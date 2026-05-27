@@ -1,0 +1,30 @@
+# Python
+__pycache__/
+*.py[cod]
+*.egg-info/
+dist/
+.venv/
+
+# Environment
+.env
+.env.local
+
+# IDE
+.vscode/
+.idea/
+
+# OS
+.DS_Store
+Thumbs.db
+
+# opencode reference (not part of voidx)
+opencode/
+
+# PowerShell artifacts
+$null
+
+# Miscellaneous
+_fix.py
+
+# uv
+uv.lock
