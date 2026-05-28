@@ -54,6 +54,7 @@ class Settings(BaseSettings):
     anthropic_api_key: str | None = Field(default=None, alias="ANTHROPIC_API_KEY")
     anthropic_base_url: str | None = Field(default=None, alias="ANTHROPIC_BASE_URL")
     openai_api_key: str | None = Field(default=None, alias="OPENAI_API_KEY")
+    openrouter_api_key: str | None = Field(default=None, alias="OPENROUTER_API_KEY")
 
     def resolve_api_key(self, provider: str) -> str | None:
         # deepseek uses the anthropic key with a custom base URL
@@ -62,12 +63,17 @@ class Settings(BaseSettings):
         key_map: dict[str, str | None] = {
             "anthropic": self.anthropic_api_key,
             "openai": self.openai_api_key,
+            "openrouter": self.openrouter_api_key,
         }
         return key_map.get(provider)
 
     def build_config(self) -> Config:
         provider = self.default_provider
-        base_url = self.anthropic_base_url if provider == "deepseek" else None
+        base_url: str | None = None
+        if provider == "deepseek":
+            base_url = self.anthropic_base_url
+        elif provider == "openrouter":
+            base_url = "https://openrouter.ai/api/v1"
         return Config(
             model=ModelConfig(
                 provider=provider,

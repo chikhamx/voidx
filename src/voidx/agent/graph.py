@@ -27,7 +27,7 @@ from langgraph.graph import END, StateGraph
 from voidx.agent.agents import get_agent, AgentDef
 from voidx.agent.prompts import SYSTEM_PROMPT
 from voidx.agent.state import AgentState
-from voidx.config import Config
+from voidx.config import Config, Settings
 from voidx.llm.compaction import CompactionService, SUMMARY_TEMPLATE
 from voidx.llm.context import count_tokens, count_messages_tokens
 from voidx.llm.instruction import InstructionService
@@ -296,12 +296,13 @@ def _prepare(state: AgentState) -> dict:
 class VoidXGraph:
     """The voidx agent as a LangGraph state machine."""
 
-    def __init__(self, config: Config, api_key: str, session: SessionInfo | None = None):
+    def __init__(self, config: Config, api_key: str, session: SessionInfo | None = None, settings: Settings | None = None):
         self.config = config
         self.api_key = api_key
         self.model = create_chat_model(api_key, config.model)
         self._session = session
         self._workspace = config.workspace
+        self._settings = settings
 
         # Build tool registry, wire task/todo/task_status to tracker
         self.tools = ToolRegistry()
@@ -581,6 +582,13 @@ class VoidXGraph:
             elapsed = time.monotonic() - t0
             ui.tool_done(tid, elapsed, ok)
 
+            # Render diff to terminal (if any)
+            if getattr(result, "diff", None) and ok:
+                from voidx.ui.diff import diff_stat
+                added, removed = diff_stat(result.diff)
+                ui.print(f"  [green]+{added}[/green] [red]−{removed}[/red]")
+                ui.diff(result.diff)
+
             if tc_node:
                 icon = "✓" if ok else "✗"
                 tc_node.header += f"  {icon} ({elapsed:.1f}s)"
@@ -590,7 +598,7 @@ class VoidXGraph:
                     self._current_tree.new_node(
                         parent=tc_node, node_type="diff",
                         header="diff", body_lines=result.diff.split("\n")[:20],
-                        collapsed=True,
+                        collapsed=False,
                     )
                 else:
                     lines = result.output[:600].split("\n")
@@ -1037,6 +1045,10 @@ class VoidXGraph:
             ui.print("[yellow]Compacting...[/yellow]")
         elif cmd == "/diff":
             await self._show_diff()
+        elif cmd == "/model":
+            await self._list_models()
+        elif cmd.startswith("/model"):
+            await self._switch_model(args)
         elif cmd == "/help":
             ui.print("[bold]Commands:[/bold]")
             for name, desc in COMMANDS:
@@ -1056,6 +1068,85 @@ class VoidXGraph:
                 ui.print("[dim]No diff content.[/dim]")
         else:
             ui.print("[dim]No changes in working tree.[/dim]")
+
+    async def _list_models(self) -> None:
+        """Show current model and available models per provider."""
+        from voidx.llm.catalog import list_models
+
+        current = f"{self.config.model.provider}/{self.config.model.model}"
+        ui.print(f"[bold]Current:[/bold] [cyan]{current}[/cyan]\n")
+
+        providers = ["anthropic", "openai", "deepseek", "openrouter"]
+        for provider in providers:
+            ui.print(f"  [bold]{provider}[/bold] ", end="")
+            models = await list_models(provider)
+            if models:
+                # Show first 6, indicate remainder
+                shown = models[:8]
+                suffix = f" [dim](+{len(models) - 8} more)[/dim]" if len(models) > 8 else ""
+                ui.print(f"{'  '.join(shown)}{suffix}")
+            else:
+                ui.print("[dim](none)[/dim]")
+        ui.print()
+        ui.print("[dim]Usage: /model <name> (same provider)  |  /model <provider> <name>  |  /model <provider>/<name>[/dim]")
+
+    async def _switch_model(self, model_spec: str) -> None:
+        """Switch model at runtime. Updates config, rebuilds LLM, persists to session."""
+        from voidx.memory.session import update_session_model
+
+        if not model_spec:
+            await self._list_models()
+            return
+
+        spec = model_spec.strip()
+
+        # Parse: /model <provider> <name> or /model <name> or /model <provider>/<name>
+        if " " in spec:
+            parts = spec.split(None, 1)
+            new_provider = parts[0].lower()
+            new_model = parts[1]
+        elif "/" in spec:
+            new_provider, new_model = spec.split("/", 1)
+            new_provider = new_provider.lower()
+        else:
+            new_provider = self.config.model.provider
+            new_model = spec
+
+        # If switching provider, resolve API key
+        if new_provider != self.config.model.provider:
+            if self._settings is None:
+                ui.error("Cannot switch provider: no Settings reference available.")
+                return
+            new_key = self._settings.resolve_api_key(new_provider)
+            if not new_key:
+                ui.error(
+                    f"No API key found for '{new_provider}'. "
+                    f"Set {new_provider.upper()}_API_KEY in .env"
+                )
+                return
+            self.api_key = new_key
+
+        # Rebuild config + model
+        old = f"{self.config.model.provider}/{self.config.model.model}"
+        self.config.model.provider = new_provider
+        self.config.model.model = new_model
+
+        # Update base_url if the new provider needs a non-default one
+        if new_provider == "deepseek":
+            self.config.model.base_url = "https://api.deepseek.com/anthropic"
+        elif new_provider == "openrouter":
+            self.config.model.base_url = "https://openrouter.ai/api/v1"
+        else:
+            self.config.model.base_url = None
+
+        self.model = create_chat_model(self.api_key, self.config.model)
+
+        # Persist
+        if self._session:
+            await update_session_model(self._session.id, new_provider, new_model)
+
+        ui.print(f"[dim]  {old}[/dim]")
+        ui.print(f"  [cyan]→ {new_provider}/{new_model}[/cyan] [green]✓[/green]")
 
     async def _clear(self) -> None:
         if self._session:

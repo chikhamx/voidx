@@ -112,6 +112,13 @@ async def update_title(session_id: str, title: str) -> None:
     )
 
 
+async def update_session_model(session_id: str, provider: str, model: str) -> None:
+    await _execute_commit(
+        "UPDATE sessions SET model_provider = ?, model_name = ?, updated_at = ? WHERE id = ?",
+        (provider, model, _now(), session_id),
+    )
+
+
 async def touch_session(session_id: str) -> None:
     await _execute_commit(
         "UPDATE sessions SET updated_at = ? WHERE id = ?",

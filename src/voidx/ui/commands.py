@@ -7,6 +7,7 @@ COMMANDS: list[tuple[str, str]] = [
     ("/list", "List saved sessions"),
     ("/resume", "Resume a session by ID"),
     ("/title", "Set session title"),
+    ("/model", "Switch LLM model — /model to list, /model <name> to switch"),
     ("/plan", "Enter plan mode (write/edit blocked)"),
     ("/unplan", "Exit plan mode"),
     ("/allow", "Allow a tool for this session"),

@@ -260,13 +260,26 @@ class StreamingRenderer:
     def get_body_text(self) -> str:
         return self._accumulated
 
+    THINKING_MAX_LINES = 5
+
     def _flush_thinking(self) -> None:
         thinking_text = "".join(self._thinking)
         if thinking_text.strip():
-            self._console.print(
-                Text(f"  {self._next_spinner()} Thinking... ", style="dim"),
-                end="",
-            )
+            lines = thinking_text.split("\n")
+            total = len(lines)
+            if total > self.THINKING_MAX_LINES:
+                skipped = total - self.THINKING_MAX_LINES
+                thinking_text = "\n".join(lines[-self.THINKING_MAX_LINES:])
+                self._console.print(
+                    Text(f"  {self._next_spinner()} Thinking… ", style="dim"),
+                    end="",
+                )
+                self._console.print(Text(f"[{skipped} earlier lines folded]\n", style="dim"))
+            else:
+                self._console.print(
+                    Text(f"  {self._next_spinner()} Thinking... ", style="dim"),
+                    end="",
+                )
             self._console.print(Text(thinking_text, style="dim italic"))
         self._thinking = []
 

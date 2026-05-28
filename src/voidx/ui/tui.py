@@ -38,6 +38,37 @@ def _visual_rows(text: str, prefix_width: int, term_width: int) -> int:
     return (dw - 1) // term_width + 1
 
 
+def _wrap_text(text: str, first_width: int, cont_width: int) -> list[str]:
+    """Split *text* by display width into a list of chunks.
+
+    ``first_width`` is the allowed display-width for the first chunk;
+    ``cont_width`` for all subsequent chunks.  Returns at least one
+    (possibly empty) chunk.
+    """
+    if not text:
+        return [""]
+    chunks: list[str] = []
+    i = 0
+    width = first_width
+    while i < len(text):
+        if width < 1:
+            width = 1
+        j = i
+        w = 0
+        while j < len(text):
+            cw = 2 if unicodedata.east_asian_width(text[j]) in ("W", "F") else 1
+            if w + cw > width:
+                break
+            w += cw
+            j += 1
+        if j == i:
+            j = i + 1  # ensure at least one char per chunk
+        chunks.append(text[i:j])
+        i = j
+        width = cont_width
+    return chunks
+
+
 # ── live_input ──────────────────────────────────────────────────────────
 
 def live_input(commands: list[tuple[str, str]]) -> str:
@@ -86,17 +117,40 @@ def live_input(commands: list[tuple[str, str]]) -> str:
             out.append(f"\x1b[{_prev_cursor_row}A")
 
         text = "".join(buffer)
-        lines = text.split("\n")
-        term_width = shutil.get_terminal_size().columns or 80
+        logical_lines = text.split("\n")
+        term_width = max(shutil.get_terminal_size().columns or 80, 3)
 
-        visual_row_counts = []
-        for line in lines:
-            visual_row_counts.append(_visual_rows(line, 2, term_width))
+        # ── wrap every logical line into display-width chunks ──────────
+        wrapped: list[tuple[int, int, str, str, int]] = []
+        # line_starts[i] = byte/char offset where logical line *i* begins
+        line_starts: list[int] = [0]
+        for lt in logical_lines:
+            line_starts.append(line_starts[-1] + len(lt) + 1)
 
-        out.append("\r\x1b[K❯ " + lines[0])
-        for line in lines[1:]:
-            out.append("\n\r\x1b[K  " + line)
+        for line_idx, line_text in enumerate(logical_lines):
+            chunks = _wrap_text(line_text, term_width - 2, term_width)
+            line_start = line_starts[line_idx]
+            offset = 0
+            for chunk_idx, chunk_text in enumerate(chunks):
+                if line_idx == 0 and chunk_idx == 0:
+                    prefix = "\r\x1b[K❯ "
+                    prefix_dw = 2
+                elif chunk_idx == 0:
+                    prefix = "\n\r\x1b[K  "
+                    prefix_dw = 2
+                else:
+                    prefix = "\n\r\x1b[K"
+                    prefix_dw = 0
+                t_start = line_start + offset
+                t_end = t_start + len(chunk_text)
+                wrapped.append((t_start, t_end, chunk_text, prefix, prefix_dw))
+                offset += len(chunk_text)
 
+        # ── render every chunk line ────────────────────────────────────
+        for _, _, chunk_text, prefix, _ in wrapped:
+            out.append(prefix + chunk_text)
+
+        # ── hints (unchanged logic) ────────────────────────────────────
         prefix = "".join(buffer)
         new_hint_count = 0
         hint_visual_rows = 0
@@ -124,26 +178,33 @@ def live_input(commands: list[tuple[str, str]]) -> str:
             else:
                 selected_index = -1
 
-        new_visual = sum(visual_row_counts) + hint_visual_rows
+        # ── total visual rows, clear stale rows ────────────────────────
+        new_visual = len(wrapped) + hint_visual_rows
         for _ in range(new_visual, prev_visual):
             out.append("\n\r\x1b[K")
+        total_rows = max(new_visual, prev_visual)
         prev_visual = new_visual
         hint_count = new_hint_count
 
-        char_count = 0
+        # ── cursor position ────────────────────────────────────────────
         cursor_visual_row = 0
-        for i, line in enumerate(lines):
-            line_len = len(line)
-            if cursor_pos <= char_count + line_len:
-                chars_before = cursor_pos - char_count
-                text_before = line[:chars_before]
-                dw = 2 + _display_width(text_before)
-                cursor_visual_row = sum(visual_row_counts[:i]) + dw // term_width
-                cursor_col = (dw % term_width) + 1
+        cursor_col = 3  # default: right after "❯ "
+        found = False
+        for vr, (t_start, t_end, chunk_text, _prefix_str, prefix_dw) in enumerate(wrapped):
+            if t_start <= cursor_pos <= t_end:
+                chars_before = min(cursor_pos - t_start, len(chunk_text))
+                cursor_visual_row = vr
+                cursor_col = prefix_dw + _display_width(chunk_text[:chars_before]) + 1
+                found = True
                 break
-            char_count += line_len + 1
+        if not found and wrapped:
+            # Cursor is past all text — place at end of last chunk
+            cursor_visual_row = len(wrapped) - 1
+            last = wrapped[-1]
+            cursor_col = last[4] + _display_width(last[2]) + 1
 
-        back = max(new_visual - 1, 0)
+        # ── final cursor positioning ───────────────────────────────────
+        back = max(total_rows - 1, 0)
         if back:
             out.append(f"\x1b[{back}A")
         if cursor_visual_row > 0:

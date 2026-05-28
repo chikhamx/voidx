@@ -63,7 +63,7 @@ async def _run_chat(
             model=cfg.model.model,
         )
 
-    graph = VoidXGraph(cfg, api_key, session=session)
+    graph = VoidXGraph(cfg, api_key, session=session, settings=settings)
     await graph.run()
 
 

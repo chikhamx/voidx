@@ -16,6 +16,7 @@ def create_chat_model(api_key: str, config: ModelConfig) -> BaseChatModel:
     - anthropic: native Anthropic API
     - deepseek: Anthropic-compatible protocol via custom base_url
     - openai: native OpenAI API
+    - openrouter: OpenAI-compatible protocol via OpenRouter
     """
     match config.provider:
         case "deepseek":
@@ -36,6 +37,14 @@ def create_chat_model(api_key: str, config: ModelConfig) -> BaseChatModel:
         case "openai":
             return ChatOpenAI(
                 api_key=api_key,
+                model=config.model,
+                temperature=config.temperature,
+                max_tokens=config.max_tokens,
+            )
+        case "openrouter":
+            return ChatOpenAI(
+                api_key=api_key,
+                base_url=config.base_url or "https://openrouter.ai/api/v1",
                 model=config.model,
                 temperature=config.temperature,
                 max_tokens=config.max_tokens,

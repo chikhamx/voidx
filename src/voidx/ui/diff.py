@@ -35,6 +35,18 @@ def make_file_diff(
     return "".join(diff)
 
 
+def diff_stat(diff_text: str) -> tuple[int, int]:
+    """Return (added, removed) line counts from a unified diff."""
+    added = 0
+    removed = 0
+    for line in diff_text.split("\n"):
+        if line.startswith("+") and not line.startswith("+++"):
+            added += 1
+        elif line.startswith("-") and not line.startswith("---"):
+            removed += 1
+    return added, removed
+
+
 def git_diff(workspace: str, staged: bool = False) -> str:
     """Get working tree diff via git."""
     try:
