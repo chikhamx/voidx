@@ -20,34 +20,19 @@ def _vconsole():
     return VoidConsole()
 
 
-async def _run_chat(
-    workspace: str = ".",
-    model: str | None = None,
-    provider: str | None = None,
-    resume: str | None = None,
-    new_session: bool = False,
-) -> None:
-    from voidx.config import Settings
-    from voidx.agent.graph import VoidXGraph
-    from voidx.memory.session import get_session, list_sessions, create_session
-
-    vconsole = _vconsole()
-    settings = Settings()  # type: ignore[call-arg]
-    cfg = settings.build_config()
-    cfg.workspace = str(Path(workspace).resolve())
-
-    if model:
-        cfg.model.model = model
-    if provider:
-        cfg.model.provider = provider
-
-    api_key = settings.resolve_api_key(cfg.model.provider)
-    if not api_key:
-        vconsole.error(
-            f"No API key found for '{cfg.model.provider}'. "
-            f"Set {cfg.model.provider.upper()}_API_KEY in .env"
-        )
-        raise typer.Exit(code=1)
+async def _select_start_session(
+    workspace: str,
+    provider: str,
+    model: str,
+    resume: str | None,
+    new_session: bool,
+    vconsole,
+):
+    from voidx.memory.session import (
+        create_session,
+        get_session,
+        latest_session_for_workspace,
+    )
 
     if resume:
         session = await get_session(resume)
@@ -56,12 +41,60 @@ async def _run_chat(
             raise typer.Exit(code=1)
         title = session.title[:60] + ("..." if len(session.title) > 60 else "")
         vconsole.print(f"[dim]Resumed {session.id}: {title}[/dim]")
+        return session
+
+    if not new_session:
+        session = await latest_session_for_workspace(workspace)
+        if session:
+            title = session.title[:60] + ("..." if len(session.title) > 60 else "")
+            vconsole.print(f"[dim]Resumed {session.id}: {title}[/dim]")
+            return session
+
+    return await create_session(
+        workspace=workspace,
+        provider=provider,
+        model=model,
+    )
+
+
+async def _run_chat(
+    workspace: str = ".",
+    model: str | None = None,
+    provider: str | None = None,
+    resume: str | None = None,
+    new_session: bool = False,
+) -> None:
+    from voidx.ui.dock import set_dock, BottomInputDock
+    set_dock(BottomInputDock())
+
+    from voidx.config import Settings
+    from voidx.agent.graph import VoidXGraph
+
+    vconsole = _vconsole()
+    ws_path = str(Path(workspace).resolve())
+    settings = Settings(ws_path)
+    cfg = settings.build_config()
+    cfg.workspace = ws_path
+
+    if model:
+        cfg.model.model = model
+    if provider:
+        cfg.model.provider = provider
+
+    profile = settings.resolve_profile()
+    if profile:
+        api_key = profile.api_key
     else:
-        session = await create_session(
-            workspace=cfg.workspace,
-            provider=cfg.model.provider,
-            model=cfg.model.model,
-        )
+        api_key = settings.resolve_api_key(cfg.model.provider)
+
+    session = await _select_start_session(
+        workspace=cfg.workspace,
+        provider=cfg.model.provider,
+        model=cfg.model.model,
+        resume=resume,
+        new_session=new_session,
+        vconsole=vconsole,
+    )
 
     graph = VoidXGraph(cfg, api_key, session=session, settings=settings)
     await graph.run()

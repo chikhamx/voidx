@@ -38,8 +38,8 @@ def _init_schema(conn: sqlite3.Connection) -> None:
             id TEXT PRIMARY KEY,
             title TEXT NOT NULL DEFAULT 'New session',
             workspace TEXT NOT NULL DEFAULT '.',
-            model_provider TEXT NOT NULL DEFAULT 'deepseek',
-            model_name TEXT NOT NULL DEFAULT 'deepseek-v4-pro',
+            model_provider TEXT NOT NULL DEFAULT 'anthropic',
+            model_name TEXT NOT NULL DEFAULT 'claude-sonnet-4-6',
             created_at TEXT NOT NULL,
             updated_at TEXT NOT NULL
         );
@@ -58,6 +58,13 @@ def _init_schema(conn: sqlite3.Connection) -> None:
         CREATE INDEX IF NOT EXISTS idx_messages_session
             ON messages(session_id, id);
     """)
+    # Migration: add content_format column (v0.1.0 → v0.1.1)
+    try:
+        conn.execute(
+            "ALTER TABLE messages ADD COLUMN content_format TEXT NOT NULL DEFAULT 'text'"
+        )
+    except sqlite3.OperationalError:
+        pass
 
 
 async def _execute(sql: str, params: tuple = ()) -> sqlite3.Cursor:

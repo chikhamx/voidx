@@ -29,8 +29,8 @@ class SessionInfo(BaseModel):
     id: str
     title: str = "New session"
     workspace: str = "."
-    model_provider: str = "deepseek"
-    model_name: str = "deepseek-v4-pro"
+    model_provider: str = "anthropic"
+    model_name: str = "claude-sonnet-4-6"
     created_at: str = Field(default_factory=_now)
     updated_at: str = Field(default_factory=_now)
     message_count: int = 0
@@ -41,6 +41,7 @@ class MessageRow(BaseModel):
     session_id: str
     role: str  # system | user | assistant | tool
     content: str = ""
+    content_format: str = "text"  # "text" | "structured" (e.g. DeepSeek thinking blocks)
     tool_calls: list[dict] | None = None
     tool_call_id: str | None = None
     created_at: str = Field(default_factory=_now)
@@ -50,8 +51,8 @@ class MessageRow(BaseModel):
 
 async def create_session(
     workspace: str = ".",
-    provider: str = "deepseek",
-    model: str = "deepseek-v4-pro",
+    provider: str = "anthropic",
+    model: str = "claude-sonnet-4-6",
 ) -> SessionInfo:
     sid = _uid()
     now = _now()
@@ -105,6 +106,27 @@ async def list_sessions(limit: int = 50) -> list[SessionInfo]:
     ]
 
 
+async def latest_session_for_workspace(workspace: str) -> SessionInfo | None:
+    row = await _fetch_one(
+        """SELECT s.*, COUNT(m.id) as cnt
+           FROM sessions s
+           LEFT JOIN messages m ON s.id = m.session_id
+           WHERE s.workspace = ?
+           GROUP BY s.id
+           ORDER BY s.updated_at DESC
+           LIMIT 1""",
+        (workspace,),
+    )
+    if not row:
+        return None
+    return SessionInfo(
+        id=row["id"], title=row["title"], workspace=row["workspace"],
+        model_provider=row["model_provider"], model_name=row["model_name"],
+        created_at=row["created_at"], updated_at=row["updated_at"],
+        message_count=row["cnt"] or 0,
+    )
+
+
 async def update_title(session_id: str, title: str) -> None:
     await _execute_commit(
         "UPDATE sessions SET title = ?, updated_at = ? WHERE id = ?",
@@ -136,12 +158,13 @@ async def delete_session(session_id: str) -> None:
 async def save_message(msg: MessageRow) -> int:
     """Save a message row. Returns the auto-generated id."""
     cur = await _execute_commit(
-        """INSERT INTO messages (session_id, role, content, tool_calls, tool_call_id, created_at)
-           VALUES (?, ?, ?, ?, ?, ?)""",
+        """INSERT INTO messages (session_id, role, content, content_format, tool_calls, tool_call_id, created_at)
+           VALUES (?, ?, ?, ?, ?, ?, ?)""",
         (
             msg.session_id,
             msg.role,
             msg.content,
+            msg.content_format,
             json.dumps(msg.tool_calls) if msg.tool_calls else None,
             msg.tool_call_id,
             msg.created_at,
@@ -162,6 +185,7 @@ async def load_messages(session_id: str) -> list[MessageRow]:
             session_id=row["session_id"],
             role=row["role"],
             content=row["content"],
+            content_format=row["content_format"] if "content_format" in row.keys() else "text",
             tool_calls=json.loads(row["tool_calls"]) if row["tool_calls"] else None,
             tool_call_id=row["tool_call_id"],
             created_at=row["created_at"],
@@ -189,6 +213,7 @@ async def last_messages(session_id: str, n: int = 20) -> list[MessageRow]:
             session_id=row["session_id"],
             role=row["role"],
             content=row["content"],
+            content_format=row["content_format"] if "content_format" in row.keys() else "text",
             tool_calls=json.loads(row["tool_calls"]) if row["tool_calls"] else None,
             tool_call_id=row["tool_call_id"],
             created_at=row["created_at"],

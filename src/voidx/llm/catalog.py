@@ -35,6 +35,34 @@ STATIC_MODELS: dict[str, list[str]] = {
         "deepseek-v4-pro",
         "deepseek-v4-flash",
     ],
+    "mimo": [
+        "mimo-v2.5-pro",
+        "mimo-v2.5",
+        "mimo-v2.5-tts",
+    ],
+    "qwen": [
+        "qwen3.7-max",
+        "qwen3-max",
+        "qwen3.6-plus",
+        "qwen-plus",
+        "qwen-turbo",
+    ],
+    "zhipu": [
+        "glm-5.1",
+        "glm-5",
+        "glm-4.7",
+        "glm-4.7-flash",
+    ],
+    "kimi": [
+        "kimi-k2.6",
+        "kimi-k2.5",
+        "kimi-k2",
+    ],
+    "doubao": [
+        "doubao-seed-1.6-thinking",
+        "doubao-seed-1.6",
+        "doubao-seed-1.6-flash",
+    ],
 }
 
 # ── fetcher registry ───────────────────────────────────────────────────────
@@ -53,7 +81,8 @@ OPENROUTER_API = "https://openrouter.ai/api/v1/models"
 
 
 async def _fetch_openrouter_models() -> list[str]:
-    """Fetch free models from OpenRouter's public /models endpoint (no auth needed)."""
+    """Fetch models from OpenRouter's public /models endpoint. Free models first,
+    filtered to chat/language models only, limited to a manageable count."""
     async with httpx.AsyncClient(timeout=15.0) as client:
         try:
             resp = await client.get(OPENROUTER_API)
@@ -62,12 +91,29 @@ async def _fetch_openrouter_models() -> list[str]:
         except Exception:
             return STATIC_MODELS.get("openrouter", [])
 
+    _skip_keywords = (
+        "embed", "moderation", "image", "vision", "audio",
+        "whisper", "tts", "dall-e", "dalle", "transcribe",
+    )
+
     free_models: list[str] = []
+    paid_models: list[str] = []
+    seen: set[str] = set()
+
     for entry in data.get("data", []):
         model_id = entry.get("id", "")
         if not model_id:
             continue
-        # Free models: pricing is "0" for both prompt and completion, or :free suffix
+        # Skip empty/invalid models
+        ctx_len = entry.get("context_length", 0) or 0
+        if ctx_len <= 0:
+            continue
+        # Skip obviously non-chat models
+        mid_lower = model_id.lower()
+        if any(kw in mid_lower for kw in _skip_keywords):
+            continue
+        # Dedup: if both x and x:free exist, prefer :free for free list
+        base = model_id.removesuffix(":free")
         pricing = entry.get("pricing", {})
         prompt_price = pricing.get("prompt", "-1")
         completion_price = pricing.get("completion", "-1")
@@ -76,9 +122,17 @@ async def _fetch_openrouter_models() -> list[str]:
             or (prompt_price == "0" and completion_price == "0")
         )
         if is_free:
-            free_models.append(model_id)
+            if base not in seen:
+                seen.add(base)
+                free_models.append(model_id)
+        else:
+            if base not in seen:
+                seen.add(base)
+                paid_models.append(model_id)
 
-    return free_models
+    result = free_models + paid_models
+    # Limit total to keep the selector usable
+    return result[:100]
 
 
 register_fetcher("openrouter", _fetch_openrouter_models)

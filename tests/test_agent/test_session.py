@@ -11,6 +11,7 @@ from voidx.memory.session import (
     create_session,
     get_session,
     list_sessions,
+    latest_session_for_workspace,
     delete_session,
     save_message,
     load_messages,
@@ -67,6 +68,26 @@ async def test_list_sessions():
     assert s2.id in ids
     await delete_session(s1.id)
     await delete_session(s2.id)
+
+
+@pytest.mark.asyncio
+async def test_latest_session_for_workspace_returns_newest_matching_workspace(tmp_path):
+    workspace = str(tmp_path)
+    other_workspace = str(tmp_path / "other")
+    older = await create_session(workspace=workspace)
+    latest = await create_session(workspace=workspace)
+    other = await create_session(workspace=other_workspace)
+    await update_title(latest.id, "Latest")
+    try:
+        loaded = await latest_session_for_workspace(workspace)
+
+        assert loaded is not None
+        assert loaded.id == latest.id
+        assert loaded.workspace == workspace
+    finally:
+        await delete_session(older.id)
+        await delete_session(latest.id)
+        await delete_session(other.id)
 
 
 @pytest.mark.asyncio

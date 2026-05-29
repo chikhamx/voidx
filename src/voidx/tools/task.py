@@ -1,7 +1,7 @@
-"""Task tool — spawn sub-agents with isolated context. Depth limit = 1.
+"""Task tool — spawn sub-agents with filtered context. Depth limit = 1.
 
 Inspired by opencode's TaskTool: creates a fresh agent instance, runs it with
-only the task description (no parent history), returns summary to parent.
+a task description plus filtered parent context, returns summary to parent.
 """
 
 from __future__ import annotations
@@ -20,8 +20,8 @@ class TaskInput(BaseModel):
     )
     description: str = Field(
         description="Complete, self-contained task description for the sub-agent. "
-                    "Include all context the sub-agent needs — it cannot see the "
-                    "conversation history."
+                    "Include all context the sub-agent needs — it receives only "
+                    "a filtered slice of the parent conversation."
     )
     model: str | None = Field(
         default=None,
@@ -36,9 +36,9 @@ class TaskTool(BaseTool):
         "Use this to delegate work to specialist agents.\n\n"
         + subagent_descriptions_for_llm() +
         "\n\nIMPORTANT: Provide a complete, self-contained task description. "
-        "The sub-agent cannot see the conversation history — it only sees your "
-        "task description. Be specific about what files to examine/modify, what "
-        "the expected output format is, and any constraints."
+        "The sub-agent receives only a filtered slice of the parent context plus "
+        "your task description. Be specific about what files to examine/modify, "
+        "what the expected output format is, and any constraints."
     )
 
     def __init__(self, orchestrator_func=None):

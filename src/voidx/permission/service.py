@@ -84,11 +84,21 @@ class PermissionService:
         self._session_deny.discard(tool)
         ui.print(f"[dim]✓ {tool} now allowed for this session[/dim]")
 
+    def allow_silent(self, tool: str) -> None:
+        """Pre-approve a tool for the session without UI noise."""
+        self._session_allow.add(tool)
+        self._session_deny.discard(tool)
+
     def deny(self, tool: str) -> None:
         """Block a tool for the entire session."""
         self._session_deny.add(tool)
         self._session_allow.discard(tool)
         ui.print(f"[dim]✗ {tool} now denied for this session[/dim]")
+
+    def deny_silent(self, tool: str) -> None:
+        """Block a tool for the session without UI noise."""
+        self._session_deny.add(tool)
+        self._session_allow.discard(tool)
 
     def show_rules(self) -> str:
         """Format current session rules."""
@@ -116,23 +126,20 @@ class PermissionService:
         Returns "allow" (proceed) or "deny" (block silently).
         Raises PermissionRejectedError if user rejects the interactive ask.
         """
-        # 1. Session deny overrides everything
+        action = self.decide(tool, pattern)
+        if action != "ask":
+            return action
+        return await self._ask_user(tool, pattern, session_id)
+
+    def decide(self, tool: str, pattern: str = "*") -> Action:
+        """Return the non-interactive permission decision for a tool call."""
         if tool in self._session_deny:
             return "deny"
-
-        # 2. Session allow skips defaults + ask
         if tool in self._session_allow:
             return "allow"
 
-        # 3. Built-in defaults
         rule = evaluate(tool, pattern, DEFAULT_RULES)
-        if rule.action == "allow":
-            return "allow"
-        if rule.action == "deny":
-            return "deny"
-
-        # 4. Must ask user
-        return await self._ask_user(tool, pattern, session_id)
+        return rule.action
 
     async def _ask_user(self, tool: str, pattern: str, session_id: str) -> Action:
         """Interactive ask — simple text input, no raw key artifacts."""

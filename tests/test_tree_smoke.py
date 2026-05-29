@@ -95,5 +95,29 @@ def test_basic_tree():
     print(f"tc2._is_last_sibling: {tc2._is_last_sibling}")  # True
 
 
+def test_collapsed_summary_hides_internal_node_ids():
+    tree = OutputTree()
+    turn = tree.new_node(tree.root, node_type="turn", header="turn")
+    tool = tree.new_node(turn, node_type="tool_call", header="read file.py", collapsed=True)
+    result = tree.new_node(tool, node_type="tool_result", header="OK", collapsed=True)
+
+    assert "[n" not in tool.collapse_summary
+    assert "[n" not in result.collapse_summary
+    assert "\\[" not in tool.collapse_summary
+    assert "\\[" not in result.collapse_summary
+    assert tree.get(tool.id) is tool
+
+
+def test_expanded_view_hides_internal_node_ids():
+    tree = OutputTree()
+    turn = tree.new_node(tree.root, node_type="turn", header="turn")
+    tool = tree.new_node(turn, node_type="tool_call", header="read file.py", collapsed=True)
+
+    expanded = "\n".join(tree.render_expanded(tool.id, 80))
+
+    assert "[n" not in expanded
+    assert "\\[" not in expanded
+
+
 if __name__ == "__main__":
     test_basic_tree()

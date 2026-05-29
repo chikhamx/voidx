@@ -27,18 +27,22 @@ class ToolDef(BaseModel):
 class ToolRegistry:
     """Manages all available tools. No dynamic discovery — everything explicit."""
 
-    def __init__(self) -> None:
+    def __init__(self, settings=None) -> None:
         self._tools: dict[str, ToolDef] = {}
         self._instances: dict[str, object] = {}
+        self._settings = settings
         self._register_builtins()
 
     def _register_builtins(self) -> None:
         for cls in [FileReadTool, FileWriteTool, FileEditTool,
                      RepoMapTool,
                      GlobTool, GrepTool, BashTool,
-                     TodoWriteTool, WebFetchTool, WebSearchTool]:
+                     TodoWriteTool, WebFetchTool]:
             instance = cls()
             self.register(instance.id, instance, instance.description, instance.parameters_schema())
+        # WebSearchTool needs settings for Tavily API key
+        ws = WebSearchTool(settings=self._settings)
+        self.register(ws.id, ws, ws.description, ws.parameters_schema())
 
     def register(self, tool_id: str, instance: object, description: str, parameters: dict) -> None:
         """Register a tool dynamically (e.g. task tool injected at runtime)."""

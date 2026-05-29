@@ -1,0 +1,235 @@
+"""Parse and materialize user file attachments."""
+
+from __future__ import annotations
+
+import base64
+import json
+import mimetypes
+import re
+from dataclasses import dataclass, field
+from pathlib import Path
+from typing import Any
+
+IMAGE_EXTENSIONS = {".png", ".jpg", ".jpeg", ".gif", ".webp"}
+MAX_TEXT_ATTACHMENT_BYTES = 200_000
+MAX_IMAGE_ATTACHMENT_BYTES = 5_000_000
+_ATTACHMENT_RE = re.compile(r'(?<!\S)@(?:"([^"]+)"|(\S+))')
+
+
+@dataclass(frozen=True)
+class Attachment:
+    path: Path
+    rel_path: str
+    kind: str
+    mime_type: str
+    size: int
+
+
+@dataclass
+class UserMessagePayload:
+    raw_text: str
+    clean_text: str
+    display_text: str
+    title_text: str
+    content: str | list[dict[str, Any]]
+    content_format: str
+    attachments: list[Attachment] = field(default_factory=list)
+    warnings: list[str] = field(default_factory=list)
+
+
+def parse_structured_content(content: str, content_format: str) -> str | list[dict[str, Any]]:
+    if content_format != "structured":
+        return content
+    try:
+        parsed = json.loads(content)
+    except Exception:
+        return content
+    return parsed if isinstance(parsed, list) else content
+
+
+def serialize_message_content(content: str | list[dict[str, Any]]) -> tuple[str, str]:
+    if isinstance(content, list):
+        return json.dumps(content, ensure_ascii=False), "structured"
+    return content, "text"
+
+
+def build_user_message_payload(user_text: str, workspace: str) -> UserMessagePayload:
+    workspace_path = Path(workspace).resolve()
+    tokens = _attachment_tokens(user_text)
+    removed_spans: list[tuple[int, int]] = []
+    attachments: list[Attachment] = []
+    warnings: list[str] = []
+    text_sections: list[str] = []
+    image_parts: list[dict[str, Any]] = []
+
+    for start, end, raw_path in tokens:
+        resolved = _resolve_workspace_path(workspace_path, raw_path)
+        if resolved is None:
+            warnings.append(f"Attachment skipped outside workspace: {raw_path}")
+            continue
+        if not resolved.exists() or not resolved.is_file():
+            warnings.append(f"Attachment not found: {raw_path}")
+            continue
+        removed_spans.append((start, end))
+        rel_path = _relative_path(workspace_path, resolved)
+        mime_type = mimetypes.guess_type(str(resolved))[0] or "application/octet-stream"
+        size = resolved.stat().st_size
+        kind = "image" if is_image_path(resolved) else "file"
+        attachment = Attachment(resolved, rel_path, kind, mime_type, size)
+        attachments.append(attachment)
+
+        if kind == "image":
+            if size > MAX_IMAGE_ATTACHMENT_BYTES:
+                warnings.append(f"Image skipped because it is too large: {rel_path}")
+                continue
+            image_parts.append(_image_part(resolved, mime_type))
+            continue
+
+        section, warning = _text_file_section(attachment)
+        if warning:
+            warnings.append(warning)
+        if section:
+            text_sections.append(section)
+
+    clean_text = _normalize_text(_remove_spans(user_text, removed_spans))
+    text_content = _build_text_content(clean_text, attachments, text_sections)
+    content: str | list[dict[str, Any]]
+    content_format = "text"
+    if image_parts:
+        content = [{"type": "text", "text": text_content}, *image_parts]
+        content_format = "structured"
+    else:
+        content = text_content
+
+    display_text = _display_text(clean_text, attachments)
+    title_text = clean_text or (f"Attached {attachments[0].rel_path}" if attachments else user_text)
+    return UserMessagePayload(
+        raw_text=user_text,
+        clean_text=clean_text,
+        display_text=display_text,
+        title_text=title_text,
+        content=content,
+        content_format=content_format,
+        attachments=attachments,
+        warnings=warnings,
+    )
+
+
+def is_image_path(path: Path | str) -> bool:
+    return Path(path).suffix.lower() in IMAGE_EXTENSIONS
+
+
+def _attachment_tokens(text: str) -> list[tuple[int, int, str]]:
+    return [
+        (match.start(), match.end(), match.group(1) or match.group(2) or "")
+        for match in _ATTACHMENT_RE.finditer(text)
+    ]
+
+
+def _remove_spans(text: str, spans: list[tuple[int, int]]) -> str:
+    if not spans:
+        return text
+    result: list[str] = []
+    last = 0
+    for start, end in spans:
+        result.append(text[last:start])
+        result.append(" ")
+        last = end
+    result.append(text[last:])
+    return "".join(result)
+
+
+def _resolve_workspace_path(workspace: Path, raw_path: str) -> Path | None:
+    candidate = Path(raw_path).expanduser()
+    resolved = candidate.resolve() if candidate.is_absolute() else (workspace / candidate).resolve()
+    try:
+        resolved.relative_to(workspace)
+    except ValueError:
+        return None
+    return resolved
+
+
+def _relative_path(workspace: Path, path: Path) -> str:
+    try:
+        return path.relative_to(workspace).as_posix()
+    except ValueError:
+        return path.as_posix()
+
+
+def _image_part(path: Path, mime_type: str) -> dict[str, Any]:
+    encoded = base64.b64encode(path.read_bytes()).decode("ascii")
+    return {
+        "type": "image_url",
+        "image_url": {"url": f"data:{mime_type};base64,{encoded}"},
+    }
+
+
+def _text_file_section(attachment: Attachment) -> tuple[str, str]:
+    raw = attachment.path.read_bytes()
+    truncated = len(raw) > MAX_TEXT_ATTACHMENT_BYTES
+    if truncated:
+        raw = raw[:MAX_TEXT_ATTACHMENT_BYTES]
+    if b"\x00" in raw:
+        return (
+            f"Attached binary file: {attachment.rel_path} ({attachment.mime_type}, {attachment.size} bytes).",
+            "",
+        )
+    try:
+        text = raw.decode("utf-8")
+    except UnicodeDecodeError:
+        text = raw.decode("utf-8", errors="replace")
+    suffix = ""
+    warning = ""
+    if truncated:
+        omitted = attachment.size - MAX_TEXT_ATTACHMENT_BYTES
+        suffix = f"\n\n[Attachment truncated: omitted {omitted} bytes]"
+        warning = f"Attachment truncated: {attachment.rel_path}"
+    lang = _language_from_path(attachment.rel_path)
+    return f"Attached file: {attachment.rel_path}\n```{lang}\n{text}{suffix}\n```", warning
+
+
+def _language_from_path(path: str) -> str:
+    suffix = Path(path).suffix.lower().lstrip(".")
+    mapping = {
+        "py": "python",
+        "js": "javascript",
+        "ts": "typescript",
+        "tsx": "tsx",
+        "jsx": "jsx",
+        "json": "json",
+        "md": "markdown",
+        "sh": "bash",
+        "yml": "yaml",
+        "yaml": "yaml",
+        "html": "html",
+        "css": "css",
+    }
+    return mapping.get(suffix, suffix)
+
+
+def _build_text_content(clean_text: str, attachments: list[Attachment], text_sections: list[str]) -> str:
+    parts: list[str] = []
+    if clean_text:
+        parts.append(clean_text)
+    if attachments:
+        image_lines = [f"- {item.rel_path} ({item.mime_type}, {item.size} bytes)" for item in attachments if item.kind == "image"]
+        if image_lines:
+            parts.append("Attached images:\n" + "\n".join(image_lines))
+    parts.extend(text_sections)
+    if parts:
+        return "\n\n".join(parts)
+    return "Please review the attached file."
+
+
+def _display_text(clean_text: str, attachments: list[Attachment]) -> str:
+    if not attachments:
+        return clean_text
+    names = ", ".join(item.rel_path for item in attachments[:3])
+    if len(attachments) > 3:
+        names += f", +{len(attachments) - 3} more"
+    base = clean_text or "Attached files"
+    return f"{base}\n[attachments: {names}]"
+
+
+def _normalize_text(text: str) -> str:
+    return re.sub(r"[ \t]+", " ", text).strip()

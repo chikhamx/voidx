@@ -107,7 +107,13 @@ class FileWriteTool(BaseTool):
         _record_mtime(ctx, path)
 
         from voidx.ui.diff import make_file_diff
-        diff = make_file_diff(inp.file_path, old_content, inp.content) if old_content else None
+        diff = make_file_diff(
+            inp.file_path,
+            old_content,
+            inp.content,
+            old_label=f"a/{inp.file_path}" if old_content else "/dev/null",
+            new_label=f"b/{inp.file_path}",
+        )
 
         return ToolResult(
             title=f"Wrote {size} bytes to {inp.file_path}",
