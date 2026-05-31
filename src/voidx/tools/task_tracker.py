@@ -1,4 +1,4 @@
-"""Task tracker — shared state for running sub-agent status."""
+"""Task tracker — shared state for running worker-role status."""
 
 from __future__ import annotations
 
@@ -23,7 +23,7 @@ class TaskState:
 
 
 class TaskTracker:
-    """Thread-safe registry for running sub-agent tasks."""
+    """Thread-safe registry for running worker-role tasks."""
 
     def __init__(self):
         self._tasks: dict[str, TaskState] = {}
@@ -65,7 +65,7 @@ class TaskTracker:
         """Format all tasks as a status report string."""
         tasks = self.list_all()
         if not tasks:
-            return "No sub-agent tasks."
+            return "No worker-role tasks."
 
         lines = []
         for t in tasks:

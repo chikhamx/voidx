@@ -20,14 +20,15 @@ import httpx
 
 STATIC_MODELS: dict[str, list[str]] = {
     "anthropic": [
+        "claude-opus-4-8",
         "claude-sonnet-4-6",
         "claude-opus-4-7",
         "claude-haiku-4-5",
     ],
     "openai": [
-        "gpt-4o",
-        "gpt-4.1",
-        "gpt-4.1-mini",
+        "gpt-5.5",
+        "gpt-5.4-mini",
+        "gpt-5.4-nano",
         "o3",
         "o4-mini",
     ],
@@ -36,6 +37,11 @@ STATIC_MODELS: dict[str, list[str]] = {
         "deepseek-v4-flash",
     ],
     "mimo": [
+        "mimo-v2.5-pro",
+        "mimo-v2.5",
+        "mimo-v2.5-tts",
+    ],
+    "mimo-token-plan": [
         "mimo-v2.5-pro",
         "mimo-v2.5",
         "mimo-v2.5-tts",
@@ -137,6 +143,31 @@ async def _fetch_openrouter_models() -> list[str]:
 
 register_fetcher("openrouter", _fetch_openrouter_models)
 
+# ── custom model support ────────────────────────────────────────────────
+
+_settings = None
+
+def bind_settings(settings) -> None:
+    """Bind a Settings instance so list_models() can merge custom models."""
+    global _settings
+    _settings = settings
+
+def _merge_custom(provider: str, base: list[str]) -> list[str]:
+    """Merge custom models (from settings) in front of base list, deduplicating."""
+    if _settings is None:
+        return base
+    custom = _settings.list_custom_models(provider)
+    if not custom:
+        return base
+    seen: set[str] = set()
+    result: list[str] = []
+    for m in custom + base:
+        if m not in seen:
+            seen.add(m)
+            result.append(m)
+    return result
+
+
 # ── public API ─────────────────────────────────────────────────────────────
 
 async def list_models(provider: str) -> list[str]:
@@ -144,13 +175,14 @@ async def list_models(provider: str) -> list[str]:
 
     If a dynamic fetcher is registered, it's called first. On failure or if
     no fetcher exists, falls back to STATIC_MODELS.
+    Custom models from settings are merged in front of the result.
     """
     fetcher = _fetchers.get(provider)
     if fetcher is not None:
         try:
             models = await fetcher()
             if models:
-                return models
+                return _merge_custom(provider, models)
         except Exception:
             pass
-    return STATIC_MODELS.get(provider, [])
+    return _merge_custom(provider, STATIC_MODELS.get(provider, []))

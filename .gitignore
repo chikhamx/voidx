@@ -2,12 +2,14 @@
 __pycache__/
 *.py[cod]
 *.egg-info/
+build/
 dist/
 .venv/
 
 # Environment
 .env
 .env.local
+voidx.json
 .voidx/
 
 # IDE

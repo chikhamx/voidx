@@ -23,7 +23,9 @@ from voidx.ui.events import (
     StartupShown,
     StatusFinished,
     StatusUpdated,
+    SubagentFinished,
     SubagentStarted,
+    SubagentStepStarted,
     ToolFinished,
     ToolResultAppended,
     ToolStarted,
@@ -148,7 +150,7 @@ async def test_startup_event_includes_no_profile_notice(isolated_dock):
 
         assert "Welcome to voidx!" in rendered
         assert "No profile configured" in rendered
-        assert "/model config" in rendered
+        assert "/model new" in rendered
     finally:
         await bus.stop()
 
@@ -242,7 +244,7 @@ async def test_file_change_event_updates_tool_node_with_structured_diff(isolated
     bus.start(DockEventConsumer(isolated_dock))
     try:
         await bus.request(TurnStarted(text="demo"))
-        await bus.request(ToolStarted(
+        tool = await bus.request(ToolStarted(
             tool_call_id="edit_call",
             tool_name="edit",
             label="Editing",
@@ -259,6 +261,7 @@ async def test_file_change_event_updates_tool_node_with_structured_diff(isolated
 """,
         ))
         await bus.drain()
+        isolated_dock.tree.expand(tool.id)
 
         rendered = "\n".join(_plain(line) for line in isolated_dock.tree.render(120))
         assert "Update" in rendered
@@ -361,11 +364,13 @@ async def test_capture_console_uses_ui_event_bus_for_subagent_tools(isolated_doc
         rendered = "\n".join(_plain(line) for line in isolated_dock.tree.render(100))
         assert "Exploring (1/2)" in rendered
         assert "Reading" in rendered
-        assert "first" in rendered
 
         assistant = next(node for node in isolated_dock.tree.root.children if node.node_type == "assistant")
         subagent = next(node for node in assistant.children if node.node_type == "subagent")
         tool = next(node for node in subagent.children if node.node_type == "tool_call")
+        isolated_dock.tree.expand(tool.id)
+        expanded = "\n".join(_plain(line) for line in isolated_dock.tree.render(100))
+        assert "first" in expanded
         assert tool.children[0].body_lines == ["second"]
     finally:
         await ui_events.stop()
@@ -381,9 +386,9 @@ async def test_subagent_tool_events_attach_under_agent_id(isolated_dock):
         await bus.request(ToolStarted(
             agent_id=-1,
             tool_call_id="task_call",
-            tool_name="task",
+            tool_name="agent",
             label="Running",
-            args='subagent_type="explore"',
+            args='agent="explore"',
         ))
         await bus.emit(SubagentStarted(
             agent_id=0,
@@ -412,5 +417,66 @@ async def test_subagent_tool_events_attach_under_agent_id(isolated_dock):
         assert "explore" in subagent.header
         assert "Reading" in sub_tool.header
         assert sub_tool.children[0].header == "sub result"
+    finally:
+        await bus.stop()
+
+
+@pytest.mark.asyncio
+async def test_child_agent_stream_and_progress_attach_under_agent_node(isolated_dock):
+    isolated_dock.begin_capture()
+    bus = UiEventBus()
+    bus.start(DockEventConsumer(isolated_dock))
+    try:
+        await bus.request(TurnStarted(text="demo"))
+        await bus.request(ToolStarted(
+            agent_id=-1,
+            tool_call_id="task_call",
+            tool_name="agent",
+            label="Running",
+            args='agent="explore"',
+        ))
+        await bus.emit(SubagentStarted(
+            agent_id=0,
+            subagent_id="agent_0",
+            name="explore",
+            description="inspect auth.py",
+            parent_tool_call_id="task_call",
+        ))
+        await bus.emit(SubagentStepStarted(
+            agent_id=0,
+            subagent_id="agent_0",
+            name="Exploring",
+            step=1,
+            max_steps=3,
+        ))
+        await bus.emit(AssistantStreamUpdated(agent_id=0, text="● found the auth flow"))
+        await bus.emit(AssistantStreamCommitted(agent_id=0))
+        await bus.drain()
+
+        assistant = next(node for node in isolated_dock.tree.root.children if node.node_type == "assistant")
+        task_tool = next(node for node in assistant.children if node.node_type == "tool_call")
+        agent_node = next(node for node in task_tool.children if node.node_type == "subagent")
+        stream_node = next(node for node in agent_node.children if node.node_type == "assistant")
+
+        assert "explore" in agent_node.header
+        assert "agent" in agent_node.header
+        assert agent_node.body_lines[0] == "[dim]Task:[/dim] inspect auth.py"
+        assert "found the auth flow" in stream_node.header
+
+        rendered = "\n".join(_plain(line) for line in isolated_dock.tree.render(100))
+        assert "Exploring (1/3)" in rendered
+        assert "found the auth flow" in rendered
+
+        await bus.emit(SubagentFinished(
+            agent_id=0,
+            subagent_id="agent_0",
+            ok=True,
+            elapsed=2.5,
+        ))
+        await bus.drain()
+
+        rendered = "\n".join(_plain(line) for line in isolated_dock.tree.render(100))
+        assert "explore agent completed (2.5s)" in rendered
+        assert "subagent completed" not in rendered
     finally:
         await bus.stop()

@@ -1,15 +1,19 @@
 """Regression tests for core graph behavior."""
 
+import asyncio
 import sys
 from pathlib import Path
 
 sys.path.insert(0, str(Path(__file__).parent.parent.parent / "src"))
 
 import pytest
-from langchain_core.messages import AIMessage, HumanMessage, SystemMessage
+from langchain_core.messages import AIMessage, HumanMessage, SystemMessage, ToolMessage
 
+from voidx.agent.agents import get_agent
+from voidx.agent.graph_components.runtime import current_parent_tool_call_id
 from voidx.agent.graph import VoidXGraph
-from voidx.config import Config
+from voidx.config import Config, Settings
+from voidx.llm.instruction import SkillRuntimeContext
 from voidx.memory.session import (
     MessageRow,
     create_session,
@@ -17,7 +21,9 @@ from voidx.memory.session import (
     load_messages,
     save_message,
 )
+from voidx.memory.transcript import load_transcript
 from voidx.permission.service import PermissionService
+from voidx.tools.base import ToolContext, ToolResult
 from voidx.ui.dock import BottomInputDock, set_dock
 
 
@@ -26,30 +32,65 @@ def _graph(tmp_path):
     return VoidXGraph(cfg, api_key=None)
 
 
-def test_permission_decision_keeps_task_in_ask_bucket():
+def test_graph_registers_agent_tool_not_task_tool(tmp_path):
+    graph = _graph(tmp_path)
+    ids = graph.tools.ids()
+
+    assert "agent" in ids
+    assert "task" not in ids
+
+
+def test_orchestrator_has_direct_edit_tools():
+    agent = get_agent("orchestrator")
+
+    assert agent is not None
+    assert {"write", "edit", "lsp_format"}.issubset(set(agent.tools))
+    assert agent.can_write is True
+
+
+def test_permission_decision_splits_readonly_and_implement_agents():
     service = PermissionService()
 
-    assert service.decide("task", "implement") == "ask"
+    assert service.decide("agent", "explore") == "allow"
+    assert service.decide("agent", "implement") == "ask"
 
 
 @pytest.mark.asyncio
-async def test_graph_authorization_does_not_auto_allow_task(tmp_path):
+async def test_graph_authorization_auto_allows_readonly_agent(tmp_path):
     graph = _graph(tmp_path)
-
-    async def deny(_tool_calls):
-        return "n"
-
-    graph._ask_tool_permission = deny
+    graph._permission.approval_policy = "untrusted"
     approved, denied = await graph._authorize_tool_calls(
-        [{"name": "task", "args": {"subagent_type": "implement"}, "id": "call_1"}],
+        [{"name": "agent", "args": {"agent": "explore"}, "id": "call_1"}],
         agent_name="orchestrator",
         plan_mode=False,
         session_id="test",
     )
 
-    assert approved == []
-    assert len(denied) == 1
-    assert "User denied" in denied[0][1]
+    assert [tc["name"] for tc in approved] == ["agent"]
+    assert denied == []
+
+
+@pytest.mark.asyncio
+async def test_graph_authorization_prompts_for_implement_agent(tmp_path):
+    graph = _graph(tmp_path)
+    asked: list[list[dict]] = []
+
+    async def approve(tool_calls):
+        asked.append(tool_calls)
+        return "y"
+
+    graph._ask_tool_permission = approve
+
+    approved, denied = await graph._authorize_tool_calls(
+        [{"name": "agent", "args": {"agent": "implement"}, "id": "call_1"}],
+        agent_name="orchestrator",
+        plan_mode=False,
+        session_id="test",
+    )
+
+    assert [tc["name"] for tc in approved] == ["agent"]
+    assert denied == []
+    assert [[tc["args"]["agent"] for tc in batch] for batch in asked] == [["implement"]]
 
 
 @pytest.mark.asyncio
@@ -67,6 +108,284 @@ async def test_graph_authorization_respects_session_deny_for_safe_bash(tmp_path)
     assert approved == []
     assert len(denied) == 1
     assert "Permission denied" in denied[0][1]
+
+
+@pytest.mark.asyncio
+async def test_permission_result_uses_transient_output(tmp_path):
+    graph = _graph(tmp_path)
+    graph._permission.approval_policy = "untrusted"
+
+    class FakeApp:
+        def __init__(self):
+            self.notices: list[str] = []
+            self.outputs: list[tuple[str, str]] = []
+
+        async def ask_choice(self, _prompt, _choices, details=None):
+            return "a"
+
+        def set_notice(self, text: str) -> None:
+            self.notices.append(text)
+
+        def show_transient_output(self, text: str, title: str = "") -> None:
+            self.outputs.append((title, text))
+
+    app = FakeApp()
+    graph._app = app
+
+    approved, denied = await graph._authorize_tool_calls(
+        [{"name": "write", "args": {"file_path": "app.py", "content": "x"}, "id": "call_1"}],
+        agent_name="orchestrator",
+        plan_mode=False,
+        session_id="test",
+    )
+
+    assert [tc["name"] for tc in approved] == ["write"]
+    assert denied == []
+    assert app.outputs == [("Permission", "1 tools allowed for this session")]
+    assert app.notices == []
+
+
+@pytest.mark.asyncio
+async def test_graph_on_request_auto_approves_need_ask_tools(tmp_path):
+    graph = _graph(tmp_path)
+    graph._permission.approval_policy = "on-request"
+
+    approved, denied = await graph._authorize_tool_calls(
+        [{"name": "write", "args": {"file_path": "app.py", "content": "x"}, "id": "call_1"}],
+        agent_name="orchestrator",
+        plan_mode=False,
+        session_id="test",
+    )
+
+    assert [tc["name"] for tc in approved] == ["write"]
+    assert denied == []
+
+
+@pytest.mark.asyncio
+async def test_graph_on_failure_still_asks_for_unsafe_bash(tmp_path):
+    graph = _graph(tmp_path)
+    graph._permission.approval_policy = "on-failure"
+
+    async def deny(_tool_calls):
+        return "n"
+
+    graph._ask_tool_permission = deny
+    approved, denied = await graph._authorize_tool_calls(
+        [{"name": "bash", "args": {"command": "python -m pytest"}, "id": "call_1"}],
+        agent_name="orchestrator",
+        plan_mode=False,
+        session_id="test",
+    )
+
+    assert approved == []
+    assert len(denied) == 1
+    assert "User denied" in denied[0][1]
+
+
+def test_tool_result_ok_detects_structured_failures():
+    from voidx.agent.graph_components.tool_execution import GraphToolExecutionMixin
+
+    assert GraphToolExecutionMixin._tool_result_ok(ToolResult(output="ok", metadata={"exit_code": 0}))
+    assert not GraphToolExecutionMixin._tool_result_ok(ToolResult(output="failed", metadata={"exit_code": 2}))
+    assert not GraphToolExecutionMixin._tool_result_ok(ToolResult(output="blocked", metadata={"blocked": True}))
+    assert not GraphToolExecutionMixin._tool_result_ok(ToolResult(output="error", metadata={"error": True}))
+
+
+@pytest.mark.asyncio
+async def test_graph_authorization_blocks_lsp_format_in_plan_mode(tmp_path):
+    graph = _graph(tmp_path)
+
+    approved, denied = await graph._authorize_tool_calls(
+        [{"name": "lsp_format", "args": {"file_path": "src/app.py"}, "id": "call_1"}],
+        agent_name="orchestrator",
+        plan_mode=True,
+        session_id="test",
+    )
+
+    assert approved == []
+    assert len(denied) == 1
+    assert "BLOCKED by plan mode" in denied[0][1]
+
+
+@pytest.mark.asyncio
+async def test_prepare_injects_plan_mode_prompt(tmp_path):
+    graph = _graph(tmp_path)
+
+    async def empty_system():
+        return []
+
+    async def empty_skill_context(*_args, **_kwargs):
+        return SkillRuntimeContext(instructions=[], active=[])
+
+    graph._instruction.system = empty_system
+    graph._instruction.skill_context_for = empty_skill_context
+
+    messages = [HumanMessage(content="给个方案")]
+    await graph._prepare_with_stream({
+        "messages": messages,
+        "workspace": str(tmp_path),
+        "plan_mode": True,
+        "agent": "orchestrator",
+    })
+
+    assert isinstance(messages[0], SystemMessage)
+    assert "## Mode Prompt" in messages[0].content
+    assert "## PLAN MODE ACTIVE" in messages[0].content
+
+
+@pytest.mark.asyncio
+async def test_graph_authorization_does_not_treat_goal_as_read_only_mode(tmp_path):
+    graph = _graph(tmp_path)
+    graph._permission.approval_policy = "on-request"
+
+    approved, denied = await graph._authorize_tool_calls(
+        [{"name": "edit", "args": {"file_path": "src/app.py"}, "id": "call_1"}],
+        agent_name="orchestrator",
+        plan_mode=False,
+        session_id="test",
+        interaction_mode="goal",
+    )
+
+    assert [tc["name"] for tc in approved] == ["edit"]
+    assert denied == []
+
+
+@pytest.mark.asyncio
+@pytest.mark.asyncio
+async def test_graph_authorization_allows_read_only_bash(tmp_path):
+    graph = _graph(tmp_path)
+
+    approved, denied = await graph._authorize_tool_calls(
+        [{"name": "bash", "args": {"command": "ls"}, "id": "call_1"}],
+        agent_name="orchestrator",
+        plan_mode=False,
+        session_id="test",
+        interaction_mode="auto",
+    )
+
+    assert [tc["name"] for tc in approved] == ["bash"]
+    assert denied == []
+
+
+@pytest.mark.asyncio
+async def test_graph_authorization_prompts_for_edit(tmp_path):
+    graph = _graph(tmp_path)
+    asked: list[list[dict]] = []
+
+    async def approve(tool_calls):
+        asked.append(tool_calls)
+        return "y"
+
+    graph._ask_tool_permission = approve
+
+    approved, denied = await graph._authorize_tool_calls(
+        [{"name": "edit", "args": {"file_path": "src/app.py"}, "id": "call_1"}],
+        agent_name="orchestrator",
+        plan_mode=False,
+        session_id="test",
+        interaction_mode="auto",
+    )
+
+    assert [tc["name"] for tc in approved] == ["edit"]
+    assert denied == []
+    assert [[tc["name"] for tc in batch] for batch in asked] == [["edit"]]
+
+
+@pytest.mark.asyncio
+async def test_graph_authorization_respects_session_allow_for_edit(tmp_path):
+    graph = _graph(tmp_path)
+    graph._permission.allow_silent("edit")
+
+    async def fail_if_asked(_tool_calls):
+        pytest.fail("session-allowed edit should not prompt")
+
+    graph._ask_tool_permission = fail_if_asked
+
+    approved, denied = await graph._authorize_tool_calls(
+        [{"name": "edit", "args": {"file_path": "src/app.py"}, "id": "call_1"}],
+        agent_name="orchestrator",
+        plan_mode=False,
+        session_id="test",
+        interaction_mode="auto",
+    )
+
+    assert [tc["name"] for tc in approved] == ["edit"]
+    assert denied == []
+
+
+@pytest.mark.asyncio
+async def test_graph_authorization_prompts_for_unsafe_bash(tmp_path):
+    graph = _graph(tmp_path)
+    asked: list[list[dict]] = []
+
+    async def approve(tool_calls):
+        asked.append(tool_calls)
+        return "y"
+
+    graph._ask_tool_permission = approve
+
+    approved, denied = await graph._authorize_tool_calls(
+        [{"name": "bash", "args": {"command": "python -m pytest"}, "id": "call_1"}],
+        agent_name="orchestrator",
+        plan_mode=False,
+        session_id="test",
+        interaction_mode="auto",
+    )
+
+    assert [tc["name"] for tc in approved] == ["bash"]
+    assert denied == []
+    assert [[tc["name"] for tc in batch] for batch in asked] == [["bash"]]
+
+
+@pytest.mark.asyncio
+async def test_execute_tools_keeps_parallel_child_agent_buffers_isolated(tmp_path):
+    graph = _graph(tmp_path)
+
+    class FakeAgentTool:
+        id = "agent"
+        description = "fake agent"
+
+        def parameters_schema(self):
+            return {"type": "object", "properties": {}}
+
+        async def execute(self, args: dict, ctx: ToolContext) -> ToolResult:
+            call_id = current_parent_tool_call_id.get()
+            if call_id == "call_a":
+                await asyncio.sleep(0.01)
+            graph._sub_buffers.setdefault(call_id, []).append(AIMessage(content=f"sub {call_id}"))
+            return ToolResult(output=f"done {call_id}")
+
+    graph.tools.register("agent", FakeAgentTool(), "fake agent", {"type": "object", "properties": {}})
+
+    async def allow_all(
+        tool_calls,
+        agent_name: str,
+        plan_mode: bool,
+        session_id: str,
+        interaction_mode=None,
+    ):
+        return tool_calls, []
+
+    graph._authorize_tool_calls = allow_all
+
+    parent = AIMessage(
+        content="",
+        tool_calls=[
+            {"name": "agent", "args": {"description": "a"}, "id": "call_a", "type": "tool_call"},
+            {"name": "agent", "args": {"description": "b"}, "id": "call_b", "type": "tool_call"},
+        ],
+    )
+
+    result = await graph._execute_tools({
+        "messages": [parent],
+        "workspace": str(tmp_path),
+        "agent": "orchestrator",
+        "plan_mode": False,
+    })
+
+    messages = result["messages"]
+    assert [msg.tool_call_id for msg in messages[:2] if isinstance(msg, ToolMessage)] == ["call_a", "call_b"]
+    assert [msg.content for msg in messages[2:]] == ["sub call_a", "sub call_b"]
 
 
 @pytest.mark.asyncio
@@ -138,6 +457,64 @@ async def test_run_once_persists_image_attachment_as_structured_user_message(tmp
 
 
 @pytest.mark.asyncio
+async def test_run_once_persists_and_restores_transcript_snapshot(tmp_path):
+    session = await create_session(workspace=str(tmp_path))
+    try:
+        graph = VoidXGraph(Config(workspace=str(tmp_path)), api_key=None, session=session)
+
+        class FakeGraph:
+            async def ainvoke(self, initial, _config):
+                from voidx.ui.dock import dock
+
+                dock.append_thought("checked context", elapsed=1.0)
+                tool = dock.start_tool(
+                    "Reading",
+                    'file_path="src/app.py"',
+                    tool_call_id="call_read",
+                    tool_name="read",
+                )
+                dock.append_tool_result(
+                    "src/app.py\nprint('ok')",
+                    parent=tool,
+                    tool_call_id="call_read",
+                    collapsed=False,
+                )
+                return {"messages": list(initial["messages"]) + [AIMessage(content="new answer")]}
+
+        graph.graph = FakeGraph()
+
+        first_dock = BottomInputDock()
+        set_dock(first_dock)
+        first_dock.begin_capture()
+        try:
+            await graph._run_once("new question")
+        finally:
+            first_dock.deactivate()
+            first_dock.reset()
+            set_dock(None)
+
+        rows = await load_transcript(session.id)
+        assert {row.node_type for row in rows} >= {"turn", "thought", "tool_call", "tool_result"}
+        assert any(row.tool_call_id == "call_read" for row in rows)
+
+        second_dock = BottomInputDock()
+        set_dock(second_dock)
+        try:
+            restored = await graph._restore_transcript_snapshot()
+            rendered = "\n".join(second_dock.tree.render(120))
+
+            assert restored is True
+            assert "new question" in rendered
+            assert "Thinking" in rendered
+            assert "src/app.py" in rendered
+        finally:
+            second_dock.reset()
+            set_dock(None)
+    finally:
+        await delete_session(session.id)
+
+
+@pytest.mark.asyncio
 async def test_compaction_trims_head_and_injects_summary_into_system_prompt(tmp_path):
     graph = _graph(tmp_path)
     graph._compaction.is_overflow = lambda _tokens: True
@@ -173,6 +550,248 @@ async def test_compaction_trims_head_and_injects_summary_into_system_prompt(tmp_
     await graph._prepare_with_stream(state)
 
     assert isinstance(messages[0], SystemMessage)
-    assert "Conversation Summary" in messages[0].content
+    assert "Long Summary" in messages[0].content
     assert "summary text" in messages[0].content
     assert "You are voidx" in messages[0].content
+
+
+@pytest.mark.asyncio
+async def test_compaction_asks_only_when_configured_and_can_skip(tmp_path):
+    graph = VoidXGraph(Config(workspace=str(tmp_path), ask_compact=True), api_key=None)
+    graph._compaction.is_overflow = lambda _tokens: True
+    graph._compaction.select = lambda messages: (messages[:-1], "tail")
+    asked: list[str] = []
+
+    class FakeApp:
+        async def ask_choice(self, prompt, choices, details=None):
+            asked.append(prompt)
+            assert [choice[1] for choice in choices] == ["compact", "skip"]
+            return "skip"
+
+    async def fail_if_compacted(_head_messages, _previous_summary):
+        pytest.fail("skip once should not run compaction")
+
+    graph._app = FakeApp()
+    graph._run_compaction_agent = fail_if_compacted
+    messages = [
+        HumanMessage(content="old question", id="1"),
+        AIMessage(content="old answer", id="2"),
+        HumanMessage(content="current question", id="3"),
+    ]
+
+    await graph._maybe_compact(messages, [])
+
+    assert asked == ["Compact context?"]
+    assert [message.content for message in messages] == ["old question", "old answer", "current question"]
+    assert graph._pending_summary is None
+
+
+@pytest.mark.asyncio
+async def test_compaction_auto_compacts_by_default_without_asking(tmp_path):
+    graph = VoidXGraph(Config(workspace=str(tmp_path)), api_key=None)
+    graph._compaction.is_overflow = lambda _tokens: True
+    graph._compaction.select = lambda messages: (messages[:-1], "tail")
+
+    class FakeApp:
+        async def ask_choice(self, _prompt, _choices, details=None):
+            pytest.fail("default compaction should not ask")
+
+    async def summarize(_head_messages, _previous_summary):
+        return "auto summary"
+
+    graph._app = FakeApp()
+    graph._run_compaction_agent = summarize
+    messages = [
+        HumanMessage(content="old question", id="1"),
+        AIMessage(content="old answer", id="2"),
+        HumanMessage(content="current question", id="3"),
+    ]
+
+    await graph._maybe_compact(messages, [])
+
+    assert [message.content for message in messages] == ["current question"]
+    assert graph._pending_summary == "auto summary"
+    assert graph._compaction_summary == "auto summary"
+
+
+@pytest.mark.asyncio
+async def test_compaction_uses_previous_summary_and_prunes_persisted_head(tmp_path):
+    session = await create_session(workspace=str(tmp_path))
+    try:
+        await save_message(MessageRow(session_id=session.id, role="user", content="old question"))
+        await save_message(MessageRow(session_id=session.id, role="assistant", content="old answer"))
+        await save_message(MessageRow(session_id=session.id, role="user", content="tail question"))
+
+        graph = VoidXGraph(Config(workspace=str(tmp_path)), api_key=None, session=session)
+        graph._compaction_summary = "previous summary"
+        graph._compaction.is_overflow = lambda _tokens: True
+        graph._compaction.select = lambda messages: (messages[:2], getattr(messages[2], "id", None))
+        captured: dict[str, str | None] = {}
+
+        async def summarize(_head_messages, previous_summary):
+            captured["previous"] = previous_summary
+            return "updated summary"
+
+        class FakeGraph:
+            async def ainvoke(self, initial, _config):
+                return {"messages": list(initial["messages"]) + [AIMessage(content="new answer")]}
+
+        graph._run_compaction_agent = summarize
+        graph.graph = FakeGraph()
+
+        test_dock = BottomInputDock()
+        set_dock(test_dock)
+        test_dock.begin_capture()
+        try:
+            await graph._run_once("current question")
+        finally:
+            test_dock.deactivate()
+            test_dock.reset()
+            set_dock(None)
+
+        rows = await load_messages(session.id)
+        contents = [row.content for row in rows]
+        assert captured["previous"] == "previous summary"
+        assert "old question" not in contents
+        assert "old answer" not in contents
+        assert "tail question" in contents
+        assert "current question" in contents
+        assert graph._compaction_summary == "updated summary"
+
+        resumed = VoidXGraph(Config(workspace=str(tmp_path)), api_key=None, session=session)
+        await resumed._restore_runtime_state()
+
+        assert resumed._compaction_summary == "updated summary"
+    finally:
+        await delete_session(session.id)
+
+
+@pytest.mark.asyncio
+async def test_slash_compact_runs_manual_session_compaction(tmp_path):
+    from voidx.agent.slash import SlashHandler
+
+    session = await create_session(workspace=str(tmp_path))
+    try:
+        await save_message(MessageRow(session_id=session.id, role="user", content="old question"))
+        await save_message(MessageRow(session_id=session.id, role="assistant", content="old answer"))
+        await save_message(MessageRow(session_id=session.id, role="user", content="tail question"))
+
+        graph = VoidXGraph(Config(workspace=str(tmp_path), ask_compact=True), api_key=None, session=session)
+        graph._compaction.select = lambda messages: (messages[:2], getattr(messages[2], "id", None))
+
+        async def summarize(_head_messages, _previous_summary):
+            return "manual summary"
+
+        graph._run_compaction_agent = summarize
+
+        handled = await SlashHandler(graph).dispatch("/compact")
+
+        rows = await load_messages(session.id)
+        assert handled is True
+        assert [row.content for row in rows] == ["tail question"]
+        assert graph._compaction_summary == "manual summary"
+    finally:
+        await delete_session(session.id)
+
+
+@pytest.mark.asyncio
+async def test_prepare_injects_matching_skill_instructions(tmp_path):
+    skill_dir = tmp_path / ".voidx" / "skills" / "docs"
+    skill_dir.mkdir(parents=True)
+    (skill_dir / "SKILL.md").write_text(
+        "---\nname: docs\ndescription: Documentation helper\n---\nWrite concise docs.",
+        encoding="utf-8",
+    )
+    graph = VoidXGraph(
+        Config(workspace=str(tmp_path)),
+        api_key=None,
+        settings=Settings(str(tmp_path)),
+    )
+    messages = [HumanMessage(content="Use $docs for this README")]
+    state = {
+        "messages": messages,
+        "workspace": str(tmp_path),
+        "agent": "orchestrator",
+        "plan_mode": False,
+        "tool_results": {},
+        "step_count": 0,
+        "max_steps": 50,
+        "should_continue": True,
+    }
+
+    await graph._prepare_with_stream(state)
+
+    assert isinstance(messages[0], SystemMessage)
+    assert isinstance(messages[1], HumanMessage)
+    assert "Active Skills" in messages[1].content
+    assert "Skill instructions from:" in messages[1].content
+    assert "Skill: docs" in messages[1].content
+    assert "Write concise docs." in messages[1].content
+
+
+@pytest.mark.asyncio
+async def test_prepare_injects_workflow_skills_from_task_state(tmp_path):
+    graph = VoidXGraph(
+        Config(workspace=str(tmp_path)),
+        api_key=None,
+        settings=Settings(str(tmp_path)),
+    )
+    messages = [HumanMessage(content="对，可以")]
+    state = {
+        "messages": messages,
+        "workspace": str(tmp_path),
+        "agent": "orchestrator",
+        "plan_mode": False,
+        "interaction_mode": "auto",
+        "task_intent": "implement",
+        "implementation_allowed": True,
+        "tool_results": {},
+        "step_count": 0,
+        "max_steps": 50,
+        "should_continue": True,
+    }
+
+    await graph._prepare_with_stream(state)
+
+    assert isinstance(messages[1], HumanMessage)
+    assert "Skill: test-driven-development" in messages[1].content
+    assert "Skill: verification-before-completion" in messages[1].content
+    assert "Active workflow skills: test-driven-development" in messages[1].content
+
+
+@pytest.mark.asyncio
+async def test_implement_subagent_injects_workflow_skills(tmp_path, monkeypatch):
+    from voidx.agent.agents import get_agent
+    from voidx.agent.graph_components import subagent as subagent_module
+
+    captured: dict[str, list] = {}
+
+    class FakeModel:
+        def bind_tools(self, _tool_defs):
+            return self
+
+    async def fake_stream_llm(_model, messages, _renderer, _protocol):
+        captured["messages"] = messages
+        return AIMessage(content="done")
+
+    monkeypatch.setattr(subagent_module, "create_chat_model", lambda *_args, **_kwargs: FakeModel())
+    monkeypatch.setattr(subagent_module, "stream_llm", fake_stream_llm)
+
+    output = await subagent_module.run_subagent(
+        get_agent("implement"),
+        "Implement the feature",
+        None,
+        "test-key",
+        Config(workspace=str(tmp_path)),
+        debug=False,
+    )
+
+    assert output == "done"
+    rendered_user = next(
+        message.content
+        for message in captured["messages"]
+        if isinstance(message, HumanMessage)
+    )
+    assert "Skill: test-driven-development" in rendered_user
+    assert "Skill: verification-before-completion" in rendered_user
+    assert "Active workflow skills: test-driven-development" in rendered_user

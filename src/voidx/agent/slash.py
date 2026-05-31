@@ -4,14 +4,18 @@ from __future__ import annotations
 
 from typing import TYPE_CHECKING
 
-from voidx.agent.slash_parts.model import SlashModelMixin
-from voidx.agent.slash_parts.runtime import PROVIDERS, _select_from_list, _w, ui
+from voidx.agent.slash_components.code_ide import SlashCodeIdeMixin
+from voidx.agent.slash_components.lsp import SlashLspMixin
+from voidx.agent.slash_components.mcp import SlashMcpMixin
+from voidx.agent.slash_components.model import SlashModelMixin
+from voidx.agent.slash_components.skills import SlashSkillsMixin
+from voidx.agent.slash_components.runtime import PROVIDERS, _select_from_list, _w, ui
 
 if TYPE_CHECKING:
     from voidx.agent.graph import VoidXGraph
 
 
-class SlashHandler(SlashModelMixin):
+class SlashHandler(SlashCodeIdeMixin, SlashLspMixin, SlashSkillsMixin, SlashMcpMixin, SlashModelMixin):
     """Handles all slash commands (/help, /model, /plan, etc.).
 
     Takes a reference to the parent VoidXGraph since commands need access
@@ -39,18 +43,26 @@ class SlashHandler(SlashModelMixin):
 
         if cmd == "/clear":
             await self._clear()
+        elif cmd == "/code-ide":
+            await self._code_ide(args)
         elif cmd == "/list":
             await self._list_sessions()
         elif cmd.startswith("/resume"):
             await self._resume(inp)
         elif cmd.startswith("/title"):
             await self._set_title(inp)
+        elif cmd == "/mode":
+            await self._mode(args)
+        elif cmd == "/goal":
+            await self._goal(args)
         elif cmd == "/plan":
-            self._g._plan_mode = True
-            ui.print("[yellow]PLAN MODE active. /unplan to exit.[/yellow]")
+            self._set_interaction_mode("plan")
+            if hasattr(self._g, "_persist_runtime_state"):
+                await self._g._persist_runtime_state()
         elif cmd == "/unplan":
-            self._g._plan_mode = False
-            ui.print("[dim]Plan mode exited.[/dim]")
+            self._set_interaction_mode("auto")
+            if hasattr(self._g, "_persist_runtime_state"):
+                await self._g._persist_runtime_state()
         elif cmd.startswith("/allow"):
             tool = args or cmd.removeprefix("/allow").strip()
             if tool:
@@ -61,41 +73,251 @@ class SlashHandler(SlashModelMixin):
                 self._g._permission.deny(tool)
         elif cmd == "/permissions":
             ui.print(self._g._permission.show_rules())
+        elif cmd == "/permission-mode":
+            await self._permission_mode(args)
+        elif cmd == "/sandbox":
+            self._sandbox(args)
+        elif cmd == "/approval":
+            self._approval(args)
+        elif cmd == "/usage":
+            self._usage()
         elif cmd == "/mcp":
             await self._mcp(args)
+        elif cmd == "/lsp":
+            await self._lsp(args)
+        elif cmd == "/skills":
+            await self._skills(args)
         elif cmd == "/paste":
             self._paste_clipboard_image()
         elif cmd.startswith("/debug"):
             self._debug(args)
         elif cmd == "/compact":
-            ui.print("[yellow]Compacting...[/yellow]")
+            compacted = await self._g._compact_session_history(force=True)
+            if compacted:
+                ui.print("[dim]Compacted context.[/dim]")
+            else:
+                ui.print("[dim]Nothing to compact.[/dim]")
         elif cmd == "/diff":
             await self._show_diff()
         elif cmd == "/tavily":
             await self._tavily(args)
         elif cmd == "/model":
-            if args == "config":
-                await self._model_config()
+            if args == "new":
+                await self._model_new()
             elif args == "list":
                 await self._model_list()
             elif args == "test" or args.startswith("test "):
                 target = args.removeprefix("test").strip()
                 await self._model_test(target)
-            elif args == "delete" or args.startswith("delete "):
-                target = args.removeprefix("delete").strip()
-                await self._model_delete(target)
+            elif args == "del" or args.startswith("del "):
+                target = args.removeprefix("del").strip()
+                await self._model_del(target)
             elif args == "switch" or args.startswith("switch "):
                 target = args.removeprefix("switch").strip()
                 await self._model_switch(target)
+            elif args == "reasoning" or args.startswith("reasoning "):
+                target = args.removeprefix("reasoning").strip()
+                await self._model_reasoning(target)
             elif args:
                 await self._switch_model(args)
             else:
-                await self._list_models()
+                await self._model_switch("")
         elif cmd == "/help":
             ui.print("[bold]Commands:[/bold]")
             for name, desc in COMMANDS:
                 ui.print(f"  [cyan]{name}[/cyan] — {desc}")
         return True
+
+    def _set_interaction_mode(self, mode: str) -> None:
+        from voidx.agent.runtime_context import InteractionMode
+
+        parsed = InteractionMode.parse(mode)
+        setter = getattr(self._g, "set_interaction_mode", None)
+        if callable(setter):
+            setter(parsed)
+        else:
+            self._g._plan_mode = parsed == InteractionMode.PLAN
+            self._g._interaction_mode = parsed
+        labels = {
+            InteractionMode.AUTO: "Auto",
+            InteractionMode.PLAN: "Plan",
+            InteractionMode.GOAL: "Goal",
+        }
+        notes = {
+            InteractionMode.PLAN: "write/edit/bash/lsp_format blocked",
+            InteractionMode.GOAL: "keep work scoped to the current goal",
+        }
+        suffix = f" — {notes[parsed]}" if parsed in notes else ""
+        ui.print(f"[dim]Mode set to [cyan]{labels[parsed]}[/cyan]{suffix}[/dim]")
+
+    async def _mode(self, arg: str) -> None:
+        from voidx.agent.runtime_context import InteractionMode
+
+        mode = arg.strip().lower()
+        choices = [
+            ("Auto", InteractionMode.AUTO.value, "Infer the task intent from each turn."),
+            ("Plan", InteractionMode.PLAN.value, "Read-only exploration and implementation planning."),
+            ("Goal", InteractionMode.GOAL.value, "Keep multi-step work scoped to the current goal."),
+        ]
+
+        if not mode and getattr(self._g, "_app", None):
+            mode = await self._g._app.ask_choice("Interaction mode", choices) or ""
+
+        if not mode:
+            current = getattr(getattr(self._g, "_interaction_mode", None), "value", None)
+            if current is None:
+                current = "plan" if getattr(self._g, "_plan_mode", False) else "auto"
+            ui.print(f"Mode: [cyan]{current}[/cyan]")
+            ui.print("Usage: /mode [auto|plan|goal]")
+            return
+
+        try:
+            parsed = InteractionMode.parse(mode)
+        except ValueError:
+            ui.error(f"Invalid mode: {mode}. Use: auto, plan, goal")
+            return
+        self._set_interaction_mode(parsed.value)
+        if hasattr(self._g, "_persist_runtime_state"):
+            await self._g._persist_runtime_state()
+
+    async def _goal(self, arg: str) -> None:
+        from voidx.agent.runtime_context import InteractionMode
+        from voidx.agent.task_state import TaskRun
+
+        task_run = getattr(self._g, "_task_run", None)
+        if task_run is None:
+            task_run = TaskRun()
+            self._g._task_run = task_run
+
+        goal = arg.strip()
+        if goal.lower() in {"clear", "reset"}:
+            task_run.clear()
+            task_state = getattr(self._g, "_task_state", None)
+            if task_state is not None:
+                task_state.awaiting_implementation_approval = False
+                task_state.approved_scope = ""
+            self._set_interaction_mode(InteractionMode.AUTO.value)
+            if hasattr(self._g, "_persist_runtime_state"):
+                await self._g._persist_runtime_state()
+            ui.print("[dim]Goal cleared.[/dim]")
+            return
+
+        if not goal:
+            if task_run.goal:
+                ui.print(
+                    f"Goal: [cyan]{task_run.goal}[/cyan] "
+                    f"[dim]({task_run.phase.value}, {task_run.status.value}, turns {task_run.turn_count})[/dim]"
+                )
+            else:
+                ui.print("Usage: /goal <goal>|clear")
+            return
+
+        task_run.set_goal(goal)
+        self._set_interaction_mode(InteractionMode.GOAL.value)
+        if hasattr(self._g, "_persist_runtime_state"):
+            await self._g._persist_runtime_state()
+        ui.print(f"[dim]Goal set to [cyan]{task_run.goal}[/cyan][/dim]")
+
+    def _usage(self) -> None:
+        from voidx.llm.usage import format_cache_hit_rate, format_token_count
+
+        stats = getattr(self._g, "_usage_stats", None)
+        if stats is None:
+            ui.print("[dim]No usage data available.[/dim]")
+            return
+
+        ui.print("[bold]Token Usage[/bold]")
+        ui.print(
+            f"  Context: [cyan]{format_token_count(stats.context_tokens)}[/cyan]"
+            f" / {format_token_count(stats.context_limit)}"
+        )
+        ui.print(
+            f"  Last call: in [cyan]{format_token_count(stats.last_input_tokens)}[/cyan]"
+            f" · out [cyan]{format_token_count(stats.last_output_tokens)}[/cyan]"
+            " · cache read "
+            f"[cyan]{format_token_count(stats.last_cache_read_tokens or stats.last_estimated_cache_read_tokens)}[/cyan]"
+            f" · write [cyan]{format_token_count(stats.last_cache_write_tokens)}[/cyan]"
+        )
+        ui.print(
+            f"  Session: in [cyan]{format_token_count(stats.total_input_tokens)}[/cyan]"
+            f" · out [cyan]{format_token_count(stats.total_output_tokens)}[/cyan]"
+            f" · total [cyan]{format_token_count(stats.total_tokens)}[/cyan]"
+            f" · cache {format_cache_hit_rate(stats)}"
+            f" · calls {stats.total_calls}"
+        )
+
+    def _sandbox(self, arg: str) -> None:
+        mode = arg.strip().lower()
+        valid = {"read-only", "workspace-write", "danger-full-access"}
+        if not mode:
+            ui.print(f"Sandbox mode: [cyan]{self._g._permission.sandbox_mode}[/cyan]")
+            ui.print("Usage: /sandbox [read-only|workspace-write|danger-full-access]")
+            return
+        if mode not in valid:
+            ui.error(f"Invalid sandbox mode: {mode}. Use: {', '.join(valid)}")
+            return
+        self._g._permission.sandbox_mode = mode
+        self._g._permission.mark_custom_mode()
+        if getattr(self._g, "_settings", None):
+            from voidx.config import SandboxMode
+            self._g._settings.set_sandbox_mode(SandboxMode(mode))
+        ui.print(f"[dim]Sandbox mode set to [cyan]{mode}[/cyan][/dim]")
+
+    def _approval(self, arg: str) -> None:
+        policy = arg.strip().lower()
+        valid = {"untrusted", "on-failure", "on-request", "never"}
+        if not policy:
+            ui.print(f"Approval policy: [cyan]{self._g._permission.approval_policy}[/cyan]")
+            ui.print("Usage: /approval [untrusted|on-failure|on-request|never]")
+            return
+        if policy not in valid:
+            ui.error(f"Invalid approval policy: {policy}. Use: {', '.join(valid)}")
+            return
+        self._g._permission.approval_policy = policy
+        self._g._permission.mark_custom_mode()
+        if getattr(self._g, "_settings", None):
+            from voidx.config import ApprovalPolicy
+            self._g._settings.set_approval_policy(ApprovalPolicy(policy))
+        ui.print(f"[dim]Approval policy set to [cyan]{policy}[/cyan][/dim]")
+
+    async def _permission_mode(self, arg: str) -> None:
+        from voidx.config import PermissionMode
+
+        mode = arg.strip().lower()
+        labels = {
+            PermissionMode.DEFAULT.value: "Default",
+            PermissionMode.READ_ONLY.value: "Read only",
+            PermissionMode.ACCEPT_EDITS.value: "Accept edits",
+            PermissionMode.AUTO_REVIEW.value: "Auto review",
+            PermissionMode.FULL_ACCESS.value: "Full access",
+            PermissionMode.CUSTOM.value: "Custom (voidx.json)",
+        }
+        valid = set(labels)
+
+        if not mode and getattr(self._g, "_app", None):
+            choices = [
+                (labels[PermissionMode.DEFAULT.value], PermissionMode.DEFAULT.value, "Ask before write/edit/bash."),
+                (labels[PermissionMode.READ_ONLY.value], PermissionMode.READ_ONLY.value, "Block all writes and implement delegation."),
+                (labels[PermissionMode.ACCEPT_EDITS.value], PermissionMode.ACCEPT_EDITS.value, "Allow workspace file edits; still ask for bash."),
+                (labels[PermissionMode.AUTO_REVIEW.value], PermissionMode.AUTO_REVIEW.value, "Use reviewer-assisted approvals where possible."),
+                (labels[PermissionMode.FULL_ACCESS.value], PermissionMode.FULL_ACCESS.value, "No sandbox or approval prompts."),
+                (labels[PermissionMode.CUSTOM.value], PermissionMode.CUSTOM.value, "Use explicit sandbox/approval config."),
+            ]
+            mode = await self._g._app.ask_choice("Permission mode", choices) or ""
+
+        if not mode:
+            current = self._g._permission.permission_mode
+            ui.print(f"Permission mode: [cyan]{labels.get(current, 'Custom')}[/cyan]")
+            ui.print("Usage: /permission-mode [default|read-only|accept-edits|auto-review|full-access|custom]")
+            return
+        if mode not in valid:
+            ui.error(f"Invalid permission mode: {mode}. Use: {', '.join(sorted(valid))}")
+            return
+
+        self._g._permission.set_permission_mode(mode)
+        if getattr(self._g, "_settings", None):
+            self._g._settings.set_permission_mode(PermissionMode(mode))
+        ui.print(f"[dim]Permission mode set to [cyan]{labels[mode]}[/cyan][/dim]")
 
     def _debug(self, arg: str) -> None:
         value = arg.strip().lower()
@@ -136,32 +358,29 @@ class SlashHandler(SlashModelMixin):
         else:
             ui.print("[dim]No changes in working tree.[/dim]")
 
-    async def _mcp(self, args: str) -> None:
-        settings = self._g._settings
-        if settings is None:
-            ui.print("[dim]No settings file available.[/dim]")
-            return
-
-        servers = settings.list_mcp_servers()
-        ui.print("[bold]MCP servers:[/bold]")
-        ui.print(f"[dim]{settings.path}[/dim]")
-        if not servers:
-            ui.print("[dim]No MCP servers configured. Add mcpServers to voidx.json.[/dim]")
-            return
-
-        for server in servers:
-            state = "[dim]disabled[/dim]" if server.disabled else "[green]configured[/green]"
-            tools = f"{server.tool_count} tool{'s' if server.tool_count != 1 else ''}"
-            ui.print(f"  [cyan]{server.name}[/cyan] · {state} · [dim]{tools}[/dim]")
-
     async def _clear(self) -> None:
         if self._g._session:
             from voidx.memory.session import clear_messages, update_title
             await clear_messages(self._g._session.id)
             await update_title(self._g._session.id, "New session")
+            if hasattr(self._g, "_clear_runtime_state"):
+                await self._g._clear_runtime_state()
+            self._g._session = self._g._session.model_copy(update={
+                "title": "New session",
+                "message_count": 0,
+            })
             self._g._tracker._todos = []
             self._g._permission.clear_session_permissions()
-            self._g._plan_mode = False
+            stats = getattr(self._g, "_usage_stats", None)
+            if stats is not None:
+                stats.reset()
+        from voidx.ui.session_changes import session_tracker
+        session_tracker.clear()
+        from voidx.ui.dock import get_dock
+        active_dock = get_dock()
+        if active_dock is not None:
+            active_dock.reset()
+        await self._g._show_startup()
         ui.print("[dim]✓ Session cleared — ready for a new conversation[/dim]")
 
     async def _list_sessions(self) -> None:
@@ -197,6 +416,13 @@ class SlashHandler(SlashModelMixin):
         self._g._session = session
         self._g._workspace = session.workspace
         self._g.config.workspace = session.workspace
+        if hasattr(self._g, "_restore_runtime_state"):
+            await self._g._restore_runtime_state()
+        from voidx.ui.dock import get_dock
+        active_dock = get_dock()
+        if active_dock is not None:
+            active_dock.reset()
+        await self._g._show_startup(append_transcript=True)
         ui.print(f"[dim]Resumed: {session.id} — {session.title} ({session.message_count} msgs)[/dim]")
 
     async def _set_title(self, cmd: str) -> None:

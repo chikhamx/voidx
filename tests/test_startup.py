@@ -47,6 +47,9 @@ def test_startup_banner_has_no_internal_blank_rows():
         assert "Workspace" in text
         assert "Ask anything" in text
         assert "/model switch" in text
+        assert "@ attach" in text
+        assert "Ctrl+V image" in text
+        assert "wheel/click transcript" in text
         assert "•_•" not in text
     finally:
         test_dock.deactivate()

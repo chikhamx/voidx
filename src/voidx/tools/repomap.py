@@ -61,7 +61,7 @@ class RepoMapTool(BaseTool):
         inp = RepoMapInput.model_validate(args)
         base = Path(ctx.workspace)
         if inp.path:
-            root = resolve_safe(ctx.workspace, inp.path)
+            root = resolve_safe(ctx.workspace, inp.path, ctx.sandbox_extra_paths)
             if root is None:
                 return ToolResult(output=f"Path traversal blocked: {inp.path}")
         else:

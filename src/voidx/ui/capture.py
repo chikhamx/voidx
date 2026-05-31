@@ -6,6 +6,7 @@ from rich.markup import escape
 from voidx.ui.tree import OutputTree, OutputNode
 from voidx.ui.console import _fmt_args, _title, VoidConsole
 from voidx.ui.dock import dock
+from voidx.ui.dock_components.nodes import _bash_markdown_lines
 from voidx.ui.events import (
     ErrorAppended,
     SubagentStepStarted,
@@ -26,6 +27,7 @@ class CaptureConsole:
         self._agent_id = agent_id
         self._current_tool: OutputNode | None = None
         self._current_tool_id: str = ""
+        self._tool_nodes: dict[str, OutputNode] = {}
         self._dummy = _DummyConsole()
 
     @property
@@ -52,56 +54,70 @@ class CaptureConsole:
         )
         dock.refresh()
 
-    def tool_call(self, tool_name: str, args: dict[str, object]) -> None:
+    def tool_call(self, tool_name: str, args: dict[str, object], tool_call_id: str | None = None) -> None:
         gerund = _title(VoidConsole._TOOL_GERUND.get(tool_name, tool_name + "ing"))
+        call_id = tool_call_id or f"capture:{tool_name}:{time.time_ns()}"
+        self._current_tool_id = call_id
         if dock.active and ui_events.is_running:
-            self._current_tool_id = f"capture:{tool_name}:{time.time_ns()}"
             ui_events.emit_nowait(ToolStarted(
                 agent_id=self._agent_id,
-                tool_call_id=self._current_tool_id,
+                tool_call_id=call_id,
                 tool_name=tool_name,
                 label=gerund,
                 args=_fmt_args(args),
+                raw_args=args,
             ))
             return
+        body_lines = []
+        detail = f"({_fmt_args(args)})"
+        if tool_name == "bash":
+            command = str(args.get("command") or "")
+            detail = ""
+            body_lines = _bash_markdown_lines(command, self._dummy.width)
         self._current_tool = self._tree.new_node(
             parent=self._parent, node_type="tool_call",
-            header=f"● {gerund}({_fmt_args(args)})",
+            header=f"● {gerund}{detail}",
+            body_lines=body_lines,
             status="running", collapsed=True,
         )
+        self._tool_nodes[call_id] = self._current_tool
         dock.refresh()
     
-    def tool_done(self, tool_name: str, elapsed: float, ok: bool = True) -> None:
-        if dock.active and ui_events.is_running and self._current_tool_id:
+    def tool_done(self, tool_name: str, elapsed: float, ok: bool = True, tool_call_id: str | None = None) -> None:
+        call_id = tool_call_id or self._current_tool_id
+        if dock.active and ui_events.is_running and call_id:
             ui_events.emit_nowait(ToolFinished(
                 agent_id=self._agent_id,
-                tool_call_id=self._current_tool_id,
+                tool_call_id=call_id,
                 label=_title(tool_name),
                 elapsed=elapsed,
                 ok=ok,
             ))
             return
-        if not self._current_tool: return
+        tool_node = self._tool_nodes.get(call_id) or self._current_tool
+        if not tool_node: return
         icon = "●" if ok else "✗"
-        self._current_tool.header += f"  {icon} {_title(tool_name)} ({elapsed:.1f}s)"
-        self._current_tool.elapsed = elapsed
-        self._current_tool.status = "done" if ok else "error"
+        tool_node.header += f"  {icon} {_title(tool_name)} ({elapsed:.1f}s)"
+        tool_node.elapsed = elapsed
+        tool_node.status = "done" if ok else "error"
+        self._tree.mark_dirty()
         dock.refresh()
     
-    def tool_result(self, text: str) -> None:
+    def tool_result(self, text: str, tool_call_id: str | None = None) -> None:
+        call_id = tool_call_id or self._current_tool_id
         if dock.active and ui_events.is_running:
             ui_events.emit_nowait(ToolResultAppended(
                 agent_id=self._agent_id,
-                tool_call_id=self._current_tool_id,
+                tool_call_id=call_id,
                 text=text,
             ))
             return
-        parent = self._current_tool or self._parent
+        parent = self._tool_nodes.get(call_id) or self._current_tool or self._parent
         lines = text.split("\n")
         self._tree.new_node(
             parent=parent, node_type="tool_result",
             header=escape(lines[0]) if lines else "",
-            body_lines=[escape(line) for line in lines[1:]], collapsed=True,
+            body_lines=[escape(line) for line in lines[1:]], collapsed=False,
         )
         dock.refresh()
     

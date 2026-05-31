@@ -80,7 +80,7 @@ class GrepTool(BaseTool):
     async def execute(self, args: dict, ctx: ToolContext) -> ToolResult:
         inp = GrepInput.model_validate(args)
         base = Path(ctx.workspace)
-        search_dir = resolve_safe(ctx.workspace, inp.path) if inp.path else base
+        search_dir = resolve_safe(ctx.workspace, inp.path, ctx.sandbox_extra_paths) if inp.path else base
         if search_dir is None:
             return ToolResult(output=f"Path traversal blocked: {inp.path}")
 

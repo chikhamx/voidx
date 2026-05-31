@@ -6,6 +6,13 @@ from pydantic import BaseModel, ConfigDict
 
 from voidx.tools.base import ToolContext, ToolResult  # noqa: F401 — re-export
 from voidx.tools.file_ops import FileReadTool, FileWriteTool, FileEditTool
+from voidx.tools.lsp import (
+    LspDefinitionTool,
+    LspDiagnosticsTool,
+    LspFormatTool,
+    LspReferencesTool,
+    LspSymbolsTool,
+)
 from voidx.tools.repomap import RepoMapTool
 from voidx.tools.search import GlobTool, GrepTool
 from voidx.tools.bash import BashTool
@@ -34,18 +41,24 @@ class ToolRegistry:
         self._register_builtins()
 
     def _register_builtins(self) -> None:
-        for cls in [FileReadTool, FileWriteTool, FileEditTool,
-                     RepoMapTool,
-                     GlobTool, GrepTool, BashTool,
-                     TodoWriteTool, WebFetchTool]:
+        for cls in [
+            FileReadTool, FileWriteTool, FileEditTool,
+            RepoMapTool,
+            GlobTool, GrepTool, BashTool,
+            TodoWriteTool,
+            LspDiagnosticsTool, LspSymbolsTool,
+            LspDefinitionTool, LspReferencesTool, LspFormatTool,
+        ]:
             instance = cls()
             self.register(instance.id, instance, instance.description, instance.parameters_schema())
+        wf = WebFetchTool(settings=self._settings)
+        self.register(wf.id, wf, wf.description, wf.parameters_schema())
         # WebSearchTool needs settings for Tavily API key
         ws = WebSearchTool(settings=self._settings)
         self.register(ws.id, ws, ws.description, ws.parameters_schema())
 
     def register(self, tool_id: str, instance: object, description: str, parameters: dict) -> None:
-        """Register a tool dynamically (e.g. task tool injected at runtime)."""
+        """Register a tool dynamically (e.g. agent tool injected at runtime)."""
         self._tools[tool_id] = ToolDef(
             id=tool_id, description=description, parameters=parameters,
         )
@@ -60,6 +73,11 @@ class ToolRegistry:
     def get_def(self, tool_id: str) -> ToolDef | None:
         return self._tools.get(tool_id)
 
+    def unregister_prefix(self, prefix: str) -> None:
+        for tool_id in [tid for tid in self._tools if tid.startswith(prefix)]:
+            self._tools.pop(tool_id, None)
+            self._instances.pop(tool_id, None)
+
     def ids(self) -> list[str]:
         return list(self._tools.keys())
 
@@ -73,6 +91,7 @@ class ToolRegistry:
                     "name": t.id,
                     "description": t.description,
                     "parameters": t.parameters,
+                    "strict": True,
                 },
             })
         return result

@@ -11,6 +11,7 @@ from voidx.tools.base import ToolContext, ToolResult
 from voidx.tools.file_ops import FileReadInput, FileWriteInput, FileEditInput, EditEntry
 from voidx.tools.search import GlobInput, GrepInput
 from voidx.tools.bash import BashInput
+from voidx.tools.agent import AgentInput
 from voidx.tools.task_tracker import TaskTracker
 from voidx.tools.task_status import TaskStatusTool
 from voidx.tools.registry import ToolRegistry
@@ -48,6 +49,12 @@ class TestToolSchemas:
         assert inp.command == "ls"
         assert inp.timeout == 120
 
+    def test_agent_input_uses_child_agent_schema(self):
+        assert AgentInput.model_validate({"agent": "explore", "description": "inspect"}).agent == "explore"
+        schema = AgentInput.model_json_schema()
+        assert "agent" in schema["properties"]
+        assert "subagent_type" not in schema["properties"]
+
 
 class TestToolRegistry:
     """Registry knows all tools."""
@@ -62,11 +69,17 @@ class TestToolRegistry:
         assert "grep" in ids
         assert "bash" in ids
         assert "repo_map" in ids
+        assert "lsp_diagnostics" in ids
+        assert "lsp_symbols" in ids
+        assert "lsp_definition" in ids
+        assert "lsp_references" in ids
+        assert "lsp_format" in ids
 
     def test_tools_for_llm(self):
         r = ToolRegistry()
         tools = r.tools_for_llm()
-        assert len(tools) == 10
+        assert len(tools) == len(r.ids())
+        assert len(tools) >= 10
         for t in tools:
             assert t["type"] == "function"
             assert "name" in t["function"]
@@ -167,7 +180,7 @@ class TestBash:
 
 
 class TestTaskTracker:
-    """TaskTracker reports sub-agent progress."""
+    """TaskTracker reports worker-role progress."""
 
     def test_start_and_update(self):
         tracker = TaskTracker()

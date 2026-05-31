@@ -10,7 +10,7 @@ from rich.live import Live
 from rich.markup import escape
 from rich.text import Text
 
-from voidx.ui.dock_parts.formatting import (
+from voidx.ui.dock_components.formatting import (
     ANSI_LINE_PREFIX,
     _ansi_line,
     _ansi_rgb,
@@ -18,8 +18,8 @@ from voidx.ui.dock_parts.formatting import (
     _markdown_lines,
     _text_from_line,
 )
-from voidx.ui.dock_parts.nodes import DockNodeMixin
-from voidx.ui.dock_parts.state import dock, get_dock, set_dock
+from voidx.ui.dock_components.nodes import DockNodeMixin
+from voidx.ui.dock_components.state import dock, get_dock, set_dock
 from voidx.ui.tree import OutputNode, OutputTree
 
 
@@ -106,6 +106,21 @@ class BottomInputDock(DockNodeMixin):
 
     def reset(self) -> None:
         self._tree = OutputTree()
+        self._reset_runtime_nodes()
+        self._input_text = ""
+        self._cursor_pos = 0
+        self._hints = []
+        self.refresh()
+
+    def restore_tree(self, tree: OutputTree, *, append: bool = False) -> None:
+        if append:
+            self._tree.extend_from(tree)
+        else:
+            self._tree = tree
+        self._reset_runtime_nodes()
+        self.refresh()
+
+    def _reset_runtime_nodes(self) -> None:
         self._current_turn = None
         self._current_agent = None
         self._current_tool = None
@@ -114,10 +129,6 @@ class BottomInputDock(DockNodeMixin):
         self._status_nodes = {}
         self._status_ticks = {}
         self._permission_node = None
-        self._input_text = ""
-        self._cursor_pos = 0
-        self._hints = []
-        self.refresh()
 
     def start_turn(self, text: str) -> OutputNode:
         self.commit_stream()
@@ -172,11 +183,11 @@ class BottomInputDock(DockNodeMixin):
             self.append_ansi(text)
         return True
 
-    def set_stream(self, text: str) -> bool:
+    def set_stream(self, text: str, *, parent: OutputNode | None = None) -> bool:
         if not self._active:
             return False
         self._stream_text = text
-        self._update_stream_node()
+        self._update_stream_node(parent=parent)
         self.refresh()
         return True
 
@@ -271,12 +282,14 @@ class BottomInputDock(DockNodeMixin):
             parts.append((after, "white"))
         return parts
 
-    def _update_stream_node(self) -> None:
+    def _update_stream_node(self, *, parent: OutputNode | None = None) -> None:
         clean = _clean(self._stream_text).strip("\n")
         if not clean:
             return
-        if self._stream_node is None:
-            self._stream_node = self._new_stream_node()
+        if self._stream_node is None or (
+            parent is not None and self._stream_node.parent is not parent
+        ):
+            self._stream_node = self._new_stream_node(parent=parent)
         if clean.startswith("● "):
             clean = clean[2:]
         lines = _markdown_lines(clean, self._markdown_width())
@@ -290,7 +303,15 @@ class BottomInputDock(DockNodeMixin):
         self._stream_node.body_lines = [_ansi_line(f"  {line}") for line in lines[1:]]
         self._tree.mark_dirty()
 
-    def _new_stream_node(self) -> OutputNode:
+    def _new_stream_node(self, *, parent: OutputNode | None = None) -> OutputNode:
+        if parent is not None:
+            return self._tree.new_node(
+                parent=parent,
+                node_type="assistant",
+                header="",
+                collapsed=False,
+            )
+
         if (
             self._current_agent is not None
             and self._current_agent.node_type == "assistant"

@@ -73,6 +73,11 @@ async def _run_chat(
     vconsole = _vconsole()
     ws_path = str(Path(workspace).resolve())
     settings = Settings(ws_path)
+
+    # Bind settings to catalog early so list_models() merges custom models
+    from voidx.llm.catalog import bind_settings
+    bind_settings(settings)
+
     cfg = settings.build_config()
     cfg.workspace = ws_path
 

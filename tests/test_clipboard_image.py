@@ -4,7 +4,7 @@ from pathlib import Path
 sys.path.insert(0, str(Path(__file__).parent.parent / "src"))
 
 from voidx.agent.attachments import MAX_IMAGE_ATTACHMENT_BYTES
-from voidx.ui.app_parts.clipboard_image import (
+from voidx.ui.app_components.clipboard_image import (
     KEEP_ORIGINAL_BYTES,
     paste_clipboard_image,
 )

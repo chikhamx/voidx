@@ -1,4 +1,4 @@
-"""TaskStatus tool — check sub-agent progress. Claude Code aligned."""
+"""TaskStatus tool — check worker-role progress. Claude Code aligned."""
 
 from __future__ import annotations
 
@@ -17,7 +17,7 @@ class TaskStatusInput(BaseModel):
 class TaskStatusTool(BaseTool):
     id = "task_status"
     description = (
-        "Check sub-agent task status. Returns status (pending/running/completed/error), "
+        "Check child-agent task status. Returns status (pending/running/completed/error), "
         "current step, elapsed time, and recent output preview. "
         "Without task_id, lists all tasks."
     )

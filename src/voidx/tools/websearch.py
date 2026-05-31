@@ -8,11 +8,27 @@ from html.parser import HTMLParser
 from pydantic import BaseModel, Field
 
 from voidx.tools.base import BaseTool, model_to_json_schema, ToolContext, ToolResult
+from voidx.tools.web_content import (
+    WEB_TOOL_CACHE,
+    cached_tool_result,
+    matches_domain,
+    normalize_search_results,
+    search_cache_key,
+)
+from voidx.tools.web_mcp import call_mcp_web_tool
 
 
 class WebSearchInput(BaseModel):
     query: str = Field(description="Search query, max 70 characters")
-    domain_filter: str | None = Field(default=None, description="Limit results to this domain (e.g. 'docs.python.org')")
+    allowed_domains: list[str] | None = Field(
+        default=None,
+        description="Only include search results from these domains",
+    )
+    blocked_domains: list[str] | None = Field(
+        default=None,
+        description="Never include search results from these domains",
+    )
+    max_results: int = Field(default=10, ge=1, le=20, description="Maximum number of results to return")
 
 
 # ── DuckDuckGo HTML parser ──────────────────────────────────────────────
@@ -74,7 +90,13 @@ def _parse_duckduckgo_html(html: str) -> list[dict[str, str]]:
 
 # ── Tavily API backend ──────────────────────────────────────────────────
 
-async def _search_tavily(query: str, api_key: str, domain_filter: str | None = None) -> list[dict[str, str]]:
+async def _search_tavily(
+    query: str,
+    api_key: str,
+    allowed_domains: list[str] | None = None,
+    blocked_domains: list[str] | None = None,
+    max_results: int = 10,
+) -> list[dict[str, str]]:
     """Search via Tavily API. Returns list of {url, title, snippet}."""
     import httpx
 
@@ -85,12 +107,14 @@ async def _search_tavily(query: str, api_key: str, domain_filter: str | None = N
     }
     payload: dict = {
         "query": query,
-        "max_results": 10,
+        "max_results": max_results,
         "include_answer": False,
         "search_depth": "basic",
     }
-    if domain_filter:
-        payload["include_domains"] = [domain_filter]
+    if allowed_domains:
+        payload["include_domains"] = allowed_domains
+    if blocked_domains:
+        payload["exclude_domains"] = blocked_domains
 
     async with httpx.AsyncClient(timeout=15) as client:
         resp = await client.post(url, json=payload, headers=headers)
@@ -109,7 +133,12 @@ async def _search_tavily(query: str, api_key: str, domain_filter: str | None = N
 
 # ── DuckDuckGo fallback backend ─────────────────────────────────────────
 
-async def _search_duckduckgo(query: str, domain_filter: str | None = None) -> list[dict[str, str]]:
+async def _search_duckduckgo(
+    query: str,
+    allowed_domains: list[str] | None = None,
+    blocked_domains: list[str] | None = None,
+    max_results: int = 10,
+) -> list[dict[str, str]]:
     """Search via DuckDuckGo HTML scraping. Returns list of {url, title, snippet}."""
     import httpx
 
@@ -124,10 +153,12 @@ async def _search_duckduckgo(query: str, domain_filter: str | None = None) -> li
 
     results = _parse_duckduckgo_html(resp.text)
 
-    if domain_filter:
-        results = [r for r in results if domain_filter in r["url"]]
+    if allowed_domains:
+        results = [r for r in results if any(matches_domain(r["url"], domain) for domain in allowed_domains)]
+    if blocked_domains:
+        results = [r for r in results if not any(matches_domain(r["url"], domain) for domain in blocked_domains)]
 
-    return results[:10]
+    return results[:max_results]
 
 
 # ── Tool ────────────────────────────────────────────────────────────────
@@ -144,33 +175,72 @@ class WebSearchTool(BaseTool):
 
     async def execute(self, args: dict, ctx: ToolContext) -> ToolResult:
         inp = WebSearchInput.model_validate(args)
+        mcp_result = await call_mcp_web_tool(
+            kind="search",
+            settings=self._settings,
+            ctx=ctx,
+            arguments=inp.model_dump(exclude_none=True),
+            title=f"Search: {inp.query}",
+        )
+        if mcp_result is not None:
+            return mcp_result
 
-        # Try Tavily first
         tavily_key = self._get_tavily_key()
+        cache_key = search_cache_key(
+            query=inp.query,
+            allowed_domains=inp.allowed_domains,
+            blocked_domains=inp.blocked_domains,
+            max_results=inp.max_results,
+            backend="tavily" if tavily_key else "duckduckgo",
+        )
+        cached = WEB_TOOL_CACHE.get(cache_key)
+        if isinstance(cached, ToolResult):
+            return cached_tool_result(cached)
+
+        fallback_errors: list[str] = []
         if tavily_key:
             try:
-                results = await _search_tavily(inp.query, tavily_key, inp.domain_filter)
+                results = await _search_tavily(
+                    inp.query,
+                    tavily_key,
+                    inp.allowed_domains,
+                    inp.blocked_domains,
+                    inp.max_results,
+                )
                 if results:
-                    return self._format_results(inp.query, results[:10], "tavily")
-            except Exception:
-                pass  # fall through to DuckDuckGo
+                    result = self._format_results(inp.query, results, "tavily", fallback_errors)
+                    WEB_TOOL_CACHE.set(cache_key, result, ttl_seconds=600)
+                    return result
+            except Exception as exc:
+                fallback_errors.append(f"tavily: {exc}")
 
-        # DuckDuckGo fallback
         try:
-            results = await _search_duckduckgo(inp.query, inp.domain_filter)
+            results = await _search_duckduckgo(
+                inp.query,
+                inp.allowed_domains,
+                inp.blocked_domains,
+                inp.max_results,
+            )
         except Exception as e:
             return ToolResult(
                 output=f"Search failed: {e}. Query: {inp.query}",
-                metadata={"query": inp.query, "error": str(e)},
+                metadata={"query": inp.query, "error": str(e), "fallback_errors": fallback_errors},
             )
 
         if not results:
             return ToolResult(
                 output=f"No results found for: {inp.query}",
-                metadata={"query": inp.query, "results": 0},
+                metadata={
+                    "query": inp.query,
+                    "results": 0,
+                    "backend": "duckduckgo",
+                    "fallback_errors": fallback_errors,
+                },
             )
 
-        return self._format_results(inp.query, results[:10], "duckduckgo")
+        result = self._format_results(inp.query, results, "duckduckgo", fallback_errors)
+        WEB_TOOL_CACHE.set(cache_key, result, ttl_seconds=600)
+        return result
 
     def _get_tavily_key(self) -> str | None:
         env_key = os.environ.get("TAVILY_API_KEY")
@@ -181,12 +251,26 @@ class WebSearchTool(BaseTool):
         return None
 
     @staticmethod
-    def _format_results(query: str, results: list[dict[str, str]], backend: str) -> ToolResult:
+    def _format_results(
+        query: str,
+        results: list[dict[str, str]],
+        backend: str,
+        fallback_errors: list[str] | None = None,
+    ) -> ToolResult:
+        normalized = normalize_search_results(results)
         formatted = []
-        for r in results:
-            formatted.append(f"- [{r['title']}]({r['url']})\n  {r['snippet']}")
+        for r in normalized:
+            snippet = f"\n  {r['snippet']}" if r["snippet"] else ""
+            formatted.append(f"- [{r['title']}]({r['url']}){snippet}")
         return ToolResult(
             title=f"Search: {query}",
             output="\n\n".join(formatted),
-            metadata={"query": query, "results": len(results), "backend": backend},
+            metadata={
+                "query": query,
+                "results": len(normalized),
+                "backend": backend,
+                "items": normalized,
+                "cached": False,
+                "fallback_errors": fallback_errors or [],
+            },
         )

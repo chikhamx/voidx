@@ -11,7 +11,7 @@ from rich.markdown import Markdown
 from rich.panel import Panel
 from rich.text import Text
 
-from voidx.ui.console_parts.formatting import (
+from voidx.ui.console_components.formatting import (
     _capture_ansi,
     _done_spin,
     _event_tool_id,
@@ -34,7 +34,7 @@ from voidx.ui.events import (
     ToolStarted,
     ui_events,
 )
-from voidx.ui.console_parts.streaming import StreamingRenderer
+from voidx.ui.console_components.streaming import StreamingRenderer
 
 CommandOutputSink = Callable[[str], None]
 CommandOutputWidth = int | Callable[[], int]
@@ -65,8 +65,11 @@ class VoidConsole:
     _TOOL_GERUND: dict[str, str] = {
         "read": "reading", "write": "writing", "edit": "editing",
         "glob": "finding", "grep": "searching", "bash": "running",
-        "task": "running", "webfetch": "fetching", "websearch": "searching",
+        "agent": "delegating", "webfetch": "fetching", "websearch": "searching",
         "todo": "updating", "task_status": "checking", "repo_map": "mapping",
+        "lsp_diagnostics": "checking", "lsp_symbols": "indexing",
+        "lsp_definition": "locating", "lsp_references": "finding",
+        "lsp_format": "formatting",
     }
 
     _AGENT_GERUND: dict[str, str] = {
@@ -175,10 +178,11 @@ class VoidConsole:
                 tool_name=tool_name,
                 label=gerund,
                 args=_fmt_args(args),
+                raw_args=args,
             ))
             return
         if dock.active:
-            dock.start_tool(gerund, _fmt_args(args))
+            dock.start_tool(gerund, _fmt_args(args), tool_name=tool_name, raw_args=args)
             return
         self.print(f"  {_next_spin()} [bold]{gerund}[/bold]({_fmt_args(args)})")
 
@@ -200,6 +204,7 @@ class VoidConsole:
                     tool_name=tool_name,
                     label=label,
                     args=detail,
+                    raw_args=args,
                 ))
                 ui_events.emit_nowait(ToolFinished(
                     tool_call_id=event_id,
@@ -210,7 +215,7 @@ class VoidConsole:
                 return
             if dock.active:
                 detail = _fmt_args_short(tool_name, args)
-                dock.start_tool(label, detail)
+                dock.start_tool(label, detail, tool_name=tool_name, raw_args=args)
                 dock.finish_tool(label, elapsed, ok)
                 return
             self.print(
@@ -321,6 +326,7 @@ class TreeAwareConsole:
             node_type="tool_call",
             header=f"{dot} [bold]{gerund}[/bold]({fmt_args(args)})",
             status="running",
+            collapsed=True,
         )
 
     def tool_done(self, tool_name: str, elapsed: float, ok: bool = True) -> None:

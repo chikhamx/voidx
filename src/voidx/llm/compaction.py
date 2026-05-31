@@ -29,7 +29,7 @@ DEFAULT_TAIL_TURNS = 3
 MIN_PRESERVE_RECENT = 2_000
 MAX_PRESERVE_RECENT = 8_000
 TOOL_OUTPUT_MAX_CHARS = 2_000
-PRUNE_PROTECTED_TOOLS = {"task"}
+PRUNE_PROTECTED_TOOLS = {"agent"}
 
 SUMMARY_TEMPLATE = """Output exactly the Markdown structure shown inside <template> and keep the section order unchanged. Do not include the <template> tags in your response.
 <template>
@@ -119,7 +119,7 @@ class CompactionService:
 
         Rules:
         - Skip most recent 2 turns (user messages count as turn boundaries)
-        - Protected tools (task) are never pruned
+        - Protected tools (agent) are never pruned
         - Already compacted parts stop further pruning
         - Cumulative tool output > PRUNE_PROTECT → truncate to TOOL_OUTPUT_MAX_CHARS
         - Only prune if total pruned > PRUNE_MINIMUM

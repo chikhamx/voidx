@@ -46,13 +46,13 @@ class FileReadTool(BaseTool):
 
     async def execute(self, args: dict, ctx: ToolContext) -> ToolResult:
         inp = FileReadInput.model_validate(args)
-        path = resolve_safe(ctx.workspace,inp.file_path)
+        path = resolve_safe(ctx.workspace, inp.file_path, ctx.sandbox_extra_paths)
         if path is None:
-            return ToolResult(output=f"Path traversal blocked: {inp.file_path}")
+            return ToolResult(output=f"Path traversal blocked: {inp.file_path}", metadata={"error": True})
         if not path.exists():
-            return ToolResult(output=f"File not found: {inp.file_path}")
+            return ToolResult(output=f"File not found: {inp.file_path}", metadata={"error": True})
         if path.is_dir():
-            return ToolResult(output=f"Path is a directory: {inp.file_path}")
+            return ToolResult(output=f"Path is a directory: {inp.file_path}", metadata={"error": True})
 
         text = path.read_text(encoding="utf-8", errors="replace")
         if text.endswith("\n"):
@@ -89,13 +89,13 @@ class FileWriteTool(BaseTool):
 
     async def execute(self, args: dict, ctx: ToolContext) -> ToolResult:
         inp = FileWriteInput.model_validate(args)
-        path = resolve_safe(ctx.workspace,inp.file_path)
+        path = resolve_safe(ctx.workspace, inp.file_path, ctx.sandbox_extra_paths)
         if path is None:
-            return ToolResult(output=f"Path traversal blocked: {inp.file_path}")
+            return ToolResult(output=f"Path traversal blocked: {inp.file_path}", metadata={"error": True})
         if path.exists():
             stale = _check_staleness(ctx, path)
             if stale:
-                return ToolResult(output=stale)
+                return ToolResult(output=stale, metadata={"error": True})
 
         old_content = ""
         if path.exists():
@@ -145,18 +145,21 @@ class FileEditTool(BaseTool):
 
     async def execute(self, args: dict, ctx: ToolContext) -> ToolResult:
         inp = FileEditInput.model_validate(args)
-        path = resolve_safe(ctx.workspace,inp.file_path)
+        path = resolve_safe(ctx.workspace, inp.file_path, ctx.sandbox_extra_paths)
         if path is None:
-            return ToolResult(output=f"Path traversal blocked: {inp.file_path}")
+            return ToolResult(output=f"Path traversal blocked: {inp.file_path}", metadata={"error": True})
         if not path.exists():
-            return ToolResult(output=f"File not found: {inp.file_path}")
+            return ToolResult(output=f"File not found: {inp.file_path}", metadata={"error": True})
 
         if not inp.edits:
-            return ToolResult(output="No edits provided. The 'edits' array must contain at least one entry.")
+            return ToolResult(
+                output="No edits provided. The 'edits' array must contain at least one entry.",
+                metadata={"error": True},
+            )
 
         stale = _check_staleness(ctx, path)
         if stale:
-            return ToolResult(output=stale)
+            return ToolResult(output=stale, metadata={"error": True})
 
         original = path.read_text(encoding="utf-8", errors="replace")
         content = original
@@ -169,7 +172,10 @@ class FileEditTool(BaseTool):
 
             count = content.count(edit.old_string)
             if count == 0:
-                return ToolResult(output=f"Edit {i}: old_string not found in {inp.file_path}")
+                return ToolResult(
+                    output=f"Edit {i}: old_string not found in {inp.file_path}",
+                    metadata={"error": True},
+                )
 
             content = content.replace(edit.old_string, edit.new_string)
 

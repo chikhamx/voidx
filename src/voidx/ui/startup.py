@@ -57,8 +57,8 @@ def render_startup_lines(
         ("model", f"● Model  {provider}/{model}"),
         ("folder", f"▣ Workspace  {folder_name}"),
         ("session", f"↳ {session_line}"),
-        ("hint", "Ask anything, or type / for commands"),
-        ("hint", "/model switch · /diff · wheel scrolls"),
+        ("hint", "Ask anything · / commands · /model switch · Ctrl+J newline"),
+        ("hint", "wheel/click transcript · @ attach · Ctrl+V image"),
     ]
 
     title = f"voidx v{__version__}"

@@ -2,6 +2,7 @@
 import sys
 sys.path.insert(0, "src")
 from voidx.ui.tree import OutputNode, OutputTree
+from voidx.ui.transcript import transcript_rows_to_tree, tree_to_transcript_rows
 
 
 def test_basic_tree():
@@ -117,6 +118,51 @@ def test_expanded_view_hides_internal_node_ids():
 
     assert "[n" not in expanded
     assert "\\[" not in expanded
+
+
+def test_transcript_snapshot_round_trips_turn_tree():
+    tree = OutputTree()
+    turn = tree.new_node(tree.root, node_type="turn", header="❯ inspect")
+    assistant = tree.new_node(tree.root, node_type="assistant", header="● voidx")
+    thought = tree.new_node(
+        assistant,
+        node_type="thought",
+        header="Thinking",
+        body_lines=["read files"],
+        collapsed=True,
+        meta="Thinking for 1s",
+    )
+    tool = tree.new_node(
+        assistant,
+        node_type="tool_call",
+        header="Reading(file.py)",
+        tool_call_id="call_1",
+        payload={"tool_name": "read", "args": 'file_path="file.py"'},
+    )
+    tree.new_node(
+        tool,
+        node_type="tool_result",
+        header="content",
+        body_lines=["line 2"],
+        tool_call_id="call_1",
+        collapsed=False,
+    )
+
+    rows, turn_count = tree_to_transcript_rows("s1", tree)
+    restored = transcript_rows_to_tree(rows)
+    rendered = "\n".join(restored.render(100))
+
+    assert turn_count == 1
+    assert rows[0].turn_id == 0
+    assert rows[0].node_id == 0
+    assert rows[1].parent_node_id is None
+    assert rows[2].parent_node_id == rows[1].node_id
+    assert rows[3].tool_call_id == "call_1"
+    assert rows[3].metadata["payload"]["tool_name"] == "read"
+    assert thought.id != restored.root.children[1].children[0].id
+    assert turn.header in rendered
+    assert "Thinking" in rendered
+    assert "content" in rendered
 
 
 if __name__ == "__main__":

@@ -8,9 +8,10 @@ from dataclasses import dataclass
 from typing import Any
 
 from rich.markdown import Markdown
+from rich.markup import escape
 
 from voidx.ui.dock import BottomInputDock
-from voidx.ui.event_parts.schema import (
+from voidx.ui.event_components.schema import (
     AnsiAppended,
     AssistantStreamCommitted,
     AssistantStreamDiscarded,
@@ -205,16 +206,23 @@ class DockEventConsumer:
                 remove=event.remove,
             )
         if isinstance(event, AssistantStreamStarted):
-            return self._dock.set_stream("")
+            return self._dock.set_stream("", parent=self._stream_parent(event.agent_id))
         if isinstance(event, AssistantStreamUpdated):
-            return self._dock.set_stream(event.text)
+            return self._dock.set_stream(event.text, parent=self._stream_parent(event.agent_id))
         if isinstance(event, AssistantStreamCommitted):
             return self._dock.commit_stream()
         if isinstance(event, AssistantStreamDiscarded):
             return self._dock.discard_stream()
         if isinstance(event, ToolStarted):
             parent = self._agent_parent(event.agent_id)
-            node = self._dock.start_tool(event.label, event.args, parent=parent)
+            node = self._dock.start_tool(
+                event.label,
+                event.args,
+                parent=parent,
+                tool_call_id=event.tool_call_id,
+                tool_name=event.tool_name,
+                raw_args=event.raw_args,
+            )
             self._tool_nodes[event.tool_call_id] = node
             return node
         if isinstance(event, ToolFinished):
@@ -225,10 +233,23 @@ class DockEventConsumer:
             return self._dock.finish_tool_node(node, event.label, event.elapsed, event.ok, event.detail)
         if isinstance(event, ToolResultAppended):
             parent = self._tool_nodes.get(event.tool_call_id) if event.tool_call_id else None
-            return self._dock.append_tool_result(event.text, parent=parent, collapsed=event.collapsed)
+            if parent is None:
+                parent = self._stream_parent(event.agent_id)
+            return self._dock.append_tool_result(
+                event.text,
+                parent=parent,
+                collapsed=event.collapsed,
+                tool_call_id=event.tool_call_id or None,
+            )
         if isinstance(event, FileChangeAppended):
             parent = self._tool_nodes.get(event.tool_call_id) if event.tool_call_id else None
-            return self._dock.append_file_change(event.diff_text, parent=parent)
+            if parent is None:
+                parent = self._stream_parent(event.agent_id)
+            return self._dock.append_file_change(
+                event.diff_text,
+                parent=parent,
+                tool_call_id=event.tool_call_id or None,
+            )
         if isinstance(event, SubagentStepStarted):
             parent = self._agent_parent(event.agent_id)
             return self._dock.set_status(
@@ -239,31 +260,46 @@ class DockEventConsumer:
             )
         if isinstance(event, SubagentStarted):
             parent = self._tool_nodes.get(event.parent_tool_call_id)
+            if parent is not None:
+                parent.collapsed = False
             if parent is None and event.parent_agent_id >= 0:
                 parent = self._agent_parent(event.parent_agent_id)
             if parent is None:
                 parent = self._dock.ensure_agent()
-            header = f"⟳ {event.name}"
+            body_lines = []
             if event.description:
-                header += f": {event.description}"
+                body_lines.append(f"[dim]Task:[/dim] {escape(event.description)}")
+            body_lines.append(f"[dim]Agent ID:[/dim] {event.agent_id}")
             node = self._dock.tree.new_node(
                 parent=parent,
                 node_type="subagent",
-                header=header,
+                header=f"[#B48EAD]●[/#B48EAD] [bold]{escape(event.name)}[/bold] agent",
+                body_lines=body_lines,
                 collapsed=False,
+                agent_name=event.name,
+                agent_run_id=event.subagent_id,
+                payload={"role_name": event.name, "description": event.description},
             )
             self._agent_nodes[event.agent_id] = node
             self._dock.refresh()
             return node
         if isinstance(event, SubagentFinished):
+            node = self._agent_parent(event.agent_id)
             label = "completed" if event.ok else "failed"
             elapsed = f" ({event.elapsed:.1f}s)" if event.elapsed is not None else ""
             self._dock.finish_status(f"agent:{event.agent_id}:progress")
-            return self._dock.append_message(
-                f"subagent {label}{elapsed}",
-                style="dim",
-                parent=self._agent_parent(event.agent_id),
-            )
+            if node is None:
+                return None
+            color = "dim" if event.ok else "red"
+            icon = "●" if event.ok else "✗"
+            role_name = str(node.payload.get("role_name") or node.agent_name or event.subagent_id)
+            node.header = f"[{color}]{icon}[/{color}] [{color}]{escape(role_name)} agent {label}{elapsed}[/{color}]"
+            node.status = "done" if event.ok else "error"
+            node.elapsed = event.elapsed
+            node.collapsed = False
+            self._dock.tree.mark_dirty()
+            self._dock.refresh()
+            return node
         if isinstance(event, InputSet):
             return self._dock.set_input(event.text, event.hints, event.cursor_pos)
         if isinstance(event, (PermissionPromptShown, PermissionPromptCleared, NoticeSet)):
@@ -279,6 +315,11 @@ class DockEventConsumer:
             return self._agent_parent(event.agent_id)
         return None
 
+    def _stream_parent(self, agent_id: int) -> OutputNode | None:
+        if agent_id >= 0:
+            return self._agent_parent(agent_id)
+        return None
+
     def _agent_parent(self, agent_id: int) -> OutputNode | None:
         if agent_id < 0:
             return None
@@ -288,8 +329,9 @@ class DockEventConsumer:
         node = self._dock.tree.new_node(
             parent=self._dock.ensure_agent(),
             node_type="subagent",
-            header=f"⟳ agent {agent_id}",
+            header=f"[#B48EAD]●[/#B48EAD] [bold]child agent {agent_id}[/bold]",
             collapsed=False,
+            agent_name=f"agent {agent_id}",
         )
         self._agent_nodes[agent_id] = node
         self._dock.refresh()

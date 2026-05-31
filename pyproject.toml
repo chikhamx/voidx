@@ -1,6 +1,6 @@
 [project]
 name = "voidx"
-version = "0.1.0"
+version = "1.0.0"
 description = "A coding agent that quantifies everything and solves with tools, not fuzzy prompts."
 requires-python = ">=3.11"
 dependencies = [
@@ -22,15 +22,27 @@ voidx = "voidx.main:cli"
 
 [project.optional-dependencies]
 dev = [
+    "build>=1.2.0",
     "pytest>=8.0.0",
     "pytest-asyncio>=0.25.0",
 ]
 
 [dependency-groups]
 dev = [
+    "build>=1.2.0",
     "pytest>=8.0.0",
     "pytest-asyncio>=0.25.0",
 ]
+
+[build-system]
+requires = ["setuptools>=68", "wheel"]
+build-backend = "setuptools.build_meta"
+
+[tool.setuptools.packages.find]
+where = ["src"]
+
+[tool.setuptools.package-data]
+"voidx.skills" = ["bundled/superpowers/*/SKILL.md"]
 
 [tool.pytest.ini_options]
 asyncio_mode = "auto"

@@ -2,7 +2,9 @@
 
 from __future__ import annotations
 
+import re
 from dataclasses import dataclass, field
+from typing import Any
 from typing import Literal
 
 
@@ -41,6 +43,10 @@ class OutputNode:
     agent_name: str | None = None
     step_info: str | None = None
     meta: str | None = None
+    tool_call_id: str | None = None
+    agent_run_id: str | None = None
+    message_id: int | None = None
+    payload: dict[str, Any] = field(default_factory=dict)
 
     _is_last_sibling: bool = False  # Set by parent when children are finalised
 
@@ -98,14 +104,39 @@ class OutputTree:
     def mark_dirty(self) -> None:
         self._dirty = True
 
-    def new_node(self, parent: OutputNode, **kwargs) -> OutputNode:
+    def new_node(self, parent: OutputNode, *, node_id: str | None = None, **kwargs) -> OutputNode:
         """Create a new node under parent. Auto-assigns id."""
-        self._counter += 1
-        node = OutputNode(id=f"n{self._counter}", **kwargs)
-        parent.add_child(node)
-        self._all[node.id] = node
-        self.mark_dirty()
+        if node_id is None:
+            self._counter += 1
+            node_id = f"n{self._counter}"
+        node = OutputNode(id=node_id, **kwargs)
+        self.add_node(parent, node)
+        self._sync_counter(node.id)
         return node
+
+    def add_node(self, parent: OutputNode, node: OutputNode) -> None:
+        """Attach an existing node and register its subtree."""
+        parent.add_child(node)
+        self._register_subtree(node)
+        self._sync_counter(node.id)
+        self.mark_dirty()
+
+    def extend_from(self, other: OutputTree) -> None:
+        """Append another tree's root children to this tree."""
+        for child in list(other.root.children):
+            self.add_node(self.root, child)
+
+    def _register_subtree(self, node: OutputNode) -> None:
+        self._all[node.id] = node
+        for child in node.children:
+            child.parent = node
+            child.depth = node.depth + 1
+            self._register_subtree(child)
+
+    def _sync_counter(self, node_id: str) -> None:
+        match = re.fullmatch(r"n(\d+)", node_id)
+        if match:
+            self._counter = max(self._counter, int(match.group(1)))
 
     def get(self, node_id: str) -> OutputNode | None:
         return self._all.get(node_id)
@@ -242,8 +273,11 @@ class OutputTree:
             and bool(node.parent.children)
             and node.parent.children[0] is node
         )
+        suppress_connector = node.parent is not None and node.parent.node_type == "assistant"
         prefix = indent + connector
-        aligned_prefix = prefix if is_first_sibling else indent + self.BOX_SPACE
+        aligned_prefix = indent + self.BOX_SPACE if suppress_connector else (
+            prefix if is_first_sibling else indent + self.BOX_SPACE
+        )
         inline_tool_result = (
             node.node_type == "tool_result"
             and node.parent is not None
@@ -265,7 +299,7 @@ class OutputTree:
             line_map[len(lines) - 1] = node.id
 
         # Continuation for body lines and children
-        cont_suffix = self.BOX_SPACE if node._is_last_sibling else self.BOX_VERT
+        cont_suffix = self.BOX_SPACE if suppress_connector or node._is_last_sibling else self.BOX_VERT
         cont = indent if inline_tool_result else indent + cont_suffix
 
         # Body lines

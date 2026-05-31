@@ -10,15 +10,26 @@ from collections.abc import Callable
 from pydantic import BaseModel, Field
 
 
-def resolve_safe(workspace: str, file_path: str) -> Path | None:
-    """Resolve file path and verify it stays inside workspace. Returns None if blocked."""
+def resolve_safe(workspace: str, file_path: str, extra_paths: list[str] | None = None) -> Path | None:
+    """Resolve file path and verify it stays inside workspace (+ optional extra paths).
+
+    Returns the resolved path if safe, or None if blocked.
+    """
     ws = Path(workspace).resolve()
     resolved = (ws / file_path).resolve()
-    try:
-        resolved.relative_to(ws)
-    except ValueError:
-        return None
-    return resolved
+
+    allowed = [ws]
+    if extra_paths:
+        for ep in extra_paths:
+            allowed.append(Path(ep).expanduser().resolve())
+
+    for base in allowed:
+        try:
+            resolved.relative_to(base)
+            return resolved
+        except ValueError:
+            continue
+    return None
 
 
 class ToolResult(BaseModel):
@@ -35,6 +46,9 @@ class ToolContext(BaseModel):
     session_id: str = "default"
     agent: str = "build"
     file_mtimes: dict[str, float] = Field(default_factory=dict)
+    mcp_manager: Any | None = None
+    lsp_manager: Any | None = None
+    sandbox_extra_paths: list[str] = Field(default_factory=list)
 
     model_config = {"arbitrary_types_allowed": True}
 
@@ -68,4 +82,5 @@ def model_to_json_schema(model: type[BaseModel]) -> dict[str, Any]:
         "type": "object",
         "properties": schema.get("properties", {}),
         "required": schema.get("required", []),
+        "additionalProperties": False,
     }

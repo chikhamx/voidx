@@ -10,6 +10,14 @@ import pytest
 from voidx.permission.wildcard import match
 from voidx.permission.evaluate import evaluate, from_config, merge
 from voidx.permission.schema import Rule, Ruleset
+from voidx.permission.engine import (
+    PermissionCapability,
+    PermissionContext,
+    authorize_tool_call,
+    classify_tool_call,
+)
+from voidx.permission.service import PermissionService
+from voidx.permission.sandbox import check_sandbox_bash
 
 
 class TestWildcard:
@@ -113,3 +121,157 @@ class TestMerge:
         merged = merge(defaults, agent)
         assert evaluate("read", "x.py", merged).action == "allow"
         assert evaluate("write", "y.py", merged).action == "deny"
+
+
+def test_permission_service_status_label_tracks_session_overrides():
+    service = PermissionService(sandbox_mode="workspace-write")
+
+    assert service.status_label() == "Default"
+
+    service.allow_silent("bash")
+    service.deny_silent("write")
+
+    assert service.status_label() == "Default +1 -1"
+
+
+def test_permission_service_splits_readonly_and_implement_agents():
+    service = PermissionService()
+
+    assert service.decide("agent", "explore") == "allow"
+    assert service.decide("agent", "implement") == "ask"
+
+
+def test_permission_service_session_wildcards_apply_to_mcp_tools():
+    service = PermissionService()
+    tool = "mcp__web-reader__read_url_12345678"
+
+    assert service.decide(tool) == "ask"
+
+    service.allow_silent("mcp__web-reader__*")
+    assert service.decide(tool) == "allow"
+
+    service.deny_silent("mcp/web-reader/*")
+    assert service.decide(tool) == "deny"
+
+
+def test_permission_service_allows_read_only_lsp_tools_but_asks_for_format():
+    service = PermissionService()
+
+    assert service.decide("lsp_diagnostics") == "allow"
+    assert service.decide("lsp_symbols") == "allow"
+    assert service.decide("lsp_definition") == "allow"
+    assert service.decide("lsp_references") == "allow"
+    assert service.decide("lsp_format", "src/app.py") == "ask"
+
+
+def test_permission_service_mode_presets_update_sandbox_and_approval():
+    service = PermissionService()
+
+    service.set_permission_mode("auto-review")
+    assert service.permission_mode == "auto-review"
+    assert service.sandbox_mode == "workspace-write"
+    assert service.approval_policy == "untrusted"
+    assert service.approval_reviewer == "auto_review"
+    assert service.status_label() == "Auto review"
+
+    service.set_permission_mode("read-only")
+    assert service.sandbox_mode == "read-only"
+    assert service.approval_policy == "untrusted"
+    assert service.approval_reviewer == "user"
+
+    service.set_permission_mode("accept-edits")
+    assert service.sandbox_mode == "workspace-write"
+    assert service.decide("edit", "src/app.py") == "allow"
+    assert service.decide("bash", "python -m pytest") == "ask"
+
+    service.set_permission_mode("full-access")
+    assert service.sandbox_mode == "danger-full-access"
+    assert service.approval_policy == "never"
+    assert service.decide("bash", "python -m pytest") == "allow"
+    assert service.status_label() == "Full access"
+
+
+def test_permission_engine_classifies_basic_capabilities():
+    assert classify_tool_call({"name": "read", "args": {"file_path": "x.py"}}).capability == PermissionCapability.READ_TOOLS
+    assert classify_tool_call({"name": "edit", "args": {"file_path": "x.py"}}).capability == PermissionCapability.FILE_WRITE
+    assert classify_tool_call({"name": "bash", "args": {"command": "ls"}}).capability == PermissionCapability.BASH_READ
+    assert classify_tool_call({"name": "bash", "args": {"command": "python -m pytest"}}).capability == PermissionCapability.BASH_WRITE
+    assert classify_tool_call({"name": "agent", "args": {"agent": "explore"}}).capability == PermissionCapability.AGENT_READONLY
+    assert classify_tool_call({"name": "agent", "args": {"agent": "implement"}}).capability == PermissionCapability.AGENT_IMPLEMENT
+
+
+def test_permission_engine_default_strategy_and_plan_overlay(tmp_path):
+    context = PermissionContext(workspace=str(tmp_path))
+
+    assert authorize_tool_call({"name": "read", "args": {"file_path": "x.py"}}, context).action == "allow"
+    assert authorize_tool_call({"name": "bash", "args": {"command": "ls"}}, context).action == "allow"
+    assert authorize_tool_call({"name": "edit", "args": {"file_path": "x.py"}}, context).action == "ask"
+    assert authorize_tool_call({"name": "agent", "args": {"agent": "implement"}}, context).action == "ask"
+
+    plan = PermissionContext(workspace=str(tmp_path), interaction_mode="plan")
+    safe_bash = authorize_tool_call({"name": "bash", "args": {"command": "ls"}}, plan)
+    unsafe_bash = authorize_tool_call({"name": "bash", "args": {"command": "python -m pytest"}}, plan)
+    edit = authorize_tool_call({"name": "edit", "args": {"file_path": "x.py"}}, plan)
+    implement = authorize_tool_call({"name": "agent", "args": {"agent": "implement"}}, plan)
+
+    assert safe_bash.action == "allow"
+    assert unsafe_bash.action == "deny"
+    assert edit.action == "deny"
+    assert implement.action == "deny"
+
+
+def test_permission_engine_policy_presets(tmp_path):
+    accept_edits = PermissionContext(
+        workspace=str(tmp_path),
+        permission_mode="accept-edits",
+    )
+    full_access = PermissionContext(
+        workspace=str(tmp_path),
+        sandbox_mode="danger-full-access",
+        approval_policy="never",
+    )
+    on_failure = PermissionContext(
+        workspace=str(tmp_path),
+        approval_policy="on-failure",
+    )
+
+    assert authorize_tool_call({"name": "edit", "args": {"file_path": "x.py"}}, accept_edits).action == "allow"
+    assert authorize_tool_call({"name": "bash", "args": {"command": "python -m pytest"}}, accept_edits).action == "ask"
+    assert authorize_tool_call({"name": "bash", "args": {"command": "python -m pytest"}}, full_access).action == "allow"
+
+    edit = authorize_tool_call({"name": "edit", "args": {"file_path": "x.py"}}, on_failure)
+    bash = authorize_tool_call({"name": "bash", "args": {"command": "python -m pytest"}}, on_failure)
+
+    assert edit.action == "allow"
+    assert edit.failure_check is True
+    assert bash.action == "ask"
+
+
+def test_permission_engine_read_only_sandbox_allows_read_bash_but_blocks_writes(tmp_path):
+    context = PermissionContext(workspace=str(tmp_path), sandbox_mode="read-only")
+
+    assert authorize_tool_call({"name": "bash", "args": {"command": "ls"}}, context).action == "allow"
+    assert authorize_tool_call({"name": "bash", "args": {"command": "python -m pytest"}}, context).action == "deny"
+    assert authorize_tool_call({"name": "edit", "args": {"file_path": "x.py"}}, context).action == "deny"
+
+
+def test_sandbox_bash_tracks_cd_before_relative_write(tmp_path):
+    workspace = str(tmp_path / "workspace")
+    outside = tmp_path / "outside"
+    Path(workspace).mkdir()
+    outside.mkdir()
+
+    reason = check_sandbox_bash(f"cd {outside} && touch generated.txt", workspace, [])
+
+    assert reason is not None
+    assert "outside the allowed workspace" in reason
+
+
+def test_sandbox_bash_blocks_git_push_even_with_extra_paths(tmp_path):
+    workspace = str(tmp_path / "workspace")
+    Path(workspace).mkdir()
+
+    reason = check_sandbox_bash("git push origin main", workspace, [str(tmp_path / "cache")])
+
+    assert reason is not None
+    assert "git push writes outside" in reason

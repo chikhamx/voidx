@@ -7,8 +7,10 @@ from types import SimpleNamespace
 sys.path.insert(0, "src")
 
 from prompt_toolkit.data_structures import Point
+from prompt_toolkit.clipboard import InMemoryClipboard
 from prompt_toolkit.keys import Keys
 from prompt_toolkit.mouse_events import MouseButton, MouseEvent, MouseEventType
+from rich.cells import cell_len
 from voidx.ui.app import McpServerStatus, PromptToolkitTui, UiStatus, _STYLE, _continuation_prefix
 from voidx.ui.commands import COMMANDS
 from voidx.ui.console import StreamingRenderer
@@ -16,8 +18,8 @@ from voidx.ui.dock import ANSI_LINE_PREFIX, dock, set_dock, BottomInputDock
 from voidx.ui.capture import CaptureConsole
 from voidx.ui.tree import OutputTree
 from voidx.agent.slash import SlashHandler
-from voidx.agent.slash_parts.runtime import ui as slash_ui
-from voidx.ui.app_parts.clipboard_image import ClipboardImageResult
+from voidx.agent.slash_components.runtime import ui as slash_ui
+from voidx.ui.app_components.clipboard_image import ClipboardImageResult
 from rich.console import Console
 
 @pytest.fixture(autouse=True)
@@ -32,6 +34,10 @@ _ANSI_RE = re.compile(r"\x1b\[[0-9;?]*[ -/]*[@-~]")
 
 def _plain(line: str) -> str:
     return _ANSI_RE.sub("", line.replace(ANSI_LINE_PREFIX, ""))
+
+
+def _fragments_text(fragments) -> str:
+    return "".join(fragment[1] for fragment in fragments)
 
 
 def _scrollbar_button_rows(fragments: list[tuple[str, str]]) -> list[int]:
@@ -52,16 +58,22 @@ def _tui(
     mcp_config_path: str = "",
     commands: list[tuple[str, str]] | None = None,
     workspace: str = "/tmp/workspace",
+    provider: str = "provider",
+    model: str = "model",
+    reasoning_effort: str = "xhigh",
+    permission_label=None,
 ) -> PromptToolkitTui:
     return PromptToolkitTui(
         UiStatus(
-            provider="provider",
-            model="model",
+            provider=provider,
+            model=model,
             workspace=workspace,
             session_title="session",
             context_limit=128_000,
             debug=lambda: True,
             plan_mode=lambda: False,
+            reasoning_effort=reasoning_effort,
+            permission_label=permission_label or (lambda: "default"),
             mcp_servers=mcp_servers or (lambda: []),
             mcp_config_path=mcp_config_path,
         ),
@@ -109,13 +121,248 @@ def test_typing_after_ctrl_c_resets_exit_prompt():
     assert not tui._ctrl_c_armed
 
 
+def test_input_supports_shift_enter_newline_binding():
+    tui = _tui()
+    bindings = {tuple(binding.keys) for binding in tui.app.key_bindings.bindings}
+
+    assert (Keys.Escape, Keys.ControlM) in bindings
+
+    tui.input.text = "hello"
+    tui.input.buffer.cursor_position = len(tui.input.text)
+
+    tui._insert_input_newline()
+
+    assert tui.input.text == "hello\n"
+
+
+def test_input_shift_arrows_extend_selection():
+    tui = _tui()
+    bindings = {tuple(binding.keys) for binding in tui.app.key_bindings.bindings}
+
+    assert (Keys.ShiftLeft,) in bindings
+    assert (Keys.ShiftRight,) in bindings
+
+    tui.input.text = "abc"
+    tui.input.buffer.cursor_position = len(tui.input.text)
+
+    tui._extend_input_selection(-1)
+    assert tui._input_selection_text() == "c"
+
+    tui._extend_input_selection(-1)
+    assert tui._input_selection_text() == "bc"
+
+    tui._extend_input_selection(1)
+    assert tui._input_selection_text() == "c"
+
+
+def test_input_history_uses_up_and_down_without_panels():
+    tui = _tui()
+
+    tui.input.text = "first"
+    tui._submit_input()
+    tui.input.text = "second"
+    tui._submit_input()
+    tui.input.text = "draft"
+
+    tui._previous_input_history()
+    assert tui.input.text == "second"
+
+    tui._previous_input_history()
+    assert tui.input.text == "first"
+
+    tui._next_input_history()
+    assert tui.input.text == "second"
+
+    tui._next_input_history()
+    assert tui.input.text == "draft"
+
+
+def test_copy_selection_uses_prompt_toolkit_and_system_clipboard(monkeypatch):
+    tui = _tui()
+    clipboard = InMemoryClipboard()
+    event = SimpleNamespace(app=SimpleNamespace(clipboard=clipboard))
+    calls: list[str] = []
+
+    def fake_run(command, *, input, text, timeout, check):
+        calls.append(input)
+        return SimpleNamespace(returncode=0)
+
+    monkeypatch.setattr("voidx.ui.app.subprocess.run", fake_run)
+    monkeypatch.setattr("voidx.ui.app.sys.platform", "darwin")
+    tui.input.text = "abc"
+    tui.input.buffer.cursor_position = len(tui.input.text)
+    tui._extend_input_selection(-1)
+
+    assert tui._copy_input_selection(event) is True
+    assert clipboard.get_data().text == "c"
+    assert calls == ["c"]
+    assert tui._notice == "Copied selection"
+
+
+def test_ctrl_c_with_input_selection_copies_instead_of_exiting(monkeypatch):
+    tui = _tui()
+    monkeypatch.setattr("voidx.ui.app.sys.platform", "linux")
+    tui.input.text = "abc"
+    tui.input.buffer.cursor_position = len(tui.input.text)
+    tui._extend_input_selection(-1)
+
+    assert tui._copy_input_selection() is True
+
+    assert tui.input.text == "abc"
+    assert tui._queue.empty()
+    assert not tui._ctrl_c_armed
+
+
+@pytest.mark.asyncio
+async def test_ctrl_c_while_busy_cancels_submission_and_restores_input():
+    tui = _tui()
+    started = asyncio.Event()
+    cancelled = asyncio.Event()
+
+    async def on_submit(text: str) -> bool:
+        assert text == "edit this"
+        started.set()
+        try:
+            await asyncio.Future()
+        except asyncio.CancelledError:
+            cancelled.set()
+            return True
+
+    consumer = asyncio.create_task(tui._consume(on_submit))
+    try:
+        tui._queue.put_nowait("edit this")
+        await started.wait()
+
+        tui._handle_ctrl_c()
+        await asyncio.wait_for(cancelled.wait(), timeout=1)
+
+        assert tui.input.text == "edit this"
+        assert tui.input.buffer.cursor_position == len("edit this")
+        assert "Restored last message" in tui._notice
+    finally:
+        consumer.cancel()
+        try:
+            await consumer
+        except asyncio.CancelledError:
+            pass
+
+
 def test_footer_fits_default_width():
     tui = _tui()
 
     footer = tui._render_footer()
     text = "".join(part[1] for part in footer)
 
+    assert len(text) <= tui._input_panel_width()
+
+
+def test_bottom_bar_reserves_status_width():
+    tui = _tui()
+    tui._main_width = lambda: 120
+
+    assert tui._input_panel_width() == 71
+    assert tui._detail_status_width() == 48
+    assert tui._input_panel_width() + 1 + tui._detail_status_width() == 120
+
+
+def test_footer_omits_default_hint_and_context_status():
+    tui = _tui()
+    tui._main_width = lambda: 160
+    tui.status.usage_stats.update_context(12_345, limit=128_000)
+    tui.status.usage_stats.last_input_tokens = 12_345
+    tui.status.usage_stats.last_output_tokens = 678
+
+    footer = tui._render_footer()
+    text = "".join(part[1] for part in footer)
+
+    assert "wheel/click" not in text
+    assert "ctx " not in text
+    assert "in 12.3k" not in text
+    assert "out 678" not in text
+
+
+def test_footer_renders_model_status_segments():
+    tui = _tui(
+        provider="mimo",
+        model="mimo-v2.5",
+        reasoning_effort="high",
+        permission_label=lambda: "custom +2 -1",
+    )
+
+    footer = tui._render_footer()
+    text = "".join(part[1] for part in footer)
+
     assert len(text) <= tui._width()
+    assert "custom +2 -1" in text
+    assert "permission" not in text
+    assert "mimo/mimo-v2.5" in text
+    assert "high" in text
+    assert "busy" not in text
+    assert "高" not in text
+    styles = [fragment[0] for fragment in footer]
+    assert "class:footer.permission" in styles
+    assert "class:footer.model" in styles
+    assert "class:footer.reasoning" in styles
+
+
+def test_footer_permission_segment_click_opens_permissions():
+    tui = _tui(permission_label=lambda: "default")
+    footer = tui._render_footer()
+    fragment = _clickable_footer_fragment(footer, "default")
+
+    fragment[2](_mouse_event(MouseEventType.MOUSE_UP))
+
+    assert tui._queue.get_nowait() == "/permission-mode"
+    assert tui.consume_quiet_command("/permission-mode") is True
+    assert tui._choice_anchor == "permission"
+
+
+def test_footer_model_segment_click_opens_model_picker():
+    tui = _tui(provider="mimo", model="mimo-v2.5", reasoning_effort="high")
+    footer = tui._render_footer()
+    fragment = _clickable_footer_fragment(footer, "mimo/mimo-v2.5")
+
+    fragment[2](_mouse_event(MouseEventType.MOUSE_UP))
+
+    assert tui._queue.get_nowait() == "/model"
+    assert tui.consume_quiet_command("/model") is True
+    assert tui._choice_anchor == "model"
+
+
+def test_footer_reasoning_segment_click_opens_reasoning_picker():
+    tui = _tui(provider="mimo", model="mimo-v2.5", reasoning_effort="high")
+    footer = tui._render_footer()
+    fragment = _clickable_footer_fragment(footer, "high")
+
+    fragment[2](_mouse_event(MouseEventType.MOUSE_UP))
+
+    assert tui._queue.get_nowait() == "/model reasoning"
+    assert tui.consume_quiet_command("/model reasoning") is True
+    assert tui._choice_anchor == "reasoning"
+
+
+def test_footer_click_ignores_mouse_down():
+    tui = _tui()
+    footer = tui._render_footer()
+    fragment = _clickable_footer_fragment(footer, "default")
+
+    fragment[2](_mouse_event(MouseEventType.MOUSE_DOWN))
+
+    assert tui._queue.empty()
+
+
+def test_footer_click_closes_matching_choice_popup():
+    tui = _tui()
+    tui._active_choice = [("Default", "default", "")]
+    tui._choice_anchor = "permission"
+    footer = tui._render_footer()
+    fragment = _clickable_footer_fragment(footer, "default")
+
+    fragment[2](_mouse_event(MouseEventType.MOUSE_UP))
+
+    assert tui._active_choice is None
+    assert tui._choice_queue.get_nowait() is None
+    assert tui._queue.empty()
 
 
 def test_choice_footer_fits_default_width():
@@ -131,6 +378,66 @@ def test_choice_footer_fits_default_width():
     text = "".join(part[1] for part in footer)
 
     assert len(text) <= tui._width()
+    assert "default" in text
+    assert "permission" not in text
+
+
+def test_compact_choice_overlay_does_not_change_body_height():
+    tui = _tui()
+    base_height = tui._body_height()
+    tui._active_choice = [
+        ("low", "0", ""),
+        ("medium", "1", ""),
+        ("high", "2", ""),
+    ]
+
+    assert tui._body_height() == base_height
+
+
+def test_permission_choice_overlay_does_not_change_body_height():
+    tui = _tui()
+    base_height = tui._body_height()
+    tui._active_choice = [
+        ("Yes, always", "a", ""),
+        ("Yes", "y", ""),
+        ("No", "n", ""),
+    ]
+    tui._choice_details = [{"name": "bash", "pattern": "npm test", "args": {"command": "npm test"}}]
+
+    assert tui._body_height() == base_height
+
+
+def test_compact_choice_panel_is_transparent_and_anchored_above_footer():
+    tui = _tui(provider="deepseek", model="deepseek-v4-pro", reasoning_effort="high")
+    tui._main_width = lambda: 150
+    tui._choice_prompt = "Select effort"
+    tui._active_choice = [
+        ("off", "0", ""),
+        ("low", "1", ""),
+        ("medium", "2", ""),
+        ("high", "3", ""),
+    ]
+    tui._choice_anchor = "reasoning"
+
+    panel = tui._render_compact_choice_panel()
+    text = "".join(fragment[1] for fragment in panel)
+    attrs = _STYLE.get_attrs_for_style_str("class:choice.pad")
+    choice_float = tui.app.layout.container.floats[0]
+    first_line = text.splitlines()[0]
+
+    assert "high" in text
+    assert "高" not in text
+    assert attrs.bgcolor == "000000"
+    assert choice_float.left >= 0
+    assert not first_line.startswith("          ")
+
+
+def test_choice_overlay_float_stays_near_footer():
+    tui = _tui()
+    choice_float = tui.app.layout.container.floats[0]
+
+    assert choice_float.bottom == 2
+    assert choice_float.transparent()
 
 
 def test_choice_panel_keeps_selected_row_visible():
@@ -139,12 +446,91 @@ def test_choice_panel_keeps_selected_row_visible():
     tui._active_choice = [(f"provider{index}", str(index), "") for index in range(12)]
     tui._choice_selected = 10
 
-    panel = "".join(text for _, text in tui._render_choice_panel())
+    panel = _fragments_text(tui._render_choice_panel())
 
     assert "provider0" not in panel
-    assert "❯ provider10" in panel
+    assert "provider10" in panel
+    selected_rows = [
+        fragment[1] for fragment in tui._render_choice_panel()
+        if "choice.selected" in fragment[0]
+    ]
+    assert any("provider10" in row for row in selected_rows)
     assert "... 4 above" in panel
-    assert "╰" in panel
+
+
+def test_compact_choice_panel_keeps_reasoning_effort_labels_in_english():
+    tui = _tui()
+    tui._choice_prompt = "Select effort"
+    tui._active_choice = [
+        ("off", "0", ""),
+        ("low", "1", ""),
+        ("medium", "2", ""),
+        ("high", "3", ""),
+        ("xhigh", "4", ""),
+    ]
+    tui._choice_selected = 4
+
+    panel = _fragments_text(tui._render_choice_panel())
+
+    assert "off" in panel
+    assert "low" in panel
+    assert "medium" in panel
+    assert "high" in panel
+    assert "xhigh" in panel
+    assert "超高" not in panel
+
+
+def test_compact_choice_panel_height_matches_visible_rows():
+    tui = _tui()
+    tui._choice_prompt = "Select effort"
+    tui._active_choice = [
+        ("off", "0", ""),
+        ("low", "1", ""),
+        ("medium", "2", ""),
+        ("high", "3", ""),
+        ("xhigh", "4", ""),
+    ]
+
+    assert tui._choice_panel_height() == 5
+
+
+def test_compact_choice_panel_mouse_click_selects_item():
+    tui = _tui()
+    tui._choice_prompt = "Select effort"
+    tui._active_choice = [
+        ("off", "0", ""),
+        ("low", "1", ""),
+        ("medium", "2", ""),
+        ("high", "3", ""),
+        ("xhigh", "4", ""),
+    ]
+    footer = tui._render_compact_choice_panel()
+    fragment = _clickable_footer_fragment(footer, "xhigh")
+
+    fragment[2](_mouse_event(MouseEventType.MOUSE_UP))
+
+    assert tui._choice_queue.get_nowait() == "4"
+    assert tui._active_choice is None
+
+
+def test_choice_panel_supports_keyboard_selection():
+    tui = _tui()
+    bindings = {tuple(binding.keys) for binding in tui.app.key_bindings.bindings}
+    tui._active_choice = [
+        ("off", "0", ""),
+        ("low", "1", ""),
+        ("medium", "2", ""),
+    ]
+
+    assert (Keys.Up,) in bindings
+    assert (Keys.Down,) in bindings
+    assert (Keys.ControlM,) in bindings
+
+    tui._move_choice_selection(1)
+    tui._submit_choice_selection()
+
+    assert tui._choice_queue.get_nowait() == "1"
+    assert tui._active_choice is None
 
 
 def test_input_area_matches_body_black_background():
@@ -156,13 +542,100 @@ def test_input_area_matches_body_black_background():
     assert input_attrs.color == body_attrs.color == "ECEFF4"
 
 
-def test_input_area_defaults_to_two_rows():
+def test_input_area_defaults_to_three_rows():
     tui = _tui()
     height = tui.input.window.height
 
-    assert height.min == 2
-    assert height.preferred == 2
-    assert height.max == 2
+    assert height.min == 3
+    assert height.preferred == 3
+    assert height.max == 3
+
+
+def test_detail_status_panel_renders_usage_and_modes():
+    tui = _tui(provider="deepseek", model="deepseek-v4-pro", reasoning_effort="high")
+    tui._main_width = lambda: 160
+    tui.status.usage_stats.update_context(12_345, limit=1_000_000)
+    tui.status.usage_stats.last_input_tokens = 12_345
+    tui.status.usage_stats.last_output_tokens = 678
+    tui.status.usage_stats.total_input_tokens = 12_345
+    tui.status.usage_stats.total_output_tokens = 678
+    tui.status.usage_stats.total_cache_read_tokens = 6_173
+    tui.status.usage_stats.total_cache_write_tokens = 1_000
+    tui.status.usage_stats.total_calls = 1
+
+    panel = _fragments_text(tui._render_detail_status_panel())
+
+    assert "ctx 12.3k/1m" in panel
+    assert "cache 50%" in panel
+    assert "calls 1" in panel
+    assert "in 12.3k" in panel
+    assert "out 678" in panel
+    assert "s:w-write" in panel
+    assert "a:on-fail" in panel
+    assert "state:idle" in panel
+    assert "mode:auto" in panel
+    assert "plan:off" in panel
+    assert "deepseek-v4-pro" not in panel
+    assert "reasoning" not in panel
+
+
+def test_detail_status_panel_renders_goal_state():
+    tui = _tui()
+    tui._main_width = lambda: 160
+    tui.status.goal_label = lambda: "优化 markdown 渲染截断"
+    tui.status.goal_phase = lambda: "design"
+    tui.status.goal_status = lambda: "active"
+    tui.status.goal_turn_count = lambda: 2
+    tui.status.goal_awaiting_approval = lambda: True
+
+    panel = _fragments_text(tui._render_detail_status_panel())
+
+    assert "goal:active/design" in panel
+    assert "turns 2" in panel
+    assert "approval:waiting" in panel
+    assert "优化 markdown 渲染截断" in panel
+
+
+def test_busy_state_renders_only_in_detail_status_panel():
+    tui = _tui(provider="mimo", model="mimo-v2.5-pro", reasoning_effort="xhigh")
+    tui._main_width = lambda: 160
+    tui._busy = True
+
+    footer = _fragments_text(tui._render_footer())
+    detail = _fragments_text(tui._render_detail_status_panel())
+
+    assert "busy" not in footer
+    assert "state:busy" in detail
+
+
+def test_detail_status_panel_uses_body_background():
+    attrs = _STYLE.get_attrs_for_style_str("class:status")
+
+    assert attrs.bgcolor == "000000"
+
+
+def test_panel_backgrounds_are_black_or_transparent():
+    black_styles = [
+        "class:command",
+        "class:command.selected",
+        "class:permission",
+        "class:scrollbar.background",
+        "class:choice.pad",
+        "class:choice",
+        "class:choice.selected",
+    ]
+    transparent_styles = [
+    ]
+
+    for style in black_styles:
+        assert _STYLE.get_attrs_for_style_str(style).bgcolor == "000000"
+    for style in transparent_styles:
+        assert _STYLE.get_attrs_for_style_str(style).bgcolor == ""
+    assert _STYLE.get_attrs_for_style_str("class:permission.choice.selected").bgcolor in {"", "000000"}
+    assert _STYLE.get_attrs_for_style_str("class:command-output").bgcolor == "000000"
+    assert _STYLE.get_attrs_for_style_str("class:footer.permission").bgcolor == "000000"
+    assert _STYLE.get_attrs_for_style_str("class:footer.model").bgcolor == "000000"
+    assert _STYLE.get_attrs_for_style_str("class:footer.reasoning").bgcolor == "000000"
 
 
 def test_slash_command_panel_renders_without_polluting_transcript():
@@ -179,8 +652,8 @@ def test_slash_command_panel_renders_without_polluting_transcript():
         footer = "".join(text for _, text in tui._render_footer())
 
         assert "Slash commands" in panel
-        assert "/mcp" in panel
-        assert "Manage MCP servers" in panel
+        assert "/allow" in panel
+        assert "Allow a tool for this session" in panel
         assert "Slash commands" not in body
         assert "↑/↓ select" in footer
     finally:
@@ -280,7 +753,7 @@ def test_mcp_command_panel_renders_server_status_like_claude():
             McpServerStatus(name="zai-mcp-server", status="connected", tool_count=8, source="User MCPs"),
         ],
     )
-    tui.input.text = "/mcp"
+    tui.input.text = "/mcp "
 
     panel = "".join(text for _, text in tui._render_command_panel())
 
@@ -336,18 +809,57 @@ def test_command_output_panel_renders_without_polluting_transcript():
         panel = "".join(text for _, text in tui._render_command_output_panel())
         body = "".join(text for _, text in tui._render_body())
 
-        assert "Command Output" in panel
+        assert "Command Output" not in panel
         assert "/help" in panel
         assert "/help" not in body
-        assert tui._command_output_bottom_active()
+        assert tui._command_output_active()
+        assert not tui._command_output_bottom_active()
 
         tui._width = lambda: 140
 
-        assert tui._command_output_wide_active()
-        assert tui._main_width() < tui._width()
+        assert not tui._command_output_wide_active()
+        assert tui._main_width() == tui._width()
     finally:
         dock.deactivate()
         dock.reset()
+
+
+def test_command_output_panel_uses_main_background():
+    attrs = _STYLE.get_attrs_for_style_str("class:command-output")
+
+    assert attrs.bgcolor == "000000"
+
+
+def test_transient_output_uses_command_output_overlay():
+    tui = _tui()
+
+    tui.show_transient_output("1 tools allowed for this session", title="Permission")
+
+    panel = "".join(text for _, text in tui._render_command_output_panel())
+
+    assert "1 tools allowed for this session" in panel
+    assert tui._command_output_title == "Permission"
+    assert tui._command_output_active()
+
+
+def test_review_file_click_uses_configured_code_ide(tmp_path, monkeypatch):
+    calls = []
+
+    def fake_open(file_path, *, line=1, settings=None, preferred=None):
+        calls.append((file_path, line, settings, preferred))
+        return True
+
+    monkeypatch.setattr("voidx.ui.app_components.rendering.open_file_in_code_ide", fake_open)
+    tui = _tui(workspace=str(tmp_path))
+    tui.status.code_ide = lambda: "ghostty"
+    tui._review_active = True
+
+    handler = tui._file_click_handler("src/app.py")
+    handler(_mouse_event(MouseEventType.MOUSE_UP))
+
+    assert calls == [(tmp_path / "src/app.py", 1, None, "ghostty")]
+    assert tui._notice == "Opened src/app.py"
+    assert tui._review_active is False
 
 
 @pytest.mark.asyncio
@@ -377,7 +889,23 @@ async def test_slash_command_output_capture_avoids_transcript():
         dock.reset()
 
 
-def test_permission_choice_panel_renders_tool_details_without_body_text():
+@pytest.mark.asyncio
+async def test_command_output_overlay_auto_clears_after_ttl():
+    tui = _tui()
+    tui.COMMAND_OUTPUT_TTL_SECONDS = 0.01
+
+    tui.begin_command_output("/help")
+    tui.append_command_output("Commands")
+
+    assert tui._command_output_active()
+
+    await asyncio.sleep(0.03)
+
+    assert not tui._command_output_active()
+    assert tui._command_output_lines == []
+
+
+def test_permission_choice_popup_renders_tool_details_without_body_text():
     dock.deactivate()
     dock.reset()
     dock.begin_capture()
@@ -398,14 +926,16 @@ def test_permission_choice_panel_renders_tool_details_without_body_text():
             }
         ]
 
-        panel = "".join(text for _, text in tui._render_choice_panel())
+        panel = _fragments_text(tui._render_compact_choice_panel())
         body = "".join(text for _, text in tui._render_body())
+        attrs = _STYLE.get_attrs_for_style_str("class:choice.pad")
 
         assert "Allow tool use?" in panel
         assert "bash" in panel
         assert "npm test" in panel
         assert "Yes, and don't ask again this session" in panel
         assert "npm test" not in body
+        assert attrs.bgcolor == "000000"
     finally:
         dock.deactivate()
         dock.reset()
@@ -413,6 +943,13 @@ def test_permission_choice_panel_renders_tool_details_without_body_text():
 
 def _mouse_event(event_type: MouseEventType, x: int = 0, y: int = 0) -> MouseEvent:
     return MouseEvent(Point(x=x, y=y), event_type, MouseButton.NONE, frozenset())
+
+
+def _clickable_footer_fragment(footer, text: str):
+    for fragment in footer:
+        if len(fragment) >= 3 and text in fragment[1]:
+            return fragment
+    raise AssertionError(f"Clickable footer fragment not found: {text!r}")
 
 
 def test_prompt_tui_routes_mouse_events_inside_app():
@@ -486,18 +1023,53 @@ def test_transcript_click_toggles_collapsed_tool_result():
         tui = _tui()
         tui._render_body()
 
-        row = next(i for i, line in enumerate(tui._visible_body_lines) if "first" in _plain(line))
+        row = next(i for i, line in enumerate(tui._visible_body_lines) if "Reading" in _plain(line))
         tui._toggle_body_node_at(row)
 
         assert result is not None
-        assert result.collapsed is False
+        assert tool.collapsed is False
         rendered = "\n".join(_plain(line) for line in dock.tree.render(100))
-        assert "second" in rendered
+        assert "first" in rendered
 
         tui._render_body()
         tui._toggle_body_node_at(row)
 
-        assert result.collapsed is True
+        assert tool.collapsed is True
+    finally:
+        dock.deactivate()
+        dock.reset()
+
+
+def test_transcript_click_hitbox_accounts_for_wide_wrapped_lines():
+    dock.deactivate()
+    dock.reset()
+    dock.begin_capture()
+    try:
+        wide_line = "你好" * 8
+        dock.append_message(wide_line)
+        thought = dock.append_thought("hidden reasoning", elapsed=6)
+        assert thought is not None
+        assert thought.collapsed is True
+
+        tui = _tui()
+        tui._main_width = lambda: 21
+        tui._render_body()
+
+        width = max(tui._main_width() - 1, 20)
+        logical_thought_row = next(
+            i for i, line in enumerate(tui._visible_body_lines)
+            if "Thinking for 6s" in _plain(line)
+        )
+        visual_thought_row = sum(
+            max(1, (cell_len(_plain(line)) + width - 1) // width)
+            for line in tui._visible_body_lines[:logical_thought_row]
+        )
+
+        tui.body_control.mouse_handler(
+            _mouse_event(MouseEventType.MOUSE_UP, x=0, y=visual_thought_row)
+        )
+
+        assert thought.collapsed is False
     finally:
         dock.deactivate()
         dock.reset()
@@ -513,7 +1085,7 @@ def test_transcript_has_no_keyboard_scroll_bindings():
 
 def test_prompt_tui_wraps_transcript_lines():
     tui = _tui()
-    body = tui.app.layout.container.children[0].children[0]
+    body = tui.app.layout.container.content.children[0]
 
     assert body.wrap_lines() is True
 
@@ -709,6 +1281,7 @@ def test_tool_result_renders_as_compact_block_under_tool():
         tool = dock.start_tool("Reading", "")
         dock.finish_tool_node(tool, "read", 0.0, True)
         dock.append_tool_result("first\nsecond", parent=tool, collapsed=False)
+        dock.tree.expand(tool.id)
 
         lines = [_plain(line) for line in dock.tree.render(100)]
         tool_index = next(i for i, line in enumerate(lines) if "Reading" in line)
@@ -737,6 +1310,7 @@ def test_file_change_renders_claude_style_update_node():
 """,
             parent=tool,
         )
+        dock.tree.expand(tool.id)
 
         rendered = "\n".join(_plain(line) for line in dock.tree.render(120))
 
@@ -752,7 +1326,7 @@ def test_file_change_renders_claude_style_update_node():
         dock.reset()
 
 
-def test_dock_tree_renders_nested_connectors():
+def test_dock_tree_renders_assistant_tools_without_nested_connectors():
     dock.deactivate()
     dock.reset()
     dock.begin_capture()
@@ -761,12 +1335,69 @@ def test_dock_tree_renders_nested_connectors():
         tool = dock.start_tool("Reading", "")
         dock.finish_tool_node(tool, "read", 0.0, True)
         dock.append_tool_result("first\nsecond", parent=tool, collapsed=False)
+        dock.tree.expand(tool.id)
 
         rendered = "\n".join(_plain(line) for line in dock.tree.render(100))
 
-        assert "└─" in rendered
+        assert "├─" not in rendered
+        assert "└─" not in rendered
         assert "Reading" in rendered
         assert "first" in rendered
+    finally:
+        dock.deactivate()
+        dock.reset()
+
+
+def test_tool_call_defaults_collapsed_and_hides_result_until_expanded():
+    dock.deactivate()
+    dock.reset()
+    dock.begin_capture()
+    try:
+        tool = dock.start_tool("Reading", 'file_path="x.py"', tool_name="read")
+        dock.finish_tool_node(tool, "read", 0.0, True)
+        result = dock.append_tool_result("first\nsecond", parent=tool)
+
+        collapsed = "\n".join(_plain(line) for line in dock.tree.render(100))
+        assert "Reading" in collapsed
+        assert "first" not in collapsed
+        assert tool.collapsed is True
+        assert result is not None
+        assert result.collapsed is False
+
+        dock.tree.expand(tool.id)
+        expanded = "\n".join(_plain(line) for line in dock.tree.render(100))
+        assert "first" in expanded
+        assert "second" in expanded
+    finally:
+        dock.deactivate()
+        dock.reset()
+
+
+def test_bash_tool_command_renders_as_markdown_only_when_expanded():
+    dock.deactivate()
+    dock.reset()
+    dock.begin_capture()
+    try:
+        tool = dock.start_tool(
+            "Running",
+            'command="echo hi"',
+            tool_name="bash",
+            raw_args={"command": "echo hi\nls -la"},
+        )
+        dock.finish_tool_node(tool, "bash", 0.0, True)
+
+        collapsed = "\n".join(_plain(line) for line in dock.tree.render(100))
+        assert "Running" in collapsed
+        assert "echo hi" not in collapsed
+        assert "command=" not in collapsed
+        assert tool.body_lines
+        assert all(line.startswith(ANSI_LINE_PREFIX) for line in tool.body_lines)
+
+        dock.tree.expand(tool.id)
+        expanded = "\n".join(_plain(line) for line in dock.tree.render(100))
+        assert "echo hi" in expanded
+        assert "ls -la" in expanded
+        assert "```" not in expanded
     finally:
         dock.deactivate()
         dock.reset()
@@ -791,8 +1422,8 @@ def test_dock_tree_connector_only_marks_first_sibling():
         rendered = "\n".join(dock.tree.render(100))
         connector_count = rendered.count("├─") + rendered.count("└─")
 
-        assert "[dim]├─[/dim]" in rendered
-        assert connector_count == 1
+        assert "[dim]├─[/dim]" not in rendered
+        assert connector_count == 0
         assert "│" not in rendered
     finally:
         dock.deactivate()

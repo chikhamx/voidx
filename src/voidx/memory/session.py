@@ -149,6 +149,12 @@ async def touch_session(session_id: str) -> None:
 
 
 async def delete_session(session_id: str) -> None:
+    await _execute_commit("DELETE FROM context_frames WHERE session_id = ?", (session_id,))
+    await _execute_commit("DELETE FROM message_runtime_snapshots WHERE session_id = ?", (session_id,))
+    await _execute_commit("DELETE FROM session_task_runs WHERE session_id = ?", (session_id,))
+    await _execute_commit("DELETE FROM session_runtime_state WHERE session_id = ?", (session_id,))
+    await _execute_commit("DELETE FROM transcript_nodes WHERE session_id = ?", (session_id,))
+    await _execute_commit("DELETE FROM turns WHERE session_id = ?", (session_id,))
     await _execute_commit("DELETE FROM messages WHERE session_id = ?", (session_id,))
     await _execute_commit("DELETE FROM sessions WHERE id = ?", (session_id,))
 
@@ -196,8 +202,52 @@ async def load_messages(session_id: str) -> list[MessageRow]:
 
 async def clear_messages(session_id: str) -> None:
     await _execute_commit(
+        "DELETE FROM context_frames WHERE session_id = ?", (session_id,)
+    )
+    await _execute_commit(
+        "DELETE FROM message_runtime_snapshots WHERE session_id = ?", (session_id,)
+    )
+    await _execute_commit(
+        "DELETE FROM transcript_nodes WHERE session_id = ?", (session_id,)
+    )
+    await _execute_commit(
+        "DELETE FROM turns WHERE session_id = ?", (session_id,)
+    )
+    await _execute_commit(
         "DELETE FROM messages WHERE session_id = ?", (session_id,)
     )
+
+
+async def delete_messages_from(session_id: str, first_message_id: int) -> None:
+    await _execute_commit(
+        "DELETE FROM context_frames WHERE session_id = ? AND user_message_id >= ?",
+        (session_id, first_message_id),
+    )
+    await _execute_commit(
+        "DELETE FROM message_runtime_snapshots WHERE session_id = ? AND message_id >= ?",
+        (session_id, first_message_id),
+    )
+    await _execute_commit(
+        "DELETE FROM messages WHERE session_id = ? AND id >= ?",
+        (session_id, first_message_id),
+    )
+    await touch_session(session_id)
+
+
+async def delete_messages_through(session_id: str, last_message_id: int) -> None:
+    await _execute_commit(
+        "DELETE FROM context_frames WHERE session_id = ? AND user_message_id <= ?",
+        (session_id, last_message_id),
+    )
+    await _execute_commit(
+        "DELETE FROM message_runtime_snapshots WHERE session_id = ? AND message_id <= ?",
+        (session_id, last_message_id),
+    )
+    await _execute_commit(
+        "DELETE FROM messages WHERE session_id = ? AND id <= ?",
+        (session_id, last_message_id),
+    )
+    await touch_session(session_id)
 
 
 async def last_messages(session_id: str, n: int = 20) -> list[MessageRow]:

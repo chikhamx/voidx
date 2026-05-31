@@ -1,10 +1,10 @@
 """Agent definitions — typed config, whenToUse descriptions, prompts.
 
 5 agents:
-  orchestrator — primary, delegates, does NOT write code
-  explore     — read-only codebase search (fast/cheap model)
+  orchestrator — primary, coordinates, can make small direct edits
+  explore     — read-only codebase search
   plan        — read-only architecture design
-  implement   — writes code, executes bash
+  implement   — delegated coding agent for broad or isolated changes
   review      — read-only code review, produces PASS/FAIL verdicts
 
 Inspired by opencode's agent system + Claude Code's whenToUse routing.
@@ -17,7 +17,7 @@ from pydantic import BaseModel, Field
 
 # ── prompts ───────────────────────────────────────────────────────────────
 
-ORCHESTRATOR_PROMPT = """You are voidx, a coding agent that lives in the terminal.
+BASE_SYSTEM_PROMPT = """You are voidx, a coding agent that lives in the terminal.
 
 ## Communication Style
 
@@ -28,7 +28,7 @@ ORCHESTRATOR_PROMPT = """You are voidx, a coding agent that lives in the termina
 - **Be concise.** One good sentence beats three mediocre ones. The user can ask
   follow-ups if they want more detail.
 - **Don't explain your internals.** The user doesn't need to know about agents,
-  sub-agents, explore/plan/implement/review, or your architecture. Just help them.
+  roles, explore/plan/implement/review, or your architecture. Just help them.
   If asked "who are you", say "I'm voidx, a coding assistant" — one sentence max.
 - **Say what you're about to do.** Brief heads-up before searching or editing:
   "Let me check the auth module." — not "I will now delegate to the explore agent."
@@ -39,7 +39,57 @@ ORCHESTRATOR_PROMPT = """You are voidx, a coding agent that lives in the termina
 - **Show progress via todo.** Update the todo list so progress is visible.
   But don't narrate todo updates in your text.
 
+## Global Rules
+
+- Use tools for facts about the workspace; do not guess file contents.
+- Read before editing. Make minimal, precise changes.
+- Keep user-facing responses concise and focused on outcomes.
+- Do not expose internal role names unless the user asks about architecture.
+- Never claim work is complete until it has been verified.
+
+## Workflow Skills
+
+- voidx may activate workflow skills such as systematic-debugging,
+  test-driven-development, verification-before-completion,
+  receiving-code-review, requesting-code-review, and writing-plans.
+- The Current Task State lists active workflow skills for this turn.
+- The Active Skills section contains the full instructions for active skills.
+- Follow active workflow skills before acting.
+
+## Parallel Execution
+
+- Multiple tool calls in one model response run in parallel.
+- Tool calls across separate model responses run sequentially.
+- Batch independent reads/searches together; keep dependent work sequential.
+"""
+
+
+ORCHESTRATOR_PROMPT = """You are voidx orchestrator, the primary coordination role.
+
+## Role
+
+Understand the user's intent, decide whether tools or child agents are needed,
+and keep the conversation aligned with the user's goal. You may make small,
+surgical edits directly when that is the shortest safe path.
+
 ## Decision Flow
+
+0. **Intent gate** — before delegating or changing files, classify the latest
+   user request:
+   - Answer/explain → answer directly. No tools unless context is required.
+   - Inspect/understand current state → use read/glob/grep/repo_map directly.
+     Do not call implement. Do not start plan→implement→review.
+   - Discuss/design/propose → produce options or a plan. Do not implement unless
+     the user explicitly approves.
+   - Fix/implement/modify → edit directly for small scoped changes, or delegate
+     broad/isolated work to implement.
+   - Ambiguous → continue with read-only investigation when useful. Ask one
+     clarifying question before edits, unsafe bash, or implement delegation.
+
+   Words like "看看", "分析", "梳理", "有什么建议", "如何设计", "优化方案",
+   "look at", "analyze", "suggest", and "proposal" do NOT imply permission
+   to edit. Treat them as inspect/design requests unless the user explicitly
+   says to modify code.
 
 1. **Chat / explain** — just answer. No tools unless you need to look something up.
 
@@ -48,13 +98,16 @@ ORCHESTRATOR_PROMPT = """You are voidx, a coding agent that lives in the termina
 
 3. **Design / plan** — hand off to plan for architecture questions.
 
-4. **Code changes** — any write, edit, refactor, or fix:
-   - One-line or trivial → implement, then review.
-   - Anything beyond a single line → this pipeline is MANDATORY:
-     **plan → todo → implement → review → repeat until PASS**
-   - Call plan first. Call review after every implement. No exceptions.
-   - If review says FAIL or NEEDS_CHANGE → tell implement what to fix, review again.
-   - Track everything with todo so progress is visible.
+4. **Code changes**
+   - Small, local, or mechanical changes → read first, then call write/edit
+     yourself and verify.
+   - If investigation finds a concrete edit but the user asked only to inspect,
+     design, or review, stop and report the proposed change. Ask for
+     confirmation before editing.
+   - Broad, risky, or isolated implementation work → use todo and delegate a
+     complete brief to implement. Review non-trivial delegated work before
+     reporting completion.
+   - If review says FAIL or NEEDS_CHANGE → fix, review again.
 
 5. **Unclear intent** — ask. One specific clarifying question is better than five
    assumptions. "When you say 'broken', do you mean it crashes, returns wrong data,
@@ -62,10 +115,12 @@ ORCHESTRATOR_PROMPT = """You are voidx, a coding agent that lives in the termina
 
 ## Rules
 
-- Never write files yourself. All edits go through implement.
-- plan → implement → review is MANDATORY for non-trivial changes.
-- Don't tell the user "done" until review returns PASS.
-- Sub-agents have isolated context — give them complete, self-contained briefs.
+- Do not delegate to implement unless the user explicitly asks to modify code.
+- In plan mode, do not call write/edit/lsp_format, unsafe bash, or implement.
+- Ambiguous implementation intent is not enough for write/edit/lsp_format,
+  unsafe bash, or implement delegation.
+- Don't tell the user "done" until changes are verified.
+- Child agents have isolated context — give them complete, self-contained briefs.
 
 ## Parallel Execution
 - Multiple tool calls in ONE response → they run in parallel.
@@ -78,8 +133,8 @@ ORCHESTRATOR_PROMPT = """You are voidx, a coding agent that lives in the termina
 PLAN_MODE_APPEND = """
 ## PLAN MODE ACTIVE
 You are in plan mode. Write/edit tools are BLOCKED at the permission level.
-- You CAN: read, glob, grep, bash (read-only), plan, task(plan/explore/review)
-- You CANNOT: write, edit, task(implement), bash (destructive)
+- You CAN: read, glob, grep, bash (read-only), agent(plan/explore/review)
+- You CANNOT: write, edit, agent(implement), bash (destructive)
 - Focus on analysis, design, and creating structured plans.
 - When ready to implement, tell the user to exit plan mode.
 """
@@ -87,7 +142,7 @@ You are in plan mode. Write/edit tools are BLOCKED at the permission level.
 EXPLORE_PROMPT = """You are voidx explore, a fast read-only codebase explorer.
 
 ## Role
-Search, find, and understand code. You have read/glob/grep tools.
+Search, find, and understand code. Use only the tools listed in the Tool Contract.
 Report what you find with file paths, line numbers, and relevant code.
 Be thorough but efficient.
 
@@ -101,8 +156,8 @@ Be thorough but efficient.
 PLAN_PROMPT = """You are voidx plan, a software architect.
 
 ## Role
-Design implementation approaches. You have read/glob/grep tools to study
-the existing codebase. Output structured, implementable plans.
+Design implementation approaches. Study the existing codebase with the tools
+listed in the Tool Contract. Output structured, implementable plans.
 
 ## Output Format
 
@@ -133,8 +188,8 @@ the existing codebase. Output structured, implementable plans.
 IMPLEMENT_PROMPT = """You are voidx implement, the coding agent.
 
 ## Role
-Execute coding tasks. You have all tools: read, write, edit, glob, grep, bash.
-You are the ONLY agent that writes code.
+Execute coding tasks using the tools listed in the Tool Contract.
+You are the dedicated executor for broad or isolated implementation tasks.
 
 ## Rules
 - Read before writing. Never guess file contents.
@@ -142,7 +197,7 @@ You are the ONLY agent that writes code.
 - Follow the plan if one was provided.
 - Run tests/bash after changes to verify.
 - Return: what files were changed, what was done, any issues encountered.
-- Do NOT spawn sub-agents (you are the executor, not the coordinator).
+- Do NOT start other child agents (you are the executor, not the coordinator).
 
 ## Parallel Execution
 - Tools in the same response run IN PARALLEL via asyncio.gather.
@@ -155,7 +210,7 @@ REVIEW_PROMPT = """You are voidx review, a code reviewer.
 
 ## Role
 Review code changes for correctness, style, security, and completeness.
-You have read/glob/grep/bash tools.
+Use only the tools listed in the Tool Contract.
 You do NOT write or edit code.
 
 ## Output Format
@@ -195,13 +250,13 @@ class AgentDef(BaseModel):
     when_to_use: str
     tools: list[str]  # tool IDs this agent can use
     can_write: bool
-    can_delegate: bool  # can it spawn sub-agents via task tool?
+    can_delegate: bool  # can it start child agents via the agent tool?
     max_steps: int = 25
     hidden: bool = False  # hidden from user-facing lists?
     model: str | None = None  # None = inherit from parent
 
     @property
-    def prompt(self) -> str:
+    def role_prompt(self) -> str:
         prompts = {
             "orchestrator": ORCHESTRATOR_PROMPT,
             "explore": EXPLORE_PROMPT,
@@ -211,17 +266,44 @@ class AgentDef(BaseModel):
         }
         return prompts.get(self.name, "")
 
+    @property
+    def tool_contract(self) -> str:
+        lines = [
+            f"- Role: {self.name}",
+            f"- Can write files: {str(self.can_write).lower()}",
+            f"- Can start child agents: {str(self.can_delegate).lower()}",
+            f"- Max steps: {self.max_steps}",
+        ]
+        if self.tools:
+            lines.append(f"- Available tools: {', '.join(self.tools)}")
+        else:
+            lines.append("- Available tools: none")
+        if not self.can_write:
+            lines.append("- Constraint: this role must not write or edit files.")
+        if not self.can_delegate:
+            lines.append("- Constraint: this role must not start another child agent.")
+        return "\n".join(lines)
+
+    @property
+    def prompt(self) -> str:
+        return self.role_prompt
+
 
 # ── built-in agents ────────────────────────────────────────────────────────
 
 BUILTIN_AGENTS: dict[str, AgentDef] = {
     "orchestrator": AgentDef(
         name="orchestrator",
-        description="Coordinator agent. Understands intent, delegates work to specialists, "
-                    "reviews results. Does NOT write code directly.",
+        description="Coordinator agent. Understands intent, edits small scoped changes directly, "
+                    "delegates broad work to specialists, reviews results.",
         when_to_use="Default agent for all user interactions. Always use first.",
-        tools=["read", "glob", "grep", "bash", "task", "task_status", "todo", "webfetch", "websearch", "repo_map"],
-        can_write=False,
+        tools=[
+            "read", "glob", "grep", "bash", "agent", "task_status", "todo",
+            "webfetch", "websearch", "repo_map",
+            "lsp_diagnostics", "lsp_symbols", "lsp_definition", "lsp_references",
+            "write", "edit", "lsp_format",
+        ],
+        can_write=True,
         can_delegate=True,
         max_steps=20,
         hidden=False,
@@ -233,12 +315,15 @@ BUILTIN_AGENTS: dict[str, AgentDef] = {
         when_to_use="Use when you need to find files, search code, understand structure, "
                     "or answer 'how does X work' questions. Specify thoroughness: "
                     "'quick' for basic, 'medium' for moderate, 'very thorough' for exhaustive.",
-        tools=["read", "glob", "grep", "webfetch", "websearch", "repo_map"],
+        tools=[
+            "read", "glob", "grep", "webfetch", "websearch", "repo_map",
+            "lsp_diagnostics", "lsp_symbols", "lsp_definition", "lsp_references",
+        ],
         can_write=False,
         can_delegate=False,
         max_steps=10,
         hidden=False,
-        model="deepseek-v4-flash",
+
     ),
     "plan": AgentDef(
         name="plan",
@@ -246,7 +331,10 @@ BUILTIN_AGENTS: dict[str, AgentDef] = {
                     "proposes approaches, identifies risks.",
         when_to_use="Use for design/architecture questions, before complex implementations, "
                     "or when the user asks for a plan/approach/solution design.",
-        tools=["read", "glob", "grep", "webfetch", "websearch", "repo_map"],
+        tools=[
+            "read", "glob", "grep", "webfetch", "websearch", "repo_map",
+            "lsp_diagnostics", "lsp_symbols", "lsp_definition", "lsp_references",
+        ],
         can_write=False,
         can_delegate=False,
         max_steps=15,
@@ -254,11 +342,14 @@ BUILTIN_AGENTS: dict[str, AgentDef] = {
     ),
     "implement": AgentDef(
         name="implement",
-        description="The coding agent. Writes and edits files, runs bash commands. "
-                    "The ONLY agent that writes code.",
+        description="Delegated coding agent. Writes and edits files, runs bash commands.",
         when_to_use="Use for all code writing, file editing, refactoring, bug fixing, "
                     "and bash execution. Give complete, self-contained task descriptions.",
-        tools=["read", "write", "edit", "glob", "grep", "bash", "todo", "repo_map"],
+        tools=[
+            "read", "write", "edit", "glob", "grep", "bash", "todo", "repo_map",
+            "lsp_diagnostics", "lsp_symbols", "lsp_definition", "lsp_references",
+            "lsp_format",
+        ],
         can_write=True,
         can_delegate=False,
         max_steps=25,
@@ -270,7 +361,10 @@ BUILTIN_AGENTS: dict[str, AgentDef] = {
                     "Returns PASS/FAIL/NEEDS_CHANGE verdicts with specific issues.",
         when_to_use="ALWAYS invoke after implement finishes non-trivial work. "
                     "Use to verify correctness before reporting completion to the user.",
-        tools=["read", "glob", "grep", "bash", "webfetch", "websearch", "repo_map"],
+        tools=[
+            "read", "glob", "grep", "bash", "webfetch", "websearch", "repo_map",
+            "lsp_diagnostics", "lsp_symbols", "lsp_definition", "lsp_references",
+        ],
         can_write=False,
         can_delegate=False,
         max_steps=10,
@@ -321,16 +415,16 @@ def get_visible_agents() -> list[AgentDef]:
 
 
 def get_subagents() -> list[AgentDef]:
-    """Agents the orchestrator can delegate to (all non-primary, non-hidden)."""
+    """Worker roles the orchestrator can run (all non-primary, non-hidden)."""
     return [
         a for a in BUILTIN_AGENTS.values()
         if a.name != "orchestrator" and not a.hidden
     ]
 
 
-def subagent_descriptions_for_llm() -> str:
-    """Generate the whenToUse descriptions for the task tool."""
-    lines = ["Available agent types and the tools they have access to:"]
+def child_agent_descriptions_for_llm() -> str:
+    """Generate child-agent descriptions for the agent tool."""
+    lines = ["Available child agents and the tools they have access to:"]
     for agent in get_subagents():
         tools_str = ", ".join(agent.tools)
         lines.append(
@@ -339,3 +433,7 @@ def subagent_descriptions_for_llm() -> str:
             f"  Write access: {agent.can_write}"
         )
     return "\n".join(lines)
+
+
+def subagent_descriptions_for_llm() -> str:
+    return child_agent_descriptions_for_llm()

@@ -13,6 +13,7 @@ Resolution order:
 from __future__ import annotations
 
 import asyncio
+from dataclasses import dataclass
 from pathlib import Path
 
 import httpx
@@ -20,11 +21,18 @@ import httpx
 INSTRUCTION_FILES = ["AGENTS.md", "CLAUDE.md"]  # CLAUDE.md for compat
 
 
+@dataclass(frozen=True)
+class SkillRuntimeContext:
+    instructions: list[str]
+    active: list[str]
+
+
 class InstructionService:
     """Manages project instructions injection into system prompt."""
 
-    def __init__(self, workspace: str) -> None:
+    def __init__(self, workspace: str, settings=None) -> None:
         self._workspace = Path(workspace).resolve()
+        self._settings = settings
         self._global_dir = Path.home() / ".voidx"
         self._claude_dir = Path.home() / ".claude"
 
@@ -77,6 +85,50 @@ class InstructionService:
         'Instructions from: <path>\n<content>' strings."""
         paths = await self.system_paths()
         return await self._read_all(paths)
+
+    async def skill_context_for(
+        self,
+        user_text: str,
+        *,
+        agent: str = "",
+        task_intent: str | None = None,
+        interaction_mode: str | None = None,
+    ) -> SkillRuntimeContext:
+        from voidx.skills.registry import SkillRegistry
+        from voidx.skills.service import SkillService
+
+        selection = self._settings.get_skill_selection() if self._settings is not None else None
+        service = SkillService(
+            SkillRegistry(str(self._workspace)),
+            selection=selection,
+        )
+        matches = await asyncio.to_thread(
+            service.select,
+            user_text,
+            agent=agent,
+            task_intent=task_intent,
+            interaction_mode=interaction_mode,
+        )
+        return SkillRuntimeContext(
+            instructions=[service.render_instruction(match.skill) for match in matches],
+            active=[f"{match.name} ({match.reason})" for match in matches],
+        )
+
+    async def skills_for(
+        self,
+        user_text: str,
+        *,
+        agent: str = "",
+        task_intent: str | None = None,
+        interaction_mode: str | None = None,
+    ) -> list[str]:
+        context = await self.skill_context_for(
+            user_text,
+            agent=agent,
+            task_intent=task_intent,
+            interaction_mode=interaction_mode,
+        )
+        return context.instructions
 
     async def resolve(
         self,
