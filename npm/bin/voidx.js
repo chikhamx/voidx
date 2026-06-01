@@ -49,6 +49,9 @@ function selectPython(env) {
   const candidates = [
     { command: "python3", args: [], label: "python3" },
     { command: "python", args: [], label: "python" },
+    { command: "python3.13", args: [], label: "python3.13" },
+    { command: "python3.12", args: [], label: "python3.12" },
+    { command: "python3.11", args: [], label: "python3.11" },
   ];
   if (process.platform === "win32") {
     candidates.push({ command: "py", args: ["-3.11"], label: "py -3.11" });
@@ -66,12 +69,31 @@ function selectPython(env) {
     oldVersions.push(`${probe.versionText} at ${candidate.label}`);
   }
 
+  const hint = pythonHint();
   if (oldVersions.length > 0) {
-    throw new Error(`voidx requires Python 3.11+. Found ${oldVersions.join(", ")}.`);
+    throw new Error(
+      `voidx requires Python 3.11+. Found ${oldVersions.join(", ")}.\n${hint}`
+    );
   }
   throw new Error(
-    "voidx npm launcher requires Python 3.11+. Install Python or set VOIDX_PYTHON."
+    `voidx npm launcher requires Python 3.11+. ${hint}`
   );
+}
+
+function pythonHint() {
+  if (process.platform === "darwin") {
+    return "Install Python 3.11+ via: brew install python@3.12\n" +
+      "Or point to an existing install: VOIDX_PYTHON=/path/to/python3 voidx";
+  }
+  if (process.platform === "linux") {
+    return "Install Python 3.11+ via your package manager (apt/dnf).\n" +
+      "Or point to an existing install: VOIDX_PYTHON=/path/to/python3 voidx";
+  }
+  if (process.platform === "win32") {
+    return "Install Python 3.11+ from https://python.org/downloads\n" +
+      "Or: VOIDX_PYTHON=C:\\Python312\\python.exe voidx";
+  }
+  return "Install Python 3.11+ or set VOIDX_PYTHON.";
 }
 
 function probePython(candidate) {
@@ -128,39 +150,63 @@ function ensureVenv(python, venvDir, env) {
 
   fs.mkdirSync(path.dirname(venvDir), { recursive: true });
   const venvPython = resolveVenvPython(venvDir);
-  if (!fs.existsSync(venvPython)) {
-    debug(env, `Creating npm-managed Python environment at ${venvDir}`);
-    runChecked(
+
+  const isFresh = !fs.existsSync(venvPython);
+  if (isFresh) {
+    console.error(
+      "\n⚙️  Setting up voidx environment (this only happens once)...\n"
+    );
+    const venvResult = spawnSync(
       python.command,
       [...python.args, "-m", "venv", venvDir],
-      "Failed to create the npm-managed Python environment.",
-      env
+      { encoding: "utf8", stdio: "inherit", windowsHide: true }
     );
+    if (venvResult.error) {
+      throw new Error(
+        `Failed to create the Python virtual environment: ${venvResult.error.message}`
+      );
+    }
+    if (venvResult.status !== 0) {
+      throw new Error(
+        "Failed to create the Python virtual environment. See errors above."
+      );
+    }
   }
 
-  debug(env, `Installing ${packageSpec} into ${venvDir}`);
-  runChecked(
-    venvPython,
-    ["-m", "pip", "install", "--upgrade", packageSpec],
-    `Failed to install ${packageSpec} into the npm-managed Python environment.`,
-    env
-  );
+  if (!fs.existsSync(executable) || readFile(markerPath) !== marker) {
+    console.error(
+      `\n📦 Downloading ${packageSpec} and dependencies… ` +
+        "(1–2 minutes on first run)\n"
+    );
+    const pipEnv = Object.assign({}, env, {
+      PIP_NO_INPUT: "1",
+      PIP_DISABLE_PIP_VERSION_CHECK: "1",
+      PYTHON_KEYRING_BACKEND: "keyring.backends.null.Keyring",
+    });
+    const result = spawnSync(
+      venvPython,
+      [
+        "-m",
+        "pip",
+        "install",
+        "--upgrade",
+        "--progress-bar",
+        "on",
+        packageSpec,
+      ],
+      { encoding: "utf8", stdio: "inherit", windowsHide: true, env: pipEnv }
+    );
+    if (result.error) {
+      throw new Error(
+        `Failed to install ${packageSpec}: ${result.error.message}`
+      );
+    }
+    if (result.status !== 0) {
+      throw new Error(`Failed to install ${packageSpec}. See errors above.`);
+    }
+  }
+
   fs.writeFileSync(markerPath, marker);
-}
-
-function runChecked(command, args, errorMessage, env) {
-  const result = spawnSync(command, args, {
-    encoding: "utf8",
-    stdio: env.VOIDX_NPM_DEBUG === "1" ? "inherit" : "pipe",
-    windowsHide: true,
-  });
-  if (result.error) {
-    throw new Error(`${errorMessage} ${result.error.message}`);
-  }
-  if (result.status !== 0) {
-    const stderr = result.stderr ? result.stderr.trim() : "";
-    throw new Error(stderr ? `${errorMessage} ${stderr}` : errorMessage);
-  }
 }
 
 function resolveVenvDir(env) {
