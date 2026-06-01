@@ -16,7 +16,7 @@ on the machine and installs the matching Python package into an isolated
 user-local virtual environment on first run:
 
 ```bash
-npm install -g @voidx/cli
+npm install -g @chikhamx/voidx
 voidx
 ```
 
