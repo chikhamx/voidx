@@ -358,7 +358,7 @@ class PromptToolkitTui(PromptToolkitRenderMixin):
         attachment_panel = ConditionalContainer(
             Window(
                 FormattedTextControl(self._render_attachment_panel),
-                height=lambda: self._command_panel_height(),
+                height=lambda: self._attachment_panel_height(),
                 dont_extend_height=True,
                 style="class:command",
             ),
