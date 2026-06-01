@@ -1,0 +1,142 @@
+#!/usr/bin/env python3
+"""Release voidx to PyPI and npm. PyPI goes first, npm only if PyPI succeeds."""
+
+from __future__ import annotations
+
+import argparse
+import json
+import shutil
+import subprocess
+import sys
+import tomllib
+from pathlib import Path
+
+
+ROOT = Path(__file__).resolve().parents[1]
+DIST = ROOT / "dist"
+NPM_DIR = ROOT / "npm"
+
+
+def main() -> int:
+    parser = argparse.ArgumentParser(description="Release voidx to PyPI and npm.")
+    parser.add_argument("--pypi-only", action="store_true", help="Only publish to PyPI.")
+    parser.add_argument("--npm-only", action="store_true", help="Only publish to npm.")
+    parser.add_argument("--dry-run", action="store_true", help="Build but do not publish.")
+    parser.add_argument("--skip-checks", action="store_true", help="Skip release metadata checks.")
+    args = parser.parse_args()
+
+    # 1. Metadata checks
+    if not args.skip_checks:
+        print("🔍 Checking release metadata...")
+        result = _run([sys.executable, str(ROOT / "scripts" / "package.py"), "--check-only"])
+        if result != 0:
+            print("❌ Metadata check failed. Fix issues before releasing.")
+            return result
+        print("   ✅ Metadata OK")
+
+    # 2. Sync npm version from pyproject.toml
+    pyproject_version = _get_pyproject_version()
+    _sync_npm_version(pyproject_version)
+    print(f"📦 Version: {pyproject_version}")
+
+    publish_pypi = not args.npm_only
+    publish_npm = not args.pypi_only
+    exit_code = 0
+
+    if publish_pypi:
+        exit_code = _release_pypi(args.dry_run)
+        if exit_code != 0:
+            return exit_code
+
+    if publish_npm:
+        exit_code = _release_npm(args.dry_run)
+        if exit_code != 0:
+            return exit_code
+
+    print("\n🎉 Release complete!")
+    return 0
+
+
+def _get_pyproject_version() -> str:
+    pyproject = tomllib.loads((ROOT / "pyproject.toml").read_text())
+    return pyproject["project"]["version"]
+
+
+def _sync_npm_version(version: str) -> None:
+    npm_package = NPM_DIR / "package.json"
+    data = json.loads(npm_package.read_text())
+    if data.get("version") != version:
+        data["version"] = version
+        npm_package.write_text(json.dumps(data, indent=2) + "\n")
+        print(f"   Synced npm/package.json version → {version}")
+
+
+def _release_pypi(dry_run: bool) -> int:
+    print("\n🐍 Building PyPI artifacts...")
+
+    # Clean and build
+    if DIST.exists():
+        shutil.rmtree(DIST)
+    result = _run([sys.executable, str(ROOT / "scripts" / "package.py"), "--format", "all"])
+    if result != 0:
+        print("❌ PyPI build failed.")
+        return result
+
+    wheel = list(DIST.glob("*.whl"))
+    sdist = list(DIST.glob("*.tar.gz"))
+    print(f"   ✅ wheel:  {wheel[0].name if wheel else 'N/A'}")
+    print(f"   ✅ sdist:  {sdist[0].name if sdist else 'N/A'}")
+
+    if dry_run:
+        print("   🏷️  Dry run — skipping PyPI upload.")
+        return 0
+
+    print("📤 Uploading to PyPI...")
+    result = _run(
+        [sys.executable, "-m", "twine", "upload", str(DIST / "*")],
+    )
+    if result != 0:
+        print("❌ PyPI upload failed.")
+        return result
+
+    print("   ✅ PyPI upload done.")
+    return 0
+
+
+def _release_npm(dry_run: bool) -> int:
+    print("\n📦 Preparing npm package...")
+
+    # Syntax check
+    result = _run(["node", "--check", str(NPM_DIR / "bin" / "voidx.js")])
+    if result != 0:
+        print("❌ npm syntax check failed.")
+        return result
+    print("   ✅ Syntax check OK")
+
+    if dry_run:
+        print("   🏷️  Dry run — skipping npm publish.")
+        return 0
+
+    print("📤 Publishing to npm...")
+    result = _run(
+        ["npm", "publish", "--access", "public"],
+        cwd=NPM_DIR,
+    )
+    if result != 0:
+        print("❌ npm publish failed.")
+        return result
+
+    print("   ✅ npm publish done.")
+    return 0
+
+
+def _run(command: list[str], cwd: Path | None = None) -> int:
+    try:
+        subprocess.run(command, cwd=cwd or ROOT, check=True)
+        return 0
+    except subprocess.CalledProcessError as exc:
+        return int(exc.returncode)
+
+
+if __name__ == "__main__":
+    raise SystemExit(main())
