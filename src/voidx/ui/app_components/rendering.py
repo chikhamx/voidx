@@ -29,6 +29,13 @@ from voidx.ui.app_components.file_picker import (
     format_size,
     list_file_candidates,
 )
+
+
+def _candidate_meta(candidate: FileCandidate) -> str:
+    if candidate.kind == "dir":
+        items = candidate.size
+        return f"  {candidate.kind} · {items} item{'s' if items != 1 else ''}"
+    return f"  {candidate.kind} · {format_size(candidate.size)}"
 from voidx.ui.dock import dock
 from voidx.ui.session_changes import session_tracker
 
@@ -665,7 +672,7 @@ class PromptToolkitRenderMixin:
             index = start + offset
             marker = "❯" if index == selected else " "
             name_style = "class:command.selected" if index == selected else "class:command.name"
-            meta = f"  {candidate.kind} · {format_size(candidate.size)}"
+            meta = _candidate_meta(candidate)
             self._append_command_line(
                 rows,
                 [

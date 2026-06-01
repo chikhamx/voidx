@@ -68,6 +68,27 @@ def list_file_candidates(workspace: str, query: str, limit: int = 8) -> list[Fil
     for dirpath, dirnames, filenames in os.walk(root):
         dirnames[:] = [name for name in dirnames if name not in SKIP_DIRS and not name.startswith(".")]
         rel_dir = Path(dirpath).resolve().relative_to(root).as_posix()
+        for dirname in dirnames:
+            path = Path(dirpath) / dirname
+            try:
+                rel_path = path.resolve().relative_to(root).as_posix()
+            except ValueError:
+                continue
+            scanned += 1
+            if scanned > MAX_SCAN_FILES:
+                break
+            rel_lower = rel_path.lower()
+            if normalized_query and normalized_query not in rel_lower:
+                continue
+            try:
+                item_count = sum(1 for _ in path.iterdir())
+            except (OSError, PermissionError):
+                item_count = 0
+            candidates.append(FileCandidate(
+                rel_path=rel_path + "/",
+                kind="dir",
+                size=item_count,
+            ))
         for filename in filenames:
             if filename.startswith("."):
                 continue
@@ -94,7 +115,15 @@ def list_file_candidates(workspace: str, query: str, limit: int = 8) -> list[Fil
         len(item.rel_path),
         item.rel_path,
     ))
-    return candidates[:limit]
+    files = [c for c in candidates if c.kind != "dir"]
+    dirs = [c for c in candidates if c.kind == "dir"]
+    dir_slots = min(3, len(dirs))
+    file_slots = limit - dir_slots
+    result = files[:file_slots] + dirs[:dir_slots]
+    if len(result) < limit:
+        remaining = limit - len(result)
+        result += files[file_slots:file_slots + remaining]
+    return result
 
 
 def attachment_token_text(rel_path: str) -> str:

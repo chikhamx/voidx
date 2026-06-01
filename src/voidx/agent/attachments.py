@@ -13,6 +13,8 @@ from typing import Any
 IMAGE_EXTENSIONS = {".png", ".jpg", ".jpeg", ".gif", ".webp"}
 MAX_TEXT_ATTACHMENT_BYTES = 200_000
 MAX_IMAGE_ATTACHMENT_BYTES = 5_000_000
+MAX_DIR_LISTING_ITEMS = 500
+_DIR_TREE_SKIP = {"__pycache__", ".git", ".hg", ".svn", "node_modules", ".venv", "venv", "dist", "build", ".pytest_cache", ".mypy_cache"}
 _ATTACHMENT_RE = re.compile(r'(?<!\S)@(?:"([^"]+)"|(\S+))')
 
 
@@ -67,14 +69,18 @@ def build_user_message_payload(user_text: str, workspace: str) -> UserMessagePay
         if resolved is None:
             warnings.append(f"Attachment skipped outside workspace: {raw_path}")
             continue
-        if not resolved.exists() or not resolved.is_file():
+        if not resolved.exists():
             warnings.append(f"Attachment not found: {raw_path}")
             continue
+        if not resolved.is_file() and not resolved.is_dir():
+            warnings.append(f"Attachment is not a file or directory: {raw_path}")
+            continue
+        is_dir = resolved.is_dir()
         removed_spans.append((start, end))
         rel_path = _relative_path(workspace_path, resolved)
         mime_type = mimetypes.guess_type(str(resolved))[0] or "application/octet-stream"
         size = resolved.stat().st_size
-        kind = "image" if is_image_path(resolved) else "file"
+        kind = "dir" if is_dir else ("image" if is_image_path(resolved) else "file")
         attachment = Attachment(resolved, rel_path, kind, mime_type, size)
         attachments.append(attachment)
 
@@ -83,6 +89,14 @@ def build_user_message_payload(user_text: str, workspace: str) -> UserMessagePay
                 warnings.append(f"Image skipped because it is too large: {rel_path}")
                 continue
             image_parts.append(_image_part(resolved, mime_type))
+            continue
+
+        if kind == "dir":
+            section, warning = _directory_section(attachment)
+            if warning:
+                warnings.append(warning)
+            if section:
+                text_sections.append(section)
             continue
 
         section, warning = _text_file_section(attachment)
@@ -186,6 +200,46 @@ def _text_file_section(attachment: Attachment) -> tuple[str, str]:
         warning = f"Attachment truncated: {attachment.rel_path}"
     lang = _language_from_path(attachment.rel_path)
     return f"Attached file: {attachment.rel_path}\n```{lang}\n{text}{suffix}\n```", warning
+
+
+def _directory_section(attachment: Attachment) -> tuple[str, str]:
+    listing: list[str] = []
+    try:
+        _walk_dir_tree(attachment.path, "", listing, depth=0, max_depth=3)
+    except (OSError, PermissionError) as exc:
+        return "", f"Cannot read directory {attachment.rel_path}: {exc}"
+    tree_text = "\n".join(listing) if listing else "(empty)"
+    label = f"Attached directory: {attachment.rel_path}"
+    if listing and listing[-1].startswith("..."):
+        item_count = sum(1 for line in listing if not line.endswith("..."))
+        label += f" (showing first {item_count} items)"
+    return f"{label}\n{tree_text}", ""
+
+
+def _walk_dir_tree(root: Path, prefix: str, listing: list[str], depth: int, max_depth: int) -> None:
+    if depth >= max_depth or len(listing) >= MAX_DIR_LISTING_ITEMS:
+        if not listing or not listing[-1].startswith("..."):
+            listing.append(f"{prefix}...")
+        return
+    try:
+        entries = sorted(root.iterdir(), key=lambda p: (not p.is_dir(), p.name.lower()))
+    except (OSError, PermissionError):
+        return
+    for i, entry in enumerate(entries):
+        if entry.name.startswith("."):
+            continue
+        if entry.is_dir() and entry.name in _DIR_TREE_SKIP:
+            continue
+        if len(listing) >= MAX_DIR_LISTING_ITEMS:
+            if not listing[-1].startswith("..."):
+                listing.append(f"{prefix}...")
+            return
+        is_last = i == len(entries) - 1
+        connector = "└── " if is_last else "├── "
+        listing.append(f"{prefix}{connector}{entry.name}")
+        if entry.is_dir():
+            ext_prefix = "    " if is_last else "│   "
+            _walk_dir_tree(entry, prefix + ext_prefix, listing, depth + 1, max_depth)
 
 
 def _language_from_path(path: str) -> str:
