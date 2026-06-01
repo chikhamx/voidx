@@ -1,0 +1,23 @@
+{
+  "name": "@voidx/cli",
+  "version": "1.0.0",
+  "description": "npm launcher for voidx, a terminal AI coding agent.",
+  "bin": {
+    "voidx": "bin/voidx.js"
+  },
+  "files": [
+    "bin/"
+  ],
+  "engines": {
+    "node": ">=16"
+  },
+  "keywords": [
+    "ai",
+    "agent",
+    "coding-agent",
+    "cli"
+  ],
+  "scripts": {
+    "check": "node --check bin/voidx.js"
+  }
+}

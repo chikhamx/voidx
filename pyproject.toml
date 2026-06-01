@@ -2,6 +2,7 @@
 name = "voidx"
 version = "1.0.0"
 description = "A coding agent that quantifies everything and solves with tools, not fuzzy prompts."
+readme = "README.md"
 requires-python = ">=3.11"
 dependencies = [
     "langgraph>=0.3.0",

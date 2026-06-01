@@ -15,7 +15,7 @@ voidx
 or:
 
 ```bash
-npm install -g voidx
+npm install -g @voidx/cli
 voidx
 ```
 
@@ -151,10 +151,10 @@ python scripts/package.py --format all --clean
 npm --prefix npm pack
 ```
 
-After publishing the Python package to PyPI:
+After publishing the Python package to PyPI and the npm wrapper to npm:
 
 ```bash
-npm install -g ./npm/voidx-<version>.tgz
+npm install -g ./npm/voidx-cli-<version>.tgz
 voidx version
 ```
 
