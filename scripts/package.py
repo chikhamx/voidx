@@ -15,6 +15,7 @@ from pathlib import Path
 
 ROOT = Path(__file__).resolve().parents[1]
 DIST = ROOT / "dist"
+BUILD = ROOT / "build"
 
 
 def main() -> int:
@@ -34,6 +35,8 @@ def main() -> int:
     out_dir = Path(args.out_dir).expanduser().resolve()
     if args.clean and out_dir.exists():
         shutil.rmtree(out_dir)
+    if args.clean and BUILD.exists():
+        shutil.rmtree(BUILD)
     out_dir.mkdir(parents=True, exist_ok=True)
 
     if _has_module("build.__main__"):
@@ -72,8 +75,12 @@ def main() -> int:
 
 def _has_module(name: str) -> bool:
     probe = (
-        "import importlib.util, sys; "
-        f"sys.exit(0 if importlib.util.find_spec({name!r}) else 1)"
+        "import importlib.util, sys\n"
+        "try:\n"
+        f"    spec = importlib.util.find_spec({name!r})\n"
+        "except ModuleNotFoundError:\n"
+        "    spec = None\n"
+        "sys.exit(0 if spec else 1)"
     )
     return subprocess.run([sys.executable, "-c", probe], cwd=ROOT).returncode == 0
 

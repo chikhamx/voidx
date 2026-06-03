@@ -77,7 +77,7 @@ def _release_pypi(dry_run: bool) -> int:
     # Clean and build
     if DIST.exists():
         shutil.rmtree(DIST)
-    result = _run([sys.executable, str(ROOT / "scripts" / "package.py"), "--format", "all"])
+    result = _run([sys.executable, str(ROOT / "scripts" / "package.py"), "--format", "all", "--clean"])
     if result != 0:
         print("❌ PyPI build failed.")
         return result

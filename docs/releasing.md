@@ -6,7 +6,7 @@ and npm.
 ## Package Names
 
 - PyPI package: `voidx`
-- npm package: `@voidx/cli`
+- npm package: `@chikhamx/voidx`
 - Installed CLI command: `voidx`
 
 The Python package is the canonical implementation. The npm package is a thin
@@ -33,7 +33,7 @@ Run the full verification suite before publishing:
 .venv/bin/python -m compileall -q src scripts tests
 .venv/bin/python -m pytest -q
 npm --prefix npm run check
-npm --prefix npm pack --dry-run
+npm pack ./npm --dry-run
 ```
 
 If `uv` needs a writable cache outside the home directory, run package builds
@@ -82,19 +82,19 @@ first run.
 Pack and inspect the npm package:
 
 ```bash
-npm --prefix npm pack --dry-run
+npm pack ./npm --dry-run
 ```
 
 Publish:
 
 ```bash
-npm publish npm --access public
+npm publish ./npm --access public
 ```
 
 Verify a clean global install:
 
 ```bash
-npm install -g @voidx/cli@<version>
+npm install -g @chikhamx/voidx@<version>
 voidx version
 ```
 
@@ -108,7 +108,7 @@ Confirm both package managers report the released version:
 
 ```bash
 python3.11 -m pip index versions voidx
-npm view @voidx/cli version
+npm view @chikhamx/voidx version
 ```
 
 Confirm the CLI starts from both install paths:
