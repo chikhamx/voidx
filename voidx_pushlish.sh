@@ -7,7 +7,8 @@ cd "$ROOT"
 PYTHON="${PYTHON:-.venv/bin/python}"
 VERSION="$("$PYTHON" - <<'PY'
 import tomllib
-print(tomllib.loads(open("pyproject.toml", "rb").read())["project"]["version"])
+with open("pyproject.toml", "rb") as handle:
+    print(tomllib.load(handle)["project"]["version"])
 PY
 )"
 NPM_PACKAGE="$("$PYTHON" - <<'PY'
