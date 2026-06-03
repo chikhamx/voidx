@@ -25,12 +25,12 @@ if [[ -n "$(git status --short)" ]]; then
   exit 1
 fi
 
-if [[ -z "${TWINE_USERNAME:-}" || -z "${TWINE_PASSWORD:-}" ]]; then
+if [[ -z "${TWINE_PASSWORD:-}" ]]; then
   echo "Set PyPI credentials first:" >&2
-  echo "  export TWINE_USERNAME=__token__" >&2
   echo "  export TWINE_PASSWORD='pypi-...'" >&2
   exit 1
 fi
+export TWINE_USERNAME=__token__
 
 if ! "$PYTHON" -m twine --version >/dev/null 2>&1; then
   echo "twine is not installed in ${PYTHON}. Install with: uv pip install twine" >&2
