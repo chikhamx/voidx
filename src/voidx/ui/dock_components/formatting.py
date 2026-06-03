@@ -43,6 +43,7 @@ def _markdown_lines(text: str, width: int) -> list[str]:
         force_terminal=True,
         color_system="truecolor",
         width=width or 80,
+        _environ={},
     )
     console.print(Markdown(text), end="")
 
@@ -64,6 +65,7 @@ def _strip_ansi_trailing_space(line: str) -> str:
         force_terminal=True,
         color_system="truecolor",
         width=10_000,
+        _environ={},
     )
     console.print(text, end="")
     return buffer.getvalue()

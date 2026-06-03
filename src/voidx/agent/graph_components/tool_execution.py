@@ -17,6 +17,7 @@ from voidx.ui.events import (
     ToolResultAppended,
     ToolStarted,
     ui_events,
+    via_events,
 )
 from voidx.ui.session_changes import session_tracker
 
@@ -63,7 +64,7 @@ class GraphToolExecutionMixin:
 
             tool_event_id = cid or f"{tid}:{id(tc)}"
             tool_node = None
-            if dock.active and ui_events.is_running:
+            if via_events():
                 gerund = _title(ui._TOOL_GERUND.get(tid, tid + "ing"))
                 tool_node = await ui_events.request(ToolStarted(
                     tool_call_id=tool_event_id,
@@ -115,7 +116,7 @@ class GraphToolExecutionMixin:
             elif ok and hasattr(self, "_needs_failure_check"):
                 self._clear_failure_check(cid)
 
-            if dock.active and ui_events.is_running:
+            if via_events():
                 await ui_events.emit(ToolFinished(
                     tool_call_id=tool_event_id,
                     label=_title(tid),
@@ -130,7 +131,7 @@ class GraphToolExecutionMixin:
             # Render diff to terminal (if any)
             if getattr(result, "diff", None) and ok:
                 session_tracker.record_diff(result.diff)
-                if dock.active and ui_events.is_running:
+                if via_events():
                     await ui_events.emit(FileChangeAppended(
                         tool_call_id=tool_event_id,
                         diff_text=result.diff,
@@ -148,7 +149,7 @@ class GraphToolExecutionMixin:
                 if self._debug and not tool_node:
                     ui.diff(result.diff)
             elif self._debug:
-                if dock.active and ui_events.is_running:
+                if via_events():
                     await ui_events.emit(ToolResultAppended(
                         tool_call_id=tool_event_id,
                         text=result.output,
@@ -171,7 +172,7 @@ class GraphToolExecutionMixin:
         if hasattr(self, "_needs_failure_check"):
             self._needs_failure_check.clear()
 
-        if dock.active and ui_events.is_running:
+        if via_events():
             await ui_events.drain()
 
         # Child-agent messages are buffered by parent tool_call_id. Append them

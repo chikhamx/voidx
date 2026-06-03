@@ -50,7 +50,7 @@ COMMANDS: list[tuple[str, str]] = [
     ("/permission-mode", "Choose permission mode"),
     ("/permission-mode accept-edits", "Allow file edits, ask for bash"),
     ("/permission-mode auto-review", "Reviewer-assisted approvals"),
-    ("/permission-mode custom", "Use voidx.json config"),
+    ("/permission-mode custom", "Use .voidx/settings.json config"),
     ("/permission-mode default", "Ask before write/edit/bash"),
     ("/permission-mode full-access", "No sandbox or approval prompts"),
     ("/permission-mode read-only", "Block all writes"),

@@ -17,7 +17,7 @@ from voidx.memory.session import create_session, load_messages
 from voidx.ui.dock import BottomInputDock, set_dock
 
 
-class FakePromptTui:
+class FakeTui:
     instances = []
 
     def __init__(self, status, commands):
@@ -25,7 +25,7 @@ class FakePromptTui:
         self.commands = commands
         self.begun_outputs: list[str] = []
         self.hidden_outputs = 0
-        FakePromptTui.instances.append(self)
+        FakeTui.instances.append(self)
 
     async def run(self, on_submit):
         keep_running = await on_submit("/model reasoning")
@@ -56,7 +56,7 @@ def _graph(session=None, workspace: str = "/tmp/workspace") -> GraphRunLoopMixin
         workspace=workspace,
         model=SimpleNamespace(provider="mimo", model="mimo-v2.5", reasoning_effort="high"),
     )
-    graph._settings = SimpleNamespace(list_mcp_servers=lambda: [], path=f"{workspace}/voidx.json")
+    graph._settings = SimpleNamespace(list_mcp_servers=lambda: [], path=f"{workspace}/.voidx/settings.json")
     graph._permission = SimpleNamespace(
         status_label=lambda: "default",
         clear_session_permissions=lambda: None,
@@ -70,8 +70,8 @@ def _graph(session=None, workspace: str = "/tmp/workspace") -> GraphRunLoopMixin
 
 @pytest.mark.asyncio
 async def test_quiet_slash_command_does_not_open_command_output(monkeypatch):
-    FakePromptTui.instances = []
-    monkeypatch.setattr("voidx.ui.app.PromptToolkitTui", FakePromptTui)
+    FakeTui.instances = []
+    monkeypatch.setattr("voidx.ui.tui.PureTui", FakeTui)
     monkeypatch.setattr("voidx.agent.graph_components.run_loop.show_startup", lambda **_: None)
 
     graph = GraphRunLoopMixin()
@@ -82,7 +82,7 @@ async def test_quiet_slash_command_does_not_open_command_output(monkeypatch):
         workspace=graph._workspace,
         model=SimpleNamespace(provider="mimo", model="mimo-v2.5", reasoning_effort="high"),
     )
-    graph._settings = SimpleNamespace(list_mcp_servers=lambda: [], path="/tmp/workspace/voidx.json")
+    graph._settings = SimpleNamespace(list_mcp_servers=lambda: [], path="/tmp/workspace/.voidx/settings.json")
     graph._permission = SimpleNamespace(status_label=lambda: "default")
     graph._usage_stats = UsageStats()
     graph._debug = False
@@ -98,7 +98,7 @@ async def test_quiet_slash_command_does_not_open_command_output(monkeypatch):
 
     await graph.run()
 
-    app = FakePromptTui.instances[0]
+    app = FakeTui.instances[0]
     assert dispatched == ["/model reasoning"]
     assert app.begun_outputs == []
     assert app.hidden_outputs == 2

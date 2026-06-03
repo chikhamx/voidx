@@ -33,6 +33,7 @@ from voidx.ui.events import (
     ToolResultAppended,
     ToolStarted,
     ui_events,
+    via_events,
 )
 from voidx.ui.console_components.streaming import StreamingRenderer
 
@@ -128,7 +129,7 @@ class VoidConsole:
     def print(self, *args, **kwargs) -> None:
         if self._emit_command_output(lambda console: console.print(*args, **kwargs)):
             return
-        if dock.active and ui_events.is_running:
+        if via_events():
             text = _capture_ansi(
                 self._console.width,
                 lambda console: console.print(*args, **kwargs),
@@ -143,7 +144,7 @@ class VoidConsole:
     def markdown(self, content: str) -> None:
         if self._emit_command_output(lambda console: console.print(Markdown(content))):
             return
-        if dock.active and ui_events.is_running:
+        if via_events():
             ui_events.emit_nowait(MarkdownAppended(content=content))
             return
         if dock.active and dock.capture(lambda console: console.print(Markdown(content))):
@@ -153,7 +154,7 @@ class VoidConsole:
     def thinking(self, text: str) -> None:
         if self._emit_command_output(lambda console: console.print(Text(text, style="dim italic"))):
             return
-        if dock.active and ui_events.is_running:
+        if via_events():
             captured = _capture_ansi(
                 self._console.width,
                 lambda console: console.print(Text(text, style="dim italic")),
@@ -170,7 +171,7 @@ class VoidConsole:
             self._pending_tools.setdefault(tool_name, []).append(args)
             return
         gerund = _title(self._TOOL_GERUND.get(tool_name, tool_name + "ing"))
-        if dock.active and ui_events.is_running:
+        if via_events():
             event_id = _event_tool_id(tool_name)
             self._event_tool_ids.setdefault(tool_name, []).append(event_id)
             ui_events.emit_nowait(ToolStarted(
@@ -196,7 +197,7 @@ class VoidConsole:
             if not pending:
                 self._pending_tools.pop(tool_name, None)
             elapsed_part = f" [dim]({elapsed:.1f}s)[/dim]" if elapsed >= 2 else ""
-            if dock.active and ui_events.is_running:
+            if via_events():
                 event_id = _event_tool_id(tool_name)
                 detail = _fmt_args_short(tool_name, args)
                 ui_events.emit_nowait(ToolStarted(
@@ -222,7 +223,7 @@ class VoidConsole:
                 f"  {icon} [{style}]{label}[/] [dim]{_fmt_args_short(tool_name, args)}[/]{elapsed_part}"
             )
             return
-        if dock.active and ui_events.is_running:
+        if via_events():
             event_id = _pop_event_tool_id(self._event_tool_ids, tool_name)
             if event_id:
                 ui_events.emit_nowait(ToolFinished(
@@ -238,7 +239,7 @@ class VoidConsole:
         self.print(f"  {icon} [{style}]{label}[/{style}] [dim]({elapsed:.1f}s)[/dim]")
 
     def tool_result(self, text: str) -> None:
-        if dock.active and ui_events.is_running:
+        if via_events():
             ui_events.emit_nowait(ToolResultAppended(text=text))
             return
         if dock.active:
@@ -251,7 +252,7 @@ class VoidConsole:
             lambda console: console.print(Panel(message, border_style="red", title="error"))
         ):
             return
-        if dock.active and ui_events.is_running:
+        if via_events():
             ui_events.emit_nowait(ErrorAppended(message=message))
             return
         if dock.active:
@@ -269,7 +270,7 @@ class VoidConsole:
     def step_header(self, n: int, max_n: int, agent: str = "") -> None:
         gerund = _title(self._AGENT_GERUND.get(agent, agent))
         label = f"Agent step {n}/{max_n}" if agent == "orchestrator" else f"{gerund} {n}/{max_n}"
-        if dock.active and ui_events.is_running:
+        if via_events():
             ui_events.emit_nowait(StatusUpdated(
                 status_id="agent:-1:progress",
                 label=label,
@@ -286,7 +287,7 @@ class VoidConsole:
         from voidx.ui.diff import render_diff
         if self._emit_command_output(lambda console: render_diff(console, diff_text, title)):
             return
-        if dock.active and ui_events.is_running:
+        if via_events():
             ui_events.emit_nowait(DiffAppended(diff_text=diff_text, title=title))
             return
         if dock.active and dock.capture(lambda console: render_diff(console, diff_text, title)):

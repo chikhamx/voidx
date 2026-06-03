@@ -63,10 +63,7 @@ class OutputNode:
             meta = " ".join(filter(None, [self.agent_name, steps, elapsed]))
             return f"\u25bc {meta}"
         elif self.node_type == "tool_call":
-            parts = [self.header]
-            if self.elapsed:
-                parts.append(f"({self.elapsed:.1f}s)")
-            return " ".join(parts)
+            return self.header
         elif self.node_type == "tool_result":
             preview = self.header[:80] or (self.body_lines[0][:80] if self.body_lines else "")
             return preview
@@ -255,9 +252,9 @@ class OutputTree:
             if line_map is not None and _is_clickable(node):
                 line_map[len(lines) - 1] = node.id
 
-            # Body lines — plain spaces continuation
+            body_prefix = "  " if node.node_type == "turn" else ""
             for bl in node.body_lines:
-                lines.append(bl)
+                lines.append(f"{body_prefix}{bl}")
 
             # Children get box-drawing, indented under this node
             new_parts = [" "]
@@ -305,6 +302,8 @@ class OutputTree:
         # Body lines
         for bl in node.body_lines:
             lines.append(f"{cont}{bl}")
+            if line_map is not None and _is_clickable(node):
+                line_map[len(lines) - 1] = node.id
 
         # Children
         new_parts = prefix_parts if inline_tool_result else prefix_parts + [cont_suffix]

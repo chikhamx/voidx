@@ -36,7 +36,7 @@ def test_startup_banner_has_no_internal_blank_rows():
 
         assert lines
         assert all(line.strip() for line in lines)
-        assert len(lines) <= 8
+        assert len(lines) <= 9
         assert max(cell_len(line) for line in lines) <= 80
 
         text = "\n".join(lines)
@@ -48,8 +48,10 @@ def test_startup_banner_has_no_internal_blank_rows():
         assert "Ask anything" in text
         assert "/model switch" in text
         assert "@ attach" in text
-        assert "Ctrl+V image" in text
-        assert "wheel/click transcript" in text
+        assert "Ctrl+" in text  # truncated at narrow width
+        assert "PgUp/PgDn scroll transcript" in text
+        assert "Panels:" in text
+        assert "Enter accept" in text
         assert "•_•" not in text
     finally:
         test_dock.deactivate()

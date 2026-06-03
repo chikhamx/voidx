@@ -15,6 +15,7 @@ from voidx.ui.events import (
     ToolStarted,
     WarningAppended,
     ui_events,
+    via_events,
 )
 
 class _DummyConsole:
@@ -35,7 +36,7 @@ class CaptureConsole:
         return self._dummy
 
     def step_header(self, n: int, max_n: int, agent: str = "") -> None:
-        if dock.active and ui_events.is_running:
+        if via_events():
             ui_events.emit_nowait(SubagentStepStarted(
                 agent_id=self._agent_id,
                 subagent_id=agent or "subagent",
@@ -58,7 +59,7 @@ class CaptureConsole:
         gerund = _title(VoidConsole._TOOL_GERUND.get(tool_name, tool_name + "ing"))
         call_id = tool_call_id or f"capture:{tool_name}:{time.time_ns()}"
         self._current_tool_id = call_id
-        if dock.active and ui_events.is_running:
+        if via_events():
             ui_events.emit_nowait(ToolStarted(
                 agent_id=self._agent_id,
                 tool_call_id=call_id,
@@ -85,7 +86,7 @@ class CaptureConsole:
     
     def tool_done(self, tool_name: str, elapsed: float, ok: bool = True, tool_call_id: str | None = None) -> None:
         call_id = tool_call_id or self._current_tool_id
-        if dock.active and ui_events.is_running and call_id:
+        if via_events() and call_id:
             ui_events.emit_nowait(ToolFinished(
                 agent_id=self._agent_id,
                 tool_call_id=call_id,
@@ -105,7 +106,7 @@ class CaptureConsole:
     
     def tool_result(self, text: str, tool_call_id: str | None = None) -> None:
         call_id = tool_call_id or self._current_tool_id
-        if dock.active and ui_events.is_running:
+        if via_events():
             ui_events.emit_nowait(ToolResultAppended(
                 agent_id=self._agent_id,
                 tool_call_id=call_id,
@@ -122,7 +123,7 @@ class CaptureConsole:
         dock.refresh()
     
     def diff(self, diff_text: str, title: str = "") -> None:
-        if dock.active and ui_events.is_running:
+        if via_events():
             text = f"{title}\n{diff_text}" if title else diff_text
             ui_events.emit_nowait(ToolResultAppended(
                 agent_id=self._agent_id,
@@ -150,7 +151,7 @@ class CaptureConsole:
         pass
     
     def error(self, message: str) -> None:
-        if dock.active and ui_events.is_running:
+        if via_events():
             ui_events.emit_nowait(ErrorAppended(agent_id=self._agent_id, message=message))
             return
         self._tree.new_node(parent=self._parent, node_type="error",
@@ -158,7 +159,7 @@ class CaptureConsole:
         dock.refresh()
     
     def warn(self, message: str) -> None:
-        if dock.active and ui_events.is_running:
+        if via_events():
             ui_events.emit_nowait(WarningAppended(agent_id=self._agent_id, message=message))
             return
         self._tree.new_node(parent=self._parent, node_type="warn",

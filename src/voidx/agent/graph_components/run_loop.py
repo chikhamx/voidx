@@ -39,6 +39,7 @@ from voidx.memory.transcript import load_transcript, replace_transcript
 from voidx.ui.commands import COMMANDS
 from voidx.ui.dock import dock, get_dock
 from voidx.ui.events import (
+    CompositeEventConsumer,
     DockEventConsumer,
     InputSet,
     StartupShown,
@@ -46,7 +47,11 @@ from voidx.ui.events import (
     StatusUpdated,
     TurnStarted,
     ui_events,
+    via_events,
 )
+from voidx.ui.gateway import GatewayEventConsumer, GatewayServer, GatewaySession
+from voidx.ui.gateway.bootstrap import emit_web_gateway_bootstrap
+from voidx.ui.protocol import UiCancelCommand, UiCommand, UiSubmitCommand
 from voidx.ui.session_changes import session_tracker
 from voidx.ui.startup import show_startup
 from voidx.ui.transcript import transcript_rows_to_tree, tree_to_transcript_rows
@@ -105,9 +110,18 @@ class GraphRunLoopMixin:
             title = title[:57] + "..."
         return title
 
-    async def run(self) -> None:
+    async def run(
+        self,
+        *,
+        web: bool = False,
+        web_headless: bool = False,
+        web_host: str = "127.0.0.1",
+        web_port: int = 0,
+        web_token: str = "",
+    ) -> None:
         """Interactive REPL with orchestrator agent."""
-        from voidx.ui.app import McpServerStatus, PromptToolkitTui, UiStatus
+        from voidx.ui.types import McpServerStatus, UiStatus
+        from voidx.ui.tui import PureTui
 
         self._any_messages_sent = False
         session_tracker.clear()
@@ -116,14 +130,27 @@ class GraphRunLoopMixin:
 
         dock.begin_capture()
         active_dock = get_dock()
+        gateway_session: GatewaySession | None = None
+        gateway_server: GatewayServer | None = None
         if active_dock is not None:
-            ui_events.start(DockEventConsumer(active_dock))
+            consumer = DockEventConsumer(active_dock)
+            if web:
+                gateway_session = GatewaySession(
+                    lambda: active_dock.tree,
+                    session_id=self._session.id if self._session else "",
+                )
+                ui_events.start(CompositeEventConsumer(
+                    primary=consumer,
+                    mirrors=[GatewayEventConsumer(gateway_session)],
+                ))
+            else:
+                ui_events.start(consumer)
         await self._restore_runtime_state()
         await self._show_startup(append_transcript=True)
 
         exit_message: str | None = None
 
-        app = PromptToolkitTui(
+        app = PureTui(
             UiStatus(
                 provider=self.config.model.provider,
                 model=self.config.model.model,
@@ -170,6 +197,30 @@ class GraphRunLoopMixin:
             COMMANDS,
         )
         self._app = app
+
+        if gateway_session is not None:
+            async def handle_web_command(command: UiCommand) -> None:
+                if isinstance(command, UiSubmitCommand):
+                    app.submit_external_input(command.text)
+                elif isinstance(command, UiCancelCommand):
+                    app.cancel_external_input()
+
+            gateway_session.set_command_handler(handle_web_command)
+            app.set_external_request_handler(gateway_session.request)
+            gateway_server = GatewayServer(
+                gateway_session,
+                host=web_host,
+                port=web_port,
+                token=web_token,
+            )
+            await gateway_server.start()
+            if web_headless:
+                emit_web_gateway_bootstrap(gateway_server.url)
+            else:
+                app.show_transient_output(
+                    f"Web UI gateway: {gateway_server.url}",
+                    title="Web",
+                )
 
         if hasattr(self, '_lsp_manager'):
             lsp_lines = []
@@ -227,10 +278,15 @@ class GraphRunLoopMixin:
             return True
 
         try:
-            await app.run(handle_user_input)
+            if web_headless:
+                await app.run_headless(handle_user_input)
+            else:
+                await app.run(handle_user_input)
             if exit_message is None:
                 exit_message = "\n[dim]bye.[/dim]"
         finally:
+            if gateway_server is not None:
+                await gateway_server.stop()
             if hasattr(self, '_mcp_manager'):
                 await self._mcp_manager.stop_all()
             if hasattr(self, '_lsp_manager'):
@@ -248,7 +304,7 @@ class GraphRunLoopMixin:
             session_tracker.begin_turn(self._workspace)
             payload = build_user_message_payload(user_text, self._workspace)
             self._current_tree = dock.tree
-            if dock.active and ui_events.is_running:
+            if via_events():
                 self._turn_node = await ui_events.request(TurnStarted(text=payload.display_text))
                 await ui_events.emit(StatusUpdated(
                     status_id="turn:analyzing",
@@ -351,7 +407,7 @@ class GraphRunLoopMixin:
 
             # ── compaction: check overflow before running ──────────────────
             head, tail_id = await self._maybe_compact(msgs, session_msgs)
-            if dock.active and ui_events.is_running:
+            if via_events():
                 await ui_events.emit(StatusFinished(status_id="turn:analyzing"))
 
             final = await self.graph.ainvoke(initial, {"recursion_limit": self.config.agent.recursion_limit})
@@ -456,7 +512,7 @@ class GraphRunLoopMixin:
             raise
         finally:
             session_tracker.finish_turn()
-            if dock.active and ui_events.is_running:
+            if via_events():
                 await ui_events.emit(StatusFinished(status_id="turn:analyzing"))
                 await ui_events.emit(StatusFinished(status_id="agent:-1:progress"))
                 await ui_events.emit(StatusFinished(status_id="compaction"))

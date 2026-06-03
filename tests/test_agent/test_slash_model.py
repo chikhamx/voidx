@@ -14,7 +14,7 @@ from voidx.permission.service import PermissionService
 from voidx.llm.catalog import STATIC_MODELS
 from voidx.llm.usage import UsageStats
 from voidx.memory.model_profiles import delete_model_profile
-from voidx.ui.app_components.clipboard_image import ClipboardImageResult
+from voidx.ui.clipboard_image import ClipboardImageResult
 
 
 class FakeChoiceApp:

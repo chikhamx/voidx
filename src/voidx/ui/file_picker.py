@@ -66,8 +66,10 @@ def list_file_candidates(workspace: str, query: str, limit: int = 8) -> list[Fil
     candidates: list[FileCandidate] = []
     scanned = 0
     for dirpath, dirnames, filenames in os.walk(root):
-        dirnames[:] = [name for name in dirnames if name not in SKIP_DIRS and not name.startswith(".")]
-        rel_dir = Path(dirpath).resolve().relative_to(root).as_posix()
+        dirnames[:] = [
+            name for name in dirnames
+            if name not in SKIP_DIRS and not name.startswith(".")
+        ]
         for dirname in dirnames:
             path = Path(dirpath) / dirname
             try:
@@ -124,12 +126,6 @@ def list_file_candidates(workspace: str, query: str, limit: int = 8) -> list[Fil
         remaining = limit - len(result)
         result += files[file_slots:file_slots + remaining]
     return result
-
-
-def attachment_token_text(rel_path: str) -> str:
-    if any(ch.isspace() for ch in rel_path):
-        return f'@"{rel_path}"'
-    return f"@{rel_path}"
 
 
 def is_image_file(path: str | Path) -> bool:

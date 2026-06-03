@@ -5,6 +5,7 @@ from pathlib import Path
 
 import pytest
 from rich.console import Console
+from rich.text import Text
 
 sys.path.insert(0, str(Path(__file__).parent.parent / "src"))
 
@@ -42,6 +43,10 @@ def _plain(line: str) -> str:
     return _ANSI_RE.sub("", line.replace(ANSI_LINE_PREFIX, ""))
 
 
+def _rich_plain(line: str) -> str:
+    return Text.from_markup(_plain(line)).plain
+
+
 @pytest.fixture(autouse=True)
 def isolated_dock():
     test_dock = BottomInputDock()
@@ -77,8 +82,10 @@ async def test_ui_event_bus_serializes_tool_updates_by_call_id(isolated_dock):
         assistant = next(node for node in isolated_dock.tree.root.children if node.node_type == "assistant")
         tools = {node.header: node for node in assistant.children if node.node_type == "tool_call"}
 
-        reading = next(node for header, node in tools.items() if "Reading" in header)
-        mapping = next(node for header, node in tools.items() if "Mapping" in header)
+        visible_headers = "\n".join(_rich_plain(header) for header in tools)
+        reading = next(node for header, node in tools.items() if 'Read("x")' in _rich_plain(header))
+        mapping = next(node for header, node in tools.items() if 'Map' in _rich_plain(header))
+        assert "[cyan]" not in visible_headers
         assert reading.children[0].header == "first result"
         assert mapping.children[0].header == "second result"
     finally:
@@ -131,6 +138,40 @@ async def test_startup_event_renders_structured_startup_node(isolated_dock):
 
 
 @pytest.mark.asyncio
+async def test_startup_event_updates_existing_startup_node(isolated_dock):
+    isolated_dock.begin_capture()
+    bus = UiEventBus()
+    bus.start(DockEventConsumer(isolated_dock))
+    try:
+        await bus.emit(StartupShown(
+            model="old-model",
+            provider="old-provider",
+            workspace="/tmp/project",
+            session_title="Old",
+            is_new=True,
+        ))
+        await bus.emit(StartupShown(
+            model="new-model",
+            provider="new-provider",
+            workspace="/tmp/project",
+            session_title="New",
+            is_new=True,
+        ))
+        await bus.drain()
+
+        startup_nodes = [
+            node for node in isolated_dock.tree.root.children if node.node_type == "startup"
+        ]
+        rendered = "\n".join(_plain(line) for line in isolated_dock.tree.render(100))
+
+        assert len(startup_nodes) == 1
+        assert "new-provider/new-model" in rendered
+        assert "old-provider/old-model" not in rendered
+    finally:
+        await bus.stop()
+
+
+@pytest.mark.asyncio
 async def test_startup_event_includes_no_profile_notice(isolated_dock):
     isolated_dock.begin_capture()
     bus = UiEventBus()
@@ -178,6 +219,31 @@ async def test_status_events_render_and_clear(isolated_dock):
 
         rendered = "\n".join(_plain(line) for line in isolated_dock.tree.render(100))
         assert "Analyzing" not in rendered
+    finally:
+        await bus.stop()
+
+
+@pytest.mark.asyncio
+async def test_agent_step_status_updates_panel_without_transcript_node(isolated_dock):
+    isolated_dock.begin_capture()
+    bus = UiEventBus()
+    bus.start(DockEventConsumer(isolated_dock))
+    try:
+        await bus.emit(StatusUpdated(
+            status_id="agent:-1:progress",
+            label="Agent step 1/50",
+            stage="agent_step",
+        ))
+        await bus.drain()
+
+        rendered = "\n".join(_plain(line) for line in isolated_dock.tree.render(100))
+        assert "Agent step" not in rendered
+        assert isolated_dock.status_record("agent:-1:progress").label == "Agent step 1/50"
+
+        await bus.emit(StatusFinished(status_id="agent:-1:progress"))
+        await bus.drain()
+
+        assert isolated_dock.status_record("agent:-1:progress") is None
     finally:
         await bus.stop()
 
@@ -248,7 +314,8 @@ async def test_file_change_event_updates_tool_node_with_structured_diff(isolated
             tool_call_id="edit_call",
             tool_name="edit",
             label="Editing",
-            args='file_path="test.cpp"',
+            args='file_path="[cyan]test.cpp[/cyan]"',
+            raw_args={"file_path": "test.cpp"},
         ))
         await bus.emit(FileChangeAppended(
             tool_call_id="edit_call",
@@ -263,10 +330,12 @@ async def test_file_change_event_updates_tool_node_with_structured_diff(isolated
         await bus.drain()
         isolated_dock.tree.expand(tool.id)
 
-        rendered = "\n".join(_plain(line) for line in isolated_dock.tree.render(120))
-        assert "Update" in rendered
-        assert "(test.cpp)" in rendered
+        rendered = "\n".join(_rich_plain(line) for line in isolated_dock.tree.render(120))
+        assert 'Update("test.cpp")' in rendered
+        assert "[cyan]" not in rendered
         assert "Added 1 line, removed 1 line" in rendered
+        assert "-  old" in rendered
+        assert "+  new" in rendered
         assert "old" in rendered
         assert "new" in rendered
     finally:
@@ -361,9 +430,10 @@ async def test_capture_console_uses_ui_event_bus_for_subagent_tools(isolated_doc
         capture.tool_result("first\nsecond")
         await ui_events.drain()
 
-        rendered = "\n".join(_plain(line) for line in isolated_dock.tree.render(100))
+        rendered = "\n".join(_rich_plain(line) for line in isolated_dock.tree.render(100))
         assert "Exploring (1/2)" in rendered
-        assert "Reading" in rendered
+        assert 'Read("x.py")' in rendered
+        assert "[cyan]" not in rendered
 
         assistant = next(node for node in isolated_dock.tree.root.children if node.node_type == "assistant")
         subagent = next(node for node in assistant.children if node.node_type == "subagent")
@@ -415,7 +485,9 @@ async def test_subagent_tool_events_attach_under_agent_id(isolated_dock):
         sub_tool = next(node for node in subagent.children if node.node_type == "tool_call")
 
         assert "explore" in subagent.header
-        assert "Reading" in sub_tool.header
+        sub_tool_header = _rich_plain(sub_tool.header)
+        assert 'Read("x.py")' in sub_tool_header
+        assert "[cyan]" not in sub_tool_header
         assert sub_tool.children[0].header == "sub result"
     finally:
         await bus.stop()

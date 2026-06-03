@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import asyncio
+import secrets
 from pathlib import Path
 
 import typer
@@ -63,6 +64,10 @@ async def _run_chat(
     provider: str | None = None,
     resume: str | None = None,
     new_session: bool = False,
+    web: bool = False,
+    web_headless: bool = False,
+    web_host: str = "127.0.0.1",
+    web_port: int = 0,
 ) -> None:
     from voidx.ui.dock import set_dock, BottomInputDock
     set_dock(BottomInputDock())
@@ -102,7 +107,13 @@ async def _run_chat(
     )
 
     graph = VoidXGraph(cfg, api_key, session=session, settings=settings)
-    await graph.run()
+    await graph.run(
+        web=web,
+        web_headless=web_headless,
+        web_host=web_host,
+        web_port=web_port,
+        web_token=secrets.token_urlsafe(16) if web else "",
+    )
 
 
 # ── default command (no subcommand needed) ──────────────────────────────
@@ -114,9 +125,19 @@ def main(
     provider: str = typer.Option(None, "-p", "--provider", help="Provider"),
     resume: str = typer.Option(None, "-r", "--resume", help="Resume a session by ID"),
     new: bool = typer.Option(False, "-n", "--new", help="Force new session"),
+    web: bool = typer.Option(False, "--web", help="Start the Web UI gateway"),
+    web_headless: bool = typer.Option(
+        False,
+        "--web-headless",
+        help="Run without the terminal UI; requires --web",
+    ),
+    web_host: str = typer.Option("127.0.0.1", "--web-host", help="Web UI gateway host"),
+    web_port: int = typer.Option(0, "--web-port", help="Web UI gateway port"),
 ) -> None:
     """Start an interactive coding session."""
-    asyncio.run(_run_chat(workspace, model, provider, resume, new))
+    if web_headless and not web:
+        raise typer.BadParameter("--web-headless requires --web")
+    asyncio.run(_run_chat(workspace, model, provider, resume, new, web, web_headless, web_host, web_port))
 
 
 # ── subcommands ────────────────────────────────────────────────────────

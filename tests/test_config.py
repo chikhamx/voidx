@@ -49,7 +49,7 @@ def test_settings_saves_mcp_server_and_web_routes(tmp_path):
         WebToolRoute(backend="mcp", server="voidx-web", tool="web_search"),
     )
 
-    saved = json.loads((tmp_path / "voidx.json").read_text(encoding="utf-8"))
+    saved = json.loads((tmp_path / ".voidx" / "settings.json").read_text(encoding="utf-8"))
     assert saved["mcpServers"]["voidx-web"]["command"] == "python"
     assert "name" not in saved["mcpServers"]["voidx-web"]
     assert saved["web"]["search"]["server"] == "voidx-web"
@@ -59,7 +59,7 @@ def test_settings_saves_mcp_server_and_web_routes(tmp_path):
     assert loaded.get_web_tool_route("search").tool == "web_search"
 
     loaded.delete_mcp_server("voidx-web")
-    saved = json.loads((tmp_path / "voidx.json").read_text(encoding="utf-8"))
+    saved = json.loads((tmp_path / ".voidx" / "settings.json").read_text(encoding="utf-8"))
     assert "voidx-web" not in saved["mcpServers"]
     assert saved["web"]["search"]["backend"] == "legacy"
 
@@ -74,8 +74,8 @@ def test_settings_tracks_skill_enable_disable(tmp_path):
     saved = json.loads((tmp_path / ".voidx" / "skills.json").read_text(encoding="utf-8"))
 
     assert saved == {"version": 1, "enabled": ["python"], "disabled": ["docs"]}
-    if (tmp_path / "voidx.json").exists():
-        assert "skills" not in json.loads((tmp_path / "voidx.json").read_text(encoding="utf-8"))
+    if (tmp_path / ".voidx" / "settings.json").exists():
+        assert "skills" not in json.loads((tmp_path / ".voidx" / "settings.json").read_text(encoding="utf-8"))
     assert selection.disabled == {"docs"}
     assert selection.enabled == {"python"}
 
@@ -158,7 +158,7 @@ def test_settings_defaults_and_saves_code_ide(tmp_path):
 
     settings.set_code_ide(CodeIde.GHOSTTY)
 
-    saved = json.loads((tmp_path / "voidx.json").read_text(encoding="utf-8"))
+    saved = json.loads((tmp_path / ".voidx" / "settings.json").read_text(encoding="utf-8"))
     assert saved["codeIde"] == "ghostty"
     assert Settings(str(tmp_path)).get_code_ide() == CodeIde.GHOSTTY
 
@@ -174,7 +174,7 @@ def test_settings_migrates_legacy_skill_selection_on_write(tmp_path):
     settings.set_tavily_api_key("tvly-test")
 
     state = json.loads((tmp_path / ".voidx" / "skills.json").read_text(encoding="utf-8"))
-    saved = json.loads((tmp_path / "voidx.json").read_text(encoding="utf-8"))
+    saved = json.loads((tmp_path / ".voidx" / "settings.json").read_text(encoding="utf-8"))
 
     assert state == {"version": 1, "enabled": ["docs", "legacy"], "disabled": []}
     assert saved == {"tavily_api_key": "tvly-test"}
@@ -230,7 +230,7 @@ def test_build_config_uses_default_reasoning_effort(tmp_path):
         assert cfg.model.base_url == "https://mimo.example/v1"
         assert cfg.model.protocol == "openai"
         assert cfg.model.reasoning_effort == "xhigh"
-        saved = json.loads((tmp_path / "voidx.json").read_text(encoding="utf-8"))
+        saved = json.loads((tmp_path / ".voidx" / "settings.json").read_text(encoding="utf-8"))
         assert saved == {"current_profile": profile_name}
     finally:
         delete_model_profile(profile_name)
@@ -255,7 +255,7 @@ def test_save_profile_persists_model_in_db_and_only_current_profile_in_json(tmp_
             base_url="https://another.example/v1",
         )
 
-        saved = json.loads((tmp_path / "voidx.json").read_text(encoding="utf-8"))
+        saved = json.loads((tmp_path / ".voidx" / "settings.json").read_text(encoding="utf-8"))
         assert saved == {"current_profile": profile_name}
 
         loaded = settings.resolve_profile(profile_name)

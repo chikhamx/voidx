@@ -47,6 +47,19 @@ class DockNodeMixin:
             ])
         if not lines:
             return None
+        startup_nodes = [
+            child for child in self._tree.root.children if child.node_type == "startup"
+        ]
+        if startup_nodes:
+            existing = startup_nodes[0]
+            for duplicate in startup_nodes[1:]:
+                self._remove_node(duplicate)
+            existing.header = lines[0]
+            existing.body_lines = lines[1:]
+            existing.collapsed = False
+            self._tree.mark_dirty()
+            self.refresh()
+            return existing
         node = self._tree.new_node(
             parent=self._tree.root,
             node_type="startup",
@@ -118,12 +131,16 @@ class DockNodeMixin:
         summary = f"Thinking for {elapsed:.0f}s" if elapsed is not None else "Thinking"
         if lines:
             summary += f", {len(lines)} line{'s' if len(lines) != 1 else ''}"
+        visible_lines = lines[:5]
+        body: list[str] = [f"[dim]{escape(line)}[/dim]" for line in visible_lines]
+        if len(lines) > 5:
+            body.append(f"[dim]… (+{len(lines) - 5} more lines)[/dim]")
         node = self._tree.new_node(
             parent=self.ensure_agent(),
             node_type="thought",
             header=f"[dim]●[/dim] [dim]{escape(summary)}[/dim]",
-            body_lines=[f"[dim]{escape(line)}[/dim]" for line in lines[-5:]],
-            collapsed=True,
+            body_lines=body,
+            collapsed=False,
             meta=summary,
         )
         self.refresh()
@@ -143,13 +160,11 @@ class DockNodeMixin:
             self._settle_stream_for_tool()
         raw_args = raw_args or {}
         body_lines: list[str] = []
-        header = f"[bold]{escape(label)}[/]"
         if tool_name == "bash":
             command = str(raw_args.get("command") or "")
             if command:
                 body_lines = _bash_markdown_lines(command, self._markdown_width())
-        elif args:
-            header += f"({args})"
+        header = _tool_header(tool_name, label, args, raw_args)
         parent = parent or self.ensure_agent()
         tool_body = header
         self._current_tool = self._tree.new_node(
@@ -182,7 +197,7 @@ class DockNodeMixin:
         color = "dim" if ok else "red"
         icon = "●" if ok else "✗"
         tool_body = node.meta or node.header
-        suffix = f" [dim]({elapsed:.1f}s)[/dim]"
+        suffix = f" [dim]({elapsed:.1f}s)[/dim]" if elapsed >= 2 else ""
         if detail:
             suffix += f" [dim]{detail}[/dim]"
         node.header = f"[{color}]{icon}[/{color}] {tool_body}{suffix}"
@@ -250,7 +265,7 @@ class DockNodeMixin:
             body_lines, omitted = render_file_change_lines(file_diff, preview_hunks, preview_lines)
             header = (
                 f"[#A3BE8C]●[/#A3BE8C] "
-                f"[bold]{file_diff.operation}[/bold]({escape(_short_path(file_diff.path))})"
+                f"{_operation_header(file_diff.operation, file_diff.path)}"
             )
             if index == 0 and target.node_type == "tool_call":
                 node = target
@@ -298,6 +313,7 @@ class DockNodeMixin:
         parent: OutputNode | None = None,
         stage: str = "working",
     ) -> OutputNode:
+        self.record_status(status_id, label, detail, stage=stage)
         node = self._status_nodes.get(status_id)
         if node is None:
             node = self._tree.new_node(
@@ -329,6 +345,7 @@ class DockNodeMixin:
         ok: bool = True,
         remove: bool = True,
     ) -> None:
+        self.clear_status_record(status_id)
         node = self._status_nodes.pop(status_id, None)
         if node is None:
             return
@@ -399,3 +416,95 @@ def _bash_markdown_lines(command: str, width: int) -> list[str]:
 def _markdown_fence(text: str) -> str:
     runs = [len(match.group(0)) for match in re.finditer(r"`+", text)]
     return "`" * max(3, max(runs, default=0) + 1)
+
+
+def _tool_header(
+    tool_name: str,
+    label: str,
+    args: str,
+    raw_args: dict[str, Any],
+) -> str:
+    name = _tool_display_name(tool_name, label)
+    value = _tool_display_value(tool_name, args, raw_args)
+    if value:
+        return f'[bold]{escape(name)}[/bold]("[cyan]{escape(_shorten(value))}[/cyan]")'
+    return f"[bold]{escape(name)}[/bold]()"
+
+
+def _operation_header(operation: str, path: str) -> str:
+    return f'[bold]{escape(operation)}[/bold]("[cyan]{escape(_short_path(path))}[/cyan]")'
+
+
+def _tool_display_name(tool_name: str, label: str) -> str:
+    mapping = {
+        "read": "Read",
+        "grep": "Search",
+        "glob": "Search",
+        "edit": "Update",
+        "write": "Update",
+        "lsp_format": "Update",
+        "bash": "Bash",
+        "agent": "Agent",
+        "webfetch": "Fetch",
+        "websearch": "Search",
+        "repo_map": "Map",
+        "todo": "Todo",
+        "task_status": "Status",
+    }
+    label_mapping = {
+        "Reading": "Read",
+        "Editing": "Update",
+        "Writing": "Update",
+        "Searching": "Search",
+        "Finding": "Search",
+        "Mapping": "Map",
+        "Running": "Run",
+    }
+    if tool_name in mapping:
+        return mapping[tool_name]
+    if label in label_mapping:
+        return label_mapping[label]
+    return label or (tool_name or "Tool").title()
+
+
+def _tool_display_value(tool_name: str, args: str, raw_args: dict[str, Any]) -> str:
+    value: object = ""
+    if tool_name in {"read", "edit", "write", "lsp_format"}:
+        value = raw_args.get("file_path") or raw_args.get("path")
+    elif tool_name == "grep":
+        pattern = raw_args.get("pattern") or raw_args.get("query")
+        include = raw_args.get("include")
+        value = f"{pattern} in {include}" if pattern and include else pattern
+    elif tool_name == "glob":
+        value = raw_args.get("pattern")
+    elif tool_name == "bash":
+        value = str(raw_args.get("command") or "").replace("\n", "; ")
+    elif tool_name == "agent":
+        value = raw_args.get("agent") or raw_args.get("role") or raw_args.get("description")
+    elif tool_name in {"webfetch", "websearch"}:
+        value = raw_args.get("url") or raw_args.get("query")
+    elif raw_args:
+        for key in ("file_path", "path", "pattern", "query", "url", "command", "name"):
+            if raw_args.get(key):
+                value = raw_args[key]
+                break
+    if value:
+        return str(value)
+    return _strip_rich_markup(args)
+
+
+def _strip_rich_markup(text: str) -> str:
+    if not text:
+        return ""
+    text = re.sub(r"\[/?[A-Za-z0-9_#= .:-]+\]", "", text)
+    text = text.strip()
+    if "=" in text:
+        text = text.split("=", 1)[1].strip()
+    return text.strip("\"'")
+
+
+def _shorten(text: str, limit: int = 80) -> str:
+    clean = " ".join(str(text).split())
+    if len(clean) <= limit:
+        return clean
+    return clean[: limit - 1].rstrip() + "…"

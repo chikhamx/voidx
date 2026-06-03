@@ -8,8 +8,9 @@ from pathlib import Path
 
 from pydantic import BaseModel, Field
 
-SETTINGS_FILE = "voidx.json"
+SETTINGS_FILE = ".voidx/settings.json"
 SKILLS_STATE_FILE = ".voidx/skills.json"
+_LEGACY_SETTINGS_FILE = "voidx.json"
 
 
 class SandboxMode(str, Enum):
@@ -175,14 +176,21 @@ class Config(BaseModel):
 # ── JSON-backed settings store ────────────────────────────────────────────
 
 class Settings:
-    """Persistent settings backed by ``voidx.json`` in the workspace directory."""
+    """Persistent settings backed by ``.voidx/settings.json`` in the workspace directory."""
 
     def __init__(self, workspace: str = ".") -> None:
         self._workspace = Path(workspace).resolve()
         self._path = self._workspace / SETTINGS_FILE
+        self._migrate_legacy_file()
         self._data: dict = self._load()
         self._runtime_keys: dict[str, str] = {}
         self._migrate_legacy_profiles()
+
+    def _migrate_legacy_file(self) -> None:
+        legacy = self._workspace / _LEGACY_SETTINGS_FILE
+        if legacy.exists() and not self._path.exists():
+            self._path.parent.mkdir(parents=True, exist_ok=True)
+            legacy.rename(self._path)
 
     def _load(self) -> dict:
         if self._path.exists():

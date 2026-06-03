@@ -10,7 +10,7 @@ from typing import Any
 from rich.markdown import Markdown
 from rich.markup import escape
 
-from voidx.ui.dock import BottomInputDock
+from voidx.ui.dock import BottomInputDock, dock
 from voidx.ui.event_components.schema import (
     AnsiAppended,
     AssistantStreamCommitted,
@@ -141,6 +141,27 @@ class UiEventBus:
                 self._queue.task_done()
 
 
+class CompositeEventConsumer:
+    """Apply an event to a primary consumer and mirror it to secondary consumers."""
+
+    def __init__(self, primary: Any, mirrors: list[Any] | None = None) -> None:
+        self._primary = primary
+        self._mirrors = mirrors or []
+
+    async def handle(self, event: UiEvent) -> Any:
+        result = self._primary.handle(event)
+        if inspect.isawaitable(result):
+            result = await result
+        mirror_tasks = []
+        for mirror in self._mirrors:
+            mirror_result = mirror.handle(event)
+            if inspect.isawaitable(mirror_result):
+                mirror_tasks.append(mirror_result)
+        if mirror_tasks:
+            await asyncio.gather(*mirror_tasks)
+        return result
+
+
 class DockEventConsumer:
     """Apply typed events to BottomInputDock in queue order."""
 
@@ -190,6 +211,17 @@ class DockEventConsumer:
 
             return self._dock.capture(lambda console: render_diff(console, event.diff_text, event.title))
         if isinstance(event, StatusUpdated):
+            if (
+                event.stage == "agent_step"
+                and event.agent_id < 0
+                and not event.parent_tool_call_id
+            ):
+                return self._dock.record_status(
+                    event.status_id,
+                    event.label,
+                    event.detail,
+                    stage=event.stage.replace("_", " "),
+                )
             return self._dock.set_status(
                 event.status_id,
                 event.label,
@@ -339,3 +371,8 @@ class DockEventConsumer:
 
 
 ui_events = UiEventBus()
+
+
+def via_events() -> bool:
+    """True when the dock is active and the UI event bus is the preferred rendering path."""
+    return dock.active and ui_events.is_running

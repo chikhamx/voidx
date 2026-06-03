@@ -1,0 +1,12 @@
+{
+  "name": "voidx-desktop",
+  "private": true,
+  "type": "module",
+  "scripts": {
+    "dev": "tauri dev",
+    "build": "tauri build"
+  },
+  "devDependencies": {
+    "@tauri-apps/cli": "latest"
+  }
+}

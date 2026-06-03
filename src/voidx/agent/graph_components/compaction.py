@@ -11,7 +11,7 @@ from voidx.llm.usage import estimate_context_tokens, estimate_message_tokens, ex
 from voidx.memory.context_frames import save_context_frame_from_messages
 from voidx.ui.console import StreamingRenderer
 from voidx.ui.dock import dock
-from voidx.ui.events import StatusFinished, StatusUpdated, ui_events
+from voidx.ui.events import StatusFinished, StatusUpdated, ui_events, via_events
 
 
 class GraphCompactionMixin:
@@ -33,7 +33,7 @@ class GraphCompactionMixin:
         if not force and ask and getattr(self.config, "ask_compact", False):
             should_compact = await self._ask_compact(total_tokens)
             if not should_compact:
-                if dock.active and ui_events.is_running:
+                if via_events():
                     await ui_events.emit(StatusFinished(
                         status_id="compaction",
                         label="Compaction skipped",
@@ -43,7 +43,7 @@ class GraphCompactionMixin:
                     ui.print("[dim]Compaction skipped[/dim]")
                 return None, None
 
-        if dock.active and ui_events.is_running:
+        if via_events():
             await ui_events.emit(StatusUpdated(
                 status_id="compaction",
                 label="Compacting context",
@@ -66,7 +66,7 @@ class GraphCompactionMixin:
         if not head_msgs or not tail_id:
             # Hard fallback: keep only last 6 messages
             keep = min(6, len(messages))
-            if dock.active and ui_events.is_running:
+            if via_events():
                 await ui_events.emit(StatusUpdated(
                     status_id="compaction",
                     label="Compacting context",
@@ -90,7 +90,7 @@ class GraphCompactionMixin:
 
         # Run compaction agent
         try:
-            if dock.active and ui_events.is_running:
+            if via_events():
                 await ui_events.emit(StatusUpdated(
                     status_id="compaction",
                     label="Compacting context",
@@ -100,7 +100,7 @@ class GraphCompactionMixin:
             previous_summary = getattr(self, "_compaction_summary", "") or None
             summary = await self._run_compaction_agent(head_msgs, previous_summary)
         except Exception as e:
-            if dock.active and ui_events.is_running:
+            if via_events():
                 await ui_events.emit(StatusUpdated(
                     status_id="compaction",
                     label="Compaction agent failed",
@@ -115,7 +115,7 @@ class GraphCompactionMixin:
             messages.clear()
             messages.extend(system_msgs)
             messages.extend(other_msgs[-keep:])
-            if dock.active and ui_events.is_running:
+            if via_events():
                 await ui_events.emit(StatusFinished(
                     status_id="compaction",
                     label=f"Compaction fallback kept last {keep} messages",
@@ -133,7 +133,7 @@ class GraphCompactionMixin:
             self._compaction_summary = summary
             self._compaction.compaction_count += 1
             await self._persist_compaction(head_msgs)
-            if dock.active and ui_events.is_running:
+            if via_events():
                 await ui_events.emit(StatusFinished(
                     status_id="compaction",
                     label=f"Compacted {len(head_msgs)} messages into summary",
@@ -141,7 +141,7 @@ class GraphCompactionMixin:
                 ))
             else:
                 ui.print(f"[dim]Compacted: {len(head_msgs)} messages → summary[/dim]")
-        elif dock.active and ui_events.is_running:
+        elif via_events():
             await ui_events.emit(StatusFinished(
                 status_id="compaction",
                 label="Compaction produced no summary",

@@ -63,6 +63,7 @@ from voidx.ui.events import (
     SubagentFinished,
     SubagentStarted,
     ui_events,
+    via_events,
 )
 from voidx.ui.tree import OutputNode
 
@@ -136,7 +137,7 @@ class VoidXGraph(
         self._sub_buffers: dict[str, list] = {}
         self._pending_summary: str | None = None
         self._compaction_summary: str = ""
-        self._app: PromptToolkitTui | None = None
+        self._app: Any | None = None  # PureTui (tui.py)
         self._next_agent_id: int = 0
         self._task_state = TaskState()
         self._task_run = TaskRun()
@@ -162,6 +163,11 @@ class VoidXGraph(
         )
         from voidx.lsp import LspManager
         self._lsp_manager = LspManager(self._workspace)
+
+    @property
+    def app(self) -> Any | None:
+        """The interactive TUI app, if one is running."""
+        return self._app
 
     @property
     def _plan_mode(self) -> bool:
@@ -196,7 +202,7 @@ class VoidXGraph(
                 interaction_mode=self._interaction_mode.value,
             )
 
-        if dock.active and ui_events.is_running:
+        if via_events():
             await ui_events.emit(SubagentStarted(
                 agent_id=agent_id,
                 subagent_id=f"agent_{agent_id}",
@@ -252,7 +258,7 @@ class VoidXGraph(
             self._sub_buffers.setdefault(key, []).extend(sub_buffer)
             return result
         finally:
-            if dock.active and ui_events.is_running:
+            if via_events():
                 await ui_events.emit(SubagentFinished(
                     agent_id=agent_id,
                     subagent_id=f"agent_{agent_id}",

@@ -15,7 +15,8 @@ MAX_TEXT_ATTACHMENT_BYTES = 200_000
 MAX_IMAGE_ATTACHMENT_BYTES = 5_000_000
 MAX_DIR_LISTING_ITEMS = 500
 _DIR_TREE_SKIP = {"__pycache__", ".git", ".hg", ".svn", "node_modules", ".venv", "venv", "dist", "build", ".pytest_cache", ".mypy_cache"}
-_ATTACHMENT_RE = re.compile(r'(?<!\S)@(?:"([^"]+)"|(\S+))')
+_ATTACHMENT_RE = re.compile(r'(?<!\S)(?:@(?:"([^"]+)"|(\S+))|\[image-([^\]]+)\])')
+_CLIPBOARD_ATTACHMENT_DIR = ".voidx/attachments"
 
 
 @dataclass(frozen=True)
@@ -65,15 +66,21 @@ def build_user_message_payload(user_text: str, workspace: str) -> UserMessagePay
     image_parts: list[dict[str, Any]] = []
 
     for start, end, raw_path in tokens:
-        resolved = _resolve_workspace_path(workspace_path, raw_path)
+        if raw_path.startswith(":image:"):
+            stem = raw_path[len(":image:"):]
+            resolved = _resolve_image_stem(workspace_path, stem)
+            display_label = f"[image-{stem}]"
+        else:
+            resolved = _resolve_workspace_path(workspace_path, raw_path)
+            display_label = raw_path
         if resolved is None:
-            warnings.append(f"Attachment skipped outside workspace: {raw_path}")
+            warnings.append(f"Attachment skipped outside workspace: {display_label}")
             continue
         if not resolved.exists():
-            warnings.append(f"Attachment not found: {raw_path}")
+            warnings.append(f"Attachment not found: {display_label}")
             continue
         if not resolved.is_file() and not resolved.is_dir():
-            warnings.append(f"Attachment is not a file or directory: {raw_path}")
+            warnings.append(f"Attachment is not a file or directory: {display_label}")
             continue
         is_dir = resolved.is_dir()
         removed_spans.append((start, end))
@@ -134,10 +141,16 @@ def is_image_path(path: Path | str) -> bool:
 
 
 def _attachment_tokens(text: str) -> list[tuple[int, int, str]]:
-    return [
-        (match.start(), match.end(), match.group(1) or match.group(2) or "")
-        for match in _ATTACHMENT_RE.finditer(text)
-    ]
+    tokens: list[tuple[int, int, str]] = []
+    for match in _ATTACHMENT_RE.finditer(text):
+        image_stem = match.group(3)
+        if image_stem:
+            raw_path = f":image:{image_stem}"
+        else:
+            raw_path = match.group(1) or match.group(2)
+        if raw_path:
+            tokens.append((match.start(), match.end(), raw_path))
+    return tokens
 
 
 def _remove_spans(text: str, spans: list[tuple[int, int]]) -> str:
@@ -161,6 +174,14 @@ def _resolve_workspace_path(workspace: Path, raw_path: str) -> Path | None:
     except ValueError:
         return None
     return resolved
+
+
+def _resolve_image_stem(workspace: Path, stem: str) -> Path | None:
+    target_dir = workspace / _CLIPBOARD_ATTACHMENT_DIR
+    if not target_dir.is_dir():
+        return None
+    matches = sorted(target_dir.glob(f"{stem}.*"))
+    return matches[0] if matches else None
 
 
 def _relative_path(workspace: Path, path: Path) -> str:

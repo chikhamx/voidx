@@ -58,7 +58,7 @@ async def test_mcp_new_builtin_saves_server_and_web_routes(tmp_path, monkeypatch
 
     await handler.dispatch("/mcp new")
 
-    saved = json.loads((tmp_path / "voidx.json").read_text(encoding="utf-8"))
+    saved = json.loads((tmp_path / ".voidx" / "settings.json").read_text(encoding="utf-8"))
     assert saved["mcpServers"]["voidx-web"]["args"] == ["-m", "voidx.mcp_servers.web"]
     assert saved["mcpServers"]["voidx-web"]["tools"] == ["web_search", "web_fetch"]
     assert saved["web"]["search"] == {
@@ -94,7 +94,7 @@ async def test_mcp_new_tavily_saves_server_and_web_routes(tmp_path, monkeypatch)
 
     await handler.dispatch("/mcp new")
 
-    saved = json.loads((tmp_path / "voidx.json").read_text(encoding="utf-8"))
+    saved = json.loads((tmp_path / ".voidx" / "settings.json").read_text(encoding="utf-8"))
     assert saved["mcpServers"]["tavily"]["command"] == "npx"
     assert saved["mcpServers"]["tavily"]["args"] == ["-y", "tavily-mcp@latest"]
     assert saved["mcpServers"]["tavily"]["env"] == {"TAVILY_API_KEY": "tvly-test"}

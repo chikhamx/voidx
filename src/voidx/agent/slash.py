@@ -290,7 +290,7 @@ class SlashHandler(SlashCodeIdeMixin, SlashLspMixin, SlashSkillsMixin, SlashMcpM
             PermissionMode.ACCEPT_EDITS.value: "Accept edits",
             PermissionMode.AUTO_REVIEW.value: "Auto review",
             PermissionMode.FULL_ACCESS.value: "Full access",
-            PermissionMode.CUSTOM.value: "Custom (voidx.json)",
+            PermissionMode.CUSTOM.value: "Custom (.voidx/settings.json)",
         }
         valid = set(labels)
 

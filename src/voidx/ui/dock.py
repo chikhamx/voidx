@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+from dataclasses import dataclass
 from io import StringIO
 from typing import Callable
 
@@ -16,11 +17,39 @@ from voidx.ui.dock_components.formatting import (
     _ansi_rgb,
     _clean,
     _markdown_lines,
+    _strip_ansi_trailing_space,
     _text_from_line,
 )
 from voidx.ui.dock_components.nodes import DockNodeMixin
 from voidx.ui.dock_components.state import dock, get_dock, set_dock
 from voidx.ui.tree import OutputNode, OutputTree
+
+
+@dataclass(frozen=True)
+class DockStatusRecord:
+    status_id: str
+    label: str
+    detail: str = ""
+    stage: str = "working"
+
+
+def active_agent_step_text() -> str:
+    current = get_dock()
+    status_record = getattr(current, "status_record", None)
+    if not callable(status_record):
+        return ""
+    record = status_record("agent:-1:progress")
+    if record is None:
+        return ""
+    return _agent_step_text(record.label)
+
+
+def _agent_step_text(label: str) -> str:
+    text = _clean(label).strip()
+    prefix = "Agent step "
+    if text.startswith(prefix):
+        return "step " + text[len(prefix):]
+    return text
 
 
 class BottomInputDock(DockNodeMixin):
@@ -39,6 +68,7 @@ class BottomInputDock(DockNodeMixin):
         self._stream_text = ""
         self._status_nodes: dict[str, OutputNode] = {}
         self._status_ticks: dict[str, int] = {}
+        self._status_records: dict[str, DockStatusRecord] = {}
         self._permission_node: OutputNode | None = None
         self._input_text = ""
         self._cursor_pos = 0
@@ -128,6 +158,7 @@ class BottomInputDock(DockNodeMixin):
         self._stream_text = ""
         self._status_nodes = {}
         self._status_ticks = {}
+        self._status_records = {}
         self._permission_node = None
 
     def start_turn(self, text: str) -> OutputNode:
@@ -135,16 +166,14 @@ class BottomInputDock(DockNodeMixin):
         self._current_tool = None
         self._current_agent = None
         if self._tree.root.children:
-            self._tree.new_node(
-                parent=self._tree.root,
-                node_type="message",
-                header="",
-                collapsed=False,
-            )
+            self._append_root_spacer()
+        preview = _clean(text)[:160]
+        lines = [_strip_ansi_trailing_space(line) for line in (preview.splitlines() or [preview])]
         self._current_turn = self._tree.new_node(
             parent=self._tree.root,
             node_type="turn",
-            header=f"[bold white]❯[/] {escape(text[:160])}",
+            header=f"[bold white]❯[/] {escape(lines[0])}",
+            body_lines=[escape(line) for line in lines[1:]],
             collapsed=False,
         )
         self.refresh()
@@ -152,6 +181,7 @@ class BottomInputDock(DockNodeMixin):
 
     def ensure_agent(self) -> OutputNode:
         if self._current_agent is None:
+            self._append_root_spacer()
             self._current_agent = self._tree.new_node(
                 parent=self._tree.root,
                 node_type="assistant",
@@ -296,8 +326,8 @@ class BottomInputDock(DockNodeMixin):
         if not lines:
             return
 
-        # Render the bullet and first line as one ANSI run so prompt_toolkit
-        # keeps them on the same visual baseline.
+        # Render the bullet and first line as one ANSI run so the terminal keeps
+        # them on the same visual baseline.
         bullet = _ansi_rgb("●", (163, 190, 140))
         self._stream_node.header = _ansi_line(f"{bullet} {lines[0]}")
         self._stream_node.body_lines = [_ansi_line(f"  {line}") for line in lines[1:]]
@@ -324,6 +354,7 @@ class BottomInputDock(DockNodeMixin):
             if self._current_agent.header == "[#EBCB8B]●[/#EBCB8B] Working":
                 self._current_agent.header = "[dim]●[/dim] voidx"
                 self._tree.mark_dirty()
+            self._append_root_spacer()
             self._current_agent = self._tree.new_node(
                 parent=self._tree.root,
                 node_type="assistant",
@@ -332,6 +363,7 @@ class BottomInputDock(DockNodeMixin):
             )
             return self._current_agent
 
+        self._append_root_spacer()
         self._current_agent = self._tree.new_node(
             parent=self._tree.root,
             node_type="assistant",
@@ -339,6 +371,46 @@ class BottomInputDock(DockNodeMixin):
             collapsed=False,
         )
         return self._current_agent
+
+    def record_status(
+        self,
+        status_id: str,
+        label: str,
+        detail: str = "",
+        *,
+        stage: str = "working",
+    ) -> DockStatusRecord:
+        record = DockStatusRecord(
+            status_id=status_id,
+            label=label,
+            detail=detail,
+            stage=stage,
+        )
+        self._status_records[status_id] = record
+        self.refresh()
+        return record
+
+    def clear_status_record(self, status_id: str) -> None:
+        if status_id in self._status_records:
+            self._status_records.pop(status_id, None)
+            self.refresh()
+
+    def status_record(self, status_id: str) -> DockStatusRecord | None:
+        return self._status_records.get(status_id)
+
+    def _append_root_spacer(self) -> None:
+        children = self._tree.root.children
+        if not children:
+            return
+        last = children[-1]
+        if last.node_type == "message" and not last.header and not last.body_lines and not last.children:
+            return
+        self._tree.new_node(
+            parent=self._tree.root,
+            node_type="message",
+            header="",
+            collapsed=False,
+        )
 
     def _settle_stream_for_tool(self) -> None:
         if (

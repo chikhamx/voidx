@@ -1,0 +1,1744 @@
+{
+  "$defs": {
+    "AnsiAppended": {
+      "properties": {
+        "agent_id": {
+          "default": -1,
+          "title": "Agent Id",
+          "type": "integer"
+        },
+        "kind": {
+          "const": "ansi.appended",
+          "default": "ansi.appended",
+          "title": "Kind",
+          "type": "string"
+        },
+        "text": {
+          "title": "Text",
+          "type": "string"
+        }
+      },
+      "required": [
+        "text"
+      ],
+      "title": "AnsiAppended",
+      "type": "object"
+    },
+    "AssistantStreamCommitted": {
+      "properties": {
+        "agent_id": {
+          "default": -1,
+          "title": "Agent Id",
+          "type": "integer"
+        },
+        "kind": {
+          "const": "assistant_stream.committed",
+          "default": "assistant_stream.committed",
+          "title": "Kind",
+          "type": "string"
+        },
+        "stream_id": {
+          "default": "default",
+          "title": "Stream Id",
+          "type": "string"
+        }
+      },
+      "title": "AssistantStreamCommitted",
+      "type": "object"
+    },
+    "AssistantStreamDiscarded": {
+      "properties": {
+        "agent_id": {
+          "default": -1,
+          "title": "Agent Id",
+          "type": "integer"
+        },
+        "kind": {
+          "const": "assistant_stream.discarded",
+          "default": "assistant_stream.discarded",
+          "title": "Kind",
+          "type": "string"
+        },
+        "stream_id": {
+          "default": "default",
+          "title": "Stream Id",
+          "type": "string"
+        }
+      },
+      "title": "AssistantStreamDiscarded",
+      "type": "object"
+    },
+    "AssistantStreamStarted": {
+      "properties": {
+        "agent_id": {
+          "default": -1,
+          "title": "Agent Id",
+          "type": "integer"
+        },
+        "kind": {
+          "const": "assistant_stream.started",
+          "default": "assistant_stream.started",
+          "title": "Kind",
+          "type": "string"
+        },
+        "stream_id": {
+          "default": "default",
+          "title": "Stream Id",
+          "type": "string"
+        }
+      },
+      "title": "AssistantStreamStarted",
+      "type": "object"
+    },
+    "AssistantStreamUpdated": {
+      "properties": {
+        "agent_id": {
+          "default": -1,
+          "title": "Agent Id",
+          "type": "integer"
+        },
+        "kind": {
+          "const": "assistant_stream.updated",
+          "default": "assistant_stream.updated",
+          "title": "Kind",
+          "type": "string"
+        },
+        "stream_id": {
+          "default": "default",
+          "title": "Stream Id",
+          "type": "string"
+        },
+        "text": {
+          "title": "Text",
+          "type": "string"
+        }
+      },
+      "required": [
+        "text"
+      ],
+      "title": "AssistantStreamUpdated",
+      "type": "object"
+    },
+    "CaptureStarted": {
+      "properties": {
+        "agent_id": {
+          "default": -1,
+          "title": "Agent Id",
+          "type": "integer"
+        },
+        "kind": {
+          "const": "capture.started",
+          "default": "capture.started",
+          "title": "Kind",
+          "type": "string"
+        }
+      },
+      "title": "CaptureStarted",
+      "type": "object"
+    },
+    "CaptureStopped": {
+      "properties": {
+        "agent_id": {
+          "default": -1,
+          "title": "Agent Id",
+          "type": "integer"
+        },
+        "kind": {
+          "const": "capture.stopped",
+          "default": "capture.stopped",
+          "title": "Kind",
+          "type": "string"
+        }
+      },
+      "title": "CaptureStopped",
+      "type": "object"
+    },
+    "DiffAppended": {
+      "properties": {
+        "agent_id": {
+          "default": -1,
+          "title": "Agent Id",
+          "type": "integer"
+        },
+        "diff_text": {
+          "title": "Diff Text",
+          "type": "string"
+        },
+        "kind": {
+          "const": "diff.appended",
+          "default": "diff.appended",
+          "title": "Kind",
+          "type": "string"
+        },
+        "title": {
+          "default": "",
+          "title": "Title",
+          "type": "string"
+        }
+      },
+      "required": [
+        "diff_text"
+      ],
+      "title": "DiffAppended",
+      "type": "object"
+    },
+    "ErrorAppended": {
+      "properties": {
+        "agent_id": {
+          "default": -1,
+          "title": "Agent Id",
+          "type": "integer"
+        },
+        "kind": {
+          "const": "error.appended",
+          "default": "error.appended",
+          "title": "Kind",
+          "type": "string"
+        },
+        "message": {
+          "title": "Message",
+          "type": "string"
+        }
+      },
+      "required": [
+        "message"
+      ],
+      "title": "ErrorAppended",
+      "type": "object"
+    },
+    "FileChangeAppended": {
+      "properties": {
+        "agent_id": {
+          "default": -1,
+          "title": "Agent Id",
+          "type": "integer"
+        },
+        "diff_text": {
+          "title": "Diff Text",
+          "type": "string"
+        },
+        "kind": {
+          "const": "file_change.appended",
+          "default": "file_change.appended",
+          "title": "Kind",
+          "type": "string"
+        },
+        "tool_call_id": {
+          "default": "",
+          "title": "Tool Call Id",
+          "type": "string"
+        }
+      },
+      "required": [
+        "diff_text"
+      ],
+      "title": "FileChangeAppended",
+      "type": "object"
+    },
+    "InputSet": {
+      "properties": {
+        "agent_id": {
+          "default": -1,
+          "title": "Agent Id",
+          "type": "integer"
+        },
+        "cursor_pos": {
+          "anyOf": [
+            {
+              "type": "integer"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null,
+          "title": "Cursor Pos"
+        },
+        "hints": {
+          "items": {
+            "maxItems": 3,
+            "minItems": 3,
+            "prefixItems": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "string"
+              },
+              {
+                "type": "boolean"
+              }
+            ],
+            "type": "array"
+          },
+          "title": "Hints",
+          "type": "array"
+        },
+        "kind": {
+          "const": "input.set",
+          "default": "input.set",
+          "title": "Kind",
+          "type": "string"
+        },
+        "text": {
+          "title": "Text",
+          "type": "string"
+        }
+      },
+      "required": [
+        "text"
+      ],
+      "title": "InputSet",
+      "type": "object"
+    },
+    "MarkdownAppended": {
+      "properties": {
+        "agent_id": {
+          "default": -1,
+          "title": "Agent Id",
+          "type": "integer"
+        },
+        "content": {
+          "title": "Content",
+          "type": "string"
+        },
+        "kind": {
+          "const": "markdown.appended",
+          "default": "markdown.appended",
+          "title": "Kind",
+          "type": "string"
+        }
+      },
+      "required": [
+        "content"
+      ],
+      "title": "MarkdownAppended",
+      "type": "object"
+    },
+    "MessageAppended": {
+      "properties": {
+        "agent_id": {
+          "default": -1,
+          "title": "Agent Id",
+          "type": "integer"
+        },
+        "kind": {
+          "const": "message.appended",
+          "default": "message.appended",
+          "title": "Kind",
+          "type": "string"
+        },
+        "style": {
+          "default": "",
+          "title": "Style",
+          "type": "string"
+        },
+        "text": {
+          "title": "Text",
+          "type": "string"
+        }
+      },
+      "required": [
+        "text"
+      ],
+      "title": "MessageAppended",
+      "type": "object"
+    },
+    "NoticeSet": {
+      "properties": {
+        "agent_id": {
+          "default": -1,
+          "title": "Agent Id",
+          "type": "integer"
+        },
+        "kind": {
+          "const": "notice.set",
+          "default": "notice.set",
+          "title": "Kind",
+          "type": "string"
+        },
+        "text": {
+          "title": "Text",
+          "type": "string"
+        }
+      },
+      "required": [
+        "text"
+      ],
+      "title": "NoticeSet",
+      "type": "object"
+    },
+    "PermissionPromptCleared": {
+      "properties": {
+        "agent_id": {
+          "default": -1,
+          "title": "Agent Id",
+          "type": "integer"
+        },
+        "kind": {
+          "const": "permission_prompt.cleared",
+          "default": "permission_prompt.cleared",
+          "title": "Kind",
+          "type": "string"
+        }
+      },
+      "title": "PermissionPromptCleared",
+      "type": "object"
+    },
+    "PermissionPromptShown": {
+      "properties": {
+        "agent_id": {
+          "default": -1,
+          "title": "Agent Id",
+          "type": "integer"
+        },
+        "choices": {
+          "items": {
+            "maxItems": 3,
+            "minItems": 3,
+            "prefixItems": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "string"
+              },
+              {
+                "type": "string"
+              }
+            ],
+            "type": "array"
+          },
+          "title": "Choices",
+          "type": "array"
+        },
+        "kind": {
+          "const": "permission_prompt.shown",
+          "default": "permission_prompt.shown",
+          "title": "Kind",
+          "type": "string"
+        },
+        "prompt": {
+          "title": "Prompt",
+          "type": "string"
+        },
+        "tools": {
+          "items": {
+            "$ref": "#/$defs/PermissionToolDetail"
+          },
+          "title": "Tools",
+          "type": "array"
+        }
+      },
+      "required": [
+        "prompt",
+        "choices"
+      ],
+      "title": "PermissionPromptShown",
+      "type": "object"
+    },
+    "PermissionToolDetail": {
+      "properties": {
+        "args": {
+          "additionalProperties": true,
+          "title": "Args",
+          "type": "object"
+        },
+        "name": {
+          "title": "Name",
+          "type": "string"
+        },
+        "pattern": {
+          "default": "",
+          "title": "Pattern",
+          "type": "string"
+        }
+      },
+      "required": [
+        "name"
+      ],
+      "title": "PermissionToolDetail",
+      "type": "object"
+    },
+    "ProtocolEnvelope": {
+      "discriminator": {
+        "mapping": {
+          "command": "#/$defs/UiCommandEnvelope",
+          "event": "#/$defs/UiEventEnvelope",
+          "hello": "#/$defs/UiHelloEnvelope",
+          "request": "#/$defs/UiRequestEnvelope",
+          "response": "#/$defs/UiResponseEnvelope",
+          "snapshot": "#/$defs/UiSnapshotEnvelope"
+        },
+        "propertyName": "type"
+      },
+      "oneOf": [
+        {
+          "$ref": "#/$defs/UiHelloEnvelope"
+        },
+        {
+          "$ref": "#/$defs/UiSnapshotEnvelope"
+        },
+        {
+          "$ref": "#/$defs/UiEventEnvelope"
+        },
+        {
+          "$ref": "#/$defs/UiRequestEnvelope"
+        },
+        {
+          "$ref": "#/$defs/UiResponseEnvelope"
+        },
+        {
+          "$ref": "#/$defs/UiCommandEnvelope"
+        }
+      ]
+    },
+    "RefreshRequested": {
+      "properties": {
+        "agent_id": {
+          "default": -1,
+          "title": "Agent Id",
+          "type": "integer"
+        },
+        "kind": {
+          "const": "refresh.requested",
+          "default": "refresh.requested",
+          "title": "Kind",
+          "type": "string"
+        }
+      },
+      "title": "RefreshRequested",
+      "type": "object"
+    },
+    "ResetRequested": {
+      "properties": {
+        "agent_id": {
+          "default": -1,
+          "title": "Agent Id",
+          "type": "integer"
+        },
+        "kind": {
+          "const": "reset.requested",
+          "default": "reset.requested",
+          "title": "Kind",
+          "type": "string"
+        }
+      },
+      "title": "ResetRequested",
+      "type": "object"
+    },
+    "StartupShown": {
+      "properties": {
+        "agent_id": {
+          "default": -1,
+          "title": "Agent Id",
+          "type": "integer"
+        },
+        "is_new": {
+          "title": "Is New",
+          "type": "boolean"
+        },
+        "kind": {
+          "const": "startup.shown",
+          "default": "startup.shown",
+          "title": "Kind",
+          "type": "string"
+        },
+        "model": {
+          "title": "Model",
+          "type": "string"
+        },
+        "profile_configured": {
+          "default": true,
+          "title": "Profile Configured",
+          "type": "boolean"
+        },
+        "provider": {
+          "title": "Provider",
+          "type": "string"
+        },
+        "session_title": {
+          "title": "Session Title",
+          "type": "string"
+        },
+        "workspace": {
+          "title": "Workspace",
+          "type": "string"
+        }
+      },
+      "required": [
+        "model",
+        "provider",
+        "workspace",
+        "session_title",
+        "is_new"
+      ],
+      "title": "StartupShown",
+      "type": "object"
+    },
+    "StatusFinished": {
+      "properties": {
+        "agent_id": {
+          "default": -1,
+          "title": "Agent Id",
+          "type": "integer"
+        },
+        "detail": {
+          "default": "",
+          "title": "Detail",
+          "type": "string"
+        },
+        "kind": {
+          "const": "status.finished",
+          "default": "status.finished",
+          "title": "Kind",
+          "type": "string"
+        },
+        "label": {
+          "default": "",
+          "title": "Label",
+          "type": "string"
+        },
+        "ok": {
+          "default": true,
+          "title": "Ok",
+          "type": "boolean"
+        },
+        "remove": {
+          "default": true,
+          "title": "Remove",
+          "type": "boolean"
+        },
+        "status_id": {
+          "title": "Status Id",
+          "type": "string"
+        }
+      },
+      "required": [
+        "status_id"
+      ],
+      "title": "StatusFinished",
+      "type": "object"
+    },
+    "StatusUpdated": {
+      "properties": {
+        "agent_id": {
+          "default": -1,
+          "title": "Agent Id",
+          "type": "integer"
+        },
+        "detail": {
+          "default": "",
+          "title": "Detail",
+          "type": "string"
+        },
+        "kind": {
+          "const": "status.updated",
+          "default": "status.updated",
+          "title": "Kind",
+          "type": "string"
+        },
+        "label": {
+          "title": "Label",
+          "type": "string"
+        },
+        "parent_tool_call_id": {
+          "default": "",
+          "title": "Parent Tool Call Id",
+          "type": "string"
+        },
+        "stage": {
+          "default": "working",
+          "enum": [
+            "analyzing",
+            "thinking",
+            "streaming",
+            "agent_step",
+            "compacting",
+            "waiting_permission",
+            "working"
+          ],
+          "title": "Stage",
+          "type": "string"
+        },
+        "status_id": {
+          "title": "Status Id",
+          "type": "string"
+        }
+      },
+      "required": [
+        "status_id",
+        "label"
+      ],
+      "title": "StatusUpdated",
+      "type": "object"
+    },
+    "SubagentFinished": {
+      "properties": {
+        "agent_id": {
+          "title": "Agent Id",
+          "type": "integer"
+        },
+        "elapsed": {
+          "anyOf": [
+            {
+              "type": "number"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null,
+          "title": "Elapsed"
+        },
+        "kind": {
+          "const": "subagent.finished",
+          "default": "subagent.finished",
+          "title": "Kind",
+          "type": "string"
+        },
+        "ok": {
+          "default": true,
+          "title": "Ok",
+          "type": "boolean"
+        },
+        "subagent_id": {
+          "title": "Subagent Id",
+          "type": "string"
+        }
+      },
+      "required": [
+        "agent_id",
+        "subagent_id"
+      ],
+      "title": "SubagentFinished",
+      "type": "object"
+    },
+    "SubagentStarted": {
+      "properties": {
+        "agent_id": {
+          "title": "Agent Id",
+          "type": "integer"
+        },
+        "description": {
+          "default": "",
+          "title": "Description",
+          "type": "string"
+        },
+        "kind": {
+          "const": "subagent.started",
+          "default": "subagent.started",
+          "title": "Kind",
+          "type": "string"
+        },
+        "name": {
+          "title": "Name",
+          "type": "string"
+        },
+        "parent_agent_id": {
+          "default": -1,
+          "title": "Parent Agent Id",
+          "type": "integer"
+        },
+        "parent_tool_call_id": {
+          "default": "",
+          "title": "Parent Tool Call Id",
+          "type": "string"
+        },
+        "subagent_id": {
+          "title": "Subagent Id",
+          "type": "string"
+        }
+      },
+      "required": [
+        "agent_id",
+        "subagent_id",
+        "name"
+      ],
+      "title": "SubagentStarted",
+      "type": "object"
+    },
+    "SubagentStepStarted": {
+      "properties": {
+        "agent_id": {
+          "title": "Agent Id",
+          "type": "integer"
+        },
+        "kind": {
+          "const": "subagent_step.started",
+          "default": "subagent_step.started",
+          "title": "Kind",
+          "type": "string"
+        },
+        "max_steps": {
+          "title": "Max Steps",
+          "type": "integer"
+        },
+        "name": {
+          "title": "Name",
+          "type": "string"
+        },
+        "step": {
+          "title": "Step",
+          "type": "integer"
+        },
+        "subagent_id": {
+          "title": "Subagent Id",
+          "type": "string"
+        }
+      },
+      "required": [
+        "agent_id",
+        "subagent_id",
+        "name",
+        "step",
+        "max_steps"
+      ],
+      "title": "SubagentStepStarted",
+      "type": "object"
+    },
+    "ThoughtAppended": {
+      "properties": {
+        "agent_id": {
+          "default": -1,
+          "title": "Agent Id",
+          "type": "integer"
+        },
+        "elapsed": {
+          "anyOf": [
+            {
+              "type": "number"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null,
+          "title": "Elapsed"
+        },
+        "kind": {
+          "const": "thought.appended",
+          "default": "thought.appended",
+          "title": "Kind",
+          "type": "string"
+        },
+        "text": {
+          "title": "Text",
+          "type": "string"
+        }
+      },
+      "required": [
+        "text"
+      ],
+      "title": "ThoughtAppended",
+      "type": "object"
+    },
+    "ToolFinished": {
+      "properties": {
+        "agent_id": {
+          "default": -1,
+          "title": "Agent Id",
+          "type": "integer"
+        },
+        "detail": {
+          "default": "",
+          "title": "Detail",
+          "type": "string"
+        },
+        "elapsed": {
+          "title": "Elapsed",
+          "type": "number"
+        },
+        "kind": {
+          "const": "tool.finished",
+          "default": "tool.finished",
+          "title": "Kind",
+          "type": "string"
+        },
+        "label": {
+          "title": "Label",
+          "type": "string"
+        },
+        "ok": {
+          "default": true,
+          "title": "Ok",
+          "type": "boolean"
+        },
+        "tool_call_id": {
+          "title": "Tool Call Id",
+          "type": "string"
+        }
+      },
+      "required": [
+        "tool_call_id",
+        "label",
+        "elapsed"
+      ],
+      "title": "ToolFinished",
+      "type": "object"
+    },
+    "ToolResultAppended": {
+      "properties": {
+        "agent_id": {
+          "default": -1,
+          "title": "Agent Id",
+          "type": "integer"
+        },
+        "collapsed": {
+          "default": false,
+          "title": "Collapsed",
+          "type": "boolean"
+        },
+        "kind": {
+          "const": "tool_result.appended",
+          "default": "tool_result.appended",
+          "title": "Kind",
+          "type": "string"
+        },
+        "text": {
+          "title": "Text",
+          "type": "string"
+        },
+        "tool_call_id": {
+          "default": "",
+          "title": "Tool Call Id",
+          "type": "string"
+        }
+      },
+      "required": [
+        "text"
+      ],
+      "title": "ToolResultAppended",
+      "type": "object"
+    },
+    "ToolStarted": {
+      "properties": {
+        "agent_id": {
+          "default": -1,
+          "title": "Agent Id",
+          "type": "integer"
+        },
+        "args": {
+          "default": "",
+          "title": "Args",
+          "type": "string"
+        },
+        "kind": {
+          "const": "tool.started",
+          "default": "tool.started",
+          "title": "Kind",
+          "type": "string"
+        },
+        "label": {
+          "title": "Label",
+          "type": "string"
+        },
+        "raw_args": {
+          "additionalProperties": true,
+          "title": "Raw Args",
+          "type": "object"
+        },
+        "tool_call_id": {
+          "title": "Tool Call Id",
+          "type": "string"
+        },
+        "tool_name": {
+          "default": "",
+          "title": "Tool Name",
+          "type": "string"
+        }
+      },
+      "required": [
+        "tool_call_id",
+        "label"
+      ],
+      "title": "ToolStarted",
+      "type": "object"
+    },
+    "TranscriptNode": {
+      "properties": {
+        "agent_name": {
+          "anyOf": [
+            {
+              "type": "string"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null,
+          "title": "Agent Name"
+        },
+        "agent_run_id": {
+          "anyOf": [
+            {
+              "type": "string"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null,
+          "title": "Agent Run Id"
+        },
+        "body_lines": {
+          "items": {
+            "type": "string"
+          },
+          "title": "Body Lines",
+          "type": "array"
+        },
+        "child_ids": {
+          "items": {
+            "type": "string"
+          },
+          "title": "Child Ids",
+          "type": "array"
+        },
+        "collapsed": {
+          "default": false,
+          "title": "Collapsed",
+          "type": "boolean"
+        },
+        "elapsed": {
+          "anyOf": [
+            {
+              "type": "number"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null,
+          "title": "Elapsed"
+        },
+        "header": {
+          "default": "",
+          "title": "Header",
+          "type": "string"
+        },
+        "header_style": {
+          "default": "",
+          "title": "Header Style",
+          "type": "string"
+        },
+        "id": {
+          "title": "Id",
+          "type": "string"
+        },
+        "message_id": {
+          "anyOf": [
+            {
+              "type": "integer"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null,
+          "title": "Message Id"
+        },
+        "meta": {
+          "anyOf": [
+            {
+              "type": "string"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null,
+          "title": "Meta"
+        },
+        "node_type": {
+          "enum": [
+            "root",
+            "startup",
+            "turn",
+            "tool_call",
+            "tool_result",
+            "subagent",
+            "message",
+            "assistant",
+            "thought",
+            "status",
+            "permission",
+            "error",
+            "warn",
+            "diff"
+          ],
+          "title": "Node Type",
+          "type": "string"
+        },
+        "parent_id": {
+          "anyOf": [
+            {
+              "type": "string"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null,
+          "title": "Parent Id"
+        },
+        "payload": {
+          "additionalProperties": true,
+          "title": "Payload",
+          "type": "object"
+        },
+        "status": {
+          "default": "running",
+          "enum": [
+            "running",
+            "done",
+            "error"
+          ],
+          "title": "Status",
+          "type": "string"
+        },
+        "step_info": {
+          "anyOf": [
+            {
+              "type": "string"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null,
+          "title": "Step Info"
+        },
+        "title": {
+          "default": "",
+          "title": "Title",
+          "type": "string"
+        },
+        "tool_call_id": {
+          "anyOf": [
+            {
+              "type": "string"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null,
+          "title": "Tool Call Id"
+        }
+      },
+      "required": [
+        "id",
+        "node_type"
+      ],
+      "title": "TranscriptNode",
+      "type": "object"
+    },
+    "TranscriptSnapshot": {
+      "properties": {
+        "nodes": {
+          "items": {
+            "$ref": "#/$defs/TranscriptNode"
+          },
+          "title": "Nodes",
+          "type": "array"
+        },
+        "revision": {
+          "default": 0,
+          "title": "Revision",
+          "type": "integer"
+        },
+        "root_id": {
+          "default": "root",
+          "title": "Root Id",
+          "type": "string"
+        },
+        "session_id": {
+          "default": "",
+          "title": "Session Id",
+          "type": "string"
+        }
+      },
+      "title": "TranscriptSnapshot",
+      "type": "object"
+    },
+    "TurnStarted": {
+      "properties": {
+        "agent_id": {
+          "default": -1,
+          "title": "Agent Id",
+          "type": "integer"
+        },
+        "kind": {
+          "const": "turn.started",
+          "default": "turn.started",
+          "title": "Kind",
+          "type": "string"
+        },
+        "text": {
+          "title": "Text",
+          "type": "string"
+        }
+      },
+      "required": [
+        "text"
+      ],
+      "title": "TurnStarted",
+      "type": "object"
+    },
+    "UiCancelCommand": {
+      "properties": {
+        "kind": {
+          "const": "cancel",
+          "default": "cancel",
+          "title": "Kind",
+          "type": "string"
+        }
+      },
+      "title": "UiCancelCommand",
+      "type": "object"
+    },
+    "UiChoiceRequest": {
+      "properties": {
+        "choices": {
+          "items": {
+            "maxItems": 3,
+            "minItems": 3,
+            "prefixItems": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "string"
+              },
+              {
+                "type": "string"
+              }
+            ],
+            "type": "array"
+          },
+          "title": "Choices",
+          "type": "array"
+        },
+        "kind": {
+          "const": "choice",
+          "default": "choice",
+          "title": "Kind",
+          "type": "string"
+        },
+        "prompt": {
+          "title": "Prompt",
+          "type": "string"
+        },
+        "request_id": {
+          "title": "Request Id",
+          "type": "string"
+        }
+      },
+      "required": [
+        "request_id",
+        "prompt"
+      ],
+      "title": "UiChoiceRequest",
+      "type": "object"
+    },
+    "UiCommandEnvelope": {
+      "properties": {
+        "payload": {
+          "discriminator": {
+            "mapping": {
+              "cancel": "#/$defs/UiCancelCommand",
+              "submit": "#/$defs/UiSubmitCommand"
+            },
+            "propertyName": "kind"
+          },
+          "oneOf": [
+            {
+              "$ref": "#/$defs/UiSubmitCommand"
+            },
+            {
+              "$ref": "#/$defs/UiCancelCommand"
+            }
+          ],
+          "title": "Payload"
+        },
+        "seq": {
+          "default": 0,
+          "title": "Seq",
+          "type": "integer"
+        },
+        "ts": {
+          "title": "Ts",
+          "type": "number"
+        },
+        "type": {
+          "const": "command",
+          "default": "command",
+          "title": "Type",
+          "type": "string"
+        },
+        "v": {
+          "default": 1,
+          "title": "V",
+          "type": "integer"
+        }
+      },
+      "required": [
+        "payload"
+      ],
+      "title": "UiCommandEnvelope",
+      "type": "object"
+    },
+    "UiEventEnvelope": {
+      "properties": {
+        "payload": {
+          "anyOf": [
+            {
+              "$ref": "#/$defs/CaptureStarted"
+            },
+            {
+              "$ref": "#/$defs/CaptureStopped"
+            },
+            {
+              "$ref": "#/$defs/RefreshRequested"
+            },
+            {
+              "$ref": "#/$defs/ResetRequested"
+            },
+            {
+              "$ref": "#/$defs/TurnStarted"
+            },
+            {
+              "$ref": "#/$defs/StartupShown"
+            },
+            {
+              "$ref": "#/$defs/MessageAppended"
+            },
+            {
+              "$ref": "#/$defs/AnsiAppended"
+            },
+            {
+              "$ref": "#/$defs/MarkdownAppended"
+            },
+            {
+              "$ref": "#/$defs/ThoughtAppended"
+            },
+            {
+              "$ref": "#/$defs/WarningAppended"
+            },
+            {
+              "$ref": "#/$defs/ErrorAppended"
+            },
+            {
+              "$ref": "#/$defs/DiffAppended"
+            },
+            {
+              "$ref": "#/$defs/StatusUpdated"
+            },
+            {
+              "$ref": "#/$defs/StatusFinished"
+            },
+            {
+              "$ref": "#/$defs/AssistantStreamStarted"
+            },
+            {
+              "$ref": "#/$defs/AssistantStreamUpdated"
+            },
+            {
+              "$ref": "#/$defs/AssistantStreamCommitted"
+            },
+            {
+              "$ref": "#/$defs/AssistantStreamDiscarded"
+            },
+            {
+              "$ref": "#/$defs/ToolStarted"
+            },
+            {
+              "$ref": "#/$defs/ToolFinished"
+            },
+            {
+              "$ref": "#/$defs/ToolResultAppended"
+            },
+            {
+              "$ref": "#/$defs/FileChangeAppended"
+            },
+            {
+              "$ref": "#/$defs/SubagentStarted"
+            },
+            {
+              "$ref": "#/$defs/SubagentStepStarted"
+            },
+            {
+              "$ref": "#/$defs/SubagentFinished"
+            },
+            {
+              "$ref": "#/$defs/PermissionPromptShown"
+            },
+            {
+              "$ref": "#/$defs/PermissionPromptCleared"
+            },
+            {
+              "$ref": "#/$defs/InputSet"
+            },
+            {
+              "$ref": "#/$defs/NoticeSet"
+            }
+          ],
+          "title": "Payload"
+        },
+        "seq": {
+          "default": 0,
+          "title": "Seq",
+          "type": "integer"
+        },
+        "ts": {
+          "title": "Ts",
+          "type": "number"
+        },
+        "type": {
+          "const": "event",
+          "default": "event",
+          "title": "Type",
+          "type": "string"
+        },
+        "v": {
+          "default": 1,
+          "title": "V",
+          "type": "integer"
+        }
+      },
+      "required": [
+        "payload"
+      ],
+      "title": "UiEventEnvelope",
+      "type": "object"
+    },
+    "UiHello": {
+      "properties": {
+        "client": {
+          "title": "Client",
+          "type": "string"
+        },
+        "last_seq": {
+          "anyOf": [
+            {
+              "type": "integer"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null,
+          "title": "Last Seq"
+        }
+      },
+      "required": [
+        "client"
+      ],
+      "title": "UiHello",
+      "type": "object"
+    },
+    "UiHelloEnvelope": {
+      "properties": {
+        "payload": {
+          "$ref": "#/$defs/UiHello"
+        },
+        "seq": {
+          "default": 0,
+          "title": "Seq",
+          "type": "integer"
+        },
+        "ts": {
+          "title": "Ts",
+          "type": "number"
+        },
+        "type": {
+          "const": "hello",
+          "default": "hello",
+          "title": "Type",
+          "type": "string"
+        },
+        "v": {
+          "default": 1,
+          "title": "V",
+          "type": "integer"
+        }
+      },
+      "required": [
+        "payload"
+      ],
+      "title": "UiHelloEnvelope",
+      "type": "object"
+    },
+    "UiPermissionRequest": {
+      "properties": {
+        "choices": {
+          "items": {
+            "maxItems": 3,
+            "minItems": 3,
+            "prefixItems": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "string"
+              },
+              {
+                "type": "string"
+              }
+            ],
+            "type": "array"
+          },
+          "title": "Choices",
+          "type": "array"
+        },
+        "kind": {
+          "const": "permission",
+          "default": "permission",
+          "title": "Kind",
+          "type": "string"
+        },
+        "prompt": {
+          "title": "Prompt",
+          "type": "string"
+        },
+        "request_id": {
+          "title": "Request Id",
+          "type": "string"
+        },
+        "tools": {
+          "items": {
+            "$ref": "#/$defs/PermissionToolDetail"
+          },
+          "title": "Tools",
+          "type": "array"
+        }
+      },
+      "required": [
+        "request_id",
+        "prompt"
+      ],
+      "title": "UiPermissionRequest",
+      "type": "object"
+    },
+    "UiRequestEnvelope": {
+      "properties": {
+        "payload": {
+          "discriminator": {
+            "mapping": {
+              "choice": "#/$defs/UiChoiceRequest",
+              "permission": "#/$defs/UiPermissionRequest",
+              "text": "#/$defs/UiTextRequest"
+            },
+            "propertyName": "kind"
+          },
+          "oneOf": [
+            {
+              "$ref": "#/$defs/UiChoiceRequest"
+            },
+            {
+              "$ref": "#/$defs/UiTextRequest"
+            },
+            {
+              "$ref": "#/$defs/UiPermissionRequest"
+            }
+          ],
+          "title": "Payload"
+        },
+        "seq": {
+          "default": 0,
+          "title": "Seq",
+          "type": "integer"
+        },
+        "ts": {
+          "title": "Ts",
+          "type": "number"
+        },
+        "type": {
+          "const": "request",
+          "default": "request",
+          "title": "Type",
+          "type": "string"
+        },
+        "v": {
+          "default": 1,
+          "title": "V",
+          "type": "integer"
+        }
+      },
+      "required": [
+        "payload"
+      ],
+      "title": "UiRequestEnvelope",
+      "type": "object"
+    },
+    "UiResponse": {
+      "properties": {
+        "request_id": {
+          "title": "Request Id",
+          "type": "string"
+        },
+        "value": {
+          "anyOf": [
+            {
+              "type": "string"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null,
+          "title": "Value"
+        }
+      },
+      "required": [
+        "request_id"
+      ],
+      "title": "UiResponse",
+      "type": "object"
+    },
+    "UiResponseEnvelope": {
+      "properties": {
+        "payload": {
+          "$ref": "#/$defs/UiResponse"
+        },
+        "seq": {
+          "default": 0,
+          "title": "Seq",
+          "type": "integer"
+        },
+        "ts": {
+          "title": "Ts",
+          "type": "number"
+        },
+        "type": {
+          "const": "response",
+          "default": "response",
+          "title": "Type",
+          "type": "string"
+        },
+        "v": {
+          "default": 1,
+          "title": "V",
+          "type": "integer"
+        }
+      },
+      "required": [
+        "payload"
+      ],
+      "title": "UiResponseEnvelope",
+      "type": "object"
+    },
+    "UiSnapshotEnvelope": {
+      "properties": {
+        "payload": {
+          "$ref": "#/$defs/TranscriptSnapshot"
+        },
+        "seq": {
+          "default": 0,
+          "title": "Seq",
+          "type": "integer"
+        },
+        "ts": {
+          "title": "Ts",
+          "type": "number"
+        },
+        "type": {
+          "const": "snapshot",
+          "default": "snapshot",
+          "title": "Type",
+          "type": "string"
+        },
+        "v": {
+          "default": 1,
+          "title": "V",
+          "type": "integer"
+        }
+      },
+      "required": [
+        "payload"
+      ],
+      "title": "UiSnapshotEnvelope",
+      "type": "object"
+    },
+    "UiSubmitCommand": {
+      "properties": {
+        "kind": {
+          "const": "submit",
+          "default": "submit",
+          "title": "Kind",
+          "type": "string"
+        },
+        "text": {
+          "title": "Text",
+          "type": "string"
+        }
+      },
+      "required": [
+        "text"
+      ],
+      "title": "UiSubmitCommand",
+      "type": "object"
+    },
+    "UiTextRequest": {
+      "properties": {
+        "default": {
+          "default": "",
+          "title": "Default",
+          "type": "string"
+        },
+        "kind": {
+          "const": "text",
+          "default": "text",
+          "title": "Kind",
+          "type": "string"
+        },
+        "prompt": {
+          "title": "Prompt",
+          "type": "string"
+        },
+        "request_id": {
+          "title": "Request Id",
+          "type": "string"
+        },
+        "secret": {
+          "default": false,
+          "title": "Secret",
+          "type": "boolean"
+        }
+      },
+      "required": [
+        "request_id",
+        "prompt"
+      ],
+      "title": "UiTextRequest",
+      "type": "object"
+    },
+    "WarningAppended": {
+      "properties": {
+        "agent_id": {
+          "default": -1,
+          "title": "Agent Id",
+          "type": "integer"
+        },
+        "kind": {
+          "const": "warning.appended",
+          "default": "warning.appended",
+          "title": "Kind",
+          "type": "string"
+        },
+        "message": {
+          "title": "Message",
+          "type": "string"
+        }
+      },
+      "required": [
+        "message"
+      ],
+      "title": "WarningAppended",
+      "type": "object"
+    }
+  },
+  "title": "VoidxUiProtocol",
+  "type": "object"
+}
