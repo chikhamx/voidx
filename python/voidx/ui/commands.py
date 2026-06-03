@@ -1,0 +1,83 @@
+"""Slash command palette — Claude Code style. / triggers selectable command list."""
+
+from __future__ import annotations
+
+COMMANDS: list[tuple[str, str]] = [
+    ("/allow", "Allow a tool for this session"),
+    ("/approval", "Set approval policy: untrusted|on-failure|on-request|never"),
+    ("/approval never", "Never ask for approval"),
+    ("/approval on-failure", "Auto-allow non-bash tools and report failures"),
+    ("/approval on-request", "Auto-allow unless an explicit request is needed"),
+    ("/approval untrusted", "Ask for write/edit/write-capable bash tools"),
+    ("/clear", "Start a new session with empty context"),
+    ("/code-ide", "Choose app for opening changed files"),
+    ("/code-ide status", "Show detected code IDEs"),
+    ("/compact", "Manually trigger context compaction"),
+    ("/debug", "Toggle verbose step/tool output"),
+    ("/debug off", "Disable verbose step/tool output"),
+    ("/debug on", "Enable verbose step/tool output"),
+    ("/deny", "Deny a tool for this session"),
+    ("/diff", "Show git working tree diff with syntax highlighting"),
+    ("/exit", "Exit voidx"),
+    ("/help", "Show all commands"),
+    ("/goal", "Set or show current goal"),
+    ("/goal clear", "Clear current goal"),
+    ("/list", "List saved sessions"),
+    ("/lsp", "Manage language servers"),
+    ("/lsp doctor", "Check installed language servers"),
+    ("/lsp restart", "Restart language servers"),
+    ("/lsp servers", "List configured LSP servers"),
+    ("/lsp status", "Show LSP server status"),
+    ("/mcp", "Manage MCP servers"),
+    ("/mcp del", "Remove an MCP server"),
+    ("/mcp list", "List configured MCP servers"),
+    ("/mcp new", "Configure a new MCP server"),
+    ("/mcp restart", "Restart an MCP server"),
+    ("/mcp test", "Test an MCP server connection"),
+    ("/mcp tools", "Show MCP server tools"),
+    ("/mode", "Choose interaction mode: auto|plan|goal"),
+    ("/mode auto", "Auto-detect task intent per turn"),
+    ("/mode goal", "Keep multi-step work scoped"),
+    ("/mode plan", "Read-only plan mode"),
+    ("/model", "Switch configured model"),
+    ("/model del", "Remove a profile"),
+    ("/model list", "Show configured model details"),
+    ("/model new", "Create or update a model profile"),
+    ("/model reasoning", "Set reasoning effort level"),
+    ("/model switch", "Switch to a configured provider"),
+    ("/model test", "Test a provider's connectivity"),
+    ("/paste", "Paste an image from the clipboard"),
+    ("/permission-mode", "Choose permission mode"),
+    ("/permission-mode accept-edits", "Allow file edits, ask for bash"),
+    ("/permission-mode auto-review", "Reviewer-assisted approvals"),
+    ("/permission-mode custom", "Use .voidx/settings.json config"),
+    ("/permission-mode default", "Ask before write/edit/bash"),
+    ("/permission-mode full-access", "No sandbox or approval prompts"),
+    ("/permission-mode read-only", "Block all writes"),
+    ("/permissions", "Show current permission rules"),
+    ("/plan", "Enter plan mode (writes and write-capable bash blocked)"),
+    ("/resume", "Resume a session by ID"),
+    ("/sandbox", "Set sandbox mode: read-only|workspace-write|danger-full-access"),
+    ("/sandbox danger-full-access", "No sandbox restrictions"),
+    ("/sandbox read-only", "Read-only sandbox"),
+    ("/sandbox workspace-write", "Allow workspace writes"),
+    ("/skills", "Manage local skills"),
+    ("/tavily", "Configure Tavily API key for web search"),
+    ("/tavily delete", "Delete Tavily API key"),
+    ("/tavily set", "Set Tavily API key for web search"),
+    ("/tavily show", "Show Tavily API key status"),
+    ("/title", "Set session title"),
+    ("/unplan", "Return to auto mode"),
+    ("/usage", "Show token usage for this session"),
+]
+
+def filter_commands(prefix: str) -> list[tuple[str, str]]:
+    """Filter commands by prefix. Returns (name, description) pairs.
+
+    Matches both when the input *is* a prefix of a command (e.g. ``/res``
+    matches ``/resume``) and when the input *starts with* a command
+    (e.g. ``/resume abc123`` matches ``/resume``).
+    """
+    p = prefix.lower()
+    return [(n, d) for n, d in COMMANDS
+            if n.lower().startswith(p) or p.startswith(n.lower())]

@@ -1,0 +1,2 @@
+[console_scripts]
+voidx = voidx.main:cli

@@ -1,0 +1,8 @@
+/target
+*.pyd
+*.dll
+.env
+.env.*
+.voidx/
+__pycache__/
+*.pyc

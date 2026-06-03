@@ -1,0 +1,25 @@
+[package]
+name = "voidx-tui"
+version.workspace = true
+edition.workspace = true
+license.workspace = true
+
+[[bin]]
+name = "voidx"
+path = "src/main.rs"
+
+[dependencies]
+voidx-core = { path = "../voidx-core" }
+voidx-config = { path = "../voidx-config" }
+voidx-llm = { path = "../voidx-llm" }
+voidx-agent = { path = "../voidx-agent" }
+voidx-tools = { path = "../voidx-tools" }
+voidx-memory = { path = "../voidx-memory" }
+voidx-permission = { path = "../voidx-permission" }
+
+clap.workspace = true
+ratatui.workspace = true
+crossterm.workspace = true
+tokio.workspace = true
+tracing.workspace = true
+tracing-subscriber.workspace = true

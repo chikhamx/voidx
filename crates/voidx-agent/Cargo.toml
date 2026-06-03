@@ -1,0 +1,23 @@
+[package]
+name = "voidx-agent"
+version.workspace = true
+edition.workspace = true
+license.workspace = true
+
+[dependencies]
+voidx-config = { path = "../voidx-config" }
+voidx-llm = { path = "../voidx-llm" }
+voidx-tools = { path = "../voidx-tools" }
+voidx-memory = { path = "../voidx-memory" }
+voidx-permission = { path = "../voidx-permission" }
+
+serde.workspace = true
+serde_json.workspace = true
+tokio.workspace = true
+thiserror.workspace = true
+tracing.workspace = true
+async-trait.workspace = true
+futures.workspace = true
+
+[dev-dependencies]
+tempfile.workspace = true

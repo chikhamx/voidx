@@ -1,0 +1,14 @@
+Metadata-Version: 2.4
+Name: voidx
+Version: 2.0.0
+Summary: A coding agent that quantifies everything — Rust core, Python UI.
+Requires-Python: >=3.11
+Description-Content-Type: text/markdown
+Requires-Dist: typer>=0.15.0
+Requires-Dist: rich>=13.9.0
+Requires-Dist: prompt-toolkit>=3.0.0
+Requires-Dist: httpx>=0.28.0
+Requires-Dist: pydantic>=2.0
+Provides-Extra: dev
+Requires-Dist: pytest>=8.0.0; extra == "dev"
+Requires-Dist: pytest-asyncio>=0.25.0; extra == "dev"
