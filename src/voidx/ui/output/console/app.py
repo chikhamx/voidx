@@ -2,16 +2,12 @@
 
 from __future__ import annotations
 
-from contextlib import contextmanager
-from contextvars import ContextVar
-from typing import Callable, Iterator
-
 from rich.console import Console
 from rich.markdown import Markdown
 from rich.panel import Panel
 from rich.text import Text
 
-from voidx.ui.console_components.formatting import (
+from voidx.ui.output.console.formatting import (
     _capture_ansi,
     _done_spin,
     _event_tool_id,
@@ -22,8 +18,8 @@ from voidx.ui.console_components.formatting import (
     _title,
     fmt_args,
 )
-from voidx.ui.dock import dock
-from voidx.ui.events import (
+from voidx.ui.output.dock import dock
+from voidx.ui.output.events import (
     AnsiAppended,
     DiffAppended,
     ErrorAppended,
@@ -35,29 +31,7 @@ from voidx.ui.events import (
     ui_events,
     via_events,
 )
-from voidx.ui.console_components.streaming import StreamingRenderer
-
-CommandOutputSink = Callable[[str], None]
-CommandOutputWidth = int | Callable[[], int]
-
-_command_output_sink: ContextVar[CommandOutputSink | None] = ContextVar(
-    "command_output_sink",
-    default=None,
-)
-_command_output_width: ContextVar[CommandOutputWidth] = ContextVar(
-    "command_output_width",
-    default=80,
-)
-
-
-def _capture_width() -> int:
-    width = _command_output_width.get()
-    if callable(width):
-        try:
-            return max(int(width()), 20)
-        except Exception:
-            return 80
-    return max(int(width), 20)
+from voidx.ui.output.console.streaming import StreamingRenderer
 
 
 class VoidConsole:
@@ -102,65 +76,35 @@ class VoidConsole:
     def set_debug(self, value: bool) -> None:
         self._debug = value
 
-    @contextmanager
-    def capture_command_output(
-        self,
-        sink: CommandOutputSink,
-        *,
-        width: CommandOutputWidth = 80,
-    ) -> Iterator[None]:
-        sink_token = _command_output_sink.set(sink)
-        width_token = _command_output_width.set(width)
-        try:
-            yield
-        finally:
-            _command_output_width.reset(width_token)
-            _command_output_sink.reset(sink_token)
-
-    def _emit_command_output(self, render: Callable[[Console], None]) -> bool:
-        sink = _command_output_sink.get()
-        if sink is None:
-            return False
-        text = _capture_ansi(_capture_width(), render)
-        if text:
-            sink(text)
-        return True
-
     def print(self, *args, **kwargs) -> None:
-        if self._emit_command_output(lambda console: console.print(*args, **kwargs)):
-            return
         if via_events():
             text = _capture_ansi(
                 self._console.width,
                 lambda console: console.print(*args, **kwargs),
             )
             if text:
-                ui_events.emit_nowait(AnsiAppended(text=text))
+                ui_events.emit_direct(AnsiAppended(text=text))
             return
         if dock.active and dock.print(*args, **kwargs):
             return
         self._console.print(*args, **kwargs)
 
     def markdown(self, content: str) -> None:
-        if self._emit_command_output(lambda console: console.print(Markdown(content))):
-            return
         if via_events():
-            ui_events.emit_nowait(MarkdownAppended(content=content))
+            ui_events.emit_direct(MarkdownAppended(content=content))
             return
         if dock.active and dock.capture(lambda console: console.print(Markdown(content))):
             return
         self._console.print(Markdown(content))
 
     def thinking(self, text: str) -> None:
-        if self._emit_command_output(lambda console: console.print(Text(text, style="dim italic"))):
-            return
         if via_events():
             captured = _capture_ansi(
                 self._console.width,
                 lambda console: console.print(Text(text, style="dim italic")),
             )
             if captured:
-                ui_events.emit_nowait(AnsiAppended(text=captured))
+                ui_events.emit_direct(AnsiAppended(text=captured))
             return
         if dock.active and dock.capture(lambda console: console.print(Text(text, style="dim italic"))):
             return
@@ -174,7 +118,7 @@ class VoidConsole:
         if via_events():
             event_id = _event_tool_id(tool_name)
             self._event_tool_ids.setdefault(tool_name, []).append(event_id)
-            ui_events.emit_nowait(ToolStarted(
+            ui_events.emit_direct(ToolStarted(
                 tool_call_id=event_id,
                 tool_name=tool_name,
                 label=gerund,
@@ -200,14 +144,14 @@ class VoidConsole:
             if via_events():
                 event_id = _event_tool_id(tool_name)
                 detail = _fmt_args_short(tool_name, args)
-                ui_events.emit_nowait(ToolStarted(
+                ui_events.emit_direct(ToolStarted(
                     tool_call_id=event_id,
                     tool_name=tool_name,
                     label=label,
                     args=detail,
                     raw_args=args,
                 ))
-                ui_events.emit_nowait(ToolFinished(
+                ui_events.emit_direct(ToolFinished(
                     tool_call_id=event_id,
                     label=label,
                     elapsed=elapsed,
@@ -226,7 +170,7 @@ class VoidConsole:
         if via_events():
             event_id = _pop_event_tool_id(self._event_tool_ids, tool_name)
             if event_id:
-                ui_events.emit_nowait(ToolFinished(
+                ui_events.emit_direct(ToolFinished(
                     tool_call_id=event_id,
                     label=label,
                     elapsed=elapsed,
@@ -240,7 +184,7 @@ class VoidConsole:
 
     def tool_result(self, text: str) -> None:
         if via_events():
-            ui_events.emit_nowait(ToolResultAppended(text=text))
+            ui_events.emit_direct(ToolResultAppended(text=text))
             return
         if dock.active:
             dock.append_tool_result(text)
@@ -248,12 +192,8 @@ class VoidConsole:
         self.print(text)
 
     def error(self, message: str) -> None:
-        if self._emit_command_output(
-            lambda console: console.print(Panel(message, border_style="red", title="error"))
-        ):
-            return
         if via_events():
-            ui_events.emit_nowait(ErrorAppended(message=message))
+            ui_events.emit_direct(ErrorAppended(message=message))
             return
         if dock.active:
             dock.append_error(message)
@@ -271,7 +211,7 @@ class VoidConsole:
         gerund = _title(self._AGENT_GERUND.get(agent, agent))
         label = f"Agent step {n}/{max_n}" if agent == "orchestrator" else f"{gerund} {n}/{max_n}"
         if via_events():
-            ui_events.emit_nowait(StatusUpdated(
+            ui_events.emit_direct(StatusUpdated(
                 status_id="agent:-1:progress",
                 label=label,
                 stage="agent_step",
@@ -284,11 +224,9 @@ class VoidConsole:
         self.print(f"  {_next_spin()} [dim]{gerund} ({n}/{max_n})[/dim]")
 
     def diff(self, diff_text: str, title: str = "") -> None:
-        from voidx.ui.diff import render_diff
-        if self._emit_command_output(lambda console: render_diff(console, diff_text, title)):
-            return
+        from voidx.ui.output.diff import render_diff
         if via_events():
-            ui_events.emit_nowait(DiffAppended(diff_text=diff_text, title=title))
+            ui_events.emit_direct(DiffAppended(diff_text=diff_text, title=title))
             return
         if dock.active and dock.capture(lambda console: render_diff(console, diff_text, title)):
             return
@@ -354,7 +292,7 @@ class TreeAwareConsole:
             )
 
     def diff(self, diff_text: str, title: str = "") -> None:
-        from voidx.ui.diff import render_diff
+        from voidx.ui.output.diff import render_diff
         render_diff(self._console, diff_text, title)
         if self._current_tool:
             lines = diff_text.split("\n")

@@ -7,7 +7,7 @@ from typing import Any
 
 from rich.markup import escape
 
-from voidx.ui.dock_components.formatting import (
+from voidx.ui.output.dock.formatting import (
     _ansi_line,
     _clean,
     _markdown_lines,
@@ -16,7 +16,7 @@ from voidx.ui.dock_components.formatting import (
     _strip_ansi_trailing_space,
     _tail_lines,
 )
-from voidx.ui.tree import OutputNode
+from voidx.ui.output.tree import OutputNode
 
 
 class DockNodeMixin:
@@ -30,7 +30,7 @@ class DockNodeMixin:
         is_new: bool,
         profile_configured: bool = True,
     ) -> OutputNode | None:
-        from voidx.ui.startup import render_startup_lines
+        from voidx.ui.session import render_startup_lines
 
         lines = render_startup_lines(
             self._width(),
@@ -70,16 +70,16 @@ class DockNodeMixin:
         self.refresh()
         return node
 
-    def append_message(self, text: str, *, style: str = "", parent: OutputNode | None = None) -> OutputNode | None:
+    def append_message(self, text: str, *, style: str = "", parent: OutputNode | None = None, markup: bool = False) -> OutputNode | None:
         clean = _clean(text)
         if not clean.strip():
             return None
         target = parent or self._tree.root
         lines = [_strip_ansi_trailing_space(line) for line in (clean.splitlines() or [clean])]
-        header = escape(lines[0])
+        header = lines[0] if markup else escape(lines[0])
         if style:
             header = f"[{style}]{header}[/]"
-        body_lines = [escape(line) for line in lines[1:]]
+        body_lines = lines[1:] if markup else [escape(line) for line in lines[1:]]
         if style:
             body_lines = [f"[{style}]{line}[/]" for line in body_lines]
         node = self._tree.new_node(
@@ -241,10 +241,10 @@ class DockNodeMixin:
         *,
         parent: OutputNode | None = None,
         tool_call_id: str | None = None,
-        preview_hunks: int = 1,
-        preview_lines: int = 8,
+        preview_hunks: int | None = None,
+        preview_lines: int | None = None,
     ) -> OutputNode | None:
-        from voidx.ui.diff import (
+        from voidx.ui.output.diff import (
             parse_unified_diff,
             render_file_change_lines,
             render_full_file_diff_lines,
@@ -262,16 +262,21 @@ class DockNodeMixin:
         target = parent or self._current_tool or self._current_agent or self._tree.root
         first_node: OutputNode | None = None
         for index, file_diff in enumerate(parsed.files):
-            body_lines, omitted = render_file_change_lines(file_diff, preview_hunks, preview_lines)
+            if preview_hunks is not None and preview_lines is not None:
+                body_lines, omitted = render_file_change_lines(file_diff, preview_hunks, preview_lines)
+            else:
+                body_lines = render_full_file_diff_lines(file_diff)
+                omitted = False
             header = (
                 f"[#A3BE8C]●[/#A3BE8C] "
                 f"{_operation_header(file_diff.operation, file_diff.path)}"
             )
+            show_diff = file_diff.operation == "Update"
             if index == 0 and target.node_type == "tool_call":
                 node = target
                 node.header = header
                 node.body_lines = body_lines
-                node.collapsed = True
+                node.collapsed = not show_diff
                 node.status = "done"
                 node.meta = header
                 if tool_call_id:
@@ -283,21 +288,22 @@ class DockNodeMixin:
                     node_type="tool_call",
                     header=header,
                     body_lines=body_lines,
-                    collapsed=True,
+                    collapsed=not show_diff,
                     status="done",
                     meta=header,
                     tool_call_id=tool_call_id,
                     payload={"diff_text": diff_text},
                 )
-            full_lines = render_full_file_diff_lines(file_diff)
-            if omitted and full_lines:
-                self._tree.new_node(
-                    parent=node,
-                    node_type="tool_result",
-                    header="[dim]Full diff[/dim]",
-                    body_lines=full_lines,
-                    collapsed=True,
-                )
+            if omitted:
+                full_lines = render_full_file_diff_lines(file_diff)
+                if full_lines:
+                    self._tree.new_node(
+                        parent=node,
+                        node_type="tool_result",
+                        header="[dim]Full diff[/dim]",
+                        body_lines=full_lines,
+                        collapsed=True,
+                    )
             if first_node is None:
                 first_node = node
         self._tree.mark_dirty()
@@ -348,6 +354,9 @@ class DockNodeMixin:
         self.clear_status_record(status_id)
         node = self._status_nodes.pop(status_id, None)
         if node is None:
+            if status_id:
+                import logging
+                logging.getLogger("voidx.ui").debug("finish_status: unknown status_id=%s", status_id)
             return
         self._status_ticks.pop(status_id, None)
         if remove:

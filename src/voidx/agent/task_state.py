@@ -4,6 +4,7 @@ from __future__ import annotations
 
 import re
 
+from dataclasses import dataclass
 from enum import Enum
 
 from pydantic import BaseModel
@@ -137,20 +138,13 @@ class TaskRun(BaseModel):
         self.status = TaskRunStatus.ACTIVE
         self.turn_count += 1
         self.phase = _phase_for_intent(resolution.intent)
-
-        if resolution.intent == TaskIntent.DESIGN:
-            self.awaiting_implementation_approval = True
-            self.approved_scope = _summarize_scope(scope_text or self.goal or user_text)
-            return
-
-        if resolution.intent == TaskIntent.IMPLEMENT:
-            self.awaiting_implementation_approval = False
-            self.approved_scope = ""
-            return
-
-        if resolution.intent != TaskIntent.AMBIGUOUS:
-            self.awaiting_implementation_approval = False
-            self.approved_scope = ""
+        transition = _approval_transition(
+            resolution.intent,
+            _summarize_scope(scope_text or self.goal or user_text),
+        )
+        if transition.update:
+            self.awaiting_implementation_approval = transition.awaiting_implementation_approval
+            self.approved_scope = transition.approved_scope
 
 
 class TaskState(BaseModel):
@@ -171,22 +165,12 @@ class TaskState(BaseModel):
         self.previous_intent = self.current_intent
         self.current_intent = resolution.intent
         self.current_goal = _summarize_scope(scope_text or user_text)
-
-        if resolution.intent == TaskIntent.DESIGN:
-            scope = _summarize_scope(scope_text or user_text)
-            self.awaiting_implementation_approval = True
-            self.approved_scope = scope
-            self.last_plan_summary = scope
-            return
-
-        if resolution.intent == TaskIntent.IMPLEMENT:
-            self.awaiting_implementation_approval = False
-            self.approved_scope = ""
-            return
-
-        if resolution.intent != TaskIntent.AMBIGUOUS:
-            self.awaiting_implementation_approval = False
-            self.approved_scope = ""
+        transition = _approval_transition(resolution.intent, self.current_goal)
+        if transition.update:
+            self.awaiting_implementation_approval = transition.awaiting_implementation_approval
+            self.approved_scope = transition.approved_scope
+            if transition.last_plan_summary is not None:
+                self.last_plan_summary = transition.last_plan_summary
 
 
 class IntentResolution(BaseModel):
@@ -195,6 +179,27 @@ class IntentResolution(BaseModel):
     reason: str
     awaiting_implementation_approval: bool = False
     approved_scope: str = ""
+
+
+@dataclass(frozen=True)
+class _ApprovalTransition:
+    update: bool
+    awaiting_implementation_approval: bool = False
+    approved_scope: str = ""
+    last_plan_summary: str | None = None
+
+
+def _approval_transition(intent: TaskIntent, scope: str) -> _ApprovalTransition:
+    if intent == TaskIntent.DESIGN:
+        return _ApprovalTransition(
+            update=True,
+            awaiting_implementation_approval=True,
+            approved_scope=scope,
+            last_plan_summary=scope,
+        )
+    if intent == TaskIntent.AMBIGUOUS:
+        return _ApprovalTransition(update=False)
+    return _ApprovalTransition(update=True)
 
 
 def resolve_turn_intent(

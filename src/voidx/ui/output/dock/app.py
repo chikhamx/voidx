@@ -11,7 +11,7 @@ from rich.live import Live
 from rich.markup import escape
 from rich.text import Text
 
-from voidx.ui.dock_components.formatting import (
+from voidx.ui.output.dock.formatting import (
     ANSI_LINE_PREFIX,
     _ansi_line,
     _ansi_rgb,
@@ -20,9 +20,9 @@ from voidx.ui.dock_components.formatting import (
     _strip_ansi_trailing_space,
     _text_from_line,
 )
-from voidx.ui.dock_components.nodes import DockNodeMixin
-from voidx.ui.dock_components.state import dock, get_dock, set_dock
-from voidx.ui.tree import OutputNode, OutputTree
+from voidx.ui.output.dock.nodes import DockNodeMixin
+from voidx.ui.output.dock.state import dock, get_dock, set_dock
+from voidx.ui.output.tree import OutputNode, OutputTree
 
 
 @dataclass(frozen=True)
@@ -75,6 +75,7 @@ class BottomInputDock(DockNodeMixin):
         self._hints: list[tuple[str, str, bool]] = []
         self._refresh_callback: Callable[[], None] | None = None
         self._width_provider: Callable[[], int] | None = None
+        self._needs_clear_screen: bool = False
 
     @property
     def active(self) -> bool:
@@ -97,6 +98,11 @@ class BottomInputDock(DockNodeMixin):
 
     def set_width_provider(self, callback: Callable[[], int] | None) -> None:
         self._width_provider = callback
+
+    def consume_clear_screen_request(self) -> bool:
+        requested = self._needs_clear_screen
+        self._needs_clear_screen = False
+        return requested
 
     def activate(self) -> None:
         if self._live:
@@ -140,6 +146,7 @@ class BottomInputDock(DockNodeMixin):
         self._input_text = ""
         self._cursor_pos = 0
         self._hints = []
+        self._needs_clear_screen = True
         self.refresh()
 
     def restore_tree(self, tree: OutputTree, *, append: bool = False) -> None:
@@ -259,9 +266,6 @@ class BottomInputDock(DockNodeMixin):
     def after_output(self) -> None:
         self.refresh()
 
-    def render(self) -> None:
-        self.refresh()
-
     def refresh(self) -> None:
         if self._refresh_callback:
             self._refresh_callback()
@@ -281,7 +285,13 @@ class BottomInputDock(DockNodeMixin):
         input_height = 3 + len(hint_lines)
         body_limit = max((self._console.height or 24) - input_height - 1, 1)
         lines = self._tree.render(self._width())
-        body = Group(*[_text_from_line(line) for line in lines[-body_limit:]]) if lines else Text("")
+
+        startup_count = self._tree.startup_line_count()
+        startup_lines = lines[:startup_count] if startup_count > 0 else []
+        remaining_limit = max(body_limit - startup_count, 1)
+        scrollable_lines = lines[startup_count:]
+        visible = startup_lines + scrollable_lines[-remaining_limit:]
+        body = Group(*[_text_from_line(line) for line in visible]) if visible else Text("")
 
         border = "─" * width
         input_box = Text.assemble(
@@ -316,6 +326,7 @@ class BottomInputDock(DockNodeMixin):
         clean = _clean(self._stream_text).strip("\n")
         if not clean:
             return
+        stream_existed = self._stream_node is not None
         if self._stream_node is None or (
             parent is not None and self._stream_node.parent is not parent
         ):
@@ -331,7 +342,12 @@ class BottomInputDock(DockNodeMixin):
         bullet = _ansi_rgb("●", (163, 190, 140))
         self._stream_node.header = _ansi_line(f"{bullet} {lines[0]}")
         self._stream_node.body_lines = [_ansi_line(f"  {line}") for line in lines[1:]]
-        self._tree.mark_dirty()
+        # Content-only update on existing node: mark only that subtree dirty.
+        # New node (structural change): mark the whole tree dirty.
+        if stream_existed and self._stream_node is not None:
+            self._tree.mark_dirty(self._stream_node.id)
+        else:
+            self._tree.mark_dirty()
 
     def _new_stream_node(self, *, parent: OutputNode | None = None) -> OutputNode:
         if parent is not None:

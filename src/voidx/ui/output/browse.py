@@ -4,7 +4,7 @@ from __future__ import annotations
 
 import sys
 from rich.console import Console
-from voidx.ui.tree import OutputTree
+from voidx.ui.output.tree import OutputTree
 
 
 def browse(tree: OutputTree, console: Console) -> None:
@@ -112,7 +112,7 @@ def _browse_unix(tree, console, line_map, total_lines, width):
         tty.setraw(fd)
         while True:
             # Use select with short timeout to handle partial reads
-            if not select.select([sys.stdin], [], [], 0.1)[0]:
+            if not select.select([sys.stdin], [], [], 0.3)[0]:
                 continue
 
             ch = sys.stdin.buffer.read(1)

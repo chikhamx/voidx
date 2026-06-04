@@ -56,13 +56,15 @@ class ToolContext(BaseModel):
 class BaseTool(ABC):
     """Every tool has: id, description, typed parameters, deterministic execute."""
 
-    @property
-    @abstractmethod
-    def id(self) -> str: ...
+    id: str = ""
+    description: str = ""
 
-    @property
-    @abstractmethod
-    def description(self) -> str: ...
+    def __init_subclass__(cls, **kwargs: Any) -> None:
+        super().__init_subclass__(**kwargs)
+        if not getattr(cls, "id", ""):
+            raise TypeError(f"{cls.__name__} must define a class attribute 'id'")
+        if not getattr(cls, "description", ""):
+            raise TypeError(f"{cls.__name__} must define a class attribute 'description'")
 
     @abstractmethod
     def parameters_schema(self) -> dict[str, Any]:
@@ -73,6 +75,20 @@ class BaseTool(ABC):
     async def execute(self, args: dict, ctx: ToolContext) -> ToolResult:
         """Execute the tool with typed inputs. Returns typed result."""
         ...
+
+
+SKIP_DIRS = frozenset({
+    ".git", ".venv", "venv", "node_modules", "__pycache__",
+    ".pytest_cache", ".mypy_cache", ".tox", ".eggs",
+    ".idea", ".vscode", "dist", "build", "opencode",
+    ".claude", ".ruff_cache",
+})
+
+SKIP_SUFFIXES = frozenset({
+    ".pyc", ".pyo", ".so", ".dll", ".exe", ".bin",
+    ".png", ".jpg", ".jpeg", ".gif", ".ico", ".pdf",
+    ".zip", ".tar", ".gz", ".whl", ".egg",
+})
 
 
 def model_to_json_schema(model: type[BaseModel]) -> dict[str, Any]:

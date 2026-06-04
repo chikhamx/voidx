@@ -3,7 +3,7 @@ from pathlib import Path
 
 sys.path.insert(0, str(Path(__file__).parent.parent / "src"))
 
-from voidx.ui.diff import language_from_path, parse_unified_diff, render_file_change_lines
+from voidx.ui.output.diff import language_from_path, parse_unified_diff, render_file_change_lines
 
 
 def test_parse_unified_diff_extracts_file_hunks_and_counts():

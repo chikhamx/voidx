@@ -23,7 +23,7 @@ from voidx.permission.engine import (
     tool_call_from_pattern,
 )
 from voidx.permission.schema import Action
-from voidx.ui.console import VoidConsole
+from voidx.ui.output.console import VoidConsole
 
 ui = VoidConsole()
 

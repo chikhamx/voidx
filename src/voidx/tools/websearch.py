@@ -168,6 +168,7 @@ class WebSearchTool(BaseTool):
     description = "Search the web. Returns titles, URLs, and snippets."
 
     def __init__(self, settings=None):
+        super().__init__()
         self._settings = settings
 
     def parameters_schema(self) -> dict:

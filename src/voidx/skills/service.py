@@ -164,11 +164,11 @@ class SkillService:
 
         for trigger in skill.meta.triggers:
             normalized = trigger.strip().lower()
-            if normalized and normalized in lowered_text:
+            if normalized and _contains_phrase(lowered_text, normalized):
                 return f"trigger:{trigger}"
 
         description_terms = _significant_terms(skill.meta.description)
-        if description_terms and sum(1 for term in description_terms if term in lowered_text) >= 2:
+        if description_terms and sum(1 for term in description_terms if _contains_phrase(lowered_text, term)) >= 2:
             return "description"
         return ""
 

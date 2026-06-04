@@ -34,10 +34,11 @@ class ToolDef(BaseModel):
 class ToolRegistry:
     """Manages all available tools. No dynamic discovery — everything explicit."""
 
-    def __init__(self, settings=None) -> None:
+    def __init__(self, settings=None, tracker=None) -> None:
         self._tools: dict[str, ToolDef] = {}
         self._instances: dict[str, object] = {}
         self._settings = settings
+        self._tracker = tracker
         self._register_builtins()
 
     def _register_builtins(self) -> None:
@@ -45,15 +46,18 @@ class ToolRegistry:
             FileReadTool, FileWriteTool, FileEditTool,
             RepoMapTool,
             GlobTool, GrepTool, BashTool,
-            TodoWriteTool,
             LspDiagnosticsTool, LspSymbolsTool,
             LspDefinitionTool, LspReferencesTool, LspFormatTool,
         ]:
             instance = cls()
             self.register(instance.id, instance, instance.description, instance.parameters_schema())
+        # Tools with optional dependency injection
+        todo_tool = TodoWriteTool(tracker=self._tracker)
+        self.register(todo_tool.id, todo_tool, todo_tool.description, todo_tool.parameters_schema())
+        task_status_tool = TaskStatusTool(tracker=self._tracker)
+        self.register(task_status_tool.id, task_status_tool, task_status_tool.description, task_status_tool.parameters_schema())
         wf = WebFetchTool(settings=self._settings)
         self.register(wf.id, wf, wf.description, wf.parameters_schema())
-        # WebSearchTool needs settings for Tavily API key
         ws = WebSearchTool(settings=self._settings)
         self.register(ws.id, ws, ws.description, ws.parameters_schema())
 
@@ -75,6 +79,13 @@ class ToolRegistry:
 
     def unregister_prefix(self, prefix: str) -> None:
         for tool_id in [tid for tid in self._tools if tid.startswith(prefix)]:
+            self._tools.pop(tool_id, None)
+            self._instances.pop(tool_id, None)
+
+    def filter_tools(self, allowed_ids: set[str] | list[str] | tuple[str, ...]) -> None:
+        """Retain only the tools listed in allowed_ids."""
+        allowed = set(allowed_ids)
+        for tool_id in [tid for tid in self._tools if tid not in allowed]:
             self._tools.pop(tool_id, None)
             self._instances.pop(tool_id, None)
 

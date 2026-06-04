@@ -6,9 +6,9 @@ sys.path.insert(0, str(Path(__file__).parent.parent / "src"))
 
 from rich.cells import cell_len
 
-from voidx.ui.console import VoidConsole
-from voidx.ui.dock import ANSI_LINE_PREFIX, BottomInputDock, set_dock
-from voidx.ui.startup import show_startup
+from voidx.ui.output.console import VoidConsole
+from voidx.ui.output.dock import ANSI_LINE_PREFIX, BottomInputDock, set_dock
+from voidx.ui.session import show_startup
 
 
 _ANSI_RE = re.compile(r"\x1b\[[0-9;?]*[ -/]*[@-~]")

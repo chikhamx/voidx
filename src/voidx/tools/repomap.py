@@ -13,22 +13,10 @@ from pathlib import Path
 
 from pydantic import BaseModel, Field
 
-from voidx.tools.base import BaseTool, model_to_json_schema, ToolContext, ToolResult, resolve_safe
+from voidx.tools.base import BaseTool, model_to_json_schema, ToolContext, ToolResult, resolve_safe, SKIP_DIRS, SKIP_SUFFIXES
 
 OUTPUT_TOKEN_BUDGET = 4000
 DIR_ENTRY_LIMIT = 200
-
-SKIP_DIRS = {
-    ".git", ".venv", "venv", "node_modules", "__pycache__",
-    ".pytest_cache", ".mypy_cache", ".tox", ".eggs",
-    ".idea", ".vscode", "dist", "build", "opencode",
-    ".claude", ".ruff_cache",
-}
-SKIP_SUFFIXES = {
-    ".pyc", ".pyo", ".so", ".dll", ".exe", ".bin",
-    ".png", ".jpg", ".jpeg", ".gif", ".ico", ".pdf",
-    ".zip", ".tar", ".gz", ".whl", ".egg",
-}
 
 
 class RepoMapInput(BaseModel):

@@ -3,19 +3,21 @@
 from __future__ import annotations
 
 import time
+from contextvars import ContextVar
 from io import StringIO
 
 from rich.console import Console
 
 _SPIN_FRAMES = ["⠋", "⠙", "⠹", "⠸", "⠼", "⠴", "⠦", "⠧", "⠇", "⠏"]
-_spin_idx = 0
+_spin_idx: ContextVar[int] = ContextVar("spin_idx", default=0)
 _ORANGE = "#EBCB8B"  # Nord yellow-ish
 
 
 def _next_spin() -> str:
-    global _spin_idx
-    _spin_idx = (_spin_idx + 1) % len(_SPIN_FRAMES)
-    return f"[{_ORANGE}]{_SPIN_FRAMES[_spin_idx]}[/]"
+    idx = _spin_idx.get()
+    nxt = (idx + 1) % len(_SPIN_FRAMES)
+    _spin_idx.set(nxt)
+    return f"[{_ORANGE}]{_SPIN_FRAMES[nxt]}[/]"
 
 
 def _done_spin() -> str:

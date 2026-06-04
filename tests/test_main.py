@@ -22,12 +22,13 @@ class FakeConsole:
 
 
 @pytest.mark.asyncio
-async def test_start_session_auto_resumes_latest_for_workspace(tmp_path):
+async def test_start_session_default_creates_new_session(tmp_path):
     workspace = str(tmp_path)
     older = await create_session(workspace=workspace)
     latest = await create_session(workspace=workspace)
     await update_title(latest.id, "Latest session")
     console = FakeConsole()
+    selected = None
     try:
         selected = await _select_start_session(
             workspace=workspace,
@@ -38,11 +39,13 @@ async def test_start_session_auto_resumes_latest_for_workspace(tmp_path):
             vconsole=console,
         )
 
-        assert selected.id == latest.id
-        assert any(latest.id in message for message in console.messages)
+        assert selected.id not in {older.id, latest.id}
+        assert selected.workspace == workspace
     finally:
         await delete_session(older.id)
         await delete_session(latest.id)
+        if selected is not None:
+            await delete_session(selected.id)
 
 
 @pytest.mark.asyncio

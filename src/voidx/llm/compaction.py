@@ -21,6 +21,7 @@ from dataclasses import dataclass, field
 from langchain_core.messages import AIMessage, HumanMessage, SystemMessage
 
 from voidx.llm.context import count_tokens, count_messages_tokens
+from voidx.llm.usage import estimate_context_tokens
 
 PRUNE_MINIMUM = 20_000
 PRUNE_PROTECT = 40_000
@@ -30,6 +31,9 @@ MIN_PRESERVE_RECENT = 2_000
 MAX_PRESERVE_RECENT = 8_000
 TOOL_OUTPUT_MAX_CHARS = 2_000
 PRUNE_PROTECTED_TOOLS = {"agent"}
+COMPACTION_MAX_RETRIES = 2
+FALLBACK_SUMMARY_MAX_PER_MSG = 200
+COMPACTION_THRESHOLD = 0.90  # trigger when used >= 90% of context_limit
 
 SUMMARY_TEMPLATE = """Output exactly the Markdown structure shown inside <template> and keep the section order unchanged. Do not include the <template> tags in your response.
 <template>
@@ -98,18 +102,20 @@ class CompactionService:
         return min(MAX_PRESERVE_RECENT, max(MIN_PRESERVE_RECENT, int(usable * 0.25)))
 
     def is_overflow(self, tokens: dict) -> bool:
-        """Check if token usage exceeds usable window.
+        """Check if token usage exceeds the compaction threshold.
+
+        Triggers when used tokens >= COMPACTION_THRESHOLD (90%) of context_limit,
+        i.e. when less than 10% of the context window remains.
         tokens: {input, output, reasoning, cache_read, cache_write, total}
         """
-        usable = self.usable_window()
-        if usable <= 0:
+        if self.context_limit <= 0:
             return False
         total = tokens.get("total", 0) or (
             tokens.get("input", 0) +
             tokens.get("output", 0) +
             tokens.get("reasoning", 0)
         )
-        return total >= usable
+        return total >= int(self.context_limit * COMPACTION_THRESHOLD)
 
     # ── Layer 1: prune tool outputs ─────────────────────────────────────
 
@@ -195,6 +201,7 @@ class CompactionService:
         Returns (head_messages, tail_start_id_or_None).
 
         Preserves recent turns up to preserve_recent_budget() tokens.
+        Uses estimate_context_tokens for consistent counting with overflow checks.
         """
         budget = self.preserve_recent_budget()
         turns = self._turns(messages)
@@ -208,11 +215,7 @@ class CompactionService:
 
         for turn in reversed(recent):
             turn_msgs = messages[turn.start:turn.end]
-            size = count_messages_tokens(
-                [{"role": "assistant" if isinstance(m, AIMessage) else "user",
-                  "content": str(getattr(m, "content", ""))}
-                 for m in turn_msgs]
-            )
+            size = estimate_context_tokens(turn_msgs)
             if total + size <= budget:
                 total += size
                 keep_start = turn.start
@@ -226,6 +229,27 @@ class CompactionService:
         return messages[:keep_start], keep_id
 
     # ── build compaction prompt ─────────────────────────────────────────
+
+    @staticmethod
+    def fallback_summary(messages: list) -> str:
+        """Generate a basic summary from messages when the compaction agent fails.
+        Extracts user message text to preserve key intents."""
+        user_parts: list[str] = []
+        for msg in messages:
+            if isinstance(msg, HumanMessage):
+                text = str(getattr(msg, "content", "")).strip()
+                if text:
+                    user_parts.append(text[:FALLBACK_SUMMARY_MAX_PER_MSG])
+
+        if not user_parts:
+            return "[Context was compacted but no user messages were preserved]"
+
+        lines = ["## Goal", "- [auto-extracted from truncated context]"]
+        lines.append("")
+        lines.append("## User Requests (extracted)")
+        for part in user_parts:
+            lines.append(f"- {part}")
+        return "\n".join(lines)
 
     def build_prompt(self, head_messages: list, previous_summary: str | None = None) -> str:
         """Build the compaction prompt. Extracts user message text from

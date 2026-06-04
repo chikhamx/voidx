@@ -7,7 +7,7 @@ import inspect
 from collections.abc import Awaitable, Callable
 from typing import Protocol
 
-from voidx.ui.event_components.schema import UiEvent
+from voidx.ui.output.events.schema import UiEvent
 from voidx.ui.protocol import (
     UiCommand,
     UiEventEnvelope,
@@ -17,7 +17,7 @@ from voidx.ui.protocol import (
     UiSnapshotEnvelope,
     tree_to_snapshot,
 )
-from voidx.ui.tree import OutputTree
+from voidx.ui.output.tree import OutputTree
 
 
 class ProtocolClient(Protocol):

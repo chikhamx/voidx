@@ -37,8 +37,11 @@ class SkillRegistry:
         self.bundled_dir = bundled_dir or (Path(__file__).resolve().parent / "bundled" / "superpowers")
         self.global_dir = global_dir or (Path.home() / ".voidx" / "skills")
         self.project_dir = project_dir or (self.workspace / ".voidx" / "skills")
+        self._cache: list[SkillDefinition] | None = None
 
     def discover(self) -> list[SkillDefinition]:
+        if self._cache is not None:
+            return self._cache
         skills: dict[str, SkillDefinition] = {}
         for scope, root in (
             ("bundled", self.bundled_dir),
@@ -47,7 +50,11 @@ class SkillRegistry:
         ):
             for skill in self._discover_root(root, scope):
                 skills[normalize_skill_name(skill.name)] = skill
-        return sorted(skills.values(), key=lambda item: item.name)
+        self._cache = sorted(skills.values(), key=lambda item: item.name)
+        return self._cache
+
+    def invalidate(self) -> None:
+        self._cache = None
 
     def get(self, name: str) -> SkillDefinition | None:
         target = normalize_skill_name(name)
@@ -104,29 +111,61 @@ def _split_frontmatter(text: str) -> tuple[dict[str, Any], str]:
 
 def _parse_frontmatter(text: str) -> dict[str, Any]:
     result: dict[str, Any] = {}
-    current_key: str | None = None
-    for raw_line in text.splitlines():
-        line = raw_line.rstrip()
+    lines = text.splitlines()
+    index = 0
+    while index < len(lines):
+        line = lines[index].rstrip()
         stripped = line.strip()
         if not stripped or stripped.startswith("#"):
+            index += 1
             continue
-        if stripped.startswith("- ") and current_key:
-            current = result.setdefault(current_key, [])
+        if stripped.startswith("- ") and result:
+            last_key = next(reversed(result))
+            current = result[last_key]
             if isinstance(current, list):
                 current.append(_parse_scalar(stripped[2:].strip()))
+            index += 1
             continue
         if ":" not in line:
+            index += 1
             continue
         key, value = line.split(":", 1)
-        current_key = key.strip()
+        key = key.strip()
         value = value.strip()
-        if not current_key:
+        if not key:
+            index += 1
             continue
-        if value == "":
-            result[current_key] = []
+        if value in ("", ">", "|"):
+            collected, index = _collect_block(lines, index + 1, folded=(value == ">"))
+            if value == "" and not collected:
+                result[key] = []
+            elif value == "":
+                result[key] = collected[0] if len(collected) == 1 else collected
+            else:
+                result[key] = collected
         else:
-            result[current_key] = _parse_scalar(value)
+            result[key] = _parse_scalar(value)
+            index += 1
     return result
+
+
+def _collect_block(lines: list[str], start: int, *, folded: bool = False) -> tuple[str, int]:
+    parts: list[str] = []
+    index = start
+    while index < len(lines):
+        line = lines[index]
+        if not line.startswith(" ") and not line.startswith("\t") and line.strip():
+            break
+        stripped = line.strip()
+        if stripped.startswith("- "):
+            break
+        if not stripped:
+            index += 1
+            continue
+        parts.append(stripped)
+        index += 1
+    text = " ".join(parts) if folded else "\n".join(parts)
+    return text, index
 
 
 def _parse_scalar(value: str) -> Any:

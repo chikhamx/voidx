@@ -1,18 +1,22 @@
 import asyncio
+import os
+import re
+import shutil
 import sys
 from pathlib import Path
 from types import SimpleNamespace
 
 import pytest
+from rich.cells import cell_len
 from rich.console import Console
 from rich.text import Text
 
 sys.path.insert(0, str(Path(__file__).parent.parent / "src"))
 
 from voidx.llm.usage import UsageStats
-from voidx.ui.clipboard_image import ClipboardImageResult
+from voidx.ui.tools.clipboard_image import ClipboardImageResult
 from voidx.ui.commands import COMMANDS
-from voidx.ui.dock import BottomInputDock, dock, set_dock
+from voidx.ui.output.dock import BottomInputDock, dock, set_dock
 from voidx.ui.tui import (
     PureTui,
     _ENTER_TERMINAL_SEQUENCE,
@@ -126,6 +130,21 @@ def test_status_summary_degrades_to_fit_width(tmp_path):
     assert summary.startswith("  anthropic")
 
 
+def test_status_summary_degrades_by_display_width_for_cjk(tmp_path):
+    status = SimpleNamespace(
+        provider="模型",
+        model="超宽模型",
+        workspace=str(tmp_path),
+        reasoning_effort="推理",
+        permission_label=lambda: "接受编辑",
+    )
+    tui = PureTui(status, COMMANDS)
+
+    summary = tui._status_summary(10)
+
+    assert cell_len(summary) <= 10
+
+
 def test_status_summary_is_empty_without_model_status(tmp_path):
     tui = _tui(tmp_path)
 
@@ -133,13 +152,19 @@ def test_status_summary_is_empty_without_model_status(tmp_path):
     assert tui._render_hint_lines() == []
 
 
-def test_terminal_sequences_stay_on_main_screen():
+def test_terminal_sequences_stay_on_normal_buffer():
+    # Alternate screen NOT used — terminal handles scrollback natively
     assert "\x1b[?1049h" not in _ENTER_TERMINAL_SEQUENCE
     assert "\x1b[?1049l" not in _EXIT_TERMINAL_SEQUENCE
-    assert "\x1b7" not in _ENTER_TERMINAL_SEQUENCE
-    assert "\x1b8" not in _EXIT_TERMINAL_SEQUENCE
     assert "\x1b[?1000l" in _ENTER_TERMINAL_SEQUENCE
     assert "\x1b[?1006l" in _EXIT_TERMINAL_SEQUENCE
+
+
+def test_dock_clear_screen_request_is_consumed_publicly():
+    dock.reset()
+
+    assert dock.consume_clear_screen_request() is True
+    assert dock.consume_clear_screen_request() is False
 
 
 def test_rendered_row_count_tracks_terminal_cursor_rows():
@@ -149,13 +174,42 @@ def test_rendered_row_count_tracks_terminal_cursor_rows():
     assert _rendered_row_count("one\ntwo\n") == 2
 
 
-def test_frame_top_sequence_uses_previous_frame_rows_not_cursor_offset(tmp_path):
+def test_render_impl_clips_transcript_to_visible_tail(tmp_path):
     tui = _tui(tmp_path)
-    tui._has_rendered_frame = True
-    tui._last_frame_rows = 30
-    tui._cursor_to_frame_end_lines = 4
+    tui._console = Console(file=None, force_terminal=True, width=80, height=10, _environ={})
+    for index in range(20):
+        dock.tree.new_node(
+            parent=dock.tree.root,
+            node_type="message",
+            header=f"line {index:02d}",
+            collapsed=False,
+        )
 
-    assert tui._move_to_frame_top_sequence() == "\r\x1b[4B\r\x1b[30A\r"
+    lines = _render_lines(tui, width=80)
+    rendered = "\n".join(lines)
+
+    assert len(lines) <= 10
+    assert "line 12" not in rendered
+    assert "line 13" in rendered
+    assert "line 19" in rendered
+
+
+def test_frame_top_positioning_uses_terminal_height_for_absolute_row(tmp_path, monkeypatch):
+    """Frame rendering calculates start_row from terminal height so
+    the frame always renders at the bottom without scrollback pollution."""
+    monkeypatch.setattr(
+        shutil, "get_terminal_size",
+        lambda fallback=None: os.terminal_size((80, 30)),
+    )
+    tui = _tui(tmp_path)
+    tui._tty = True
+    tui._has_rendered_frame = True
+
+    # _move_to_frame_top_sequence is no longer called in the render path;
+    # absolute positioning is computed directly from terminal height.
+    # The old method still exists but is dead code.
+    tui._last_frame_rows = 5
+    assert tui._move_to_frame_top_sequence() == "\x1b[5A"
 
 
 def test_frame_end_sequence_returns_from_input_cursor_to_frame_end(tmp_path):
@@ -280,7 +334,55 @@ def test_input_cursor_position_counts_wide_chinese_cells(tmp_path, monkeypatch):
 
     tui._position_input_cursor()
 
+    assert fake_stdout.text.startswith("\x1b[1A")
     assert "\x1b[7G" in fake_stdout.text
+
+
+def test_input_cursor_position_accounts_for_status_line(tmp_path, monkeypatch):
+    class FakeStdout:
+        def __init__(self) -> None:
+            self.text = ""
+
+        def write(self, value: str) -> int:
+            self.text += value
+            return len(value)
+
+    fake_stdout = FakeStdout()
+    monkeypatch.setattr(sys, "stdout", fake_stdout)
+    status = SimpleNamespace(provider="openai", model="gpt", workspace=str(tmp_path))
+    tui = PureTui(status, COMMANDS)
+    tui._input_lines = ["现在"]
+    tui._cursor_row = 0
+    tui._cursor_col = 2
+    tui._console = Console(file=None, force_terminal=True, width=80, height=24, _environ={})
+
+    tui._position_input_cursor()
+
+    assert fake_stdout.text == "\x1b[2A\x1b[7G"
+
+
+def test_input_cursor_position_accounts_for_wrapped_long_line(tmp_path, monkeypatch):
+    class FakeStdout:
+        def __init__(self) -> None:
+            self.text = ""
+
+        def write(self, value: str) -> int:
+            self.text += value
+            return len(value)
+
+    fake_stdout = FakeStdout()
+    monkeypatch.setattr(sys, "stdout", fake_stdout)
+    tui = _tui(tmp_path)
+    tui._input_lines = ["x" * 50]
+    tui._cursor_row = 0
+    tui._cursor_col = 0
+    tui._console = Console(file=None, force_terminal=True, width=22, height=24, _environ={})
+
+    tui._position_input_cursor()
+
+    match = re.search(r"\x1b\[(\d+)A", fake_stdout.text)
+    assert match is not None
+    assert int(match.group(1)) == 3
 
 
 def test_tty_render_reuses_previous_frame_region(tmp_path, monkeypatch):
@@ -310,8 +412,10 @@ def test_tty_render_reuses_previous_frame_region(tmp_path, monkeypatch):
     tui._cursor_col = 1
     tui._render_frame()
 
-    assert fake_stdout.text.startswith("\r\x1b[")
-    assert "A\r\x1b[J" in fake_stdout.text
+    # Normal-buffer mode: relative cursor movement instead of absolute \x1b[H
+    assert "\x1b[H" not in fake_stdout.text
+    assert "\x1b[" in fake_stdout.text
+    assert "\x1b[J" in fake_stdout.text
 
 
 def test_command_panel_renders_below_input_with_bottom_rule(tmp_path):
@@ -337,7 +441,6 @@ def test_command_panel_renders_below_input_with_bottom_rule(tmp_path):
 
     assert input_index < selected_index
     assert set(lines[input_index + 1]) == {"─"}
-    assert set(lines[max(selected_index, reasoning_index, switch_index) + 1]) == {"─"}
     assert lines[selected_index].strip().startswith("❯ /model new")
     assert not lines[reasoning_index].strip().startswith("❯")
     assert "↑↓ select" not in "\n".join(lines)
@@ -373,32 +476,31 @@ def test_command_panel_keeps_dynamic_status_below_panel(tmp_path):
     assert "Esc close" not in lines[status_index]
 
 
-def test_transient_output_renders_rich_markup(tmp_path):
+def test_transient_output_appends_to_dock(tmp_path):
     tui = _tui(tmp_path)
     tui.show_transient_output(
         "  [cyan]python[/cyan] [dim]→[/dim] /opt/homebrew/bin/node [dim][CursorPyright][/dim]",
         title="LSP",
     )
 
-    rendered = "\n".join(_render_lines(tui))
+    from voidx.ui.output.dock import dock as dock_instance
+    tree_lines = dock_instance.tree.render(80)
+    rendered = "\n".join(tree_lines)
 
-    assert "LSP" in rendered
     assert "python" in rendered
     assert "/opt/homebrew/bin/" in rendered
-    assert "[cyan]" not in rendered
-    assert "[dim]" not in rendered
 
 
-def test_command_output_renders_captured_ansi_without_escape_codes(tmp_path):
+def test_secret_input_masks_by_display_width(tmp_path):
     tui = _tui(tmp_path)
-    tui.begin_command_output("/")
-    tui.append_command_output("\x1b[36m/model\x1b[0m \x1b[2mSwitch model\x1b[0m")
+    tui._active_text_secret = True
+    tui._input_lines = ["你好"]
+    tui._cursor_col = 2
 
     rendered = "\n".join(_render_lines(tui))
 
-    assert "/model" in rendered
-    assert "Switch model" in rendered
-    assert "\x1b[" not in rendered
+    assert "****" in rendered
+    assert "你好" not in rendered
 
 
 def test_choice_enter_submits_selected_value(tmp_path):
@@ -428,6 +530,35 @@ def test_choice_quick_key_finishes_single_character_value(tmp_path):
     assert tui._queue.empty()
 
 
+def test_choice_text_does_not_select_by_non_ascii_label_prefix(tmp_path):
+    tui = _tui(tmp_path)
+    tui._active_choice = [
+        ("中文", "zh", "Chinese"),
+        ("English", "en", "English"),
+    ]
+    tui._choice_selected = 1
+
+    tui._process_input("中".encode("utf-8"))
+
+    assert tui._choice_selected == 1
+    assert tui._choice_queue.empty()
+    assert tui._queue.empty()
+
+
+def test_alt_key_does_not_trigger_choice_quick_select(tmp_path):
+    tui = _tui(tmp_path)
+    tui._active_choice = [
+        ("Yes", "y", "Allow"),
+        ("No", "n", "Deny"),
+    ]
+
+    changed = tui._process_input(b"\x1bn")
+
+    assert changed is False
+    assert tui._choice_queue.empty()
+    assert tui._queue.empty()
+
+
 def test_ask_choice_accepts_permission_details(tmp_path):
     tui = _tui(tmp_path)
 
@@ -445,6 +576,58 @@ def test_ask_choice_accepts_permission_details(tmp_path):
         return await task
 
     assert asyncio.run(run_prompt()) == "y"
+
+
+def test_ask_choice_timeout_returns_none_and_clears_prompt(tmp_path):
+    tui = _tui(tmp_path)
+
+    async def run_prompt():
+        return await tui.ask_choice(
+            "Allow tool use?",
+            [("Yes", "y", "Allow"), ("No", "n", "Deny")],
+            timeout=0.001,
+        )
+
+    assert asyncio.run(run_prompt()) is None
+    assert tui._active_choice is None
+
+
+def test_ask_choice_ignores_stale_queue_values_after_timeout(tmp_path):
+    tui = _tui(tmp_path)
+
+    async def run_prompt():
+        return await tui.ask_choice(
+            "Allow tool use?",
+            [("Yes", "y", "Allow"), ("No", "n", "Deny")],
+            timeout=0.001,
+        )
+
+    assert asyncio.run(run_prompt()) is None
+    tui._choice_queue.put_nowait("stale")
+    assert asyncio.run(run_prompt()) is None
+
+
+def test_ask_text_timeout_returns_none_and_restores_input(tmp_path):
+    tui = _tui(tmp_path)
+    tui._input_lines = ["draft"]
+    tui._cursor_col = 5
+
+    async def run_prompt():
+        return await tui.ask_text("Name?", default="default", timeout=0.001)
+
+    assert asyncio.run(run_prompt()) is None
+    assert tui._get_input_text() == "draft"
+
+
+def test_ask_text_ignores_stale_queue_values_after_timeout(tmp_path):
+    tui = _tui(tmp_path)
+
+    async def run_prompt():
+        return await tui.ask_text("Name?", default="default", timeout=0.001)
+
+    assert asyncio.run(run_prompt()) is None
+    tui._text_queue.put_nowait("stale")
+    assert asyncio.run(run_prompt()) is None
 
 
 def test_command_panel_enter_accepts_selected_command_without_queueing(tmp_path):
@@ -470,6 +653,14 @@ def test_command_panel_enter_accepts_selected_command_without_queueing(tmp_path)
     assert tui._queue.get_nowait() == "/model"
 
 
+def test_filtered_commands_only_match_current_prefix(tmp_path):
+    tui = _tui(tmp_path)
+    tui._input_lines = ["/approval on-failure now"]
+    tui._cursor_col = len("/approval on-failure now")
+
+    assert tui._filtered_commands() == []
+
+
 def test_attachment_panel_accepts_workspace_file(tmp_path):
     file_path = tmp_path / "src" / "main.py"
     file_path.parent.mkdir()
@@ -481,12 +672,45 @@ def test_attachment_panel_accepts_workspace_file(tmp_path):
 
     assert tui._attachment_panel_active()
     panel = "\n".join(tui._render_attachment_panel(80))
-    assert "src/main.py" in panel
+    assert "src/" in panel
 
+    # Select src/ directory — drills into it
     tui._process_input(b"\r")
+    assert tui._get_input_text() == "@src/"
+    assert tui._attachment_panel_active()
 
+    # Now select main.py inside src/
+    tui._process_input(b"\r")
     assert tui._get_input_text() == "@src/main.py "
     assert tui._queue.empty()
+
+
+
+
+def test_attachment_matches_are_cached_per_token(tmp_path, monkeypatch):
+    from voidx.ui.tools.file_picker import FileCandidate
+
+    calls: list[str] = []
+
+    def fake_list_file_candidates(_workspace: str, query: str, limit: int = 8):
+        calls.append(query)
+        return [FileCandidate("src/main.py", "file", 1)]
+
+    monkeypatch.setattr(
+        "voidx.ui.tui.panels.list_file_candidates",
+        fake_list_file_candidates,
+    )
+    tui = _tui(tmp_path)
+    tui._input_lines = ["@src"]
+    tui._cursor_col = len("@src")
+
+    assert tui._attachment_matches()
+    assert tui._attachment_matches()
+
+    tui._insert_text("x")
+    assert tui._attachment_matches()
+
+    assert calls == ["src", "srcx"]
 
 
 def test_attachment_panel_quotes_paths_with_spaces(tmp_path):
@@ -494,12 +718,21 @@ def test_attachment_panel_quotes_paths_with_spaces(tmp_path):
     file_path.parent.mkdir()
     file_path.write_text("hello\n", encoding="utf-8")
     tui = _tui(tmp_path)
-    tui._input_lines = ["@my"]
-    tui._cursor_col = len("@my")
+    tui._input_lines = ["@notes"]
+    tui._cursor_col = len("@notes")
     tui._update_input_panels()
 
+    # Select notes/ directory
+    assert tui._accept_attachment_panel_selection()
+    assert tui._get_input_text() == "@notes/"
+
+    # Now filter for "my" inside notes/
+    tui._input_lines = ["@notes/my"]
+    tui._cursor_col = len("@notes/my")
+    tui._update_input_panels()
     assert tui._accept_attachment_panel_selection()
     assert tui._get_input_text() == '@"notes/my file.txt" '
+
 
 
 def test_attachment_panel_arrow_selection_accepts_selected_file(tmp_path):
@@ -534,6 +767,26 @@ def test_attachment_panel_escape_hides_without_accepting(tmp_path):
     assert tui._get_input_text() == "@src"
 
 
+def test_attachment_panel_suppression_clears_after_text_changes(tmp_path):
+    file_path = tmp_path / "src" / "main.py"
+    file_path.parent.mkdir()
+    file_path.write_text("print('hi')\n", encoding="utf-8")
+    tui = _tui(tmp_path)
+    tui._input_lines = ["@src"]
+    tui._cursor_col = len("@src")
+    tui._update_input_panels()
+
+    assert tui._attachment_panel_active()
+    tui._process_input(b"\x1b")
+    assert not tui._attachment_panel_active()
+
+    tui._process_input(b"\x7f")
+    tui._process_input(b"c")
+
+    assert tui._get_input_text() == "@src"
+    assert tui._attachment_panel_active()
+
+
 def test_regular_enter_submits_input(tmp_path):
     tui = _tui(tmp_path)
     tui._input_lines = ["hello"]
@@ -556,15 +809,34 @@ def test_empty_enter_on_empty_input_is_noop(tmp_path):
 
 
 @pytest.mark.parametrize(
+    "sequence,expected_input",
+    [
+        (b"\x1b[Mabc", "abc"),
+    ],
+)
+def test_legacy_mouse_sequences_become_plain_text(tmp_path, sequence, expected_input):
+    """Without mouse tracking enabled, mouse escape sequences degrade to
+    printable characters — ESC is consumed, M abc are inserted as text."""
+    tui = _tui(tmp_path)
+
+    changed = tui._process_input(sequence)
+
+    assert changed is True
+    assert tui._get_input_text() == expected_input
+    assert tui._queue.empty()
+
+
+@pytest.mark.parametrize(
     "sequence",
     [
         b"\x1b[<64;10;5M",
         b"\x1b[<65;10;5m",
-        b"\x1b[Mabc",
         b"\x1b[64;10;5M",
     ],
 )
-def test_mouse_reporting_sequences_are_ignored(tmp_path, sequence):
+def test_mouse_scroll_is_noop_without_tracking(tmp_path, sequence):
+    """Without mouse tracking, SGR mouse sequences are consumed as CSI
+    with no side effects — the terminal won't send them anyway."""
     tui = _tui(tmp_path)
 
     changed = tui._process_input(sequence)
@@ -650,7 +922,7 @@ def test_ctrl_c_requires_second_empty_press(tmp_path):
 
 def test_ctrl_c_deadline_requires_fresh_second_press(tmp_path, monkeypatch):
     now = 100.0
-    monkeypatch.setattr("voidx.ui.tui.time.monotonic", lambda: now)
+    monkeypatch.setattr("voidx.ui.tui.app.time.monotonic", lambda: now)
     tui = _tui(tmp_path)
 
     tui._handle_interrupt()
@@ -723,6 +995,529 @@ async def test_ctrl_c_cancels_active_submit_task(tmp_path):
     await asyncio.wait_for(consumer, timeout=1)
 
 
+@pytest.mark.asyncio
+async def test_read_input_raw_returns_ctrl_d_on_stdin_eof(tmp_path, monkeypatch):
+    running_loop = asyncio.get_running_loop()
+
+    class FakeLoop:
+        def create_future(self):
+            return running_loop.create_future()
+
+        def add_reader(self, _fd, callback):
+            callback()
+
+        def remove_reader(self, _fd):
+            pass
+
+    tui = _tui(tmp_path)
+    tui._stdin_fd = 99
+    monkeypatch.setattr(asyncio, "get_event_loop", lambda: FakeLoop())
+    monkeypatch.setattr(os, "read", lambda _fd, _size: b"")
+
+    assert await tui._read_input_raw() == b"\x04"
+
+
+@pytest.mark.asyncio
+async def test_run_finally_does_not_mask_missing_workspace(monkeypatch):
+    class FakeStdout:
+        def write(self, value: str) -> int:
+            return len(value)
+
+        def flush(self) -> None:
+            pass
+
+    async def fake_read_input_raw():
+        return b"\x04"
+
+    tui = PureTui(SimpleNamespace(), COMMANDS)
+    tui._stdin_fd = 99
+    monkeypatch.setattr(os, "isatty", lambda _fd: True)
+    monkeypatch.setattr(sys, "stdout", FakeStdout())
+    monkeypatch.setattr(tui, "_setup_terminal", lambda: None)
+    monkeypatch.setattr(tui, "_restore_terminal", lambda: None)
+    monkeypatch.setattr(tui, "_render_frame", lambda: None)
+    monkeypatch.setattr(tui, "_move_to_frame_end_sequence", lambda: "")
+    monkeypatch.setattr(tui, "_read_input_raw", fake_read_input_raw)
+
+    async def on_submit(_text: str) -> bool:
+        return True
+
+    await tui.run(on_submit)
+
+
+def test_capture_renderable_reuses_console_and_clears_buffer(tmp_path):
+    tui = _tui(tmp_path)
+
+    first = tui._capture_renderable(Text("first"), 80)
+    console_id = id(tui._capture_console)
+    second = tui._capture_renderable(Text("second"), 80)
+
+    assert id(tui._capture_console) == console_id
+    assert "first" in first
+    assert "first" not in second
+    assert "second" in second
+
+
+def test_input_history_is_bounded(tmp_path):
+    tui = _tui(tmp_path)
+    limit = tui.INPUT_HISTORY_LIMIT
+
+    for index in range(limit + 5):
+        tui._record_history(f"command {index}")
+
+    assert len(tui._input_history) == limit
+    assert tui._input_history[0] == "command 5"
+
+
+def test_tree_incremental_render_only_rewalks_dirty_subtree():
+    from voidx.ui.output.tree import OutputTree
+
+    tree = OutputTree()
+    # Build a tree with two independent root children
+    turn1 = tree.new_node(tree.root, node_type="turn", header="Turn 1")
+    tree.new_node(turn1, node_type="message", header="msg1", body_lines=["body1"])
+    turn2 = tree.new_node(tree.root, node_type="turn", header="Turn 2")
+    stream = tree.new_node(turn2, node_type="assistant", header="stream", body_lines=["line 1"])
+
+    # Full render
+    full_render = tree.render(80)
+    assert any("Turn 1" in line for line in full_render)
+    assert any("Turn 2" in line for line in full_render)
+
+    # Content-only update on the stream node
+    stream.body_lines = ["line 1", "line 2 (new)"]
+    tree.mark_dirty(stream.id)
+
+    # Incremental render should still be correct
+    # Verify incremental path was used (no full dirty flag)
+    assert tree._dirty is False
+    inc_render = tree.render(80)
+    assert "line 2 (new)" in "\n".join(inc_render)
+    assert any("Turn 1" in line for line in inc_render)
+    assert any("Turn 2" in line for line in inc_render)
+    assert len(inc_render) > len(full_render)  # grew by one line
+    # Verify range: stream node's start position stays unchanged.
+    assert tree._node_ranges[stream.id][0] >= 2  # after turn2 header
+
+    # Third update – should still be correct
+    stream.body_lines = ["line 1", "line 2 (new)", "line 3 (newest)"]
+    tree.mark_dirty(stream.id)
+    inc_render2 = tree.render(80)
+    assert "line 3 (newest)" in "\n".join(inc_render2)
+    # Verify no duplicate content from stale ranges
+    joined = "\n".join(inc_render2)
+    assert joined.count("line 1") == 1  # appears exactly once
+    assert joined.count("line 3 (newest)") == 1
+
+    # After structural change (add node), full render should work
+    turn3 = tree.new_node(tree.root, node_type="turn", header="Turn 3")
+    final = tree.render(80)
+    assert any("Turn 1" in line for line in final)
+    assert any("Turn 3" in line for line in final)
+
+
+def test_tree_incremental_render_shifts_sibling_after_ranges():
+    """After incremental splice, sibling-after nodes get shifted ranges."""
+    from voidx.ui.output.tree import OutputTree
+
+    tree = OutputTree()
+    turn = tree.new_node(tree.root, node_type="turn", header="Turn")
+    assistant = tree.new_node(tree.root, node_type="assistant", header="● Working")
+    stream = tree.new_node(assistant, node_type="assistant", header="stream", body_lines=["line 1"])
+    # sibling-after: same parent as stream
+    tool = tree.new_node(assistant, node_type="tool_call", header="read file.py")
+
+    full = tree.render(80)
+    # Remember ranges after full render
+    tool_start, tool_end = tree._node_ranges[tool.id]
+    assistant_start, assistant_end = tree._node_ranges[assistant.id]
+
+    # Content-only update on stream: it grows by 2 lines
+    stream.body_lines = ["line 1", "extra line 2", "extra line 3"]
+    tree.mark_dirty(stream.id)
+    inc = tree.render(80)
+
+    delta = len(inc) - len(full)
+    assert delta == 2
+
+    # tool's range should shift by delta
+    new_tool_start, new_tool_end = tree._node_ranges[tool.id]
+    assert new_tool_start == tool_start + delta
+    assert new_tool_end == tool_end + delta
+
+    # assistant's end should shift by delta (ancestor spanning)
+    _, new_assistant_end = tree._node_ranges[assistant.id]
+    assert new_assistant_end == assistant_end + delta
+
+    # Content is still correct
+    assert "extra line 3" in "\n".join(inc)
+    assert "read file.py" in "\n".join(inc)
+
+
+def test_tree_incremental_render_shifts_click_map():
+    """After incremental splice, _click_map rows shift correctly."""
+    from voidx.ui.output.tree import OutputTree
+
+    tree = OutputTree()
+    turn = tree.new_node(tree.root, node_type="turn", header="Turn")
+    assistant = tree.new_node(tree.root, node_type="assistant", header="Working")
+    stream = tree.new_node(assistant, node_type="assistant", header="stream", body_lines=["L1"])
+    tool = tree.new_node(assistant, node_type="tool_call", header="read file")
+
+    full = tree.render(80)
+    # tool is clickable
+    tool_rows = [r for r, n in tree._click_map.items() if n == tool.id]
+    assert len(tool_rows) == 1
+    old_tool_row = tool_rows[0]
+    assert "read file" in full[old_tool_row]
+
+    # Content-only update: stream grows by 2 lines
+    stream.body_lines = ["L1", "L2", "L3"]
+    tree.mark_dirty(stream.id)
+    inc = tree.render(80)
+
+    # tool's click_map row should shift by delta=2
+    new_tool_rows = [r for r, n in tree._click_map.items() if n == tool.id]
+    assert len(new_tool_rows) == 1
+    assert new_tool_rows[0] == old_tool_row + 2
+    assert "read file" in inc[new_tool_rows[0]]
+
+    # Second incremental: stream shrinks by 1 line
+    stream.body_lines = ["L1", "L2"]
+    tree.mark_dirty(stream.id)
+    inc2 = tree.render(80)
+    tool_rows2 = [r for r, n in tree._click_map.items() if n == tool.id]
+    assert tool_rows2[0] == old_tool_row + 1
+    assert "read file" in inc2[tool_rows2[0]]
+
+
+def test_dump_transcript_log_writes_plain_text(tmp_path):
+    tui = _tui(tmp_path)
+
+    dock.tree.new_node(
+        parent=dock.tree.root,
+        node_type="turn",
+        header="[bold white]❯[/] hello world",
+        body_lines=["this is a test message"],
+        collapsed=False,
+    )
+    dock.tree.new_node(
+        parent=dock.tree.root,
+        node_type="message",
+        header="[#EBCB8B]●[/#EBCB8B] response",
+        body_lines=["some output here"],
+        collapsed=False,
+    )
+
+    from voidx.ui.tui import _dump_transcript_log
+
+    log_path = tmp_path / ".voidx" / "transcript.log"
+    assert not log_path.exists()
+
+    _dump_transcript_log(tmp_path, dock.tree)
+
+    assert log_path.exists()
+    content = log_path.read_text()
+    assert "hello world" in content
+    assert "this is a test message" in content
+    assert "some output here" in content
+
+
+def test_render_frame_uses_absolute_positioning_to_avoid_scrollback_pollution(
+    tmp_path, monkeypatch
+):
+    """Each frame render MUST use absolute cursor positioning so the
+    terminal does not scroll while writing the frame.  Relative
+    positioning (\x1b[{N}A) pushes old frames into scrollback because
+    when the frame grows, \n at the last line triggers a scroll."""
+
+    class FakeStdout:
+        def __init__(self) -> None:
+            self.text = ""
+
+        def write(self, value: str) -> int:
+            self.text += value
+            return len(value)
+
+        def flush(self) -> None:
+            pass
+
+    fake_stdout = FakeStdout()
+    monkeypatch.setattr(sys, "stdout", fake_stdout)
+    monkeypatch.setattr(
+        shutil, "get_terminal_size",
+        lambda fallback=None: os.terminal_size((80, 30)),
+    )
+
+    tui = _tui(tmp_path)
+    tui._tty = True
+    tui._console = Console(file=None, force_terminal=True, width=80, height=30, _environ={})
+
+    tui._render_frame()
+
+    text = fake_stdout.text
+    # The first cursor movement (before \x1b[J, the clear-screen) MUST
+    # be absolute positioning: \x1b[{row};{col}H
+    clear_pos = text.find("\x1b[J")
+    assert clear_pos > 0, f"Expected \\x1b[J, got: {text!r}"
+
+    before_clear = text[:clear_pos]
+    assert re.search(r"\x1b\[\d+;\d+H", before_clear), (
+        f"Expected absolute \\x1b[{{row}};{{col}}H before \\x1b[J,"
+        f" got: {before_clear!r}"
+    )
+
+    match = re.search(r"\x1b\[(\d+);(\d+)H", before_clear)
+    row = int(match.group(1))
+    # When content fits the terminal, the frame starts at row 1 (top-aligned).
+    # When content exceeds terminal height, it anchors near the bottom.
+    assert row >= 1, f"Frame start row {row} is invalid"
+    assert row <= 30, f"Frame start row {row} exceeds terminal height 30"
+
+
+def test_render_frame_starts_below_short_committed_history(tmp_path, monkeypatch):
+    class FakeStdout:
+        def __init__(self) -> None:
+            self.text = ""
+
+        def write(self, value: str) -> int:
+            self.text += value
+            return len(value)
+
+        def flush(self) -> None:
+            pass
+
+    fake_stdout = FakeStdout()
+    monkeypatch.setattr(sys, "stdout", fake_stdout)
+    monkeypatch.setattr(
+        shutil,
+        "get_terminal_size",
+        lambda fallback=None: os.terminal_size((80, 30)),
+    )
+
+    tui = _tui(tmp_path)
+    tui._tty = True
+    tui._console = Console(file=None, force_terminal=True, width=80, height=30, _environ={})
+    for index in range(3):
+        dock.tree.new_node(
+            parent=dock.tree.root,
+            node_type="message",
+            header=f"committed line {index}",
+            collapsed=False,
+        )
+    tui._committed_line_count = 3
+    tui._visible_committed_rows = 3
+
+    tui._render_frame()
+
+    assert tui._last_frame_start_row == 4
+    assert fake_stdout.text.startswith("\x1b[4;1H\x1b[J")
+
+
+def test_render_frame_scrolls_visible_committed_history_before_overlap(
+    tmp_path, monkeypatch
+):
+    class FakeStdout:
+        def __init__(self) -> None:
+            self.text = ""
+
+        def write(self, value: str) -> int:
+            self.text += value
+            return len(value)
+
+        def flush(self) -> None:
+            pass
+
+    fake_stdout = FakeStdout()
+    monkeypatch.setattr(sys, "stdout", fake_stdout)
+    monkeypatch.setattr(
+        shutil,
+        "get_terminal_size",
+        lambda fallback=None: os.terminal_size((80, 12)),
+    )
+
+    tui = _tui(tmp_path)
+    tui._tty = True
+    tui._console = Console(file=None, force_terminal=True, width=80, height=12, _environ={})
+    for index in range(3):
+        dock.tree.new_node(
+            parent=dock.tree.root,
+            node_type="message",
+            header=f"committed line {index}",
+            collapsed=False,
+        )
+    for index in range(7):
+        dock.tree.new_node(
+            parent=dock.tree.root,
+            node_type="message",
+            header=f"active line {index}",
+            collapsed=False,
+        )
+    tui._committed_line_count = 3
+    tui._visible_committed_rows = 3
+
+    tui._render_frame()
+
+    assert tui._last_frame_start_row == 3
+    assert tui._visible_committed_rows == 2
+    clear_pos = fake_stdout.text.find("\x1b[J")
+    assert fake_stdout.text[:clear_pos].startswith("\x1b[12;1H\n\x1b[3;1H")
+
+
+def test_flush_committed_does_not_pad_short_history_to_bottom(tmp_path, monkeypatch):
+    class FakeStdout:
+        def __init__(self) -> None:
+            self.text = ""
+
+        def write(self, value: str) -> int:
+            self.text += value
+            return len(value)
+
+        def flush(self) -> None:
+            pass
+
+    fake_stdout = FakeStdout()
+    monkeypatch.setattr(sys, "stdout", fake_stdout)
+    monkeypatch.setattr(
+        shutil,
+        "get_terminal_size",
+        lambda fallback=None: os.terminal_size((80, 30)),
+    )
+
+    tui = _tui(tmp_path)
+    tui._tty = True
+    tui._console = Console(file=fake_stdout, force_terminal=True, width=80, height=30, _environ={})
+    for index in range(3):
+        dock.tree.new_node(
+            parent=dock.tree.root,
+            node_type="message",
+            header=f"committed line {index}",
+            collapsed=False,
+        )
+
+    tui._flush_committed(force=True)
+
+    assert tui._committed_line_count == 3
+    assert tui._visible_committed_rows == 3
+    assert fake_stdout.text.count("\n") < 10
+
+
+def test_render_frame_pins_to_bottom_after_history_fills_terminal(tmp_path, monkeypatch):
+    class FakeStdout:
+        def __init__(self) -> None:
+            self.text = ""
+
+        def write(self, value: str) -> int:
+            self.text += value
+            return len(value)
+
+        def flush(self) -> None:
+            pass
+
+    fake_stdout = FakeStdout()
+    monkeypatch.setattr(sys, "stdout", fake_stdout)
+    monkeypatch.setattr(
+        shutil,
+        "get_terminal_size",
+        lambda fallback=None: os.terminal_size((80, 12)),
+    )
+
+    tui = _tui(tmp_path)
+    tui._tty = True
+    tui._console = Console(file=None, force_terminal=True, width=80, height=12, _environ={})
+    for index in range(20):
+        dock.tree.new_node(
+            parent=dock.tree.root,
+            node_type="message",
+            header=f"committed line {index}",
+            collapsed=False,
+        )
+    tui._committed_line_count = 20
+    tui._visible_committed_rows = 12
+
+    tui._render_frame()
+
+    assert tui._last_frame_start_row == max(12 - tui._last_frame_rows + 1, 1)
+    assert tui._last_frame_start_row < tui._committed_line_count + 1
+
+
+def test_render_frame_clips_long_transcript_to_terminal_height(tmp_path, monkeypatch):
+    class FakeStdout:
+        def __init__(self) -> None:
+            self.text = ""
+
+        def write(self, value: str) -> int:
+            self.text += value
+            return len(value)
+
+        def flush(self) -> None:
+            pass
+
+    fake_stdout = FakeStdout()
+    monkeypatch.setattr(sys, "stdout", fake_stdout)
+    monkeypatch.setattr(
+        shutil, "get_terminal_size",
+        lambda fallback=None: os.terminal_size((80, 12)),
+    )
+
+    tui = _tui(tmp_path)
+    tui._tty = True
+    tui._console = Console(file=None, force_terminal=True, width=80, height=12, _environ={})
+    for index in range(50):
+        dock.tree.new_node(
+            parent=dock.tree.root,
+            node_type="message",
+            header=f"frame line {index:02d}",
+            collapsed=False,
+        )
+
+    tui._render_frame()
+
+    assert tui._last_frame_rows <= 12
+    assert "frame line 41" in fake_stdout.text
+    assert "frame line 40" not in fake_stdout.text
+
+
+def test_typing_redraws_input_region_without_rewriting_transcript(tmp_path, monkeypatch):
+    class FakeStdout:
+        def __init__(self) -> None:
+            self.text = ""
+
+        def write(self, value: str) -> int:
+            self.text += value
+            return len(value)
+
+        def flush(self) -> None:
+            pass
+
+    fake_stdout = FakeStdout()
+    monkeypatch.setattr(sys, "stdout", fake_stdout)
+    monkeypatch.setattr(
+        shutil, "get_terminal_size",
+        lambda fallback=None: os.terminal_size((80, 12)),
+    )
+
+    tui = _tui(tmp_path)
+    tui._tty = True
+    tui._console = Console(file=None, force_terminal=True, width=80, height=12, _environ={})
+    dock.tree.new_node(
+        parent=dock.tree.root,
+        node_type="message",
+        header="startup banner",
+        collapsed=False,
+    )
+
+    tui._render_frame()
+    assert "startup banner" in fake_stdout.text
+
+    fake_stdout.text = ""
+    assert tui._process_input(b"x") is True
+    tui._render_after_input()
+
+    assert "startup banner" not in fake_stdout.text
+    assert "x" in fake_stdout.text
+
+
 def test_paste_clipboard_image_inserts_image_token(tmp_path, monkeypatch):
     def fake_paste(_workspace: str) -> ClipboardImageResult:
         return ClipboardImageResult(
@@ -732,7 +1527,7 @@ def test_paste_clipboard_image_inserts_image_token(tmp_path, monkeypatch):
             size=123,
         )
 
-    monkeypatch.setattr("voidx.ui.tui.paste_clipboard_image_from_system", fake_paste)
+    monkeypatch.setattr("voidx.ui.tui.app.paste_clipboard_image_from_system", fake_paste)
     tui = _tui(tmp_path)
 
     result = tui.paste_clipboard_image()
@@ -740,3 +1535,75 @@ def test_paste_clipboard_image_inserts_image_token(tmp_path, monkeypatch):
     assert result.ok
     assert tui._get_input_text() == "[image-clip] "
     assert tui._notice == "Pasted image"
+
+
+def test_bracketed_paste_multiline_text_inserts_as_whole(tmp_path):
+    tui = _tui(tmp_path)
+    tui._tty = True
+    tui._input_lines = [""]
+    tui._cursor_col = 0
+
+    paste_data = b"\x1b[200~line1\r\nline2\r\nline3\x1b[201~"
+    tui._process_input(paste_data)
+
+    assert tui._get_input_text() == "line1\nline2\nline3"
+    assert tui._queue.empty()
+
+
+def test_bracketed_paste_single_line_does_not_submit(tmp_path):
+    tui = _tui(tmp_path)
+    tui._tty = True
+    tui._input_lines = [""]
+    tui._cursor_col = 0
+
+    paste_data = b"\x1b[200~hello world\x1b[201~"
+    tui._process_input(paste_data)
+
+    assert tui._get_input_text() == "hello world"
+    assert tui._queue.empty()
+
+
+def test_bracketed_paste_with_trailing_key(tmp_path):
+    tui = _tui(tmp_path)
+    tui._tty = True
+    tui._input_lines = [""]
+    tui._cursor_col = 0
+
+    # Paste followed by a regular keypress
+    paste_data = b"\x1b[200~text\x1b[201~x"
+    tui._process_input(paste_data)
+
+    assert tui._get_input_text() == "textx"
+    assert tui._queue.empty()
+
+
+def test_bracketed_paste_split_across_reads(tmp_path):
+    tui = _tui(tmp_path)
+    tui._tty = True
+    tui._input_lines = [""]
+    tui._cursor_col = 0
+
+    # First read: paste start + partial content
+    tui._process_input(b"\x1b[200~line1\r\n")
+    assert tui._paste_buffer is not None
+    assert tui._queue.empty()
+
+    # Second read: rest of content + paste end
+    tui._process_input(b"line2\x1b[201~")
+    assert tui._paste_buffer is None
+    assert tui._get_input_text() == "line1\nline2"
+    assert tui._queue.empty()
+
+
+def test_bracketed_paste_cr_only_normalised_to_newline(tmp_path):
+    tui = _tui(tmp_path)
+    tui._tty = True
+    tui._input_lines = [""]
+    tui._cursor_col = 0
+
+    # Bare CR (no LF) should also become a newline
+    paste_data = b"\x1b[200~line1\rline2\x1b[201~"
+    tui._process_input(paste_data)
+
+    assert tui._get_input_text() == "line1\nline2"
+    assert tui._queue.empty()

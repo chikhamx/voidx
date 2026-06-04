@@ -10,9 +10,9 @@ from rich.live import Live
 from rich.markdown import Markdown
 from rich.text import Text
 
-from voidx.ui.console_components.formatting import _next_spin
-from voidx.ui.dock import dock
-from voidx.ui.events import (
+from voidx.ui.output.console.formatting import _next_spin
+from voidx.ui.output.dock import dock
+from voidx.ui.output.events import (
     AssistantStreamStarted,
     AssistantStreamCommitted,
     AssistantStreamDiscarded,
@@ -70,7 +70,7 @@ class StreamingRenderer:
         self._status_started = True
         if dock.active and self._stream_to_dock:
             ui_events.emit_nowait(AssistantStreamStarted(agent_id=self._agent_id))
-            ui_events.emit_nowait(StatusUpdated(
+            ui_events.emit_direct(StatusUpdated(
                 agent_id=self._agent_id,
                 status_id=self._thinking_status_id,
                 label="Thinking",
@@ -149,16 +149,16 @@ class StreamingRenderer:
             self._live = None
         elif dock.active:
             if self._discard:
-                if not ui_events.emit_nowait(AssistantStreamDiscarded(agent_id=self._agent_id)):
+                if not ui_events.emit_direct(AssistantStreamDiscarded(agent_id=self._agent_id)):
                     dock.discard_stream()
             else:
                 if self._accumulated:
-                    if not ui_events.emit_nowait(AssistantStreamUpdated(
+                    if not ui_events.emit_direct(AssistantStreamUpdated(
                         agent_id=self._agent_id,
                         text=self._accumulated,
                     )):
                         dock.set_stream(self._accumulated)
-                if not ui_events.emit_nowait(AssistantStreamCommitted(agent_id=self._agent_id)):
+                if not ui_events.emit_direct(AssistantStreamCommitted(agent_id=self._agent_id)):
                     dock.commit_stream()
 
         full = self._accumulated
@@ -184,7 +184,7 @@ class StreamingRenderer:
         thinking_text = self.get_thinking_text()
         if thinking_text.strip():
             if dock.active:
-                if not ui_events.emit_nowait(StatusUpdated(
+                if not ui_events.emit_direct(StatusUpdated(
                     agent_id=self._agent_id,
                     status_id=self._thinking_status_id,
                     label="Thinking",
@@ -217,7 +217,7 @@ class StreamingRenderer:
             return
         self._streaming_status_started = True
         self._finish_thinking_status()
-        ui_events.emit_nowait(StatusUpdated(
+        ui_events.emit_direct(StatusUpdated(
             agent_id=self._agent_id,
             status_id=self._streaming_status_id,
             label="Streaming",
@@ -229,7 +229,7 @@ class StreamingRenderer:
         if not dock.active or not self._stream_to_dock or not self._status_started:
             return
         if self._streaming_status_started:
-            ui_events.emit_nowait(StatusFinished(
+            ui_events.emit_direct(StatusFinished(
                 agent_id=self._agent_id,
                 status_id=self._streaming_status_id,
             ))
@@ -239,7 +239,7 @@ class StreamingRenderer:
     def _finish_thinking_status(self) -> None:
         thinking_text = self.get_thinking_text()
         if thinking_text.strip():
-            ui_events.emit_nowait(StatusFinished(
+            ui_events.emit_direct(StatusFinished(
                 agent_id=self._agent_id,
                 status_id=self._thinking_status_id,
                 label=f"Thinking for {self.elapsed():.0f}s",
@@ -247,7 +247,7 @@ class StreamingRenderer:
                 remove=False,
             ))
             return
-        ui_events.emit_nowait(StatusFinished(
+        ui_events.emit_direct(StatusFinished(
             agent_id=self._agent_id,
             status_id=self._thinking_status_id,
         ))

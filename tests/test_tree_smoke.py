@@ -1,7 +1,7 @@
 """Smoke test for OutputNode / OutputTree rendering."""
 import sys
 sys.path.insert(0, "src")
-from voidx.ui.tree import OutputNode, OutputTree
+from voidx.ui.output.tree import OutputNode, OutputTree
 from voidx.ui.transcript import transcript_rows_to_tree, tree_to_transcript_rows
 
 

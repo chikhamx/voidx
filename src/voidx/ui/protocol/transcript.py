@@ -7,7 +7,7 @@ from typing import Any
 from pydantic import BaseModel, ConfigDict, Field
 
 from voidx.ui.transcript import NodeType, Status
-from voidx.ui.tree import OutputNode, OutputTree
+from voidx.ui.output.tree import OutputNode, OutputTree
 
 
 class TranscriptNode(BaseModel):

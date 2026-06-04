@@ -52,7 +52,7 @@ function connect(url) {
     const envelope = JSON.parse(event.data);
     if (envelope.type === "snapshot") {
       renderTranscript(transcriptEl, envelope.payload);
-      transcriptEl.scrollTop = transcriptEl.scrollHeight;
+      window.scrollTo({ top: document.body.scrollHeight, behavior: "smooth" });
       return;
     }
     if (envelope.type === "event") {

@@ -20,7 +20,6 @@ SKIP_DIRS = {
     "dist",
     "build",
 }
-MAX_SCAN_FILES = 5_000
 
 
 @dataclass(frozen=True)
@@ -59,73 +58,69 @@ def find_attachment_token(text: str, cursor: int) -> AttachmentToken | None:
 
 
 def list_file_candidates(workspace: str, query: str, limit: int = 8) -> list[FileCandidate]:
+    """List candidates for @ attachment, scanning only one directory level.
+
+    The query is interpreted as a path prefix: everything before the last ``/``
+    is the directory to scan, and the part after is the filter.  For example:
+
+    * ``@src``     → scan workspace root, filter by "src"
+    * ``@src/``    → scan ``src/``, show all entries
+    * ``@src/vo``  → scan ``src/``, filter by "vo"
+    """
     root = Path(workspace).resolve()
     if not root.exists() or not root.is_dir():
         return []
-    normalized_query = query.strip().lower().replace("\\", "/")
+
+    normalized_query = query.strip().replace("\\", "/")
+
+    if "/" in normalized_query:
+        dir_part, filter_part = normalized_query.rsplit("/", 1)
+    else:
+        dir_part = ""
+        filter_part = normalized_query
+
+    filter_lower = filter_part.lower()
+
+    scan_dir = root / dir_part if dir_part else root
+    if not scan_dir.is_dir():
+        return []
+
     candidates: list[FileCandidate] = []
-    scanned = 0
-    for dirpath, dirnames, filenames in os.walk(root):
-        dirnames[:] = [
-            name for name in dirnames
-            if name not in SKIP_DIRS and not name.startswith(".")
-        ]
-        for dirname in dirnames:
-            path = Path(dirpath) / dirname
-            try:
-                rel_path = path.resolve().relative_to(root).as_posix()
-            except ValueError:
-                continue
-            scanned += 1
-            if scanned > MAX_SCAN_FILES:
-                break
-            rel_lower = rel_path.lower()
-            if normalized_query and normalized_query not in rel_lower:
-                continue
-            try:
-                item_count = sum(1 for _ in path.iterdir())
-            except (OSError, PermissionError):
-                item_count = 0
+    try:
+        entries = sorted(os.scandir(scan_dir), key=lambda e: e.name.lower())
+    except (OSError, PermissionError):
+        return []
+
+    for entry in entries:
+        name = entry.name
+        if name.startswith("."):
+            continue
+        if entry.is_dir() and name in SKIP_DIRS:
+            continue
+
+        if filter_lower and not name.lower().startswith(filter_lower):
+            continue
+
+        rel_prefix = (dir_part + "/") if dir_part else ""
+        if entry.is_dir():
             candidates.append(FileCandidate(
-                rel_path=rel_path + "/",
+                rel_path=rel_prefix + name + "/",
                 kind="dir",
-                size=item_count,
+                size=0,
             ))
-        for filename in filenames:
-            if filename.startswith("."):
-                continue
-            path = Path(dirpath) / filename
-            try:
-                rel_path = path.resolve().relative_to(root).as_posix()
-            except ValueError:
-                continue
-            scanned += 1
-            if scanned > MAX_SCAN_FILES:
-                break
-            rel_lower = rel_path.lower()
-            if normalized_query and normalized_query not in rel_lower:
-                continue
+        else:
+            rel_path = rel_prefix + name
             candidates.append(FileCandidate(
                 rel_path=rel_path,
                 kind="image" if is_image_file(rel_path) else "file",
-                size=path.stat().st_size,
+                size=0,
             ))
-        if scanned > MAX_SCAN_FILES:
-            break
+
     candidates.sort(key=lambda item: (
-        not item.rel_path.lower().startswith(normalized_query),
-        len(item.rel_path),
-        item.rel_path,
+        item.kind != "dir",
+        item.rel_path.lower(),
     ))
-    files = [c for c in candidates if c.kind != "dir"]
-    dirs = [c for c in candidates if c.kind == "dir"]
-    dir_slots = min(3, len(dirs))
-    file_slots = limit - dir_slots
-    result = files[:file_slots] + dirs[:dir_slots]
-    if len(result) < limit:
-        remaining = limit - len(result)
-        result += files[file_slots:file_slots + remaining]
-    return result
+    return candidates[:limit]
 
 
 def is_image_file(path: str | Path) -> bool:

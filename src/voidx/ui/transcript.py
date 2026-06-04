@@ -6,7 +6,7 @@ from collections import defaultdict
 from typing import Literal, cast
 
 from voidx.memory.transcript import TranscriptNodeRow
-from voidx.ui.tree import OutputNode, OutputTree
+from voidx.ui.output.tree import OutputNode, OutputTree
 
 NodeType = Literal[
     "root",

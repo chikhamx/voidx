@@ -64,6 +64,7 @@ class WebFetchTool(BaseTool):
     description = "Fetch content from a URL and convert to readable text."
 
     def __init__(self, settings=None):
+        super().__init__()
         self._settings = settings
 
     def parameters_schema(self) -> dict:

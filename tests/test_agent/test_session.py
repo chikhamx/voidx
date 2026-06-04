@@ -6,8 +6,9 @@ from pathlib import Path
 sys.path.insert(0, str(Path(__file__).parent.parent.parent / "src"))
 
 import pytest
-from langchain_core.messages import HumanMessage, SystemMessage
+from langchain_core.messages import AIMessage, HumanMessage, SystemMessage, ToolMessage
 
+from voidx.agent.message_rows import messages_from_rows
 from voidx.agent.runtime_context import InteractionMode, TaskIntent
 from voidx.agent.task_state import TaskPhase, TaskRun, TaskRunStatus, TaskState
 from voidx.memory.context_frames import (
@@ -78,6 +79,38 @@ async def test_save_and_load_messages():
     assert msgs[2].tool_calls[0]["name"] == "read"
 
     await delete_session(session.id)
+
+
+def test_messages_from_rows_preserves_content_and_tool_fields():
+    rows = [
+        MessageRow(id=1, session_id="s", role="system", content="system"),
+        MessageRow(
+            id=2,
+            session_id="s",
+            role="user",
+            content='[{"type":"text","text":"hello"}]',
+            content_format="structured",
+        ),
+        MessageRow(
+            id=3,
+            session_id="s",
+            role="assistant",
+            content="ok",
+            tool_calls=[{"name": "read", "args": {"file_path": "x.txt"}, "id": "c1"}],
+        ),
+        MessageRow(id=4, session_id="s", role="tool", content="result", tool_call_id="c1"),
+    ]
+
+    messages = messages_from_rows(rows)
+
+    assert isinstance(messages[0], SystemMessage)
+    assert messages[0].id == "1"
+    assert isinstance(messages[1], HumanMessage)
+    assert messages[1].content == [{"type": "text", "text": "hello"}]
+    assert isinstance(messages[2], AIMessage)
+    assert messages[2].tool_calls[0]["name"] == "read"
+    assert isinstance(messages[3], ToolMessage)
+    assert messages[3].tool_call_id == "c1"
 
 
 @pytest.mark.asyncio

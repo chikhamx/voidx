@@ -50,7 +50,7 @@ class TodoWriteTool(BaseTool):
 
         # Store in tracker if available
         if self._tracker:
-            self._tracker._todos = inp.todos
+            self._tracker.set_todos(inp.todos)
 
         # Format with icons and progress
         ICONS = {"pending": "○", "in_progress": "◐", "completed": "●", "cancelled": "✕"}

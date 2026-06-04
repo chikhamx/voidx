@@ -257,14 +257,12 @@ class AgentDef(BaseModel):
 
     @property
     def role_prompt(self) -> str:
-        prompts = {
-            "orchestrator": ORCHESTRATOR_PROMPT,
-            "explore": EXPLORE_PROMPT,
-            "plan": PLAN_PROMPT,
-            "implement": IMPLEMENT_PROMPT,
-            "review": REVIEW_PROMPT,
-        }
-        return prompts.get(self.name, "")
+        if self.name in PROMPTLESS_AGENTS:
+            return ""
+        try:
+            return ROLE_PROMPTS[self.name]
+        except KeyError as exc:
+            raise ValueError(f"No role prompt registered for agent: {self.name}") from exc
 
     @property
     def tool_contract(self) -> str:
@@ -284,9 +282,14 @@ class AgentDef(BaseModel):
             lines.append("- Constraint: this role must not start another child agent.")
         return "\n".join(lines)
 
-    @property
-    def prompt(self) -> str:
-        return self.role_prompt
+ROLE_PROMPTS = {
+    "orchestrator": ORCHESTRATOR_PROMPT,
+    "explore": EXPLORE_PROMPT,
+    "plan": PLAN_PROMPT,
+    "implement": IMPLEMENT_PROMPT,
+    "review": REVIEW_PROMPT,
+}
+PROMPTLESS_AGENTS = {"compaction", "title"}
 
 
 # ── built-in agents ────────────────────────────────────────────────────────
@@ -397,9 +400,7 @@ COMPACTION_PROMPT = """You are voidx compaction agent. Your job is to generate a
 structured summary of the conversation history to free context space.
 
 You have NO tools. Just read the conversation history below and output the
-summary in the exact format specified.
-
-""" + "Use template defined in CompactionService."
+summary in the exact format specified."""
 
 TITLE_PROMPT = """You are voidx title agent. Generate a short, descriptive
 title (max 80 chars) for this conversation based on the first user message.
@@ -433,7 +434,3 @@ def child_agent_descriptions_for_llm() -> str:
             f"  Write access: {agent.can_write}"
         )
     return "\n".join(lines)
-
-
-def subagent_descriptions_for_llm() -> str:
-    return child_agent_descriptions_for_llm()

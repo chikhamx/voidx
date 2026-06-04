@@ -10,8 +10,8 @@ body {
 }
 
 .shell {
-  display: grid;
-  grid-template-rows: auto minmax(0, 1fr) auto auto;
+  display: flex;
+  flex-direction: column;
   min-height: 100vh;
 }
 
@@ -32,7 +32,6 @@ p {
 }
 
 .transcript {
-  overflow: auto;
   padding: 18px 20px;
 }
 

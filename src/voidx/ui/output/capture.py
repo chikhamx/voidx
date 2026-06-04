@@ -3,11 +3,11 @@ import time
 
 from rich.markup import escape
 
-from voidx.ui.tree import OutputTree, OutputNode
-from voidx.ui.console import _fmt_args, _title, VoidConsole
-from voidx.ui.dock import dock
-from voidx.ui.dock_components.nodes import _bash_markdown_lines
-from voidx.ui.events import (
+from voidx.ui.output.tree import OutputTree, OutputNode
+from voidx.ui.output.console import _fmt_args, _title, VoidConsole
+from voidx.ui.output.dock import dock
+from voidx.ui.output.dock.nodes import _bash_markdown_lines
+from voidx.ui.output.events import (
     ErrorAppended,
     SubagentStepStarted,
     ToolFinished,
@@ -37,7 +37,7 @@ class CaptureConsole:
 
     def step_header(self, n: int, max_n: int, agent: str = "") -> None:
         if via_events():
-            ui_events.emit_nowait(SubagentStepStarted(
+            ui_events.emit_direct(SubagentStepStarted(
                 agent_id=self._agent_id,
                 subagent_id=agent or "subagent",
                 name=_title(VoidConsole._AGENT_GERUND.get(agent, agent)),
@@ -60,7 +60,7 @@ class CaptureConsole:
         call_id = tool_call_id or f"capture:{tool_name}:{time.time_ns()}"
         self._current_tool_id = call_id
         if via_events():
-            ui_events.emit_nowait(ToolStarted(
+            ui_events.emit_direct(ToolStarted(
                 agent_id=self._agent_id,
                 tool_call_id=call_id,
                 tool_name=tool_name,
@@ -87,7 +87,7 @@ class CaptureConsole:
     def tool_done(self, tool_name: str, elapsed: float, ok: bool = True, tool_call_id: str | None = None) -> None:
         call_id = tool_call_id or self._current_tool_id
         if via_events() and call_id:
-            ui_events.emit_nowait(ToolFinished(
+            ui_events.emit_direct(ToolFinished(
                 agent_id=self._agent_id,
                 tool_call_id=call_id,
                 label=_title(tool_name),
@@ -107,7 +107,7 @@ class CaptureConsole:
     def tool_result(self, text: str, tool_call_id: str | None = None) -> None:
         call_id = tool_call_id or self._current_tool_id
         if via_events():
-            ui_events.emit_nowait(ToolResultAppended(
+            ui_events.emit_direct(ToolResultAppended(
                 agent_id=self._agent_id,
                 tool_call_id=call_id,
                 text=text,
@@ -125,7 +125,7 @@ class CaptureConsole:
     def diff(self, diff_text: str, title: str = "") -> None:
         if via_events():
             text = f"{title}\n{diff_text}" if title else diff_text
-            ui_events.emit_nowait(ToolResultAppended(
+            ui_events.emit_direct(ToolResultAppended(
                 agent_id=self._agent_id,
                 tool_call_id=self._current_tool_id,
                 text=text,
@@ -152,7 +152,7 @@ class CaptureConsole:
     
     def error(self, message: str) -> None:
         if via_events():
-            ui_events.emit_nowait(ErrorAppended(agent_id=self._agent_id, message=message))
+            ui_events.emit_direct(ErrorAppended(agent_id=self._agent_id, message=message))
             return
         self._tree.new_node(parent=self._parent, node_type="error",
             header=f"[red]✗ {escape(message)}[/]", header_style="red", collapsed=False)
@@ -160,7 +160,7 @@ class CaptureConsole:
     
     def warn(self, message: str) -> None:
         if via_events():
-            ui_events.emit_nowait(WarningAppended(agent_id=self._agent_id, message=message))
+            ui_events.emit_direct(WarningAppended(agent_id=self._agent_id, message=message))
             return
         self._tree.new_node(parent=self._parent, node_type="warn",
             header=f"[yellow]! {escape(message)}[/]", header_style="yellow", collapsed=False)

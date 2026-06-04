@@ -7,7 +7,7 @@ sys.path.insert(0, str(Path(__file__).parent.parent.parent / "src"))
 
 import pytest
 
-from voidx.tools.base import ToolContext, ToolResult
+from voidx.tools.base import ToolContext, ToolResult, BaseTool
 from voidx.tools.file_ops import FileReadInput, FileWriteInput, FileEditInput, EditEntry
 from voidx.tools.search import GlobInput, GrepInput
 from voidx.tools.bash import BashInput
@@ -19,6 +19,24 @@ from voidx.tools.registry import ToolRegistry
 
 class TestToolSchemas:
     """Every tool has typed, validatable input."""
+
+    def test_base_tool_requires_id_and_description(self):
+        with pytest.raises(TypeError, match="must define"):
+            class BadTool(BaseTool):
+                def parameters_schema(self):
+                    return {}
+                async def execute(self, args, ctx):
+                    pass
+
+    def test_base_tool_subclass_with_id_and_description_ok(self):
+        class GoodTool(BaseTool):
+            id = "good"
+            description = "a good tool"
+            def parameters_schema(self):
+                return {}
+            async def execute(self, args, ctx):
+                pass
+        assert GoodTool.id == "good"
 
     def test_read_input_validates(self):
         inp = FileReadInput(file_path="foo.py")
@@ -90,6 +108,17 @@ class TestToolRegistry:
         r = ToolRegistry()
         assert r.get("nonexistent") is None
 
+    def test_filter_tools_retains_only_allowed_tools(self):
+        r = ToolRegistry()
+
+        r.filter_tools({"read", "grep"})
+
+        assert set(r.ids()) == {"read", "grep"}
+        assert r.get("read") is not None
+        assert r.get("write") is None
+        names = [tool["function"]["name"] for tool in r.tools_for_llm()]
+        assert names == ["read", "grep"]
+
 
 class TestFileOps:
     """File operations work on real files."""
@@ -128,11 +157,54 @@ class TestFileOps:
         assert (tmp_path / "edit.txt").read_text() == "hi world"
 
     @pytest.mark.asyncio
+    async def test_edit_output_contains_diff(self, tmp_path):
+        f = tmp_path / "edit.txt"
+        f.write_text("hello world")
+        ctx = ToolContext(workspace=str(tmp_path))
+        r = ToolRegistry()
+        result = await r.execute_tool(
+            "edit",
+            {"file_path": "edit.txt", "edits": [{"old_string": "hello", "new_string": "hi"}]},
+            ctx,
+        )
+        assert "File edited" in result.output
+        assert result.diff is not None
+        assert "-hello" in result.diff
+        assert "+hi" in result.diff
+        # output should also contain the diff text
+        assert "-hello" in result.output or "diff" in result.output.lower()
+
+    @pytest.mark.asyncio
+    async def test_edit_rejects_multiple_matches(self, tmp_path):
+        f = tmp_path / "multi.txt"
+        f.write_text("foo bar foo baz")
+        ctx = ToolContext(workspace=str(tmp_path))
+        r = ToolRegistry()
+        result = await r.execute_tool(
+            "edit",
+            {"file_path": "multi.txt", "edits": [{"old_string": "foo", "new_string": "qux"}]},
+            ctx,
+        )
+        assert "2 times" in result.output or "matches" in result.output
+        assert result.metadata.get("error")
+        assert (tmp_path / "multi.txt").read_text() == "foo bar foo baz"
+
+    @pytest.mark.asyncio
     async def test_read_nonexistent(self, tmp_path):
         ctx = ToolContext(workspace=str(tmp_path))
         r = ToolRegistry()
         result = await r.execute_tool("read", {"file_path": "nope.txt"}, ctx)
         assert "File not found" in result.output
+
+    @pytest.mark.asyncio
+    async def test_read_offset_beyond_file(self, tmp_path):
+        f = tmp_path / "short.txt"
+        f.write_text("line1\nline2\n")
+        ctx = ToolContext(workspace=str(tmp_path))
+        r = ToolRegistry()
+        result = await r.execute_tool("read", {"file_path": "short.txt", "offset": 100}, ctx)
+        assert result.metadata["lines"] == 0
+        assert "beyond" in result.output.lower() or "offset" in result.output.lower()
 
 
 class TestSearch:
@@ -217,6 +289,17 @@ class TestTaskTracker:
         output = tracker.format_status()
         assert "implement" in output
         assert "running" in output
+
+    def test_todo_state_is_managed_through_public_api(self):
+        tracker = TaskTracker()
+        todos = [{"content": "ship fix", "status": "pending"}]
+
+        tracker.set_todos(todos)
+        todos.clear()
+
+        assert tracker.list_todos() == [{"content": "ship fix", "status": "pending"}]
+        tracker.clear_todos()
+        assert tracker.list_todos() == []
 
     @pytest.mark.asyncio
     async def test_task_status_tool(self, tmp_path):

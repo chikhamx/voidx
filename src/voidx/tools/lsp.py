@@ -125,11 +125,11 @@ class LspFormatTool(BaseTool):
 
     async def execute(self, args: dict, ctx: ToolContext) -> ToolResult:
         inp = LspFormatInput.model_validate(args)
-        manager = getattr(ctx, "lsp_manager", None)
-        if manager is None:
+        service = _service(ctx)
+        if service is None:
             return ToolResult(output="LSP manager not available.", metadata={"error": True})
         try:
-            changed, old_text, new_text = await manager.format_document(inp.file_path)
+            changed, old_text, new_text = await service.format(inp.file_path)
         except LspError as exc:
             return ToolResult(output=f"LSP format failed: {exc}", metadata={"error": True})
         path = resolve_safe(ctx.workspace, inp.file_path, ctx.sandbox_extra_paths)
@@ -138,7 +138,7 @@ class LspFormatTool(BaseTool):
         if not changed:
             return ToolResult(output=f"No formatting changes for {inp.file_path}.")
 
-        from voidx.ui.diff import make_file_diff
+        from voidx.ui.output.diff import make_file_diff
         diff = make_file_diff(inp.file_path, old_text, new_text)
         return ToolResult(
             title=f"Formatted {inp.file_path}",

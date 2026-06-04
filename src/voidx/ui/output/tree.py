@@ -95,11 +95,30 @@ class OutputTree:
         self._all: dict[str, OutputNode] = {}  # id → node lookup
         self._click_map: dict[int, str] = {}   # backward compat
         self._dirty: bool = True
+        self._dirty_nodes: set[str] = set()
+        self._node_ranges: dict[str, tuple[int, int]] = {}  # id → (start, end)
+        self._node_prefixes: dict[str, list[str]] = {}  # id → prefix_parts
         self._cached_lines: list[str] = []
         self._cached_width: int = 0
 
-    def mark_dirty(self) -> None:
-        self._dirty = True
+    def startup_line_count(self) -> int:
+        """Return the number of rendered lines occupied by startup nodes."""
+        count = 0
+        for child in self.root.children:
+            if child.node_type == "startup":
+                rng = self._node_ranges.get(child.id)
+                if rng:
+                    count += rng[1] - rng[0]
+                else:
+                    count += 1 + len(child.body_lines)
+        return count
+
+    def mark_dirty(self, node_id: str | None = None) -> None:
+        if node_id is None:
+            self._dirty = True
+            self._dirty_nodes.clear()
+        else:
+            self._dirty_nodes.add(node_id)
 
     def new_node(self, parent: OutputNode, *, node_id: str | None = None, **kwargs) -> OutputNode:
         """Create a new node under parent. Auto-assigns id."""
@@ -171,20 +190,133 @@ class OutputTree:
         Returns list of plain strings (no Rich markup needed at this level —
         markup can be embedded in header/body_lines by the caller).
         """
-        if not self._dirty and self._cached_width == console_width:
+        if not self._dirty and not self._dirty_nodes and self._cached_width == console_width:
             return self._cached_lines
 
+        # Full render: structural change or width change
+        if self._dirty or self._cached_width != console_width:
+            return self._full_render(console_width)
+
+        # Incremental: only content changes on existing nodes
+        return self._incremental_render(console_width)
+
+    def _full_render(self, console_width: int) -> list[str]:
         self._click_map.clear()
+        self._node_ranges.clear()
+        self._node_prefixes.clear()
         lines: list[str] = []
         line_map: dict[int, str] = {}
         self._walk_render(self.root, [], lines, line_map)
-        # Populate backward-compat _click_map
         self._click_map = dict(line_map)
-
         self._cached_lines = lines
         self._cached_width = console_width
         self._dirty = False
+        self._dirty_nodes.clear()
         return lines
+
+    def _incremental_render(self, console_width: int) -> list[str]:
+        """Incremental render: re-walk only dirty subtrees, splice into cache.
+
+        Assumes a single content-only dirty node (e.g. streaming text appended
+        to the current assistant node).  Multiple independent dirty nodes or
+        structural changes fall back to full render via ``_dirty``.
+
+        After splice, ancestor and sibling-after ``_node_ranges`` are repaired
+        via a delta pass, and ``_click_map`` is rebuilt from pre-splice entries
+        (shifted) plus the re-walked subtree entries (offset to absolute rows).
+        """
+        if not self._dirty_nodes:
+            return self._cached_lines
+
+        dirty_with_ranges = [
+            (nid, self._node_ranges.get(nid, (0, 0)))
+            for nid in self._dirty_nodes
+            if nid in self._node_ranges and nid in self._all
+        ]
+        if not dirty_with_ranges:
+            self._dirty_nodes.clear()
+            return self._cached_lines
+
+        # Filter out nodes whose ancestors are also dirty
+        dirty_set = self._dirty_nodes
+        independent: list[str] = []
+        for nid, _ in sorted(dirty_with_ranges, key=lambda x: x[1][0]):
+            node = self._all.get(nid)
+            if node is None:
+                continue
+            ancestor_dirty = False
+            cursor = node.parent
+            while cursor and cursor is not self.root:
+                if cursor.id in dirty_set:
+                    ancestor_dirty = True
+                    break
+                cursor = cursor.parent
+            if not ancestor_dirty:
+                independent.append(nid)
+
+        if not independent:
+            self._dirty_nodes.clear()
+            return self._cached_lines
+
+        # If multiple independent dirty nodes, fall back to full render
+        if len(independent) > 1:
+            self._dirty = True
+            self._dirty_nodes.clear()
+            return self.render(console_width)
+
+        # Single dirty node: render its subtree, splice into cache
+        nid = independent[0]
+        old_start, old_end = self._node_ranges[nid]
+        node = self._all[nid]
+
+        # Capture pre-walk keys so we can shift newly written ranges.
+        # _walk_render writes ranges relative to new_lines start (0).
+        pre_keys = set(self._node_ranges.keys())
+
+        new_lines: list[str] = []
+        prefix = self._node_prefixes.get(nid, [])
+        sub_line_map: dict[int, str] = {}
+        self._walk_render(node, prefix, new_lines, sub_line_map)
+
+        # Shift ranges written by _walk_render from relative → absolute.
+        new_keys = set(self._node_ranges.keys()) - pre_keys
+        changed_keys = {
+            k for k in (set(self._node_ranges.keys()) & pre_keys)
+            if self._node_ranges[k][0] < old_start
+        }
+        for r_nid in new_keys | changed_keys:
+            s, e = self._node_ranges[r_nid]
+            self._node_ranges[r_nid] = (s + old_start, e + old_start)
+
+        # Splice: everything before + new subtree + everything after
+        self._cached_lines = (
+            self._cached_lines[:old_start]
+            + new_lines
+            + self._cached_lines[old_end:]
+        )
+        # Fix stale ranges: ancestors and sibling-after nodes shifted by delta.
+        delta = len(new_lines) - (old_end - old_start)
+        if delta != 0:
+            for r_nid, (s, e) in list(self._node_ranges.items()):
+                if s >= old_end:
+                    self._node_ranges[r_nid] = (s + delta, e + delta)
+                elif e > old_end and s < old_start:
+                    self._node_ranges[r_nid] = (s, e + delta)
+        self._dirty_nodes.clear()
+
+        # Rebuild _click_map: old entries outside the splice range shift or stay,
+        # new entries from the re-walked subtree replace the spliced range.
+        new_click: dict[int, str] = {}
+        for row, nid in self._click_map.items():
+            if row < old_start:
+                new_click[row] = nid
+            elif row >= old_end:
+                new_click[row + delta] = nid
+        for row, nid in sub_line_map.items():
+            new_click[row + old_start] = nid
+        self._click_map = new_click
+
+        return self._cached_lines
 
     def render_with_line_map(self, console_width: int = 80) -> tuple[list[str], dict[int, str]]:
         """Like render() but also returns a map of line_number → node_id
@@ -238,6 +370,8 @@ class OutputTree:
                 self._walk_render(child, [], lines, line_map)
             return
 
+        start = len(lines)
+
         # ── depth 1: no box-drawing ────────────────────────────────────
         if node.depth == 1:
             if node.collapsed:
@@ -245,6 +379,8 @@ class OutputTree:
                 lines.append(line)
                 if line_map is not None:
                     line_map[len(lines) - 1] = node.id
+                self._node_ranges[node.id] = (start, len(lines))
+                self._node_prefixes[node.id] = []
                 return
 
             line = node.header if node.header else ""
@@ -260,6 +396,8 @@ class OutputTree:
             new_parts = [" "]
             for child in node.children:
                 self._walk_render(child, new_parts, lines, line_map)
+            self._node_ranges[node.id] = (start, len(lines))
+            self._node_prefixes[node.id] = []
             return
 
         # ── depth >= 2: full box-drawing ───────────────────────────────
@@ -286,6 +424,8 @@ class OutputTree:
             lines.append(line)
             if line_map is not None:
                 line_map[len(lines) - 1] = node.id
+            self._node_ranges[node.id] = (start, len(lines))
+            self._node_prefixes[node.id] = list(prefix_parts)
             return
 
         # Header line
@@ -309,6 +449,8 @@ class OutputTree:
         new_parts = prefix_parts if inline_tool_result else prefix_parts + [cont_suffix]
         for child in node.children:
             self._walk_render(child, new_parts, lines, line_map)
+        self._node_ranges[node.id] = (start, len(lines))
+        self._node_prefixes[node.id] = list(prefix_parts)
 
 
 def _is_clickable(node: OutputNode) -> bool:

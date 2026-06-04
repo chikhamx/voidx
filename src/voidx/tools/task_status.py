@@ -51,7 +51,7 @@ class TaskStatusTool(BaseTool):
         output = self._tracker.format_status()
         running = self._tracker.list_running()
         return ToolResult(
-            title=f"Tasks: {len(running)} running, {len(self._tracker._tasks)} total",
+            title=f"Tasks: {len(running)} running, {len(self._tracker.list_all())} total",
             output=output,
             metadata={"running": len(running), "total": len(self._tracker._tasks)},
         )

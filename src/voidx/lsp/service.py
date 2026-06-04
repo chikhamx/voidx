@@ -54,6 +54,9 @@ class LspService:
             return "No references found."
         return "\n".join(_format_location(item, self._manager.workspace) for item in locations[:200])
 
+    async def format(self, file_path: str) -> tuple[bool, str, str]:
+        return await self._manager.format_document(file_path)
+
 
 def _format_diagnostic(diagnostic: LspDiagnostic, workspace: str) -> str:
     level = _severity_label(diagnostic.severity)

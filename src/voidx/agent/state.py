@@ -15,16 +15,16 @@ class AgentState(TypedDict):
     workspace: str  # absolute path to working directory
     agent: str  # current agent name (orchestrator/explore/plan/implement/review)
     plan_mode: bool  # when True, write/edit are denied — plan→implement→review enforced
-    interaction_mode: NotRequired[str]  # auto/plan/goal
-    task_intent: NotRequired[str]  # chat/inspect/design/review/implement/debug/ambiguous
-    implementation_allowed: NotRequired[bool]  # intent hint for context, not a permission gate
-    intent_resolution_reason: NotRequired[str]
-    awaiting_implementation_approval: NotRequired[bool]
-    approved_scope: NotRequired[str]
-    goal: NotRequired[str]
-    goal_phase: NotRequired[str]
-    goal_status: NotRequired[str]
-    goal_turn_count: NotRequired[int]
+    interaction_mode: str  # auto/plan/goal
+    task_intent: str  # chat/inspect/design/review/implement/debug/ambiguous
+    implementation_allowed: bool  # intent hint for context, not a permission gate
+    intent_resolution_reason: str
+    awaiting_implementation_approval: bool
+    approved_scope: str
+    goal: str
+    goal_phase: str
+    goal_status: str
+    goal_turn_count: int
     user_message_id: NotRequired[int]
     tool_results: dict[str, str]  # tool_call_id → result text
     step_count: int  # current step number

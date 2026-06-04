@@ -7,7 +7,7 @@ from pathlib import Path
 
 from pydantic import BaseModel, Field
 
-from voidx.tools.base import BaseTool, model_to_json_schema, ToolContext, ToolResult, resolve_safe
+from voidx.tools.base import BaseTool, model_to_json_schema, ToolContext, ToolResult, resolve_safe, SKIP_DIRS, SKIP_SUFFIXES
 
 
 class GlobInput(BaseModel):
@@ -27,9 +27,6 @@ class GlobTool(BaseTool):
     async def execute(self, args: dict, ctx: ToolContext) -> ToolResult:
         inp = GlobInput.model_validate(args)
         base = Path(ctx.workspace)
-        SKIP_DIRS = {".git", ".venv", "venv", "node_modules", "__pycache__", "opencode",
-                     ".pytest_cache", ".mypy_cache", ".tox", ".idea", ".vscode",
-                     "dist", "build", ".eggs"}
 
         def _visible_path(p: Path) -> bool:
             parts = p.relative_to(base).parts
@@ -54,10 +51,12 @@ class GlobTool(BaseTool):
                 metadata={"pattern": inp.pattern, "matches": 0},
             )
 
+        total = len(matches)
+        shown = matches[:200]
         return ToolResult(
-            title=f"Glob: {inp.pattern} → {len(matches)} files",
-            output="\n".join(matches[:200]),  # cap at 200 results
-            metadata={"pattern": inp.pattern, "matches": len(matches)},
+            title=f"Glob: {inp.pattern} → {total} files",
+            output="\n".join(shown),
+            metadata={"pattern": inp.pattern, "matches": total, "truncated": total > 200},
         )
 
 
@@ -92,16 +91,6 @@ class GrepTool(BaseTool):
         results: list[str] = []
         count = 0
         scanned = 0
-
-        # Directories to never enter
-        SKIP_DIRS = {".git", ".venv", "venv", "node_modules", "__pycache__",
-                     ".pytest_cache", ".mypy_cache", ".tox", "opencode",
-                     ".idea", ".vscode", "dist", "build", ".eggs"}
-
-        # Binary/text suffixes to skip
-        SKIP_SUFFIXES = {".pyc", ".pyo", ".so", ".dll", ".exe", ".bin",
-                         ".png", ".jpg", ".jpeg", ".gif", ".ico", ".pdf",
-                         ".zip", ".tar", ".gz", ".whl", ".egg"}
 
         def should_skip_dir(p: Path) -> bool:
             return p.name in SKIP_DIRS or p.name.startswith(".")

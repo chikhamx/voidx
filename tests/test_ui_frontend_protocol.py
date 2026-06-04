@@ -4,7 +4,7 @@ from pathlib import Path
 sys.path.insert(0, str(Path(__file__).parent.parent / "src"))
 
 from voidx.ui.frontend import UiController, UiFrontend
-from voidx.ui.event_components.schema import AssistantStreamUpdated
+from voidx.ui.output.events.schema import AssistantStreamUpdated
 from voidx.ui.protocol import (
     ProtocolEnvelope,
     TranscriptSnapshot,
@@ -24,7 +24,7 @@ from voidx.ui.protocol import (
     tree_to_snapshot,
     parse_ui_request,
 )
-from voidx.ui.tree import OutputTree
+from voidx.ui.output.tree import OutputTree
 
 
 def test_ui_choice_request_serializes_with_stable_kind():

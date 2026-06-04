@@ -59,6 +59,12 @@ class FileReadTool(BaseTool):
             text = text[:-1]
         lines = text.split("\n")
         start = (inp.offset or 1) - 1
+        if start >= len(lines):
+            return ToolResult(
+                title=f"Read 0 lines from {inp.file_path}",
+                output=f"Offset {inp.offset} is beyond end of file (file has {len(lines)} lines).",
+                metadata={"file": inp.file_path, "lines": 0, "total_lines": len(lines)},
+            )
         end = start + (inp.limit or len(lines))
         sliced = lines[start:end]
 
@@ -106,7 +112,7 @@ class FileWriteTool(BaseTool):
         size = len(inp.content)
         _record_mtime(ctx, path)
 
-        from voidx.ui.diff import make_file_diff
+        from voidx.ui.output.diff import make_file_diff
         diff = make_file_diff(
             inp.file_path,
             old_content,
@@ -136,8 +142,9 @@ class FileEditInput(BaseModel):
 class FileEditTool(BaseTool):
     id = "edit"
     description = (
-        "Replace strings in a single file atomically. Replaces ALL occurrences "
-        "of each old_string. Edits apply in order — later edits see earlier results."
+        "Replace strings in a single file atomically. Each old_string must match "
+        "exactly once — provide more context if it appears multiple times. "
+        "Edits apply in order — later edits see earlier results."
     )
 
     def parameters_schema(self) -> dict:
@@ -176,18 +183,26 @@ class FileEditTool(BaseTool):
                     output=f"Edit {i}: old_string not found in {inp.file_path}",
                     metadata={"error": True},
                 )
+            if count > 1:
+                return ToolResult(
+                    output=(
+                        f"Edit {i}: old_string matches {count} times in {inp.file_path}. "
+                        "Provide more context to make the match unique, or use write to replace the entire file."
+                    ),
+                    metadata={"error": True, "match_count": count},
+                )
 
             content = content.replace(edit.old_string, edit.new_string)
 
         path.write_text(content, encoding="utf-8")
         _record_mtime(ctx, path)
 
-        from voidx.ui.diff import make_file_diff
+        from voidx.ui.output.diff import make_file_diff
         diff = make_file_diff(inp.file_path, original, content)
 
         return ToolResult(
             title=f"Edited {inp.file_path} ({len(inp.edits)} edits)",
-            output=f"File edited: {inp.file_path} ({len(inp.edits)} replacements)",
+            output=f"File edited: {inp.file_path} ({len(inp.edits)} replacements)\n{diff}",
             metadata={"file": inp.file_path, "replacements": len(inp.edits)},
             diff=diff,
         )

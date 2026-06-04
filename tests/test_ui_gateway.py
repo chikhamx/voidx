@@ -8,9 +8,9 @@ import websockets
 
 sys.path.insert(0, str(Path(__file__).parent.parent / "src"))
 
-from voidx.ui.dock import BottomInputDock
-from voidx.ui.event_components.schema import AssistantStreamUpdated, RefreshRequested, TurnStarted
-from voidx.ui.events import CompositeEventConsumer, DockEventConsumer
+from voidx.ui.output.dock import BottomInputDock
+from voidx.ui.output.events.schema import AssistantStreamUpdated, RefreshRequested, TurnStarted
+from voidx.ui.output.events import CompositeEventConsumer, DockEventConsumer
 from voidx.ui.gateway.session import GatewayEventConsumer, GatewaySession
 from voidx.ui.gateway.server import GatewayServer
 from voidx.ui.protocol import (

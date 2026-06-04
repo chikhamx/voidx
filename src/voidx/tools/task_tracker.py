@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+import threading
 import time
 from dataclasses import dataclass, field
 from typing import Literal
@@ -26,6 +27,7 @@ class TaskTracker:
     """Thread-safe registry for running worker-role tasks."""
 
     def __init__(self):
+        self._lock = threading.Lock()
         self._tasks: dict[str, TaskState] = {}
         self._todos: list = []  # type: ignore[type-arg]
 
@@ -34,32 +36,51 @@ class TaskTracker:
             id=task_id, agent=agent, description=description,
             status="running", max_steps=max_steps,
         )
-        self._tasks[task_id] = state
+        with self._lock:
+            self._tasks[task_id] = state
         return state
 
     def update(self, task_id: str, **kwargs):
-        if task_id in self._tasks:
-            for k, v in kwargs.items():
-                if hasattr(self._tasks[task_id], k):
-                    setattr(self._tasks[task_id], k, v)
-            self._tasks[task_id].updated_at = time.time()
+        with self._lock:
+            if task_id in self._tasks:
+                for k, v in kwargs.items():
+                    if hasattr(self._tasks[task_id], k):
+                        setattr(self._tasks[task_id], k, v)
+                self._tasks[task_id].updated_at = time.time()
 
     def finish(self, task_id: str, status: TaskStatus = "completed"):
-        if task_id in self._tasks:
-            self._tasks[task_id].status = status
-            self._tasks[task_id].updated_at = time.time()
+        with self._lock:
+            if task_id in self._tasks:
+                self._tasks[task_id].status = status
+                self._tasks[task_id].updated_at = time.time()
 
     def get(self, task_id: str) -> TaskState | None:
-        return self._tasks.get(task_id)
+        with self._lock:
+            return self._tasks.get(task_id)
 
     def list_all(self) -> list[TaskState]:
-        return list(self._tasks.values())
+        with self._lock:
+            return list(self._tasks.values())
 
     def list_running(self) -> list[TaskState]:
-        return [t for t in self._tasks.values() if t.status in ("pending", "running")]
+        with self._lock:
+            return [t for t in self._tasks.values() if t.status in ("pending", "running")]
 
     def remove(self, task_id: str):
-        self._tasks.pop(task_id, None)
+        with self._lock:
+            self._tasks.pop(task_id, None)
+
+    def set_todos(self, todos: list) -> None:  # type: ignore[type-arg]
+        with self._lock:
+            self._todos = list(todos)
+
+    def clear_todos(self) -> None:
+        with self._lock:
+            self._todos = []
+
+    def list_todos(self) -> list:  # type: ignore[type-arg]
+        with self._lock:
+            return list(self._todos)
 
     def format_status(self) -> str:
         """Format all tasks as a status report string."""

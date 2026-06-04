@@ -33,13 +33,12 @@ _BLOCKED = [
 
 def _normalize_command(command: str) -> str:
     """Strip common shell escapes so blocked patterns can't be bypassed."""
-    import re as _re
     s = command.strip()
-    s = _re.sub(r"\\\s*\n", " ", s)
-    s = _re.sub(r"\\(.)", r"\1", s)
-    s = _re.sub(r"\$\([^)]*\)", "SUB", s)
-    s = _re.sub(r"`[^`]*`", "SUB", s)
-    s = _re.sub(r"''", "", s)
+    s = re.sub(r"\\\s*\n", " ", s)
+    s = re.sub(r"\\(.)", r"\1", s)
+    s = re.sub(r"\$\([^)]*\)", "SUB", s)
+    s = re.sub(r"`[^`]*`", "SUB", s)
+    s = re.sub(r"''", "", s)
     return s
 
 

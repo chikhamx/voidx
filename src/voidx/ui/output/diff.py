@@ -149,7 +149,7 @@ def render_file_change_lines(file_diff: FileDiff, max_hunks: int = 1, max_lines:
 
 
 def render_full_file_diff_lines(file_diff: FileDiff) -> list[str]:
-    lines: list[str] = []
+    lines = [_summary_line(file_diff)]
     language = language_from_path(file_diff.path)
     for hunk in file_diff.hunks:
         if hunk.section:

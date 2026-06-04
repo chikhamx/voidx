@@ -1,10 +1,12 @@
 import sys
 from pathlib import Path
+from typing import get_origin, get_type_hints
 
 sys.path.insert(0, str(Path(__file__).parent.parent.parent / "src"))
 
 import pytest
 from langchain_core.messages import AIMessage, HumanMessage, SystemMessage
+from typing_extensions import NotRequired
 
 from voidx.agent.runtime_context import (
     InteractionMode,
@@ -13,7 +15,29 @@ from voidx.agent.runtime_context import (
     implementation_allowed_for_intent,
     infer_task_intent,
 )
+from voidx.agent.state import AgentState
 from voidx.config import Config
+
+
+def test_agent_state_marks_runtime_turn_metadata_required():
+    hints = get_type_hints(AgentState, include_extras=True)
+    assert {
+        key
+        for key in (
+            "interaction_mode",
+            "task_intent",
+            "implementation_allowed",
+            "intent_resolution_reason",
+            "awaiting_implementation_approval",
+            "approved_scope",
+            "goal",
+            "goal_phase",
+            "goal_status",
+            "goal_turn_count",
+        )
+        if get_origin(hints[key]) is NotRequired
+    } == set()
+    assert get_origin(hints["user_message_id"]) is NotRequired
 
 
 def test_runtime_context_section_order_places_active_skills_before_task_state(tmp_path):

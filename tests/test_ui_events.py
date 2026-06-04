@@ -9,10 +9,10 @@ from rich.text import Text
 
 sys.path.insert(0, str(Path(__file__).parent.parent / "src"))
 
-from voidx.ui.capture import CaptureConsole
-from voidx.ui.console import StreamingRenderer
-from voidx.ui.dock import ANSI_LINE_PREFIX, BottomInputDock, set_dock
-from voidx.ui.events import (
+from voidx.ui.output.capture import CaptureConsole
+from voidx.ui.output.console import StreamingRenderer
+from voidx.ui.output.dock import ANSI_LINE_PREFIX, BottomInputDock, set_dock
+from voidx.ui.output.events import (
     AssistantStreamCommitted,
     AssistantStreamUpdated,
     DockEventConsumer,
@@ -328,8 +328,7 @@ async def test_file_change_event_updates_tool_node_with_structured_diff(isolated
 """,
         ))
         await bus.drain()
-        isolated_dock.tree.expand(tool.id)
-
+        # Edit nodes should be expanded by default, showing diff content
         rendered = "\n".join(_rich_plain(line) for line in isolated_dock.tree.render(120))
         assert 'Update("test.cpp")' in rendered
         assert "[cyan]" not in rendered

@@ -28,6 +28,8 @@ class _DockProxy:
             if name in ("active",):
                 return False
             if name in (
+                "append_message",
+                "append_ansi",
                 "begin_capture",
                 "deactivate",
                 "print",

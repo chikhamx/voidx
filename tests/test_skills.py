@@ -43,6 +43,75 @@ Write clear docs.
     assert skill.meta.scope == "project"
 
 
+def test_parse_skill_file_no_frontmatter(tmp_path):
+    path = _write_skill(tmp_path, "bare", "Just a body with no frontmatter.")
+    skill = parse_skill_file(path, scope="project")
+    assert skill.name == "bare"
+    assert skill.meta.description == ""
+    assert skill.meta.enabled is True
+    assert skill.meta.triggers == []
+    assert skill.body == "Just a body with no frontmatter."
+
+
+def test_parse_skill_file_unclosed_frontmatter(tmp_path):
+    path = _write_skill(tmp_path, "bad", "---\nname: bad\nno closing")
+    from voidx.skills.registry import SkillParseError
+    import pytest
+    with pytest.raises(SkillParseError, match="Unclosed frontmatter"):
+        parse_skill_file(path, scope="project")
+
+
+def test_parse_skill_file_quoted_values(tmp_path):
+    path = _write_skill(
+        tmp_path,
+        "quoted",
+        "---\nname: quoted\ndescription: 'has: colons, and stuff'\n---\nbody",
+    )
+    skill = parse_skill_file(path, scope="project")
+    assert skill.meta.description == "has: colons, and stuff"
+
+
+def test_parse_skill_file_inline_list(tmp_path):
+    path = _write_skill(
+        tmp_path,
+        "inline",
+        "---\nname: inline\ntriggers: [alpha, beta]\n---\nbody",
+    )
+    skill = parse_skill_file(path, scope="project")
+    assert skill.meta.triggers == ["alpha", "beta"]
+
+
+def test_parse_skill_file_multiline_description(tmp_path):
+    path = _write_skill(
+        tmp_path,
+        "multi",
+        '---\nname: multi\ndescription: >\n  This is a long\n  description that spans\n  multiple lines\n---\nbody',
+    )
+    skill = parse_skill_file(path, scope="project")
+    assert "long" in skill.meta.description
+    assert "multiple" in skill.meta.description
+
+
+def test_parse_skill_file_comments_ignored(tmp_path):
+    path = _write_skill(
+        tmp_path,
+        "commented",
+        "---\n# this is a comment\nname: commented\n---\nbody",
+    )
+    skill = parse_skill_file(path, scope="project")
+    assert skill.name == "commented"
+
+
+def test_parse_skill_file_empty_name_falls_back_to_dir(tmp_path):
+    path = _write_skill(
+        tmp_path,
+        "my-skill",
+        "---\nname: ''\n---\nbody",
+    )
+    skill = parse_skill_file(path, scope="project")
+    assert skill.name == "my-skill"
+
+
 def test_registry_discovers_global_and_project_with_project_override(tmp_path):
     global_dir = tmp_path / "global"
     project_dir = tmp_path / "workspace" / ".voidx" / "skills"
@@ -229,6 +298,61 @@ def test_skill_service_respects_disabled_before_enabled(tmp_path):
     assert [skill.name for skill in service.enabled_skills()] == ["docs"]
     assert service.select("$docs")[0].name == "docs"
     assert service.select("$python") == []
+
+
+def test_registry_discover_caches_results(tmp_path):
+    project_dir = tmp_path / "workspace" / ".voidx" / "skills"
+    _write_skill(project_dir, "alpha", "---\nname: alpha\n---\nalpha body")
+
+    registry = SkillRegistry(
+        str(tmp_path / "workspace"),
+        bundled_dir=tmp_path / "bundled",
+        global_dir=tmp_path / "global",
+        project_dir=project_dir,
+    )
+
+    first = registry.discover()
+    second = registry.discover()
+    assert first is second
+
+
+def test_registry_invalidate_clears_cache(tmp_path):
+    project_dir = tmp_path / "workspace" / ".voidx" / "skills"
+    _write_skill(project_dir, "alpha", "---\nname: alpha\n---\nalpha body")
+
+    registry = SkillRegistry(
+        str(tmp_path / "workspace"),
+        bundled_dir=tmp_path / "bundled",
+        global_dir=tmp_path / "global",
+        project_dir=project_dir,
+    )
+
+    first = registry.discover()
+    registry.invalidate()
+    second = registry.discover()
+    assert first is not second
+    assert [s.name for s in first] == [s.name for s in second]
+
+
+def test_skill_service_trigger_match_uses_word_boundary(tmp_path):
+    project_dir = tmp_path / "workspace" / ".voidx" / "skills"
+    _write_skill(
+        project_dir,
+        "test-skill",
+        "---\nname: test-skill\ntriggers: [test]\n---\nTest rules",
+    )
+    service = SkillService(
+        SkillRegistry(
+            str(tmp_path / "workspace"),
+            bundled_dir=tmp_path / "bundled",
+            global_dir=tmp_path / "global",
+            project_dir=project_dir,
+        )
+    )
+
+    assert service.select("run the latest version") == []
+    assert service.select("win the contest") == []
+    assert service.select("write a test for this") != []
 
 
 def test_skill_service_renders_instruction_with_source_path(tmp_path):

@@ -4,7 +4,7 @@ from pathlib import Path
 sys.path.insert(0, "src")
 
 from voidx.config import CodeIde
-from voidx.ui.code_ide import IdeCandidate, build_open_command, choose_ide, normalize_ide
+from voidx.ui.tools.code_ide import IdeCandidate, build_open_command, choose_ide, normalize_ide
 
 
 def test_build_open_command_uses_goto_for_trae_cli():
