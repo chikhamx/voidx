@@ -20,6 +20,10 @@ class _InputParserMixin:
         """Read raw bytes from the terminal (raw mode, VMIN=1)."""
         if self._stdin_fd is None:
             return await self._read_input_line()
+
+        if sys.platform == "win32":
+            return await self._read_input_raw_win32()
+
         loop = asyncio.get_event_loop()
         fut: asyncio.Future[None] = loop.create_future()
         loop.add_reader(self._stdin_fd, lambda: fut.set_result(None) if not fut.done() else None)
@@ -33,6 +37,35 @@ class _InputParserMixin:
         # get the full sequence (e.g. "\x1b[A") in a single read.
         data = os.read(self._stdin_fd, 4096)
         return data or b"\x04"
+
+    async def _read_input_raw_win32(self) -> bytes:
+        """Read raw key input on Windows via msvcrt."""
+        import msvcrt
+
+        def _read() -> bytes:
+            ch = msvcrt.getwch()
+            if ch == "\x00" or ch == "\xe0":
+                # Function / arrow key: read the second byte
+                ch2 = msvcrt.getwch()
+                # Map Windows arrow keys to ANSI escape sequences
+                _WIN_KEY_MAP = {
+                    "H": "\x1b[A",   # Up
+                    "P": "\x1b[B",   # Down
+                    "K": "\x1b[D",   # Left
+                    "M": "\x1b[C",   # Right
+                    "G": "\x1b[H",   # Home
+                    "O": "\x1b[F",   # End
+                    "I": "\x1b[2~",  # Insert
+                    "S": "\x1b[3~",  # Delete
+                    "R": "\x1b[2;2~",  # Shift+Insert
+                }
+                mapped = _WIN_KEY_MAP.get(ch2)
+                if mapped:
+                    return mapped.encode("utf-8")
+                return ("\x00" + ch2).encode("utf-8")
+            return ch.encode("utf-8")
+
+        return await asyncio.to_thread(_read)
 
     async def _read_input_line(self) -> bytes:
         """Fallback: read a line from stdin (not a tty)."""
