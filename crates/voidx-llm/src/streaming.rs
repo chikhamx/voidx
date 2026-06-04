@@ -115,6 +115,8 @@ where
                         output_tokens: output,
                         cache_read_tokens: usage.get("cache_read_input_tokens").and_then(|v| v.as_u64()).unwrap_or(0) as u32,
                         cache_write_tokens: usage.get("cache_creation_input_tokens").and_then(|v| v.as_u64()).unwrap_or(0) as u32,
+                        reasoning_tokens: 0,
+                        cache_tokens_reported: usage.get("cache_read_input_tokens").and_then(|v| v.as_u64()).unwrap_or(0) > 0,
                     }));
                 }
                 None
@@ -175,6 +177,8 @@ where
                     output_tokens: output,
                     cache_read_tokens: 0,
                     cache_write_tokens: 0,
+                    reasoning_tokens: 0,
+                    cache_tokens_reported: false,
                 }));
             }
             return Some(StreamEvent::MessageComplete);

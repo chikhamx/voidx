@@ -76,7 +76,13 @@ impl InstructionService {
 
         // 2. Project: walk-up from workspace, first match wins
         let mut current = self.workspace.clone();
-        let root = current.anchor().to_path_buf();
+        let root = {
+            let mut r = current.as_path();
+            while let Some(parent) = r.parent() {
+                r = parent;
+            }
+            r.to_path_buf()
+        };
         while current != root {
             for filename in INSTRUCTION_FILES {
                 let candidate = current.join(filename);
@@ -111,15 +117,15 @@ impl InstructionService {
     /// Get skill runtime context for the current turn.
     pub fn skill_context_for(
         &mut self,
-        user_text: &str,
-        agent: &str,
-        task_intent: &str,
-        interaction_mode: &str,
+        _user_text: &str,
+        _agent: &str,
+        _task_intent: &str,
+        _interaction_mode: &str,
     ) -> SkillRuntimeContext {
         // Note: This is a simplified version without the full SkillService
         // integration. The full version would use voidx-skills crate.
         let mut instructions: Vec<String> = Vec::new();
-        let mut active: Vec<String> = Vec::new();
+        let active: Vec<String> = Vec::new();
 
         // Add system instructions
         let system = self.system();

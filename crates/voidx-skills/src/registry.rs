@@ -33,6 +33,7 @@ pub enum SkillParseError {
 
 /// Discovers bundled, global, and project skills.
 pub struct SkillRegistry {
+    #[allow(dead_code)]
     workspace: PathBuf,
     bundled_dir: PathBuf,
     global_dir: PathBuf,

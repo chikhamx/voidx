@@ -113,6 +113,8 @@ impl From<PyConfig> for Config {
             approval_policy: voidx_config::ApprovalPolicy::Untrusted,
             approval_reviewer: voidx_config::ApprovalReviewer::User,
             permission_mode: voidx_config::PermissionMode::Default,
+            sandbox_extra_paths: Vec::new(),
+            code_ide: voidx_config::CodeIde::Auto,
         }
     }
 }

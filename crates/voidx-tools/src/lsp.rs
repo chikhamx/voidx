@@ -41,7 +41,7 @@ impl Tool for LspDiagnosticsTool {
     ) -> Result<ToolResult, ToolError> {
         let file_path = args.get("file_path")
             .and_then(|v| v.as_str())
-            .ok_or_else(|| ToolError::InvalidArguments("file_path required".into()))?;
+            .ok_or_else(|| ToolError::InvalidArgs("file_path required".into()))?;
 
         let resolved = crate::base::resolve_safe(
             &ctx.workspace,
@@ -100,7 +100,7 @@ impl Tool for LspSymbolsTool {
     ) -> Result<ToolResult, ToolError> {
         let file_path = args.get("file_path")
             .and_then(|v| v.as_str())
-            .ok_or_else(|| ToolError::InvalidArguments("file_path required".into()))?;
+            .ok_or_else(|| ToolError::InvalidArgs("file_path required".into()))?;
 
         let resolved = crate::base::resolve_safe(
             &ctx.workspace,
@@ -165,7 +165,7 @@ impl Tool for LspDefinitionTool {
     ) -> Result<ToolResult, ToolError> {
         let file_path = args.get("file_path")
             .and_then(|v| v.as_str())
-            .ok_or_else(|| ToolError::InvalidArguments("file_path required".into()))?;
+            .ok_or_else(|| ToolError::InvalidArgs("file_path required".into()))?;
         let line = args.get("line").and_then(|v| v.as_u64()).unwrap_or(1);
         let character = args.get("character").and_then(|v| v.as_u64()).unwrap_or(1);
 
@@ -232,7 +232,7 @@ impl Tool for LspReferencesTool {
     ) -> Result<ToolResult, ToolError> {
         let file_path = args.get("file_path")
             .and_then(|v| v.as_str())
-            .ok_or_else(|| ToolError::InvalidArguments("file_path required".into()))?;
+            .ok_or_else(|| ToolError::InvalidArgs("file_path required".into()))?;
         let line = args.get("line").and_then(|v| v.as_u64()).unwrap_or(1);
         let character = args.get("character").and_then(|v| v.as_u64()).unwrap_or(1);
 
@@ -291,7 +291,7 @@ impl Tool for LspFormatTool {
     ) -> Result<ToolResult, ToolError> {
         let file_path = args.get("file_path")
             .and_then(|v| v.as_str())
-            .ok_or_else(|| ToolError::InvalidArguments("file_path required".into()))?;
+            .ok_or_else(|| ToolError::InvalidArgs("file_path required".into()))?;
 
         let resolved = crate::base::resolve_safe(
             &ctx.workspace,

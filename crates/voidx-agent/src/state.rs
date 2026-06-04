@@ -150,6 +150,16 @@ pub enum TaskRunStatus {
     Done,
 }
 
+impl std::fmt::Display for TaskRunStatus {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        match self {
+            TaskRunStatus::Idle => write!(f, "idle"),
+            TaskRunStatus::Active => write!(f, "active"),
+            TaskRunStatus::Done => write!(f, "done"),
+        }
+    }
+}
+
 impl Default for TaskRun {
     fn default() -> Self {
         Self {
@@ -243,6 +253,7 @@ pub struct AgentState {
     pub goal_phase: TaskPhase,
     pub goal_status: TaskRunStatus,
     pub goal_turn_count: u32,
+    pub previous_intent: Option<TaskIntent>,
 
     // Step budget
     pub step_count: u32,
@@ -273,6 +284,7 @@ impl Default for AgentState {
             goal_phase: TaskPhase::Clarify,
             goal_status: TaskRunStatus::Idle,
             goal_turn_count: 0,
+            previous_intent: None,
             step_count: 0,
             max_steps: 50,
             should_continue: true,

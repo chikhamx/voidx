@@ -11,6 +11,7 @@ use voidx_llm::ChatMessage;
 // ── Replay-unsafe block types ────────────────────────────────────────────
 
 /// Block types that should be stripped before replaying assistant history.
+#[allow(dead_code)]
 const REPLAY_UNSAFE_BLOCK_TYPES: &[&str] = &[
     "thinking",
     "redacted_thinking",
@@ -92,7 +93,7 @@ fn parse_dsml_invoke(block: &str) -> Option<DSMLToolCall> {
     let mut id = String::new();
 
     // Simple attribute parsing: name="value"
-    for attr in inner.splitn(2, '>').first()?.split_whitespace() {
+    for attr in inner.splitn(2, '>').next()?.split_whitespace() {
         if let Some((key, value)) = attr.split_once('=') {
             let value = value.trim_matches('"');
             match key {

@@ -6,7 +6,7 @@ use crate::agents::{get_agent, AgentDef};
 use crate::compaction::{compact, should_compact};
 use crate::error::AgentError;
 use crate::prompt;
-use crate::state::{AgentState, InteractionMode};
+use crate::state::AgentState;
 use crate::streaming::StreamAccumulator;
 use crate::VoidXAgent;
 use futures::StreamExt;

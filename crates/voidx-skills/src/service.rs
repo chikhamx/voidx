@@ -43,12 +43,33 @@ impl SkillService {
     }
 
     /// List only enabled skills.
-    pub fn enabled_skills(&mut self) -> Vec<&SkillDefinition> {
+    pub fn enabled_skills(&mut self) -> Vec<SkillDefinition> {
         self.list_skills();
-        self.registry
-            .discover()
+        let skills = self.registry.discover();
+        let selection = &self.selection;
+        skills
             .iter()
-            .filter(|s| self.is_enabled(s))
+            .filter(|s| {
+                let name = normalize_skill_name(s.name());
+                let disabled: Vec<String> = selection
+                    .disabled
+                    .iter()
+                    .map(|s| normalize_skill_name(s))
+                    .collect();
+                let enabled: Vec<String> = selection
+                    .enabled
+                    .iter()
+                    .map(|s| normalize_skill_name(s))
+                    .collect();
+                if disabled.contains(&name) {
+                    false
+                } else if enabled.contains(&name) {
+                    true
+                } else {
+                    s.meta.enabled
+                }
+            })
+            .cloned()
             .collect()
     }
 
@@ -93,16 +114,16 @@ impl SkillService {
         }
 
         let skills = self.enabled_skills();
-        let skills_by_name: std::collections::HashMap<String, &SkillDefinition> = skills
+        let skills_by_name: std::collections::HashMap<String, SkillDefinition> = skills
             .iter()
-            .map(|s| (normalize_skill_name(s.name()), *s))
+            .map(|s| (normalize_skill_name(s.name()), s.clone()))
             .collect();
 
         let explicit = explicit_refs(text);
         let mut matches: Vec<SkillMatch> = Vec::new();
         let mut seen: std::collections::HashSet<String> = std::collections::HashSet::new();
 
-        let mut add_match = |skill: Option<&SkillDefinition>, reason: &str, matches: &mut Vec<SkillMatch>, seen: &mut std::collections::HashSet<String>| {
+        let add_match = |skill: Option<&SkillDefinition>, reason: &str, matches: &mut Vec<SkillMatch>, seen: &mut std::collections::HashSet<String>| {
             if let Some(skill) = skill {
                 let name = normalize_skill_name(skill.name());
                 if !seen.contains(&name) {

@@ -113,6 +113,8 @@ fn init_agent(cli: &Cli, api_key: &str) -> Result<VoidXAgent, String> {
         approval_policy: voidx_config::ApprovalPolicy::Untrusted,
         approval_reviewer: voidx_config::ApprovalReviewer::User,
         permission_mode: voidx_config::PermissionMode::Default,
+        sandbox_extra_paths: Vec::new(),
+        code_ide: voidx_config::CodeIde::Auto,
     };
 
     let client = create_client(&config.model, api_key).map_err(|e| e.to_string())?;

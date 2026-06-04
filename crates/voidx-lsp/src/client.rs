@@ -22,6 +22,7 @@ struct LspRequest {
 struct LspResponse {
     #[allow(dead_code)]
     jsonrpc: String,
+    #[allow(dead_code)]
     id: u64,
     #[serde(default)]
     result: Option<serde_json::Value>,

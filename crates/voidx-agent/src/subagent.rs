@@ -7,11 +7,9 @@ use crate::agents::AgentDef;
 use crate::error::AgentError;
 use crate::prompt;
 use crate::state::{AgentState, InteractionMode};
-use crate::streaming::StreamAccumulator;
 use crate::tool_messages::sanitize_tool_message_content;
-use futures::StreamExt;
 use voidx_config::Config;
-use voidx_llm::{ChatClient, ChatMessage, ToolCall};
+use voidx_llm::{ChatClient, ChatMessage};
 use voidx_permission::{PermissionEngine, PermissionVerdict};
 use voidx_tools::base::ToolContext;
 use std::sync::Arc;
@@ -78,7 +76,7 @@ pub async fn run_subagent(
                 }
 
                 // Append assistant message
-                state.messages.push(response);
+                state.messages.push(response.clone());
 
                 // Execute tools
                 let tool_ctx = ToolContext {
@@ -236,7 +234,7 @@ pub async fn run_subagent_with_parent_context(
                     return Ok(content.clone());
                 }
 
-                state.messages.push(response);
+                state.messages.push(response.clone());
 
                 let tool_ctx = ToolContext {
                     workspace: config.workspace.clone(),

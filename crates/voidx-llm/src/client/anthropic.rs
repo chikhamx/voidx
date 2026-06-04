@@ -225,6 +225,7 @@ impl AnthropicClient {
         })
     }
 
+    #[allow(dead_code)]
     fn parse_sse_stream_response(
         &self,
         events: Vec<StreamEvent>,

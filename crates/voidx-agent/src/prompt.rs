@@ -195,7 +195,13 @@ pub fn load_instructions(workspace: &std::path::Path) -> Option<String> {
 
     // Project: walk-up from workspace, first match wins
     let mut current = workspace.to_path_buf();
-    let root = current.anchor().to_path_buf();
+    let root = {
+        let mut r = current.as_path();
+        while let Some(parent) = r.parent() {
+            r = parent;
+        }
+        r.to_path_buf()
+    };
     while current != root {
         for filename in &["AGENTS.md", "CLAUDE.md"] {
             let candidate = current.join(filename);

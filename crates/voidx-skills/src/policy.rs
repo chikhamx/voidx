@@ -31,8 +31,8 @@ fn skill_priority(name: &str) -> u32 {
 }
 
 /// Sort key for workflow skills: (priority, name).
-pub fn workflow_skill_sort_key(name: &str) -> (u32, &str) {
-    (skill_priority(name), name)
+pub fn workflow_skill_sort_key(name: &str) -> (u32, String) {
+    (skill_priority(name), name.to_string())
 }
 
 /// Determine which workflow skills should be activated for the given context.

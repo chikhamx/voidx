@@ -6,9 +6,10 @@ use serde::{Deserialize, Serialize};
 use std::path::PathBuf;
 
 /// Where a skill was discovered.
-#[derive(Debug, Clone, Copy, PartialEq, Eq, Hash, Serialize, Deserialize)]
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Hash, Serialize, Deserialize, Default)]
 #[serde(rename_all = "lowercase")]
 pub enum SkillScope {
+    #[default]
     Bundled,
     Global,
     Project,

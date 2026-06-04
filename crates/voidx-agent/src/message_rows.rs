@@ -13,7 +13,7 @@ pub fn messages_from_rows(rows: &[TranscriptMessage]) -> Vec<ChatMessage> {
     let mut messages: Vec<ChatMessage> = Vec::new();
 
     for row in rows {
-        let msg_id = if row.id > 0 {
+        let _msg_id = if row.id > 0 {
             Some(row.id.to_string())
         } else {
             None
