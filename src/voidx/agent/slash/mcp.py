@@ -7,7 +7,7 @@ import shlex
 import sys
 from collections.abc import Mapping
 
-from voidx.agent.slash_components.runtime import _select_from_list, ui
+from voidx.agent.slash.runtime import _select_from_list, ui
 from voidx.config import McpServerConfig, WebToolRoute
 
 

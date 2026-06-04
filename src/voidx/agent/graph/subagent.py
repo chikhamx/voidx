@@ -8,9 +8,10 @@ import time
 from langchain_core.messages import AIMessage, HumanMessage, SystemMessage, ToolMessage
 
 from voidx.agent.agents import BASE_SYSTEM_PROMPT, PLAN_MODE_APPEND, AgentDef
-from voidx.agent.graph_components.runtime import console, ui
-from voidx.agent.graph_components.streaming import extract_text, stream_llm
+from voidx.agent.graph.runtime import console, ui
+from voidx.agent.graph.streaming import extract_text, stream_llm
 from voidx.agent.runtime_context import InteractionMode, RuntimeContextBuilder
+from voidx.agent.tool_messages import sanitize_tool_message_content
 from voidx.agent.tool_filters import filter_unavailable_lsp_tools
 from voidx.config import Config
 from voidx.llm.provider import create_chat_model, resolve_protocol
@@ -26,9 +27,9 @@ from voidx.skills.service import SkillService
 from voidx.tools.base import ToolContext
 from voidx.tools.registry import ToolRegistry
 from voidx.tools.task_tracker import TaskTracker
-from voidx.ui.capture import CaptureConsole
-from voidx.ui.tree import OutputTree
-from voidx.ui.console import StreamingRenderer
+from voidx.ui.output.capture import CaptureConsole
+from voidx.ui.output.tree import OutputTree
+from voidx.ui.output.console import StreamingRenderer
 
 
 async def run_subagent(
@@ -60,15 +61,7 @@ async def run_subagent(
 
     # Child agents use their own tool registry and cannot start nested agents.
     agent_tools = ToolRegistry()
-    all_tool_ids = agent_tools.ids()
-    for tid in list(all_tool_ids):
-        if tid not in agent_def.tools and tid != "agent":
-            agent_tools._tools.pop(tid, None)
-            agent_tools._instances.pop(tid, None)
-    agent_tools._tools.pop("agent", None)
-    agent_tools._instances.pop("agent", None)
-    agent_tools._tools.pop("task_status", None)
-    agent_tools._instances.pop("task_status", None)
+    agent_tools.filter_tools(set(agent_def.tools) - {"agent", "task_status"})
 
     model = create_chat_model(api_key, model_cfg)
     tool_defs = [
@@ -247,11 +240,17 @@ async def run_subagent(
                 if capture_tree and parent_node is not None:
                     capture.tool_done(tid, 0.0, True, tool_call_id=cid)
                     capture.tool_result(result.output, tool_call_id=cid)
-                return ToolMessage(content=result.output, tool_call_id=cid)
+                return ToolMessage(
+                    content=sanitize_tool_message_content(result.output, workspace=ctx.workspace),
+                    tool_call_id=cid,
+                )
 
             tool_msgs = await asyncio.gather(*[run_one(tc) for tc in approved])
             denied_msgs = [
-                ToolMessage(content=reason, tool_call_id=tc.get("id", ""))
+                ToolMessage(
+                    content=sanitize_tool_message_content(reason, workspace=ctx.workspace),
+                    tool_call_id=tc.get("id", ""),
+                )
                 for tc, reason in denied
             ]
             messages.extend(tool_msgs + denied_msgs)

@@ -5,15 +5,17 @@ from __future__ import annotations
 import asyncio
 import json
 import time
+from functools import partial
+from typing import TYPE_CHECKING
 
-from langchain_core.messages import AIMessage, HumanMessage, SystemMessage, ToolMessage
+from langchain_core.messages import AIMessage, HumanMessage, ToolMessage
 
 from voidx.agent.attachments import (
     build_user_message_payload,
-    parse_structured_content,
     serialize_message_content,
 )
-from voidx.agent.graph_components.runtime import ui
+from voidx.agent.graph.runtime import ui
+from voidx.agent.message_rows import messages_from_rows
 from voidx.agent.state import AgentState
 from voidx.agent.task_state import resolve_turn_intent
 from voidx.llm.provider import get_context_limit
@@ -37,8 +39,8 @@ from voidx.memory.runtime_state import (
 )
 from voidx.memory.transcript import load_transcript, replace_transcript
 from voidx.ui.commands import COMMANDS
-from voidx.ui.dock import dock, get_dock
-from voidx.ui.events import (
+from voidx.ui.output.dock import dock, get_dock
+from voidx.ui.output.events import (
     CompositeEventConsumer,
     DockEventConsumer,
     InputSet,
@@ -52,13 +54,16 @@ from voidx.ui.events import (
 from voidx.ui.gateway import GatewayEventConsumer, GatewayServer, GatewaySession
 from voidx.ui.gateway.bootstrap import emit_web_gateway_bootstrap
 from voidx.ui.protocol import UiCancelCommand, UiCommand, UiSubmitCommand
-from voidx.ui.session_changes import session_tracker
-from voidx.ui.startup import show_startup
+from voidx.ui.session import session_tracker
+from voidx.ui.session import show_startup
 from voidx.ui.transcript import transcript_rows_to_tree, tree_to_transcript_rows
+
+if TYPE_CHECKING:
+    from voidx.agent.graph.contracts import GraphRunLoopHost
 
 
 class GraphRunLoopMixin:
-    async def _show_startup(self, *, append_transcript: bool = False) -> None:
+    async def _show_startup(self: GraphRunLoopHost, *, append_transcript: bool = False) -> None:
         is_new = self._session is None
         title = self._startup_title()
         active_dock = get_dock()
@@ -104,14 +109,14 @@ class GraphRunLoopMixin:
             ui.print(f"[dim]  Use [cyan]/model new[/cyan] to create a profile interactively[/dim]")
             ui.print()
 
-    def _startup_title(self) -> str:
+    def _startup_title(self: GraphRunLoopHost) -> str:
         title = self._session.title if self._session else "New session"
         if len(title) > 60:
             title = title[:57] + "..."
         return title
 
     async def run(
-        self,
+        self: GraphRunLoopHost,
         *,
         web: bool = False,
         web_headless: bool = False,
@@ -120,7 +125,7 @@ class GraphRunLoopMixin:
         web_token: str = "",
     ) -> None:
         """Interactive REPL with orchestrator agent."""
-        from voidx.ui.types import McpServerStatus, UiStatus
+        from voidx.ui.output.types import McpServerStatus, UiStatus
         from voidx.ui.tui import PureTui
 
         self._any_messages_sent = False
@@ -199,13 +204,7 @@ class GraphRunLoopMixin:
         self._app = app
 
         if gateway_session is not None:
-            async def handle_web_command(command: UiCommand) -> None:
-                if isinstance(command, UiSubmitCommand):
-                    app.submit_external_input(command.text)
-                elif isinstance(command, UiCancelCommand):
-                    app.cancel_external_input()
-
-            gateway_session.set_command_handler(handle_web_command)
+            gateway_session.set_command_handler(partial(self._handle_web_command, app))
             app.set_external_request_handler(gateway_session.request)
             gateway_server = GatewayServer(
                 gateway_session,
@@ -217,10 +216,7 @@ class GraphRunLoopMixin:
             if web_headless:
                 emit_web_gateway_bootstrap(gateway_server.url)
             else:
-                app.show_transient_output(
-                    f"Web UI gateway: {gateway_server.url}",
-                    title="Web",
-                )
+                dock.append_message(f"Web UI gateway: {gateway_server.url}")
 
         if hasattr(self, '_lsp_manager'):
             lsp_lines = []
@@ -229,53 +225,17 @@ class GraphRunLoopMixin:
                     source = f" [dim][{check.detected_source}][/dim]" if check.detected_source else ""
                     lsp_lines.append(f"  [cyan]{check.language}[/cyan] [dim]→[/dim] {check.resolved_path}{source}")
             if lsp_lines:
-                app.show_transient_output("\n".join(lsp_lines), title="LSP")
+                dock.append_message("\n".join(lsp_lines), markup=True)
 
         if hasattr(self, '_mcp_manager'):
             await self._mcp_manager.start_all()
 
         async def handle_user_input(user_input: str) -> bool:
             nonlocal exit_message
-            user_input = user_input.strip()
-            if not user_input:
-                return True
-
-            if user_input.startswith("/"):
-                if user_input in ("/exit", "/quit"):
-                    exit_message = "\n[dim]bye.[/dim]"
-                    return False
-                if app.consume_quiet_command(user_input):
-                    app.hide_command_output()
-                    with ui.capture_command_output(
-                        lambda _text: None,
-                        width=app.command_output_width,
-                    ):
-                        await self._dispatch_slash(user_input)
-                    app.hide_command_output()
-                    return True
-                if user_input == "/":
-                    app.begin_command_output(user_input)
-                    with ui.capture_command_output(
-                        app.append_command_output,
-                        width=app.command_output_width,
-                    ):
-                        ui.print("[bold]Commands:[/bold]")
-                        for name, desc in COMMANDS:
-                            ui.print(f"  [cyan]{name}[/cyan] — {desc}")
-                    return True
-                app.begin_command_output(user_input)
-                with ui.capture_command_output(
-                    app.append_command_output,
-                    width=app.command_output_width,
-                ):
-                    dispatched = await self._dispatch_slash(user_input)
-                return True if dispatched else True
-
-            try:
-                await self._run_once(user_input)
-            except (KeyboardInterrupt, asyncio.CancelledError):
-                ui.print(f"\n[dim]Interrupted.[/dim]")
-            return True
+            keep_running, next_exit_message = await self._handle_user_input(app, user_input)
+            if next_exit_message is not None:
+                exit_message = next_exit_message
+            return keep_running
 
         try:
             if web_headless:
@@ -297,8 +257,44 @@ class GraphRunLoopMixin:
             if exit_message:
                 ui.print(exit_message)
 
-    async def _run_once(self, user_text: str) -> None:
+    async def _handle_web_command(self: GraphRunLoopHost, app, command: UiCommand) -> None:
+        if isinstance(command, UiSubmitCommand):
+            app.submit_external_input(command.text)
+        elif isinstance(command, UiCancelCommand):
+            app.cancel_external_input()
+
+    async def _handle_user_input(self: GraphRunLoopHost, app, user_input: str) -> tuple[bool, str | None]:
+        user_input = user_input.strip()
+        if not user_input:
+            return True, None
+
+        if user_input.startswith("/"):
+            if user_input in ("/exit", "/quit"):
+                return False, "\n[dim]bye.[/dim]"
+            is_quiet = app.consume_quiet_command(user_input)
+            hide_command_output = getattr(app, "hide_command_output", None)
+            if is_quiet and callable(hide_command_output):
+                hide_command_output()
+            if not is_quiet:
+                dock.start_turn(user_input)
+            dispatched = await self._dispatch_slash(user_input)
+            if not dispatched:
+                ui.print(f"[dim]Unknown command: {user_input}  — type [cyan]/help[/cyan] to see available commands[/dim]")
+            if is_quiet and callable(hide_command_output):
+                hide_command_output()
+            return True, None
+
+        try:
+            await self._run_once(user_input)
+        except (KeyboardInterrupt, asyncio.CancelledError):
+            ui.print(f"\n[dim]Interrupted.[/dim]")
+        return True, None
+
+    async def _run_once(self: GraphRunLoopHost, user_text: str) -> None:
         t_turn_start = time.monotonic()
+        t_turn_calls_start = self._usage_stats.total_calls
+        t_turn_in_start = self._usage_stats.total_input_tokens
+        t_turn_out_start = self._usage_stats.total_output_tokens
         user_message_id: int | None = None
         try:
             session_tracker.begin_turn(self._workspace)
@@ -315,33 +311,21 @@ class GraphRunLoopMixin:
             else:
                 self._turn_node = dock.start_turn(payload.display_text)
             session_msgs = await load_messages(self._session.id) if self._session else []
+            truncation_notice: str | None = None
             # Safety: if session is huge, only load recent messages
             if len(session_msgs) > 500:
-                ui.warn(f"Session has {len(session_msgs)} messages — loading last 200")
+                original_count = len(session_msgs)
+                omitted_count = original_count - 200
+                ui.warn(f"Session has {original_count} messages — loading last 200")
                 session_msgs = session_msgs[-200:]
+                truncation_notice = (
+                    f"Earlier session context was truncated for this turn: "
+                    f"{omitted_count} older persisted messages were omitted. "
+                    f"Only the latest {len(session_msgs)} persisted messages "
+                    "plus the current user message are available."
+                )
 
-            msgs = []
-            for row in session_msgs:
-                if row.role == "system":
-                    msgs.append(SystemMessage(content=row.content, id=str(row.id) if row.id is not None else None))
-                elif row.role == "user":
-                    msgs.append(HumanMessage(
-                        content=parse_structured_content(row.content, row.content_format),
-                        id=str(row.id) if row.id is not None else None,
-                    ))
-                elif row.role == "assistant":
-                    content = parse_structured_content(row.content, row.content_format)
-                    msgs.append(AIMessage(
-                        content=content,
-                        tool_calls=row.tool_calls or [],
-                        id=str(row.id) if row.id is not None else None,
-                    ))
-                elif row.role == "tool":
-                    msgs.append(ToolMessage(
-                        content=row.content,
-                        tool_call_id=row.tool_call_id or "",
-                        id=str(row.id) if row.id is not None else None,
-                    ))
+            msgs = messages_from_rows(session_msgs)
 
             for warning in payload.warnings:
                 ui.warn(warning)
@@ -407,6 +391,13 @@ class GraphRunLoopMixin:
 
             # ── compaction: check overflow before running ──────────────────
             head, tail_id = await self._maybe_compact(msgs, session_msgs)
+            if truncation_notice:
+                existing_summary = self._pending_summary or self._compaction_summary
+                self._pending_summary = (
+                    f"{truncation_notice}\n\n{existing_summary}"
+                    if existing_summary
+                    else truncation_notice
+                )
             if via_events():
                 await ui_events.emit(StatusFinished(status_id="turn:analyzing"))
 
@@ -504,8 +495,25 @@ class GraphRunLoopMixin:
                 await self._persist_transcript_snapshot()
 
             elapsed = time.monotonic() - t_turn_start
-            if self._debug:
-                ui.print(f"[dim]✻  Churned for {elapsed:.0f}s[/dim]")
+            stats = self._usage_stats
+            turn_calls = stats.total_calls - t_turn_calls_start
+            turn_in = stats.total_input_tokens - t_turn_in_start
+            turn_out = stats.total_output_tokens - t_turn_out_start
+            from voidx.llm.usage import format_token_count
+            dock.append_message(
+                f"[dim]✻  {elapsed:.0f}s[/dim]"
+                f"  [dim]·[/dim]  [cyan]{turn_calls}[/cyan] [dim]llm calls[/dim]"
+                f"  [dim]·[/dim]  [cyan]{format_token_count(turn_in)}[/cyan] [dim]in[/dim]"
+                f"  [cyan]{format_token_count(turn_out)}[/cyan] [dim]out[/dim]",
+                markup=True,
+            )
+            change_lines = session_tracker.change_summary_lines()
+            if change_lines:
+                dock.append_message(
+                    "\n".join(change_lines),
+                    markup=True,
+                )
+            session_tracker.finish_turn()
         except (KeyboardInterrupt, asyncio.CancelledError):
             if self._session is not None and user_message_id is not None:
                 await delete_messages_from(self._session.id, user_message_id)
@@ -522,11 +530,11 @@ class GraphRunLoopMixin:
                 dock.set_input("", [])
             self._current_implementation_allowed = True
 
-    async def _dispatch_slash(self, inp: str) -> bool:
+    async def _dispatch_slash(self: GraphRunLoopHost, inp: str) -> bool:
         """Try to dispatch a slash command. Returns True if handled."""
         return await self._slash.dispatch(inp)
 
-    async def _restore_runtime_state(self) -> None:
+    async def _restore_runtime_state(self: GraphRunLoopHost) -> None:
         if self._session is None:
             return
         snapshot = await load_runtime_state(self._session.id)
@@ -535,7 +543,7 @@ class GraphRunLoopMixin:
         self._task_run = snapshot.task_run
         self._compaction_summary = snapshot.compaction_summary
 
-    async def _persist_runtime_state(self) -> None:
+    async def _persist_runtime_state(self: GraphRunLoopHost) -> None:
         if self._session is None:
             return
         from voidx.agent.runtime_context import InteractionMode
@@ -554,7 +562,7 @@ class GraphRunLoopMixin:
             ),
         )
 
-    async def _clear_runtime_state(self) -> None:
+    async def _clear_runtime_state(self: GraphRunLoopHost) -> None:
         from voidx.agent.runtime_context import InteractionMode
         from voidx.agent.task_state import TaskRun, TaskState
 
@@ -566,7 +574,7 @@ class GraphRunLoopMixin:
         self._compaction_summary = ""
         self._pending_summary = None
 
-    async def _persist_transcript_snapshot(self) -> None:
+    async def _persist_transcript_snapshot(self: GraphRunLoopHost) -> None:
         if self._session is None:
             return
         active_dock = get_dock()
@@ -575,7 +583,7 @@ class GraphRunLoopMixin:
         rows, turn_count = tree_to_transcript_rows(self._session.id, active_dock.tree)
         await replace_transcript(self._session.id, rows, turn_count=turn_count)
 
-    async def _restore_transcript_snapshot(self, *, append: bool = False) -> bool:
+    async def _restore_transcript_snapshot(self: GraphRunLoopHost, *, append: bool = False) -> bool:
         if self._session is None:
             return False
         active_dock = get_dock()

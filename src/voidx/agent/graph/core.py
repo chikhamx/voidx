@@ -14,27 +14,29 @@ from __future__ import annotations
 
 import asyncio
 import time
+from typing import TYPE_CHECKING
 
 from langchain_core.messages import (
     AIMessage,
+    BaseMessage,
     HumanMessage,
     SystemMessage,
 )
 from langgraph.graph import END, StateGraph
 
 from voidx.agent.agents import BASE_SYSTEM_PROMPT, PLAN_MODE_APPEND, get_agent, AgentDef
-from voidx.agent.graph_components.compaction import GraphCompactionMixin
-from voidx.agent.graph_components.permissions import GraphPermissionMixin
-from voidx.agent.graph_components.runtime import (
+from voidx.agent.graph.compaction import GraphCompactionMixin
+from voidx.agent.graph.permissions import GraphPermissionMixin
+from voidx.agent.graph.runtime import (
     console,
     current_parent_tool_call_id as _current_parent_tool_call_id,
     ui,
 )
-from voidx.agent.graph_components.run_loop import GraphRunLoopMixin
+from voidx.agent.graph.run_loop import GraphRunLoopMixin
 from voidx.agent.state import AgentState
-from voidx.agent.graph_components.streaming import stream_llm as _stream_llm
-from voidx.agent.graph_components.subagent import run_subagent as _run_subagent
-from voidx.agent.graph_components.tool_execution import GraphToolExecutionMixin
+from voidx.agent.graph.streaming import stream_llm as _stream_llm
+from voidx.agent.graph.subagent import run_subagent as _run_subagent
+from voidx.agent.graph.tool_execution import GraphToolExecutionMixin
 from voidx.agent.runtime_context import InteractionMode, RuntimeContextBuilder
 from voidx.agent.task_state import TaskRun, TaskState
 from voidx.agent.tool_filters import filter_unavailable_lsp_tools
@@ -54,18 +56,20 @@ from voidx.agent.slash import SlashHandler
 from voidx.permission.service import PermissionService
 from voidx.tools.registry import ToolRegistry
 from voidx.tools.agent import AgentTool
-from voidx.tools.task_status import TaskStatusTool
 from voidx.tools.task_tracker import TaskTracker
-from voidx.tools.todo import TodoWriteTool
-from voidx.ui.console import StreamingRenderer
-from voidx.ui.dock import dock
-from voidx.ui.events import (
+from voidx.ui.output.console import StreamingRenderer
+from voidx.ui.output.dock import dock
+from voidx.ui.output.events import (
     SubagentFinished,
     SubagentStarted,
     ui_events,
     via_events,
 )
-from voidx.ui.tree import OutputNode
+from voidx.ui.output.tree import OutputNode, OutputTree
+
+if TYPE_CHECKING:
+    from voidx.agent.graph.contracts import GraphComponentHost
+    from voidx.ui.tui import PureTui
 
 
 # ── LangGraph nodes ────────────────────────────────────────────────────────
@@ -102,16 +106,11 @@ class VoidXGraph(
             from voidx.llm.catalog import bind_settings
             bind_settings(settings)
 
-        # Build tool registry, wire agent/todo/task_status to tracker
-        self.tools = ToolRegistry(settings=settings)
+        # Build tool registry, wire tracker through registry
         self._tracker = TaskTracker()
+        self.tools = ToolRegistry(settings=settings, tracker=self._tracker)
         agent_tool = AgentTool(runner=self._subagent_runner)
         self.tools.register("agent", agent_tool, agent_tool.description, agent_tool.parameters_schema())
-        task_status_tool = TaskStatusTool(tracker=self._tracker)
-        self.tools.register("task_status", task_status_tool, task_status_tool.description, task_status_tool.parameters_schema())
-        # Replace built-in todo with tracker-aware version
-        todo_tool = TodoWriteTool(tracker=self._tracker)
-        self.tools.register("todo", todo_tool, todo_tool.description, todo_tool.parameters_schema())
 
         # AGENTS.md instruction service — refreshed each turn
         self._instruction = InstructionService(self._workspace, settings=settings)
@@ -133,14 +132,16 @@ class VoidXGraph(
         self._file_mtimes: dict[str, float] = {}
         self._turn_node: OutputNode | None = None
         self._current_tree: OutputTree | None = None
-        self._current_messages: list | None = None
-        self._sub_buffers: dict[str, list] = {}
+        self._current_messages: list[BaseMessage] | None = None
+        self._sub_buffers: dict[str, list[BaseMessage]] = {}
+        # One-turn summary injection vs. persisted summary restored across turns.
         self._pending_summary: str | None = None
         self._compaction_summary: str = ""
-        self._app: Any | None = None  # PureTui (tui.py)
+        self._app: PureTui | None = None
         self._next_agent_id: int = 0
         self._task_state = TaskState()
         self._task_run = TaskRun()
+        self._needs_failure_check: dict[str, dict] = {}
 
         # Context compaction service — provider-aware limits
         from voidx.llm.provider import get_context_limit
@@ -163,9 +164,11 @@ class VoidXGraph(
         )
         from voidx.lsp import LspManager
         self._lsp_manager = LspManager(self._workspace)
+        if TYPE_CHECKING:
+            _host_contract: GraphComponentHost = self
 
     @property
-    def app(self) -> Any | None:
+    def app(self) -> PureTui | None:
         """The interactive TUI app, if one is running."""
         return self._app
 
@@ -186,7 +189,7 @@ class VoidXGraph(
 
     async def _subagent_runner(self, agent_def: AgentDef, description: str, model_override: str | None) -> str:
         parent_messages = getattr(self, '_current_messages', None)
-        sub_buffer: list = []
+        sub_buffer: list[BaseMessage] = []
         session_id = self._session.id if self._session else "default"
         agent_id = self._next_agent_id
         self._next_agent_id += 1
@@ -214,45 +217,31 @@ class VoidXGraph(
 
         ok = False
         try:
+            kwargs = {
+                "parent_messages": parent_messages,
+                "sub_messages": sub_buffer,
+                "authorize_tools": authorize,
+                "debug": self._debug,
+                "agent_id": agent_id,
+                "session_id": session_id if self._session else None,
+                "usage_stats": self._usage_stats,
+                "lsp_manager": getattr(self, "_lsp_manager", None),
+                "skill_selection": self._settings.get_skill_selection() if self._settings else None,
+            }
             if self._current_tree and self._turn_node:
-                parent = self._turn_node
-                result = await _run_subagent(
-                    agent_def,
-                    description,
-                    model_override,
-                    self.api_key,
-                    self.config,
-                    self._tracker,
-                    self._current_tree,
-                    parent,
-                    parent_messages=parent_messages,
-                    sub_messages=sub_buffer,
-                    authorize_tools=authorize,
-                    debug=self._debug,
-                    agent_id=agent_id,
-                    session_id=session_id if self._session else None,
-                    usage_stats=self._usage_stats,
-                    lsp_manager=getattr(self, "_lsp_manager", None),
-                    skill_selection=self._settings.get_skill_selection() if self._settings else None,
-                )
-            else:
-                result = await _run_subagent(
-                    agent_def,
-                    description,
-                    model_override,
-                    self.api_key,
-                    self.config,
-                    self._tracker,
-                    parent_messages=parent_messages,
-                    sub_messages=sub_buffer,
-                    authorize_tools=authorize,
-                    debug=self._debug,
-                    agent_id=agent_id,
-                    session_id=session_id if self._session else None,
-                    usage_stats=self._usage_stats,
-                    lsp_manager=getattr(self, "_lsp_manager", None),
-                    skill_selection=self._settings.get_skill_selection() if self._settings else None,
-                )
+                kwargs.update({
+                    "capture_tree": self._current_tree,
+                    "parent_node": self._turn_node,
+                })
+            result = await _run_subagent(
+                agent_def,
+                description,
+                model_override,
+                self.api_key,
+                self.config,
+                self._tracker,
+                **kwargs,
+            )
             ok = True
             key = parent_tool_call_id or f"agent:{agent_id}"
             self._sub_buffers.setdefault(key, []).extend(sub_buffer)
@@ -396,7 +385,6 @@ class VoidXGraph(
                 },
             )
         max_retries = 2
-        last_error = None
         for attempt in range(max_retries + 1):
             try:
                 renderer = StreamingRenderer(console, debug=self._debug)
@@ -414,7 +402,6 @@ class VoidXGraph(
                     ui.print()
                 break
             except Exception as e:
-                last_error = e
                 if attempt < max_retries:
                     delay = (attempt + 1) * 2
                     ui.print(f"[dim]LLM error, retrying in {delay}s: {e}[/dim]")
@@ -426,13 +413,6 @@ class VoidXGraph(
                         "step_count": step,
                         "should_continue": False,
                     }
-        else:
-            # All retries exhausted
-            return {
-                "messages": [AIMessage(content=f"LLM call failed after all retries: {last_error}")],
-                "step_count": step,
-                "should_continue": False,
-            }
 
         return {
             "messages": [assistant_msg],
@@ -451,7 +431,7 @@ class VoidXGraph(
         return {}
 
 
-def _latest_user_text(messages: list) -> str:
+def _latest_user_text(messages: list[BaseMessage]) -> str:
     for msg in reversed(messages):
         if isinstance(msg, HumanMessage):
             content = msg.content

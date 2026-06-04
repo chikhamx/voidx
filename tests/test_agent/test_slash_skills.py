@@ -57,7 +57,7 @@ async def test_skills_paths_dispatch(tmp_path):
 @pytest.mark.asyncio
 async def test_skills_paths_prints_bundled_source(tmp_path, monkeypatch):
     output: list[str] = []
-    monkeypatch.setattr("voidx.agent.slash_components.skills.ui.print", lambda text="": output.append(str(text)))
+    monkeypatch.setattr("voidx.agent.slash.skills.ui.print", lambda text="": output.append(str(text)))
     graph = SimpleNamespace(_settings=Settings(str(tmp_path)), _workspace=str(tmp_path))
 
     assert await SlashHandler(graph).dispatch("/skills paths") is True

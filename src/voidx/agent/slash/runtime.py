@@ -4,9 +4,7 @@ from __future__ import annotations
 
 import sys
 
-from voidx.ui.console import VoidConsole
-
-ui = VoidConsole()
+from voidx.agent.graph.runtime import ui
 
 _STATIC_PROVIDERS = [
     "anthropic",

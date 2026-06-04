@@ -4,7 +4,7 @@ from __future__ import annotations
 
 import asyncio
 
-from voidx.agent.slash_components.runtime import PROVIDERS, get_providers, _select_from_list, ui
+from voidx.agent.slash.runtime import PROVIDERS, get_providers, _select_from_list, ui
 
 
 class SlashModelMixin:
@@ -163,6 +163,14 @@ class SlashModelMixin:
             return await app.ask_text(text, default=default, secret=secret)
 
         loop = asyncio.get_event_loop()
+        if secret:
+            import getpass
+            result = await loop.run_in_executor(
+                None,
+                lambda: getpass.getpass(f"  {text}: ").strip(),
+            )
+            return result if result else default
+
         result = await loop.run_in_executor(
             None,
             lambda: input(f"  {text}: ").strip(),

@@ -7,14 +7,15 @@ import pytest
 
 sys.path.insert(0, str(Path(__file__).parent.parent.parent / "src"))
 
-from voidx.agent.slash import SlashHandler, _select_from_list
+from voidx.agent.slash import SlashHandler
+from voidx.agent.slash.runtime import _select_from_list
 from voidx.agent.task_state import TaskRun, TaskState
 from voidx.config import CodeIde, ApprovalPolicy, ApprovalReviewer, ModelConfig, PermissionMode, SandboxMode, Settings
 from voidx.permission.service import PermissionService
 from voidx.llm.catalog import STATIC_MODELS
 from voidx.llm.usage import UsageStats
 from voidx.memory.model_profiles import delete_model_profile
-from voidx.ui.clipboard_image import ClipboardImageResult
+from voidx.ui.tools.clipboard_image import ClipboardImageResult
 
 
 class FakeChoiceApp:
@@ -97,6 +98,11 @@ async def test_model_test_dispatch_strips_command_prefix():
 
 
 @pytest.mark.asyncio
+async def test_slash_dispatch_rejects_unknown_prefix_command():
+    assert await SlashHandler(SimpleNamespace()).dispatch("/debugx") is False
+
+
+@pytest.mark.asyncio
 async def test_model_test_creates_model_with_config_defaults(tmp_path, monkeypatch):
     profile_name = f"openai/{tmp_path.name}-gpt-5.4-mini"
     (tmp_path / "voidx.json").write_text(
@@ -150,10 +156,46 @@ async def test_model_prompt_uses_prompt_app_text_input():
     assert app.text_secret is True
 
 
+@pytest.mark.asyncio
+async def test_tavily_set_uses_secret_prompt(tmp_path, monkeypatch):
+    monkeypatch.delenv("TAVILY_API_KEY", raising=False)
+    settings = Settings(str(tmp_path))
+    app = FakeChoiceApp(result="tvly-secret")
+    graph = SimpleNamespace(_settings=settings, _app=app)
+
+    handled = await SlashHandler(graph).dispatch("/tavily set")
+
+    assert handled is True
+    assert settings.get_tavily_api_key() == "tvly-secret"
+    assert app.text_prompt == "Tavily API key"
+    assert app.text_secret is True
+
+
+@pytest.mark.asyncio
+async def test_tavily_set_rejects_key_in_command_text(tmp_path, monkeypatch):
+    monkeypatch.delenv("TAVILY_API_KEY", raising=False)
+    settings = Settings(str(tmp_path))
+    app = FakeChoiceApp(result="tvly-secret")
+    graph = SimpleNamespace(_settings=settings, _app=app)
+
+    handled = await SlashHandler(graph).dispatch("/tavily set tvly-plain")
+
+    assert handled is True
+    assert settings.get_tavily_api_key() is None
+    assert app.text_prompt == ""
+
+
 def test_model_provider_list_matches_catalog():
-    from voidx.agent.slash import PROVIDERS
+    from voidx.agent.slash.runtime import PROVIDERS
 
     assert set(STATIC_MODELS).issubset(PROVIDERS)
+
+
+def test_slash_runtime_uses_graph_console_singleton():
+    from voidx.agent.graph.runtime import ui as graph_ui
+    from voidx.agent.slash.runtime import ui as slash_ui
+
+    assert slash_ui is graph_ui
 
 
 def test_model_status_sync_updates_prompt_footer_state():
@@ -349,7 +391,7 @@ async def test_code_ide_dispatch_uses_choice_panel(tmp_path, monkeypatch):
     app = FakeChoiceApp(result=CodeIde.CURSOR.value)
     graph = SimpleNamespace(_settings=settings, _app=app)
 
-    monkeypatch.setattr("voidx.agent.slash_components.code_ide.detect_code_ides", lambda: [])
+    monkeypatch.setattr("voidx.agent.slash.code_ide.detect_code_ides", lambda: [])
 
     assert await SlashHandler(graph).dispatch("/code-ide") is True
 

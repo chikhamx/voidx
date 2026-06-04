@@ -9,8 +9,8 @@ sys.path.insert(0, str(Path(__file__).parent.parent.parent / "src"))
 import pytest
 from langchain_core.messages import AIMessage, HumanMessage, SystemMessage, ToolMessage
 
-from voidx.agent.agents import get_agent
-from voidx.agent.graph_components.runtime import current_parent_tool_call_id
+from voidx.agent.agents import AgentDef, get_agent
+from voidx.agent.graph.runtime import current_parent_tool_call_id
 from voidx.agent.graph import VoidXGraph
 from voidx.config import Config, Settings
 from voidx.llm.instruction import SkillRuntimeContext
@@ -24,7 +24,7 @@ from voidx.memory.session import (
 from voidx.memory.transcript import load_transcript
 from voidx.permission.service import PermissionService
 from voidx.tools.base import ToolContext, ToolResult
-from voidx.ui.dock import BottomInputDock, set_dock
+from voidx.ui.output.dock import BottomInputDock, set_dock
 
 
 def _graph(tmp_path):
@@ -46,6 +46,27 @@ def test_orchestrator_has_direct_edit_tools():
     assert agent is not None
     assert {"write", "edit", "lsp_format"}.issubset(set(agent.tools))
     assert agent.can_write is True
+
+
+def test_role_prompt_rejects_unregistered_agent_name():
+    agent = AgentDef(
+        name="orchesrator",
+        description="typo",
+        when_to_use="never",
+        tools=[],
+        can_write=False,
+        can_delegate=False,
+    )
+
+    with pytest.raises(ValueError, match="No role prompt registered"):
+        _ = agent.role_prompt
+
+
+def test_promptless_builtin_agents_are_explicit():
+    agent = get_agent("compaction")
+
+    assert agent is not None
+    assert agent.role_prompt == ""
 
 
 def test_permission_decision_splits_readonly_and_implement_agents():
@@ -118,16 +139,12 @@ async def test_permission_result_uses_transient_output(tmp_path):
     class FakeApp:
         def __init__(self):
             self.notices: list[str] = []
-            self.outputs: list[tuple[str, str]] = []
 
         async def ask_choice(self, _prompt, _choices, details=None):
             return "a"
 
         def set_notice(self, text: str) -> None:
             self.notices.append(text)
-
-        def show_transient_output(self, text: str, title: str = "") -> None:
-            self.outputs.append((title, text))
 
     app = FakeApp()
     graph._app = app
@@ -141,7 +158,6 @@ async def test_permission_result_uses_transient_output(tmp_path):
 
     assert [tc["name"] for tc in approved] == ["write"]
     assert denied == []
-    assert app.outputs == [("Permission", "1 tools allowed for this session")]
     assert app.notices == []
 
 
@@ -183,7 +199,7 @@ async def test_graph_on_failure_still_asks_for_unsafe_bash(tmp_path):
 
 
 def test_tool_result_ok_detects_structured_failures():
-    from voidx.agent.graph_components.tool_execution import GraphToolExecutionMixin
+    from voidx.agent.graph.tool_execution import GraphToolExecutionMixin
 
     assert GraphToolExecutionMixin._tool_result_ok(ToolResult(output="ok", metadata={"exit_code": 0}))
     assert not GraphToolExecutionMixin._tool_result_ok(ToolResult(output="failed", metadata={"exit_code": 2}))
@@ -464,7 +480,7 @@ async def test_run_once_persists_and_restores_transcript_snapshot(tmp_path):
 
         class FakeGraph:
             async def ainvoke(self, initial, _config):
-                from voidx.ui.dock import dock
+                from voidx.ui.output.dock import dock
 
                 dock.append_thought("checked context", elapsed=1.0)
                 tool = dock.start_tool(
@@ -615,6 +631,37 @@ async def test_compaction_auto_compacts_by_default_without_asking(tmp_path):
 
 
 @pytest.mark.asyncio
+async def test_compaction_fallback_returns_removed_messages(tmp_path):
+    graph = VoidXGraph(Config(workspace=str(tmp_path)), api_key=None)
+    graph._compaction.is_overflow = lambda _tokens: True
+    graph._compaction.select = lambda _messages: ([], None)
+    messages = [
+        SystemMessage(content="system"),
+        HumanMessage(content="old 1"),
+        AIMessage(content="old 2"),
+        HumanMessage(content="tail 1"),
+        AIMessage(content="tail 2"),
+        HumanMessage(content="tail 3"),
+        AIMessage(content="tail 4"),
+        HumanMessage(content="tail 5"),
+    ]
+
+    removed, tail_id = await graph._maybe_compact(messages, [], ask=False)
+
+    assert [message.content for message in messages] == [
+        "system",
+        "old 2",
+        "tail 1",
+        "tail 2",
+        "tail 3",
+        "tail 4",
+        "tail 5",
+    ]
+    assert [message.content for message in removed or []] == ["old 1"]
+    assert tail_id is None
+
+
+@pytest.mark.asyncio
 async def test_compaction_uses_previous_summary_and_prunes_persisted_head(tmp_path):
     session = await create_session(workspace=str(tmp_path))
     try:
@@ -762,7 +809,7 @@ async def test_prepare_injects_workflow_skills_from_task_state(tmp_path):
 @pytest.mark.asyncio
 async def test_implement_subagent_injects_workflow_skills(tmp_path, monkeypatch):
     from voidx.agent.agents import get_agent
-    from voidx.agent.graph_components import subagent as subagent_module
+    import voidx.agent.graph.subagent as subagent_module
 
     captured: dict[str, list] = {}
 

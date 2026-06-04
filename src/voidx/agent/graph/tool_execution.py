@@ -4,14 +4,16 @@ from __future__ import annotations
 
 import asyncio
 import time
+from typing import TYPE_CHECKING
 
 from langchain_core.messages import AIMessage, ToolMessage
 
-from voidx.agent.graph_components.runtime import current_parent_tool_call_id, ui
+from voidx.agent.graph.runtime import current_parent_tool_call_id, ui
+from voidx.agent.tool_messages import sanitize_tool_message_content
 from voidx.tools.base import ToolContext
-from voidx.ui.console import _fmt_args, _title
-from voidx.ui.dock import dock
-from voidx.ui.events import (
+from voidx.ui.output.console import _fmt_args, _title
+from voidx.ui.output.dock import dock
+from voidx.ui.output.events import (
     FileChangeAppended,
     ToolFinished,
     ToolResultAppended,
@@ -19,11 +21,14 @@ from voidx.ui.events import (
     ui_events,
     via_events,
 )
-from voidx.ui.session_changes import session_tracker
+from voidx.ui.session import session_tracker
+
+if TYPE_CHECKING:
+    from voidx.agent.graph.contracts import GraphToolExecutionHost
 
 
 class GraphToolExecutionMixin:
-    async def _execute_tools(self, state) -> dict:
+    async def _execute_tools(self: GraphToolExecutionHost, state) -> dict:
         last = state["messages"][-1]
         if not isinstance(last, AIMessage) or not last.tool_calls:
             return {}
@@ -101,19 +106,23 @@ class GraphToolExecutionMixin:
                 ok = self._tool_result_ok(result)
             except Exception as e:
                 from voidx.tools.base import ToolResult
+                error_text = sanitize_tool_message_content(
+                    f"Tool execution error: {e}",
+                    workspace=ctx.workspace,
+                )
                 result = ToolResult(
-                    output=f"Tool execution error: {e}",
-                    metadata={"error": str(e)},
+                    output=error_text,
+                    metadata={"error": sanitize_tool_message_content(str(e), workspace=ctx.workspace)},
                 )
                 ok = False
             elapsed = time.monotonic() - t0
 
             # on-failure: notify user when auto-approved tool fails
-            if not ok and hasattr(self, "_needs_failure_check"):
+            if not ok:
                 failure_tc = self._needs_failure_check.get(cid, None)
                 if failure_tc and self._permission.approval_policy == "on-failure":
                     self._notify_tool_failure(failure_tc, result)
-            elif ok and hasattr(self, "_needs_failure_check"):
+            elif ok:
                 self._clear_failure_check(cid)
 
             if via_events():
@@ -143,7 +152,7 @@ class GraphToolExecutionMixin:
                         tool_call_id=tool_event_id,
                     )
                 else:
-                    from voidx.ui.diff import diff_stat
+                    from voidx.ui.output.diff import diff_stat
                     added, removed = diff_stat(result.diff)
                     ui.print(f"  [green]+{added}[/green] [red]−{removed}[/red]")
                 if self._debug and not tool_node:
@@ -163,14 +172,16 @@ class GraphToolExecutionMixin:
                 else:
                     ui.tool_result(result.output)
 
-            return ToolMessage(content=result.output, tool_call_id=cid)
+            return ToolMessage(
+                content=sanitize_tool_message_content(result.output, workspace=ctx.workspace),
+                tool_call_id=cid,
+            )
 
         # Run all approved tools in parallel
         executed = await asyncio.gather(*[execute_one(tc) for tc in approved])
 
         # Clear on-failure tracking for this batch (full logic in Phase 2)
-        if hasattr(self, "_needs_failure_check"):
-            self._needs_failure_check.clear()
+        self._needs_failure_check.clear()
 
         if via_events():
             await ui_events.drain()
@@ -190,7 +201,10 @@ class GraphToolExecutionMixin:
 
         # Denied tools get error messages
         denied_msgs = [
-            ToolMessage(content=reason, tool_call_id=tc.get("id", ""))
+            ToolMessage(
+                content=sanitize_tool_message_content(reason, workspace=ctx.workspace),
+                tool_call_id=tc.get("id", ""),
+            )
             for tc, reason in denied
         ]
 

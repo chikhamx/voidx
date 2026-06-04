@@ -2,28 +2,40 @@
 
 from __future__ import annotations
 
-from langchain_core.messages import AIMessage, HumanMessage, SystemMessage, ToolMessage
+from typing import TYPE_CHECKING
 
-from voidx.agent.graph_components.runtime import console, ui
-from voidx.agent.graph_components.streaming import extract_text, stream_llm
+from langchain_core.messages import AIMessage, SystemMessage
+
+from voidx.agent.message_rows import messages_from_rows
+from voidx.agent.graph.runtime import console, ui
+from voidx.agent.graph.streaming import extract_text, stream_llm
+from voidx.llm.compaction import COMPACTION_MAX_RETRIES, CompactionService
 from voidx.llm.provider import resolve_protocol
 from voidx.llm.usage import estimate_context_tokens, estimate_message_tokens, extract_token_usage
 from voidx.memory.context_frames import save_context_frame_from_messages
-from voidx.ui.console import StreamingRenderer
-from voidx.ui.dock import dock
-from voidx.ui.events import StatusFinished, StatusUpdated, ui_events, via_events
+from voidx.ui.output.console import StreamingRenderer
+from voidx.ui.output.dock import dock
+from voidx.ui.output.events import StatusFinished, StatusUpdated, ui_events, via_events
+
+if TYPE_CHECKING:
+    from voidx.agent.graph.contracts import GraphCompactionHost
 
 
 class GraphCompactionMixin:
     async def _maybe_compact(
-        self,
+        self: GraphCompactionHost,
         messages: list,
         session_msgs: list,
         *,
         force: bool = False,
         ask: bool = True,
     ) -> tuple[list | None, str | None]:
-        """Check overflow and compact if needed."""
+        """Check overflow and compact if needed.
+
+        Returns the messages removed from the live context and the persisted
+        tail anchor id when one is available. Fallback truncation has no stable
+        tail anchor, so it returns None for the second value.
+        """
         total_tokens = estimate_context_tokens(messages, self.config.model.model)
         tokens = {"total": total_tokens, "input": total_tokens, "output": 0, "reasoning": 0}
 
@@ -73,56 +85,83 @@ class GraphCompactionMixin:
                     detail=f"fallback truncation, keeping last {keep} messages",
                     stage="compacting",
                 ))
-                await ui_events.emit(StatusFinished(
-                    status_id="compaction",
-                    label=f"Compaction fallback kept last {keep} messages",
-                    remove=False,
-                ))
             else:
                 ui.print(f"[dim]Aggressive truncation: keeping last {keep} messages[/dim]")
-            # Remove old messages, keep system + last N
-            system_msgs = [m for m in messages if isinstance(m, SystemMessage)]
-            other_msgs = [m for m in messages if not isinstance(m, SystemMessage)]
-            messages.clear()
-            messages.extend(system_msgs)
-            messages.extend(other_msgs[-keep:])
-            return messages[:max(0, len(messages) - keep)], None
 
-        # Run compaction agent
-        try:
+            removed = _truncate_to_recent_messages(messages, keep)
+            # Generate a basic summary from the removed messages
+            fallback = CompactionService.fallback_summary(removed)
+            self._pending_summary = fallback
+            self._compaction_summary = fallback
+            self._compaction.compaction_count += 1
+
             if via_events():
-                await ui_events.emit(StatusUpdated(
+                await ui_events.emit(StatusFinished(
                     status_id="compaction",
-                    label="Compacting context",
-                    detail=f"summarizing {len(head_msgs)} old messages",
-                    stage="compacting",
+                    label=f"Compaction fallback kept last {keep} messages (with extracted summary)",
+                    remove=False,
                 ))
-            previous_summary = getattr(self, "_compaction_summary", "") or None
-            summary = await self._run_compaction_agent(head_msgs, previous_summary)
-        except Exception as e:
+            return removed, None
+
+        # Run compaction agent with retries
+        summary = None
+        previous_summary = getattr(self, "_compaction_summary", "") or None
+        last_error: Exception | None = None
+
+        for attempt in range(1, COMPACTION_MAX_RETRIES + 2):  # 1 initial + N retries
+            try:
+                if via_events():
+                    retry_label = f" (attempt {attempt})" if attempt > 1 else ""
+                    await ui_events.emit(StatusUpdated(
+                        status_id="compaction",
+                        label="Compacting context",
+                        detail=f"summarizing {len(head_msgs)} old messages{retry_label}",
+                        stage="compacting",
+                    ))
+                summary = await self._run_compaction_agent(head_msgs, previous_summary)
+                if summary:
+                    break
+            except Exception as e:
+                last_error = e
+                if attempt <= COMPACTION_MAX_RETRIES:
+                    if via_events():
+                        await ui_events.emit(StatusUpdated(
+                            status_id="compaction",
+                            label="Compaction agent failed",
+                            detail=f"{e}; retrying ({attempt}/{COMPACTION_MAX_RETRIES})",
+                            stage="compacting",
+                        ))
+                    else:
+                        ui.print(f"[dim]Compaction agent failed ({e}) — retrying ({attempt}/{COMPACTION_MAX_RETRIES})[/dim]")
+
+        if not summary:
+            # All retries exhausted — fallback truncation with basic summary
             if via_events():
+                err_detail = f"{last_error}; " if last_error else ""
                 await ui_events.emit(StatusUpdated(
                     status_id="compaction",
                     label="Compaction agent failed",
-                    detail=f"{e}; falling back to truncation",
+                    detail=f"{err_detail}falling back to truncation with extracted summary",
                     stage="compacting",
                 ))
             else:
-                ui.print(f"[dim]Compaction agent failed ({e}) — aggressive truncation[/dim]")
+                err_msg = f" ({last_error})" if last_error else ""
+                ui.print(f"[dim]Compaction agent failed{err_msg} — aggressive truncation with summary[/dim]")
             keep = min(6, len(messages))
-            system_msgs = [m for m in messages if isinstance(m, SystemMessage)]
-            other_msgs = [m for m in messages if not isinstance(m, SystemMessage)]
-            messages.clear()
-            messages.extend(system_msgs)
-            messages.extend(other_msgs[-keep:])
+            removed = _truncate_to_recent_messages(messages, keep)
+            # Generate a basic summary from the removed messages
+            fallback = CompactionService.fallback_summary(head_msgs if head_msgs else removed)
+            self._pending_summary = fallback
+            self._compaction_summary = fallback
+            self._compaction.compaction_count += 1
             if via_events():
                 await ui_events.emit(StatusFinished(
                     status_id="compaction",
-                    label=f"Compaction fallback kept last {keep} messages",
+                    label=f"Compaction fallback kept last {keep} messages (with extracted summary)",
                     ok=False,
                     remove=False,
                 ))
-            return messages[:max(0, len(messages) - keep)], None
+            return removed, None
 
         if summary:
             keep_from = len(head_msgs)
@@ -154,7 +193,7 @@ class GraphCompactionMixin:
 
         return head_msgs, tail_id
 
-    async def _ask_compact(self, total_tokens: int) -> bool:
+    async def _ask_compact(self: GraphCompactionHost, total_tokens: int) -> bool:
         choices = [
             ("Compact", "compact", "Summarize older context and continue"),
             ("Skip once", "skip", "Continue without compacting this turn"),
@@ -167,7 +206,7 @@ class GraphCompactionMixin:
         ui.print(f"  [yellow]Context is large ({total_tokens} tokens); compacting automatically.[/yellow]")
         return True
 
-    async def _persist_compaction(self, head_messages: list) -> None:
+    async def _persist_compaction(self: GraphCompactionHost, head_messages: list) -> None:
         if getattr(self, "_session", None) is None:
             return
         if hasattr(self, "_persist_runtime_state"):
@@ -179,42 +218,24 @@ class GraphCompactionMixin:
 
         await delete_messages_through(self._session.id, last_message_id)
 
-    async def _compact_session_history(self, *, force: bool = True) -> bool:
+    async def _compact_session_history(self: GraphCompactionHost, *, force: bool = True) -> bool:
         if getattr(self, "_session", None) is None:
             ui.print("[dim]No active session to compact.[/dim]")
             return False
 
-        from voidx.agent.attachments import parse_structured_content
         from voidx.memory.session import load_messages
 
         rows = await load_messages(self._session.id)
-        messages = []
-        for row in rows:
-            msg_id = str(row.id) if row.id is not None else None
-            if row.role == "system":
-                messages.append(SystemMessage(content=row.content, id=msg_id))
-            elif row.role == "user":
-                messages.append(HumanMessage(
-                    content=parse_structured_content(row.content, row.content_format),
-                    id=msg_id,
-                ))
-            elif row.role == "assistant":
-                messages.append(AIMessage(
-                    content=parse_structured_content(row.content, row.content_format),
-                    tool_calls=row.tool_calls or [],
-                    id=msg_id,
-                ))
-            elif row.role == "tool":
-                messages.append(ToolMessage(
-                    content=row.content,
-                    tool_call_id=row.tool_call_id or "",
-                    id=msg_id,
-                ))
+        messages = messages_from_rows(rows)
 
         head, _tail_id = await self._maybe_compact(messages, rows, force=force, ask=False)
         return bool(head)
 
-    async def _run_compaction_agent(self, head_messages: list, previous_summary: str | None) -> str | None:
+    async def _run_compaction_agent(
+        self: GraphCompactionHost,
+        head_messages: list,
+        previous_summary: str | None,
+    ) -> str | None:
         """Run the compaction agent to generate a structured summary."""
         from voidx.agent.agents import COMPACTION_PROMPT
 
@@ -266,3 +287,16 @@ def _max_persisted_message_id(messages: list) -> int | None:
         except (TypeError, ValueError):
             continue
     return max(ids) if ids else None
+
+
+def _truncate_to_recent_messages(messages: list, keep: int) -> list:
+    original = list(messages)
+    system_msgs = [m for m in original if isinstance(m, SystemMessage)]
+    other_msgs = [m for m in original if not isinstance(m, SystemMessage)]
+    tail_msgs = other_msgs[-keep:] if keep > 0 else []
+    retained_ids = {id(m) for m in [*system_msgs, *tail_msgs]}
+    removed = [m for m in original if id(m) not in retained_ids]
+    messages.clear()
+    messages.extend(system_msgs)
+    messages.extend(tail_msgs)
+    return removed

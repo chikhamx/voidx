@@ -4,7 +4,7 @@ from __future__ import annotations
 
 from contextvars import ContextVar
 
-from voidx.ui.console import VoidConsole
+from voidx.ui.output.console import VoidConsole
 
 ui = VoidConsole()
 console = ui.console

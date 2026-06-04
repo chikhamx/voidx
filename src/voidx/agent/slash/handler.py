@@ -2,14 +2,15 @@
 
 from __future__ import annotations
 
+from inspect import isawaitable
 from typing import TYPE_CHECKING
 
-from voidx.agent.slash_components.code_ide import SlashCodeIdeMixin
-from voidx.agent.slash_components.lsp import SlashLspMixin
-from voidx.agent.slash_components.mcp import SlashMcpMixin
-from voidx.agent.slash_components.model import SlashModelMixin
-from voidx.agent.slash_components.skills import SlashSkillsMixin
-from voidx.agent.slash_components.runtime import PROVIDERS, _select_from_list, _w, ui
+from voidx.agent.slash.code_ide import SlashCodeIdeMixin
+from voidx.agent.slash.lsp import SlashLspMixin
+from voidx.agent.slash.mcp import SlashMcpMixin
+from voidx.agent.slash.model import SlashModelMixin
+from voidx.agent.slash.skills import SlashSkillsMixin
+from voidx.agent.slash.runtime import PROVIDERS, _select_from_list, _w, ui
 
 if TYPE_CHECKING:
     from voidx.agent.graph import VoidXGraph
@@ -26,107 +27,104 @@ class SlashHandler(SlashCodeIdeMixin, SlashLspMixin, SlashSkillsMixin, SlashMcpM
         self._g = graph
 
     async def dispatch(self, inp: str) -> bool:
-        from voidx.ui.commands import COMMANDS
-
         parts = inp.split(None, 1)
         cmd = parts[0]
         args = parts[1] if len(parts) > 1 else ""
 
-        known = [n for n, _ in COMMANDS if n == cmd]
-        if not known:
-            return False
-
-        ui.print()
-
-        if cmd in ("/exit", "/quit"):
-            return True
-
-        if cmd == "/clear":
-            await self._clear()
-        elif cmd == "/code-ide":
-            await self._code_ide(args)
-        elif cmd == "/list":
-            await self._list_sessions()
-        elif cmd.startswith("/resume"):
-            await self._resume(inp)
-        elif cmd.startswith("/title"):
-            await self._set_title(inp)
-        elif cmd == "/mode":
-            await self._mode(args)
-        elif cmd == "/goal":
-            await self._goal(args)
-        elif cmd == "/plan":
+        async def set_plan() -> None:
             self._set_interaction_mode("plan")
             if hasattr(self._g, "_persist_runtime_state"):
                 await self._g._persist_runtime_state()
-        elif cmd == "/unplan":
+
+        async def set_auto() -> None:
             self._set_interaction_mode("auto")
             if hasattr(self._g, "_persist_runtime_state"):
                 await self._g._persist_runtime_state()
-        elif cmd.startswith("/allow"):
+
+        def allow_tool() -> None:
             tool = args or cmd.removeprefix("/allow").strip()
             if tool:
                 self._g._permission.allow(tool)
-        elif cmd.startswith("/deny"):
+
+        def deny_tool() -> None:
             tool = args or cmd.removeprefix("/deny").strip()
             if tool:
                 self._g._permission.deny(tool)
-        elif cmd == "/permissions":
-            ui.print(self._g._permission.show_rules())
-        elif cmd == "/permission-mode":
-            await self._permission_mode(args)
-        elif cmd == "/sandbox":
-            self._sandbox(args)
-        elif cmd == "/approval":
-            self._approval(args)
-        elif cmd == "/usage":
-            self._usage()
-        elif cmd == "/mcp":
-            await self._mcp(args)
-        elif cmd == "/lsp":
-            await self._lsp(args)
-        elif cmd == "/skills":
-            await self._skills(args)
-        elif cmd == "/paste":
-            self._paste_clipboard_image()
-        elif cmd.startswith("/debug"):
-            self._debug(args)
-        elif cmd == "/compact":
+
+        async def compact() -> None:
             compacted = await self._g._compact_session_history(force=True)
             if compacted:
                 ui.print("[dim]Compacted context.[/dim]")
             else:
                 ui.print("[dim]Nothing to compact.[/dim]")
-        elif cmd == "/diff":
-            await self._show_diff()
-        elif cmd == "/tavily":
-            await self._tavily(args)
-        elif cmd == "/model":
-            if args == "new":
-                await self._model_new()
-            elif args == "list":
-                await self._model_list()
-            elif args == "test" or args.startswith("test "):
-                target = args.removeprefix("test").strip()
-                await self._model_test(target)
-            elif args == "del" or args.startswith("del "):
-                target = args.removeprefix("del").strip()
-                await self._model_del(target)
-            elif args == "switch" or args.startswith("switch "):
-                target = args.removeprefix("switch").strip()
-                await self._model_switch(target)
-            elif args == "reasoning" or args.startswith("reasoning "):
-                target = args.removeprefix("reasoning").strip()
-                await self._model_reasoning(target)
-            elif args:
-                await self._switch_model(args)
-            else:
-                await self._model_switch("")
-        elif cmd == "/help":
+
+        def show_help() -> None:
+            from voidx.ui.commands import COMMANDS
+
             ui.print("[bold]Commands:[/bold]")
             for name, desc in COMMANDS:
                 ui.print(f"  [cyan]{name}[/cyan] — {desc}")
+
+        handlers = {
+            "/exit": lambda: None,
+            "/quit": lambda: None,
+            "/clear": self._clear,
+            "/code-ide": lambda: self._code_ide(args),
+            "/list": self._list_sessions,
+            "/resume": lambda: self._resume(inp),
+            "/title": lambda: self._set_title(inp),
+            "/mode": lambda: self._mode(args),
+            "/goal": lambda: self._goal(args),
+            "/plan": set_plan,
+            "/unplan": set_auto,
+            "/allow": allow_tool,
+            "/deny": deny_tool,
+            "/permissions": lambda: ui.print(self._g._permission.show_rules()),
+            "/permission-mode": lambda: self._permission_mode(args),
+            "/sandbox": lambda: self._sandbox(args),
+            "/approval": lambda: self._approval(args),
+            "/usage": self._usage,
+            "/mcp": lambda: self._mcp(args),
+            "/lsp": lambda: self._lsp(args),
+            "/skills": lambda: self._skills(args),
+            "/paste": self._paste_clipboard_image,
+            "/debug": lambda: self._debug(args),
+            "/compact": compact,
+            "/diff": self._show_diff,
+            "/tavily": lambda: self._tavily(args),
+            "/model": lambda: self._dispatch_model(args),
+            "/help": show_help,
+        }
+        handler = handlers.get(cmd)
+        if handler is None:
+            return False
+
+        result = handler()
+        if isawaitable(result):
+            await result
         return True
+
+    async def _dispatch_model(self, args: str) -> None:
+        if args == "new":
+            await self._model_new()
+        elif args == "list":
+            await self._model_list()
+        elif args == "test" or args.startswith("test "):
+            target = args.removeprefix("test").strip()
+            await self._model_test(target)
+        elif args == "del" or args.startswith("del "):
+            target = args.removeprefix("del").strip()
+            await self._model_del(target)
+        elif args == "switch" or args.startswith("switch "):
+            target = args.removeprefix("switch").strip()
+            await self._model_switch(target)
+        elif args == "reasoning" or args.startswith("reasoning "):
+            target = args.removeprefix("reasoning").strip()
+            await self._model_reasoning(target)
+        elif args:
+            await self._switch_model(args)
+        else:
+            await self._model_switch("")
 
     def _set_interaction_mode(self, mode: str) -> None:
         from voidx.agent.runtime_context import InteractionMode
@@ -346,7 +344,7 @@ class SlashHandler(SlashCodeIdeMixin, SlashLspMixin, SlashSkillsMixin, SlashMcpM
         ui.error(result.message)
 
     async def _show_diff(self) -> None:
-        from voidx.ui.diff import git_diff, git_diff_stat
+        from voidx.ui.output.diff import git_diff, git_diff_stat
         stat = git_diff_stat(self._g._workspace)
         if stat:
             ui.print(f"[bold]Changes:[/bold]\n{stat}\n")
@@ -369,19 +367,18 @@ class SlashHandler(SlashCodeIdeMixin, SlashLspMixin, SlashSkillsMixin, SlashMcpM
                 "title": "New session",
                 "message_count": 0,
             })
-            self._g._tracker._todos = []
+            self._g._tracker.clear_todos()
             self._g._permission.clear_session_permissions()
             stats = getattr(self._g, "_usage_stats", None)
             if stats is not None:
                 stats.reset()
-        from voidx.ui.session_changes import session_tracker
+        from voidx.ui.session import session_tracker
         session_tracker.clear()
-        from voidx.ui.dock import get_dock
+        from voidx.ui.output.dock import get_dock
         active_dock = get_dock()
         if active_dock is not None:
             active_dock.reset()
         await self._g._show_startup()
-        ui.print("[dim]✓ Session cleared — ready for a new conversation[/dim]")
 
     async def _list_sessions(self) -> None:
         from voidx.memory.session import list_sessions
@@ -404,11 +401,24 @@ class SlashHandler(SlashCodeIdeMixin, SlashLspMixin, SlashSkillsMixin, SlashMcpM
             await self._resume(f"/resume {sessions[idx].id}")
 
     async def _resume(self, cmd: str) -> None:
-        from voidx.memory.session import get_session
+        from voidx.memory.session import get_session, list_sessions
         sid = cmd.removeprefix("/resume").strip()
         if not sid:
-            ui.error("Usage: /resume <session_id>")
-            return
+            sessions = await list_sessions()
+            if not sessions:
+                ui.print("[dim]No saved sessions.[/dim]")
+                return
+            items = []
+            for s in sessions:
+                title = s.title[:50] + ("..." if len(s.title) > 50 else "")
+                items.append(f"{s.id[:8]} | {title} | {getattr(s, 'updated_at', '')[:16]}")
+            idx = None
+            if getattr(self._g, "_app", None):
+                idx = await _select_from_list(self._g._app, "Resume session?", items)
+            if idx is None:
+                ui.print("[dim]Cancelled.[/dim]")
+                return
+            sid = sessions[idx].id
         session = await get_session(sid)
         if not session:
             ui.error(f"Session not found: {sid}")
@@ -418,11 +428,11 @@ class SlashHandler(SlashCodeIdeMixin, SlashLspMixin, SlashSkillsMixin, SlashMcpM
         self._g.config.workspace = session.workspace
         if hasattr(self._g, "_restore_runtime_state"):
             await self._g._restore_runtime_state()
-        from voidx.ui.dock import get_dock
+        from voidx.ui.output.dock import get_dock
         active_dock = get_dock()
         if active_dock is not None:
             active_dock.reset()
-        await self._g._show_startup(append_transcript=True)
+        await self._g._restore_transcript_snapshot(append=True)
         ui.print(f"[dim]Resumed: {session.id} — {session.title} ({session.message_count} msgs)[/dim]")
 
     async def _set_title(self, cmd: str) -> None:
@@ -444,23 +454,30 @@ class SlashHandler(SlashCodeIdeMixin, SlashLspMixin, SlashSkillsMixin, SlashMcpM
         if not args or args.strip() == "show":
             key = settings.get_tavily_api_key()
             if key:
-                masked = key[:4] + "****" + key[-4:] if len(key) > 8 else key
-                ui.print(f"Tavily API key: [cyan]{masked}[/cyan]")
+                ui.print(f"Tavily API key: [cyan]{self._mask_key(key)}[/cyan]")
             else:
                 ui.print("[dim]Tavily API key not configured. Using DuckDuckGo fallback.[/dim]")
-            ui.print("[dim]Usage: /tavily set <api_key> | /tavily delete[/dim]")
+            ui.print("[dim]Usage: /tavily set | /tavily delete[/dim]")
             return
 
-        if args.startswith("set "):
-            api_key = args[4:].strip()
-            if api_key:
-                settings.set_tavily_api_key(api_key)
-                masked = api_key[:4] + "****" + api_key[-4:] if len(api_key) > 8 else api_key
-                ui.print(f"Tavily API key saved: [cyan]{masked}[/cyan]")
-            else:
-                ui.error("Usage: /tavily set <api_key>")
+        parts = args.split(None, 1)
+        action = parts[0].strip().lower() if parts else ""
+        if action == "set":
+            if len(parts) > 1 and parts[1].strip():
+                ui.error("Do not include the API key in command text. Use /tavily set.")
+                return
+            api_key = await self._prompt("Tavily API key", default="", secret=True)
+            if api_key is None:
+                ui.print("[dim]Cancelled.[/dim]")
+                return
+            api_key = api_key.strip()
+            if not api_key:
+                ui.error("Tavily API key is required.")
+                return
+            settings.set_tavily_api_key(api_key)
+            ui.print(f"Tavily API key saved: [cyan]{self._mask_key(api_key)}[/cyan]")
         elif args.strip() == "delete":
             settings.delete_tavily_api_key()
             ui.print("[dim]Tavily API key deleted. Using DuckDuckGo fallback.[/dim]")
         else:
-            ui.print("[dim]Usage: /tavily [set <api_key>|delete|show][/dim]")
+            ui.print("[dim]Usage: /tavily [set|delete|show][/dim]")

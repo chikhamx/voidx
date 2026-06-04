@@ -4,17 +4,21 @@ from pathlib import Path
 from types import MethodType, SimpleNamespace
 
 import pytest
+from langchain_core.messages import AIMessage
 
 sys.path.insert(0, str(Path(__file__).parent.parent.parent / "src"))
 
 from voidx.agent.slash import SlashHandler
-from voidx.agent.graph_components.run_loop import GraphRunLoopMixin
+from voidx.agent.graph import VoidXGraph
+from voidx.agent.graph.run_loop import GraphRunLoopMixin
 from voidx.agent.runtime_context import InteractionMode, TaskIntent
 from voidx.agent.task_state import TaskPhase, TaskRun, TaskRunStatus, TaskState
+from voidx.config import Config
 from voidx.llm.usage import UsageStats
 from voidx.memory.runtime_state import RuntimeStateSnapshot, save_runtime_state
-from voidx.memory.session import create_session, load_messages
-from voidx.ui.dock import BottomInputDock, set_dock
+from voidx.memory.session import MessageRow, create_session, load_messages, save_message
+from voidx.tools.task_tracker import TaskTracker
+from voidx.ui.output.dock import BottomInputDock, set_dock
 
 
 class FakeTui:
@@ -23,8 +27,6 @@ class FakeTui:
     def __init__(self, status, commands):
         self.status = status
         self.commands = commands
-        self.begun_outputs: list[str] = []
-        self.hidden_outputs = 0
         FakeTui.instances.append(self)
 
     async def run(self, on_submit):
@@ -33,18 +35,6 @@ class FakeTui:
 
     def consume_quiet_command(self, command: str) -> bool:
         return command == "/model reasoning"
-
-    def hide_command_output(self) -> None:
-        self.hidden_outputs += 1
-
-    def begin_command_output(self, title: str) -> None:
-        self.begun_outputs.append(title)
-
-    def append_command_output(self, text: str) -> None:
-        return None
-
-    def command_output_width(self) -> int:
-        return 80
 
 
 def _graph(session=None, workspace: str = "/tmp/workspace") -> GraphRunLoopMixin:
@@ -64,15 +54,15 @@ def _graph(session=None, workspace: str = "/tmp/workspace") -> GraphRunLoopMixin
     graph._usage_stats = UsageStats()
     graph._debug = False
     graph._plan_mode = False
-    graph._tracker = SimpleNamespace(_todos=[])
+    graph._tracker = TaskTracker()
     return graph
 
 
 @pytest.mark.asyncio
-async def test_quiet_slash_command_does_not_open_command_output(monkeypatch):
+async def test_quiet_slash_command_dispatches_without_turn(monkeypatch):
     FakeTui.instances = []
     monkeypatch.setattr("voidx.ui.tui.PureTui", FakeTui)
-    monkeypatch.setattr("voidx.agent.graph_components.run_loop.show_startup", lambda **_: None)
+    monkeypatch.setattr("voidx.agent.graph.run_loop.show_startup", lambda **_: None)
 
     graph = GraphRunLoopMixin()
     graph._session = None
@@ -98,14 +88,11 @@ async def test_quiet_slash_command_does_not_open_command_output(monkeypatch):
 
     await graph.run()
 
-    app = FakeTui.instances[0]
     assert dispatched == ["/model reasoning"]
-    assert app.begun_outputs == []
-    assert app.hidden_outputs == 2
 
 
 @pytest.mark.asyncio
-async def test_clear_reprints_startup_after_reset(tmp_path):
+async def test_clear_reprints_startup(tmp_path):
     session = await create_session(
         workspace=str(tmp_path),
         provider="mimo",
@@ -139,7 +126,7 @@ async def test_clear_reprints_startup_after_reset(tmp_path):
 
 
 @pytest.mark.asyncio
-async def test_resume_reprints_startup_before_restored_transcript(tmp_path):
+async def test_resume_does_not_reprint_startup(tmp_path):
     session = await create_session(
         workspace=str(tmp_path),
         provider="mimo",
@@ -164,11 +151,10 @@ async def test_resume_reprints_startup_before_restored_transcript(tmp_path):
 
         rendered_lines = test_dock.tree.render(120)
         rendered = "\n".join(rendered_lines)
-        startup_index = next(i for i, line in enumerate(rendered_lines) if "voidx v" in line)
-        restored_index = next(i for i, line in enumerate(rendered_lines) if "restored transcript" in line)
+        assert "voidx v" not in rendered
         assert restore_calls == [True]
-        assert startup_index < restored_index
         assert "old transcript" not in rendered
+        assert "restored transcript" in rendered
         assert graph._session.id == session.id
         assert graph._workspace == str(tmp_path)
         assert graph.config.workspace == str(tmp_path)
@@ -273,3 +259,43 @@ async def test_run_once_cancel_deletes_pending_user_message(tmp_path):
         test_dock.deactivate()
         test_dock.reset()
         set_dock(None)
+
+
+@pytest.mark.asyncio
+async def test_large_session_truncation_adds_context_notice(tmp_path):
+    session = await create_session(workspace=str(tmp_path))
+    for index in range(501):
+        await save_message(MessageRow(
+            session_id=session.id,
+            role="user" if index % 2 == 0 else "assistant",
+            content=f"message {index}",
+        ))
+
+    graph = VoidXGraph(Config(workspace=str(tmp_path)), api_key=None, session=session)
+    graph._compaction.is_overflow = lambda _tokens: False
+    graph._compaction.prune = lambda _messages: None
+    captured: dict[str, list] = {}
+
+    class FakeGraph:
+        async def ainvoke(self, initial, _config):
+            await graph._prepare_with_stream(initial)
+            captured["messages"] = list(initial["messages"])
+            return {"messages": list(initial["messages"]) + [AIMessage(content="ok")]}
+
+    graph.graph = FakeGraph()
+
+    test_dock = BottomInputDock()
+    set_dock(test_dock)
+    test_dock.begin_capture()
+    try:
+        await graph._run_once("current request")
+    finally:
+        test_dock.deactivate()
+        test_dock.reset()
+        set_dock(None)
+
+    system_content = captured["messages"][0].content
+    assert "Long Summary" in system_content
+    assert "301 older persisted messages were omitted" in system_content
+    assert all(getattr(message, "content", None) != "message 0" for message in captured["messages"])
+    assert any(getattr(message, "content", None) == "message 500" for message in captured["messages"])

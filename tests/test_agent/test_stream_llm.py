@@ -7,7 +7,7 @@ from langchain_core.messages import AIMessage, AIMessageChunk, HumanMessage, Sys
 
 sys.path.insert(0, str(Path(__file__).parent.parent.parent / "src"))
 
-from voidx.agent.graph import _stream_llm
+from voidx.agent.graph.streaming import stream_llm as _stream_llm
 from voidx.agent.graph import VoidXGraph
 from voidx.config import Config, ModelConfig
 from voidx.memory.context_frames import load_context_frames
@@ -59,6 +59,20 @@ class FakeDsmlStreamingModel:
             '<｜｜DSML｜｜parameter name="pattern" string="true">permissions</｜｜DSML｜｜parameter>\n'
             '</｜｜DSML｜｜invoke>\n'
             '</｜｜DSML｜｜tool_calls>'
+        ))
+
+
+class FakeMalformedDsmlStreamingModel:
+    def bind_tools(self, tool_defs):
+        return self
+
+    async def astream(self, messages):
+        yield AIMessageChunk(content=(
+            '<|||DSML||tool_calls>\n'
+            '<||DSML||invoke name="grep">\n'
+            '<||DSML||parameter name="path" string="true">src/voidx/ui/commands.py</||DSML||parameter>\n'
+            '</||DSML||invoke>\n'
+            '</|||DSML||tool_calls>'
         ))
 
 
@@ -180,6 +194,16 @@ async def test_stream_llm_parses_dsml_text_tool_calls():
 
 
 @pytest.mark.asyncio
+async def test_stream_llm_ignores_malformed_dsml_pipe_runs():
+    renderer = FakeRenderer()
+
+    msg = await _stream_llm(FakeMalformedDsmlStreamingModel(), [], renderer, "anthropic")
+
+    assert msg.tool_calls == []
+    assert "<|||DSML||tool_calls>" in msg.content
+
+
+@pytest.mark.asyncio
 async def test_stream_llm_strips_legacy_dsml_blocks_before_replay():
     renderer = FakeRenderer()
     model = FakeStreamingModel()
@@ -220,7 +244,7 @@ async def test_stream_llm_preserves_usage_metadata():
 
 @pytest.mark.asyncio
 async def test_call_llm_resolves_protocol_for_mimo_provider(tmp_path, monkeypatch):
-    import voidx.agent.graph as graph_module
+    import voidx.agent.graph.core as graph_module
 
     monkeypatch.setattr(graph_module, "StreamingRenderer", FakeRenderer)
 
@@ -246,7 +270,7 @@ async def test_call_llm_resolves_protocol_for_mimo_provider(tmp_path, monkeypatc
 
 @pytest.mark.asyncio
 async def test_call_llm_updates_usage_stats(tmp_path, monkeypatch):
-    import voidx.agent.graph as graph_module
+    import voidx.agent.graph.core as graph_module
 
     monkeypatch.setattr(graph_module, "StreamingRenderer", FakeRenderer)
 
@@ -276,7 +300,7 @@ async def test_call_llm_updates_usage_stats(tmp_path, monkeypatch):
 
 @pytest.mark.asyncio
 async def test_call_llm_persists_context_frame_for_session(tmp_path, monkeypatch):
-    import voidx.agent.graph as graph_module
+    import voidx.agent.graph.core as graph_module
 
     monkeypatch.setattr(graph_module, "StreamingRenderer", FakeRenderer)
     session = await create_session(workspace=str(tmp_path))
@@ -323,7 +347,7 @@ async def test_call_llm_persists_context_frame_for_session(tmp_path, monkeypatch
 
 @pytest.mark.asyncio
 async def test_call_llm_does_not_bind_tools_when_no_tool_step_budget(tmp_path, monkeypatch):
-    import voidx.agent.graph as graph_module
+    import voidx.agent.graph.core as graph_module
 
     monkeypatch.setattr(graph_module, "StreamingRenderer", FakeRenderer)
 
@@ -350,7 +374,7 @@ async def test_call_llm_does_not_bind_tools_when_no_tool_step_budget(tmp_path, m
 
 @pytest.mark.asyncio
 async def test_call_llm_filters_lsp_tools_when_no_lsp_server_is_available(tmp_path, monkeypatch):
-    import voidx.agent.graph as graph_module
+    import voidx.agent.graph.core as graph_module
 
     monkeypatch.setattr(graph_module, "StreamingRenderer", FakeRenderer)
 
@@ -381,7 +405,7 @@ async def test_call_llm_filters_lsp_tools_when_no_lsp_server_is_available(tmp_pa
 
 @pytest.mark.asyncio
 async def test_call_llm_keeps_lsp_tools_when_a_lsp_server_is_available(tmp_path, monkeypatch):
-    import voidx.agent.graph as graph_module
+    import voidx.agent.graph.core as graph_module
 
     monkeypatch.setattr(graph_module, "StreamingRenderer", FakeRenderer)
 

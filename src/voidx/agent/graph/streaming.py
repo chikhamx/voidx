@@ -9,7 +9,7 @@ import uuid
 
 from langchain_core.messages import AIMessage, AIMessageChunk, ToolMessage
 
-from voidx.ui.console import StreamingRenderer
+from voidx.ui.output.console import StreamingRenderer
 
 _REPLAY_UNSAFE_BLOCK_TYPES = {
     "thinking",
@@ -17,16 +17,17 @@ _REPLAY_UNSAFE_BLOCK_TYPES = {
     "reasoning",
     "reasoning_content",
 }
+_DSML_MARKER_RE = r"\|\|DSML\|\|"
 _DSML_TOOL_CALLS_RE = re.compile(
-    r"<\|+DSML\|+tool_calls\b[^>]*>.*?</\|+DSML\|+tool_calls>",
+    rf"<{_DSML_MARKER_RE}tool_calls\b[^>]*>.*?</{_DSML_MARKER_RE}tool_calls>",
     re.DOTALL,
 )
 _DSML_INVOKE_RE = re.compile(
-    r"<\|+DSML\|+invoke\b([^>]*)>(.*?)</\|+DSML\|+invoke>",
+    rf"<{_DSML_MARKER_RE}invoke\b([^>]*)>(.*?)</{_DSML_MARKER_RE}invoke>",
     re.DOTALL,
 )
 _DSML_PARAMETER_RE = re.compile(
-    r"<\|+DSML\|+parameter\b([^>]*)>(.*?)</\|+DSML\|+parameter>",
+    rf"<{_DSML_MARKER_RE}parameter\b([^>]*)>(.*?)</{_DSML_MARKER_RE}parameter>",
     re.DOTALL,
 )
 _DSML_ATTR_RE = re.compile(r'([A-Za-z_][\w:-]*)="([^"]*)"')
@@ -73,9 +74,7 @@ async def stream_llm(
     if not chunks:
         return AIMessage(content="")
 
-    merged = chunks[0]
-    for c in chunks[1:]:
-        merged = merged + c
+    merged = chunks[0] + chunks[1:] if len(chunks) > 1 else chunks[0]
 
     _, dsml_tool_calls = _extract_dsml_tool_calls(merged.content)
     content = _sanitize_ai_content_for_replay(merged.content)

@@ -2,7 +2,7 @@
 
 from __future__ import annotations
 
-from voidx.agent.slash_components.runtime import ui
+from voidx.agent.slash.runtime import ui
 from voidx.lsp.config import lsp_config_path
 
 

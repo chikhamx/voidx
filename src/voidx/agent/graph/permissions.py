@@ -2,21 +2,26 @@
 
 from __future__ import annotations
 
-from voidx.agent.graph_components.runtime import ui
+from typing import TYPE_CHECKING
+
+from voidx.agent.graph.runtime import ui
 from voidx.permission.engine import (
     PermissionContext,
     authorize_tool_call,
     build_pattern,
     classify_tool_call,
 )
-from voidx.ui.events import PermissionToolDetail
+from voidx.ui.output.events import PermissionToolDetail
+
+if TYPE_CHECKING:
+    from voidx.agent.graph.contracts import GraphPermissionHost
 
 
 class GraphPermissionMixin:
     _needs_failure_check: dict[str, dict]
 
     async def _authorize_tool_calls(
-        self,
+        self: GraphPermissionHost,
         tool_calls: list[dict],
         agent_name: str,
         plan_mode: bool,
@@ -26,9 +31,6 @@ class GraphPermissionMixin:
         approved: list[dict] = []
         denied: list[tuple[dict, str]] = []
         need_ask: list[dict] = []
-
-        if not hasattr(self, '_needs_failure_check'):
-            self._needs_failure_check = {}
 
         context = PermissionContext.from_service(
             self._permission,
@@ -54,7 +56,7 @@ class GraphPermissionMixin:
         return approved, denied
 
     async def _ask_and_apply_permission(
-        self,
+        self: GraphPermissionHost,
         need_ask: list[dict],
         approved: list[dict],
         denied: list[tuple[dict, str]],
@@ -76,7 +78,7 @@ class GraphPermissionMixin:
             for tc in need_ask:
                 denied.append((tc, f"User denied: {tc['name']}"))
 
-    async def _ask_tool_permission(self, tool_calls: list[dict]) -> str | None:
+    async def _ask_tool_permission(self: GraphPermissionHost, tool_calls: list[dict]) -> str | None:
         tool_list = ", ".join(t["name"] for t in tool_calls)
         choices = [
             ("Yes, always", "a", "Allow these tools for this session"),
@@ -93,12 +95,12 @@ class GraphPermissionMixin:
             return await self._app.ask_choice("Allow tool use?", choices, details=details)
         return "n"
 
-    def _notice_permission_result(self, message: str) -> None:
+    def _notice_permission_result(self: GraphPermissionHost, message: str) -> None:
         if self._show_permission_output(message):
             return
         ui.print(f"[dim]✓ {message}[/dim]")
 
-    def _notify_tool_failure(self, tc: dict, result) -> None:
+    def _notify_tool_failure(self: GraphPermissionHost, tc: dict, result) -> None:
         """Notify user when an auto-approved tool (on-failure policy) fails.
 
         The tool was auto-allowed by the on-failure policy and then
@@ -111,23 +113,16 @@ class GraphPermissionMixin:
         if not self._show_permission_output(message):
             ui.print(f"\n[yellow]{message}[/yellow]")
 
-    def _show_permission_output(self, message: str) -> bool:
-        app = self._app
-        if not app:
-            return False
-        show_transient = getattr(app, "show_transient_output", None)
-        if callable(show_transient):
-            show_transient(message, title="Permission")
-            return True
-        app.begin_command_output("Permission")
-        app.append_command_output(message)
+    def _show_permission_output(self: GraphPermissionHost, message: str) -> bool:
+        from voidx.ui.output.dock import dock
+        dock.append_message(message)
         return True
 
-    def _clear_failure_check(self, cid: str) -> None:
+    def _clear_failure_check(self: GraphPermissionHost, cid: str) -> None:
         """Remove a tool call ID from on-failure tracking (used on success)."""
         self._needs_failure_check.pop(cid, None)
 
-    def _permission_tool_details(self, tool_calls: list[dict]) -> list[PermissionToolDetail]:
+    def _permission_tool_details(self: GraphPermissionHost, tool_calls: list[dict]) -> list[PermissionToolDetail]:
         details: list[PermissionToolDetail] = []
         for call in tool_calls:
             classified = classify_tool_call(call)

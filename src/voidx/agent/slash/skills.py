@@ -2,7 +2,7 @@
 
 from __future__ import annotations
 
-from voidx.agent.slash_components.runtime import ui
+from voidx.agent.slash.runtime import ui
 from voidx.skills.registry import SkillRegistry
 from voidx.skills.service import SkillService
 
