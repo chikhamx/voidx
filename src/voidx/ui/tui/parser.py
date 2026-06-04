@@ -129,6 +129,10 @@ class _InputParserMixin:
                 self._request_exit()
                 needs_render = True
                 input_region_only = False
+            elif action == "paste_image":
+                self._paste_clipboard_image_quiet()
+                needs_render = True
+                input_region_only = False
             elif action == "noop":
                 pass
             else:
@@ -160,8 +164,14 @@ class _InputParserMixin:
         return True
 
     def _insert_pasted_text(self, text: str) -> None:
-        """Insert pasted text, converting line endings to newlines in the editor."""
+        """Insert pasted text, converting line endings to newlines in the editor.
+
+        When the pasted text is empty (e.g. Cmd+V with an image on macOS where
+        the terminal sends an empty bracketed-paste), fall back to reading the
+        system clipboard for an image.
+        """
         if not text:
+            self._paste_clipboard_image_quiet()
             return
         # Normalise line endings: \r\n → \n, \r → \n
         text = text.replace("\r\n", "\n").replace("\r", "\n")
@@ -207,6 +217,10 @@ class _InputParserMixin:
             return (1, "submit")
         if first == 0x0D:
             return (1, "submit")
+
+        # Ctrl+V: paste image from clipboard
+        if first == 0x16:
+            return (1, "paste_image")
 
         # Tab
         if first == 0x09:

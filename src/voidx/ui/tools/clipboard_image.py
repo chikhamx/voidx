@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+import os
 import platform
 import secrets
 import subprocess
@@ -22,36 +23,35 @@ CaptureClipboardPng = Callable[[Path], str]
 CompressImage = Callable[[Path, Path], bool]
 NameFactory = Callable[[], str]
 
-_CAPTURE_SCRIPT = r"""
-ObjC.import('AppKit');
-ObjC.import('Foundation');
+_CAPTURE_SCRIPT = """set outPath to do shell script "echo $VOIDX_CLIP_OUT"
+use framework "AppKit"
+use framework "Foundation"
 
-function run(argv) {
-  const outPath = argv[0];
-  const pasteboard = $.NSPasteboard.generalPasteboard;
-  let data = pasteboard.dataForType('public.png');
+set pb to current application's NSPasteboard's generalPasteboard()
 
-  if (!data) {
-    const image = $.NSImage.alloc.initWithPasteboard(pasteboard);
-    if (!image) {
-      return 'no_image';
-    }
-    const tiff = image.TIFFRepresentation;
-    if (!tiff) {
-      return 'no_image';
-    }
-    const rep = $.NSBitmapImageRep.imageRepWithData(tiff);
-    if (!rep) {
-      return 'no_image';
-    }
-    data = rep.representationUsingTypeProperties($.NSPNGFileType, $({}));
-  }
+-- Try PNG data directly
+set pngData to pb's dataForType:"public.png"
+if pngData is not missing value then
+	set theResult to pngData's writeToFile:outPath atomically:true
+	if theResult then return "ok"
+end if
 
-  if (!data) {
-    return 'no_image';
-  }
-  return data.writeToFileAtomically(outPath, true) ? 'ok' : 'write_failed';
-}
+-- Fall back to NSImage → TIFF → PNG
+set theImage to current application's NSImage's alloc()'s initWithPasteboard:pb
+if theImage is missing value then return "no_image"
+
+set theTIFF to theImage's TIFFRepresentation()
+if theTIFF is missing value then return "no_image"
+
+set theRep to current application's NSBitmapImageRep's imageRepWithData:theTIFF
+if theRep is missing value then return "no_image"
+
+set pngData to theRep's representationUsingType:(current application's NSPNGFileType) |properties|:(missing value)
+if pngData is missing value then return "no_image"
+
+set theResult to pngData's writeToFile:outPath atomically:true
+if theResult then return "ok"
+return "write_failed"
 """
 
 
@@ -122,11 +122,12 @@ def _capture_clipboard_png(output_path: Path) -> str:
         return "unsupported"
     try:
         result = subprocess.run(
-            ["osascript", "-l", "JavaScript", "-e", _CAPTURE_SCRIPT, str(output_path)],
+            ["osascript", "-e", _CAPTURE_SCRIPT],
             capture_output=True,
             text=True,
             timeout=8,
             check=False,
+            env={**os.environ, "VOIDX_CLIP_OUT": str(output_path)},
         )
     except FileNotFoundError:
         return "unsupported"

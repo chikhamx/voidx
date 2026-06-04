@@ -9,8 +9,10 @@ from __future__ import annotations
 import asyncio
 import io
 import os
+import platform
 import re
 import shutil
+import subprocess
 import sys
 import sys as _sys
 
@@ -159,6 +161,9 @@ class PureTui(_InputParserMixin, _InputEditorMixin, _PanelManagerMixin, _Termina
         # Bracketed paste: None when not pasting, bytes accumulator during paste
         self._paste_buffer: bytes | None = None
 
+        # Clipboard watcher state (macOS: Ctrl+V image paste)
+        self._clipboard_change_count: int = -1
+
     # ── public API ───────────────────────────────────────────────────────
 
     async def run(self, on_submit: SubmitHandler) -> None:
@@ -239,6 +244,25 @@ class PureTui(_InputParserMixin, _InputEditorMixin, _PanelManagerMixin, _Termina
             self._notice = result.message
         self.invalidate()
         return result
+
+    def _paste_clipboard_image_quiet(self) -> None:
+        self.paste_clipboard_image(quiet_no_image=True)
+
+    _CHANGE_COUNT_SCRIPT = (
+        'use framework "AppKit"\n'
+        "set pb to current application's NSPasteboard's generalPasteboard()\n"
+        "return (pb's changeCount) as text"
+    )
+
+    def _read_clipboard_change_count(self) -> int:
+        try:
+            result = subprocess.run(
+                ["osascript", "-e", self._CHANGE_COUNT_SCRIPT],
+                capture_output=True, text=True, timeout=2, check=False,
+            )
+            return int(result.stdout.strip()) if result.returncode == 0 else -1
+        except Exception:
+            return -1
 
     def queue_quiet_command(self, command: str) -> None:
         command = command.strip()
@@ -423,6 +447,9 @@ class PureTui(_InputParserMixin, _InputEditorMixin, _PanelManagerMixin, _Termina
             )
             new[6][termios.VMIN] = 1
             new[6][termios.VTIME] = 0
+            # Disable VLNEXT (Ctrl+V literal-next) so 0x16 reaches os.read()
+            if hasattr(termios, "VLNEXT"):
+                new[6][termios.VLNEXT] = 0
             # Keep BRKINT so Ctrl+C sends SIGINT as fallback
             new[0] = new[0] & ~(termios.IGNBRK | termios.ICRNL)
             new[0] |= termios.BRKINT
