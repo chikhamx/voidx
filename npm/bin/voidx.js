@@ -8,6 +8,13 @@ const path = require("path");
 
 const pkg = require("../package.json");
 
+// ── Configuration ──────────────────────────────────────────────────────────
+
+const PBS_TAG = "20260602";
+const PBS_PYTHON_MAJOR = "3.12";
+
+// ── Main ───────────────────────────────────────────────────────────────────
+
 function main(argv = process.argv.slice(2), env = process.env) {
   try {
     const python = selectPython(env);
@@ -23,14 +30,17 @@ function main(argv = process.argv.slice(2), env = process.env) {
       process.exit(code === null ? 1 : code);
     });
     child.on("error", (error) => {
-      fail(`Failed to start voidx from npm-managed environment: ${error.message}`);
+      fail(`Failed to start voidx: ${error.message}`);
     });
   } catch (error) {
     fail(error.message);
   }
 }
 
+// ── Python selection ───────────────────────────────────────────────────────
+
 function selectPython(env) {
+  // 1. Explicit override
   const explicit = env.VOIDX_PYTHON;
   if (explicit) {
     const candidate = { command: explicit, args: [], label: explicit };
@@ -46,6 +56,17 @@ function selectPython(env) {
     return candidate;
   }
 
+  // 2. Bundled Python (downloaded by postinstall)
+  const bundledBin = resolveBundledPythonBin(env);
+  if (bundledBin && fs.existsSync(bundledBin)) {
+    const candidate = { command: bundledBin, args: [], label: "bundled" };
+    const probe = probePython(candidate);
+    if (probe.ok && isCompatible(probe.version)) {
+      return candidate;
+    }
+  }
+
+  // 3. System Python
   const candidates = [
     { command: "python3", args: [], label: "python3" },
     { command: "python", args: [], label: "python" },
@@ -54,7 +75,7 @@ function selectPython(env) {
     { command: "python3.11", args: [], label: "python3.11" },
   ];
   if (process.platform === "win32") {
-    candidates.push({ command: "py", args: ["-3.11"], label: "py -3.11" });
+    candidates.push({ command: "py", args: ["-3"], label: "py -3" });
   }
 
   const oldVersions = [];
@@ -76,24 +97,8 @@ function selectPython(env) {
     );
   }
   throw new Error(
-    `voidx npm launcher requires Python 3.11+. ${hint}`
+    `voidx requires Python 3.11+. No Python found.\n${hint}`
   );
-}
-
-function pythonHint() {
-  if (process.platform === "darwin") {
-    return "Install Python 3.11+ via: brew install python@3.12\n" +
-      "Or point to an existing install: VOIDX_PYTHON=/path/to/python3 voidx";
-  }
-  if (process.platform === "linux") {
-    return "Install Python 3.11+ via your package manager (apt/dnf).\n" +
-      "Or point to an existing install: VOIDX_PYTHON=/path/to/python3 voidx";
-  }
-  if (process.platform === "win32") {
-    return "Install Python 3.11+ from https://python.org/downloads\n" +
-      "Or: VOIDX_PYTHON=C:\\Python312\\python.exe voidx";
-  }
-  return "Install Python 3.11+ or set VOIDX_PYTHON.";
 }
 
 function probePython(candidate) {
@@ -131,6 +136,69 @@ function isCompatible(version) {
   return version[0] > 3 || (version[0] === 3 && version[1] >= 11);
 }
 
+function pythonHint() {
+  if (process.platform === "darwin") {
+    return "Install Python 3.11+ via: brew install python@3.12\n" +
+      "Or reinstall voidx to get the bundled Python.";
+  }
+  if (process.platform === "linux") {
+    return "Install Python 3.11+ via your package manager (apt/dnf).\n" +
+      "Or reinstall voidx to get the bundled Python.";
+  }
+  if (process.platform === "win32") {
+    return "Install Python 3.11+ from https://python.org/downloads\n" +
+      "Or reinstall voidx to get the bundled Python.";
+  }
+  return "Install Python 3.11+ or reinstall voidx.";
+}
+
+// ── Paths ──────────────────────────────────────────────────────────────────
+
+function resolveDataHome(env) {
+  if (env.VOIDX_NPM_HOME) {
+    return path.resolve(env.VOIDX_NPM_HOME);
+  }
+  if (process.platform === "win32") {
+    return env.LOCALAPPDATA || path.join(os.homedir(), "AppData", "Local");
+  }
+  return env.XDG_DATA_HOME || path.join(os.homedir(), ".local", "share");
+}
+
+function resolvePythonDir(env) {
+  if (env.VOIDX_NPM_PYTHON_DIR) {
+    return path.resolve(env.VOIDX_NPM_PYTHON_DIR);
+  }
+  return path.join(resolveDataHome(env), "voidx", "python");
+}
+
+function resolveBundledPythonBin(env) {
+  const pythonDir = resolvePythonDir(env);
+  return process.platform === "win32"
+    ? path.join(pythonDir, "python", "python.exe")
+    : path.join(pythonDir, "python", "bin", `python${PBS_PYTHON_MAJOR}`);
+}
+
+function resolveVenvDir(env) {
+  if (env.VOIDX_NPM_VENV) {
+    return path.resolve(env.VOIDX_NPM_VENV);
+  }
+  return path.join(resolveDataHome(env), "voidx", "npm-venv");
+}
+
+function resolveVenvPython(venvDir) {
+  return process.platform === "win32"
+    ? path.join(venvDir, "Scripts", "python.exe")
+    : path.join(venvDir, "bin", "python");
+}
+
+function resolveVoidxExecutable(venvDir) {
+  return process.platform === "win32"
+    ? path.join(venvDir, "Scripts", "voidx.exe")
+    : path.join(venvDir, "bin", "voidx");
+}
+
+// ── Venv setup ─────────────────────────────────────────────────────────────
+
 function ensureVenv(python, venvDir, env) {
   const executable = resolveVoidxExecutable(venvDir);
   if (env.VOIDX_NPM_SKIP_BOOTSTRAP === "1") {
@@ -142,7 +210,8 @@ function ensureVenv(python, venvDir, env) {
 
   const markerPath = path.join(venvDir, ".voidx-npm-version");
   const packageSpec = env.VOIDX_NPM_PACKAGE_SPEC || `voidx==${pkg.version}`;
-  const marker = `${pkg.version}\n${packageSpec}\n`;
+  // Marker must match postinstall.js format (includes PBS_TAG + PBS_CPYTHON)
+  const marker = `${pkg.version}\n${packageSpec}\n${PBS_TAG}\n3.12.13\n`;
   if (fs.existsSync(executable) && readFile(markerPath) === marker) {
     debug(env, `Using cached npm-managed environment at ${venvDir}`);
     return;
@@ -209,34 +278,7 @@ function ensureVenv(python, venvDir, env) {
   fs.writeFileSync(markerPath, marker);
 }
 
-function resolveVenvDir(env) {
-  if (env.VOIDX_NPM_VENV) {
-    return path.resolve(env.VOIDX_NPM_VENV);
-  }
-  return path.join(resolveDataHome(env), "voidx", "npm-venv");
-}
-
-function resolveDataHome(env) {
-  if (env.VOIDX_NPM_HOME) {
-    return path.resolve(env.VOIDX_NPM_HOME);
-  }
-  if (process.platform === "win32") {
-    return env.LOCALAPPDATA || path.join(os.homedir(), "AppData", "Local");
-  }
-  return env.XDG_DATA_HOME || path.join(os.homedir(), ".local", "share");
-}
-
-function resolveVenvPython(venvDir) {
-  return process.platform === "win32"
-    ? path.join(venvDir, "Scripts", "python.exe")
-    : path.join(venvDir, "bin", "python");
-}
-
-function resolveVoidxExecutable(venvDir) {
-  return process.platform === "win32"
-    ? path.join(venvDir, "Scripts", "voidx.exe")
-    : path.join(venvDir, "bin", "voidx");
-}
+// ── Helpers ────────────────────────────────────────────────────────────────
 
 function readFile(filePath) {
   try {
@@ -266,5 +308,6 @@ module.exports = {
   parseVersion,
   resolveDataHome,
   resolveVenvDir,
+  resolveBundledPythonBin,
   selectPython,
 };

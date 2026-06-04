@@ -11,6 +11,15 @@
   "engines": {
     "node": ">=16"
   },
+  "os": [
+    "darwin",
+    "linux",
+    "win32"
+  ],
+  "cpu": [
+    "x64",
+    "arm64"
+  ],
   "keywords": [
     "ai",
     "agent",
