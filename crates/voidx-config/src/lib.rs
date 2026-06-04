@@ -111,6 +111,10 @@ pub struct Config {
     pub approval_reviewer: ApprovalReviewer,
     #[serde(default = "default_permission_mode")]
     pub permission_mode: PermissionMode,
+    #[serde(default)]
+    pub sandbox_extra_paths: Vec<PathBuf>,
+    #[serde(default)]
+    pub code_ide: CodeIde,
 }
 
 fn default_sandbox_mode() -> SandboxMode {
@@ -123,6 +127,36 @@ fn default_approval_policy() -> ApprovalPolicy {
 
 fn default_permission_mode() -> PermissionMode {
     PermissionMode::Default
+}
+
+impl Default for Config {
+    fn default() -> Self {
+        Self {
+            workspace: PathBuf::from("."),
+            model: ModelConfig::default(),
+            sandbox_mode: SandboxMode::WorkspaceWrite,
+            sandbox_workspace_write: false,
+            approval_policy: ApprovalPolicy::Untrusted,
+            approval_reviewer: ApprovalReviewer::User,
+            permission_mode: PermissionMode::Default,
+            sandbox_extra_paths: Vec::new(),
+            code_ide: CodeIde::Auto,
+        }
+    }
+}
+
+impl Default for ModelConfig {
+    fn default() -> Self {
+        Self {
+            provider: "anthropic".to_string(),
+            model: "claude-haiku-4-5".to_string(),
+            protocol: None,
+            base_url: None,
+            temperature: 0.7,
+            max_tokens: 8192,
+            reasoning_effort: None,
+        }
+    }
 }
 
 // ── Permission mode defaults ───────────────────────────────────────────────

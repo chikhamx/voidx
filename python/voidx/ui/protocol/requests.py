@@ -6,7 +6,7 @@ from typing import Annotated, Literal, TypeAlias
 
 from pydantic import BaseModel, ConfigDict, Field, TypeAdapter
 
-from voidx.ui.event_components.schema import PermissionToolDetail
+from voidx.ui.output.events.schema import PermissionToolDetail
 
 
 class UiRequestBase(BaseModel):

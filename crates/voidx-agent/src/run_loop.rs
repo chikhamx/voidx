@@ -6,7 +6,7 @@ use crate::agents::{get_agent, AgentDef};
 use crate::compaction::{compact, should_compact};
 use crate::error::AgentError;
 use crate::prompt;
-use crate::state::AgentState;
+use crate::state::{AgentState, InteractionMode};
 use crate::streaming::StreamAccumulator;
 use crate::VoidXAgent;
 use futures::StreamExt;
@@ -33,14 +33,21 @@ pub async fn run(
 ) -> Result<RunResult, AgentError> {
     let agent_def = get_agent(&state.agent).unwrap_or_else(|| crate::agents::orchestrator());
 
-    // Build initial context
-    let context = prompt::build_context(
-        &agent.config,
-        &agent_def,
-        state.interaction_mode,
-        if state.compaction_summary.is_empty() { None } else { Some(state.compaction_summary.as_str()) },
-        None,
-    );
+    // Build initial context with full runtime state
+    let instructions = prompt::load_instructions(&agent.config.workspace);
+    let context = prompt::build_context(&prompt::ContextOptions {
+        config: &agent.config,
+        agent_def: &agent_def,
+        interaction_mode: state.interaction_mode,
+        summary: if state.compaction_summary.is_empty() { None } else { Some(state.compaction_summary.as_str()) },
+        instructions: instructions.as_deref(),
+        skills: None,
+        task_intent: Some(state.task_intent),
+        goal: if state.goal.is_empty() { None } else { Some(state.goal.as_str()) },
+        goal_phase: Some(state.goal_phase),
+        goal_status: Some(state.goal_status),
+        approved_scope: if state.approved_scope.is_empty() { None } else { Some(state.approved_scope.as_str()) },
+    });
 
     // Insert system prompt at the front
     state.messages.insert(0, ChatMessage::system(&context.system_prompt));
@@ -121,6 +128,7 @@ pub async fn run(
             workspace: agent.config.workspace.clone(),
             session_id: session_id.to_string(),
             agent: state.agent.clone(),
+            sandbox_extra_paths: agent.config.sandbox_extra_paths.clone(),
             ..Default::default()
         };
 
@@ -152,7 +160,7 @@ pub async fn run(
                     });
                     continue;
                 }
-                PermissionVerdict::Allow => {}
+                PermissionVerdict::Allow | PermissionVerdict::AllowWithFailureCheck { .. } => {}
             }
 
             // Handle subagent delegation

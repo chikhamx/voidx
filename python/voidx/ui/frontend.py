@@ -4,7 +4,7 @@ from __future__ import annotations
 
 from typing import Protocol
 
-from voidx.ui.event_components.schema import UiEvent
+from voidx.ui.output.events.schema import UiEvent
 from voidx.ui.protocol import UiRequest, UiResponse
 
 

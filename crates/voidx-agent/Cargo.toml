@@ -18,6 +18,11 @@ thiserror.workspace = true
 tracing.workspace = true
 async-trait.workspace = true
 futures.workspace = true
+chrono.workspace = true
+regex.workspace = true
+base64 = "0.22"
+pathdiff = "0.2"
+dirs.workspace = true
 
 [dev-dependencies]
 tempfile.workspace = true

@@ -8,4 +8,4 @@ pub mod manager;
 
 pub use client::McpClient;
 pub use error::McpError;
-pub use manager::McpManager;
+pub use manager::{McpManager, McpRuntimeStatus, McpServerConfig};

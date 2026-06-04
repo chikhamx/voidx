@@ -17,7 +17,7 @@ cli = typer.Typer(
 
 
 def _vconsole():
-    from voidx.ui.console import VoidConsole
+    from voidx.ui.output.console import VoidConsole
     return VoidConsole()
 
 
@@ -32,7 +32,6 @@ async def _select_start_session(
     from voidx.memory.session import (
         create_session,
         get_session,
-        latest_session_for_workspace,
     )
 
     if resume:
@@ -43,13 +42,6 @@ async def _select_start_session(
         title = session.title[:60] + ("..." if len(session.title) > 60 else "")
         vconsole.print(f"[dim]Resumed {session.id}: {title}[/dim]")
         return session
-
-    if not new_session:
-        session = await latest_session_for_workspace(workspace)
-        if session:
-            title = session.title[:60] + ("..." if len(session.title) > 60 else "")
-            vconsole.print(f"[dim]Resumed {session.id}: {title}[/dim]")
-            return session
 
     return await create_session(
         workspace=workspace,
@@ -69,7 +61,7 @@ async def _run_chat(
     web_host: str = "127.0.0.1",
     web_port: int = 0,
 ) -> None:
-    from voidx.ui.dock import set_dock, BottomInputDock
+    from voidx.ui.output.dock import set_dock, BottomInputDock
     set_dock(BottomInputDock())
 
     from voidx.config import Settings

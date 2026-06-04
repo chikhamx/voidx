@@ -41,6 +41,17 @@ impl ToolRegistry {
         self.register(Arc::new(crate::glob::GlobTool));
         self.register(Arc::new(crate::webfetch::WebFetchTool::default()));
         self.register(Arc::new(crate::websearch::WebSearchTool::default()));
+        // RepoMap
+        self.register(Arc::new(crate::repomap::RepoMapTool));
+        // Todo & Task Status
+        self.register(Arc::new(crate::todo::TodoWriteTool));
+        self.register(Arc::new(crate::task_status::TaskStatusTool));
+        // LSP tools
+        self.register(Arc::new(crate::lsp::LspDiagnosticsTool));
+        self.register(Arc::new(crate::lsp::LspSymbolsTool));
+        self.register(Arc::new(crate::lsp::LspDefinitionTool));
+        self.register(Arc::new(crate::lsp::LspReferencesTool));
+        self.register(Arc::new(crate::lsp::LspFormatTool));
     }
 
     /// Register a tool dynamically.
@@ -106,6 +117,26 @@ impl ToolRegistry {
         self.tools.keys().map(|s| s.as_str()).collect()
     }
 
+    /// Retain only the tools listed in allowed_ids.
+    pub fn filter_tools(&mut self, allowed_ids: &[&str]) {
+        let allowed: std::collections::HashSet<&str> = allowed_ids.iter().copied().collect();
+        let to_remove: Vec<String> = self
+            .defs
+            .keys()
+            .filter(|id| !allowed.contains(id.as_str()))
+            .cloned()
+            .collect();
+        for id in to_remove {
+            self.defs.remove(&id);
+            self.tools.remove(&id);
+        }
+    }
+
+    /// Check if a tool is registered.
+    pub fn has(&self, tool_id: &str) -> bool {
+        self.tools.contains_key(tool_id)
+    }
+
     /// Execute a tool by id.
     pub async fn execute(
         &self,
@@ -140,6 +171,14 @@ mod tests {
         assert!(ids.contains(&"file_edit"));
         assert!(ids.contains(&"grep"));
         assert!(ids.contains(&"glob"));
+        assert!(ids.contains(&"repo_map"));
+        assert!(ids.contains(&"todo"));
+        assert!(ids.contains(&"task_status"));
+        assert!(ids.contains(&"lsp_diagnostics"));
+        assert!(ids.contains(&"lsp_symbols"));
+        assert!(ids.contains(&"lsp_definition"));
+        assert!(ids.contains(&"lsp_references"));
+        assert!(ids.contains(&"lsp_format"));
     }
 
     #[test]

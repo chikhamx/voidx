@@ -4,8 +4,12 @@
 
 pub mod base;
 pub mod error;
+pub mod lsp;
 pub mod registry;
+pub mod repomap;
 pub mod schema;
+pub mod task_status;
+pub mod todo;
 
 mod bash;
 mod file_ops;

@@ -4,6 +4,7 @@
 
 pub mod catalog;
 pub mod error;
+pub mod instruction;
 pub mod protocol;
 pub mod reasoning;
 pub mod streaming;

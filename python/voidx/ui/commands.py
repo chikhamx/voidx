@@ -56,7 +56,7 @@ COMMANDS: list[tuple[str, str]] = [
     ("/permission-mode read-only", "Block all writes"),
     ("/permissions", "Show current permission rules"),
     ("/plan", "Enter plan mode (writes and write-capable bash blocked)"),
-    ("/resume", "Resume a session by ID"),
+    ("/resume", "Resume a session (select from list or specify ID)"),
     ("/sandbox", "Set sandbox mode: read-only|workspace-write|danger-full-access"),
     ("/sandbox danger-full-access", "No sandbox restrictions"),
     ("/sandbox read-only", "Read-only sandbox"),

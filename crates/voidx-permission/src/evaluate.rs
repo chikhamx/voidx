@@ -9,4 +9,6 @@ pub enum PermissionVerdict {
     Deny(String),
     /// Ask the user for approval before executing.
     AskUser(String),
+    /// Tool call is allowed, but check for failures after execution.
+    AllowWithFailureCheck { reason: String },
 }

@@ -3,13 +3,19 @@
 //! Ported from `src/voidx/agent/graph.py` + related modules.
 
 pub mod agents;
+pub mod attachments;
 pub mod compaction;
+pub mod contracts;
 pub mod error;
+pub mod message_rows;
 pub mod prompt;
 pub mod run_loop;
 pub mod state;
 pub mod streaming;
 pub mod subagent;
+pub mod tool_execution;
+pub mod tool_filters;
+pub mod tool_messages;
 
 pub use agents::AgentDef;
 pub use error::AgentError;
