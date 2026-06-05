@@ -9,13 +9,13 @@ voidx is a terminal AI coding agent built in Python.
 macOS / Linux:
 
 ```bash
-curl -fsSL https://raw.githubusercontent.com/chikhamx/voidx/main/scripts/install.sh | bash
+curl -fsSL https://raw.githubusercontent.com/chikhamx/voidx/master/scripts/install.sh | bash
 ```
 
 Windows (PowerShell):
 
 ```powershell
-irm https://raw.githubusercontent.com/chikhamx/voidx/main/scripts/install.ps1 | iex
+irm https://raw.githubusercontent.com/chikhamx/voidx/master/scripts/install.ps1 | iex
 ```
 
 The installer downloads a standalone Python runtime and sets up voidx in an
@@ -32,6 +32,15 @@ voidx
 
 ```bash
 npm install -g @chikhamx/voidx
+voidx
+```
+
+### From source
+
+```bash
+git clone https://github.com/chikhamx/voidx.git
+cd voidx
+pip install -e .
 voidx
 ```
 
