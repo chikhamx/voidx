@@ -1191,6 +1191,105 @@ def test_tree_incremental_render_shifts_click_map():
     assert "read file" in inc2[tool_rows2[0]]
 
 
+def test_tree_line_map_tracks_non_clickable_body_rows():
+    from voidx.ui.output.tree import OutputTree
+
+    tree = OutputTree()
+    message = tree.new_node(
+        tree.root,
+        node_type="message",
+        header="header",
+        body_lines=["body"],
+    )
+
+    lines, line_map = tree.render_with_line_map(80)
+
+    assert lines == ["header", "body"]
+    assert line_map == {0: message.id, 1: message.id}
+    assert tree._click_map == {}
+
+
+def test_safe_flush_line_count_stops_at_unsettled_ancestor():
+    test_dock = dock
+    test_dock.begin_capture()
+    test_dock.start_turn("demo")
+    tool = test_dock.start_tool(
+        "Reading",
+        'file_path="x.py"',
+        tool_name="read",
+        raw_args={"file_path": "x.py"},
+    )
+    test_dock.finish_tool_node(tool, "Read", 0.1, True)
+    test_dock.append_tool_result("result")
+
+    lines = test_dock.tree.render(100)
+    blocked_limit = test_dock.safe_flush_line_count(100, 0)
+
+    assert blocked_limit < len(lines)
+    assert "Read" in "\n".join(lines[blocked_limit:])
+
+    test_dock.set_stream("● final answer")
+    lines = test_dock.tree.render(100)
+    advanced_limit = test_dock.safe_flush_line_count(100, 0)
+
+    assert advanced_limit > blocked_limit
+    assert "Read" in "\n".join(lines[:advanced_limit])
+    assert "final answer" in "\n".join(lines[advanced_limit:])
+
+
+def test_safe_flush_line_count_requires_settled_ancestors():
+    test_dock = dock
+    test_dock.begin_capture()
+    parent = test_dock.tree.new_node(
+        test_dock.tree.root,
+        node_type="subagent",
+        header="explore agent",
+        collapsed=False,
+    )
+    child = test_dock.tree.new_node(
+        parent,
+        node_type="assistant",
+        header="found auth flow",
+        collapsed=False,
+    )
+    test_dock.mark_node_unsettled(parent)
+    test_dock.mark_node_settled(child)
+
+    assert test_dock.safe_flush_line_count(100, 0) == 0
+
+    test_dock.mark_node_settled(parent)
+    assert test_dock.safe_flush_line_count(100, 0) == len(test_dock.tree.render(100))
+
+
+def test_non_tty_flush_committed_prints_settled_prefix_before_idle(tmp_path, monkeypatch):
+    class FakeStdout:
+        def __init__(self) -> None:
+            self.text = ""
+
+        def write(self, value: str) -> int:
+            self.text += value
+            return len(value)
+
+        def flush(self) -> None:
+            pass
+
+    fake_stdout = FakeStdout()
+    monkeypatch.setattr(sys, "stdout", fake_stdout)
+
+    test_dock = dock
+    test_dock.begin_capture()
+    test_dock.start_turn("hello")
+
+    tui = _tui(tmp_path)
+    tui._tty = False
+    tui._console = Console(file=None, force_terminal=False, width=80, height=24, _environ={})
+
+    tui._flush_committed()
+
+    assert "hello" in fake_stdout.text
+    assert tui._committed_line_count > 0
+
+
 def test_dump_transcript_log_writes_plain_text(tmp_path):
     tui = _tui(tmp_path)
 
@@ -1476,6 +1575,114 @@ def test_render_frame_clips_long_transcript_to_terminal_height(tmp_path, monkeyp
     assert tui._last_frame_rows <= 12
     assert "frame line 41" in fake_stdout.text
     assert "frame line 40" not in fake_stdout.text
+
+
+def test_render_frame_clips_single_wrapped_transcript_line_to_terminal_height(
+    tmp_path, monkeypatch
+):
+    class FakeStdout:
+        def __init__(self) -> None:
+            self.text = ""
+
+        def write(self, value: str) -> int:
+            self.text += value
+            return len(value)
+
+        def flush(self) -> None:
+            pass
+
+    fake_stdout = FakeStdout()
+    monkeypatch.setattr(sys, "stdout", fake_stdout)
+    monkeypatch.setattr(
+        shutil,
+        "get_terminal_size",
+        lambda fallback=None: os.terminal_size((80, 12)),
+    )
+
+    tui = _tui(tmp_path)
+    tui._tty = True
+    tui._console = Console(file=None, force_terminal=True, width=80, height=12, _environ={})
+    dock.tree.new_node(
+        parent=dock.tree.root,
+        node_type="message",
+        header="long " + ("x" * 2000),
+        collapsed=False,
+    )
+
+    tui._render_frame()
+
+    assert tui._last_frame_rows <= 12
+    assert "❯" in fake_stdout.text
+
+
+def test_input_display_rows_uses_frame_width_boundary(tmp_path):
+    tui = _tui(tmp_path)
+    tui._console = Console(file=None, force_terminal=True, width=80, height=24, _environ={})
+
+    width = tui._frame_width()
+    max_first_line_cells = width - tui._input_line_prefix_width(0) - 1
+
+    tui._input_lines = ["x" * max_first_line_cells]
+    tui._cursor_col = max_first_line_cells
+    assert tui._input_display_rows(width) == [1]
+
+    tui._input_lines = ["x" * (max_first_line_cells + 1)]
+    tui._cursor_col = max_first_line_cells + 1
+    assert tui._input_display_rows(width) == [2]
+
+
+def test_wrapped_input_keeps_prompt_on_first_content_row(tmp_path):
+    tui = _tui(tmp_path)
+    tui._console = Console(file=None, force_terminal=True, width=80, height=24, _environ={})
+    tui._input_lines = ["x" * 80]
+    tui._cursor_col = 80
+
+    ansi = tui._capture_renderable(tui._render_bottom_impl(), tui._frame_width())
+    plain_lines = [
+        re.sub(r"\x1b\[[0-9;]*[a-zA-Z]", "", line).rstrip()
+        for line in ansi.splitlines()
+    ]
+
+    assert plain_lines[1].startswith("❯ x")
+
+
+def test_non_tty_flush_prints_transcript_without_live_frame_chrome(tmp_path, monkeypatch):
+    class FakeStdout:
+        def __init__(self) -> None:
+            self.text = ""
+
+        def write(self, value: str) -> int:
+            self.text += value
+            return len(value)
+
+        def flush(self) -> None:
+            pass
+
+    fake_stdout = FakeStdout()
+    monkeypatch.setattr(sys, "stdout", fake_stdout)
+
+    tui = _tui(tmp_path)
+    tui._tty = False
+    tui._console = Console(file=None, force_terminal=False, width=80, height=24, _environ={})
+    dock.tree.new_node(
+        parent=dock.tree.root,
+        node_type="startup",
+        header="[bold]Welcome[/bold]",
+        body_lines=["plain line"],
+        collapsed=False,
+    )
+
+    tui._flush_committed(force=True)
+
+    assert "Welcome" in fake_stdout.text
+    assert "plain line" in fake_stdout.text
+    assert "─" not in fake_stdout.text
+    assert "❯ " not in fake_stdout.text
+
+    fake_stdout.text = ""
+    tui._render_frame()
+
+    assert fake_stdout.text == ""
 
 
 def test_typing_redraws_input_region_without_rewriting_transcript(tmp_path, monkeypatch):

@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+import asyncio
 import os
 import shlex
 import sys
@@ -41,7 +42,7 @@ class SlashMcpMixin:
             return
 
         ui.print("[bold]Configure MCP server[/bold]")
-        choices = ["voidx-web (built-in)", "Tavily MCP", "Custom command"]
+        choices = ["voidx-web (built-in)", "Tavily MCP", "URL (SSE / Streamable HTTP)", "Custom command"]
         idx = await _select_from_list(self._g._app, "MCP server type", choices)
         if idx is None:
             ui.print("[dim]Cancelled.[/dim]")
@@ -64,6 +65,10 @@ class SlashMcpMixin:
                 "search": WebToolRoute(backend="mcp", server=server.name, tool="tavily_search"),
                 "fetch": WebToolRoute(backend="mcp", server=server.name, tool="tavily_extract"),
             }
+        elif choices[idx].startswith("URL"):
+            server = await self._mcp_url_config()
+            if server is None:
+                return
         else:
             server = await self._mcp_custom_config()
             if server is None:
@@ -85,7 +90,10 @@ class SlashMcpMixin:
 
         manager = getattr(self._g, "_mcp_manager", None)
         if manager is not None:
-            await manager.restart_all()
+            try:
+                await asyncio.wait_for(manager.restart_all(), timeout=30.0)
+            except asyncio.TimeoutError:
+                ui.warn("MCP restart timed out; servers may still be connecting in the background.")
 
         ui.print(
             f"  [cyan]{server.name}[/cyan] [green]✓ configured[/green]"
@@ -180,6 +188,43 @@ class SlashMcpMixin:
         env = _parse_env_pairs(env_text)
         return McpServerConfig(name=name, command=command, args=args, env=env)
 
+    async def _mcp_url_config(self) -> McpServerConfig | None:
+        name = await self._prompt("Server name")
+        if name is None:
+            ui.print("[dim]Cancelled.[/dim]")
+            return None
+        name = name.strip()
+        if not name:
+            ui.error("Server name is required.")
+            return None
+
+        transport_choices = ["SSE (legacy)", "Streamable HTTP (MCP 2024-11-05)"]
+        t_idx = await _select_from_list(self._g._app, "Transport type", transport_choices)
+        if t_idx is None:
+            ui.print("[dim]Cancelled.[/dim]")
+            return None
+        transport = "sse" if t_idx == 0 else "streamable-http"
+
+        url_hint = "https://mcp.example.com/sse" if transport == "sse" else "http://127.0.0.1:52222/mcp/"
+        url = await self._prompt(f"URL (e.g. {url_hint})")
+        if url is None:
+            ui.print("[dim]Cancelled.[/dim]")
+            return None
+        url = url.strip()
+        if not url:
+            ui.error("URL is required.")
+            return None
+        if not url.startswith(("http://", "https://")):
+            ui.error("URL must start with http:// or https://")
+            return None
+
+        env_text = await self._prompt("Env VAR=value,VAR2=value2 (optional)", default="")
+        if env_text is None:
+            ui.print("[dim]Cancelled.[/dim]")
+            return None
+        env = _parse_env_pairs(env_text)
+        return McpServerConfig(name=name, url=url, transport=transport, env=env)
+
     async def _mcp_list(self) -> None:
         settings = self._g._settings
         if settings is None:
@@ -235,7 +280,10 @@ class SlashMcpMixin:
             path = self._g._settings.delete_mcp_server(name)
             manager = getattr(self._g, "_mcp_manager", None)
             if manager is not None:
-                await manager.restart_all()
+                try:
+                    await asyncio.wait_for(manager.restart_all(), timeout=30.0)
+                except asyncio.TimeoutError:
+                    ui.warn("MCP restart timed out after deletion; servers may still be reconnecting.")
             ui.print(f"[dim]'{name}' removed.[/dim]")
             ui.print(f"[dim]Cleaned {path}[/dim]")
 
@@ -247,7 +295,11 @@ class SlashMcpMixin:
         if manager is None:
             ui.error("No MCP manager available.")
             return
-        await manager.restart_all()
+        try:
+            await asyncio.wait_for(manager.restart_all(), timeout=30.0)
+        except asyncio.TimeoutError:
+            ui.warn("MCP restart timed out; servers may still be connecting in the background.")
+            return
         ui.print("[green]✓ MCP servers restarted[/green]")
 
     async def _mcp_tools(self, target: str) -> None:
@@ -257,7 +309,12 @@ class SlashMcpMixin:
                 ui.error("No MCP manager available.")
                 return
             try:
-                tools = await manager.list_tools_for_server(name)
+                tools = await asyncio.wait_for(
+                    manager.list_tools_for_server(name), timeout=15.0,
+                )
+            except asyncio.TimeoutError:
+                ui.error(f"Listing tools for {name} timed out.")
+                return
             except Exception as exc:
                 ui.error(f"Could not list tools for {name}: {exc}")
                 return
@@ -289,23 +346,30 @@ class SlashMcpMixin:
         await callback(names[idx])
 
     @staticmethod
-    async def _test_mcp_config(server: McpServerConfig):
+    async def _test_mcp_config(server: McpServerConfig, timeout: float = 30.0):
         from voidx.mcp.client import McpClient
 
         client = McpClient(server)
         try:
-            await client.start()
-            tools = await client.list_tools()
+            await asyncio.wait_for(client.start(), timeout=timeout)
+            tools = await asyncio.wait_for(client.list_tools(), timeout=timeout)
             return True, tools, ""
+        except asyncio.TimeoutError:
+            return False, [], f"connection timed out after {timeout:.0f}s"
         except Exception as exc:
             return False, [], str(exc)
         finally:
-            await client.stop()
+            try:
+                await asyncio.wait_for(client.stop(), timeout=5.0)
+            except (asyncio.TimeoutError, Exception):
+                pass
 
     @staticmethod
     def _print_mcp_status(status) -> None:
         if status.status == "connected":
             state = "[green]connected[/green]"
+        elif status.status == "connecting":
+            state = "[yellow]connecting…[/yellow]"
         elif status.status == "error":
             state = "[red]error[/red]"
         elif status.status == "disabled":

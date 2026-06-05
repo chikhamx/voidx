@@ -2,14 +2,12 @@
 
 from __future__ import annotations
 
-from dataclasses import dataclass
+from pydantic import BaseModel, Field
 
-from voidx.memory.session import _now
-from voidx.memory.store import _get_db, _write_lock
+from voidx.memory.store import _execute_commit, _fetch_all, _fetch_one, _now, _write_transaction
 
 
-@dataclass(frozen=True)
-class ModelProfileRow:
+class ModelProfileRow(BaseModel):
     name: str
     provider: str
     model: str
@@ -17,46 +15,45 @@ class ModelProfileRow:
     base_url: str | None = None
     protocol: str | None = None
 
-def list_model_profiles() -> list[ModelProfileRow]:
-    conn = _get_db()
-    rows = conn.execute(
+
+# ── async API ────────────────────────────────────────────────────────────
+
+
+async def list_model_profiles_async() -> list[ModelProfileRow]:
+    rows = await _fetch_all(
         """SELECT name, provider, model, api_key, base_url, protocol
            FROM model_profiles
            ORDER BY updated_at DESC, name ASC"""
-    ).fetchall()
+    )
     return [_row_to_profile(row) for row in rows]
 
 
-def get_model_profile(name: str) -> ModelProfileRow | None:
-    conn = _get_db()
-    row = conn.execute(
+async def get_model_profile_async(name: str) -> ModelProfileRow | None:
+    row = await _fetch_one(
         """SELECT name, provider, model, api_key, base_url, protocol
            FROM model_profiles
            WHERE name = ?""",
         (name,),
-    ).fetchone()
+    )
     return _row_to_profile(row) if row else None
 
 
-def first_model_profile_for_provider(provider: str) -> ModelProfileRow | None:
-    conn = _get_db()
-    row = conn.execute(
+async def first_model_profile_for_provider_async(provider: str) -> ModelProfileRow | None:
+    row = await _fetch_one(
         """SELECT name, provider, model, api_key, base_url, protocol
            FROM model_profiles
            WHERE provider = ?
            ORDER BY updated_at DESC, name ASC
            LIMIT 1""",
         (provider,),
-    ).fetchone()
+    )
     return _row_to_profile(row) if row else None
 
 
-def save_model_profile(profile: ModelProfileRow) -> None:
+async def save_model_profile_async(profile: ModelProfileRow) -> None:
     now = _now()
-    conn = _get_db()
-    with _write_lock:
-        conn.execute(
-            """INSERT INTO model_profiles
+    await _execute_commit(
+        """INSERT INTO model_profiles
                (name, provider, model, api_key, base_url, protocol, created_at, updated_at)
                VALUES (?, ?, ?, ?, ?, ?, ?, ?)
                ON CONFLICT(name) DO UPDATE SET
@@ -66,25 +63,23 @@ def save_model_profile(profile: ModelProfileRow) -> None:
                    base_url = excluded.base_url,
                    protocol = excluded.protocol,
                    updated_at = excluded.updated_at""",
-            (
-                profile.name,
-                profile.provider,
-                profile.model,
-                profile.api_key,
-                profile.base_url,
-                profile.protocol,
-                now,
-                now,
-            ),
-        )
-        conn.commit()
+        (
+            profile.name,
+            profile.provider,
+            profile.model,
+            profile.api_key,
+            profile.base_url,
+            profile.protocol,
+            now,
+            now,
+        ),
+    )
 
 
-def delete_model_profile(name: str) -> None:
-    conn = _get_db()
-    with _write_lock:
-        conn.execute("DELETE FROM model_profiles WHERE name = ?", (name,))
-        conn.commit()
+async def delete_model_profile_async(name: str) -> None:
+    await _execute_commit(
+        "DELETE FROM model_profiles WHERE name = ?", (name,)
+    )
 
 
 def _row_to_profile(row) -> ModelProfileRow:

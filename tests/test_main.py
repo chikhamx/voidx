@@ -22,54 +22,37 @@ class FakeConsole:
 
 
 @pytest.mark.asyncio
-async def test_start_session_default_creates_new_session(tmp_path):
-    workspace = str(tmp_path)
-    older = await create_session(workspace=workspace)
-    latest = await create_session(workspace=workspace)
-    await update_title(latest.id, "Latest session")
+async def test_start_session_default_returns_none():
+    """Without --resume, session creation is deferred to first user input."""
+    workspace = str(tmp_path) if (tmp_path := Path("/tmp/test_defer")) else "."
     console = FakeConsole()
-    selected = None
-    try:
-        selected = await _select_start_session(
-            workspace=workspace,
-            provider="anthropic",
-            model="claude",
-            resume=None,
-            new_session=False,
-            vconsole=console,
-        )
+    selected = await _select_start_session(
+        workspace=workspace,
+        provider="anthropic",
+        model="claude",
+        resume=None,
+        new_session=False,
+        vconsole=console,
+    )
 
-        assert selected.id not in {older.id, latest.id}
-        assert selected.workspace == workspace
-    finally:
-        await delete_session(older.id)
-        await delete_session(latest.id)
-        if selected is not None:
-            await delete_session(selected.id)
+    assert selected is None
 
 
 @pytest.mark.asyncio
-async def test_start_session_new_flag_skips_auto_resume(tmp_path):
-    workspace = str(tmp_path)
-    existing = await create_session(workspace=workspace)
+async def test_start_session_new_flag_returns_none():
+    """--new also defers session creation; no empty session is created."""
+    workspace = str(tmp_path) if (tmp_path := Path("/tmp/test_new_defer")) else "."
     console = FakeConsole()
-    selected = None
-    try:
-        selected = await _select_start_session(
-            workspace=workspace,
-            provider="anthropic",
-            model="claude",
-            resume=None,
-            new_session=True,
-            vconsole=console,
-        )
+    selected = await _select_start_session(
+        workspace=workspace,
+        provider="anthropic",
+        model="claude",
+        resume=None,
+        new_session=True,
+        vconsole=console,
+    )
 
-        assert selected.id != existing.id
-        assert selected.workspace == workspace
-    finally:
-        await delete_session(existing.id)
-        if selected is not None:
-            await delete_session(selected.id)
+    assert selected is None
 
 
 @pytest.mark.asyncio

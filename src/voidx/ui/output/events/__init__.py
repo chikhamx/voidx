@@ -341,6 +341,7 @@ class DockEventConsumer:
                     payload={"role_name": e.name, "description": e.description},
                 )
                 self._agent_nodes[e.agent_id] = node
+                self._dock.mark_node_unsettled(node)
                 self._dock.refresh()
                 return node
             case SubagentFinished() as e:
@@ -358,6 +359,7 @@ class DockEventConsumer:
                 node.elapsed = e.elapsed
                 node.collapsed = False
                 self._dock.tree.mark_dirty()
+                self._dock.mark_node_settled(node)
                 self._dock.refresh()
                 return node
             case InputSet() as e:

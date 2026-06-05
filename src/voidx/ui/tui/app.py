@@ -39,7 +39,6 @@ from voidx.ui.output.tree import OutputTree
 from voidx.ui.tui.helpers import (
     _ENTER_TERMINAL_SEQUENCE,
     _EXIT_TERMINAL_SEQUENCE,
-    _ANSI_STRIP_RE,
     _plain_line,
     _rendered_row_count,
     _escape_markup,
@@ -351,30 +350,44 @@ class PureTui(_InputParserMixin, _InputEditorMixin, _PanelManagerMixin, _Termina
     def _flush_committed(self, *, force: bool = False) -> None:
         """Flush completed content to terminal scrollback.
 
-        When the agent transitions from busy → idle, all tree lines that
-        were part of the active frame are printed to the terminal so they
-        become part of the native scrollback history.  The next render
-        frame then only covers the uncommitted (still-changing) tail.
+        During a busy turn, only the safe settled prefix is printed to
+        native scrollback.  When the agent transitions from busy → idle,
+        any remaining active frame content is flushed as the final fallback.
 
         With ``force=True``, flush regardless of busy-state transition
         (used for startup banner).
         """
-        if not force:
+        width = self._frame_width()
+        tree_lines = dock.tree.render(width)
+        total = len(tree_lines)
+
+        if force:
+            flush_limit = total
+        else:
             is_busy = self._busy
             was_busy = self._was_busy
             self._was_busy = is_busy
-            if not (was_busy and not is_busy):
-                return
+            if was_busy and not is_busy:
+                flush_limit = total
+            else:
+                flush_limit = min(
+                    dock.safe_flush_line_count(width, self._committed_line_count),
+                    total,
+                )
 
-        tree_lines = dock.tree.render(max((self._console.width or 80) - 1, 20))
-        total = len(tree_lines)
-        if total <= self._committed_line_count:
+        if flush_limit <= self._committed_line_count:
             return
 
-        flush_lines = tree_lines[self._committed_line_count:total]
-        self._committed_line_count = total
+        flush_lines = tree_lines[self._committed_line_count:flush_limit]
+        self._committed_line_count = flush_limit
 
-        if not self._tty or not flush_lines:
+        if not flush_lines:
+            return
+
+        if not self._tty:
+            for line in flush_lines:
+                sys.stdout.write(_plain_line(line).rstrip() + "\n")
+            sys.stdout.flush()
             return
 
         # Clear the current frame before flushing so that input box,
@@ -391,7 +404,6 @@ class PureTui(_InputParserMixin, _InputEditorMixin, _PanelManagerMixin, _Termina
             except Exception:
                 rendered_lines.append(Text(line))
 
-        width = max((self._console.width or 80) - 1, 20)
         flush_rows = _rendered_row_count(self._capture_renderable(Group(*rendered_lines), width))
 
         for rendered in rendered_lines:

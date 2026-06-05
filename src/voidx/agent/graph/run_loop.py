@@ -16,8 +16,9 @@ from voidx.agent.attachments import (
 )
 from voidx.agent.graph.runtime import ui
 from voidx.agent.message_rows import messages_from_rows
+from voidx.agent.runtime_context import TaskIntent
 from voidx.agent.state import AgentState
-from voidx.agent.task_state import resolve_turn_intent
+from voidx.agent.task_state import IntentResolution, PendingApproval, resolve_turn_intent
 from voidx.llm.provider import get_context_limit
 from voidx.memory.session import (
     MessageRow,
@@ -179,7 +180,7 @@ class GraphRunLoopMixin:
                 goal_phase=lambda: getattr(getattr(getattr(self, "_task_run", None), "phase", None), "value", "clarify"),
                 goal_status=lambda: getattr(getattr(getattr(self, "_task_run", None), "status", None), "value", "idle"),
                 goal_turn_count=lambda: getattr(getattr(self, "_task_run", None), "turn_count", 0),
-                goal_awaiting_approval=lambda: getattr(getattr(self, "_task_run", None), "awaiting_implementation_approval", False),
+                goal_awaiting_approval=lambda: bool(getattr(getattr(self, "_task_run", None), "pending_approval", None)),
                 mcp_servers=lambda: [
                     McpServerStatus(
                         name=s.name,
@@ -228,6 +229,11 @@ class GraphRunLoopMixin:
                 dock.append_message("\n".join(lsp_lines), markup=True)
 
         if hasattr(self, '_mcp_manager'):
+            servers = self._settings.list_mcp_servers() if self._settings else []
+            enabled = [s for s in servers if not s.disabled]
+            if enabled:
+                names = ", ".join(s.name for s in enabled)
+                dock.append_message(f"[dim]MCP connecting: {names}…[/dim]", markup=True)
             await self._mcp_manager.start_all()
 
         async def handle_user_input(user_input: str) -> bool:
@@ -310,7 +316,13 @@ class GraphRunLoopMixin:
                 ))
             else:
                 self._turn_node = dock.start_turn(payload.display_text)
-            session_msgs = await load_messages(self._session.id) if self._session else []
+            # Load session messages — use in-memory cache when available
+            if self._session_msg_cache is not None:
+                session_msgs = list(self._session_msg_cache)
+            else:
+                session_msgs = (await load_messages(self._session.id)) if self._session else []
+                if self._session:
+                    self._session_msg_cache = list(session_msgs)
             truncation_notice: str | None = None
             # Safety: if session is huge, only load recent messages
             if len(session_msgs) > 500:
@@ -349,12 +361,15 @@ class GraphRunLoopMixin:
                 getattr(self, "_task_state", None),
             )
             task_intent = intent_resolution.intent
-            implementation_allowed = intent_resolution.implementation_allowed
-            self._current_implementation_allowed = implementation_allowed
             goal_scope = (
                 task_run.goal
                 if interaction_mode == "goal" and task_run is not None and task_run.goal
                 else payload.title_text
+            )
+            pending_approval = _active_pending_approval(
+                getattr(self, "_task_state", None),
+                task_run,
+                interaction_mode,
             )
 
             saved_user_content, user_content_format = serialize_message_content(payload.content)
@@ -365,6 +380,15 @@ class GraphRunLoopMixin:
                 content_format=user_content_format,
                 created_at=_now(),
             ))
+            if self._session_msg_cache is not None:
+                self._session_msg_cache.append(MessageRow(
+                    id=user_message_id,
+                    session_id=self._session.id,
+                    role="user",
+                    content=saved_user_content,
+                    content_format=user_content_format,
+                    created_at=_now(),
+                ))
             self._any_messages_sent = True
 
             initial: AgentState = {
@@ -378,10 +402,8 @@ class GraphRunLoopMixin:
                 "plan_mode": self._plan_mode,
                 "interaction_mode": interaction_mode,
                 "task_intent": task_intent.value,
-                "implementation_allowed": implementation_allowed,
                 "intent_resolution_reason": intent_resolution.reason,
-                "awaiting_implementation_approval": intent_resolution.awaiting_implementation_approval,
-                "approved_scope": intent_resolution.approved_scope,
+                "pending_approval": _dump_pending_approval(pending_approval),
                 "goal": task_run.goal if task_run is not None else "",
                 "goal_phase": task_run.phase.value if task_run is not None else "",
                 "goal_status": task_run.status.value if task_run is not None else "",
@@ -402,43 +424,51 @@ class GraphRunLoopMixin:
                 await ui_events.emit(StatusFinished(status_id="turn:analyzing"))
 
             final = await self.graph.ainvoke(initial, {"recursion_limit": self.config.agent.recursion_limit})
+            final_task_intent = TaskIntent(final.get("task_intent", task_intent.value))
+            final_intent_resolution_reason = final.get(
+                "intent_resolution_reason",
+                intent_resolution.reason,
+            )
+            final_pending_approval = _load_pending_approval(final.get("pending_approval"))
+            final_scope = final_pending_approval.scope if final_pending_approval else goal_scope
+            final_resolution = IntentResolution(
+                intent=final_task_intent,
+                reason=final_intent_resolution_reason,
+                confirmed_approval=intent_resolution.confirmed_approval,
+            )
             if self.model is not None and hasattr(self, "_task_state"):
                 self._task_state.update_after_turn(
-                    intent_resolution,
+                    final_resolution,
                     payload.title_text,
-                    scope_text=goal_scope,
+                    scope_text=final_scope,
                 )
             if self.model is not None and interaction_mode == "goal" and task_run is not None:
                 task_run.update_after_turn(
-                    intent_resolution,
+                    final_resolution,
                     payload.title_text,
-                    scope_text=goal_scope,
+                    scope_text=final_scope,
                 )
+            if self.model is not None and task_run is not None:
+                task_run.merge_skill_runs(final.get("skill_runs", []))
             await save_message_runtime_snapshot(MessageRuntimeSnapshot(
                 message_id=user_message_id,
                 session_id=self._session.id,
                 interaction_mode=interaction_mode,
-                task_intent=task_intent,
-                implementation_allowed=implementation_allowed,
-                intent_resolution_reason=intent_resolution.reason,
+                task_intent=final_task_intent,
+                intent_resolution_reason=final_intent_resolution_reason,
                 goal=task_run.goal if task_run is not None else "",
                 goal_phase=task_run.phase.value if task_run is not None else "",
                 goal_status=task_run.status.value if task_run is not None else "",
                 goal_turn_count=task_run.turn_count if task_run is not None else 0,
-                awaiting_implementation_approval=(
-                    task_run.awaiting_implementation_approval
-                    if interaction_mode == "goal" and task_run is not None
-                    else getattr(
-                        getattr(self, "_task_state", None),
-                        "awaiting_implementation_approval",
-                        False,
-                    )
+                pending_approval=_active_pending_approval(
+                    getattr(self, "_task_state", None),
+                    task_run,
+                    interaction_mode,
                 ),
-                approved_scope=(
-                    task_run.approved_scope
-                    if interaction_mode == "goal" and task_run is not None
-                    else getattr(getattr(self, "_task_state", None), "approved_scope", "")
-                ),
+                intent_confidence=final.get("intent_confidence"),
+                intent_source=final.get("intent_source", ""),
+                intent_refined=bool(final.get("intent_refined", False)),
+                available_tool_ids=list(final.get("available_tool_ids", []) or []),
             ))
             await self._persist_runtime_state()
 
@@ -469,7 +499,7 @@ class GraphRunLoopMixin:
                         else:
                             saved = str(raw_content)
                             fmt = "text"
-                        await save_message(MessageRow(
+                        row_id = await save_message(MessageRow(
                             session_id=self._session.id,
                             role="assistant",
                             content=saved,
@@ -477,14 +507,33 @@ class GraphRunLoopMixin:
                             tool_calls=msg.tool_calls if msg.tool_calls else None,
                             created_at=_now(),
                         ))
+                        if self._session_msg_cache is not None:
+                            self._session_msg_cache.append(MessageRow(
+                                id=row_id,
+                                session_id=self._session.id,
+                                role="assistant",
+                                content=saved,
+                                content_format=fmt,
+                                tool_calls=msg.tool_calls if msg.tool_calls else None,
+                                created_at=_now(),
+                            ))
                     elif isinstance(msg, ToolMessage):
-                        await save_message(MessageRow(
+                        row_id = await save_message(MessageRow(
                             session_id=self._session.id,
                             role="tool",
                             content=str(msg.content),
                             tool_call_id=getattr(msg, "tool_call_id", None),
                             created_at=_now(),
                         ))
+                        if self._session_msg_cache is not None:
+                            self._session_msg_cache.append(MessageRow(
+                                id=row_id,
+                                session_id=self._session.id,
+                                role="tool",
+                                content=str(msg.content),
+                                tool_call_id=getattr(msg, "tool_call_id", None),
+                                created_at=_now(),
+                            ))
                 await touch_session(self._session.id)
 
                 # Auto-title on first message
@@ -517,6 +566,11 @@ class GraphRunLoopMixin:
         except (KeyboardInterrupt, asyncio.CancelledError):
             if self._session is not None and user_message_id is not None:
                 await delete_messages_from(self._session.id, user_message_id)
+                if self._session_msg_cache is not None:
+                    self._session_msg_cache = [
+                        r for r in self._session_msg_cache
+                        if r.id is None or r.id < user_message_id
+                    ]
             raise
         finally:
             session_tracker.finish_turn()
@@ -528,7 +582,6 @@ class GraphRunLoopMixin:
                 await ui_events.drain()
             else:
                 dock.set_input("", [])
-            self._current_implementation_allowed = True
 
     async def _dispatch_slash(self: GraphRunLoopHost, inp: str) -> bool:
         """Try to dispatch a slash command. Returns True if handled."""
@@ -594,3 +647,27 @@ class GraphRunLoopMixin:
             return False
         active_dock.restore_tree(transcript_rows_to_tree(rows), append=append)
         return True
+
+
+def _active_pending_approval(task_state, task_run, interaction_mode: str) -> PendingApproval | None:
+    if interaction_mode == "goal" and task_run is not None:
+        return getattr(task_run, "pending_approval", None)
+    if task_state is not None:
+        return getattr(task_state, "pending_approval", None)
+    return None
+
+
+def _dump_pending_approval(value: PendingApproval | dict | None) -> dict | None:
+    if value is None:
+        return None
+    if isinstance(value, dict):
+        return value
+    return value.model_dump(mode="json")
+
+
+def _load_pending_approval(value: PendingApproval | dict | None) -> PendingApproval | None:
+    if value is None:
+        return None
+    if isinstance(value, PendingApproval):
+        return value
+    return PendingApproval.model_validate(value)

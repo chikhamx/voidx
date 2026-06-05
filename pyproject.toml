@@ -43,7 +43,10 @@ build-backend = "setuptools.build_meta"
 where = ["src"]
 
 [tool.setuptools.package-data]
-"voidx.skills" = ["bundled/superpowers/*/SKILL.md"]
+"voidx.skills" = [
+    "bundled/superpowers/*/SKILL.md",
+    "bundled/superpowers/*/templates/*.md",
+]
 
 [tool.pytest.ini_options]
 asyncio_mode = "auto"

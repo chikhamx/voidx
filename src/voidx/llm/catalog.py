@@ -152,11 +152,11 @@ def bind_settings(settings) -> None:
     global _settings
     _settings = settings
 
-def _merge_custom(provider: str, base: list[str]) -> list[str]:
+async def _merge_custom(provider: str, base: list[str]) -> list[str]:
     """Merge custom models (from settings) in front of base list, deduplicating."""
     if _settings is None:
         return base
-    custom = _settings.list_custom_models(provider)
+    custom = await _settings.list_custom_models(provider)
     if not custom:
         return base
     seen: set[str] = set()
@@ -182,7 +182,7 @@ async def list_models(provider: str) -> list[str]:
         try:
             models = await fetcher()
             if models:
-                return _merge_custom(provider, models)
+                return await _merge_custom(provider, models)
         except Exception:
             pass
-    return _merge_custom(provider, STATIC_MODELS.get(provider, []))
+    return await _merge_custom(provider, STATIC_MODELS.get(provider, []))

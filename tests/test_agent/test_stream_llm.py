@@ -404,6 +404,34 @@ async def test_call_llm_filters_lsp_tools_when_no_lsp_server_is_available(tmp_pa
 
 
 @pytest.mark.asyncio
+async def test_call_llm_filters_tools_from_runtime_visible_tool_ids(tmp_path, monkeypatch):
+    import voidx.agent.graph.core as graph_module
+
+    monkeypatch.setattr(graph_module, "StreamingRenderer", FakeRenderer)
+
+    graph = VoidXGraph(
+        Config(
+            model=ModelConfig(provider="openai", model="gpt-4o"),
+            workspace=str(tmp_path),
+        ),
+        api_key=None,
+    )
+    model = TrackingStreamingModel()
+    graph.model = model
+
+    await graph._call_llm({
+        "messages": [HumanMessage(content="hi")],
+        "step_count": 0,
+        "max_steps": 50,
+        "agent": "orchestrator",
+        "available_tool_ids": ["read", "grep"],
+    })
+
+    tool_names = [tool["function"]["name"] for tool in model.bound_tools]
+    assert tool_names == ["read", "grep"]
+
+
+@pytest.mark.asyncio
 async def test_call_llm_keeps_lsp_tools_when_a_lsp_server_is_available(tmp_path, monkeypatch):
     import voidx.agent.graph.core as graph_module
 

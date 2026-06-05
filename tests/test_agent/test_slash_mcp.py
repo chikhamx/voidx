@@ -110,3 +110,27 @@ async def test_mcp_new_tavily_saves_server_and_web_routes(tmp_path, monkeypatch)
         "tool": "tavily_extract",
     }
     assert manager.restarts == 1
+
+
+@pytest.mark.asyncio
+async def test_mcp_new_url_saves_server_with_url(tmp_path, monkeypatch):
+    settings = Settings(str(tmp_path))
+    app = FakePromptApp(choices=["2", "0"], texts=["my-remote", "https://mcp.example.com/sse", ""])
+    manager = FakeMcpManager()
+    graph = SimpleNamespace(_settings=settings, _app=app, _mcp_manager=manager)
+    handler = SlashHandler(graph)
+
+    async def fake_test(server):
+        assert server.name == "my-remote"
+        assert server.url == "https://mcp.example.com/sse"
+        assert server.effective_transport == "sse"
+        return True, [McpToolDef(name="remote_tool")], ""
+
+    monkeypatch.setattr(handler, "_test_mcp_config", fake_test)
+
+    await handler.dispatch("/mcp new")
+
+    saved = json.loads((tmp_path / ".voidx" / "settings.json").read_text(encoding="utf-8"))
+    assert saved["mcpServers"]["my-remote"]["url"] == "https://mcp.example.com/sse"
+    assert saved["mcpServers"]["my-remote"]["tools"] == ["remote_tool"]
+    assert manager.restarts == 1

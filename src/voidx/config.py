@@ -137,9 +137,20 @@ class McpServerConfig(BaseModel):
     command: str = ""
     args: list[str] = Field(default_factory=list)
     env: dict[str, str] = Field(default_factory=dict)
+    headers: dict[str, str] = Field(default_factory=dict)
+    url: str = ""
     disabled: bool = False
     tools: list[str] | dict[str, object] | None = None
-    transport: str = "stdio"  # "stdio" | "sse" (future)
+    transport: str = ""  # "stdio" | "sse" | "streamable-http"; auto-detected from url if blank
+
+    @property
+    def effective_transport(self) -> str:
+        """Return the transport mode, auto-detecting from url when blank."""
+        if self.transport:
+            return self.transport
+        if self.url:
+            return "sse"
+        return "stdio"
 
     @property
     def tool_count(self) -> int:
@@ -184,7 +195,17 @@ class Settings:
         self._migrate_legacy_file()
         self._data: dict = self._load()
         self._runtime_keys: dict[str, str] = {}
-        self._migrate_legacy_profiles()
+
+    @classmethod
+    async def create(cls, workspace: str = ".") -> Settings:
+        settings = cls.__new__(cls)
+        settings._workspace = Path(workspace).resolve()
+        settings._path = settings._workspace / SETTINGS_FILE
+        settings._migrate_legacy_file()
+        settings._data = settings._load()
+        settings._runtime_keys = {}
+        await settings._migrate_legacy_profiles()
+        return settings
 
     def _migrate_legacy_file(self) -> None:
         legacy = self._workspace / _LEGACY_SETTINGS_FILE
@@ -214,8 +235,8 @@ class Settings:
 
     # ── profiles API ─────────────────────────────────────────────────────
 
-    def list_profiles(self) -> list[Profile]:
-        from voidx.memory.model_profiles import list_model_profiles
+    async def list_profiles(self) -> list[Profile]:
+        from voidx.memory.model_profiles import list_model_profiles_async
 
         return [
             Profile(
@@ -224,23 +245,23 @@ class Settings:
                 base_url=row.base_url,
                 protocol=row.protocol,
             )
-            for row in list_model_profiles()
+            for row in await list_model_profiles_async()
         ]
 
-    def resolve_profile(self, name: str = "") -> Profile | None:
+    async def resolve_profile(self, name: str = "") -> Profile | None:
         if not name:
             name = self._data.get("current_profile", "")
         if name:
-            profile = self._get_profile(name)
+            profile = await self._get_profile(name)
             if profile is not None:
                 return profile
-        profiles = self.list_profiles()
+        profiles = await self.list_profiles()
         return profiles[0] if profiles else None
 
-    def save_profile(self, profile: Profile) -> Path:
-        from voidx.memory.model_profiles import ModelProfileRow, save_model_profile
+    async def save_profile(self, profile: Profile) -> Path:
+        from voidx.memory.model_profiles import ModelProfileRow, save_model_profile_async
 
-        save_model_profile(ModelProfileRow(
+        await save_model_profile_async(ModelProfileRow(
             name=profile.name,
             provider=profile.provider,
             model=profile.model,
@@ -252,12 +273,13 @@ class Settings:
         self._save()
         return self._path
 
-    def delete_profile(self, name: str) -> Path:
-        from voidx.memory.model_profiles import delete_model_profile
+    async def delete_profile(self, name: str) -> Path:
+        from voidx.memory.model_profiles import delete_model_profile_async
 
-        delete_model_profile(name)
+        await delete_model_profile_async(name)
         if self._data.get("current_profile") == name:
-            next_profile = self.list_profiles()[0] if self.list_profiles() else None
+            profiles = await self.list_profiles()
+            next_profile = profiles[0] if profiles else None
             if next_profile is not None:
                 self._data["current_profile"] = next_profile.name
             else:
@@ -267,11 +289,11 @@ class Settings:
 
     # ── cross-profile lookups ────────────────────────────────────────────
 
-    def resolve_api_key(self, provider: str) -> str | None:
+    async def resolve_api_key(self, provider: str) -> str | None:
         runtime = self._runtime_keys.get(provider)
         if runtime:
             return runtime
-        for p in self.list_profiles():
+        for p in await self.list_profiles():
             if p.provider == provider:
                 return p.api_key
         return None
@@ -279,8 +301,8 @@ class Settings:
     def set_runtime_api_key(self, provider: str, key: str) -> None:
         self._runtime_keys[provider] = key
 
-    def resolve_base_url(self, provider: str) -> str | None:
-        for p in self.list_profiles():
+    async def resolve_base_url(self, provider: str) -> str | None:
+        for p in await self.list_profiles():
             if p.provider == provider and p.base_url:
                 return p.base_url
         for cp in self.list_custom_providers():
@@ -288,8 +310,8 @@ class Settings:
                 return cp["base_url"]
         return None
 
-    def resolve_protocol(self, provider: str) -> str | None:
-        for p in self.list_profiles():
+    async def resolve_protocol(self, provider: str) -> str | None:
+        for p in await self.list_profiles():
             if p.provider == provider and p.protocol:
                 return p.protocol
         for cp in self.list_custom_providers():
@@ -529,7 +551,7 @@ class Settings:
 
     # ── custom models ─────────────────────────────────────────────────────
 
-    def list_custom_models(self, provider: str) -> list[str]:
+    async def list_custom_models(self, provider: str) -> list[str]:
         """Return user-added custom model names for a provider."""
         custom = self._data.get("custom_models", {})
         result: list[str] = []
@@ -539,7 +561,7 @@ class Settings:
             models = custom.get(provider, [])
         if isinstance(models, list):
             result.extend(str(model) for model in models)
-        for profile in self.list_profiles():
+        for profile in await self.list_profiles():
             if profile.provider == provider and profile.model not in result:
                 result.append(profile.model)
         return result
@@ -596,8 +618,8 @@ class Settings:
 
     # ── build config for graph ───────────────────────────────────────────
 
-    def build_config(self) -> Config:
-        profile = self.resolve_profile()
+    async def build_config(self) -> Config:
+        profile = await self.resolve_profile()
         if profile:
             provider = profile.provider
             model = profile.model
@@ -640,10 +662,10 @@ class Settings:
             ask_compact=bool(self._data.get("askCompact", self._data.get("ask_compact", False))),
         )
 
-    def _get_profile(self, name: str) -> Profile | None:
-        from voidx.memory.model_profiles import get_model_profile
+    async def _get_profile(self, name: str) -> Profile | None:
+        from voidx.memory.model_profiles import get_model_profile_async
 
-        row = get_model_profile(name)
+        row = await get_model_profile_async(name)
         if row is None:
             return None
         return Profile(
@@ -653,8 +675,8 @@ class Settings:
             protocol=row.protocol,
         )
 
-    def _migrate_legacy_profiles(self) -> None:
-        from voidx.memory.model_profiles import ModelProfileRow, save_model_profile
+    async def _migrate_legacy_profiles(self) -> None:
+        from voidx.memory.model_profiles import ModelProfileRow, save_model_profile_async
 
         profiles_data = self._data.get("profiles", {})
         if not isinstance(profiles_data, dict):
@@ -681,7 +703,7 @@ class Settings:
                 base_url=base_url,
                 protocol=protocol,
             )
-            save_model_profile(ModelProfileRow(
+            await save_model_profile_async(ModelProfileRow(
                 name=profile.name,
                 provider=profile.provider,
                 model=profile.model,

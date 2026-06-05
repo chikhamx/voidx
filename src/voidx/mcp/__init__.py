@@ -18,7 +18,7 @@ from __future__ import annotations
 from voidx.mcp.manager import McpManager
 from voidx.mcp.client import McpClient, McpConnectionError, McpProtocolError, McpTimeoutError
 from voidx.mcp.tool import McpToolWrapper
-from voidx.mcp.schema import McpRuntimeStatus, McpToolDef, McpCallResult
+from voidx.mcp.schema import McpRuntimeStatus, McpToolDef, McpCallResult, format_mcp_call_result
 
 __all__ = [
     "McpManager",
@@ -27,6 +27,7 @@ __all__ = [
     "McpRuntimeStatus",
     "McpToolDef",
     "McpCallResult",
+    "format_mcp_call_result",
     "McpConnectionError",
     "McpProtocolError",
     "McpTimeoutError",

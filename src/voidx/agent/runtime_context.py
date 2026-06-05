@@ -10,6 +10,7 @@ from langchain_core.messages import BaseMessage, HumanMessage, SystemMessage
 from pydantic import BaseModel, Field
 
 from voidx.config import ApprovalReviewer, Config
+from voidx.skills.runtime import SkillRunState
 
 
 class InteractionMode(str, Enum):
@@ -87,10 +88,6 @@ def infer_task_intent(text: str, interaction_mode: str | InteractionMode | None 
     if _contains_any(normalized, _INSPECT_HINTS):
         return TaskIntent.INSPECT
     return TaskIntent.CHAT
-
-
-def implementation_allowed_for_intent(intent: str | TaskIntent) -> bool:
-    return TaskIntent(intent) == TaskIntent.IMPLEMENT
 
 
 class ExecutionPolicy(BaseModel):
@@ -185,18 +182,21 @@ class RuntimeContextBuilder:
         interaction_mode: str | InteractionMode,
         instructions: Iterable[str] = (),
         skill_instructions: Iterable[str] = (),
+        skill_runs: Iterable[SkillRunState] = (),
         active_skill_summaries: Iterable[str] = (),
         summary: str | None = None,
         current_user_text: str = "",
         task_intent: str | TaskIntent | None = None,
-        implementation_allowed: bool | None = None,
         intent_resolution_reason: str = "",
-        awaiting_implementation_approval: bool = False,
-        approved_scope: str = "",
+        pending_approval: object | None = None,
         goal: str = "",
         goal_phase: str = "",
         goal_status: str = "",
         goal_turn_count: int = 0,
+        available_tool_ids: Iterable[str] = (),
+        intent_confidence: float | None = None,
+        intent_source: str = "",
+        intent_refined: bool = False,
         agent_id: int = -1,
     ) -> None:
         self.config = config
@@ -209,6 +209,7 @@ class RuntimeContextBuilder:
         self.interaction_mode = InteractionMode.parse(interaction_mode)
         self.instructions = [item for item in instructions if item.strip()]
         self.skill_instructions = [item for item in skill_instructions if item.strip()]
+        self.skill_runs = list(skill_runs)
         self.active_skill_summaries = [item for item in active_skill_summaries if item.strip()]
         self.summary = summary.strip() if summary else ""
         self.current_user_text = current_user_text.strip()
@@ -217,18 +218,16 @@ class RuntimeContextBuilder:
             if task_intent is not None
             else infer_task_intent(self.current_user_text, self.interaction_mode)
         )
-        self.implementation_allowed = (
-            implementation_allowed
-            if implementation_allowed is not None
-            else implementation_allowed_for_intent(self.task_intent)
-        )
         self.intent_resolution_reason = intent_resolution_reason.strip()
-        self.awaiting_implementation_approval = awaiting_implementation_approval
-        self.approved_scope = approved_scope.strip()
+        self.pending_approval = pending_approval
         self.goal = goal.strip()
         self.goal_phase = goal_phase.strip()
         self.goal_status = goal_status.strip()
         self.goal_turn_count = goal_turn_count
+        self.available_tool_ids = [item for item in available_tool_ids if item.strip()]
+        self.intent_confidence = intent_confidence
+        self.intent_source = intent_source.strip()
+        self.intent_refined = intent_refined
         self.agent_id = agent_id
 
     def build(self) -> RuntimeContext:
@@ -291,16 +290,32 @@ class RuntimeContextBuilder:
         lines = [
             f"- Mode: {self.interaction_mode.value}",
             f"- Intent: {self.task_intent.value}",
-            f"- Awaiting implementation approval: {str(self.awaiting_implementation_approval).lower()}",
             f"- Agent: {self.agent}",
             f"- Agent ID: {self.agent_id}",
         ]
         if self.active_skill_summaries:
             lines.append(f"- Active workflow skills: {'; '.join(self.active_skill_summaries)}")
+        if self.skill_runs:
+            lines.append(f"- Skill run state: {'; '.join(run.state_summary() for run in self.skill_runs)}")
+        if self.intent_refined:
+            confidence = (
+                f"{self.intent_confidence:.2f}"
+                if self.intent_confidence is not None
+                else "unknown"
+            )
+            source = self.intent_source or "runtime"
+            lines.append(f"- Intent refined: true source={source} confidence={confidence}")
+        if self.intent_confidence is not None and self.intent_confidence < 0.6:
+            lines.append("- Suggestion: use clarify to resolve intent ambiguity before proceeding.")
+        if self.available_tool_ids:
+            lines.append(f"- Runtime-visible tools: {', '.join(self.available_tool_ids)}")
         if self.intent_resolution_reason:
             lines.append(f"- Intent resolution: {self.intent_resolution_reason}")
-        if self.approved_scope:
-            lines.append(f"- Approved scope: {self.approved_scope}")
+        pending = _render_pending_approval(self.pending_approval)
+        if pending:
+            lines.append(f"- Pending approval: {pending}")
+        if self.task_intent == TaskIntent.DESIGN and pending:
+            lines.append("- Suggestion: use plan_checkpoint to get explicit approval before implementing.")
         if self.interaction_mode == InteractionMode.GOAL:
             lines.append("- Goal mode: true")
             lines.append(f"- Goal: {self.goal or 'not set'}")
@@ -343,6 +358,20 @@ def _render_envelope(envelope: RuntimeEnvelope) -> str:
     if policy.extra_write_paths:
         lines.append(f"- Extra write paths: {', '.join(policy.extra_write_paths)}")
     return "\n".join(lines)
+
+
+def _render_pending_approval(value: object | None) -> str:
+    if value is None:
+        return ""
+    if isinstance(value, dict):
+        kind = str(value.get("kind") or "implementation")
+        scope = str(value.get("scope") or "").strip()
+    else:
+        kind = str(getattr(value, "kind", "implementation") or "implementation")
+        scope = str(getattr(value, "scope", "") or "").strip()
+    if not scope:
+        return kind
+    return f"{kind} scope={scope}"
 
 
 def _last_user_index(messages: list[BaseMessage]) -> int | None:

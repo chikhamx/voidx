@@ -3,16 +3,11 @@
 from __future__ import annotations
 
 import json
-from datetime import datetime, timezone
 from typing import Any
 
 from pydantic import BaseModel, Field
 
-from voidx.memory.store import _fetch_all, _write_transaction
-
-
-def _now() -> str:
-    return datetime.now(timezone.utc).isoformat()
+from voidx.memory.store import _fetch_all, _now, _write_transaction
 
 
 class TranscriptTurnRow(BaseModel):

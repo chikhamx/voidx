@@ -1,10 +1,11 @@
+import pytest
 import json
 import sys
 
 sys.path.insert(0, "src")
 
 from voidx.config import CodeIde, ApprovalPolicy, ApprovalReviewer, McpServerConfig, PermissionMode, Profile, SandboxMode, Settings, WebToolRoute
-from voidx.memory.model_profiles import delete_model_profile
+from voidx.memory.model_profiles import delete_model_profile_async
 
 
 def test_settings_lists_mcp_servers_from_voidx_json(tmp_path):
@@ -64,6 +65,39 @@ def test_settings_saves_mcp_server_and_web_routes(tmp_path):
     assert saved["web"]["search"]["backend"] == "legacy"
 
 
+def test_mcp_server_config_effective_transport():
+    # stdio: no url, no explicit transport
+    stdio = McpServerConfig(name="test", command="npx")
+    assert stdio.effective_transport == "stdio"
+
+    # sse: has url, no explicit transport
+    sse = McpServerConfig(name="test", url="https://mcp.example.com/sse")
+    assert sse.effective_transport == "sse"
+
+    # explicit transport overrides auto-detect
+    explicit = McpServerConfig(name="test", url="https://mcp.example.com/sse", transport="stdio")
+    assert explicit.effective_transport == "stdio"
+
+
+def test_settings_saves_mcp_server_with_url(tmp_path):
+    settings = Settings(str(tmp_path))
+
+    settings.save_mcp_server(McpServerConfig(
+        name="remote",
+        url="https://mcp.example.com/sse",
+        env={"API_KEY": "secret"},
+    ))
+
+    saved = json.loads((tmp_path / ".voidx" / "settings.json").read_text(encoding="utf-8"))
+    assert saved["mcpServers"]["remote"]["url"] == "https://mcp.example.com/sse"
+    assert saved["mcpServers"]["remote"]["env"] == {"API_KEY": "secret"}
+
+    loaded = Settings(str(tmp_path))
+    server = loaded.get_mcp_server("remote")
+    assert server.url == "https://mcp.example.com/sse"
+    assert server.effective_transport == "sse"
+
+
 def test_settings_tracks_skill_enable_disable(tmp_path):
     settings = Settings(str(tmp_path))
 
@@ -100,12 +134,12 @@ def test_settings_reads_legacy_skill_selection_from_voidx_json(tmp_path):
     assert selection.disabled == {"python"}
 
 
-def test_permission_mode_presets_drive_build_config(tmp_path):
+async def test_permission_mode_presets_drive_build_config(tmp_path):
     settings = Settings(str(tmp_path))
     settings.set_sandbox_workspace_write([str(tmp_path / "external")])
 
     settings.set_permission_mode(PermissionMode.FULL_ACCESS)
-    cfg = Settings(str(tmp_path)).build_config()
+    cfg = await (await Settings.create(str(tmp_path))).build_config()
 
     assert cfg.permission_mode == PermissionMode.FULL_ACCESS
     assert cfg.sandbox_mode == SandboxMode.DANGER_FULL_ACCESS
@@ -114,7 +148,7 @@ def test_permission_mode_presets_drive_build_config(tmp_path):
     assert cfg.sandbox_workspace_write == []
 
     settings.set_permission_mode(PermissionMode.AUTO_REVIEW)
-    cfg = Settings(str(tmp_path)).build_config()
+    cfg = await (await Settings.create(str(tmp_path))).build_config()
 
     assert cfg.permission_mode == PermissionMode.AUTO_REVIEW
     assert cfg.sandbox_mode == SandboxMode.WORKSPACE_WRITE
@@ -122,29 +156,29 @@ def test_permission_mode_presets_drive_build_config(tmp_path):
     assert cfg.approval_reviewer == ApprovalReviewer.AUTO_REVIEW
 
     settings.set_permission_mode(PermissionMode.READ_ONLY)
-    cfg = Settings(str(tmp_path)).build_config()
+    cfg = await (await Settings.create(str(tmp_path))).build_config()
 
     assert cfg.sandbox_mode == SandboxMode.READ_ONLY
     assert cfg.approval_policy == ApprovalPolicy.UNTRUSTED
 
 
-def test_build_config_defaults_and_reads_ask_compact(tmp_path):
-    assert Settings(str(tmp_path)).build_config().ask_compact is False
+async def test_build_config_defaults_and_reads_ask_compact(tmp_path):
+    assert (await (await Settings.create(str(tmp_path))).build_config()).ask_compact is False
 
     (tmp_path / "voidx.json").write_text(
         json.dumps({"askCompact": True}),
         encoding="utf-8",
     )
 
-    assert Settings(str(tmp_path)).build_config().ask_compact is True
+    assert (await (await Settings.create(str(tmp_path))).build_config()).ask_compact is True
 
 
-def test_low_level_permission_changes_mark_custom_mode(tmp_path):
+async def test_low_level_permission_changes_mark_custom_mode(tmp_path):
     settings = Settings(str(tmp_path))
 
     settings.set_permission_mode(PermissionMode.DEFAULT)
     settings.set_approval_policy(ApprovalPolicy.ON_FAILURE)
-    cfg = Settings(str(tmp_path)).build_config()
+    cfg = await (await Settings.create(str(tmp_path))).build_config()
 
     assert cfg.permission_mode == PermissionMode.CUSTOM
     assert cfg.sandbox_mode == SandboxMode.WORKSPACE_WRITE
@@ -198,7 +232,7 @@ def test_settings_prefers_skill_state_file_over_legacy_voidx_json(tmp_path):
     assert selection.disabled == {"python"}
 
 
-def test_build_config_uses_default_reasoning_effort(tmp_path):
+async def test_build_config_uses_default_reasoning_effort(tmp_path):
     profile_name = f"mimo/{tmp_path.name}-v2.5"
     (tmp_path / "voidx.json").write_text(
         json.dumps({
@@ -222,8 +256,8 @@ def test_build_config_uses_default_reasoning_effort(tmp_path):
     )
 
     try:
-        settings = Settings(str(tmp_path))
-        cfg = settings.build_config()
+        settings = await Settings.create(str(tmp_path))
+        cfg = await settings.build_config()
 
         assert cfg.model.provider == "mimo"
         assert cfg.model.model == f"{tmp_path.name}-v2.5"
@@ -233,10 +267,10 @@ def test_build_config_uses_default_reasoning_effort(tmp_path):
         saved = json.loads((tmp_path / ".voidx" / "settings.json").read_text(encoding="utf-8"))
         assert saved == {"current_profile": profile_name}
     finally:
-        delete_model_profile(profile_name)
+        await delete_model_profile_async(profile_name)
 
 
-def test_save_profile_persists_model_in_db_and_only_current_profile_in_json(tmp_path):
+async def test_save_profile_persists_model_in_db_and_only_current_profile_in_json(tmp_path):
     profile_name = f"custom/{tmp_path.name}-model"
     settings = Settings(str(tmp_path))
     profile = Profile(
@@ -247,7 +281,7 @@ def test_save_profile_persists_model_in_db_and_only_current_profile_in_json(tmp_
     )
 
     try:
-        settings.save_profile(profile)
+        await settings.save_profile(profile)
         settings.add_custom_model("custom", "another-model")
         settings.add_custom_provider(
             "another-provider",
@@ -258,7 +292,7 @@ def test_save_profile_persists_model_in_db_and_only_current_profile_in_json(tmp_
         saved = json.loads((tmp_path / ".voidx" / "settings.json").read_text(encoding="utf-8"))
         assert saved == {"current_profile": profile_name}
 
-        loaded = settings.resolve_profile(profile_name)
+        loaded = await settings.resolve_profile(profile_name)
         assert loaded == profile
     finally:
-        delete_model_profile(profile_name)
+        await delete_model_profile_async(profile_name)

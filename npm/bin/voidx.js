@@ -40,7 +40,7 @@ function main(argv = process.argv.slice(2), env = process.env) {
 // ── Python selection ───────────────────────────────────────────────────────
 
 function selectPython(env) {
-  // 1. Explicit override
+  // 1. Explicit override (for advanced users / debugging)
   const explicit = env.VOIDX_PYTHON;
   if (explicit) {
     const candidate = { command: explicit, args: [], label: explicit };
@@ -56,7 +56,7 @@ function selectPython(env) {
     return candidate;
   }
 
-  // 2. Bundled Python (downloaded by postinstall)
+  // 2. Bundled Python (the only normal path)
   const bundledBin = resolveBundledPythonBin(env);
   if (bundledBin && fs.existsSync(bundledBin)) {
     const candidate = { command: bundledBin, args: [], label: "bundled" };
@@ -66,38 +66,11 @@ function selectPython(env) {
     }
   }
 
-  // 3. System Python
-  const candidates = [
-    { command: "python3", args: [], label: "python3" },
-    { command: "python", args: [], label: "python" },
-    { command: "python3.13", args: [], label: "python3.13" },
-    { command: "python3.12", args: [], label: "python3.12" },
-    { command: "python3.11", args: [], label: "python3.11" },
-  ];
-  if (process.platform === "win32") {
-    candidates.push({ command: "py", args: ["-3"], label: "py -3" });
-  }
-
-  const oldVersions = [];
-  for (const candidate of candidates) {
-    const probe = probePython(candidate);
-    if (!probe.ok) {
-      continue;
-    }
-    if (isCompatible(probe.version)) {
-      return candidate;
-    }
-    oldVersions.push(`${probe.versionText} at ${candidate.label}`);
-  }
-
-  const hint = pythonHint();
-  if (oldVersions.length > 0) {
-    throw new Error(
-      `voidx requires Python 3.11+. Found ${oldVersions.join(", ")}.\n${hint}`
-    );
-  }
+  // No system Python fallback — bundled Python is required
   throw new Error(
-    `voidx requires Python 3.11+. No Python found.\n${hint}`
+    "voidx bundled Python not found.\n" +
+    "Reinstall the npm package to set it up:\n" +
+    "  npm install -g @chikhamx/voidx"
   );
 }
 
@@ -134,22 +107,6 @@ function parseVersion(value) {
 
 function isCompatible(version) {
   return version[0] > 3 || (version[0] === 3 && version[1] >= 11);
-}
-
-function pythonHint() {
-  if (process.platform === "darwin") {
-    return "Install Python 3.11+ via: brew install python@3.12\n" +
-      "Or reinstall voidx to get the bundled Python.";
-  }
-  if (process.platform === "linux") {
-    return "Install Python 3.11+ via your package manager (apt/dnf).\n" +
-      "Or reinstall voidx to get the bundled Python.";
-  }
-  if (process.platform === "win32") {
-    return "Install Python 3.11+ from https://python.org/downloads\n" +
-      "Or reinstall voidx to get the bundled Python.";
-  }
-  return "Install Python 3.11+ or reinstall voidx.";
 }
 
 // ── Paths ──────────────────────────────────────────────────────────────────
@@ -220,6 +177,16 @@ function ensureVenv(python, venvDir, env) {
   fs.mkdirSync(path.dirname(venvDir), { recursive: true });
   const venvPython = resolveVenvPython(venvDir);
 
+  // If venv exists but is corrupted (python binary missing), nuke and rebuild
+  if (fs.existsSync(venvDir) && !fs.existsSync(venvPython)) {
+    console.error("  Existing venv is corrupted, rebuilding…");
+    try {
+      fs.rmSync(venvDir, { recursive: true, force: true });
+    } catch (err) {
+      console.error(`  Failed to remove corrupted venv: ${err.message}`);
+    }
+  }
+
   const isFresh = !fs.existsSync(venvPython);
   if (isFresh) {
     console.error(
@@ -247,22 +214,45 @@ function ensureVenv(python, venvDir, env) {
       `\n📦 Downloading ${packageSpec} and dependencies… ` +
         "(1–2 minutes on first run)\n"
     );
+
+    // Upgrade pip first to avoid resolver bugs
+    const pipUpgradeEnv = Object.assign({}, env, {
+      PIP_NO_INPUT: "1",
+      PIP_DISABLE_PIP_VERSION_CHECK: "1",
+      PYTHON_KEYRING_BACKEND: "keyring.backends.null.Keyring",
+    });
+    const pipUpgradeResult = spawnSync(
+      venvPython,
+      ["-m", "pip", "install", "--upgrade", "pip", "--no-cache-dir"],
+      { encoding: "utf8", stdio: "inherit", windowsHide: true, env: pipUpgradeEnv }
+    );
+    if (pipUpgradeResult.error || pipUpgradeResult.status !== 0) {
+      console.error("  ⚠️  Failed to upgrade pip, continuing with current version…");
+    }
+
     const pipEnv = Object.assign({}, env, {
       PIP_NO_INPUT: "1",
       PIP_DISABLE_PIP_VERSION_CHECK: "1",
       PYTHON_KEYRING_BACKEND: "keyring.backends.null.Keyring",
     });
+
+    const pipArgs = ["-m", "pip", "install", "--upgrade", "--no-cache-dir", "--progress-bar", "on"];
+
+    // Support custom PyPI index
+    const pipIndex = env.VOIDX_NPM_PIP_INDEX;
+    if (pipIndex) {
+      pipArgs.push("-i", pipIndex);
+      try {
+        const indexUrl = new URL(pipIndex);
+        pipArgs.push("--trusted-host", indexUrl.hostname);
+      } catch {}
+    }
+
+    pipArgs.push(packageSpec);
+
     const result = spawnSync(
       venvPython,
-      [
-        "-m",
-        "pip",
-        "install",
-        "--upgrade",
-        "--progress-bar",
-        "on",
-        packageSpec,
-      ],
+      pipArgs,
       { encoding: "utf8", stdio: "inherit", windowsHide: true, env: pipEnv }
     );
     if (result.error) {

@@ -12,11 +12,12 @@ from voidx.agent.runtime_context import (
     InteractionMode,
     RuntimeContextBuilder,
     TaskIntent,
-    implementation_allowed_for_intent,
     infer_task_intent,
 )
 from voidx.agent.state import AgentState
+from voidx.agent.task_state import PendingApproval
 from voidx.config import Config
+from voidx.skills.runtime import SkillActivationSource, SkillRunState, SkillRunStatus
 
 
 def test_agent_state_marks_runtime_turn_metadata_required():
@@ -26,10 +27,7 @@ def test_agent_state_marks_runtime_turn_metadata_required():
         for key in (
             "interaction_mode",
             "task_intent",
-            "implementation_allowed",
             "intent_resolution_reason",
-            "awaiting_implementation_approval",
-            "approved_scope",
             "goal",
             "goal_phase",
             "goal_status",
@@ -152,8 +150,6 @@ def test_intent_classifier_does_not_treat_inspection_as_implementation():
     assert infer_task_intent("有什么更好的优化方案") == TaskIntent.DESIGN
     assert infer_task_intent("可以，直接改") == TaskIntent.IMPLEMENT
     assert infer_task_intent("对，可以") == TaskIntent.CHAT
-    assert implementation_allowed_for_intent(TaskIntent.INSPECT) is False
-    assert implementation_allowed_for_intent(TaskIntent.IMPLEMENT) is True
 
 
 def test_current_task_state_records_intent_and_implementation_gate(tmp_path):
@@ -194,27 +190,98 @@ def test_current_task_state_records_active_workflow_skills(tmp_path):
     assert "Active workflow skills: test-driven-development (implement role); verification-before-completion (implement lifecycle)" in messages[-1].content
 
 
-def test_current_task_state_records_multiturn_approval_state(tmp_path):
-    messages = [HumanMessage(content="对，可以")]
+def test_current_task_state_records_structured_skill_runs(tmp_path):
+    messages = [HumanMessage(content="实现这个功能")]
+    context = RuntimeContextBuilder(
+        config=Config(workspace=str(tmp_path)),
+        workspace=str(tmp_path),
+        agent_prompt="You are voidx.",
+        agent="implement",
+        interaction_mode=InteractionMode.AUTO,
+        current_user_text="实现这个功能",
+        task_intent=TaskIntent.IMPLEMENT,
+        skill_runs=[
+            SkillRunState(
+                name="test-driven-development",
+                status=SkillRunStatus.ACTIVE,
+                source=SkillActivationSource.WORKFLOW,
+                reason="implement role",
+                phase="implement",
+                scope="实现这个功能",
+                activated_turn=1,
+                updated_turn=1,
+            )
+        ],
+    ).build()
+
+    context.apply_to_messages(messages)
+
+    assert (
+        "Skill run state: test-driven-development=active "
+        "phase=implement source=workflow reason=implement role"
+    ) in messages[-1].content
+
+
+def test_current_task_state_records_refined_intent_and_visible_tools(tmp_path):
+    messages = [HumanMessage(content="继续")]
     context = RuntimeContextBuilder(
         config=Config(workspace=str(tmp_path)),
         workspace=str(tmp_path),
         agent_prompt="You are voidx.",
         agent="orchestrator",
         interaction_mode=InteractionMode.AUTO,
-        current_user_text="对，可以",
+        current_user_text="继续",
         task_intent=TaskIntent.IMPLEMENT,
-        implementation_allowed=True,
-        intent_resolution_reason="user confirmed the pending implementation plan",
-        awaiting_implementation_approval=True,
-        approved_scope="优化 runtime context",
+        intent_refined=True,
+        intent_source="on_intent",
+        intent_confidence=0.91,
+        available_tool_ids=["read", "edit"],
     ).build()
 
     context.apply_to_messages(messages)
 
-    assert "Intent: implement" in messages[-1].content
-    assert "Awaiting implementation approval: true" in messages[-1].content
-    assert "Approved scope: 优化 runtime context" in messages[-1].content
+    assert "Intent refined: true source=on_intent confidence=0.91" in messages[-1].content
+    assert "Runtime-visible tools: read, edit" in messages[-1].content
+
+
+def test_current_task_state_records_multiturn_approval_state(tmp_path):
+    messages = [HumanMessage(content="给个方案")]
+    context = RuntimeContextBuilder(
+        config=Config(workspace=str(tmp_path)),
+        workspace=str(tmp_path),
+        agent_prompt="You are voidx.",
+        agent="orchestrator",
+        interaction_mode=InteractionMode.AUTO,
+        current_user_text="给个方案",
+        task_intent=TaskIntent.DESIGN,
+        intent_resolution_reason="single-turn classifier matched design",
+        pending_approval=PendingApproval(scope="优化 runtime context"),
+    ).build()
+
+    context.apply_to_messages(messages)
+
+    assert "Intent: design" in messages[-1].content
+    assert "Pending approval: implementation scope=优化 runtime context" in messages[-1].content
+    assert "Suggestion: use plan_checkpoint" in messages[-1].content
+
+
+def test_current_task_state_suggests_clarify_for_low_confidence_intent(tmp_path):
+    messages = [HumanMessage(content="继续")]
+    context = RuntimeContextBuilder(
+        config=Config(workspace=str(tmp_path)),
+        workspace=str(tmp_path),
+        agent_prompt="You are voidx.",
+        agent="orchestrator",
+        interaction_mode=InteractionMode.AUTO,
+        current_user_text="继续",
+        task_intent=TaskIntent.AMBIGUOUS,
+        intent_refined=True,
+        intent_confidence=0.42,
+    ).build()
+
+    context.apply_to_messages(messages)
+
+    assert "Suggestion: use clarify" in messages[-1].content
 
 
 def test_current_task_state_records_goal_run(tmp_path):
@@ -227,7 +294,6 @@ def test_current_task_state_records_goal_run(tmp_path):
         interaction_mode=InteractionMode.GOAL,
         current_user_text="给个方案",
         task_intent=TaskIntent.DESIGN,
-        implementation_allowed=False,
         goal="优化 markdown 渲染截断",
         goal_phase="design",
         goal_status="active",

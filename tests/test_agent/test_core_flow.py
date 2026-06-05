@@ -37,7 +37,26 @@ def test_graph_registers_agent_tool_not_task_tool(tmp_path):
     ids = graph.tools.ids()
 
     assert "agent" in ids
+    assert "on_intent" in ids
+    assert "clarify" in ids
+    assert "plan_checkpoint" in ids
     assert "task" not in ids
+
+
+def test_on_intent_schema_inlines_task_intent_enum(tmp_path):
+    graph = _graph(tmp_path)
+    schema = graph.tools.get_def("on_intent").parameters
+
+    assert "$ref" not in schema["properties"]["intent"]
+    assert schema["properties"]["intent"]["enum"] == [
+        "chat",
+        "inspect",
+        "design",
+        "review",
+        "implement",
+        "debug",
+        "ambiguous",
+    ]
 
 
 def test_orchestrator_has_direct_edit_tools():
@@ -45,6 +64,7 @@ def test_orchestrator_has_direct_edit_tools():
 
     assert agent is not None
     assert {"write", "edit", "lsp_format"}.issubset(set(agent.tools))
+    assert {"clarify", "plan_checkpoint"}.issubset(set(agent.tools))
     assert agent.can_write is True
 
 
@@ -402,6 +422,235 @@ async def test_execute_tools_keeps_parallel_child_agent_buffers_isolated(tmp_pat
     messages = result["messages"]
     assert [msg.tool_call_id for msg in messages[:2] if isinstance(msg, ToolMessage)] == ["call_a", "call_b"]
     assert [msg.content for msg in messages[2:]] == ["sub call_a", "sub call_b"]
+
+
+@pytest.mark.asyncio
+async def test_execute_tools_applies_on_intent_state_patch(tmp_path):
+    graph = _graph(tmp_path)
+
+    async def allow_all(
+        tool_calls,
+        agent_name: str,
+        plan_mode: bool,
+        session_id: str,
+        interaction_mode=None,
+    ):
+        return tool_calls, []
+
+    graph._authorize_tool_calls = allow_all
+    parent = AIMessage(
+        content="",
+        tool_calls=[
+            {
+                "name": "on_intent",
+                "args": {
+                    "intent": "implement",
+                    "confidence": 0.92,
+                    "reason": "user asked to implement the approved design",
+                    "scope": "实现 on_intent runtime callback",
+                },
+                "id": "call_intent",
+                "type": "tool_call",
+            }
+        ],
+    )
+
+    result = await graph._execute_tools({
+        "messages": [parent],
+        "workspace": str(tmp_path),
+        "agent": "orchestrator",
+        "plan_mode": False,
+        "interaction_mode": "auto",
+        "task_intent": "chat",
+    })
+
+    assert result["task_intent"] == "implement"
+    assert result["pending_approval"] is None
+    assert result["intent_source"] == "on_intent"
+    assert result["intent_refined"] is True
+    assert "write" in result["available_tool_ids"]
+    assert {
+        run.name for run in result["skill_runs"]
+    } >= {"test-driven-development", "verification-before-completion"}
+    assert "confirmed_intent" in result["messages"][0].content
+
+
+@pytest.mark.asyncio
+async def test_on_intent_downgrades_implementation_in_plan_mode(tmp_path):
+    graph = _graph(tmp_path)
+
+    async def allow_all(
+        tool_calls,
+        agent_name: str,
+        plan_mode: bool,
+        session_id: str,
+        interaction_mode=None,
+    ):
+        return tool_calls, []
+
+    graph._authorize_tool_calls = allow_all
+    parent = AIMessage(
+        content="",
+        tool_calls=[
+            {
+                "name": "on_intent",
+                "args": {
+                    "intent": "implement",
+                    "confidence": 0.95,
+                    "reason": "model thinks this asks for code changes",
+                    "scope": "设计 runtime callback",
+                },
+                "id": "call_intent",
+                "type": "tool_call",
+            }
+        ],
+    )
+
+    result = await graph._execute_tools({
+        "messages": [parent],
+        "workspace": str(tmp_path),
+        "agent": "orchestrator",
+        "plan_mode": True,
+        "interaction_mode": "plan",
+        "task_intent": "chat",
+    })
+
+    assert result["task_intent"] == "design"
+    assert result["pending_approval"]["scope"] == "设计 runtime callback"
+    assert "write" not in result["available_tool_ids"]
+    assert "edit" not in result["available_tool_ids"]
+
+
+@pytest.mark.asyncio
+async def test_on_intent_defers_other_tools_in_same_batch(tmp_path):
+    graph = _graph(tmp_path)
+
+    class ExplodingReadTool:
+        id = "read"
+        description = "fake read"
+
+        def parameters_schema(self):
+            return {"type": "object", "properties": {}}
+
+        async def execute(self, args: dict, ctx: ToolContext) -> ToolResult:
+            pytest.fail("read should be deferred until after on_intent")
+
+    graph.tools.register("read", ExplodingReadTool(), "fake read", {"type": "object", "properties": {}})
+
+    async def allow_all(
+        tool_calls,
+        agent_name: str,
+        plan_mode: bool,
+        session_id: str,
+        interaction_mode=None,
+    ):
+        return tool_calls, []
+
+    graph._authorize_tool_calls = allow_all
+    parent = AIMessage(
+        content="",
+        tool_calls=[
+            {
+                "name": "on_intent",
+                "args": {
+                    "intent": "inspect",
+                    "confidence": 0.84,
+                    "reason": "needs repository inspection",
+                    "scope": "检查 agent runtime",
+                },
+                "id": "call_intent",
+                "type": "tool_call",
+            },
+            {
+                "name": "read",
+                "args": {"file_path": "src/app.py"},
+                "id": "call_read",
+                "type": "tool_call",
+            },
+        ],
+    )
+
+    result = await graph._execute_tools({
+        "messages": [parent],
+        "workspace": str(tmp_path),
+        "agent": "orchestrator",
+        "plan_mode": False,
+        "interaction_mode": "auto",
+        "task_intent": "chat",
+    })
+
+    assert [message.tool_call_id for message in result["messages"]] == ["call_intent", "call_read"]
+    assert "Deferred until after a runtime barrier tool" in result["messages"][1].content
+
+
+@pytest.mark.asyncio
+async def test_plan_checkpoint_defers_other_tools_and_updates_state(tmp_path):
+    graph = _graph(tmp_path)
+
+    class ExplodingReadTool:
+        id = "read"
+        description = "fake read"
+
+        def parameters_schema(self):
+            return {"type": "object", "properties": {}}
+
+        async def execute(self, args: dict, ctx: ToolContext) -> ToolResult:
+            pytest.fail("read should be deferred until after plan_checkpoint")
+
+    graph.tools.register("read", ExplodingReadTool(), "fake read", {"type": "object", "properties": {}})
+
+    async def allow_all(
+        tool_calls,
+        agent_name: str,
+        plan_mode: bool,
+        session_id: str,
+        interaction_mode=None,
+    ):
+        return tool_calls, []
+
+    class FakeApp:
+        async def ask_choice(self, prompt, choices, **kwargs):
+            return "approved"
+
+        async def ask_text(self, prompt, **kwargs):
+            return ""
+
+    graph._authorize_tool_calls = allow_all
+    graph._app = FakeApp()
+    parent = AIMessage(
+        content="",
+        tool_calls=[
+            {
+                "name": "plan_checkpoint",
+                "args": {"plan_summary": "Update runtime state handling"},
+                "id": "call_plan",
+                "type": "tool_call",
+            },
+            {
+                "name": "read",
+                "args": {"file_path": "src/app.py"},
+                "id": "call_read",
+                "type": "tool_call",
+            },
+        ],
+    )
+
+    result = await graph._execute_tools({
+        "messages": [parent],
+        "workspace": str(tmp_path),
+        "agent": "orchestrator",
+        "plan_mode": False,
+        "interaction_mode": "auto",
+        "task_intent": "design",
+        "pending_approval": {"kind": "implementation", "scope": "Update runtime state handling"},
+    })
+
+    assert [message.tool_call_id for message in result["messages"]] == ["call_plan", "call_read"]
+    assert result["task_intent"] == "implement"
+    assert result["goal"] == "Update runtime state handling"
+    assert result["goal_phase"] == "implement"
+    assert result["pending_approval"] is None
+    assert "Deferred until after a runtime barrier tool" in result["messages"][1].content
 
 
 @pytest.mark.asyncio
@@ -791,19 +1040,23 @@ async def test_prepare_injects_workflow_skills_from_task_state(tmp_path):
         "plan_mode": False,
         "interaction_mode": "auto",
         "task_intent": "implement",
-        "implementation_allowed": True,
         "tool_results": {},
         "step_count": 0,
         "max_steps": 50,
         "should_continue": True,
     }
 
-    await graph._prepare_with_stream(state)
+    result = await graph._prepare_with_stream(state)
 
     assert isinstance(messages[1], HumanMessage)
     assert "Skill: test-driven-development" in messages[1].content
     assert "Skill: verification-before-completion" in messages[1].content
     assert "Active workflow skills: test-driven-development" in messages[1].content
+    assert [run.name for run in result["skill_runs"]] == [
+        "test-driven-development",
+        "verification-before-completion",
+    ]
+    assert "Skill run state: test-driven-development=active" in messages[1].content
 
 
 @pytest.mark.asyncio

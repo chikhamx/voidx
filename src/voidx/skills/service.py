@@ -7,6 +7,7 @@ from collections.abc import Iterable
 
 from voidx.skills.policy import workflow_skill_activations, workflow_skill_sort_key
 from voidx.skills.registry import SkillRegistry, normalize_skill_name
+from voidx.skills.runtime import SkillRunState
 from voidx.skills.schema import SkillDefinition, SkillMatch, SkillSelectionConfig
 
 _EXPLICIT_REF_RE = re.compile(r"(?<![\w.-])\$([A-Za-z0-9_.-]+)")
@@ -120,6 +121,34 @@ class SkillService:
             )
         ]
 
+    def select_runs(
+        self,
+        user_text: str,
+        *,
+        agent: str = "",
+        task_intent: str | None = None,
+        interaction_mode: str | None = None,
+        phase: str = "",
+        scope: str = "",
+        turn_count: int = 0,
+        limit: int = 5,
+    ) -> list[SkillRunState]:
+        return [
+            SkillRunState.from_match(
+                match,
+                phase=phase,
+                scope=scope,
+                turn_count=turn_count,
+            )
+            for match in self.select(
+                user_text,
+                agent=agent,
+                task_intent=task_intent,
+                interaction_mode=interaction_mode,
+                limit=limit,
+            )
+        ]
+
     def instructions_for(
         self,
         user_text: str,
@@ -176,8 +205,14 @@ class SkillService:
 def _contains_phrase(text: str, phrase: str) -> bool:
     if not phrase:
         return False
+    if _is_cjk_phrase(phrase):
+        return phrase in text
     pattern = r"(?<![\w.-])" + re.escape(phrase) + r"(?![\w.-])"
     return bool(re.search(pattern, text))
+
+
+def _is_cjk_phrase(phrase: str) -> bool:
+    return any("\u4e00" <= ch <= "\u9fff" for ch in phrase)
 
 
 def _significant_terms(text: str) -> set[str]:

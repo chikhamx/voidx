@@ -13,10 +13,12 @@ Resolution order:
 from __future__ import annotations
 
 import asyncio
-from dataclasses import dataclass
+from dataclasses import dataclass, field
 from pathlib import Path
 
 import httpx
+
+from voidx.skills.runtime import SkillRunState
 
 INSTRUCTION_FILES = ["AGENTS.md", "CLAUDE.md"]  # CLAUDE.md for compat
 
@@ -25,6 +27,7 @@ INSTRUCTION_FILES = ["AGENTS.md", "CLAUDE.md"]  # CLAUDE.md for compat
 class SkillRuntimeContext:
     instructions: list[str]
     active: list[str]
+    runs: list[SkillRunState] = field(default_factory=list)
 
 
 class InstructionService:
@@ -93,6 +96,9 @@ class InstructionService:
         agent: str = "",
         task_intent: str | None = None,
         interaction_mode: str | None = None,
+        task_phase: str = "",
+        scope: str = "",
+        turn_count: int = 0,
     ) -> SkillRuntimeContext:
         from voidx.skills.registry import SkillRegistry
         from voidx.skills.service import SkillService
@@ -109,9 +115,19 @@ class InstructionService:
             task_intent=task_intent,
             interaction_mode=interaction_mode,
         )
+        phase = task_phase or _phase_from_intent(task_intent, interaction_mode)
         return SkillRuntimeContext(
             instructions=[service.render_instruction(match.skill) for match in matches],
             active=[f"{match.name} ({match.reason})" for match in matches],
+            runs=[
+                SkillRunState.from_match(
+                    match,
+                    phase=phase,
+                    scope=scope,
+                    turn_count=turn_count,
+                )
+                for match in matches
+            ],
         )
 
     async def skills_for(
@@ -218,3 +234,14 @@ class InstructionService:
                         if p:
                             paths.add(p)
         return paths
+
+
+def _phase_from_intent(task_intent: str | None, interaction_mode: str | None = None) -> str:
+    if (interaction_mode or "").strip().lower() == "plan":
+        return "design"
+    intent = (task_intent or "").strip().lower()
+    if intent == "debug":
+        return "inspect"
+    if intent in {"inspect", "design", "implement", "review"}:
+        return intent
+    return ""

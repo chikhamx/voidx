@@ -4,13 +4,15 @@ from __future__ import annotations
 
 import asyncio
 import time
+from dataclasses import dataclass
 from typing import TYPE_CHECKING
 
 from langchain_core.messages import AIMessage, ToolMessage
 
 from voidx.agent.graph.runtime import current_parent_tool_call_id, ui
+from voidx.agent.task_state import ToolStatePatch
 from voidx.agent.tool_messages import sanitize_tool_message_content
-from voidx.tools.base import ToolContext
+from voidx.tools.base import ToolContext, UserInteraction, UserResponse
 from voidx.ui.output.console import _fmt_args, _title
 from voidx.ui.output.dock import dock
 from voidx.ui.output.events import (
@@ -27,6 +29,13 @@ if TYPE_CHECKING:
     from voidx.agent.graph.contracts import GraphToolExecutionHost
 
 
+@dataclass
+class _ExecutedTool:
+    message: ToolMessage
+    result: object
+    tool_call: dict
+
+
 class GraphToolExecutionMixin:
     async def _execute_tools(self: GraphToolExecutionHost, state) -> dict:
         last = state["messages"][-1]
@@ -37,17 +46,26 @@ class GraphToolExecutionMixin:
             self._turn_node = dock.current_agent
 
         self._current_messages = state["messages"]
-        ctx = ToolContext(
-            workspace=state.get("workspace", self._workspace),
-            file_mtimes=self._file_mtimes,
-            mcp_manager=getattr(self, "_mcp_manager", None),
-            lsp_manager=getattr(self, "_lsp_manager", None),
-            sandbox_extra_paths=self._permission.sandbox_workspace_write,
-        )
         agent_name = state.get("agent", "orchestrator")
         session_id = self._session.id if self._session else "default"
         plan_mode = state.get("plan_mode", False)
         interaction_mode = state.get("interaction_mode")
+        ctx = ToolContext(
+            workspace=state.get("workspace", self._workspace),
+            session_id=session_id,
+            agent=agent_name,
+            interaction_mode=interaction_mode or ("plan" if plan_mode else "auto"),
+            task_intent=state.get("task_intent", "chat"),
+            pending_approval=_dump_pending_approval(state.get("pending_approval")),
+            goal=state.get("goal", ""),
+            goal_turn_count=state.get("goal_turn_count", 0),
+            file_mtimes=self._file_mtimes,
+            mcp_manager=getattr(self, "_mcp_manager", None),
+            lsp_manager=getattr(self, "_lsp_manager", None),
+            sandbox_mode=self._permission.sandbox_mode,
+            sandbox_extra_paths=self._permission.sandbox_workspace_write,
+            interact=_make_interact_callback(getattr(self, "_app", None)),
+        )
 
         tool_calls = last.tool_calls
         self._sub_buffers = {}
@@ -59,6 +77,12 @@ class GraphToolExecutionMixin:
             session_id=session_id,
             interaction_mode=interaction_mode,
         )
+        barrier_present = any(_is_barrier_tool(tc) for tc in approved)
+        deferred_for_barrier: list[dict] = []
+        if barrier_present:
+            barrier = [tc for tc in approved if _is_barrier_tool(tc)]
+            deferred_for_barrier = [tc for tc in approved if not _is_barrier_tool(tc)]
+            approved = barrier
 
         # ── Phase 2: parallel execution of all approved tools ────────
 
@@ -172,13 +196,21 @@ class GraphToolExecutionMixin:
                 else:
                     ui.tool_result(result.output)
 
-            return ToolMessage(
-                content=sanitize_tool_message_content(result.output, workspace=ctx.workspace),
-                tool_call_id=cid,
+            return _ExecutedTool(
+                message=ToolMessage(
+                    content=sanitize_tool_message_content(result.output, workspace=ctx.workspace),
+                    tool_call_id=cid,
+                ),
+                result=result,
+                tool_call=tc,
             )
 
-        # Run all approved tools in parallel
-        executed = await asyncio.gather(*[execute_one(tc) for tc in approved])
+        if barrier_present:
+            executed = []
+            for tc in approved:
+                executed.append(await execute_one(tc))
+        else:
+            executed = await asyncio.gather(*[execute_one(tc) for tc in approved])
 
         # Clear on-failure tracking for this batch (full logic in Phase 2)
         self._needs_failure_check.clear()
@@ -207,8 +239,13 @@ class GraphToolExecutionMixin:
             )
             for tc, reason in denied
         ]
+        deferred_msgs = [_deferred_message(tc, ctx.workspace) for tc in deferred_for_barrier]
 
-        return {"messages": list(executed) + extra + denied_msgs}
+        state_update = _state_update_from_executed_tools(executed)
+        return {
+            "messages": [item.message for item in executed] + extra + denied_msgs + deferred_msgs,
+            **state_update,
+        }
 
     @staticmethod
     def _tool_result_ok(result) -> bool:
@@ -221,3 +258,70 @@ class GraphToolExecutionMixin:
             except (TypeError, ValueError):
                 return False
         return True
+
+
+def _state_update_from_executed_tools(executed: list[_ExecutedTool]) -> dict:
+    update: dict = {}
+    for item in executed:
+        metadata = getattr(item.result, "metadata", {}) or {}
+        raw = metadata.get("state_patch")
+        if raw is None and isinstance(metadata.get("on_intent"), dict):
+            raw = metadata["on_intent"].get("state_patch")
+        if raw is None:
+            continue
+        patch = ToolStatePatch.model_validate(raw)
+        data = patch.model_dump(mode="json")
+        for field in patch.model_fields_set:
+            if field == "task_intent":
+                value = data.get(field)
+                if value is not None:
+                    update["task_intent"] = value
+            elif field == "pending_approval":
+                update["pending_approval"] = data.get(field)
+            elif field == "skill_runs":
+                update["skill_runs"] = patch.skill_runs
+            else:
+                update[field] = data.get(field)
+    return update
+
+
+def _is_barrier_tool(tool_call: dict) -> bool:
+    return tool_call.get("name") in {"on_intent", "clarify", "plan_checkpoint"}
+
+
+def _deferred_message(tool_call: dict, workspace: str) -> ToolMessage:
+    return ToolMessage(
+        content=sanitize_tool_message_content(
+            "Deferred until after a runtime barrier tool updates state. "
+            "Re-issue this tool call if it is still allowed for the updated intent.",
+            workspace=workspace,
+        ),
+        tool_call_id=tool_call.get("id", ""),
+    )
+
+
+def _make_interact_callback(app):
+    if app is None:
+        return None
+
+    async def interact(request: UserInteraction) -> UserResponse:
+        timeout = request.timeout
+        if request.options:
+            result = await app.ask_choice(request.prompt, request.options, timeout=timeout)
+        else:
+            result = await app.ask_text(request.prompt, timeout=timeout)
+        if result is None:
+            return UserResponse(value="", cancelled=True)
+        return UserResponse(value=result)
+
+    return interact
+
+
+def _dump_pending_approval(value: object | None) -> dict | None:
+    if value is None:
+        return None
+    if isinstance(value, dict):
+        return value
+    if hasattr(value, "model_dump"):
+        return value.model_dump(mode="json")
+    return None

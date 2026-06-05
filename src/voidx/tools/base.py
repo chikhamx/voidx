@@ -3,9 +3,9 @@
 from __future__ import annotations
 
 from abc import ABC, abstractmethod
+from collections.abc import Awaitable, Callable
 from pathlib import Path
 from typing import Any
-from collections.abc import Callable
 
 from pydantic import BaseModel, Field
 
@@ -40,15 +40,39 @@ class ToolResult(BaseModel):
     diff: str | None = None  # unified diff for edit/write tools
 
 
+class UserInteraction(BaseModel):
+    """A request for user input from a tool."""
+    prompt: str
+    options: list[tuple[str, str, str]] = Field(default_factory=list)
+    blocking: bool = True
+    timeout: float | None = None
+
+
+class UserResponse(BaseModel):
+    """The user's response to a tool interaction request."""
+    value: str
+    cancelled: bool = False
+
+
+UserInteractionCallback = Callable[[UserInteraction], Awaitable[UserResponse]]
+
+
 class ToolContext(BaseModel):
     """Context passed to every tool execution. Mutable file_mtimes for staleness guard."""
     workspace: str
     session_id: str = "default"
     agent: str = "build"
+    interaction_mode: str = "auto"
+    task_intent: str = "chat"
+    pending_approval: dict | None = None
+    goal: str = ""
+    goal_turn_count: int = 0
     file_mtimes: dict[str, float] = Field(default_factory=dict)
     mcp_manager: Any | None = None
     lsp_manager: Any | None = None
+    sandbox_mode: str = "workspace-write"
     sandbox_extra_paths: list[str] = Field(default_factory=list)
+    interact: UserInteractionCallback | None = Field(default=None, exclude=True)
 
     model_config = {"arbitrary_types_allowed": True}
 
@@ -94,9 +118,25 @@ SKIP_SUFFIXES = frozenset({
 def model_to_json_schema(model: type[BaseModel]) -> dict[str, Any]:
     """Convert a Pydantic model to JSON Schema dict."""
     schema = model.model_json_schema()
-    return {
+    result = {
         "type": "object",
         "properties": schema.get("properties", {}),
         "required": schema.get("required", []),
         "additionalProperties": False,
     }
+    if "$defs" in schema:
+        result["$defs"] = schema["$defs"]
+    _disallow_extra_properties(result)
+    return result
+
+
+def _disallow_extra_properties(schema: dict[str, Any]) -> None:
+    if schema.get("type") == "object":
+        schema.setdefault("additionalProperties", False)
+    for value in schema.values():
+        if isinstance(value, dict):
+            _disallow_extra_properties(value)
+        elif isinstance(value, list):
+            for item in value:
+                if isinstance(item, dict):
+                    _disallow_extra_properties(item)

@@ -17,7 +17,7 @@ def browse(tree: OutputTree, console: Console) -> None:
 
     # Initial render — track line count for in-place updates
     width = console.width or 80
-    lines, line_map = tree.render_with_line_map(width)
+    lines, line_map = tree.render_with_click_map(width)
     for line in lines:
         console.print(line)
     console.print(HINT)
@@ -44,7 +44,7 @@ def _rerender(tree, console, total_lines, width):
     sys.stdout.write("\x1b[J")  # Clear from cursor to end
     sys.stdout.flush()
 
-    lines, line_map = tree.render_with_line_map(width)
+    lines, line_map = tree.render_with_click_map(width)
     for line in lines:
         console.print(line)
     console.print("[dim]点击节点展开/折叠，按任意键开始输入[/dim]")

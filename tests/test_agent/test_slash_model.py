@@ -9,12 +9,12 @@ sys.path.insert(0, str(Path(__file__).parent.parent.parent / "src"))
 
 from voidx.agent.slash import SlashHandler
 from voidx.agent.slash.runtime import _select_from_list
-from voidx.agent.task_state import TaskRun, TaskState
+from voidx.agent.task_state import PendingApproval, TaskRun, TaskState
 from voidx.config import CodeIde, ApprovalPolicy, ApprovalReviewer, ModelConfig, PermissionMode, SandboxMode, Settings
 from voidx.permission.service import PermissionService
 from voidx.llm.catalog import STATIC_MODELS
 from voidx.llm.usage import UsageStats
-from voidx.memory.model_profiles import delete_model_profile
+from voidx.memory.model_profiles import delete_model_profile_async
 from voidx.ui.tools.clipboard_image import ClipboardImageResult
 
 
@@ -66,9 +66,9 @@ async def test_model_list_reads_settings_profiles(tmp_path):
         encoding="utf-8",
     )
     try:
-        settings = Settings(str(tmp_path))
+        settings = await Settings.create(str(tmp_path))
         graph = SimpleNamespace(
-            config=settings.build_config(),
+            config=await settings.build_config(),
             _settings=settings,
             model=object(),
             _app=None,
@@ -76,8 +76,8 @@ async def test_model_list_reads_settings_profiles(tmp_path):
 
         await SlashHandler(graph)._model_list()
     finally:
-        delete_model_profile(profile_one)
-        delete_model_profile(profile_two)
+        await delete_model_profile_async(profile_one)
+        await delete_model_profile_async(profile_two)
 
 
 @pytest.mark.asyncio
@@ -117,9 +117,9 @@ async def test_model_test_creates_model_with_config_defaults(tmp_path, monkeypat
         encoding="utf-8",
     )
     try:
-        settings = Settings(str(tmp_path))
+        settings = await Settings.create(str(tmp_path))
         graph = SimpleNamespace(
-            config=settings.build_config(),
+            config=await settings.build_config(),
             _settings=settings,
             _app=None,
         )
@@ -141,7 +141,7 @@ async def test_model_test_creates_model_with_config_defaults(tmp_path, monkeypat
 
         assert captured["reasoning_effort"] == "xhigh"
     finally:
-        delete_model_profile(profile_name)
+        await delete_model_profile_async(profile_name)
 
 
 @pytest.mark.asyncio
@@ -308,7 +308,8 @@ async def test_permission_mode_dispatch_updates_service_and_settings(tmp_path):
 
     assert await SlashHandler(graph).dispatch("/permission-mode full-access") is True
 
-    cfg = Settings(str(tmp_path)).build_config()
+    reloaded = await Settings.create(str(tmp_path))
+    cfg = await reloaded.build_config()
     assert permission.permission_mode == "full-access"
     assert permission.sandbox_mode == "danger-full-access"
     assert permission.approval_policy == "never"
@@ -439,7 +440,7 @@ async def test_goal_dispatch_sets_goal_and_goal_mode():
 async def test_goal_clear_resets_goal_and_returns_to_auto():
     run = TaskRun()
     run.set_goal("优化 markdown 渲染截断")
-    state = TaskState(awaiting_implementation_approval=True, approved_scope="优化 markdown 渲染截断")
+    state = TaskState(pending_approval=PendingApproval(scope="优化 markdown 渲染截断"))
     graph = SimpleNamespace(
         _interaction_mode=None,
         _plan_mode=False,
@@ -452,5 +453,4 @@ async def test_goal_clear_resets_goal_and_returns_to_auto():
 
     assert graph._interaction_mode.value == "auto"
     assert graph._task_run.goal == ""
-    assert graph._task_state.awaiting_implementation_approval is False
-    assert graph._task_state.approved_scope == ""
+    assert graph._task_state.pending_approval is None

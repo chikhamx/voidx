@@ -14,8 +14,7 @@ def test_inspect_turn_does_not_allow_implementation():
     state.update_after_turn(resolution, "看看 voidx 的 agent 编排")
 
     assert resolution.intent == TaskIntent.INSPECT
-    assert resolution.implementation_allowed is False
-    assert state.awaiting_implementation_approval is False
+    assert state.pending_approval is None
 
 
 def test_design_turn_opens_one_pending_implementation_approval():
@@ -25,9 +24,8 @@ def test_design_turn_opens_one_pending_implementation_approval():
     state.update_after_turn(resolution, "给个优化方案")
 
     assert resolution.intent == TaskIntent.DESIGN
-    assert resolution.implementation_allowed is False
-    assert state.awaiting_implementation_approval is True
-    assert state.approved_scope == "给个优化方案"
+    assert state.pending_approval is not None
+    assert state.pending_approval.scope == "给个优化方案"
 
 
 def test_approval_phrase_confirms_pending_design():
@@ -38,8 +36,8 @@ def test_approval_phrase_confirms_pending_design():
     resolution = resolve_turn_intent("对，可以", "auto", state)
 
     assert resolution.intent == TaskIntent.IMPLEMENT
-    assert resolution.implementation_allowed is True
-    assert resolution.approved_scope == "给个优化方案"
+    assert resolution.confirmed_approval is not None
+    assert resolution.confirmed_approval.scope == "给个优化方案"
 
 
 def test_confirm_phrase_confirms_pending_design():
@@ -50,36 +48,34 @@ def test_confirm_phrase_confirms_pending_design():
     resolution = resolve_turn_intent("确认", "auto", state)
 
     assert resolution.intent == TaskIntent.IMPLEMENT
-    assert resolution.implementation_allowed is True
-    assert resolution.approved_scope == "给个优化方案"
+    assert resolution.confirmed_approval is not None
+    assert resolution.confirmed_approval.scope == "给个优化方案"
 
 
 def test_approval_phrase_without_pending_design_is_ambiguous():
     resolution = resolve_turn_intent("对，可以", "auto", TaskState())
 
     assert resolution.intent == TaskIntent.AMBIGUOUS
-    assert resolution.implementation_allowed is False
 
 
 def test_direct_implementation_request_does_not_need_pending_design():
     resolution = resolve_turn_intent("开始实现这个优化", "auto", TaskState())
 
     assert resolution.intent == TaskIntent.IMPLEMENT
-    assert resolution.implementation_allowed is True
+    assert resolution.confirmed_approval is None
 
 
 def test_short_modify_command_is_explicit_implementation_intent():
     resolution = resolve_turn_intent("改", "auto", TaskState())
 
     assert resolution.intent == TaskIntent.IMPLEMENT
-    assert resolution.implementation_allowed is True
+    assert resolution.confirmed_approval is None
 
 
 def test_design_question_with_change_word_stays_design_intent():
     resolution = resolve_turn_intent("怎么改比较好", "auto", TaskState())
 
     assert resolution.intent == TaskIntent.DESIGN
-    assert resolution.implementation_allowed is False
 
 
 def test_non_design_turn_clears_pending_approval():
@@ -92,7 +88,7 @@ def test_non_design_turn_clears_pending_approval():
     approval = resolve_turn_intent("对，可以", "auto", state)
 
     assert inspect.intent == TaskIntent.INSPECT
-    assert state.awaiting_implementation_approval is False
+    assert state.pending_approval is None
     assert approval.intent == TaskIntent.AMBIGUOUS
 
 
@@ -106,8 +102,8 @@ def test_goal_run_tracks_goal_phase_and_approval_scope():
     assert run.status == TaskRunStatus.ACTIVE
     assert run.phase == TaskPhase.DESIGN
     assert run.turn_count == 1
-    assert run.awaiting_implementation_approval is True
-    assert run.approved_scope == "优化 markdown 渲染截断"
+    assert run.pending_approval is not None
+    assert run.pending_approval.scope == "优化 markdown 渲染截断"
 
 
 def test_goal_run_implementation_clears_pending_approval():
@@ -124,8 +120,7 @@ def test_goal_run_implementation_clears_pending_approval():
     assert approval.intent == TaskIntent.IMPLEMENT
     assert run.phase == TaskPhase.IMPLEMENT
     assert run.turn_count == 2
-    assert run.awaiting_implementation_approval is False
-    assert run.approved_scope == ""
+    assert run.pending_approval is None
 
 
 def test_goal_run_clear_resets_to_idle():

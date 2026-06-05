@@ -270,9 +270,33 @@ def _is_git_push_outside(
     """
     if prog != "git" or len(words) < 2:
         return False
-    if words[1] != "push":
-        return False
-    return True
+    subcommand = _git_subcommand(_program_args(words))
+    return subcommand == "push"
+
+
+_GIT_GLOBAL_OPTIONS_WITH_VALUE = {
+    "-C", "-c", "--git-dir", "--work-tree", "--namespace", "--exec-path",
+}
+
+
+def _git_subcommand(args: list[str]) -> str:
+    index = 0
+    while index < len(args):
+        word = args[index]
+        if word in _GIT_GLOBAL_OPTIONS_WITH_VALUE:
+            index += 2
+            continue
+        if any(word.startswith(f"{option}=") for option in _GIT_GLOBAL_OPTIONS_WITH_VALUE if option.startswith("--")):
+            index += 1
+            continue
+        if word == "--":
+            index += 1
+            continue
+        if word.startswith("-"):
+            index += 1
+            continue
+        return word
+    return ""
 
 
 # ── export ───────────────────────────────────────────────────────────

@@ -8,6 +8,8 @@ Responsibilities:
   - Clean shutdown on graph exit
 
 Design: all servers start in parallel, a single failure doesn't block others.
+Startup is non-blocking — start_all() returns immediately and servers connect
+in the background. UI can poll statuses() to show progress.
 """
 
 from __future__ import annotations
@@ -36,6 +38,9 @@ class McpManager:
         self._started = False
         self._tool_counts: dict[str, int] = {}
         self._errors: dict[str, str] = {}
+        self._connecting: set[str] = set()
+        self._init_task: asyncio.Task | None = None
+        self._server_configs: list[McpServerConfig] = []
 
     @property
     def started(self) -> bool:
@@ -44,9 +49,10 @@ class McpManager:
     # ── lifecycle ───────────────────────────────────────────────────────
 
     async def start_all(self) -> None:
-        """Start all configured MCP servers and register their tools.
+        """Start all configured MCP servers in the background.
 
-        Servers start in parallel. A failed server doesn't block others.
+        Returns immediately. Servers connect asynchronously; poll statuses()
+        or await wait_ready() to know when they're done.
         """
         if self._started:
             return
@@ -61,62 +67,94 @@ class McpManager:
         if not servers:
             return
 
+        self._server_configs = servers
         enabled = [s for s in servers if not s.disabled]
         if not enabled:
             return
 
-        log.info("Starting %d MCP server(s)...", len(enabled))
+        log.info("Starting %d MCP server(s) in background...", len(enabled))
 
-        # Start all servers concurrently
-        results = await self._start_servers(enabled)
+        # Mark all as connecting
+        for s in enabled:
+            self._connecting.add(s.name)
 
-        # Register tools from successfully started servers
-        for server_name, client in results:
-            try:
-                tool_defs = await client.list_tools()
-            except Exception as e:
-                log.warning("Could not list tools from MCP server '%s': %s", server_name, e)
-                self._errors[server_name] = f"Could not list tools: {e}"
-                self._tool_counts[server_name] = 0
-                continue
-            self._errors.pop(server_name, None)
+        # Fire-and-forget: connect in background
+        self._init_task = asyncio.create_task(self._init_servers(enabled))
 
-            allowed = self._resolve_tool_filter(
-                next((s for s in servers if s.name == server_name), None)
-            )
+    async def wait_ready(self, timeout: float = 30.0) -> None:
+        """Wait until all background server connections are done (or timed out)."""
+        if self._init_task is None:
+            return
+        try:
+            await asyncio.wait_for(asyncio.shield(self._init_task), timeout=timeout)
+        except asyncio.TimeoutError:
+            log.warning("MCP server init did not complete within %.0fs", timeout)
 
-            registered = 0
-            for td in tool_defs:
-                if allowed is not None and td.name not in allowed:
+    async def _init_servers(self, servers: list[McpServerConfig]) -> None:
+        """Connect to servers and register tools (runs in background)."""
+        try:
+            results = await self._start_servers(servers)
+
+            # Register tools from successfully started servers
+            for server_name, client in results:
+                try:
+                    tool_defs = await client.list_tools()
+                except Exception as e:
+                    log.warning("Could not list tools from MCP server '%s': %s", server_name, e)
+                    self._errors[server_name] = f"Could not list tools: {e}"
+                    self._tool_counts[server_name] = 0
                     continue
-                wrapper = McpToolWrapper(client, td, server_name)
-                self._registry.register(
-                    wrapper.id,
-                    wrapper,
-                    wrapper.description,
-                    wrapper.parameters_schema(),
+                self._errors.pop(server_name, None)
+
+                allowed = self._resolve_tool_filter(
+                    next((s for s in servers if s.name == server_name), None)
                 )
-                registered += 1
 
-            # Pre-deny tools that are in deny filter (user explicitly wants them blocked)
-            disallowed = self._resolve_tool_filter(
-                next((s for s in servers if s.name == server_name), None),
-                allow_mode=False,
-            )
-            if disallowed:
-                for tool_name in disallowed:
-                    tool_id = mcp_tool_id(server_name, tool_name)
-                    self._permission.deny_silent(tool_id)
+                registered = 0
+                for td in tool_defs:
+                    if allowed is not None and td.name not in allowed:
+                        continue
+                    wrapper = McpToolWrapper(client, td, server_name)
+                    self._registry.register(
+                        wrapper.id,
+                        wrapper,
+                        wrapper.description,
+                        wrapper.parameters_schema(),
+                    )
+                    registered += 1
 
-            log.info(
-                "MCP server '%s': %d tools registered",
-                server_name, registered,
-            )
-            self._tool_counts[server_name] = registered
+                # Pre-deny tools that are in deny filter (user explicitly wants them blocked)
+                disallowed = self._resolve_tool_filter(
+                    next((s for s in servers if s.name == server_name), None),
+                    allow_mode=False,
+                )
+                if disallowed:
+                    for tool_name in disallowed:
+                        tool_id = mcp_tool_id(server_name, tool_name)
+                        self._permission.deny_silent(tool_id)
+
+                log.info(
+                    "MCP server '%s': %d tools registered",
+                    server_name, registered,
+                )
+                self._tool_counts[server_name] = registered
+        finally:
+            self._connecting.clear()
 
     async def stop_all(self) -> None:
         """Gracefully stop all MCP server connections."""
         self._started = False
+        self._connecting.clear()
+
+        # Cancel background init if still running
+        if self._init_task is not None and not self._init_task.done():
+            self._init_task.cancel()
+            try:
+                await self._init_task
+            except (asyncio.CancelledError, Exception):
+                pass
+            self._init_task = None
+
         self._registry.unregister_prefix("mcp__")
         self._tool_counts.clear()
         if not self._clients:
@@ -165,16 +203,24 @@ class McpManager:
 
     def statuses(self) -> list[McpRuntimeStatus]:
         """Return runtime status of all configured servers (for UI)."""
-        if self._settings is None:
+        servers = self._server_configs
+        if not servers and self._settings is not None:
+            servers = self._settings.list_mcp_servers()
+        if not servers:
             return []
-
-        servers = self._settings.list_mcp_servers()
         result: list[McpRuntimeStatus] = []
         for sc in servers:
             if sc.disabled:
                 result.append(McpRuntimeStatus(
                     name=sc.name,
                     status="disabled",
+                ))
+                continue
+
+            if sc.name in self._connecting:
+                result.append(McpRuntimeStatus(
+                    name=sc.name,
+                    status="connecting",
                 ))
                 continue
 
@@ -236,7 +282,15 @@ class McpManager:
     @staticmethod
     async def _gather_safe(tasks: list) -> list:
         results = await asyncio.gather(*tasks, return_exceptions=True)
-        return [None if isinstance(r, BaseException) else r for r in results]
+        safe: list = []
+        for r in results:
+            if isinstance(r, (KeyboardInterrupt, SystemExit)):
+                raise r
+            if isinstance(r, BaseException):
+                safe.append(None)
+            else:
+                safe.append(r)
+        return safe
 
     @staticmethod
     def _resolve_tool_filter(
@@ -249,7 +303,7 @@ class McpManager:
         """
         if server_config is None:
             return None
-        tools_field = getattr(server_config, "tools", None)
+        tools_field = server_config.tools
         if tools_field is None:
             return None
         if isinstance(tools_field, list):

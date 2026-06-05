@@ -4,17 +4,17 @@ from __future__ import annotations
 
 import re
 
-from dataclasses import dataclass
 from enum import Enum
+from typing import Literal
 
-from pydantic import BaseModel
+from pydantic import BaseModel, Field
 
 from voidx.agent.runtime_context import (
     InteractionMode,
     TaskIntent,
-    implementation_allowed_for_intent,
     infer_task_intent,
 )
+from voidx.skills.runtime import SkillRunState
 
 
 _APPROVAL_ONLY_HINTS = {
@@ -95,13 +95,20 @@ class TaskRunStatus(str, Enum):
     DONE = "done"
 
 
+class PendingApproval(BaseModel):
+    kind: Literal["implementation"] = "implementation"
+    scope: str
+    source_intent: TaskIntent = TaskIntent.DESIGN
+    created_turn: int = 0
+
+
 class TaskRun(BaseModel):
     goal: str = ""
     phase: TaskPhase = TaskPhase.CLARIFY
     status: TaskRunStatus = TaskRunStatus.IDLE
-    approved_scope: str = ""
-    awaiting_implementation_approval: bool = False
+    pending_approval: PendingApproval | None = None
     turn_count: int = 0
+    skill_runs: dict[str, SkillRunState] = Field(default_factory=dict)
 
     @property
     def active(self) -> bool:
@@ -111,17 +118,22 @@ class TaskRun(BaseModel):
         self.goal = _summarize_scope(goal)
         self.phase = TaskPhase.CLARIFY
         self.status = TaskRunStatus.ACTIVE if self.goal else TaskRunStatus.IDLE
-        self.approved_scope = ""
-        self.awaiting_implementation_approval = False
+        self.pending_approval = None
         self.turn_count = 0
+        self.skill_runs = {}
 
     def clear(self) -> None:
         self.goal = ""
         self.phase = TaskPhase.CLARIFY
         self.status = TaskRunStatus.IDLE
-        self.approved_scope = ""
-        self.awaiting_implementation_approval = False
+        self.pending_approval = None
         self.turn_count = 0
+        self.skill_runs = {}
+
+    def merge_skill_runs(self, runs: list[SkillRunState | dict]) -> None:
+        for item in runs:
+            run = item if isinstance(item, SkillRunState) else SkillRunState.model_validate(item)
+            self.skill_runs[run.name] = run
 
     def update_after_turn(
         self,
@@ -138,21 +150,21 @@ class TaskRun(BaseModel):
         self.status = TaskRunStatus.ACTIVE
         self.turn_count += 1
         self.phase = _phase_for_intent(resolution.intent)
-        transition = _approval_transition(
+        if resolution.intent == TaskIntent.AMBIGUOUS:
+            return
+        self.pending_approval = _next_pending_approval(
+            resolution,
             resolution.intent,
             _summarize_scope(scope_text or self.goal or user_text),
+            turn_count=self.turn_count,
         )
-        if transition.update:
-            self.awaiting_implementation_approval = transition.awaiting_implementation_approval
-            self.approved_scope = transition.approved_scope
 
 
 class TaskState(BaseModel):
     current_intent: TaskIntent = TaskIntent.CHAT
     previous_intent: TaskIntent | None = None
     current_goal: str = ""
-    awaiting_implementation_approval: bool = False
-    approved_scope: str = ""
+    pending_approval: PendingApproval | None = None
     last_plan_summary: str = ""
 
     def update_after_turn(
@@ -164,42 +176,58 @@ class TaskState(BaseModel):
     ) -> None:
         self.previous_intent = self.current_intent
         self.current_intent = resolution.intent
-        self.current_goal = _summarize_scope(scope_text or user_text)
-        transition = _approval_transition(resolution.intent, self.current_goal)
-        if transition.update:
-            self.awaiting_implementation_approval = transition.awaiting_implementation_approval
-            self.approved_scope = transition.approved_scope
-            if transition.last_plan_summary is not None:
-                self.last_plan_summary = transition.last_plan_summary
+        goal_text = scope_text or (
+            resolution.confirmed_approval.scope
+            if resolution.confirmed_approval
+            else user_text
+        )
+        self.current_goal = _summarize_scope(goal_text)
+        if resolution.intent == TaskIntent.AMBIGUOUS:
+            return
+        if resolution.intent == TaskIntent.DESIGN:
+            self.last_plan_summary = self.current_goal
+        self.pending_approval = _next_pending_approval(
+            resolution,
+            resolution.intent,
+            self.current_goal,
+        )
 
 
 class IntentResolution(BaseModel):
     intent: TaskIntent
-    implementation_allowed: bool
     reason: str
-    awaiting_implementation_approval: bool = False
-    approved_scope: str = ""
+    confirmed_approval: PendingApproval | None = None
 
 
-@dataclass(frozen=True)
-class _ApprovalTransition:
-    update: bool
-    awaiting_implementation_approval: bool = False
-    approved_scope: str = ""
-    last_plan_summary: str | None = None
+class ToolStatePatch(BaseModel):
+    """Structured state updates requested by runtime tools."""
+    task_intent: TaskIntent | None = None
+    intent_resolution_reason: str | None = None
+    goal: str | None = None
+    goal_phase: str | None = None
+    goal_status: str | None = None
+    pending_approval: PendingApproval | None = None
+    available_tool_ids: list[str] | None = None
+    skill_runs: list[SkillRunState] = Field(default_factory=list)
+    intent_confidence: float | None = None
+    intent_source: str | None = None
+    intent_refined: bool | None = None
 
 
-def _approval_transition(intent: TaskIntent, scope: str) -> _ApprovalTransition:
+def _next_pending_approval(
+    resolution: IntentResolution,
+    intent: TaskIntent,
+    scope: str,
+    *,
+    turn_count: int = 0,
+) -> PendingApproval | None:
     if intent == TaskIntent.DESIGN:
-        return _ApprovalTransition(
-            update=True,
-            awaiting_implementation_approval=True,
-            approved_scope=scope,
-            last_plan_summary=scope,
+        return PendingApproval(
+            scope=scope,
+            source_intent=TaskIntent.DESIGN,
+            created_turn=turn_count,
         )
-    if intent == TaskIntent.AMBIGUOUS:
-        return _ApprovalTransition(update=False)
-    return _ApprovalTransition(update=True)
+    return None
 
 
 def resolve_turn_intent(
@@ -214,12 +242,11 @@ def resolve_turn_intent(
         return _resolution(TaskIntent.DESIGN, "interaction mode forces design")
 
     if _is_approval_only(text):
-        if state.awaiting_implementation_approval:
+        if state.pending_approval:
             return _resolution(
                 TaskIntent.IMPLEMENT,
                 "user confirmed the pending implementation plan",
-                awaiting_implementation_approval=True,
-                approved_scope=state.approved_scope,
+                confirmed_approval=state.pending_approval,
             )
         return _resolution(
             TaskIntent.AMBIGUOUS,
@@ -240,15 +267,12 @@ def _resolution(
     intent: TaskIntent,
     reason: str,
     *,
-    awaiting_implementation_approval: bool = False,
-    approved_scope: str = "",
+    confirmed_approval: PendingApproval | None = None,
 ) -> IntentResolution:
     return IntentResolution(
         intent=intent,
-        implementation_allowed=implementation_allowed_for_intent(intent),
         reason=reason,
-        awaiting_implementation_approval=awaiting_implementation_approval,
-        approved_scope=approved_scope,
+        confirmed_approval=confirmed_approval,
     )
 
 

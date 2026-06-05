@@ -1,0 +1,170 @@
+# voidx installer for Windows — downloads a standalone Python, creates an
+# isolated venv, and installs voidx. No Python, pip, or npm required.
+#
+# Usage:
+#   irm https://raw.githubusercontent.com/.../install.ps1 | iex
+#   # or:
+#   powershell -File install.ps1
+#
+# Environment variables:
+#   $env:VOIDX_VERSION       — version to install (default: 1.1.1)
+#   $env:VOIDX_HOME          — install directory (default: $env:LOCALAPPDATA\voidx)
+#   $env:VOIDX_PYTHON_MIRROR — mirror for python-build-standalone downloads
+#   $env:VOIDX_PIP_INDEX     — custom PyPI index URL
+
+$ErrorActionPreference = "Stop"
+
+$Version = if ($env:VOIDX_VERSION) { $env:VOIDX_VERSION } else { "1.1.1" }
+$PbsTag = "20260602"
+$PbsCpython = "3.12.13"
+$PbsReleaseBase = "https://github.com/astral-sh/python-build-standalone/releases/download/$PbsTag"
+
+# ── Platform detection ──────────────────────────────────────────────────────
+$Arch = [System.Runtime.InteropServices.RuntimeInformation]::OSArchitecture
+if ($Arch -eq "X64") { $PbsTarget = "x86_64-pc-windows-msvc" }
+elseif ($Arch -eq "Arm64") { $PbsTarget = "aarch64-pc-windows-msvc" }
+else {
+    Write-Host "  ❌ Unsupported architecture: $Arch" -ForegroundColor Red
+    Write-Host "     voidx supports: Windows x64/arm64" -ForegroundColor Red
+    exit 1
+}
+
+$PbsFilename = "cpython-$PbsCpython+$PbsTag-$PbsTarget-install_only_stripped.tar.gz"
+$PbsMirror = if ($env:VOIDX_PYTHON_MIRROR) { $env:VOIDX_PYTHON_MIRROR } else { $PbsReleaseBase }
+$PbsUrl = "$PbsMirror/$PbsTag/$PbsFilename"
+
+# ── Paths ───────────────────────────────────────────────────────────────────
+$VoidxHome = if ($env:VOIDX_HOME) { $env:VOIDX_HOME } else { Join-Path $env:LOCALAPPDATA "voidx" }
+$PythonDir = Join-Path $VoidxHome "python"
+$VenvDir = Join-Path $VoidxHome "venv"
+$BundledPython = Join-Path $PythonDir "python\python.exe"
+$VenvPython = Join-Path $VenvDir "Scripts\python.exe"
+$VoidxBin = Join-Path $VenvDir "Scripts\voidx.exe"
+$MarkerPath = Join-Path $VenvDir ".voidx-install-version"
+$Marker = "$Version`n$PbsTag`n$PbsCpython`n"
+
+# ── Check if already installed ──────────────────────────────────────────────
+if ((Test-Path $VoidxBin) -and (Test-Path $MarkerPath)) {
+    $Existing = Get-Content $MarkerPath -Raw -ErrorAction SilentlyContinue
+    if ($Existing -eq $Marker) {
+        Write-Host "  ✅ voidx $Version already installed at $VenvDir" -ForegroundColor Green
+        exit 0
+    }
+}
+
+Write-Host ""
+Write-Host "  🐍 Installing voidx $Version…" -ForegroundColor Cyan
+Write-Host ""
+
+# ── Step 1: Download Python ─────────────────────────────────────────────────
+Write-Host "  [1/3] Setting up Python runtime" -ForegroundColor Yellow
+
+if (Test-Path $BundledPython) {
+    Write-Host "  ✅ Using cached Python runtime" -ForegroundColor Green
+} else {
+    $ArchivePath = Join-Path $PythonDir $PbsFilename
+    New-Item -ItemType Directory -Path $PythonDir -Force | Out-Null
+
+    if (-not (Test-Path $ArchivePath)) {
+        Write-Host "    Downloading $PbsFilename…"
+
+        $Downloaded = $false
+        $Retries = 3
+        for ($i = 1; $i -le $Retries; $i++) {
+            try {
+                $TmpPath = "$ArchivePath.tmp"
+                Invoke-WebRequest -Uri $PbsUrl -OutFile $TmpPath -UseBasicParsing
+                Move-Item -Path $TmpPath -Destination $ArchivePath -Force
+                $Downloaded = $true
+                break
+            } catch {
+                Remove-Item -Path "$ArchivePath.tmp" -Force -ErrorAction SilentlyContinue
+                if ($i -lt $Retries) {
+                    $Delay = [Math]::Pow(2, $i)
+                    Write-Host "    Download attempt $i/$Retries failed, retrying in ${Delay}s…" -ForegroundColor Yellow
+                    Start-Sleep -Seconds $Delay
+                }
+            }
+        }
+
+        if (-not $Downloaded) {
+            Write-Host ""
+            Write-Host "  ❌ Failed to download Python runtime after $Retries attempts" -ForegroundColor Red
+            Write-Host ""
+            Write-Host "  This is usually a network issue. Try:"
+            Write-Host "    1. Use a mirror: `$env:VOIDX_PYTHON_MIRROR='https://npmmirror.com/mirrors/python-standalone'"
+            Write-Host "    2. Retry: powershell -File install.ps1"
+            Write-Host "    3. If you're in China, also set: `$env:VOIDX_PIP_INDEX='https://pypi.tuna.tsinghua.edu.cn/simple'"
+            exit 1
+        }
+    }
+
+    Write-Host "    Extracting Python runtime…"
+    tar -xzf $ArchivePath -C $PythonDir
+    Remove-Item -Path $ArchivePath -Force -ErrorAction SilentlyContinue
+    Write-Host "  ✅ Python runtime ready" -ForegroundColor Green
+}
+
+# ── Step 2: Create venv ────────────────────────────────────────────────────
+Write-Host "  [2/3] Creating virtual environment" -ForegroundColor Yellow
+
+# If venv exists but is corrupted, rebuild
+if ((Test-Path $VenvDir) -and -not (Test-Path $VenvPython)) {
+    Write-Host "    Existing venv is corrupted, rebuilding…" -ForegroundColor Yellow
+    Remove-Item -Path $VenvDir -Recurse -Force -ErrorAction SilentlyContinue
+}
+
+if (-not (Test-Path $VenvPython)) {
+    & $BundledPython -m venv $VenvDir
+    if ($LASTEXITCODE -ne 0) {
+        Write-Host "  ❌ Failed to create virtual environment" -ForegroundColor Red
+        exit 1
+    }
+}
+
+# Upgrade pip
+& $VenvPython -m pip install --upgrade pip --no-cache-dir 2>$null
+if ($LASTEXITCODE -ne 0) {
+    Write-Host "  ⚠️  Failed to upgrade pip, continuing with current version" -ForegroundColor Yellow
+}
+
+Write-Host "  ✅ Virtual environment ready" -ForegroundColor Green
+
+# ── Step 3: Install voidx ──────────────────────────────────────────────────
+Write-Host "  [3/3] Installing voidx $Version" -ForegroundColor Yellow
+
+$PipArgs = @("-m", "pip", "install", "--upgrade", "--no-cache-dir", "--progress-bar", "on")
+
+if ($env:VOIDX_PIP_INDEX) {
+    $PipArgs += @("-i", $env:VOIDX_PIP_INDEX)
+    try {
+        $IndexUri = [System.Uri]::new($env:VOIDX_PIP_INDEX)
+        $PipArgs += @("--trusted-host", $IndexUri.Host)
+    } catch {}
+}
+
+$PipArgs += @("voidx==$Version")
+
+$env:PIP_NO_INPUT = "1"
+$env:PIP_DISABLE_PIP_VERSION_CHECK = "1"
+$env:PYTHON_KEYRING_BACKEND = "keyring.backends.null.Keyring"
+
+& $VenvPython $PipArgs
+if ($LASTEXITCODE -ne 0) {
+    Write-Host ""
+    Write-Host "  ❌ pip install failed" -ForegroundColor Red
+    Write-Host ""
+    Write-Host "  This is usually a network issue. Try:"
+    Write-Host "    1. Use a PyPI mirror: `$env:VOIDX_PIP_INDEX='https://pypi.tuna.tsinghua.edu.cn/simple'"
+    Write-Host "    2. Retry: powershell -File install.ps1"
+    exit 1
+}
+
+# ── Write marker ────────────────────────────────────────────────────────────
+Set-Content -Path $MarkerPath -Value $Marker -NoNewline
+
+# ── Done ────────────────────────────────────────────────────────────────────
+Write-Host ""
+Write-Host "  ✅ voidx $Version installed!" -ForegroundColor Green
+Write-Host ""
+Write-Host "  Run: voidx" -ForegroundColor Cyan

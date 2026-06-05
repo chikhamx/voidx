@@ -25,7 +25,7 @@ class GraphCompactionMixin:
     async def _maybe_compact(
         self: GraphCompactionHost,
         messages: list,
-        session_msgs: list,
+        session_msgs: list | None = None,
         *,
         force: bool = False,
         ask: bool = True,
@@ -218,14 +218,23 @@ class GraphCompactionMixin:
 
         await delete_messages_through(self._session.id, last_message_id)
 
+        # Sync in-memory cache: drop compacted rows
+        cache = getattr(self, "_session_msg_cache", None)
+        if cache is not None:
+            self._session_msg_cache = [r for r in cache if r.id is not None and r.id > last_message_id]
+
     async def _compact_session_history(self: GraphCompactionHost, *, force: bool = True) -> bool:
         if getattr(self, "_session", None) is None:
             ui.print("[dim]No active session to compact.[/dim]")
             return False
 
-        from voidx.memory.session import load_messages
+        cache = getattr(self, "_session_msg_cache", None)
+        if cache is not None:
+            rows = list(cache)
+        else:
+            from voidx.memory.session import load_messages
+            rows = await load_messages(self._session.id)
 
-        rows = await load_messages(self._session.id)
         messages = messages_from_rows(rows)
 
         head, _tail_id = await self._maybe_compact(messages, rows, force=force, ask=False)

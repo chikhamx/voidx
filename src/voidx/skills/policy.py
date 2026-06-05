@@ -12,8 +12,10 @@ class WorkflowSkillActivation:
 
 
 WORKFLOW_SKILL_PRIORITY = {
+    "brainstorming": 5,
     "systematic-debugging": 10,
     "receiving-code-review": 20,
+    "writing-design-docs": 25,
     "writing-plans": 30,
     "test-driven-development": 40,
     "verification-before-completion": 50,
@@ -54,10 +56,13 @@ def workflow_skill_activations(
     if intent == "review" and _contains_any(text, _REVIEW_FEEDBACK_TERMS):
         add("receiving-code-review", "review feedback")
 
-    if intent == "design" and _contains_any(text, _PLAN_TERMS):
-        add("writing-plans", "planning intent")
+    if intent == "design" or intent == "create":
+        add("brainstorming", "design/create intent")
+        if _contains_any(text, _PLAN_TERMS):
+            add("writing-plans", "planning intent")
 
     if mode == "plan":
+        add("brainstorming", "plan mode")
         add("writing-plans", "plan mode")
 
     return sorted(

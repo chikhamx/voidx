@@ -1,5 +1,7 @@
 """Smoke tests for tool system — types, execution, error handling."""
 
+import asyncio
+import shlex
 import sys
 from pathlib import Path
 
@@ -7,7 +9,9 @@ sys.path.insert(0, str(Path(__file__).parent.parent.parent / "src"))
 
 import pytest
 
-from voidx.tools.base import ToolContext, ToolResult, BaseTool
+from langchain_core.messages import ToolMessage
+
+from voidx.tools.base import ToolContext, ToolResult, BaseTool, UserInteraction, UserResponse
 from voidx.tools.file_ops import FileReadInput, FileWriteInput, FileEditInput, EditEntry
 from voidx.tools.search import GlobInput, GrepInput
 from voidx.tools.bash import BashInput
@@ -15,6 +19,10 @@ from voidx.tools.agent import AgentInput
 from voidx.tools.task_tracker import TaskTracker
 from voidx.tools.task_status import TaskStatusTool
 from voidx.tools.registry import ToolRegistry
+from voidx.tools.clarify import ClarifyTool, ClarifyInput, ClarifyOption, _infer_state_patch
+from voidx.tools.plan_checkpoint import PlanCheckpointTool
+from voidx.agent.task_state import ToolStatePatch, PendingApproval
+from voidx.agent.runtime_context import TaskIntent
 
 
 class TestToolSchemas:
@@ -87,6 +95,8 @@ class TestToolRegistry:
         assert "grep" in ids
         assert "bash" in ids
         assert "repo_map" in ids
+        assert "clarify" in ids
+        assert "plan_checkpoint" in ids
         assert "lsp_diagnostics" in ids
         assert "lsp_symbols" in ids
         assert "lsp_definition" in ids
@@ -104,6 +114,17 @@ class TestToolRegistry:
             assert "description" in t["function"]
             assert "parameters" in t["function"]
 
+    def test_nested_tool_schemas_keep_defs_and_strict_objects(self):
+        r = ToolRegistry()
+        clarify = r.get_def("clarify").parameters
+        checkpoint = r.get_def("plan_checkpoint").parameters
+
+        assert "$defs" in clarify
+        assert "$defs" in checkpoint
+        assert clarify["$defs"]["ClarifyOption"]["additionalProperties"] is False
+        assert checkpoint["$defs"]["PlanStep"]["additionalProperties"] is False
+        assert checkpoint["$defs"]["PlanAlternative"]["additionalProperties"] is False
+
     def test_unknown_tool(self):
         r = ToolRegistry()
         assert r.get("nonexistent") is None
@@ -118,6 +139,467 @@ class TestToolRegistry:
         assert r.get("write") is None
         names = [tool["function"]["name"] for tool in r.tools_for_llm()]
         assert names == ["read", "grep"]
+
+
+class TestInteractiveTools:
+    @pytest.mark.asyncio
+    async def test_clarify_uses_interaction_callback_and_returns_state_patch(self, tmp_path):
+        requests = []
+
+        async def interact(request):
+            requests.append(request)
+            return UserResponse(value="implement")
+
+        result = await ClarifyTool().execute(
+            {
+                "question": "What should I do?",
+                "options": [
+                    {"label": "Implement", "value": "implement", "description": "Make the change"},
+                    {"label": "Inspect", "value": "inspect", "description": "Only inspect"},
+                ],
+            },
+            ToolContext(workspace=str(tmp_path), interact=interact),
+        )
+
+        assert requests
+        assert result.metadata["clarify_answer"] == "implement"
+        assert result.metadata["state_patch"]["task_intent"] == "implement"
+        assert result.metadata["state_patch"]["intent_source"] == "clarify"
+
+    @pytest.mark.asyncio
+    async def test_plan_checkpoint_approval_clears_pending_approval(self, tmp_path):
+        async def interact(request):
+            return UserResponse(value="approved")
+
+        result = await PlanCheckpointTool().execute(
+            {"plan_summary": "Update runtime state handling"},
+            ToolContext(workspace=str(tmp_path), interact=interact),
+        )
+
+        assert result.metadata["plan_decision"] == "approved"
+        patch = result.metadata["state_patch"]
+        assert patch["task_intent"] == "implement"
+        assert patch["goal"] == "Update runtime state handling"
+        assert patch["pending_approval"] is None
+
+    @pytest.mark.asyncio
+    async def test_plan_checkpoint_blocks_without_interaction(self, tmp_path):
+        result = await PlanCheckpointTool().execute(
+            {"plan_summary": "Edit files"},
+            ToolContext(workspace=str(tmp_path)),
+        )
+
+        assert result.metadata["blocked"] is True
+        assert result.metadata["plan_decision"] == "interaction_unavailable"
+
+    @pytest.mark.asyncio
+    async def test_clarify_without_interaction_returns_blocked(self, tmp_path):
+        result = await ClarifyTool().execute(
+            {"question": "What should I do?"},
+            ToolContext(workspace=str(tmp_path)),
+        )
+
+        assert result.metadata["clarify_cancelled"] is True
+        assert result.metadata["blocked"] is True
+
+    @pytest.mark.asyncio
+    async def test_clarify_user_cancels(self, tmp_path):
+        async def interact(request):
+            return UserResponse(value="", cancelled=True)
+
+        result = await ClarifyTool().execute(
+            {"question": "What should I do?"},
+            ToolContext(workspace=str(tmp_path), interact=interact),
+        )
+
+        assert result.metadata["clarify_cancelled"] is True
+        assert "skipped" in result.title
+
+    @pytest.mark.asyncio
+    async def test_clarify_free_text_without_options(self, tmp_path):
+        requests = []
+
+        async def interact(request):
+            requests.append(request)
+            return UserResponse(value="I want to refactor the auth module")
+
+        result = await ClarifyTool().execute(
+            {"question": "What would you like to do?"},
+            ToolContext(workspace=str(tmp_path), interact=interact),
+        )
+
+        assert len(requests) == 1
+        assert requests[0].options == []
+        assert result.metadata["clarify_answer"] == "I want to refactor the auth module"
+
+    @pytest.mark.asyncio
+    async def test_clarify_passes_context_in_prompt(self, tmp_path):
+        requests = []
+
+        async def interact(request):
+            requests.append(request)
+            return UserResponse(value="refactor")
+
+        result = await ClarifyTool().execute(
+            {
+                "question": "What should I do?",
+                "context": "This determines the implementation scope",
+            },
+            ToolContext(workspace=str(tmp_path), interact=interact),
+        )
+
+        assert "This determines the implementation scope" in requests[0].prompt
+
+    @pytest.mark.asyncio
+    async def test_plan_checkpoint_rejected_stays_in_design(self, tmp_path):
+        async def interact(request):
+            return UserResponse(value="rejected")
+
+        result = await PlanCheckpointTool().execute(
+            {"plan_summary": "Refactor auth module"},
+            ToolContext(workspace=str(tmp_path), interact=interact),
+        )
+
+        assert result.metadata["plan_decision"] == "rejected"
+        patch = result.metadata["state_patch"]
+        assert patch["task_intent"] == "design"
+        assert patch["goal_phase"] == "design"
+
+    @pytest.mark.asyncio
+    async def test_plan_checkpoint_modified_updates_scope(self, tmp_path):
+        interact_calls = []
+
+        async def interact(request):
+            interact_calls.append(request)
+            if len(interact_calls) == 1:
+                return UserResponse(value="modified")
+            return UserResponse(value="Only refactor the login function")
+
+        result = await PlanCheckpointTool().execute(
+            {"plan_summary": "Refactor auth module"},
+            ToolContext(workspace=str(tmp_path), interact=interact),
+        )
+
+        assert result.metadata["plan_decision"] == "modified"
+        patch = result.metadata["state_patch"]
+        assert patch["task_intent"] == "implement"
+        assert patch["goal"] == "Only refactor the login function"
+        assert len(interact_calls) == 2
+        assert "Describe the modified scope" in interact_calls[1].prompt
+
+    @pytest.mark.asyncio
+    async def test_plan_checkpoint_modified_scope_cancelled_falls_back_to_summary(self, tmp_path):
+        async def interact(request):
+            if request.options:
+                return UserResponse(value="modified")
+            return UserResponse(value="", cancelled=True)
+
+        result = await PlanCheckpointTool().execute(
+            {"plan_summary": "Refactor auth module"},
+            ToolContext(workspace=str(tmp_path), interact=interact),
+        )
+
+        assert result.metadata["plan_decision"] == "modified"
+        patch = result.metadata["state_patch"]
+        assert patch["goal"] == "Refactor auth module"
+
+    @pytest.mark.asyncio
+    async def test_plan_checkpoint_user_cancels_treated_as_rejected(self, tmp_path):
+        async def interact(request):
+            return UserResponse(value="", cancelled=True)
+
+        result = await PlanCheckpointTool().execute(
+            {"plan_summary": "Refactor auth module"},
+            ToolContext(workspace=str(tmp_path), interact=interact),
+        )
+
+        assert result.metadata["plan_decision"] == "rejected"
+
+    @pytest.mark.asyncio
+    async def test_clarify_sets_default_timeout_on_interaction(self, tmp_path):
+        requests = []
+
+        async def interact(request):
+            requests.append(request)
+            return UserResponse(value="chat")
+
+        result = await ClarifyTool().execute(
+            {"question": "What should I do?"},
+            ToolContext(workspace=str(tmp_path), interact=interact),
+        )
+
+        assert requests[0].timeout == 120.0
+
+    @pytest.mark.asyncio
+    async def test_plan_checkpoint_sets_default_timeout_on_interaction(self, tmp_path):
+        requests = []
+
+        async def interact(request):
+            requests.append(request)
+            return UserResponse(value="approved")
+
+        result = await PlanCheckpointTool().execute(
+            {"plan_summary": "Refactor auth"},
+            ToolContext(workspace=str(tmp_path), interact=interact),
+        )
+
+        assert requests[0].timeout == 120.0
+
+
+class TestInferStatePatch:
+    def test_intent_match_from_option_value(self):
+        inp = ClarifyInput(question="What?", options=[
+            ClarifyOption(label="Implement", value="implement"),
+        ])
+        response = UserResponse(value="implement")
+        patch = _infer_state_patch(inp, response)
+
+        assert patch is not None
+        assert patch.task_intent == TaskIntent.IMPLEMENT
+        assert patch.intent_source == "clarify"
+        assert patch.intent_refined is True
+
+    def test_intent_match_case_insensitive(self):
+        inp = ClarifyInput(question="What?")
+        response = UserResponse(value="Implement")
+        patch = _infer_state_patch(inp, response)
+
+        assert patch is not None
+        assert patch.task_intent == TaskIntent.IMPLEMENT
+
+    def test_scope_context_updates_goal(self):
+        inp = ClarifyInput(question="Which files?", context="This determines the scope of changes")
+        response = UserResponse(value="Only auth.py and tests")
+        patch = _infer_state_patch(inp, response)
+
+        assert patch is not None
+        assert patch.goal == "Only auth.py and tests"
+        assert patch.intent_source == "clarify"
+
+    def test_no_match_returns_none(self):
+        inp = ClarifyInput(question="What color?")
+        response = UserResponse(value="blue")
+        patch = _infer_state_patch(inp, response)
+
+        assert patch is None
+
+    def test_empty_answer_returns_none(self):
+        inp = ClarifyInput(question="What?")
+        response = UserResponse(value="  ")
+        patch = _infer_state_patch(inp, response)
+
+        assert patch is None
+
+
+class TestToolStatePatch:
+    def test_model_fields_set_tracks_explicit_fields(self):
+        patch = ToolStatePatch(task_intent=TaskIntent.IMPLEMENT, intent_source="clarify")
+        assert "task_intent" in patch.model_fields_set
+        assert "intent_source" in patch.model_fields_set
+        assert "goal" not in patch.model_fields_set
+
+    def test_none_pending_approval_is_explicit(self):
+        patch = ToolStatePatch(pending_approval=None)
+        assert "pending_approval" in patch.model_fields_set
+        data = patch.model_dump(mode="json", exclude_unset=True)
+        assert data["pending_approval"] is None
+
+    def test_full_patch_round_trips(self):
+        patch = ToolStatePatch(
+            task_intent=TaskIntent.IMPLEMENT,
+            intent_resolution_reason="plan_checkpoint: approved",
+            goal="Refactor auth",
+            goal_phase="implement",
+            pending_approval=None,
+            intent_source="plan_checkpoint",
+            intent_refined=True,
+        )
+        data = patch.model_dump(mode="json")
+        restored = ToolStatePatch.model_validate(data)
+        assert restored.task_intent == TaskIntent.IMPLEMENT
+        assert restored.goal == "Refactor auth"
+        assert restored.pending_approval is None
+
+
+class TestPendingApproval:
+    def test_default_kind_is_implementation(self):
+        pa = PendingApproval(scope="Refactor auth")
+        assert pa.kind == "implementation"
+        assert pa.source_intent == TaskIntent.DESIGN
+
+    def test_round_trip(self):
+        pa = PendingApproval(scope="Fix bug", source_intent=TaskIntent.DESIGN, created_turn=3)
+        data = pa.model_dump(mode="json")
+        restored = PendingApproval.model_validate(data)
+        assert restored.scope == "Fix bug"
+        assert restored.created_turn == 3
+
+
+class TestUserInteractionModels:
+    def test_user_interaction_defaults(self):
+        ui = UserInteraction(prompt="What?")
+        assert ui.options == []
+        assert ui.blocking is True
+        assert ui.timeout is None
+
+    def test_user_response_cancelled(self):
+        resp = UserResponse(value="", cancelled=True)
+        assert resp.cancelled is True
+
+    def test_user_interaction_with_options(self):
+        ui = UserInteraction(
+            prompt="Choose",
+            options=[("A", "a", "Option A"), ("B", "b", "Option B")],
+            timeout=60.0,
+        )
+        assert len(ui.options) == 2
+        assert ui.timeout == 60.0
+
+
+class TestMakeInteractCallback:
+    @pytest.mark.asyncio
+    async def test_returns_none_when_app_is_none(self):
+        from voidx.agent.graph.tool_execution import _make_interact_callback
+        assert _make_interact_callback(None) is None
+
+    @pytest.mark.asyncio
+    async def test_ask_choice_with_options(self):
+        from voidx.agent.graph.tool_execution import _make_interact_callback
+
+        class FakeApp:
+            async def ask_choice(self, prompt, choices, **kwargs):
+                return choices[1][1]
+
+            async def ask_text(self, prompt, **kwargs):
+                return "text"
+
+        callback = _make_interact_callback(FakeApp())
+        response = await callback(UserInteraction(
+            prompt="Choose",
+            options=[("A", "a", "desc a"), ("B", "b", "desc b")],
+        ))
+        assert response.value == "b"
+        assert not response.cancelled
+
+    @pytest.mark.asyncio
+    async def test_ask_text_without_options(self):
+        from voidx.agent.graph.tool_execution import _make_interact_callback
+
+        class FakeApp:
+            async def ask_choice(self, prompt, choices, **kwargs):
+                return "choice"
+
+            async def ask_text(self, prompt, **kwargs):
+                return "user input"
+
+        callback = _make_interact_callback(FakeApp())
+        response = await callback(UserInteraction(prompt="Enter text:"))
+        assert response.value == "user input"
+
+    @pytest.mark.asyncio
+    async def test_cancelled_when_app_returns_none(self):
+        from voidx.agent.graph.tool_execution import _make_interact_callback
+
+        class FakeApp:
+            async def ask_choice(self, prompt, choices, **kwargs):
+                return None
+
+            async def ask_text(self, prompt, **kwargs):
+                return None
+
+        callback = _make_interact_callback(FakeApp())
+        response = await callback(UserInteraction(
+            prompt="Choose",
+            options=[("A", "a", "desc")],
+        ))
+        assert response.cancelled is True
+        assert response.value == ""
+
+
+class TestDumpPendingApproval:
+    def test_none_returns_none(self):
+        from voidx.agent.graph.tool_execution import _dump_pending_approval
+        assert _dump_pending_approval(None) is None
+
+    def test_dict_passthrough(self):
+        from voidx.agent.graph.tool_execution import _dump_pending_approval
+        d = {"kind": "implementation", "scope": "Fix bug"}
+        assert _dump_pending_approval(d) is d
+
+    def test_pydantic_model_dump(self):
+        from voidx.agent.graph.tool_execution import _dump_pending_approval
+        pa = PendingApproval(scope="Refactor auth")
+        result = _dump_pending_approval(pa)
+        assert result["kind"] == "implementation"
+        assert result["scope"] == "Refactor auth"
+
+    def test_other_type_returns_none(self):
+        from voidx.agent.graph.tool_execution import _dump_pending_approval
+        assert _dump_pending_approval(42) is None
+
+
+class TestStateUpdateFromExecutedTools:
+    def test_merges_state_patches(self):
+        from voidx.agent.graph.tool_execution import _state_update_from_executed_tools, _ExecutedTool
+
+        patch1 = ToolStatePatch(task_intent=TaskIntent.IMPLEMENT, intent_source="on_intent")
+        patch2 = ToolStatePatch(goal="Refactor auth", goal_phase="implement")
+
+        msg1 = ToolMessage(content="result1", tool_call_id="c1")
+        msg2 = ToolMessage(content="result2", tool_call_id="c2")
+
+        result1 = ToolResult(output="r1", metadata={"state_patch": patch1.model_dump(mode="json", exclude_unset=True)})
+        result2 = ToolResult(output="r2", metadata={"state_patch": patch2.model_dump(mode="json", exclude_unset=True)})
+
+        executed = [
+            _ExecutedTool(message=msg1, result=result1, tool_call={"name": "on_intent"}),
+            _ExecutedTool(message=msg2, result=result2, tool_call={"name": "clarify"}),
+        ]
+
+        update = _state_update_from_executed_tools(executed)
+        assert update["task_intent"] == "implement"
+        assert update["goal"] == "Refactor auth"
+        assert update["goal_phase"] == "implement"
+
+    def test_later_patch_overrides_earlier(self):
+        from voidx.agent.graph.tool_execution import _state_update_from_executed_tools, _ExecutedTool
+
+        patch1 = ToolStatePatch(task_intent=TaskIntent.DESIGN, intent_source="on_intent")
+        patch2 = ToolStatePatch(task_intent=TaskIntent.IMPLEMENT, intent_source="clarify")
+
+        msg1 = ToolMessage(content="r1", tool_call_id="c1")
+        msg2 = ToolMessage(content="r2", tool_call_id="c2")
+
+        result1 = ToolResult(output="r1", metadata={"state_patch": patch1.model_dump(mode="json", exclude_unset=True)})
+        result2 = ToolResult(output="r2", metadata={"state_patch": patch2.model_dump(mode="json", exclude_unset=True)})
+
+        executed = [
+            _ExecutedTool(message=msg1, result=result1, tool_call={"name": "on_intent"}),
+            _ExecutedTool(message=msg2, result=result2, tool_call={"name": "clarify"}),
+        ]
+
+        update = _state_update_from_executed_tools(executed)
+        assert update["task_intent"] == "implement"
+
+    def test_none_pending_approval_clears_state(self):
+        from voidx.agent.graph.tool_execution import _state_update_from_executed_tools, _ExecutedTool
+
+        patch = ToolStatePatch(pending_approval=None)
+        msg = ToolMessage(content="r", tool_call_id="c1")
+        result = ToolResult(output="r", metadata={"state_patch": patch.model_dump(mode="json", exclude_unset=True)})
+
+        executed = [_ExecutedTool(message=msg, result=result, tool_call={"name": "plan_checkpoint"})]
+        update = _state_update_from_executed_tools(executed)
+        assert update["pending_approval"] is None
+
+    def test_no_patch_returns_empty(self):
+        from voidx.agent.graph.tool_execution import _state_update_from_executed_tools, _ExecutedTool
+
+        msg = ToolMessage(content="r", tool_call_id="c1")
+        result = ToolResult(output="r", metadata={})
+        executed = [_ExecutedTool(message=msg, result=result, tool_call={"name": "read"})]
+        update = _state_update_from_executed_tools(executed)
+        assert update == {}
 
 
 class TestFileOps:
@@ -249,6 +731,38 @@ class TestBash:
         result = await r.execute_tool("bash", {"command": "echo hello"}, ctx)
         assert "hello" in result.output
         assert result.metadata["exit_code"] == 0
+
+    @pytest.mark.asyncio
+    async def test_bash_blocks_workspace_escape_in_tool_layer(self, tmp_path):
+        workspace = tmp_path / "workspace"
+        workspace.mkdir()
+        outside = tmp_path / "outside.txt"
+        ctx = ToolContext(workspace=str(workspace))
+        r = ToolRegistry()
+
+        result = await r.execute_tool(
+            "bash",
+            {"command": f"printf nope > {shlex.quote(str(outside))}"},
+            ctx,
+        )
+
+        assert result.metadata["blocked"] is True
+        assert not outside.exists()
+
+    @pytest.mark.asyncio
+    async def test_bash_timeout_terminates_process(self, tmp_path):
+        ctx = ToolContext(workspace=str(tmp_path))
+        r = ToolRegistry()
+
+        result = await r.execute_tool(
+            "bash",
+            {"command": "sleep 2; printf late > late.txt", "timeout": 1},
+            ctx,
+        )
+        await asyncio.sleep(2.2)
+
+        assert result.metadata["timeout"] is True
+        assert not (tmp_path / "late.txt").exists()
 
 
 class TestTaskTracker:

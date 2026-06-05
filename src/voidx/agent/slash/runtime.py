@@ -20,11 +20,11 @@ _STATIC_PROVIDERS = [
 ]
 
 
-def get_providers(settings=None) -> list[str]:
+async def get_providers(settings=None) -> list[str]:
     """Return providers list, merging static + custom providers from settings."""
     base = list(_STATIC_PROVIDERS)
     if settings:
-        for profile in settings.list_profiles():
+        for profile in await settings.list_profiles():
             if profile.provider not in base:
                 base.append(profile.provider)
         for cp in settings.list_custom_providers():

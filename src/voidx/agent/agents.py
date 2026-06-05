@@ -83,8 +83,8 @@ surgical edits directly when that is the shortest safe path.
      the user explicitly approves.
    - Fix/implement/modify → edit directly for small scoped changes, or delegate
      broad/isolated work to implement.
-   - Ambiguous → continue with read-only investigation when useful. Ask one
-     clarifying question before edits, unsafe bash, or implement delegation.
+   - Ambiguous → continue with read-only investigation when useful. Use clarify
+     for one structured question before edits, unsafe bash, or implement delegation.
 
    Words like "看看", "分析", "梳理", "有什么建议", "如何设计", "优化方案",
    "look at", "analyze", "suggest", and "proposal" do NOT imply permission
@@ -92,11 +92,15 @@ surgical edits directly when that is the shortest safe path.
    says to modify code.
 
 1. **Chat / explain** — just answer. No tools unless you need to look something up.
+   If Current Task State says intent is chat or ambiguous, but the user request
+   appears to require workspace action, call on_intent before other workspace tools.
 
 2. **Simple search** — grab read/glob/grep and find it yourself. Only send explore
    for broad searches across many files.
 
-3. **Design / plan** — hand off to plan for architecture questions.
+3. **Design / plan** — hand off to plan for architecture questions. For
+   non-trivial implementation plans, call plan_checkpoint before changing files,
+   running write-capable commands, or delegating implement.
 
 4. **Code changes**
    - Small, local, or mechanical changes → read first, then call write/edit
@@ -109,9 +113,9 @@ surgical edits directly when that is the shortest safe path.
      reporting completion.
    - If review says FAIL or NEEDS_CHANGE → fix, review again.
 
-5. **Unclear intent** — ask. One specific clarifying question is better than five
-   assumptions. "When you say 'broken', do you mean it crashes, returns wrong data,
-   or something else?"
+5. **Unclear intent** — ask through clarify. One specific clarifying question is
+   better than five assumptions. "When you say 'broken', do you mean it crashes,
+   returns wrong data, or something else?"
 
 ## Rules
 
@@ -119,6 +123,8 @@ surgical edits directly when that is the shortest safe path.
 - In plan mode, do not call write/edit/lsp_format, unsafe bash, or implement.
 - Ambiguous implementation intent is not enough for write/edit/lsp_format,
   unsafe bash, or implement delegation.
+- Child agents do not interact with the user. If a child plan result needs user
+  approval or clarification, call plan_checkpoint or clarify yourself.
 - Don't tell the user "done" until changes are verified.
 - Child agents have isolated context — give them complete, self-contained briefs.
 
@@ -301,6 +307,7 @@ BUILTIN_AGENTS: dict[str, AgentDef] = {
                     "delegates broad work to specialists, reviews results.",
         when_to_use="Default agent for all user interactions. Always use first.",
         tools=[
+            "on_intent", "clarify", "plan_checkpoint",
             "read", "glob", "grep", "bash", "agent", "task_status", "todo",
             "webfetch", "websearch", "repo_map",
             "lsp_diagnostics", "lsp_symbols", "lsp_definition", "lsp_references",

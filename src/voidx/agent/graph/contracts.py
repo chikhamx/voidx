@@ -53,6 +53,7 @@ class GraphComponentHost(Protocol):
     _sub_buffers: dict[str, list[BaseMessage]]
     _pending_summary: str | None
     _compaction_summary: str
+    _session_msg_cache: list[Any] | None
     _app: PureTui | None
     _usage_stats: UsageStats
     _compaction: CompactionService
@@ -64,7 +65,6 @@ class GraphComponentHost(Protocol):
     _slash: Any
 
     _any_messages_sent: bool
-    _current_implementation_allowed: bool
     _needs_failure_check: dict[str, dict]
 
     @property
@@ -85,7 +85,7 @@ class GraphComponentHost(Protocol):
     async def _maybe_compact(
         self,
         messages: list[BaseMessage],
-        session_msgs: list[Any],
+        session_msgs: list[Any] | None = None,
         *,
         force: bool = False,
         ask: bool = True,

@@ -8,15 +8,10 @@ from __future__ import annotations
 
 import json
 import uuid
-from datetime import datetime, timezone
 
 from pydantic import BaseModel, Field
 
-from voidx.memory.store import _execute_commit, _fetch_all, _fetch_one
-
-
-def _now() -> str:
-    return datetime.now(timezone.utc).isoformat()
+from voidx.memory.store import _execute_commit, _fetch_all, _fetch_one, _now, _write_transaction
 
 
 def _uid() -> str:
@@ -149,14 +144,9 @@ async def touch_session(session_id: str) -> None:
 
 
 async def delete_session(session_id: str) -> None:
-    await _execute_commit("DELETE FROM context_frames WHERE session_id = ?", (session_id,))
-    await _execute_commit("DELETE FROM message_runtime_snapshots WHERE session_id = ?", (session_id,))
-    await _execute_commit("DELETE FROM session_task_runs WHERE session_id = ?", (session_id,))
-    await _execute_commit("DELETE FROM session_runtime_state WHERE session_id = ?", (session_id,))
-    await _execute_commit("DELETE FROM transcript_nodes WHERE session_id = ?", (session_id,))
-    await _execute_commit("DELETE FROM turns WHERE session_id = ?", (session_id,))
-    await _execute_commit("DELETE FROM messages WHERE session_id = ?", (session_id,))
-    await _execute_commit("DELETE FROM sessions WHERE id = ?", (session_id,))
+    await _execute_commit(
+        "DELETE FROM sessions WHERE id = ?", (session_id,)
+    )
 
 
 # ── message persistence ─────────────────────────────────────────────────
@@ -191,7 +181,7 @@ async def load_messages(session_id: str) -> list[MessageRow]:
             session_id=row["session_id"],
             role=row["role"],
             content=row["content"],
-            content_format=row["content_format"] if "content_format" in row.keys() else "text",
+            content_format=row["content_format"],
             tool_calls=json.loads(row["tool_calls"]) if row["tool_calls"] else None,
             tool_call_id=row["tool_call_id"],
             created_at=row["created_at"],
@@ -201,52 +191,53 @@ async def load_messages(session_id: str) -> list[MessageRow]:
 
 
 async def clear_messages(session_id: str) -> None:
-    await _execute_commit(
-        "DELETE FROM context_frames WHERE session_id = ?", (session_id,)
-    )
-    await _execute_commit(
-        "DELETE FROM message_runtime_snapshots WHERE session_id = ?", (session_id,)
-    )
-    await _execute_commit(
-        "DELETE FROM transcript_nodes WHERE session_id = ?", (session_id,)
-    )
-    await _execute_commit(
-        "DELETE FROM turns WHERE session_id = ?", (session_id,)
-    )
-    await _execute_commit(
-        "DELETE FROM messages WHERE session_id = ?", (session_id,)
-    )
+    def _run(conn):
+        conn.execute("DELETE FROM context_frames WHERE session_id = ?", (session_id,))
+        conn.execute("DELETE FROM message_runtime_snapshots WHERE session_id = ?", (session_id,))
+        conn.execute("DELETE FROM session_runtime_state WHERE session_id = ?", (session_id,))
+        conn.execute("DELETE FROM session_task_runs WHERE session_id = ?", (session_id,))
+        conn.execute("DELETE FROM transcript_nodes WHERE session_id = ?", (session_id,))
+        conn.execute("DELETE FROM turns WHERE session_id = ?", (session_id,))
+        conn.execute("DELETE FROM messages WHERE session_id = ?", (session_id,))
+
+    await _write_transaction(_run)
 
 
 async def delete_messages_from(session_id: str, first_message_id: int) -> None:
-    await _execute_commit(
-        "DELETE FROM context_frames WHERE session_id = ? AND user_message_id >= ?",
-        (session_id, first_message_id),
-    )
-    await _execute_commit(
-        "DELETE FROM message_runtime_snapshots WHERE session_id = ? AND message_id >= ?",
-        (session_id, first_message_id),
-    )
-    await _execute_commit(
-        "DELETE FROM messages WHERE session_id = ? AND id >= ?",
-        (session_id, first_message_id),
-    )
+    def _run(conn):
+        conn.execute(
+            "DELETE FROM context_frames WHERE session_id = ? AND user_message_id >= ?",
+            (session_id, first_message_id),
+        )
+        conn.execute(
+            "DELETE FROM message_runtime_snapshots WHERE session_id = ? AND message_id >= ?",
+            (session_id, first_message_id),
+        )
+        conn.execute(
+            "DELETE FROM messages WHERE session_id = ? AND id >= ?",
+            (session_id, first_message_id),
+        )
+
+    await _write_transaction(_run)
     await touch_session(session_id)
 
 
 async def delete_messages_through(session_id: str, last_message_id: int) -> None:
-    await _execute_commit(
-        "DELETE FROM context_frames WHERE session_id = ? AND user_message_id <= ?",
-        (session_id, last_message_id),
-    )
-    await _execute_commit(
-        "DELETE FROM message_runtime_snapshots WHERE session_id = ? AND message_id <= ?",
-        (session_id, last_message_id),
-    )
-    await _execute_commit(
-        "DELETE FROM messages WHERE session_id = ? AND id <= ?",
-        (session_id, last_message_id),
-    )
+    def _run(conn):
+        conn.execute(
+            "DELETE FROM context_frames WHERE session_id = ? AND user_message_id <= ?",
+            (session_id, last_message_id),
+        )
+        conn.execute(
+            "DELETE FROM message_runtime_snapshots WHERE session_id = ? AND message_id <= ?",
+            (session_id, last_message_id),
+        )
+        conn.execute(
+            "DELETE FROM messages WHERE session_id = ? AND id <= ?",
+            (session_id, last_message_id),
+        )
+
+    await _write_transaction(_run)
     await touch_session(session_id)
 
 
@@ -263,7 +254,7 @@ async def last_messages(session_id: str, n: int = 20) -> list[MessageRow]:
             session_id=row["session_id"],
             role=row["role"],
             content=row["content"],
-            content_format=row["content_format"] if "content_format" in row.keys() else "text",
+            content_format=row["content_format"],
             tool_calls=json.loads(row["tool_calls"]) if row["tool_calls"] else None,
             tool_call_id=row["tool_call_id"],
             created_at=row["created_at"],

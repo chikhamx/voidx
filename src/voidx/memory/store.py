@@ -5,6 +5,7 @@ from __future__ import annotations
 import asyncio
 import sqlite3
 import threading
+from datetime import datetime, timezone
 from pathlib import Path
 from typing import Callable, TypeVar
 
@@ -16,10 +17,12 @@ _write_lock = threading.Lock()
 T = TypeVar("T")
 
 
+def _now() -> str:
+    return datetime.now(timezone.utc).isoformat()
+
+
 def _get_db() -> sqlite3.Connection:
     global _conn
-    if _conn is not None:
-        return _conn
     with _init_lock:
         if _conn is not None:
             return _conn
@@ -29,6 +32,7 @@ def _get_db() -> sqlite3.Connection:
         conn.row_factory = sqlite3.Row
         conn.execute("PRAGMA journal_mode=WAL")
         conn.execute("PRAGMA foreign_keys=ON")
+        conn.execute("PRAGMA busy_timeout=5000")
         _init_schema(conn)
         _conn = conn
         return _conn
@@ -105,6 +109,7 @@ def _init_schema(conn: sqlite3.Connection) -> None:
             current_goal TEXT NOT NULL DEFAULT '',
             awaiting_implementation_approval INTEGER NOT NULL DEFAULT 0,
             approved_scope TEXT NOT NULL DEFAULT '',
+            pending_approval_json TEXT NOT NULL DEFAULT '',
             last_plan_summary TEXT NOT NULL DEFAULT '',
             compaction_summary TEXT NOT NULL DEFAULT '',
             updated_at TEXT NOT NULL,
@@ -118,7 +123,9 @@ def _init_schema(conn: sqlite3.Connection) -> None:
             status TEXT NOT NULL DEFAULT 'idle',
             approved_scope TEXT NOT NULL DEFAULT '',
             awaiting_implementation_approval INTEGER NOT NULL DEFAULT 0,
+            pending_approval_json TEXT NOT NULL DEFAULT '',
             turn_count INTEGER NOT NULL DEFAULT 0,
+            skill_runs_json TEXT NOT NULL DEFAULT '{}',
             updated_at TEXT NOT NULL,
             FOREIGN KEY (session_id) REFERENCES sessions(id) ON DELETE CASCADE
         );
@@ -136,6 +143,11 @@ def _init_schema(conn: sqlite3.Connection) -> None:
             goal_turn_count INTEGER NOT NULL DEFAULT 0,
             awaiting_implementation_approval INTEGER NOT NULL DEFAULT 0,
             approved_scope TEXT NOT NULL DEFAULT '',
+            pending_approval_json TEXT NOT NULL DEFAULT '',
+            intent_confidence REAL,
+            intent_source TEXT NOT NULL DEFAULT '',
+            intent_refined INTEGER NOT NULL DEFAULT 0,
+            available_tool_ids_json TEXT NOT NULL DEFAULT '[]',
             created_at TEXT NOT NULL,
             FOREIGN KEY (message_id) REFERENCES messages(id) ON DELETE CASCADE,
             FOREIGN KEY (session_id) REFERENCES sessions(id) ON DELETE CASCADE
@@ -197,13 +209,25 @@ def _init_schema(conn: sqlite3.Connection) -> None:
         )
     except sqlite3.OperationalError:
         pass
-
-
-async def _execute(sql: str, params: tuple = ()) -> sqlite3.Cursor:
-    def _run():
-        conn = _get_db()
-        return conn.execute(sql, params)
-    return await asyncio.to_thread(_run)
+    try:
+        conn.execute(
+            "ALTER TABLE session_task_runs ADD COLUMN skill_runs_json TEXT NOT NULL DEFAULT '{}'"
+        )
+    except sqlite3.OperationalError:
+        pass
+    for statement in (
+        "ALTER TABLE session_runtime_state ADD COLUMN pending_approval_json TEXT NOT NULL DEFAULT ''",
+        "ALTER TABLE session_task_runs ADD COLUMN pending_approval_json TEXT NOT NULL DEFAULT ''",
+        "ALTER TABLE message_runtime_snapshots ADD COLUMN pending_approval_json TEXT NOT NULL DEFAULT ''",
+        "ALTER TABLE message_runtime_snapshots ADD COLUMN intent_confidence REAL",
+        "ALTER TABLE message_runtime_snapshots ADD COLUMN intent_source TEXT NOT NULL DEFAULT ''",
+        "ALTER TABLE message_runtime_snapshots ADD COLUMN intent_refined INTEGER NOT NULL DEFAULT 0",
+        "ALTER TABLE message_runtime_snapshots ADD COLUMN available_tool_ids_json TEXT NOT NULL DEFAULT '[]'",
+    ):
+        try:
+            conn.execute(statement)
+        except sqlite3.OperationalError:
+            pass
 
 
 async def _execute_commit(sql: str, params: tuple = ()) -> sqlite3.Cursor:

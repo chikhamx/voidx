@@ -93,7 +93,8 @@ class OutputTree:
         self.root = OutputNode(id="root", node_type="root", depth=0)
         self._counter = 0
         self._all: dict[str, OutputNode] = {}  # id → node lookup
-        self._click_map: dict[int, str] = {}   # backward compat
+        self._line_map: dict[int, str] = {}    # rendered line → owning node id
+        self._click_map: dict[int, str] = {}   # rendered line → clickable node id
         self._dirty: bool = True
         self._dirty_nodes: set[str] = set()
         self._node_ranges: dict[str, tuple[int, int]] = {}  # id → (start, end)
@@ -201,13 +202,16 @@ class OutputTree:
         return self._incremental_render(console_width)
 
     def _full_render(self, console_width: int) -> list[str]:
+        self._line_map.clear()
         self._click_map.clear()
         self._node_ranges.clear()
         self._node_prefixes.clear()
         lines: list[str] = []
         line_map: dict[int, str] = {}
-        self._walk_render(self.root, [], lines, line_map)
-        self._click_map = dict(line_map)
+        click_map: dict[int, str] = {}
+        self._walk_render(self.root, [], lines, line_map, click_map)
+        self._line_map = dict(line_map)
+        self._click_map = dict(click_map)
         self._cached_lines = lines
         self._cached_width = console_width
         self._dirty = False
@@ -276,7 +280,8 @@ class OutputTree:
         new_lines: list[str] = []
         prefix = self._node_prefixes.get(nid, [])
         sub_line_map: dict[int, str] = {}
-        self._walk_render(node, prefix, new_lines, sub_line_map)
+        sub_click_map: dict[int, str] = {}
+        self._walk_render(node, prefix, new_lines, sub_line_map, sub_click_map)
 
         # Shift ranges written by _walk_render from relative → absolute.
         new_keys = set(self._node_ranges.keys()) - pre_keys
@@ -304,23 +309,31 @@ class OutputTree:
                     self._node_ranges[r_nid] = (s, e + delta)
         self._dirty_nodes.clear()
 
-        # Rebuild _click_map: old entries outside the splice range shift or stay,
+        # Rebuild maps: old entries outside the splice range shift or stay,
         # new entries from the re-walked subtree replace the spliced range.
-        new_click: dict[int, str] = {}
-        for row, nid in self._click_map.items():
-            if row < old_start:
-                new_click[row] = nid
-            elif row >= old_end:
-                new_click[row + delta] = nid
-        for row, nid in sub_line_map.items():
-            new_click[row + old_start] = nid
-        self._click_map = new_click
+        def rebuild_map(old_map: dict[int, str], sub_map: dict[int, str]) -> dict[int, str]:
+            rebuilt: dict[int, str] = {}
+            for row, row_nid in old_map.items():
+                if row < old_start:
+                    rebuilt[row] = row_nid
+                elif row >= old_end:
+                    rebuilt[row + delta] = row_nid
+            for row, row_nid in sub_map.items():
+                rebuilt[row + old_start] = row_nid
+            return rebuilt
+
+        self._line_map = rebuild_map(self._line_map, sub_line_map)
+        self._click_map = rebuild_map(self._click_map, sub_click_map)
 
         return self._cached_lines
 
     def render_with_line_map(self, console_width: int = 80) -> tuple[list[str], dict[int, str]]:
-        """Like render() but also returns a map of line_number → node_id
-        for mouse click targeting."""
+        """Like render() but also returns line_number → owning node_id."""
+        self.render(console_width)
+        return self._cached_lines, self._line_map
+
+    def render_with_click_map(self, console_width: int = 80) -> tuple[list[str], dict[int, str]]:
+        """Like render() but also returns line_number → clickable node_id."""
         self.render(console_width)
         return self._cached_lines, self._click_map
 
@@ -353,8 +366,14 @@ class OutputTree:
 
     # ── internal walk ──────────────────────────────────────────────────────
 
-    def _walk_render(self, node: OutputNode, prefix_parts: list[str],
-                     lines: list[str], line_map: dict[int, str] | None = None) -> None:
+    def _walk_render(
+        self,
+        node: OutputNode,
+        prefix_parts: list[str],
+        lines: list[str],
+        line_map: dict[int, str] | None = None,
+        click_map: dict[int, str] | None = None,
+    ) -> None:
         """Recursive depth-first walk to render the tree.
 
         Depth 0 (root):      not rendered, iterate children directly.
@@ -367,7 +386,7 @@ class OutputTree:
                 if prev is not None and prev.node_type == "turn" and child.node_type == "message" and child.header:
                     lines.append("")
                 prev = child
-                self._walk_render(child, [], lines, line_map)
+                self._walk_render(child, [], lines, line_map, click_map)
             return
 
         start = len(lines)
@@ -379,23 +398,29 @@ class OutputTree:
                 lines.append(line)
                 if line_map is not None:
                     line_map[len(lines) - 1] = node.id
+                if click_map is not None:
+                    click_map[len(lines) - 1] = node.id
                 self._node_ranges[node.id] = (start, len(lines))
                 self._node_prefixes[node.id] = []
                 return
 
             line = node.header if node.header else ""
             lines.append(line)
-            if line_map is not None and _is_clickable(node):
+            if line_map is not None:
                 line_map[len(lines) - 1] = node.id
+            if click_map is not None and _is_clickable(node):
+                click_map[len(lines) - 1] = node.id
 
             body_prefix = "  " if node.node_type == "turn" else ""
             for bl in node.body_lines:
                 lines.append(f"{body_prefix}{bl}")
+                if line_map is not None:
+                    line_map[len(lines) - 1] = node.id
 
             # Children get box-drawing, indented under this node
             new_parts = [" "]
             for child in node.children:
-                self._walk_render(child, new_parts, lines, line_map)
+                self._walk_render(child, new_parts, lines, line_map, click_map)
             self._node_ranges[node.id] = (start, len(lines))
             self._node_prefixes[node.id] = []
             return
@@ -424,6 +449,8 @@ class OutputTree:
             lines.append(line)
             if line_map is not None:
                 line_map[len(lines) - 1] = node.id
+            if click_map is not None:
+                click_map[len(lines) - 1] = node.id
             self._node_ranges[node.id] = (start, len(lines))
             self._node_prefixes[node.id] = list(prefix_parts)
             return
@@ -432,8 +459,10 @@ class OutputTree:
         current_prefix = indent if inline_tool_result else aligned_prefix
         line = f"{current_prefix}{node.header}" if node.header else current_prefix
         lines.append(line)
-        if line_map is not None and _is_clickable(node):
+        if line_map is not None:
             line_map[len(lines) - 1] = node.id
+        if click_map is not None and _is_clickable(node):
+            click_map[len(lines) - 1] = node.id
 
         # Continuation for body lines and children
         cont_suffix = self.BOX_SPACE if suppress_connector or node._is_last_sibling else self.BOX_VERT
@@ -442,13 +471,15 @@ class OutputTree:
         # Body lines
         for bl in node.body_lines:
             lines.append(f"{cont}{bl}")
-            if line_map is not None and _is_clickable(node):
+            if line_map is not None:
                 line_map[len(lines) - 1] = node.id
+            if click_map is not None and _is_clickable(node):
+                click_map[len(lines) - 1] = node.id
 
         # Children
         new_parts = prefix_parts if inline_tool_result else prefix_parts + [cont_suffix]
         for child in node.children:
-            self._walk_render(child, new_parts, lines, line_map)
+            self._walk_render(child, new_parts, lines, line_map, click_map)
         self._node_ranges[node.id] = (start, len(lines))
         self._node_prefixes[node.id] = list(prefix_parts)
 

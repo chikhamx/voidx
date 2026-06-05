@@ -18,8 +18,11 @@ from voidx.tools.search import GlobTool, GrepTool
 from voidx.tools.bash import BashTool
 from voidx.tools.task_status import TaskStatusTool
 from voidx.tools.todo import TodoWriteTool
+from voidx.tools.doc_template import LoadDocTemplateTool
 from voidx.tools.webfetch import WebFetchTool
 from voidx.tools.websearch import WebSearchTool
+from voidx.tools.clarify import ClarifyTool
+from voidx.tools.plan_checkpoint import PlanCheckpointTool
 
 
 class ToolDef(BaseModel):
@@ -48,6 +51,8 @@ class ToolRegistry:
             GlobTool, GrepTool, BashTool,
             LspDiagnosticsTool, LspSymbolsTool,
             LspDefinitionTool, LspReferencesTool, LspFormatTool,
+            LoadDocTemplateTool,
+            ClarifyTool, PlanCheckpointTool,
         ]:
             instance = cls()
             self.register(instance.id, instance, instance.description, instance.parameters_schema())

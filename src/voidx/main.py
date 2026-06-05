@@ -30,7 +30,6 @@ async def _select_start_session(
     vconsole,
 ):
     from voidx.memory.session import (
-        create_session,
         get_session,
     )
 
@@ -43,11 +42,7 @@ async def _select_start_session(
         vconsole.print(f"[dim]Resumed {session.id}: {title}[/dim]")
         return session
 
-    return await create_session(
-        workspace=workspace,
-        provider=provider,
-        model=model,
-    )
+    return None
 
 
 async def _run_chat(
@@ -69,13 +64,13 @@ async def _run_chat(
 
     vconsole = _vconsole()
     ws_path = str(Path(workspace).resolve())
-    settings = Settings(ws_path)
+    settings = await Settings.create(ws_path)
 
     # Bind settings to catalog early so list_models() merges custom models
     from voidx.llm.catalog import bind_settings
     bind_settings(settings)
 
-    cfg = settings.build_config()
+    cfg = await settings.build_config()
     cfg.workspace = ws_path
 
     if model:
@@ -83,7 +78,7 @@ async def _run_chat(
     if provider:
         cfg.model.provider = provider
 
-    profile = settings.resolve_profile()
+    profile = await settings.resolve_profile()
     if profile:
         api_key = profile.api_key
     else:

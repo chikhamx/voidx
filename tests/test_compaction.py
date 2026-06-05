@@ -3,6 +3,7 @@
 import sys
 from pathlib import Path
 
+import pytest
 from langchain_core.messages import AIMessage, HumanMessage, SystemMessage, ToolMessage
 
 sys.path.insert(0, str(Path(__file__).parent.parent / "src"))
@@ -229,10 +230,10 @@ class TestCompactionRetry:
         from voidx.llm.compaction import COMPACTION_MAX_RETRIES
         assert COMPACTION_MAX_RETRIES >= 1
 
-    def test_maybe_compact_retries_on_agent_failure(self):
+    @pytest.mark.asyncio
+    async def test_maybe_compact_retries_on_agent_failure(self):
         """When _run_compaction_agent raises, _maybe_compact should retry
         before falling back to truncation."""
-        import asyncio
         from unittest.mock import AsyncMock, MagicMock, patch
 
         from voidx.agent.graph.compaction import GraphCompactionMixin
@@ -265,20 +266,18 @@ class TestCompactionRetry:
 
         with patch('voidx.agent.graph.compaction.via_events', return_value=False):
             with patch('voidx.agent.graph.compaction.estimate_context_tokens', return_value=200_000):
-                result = asyncio.get_event_loop().run_until_complete(
-                    GraphCompactionMixin._maybe_compact(
-                        host, messages, [], force=True, ask=False,
-                    )
+                result = await GraphCompactionMixin._maybe_compact(
+                    host, messages, [], force=True, ask=False,
                 )
 
         # Should have retried and eventually succeeded
         assert call_count == 3, f"Expected 3 calls (2 failures + 1 success), got {call_count}"
         assert host._pending_summary == "## Goal\n- Test goal"
 
-    def test_maybe_compact_falls_back_after_max_retries(self):
+    @pytest.mark.asyncio
+    async def test_maybe_compact_falls_back_after_max_retries(self):
         """When _run_compaction_agent keeps failing, _maybe_compact should
         fall back to truncation with a basic summary after COMPACTION_MAX_RETRIES."""
-        import asyncio
         from unittest.mock import AsyncMock, MagicMock, patch
 
         from voidx.llm.compaction import COMPACTION_MAX_RETRIES
@@ -311,10 +310,8 @@ class TestCompactionRetry:
 
         with patch('voidx.agent.graph.compaction.via_events', return_value=False):
             with patch('voidx.agent.graph.compaction.estimate_context_tokens', return_value=200_000):
-                result = asyncio.get_event_loop().run_until_complete(
-                    GraphCompactionMixin._maybe_compact(
-                        host, messages, [], force=True, ask=False,
-                    )
+                result = await GraphCompactionMixin._maybe_compact(
+                    host, messages, [], force=True, ask=False,
                 )
 
         # Should have tried COMPACTION_MAX_RETRIES + 1 times (initial + retries)

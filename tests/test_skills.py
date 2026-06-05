@@ -4,6 +4,7 @@ from pathlib import Path
 sys.path.insert(0, str(Path(__file__).parent.parent / "src"))
 
 from voidx.skills.registry import SkillRegistry, parse_skill_file
+from voidx.skills.runtime import SkillActivationSource, SkillRunStatus
 from voidx.skills.schema import SkillSelectionConfig
 from voidx.skills.service import SkillService
 
@@ -255,8 +256,38 @@ def test_skill_service_selects_workflow_policy_by_role_and_intent(tmp_path):
     ]
     assert "implement role" in implement[0].reason
     assert "debug intent" in debug[0].reason
-    assert [match.name for match in plan] == ["writing-plans"]
-    assert plan[0].reason == "plan role"
+    assert [match.name for match in plan] == ["brainstorming", "writing-plans"]
+    assert plan[0].reason == "design/create intent"
+    assert plan[1].reason == "plan role"
+
+
+def test_skill_service_returns_structured_skill_runs(tmp_path):
+    service = SkillService(
+        SkillRegistry(
+            str(tmp_path / "workspace"),
+            global_dir=tmp_path / "global",
+            project_dir=tmp_path / "workspace" / ".voidx" / "skills",
+        )
+    )
+
+    runs = service.select_runs(
+        "对，可以",
+        agent="implement",
+        task_intent="implement",
+        phase="implement",
+        scope="优化 runtime context",
+        turn_count=3,
+    )
+
+    assert [run.name for run in runs] == [
+        "test-driven-development",
+        "verification-before-completion",
+    ]
+    assert {run.status for run in runs} == {SkillRunStatus.ACTIVE}
+    assert {run.source for run in runs} == {SkillActivationSource.WORKFLOW}
+    assert runs[0].phase == "implement"
+    assert runs[0].scope == "优化 runtime context"
+    assert runs[0].activated_turn == 3
 
 
 def test_skill_service_returns_activation_summaries(tmp_path):

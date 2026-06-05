@@ -37,6 +37,7 @@ from voidx.agent.state import AgentState
 from voidx.agent.graph.streaming import stream_llm as _stream_llm
 from voidx.agent.graph.subagent import run_subagent as _run_subagent
 from voidx.agent.graph.tool_execution import GraphToolExecutionMixin
+from voidx.agent.intent_refinement import refine_intent
 from voidx.agent.runtime_context import InteractionMode, RuntimeContextBuilder
 from voidx.agent.task_state import TaskRun, TaskState
 from voidx.agent.tool_filters import filter_unavailable_lsp_tools
@@ -51,11 +52,11 @@ from voidx.llm.usage import (
     extract_token_usage,
 )
 from voidx.memory.context_frames import save_context_frame_from_messages
-from voidx.memory.session import SessionInfo
-from voidx.agent.slash import SlashHandler
+from voidx.memory.session import MessageRow, SessionInfo
 from voidx.permission.service import PermissionService
 from voidx.tools.registry import ToolRegistry
 from voidx.tools.agent import AgentTool
+from voidx.tools.on_intent import OnIntentInput, OnIntentTool
 from voidx.tools.task_tracker import TaskTracker
 from voidx.ui.output.console import StreamingRenderer
 from voidx.ui.output.dock import dock
@@ -109,6 +110,8 @@ class VoidXGraph(
         # Build tool registry, wire tracker through registry
         self._tracker = TaskTracker()
         self.tools = ToolRegistry(settings=settings, tracker=self._tracker)
+        intent_tool = OnIntentTool(resolver=self._resolve_on_intent)
+        self.tools.register("on_intent", intent_tool, intent_tool.description, intent_tool.parameters_schema())
         agent_tool = AgentTool(runner=self._subagent_runner)
         self.tools.register("agent", agent_tool, agent_tool.description, agent_tool.parameters_schema())
 
@@ -137,6 +140,7 @@ class VoidXGraph(
         # One-turn summary injection vs. persisted summary restored across turns.
         self._pending_summary: str | None = None
         self._compaction_summary: str = ""
+        self._session_msg_cache: list[MessageRow] | None = None
         self._app: PureTui | None = None
         self._next_agent_id: int = 0
         self._task_state = TaskState()
@@ -153,6 +157,8 @@ class VoidXGraph(
         )
 
         self._build()
+        from voidx.agent.slash import SlashHandler
+
         self._slash = SlashHandler(self)
 
         # MCP (Model Context Protocol) servers — start on run()
@@ -186,6 +192,15 @@ class VoidXGraph(
 
     def interaction_mode(self) -> InteractionMode:
         return self._interaction_mode
+
+    def _resolve_on_intent(self, inp: OnIntentInput, ctx):
+        return refine_intent(
+            inp,
+            ctx,
+            config=self.config,
+            settings=self._settings,
+            registered_tool_ids=self.tools.ids(),
+        )
 
     async def _subagent_runner(self, agent_def: AgentDef, description: str, model_override: str | None) -> str:
         parent_messages = getattr(self, '_current_messages', None)
@@ -297,6 +312,8 @@ class VoidXGraph(
             agent=agent_name,
             task_intent=state.get("task_intent"),
             interaction_mode=interaction_mode,
+            scope=_pending_approval_scope(state.get("pending_approval")) or state.get("goal") or latest_user_text,
+            turn_count=state.get("goal_turn_count", 0),
         )
         mode_prompt = PLAN_MODE_APPEND if InteractionMode.parse(interaction_mode) == InteractionMode.PLAN else ""
         summary = self._pending_summary or self._compaction_summary
@@ -313,22 +330,25 @@ class VoidXGraph(
             interaction_mode=interaction_mode,
             instructions=instructions,
             skill_instructions=skill_context.instructions,
+            skill_runs=skill_context.runs,
             active_skill_summaries=skill_context.active,
             summary=summary,
             current_user_text=latest_user_text,
             task_intent=state.get("task_intent"),
-            implementation_allowed=state.get("implementation_allowed"),
             intent_resolution_reason=state.get("intent_resolution_reason", ""),
-            awaiting_implementation_approval=state.get("awaiting_implementation_approval", False),
-            approved_scope=state.get("approved_scope", ""),
+            pending_approval=state.get("pending_approval"),
             goal=state.get("goal", ""),
             goal_phase=state.get("goal_phase", ""),
             goal_status=state.get("goal_status", ""),
             goal_turn_count=state.get("goal_turn_count", 0),
+            available_tool_ids=state.get("available_tool_ids", []),
+            intent_confidence=state.get("intent_confidence"),
+            intent_source=state.get("intent_source", ""),
+            intent_refined=state.get("intent_refined", False),
         ).build()
         context.apply_to_messages(state.get("messages", []))
 
-        return base
+        return {**base, "skill_runs": skill_context.runs}
 
     async def _call_llm(self, state: AgentState) -> dict:
         step = state.get("step_count", 0)
@@ -354,6 +374,9 @@ class VoidXGraph(
             tool_defs = [t for t in all_tool_defs if t["function"]["name"] in agent_tool_ids]
         else:
             tool_defs = all_tool_defs
+        if "available_tool_ids" in state:
+            visible = set(state.get("available_tool_ids") or [])
+            tool_defs = [t for t in tool_defs if t["function"]["name"] in visible]
         tool_defs = filter_unavailable_lsp_tools(tool_defs, getattr(self, "_lsp_manager", None))
 
         has_tool_budget = step < max_s - 1
@@ -447,3 +470,11 @@ def _latest_user_text(messages: list[BaseMessage]) -> str:
                 return "\n".join(parts)
             return str(content)
     return ""
+
+
+def _pending_approval_scope(value: object | None) -> str:
+    if value is None:
+        return ""
+    if isinstance(value, dict):
+        return str(value.get("scope") or "").strip()
+    return str(getattr(value, "scope", "") or "").strip()

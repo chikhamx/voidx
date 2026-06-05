@@ -192,8 +192,7 @@ class SlashHandler(SlashCodeIdeMixin, SlashLspMixin, SlashSkillsMixin, SlashMcpM
             task_run.clear()
             task_state = getattr(self._g, "_task_state", None)
             if task_state is not None:
-                task_state.awaiting_implementation_approval = False
-                task_state.approved_scope = ""
+                task_state.pending_approval = None
             self._set_interaction_mode(InteractionMode.AUTO.value)
             if hasattr(self._g, "_persist_runtime_state"):
                 await self._g._persist_runtime_state()
@@ -367,6 +366,7 @@ class SlashHandler(SlashCodeIdeMixin, SlashLspMixin, SlashSkillsMixin, SlashMcpM
                 "title": "New session",
                 "message_count": 0,
             })
+            self._g._session_msg_cache = []
             self._g._tracker.clear_todos()
             self._g._permission.clear_session_permissions()
             stats = getattr(self._g, "_usage_stats", None)
@@ -426,6 +426,7 @@ class SlashHandler(SlashCodeIdeMixin, SlashLspMixin, SlashSkillsMixin, SlashMcpM
         self._g._session = session
         self._g._workspace = session.workspace
         self._g.config.workspace = session.workspace
+        self._g._session_msg_cache = None
         if hasattr(self._g, "_restore_runtime_state"):
             await self._g._restore_runtime_state()
         from voidx.ui.output.dock import get_dock

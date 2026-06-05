@@ -12,7 +12,7 @@ from voidx.agent.slash import SlashHandler
 from voidx.agent.graph import VoidXGraph
 from voidx.agent.graph.run_loop import GraphRunLoopMixin
 from voidx.agent.runtime_context import InteractionMode, TaskIntent
-from voidx.agent.task_state import TaskPhase, TaskRun, TaskRunStatus, TaskState
+from voidx.agent.task_state import PendingApproval, TaskPhase, TaskRun, TaskRunStatus, TaskState
 from voidx.config import Config
 from voidx.llm.usage import UsageStats
 from voidx.memory.runtime_state import RuntimeStateSnapshot, save_runtime_state
@@ -55,6 +55,7 @@ def _graph(session=None, workspace: str = "/tmp/workspace") -> GraphRunLoopMixin
     graph._debug = False
     graph._plan_mode = False
     graph._tracker = TaskTracker()
+    graph._session_msg_cache = None
     return graph
 
 
@@ -178,15 +179,13 @@ async def test_resume_restores_structured_runtime_state(tmp_path):
             task_state=TaskState(
                 current_intent=TaskIntent.DESIGN,
                 current_goal="优化 markdown 渲染截断",
-                awaiting_implementation_approval=True,
-                approved_scope="优化 markdown 渲染截断",
+                pending_approval=PendingApproval(scope="优化 markdown 渲染截断"),
             ),
             task_run=TaskRun(
                 goal="优化 markdown 渲染截断",
                 phase=TaskPhase.DESIGN,
                 status=TaskRunStatus.ACTIVE,
-                awaiting_implementation_approval=True,
-                approved_scope="优化 markdown 渲染截断",
+                pending_approval=PendingApproval(scope="优化 markdown 渲染截断", created_turn=2),
                 turn_count=2,
             ),
         ),
@@ -200,7 +199,7 @@ async def test_resume_restores_structured_runtime_state(tmp_path):
 
         assert graph._interaction_mode == InteractionMode.GOAL
         assert graph._task_state.current_intent == TaskIntent.DESIGN
-        assert graph._task_state.awaiting_implementation_approval is True
+        assert graph._task_state.pending_approval is not None
         assert graph._task_run.goal == "优化 markdown 渲染截断"
         assert graph._task_run.phase == TaskPhase.DESIGN
         assert graph._task_run.turn_count == 2

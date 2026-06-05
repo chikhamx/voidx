@@ -23,6 +23,7 @@ from voidx.llm.usage import (
 )
 from voidx.memory.context_frames import save_context_frame_from_messages
 from voidx.skills.registry import SkillRegistry
+from voidx.skills.runtime import SkillRunState
 from voidx.skills.service import SkillService
 from voidx.tools.base import ToolContext
 from voidx.tools.registry import ToolRegistry
@@ -144,6 +145,14 @@ async def run_subagent(
         agent=agent_def.name,
         interaction_mode=interaction_mode,
         skill_instructions=[skill_service.render_instruction(match.skill) for match in skill_matches],
+        skill_runs=[
+            SkillRunState.from_match(
+                match,
+                phase="design" if interaction_mode == InteractionMode.PLAN.value else task_intent,
+                scope=task_description,
+            )
+            for match in skill_matches
+        ],
         active_skill_summaries=[f"{match.name} ({match.reason})" for match in skill_matches],
         current_user_text=task_description,
         task_intent=task_intent,
@@ -153,6 +162,7 @@ async def run_subagent(
     ctx = ToolContext(
         workspace=config.workspace,
         lsp_manager=lsp_manager,
+        sandbox_mode=config.sandbox_mode.value,
         sandbox_extra_paths=config.sandbox_workspace_write,
     )
 

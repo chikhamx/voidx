@@ -2,19 +2,14 @@
 "use strict";
 
 // Post-install: download a standalone Python, create venv, pip install voidx.
-// Falls back to system Python if download fails.
+// Uses only the bundled Python — never falls back to the system Python.
 
-const { createWriteStream, existsSync, mkdirSync, readFileSync, writeFileSync } = require("fs");
+const { createWriteStream, existsSync, mkdirSync, readFileSync, writeFileSync, unlinkSync, rmSync } = require("fs");
 const { spawnSync } = require("child_process");
-const { get, request } = require("https");
-const { createGunzip } = require("zlib");
-const { pipeline } = require("stream/promises");
-const { createUnzip } = require("zlib");
 const { join, dirname } = require("path");
 const os = require("os");
 const fs = require("fs");
 const path = require("path");
-const { execSync } = require("child_process");
 
 const pkg = require("../package.json");
 
@@ -92,7 +87,32 @@ function resolveBundledPython(pythonDir, platform) {
   return path.join(installDir, "bin", "python3");
 }
 
-// ── Download ───────────────────────────────────────────────────────────────
+// ── Download with retry ────────────────────────────────────────────────────
+const MAX_DOWNLOAD_RETRIES = 3;
+
+function sleep(ms) {
+  return new Promise((resolve) => setTimeout(resolve, ms));
+}
+
+async function downloadFileWithRetry(url, dest, retries = MAX_DOWNLOAD_RETRIES) {
+  for (let attempt = 1; attempt <= retries; attempt++) {
+    try {
+      return await downloadFile(url, dest);
+    } catch (err) {
+      // Clean up partial download
+      try { unlinkSync(dest); } catch {}
+      if (attempt < retries) {
+        const delay = Math.pow(2, attempt) * 1000;
+        console.error(`    Download attempt ${attempt}/${retries} failed: ${err.message}`);
+        console.error(`    Retrying in ${delay / 1000}s…`);
+        await sleep(delay);
+      } else {
+        throw err;
+      }
+    }
+  }
+}
+
 function downloadFile(url, dest) {
   return new Promise((resolve, reject) => {
     const doRequest = (currentUrl, redirects = 0) => {
@@ -100,7 +120,7 @@ function downloadFile(url, dest) {
         return reject(new Error(`Too many redirects downloading ${url}`));
       }
       const mod = currentUrl.startsWith("https") ? require("https") : require("http");
-      mod.get(currentUrl, { timeout: 60000 }, (res) => {
+      mod.get(currentUrl, { timeout: 30000 }, (res) => {
         if (res.statusCode >= 300 && res.statusCode < 400 && res.headers.location) {
           return doRequest(res.headers.location, redirects + 1);
         }
@@ -163,14 +183,45 @@ function writeMarker(markerPath, content) {
 
 // ── pip install ────────────────────────────────────────────────────────────
 function pipInstall(venvPython, packageSpec, env) {
+  // Upgrade pip first to avoid resolver bugs in old versions
+  const pipUpgradeEnv = Object.assign({}, env, {
+    PIP_NO_INPUT: "1",
+    PIP_DISABLE_PIP_VERSION_CHECK: "1",
+    PYTHON_KEYRING_BACKEND: "keyring.backends.null.Keyring",
+  });
+  const pipUpgradeResult = spawnSync(
+    venvPython,
+    ["-m", "pip", "install", "--upgrade", "pip", "--no-cache-dir"],
+    { encoding: "utf8", stdio: "inherit", windowsHide: true, env: pipUpgradeEnv }
+  );
+  if (pipUpgradeResult.error || pipUpgradeResult.status !== 0) {
+    console.error("  ⚠️  Failed to upgrade pip, continuing with current version…");
+  }
+
   const pipEnv = Object.assign({}, env, {
     PIP_NO_INPUT: "1",
     PIP_DISABLE_PIP_VERSION_CHECK: "1",
     PYTHON_KEYRING_BACKEND: "keyring.backends.null.Keyring",
   });
+
+  const pipArgs = ["-m", "pip", "install", "--upgrade", "--no-cache-dir", "--progress-bar", "on"];
+
+  // Support custom PyPI index for users behind firewalls or in regions with slow PyPI access
+  const pipIndex = env.VOIDX_NPM_PIP_INDEX;
+  if (pipIndex) {
+    pipArgs.push("-i", pipIndex);
+    // Extract host for --trusted-host when using a custom index
+    try {
+      const indexUrl = new URL(pipIndex);
+      pipArgs.push("--trusted-host", indexUrl.hostname);
+    } catch {}
+  }
+
+  pipArgs.push(packageSpec);
+
   const result = spawnSync(
     venvPython,
-    ["-m", "pip", "install", "--upgrade", "--progress-bar", "on", packageSpec],
+    pipArgs,
     { encoding: "utf8", stdio: "inherit", windowsHide: true, env: pipEnv }
   );
   if (result.error) {
@@ -179,37 +230,6 @@ function pipInstall(venvPython, packageSpec, env) {
   if (result.status !== 0) {
     throw new Error("pip install failed. See errors above.");
   }
-}
-
-// ── System Python fallback ─────────────────────────────────────────────────
-function probeSystemPython() {
-  const candidates = [
-    { command: "python3", args: [] },
-    { command: "python", args: [] },
-    { command: "python3.12", args: [] },
-    { command: "python3.11", args: [] },
-  ];
-  if (process.platform === "win32") {
-    candidates.push({ command: "py", args: ["-3"] });
-  }
-
-  for (const candidate of candidates) {
-    const result = spawnSync(
-      candidate.command,
-      [...candidate.args, "-c", "import sys; print(f'{sys.version_info.major}.{sys.version_info.minor}')"],
-      { encoding: "utf8", windowsHide: true }
-    );
-    if (result.error || result.status !== 0) continue;
-    const ver = (result.stdout || "").trim();
-    const match = /^(\d+)\.(\d+)/.exec(ver);
-    if (!match) continue;
-    const major = parseInt(match[1], 10);
-    const minor = parseInt(match[2], 10);
-    if (major > 3 || (major === 3 && minor >= 11)) {
-      return { command: candidate.command, args: candidate.args };
-    }
-  }
-  return null;
 }
 
 // ── Main ───────────────────────────────────────────────────────────────────
@@ -228,70 +248,71 @@ async function main() {
     return;
   }
 
-  // Step 1: Get a Python interpreter (bundled or system)
-  let pythonForVenv;
+  // Step 1: Download bundled Python (required — no system Python fallback)
   const platformInfo = getPlatformInfo();
-
-  if (platformInfo && env.VOIDX_NPM_SKIP_BUNDLED_PYTHON !== "1") {
-    console.error(`\n🐍 Setting up voidx ${pkg.version}…\n`);
-    console.error("  [1/3] Downloading Python runtime…");
-
-    const pythonDir = resolvePythonDir(env);
-    const pbsFilename = getPbsFilename(platformInfo.target);
-    const pbsUrl = `${PBS_RELEASE_BASE}/${pbsFilename}`;
-    const archivePath = path.join(pythonDir, pbsFilename);
-    const bundledPython = resolveBundledPython(pythonDir, platformInfo.platform);
-
-    if (!existsSync(bundledPython)) {
-      try {
-        mkdirSync(pythonDir, { recursive: true });
-
-        if (!existsSync(archivePath)) {
-          console.error(`    Downloading ${pbsFilename}…`);
-          await downloadFile(pbsUrl, archivePath);
-          console.error("    Download complete.");
-        }
-
-        console.error("    Extracting Python runtime…");
-        extractTarGz(archivePath, pythonDir);
-        console.error("    Extraction complete.");
-
-        // Clean up archive to save disk
-        try { fs.unlinkSync(archivePath); } catch {}
-      } catch (err) {
-        console.error(`\n  ⚠️  Bundled Python download failed: ${err.message}`);
-        console.error("  Falling back to system Python…\n");
-      }
-    } else {
-      console.error("    Using cached Python runtime.");
-    }
-
-    if (existsSync(bundledPython)) {
-      pythonForVenv = { command: bundledPython, args: [], label: "bundled" };
-    }
+  if (!platformInfo) {
+    console.error(`\n  ❌ Unsupported platform: ${os.platform()}-${os.arch()}\n`);
+    console.error("     voidx npm package supports: macOS (x64/arm64), Linux (x64/arm64), Windows (x64/arm64)\n");
+    process.exit(1);
   }
 
-  // Fallback to system Python
-  if (!pythonForVenv) {
-    const sysPython = probeSystemPython();
-    if (sysPython) {
-      pythonForVenv = sysPython;
-      console.error("\n  Using system Python.\n");
-    } else {
-      console.error("\n  ❌ No Python 3.11+ found. Please install Python 3.11+ and run voidx again.\n");
-      console.error("     macOS:   brew install python@3.12");
-      console.error("     Linux:   sudo apt install python3.12");
-      console.error("     Windows: https://python.org/downloads\n");
+  console.error(`\n🐍 Setting up voidx ${pkg.version}…\n`);
+  console.error("  [1/3] Downloading Python runtime…");
+
+  const pythonDir = resolvePythonDir(env);
+  const pbsFilename = getPbsFilename(platformInfo.target);
+  const pbsUrlBase = env.VOIDX_NPM_PYTHON_MIRROR || PBS_RELEASE_BASE;
+  const pbsUrl = `${pbsUrlBase}/${PBS_TAG}/${pbsFilename}`;
+  const archivePath = path.join(pythonDir, pbsFilename);
+  const bundledPython = resolveBundledPython(pythonDir, platformInfo.platform);
+
+  if (!existsSync(bundledPython)) {
+    try {
+      mkdirSync(pythonDir, { recursive: true });
+
+      if (!existsSync(archivePath)) {
+        console.error(`    Downloading ${pbsFilename}…`);
+        await downloadFileWithRetry(pbsUrl, archivePath);
+        console.error("    Download complete.");
+      }
+
+      console.error("    Extracting Python runtime…");
+      extractTarGz(archivePath, pythonDir);
+      console.error("    Extraction complete.");
+
+      // Clean up archive to save disk
+      try { fs.unlinkSync(archivePath); } catch {}
+    } catch (err) {
+      // Clean up partial archive on failure
+      try { unlinkSync(archivePath); } catch {}
+      console.error(`\n  ❌ Failed to download Python runtime: ${err.message}\n`);
+      console.error("  This is usually a network issue. Try:");
+      console.error("    1. Use a mirror: VOIDX_NPM_PYTHON_MIRROR=https://npmmirror.com/mirrors/python-standalone");
+      console.error("    2. Retry: npm install -g @chikhamx/voidx");
+      console.error("    3. Debug: VOIDX_NPM_DEBUG=1 npm install -g @chikhamx/voidx\n");
       process.exit(1);
     }
+  } else {
+    console.error("    Using cached Python runtime.");
   }
 
-  // Step 2: Create venv
+  // Step 2: Create venv (rebuild if corrupted)
   console.error("  [2/3] Creating virtual environment…");
+
+  // If venv exists but is corrupted (python binary missing), nuke and rebuild
+  if (existsSync(venvDir) && !existsSync(venvPython)) {
+    console.error("    Existing venv is corrupted, rebuilding…");
+    try {
+      rmSync(venvDir, { recursive: true, force: true });
+    } catch (err) {
+      console.error(`    Failed to remove corrupted venv: ${err.message}`);
+    }
+  }
+
   if (!existsSync(venvPython)) {
     const venvResult = spawnSync(
-      pythonForVenv.command,
-      [...pythonForVenv.args, "-m", "venv", venvDir],
+      bundledPython,
+      ["-m", "venv", venvDir],
       { encoding: "utf8", stdio: "inherit", windowsHide: true }
     );
     if (venvResult.error) {
@@ -313,7 +334,18 @@ async function main() {
   console.error(`\n✅ voidx ${pkg.version} installed! Run: voidx\n`);
 }
 
+// ── URL builder (for mirror support) ──────────────────────────────────────
+
+function buildPythonDownloadUrl(mirrorBase, tag, filename) {
+  return `${mirrorBase}/${tag}/${filename}`;
+}
+
 main().catch((err) => {
   console.error(`\n❌ Setup failed: ${err.message}\n`);
   process.exit(1);
 });
+
+module.exports = {
+  buildPythonDownloadUrl,
+  downloadFileWithRetry,
+};

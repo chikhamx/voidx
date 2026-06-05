@@ -92,7 +92,7 @@ async def call_mcp_web_tool(
             },
         )
 
-    from voidx.mcp.tool import format_mcp_call_result
+    from voidx.mcp.schema import format_mcp_call_result
 
     return ToolResult(
         title=title,

@@ -82,6 +82,7 @@ for raw in sys.stdin:
     manager = McpManager(settings, registry, PermissionService())
 
     await manager.start_all()
+    await manager.wait_ready()
     try:
         mcp_tool_names = [
             tool["function"]["name"]
@@ -100,6 +101,86 @@ for raw in sys.stdin:
         assert result.output == "ok"
         direct = await manager.call_tool("web-reader", "read/url", {"url": "https://example.com"})
         assert direct.content[0]["text"] == "ok"
+    finally:
+        await manager.stop_all()
+
+
+@pytest.mark.asyncio
+async def test_call_tool_sends_empty_arguments_object(tmp_path):
+    """call_tool({}) must send 'arguments': {} — not omit the field."""
+    server = tmp_path / "fake_mcp_server.py"
+    server.write_text(
+        """
+import json
+import sys
+
+for raw in sys.stdin:
+    message = json.loads(raw)
+    method = message.get("method")
+    if method == "initialize":
+        params = message.get("params", {})
+        result = {
+            "protocolVersion": params.get("protocolVersion"),
+            "capabilities": {},
+            "serverInfo": {"name": "fake", "version": "1.0.0"},
+        }
+        print(json.dumps({"jsonrpc": "2.0", "id": message["id"], "result": result}), flush=True)
+    elif method == "notifications/initialized":
+        continue
+    elif method == "tools/list":
+        result = {
+            "tools": [{
+                "name": "get_me",
+                "description": "Get current user",
+                "inputSchema": {"type": "object", "properties": {}},
+            }]
+        }
+        print(json.dumps({"jsonrpc": "2.0", "id": message["id"], "result": result}), flush=True)
+    elif method == "tools/call":
+        # Echo back the params so the test can inspect them
+        params = message.get("params", {})
+        has_args = "arguments" in params
+        text = f"has_arguments={has_args}"
+        result = {"content": [{"type": "text", "text": text}], "isError": False}
+        print(json.dumps({"jsonrpc": "2.0", "id": message["id"], "result": result}), flush=True)
+    elif method == "shutdown":
+        break
+""",
+        encoding="utf-8",
+    )
+    (tmp_path / "voidx.json").write_text(
+        json.dumps({
+            "mcpServers": {
+                "test-server": {
+                    "command": sys.executable,
+                    "args": [str(server)],
+                },
+            },
+        }),
+        encoding="utf-8",
+    )
+
+    settings = Settings(str(tmp_path))
+    registry = ToolRegistry(settings=settings)
+    manager = McpManager(settings, registry, PermissionService())
+
+    await manager.start_all()
+    await manager.wait_ready()
+    try:
+        mcp_tool_names = [
+            tid for tid in registry.ids() if tid.startswith("mcp__")
+        ]
+        assert len(mcp_tool_names) == 1
+
+        result = await registry.execute_tool(
+            mcp_tool_names[0],
+            {},
+            ToolContext(workspace=str(tmp_path)),
+        )
+        # The fake server echoes whether 'arguments' was present in the request
+        assert result.output == "has_arguments=True", (
+            f"Expected 'arguments' key in tools/call params, got: {result.output}"
+        )
     finally:
         await manager.stop_all()
 
@@ -140,10 +221,12 @@ for raw in sys.stdin:
     manager = McpManager(settings, registry, PermissionService())
 
     await manager.start_all()
+    await manager.wait_ready()
     assert any(tool_id.startswith("mcp__") for tool_id in registry.ids())
 
     settings.delete_mcp_server("web-reader")
     await manager.restart_all()
+    await manager.wait_ready()
 
     assert not any(tool_id.startswith("mcp__") for tool_id in registry.ids())
 
@@ -177,6 +260,7 @@ for raw in sys.stdin:
     manager = McpManager(settings, registry, PermissionService())
 
     await manager.start_all()
+    await manager.wait_ready()
     assert manager.started is True
     assert not any(tool_id.startswith("mcp__") for tool_id in registry.ids())
 
@@ -188,6 +272,7 @@ for raw in sys.stdin:
         args=[str(server)],
     ))
     await manager.restart_all()
+    await manager.wait_ready()
 
     assert any(tool_id.startswith("mcp__") for tool_id in registry.ids())
 
@@ -211,11 +296,33 @@ async def test_mcp_manager_reports_startup_errors(tmp_path):
     manager = McpManager(settings, ToolRegistry(settings=settings), PermissionService())
 
     await manager.start_all()
+    await manager.wait_ready()
 
     status = manager.statuses()[0]
     assert status.name == "missing-server"
     assert status.status == "error"
     assert "Command not found" in status.error_message
+
+
+def test_mcp_tool_wrapper_id_and_description_are_instance_attributes():
+    class FakeClient:
+        healthy = True
+        status = "connected"
+        error_message = ""
+
+        async def call_tool(self, name, arguments):
+            return McpCallResult(content=[])
+
+    wrapper = McpToolWrapper(FakeClient(), McpToolDef(name="read/url"), "my-server")
+
+    assert isinstance(wrapper.id, str)
+    assert wrapper.id.startswith("mcp__my-server__read_url_")
+    assert isinstance(wrapper.description, str)
+    assert "[MCP:my-server]" in wrapper.description
+
+    # Instance attribute, not a property descriptor
+    assert not isinstance(type(wrapper).id, property)
+    assert not isinstance(type(wrapper).description, property)
 
 
 @pytest.mark.asyncio

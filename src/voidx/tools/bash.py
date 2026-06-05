@@ -3,11 +3,16 @@
 from __future__ import annotations
 
 import asyncio
+import os
 import re
+import signal
 import subprocess
+from contextlib import suppress
 
 from pydantic import BaseModel, Field
 
+from voidx.permission.engine import is_safe_bash
+from voidx.permission.sandbox import check_sandbox_bash
 from voidx.tools.base import BaseTool, model_to_json_schema, ToolContext, ToolResult
 
 # Patterns that are always blocked regardless of permission
@@ -51,6 +56,42 @@ def _check_command(command: str) -> str | None:
     return None
 
 
+def _sandbox_denial(command: str, ctx: ToolContext) -> str | None:
+    if ctx.sandbox_mode == "danger-full-access":
+        return None
+    if ctx.sandbox_mode == "read-only":
+        if is_safe_bash(command):
+            return None
+        return f"SANDBOX READ-ONLY: 'bash' is not allowed.\n  command: {command.strip()[:120]}"
+    return check_sandbox_bash(command, ctx.workspace, ctx.sandbox_extra_paths)
+
+
+async def _terminate_process(proc: asyncio.subprocess.Process) -> None:
+    if proc.returncode is not None:
+        return
+    try:
+        if hasattr(os, "killpg"):
+            os.killpg(proc.pid, signal.SIGTERM)
+        else:
+            proc.terminate()
+    except ProcessLookupError:
+        return
+
+    try:
+        await asyncio.wait_for(proc.wait(), timeout=2)
+        return
+    except asyncio.TimeoutError:
+        pass
+
+    with suppress(ProcessLookupError):
+        if hasattr(os, "killpg"):
+            os.killpg(proc.pid, signal.SIGKILL)
+        else:
+            proc.kill()
+    with suppress(asyncio.TimeoutError):
+        await asyncio.wait_for(proc.wait(), timeout=2)
+
+
 class BashInput(BaseModel):
     command: str = Field(description="Shell command to execute")
     timeout: int = Field(default=120, description="Timeout in seconds")
@@ -70,17 +111,23 @@ class BashTool(BaseTool):
         if blocked:
             return ToolResult(output=blocked, metadata={"command": inp.command, "blocked": True})
 
+        blocked = _sandbox_denial(inp.command, ctx)
+        if blocked:
+            return ToolResult(output=blocked, metadata={"command": inp.command, "blocked": True})
+
         try:
             proc = await asyncio.create_subprocess_shell(
                 inp.command,
                 stdout=subprocess.PIPE,
                 stderr=subprocess.PIPE,
                 cwd=ctx.workspace,
+                start_new_session=hasattr(os, "killpg"),
             )
             stdout, stderr = await asyncio.wait_for(
                 proc.communicate(), timeout=inp.timeout
             )
         except asyncio.TimeoutError:
+            await _terminate_process(proc)
             return ToolResult(
                 output=f"Command timed out after {inp.timeout}s: {inp.command}",
                 metadata={"command": inp.command, "exit_code": -1, "timeout": True},

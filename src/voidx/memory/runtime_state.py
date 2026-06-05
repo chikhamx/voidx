@@ -2,12 +2,14 @@
 
 from __future__ import annotations
 
+import json
+
 from pydantic import BaseModel, Field
 
 from voidx.agent.runtime_context import InteractionMode, TaskIntent
-from voidx.agent.task_state import TaskPhase, TaskRun, TaskRunStatus, TaskState
-from voidx.memory.session import _now
-from voidx.memory.store import _execute_commit, _fetch_one
+from voidx.agent.task_state import PendingApproval, TaskPhase, TaskRun, TaskRunStatus, TaskState
+from voidx.memory.store import _execute_commit, _fetch_one, _now, _write_transaction
+from voidx.skills.runtime import SkillRunState
 
 
 class RuntimeStateSnapshot(BaseModel):
@@ -22,14 +24,16 @@ class MessageRuntimeSnapshot(BaseModel):
     session_id: str
     interaction_mode: InteractionMode = InteractionMode.AUTO
     task_intent: TaskIntent = TaskIntent.CHAT
-    implementation_allowed: bool = False
     intent_resolution_reason: str = ""
     goal: str = ""
     goal_phase: str = TaskPhase.CLARIFY.value
     goal_status: str = TaskRunStatus.IDLE.value
     goal_turn_count: int = 0
-    awaiting_implementation_approval: bool = False
-    approved_scope: str = ""
+    pending_approval: PendingApproval | None = None
+    intent_confidence: float | None = None
+    intent_source: str = ""
+    intent_refined: bool = False
+    available_tool_ids: list[str] = Field(default_factory=list)
     created_at: str = Field(default_factory=_now)
 
 
@@ -62,9 +66,9 @@ async def save_session_runtime_state(
         """INSERT INTO session_runtime_state (
                session_id, interaction_mode, current_intent, previous_intent,
                current_goal, awaiting_implementation_approval, approved_scope,
-               last_plan_summary, compaction_summary, updated_at
+               pending_approval_json, last_plan_summary, compaction_summary, updated_at
            )
-           VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+           VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
            ON CONFLICT(session_id) DO UPDATE SET
                interaction_mode = excluded.interaction_mode,
                current_intent = excluded.current_intent,
@@ -72,6 +76,7 @@ async def save_session_runtime_state(
                current_goal = excluded.current_goal,
                awaiting_implementation_approval = excluded.awaiting_implementation_approval,
                approved_scope = excluded.approved_scope,
+               pending_approval_json = excluded.pending_approval_json,
                last_plan_summary = excluded.last_plan_summary,
                compaction_summary = excluded.compaction_summary,
                updated_at = excluded.updated_at""",
@@ -81,8 +86,9 @@ async def save_session_runtime_state(
             task_state.current_intent.value,
             task_state.previous_intent.value if task_state.previous_intent else None,
             task_state.current_goal,
-            1 if task_state.awaiting_implementation_approval else 0,
-            task_state.approved_scope,
+            1 if task_state.pending_approval else 0,
+            task_state.pending_approval.scope if task_state.pending_approval else "",
+            _dump_pending_approval(task_state.pending_approval),
             task_state.last_plan_summary,
             compaction_summary,
             _now(),
@@ -107,12 +113,16 @@ async def load_task_state(session_id: str) -> TaskState:
     )
     if not row:
         return TaskState()
+    pending = _load_pending_approval(
+        row["pending_approval_json"] if "pending_approval_json" in row.keys() else "",
+        awaiting=bool(row["awaiting_implementation_approval"]),
+        scope=row["approved_scope"],
+    )
     return TaskState(
         current_intent=TaskIntent(row["current_intent"]),
         previous_intent=TaskIntent(row["previous_intent"]) if row["previous_intent"] else None,
         current_goal=row["current_goal"],
-        awaiting_implementation_approval=bool(row["awaiting_implementation_approval"]),
-        approved_scope=row["approved_scope"],
+        pending_approval=pending,
         last_plan_summary=row["last_plan_summary"],
     )
 
@@ -124,32 +134,37 @@ async def load_compaction_summary(session_id: str) -> str:
     )
     if not row:
         return ""
-    return row["compaction_summary"] if "compaction_summary" in row.keys() else ""
+    return row["compaction_summary"] or ""
 
 
 async def save_session_task_run(session_id: str, task_run: TaskRun) -> None:
     await _execute_commit(
         """INSERT INTO session_task_runs (
                session_id, goal, phase, status, approved_scope,
-               awaiting_implementation_approval, turn_count, updated_at
+               awaiting_implementation_approval, pending_approval_json, turn_count, skill_runs_json,
+               updated_at
            )
-           VALUES (?, ?, ?, ?, ?, ?, ?, ?)
+           VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
            ON CONFLICT(session_id) DO UPDATE SET
                goal = excluded.goal,
                phase = excluded.phase,
                status = excluded.status,
                approved_scope = excluded.approved_scope,
                awaiting_implementation_approval = excluded.awaiting_implementation_approval,
+               pending_approval_json = excluded.pending_approval_json,
                turn_count = excluded.turn_count,
+               skill_runs_json = excluded.skill_runs_json,
                updated_at = excluded.updated_at""",
         (
             session_id,
             task_run.goal,
             task_run.phase.value,
             task_run.status.value,
-            task_run.approved_scope,
-            1 if task_run.awaiting_implementation_approval else 0,
+            task_run.pending_approval.scope if task_run.pending_approval else "",
+            1 if task_run.pending_approval else 0,
+            _dump_pending_approval(task_run.pending_approval),
             task_run.turn_count,
+            _dump_skill_runs(task_run.skill_runs),
             _now(),
         ),
     )
@@ -162,25 +177,85 @@ async def load_task_run(session_id: str) -> TaskRun:
     )
     if not row:
         return TaskRun()
+    pending = _load_pending_approval(
+        row["pending_approval_json"] if "pending_approval_json" in row.keys() else "",
+        awaiting=bool(row["awaiting_implementation_approval"]),
+        scope=row["approved_scope"],
+    )
     return TaskRun(
         goal=row["goal"],
         phase=TaskPhase(row["phase"]),
         status=TaskRunStatus(row["status"]),
-        approved_scope=row["approved_scope"],
-        awaiting_implementation_approval=bool(row["awaiting_implementation_approval"]),
+        pending_approval=pending,
         turn_count=row["turn_count"],
+        skill_runs=_load_skill_runs(row["skill_runs_json"] if "skill_runs_json" in row.keys() else ""),
     )
 
 
+def _dump_skill_runs(skill_runs: dict[str, SkillRunState]) -> str:
+    return json.dumps(
+        {name: run.model_dump(mode="json") for name, run in skill_runs.items()},
+        ensure_ascii=False,
+    )
+
+
+def _dump_pending_approval(pending: PendingApproval | None) -> str:
+    if pending is None:
+        return ""
+    return json.dumps(pending.model_dump(mode="json"), ensure_ascii=False)
+
+
+def _load_pending_approval(
+    raw: str,
+    *,
+    awaiting: bool = False,
+    scope: str = "",
+) -> PendingApproval | None:
+    if raw:
+        try:
+            data = json.loads(raw)
+        except json.JSONDecodeError:
+            data = None
+        if isinstance(data, dict):
+            try:
+                return PendingApproval.model_validate(data)
+            except ValueError:
+                return None
+    if awaiting and scope:
+        return PendingApproval(scope=scope)
+    return None
+
+
+def _load_skill_runs(raw: str) -> dict[str, SkillRunState]:
+    if not raw:
+        return {}
+    try:
+        data = json.loads(raw)
+    except json.JSONDecodeError:
+        return {}
+    if not isinstance(data, dict):
+        return {}
+    runs: dict[str, SkillRunState] = {}
+    for name, value in data.items():
+        try:
+            run = SkillRunState.model_validate(value)
+        except ValueError:
+            continue
+        runs[str(name)] = run
+    return runs
+
+
 async def save_message_runtime_snapshot(snapshot: MessageRuntimeSnapshot) -> None:
+    legacy_pending = snapshot.pending_approval
     await _execute_commit(
         """INSERT INTO message_runtime_snapshots (
                message_id, session_id, interaction_mode, task_intent,
                implementation_allowed, intent_resolution_reason, goal, goal_phase,
                goal_status, goal_turn_count, awaiting_implementation_approval,
-               approved_scope, created_at
+               approved_scope, pending_approval_json, intent_confidence, intent_source, intent_refined,
+               available_tool_ids_json, created_at
            )
-           VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+           VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
            ON CONFLICT(message_id) DO UPDATE SET
                interaction_mode = excluded.interaction_mode,
                task_intent = excluded.task_intent,
@@ -191,20 +266,30 @@ async def save_message_runtime_snapshot(snapshot: MessageRuntimeSnapshot) -> Non
                goal_status = excluded.goal_status,
                goal_turn_count = excluded.goal_turn_count,
                awaiting_implementation_approval = excluded.awaiting_implementation_approval,
-               approved_scope = excluded.approved_scope""",
+               approved_scope = excluded.approved_scope,
+               pending_approval_json = excluded.pending_approval_json,
+               intent_confidence = excluded.intent_confidence,
+               intent_source = excluded.intent_source,
+               intent_refined = excluded.intent_refined,
+               available_tool_ids_json = excluded.available_tool_ids_json""",
         (
             snapshot.message_id,
             snapshot.session_id,
             snapshot.interaction_mode.value,
             snapshot.task_intent.value,
-            1 if snapshot.implementation_allowed else 0,
+            1 if snapshot.task_intent == TaskIntent.IMPLEMENT else 0,
             snapshot.intent_resolution_reason,
             snapshot.goal,
             snapshot.goal_phase,
             snapshot.goal_status,
             snapshot.goal_turn_count,
-            1 if snapshot.awaiting_implementation_approval else 0,
-            snapshot.approved_scope,
+            1 if legacy_pending else 0,
+            legacy_pending.scope if legacy_pending else "",
+            _dump_pending_approval(legacy_pending),
+            snapshot.intent_confidence,
+            snapshot.intent_source,
+            1 if snapshot.intent_refined else 0,
+            json.dumps(snapshot.available_tool_ids, ensure_ascii=False),
             snapshot.created_at,
         ),
     )
@@ -217,24 +302,48 @@ async def load_message_runtime_snapshot(message_id: int) -> MessageRuntimeSnapsh
     )
     if not row:
         return None
+    pending = _load_pending_approval(
+        row["pending_approval_json"] if "pending_approval_json" in row.keys() else "",
+        awaiting=bool(row["awaiting_implementation_approval"]),
+        scope=row["approved_scope"],
+    )
     return MessageRuntimeSnapshot(
         message_id=row["message_id"],
         session_id=row["session_id"],
         interaction_mode=InteractionMode(row["interaction_mode"]),
         task_intent=TaskIntent(row["task_intent"]),
-        implementation_allowed=bool(row["implementation_allowed"]),
         intent_resolution_reason=row["intent_resolution_reason"],
         goal=row["goal"],
         goal_phase=row["goal_phase"],
         goal_status=row["goal_status"],
         goal_turn_count=row["goal_turn_count"],
-        awaiting_implementation_approval=bool(row["awaiting_implementation_approval"]),
-        approved_scope=row["approved_scope"],
+        pending_approval=pending,
+        intent_confidence=row["intent_confidence"] if "intent_confidence" in row.keys() else None,
+        intent_source=row["intent_source"] if "intent_source" in row.keys() else "",
+        intent_refined=bool(row["intent_refined"]) if "intent_refined" in row.keys() else False,
+        available_tool_ids=_load_string_list(
+            row["available_tool_ids_json"] if "available_tool_ids_json" in row.keys() else ""
+        ),
         created_at=row["created_at"],
     )
 
 
+def _load_string_list(raw: str) -> list[str]:
+    if not raw:
+        return []
+    try:
+        data = json.loads(raw)
+    except json.JSONDecodeError:
+        return []
+    if not isinstance(data, list):
+        return []
+    return [item for item in data if isinstance(item, str)]
+
+
 async def clear_runtime_state(session_id: str) -> None:
-    await _execute_commit("DELETE FROM session_runtime_state WHERE session_id = ?", (session_id,))
-    await _execute_commit("DELETE FROM session_task_runs WHERE session_id = ?", (session_id,))
-    await _execute_commit("DELETE FROM message_runtime_snapshots WHERE session_id = ?", (session_id,))
+    def _run(conn):
+        conn.execute("DELETE FROM session_runtime_state WHERE session_id = ?", (session_id,))
+        conn.execute("DELETE FROM session_task_runs WHERE session_id = ?", (session_id,))
+        conn.execute("DELETE FROM message_runtime_snapshots WHERE session_id = ?", (session_id,))
+
+    await _write_transaction(_run)

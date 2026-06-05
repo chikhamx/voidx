@@ -58,6 +58,7 @@ class DockNodeMixin:
             existing.body_lines = lines[1:]
             existing.collapsed = False
             self._tree.mark_dirty()
+            self._mark_settled(existing)
             self.refresh()
             return existing
         node = self._tree.new_node(
@@ -67,6 +68,7 @@ class DockNodeMixin:
             body_lines=lines[1:],
             collapsed=False,
         )
+        self._mark_settled(node)
         self.refresh()
         return node
 
@@ -89,6 +91,7 @@ class DockNodeMixin:
             body_lines=body_lines,
             collapsed=False,
         )
+        self._mark_settled(node)
         self.refresh()
         return node
 
@@ -105,6 +108,7 @@ class DockNodeMixin:
             collapsed=False,
             status="error",
         )
+        self._mark_settled(node)
         self.refresh()
         return node
 
@@ -120,6 +124,7 @@ class DockNodeMixin:
             body_lines=[_ansi_line(line) for line in lines[1:]],
             collapsed=False,
         )
+        self._mark_settled(node)
         self.refresh()
         return node
 
@@ -143,6 +148,7 @@ class DockNodeMixin:
             collapsed=False,
             meta=summary,
         )
+        self._mark_settled(node)
         self.refresh()
         return node
 
@@ -178,6 +184,7 @@ class DockNodeMixin:
             tool_call_id=tool_call_id,
             payload={"tool_name": tool_name, "args": args, "raw_args": raw_args},
         )
+        self._mark_unsettled(self._current_tool)
         self.refresh()
         return self._current_tool
 
@@ -224,14 +231,18 @@ class DockNodeMixin:
             lines.pop()
         if not lines:
             return None
+        target = parent or self._current_tool or self._current_agent or self._tree.root
         node = self._tree.new_node(
-            parent=parent or self._current_tool or self._current_agent or self._tree.root,
+            parent=target,
             node_type="tool_result",
             header=escape(lines[0]) if lines else "",
             body_lines=[escape(line) for line in lines[1:]],
             collapsed=collapsed,
             tool_call_id=tool_call_id,
         )
+        self._mark_subtree_settled(node)
+        if target.node_type == "tool_call":
+            self._mark_subtree_settled(target)
         self.refresh()
         return node
 
@@ -260,7 +271,10 @@ class DockNodeMixin:
             )
 
         target = parent or self._current_tool or self._current_agent or self._tree.root
+        if target.node_type == "tool_call":
+            self._mark_unsettled(target)
         first_node: OutputNode | None = None
+        settled_nodes: list[OutputNode] = []
         for index, file_diff in enumerate(parsed.files):
             if preview_hunks is not None and preview_lines is not None:
                 body_lines, omitted = render_file_change_lines(file_diff, preview_hunks, preview_lines)
@@ -306,6 +320,9 @@ class DockNodeMixin:
                     )
             if first_node is None:
                 first_node = node
+            settled_nodes.append(node)
+        for node in settled_nodes:
+            self._mark_subtree_settled(node)
         self._tree.mark_dirty()
         self.refresh()
         return first_node
@@ -339,6 +356,7 @@ class DockNodeMixin:
         node.status = "running"
         node.meta = label
         self._tree.mark_dirty()
+        self._mark_unsettled(node)
         self.refresh()
         return node
 
@@ -374,6 +392,7 @@ class DockNodeMixin:
         node.collapsed = True
         node.meta = text
         self._tree.mark_dirty()
+        self._mark_subtree_settled(node)
         self.refresh()
 
     def show_permission(
@@ -402,6 +421,7 @@ class DockNodeMixin:
             body_lines=body,
             collapsed=False,
         )
+        self._mark_unsettled(self._permission_node)
         self.refresh()
         return self._permission_node
 

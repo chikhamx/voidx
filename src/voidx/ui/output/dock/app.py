@@ -70,6 +70,7 @@ class BottomInputDock(DockNodeMixin):
         self._status_ticks: dict[str, int] = {}
         self._status_records: dict[str, DockStatusRecord] = {}
         self._permission_node: OutputNode | None = None
+        self._settled_node_ids: set[str] = set()
         self._input_text = ""
         self._cursor_pos = 0
         self._hints: list[tuple[str, str, bool]] = []
@@ -142,6 +143,7 @@ class BottomInputDock(DockNodeMixin):
 
     def reset(self) -> None:
         self._tree = OutputTree()
+        self._settled_node_ids.clear()
         self._reset_runtime_nodes()
         self._input_text = ""
         self._cursor_pos = 0
@@ -154,6 +156,8 @@ class BottomInputDock(DockNodeMixin):
             self._tree.extend_from(tree)
         else:
             self._tree = tree
+        self._settled_node_ids.clear()
+        self._mark_tree_settled()
         self._reset_runtime_nodes()
         self.refresh()
 
@@ -183,6 +187,7 @@ class BottomInputDock(DockNodeMixin):
             body_lines=[escape(line) for line in lines[1:]],
             collapsed=False,
         )
+        self._mark_settled(self._current_turn)
         self.refresh()
         return self._current_turn
 
@@ -195,6 +200,7 @@ class BottomInputDock(DockNodeMixin):
                 header="[#EBCB8B]●[/#EBCB8B] Working",
                 collapsed=False,
             )
+            self._mark_unsettled(self._current_agent)
             self.refresh()
         return self._current_agent
 
@@ -225,12 +231,16 @@ class BottomInputDock(DockNodeMixin):
             return False
         self._stream_text = text
         self._update_stream_node(parent=parent)
+        self._mark_unsettled(self._stream_node)
         self.refresh()
         return True
 
     def commit_stream(self) -> bool:
         if not self._active:
             return False
+        stream_node = self._stream_node
+        if stream_node is not None and stream_node is not self._current_agent:
+            self._mark_settled(stream_node)
         self._stream_node = None
         self._stream_text = ""
         self.refresh()
@@ -369,6 +379,7 @@ class BottomInputDock(DockNodeMixin):
         if self._current_agent is not None:
             if self._current_agent.header == "[#EBCB8B]●[/#EBCB8B] Working":
                 self._current_agent.header = "[dim]●[/dim] voidx"
+                self._mark_subtree_settled(self._current_agent)
                 self._tree.mark_dirty()
             self._append_root_spacer()
             self._current_agent = self._tree.new_node(
@@ -377,6 +388,7 @@ class BottomInputDock(DockNodeMixin):
                 header="",
                 collapsed=False,
             )
+            self._mark_unsettled(self._current_agent)
             return self._current_agent
 
         self._append_root_spacer()
@@ -386,6 +398,7 @@ class BottomInputDock(DockNodeMixin):
             header="",
             collapsed=False,
         )
+        self._mark_unsettled(self._current_agent)
         return self._current_agent
 
     def record_status(
@@ -414,6 +427,61 @@ class BottomInputDock(DockNodeMixin):
     def status_record(self, status_id: str) -> DockStatusRecord | None:
         return self._status_records.get(status_id)
 
+    def _mark_settled(self, node: OutputNode | None) -> None:
+        if node is not None:
+            self._settled_node_ids.add(node.id)
+
+    def _mark_unsettled(self, node: OutputNode | None) -> None:
+        if node is not None:
+            self._settled_node_ids.discard(node.id)
+
+    def _mark_subtree_settled(self, node: OutputNode | None) -> None:
+        if node is None:
+            return
+        self._settled_node_ids.add(node.id)
+        for child in node.children:
+            self._mark_subtree_settled(child)
+
+    def _mark_tree_settled(self) -> None:
+        for child in self._tree.root.children:
+            self._mark_subtree_settled(child)
+
+    def _discard_settled_subtree(self, node: OutputNode | None) -> None:
+        if node is None:
+            return
+        self._settled_node_ids.discard(node.id)
+        for child in node.children:
+            self._discard_settled_subtree(child)
+
+    def _is_node_chain_settled(self, node_id: str) -> bool:
+        node = self._tree.get(node_id)
+        while node is not None and node is not self._tree.root:
+            if node.id not in self._settled_node_ids:
+                return False
+            node = node.parent
+        return True
+
+    def safe_flush_line_count(self, width: int, committed: int) -> int:
+        lines, line_map = self._tree.render_with_line_map(width)
+        index = max(0, min(committed, len(lines)))
+        while index < len(lines):
+            node_id = line_map.get(index)
+            if node_id is None:
+                if lines[index].strip():
+                    break
+                index += 1
+                continue
+            if not self._is_node_chain_settled(node_id):
+                break
+            index += 1
+        return index
+
+    def mark_node_settled(self, node: OutputNode | None) -> None:
+        self._mark_subtree_settled(node)
+
+    def mark_node_unsettled(self, node: OutputNode | None) -> None:
+        self._mark_unsettled(node)
+
     def _append_root_spacer(self) -> None:
         children = self._tree.root.children
         if not children:
@@ -421,12 +489,13 @@ class BottomInputDock(DockNodeMixin):
         last = children[-1]
         if last.node_type == "message" and not last.header and not last.body_lines and not last.children:
             return
-        self._tree.new_node(
+        node = self._tree.new_node(
             parent=self._tree.root,
             node_type="message",
             header="",
             collapsed=False,
         )
+        self._mark_settled(node)
 
     def _settle_stream_for_tool(self) -> None:
         if (
@@ -437,10 +506,12 @@ class BottomInputDock(DockNodeMixin):
         ):
             self._stream_node.header = "[#EBCB8B]●[/#EBCB8B] Working"
             self._stream_node.body_lines = []
+            self._mark_unsettled(self._stream_node)
             self._tree.mark_dirty()
         self.commit_stream()
 
     def _remove_node(self, node: OutputNode) -> None:
+        self._discard_settled_subtree(node)
         parent = node.parent
         if parent and node in parent.children:
             parent.children.remove(node)

@@ -6,7 +6,9 @@ Based on the Model Context Protocol specification:
 
 from __future__ import annotations
 
+import json
 from dataclasses import dataclass, field
+from importlib.metadata import version as _pkg_version
 from typing import Any
 
 
@@ -73,7 +75,7 @@ class McpInitializeParams:
     })
     client_info: dict[str, str] = field(default_factory=lambda: {
         "name": "voidx",
-        "version": "1.0.0",
+        "version": _pkg_version("voidx"),
     })
 
     def to_dict(self) -> dict[str, Any]:
@@ -97,7 +99,7 @@ class McpCallResult:
     """Result from a tools/call request."""
     content: list[dict[str, Any]] = field(default_factory=list)
     isError: bool = False
-    structured_content: Any = None
+    structured_content: dict[str, Any] | None = None
 
 
 # ── Server status (for UI consumption) ────────────────────────────────────
@@ -107,6 +109,52 @@ class McpCallResult:
 class McpRuntimeStatus:
     """Runtime status of a single MCP server connection."""
     name: str
-    status: str  # "connected" | "disconnected" | "error"
+    status: str  # "connected" | "connecting" | "disconnected" | "error" | "disabled"
     tool_count: int = 0
     error_message: str = ""
+
+
+# ── Result formatting ──────────────────────────────────────────────────────
+
+
+def format_mcp_call_result(result: McpCallResult) -> str:
+    parts = [_format_content_block(block) for block in result.content]
+    if result.structured_content is not None:
+        parts.append(
+            "Structured content:\n"
+            + json.dumps(result.structured_content, ensure_ascii=False, indent=2, default=str)
+        )
+    rendered = [part for part in parts if part]
+    return "\n".join(rendered) if rendered else "(empty response)"
+
+
+def _format_content_block(block: Any) -> str:
+    if not isinstance(block, dict):
+        return str(block) if block is not None else ""
+
+    block_type = block.get("type", "")
+    if block_type == "text":
+        text = block.get("text", "")
+        return text if isinstance(text, str) else str(text)
+
+    if block_type == "image":
+        mime = block.get("mimeType") or block.get("mime_type") or "unknown"
+        data = block.get("data", "")
+        size = len(data) if isinstance(data, str) else 0
+        return f"[image {mime}, {size} base64 chars]"
+
+    if block_type == "resource":
+        resource = block.get("resource")
+        if isinstance(resource, dict):
+            uri = resource.get("uri", "resource")
+            mime = resource.get("mimeType") or resource.get("mime_type") or ""
+            header = f"[resource {uri}{f' ({mime})' if mime else ''}]"
+            text = resource.get("text")
+            if isinstance(text, str):
+                return f"{header}\n{text}"
+            blob = resource.get("blob")
+            if isinstance(blob, str):
+                return f"{header}\n[{len(blob)} base64 chars]"
+            return header
+
+    return json.dumps(block, ensure_ascii=False, sort_keys=True, default=str)

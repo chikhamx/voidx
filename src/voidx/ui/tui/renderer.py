@@ -15,7 +15,7 @@ from voidx.llm.usage import format_cache_hit_rate, format_token_count
 from voidx.ui.output.dock import active_agent_step_text, dock
 from voidx.ui.output.dock.formatting import _text_from_line
 from voidx.ui.tools.file_picker import format_size, FileCandidate
-from voidx.ui.tui.helpers import _escape_markup, _clip_cells, _candidate_meta, _rendered_row_count, _ANSI_STRIP_RE
+from voidx.ui.tui.helpers import _escape_markup, _clip_cells, _candidate_meta, _rendered_row_count
 
 
 class _TerminalRendererMixin:
@@ -27,9 +27,12 @@ class _TerminalRendererMixin:
 
     # ── rendering ────────────────────────────────────────────────────────
 
+    def _frame_width(self) -> int:
+        return max((self._console.width or 80) - 1, 20)
+
     def _render_frame(self) -> None:
         """Render to terminal: capture Rich output, write with cursor control."""
-        width = max((self._console.width or 80) - 1, 20)
+        width = self._frame_width()
         term_height = shutil.get_terminal_size().lines if self._tty else None
         try:
             renderable = self._render_impl(height=term_height)
@@ -68,10 +71,7 @@ class _TerminalRendererMixin:
                 sys.stderr.flush()
                 self._pending_tb = ""
         else:
-            # Non-TTY: strip ANSI for clean output
-            clean = _ANSI_STRIP_RE.sub('', ansi)
-            sys.stdout.write(clean)
-            sys.stdout.flush()
+            return
 
     def _make_room_for_frame(self, frame_rows: int, term_height: int) -> None:
         visible = max(0, min(self._visible_committed_rows, term_height))
@@ -93,7 +93,7 @@ class _TerminalRendererMixin:
             self._render_frame()
             return
 
-        width = max((self._console.width or 80) - 1, 20)
+        width = self._frame_width()
         try:
             ansi = self._capture_renderable(self._render_bottom_impl(), width)
         except Exception:
@@ -120,7 +120,7 @@ class _TerminalRendererMixin:
         sys.stdout.flush()
 
     def _capture_renderable(self, renderable: object, width: int) -> str:
-        capture_width = width + 2
+        capture_width = max(width, 1)
         key = (capture_width, self._console.height)
         if self._capture_console is None or self._capture_console_key != key:
             self._capture_buffer = io.StringIO()
@@ -159,7 +159,7 @@ class _TerminalRendererMixin:
 
     def _position_input_cursor(self, frame_rows: int | None = None) -> None:
         """Move terminal cursor to the current input cursor position."""
-        width = max((self._console.width or 80) - 1, 20)
+        width = self._frame_width()
         status_lines = self._render_hint_lines()
         panel_lines = self._render_panel_lines(width)
         input_rows = self._input_display_rows(width)
@@ -196,7 +196,7 @@ class _TerminalRendererMixin:
             self._last_frame_rows = frame_rows
 
     def _render_impl(self, *, height: int | None = None) -> Group:
-        width = max((self._console.width or 80) - 1, 20)
+        width = self._frame_width()
         render_height = max(height or self._console.height or 24, 1)
 
         status_lines = self._render_hint_lines()
@@ -220,22 +220,11 @@ class _TerminalRendererMixin:
         committed = self._committed_line_count
         active_lines = tree_lines[committed:]
 
-        # Active content is typically small (current turn only), but if it
-        # exceeds the viewport, show only the tail like before.
-        if len(active_lines) > body_limit:
-            visible_tree = active_lines[-body_limit:]
-        else:
-            visible_tree = active_lines
-
-        # Build renderables
-        elements: list = []
-
-        # Transcript
-        for line in visible_tree:
-            try:
-                elements.append(_text_from_line(line))
-            except Exception:
-                elements.append(Text(line))
+        elements: list = self._transcript_elements_for_rows(
+            active_lines,
+            width,
+            body_limit,
+        )
 
         elements.extend(
             self._render_bottom_elements(width, panel_lines, status_lines)
@@ -243,8 +232,31 @@ class _TerminalRendererMixin:
 
         return Group(*elements)
 
+    def _transcript_elements_for_rows(
+        self,
+        lines: list[str],
+        width: int,
+        row_limit: int,
+    ) -> list[Text]:
+        if not lines or row_limit <= 0:
+            return []
+
+        renderables: list[Text] = []
+        for line in lines:
+            try:
+                renderables.append(_text_from_line(line))
+            except Exception:
+                renderables.append(Text(line))
+
+        ansi = self._capture_renderable(Group(*renderables), width)
+        if not ansi:
+            return []
+
+        tail_rows = ansi.splitlines()[-row_limit:]
+        return [Text.from_ansi(row) for row in tail_rows]
+
     def _render_line_width(self, width: int) -> int:
-        return max(width + 2, 1)
+        return max(width, 1)
 
     def _input_line_prefix_width(self, row: int) -> int:
         if row == 0 and self._active_text_prompt is not None:
@@ -260,13 +272,88 @@ class _TerminalRendererMixin:
         render_width = self._render_line_width(width)
         rows: list[int] = []
         for row, line in enumerate(self._input_lines):
-            display = self._input_display_text(line)
-            cells = self._input_line_prefix_width(row) + cell_len(display)
+            cells = self._input_display_cell_count(row, line)
             rows.append(max((cells + render_width - 1) // render_width, 1))
         return rows or [1]
 
+    def _input_display_cell_count(self, row: int, line: str) -> int:
+        display = self._input_display_text(line)
+        cells = self._input_line_prefix_width(row) + cell_len(display)
+        if row == self._cursor_row and not self._active_choice:
+            cursor = min(self._cursor_col, len(line))
+            if self._active_text_secret:
+                cursor_cells = cell_len(line[:cursor])
+                display_cells = len(display)
+            else:
+                cursor_cells = cell_len(display[:cursor])
+                display_cells = cell_len(display)
+            if cursor_cells >= display_cells:
+                cells += 1
+        return cells
+
+    def _render_input_line(
+        self,
+        row: int,
+        line: str,
+        prefix: str,
+        width: int,
+    ) -> list[Text]:
+        segments: list[tuple[str, str]] = []
+        if prefix:
+            segments.append((prefix, "bold white"))
+
+        display = self._input_display_text(line)
+        if row == self._cursor_row and not self._active_choice:
+            if self._active_text_secret:
+                col = min(cell_len(line[: self._cursor_col]), len(display))
+            else:
+                col = min(self._cursor_col, len(display))
+            before = display[:col]
+            at = display[col : col + 1] or " "
+            after = display[col + 1 :]
+            if before:
+                segments.append((before, "white"))
+            segments.append((at, "reverse white"))
+            if after:
+                segments.append((after, "white"))
+        else:
+            segments.append((display, "white"))
+
+        return self._wrap_input_segments(segments, width)
+
+    def _wrap_input_segments(
+        self,
+        segments: list[tuple[str, str]],
+        width: int,
+    ) -> list[Text]:
+        rows: list[Text] = []
+        current = Text()
+        used = 0
+        render_width = self._render_line_width(width)
+
+        for text, style in segments:
+            for char in text:
+                char_width = cell_len(char)
+                if char_width <= 0:
+                    current.append(char, style=style)
+                    continue
+                if used > 0 and used + char_width > render_width:
+                    rows.append(current)
+                    current = Text()
+                    used = 0
+                current.append(char, style=style)
+                used += char_width
+                if used >= render_width:
+                    rows.append(current)
+                    current = Text()
+                    used = 0
+
+        if current.plain or not rows:
+            rows.append(current)
+        return rows
+
     def _render_bottom_impl(self) -> Group:
-        width = max((self._console.width or 80) - 1, 20)
+        width = self._frame_width()
         return Group(
             *self._render_bottom_elements(
                 width,
@@ -283,10 +370,10 @@ class _TerminalRendererMixin:
     ) -> list:
         elements: list = []
 
-        elements.append(Text("─" * (width + 1), style="dim"))
+        elements.append(Text("─" * width, style="dim"))
 
         # Input box
-        input_border = "─" * (width + 1)
+        input_border = "─" * width
         prompt = "❯ "
 
         if self._active_text_prompt is not None:
@@ -295,27 +382,8 @@ class _TerminalRendererMixin:
 
         prompt_width = 2
         for row, line in enumerate(self._input_lines):
-            display = self._input_display_text(line)
             prefix = prompt if row == 0 else " " * prompt_width
-
-            if row == self._cursor_row and not self._active_choice:
-                if self._active_text_secret:
-                    col = min(cell_len(line[: self._cursor_col]), len(display))
-                else:
-                    col = min(self._cursor_col, len(display))
-                before = display[:col]
-                at = display[col : col + 1] or " "
-                after = display[col + 1 :]
-
-                parts: list = [Text(prefix, style="bold white")]
-                if before:
-                    parts.append(Text(before, style="white"))
-                parts.append(Text(at, style="reverse white"))
-                if after:
-                    parts.append(Text(after, style="white"))
-                elements.append(Text.assemble(*parts))
-            else:
-                elements.append(Text(f"{prefix}{display}", style="white"))
+            elements.extend(self._render_input_line(row, line, prefix, width))
 
         elements.append(Text(input_border, style="dim"))
 
@@ -324,7 +392,7 @@ class _TerminalRendererMixin:
             elements.append(Text.from_markup(line))
 
         if panel_lines:
-            elements.append(Text("─" * (width + 1), style="dim"))
+            elements.append(Text("─" * width, style="dim"))
 
         # Status bar (always at the very bottom)
         for line in status_lines:
@@ -334,7 +402,7 @@ class _TerminalRendererMixin:
 
     def _render_hint_lines(self) -> list:
         lines: list = []
-        status = self._status_summary(max((self._console.width or 80) - 1, 20))
+        status = self._status_summary(self._frame_width())
         if status:
             lines.append(Text(status, style="#8F9BA8"))
         if self._notice:
@@ -522,4 +590,3 @@ class _TerminalRendererMixin:
         if len(filtered) > max_items:
             result.append(f"  [dim]… and {len(filtered) - max_items} more[/dim]")
         return result
-
