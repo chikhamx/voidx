@@ -16,11 +16,11 @@
 
 set -euo pipefail
 
-VERSION="${VOIDX_VERSION:-2.0.3}"
+VERSION="${VOIDX_VERSION:-2.0.4}"
 PBS_TAG="20260602"
 PBS_CPYTHON="3.12.13"
 PBS_PYTHON_MAJOR="3.12"
-PBS_RELEASE_BASE="https://github.com/astral-sh/python-build-standalone/releases/download/${PBS_TAG}"
+PBS_RELEASE_BASE="https://github.com/astral-sh/python-build-standalone/releases/download"
 
 # ── Colors ──────────────────────────────────────────────────────────────────
 RED='\033[0;31m'

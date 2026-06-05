@@ -14,10 +14,10 @@
 
 $ErrorActionPreference = "Stop"
 
-$Version = if ($env:VOIDX_VERSION) { $env:VOIDX_VERSION } else { "2.0.3" }
+$Version = if ($env:VOIDX_VERSION) { $env:VOIDX_VERSION } else { "2.0.4" }
 $PbsTag = "20260602"
 $PbsCpython = "3.12.13"
-$PbsReleaseBase = "https://github.com/astral-sh/python-build-standalone/releases/download/$PbsTag"
+$PbsReleaseBase = "https://github.com/astral-sh/python-build-standalone/releases/download"
 
 # ── Platform detection ──────────────────────────────────────────────────────
 # Use PROCESSOR_ARCHITECTURE env var — works on all PowerShell versions (5.1+).

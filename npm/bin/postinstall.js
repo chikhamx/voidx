@@ -18,7 +18,7 @@ const pkg = require("../package.json");
 // Update these when upgrading the bundled Python.
 const PBS_TAG = "20260602";
 const PBS_CPYTHON = "3.12.13";
-const PBS_RELEASE_BASE = `https://github.com/astral-sh/python-build-standalone/releases/download/${PBS_TAG}`;
+const PBS_RELEASE_BASE = `https://github.com/astral-sh/python-build-standalone/releases/download`;
 
 // ── Platform mapping ───────────────────────────────────────────────────────
 function getPlatformInfo() {
