@@ -14,7 +14,7 @@
 
 $ErrorActionPreference = "Stop"
 
-$Version = if ($env:VOIDX_VERSION) { $env:VOIDX_VERSION } else { "1.1.1" }
+$Version = if ($env:VOIDX_VERSION) { $env:VOIDX_VERSION } else { "2.0.2" }
 $PbsTag = "20260602"
 $PbsCpython = "3.12.13"
 $PbsReleaseBase = "https://github.com/astral-sh/python-build-standalone/releases/download/$PbsTag"
@@ -73,7 +73,9 @@ if (Test-Path $BundledPython) {
         for ($i = 1; $i -le $Retries; $i++) {
             try {
                 $TmpPath = "$ArchivePath.tmp"
+                $ProgressPreference = 'SilentlyContinue'
                 Invoke-WebRequest -Uri $PbsUrl -OutFile $TmpPath -UseBasicParsing
+                $ProgressPreference = 'Continue'
                 Move-Item -Path $TmpPath -Destination $ArchivePath -Force
                 $Downloaded = $true
                 break
@@ -100,7 +102,14 @@ if (Test-Path $BundledPython) {
     }
 
     Write-Host "    Extracting Python runtime…"
-    tar -xzf $ArchivePath -C $PythonDir
+    try {
+        tar -xzf $ArchivePath -C $PythonDir
+        if ($LASTEXITCODE -ne 0) { throw "tar exited with code $LASTEXITCODE" }
+    } catch {
+        Write-Host "  ❌ Failed to extract Python runtime: $_" -ForegroundColor Red
+        Write-Host "     Ensure Windows tar is available (Windows 10+)." -ForegroundColor Red
+        exit 1
+    }
     Remove-Item -Path $ArchivePath -Force -ErrorAction SilentlyContinue
     Write-Host "  ✅ Python runtime ready" -ForegroundColor Green
 }
@@ -163,8 +172,18 @@ if ($LASTEXITCODE -ne 0) {
 # ── Write marker ────────────────────────────────────────────────────────────
 Set-Content -Path $MarkerPath -Value $Marker -NoNewline
 
+# ── Add to PATH ──────────────────────────────────────────────────────────────
+$VoidxScriptsDir = Join-Path $VenvDir "Scripts"
+$CurrentPath = [Environment]::GetEnvironmentVariable("Path", "User")
+if ($CurrentPath -notlike "*$VoidxScriptsDir*") {
+    [Environment]::SetEnvironmentVariable("Path", "$CurrentPath;$VoidxScriptsDir", "User")
+    $env:Path = "$env:Path;$VoidxScriptsDir"
+    Write-Host "  ✅ Added $VoidxScriptsDir to user PATH" -ForegroundColor Green
+}
+
 # ── Done ────────────────────────────────────────────────────────────────────
 Write-Host ""
 Write-Host "  ✅ voidx $Version installed!" -ForegroundColor Green
 Write-Host ""
 Write-Host "  Run: voidx" -ForegroundColor Cyan
+Write-Host "  (Restart your terminal if 'voidx' is not found)" -ForegroundColor DarkGray
