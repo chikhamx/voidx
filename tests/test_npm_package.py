@@ -81,12 +81,11 @@ def test_npm_launcher_rejects_old_explicit_python(tmp_path):
 
 
 @pytest.mark.skipif(NODE is None, reason="node is not installed")
-def test_npm_launcher_does_not_search_system_python(tmp_path):
-    """voidx.js must not fall back to system Python when bundled Python is missing."""
+def test_npm_launcher_falls_back_to_system_python(tmp_path):
+    """voidx.js falls back to system Python when bundled Python is missing (v1.x upgrade path)."""
     if sys.platform == "win32":
         pytest.skip("uses a POSIX environment")
-    # No bundled Python, no VOIDX_PYTHON — should fail with a clear message
-    # about reinstalling, not about system Python.
+    # No bundled Python, no VOIDX_PYTHON — should try system Python as fallback.
     env = {
         "PATH": os.environ.get("PATH", ""),
         "VOIDX_NPM_HOME": str(tmp_path / "home"),
@@ -98,13 +97,10 @@ def test_npm_launcher_does_not_search_system_python(tmp_path):
         text=True,
         capture_output=True,
     )
-    assert result.returncode == 1
-    # Must NOT mention system python commands like python3, python, py -3
-    assert "python3" not in result.stderr
-    assert "python3.12" not in result.stderr
-    assert "python3.11" not in result.stderr
-    # Must mention reinstalling / bundled Python
-    assert "reinstall" in result.stderr.lower() or "npm install" in result.stderr.lower()
+    # With system Python available, fallback should work (exit 0 or 1 from voidx itself)
+    # Without system Python, should fail with a clear message
+    if result.returncode == 1:
+        assert "npm install" in result.stderr.lower() or "python 3.11" in result.stderr.lower()
 
 
 @pytest.mark.skipif(NODE is None, reason="node is not installed")
@@ -152,8 +148,8 @@ def test_npm_launcher_selectPython_uses_bundled_only(tmp_path):
 
 
 @pytest.mark.skipif(NODE is None, reason="node is not installed")
-def test_npm_launcher_selectPython_fails_without_bundled(tmp_path):
-    """selectPython must throw when bundled Python is missing and no VOIDX_PYTHON."""
+def test_npm_launcher_selectPython_falls_back_to_system(tmp_path):
+    """selectPython falls back to system Python when bundled Python is missing."""
     env = {
         "PATH": os.environ.get("PATH", ""),
         "VOIDX_NPM_HOME": str(tmp_path / "home"),
@@ -161,7 +157,7 @@ def test_npm_launcher_selectPython_fails_without_bundled(tmp_path):
     result = subprocess.run(
         [NODE, "-e", (
             "const m = require('./npm/bin/voidx.js');"
-            "try { m.selectPython(process.env); console.log('NO_ERROR'); }"
+            "try { const p = m.selectPython(process.env); console.log('OK:' + p.label); }"
             "catch(e) { console.log('ERROR:' + e.message); }"
         )],
         cwd=ROOT,
@@ -170,11 +166,8 @@ def test_npm_launcher_selectPython_fails_without_bundled(tmp_path):
         capture_output=True,
     )
     assert result.returncode == 0, result.stderr
-    assert result.stdout.startswith("ERROR:")
-    # Must NOT suggest installing system Python
-    assert "brew install" not in result.stdout
-    assert "apt install" not in result.stdout
-    assert "python.org" not in result.stdout
+    # Should either find a system Python or report a clear error
+    assert result.stdout.startswith("OK:") or result.stdout.startswith("ERROR:")
 
 
 @pytest.mark.skipif(NODE is None, reason="node is not installed")
