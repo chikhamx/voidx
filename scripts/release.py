@@ -25,7 +25,11 @@ def main() -> int:
     parser.add_argument("--skip-checks", action="store_true", help="Skip release metadata checks.")
     args = parser.parse_args()
 
-    # 1. Metadata checks
+    # 1. Sync npm version from pyproject.toml (before metadata check)
+    pyproject_version = _get_pyproject_version()
+    _sync_npm_version(pyproject_version)
+
+    # 2. Metadata checks
     if not args.skip_checks:
         print("🔍 Checking release metadata...")
         result = _run([sys.executable, str(ROOT / "scripts" / "package.py"), "--check-only"])
@@ -34,9 +38,6 @@ def main() -> int:
             return result
         print("   ✅ Metadata OK")
 
-    # 2. Sync npm version from pyproject.toml
-    pyproject_version = _get_pyproject_version()
-    _sync_npm_version(pyproject_version)
     print(f"📦 Version: {pyproject_version}")
 
     publish_pypi = not args.npm_only
