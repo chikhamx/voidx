@@ -14,18 +14,21 @@
 
 $ErrorActionPreference = "Stop"
 
-$Version = if ($env:VOIDX_VERSION) { $env:VOIDX_VERSION } else { "2.0.2" }
+$Version = if ($env:VOIDX_VERSION) { $env:VOIDX_VERSION } else { "2.0.3" }
 $PbsTag = "20260602"
 $PbsCpython = "3.12.13"
 $PbsReleaseBase = "https://github.com/astral-sh/python-build-standalone/releases/download/$PbsTag"
 
 # ── Platform detection ──────────────────────────────────────────────────────
-$Arch = [System.Runtime.InteropServices.RuntimeInformation]::OSArchitecture
-if ($Arch -eq "X64") { $PbsTarget = "x86_64-pc-windows-msvc" }
-elseif ($Arch -eq "Arm64") { $PbsTarget = "aarch64-pc-windows-msvc" }
+# Use PROCESSOR_ARCHITECTURE env var — works on all PowerShell versions (5.1+).
+# RuntimeInformation.OSArchitecture is unreliable on Windows PowerShell 5.1.
+$ProcArch = $env:PROCESSOR_ARCHITECTURE
+if ($ProcArch -eq "AMD64") { $PbsTarget = "x86_64-pc-windows-msvc" }
+elseif ($ProcArch -eq "ARM64") { $PbsTarget = "aarch64-pc-windows-msvc" }
 else {
-    Write-Host "  ❌ Unsupported architecture: $Arch" -ForegroundColor Red
+    Write-Host "  ❌ Unsupported architecture: $ProcArch" -ForegroundColor Red
     Write-Host "     voidx supports: Windows x64/arm64" -ForegroundColor Red
+    Write-Host "     PROCESSOR_ARCHITECTURE=$ProcArch" -ForegroundColor DarkGray
     exit 1
 }
 
