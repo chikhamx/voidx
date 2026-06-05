@@ -16,7 +16,7 @@
 
 set -euo pipefail
 
-VERSION="${VOIDX_VERSION:-2.0.5}"
+VERSION="${VOIDX_VERSION:-2.0.6}"
 PBS_TAG="20260602"
 PBS_CPYTHON="3.12.13"
 PBS_PYTHON_MAJOR="3.12"
@@ -103,7 +103,13 @@ else
         RETRIES=3
         DOWNLOADED=false
         for i in $(seq 1 "${RETRIES}"); do
-            if curl -fsSL --connect-timeout 30 --max-time 300 -o "${ARCHIVE_PATH}.tmp" "${PBS_URL}"; then
+            if curl -fsSL --connect-timeout 30 --max-time 600 -o "${ARCHIVE_PATH}.tmp" "${PBS_URL}"; then
+                DOWNLOAD_SIZE=$(stat -f%z "${ARCHIVE_PATH}.tmp" 2>/dev/null || stat -c%s "${ARCHIVE_PATH}.tmp" 2>/dev/null || echo 0)
+                if [ "${DOWNLOAD_SIZE}" -lt 1048576 ]; then
+                    rm -f "${ARCHIVE_PATH}.tmp"
+                    warn "Downloaded file is only ${DOWNLOAD_SIZE} bytes — likely incomplete, retrying…"
+                    continue
+                fi
                 mv "${ARCHIVE_PATH}.tmp" "${ARCHIVE_PATH}"
                 DOWNLOADED=true
                 break
@@ -129,7 +135,12 @@ else
     fi
 
     info "Extracting Python runtime…"
-    tar -xzf "${ARCHIVE_PATH}" -C "${PYTHON_DIR}"
+    if ! tar -xzf "${ARCHIVE_PATH}" -C "${PYTHON_DIR}"; then
+        rm -f "${ARCHIVE_PATH}"
+        err "Failed to extract Python runtime — the downloaded archive may be incomplete."
+        err "Re-run the installer to retry."
+        exit 1
+    fi
     rm -f "${ARCHIVE_PATH}"
     ok "Python runtime ready"
 fi

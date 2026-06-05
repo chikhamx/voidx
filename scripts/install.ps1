@@ -17,7 +17,7 @@ $ErrorActionPreference = "Stop"
 # Force TLS 1.2+ — Windows PowerShell 5.1 defaults to TLS 1.0 which GitHub rejects.
 [Net.ServicePointManager]::SecurityProtocol = [Net.SecurityProtocolType]::Tls12
 
-$Version = if ($env:VOIDX_VERSION) { $env:VOIDX_VERSION } else { "2.0.5" }
+$Version = if ($env:VOIDX_VERSION) { $env:VOIDX_VERSION } else { "2.0.6" }
 $PbsTag = "20260602"
 $PbsCpython = "3.12.13"
 $PbsReleaseBase = "https://github.com/astral-sh/python-build-standalone/releases/download"
@@ -82,14 +82,21 @@ if (Test-Path $BundledPython) {
                 $ProgressPreference = 'SilentlyContinue'
                 Invoke-WebRequest -Uri $PbsUrl -OutFile $TmpPath -UseBasicParsing
                 $ProgressPreference = 'Continue'
+                # Verify the download is not empty / trivially small
+                $DownloadSize = (Get-Item $TmpPath).Length
+                if ($DownloadSize -lt 1MB) {
+                    Remove-Item -Path $TmpPath -Force -ErrorAction SilentlyContinue
+                    throw "Downloaded file is only $DownloadSize bytes — likely incomplete or a redirect page."
+                }
                 Move-Item -Path $TmpPath -Destination $ArchivePath -Force
                 $Downloaded = $true
                 break
             } catch {
                 Remove-Item -Path "$ArchivePath.tmp" -Force -ErrorAction SilentlyContinue
+                Write-Host "    Download attempt $i/$Retries failed: $_" -ForegroundColor Yellow
                 if ($i -lt $Retries) {
                     $Delay = [Math]::Pow(2, $i)
-                    Write-Host "    Download attempt $i/$Retries failed, retrying in ${Delay}s…" -ForegroundColor Yellow
+                    Write-Host "    Retrying in ${Delay}s…" -ForegroundColor Yellow
                     Start-Sleep -Seconds $Delay
                 }
             }
@@ -99,7 +106,7 @@ if (Test-Path $BundledPython) {
             Write-Host ""
             Write-Host "  ❌ Failed to download Python runtime after $Retries attempts" -ForegroundColor Red
             Write-Host ""
-            Write-Host "  This is usually a network issue. Try:"
+            Write-Host "  This is usually a network issue. Try:" -ForegroundColor Red
             Write-Host "    1. Use a mirror: `$env:VOIDX_PYTHON_MIRROR='https://npmmirror.com/mirrors/python-standalone'"
             Write-Host "    2. Retry: powershell -File install.ps1"
             Write-Host "    3. If you're in China, also set: `$env:VOIDX_PIP_INDEX='https://pypi.tuna.tsinghua.edu.cn/simple'"
@@ -113,10 +120,11 @@ if (Test-Path $BundledPython) {
     $TarResult = & tar -xzf "$ArchivePath" -C "$PythonDir" 2>&1
     $TarExit = $LASTEXITCODE
     if ($TarExit -ne 0) {
+        # Remove corrupted archive so retry will re-download
+        Remove-Item -Path $ArchivePath -Force -ErrorAction SilentlyContinue
         Write-Host "  ❌ Failed to extract Python runtime (tar exit code $TarExit)" -ForegroundColor Red
         Write-Host "     $TarResult" -ForegroundColor DarkGray
-        Write-Host "     This may be caused by spaces in the install path or missing tar." -ForegroundColor DarkGray
-        Write-Host "     Try setting a different install dir: `$env:VOIDX_HOME='C:\voidx'" -ForegroundColor DarkGray
+        Write-Host "     The downloaded archive may be incomplete. Re-run the installer to retry." -ForegroundColor DarkGray
         exit 1
     }
     Remove-Item -Path $ArchivePath -Force -ErrorAction SilentlyContinue
