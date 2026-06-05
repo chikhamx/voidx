@@ -1,6 +1,6 @@
 {
   "name": "@chikhamx/voidx",
-  "version": "2.0.4",
+  "version": "2.0.5",
   "description": "npm launcher for voidx, a terminal AI coding agent.",
   "bin": {
     "voidx": "bin/voidx.js"

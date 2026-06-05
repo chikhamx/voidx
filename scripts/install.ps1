@@ -14,7 +14,10 @@
 
 $ErrorActionPreference = "Stop"
 
-$Version = if ($env:VOIDX_VERSION) { $env:VOIDX_VERSION } else { "2.0.4" }
+# Force TLS 1.2+ — Windows PowerShell 5.1 defaults to TLS 1.0 which GitHub rejects.
+[Net.ServicePointManager]::SecurityProtocol = [Net.SecurityProtocolType]::Tls12
+
+$Version = if ($env:VOIDX_VERSION) { $env:VOIDX_VERSION } else { "2.0.5" }
 $PbsTag = "20260602"
 $PbsCpython = "3.12.13"
 $PbsReleaseBase = "https://github.com/astral-sh/python-build-standalone/releases/download"
@@ -105,12 +108,15 @@ if (Test-Path $BundledPython) {
     }
 
     Write-Host "    Extracting Python runtime…"
-    try {
-        tar -xzf $ArchivePath -C $PythonDir
-        if ($LASTEXITCODE -ne 0) { throw "tar exited with code $LASTEXITCODE" }
-    } catch {
-        Write-Host "  ❌ Failed to extract Python runtime: $_" -ForegroundColor Red
-        Write-Host "     Ensure Windows tar is available (Windows 10+)." -ForegroundColor Red
+    # Use Stop-Parsing to avoid PowerShell interpreting special chars in paths.
+    # Quote paths for tar in case they contain spaces (e.g. C:\Users\User Name\).
+    $TarResult = & tar -xzf "$ArchivePath" -C "$PythonDir" 2>&1
+    $TarExit = $LASTEXITCODE
+    if ($TarExit -ne 0) {
+        Write-Host "  ❌ Failed to extract Python runtime (tar exit code $TarExit)" -ForegroundColor Red
+        Write-Host "     $TarResult" -ForegroundColor DarkGray
+        Write-Host "     This may be caused by spaces in the install path or missing tar." -ForegroundColor DarkGray
+        Write-Host "     Try setting a different install dir: `$env:VOIDX_HOME='C:\voidx'" -ForegroundColor DarkGray
         exit 1
     }
     Remove-Item -Path $ArchivePath -Force -ErrorAction SilentlyContinue
