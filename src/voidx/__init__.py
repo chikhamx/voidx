@@ -1,3 +1,3 @@
 """VoidX - A coding agent that quantifies everything."""
 
-__version__ = "2.0.0"
+__version__ = "2.0.1"
