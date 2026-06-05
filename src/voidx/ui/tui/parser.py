@@ -212,6 +212,8 @@ class _InputParserMixin:
         # Enter is CR in raw TTY mode. LF is Ctrl+J there, useful as newline.
         if first == 0x0A:
             if self._tty:
+                if self._active_choice is not None or self._active_text_prompt is not None:
+                    return (1, "submit")
                 self._insert_newline()
                 return (1, None)
             return (1, "submit")

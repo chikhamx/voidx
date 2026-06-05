@@ -118,6 +118,7 @@ class BashTool(BaseTool):
         try:
             proc = await asyncio.create_subprocess_shell(
                 inp.command,
+                stdin=subprocess.DEVNULL,
                 stdout=subprocess.PIPE,
                 stderr=subprocess.PIPE,
                 cwd=ctx.workspace,
@@ -139,12 +140,19 @@ class BashTool(BaseTool):
         if stderr:
             output_parts.append(f"[stderr]\n{stderr.decode('utf-8', errors='replace')}")
 
+        exit_code = proc.returncode or 0
+        if exit_code != 0 and not stdout and not stderr:
+            output_parts.append(
+                "Interactive commands that read from stdin are not supported. "
+                "Use non-interactive flags or pipe input via echo/heredoc."
+            )
+
         return ToolResult(
             title=f"Bash: {inp.command}",
             output="\n".join(output_parts) or "(no output)",
             metadata={
                 "command": inp.command,
-                "exit_code": proc.returncode or 0,
+                "exit_code": exit_code,
                 "stdout_size": len(stdout) if stdout else 0,
                 "stderr_size": len(stderr) if stderr else 0,
             },

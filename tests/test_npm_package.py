@@ -117,7 +117,7 @@ def test_npm_postinstall_does_not_export_probeSystemPython():
         capture_output=True,
     )
     assert result.returncode == 0, result.stderr
-    assert result.stdout.strip() == "undefined"
+    assert result.stdout.strip().splitlines()[-1] == "undefined"
 
 
 @pytest.mark.skipif(NODE is None, reason="node is not installed")

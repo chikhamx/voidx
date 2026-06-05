@@ -45,6 +45,7 @@ class VoidConsole:
         "lsp_diagnostics": "checking", "lsp_symbols": "indexing",
         "lsp_definition": "locating", "lsp_references": "finding",
         "lsp_format": "formatting",
+        "plan_checkpoint": "checking", "on_intent": "resolving",
     }
 
     _AGENT_GERUND: dict[str, str] = {
