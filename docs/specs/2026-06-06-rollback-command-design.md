@@ -1,111 +1,153 @@
-# `/rollback` 命令设计
+# `/rollback` Slash Command Design
 
-> **Status: In Progress**
+> **Status: Draft**
 
-## 问题
+## Problem
 
-`SessionChangeTracker` 已有完整的文件快照和回滚基础设施（`capture_file`、`rollback_current`、`RollbackResult`），但没有用户入口。用户无法在 agent 修改文件后撤销改动，只能手动 `git checkout` 或丢弃工作区变更。
+`SessionChangeTracker.rollback_current()` exists and works — it restores modified files and deletes newly created ones — but there is **no user-facing entry point**. Users have no way to undo file changes made by the agent in the current turn.
 
-## 设计目标
+## Goal
 
-- 用户可通过 `/rollback` 查看当前轮次被修改的文件列表
-- 用户可通过 `/rollback <file>` 回滚指定文件
-- 用户可通过 `/rollback all` 回滚所有文件
-- 回滚后给出清晰的反馈（恢复/删除/错误）
-- 不回滚的文件保持不变
+Add a `/rollback` slash command that lets users revert all file changes from the most recent agent turn.
 
-## 现有基础设施
+## Current Architecture
 
 ```
 SessionChangeTracker
-├── _snapshots: dict[str, FileSnapshot]  ← 文件原始内容快照
-│   └── FileSnapshot(path, resolved_path, existed, content)
-├── _files: dict[str, FileChangeRecord]  ← 变更统计（用于展示）
-│   └── FileChangeRecord(path, added, removed)
-├── rollback_current() → RollbackResult  ← 全量回滚（已实现）
-│   └── RollbackResult(restored, removed, errors)
-└── _visible: bool  ← finish_turn 后为 True
+├── begin_turn()          — clears snapshots, starts tracking
+├── capture_file()        — snapshots file before modification
+├── capture_tool_call()   — auto-captures write/edit/lsp_format
+├── record_diff()         — accumulates +/− line counts
+├── finish_turn()         — marks changes as visible
+├── rollback_current()    — restores files, returns RollbackResult
+├── change_summary_lines()— formatted list of changed files
+├── has_changes           — bool, True if turn has file changes
+└── clear()               — discards all tracking state
 ```
 
-`rollback_current()` 是全量回滚——恢复所有快照文件、删除所有新建文件。需要扩展为支持单文件回滚。
+Lifecycle: `begin_turn` → `capture_*` / `record_diff` → `finish_turn` → (optional `rollback_current`) → next `begin_turn` clears everything.
 
-## 方案
+## Design
 
-### 1. `SessionChangeTracker` 新增单文件回滚
+### Command: `/rollback`
 
-```python
-def rollback_file(self, path: str) -> RollbackResult:
-    """Roll back a single file by its display path."""
-```
+**Behavior:**
 
-逻辑：
-- 遍历 `_snapshots`，找到 `snapshot.path == path` 的条目
-- 执行与 `rollback_current` 相同的恢复/删除逻辑，但只针对这一个文件
-- 从 `_snapshots` 和 `_files` 中移除该条目
-- 返回 `RollbackResult`
+1. Check `session_tracker.has_changes`. If no changes, print a message and return.
+2. Show the pending changes (reuse `change_summary_lines()` output) and ask for confirmation.
+3. On confirm, call `session_tracker.rollback_current()`.
+4. Display the result: which files were restored, which were removed, any errors.
 
-`rollback_current()` 改为遍历所有快照调用 `rollback_file`，复用逻辑。
+**No-arg variant only.** No `/rollback <turn-number>` — we only track the current turn.
 
-### 2. `/rollback` slash 命令
+### Confirmation Flow
 
-**无参数** — 列出当前可回滚的文件：
+Since `/rollback` is destructive, add a confirmation prompt:
 
 ```
 /rollback
+  Modified  auth.py  +12 −3
+  Created   new_api.py  +45 −0
+
+Rollback these changes? [y/N]
 ```
 
-输出示例：
+If the TUI app is available, use the existing `_select_from_list` pattern for a yes/no picker. Otherwise fall back to a simple text prompt.
+
+### Edge Cases
+
+| Case | Behavior |
+|------|----------|
+| No changes in current turn | Print "No file changes to roll back." and return |
+| Agent is currently running | Reject: print "Cannot rollback while agent is busy." |
+| Partial failure (some files fail to restore) | Report errors, keep snapshots (current behavior of `rollback_current`) |
+| File was modified by user after agent changed it | Overwrite with snapshot — same as current behavior, warn in output |
+| `/rollback` called twice | Second call: no changes (snapshots cleared after successful rollback) |
+
+### Agent-Busy Guard
+
+`/rollback` must not run while the agent is actively executing tools, because:
+- The agent may be mid-write, leading to race conditions
+- Snapshots are being mutated during tool execution
+
+Check: if `task_state` indicates the agent is running, reject the command.
+
+## Implementation Plan
+
+### 1. Add `_rollback` method to `SlashSessionMixin`
+
+File: `src/voidx/agent/slash/session.py`
+
+```python
+async def _rollback(self) -> None:
+    if not session_tracker.has_changes:
+        ui.print("[dim]No file changes to roll back.[/dim]")
+        return
+
+    lines = session_tracker.change_summary_lines()
+    ui.print("[bold]Files changed this turn:[/bold]")
+    for line in lines:
+        ui.print(line)
+    ui.print("")
+    ui.print("Rollback these changes? [y/N]")
+
+    # TODO: confirmation via TUI picker or text input
+    # For now, require explicit "y"
+    ...
+    
+    result = session_tracker.rollback_current()
+    if result.ok:
+        if result.restored:
+            ui.print(f"[green]Restored:[/green] {', '.join(result.restored)}")
+        if result.removed:
+            ui.print(f"[green]Removed:[/green] {', '.join(result.removed)}")
+    else:
+        for err in result.errors:
+            ui.error(err)
 ```
-Modified files this turn:
-  [cyan]src/voidx/ui/session.py[/cyan]  [green]+12[/green] [red]−3[/red]
-  [cyan]tests/test_ui_events.py[/cyan]  [green]+80[/green] [red]−0[/red]
 
-Usage: /rollback <file> or /rollback all
+### 2. Register `/rollback` in `SlashHandler.dispatch`
+
+File: `src/voidx/agent/slash/handler.py`
+
+Add to the `handlers` dict:
+```python
+"/rollback": self._rollback,
 ```
 
-**指定文件** — 回滚单个文件：
+### 3. Add to command palette
 
-```
-/rollback src/voidx/ui/session.py
-```
+File: `src/voidx/ui/commands.py`
 
-输出：
-```
-Restored: src/voidx/ui/session.py
+Add entry:
+```python
+("/rollback", "Revert file changes from the current turn"),
 ```
 
-**`all`** — 回滚所有文件：
+### 4. Add agent-busy guard
 
-```
-/rollback all
-```
+In `_rollback`, check task state before proceeding. The `SlashHandler` already has `_host_task_state()` access.
 
-输出：
-```
-Restored: src/voidx/ui/session.py, tests/test_ui_events.py
-```
+### 5. Tests
 
-### 3. 改动清单
+File: `tests/test_ui_session_changes.py` (extend existing)
 
-| 文件 | 改动 |
-|------|------|
-| `src/voidx/ui/session.py` | 新增 `rollback_file(path)` 方法；`rollback_current()` 复用之 |
-| `src/voidx/agent/slash/handler.py` | 新增 `/rollback` handler → `_rollback(args)` |
-| `src/voidx/ui/commands.py` | 注册 `/rollback` 和 `/rollback all` 到 COMMANDS 列表 |
-| `tests/test_ui_session_changes.py` | 新增 `test_rollback_single_file`、`test_rollback_all`、`test_rollback_nonexistent` |
+- Test `/rollback` dispatch routes to `_rollback`
+- Test `_rollback` with no changes → "no changes" message
+- Test `_rollback` with changes → confirmation → rollback executed
+- Test `_rollback` while agent busy → rejection
 
-### 4. 不需要改动的文件
+## Files Changed
 
-| 文件 | 原因 |
-|------|------|
-| `src/voidx/agent/graph/tool_execution.py` | `capture_tool_call` 已正确调用 |
-| `src/voidx/agent/graph/run_loop.py` | `begin_turn`/`finish_turn` 已正确调用 |
-| `src/voidx/ui/output/dock/` | 回滚不需要 dock 交互 |
+| File | Change |
+|------|--------|
+| `src/voidx/agent/slash/session.py` | Add `_rollback()` method |
+| `src/voidx/agent/slash/handler.py` | Register `/rollback` in dispatch |
+| `src/voidx/ui/commands.py` | Add command palette entry |
+| `tests/test_ui_session_changes.py` | Add rollback command tests |
 
-### 5. 边界情况
+## Out of Scope
 
-- **无变更时** `/rollback`：打印 `[dim]No changes to roll back.[/dim]`
-- **文件路径不匹配**：打印 `[dim]No snapshot found for: {path}[/dim]`，列出可用路径
-- **回滚后 `_visible` 状态**：如果 `_snapshots` 为空，设 `_visible = False`
-- **快照 key 是 resolved 绝对路径，display path 是相对路径**：`rollback_file` 接受 display path，内部按 `snapshot.path` 匹配
-- **同一文件多次编辑**：快照只保留第一次编辑前的内容（`capture_file` 有去重），回滚恢复到第一次编辑前——这是正确行为
+- Multi-turn rollback (history stack) — significant complexity, separate design
+- Selective file rollback (`/rollback auth.py`) — requires per-file snapshot selection
+- Git-based rollback (`git checkout`) — different mechanism, separate command
