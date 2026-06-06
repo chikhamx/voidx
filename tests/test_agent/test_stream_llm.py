@@ -4,14 +4,23 @@ from types import SimpleNamespace
 
 import pytest
 from langchain_core.messages import AIMessage, AIMessageChunk, HumanMessage, SystemMessage, ToolMessage
+from rich.console import Console
 
 sys.path.insert(0, str(Path(__file__).parent.parent.parent / "src"))
 
 from voidx.agent.graph.streaming import stream_llm as _stream_llm
 from voidx.agent.graph import VoidXGraph
+from voidx.agent.graph.convergence import is_step_hint_message
 from voidx.config import Config, ModelConfig
 from voidx.memory.context_frames import load_context_frames
 from voidx.memory.session import MessageRow, create_session, delete_session, save_message
+from voidx.ui.output.console import StreamingRenderer
+from voidx.ui.output.dock import ANSI_LINE_PREFIX, BottomInputDock, set_dock
+from voidx.ui.output.events import DockEventConsumer, ui_events
+
+
+def _plain(line: str) -> str:
+    return line.replace(ANSI_LINE_PREFIX, "")
 
 
 class FakeStreamingModel:
@@ -122,6 +131,32 @@ async def test_stream_llm_uses_protocol_for_thinking_extraction():
     assert renderer.discarded is False
     assert renderer.text == ["answer"]
     assert renderer.thinking == ["think"]
+
+
+@pytest.mark.asyncio
+async def test_stream_llm_drains_final_stream_events_before_return():
+    test_dock = BottomInputDock()
+    set_dock(test_dock)
+    test_dock.begin_capture()
+    ui_events.start(DockEventConsumer(test_dock))
+    try:
+        msg = await _stream_llm(
+            FakeStreamingModel(),
+            [],
+            StreamingRenderer(Console(), debug=False),
+            "anthropic",
+        )
+
+        assert msg.content == "answer"
+        rendered = "\n".join(_plain(line) for line in test_dock.tree.render(100))
+        assert "answer" in rendered
+        assert "Thinking" not in rendered
+        assert "think" not in rendered
+    finally:
+        await ui_events.stop()
+        test_dock.deactivate()
+        test_dock.reset()
+        set_dock(None)
 
 
 @pytest.mark.asyncio
@@ -325,7 +360,7 @@ async def test_call_llm_persists_context_frame_for_session(tmp_path, monkeypatch
                 SystemMessage(content=(
                     "VOIDX_RUNTIME_CONTEXT\n\n"
                     "## Base System\nbase\n\n"
-                    "## Current Date\n2026-05-31 10:00 CST"
+                    "## Session Date\n2026-05-31 CST"
                 )),
                 HumanMessage(content="hi"),
             ],
@@ -370,6 +405,142 @@ async def test_call_llm_does_not_bind_tools_when_no_tool_step_budget(tmp_path, m
 
     assert result["messages"][0].content == "answer"
     assert model.bound_tools is None
+
+
+@pytest.mark.asyncio
+async def test_call_llm_adds_step_hint_to_payload_only(tmp_path, monkeypatch):
+    import voidx.agent.graph.core as graph_module
+
+    monkeypatch.setattr(graph_module, "StreamingRenderer", FakeRenderer)
+
+    graph = VoidXGraph(
+        Config(
+            model=ModelConfig(provider="mimo", model="mimo-v2.5"),
+            workspace=str(tmp_path),
+        ),
+        api_key=None,
+    )
+    model = TrackingStreamingModel()
+    graph.model = model
+    state_messages = [HumanMessage(content="finish the task")]
+
+    result = await graph._call_llm({
+        "messages": state_messages,
+        "step_count": 46,
+        "max_steps": 50,
+        "agent": "orchestrator",
+    })
+
+    assert result["messages"][0].content == "answer"
+    assert result["convergence_forced"] is False
+    assert len(state_messages) == 1
+    assert not any(is_step_hint_message(message) for message in result["messages"])
+    assert model.messages is not None
+    assert len(model.messages) == 2
+    assert is_step_hint_message(model.messages[-1])
+    assert "Start converging" in model.messages[-1].content
+
+
+@pytest.mark.asyncio
+async def test_call_llm_final_step_injects_prompt_and_disables_tools(tmp_path, monkeypatch):
+    import voidx.agent.graph.core as graph_module
+
+    monkeypatch.setattr(graph_module, "StreamingRenderer", FakeRenderer)
+
+    graph = VoidXGraph(
+        Config(
+            model=ModelConfig(provider="mimo", model="mimo-v2.5"),
+            workspace=str(tmp_path),
+        ),
+        api_key=None,
+    )
+    model = TrackingStreamingModel()
+    graph.model = model
+
+    result = await graph._call_llm({
+        "messages": [HumanMessage(content="finish the task")],
+        "step_count": 49,
+        "max_steps": 50,
+        "agent": "orchestrator",
+    })
+
+    assert result["convergence_forced"] is True
+    assert model.bound_tools is None
+    assert model.messages is not None
+    assert is_step_hint_message(model.messages[-1])
+    assert "FINAL response step" in model.messages[-1].content
+    assert "Original goal: finish the task" in model.messages[-1].content
+    assert not any(is_step_hint_message(message) for message in result["messages"])
+
+
+@pytest.mark.asyncio
+async def test_call_llm_context_frame_records_transient_final_prompt(tmp_path, monkeypatch):
+    import voidx.agent.graph.core as graph_module
+
+    monkeypatch.setattr(graph_module, "StreamingRenderer", FakeRenderer)
+    session = await create_session(workspace=str(tmp_path))
+    try:
+        graph = VoidXGraph(
+            Config(
+                model=ModelConfig(provider="mimo", model="mimo-v2.5"),
+                workspace=str(tmp_path),
+            ),
+            api_key=None,
+            session=session,
+        )
+        graph.model = FakeStreamingModel()
+
+        await graph._call_llm({
+            "messages": [HumanMessage(content="finish the task")],
+            "step_count": 49,
+            "max_steps": 50,
+            "agent": "orchestrator",
+        })
+
+        frames = await load_context_frames(session.id)
+        assert frames[0].metadata["convergence_forced"] is True
+        assert frames[0].metadata["convergence_hint_count"] == 1
+        assert "FINAL response step" in frames[0].messages[-1]["content"]
+    finally:
+        await delete_session(session.id)
+
+
+@pytest.mark.asyncio
+async def test_finalize_uses_fallback_only_for_invalid_forced_convergence(tmp_path):
+    graph = VoidXGraph(Config(workspace=str(tmp_path)), api_key=None)
+
+    normal = await graph._finalize({
+        "messages": [AIMessage(content="ok")],
+        "convergence_forced": False,
+    })
+    fallback = await graph._finalize({
+        "messages": [
+            HumanMessage(content="Fix src/voidx/agent/graph/core.py"),
+            AIMessage(content=""),
+        ],
+        "goal": "",
+        "tool_results": {"tc1": "read src/voidx/agent/graph/core.py"},
+        "step_count": 50,
+        "max_steps": 50,
+        "convergence_forced": True,
+    })
+    valid_forced = await graph._finalize({
+        "messages": [AIMessage(content="Here is the final result with enough detail.")],
+        "convergence_forced": True,
+    })
+    valid_forced_with_tool_tail = await graph._finalize({
+        "messages": [
+            AIMessage(content="Here is the final result with enough detail."),
+            ToolMessage(content="late tool result", tool_call_id="tc_tail"),
+        ],
+        "convergence_forced": True,
+    })
+
+    assert normal == {}
+    assert valid_forced == {}
+    assert valid_forced_with_tool_tail == {}
+    assert "Step limit reached: 50/50." in fallback["messages"][0].content
+    assert "src/voidx/agent/graph/core.py" in fallback["messages"][0].content
 
 
 @pytest.mark.asyncio

@@ -116,6 +116,7 @@ class AssistantStreamUpdated(UiEventBase):
     kind: Literal["assistant_stream.updated"] = "assistant_stream.updated"
     text: str
     stream_id: str = "default"
+    phase: Literal["thinking", "text"] = "text"
 
 
 class AssistantStreamCommitted(UiEventBase):

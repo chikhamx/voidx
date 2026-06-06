@@ -7,15 +7,18 @@ from pathlib import Path
 sys.path.insert(0, str(Path(__file__).parent.parent.parent / "src"))
 
 import pytest
-from langchain_core.messages import AIMessage, HumanMessage, SystemMessage, ToolMessage
+from langchain_core.messages import AIMessage, AIMessageChunk, HumanMessage, SystemMessage, ToolMessage
 
 from voidx.agent.agents import AgentDef, get_agent
+from voidx.agent.graph.convergence import is_step_hint_message
 from voidx.agent.graph.runtime import current_parent_tool_call_id
 from voidx.agent.graph import VoidXGraph
 from voidx.config import Config, Settings
+from voidx.llm.compaction import CompactionSelection
 from voidx.llm.instruction import SkillRuntimeContext
 from voidx.memory.session import (
     MessageRow,
+    SessionInfo,
     create_session,
     delete_session,
     load_messages,
@@ -25,6 +28,7 @@ from voidx.memory.transcript import load_transcript
 from voidx.permission.service import PermissionService
 from voidx.tools.base import ToolContext, ToolResult
 from voidx.ui.output.dock import BottomInputDock, set_dock
+from voidx.ui.output.events import DockEventConsumer, TurnStarted, ui_events
 
 
 def _graph(tmp_path):
@@ -41,6 +45,19 @@ def test_graph_registers_agent_tool_not_task_tool(tmp_path):
     assert "clarify" in ids
     assert "plan_checkpoint" in ids
     assert "task" not in ids
+
+
+def test_graph_session_date_uses_session_creation_date(tmp_path):
+    session = SessionInfo(
+        id="s1",
+        workspace=str(tmp_path),
+        created_at="2026-06-06T12:00:00",
+        updated_at="2026-06-07T12:00:00",
+    )
+
+    graph = VoidXGraph(Config(workspace=str(tmp_path)), api_key=None, session=session)
+
+    assert graph._session_date.startswith("2026-06-06 ")
 
 
 def test_on_intent_schema_inlines_task_intent_enum(tmp_path):
@@ -425,6 +442,87 @@ async def test_execute_tools_keeps_parallel_child_agent_buffers_isolated(tmp_pat
 
 
 @pytest.mark.asyncio
+async def test_agent_tool_suppresses_child_stream_but_keeps_final_result(tmp_path, monkeypatch):
+    import voidx.agent.graph.subagent as subagent_module
+
+    graph = _graph(tmp_path)
+
+    class FakeSubagentModel:
+        def bind_tools(self, _tool_defs):
+            return self
+
+        async def astream(self, _messages):
+            yield AIMessageChunk(content=[{"type": "thinking", "text": "child hidden thought"}])
+            yield AIMessageChunk(content="child final answer")
+
+    monkeypatch.setattr(
+        subagent_module,
+        "create_chat_model",
+        lambda *_args, **_kwargs: FakeSubagentModel(),
+    )
+
+    async def allow_all(
+        tool_calls,
+        agent_name: str,
+        plan_mode: bool,
+        session_id: str,
+        interaction_mode=None,
+    ):
+        return tool_calls, []
+
+    graph._authorize_tool_calls = allow_all
+    test_dock = BottomInputDock()
+    set_dock(test_dock)
+    test_dock.begin_capture()
+    ui_events.start(DockEventConsumer(test_dock))
+    try:
+        graph._current_tree = test_dock.tree
+        graph._turn_node = await ui_events.request(TurnStarted(text="demo"))
+        parent = AIMessage(
+            content="",
+            tool_calls=[{
+                "name": "agent",
+                "args": {"agent": "explore", "description": "inspect auth flow"},
+                "id": "call_agent",
+                "type": "tool_call",
+            }],
+        )
+
+        result = await graph._execute_tools({
+            "messages": [parent],
+            "workspace": str(tmp_path),
+            "agent": "orchestrator",
+            "plan_mode": False,
+        })
+        await ui_events.drain()
+
+        assistant = next(node for node in test_dock.tree.root.children if node.node_type == "assistant")
+        agent_tool = next(node for node in assistant.children if node.node_type == "tool_call")
+        subagent = next(node for node in agent_tool.children if node.node_type == "subagent")
+        child_streams = [
+            node for node in subagent.children
+            if node.node_type == "assistant" and "child final answer" in node.header
+        ]
+        final_results = [
+            node for node in agent_tool.children
+            if node.node_type == "tool_result" and "child final answer" in node.header
+        ]
+
+        rendered = "\n".join(test_dock.tree.render(120))
+        assert child_streams == []
+        assert len(final_results) == 1
+        assert "child hidden thought" not in rendered
+        assert rendered.count("child final answer") == 1
+        assert [message.tool_call_id for message in result["messages"] if isinstance(message, ToolMessage)][0] == "call_agent"
+        assert any(isinstance(message, AIMessage) and message.content == "child final answer" for message in result["messages"])
+    finally:
+        await ui_events.stop()
+        test_dock.deactivate()
+        test_dock.reset()
+        set_dock(None)
+
+
+@pytest.mark.asyncio
 async def test_execute_tools_applies_on_intent_state_patch(tmp_path):
     graph = _graph(tmp_path)
 
@@ -783,22 +881,31 @@ async def test_run_once_persists_and_restores_transcript_snapshot(tmp_path):
 async def test_compaction_trims_head_and_injects_summary_into_system_prompt(tmp_path):
     graph = _graph(tmp_path)
     graph._compaction.is_overflow = lambda _tokens: True
-    graph._compaction.select = lambda messages: (messages[:-1], "tail")
+    graph._compaction.select_details = lambda messages: CompactionSelection(
+        head=messages[:2],
+        tail_id=getattr(messages[2], "id", None),
+        keep_from=2,
+        mode="full",
+    )
 
     async def summarize(_head_messages, _previous_summary):
         return "summary text"
 
     graph._run_compaction_agent = summarize
     messages = [
-        HumanMessage(content="old question"),
+        HumanMessage(content="older question", id="older_user"),
+        AIMessage(content="older answer"),
+        HumanMessage(content="old question", id="old_user"),
         AIMessage(content="old answer"),
         HumanMessage(content="current question", id="current_user"),
     ]
 
     await graph._maybe_compact(messages, [])
 
-    assert len(messages) == 1
+    assert len(messages) == 3
     assert isinstance(messages[0], HumanMessage)
+    assert messages[0].content == "old question"
+    assert messages[-1].content == "current question"
     assert graph._pending_summary == "summary text"
 
     state = {
@@ -824,7 +931,6 @@ async def test_compaction_trims_head_and_injects_summary_into_system_prompt(tmp_
 async def test_compaction_asks_only_when_configured_and_can_skip(tmp_path):
     graph = VoidXGraph(Config(workspace=str(tmp_path), ask_compact=True), api_key=None)
     graph._compaction.is_overflow = lambda _tokens: True
-    graph._compaction.select = lambda messages: (messages[:-1], "tail")
     asked: list[str] = []
 
     class FakeApp:
@@ -855,7 +961,12 @@ async def test_compaction_asks_only_when_configured_and_can_skip(tmp_path):
 async def test_compaction_auto_compacts_by_default_without_asking(tmp_path):
     graph = VoidXGraph(Config(workspace=str(tmp_path)), api_key=None)
     graph._compaction.is_overflow = lambda _tokens: True
-    graph._compaction.select = lambda messages: (messages[:-1], "tail")
+    graph._compaction.select_details = lambda messages: CompactionSelection(
+        head=messages[:2],
+        tail_id=getattr(messages[2], "id", None),
+        keep_from=2,
+        mode="full",
+    )
 
     class FakeApp:
         async def ask_choice(self, _prompt, _choices, details=None):
@@ -867,6 +978,8 @@ async def test_compaction_auto_compacts_by_default_without_asking(tmp_path):
     graph._app = FakeApp()
     graph._run_compaction_agent = summarize
     messages = [
+        HumanMessage(content="older question", id="0"),
+        AIMessage(content="older answer"),
         HumanMessage(content="old question", id="1"),
         AIMessage(content="old answer", id="2"),
         HumanMessage(content="current question", id="3"),
@@ -874,7 +987,7 @@ async def test_compaction_auto_compacts_by_default_without_asking(tmp_path):
 
     await graph._maybe_compact(messages, [])
 
-    assert [message.content for message in messages] == ["current question"]
+    assert [message.content for message in messages] == ["old question", "old answer", "current question"]
     assert graph._pending_summary == "auto summary"
     assert graph._compaction_summary == "auto summary"
 
@@ -883,31 +996,31 @@ async def test_compaction_auto_compacts_by_default_without_asking(tmp_path):
 async def test_compaction_fallback_returns_removed_messages(tmp_path):
     graph = VoidXGraph(Config(workspace=str(tmp_path)), api_key=None)
     graph._compaction.is_overflow = lambda _tokens: True
-    graph._compaction.select = lambda _messages: ([], None)
+    graph._compaction.select_details = lambda messages: CompactionSelection(
+        head=messages[:2],
+        tail_id=getattr(messages[2], "id", None),
+        keep_from=2,
+        mode="full",
+    )
     messages = [
-        SystemMessage(content="system"),
-        HumanMessage(content="old 1"),
+        HumanMessage(content="old 1", id="1"),
         AIMessage(content="old 2"),
-        HumanMessage(content="tail 1"),
+        HumanMessage(content="tail 1", id="2"),
         AIMessage(content="tail 2"),
-        HumanMessage(content="tail 3"),
-        AIMessage(content="tail 4"),
-        HumanMessage(content="tail 5"),
+        HumanMessage(content="current", id="3"),
     ]
 
     removed, tail_id = await graph._maybe_compact(messages, [], ask=False)
 
     assert [message.content for message in messages] == [
-        "system",
-        "old 2",
         "tail 1",
         "tail 2",
-        "tail 3",
-        "tail 4",
-        "tail 5",
+        "current",
     ]
-    assert [message.content for message in removed or []] == ["old 1"]
-    assert tail_id is None
+    assert [message.content for message in removed or []] == ["old 1", "old 2"]
+    assert tail_id == "2"
+    assert "old 1" in graph._pending_summary
+    assert "old 2" in graph._pending_summary
 
 
 @pytest.mark.asyncio
@@ -921,7 +1034,12 @@ async def test_compaction_uses_previous_summary_and_prunes_persisted_head(tmp_pa
         graph = VoidXGraph(Config(workspace=str(tmp_path)), api_key=None, session=session)
         graph._compaction_summary = "previous summary"
         graph._compaction.is_overflow = lambda _tokens: True
-        graph._compaction.select = lambda messages: (messages[:2], getattr(messages[2], "id", None))
+        graph._compaction.select_details = lambda messages: CompactionSelection(
+            head=messages[:2],
+            tail_id=getattr(messages[2], "id", None),
+            keep_from=2,
+            mode="normal",
+        )
         captured: dict[str, str | None] = {}
 
         async def summarize(_head_messages, previous_summary):
@@ -973,7 +1091,12 @@ async def test_slash_compact_runs_manual_session_compaction(tmp_path):
         await save_message(MessageRow(session_id=session.id, role="user", content="tail question"))
 
         graph = VoidXGraph(Config(workspace=str(tmp_path), ask_compact=True), api_key=None, session=session)
-        graph._compaction.select = lambda messages: (messages[:2], getattr(messages[2], "id", None))
+        graph._compaction.select_details = lambda messages: CompactionSelection(
+            head=messages[:2],
+            tail_id=getattr(messages[2], "id", None),
+            keep_from=2,
+            mode="normal",
+        )
 
         async def summarize(_head_messages, _previous_summary):
             return "manual summary"
@@ -1095,3 +1218,121 @@ async def test_implement_subagent_injects_workflow_skills(tmp_path, monkeypatch)
     assert "Skill: test-driven-development" in rendered_user
     assert "Skill: verification-before-completion" in rendered_user
     assert "Active workflow skills: test-driven-development" in rendered_user
+
+
+@pytest.mark.asyncio
+async def test_subagent_adds_last_tool_step_hint_to_payload_only(tmp_path, monkeypatch):
+    import voidx.agent.graph.subagent as subagent_module
+
+    captured: dict[str, list] = {}
+    sub_messages: list = []
+
+    class FakeModel:
+        def bind_tools(self, _tool_defs):
+            return self
+
+    async def fake_stream_llm(_model, messages, _renderer, _protocol):
+        captured["messages"] = messages
+        return AIMessage(content="done")
+
+    monkeypatch.setattr(subagent_module, "create_chat_model", lambda *_args, **_kwargs: FakeModel())
+    monkeypatch.setattr(subagent_module, "stream_llm", fake_stream_llm)
+
+    output = await subagent_module.run_subagent(
+        AgentDef(
+            name="explore",
+            description="test",
+            when_to_use="test",
+            tools=["fake_tool"],
+            can_write=False,
+            can_delegate=False,
+            max_steps=3,
+        ),
+        "Inspect the workspace",
+        None,
+        "test-key",
+        Config(workspace=str(tmp_path)),
+        sub_messages=sub_messages,
+        debug=False,
+    )
+
+    assert output == "done"
+    assert captured["messages"][-1].content.startswith("[Step 1/3]")
+    assert "LAST step with tools" in captured["messages"][-1].content
+    assert is_step_hint_message(captured["messages"][-1])
+    assert not any(is_step_hint_message(message) for message in sub_messages)
+
+
+@pytest.mark.asyncio
+async def test_subagent_final_step_fallback_does_not_leak_hint_to_sub_messages(tmp_path, monkeypatch):
+    import voidx.agent.graph.subagent as subagent_module
+
+    captured_calls: list[list] = []
+    sub_messages: list = []
+
+    class FakeModel:
+        def bind_tools(self, _tool_defs):
+            return self
+
+    class FakeToolRegistry:
+        def filter_tools(self, _allowed_ids):
+            return None
+
+        def tools_for_llm(self):
+            return [{
+                "type": "function",
+                "function": {
+                    "name": "fake_tool",
+                    "description": "fake",
+                    "parameters": {"type": "object", "properties": {}},
+                    "strict": True,
+                },
+            }]
+
+        async def execute_tool(self, _tool_id, _args, _ctx):
+            return ToolResult(output="read src/voidx/agent/graph/subagent.py")
+
+    async def fake_stream_llm(_model, messages, _renderer, _protocol):
+        captured_calls.append(messages)
+        if len(captured_calls) == 1:
+            return AIMessage(
+                content="",
+                tool_calls=[{
+                    "name": "fake_tool",
+                    "args": {},
+                    "id": "tc1",
+                    "type": "tool_call",
+                }],
+            )
+        return AIMessage(content="")
+
+    monkeypatch.setattr(subagent_module, "ToolRegistry", FakeToolRegistry)
+    monkeypatch.setattr(subagent_module, "create_chat_model", lambda *_args, **_kwargs: FakeModel())
+    monkeypatch.setattr(subagent_module, "stream_llm", fake_stream_llm)
+
+    output = await subagent_module.run_subagent(
+        AgentDef(
+            name="explore",
+            description="test",
+            when_to_use="test",
+            tools=["fake_tool"],
+            can_write=False,
+            can_delegate=False,
+            max_steps=3,
+        ),
+        "Inspect the workspace",
+        None,
+        "test-key",
+        Config(workspace=str(tmp_path)),
+        sub_messages=sub_messages,
+        debug=False,
+    )
+
+    assert "Step limit reached: 2/3." in output
+    assert "Goal: Inspect the workspace" in output
+    assert "src/voidx/agent/graph/subagent.py" in output
+    assert captured_calls[0][-1].content.startswith("[Step 1/3]")
+    assert "LAST step with tools" in captured_calls[0][-1].content
+    assert captured_calls[1][-1].content.startswith("[Step 2/3]")
+    assert "FINAL response step" in captured_calls[1][-1].content
+    assert not any(is_step_hint_message(message) for message in sub_messages)

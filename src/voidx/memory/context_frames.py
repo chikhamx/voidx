@@ -168,7 +168,7 @@ def _stable_prefix_payload(messages: list[dict[str, Any]]) -> list[dict[str, Any
     if not messages or messages[0].get("role") != "system":
         return []
     content = str(messages[0].get("content", ""))
-    stable_content = content.split("\n\n## Current Date", 1)[0]
+    stable_content = content.split("\n\n## Long Summary", 1)[0]
     return [{"role": "system", "content": stable_content}]
 
 

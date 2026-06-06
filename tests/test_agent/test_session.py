@@ -246,7 +246,7 @@ async def test_replace_and_load_transcript_nodes():
         await delete_session(session.id)
 
 
-def test_context_frame_hashes_stable_prefix_before_current_date():
+def test_context_frame_hashes_stable_prefix_before_long_summary():
     first = build_context_frame(
         session_id="s1",
         provider="mimo",
@@ -256,8 +256,8 @@ def test_context_frame_hashes_stable_prefix_before_current_date():
                 "VOIDX_RUNTIME_CONTEXT\n\n"
                 "## Base System\nbase\n\n"
                 "## Role Prompt\nrole\n\n"
-                "## Current Date\n2026-05-31 10:00 CST\n\n"
-                "## Runtime State\n- Mode: auto"
+                "## Session Date\n2026-05-31 CST\n\n"
+                "## Long Summary\n- first summary"
             )),
             HumanMessage(content="hi"),
         ],
@@ -271,8 +271,8 @@ def test_context_frame_hashes_stable_prefix_before_current_date():
                 "VOIDX_RUNTIME_CONTEXT\n\n"
                 "## Base System\nbase\n\n"
                 "## Role Prompt\nrole\n\n"
-                "## Current Date\n2026-05-31 10:01 CST\n\n"
-                "## Runtime State\n- Mode: goal"
+                "## Session Date\n2026-05-31 CST\n\n"
+                "## Long Summary\n- second summary"
             )),
             HumanMessage(content="hi"),
         ],

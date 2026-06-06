@@ -61,10 +61,10 @@ def test_runtime_context_section_order_places_active_skills_before_task_state(tm
         "Tool Contract",
         "Workspace Facts",
         "Project Facts",
+        "Session Date",
         "Long Summary",
-        "Current Date",
         "Runtime State",
-        "Recent Messages",
+        "Current DateTime",
         "Active Skills",
         "Current Task State",
     ]
@@ -73,7 +73,8 @@ def test_runtime_context_section_order_places_active_skills_before_task_state(tm
     assert system.index("## Role Prompt") < system.index("## Mode Prompt")
     assert system.index("## Mode Prompt") < system.index("## Tool Contract")
     assert system.index("## Tool Contract") < system.index("## Workspace Facts")
-    assert system.index("## Current Date") < system.index("## Runtime State")
+    assert system.index("## Session Date") < system.index("## Long Summary")
+    assert "## Runtime State" not in system
 
 
 def test_runtime_context_applies_task_context_before_current_user(tmp_path):
@@ -97,11 +98,47 @@ def test_runtime_context_applies_task_context_before_current_user(tmp_path):
     assert isinstance(messages[0], SystemMessage)
     assert all(not isinstance(message, SystemMessage) for message in messages[1:])
     assert isinstance(messages[-1], HumanMessage)
+    assert messages[1].content == "old question"
     assert "Active Skills" in messages[-1].content
+    assert "Runtime State" in messages[-1].content
+    assert "Current DateTime" in messages[-1].content
     assert "Current Task State" in messages[-1].content
     assert "## User Message" in messages[-1].content
     assert isinstance(messages[-1], HumanMessage)
     assert messages[-1].content.endswith("current request")
+
+
+def test_runtime_context_system_uses_session_date_not_runtime_state(tmp_path):
+    first = RuntimeContextBuilder(
+        config=Config(workspace=str(tmp_path)),
+        workspace=str(tmp_path),
+        agent_prompt="You are voidx.",
+        agent="orchestrator",
+        interaction_mode=InteractionMode.AUTO,
+        session_date="2026-06-06 CST",
+        current_datetime="2026-06-06 10:01 CST",
+        current_user_text="first",
+        task_intent=TaskIntent.CHAT,
+    ).build()
+    second = RuntimeContextBuilder(
+        config=Config(workspace=str(tmp_path)),
+        workspace=str(tmp_path),
+        agent_prompt="You are voidx.",
+        agent="orchestrator",
+        interaction_mode=InteractionMode.AUTO,
+        session_date="2026-06-06 CST",
+        current_datetime="2026-06-06 10:02 CST",
+        current_user_text="second",
+        task_intent=TaskIntent.IMPLEMENT,
+        intent_resolution_reason="changed",
+    ).build()
+
+    assert first.render_system() == second.render_system()
+    latest = [HumanMessage(content="second")]
+    second.apply_to_messages(latest)
+    assert "2026-06-06 10:02 CST" in latest[-1].content
+    assert "Runtime State" in latest[-1].content
+    assert "Current DateTime" in latest[-1].content
 
 
 def test_runtime_context_preserves_multimodal_user_message_without_extra_system(tmp_path):
@@ -128,6 +165,8 @@ def test_runtime_context_preserves_multimodal_user_message_without_extra_system(
     assert isinstance(messages[-1], HumanMessage)
     assert isinstance(messages[-1].content, list)
     assert messages[-1].content[0]["type"] == "text"
+    assert "Runtime State" in messages[-1].content[0]["text"]
+    assert "Current DateTime" in messages[-1].content[0]["text"]
     assert "Active Skills" in messages[-1].content[0]["text"]
     assert messages[-1].content[1]["type"] == "text"
     assert messages[-1].content[2]["type"] == "image_url"

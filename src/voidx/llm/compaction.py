@@ -16,11 +16,13 @@ Token budget constants (from opencode):
 
 from __future__ import annotations
 
-from dataclasses import dataclass, field
+from dataclasses import dataclass
+from typing import Literal
 
-from langchain_core.messages import AIMessage, HumanMessage, SystemMessage
+from langchain_core.messages import AIMessage, HumanMessage, ToolMessage
 
-from voidx.llm.context import count_tokens, count_messages_tokens
+from voidx.llm.context import count_tokens
+from voidx.llm.message_markers import STEP_HINT_MARKER, is_step_hint_message
 from voidx.llm.usage import estimate_context_tokens
 
 PRUNE_MINIMUM = 20_000
@@ -33,6 +35,8 @@ TOOL_OUTPUT_MAX_CHARS = 2_000
 PRUNE_PROTECTED_TOOLS = {"agent"}
 COMPACTION_MAX_RETRIES = 2
 FALLBACK_SUMMARY_MAX_PER_MSG = 200
+FALLBACK_SUMMARY_MAX_ITEMS = 8
+COMPACTION_PROMPT_CONTEXT_MAX_CHARS = 60_000
 COMPACTION_THRESHOLD = 0.90  # trigger when used >= 90% of context_limit
 
 SUMMARY_TEMPLATE = """Output exactly the Markdown structure shown inside <template> and keep the section order unchanged. Do not include the <template> tags in your response.
@@ -70,6 +74,9 @@ Rules:
 - Keep every section, even when empty.
 - Use terse bullets, not prose paragraphs.
 - Preserve exact file paths, commands, error strings, and identifiers when known.
+- Deduplicate repeated requests, tool results, and progress updates.
+- Prefer durable facts, decisions, constraints, open work, and final tool outcomes over step-by-step narration.
+- When a previous summary exists, keep still-true details, drop stale details, and merge new facts without duplicating old bullets.
 - Do not mention the summary process or that context was compacted."""
 
 
@@ -79,6 +86,19 @@ class Turn:
     start: int   # index in messages list
     end: int     # index in messages list (exclusive)
     id: str      # user message id
+
+
+@dataclass(frozen=True)
+class CompactionSelection:
+    """Structured compaction split decision."""
+    head: list
+    tail_id: str | None
+    keep_from: int
+    mode: Literal["none", "normal", "full"]
+
+    @property
+    def should_compact(self) -> bool:
+        return self.mode != "none" and bool(self.head) and self.tail_id is not None
 
 
 class CompactionService:
@@ -188,17 +208,18 @@ class CompactionService:
         for i, msg in enumerate(messages):
             if isinstance(msg, HumanMessage):
                 # Skip synthetic continuation messages
+                if is_step_hint_message(msg):
+                    continue
                 content = str(getattr(msg, "content", ""))
                 if "Continue if you have next steps" in content:
                     continue
-                result.append(Turn(start=i, end=len(messages), id=getattr(msg, "id", str(i))))
+                result.append(Turn(start=i, end=len(messages), id=getattr(msg, "id", None) or str(i)))
         for j in range(len(result) - 1):
             result[j].end = result[j + 1].start
         return result
 
-    def select(self, messages: list, tail_turns: int = DEFAULT_TAIL_TURNS) -> tuple[list, str | None]:
+    def select_details(self, messages: list, tail_turns: int = DEFAULT_TAIL_TURNS) -> CompactionSelection:
         """Split messages into head (to compact) and tail (to keep).
-        Returns (head_messages, tail_start_id_or_None).
 
         Preserves recent turns up to preserve_recent_budget() tokens.
         Uses estimate_context_tokens for consistent counting with overflow checks.
@@ -206,7 +227,7 @@ class CompactionService:
         budget = self.preserve_recent_budget()
         turns = self._turns(messages)
         if not turns or tail_turns <= 0:
-            return messages, None
+            return CompactionSelection(messages, None, 0, "none")
 
         recent = turns[-tail_turns:]
         total = 0
@@ -223,32 +244,103 @@ class CompactionService:
             else:
                 break
 
-        if keep_start is None or keep_start == 0:
-            return messages, None
+        minimum_tail_turn = _minimum_tail_turn(turns)
+        if keep_start is None or keep_start > minimum_tail_turn.start:
+            keep_turn = minimum_tail_turn
+            if keep_turn.start == 0:
+                return CompactionSelection([], None, 0, "none")
+            return CompactionSelection(
+                messages[:keep_turn.start],
+                keep_turn.id,
+                keep_turn.start,
+                "full",
+            )
 
-        return messages[:keep_start], keep_id
+        if keep_start == 0:
+            return CompactionSelection(messages, None, 0, "none")
+
+        return CompactionSelection(messages[:keep_start], keep_id, keep_start, "normal")
+
+    def select(self, messages: list, tail_turns: int = DEFAULT_TAIL_TURNS) -> tuple[list, str | None]:
+        """Backward-compatible split API returning (head, tail_start_id)."""
+        selection = self.select_details(messages, tail_turns=tail_turns)
+        if not selection.should_compact:
+            return messages, None
+        return selection.head, selection.tail_id
 
     # ── build compaction prompt ─────────────────────────────────────────
 
     @staticmethod
     def fallback_summary(messages: list) -> str:
         """Generate a basic summary from messages when the compaction agent fails.
-        Extracts user message text to preserve key intents."""
+        Preserves user intent plus assistant decisions and tool outcomes."""
         user_parts: list[str] = []
+        assistant_parts: list[str] = []
+        tool_parts: list[str] = []
+        file_parts: list[str] = []
         for msg in messages:
+            if is_step_hint_message(msg):
+                continue
+            content = _message_text(msg).strip()
             if isinstance(msg, HumanMessage):
-                text = str(getattr(msg, "content", "")).strip()
-                if text:
-                    user_parts.append(text[:FALLBACK_SUMMARY_MAX_PER_MSG])
+                if content:
+                    user_parts.append(_truncate_line(content, FALLBACK_SUMMARY_MAX_PER_MSG))
+                    file_parts.extend(_extract_path_mentions(content))
+            elif isinstance(msg, AIMessage):
+                if content:
+                    assistant_parts.append(_truncate_line(content, FALLBACK_SUMMARY_MAX_PER_MSG))
+                    file_parts.extend(_extract_path_mentions(content))
+                for tc in getattr(msg, "tool_calls", []) or []:
+                    name = tc.get("name", "?")
+                    args = _truncate_line(str(tc.get("args", {})), 160)
+                    assistant_parts.append(f"Called tool {name} with {args}")
+            elif isinstance(msg, ToolMessage) or getattr(msg, "tool_call_id", None):
+                name = getattr(msg, "name", "") or getattr(msg, "tool_call_id", "") or "tool"
+                if content:
+                    tool_parts.append(f"{name}: {_truncate_line(content, FALLBACK_SUMMARY_MAX_PER_MSG)}")
+                    file_parts.extend(_extract_path_mentions(content))
 
-        if not user_parts:
-            return "[Context was compacted but no user messages were preserved]"
+        user_parts = _dedupe(user_parts)[:FALLBACK_SUMMARY_MAX_ITEMS]
+        assistant_parts = _dedupe(assistant_parts)[:FALLBACK_SUMMARY_MAX_ITEMS]
+        tool_parts = _dedupe(tool_parts)[:FALLBACK_SUMMARY_MAX_ITEMS]
+        file_parts = _dedupe(file_parts)[:FALLBACK_SUMMARY_MAX_ITEMS]
 
-        lines = ["## Goal", "- [auto-extracted from truncated context]"]
-        lines.append("")
-        lines.append("## User Requests (extracted)")
-        for part in user_parts:
-            lines.append(f"- {part}")
+        lines = [
+            "## Goal",
+            f"- {user_parts[-1] if user_parts else '[auto-extracted from compacted context]'}",
+            "",
+            "## Constraints & Preferences",
+            "- (none)",
+            "",
+            "## Progress",
+            "### Done",
+        ]
+        lines.extend(_bullets(assistant_parts, empty="(none)"))
+        lines.extend([
+            "",
+            "### In Progress",
+            "- (none)",
+            "",
+            "### Blocked",
+            "- (none)",
+            "",
+            "## Key Decisions",
+        ])
+        lines.extend(_bullets([part for part in assistant_parts if part.startswith("Called tool ")], empty="(none)"))
+        lines.extend([
+            "",
+            "## Next Steps",
+            "- (none)",
+            "",
+            "## Critical Context",
+        ])
+        critical = [f"User requested: {part}" for part in user_parts] + [f"Tool result: {part}" for part in tool_parts]
+        lines.extend(_bullets(critical, empty="(none)"))
+        lines.extend([
+            "",
+            "## Relevant Files",
+        ])
+        lines.extend(_bullets(file_parts, empty="(none)"))
         return "\n".join(lines)
 
     def build_prompt(self, head_messages: list, previous_summary: str | None = None) -> str:
@@ -257,7 +349,9 @@ class CompactionService:
         context_parts: list[str] = []
 
         for msg in head_messages:
-            content = str(getattr(msg, "content", ""))
+            if is_step_hint_message(msg):
+                continue
+            content = _message_text(msg)
             if not content.strip():
                 continue
 
@@ -288,4 +382,96 @@ class CompactionService:
             else "Create a new anchored summary from the conversation history above."
         )
 
-        return "\n\n".join([anchor, SUMMARY_TEMPLATE] + context_parts[:20])
+        history = _join_with_char_budget(context_parts, COMPACTION_PROMPT_CONTEXT_MAX_CHARS)
+        return "\n\n".join([
+            anchor,
+            "## Conversation History\n" + (history if history else "(none)"),
+            SUMMARY_TEMPLATE,
+        ])
+
+
+def _minimum_tail_turn(turns: list[Turn]) -> Turn:
+    """Return the oldest turn that must remain live after full compaction.
+
+    During the normal run loop compaction runs after the current user message
+    is appended and before the assistant responds. In that case the final turn
+    is only the current request, so the previous complete turn must also remain
+    live.
+    """
+    last = turns[-1]
+    if last.end == last.start + 1 and len(turns) >= 2:
+        return turns[-2]
+    return last
+
+
+def _message_text(msg: object) -> str:
+    content = getattr(msg, "content", "")
+    if isinstance(content, str):
+        return content
+    if isinstance(content, list):
+        parts: list[str] = []
+        for item in content:
+            if isinstance(item, dict) and item.get("type") == "text":
+                parts.append(str(item.get("text", "")))
+            elif isinstance(item, str):
+                parts.append(item)
+        return "\n".join(part for part in parts if part)
+    return str(content)
+
+
+def _truncate_line(text: str, limit: int) -> str:
+    compact = " ".join(text.split())
+    if len(compact) <= limit:
+        return compact
+    return compact[:limit].rstrip() + f"... [truncated {len(compact) - limit} chars]"
+
+
+def _dedupe(items: list[str]) -> list[str]:
+    seen: set[str] = set()
+    result: list[str] = []
+    for item in items:
+        key = item.strip()
+        if not key or key in seen:
+            continue
+        seen.add(key)
+        result.append(key)
+    return result
+
+
+def _bullets(items: list[str], *, empty: str) -> list[str]:
+    if not items:
+        return [f"- {empty}"]
+    return [f"- {item}" for item in items]
+
+
+def _extract_path_mentions(text: str) -> list[str]:
+    paths: list[str] = []
+    for raw in text.replace(",", " ").replace(")", " ").replace("(", " ").split():
+        token = raw.strip("`'\"")
+        if "/" not in token:
+            continue
+        if token.startswith(("/", "./", "../")) or "." in token.rsplit("/", 1)[-1]:
+            paths.append(token.rstrip(":;"))
+    return paths
+
+
+def _join_with_char_budget(parts: list[str], budget: int) -> str:
+    if budget <= 0:
+        return ""
+    kept: list[str] = []
+    used = 0
+    separator = "\n\n"
+    for part in parts:
+        extra = len(part) + (len(separator) if kept else 0)
+        remaining = budget - used
+        if remaining <= 0:
+            break
+        if extra <= remaining:
+            kept.append(part)
+            used += extra
+            continue
+        allowance = remaining - (len(separator) if kept else 0)
+        if allowance > 80:
+            kept.append(part[:allowance].rstrip() + "\n[conversation history truncated by char budget]")
+        break
+    return separator.join(kept)

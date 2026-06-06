@@ -26,6 +26,12 @@
 - Keep prompts rules-first, concise, and specific to the agent role.
 - Do not add comments unless they explain non-obvious intent or constraints.
 
+## Document Lifecycle
+- Design docs live in `docs/specs/` while in progress.
+- When implementation is **fully complete** (code + tests exist, not just stubs or string references), move the doc to `docs/archive/` and add a `> **Status: Done**` header.
+- Do **not** archive based on keyword search alone — verify the actual implementation files exist and are functional.
+- `docs/design/` is for exploratory/RFC-stage docs; `docs/specs/` is for approved designs awaiting or in implementation.
+
 ## Safety
 - Do not commit `.voidx/`, `.env*`, or local credentials.
 - Preserve user work in a dirty tree; never revert unrelated changes.

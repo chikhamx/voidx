@@ -90,240 +90,41 @@ PYTHON_QUERIES = {
         (decorator) @decorator
     """,
 }
-
-# TypeScript example
-TYPESCRIPT_QUERIES = {
-    "overview": """
-        (class_declaration name: (type_identifier) @class.name)
-        (function_declaration name: (identifier) @function.name)
-        (interface_declaration name: (type_identifier) @interface.name)
-        (type_alias_declaration name: (type_identifier) @type.name)
-        (export_statement) @export
-    """,
-    "signatures": """
-        (class_declaration
-            name: (type_identifier) @class.name
-            body: (class_body
-                (method_definition name: (property_identifier) @method.name
-                    parameters: (formal_parameters) @method.params)))
-        (function_declaration
-            name: (identifier) @function.name
-            parameters: (formal_parameters) @function.params
-            return_type: (type_annotation) @function.return_type)
-    """,
-}
-```
-
-### Symbol Extraction Architecture
-
-```python
-@dataclass
-class SymbolInfo:
-    name: str
-    kind: str           # "class", "function", "method", "interface", "struct", etc.
-    signature: str      # full signature text (only in "signatures" mode)
-    line_start: int
-    line_end: int
-    parent: str | None  # parent class/interface name
-    decorators: list[str] = field(default_factory=list)
-    is_exported: bool = False
-
-class LanguageParser(ABC):
-    @abstractmethod
-    def extract_symbols(self, source: str, detail: str) -> list[SymbolInfo]: ...
-
-class TreeSitterParser(LanguageParser):
-    def __init__(self, language_name: str, grammar, queries: dict[str, str]):
-        self._language = Language(grammar)
-        self._parser = TSParser(self._language)
-        self._queries = queries
-
-    def extract_symbols(self, source: str, detail: str) -> list[SymbolInfo]:
-        tree = self._parser.parse(source.encode())
-        query = self._language.query(self._queries.get(detail, self._queries["overview"]))
-        captures = query.captures(tree.root_node)
-        return self._build_symbols(captures, source)
-
-class RegexFallbackParser(LanguageParser):
-    """Fallback for languages without tree-sitter grammars."""
-    ...
-```
-
-### Parser Registry
-
-```python
-class ParserRegistry:
-    _parsers: dict[str, LanguageParser] = {}
-
-    @classmethod
-    def get(cls, language: str) -> LanguageParser | None:
-        if language in cls._parsers:
-            return cls._parsers[language]
-        parser = cls._try_tree_sitter(language)
-        if parser:
-            cls._parsers[language] = parser
-            return parser
-        return cls._regex_fallback(language)
-
-    @classmethod
-    def _try_tree_sitter(cls, language: str) -> TreeSitterParser | None:
-        try:
-            grammar = _import_grammar(language)
-            queries = _QUERIES.get(language, {})
-            return TreeSitterParser(language, grammar, queries)
-        except ImportError:
-            return None
-```
-
-### Language Detection
-
-Detect language from file extension (already in `src/voidx/lsp/config.py`):
-
-```python
-EXTENSION_TO_LANGUAGE = {
-    ".py": "python",
-    ".ts": "typescript", ".tsx": "typescript",
-    ".js": "javascript", ".jsx": "javascript",
-    ".go": "go",
-    ".rs": "rust",
-    ".java": "java",
-    ".c": "c", ".h": "c",
-    ".cpp": "cpp", ".cc": "cpp", ".hpp": "cpp",
-    ".rb": "ruby",
-    ".lua": "lua",
-}
 ```
 
 ### Tiered Detail Levels
 
-Replace the current two-level (`overview` / `signatures`) with three levels:
+| Level | What's included | Token cost |
+|-------|----------------|------------|
+| `overview` | Top-level class/function names only | Low (~50 tokens/file) |
+| `signatures` | Full signatures with params and return types | Medium (~200 tokens/file) |
+| `full` | Signatures + docstrings + imports | High (~500 tokens/file) |
 
-| Level | What's included | Token cost | Use case |
-|-------|----------------|------------|----------|
-| `tree` | File tree only, no symbols | ~500 tokens | Quick orientation |
-| `overview` | Top-level classes, functions, interfaces | ~2000 tokens | Understanding structure |
-| `signatures` | All symbols with full signatures | ~6000 tokens | Detailed implementation work |
-
-Token budget increases from 4000 to 8000 for `signatures` mode.
-
-### Relevance Ranking
-
-When the token budget is exceeded, prioritize files by relevance:
-
-```python
-def rank_files(files: list[Path], query: str | None, recent_edits: set[str]) -> list[Path]:
-    """Rank files by relevance to the current task."""
-    scores: dict[Path, float] = {}
-    for f in files:
-        score = 0.0
-        if str(f) in recent_edits:
-            score += 10.0  # recently edited files are most relevant
-        if query and _matches_query(f, query):
-            score += 5.0   # files matching the query pattern
-        score += _import_centrality(f)  # files imported by many others
-        scores[f] = score
-    return sorted(files, key=lambda f: scores.get(f, 0), reverse=True)
-```
-
-Import centrality is a simple heuristic: count how many other files import this file. Files imported by many others are likely core modules.
+The `detail` parameter on `repo_map` selects the tier. Default is `overview`.
 
 ### Incremental Updates
 
-Cache parsed symbols per file, invalidate on mtime change:
+Cache parsed ASTs and only re-parse files whose mtime changed:
 
 ```python
 class RepoMapCache:
-    """Cache parsed symbols keyed by (file_path, mtime, detail_level)."""
-    _cache: dict[tuple[str, float, str], list[SymbolInfo]] = {}
+    _cache: dict[str, tuple[float, Tree]]  # path → (mtime, tree)
 
-    def get(self, path: str, mtime: float, detail: str) -> list[SymbolInfo] | None:
-        return self._cache.get((path, mtime, detail))
-
-    def set(self, path: str, mtime: float, detail: str, symbols: list[SymbolInfo]) -> None:
-        self._cache[(path, mtime, detail)] = symbols
+    def get_or_parse(self, path: str, language: Language) -> Tree:
+        mtime = os.path.getmtime(path)
+        if path in self._cache and self._cache[path][0] == mtime:
+            return self._cache[path][1]
+        tree = parse_file(path, language)
+        self._cache[path] = (mtime, tree)
+        return tree
 ```
 
-On subsequent `repo_map` calls, only re-parse files whose mtime changed.
+### Testing
 
-### Import/Export Information
-
-In `signatures` mode, also extract import statements:
-
-```python
-@dataclass
-class ImportInfo:
-    module: str
-    names: list[str]       # imported names
-    is_from: bool          # from X import Y vs import X
-    line: int
-```
-
-This lets the agent understand module dependencies without reading every file.
-
-## Scope
-
-In scope:
-
-- Tree-sitter integration with 10 language grammars.
-- Language-specific query definitions for overview and signatures.
-- `ParserRegistry` with tree-sitter + regex fallback.
-- Three-tier detail levels with increased token budgets.
-- Relevance ranking for large codebases.
-- Incremental cache based on file mtime.
-- Import/export extraction in signatures mode.
-- Optional grammar dependencies (graceful fallback).
-
-Out of scope:
-
-- Call graph generation (future — needs cross-file analysis).
-- Type inference / type checking (LSP already provides this).
-- Semantic search / embedding-based search (separate feature).
-- WASM-based grammar loading (native bindings are sufficient).
-- Custom grammar loading from user directories.
-
-## File Changes
-
-| File | Change |
-|------|--------|
-| `src/voidx/tools/repomap.py` | Major rewrite — use `ParserRegistry`, tiered detail, ranking, caching |
-| `src/voidx/tools/ts_parser.py` | New — `TreeSitterParser`, `ParserRegistry`, `SymbolInfo`, `ImportInfo` |
-| `src/voidx/tools/ts_queries.py` | New — language-specific tree-sitter queries for 10 languages |
-| `src/voidx/tools/ts_detect.py` | New — language detection from file extensions |
-| `pyproject.toml` | Add optional `tree-sitter` dependency group |
-| `tests/test_tools/test_repomap.py` | Update — test tree-sitter parsing, fallback, caching |
-| `tests/test_tools/test_ts_parser.py` | New — parser tests for each language |
-
-## Dependency Strategy
-
-Tree-sitter grammars are optional. In `pyproject.toml`:
-
-```toml
-[project.optional-dependencies]
-tree-sitter = [
-    "tree-sitter>=0.22",
-    "tree-sitter-python>=0.21",
-    "tree-sitter-typescript>=0.21",
-    "tree-sitter-go>=0.21",
-    "tree-sitter-rust>=0.21",
-    "tree-sitter-java>=0.21",
-    "tree-sitter-c>=0.21",
-    "tree-sitter-cpp>=0.22",
-    "tree-sitter-javascript>=0.21",
-    "tree-sitter-ruby>=0.21",
-    "tree-sitter-lua>=0.21",
-]
-```
-
-If no grammar is installed, `ParserRegistry._try_tree_sitter()` returns `None` and the regex fallback is used. This keeps the base install lightweight.
-
-## Risks
-
-| Risk | Mitigation |
-|------|-----------|
-| Tree-sitter grammars add install size (~20 MB total) | Optional dependency group; regex fallback always available |
-| Grammar API changes between tree-sitter versions | Pin minimum versions; test against specific versions |
-| Query syntax varies per grammar | Per-language query definitions tested independently |
-| Large repos still exceed token budget | Relevance ranking + tiered detail; `tree` mode for orientation |
-| Incremental cache grows unbounded | LRU eviction with max 1000 entries |
-| Import centrality is expensive to compute | Only compute on first call; cache results |
-| Regex fallback produces worse results than before | Keep existing regex patterns as-is; tree-sitter is additive |
+| Test | Description |
+|------|-------------|
+| `test_repomap_python_signatures` | Python class/method signatures extracted correctly |
+| `test_repomap_typescript_signatures` | TypeScript interface/function signatures |
+| `test_repomap_fallback_to_regex` | Falls back to regex when grammar not installed |
+| `test_repomap_tiered_detail` | overview < signatures < full in token cost |
+| `test_repomap_incremental_cache` | Only re-parses changed files |

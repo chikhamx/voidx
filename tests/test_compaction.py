@@ -4,17 +4,16 @@ import sys
 from pathlib import Path
 
 import pytest
-from langchain_core.messages import AIMessage, HumanMessage, SystemMessage, ToolMessage
+from langchain_core.messages import AIMessage, HumanMessage, ToolMessage
 
 sys.path.insert(0, str(Path(__file__).parent.parent / "src"))
 
 from voidx.llm.compaction import (
-    COMPACTION_BUFFER,
     COMPACTION_MAX_RETRIES,
     COMPACTION_THRESHOLD,
     CompactionService,
     DEFAULT_TAIL_TURNS,
-    TOOL_OUTPUT_MAX_CHARS,
+    STEP_HINT_MARKER,
 )
 from voidx.llm.usage import estimate_context_tokens
 
@@ -180,6 +179,88 @@ class TestSelectTokenCounting:
                 f"by more than 20%. select() is underestimating turn size."
             )
 
+    def test_select_details_full_mode_keeps_previous_complete_turn_and_current_user(self):
+        svc = CompactionService(context_limit=1_000, output_token_max=900)
+        svc.preserve_recent_budget = lambda: 1
+        messages = [
+            HumanMessage(content="old 1", id="u1"),
+            AIMessage(content="a1"),
+            HumanMessage(content="old 2", id="u2"),
+            AIMessage(content="a2"),
+            ToolMessage(content="tool 2", tool_call_id="tc2"),
+            HumanMessage(content="current", id="u3"),
+        ]
+
+        selection = svc.select_details(messages)
+
+        assert selection.mode == "full"
+        assert [message.content for message in selection.head] == ["old 1", "a1"]
+        assert selection.keep_from == 2
+        assert [message.content for message in messages[selection.keep_from:]] == [
+            "old 2",
+            "a2",
+            "tool 2",
+            "current",
+        ]
+
+    def test_select_details_keeps_previous_complete_turn_when_current_fits_budget(self):
+        svc = CompactionService(context_limit=1_000, output_token_max=900)
+        messages = [
+            HumanMessage(content="old 1", id="u1"),
+            AIMessage(content="a1 " * 100),
+            HumanMessage(content="previous complete", id="u2"),
+            AIMessage(content="a2 " * 100),
+            ToolMessage(content="tool 2 " * 100, tool_call_id="tc2"),
+            HumanMessage(content="current", id="u3"),
+        ]
+        current_turn_size = estimate_context_tokens(messages[-1:])
+        svc.preserve_recent_budget = lambda: current_turn_size + 10
+
+        selection = svc.select_details(messages)
+
+        assert selection.mode == "full"
+        assert [message.content for message in selection.head] == ["old 1", "a1 " * 100]
+        assert selection.keep_from == 2
+        assert [message.content for message in messages[selection.keep_from:]] == [
+            "previous complete",
+            "a2 " * 100,
+            "tool 2 " * 100,
+            "current",
+        ]
+
+    def test_step_hint_messages_do_not_create_turns_or_tail_ids(self):
+        svc = CompactionService(context_limit=1_000, output_token_max=900)
+        hint = HumanMessage(
+            content="[Step 9/10] FINAL response step. No tools are available.",
+            additional_kwargs={STEP_HINT_MARKER: True},
+            id="hint",
+        )
+        messages = [
+            HumanMessage(content="old", id="u1"),
+            AIMessage(content="a1"),
+            HumanMessage(content="current", id="u2"),
+            hint,
+        ]
+
+        turns = svc._turns(messages)
+        selection = svc.select_details(messages)
+
+        assert [turn.id for turn in turns] == ["u1", "u2"]
+        assert selection.tail_id != "hint"
+
+    def test_build_prompt_skips_step_hint_messages(self):
+        svc = CompactionService()
+        prompt = svc.build_prompt([
+            HumanMessage(content="real request", id="u1"),
+            HumanMessage(
+                content="[Step 9/10] FINAL response step. No tools are available.",
+                additional_kwargs={STEP_HINT_MARKER: True},
+            ),
+        ])
+
+        assert "real request" in prompt
+        assert "FINAL response step" not in prompt
+
 
 class TestFallbackSummary:
     """When compaction agent fails, fallback should still produce a basic summary."""
@@ -220,6 +301,41 @@ class TestFallbackSummary:
         summary = CompactionService.fallback_summary(messages)
         # Should be reasonably sized, not the full 10000 chars
         assert len(summary) < 5000
+
+    def test_fallback_summary_preserves_ai_decisions_and_tool_results(self):
+        messages = [
+            HumanMessage(content="Fix src/voidx/llm/compaction.py", id="1"),
+            AIMessage(
+                content="Decision: keep previous complete turn before current request.",
+                tool_calls=[
+                    {"name": "read", "args": {"file_path": "src/voidx/llm/compaction.py"}, "id": "tc1"},
+                ],
+            ),
+            ToolMessage(
+                content="pytest failed: AssertionError in tests/test_compaction.py",
+                tool_call_id="tc1",
+            ),
+        ]
+
+        summary = CompactionService.fallback_summary(messages)
+
+        assert "Decision: keep previous complete turn" in summary
+        assert "Called tool read" in summary
+        assert "pytest failed: AssertionError" in summary
+        assert "src/voidx/llm/compaction.py" in summary
+
+    def test_build_prompt_uses_char_budget_not_fixed_message_count(self):
+        svc = CompactionService()
+        messages = [
+            HumanMessage(content=f"request {i}", id=str(i))
+            for i in range(25)
+        ]
+
+        prompt = svc.build_prompt(messages)
+
+        assert "request 0" in prompt
+        assert "request 24" in prompt
+        assert "## Conversation History" in prompt
 
 
 class TestCompactionRetry:

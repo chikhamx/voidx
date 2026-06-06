@@ -4,10 +4,15 @@ from __future__ import annotations
 
 import asyncio
 import time
+from datetime import datetime
 
 from langchain_core.messages import AIMessage, HumanMessage, SystemMessage, ToolMessage
 
 from voidx.agent.agents import BASE_SYSTEM_PROMPT, PLAN_MODE_APPEND, AgentDef
+from voidx.agent.graph.convergence import (
+    build_convergence_messages,
+    generate_fallback_summary,
+)
 from voidx.agent.graph.runtime import console, ui
 from voidx.agent.graph.streaming import extract_text, stream_llm
 from voidx.agent.runtime_context import InteractionMode, RuntimeContextBuilder
@@ -156,6 +161,7 @@ async def run_subagent(
         active_skill_summaries=[f"{match.name} ({match.reason})" for match in skill_matches],
         current_user_text=task_description,
         task_intent=task_intent,
+        session_date=datetime.now().astimezone().strftime("%Y-%m-%d %Z"),
         agent_id=agent_id,
     ).build().apply_to_messages(messages)
 
@@ -182,10 +188,18 @@ async def run_subagent(
             else:
                 ui.step_header(step, agent_def.max_steps, agent_def.name)
 
-            active_tool_defs = tool_defs if step < agent_def.max_steps else []
+            has_tool_budget = step < agent_def.max_steps - 1
+            active_tool_defs = tool_defs if has_tool_budget else []
+            convergence_messages, convergence_forced = build_convergence_messages(
+                step=step,
+                max_steps=agent_def.max_steps,
+                has_tool_budget=has_tool_budget,
+                goal=task_description,
+            )
+            llm_messages = [*messages, *convergence_messages]
             model_with_tools = model.bind_tools(active_tool_defs) if active_tool_defs else model
-            renderer = StreamingRenderer(console, debug=debug, agent_id=agent_id)
-            context_tokens = estimate_context_tokens(messages, config.model.model)
+            renderer = StreamingRenderer(console, debug=debug, agent_id=agent_id, headless=True)
+            context_tokens = estimate_context_tokens(llm_messages, config.model.model)
             if usage_stats is not None:
                 usage_stats.update_context(context_tokens)
             if session_id:
@@ -195,18 +209,20 @@ async def run_subagent(
                     agent_role=agent_def.name,
                     provider=config.model.provider,
                     model=config.model.model,
-                    messages=messages,
+                    messages=llm_messages,
                     token_estimate=context_tokens,
                     metadata={
                         "step": step,
                         "max_steps": agent_def.max_steps,
                         "tool_count": len(active_tool_defs),
                         "agent_id": agent_id,
+                        "convergence_hint_count": len(convergence_messages),
+                        "convergence_forced": convergence_forced,
                     },
                 )
             assistant_msg = await stream_llm(
                 model_with_tools,
-                messages,
+                llm_messages,
                 renderer,
                 resolve_protocol(config.model),
             )
@@ -215,15 +231,36 @@ async def run_subagent(
                     extract_token_usage(assistant_msg),
                     fallback_input_tokens=context_tokens,
                     fallback_output_tokens=estimate_message_tokens(assistant_msg, config.model.model),
-                    messages=messages,
+                    messages=llm_messages,
                     model=config.model.model,
                     cache_key=f"{config.model.provider}/{config.model.model}",
                 )
             messages.append(assistant_msg)
             sub_messages.append(assistant_msg)
 
+            if not has_tool_budget and assistant_msg.tool_calls:
+                text = generate_fallback_summary({
+                    "messages": messages,
+                    "goal": task_description,
+                    "tool_results": {},
+                    "step_count": step,
+                    "max_steps": agent_def.max_steps,
+                })
+                if tracker:
+                    tracker.update(task_id, last_output=text[:200])
+                    tracker.finish(task_id, "completed")
+                return text
+
             if not assistant_msg.tool_calls:
                 text = extract_text(assistant_msg)
+                if convergence_forced and len(text.strip()) < 20:
+                    text = generate_fallback_summary({
+                        "messages": messages,
+                        "goal": task_description,
+                        "tool_results": {},
+                        "step_count": step,
+                        "max_steps": agent_def.max_steps,
+                    })
                 if tracker:
                     tracker.update(task_id, last_output=text[:200])
                     tracker.finish(task_id, "completed")

@@ -10,6 +10,7 @@ import uuid
 from langchain_core.messages import AIMessage, AIMessageChunk, ToolMessage
 
 from voidx.ui.output.console import StreamingRenderer
+from voidx.ui.output.events import ui_events
 
 _REPLAY_UNSAFE_BLOCK_TYPES = {
     "thinking",
@@ -70,6 +71,8 @@ async def stream_llm(
         raise
     finally:
         renderer.done()
+        if ui_events.is_running:
+            await ui_events.drain()
 
     if not chunks:
         return AIMessage(content="")

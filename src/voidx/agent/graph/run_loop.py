@@ -556,13 +556,13 @@ class GraphRunLoopMixin:
                 f"  [cyan]{format_token_count(turn_out)}[/cyan] [dim]out[/dim]",
                 markup=True,
             )
+            session_tracker.finish_turn()
             change_lines = session_tracker.change_summary_lines()
             if change_lines:
                 dock.append_message(
                     "\n".join(change_lines),
                     markup=True,
                 )
-            session_tracker.finish_turn()
         except (KeyboardInterrupt, asyncio.CancelledError):
             if self._session is not None and user_message_id is not None:
                 await delete_messages_from(self._session.id, user_message_id)

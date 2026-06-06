@@ -268,7 +268,11 @@ class DockEventConsumer:
             case AssistantStreamStarted() as e:
                 return self._dock.set_stream("", parent=self._stream_parent(e.agent_id))
             case AssistantStreamUpdated() as e:
-                return self._dock.set_stream(e.text, parent=self._stream_parent(e.agent_id))
+                return self._dock.set_stream(
+                    e.text,
+                    parent=self._stream_parent(e.agent_id),
+                    phase=e.phase,
+                )
             case AssistantStreamCommitted():
                 return self._dock.commit_stream()
             case AssistantStreamDiscarded():
@@ -326,19 +330,15 @@ class DockEventConsumer:
                     parent = self._agent_parent(e.parent_agent_id)
                 if parent is None:
                     parent = self._dock.ensure_agent()
-                body_lines = []
-                if e.description:
-                    body_lines.append(f"[dim]Task:[/dim] {escape(e.description)}")
-                body_lines.append(f"[dim]Agent ID:[/dim] {e.agent_id}")
                 node = self._dock.tree.new_node(
                     parent=parent,
                     node_type="subagent",
                     header=f"[#B48EAD]●[/#B48EAD] [bold]{escape(e.name)}[/bold] agent",
-                    body_lines=body_lines,
+                    body_lines=[],
                     collapsed=False,
                     agent_name=e.name,
                     agent_run_id=e.subagent_id,
-                    payload={"role_name": e.name, "description": e.description},
+                    payload={"role_name": e.name, "description": e.description, "agent_id": e.agent_id},
                 )
                 self._agent_nodes[e.agent_id] = node
                 self._dock.mark_node_unsettled(node)

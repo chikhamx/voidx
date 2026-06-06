@@ -4,7 +4,7 @@ from __future__ import annotations
 
 from typing import TYPE_CHECKING
 
-from langchain_core.messages import AIMessage, SystemMessage
+from langchain_core.messages import SystemMessage
 
 from voidx.agent.message_rows import messages_from_rows
 from voidx.agent.graph.runtime import console, ui
@@ -33,8 +33,7 @@ class GraphCompactionMixin:
         """Check overflow and compact if needed.
 
         Returns the messages removed from the live context and the persisted
-        tail anchor id when one is available. Fallback truncation has no stable
-        tail anchor, so it returns None for the second value.
+        tail anchor id when compaction removes an older complete turn.
         """
         total_tokens = estimate_context_tokens(messages, self.config.model.model)
         tokens = {"total": total_tokens, "input": total_tokens, "output": 0, "reasoning": 0}
@@ -73,35 +72,17 @@ class GraphCompactionMixin:
                 else "[yellow]Compacting context...[/yellow]"
             )
 
-        head_msgs, tail_id = self._compaction.select(messages)
+        selection = self._compaction.select_details(messages)
+        head_msgs, tail_id = selection.head, selection.tail_id
 
-        if not head_msgs or not tail_id:
-            # Hard fallback: keep only last 6 messages
-            keep = min(6, len(messages))
-            if via_events():
-                await ui_events.emit(StatusUpdated(
-                    status_id="compaction",
-                    label="Compacting context",
-                    detail=f"fallback truncation, keeping last {keep} messages",
-                    stage="compacting",
-                ))
-            else:
-                ui.print(f"[dim]Aggressive truncation: keeping last {keep} messages[/dim]")
-
-            removed = _truncate_to_recent_messages(messages, keep)
-            # Generate a basic summary from the removed messages
-            fallback = CompactionService.fallback_summary(removed)
-            self._pending_summary = fallback
-            self._compaction_summary = fallback
-            self._compaction.compaction_count += 1
-
+        if not selection.should_compact:
             if via_events():
                 await ui_events.emit(StatusFinished(
                     status_id="compaction",
-                    label=f"Compaction fallback kept last {keep} messages (with extracted summary)",
+                    label="Compaction skipped: no older complete turn to summarize",
                     remove=False,
                 ))
-            return removed, None
+            return None, None
 
         # Run compaction agent with retries
         summary = None
@@ -135,37 +116,37 @@ class GraphCompactionMixin:
                         ui.print(f"[dim]Compaction agent failed ({e}) — retrying ({attempt}/{COMPACTION_MAX_RETRIES})[/dim]")
 
         if not summary:
-            # All retries exhausted — fallback truncation with basic summary
+            # All retries exhausted — use an extracted summary, but keep the selected tail.
             if via_events():
                 err_detail = f"{last_error}; " if last_error else ""
                 await ui_events.emit(StatusUpdated(
                     status_id="compaction",
                     label="Compaction agent failed",
-                    detail=f"{err_detail}falling back to truncation with extracted summary",
+                    detail=f"{err_detail}using extracted summary",
                     stage="compacting",
                 ))
             else:
                 err_msg = f" ({last_error})" if last_error else ""
-                ui.print(f"[dim]Compaction agent failed{err_msg} — aggressive truncation with summary[/dim]")
-            keep = min(6, len(messages))
-            removed = _truncate_to_recent_messages(messages, keep)
-            # Generate a basic summary from the removed messages
-            fallback = CompactionService.fallback_summary(head_msgs if head_msgs else removed)
+                ui.print(f"[dim]Compaction agent failed{err_msg} — using extracted summary[/dim]")
+            fallback = CompactionService.fallback_summary(head_msgs)
             self._pending_summary = fallback
             self._compaction_summary = fallback
             self._compaction.compaction_count += 1
+            tail_msgs = messages[selection.keep_from:]
+            messages.clear()
+            messages.extend(tail_msgs)
+            await self._persist_compaction(head_msgs)
             if via_events():
                 await ui_events.emit(StatusFinished(
                     status_id="compaction",
-                    label=f"Compaction fallback kept last {keep} messages (with extracted summary)",
+                    label=f"Compaction fallback summarized {len(head_msgs)} messages",
                     ok=False,
                     remove=False,
                 ))
-            return removed, None
+            return head_msgs, tail_id
 
         if summary:
-            keep_from = len(head_msgs)
-            tail_msgs = messages[keep_from:]
+            tail_msgs = messages[selection.keep_from:]
             messages.clear()
             messages.extend(tail_msgs)
             self._pending_summary = summary
@@ -296,16 +277,3 @@ def _max_persisted_message_id(messages: list) -> int | None:
         except (TypeError, ValueError):
             continue
     return max(ids) if ids else None
-
-
-def _truncate_to_recent_messages(messages: list, keep: int) -> list:
-    original = list(messages)
-    system_msgs = [m for m in original if isinstance(m, SystemMessage)]
-    other_msgs = [m for m in original if not isinstance(m, SystemMessage)]
-    tail_msgs = other_msgs[-keep:] if keep > 0 else []
-    retained_ids = {id(m) for m in [*system_msgs, *tail_msgs]}
-    removed = [m for m in original if id(m) not in retained_ids]
-    messages.clear()
-    messages.extend(system_msgs)
-    messages.extend(tail_msgs)
-    return removed

@@ -4,6 +4,7 @@ from __future__ import annotations
 
 from datetime import datetime
 from enum import Enum
+import platform
 from typing import Iterable
 
 from langchain_core.messages import BaseMessage, HumanMessage, SystemMessage
@@ -197,6 +198,8 @@ class RuntimeContextBuilder:
         intent_confidence: float | None = None,
         intent_source: str = "",
         intent_refined: bool = False,
+        session_date: str | None = None,
+        current_datetime: str | None = None,
         agent_id: int = -1,
     ) -> None:
         self.config = config
@@ -228,12 +231,14 @@ class RuntimeContextBuilder:
         self.intent_confidence = intent_confidence
         self.intent_source = intent_source.strip()
         self.intent_refined = intent_refined
+        now = datetime.now().astimezone()
+        self.session_date = (session_date or now.strftime("%Y-%m-%d %Z")).strip()
+        self.current_datetime = (current_datetime or now.strftime("%Y-%m-%d %H:%M %Z")).strip()
         self.agent_id = agent_id
 
     def build(self) -> RuntimeContext:
-        date_str = datetime.now().astimezone().strftime("%Y-%m-%d %H:%M %Z")
         envelope = RuntimeEnvelope(
-            date=date_str,
+            date=self.session_date,
             workspace=self.workspace,
             provider=self.config.model.provider,
             model=self.config.model.model,
@@ -254,7 +259,10 @@ class RuntimeContextBuilder:
         if self.tool_contract:
             sections.append(ContextSection(name="Tool Contract", content=self.tool_contract))
         sections.extend([
-            ContextSection(name="Workspace Facts", content=f"- Current workspace: {self.workspace}"),
+            ContextSection(
+                name="Workspace Facts",
+                content=f"- Current workspace: {self.workspace}\n- Platform: {_platform_info()}",
+            ),
         ])
 
         if self.instructions:
@@ -262,17 +270,16 @@ class RuntimeContextBuilder:
                 name="Project Facts",
                 content="\n\n".join(self.instructions),
             ))
+        sections.append(ContextSection(name="Session Date", content=self.session_date))
         if self.summary:
             sections.append(ContextSection(
                 name="Long Summary",
                 content=self.summary,
             ))
 
-        sections.append(ContextSection(name="Current Date", content=date_str))
-        sections.append(ContextSection(name="Runtime State", content=_render_envelope(envelope)))
-
         task_sections = [
-            ContextSection(name="Recent Messages", content="- Preserved as native conversation messages above."),
+            ContextSection(name="Runtime State", content=_render_envelope(envelope)),
+            ContextSection(name="Current DateTime", content=self.current_datetime),
         ]
         if self.skill_instructions:
             task_sections.append(ContextSection(
@@ -372,6 +379,17 @@ def _render_pending_approval(value: object | None) -> str:
     if not scope:
         return kind
     return f"{kind} scope={scope}"
+
+
+def _platform_info() -> str:
+    system = platform.system() or "Unknown"
+    machine = platform.machine() or "unknown"
+    if system == "Darwin":
+        chip = "Apple Silicon" if machine == "arm64" else "Intel"
+        return f"macOS {machine} ({chip})"
+    if system == "Windows":
+        return f"Windows {machine}"
+    return f"{system} {machine}"
 
 
 def _last_user_index(messages: list[BaseMessage]) -> int | None:

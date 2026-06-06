@@ -226,11 +226,17 @@ class BottomInputDock(DockNodeMixin):
             self.append_ansi(text)
         return True
 
-    def set_stream(self, text: str, *, parent: OutputNode | None = None) -> bool:
+    def set_stream(
+        self,
+        text: str,
+        *,
+        parent: OutputNode | None = None,
+        phase: str = "text",
+    ) -> bool:
         if not self._active:
             return False
         self._stream_text = text
-        self._update_stream_node(parent=parent)
+        self._update_stream_node(parent=parent, phase=phase)
         self._mark_unsettled(self._stream_node)
         self.refresh()
         return True
@@ -332,7 +338,12 @@ class BottomInputDock(DockNodeMixin):
             parts.append((after, "white"))
         return parts
 
-    def _update_stream_node(self, *, parent: OutputNode | None = None) -> None:
+    def _update_stream_node(
+        self,
+        *,
+        parent: OutputNode | None = None,
+        phase: str = "text",
+    ) -> None:
         clean = _clean(self._stream_text).strip("\n")
         if not clean:
             return
@@ -341,6 +352,19 @@ class BottomInputDock(DockNodeMixin):
             parent is not None and self._stream_node.parent is not parent
         ):
             self._stream_node = self._new_stream_node(parent=parent)
+        if phase == "thinking":
+            lines = clean.splitlines()
+            visible = lines[-5:]
+            bullet = _ansi_rgb("⏳", (235, 203, 139))
+            self._stream_node.header = _ansi_line(f"{bullet} Thinking")
+            self._stream_node.body_lines = [
+                _ansi_line(f"  {escape(line)}") for line in visible
+            ]
+            if stream_existed and self._stream_node is not None:
+                self._tree.mark_dirty(self._stream_node.id)
+            else:
+                self._tree.mark_dirty()
+            return
         if clean.startswith("● "):
             clean = clean[2:]
         lines = _markdown_lines(clean, self._markdown_width())

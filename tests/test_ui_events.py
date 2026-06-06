@@ -364,17 +364,21 @@ async def test_streaming_renderer_updates_thinking_and_streaming_status(isolated
     try:
         renderer = StreamingRenderer(Console(), debug=False)
         renderer.start()
+        renderer.feed_thinking("inspect auth\n")
         await ui_events.drain()
 
         rendered = "\n".join(_plain(line) for line in isolated_dock.tree.render(100))
         assert "Thinking" in rendered
+        assert "inspect auth" in rendered
 
         renderer.feed_text("hello")
         await ui_events.drain()
 
         rendered = "\n".join(_plain(line) for line in isolated_dock.tree.render(100))
+        assert "Thinking" not in rendered
         assert "Thinking for" not in rendered
-        assert "Streaming" in rendered
+        assert "Streaming" not in rendered
+        assert "inspect auth" not in rendered
         assert "hello" in rendered
 
         renderer.done()
@@ -408,11 +412,146 @@ async def test_streaming_renderer_collapses_thinking_content_after_text_starts(i
         await ui_events.drain()
 
         rendered = "\n".join(_plain(line) for line in isolated_dock.tree.render(100))
-        assert "Thinking for" in rendered
+        assert "Thinking for" not in rendered
+        assert "Thinking" not in rendered
+        assert "six" not in rendered
+        assert "answer" in rendered
+
+        renderer.done()
+        await ui_events.drain()
+
+        rendered = "\n".join(_plain(line) for line in isolated_dock.tree.render(100))
+        assert "Thinking" not in rendered
         assert "six" not in rendered
         assert "answer" in rendered
     finally:
         await ui_events.stop()
+
+
+@pytest.mark.asyncio
+async def test_streaming_renderer_discards_thinking_only_stream(isolated_dock):
+    isolated_dock.begin_capture()
+    ui_events.start(DockEventConsumer(isolated_dock))
+    try:
+        renderer = StreamingRenderer(Console(), debug=False)
+        renderer.start()
+        renderer.feed_thinking("temporary thought\n")
+        await ui_events.drain()
+
+        rendered = "\n".join(_plain(line) for line in isolated_dock.tree.render(100))
+        assert "Thinking" in rendered
+        assert "temporary thought" in rendered
+
+        renderer.done()
+        await ui_events.drain()
+
+        rendered = "\n".join(_plain(line) for line in isolated_dock.tree.render(100))
+        assert "Thinking" not in rendered
+        assert "temporary thought" not in rendered
+    finally:
+        await ui_events.stop()
+
+
+@pytest.mark.asyncio
+async def test_streaming_renderer_headless_suppresses_ui_output(isolated_dock):
+    isolated_dock.begin_capture()
+    ui_events.start(DockEventConsumer(isolated_dock))
+    try:
+        renderer = StreamingRenderer(Console(), debug=False, headless=True)
+        renderer.start()
+        renderer.feed_thinking("hidden thought\n")
+        renderer.feed_text("hidden answer")
+        result = renderer.done()
+        await ui_events.drain()
+
+        rendered = "\n".join(_plain(line) for line in isolated_dock.tree.render(100))
+        assert result == "hidden answer"
+        assert "hidden thought" not in rendered
+        assert "hidden answer" not in rendered
+        assert "Thinking" not in rendered
+    finally:
+        await ui_events.stop()
+
+    renderer = StreamingRenderer(Console(), debug=False, stream_to_dock=False, headless=True)
+    renderer.feed_thinking("quiet thought\n")
+    renderer.feed_text("quiet answer")
+    assert renderer.done() == "quiet answer"
+
+
+@pytest.mark.asyncio
+async def test_subagent_streaming_is_headless(isolated_dock):
+    """Simulate the event sequence a headless subagent would produce.
+
+    In headless mode the child StreamingRenderer emits no stream events,
+    so the dock tree should have no child assistant stream node.
+    The parent agent tool does NOT emit ToolResultAppended — child output
+    is suppressed to avoid duplicate display.
+    """
+    isolated_dock.begin_capture()
+    bus = UiEventBus()
+    bus.start(DockEventConsumer(isolated_dock))
+    try:
+        await bus.request(TurnStarted(text="demo"))
+        await bus.request(ToolStarted(
+            agent_id=-1,
+            tool_call_id="task_call",
+            tool_name="agent",
+            label="Running",
+            args='agent="explore"',
+        ))
+        await bus.emit(SubagentStarted(
+            agent_id=0,
+            subagent_id="agent_0",
+            name="explore",
+            description="inspect project",
+            parent_agent_id=-1,
+            parent_tool_call_id="task_call",
+        ))
+        await bus.emit(SubagentStepStarted(
+            agent_id=0,
+            subagent_id="agent_0",
+            name="Exploring",
+            step=1,
+            max_steps=3,
+        ))
+        # Child agent tools still emit events (CaptureConsole is not headless)
+        await bus.emit(ToolStarted(
+            agent_id=0,
+            tool_call_id="sub_read",
+            tool_name="read",
+            label="Reading",
+            args='file_path="x.py"',
+        ))
+        await bus.emit(ToolFinished(agent_id=0, tool_call_id="sub_read", label="Read", elapsed=0.1))
+        await bus.emit(ToolResultAppended(agent_id=0, tool_call_id="sub_read", text="sub result"))
+        # NO AssistantStreamUpdated / AssistantStreamCommitted — headless suppresses them
+        await bus.emit(SubagentFinished(
+            agent_id=0,
+            subagent_id="agent_0",
+            ok=True,
+            elapsed=2.5,
+        ))
+        # NO ToolResultAppended for the parent agent tool — suppressed
+        await bus.drain()
+
+        assistant = next(node for node in isolated_dock.tree.root.children if node.node_type == "assistant")
+        task_tool = next(node for node in assistant.children if node.node_type == "tool_call")
+        subagent = next(node for node in task_tool.children if node.node_type == "subagent")
+
+        # No child assistant stream node under the subagent
+        stream_nodes = [n for n in subagent.children if n.node_type == "assistant"]
+        assert stream_nodes == []
+
+        # Child tool calls are still visible
+        sub_tools = [n for n in subagent.children if n.node_type == "tool_call"]
+        assert len(sub_tools) == 1
+        assert 'Read("x.py")' in _rich_plain(sub_tools[0].header)
+
+        # No ToolResultAppended under the parent agent tool node
+        result_nodes = [n for n in task_tool.children if n.node_type == "tool_result"]
+        assert result_nodes == []
+    finally:
+        await bus.stop()
 
 
 @pytest.mark.asyncio
@@ -531,10 +670,15 @@ async def test_child_agent_stream_and_progress_attach_under_agent_node(isolated_
 
         assert "explore" in agent_node.header
         assert "agent" in agent_node.header
-        assert agent_node.body_lines[0] == "[dim]Task:[/dim] inspect auth.py"
+        assert agent_node.body_lines == []
+        assert agent_node.payload["description"] == "inspect auth.py"
+        assert agent_node.payload["agent_id"] == 0
         assert "found the auth flow" in stream_node.header
 
         rendered = "\n".join(_plain(line) for line in isolated_dock.tree.render(100))
+        assert "Task:" not in rendered
+        assert "inspect auth.py" not in rendered
+        assert "Agent ID" not in rendered
         assert "Exploring (1/3)" in rendered
         assert "found the auth flow" in rendered
 

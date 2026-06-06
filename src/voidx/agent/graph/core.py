@@ -14,6 +14,7 @@ from __future__ import annotations
 
 import asyncio
 import time
+from datetime import datetime
 from typing import TYPE_CHECKING
 
 from langchain_core.messages import (
@@ -26,6 +27,11 @@ from langgraph.graph import END, StateGraph
 
 from voidx.agent.agents import BASE_SYSTEM_PROMPT, PLAN_MODE_APPEND, get_agent, AgentDef
 from voidx.agent.graph.compaction import GraphCompactionMixin
+from voidx.agent.graph.convergence import (
+    build_convergence_messages,
+    generate_fallback_summary,
+    is_step_hint_message,
+)
 from voidx.agent.graph.permissions import GraphPermissionMixin
 from voidx.agent.graph.runtime import (
     console,
@@ -34,7 +40,7 @@ from voidx.agent.graph.runtime import (
 )
 from voidx.agent.graph.run_loop import GraphRunLoopMixin
 from voidx.agent.state import AgentState
-from voidx.agent.graph.streaming import stream_llm as _stream_llm
+from voidx.agent.graph.streaming import extract_text, stream_llm as _stream_llm
 from voidx.agent.graph.subagent import run_subagent as _run_subagent
 from voidx.agent.graph.tool_execution import GraphToolExecutionMixin
 from voidx.agent.intent_refinement import refine_intent
@@ -140,6 +146,7 @@ class VoidXGraph(
         # One-turn summary injection vs. persisted summary restored across turns.
         self._pending_summary: str | None = None
         self._compaction_summary: str = ""
+        self._session_date: str = _session_date(session)
         self._session_msg_cache: list[MessageRow] | None = None
         self._app: PureTui | None = None
         self._next_agent_id: int = 0
@@ -345,6 +352,7 @@ class VoidXGraph(
             intent_confidence=state.get("intent_confidence"),
             intent_source=state.get("intent_source", ""),
             intent_refined=state.get("intent_refined", False),
+            session_date=self._session_date,
         ).build()
         context.apply_to_messages(state.get("messages", []))
 
@@ -382,6 +390,13 @@ class VoidXGraph(
         has_tool_budget = step < max_s - 1
         if not has_tool_budget:
             tool_defs = []
+        convergence_messages, convergence_forced = build_convergence_messages(
+            step=step,
+            max_steps=max_s,
+            has_tool_budget=has_tool_budget,
+            goal=state.get("goal", "") or _latest_user_text(state.get("messages", [])),
+        )
+        llm_messages = [*state["messages"], *convergence_messages]
 
         agent_name = state.get("agent", "orchestrator")
         if self._debug:
@@ -389,7 +404,7 @@ class VoidXGraph(
         ui.step_header(step, max_s, agent_name)
 
         # ── LLM call with retry ────────────────────────────────────────
-        context_tokens = estimate_context_tokens(state["messages"], self.config.model.model)
+        context_tokens = estimate_context_tokens(llm_messages, self.config.model.model)
         self._usage_stats.update_context(context_tokens)
         if self._session is not None:
             await save_context_frame_from_messages(
@@ -399,12 +414,14 @@ class VoidXGraph(
                 agent_role=agent_name,
                 provider=self.config.model.provider,
                 model=self.config.model.model,
-                messages=state["messages"],
+                messages=llm_messages,
                 token_estimate=context_tokens,
                 metadata={
                     "step": step,
                     "max_steps": max_s,
                     "tool_count": len(tool_defs),
+                    "convergence_hint_count": len(convergence_messages),
+                    "convergence_forced": convergence_forced,
                 },
             )
         max_retries = 2
@@ -412,12 +429,12 @@ class VoidXGraph(
             try:
                 renderer = StreamingRenderer(console, debug=self._debug)
                 model_with_tools = self.model.bind_tools(tool_defs) if tool_defs else self.model
-                assistant_msg = await _stream_llm(model_with_tools, state["messages"], renderer, resolve_protocol(self.config.model))
+                assistant_msg = await _stream_llm(model_with_tools, llm_messages, renderer, resolve_protocol(self.config.model))
                 self._usage_stats.record_call(
                     extract_token_usage(assistant_msg),
                     fallback_input_tokens=context_tokens,
                     fallback_output_tokens=estimate_message_tokens(assistant_msg, self.config.model.model),
-                    messages=state["messages"],
+                    messages=llm_messages,
                     model=self.config.model.model,
                     cache_key=f"{self.config.model.provider}/{self.config.model.model}",
                 )
@@ -440,6 +457,7 @@ class VoidXGraph(
         return {
             "messages": [assistant_msg],
             "step_count": step + 1,
+            "convergence_forced": convergence_forced,
         }
 
     def _router(self, state: AgentState) -> str:
@@ -451,12 +469,18 @@ class VoidXGraph(
         return "end"
 
     async def _finalize(self, state: AgentState) -> dict:
-        return {}
+        if not state.get("convergence_forced"):
+            return {}
+        last = _latest_ai_message(state.get("messages", []))
+        if isinstance(last, AIMessage) and not last.tool_calls:
+            if len(extract_text(last).strip()) >= 20:
+                return {}
+        return {"messages": [AIMessage(content=generate_fallback_summary(state))]}
 
 
 def _latest_user_text(messages: list[BaseMessage]) -> str:
     for msg in reversed(messages):
-        if isinstance(msg, HumanMessage):
+        if isinstance(msg, HumanMessage) and not is_step_hint_message(msg):
             content = msg.content
             if isinstance(content, str):
                 return content
@@ -470,6 +494,22 @@ def _latest_user_text(messages: list[BaseMessage]) -> str:
                 return "\n".join(parts)
             return str(content)
     return ""
+
+
+def _latest_ai_message(messages: list[BaseMessage]) -> AIMessage | None:
+    for msg in reversed(messages):
+        if isinstance(msg, AIMessage):
+            return msg
+    return None
+
+
+def _session_date(session: SessionInfo | None) -> str:
+    if session is not None and session.created_at:
+        try:
+            return datetime.fromisoformat(session.created_at).astimezone().strftime("%Y-%m-%d %Z")
+        except ValueError:
+            pass
+    return datetime.now().astimezone().strftime("%Y-%m-%d %Z")
 
 
 def _pending_approval_scope(value: object | None) -> str:

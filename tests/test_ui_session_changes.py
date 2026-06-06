@@ -74,6 +74,23 @@ def test_change_summary_lines_created_file(tmp_path):
     assert "Created" in lines[0]
 
 
+def test_change_summary_lines_path_and_diff_colors(tmp_path):
+    tracker = SessionChangeTracker()
+    tracker.begin_turn(str(tmp_path))
+    (tmp_path / "auth.py").write_text("old\n", encoding="utf-8")
+    tracker.capture_file("auth.py", str(tmp_path))
+    tracker.record_diff(make_file_diff("auth.py", "old\n", "new\n"))
+    tracker.finish_turn()
+    lines = tracker.change_summary_lines()
+    assert len(lines) == 1
+    line = lines[0]
+    # File path should be rendered in cyan
+    assert "[cyan]auth.py[/cyan]" in line
+    # Added count should be green, removed count should be red
+    assert "[green]+" in line
+    assert "[red]−" in line
+
+
 def test_change_summary_lines_mixed(tmp_path):
     tracker = SessionChangeTracker()
     tracker.begin_turn(str(tmp_path))

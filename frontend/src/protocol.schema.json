@@ -103,6 +103,15 @@
           "title": "Kind",
           "type": "string"
         },
+        "phase": {
+          "default": "text",
+          "enum": [
+            "thinking",
+            "text"
+          ],
+          "title": "Phase",
+          "type": "string"
+        },
         "stream_id": {
           "default": "default",
           "title": "Stream Id",

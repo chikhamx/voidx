@@ -91,193 +91,49 @@ All subcommands return typed Pydantic models, not raw text:
 class GitStatusEntry(BaseModel):
     path: str
     staged: str       # "" | "added" | "modified" | "deleted" | "renamed"
-    unstaged: str      # "" | "modified" | "deleted"
+    unstaged: str     # "" | "modified" | "deleted"
     untracked: bool
 
-class GitCommitInfo(BaseModel):
+class GitDiffEntry(BaseModel):
+    file: str
+    additions: int
+    deletions: int
+    hunks: list[str]  # raw hunk text for LLM consumption
+
+class GitLogEntry(BaseModel):
     hash: str
-    short_hash: str
     author: str
     date: str
     message: str
-    files_changed: int
-    insertions: int
-    deletions: int
-
-class GitDiffFile(BaseModel):
-    path: str
-    old_path: str | None = None   # for renames
-    additions: int
-    deletions: int
-    binary: bool
-    patch: str   # unified diff text for this file
+    files_changed: list[str]
 ```
-
-### Implementation: GitService
-
-Create `src/voidx/tools/git_service.py` that wraps `git` CLI calls with structured parsing:
-
-```python
-class GitService:
-    def __init__(self, workspace: str):
-        self._workspace = workspace
-
-    async def status(self, pathspec: str | None = None) -> list[GitStatusEntry]: ...
-    async def diff(self, cached: bool = False, path: str | None = None, ref: str | None = None) -> list[GitDiffFile]: ...
-    async def log(self, n: int = 10, path: str | None = None) -> list[GitCommitInfo]: ...
-    async def blame(self, path: str, line: int | None = None) -> list[GitBlameLine]: ...
-    async def add(self, paths: list[str]) -> None: ...
-    async def commit(self, message: str, amend: bool = False) -> GitCommitInfo: ...
-    async def stash_push(self, message: str | None = None) -> str: ...
-    async def stash_pop(self) -> str: ...
-    async def restore(self, paths: list[str], staged: bool = False) -> list[str]: ...
-    async def branch_list(self, all: bool = False) -> list[GitBranch]: ...
-    async def checkout(self, branch: str, create: bool = False) -> str: ...
-    async def pr_create(self, title: str, body: str | None = None, base: str | None = None, draft: bool = False) -> GitPrResult: ...
-```
-
-All methods run `git` via `asyncio.create_subprocess_exec` (not bash), parse output with dedicated parsers, and return typed models.
 
 ### Auto-Commit Hook
 
-After the agent finishes a batch of edits (all tool calls in a single AIMessage), automatically create a checkpoint commit:
+After a batch of edits (when the agent finishes a tool execution cycle), automatically commit changes:
 
-```python
-async def _auto_commit_if_dirty(self, state) -> None:
-    """After tool execution, auto-commit if files were modified."""
-    if not self._settings.get_auto_commit():
-        return
-    service = GitService(self._workspace)
-    status = await service.status()
-    dirty = [e for e in status if e.staged or e.unstaged or e.untracked]
-    if not dirty:
-        return
-    # Stage all agent-modified files
-    agent_files = [e.path for e in dirty if e.path in self._edited_files]
-    if not agent_files:
-        return
-    await service.add(agent_files)
-    message = _generate_commit_message(agent_files, self._current_task_description)
-    await service.commit(message)
-```
+1. `git add -A` (all changes in workspace)
+2. `git commit -m "voidx: <summary of changes>"`
+3. If commit fails (nothing to commit), skip silently.
 
-Configuration:
+This gives users an easy undo path: `git reset --hard HEAD~1` reverts the entire agent action.
 
-```json
-{
-  "git": {
-    "auto_commit": true,
-    "auto_commit_prefix": "voidx:",
-    "undo_enabled": true
-  }
-}
-```
+### Permission Model
 
-Auto-commit messages are prefixed with `voidx:` so users can distinguish agent commits from their own.
+| Subcommand | Permission | Rationale |
+|-----------|-----------|-----------|
+| status, diff, log, blame, branch, remote | Allow | Read-only |
+| add, commit, stash, restore, checkout | Ask | Modifies repo state |
+| pr_create | Ask | Pushes to remote |
 
-### Undo Command
+### Testing
 
-Add `/undo` slash command that reverts the last auto-commit:
-
-```python
-async def _undo(self) -> None:
-    service = GitService(self._workspace)
-    log = await service.log(n=1)
-    if not log or not log[0].message.startswith("voidx:"):
-        ui.error("No voidx auto-commit to undo.")
-        return
-    await service.restore(paths=["."], staged=True)  # git reset HEAD~1
-    ui.print(f"Undid: {log[0].message}")
-```
-
-### Git-Aware Context
-
-Add git status to the runtime context injected into the system prompt:
-
-```
-## Git Status
-- Branch: main (ahead 2, behind 0)
-- Modified: src/voidx/tools/file_ops.py, src/voidx/agent/graph.py
-- Untracked: src/voidx/tools/apply_patch.py
-- Last commit: a3f2c1d "feat: add apply_patch tool" (2 min ago)
-```
-
-This gives the agent awareness of what's changed without needing to run `git status` explicitly.
-
-### Permission Integration
-
-| Subcommand | Capability | Default Action |
-|------------|-----------|---------------|
-| status, diff, log, blame, branch, remote | `GIT_READ` | allow |
-| add, commit, stash, restore, checkout | `GIT_WRITE` | ask |
-| pr_create | `GIT_WRITE` | ask |
-| `commit --amend` | `GIT_WRITE` | ask (extra warning) |
-
-New rules in `BASIC_RULES`:
-
-```python
-Rule(permission="git", pattern="status|diff|log|blame|branch|remote", action="allow"),
-Rule(permission="git", pattern="*", action="ask"),
-```
-
-### Smart Commit Messages
-
-Auto-generate commit messages from the edit context:
-
-```python
-def _generate_commit_message(files: list[str], task_description: str) -> str:
-    # Use the task description as the commit subject
-    # List changed files in the body
-    subject = task_description[:72] if task_description else "agent edits"
-    body = f"Files changed: {', '.join(files)}"
-    return f"voidx: {subject}\n\n{body}"
-```
-
-For manual commits via the `git commit` subcommand, the LLM provides the message directly.
-
-## Scope
-
-In scope:
-
-- `git` tool with 12 subcommands (6 read-only, 6 write).
-- `GitService` with structured parsing.
-- Auto-commit hook after agent edit sessions.
-- `/undo` slash command.
-- Git status in runtime context.
-- Smart commit message generation.
-- Permission integration.
-
-Out of scope:
-
-- Interactive rebase (too complex, use bash).
-- Merge conflict resolution (future — needs UI support).
-- Git hooks management.
-- Submodule support.
-- Git worktree support.
-- Visual diff UI (TUI/Web already have basic diff rendering).
-
-## File Changes
-
-| File | Change |
-|------|--------|
-| `src/voidx/tools/git.py` | New — `GitTool`, `GitInput`, subcommand dispatch |
-| `src/voidx/tools/git_service.py` | New — `GitService`, structured parsers, Pydantic result models |
-| `src/voidx/tools/registry.py` | Register `GitTool` |
-| `src/voidx/permission/engine.py` | Add `GIT_READ`, `GIT_WRITE` capabilities; add git rules to `BASIC_RULES` |
-| `src/voidx/agent/slash/handler.py` | Add `/undo` command |
-| `src/voidx/agent/graph/tool_execution.py` | Add auto-commit hook after tool execution |
-| `src/voidx/agent/runtime_context.py` | Add git status to runtime context |
-| `src/voidx/config.py` | Add `GitConfig` with `auto_commit`, `auto_commit_prefix`, `undo_enabled` |
-| `src/voidx/agent/agents.py` | Update prompts to mention `git` tool and `/undo` |
-| `tests/test_tools/test_git.py` | New — subcommand tests, parser tests, auto-commit tests |
-
-## Risks
-
-| Risk | Mitigation |
-|------|-----------|
-| Auto-commit creates noise in git history | Prefix with `voidx:`, configurable, can be squashed later |
-| `gh` CLI not installed for PR creation | Detect at startup, disable `pr_create` subcommand gracefully |
-| Git commands fail in non-git repos | `GitService.__init__` checks for `.git` directory, returns clear error |
-| Auto-commit during partial edits creates broken state | Only auto-commit after all tool calls in a turn complete |
-| Structured parsing breaks on unusual git output | Fallback to raw text output with parse error metadata |
-| `/undo` conflicts with user's own commits | Only undo commits with `voidx:` prefix, refuse otherwise |
+| Test | Description |
+|------|-------------|
+| `test_git_status_structured` | status returns typed entries |
+| `test_git_diff_structured` | diff returns typed entries with hunks |
+| `test_git_log_structured` | log returns typed entries |
+| `test_git_commit_auto` | auto-commit after edits |
+| `test_git_restore_undo` | restore undoes agent changes |
+| `test_git_permission_read_only` | read-only subcommands don't prompt |
+| `test_git_permission_write` | write subcommands require permission |

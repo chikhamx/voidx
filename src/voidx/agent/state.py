@@ -36,3 +36,4 @@ class AgentState(TypedDict):
     step_count: int  # current step number
     max_steps: int  # safety limit
     should_continue: bool  # router flag
+    convergence_forced: NotRequired[bool]  # final no-tools convergence prompt was injected
