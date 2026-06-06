@@ -4,7 +4,7 @@ import sys
 from pathlib import Path
 
 import pytest
-from langchain_core.messages import AIMessage, HumanMessage, ToolMessage
+from langchain_core.messages import AIMessage, HumanMessage, SystemMessage, ToolMessage
 
 sys.path.insert(0, str(Path(__file__).parent.parent / "src"))
 
@@ -347,6 +347,54 @@ class TestCompactionRetry:
         assert COMPACTION_MAX_RETRIES >= 1
 
     @pytest.mark.asyncio
+    async def test_run_compaction_agent_builds_messages_and_extracts_text(self, monkeypatch):
+        """The real compaction agent path should construct chat messages and
+        return extracted assistant text."""
+        from types import SimpleNamespace
+        from unittest.mock import MagicMock
+
+        import voidx.agent.graph.compaction as compaction_module
+        from voidx.agent.graph.compaction import GraphCompactionMixin
+
+        captured = {}
+
+        async def fake_stream_llm(model, messages, _renderer, protocol):
+            captured["model"] = model
+            captured["messages"] = messages
+            captured["protocol"] = protocol
+            return AIMessage(content="## Goal\n- summarized")
+
+        monkeypatch.setattr(compaction_module, "stream_llm", fake_stream_llm)
+
+        host = SimpleNamespace(
+            _compaction=CompactionService(context_limit=128_000, output_token_max=8_192),
+            _debug=False,
+            _session=None,
+            _usage_stats=MagicMock(),
+            config=SimpleNamespace(
+                model=SimpleNamespace(
+                    provider="openai",
+                    model="gpt-4o",
+                    protocol=None,
+                ),
+            ),
+            model=object(),
+        )
+
+        result = await GraphCompactionMixin._run_compaction_agent(
+            host,
+            [HumanMessage(content="Fix the compaction fallback", id="1")],
+            None,
+        )
+
+        assert result == "## Goal\n- summarized"
+        assert captured["model"] is host.model
+        assert captured["protocol"] == "openai"
+        assert isinstance(captured["messages"][0], SystemMessage)
+        assert isinstance(captured["messages"][1], HumanMessage)
+        assert "Fix the compaction fallback" in captured["messages"][1].content
+
+    @pytest.mark.asyncio
     async def test_maybe_compact_retries_on_agent_failure(self):
         """When _run_compaction_agent raises, _maybe_compact should retry
         before falling back to truncation."""
@@ -437,6 +485,59 @@ class TestCompactionRetry:
         # Fallback should still produce a summary
         assert host._pending_summary is not None
         assert len(host._pending_summary) > 0
+
+    @pytest.mark.asyncio
+    async def test_maybe_compact_fallback_finished_event_includes_failure_detail(self, monkeypatch):
+        """The final fallback status should keep the failure reason visible."""
+        from unittest.mock import AsyncMock, MagicMock
+
+        import voidx.agent.graph.compaction as compaction_module
+        from voidx.agent.graph.compaction import GraphCompactionMixin
+
+        class FakeEvents:
+            def __init__(self):
+                self.events = []
+
+            async def emit(self, event):
+                self.events.append(event)
+
+        async def fake_run_agent_always_fail(_head_msgs, _prev_summary):
+            raise RuntimeError("LLM always fails")
+
+        fake_events = FakeEvents()
+        monkeypatch.setattr(compaction_module, "via_events", lambda: True)
+        monkeypatch.setattr(compaction_module, "ui_events", fake_events)
+        monkeypatch.setattr(compaction_module, "estimate_context_tokens", lambda *_args, **_kwargs: 200_000)
+
+        host = MagicMock()
+        host._compaction = CompactionService(context_limit=128_000, output_token_max=8_192)
+        host._pending_summary = None
+        host._compaction_summary = ""
+        host.config = MagicMock()
+        host.config.model.model = "test-model"
+        host.config.ask_compact = False
+        host._session = None
+        host._debug = False
+        host.model = MagicMock()
+        host._run_compaction_agent = fake_run_agent_always_fail
+        host._persist_compaction = AsyncMock()
+
+        messages = []
+        for i in range(8):
+            messages.append(HumanMessage(content=f"Fix the auth bug {i}", id=str(i * 2 + 1)))
+            messages.append(AIMessage(content=f"Looking at it {i}"))
+
+        await GraphCompactionMixin._maybe_compact(
+            host, messages, [], force=True, ask=False,
+        )
+
+        finished = [
+            event for event in fake_events.events
+            if getattr(event, "kind", "") == "status.finished"
+        ][-1]
+        assert finished.status_id == "compaction"
+        assert finished.ok is False
+        assert finished.detail == "RuntimeError: LLM always fails; using extracted summary"
 
 
 class TestOverflowThreshold:

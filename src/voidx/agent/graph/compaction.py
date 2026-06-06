@@ -2,9 +2,10 @@
 
 from __future__ import annotations
 
+import logging
 from typing import TYPE_CHECKING
 
-from langchain_core.messages import SystemMessage
+from langchain_core.messages import HumanMessage, SystemMessage
 
 from voidx.agent.message_rows import messages_from_rows
 from voidx.agent.graph.runtime import console, ui
@@ -24,6 +25,9 @@ from voidx.runtime.ui import (
 
 if TYPE_CHECKING:
     from voidx.agent.graph.contracts import GraphCompactionHost
+
+
+logger = logging.getLogger(__name__)
 
 
 class GraphCompactionMixin:
@@ -93,6 +97,7 @@ class GraphCompactionMixin:
         summary = None
         previous_summary = getattr(self, "_compaction_summary", "") or None
         last_error: Exception | None = None
+        returned_no_summary = False
 
         for attempt in range(1, COMPACTION_MAX_RETRIES + 2):  # 1 initial + N retries
             try:
@@ -107,8 +112,11 @@ class GraphCompactionMixin:
                 summary = await self._run_compaction_agent(head_msgs, previous_summary)
                 if summary:
                     break
+                returned_no_summary = True
+                last_error = None
             except Exception as e:
                 last_error = e
+                returned_no_summary = False
                 if attempt <= COMPACTION_MAX_RETRIES:
                     if via_events():
                         await ui_events.emit(StatusUpdated(
@@ -122,16 +130,21 @@ class GraphCompactionMixin:
 
         if not summary:
             # All retries exhausted — use an extracted summary, but keep the selected tail.
+            if last_error:
+                failure_detail = f"{type(last_error).__name__}: {last_error}"
+            elif returned_no_summary:
+                failure_detail = "compaction agent returned no summary"
+            else:
+                failure_detail = "compaction agent did not produce a summary"
             if via_events():
-                err_detail = f"{last_error}; " if last_error else ""
                 await ui_events.emit(StatusUpdated(
                     status_id="compaction",
                     label="Compaction agent failed",
-                    detail=f"{err_detail}using extracted summary",
+                    detail=f"{failure_detail}; using extracted summary",
                     stage="compacting",
                 ))
             else:
-                err_msg = f" ({last_error})" if last_error else ""
+                err_msg = f" ({failure_detail})"
                 ui.print(f"[dim]Compaction agent failed{err_msg} — using extracted summary[/dim]")
             fallback = CompactionService.fallback_summary(head_msgs)
             self._pending_summary = fallback
@@ -145,6 +158,7 @@ class GraphCompactionMixin:
                 await ui_events.emit(StatusFinished(
                     status_id="compaction",
                     label=f"Compaction fallback summarized {len(head_msgs)} messages",
+                    detail=f"{failure_detail}; using extracted summary",
                     ok=False,
                     remove=False,
                 ))
@@ -270,7 +284,20 @@ class GraphCompactionMixin:
             cache_key=f"{self.config.model.provider}/{self.config.model.model}",
         )
         text = extract_text(assistant_msg)
-        return text if text else None
+        if text:
+            return text
+        logger.warning(
+            "Compaction agent returned empty text: message_type=%s content_type=%s",
+            type(assistant_msg).__name__,
+            _content_type_summary(getattr(assistant_msg, "content", None)),
+        )
+        return None
+
+
+def _content_type_summary(content: object) -> str:
+    if isinstance(content, list):
+        return ",".join(type(item).__name__ for item in content) or "list(empty)"
+    return type(content).__name__
 
 
 def _max_persisted_message_id(messages: list) -> int | None:
