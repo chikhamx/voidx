@@ -332,7 +332,7 @@ def capability_for_tool(tool: str, args: dict) -> PermissionCapability:
         "lsp_references",
     }:
         return PermissionCapability.READ_TOOLS
-    if tool in {"write", "edit"}:
+    if tool in {"write", "edit", "apply_patch"}:
         return PermissionCapability.FILE_WRITE
     if tool == "lsp_format":
         return PermissionCapability.FILE_FORMAT
@@ -346,7 +346,7 @@ def capability_for_tool(tool: str, args: dict) -> PermissionCapability:
 
 
 _FILE_PATTERN_TOOLS = {
-    "read", "write", "edit",
+    "read", "write", "edit", "apply_patch",
     "lsp_diagnostics", "lsp_symbols", "lsp_definition",
     "lsp_references", "lsp_format",
 }

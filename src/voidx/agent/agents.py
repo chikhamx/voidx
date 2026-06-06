@@ -103,7 +103,7 @@ surgical edits directly when that is the shortest safe path.
    running write-capable commands, or delegating implement.
 
 4. **Code changes**
-   - Small, local, or mechanical changes → read first, then call write/edit
+   - Small, local, or mechanical changes → read first, then call write/edit/apply_patch
      yourself and verify.
    - If investigation finds a concrete edit but the user asked only to inspect,
      design, or review, stop and report the proposed change. Ask for
@@ -199,7 +199,7 @@ You are the dedicated executor for broad or isolated implementation tasks.
 
 ## Rules
 - Read before writing. Never guess file contents.
-- Make minimal, precise edits. Use edit with exact old_string matches.
+- Make minimal, precise edits. Use edit with exact old_string matches, or apply_patch for unified diffs and multi-file changes.
 - Follow the plan if one was provided.
 - Run tests/bash after changes to verify.
 - Return: what files were changed, what was done, any issues encountered.
@@ -261,6 +261,12 @@ class AgentDef(BaseModel):
     hidden: bool = False  # hidden from user-facing lists?
     model: str | None = None  # None = inherit from parent
 
+    def with_max_steps(self, value: int) -> "AgentDef":
+        """Return a copy with max_steps overridden."""
+        if value == self.max_steps:
+            return self
+        return self.model_copy(update={"max_steps": value})
+
     @property
     def role_prompt(self) -> str:
         if self.name in PROMPTLESS_AGENTS:
@@ -311,11 +317,11 @@ BUILTIN_AGENTS: dict[str, AgentDef] = {
             "read", "glob", "grep", "bash", "agent", "task_status", "todo",
             "webfetch", "websearch", "repo_map",
             "lsp_diagnostics", "lsp_symbols", "lsp_definition", "lsp_references",
-            "write", "edit", "lsp_format",
+            "write", "edit", "apply_patch", "lsp_format",
         ],
         can_write=True,
         can_delegate=True,
-        max_steps=20,
+        max_steps=100,
         hidden=False,
     ),
     "explore": AgentDef(
@@ -331,7 +337,7 @@ BUILTIN_AGENTS: dict[str, AgentDef] = {
         ],
         can_write=False,
         can_delegate=False,
-        max_steps=10,
+        max_steps=25,
         hidden=False,
 
     ),
@@ -347,7 +353,7 @@ BUILTIN_AGENTS: dict[str, AgentDef] = {
         ],
         can_write=False,
         can_delegate=False,
-        max_steps=15,
+        max_steps=30,
         hidden=False,
     ),
     "implement": AgentDef(
@@ -356,13 +362,13 @@ BUILTIN_AGENTS: dict[str, AgentDef] = {
         when_to_use="Use for all code writing, file editing, refactoring, bug fixing, "
                     "and bash execution. Give complete, self-contained task descriptions.",
         tools=[
-            "read", "write", "edit", "glob", "grep", "bash", "todo", "repo_map",
+            "read", "write", "edit", "apply_patch", "glob", "grep", "bash", "todo", "repo_map",
             "lsp_diagnostics", "lsp_symbols", "lsp_definition", "lsp_references",
             "lsp_format",
         ],
         can_write=True,
         can_delegate=False,
-        max_steps=25,
+        max_steps=100,
         hidden=False,
     ),
     "review": AgentDef(
@@ -377,7 +383,7 @@ BUILTIN_AGENTS: dict[str, AgentDef] = {
         ],
         can_write=False,
         can_delegate=False,
-        max_steps=10,
+        max_steps=30,
         hidden=False,
     ),
     # ── hidden agents (not user-visible, internal only) ───────────────
