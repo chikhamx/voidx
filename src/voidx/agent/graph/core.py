@@ -72,6 +72,7 @@ from voidx.llm.usage import (
 )
 from voidx.memory.context_frames import save_context_frame_from_messages
 from voidx.memory.session import MessageRow, SessionInfo
+from voidx.skills.runtime import SkillRunState
 from voidx.tools.on_intent import OnIntentInput
 from voidx.runtime.ui import (
     OutputNode,
@@ -87,6 +88,24 @@ from voidx.runtime.ui import (
 
 if TYPE_CHECKING:
     from voidx.agent.graph.contracts import GraphComponentHost
+
+
+def _restored_skill_runs(task_run: TaskRun | None) -> list[SkillRunState]:
+    if task_run is None:
+        return []
+    return list((task_run.skill_runs or {}).values())
+
+
+def _merge_skill_runs(*groups: list[SkillRunState | dict]) -> list[SkillRunState]:
+    merged: dict[str, SkillRunState] = {}
+    for group in groups:
+        for item in group:
+            try:
+                run = item if isinstance(item, SkillRunState) else SkillRunState.model_validate(item)
+            except ValueError:
+                continue
+            merged[run.name] = run
+    return list(merged.values())
 
 
 class VoidXGraph(
@@ -355,6 +374,11 @@ class VoidXGraph(
             scope=pending_approval_scope(state.get("pending_approval")) or state.get("goal") or current_user_text,
             turn_count=state.get("goal_turn_count", 0),
         )
+        skill_runs = _merge_skill_runs(
+            _restored_skill_runs(getattr(self, "_task_run", None)),
+            state.get("skill_runs", []) or [],
+            skill_context.runs,
+        )
         mode_prompt = PLAN_MODE_APPEND if InteractionMode.parse(interaction_mode) == InteractionMode.PLAN else ""
         summary = self._pending_summary or self._compaction_summary
         self._pending_summary = None
@@ -370,7 +394,7 @@ class VoidXGraph(
             interaction_mode=interaction_mode,
             instructions=instructions,
             skill_instructions=skill_context.instructions,
-            skill_runs=skill_context.runs,
+            skill_runs=skill_runs,
             active_skill_summaries=skill_context.active,
             summary=summary,
             current_user_text=current_user_text,
@@ -389,7 +413,7 @@ class VoidXGraph(
         ).build()
         context.apply_to_messages(state.get("messages", []))
 
-        return {**base, "skill_runs": skill_context.runs}
+        return {**base, "skill_runs": skill_runs}
 
     async def _call_llm(self, state: AgentState) -> dict:
         step = state.get("step_count", 0)

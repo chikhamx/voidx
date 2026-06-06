@@ -190,6 +190,15 @@ async def load_messages(session_id: str) -> list[MessageRow]:
     ]
 
 
+async def count_messages(session_id: str) -> int:
+    """Count persisted messages for a session."""
+    row = await _fetch_one(
+        "SELECT COUNT(*) AS cnt FROM messages WHERE session_id = ?",
+        (session_id,),
+    )
+    return int(row["cnt"] or 0) if row else 0
+
+
 async def clear_messages(session_id: str) -> None:
     def _run(conn):
         conn.execute("DELETE FROM context_frames WHERE session_id = ?", (session_id,))

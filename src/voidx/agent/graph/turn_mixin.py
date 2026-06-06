@@ -19,6 +19,7 @@ from voidx.memory.runtime_state import MessageRuntimeSnapshot, save_message_runt
 from voidx.memory.session import (
     MessageRow,
     _now,
+    count_messages,
     create_session,
     delete_messages_from,
     load_messages,
@@ -39,6 +40,9 @@ from voidx.runtime.ui import (
 
 if TYPE_CHECKING:
     from voidx.agent.graph.contracts import GraphRunLoopHost
+
+
+RESUME_FORCE_COMPACT_MESSAGE_COUNT = 500
 
 
 class GraphTurnMixin:
@@ -63,25 +67,34 @@ class GraphTurnMixin:
             else:
                 self._turn_node = dock.start_turn(payload.display_text)
             # Load session messages — use in-memory cache when available
+            force_resume_compaction = False
             if self._session_msg_cache is not None:
                 session_msgs = list(self._session_msg_cache)
             else:
-                session_msgs = (await load_messages(self._session.id)) if self._session else []
+                if self._session:
+                    message_count = await count_messages(self._session.id)
+                    force_resume_compaction = (
+                        self.model is not None
+                        and message_count > RESUME_FORCE_COMPACT_MESSAGE_COUNT
+                        and not (self._pending_summary or self._compaction_summary)
+                    )
+                    if force_resume_compaction:
+                        if via_events():
+                            await ui_events.emit(StatusUpdated(
+                                status_id="turn:analyzing",
+                                label="Resuming long session",
+                                detail=f"{message_count} persisted messages; preparing compaction",
+                                stage="analyzing",
+                            ))
+                        else:
+                            ui.warn(
+                                f"Session has {message_count} messages; compacting older context before continuing"
+                            )
+                    session_msgs = await load_messages(self._session.id)
+                else:
+                    session_msgs = []
                 if self._session:
                     self._session_msg_cache = list(session_msgs)
-            truncation_notice: str | None = None
-            # Safety: if session is huge, only load recent messages
-            if len(session_msgs) > 500:
-                original_count = len(session_msgs)
-                omitted_count = original_count - 200
-                ui.warn(f"Session has {original_count} messages — loading last 200")
-                session_msgs = session_msgs[-200:]
-                truncation_notice = (
-                    f"Earlier session context was truncated for this turn: "
-                    f"{omitted_count} older persisted messages were omitted. "
-                    f"Only the latest {len(session_msgs)} persisted messages "
-                    "plus the current user message are available."
-                )
 
             msgs = messages_from_rows(session_msgs)
 
@@ -158,14 +171,12 @@ class GraphTurnMixin:
             }
 
             # ── compaction: check overflow before running ──────────────────
-            head, tail_id = await self._maybe_compact(msgs, session_msgs)
-            if truncation_notice:
-                existing_summary = self._pending_summary or self._compaction_summary
-                self._pending_summary = (
-                    f"{truncation_notice}\n\n{existing_summary}"
-                    if existing_summary
-                    else truncation_notice
-                )
+            await self._maybe_compact(
+                msgs,
+                session_msgs,
+                force=force_resume_compaction,
+                ask=not force_resume_compaction,
+            )
             if via_events():
                 await ui_events.emit(StatusFinished(status_id="turn:analyzing"))
 

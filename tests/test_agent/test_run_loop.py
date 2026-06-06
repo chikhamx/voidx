@@ -4,7 +4,7 @@ from pathlib import Path
 from types import MethodType, SimpleNamespace
 
 import pytest
-from langchain_core.messages import AIMessage
+from langchain_core.messages import AIMessage, HumanMessage
 
 sys.path.insert(0, str(Path(__file__).parent.parent.parent / "src"))
 
@@ -14,9 +14,11 @@ from voidx.agent.graph.run_loop import GraphRunLoopMixin
 from voidx.agent.runtime_context import InteractionMode, TaskIntent
 from voidx.agent.task_state import PendingApproval, TaskPhase, TaskRun, TaskRunStatus, TaskState
 from voidx.config import Config
+from voidx.llm.instruction import SkillRuntimeContext
 from voidx.llm.usage import UsageStats
 from voidx.memory.runtime_state import RuntimeStateSnapshot, save_runtime_state
 from voidx.memory.session import MessageRow, create_session, load_messages, save_message
+from voidx.skills.runtime import SkillActivationSource, SkillRunState, SkillRunStatus
 from voidx.tools.task_tracker import TaskTracker
 from voidx.ui.output.dock import BottomInputDock, set_dock
 
@@ -226,7 +228,7 @@ async def test_run_once_cancel_deletes_pending_user_message(tmp_path):
     graph._task_state = TaskState()
     graph._task_run = None
 
-    async def fake_maybe_compact(self, messages, session_messages):
+    async def fake_maybe_compact(self, messages, session_messages, **_kwargs):
         return messages, None
 
     started = asyncio.Event()
@@ -261,7 +263,7 @@ async def test_run_once_cancel_deletes_pending_user_message(tmp_path):
 
 
 @pytest.mark.asyncio
-async def test_large_session_truncation_adds_context_notice(tmp_path):
+async def test_large_uncompacted_resume_forces_compaction_without_truncating(tmp_path):
     session = await create_session(workspace=str(tmp_path))
     for index in range(501):
         await save_message(MessageRow(
@@ -271,9 +273,19 @@ async def test_large_session_truncation_adds_context_notice(tmp_path):
         ))
 
     graph = VoidXGraph(Config(workspace=str(tmp_path)), api_key=None, session=session)
-    graph._compaction.is_overflow = lambda _tokens: False
+    graph.model = object()
     graph._compaction.prune = lambda _messages: None
+    compact_calls: list[dict] = []
     captured: dict[str, list] = {}
+
+    async def fake_maybe_compact(messages, session_messages, *, force=False, ask=True):
+        compact_calls.append({
+            "force": force,
+            "ask": ask,
+            "session_count": len(session_messages),
+            "message_contents": [getattr(message, "content", None) for message in messages],
+        })
+        return None, None
 
     class FakeGraph:
         async def ainvoke(self, initial, _config):
@@ -281,6 +293,7 @@ async def test_large_session_truncation_adds_context_notice(tmp_path):
             captured["messages"] = list(initial["messages"])
             return {"messages": list(initial["messages"]) + [AIMessage(content="ok")]}
 
+    graph._maybe_compact = fake_maybe_compact
     graph.graph = FakeGraph()
 
     test_dock = BottomInputDock()
@@ -293,8 +306,64 @@ async def test_large_session_truncation_adds_context_notice(tmp_path):
         test_dock.reset()
         set_dock(None)
 
+    assert compact_calls == [{
+        "force": True,
+        "ask": False,
+        "session_count": 501,
+        "message_contents": [f"message {index}" for index in range(501)] + ["current request"],
+    }]
     system_content = captured["messages"][0].content
-    assert "Long Summary" in system_content
-    assert "301 older persisted messages were omitted" in system_content
-    assert all(getattr(message, "content", None) != "message 0" for message in captured["messages"])
+    assert "older persisted messages were omitted" not in system_content
+    assert any(getattr(message, "content", None) == "message 0" for message in captured["messages"])
     assert any(getattr(message, "content", None) == "message 500" for message in captured["messages"])
+
+
+@pytest.mark.asyncio
+async def test_prepare_includes_restored_skill_runs(tmp_path):
+    graph = VoidXGraph(Config(workspace=str(tmp_path)), api_key=None)
+    restored = SkillRunState(
+        name="brainstorming",
+        status=SkillRunStatus.ACTIVE,
+        source=SkillActivationSource.WORKFLOW,
+        reason="resume",
+        phase="design",
+        scope="resume optimization",
+        activated_turn=1,
+        updated_turn=2,
+    )
+    graph._task_run = TaskRun(skill_runs={"brainstorming": restored})
+
+    class FakeInstruction:
+        async def system(self):
+            return []
+
+        async def skill_context_for(self, *_args, **_kwargs):
+            return SkillRuntimeContext(instructions=[], active=[], runs=[])
+
+    graph._instruction = FakeInstruction()
+    state = {
+        "messages": [HumanMessage(content="continue")],
+        "workspace": str(tmp_path),
+        "agent": "orchestrator",
+        "interaction_mode": "auto",
+        "task_intent": "design",
+        "intent_resolution_reason": "resume",
+        "pending_approval": None,
+        "goal": "resume optimization",
+        "goal_phase": "design",
+        "goal_status": "active",
+        "goal_turn_count": 2,
+        "available_tool_ids": [],
+        "step_count": 0,
+        "max_steps": 50,
+        "tool_results": {},
+        "should_continue": True,
+    }
+
+    result = await graph._prepare_with_stream(state)
+
+    assert result["skill_runs"] == [restored]
+    assert (
+        "Skill run state: brainstorming=active "
+        "phase=design source=workflow reason=resume"
+    ) in state["messages"][-1].content
