@@ -5,14 +5,19 @@ Each call REPLACES the entire list. Status persists across calls via tracker.
 
 from __future__ import annotations
 
+from typing import Literal, TypeAlias
+
 from pydantic import BaseModel, Field
 
 from voidx.tools.base import BaseTool, model_to_json_schema, ToolContext, ToolResult
 
 
+TodoStatus: TypeAlias = Literal["pending", "in_progress", "completed", "cancelled"]
+
+
 class TodoItem(BaseModel):
     content: str = Field(description="Task description, one sentence.")
-    status: str = Field(
+    status: TodoStatus = Field(
         default="pending",
         description="pending | in_progress | completed | cancelled"
     )
@@ -78,5 +83,7 @@ class TodoWriteTool(BaseTool):
             metadata={
                 "total": total, "done": done, "in_progress": in_progress,
                 "pending": pending, "cancelled": cancelled,
+                "todo_items": [item.model_dump(mode="json") for item in inp.todos],
+                "todo_summary": f"{done}/{total} done · {in_progress} active · {pending} pending",
             },
         )

@@ -6,6 +6,8 @@ from typing import Any, Literal, TypeAlias
 
 from pydantic import BaseModel, ConfigDict, Field
 
+from voidx.tools.todo import TodoStatus
+
 
 class UiEventBase(BaseModel):
     model_config = ConfigDict(frozen=True)
@@ -154,6 +156,19 @@ class ToolResultAppended(UiEventBase):
     collapsed: bool = False
 
 
+class TodoItemPayload(BaseModel):
+    model_config = ConfigDict(frozen=True)
+
+    content: str
+    status: TodoStatus
+
+
+class TodoUpdated(UiEventBase):
+    kind: Literal["todo.updated"] = "todo.updated"
+    items: list[TodoItemPayload]
+    summary: str
+
+
 class FileChangeAppended(UiEventBase):
     kind: Literal["file_change.appended"] = "file_change.appended"
     tool_call_id: str = ""
@@ -239,6 +254,7 @@ UiEvent: TypeAlias = (
     | ToolStarted
     | ToolFinished
     | ToolResultAppended
+    | TodoUpdated
     | FileChangeAppended
     | SubagentStarted
     | SubagentStepStarted
