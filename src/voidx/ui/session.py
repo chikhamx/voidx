@@ -225,12 +225,31 @@ class SessionChangeTracker:
         workspace: str,
         extra_paths: list[str] | None = None,
     ) -> None:
+        if tool_name == "apply_patch":
+            patch = args.get("patch")
+            if not isinstance(patch, str) or not patch:
+                return
+            self._capture_patch_files(patch, workspace, extra_paths)
+            return
         if tool_name not in {"write", "edit", "lsp_format"}:
             return
         file_path = args.get("file_path")
         if not isinstance(file_path, str) or not file_path:
             return
         self.capture_file(file_path, workspace, extra_paths)
+
+    def _capture_patch_files(
+        self,
+        patch: str,
+        workspace: str,
+        extra_paths: list[str] | None = None,
+    ) -> None:
+        from voidx.diffing import parse_unified_diff
+
+        parsed = parse_unified_diff(patch)
+        for file_diff in parsed.files:
+            if file_diff.path and file_diff.path != "/dev/null":
+                self.capture_file(file_diff.path, workspace, extra_paths)
 
     def capture_file(
         self,
