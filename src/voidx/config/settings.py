@@ -6,8 +6,9 @@ import json
 from pathlib import Path
 
 from voidx.config.enums import PermissionMode
-from voidx.config.models import Config, ModelConfig, Profile
+from voidx.config.models import Config, ModelConfig, Profile, UserProfile
 from voidx.config.permissions import permission_mode_defaults, permission_mode_reviewer_default
+from voidx.config.settings_agent import SettingsAgentMixin
 from voidx.config.settings_api_keys import SettingsApiKeyMixin
 from voidx.config.settings_code_ide import SettingsCodeIdeMixin
 from voidx.config.settings_custom import SettingsCustomProviderMixin
@@ -22,6 +23,7 @@ _LEGACY_SETTINGS_FILE = "voidx.json"
 
 
 class Settings(
+    SettingsAgentMixin,
     SettingsApiKeyMixin,
     SettingsMcpMixin,
     SettingsWebMixin,
@@ -144,6 +146,47 @@ class Settings(
 
     # ── custom models ─────────────────────────────────────────────────────
 
+    # ── user profile ──────────────────────────────────────────────────────
+
+    def get_user_profile(self) -> UserProfile:
+        raw = self._data.get("userProfile")
+        if not isinstance(raw, dict):
+            raw = self._data.get("user_profile")
+        if not isinstance(raw, dict):
+            raw = {}
+        language = raw.get("language", self._data.get("user_language", ""))
+        tone = raw.get("tone", self._data.get("user_tone", ""))
+        return UserProfile(
+            language=_normalize_user_language(language),
+            tone=_normalize_user_tone(tone),
+        )
+
+    def set_user_language(self, language: str) -> Path:
+        profile = self.get_user_profile()
+        profile.language = _normalize_user_language(language)
+        return self._save_user_profile(profile)
+
+    def set_user_tone(self, tone: str) -> Path:
+        profile = self.get_user_profile()
+        profile.tone = _normalize_user_tone(tone)
+        return self._save_user_profile(profile)
+
+    def _save_user_profile(self, profile: UserProfile) -> Path:
+        payload: dict[str, str] = {}
+        if profile.language:
+            payload["language"] = profile.language
+        if profile.tone:
+            payload["tone"] = profile.tone
+        if payload:
+            self._data["userProfile"] = payload
+        else:
+            self._data.pop("userProfile", None)
+        self._data.pop("user_profile", None)
+        self._data.pop("user_language", None)
+        self._data.pop("user_tone", None)
+        self._save()
+        return self._path
+
     # ── build config for graph ───────────────────────────────────────────
 
     async def build_config(self) -> Config:
@@ -182,12 +225,14 @@ class Settings(
 
         return Config(
             model=cfg,
+            agent_max_steps=self.get_agent_max_steps(),
             permission_mode=permission_mode,
             sandbox_mode=sandbox_mode,
             sandbox_workspace_write=self.get_sandbox_workspace_write(),
             approval_policy=approval_policy,
             approval_reviewer=approval_reviewer,
             ask_compact=bool(self._data.get("askCompact", self._data.get("ask_compact", False))),
+            user_profile=self.get_user_profile(),
         )
 
     async def _get_profile(self, name: str) -> Profile | None:
@@ -263,3 +308,17 @@ class Settings(
             changed = True
         if changed:
             self._save()
+
+
+def _normalize_user_language(value: object) -> str:
+    text = str(value or "").strip()
+    if text.lower() in {"", "auto", "detect", "default"}:
+        return ""
+    return text
+
+
+def _normalize_user_tone(value: object) -> str:
+    text = str(value or "").strip()
+    if text.lower() in {"", "auto", "default"}:
+        return ""
+    return text

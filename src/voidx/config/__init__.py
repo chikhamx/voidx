@@ -9,10 +9,12 @@ from voidx.config.enums import (
 )
 from voidx.config.models import (
     AgentConfig,
+    AgentMaxSteps,
     Config,
     McpServerConfig,
     ModelConfig,
     Profile,
+    UserProfile,
     WebToolRoute,
 )
 from voidx.config.permissions import (
@@ -25,6 +27,7 @@ __all__ = [
     "SETTINGS_FILE",
     "SKILLS_STATE_FILE",
     "AgentConfig",
+    "AgentMaxSteps",
     "ApprovalPolicy",
     "ApprovalReviewer",
     "CodeIde",
@@ -35,6 +38,7 @@ __all__ = [
     "Profile",
     "SandboxMode",
     "Settings",
+    "UserProfile",
     "WebToolRoute",
     "permission_mode_defaults",
     "permission_mode_reviewer_default",

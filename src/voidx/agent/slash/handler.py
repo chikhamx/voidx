@@ -10,9 +10,10 @@ from voidx.agent.slash.code_ide import SlashCodeIdeMixin
 from voidx.agent.slash.lsp import SlashLspMixin
 from voidx.agent.slash.mcp import SlashMcpMixin
 from voidx.agent.slash.model import SlashModelMixin
+from voidx.agent.slash.profile import SlashProfileMixin
 from voidx.agent.slash.session import SlashSessionMixin
 from voidx.agent.slash.skills import SlashSkillsMixin
-from voidx.agent.slash.runtime import PROVIDERS, _select_from_list, _w, ui
+from voidx.agent.slash.runtime import PROVIDERS, _select_from_list, _w, prompt_text, ui
 from voidx.runtime.ui import COMMANDS
 
 
@@ -57,6 +58,7 @@ class SlashHandler(
     SlashSessionMixin,
     SlashSkillsMixin,
     SlashMcpMixin,
+    SlashProfileMixin,
     SlashModelMixin,
 ):
     """Handles all slash commands (/help, /model, /plan, etc.).
@@ -90,6 +92,9 @@ class SlashHandler(
 
     def _host_settings(self) -> Any | None:
         return self._host_value("settings", "_settings")
+
+    async def _prompt(self, text: str, default: str = "", secret: bool = False) -> str | None:
+        return await prompt_text(self._host_app(), text, default=default, secret=secret)
 
     def _host_task_run(self) -> Any:
         return self._host_value("task_run", "_task_run")
@@ -188,6 +193,7 @@ class SlashHandler(
             "/title": lambda: self._set_title(inp),
             "/mode": lambda: self._mode(args),
             "/goal": lambda: self._goal(args),
+            "/lang": lambda: self._lang(args),
             "/plan": set_plan,
             "/unplan": set_auto,
             "/allow": allow_tool,
@@ -201,6 +207,7 @@ class SlashHandler(
             "/lsp": lambda: self._lsp(args),
             "/skills": lambda: self._skills(args),
             "/paste": self._paste_clipboard_image,
+            "/tone": lambda: self._tone(args),
             "/debug": lambda: self._debug(args),
             "/compact": compact,
             "/diff": self._show_diff,

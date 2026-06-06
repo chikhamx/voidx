@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+import asyncio
 import sys
 
 from voidx.agent.graph.runtime import ui
@@ -17,6 +18,7 @@ _STATIC_PROVIDERS = [
     "zhipu",
     "kimi",
     "doubao",
+    "typex",
 ]
 
 
@@ -51,3 +53,23 @@ async def _select_from_list(app, prompt: str, items: list[str]) -> int | None:
     if res is not None:
         return int(res)
     return None
+
+
+async def prompt_text(app, text: str, default: str = "", secret: bool = False) -> str | None:
+    if app is not None and hasattr(app, "ask_text"):
+        return await app.ask_text(text, default=default, secret=secret)
+
+    loop = asyncio.get_event_loop()
+    if secret:
+        import getpass
+        result = await loop.run_in_executor(
+            None,
+            lambda: getpass.getpass(f"  {text}: ").strip(),
+        )
+        return result if result else default
+
+    result = await loop.run_in_executor(
+        None,
+        lambda: input(f"  {text}: ").strip(),
+    )
+    return result if result else default

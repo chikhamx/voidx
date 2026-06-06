@@ -120,8 +120,13 @@ def main(
     ),
     web_host: str = typer.Option("127.0.0.1", "--web-host", help="Web UI gateway host"),
     web_port: int = typer.Option(0, "--web-port", help="Web UI gateway port"),
+    version: bool = typer.Option(False, "--version", help="Show version and exit"),
 ) -> None:
     """Start an interactive coding session."""
+    if version:
+        from voidx import __version__
+        print(f"voidx v{__version__}")
+        raise typer.Exit()
     if web_headless and not web:
         raise typer.BadParameter("--web-headless requires --web")
     asyncio.run(_run_chat(workspace, model, provider, resume, new, web, web_headless, web_host, web_port))

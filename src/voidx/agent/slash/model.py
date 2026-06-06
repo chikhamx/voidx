@@ -166,26 +166,6 @@ class SlashModelMixin:
             return "*" * len(key)
         return key[:4] + "****" + key[-4:]
 
-    async def _prompt(self, text: str, default: str = "", secret: bool = False) -> str | None:
-        app = getattr(self._g, "_app", None)
-        if app is not None and hasattr(app, "ask_text"):
-            return await app.ask_text(text, default=default, secret=secret)
-
-        loop = asyncio.get_event_loop()
-        if secret:
-            import getpass
-            result = await loop.run_in_executor(
-                None,
-                lambda: getpass.getpass(f"  {text}: ").strip(),
-            )
-            return result if result else default
-
-        result = await loop.run_in_executor(
-            None,
-            lambda: input(f"  {text}: ").strip(),
-        )
-        return result if result else default
-
     async def _list_models(self) -> None:
         from voidx.llm.catalog import list_models
 

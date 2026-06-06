@@ -22,6 +22,7 @@ COMMANDS: list[tuple[str, str]] = [
     ("/help", "Show all commands"),
     ("/goal", "Set or show current goal"),
     ("/goal clear", "Clear current goal"),
+    ("/lang", "Set response language preference"),
     ("/list", "List saved sessions"),
     ("/lsp", "Manage language servers"),
     ("/lsp doctor", "Check installed language servers"),
@@ -67,6 +68,7 @@ COMMANDS: list[tuple[str, str]] = [
     ("/tavily set", "Set Tavily API key for web search"),
     ("/tavily show", "Show Tavily API key status"),
     ("/title", "Set session title"),
+    ("/tone", "Set response tone preference"),
     ("/unplan", "Return to auto mode"),
     ("/usage", "Show token usage for this session"),
 ]

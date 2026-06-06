@@ -9,7 +9,7 @@ from typing import Iterable
 from langchain_core.messages import BaseMessage, HumanMessage, SystemMessage
 from pydantic import BaseModel, Field
 
-from voidx.config import ApprovalReviewer, Config
+from voidx.config import ApprovalReviewer, Config, UserProfile
 from voidx.runtime.intent import InteractionMode, TaskIntent, infer_task_intent
 from voidx.skills.runtime import SkillRunState
 
@@ -40,6 +40,7 @@ class RuntimeEnvelope(BaseModel):
     execution_policy: ExecutionPolicy
     agent: str
     agent_id: int = -1
+    user_profile: UserProfile = Field(default_factory=UserProfile)
 
 
 class ContextSection(BaseModel):
@@ -154,6 +155,7 @@ class RuntimeContextBuilder:
         self.intent_confidence = intent_confidence
         self.intent_source = intent_source.strip()
         self.intent_refined = intent_refined
+        self.user_profile = config.user_profile
         now = datetime.now().astimezone()
         self.session_date = (session_date or now.strftime("%Y-%m-%d %Z")).strip()
         self.current_datetime = (current_datetime or now.strftime("%Y-%m-%d %H:%M %Z")).strip()
@@ -170,6 +172,7 @@ class RuntimeContextBuilder:
             execution_policy=ExecutionPolicy.from_config(self.config),
             agent=self.agent,
             agent_id=self.agent_id,
+            user_profile=self.user_profile,
         )
 
         sections = [
@@ -241,6 +244,18 @@ class RuntimeContextBuilder:
             lines.append(f"- Runtime-visible tools: {', '.join(self.available_tool_ids)}")
         if self.intent_resolution_reason:
             lines.append(f"- Intent resolution: {self.intent_resolution_reason}")
+        language = self.user_profile.language.strip()
+        if language:
+            display = _language_display(language)
+            target = _language_target(language)
+            lines.append(f"- User language preference: {display}")
+            lines.append(
+                f"- Language instruction: Prefer responding in {target} unless the user explicitly asks otherwise."
+            )
+        tone = self.user_profile.tone.strip()
+        if tone:
+            lines.append(f"- User tone preference: {tone}")
+            lines.append(f"- Tone instruction: {_tone_instruction(tone)}")
         pending = _render_pending_approval(self.pending_approval)
         if pending:
             lines.append(f"- Pending approval: {pending}")
@@ -287,7 +302,83 @@ def _render_envelope(envelope: RuntimeEnvelope) -> str:
     ]
     if policy.extra_write_paths:
         lines.append(f"- Extra write paths: {', '.join(policy.extra_write_paths)}")
+    language = envelope.user_profile.language.strip()
+    if language:
+        lines.append(f"- User language: {_language_display(language)}")
+    tone = envelope.user_profile.tone.strip()
+    if tone:
+        lines.append(f"- User tone: {tone}")
     return "\n".join(lines)
+
+
+_LANGUAGE_LABELS = {
+    "zh-cn": ("Chinese (Simplified)", "zh-CN"),
+    "zh": ("Chinese", "zh"),
+    "zh-tw": ("Chinese (Traditional)", "zh-TW"),
+    "en": ("English", "en"),
+    "en-us": ("English", "en-US"),
+    "ja": ("Japanese", "ja"),
+    "ko": ("Korean", "ko"),
+}
+
+
+_TONE_LABELS: dict[str, tuple[str, str, str]] = {
+    "concise": (
+        "Concise",
+        "short and to the point",
+        "Prefer short answers. Remove filler and avoid restating obvious context.",
+    ),
+    "friendly": (
+        "Friendly",
+        "warm and approachable",
+        "Keep phrasing warm and approachable while staying concrete.",
+    ),
+    "formal": (
+        "Formal",
+        "professional and structured",
+        "Use polished, structured phrasing and avoid casual wording.",
+    ),
+    "direct": (
+        "Direct",
+        "straightforward, no fluff",
+        "Be direct and practical. Lead with the answer or action.",
+    ),
+    "technical": (
+        "Technical",
+        "precise, uses domain terminology",
+        "Use precise domain terminology. Prefer concrete specs and implementation details over broad summaries.",
+    ),
+    "casual": (
+        "Casual",
+        "relaxed and conversational",
+        "Use relaxed conversational phrasing without losing technical accuracy.",
+    ),
+}
+
+
+def _language_display(value: str) -> str:
+    text = value.strip()
+    label = _LANGUAGE_LABELS.get(text.lower())
+    if label is None:
+        return text
+    name, tag = label
+    return f"{name} [{tag}]"
+
+
+def _language_target(value: str) -> str:
+    text = value.strip()
+    label = _LANGUAGE_LABELS.get(text.lower())
+    if label is None:
+        return text
+    return label[0]
+
+
+def _tone_instruction(value: str) -> str:
+    text = value.strip()
+    label = _TONE_LABELS.get(text.lower())
+    if label is None:
+        return f"Keep the response tone {text}."
+    return label[2]
 
 
 def _render_pending_approval(value: object | None) -> str:
