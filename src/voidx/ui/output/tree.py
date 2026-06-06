@@ -22,6 +22,7 @@ class OutputNode:
         "turn",
         "tool_call",
         "tool_result",
+        "todo",
         "subagent",
         "message",
         "assistant",

@@ -41,12 +41,24 @@ from voidx.ui.output.events.schema import (
     ToolFinished,
     ToolResultAppended,
     ToolStarted,
+    TodoItemPayload,
+    TodoUpdated,
     TurnStarted,
     UiEvent,
     UiEventBase,
     WarningAppended,
 )
 from voidx.ui.output.tree import OutputNode
+
+
+TODO_MAX_VISIBLE_ITEMS = 8
+TODO_STATUS_ORDER = ("in_progress", "pending", "completed", "cancelled")
+TODO_ICONS = {
+    "pending": "[dim]○[/dim]",
+    "in_progress": "[#7AA2F7]◐[/#7AA2F7]",
+    "completed": "[#A3BE8C]●[/#A3BE8C]",
+    "cancelled": "[#BF616A]✕[/#BF616A]",
+}
 
 
 @dataclass
@@ -305,6 +317,8 @@ class DockEventConsumer:
                     collapsed=e.collapsed,
                     tool_call_id=e.tool_call_id or None,
                 )
+            case TodoUpdated() as e:
+                return self._update_todo_node(e)
             case FileChangeAppended() as e:
                 parent = self._tool_nodes.get(e.tool_call_id) if e.tool_call_id else None
                 if parent is None:
@@ -368,6 +382,68 @@ class DockEventConsumer:
                 return None
             case _:
                 raise TypeError(f"Unsupported UI event: {event!r}")
+
+    def _update_todo_node(self, event: TodoUpdated) -> OutputNode | None:
+        if not self._dock.active:
+            return None
+        parent = self._todo_parent(event.agent_id)
+        if parent is None:
+            return None
+        todo_node = next((child for child in parent.children if child.node_type == "todo"), None)
+        if todo_node is None:
+            todo_node = self._dock.tree.new_node(
+                parent=parent,
+                node_type="todo",
+                header="Todo",
+                body_lines=[],
+                collapsed=False,
+                status="done",
+            )
+
+        todo_node.header = f"[bold]Todo[/bold]: {escape(event.summary)}"
+        todo_node.body_lines = self._render_todo_lines(event)
+        todo_node.payload = {
+            "items": [item.model_dump(mode="json") for item in event.items],
+            "summary": event.summary,
+        }
+        todo_node.status = "done"
+        todo_node.collapsed = False
+        self._dock.tree.mark_dirty(todo_node.id)
+        self._dock.mark_node_settled(todo_node)
+        self._dock.refresh()
+        return todo_node
+
+    def _todo_parent(self, agent_id: int) -> OutputNode | None:
+        if agent_id >= 0:
+            return self._agent_parent(agent_id)
+        if self._dock.current_agent is not None:
+            return self._dock.current_agent
+        return self._dock.ensure_agent()
+
+    def _render_todo_lines(self, event: TodoUpdated) -> list[str]:
+        total = len(event.items)
+        done = sum(1 for item in event.items if item.status == "completed")
+        if total == 0:
+            return ["[dim]No todos[/dim]"]
+
+        bar_len = 20
+        filled = int(bar_len * (done / total))
+        bar = "█" * filled + "░" * (bar_len - filled)
+        lines = [escape(f"[{bar}] {done}/{total} done")]
+
+        ordered_items = [
+            item
+            for status in TODO_STATUS_ORDER
+            for item in event.items
+            if item.status == status
+        ]
+        visible_items = ordered_items[:TODO_MAX_VISIBLE_ITEMS]
+        for item in visible_items:
+            lines.append(f"  {TODO_ICONS[item.status]} {escape(item.content)}")
+        omitted = len(ordered_items) - len(visible_items)
+        if omitted > 0:
+            lines.append(f"  [dim]… {omitted} more todos[/dim]")
+        return lines
 
     def _status_parent(self, event: StatusUpdated) -> OutputNode | None:
         if event.parent_tool_call_id:
