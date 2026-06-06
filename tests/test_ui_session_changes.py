@@ -86,9 +86,9 @@ def test_change_summary_lines_path_and_diff_colors(tmp_path):
     line = lines[0]
     # File path should be rendered in cyan
     assert "[cyan]auth.py[/cyan]" in line
-    # Added count should be green, removed count should be red
-    assert "[green]+" in line
-    assert "[red]−" in line
+    # Added count should be monokai green, removed count should be monokai red
+    assert "[#A6E22E]+" in line
+    assert "[#FF4689]−" in line
 
 
 def test_change_summary_lines_mixed(tmp_path):

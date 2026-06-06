@@ -328,7 +328,7 @@ class SessionChangeTracker:
                 kind = "Created"
             else:
                 kind = "Modified"
-            lines.append(f"  [dim]{kind}[/dim]  [cyan]{escape(rec.path)}[/cyan]  [green]+{rec.added}[/green] [red]−{rec.removed}[/red]")
+            lines.append(f"  [dim]{kind}[/dim]  [cyan]{escape(rec.path)}[/cyan]  [#A6E22E]+{rec.added}[/#A6E22E] [#FF4689]−{rec.removed}[/#FF4689]")
         return lines
 
     def clear(self) -> None:

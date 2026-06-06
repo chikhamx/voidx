@@ -8,8 +8,7 @@ from collections.abc import Awaitable, Callable
 
 from pydantic import BaseModel, Field
 
-from voidx.agent.task_state import ToolStatePatch
-from voidx.agent.runtime_context import TaskIntent
+from voidx.runtime import TaskIntent, ToolStatePatch
 from voidx.skills.runtime import SkillRunState
 from voidx.tools.base import BaseTool, ToolContext, ToolResult, model_to_json_schema
 

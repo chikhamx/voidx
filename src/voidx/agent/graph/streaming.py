@@ -6,11 +6,11 @@ import html
 import json
 import re
 import uuid
+from typing import Any
 
 from langchain_core.messages import AIMessage, AIMessageChunk, ToolMessage
 
-from voidx.ui.output.console import StreamingRenderer
-from voidx.ui.output.events import ui_events
+from voidx.runtime.ui import ui_events
 
 _REPLAY_UNSAFE_BLOCK_TYPES = {
     "thinking",
@@ -41,7 +41,7 @@ _DSML_BOILERPLATE_RE = re.compile(
 async def stream_llm(
     model,
     messages: list,
-    renderer: StreamingRenderer,
+    renderer: Any,
     protocol: str = "",
 ) -> AIMessage:
     """Stream LLM response, render live, return merged AIMessage."""

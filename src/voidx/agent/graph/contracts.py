@@ -7,7 +7,7 @@ changing the runtime inheritance model.
 
 from __future__ import annotations
 
-from typing import TYPE_CHECKING, Any, Protocol
+from typing import Any, Protocol
 
 from langchain_core.messages import BaseMessage
 
@@ -22,10 +22,6 @@ from voidx.memory.session import SessionInfo
 from voidx.permission.service import PermissionService
 from voidx.tools.registry import ToolRegistry
 from voidx.tools.task_tracker import TaskTracker
-from voidx.ui.output.tree import OutputNode, OutputTree
-
-if TYPE_CHECKING:
-    from voidx.ui.tui import PureTui
 
 
 class GraphComponentHost(Protocol):
@@ -47,14 +43,14 @@ class GraphComponentHost(Protocol):
     _interaction_mode: InteractionMode
     _debug: bool
     _file_mtimes: dict[str, float]
-    _turn_node: OutputNode | None
-    _current_tree: OutputTree | None
+    _turn_node: Any | None
+    _current_tree: Any | None
     _current_messages: list[BaseMessage] | None
     _sub_buffers: dict[str, list[BaseMessage]]
     _pending_summary: str | None
     _compaction_summary: str
     _session_msg_cache: list[Any] | None
-    _app: PureTui | None
+    _app: Any | None
     _usage_stats: UsageStats
     _compaction: CompactionService
     _task_state: TaskState

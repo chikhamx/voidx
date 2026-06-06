@@ -14,23 +14,23 @@ from __future__ import annotations
 
 import asyncio
 import time
-from datetime import datetime
 from typing import TYPE_CHECKING
 
 from langchain_core.messages import (
     AIMessage,
     BaseMessage,
-    HumanMessage,
-    SystemMessage,
 )
-from langgraph.graph import END, StateGraph
 
-from voidx.agent.agents import BASE_SYSTEM_PROMPT, PLAN_MODE_APPEND, get_agent, AgentDef
+from voidx.agent.agents import (
+    BASE_SYSTEM_PROMPT,
+    PLAN_MODE_APPEND,
+    AgentDef,
+    get_agent,
+)
 from voidx.agent.graph.compaction import GraphCompactionMixin
 from voidx.agent.graph.convergence import (
     build_convergence_messages,
     generate_fallback_summary,
-    is_step_hint_message,
 )
 from voidx.agent.graph.permissions import GraphPermissionMixin
 from voidx.agent.graph.runtime import (
@@ -39,6 +39,21 @@ from voidx.agent.graph.runtime import (
     ui,
 )
 from voidx.agent.graph.run_loop import GraphRunLoopMixin
+from voidx.agent.graph.topology import (
+    build_graph,
+    latest_ai_message,
+    latest_user_text,
+    pending_approval_scope,
+    prepare_state,
+    session_date,
+)
+from voidx.agent.graph.wiring import (
+    bind_settings_to_catalog,
+    build_compaction_service,
+    build_external_managers,
+    build_permission_service,
+    build_tool_registry,
+)
 from voidx.agent.state import AgentState
 from voidx.agent.graph.streaming import extract_text, stream_llm as _stream_llm
 from voidx.agent.graph.subagent import run_subagent as _run_subagent
@@ -48,48 +63,30 @@ from voidx.agent.runtime_context import InteractionMode, RuntimeContextBuilder
 from voidx.agent.task_state import TaskRun, TaskState
 from voidx.agent.tool_filters import filter_unavailable_lsp_tools
 from voidx.config import Config, Settings
-from voidx.llm.compaction import CompactionService
 from voidx.llm.instruction import InstructionService
 from voidx.llm.provider import create_chat_model, resolve_protocol
 from voidx.llm.usage import (
-    UsageStats,
     estimate_context_tokens,
     estimate_message_tokens,
     extract_token_usage,
 )
 from voidx.memory.context_frames import save_context_frame_from_messages
 from voidx.memory.session import MessageRow, SessionInfo
-from voidx.permission.service import PermissionService
-from voidx.tools.registry import ToolRegistry
-from voidx.tools.agent import AgentTool
-from voidx.tools.on_intent import OnIntentInput, OnIntentTool
-from voidx.tools.task_tracker import TaskTracker
-from voidx.ui.output.console import StreamingRenderer
-from voidx.ui.output.dock import dock
-from voidx.ui.output.events import (
+from voidx.tools.on_intent import OnIntentInput
+from voidx.runtime.ui import (
+    OutputNode,
+    OutputTree,
+    PureTui,
+    StreamingRenderer,
     SubagentFinished,
     SubagentStarted,
+    dock,
     ui_events,
     via_events,
 )
-from voidx.ui.output.tree import OutputNode, OutputTree
 
 if TYPE_CHECKING:
     from voidx.agent.graph.contracts import GraphComponentHost
-    from voidx.ui.tui import PureTui
-
-
-# ── LangGraph nodes ────────────────────────────────────────────────────────
-
-def _prepare(state: AgentState) -> dict:
-    """Advance step counters before LLM execution."""
-    agent_name = state.get("agent", "orchestrator")
-    agent_def = get_agent(agent_name)
-
-    return {
-        "step_count": state.get("step_count", 0) + 1,
-        "max_steps": state.get("max_steps", agent_def.max_steps if agent_def else 50),
-    }
 
 
 class VoidXGraph(
@@ -108,75 +105,46 @@ class VoidXGraph(
         self._workspace = config.workspace
         self._settings = settings
 
-        # Bind settings to catalog so list_models() merges custom models
-        if settings:
-            from voidx.llm.catalog import bind_settings
-            bind_settings(settings)
-
-        # Build tool registry, wire tracker through registry
-        self._tracker = TaskTracker()
-        self.tools = ToolRegistry(settings=settings, tracker=self._tracker)
-        intent_tool = OnIntentTool(resolver=self._resolve_on_intent)
-        self.tools.register("on_intent", intent_tool, intent_tool.description, intent_tool.parameters_schema())
-        agent_tool = AgentTool(runner=self._subagent_runner)
-        self.tools.register("agent", agent_tool, agent_tool.description, agent_tool.parameters_schema())
-
-        # AGENTS.md instruction service — refreshed each turn
-        self._instruction = InstructionService(self._workspace, settings=settings)
-
-        # Permission service — sandbox → allow/deny/ask per tool call
-        self._permission = PermissionService(
-            permission_mode=config.permission_mode.value,
-            sandbox_mode=config.sandbox_mode.value,
-            sandbox_workspace_write=config.sandbox_workspace_write,
-            approval_policy=config.approval_policy.value,
-            approval_reviewer=config.approval_reviewer.value,
+        bind_settings_to_catalog(settings)
+        self._tracker, self.tools = build_tool_registry(
+            settings=settings,
+            on_intent_resolver=self._resolve_on_intent,
+            subagent_runner=self._subagent_runner,
         )
+
+        self._instruction = InstructionService(self._workspace, settings=settings)
+        self._permission = build_permission_service(config, notifier=ui.print)
 
         self._interaction_mode: InteractionMode = InteractionMode.AUTO
         self._debug: bool = True
         ui.set_debug(self._debug)
 
-        # File mtime staleness guard — shared across tool calls
         self._file_mtimes: dict[str, float] = {}
         self._turn_node: OutputNode | None = None
         self._current_tree: OutputTree | None = None
         self._current_messages: list[BaseMessage] | None = None
         self._sub_buffers: dict[str, list[BaseMessage]] = {}
-        # One-turn summary injection vs. persisted summary restored across turns.
         self._pending_summary: str | None = None
         self._compaction_summary: str = ""
-        self._session_date: str = _session_date(session)
+        self._session_date: str = session_date(session)
         self._session_msg_cache: list[MessageRow] | None = None
         self._app: PureTui | None = None
         self._next_agent_id: int = 0
         self._task_state = TaskState()
         self._task_run = TaskRun()
         self._needs_failure_check: dict[str, dict] = {}
-
-        # Context compaction service — provider-aware limits
-        from voidx.llm.provider import get_context_limit
-        context_limit = get_context_limit(config.model.provider)
-        self._usage_stats = UsageStats(context_limit=context_limit)
-        self._compaction = CompactionService(
-            context_limit=context_limit,
-            output_token_max=config.model.max_tokens,
-        )
+        self._usage_stats, self._compaction = build_compaction_service(config)
 
         self._build()
         from voidx.agent.slash import SlashHandler
 
         self._slash = SlashHandler(self)
-
-        # MCP (Model Context Protocol) servers — start on run()
-        from voidx.mcp import McpManager
-        self._mcp_manager = McpManager(
+        self._mcp_manager, self._lsp_manager = build_external_managers(
             settings=self._settings,
-            registry=self.tools,
+            tools=self.tools,
             permission=self._permission,
+            workspace=self._workspace,
         )
-        from voidx.lsp import LspManager
-        self._lsp_manager = LspManager(self._workspace)
         if TYPE_CHECKING:
             _host_contract: GraphComponentHost = self
 
@@ -184,6 +152,34 @@ class VoidXGraph(
     def app(self) -> PureTui | None:
         """The interactive TUI app, if one is running."""
         return self._app
+
+    @property
+    def permission(self):
+        return self._permission
+
+    @property
+    def session(self) -> SessionInfo | None:
+        return self._session
+
+    @property
+    def settings(self) -> Settings | None:
+        return self._settings
+
+    @property
+    def task_run(self) -> TaskRun:
+        return self._task_run
+
+    @property
+    def task_state(self) -> TaskState:
+        return self._task_state
+
+    @property
+    def usage_stats(self):
+        return self._usage_stats
+
+    @property
+    def workspace(self) -> str:
+        return self._workspace
 
     @property
     def _plan_mode(self) -> bool:
@@ -199,6 +195,59 @@ class VoidXGraph(
 
     def interaction_mode(self) -> InteractionMode:
         return self._interaction_mode
+
+    def debug_enabled(self) -> bool:
+        return self._debug
+
+    def set_task_run(self, task_run: TaskRun) -> None:
+        self._task_run = task_run
+
+    async def persist_runtime_state(self) -> None:
+        await self._persist_runtime_state()
+
+    async def compact_session_history(self, *, force: bool = True) -> bool:
+        return await self._compact_session_history(force=force)
+
+    async def restore_transcript_snapshot(self, *, append: bool = False) -> bool:
+        return await self._restore_transcript_snapshot(append=append)
+
+    async def show_startup(self, *, append_transcript: bool = False) -> None:
+        await self._show_startup(append_transcript=append_transcript)
+
+    async def clear_current_session(self) -> None:
+        if self._session is None:
+            return
+
+        from voidx.memory.session import clear_messages, update_title
+
+        await clear_messages(self._session.id)
+        await update_title(self._session.id, "New session")
+        await self._clear_runtime_state()
+        self._session = self._session.model_copy(update={
+            "title": "New session",
+            "message_count": 0,
+        })
+        self._session_msg_cache = []
+        self._tracker.clear_todos()
+        self._permission.clear_session_permissions()
+        self._usage_stats.reset()
+
+    async def resume_session(self, session: SessionInfo) -> None:
+        self._session = session
+        self._workspace = session.workspace
+        self.config.workspace = session.workspace
+        self._session_date = session_date(session)
+        self._session_msg_cache = None
+        await self._restore_runtime_state()
+
+    async def set_session_title(self, title: str) -> None:
+        if self._session is None:
+            return
+
+        from voidx.memory.session import update_title
+
+        await update_title(self._session.id, title)
+        self._session = self._session.model_copy(update={"title": title})
 
     def _resolve_on_intent(self, inp: OnIntentInput, ctx):
         return refine_intent(
@@ -282,28 +331,12 @@ class VoidXGraph(
         ui.set_debug(value)
 
     def _build(self) -> None:
-        workflow = StateGraph(AgentState)
-
-        workflow.add_node("prepare", self._prepare_with_stream)
-        workflow.add_node("call_llm", self._call_llm)
-        workflow.add_node("execute_tools", self._execute_tools)
-        workflow.add_node("finalize", self._finalize)
-
-        workflow.set_entry_point("prepare")
-        workflow.add_edge("prepare", "call_llm")
-        workflow.add_conditional_edges("call_llm", self._router, {
-            "execute": "execute_tools",
-            "end": "finalize",
-        })
-        workflow.add_edge("execute_tools", "call_llm")
-        workflow.add_edge("finalize", END)
-
-        self.graph = workflow.compile()
+        self.graph = build_graph(self)
 
     # ── nodes ───────────────────────────────────────────────────────────
 
     async def _prepare_with_stream(self, state: AgentState) -> dict:
-        base = _prepare(state)
+        base = prepare_state(state)
         agent_name = state.get("agent", "orchestrator")
         self._current_agent = get_agent(agent_name)
         role_prompt = self._current_agent.role_prompt if self._current_agent else ""
@@ -312,14 +345,14 @@ class VoidXGraph(
         interaction_mode = state.get("interaction_mode") or (
             InteractionMode.PLAN.value if state.get("plan_mode", False) else self._interaction_mode.value
         )
-        latest_user_text = _latest_user_text(state.get("messages", []))
+        current_user_text = latest_user_text(state.get("messages", []))
         instructions = await self._instruction.system()
         skill_context = await self._instruction.skill_context_for(
-            latest_user_text,
+            current_user_text,
             agent=agent_name,
             task_intent=state.get("task_intent"),
             interaction_mode=interaction_mode,
-            scope=_pending_approval_scope(state.get("pending_approval")) or state.get("goal") or latest_user_text,
+            scope=pending_approval_scope(state.get("pending_approval")) or state.get("goal") or current_user_text,
             turn_count=state.get("goal_turn_count", 0),
         )
         mode_prompt = PLAN_MODE_APPEND if InteractionMode.parse(interaction_mode) == InteractionMode.PLAN else ""
@@ -340,7 +373,7 @@ class VoidXGraph(
             skill_runs=skill_context.runs,
             active_skill_summaries=skill_context.active,
             summary=summary,
-            current_user_text=latest_user_text,
+            current_user_text=current_user_text,
             task_intent=state.get("task_intent"),
             intent_resolution_reason=state.get("intent_resolution_reason", ""),
             pending_approval=state.get("pending_approval"),
@@ -394,7 +427,7 @@ class VoidXGraph(
             step=step,
             max_steps=max_s,
             has_tool_budget=has_tool_budget,
-            goal=state.get("goal", "") or _latest_user_text(state.get("messages", [])),
+            goal=state.get("goal", "") or latest_user_text(state.get("messages", [])),
         )
         llm_messages = [*state["messages"], *convergence_messages]
 
@@ -471,50 +504,8 @@ class VoidXGraph(
     async def _finalize(self, state: AgentState) -> dict:
         if not state.get("convergence_forced"):
             return {}
-        last = _latest_ai_message(state.get("messages", []))
+        last = latest_ai_message(state.get("messages", []))
         if isinstance(last, AIMessage) and not last.tool_calls:
             if len(extract_text(last).strip()) >= 20:
                 return {}
         return {"messages": [AIMessage(content=generate_fallback_summary(state))]}
-
-
-def _latest_user_text(messages: list[BaseMessage]) -> str:
-    for msg in reversed(messages):
-        if isinstance(msg, HumanMessage) and not is_step_hint_message(msg):
-            content = msg.content
-            if isinstance(content, str):
-                return content
-            if isinstance(content, list):
-                parts: list[str] = []
-                for item in content:
-                    if isinstance(item, dict) and item.get("type") == "text":
-                        text = item.get("text", "")
-                        if isinstance(text, str):
-                            parts.append(text)
-                return "\n".join(parts)
-            return str(content)
-    return ""
-
-
-def _latest_ai_message(messages: list[BaseMessage]) -> AIMessage | None:
-    for msg in reversed(messages):
-        if isinstance(msg, AIMessage):
-            return msg
-    return None
-
-
-def _session_date(session: SessionInfo | None) -> str:
-    if session is not None and session.created_at:
-        try:
-            return datetime.fromisoformat(session.created_at).astimezone().strftime("%Y-%m-%d %Z")
-        except ValueError:
-            pass
-    return datetime.now().astimezone().strftime("%Y-%m-%d %Z")
-
-
-def _pending_approval_scope(value: object | None) -> str:
-    if value is None:
-        return ""
-    if isinstance(value, dict):
-        return str(value.get("scope") or "").strip()
-    return str(getattr(value, "scope", "") or "").strip()

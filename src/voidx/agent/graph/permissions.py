@@ -11,7 +11,7 @@ from voidx.permission.engine import (
     build_pattern,
     classify_tool_call,
 )
-from voidx.ui.output.events import PermissionToolDetail
+from voidx.runtime.ui import PermissionToolDetail, dock
 
 if TYPE_CHECKING:
     from voidx.agent.graph.contracts import GraphPermissionHost
@@ -114,7 +114,6 @@ class GraphPermissionMixin:
             ui.print(f"\n[yellow]{message}[/yellow]")
 
     def _show_permission_output(self: GraphPermissionHost, message: str) -> bool:
-        from voidx.ui.output.dock import dock
         dock.append_message(message)
         return True
 

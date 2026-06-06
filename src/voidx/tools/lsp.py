@@ -4,6 +4,7 @@ from __future__ import annotations
 
 from pydantic import BaseModel, Field
 
+from voidx.diffing import make_file_diff
 from voidx.lsp.errors import LspError
 from voidx.lsp.service import LspService
 from voidx.tools.base import BaseTool, ToolContext, ToolResult, model_to_json_schema, resolve_safe
@@ -138,7 +139,6 @@ class LspFormatTool(BaseTool):
         if not changed:
             return ToolResult(output=f"No formatting changes for {inp.file_path}.")
 
-        from voidx.ui.output.diff import make_file_diff
         diff = make_file_diff(inp.file_path, old_text, new_text)
         return ToolResult(
             title=f"Formatted {inp.file_path}",

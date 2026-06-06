@@ -17,61 +17,12 @@ from voidx.ui.output.dock.formatting import (
     _tail_lines,
 )
 from voidx.ui.output.tree import OutputNode
+from voidx.ui.output.dock.nodes_startup import DockStartupNodeMixin
+from voidx.ui.output.dock.nodes_status import DockStatusNodeMixin
+from voidx.ui.output.dock.nodes_permission import DockPermissionNodeMixin
 
 
-class DockNodeMixin:
-    def append_startup(
-        self,
-        *,
-        model: str,
-        provider: str,
-        workspace: str,
-        session_title: str,
-        is_new: bool,
-        profile_configured: bool = True,
-    ) -> OutputNode | None:
-        from voidx.ui.session import render_startup_lines
-
-        lines = render_startup_lines(
-            self._width(),
-            model=model,
-            provider=provider,
-            workspace=workspace,
-            session_title=session_title,
-            is_new=is_new,
-        )
-        if not profile_configured:
-            lines.extend([
-                "[yellow]No profile configured — chat is disabled until you set one up.[/yellow]",
-                "[dim]  Use [cyan]/model new[/cyan] to create a profile interactively[/dim]",
-            ])
-        if not lines:
-            return None
-        startup_nodes = [
-            child for child in self._tree.root.children if child.node_type == "startup"
-        ]
-        if startup_nodes:
-            existing = startup_nodes[0]
-            for duplicate in startup_nodes[1:]:
-                self._remove_node(duplicate)
-            existing.header = lines[0]
-            existing.body_lines = lines[1:]
-            existing.collapsed = False
-            self._tree.mark_dirty()
-            self._mark_settled(existing)
-            self.refresh()
-            return existing
-        node = self._tree.new_node(
-            parent=self._tree.root,
-            node_type="startup",
-            header=lines[0],
-            body_lines=lines[1:],
-            collapsed=False,
-        )
-        self._mark_settled(node)
-        self.refresh()
-        return node
-
+class DockNodeMixin(DockStartupNodeMixin, DockStatusNodeMixin, DockPermissionNodeMixin):
     def append_message(self, text: str, *, style: str = "", parent: OutputNode | None = None, markup: bool = False) -> OutputNode | None:
         clean = _clean(text)
         if not clean.strip():
@@ -327,110 +278,6 @@ class DockNodeMixin:
         self.refresh()
         return first_node
 
-    def set_status(
-        self,
-        status_id: str,
-        label: str,
-        detail: str = "",
-        *,
-        parent: OutputNode | None = None,
-        stage: str = "working",
-    ) -> OutputNode:
-        self.record_status(status_id, label, detail, stage=stage)
-        node = self._status_nodes.get(status_id)
-        if node is None:
-            node = self._tree.new_node(
-                parent=parent or self._tree.root,
-                node_type="status",
-                header="",
-                collapsed=False,
-            )
-        self._status_nodes[status_id] = node
-        tick = self._status_ticks.get(status_id, 0)
-        self._status_ticks[status_id] = tick + 1
-        color = "#EBCB8B" if tick % 2 == 0 else "#F6D365"
-        node.header = f"[{color}]●[/{color}] {escape(label)}"
-        clean_detail = _clean(detail).strip()
-        node.body_lines = [f"[dim]{escape(line)}[/dim]" for line in _tail_lines(clean_detail, 5)]
-        node.collapsed = False
-        node.status = "running"
-        node.meta = label
-        self._tree.mark_dirty()
-        self._mark_unsettled(node)
-        self.refresh()
-        return node
-
-    def finish_status(
-        self,
-        status_id: str,
-        *,
-        label: str = "",
-        detail: str = "",
-        ok: bool = True,
-        remove: bool = True,
-    ) -> None:
-        self.clear_status_record(status_id)
-        node = self._status_nodes.pop(status_id, None)
-        if node is None:
-            if status_id:
-                import logging
-                logging.getLogger("voidx.ui").debug("finish_status: unknown status_id=%s", status_id)
-            return
-        self._status_ticks.pop(status_id, None)
-        if remove:
-            self._remove_node(node)
-            self.refresh()
-            return
-        color = "dim" if ok else "red"
-        icon = "●" if ok else "✗"
-        text = label or _clean(node.header).strip() or "Done"
-        node.header = f"[{color}]{icon}[/{color}] [dim]{escape(text)}[/dim]"
-        clean_detail = _clean(detail).strip()
-        if clean_detail:
-            node.body_lines = [f"[dim]{escape(line)}[/dim]" for line in _tail_lines(clean_detail, 5)]
-        node.status = "done" if ok else "error"
-        node.collapsed = True
-        node.meta = text
-        self._tree.mark_dirty()
-        self._mark_subtree_settled(node)
-        self.refresh()
-
-    def show_permission(
-        self,
-        prompt: str,
-        tools: list[dict[str, Any]],
-        *,
-        parent: OutputNode | None = None,
-    ) -> OutputNode:
-        self.clear_permission()
-        body: list[str] = []
-        for index, tool in enumerate(tools, 1):
-            name = str(tool.get("name") or "tool")
-            pattern = str(tool.get("pattern") or "")
-            body.append(escape(f"{index}. {name}"))
-            if pattern and pattern != "*":
-                body.append(escape(f"   target: {pattern}"))
-            args = tool.get("args")
-            if isinstance(args, dict):
-                for key, value in args.items():
-                    body.append(escape(f"   {key}: {_short_value(value)}"))
-        self._permission_node = self._tree.new_node(
-            parent=parent or self._tree.root,
-            node_type="permission",
-            header=f"[yellow]Permission required[/yellow] {escape(prompt)}",
-            body_lines=body,
-            collapsed=False,
-        )
-        self._mark_unsettled(self._permission_node)
-        self.refresh()
-        return self._permission_node
-
-    def clear_permission(self) -> None:
-        if self._permission_node is None:
-            return
-        self._remove_node(self._permission_node)
-        self._permission_node = None
-        self.refresh()
 
 
 def _bash_markdown_lines(command: str, width: int) -> list[str]:

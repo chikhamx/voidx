@@ -6,8 +6,7 @@ import json
 
 from pydantic import BaseModel, Field
 
-from voidx.agent.runtime_context import TaskIntent
-from voidx.agent.task_state import ToolStatePatch
+from voidx.runtime import TaskIntent, ToolStatePatch
 from voidx.tools.base import (
     BaseTool,
     ToolContext,

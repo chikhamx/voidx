@@ -6,6 +6,7 @@ from pathlib import Path
 
 from pydantic import BaseModel, Field
 
+from voidx.diffing import make_file_diff
 from voidx.tools.base import BaseTool, model_to_json_schema, ToolContext, ToolResult, resolve_safe
 
 
@@ -112,7 +113,6 @@ class FileWriteTool(BaseTool):
         size = len(inp.content)
         _record_mtime(ctx, path)
 
-        from voidx.ui.output.diff import make_file_diff
         diff = make_file_diff(
             inp.file_path,
             old_content,
@@ -197,7 +197,6 @@ class FileEditTool(BaseTool):
         path.write_text(content, encoding="utf-8")
         _record_mtime(ctx, path)
 
-        from voidx.ui.output.diff import make_file_diff
         diff = make_file_diff(inp.file_path, original, content)
 
         return ToolResult(

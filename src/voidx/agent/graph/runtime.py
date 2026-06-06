@@ -4,10 +4,8 @@ from __future__ import annotations
 
 from contextvars import ContextVar
 
-from voidx.ui.output.console import VoidConsole
+from voidx.runtime.ui import console, ui
 
-ui = VoidConsole()
-console = ui.console
 current_parent_tool_call_id: ContextVar[str] = ContextVar(
     "current_parent_tool_call_id",
     default="",

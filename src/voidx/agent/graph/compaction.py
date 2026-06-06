@@ -13,9 +13,14 @@ from voidx.llm.compaction import COMPACTION_MAX_RETRIES, CompactionService
 from voidx.llm.provider import resolve_protocol
 from voidx.llm.usage import estimate_context_tokens, estimate_message_tokens, extract_token_usage
 from voidx.memory.context_frames import save_context_frame_from_messages
-from voidx.ui.output.console import StreamingRenderer
-from voidx.ui.output.dock import dock
-from voidx.ui.output.events import StatusFinished, StatusUpdated, ui_events, via_events
+from voidx.runtime.ui import (
+    StatusFinished,
+    StatusUpdated,
+    StreamingRenderer,
+    dock,
+    ui_events,
+    via_events,
+)
 
 if TYPE_CHECKING:
     from voidx.agent.graph.contracts import GraphCompactionHost

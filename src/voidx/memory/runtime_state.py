@@ -6,8 +6,15 @@ import json
 
 from pydantic import BaseModel, Field
 
-from voidx.agent.runtime_context import InteractionMode, TaskIntent
-from voidx.agent.task_state import PendingApproval, TaskPhase, TaskRun, TaskRunStatus, TaskState
+from voidx.runtime import (
+    InteractionMode,
+    PendingApproval,
+    TaskIntent,
+    TaskPhase,
+    TaskRun,
+    TaskRunStatus,
+    TaskState,
+)
 from voidx.memory.store import _execute_commit, _fetch_one, _now, _write_transaction
 from voidx.skills.runtime import SkillRunState
 

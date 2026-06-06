@@ -2,9 +2,11 @@
 
 from __future__ import annotations
 
+from collections.abc import Callable, Iterable
+from typing import Any
+
 from pydantic import BaseModel, Field
 
-from voidx.agent.agents import child_agent_descriptions_for_llm, get_agent
 from voidx.tools.base import BaseTool, ToolContext, ToolResult, model_to_json_schema
 
 
@@ -34,15 +36,29 @@ class AgentTool(BaseTool):
         "Start an isolated child agent for a delegated task. Use this for true "
         "sub-agent work only: broad codebase exploration, implementation, review, "
         "or planning that should run in its own context.\n\n"
-        + child_agent_descriptions_for_llm()
-        + "\n\nIMPORTANT: Provide a complete, self-contained task description. "
+        "IMPORTANT: Provide a complete, self-contained task description. "
         "The child agent receives only a filtered slice of the parent context plus "
         "your task description."
     )
 
-    def __init__(self, runner=None):
+    def __init__(
+        self,
+        runner=None,
+        *,
+        agent_resolver: Callable[[str], Any | None] | None = None,
+        child_agent_descriptions: str = "",
+        available_agents: Iterable[str] = (),
+    ):
         super().__init__()
         self._run_child_agent = runner
+        self._agent_resolver = agent_resolver
+        self._available_agents = list(available_agents)
+        if child_agent_descriptions:
+            self.description = (
+                self.description
+                + "\n\n"
+                + child_agent_descriptions
+            )
 
     def parameters_schema(self) -> dict:
         return model_to_json_schema(AgentInput)
@@ -50,16 +66,18 @@ class AgentTool(BaseTool):
     async def execute(self, args: dict, ctx: ToolContext) -> ToolResult:
         inp = AgentInput.model_validate(args)
 
-        agent_def = get_agent(inp.agent)
+        if self._agent_resolver is None:
+            return ToolResult(
+                output=f"Child agent execution not available. Task: {inp.description[:200]}"
+            )
+
+        agent_def = self._agent_resolver(inp.agent) if self._agent_resolver else None
         if not agent_def:
-            available = [
-                a.name
-                for a in [get_agent(n) for n in ["explore", "plan", "implement", "review"]]
-                if a
-            ]
+            available = self._available_agents
             return ToolResult(output=f"Unknown child agent: {inp.agent}. Available: {available}")
 
-        if agent_def.name == "orchestrator":
+        agent_name = str(getattr(agent_def, "name", inp.agent))
+        if agent_name == "orchestrator":
             return ToolResult(output="Cannot run orchestrator as a child agent.")
 
         if not self._run_child_agent:
@@ -70,12 +88,15 @@ class AgentTool(BaseTool):
         try:
             output = await self._run_child_agent(agent_def, inp.description, inp.model)
             return ToolResult(
-                title=f"{agent_def.name}: {inp.description[:60]}",
+                title=f"{agent_name}: {inp.description[:60]}",
                 output=output,
-                metadata={"agent": agent_def.name, "model": inp.model or agent_def.model or "default"},
+                metadata={
+                    "agent": agent_name,
+                    "model": inp.model or getattr(agent_def, "model", None) or "default",
+                },
             )
         except Exception as exc:
             return ToolResult(
-                output=f"Child agent '{agent_def.name}' failed: {exc}",
-                metadata={"agent": agent_def.name, "error": str(exc)},
+                output=f"Child agent '{agent_name}' failed: {exc}",
+                metadata={"agent": agent_name, "error": str(exc)},
             )

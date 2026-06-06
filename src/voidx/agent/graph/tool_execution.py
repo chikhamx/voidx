@@ -9,21 +9,23 @@ from typing import TYPE_CHECKING
 
 from langchain_core.messages import AIMessage, ToolMessage
 
+from voidx.diffing import diff_stat
 from voidx.agent.graph.runtime import current_parent_tool_call_id, ui
 from voidx.agent.task_state import ToolStatePatch
 from voidx.agent.tool_messages import sanitize_tool_message_content
 from voidx.tools.base import ToolContext, UserInteraction, UserResponse
-from voidx.ui.output.console import _fmt_args, _title
-from voidx.ui.output.dock import dock
-from voidx.ui.output.events import (
+from voidx.runtime.ui import (
     FileChangeAppended,
     ToolFinished,
     ToolResultAppended,
     ToolStarted,
+    _fmt_args,
+    _title,
+    dock,
+    session_tracker,
     ui_events,
     via_events,
 )
-from voidx.ui.session import session_tracker
 
 if TYPE_CHECKING:
     from voidx.agent.graph.contracts import GraphToolExecutionHost
@@ -176,12 +178,11 @@ class GraphToolExecutionMixin:
                         tool_call_id=tool_event_id,
                     )
                 else:
-                    from voidx.ui.output.diff import diff_stat
                     added, removed = diff_stat(result.diff)
                     ui.print(f"  [green]+{added}[/green] [red]−{removed}[/red]")
                 if self._debug and not tool_node:
                     ui.diff(result.diff)
-            elif self._debug and tid != "agent":
+            elif self._debug:
                 if via_events():
                     await ui_events.emit(ToolResultAppended(
                         tool_call_id=tool_event_id,

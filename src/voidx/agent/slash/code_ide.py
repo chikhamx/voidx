@@ -4,7 +4,7 @@ from __future__ import annotations
 
 from voidx.agent.slash.runtime import ui
 from voidx.config import CodeIde
-from voidx.ui.tools.code_ide import code_ide_status, detect_code_ides, normalize_ide
+from voidx.runtime.ui import code_ide_status, detect_code_ides, normalize_ide
 
 
 class SlashCodeIdeMixin:

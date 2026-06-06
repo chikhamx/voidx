@@ -33,9 +33,7 @@ from voidx.skills.service import SkillService
 from voidx.tools.base import ToolContext
 from voidx.tools.registry import ToolRegistry
 from voidx.tools.task_tracker import TaskTracker
-from voidx.ui.output.capture import CaptureConsole
-from voidx.ui.output.tree import OutputTree
-from voidx.ui.output.console import StreamingRenderer
+from voidx.runtime.ui import CaptureConsole, OutputTree, StreamingRenderer
 
 
 async def run_subagent(

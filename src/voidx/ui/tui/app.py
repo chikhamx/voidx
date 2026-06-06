@@ -9,19 +9,8 @@ from __future__ import annotations
 import asyncio
 import io
 import os
-import platform
-import re
 import shutil
-import subprocess
 import sys
-import sys as _sys
-
-if _sys.platform == "win32":
-    import msvcrt as _msvcrt
-    termios = None  # type: ignore[assignment]
-else:
-    import termios  # type: ignore[no-redef]
-    _msvcrt = None  # type: ignore[assignment]
 import time
 from pathlib import Path
 from typing import Any, Awaitable, Callable
@@ -29,35 +18,24 @@ from typing import Any, Awaitable, Callable
 from rich.console import Console, Group
 from rich.text import Text
 
-from voidx.ui.tools.clipboard_image import (
-    ClipboardImageResult,
-    paste_clipboard_image as paste_clipboard_image_from_system,
-)
 from voidx.ui.output.dock import dock
 from voidx.ui.output.dock.formatting import _text_from_line
 from voidx.ui.output.tree import OutputTree
+from voidx.ui.tools.clipboard_image import paste_clipboard_image as paste_clipboard_image_from_system
 from voidx.ui.tui.helpers import (
     _ENTER_TERMINAL_SEQUENCE,
     _EXIT_TERMINAL_SEQUENCE,
     _plain_line,
     _rendered_row_count,
-    _escape_markup,
-    _candidate_meta,
-    _safe_status_value,
-    _call_status,
-    _call_bool,
-    _call_int,
-    _ctrl,
-    _is_printable,
-    _is_utf8_continuation,
-    _utf8_len,
-    _csi_modifier_has_shift,
-    _parse_csi_modifier,
 )
+from voidx.ui.tui.choice_mixin import _ChoicePromptMixin
+from voidx.ui.tui.clipboard_mixin import _ClipboardMixin
 from voidx.ui.tui.input import _InputEditorMixin
 from voidx.ui.tui.parser import _InputParserMixin
 from voidx.ui.tui.panels import _PanelManagerMixin
 from voidx.ui.tui.renderer import _TerminalRendererMixin
+from voidx.ui.tui.terminal_mixin import _TerminalLifecycleMixin
+from voidx.ui.tui.text_prompt_mixin import _TextPromptMixin
 
 SubmitHandler = Callable[[str], Awaitable[bool]]
 
@@ -65,7 +43,16 @@ SubmitHandler = Callable[[str], Awaitable[bool]]
 # ── PureTui ────────────────────────────────────────────────────────────────
 
 
-class PureTui(_InputParserMixin, _InputEditorMixin, _PanelManagerMixin, _TerminalRendererMixin):
+class PureTui(
+    _InputParserMixin,
+    _InputEditorMixin,
+    _PanelManagerMixin,
+    _ChoicePromptMixin,
+    _TextPromptMixin,
+    _ClipboardMixin,
+    _TerminalLifecycleMixin,
+    _TerminalRendererMixin,
+):
     """Scrollable transcript with a fixed bottom input — pure Rich + raw stdin."""
 
     INPUT_HISTORY_LIMIT = 1000
@@ -92,22 +79,8 @@ class PureTui(_InputParserMixin, _InputEditorMixin, _PanelManagerMixin, _Termina
         self._ctrl_c_armed: bool = False
         self._ctrl_c_deadline: float = 0.0
 
-        # Choice prompts
-        self._choice_queue: asyncio.Queue[str | None] = asyncio.Queue()
-        self._active_choice: list[tuple[str, str, str]] | None = None
-        self._choice_prompt: str = ""
-        self._choice_selected: int = 0
-        self._choice_details: list[dict[str, Any]] = []
-        self._choice_anchor: str = ""
-
-        # Text prompts
-        self._text_queue: asyncio.Queue[str | None] = asyncio.Queue()
-        self._active_text_prompt: str | None = None
-        self._active_text_default: str = ""
-        self._active_text_secret: bool = False
-        self._saved_input_lines: list[str] = [""]
-        self._saved_cursor_row: int = 0
-        self._saved_cursor_col: int = 0
+        self._init_choice_prompt_state()
+        self._init_text_prompt_state()
 
         # Command palette
         self._command_selected: int = 0
@@ -233,36 +206,6 @@ class PureTui(_InputParserMixin, _InputEditorMixin, _PanelManagerMixin, _Termina
         from voidx.ui.output.dock import dock
         dock.append_message(text)
 
-    def paste_clipboard_image(self, *, quiet_no_image: bool = False) -> ClipboardImageResult:
-        from voidx.ui.tools.attachment_tokens import image_attachment_token_text
-        result = paste_clipboard_image_from_system(self.status.workspace)
-        if result.ok:
-            stem = Path(result.rel_path).stem
-            self._insert_text_token(image_attachment_token_text(stem) + " ")
-        if result.ok or not quiet_no_image:
-            self._notice = result.message
-        self.invalidate()
-        return result
-
-    def _paste_clipboard_image_quiet(self) -> None:
-        self.paste_clipboard_image(quiet_no_image=True)
-
-    _CHANGE_COUNT_SCRIPT = (
-        'use framework "AppKit"\n'
-        "set pb to current application's NSPasteboard's generalPasteboard()\n"
-        "return (pb's changeCount) as text"
-    )
-
-    def _read_clipboard_change_count(self) -> int:
-        try:
-            result = subprocess.run(
-                ["osascript", "-e", self._CHANGE_COUNT_SCRIPT],
-                capture_output=True, text=True, timeout=2, check=False,
-            )
-            return int(result.stdout.strip()) if result.returncode == 0 else -1
-        except Exception:
-            return -1
-
     def queue_quiet_command(self, command: str) -> None:
         command = command.strip()
         if not command:
@@ -278,69 +221,6 @@ class PureTui(_InputParserMixin, _InputEditorMixin, _PanelManagerMixin, _Termina
             return False
         del self._quiet_commands[index]
         return True
-
-    async def ask_choice(
-        self,
-        prompt: str,
-        choices: list[tuple[str, str, str]],
-        selected: int = 0,
-        anchor: str = "",
-        details: list[dict[str, Any]] | None = None,
-        timeout: float | None = None,
-    ) -> str | None:
-        self._reset_queue_for_current_loop("_choice_queue")
-        self._drain_queue(self._choice_queue)
-        self._choice_prompt = prompt
-        self._active_choice = choices
-        self._choice_selected = max(0, min(selected, len(choices) - 1))
-        self._choice_details = [self._normalize_choice_detail(item) for item in (details or [])]
-        self._choice_anchor = anchor
-        self.invalidate()
-        try:
-            if timeout is None:
-                return await self._choice_queue.get()
-            return await asyncio.wait_for(self._choice_queue.get(), timeout=timeout)
-        except asyncio.TimeoutError:
-            return None
-        finally:
-            self._drain_queue(self._choice_queue)
-            self._active_choice = None
-            self._choice_selected = 0
-            self._choice_details = []
-            self._choice_anchor = ""
-            self.invalidate()
-
-    async def ask_text(
-        self, prompt: str, default: str = "", secret: bool = False, timeout: float | None = None
-    ) -> str | None:
-        self._reset_queue_for_current_loop("_text_queue")
-        self._drain_queue(self._text_queue)
-        self._saved_input_lines = list(self._input_lines)
-        self._saved_cursor_row = self._cursor_row
-        self._saved_cursor_col = self._cursor_col
-
-        self._active_text_prompt = prompt
-        self._active_text_default = default
-        self._active_text_secret = secret
-        self._input_lines = [default]
-        self._cursor_row = 0
-        self._cursor_col = len(default)
-        self.invalidate()
-        try:
-            if timeout is None:
-                return await self._text_queue.get()
-            return await asyncio.wait_for(self._text_queue.get(), timeout=timeout)
-        except asyncio.TimeoutError:
-            return None
-        finally:
-            self._drain_queue(self._text_queue)
-            self._active_text_prompt = None
-            self._active_text_default = ""
-            self._active_text_secret = False
-            self._input_lines = list(self._saved_input_lines)
-            self._cursor_row = self._saved_cursor_row
-            self._cursor_col = self._saved_cursor_col
-            self.invalidate()
 
     def invalidate(self) -> None:
         if self._running:
@@ -444,35 +324,6 @@ class PureTui(_InputParserMixin, _InputEditorMixin, _PanelManagerMixin, _Termina
             setattr(self, attr, asyncio.Queue())
 
     # ── terminal setup ───────────────────────────────────────────────────
-
-    def _setup_terminal(self) -> None:
-        if self._stdin_fd is None or not os.isatty(self._stdin_fd):
-            return
-        if termios is not None:
-            self._old_termios = termios.tcgetattr(self._stdin_fd)
-            new = termios.tcgetattr(self._stdin_fd)
-            # raw mode: no echo, no canonical, no CR->LF translation, VMIN=1 VTIME=0
-            # VMIN=1: os.read() blocks until at least 1 byte, then returns
-            #          ALL available bytes (escape sequences arrive as one burst)
-            new[3] = new[3] & ~(
-                termios.ECHO | termios.ICANON | termios.ISIG | termios.IEXTEN
-            )
-            new[6][termios.VMIN] = 1
-            new[6][termios.VTIME] = 0
-            # Disable VLNEXT (Ctrl+V literal-next) so 0x16 reaches os.read()
-            if hasattr(termios, "VLNEXT"):
-                new[6][termios.VLNEXT] = 0
-            # Keep BRKINT so Ctrl+C sends SIGINT as fallback
-            new[0] = new[0] & ~(termios.IGNBRK | termios.ICRNL)
-            new[0] |= termios.BRKINT
-            termios.tcsetattr(self._stdin_fd, termios.TCSADRAIN, new)
-        else:
-            # Windows: no termios, msvcrt handles raw reads directly
-            self._old_termios = None
-
-    def _restore_terminal(self) -> None:
-        if termios is not None and self._old_termios is not None:
-            termios.tcsetattr(self._stdin_fd, termios.TCSADRAIN, self._old_termios)
 
     # ── submit ───────────────────────────────────────────────────────────
 

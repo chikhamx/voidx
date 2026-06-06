@@ -9,6 +9,7 @@ Manage via /allow <tool>, /deny <tool>, /permissions commands.
 from __future__ import annotations
 
 import asyncio
+from collections.abc import Callable
 from dataclasses import dataclass
 
 from pydantic import BaseModel
@@ -23,9 +24,8 @@ from voidx.permission.engine import (
     tool_call_from_pattern,
 )
 from voidx.permission.schema import Action
-from voidx.ui.output.console import VoidConsole
 
-ui = VoidConsole()
+PermissionNotifier = Callable[[str], None]
 
 
 DEFAULT_RULES = BASIC_RULES
@@ -65,8 +65,10 @@ class PermissionService:
         sandbox_workspace_write: list[str] | None = None,
         approval_policy: str = "untrusted",
         approval_reviewer: str = "user",
+        notifier: PermissionNotifier | None = None,
     ) -> None:
         self._pending: dict[str, PendingEntry] = {}
+        self._notifier = notifier
         # Session whitelist: tools the user has approved for this session
         self._session_allow: set[str] = set()
         self._session_deny: set[str] = set()
@@ -102,7 +104,7 @@ class PermissionService:
         """Pre-approve a tool for the entire session. No more prompts."""
         self._session_allow.add(tool)
         self._session_deny.discard(tool)
-        ui.print(f"[dim]✓ {tool} now allowed for this session[/dim]")
+        self._notify(f"[dim]✓ {tool} now allowed for this session[/dim]")
 
     def allow_silent(self, tool: str) -> None:
         """Pre-approve a tool for the session without UI noise."""
@@ -113,7 +115,7 @@ class PermissionService:
         """Block a tool for the entire session."""
         self._session_deny.add(tool)
         self._session_allow.discard(tool)
-        ui.print(f"[dim]✗ {tool} now denied for this session[/dim]")
+        self._notify(f"[dim]✗ {tool} now denied for this session[/dim]")
 
     def deny_silent(self, tool: str) -> None:
         """Block a tool for the session without UI noise."""
@@ -268,9 +270,9 @@ class PermissionService:
 
     async def _ask_user(self, tool: str, pattern: str, session_id: str) -> Action:
         """Interactive ask — simple text input, no raw key artifacts."""
-        ui.print("")
-        ui.print(f"  [yellow]Allow [bold]{tool}[/bold] → {pattern}?[/yellow]")
-        ui.print(f"  [a] Always  [y] Yes once  [n] No")
+        self._notify("")
+        self._notify(f"  [yellow]Allow [bold]{tool}[/bold] → {pattern}?[/yellow]")
+        self._notify("  [a] Always  [y] Yes once  [n] No")
         try:
             choice = await asyncio.get_event_loop().run_in_executor(
                 None, lambda: input("  > ").strip().lower()
@@ -280,7 +282,7 @@ class PermissionService:
 
         if choice in ("a", "always"):
             self._session_allow.add(tool)
-            ui.print(f"[dim]✓ {tool} allowed for this session[/dim]")
+            self._notify(f"[dim]✓ {tool} allowed for this session[/dim]")
             return "allow"
         elif choice in ("y", "yes", ""):
             return "allow"
@@ -312,3 +314,9 @@ class PermissionService:
             session_allow=frozenset(self._session_allow),
             session_deny=frozenset(self._session_deny),
         )
+
+    def _notify(self, message: str) -> None:
+        if self._notifier is not None:
+            self._notifier(message)
+        else:
+            print(message)
