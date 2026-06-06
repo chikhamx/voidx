@@ -330,7 +330,7 @@ class GraphTurnMixin:
             from voidx.llm.usage import format_token_count
             dock.append_message(
                 f"[dim]✻  {elapsed:.0f}s[/dim]"
-                f"  [dim]·[/dim]  [cyan]{turn_calls}[/cyan] [dim]llm calls[/dim]"
+                f"  [dim]·[/dim]  [cyan]{turn_calls}[/cyan] [dim]calls[/dim]"
                 f"  [dim]·[/dim]  [cyan]{format_token_count(turn_in)}[/cyan] [dim]in[/dim]"
                 f"  [cyan]{format_token_count(turn_out)}[/cyan] [dim]out[/dim]",
                 markup=True,

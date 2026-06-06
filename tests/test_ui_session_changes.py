@@ -87,6 +87,7 @@ def test_change_summary_lines_empty_before_finish(tmp_path):
     tracker.capture_file("a.py", str(tmp_path))
     tracker.record_diff(make_file_diff("a.py", "old\n", "new\n"))
     assert tracker.change_summary_lines() == []
+    assert tracker.rollback_summary_lines() == []
 
 
 def test_change_summary_lines_no_changes(tmp_path):
@@ -94,6 +95,24 @@ def test_change_summary_lines_no_changes(tmp_path):
     tracker.begin_turn(str(tmp_path))
     tracker.finish_turn()
     assert tracker.change_summary_lines() == []
+    assert tracker.rollback_summary_lines() == []
+
+
+def test_has_rollbackable_changes_uses_snapshots_without_diff(tmp_path):
+    tracker = SessionChangeTracker()
+    tracker.begin_turn(str(tmp_path))
+    (tmp_path / "a.py").write_text("old\n", encoding="utf-8")
+    tracker.capture_file("a.py", str(tmp_path))
+    (tmp_path / "a.py").write_text("new\n", encoding="utf-8")
+    tracker.finish_turn()
+
+    assert tracker.has_changes is False
+    assert tracker.has_rollbackable_changes is True
+
+    lines = tracker.rollback_summary_lines()
+    assert len(lines) == 1
+    assert "a.py" in lines[0]
+    assert "snapshot only" in lines[0]
 
 
 def test_change_summary_lines_modified_file(tmp_path):

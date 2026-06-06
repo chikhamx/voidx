@@ -135,7 +135,7 @@ class VoidXGraph(
         self._permission = build_permission_service(config, notifier=ui.print)
 
         self._interaction_mode: InteractionMode = InteractionMode.AUTO
-        self._debug: bool = True
+        self._debug: bool = False
         ui.set_debug(self._debug)
 
         self._file_mtimes: dict[str, float] = {}

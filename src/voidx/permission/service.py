@@ -123,14 +123,7 @@ class PermissionService:
         self._session_allow.discard(tool)
 
     def status_label(self) -> str:
-        if not self._session_allow and not self._session_deny:
-            return self.permission_mode_label()
-        parts: list[str] = [self.permission_mode_label()]
-        if self._session_allow:
-            parts.append(f"+{len(self._session_allow)}")
-        if self._session_deny:
-            parts.append(f"-{len(self._session_deny)}")
-        return " ".join(parts)
+        return self.permission_mode_label()
 
     def set_permission_mode(self, mode: str) -> None:
         try:

@@ -190,6 +190,7 @@ class SlashHandler(
             "/code-ide": lambda: self._code_ide(args),
             "/list": self._list_sessions,
             "/resume": lambda: self._resume(inp),
+            "/rollback": self._rollback,
             "/title": lambda: self._set_title(inp),
             "/mode": lambda: self._mode(args),
             "/goal": lambda: self._goal(args),

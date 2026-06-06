@@ -123,7 +123,7 @@ class TestMerge:
         assert evaluate("write", "y.py", merged).action == "deny"
 
 
-def test_permission_service_status_label_tracks_session_overrides():
+def test_permission_service_status_label_ignores_session_overrides():
     service = PermissionService(sandbox_mode="workspace-write")
 
     assert service.status_label() == "Default"
@@ -131,7 +131,7 @@ def test_permission_service_status_label_tracks_session_overrides():
     service.allow_silent("bash")
     service.deny_silent("write")
 
-    assert service.status_label() == "Default +1 -1"
+    assert service.status_label() == "Default"
 
 
 def test_permission_service_splits_readonly_and_implement_agents():

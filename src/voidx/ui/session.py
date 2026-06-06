@@ -334,6 +334,10 @@ class SessionChangeTracker:
     def has_changes(self) -> bool:
         return self._visible and len(self._files) > 0
 
+    @property
+    def has_rollbackable_changes(self) -> bool:
+        return self._visible and len(self._snapshots) > 0
+
     def change_summary_lines(self) -> list[str]:
         if not self._visible or not self._files:
             return []
@@ -348,6 +352,20 @@ class SessionChangeTracker:
             else:
                 kind = "Modified"
             lines.append(f"  [dim]{kind}[/dim]  [cyan]{escape(rec.path)}[/cyan]  [#A6E22E]+{rec.added}[/#A6E22E] [#FF4689]−{rec.removed}[/#FF4689]")
+        return lines
+
+    def rollback_summary_lines(self) -> list[str]:
+        if not self._visible or not self._snapshots:
+            return []
+        lines = self.change_summary_lines()
+        recorded_paths = {rec.path for rec in self._files.values()}
+        for snapshot in self._snapshots.values():
+            if snapshot.path in recorded_paths:
+                continue
+            kind = "Created" if not snapshot.existed else "Modified"
+            lines.append(
+                f"  [dim]{kind}[/dim]  [cyan]{escape(snapshot.path)}[/cyan]  [dim](snapshot only)[/dim]"
+            )
         return lines
 
     def clear(self) -> None:

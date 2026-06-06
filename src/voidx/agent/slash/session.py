@@ -7,6 +7,50 @@ from voidx.runtime.ui import get_dock, session_tracker
 
 
 class SlashSessionMixin:
+    async def _rollback(self) -> None:
+        if not session_tracker.has_rollbackable_changes:
+            ui.print("[dim]No file changes to roll back.[/dim]")
+            return
+
+        lines = session_tracker.rollback_summary_lines()
+        if lines:
+            ui.print("[bold]Files changed this turn:[/bold]")
+            for line in lines:
+                ui.print(line)
+            ui.print("")
+        ui.print("[yellow]Rollback will overwrite current file contents with the pre-edit snapshot.[/yellow]")
+
+        confirmed = await self._confirm_rollback()
+        if not confirmed:
+            ui.print("[dim]Rollback cancelled.[/dim]")
+            return
+
+        result = session_tracker.rollback_current()
+        if result.restored:
+            ui.print(f"[green]Restored:[/green] {', '.join(result.restored)}")
+        if result.removed:
+            ui.print(f"[green]Removed:[/green] {', '.join(result.removed)}")
+        if result.ok:
+            if not result.restored and not result.removed:
+                ui.print("[dim]No files needed rollback.[/dim]")
+            return
+        for err in result.errors:
+            ui.error(err)
+
+    async def _confirm_rollback(self) -> bool:
+        app = self._host_app()
+        if app is not None and hasattr(app, "ask_choice"):
+            choice = await app.ask_choice(
+                "Rollback these changes?",
+                [
+                    ("Cancel", "no", "Keep current files"),
+                    ("Rollback", "yes", "Restore captured snapshots"),
+                ],
+            )
+            return choice == "yes"
+        answer = await self._prompt("Rollback these changes? Type y to confirm", default="")
+        return (answer or "").strip().lower() in {"y", "yes"}
+
     async def _clear(self) -> None:
         clearer = getattr(self._g, "clear_current_session", None)
         if callable(clearer):
