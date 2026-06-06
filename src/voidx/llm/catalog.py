@@ -69,6 +69,9 @@ STATIC_MODELS: dict[str, list[str]] = {
         "doubao-seed-1.6",
         "doubao-seed-1.6-flash",
     ],
+    "typex": [
+        "zai-org/GLM-5-FP8",
+    ],
 }
 
 # ── fetcher registry ───────────────────────────────────────────────────────

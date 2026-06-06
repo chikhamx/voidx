@@ -23,6 +23,7 @@ _PROVIDER_PROTOCOLS: dict[str, str] = {
     "zhipu": "anthropic",
     "kimi": "anthropic",
     "doubao": "openai",
+    "typex": "openai",
 }
 
 _DEFAULT_BASE_URLS: dict[tuple[str, str], str] = {
@@ -42,6 +43,7 @@ _DEFAULT_BASE_URLS: dict[tuple[str, str], str] = {
     ("kimi", "openai"): "https://api.moonshot.cn/v1",
     ("kimi", "anthropic"): "https://api.moonshot.cn/anthropic",
     ("doubao", "openai"): "https://ark.cn-beijing.volces.com/api/v3",
+    ("typex", "openai"): "https://newapi.typex-test.cn/v1",
 }
 
 
@@ -143,6 +145,11 @@ def _openai_reasoning_kwargs(config: ModelConfig) -> dict:
 
     if config.provider == "doubao":
         return _doubao_reasoning_kwargs(config)
+
+    if config.provider == "typex":
+        if effort is None:
+            return {}
+        return {"reasoning_effort": {"none": "none", "low": "low", "medium": "medium", "high": "high", "xhigh": "high", "max": "high"}.get(effort, "high")}
 
     return {}
 
@@ -304,6 +311,7 @@ def get_context_limit(provider: str, protocol: str = "") -> int:
         "zhipu": 200_000,
         "kimi": 262_144,
         "doubao": 256_000,
+        "typex": 200_000,
     }
     if provider in limits:
         return limits[provider]
