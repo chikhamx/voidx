@@ -367,3 +367,32 @@ async def test_prepare_includes_restored_skill_runs(tmp_path):
         "Skill run state: brainstorming=active "
         "phase=design source=workflow reason=resume"
     ) in state["messages"][-1].content
+
+
+def test_resolve_recursion_limit_derives_minimum_from_max_steps():
+    from voidx.agent.graph.turn_mixin import _resolve_recursion_limit
+    from voidx.config.models import AgentMaxSteps
+
+    # Default: orchestrator=100, recursion_limit=500 → 2*100+10=210 < 500, so 500
+    steps = AgentMaxSteps()
+    assert _resolve_recursion_limit(steps, "orchestrator") == 500
+
+    # High orchestrator steps, low recursion_limit → derived minimum wins
+    steps = AgentMaxSteps(orchestrator=500, recursion_limit=500)
+    assert _resolve_recursion_limit(steps, "orchestrator") == 1010
+
+    # High recursion_limit, low max_steps → configured limit wins
+    steps = AgentMaxSteps(orchestrator=50, recursion_limit=1000)
+    assert _resolve_recursion_limit(steps, "orchestrator") == 1000
+
+    # Exact boundary: 2*max_steps+10 == recursion_limit
+    steps = AgentMaxSteps(orchestrator=245, recursion_limit=500)
+    assert _resolve_recursion_limit(steps, "orchestrator") == 500
+
+
+def test_resolve_recursion_limit_uses_correct_agent_field():
+    from voidx.agent.graph.turn_mixin import _resolve_recursion_limit
+    from voidx.config.models import AgentMaxSteps
+
+    steps = AgentMaxSteps(implement=200, recursion_limit=300)
+    assert _resolve_recursion_limit(steps, "implement") == 410

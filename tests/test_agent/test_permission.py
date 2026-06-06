@@ -222,6 +222,7 @@ def test_permission_service_mode_presets_update_sandbox_and_approval():
 def test_permission_engine_classifies_basic_capabilities():
     assert classify_tool_call({"name": "read", "args": {"file_path": "x.py"}}).capability == PermissionCapability.READ_TOOLS
     assert classify_tool_call({"name": "edit", "args": {"file_path": "x.py"}}).capability == PermissionCapability.FILE_WRITE
+    assert classify_tool_call({"name": "apply_patch", "args": {"patch": ""}}).capability == PermissionCapability.FILE_WRITE
     assert classify_tool_call({"name": "bash", "args": {"command": "ls"}}).capability == PermissionCapability.BASH_READ
     assert classify_tool_call({"name": "bash", "args": {"command": "ls | sort | head"}}).capability == PermissionCapability.BASH_READ
     assert classify_tool_call({"name": "bash", "args": {"command": "python -m pytest"}}).capability == PermissionCapability.BASH_WRITE

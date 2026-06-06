@@ -16,7 +16,7 @@ from voidx.agent.runtime_context import (
 )
 from voidx.agent.state import AgentState
 from voidx.agent.task_state import PendingApproval
-from voidx.config import Config
+from voidx.config import Config, UserProfile
 from voidx.skills.runtime import SkillActivationSource, SkillRunState, SkillRunStatus
 
 
@@ -259,6 +259,30 @@ def test_current_task_state_records_structured_skill_runs(tmp_path):
         "Skill run state: test-driven-development=active "
         "phase=implement source=workflow reason=implement role"
     ) in messages[-1].content
+
+
+def test_current_task_state_records_user_profile_preferences(tmp_path):
+    messages = [HumanMessage(content="继续")]
+    context = RuntimeContextBuilder(
+        config=Config(
+            workspace=str(tmp_path),
+            user_profile=UserProfile(language="zh-CN", tone="direct"),
+        ),
+        workspace=str(tmp_path),
+        agent_prompt="You are voidx.",
+        agent="orchestrator",
+        interaction_mode=InteractionMode.AUTO,
+        current_user_text="继续",
+        task_intent=TaskIntent.DESIGN,
+    ).build()
+
+    context.apply_to_messages(messages)
+
+    assert "User language: Chinese (Simplified) [zh-CN]" in messages[-1].content
+    assert "User language preference: Chinese (Simplified) [zh-CN]" in messages[-1].content
+    assert "Language instruction: Prefer responding in Chinese (Simplified)" in messages[-1].content
+    assert "User tone: direct" in messages[-1].content
+    assert "Tone instruction: Be direct and practical. Lead with the answer or action." in messages[-1].content
 
 
 def test_current_task_state_records_refined_intent_and_visible_tools(tmp_path):

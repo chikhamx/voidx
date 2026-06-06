@@ -4,7 +4,8 @@ import sys
 
 sys.path.insert(0, "src")
 
-from voidx.config import CodeIde, ApprovalPolicy, ApprovalReviewer, McpServerConfig, PermissionMode, Profile, SandboxMode, Settings, WebToolRoute
+from voidx.config import CodeIde, ApprovalPolicy, ApprovalReviewer, McpServerConfig, PermissionMode, Profile, SandboxMode, Settings, UserProfile, WebToolRoute
+from voidx.config.models import AgentMaxSteps
 from voidx.memory.model_profiles import delete_model_profile_async
 
 
@@ -173,6 +174,28 @@ async def test_build_config_defaults_and_reads_ask_compact(tmp_path):
     assert (await (await Settings.create(str(tmp_path))).build_config()).ask_compact is True
 
 
+async def test_user_profile_round_trips_and_builds_config(tmp_path):
+    settings = Settings(str(tmp_path))
+
+    assert settings.get_user_profile() == UserProfile()
+
+    settings.set_user_language("zh-CN")
+    settings.set_user_tone("direct")
+
+    saved = json.loads((tmp_path / ".voidx" / "settings.json").read_text(encoding="utf-8"))
+    assert saved["userProfile"] == {"language": "zh-CN", "tone": "direct"}
+
+    reloaded = await Settings.create(str(tmp_path))
+    assert reloaded.get_user_profile() == UserProfile(language="zh-CN", tone="direct")
+    cfg = await reloaded.build_config()
+    assert cfg.user_profile == UserProfile(language="zh-CN", tone="direct")
+
+    reloaded.set_user_language("auto")
+    assert reloaded.get_user_profile() == UserProfile(tone="direct")
+    saved = json.loads((tmp_path / ".voidx" / "settings.json").read_text(encoding="utf-8"))
+    assert saved["userProfile"] == {"tone": "direct"}
+
+
 async def test_low_level_permission_changes_mark_custom_mode(tmp_path):
     settings = Settings(str(tmp_path))
 
@@ -296,3 +319,34 @@ async def test_save_profile_persists_model_in_db_and_only_current_profile_in_jso
         assert loaded == profile
     finally:
         await delete_model_profile_async(profile_name)
+
+
+def test_agent_max_steps_normalizes_zero_to_fallback():
+    steps = AgentMaxSteps(orchestrator=0, explore=0, recursion_limit=0)
+    assert steps.orchestrator == 500
+    assert steps.explore == 500
+    assert steps.recursion_limit == 500
+
+
+def test_agent_max_steps_preserves_positive_values():
+    steps = AgentMaxSteps(orchestrator=50, explore=10, recursion_limit=100)
+    assert steps.orchestrator == 50
+    assert steps.explore == 10
+    assert steps.recursion_limit == 100
+
+
+def test_agent_max_steps_defaults():
+    steps = AgentMaxSteps()
+    assert steps.orchestrator == 100
+    assert steps.explore == 25
+    assert steps.plan == 30
+    assert steps.implement == 100
+    assert steps.review == 30
+    assert steps.recursion_limit == 500
+
+
+def test_settings_get_agent_max_steps_no_double_normalization(tmp_path):
+    settings = Settings(str(tmp_path))
+    steps = settings.get_agent_max_steps()
+    assert steps.orchestrator == 100
+    assert steps.recursion_limit == 500

@@ -13,7 +13,7 @@ from voidx.agent.agents import AgentDef, get_agent
 from voidx.agent.graph.convergence import is_step_hint_message
 from voidx.agent.graph.runtime import current_parent_tool_call_id
 from voidx.agent.graph import VoidXGraph
-from voidx.config import Config, Settings
+from voidx.config import Config, Settings, UserProfile
 from voidx.llm.compaction import CompactionSelection
 from voidx.llm.instruction import SkillRuntimeContext
 from voidx.memory.session import (
@@ -78,9 +78,12 @@ def test_on_intent_schema_inlines_task_intent_enum(tmp_path):
 
 def test_orchestrator_has_direct_edit_tools():
     agent = get_agent("orchestrator")
+    implement = get_agent("implement")
 
     assert agent is not None
-    assert {"write", "edit", "lsp_format"}.issubset(set(agent.tools))
+    assert implement is not None
+    assert {"write", "edit", "apply_patch", "lsp_format"}.issubset(set(agent.tools))
+    assert {"write", "edit", "apply_patch", "lsp_format"}.issubset(set(implement.tools))
     assert {"clarify", "plan_checkpoint"}.issubset(set(agent.tools))
     assert agent.can_write is True
 
@@ -439,6 +442,76 @@ async def test_execute_tools_keeps_parallel_child_agent_buffers_isolated(tmp_pat
     messages = result["messages"]
     assert [msg.tool_call_id for msg in messages[:2] if isinstance(msg, ToolMessage)] == ["call_a", "call_b"]
     assert [msg.content for msg in messages[2:]] == ["sub call_a", "sub call_b"]
+
+
+@pytest.mark.asyncio
+async def test_execute_tools_emits_todo_updated_node(tmp_path):
+    graph = _graph(tmp_path)
+
+    class FakeTodoTool:
+        id = "todo"
+        description = "fake todo"
+
+        def parameters_schema(self):
+            return {"type": "object", "properties": {}}
+
+        async def execute(self, args: dict, ctx: ToolContext) -> ToolResult:
+            return ToolResult(
+                title="Todo",
+                output="todo output",
+                metadata={
+                    "todo_summary": "0/1 done · 1 active · 0 pending",
+                    "todo_items": [{"content": "wire event", "status": "in_progress"}],
+                },
+            )
+
+    graph.tools.register("todo", FakeTodoTool(), "fake todo", {"type": "object", "properties": {}})
+
+    async def allow_all(
+        tool_calls,
+        agent_name: str,
+        plan_mode: bool,
+        session_id: str,
+        interaction_mode=None,
+    ):
+        return tool_calls, []
+
+    graph._authorize_tool_calls = allow_all
+    test_dock = BottomInputDock()
+    set_dock(test_dock)
+    test_dock.begin_capture()
+    ui_events.start(DockEventConsumer(test_dock))
+    try:
+        await ui_events.request(TurnStarted(text="demo"))
+        parent = AIMessage(
+            content="",
+            tool_calls=[{
+                "name": "todo",
+                "args": {"todos": []},
+                "id": "call_todo",
+                "type": "tool_call",
+            }],
+        )
+
+        result = await graph._execute_tools({
+            "messages": [parent],
+            "workspace": str(tmp_path),
+            "agent": "orchestrator",
+            "plan_mode": False,
+        })
+        await ui_events.drain()
+
+        assistant = next(node for node in test_dock.tree.root.children if node.node_type == "assistant")
+        todo = next(node for node in assistant.children if node.node_type == "todo")
+
+        assert todo.payload["items"] == [{"content": "wire event", "status": "in_progress"}]
+        assert todo.payload["summary"] == "0/1 done · 1 active · 0 pending"
+        assert [message.tool_call_id for message in result["messages"] if isinstance(message, ToolMessage)] == ["call_todo"]
+    finally:
+        await ui_events.stop()
+        test_dock.deactivate()
+        test_dock.reset()
+        set_dock(None)
 
 
 @pytest.mark.asyncio
@@ -1205,7 +1278,10 @@ async def test_implement_subagent_injects_workflow_skills(tmp_path, monkeypatch)
         "Implement the feature",
         None,
         "test-key",
-        Config(workspace=str(tmp_path)),
+        Config(
+            workspace=str(tmp_path),
+            user_profile=UserProfile(language="zh-CN", tone="direct"),
+        ),
         debug=False,
     )
 
@@ -1218,6 +1294,8 @@ async def test_implement_subagent_injects_workflow_skills(tmp_path, monkeypatch)
     assert "Skill: test-driven-development" in rendered_user
     assert "Skill: verification-before-completion" in rendered_user
     assert "Active workflow skills: test-driven-development" in rendered_user
+    assert "User language: Chinese (Simplified) [zh-CN]" in rendered_user
+    assert "Tone instruction: Be direct and practical. Lead with the answer or action." in rendered_user
 
 
 @pytest.mark.asyncio

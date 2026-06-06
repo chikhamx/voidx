@@ -18,6 +18,7 @@ from voidx.tools.bash import BashInput
 from voidx.tools.agent import AgentInput
 from voidx.tools.task_tracker import TaskTracker
 from voidx.tools.task_status import TaskStatusTool
+from voidx.tools.todo import TodoInput, TodoWriteTool
 from voidx.tools.registry import ToolRegistry
 from voidx.tools.clarify import ClarifyTool, ClarifyInput, ClarifyOption, _infer_state_patch
 from voidx.tools.plan_checkpoint import PlanCheckpointTool
@@ -91,6 +92,7 @@ class TestToolRegistry:
         assert "read" in ids
         assert "write" in ids
         assert "edit" in ids
+        assert "apply_patch" in ids
         assert "glob" in ids
         assert "grep" in ids
         assert "bash" in ids
@@ -688,6 +690,227 @@ class TestFileOps:
         assert result.metadata["lines"] == 0
         assert "beyond" in result.output.lower() or "offset" in result.output.lower()
 
+    @pytest.mark.asyncio
+    async def test_apply_patch_single_file(self, tmp_path):
+        (tmp_path / "a.txt").write_text("one\ntwo\nthree\n")
+        ctx = ToolContext(workspace=str(tmp_path))
+        r = ToolRegistry()
+
+        result = await r.execute_tool("apply_patch", {"patch": """--- a/a.txt
++++ b/a.txt
+@@ -1,3 +1,3 @@
+ one
+-two
++TWO
+ three
+"""}, ctx)
+
+        assert result.metadata["changed_files"] == 1
+        assert (tmp_path / "a.txt").read_text() == "one\nTWO\nthree\n"
+        assert "-two" in result.diff
+        assert "+TWO" in result.diff
+
+    @pytest.mark.asyncio
+    async def test_apply_patch_multi_file(self, tmp_path):
+        for name in ("a.txt", "b.txt", "c.txt"):
+            (tmp_path / name).write_text(f"{name}\nold\n")
+        ctx = ToolContext(workspace=str(tmp_path))
+        r = ToolRegistry()
+
+        result = await r.execute_tool("apply_patch", {"patch": """--- a/a.txt
++++ b/a.txt
+@@ -1,2 +1,2 @@
+ a.txt
+-old
++new-a
+--- a/b.txt
++++ b/b.txt
+@@ -1,2 +1,2 @@
+ b.txt
+-old
++new-b
+--- a/c.txt
++++ b/c.txt
+@@ -1,2 +1,2 @@
+ c.txt
+-old
++new-c
+"""}, ctx)
+
+        assert result.metadata["changed_files"] == 3
+        assert (tmp_path / "a.txt").read_text() == "a.txt\nnew-a\n"
+        assert (tmp_path / "b.txt").read_text() == "b.txt\nnew-b\n"
+        assert (tmp_path / "c.txt").read_text() == "c.txt\nnew-c\n"
+
+    @pytest.mark.asyncio
+    async def test_apply_patch_returns_combined_diff(self, tmp_path):
+        (tmp_path / "a.txt").write_text("a\nold\n")
+        (tmp_path / "b.txt").write_text("b\nold\n")
+        ctx = ToolContext(workspace=str(tmp_path))
+        r = ToolRegistry()
+
+        result = await r.execute_tool("apply_patch", {"patch": """--- a/a.txt
++++ b/a.txt
+@@ -1,2 +1,2 @@
+ a
+-old
++new-a
+--- a/b.txt
++++ b/b.txt
+@@ -1,2 +1,2 @@
+ b
+-old
++new-b
+"""}, ctx)
+
+        assert result.metadata["changed_files"] == 2
+        assert "--- a/a.txt" in result.diff
+        assert "+++ b/a.txt" in result.diff
+        assert "-old" in result.diff
+        assert "+new-a" in result.diff
+        assert "--- a/b.txt" in result.diff
+        assert "+++ b/b.txt" in result.diff
+        assert "+new-b" in result.diff
+
+    @pytest.mark.asyncio
+    async def test_apply_patch_create_file(self, tmp_path):
+        ctx = ToolContext(workspace=str(tmp_path))
+        r = ToolRegistry()
+
+        result = await r.execute_tool("apply_patch", {"patch": """--- /dev/null
++++ b/new.txt
+@@ -0,0 +1,2 @@
++hello
++world
+"""}, ctx)
+
+        assert result.metadata["files"][0]["status"] == "create"
+        assert (tmp_path / "new.txt").read_text() == "hello\nworld\n"
+
+    @pytest.mark.asyncio
+    async def test_apply_patch_delete_file(self, tmp_path):
+        (tmp_path / "gone.txt").write_text("remove\nme\n")
+        ctx = ToolContext(workspace=str(tmp_path))
+        r = ToolRegistry()
+
+        result = await r.execute_tool("apply_patch", {"patch": """--- a/gone.txt
++++ /dev/null
+@@ -1,2 +0,0 @@
+-remove
+-me
+"""}, ctx)
+
+        assert result.metadata["files"][0]["status"] == "delete"
+        assert not (tmp_path / "gone.txt").exists()
+
+    @pytest.mark.asyncio
+    async def test_apply_patch_atomic_validation(self, tmp_path):
+        (tmp_path / "ok.txt").write_text("before\n")
+        (tmp_path / "bad.txt").write_text("actual\n")
+        ctx = ToolContext(workspace=str(tmp_path))
+        r = ToolRegistry()
+
+        result = await r.execute_tool("apply_patch", {"patch": """--- a/ok.txt
++++ b/ok.txt
+@@ -1,1 +1,1 @@
+-before
++after
+--- a/bad.txt
++++ b/bad.txt
+@@ -1,1 +1,1 @@
+-expected
++changed
+"""}, ctx)
+
+        assert result.metadata["error"] is True
+        assert (tmp_path / "ok.txt").read_text() == "before\n"
+        assert (tmp_path / "bad.txt").read_text() == "actual\n"
+
+    @pytest.mark.asyncio
+    async def test_apply_patch_fuzzy_match(self, tmp_path):
+        (tmp_path / "fuzzy.txt").write_text("header\none\ntwo\n")
+        ctx = ToolContext(workspace=str(tmp_path))
+        r = ToolRegistry()
+
+        result = await r.execute_tool("apply_patch", {"patch": """--- a/fuzzy.txt
++++ b/fuzzy.txt
+@@ -1,2 +1,2 @@
+-one
++ONE
+ two
+"""}, ctx)
+
+        assert result.metadata.get("error") is not True
+        assert (tmp_path / "fuzzy.txt").read_text() == "header\nONE\ntwo\n"
+
+    @pytest.mark.asyncio
+    async def test_apply_patch_dry_run(self, tmp_path):
+        (tmp_path / "dry.txt").write_text("old\n")
+        ctx = ToolContext(workspace=str(tmp_path))
+        r = ToolRegistry()
+
+        result = await r.execute_tool("apply_patch", {"patch": """--- a/dry.txt
++++ b/dry.txt
+@@ -1,1 +1,1 @@
+-old
++new
+""", "dry_run": True}, ctx)
+
+        assert result.metadata["dry_run"] is True
+        assert (tmp_path / "dry.txt").read_text() == "old\n"
+        assert "+new" in result.diff
+
+    @pytest.mark.asyncio
+    async def test_apply_patch_staleness(self, tmp_path):
+        target = tmp_path / "stale.txt"
+        target.write_text("old\n")
+        ctx = ToolContext(workspace=str(tmp_path))
+        ctx.file_mtimes[str(target.resolve())] = 0
+        r = ToolRegistry()
+
+        result = await r.execute_tool("apply_patch", {"patch": """--- a/stale.txt
++++ b/stale.txt
+@@ -1,1 +1,1 @@
+-old
++new
+"""}, ctx)
+
+        assert result.metadata["error"] is True
+        assert "modified since last read" in result.output
+        assert target.read_text() == "old\n"
+
+    @pytest.mark.asyncio
+    async def test_apply_patch_blocks_path_traversal(self, tmp_path):
+        ctx = ToolContext(workspace=str(tmp_path))
+        r = ToolRegistry()
+
+        result = await r.execute_tool("apply_patch", {"patch": """--- /dev/null
++++ b/../outside.txt
+@@ -0,0 +1,1 @@
++nope
+"""}, ctx)
+
+        assert result.metadata["error"] is True
+        assert "Path traversal blocked" in result.output
+        assert not (tmp_path.parent / "outside.txt").exists()
+
+    @pytest.mark.asyncio
+    async def test_apply_patch_rejects_rename(self, tmp_path):
+        (tmp_path / "old.txt").write_text("old\n")
+        ctx = ToolContext(workspace=str(tmp_path))
+        r = ToolRegistry()
+
+        result = await r.execute_tool("apply_patch", {"patch": """--- a/old.txt
++++ b/new.txt
+@@ -1,1 +1,1 @@
+-old
++new
+"""}, ctx)
+
+        assert result.metadata["error"] is True
+        assert "Rename patches are not supported" in result.output
+        assert (tmp_path / "old.txt").read_text() == "old\n"
+
 
 class TestSearch:
     """Search tools find files deterministically."""
@@ -814,6 +1037,34 @@ class TestTaskTracker:
         assert tracker.list_todos() == [{"content": "ship fix", "status": "pending"}]
         tracker.clear_todos()
         assert tracker.list_todos() == []
+
+    @pytest.mark.asyncio
+    async def test_todo_tool_returns_structured_metadata(self, tmp_path):
+        tracker = TaskTracker()
+        tool = TodoWriteTool(tracker=tracker)
+        ctx = ToolContext(workspace=str(tmp_path))
+
+        result = await tool.execute({
+            "todos": [
+                {"content": "implement event", "status": "in_progress"},
+                {"content": "write tests", "status": "pending"},
+                {"content": "update docs", "status": "completed"},
+            ],
+        }, ctx)
+
+        assert result.metadata["todo_summary"] == "1/3 done · 1 active · 1 pending"
+        assert result.metadata["todo_items"] == [
+            {"content": "implement event", "status": "in_progress"},
+            {"content": "write tests", "status": "pending"},
+            {"content": "update docs", "status": "completed"},
+        ]
+        assert tracker.list_todos()[0].content == "implement event"
+
+    def test_todo_input_rejects_unknown_status(self):
+        with pytest.raises(ValueError):
+            TodoInput.model_validate({
+                "todos": [{"content": "bad status", "status": "blocked"}],
+            })
 
     @pytest.mark.asyncio
     async def test_task_status_tool(self, tmp_path):

@@ -30,6 +30,8 @@ from voidx.ui.output.events import (
     ToolFinished,
     ToolResultAppended,
     ToolStarted,
+    TodoItemPayload,
+    TodoUpdated,
     TurnStarted,
     UiEventBus,
     ui_events,
@@ -337,6 +339,90 @@ async def test_file_change_event_updates_tool_node_with_structured_diff(isolated
         assert "+  new" in rendered
         assert "old" in rendered
         assert "new" in rendered
+    finally:
+        await bus.stop()
+
+
+@pytest.mark.asyncio
+async def test_todo_updated_creates_and_updates_single_todo_node(isolated_dock):
+    isolated_dock.begin_capture()
+    bus = UiEventBus()
+    bus.start(DockEventConsumer(isolated_dock))
+    try:
+        await bus.request(TurnStarted(text="demo"))
+        await bus.request(ToolStarted(
+            tool_call_id="todo_call",
+            tool_name="todo",
+            label="Updating",
+            args="",
+        ))
+        await bus.emit(TodoUpdated(
+            items=[
+                TodoItemPayload(content="implement event", status="in_progress"),
+                TodoItemPayload(content="write tests", status="pending"),
+            ],
+            summary="0/2 done · 1 active · 1 pending",
+        ))
+        await bus.emit(TodoUpdated(
+            items=[
+                TodoItemPayload(content=f"task {idx}", status="pending")
+                for idx in range(10)
+            ],
+            summary="0/10 done · 0 active · 10 pending",
+        ))
+        await bus.drain()
+
+        assistant = next(node for node in isolated_dock.tree.root.children if node.node_type == "assistant")
+        todo_nodes = [node for node in assistant.children if node.node_type == "todo"]
+        rendered = "\n".join(_rich_plain(line) for line in isolated_dock.tree.render(120))
+
+        assert len(todo_nodes) == 1
+        assert todo_nodes[0].payload["summary"] == "0/10 done · 0 active · 10 pending"
+        assert len(todo_nodes[0].payload["items"]) == 10
+        assert "Todo: 0/10 done" in rendered
+        assert "task 7" in rendered
+        assert "2 more todos" in rendered
+        assert "task 8" not in rendered
+    finally:
+        await bus.stop()
+
+
+@pytest.mark.asyncio
+async def test_todo_updated_with_agent_id_attaches_under_subagent(isolated_dock):
+    isolated_dock.begin_capture()
+    bus = UiEventBus()
+    bus.start(DockEventConsumer(isolated_dock))
+    try:
+        await bus.request(TurnStarted(text="demo"))
+        await bus.request(ToolStarted(
+            agent_id=-1,
+            tool_call_id="task_call",
+            tool_name="agent",
+            label="Running",
+            args='agent="explore"',
+        ))
+        await bus.emit(SubagentStarted(
+            agent_id=0,
+            subagent_id="agent_0",
+            name="explore",
+            description="inspect project",
+            parent_agent_id=-1,
+            parent_tool_call_id="task_call",
+        ))
+        await bus.emit(TodoUpdated(
+            agent_id=0,
+            items=[TodoItemPayload(content="inspect auth", status="in_progress")],
+            summary="0/1 done · 1 active · 0 pending",
+        ))
+        await bus.drain()
+
+        assistant = next(node for node in isolated_dock.tree.root.children if node.node_type == "assistant")
+        task_tool = next(node for node in assistant.children if node.node_type == "tool_call")
+        subagent = next(node for node in task_tool.children if node.node_type == "subagent")
+        todo = next(node for node in subagent.children if node.node_type == "todo")
+
+        assert todo.payload["items"] == [{"content": "inspect auth", "status": "in_progress"}]
+        assert not any(node.node_type == "todo" for node in assistant.children)
     finally:
         await bus.stop()
 
