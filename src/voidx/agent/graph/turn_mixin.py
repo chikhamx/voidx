@@ -45,6 +45,25 @@ if TYPE_CHECKING:
 RESUME_FORCE_COMPACT_MESSAGE_COUNT = 500
 
 
+def _resolve_max_steps(config, agent_name: str) -> int:
+    """Resolve max_steps from config, with fallback for test mocks."""
+    steps = getattr(config, 'agent_max_steps', None)
+    if steps is not None:
+        return getattr(steps, agent_name, 100)
+    return 100
+
+
+def _resolve_recursion_limit(steps, agent_name: str) -> int:
+    """Derive effective recursion limit from max_steps.
+
+    Each LLM step consumes ~2 graph recursions (call_llm → execute_tools → call_llm),
+    so the limit must be at least 2 * max_steps + margin to avoid premature cutoff.
+    """
+    configured = getattr(steps, 'recursion_limit', 500) if steps is not None else 500
+    max_steps = getattr(steps, agent_name, 100) if steps is not None else 100
+    return max(configured, 2 * max_steps + 10)
+
+
 class GraphTurnMixin:
     async def _run_once(self: GraphRunLoopHost, user_text: str) -> None:
         t_turn_start = time.monotonic()
@@ -155,7 +174,7 @@ class GraphTurnMixin:
                 "workspace": self._workspace,
                 "tool_results": {},
                 "step_count": 0,
-                "max_steps": 50,
+                "max_steps": _resolve_max_steps(self.config, "orchestrator"),
                 "should_continue": True,
                 "agent": "orchestrator",
                 "plan_mode": self._plan_mode,
@@ -180,7 +199,10 @@ class GraphTurnMixin:
             if via_events():
                 await ui_events.emit(StatusFinished(status_id="turn:analyzing"))
 
-            final = await self.graph.ainvoke(initial, {"recursion_limit": self.config.agent.recursion_limit})
+            recursion_limit = _resolve_recursion_limit(
+                getattr(self.config, 'agent_max_steps', None), "orchestrator",
+            )
+            final = await self.graph.ainvoke(initial, {"recursion_limit": recursion_limit})
             final_task_intent = TaskIntent(final.get("task_intent", task_intent.value))
             final_intent_resolution_reason = final.get(
                 "intent_resolution_reason",

@@ -278,6 +278,8 @@ class VoidXGraph(
         )
 
     async def _subagent_runner(self, agent_def: AgentDef, description: str, model_override: str | None) -> str:
+        # Apply configured max_steps override
+        agent_def = self._apply_max_steps_override(agent_def)
         parent_messages = getattr(self, '_current_messages', None)
         sub_buffer: list[BaseMessage] = []
         session_id = self._session.id if self._session else "default"
@@ -349,6 +351,16 @@ class VoidXGraph(
         self._debug = value
         ui.set_debug(value)
 
+    def _apply_max_steps_override(self, agent_def: AgentDef) -> AgentDef:
+        """Override agent_def.max_steps with configured value if present."""
+        steps_map = getattr(self.config, 'agent_max_steps', None)
+        if steps_map is None:
+            return agent_def
+        configured = getattr(steps_map, agent_def.name, None)
+        if configured is not None:
+            return agent_def.with_max_steps(configured)
+        return agent_def
+
     def _build(self) -> None:
         self.graph = build_graph(self)
 
@@ -357,7 +369,7 @@ class VoidXGraph(
     async def _prepare_with_stream(self, state: AgentState) -> dict:
         base = prepare_state(state)
         agent_name = state.get("agent", "orchestrator")
-        self._current_agent = get_agent(agent_name)
+        self._current_agent = self._apply_max_steps_override(get_agent(agent_name))
         role_prompt = self._current_agent.role_prompt if self._current_agent else ""
         tool_contract = self._current_agent.tool_contract if self._current_agent else ""
 
@@ -417,7 +429,7 @@ class VoidXGraph(
 
     async def _call_llm(self, state: AgentState) -> dict:
         step = state.get("step_count", 0)
-        max_s = state.get("max_steps", 50)
+        max_s = state.get("max_steps", 100)  # fallback: orchestrator default
         if step > max_s:
             return {"should_continue": False}
 
@@ -520,7 +532,7 @@ class VoidXGraph(
     def _router(self, state: AgentState) -> str:
         last = state["messages"][-1]
         if isinstance(last, AIMessage) and last.tool_calls:
-            if state.get("step_count", 0) >= state.get("max_steps", 50):
+            if state.get("step_count", 0) >= state.get("max_steps", 100):  # fallback: orchestrator default
                 return "end"
             return "execute"
         return "end"

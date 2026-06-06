@@ -31,7 +31,7 @@ class TaskTracker:
         self._tasks: dict[str, TaskState] = {}
         self._todos: list = []  # type: ignore[type-arg]
 
-    def start(self, task_id: str, agent: str, description: str, max_steps: int = 25) -> TaskState:
+    def start(self, task_id: str, agent: str, description: str, max_steps: int = 100) -> TaskState:
         state = TaskState(
             id=task_id, agent=agent, description=description,
             status="running", max_steps=max_steps,

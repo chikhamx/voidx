@@ -15,6 +15,7 @@ from voidx.agent.graph.convergence import (
 )
 from voidx.agent.graph.runtime import console, ui
 from voidx.agent.graph.streaming import extract_text, stream_llm
+from voidx.agent.graph.todo_events import todo_updated_event
 from voidx.agent.runtime_context import InteractionMode, RuntimeContextBuilder
 from voidx.agent.tool_messages import sanitize_tool_message_content
 from voidx.agent.tool_filters import filter_unavailable_lsp_tools
@@ -33,7 +34,7 @@ from voidx.skills.service import SkillService
 from voidx.tools.base import ToolContext
 from voidx.tools.registry import ToolRegistry
 from voidx.tools.task_tracker import TaskTracker
-from voidx.runtime.ui import CaptureConsole, OutputTree, StreamingRenderer
+from voidx.runtime.ui import CaptureConsole, OutputTree, StreamingRenderer, ui_events, via_events
 
 
 async def run_subagent(
@@ -282,6 +283,10 @@ async def run_subagent(
                 if capture_tree and parent_node is not None:
                     capture.tool_call(tid, targs, tool_call_id=cid)
                 result = await agent_tools.execute_tool(tid, targs, ctx)
+                if via_events() and tid == "todo":
+                    todo_event = todo_updated_event(result, agent_id=agent_id)
+                    if todo_event is not None:
+                        ui_events.emit_direct(todo_event)
                 if capture_tree and parent_node is not None:
                     capture.tool_done(tid, 0.0, True, tool_call_id=cid)
                     capture.tool_result(result.output, tool_call_id=cid)

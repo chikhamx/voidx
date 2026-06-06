@@ -11,6 +11,7 @@ from langchain_core.messages import AIMessage, ToolMessage
 
 from voidx.diffing import diff_stat
 from voidx.agent.graph.runtime import current_parent_tool_call_id, ui
+from voidx.agent.graph.todo_events import todo_updated_event
 from voidx.agent.task_state import ToolStatePatch
 from voidx.agent.tool_messages import sanitize_tool_message_content
 from voidx.tools.base import ToolContext, UserInteraction, UserResponse
@@ -150,6 +151,11 @@ class GraphToolExecutionMixin:
                     self._notify_tool_failure(failure_tc, result)
             elif ok:
                 self._clear_failure_check(cid)
+
+            if via_events() and tid == "todo":
+                todo_event = todo_updated_event(result)
+                if todo_event is not None:
+                    await ui_events.emit(todo_event)
 
             if via_events():
                 await ui_events.emit(ToolFinished(
