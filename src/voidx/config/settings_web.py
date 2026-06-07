@@ -29,10 +29,14 @@ class SettingsWebMixin:
         self._save()
         return self._path
 
-    def clear_web_routes_for_server(self, server: str) -> None:
+    def clear_web_routes_for_server(self, server: str, *, save: bool = False) -> Path | None:
         web = self._data.get("web", {})
         if not isinstance(web, dict):
-            return
+            return None
         for kind, fields in list(web.items()):
             if isinstance(fields, dict) and fields.get("server") == server:
                 web[kind] = WebToolRoute().model_dump()
+        if save:
+            self._save()
+            return self._path
+        return None

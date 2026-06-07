@@ -182,6 +182,17 @@ def test_permission_service_session_wildcards_apply_to_mcp_tools():
     assert service.decide(tool) == "deny"
 
 
+def test_mcp_tool_execution_requires_permission(tmp_path):
+    context = PermissionContext(workspace=str(tmp_path))
+    decision = authorize_tool_call(
+        {"name": "mcp__demo__send_message_12345678", "args": {"text": "hello"}},
+        context,
+    )
+
+    assert decision.action == "ask"
+    assert decision.capability == PermissionCapability.MCP_TOOLS
+
+
 def test_permission_service_allows_read_only_lsp_tools_but_asks_for_format():
     service = PermissionService()
 

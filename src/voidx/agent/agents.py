@@ -248,6 +248,7 @@ class AgentDef(BaseModel):
     max_steps: int = 25
     hidden: bool = False  # hidden from user-facing lists?
     model: str | None = None  # None = inherit from parent
+    mcp_tools: bool = False  # can see registered MCP tools
 
     def with_max_steps(self, value: int) -> "AgentDef":
         """Return a copy with max_steps overridden."""
@@ -276,6 +277,8 @@ class AgentDef(BaseModel):
             lines.append(f"- Available tools: {', '.join(self.tools)}")
         else:
             lines.append("- Available tools: none")
+        if self.mcp_tools:
+            lines.append("- MCP tools: available when configured; each call is permission-gated")
         if not self.can_write:
             lines.append("- Constraint: this role must not write or edit files.")
         if not self.can_delegate:
@@ -344,6 +347,7 @@ BUILTIN_AGENTS: dict[str, AgentDef] = {
         can_delegate=True,
         max_steps=100,
         hidden=False,
+        mcp_tools=True,
     ),
     "explore": AgentDef(
         name="explore",
@@ -462,6 +466,8 @@ def child_agent_descriptions_for_llm() -> str:
     lines = ["Available child agents and the tools they have access to:"]
     for agent in get_subagents():
         tools_str = ", ".join(agent.tools)
+        if agent.mcp_tools:
+            tools_str = f"{tools_str}, MCP tools" if tools_str else "MCP tools"
         lines.append(
             f"- {agent.name}: {agent.description}\n"
             f"  Tools: {tools_str}\n"

@@ -96,6 +96,22 @@ class ToolRegistry:
             self._tools.pop(tool_id, None)
             self._instances.pop(tool_id, None)
 
+    def filtered_copy(self, allowed_ids: set[str] | list[str] | tuple[str, ...]) -> "ToolRegistry":
+        """Return a registry view containing existing tool defs and instances."""
+        allowed = set(allowed_ids)
+        clone = ToolRegistry(settings=self._settings, tracker=self._tracker)
+        clone._tools = {
+            tool_id: tool_def
+            for tool_id, tool_def in self._tools.items()
+            if tool_id in allowed
+        }
+        clone._instances = {
+            tool_id: instance
+            for tool_id, instance in self._instances.items()
+            if tool_id in allowed
+        }
+        return clone
+
     def ids(self) -> list[str]:
         return list(self._tools.keys())
 

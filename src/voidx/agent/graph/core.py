@@ -404,6 +404,7 @@ class VoidXGraph(
                 "usage_stats": self._usage_stats,
                 "lsp_manager": getattr(self, "_lsp_manager", None),
                 "skill_selection": self._settings.get_skill_selection() if self._settings else None,
+                "parent_tools": self.tools,
             }
             if self._current_tree and self._turn_node:
                 kwargs.update({
@@ -534,12 +535,19 @@ class VoidXGraph(
             }
 
         agent = get_agent(state.get("agent", "orchestrator"))
-        agent_tool_ids = agent.tools if agent else None
+        agent_tool_ids = set(agent.tools) if agent else None
+        mcp_allowed = bool(agent and agent.mcp_tools)
         all_tool_defs = self.tools.tools_for_llm()
 
         # Filter tools based on agent's allowlist
         if agent_tool_ids is not None:
-            tool_defs = [t for t in all_tool_defs if t["function"]["name"] in agent_tool_ids]
+            tool_defs = [
+                t for t in all_tool_defs
+                if (
+                    t["function"]["name"] in agent_tool_ids
+                    or (mcp_allowed and t["function"]["name"].startswith("mcp__"))
+                )
+            ]
         else:
             tool_defs = all_tool_defs
         if "available_tool_ids" in state:

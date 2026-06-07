@@ -60,6 +60,7 @@ async def run_subagent(
     usage_stats: UsageStats | None = None,
     lsp_manager=None,
     skill_selection=None,
+    parent_tools: ToolRegistry | None = None,
 ) -> str:
     """Run a child agent. Child messages are appended to sub_messages
     (when provided) so the caller can place them after ToolMessages."""
@@ -69,9 +70,13 @@ async def run_subagent(
     elif agent_def.model:
         model_cfg.model = agent_def.model
 
-    # Child agents use their own tool registry and cannot start nested agents.
-    agent_tools = ToolRegistry()
-    agent_tools.filter_tools(set(agent_def.tools) - {"agent", "task_status"})
+    # Child agents get a filtered view of the parent registry so dynamic MCP
+    # wrappers can be reused when an agent explicitly opts in.
+    allowed_ids = set(agent_def.tools) - {"agent", "task_status"}
+    base_tools = parent_tools or ToolRegistry()
+    if agent_def.mcp_tools and parent_tools is not None:
+        allowed_ids.update(tid for tid in parent_tools.ids() if tid.startswith("mcp__"))
+    agent_tools = base_tools.filtered_copy(allowed_ids)
 
     model = create_chat_model(api_key, model_cfg)
     tool_defs = [

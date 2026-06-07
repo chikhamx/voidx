@@ -44,6 +44,18 @@ class SettingsMcpMixin:
         self._save()
         return self._path
 
+    def set_mcp_server_disabled(self, name: str, disabled: bool) -> Path:
+        servers = self._mcp_servers_data()
+        fields = servers.get(name)
+        if not isinstance(fields, dict):
+            raise KeyError(name)
+        servers[name] = {**fields, "disabled": disabled}
+        self._data["mcpServers"] = servers
+        if disabled:
+            self.clear_web_routes_for_server(name)
+        self._save()
+        return self._path
+
     def _mcp_servers_data(self) -> dict:
         servers = self._data.get("mcpServers")
         if not isinstance(servers, dict):

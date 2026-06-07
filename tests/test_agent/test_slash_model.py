@@ -15,6 +15,7 @@ from voidx.config import (
     ApprovalPolicy,
     ApprovalReviewer,
     Config,
+    McpServerConfig,
     ModelConfig,
     ParallelSubagentsConfig,
     PermissionMode,
@@ -184,11 +185,17 @@ async def test_model_prompt_uses_prompt_app_text_input():
 
 
 @pytest.mark.asyncio
-async def test_tavily_set_uses_secret_prompt(tmp_path, monkeypatch):
+async def test_tavily_set_creates_mcp_server_and_routes(tmp_path, monkeypatch):
     monkeypatch.delenv("TAVILY_API_KEY", raising=False)
     settings = Settings(str(tmp_path))
     app = FakeChoiceApp(result="tvly-secret")
-    graph = SimpleNamespace(_settings=settings, _app=app)
+    manager = SimpleNamespace(restarts=0)
+
+    async def restart_all():
+        manager.restarts += 1
+
+    manager.restart_all = restart_all
+    graph = SimpleNamespace(_settings=settings, _app=app, _mcp_manager=manager)
 
     handled = await SlashHandler(graph).dispatch("/tavily set")
 
@@ -196,6 +203,87 @@ async def test_tavily_set_uses_secret_prompt(tmp_path, monkeypatch):
     assert settings.get_tavily_api_key() == "tvly-secret"
     assert app.text_prompt == "Tavily API key"
     assert app.text_secret is True
+    tavily = settings.get_mcp_server("tavily")
+    assert tavily.command == "npx"
+    assert tavily.args == ["-y", "tavily-mcp@latest"]
+    assert tavily.env == {"TAVILY_API_KEY": "tvly-secret"}
+    assert tavily.tools == ["tavily_search", "tavily_extract"]
+    assert settings.get_web_tool_route("search").server == "tavily"
+    assert settings.get_web_tool_route("search").tool == "tavily_search"
+    assert settings.get_web_tool_route("fetch").tool == "tavily_extract"
+    assert manager.restarts == 1
+
+
+@pytest.mark.asyncio
+async def test_tavily_set_updates_existing_mcp_server_env(tmp_path, monkeypatch):
+    monkeypatch.delenv("TAVILY_API_KEY", raising=False)
+    settings = Settings(str(tmp_path))
+    settings.save_mcp_server(McpServerConfig(
+        name="tavily",
+        command="custom",
+        args=["serve"],
+        env={"OTHER": "1"},
+        disabled=True,
+        tools=["custom_tool"],
+    ))
+    app = FakeChoiceApp(result="tvly-new")
+    graph = SimpleNamespace(_settings=settings, _app=app)
+
+    handled = await SlashHandler(graph).dispatch("/tavily set")
+
+    assert handled is True
+    tavily = settings.get_mcp_server("tavily")
+    assert tavily.command == "custom"
+    assert tavily.args == ["serve"]
+    assert tavily.disabled is True
+    assert tavily.tools == ["custom_tool"]
+    assert tavily.env == {"OTHER": "1", "TAVILY_API_KEY": "tvly-new"}
+
+
+@pytest.mark.asyncio
+async def test_tavily_set_restarts_mcp_manager_when_available(tmp_path, monkeypatch):
+    monkeypatch.delenv("TAVILY_API_KEY", raising=False)
+    settings = Settings(str(tmp_path))
+    app = FakeChoiceApp(result="tvly-secret")
+    manager = SimpleNamespace(restarts=0)
+
+    async def restart_all():
+        manager.restarts += 1
+
+    manager.restart_all = restart_all
+    graph = SimpleNamespace(_settings=settings, _app=app, _mcp_manager=manager)
+
+    handled = await SlashHandler(graph).dispatch("/tavily set")
+
+    assert handled is True
+    assert manager.restarts == 1
+
+
+@pytest.mark.asyncio
+async def test_tavily_delete_removes_key_from_mcp_server_env_and_routes(tmp_path, monkeypatch):
+    monkeypatch.delenv("TAVILY_API_KEY", raising=False)
+    settings = Settings(str(tmp_path))
+    settings.set_tavily_api_key("tvly-old")
+    settings.save_mcp_server(McpServerConfig(
+        name="tavily",
+        command="npx",
+        args=["-y", "tavily-mcp@latest"],
+        env={"TAVILY_API_KEY": "tvly-old", "OTHER": "1"},
+        tools=["tavily_search", "tavily_extract"],
+    ))
+    from voidx.config import WebToolRoute
+    settings.set_web_tool_route("search", WebToolRoute(backend="mcp", server="tavily", tool="tavily_search"))
+    settings.set_web_tool_route("fetch", WebToolRoute(backend="mcp", server="tavily", tool="tavily_extract"))
+    graph = SimpleNamespace(_settings=settings, _app=None)
+
+    handled = await SlashHandler(graph).dispatch("/tavily delete")
+
+    assert handled is True
+    assert settings.get_tavily_api_key() is None
+    tavily = settings.get_mcp_server("tavily")
+    assert tavily.env == {"OTHER": "1"}
+    assert settings.get_web_tool_route("search").backend == "legacy"
+    assert settings.get_web_tool_route("fetch").backend == "legacy"
 
 
 @pytest.mark.asyncio
@@ -210,6 +298,20 @@ async def test_tavily_set_rejects_key_in_command_text(tmp_path, monkeypatch):
     assert handled is True
     assert settings.get_tavily_api_key() is None
     assert app.text_prompt == ""
+
+
+@pytest.mark.asyncio
+async def test_tavily_mcp_restart_skips_when_manager_unavailable(tmp_path, monkeypatch):
+    monkeypatch.delenv("TAVILY_API_KEY", raising=False)
+    settings = Settings(str(tmp_path))
+    app = FakeChoiceApp(result="tvly-secret")
+    graph = SimpleNamespace(_settings=settings, _app=app, _mcp_manager=None)
+
+    handled = await SlashHandler(graph).dispatch("/tavily set")
+
+    assert handled is True
+    assert settings.get_tavily_api_key() == "tvly-secret"
+    assert settings.get_mcp_server("tavily") is not None
 
 
 def test_model_provider_list_matches_catalog():

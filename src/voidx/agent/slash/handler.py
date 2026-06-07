@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+import asyncio
 from inspect import isawaitable
 from typing import Any, Protocol
 
@@ -573,9 +574,63 @@ class SlashHandler(
                 ui.error("Tavily API key is required.")
                 return
             settings.set_tavily_api_key(api_key)
+            await self._sync_tavily_mcp_config(api_key)
             ui.print(f"Tavily API key saved: [cyan]{self._mask_key(api_key)}[/cyan]")
+            ui.print("[dim]Tavily MCP server configured for websearch/webfetch.[/dim]")
         elif args.strip() == "delete":
             settings.delete_tavily_api_key()
+            await self._remove_tavily_mcp_key()
             ui.print("[dim]Tavily API key deleted. Using DuckDuckGo fallback.[/dim]")
         else:
             ui.print("[dim]Usage: /tavily [set|delete|show][/dim]")
+
+    async def _sync_tavily_mcp_config(self, api_key: str) -> None:
+        from voidx.config import McpServerConfig, WebToolRoute
+
+        settings = self._host_settings()
+        if settings is None:
+            return
+        existing = settings.get_mcp_server("tavily")
+        if existing is None:
+            server = McpServerConfig(
+                name="tavily",
+                command="npx",
+                args=["-y", "tavily-mcp@latest"],
+                env={"TAVILY_API_KEY": api_key},
+                tools=["tavily_search", "tavily_extract"],
+            )
+        else:
+            server = existing.model_copy(
+                update={"env": {**existing.env, "TAVILY_API_KEY": api_key}},
+            )
+        settings.save_mcp_server(server)
+        settings.set_web_tool_route(
+            "search",
+            WebToolRoute(backend="mcp", server="tavily", tool="tavily_search"),
+        )
+        settings.set_web_tool_route(
+            "fetch",
+            WebToolRoute(backend="mcp", server="tavily", tool="tavily_extract"),
+        )
+        await self._restart_mcp_manager_if_available()
+
+    async def _remove_tavily_mcp_key(self) -> None:
+        settings = self._host_settings()
+        if settings is None:
+            return
+        existing = settings.get_mcp_server("tavily")
+        if existing is not None and "TAVILY_API_KEY" in existing.env:
+            env = dict(existing.env)
+            env.pop("TAVILY_API_KEY", None)
+            settings.save_mcp_server(existing.model_copy(update={"env": env}))
+        settings.clear_web_routes_for_server("tavily", save=True)
+        await self._restart_mcp_manager_if_available()
+
+    async def _restart_mcp_manager_if_available(self) -> None:
+        manager = getattr(self._g, "_mcp_manager", None)
+        if manager is None:
+            return
+        try:
+            await asyncio.wait_for(manager.restart_all(), timeout=30.0)
+        except asyncio.TimeoutError:
+            ui.warn("MCP restart timed out; servers may still be connecting in the background.")

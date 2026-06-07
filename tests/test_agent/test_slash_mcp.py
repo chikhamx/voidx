@@ -8,8 +8,9 @@ import pytest
 sys.path.insert(0, str(Path(__file__).parent.parent.parent / "src"))
 
 from voidx.agent.slash import SlashHandler
-from voidx.config import Settings
+from voidx.config import McpServerConfig, Settings, WebToolRoute
 from voidx.mcp.schema import McpToolDef
+from voidx.ui.commands import filter_commands
 
 
 class FakePromptApp:
@@ -40,6 +41,11 @@ class FakeMcpManager:
 
     def statuses(self):
         return []
+
+
+def test_mcp_enable_disable_commands_are_in_palette():
+    assert ("/mcp disable", "Disable an MCP server") in filter_commands("/mcp d")
+    assert ("/mcp enable", "Enable an MCP server") in filter_commands("/mcp e")
 
 
 @pytest.mark.asyncio
@@ -133,4 +139,48 @@ async def test_mcp_new_url_saves_server_with_url(tmp_path, monkeypatch):
     saved = json.loads((tmp_path / ".voidx" / "settings.json").read_text(encoding="utf-8"))
     assert saved["mcpServers"]["my-remote"]["url"] == "https://mcp.example.com/sse"
     assert saved["mcpServers"]["my-remote"]["tools"] == ["remote_tool"]
+    assert manager.restarts == 1
+
+
+@pytest.mark.asyncio
+async def test_mcp_disable_command_sets_disabled_true_and_restarts(tmp_path):
+    settings = Settings(str(tmp_path))
+    settings.save_mcp_server(McpServerConfig(
+        name="voidx-web",
+        command=sys.executable,
+        args=["-m", "voidx.mcp_servers.web"],
+        tools=["web_search"],
+    ))
+    settings.set_web_tool_route(
+        "search",
+        WebToolRoute(backend="mcp", server="voidx-web", tool="web_search"),
+    )
+    manager = FakeMcpManager()
+    graph = SimpleNamespace(_settings=settings, _app=None, _mcp_manager=manager)
+
+    await SlashHandler(graph).dispatch("/mcp disable voidx-web")
+
+    saved = json.loads((tmp_path / ".voidx" / "settings.json").read_text(encoding="utf-8"))
+    assert saved["mcpServers"]["voidx-web"]["disabled"] is True
+    assert saved["web"]["search"]["backend"] == "legacy"
+    assert manager.restarts == 1
+
+
+@pytest.mark.asyncio
+async def test_mcp_enable_command_sets_disabled_false_and_restarts(tmp_path):
+    settings = Settings(str(tmp_path))
+    settings.save_mcp_server(McpServerConfig(
+        name="voidx-web",
+        command=sys.executable,
+        args=["-m", "voidx.mcp_servers.web"],
+        disabled=True,
+        tools=["web_search"],
+    ))
+    manager = FakeMcpManager()
+    graph = SimpleNamespace(_settings=settings, _app=None, _mcp_manager=manager)
+
+    await SlashHandler(graph).dispatch("/mcp enable voidx-web")
+
+    saved = json.loads((tmp_path / ".voidx" / "settings.json").read_text(encoding="utf-8"))
+    assert saved["mcpServers"]["voidx-web"]["disabled"] is False
     assert manager.restarts == 1

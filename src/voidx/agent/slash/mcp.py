@@ -30,8 +30,12 @@ class SlashMcpMixin:
             await self._mcp_restart(target)
         elif action == "tools" or action.startswith("tools "):
             await self._mcp_tools(target)
+        elif action == "disable" or action.startswith("disable "):
+            await self._mcp_set_disabled(target, disabled=True)
+        elif action == "enable" or action.startswith("enable "):
+            await self._mcp_set_disabled(target, disabled=False)
         elif action:
-            ui.error("Usage: /mcp [new|list|test|del|restart|tools]")
+            ui.error("Usage: /mcp [new|list|test|del|restart|tools|disable|enable]")
         else:
             await self._mcp_list()
 
@@ -255,7 +259,7 @@ class SlashMcpMixin:
             ui.print("[bold]Web routing:[/bold]")
             ui.print(f"  search · {search.backend} {search.server}/{search.tool}".rstrip("/"))
             ui.print(f"  fetch  · {fetch.backend} {fetch.server}/{fetch.tool}".rstrip("/"))
-        ui.print("[dim]Usage: /mcp new|list|test|del|restart|tools[/dim]")
+        ui.print("[dim]Usage: /mcp new|list|test|del|restart|tools|disable|enable[/dim]")
 
     async def _mcp_test(self, target: str) -> None:
         async def _do_test(name: str) -> None:
@@ -301,6 +305,32 @@ class SlashMcpMixin:
             ui.warn("MCP restart timed out; servers may still be connecting in the background.")
             return
         ui.print("[green]✓ MCP servers restarted[/green]")
+
+    async def _mcp_set_disabled(self, target: str, *, disabled: bool) -> None:
+        action = "Disable" if disabled else "Enable"
+
+        async def _do_set(name: str) -> None:
+            if self._g._settings is None:
+                ui.error("No settings file available.")
+                return
+            try:
+                path = self._g._settings.set_mcp_server_disabled(name, disabled)
+            except KeyError:
+                ui.error(f"MCP server not found: {name}")
+                return
+            manager = getattr(self._g, "_mcp_manager", None)
+            if manager is not None:
+                try:
+                    await asyncio.wait_for(manager.restart_all(), timeout=30.0)
+                except asyncio.TimeoutError:
+                    ui.warn("MCP restart timed out; servers may still be reconnecting.")
+            state = "disabled" if disabled else "enabled"
+            ui.print(f"[green]✓ {name} {state}[/green]")
+            if disabled:
+                ui.print("[dim]Web routes pointing to this server were cleared.[/dim]")
+            ui.print(f"[dim]Saved to {path}[/dim]")
+
+        await self._pick_mcp_server(action, target, _do_set)
 
     async def _mcp_tools(self, target: str) -> None:
         async def _do_tools(name: str) -> None:

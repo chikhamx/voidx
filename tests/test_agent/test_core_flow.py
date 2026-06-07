@@ -30,6 +30,7 @@ from voidx.memory.session import (
 from voidx.memory.transcript import load_transcript
 from voidx.permission.service import PermissionService
 from voidx.tools.base import ToolContext, ToolResult
+from voidx.tools.registry import ToolRegistry
 from voidx.ui.output.dock import BottomInputDock, set_dock
 from voidx.ui.output.events import DockEventConsumer, TurnStarted, ui_events
 
@@ -2116,6 +2117,125 @@ async def test_implement_subagent_injects_workflow_skills(tmp_path, monkeypatch)
 
 
 @pytest.mark.asyncio
+async def test_subagent_without_mcp_tools_excludes_parent_mcp_tools(tmp_path, monkeypatch):
+    import voidx.agent.graph.subagent as subagent_module
+
+    captured: dict[str, list] = {}
+
+    class FakeModel:
+        def bind_tools(self, tool_defs):
+            captured["tool_defs"] = tool_defs
+            return self
+
+    async def fake_stream_llm(_model, _messages, _renderer, _protocol):
+        return AIMessage(content="done")
+
+    parent_tools = ToolRegistry()
+    parent_tools.register(
+        "mcp__demo__send_message_12345678",
+        object(),
+        "MCP demo",
+        {"type": "object", "properties": {}},
+    )
+
+    monkeypatch.setattr(subagent_module, "create_chat_model", lambda *_args, **_kwargs: FakeModel())
+    monkeypatch.setattr(subagent_module, "stream_llm", fake_stream_llm)
+
+    output = await subagent_module.run_subagent(
+        AgentDef(
+            name="explore",
+            description="test",
+            when_to_use="test",
+            tools=["read"],
+            can_write=False,
+            can_delegate=False,
+            max_steps=3,
+        ),
+        "Inspect the workspace",
+        None,
+        "test-key",
+        Config(workspace=str(tmp_path)),
+        parent_tools=parent_tools,
+        debug=False,
+    )
+
+    assert output == "done"
+    tool_names = [tool["function"]["name"] for tool in captured["tool_defs"]]
+    assert "read" in tool_names
+    assert "mcp__demo__send_message_12345678" not in tool_names
+
+
+@pytest.mark.asyncio
+async def test_subagent_with_mcp_tools_copies_parent_mcp_tools(tmp_path, monkeypatch):
+    import voidx.agent.graph.subagent as subagent_module
+
+    captured: dict[str, list] = {}
+    calls: list[dict] = []
+
+    class FakeModel:
+        def bind_tools(self, tool_defs):
+            captured["tool_defs"] = tool_defs
+            return self
+
+    class FakeMcpTool:
+        async def execute(self, args, _ctx):
+            calls.append(args)
+            return ToolResult(output="mcp result")
+
+    stream_count = 0
+
+    async def fake_stream_llm(_model, _messages, _renderer, _protocol):
+        nonlocal stream_count
+        stream_count += 1
+        if stream_count == 1:
+            return AIMessage(
+                content="",
+                tool_calls=[{
+                    "name": "mcp__demo__send_message_12345678",
+                    "args": {"text": "hello"},
+                    "id": "mcp1",
+                    "type": "tool_call",
+                }],
+            )
+        return AIMessage(content="done")
+
+    parent_tools = ToolRegistry()
+    parent_tools.register(
+        "mcp__demo__send_message_12345678",
+        FakeMcpTool(),
+        "MCP demo",
+        {"type": "object", "properties": {"text": {"type": "string"}}},
+    )
+
+    monkeypatch.setattr(subagent_module, "create_chat_model", lambda *_args, **_kwargs: FakeModel())
+    monkeypatch.setattr(subagent_module, "stream_llm", fake_stream_llm)
+
+    output = await subagent_module.run_subagent(
+        AgentDef(
+            name="explore",
+            description="test",
+            when_to_use="test",
+            tools=["read"],
+            can_write=False,
+            can_delegate=False,
+            max_steps=4,
+            mcp_tools=True,
+        ),
+        "Send the message",
+        None,
+        "test-key",
+        Config(workspace=str(tmp_path)),
+        parent_tools=parent_tools,
+        debug=False,
+    )
+
+    assert output == "done"
+    tool_names = [tool["function"]["name"] for tool in captured["tool_defs"]]
+    assert "mcp__demo__send_message_12345678" in tool_names
+    assert calls == [{"text": "hello"}]
+
+
+@pytest.mark.asyncio
 async def test_subagent_parent_history_strips_parent_turn_overlay(tmp_path, monkeypatch):
     import voidx.agent.graph.subagent as subagent_module
 
@@ -2219,8 +2339,8 @@ async def test_subagent_final_step_fallback_does_not_leak_hint_to_sub_messages(t
             return self
 
     class FakeToolRegistry:
-        def filter_tools(self, _allowed_ids):
-            return None
+        def filtered_copy(self, _allowed_ids):
+            return self
 
         def tools_for_llm(self):
             return [{

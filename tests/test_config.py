@@ -78,6 +78,37 @@ def test_settings_saves_mcp_server_and_web_routes(tmp_path):
     assert saved["web"]["search"]["backend"] == "legacy"
 
 
+def test_settings_set_mcp_server_disabled_clears_web_routes(tmp_path):
+    settings = Settings(str(tmp_path))
+    settings.save_mcp_server(McpServerConfig(
+        name="voidx-web",
+        command="python",
+        args=["-m", "voidx.mcp_servers.web"],
+        tools=["web_search", "web_fetch"],
+    ))
+    settings.set_web_tool_route(
+        "search",
+        WebToolRoute(backend="mcp", server="voidx-web", tool="web_search"),
+    )
+    settings.set_web_tool_route(
+        "fetch",
+        WebToolRoute(backend="mcp", server="voidx-web", tool="web_fetch"),
+    )
+
+    settings.set_mcp_server_disabled("voidx-web", True)
+
+    saved = json.loads((tmp_path / ".voidx" / "settings.json").read_text(encoding="utf-8"))
+    assert saved["mcpServers"]["voidx-web"]["disabled"] is True
+    assert saved["web"]["search"]["backend"] == "legacy"
+    assert saved["web"]["fetch"]["backend"] == "legacy"
+
+    settings.set_mcp_server_disabled("voidx-web", False)
+
+    saved = json.loads((tmp_path / ".voidx" / "settings.json").read_text(encoding="utf-8"))
+    assert saved["mcpServers"]["voidx-web"]["disabled"] is False
+    assert saved["web"]["search"]["backend"] == "legacy"
+
+
 def test_mcp_server_config_effective_transport():
     # stdio: no url, no explicit transport
     stdio = McpServerConfig(name="test", command="npx")

@@ -34,6 +34,8 @@ COMMANDS: list[tuple[str, str]] = [
     ("/lsp status", "Show LSP server status"),
     ("/mcp", "Manage MCP servers"),
     ("/mcp del", "Remove an MCP server"),
+    ("/mcp disable", "Disable an MCP server"),
+    ("/mcp enable", "Enable an MCP server"),
     ("/mcp list", "List configured MCP servers"),
     ("/mcp new", "Configure a new MCP server"),
     ("/mcp restart", "Restart an MCP server"),

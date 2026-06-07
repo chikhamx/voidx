@@ -645,7 +645,7 @@ async def test_call_llm_filters_lsp_tools_when_no_lsp_server_is_available(tmp_pa
 
 
 @pytest.mark.asyncio
-async def test_call_llm_filters_tools_from_runtime_visible_tool_ids(tmp_path, monkeypatch):
+async def test_available_tool_ids_can_hide_mcp_tools(tmp_path, monkeypatch):
     import voidx.agent.graph.core as graph_module
 
     monkeypatch.setattr(graph_module, "StreamingRenderer", FakeRenderer)
@@ -659,6 +659,12 @@ async def test_call_llm_filters_tools_from_runtime_visible_tool_ids(tmp_path, mo
     )
     model = TrackingStreamingModel()
     graph.model = model
+    graph.tools.register(
+        "mcp__demo__send_message_12345678",
+        object(),
+        "MCP demo",
+        {"type": "object", "properties": {}},
+    )
 
     await graph._call_llm({
         "messages": [HumanMessage(content="hi")],
@@ -670,6 +676,73 @@ async def test_call_llm_filters_tools_from_runtime_visible_tool_ids(tmp_path, mo
 
     tool_names = [tool["function"]["name"] for tool in model.bound_tools]
     assert tool_names == ["read", "grep"]
+
+
+@pytest.mark.asyncio
+async def test_orchestrator_sees_mcp_tools(tmp_path, monkeypatch):
+    import voidx.agent.graph.core as graph_module
+
+    monkeypatch.setattr(graph_module, "StreamingRenderer", FakeRenderer)
+
+    graph = VoidXGraph(
+        Config(
+            model=ModelConfig(provider="openai", model="gpt-4o"),
+            workspace=str(tmp_path),
+        ),
+        api_key=None,
+    )
+    model = TrackingStreamingModel()
+    graph.model = model
+    graph.tools.register(
+        "mcp__demo__send_message_12345678",
+        object(),
+        "MCP demo",
+        {"type": "object", "properties": {}},
+    )
+
+    await graph._call_llm({
+        "messages": [HumanMessage(content="hi")],
+        "step_count": 0,
+        "max_steps": 50,
+        "agent": "orchestrator",
+    })
+
+    tool_names = [tool["function"]["name"] for tool in model.bound_tools]
+    assert "mcp__demo__send_message_12345678" in tool_names
+
+
+@pytest.mark.asyncio
+async def test_non_mcp_agent_does_not_see_mcp_tools(tmp_path, monkeypatch):
+    import voidx.agent.graph.core as graph_module
+
+    monkeypatch.setattr(graph_module, "StreamingRenderer", FakeRenderer)
+
+    graph = VoidXGraph(
+        Config(
+            model=ModelConfig(provider="openai", model="gpt-4o"),
+            workspace=str(tmp_path),
+        ),
+        api_key=None,
+    )
+    model = TrackingStreamingModel()
+    graph.model = model
+    graph.tools.register(
+        "mcp__demo__send_message_12345678",
+        object(),
+        "MCP demo",
+        {"type": "object", "properties": {}},
+    )
+
+    await graph._call_llm({
+        "messages": [HumanMessage(content="hi")],
+        "step_count": 0,
+        "max_steps": 50,
+        "agent": "explore",
+    })
+
+    tool_names = [tool["function"]["name"] for tool in model.bound_tools]
+    assert "read" in tool_names
+    assert "mcp__demo__send_message_12345678" not in tool_names
 
 
 @pytest.mark.asyncio
