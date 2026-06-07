@@ -52,6 +52,7 @@ class UserResponse(BaseModel):
     """The user's response to a tool interaction request."""
     value: str
     cancelled: bool = False
+    free_text: bool = False
 
 
 UserInteractionCallback = Callable[[UserInteraction], Awaitable[UserResponse]]

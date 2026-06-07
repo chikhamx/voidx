@@ -32,6 +32,9 @@ if TYPE_CHECKING:
     from voidx.agent.graph.contracts import GraphToolExecutionHost
 
 
+_OTHER_VALUE_PREFIX = "__voidx_choice_prompt_other__"
+
+
 @dataclass
 class _ExecutedTool:
     message: ToolMessage
@@ -314,14 +317,37 @@ def _make_interact_callback(app):
     async def interact(request: UserInteraction) -> UserResponse:
         timeout = request.timeout
         if request.options:
-            result = await app.ask_choice(request.prompt, request.options, timeout=timeout)
+            other_value = _other_choice_value(request.options)
+            choices = [
+                *request.options,
+                ("Other (type your answer)", other_value, ""),
+            ]
+            result = await app.ask_choice(request.prompt, choices, timeout=timeout)
+            if result == other_value:
+                result = await app.ask_text(request.prompt, timeout=timeout)
+                if result is None:
+                    return UserResponse(value="", cancelled=True)
+                return UserResponse(value=result, free_text=True)
         else:
             result = await app.ask_text(request.prompt, timeout=timeout)
+            if result is None:
+                return UserResponse(value="", cancelled=True)
+            return UserResponse(value=result, free_text=True)
         if result is None:
             return UserResponse(value="", cancelled=True)
         return UserResponse(value=result)
 
     return interact
+
+
+def _other_choice_value(options: list[tuple[str, str, str]]) -> str:
+    used = {value for _, value, _ in options}
+    value = _OTHER_VALUE_PREFIX
+    index = 1
+    while value in used:
+        value = f"{_OTHER_VALUE_PREFIX}_{index}"
+        index += 1
+    return value
 
 
 def _dump_pending_approval(value: object | None) -> dict | None:

@@ -76,6 +76,8 @@ class PlanCheckpointTool(BaseTool):
         ))
         if response.cancelled or response.value == "rejected":
             return _decision_result(inp, decision="rejected")
+        if response.free_text:
+            return _decision_result(inp, decision="modified", modified_scope=response.value.strip())
         if response.value == "modified":
             scope_response = await ctx.interact(UserInteraction(
                 prompt="Describe the modified scope:",
@@ -84,7 +86,9 @@ class PlanCheckpointTool(BaseTool):
             ))
             modified_scope = "" if scope_response.cancelled else scope_response.value.strip()
             return _decision_result(inp, decision="modified", modified_scope=modified_scope)
-        return _decision_result(inp, decision="approved")
+        if response.value == "approved":
+            return _decision_result(inp, decision="approved")
+        return _decision_result(inp, decision="modified", modified_scope=response.value.strip())
 
 
 def _decision_result(

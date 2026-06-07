@@ -1,6 +1,7 @@
 """Smoke tests for tool system — types, execution, error handling."""
 
 import asyncio
+import json
 import shlex
 import sys
 from pathlib import Path
@@ -235,6 +236,26 @@ class TestInteractiveTools:
         assert result.metadata["clarify_answer"] == "I want to refactor the auth module"
 
     @pytest.mark.asyncio
+    async def test_clarify_free_text_with_options_is_not_selected_option(self, tmp_path):
+        async def interact(request):
+            return UserResponse(value="Audit the auth flow first", free_text=True)
+
+        result = await ClarifyTool().execute(
+            {
+                "question": "What should I do?",
+                "options": [
+                    {"label": "Implement", "value": "implement", "description": "Make the change"},
+                    {"label": "Inspect", "value": "inspect", "description": "Only inspect"},
+                ],
+            },
+            ToolContext(workspace=str(tmp_path), interact=interact),
+        )
+
+        payload = json.loads(result.output)
+        assert payload["answer"] == "Audit the auth flow first"
+        assert payload["selected_option"] is None
+
+    @pytest.mark.asyncio
     async def test_clarify_passes_context_in_prompt(self, tmp_path):
         requests = []
 
@@ -288,6 +309,24 @@ class TestInteractiveTools:
         assert patch["goal"] == "Only refactor the login function"
         assert len(interact_calls) == 2
         assert "Describe the modified scope" in interact_calls[1].prompt
+
+    @pytest.mark.asyncio
+    async def test_plan_checkpoint_free_text_is_modified_not_approved(self, tmp_path):
+        async def interact(request):
+            return UserResponse(value="Only update the login form", free_text=True)
+
+        result = await PlanCheckpointTool().execute(
+            {"plan_summary": "Refactor auth module"},
+            ToolContext(workspace=str(tmp_path), interact=interact),
+        )
+
+        assert result.metadata["plan_decision"] == "modified"
+        payload = json.loads(result.output)
+        assert payload["decision"] == "modified"
+        assert payload["modified_scope"] == "Only update the login form"
+        patch = result.metadata["state_patch"]
+        assert patch["task_intent"] == "implement"
+        assert patch["goal"] == "Only update the login form"
 
     @pytest.mark.asyncio
     async def test_plan_checkpoint_modified_scope_cancelled_falls_back_to_summary(self, tmp_path):
@@ -482,6 +521,84 @@ class TestMakeInteractCallback:
         ))
         assert response.value == "b"
         assert not response.cancelled
+        assert not response.free_text
+
+    @pytest.mark.asyncio
+    async def test_ask_choice_appends_other_option(self):
+        from voidx.agent.graph.tool_execution import _make_interact_callback
+
+        captured_choices = []
+
+        class FakeApp:
+            async def ask_choice(self, prompt, choices, **kwargs):
+                captured_choices.extend(choices)
+                return choices[0][1]
+
+            async def ask_text(self, prompt, **kwargs):
+                return "text"
+
+        callback = _make_interact_callback(FakeApp())
+        response = await callback(UserInteraction(
+            prompt="Choose",
+            options=[("A", "a", "desc a")],
+        ))
+
+        assert response.value == "a"
+        assert captured_choices[-1][0] == "Other (type your answer)"
+        assert captured_choices[-1][2] == ""
+
+    @pytest.mark.asyncio
+    async def test_ask_choice_other_invokes_text_and_marks_free_text(self):
+        from voidx.agent.graph.tool_execution import _make_interact_callback
+
+        calls = []
+
+        class FakeApp:
+            async def ask_choice(self, prompt, choices, **kwargs):
+                calls.append(("choice", prompt, choices))
+                return choices[-1][1]
+
+            async def ask_text(self, prompt, **kwargs):
+                calls.append(("text", prompt, kwargs))
+                return "custom answer"
+
+        callback = _make_interact_callback(FakeApp())
+        response = await callback(UserInteraction(
+            prompt="Choose",
+            options=[("A", "a", "desc a")],
+        ))
+
+        assert response.value == "custom answer"
+        assert response.free_text is True
+        assert [call[0] for call in calls] == ["choice", "text"]
+
+    @pytest.mark.asyncio
+    async def test_ask_choice_other_sentinel_collision_preserves_real_option(self):
+        from voidx.agent.graph.tool_execution import _make_interact_callback
+
+        text_called = False
+        captured_choices = []
+
+        class FakeApp:
+            async def ask_choice(self, prompt, choices, **kwargs):
+                captured_choices.extend(choices)
+                return "__voidx_choice_prompt_other__"
+
+            async def ask_text(self, prompt, **kwargs):
+                nonlocal text_called
+                text_called = True
+                return "text"
+
+        callback = _make_interact_callback(FakeApp())
+        response = await callback(UserInteraction(
+            prompt="Choose",
+            options=[("Real Other", "__voidx_choice_prompt_other__", "desc")],
+        ))
+
+        assert response.value == "__voidx_choice_prompt_other__"
+        assert response.free_text is False
+        assert text_called is False
+        assert captured_choices[-1][1] == "__voidx_choice_prompt_other___1"
 
     @pytest.mark.asyncio
     async def test_ask_text_without_options(self):

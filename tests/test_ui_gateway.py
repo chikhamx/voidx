@@ -19,6 +19,7 @@ from voidx.ui.protocol import (
     UiResponse,
     UiResponseEnvelope,
     UiSubmitCommand,
+    UiTextRequest,
     parse_protocol_envelope,
 )
 
@@ -240,6 +241,43 @@ async def test_gateway_request_sends_request_and_resolves_response():
     await session.handle_response(UiResponse(request_id="req_1", value="auto"))
 
     assert await task == UiResponse(request_id="req_1", value="auto")
+
+
+@pytest.mark.asyncio
+async def test_gateway_handles_consecutive_choice_then_text_requests():
+    dock = BottomInputDock()
+    session = GatewaySession(lambda: dock.tree)
+    client = FakeClient()
+    await session.connect(client)
+
+    choice_task = asyncio.create_task(session.request(UiChoiceRequest(
+        request_id="choice_1",
+        prompt="Mode",
+        choices=[("Other", "other", "")],
+    )))
+    for _ in range(20):
+        if len(client.messages) > 1:
+            break
+        await asyncio.sleep(0.01)
+    choice_request = parse_protocol_envelope(json.loads(client.messages[-1]))
+    assert choice_request.type == "request"
+    assert choice_request.payload.kind == "choice"
+    await session.handle_response(UiResponse(request_id="choice_1", value="other"))
+    assert await choice_task == UiResponse(request_id="choice_1", value="other")
+
+    text_task = asyncio.create_task(session.request(UiTextRequest(
+        request_id="text_1",
+        prompt="Custom answer",
+    )))
+    for _ in range(20):
+        if len(client.messages) > 2:
+            break
+        await asyncio.sleep(0.01)
+    text_request = parse_protocol_envelope(json.loads(client.messages[-1]))
+    assert text_request.type == "request"
+    assert text_request.payload.kind == "text"
+    await session.handle_response(UiResponse(request_id="text_1", value="custom answer"))
+    assert await text_task == UiResponse(request_id="text_1", value="custom answer")
 
 
 @pytest.mark.asyncio

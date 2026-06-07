@@ -82,10 +82,11 @@ class ClarifyTool(BaseTool):
             )
 
         patch = _infer_state_patch(inp, response)
+        selected_option = _selected_option(inp, response)
         result = ClarifyResult(
             question=inp.question,
             answer=response.value,
-            selected_option=response.value if inp.options else None,
+            selected_option=selected_option,
             state_patch=patch,
         )
         payload = result.model_dump(mode="json")
@@ -135,4 +136,13 @@ def _infer_state_patch(inp: ClarifyInput, response: UserResponse) -> ToolStatePa
             intent_source="clarify",
             intent_refined=True,
         )
+    return None
+
+
+def _selected_option(inp: ClarifyInput, response: UserResponse) -> str | None:
+    if response.free_text:
+        return None
+    option_values = {option.value for option in inp.options}
+    if response.value in option_values:
+        return response.value
     return None
