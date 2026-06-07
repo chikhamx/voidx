@@ -96,6 +96,7 @@ class TestToolRegistry:
         assert "apply_patch" in ids
         assert "glob" in ids
         assert "grep" in ids
+        assert "git" in ids
         assert "bash" in ids
         assert "repo_map" in ids
         assert "clarify" in ids

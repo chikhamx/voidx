@@ -61,6 +61,7 @@ def sandbox_denial_reason(classified: ClassifiedToolCall, context: PermissionCon
             PermissionCapability.FILE_WRITE,
             PermissionCapability.FILE_FORMAT,
             PermissionCapability.BASH_WRITE,
+            PermissionCapability.GIT_WRITE,
         }:
             return f"SANDBOX READ-ONLY: '{classified.name}' is not allowed."
         if classified.capability == PermissionCapability.AGENT_IMPLEMENT:
@@ -94,6 +95,7 @@ def mode_overlay_denial_reason(classified: ClassifiedToolCall, context: Permissi
         PermissionCapability.FILE_WRITE,
         PermissionCapability.FILE_FORMAT,
         PermissionCapability.BASH_WRITE,
+        PermissionCapability.GIT_WRITE,
     }:
         return f"BLOCKED by plan mode: '{classified.name}' is not allowed."
     if classified.capability == PermissionCapability.AGENT_IMPLEMENT:
@@ -115,7 +117,7 @@ def strategy_action_for_tool(classified: ClassifiedToolCall, context: Permission
         PermissionCapability.FILE_FORMAT,
     }:
         return "allow"
-    if classified.capability == PermissionCapability.BASH_READ:
+    if classified.capability in {PermissionCapability.BASH_READ, PermissionCapability.GIT_READ}:
         return "allow"
     return evaluate(classified.name, classified.pattern, BASIC_RULES).action
 
@@ -126,7 +128,7 @@ def resolve_approval(classified: ClassifiedToolCall, context: PermissionContext)
         return _decision(classified, "allow", "approval_policy", _reason_for(classified, "allow"))
 
     if policy == ApprovalPolicy.ON_FAILURE.value:
-        if classified.capability == PermissionCapability.BASH_WRITE:
+        if classified.capability in {PermissionCapability.BASH_WRITE, PermissionCapability.GIT_WRITE}:
             return _decision(classified, "ask", "approval_policy", _reason_for(classified, "ask"))
         return _decision(
             classified,
@@ -137,7 +139,7 @@ def resolve_approval(classified: ClassifiedToolCall, context: PermissionContext)
         )
 
     if context.approval_reviewer == ApprovalReviewer.AUTO_REVIEW.value:
-        if classified.capability == PermissionCapability.BASH_WRITE:
+        if classified.capability in {PermissionCapability.BASH_WRITE, PermissionCapability.GIT_WRITE}:
             return _decision(classified, "ask", "auto_review", _reason_for(classified, "ask"))
         return _decision(classified, "allow", "auto_review", _reason_for(classified, "allow"))
 

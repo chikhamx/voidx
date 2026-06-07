@@ -15,6 +15,8 @@ class PermissionCapability(str, Enum):
     FILE_FORMAT = "file_format"
     BASH_READ = "bash_read"
     BASH_WRITE = "bash_write"
+    GIT_READ = "git_read"
+    GIT_WRITE = "git_write"
     AGENT_READONLY = "agent_readonly"
     AGENT_IMPLEMENT = "agent_implement"
     MCP_TOOLS = "mcp_tools"
@@ -40,6 +42,7 @@ BASIC_RULES: Ruleset = [
     Rule(permission="agent", pattern="*", action="allow"),
     Rule(permission="write", pattern="*", action="ask"),
     Rule(permission="edit", pattern="*", action="ask"),
+    Rule(permission="git", pattern="write", action="ask"),
     Rule(permission="bash", pattern="*", action="ask"),
     Rule(permission="lsp_format", pattern="*", action="ask"),
     Rule(permission="agent", pattern="implement", action="ask"),
@@ -112,6 +115,8 @@ def build_pattern(tool: str, args: dict) -> str:
         return str(args.get("file_path", "*"))
     if tool == "agent":
         return delegated_agent(args) or "*"
+    if tool == "git":
+        return "read" if _is_read_only_git_tool_command(args) else "write"
     return "*"
 
 
@@ -338,6 +343,8 @@ def capability_for_tool(tool: str, args: dict) -> PermissionCapability:
         return PermissionCapability.FILE_FORMAT
     if tool == "bash":
         return PermissionCapability.BASH_READ if is_safe_bash(str(args.get("command", ""))) else PermissionCapability.BASH_WRITE
+    if tool == "git":
+        return PermissionCapability.GIT_READ if _is_read_only_git_tool_command(args) else PermissionCapability.GIT_WRITE
     if tool == "agent":
         return PermissionCapability.AGENT_IMPLEMENT if delegated_agent(args) == "implement" else PermissionCapability.AGENT_READONLY
     if tool.startswith("mcp__") or tool.startswith("mcp/"):
@@ -350,3 +357,14 @@ _FILE_PATTERN_TOOLS = {
     "lsp_diagnostics", "lsp_symbols", "lsp_definition",
     "lsp_references", "lsp_format",
 }
+
+
+def _is_read_only_git_tool_command(args: dict) -> bool:
+    return str(args.get("command", "")) in {
+        "status",
+        "diff",
+        "log",
+        "blame",
+        "branch_list",
+        "remote_list",
+    }

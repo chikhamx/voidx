@@ -6,6 +6,7 @@ from pydantic import BaseModel, ConfigDict
 
 from voidx.tools.base import ToolContext, ToolResult  # noqa: F401 — re-export
 from voidx.tools.file_ops import ApplyPatchTool, FileReadTool, FileWriteTool, FileEditTool
+from voidx.tools.git import GitTool
 from voidx.tools.lsp import (
     LspDefinitionTool,
     LspDiagnosticsTool,
@@ -47,6 +48,7 @@ class ToolRegistry:
     def _register_builtins(self) -> None:
         for cls in [
             FileReadTool, FileWriteTool, FileEditTool, ApplyPatchTool,
+            GitTool,
             RepoMapTool,
             GlobTool, GrepTool, BashTool,
             LspDiagnosticsTool, LspSymbolsTool,
