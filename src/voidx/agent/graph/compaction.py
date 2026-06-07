@@ -259,7 +259,12 @@ class GraphCompactionMixin:
             return None
 
         prompt = self._compaction.build_prompt(head_messages, previous_summary)
-        renderer = StreamingRenderer(console, debug=self._debug, stream_to_dock=False)
+        renderer = StreamingRenderer(
+            console,
+            debug=self._debug,
+            stream_to_dock=False,
+            headless=True,
+        )
 
         messages = [SystemMessage(content=COMPACTION_PROMPT)]
         messages.append(HumanMessage(content=prompt))

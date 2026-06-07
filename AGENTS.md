@@ -1,12 +1,21 @@
 # voidx Agent Instructions
 
 ## Project Shape
-- `src/voidx/agent/`: LangGraph orchestration, roles, slash commands, runtime state.
-- `src/voidx/tools/`: typed tool implementations and MCP/LSP adapters.
-- `src/voidx/llm/`: provider setup, prompt context, compaction, token usage.
-- `src/voidx/memory/`: SQLite-backed sessions, transcript, runtime snapshots.
-- `src/voidx/ui/`: prompt_toolkit/Rich terminal UI and transcript rendering.
-- `tests/`: pytest coverage for agent flow, permissions, tools, UI, MCP/LSP.
+- `src/voidx/agent/graph/`: LangGraph orchestration — turn loop, compaction, subagents, tool execution, permissions.
+- `src/voidx/agent/slash/`: Slash command handlers — /mcp, /model, /lsp, /session, /skills, /init.
+- `src/voidx/config/`: Settings & profiles — Pydantic models, MCP server config, API keys, permissions.
+- `src/voidx/llm/`: Provider setup, prompt context, compaction, token usage.
+- `src/voidx/mcp/`: MCP client manager, tool wrapper, schema.
+- `src/voidx/mcp_servers/`: Built-in MCP server implementations (e.g. voidx-web).
+- `src/voidx/memory/`: SQLite-backed sessions, transcript, runtime snapshots, context frames.
+- `src/voidx/permission/`: Permission engine — rules, sandbox, approval policy, wildcard matching.
+- `src/voidx/runtime/`: Shared runtime — UI sink, task state, intent resolution.
+- `src/voidx/skills/`: Skill system — registry, policy, bundled skills.
+- `src/voidx/tools/`: Typed tool implementations and MCP/LSP adapters.
+- `src/voidx/ui/tui/`: Pure terminal TUI — input parser, editor, panels, renderer, state.
+- `src/voidx/ui/output/`: Output rendering — dock tree, streaming, capture, events, diff.
+- `src/voidx/ui/gateway/`: WebSocket gateway for web/desktop frontend.
+- `tests/`: pytest coverage — test_agent/, test_tools/, plus top-level UI and integration tests.
 
 ## Commands
 - Full tests: `.venv/bin/python -m pytest tests/ -v`

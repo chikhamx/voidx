@@ -19,8 +19,8 @@ class _TerminalLifecycleMixin:
             self._old_termios = termios.tcgetattr(self._stdin_fd)
             new = termios.tcgetattr(self._stdin_fd)
             # raw mode: no echo, no canonical, no CR->LF translation, VMIN=1 VTIME=0
-            # VMIN=1: os.read() blocks until at least 1 byte, then returns
-            #          ALL available bytes (escape sequences arrive as one burst)
+            # VMIN=1: raw reads wait for at least 1 byte, while asyncio
+            # drains the available terminal bytes into the StreamReader.
             new[3] = new[3] & ~(
                 termios.ECHO | termios.ICANON | termios.ISIG | termios.IEXTEN
             )
@@ -40,4 +40,3 @@ class _TerminalLifecycleMixin:
     def _restore_terminal(self) -> None:
         if termios is not None and self._old_termios is not None:
             termios.tcsetattr(self._stdin_fd, termios.TCSADRAIN, self._old_termios)
-

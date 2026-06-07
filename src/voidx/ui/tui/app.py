@@ -7,7 +7,6 @@ explicit cursor positioning so IME overlays appear at the right spot.
 from __future__ import annotations
 
 import asyncio
-import io
 import os
 import shutil
 import sys
@@ -35,6 +34,19 @@ from voidx.ui.tui.input import _InputEditorMixin
 from voidx.ui.tui.parser import _InputParserMixin
 from voidx.ui.tui.panels import _PanelManagerMixin
 from voidx.ui.tui.renderer import _TerminalRendererMixin
+from voidx.ui.tui.state import (
+    CaptureState,
+    ChoiceState,
+    ExternalState,
+    InputState,
+    PanelState,
+    PasteState,
+    RenderState,
+    STATE_FIELD_MAP,
+    SubmitState,
+    TerminalState,
+    TextPromptState,
+)
 from voidx.ui.tui.terminal_mixin import _TerminalLifecycleMixin
 from voidx.ui.tui.text_prompt_mixin import _TextPromptMixin
 
@@ -72,90 +84,41 @@ class PureTui(
 
     INPUT_HISTORY_LIMIT = 1000
 
+    def __getattr__(self, name: str) -> Any:
+        mapping = STATE_FIELD_MAP.get(name)
+        if mapping is None:
+            raise AttributeError(name)
+        state_attr, field_name = mapping
+        state = object.__getattribute__(self, state_attr)
+        return getattr(state, field_name)
+
+    def __setattr__(self, name: str, value: Any) -> None:
+        mapping = STATE_FIELD_MAP.get(name)
+        if mapping is not None:
+            state_attr, field_name = mapping
+            try:
+                state = object.__getattribute__(self, state_attr)
+            except AttributeError:
+                pass
+            else:
+                setattr(state, field_name, value)
+                return
+        object.__setattr__(self, name, value)
+
     def __init__(self, status, commands: list[tuple[str, str]]) -> None:
         self.status = status
         self.commands = commands
         self._console = Console()
-
-        # Input state
-        self._input_lines: list[str] = [""]
-        self._cursor_row: int = 0
-        self._cursor_col: int = 0
-        self._input_history: list[str] = []
-        self._input_history_paste_entries: list[list[dict[str, Any]]] = []
-        self._history_idx: int = -1
-        self._history_draft: list[str] = [""]
-        self._history_draft_paste_entries: list[dict[str, Any]] = []
-
-        # Submit queue / flow
-        self._queue: asyncio.Queue[str | None] = asyncio.Queue()
-        self._busy: bool = False
-        self._current_submit_task: asyncio.Task[bool] | None = None
-        self._current_submitted_text: str = ""
-        self._current_submitted_paste_entries: list[dict[str, Any]] = []
-        self._submit_cancel_requested: bool = False
-        self._ctrl_c_armed: bool = False
-        self._ctrl_c_deadline: float = 0.0
-
-        self._init_choice_prompt_state()
-        self._init_text_prompt_state()
-
-        # Command palette
-        self._command_selected: int = 0
-        self._command_panel_active: bool = False
-
-        # File attachment palette
-        self._attachment_selected: int = 0
-        self._attachment_panel_suppressed_text: str = ""
-
-        self._capture_buffer: io.StringIO | None = None
-        self._capture_console: Console | None = None
-        self._capture_console_key: tuple[int, int | None] | None = None
-
-        # Quiet commands
-        self._quiet_commands: list[str] = []
-
-        # Rendering
-        self._running: bool = False
-        self._exit_requested: bool = False
-        self._last_error: str = ""
-        self._notice: str = ""
-        self._pending_tb: str = ""
-        self._has_rendered_frame: bool = False
-        self._cursor_to_frame_top_lines: int = 0
-        self._cursor_to_frame_end_lines: int = 0
-        self._last_frame_rows: int = 0
-        self._last_frame_start_row: int = 1
-        self._last_bottom_rows: int = 0
-        self._last_bottom_start_row: int = 1
-        self._input_region_render_pending: bool = False
-        self._attachment_matches_cache_key: tuple[str, str, int, int] | None = None
-
-        # Scrollback flush: lines already committed to terminal history
-        self._committed_line_count: int = 0
-        self._visible_committed_rows: int = 0
-        self._was_busy: bool = False
-        self._attachment_matches_cache: list[Any] = []
-
-        # External protocol hooks (web gateway stubs)
-        self._external_request_handler: Callable[[Any], Awaitable[Any]] | None = None
-        self._external_command_handler: Callable[[Any], Awaitable[Any]] | None = None
-
-        # stdin
-        self._stdin_fd: int | None = self._stdin_fileno()
-        self._tty: bool = False
-        self._old_termios: list | None = None
-
-        # Buffer-boundary safety: hold truncated UTF-8 or lone ESC across reads
-        self._pending_bytes: bytes = b""
-
-        # Bracketed paste: None when not pasting, bytes accumulator during paste
-        self._paste_buffer: bytes | None = None
-        self._paste_entries: list[dict[str, Any]] = []
-        self._paste_next_id: int = 1
-
-        # Clipboard watcher state (macOS: Ctrl+V image paste)
-        self._clipboard_change_count: int = -1
+        self._input_state = InputState()
+        self._submit_state = SubmitState()
+        self._choice_state = ChoiceState()
+        self._text_prompt_state = TextPromptState()
+        self._panel_state = PanelState()
+        self._capture_state = CaptureState()
+        self._render_state = RenderState()
+        self._external_state = ExternalState()
+        self._terminal_state = TerminalState(stdin_fd=self._stdin_fileno())
+        self._paste_state = PasteState()
 
     # ── public API ───────────────────────────────────────────────────────
 
@@ -188,6 +151,7 @@ class PureTui(
                     self._render_after_input()
         finally:
             self._running = False
+            self._close_stdin_reader()
             if self._tty:
                 try:
                     _dump_transcript_log(Path(self.status.workspace), dock.tree)
@@ -247,9 +211,24 @@ class PureTui(
         return True
 
     def invalidate(self) -> None:
+        self._mark_status_summary_dirty()
         if self._running:
-            self._flush_committed()
-            self._render_frame()
+            if self._render_scheduled:
+                return
+            self._render_scheduled = True
+            try:
+                loop = asyncio.get_running_loop()
+            except RuntimeError:
+                self._run_scheduled_render()
+                return
+            loop.call_soon(self._run_scheduled_render)
+
+    def _run_scheduled_render(self) -> None:
+        self._render_scheduled = False
+        if not self._running:
+            return
+        self._flush_committed()
+        self._render_frame()
 
     def _flush_committed(self, *, force: bool = False) -> None:
         """Flush completed content to terminal scrollback.

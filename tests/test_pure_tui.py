@@ -18,6 +18,7 @@ from voidx.ui.tools.clipboard_image import ClipboardImageResult
 from voidx.ui.tools.clipboard_text import ClipboardTextResult
 from voidx.ui.commands import COMMANDS
 from voidx.ui.output.dock import BottomInputDock, dock, set_dock
+from voidx.ui.tui.state import InputState, RenderState
 from voidx.ui.tui import (
     PureTui,
     _ENTER_TERMINAL_SEQUENCE,
@@ -48,6 +49,20 @@ def _render_lines(tui: PureTui, *, width: int = 100) -> list[str]:
     with console.capture() as capture:
         console.print(tui._render_impl())
     return [line.rstrip() for line in capture.get().splitlines()]
+
+
+def test_pure_tui_groups_runtime_state(tmp_path):
+    tui = _tui(tmp_path)
+
+    assert isinstance(tui._input_state, InputState)
+    assert isinstance(tui._render_state, RenderState)
+
+    tui._input_lines = ["hello"]
+    tui._cursor_col = 5
+
+    assert tui._input_state.lines == ["hello"]
+    assert tui._input_state.cursor_col == 5
+    assert tui._input_lines == ["hello"]
 
 
 def test_choice_render_handles_unselected_items_and_details(tmp_path):
@@ -151,6 +166,55 @@ def test_status_summary_is_empty_without_model_status(tmp_path):
 
     assert tui._status_summary(80) == ""
     assert tui._render_hint_lines() == []
+
+
+def test_status_summary_reuses_cache_until_marked_dirty(tmp_path):
+    calls = {"permission": 0}
+
+    def permission_label() -> str:
+        calls["permission"] += 1
+        return f"perm-{calls['permission']}"
+
+    status = SimpleNamespace(
+        provider="mimo",
+        model="mimo-v2.5",
+        workspace=str(tmp_path),
+        reasoning_effort="xhigh",
+        permission_label=permission_label,
+    )
+    tui = PureTui(status, COMMANDS)
+
+    first = tui._status_summary(120)
+    second = tui._status_summary(120)
+
+    assert first == second
+    assert calls["permission"] == 1
+
+    tui._mark_status_summary_dirty()
+    third = tui._status_summary(120)
+
+    assert "perm-2" in third
+    assert calls["permission"] == 2
+
+
+@pytest.mark.asyncio
+async def test_invalidate_coalesces_render_until_next_loop(tmp_path, monkeypatch):
+    tui = _tui(tmp_path)
+    tui._running = True
+    calls = {"flush": 0, "render": 0}
+
+    monkeypatch.setattr(tui, "_flush_committed", lambda: calls.__setitem__("flush", calls["flush"] + 1))
+    monkeypatch.setattr(tui, "_render_frame", lambda: calls.__setitem__("render", calls["render"] + 1))
+
+    tui.invalidate()
+    tui.invalidate()
+
+    assert calls == {"flush": 0, "render": 0}
+
+    await asyncio.sleep(0)
+
+    assert calls == {"flush": 1, "render": 1}
+    assert tui._render_scheduled is False
 
 
 def test_terminal_sequences_stay_on_normal_buffer():
@@ -1095,25 +1159,38 @@ async def test_ctrl_c_cancels_active_submit_task(tmp_path):
 
 
 @pytest.mark.asyncio
-async def test_read_input_raw_returns_ctrl_d_on_stdin_eof(tmp_path, monkeypatch):
-    running_loop = asyncio.get_running_loop()
-
-    class FakeLoop:
-        def create_future(self):
-            return running_loop.create_future()
-
-        def add_reader(self, _fd, callback):
-            callback()
-
-        def remove_reader(self, _fd):
-            pass
-
+async def test_read_input_raw_uses_stream_reader_for_pipe_bytes(tmp_path):
+    if sys.platform == "win32":
+        pytest.skip("connect_read_pipe coverage is POSIX-only")
+    read_fd, write_fd = os.pipe()
     tui = _tui(tmp_path)
-    tui._stdin_fd = 99
-    monkeypatch.setattr(asyncio, "get_event_loop", lambda: FakeLoop())
-    monkeypatch.setattr(os, "read", lambda _fd, _size: b"")
+    tui._stdin_fd = read_fd
+    try:
+        os.write(write_fd, b"abc")
+        data = await asyncio.wait_for(tui._read_input_raw(), timeout=1)
+    finally:
+        tui._close_stdin_reader()
+        os.close(write_fd)
+        os.close(read_fd)
 
-    assert await tui._read_input_raw() == b"\x04"
+    assert data == b"abc"
+
+
+@pytest.mark.asyncio
+async def test_read_input_raw_returns_ctrl_d_on_stdin_eof(tmp_path):
+    if sys.platform == "win32":
+        pytest.skip("connect_read_pipe coverage is POSIX-only")
+    read_fd, write_fd = os.pipe()
+    tui = _tui(tmp_path)
+    tui._stdin_fd = read_fd
+    os.close(write_fd)
+    try:
+        data = await asyncio.wait_for(tui._read_input_raw(), timeout=1)
+    finally:
+        tui._close_stdin_reader()
+        os.close(read_fd)
+
+    assert data == b"\x04"
 
 
 @pytest.mark.asyncio

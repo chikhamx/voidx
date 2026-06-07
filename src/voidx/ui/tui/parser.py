@@ -24,19 +24,43 @@ class _InputParserMixin:
         if sys.platform == "win32":
             return await self._read_input_raw_win32()
 
-        loop = asyncio.get_event_loop()
-        fut: asyncio.Future[None] = loop.create_future()
-        loop.add_reader(self._stdin_fd, lambda: fut.set_result(None) if not fut.done() else None)
-        try:
-            await fut
-        finally:
-            loop.remove_reader(self._stdin_fd)
-
-        # VMIN=1: os.read blocks until >=1 byte arrives, then returns all
-        # available bytes. Escape sequences arrive in one burst, so we
-        # get the full sequence (e.g. "\x1b[A") in a single read.
-        data = os.read(self._stdin_fd, 4096)
+        reader = await self._stdin_reader()
+        data = await reader.read(4096)
         return data or b"\x04"
+
+    async def _stdin_reader(self) -> asyncio.StreamReader:
+        if self._stdin_stream_reader is not None:
+            return self._stdin_stream_reader
+        if self._stdin_fd is None:
+            raise RuntimeError("stdin fd is unavailable")
+
+        loop = asyncio.get_running_loop()
+        reader = asyncio.StreamReader()
+        protocol = asyncio.StreamReaderProtocol(reader)
+        pipe = os.fdopen(os.dup(self._stdin_fd), "rb", buffering=0)
+        try:
+            transport, _ = await loop.connect_read_pipe(lambda: protocol, pipe)
+        except Exception:
+            pipe.close()
+            raise
+        self._stdin_stream_reader = reader
+        self._stdin_stream_transport = transport
+        self._stdin_stream_pipe = pipe
+        return reader
+
+    def _close_stdin_reader(self) -> None:
+        transport = self._stdin_stream_transport
+        if transport is not None:
+            transport.close()
+        pipe = self._stdin_stream_pipe
+        if transport is None and pipe is not None:
+            try:
+                pipe.close()
+            except OSError:
+                pass
+        self._stdin_stream_reader = None
+        self._stdin_stream_transport = None
+        self._stdin_stream_pipe = None
 
     async def _read_input_raw_win32(self) -> bytes:
         """Read raw key input on Windows via msvcrt."""

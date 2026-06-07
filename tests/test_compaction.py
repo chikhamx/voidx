@@ -406,9 +406,10 @@ class TestCompactionRetry:
 
         captured = {}
 
-        async def fake_stream_llm(model, messages, _renderer, protocol):
+        async def fake_stream_llm(model, messages, renderer, protocol):
             captured["model"] = model
             captured["messages"] = messages
+            captured["renderer"] = renderer
             captured["protocol"] = protocol
             return AIMessage(content="## Goal\n- summarized")
 
@@ -438,6 +439,8 @@ class TestCompactionRetry:
         assert result == "## Goal\n- summarized"
         assert captured["model"] is host.model
         assert captured["protocol"] == "openai"
+        assert captured["renderer"]._headless is True
+        assert captured["renderer"]._stream_to_dock is False
         assert isinstance(captured["messages"][0], SystemMessage)
         assert isinstance(captured["messages"][1], HumanMessage)
         assert "Fix the compaction fallback" in captured["messages"][1].content

@@ -16,6 +16,7 @@ from voidx.ui.output.dock import active_agent_step_text, dock
 from voidx.ui.output.dock.formatting import _text_from_line
 from voidx.ui.tui.helpers import _clip_cells, _rendered_row_count
 from voidx.ui.tui.overlays import _OverlayRendererMixin
+from voidx.ui.tui.state import StatusSummaryCache
 
 
 class _TerminalRendererMixin(_OverlayRendererMixin):
@@ -459,8 +460,19 @@ class _TerminalRendererMixin(_OverlayRendererMixin):
             lines.append(Text("  ⚠ " + self._last_error, style="red"))
         return lines
 
+    def _mark_status_summary_dirty(self) -> None:
+        self._render_state.status_summary_dirty = True
+
     def _status_summary(self, width: int) -> str:
         from voidx.ui.tui.helpers import _safe_status_value, _call_status, _call_bool, _call_int
+        cache = self._render_state.status_summary_cache
+        if (
+            cache is not None
+            and cache.width == width
+            and not self._render_state.status_summary_dirty
+        ):
+            return cache.summary
+
         provider = _safe_status_value(getattr(self.status, "provider", ""), "")
         model = _safe_status_value(getattr(self.status, "model", ""), "")
         effort = _safe_status_value(getattr(self.status, "reasoning_effort", ""), "")
@@ -477,6 +489,37 @@ class _TerminalRendererMixin(_OverlayRendererMixin):
         goal_turns = _call_int(getattr(self.status, "goal_turn_count", None), 0)
         stats = getattr(self.status, "usage_stats", None)
         context_limit = getattr(stats, "context_limit", None) or getattr(self.status, "context_limit", 0)
+        agent_step = active_agent_step_text()
+        stats_snapshot = (
+            context_limit,
+            getattr(stats, "context_tokens", 0) if stats is not None else 0,
+            getattr(stats, "last_input_tokens", 0) if stats is not None else 0,
+            getattr(stats, "last_output_tokens", 0) if stats is not None else 0,
+            getattr(stats, "total_tokens", 0) if stats is not None else 0,
+            getattr(stats, "cache_hit_rate", None) if stats is not None else None,
+        )
+        snapshot = (
+            provider,
+            model,
+            effort,
+            permission,
+            sandbox,
+            approval,
+            reviewer,
+            mode,
+            plan,
+            debug,
+            goal_label,
+            goal_status,
+            goal_phase,
+            goal_turns,
+            self._busy,
+            agent_step,
+            stats_snapshot,
+        )
+        if cache is not None and cache.width == width and cache.snapshot == snapshot:
+            self._render_state.status_summary_dirty = False
+            return cache.summary
 
         model_text = "/".join(part for part in (provider, model) if part)
         if effort:
@@ -490,7 +533,6 @@ class _TerminalRendererMixin(_OverlayRendererMixin):
         state_parts = []
         if self._busy:
             state_parts.append("busy")
-        agent_step = active_agent_step_text()
         if agent_step:
             state_parts.append(agent_step)
         if mode:
@@ -528,8 +570,15 @@ class _TerminalRendererMixin(_OverlayRendererMixin):
         for variant in variants:
             summary_text = " | ".join(part for part in variant if part)
             if not summary_text:
+                self._render_state.status_summary_dirty = False
+                self._render_state.status_summary_cache = StatusSummaryCache(width, snapshot, "")
                 return ""
             summary = "  " + summary_text
             if cell_len(summary) <= width:
+                self._render_state.status_summary_dirty = False
+                self._render_state.status_summary_cache = StatusSummaryCache(width, snapshot, summary)
                 return summary
-        return _clip_cells("  " + model_text, width)
+        summary = _clip_cells("  " + model_text, width)
+        self._render_state.status_summary_dirty = False
+        self._render_state.status_summary_cache = StatusSummaryCache(width, snapshot, summary)
+        return summary
