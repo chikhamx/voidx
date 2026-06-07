@@ -8,6 +8,7 @@ from typing import Any, Protocol
 from voidx.diffing import git_diff, git_diff_stat
 from voidx.agent.slash.code_ide import SlashCodeIdeMixin
 from voidx.agent.slash.guide import SlashGuideMixin
+from voidx.agent.slash.init import SlashInitMixin
 from voidx.agent.slash.lsp import SlashLspMixin
 from voidx.agent.slash.mcp import SlashMcpMixin
 from voidx.agent.slash.model import SlashModelMixin
@@ -49,13 +50,20 @@ class SlashCommandHost(Protocol):
     async def persist_runtime_state(self) -> None: ...
     async def restore_transcript_snapshot(self, *, append: bool = False) -> bool: ...
     async def resume_session(self, session: Any) -> None: ...
+    async def run_synthetic_turn(self, text: str, *, display_text: str | None = None) -> None: ...
     async def set_session_title(self, title: str) -> None: ...
-    async def show_startup(self, *, append_transcript: bool = False) -> None: ...
+    async def show_startup(
+        self,
+        *,
+        append_transcript: bool = False,
+        prefer_direct: bool = False,
+    ) -> None: ...
 
 
 class SlashHandler(
     SlashCodeIdeMixin,
     SlashGuideMixin,
+    SlashInitMixin,
     SlashLspMixin,
     SlashSessionMixin,
     SlashSkillsMixin,
@@ -197,6 +205,7 @@ class SlashHandler(
             "/mode": lambda: self._mode(args),
             "/goal": lambda: self._goal(args),
             "/guide": lambda: self._guide(args),
+            "/init": lambda: self._init(args),
             "/lang": lambda: self._lang(args),
             "/plan": set_plan,
             "/unplan": set_auto,

@@ -16,6 +16,16 @@ if TYPE_CHECKING:
 
 
 class GraphSessionMixin:
+    def _reset_runtime_state_memory(self: GraphRunLoopHost) -> None:
+        from voidx.agent.runtime_context import InteractionMode
+        from voidx.agent.task_state import TaskRun, TaskState
+
+        self._interaction_mode = InteractionMode.AUTO
+        self._task_state = TaskState()
+        self._task_run = TaskRun()
+        self._compaction_summary = ""
+        self._pending_summary = None
+
     async def _restore_runtime_state(self: GraphRunLoopHost) -> None:
         if self._session is None:
             return
@@ -45,13 +55,6 @@ class GraphSessionMixin:
         )
 
     async def _clear_runtime_state(self: GraphRunLoopHost) -> None:
-        from voidx.agent.runtime_context import InteractionMode
-        from voidx.agent.task_state import TaskRun, TaskState
-
         if self._session is not None:
             await clear_runtime_state(self._session.id)
-        self._interaction_mode = InteractionMode.AUTO
-        self._task_state = TaskState()
-        self._task_run = TaskRun()
-        self._compaction_summary = ""
-        self._pending_summary = None
+        self._reset_runtime_state_memory()

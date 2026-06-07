@@ -1,5 +1,7 @@
 # /init Slash Command Design
 
+> **Status: Done**
+
 Date: 2026-06-07
 
 ## Problem
@@ -10,11 +12,13 @@ auto-generates `AGENTS.md` by scanning the project, and voidx should offer the
 same convenience — adapted to voidx's own conventions and mechanisms.
 
 Unlike opencode's deterministic scanner, voidx's `/init` delegates the scan and
-generation to a child agent (implement). This lets the LLM use voidx's own
-tools (repo_map, glob, grep, read) to deeply understand the project, then
-produce a high-quality AGENTS.md that reflects the actual codebase — not just
-config file presence checks. The key differentiator is a structured prompt that
-guides the LLM to generate content aligned with voidx's specific mechanisms.
+generation to the normal orchestrator turn. The orchestrator may use child
+agents when appropriate, but the command does not force an extra subagent layer.
+This lets the LLM use voidx's own tools (repo_map, glob, grep, read) to deeply
+understand the project, then produce a high-quality AGENTS.md that reflects the
+actual codebase — not just config file presence checks. The key differentiator
+is a structured prompt that guides the LLM to generate content aligned with
+voidx's specific mechanisms.
 
 ## Current State
 
@@ -35,14 +39,18 @@ When the user runs `/init`:
 
 1. If AGENTS.md already exists and `force` is not specified, print a message
    and return.
-2. Inject a structured task prompt into the current turn, directing the
-   orchestrator to delegate to the implement agent.
-3. The implement agent scans the project using voidx tools, then writes the
-   AGENTS.md.
+2. If the current interaction mode is plan mode, refuse with a message telling
+   the user to run `/unplan` first. `/init` writes a file, so it should not try
+   to bypass plan-mode write restrictions.
+3. Start a synthetic agent turn with a structured task prompt, directing the
+   orchestrator to generate AGENTS.md. The orchestrator may delegate to the
+   implement agent or write directly, subject to normal permissions.
+4. The agent scans the project using voidx tools, then writes AGENTS.md.
 
-The orchestrator receives the task as a synthetic user message appended to the
-current turn. This avoids a separate LLM call infrastructure — it reuses the
-existing agent loop.
+The orchestrator receives the task as a synthetic user message in a normal
+agent turn. This avoids a separate LLM call infrastructure, but it must not use
+the mid-turn guidance path: `submit_guidance()` collapses whitespace, caps
+content at 2000 characters, and does not start a new agent run by itself.
 
 ### Init Prompt
 
@@ -55,7 +63,7 @@ Generate an AGENTS.md file for this project. Write it to the workspace root.
 
 ## What to do
 
-1. Scan the project structure using repo_map, glob, and read tools.
+1. Scan the project structure using repo_map, glob, grep, and read tools.
 2. Detect the language, framework, test runner, linter, and build system.
 3. Read key config files (pyproject.toml, package.json, Cargo.toml, go.mod, etc.)
    to extract exact commands.
@@ -97,22 +105,11 @@ Infer conventions from the codebase. Look at:
 This section is specific to voidx. Include the rules that help voidx agents
 work effectively with this project:
 
-- **Tool preferences**: Which voidx tools to prefer for this project.
-  - Use `repo_map` for structural overview before deep dives.
-  - Use `edit` with exact `old_string` matches for surgical changes.
-  - Use `apply_patch` for multi-file changes.
-  - Use `lsp_format` after editing if the project has a formatter.
-  - Use `lsp_diagnostics` to verify changes compile/type-check.
-- **Agent delegation**: When to use which child agent.
-  - `explore` for codebase understanding questions.
-  - `plan` for architecture and design before implementation.
-  - `implement` for broad or isolated coding tasks.
-  - `review` after non-trivial implementation work.
-- **Workflow skills**: Which skills are relevant for this project.
-  - `test-driven-development` for feature/bug work.
-  - `verification-before-completion` before claiming done.
-  - `systematic-debugging` for bug investigation.
-  - `writing-plans` before complex implementations.
+- **Workflow skills**: Which discovered voidx skills are relevant for this
+  project. Mention a skill only if it exists in the local skill registry or is
+  already referenced by this project. Examples may include
+  `test-driven-development`, `verification-before-completion`,
+  `systematic-debugging`, and `writing-plans`.
 - **Permission awareness**: Note which tools require approval in this project
   (write, edit, bash, lsp_format, agent(implement)) and plan accordingly —
   batch reads before edits, minimize approval prompts.
@@ -141,8 +138,9 @@ Standard safety rules:
 - Read actual config files to get exact commands and flags.
 - Keep the file concise — rules and facts, not essays.
 - Do not add comments unless they explain non-obvious intent or constraints.
-- If the project has an existing AGENTS.md, read it first and preserve any
-  custom sections not covered by the standard structure.
+- If the project has an existing AGENTS.md because /init force was used, read it
+  first and preserve custom project-specific sections when they are still
+  accurate.
 """
 ```
 
@@ -153,21 +151,27 @@ Standard safety rules:
 ```python
 class SlashInitMixin:
     async def _init(self, args: str) -> None:
-        workspace = self._host_workspace()
-        existing = Path(workspace) / "AGENTS.md"
+        arg = args.strip().lower()
+        if arg not in {"", "force"}:
+            ui.error("Usage: /init [force]")
+            return
 
-        if existing.exists() and args.strip() != "force":
+        if self._host_interaction_mode_value() == "plan":
+            ui.error("/init writes AGENTS.md. Run /unplan first.")
+            return
+
+        existing = Path(self._host_workspace()) / "AGENTS.md"
+
+        if existing.exists() and arg != "force":
             ui.print("[dim]AGENTS.md already exists. Use /init force to regenerate.[/dim]")
             return
 
-        # Inject the init task as a guide message into the current turn.
-        # The orchestrator will pick it up and delegate to implement.
-        await self._guide(INIT_PROMPT)
+        await self._g.run_synthetic_turn(INIT_PROMPT, display_text="/init")
 ```
 
-The `_guide` method already exists on `SlashHandler` — it appends a guidance
-message to the running agent turn. This means `/init` reuses the existing
-guidance mechanism rather than building a new LLM call path.
+`run_synthetic_turn()` reuses the normal agent loop while keeping the prompt out
+of the guidance queue. The display text keeps the UI compact (`/init`) while
+the persisted user message and LLM input contain the full init prompt.
 
 #### 2. Register in handler
 
@@ -183,14 +187,29 @@ table:
 Add entries to `COMMANDS` in `src/voidx/ui/commands.py`:
 
 ```python
-("/init", "Generate or update AGENTS.md for this project"),
+("/init", "Generate AGENTS.md for this project"),
 ("/init force", "Regenerate AGENTS.md even if it already exists"),
 ```
+
+#### 4. Add synthetic turn host method
+
+Add a public graph method:
+
+```python
+async def run_synthetic_turn(self, text: str, *, display_text: str | None = None) -> None:
+    await self._run_once(text, display_text=display_text)
+```
+
+Update `GraphTurnMixin._run_once()` to accept `display_text: str | None = None`
+and use it only for `TurnStarted` / `dock.start_turn()` display text. The full
+`text` still goes through `build_user_message_payload()`, persistence, intent
+resolution, and LLM context.
 
 ### What does NOT change
 
 - **`InstructionService`** — no changes to how AGENTS.md is loaded.
-- **No new LLM infrastructure** — reuses the existing agent loop via `_guide`.
+- **No new LLM infrastructure** — reuses the existing agent loop via a
+  synthetic user turn.
 - **No deterministic scanner** — the LLM does the scanning using voidx tools,
   producing higher-quality output than config-file-presence checks.
 - **No interactive wizard** — V1 is fully automatic via the prompt.
@@ -213,10 +232,13 @@ Add entries to `COMMANDS` in `src/voidx/ui/commands.py`:
 
 | Test | Description |
 |------|-------------|
-| `test_init_dispatches_guide` | `/init` calls `_guide` with the init prompt |
+| `test_init_dispatches_synthetic_turn` | `/init` calls `run_synthetic_turn()` with the full init prompt and display text `/init` |
 | `test_init_refuses_existing_without_force` | `/init` prints message when AGENTS.md exists |
-| `test_init_force_dispatches_with_existing` | `/init force` calls `_guide` even when AGENTS.md exists |
-| `test_init_dispatches_when_no_agents_md` | `/init` calls `_guide` when no AGENTS.md exists |
+| `test_init_force_dispatches_with_existing` | `/init force` calls `run_synthetic_turn()` even when AGENTS.md exists |
+| `test_init_rejects_invalid_args` | `/init anything-else` prints usage |
+| `test_init_rejects_plan_mode` | `/init` refuses to run in plan mode |
+| `test_run_synthetic_turn_uses_display_text_without_losing_prompt` | synthetic turn displays `/init` while preserving the full prompt for the LLM |
+| `test_init_command_is_in_palette` | command palette includes `/init` and `/init force` |
 
 These tests verify the slash command dispatch logic. The actual AGENTS.md
 generation quality is tested by running `/init` on real projects — it's an
@@ -227,6 +249,8 @@ LLM output, not a deterministic function.
 - `/init` triggers the orchestrator to scan the project and write AGENTS.md.
 - Generated AGENTS.md includes all standard sections, especially `voidx Integration`.
 - Existing AGENTS.md is not overwritten without `force`.
+- `/init` does not use the guidance path and does not truncate the init prompt.
+- `/init` refuses to run in plan mode.
 - The `voidx Integration` section covers tool preferences, agent delegation,
   workflow skills, and permission awareness.
-- No new LLM call infrastructure — reuses `_guide`.
+- No separate LLM call infrastructure — reuses the normal agent loop.

@@ -23,6 +23,8 @@ COMMANDS: list[tuple[str, str]] = [
     ("/goal", "Set or show current goal"),
     ("/goal clear", "Clear current goal"),
     ("/guide", "Add guidance to the running agent turn"),
+    ("/init", "Generate AGENTS.md for this project"),
+    ("/init force", "Regenerate AGENTS.md even if it already exists"),
     ("/lang", "Set response language preference"),
     ("/list", "List saved sessions"),
     ("/lsp", "Manage language servers"),

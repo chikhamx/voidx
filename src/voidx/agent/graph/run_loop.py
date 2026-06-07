@@ -36,7 +36,12 @@ if TYPE_CHECKING:
 
 
 class GraphRunLoopMixin(GraphTurnMixin, GraphSessionMixin, GraphTranscriptMixin):
-    async def _show_startup(self: GraphRunLoopHost, *, append_transcript: bool = False) -> None:
+    async def _show_startup(
+        self: GraphRunLoopHost,
+        *,
+        append_transcript: bool = False,
+        prefer_direct: bool = False,
+    ) -> None:
         is_new = self._session is None
         title = self._startup_title()
         active_dock = get_dock()
@@ -48,7 +53,7 @@ class GraphRunLoopMixin(GraphTurnMixin, GraphSessionMixin, GraphTranscriptMixin)
             is_new=is_new,
             profile_configured=self.model is not None,
         )
-        startup_via_event = active_dock is not None and ui_events.is_running
+        startup_via_event = active_dock is not None and ui_events.is_running and not prefer_direct
         if startup_via_event:
             await ui_events.request(startup_event)
             if append_transcript:

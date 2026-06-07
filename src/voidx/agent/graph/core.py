@@ -163,6 +163,7 @@ class VoidXGraph(
         self._task_run = TaskRun()
         self._needs_failure_check: dict[str, dict] = {}
         self._pending_guidance: list[str] = []
+        self._clear_session_tasks: set[asyncio.Task[None]] = set()
         self._usage_stats, self._compaction = build_compaction_service(config)
 
         self._build()
@@ -268,28 +269,53 @@ class VoidXGraph(
     async def restore_transcript_snapshot(self, *, append: bool = False) -> bool:
         return await self._restore_transcript_snapshot(append=append)
 
-    async def show_startup(self, *, append_transcript: bool = False) -> None:
-        await self._show_startup(append_transcript=append_transcript)
+    async def show_startup(
+        self,
+        *,
+        append_transcript: bool = False,
+        prefer_direct: bool = False,
+    ) -> None:
+        await self._show_startup(
+            append_transcript=append_transcript,
+            prefer_direct=prefer_direct,
+        )
+
+    async def run_synthetic_turn(self, text: str, *, display_text: str | None = None) -> None:
+        await self._run_once(text, display_text=display_text)
 
     async def clear_current_session(self) -> None:
-        if self._session is None:
-            return
-
-        from voidx.memory.session import clear_messages, update_title
-
-        await clear_messages(self._session.id)
-        await update_title(self._session.id, "New session")
-        await self._clear_runtime_state()
-        self._session = self._session.model_copy(update={
-            "title": "New session",
-            "message_count": 0,
-        })
+        old_session_id = self._session.id if self._session is not None else None
+        self._session = None
+        self._session_date = session_date(None)
         self._session_msg_cache = []
         self._context_cache = ContextCompilerCache()
+        self._reset_runtime_state_memory()
         self._reload_parallel_subagents_from_settings()
         self._tracker.clear_todos()
         self._permission.clear_session_permissions()
         self._usage_stats.reset()
+        self._current_messages = None
+        self._sub_buffers.clear()
+        self._pending_guidance.clear()
+        if old_session_id:
+            self._schedule_clear_session_storage(old_session_id)
+
+    def _schedule_clear_session_storage(self, session_id: str) -> None:
+        task = asyncio.create_task(
+            self._clear_session_storage(session_id),
+            name=f"voidx-clear-session-{session_id}",
+        )
+        self._clear_session_tasks.add(task)
+        task.add_done_callback(self._clear_session_tasks.discard)
+
+    async def _clear_session_storage(self, session_id: str) -> None:
+        from voidx.memory.session import clear_messages, update_title
+
+        try:
+            await clear_messages(session_id)
+            await update_title(session_id, "New session", touch=False)
+        except Exception as exc:
+            ui.print(f"[red]Clear cleanup failed: {exc}[/red]")
 
     def _reload_parallel_subagents_from_settings(self) -> None:
         if self._settings is None:

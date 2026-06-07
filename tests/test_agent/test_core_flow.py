@@ -1586,6 +1586,42 @@ async def test_session_persistence_saves_only_new_ai_and_tool_messages(tmp_path)
 
 
 @pytest.mark.asyncio
+async def test_run_synthetic_turn_uses_display_text_without_losing_prompt(tmp_path):
+    graph = VoidXGraph(Config(workspace=str(tmp_path)), api_key=None)
+    captured: dict[str, list] = {}
+
+    class FakeGraph:
+        async def ainvoke(self, initial, _config):
+            captured["messages"] = list(initial["messages"])
+            return {"messages": list(initial["messages"]) + [AIMessage(content="ok")]}
+
+    graph.graph = FakeGraph()
+
+    test_dock = BottomInputDock()
+    set_dock(test_dock)
+    test_dock.begin_capture()
+    try:
+        await graph.run_synthetic_turn(
+            "full initialization prompt with unique model marker",
+            display_text="/init",
+        )
+        turn_header = test_dock.tree.root.children[0].header
+        rendered = "\n".join(test_dock.tree.render(120))
+    finally:
+        test_dock.deactivate()
+        test_dock.reset()
+        set_dock(None)
+
+    assert turn_header == "[bold white]❯[/] /init"
+    assert "full initialization prompt" not in rendered
+    assert any(
+        isinstance(message, HumanMessage)
+        and message.content == "full initialization prompt with unique model marker"
+        for message in captured["messages"]
+    )
+
+
+@pytest.mark.asyncio
 async def test_run_once_persists_image_attachment_as_structured_user_message(tmp_path):
     image = tmp_path / "shot.png"
     image.write_bytes(b"\x89PNG\r\n\x1a\n")

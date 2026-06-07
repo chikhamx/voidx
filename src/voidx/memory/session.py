@@ -122,10 +122,16 @@ async def latest_session_for_workspace(workspace: str) -> SessionInfo | None:
     )
 
 
-async def update_title(session_id: str, title: str) -> None:
+async def update_title(session_id: str, title: str, *, touch: bool = True) -> None:
+    if touch:
+        await _execute_commit(
+            "UPDATE sessions SET title = ?, updated_at = ? WHERE id = ?",
+            (title, _now(), session_id),
+        )
+        return
     await _execute_commit(
-        "UPDATE sessions SET title = ?, updated_at = ? WHERE id = ?",
-        (title, _now(), session_id),
+        "UPDATE sessions SET title = ? WHERE id = ?",
+        (title, session_id),
     )
 
 

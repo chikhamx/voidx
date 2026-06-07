@@ -821,6 +821,48 @@ async def test_tui_busy_guide_bypasses_submit_queue(tmp_path):
     assert tui._get_input_text() == ""
 
 
+@pytest.mark.asyncio
+async def test_tui_busy_clear_cancels_current_submit_and_runs_clear_next(tmp_path):
+    tui = _tui(tmp_path)
+    started = asyncio.Event()
+    cancelled = asyncio.Event()
+    clear_seen = asyncio.Event()
+    submitted: list[str] = []
+
+    async def on_submit(text: str) -> bool:
+        submitted.append(text)
+        if text == "slow":
+            started.set()
+            try:
+                await asyncio.Event().wait()
+            except asyncio.CancelledError:
+                cancelled.set()
+                raise
+        if text == "/clear":
+            clear_seen.set()
+        return True
+
+    consumer = asyncio.create_task(tui._consume(on_submit))
+    try:
+        tui._queue.put_nowait("slow")
+        await started.wait()
+        tui._queue.put_nowait("stale prompt")
+        tui._input_lines = ["/clear"]
+        tui._cursor_col = len("/clear")
+
+        changed = tui._process_input(b"\r")
+
+        assert changed is True
+        await asyncio.wait_for(cancelled.wait(), timeout=1)
+        await asyncio.wait_for(clear_seen.wait(), timeout=1)
+
+        assert submitted == ["slow", "/clear"]
+        assert tui._notice == "Clearing current turn..."
+    finally:
+        tui._queue.put_nowait(None)
+        await asyncio.wait_for(consumer, timeout=1)
+
+
 def test_empty_enter_on_empty_input_is_noop(tmp_path):
     tui = _tui(tmp_path)
 

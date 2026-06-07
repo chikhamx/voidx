@@ -17,10 +17,11 @@ from voidx.config import Config
 from voidx.llm.instruction import SkillRuntimeContext
 from voidx.llm.usage import UsageStats
 from voidx.memory.runtime_state import RuntimeStateSnapshot, save_runtime_state
-from voidx.memory.session import MessageRow, create_session, load_messages, save_message
+from voidx.memory.session import MessageRow, create_session, get_session, load_messages, save_message
 from voidx.skills.runtime import SkillActivationSource, SkillRunState, SkillRunStatus
 from voidx.tools.task_tracker import TaskTracker
 from voidx.ui.output.dock import BottomInputDock, set_dock
+from voidx.ui.output.events import DockEventConsumer, ui_events
 from voidx.ui.protocol import UiSubmitCommand
 
 
@@ -145,6 +146,13 @@ async def test_clear_reprints_startup(tmp_path):
     graph._interaction_mode = InteractionMode.GOAL
     graph._task_state = TaskState(current_goal="修复 UI")
     graph._task_run = TaskRun(goal="修复 UI", phase=TaskPhase.DESIGN, status=TaskRunStatus.ACTIVE)
+    restore_calls: list[bool] = []
+
+    async def fake_restore(self, *, append: bool = False) -> bool:
+        restore_calls.append(append)
+        return True
+
+    graph._restore_transcript_snapshot = MethodType(fake_restore, graph)
     test_dock = BottomInputDock()
     set_dock(test_dock)
     test_dock.begin_capture()
@@ -157,12 +165,81 @@ async def test_clear_reprints_startup(tmp_path):
         assert "voidx v" in rendered
         assert "Ask anything" in rendered
         assert "old transcript" not in rendered
-        assert graph._session.title == "New session"
-        assert graph._session.message_count == 0
+        assert graph._session is None
+        assert graph._session_msg_cache == []
         assert graph._interaction_mode == InteractionMode.AUTO
         assert graph._task_state.current_goal == ""
         assert graph._task_run.status == TaskRunStatus.IDLE
+        assert restore_calls == []
+        if getattr(graph, "_clear_session_tasks", None):
+            await asyncio.gather(*graph._clear_session_tasks)
     finally:
+        test_dock.deactivate()
+        test_dock.reset()
+        set_dock(None)
+
+
+@pytest.mark.asyncio
+async def test_clear_detaches_old_session_and_cleans_storage_in_background(tmp_path):
+    session = await create_session(
+        workspace=str(tmp_path),
+        provider="mimo",
+        model="mimo-v2.5",
+    )
+    await save_message(MessageRow(session_id=session.id, role="user", content="old question"))
+    graph = VoidXGraph(Config(workspace=str(tmp_path)), api_key=None, session=session)
+    graph._interaction_mode = InteractionMode.GOAL
+    graph._task_state = TaskState(current_goal="old goal")
+    graph._task_run = TaskRun(goal="old goal", phase=TaskPhase.DESIGN, status=TaskRunStatus.ACTIVE)
+
+    test_dock = BottomInputDock()
+    set_dock(test_dock)
+    test_dock.begin_capture()
+    try:
+        await SlashHandler(graph)._clear()
+        new_session = await create_session(
+            workspace=str(tmp_path),
+            provider="mimo",
+            model="mimo-v2.5",
+        )
+        await save_message(MessageRow(session_id=new_session.id, role="user", content="new question"))
+        await asyncio.gather(*graph._clear_session_tasks)
+
+        old_session = await get_session(session.id)
+        assert graph._session is None
+        assert old_session is not None
+        assert old_session.title == "New session"
+        assert old_session.updated_at == session.updated_at
+        assert await load_messages(session.id) == []
+        new_messages = await load_messages(new_session.id)
+        assert [message.content for message in new_messages] == ["new question"]
+    finally:
+        test_dock.deactivate()
+        test_dock.reset()
+        set_dock(None)
+
+
+@pytest.mark.asyncio
+async def test_show_startup_prefer_direct_skips_event_request(tmp_path, monkeypatch):
+    graph = _graph(session=None, workspace=str(tmp_path))
+    test_dock = BottomInputDock()
+    set_dock(test_dock)
+    test_dock.begin_capture()
+    ui_events.start(DockEventConsumer(test_dock))
+
+    async def fail_request(_event):
+        raise AssertionError("prefer_direct should not call ui_events.request")
+
+    monkeypatch.setattr(ui_events, "request", fail_request)
+    try:
+        await graph._show_startup(prefer_direct=True)
+
+        rendered = "\n".join(test_dock.tree.render(120))
+        assert "voidx v" in rendered
+        assert "Ask anything" in rendered
+    finally:
+        if ui_events.is_running:
+            await ui_events.stop()
         test_dock.deactivate()
         test_dock.reset()
         set_dock(None)

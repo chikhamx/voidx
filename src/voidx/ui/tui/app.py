@@ -376,6 +376,22 @@ class PureTui(
         if not stripped:
             self._clear_input()
             return True
+        if self._busy and stripped == "/clear":
+            paste_entries = self._paste_entries_snapshot()
+            self._record_history(draft_text, paste_entries)
+            self._clear_input()
+            self._drain_queue(self._queue)
+            self._queue.put_nowait(_SubmitQueueItem(
+                "/clear",
+                restore_text=draft_text,
+                paste_entries=paste_entries,
+            ))
+            self._submit_cancel_requested = True
+            if self._current_submit_task is not None and not self._current_submit_task.done():
+                self._current_submit_task.cancel()
+            self._notice = "Clearing current turn..."
+            self.invalidate()
+            return True
         if self._busy and stripped.startswith("/guide "):
             paste_entries = self._paste_entries_snapshot()
             self._record_history(draft_text, paste_entries)

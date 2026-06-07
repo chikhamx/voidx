@@ -2,6 +2,8 @@
 
 from __future__ import annotations
 
+import asyncio
+
 from voidx.agent.slash.runtime import _select_from_list, ui
 from voidx.runtime.ui import get_dock, session_tracker
 
@@ -61,7 +63,7 @@ class SlashSessionMixin:
         active_dock = get_dock()
         if active_dock is not None:
             active_dock.reset()
-        await self._show_startup()
+        await self._show_startup(prefer_direct=True)
 
     async def _list_sessions(self) -> None:
         from voidx.memory.session import list_sessions
@@ -141,21 +143,34 @@ class SlashSessionMixin:
 
     async def _clear_current_session_compat(self) -> None:
         session = self._host_session()
-        if not session:
-            return
-
-        from voidx.memory.session import clear_messages, update_title
-
-        await clear_messages(session.id)
-        await update_title(session.id, "New session")
-        clear_runtime_state = self._legacy_attr("_clear_runtime_state")
-        if callable(clear_runtime_state):
-            await clear_runtime_state()
-        self._set_legacy_attr("_session", session.model_copy(update={
-            "title": "New session",
-            "message_count": 0,
-        }))
+        old_session_id = getattr(session, "id", None) if session else None
+        self._set_legacy_attr("_session", None)
         self._set_legacy_attr("_session_msg_cache", [])
+        try:
+            from voidx.agent.runtime_context import ContextCompilerCache
+
+            self._set_legacy_attr("_context_cache", ContextCompilerCache())
+        except Exception:
+            pass
+        reset_runtime_state = self._legacy_attr("_reset_runtime_state_memory")
+        if callable(reset_runtime_state):
+            reset_runtime_state()
+        else:
+            from voidx.agent.runtime_context import InteractionMode
+            from voidx.agent.task_state import TaskRun, TaskState
+
+            self._set_legacy_attr("_interaction_mode", InteractionMode.AUTO)
+            self._set_legacy_attr("_task_state", TaskState())
+            self._set_legacy_attr("_task_run", TaskRun())
+            self._set_legacy_attr("_compaction_summary", "")
+            self._set_legacy_attr("_pending_summary", None)
+        self._set_legacy_attr("_current_messages", None)
+        sub_buffers = self._legacy_attr("_sub_buffers")
+        if sub_buffers is not None:
+            sub_buffers.clear()
+        pending_guidance = self._legacy_attr("_pending_guidance")
+        if pending_guidance is not None:
+            pending_guidance.clear()
         tracker = self._legacy_attr("_tracker")
         if tracker is not None:
             tracker.clear_todos()
@@ -165,6 +180,23 @@ class SlashSessionMixin:
         stats = self._host_usage_stats()
         if stats is not None:
             stats.reset()
+        if old_session_id:
+            task = asyncio.create_task(self._clear_session_storage_compat(old_session_id))
+            tasks = self._legacy_attr("_clear_session_tasks")
+            if tasks is None:
+                tasks = set()
+                self._set_legacy_attr("_clear_session_tasks", tasks)
+            tasks.add(task)
+            task.add_done_callback(tasks.discard)
+
+    async def _clear_session_storage_compat(self, session_id: str) -> None:
+        from voidx.memory.session import clear_messages, update_title
+
+        try:
+            await clear_messages(session_id)
+            await update_title(session_id, "New session", touch=False)
+        except Exception as exc:
+            ui.print(f"[red]Clear cleanup failed: {exc}[/red]")
 
     async def _resume_session_compat(self, session) -> None:
         self._set_legacy_attr("_session", session)
@@ -182,10 +214,10 @@ class SlashSessionMixin:
         restorer = self._legacy_attr("_restore_transcript_snapshot")
         return bool(await restorer(append=append))
 
-    async def _show_startup(self) -> None:
+    async def _show_startup(self, **kwargs) -> None:
         shower = getattr(self._g, "show_startup", None)
         if callable(shower):
-            await shower()
+            await shower(**kwargs)
             return
         shower = self._legacy_attr("_show_startup")
-        await shower()
+        await shower(**kwargs)

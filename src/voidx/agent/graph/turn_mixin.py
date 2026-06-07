@@ -66,7 +66,12 @@ def _resolve_recursion_limit(steps, agent_name: str) -> int:
 
 
 class GraphTurnMixin:
-    async def _run_once(self: GraphRunLoopHost, user_text: str) -> None:
+    async def _run_once(
+        self: GraphRunLoopHost,
+        user_text: str,
+        *,
+        display_text: str | None = None,
+    ) -> None:
         t_turn_start = time.monotonic()
         t_turn_calls_start = self._usage_stats.total_calls
         t_turn_in_start = self._usage_stats.total_input_tokens
@@ -75,9 +80,10 @@ class GraphTurnMixin:
         try:
             session_tracker.begin_turn(self._workspace)
             payload = build_user_message_payload(user_text, self._workspace)
+            turn_display_text = display_text or payload.display_text
             self._current_tree = dock.tree
             if via_events():
-                self._turn_node = await ui_events.request(TurnStarted(text=payload.display_text))
+                self._turn_node = await ui_events.request(TurnStarted(text=turn_display_text))
                 await ui_events.emit(StatusUpdated(
                     status_id="turn:analyzing",
                     label="Analyzing",
@@ -85,7 +91,7 @@ class GraphTurnMixin:
                     stage="analyzing",
                 ))
             else:
-                self._turn_node = dock.start_turn(payload.display_text)
+                self._turn_node = dock.start_turn(turn_display_text)
             # Load session messages — use in-memory cache when available
             force_resume_compaction = False
             if self._session_msg_cache is not None:
