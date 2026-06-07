@@ -20,6 +20,7 @@ from voidx.config.settings_web import SettingsWebMixin
 SETTINGS_FILE = ".voidx/settings.json"
 SKILLS_STATE_FILE = ".voidx/skills.json"
 _LEGACY_SETTINGS_FILE = "voidx.json"
+_PROFILE_UNSET = object()
 
 
 class Settings(
@@ -189,8 +190,9 @@ class Settings(
 
     # ── build config for graph ───────────────────────────────────────────
 
-    async def build_config(self) -> Config:
-        profile = await self.resolve_profile()
+    async def build_config(self, profile: Profile | None | object = _PROFILE_UNSET) -> Config:
+        if profile is _PROFILE_UNSET:
+            profile = await self.resolve_profile()
         if profile:
             provider = profile.provider
             model = profile.model

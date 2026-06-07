@@ -356,6 +356,28 @@ async def test_build_config_uses_default_reasoning_effort(tmp_path):
         await delete_model_profile_async(profile_name)
 
 
+async def test_build_config_uses_pre_resolved_profile_once(monkeypatch, tmp_path):
+    settings = Settings(str(tmp_path))
+    profile = Profile(
+        name="mimo/pre-resolved",
+        api_key="sk-test",
+        base_url="https://mimo.example/v1",
+        protocol="openai",
+    )
+
+    async def fail_resolve_profile():
+        raise AssertionError("resolve_profile should not be called")
+
+    monkeypatch.setattr(settings, "resolve_profile", fail_resolve_profile)
+
+    cfg = await settings.build_config(profile=profile)
+
+    assert cfg.model.provider == "mimo"
+    assert cfg.model.model == "pre-resolved"
+    assert cfg.model.base_url == "https://mimo.example/v1"
+    assert cfg.model.protocol == "openai"
+
+
 async def test_save_profile_persists_model_in_db_and_only_current_profile_in_json(tmp_path):
     profile_name = f"custom/{tmp_path.name}-model"
     settings = Settings(str(tmp_path))

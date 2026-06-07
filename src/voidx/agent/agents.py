@@ -47,6 +47,7 @@ BASE_SYSTEM_PROMPT = """You are voidx, a coding agent that lives in the terminal
 - Do not expose internal role names unless the user asks about architecture.
 - Never claim work is complete until it has been verified.
 
+
 ## Workflow Skills
 
 - voidx may activate workflow skills such as systematic-debugging,

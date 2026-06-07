@@ -31,6 +31,7 @@ class SlashLspMixin:
         ui.print("[bold]LSP status:[/bold]")
         for status in manager.statuses():
             label = {
+                "initializing": "[dim]initializing[/dim]",
                 "connected": "[green]connected[/green]",
                 "disconnected": "[dim]disconnected[/dim]",
                 "disabled": "[dim]disabled[/dim]",
@@ -47,6 +48,9 @@ class SlashLspMixin:
         manager = getattr(self._g, "_lsp_manager", None)
         if manager is None:
             ui.error("No LSP manager available.")
+            return
+        if getattr(manager, "initializing", False) or not getattr(manager, "initialized", True):
+            ui.print("[dim]LSP servers are still initializing.[/dim]")
             return
         ui.print("[bold]LSP doctor:[/bold]")
         missing = 0
@@ -96,6 +100,9 @@ class SlashLspMixin:
         ui.print(f"[dim]{lsp_config_path(workspace)}[/dim]")
         if manager is None:
             ui.error("No LSP manager available.")
+            return
+        if getattr(manager, "initializing", False) or not getattr(manager, "initialized", True):
+            ui.print("[dim]LSP servers are still initializing.[/dim]")
             return
         for config in manager.servers.values():
             state = "[green]enabled[/green]" if config.enabled else "[dim]disabled[/dim]"

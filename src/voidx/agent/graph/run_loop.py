@@ -112,6 +112,7 @@ class GraphRunLoopMixin(GraphTurnMixin, GraphSessionMixin, GraphTranscriptMixin)
         active_dock = get_dock()
         gateway_session: GatewaySession | None = None
         gateway_server: GatewayServer | None = None
+        lsp_startup_tasks: list[asyncio.Task] = []
         if active_dock is not None:
             consumer = DockEventConsumer(active_dock)
             if web:
@@ -194,14 +195,26 @@ class GraphRunLoopMixin(GraphTurnMixin, GraphSessionMixin, GraphTranscriptMixin)
             else:
                 dock.append_message(f"Web UI gateway: {gateway_server.url}")
 
+        async def show_lsp_startup() -> None:
+            manager = getattr(self, "_lsp_manager", None)
+            if manager is None:
+                return
+            try:
+                await manager.initialize()
+                lsp_lines = []
+                for check in manager.doctor():
+                    if check.available and check.enabled:
+                        source = f" [dim][{check.detected_source}][/dim]" if check.detected_source else ""
+                        lsp_lines.append(f"  [cyan]{check.language}[/cyan] [dim]→[/dim] {check.resolved_path}{source}")
+                if lsp_lines:
+                    dock.append_message("\n".join(lsp_lines), markup=True)
+            except asyncio.CancelledError:
+                raise
+            except Exception as exc:
+                dock.append_message(f"[dim]LSP setup failed: {exc}[/dim]", markup=True)
+
         if hasattr(self, '_lsp_manager'):
-            lsp_lines = []
-            for check in self._lsp_manager.doctor():
-                if check.available and check.enabled:
-                    source = f" [dim][{check.detected_source}][/dim]" if check.detected_source else ""
-                    lsp_lines.append(f"  [cyan]{check.language}[/cyan] [dim]→[/dim] {check.resolved_path}{source}")
-            if lsp_lines:
-                dock.append_message("\n".join(lsp_lines), markup=True)
+            lsp_startup_tasks.append(asyncio.create_task(show_lsp_startup()))
 
         if hasattr(self, '_mcp_manager'):
             servers = self._settings.list_mcp_servers() if self._settings else []
@@ -233,6 +246,10 @@ class GraphRunLoopMixin(GraphTurnMixin, GraphSessionMixin, GraphTranscriptMixin)
                 await gateway_server.stop()
             if hasattr(self, '_mcp_manager'):
                 await self._mcp_manager.stop_all()
+            for task in lsp_startup_tasks:
+                task.cancel()
+            if lsp_startup_tasks:
+                await asyncio.gather(*lsp_startup_tasks, return_exceptions=True)
             if hasattr(self, '_lsp_manager'):
                 await self._lsp_manager.stop_all()
             if ui_events.is_running:

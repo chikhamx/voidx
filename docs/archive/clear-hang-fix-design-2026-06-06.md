@@ -40,8 +40,10 @@ enqueue `/clear` as the next command.
 
 ### 2. Startup Re-render Waits on Event Bus
 
-`SlashSessionMixin._clear()` currently resets the dock directly, then calls
-`_show_startup()`:
+The pre-fix `SlashSessionMixin._clear()` implementation reset the dock directly,
+then called `_show_startup()`:
+
+Pre-fix code:
 
 ```python
 active_dock.reset()
@@ -140,42 +142,46 @@ This keeps `/clear` out of the event-bus request/future path.
   `append_transcript=False`, so transcript restoration is already skipped.
 - No concurrent execution of arbitrary submit queue items. Only busy `/clear`
   gets the cancel-and-run-next behavior.
+- `/guide` does not get cancel-and-run-next behavior. Guidance is additive: it
+  injects extra instructions into the running turn when the next LLM call
+  happens. It should not replace the current turn, drain queued user prompts, or
+  force a new command to run after cancellation. The busy `/guide` path bypasses
+  the submit queue and sends guidance directly to the running graph.
 
-## Implementation Plan
+## Implemented Changes
 
-### Step 1: Startup Direct Mode
+### 1. Startup Direct Mode
 
 Files:
 
 - `src/voidx/agent/graph/run_loop.py`
 - `src/voidx/agent/graph/core.py`
 - `src/voidx/agent/graph/contracts.py`
-- `src/voidx/agent/slash/handler.py`
 - `src/voidx/agent/slash/session.py`
 
 Changes:
 
-- Add `prefer_direct` to `_show_startup()` and `show_startup()`.
-- Forward arbitrary keyword arguments through `SlashSessionMixin._show_startup()`.
-- Call `_show_startup(prefer_direct=True)` from `_clear()`.
+- Added `prefer_direct` to `_show_startup()` and the graph wrapper.
+- Forwarded `prefer_direct` through the slash/session protocol.
+- `/clear` now calls `_show_startup(prefer_direct=True)`, so startup redraw does
+  not wait on `ui_events.request()`.
 
-### Step 2: Non-Reused Session Clear
+### 2. Non-Reused Session Clear
 
 Files:
 
 - `src/voidx/agent/graph/core.py`
-- `src/voidx/agent/graph/session_mixin.py`
-- `src/voidx/agent/graph/contracts.py`
 - `src/voidx/agent/slash/session.py`
 
 Changes:
 
-- Add a memory-only runtime reset helper.
-- Change `clear_current_session()` to detach from the old session immediately.
-- Schedule old-session SQLite cleanup in a tracked background task.
-- Align the slash compatibility fallback with the same non-reuse behavior.
+- `clear_current_session()` now detaches from the old session immediately and
+  clears in-memory runtime state.
+- Old-session SQLite cleanup is scheduled as a tracked background task.
+- The old session title is reset with `touch=False`, so delayed cleanup does not
+  make the old empty session appear newer than the fresh session.
 
-### Step 3: Busy `/clear` TUI Path
+### 3. Busy `/clear` TUI Path
 
 File:
 
@@ -183,20 +189,21 @@ File:
 
 Changes:
 
-- Add a busy `/clear` branch next to the existing busy `/guide` branch.
-- Drain pending submit queue items before enqueuing `/clear`.
-- Cancel the active submit task and show immediate notice.
+- Busy `/clear` drains pending submit queue items, enqueues `/clear`, cancels
+  the active submit task, and shows `Clearing current turn...`.
+- Busy `/guide` remains a direct guidance bypass and does not cancel the current
+  submit task.
 
-### Step 4: Tests
+## Tests
 
-Tests:
-
-- Busy `/clear` cancels the active submit task and then submits `/clear`.
-- Busy `/clear` drops stale queued submit items.
-- `/clear` resets the UI and graph state without reusing the old session.
-- Background cleanup clears old persisted messages and title.
-- `_show_startup(prefer_direct=True)` skips `ui_events.request()`.
-- `/clear` does not restore transcript snapshot.
+| Test | File | Coverage |
+|------|------|----------|
+| `test_tui_busy_clear_cancels_current_submit_and_runs_clear_next` | `tests/test_pure_tui.py` | Busy `/clear` cancels the active submit task, drops stale queued input, and runs `/clear` next. |
+| `test_tui_busy_guide_bypasses_submit_queue` | `tests/test_pure_tui.py` | Busy `/guide` bypasses the submit queue without canceling/replacing the running turn. |
+| `test_clear_reprints_startup` | `tests/test_agent/test_run_loop.py` | `/clear` resets UI and graph runtime state, redraws startup, and does not restore transcript snapshot. |
+| `test_clear_detaches_old_session_and_cleans_storage_in_background` | `tests/test_agent/test_run_loop.py` | `/clear` detaches from the old session, background cleanup clears old messages/title, and post-clear messages in a new session survive. |
+| `test_show_startup_prefer_direct_skips_event_request` | `tests/test_agent/test_run_loop.py` | `_show_startup(prefer_direct=True)` skips `ui_events.request()` and renders directly. |
+| `test_smart_title_does_not_update_after_clear` | `tests/test_agent/test_run_loop.py` | Delayed title generation cannot overwrite the cleared old session after `/clear`. |
 
 ## Acceptance Criteria
 

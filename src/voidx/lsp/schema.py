@@ -9,7 +9,7 @@ from urllib.parse import unquote, urlparse
 from pydantic import BaseModel, Field
 
 
-LspStatus = Literal["disabled", "disconnected", "connected", "error"]
+LspStatus = Literal["initializing", "disabled", "disconnected", "connected", "error"]
 
 
 class LspPosition(BaseModel):

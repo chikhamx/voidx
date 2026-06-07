@@ -759,7 +759,7 @@ async def test_call_llm_keeps_lsp_tools_when_a_lsp_server_is_available(tmp_path,
         api_key=None,
     )
     graph._lsp_manager = SimpleNamespace(
-        doctor=lambda: [SimpleNamespace(enabled=True, available=True)]
+        has_available_server=lambda: True
     )
     model = TrackingStreamingModel()
     graph.model = model

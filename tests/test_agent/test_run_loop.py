@@ -71,6 +71,12 @@ class NoopMcpManager:
 
 
 class NoopLspManager:
+    initialized = True
+    initializing = False
+
+    async def initialize(self):
+        return None
+
     def doctor(self):
         return []
 
@@ -717,6 +723,46 @@ async def test_exit_cleanup_keeps_session_with_messages_even_new_session_title(t
     assert loaded.message_count == 1
     assert graph._session is not None
     assert graph._session.id == session.id
+
+
+@pytest.mark.asyncio
+async def test_run_loop_cancels_lsp_startup_tasks_on_exit(monkeypatch, tmp_path):
+    class YieldingExitTui(ExitTui):
+        async def run(self, on_submit):
+            await asyncio.sleep(0)
+
+    monkeypatch.setattr("voidx.agent.graph.run_loop.PureTui", YieldingExitTui)
+
+    class HangingLspManager:
+        initialized = False
+        initializing = True
+
+        def __init__(self) -> None:
+            self.cancelled = False
+            self.stopped = False
+
+        async def initialize(self):
+            try:
+                await asyncio.Event().wait()
+            except asyncio.CancelledError:
+                self.cancelled = True
+                raise
+
+        def doctor(self):
+            return []
+
+        async def stop_all(self):
+            self.stopped = True
+
+    graph = VoidXGraph(Config(workspace=str(tmp_path)), api_key=None)
+    graph._mcp_manager = NoopMcpManager()
+    manager = HangingLspManager()
+    graph._lsp_manager = manager
+
+    await graph.run()
+
+    assert manager.cancelled is True
+    assert manager.stopped is True
 
 
 @pytest.mark.asyncio

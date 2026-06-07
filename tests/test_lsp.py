@@ -8,9 +8,11 @@ import pytest
 sys.path.insert(0, str(Path(__file__).parent.parent / "src"))
 
 from voidx.agent.slash import SlashHandler
+from voidx.agent.tool_filters import filter_unavailable_lsp_tools
 from voidx.lsp.client import encode_lsp_message
 from voidx.lsp.errors import LspServerUnavailable
 from voidx.lsp.manager import LspManager, apply_text_edits
+from voidx.lsp.schema import LspServerConfig
 from voidx.tools.base import ToolContext
 from voidx.tools.registry import ToolRegistry
 
@@ -152,12 +154,14 @@ async def test_lsp_manager_talks_to_stdio_server(tmp_path):
     manager = LspManager(str(tmp_path))
 
     try:
+        assert manager.initialized is False
         diagnostics = await manager.diagnostics("sample.py", wait=0.05)
         symbols = await manager.document_symbols("sample.py")
         definition = await manager.definition("sample.py", 1, 8)
         references = await manager.references("sample.py", 2, 8)
         changed, old_text, new_text = await manager.format_document("sample.py")
 
+        assert manager.initialized is True
         assert diagnostics[0].message == "fake warning"
         assert [symbol.name for symbol in symbols] == ["Foo", "bar"]
         assert definition[0].path.endswith("sample.py")
@@ -168,6 +172,99 @@ async def test_lsp_manager_talks_to_stdio_server(tmp_path):
         assert (tmp_path / "sample.py").read_text(encoding="utf-8") == new_text
     finally:
         await manager.stop_all()
+
+
+def test_lsp_manager_constructor_does_not_load_servers(monkeypatch, tmp_path):
+    def fail_load(_workspace):
+        raise AssertionError("load_lsp_servers should not run in constructor")
+
+    monkeypatch.setattr("voidx.lsp.manager.load_lsp_servers", fail_load)
+
+    manager = LspManager(str(tmp_path))
+
+    assert manager.initialized is False
+    assert manager.servers == {}
+
+
+@pytest.mark.asyncio
+async def test_lsp_initialize_runs_load_in_thread(monkeypatch, tmp_path):
+    captured = SimpleNamespace(fn=None, args=None)
+
+    async def fake_to_thread(fn, *args):
+        captured.fn = fn
+        captured.args = args
+        return {
+            "python": LspServerConfig(
+                language="python",
+                command=sys.executable,
+                extensions=[".py"],
+                resolved_command=sys.executable,
+            )
+        }
+
+    monkeypatch.setattr("voidx.lsp.manager.asyncio.to_thread", fake_to_thread)
+
+    manager = LspManager(str(tmp_path))
+    await manager.initialize()
+
+    assert captured.fn.__name__ == "load_lsp_servers"
+    assert captured.args == (str(tmp_path.resolve()),)
+    assert manager.initialized is True
+    assert manager.has_available_server() is True
+
+
+@pytest.mark.asyncio
+async def test_lsp_tool_waits_for_initialization(tmp_path):
+    _write_fake_lsp(tmp_path)
+    (tmp_path / "sample.py").write_text("class Foo:\n def bar(self):\n  return 1\n", encoding="utf-8")
+    manager = LspManager(str(tmp_path))
+
+    try:
+        assert manager.initialized is False
+        symbols = await manager.document_symbols("sample.py")
+
+        assert manager.initialized is True
+        assert [symbol.name for symbol in symbols] == ["Foo", "bar"]
+    finally:
+        await manager.stop_all()
+
+
+def test_lsp_doctor_reports_initializing_without_io(monkeypatch, tmp_path):
+    def fail_load(_workspace):
+        raise AssertionError("load_lsp_servers should not run from doctor/statuses")
+
+    monkeypatch.setattr("voidx.lsp.manager.load_lsp_servers", fail_load)
+    manager = LspManager(str(tmp_path))
+
+    checks = manager.doctor()
+    statuses = manager.statuses()
+
+    assert checks[0].language == "*"
+    assert "initializing" in checks[0].error_message
+    assert statuses[0].status == "initializing"
+
+
+def test_tool_filter_uses_cached_lsp_availability():
+    tool_defs = [
+        {"function": {"name": "lsp_symbols"}},
+        {"function": {"name": "read_file"}},
+    ]
+
+    class FakeLspManager:
+        def __init__(self) -> None:
+            self.checked = False
+
+        def has_available_server(self):
+            self.checked = True
+            return True
+
+        def doctor(self):
+            raise AssertionError("doctor should not be called by tool filtering")
+
+    manager = FakeLspManager()
+
+    assert filter_unavailable_lsp_tools(tool_defs, manager) == tool_defs
+    assert manager.checked is True
 
 
 @pytest.mark.asyncio
@@ -208,7 +305,8 @@ async def test_lsp_manager_reports_missing_server(tmp_path):
     assert any(status.language == "python" and status.status == "error" for status in statuses)
 
 
-def test_lsp_doctor_reports_available_missing_and_disabled_servers(tmp_path):
+@pytest.mark.asyncio
+async def test_lsp_doctor_reports_available_missing_and_disabled_servers(tmp_path):
     (tmp_path / ".voidx").mkdir()
     (tmp_path / ".voidx" / "lsp.json").write_text(
         json.dumps({
@@ -232,6 +330,7 @@ def test_lsp_doctor_reports_available_missing_and_disabled_servers(tmp_path):
         encoding="utf-8",
     )
     manager = LspManager(str(tmp_path))
+    await manager.initialize()
 
     checks = {check.language: check for check in manager.doctor()}
 

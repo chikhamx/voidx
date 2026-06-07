@@ -70,7 +70,8 @@ async def _run_chat(
     from voidx.llm.catalog import bind_settings
     bind_settings(settings)
 
-    cfg = await settings.build_config()
+    profile = await settings.resolve_profile()
+    cfg = await settings.build_config(profile=profile)
     cfg.workspace = ws_path
 
     if model:
@@ -78,11 +79,10 @@ async def _run_chat(
     if provider:
         cfg.model.provider = provider
 
-    profile = await settings.resolve_profile()
-    if profile:
+    if profile and profile.provider == cfg.model.provider:
         api_key = profile.api_key
     else:
-        api_key = settings.resolve_api_key(cfg.model.provider)
+        api_key = await settings.resolve_api_key(cfg.model.provider)
 
     session = await _select_start_session(
         workspace=cfg.workspace,

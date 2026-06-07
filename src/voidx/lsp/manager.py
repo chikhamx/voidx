@@ -27,14 +27,53 @@ from voidx.tools.base import resolve_safe
 class LspManager:
     def __init__(self, workspace: str) -> None:
         self.workspace = str(Path(workspace).resolve())
-        self._servers = load_lsp_servers(self.workspace)
+        self._servers: dict[str, LspServerConfig] = {}
         self._clients: dict[str, LspClient] = {}
         self._errors: dict[str, str] = {}
         self._open_docs: dict[str, tuple[str, int, str]] = {}
+        self._initialized = False
+        self._initializing = False
+        self._initialization_error = ""
+        self._initialize_lock = asyncio.Lock()
 
     @property
     def servers(self) -> dict[str, LspServerConfig]:
         return self._servers
+
+    @property
+    def initialized(self) -> bool:
+        return self._initialized
+
+    @property
+    def initializing(self) -> bool:
+        return self._initializing
+
+    async def initialize(self) -> None:
+        if self._initialized:
+            return
+        async with self._initialize_lock:
+            if self._initialized:
+                return
+            self._initializing = True
+            self._initialization_error = ""
+            try:
+                servers = await asyncio.to_thread(load_lsp_servers, self.workspace)
+            except Exception as exc:
+                self._initialization_error = str(exc)
+                raise LspServerUnavailable(f"LSP server configuration failed: {exc}") from exc
+            else:
+                self._servers = servers
+                self._initialized = True
+            finally:
+                self._initializing = False
+
+    def has_available_server(self) -> bool:
+        if not self._initialized:
+            return False
+        return any(
+            config.enabled and bool(config.resolved_command)
+            for config in self._servers.values()
+        )
 
     async def stop_all(self) -> None:
         clients = list(self._clients.values())
@@ -43,6 +82,7 @@ class LspManager:
         await asyncio.gather(*(client.stop() for client in clients), return_exceptions=True)
 
     async def restart(self, language: str | None = None) -> None:
+        await self.initialize()
         if language:
             client = self._clients.pop(language, None)
             if client is not None:
@@ -54,9 +94,18 @@ class LspManager:
             return
         await self.stop_all()
         self._errors.clear()
-        self._servers = load_lsp_servers(self.workspace)
+        self._servers = await asyncio.to_thread(load_lsp_servers, self.workspace)
+        self._initialized = True
 
     def statuses(self) -> list[LspRuntimeStatus]:
+        if not self._initialized:
+            status = "error" if self._initialization_error else "initializing"
+            return [LspRuntimeStatus(
+                language="*",
+                command="",
+                status=status,
+                error_message=self._initialization_error or "Loading LSP server configuration.",
+            )]
         result: list[LspRuntimeStatus] = []
         for language, config in self._servers.items():
             client = self._clients.get(language)
@@ -80,6 +129,14 @@ class LspManager:
         return result
 
     def doctor(self) -> list[LspDoctorCheck]:
+        if not self._initialized:
+            return [LspDoctorCheck(
+                language="*",
+                command="",
+                enabled=True,
+                available=False,
+                error_message=self._initialization_error or "LSP servers are still initializing.",
+            )]
         checks: list[LspDoctorCheck] = []
         for language, config in self._servers.items():
             resolved = config.resolved_command or _resolve_command(config.command)
@@ -120,6 +177,7 @@ class LspManager:
         return parse_document_symbols(uri, value)
 
     async def workspace_symbols(self, query: str) -> list[LspSymbol]:
+        await self.initialize()
         symbols: list[LspSymbol] = []
         for language in self._servers:
             try:
@@ -171,6 +229,7 @@ class LspManager:
 
     async def open_document(self, file_path: str) -> tuple[LspClient, str]:
         path = self._resolve_path(file_path)
+        await self.initialize()
         language = self._language_for(path)
         client = await self._ensure_client(language)
         uri = file_uri(path)
@@ -196,6 +255,7 @@ class LspManager:
         return client, uri
 
     async def _ensure_client(self, language: str) -> LspClient:
+        await self.initialize()
         config = self._servers.get(language)
         if config is None or not config.enabled:
             raise LspServerUnavailable(f"No enabled LSP server for language: {language}")

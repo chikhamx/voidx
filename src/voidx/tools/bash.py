@@ -99,7 +99,7 @@ class BashInput(BaseModel):
 
 class BashTool(BaseTool):
     id = "bash"
-    description = "Execute a shell command in the workspace directory. Returns stdout, stderr, and exit code."
+    description = "Execute a shell command in the workspace directory. Returns stdout, stderr, and exit code. No comments inside the command."
 
     def parameters_schema(self) -> dict:
         return model_to_json_schema(BashInput)

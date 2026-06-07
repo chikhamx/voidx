@@ -39,7 +39,7 @@ Do not write code, invoke implementation skills, or take implementation action u
 2. **Ask clarifying questions** — one at a time. Understand purpose, constraints, and success criteria. If the request is ambiguous, ask before assuming. One clarifying question is better than five assumptions.
 3. **Propose 2-3 approaches** — with trade-offs and your recommendation.
 4. **Present design** — scaled to complexity. Get user approval. If the scope covers multiple independent subsystems, suggest splitting into separate designs.
-5. **Write design doc** — save to `docs/specs/YYYY-MM-DD-<topic>-design.md`.
+5. **Write design doc** — save to `docs/specs/<topic>-design-YYYY-MM-DD.md`.
 6. **Transition** — invoke writing-design-docs skill to write the technical design doc, then writing-plans to create the implementation plan.
 
 ## Decision Rules

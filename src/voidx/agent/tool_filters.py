@@ -16,12 +16,9 @@ def filter_unavailable_lsp_tools(tool_defs: list[dict], lsp_manager: Any | None)
 
 
 def _has_available_lsp_server(lsp_manager: Any | None) -> bool:
-    if lsp_manager is None or not hasattr(lsp_manager, "doctor"):
+    if lsp_manager is None or not hasattr(lsp_manager, "has_available_server"):
         return False
     try:
-        return any(
-            getattr(check, "enabled", False) and getattr(check, "available", False)
-            for check in lsp_manager.doctor()
-        )
+        return bool(lsp_manager.has_available_server())
     except Exception:
         return False
