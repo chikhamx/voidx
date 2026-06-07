@@ -1,4 +1,5 @@
 import asyncio
+import contextlib
 import os
 import re
 import shutil
@@ -1159,9 +1160,9 @@ async def test_ctrl_c_cancels_active_submit_task(tmp_path):
 
 
 @pytest.mark.asyncio
-async def test_read_input_raw_uses_stream_reader_for_pipe_bytes(tmp_path):
+async def test_read_input_raw_uses_add_reader_for_pipe_bytes(tmp_path):
     if sys.platform == "win32":
-        pytest.skip("connect_read_pipe coverage is POSIX-only")
+        pytest.skip("add_reader coverage is POSIX-only")
     read_fd, write_fd = os.pipe()
     tui = _tui(tmp_path)
     tui._stdin_fd = read_fd
@@ -1177,9 +1178,54 @@ async def test_read_input_raw_uses_stream_reader_for_pipe_bytes(tmp_path):
 
 
 @pytest.mark.asyncio
+async def test_read_input_raw_does_not_mark_terminal_fd_nonblocking(tmp_path):
+    if sys.platform == "win32":
+        pytest.skip("pty coverage is POSIX-only")
+    import fcntl
+    import pty
+    import termios
+
+    master_fd, slave_fd = pty.openpty()
+    stdout_like_fd = os.dup(slave_fd)
+    old_attrs = termios.tcgetattr(slave_fd)
+    new_attrs = termios.tcgetattr(slave_fd)
+    new_attrs[3] &= ~(termios.ICANON | termios.ECHO)
+    new_attrs[6][termios.VMIN] = 1
+    new_attrs[6][termios.VTIME] = 0
+    termios.tcsetattr(slave_fd, termios.TCSANOW, new_attrs)
+
+    def is_nonblocking(fd: int) -> bool:
+        return bool(fcntl.fcntl(fd, fcntl.F_GETFL) & os.O_NONBLOCK)
+
+    tui = _tui(tmp_path)
+    tui._stdin_fd = slave_fd
+    task = asyncio.create_task(tui._read_input_raw())
+    try:
+        await asyncio.sleep(0)
+        assert not is_nonblocking(slave_fd)
+        assert not is_nonblocking(stdout_like_fd)
+
+        os.write(master_fd, b"x")
+        data = await asyncio.wait_for(task, timeout=1)
+
+        assert data == b"x"
+        assert not is_nonblocking(slave_fd)
+        assert not is_nonblocking(stdout_like_fd)
+    finally:
+        if not task.done():
+            task.cancel()
+            with contextlib.suppress(asyncio.CancelledError):
+                await task
+        termios.tcsetattr(slave_fd, termios.TCSANOW, old_attrs)
+        os.close(stdout_like_fd)
+        os.close(slave_fd)
+        os.close(master_fd)
+
+
+@pytest.mark.asyncio
 async def test_read_input_raw_returns_ctrl_d_on_stdin_eof(tmp_path):
     if sys.platform == "win32":
-        pytest.skip("connect_read_pipe coverage is POSIX-only")
+        pytest.skip("add_reader coverage is POSIX-only")
     read_fd, write_fd = os.pipe()
     tui = _tui(tmp_path)
     tui._stdin_fd = read_fd
