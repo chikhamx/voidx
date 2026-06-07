@@ -73,9 +73,10 @@ async def save_session_runtime_state(
         """INSERT INTO session_runtime_state (
                session_id, interaction_mode, current_intent, previous_intent,
                current_goal, awaiting_implementation_approval, approved_scope,
-               pending_approval_json, last_plan_summary, compaction_summary, updated_at
+               pending_approval_json, last_plan_summary, recent_user_texts_json,
+               compaction_summary, updated_at
            )
-           VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+           VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
            ON CONFLICT(session_id) DO UPDATE SET
                interaction_mode = excluded.interaction_mode,
                current_intent = excluded.current_intent,
@@ -85,6 +86,7 @@ async def save_session_runtime_state(
                approved_scope = excluded.approved_scope,
                pending_approval_json = excluded.pending_approval_json,
                last_plan_summary = excluded.last_plan_summary,
+               recent_user_texts_json = excluded.recent_user_texts_json,
                compaction_summary = excluded.compaction_summary,
                updated_at = excluded.updated_at""",
         (
@@ -97,6 +99,7 @@ async def save_session_runtime_state(
             task_state.pending_approval.scope if task_state.pending_approval else "",
             _dump_pending_approval(task_state.pending_approval),
             task_state.last_plan_summary,
+            _dump_string_list(task_state.recent_user_texts),
             compaction_summary,
             _now(),
         ),
@@ -131,6 +134,9 @@ async def load_task_state(session_id: str) -> TaskState:
         current_goal=row["current_goal"],
         pending_approval=pending,
         last_plan_summary=row["last_plan_summary"],
+        recent_user_texts=_load_string_list(
+            row["recent_user_texts_json"] if "recent_user_texts_json" in row.keys() else ""
+        )[-2:],
     )
 
 
@@ -210,6 +216,10 @@ def _dump_pending_approval(pending: PendingApproval | None) -> str:
     if pending is None:
         return ""
     return json.dumps(pending.model_dump(mode="json"), ensure_ascii=False)
+
+
+def _dump_string_list(items: list[str]) -> str:
+    return json.dumps([item for item in items if isinstance(item, str)][-2:], ensure_ascii=False)
 
 
 def _load_pending_approval(

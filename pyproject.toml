@@ -47,6 +47,9 @@ where = ["src"]
     "bundled/superpowers/*/SKILL.md",
     "bundled/superpowers/*/templates/*.md",
 ]
+"voidx.data" = [
+    "intent_classifier.json",
+]
 
 [tool.pytest.ini_options]
 asyncio_mode = "auto"

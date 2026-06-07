@@ -281,6 +281,21 @@ def test_intent_classifier_does_not_treat_inspection_as_implementation():
     assert infer_task_intent("对，可以") == TaskIntent.CHAT
 
 
+def test_keyword_intent_avoids_broad_problem_debug_match():
+    assert infer_task_intent("有什么问题吗") == TaskIntent.CHAT
+    assert infer_task_intent("看看这个问题") == TaskIntent.INSPECT
+    assert infer_task_intent("这个问题怎么解决") == TaskIntent.CHAT
+    assert infer_task_intent("这个报错问题怎么处理") == TaskIntent.DEBUG
+
+
+def test_keyword_intent_uses_word_boundaries_for_short_english_hints():
+    assert infer_task_intent("fix this issue") == TaskIntent.IMPLEMENT
+    assert infer_task_intent("prefix handling") == TaskIntent.CHAT
+    assert infer_task_intent("suffix handling") == TaskIntent.CHAT
+    assert infer_task_intent("这个可以改吗") != TaskIntent.IMPLEMENT
+    assert infer_task_intent("这个可以开始了吗") != TaskIntent.IMPLEMENT
+
+
 def test_current_task_state_records_intent_and_implementation_gate(tmp_path):
     messages = [HumanMessage(content="看看这个项目")]
     context = RuntimeContextBuilder(

@@ -111,6 +111,7 @@ def _init_schema(conn: sqlite3.Connection) -> None:
             approved_scope TEXT NOT NULL DEFAULT '',
             pending_approval_json TEXT NOT NULL DEFAULT '',
             last_plan_summary TEXT NOT NULL DEFAULT '',
+            recent_user_texts_json TEXT NOT NULL DEFAULT '[]',
             compaction_summary TEXT NOT NULL DEFAULT '',
             updated_at TEXT NOT NULL,
             FOREIGN KEY (session_id) REFERENCES sessions(id) ON DELETE CASCADE
@@ -223,6 +224,7 @@ def _init_schema(conn: sqlite3.Connection) -> None:
         "ALTER TABLE message_runtime_snapshots ADD COLUMN intent_source TEXT NOT NULL DEFAULT ''",
         "ALTER TABLE message_runtime_snapshots ADD COLUMN intent_refined INTEGER NOT NULL DEFAULT 0",
         "ALTER TABLE message_runtime_snapshots ADD COLUMN available_tool_ids_json TEXT NOT NULL DEFAULT '[]'",
+        "ALTER TABLE session_runtime_state ADD COLUMN recent_user_texts_json TEXT NOT NULL DEFAULT '[]'",
     ):
         try:
             conn.execute(statement)

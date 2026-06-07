@@ -1,0 +1,446 @@
+{"text": "帮我检查一下代码", "intent": "inspect", "source": "synthetic", "notes": "variation_76"}
+{"text": "帮我内存泄漏了吧", "intent": "debug", "source": "synthetic", "notes": "variation_230"}
+{"text": "debug this issue", "intent": "debug", "source": "synthetic", "notes": "variation_208"}
+{"text": "help me what's the current state now", "intent": "inspect", "source": "synthetic", "notes": "variation_46"}
+{"text": "请嗯啊", "intent": "ambiguous", "source": "synthetic", "notes": "variation_277"}
+{"text": "can you what about this", "intent": "ambiguous", "source": "synthetic", "notes": "variation_283"}
+{"text": "帮我看看这个模块", "intent": "inspect", "source": "synthetic", "notes": "variation_30"}
+{"text": "can you traceback error", "intent": "debug", "source": "synthetic", "notes": "variation_104"}
+{"text": "麻烦添加单元测试啊", "intent": "implement", "source": "synthetic", "notes": "variation_127"}
+{"text": "请这个行不行吧", "intent": "ambiguous", "source": "synthetic", "notes": "variation_281"}
+{"text": "please what about this please", "intent": "ambiguous", "source": "synthetic", "notes": "variation_76"}
+{"text": "麻烦添加单元测试吧", "intent": "implement", "source": "synthetic", "notes": "variation_2"}
+{"text": "请程序崩溃了一下", "intent": "debug", "source": "synthetic", "notes": "variation_167"}
+{"text": "can you how should we design this now", "intent": "design", "source": "synthetic", "notes": "variation_152"}
+{"text": "can you makes sense", "intent": "chat", "source": "synthetic", "notes": "variation_210"}
+{"text": "能不能改一下返回格式吧", "intent": "implement", "source": "synthetic", "notes": "variation_221"}
+{"text": "explain this error", "intent": "debug", "source": "near_miss", "notes": ""}
+{"text": "麻烦重构这个模块吧", "intent": "implement", "source": "synthetic", "notes": "variation_252"}
+{"text": "help me explain this function please", "intent": "inspect", "source": "synthetic", "notes": "variation_144"}
+{"text": "请讨论一下技术选型呢", "intent": "design", "source": "synthetic", "notes": "variation_160"}
+{"text": "could you and?", "intent": "ambiguous", "source": "synthetic", "notes": "variation_215"}
+{"text": "can you what now please", "intent": "ambiguous", "source": "synthetic", "notes": "variation_47"}
+{"text": "麻烦为什么返回 null一下", "intent": "debug", "source": "synthetic", "notes": "variation_200"}
+{"text": "请有什么建议啊", "intent": "design", "source": "synthetic", "notes": "variation_174"}
+{"text": "please design a solution for me", "intent": "design", "source": "synthetic", "notes": "variation_59"}
+{"text": "能不能今天怎么样一下", "intent": "chat", "source": "synthetic", "notes": "variation_85"}
+{"text": "could you nice for me", "intent": "chat", "source": "synthetic", "notes": "variation_261"}
+{"text": "能不能看看有什么问题啊", "intent": "review", "source": "synthetic", "notes": "variation_22"}
+{"text": "can you how does this work", "intent": "inspect", "source": "synthetic", "notes": "variation_17"}
+{"text": "请审计一下安全性一下", "intent": "review", "source": "synthetic", "notes": "variation_273"}
+{"text": "能不能修改一下逻辑吧", "intent": "implement", "source": "synthetic", "notes": "variation_48"}
+{"text": "can you what now", "intent": "ambiguous", "source": "synthetic", "notes": "variation_172"}
+{"text": "帮我为什么返回 null", "intent": "debug", "source": "synthetic", "notes": "variation_279"}
+{"text": "能不能好的知道了呢", "intent": "chat", "source": "synthetic", "notes": "variation_73"}
+{"text": "help me review this PR for me", "intent": "review", "source": "synthetic", "notes": "variation_259"}
+{"text": "帮我看看这个 API 的定义一下", "intent": "inspect", "source": "synthetic", "notes": "variation_19"}
+{"text": "优化一下性能", "intent": "implement", "source": "synthetic", "notes": "variation_271"}
+{"text": "请这个呢", "intent": "ambiguous", "source": "synthetic", "notes": "variation_93"}
+{"text": "修复这个bug [SEP] 好了", "intent": "chat", "source": "multi_turn", "notes": "window_size=2", "turns": [{"text": "修复这个bug", "intent": "implement"}, {"text": "好了", "intent": "chat"}]}
+{"text": "看看现在的代码结构 [SEP] 太乱了 [SEP] 怎么重构比较好", "intent": "design", "source": "multi_turn", "notes": "window_size=3", "turns": [{"text": "看看现在的代码结构", "intent": "inspect"}, {"text": "太乱了", "intent": "design"}, {"text": "怎么重构比较好", "intent": "design"}]}
+{"text": "这个呢", "intent": "ambiguous", "source": "synthetic", "notes": "variation_188"}
+{"text": "帮我改一下返回格式", "intent": "implement", "source": "synthetic", "notes": "variation_4"}
+{"text": "can you audit the codebase for me", "intent": "review", "source": "synthetic", "notes": "variation_17"}
+{"text": "麻烦程序崩溃了一下", "intent": "debug", "source": "synthetic", "notes": "variation_15"}
+{"text": "麻烦这个实现有问题吗", "intent": "review", "source": "synthetic", "notes": "variation_271"}
+{"text": "这个实现有问题吗呢", "intent": "review", "source": "synthetic", "notes": "variation_46"}
+{"text": "麻烦内存泄漏了呢", "intent": "debug", "source": "synthetic", "notes": "variation_88"}
+{"text": "inspect the pipeline please", "intent": "inspect", "source": "synthetic", "notes": "variation_44"}
+{"text": "梳理一下逻辑一下", "intent": "inspect", "source": "synthetic", "notes": "variation_250"}
+{"text": "please refactor the code please", "intent": "implement", "source": "synthetic", "notes": "variation_160"}
+{"text": "麻烦你说得对一下", "intent": "chat", "source": "synthetic", "notes": "variation_267"}
+{"text": "程序崩溃了一下", "intent": "debug", "source": "synthetic", "notes": "variation_149"}
+{"text": "能不能设计一下", "intent": "design", "source": "synthetic", "notes": "variation_111"}
+{"text": "please makes sense", "intent": "chat", "source": "synthetic", "notes": "variation_7"}
+{"text": "help me interesting for me", "intent": "chat", "source": "synthetic", "notes": "variation_90"}
+{"text": "explain this module [SEP] how can we improve it [SEP] let's not change it now", "intent": "chat", "source": "multi_turn", "notes": "window_size=3", "turns": [{"text": "explain this module", "intent": "inspect"}, {"text": "how can we improve it", "intent": "design"}, {"text": "let's not change it now", "intent": "chat"}]}
+{"text": "请这个 bug 怎么复现啊", "intent": "debug", "source": "synthetic", "notes": "variation_268"}
+{"text": "审查一下这个PR [SEP] 有几个问题 [SEP] 改完再审核", "intent": "review", "source": "multi_turn", "notes": "window_size=3", "turns": [{"text": "审查一下这个PR", "intent": "review"}, {"text": "有几个问题", "intent": "review"}, {"text": "改完再审核", "intent": "review"}]}
+{"text": "实现这个功能", "intent": "implement", "source": "synthetic", "notes": "variation_155"}
+{"text": "好的好的呢", "intent": "chat", "source": "synthetic", "notes": "variation_189"}
+{"text": "please I see now", "intent": "chat", "source": "synthetic", "notes": "variation_104"}
+{"text": "so?", "intent": "ambiguous", "source": "synthetic", "notes": "variation_17"}
+{"text": "how does this work for me", "intent": "inspect", "source": "synthetic", "notes": "variation_228"}
+{"text": "can you check code quality", "intent": "review", "source": "synthetic", "notes": "variation_142"}
+{"text": "检查一下代码规范一下", "intent": "review", "source": "synthetic", "notes": "variation_177"}
+{"text": "帮我看看配置呢", "intent": "inspect", "source": "synthetic", "notes": "variation_254"}
+{"text": "帮我不太对吧", "intent": "ambiguous", "source": "synthetic", "notes": "variation_237"}
+{"text": "请优化一下性能", "intent": "implement", "source": "synthetic", "notes": "variation_154"}
+{"text": "优化一下性能啊", "intent": "implement", "source": "synthetic", "notes": "variation_263"}
+{"text": "请这个变量是什么意思呢", "intent": "inspect", "source": "synthetic", "notes": "variation_130"}
+{"text": "propose a solution", "intent": "design", "source": "synthetic", "notes": "variation_130"}
+{"text": "could you why is this failing", "intent": "debug", "source": "synthetic", "notes": "variation_39"}
+{"text": "can you review the data flow for me", "intent": "inspect", "source": "synthetic", "notes": "variation_145"}
+{"text": "更新依赖版本呢", "intent": "implement", "source": "synthetic", "notes": "variation_94"}
+{"text": "plan the migration", "intent": "design", "source": "synthetic", "notes": "variation_5"}
+{"text": "麻烦看看这个文件一下", "intent": "inspect", "source": "synthetic", "notes": "variation_271"}
+{"text": "麻烦看看这个模块呢", "intent": "inspect", "source": "synthetic", "notes": "variation_32"}
+{"text": "audit the codebase", "intent": "review", "source": "synthetic", "notes": "variation_275"}
+{"text": "请死锁了呢", "intent": "debug", "source": "synthetic", "notes": "variation_90"}
+{"text": "能不能收到吧", "intent": "chat", "source": "synthetic", "notes": "variation_219"}
+{"text": "please so? please", "intent": "ambiguous", "source": "synthetic", "notes": "variation_107"}
+{"text": "appreciate it please", "intent": "chat", "source": "synthetic", "notes": "variation_236"}
+{"text": "了解一下项目结构 [SEP] 这个模块是干什么的", "intent": "inspect", "source": "multi_turn", "notes": "window_size=2", "turns": [{"text": "了解一下项目结构", "intent": "inspect"}, {"text": "这个模块是干什么的", "intent": "inspect"}]}
+{"text": "请不错不错一下", "intent": "chat", "source": "synthetic", "notes": "variation_275"}
+{"text": "能不能那吧", "intent": "ambiguous", "source": "synthetic", "notes": "variation_83"}
+{"text": "麻烦没问题", "intent": "chat", "source": "synthetic", "notes": "variation_212"}
+{"text": "update the config", "intent": "implement", "source": "synthetic", "notes": "variation_214"}
+{"text": "设计一个新模块一下", "intent": "design", "source": "synthetic", "notes": "variation_41"}
+{"text": "请这个实现有问题吗啊", "intent": "review", "source": "synthetic", "notes": "variation_277"}
+{"text": "帮我死锁了一下", "intent": "debug", "source": "synthetic", "notes": "variation_243"}
+{"text": "删除这个字段啊", "intent": "implement", "source": "synthetic", "notes": "variation_223"}
+{"text": "help me good to know for me", "intent": "chat", "source": "synthetic", "notes": "variation_16"}
+{"text": "这个报错怎么回事 [SEP] 看看日志 [SEP] 找到原因了", "intent": "debug", "source": "multi_turn", "notes": "window_size=3", "turns": [{"text": "这个报错怎么回事", "intent": "debug"}, {"text": "看看日志", "intent": "inspect"}, {"text": "找到原因了", "intent": "debug"}]}
+{"text": "能不能更新依赖版本吧", "intent": "implement", "source": "synthetic", "notes": "variation_195"}
+{"text": "死锁了啊", "intent": "debug", "source": "synthetic", "notes": "variation_222"}
+{"text": "请改一下返回格式啊", "intent": "implement", "source": "synthetic", "notes": "variation_108"}
+{"text": "please what's your recommendation for me", "intent": "design", "source": "synthetic", "notes": "variation_47"}
+{"text": "请为什么返回 null", "intent": "debug", "source": "synthetic", "notes": "variation_10"}
+{"text": "请看看有什么问题一下", "intent": "review", "source": "synthetic", "notes": "variation_254"}
+{"text": "请内存泄漏了呢", "intent": "debug", "source": "synthetic", "notes": "variation_277"}
+{"text": "请这个方案有什么风险", "intent": "review", "source": "synthetic", "notes": "variation_39"}
+{"text": "帮我了解一下依赖关系啊", "intent": "inspect", "source": "synthetic", "notes": "variation_37"}
+{"text": "帮我怎么拆分这个模块啊", "intent": "design", "source": "synthetic", "notes": "variation_11"}
+{"text": "请怎么设计比较好吧", "intent": "design", "source": "synthetic", "notes": "variation_184"}
+{"text": "帮我这个变量是什么意思一下", "intent": "inspect", "source": "synthetic", "notes": "variation_214"}
+{"text": "可以一下", "intent": "ambiguous", "source": "synthetic", "notes": "variation_85"}
+{"text": "帮我那吧", "intent": "ambiguous", "source": "synthetic", "notes": "variation_229"}
+{"text": "能不能这个有问题啊", "intent": "ambiguous", "source": "synthetic", "notes": "variation_89"}
+{"text": "please plan the migration now", "intent": "design", "source": "synthetic", "notes": "variation_142"}
+{"text": "分析一下架构 [SEP] 有什么改进建议 [SEP] 好的，先不改", "intent": "chat", "source": "multi_turn", "notes": "window_size=3", "turns": [{"text": "分析一下架构", "intent": "inspect"}, {"text": "有什么改进建议", "intent": "design"}, {"text": "好的，先不改", "intent": "chat"}]}
+{"text": "请可以啊", "intent": "ambiguous", "source": "synthetic", "notes": "variation_206"}
+{"text": "请看看测试覆盖率吧", "intent": "review", "source": "synthetic", "notes": "variation_178"}
+{"text": "can you look at this module", "intent": "inspect", "source": "synthetic", "notes": "variation_150"}
+{"text": "代码审查吧", "intent": "review", "source": "synthetic", "notes": "variation_243"}
+{"text": "你说得对一下", "intent": "chat", "source": "synthetic", "notes": "variation_150"}
+{"text": "could you interesting", "intent": "chat", "source": "synthetic", "notes": "variation_204"}
+{"text": "更新依赖版本", "intent": "implement", "source": "synthetic", "notes": "variation_9"}
+{"text": "麻烦修改一下逻辑一下", "intent": "implement", "source": "synthetic", "notes": "variation_128"}
+{"text": "今天进度怎么样 [SEP] 还行吧 [SEP] 改天再聊", "intent": "chat", "source": "multi_turn", "notes": "window_size=3", "turns": [{"text": "今天进度怎么样", "intent": "chat"}, {"text": "还行吧", "intent": "chat"}, {"text": "改天再聊", "intent": "chat"}]}
+{"text": "能不能辛苦了呢", "intent": "chat", "source": "synthetic", "notes": "variation_19"}
+{"text": "嗯嗯啊", "intent": "chat", "source": "synthetic", "notes": "variation_148"}
+{"text": "麻烦超时了呢", "intent": "debug", "source": "synthetic", "notes": "variation_109"}
+{"text": "能不能嗯啊", "intent": "ambiguous", "source": "synthetic", "notes": "variation_187"}
+{"text": "can you what about this please", "intent": "ambiguous", "source": "synthetic", "notes": "variation_207"}
+{"text": "这个方案有什么风险一下", "intent": "review", "source": "synthetic", "notes": "variation_78"}
+{"text": "麻烦如何组织代码", "intent": "design", "source": "synthetic", "notes": "variation_42"}
+{"text": "can you update the config for me", "intent": "implement", "source": "synthetic", "notes": "variation_177"}
+{"text": "重构这个模块一下", "intent": "implement", "source": "synthetic", "notes": "variation_231"}
+{"text": "can you thanks now", "intent": "chat", "source": "synthetic", "notes": "variation_268"}
+{"text": "设计一下", "intent": "design", "source": "synthetic", "notes": "variation_238"}
+{"text": "改一下这个错误", "intent": "implement", "source": "near_miss", "notes": ""}
+{"text": "could you check the logs", "intent": "inspect", "source": "synthetic", "notes": "variation_202"}
+{"text": "麻烦怎么设计比较好一下", "intent": "design", "source": "synthetic", "notes": "variation_71"}
+{"text": "debug this crash", "intent": "debug", "source": "synthetic", "notes": "variation_36"}
+{"text": "please apply this change for me", "intent": "implement", "source": "synthetic", "notes": "variation_227"}
+{"text": "debug this crash [SEP] found the null pointer [SEP] add a null check", "intent": "implement", "source": "multi_turn", "notes": "window_size=3", "turns": [{"text": "debug this crash", "intent": "debug"}, {"text": "found the null pointer", "intent": "debug"}, {"text": "add a null check", "intent": "implement"}]}
+{"text": "can you inspect the pipeline", "intent": "inspect", "source": "synthetic", "notes": "variation_248"}
+{"text": "这个行不行", "intent": "ambiguous", "source": "synthetic", "notes": "variation_199"}
+{"text": "这个接口需要改 [SEP] 加个参数", "intent": "implement", "source": "multi_turn", "notes": "window_size=2", "turns": [{"text": "这个接口需要改", "intent": "design"}, {"text": "加个参数", "intent": "implement"}]}
+{"text": "请这个实现有问题吗一下", "intent": "review", "source": "synthetic", "notes": "variation_212"}
+{"text": "改一下配置一下", "intent": "implement", "source": "synthetic", "notes": "variation_13"}
+{"text": "can you add error handling", "intent": "implement", "source": "synthetic", "notes": "variation_51"}
+{"text": "帮我写一个新接口啊", "intent": "implement", "source": "synthetic", "notes": "variation_202"}
+{"text": "看看现在的代码结构 [SEP] 太乱了 [SEP] 怎么重构比较好", "intent": "design", "source": "multi_turn", "notes": "window_size=3", "turns": [{"text": "看看现在的代码结构", "intent": "inspect"}, {"text": "太乱了", "intent": "design"}, {"text": "怎么重构比较好", "intent": "design"}]}
+{"text": "can you that's helpful", "intent": "chat", "source": "synthetic", "notes": "variation_167"}
+{"text": "help me apply this change", "intent": "implement", "source": "synthetic", "notes": "variation_124"}
+{"text": "help me good to know", "intent": "chat", "source": "synthetic", "notes": "variation_81"}
+{"text": "请写一个新接口呢", "intent": "implement", "source": "synthetic", "notes": "variation_73"}
+{"text": "看看这个接口 [SEP] 返回值不对 [SEP] 修一下", "intent": "implement", "source": "multi_turn", "notes": "window_size=3", "turns": [{"text": "看看这个接口", "intent": "inspect"}, {"text": "返回值不对", "intent": "debug"}, {"text": "修一下", "intent": "implement"}]}
+{"text": "能不能看看这个 API 的定义吧", "intent": "inspect", "source": "synthetic", "notes": "variation_218"}
+{"text": "能不能改一下配置一下", "intent": "implement", "source": "synthetic", "notes": "variation_22"}
+{"text": "can you hmm", "intent": "ambiguous", "source": "synthetic", "notes": "variation_108"}
+{"text": "不太对吧", "intent": "ambiguous", "source": "synthetic", "notes": "variation_213"}
+{"text": "麻烦加油啊", "intent": "chat", "source": "synthetic", "notes": "variation_245"}
+{"text": "能不能规划一下开发计划啊", "intent": "design", "source": "synthetic", "notes": "variation_254"}
+{"text": "analyze the architecture for me", "intent": "inspect", "source": "synthetic", "notes": "variation_195"}
+{"text": "看看这个模块 [SEP] 这个函数有问题 [SEP] 修复一下", "intent": "implement", "source": "multi_turn", "notes": "window_size=3", "turns": [{"text": "看看这个模块", "intent": "inspect"}, {"text": "这个函数有问题", "intent": "debug"}, {"text": "修复一下", "intent": "implement"}]}
+{"text": "can you add error handling", "intent": "implement", "source": "synthetic", "notes": "variation_238"}
+{"text": "appreciate it please", "intent": "chat", "source": "synthetic", "notes": "variation_139"}
+{"text": "帮我改一下配置一下", "intent": "implement", "source": "synthetic", "notes": "variation_74"}
+{"text": "please sounds good for me", "intent": "chat", "source": "synthetic", "notes": "variation_140"}
+{"text": "can you explain the design pattern here", "intent": "inspect", "source": "synthetic", "notes": "variation_94"}
+{"text": "help me is this right for me", "intent": "ambiguous", "source": "synthetic", "notes": "variation_28"}
+{"text": "please makes sense", "intent": "chat", "source": "synthetic", "notes": "variation_164"}
+{"text": "麻烦看看有什么问题一下", "intent": "review", "source": "synthetic", "notes": "variation_182"}
+{"text": "嗯嗯呢", "intent": "chat", "source": "synthetic", "notes": "variation_116"}
+{"text": "explain this module [SEP] how can we improve it [SEP] let's not change it now", "intent": "chat", "source": "multi_turn", "notes": "window_size=3", "turns": [{"text": "explain this module", "intent": "inspect"}, {"text": "how can we improve it", "intent": "design"}, {"text": "let's not change it now", "intent": "chat"}]}
+{"text": "帮我有什么可以改进的一下", "intent": "review", "source": "synthetic", "notes": "variation_229"}
+{"text": "能不能怎么办啊", "intent": "ambiguous", "source": "synthetic", "notes": "variation_31"}
+{"text": "could you something's off", "intent": "ambiguous", "source": "synthetic", "notes": "variation_167"}
+{"text": "这个bug怎么复现 [SEP] 我看看代码 [SEP] 找到了，修一下", "intent": "implement", "source": "multi_turn", "notes": "window_size=3", "turns": [{"text": "这个bug怎么复现", "intent": "debug"}, {"text": "我看看代码", "intent": "inspect"}, {"text": "找到了，修一下", "intent": "implement"}]}
+{"text": "能不能看看有什么问题吧", "intent": "review", "source": "synthetic", "notes": "variation_118"}
+{"text": "修改一下逻辑", "intent": "implement", "source": "synthetic", "notes": "variation_52"}
+{"text": "给个重构方案 [SEP] 方案不错 [SEP] 可以", "intent": "chat", "source": "multi_turn", "notes": "window_size=3", "turns": [{"text": "给个重构方案", "intent": "design"}, {"text": "方案不错", "intent": "chat"}, {"text": "可以", "intent": "chat"}]}
+{"text": "请嗯嗯啊", "intent": "chat", "source": "synthetic", "notes": "variation_117"}
+{"text": "麻烦如何改进呢", "intent": "design", "source": "synthetic", "notes": "variation_70"}
+{"text": "review the code [SEP] LGTM [SEP] merge it", "intent": "implement", "source": "multi_turn", "notes": "window_size=3", "turns": [{"text": "review the code", "intent": "review"}, {"text": "LGTM", "intent": "chat"}, {"text": "merge it", "intent": "implement"}]}
+{"text": "给个方案 [SEP] 可以，开始实现", "intent": "implement", "source": "multi_turn", "notes": "window_size=2", "turns": [{"text": "给个方案", "intent": "design"}, {"text": "可以，开始实现", "intent": "implement"}]}
+{"text": "能不能这个实现有问题吗一下", "intent": "review", "source": "synthetic", "notes": "variation_252"}
+{"text": "请为什么运行失败一下", "intent": "debug", "source": "synthetic", "notes": "variation_76"}
+{"text": "can you implement this feature please", "intent": "implement", "source": "synthetic", "notes": "variation_42"}
+{"text": "请你好呢", "intent": "chat", "source": "synthetic", "notes": "variation_119"}
+{"text": "分析一下架构呢", "intent": "inspect", "source": "synthetic", "notes": "variation_159"}
+{"text": "能不能规划一下开发计划一下", "intent": "design", "source": "synthetic", "notes": "variation_35"}
+{"text": "could you explain the design pattern here please", "intent": "inspect", "source": "synthetic", "notes": "variation_102"}
+{"text": "了解一下流程呢", "intent": "inspect", "source": "synthetic", "notes": "variation_31"}
+{"text": "帮我这个实现有问题吗一下", "intent": "review", "source": "synthetic", "notes": "variation_138"}
+{"text": "排查一下问题呢", "intent": "debug", "source": "synthetic", "notes": "variation_41"}
+{"text": "please patch this bug", "intent": "implement", "source": "synthetic", "notes": "variation_211"}
+{"text": "看看这个设计 [SEP] 不太合理 [SEP] 重新设计一下", "intent": "design", "source": "multi_turn", "notes": "window_size=3", "turns": [{"text": "看看这个设计", "intent": "inspect"}, {"text": "不太合理", "intent": "design"}, {"text": "重新设计一下", "intent": "design"}]}
+{"text": "这个 bug 怎么复现", "intent": "debug", "source": "synthetic", "notes": "variation_174"}
+{"text": "能不能程序崩溃了啊", "intent": "debug", "source": "synthetic", "notes": "variation_66"}
+{"text": "帮我这样可以吗啊", "intent": "ambiguous", "source": "synthetic", "notes": "variation_245"}
+{"text": "请改一下配置", "intent": "implement", "source": "synthetic", "notes": "variation_282"}
+{"text": "能不能代码审查啊", "intent": "review", "source": "synthetic", "notes": "variation_8"}
+{"text": "help me what's the best architecture please", "intent": "design", "source": "synthetic", "notes": "variation_12"}
+{"text": "review this commit", "intent": "review", "source": "synthetic", "notes": "variation_73"}
+{"text": "请为什么运行失败啊", "intent": "debug", "source": "synthetic", "notes": "variation_177"}
+{"text": "为什么运行失败啊", "intent": "debug", "source": "synthetic", "notes": "variation_175"}
+{"text": "what's this function [SEP] it's deprecated [SEP] remove it", "intent": "implement", "source": "multi_turn", "notes": "window_size=3", "turns": [{"text": "what's this function", "intent": "inspect"}, {"text": "it's deprecated", "intent": "chat"}, {"text": "remove it", "intent": "implement"}]}
+{"text": "分析一下架构呢", "intent": "inspect", "source": "synthetic", "notes": "variation_257"}
+{"text": "能不能怎么重构比较好", "intent": "design", "source": "synthetic", "notes": "variation_227"}
+{"text": "can you nice please", "intent": "chat", "source": "synthetic", "notes": "variation_4"}
+{"text": "帮我讨论一下架构吧", "intent": "design", "source": "synthetic", "notes": "variation_204"}
+{"text": "麻烦了解一下依赖关系一下", "intent": "inspect", "source": "synthetic", "notes": "variation_51"}
+{"text": "could you thanks", "intent": "chat", "source": "synthetic", "notes": "variation_120"}
+{"text": "帮我怎么办", "intent": "ambiguous", "source": "synthetic", "notes": "variation_133"}
+{"text": "有什么更好的方案呢", "intent": "design", "source": "synthetic", "notes": "variation_249"}
+{"text": "能不能怎么办吧", "intent": "ambiguous", "source": "synthetic", "notes": "variation_55"}
+{"text": "review the data flow now", "intent": "inspect", "source": "synthetic", "notes": "variation_151"}
+{"text": "can you review the changes", "intent": "review", "source": "synthetic", "notes": "variation_127"}
+{"text": "could you review this commit please", "intent": "review", "source": "synthetic", "notes": "variation_136"}
+{"text": "design the API for me", "intent": "design", "source": "synthetic", "notes": "variation_260"}
+{"text": "请看看这个文件啊", "intent": "inspect", "source": "synthetic", "notes": "variation_54"}
+{"text": "could you review the data flow please", "intent": "inspect", "source": "synthetic", "notes": "variation_198"}
+{"text": "please ok", "intent": "ambiguous", "source": "synthetic", "notes": "variation_23"}
+{"text": "请为什么运行失败", "intent": "debug", "source": "synthetic", "notes": "variation_113"}
+{"text": "帮我这个呢", "intent": "ambiguous", "source": "synthetic", "notes": "variation_182"}
+{"text": "请你好一下", "intent": "chat", "source": "synthetic", "notes": "variation_191"}
+{"text": "can you is this right please", "intent": "ambiguous", "source": "synthetic", "notes": "variation_269"}
+{"text": "能不能谢谢一下", "intent": "chat", "source": "synthetic", "notes": "variation_30"}
+{"text": "帮我排查一下问题", "intent": "debug", "source": "synthetic", "notes": "variation_282"}
+{"text": "看看有什么问题", "intent": "review", "source": "synthetic", "notes": "variation_249"}
+{"text": "帮我修改一下逻辑吧", "intent": "implement", "source": "synthetic", "notes": "variation_191"}
+{"text": "please sounds good for me", "intent": "chat", "source": "synthetic", "notes": "variation_103"}
+{"text": "请慢慢来啊", "intent": "chat", "source": "synthetic", "notes": "variation_200"}
+{"text": "帮我审查一下代码吧", "intent": "review", "source": "synthetic", "notes": "variation_269"}
+{"text": "please what now for me", "intent": "ambiguous", "source": "synthetic", "notes": "variation_38"}
+{"text": "debug this crash [SEP] found the null pointer [SEP] add a null check", "intent": "implement", "source": "multi_turn", "notes": "window_size=3", "turns": [{"text": "debug this crash", "intent": "debug"}, {"text": "found the null pointer", "intent": "debug"}, {"text": "add a null check", "intent": "implement"}]}
+{"text": "麻烦排查一下问题呢", "intent": "debug", "source": "synthetic", "notes": "variation_224"}
+{"text": "can you audit the codebase", "intent": "review", "source": "synthetic", "notes": "variation_49"}
+{"text": "interesting now", "intent": "chat", "source": "synthetic", "notes": "variation_154"}
+{"text": "帮我这个呢", "intent": "ambiguous", "source": "synthetic", "notes": "variation_175"}
+{"text": "please what about this", "intent": "ambiguous", "source": "synthetic", "notes": "variation_75"}
+{"text": "看看这个设计 [SEP] 不太合理 [SEP] 重新设计一下", "intent": "design", "source": "multi_turn", "notes": "window_size=3", "turns": [{"text": "看看这个设计", "intent": "inspect"}, {"text": "不太合理", "intent": "design"}, {"text": "重新设计一下", "intent": "design"}]}
+{"text": "麻烦检查一下代码规范一下", "intent": "review", "source": "synthetic", "notes": "variation_89"}
+{"text": "麻烦梳理一下逻辑", "intent": "inspect", "source": "synthetic", "notes": "variation_284"}
+{"text": "can you what's the current state", "intent": "inspect", "source": "synthetic", "notes": "variation_89"}
+{"text": "这个报错什么意思 [SEP] 是类型错误", "intent": "debug", "source": "multi_turn", "notes": "window_size=2", "turns": [{"text": "这个报错什么意思", "intent": "debug"}, {"text": "是类型错误", "intent": "debug"}]}
+{"text": "review the data flow", "intent": "inspect", "source": "synthetic", "notes": "variation_1"}
+{"text": "帮我代码审查吧", "intent": "review", "source": "synthetic", "notes": "variation_60"}
+{"text": "看看有什么问题吧", "intent": "review", "source": "synthetic", "notes": "variation_240"}
+{"text": "能不能检查一下代码", "intent": "inspect", "source": "synthetic", "notes": "variation_103"}
+{"text": "help me what's the current state", "intent": "inspect", "source": "synthetic", "notes": "variation_106"}
+{"text": "please what's the current state", "intent": "inspect", "source": "synthetic", "notes": "variation_223"}
+{"text": "麻烦加油", "intent": "chat", "source": "synthetic", "notes": "variation_223"}
+{"text": "something's off for me", "intent": "ambiguous", "source": "synthetic", "notes": "variation_49"}
+{"text": "请运行时报错一下", "intent": "debug", "source": "synthetic", "notes": "variation_209"}
+{"text": "plan the migration for me", "intent": "design", "source": "synthetic", "notes": "variation_122"}
+{"text": "能不能运行时报错", "intent": "debug", "source": "synthetic", "notes": "variation_61"}
+{"text": "怎么拆分这个模块啊", "intent": "design", "source": "synthetic", "notes": "variation_252"}
+{"text": "帮我收到吧", "intent": "chat", "source": "synthetic", "notes": "variation_124"}
+{"text": "请辛苦了", "intent": "chat", "source": "synthetic", "notes": "variation_201"}
+{"text": "帮我改一下返回格式一下", "intent": "implement", "source": "synthetic", "notes": "variation_179"}
+{"text": "实现这个方案", "intent": "implement", "source": "near_miss", "notes": ""}
+{"text": "麻烦改一下配置呢", "intent": "implement", "source": "synthetic", "notes": "variation_194"}
+{"text": "能不能实现这个需求一下", "intent": "implement", "source": "synthetic", "notes": "variation_235"}
+{"text": "帮我今天怎么样吧", "intent": "chat", "source": "synthetic", "notes": "variation_110"}
+{"text": "帮我运行时报错吧", "intent": "debug", "source": "synthetic", "notes": "variation_63"}
+{"text": "can you what about this", "intent": "ambiguous", "source": "synthetic", "notes": "variation_54"}
+{"text": "check code quality now", "intent": "review", "source": "synthetic", "notes": "variation_98"}
+{"text": "规划一下", "intent": "design", "source": "synthetic", "notes": "variation_269"}
+{"text": "review this PR [SEP] looks good [SEP] approve it", "intent": "review", "source": "multi_turn", "notes": "window_size=3", "turns": [{"text": "review this PR", "intent": "review"}, {"text": "looks good", "intent": "chat"}, {"text": "approve it", "intent": "review"}]}
+{"text": "请这里报错了一下", "intent": "debug", "source": "synthetic", "notes": "variation_21"}
+{"text": "help me hmm", "intent": "ambiguous", "source": "synthetic", "notes": "variation_50"}
+{"text": "请了解一下项目结构一下", "intent": "inspect", "source": "synthetic", "notes": "variation_111"}
+{"text": "can you show me the implementation please", "intent": "inspect", "source": "synthetic", "notes": "variation_100"}
+{"text": "麻烦给个优化方案吧", "intent": "design", "source": "synthetic", "notes": "variation_207"}
+{"text": "帮我为什么运行失败", "intent": "debug", "source": "synthetic", "notes": "variation_237"}
+{"text": "能不能这个怎么搞", "intent": "ambiguous", "source": "synthetic", "notes": "variation_222"}
+{"text": "please review this PR please", "intent": "review", "source": "synthetic", "notes": "variation_137"}
+{"text": "这个怎么搞一下", "intent": "ambiguous", "source": "synthetic", "notes": "variation_221"}
+{"text": "could you inspect the pipeline", "intent": "inspect", "source": "synthetic", "notes": "variation_255"}
+{"text": "请检查一下代码规范一下", "intent": "review", "source": "synthetic", "notes": "variation_19"}
+{"text": "help me what about this", "intent": "ambiguous", "source": "synthetic", "notes": "variation_273"}
+{"text": "please review this PR", "intent": "review", "source": "synthetic", "notes": "variation_282"}
+{"text": "请检查一下代码规范呢", "intent": "review", "source": "synthetic", "notes": "variation_116"}
+{"text": "这个接口需要改 [SEP] 加个参数", "intent": "implement", "source": "multi_turn", "notes": "window_size=2", "turns": [{"text": "这个接口需要改", "intent": "design"}, {"text": "加个参数", "intent": "implement"}]}
+{"text": "can you add error handling now", "intent": "implement", "source": "synthetic", "notes": "variation_209"}
+{"text": "please what do you think about AI please", "intent": "chat", "source": "synthetic", "notes": "variation_128"}
+{"text": "麻烦慢慢来吧", "intent": "chat", "source": "synthetic", "notes": "variation_276"}
+{"text": "能不能有什么可以改进的一下", "intent": "review", "source": "synthetic", "notes": "variation_79"}
+{"text": "can you cool for me", "intent": "chat", "source": "synthetic", "notes": "variation_241"}
+{"text": "麻烦了解一下依赖关系吧", "intent": "inspect", "source": "synthetic", "notes": "variation_4"}
+{"text": "请慢慢来", "intent": "chat", "source": "synthetic", "notes": "variation_29"}
+{"text": "look at this error [SEP] check the stack trace [SEP] fix it", "intent": "implement", "source": "multi_turn", "notes": "window_size=3", "turns": [{"text": "look at this error", "intent": "debug"}, {"text": "check the stack trace", "intent": "debug"}, {"text": "fix it", "intent": "implement"}]}
+{"text": "麻烦看看测试覆盖率呢", "intent": "review", "source": "synthetic", "notes": "variation_84"}
+{"text": "can you nice please", "intent": "chat", "source": "synthetic", "notes": "variation_86"}
+{"text": "could you change the implementation for me", "intent": "implement", "source": "synthetic", "notes": "variation_240"}
+{"text": "加油呢", "intent": "chat", "source": "synthetic", "notes": "variation_262"}
+{"text": "could you review this PR please", "intent": "review", "source": "synthetic", "notes": "variation_62"}
+{"text": "请检查一下代码规范一下", "intent": "review", "source": "synthetic", "notes": "variation_157"}
+{"text": "帮我了解一下项目结构呢", "intent": "inspect", "source": "synthetic", "notes": "variation_209"}
+{"text": "麻烦不太对", "intent": "ambiguous", "source": "synthetic", "notes": "variation_134"}
+{"text": "帮我这个行不行一下", "intent": "ambiguous", "source": "synthetic", "notes": "variation_79"}
+{"text": "请这个 bug 怎么复现一下", "intent": "debug", "source": "synthetic", "notes": "variation_99"}
+{"text": "帮我这个异常是什么原因", "intent": "debug", "source": "synthetic", "notes": "variation_204"}
+{"text": "请改一下返回格式啊", "intent": "implement", "source": "synthetic", "notes": "variation_132"}
+{"text": "麻烦怎么重构比较好啊", "intent": "design", "source": "synthetic", "notes": "variation_251"}
+{"text": "请复核变更", "intent": "review", "source": "synthetic", "notes": "variation_9"}
+{"text": "这个行不行一下", "intent": "ambiguous", "source": "synthetic", "notes": "variation_18"}
+{"text": "麻烦复核变更一下", "intent": "review", "source": "synthetic", "notes": "variation_227"}
+{"text": "请讨论一下架构呢", "intent": "design", "source": "synthetic", "notes": "variation_104"}
+{"text": "麻烦这个呢", "intent": "ambiguous", "source": "synthetic", "notes": "variation_231"}
+{"text": "帮我看看数据库表结构呢", "intent": "inspect", "source": "synthetic", "notes": "variation_239"}
+{"text": "麻烦看看配置吧", "intent": "inspect", "source": "synthetic", "notes": "variation_229"}
+{"text": "请不错不错啊", "intent": "chat", "source": "synthetic", "notes": "variation_283"}
+{"text": "麻烦嗯一下", "intent": "ambiguous", "source": "synthetic", "notes": "variation_275"}
+{"text": "麻烦分析一下架构吧", "intent": "inspect", "source": "synthetic", "notes": "variation_64"}
+{"text": "服务挂了 [SEP] 看看错误日志 [SEP] 是内存溢出", "intent": "debug", "source": "multi_turn", "notes": "window_size=3", "turns": [{"text": "服务挂了", "intent": "debug"}, {"text": "看看错误日志", "intent": "debug"}, {"text": "是内存溢出", "intent": "debug"}]}
+{"text": "review the diff", "intent": "review", "source": "synthetic", "notes": "variation_128"}
+{"text": "please cool please", "intent": "chat", "source": "synthetic", "notes": "variation_237"}
+{"text": "请有什么可以改进的呢", "intent": "review", "source": "synthetic", "notes": "variation_122"}
+{"text": "麻烦改一下配置呢", "intent": "implement", "source": "synthetic", "notes": "variation_115"}
+{"text": "help me traceback error", "intent": "debug", "source": "synthetic", "notes": "variation_56"}
+{"text": "what does this code do please", "intent": "inspect", "source": "synthetic", "notes": "variation_172"}
+{"text": "麻烦加油啊", "intent": "chat", "source": "synthetic", "notes": "variation_79"}
+{"text": "修复这个 bug", "intent": "implement", "source": "near_miss", "notes": ""}
+{"text": "请添加单元测试啊", "intent": "implement", "source": "synthetic", "notes": "variation_183"}
+{"text": "could you I see", "intent": "chat", "source": "synthetic", "notes": "variation_2"}
+{"text": "麻烦有什么更好的方案一下", "intent": "design", "source": "synthetic", "notes": "variation_89"}
+{"text": "帮我超时了吧", "intent": "debug", "source": "synthetic", "notes": "variation_101"}
+{"text": "analyze the performance [SEP] the query is slow [SEP] optimize it", "intent": "implement", "source": "multi_turn", "notes": "window_size=3", "turns": [{"text": "analyze the performance", "intent": "inspect"}, {"text": "the query is slow", "intent": "debug"}, {"text": "optimize it", "intent": "implement"}]}
+{"text": "explain this module [SEP] how can we improve it [SEP] let's not change it now", "intent": "chat", "source": "multi_turn", "notes": "window_size=3", "turns": [{"text": "explain this module", "intent": "inspect"}, {"text": "how can we improve it", "intent": "design"}, {"text": "let's not change it now", "intent": "chat"}]}
+{"text": "给个方案 [SEP] 可以，开始实现", "intent": "implement", "source": "multi_turn", "notes": "window_size=2", "turns": [{"text": "给个方案", "intent": "design"}, {"text": "可以，开始实现", "intent": "implement"}]}
+{"text": "update the config please", "intent": "implement", "source": "synthetic", "notes": "variation_78"}
+{"text": "analyze the architecture now", "intent": "inspect", "source": "synthetic", "notes": "variation_149"}
+{"text": "今天进度怎么样 [SEP] 还行吧 [SEP] 改天再聊", "intent": "chat", "source": "multi_turn", "notes": "window_size=3", "turns": [{"text": "今天进度怎么样", "intent": "chat"}, {"text": "还行吧", "intent": "chat"}, {"text": "改天再聊", "intent": "chat"}]}
+{"text": "请给个实现思路吧", "intent": "design", "source": "synthetic", "notes": "variation_159"}
+{"text": "了解一下项目结构 [SEP] 这个模块是干什么的", "intent": "inspect", "source": "multi_turn", "notes": "window_size=2", "turns": [{"text": "了解一下项目结构", "intent": "inspect"}, {"text": "这个模块是干什么的", "intent": "inspect"}]}
+{"text": "review this commit", "intent": "review", "source": "synthetic", "notes": "variation_220"}
+{"text": "帮我随便聊聊吧", "intent": "chat", "source": "synthetic", "notes": "variation_13"}
+{"text": "能不能这个", "intent": "ambiguous", "source": "synthetic", "notes": "variation_143"}
+{"text": "怎么重构比较好吧", "intent": "design", "source": "synthetic", "notes": "variation_75"}
+{"text": "不太对吧", "intent": "ambiguous", "source": "synthetic", "notes": "variation_65"}
+{"text": "麻烦优化一下性能", "intent": "implement", "source": "synthetic", "notes": "variation_58"}
+{"text": "审查一下这个PR [SEP] 有几个问题 [SEP] 改完再审核", "intent": "review", "source": "multi_turn", "notes": "window_size=3", "turns": [{"text": "审查一下这个PR", "intent": "review"}, {"text": "有几个问题", "intent": "review"}, {"text": "改完再审核", "intent": "review"}]}
+{"text": "what's this function [SEP] it's deprecated [SEP] remove it", "intent": "implement", "source": "multi_turn", "notes": "window_size=3", "turns": [{"text": "what's this function", "intent": "inspect"}, {"text": "it's deprecated", "intent": "chat"}, {"text": "remove it", "intent": "implement"}]}
+{"text": "could you review the diff for me", "intent": "review", "source": "synthetic", "notes": "variation_234"}
+{"text": "能不能了解一下项目结构吧", "intent": "inspect", "source": "synthetic", "notes": "variation_183"}
+{"text": "加油吧", "intent": "chat", "source": "synthetic", "notes": "variation_47"}
+{"text": "audit the codebase now", "intent": "review", "source": "synthetic", "notes": "variation_171"}
+{"text": "帮我不太对呢", "intent": "ambiguous", "source": "synthetic", "notes": "variation_202"}
+{"text": "could you traceback error", "intent": "debug", "source": "synthetic", "notes": "variation_133"}
+{"text": "能不能超时了", "intent": "debug", "source": "synthetic", "notes": "variation_146"}
+{"text": "明白了一下", "intent": "chat", "source": "synthetic", "notes": "variation_260"}
+{"text": "help me so?", "intent": "ambiguous", "source": "synthetic", "notes": "variation_14"}
+{"text": "帮我设计一下", "intent": "design", "source": "synthetic", "notes": "variation_83"}
+{"text": "麻烦给个方案一下", "intent": "design", "source": "synthetic", "notes": "variation_54"}
+{"text": "could you review the data flow now", "intent": "inspect", "source": "synthetic", "notes": "variation_163"}
+{"text": "帮我随便聊聊一下", "intent": "chat", "source": "synthetic", "notes": "variation_192"}
+{"text": "能不能分析一下架构呢", "intent": "inspect", "source": "synthetic", "notes": "variation_86"}
+{"text": "refactor the architecture", "intent": "implement", "source": "near_miss", "notes": ""}
+{"text": "what's this function [SEP] it's deprecated [SEP] remove it", "intent": "implement", "source": "multi_turn", "notes": "window_size=3", "turns": [{"text": "what's this function", "intent": "inspect"}, {"text": "it's deprecated", "intent": "chat"}, {"text": "remove it", "intent": "implement"}]}
+{"text": "please review the data flow now", "intent": "inspect", "source": "synthetic", "notes": "variation_280"}
+{"text": "帮我检查一下代码规范吧", "intent": "review", "source": "synthetic", "notes": "variation_40"}
+{"text": "超时了呢", "intent": "debug", "source": "synthetic", "notes": "variation_52"}
+{"text": "死锁了", "intent": "debug", "source": "synthetic", "notes": "variation_205"}
+{"text": "麻烦这个行不行啊", "intent": "ambiguous", "source": "synthetic", "notes": "variation_39"}
+{"text": "代码审查一下", "intent": "review", "source": "synthetic", "notes": "variation_218"}
+{"text": "help me review this commit now", "intent": "review", "source": "synthetic", "notes": "variation_152"}
+{"text": "这个报错什么意思 [SEP] 是类型错误", "intent": "debug", "source": "multi_turn", "notes": "window_size=2", "turns": [{"text": "这个报错什么意思", "intent": "debug"}, {"text": "是类型错误", "intent": "debug"}]}
+{"text": "please review this commit for me", "intent": "review", "source": "synthetic", "notes": "variation_226"}
+{"text": "有什么建议", "intent": "design", "source": "synthetic", "notes": "variation_13"}
+{"text": "请这样可以吗吧", "intent": "ambiguous", "source": "synthetic", "notes": "variation_164"}
+{"text": "帮我连接被拒绝啊", "intent": "debug", "source": "synthetic", "notes": "variation_190"}
+{"text": "这个报错怎么回事 [SEP] 看看日志 [SEP] 找到原因了", "intent": "debug", "source": "multi_turn", "notes": "window_size=3", "turns": [{"text": "这个报错怎么回事", "intent": "debug"}, {"text": "看看日志", "intent": "inspect"}, {"text": "找到原因了", "intent": "debug"}]}
+{"text": "can you check code quality", "intent": "review", "source": "synthetic", "notes": "variation_12"}
+{"text": "could you implement this feature", "intent": "implement", "source": "synthetic", "notes": "variation_144"}
+{"text": "审查一下代码吧", "intent": "review", "source": "synthetic", "notes": "variation_6"}
+{"text": "能不能辛苦了吧", "intent": "chat", "source": "synthetic", "notes": "variation_271"}
+{"text": "能不能代码审查", "intent": "review", "source": "synthetic", "notes": "variation_238"}
+{"text": "这个错误怎么回事", "intent": "debug", "source": "synthetic", "notes": "variation_213"}
+{"text": "请添加单元测试", "intent": "implement", "source": "synthetic", "notes": "variation_148"}
+{"text": "makes sense", "intent": "chat", "source": "synthetic", "notes": "variation_131"}
+{"text": "can you review this commit for me", "intent": "review", "source": "synthetic", "notes": "variation_80"}
+{"text": "please appreciate it for me", "intent": "chat", "source": "synthetic", "notes": "variation_229"}
+{"text": "麻烦重构这个模块吧", "intent": "implement", "source": "synthetic", "notes": "variation_184"}
+{"text": "请有什么可以改进的吧", "intent": "review", "source": "synthetic", "notes": "variation_41"}
+{"text": "复核变更呢", "intent": "review", "source": "synthetic", "notes": "variation_247"}
+{"text": "please investigate the error", "intent": "debug", "source": "synthetic", "notes": "variation_124"}
+{"text": "帮我这个有问题吧", "intent": "ambiguous", "source": "synthetic", "notes": "variation_178"}
+{"text": "can you design a solution", "intent": "design", "source": "synthetic", "notes": "variation_97"}
+{"text": "帮我这个实现有问题吗呢", "intent": "review", "source": "synthetic", "notes": "variation_144"}
+{"text": "麻烦给个优化方案吧", "intent": "design", "source": "synthetic", "notes": "variation_128"}
+{"text": "帮我检查一下代码啊", "intent": "inspect", "source": "synthetic", "notes": "variation_6"}
+{"text": "please review this PR", "intent": "review", "source": "synthetic", "notes": "variation_235"}
+{"text": "能不能复核变更呢", "intent": "review", "source": "synthetic", "notes": "variation_0"}
+{"text": "help me debug this crash now", "intent": "debug", "source": "synthetic", "notes": "variation_25"}
+{"text": "请运行时报错啊", "intent": "debug", "source": "synthetic", "notes": "variation_86"}
+{"text": "请有什么建议吧", "intent": "design", "source": "synthetic", "notes": "variation_94"}
+{"text": "can you debug this crash please", "intent": "debug", "source": "synthetic", "notes": "variation_64"}
+{"text": "could you what now now", "intent": "ambiguous", "source": "synthetic", "notes": "variation_142"}
+{"text": "审查一下这个PR [SEP] 有几个问题 [SEP] 改完再审核", "intent": "review", "source": "multi_turn", "notes": "window_size=3", "turns": [{"text": "审查一下这个PR", "intent": "review"}, {"text": "有几个问题", "intent": "review"}, {"text": "改完再审核", "intent": "review"}]}
+{"text": "review this PR [SEP] looks good [SEP] approve it", "intent": "review", "source": "multi_turn", "notes": "window_size=3", "turns": [{"text": "review this PR", "intent": "review"}, {"text": "looks good", "intent": "chat"}, {"text": "approve it", "intent": "review"}]}
+{"text": "what's the current state", "intent": "inspect", "source": "synthetic", "notes": "variation_127"}
+{"text": "看看测试覆盖率呢", "intent": "review", "source": "synthetic", "notes": "variation_95"}
+{"text": "can you explain the design pattern here for me", "intent": "inspect", "source": "synthetic", "notes": "variation_40"}
+{"text": "could you implement this feature", "intent": "implement", "source": "synthetic", "notes": "variation_41"}
+{"text": "能不能复核变更啊", "intent": "review", "source": "synthetic", "notes": "variation_75"}
+{"text": "help me great for me", "intent": "chat", "source": "synthetic", "notes": "variation_187"}
+{"text": "麻烦加油啊", "intent": "chat", "source": "synthetic", "notes": "variation_284"}
+{"text": "could you plan the migration", "intent": "design", "source": "synthetic", "notes": "variation_215"}
+{"text": "帮我死锁了啊", "intent": "debug", "source": "synthetic", "notes": "variation_51"}
+{"text": "can you refactor the code now", "intent": "implement", "source": "synthetic", "notes": "variation_56"}
+{"text": "can you analyze the architecture", "intent": "inspect", "source": "synthetic", "notes": "variation_36"}
+{"text": "能不能程序崩溃了啊", "intent": "debug", "source": "synthetic", "notes": "variation_120"}
+{"text": "help me what does this code do for me", "intent": "inspect", "source": "synthetic", "notes": "variation_225"}
+{"text": "could you what about this now", "intent": "ambiguous", "source": "synthetic", "notes": "variation_166"}
+{"text": "没问题啊", "intent": "chat", "source": "synthetic", "notes": "variation_177"}
+{"text": "could you review this commit please", "intent": "review", "source": "synthetic", "notes": "variation_225"}
+{"text": "实现这个需求吧", "intent": "implement", "source": "synthetic", "notes": "variation_264"}
+{"text": "为什么运行失败", "intent": "debug", "source": "synthetic", "notes": "variation_40"}
+{"text": "能不能了解一下依赖关系呢", "intent": "inspect", "source": "synthetic", "notes": "variation_110"}
+{"text": "could you debug this crash now", "intent": "debug", "source": "synthetic", "notes": "variation_126"}
+{"text": "能不能这个接口返回什么吧", "intent": "inspect", "source": "synthetic", "notes": "variation_93"}
+{"text": "could you how does this work", "intent": "inspect", "source": "synthetic", "notes": "variation_132"}
+{"text": "帮我实现这个需求啊", "intent": "implement", "source": "synthetic", "notes": "variation_234"}
+{"text": "帮我这个方案有什么风险吧", "intent": "review", "source": "synthetic", "notes": "variation_23"}
+{"text": "请如何改进", "intent": "design", "source": "synthetic", "notes": "variation_64"}
+{"text": "please review this commit", "intent": "review", "source": "synthetic", "notes": "variation_280"}
+{"text": "帮我改一下返回格式一下", "intent": "implement", "source": "synthetic", "notes": "variation_249"}
+{"text": "and?", "intent": "ambiguous", "source": "synthetic", "notes": "variation_16"}
+{"text": "帮我给个优化方案吧", "intent": "design", "source": "synthetic", "notes": "variation_81"}
+{"text": "能不能没问题一下", "intent": "chat", "source": "synthetic", "notes": "variation_26"}
+{"text": "帮我代码审查一下", "intent": "review", "source": "synthetic", "notes": "variation_281"}
+{"text": "帮我那个怎么办啊", "intent": "ambiguous", "source": "synthetic", "notes": "variation_124"}
+{"text": "please review this commit", "intent": "review", "source": "synthetic", "notes": "variation_44"}
+{"text": "帮我不对劲", "intent": "ambiguous", "source": "synthetic", "notes": "variation_3"}
+{"text": "could you design the API for me", "intent": "design", "source": "synthetic", "notes": "variation_242"}
+{"text": "麻烦谢谢", "intent": "chat", "source": "synthetic", "notes": "variation_108"}
+{"text": "这个报错什么意思 [SEP] 是类型错误", "intent": "debug", "source": "multi_turn", "notes": "window_size=2", "turns": [{"text": "这个报错什么意思", "intent": "debug"}, {"text": "是类型错误", "intent": "debug"}]}
+{"text": "help me audit the codebase", "intent": "review", "source": "synthetic", "notes": "variation_94"}
+{"text": "有什么可以改进的一下", "intent": "review", "source": "synthetic", "notes": "variation_37"}
+{"text": "help me walk me through the code", "intent": "inspect", "source": "synthetic", "notes": "variation_97"}
+{"text": "please sounds good please", "intent": "chat", "source": "synthetic", "notes": "variation_122"}
+{"text": "能不能随便聊聊一下", "intent": "chat", "source": "synthetic", "notes": "variation_130"}
+{"text": "能不能这个啊", "intent": "ambiguous", "source": "synthetic", "notes": "variation_13"}
+{"text": "看看这个文件一下", "intent": "inspect", "source": "synthetic", "notes": "variation_70"}
+{"text": "看看数据库表结构啊", "intent": "inspect", "source": "synthetic", "notes": "variation_133"}
+{"text": "帮我了解一下项目结构", "intent": "inspect", "source": "synthetic", "notes": "variation_285"}
+{"text": "can you review this commit", "intent": "review", "source": "synthetic", "notes": "variation_56"}
+{"text": "review this PR", "intent": "review", "source": "synthetic", "notes": "variation_145"}
+{"text": "帮我这个方案有什么风险", "intent": "review", "source": "synthetic", "notes": "variation_268"}
+{"text": "请还行吧", "intent": "chat", "source": "synthetic", "notes": "variation_102"}
+{"text": "帮我了解一下项目结构一下", "intent": "inspect", "source": "synthetic", "notes": "variation_170"}

@@ -2,6 +2,8 @@
 
 from __future__ import annotations
 
+import re
+
 from enum import Enum
 
 
@@ -44,8 +46,7 @@ _IMPLEMENT_HINTS = (
     "\u76f4\u63a5\u6539", "\u5f00\u59cb\u5e72", "\u5f00\u59cb\u505a",
     "\u52a8\u624b", "\u843d\u5730", "\u7ee7\u7eed\u6539",
     "\u7ee7\u7eed\u505a", "\u7ee7\u7eed\u5b9e\u73b0",
-    "\u7ee7\u7eed\u4fee\u590d", "\u53ef\u4ee5\u6539",
-    "\u53ef\u4ee5\u5f00\u59cb",
+    "\u7ee7\u7eed\u4fee\u590d",
 )
 _DESIGN_HINTS = (
     "design", "plan", "proposal", "approach", "architecture", "suggest",
@@ -60,7 +61,10 @@ _INSPECT_HINTS = (
     "\u4e3a\u4ec0\u4e48",
 )
 _REVIEW_HINTS = ("review", "\u5ba1\u67e5", "\u590d\u6838", "\u8bc4\u5ba1")
-_DEBUG_HINTS = ("debug", "bug", "error", "traceback", "\u62a5\u9519", "\u6392\u67e5", "\u95ee\u9898")
+_DEBUG_HINTS = (
+    "debug", "bug", "error", "traceback",
+    "\u62a5\u9519", "\u6392\u67e5", "\u62a5\u9519\u95ee\u9898", "\u5f02\u5e38\u95ee\u9898",
+)
 
 
 def infer_task_intent(text: str, interaction_mode: str | InteractionMode | None = None) -> TaskIntent:
@@ -83,4 +87,10 @@ def infer_task_intent(text: str, interaction_mode: str | InteractionMode | None 
 
 
 def _contains_any(text: str, hints: tuple[str, ...]) -> bool:
-    return any(hint in text for hint in hints)
+    return any(_contains_hint(text, hint) for hint in hints)
+
+
+def _contains_hint(text: str, hint: str) -> bool:
+    if hint.isascii() and hint.isalpha() and len(hint) <= 3:
+        return re.search(rf"(?<![A-Za-z]){re.escape(hint)}(?![A-Za-z])", text) is not None
+    return hint in text

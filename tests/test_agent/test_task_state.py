@@ -78,6 +78,47 @@ def test_design_question_with_change_word_stays_design_intent():
     assert resolution.intent == TaskIntent.DESIGN
 
 
+def test_intent_classifier_uses_recent_two_turn_window_for_short_input():
+    state = TaskState()
+    first = resolve_turn_intent("看看这个bug", "auto", state)
+    state.update_after_turn(first, "看看这个bug")
+
+    resolution = resolve_turn_intent("这个", "auto", state)
+
+    assert state.intent_window_text("这个") == "看看这个bug [SEP] 这个"
+    assert resolution.intent == TaskIntent.DEBUG
+    assert "local classifier matched debug" in resolution.reason
+
+
+def test_intent_window_keeps_only_two_recent_user_inputs():
+    state = TaskState()
+
+    for text in ["第一轮", "第二轮", "第三轮"]:
+        resolution = resolve_turn_intent(text, "auto", state)
+        state.update_after_turn(resolution, text)
+
+    assert state.recent_user_texts == ["第二轮", "第三轮"]
+    assert state.intent_window_text("第四轮") == "第三轮 [SEP] 第四轮"
+
+
+def test_intent_window_does_not_override_approval_without_pending_plan():
+    state = TaskState(recent_user_texts=["给个重构方案"])
+
+    resolution = resolve_turn_intent("可以", "auto", state)
+
+    assert resolution.intent == TaskIntent.AMBIGUOUS
+    assert resolution.reason == "approval phrase without a pending implementation plan"
+
+
+def test_intent_window_does_not_override_direct_short_command():
+    state = TaskState(recent_user_texts=["看看这个模块"])
+
+    resolution = resolve_turn_intent("改", "auto", state)
+
+    assert resolution.intent == TaskIntent.IMPLEMENT
+    assert resolution.reason == "direct short command asks to modify the current task"
+
+
 def test_non_design_turn_clears_pending_approval():
     state = TaskState()
     design = resolve_turn_intent("给个优化方案", "auto", state)

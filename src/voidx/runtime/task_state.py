@@ -10,7 +10,12 @@ from typing import Literal
 from pydantic import BaseModel, Field
 
 from voidx.runtime.intent import InteractionMode, TaskIntent, infer_task_intent
+from voidx.runtime.intent_classifier import IntentClassifierResult, classify_intent
 from voidx.skills.runtime import SkillRunState
+
+
+_INTENT_WINDOW_SIZE = 2
+_INTENT_WINDOW_SEPARATOR = " [SEP] "
 
 
 _APPROVAL_ONLY_HINTS = {
@@ -162,6 +167,7 @@ class TaskState(BaseModel):
     current_goal: str = ""
     pending_approval: PendingApproval | None = None
     last_plan_summary: str = ""
+    recent_user_texts: list[str] = Field(default_factory=list)
 
     def update_after_turn(
         self,
@@ -178,6 +184,7 @@ class TaskState(BaseModel):
             else user_text
         )
         self.current_goal = _summarize_scope(goal_text)
+        self._record_user_text(user_text)
         if resolution.intent == TaskIntent.AMBIGUOUS:
             return
         if resolution.intent == TaskIntent.DESIGN:
@@ -187,6 +194,22 @@ class TaskState(BaseModel):
             resolution.intent,
             self.current_goal,
         )
+
+    def intent_window_text(self, current_text: str) -> str:
+        current = _summarize_scope(current_text)
+        previous = [
+            item
+            for item in self.recent_user_texts[-(_INTENT_WINDOW_SIZE - 1):]
+            if item
+        ]
+        parts = [*previous, current] if current else previous
+        return _INTENT_WINDOW_SEPARATOR.join(parts[-_INTENT_WINDOW_SIZE:])
+
+    def _record_user_text(self, text: str) -> None:
+        item = _summarize_scope(text)
+        if not item:
+            return
+        self.recent_user_texts = [*self.recent_user_texts, item][-_INTENT_WINDOW_SIZE:]
 
 
 class IntentResolution(BaseModel):
@@ -239,8 +262,25 @@ def resolve_turn_intent(
             "direct short command asks to modify the current task",
         )
 
+    classification = classify_intent(
+        text,
+        mode,
+        classifier_text=state.intent_window_text(text),
+    )
+    if classification is not None:
+        if classification.action == "accept":
+            return _resolution(
+                classification.intent,
+                _intent_classifier_reason(classification),
+            )
+        if classification.action == "suggest" and classification.intent == TaskIntent.IMPLEMENT:
+            return _resolution(
+                TaskIntent.AMBIGUOUS,
+                f"local classifier suggested implement confidence={classification.confidence:.2f}; confirmation required",
+            )
+
     intent = infer_task_intent(text, mode)
-    return _resolution(intent, f"single-turn classifier matched {intent.value}")
+    return _resolution(intent, f"keyword classifier matched {intent.value}")
 
 
 def _next_pending_approval(
@@ -270,6 +310,12 @@ def _resolution(
         reason=reason,
         confirmed_approval=confirmed_approval,
     )
+
+
+def _intent_classifier_reason(result: IntentClassifierResult) -> str:
+    if result.source == "keyword_classifier":
+        return f"keyword classifier matched {result.intent.value}"
+    return f"local classifier matched {result.intent.value} confidence={result.confidence:.2f}"
 
 
 def _is_approval_only(text: str) -> bool:

@@ -352,6 +352,7 @@ async def test_runtime_state_round_trips_structured_goal_state():
             current_goal="优化 markdown 渲染截断",
             pending_approval=PendingApproval(scope="优化 markdown 渲染截断"),
             last_plan_summary="方案",
+            recent_user_texts=["看看现状", "给个方案"],
         )
         run = TaskRun(
             goal="优化 markdown 渲染截断",
@@ -389,6 +390,7 @@ async def test_runtime_state_round_trips_structured_goal_state():
         assert loaded.task_state.previous_intent == TaskIntent.INSPECT
         assert loaded.task_state.pending_approval is not None
         assert loaded.task_state.pending_approval.scope == "优化 markdown 渲染截断"
+        assert loaded.task_state.recent_user_texts == ["看看现状", "给个方案"]
         assert loaded.task_run.goal == "优化 markdown 渲染截断"
         assert loaded.task_run.phase == TaskPhase.DESIGN
         assert loaded.task_run.turn_count == 2
