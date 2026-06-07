@@ -219,6 +219,61 @@ def test_agent_tool_description_exposes_parallel_when_enabled(tmp_path):
     assert "run concurrently" in agent_def.description
 
 
+@pytest.mark.asyncio
+async def test_clear_applies_saved_parallel_subagents_config(tmp_path):
+    session = await create_session(
+        workspace=str(tmp_path),
+        provider="mimo",
+        model="mimo-v2.5",
+    )
+    settings = Settings(str(tmp_path))
+    settings.set_parallel_subagents(ParallelSubagentsConfig(enabled=True, max_concurrent=3))
+    graph = VoidXGraph(
+        Config(workspace=str(tmp_path)),
+        api_key=None,
+        session=session,
+        settings=settings,
+    )
+
+    assert graph.config.parallel_subagents == ParallelSubagentsConfig()
+    assert "multiple `agent` tool calls" not in graph.tools.get_def("agent").description
+
+    await graph.clear_current_session()
+
+    assert graph.config.parallel_subagents == ParallelSubagentsConfig(enabled=True, max_concurrent=3)
+    agent_def = graph.tools.get_def("agent")
+    assert agent_def is not None
+    assert "multiple `agent` tool calls" in agent_def.description
+    assert "run concurrently" in agent_def.description
+
+
+@pytest.mark.asyncio
+async def test_resume_applies_saved_parallel_subagents_config(tmp_path):
+    session = await create_session(
+        workspace=str(tmp_path),
+        provider="mimo",
+        model="mimo-v2.5",
+    )
+    settings = Settings(str(tmp_path))
+    settings.set_parallel_subagents(ParallelSubagentsConfig(enabled=True, max_concurrent=3))
+    graph = VoidXGraph(
+        Config(workspace=str(tmp_path)),
+        api_key=None,
+        settings=settings,
+    )
+
+    assert graph.config.parallel_subagents == ParallelSubagentsConfig()
+    assert "multiple `agent` tool calls" not in graph.tools.get_def("agent").description
+
+    await graph.resume_session(session)
+
+    assert graph.config.parallel_subagents == ParallelSubagentsConfig(enabled=True, max_concurrent=3)
+    agent_def = graph.tools.get_def("agent")
+    assert agent_def is not None
+    assert "multiple `agent` tool calls" in agent_def.description
+    assert "run concurrently" in agent_def.description
+
+
 def test_graph_session_date_uses_session_creation_date(tmp_path):
     session = SessionInfo(
         id="s1",

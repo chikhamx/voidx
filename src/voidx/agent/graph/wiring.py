@@ -38,6 +38,21 @@ def build_tool_registry(
     intent_tool = OnIntentTool(resolver=on_intent_resolver)
     registry.register("on_intent", intent_tool, intent_tool.description, intent_tool.parameters_schema())
 
+    register_agent_tool(
+        registry,
+        config=config,
+        subagent_runner=subagent_runner,
+    )
+
+    return tracker, registry
+
+
+def register_agent_tool(
+    registry: ToolRegistry,
+    *,
+    config: Config,
+    subagent_runner: Callable[..., Any],
+) -> None:
     agent_tool = AgentTool(
         runner=subagent_runner,
         agent_resolver=get_agent,
@@ -46,8 +61,6 @@ def build_tool_registry(
         parallel_subagents_enabled=config.parallel_subagents.enabled,
     )
     registry.register("agent", agent_tool, agent_tool.description, agent_tool.parameters_schema())
-
-    return tracker, registry
 
 
 def build_permission_service(config: Config, *, notifier: Callable[[str], object]) -> PermissionService:

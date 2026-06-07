@@ -55,6 +55,7 @@ from voidx.agent.graph.wiring import (
     build_external_managers,
     build_permission_service,
     build_tool_registry,
+    register_agent_tool,
 )
 from voidx.agent.state import AgentState
 from voidx.agent.graph.streaming import extract_text, stream_llm as _stream_llm
@@ -285,9 +286,20 @@ class VoidXGraph(
         })
         self._session_msg_cache = []
         self._context_cache = ContextCompilerCache()
+        self._reload_parallel_subagents_from_settings()
         self._tracker.clear_todos()
         self._permission.clear_session_permissions()
         self._usage_stats.reset()
+
+    def _reload_parallel_subagents_from_settings(self) -> None:
+        if self._settings is None:
+            return
+        self.config.parallel_subagents = self._settings.get_parallel_subagents()
+        register_agent_tool(
+            self.tools,
+            config=self.config,
+            subagent_runner=self._subagent_runner,
+        )
 
     async def resume_session(self, session: SessionInfo) -> None:
         self._session = session
@@ -297,6 +309,7 @@ class VoidXGraph(
         self._session_msg_cache = None
         self._context_cache = ContextCompilerCache()
         await self._restore_runtime_state()
+        self._reload_parallel_subagents_from_settings()
 
     async def set_session_title(self, title: str) -> None:
         if self._session is None:

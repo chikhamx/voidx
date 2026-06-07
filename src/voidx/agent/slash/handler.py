@@ -212,6 +212,7 @@ class SlashHandler(
             "/skills": lambda: self._skills(args),
             "/paste": self._paste_clipboard_image,
             "/tone": lambda: self._tone(args),
+            "/parallel": lambda: self._parallel(args),
             "/debug": lambda: self._debug(args),
             "/compact": compact,
             "/diff": self._show_diff,
@@ -457,6 +458,55 @@ class SlashHandler(
 
         state = "on" if self._host_debug_enabled() else "off"
         ui.print(f"[dim]debug {state}[/dim]")
+
+    def _parallel(self, arg: str) -> None:
+        settings = self._host_settings()
+        if settings is None:
+            ui.error("No settings available.")
+            return
+
+        value = arg.strip().lower()
+        active = self._g.config.parallel_subagents
+        saved = settings.get_parallel_subagents()
+
+        if value in ("on", "true", "1", "yes"):
+            enabled = True
+        elif value in ("off", "false", "0", "no"):
+            enabled = False
+        elif value == "status":
+            self._print_parallel_status(active, saved)
+            return
+        elif value:
+            ui.error("Usage: /parallel [on|off|status]")
+            return
+        else:
+            enabled = not saved.enabled
+
+        saved = saved.model_copy(update={"enabled": enabled})
+        settings.set_parallel_subagents(saved)
+        state = "on" if saved.enabled else "off"
+        ui.print(
+            f"[dim]Saved parallel subagents {state} "
+            f"(max_concurrent={saved.max_concurrent}). "
+            "Run /clear or restart to apply.[/dim]"
+        )
+
+    def _print_parallel_status(self, active, saved) -> None:
+        saved_state = "on" if saved.enabled else "off"
+        active_state = "on" if active.enabled else "off"
+        if active.enabled == saved.enabled and active.max_concurrent == saved.max_concurrent:
+            ui.print(
+                f"[dim]parallel subagents {active_state} "
+                f"(max_concurrent={active.max_concurrent})[/dim]"
+            )
+            return
+
+        ui.print(
+            f"[dim]parallel subagents current {active_state} "
+            f"(max_concurrent={active.max_concurrent}); saved {saved_state} "
+            f"(max_concurrent={saved.max_concurrent}). "
+            "Run /clear or restart to apply.[/dim]"
+        )
 
     def _paste_clipboard_image(self) -> None:
         app = self._host_app()
