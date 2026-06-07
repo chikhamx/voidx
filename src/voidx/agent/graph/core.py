@@ -60,6 +60,7 @@ from voidx.agent.graph.wiring import (
 from voidx.agent.state import AgentState
 from voidx.agent.graph.streaming import extract_text, stream_llm as _stream_llm
 from voidx.agent.graph.subagent import run_subagent as _run_subagent
+from voidx.agent.graph.title_mixin import GraphTitleMixin
 from voidx.agent.graph.tool_execution import GraphToolExecutionMixin
 from voidx.agent.intent_refinement import refine_intent
 from voidx.agent.runtime_context import ContextCompilerCache, InteractionMode, RuntimeContextBuilder
@@ -117,6 +118,7 @@ def _merge_skill_runs(*groups: list[SkillRunState | dict]) -> list[SkillRunState
 
 
 class VoidXGraph(
+    GraphTitleMixin,
     GraphRunLoopMixin,
     GraphCompactionMixin,
     GraphToolExecutionMixin,
@@ -164,6 +166,8 @@ class VoidXGraph(
         self._needs_failure_check: dict[str, dict] = {}
         self._pending_guidance: list[str] = []
         self._clear_session_tasks: set[asyncio.Task[None]] = set()
+        self._title_generation: int = 0
+        self._title_task: asyncio.Task[None] | None = None
         self._usage_stats, self._compaction = build_compaction_service(config)
 
         self._build()
@@ -284,6 +288,7 @@ class VoidXGraph(
         await self._run_once(text, display_text=display_text)
 
     async def clear_current_session(self) -> None:
+        self._invalidate_session_title_generation()
         old_session_id = self._session.id if self._session is not None else None
         self._session = None
         self._session_date = session_date(None)
@@ -328,6 +333,7 @@ class VoidXGraph(
         )
 
     async def resume_session(self, session: SessionInfo) -> None:
+        self._invalidate_session_title_generation()
         self._session = session
         self._workspace = session.workspace
         self.config.workspace = session.workspace
@@ -343,6 +349,7 @@ class VoidXGraph(
 
         from voidx.memory.session import update_title
 
+        self._invalidate_session_title_generation()
         await update_title(self._session.id, title)
         self._session = self._session.model_copy(update={"title": title})
 

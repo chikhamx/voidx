@@ -226,6 +226,9 @@ class GraphRunLoopMixin(GraphTurnMixin, GraphSessionMixin, GraphTranscriptMixin)
             if exit_message is None:
                 exit_message = "\n[dim]bye.[/dim]"
         finally:
+            empty_session_cleanup = getattr(self, "_delete_empty_current_session", None)
+            if callable(empty_session_cleanup):
+                await empty_session_cleanup()
             if gateway_server is not None:
                 await gateway_server.stop()
             if hasattr(self, '_mcp_manager'):

@@ -1,5 +1,6 @@
-import sys
 import asyncio
+import contextlib
+import sys
 from pathlib import Path
 from types import MethodType, SimpleNamespace
 
@@ -11,13 +12,14 @@ sys.path.insert(0, str(Path(__file__).parent.parent.parent / "src"))
 from voidx.agent.slash import SlashHandler
 from voidx.agent.graph import VoidXGraph
 from voidx.agent.graph.run_loop import GraphRunLoopMixin
+from voidx.agent.graph.title_mixin import _sanitize_generated_title
 from voidx.agent.runtime_context import InteractionMode, TaskIntent
 from voidx.agent.task_state import PendingApproval, TaskPhase, TaskRun, TaskRunStatus, TaskState
 from voidx.config import Config
 from voidx.llm.instruction import SkillRuntimeContext
 from voidx.llm.usage import UsageStats
 from voidx.memory.runtime_state import RuntimeStateSnapshot, save_runtime_state
-from voidx.memory.session import MessageRow, create_session, get_session, load_messages, save_message
+from voidx.memory.session import MessageRow, create_session, get_session, load_messages, save_message, update_title
 from voidx.skills.runtime import SkillActivationSource, SkillRunState, SkillRunStatus
 from voidx.tools.task_tracker import TaskTracker
 from voidx.ui.output.dock import BottomInputDock, set_dock
@@ -44,6 +46,38 @@ class FakeTui:
         return command == "/model reasoning"
 
 
+class ExitTui:
+    def __init__(self, status, commands):
+        self.status = status
+        self.commands = commands
+        self.command_handler = None
+
+    async def run(self, on_submit):
+        return
+
+    def set_external_command_handler(self, handler):
+        self.command_handler = handler
+
+
+class NoopMcpManager:
+    def statuses(self):
+        return []
+
+    async def start_all(self):
+        return None
+
+    async def stop_all(self):
+        return None
+
+
+class NoopLspManager:
+    def doctor(self):
+        return []
+
+    async def stop_all(self):
+        return None
+
+
 def _graph(session=None, workspace: str = "/tmp/workspace") -> GraphRunLoopMixin:
     graph = GraphRunLoopMixin()
     graph._session = session
@@ -64,6 +98,11 @@ def _graph(session=None, workspace: str = "/tmp/workspace") -> GraphRunLoopMixin
     graph._tracker = TaskTracker()
     graph._session_msg_cache = None
     return graph
+
+
+def _disable_external_managers(graph) -> None:
+    graph._mcp_manager = NoopMcpManager()
+    graph._lsp_manager = NoopLspManager()
 
 
 @pytest.mark.asyncio
@@ -377,6 +416,307 @@ async def test_run_once_cancel_deletes_pending_user_message(tmp_path):
         test_dock.deactivate()
         test_dock.reset()
         set_dock(None)
+
+
+@pytest.mark.asyncio
+async def test_smart_title_generation_updates_matching_session(tmp_path):
+    graph = VoidXGraph(Config(workspace=str(tmp_path)), api_key=None)
+
+    class FakeTitleModel:
+        async def ainvoke(self, messages):
+            assert messages[0].content.startswith("You are voidx title agent")
+            assert "看看这个项目" in messages[1].content
+            return AIMessage(content='"项目结构分析"')
+
+    class FakeGraph:
+        async def ainvoke(self, initial, _config):
+            return {"messages": list(initial["messages"]) + [AIMessage(content="ok")]}
+
+    graph.model = FakeTitleModel()
+    graph.graph = FakeGraph()
+    test_dock = BottomInputDock()
+    set_dock(test_dock)
+    test_dock.begin_capture()
+    try:
+        await graph._run_once("看看这个项目")
+        task = graph._title_task
+        if task is not None:
+            await task
+
+        assert graph._session is not None
+        loaded = await get_session(graph._session.id)
+        assert loaded is not None
+        assert loaded.title == "项目结构分析"
+        assert graph._session.title == "项目结构分析"
+    finally:
+        test_dock.deactivate()
+        test_dock.reset()
+        set_dock(None)
+
+
+@pytest.mark.asyncio
+async def test_smart_title_generation_failure_keeps_temporary_title(tmp_path):
+    graph = VoidXGraph(Config(workspace=str(tmp_path)), api_key=None)
+
+    class FailingTitleModel:
+        async def ainvoke(self, _messages):
+            raise RuntimeError("title failed")
+
+    class FakeGraph:
+        async def ainvoke(self, initial, _config):
+            return {"messages": list(initial["messages"]) + [AIMessage(content="ok")]}
+
+    graph.model = FailingTitleModel()
+    graph.graph = FakeGraph()
+    test_dock = BottomInputDock()
+    set_dock(test_dock)
+    test_dock.begin_capture()
+    try:
+        await graph._run_once("分析一下启动流程")
+        task = graph._title_task
+        if task is not None:
+            await task
+
+        assert graph._session is not None
+        loaded = await get_session(graph._session.id)
+        assert loaded is not None
+        assert loaded.title == "分析一下启动流程"
+        assert graph._session.title == "分析一下启动流程"
+    finally:
+        test_dock.deactivate()
+        test_dock.reset()
+        set_dock(None)
+
+
+@pytest.mark.asyncio
+async def test_smart_title_does_not_override_manual_title(tmp_path):
+    session = await create_session(workspace=str(tmp_path), provider="mimo", model="mimo-v2.5")
+    await update_title(session.id, "temporary")
+    session = session.model_copy(update={"title": "temporary"})
+    graph = VoidXGraph(Config(workspace=str(tmp_path)), api_key=None, session=session)
+    started = asyncio.Event()
+    release = asyncio.Event()
+
+    class SlowTitleModel:
+        async def ainvoke(self, _messages):
+            started.set()
+            await release.wait()
+            return AIMessage(content="Generated")
+
+    graph.model = SlowTitleModel()
+    graph._schedule_session_title_generation(session.id, "first request", "temporary")
+    task = graph._title_task
+    assert task is not None
+    await asyncio.wait_for(started.wait(), timeout=1)
+
+    await graph.set_session_title("Manual title")
+    release.set()
+    with contextlib.suppress(asyncio.CancelledError):
+        await task
+
+    loaded = await get_session(session.id)
+    assert loaded is not None
+    assert loaded.title == "Manual title"
+
+
+@pytest.mark.asyncio
+async def test_smart_title_does_not_update_after_clear(tmp_path):
+    session = await create_session(workspace=str(tmp_path), provider="mimo", model="mimo-v2.5")
+    await update_title(session.id, "temporary")
+    session = session.model_copy(update={"title": "temporary"})
+    graph = VoidXGraph(Config(workspace=str(tmp_path)), api_key=None, session=session)
+    started = asyncio.Event()
+    release = asyncio.Event()
+
+    class SlowTitleModel:
+        async def ainvoke(self, _messages):
+            started.set()
+            await release.wait()
+            return AIMessage(content="Generated")
+
+    graph.model = SlowTitleModel()
+    graph._schedule_session_title_generation(session.id, "first request", "temporary")
+    task = graph._title_task
+    assert task is not None
+    await asyncio.wait_for(started.wait(), timeout=1)
+
+    await graph.clear_current_session()
+    release.set()
+    with contextlib.suppress(asyncio.CancelledError):
+        await task
+    if graph._clear_session_tasks:
+        await asyncio.gather(*graph._clear_session_tasks)
+
+    loaded = await get_session(session.id)
+    assert graph._session is None
+    assert loaded is not None
+    assert loaded.title == "New session"
+
+
+@pytest.mark.asyncio
+async def test_smart_title_does_not_update_resumed_session(tmp_path):
+    session = await create_session(workspace=str(tmp_path), provider="mimo", model="mimo-v2.5")
+    await update_title(session.id, "temporary")
+    session = session.model_copy(update={"title": "temporary"})
+    resumed = await create_session(workspace=str(tmp_path), provider="mimo", model="mimo-v2.5")
+    await update_title(resumed.id, "Resumed title")
+    resumed = resumed.model_copy(update={"title": "Resumed title"})
+    graph = VoidXGraph(Config(workspace=str(tmp_path)), api_key=None, session=session)
+    started = asyncio.Event()
+    release = asyncio.Event()
+
+    class SlowTitleModel:
+        async def ainvoke(self, _messages):
+            started.set()
+            await release.wait()
+            return AIMessage(content="Generated")
+
+    graph.model = SlowTitleModel()
+    graph._schedule_session_title_generation(session.id, "first request", "temporary")
+    task = graph._title_task
+    assert task is not None
+    await asyncio.wait_for(started.wait(), timeout=1)
+
+    await graph.resume_session(resumed)
+    release.set()
+    with contextlib.suppress(asyncio.CancelledError):
+        await task
+
+    loaded_old = await get_session(session.id)
+    loaded_resumed = await get_session(resumed.id)
+    assert graph._session is not None
+    assert graph._session.id == resumed.id
+    assert loaded_old is not None
+    assert loaded_old.title == "temporary"
+    assert loaded_resumed is not None
+    assert loaded_resumed.title == "Resumed title"
+
+
+@pytest.mark.asyncio
+async def test_smart_title_requires_database_title_to_remain_temporary(tmp_path):
+    session = await create_session(workspace=str(tmp_path), provider="mimo", model="mimo-v2.5")
+    await update_title(session.id, "temporary")
+    session = session.model_copy(update={"title": "temporary"})
+    graph = VoidXGraph(Config(workspace=str(tmp_path)), api_key=None, session=session)
+    started = asyncio.Event()
+    release = asyncio.Event()
+
+    class SlowTitleModel:
+        async def ainvoke(self, _messages):
+            started.set()
+            await release.wait()
+            return AIMessage(content="Generated")
+
+    graph.model = SlowTitleModel()
+    graph._schedule_session_title_generation(session.id, "first request", "temporary")
+    task = graph._title_task
+    assert task is not None
+    await asyncio.wait_for(started.wait(), timeout=1)
+
+    await update_title(session.id, "Manual title")
+    release.set()
+    await task
+
+    loaded = await get_session(session.id)
+    assert loaded is not None
+    assert loaded.title == "Manual title"
+
+
+@pytest.mark.asyncio
+async def test_title_auto_uses_first_user_message(tmp_path):
+    session = await create_session(workspace=str(tmp_path), provider="mimo", model="mimo-v2.5")
+    await save_message(MessageRow(session_id=session.id, role="user", content="first user request"))
+    await save_message(MessageRow(session_id=session.id, role="assistant", content="response"))
+    await save_message(MessageRow(session_id=session.id, role="user", content="second user request"))
+    graph = VoidXGraph(Config(workspace=str(tmp_path)), api_key=None, session=session)
+    prompts: list[str] = []
+
+    class FakeTitleModel:
+        async def ainvoke(self, messages):
+            prompts.append(messages[1].content)
+            return AIMessage(content="First request title")
+
+    graph.model = FakeTitleModel()
+
+    assert await graph.regenerate_session_title() is True
+    task = graph._title_task
+    assert task is not None
+    await task
+
+    loaded = await get_session(session.id)
+    assert loaded is not None
+    assert loaded.title == "First request title"
+    assert prompts == ["First user message:\n\nfirst user request"]
+
+
+def test_sanitize_generated_title_rejects_markdown():
+    assert _sanitize_generated_title("**Bold title**") == ""
+    assert _sanitize_generated_title("# Heading title") == ""
+    assert _sanitize_generated_title("`code title`") == ""
+    assert _sanitize_generated_title("[Title](https://example.com)") == ""
+    assert _sanitize_generated_title("Fix login-flow bug") == "Fix login-flow bug"
+
+
+@pytest.mark.asyncio
+async def test_delete_empty_current_session_only_deletes_sessions_without_messages(tmp_path):
+    empty = await create_session(workspace=str(tmp_path), provider="mimo", model="mimo-v2.5")
+    graph = VoidXGraph(Config(workspace=str(tmp_path)), api_key=None, session=empty)
+
+    await graph._delete_empty_current_session()
+
+    assert await get_session(empty.id) is None
+    assert graph._session is None
+
+    non_empty = await create_session(workspace=str(tmp_path), provider="mimo", model="mimo-v2.5")
+    await save_message(MessageRow(session_id=non_empty.id, role="user", content="hello"))
+    graph = VoidXGraph(Config(workspace=str(tmp_path)), api_key=None, session=non_empty)
+
+    await graph._delete_empty_current_session()
+
+    assert await get_session(non_empty.id) is not None
+    assert graph._session is not None
+
+
+@pytest.mark.asyncio
+async def test_exit_cleanup_deletes_empty_current_session(tmp_path, monkeypatch):
+    monkeypatch.setattr("voidx.agent.graph.run_loop.PureTui", ExitTui)
+    session = await create_session(workspace=str(tmp_path), provider="mimo", model="mimo-v2.5")
+    graph = VoidXGraph(Config(workspace=str(tmp_path)), api_key=None, session=session)
+    _disable_external_managers(graph)
+    test_dock = BottomInputDock()
+    set_dock(test_dock)
+    try:
+        await graph.run()
+    finally:
+        test_dock.reset()
+        set_dock(None)
+
+    assert await get_session(session.id) is None
+    assert graph._session is None
+
+
+@pytest.mark.asyncio
+async def test_exit_cleanup_keeps_session_with_messages_even_new_session_title(tmp_path, monkeypatch):
+    monkeypatch.setattr("voidx.agent.graph.run_loop.PureTui", ExitTui)
+    session = await create_session(workspace=str(tmp_path), provider="mimo", model="mimo-v2.5")
+    await save_message(MessageRow(session_id=session.id, role="user", content="hello"))
+    await update_title(session.id, "New session")
+    graph = VoidXGraph(Config(workspace=str(tmp_path)), api_key=None, session=session)
+    _disable_external_managers(graph)
+    test_dock = BottomInputDock()
+    set_dock(test_dock)
+    try:
+        await graph.run()
+    finally:
+        test_dock.reset()
+        set_dock(None)
+
+    loaded = await get_session(session.id)
+    assert loaded is not None
+    assert loaded.title == "New session"
+    assert loaded.message_count == 1
+    assert graph._session is not None
+    assert graph._session.id == session.id
 
 
 @pytest.mark.asyncio

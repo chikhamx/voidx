@@ -158,3 +158,44 @@ async def test_guide_command_without_text_prints_usage(monkeypatch):
 
 def test_guide_command_is_in_palette():
     assert ("/guide", "Add guidance to the running agent turn") in COMMANDS
+
+
+@pytest.mark.asyncio
+async def test_title_auto_dispatches_regenerator(monkeypatch):
+    output = _capture_output(monkeypatch)
+    calls: list[bool] = []
+
+    async def regenerate_session_title() -> bool:
+        calls.append(True)
+        return True
+
+    graph = SimpleNamespace(
+        _session=SimpleNamespace(id="session_1"),
+        regenerate_session_title=regenerate_session_title,
+    )
+
+    assert await SlashHandler(graph).dispatch("/title auto") is True
+
+    assert calls == [True]
+    assert output == ["[dim]Regenerating title...[/dim]"]
+
+
+@pytest.mark.asyncio
+async def test_title_auto_without_user_message_prints_notice(monkeypatch):
+    output = _capture_output(monkeypatch)
+
+    async def regenerate_session_title() -> bool:
+        return False
+
+    graph = SimpleNamespace(
+        _session=SimpleNamespace(id="session_1"),
+        regenerate_session_title=regenerate_session_title,
+    )
+
+    assert await SlashHandler(graph).dispatch("/title auto") is True
+
+    assert output == ["[dim]No user message available for title generation.[/dim]"]
+
+
+def test_title_auto_command_is_in_palette():
+    assert ("/title auto", "Regenerate session title") in COMMANDS

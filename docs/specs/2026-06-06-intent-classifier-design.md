@@ -1,139 +1,311 @@
-# Intent Classifier — 技术设计文档
+# Intent Classifier Design
 
-> 在关键字匹配和 LLM on_intent 之间增加 FastText 轻量分类层，拦截高置信度意图识别请求，减少 LLM token 消耗。
+> **Status: Draft**
 
-## 1. 背景与动机
+Date: 2026-06-06
 
-### 1.1 现有意图识别管线
+## Problem
 
-```
-用户输入
-  │
-  ▼
-Layer 0: 关键字匹配 (infer_task_intent)
-  │  _IMPLEMENT_HINTS / _DESIGN_HINTS / _INSPECT_HINTS / ...
-  │  纯字符串 contains_any，中英文关键词
-  │  命中 → 直接返回 intent
-  │  未命中 → 返回 CHAT
-  │
-  ▼
-Layer 2: LLM 调用 on_intent 工具
-  │  LLM 分析上下文，输出 intent + confidence + reason
-  │  runtime 侧 refine_intent() 做置信度校验和权限控制
-  │  每次调用消耗 500-2000ms + token
-  │
-  ▼
-最终 intent → 决定可用工具集 + 激活 skill
-```
+voidx currently starts each turn with a lightweight intent guess from
+`resolve_turn_intent()`. That guess is rule-based:
 
-### 1.2 问题
+1. interaction mode hard rules, such as plan mode forcing design;
+2. approval-only phrases, such as "可以" confirming pending implementation;
+3. short direct implementation commands, such as "fix" or "改吧";
+4. keyword matching through `infer_task_intent()`;
+5. fallback to `chat`.
 
-| 问题 | 影响 |
-|------|------|
-| Layer 0 太粗糙 | 只看关键词是否出现，"帮我看看这个bug" 会命中 inspect 而非 debug |
-| Layer 0 无法区分模糊意图 | "分析一下" 可能是 inspect 也可能是 design |
-| Layer 2 太重 | 每次未命中关键词都要走 LLM，即使意图很明显 |
-| 中英文混合 | 关键词列表需要手动维护两套，覆盖不全 |
+The LLM can later refine the intent by calling `on_intent`, but that call costs
+latency and tokens. We want a cheap local classifier to improve the initial
+intent guess and reduce unnecessary `on_intent` calls without weakening
+permission or implementation safety.
 
-### 1.3 目标
+## Non-Negotiable Gate
 
-在 Layer 0 和 Layer 2 之间插入一个轻量分类层：
+Do not wire a classifier into runtime until a trained model and offline
+evaluation report exist.
 
-- **拦截 70%+ 的 LLM on_intent 调用**（高置信度场景直接返回）
-- **推理延迟 < 1ms**（对比 LLM 的 500-2000ms）
-- **模型 < 1.5MB**，打包进 pip wheel
-- **中英文统一处理**，无需维护两套关键词
-- **LLM 兜底不变**，分类器错了 LLM 仍可修正
+Implementation order:
 
-## 2. 三层意图识别架构
+1. Build a labeled dataset and training script.
+2. Train a local classifier artifact.
+3. Run offline evaluation and record the metrics.
+4. Only if the evaluation passes the acceptance thresholds, add runtime
+   integration.
 
-```
-用户输入
-  │
-  ▼
-Layer 0: 关键字匹配 (现有，不变)
-  │  硬规则：approval / direct command / 关键词
-  │  命中 → 直接返回（最快，0ms）
-  │  未命中 ↓
-  │
-  ▼
-Layer 1: FastText 分类器 (新增)
-  │  本地模型推理，< 0.5ms
-  │  置信度 ≥ 0.85 → 直接返回 intent
-  │  置信度 < 0.85 → 回退到 LLM
-  │
-  ▼
-Layer 2: LLM on_intent (现有，不变)
-  │  最精确但最贵，兜底
-  │  分类器低置信度时仍走此路径
-  │
-  ▼
-最终 intent → 决定可用工具集 + 激活 skill
+If the trained model is missing, invalid, or fails to load, voidx must silently
+fall back to the current rule-based behavior.
+
+## Current Runtime Path
+
+The classifier does not replace the whole intent pipeline. It fits inside
+`resolve_turn_intent()` after hard safety rules and before the old keyword
+fallback:
+
+```text
+User text
+  |
+  v
+resolve_turn_intent()
+  |
+  +-- plan mode? -> DESIGN
+  +-- approval-only phrase? -> IMPLEMENT only if pending approval exists
+  +-- direct implementation command? -> IMPLEMENT
+  |
+  +-- local classifier available?
+  |     +-- high-confidence safe intent -> accept
+  |     +-- implement prediction -> suggest only, do not grant write intent
+  |     +-- low confidence -> fallback
+  |
+  +-- existing infer_task_intent()
 ```
 
-## 3. 分类器设计
+The LLM `on_intent` tool remains the runtime-owned refinement path. The local
+classifier only improves the initial task state shown to the model.
 
-### 3.1 分类类别
+## Safety Rules
 
-7 个 intent，与 `TaskIntent` 枚举一一对应：
+### Implement Intent Does Not Auto-Escalate
 
-| Intent | 语义 | 典型输入 |
-|--------|------|---------|
-| `implement` | 修改/实现代码 | "修复这个bug"、"改成异步的" |
-| `inspect` | 查看/理解代码 | "看看这个函数"、"分析性能" |
-| `design` | 设计/讨论方案 | "如何设计缓存层"、"架构建议" |
-| `review` | 审查代码 | "审查这个PR"、"代码规范检查" |
-| `debug` | 排查问题 | "为什么报TypeError"、"接口返回500" |
-| `chat` | 闲聊/解释概念 | "你好"、"什么是依赖注入" |
-| `ambiguous` | 意图不明确 | "帮我看看这个"、"这个怎么办" |
+The local classifier must not grant implementation/write authority by itself.
 
-### 3.2 模型选型
+- Existing hard rules may still return `IMPLEMENT`:
+  - direct implementation commands;
+  - approval-only phrases when there is a pending implementation approval.
+- A classifier prediction of `implement` is recorded as a suggestion unless the
+  request also matches the hard direct-implementation rules.
+- Suggested implement intent should produce an initial `DESIGN` or `AMBIGUOUS`
+  state with a reason that tells the LLM to call `on_intent` or `clarify`
+  before editing.
 
-| 方案 | 模型大小 | 推理延迟 | 准确率 | 依赖 |
-|------|---------|---------|--------|------|
-| **FastText（选用）** | ~1 MB | < 0.5ms | 88-92% | numpy（已有） |
-| ONNX 小模型 | 20-50 MB | 5-10ms | 90-95% | onnxruntime |
-| sentence-transformers | ~90 MB | 10-20ms | 92-96% | torch |
-| 规则 + TF-IDF | ~1 MB | < 1ms | 80-85% | sklearn |
+This preserves the existing `refine_intent()` behavior where low-confidence or
+unsafe implementation requests require confirmation.
 
-**选择 FastText 的理由**：
-1. 模型极小（1 MB），可打包进 wheel
-2. 推理极快（< 0.5ms），用户无感知
-3. subword 机制天然处理中英文混合，无需分词
-4. 训练数据格式极简，训练速度快（秒级）
-5. voidx 已依赖 numpy（langchain 生态），无新增依赖
+### Plan Mode Wins
 
-### 3.3 置信度阈值设计
+Plan mode always returns `DESIGN`, regardless of classifier output.
+
+### Approval Phrases Stay State-Aware
+
+Approval-only phrases still depend on `TaskState.pending_approval`. A classifier
+must not treat "可以" / "ok" as implementation when there is no pending plan to
+approve.
+
+## Model Choice
+
+The original proposal used FastText. That is still possible, but it introduces a
+native dependency and wheel packaging risk. voidx should prefer a pure-Python
+classifier unless FastText packaging is explicitly accepted.
+
+Recommended V1:
+
+- character n-gram logistic regression or multinomial naive Bayes;
+- model artifact as JSON or compact binary under `src/voidx/data/`;
+- no required runtime dependency beyond the standard library;
+- `importlib.resources` for loading.
+
+FastText can be revisited later if the pure-Python model fails evaluation.
+
+## Dataset
+
+Add versioned training data:
+
+```text
+data/intent/train.jsonl
+data/intent/eval.jsonl
+```
+
+Each JSONL row:
+
+```json
+{"text": "看看这个设计文档", "intent": "inspect", "source": "handwritten", "notes": ""}
+```
+
+Labels match `TaskIntent`:
+
+- `chat`
+- `inspect`
+- `design`
+- `review`
+- `debug`
+- `implement`
+- `ambiguous`
+
+Dataset requirements:
+
+- include Chinese, English, and mixed-language examples;
+- include approval-only phrases with and without pending-approval context;
+- include near misses such as "看看这个 bug" vs "修复这个 bug";
+- intentionally over-sample `inspect`, `design`, and `ambiguous` phrases that
+  are commonly mistaken as implementation requests;
+- keep train/eval split stable so metrics are comparable across changes.
+
+## Training Script
+
+Add:
+
+```text
+scripts/train_intent_classifier.py
+```
+
+Responsibilities:
+
+1. Load `train.jsonl` and `eval.jsonl`.
+2. Train the classifier.
+3. Write the model artifact, for example:
+
+   ```text
+   src/voidx/data/intent_classifier.json
+   ```
+
+4. Print and optionally write an evaluation report:
+
+   ```text
+   docs/reports/intent-classifier-eval.md
+   ```
+
+5. Exit non-zero if acceptance thresholds fail.
+
+## Delivery Phases
+
+### Phase A: Training And Evaluation Only
+
+Phase A produces:
+
+- labeled train/eval data;
+- training script;
+- model artifact;
+- evaluation report;
+- tests for artifact size, metrics, latency, and gate failure behavior.
+
+Phase A must not modify `resolve_turn_intent()` or any runtime behavior.
+
+### Phase B: Runtime Integration
+
+Phase B starts only after Phase A passes the evaluation gate. It adds the
+runtime loader and integrates classifier output into `resolve_turn_intent()`
+under the safety rules below.
+
+## Evaluation Gate
+
+The training script must report:
+
+- overall accuracy;
+- macro F1;
+- per-label precision / recall / F1;
+- confusion matrix;
+- model artifact size;
+- average and p95 single-input inference latency;
+- number of `implement` false positives.
+
+Minimum acceptance thresholds for runtime integration:
+
+| Metric | Required |
+|--------|----------|
+| Model size | <= 1.5 MB |
+| Average inference latency | <= 1 ms on local dev machine |
+| Macro F1 | >= 0.85 |
+| `implement` false positives | 0 on eval set |
+| `inspect/design` recall | >= 0.90 |
+
+If these thresholds do not pass, stop after training/evaluation and do not wire
+the classifier into `resolve_turn_intent()`.
+
+## Runtime API
+
+Add a small runtime module only after the evaluation gate passes:
+
+```text
+src/voidx/runtime/intent_classifier.py
+```
+
+Public API:
 
 ```python
-def classify_with_threshold(text: str) -> tuple[TaskIntent, float, str]:
-    intent, confidence = classifier.classify(text)
+class IntentClassifierResult(BaseModel):
+    intent: TaskIntent
+    confidence: float
+    source: str = "local_classifier"
+    action: Literal["accept", "suggest", "fallback"]
 
-    if confidence >= 0.85:
-        # 高置信度：直接采用，不走 LLM
-        return intent, confidence, "accept"
-    elif confidence >= 0.5:
-        # 中置信度：回退 LLM，但分类结果可作为参考
-        return intent, confidence, "suggest"
-    else:
-        # 低置信度：完全回退 LLM
-        return TaskIntent.AMBIGUOUS, confidence, "fallback"
+def classify_intent(text: str) -> IntentClassifierResult | None:
+    ...
 ```
 
-## 4. 实现要点
+Behavior:
 
-- 分类器模型文件放在 `src/voidx/data/intent_classifier.bin`
-- 通过 `importlib.resources` 加载，兼容 wheel 打包
-- 训练脚本放在 `scripts/train_intent_classifier.py`
-- 分类器调用路径：`infer_task_intent()` → `classifier.classify()` → `on_intent` (LLM fallback)
+- returns `None` if the model is unavailable or invalid;
+- never raises during normal runtime classification;
+- caches the loaded model in memory;
+- normalizes text consistently with the training script;
+- returns `suggest` rather than `accept` for classifier-predicted `implement`.
 
-## 5. 测试覆盖
+## Runtime Integration
 
-| 测试 | 描述 |
-|------|------|
-| `test_classifier_high_confidence` | 高置信度直接返回，不走 LLM |
-| `test_classifier_low_confidence_fallback` | 低置信度回退到 LLM |
-| `test_classifier_chinese_input` | 中文输入正确分类 |
-| `test_classifier_mixed_input` | 中英混合输入正确分类 |
-| `test_classifier_model_size` | 模型文件 < 1.5MB |
-| `test_classifier_latency` | 单次推理 < 1ms |
+Modify `resolve_turn_intent()`:
+
+1. Run existing hard rules first:
+   - plan mode;
+   - approval-only phrase;
+   - direct implementation command.
+2. Call `classify_intent(text)` if available.
+3. If classifier returns `accept` for a safe non-implement intent, return that
+   intent with reason `local classifier matched <intent>`.
+4. If classifier returns `suggest`, keep the runtime safe:
+   - for `implement`, return `DESIGN` or `AMBIGUOUS`;
+   - include a reason telling the model to use `on_intent` / `clarify` before
+     editing.
+5. If classifier returns `fallback` or `None`, use existing `infer_task_intent()`.
+
+The runtime context should expose classifier metadata only when useful, for
+example:
+
+```text
+Intent resolution: local classifier suggested implement confidence=0.88; confirmation required
+```
+
+## Packaging
+
+If the model artifact is placed under `src/voidx/data/`, update
+`pyproject.toml` package data:
+
+```toml
+[tool.setuptools.package-data]
+"voidx.data" = ["intent_classifier.json"]
+```
+
+The `voidx.data` package must contain `__init__.py` so `importlib.resources`
+can load the artifact from wheels.
+
+## Tests
+
+Training/evaluation tests:
+
+| Test | Description |
+|------|-------------|
+| `test_training_script_writes_model` | Training creates the model artifact |
+| `test_eval_report_contains_required_metrics` | Evaluation report includes all gate metrics |
+| `test_eval_gate_rejects_implement_false_positive` | Gate fails if eval has implement false positives |
+| `test_model_artifact_size` | Artifact is <= 1.5 MB |
+| `test_classifier_latency` | Average inference <= 1 ms |
+
+Runtime tests, only after the model passes evaluation:
+
+| Test | Description |
+|------|-------------|
+| `test_classifier_high_confidence_safe_intent` | Safe high-confidence intent returns directly |
+| `test_classifier_missing_model_falls_back` | Missing model keeps old rule-based behavior |
+| `test_classifier_implement_prediction_is_suggest_only` | ML implement does not directly grant implement intent |
+| `test_plan_mode_ignores_classifier` | Plan mode still forces design |
+| `test_approval_phrase_without_pending_plan_stays_ambiguous` | Approval text remains state-aware |
+| `test_chinese_and_mixed_input_classification` | Chinese and mixed-language examples classify correctly |
+
+## Acceptance Criteria
+
+- A trained model artifact exists and is loaded through package resources.
+- An evaluation report documents all required metrics.
+- The evaluation gate passes before runtime integration.
+- Classifier failures fall back to existing behavior.
+- Classifier output never bypasses plan mode, pending approval, or direct
+  implementation safety rules.
+- `implement` false positives are blocked by design and by tests.

@@ -121,6 +121,7 @@ class GraphTurnMixin:
                     session_msgs = []
                 if self._session:
                     self._session_msg_cache = list(session_msgs)
+            is_first_user_message = not any(row.role == "user" for row in session_msgs)
 
             context_cache = getattr(self, "_context_cache", None)
             if context_cache is not None:
@@ -330,10 +331,14 @@ class GraphTurnMixin:
                 await touch_session(self._session.id)
 
                 # Auto-title on first message
-                if len(session_msgs) <= 1:
+                if is_first_user_message:
                     title_source = payload.title_text
-                    title = title_source[:80] + ("..." if len(title_source) > 80 else "")
+                    title = self._temporary_session_title(title_source)
                     await update_title(self._session.id, title)
+                    self._session = self._session.model_copy(update={"title": title})
+                    scheduler = getattr(self, "_schedule_session_title_generation", None)
+                    if callable(scheduler):
+                        scheduler(self._session.id, title_source, title)
                 await self._persist_transcript_snapshot()
 
             elapsed = time.monotonic() - t_turn_start

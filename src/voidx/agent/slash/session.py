@@ -130,6 +130,13 @@ class SlashSessionMixin:
         if not session:
             return
         title = cmd.removeprefix("/title").strip()
+        if title.lower() == "auto":
+            regenerator = getattr(self._g, "regenerate_session_title", None)
+            if callable(regenerator) and await regenerator():
+                ui.print("[dim]Regenerating title...[/dim]")
+            else:
+                ui.print("[dim]No user message available for title generation.[/dim]")
+            return
         if title:
             setter = getattr(self._g, "set_session_title", None)
             if callable(setter):
@@ -137,6 +144,9 @@ class SlashSessionMixin:
             else:
                 from voidx.memory.session import update_title
 
+                invalidator = self._legacy_attr("_invalidate_session_title_generation")
+                if callable(invalidator):
+                    invalidator()
                 await update_title(session.id, title)
                 self._set_legacy_attr("_session", session.model_copy(update={"title": title}))
             ui.print(f"[dim]Title set: {title}[/dim]")
@@ -144,6 +154,9 @@ class SlashSessionMixin:
     async def _clear_current_session_compat(self) -> None:
         session = self._host_session()
         old_session_id = getattr(session, "id", None) if session else None
+        invalidator = self._legacy_attr("_invalidate_session_title_generation")
+        if callable(invalidator):
+            invalidator()
         self._set_legacy_attr("_session", None)
         self._set_legacy_attr("_session_msg_cache", [])
         try:
@@ -199,6 +212,9 @@ class SlashSessionMixin:
             ui.print(f"[red]Clear cleanup failed: {exc}[/red]")
 
     async def _resume_session_compat(self, session) -> None:
+        invalidator = self._legacy_attr("_invalidate_session_title_generation")
+        if callable(invalidator):
+            invalidator()
         self._set_legacy_attr("_session", session)
         self._set_legacy_attr("_workspace", session.workspace)
         self._g.config.workspace = session.workspace

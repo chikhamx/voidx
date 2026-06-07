@@ -135,6 +135,26 @@ async def update_title(session_id: str, title: str, *, touch: bool = True) -> No
     )
 
 
+async def update_title_if_current(
+    session_id: str,
+    expected_title: str,
+    title: str,
+    *,
+    touch: bool = True,
+) -> bool:
+    if touch:
+        cur = await _execute_commit(
+            "UPDATE sessions SET title = ?, updated_at = ? WHERE id = ? AND title = ?",
+            (title, _now(), session_id, expected_title),
+        )
+        return cur.rowcount > 0
+    cur = await _execute_commit(
+        "UPDATE sessions SET title = ? WHERE id = ? AND title = ?",
+        (title, session_id, expected_title),
+    )
+    return cur.rowcount > 0
+
+
 async def update_session_model(session_id: str, provider: str, model: str) -> None:
     await _execute_commit(
         "UPDATE sessions SET model_provider = ?, model_name = ?, updated_at = ? WHERE id = ?",
