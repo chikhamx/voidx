@@ -20,9 +20,6 @@ voidx.json
 .DS_Store
 Thumbs.db
 
-# opencode reference (not part of voidx)
-opencode/
-
 # PowerShell artifacts
 $null
 
@@ -31,3 +28,4 @@ _fix.py
 
 # uv
 uv.lock
+research/
