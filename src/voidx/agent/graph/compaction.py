@@ -222,6 +222,13 @@ class GraphCompactionMixin:
         cache = getattr(self, "_session_msg_cache", None)
         if cache is not None:
             self._session_msg_cache = [r for r in cache if r.id is not None and r.id > last_message_id]
+        context_cache = getattr(self, "_context_cache", None)
+        if context_cache is not None:
+            context_cache.row_messages = {
+                row_id: entry
+                for row_id, entry in context_cache.row_messages.items()
+                if row_id > last_message_id
+            }
 
     async def _compact_session_history(self: GraphCompactionHost, *, force: bool = True) -> bool:
         if getattr(self, "_session", None) is None:

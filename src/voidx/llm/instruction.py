@@ -30,6 +30,13 @@ class SkillRuntimeContext:
     runs: list[SkillRunState] = field(default_factory=list)
 
 
+@dataclass
+class _FileContentCacheEntry:
+    mtime_ns: int
+    size: int
+    content: str
+
+
 class InstructionService:
     """Manages project instructions injection into system prompt."""
 
@@ -44,6 +51,7 @@ class InstructionService:
         self._claims: dict[str, set[str]] = {}
         # Cached system paths (refreshed each turn)
         self._system_paths: list[str] = []
+        self._file_cache: dict[str, _FileContentCacheEntry] = {}
 
     # ── public API ──────────────────────────────────────────────────────
 
@@ -199,9 +207,28 @@ class InstructionService:
     # ── helpers ─────────────────────────────────────────────────────────
 
     async def _read_file(self, path: str) -> str:
+        target = Path(path)
+        resolved = str(target.resolve())
         try:
-            return await asyncio.to_thread(lambda: Path(path).read_text(encoding="utf-8", errors="replace"))
+            stat = await asyncio.to_thread(target.stat)
+            cached = self._file_cache.get(resolved)
+            if (
+                cached is not None
+                and cached.mtime_ns == stat.st_mtime_ns
+                and cached.size == stat.st_size
+            ):
+                return cached.content
+            content = await asyncio.to_thread(
+                lambda: target.read_text(encoding="utf-8", errors="replace")
+            )
+            self._file_cache[resolved] = _FileContentCacheEntry(
+                mtime_ns=stat.st_mtime_ns,
+                size=stat.st_size,
+                content=content,
+            )
+            return content
         except Exception:
+            self._file_cache.pop(resolved, None)
             return ""
 
     async def _read_all(self, paths: list[str]) -> list[str]:

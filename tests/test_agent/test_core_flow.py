@@ -13,6 +13,8 @@ from voidx.agent.agents import AgentDef, get_agent
 from voidx.agent.graph.convergence import is_step_hint_message
 from voidx.agent.graph.runtime import current_parent_tool_call_id
 from voidx.agent.graph import VoidXGraph
+from voidx.agent.message_rows import RowMessageCacheEntry
+from voidx.agent.runtime_context import InteractionMode, RuntimeContextBuilder
 from voidx.config import Config, Settings, UserProfile
 from voidx.llm.compaction import CompactionSelection
 from voidx.llm.instruction import SkillRuntimeContext
@@ -893,6 +895,34 @@ async def test_run_once_persists_image_attachment_as_structured_user_message(tmp
 
 
 @pytest.mark.asyncio
+async def test_run_once_does_not_persist_compiled_overlay_to_user_history(tmp_path):
+    session = await create_session(workspace=str(tmp_path))
+    try:
+        graph = VoidXGraph(Config(workspace=str(tmp_path)), api_key=None, session=session)
+
+        test_dock = BottomInputDock()
+        set_dock(test_dock)
+        test_dock.begin_capture()
+        try:
+            await graph._run_once("hello world")
+        finally:
+            test_dock.deactivate()
+            test_dock.reset()
+            set_dock(None)
+
+        rows = await load_messages(session.id)
+        user_rows = [row for row in rows if row.role == "user"]
+
+        assert user_rows
+        assert user_rows[-1].content == "hello world"
+        assert "VOIDX_RUNTIME_CONTEXT" not in user_rows[-1].content
+        assert "Runtime State" not in user_rows[-1].content
+        assert "Active Skills" not in user_rows[-1].content
+    finally:
+        await delete_session(session.id)
+
+
+@pytest.mark.asyncio
 async def test_run_once_persists_and_restores_transcript_snapshot(tmp_path):
     session = await create_session(workspace=str(tmp_path))
     try:
@@ -1154,6 +1184,31 @@ async def test_compaction_uses_previous_summary_and_prunes_persisted_head(tmp_pa
 
 
 @pytest.mark.asyncio
+async def test_compaction_drops_removed_row_cache_entries(tmp_path):
+    session = await create_session(workspace=str(tmp_path))
+    try:
+        await save_message(MessageRow(session_id=session.id, role="user", content="old question"))
+        await save_message(MessageRow(session_id=session.id, role="assistant", content="old answer"))
+        await save_message(MessageRow(session_id=session.id, role="user", content="tail question"))
+
+        graph = VoidXGraph(Config(workspace=str(tmp_path)), api_key=None, session=session)
+        graph._context_cache.row_messages = {
+            1: RowMessageCacheEntry("old-user", HumanMessage(content="old question", id="1")),
+            2: RowMessageCacheEntry("old-assistant", AIMessage(content="old answer", id="2")),
+            3: RowMessageCacheEntry("tail-user", HumanMessage(content="tail question", id="3")),
+        }
+
+        await graph._persist_compaction([
+            HumanMessage(content="old question", id="1"),
+            AIMessage(content="old answer", id="2"),
+        ])
+
+        assert set(graph._context_cache.row_messages) == {3}
+    finally:
+        await delete_session(session.id)
+
+
+@pytest.mark.asyncio
 async def test_slash_compact_runs_manual_session_compaction(tmp_path):
     from voidx.agent.slash import SlashHandler
 
@@ -1296,6 +1351,55 @@ async def test_implement_subagent_injects_workflow_skills(tmp_path, monkeypatch)
     assert "Active workflow skills: test-driven-development" in rendered_user
     assert "User language: Chinese (Simplified) [zh-CN]" in rendered_user
     assert "Tone instruction: Be direct and practical. Lead with the answer or action." in rendered_user
+
+
+@pytest.mark.asyncio
+async def test_subagent_parent_history_strips_parent_turn_overlay(tmp_path, monkeypatch):
+    import voidx.agent.graph.subagent as subagent_module
+
+    captured: dict[str, list] = {}
+
+    class FakeModel:
+        def bind_tools(self, _tool_defs):
+            return self
+
+    async def fake_stream_llm(_model, messages, _renderer, _protocol):
+        captured["messages"] = messages
+        return AIMessage(content="done")
+
+    monkeypatch.setattr(subagent_module, "create_chat_model", lambda *_args, **_kwargs: FakeModel())
+    monkeypatch.setattr(subagent_module, "stream_llm", fake_stream_llm)
+
+    parent_messages = [HumanMessage(content="Parent request")]
+    RuntimeContextBuilder(
+        config=Config(workspace=str(tmp_path)),
+        workspace=str(tmp_path),
+        agent_prompt="You are voidx.",
+        agent="orchestrator",
+        interaction_mode=InteractionMode.AUTO,
+        skill_instructions=["Skill instructions from: parent\nSkill: parent"],
+        current_user_text="Parent request",
+    ).build().apply_to_messages(parent_messages)
+    assert "Active Skills" in parent_messages[-1].content
+
+    output = await subagent_module.run_subagent(
+        get_agent("explore"),
+        "Inspect the workspace",
+        None,
+        "test-key",
+        Config(workspace=str(tmp_path)),
+        parent_messages=parent_messages,
+        debug=False,
+    )
+
+    assert output == "done"
+    human_messages = [message for message in captured["messages"] if isinstance(message, HumanMessage)]
+    assert len(human_messages) == 2
+    assert human_messages[0].content == "Parent request"
+    assert "Active Skills" not in human_messages[0].content
+    assert "Runtime State" not in human_messages[0].content
+    assert "Inspect the workspace" in human_messages[1].content
+    assert "Runtime State" in human_messages[1].content
 
 
 @pytest.mark.asyncio

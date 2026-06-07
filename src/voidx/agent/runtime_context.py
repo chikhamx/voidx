@@ -2,16 +2,31 @@
 
 from __future__ import annotations
 
+from dataclasses import dataclass, field as dataclass_field
 from datetime import datetime
+import hashlib
+import json
 import platform
-from typing import Iterable
+from typing import Any, Iterable
 
 from langchain_core.messages import BaseMessage, HumanMessage, SystemMessage
-from pydantic import BaseModel, Field
+from pydantic import BaseModel, ConfigDict, Field
 
+from voidx.agent.message_rows import RowMessageCacheEntry
 from voidx.config import ApprovalReviewer, Config, UserProfile
 from voidx.runtime.intent import InteractionMode, TaskIntent, infer_task_intent
 from voidx.skills.runtime import SkillRunState
+
+_CONTEXT_MARKER = "VOIDX_RUNTIME_CONTEXT"
+_USER_MESSAGE_DELIMITER = "\n\n## User Message\n"
+
+
+@dataclass
+class ContextCompilerCache:
+    stable_prefix_key: str = ""
+    stable_system_content: str = ""
+    stable_system_message: SystemMessage | None = None
+    row_messages: dict[int, RowMessageCacheEntry] = dataclass_field(default_factory=dict)
 
 
 class ExecutionPolicy(BaseModel):
@@ -49,8 +64,12 @@ class ContextSection(BaseModel):
 
 
 class RuntimeContext(BaseModel):
+    model_config = ConfigDict(arbitrary_types_allowed=True)
+
     sections: list[ContextSection]
     task_sections: list[ContextSection] = Field(default_factory=list)
+    system_content: str | None = None
+    system_message: SystemMessage | None = Field(default=None, exclude=True)
 
     def section_names(self) -> list[str]:
         names = [section.name for section in self.sections]
@@ -58,6 +77,8 @@ class RuntimeContext(BaseModel):
         return names
 
     def render_system(self) -> str:
+        if self.system_content is not None:
+            return self.system_content
         return _render_sections(self.sections)
 
     def render_task_context(self) -> str:
@@ -74,10 +95,16 @@ class ContextCompiler:
         self.context = context
 
     def compile_messages(self, messages: list[BaseMessage]) -> list[BaseMessage]:
-        semantic_messages = [message for message in messages if not isinstance(message, SystemMessage)]
+        semantic_messages = raw_semantic_messages(messages)
         current_user_index = _last_user_index(semantic_messages)
 
-        prefix = SystemMessage(content=self.context.render_system())
+        system_content = self.context.render_system()
+        cached_system = self.context.system_message
+        prefix = (
+            cached_system
+            if cached_system is not None and cached_system.content == system_content
+            else SystemMessage(content=system_content)
+        )
         task_context = self.context.render_task_context()
         if task_context:
             if current_user_index is None:
@@ -162,19 +189,38 @@ class RuntimeContextBuilder:
         self.agent_id = agent_id
 
     def build(self) -> RuntimeContext:
-        envelope = RuntimeEnvelope(
-            date=self.session_date,
-            workspace=self.workspace,
-            provider=self.config.model.provider,
-            model=self.config.model.model,
-            interaction_mode=self.interaction_mode,
-            permission_profile=self.config.permission_mode.value,
-            execution_policy=ExecutionPolicy.from_config(self.config),
-            agent=self.agent,
-            agent_id=self.agent_id,
-            user_profile=self.user_profile,
+        return RuntimeContext(
+            sections=self._build_stable_sections(),
+            task_sections=self._build_task_sections(),
         )
 
+    def build_incremental(
+        self,
+        cache: ContextCompilerCache,
+    ) -> tuple[RuntimeContext, ContextCompilerCache]:
+        sections = self._build_stable_sections()
+        stable_key = _stable_hash([
+            {"name": section.name, "content": section.content}
+            for section in sections
+        ])
+        if cache.stable_prefix_key == stable_key and cache.stable_system_content:
+            system_content = cache.stable_system_content
+            system_message = cache.stable_system_message
+        else:
+            system_content = _render_sections(sections)
+            system_message = SystemMessage(content=system_content)
+            cache.stable_prefix_key = stable_key
+            cache.stable_system_content = system_content
+            cache.stable_system_message = system_message
+
+        return RuntimeContext(
+            sections=sections,
+            task_sections=self._build_task_sections(),
+            system_content=system_content,
+            system_message=system_message,
+        ), cache
+
+    def _build_stable_sections(self) -> list[ContextSection]:
         sections = [
             ContextSection(name="Base System", content=self.base_system_prompt),
         ]
@@ -184,12 +230,10 @@ class RuntimeContextBuilder:
             sections.append(ContextSection(name="Mode Prompt", content=self.mode_prompt))
         if self.tool_contract:
             sections.append(ContextSection(name="Tool Contract", content=self.tool_contract))
-        sections.extend([
-            ContextSection(
-                name="Workspace Facts",
-                content=f"- Current workspace: {self.workspace}\n- Platform: {_platform_info()}",
-            ),
-        ])
+        sections.append(ContextSection(
+            name="Workspace Facts",
+            content=f"- Current workspace: {self.workspace}\n- Platform: {_platform_info()}",
+        ))
 
         if self.instructions:
             sections.append(ContextSection(
@@ -202,6 +246,21 @@ class RuntimeContextBuilder:
                 name="Long Summary",
                 content=self.summary,
             ))
+        return sections
+
+    def _build_task_sections(self) -> list[ContextSection]:
+        envelope = RuntimeEnvelope(
+            date=self.session_date,
+            workspace=self.workspace,
+            provider=self.config.model.provider,
+            model=self.config.model.model,
+            interaction_mode=self.interaction_mode,
+            permission_profile=self.config.permission_mode.value,
+            execution_policy=ExecutionPolicy.from_config(self.config),
+            agent=self.agent,
+            agent_id=self.agent_id,
+            user_profile=self.user_profile,
+        )
 
         task_sections = [
             ContextSection(name="Runtime State", content=_render_envelope(envelope)),
@@ -217,7 +276,7 @@ class RuntimeContextBuilder:
             content=self._current_task_state(),
         ))
 
-        return RuntimeContext(sections=sections, task_sections=task_sections)
+        return task_sections
 
     def _current_task_state(self) -> str:
         lines = [
@@ -279,12 +338,49 @@ class RuntimeContextBuilder:
 
 
 def _render_sections(sections: list[ContextSection]) -> str:
-    parts = ["VOIDX_RUNTIME_CONTEXT"]
+    parts = [_CONTEXT_MARKER]
     for section in sections:
         if not section.content.strip():
             continue
         parts.append(f"## {section.name}\n{section.content.strip()}")
     return "\n\n".join(parts)
+
+
+def raw_semantic_messages(messages: list[BaseMessage]) -> list[BaseMessage]:
+    raw: list[BaseMessage] = []
+    for message in messages:
+        if isinstance(message, SystemMessage):
+            continue
+        if isinstance(message, HumanMessage):
+            raw.append(_strip_turn_overlay(message))
+        else:
+            raw.append(message)
+    return raw
+
+
+def _strip_turn_overlay(message: HumanMessage) -> HumanMessage:
+    content = message.content
+    if isinstance(content, str):
+        stripped = _strip_turn_overlay_text(content)
+        if stripped != content:
+            return message.model_copy(update={"content": stripped})
+    elif isinstance(content, list) and content:
+        first = content[0]
+        if isinstance(first, dict) and first.get("type") == "text":
+            text = first.get("text", "")
+            if isinstance(text, str) and _is_turn_overlay_text(text):
+                return message.model_copy(update={"content": list(content[1:])})
+    return message
+
+
+def _strip_turn_overlay_text(content: str) -> str:
+    if not _is_turn_overlay_text(content):
+        return content
+    return content.split(_USER_MESSAGE_DELIMITER, 1)[1]
+
+
+def _is_turn_overlay_text(content: str) -> bool:
+    return content.startswith(_CONTEXT_MARKER) and _USER_MESSAGE_DELIMITER in content
 
 
 def _render_envelope(envelope: RuntimeEnvelope) -> str:
@@ -423,3 +519,14 @@ def _prepend_task_context(message: BaseMessage, task_context: str) -> BaseMessag
     else:
         new_content = f"{header}\n{content}"
     return message.model_copy(update={"content": new_content})
+
+
+def _stable_hash(value: Any) -> str:
+    encoded = json.dumps(
+        value,
+        ensure_ascii=False,
+        sort_keys=True,
+        separators=(",", ":"),
+        default=str,
+    ).encode("utf-8")
+    return hashlib.sha256(encoded).hexdigest()

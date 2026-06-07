@@ -22,6 +22,7 @@ from voidx.ui.output.dock import dock
 from voidx.ui.output.dock.formatting import _text_from_line
 from voidx.ui.output.tree import OutputTree
 from voidx.ui.tools.clipboard_image import paste_clipboard_image as paste_clipboard_image_from_system
+from voidx.ui.tools.clipboard_text import read_clipboard_text as paste_clipboard_text_from_system
 from voidx.ui.tui.helpers import (
     _ENTER_TERMINAL_SEQUENCE,
     _EXIT_TERMINAL_SEQUENCE,
@@ -38,6 +39,20 @@ from voidx.ui.tui.terminal_mixin import _TerminalLifecycleMixin
 from voidx.ui.tui.text_prompt_mixin import _TextPromptMixin
 
 SubmitHandler = Callable[[str], Awaitable[bool]]
+
+
+class _SubmitQueueItem(str):
+    def __new__(
+        cls,
+        submit_text: str,
+        *,
+        restore_text: str,
+        paste_entries: list[dict[str, Any]],
+    ):
+        obj = str.__new__(cls, submit_text)
+        obj.restore_text = restore_text
+        obj.paste_entries = [dict(entry) for entry in paste_entries]
+        return obj
 
 
 # ── PureTui ────────────────────────────────────────────────────────────────
@@ -67,14 +82,17 @@ class PureTui(
         self._cursor_row: int = 0
         self._cursor_col: int = 0
         self._input_history: list[str] = []
+        self._input_history_paste_entries: list[list[dict[str, Any]]] = []
         self._history_idx: int = -1
         self._history_draft: list[str] = [""]
+        self._history_draft_paste_entries: list[dict[str, Any]] = []
 
         # Submit queue / flow
         self._queue: asyncio.Queue[str | None] = asyncio.Queue()
         self._busy: bool = False
         self._current_submit_task: asyncio.Task[bool] | None = None
         self._current_submitted_text: str = ""
+        self._current_submitted_paste_entries: list[dict[str, Any]] = []
         self._submit_cancel_requested: bool = False
         self._ctrl_c_armed: bool = False
         self._ctrl_c_deadline: float = 0.0
@@ -133,6 +151,8 @@ class PureTui(
 
         # Bracketed paste: None when not pasting, bytes accumulator during paste
         self._paste_buffer: bytes | None = None
+        self._paste_entries: list[dict[str, Any]] = []
+        self._paste_next_id: int = 1
 
         # Clipboard watcher state (macOS: Ctrl+V image paste)
         self._clipboard_change_count: int = -1
@@ -339,8 +359,8 @@ class PureTui(
             self._submit_choice_selection()
             return True
 
-        text = self._get_input_text()
-        stripped = text.strip()
+        draft_text = self._get_input_text()
+        stripped = draft_text.strip()
         if not stripped and self._is_input_empty() and not self._notice and not self._ctrl_c_armed:
             return False
         self._reset_ctrl_c()
@@ -349,7 +369,7 @@ class PureTui(
         if self._command_panel_active and self._accept_command_panel_selection():
             return True
         if stripped == "/paste":
-            self._record_history(text)
+            self._record_history(draft_text)
             self._clear_input()
             self.paste_clipboard_image()
             return True
@@ -357,13 +377,21 @@ class PureTui(
             self._clear_input()
             return True
         if self._busy and stripped.startswith("/guide "):
-            self._record_history(text)
+            paste_entries = self._paste_entries_snapshot()
+            self._record_history(draft_text, paste_entries)
+            expanded_guidance = self._expand_registered_tokens(draft_text).strip()
             self._clear_input()
-            self._submit_guidance_bypass(stripped)
+            self._submit_guidance_bypass(expanded_guidance)
             return True
-        self._record_history(text)
+        submit_text = self._expand_registered_tokens(draft_text)
+        paste_entries = self._paste_entries_snapshot()
+        self._record_history(draft_text, paste_entries)
         self._clear_input()
-        self._queue.put_nowait(text)
+        self._queue.put_nowait(_SubmitQueueItem(
+            submit_text,
+            restore_text=draft_text,
+            paste_entries=paste_entries,
+        ))
         return True
 
     def _submit_guidance_bypass(self, text: str) -> None:
@@ -430,6 +458,7 @@ class PureTui(
         self._input_lines = text.split("\n")
         self._cursor_row = len(self._input_lines) - 1
         self._cursor_col = len(self._current_line())
+        self._restore_paste_entries(self._current_submitted_paste_entries)
         self._command_panel_active = False
         self._attachment_panel_suppressed_text = ""
         self._clamp_attachment_selection()
@@ -452,11 +481,16 @@ class PureTui(
                     self._exit_app()
                 return
 
+            submit_text = str(item)
+            restore_text = getattr(item, "restore_text", submit_text)
+            paste_entries = getattr(item, "paste_entries", [])
+
             self._busy = True
             self._last_error = ""
             self._submit_cancel_requested = False
-            self._current_submitted_text = item
-            self._current_submit_task = asyncio.create_task(on_submit(item))
+            self._current_submitted_text = restore_text
+            self._current_submitted_paste_entries = [dict(entry) for entry in paste_entries]
+            self._current_submit_task = asyncio.create_task(on_submit(submit_text))
             self.invalidate()
             try:
                 keep_running = await self._current_submit_task
@@ -477,6 +511,7 @@ class PureTui(
                 self._busy = False
                 self._current_submit_task = None
                 self._current_submitted_text = ""
+                self._current_submitted_paste_entries = []
                 self._submit_cancel_requested = False
                 self.invalidate()
 

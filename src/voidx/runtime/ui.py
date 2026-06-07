@@ -24,6 +24,12 @@ class AgentUiSink(Protocol):
 class _NoOpConsole:
     width = 80
 
+    def __enter__(self) -> "_NoOpConsole":
+        return self
+
+    def __exit__(self, *args: Any) -> None:
+        return None
+
     def print(self, *args: Any, **kwargs: Any) -> None:
         return None
 
@@ -115,8 +121,25 @@ class _LazyConsole:
 
 
 class _ConsoleProxy:
+    def _target(self) -> Any:
+        return ui.console
+
     def __getattr__(self, name: str) -> Any:
-        return getattr(ui.console, name)
+        return getattr(self._target(), name)
+
+    def __enter__(self) -> Any:
+        target = self._target()
+        enter = getattr(type(target), "__enter__", None)
+        if enter is None:
+            return target
+        return enter(target)
+
+    def __exit__(self, *args: Any) -> Any:
+        target = self._target()
+        exit_ = getattr(type(target), "__exit__", None)
+        if exit_ is None:
+            return None
+        return exit_(target, *args)
 
 
 _ui_proxy = _LazyConsole()

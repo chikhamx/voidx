@@ -8,7 +8,7 @@ sys.path.insert(0, str(Path(__file__).parent.parent.parent / "src"))
 import pytest
 from langchain_core.messages import AIMessage, HumanMessage, SystemMessage, ToolMessage
 
-from voidx.agent.message_rows import messages_from_rows
+from voidx.agent.message_rows import messages_from_rows, messages_from_rows_incremental
 from voidx.agent.runtime_context import InteractionMode, TaskIntent
 from voidx.agent.task_state import PendingApproval, TaskPhase, TaskRun, TaskRunStatus, TaskState
 from voidx.memory.context_frames import (
@@ -112,6 +112,33 @@ def test_messages_from_rows_preserves_content_and_tool_fields():
     assert messages[2].tool_calls[0]["name"] == "read"
     assert isinstance(messages[3], ToolMessage)
     assert messages[3].tool_call_id == "c1"
+
+
+def test_messages_from_rows_incremental_reuses_cached_rows():
+    rows = [
+        MessageRow(id=1, session_id="s", role="user", content="hello"),
+        MessageRow(id=2, session_id="s", role="assistant", content="hi"),
+    ]
+
+    first, cache = messages_from_rows_incremental(rows, {})
+    second, next_cache = messages_from_rows_incremental(rows, cache)
+
+    assert second[0] is first[0]
+    assert second[1] is first[1]
+    assert set(next_cache) == {1, 2}
+
+
+def test_messages_from_rows_incremental_rebuilds_changed_row_same_id():
+    first, cache = messages_from_rows_incremental([
+        MessageRow(id=1, session_id="s", role="tool", content="old", tool_call_id="c1"),
+    ], {})
+
+    second, _ = messages_from_rows_incremental([
+        MessageRow(id=1, session_id="s", role="tool", content="new", tool_call_id="c1"),
+    ], cache)
+
+    assert second[0] is not first[0]
+    assert second[0].content == "new"
 
 
 @pytest.mark.asyncio

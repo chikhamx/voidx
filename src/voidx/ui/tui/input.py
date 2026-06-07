@@ -19,6 +19,88 @@ class _InputEditorMixin:
         if self._input_lines:
             self._input_lines[self._cursor_row] = text
 
+    # ── paste token registry ─────────────────────────────────────────────
+
+    def _paste_entries_snapshot(self) -> list[dict[str, object]]:
+        return [dict(entry) for entry in getattr(self, "_paste_entries", [])]
+
+    def _restore_paste_entries(self, entries: list[dict[str, object]]) -> None:
+        self._paste_entries = [dict(entry) for entry in entries]
+        max_id = 0
+        for entry in self._paste_entries:
+            try:
+                max_id = max(max_id, int(entry.get("id", 0)))
+            except (TypeError, ValueError):
+                continue
+        self._paste_next_id = max_id + 1
+
+    def _clear_paste_entries(self) -> None:
+        self._paste_entries = []
+        self._paste_next_id = 1
+
+    def _register_paste_entry(self, *, kind: str, display: str, expanded: str) -> str:
+        paste_id = self._paste_next_id
+        self._paste_next_id += 1
+        entry = {
+            "id": paste_id,
+            "kind": kind,
+            "display": display,
+            "expanded": expanded,
+        }
+        self._paste_entries.append(entry)
+        return display
+
+    def _register_text_paste(self, text: str) -> str:
+        paste_id = self._paste_next_id
+        line_count = len(text.split("\n"))
+        if line_count > 1:
+            display = f"[Pasted text #{paste_id} +{line_count - 1} lines]"
+        else:
+            display = f"[Pasted text #{paste_id} {len(text)} chars]"
+        return self._register_paste_entry(kind="text", display=display, expanded=text)
+
+    def _register_image_paste(self, stem: str, size: int) -> str:
+        from voidx.ui.tools.attachment_tokens import image_attachment_token_text
+
+        paste_id = self._paste_next_id
+        display = f"[Pasted image #{paste_id} {self._format_paste_size(size)}]"
+        return self._register_paste_entry(
+            kind="image",
+            display=display,
+            expanded=image_attachment_token_text(stem),
+        )
+
+    def _expand_registered_tokens(
+        self,
+        text: str,
+        entries: list[dict[str, object]] | None = None,
+    ) -> str:
+        result = text
+        for entry in entries if entries is not None else self._paste_entries:
+            display = str(entry.get("display", ""))
+            expanded = str(entry.get("expanded", ""))
+            if display:
+                result = result.replace(display, expanded)
+        return result
+
+    @staticmethod
+    def _format_paste_size(size: int) -> str:
+        if size < 1024:
+            return f"{size}B"
+        if size < 1024 * 1024:
+            return f"{round(size / 1024)}KB"
+        return f"{size / (1024 * 1024):.1f}MB"
+
+    def _registered_paste_displays(self) -> list[tuple[str, str]]:
+        displays = []
+        for entry in getattr(self, "_paste_entries", []):
+            display = str(entry.get("display", ""))
+            kind = str(entry.get("kind", "text"))
+            if display:
+                displays.append((display, kind))
+        displays.sort(key=lambda item: len(item[0]), reverse=True)
+        return displays
+
     def _clear_attachment_suppression_on_edit(self) -> None:
         self._attachment_panel_suppressed_text = ""
 
@@ -132,6 +214,25 @@ class _InputEditorMixin:
         self._cursor_col = len(self._current_line())
         self._update_input_panels()
 
+    def _clamp_cursor_col(self) -> None:
+        self._cursor_col = min(self._cursor_col, len(self._current_line()))
+
+    def _cursor_up_or_history(self) -> None:
+        if self._cursor_row > 0:
+            self._cursor_row -= 1
+            self._clamp_cursor_col()
+            self._update_input_panels()
+            return
+        self._history_prev()
+
+    def _cursor_down_or_history(self) -> None:
+        if self._cursor_row < len(self._input_lines) - 1:
+            self._cursor_row += 1
+            self._clamp_cursor_col()
+            self._update_input_panels()
+            return
+        self._history_next()
+
     # ── history ──────────────────────────────────────────────────────────
 
     def _history_prev(self) -> None:
@@ -140,6 +241,7 @@ class _InputEditorMixin:
         self._reset_ctrl_c()
         if self._history_idx == -1:
             self._history_draft = list(self._input_lines)
+            self._history_draft_paste_entries = self._paste_entries_snapshot()
             self._history_idx = len(self._input_history) - 1
         elif self._history_idx > 0:
             self._history_idx -= 1
@@ -155,6 +257,7 @@ class _InputEditorMixin:
         if self._history_idx >= len(self._input_history):
             self._history_idx = -1
             self._input_lines = list(self._history_draft)
+            self._restore_paste_entries(self._history_draft_paste_entries)
             self._cursor_row = len(self._input_lines) - 1
             self._cursor_col = len(self._current_line())
             self._clear_attachment_suppression_on_edit()
@@ -166,20 +269,28 @@ class _InputEditorMixin:
         if 0 <= self._history_idx < len(self._input_history):
             text = self._input_history[self._history_idx]
             self._input_lines = text.split("\n")
+            if 0 <= self._history_idx < len(self._input_history_paste_entries):
+                self._restore_paste_entries(self._input_history_paste_entries[self._history_idx])
+            else:
+                self._clear_paste_entries()
             self._cursor_row = len(self._input_lines) - 1
             self._cursor_col = len(self._current_line())
             self._clear_attachment_suppression_on_edit()
             self._update_input_panels()
 
-    def _record_history(self, text: str) -> None:
+    def _record_history(self, text: str, paste_entries: list[dict[str, object]] | None = None) -> None:
         stripped = text.strip()
         if stripped and (not self._input_history or self._input_history[-1] != stripped):
             self._input_history.append(stripped)
+            self._input_history_paste_entries.append([dict(entry) for entry in (paste_entries or [])])
             limit = max(int(self.INPUT_HISTORY_LIMIT), 0)
             if limit == 0:
                 self._input_history.clear()
+                self._input_history_paste_entries.clear()
             elif len(self._input_history) > limit:
-                del self._input_history[:-limit]
+                overflow = len(self._input_history) - limit
+                del self._input_history[:overflow]
+                del self._input_history_paste_entries[:overflow]
         self._history_idx = -1
 
     # ── input helpers ────────────────────────────────────────────────────
@@ -197,6 +308,7 @@ class _InputEditorMixin:
         self._command_panel_active = False
         self._attachment_selected = 0
         self._attachment_panel_suppressed_text = ""
+        self._clear_paste_entries()
 
     def _input_cursor_position(self) -> int:
         """Return the logical character offset used by attachment-token parsing."""

@@ -202,6 +202,40 @@ def test_skill_service_selects_explicit_and_trigger_matches(tmp_path):
     assert trigger[0].reason == "trigger:pytest"
 
 
+def test_skill_body_parse_cache_keeps_activation_dynamic(tmp_path, monkeypatch):
+    project_dir = tmp_path / "workspace" / ".voidx" / "skills"
+    _write_skill(project_dir, "alpha", "---\nname: alpha\ntriggers: [alpha]\n---\nAlpha rules")
+    _write_skill(project_dir, "beta", "---\nname: beta\ntriggers: [beta]\n---\nBeta rules")
+
+    original_read_text = Path.read_text
+    calls: list[Path] = []
+
+    def counting_read_text(self, *args, **kwargs):
+        calls.append(self)
+        return original_read_text(self, *args, **kwargs)
+
+    monkeypatch.setattr(Path, "read_text", counting_read_text)
+
+    def service() -> SkillService:
+        return SkillService(
+            SkillRegistry(
+                str(tmp_path / "workspace"),
+                bundled_dir=tmp_path / "bundled",
+                global_dir=tmp_path / "global",
+                project_dir=project_dir,
+            )
+        )
+
+    first = service().select("use alpha")
+    first_call_count = len(calls)
+    second = service().select("use beta")
+
+    assert [match.name for match in first] == ["alpha"]
+    assert [match.name for match in second] == ["beta"]
+    assert first_call_count == 2
+    assert len(calls) == first_call_count
+
+
 def test_skill_service_selects_bundled_superpower_triggers(tmp_path):
     service = SkillService(
         SkillRegistry(

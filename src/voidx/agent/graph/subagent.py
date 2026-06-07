@@ -16,7 +16,12 @@ from voidx.agent.graph.convergence import (
 from voidx.agent.graph.runtime import console, ui
 from voidx.agent.graph.streaming import extract_text, stream_llm
 from voidx.agent.graph.todo_events import todo_updated_event
-from voidx.agent.runtime_context import InteractionMode, RuntimeContextBuilder
+from voidx.agent.runtime_context import (
+    ContextCompilerCache,
+    InteractionMode,
+    RuntimeContextBuilder,
+    raw_semantic_messages,
+)
 from voidx.agent.tool_messages import sanitize_tool_message_content
 from voidx.agent.tool_filters import filter_unavailable_lsp_tools
 from voidx.config import Config
@@ -80,10 +85,11 @@ async def run_subagent(
 
     if parent_messages is not None:
         messages = []
+        raw_parent_messages = raw_semantic_messages(parent_messages)
         # Copy parent context: skip system prompts, agent-spawning AIMessages,
         # and their orphaned ToolMessages.
         skipped_ids: set[str] = set()
-        for m in parent_messages:
+        for m in raw_parent_messages:
             if isinstance(m, AIMessage) and m.tool_calls:
                 for tc in m.tool_calls:
                     name = tc.get("name") if isinstance(tc, dict) else getattr(tc, "name", "")
@@ -91,7 +97,7 @@ async def run_subagent(
                         tc_id = tc.get("id") if isinstance(tc, dict) else getattr(tc, "id", "")
                         if tc_id:
                             skipped_ids.add(tc_id)
-        for m in parent_messages:
+        for m in raw_parent_messages:
             if isinstance(m, SystemMessage):
                 continue
             if isinstance(m, AIMessage) and m.tool_calls:
@@ -139,7 +145,8 @@ async def run_subagent(
         task_intent=task_intent,
         interaction_mode=interaction_mode,
     )
-    RuntimeContextBuilder(
+    context_cache = ContextCompilerCache()
+    context, context_cache = RuntimeContextBuilder(
         config=context_config,
         workspace=config.workspace,
         base_system_prompt=BASE_SYSTEM_PROMPT,
@@ -162,7 +169,8 @@ async def run_subagent(
         task_intent=task_intent,
         session_date=datetime.now().astimezone().strftime("%Y-%m-%d %Z"),
         agent_id=agent_id,
-    ).build().apply_to_messages(messages)
+    ).build_incremental(context_cache)
+    context.apply_to_messages(messages)
 
     ctx = ToolContext(
         workspace=config.workspace,

@@ -9,6 +9,7 @@ from langchain_core.messages import AIMessage, HumanMessage, SystemMessage
 from typing_extensions import NotRequired
 
 from voidx.agent.runtime_context import (
+    ContextCompilerCache,
     InteractionMode,
     RuntimeContextBuilder,
     TaskIntent,
@@ -139,6 +140,95 @@ def test_runtime_context_system_uses_session_date_not_runtime_state(tmp_path):
     assert "2026-06-06 10:02 CST" in latest[-1].content
     assert "Runtime State" in latest[-1].content
     assert "Current DateTime" in latest[-1].content
+
+
+def test_runtime_context_incremental_reuses_stable_system_message(tmp_path):
+    cache = ContextCompilerCache()
+    first, cache = RuntimeContextBuilder(
+        config=Config(workspace=str(tmp_path)),
+        workspace=str(tmp_path),
+        agent_prompt="You are voidx.",
+        agent="orchestrator",
+        interaction_mode=InteractionMode.AUTO,
+        session_date="2026-06-06 CST",
+        current_datetime="2026-06-06 10:01 CST",
+        current_user_text="first",
+    ).build_incremental(cache)
+    second, cache = RuntimeContextBuilder(
+        config=Config(workspace=str(tmp_path)),
+        workspace=str(tmp_path),
+        agent_prompt="You are voidx.",
+        agent="orchestrator",
+        interaction_mode=InteractionMode.AUTO,
+        session_date="2026-06-06 CST",
+        current_datetime="2026-06-06 10:02 CST",
+        current_user_text="second",
+    ).build_incremental(cache)
+
+    assert second.system_message is first.system_message
+    assert second.render_system() == first.render_system()
+
+
+def test_stable_prefix_rebuilds_on_summary_change(tmp_path):
+    cache = ContextCompilerCache()
+    first, cache = RuntimeContextBuilder(
+        config=Config(workspace=str(tmp_path)),
+        workspace=str(tmp_path),
+        agent_prompt="You are voidx.",
+        agent="orchestrator",
+        interaction_mode=InteractionMode.AUTO,
+        session_date="2026-06-06 CST",
+        summary="old summary",
+        current_user_text="first",
+    ).build_incremental(cache)
+    second, cache = RuntimeContextBuilder(
+        config=Config(workspace=str(tmp_path)),
+        workspace=str(tmp_path),
+        agent_prompt="You are voidx.",
+        agent="orchestrator",
+        interaction_mode=InteractionMode.AUTO,
+        session_date="2026-06-06 CST",
+        summary="new summary",
+        current_user_text="second",
+    ).build_incremental(cache)
+
+    assert second.system_message is not first.system_message
+    assert "old summary" in first.render_system()
+    assert "new summary" in second.render_system()
+
+
+def test_runtime_context_recompile_does_not_duplicate_turn_overlay(tmp_path):
+    messages = [HumanMessage(content="current request")]
+    first = RuntimeContextBuilder(
+        config=Config(workspace=str(tmp_path)),
+        workspace=str(tmp_path),
+        agent_prompt="You are voidx.",
+        agent="orchestrator",
+        interaction_mode=InteractionMode.AUTO,
+        session_date="2026-06-06 CST",
+        current_datetime="2026-06-06 10:01 CST",
+        current_user_text="current request",
+    ).build()
+    second = RuntimeContextBuilder(
+        config=Config(workspace=str(tmp_path)),
+        workspace=str(tmp_path),
+        agent_prompt="You are voidx.",
+        agent="orchestrator",
+        interaction_mode=InteractionMode.AUTO,
+        session_date="2026-06-06 CST",
+        current_datetime="2026-06-06 10:02 CST",
+        current_user_text="current request",
+    ).build()
+
+    first.apply_to_messages(messages)
+    second.apply_to_messages(messages)
+
+    assert isinstance(messages[-1], HumanMessage)
+    assert isinstance(messages[-1].content, str)
+    assert messages[-1].content.count("VOIDX_RUNTIME_CONTEXT") == 1
+    assert "2026-06-06 10:02 CST" in messages[-1].content
+    assert "2026-06-06 10:01 CST" not in messages[-1].content
+    assert messages[-1].content.endswith("current request")
 
 
 def test_runtime_context_preserves_multimodal_user_message_without_extra_system(tmp_path):

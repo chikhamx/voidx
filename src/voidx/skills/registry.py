@@ -2,12 +2,23 @@
 
 from __future__ import annotations
 
+from dataclasses import dataclass
 from pathlib import Path
 from typing import Any
 
 from voidx.skills.schema import SkillDefinition, SkillMeta, SkillScope
 
 SKILL_FILENAME = "SKILL.md"
+
+
+@dataclass
+class _ParsedSkillCacheEntry:
+    mtime_ns: int
+    size: int
+    skill: SkillDefinition
+
+
+_PARSED_SKILL_CACHE: dict[tuple[str, SkillScope], _ParsedSkillCacheEntry] = {}
 
 
 def normalize_skill_name(name: str) -> str:
@@ -76,7 +87,14 @@ class SkillRegistry:
 
 
 def parse_skill_file(path: Path, *, scope: SkillScope) -> SkillDefinition:
-    text = path.read_text(encoding="utf-8", errors="replace")
+    resolved = path.resolve()
+    stat = resolved.stat()
+    key = (str(resolved), scope)
+    cached = _PARSED_SKILL_CACHE.get(key)
+    if cached is not None and cached.mtime_ns == stat.st_mtime_ns and cached.size == stat.st_size:
+        return cached.skill.model_copy(deep=True)
+
+    text = resolved.read_text(encoding="utf-8", errors="replace")
     fields, body = _split_frontmatter(text)
     name = str(fields.get("name") or path.parent.name).strip()
     if not name:
@@ -88,7 +106,13 @@ def parse_skill_file(path: Path, *, scope: SkillScope) -> SkillDefinition:
         triggers=[str(item).strip() for item in _coerce_list(fields.get("triggers")) if str(item).strip()],
         scope=scope,
     )
-    return SkillDefinition(meta=meta, path=path.resolve(), body=body.strip())
+    skill = SkillDefinition(meta=meta, path=resolved, body=body.strip())
+    _PARSED_SKILL_CACHE[key] = _ParsedSkillCacheEntry(
+        mtime_ns=stat.st_mtime_ns,
+        size=stat.st_size,
+        skill=skill,
+    )
+    return skill.model_copy(deep=True)
 
 
 def _split_frontmatter(text: str) -> tuple[dict[str, Any], str]:

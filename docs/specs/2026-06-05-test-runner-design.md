@@ -2,291 +2,355 @@
 
 Date: 2026-06-05
 
+> **Status: Deferred** - document-only update for this cycle. Do not implement in
+> the current release cycle.
+
 ## Goal
 
-Provide a dedicated test execution tool that runs test suites, parses results into structured data, and surfaces failures with precise file/line information. This closes the verification loop — the agent can edit code and immediately validate the changes without manually parsing raw test output.
+Provide a dedicated test execution tool that runs focused test suites, parses the
+result into structured data, and surfaces failures with file/line information.
+The tool should reduce raw-output parsing by the agent while preserving the same
+safety posture as shell-based test execution.
+
+The first implementable version must be intentionally narrow: pytest-first,
+permission-gated, no arbitrary shell command, no result cache, and no broad
+multi-framework parser matrix.
 
 ## Current State
 
 Key files:
 
-- `src/voidx/tools/bash.py` — the only way to run tests. Output is raw text, no structure.
-- `src/voidx/tools/lsp.py` — `LspDiagnosticsTool` provides compiler/linter errors, but not test failures.
-- `src/voidx/agent/agents.py` — prompts mention "Run the relevant focused tests before broad test runs" but provide no structured tool.
+- `src/voidx/tools/bash.py` - current way to run tests. It returns raw stdout,
+  stderr, and exit code.
+- `src/voidx/permission/rules.py` - classifies `python -m pytest` as
+  `BASH_WRITE`, because tests execute project code and may write cache, coverage,
+  snapshots, temp files, or fixtures.
+- `src/voidx/permission/engine.py` - denies write-capability commands in plan
+  mode and read-only sandbox mode.
+- `src/voidx/tools/lsp.py` - provides compiler/linter diagnostics, not test
+  failures.
 
 Observed gaps:
 
-- No structured test results — the LLM must parse pytest/jest output as raw text, which is error-prone and token-expensive.
-- No test failure → file:line mapping — the agent can't directly navigate to the failing assertion.
-- No test discovery — the agent doesn't know what test suites exist without running `find` or `glob`.
-- No incremental test running — always runs the full suite or relies on the user to specify the right path.
-- No test result caching — re-running the same tests wastes time and tokens.
+- Test results are unstructured, so the agent parses text manually.
+- Failure locations are not normalized into `file_path` and `line`.
+- Focused test commands are easy to mistype or over-broaden.
+- Raw output can be large and token-expensive.
 
-## External References
+Important existing constraint:
 
-- **Claude Code** runs tests via bash but has no dedicated test tool.
-- **Cursor** has a test panel that shows pass/fail per test with inline failure details.
-- **Aider** automatically runs the test suite after each edit and parses failures to guide fixes.
-- **VS Code** test explorer provides structured test results with per-test status, duration, and failure details.
+- Test execution is not a read-only operation. A `test_run` tool must not be
+  granted by reclassifying test execution as `BASH_READ`.
 
-References:
+## Design Summary
 
-- https://aider.chat/docs/faq.html
-- https://code.visualstudio.com/docs/editor/testing
+Add a future `test_run` tool that runs pytest through controlled argv
+construction and returns structured JSON. The tool is not a general shell
+runner. It does not accept arbitrary `command: str` in V1.
 
-## Design
+V1 supports:
 
-### Approach: Test Runner Tool with Pluggable Parsers
+- pytest detection and execution only;
+- explicit path-scoped test selection;
+- structured pass/fail/error/skip totals;
+- bounded raw output fallback;
+- timeout handling;
+- permission integration through a dedicated test capability.
 
-Add a `test_run` tool that executes test commands and parses output into structured results. Support multiple test frameworks via pluggable parsers, starting with pytest and jest.
+V1 does not support:
 
-### Tool Definition
+- jest, vitest, Go, or Cargo parsers;
+- arbitrary shell commands;
+- result caching;
+- smart test selection from edited source files;
+- coverage parsing;
+- UI test panels or watch mode.
+
+## Tool Input
 
 ```python
 class TestRunInput(BaseModel):
-    command: str | None = Field(
+    framework: Literal["pytest"] | None = Field(
         default=None,
-        description=(
-            "Test command to run. If omitted, auto-detects based on project files. "
-            "Examples: 'pytest tests/test_foo.py', 'npm test -- --grep pattern'"
-        )
+        description="Test framework. V1 supports pytest only; omitted means auto-detect pytest."
     )
-    framework: str | None = Field(
+    paths: list[str] = Field(
+        default_factory=list,
+        description="Workspace-relative test files or directories to run."
+    )
+    keyword: str = Field(
+        default="",
+        description="Optional pytest -k expression."
+    )
+    marker: str = Field(
+        default="",
+        description="Optional pytest -m marker expression."
+    )
+    maxfail: int | None = Field(
         default=None,
-        description=(
-            "Test framework hint: pytest, jest, vitest, go_test, cargo_test. "
-            "If omitted, auto-detected from project files."
-        )
+        ge=1,
+        le=100,
+        description="Optional pytest --maxfail value."
     )
-    paths: list[str] | None = Field(
-        default=None,
-        description="Specific test files or directories to run."
+    last_failed: bool = Field(
+        default=False,
+        description="Run pytest --lf."
     )
-    focus_failures: bool = Field(
-        default=True,
-        description="If true, only include detailed output for failed tests in the result."
+    verbose: bool = Field(
+        default=False,
+        description="Use -v instead of -q."
+    )
+    include_raw_output: bool = Field(
+        default=False,
+        description="Include bounded raw output in the structured result."
     )
     timeout: int = Field(
         default=120,
+        ge=1,
+        le=1800,
         description="Maximum seconds to wait for test completion."
     )
 ```
 
-### Structured Output
+Rationale:
+
+- `paths`, `keyword`, `marker`, `maxfail`, and `last_failed` cover common
+  focused pytest workflows without opening a shell escape hatch.
+- The tool builds argv with `asyncio.create_subprocess_exec`, not a shell.
+- Any future free-form argument support must be allowlisted and reviewed.
+
+## Structured Output
 
 ```python
 class TestLocation(BaseModel):
     file_path: str
     line: int | None = None
-    test_name: str
+    test_name: str = ""
 
 class TestFailure(BaseModel):
     test_name: str
     location: TestLocation
     message: str
-    expected: str | None = None
-    actual: str | None = None
-    traceback: str | None = None
-    diff: str | None = None          # for assertion diffs
+    traceback: str = ""
+    diff: str = ""
 
 class TestSuiteResult(BaseModel):
+    ok: bool
     framework: str
-    command: str
+    command_argv: list[str]
     exit_code: int
+    timed_out: bool
+    duration_ms: int
     total: int
     passed: int
     failed: int
     skipped: int
-    errors: int                      # collection/setup errors
-    duration_ms: int
-    failures: list[TestFailure]      # detailed failure info
-    raw_output: str | None = None    # included only if focus_failures=False
+    errors: int
+    failures: list[TestFailure]
+    raw_output: str = ""
+    raw_output_truncated: bool = False
+    parse_error: str = ""
 ```
 
-### Auto-Detection
+`ok` is true only when the process exits with code `0` and does not time out.
+Parser failure must not hide test failure. If parsing fails, return the exit
+code, bounded raw output, and `parse_error`.
 
-Detect the test framework from project files:
+## Pytest Detection
 
-| File | Framework | Default Command |
-|------|-----------|----------------|
-| `pytest.ini`, `pyproject.toml` with `[tool.pytest]` | pytest | `python -m pytest` |
-| `package.json` with `jest` dep | jest | `npx jest` |
-| `package.json` with `vitest` dep | vitest | `npx vitest run` |
-| `go.mod` | go_test | `go test ./...` |
-| `Cargo.toml` | cargo_test | `cargo test` |
+V1 detects pytest only at the workspace root:
 
-Detection logic in `src/voidx/tools/test_detect.py`:
+1. If `pyproject.toml` contains `[tool.pytest.ini_options]`, use pytest.
+2. Else if `pytest.ini`, `tox.ini`, or `setup.cfg` contains pytest config, use
+   pytest.
+3. Else if `tests/` exists, pytest may still be selected when the caller
+   explicitly sets `framework="pytest"`.
+
+Default executable:
+
+1. Use `<workspace>/.venv/bin/python -m pytest` when that interpreter exists.
+2. Otherwise use `python -m pytest`.
+
+The current project convention remains compatible with this default because its
+documented command is `.venv/bin/python -m pytest tests/ -v`.
+
+## Command Construction
+
+The tool constructs argv as data:
 
 ```python
-def detect_test_framework(workspace: str) -> tuple[str, str] | None:
-    """Returns (framework, default_command) or None."""
+argv = [python_executable, "-m", "pytest"]
+argv.extend(validated_paths)
+argv.extend(["-v" if inp.verbose else "-q", "--tb=short", "-rA"])
+if inp.keyword:
+    argv.extend(["-k", inp.keyword])
+if inp.marker:
+    argv.extend(["-m", inp.marker])
+if inp.maxfail:
+    argv.extend(["--maxfail", str(inp.maxfail)])
+if inp.last_failed:
+    argv.append("--lf")
+```
+
+Path handling:
+
+- Every path is resolved with `resolve_safe`.
+- Paths must stay inside the workspace.
+- Missing paths return a structured tool error before running pytest.
+- An empty path list means run pytest's configured default selection.
+
+Execution handling:
+
+- Use `asyncio.create_subprocess_exec`.
+- Use `stdin=DEVNULL`.
+- Run with `cwd=ctx.workspace`.
+- Terminate the process group on timeout, matching the bash tool's behavior.
+- Cap captured stdout/stderr before serializing result output.
+
+## Parser
+
+V1 implements `PytestParser` only.
+
+Input:
+
+- stdout;
+- stderr;
+- exit code;
+- duration.
+
+Required parsing:
+
+- final summary counts, such as `1 failed, 5 passed in 0.12s`;
+- short summary entries, such as
+  `FAILED tests/test_foo.py::test_bar - AssertionError: expected 42`;
+- location hints from traceback lines like `tests/test_foo.py:12`;
+- collection/setup errors as `errors`.
+
+The parser should be conservative. If a field cannot be derived reliably, leave
+it empty rather than inventing data. The raw output fallback is the safety net.
+
+`pytest-json-report` is not required in V1. A later version may detect and use
+it when already installed, but V1 must not add a dependency or depend on the
+plugin for correctness.
+
+## Permission Model
+
+Add a dedicated capability:
+
+```python
+class PermissionCapability(str, Enum):
     ...
+    TEST_RUN = "test_run"
 ```
 
-### Parsers
+Rules:
 
-Each framework has a dedicated output parser:
+- `test_run` maps to `PermissionCapability.TEST_RUN`.
+- `BASIC_RULES` uses `Rule(permission="test_run", pattern="*", action="ask")`.
+- Default strategy asks before running tests.
+- Plan mode denies `TEST_RUN`.
+- Read-only sandbox denies `TEST_RUN`.
+- `approval_policy=on-failure` treats `TEST_RUN` like `BASH_WRITE`: ask first,
+  do not run automatically as a failure check.
+- `danger-full-access` with `approval_policy=never` may allow it through the
+  existing approval policy path.
 
-#### pytest Parser
+Reasoning:
 
-Parse pytest's verbose output (`-v --tb=short`):
+- Tests execute arbitrary repository code.
+- Tests may write files under the workspace.
+- A dedicated capability avoids falsely treating tests as read-only while still
+  allowing future UX to distinguish test execution from general shell commands.
 
-```
-FAILED tests/test_foo.py::test_bar - AssertionError: expected 42
-=== short test summary info ===
-FAILED tests/test_foo.py::test_bar - AssertionError: expected 42
-=== 1 failed, 5 passed in 0.12s ===
-```
+## No Result Cache In V1
 
-Also support `--json-report` if `pytest-json-report` is installed for more reliable parsing.
+Do not cache test results in V1.
 
-#### jest/vitest Parser
+Rationale:
 
-Parse jest's `--verbose` output:
+- Verification must reflect a fresh run.
+- Test outcomes can depend on environment variables, generated files, time,
+  network services, dependency state, and test order.
+- Returning stale pass results would undermine the purpose of the tool.
 
-```
-FAIL tests/foo.test.ts
-  ✕ bar (5ms)
-  ● bar
-    expect(received).toBe(expected)
-    Expected: 42
-    Received: 41
-```
+Future versions may cache discovery metadata, but result caching must be opt-in
+and must surface `cached: true` in output.
 
-#### go test Parser
+## Future Work
 
-Parse `go test -v` output:
+These are intentionally out of V1:
 
-```
---- FAIL: TestBar (0.00s)
-    foo_test.go:12: expected 42, got 41
-FAIL
-```
+- jest/vitest/go/cargo execution and parsers;
+- result caching;
+- smart test selection from edited source files;
+- coverage collection;
+- frontend or TUI test result panels;
+- watch mode;
+- debugger integration;
+- free-form command execution.
 
-#### cargo test Parser
+Any future multi-framework support should follow the same pattern:
 
-Parse `cargo test` output:
+- controlled argv construction;
+- framework-specific permission assumptions reviewed explicitly;
+- bounded output;
+- structured parser with raw fallback;
+- tests for path safety and permission behavior.
 
-```
-test bar ... FAILED
-failures:
----- bar stdout ----
-thread 'bar' panicked at 'assertion failed', src/foo.rs:12:5
-```
-
-### Parser Architecture
-
-```python
-class TestResultParser(ABC):
-    @abstractmethod
-    def parse(self, stdout: str, stderr: str, exit_code: int) -> TestSuiteResult: ...
-
-class PytestParser(TestResultParser): ...
-class JestParser(TestResultParser): ...
-class VitestParser(TestResultParser): ...
-class GoTestParser(TestResultParser): ...
-class CargoTestParser(TestResultParser): ...
-
-def get_parser(framework: str) -> TestResultParser:
-    return _PARSERS[framework]
-```
-
-### Smart Test Selection
-
-When the agent edits a file, suggest running only the related tests:
-
-```python
-def suggest_test_paths(edited_file: str, workspace: str) -> list[str]:
-    """Given an edited source file, find likely test files."""
-    # Convention-based: test_foo.py for foo.py, foo.test.ts for foo.ts
-    # Also check for test directories that reference the file
-    ...
-```
-
-This is heuristic-based (convention matching), not AST-based. Good enough for most projects.
-
-### Integration with Edit Workflow
-
-The agent prompt should include a verification step:
-
-```
-After making code changes:
-1. Run the relevant focused tests first.
-2. If tests fail, read the failure details and fix.
-3. If tests pass, run the broader test suite.
-```
-
-The `test_run` tool makes step 1-2 efficient by providing structured failure data instead of raw text.
-
-### LSP Diagnostics Synergy
-
-After running tests, also check LSP diagnostics on modified files:
-
-```
-1. test_run → get failures
-2. lsp_diagnostics → get type errors, lint issues
-3. Combine both into a complete verification result
-```
-
-This is a prompt-level integration, not a code change — the agent naturally chains these tools.
-
-### Caching
-
-Cache test results for the current session:
-
-```python
-class TestResultCache:
-    """Cache test results keyed by (command, file_mtimes_snapshot)."""
-    def get(self, key: str) -> TestSuiteResult | None: ...
-    def set(self, key: str, result: TestSuiteResult, ttl: float = 300.0) -> None: ...
-```
-
-If the same test command is run again and no source files have changed, return the cached result. This prevents wasting time on redundant runs within a session.
-
-### Permission
-
-- `test_run` is classified as `BASH_READ` capability (tests are read-only operations on the codebase).
-- Default action: `allow` — tests don't modify source files.
-- However, the underlying command execution uses the same subprocess mechanism as bash, so sandbox checks apply to any file writes the test itself might do.
-
-## Scope
-
-In scope:
-
-- `test_run` tool with auto-detection and 5 framework parsers.
-- Structured `TestSuiteResult` output model.
-- Smart test path suggestion.
-- Test result caching.
-- Permission integration.
-
-Out of scope:
-
-- Test coverage collection and display (future — needs coverage parser).
-- Test generation (the agent can write tests via `edit`/`write` tools).
-- Visual test result UI in TUI/Web (future).
-- Watch mode / continuous test running.
-- Test debugging (breakpoints, step-through).
-
-## File Changes
+## File Changes For Future Implementation
 
 | File | Change |
 |------|--------|
-| `src/voidx/tools/test_run.py` | New — `TestRunTool`, `TestRunInput`, execution logic |
-| `src/voidx/tools/test_detect.py` | New — framework auto-detection |
-| `src/voidx/tools/test_parser.py` | New — `TestResultParser` base + 5 framework parsers |
-| `src/voidx/tools/test_cache.py` | New — `TestResultCache` |
+| `src/voidx/tools/test_run.py` | New `TestRunTool`, input/output models, argv construction, execution |
+| `src/voidx/tools/test_detect.py` | New pytest-only detection helper |
+| `src/voidx/tools/test_parser.py` | New parser base plus `PytestParser` |
 | `src/voidx/tools/registry.py` | Register `TestRunTool` |
-| `src/voidx/permission/engine.py` | Add `test_run` to `BASIC_RULES` (action=allow) |
-| `src/voidx/agent/agents.py` | Update prompts to mention `test_run` tool |
-| `tests/test_tools/test_test_run.py` | New — parser tests, detection tests, execution tests |
+| `src/voidx/permission/rules.py` | Add `TEST_RUN` capability and classification |
+| `src/voidx/permission/engine.py` | Deny in plan/read-only; ask by default and on-failure |
+| `tests/test_tools/test_test_run.py` | Detection, argv, parser, timeout, path safety, output cap |
+| `tests/test_agent/test_permission.py` | Permission classification and mode overlay coverage |
+| `tests/test_tools/test_basic.py` | Registry coverage |
+
+No implementation is planned for the current cycle.
+
+## Test Plan For Future Implementation
+
+| Test | Purpose |
+|------|---------|
+| `test_test_run_detects_pytest_from_pyproject` | Detect pytest config in this repository style |
+| `test_test_run_uses_venv_python_when_available` | Prefer `.venv/bin/python -m pytest` |
+| `test_test_run_rejects_outside_workspace_path` | Block path traversal |
+| `test_test_run_rejects_missing_path` | Fail before spawning pytest |
+| `test_test_run_constructs_argv_without_shell` | Ensure no shell command string is used |
+| `test_test_run_parses_passing_pytest_summary` | Structured pass counts |
+| `test_test_run_parses_failed_pytest_summary` | Failure name, message, file, and line |
+| `test_test_run_parses_collection_error` | Collection/setup errors become `errors` |
+| `test_test_run_returns_raw_fallback_on_parse_error` | Parser failure does not hide process result |
+| `test_test_run_times_out_and_terminates_process` | Timeout behavior is structured |
+| `test_test_run_caps_raw_output` | Prevent unbounded tool output |
+| `test_permission_classifies_test_run_as_test_run` | Dedicated capability |
+| `test_permission_test_run_asks_by_default` | Default safety posture |
+| `test_permission_test_run_denied_in_plan_mode` | Plan mode cannot run tests |
+| `test_permission_test_run_denied_in_read_only_sandbox` | Read-only sandbox cannot run tests |
 
 ## Risks
 
 | Risk | Mitigation |
-|------|-----------|
-| Parser breaks on unusual test output | Fallback to raw text with parse error metadata; parsers are per-framework and narrow in scope |
-| Test commands have side effects (DB writes, file creation) | Sandbox applies; document that `test_run` is for unit/integration tests, not destructive E2E |
-| Auto-detection picks wrong framework | Allow `framework` override; show detected framework in result |
-| Long-running tests exceed timeout | Configurable timeout; return partial results with "timed out" status |
-| Test output is very large (thousands of lines) | `focus_failures=True` by default; truncate raw output to 5000 chars |
-| Framework not supported | Return raw output with `framework="unknown"`; user can specify command manually |
+|------|------------|
+| `test_run` becomes a shell bypass | Do not accept arbitrary command strings; construct argv only |
+| Tests write files or mutate local state | Treat as `TEST_RUN`, ask by default, deny in read-only and plan mode |
+| Parser misses unusual pytest output | Return bounded raw output and `parse_error` |
+| Auto-detection chooses wrong command | V1 only detects pytest at workspace root; allow explicit `framework="pytest"` |
+| Large output overwhelms context | Cap raw output and include failure-focused details |
+| Tool produces stale verification | No result cache in V1 |
+| Scope grows before safety is proven | Defer multi-framework support and smart selection to future versions |
+
+## Completion Criteria
+
+This design can be archived only after:
+
+- the pytest-only `test_run` tool exists;
+- permissions and sandbox behavior are covered by tests;
+- parser and execution tests exist;
+- focused and full test suites pass;
+- no arbitrary command execution path is introduced.

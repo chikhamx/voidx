@@ -67,7 +67,7 @@ def render_startup_lines(
         ("folder", f"▣ Workspace  {folder_name}"),
         ("session", f"↳ {session_line}"),
         ("hint", "Ask anything · / commands · /model switch · Ctrl+J newline"),
-        ("hint", "PgUp/PgDn scroll transcript · @ attach · Ctrl+V image"),
+        ("hint", "PgUp/PgDn scroll transcript · @ attach · Ctrl+V clipboard"),
         ("hint", "Panels: ↑↓ select · Enter accept · Esc close"),
     ]
 

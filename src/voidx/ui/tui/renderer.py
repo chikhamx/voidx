@@ -302,23 +302,72 @@ class _TerminalRendererMixin(_OverlayRendererMixin):
             segments.append((prefix, "bold white"))
 
         display = self._input_display_text(line)
+        line_segments = self._input_line_segments(display)
         if row == self._cursor_row and not self._active_choice:
+            cursor = min(self._cursor_col, len(display))
             if self._active_text_secret:
-                col = min(cell_len(line[: self._cursor_col]), len(display))
-            else:
-                col = min(self._cursor_col, len(display))
-            before = display[:col]
-            at = display[col : col + 1] or " "
-            after = display[col + 1 :]
-            if before:
-                segments.append((before, "white"))
-            segments.append((at, "reverse white"))
-            if after:
-                segments.append((after, "white"))
+                cursor = min(cell_len(line[: self._cursor_col]), len(display))
+            segments.extend(self._input_line_segments_with_cursor(line_segments, cursor))
         else:
-            segments.append((display, "white"))
+            segments.extend(line_segments)
 
         return self._wrap_input_segments(segments, width)
+
+    def _input_line_segments(self, display: str) -> list[tuple[str, str]]:
+        if self._active_text_secret:
+            return [(display, "white")] if display else []
+        tokens = self._registered_paste_displays()
+        if not tokens:
+            return [(display, "white")] if display else []
+
+        segments: list[tuple[str, str]] = []
+        pos = 0
+        while pos < len(display):
+            match_start = -1
+            match_token = ""
+            for token, _kind in tokens:
+                index = display.find(token, pos)
+                if index == -1:
+                    continue
+                if match_start == -1 or index < match_start:
+                    match_start = index
+                    match_token = token
+            if match_start == -1:
+                segments.append((display[pos:], "white"))
+                break
+            if match_start > pos:
+                segments.append((display[pos:match_start], "white"))
+            segments.append((match_token, "dim cyan"))
+            pos = match_start + len(match_token)
+        return segments
+
+    def _input_line_segments_with_cursor(
+        self,
+        segments: list[tuple[str, str]],
+        cursor: int,
+    ) -> list[tuple[str, str]]:
+        result: list[tuple[str, str]] = []
+        seen = 0
+        inserted = False
+        for text, style in segments:
+            if inserted or cursor >= seen + len(text):
+                result.append((text, style))
+                seen += len(text)
+                continue
+            local = max(cursor - seen, 0)
+            before = text[:local]
+            at = text[local : local + 1] or " "
+            after = text[local + 1 :]
+            if before:
+                result.append((before, style))
+            result.append((at, "reverse white"))
+            if after:
+                result.append((after, style))
+            inserted = True
+            seen += len(text)
+        if not inserted:
+            result.append((" ", "reverse white"))
+        return result
 
     def _wrap_input_segments(
         self,

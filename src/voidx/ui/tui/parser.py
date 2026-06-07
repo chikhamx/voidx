@@ -129,8 +129,8 @@ class _InputParserMixin:
                 self._request_exit()
                 needs_render = True
                 input_region_only = False
-            elif action == "paste_image":
-                self._paste_clipboard_image_quiet()
+            elif action == "paste_clipboard":
+                self._paste_clipboard_quiet()
                 needs_render = True
                 input_region_only = False
             elif action == "noop":
@@ -175,6 +175,9 @@ class _InputParserMixin:
             return
         # Normalise line endings: \r\n → \n, \r → \n
         text = text.replace("\r\n", "\n").replace("\r", "\n")
+        if len(text.split("\n")) > 3 or len(text) > 200:
+            self._insert_text_token(self._register_text_paste(text))
+            return
         # Split into lines and insert each, creating editor newlines
         lines = text.split("\n")
         for i, line in enumerate(lines):
@@ -220,9 +223,9 @@ class _InputParserMixin:
         if first == 0x0D:
             return (1, "submit")
 
-        # Ctrl+V: paste image from clipboard
+        # Ctrl+V: paste clipboard content. Prefer image, fall back to text.
         if first == 0x16:
-            return (1, "paste_image")
+            return (1, "paste_clipboard")
 
         # Tab
         if first == 0x09:
@@ -309,7 +312,7 @@ class _InputParserMixin:
             elif self._command_panel_active:
                 self._move_command_selection(-1)
             else:
-                self._history_prev()
+                self._cursor_up_or_history()
             return (consumed, None)
         if final == 0x42:  # Down
             if self._active_choice is not None:
@@ -319,7 +322,7 @@ class _InputParserMixin:
             elif self._command_panel_active:
                 self._move_command_selection(1)
             else:
-                self._history_next()
+                self._cursor_down_or_history()
             return (consumed, None)
         if final == 0x43:  # Right
             self._cursor_right()

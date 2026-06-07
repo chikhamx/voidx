@@ -60,7 +60,7 @@ from voidx.agent.graph.streaming import extract_text, stream_llm as _stream_llm
 from voidx.agent.graph.subagent import run_subagent as _run_subagent
 from voidx.agent.graph.tool_execution import GraphToolExecutionMixin
 from voidx.agent.intent_refinement import refine_intent
-from voidx.agent.runtime_context import InteractionMode, RuntimeContextBuilder
+from voidx.agent.runtime_context import ContextCompilerCache, InteractionMode, RuntimeContextBuilder
 from voidx.agent.task_state import TaskRun, TaskState
 from voidx.agent.tool_filters import filter_unavailable_lsp_tools
 from voidx.config import Config, Settings
@@ -153,6 +153,7 @@ class VoidXGraph(
         self._compaction_summary: str = ""
         self._session_date: str = session_date(session)
         self._session_msg_cache: list[MessageRow] | None = None
+        self._context_cache = ContextCompilerCache()
         self._app: PureTui | None = None
         self._next_agent_id: int = 0
         self._task_state = TaskState()
@@ -281,6 +282,7 @@ class VoidXGraph(
             "message_count": 0,
         })
         self._session_msg_cache = []
+        self._context_cache = ContextCompilerCache()
         self._tracker.clear_todos()
         self._permission.clear_session_permissions()
         self._usage_stats.reset()
@@ -291,6 +293,7 @@ class VoidXGraph(
         self.config.workspace = session.workspace
         self._session_date = session_date(session)
         self._session_msg_cache = None
+        self._context_cache = ContextCompilerCache()
         await self._restore_runtime_state()
 
     async def set_session_title(self, title: str) -> None:
@@ -429,7 +432,7 @@ class VoidXGraph(
         summary = self._pending_summary or self._compaction_summary
         self._pending_summary = None
 
-        context = RuntimeContextBuilder(
+        context, self._context_cache = RuntimeContextBuilder(
             config=self.config,
             workspace=state.get("workspace", "."),
             base_system_prompt=BASE_SYSTEM_PROMPT,
@@ -456,7 +459,7 @@ class VoidXGraph(
             intent_source=state.get("intent_source", ""),
             intent_refined=state.get("intent_refined", False),
             session_date=self._session_date,
-        ).build()
+        ).build_incremental(self._context_cache)
         context.apply_to_messages(state.get("messages", []))
 
         return {**base, "skill_runs": skill_runs}

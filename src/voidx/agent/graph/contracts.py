@@ -11,7 +11,7 @@ from typing import Any, Protocol
 
 from langchain_core.messages import BaseMessage
 
-from voidx.agent.runtime_context import InteractionMode
+from voidx.agent.runtime_context import ContextCompilerCache, InteractionMode
 from voidx.agent.state import AgentState
 from voidx.agent.task_state import TaskRun, TaskState
 from voidx.config import Config, Settings
@@ -50,6 +50,7 @@ class GraphComponentHost(Protocol):
     _pending_summary: str | None
     _compaction_summary: str
     _session_msg_cache: list[Any] | None
+    _context_cache: ContextCompilerCache
     _app: Any | None
     _usage_stats: UsageStats
     _compaction: CompactionService

@@ -11,7 +11,7 @@ from langchain_core.messages import AIMessage, HumanMessage, ToolMessage
 
 from voidx.agent.attachments import build_user_message_payload, serialize_message_content
 from voidx.agent.graph.runtime import ui
-from voidx.agent.message_rows import messages_from_rows
+from voidx.agent.message_rows import messages_from_rows_incremental
 from voidx.agent.runtime_context import TaskIntent
 from voidx.agent.state import AgentState
 from voidx.agent.task_state import IntentResolution, PendingApproval, resolve_turn_intent
@@ -116,7 +116,14 @@ class GraphTurnMixin:
                 if self._session:
                     self._session_msg_cache = list(session_msgs)
 
-            msgs = messages_from_rows(session_msgs)
+            context_cache = getattr(self, "_context_cache", None)
+            if context_cache is not None:
+                msgs, context_cache.row_messages = messages_from_rows_incremental(
+                    session_msgs,
+                    context_cache.row_messages,
+                )
+            else:
+                msgs, _ = messages_from_rows_incremental(session_msgs, {})
 
             for warning in payload.warnings:
                 ui.warn(warning)
@@ -351,6 +358,13 @@ class GraphTurnMixin:
                         r for r in self._session_msg_cache
                         if r.id is None or r.id < user_message_id
                     ]
+                context_cache = getattr(self, "_context_cache", None)
+                if context_cache is not None:
+                    context_cache.row_messages = {
+                        row_id: entry
+                        for row_id, entry in context_cache.row_messages.items()
+                        if row_id < user_message_id
+                    }
             raise
         finally:
             pending_guidance = getattr(self, "_pending_guidance", None)
