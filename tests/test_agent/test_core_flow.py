@@ -9,13 +9,14 @@ sys.path.insert(0, str(Path(__file__).parent.parent.parent / "src"))
 import pytest
 from langchain_core.messages import AIMessage, AIMessageChunk, HumanMessage, SystemMessage, ToolMessage
 
-from voidx.agent.agents import AgentDef, get_agent
+from voidx.agent.agents import AgentDef, get_agent, role_prompt_for_llm
 from voidx.agent.graph.convergence import is_step_hint_message
 from voidx.agent.graph.runtime import current_parent_tool_call_id
 from voidx.agent.graph import VoidXGraph
+from voidx.agent.graph.tool_execution import AGENT_RESULT_PREVIEW_CHARS, _agent_result_preview
 from voidx.agent.message_rows import RowMessageCacheEntry
 from voidx.agent.runtime_context import InteractionMode, RuntimeContextBuilder
-from voidx.config import Config, Settings, UserProfile
+from voidx.config import Config, ParallelSubagentsConfig, Settings, UserProfile
 from voidx.llm.compaction import CompactionSelection
 from voidx.llm.instruction import SkillRuntimeContext
 from voidx.memory.session import (
@@ -38,15 +39,184 @@ def _graph(tmp_path):
     return VoidXGraph(cfg, api_key=None)
 
 
+def test_agent_tool_result_preview_preserves_short_output():
+    assert _agent_result_preview("short child conclusion\nsecond line") == "short child conclusion\nsecond line"
+
+
+def test_agent_tool_result_preview_omits_extra_lines():
+    output = "\n".join(f"child result line {index}" for index in range(1, 8))
+
+    preview = _agent_result_preview(output)
+
+    assert "child result line 1" in preview
+    assert "child result line 5" in preview
+    assert "child result line 6" not in preview
+    assert "child result line 7" not in preview
+    assert "... (2 more lines omitted; full result passed to orchestrator)" in preview
+
+
+def test_agent_tool_result_preview_caps_long_single_line():
+    output = "x" * (AGENT_RESULT_PREVIEW_CHARS + 17)
+
+    preview = _agent_result_preview(output)
+
+    assert preview.startswith("x" * AGENT_RESULT_PREVIEW_CHARS)
+    assert len(preview.splitlines()[0]) == AGENT_RESULT_PREVIEW_CHARS
+    assert "... (17 more chars omitted; full result passed to orchestrator)" in preview
+
+
+async def _execute_fake_agent_tool_with_output(tmp_path, output: str, *, debug: bool = False):
+    graph = _graph(tmp_path)
+    graph.set_debug(debug)
+
+    class FakeTools:
+        async def execute_tool(self, tid, _targs, _ctx):
+            assert tid == "agent"
+            return ToolResult(output=output)
+
+    async def allow_all(
+        tool_calls,
+        agent_name: str,
+        plan_mode: bool,
+        session_id: str,
+        interaction_mode=None,
+    ):
+        return tool_calls, []
+
+    graph.tools = FakeTools()
+    graph._authorize_tool_calls = allow_all
+    test_dock = BottomInputDock()
+    set_dock(test_dock)
+    test_dock.begin_capture()
+    ui_events.start(DockEventConsumer(test_dock))
+    try:
+        graph._current_tree = test_dock.tree
+        graph._turn_node = await ui_events.request(TurnStarted(text="demo"))
+        parent = AIMessage(
+            content="",
+            tool_calls=[{
+                "name": "agent",
+                "args": {"agent": "explore", "description": "inspect auth flow"},
+                "id": "call_agent",
+                "type": "tool_call",
+            }],
+        )
+
+        result = await graph._execute_tools({
+            "messages": [parent],
+            "workspace": str(tmp_path),
+            "agent": "orchestrator",
+            "plan_mode": False,
+        })
+        await ui_events.drain()
+
+        assistant = next(node for node in test_dock.tree.root.children if node.node_type == "assistant")
+        agent_tool = next(node for node in assistant.children if node.node_type == "tool_call")
+        final_results = [node for node in agent_tool.children if node.node_type == "tool_result"]
+        final_texts = ["\n".join([node.header, *node.body_lines]) for node in final_results]
+        rendered = "\n".join(test_dock.tree.render(120))
+        return rendered, final_texts, list(result["messages"])
+    finally:
+        graph.set_debug(False)
+        await ui_events.stop()
+        test_dock.deactivate()
+        test_dock.reset()
+        set_dock(None)
+
+
+@pytest.mark.asyncio
+async def test_agent_tool_result_previewed_in_ui(tmp_path):
+    output = "\n".join(f"child final line {index}" for index in range(1, 8))
+
+    rendered, final_texts, messages = await _execute_fake_agent_tool_with_output(tmp_path, output)
+
+    assert len(final_texts) == 1
+    assert "child final line 1" in final_texts[0]
+    assert "child final line 5" in final_texts[0]
+    assert "child final line 6" not in final_texts[0]
+    assert "child final line 7" not in rendered
+    assert "... (2 more lines omitted; full result passed to orchestrator)" in final_texts[0]
+    assert any(isinstance(message, ToolMessage) and message.content == output for message in messages)
+
+
+@pytest.mark.asyncio
+async def test_agent_tool_result_preview_does_not_depend_on_debug(tmp_path):
+    output = "\n".join(f"debug child line {index}" for index in range(1, 8))
+
+    _rendered, final_texts, _messages = await _execute_fake_agent_tool_with_output(
+        tmp_path,
+        output,
+        debug=True,
+    )
+
+    assert len(final_texts) == 1
+    assert "debug child line 5" in final_texts[0]
+    assert "debug child line 6" not in final_texts[0]
+    assert "... (2 more lines omitted; full result passed to orchestrator)" in final_texts[0]
+
+
 def test_graph_registers_agent_tool_not_task_tool(tmp_path):
     graph = _graph(tmp_path)
     ids = graph.tools.ids()
 
     assert "agent" in ids
+    assert "agent_parallel" not in ids
     assert "on_intent" in ids
     assert "clarify" in ids
     assert "plan_checkpoint" in ids
     assert "task" not in ids
+
+
+def test_agent_parallel_tool_not_registered_when_disabled(tmp_path):
+    graph = _graph(tmp_path)
+
+    assert "agent_parallel" not in graph.tools.ids()
+
+
+def test_parallel_subagents_disabled_prompt_hides_capability():
+    agent = get_agent("orchestrator")
+    assert agent is not None
+
+    prompt = role_prompt_for_llm(agent, parallel_subagents_enabled=False)
+
+    assert "Delegate at most one child agent in a response" in prompt
+    assert "multiple `agent` tool calls" not in prompt
+    assert "run concurrently" not in prompt
+
+
+def test_parallel_subagents_enabled_prompt_exposes_capability():
+    agent = get_agent("orchestrator")
+    assert agent is not None
+
+    prompt = role_prompt_for_llm(agent, parallel_subagents_enabled=True)
+
+    assert "multiple `agent` tool calls" in prompt
+    assert "run concurrently" in prompt
+    assert "Delegate at most one child agent in a response" not in prompt
+
+
+def test_agent_tool_description_hides_parallel_when_disabled(tmp_path):
+    graph = _graph(tmp_path)
+    agent_def = graph.tools.get_def("agent")
+
+    assert agent_def is not None
+    assert "run concurrently" not in agent_def.description
+    assert "multiple `agent` tool calls" not in agent_def.description
+
+
+def test_agent_tool_description_exposes_parallel_when_enabled(tmp_path):
+    graph = VoidXGraph(
+        Config(
+            workspace=str(tmp_path),
+            parallel_subagents=ParallelSubagentsConfig(enabled=True),
+        ),
+        api_key=None,
+    )
+    agent_def = graph.tools.get_def("agent")
+
+    assert agent_def is not None
+    assert "multiple `agent` tool calls" in agent_def.description
+    assert "run concurrently" in agent_def.description
 
 
 def test_graph_session_date_uses_session_creation_date(tmp_path):
@@ -396,8 +566,504 @@ async def test_graph_authorization_prompts_for_unsafe_bash(tmp_path):
 
 
 @pytest.mark.asyncio
-async def test_execute_tools_keeps_parallel_child_agent_buffers_isolated(tmp_path):
+async def test_parallel_subagents_disabled_serializes_agent_calls(tmp_path):
     graph = _graph(tmp_path)
+    active = 0
+    max_active = 0
+
+    class FakeAgentTool:
+        id = "agent"
+        description = "fake agent"
+
+        def parameters_schema(self):
+            return {"type": "object", "properties": {}}
+
+        async def execute(self, args: dict, ctx: ToolContext) -> ToolResult:
+            nonlocal active, max_active
+            call_id = current_parent_tool_call_id.get()
+            active += 1
+            max_active = max(max_active, active)
+            await asyncio.sleep(0.01)
+            active -= 1
+            return ToolResult(output=f"done {call_id}")
+
+    graph.tools.register("agent", FakeAgentTool(), "fake agent", {"type": "object", "properties": {}})
+
+    async def allow_all(
+        tool_calls,
+        agent_name: str,
+        plan_mode: bool,
+        session_id: str,
+        interaction_mode=None,
+    ):
+        return tool_calls, []
+
+    graph._authorize_tool_calls = allow_all
+
+    parent = AIMessage(
+        content="",
+        tool_calls=[
+            {"name": "agent", "args": {"description": "a"}, "id": "call_a", "type": "tool_call"},
+            {"name": "agent", "args": {"description": "b"}, "id": "call_b", "type": "tool_call"},
+        ],
+    )
+
+    result = await graph._execute_tools({
+        "messages": [parent],
+        "workspace": str(tmp_path),
+        "agent": "orchestrator",
+        "plan_mode": False,
+    })
+
+    messages = result["messages"]
+    assert max_active == 1
+    assert [msg.tool_call_id for msg in messages if isinstance(msg, ToolMessage)] == ["call_a", "call_b"]
+
+
+@pytest.mark.asyncio
+async def test_parallel_subagents_enabled_runs_agent_calls_concurrently(tmp_path):
+    graph = VoidXGraph(
+        Config(
+            workspace=str(tmp_path),
+            parallel_subagents=ParallelSubagentsConfig(enabled=True, max_concurrent=4),
+        ),
+        api_key=None,
+    )
+    active = 0
+    max_active = 0
+
+    class FakeAgentTool:
+        id = "agent"
+        description = "fake agent"
+
+        def parameters_schema(self):
+            return {"type": "object", "properties": {}}
+
+        async def execute(self, args: dict, ctx: ToolContext) -> ToolResult:
+            nonlocal active, max_active
+            call_id = current_parent_tool_call_id.get()
+            active += 1
+            max_active = max(max_active, active)
+            await asyncio.sleep(0.01)
+            active -= 1
+            return ToolResult(output=f"done {call_id}")
+
+    graph.tools.register("agent", FakeAgentTool(), "fake agent", {"type": "object", "properties": {}})
+
+    async def allow_all(
+        tool_calls,
+        agent_name: str,
+        plan_mode: bool,
+        session_id: str,
+        interaction_mode=None,
+    ):
+        return tool_calls, []
+
+    graph._authorize_tool_calls = allow_all
+
+    parent = AIMessage(
+        content="",
+        tool_calls=[
+            {"name": "agent", "args": {"description": "a"}, "id": "call_a", "type": "tool_call"},
+            {"name": "agent", "args": {"description": "b"}, "id": "call_b", "type": "tool_call"},
+        ],
+    )
+
+    await graph._execute_tools({
+        "messages": [parent],
+        "workspace": str(tmp_path),
+        "agent": "orchestrator",
+        "plan_mode": False,
+    })
+
+    assert max_active == 2
+
+
+@pytest.mark.asyncio
+async def test_parallel_subagents_preserves_tool_message_order(tmp_path):
+    graph = VoidXGraph(
+        Config(
+            workspace=str(tmp_path),
+            parallel_subagents=ParallelSubagentsConfig(enabled=True, max_concurrent=2),
+        ),
+        api_key=None,
+    )
+
+    class FakeAgentTool:
+        id = "agent"
+        description = "fake agent"
+
+        def parameters_schema(self):
+            return {"type": "object", "properties": {}}
+
+        async def execute(self, args: dict, ctx: ToolContext) -> ToolResult:
+            call_id = current_parent_tool_call_id.get()
+            if call_id == "call_a":
+                await asyncio.sleep(0.02)
+            return ToolResult(output=f"done {call_id}")
+
+    graph.tools.register("agent", FakeAgentTool(), "fake agent", {"type": "object", "properties": {}})
+
+    async def allow_all(
+        tool_calls,
+        agent_name: str,
+        plan_mode: bool,
+        session_id: str,
+        interaction_mode=None,
+    ):
+        return tool_calls, []
+
+    graph._authorize_tool_calls = allow_all
+
+    parent = AIMessage(
+        content="",
+        tool_calls=[
+            {"name": "agent", "args": {"description": "a"}, "id": "call_a", "type": "tool_call"},
+            {"name": "agent", "args": {"description": "b"}, "id": "call_b", "type": "tool_call"},
+        ],
+    )
+
+    result = await graph._execute_tools({
+        "messages": [parent],
+        "workspace": str(tmp_path),
+        "agent": "orchestrator",
+        "plan_mode": False,
+    })
+
+    tool_messages = [msg for msg in result["messages"] if isinstance(msg, ToolMessage)]
+    assert [msg.tool_call_id for msg in tool_messages] == ["call_a", "call_b"]
+    assert [msg.content for msg in tool_messages] == ["done call_a", "done call_b"]
+
+
+@pytest.mark.asyncio
+async def test_parallel_subagents_respects_max_concurrent(tmp_path):
+    graph = VoidXGraph(
+        Config(
+            workspace=str(tmp_path),
+            parallel_subagents=ParallelSubagentsConfig(enabled=True, max_concurrent=2),
+        ),
+        api_key=None,
+    )
+    active = 0
+    max_active = 0
+
+    class FakeAgentTool:
+        id = "agent"
+        description = "fake agent"
+
+        def parameters_schema(self):
+            return {"type": "object", "properties": {}}
+
+        async def execute(self, args: dict, ctx: ToolContext) -> ToolResult:
+            nonlocal active, max_active
+            active += 1
+            max_active = max(max_active, active)
+            await asyncio.sleep(0.01)
+            active -= 1
+            return ToolResult(output="done")
+
+    graph.tools.register("agent", FakeAgentTool(), "fake agent", {"type": "object", "properties": {}})
+
+    async def allow_all(
+        tool_calls,
+        agent_name: str,
+        plan_mode: bool,
+        session_id: str,
+        interaction_mode=None,
+    ):
+        return tool_calls, []
+
+    graph._authorize_tool_calls = allow_all
+
+    parent = AIMessage(
+        content="",
+        tool_calls=[
+            {"name": "agent", "args": {"description": "a"}, "id": "call_a", "type": "tool_call"},
+            {"name": "agent", "args": {"description": "b"}, "id": "call_b", "type": "tool_call"},
+            {"name": "agent", "args": {"description": "c"}, "id": "call_c", "type": "tool_call"},
+        ],
+    )
+
+    await graph._execute_tools({
+        "messages": [parent],
+        "workspace": str(tmp_path),
+        "agent": "orchestrator",
+        "plan_mode": False,
+    })
+
+    assert max_active == 2
+
+
+@pytest.mark.asyncio
+async def test_parallel_subagents_failure_isolated(tmp_path):
+    graph = VoidXGraph(
+        Config(
+            workspace=str(tmp_path),
+            parallel_subagents=ParallelSubagentsConfig(enabled=True, max_concurrent=2),
+        ),
+        api_key=None,
+    )
+
+    class FakeAgentTool:
+        id = "agent"
+        description = "fake agent"
+
+        def parameters_schema(self):
+            return {"type": "object", "properties": {}}
+
+        async def execute(self, args: dict, ctx: ToolContext) -> ToolResult:
+            call_id = current_parent_tool_call_id.get()
+            if call_id == "call_a":
+                raise RuntimeError("boom")
+            return ToolResult(output=f"done {call_id}")
+
+    graph.tools.register("agent", FakeAgentTool(), "fake agent", {"type": "object", "properties": {}})
+
+    async def allow_all(
+        tool_calls,
+        agent_name: str,
+        plan_mode: bool,
+        session_id: str,
+        interaction_mode=None,
+    ):
+        return tool_calls, []
+
+    graph._authorize_tool_calls = allow_all
+
+    parent = AIMessage(
+        content="",
+        tool_calls=[
+            {"name": "agent", "args": {"description": "a"}, "id": "call_a", "type": "tool_call"},
+            {"name": "agent", "args": {"description": "b"}, "id": "call_b", "type": "tool_call"},
+        ],
+    )
+
+    result = await graph._execute_tools({
+        "messages": [parent],
+        "workspace": str(tmp_path),
+        "agent": "orchestrator",
+        "plan_mode": False,
+    })
+
+    messages = result["messages"]
+    assert messages[0].tool_call_id == "call_a"
+    assert "Tool execution error: boom" in messages[0].content
+    assert messages[1].tool_call_id == "call_b"
+    assert messages[1].content == "done call_b"
+
+
+@pytest.mark.asyncio
+async def test_parallel_subagents_keeps_barrier_deferral(tmp_path):
+    graph = VoidXGraph(
+        Config(
+            workspace=str(tmp_path),
+            parallel_subagents=ParallelSubagentsConfig(enabled=True),
+        ),
+        api_key=None,
+    )
+    executed: list[str] = []
+
+    class FakeBarrierTool:
+        id = "plan_checkpoint"
+        description = "fake barrier"
+
+        def parameters_schema(self):
+            return {"type": "object", "properties": {}}
+
+        async def execute(self, args: dict, ctx: ToolContext) -> ToolResult:
+            executed.append("plan_checkpoint")
+            return ToolResult(output="checkpoint ok")
+
+    class FakeAgentTool:
+        id = "agent"
+        description = "fake agent"
+
+        def parameters_schema(self):
+            return {"type": "object", "properties": {}}
+
+        async def execute(self, args: dict, ctx: ToolContext) -> ToolResult:
+            executed.append("agent")
+            return ToolResult(output="should not run")
+
+    graph.tools.register("plan_checkpoint", FakeBarrierTool(), "fake barrier", {"type": "object", "properties": {}})
+    graph.tools.register("agent", FakeAgentTool(), "fake agent", {"type": "object", "properties": {}})
+
+    async def allow_all(
+        tool_calls,
+        agent_name: str,
+        plan_mode: bool,
+        session_id: str,
+        interaction_mode=None,
+    ):
+        return tool_calls, []
+
+    graph._authorize_tool_calls = allow_all
+
+    parent = AIMessage(
+        content="",
+        tool_calls=[
+            {"name": "plan_checkpoint", "args": {}, "id": "call_plan", "type": "tool_call"},
+            {"name": "agent", "args": {"description": "a"}, "id": "call_agent", "type": "tool_call"},
+        ],
+    )
+
+    result = await graph._execute_tools({
+        "messages": [parent],
+        "workspace": str(tmp_path),
+        "agent": "orchestrator",
+        "plan_mode": False,
+    })
+
+    assert executed == ["plan_checkpoint"]
+    assert [msg.tool_call_id for msg in result["messages"]] == ["call_plan", "call_agent"]
+    assert result["messages"][0].content == "checkpoint ok"
+    assert "Deferred until after a runtime barrier tool" in result["messages"][1].content
+
+
+@pytest.mark.asyncio
+async def test_parallel_subagents_plan_mode_blocks_implement(tmp_path):
+    graph = VoidXGraph(
+        Config(
+            workspace=str(tmp_path),
+            parallel_subagents=ParallelSubagentsConfig(enabled=True),
+        ),
+        api_key=None,
+    )
+    executed: list[str] = []
+
+    class FakeAgentTool:
+        id = "agent"
+        description = "fake agent"
+
+        def parameters_schema(self):
+            return {"type": "object", "properties": {}}
+
+        async def execute(self, args: dict, ctx: ToolContext) -> ToolResult:
+            executed.append(str(args.get("agent", "")))
+            return ToolResult(output="should not run")
+
+    graph.tools.register("agent", FakeAgentTool(), "fake agent", {"type": "object", "properties": {}})
+
+    parent = AIMessage(
+        content="",
+        tool_calls=[
+            {
+                "name": "agent",
+                "args": {"agent": "implement", "description": "change auth"},
+                "id": "call_a",
+                "type": "tool_call",
+            },
+            {
+                "name": "agent",
+                "args": {"agent": "implement", "description": "change ui"},
+                "id": "call_b",
+                "type": "tool_call",
+            },
+        ],
+    )
+
+    result = await graph._execute_tools({
+        "messages": [parent],
+        "workspace": str(tmp_path),
+        "agent": "orchestrator",
+        "plan_mode": True,
+        "interaction_mode": "plan",
+    })
+
+    assert executed == []
+    assert [msg.tool_call_id for msg in result["messages"]] == ["call_a", "call_b"]
+    assert all("BLOCKED by plan mode: cannot delegate to implement" in msg.content for msg in result["messages"])
+
+
+@pytest.mark.asyncio
+async def test_parallel_subagents_aggregate_ui_status_enabled_only(tmp_path):
+    async def run_case(enabled: bool) -> list[object]:
+        graph = VoidXGraph(
+            Config(
+                workspace=str(tmp_path),
+                parallel_subagents=ParallelSubagentsConfig(enabled=enabled),
+            ),
+            api_key=None,
+        )
+
+        class FakeAgentTool:
+            id = "agent"
+            description = "fake agent"
+
+            def parameters_schema(self):
+                return {"type": "object", "properties": {}}
+
+            async def execute(self, args: dict, ctx: ToolContext) -> ToolResult:
+                await asyncio.sleep(0)
+                return ToolResult(output="done")
+
+        graph.tools.register("agent", FakeAgentTool(), "fake agent", {"type": "object", "properties": {}})
+
+        async def allow_all(
+            tool_calls,
+            agent_name: str,
+            plan_mode: bool,
+            session_id: str,
+            interaction_mode=None,
+        ):
+            return tool_calls, []
+
+        graph._authorize_tool_calls = allow_all
+        events: list[object] = []
+
+        class RecordingConsumer:
+            def handle(self, event):
+                events.append(event)
+                return None
+
+        parent = AIMessage(
+            content="",
+            tool_calls=[
+                {"name": "agent", "args": {"description": "a"}, "id": "call_a", "type": "tool_call"},
+                {"name": "agent", "args": {"description": "b"}, "id": "call_b", "type": "tool_call"},
+            ],
+        )
+
+        test_dock = BottomInputDock()
+        set_dock(test_dock)
+        test_dock.begin_capture()
+        ui_events.start(RecordingConsumer())
+        try:
+            await graph._execute_tools({
+                "messages": [parent],
+                "workspace": str(tmp_path),
+                "agent": "orchestrator",
+                "plan_mode": False,
+            })
+            await ui_events.drain()
+        finally:
+            await ui_events.stop()
+            test_dock.deactivate()
+            test_dock.reset()
+            set_dock(None)
+        return events
+
+    disabled = await run_case(False)
+    enabled = await run_case(True)
+
+    disabled_labels = [getattr(event, "label", "") for event in disabled]
+    enabled_labels = [getattr(event, "label", "") for event in enabled]
+
+    assert "Running 2 child agents" not in disabled_labels
+    assert "Finished 2 child agents" not in disabled_labels
+    assert "Running 2 child agents" in enabled_labels
+    assert "Finished 2 child agents" in enabled_labels
+
+
+@pytest.mark.asyncio
+async def test_execute_tools_keeps_parallel_child_agent_buffers_isolated(tmp_path):
+    graph = VoidXGraph(
+        Config(
+            workspace=str(tmp_path),
+            parallel_subagents=ParallelSubagentsConfig(enabled=True),
+        ),
+        api_key=None,
+    )
 
     class FakeAgentTool:
         id = "agent"
@@ -517,10 +1183,11 @@ async def test_execute_tools_emits_todo_updated_node(tmp_path):
 
 
 @pytest.mark.asyncio
-async def test_agent_tool_suppresses_child_stream_but_keeps_final_result(tmp_path, monkeypatch):
+async def test_subagent_full_output_reaches_orchestrator(tmp_path, monkeypatch):
     import voidx.agent.graph.subagent as subagent_module
 
     graph = _graph(tmp_path)
+    child_output = "\n".join(f"child final line {index}" for index in range(1, 8))
 
     class FakeSubagentModel:
         def bind_tools(self, _tool_defs):
@@ -528,7 +1195,7 @@ async def test_agent_tool_suppresses_child_stream_but_keeps_final_result(tmp_pat
 
         async def astream(self, _messages):
             yield AIMessageChunk(content=[{"type": "thinking", "text": "child hidden thought"}])
-            yield AIMessageChunk(content="child final answer")
+            yield AIMessageChunk(content=child_output)
 
     monkeypatch.setattr(
         subagent_module,
@@ -576,20 +1243,24 @@ async def test_agent_tool_suppresses_child_stream_but_keeps_final_result(tmp_pat
         subagent = next(node for node in agent_tool.children if node.node_type == "subagent")
         child_streams = [
             node for node in subagent.children
-            if node.node_type == "assistant" and "child final answer" in node.header
+            if node.node_type == "assistant" and "child final line" in node.header
         ]
-        final_results = [
-            node for node in agent_tool.children
-            if node.node_type == "tool_result" and "child final answer" in node.header
-        ]
+        final_results = [node for node in agent_tool.children if node.node_type == "tool_result"]
 
         rendered = "\n".join(test_dock.tree.render(120))
         assert child_streams == []
         assert len(final_results) == 1
+        final_result_text = "\n".join([final_results[0].header, *final_results[0].body_lines])
+        assert "child final line 1" in final_result_text
+        assert "child final line 5" in final_result_text
+        assert "child final line 6" not in final_result_text
+        assert "... (2 more lines omitted; full result passed to orchestrator)" in final_result_text
         assert "child hidden thought" not in rendered
-        assert rendered.count("child final answer") == 1
-        assert [message.tool_call_id for message in result["messages"] if isinstance(message, ToolMessage)][0] == "call_agent"
-        assert any(isinstance(message, AIMessage) and message.content == "child final answer" for message in result["messages"])
+        assert "child final line 7" not in rendered
+        tool_messages = [message for message in result["messages"] if isinstance(message, ToolMessage)]
+        assert tool_messages[0].tool_call_id == "call_agent"
+        assert tool_messages[0].content == child_output
+        assert any(isinstance(message, AIMessage) and message.content == child_output for message in result["messages"])
     finally:
         await ui_events.stop()
         test_dock.deactivate()

@@ -4,7 +4,19 @@ import sys
 
 sys.path.insert(0, "src")
 
-from voidx.config import CodeIde, ApprovalPolicy, ApprovalReviewer, McpServerConfig, PermissionMode, Profile, SandboxMode, Settings, UserProfile, WebToolRoute
+from voidx.config import (
+    ApprovalPolicy,
+    ApprovalReviewer,
+    CodeIde,
+    McpServerConfig,
+    ParallelSubagentsConfig,
+    PermissionMode,
+    Profile,
+    SandboxMode,
+    Settings,
+    UserProfile,
+    WebToolRoute,
+)
 from voidx.config.models import AgentMaxSteps
 from voidx.memory.model_profiles import delete_model_profile_async
 
@@ -164,7 +176,9 @@ async def test_permission_mode_presets_drive_build_config(tmp_path):
 
 
 async def test_build_config_defaults_and_reads_ask_compact(tmp_path):
-    assert (await (await Settings.create(str(tmp_path))).build_config()).ask_compact is False
+    cfg = await (await Settings.create(str(tmp_path))).build_config()
+    assert cfg.ask_compact is False
+    assert cfg.parallel_subagents == ParallelSubagentsConfig()
 
     (tmp_path / "voidx.json").write_text(
         json.dumps({"askCompact": True}),
@@ -172,6 +186,24 @@ async def test_build_config_defaults_and_reads_ask_compact(tmp_path):
     )
 
     assert (await (await Settings.create(str(tmp_path))).build_config()).ask_compact is True
+
+
+async def test_parallel_subagents_settings_round_trip(tmp_path):
+    settings = Settings(str(tmp_path))
+
+    assert settings.get_parallel_subagents() == ParallelSubagentsConfig()
+
+    settings.set_parallel_subagents(ParallelSubagentsConfig(enabled=True, max_concurrent=3))
+
+    loaded = Settings(str(tmp_path))
+    assert loaded.get_parallel_subagents() == ParallelSubagentsConfig(
+        enabled=True,
+        max_concurrent=3,
+    )
+    assert (await loaded.build_config()).parallel_subagents == ParallelSubagentsConfig(
+        enabled=True,
+        max_concurrent=3,
+    )
 
 
 async def test_user_profile_round_trips_and_builds_config(tmp_path):

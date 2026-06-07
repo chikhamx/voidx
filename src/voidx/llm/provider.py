@@ -311,7 +311,7 @@ def get_context_limit(provider: str, protocol: str = "") -> int:
         "zhipu": 200_000,
         "kimi": 262_144,
         "doubao": 256_000,
-        "typex": 200_000,
+        "typex": 128_000,
     }
     if provider in limits:
         return limits[provider]

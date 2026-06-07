@@ -17,6 +17,8 @@ from voidx.agent.tool_messages import sanitize_tool_message_content
 from voidx.tools.base import ToolContext, UserInteraction, UserResponse
 from voidx.runtime.ui import (
     FileChangeAppended,
+    StatusFinished,
+    StatusUpdated,
     ToolFinished,
     ToolResultAppended,
     ToolStarted,
@@ -33,6 +35,8 @@ if TYPE_CHECKING:
 
 
 _OTHER_VALUE_PREFIX = "__voidx_choice_prompt_other__"
+AGENT_RESULT_PREVIEW_LINES = 5
+AGENT_RESULT_PREVIEW_CHARS = 1200
 
 
 @dataclass
@@ -192,19 +196,20 @@ class GraphToolExecutionMixin:
                 if self._debug and not tool_node:
                     ui.diff(result.diff)
             elif self._debug or tid == "agent":
+                output = _agent_result_preview(result.output) if tid == "agent" else result.output
                 if via_events():
                     await ui_events.emit(ToolResultAppended(
                         tool_call_id=tool_event_id,
-                        text=result.output,
+                        text=output,
                     ))
                 elif tool_node:
                     dock.append_tool_result(
-                        result.output,
+                        output,
                         parent=tool_node,
                         tool_call_id=tool_event_id,
                     )
                 else:
-                    ui.tool_result(result.output)
+                    ui.tool_result(output)
 
             return _ExecutedTool(
                 message=ToolMessage(
@@ -215,12 +220,43 @@ class GraphToolExecutionMixin:
                 tool_call=tc,
             )
 
+        agent_limit = _parallel_subagent_limit(self.config)
+        agent_semaphore = asyncio.Semaphore(agent_limit)
+        parallel_agent_count = sum(1 for tc in approved if tc.get("name") == "agent")
+        aggregate_status_id = ""
+        show_parallel_status = (
+            agent_limit > 1
+            and parallel_agent_count > 1
+            and not barrier_present
+        )
+
+        async def execute_one_limited(tc):
+            if tc.get("name") == "agent":
+                async with agent_semaphore:
+                    return await execute_one(tc)
+            return await execute_one(tc)
+
+        if show_parallel_status and via_events():
+            aggregate_status_id = f"parallel-subagents:{id(last)}"
+            await ui_events.emit(StatusUpdated(
+                status_id=aggregate_status_id,
+                label=f"Running {parallel_agent_count} child agents",
+                stage="working",
+            ))
+
         if barrier_present:
             executed = []
             for tc in approved:
                 executed.append(await execute_one(tc))
         else:
-            executed = await asyncio.gather(*[execute_one(tc) for tc in approved])
+            try:
+                executed = await asyncio.gather(*[execute_one_limited(tc) for tc in approved])
+            finally:
+                if aggregate_status_id:
+                    await ui_events.emit(StatusFinished(
+                        status_id=aggregate_status_id,
+                        label=f"Finished {parallel_agent_count} child agents",
+                    ))
 
         # Clear on-failure tracking for this batch (full logic in Phase 2)
         self._needs_failure_check.clear()
@@ -293,6 +329,42 @@ def _state_update_from_executed_tools(executed: list[_ExecutedTool]) -> dict:
             else:
                 update[field] = data.get(field)
     return update
+
+
+def _parallel_subagent_limit(config) -> int:
+    parallel = getattr(config, "parallel_subagents", None)
+    if not bool(getattr(parallel, "enabled", False)):
+        return 1
+    raw = getattr(parallel, "max_concurrent", 4)
+    try:
+        return max(1, int(raw))
+    except (TypeError, ValueError):
+        return 4
+
+
+def _agent_result_preview(text: object) -> str:
+    raw = str(text)
+    stripped = raw.strip()
+    if not stripped:
+        return raw
+
+    lines = stripped.splitlines()
+    visible = lines[:AGENT_RESULT_PREVIEW_LINES]
+    omitted_lines = max(0, len(lines) - len(visible))
+
+    preview = "\n".join(visible)
+    omitted_chars = max(0, len(preview) - AGENT_RESULT_PREVIEW_CHARS)
+    if omitted_chars:
+        preview = preview[:AGENT_RESULT_PREVIEW_CHARS].rstrip()
+
+    suffixes = []
+    if omitted_lines:
+        suffixes.append(f"{omitted_lines} more lines")
+    if omitted_chars:
+        suffixes.append(f"{omitted_chars} more chars")
+    if suffixes:
+        preview = f"{preview}\n... ({'; '.join(suffixes)} omitted; full result passed to orchestrator)"
+    return preview
 
 
 def _is_barrier_tool(tool_call: dict) -> bool:

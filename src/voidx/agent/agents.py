@@ -55,12 +55,6 @@ BASE_SYSTEM_PROMPT = """You are voidx, a coding agent that lives in the terminal
 - The Current Task State lists active workflow skills for this turn.
 - The Active Skills section contains the full instructions for active skills.
 - Follow active workflow skills before acting.
-
-## Parallel Execution
-
-- Multiple tool calls in one model response run in parallel.
-- Tool calls across separate model responses run sequentially.
-- Batch independent reads/searches together; keep dependent work sequential.
 """
 
 
@@ -127,12 +121,6 @@ surgical edits directly when that is the shortest safe path.
   approval or clarification, call plan_checkpoint or clarify yourself.
 - Don't tell the user "done" until changes are verified.
 - Child agents have isolated context — give them complete, self-contained briefs.
-
-## Parallel Execution
-- Multiple tool calls in ONE response → they run in parallel.
-- Tool calls across SEPARATE responses → they run sequentially.
-- Batch independent work: read 3 files at once, search + fetch in the same step.
-- Sequential work: search first, then read based on what you found.
 """
 
 # Plan mode prompt — injected when plan_mode=True
@@ -302,6 +290,39 @@ ROLE_PROMPTS = {
     "review": REVIEW_PROMPT,
 }
 PROMPTLESS_AGENTS = {"compaction", "title"}
+
+
+def role_prompt_for_llm(agent: AgentDef, *, parallel_subagents_enabled: bool = False) -> str:
+    """Return the role prompt with runtime-gated child-agent scheduling rules."""
+
+    prompt = agent.role_prompt
+    if agent.name != "orchestrator":
+        return prompt
+    child_agent_prompt = _parallel_subagents_prompt(
+        enabled=parallel_subagents_enabled,
+    )
+    if not prompt:
+        return child_agent_prompt
+    return f"{prompt.rstrip()}\n\n{child_agent_prompt}"
+
+
+def _parallel_subagents_prompt(*, enabled: bool) -> str:
+    if enabled:
+        return """## Child-Agent Scheduling
+
+- For independent child-agent tasks, you may issue multiple `agent` tool calls
+  in one response. They will run concurrently up to the configured limit.
+- Each child-agent brief must be complete and self-contained.
+- Keep dependent child-agent work sequential: wait for the result before
+  delegating follow-up work that depends on it.
+- Batch independent read/search tools when useful; keep dependent tool work
+  sequential."""
+    return """## Child-Agent Scheduling
+
+- Delegate at most one child agent in a response. Wait for that result before
+  deciding whether another child agent is needed.
+- Batch independent non-agent read/search tools when useful; keep dependent
+  work sequential."""
 
 
 # ── built-in agents ────────────────────────────────────────────────────────

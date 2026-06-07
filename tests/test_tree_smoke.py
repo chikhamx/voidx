@@ -120,6 +120,42 @@ def test_expanded_view_hides_internal_node_ids():
     assert "\\[" not in expanded
 
 
+def test_agent_subagent_render_flattens_wrapper_node():
+    tree = OutputTree()
+    assistant = tree.new_node(tree.root, node_type="assistant", header="● Working")
+    agent_tool = tree.new_node(
+        assistant,
+        node_type="tool_call",
+        header='● Agent("review")',
+        payload={"tool_name": "agent"},
+    )
+    subagent = tree.new_node(
+        agent_tool,
+        node_type="subagent",
+        header="● review agent completed",
+        agent_name="review",
+    )
+    tree.new_node(
+        subagent,
+        node_type="tool_call",
+        header='● Map("src")',
+    )
+    tree.new_node(
+        agent_tool,
+        node_type="tool_result",
+        header="review final",
+    )
+
+    lines = tree.render(100)
+    rendered = "\n".join(lines)
+    map_line = next(line for line in lines if 'Map("src")' in line)
+
+    assert "review agent completed" not in rendered
+    assert 'Agent("review")' in rendered
+    assert "└─" in map_line
+    assert "│" not in map_line.partition("Map")[0]
+
+
 def test_transcript_snapshot_round_trips_turn_tree():
     tree = OutputTree()
     turn = tree.new_node(tree.root, node_type="turn", header="❯ inspect")

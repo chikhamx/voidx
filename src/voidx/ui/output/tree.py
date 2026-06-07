@@ -392,6 +392,13 @@ class OutputTree:
 
         start = len(lines)
 
+        if _is_transparent_agent_subagent(node):
+            for child in node.children:
+                self._walk_render(child, prefix_parts, lines, line_map, click_map)
+            self._node_ranges[node.id] = (start, len(lines))
+            self._node_prefixes[node.id] = list(prefix_parts)
+            return
+
         # ── depth 1: no box-drawing ────────────────────────────────────
         if node.depth == 1:
             if node.collapsed:
@@ -428,7 +435,8 @@ class OutputTree:
 
         # ── depth >= 2: full box-drawing ───────────────────────────────
         indent = "".join(prefix_parts)
-        connector = self.BOX_LAST if node._is_last_sibling else self.BOX_BRANCH
+        effectively_last = _is_effectively_last_sibling(node)
+        connector = self.BOX_LAST if effectively_last else self.BOX_BRANCH
         is_first_sibling = (
             node.parent is not None
             and bool(node.parent.children)
@@ -466,7 +474,7 @@ class OutputTree:
             click_map[len(lines) - 1] = node.id
 
         # Continuation for body lines and children
-        cont_suffix = self.BOX_SPACE if suppress_connector or node._is_last_sibling else self.BOX_VERT
+        cont_suffix = self.BOX_SPACE if suppress_connector or effectively_last else self.BOX_VERT
         cont = indent if inline_tool_result else indent + cont_suffix
 
         # Body lines
@@ -487,3 +495,33 @@ class OutputTree:
 
 def _is_clickable(node: OutputNode) -> bool:
     return node.node_type in {"subagent", "tool_call", "tool_result", "thought", "status"}
+
+
+def _is_effectively_last_sibling(node: OutputNode) -> bool:
+    parent = node.parent
+    if parent is None:
+        return True
+    siblings = parent.children
+    try:
+        index = siblings.index(node)
+    except ValueError:
+        return node._is_last_sibling
+    return not any(not _is_inline_tool_result(sibling) for sibling in siblings[index + 1:])
+
+
+def _is_inline_tool_result(node: OutputNode) -> bool:
+    return (
+        node.node_type == "tool_result"
+        and node.parent is not None
+        and node.parent.node_type == "tool_call"
+    )
+
+
+def _is_transparent_agent_subagent(node: OutputNode) -> bool:
+    parent = node.parent
+    return (
+        node.node_type == "subagent"
+        and parent is not None
+        and parent.node_type == "tool_call"
+        and parent.payload.get("tool_name") == "agent"
+    )

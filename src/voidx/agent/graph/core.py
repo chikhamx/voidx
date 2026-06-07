@@ -27,6 +27,7 @@ from voidx.agent.agents import (
     PLAN_MODE_APPEND,
     AgentDef,
     get_agent,
+    role_prompt_for_llm,
 )
 from voidx.agent.graph.compaction import GraphCompactionMixin
 from voidx.agent.graph.convergence import (
@@ -133,6 +134,7 @@ class VoidXGraph(
         bind_settings_to_catalog(settings)
         self._tracker, self.tools = build_tool_registry(
             settings=settings,
+            config=config,
             on_intent_resolver=self._resolve_on_intent,
             subagent_runner=self._subagent_runner,
         )
@@ -407,7 +409,13 @@ class VoidXGraph(
         base = prepare_state(state)
         agent_name = state.get("agent", "orchestrator")
         self._current_agent = self._apply_max_steps_override(get_agent(agent_name))
-        role_prompt = self._current_agent.role_prompt if self._current_agent else ""
+        role_prompt = (
+            role_prompt_for_llm(
+                self._current_agent,
+                parallel_subagents_enabled=self.config.parallel_subagents.enabled,
+            )
+            if self._current_agent else ""
+        )
         tool_contract = self._current_agent.tool_contract if self._current_agent else ""
 
         interaction_mode = state.get("interaction_mode") or (

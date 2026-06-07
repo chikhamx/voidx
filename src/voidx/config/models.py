@@ -118,12 +118,20 @@ class AgentMaxSteps(BaseModel):
         return data
 
 
+class ParallelSubagentsConfig(BaseModel):
+    """Runtime gate for concurrent child-agent execution."""
+
+    enabled: bool = False
+    max_concurrent: int = Field(default=4, ge=1, le=8)
+
+
 class Config(BaseModel):
     model: ModelConfig = Field(default_factory=ModelConfig)
     agent: AgentConfig = Field(default_factory=lambda: AgentConfig(
         name="build", description="Primary coding agent.",
     ))
     agent_max_steps: AgentMaxSteps = Field(default_factory=AgentMaxSteps)
+    parallel_subagents: ParallelSubagentsConfig = Field(default_factory=ParallelSubagentsConfig)
     workspace: str = "."
     permission_mode: PermissionMode = PermissionMode.DEFAULT
     sandbox_mode: SandboxMode = SandboxMode.WORKSPACE_WRITE
