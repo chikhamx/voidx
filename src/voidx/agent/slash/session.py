@@ -75,7 +75,7 @@ class SlashSessionMixin:
         items = []
         for session in sessions:
             title = session.title[:50] + ("..." if len(session.title) > 50 else "")
-            items.append(f"{session.id[:8]} | {title} | {getattr(session, 'updated_at', '')[:16]}")
+            items.append(f"{session.id[:8]} | {title} | {session.workspace} | {getattr(session, 'updated_at', '')[:16]}")
 
         idx = None
         app = self._host_app()
@@ -97,7 +97,7 @@ class SlashSessionMixin:
             items = []
             for session in sessions:
                 title = session.title[:50] + ("..." if len(session.title) > 50 else "")
-                items.append(f"{session.id[:8]} | {title} | {getattr(session, 'updated_at', '')[:16]}")
+                items.append(f"{session.id[:8]} | {title} | {session.workspace} | {getattr(session, 'updated_at', '')[:16]}")
             idx = None
             app = self._host_app()
             if app is not None:

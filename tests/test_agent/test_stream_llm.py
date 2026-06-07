@@ -12,6 +12,7 @@ from voidx.agent.graph.streaming import stream_llm as _stream_llm
 from voidx.agent.graph import VoidXGraph
 from voidx.agent.graph.convergence import is_step_hint_message
 from voidx.config import Config, ModelConfig
+from voidx.llm.message_markers import is_guidance_message
 from voidx.memory.context_frames import load_context_frames
 from voidx.memory.session import MessageRow, create_session, delete_session, save_message
 from voidx.ui.output.console import StreamingRenderer
@@ -471,6 +472,75 @@ async def test_call_llm_final_step_injects_prompt_and_disables_tools(tmp_path, m
     assert "FINAL response step" in model.messages[-1].content
     assert "Original goal: finish the task" in model.messages[-1].content
     assert not any(is_step_hint_message(message) for message in result["messages"])
+
+
+@pytest.mark.asyncio
+async def test_call_llm_injects_pending_guidance_before_next_model_call(tmp_path, monkeypatch):
+    import voidx.agent.graph.core as graph_module
+
+    monkeypatch.setattr(graph_module, "StreamingRenderer", FakeRenderer)
+
+    graph = VoidXGraph(
+        Config(
+            model=ModelConfig(provider="mimo", model="mimo-v2.5"),
+            workspace=str(tmp_path),
+        ),
+        api_key=None,
+    )
+    model = TrackingStreamingModel()
+    graph.model = model
+
+    assert graph.submit_guidance("  Use   TypeScript  ")
+    result = await graph._call_llm({
+        "messages": [HumanMessage(content="finish the task")],
+        "step_count": 0,
+        "max_steps": 50,
+        "agent": "orchestrator",
+    })
+
+    assert len(result["messages"]) == 2
+    assert result["messages"][0].content == "Use TypeScript"
+    assert is_guidance_message(result["messages"][0])
+    assert result["messages"][1].content == "answer"
+    assert model.messages is not None
+    assert [message.content for message in model.messages] == [
+        "finish the task",
+        "Use TypeScript",
+    ]
+    assert is_guidance_message(model.messages[1])
+    assert graph._pending_guidance == []
+
+
+@pytest.mark.asyncio
+async def test_call_llm_guidance_does_not_replace_final_convergence_goal(tmp_path, monkeypatch):
+    import voidx.agent.graph.core as graph_module
+
+    monkeypatch.setattr(graph_module, "StreamingRenderer", FakeRenderer)
+
+    graph = VoidXGraph(
+        Config(
+            model=ModelConfig(provider="mimo", model="mimo-v2.5"),
+            workspace=str(tmp_path),
+        ),
+        api_key=None,
+    )
+    model = TrackingStreamingModel()
+    graph.model = model
+
+    graph.submit_guidance("Use TypeScript for the implementation")
+    result = await graph._call_llm({
+        "messages": [HumanMessage(content="finish the task")],
+        "step_count": 49,
+        "max_steps": 50,
+        "agent": "orchestrator",
+    })
+
+    assert result["convergence_forced"] is True
+    assert model.messages is not None
+    assert is_guidance_message(model.messages[-2])
+    assert is_step_hint_message(model.messages[-1])
+    assert "Original goal: finish the task" in model.messages[-1].content
+    assert "Original goal: Use TypeScript" not in model.messages[-1].content
 
 
 @pytest.mark.asyncio

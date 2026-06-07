@@ -21,6 +21,7 @@ from voidx.memory.session import MessageRow, create_session, load_messages, save
 from voidx.skills.runtime import SkillActivationSource, SkillRunState, SkillRunStatus
 from voidx.tools.task_tracker import TaskTracker
 from voidx.ui.output.dock import BottomInputDock, set_dock
+from voidx.ui.protocol import UiSubmitCommand
 
 
 class FakeTui:
@@ -34,6 +35,9 @@ class FakeTui:
     async def run(self, on_submit):
         keep_running = await on_submit("/model reasoning")
         assert keep_running is True
+
+    def set_external_command_handler(self, handler):
+        self.command_handler = handler
 
     def consume_quiet_command(self, command: str) -> bool:
         return command == "/model reasoning"
@@ -92,6 +96,42 @@ async def test_quiet_slash_command_dispatches_without_turn(monkeypatch):
     await graph.run()
 
     assert dispatched == ["/model reasoning"]
+
+
+@pytest.mark.asyncio
+async def test_web_guide_submit_records_guidance_without_starting_turn():
+    graph = _graph()
+    guidance: list[str] = []
+    queued_inputs: list[str] = []
+
+    graph.submit_guidance = lambda text: guidance.append(text) or True
+    app = SimpleNamespace(
+        submit_external_input=queued_inputs.append,
+        cancel_external_input=lambda: None,
+    )
+
+    await graph._handle_web_command(app, UiSubmitCommand(text="/guide use TypeScript"))
+
+    assert guidance == ["use TypeScript"]
+    assert queued_inputs == []
+
+
+@pytest.mark.asyncio
+async def test_web_direct_guide_command_records_guidance():
+    graph = _graph()
+    guidance: list[str] = []
+    queued_inputs: list[str] = []
+
+    graph.submit_guidance = lambda text: guidance.append(text) or True
+    app = SimpleNamespace(
+        submit_external_input=queued_inputs.append,
+        cancel_external_input=lambda: None,
+    )
+
+    await graph._handle_web_command(app, {"kind": "guide", "text": "stay narrow"})
+
+    assert guidance == ["stay narrow"]
+    assert queued_inputs == []
 
 
 @pytest.mark.asyncio
@@ -256,6 +296,31 @@ async def test_run_once_cancel_deletes_pending_user_message(tmp_path):
 
         messages = await load_messages(session.id)
         assert messages == []
+    finally:
+        test_dock.deactivate()
+        test_dock.reset()
+        set_dock(None)
+
+
+@pytest.mark.asyncio
+async def test_run_once_clears_unconsumed_guidance(tmp_path):
+    session = await create_session(
+        workspace=str(tmp_path),
+        provider="mimo",
+        model="mimo-v2.5",
+    )
+    graph = VoidXGraph(Config(workspace=str(tmp_path)), api_key=None, session=session)
+    test_dock = BottomInputDock()
+    set_dock(test_dock)
+    test_dock.begin_capture()
+    try:
+        assert graph.submit_guidance("Use TypeScript")
+
+        await graph._run_once("hello world")
+
+        rendered = "\n".join(test_dock.tree.render(120))
+        assert graph._pending_guidance == []
+        assert "Guidance discarded: no LLM call to inject into." in rendered
     finally:
         test_dock.deactivate()
         test_dock.reset()

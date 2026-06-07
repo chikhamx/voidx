@@ -7,6 +7,7 @@ from typing import Any, Protocol
 
 from voidx.diffing import git_diff, git_diff_stat
 from voidx.agent.slash.code_ide import SlashCodeIdeMixin
+from voidx.agent.slash.guide import SlashGuideMixin
 from voidx.agent.slash.lsp import SlashLspMixin
 from voidx.agent.slash.mcp import SlashMcpMixin
 from voidx.agent.slash.model import SlashModelMixin
@@ -54,6 +55,7 @@ class SlashCommandHost(Protocol):
 
 class SlashHandler(
     SlashCodeIdeMixin,
+    SlashGuideMixin,
     SlashLspMixin,
     SlashSessionMixin,
     SlashSkillsMixin,
@@ -194,6 +196,7 @@ class SlashHandler(
             "/title": lambda: self._set_title(inp),
             "/mode": lambda: self._mode(args),
             "/goal": lambda: self._goal(args),
+            "/guide": lambda: self._guide(args),
             "/lang": lambda: self._lang(args),
             "/plan": set_plan,
             "/unplan": set_auto,

@@ -13,6 +13,7 @@ from voidx.agent.graph.convergence import (
     generate_fallback_summary,
     is_step_hint_message,
 )
+from voidx.llm.message_markers import GUIDANCE_MARKER
 
 
 def test_build_step_hint_normal_window():
@@ -123,3 +124,28 @@ def test_generate_fallback_summary_prefers_goal_over_latest_user():
 
     assert "Goal: Complete the approved implementation" in summary
     assert "Latest request text" not in summary
+
+
+def test_generate_fallback_summary_ignores_guidance_for_latest_user():
+    hint, _ = build_convergence_messages(
+        step=9,
+        max_steps=10,
+        has_tool_budget=False,
+        goal="",
+    )
+    summary = generate_fallback_summary({
+        "messages": [
+            HumanMessage(content="Finish the implementation"),
+            HumanMessage(
+                content="Use TypeScript",
+                additional_kwargs={GUIDANCE_MARKER: True},
+            ),
+            *hint,
+        ],
+        "tool_results": {},
+        "step_count": 9,
+        "max_steps": 10,
+    })
+
+    assert "Latest request: Finish the implementation" in summary
+    assert "Use TypeScript" not in summary

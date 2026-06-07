@@ -172,6 +172,7 @@ class GraphRunLoopMixin(GraphTurnMixin, GraphSessionMixin, GraphTranscriptMixin)
             COMMANDS,
         )
         self._app = app
+        app.set_external_command_handler(partial(self._handle_web_command, app))
 
         if gateway_session is not None:
             gateway_session.set_command_handler(partial(self._handle_web_command, app))
@@ -233,9 +234,16 @@ class GraphRunLoopMixin(GraphTurnMixin, GraphSessionMixin, GraphTranscriptMixin)
                 ui.print(exit_message)
 
     async def _handle_web_command(self: GraphRunLoopHost, app: Any, command: Any) -> None:
+        if isinstance(command, dict) and command.get("kind") == "guide":
+            self.submit_guidance(str(command.get("text", "")))
+            return
         kind = ui_command_kind(command)
         if kind == "submit":
-            app.submit_external_input(command.text)
+            text = command.text
+            if text.strip().startswith("/guide "):
+                self.submit_guidance(text.strip().removeprefix("/guide").strip())
+            else:
+                app.submit_external_input(text)
         elif kind == "cancel":
             app.cancel_external_input()
 

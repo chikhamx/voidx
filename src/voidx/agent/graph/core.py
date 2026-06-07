@@ -19,6 +19,7 @@ from typing import TYPE_CHECKING
 from langchain_core.messages import (
     AIMessage,
     BaseMessage,
+    HumanMessage,
 )
 
 from voidx.agent.agents import (
@@ -65,6 +66,7 @@ from voidx.agent.tool_filters import filter_unavailable_lsp_tools
 from voidx.config import Config, Settings
 from voidx.llm.instruction import InstructionService
 from voidx.llm.provider import create_chat_model, resolve_protocol
+from voidx.llm.message_markers import GUIDANCE_MARKER
 from voidx.llm.usage import (
     estimate_context_tokens,
     estimate_message_tokens,
@@ -78,6 +80,7 @@ from voidx.runtime.ui import (
     OutputNode,
     OutputTree,
     PureTui,
+    GuidanceSubmitted,
     StreamingRenderer,
     SubagentFinished,
     SubagentStarted,
@@ -88,6 +91,9 @@ from voidx.runtime.ui import (
 
 if TYPE_CHECKING:
     from voidx.agent.graph.contracts import GraphComponentHost
+
+
+GUIDANCE_MAX_CHARS = 2_000
 
 
 def _restored_skill_runs(task_run: TaskRun | None) -> list[SkillRunState]:
@@ -152,6 +158,7 @@ class VoidXGraph(
         self._task_state = TaskState()
         self._task_run = TaskRun()
         self._needs_failure_check: dict[str, dict] = {}
+        self._pending_guidance: list[str] = []
         self._usage_stats, self._compaction = build_compaction_service(config)
 
         self._build()
@@ -220,6 +227,33 @@ class VoidXGraph(
 
     def set_task_run(self, task_run: TaskRun) -> None:
         self._task_run = task_run
+
+    def submit_guidance(self, text: str) -> bool:
+        guidance = " ".join(text.strip().split())
+        if not guidance:
+            return False
+        truncated = False
+        if len(guidance) > GUIDANCE_MAX_CHARS:
+            guidance = guidance[:GUIDANCE_MAX_CHARS].rstrip()
+            truncated = True
+        self._pending_guidance.append(guidance)
+        if (
+            not via_events()
+            or not ui_events.emit_direct(GuidanceSubmitted(text=guidance, truncated=truncated))
+        ):
+            suffix = " [dim](truncated)[/dim]" if truncated else ""
+            dock.append_message(f"[dim][guide][/dim] {guidance}{suffix}", markup=True)
+        return True
+
+    def _drain_pending_guidance(self) -> list[HumanMessage]:
+        messages: list[HumanMessage] = []
+        while self._pending_guidance:
+            text = self._pending_guidance.pop(0)
+            messages.append(HumanMessage(
+                content=text,
+                additional_kwargs={GUIDANCE_MARKER: True},
+            ))
+        return messages
 
     async def persist_runtime_state(self) -> None:
         await self._persist_runtime_state()
@@ -459,13 +493,15 @@ class VoidXGraph(
         has_tool_budget = step < max_s - 1
         if not has_tool_budget:
             tool_defs = []
+        guidance_messages = self._drain_pending_guidance()
+        base_messages = [*state["messages"], *guidance_messages]
         convergence_messages, convergence_forced = build_convergence_messages(
             step=step,
             max_steps=max_s,
             has_tool_budget=has_tool_budget,
-            goal=state.get("goal", "") or latest_user_text(state.get("messages", [])),
+            goal=state.get("goal", "") or latest_user_text(base_messages),
         )
-        llm_messages = [*state["messages"], *convergence_messages]
+        llm_messages = [*base_messages, *convergence_messages]
 
         agent_name = state.get("agent", "orchestrator")
         if self._debug:
@@ -524,7 +560,7 @@ class VoidXGraph(
                     }
 
         return {
-            "messages": [assistant_msg],
+            "messages": [*guidance_messages, assistant_msg],
             "step_count": step + 1,
             "convergence_forced": convergence_forced,
         }

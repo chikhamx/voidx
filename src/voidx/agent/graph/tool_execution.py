@@ -188,7 +188,7 @@ class GraphToolExecutionMixin:
                     ui.print(f"  [green]+{added}[/green] [red]−{removed}[/red]")
                 if self._debug and not tool_node:
                     ui.diff(result.diff)
-            elif self._debug:
+            elif self._debug or tid == "agent":
                 if via_events():
                     await ui_events.emit(ToolResultAppended(
                         tool_call_id=tool_event_id,

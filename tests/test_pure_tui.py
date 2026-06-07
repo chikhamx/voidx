@@ -798,6 +798,28 @@ def test_regular_enter_submits_input(tmp_path):
     assert tui._queue.get_nowait() == "hello"
 
 
+@pytest.mark.asyncio
+async def test_tui_busy_guide_bypasses_submit_queue(tmp_path):
+    tui = _tui(tmp_path)
+    requests: list[dict[str, str]] = []
+
+    async def handle_request(request):
+        requests.append(request)
+
+    tui.set_external_command_handler(handle_request)
+    tui._busy = True
+    tui._input_lines = ["/guide use TypeScript"]
+    tui._cursor_col = len("/guide use TypeScript")
+
+    changed = tui._process_input(b"\r")
+    await asyncio.sleep(0)
+
+    assert changed is True
+    assert requests == [{"kind": "guide", "text": "use TypeScript"}]
+    assert tui._queue.empty()
+    assert tui._get_input_text() == ""
+
+
 def test_empty_enter_on_empty_input_is_noop(tmp_path):
     tui = _tui(tmp_path)
 

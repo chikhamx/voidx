@@ -129,3 +129,32 @@ async def test_rollback_command_no_changes_prints_message(monkeypatch):
 
 def test_rollback_command_is_in_palette():
     assert ("/rollback", "Revert file changes from the current turn") in COMMANDS
+
+
+@pytest.mark.asyncio
+async def test_guide_command_submits_pending_guidance():
+    calls: list[str] = []
+    graph = SimpleNamespace(
+        submit_guidance=lambda text: calls.append(text) or True,
+    )
+
+    assert await SlashHandler(graph).dispatch("/guide keep patch small") is True
+
+    assert calls == ["keep patch small"]
+
+
+@pytest.mark.asyncio
+async def test_guide_command_without_text_prints_usage(monkeypatch):
+    output: list[str] = []
+    monkeypatch.setattr(
+        "voidx.agent.slash.guide.ui.print",
+        lambda text="": output.append(str(text)),
+    )
+
+    assert await SlashHandler(SimpleNamespace()).dispatch("/guide") is True
+
+    assert output == ["[dim]Usage: /guide <guidance for the next agent step>[/dim]"]
+
+
+def test_guide_command_is_in_palette():
+    assert ("/guide", "Add guidance to the running agent turn") in COMMANDS

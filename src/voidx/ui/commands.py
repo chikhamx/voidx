@@ -22,6 +22,7 @@ COMMANDS: list[tuple[str, str]] = [
     ("/help", "Show all commands"),
     ("/goal", "Set or show current goal"),
     ("/goal clear", "Clear current goal"),
+    ("/guide", "Add guidance to the running agent turn"),
     ("/lang", "Set response language preference"),
     ("/list", "List saved sessions"),
     ("/lsp", "Manage language servers"),

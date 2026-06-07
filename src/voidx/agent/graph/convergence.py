@@ -7,7 +7,11 @@ from typing import Any
 
 from langchain_core.messages import AIMessage, BaseMessage, HumanMessage, ToolMessage
 
-from voidx.llm.message_markers import STEP_HINT_MARKER, is_step_hint_message
+from voidx.llm.message_markers import (
+    STEP_HINT_MARKER,
+    is_guidance_message,
+    is_step_hint_message,
+)
 
 
 def build_step_hint(
@@ -100,7 +104,11 @@ def _marked_human_message(content: str) -> HumanMessage:
 
 def _latest_user_text(messages: list[BaseMessage]) -> str:
     for message in reversed(messages):
-        if isinstance(message, HumanMessage) and not is_step_hint_message(message):
+        if (
+            isinstance(message, HumanMessage)
+            and not is_step_hint_message(message)
+            and not is_guidance_message(message)
+        ):
             return _message_text(message).strip()
     return ""
 

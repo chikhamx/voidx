@@ -15,6 +15,7 @@ from voidx.llm.compaction import (
     DEFAULT_TAIL_TURNS,
     STEP_HINT_MARKER,
 )
+from voidx.llm.message_markers import GUIDANCE_MARKER
 from voidx.llm.usage import estimate_context_tokens
 
 
@@ -248,6 +249,26 @@ class TestSelectTokenCounting:
         assert [turn.id for turn in turns] == ["u1", "u2"]
         assert selection.tail_id != "hint"
 
+    def test_guidance_messages_do_not_create_turns_or_tail_ids(self):
+        svc = CompactionService(context_limit=1_000, output_token_max=900)
+        guidance = HumanMessage(
+            content="Use TypeScript",
+            additional_kwargs={GUIDANCE_MARKER: True},
+            id="guide",
+        )
+        messages = [
+            HumanMessage(content="old", id="u1"),
+            AIMessage(content="a1"),
+            guidance,
+            HumanMessage(content="current", id="u2"),
+        ]
+
+        turns = svc._turns(messages)
+        selection = svc.select_details(messages)
+
+        assert [turn.id for turn in turns] == ["u1", "u2"]
+        assert selection.tail_id != "guide"
+
     def test_build_prompt_skips_step_hint_messages(self):
         svc = CompactionService()
         prompt = svc.build_prompt([
@@ -260,6 +281,19 @@ class TestSelectTokenCounting:
 
         assert "real request" in prompt
         assert "FINAL response step" not in prompt
+
+    def test_build_prompt_labels_guidance_messages(self):
+        svc = CompactionService()
+        prompt = svc.build_prompt([
+            HumanMessage(content="real request", id="u1"),
+            HumanMessage(
+                content="Use TypeScript",
+                additional_kwargs={GUIDANCE_MARKER: True},
+            ),
+        ])
+
+        assert "[User]: real request" in prompt
+        assert "[Guidance]: Use TypeScript" in prompt
 
 
 class TestFallbackSummary:
@@ -292,6 +326,20 @@ class TestFallbackSummary:
         messages = [AIMessage(content="Just AI talking")]
         summary = CompactionService.fallback_summary(messages)
         assert summary is not None
+
+    def test_fallback_summary_labels_guidance_messages(self):
+        messages = [
+            HumanMessage(content="Fix the auth bug", id="1"),
+            HumanMessage(
+                content="Keep the patch small",
+                additional_kwargs={GUIDANCE_MARKER: True},
+            ),
+        ]
+
+        summary = CompactionService.fallback_summary(messages)
+
+        assert "User requested: Fix the auth bug" in summary
+        assert "User requested: Guidance: Keep the patch small" in summary
 
     def test_fallback_summary_truncates_long_messages(self):
         messages = [

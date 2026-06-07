@@ -32,6 +32,7 @@ from voidx.runtime.ui import (
     StatusFinished,
     StatusUpdated,
     TurnStarted,
+    WarningAppended,
     dock,
     session_tracker,
     ui_events,
@@ -352,6 +353,15 @@ class GraphTurnMixin:
                     ]
             raise
         finally:
+            pending_guidance = getattr(self, "_pending_guidance", None)
+            if pending_guidance is not None:
+                if pending_guidance:
+                    message = "Guidance discarded: no LLM call to inject into."
+                    if via_events():
+                        await ui_events.emit(WarningAppended(message=message))
+                    else:
+                        dock.append_message(f"[dim]{message}[/dim]", markup=True)
+                pending_guidance.clear()
             session_tracker.finish_turn()
             if via_events():
                 await ui_events.emit(StatusFinished(status_id="turn:analyzing"))

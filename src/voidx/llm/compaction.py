@@ -22,7 +22,11 @@ from typing import Literal
 from langchain_core.messages import AIMessage, HumanMessage, ToolMessage
 
 from voidx.llm.context import count_tokens
-from voidx.llm.message_markers import STEP_HINT_MARKER, is_step_hint_message
+from voidx.llm.message_markers import (
+    STEP_HINT_MARKER,
+    is_guidance_message,
+    is_step_hint_message,
+)
 from voidx.llm.usage import estimate_context_tokens
 
 PRUNE_MINIMUM = 20_000
@@ -208,7 +212,7 @@ class CompactionService:
         for i, msg in enumerate(messages):
             if isinstance(msg, HumanMessage):
                 # Skip synthetic continuation messages
-                if is_step_hint_message(msg):
+                if is_step_hint_message(msg) or is_guidance_message(msg):
                     continue
                 content = str(getattr(msg, "content", ""))
                 if "Continue if you have next steps" in content:
@@ -284,7 +288,8 @@ class CompactionService:
             content = _message_text(msg).strip()
             if isinstance(msg, HumanMessage):
                 if content:
-                    user_parts.append(_truncate_line(content, FALLBACK_SUMMARY_MAX_PER_MSG))
+                    prefix = "Guidance: " if is_guidance_message(msg) else ""
+                    user_parts.append(prefix + _truncate_line(content, FALLBACK_SUMMARY_MAX_PER_MSG))
                     file_parts.extend(_extract_path_mentions(content))
             elif isinstance(msg, AIMessage):
                 if content:
@@ -356,7 +361,8 @@ class CompactionService:
                 continue
 
             if isinstance(msg, HumanMessage):
-                context_parts.append(f"[User]: {content[:2000]}")
+                label = "Guidance" if is_guidance_message(msg) else "User"
+                context_parts.append(f"[{label}]: {content[:2000]}")
             elif isinstance(msg, AIMessage):
                 # Extract text from assistant
                 text = content[:2000]

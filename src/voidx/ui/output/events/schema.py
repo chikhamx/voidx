@@ -72,6 +72,12 @@ class WarningAppended(UiEventBase):
     message: str
 
 
+class GuidanceSubmitted(UiEventBase):
+    kind: Literal["guidance.submitted"] = "guidance.submitted"
+    text: str
+    truncated: bool = False
+
+
 class ErrorAppended(UiEventBase):
     kind: Literal["error.appended"] = "error.appended"
     message: str
@@ -243,6 +249,7 @@ UiEvent: TypeAlias = (
     | MarkdownAppended
     | ThoughtAppended
     | WarningAppended
+    | GuidanceSubmitted
     | ErrorAppended
     | DiffAppended
     | StatusUpdated

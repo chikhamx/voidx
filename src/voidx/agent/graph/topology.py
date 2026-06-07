@@ -11,6 +11,7 @@ from langgraph.graph import END, StateGraph
 from voidx.agent.agents import get_agent
 from voidx.agent.graph.convergence import is_step_hint_message
 from voidx.agent.state import AgentState
+from voidx.llm.message_markers import is_guidance_message
 
 
 _MAX_STEPS_FALLBACK = 100
@@ -50,7 +51,11 @@ def prepare_state(state: AgentState) -> dict:
 
 def latest_user_text(messages: list[BaseMessage]) -> str:
     for msg in reversed(messages):
-        if isinstance(msg, HumanMessage) and not is_step_hint_message(msg):
+        if (
+            isinstance(msg, HumanMessage)
+            and not is_step_hint_message(msg)
+            and not is_guidance_message(msg)
+        ):
             content = msg.content
             if isinstance(content, str):
                 return content

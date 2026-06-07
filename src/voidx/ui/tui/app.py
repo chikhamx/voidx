@@ -119,8 +119,9 @@ class PureTui(
         self._was_busy: bool = False
         self._attachment_matches_cache: list[Any] = []
 
-        # External request handler (web gateway stub)
+        # External protocol hooks (web gateway stubs)
         self._external_request_handler: Callable[[Any], Awaitable[Any]] | None = None
+        self._external_command_handler: Callable[[Any], Awaitable[Any]] | None = None
 
         # stdin
         self._stdin_fd: int | None = self._stdin_fileno()
@@ -201,6 +202,9 @@ class PureTui(
 
     def set_external_request_handler(self, handler) -> None:
         self._external_request_handler = handler
+
+    def set_external_command_handler(self, handler) -> None:
+        self._external_command_handler = handler
 
     def show_transient_output(self, text: str, title: str = "") -> None:
         from voidx.ui.output.dock import dock
@@ -352,10 +356,31 @@ class PureTui(
         if not stripped:
             self._clear_input()
             return True
+        if self._busy and stripped.startswith("/guide "):
+            self._record_history(text)
+            self._clear_input()
+            self._submit_guidance_bypass(stripped)
+            return True
         self._record_history(text)
         self._clear_input()
         self._queue.put_nowait(text)
         return True
+
+    def _submit_guidance_bypass(self, text: str) -> None:
+        handler = self._external_command_handler
+        if handler is None:
+            self._notice = "Guidance unavailable for this session."
+            self.invalidate()
+            return
+
+        async def submit() -> None:
+            try:
+                await handler({"kind": "guide", "text": text.removeprefix("/guide").strip()})
+            except Exception as exc:
+                self._last_error = str(exc)
+                dock.append_error(str(exc))
+
+        asyncio.create_task(submit())
 
     # ── interrupt / exit ─────────────────────────────────────────────────
 
