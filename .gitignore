@@ -26,6 +26,10 @@ $null
 # Miscellaneous
 _fix.py
 
+# Node
+node_modules/
+package-lock.json
+
 # uv
 uv.lock
 research/
