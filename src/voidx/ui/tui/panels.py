@@ -192,8 +192,11 @@ class _PanelManagerMixin:
         n = len(self._active_choice)
         if n == 0:
             return
-        self._choice_selected = (self._choice_selected + delta) % n
-        self.invalidate()
+        selected = (self._choice_selected + delta) % n
+        if selected == self._choice_selected:
+            return
+        self._choice_selected = selected
+        self._choice_selection_render_pending = True
 
     def _finish_choice(self, value: str | None) -> None:
         self._choice_queue.put_nowait(value)

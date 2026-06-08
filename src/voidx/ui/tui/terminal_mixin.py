@@ -5,10 +5,57 @@ from __future__ import annotations
 import os
 import sys as _sys
 
+_STD_OUTPUT_HANDLE = -11
+_ENABLE_VIRTUAL_TERMINAL_PROCESSING = 0x0004
+
 if _sys.platform == "win32":
     termios = None  # type: ignore[assignment]
 else:
     import termios  # type: ignore[no-redef]
+
+
+def _enable_windows_virtual_terminal_processing(kernel32: object | None = None) -> int | None:
+    """Enable ANSI escape processing on Windows stdout.
+
+    Returns the original console mode when stdout is a console and mode was read.
+    Non-console stdout, unsupported APIs, and SetConsoleMode failures are silent
+    no-ops so redirected output and legacy shells can still run.
+    """
+    try:
+        import ctypes
+
+        if kernel32 is None:
+            kernel32 = ctypes.windll.kernel32
+        handle = kernel32.GetStdHandle(_STD_OUTPUT_HANDLE)
+        mode = ctypes.c_ulong()
+        if not kernel32.GetConsoleMode(handle, ctypes.byref(mode)):
+            return None
+        original = int(mode.value)
+        updated = original | _ENABLE_VIRTUAL_TERMINAL_PROCESSING
+        if updated == original:
+            return original
+        if not kernel32.SetConsoleMode(handle, updated):
+            return None
+        return original
+    except Exception:
+        return None
+
+
+def _restore_windows_console_mode(
+    original_mode: int | None,
+    kernel32: object | None = None,
+) -> bool:
+    if original_mode is None:
+        return False
+    try:
+        import ctypes
+
+        if kernel32 is None:
+            kernel32 = ctypes.windll.kernel32
+        handle = kernel32.GetStdHandle(_STD_OUTPUT_HANDLE)
+        return bool(kernel32.SetConsoleMode(handle, int(original_mode)))
+    except Exception:
+        return False
 
 
 class _TerminalLifecycleMixin:
@@ -36,7 +83,13 @@ class _TerminalLifecycleMixin:
         else:
             # Windows: no termios, msvcrt handles raw reads directly
             self._old_termios = None
+            self._windows_stdout_mode = _enable_windows_virtual_terminal_processing()
 
     def _restore_terminal(self) -> None:
         if termios is not None and self._old_termios is not None:
             termios.tcsetattr(self._stdin_fd, termios.TCSADRAIN, self._old_termios)
+            self._old_termios = None
+            return
+        if self._windows_stdout_mode is not None:
+            _restore_windows_console_mode(self._windows_stdout_mode)
+            self._windows_stdout_mode = None

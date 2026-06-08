@@ -305,11 +305,17 @@ class PureTui(
 
     def _render_after_input(self) -> None:
         try:
+            if (
+                self._choice_selection_render_pending
+                and self._render_choice_selection_region()
+            ):
+                return
             if self._input_region_render_pending:
                 self._render_input_region()
             else:
                 self._render_frame()
         finally:
+            self._choice_selection_render_pending = False
             self._input_region_render_pending = False
 
     @staticmethod

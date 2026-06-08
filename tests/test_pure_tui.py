@@ -19,13 +19,14 @@ from voidx.ui.tools.clipboard_image import ClipboardImageResult
 from voidx.ui.tools.clipboard_text import ClipboardTextResult
 from voidx.ui.commands import COMMANDS
 from voidx.ui.output.dock import BottomInputDock, dock, set_dock
-from voidx.ui.tui.state import InputState, RenderState
+import voidx.ui.tui.terminal_mixin as terminal_mixin
 from voidx.ui.tui import (
     PureTui,
     _ENTER_TERMINAL_SEQUENCE,
     _EXIT_TERMINAL_SEQUENCE,
     _rendered_row_count,
 )
+from voidx.ui.tui.state import InputState, RenderState
 
 
 def _rich_plain(line: str) -> str:
@@ -50,6 +51,18 @@ def _render_lines(tui: PureTui, *, width: int = 100) -> list[str]:
     with console.capture() as capture:
         console.print(tui._render_impl())
     return [line.rstrip() for line in capture.get().splitlines()]
+
+
+class _FakeStdout:
+    def __init__(self) -> None:
+        self.text = ""
+
+    def write(self, value: str) -> int:
+        self.text += value
+        return len(value)
+
+    def flush(self) -> None:
+        pass
 
 
 def test_pure_tui_groups_runtime_state(tmp_path):
@@ -80,6 +93,84 @@ def test_choice_render_handles_unselected_items_and_details(tmp_path):
     renderable = tui._render_impl()
 
     assert renderable is not None
+
+
+def test_choice_move_marks_selection_only_render(tmp_path):
+    tui = _tui(tmp_path)
+    tui._active_choice = [
+        ("Yes", "y", "Allow"),
+        ("No", "n", "Deny"),
+    ]
+    tui._choice_selected = 0
+
+    tui._move_choice(1)
+
+    assert tui._choice_selected == 1
+    assert tui._choice_selection_render_pending is True
+
+
+def test_choice_move_single_option_does_not_request_render(tmp_path):
+    tui = _tui(tmp_path)
+    tui._active_choice = [("Yes", "y", "Allow")]
+    tui._choice_selected = 0
+
+    tui._move_choice(1)
+
+    assert tui._choice_selected == 0
+    assert tui._choice_selection_render_pending is False
+
+
+def test_choice_selection_only_render_does_not_clear_to_screen_end(tmp_path, monkeypatch):
+    fake_stdout = _FakeStdout()
+    monkeypatch.setattr(sys, "stdout", fake_stdout)
+    tui = _tui(tmp_path)
+    tui._tty = True
+    tui._has_rendered_frame = True
+    tui._last_bottom_start_row = 7
+    tui._last_frame_rows = 14
+    tui._console = Console(file=None, force_terminal=True, width=80, height=24, _environ={})
+    tui._active_choice = [
+        ("Review", "review", "Inspect the design"),
+        ("Implement", "implement", "Apply the change"),
+    ]
+    tui._choice_prompt = "Intent?"
+    tui._choice_selected = 0
+    ansi = tui._capture_renderable(tui._render_bottom_impl(), tui._frame_width())
+    tui._last_bottom_rows = _rendered_row_count(ansi)
+
+    tui._choice_selected = 1
+
+    assert tui._render_choice_selection_region() is True
+    assert "\x1b[J" not in fake_stdout.text
+    assert "\x1b[K" in fake_stdout.text
+    assert "\x1b[7;1H" in fake_stdout.text
+
+
+def test_choice_selection_only_render_falls_back_when_row_count_changes(tmp_path, monkeypatch):
+    tui = _tui(tmp_path)
+    tui._tty = True
+    tui._has_rendered_frame = True
+    tui._last_bottom_start_row = 7
+    tui._last_frame_rows = 14
+    tui._console = Console(file=None, force_terminal=True, width=80, height=24, _environ={})
+    tui._active_choice = [
+        ("Review", "review", "Inspect the design"),
+        ("Implement", "implement", "Apply the change"),
+    ]
+    tui._choice_prompt = "Intent?"
+    tui._choice_selected = 0
+    ansi = tui._capture_renderable(tui._render_bottom_impl(), tui._frame_width())
+    tui._last_bottom_rows = _rendered_row_count(ansi) + 1
+    tui._choice_selection_render_pending = True
+    tui._input_region_render_pending = True
+    calls: list[str] = []
+    monkeypatch.setattr(tui, "_render_input_region", lambda: calls.append("input"))
+
+    tui._render_after_input()
+
+    assert calls == ["input"]
+    assert tui._choice_selection_render_pending is False
+    assert tui._input_region_render_pending is False
 
 
 def test_status_summary_renders_model_policy_usage_and_goal(tmp_path):
@@ -224,6 +315,130 @@ def test_terminal_sequences_stay_on_normal_buffer():
     assert "\x1b[?1049l" not in _EXIT_TERMINAL_SEQUENCE
     assert "\x1b[?1000l" in _ENTER_TERMINAL_SEQUENCE
     assert "\x1b[?1006l" in _EXIT_TERMINAL_SEQUENCE
+
+
+class _FakeKernel32:
+    def __init__(
+        self,
+        mode: int = 0,
+        *,
+        get_ok: bool = True,
+        set_ok: bool = True,
+    ) -> None:
+        self.mode = mode
+        self.get_ok = get_ok
+        self.set_ok = set_ok
+        self.handles: list[int] = []
+        self.set_modes: list[int] = []
+
+    def GetStdHandle(self, handle: int) -> int:
+        self.handles.append(handle)
+        return 123
+
+    def GetConsoleMode(self, handle: int, mode_ptr) -> int:
+        if not self.get_ok:
+            return 0
+        mode_ptr._obj.value = self.mode
+        return 1
+
+    def SetConsoleMode(self, handle: int, mode: int) -> int:
+        if not self.set_ok:
+            return 0
+        self.set_modes.append(int(mode))
+        self.mode = int(mode)
+        return 1
+
+
+def test_windows_enable_virtual_terminal_processing_sets_mode():
+    kernel32 = _FakeKernel32(mode=0)
+
+    original = terminal_mixin._enable_windows_virtual_terminal_processing(kernel32)
+
+    assert original == 0
+    assert kernel32.handles == [terminal_mixin._STD_OUTPUT_HANDLE]
+    assert kernel32.set_modes == [
+        terminal_mixin._ENABLE_VIRTUAL_TERMINAL_PROCESSING
+    ]
+
+
+def test_windows_enable_virtual_terminal_processing_keeps_existing_mode():
+    mode = terminal_mixin._ENABLE_VIRTUAL_TERMINAL_PROCESSING | 0x0001
+    kernel32 = _FakeKernel32(mode=mode)
+
+    original = terminal_mixin._enable_windows_virtual_terminal_processing(kernel32)
+
+    assert original == mode
+    assert kernel32.set_modes == []
+
+
+def test_windows_restore_console_mode_restores_original_mode():
+    kernel32 = _FakeKernel32(mode=0)
+
+    restored = terminal_mixin._restore_windows_console_mode(7, kernel32)
+
+    assert restored is True
+    assert kernel32.set_modes == [7]
+
+
+def test_windows_console_mode_helpers_ignore_non_console():
+    assert (
+        terminal_mixin._enable_windows_virtual_terminal_processing(
+            _FakeKernel32(get_ok=False)
+        )
+        is None
+    )
+    assert (
+        terminal_mixin._enable_windows_virtual_terminal_processing(
+            _FakeKernel32(set_ok=False)
+        )
+        is None
+    )
+    assert terminal_mixin._restore_windows_console_mode(None, _FakeKernel32()) is False
+
+
+def test_non_windows_terminal_setup_still_uses_termios(tmp_path, monkeypatch):
+    class FakeTermios:
+        ECHO = 0x0001
+        ICANON = 0x0002
+        ISIG = 0x0004
+        IEXTEN = 0x0008
+        IGNBRK = 0x0010
+        ICRNL = 0x0020
+        BRKINT = 0x0040
+        VMIN = 0
+        VTIME = 1
+        VLNEXT = 2
+        TCSADRAIN = 0
+
+        def __init__(self) -> None:
+            self.set_attrs: list[list] = []
+
+        def tcgetattr(self, fd: int) -> list:
+            return [
+                self.IGNBRK | self.ICRNL,
+                0,
+                0,
+                self.ECHO | self.ICANON | self.ISIG | self.IEXTEN,
+                0,
+                0,
+                [0, 0, 1],
+            ]
+
+        def tcsetattr(self, fd: int, when: int, attrs: list) -> None:
+            self.set_attrs.append(attrs)
+
+    fake_termios = FakeTermios()
+    monkeypatch.setattr(terminal_mixin, "termios", fake_termios)
+    monkeypatch.setattr(terminal_mixin.os, "isatty", lambda fd: True)
+    tui = _tui(tmp_path)
+    tui._stdin_fd = 99
+
+    tui._setup_terminal()
+
+    assert tui._old_termios is not None
+    assert len(fake_termios.set_attrs) == 1
+    assert fake_termios.set_attrs[0][6][fake_termios.VMIN] == 1
+    assert fake_termios.set_attrs[0][6][fake_termios.VTIME] == 0
 
 
 def test_dock_clear_screen_request_is_consumed_publicly():
@@ -1008,6 +1223,93 @@ def test_ctrl_j_in_tty_mode_inserts_newline_without_submit(tmp_path):
 
     assert tui._get_input_text() == "hello\n"
     assert tui._queue.empty()
+
+
+def test_ctrl_a_moves_to_current_line_start(tmp_path):
+    tui = _tui(tmp_path)
+    tui._input_lines = ["first", "second"]
+    tui._cursor_row = 1
+    tui._cursor_col = 4
+
+    changed = tui._process_input(b"\x01")
+
+    assert changed is True
+    assert tui._cursor_row == 1
+    assert tui._cursor_col == 0
+
+
+def test_ctrl_e_moves_to_current_line_end(tmp_path):
+    tui = _tui(tmp_path)
+    tui._input_lines = ["first", "second"]
+    tui._cursor_row = 0
+    tui._cursor_col = 2
+
+    changed = tui._process_input(b"\x05")
+
+    assert changed is True
+    assert tui._cursor_row == 0
+    assert tui._cursor_col == len("first")
+
+
+def test_ctrl_a_e_ignore_active_choice(tmp_path):
+    tui = _tui(tmp_path)
+    tui._input_lines = ["draft"]
+    tui._cursor_col = 3
+    tui._active_choice = [
+        ("Yes", "y", "Allow"),
+        ("No", "n", "Deny"),
+    ]
+
+    tui._process_input(b"\x01\x05")
+
+    assert tui._cursor_col == 3
+    assert tui._choice_queue.empty()
+    assert tui._queue.empty()
+
+
+@pytest.mark.parametrize(
+    "sequence,expected_col",
+    [
+        (b"\x1b[H", 0),
+        (b"\x1b[F", len("draft")),
+        (b"\x1b[1~", 0),
+        (b"\x1b[4~", len("draft")),
+        (b"\x1b[7~", 0),
+        (b"\x1b[8~", len("draft")),
+        (b"\x1bOH", 0),
+        (b"\x1bOF", len("draft")),
+    ],
+)
+def test_home_end_escape_sequences_move_cursor(tmp_path, sequence, expected_col):
+    tui = _tui(tmp_path)
+    tui._input_lines = ["draft"]
+    tui._cursor_col = 2
+
+    changed = tui._process_input(sequence)
+
+    assert changed is True
+    assert tui._cursor_col == expected_col
+    assert tui._get_input_text() == "draft"
+
+
+@pytest.mark.parametrize(
+    "sequence,expected_col",
+    [
+        (b"\x1b[1~", 0),
+        (b"\x1b[4~", len("second")),
+    ],
+)
+def test_home_end_escape_sequences_keep_multiline_row(tmp_path, sequence, expected_col):
+    tui = _tui(tmp_path)
+    tui._input_lines = ["first", "second", "third"]
+    tui._cursor_row = 1
+    tui._cursor_col = 3
+
+    tui._process_input(sequence)
+
+    assert tui._cursor_row == 1
+    assert tui._cursor_col == expected_col
+    assert tui._get_input_text() == "first\nsecond\nthird"
 
 
 def test_multiline_input_render_uses_indentation_without_visible_newline_symbol(tmp_path):

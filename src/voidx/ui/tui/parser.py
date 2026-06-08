@@ -226,6 +226,14 @@ class _InputParserMixin:
             self._delete_forward()
             return (1, None)
 
+        # Ctrl+A / Ctrl+E follow readline-style current-line navigation.
+        if first == 0x01:
+            self._cursor_home()
+            return (1, None)
+        if first == 0x05:
+            self._cursor_end()
+            return (1, None)
+
         # Enter is CR in raw TTY mode. LF is Ctrl+J there, useful as newline.
         if first == 0x0A:
             if self._tty:
@@ -285,6 +293,15 @@ class _InputParserMixin:
         if len(seq) >= 3 and seq[1:2] == b"[":
             return self._dispatch_csi(seq, offset)
 
+        if len(seq) >= 3 and seq[1:2] == b"O":
+            final = seq[2]
+            if final == 0x48:  # SS3 Home
+                self._cursor_home()
+                return (3, None)
+            if final == 0x46:  # SS3 End
+                self._cursor_end()
+                return (3, None)
+
         # Alt+key: ESC + printable → insert the char (for Alt+Enter we handled above)
         if len(seq) >= 2 and _is_printable(seq[1:2]):
             if self._active_choice is not None:
@@ -312,6 +329,13 @@ class _InputParserMixin:
         # PageUp / PageDown — handled natively by terminal scrollback
         if final == 0x7E and params[0] in ("5", "6"):
             return (consumed, "noop")
+
+        if final == 0x7E and params[0] in ("1", "7"):
+            self._cursor_home()
+            return (consumed, None)
+        if final == 0x7E and params[0] in ("4", "8"):
+            self._cursor_end()
+            return (consumed, None)
 
         # CSI u (kitty keyboard protocol): ESC [ codepoint ; modifiers u
         if final == 0x75:  # 'u'

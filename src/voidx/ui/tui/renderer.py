@@ -119,6 +119,42 @@ class _TerminalRendererMixin(_OverlayRendererMixin):
         self._has_rendered_frame = True
         sys.stdout.flush()
 
+    def _render_choice_selection_region(self) -> bool:
+        if (
+            not self._tty
+            or self._active_choice is None
+            or not self._has_rendered_frame
+            or self._last_bottom_rows <= 0
+        ):
+            return False
+
+        width = self._frame_width()
+        try:
+            ansi = self._capture_renderable(self._render_bottom_impl(), width)
+        except Exception:
+            return False
+
+        bottom_rows = _rendered_row_count(ansi)
+        if bottom_rows != self._last_bottom_rows:
+            return False
+
+        start_row = self._last_bottom_start_row
+        if start_row <= 0:
+            return False
+
+        lines = ansi.splitlines()
+        if len(lines) != bottom_rows:
+            return False
+
+        for offset, line in enumerate(lines):
+            sys.stdout.write(f"\x1b[{start_row + offset};1H")
+            sys.stdout.write(line)
+            sys.stdout.write("\x1b[K")
+        self._position_input_cursor(self._last_frame_rows)
+        self._has_rendered_frame = True
+        sys.stdout.flush()
+        return True
+
     def _capture_renderable(self, renderable: object, width: int) -> str:
         capture_width = max(width, 1)
         key = (capture_width, self._console.height)

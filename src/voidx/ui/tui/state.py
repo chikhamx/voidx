@@ -95,6 +95,7 @@ class RenderState:
     last_bottom_rows: int = 0
     last_bottom_start_row: int = 1
     input_region_render_pending: bool = False
+    choice_selection_render_pending: bool = False
     committed_line_count: int = 0
     visible_committed_rows: int = 0
     was_busy: bool = False
@@ -114,6 +115,7 @@ class TerminalState:
     stdin_fd: int | None = None
     tty: bool = False
     old_termios: list | None = None
+    windows_stdout_mode: int | None = None
     stdin_reader: asyncio.StreamReader | None = None
     stdin_transport: asyncio.Transport | None = None
     stdin_pipe: Any = None
@@ -181,6 +183,7 @@ STATE_FIELD_MAP: dict[str, tuple[str, str]] = {
     "_last_bottom_rows": ("_render_state", "last_bottom_rows"),
     "_last_bottom_start_row": ("_render_state", "last_bottom_start_row"),
     "_input_region_render_pending": ("_render_state", "input_region_render_pending"),
+    "_choice_selection_render_pending": ("_render_state", "choice_selection_render_pending"),
     "_committed_line_count": ("_render_state", "committed_line_count"),
     "_visible_committed_rows": ("_render_state", "visible_committed_rows"),
     "_was_busy": ("_render_state", "was_busy"),
@@ -190,6 +193,7 @@ STATE_FIELD_MAP: dict[str, tuple[str, str]] = {
     "_stdin_fd": ("_terminal_state", "stdin_fd"),
     "_tty": ("_terminal_state", "tty"),
     "_old_termios": ("_terminal_state", "old_termios"),
+    "_windows_stdout_mode": ("_terminal_state", "windows_stdout_mode"),
     "_stdin_stream_reader": ("_terminal_state", "stdin_reader"),
     "_stdin_stream_transport": ("_terminal_state", "stdin_transport"),
     "_stdin_stream_pipe": ("_terminal_state", "stdin_pipe"),
