@@ -3,6 +3,7 @@ import time
 
 from rich.markup import escape
 
+from voidx.ui.output.agent_display import agent_display_name
 from voidx.ui.output.tree import OutputTree, OutputNode
 from voidx.ui.output.console import _fmt_args, _title, VoidConsole
 from voidx.ui.output.dock import dock
@@ -71,7 +72,10 @@ class CaptureConsole:
             return
         body_lines = []
         detail = f"({_fmt_args(args)})"
-        if tool_name == "bash":
+        if tool_name == "agent":
+            detail = ""
+            gerund = agent_display_name(args.get("agent") or args.get("role"))
+        elif tool_name == "bash":
             command = str(args.get("command") or "")
             detail = ""
             body_lines = _bash_markdown_lines(command, self._dummy.width)

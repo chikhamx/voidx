@@ -69,6 +69,14 @@ if (Get-Command pipx -ErrorAction SilentlyContinue) {
     }
 }
 
+# Old npm-venv directory from v2.x early releases
+$OldNpmVenv = Join-Path $VoidxHome "npm-venv"
+if (Test-Path $OldNpmVenv) {
+    Write-Host "  ⚠️  Found old npm-venv directory, removing…" -ForegroundColor Yellow
+    Remove-Item $OldNpmVenv -Recurse -Force -ErrorAction SilentlyContinue
+    Write-Host "  ✅ Removed old npm-venv directory" -ForegroundColor Green
+}
+
 # ── Check if already installed ──────────────────────────────────────────────
 if ((Test-Path $VoidxBin) -and (Test-Path $MarkerPath)) {
     $Existing = Get-Content $MarkerPath -Raw -ErrorAction SilentlyContinue

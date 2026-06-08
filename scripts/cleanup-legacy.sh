@@ -117,6 +117,7 @@ for python_cmd in python3 python python3.12 python3.11; do
 done
 
 # ── 5. 检测旧版 npm-venv 目录 ──────────────────────────────────────────────
+# Hardcoded default path — npm also defaults to ~/.local/share
 OLD_NPM_VENV="${HOME}/.local/share/voidx/npm-venv"
 if [ -d "${OLD_NPM_VENV}" ]; then
     warn "发现旧版 npm-venv 目录: ${OLD_NPM_VENV}"

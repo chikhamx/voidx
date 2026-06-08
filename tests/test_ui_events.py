@@ -708,7 +708,8 @@ async def test_subagent_tool_events_attach_under_agent_id(isolated_dock):
         subagent = next(node for node in task_tool.children if node.node_type == "subagent")
         sub_tool = next(node for node in subagent.children if node.node_type == "tool_call")
 
-        assert "explore" in subagent.header
+        assert "Explorer" in subagent.header
+        assert subagent.payload["agent_name"] == "explore"
         sub_tool_header = _rich_plain(sub_tool.header)
         assert 'Read("x.py")' in sub_tool_header
         assert "[cyan]" not in sub_tool_header
@@ -754,8 +755,8 @@ async def test_child_agent_stream_and_progress_attach_under_agent_node(isolated_
         agent_node = next(node for node in task_tool.children if node.node_type == "subagent")
         stream_node = next(node for node in agent_node.children if node.node_type == "assistant")
 
-        assert "explore" in agent_node.header
-        assert "agent" in agent_node.header
+        assert "Explorer" in agent_node.header
+        assert "agent" not in agent_node.header
         assert agent_node.body_lines == []
         assert agent_node.payload["description"] == "inspect auth.py"
         assert agent_node.payload["agent_id"] == 0
@@ -778,7 +779,8 @@ async def test_child_agent_stream_and_progress_attach_under_agent_node(isolated_
 
         rendered = "\n".join(_rich_plain(line) for line in isolated_dock.tree.render(100))
         assert "explore agent completed (2.5s)" not in rendered
-        assert 'Agent("explore")' in rendered
+        assert "Explorer" in rendered
+        assert 'Agent("explore")' not in rendered
         assert "subagent completed" not in rendered
     finally:
         await bus.stop()

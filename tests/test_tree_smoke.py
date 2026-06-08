@@ -1,8 +1,15 @@
 """Smoke test for OutputNode / OutputTree rendering."""
 import sys
 sys.path.insert(0, "src")
+import pytest
+from rich.text import Text
+from voidx.ui.output.dock.app import BottomInputDock
 from voidx.ui.output.tree import OutputNode, OutputTree
 from voidx.ui.transcript import transcript_rows_to_tree, tree_to_transcript_rows
+
+
+def _plain(line: str) -> str:
+    return Text.from_markup(line).plain
 
 
 def test_basic_tree():
@@ -126,7 +133,7 @@ def test_agent_subagent_render_flattens_wrapper_node():
     agent_tool = tree.new_node(
         assistant,
         node_type="tool_call",
-        header='● Agent("review")',
+        header="● Reviewer",
         payload={"tool_name": "agent"},
     )
     subagent = tree.new_node(
@@ -151,9 +158,37 @@ def test_agent_subagent_render_flattens_wrapper_node():
     map_line = next(line for line in lines if 'Map("src")' in line)
 
     assert "review agent completed" not in rendered
-    assert 'Agent("review")' in rendered
-    assert "└─" in map_line
+    assert "Reviewer" in rendered
+    assert 'Agent("review")' not in rendered
+    assert "├" not in map_line.partition("Map")[0]
+    assert "└" not in map_line.partition("Map")[0]
     assert "│" not in map_line.partition("Map")[0]
+
+
+@pytest.mark.parametrize(
+    ("agent", "display"),
+    [
+        ("explore", "Explorer"),
+        ("plan", "Planner"),
+        ("implement", "Implementer"),
+        ("review", "Reviewer"),
+    ],
+)
+def test_agent_tool_header_uses_role_display_name(agent, display):
+    dock = BottomInputDock()
+    assistant = dock.tree.new_node(dock.tree.root, node_type="assistant", header="● voidx")
+    node = dock.start_tool(
+        "Delegating",
+        f'agent="{agent}"',
+        parent=assistant,
+        tool_name="agent",
+        raw_args={"agent": agent},
+    )
+
+    header = _plain(node.header)
+
+    assert display in header
+    assert f'Agent("{agent}")' not in header
 
 
 def test_transcript_snapshot_round_trips_turn_tree():

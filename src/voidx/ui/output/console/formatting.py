@@ -8,6 +8,8 @@ from io import StringIO
 
 from rich.console import Console
 
+from voidx.ui.output.agent_display import agent_display_name
+
 _SPIN_FRAMES = ["⠋", "⠙", "⠹", "⠸", "⠼", "⠴", "⠦", "⠧", "⠇", "⠏"]
 _spin_idx: ContextVar[int] = ContextVar("spin_idx", default=0)
 _ORANGE = "#EBCB8B"  # Nord yellow-ish
@@ -88,7 +90,7 @@ def _fmt_args_short(tool_name: str, args: dict[str, object]) -> str:
         shortened = value[:77] + "..." if len(value) > 80 else value
         return _escape_rich(shortened)
     if tool_name == "agent":
-        return _escape_rich(str(args.get("agent") or ""))
+        return _escape_rich(agent_display_name(args.get("agent") or args.get("role")))
     if tool_name in {"webfetch", "websearch"}:
         value = args.get("url") or args.get("query")
         return _escape_rich(str(value)) if value else ""

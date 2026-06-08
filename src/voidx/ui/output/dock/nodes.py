@@ -16,6 +16,7 @@ from voidx.ui.output.dock.formatting import (
     _strip_ansi_trailing_space,
     _tail_lines,
 )
+from voidx.ui.output.agent_display import agent_display_name
 from voidx.ui.output.tree import OutputNode
 from voidx.ui.output.dock.nodes_startup import DockStartupNodeMixin
 from voidx.ui.output.dock.nodes_status import DockStatusNodeMixin
@@ -300,6 +301,9 @@ def _tool_header(
     args: str,
     raw_args: dict[str, Any],
 ) -> str:
+    if tool_name == "agent":
+        agent_name = raw_args.get("agent") or raw_args.get("role") or _tool_display_value(tool_name, args, raw_args)
+        return f"[bold]{escape(agent_display_name(agent_name))}[/bold]"
     name = _tool_display_name(tool_name, label)
     value = _tool_display_value(tool_name, args, raw_args)
     if value:

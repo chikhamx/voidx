@@ -125,7 +125,7 @@ def test_npm_launcher_selectPython_uses_bundled_only(tmp_path):
     home = tmp_path / "home"
     python_dir = home / "voidx" / "python" / "python" / "bin"
     python_dir.mkdir(parents=True)
-    fake_python = python_dir / "python3.12"
+    fake_python = python_dir / "python3"
     fake_python.write_text("#!/bin/sh\nif [ \"$1\" = \"-c\" ]; then echo '3.12.0'; exit 0; fi\nexit 1\n")
     fake_python.chmod(fake_python.stat().st_mode | stat.S_IXUSR)
     env = {
@@ -237,7 +237,7 @@ def test_npm_launcher_rebuilds_corrupted_venv(tmp_path):
     # Create fake bundled Python
     python_dir = home / "voidx" / "python" / "python" / "bin"
     python_dir.mkdir(parents=True)
-    fake_python = python_dir / "python3.12"
+    fake_python = python_dir / "python3"
     fake_python.write_text("#!/bin/sh\nif [ \"$1\" = \"-c\" ]; then echo '3.12.0'; exit 0; fi\nexit 1\n")
     fake_python.chmod(fake_python.stat().st_mode | stat.S_IXUSR)
     env = {

@@ -77,7 +77,7 @@ _cleanup_legacy() {
         fi
     fi
 
-    # Old npm-venv directory
+    # Old npm-venv directory (hardcoded default path — npm also defaults to ~/.local/share)
     local old_npm_venv="${HOME}/.local/share/voidx/npm-venv"
     if [ -d "${old_npm_venv}" ]; then
         warn "发现旧版 npm-venv 目录，正在删除…"
@@ -152,11 +152,11 @@ if [ -f "${VOIDX_BIN}" ] && [ -f "${MARKER_PATH}" ]; then
     EXISTING=$(cat "${MARKER_PATH}" 2>/dev/null || echo "")
     if [ "${EXISTING}" = "$(printf '%b' "${MARKER}")" ]; then
         ok "voidx ${VERSION} already installed at ${VENV_DIR}"
-        # Still ensure the symlink exists
-        if [ ! -L "${VOIDX_LINK}" ] && [ ! -f "${VOIDX_LINK}" ]; then
+        # Ensure the symlink points to the right place
+        if [ ! -L "${VOIDX_LINK}" ] || [ "$(readlink "${VOIDX_LINK}")" != "${VOIDX_BIN}" ]; then
             mkdir -p "${BIN_DIR}"
             ln -sf "${VOIDX_BIN}" "${VOIDX_LINK}"
-            info "Created symlink: ${VOIDX_LINK} → ${VOIDX_BIN}"
+            info "Updated symlink: ${VOIDX_LINK} → ${VOIDX_BIN}"
         fi
         exit 0
     fi

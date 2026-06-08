@@ -442,7 +442,13 @@ class OutputTree:
             and bool(node.parent.children)
             and node.parent.children[0] is node
         )
-        suppress_connector = node.parent is not None and node.parent.node_type == "assistant"
+        suppress_connector = (
+            node.parent is not None
+            and (
+                node.parent.node_type == "assistant"
+                or _is_agent_tool_scope_child(node)
+            )
+        )
         prefix = indent + connector
         aligned_prefix = indent + self.BOX_SPACE if suppress_connector else (
             prefix if is_first_sibling else indent + self.BOX_SPACE
@@ -524,4 +530,19 @@ def _is_transparent_agent_subagent(node: OutputNode) -> bool:
         and parent is not None
         and parent.node_type == "tool_call"
         and parent.payload.get("tool_name") == "agent"
+    )
+
+
+def _is_agent_tool_scope_child(node: OutputNode) -> bool:
+    parent = node.parent
+    if parent is None:
+        return False
+    if parent.node_type == "tool_call" and parent.payload.get("tool_name") == "agent":
+        return True
+    grandparent = parent.parent
+    return (
+        parent.node_type == "subagent"
+        and grandparent is not None
+        and grandparent.node_type == "tool_call"
+        and grandparent.payload.get("tool_name") == "agent"
     )

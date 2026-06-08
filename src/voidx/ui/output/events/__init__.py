@@ -10,6 +10,7 @@ from typing import Any
 from rich.markdown import Markdown
 from rich.markup import escape
 
+from voidx.ui.output.agent_display import agent_display_name
 from voidx.ui.output.dock import BottomInputDock, dock
 from voidx.ui.output.events.schema import (
     AnsiAppended,
@@ -351,15 +352,21 @@ class DockEventConsumer:
                     parent = self._agent_parent(e.parent_agent_id)
                 if parent is None:
                     parent = self._dock.ensure_agent()
+                role_name = agent_display_name(e.name)
                 node = self._dock.tree.new_node(
                     parent=parent,
                     node_type="subagent",
-                    header=f"[#B48EAD]●[/#B48EAD] [bold]{escape(e.name)}[/bold] agent",
+                    header=f"[#B48EAD]●[/#B48EAD] [bold]{escape(role_name)}[/bold]",
                     body_lines=[],
                     collapsed=False,
-                    agent_name=e.name,
+                    agent_name=role_name,
                     agent_run_id=e.subagent_id,
-                    payload={"role_name": e.name, "description": e.description, "agent_id": e.agent_id},
+                    payload={
+                        "role_name": role_name,
+                        "agent_name": e.name,
+                        "description": e.description,
+                        "agent_id": e.agent_id,
+                    },
                 )
                 self._agent_nodes[e.agent_id] = node
                 self._dock.mark_node_unsettled(node)
@@ -375,7 +382,7 @@ class DockEventConsumer:
                 color = "dim" if e.ok else "red"
                 icon = "●" if e.ok else "✗"
                 role_name = str(node.payload.get("role_name") or node.agent_name or e.subagent_id)
-                node.header = f"[{color}]{icon}[/{color}] [{color}]{escape(role_name)} agent {label}{elapsed}[/{color}]"
+                node.header = f"[{color}]{icon}[/{color}] [{color}]{escape(role_name)} {label}{elapsed}[/{color}]"
                 node.status = "done" if e.ok else "error"
                 node.elapsed = e.elapsed
                 node.collapsed = False

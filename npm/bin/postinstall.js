@@ -88,6 +88,77 @@ function resolveBundledPython(pythonDir, platform) {
   return path.join(installDir, "bin", "python3");
 }
 
+// ── Legacy cleanup ──────────────────────────────────────────────────────────
+// Remove voidx installed via system Python (pip/pipx) from v1.x era,
+// and old npm-venv directory from v2.x early releases.
+function cleanupLegacy(env) {
+  const isWin = process.platform === "win32";
+
+  // pip
+  for (const cmd of isWin ? ["pip"] : ["pip3", "pip"]) {
+    try {
+      const result = spawnSync(cmd, ["show", "voidx"], {
+        encoding: "utf8",
+        windowsHide: true,
+      });
+      if (!result.error && result.status === 0 && (result.stdout || "").includes("Name: voidx")) {
+        const versionMatch = (result.stdout || "").match(/Version:\s*(\S+)/);
+        const version = versionMatch ? versionMatch[1] : "unknown";
+        console.error(`  ⚠️  Found pip-installed voidx ${version} (${cmd}), uninstalling…`);
+        const uninstallResult = spawnSync(cmd, ["uninstall", "voidx", "-y"], {
+          encoding: "utf8",
+          windowsHide: true,
+          stdio: "inherit",
+        });
+        if (uninstallResult.status === 0) {
+          console.error("  ✅ Uninstalled pip-installed voidx");
+        } else {
+          console.error(`  ⚠️  Failed to uninstall voidx via ${cmd}. Run manually: ${cmd} uninstall voidx`);
+        }
+      }
+    } catch (err) {
+      // spawnSync sets result.error for ENOENT (handled by status check above);
+      // this catch only handles truly unexpected synchronous throws.
+      console.error(`  ⚠️  Failed to check ${cmd}: ${err.message}`);
+    }
+  }
+
+  // pipx
+  try {
+    const result = spawnSync("pipx", ["list"], { encoding: "utf8", windowsHide: true });
+    if (!result.error && result.status === 0 && /^voidx\b/m.test(result.stdout || "")) {
+      console.error("  ⚠️  Found pipx-installed voidx, uninstalling…");
+      const uninstallResult = spawnSync("pipx", ["uninstall", "voidx"], {
+        encoding: "utf8",
+        windowsHide: true,
+        stdio: "inherit",
+      });
+      if (uninstallResult.status === 0) {
+        console.error("  ✅ Uninstalled pipx-installed voidx");
+      } else {
+        console.error("  ⚠️  Failed to uninstall voidx via pipx. Run manually: pipx uninstall voidx");
+      }
+    }
+  } catch (err) {
+    // spawnSync sets result.error for ENOENT (handled by status check above);
+    // this catch only handles truly unexpected synchronous throws.
+    console.error(`  ⚠️  Failed to check pipx: ${err.message}`);
+  }
+
+  // Old npm-venv directory
+  const dataHome = resolveDataHome(env);
+  const oldNpmVenv = path.join(dataHome, "voidx", "npm-venv");
+  if (existsSync(oldNpmVenv)) {
+    console.error("  ⚠️  Found old npm-venv directory, removing…");
+    try {
+      rmSync(oldNpmVenv, { recursive: true, force: true });
+      console.error("  ✅ Removed old npm-venv directory");
+    } catch (err) {
+      console.error(`  Failed to remove old npm-venv: ${err.message}`);
+    }
+  }
+}
+
 // ── Download with retry ────────────────────────────────────────────────────
 const MAX_DOWNLOAD_RETRIES = 3;
 
@@ -242,6 +313,12 @@ async function main() {
   const packageSpec = env.VOIDX_NPM_PACKAGE_SPEC || `voidx==${pkg.version}`;
   const markerPath = path.join(venvDir, ".voidx-install-version");
   const marker = `${pkg.version}\n${PBS_TAG}\n${PBS_CPYTHON}\n`;
+
+  // ── Legacy cleanup ────────────────────────────────────────────────────────
+  // Remove voidx installed via system Python (pip/pipx) from v1.x era.
+  // Also remove old npm-venv directory from v2.x early releases.
+  // Runs before marker check so legacy cleanup happens even when already installed.
+  cleanupLegacy(env);
 
   // Already set up and up-to-date?
   if (existsSync(executable) && readMarker(markerPath) === marker) {
