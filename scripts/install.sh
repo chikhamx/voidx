@@ -38,7 +38,13 @@ step()  { printf "\n${BOLD}  [%s]${NC} %s\n" "$1" "$2"; }
 
 # ── Legacy cleanup ──────────────────────────────────────────────────────────
 # Remove voidx installed via system Python (pip/pipx) from v1.x era.
+# Only runs if system Python is present — if no Python, there's nothing to clean.
 _cleanup_legacy() {
+    # Skip entirely if no system Python exists
+    if ! command -v python3 &>/dev/null && ! command -v python &>/dev/null; then
+        return
+    fi
+
     # pip
     for cmd in pip3 pip; do
         if command -v "$cmd" &>/dev/null; then
@@ -49,7 +55,7 @@ _cleanup_legacy() {
                 version=$(echo "$result" | grep "^Version:" | awk '{print $2}')
                 if [ -n "$version" ]; then
                     warn "发现 pip 安装的旧版 voidx ${version}（${cmd}），正在卸载…"
-                    if "$cmd" uninstall voidx -y 2>/dev/null; then
+                    if "$cmd" uninstall voidx -y 2>/dev/null || true; then
                         ok "已卸载 pip 安装的 voidx（${cmd}）"
                     else
                         err "卸载失败，请手动执行: ${cmd} uninstall voidx"
@@ -63,7 +69,7 @@ _cleanup_legacy() {
     if command -v pipx &>/dev/null; then
         if pipx list 2>/dev/null | grep -q "voidx"; then
             warn "发现 pipx 安装的旧版 voidx，正在卸载…"
-            if pipx uninstall voidx 2>/dev/null; then
+            if pipx uninstall voidx 2>/dev/null || true; then
                 ok "已卸载 pipx 安装的 voidx"
             else
                 err "卸载失败，请手动执行: pipx uninstall voidx"
@@ -102,6 +108,12 @@ _cleanup_legacy() {
 }
 
 _cleanup_legacy
+
+# ── Prerequisites ────────────────────────────────────────────────────────────
+if ! command -v curl &>/dev/null; then
+    err "curl is required but not found. Please install curl first."
+    exit 1
+fi
 
 # ── Platform detection ──────────────────────────────────────────────────────
 OS="$(uname -s)"
