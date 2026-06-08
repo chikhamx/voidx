@@ -49,6 +49,26 @@ $VoidxBin = Join-Path $VenvDir "Scripts\voidx.exe"
 $MarkerPath = Join-Path $VenvDir ".voidx-install-version"
 $Marker = "$Version`n$PbsTag`n$PbsCpython`n"
 
+# ── Legacy cleanup ──────────────────────────────────────────────────────────
+# Remove voidx installed via system Python (pip/pipx) from v1.x era.
+if (Get-Command pip -ErrorAction SilentlyContinue) {
+    $PipResult = pip show voidx 2>$null
+    if ($PipResult -and ($PipResult | Select-String "^Version:")) {
+        $PipVersion = ($PipResult | Select-String "^Version:").Line.Split(" ")[1]
+        Write-Host "  ⚠️  Found pip-installed voidx $PipVersion, uninstalling…" -ForegroundColor Yellow
+        pip uninstall voidx -y 2>$null
+        Write-Host "  ✅ Uninstalled pip-installed voidx" -ForegroundColor Green
+    }
+}
+if (Get-Command pipx -ErrorAction SilentlyContinue) {
+    $PipxResult = pipx list 2>$null
+    if ($PipxResult -and ($PipxResult | Select-String "voidx")) {
+        Write-Host "  ⚠️  Found pipx-installed voidx, uninstalling…" -ForegroundColor Yellow
+        pipx uninstall voidx 2>$null
+        Write-Host "  ✅ Uninstalled pipx-installed voidx" -ForegroundColor Green
+    }
+}
+
 # ── Check if already installed ──────────────────────────────────────────────
 if ((Test-Path $VoidxBin) -and (Test-Path $MarkerPath)) {
     $Existing = Get-Content $MarkerPath -Raw -ErrorAction SilentlyContinue

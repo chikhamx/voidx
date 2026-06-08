@@ -2,6 +2,8 @@
 # voidx 旧版清理脚本
 # 清理 v1.x 时代通过系统 Python / pip / pipx 安装的 voidx
 #
+# 注意: install.sh 已内置旧版清理逻辑，此脚本供不想重装的用户单独清理使用。
+#
 # 用法:
 #   curl -fsSL https://raw.githubusercontent.com/chikhamx/voidx/master/scripts/cleanup-legacy.sh | bash
 
@@ -40,7 +42,7 @@ detect_pip() {
 
     if [ -n "$version" ]; then
         warn "发现 pip 安装的 voidx ${version}（${cmd}，路径: ${location}）"
-        if "$cmd" uninstall voidx -y 2>/dev/null; then
+        if "$cmd" uninstall voidx -y 2>/dev/null || true; then
             ok "已卸载 pip 安装的 voidx（${cmd}）"
             CLEANED=$((CLEANED + 1))
         else
@@ -58,7 +60,7 @@ if command -v pipx &>/dev/null; then
     if pipx list 2>/dev/null | grep -q "voidx"; then
         local_version=$(pipx list 2>/dev/null | grep -A1 "voidx" | grep "version" | awk '{print $NF}' || echo "unknown")
         warn "发现 pipx 安装的 voidx ${local_version}"
-        if pipx uninstall voidx 2>/dev/null; then
+        if pipx uninstall voidx 2>/dev/null || true; then
             ok "已卸载 pipx 安装的 voidx"
             CLEANED=$((CLEANED + 1))
         else

@@ -11,6 +11,7 @@ const pkg = require("../package.json");
 // ── Configuration ──────────────────────────────────────────────────────────
 
 const PBS_TAG = "20260602";
+const PBS_CPYTHON = "3.12.13";
 const PBS_PYTHON_MAJOR = "3.12";
 
 // ── Main ───────────────────────────────────────────────────────────────────
@@ -73,7 +74,7 @@ function selectPython(env) {
     const result = spawnSync(process.execPath, [postinstallScript], {
       stdio: "inherit",
       windowsHide: true,
-      env: { ...env, VOIDX_NPM_SKIP_BOOTSTRAP: "" },
+      env: { ...env },
     });
     if (result.status !== 0) {
       console.error("  Setup failed. Try reinstalling:");
@@ -155,7 +156,7 @@ function resolveBundledPythonBin(env) {
   const pythonDir = resolvePythonDir(env);
   return process.platform === "win32"
     ? path.join(pythonDir, "python", "python.exe")
-    : path.join(pythonDir, "python", "bin", `python${PBS_PYTHON_MAJOR}`);
+    : path.join(pythonDir, "python", "bin", "python3");
 }
 
 function resolveVenvDir(env) {
@@ -190,8 +191,7 @@ function ensureVenv(python, venvDir, env) {
   }
 
   const markerPath = path.join(venvDir, ".voidx-install-version");
-  const packageSpec = env.VOIDX_NPM_PACKAGE_SPEC || `voidx==${pkg.version}`;
-  const marker = `${pkg.version}\n${packageSpec}\n${PBS_TAG}\n3.12.13\n`;
+  const marker = `${pkg.version}\n${PBS_TAG}\n${PBS_CPYTHON}\n`;
   if (fs.existsSync(executable) && readFile(markerPath) === marker) {
     debug(env, `Using cached environment at ${venvDir}`);
     return;

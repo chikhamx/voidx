@@ -241,10 +241,10 @@ async function main() {
   const executable = resolveVoidxExecutable(venvDir);
   const packageSpec = env.VOIDX_NPM_PACKAGE_SPEC || `voidx==${pkg.version}`;
   const markerPath = path.join(venvDir, ".voidx-install-version");
-  const marker = `${pkg.version}\n${packageSpec}\n${PBS_TAG}\n${PBS_CPYTHON}\n`;
+  const marker = `${pkg.version}\n${PBS_TAG}\n${PBS_CPYTHON}\n`;
 
   // Already set up and up-to-date?
-  if (existsSync(executable) && readMarker(markerPath) !== "") {
+  if (existsSync(executable) && readMarker(markerPath) === marker) {
     console.error(`\n✅ voidx ${pkg.version} ready (cached)\n`);
     return;
   }
