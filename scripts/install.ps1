@@ -7,17 +7,20 @@
 #   powershell -File install.ps1
 #
 # Environment variables:
-#   $env:VOIDX_VERSION       — version to install (default: 2.1.0)
+#   $env:VOIDX_VERSION       — version to install (default: 2.1.1)
 #   $env:VOIDX_HOME          — install directory (default: $env:LOCALAPPDATA\voidx)
 #   $env:VOIDX_PYTHON_MIRROR — mirror for python-build-standalone downloads
 #   $env:VOIDX_PIP_INDEX     — custom PyPI index URL
 
 $ErrorActionPreference = "Stop"
 
+# Suppress progress bars for faster downloads; restore at script exit.
+$ProgressPreference = 'SilentlyContinue'
+
 # Force TLS 1.2+ — Windows PowerShell 5.1 defaults to TLS 1.0 which GitHub rejects.
 [Net.ServicePointManager]::SecurityProtocol = [Net.SecurityProtocolType]::Tls12
 
-$Version = if ($env:VOIDX_VERSION) { $env:VOIDX_VERSION } else { "2.1.0" }
+$Version = if ($env:VOIDX_VERSION) { $env:VOIDX_VERSION } else { "2.1.1" }
 $PbsTag = "20260602"
 $PbsCpython = "3.12.13"
 $PbsReleaseBase = "https://github.com/astral-sh/python-build-standalone/releases/download"
@@ -47,25 +50,38 @@ $BundledPython = Join-Path $PythonDir "python\python.exe"
 $VenvPython = Join-Path $VenvDir "Scripts\python.exe"
 $VoidxBin = Join-Path $VenvDir "Scripts\voidx.exe"
 $MarkerPath = Join-Path $VenvDir ".voidx-install-version"
-$Marker = "$Version`n$PbsTag`n$PbsCpython`n"
+$Marker = "$Version`n$PbsTag`n$PbsCpython`n$PbsTarget`n"
 
 # ── Legacy cleanup ──────────────────────────────────────────────────────────
 # Remove voidx installed via system Python (pip/pipx) from v1.x era.
+# NOTE: try/catch wrappers are required for PowerShell 5.1 compatibility.
+# In PS 5.1, redirecting a native commandʼs stderr with 2>$null wraps each
+# line in a NativeCommandError, which $ErrorActionPreference="Stop" treats
+# as a terminating error — killing the script. try/catch swallows this safely.
 if (Get-Command pip -ErrorAction SilentlyContinue) {
-    $PipResult = pip show voidx 2>$null
+    try { $PipResult = pip show voidx 2>$null } catch { $PipResult = $null }
     if ($PipResult -and ($PipResult | Select-String "^Version:")) {
         $PipVersion = ($PipResult | Select-String "^Version:").Line.Split(" ")[1]
         Write-Host "  ⚠️  Found pip-installed voidx $PipVersion, uninstalling…" -ForegroundColor Yellow
-        pip uninstall voidx -y 2>$null
+        try { pip uninstall voidx -y 2>$null } catch {}
         Write-Host "  ✅ Uninstalled pip-installed voidx" -ForegroundColor Green
     }
 }
 if (Get-Command pipx -ErrorAction SilentlyContinue) {
-    $PipxResult = pipx list 2>$null
+    try { $PipxResult = pipx list 2>$null } catch { $PipxResult = $null }
     if ($PipxResult -and ($PipxResult | Select-String "voidx")) {
         Write-Host "  ⚠️  Found pipx-installed voidx, uninstalling…" -ForegroundColor Yellow
-        pipx uninstall voidx 2>$null
+        try { pipx uninstall voidx 2>$null } catch {}
         Write-Host "  ✅ Uninstalled pipx-installed voidx" -ForegroundColor Green
+    }
+}
+if (Get-Command npm -ErrorAction SilentlyContinue) {
+    try { $NpmResult = npm list -g @chikhamx/voidx 2>$null } catch { $NpmResult = $null }
+    if ($NpmResult -and ($NpmResult | Select-String "@chikhamx/voidx@")) {
+        $NpmVersion = ($NpmResult | Select-String "@chikhamx/voidx@").Line.Trim() -replace ".*@chikhamx/voidx@([^\s]+).*", '$1'
+        Write-Host "  ⚠️  Found npm-installed voidx $NpmVersion, uninstalling…" -ForegroundColor Yellow
+        try { npm uninstall -g @chikhamx/voidx 2>$null } catch {}
+        Write-Host "  ✅ Uninstalled npm-installed voidx" -ForegroundColor Green
     }
 }
 
@@ -107,9 +123,7 @@ if (Test-Path $BundledPython) {
         for ($i = 1; $i -le $Retries; $i++) {
             try {
                 $TmpPath = "$ArchivePath.tmp"
-                $ProgressPreference = 'SilentlyContinue'
                 Invoke-WebRequest -Uri $PbsUrl -OutFile $TmpPath -UseBasicParsing
-                $ProgressPreference = 'Continue'
                 # Verify the download is not empty / trivially small
                 $DownloadSize = (Get-Item $TmpPath).Length
                 if ($DownloadSize -lt 1MB) {
@@ -143,13 +157,17 @@ if (Test-Path $BundledPython) {
     }
 
     Write-Host "    Extracting Python runtime…"
-    # Use Stop-Parsing to avoid PowerShell interpreting special chars in paths.
-    # Quote paths for tar in case they contain spaces (e.g. C:\Users\User Name\).
-    $TarResult = & tar -xzf "$ArchivePath" -C "$PythonDir" 2>&1
+    try {
+        $TarResult = & tar -xzf "$ArchivePath" -C "$PythonDir" 2>&1
+    } catch {
+        $TarResult = $_.Exception.Message
+    }
     $TarExit = $LASTEXITCODE
     if ($TarExit -ne 0) {
-        # Remove corrupted archive so retry will re-download
+        # Remove corrupted archive AND partially-extracted Python directory
+        # so the next run re-downloads instead of reusing broken files.
         Remove-Item -Path $ArchivePath -Force -ErrorAction SilentlyContinue
+        Remove-Item -Path $PythonDir -Recurse -Force -ErrorAction SilentlyContinue
         Write-Host "  ❌ Failed to extract Python runtime (tar exit code $TarExit)" -ForegroundColor Red
         Write-Host "     $TarResult" -ForegroundColor DarkGray
         Write-Host "     The downloaded archive may be incomplete. Re-run the installer to retry." -ForegroundColor DarkGray
@@ -169,6 +187,8 @@ if ((Test-Path $VenvDir) -and -not (Test-Path $VenvPython)) {
 }
 
 if (-not (Test-Path $VenvPython)) {
+    # Clear PYTHONPATH so the venv doesnʼt accidentally inherit system site-packages.
+    $env:PYTHONPATH = ""
     & $BundledPython -m venv $VenvDir
     if ($LASTEXITCODE -ne 0) {
         Write-Host "  ❌ Failed to create virtual environment" -ForegroundColor Red
@@ -177,7 +197,7 @@ if (-not (Test-Path $VenvPython)) {
 }
 
 # Upgrade pip
-& $VenvPython -m pip install --upgrade pip --no-cache-dir 2>$null
+try { & $VenvPython -m pip install --upgrade pip --no-cache-dir 2>$null } catch {}
 if ($LASTEXITCODE -ne 0) {
     Write-Host "  ⚠️  Failed to upgrade pip, continuing with current version" -ForegroundColor Yellow
 }
@@ -208,7 +228,7 @@ if ($LASTEXITCODE -ne 0) {
     Write-Host ""
     Write-Host "  ❌ pip install failed" -ForegroundColor Red
     Write-Host ""
-    Write-Host "  This is usually a network issue. Try:"
+    Write-Host "  This is usually a network issue. Try:" -ForegroundColor Red
     Write-Host "    1. Use a PyPI mirror: `$env:VOIDX_PIP_INDEX='https://pypi.tuna.tsinghua.edu.cn/simple'"
     Write-Host "    2. Retry: powershell -File install.ps1"
     exit 1

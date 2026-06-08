@@ -8,7 +8,7 @@
 #   bash install.sh
 #
 # Environment variables:
-#   VOIDX_VERSION         — version to install (default: 2.1.0)
+#   VOIDX_VERSION         — version to install (default: 2.1.1)
 #   VOIDX_HOME            — install directory (default: ~/.local/share/voidx)
 #   VOIDX_PYTHON_MIRROR   — mirror for python-build-standalone downloads
 #   VOIDX_PIP_INDEX       — custom PyPI index URL
@@ -16,7 +16,7 @@
 
 set -euo pipefail
 
-VERSION="${VOIDX_VERSION:-2.1.0}"
+VERSION="${VOIDX_VERSION:-2.1.1}"
 PBS_TAG="20260602"
 PBS_CPYTHON="3.12.13"
 PBS_PYTHON_MAJOR="3.12"
