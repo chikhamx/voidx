@@ -7,7 +7,7 @@
 #   powershell -File install.ps1
 #
 # Environment variables:
-#   $env:VOIDX_VERSION       — version to install (default: 1.1.1)
+#   $env:VOIDX_VERSION       — version to install (default: 2.1.0)
 #   $env:VOIDX_HOME          — install directory (default: $env:LOCALAPPDATA\voidx)
 #   $env:VOIDX_PYTHON_MIRROR — mirror for python-build-standalone downloads
 #   $env:VOIDX_PIP_INDEX     — custom PyPI index URL

@@ -8,7 +8,7 @@
 #   bash install.sh
 #
 # Environment variables:
-#   VOIDX_VERSION         — version to install (default: 1.1.1)
+#   VOIDX_VERSION         — version to install (default: 2.1.0)
 #   VOIDX_HOME            — install directory (default: ~/.local/share/voidx)
 #   VOIDX_PYTHON_MIRROR   — mirror for python-build-standalone downloads
 #   VOIDX_PIP_INDEX       — custom PyPI index URL
@@ -35,6 +35,73 @@ ok()    { printf "${GREEN}  ✅${NC} %s\n" "$*"; }
 warn()  { printf "${YELLOW}  ⚠${NC} %s\n" "$*"; }
 err()   { printf "${RED}  ❌${NC} %s\n" "$*" >&2; }
 step()  { printf "\n${BOLD}  [%s]${NC} %s\n" "$1" "$2"; }
+
+# ── Legacy cleanup ──────────────────────────────────────────────────────────
+# Remove voidx installed via system Python (pip/pipx) from v1.x era.
+_cleanup_legacy() {
+    # pip
+    for cmd in pip3 pip; do
+        if command -v "$cmd" &>/dev/null; then
+            local result
+            result=$("$cmd" show voidx 2>/dev/null || true)
+            if [ -n "$result" ]; then
+                local version
+                version=$(echo "$result" | grep "^Version:" | awk '{print $2}')
+                if [ -n "$version" ]; then
+                    warn "发现 pip 安装的旧版 voidx ${version}（${cmd}），正在卸载…"
+                    if "$cmd" uninstall voidx -y 2>/dev/null; then
+                        ok "已卸载 pip 安装的 voidx（${cmd}）"
+                    else
+                        err "卸载失败，请手动执行: ${cmd} uninstall voidx"
+                    fi
+                fi
+            fi
+        fi
+    done
+
+    # pipx
+    if command -v pipx &>/dev/null; then
+        if pipx list 2>/dev/null | grep -q "voidx"; then
+            warn "发现 pipx 安装的旧版 voidx，正在卸载…"
+            if pipx uninstall voidx 2>/dev/null; then
+                ok "已卸载 pipx 安装的 voidx"
+            else
+                err "卸载失败，请手动执行: pipx uninstall voidx"
+            fi
+        fi
+    fi
+
+    # Old npm-venv directory
+    local old_npm_venv="${HOME}/.local/share/voidx/npm-venv"
+    if [ -d "${old_npm_venv}" ]; then
+        warn "发现旧版 npm-venv 目录，正在删除…"
+        rm -rf "${old_npm_venv}"
+        ok "已删除旧版 npm-venv 目录"
+    fi
+
+    # Symlinks pointing to system Python
+    for link_path in "${HOME}/.local/bin/voidx" "/usr/local/bin/voidx"; do
+        if [ ! -e "$link_path" ]; then
+            continue
+        fi
+        local target
+        target=$(readlink "$link_path" 2>/dev/null || echo "")
+        case "$target" in
+            */site-packages/*|*/dist-packages/*|*/.local/pipx/*|*/pipx/venvs/*)
+                warn "发现旧版符号链接: ${link_path} → ${target}，正在删除…"
+                rm -f "$link_path"
+                ok "已删除旧版符号链接: ${link_path}"
+                ;;
+        esac
+        # Dangling symlink
+        if [ -L "$link_path" ] && [ ! -e "$target" ]; then
+            rm -f "$link_path"
+            ok "已删除悬空符号链接: ${link_path}"
+        fi
+    done
+}
+
+_cleanup_legacy
 
 # ── Platform detection ──────────────────────────────────────────────────────
 OS="$(uname -s)"

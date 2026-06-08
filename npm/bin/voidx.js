@@ -56,7 +56,7 @@ function selectPython(env) {
     return candidate;
   }
 
-  // 2. Bundled Python (preferred)
+  // 2. Bundled Python only — voidx runs in its own isolated environment
   const bundledBin = resolveBundledPythonBin(env);
   if (bundledBin && fs.existsSync(bundledBin)) {
     const candidate = { command: bundledBin, args: [], label: "bundled" };
@@ -66,41 +66,10 @@ function selectPython(env) {
     }
   }
 
-  // 3. System Python fallback (for upgrades from v1.x where bundled Python was not used)
-  const candidates = [
-    { command: "python3", args: [], label: "python3" },
-    { command: "python", args: [], label: "python" },
-    { command: "python3.13", args: [], label: "python3.13" },
-    { command: "python3.12", args: [], label: "python3.12" },
-    { command: "python3.11", args: [], label: "python3.11" },
-  ];
-  if (process.platform === "win32") {
-    candidates.push({ command: "py", args: ["-3"], label: "py -3" });
-  }
-
-  const oldVersions = [];
-  for (const candidate of candidates) {
-    const probe = probePython(candidate);
-    if (!probe.ok) {
-      continue;
-    }
-    if (isCompatible(probe.version)) {
-      return candidate;
-    }
-    oldVersions.push(`${probe.versionText} at ${candidate.label}`);
-  }
-
-  if (oldVersions.length > 0) {
-    throw new Error(
-      `voidx requires Python 3.11+. Found ${oldVersions.join(", ")}.\n` +
-      "Install Python 3.11+ or reinstall the npm package to get the bundled runtime:\n" +
-      "  npm install -g @chikhamx/voidx"
-    );
-  }
   throw new Error(
-    "voidx requires Python 3.11+. No Python found.\n" +
-    "Install Python 3.11+ or reinstall the npm package to get the bundled runtime:\n" +
-    "  npm install -g @chikhamx/voidx"
+    "voidx bundled Python not found. Reinstall to set up the isolated runtime:\n" +
+    "  npm install -g @chikhamx/voidx\n" +
+    "  or: curl -fsSL https://raw.githubusercontent.com/chikhamx/voidx/master/scripts/install.sh | bash"
   );
 }
 
@@ -199,7 +168,7 @@ function ensureVenv(python, venvDir, env) {
   const markerPath = path.join(venvDir, ".voidx-install-version");
   const packageSpec = env.VOIDX_NPM_PACKAGE_SPEC || `voidx==${pkg.version}`;
   const marker = `${pkg.version}\n${packageSpec}\n${PBS_TAG}\n3.12.13\n`;
-  if (fs.existsSync(executable) && (readFile(markerPath) !== "" || readFile(path.join(venvDir, ".voidx-npm-version")) === marker)) {
+  if (fs.existsSync(executable) && readFile(markerPath) === marker) {
     debug(env, `Using cached environment at ${venvDir}`);
     return;
   }
