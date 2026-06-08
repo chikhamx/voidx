@@ -17,7 +17,7 @@ $ErrorActionPreference = "Stop"
 # Force TLS 1.2+ — Windows PowerShell 5.1 defaults to TLS 1.0 which GitHub rejects.
 [Net.ServicePointManager]::SecurityProtocol = [Net.SecurityProtocolType]::Tls12
 
-$Version = if ($env:VOIDX_VERSION) { $env:VOIDX_VERSION } else { "2.0.6" }
+$Version = if ($env:VOIDX_VERSION) { $env:VOIDX_VERSION } else { "2.1.0" }
 $PbsTag = "20260602"
 $PbsCpython = "3.12.13"
 $PbsReleaseBase = "https://github.com/astral-sh/python-build-standalone/releases/download"
