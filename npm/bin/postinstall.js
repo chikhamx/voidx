@@ -61,7 +61,8 @@ function resolvePythonDir(env) {
 
 function resolveVenvDir(env) {
   if (env.VOIDX_NPM_VENV) return path.resolve(env.VOIDX_NPM_VENV);
-  return path.join(resolveDataHome(env), "voidx", "npm-venv");
+  // Use the same venv directory as install.sh — single environment, no duplicates
+  return path.join(resolveDataHome(env), "voidx", "venv");
 }
 
 function resolveVenvPython(venvDir) {
@@ -239,11 +240,11 @@ async function main() {
   const venvPython = resolveVenvPython(venvDir);
   const executable = resolveVoidxExecutable(venvDir);
   const packageSpec = env.VOIDX_NPM_PACKAGE_SPEC || `voidx==${pkg.version}`;
-  const markerPath = path.join(venvDir, ".voidx-npm-version");
+  const markerPath = path.join(venvDir, ".voidx-install-version");
   const marker = `${pkg.version}\n${packageSpec}\n${PBS_TAG}\n${PBS_CPYTHON}\n`;
 
   // Already set up and up-to-date?
-  if (existsSync(executable) && readMarker(markerPath) === marker) {
+  if (existsSync(executable) && readMarker(markerPath) !== "") {
     console.error(`\n✅ voidx ${pkg.version} ready (cached)\n`);
     return;
   }

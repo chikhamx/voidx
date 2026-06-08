@@ -169,18 +169,8 @@ function resolveVenvDir(env) {
   if (env.VOIDX_NPM_VENV) {
     return path.resolve(env.VOIDX_NPM_VENV);
   }
-  const dataHome = resolveDataHome(env);
-
-  // Prefer install.sh venv if it exists and has voidx — avoids duplicate environments
-  const installShVenv = path.join(dataHome, "voidx", "venv");
-  const installShExe = path.join(installShVenv, "bin", "voidx");
-  if (process.platform === "win32") {
-    // install.sh is not available on Windows, skip
-  } else if (fs.existsSync(installShExe)) {
-    return installShVenv;
-  }
-
-  return path.join(dataHome, "voidx", "npm-venv");
+  // Use the same venv directory as install.sh — single environment, no duplicates
+  return path.join(resolveDataHome(env), "voidx", "venv");
 }
 
 function resolveVenvPython(venvDir) {
@@ -206,12 +196,10 @@ function ensureVenv(python, venvDir, env) {
     return;
   }
 
-  const markerPath = path.join(venvDir, ".voidx-npm-version");
-  const installShMarkerPath = path.join(venvDir, ".voidx-install-version");
+  const markerPath = path.join(venvDir, ".voidx-install-version");
   const packageSpec = env.VOIDX_NPM_PACKAGE_SPEC || `voidx==${pkg.version}`;
-  // Marker must match postinstall.js format (includes PBS_TAG + PBS_CPYTHON)
   const marker = `${pkg.version}\n${packageSpec}\n${PBS_TAG}\n3.12.13\n`;
-  if (fs.existsSync(executable) && (readFile(markerPath) === marker || fs.existsSync(installShMarkerPath))) {
+  if (fs.existsSync(executable) && (readFile(markerPath) !== "" || readFile(path.join(venvDir, ".voidx-npm-version")) === marker)) {
     debug(env, `Using cached environment at ${venvDir}`);
     return;
   }

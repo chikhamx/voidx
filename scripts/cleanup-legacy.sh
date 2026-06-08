@@ -114,7 +114,16 @@ for python_cmd in python3 python python3.12 python3.11; do
     fi
 done
 
-# ── 5. 检测旧版配置目录 ────────────────────────────────────────────────────
+# ── 5. 检测旧版 npm-venv 目录 ──────────────────────────────────────────────
+OLD_NPM_VENV="${HOME}/.local/share/voidx/npm-venv"
+if [ -d "${OLD_NPM_VENV}" ]; then
+    warn "发现旧版 npm-venv 目录: ${OLD_NPM_VENV}"
+    rm -rf "${OLD_NPM_VENV}"
+    ok "已删除旧版 npm-venv 目录"
+    CLEANED=$((CLEANED + 1))
+fi
+
+# ── 6. 检测旧版配置目录 ────────────────────────────────────────────────────
 OLD_CONFIG="${HOME}/.voidx"
 if [ -d "${OLD_CONFIG}" ]; then
     # v2.x 也用 ~/.voidx/skills，只清理非 skills 的旧文件
