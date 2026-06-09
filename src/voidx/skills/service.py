@@ -8,7 +8,8 @@ from collections.abc import Iterable
 from voidx.skills.policy import workflow_skill_activations, workflow_skill_sort_key
 from voidx.skills.registry import SkillRegistry, normalize_skill_name
 from voidx.skills.runtime import SkillRunState
-from voidx.skills.schema import SkillDefinition, SkillMatch, SkillSelectionConfig
+from voidx.skills.schema import SkillDefinition, SkillMatch, SkillScope, SkillSelectionConfig
+from voidx.skills.context import render_skill_instruction
 
 _EXPLICIT_REF_RE = re.compile(r"(?<![\w.-])\$([A-Za-z0-9_.-]+)")
 
@@ -32,6 +33,12 @@ class SkillService:
     def enabled_skills(self) -> list[SkillDefinition]:
         return [skill for skill in self.list_skills() if self.is_enabled(skill)]
 
+    def enabled_bundled_skills(self) -> list[SkillDefinition]:
+        return [
+            skill for skill in self.enabled_skills()
+            if skill.meta.scope == "bundled"
+        ]
+
     def is_enabled(self, skill: SkillDefinition) -> bool:
         name = normalize_skill_name(skill.name)
         if name in self._normalized(self._selection.disabled):
@@ -48,13 +55,21 @@ class SkillService:
         task_intent: str | None = None,
         interaction_mode: str | None = None,
         limit: int = 5,
+        scopes: Iterable[SkillScope] | None = None,
+        exclude_names: Iterable[str] = (),
     ) -> list[SkillMatch]:
         text = user_text.strip()
         has_context = bool(agent or task_intent or interaction_mode)
         if not text and not has_context:
             return []
 
-        skills = self.enabled_skills()
+        allowed_scopes = set(scopes) if scopes is not None else None
+        excluded = self._normalized(exclude_names)
+        skills = [
+            skill for skill in self.enabled_skills()
+            if (allowed_scopes is None or skill.meta.scope in allowed_scopes)
+            and normalize_skill_name(skill.name) not in excluded
+        ]
         skills_by_name = {normalize_skill_name(skill.name): skill for skill in skills}
         explicit = self._explicit_refs(text)
         matches: list[SkillMatch] = []
@@ -109,6 +124,8 @@ class SkillService:
         task_intent: str | None = None,
         interaction_mode: str | None = None,
         limit: int = 5,
+        scopes: Iterable[SkillScope] | None = None,
+        exclude_names: Iterable[str] = (),
     ) -> list[str]:
         return [
             f"{match.name} ({match.reason})"
@@ -118,6 +135,8 @@ class SkillService:
                 task_intent=task_intent,
                 interaction_mode=interaction_mode,
                 limit=limit,
+                scopes=scopes,
+                exclude_names=exclude_names,
             )
         ]
 
@@ -132,6 +151,8 @@ class SkillService:
         scope: str = "",
         turn_count: int = 0,
         limit: int = 5,
+        scopes: Iterable[SkillScope] | None = None,
+        exclude_names: Iterable[str] = (),
     ) -> list[SkillRunState]:
         return [
             SkillRunState.from_match(
@@ -146,6 +167,8 @@ class SkillService:
                 task_intent=task_intent,
                 interaction_mode=interaction_mode,
                 limit=limit,
+                scopes=scopes,
+                exclude_names=exclude_names,
             )
         ]
 
@@ -157,6 +180,8 @@ class SkillService:
         task_intent: str | None = None,
         interaction_mode: str | None = None,
         limit: int = 5,
+        scopes: Iterable[SkillScope] | None = None,
+        exclude_names: Iterable[str] = (),
     ) -> list[str]:
         return [
             self.render_instruction(match.skill)
@@ -166,16 +191,23 @@ class SkillService:
                 task_intent=task_intent,
                 interaction_mode=interaction_mode,
                 limit=limit,
+                scopes=scopes,
+                exclude_names=exclude_names,
             )
         ]
 
+    def available_skill_summaries(self, *, include_bundled: bool = False) -> list[str]:
+        summaries: list[str] = []
+        for skill in self.enabled_skills():
+            if skill.meta.scope == "bundled" and not include_bundled:
+                continue
+            description = skill.meta.description.strip() or "(no description)"
+            summaries.append(f"- {skill.name}: {description}")
+        return summaries
+
     @staticmethod
     def render_instruction(skill: SkillDefinition) -> str:
-        description = skill.meta.description.strip()
-        header = f"Skill instructions from: {skill.path}\nSkill: {skill.name}"
-        if description:
-            header += f"\nDescription: {description}"
-        return f"{header}\n\n{skill.body}".strip()
+        return render_skill_instruction(skill)
 
     @staticmethod
     def _normalized(values: Iterable[str]) -> set[str]:

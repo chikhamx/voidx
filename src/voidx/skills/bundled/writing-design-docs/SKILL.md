@@ -61,7 +61,7 @@ Changelog structure: group by Added / Changed / Fixed / Removed. One line per ch
 
 1. **Identify the document type** — which type fits? If none fit, define the structure based on the reader's needs.
 2. **Gather context** — read the relevant code, specs, and existing docs. Do not write from memory alone.
-3. **Load the template** — call `load_doc_template` with the appropriate `doc_type` to get the document skeleton. Fill in each section: replace `{placeholder}` fields with actual content, replace `<!-- guidance comments -->` with the corresponding section content. If information is insufficient for a field, mark it `[TBD]`. Never fabricate content.
+3. **Load the template** — read the template file at `templates/{doc_type}.md` (workspace root) to get the document skeleton. Fill in each section: replace `{placeholder}` fields with actual content, replace `<!-- guidance comments -->` with the corresponding section content. If information is insufficient for a field, mark it `[TBD]`. Never fabricate content.
 4. **Write the first draft** — be concrete: use real paths, real command names, real field names. No placeholders except `[TBD]`.
 5. **Reader test** — re-read the document as if you have zero prior context. For every statement that raises a question the doc doesn't answer, add the answer or fix the statement.
 6. **Verify accuracy** — check that code examples run, paths exist, API shapes match the actual implementation.

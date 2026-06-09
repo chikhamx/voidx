@@ -59,6 +59,7 @@ from voidx.agent.graph.wiring import (
 )
 from voidx.agent.state import AgentState
 from voidx.agent.graph.streaming import extract_text, stream_llm as _stream_llm
+from voidx.agent.graph.subagent import _task_intent_for_agent as _subagent_task_intent_for_agent
 from voidx.agent.graph.subagent import run_subagent as _run_subagent
 from voidx.agent.graph.title_mixin import GraphTitleMixin
 from voidx.agent.graph.tool_execution import GraphToolExecutionMixin
@@ -117,6 +118,20 @@ def _merge_skill_runs(*groups: list[SkillRunState | dict]) -> list[SkillRunState
     return list(merged.values())
 
 
+def _skill_names(group: list[SkillRunState | dict]) -> list[str]:
+    names: list[str] = []
+    for item in group:
+        if isinstance(item, SkillRunState):
+            name = item.name
+        elif isinstance(item, dict):
+            name = item.get("name", "")
+        else:
+            name = ""
+        if isinstance(name, str) and name.strip():
+            names.append(name.strip())
+    return names
+
+
 class VoidXGraph(
     GraphTitleMixin,
     GraphRunLoopMixin,
@@ -147,6 +162,7 @@ class VoidXGraph(
 
         self._interaction_mode: InteractionMode = InteractionMode.AUTO
         self._debug: bool = False
+        self._instruction.set_debug(self._debug)
         ui.set_debug(self._debug)
 
         self._file_mtimes: dict[str, float] = {}
@@ -372,6 +388,16 @@ class VoidXGraph(
         self._next_agent_id += 1
         parent_tool_call_id = _current_parent_tool_call_id.get()
         started_at = time.monotonic()
+        interaction_mode = InteractionMode.PLAN.value if agent_def.name == "plan" else InteractionMode.AUTO.value
+        task_intent = _subagent_task_intent_for_agent(agent_def.name)
+        skill_runtime_context = await self._instruction.skill_context_for(
+            description,
+            agent=agent_def.name,
+            task_intent=task_intent,
+            interaction_mode=interaction_mode,
+            scope=description,
+            turn_count=getattr(getattr(self, "_task_run", None), "turn_count", 0),
+        )
 
         async def authorize(calls, agent_name: str):
             return await self._authorize_tool_calls(
@@ -403,8 +429,8 @@ class VoidXGraph(
                 "session_id": session_id if self._session else None,
                 "usage_stats": self._usage_stats,
                 "lsp_manager": getattr(self, "_lsp_manager", None),
-                "skill_selection": self._settings.get_skill_selection() if self._settings else None,
                 "parent_tools": self.tools,
+                "skill_runtime_context": skill_runtime_context,
             }
             if self._current_tree and self._turn_node:
                 kwargs.update({
@@ -435,6 +461,7 @@ class VoidXGraph(
 
     def set_debug(self, value: bool) -> None:
         self._debug = value
+        self._instruction.set_debug(value)
         ui.set_debug(value)
 
     def _apply_max_steps_override(self, agent_def: AgentDef) -> AgentDef:
@@ -477,6 +504,7 @@ class VoidXGraph(
             interaction_mode=interaction_mode,
             scope=pending_approval_scope(state.get("pending_approval")) or state.get("goal") or current_user_text,
             turn_count=state.get("goal_turn_count", 0),
+            exclude_names=_skill_names(state.get("skill_runs", []) or []),
         )
         skill_runs = _merge_skill_runs(
             _restored_skill_runs(getattr(self, "_task_run", None)),
@@ -497,7 +525,7 @@ class VoidXGraph(
             agent=agent_name,
             interaction_mode=interaction_mode,
             instructions=instructions,
-            skill_instructions=skill_context.instructions,
+            skill_context_content=skill_context.content,
             skill_runs=skill_runs,
             active_skill_summaries=skill_context.active,
             summary=summary,

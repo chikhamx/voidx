@@ -9,12 +9,18 @@ import json
 import platform
 from typing import Any, Iterable
 
-from langchain_core.messages import BaseMessage, HumanMessage, SystemMessage
+from langchain_core.messages import BaseMessage, HumanMessage, SystemMessage, ToolMessage
 from pydantic import BaseModel, ConfigDict, Field
 
 from voidx.agent.message_rows import RowMessageCacheEntry
 from voidx.config import ApprovalReviewer, Config, UserProfile
 from voidx.runtime.intent import InteractionMode, TaskIntent, infer_task_intent
+from voidx.skills.context import (
+    has_skill_tool_context,
+    is_skill_context_content,
+    skill_context_cache_key,
+    strip_skill_tool_context,
+)
 from voidx.skills.runtime import SkillRunState
 
 _CONTEXT_MARKER = "VOIDX_RUNTIME_CONTEXT"
@@ -26,6 +32,9 @@ class ContextCompilerCache:
     stable_prefix_key: str = ""
     stable_system_content: str = ""
     stable_system_message: SystemMessage | None = None
+    skill_context_key: str = ""
+    skill_context_content: str = ""
+    skill_context_message: HumanMessage | None = None
     row_messages: dict[int, RowMessageCacheEntry] = dataclass_field(default_factory=dict)
 
 
@@ -68,11 +77,15 @@ class RuntimeContext(BaseModel):
 
     sections: list[ContextSection]
     task_sections: list[ContextSection] = Field(default_factory=list)
+    skill_context_content: str = ""
     system_content: str | None = None
     system_message: SystemMessage | None = Field(default=None, exclude=True)
+    skill_context_message: HumanMessage | None = Field(default=None, exclude=True)
 
     def section_names(self) -> list[str]:
         names = [section.name for section in self.sections]
+        if self.skill_context_content:
+            names.append("Skill Context")
         names.extend(section.name for section in self.task_sections)
         return names
 
@@ -97,6 +110,10 @@ class ContextCompiler:
     def compile_messages(self, messages: list[BaseMessage]) -> list[BaseMessage]:
         semantic_messages = raw_semantic_messages(messages)
         current_user_index = _last_user_index(semantic_messages)
+        semantic_messages = _strip_historical_tool_skill_context(
+            semantic_messages,
+            current_user_index,
+        )
 
         system_content = self.context.render_system()
         cached_system = self.context.system_message
@@ -113,10 +130,22 @@ class ContextCompiler:
                 current = semantic_messages[current_user_index]
                 semantic_messages[current_user_index] = _prepend_task_context(current, task_context)
 
-        return [prefix, *semantic_messages]
+        skill_context_message = self._skill_context_message()
+        if skill_context_message is None:
+            return [prefix, *semantic_messages]
+        return [prefix, skill_context_message, *semantic_messages]
 
     def apply_to_messages(self, messages: list[BaseMessage]) -> None:
         messages[:] = self.compile_messages(messages)
+
+    def _skill_context_message(self) -> HumanMessage | None:
+        content = self.context.skill_context_content.strip()
+        if not content:
+            return None
+        cached = self.context.skill_context_message
+        if cached is not None and cached.content == content:
+            return cached
+        return HumanMessage(content=content)
 
 
 class RuntimeContextBuilder:
@@ -133,7 +162,7 @@ class RuntimeContextBuilder:
         agent: str,
         interaction_mode: str | InteractionMode,
         instructions: Iterable[str] = (),
-        skill_instructions: Iterable[str] = (),
+        skill_context_content: str = "",
         skill_runs: Iterable[SkillRunState] = (),
         active_skill_summaries: Iterable[str] = (),
         summary: str | None = None,
@@ -162,7 +191,7 @@ class RuntimeContextBuilder:
         self.agent = agent
         self.interaction_mode = InteractionMode.parse(interaction_mode)
         self.instructions = [item for item in instructions if item.strip()]
-        self.skill_instructions = [item for item in skill_instructions if item.strip()]
+        self.skill_context_content = skill_context_content.strip()
         self.skill_runs = list(skill_runs)
         self.active_skill_summaries = [item for item in active_skill_summaries if item.strip()]
         self.summary = summary.strip() if summary else ""
@@ -192,6 +221,12 @@ class RuntimeContextBuilder:
         return RuntimeContext(
             sections=self._build_stable_sections(),
             task_sections=self._build_task_sections(),
+            skill_context_content=self.skill_context_content,
+            skill_context_message=(
+                HumanMessage(content=self.skill_context_content)
+                if self.skill_context_content
+                else None
+            ),
         )
 
     def build_incremental(
@@ -213,12 +248,37 @@ class RuntimeContextBuilder:
             cache.stable_system_content = system_content
             cache.stable_system_message = system_message
 
+        skill_context_content, skill_context_message = self._incremental_skill_context(cache)
+
         return RuntimeContext(
             sections=sections,
             task_sections=self._build_task_sections(),
+            skill_context_content=skill_context_content,
             system_content=system_content,
             system_message=system_message,
+            skill_context_message=skill_context_message,
         ), cache
+
+    def _incremental_skill_context(
+        self,
+        cache: ContextCompilerCache,
+    ) -> tuple[str, HumanMessage | None]:
+        content = self.skill_context_content.strip()
+        if not content:
+            cache.skill_context_key = ""
+            cache.skill_context_content = ""
+            cache.skill_context_message = None
+            return "", None
+
+        key = skill_context_cache_key(content)
+        if cache.skill_context_key == key and cache.skill_context_content:
+            return cache.skill_context_content, cache.skill_context_message
+
+        message = HumanMessage(content=content)
+        cache.skill_context_key = key
+        cache.skill_context_content = content
+        cache.skill_context_message = message
+        return content, message
 
     def _build_stable_sections(self) -> list[ContextSection]:
         sections = [
@@ -266,11 +326,6 @@ class RuntimeContextBuilder:
             ContextSection(name="Runtime State", content=_render_envelope(envelope)),
             ContextSection(name="Current DateTime", content=self.current_datetime),
         ]
-        if self.skill_instructions:
-            task_sections.append(ContextSection(
-                name="Active Skills",
-                content="\n\n".join(self.skill_instructions),
-            ))
         task_sections.append(ContextSection(
             name="Current Task State",
             content=self._current_task_state(),
@@ -352,10 +407,31 @@ def raw_semantic_messages(messages: list[BaseMessage]) -> list[BaseMessage]:
         if isinstance(message, SystemMessage):
             continue
         if isinstance(message, HumanMessage):
+            if is_skill_context_content(message.content):
+                continue
             raw.append(_strip_turn_overlay(message))
         else:
             raw.append(message)
     return raw
+
+
+def _strip_historical_tool_skill_context(
+    messages: list[BaseMessage],
+    current_user_index: int | None,
+) -> list[BaseMessage]:
+    cutoff = current_user_index if current_user_index is not None else len(messages)
+    stripped: list[BaseMessage] = []
+    for index, message in enumerate(messages):
+        if index < cutoff and isinstance(message, ToolMessage):
+            if not has_skill_tool_context(message.content):
+                stripped.append(message)
+                continue
+            content = strip_skill_tool_context(message.content)
+            if content != message.content:
+                stripped.append(message.model_copy(update={"content": content}))
+                continue
+        stripped.append(message)
+    return stripped
 
 
 def _strip_turn_overlay(message: HumanMessage) -> HumanMessage:

@@ -18,7 +18,7 @@ from voidx.agent.message_rows import RowMessageCacheEntry
 from voidx.agent.runtime_context import InteractionMode, RuntimeContextBuilder
 from voidx.config import Config, ParallelSubagentsConfig, Settings, UserProfile
 from voidx.llm.compaction import CompactionSelection
-from voidx.llm.instruction import SkillRuntimeContext
+from voidx.llm.instruction import InstructionService, SkillRuntimeContext
 from voidx.memory.session import (
     MessageRow,
     SessionInfo,
@@ -29,6 +29,7 @@ from voidx.memory.session import (
 )
 from voidx.memory.transcript import load_transcript
 from voidx.permission.service import PermissionService
+from voidx.skills.context import SKILL_CONTEXT_MARKER, SKILL_TOOL_CONTEXT_MARKER, render_skill_context
 from voidx.tools.base import ToolContext, ToolResult
 from voidx.tools.registry import ToolRegistry
 from voidx.ui.output.dock import BottomInputDock, set_dock
@@ -165,6 +166,7 @@ def test_graph_registers_agent_tool_not_task_tool(tmp_path):
     assert "on_intent" in ids
     assert "clarify" in ids
     assert "plan_checkpoint" in ids
+    assert "load_skills" in ids
     assert "task" not in ids
 
 
@@ -312,7 +314,10 @@ def test_orchestrator_has_direct_edit_tools():
     assert implement is not None
     assert {"write", "edit", "apply_patch", "lsp_format"}.issubset(set(agent.tools))
     assert {"write", "edit", "apply_patch", "lsp_format"}.issubset(set(implement.tools))
-    assert {"clarify", "plan_checkpoint"}.issubset(set(agent.tools))
+    assert {"clarify", "plan_checkpoint", "load_skills"}.issubset(set(agent.tools))
+    for visible_agent in (get_agent("orchestrator"), get_agent("explore"), get_agent("plan"), get_agent("implement"), get_agent("review")):
+        assert visible_agent is not None
+        assert "load_skills" in visible_agent.tools
     assert agent.can_write is True
 
 
@@ -515,6 +520,41 @@ async def test_prepare_injects_plan_mode_prompt(tmp_path):
     assert isinstance(messages[0], SystemMessage)
     assert "## Mode Prompt" in messages[0].content
     assert "## PLAN MODE ACTIVE" in messages[0].content
+
+
+@pytest.mark.asyncio
+async def test_subagent_runner_passes_main_skill_runtime_context(tmp_path, monkeypatch):
+    import voidx.agent.graph.core as core_module
+
+    graph = _graph(tmp_path)
+    expected_context = SkillRuntimeContext(
+        instructions=["instruction"],
+        active=["test-driven-development (implement role)"],
+        content="skill context",
+        runs=[],
+    )
+    calls: list[dict] = []
+    captured: dict[str, object] = {}
+
+    async def fake_skill_context_for(*args, **kwargs):
+        calls.append({"args": args, "kwargs": kwargs})
+        return expected_context
+
+    async def fake_run_subagent(*_args, **kwargs):
+        captured.update(kwargs)
+        return "child result"
+
+    graph._instruction.skill_context_for = fake_skill_context_for
+    monkeypatch.setattr(core_module, "_run_subagent", fake_run_subagent)
+
+    result = await graph._subagent_runner(get_agent("implement"), "Implement the feature", None)
+
+    assert result == "child result"
+    assert captured["skill_runtime_context"] is expected_context
+    assert "skill_selection" not in captured
+    assert calls[0]["kwargs"]["agent"] == "implement"
+    assert calls[0]["kwargs"]["task_intent"] == "implement"
+    assert calls[0]["kwargs"]["scope"] == "Implement the feature"
 
 
 @pytest.mark.asyncio
@@ -1226,10 +1266,13 @@ async def test_execute_tools_emits_todo_updated_node(tmp_path):
         await ui_events.drain()
 
         assistant = next(node for node in test_dock.tree.root.children if node.node_type == "assistant")
-        todo = next(node for node in assistant.children if node.node_type == "todo")
+        todo_state = test_dock.todo_state()
 
-        assert todo.payload["items"] == [{"content": "wire event", "status": "in_progress"}]
-        assert todo.payload["summary"] == "0/1 done · 1 active · 0 pending"
+        assert todo_state is not None
+        assert [(item.content, item.status) for item in todo_state.items] == [("wire event", "in_progress")]
+        assert todo_state.summary == "0/1 done · 1 active · 0 pending"
+        assert not any(node.node_type == "todo" for node in test_dock.tree.root.children)
+        assert not any(node.node_type == "todo" for node in assistant.children)
         assert [message.tool_call_id for message in result["messages"] if isinstance(message, ToolMessage)] == ["call_todo"]
     finally:
         await ui_events.stop()
@@ -1369,10 +1412,63 @@ async def test_execute_tools_applies_on_intent_state_patch(tmp_path):
     assert result["intent_source"] == "on_intent"
     assert result["intent_refined"] is True
     assert "write" in result["available_tool_ids"]
+    assert "load_skills" in result["available_tool_ids"]
     assert {
         run.name for run in result["skill_runs"]
     } >= {"test-driven-development", "verification-before-completion"}
     assert "confirmed_intent" in result["messages"][0].content
+    assert SKILL_TOOL_CONTEXT_MARKER not in result["messages"][0].content
+    assert "## Skill:" not in result["messages"][0].content
+
+
+@pytest.mark.asyncio
+async def test_on_intent_excludes_already_active_skill_runs(tmp_path):
+    graph = _graph(tmp_path)
+
+    async def allow_all(
+        tool_calls,
+        agent_name: str,
+        plan_mode: bool,
+        session_id: str,
+        interaction_mode=None,
+    ):
+        return tool_calls, []
+
+    graph._authorize_tool_calls = allow_all
+    parent = AIMessage(
+        content="",
+        tool_calls=[
+            {
+                "name": "on_intent",
+                "args": {
+                    "intent": "implement",
+                    "confidence": 0.92,
+                    "reason": "user asked to implement the approved design",
+                    "scope": "实现 on_intent runtime callback",
+                },
+                "id": "call_intent",
+                "type": "tool_call",
+            }
+        ],
+    )
+
+    result = await graph._execute_tools({
+        "messages": [parent],
+        "workspace": str(tmp_path),
+        "agent": "orchestrator",
+        "plan_mode": False,
+        "interaction_mode": "auto",
+        "task_intent": "chat",
+        "skill_runs": [{"name": "test-driven-development"}],
+    })
+
+    assert [run.name for run in result["skill_runs"]] == [
+        "test-driven-development",
+        "verification-before-completion",
+    ]
+    assert "Skill: test-driven-development" not in result["messages"][0].content
+    assert "Skill: verification-before-completion" not in result["messages"][0].content
+    assert SKILL_TOOL_CONTEXT_MARKER not in result["messages"][0].content
 
 
 @pytest.mark.asyncio
@@ -1419,6 +1515,51 @@ async def test_on_intent_downgrades_implementation_in_plan_mode(tmp_path):
     assert result["pending_approval"]["scope"] == "设计 runtime callback"
     assert "write" not in result["available_tool_ids"]
     assert "edit" not in result["available_tool_ids"]
+    assert "load_skills" in result["available_tool_ids"]
+
+
+@pytest.mark.asyncio
+async def test_on_intent_keeps_load_skills_visible_for_chat(tmp_path):
+    graph = _graph(tmp_path)
+
+    async def allow_all(
+        tool_calls,
+        agent_name: str,
+        plan_mode: bool,
+        session_id: str,
+        interaction_mode=None,
+    ):
+        return tool_calls, []
+
+    graph._authorize_tool_calls = allow_all
+    parent = AIMessage(
+        content="",
+        tool_calls=[
+            {
+                "name": "on_intent",
+                "args": {
+                    "intent": "chat",
+                    "confidence": 0.9,
+                    "reason": "general chat",
+                    "scope": "general chat",
+                },
+                "id": "call_intent",
+                "type": "tool_call",
+            }
+        ],
+    )
+
+    result = await graph._execute_tools({
+        "messages": [parent],
+        "workspace": str(tmp_path),
+        "agent": "orchestrator",
+        "plan_mode": False,
+        "interaction_mode": "auto",
+        "task_intent": "chat",
+    })
+
+    assert result["task_intent"] == "chat"
+    assert result["available_tool_ids"] == ["load_skills"]
 
 
 @pytest.mark.asyncio
@@ -1587,6 +1728,42 @@ async def test_session_persistence_saves_only_new_ai_and_tool_messages(tmp_path)
 
 
 @pytest.mark.asyncio
+async def test_skill_context_overlay_not_persisted_to_user_history(tmp_path):
+    session = await create_session(workspace=str(tmp_path))
+    try:
+        graph = VoidXGraph(Config(workspace=str(tmp_path)), api_key=None, session=session)
+
+        class FakeGraph:
+            async def ainvoke(self, initial, _config):
+                return {
+                    "messages": [
+                        *initial["messages"],
+                        HumanMessage(content=f"{SKILL_CONTEXT_MARKER}\n\n## Skill: docs\nBody-Hash: abc\n\nDocs body"),
+                        AIMessage(content="new answer"),
+                    ]
+                }
+
+        graph.graph = FakeGraph()
+
+        test_dock = BottomInputDock()
+        set_dock(test_dock)
+        test_dock.begin_capture()
+        try:
+            await graph._run_once("new question")
+        finally:
+            test_dock.deactivate()
+            test_dock.reset()
+            set_dock(None)
+
+        rows = await load_messages(session.id)
+        assert [row.content for row in rows if row.role == "user"] == ["new question"]
+        assert all(SKILL_CONTEXT_MARKER not in row.content for row in rows)
+        assert all("Docs body" not in row.content for row in rows)
+    finally:
+        await delete_session(session.id)
+
+
+@pytest.mark.asyncio
 async def test_run_synthetic_turn_uses_display_text_without_losing_prompt(tmp_path):
     graph = VoidXGraph(Config(workspace=str(tmp_path)), api_key=None)
     captured: dict[str, list] = {}
@@ -1739,6 +1916,48 @@ async def test_run_once_persists_and_restores_transcript_snapshot(tmp_path):
         finally:
             second_dock.reset()
             set_dock(None)
+    finally:
+        await delete_session(session.id)
+
+
+@pytest.mark.asyncio
+async def test_run_once_commits_event_todo_at_turn_end(tmp_path):
+    session = await create_session(workspace=str(tmp_path))
+    try:
+        graph = VoidXGraph(Config(workspace=str(tmp_path)), api_key=None, session=session)
+
+        class FakeGraph:
+            async def ainvoke(self, initial, _config):
+                from voidx.ui.output.events import TodoItemPayload, TodoUpdated, ui_events
+
+                await ui_events.emit(TodoUpdated(
+                    items=[TodoItemPayload(content="finish review", status="completed")],
+                    summary="1/1 done · 0 active · 0 pending",
+                ))
+                return {"messages": list(initial["messages"]) + [AIMessage(content="done")]}
+
+        graph.graph = FakeGraph()
+
+        test_dock = BottomInputDock()
+        set_dock(test_dock)
+        test_dock.begin_capture()
+        ui_events.start(DockEventConsumer(test_dock))
+        try:
+            await graph._run_once("track todo")
+            await ui_events.drain()
+        finally:
+            await ui_events.stop()
+            test_dock.deactivate()
+            set_dock(None)
+
+        todo_nodes = [node for node in test_dock.tree.root.children if node.node_type == "todo"]
+        rows = await load_transcript(session.id)
+
+        assert test_dock.todo_state() is None
+        assert len(todo_nodes) == 1
+        assert test_dock.tree.root.children[-1] is todo_nodes[0]
+        assert todo_nodes[0].payload["summary"] == "1/1 done · 0 active · 0 pending"
+        assert any(row.node_type == "todo" for row in rows)
     finally:
         await delete_session(session.id)
 
@@ -2005,7 +2224,7 @@ async def test_slash_compact_runs_manual_session_compaction(tmp_path):
 
 
 @pytest.mark.asyncio
-async def test_prepare_injects_matching_skill_instructions(tmp_path):
+async def test_prepare_does_not_auto_inject_project_skill_body(tmp_path):
     skill_dir = tmp_path / ".voidx" / "skills" / "docs"
     skill_dir.mkdir(parents=True)
     (skill_dir / "SKILL.md").write_text(
@@ -2033,10 +2252,9 @@ async def test_prepare_injects_matching_skill_instructions(tmp_path):
 
     assert isinstance(messages[0], SystemMessage)
     assert isinstance(messages[1], HumanMessage)
-    assert "Active Skills" in messages[1].content
-    assert "Skill instructions from:" in messages[1].content
-    assert "Skill: docs" in messages[1].content
-    assert "Write concise docs." in messages[1].content
+    assert messages[1].content.startswith(SKILL_CONTEXT_MARKER)
+    assert "Skill: docs" not in messages[1].content
+    assert "Write concise docs." not in messages[1].content
 
 
 @pytest.mark.asyncio
@@ -2063,14 +2281,16 @@ async def test_prepare_injects_workflow_skills_from_task_state(tmp_path):
     result = await graph._prepare_with_stream(state)
 
     assert isinstance(messages[1], HumanMessage)
+    assert messages[1].content.startswith(SKILL_CONTEXT_MARKER)
     assert "Skill: test-driven-development" in messages[1].content
     assert "Skill: verification-before-completion" in messages[1].content
-    assert "Active workflow skills: test-driven-development" in messages[1].content
+    assert isinstance(messages[2], HumanMessage)
+    assert "Active workflow skills: test-driven-development" in messages[2].content
     assert [run.name for run in result["skill_runs"]] == [
         "test-driven-development",
         "verification-before-completion",
     ]
-    assert "Skill run state: test-driven-development=active" in messages[1].content
+    assert "Skill run state: test-driven-development=active" in messages[2].content
 
 
 @pytest.mark.asyncio
@@ -2090,6 +2310,13 @@ async def test_implement_subagent_injects_workflow_skills(tmp_path, monkeypatch)
 
     monkeypatch.setattr(subagent_module, "create_chat_model", lambda *_args, **_kwargs: FakeModel())
     monkeypatch.setattr(subagent_module, "stream_llm", fake_stream_llm)
+    skill_context = await InstructionService(str(tmp_path)).skill_context_for(
+        "Implement the feature",
+        agent="implement",
+        task_intent="implement",
+        interaction_mode=InteractionMode.AUTO.value,
+        scope="Implement the feature",
+    )
 
     output = await subagent_module.run_subagent(
         get_agent("implement"),
@@ -2100,20 +2327,80 @@ async def test_implement_subagent_injects_workflow_skills(tmp_path, monkeypatch)
             workspace=str(tmp_path),
             user_profile=UserProfile(language="zh-CN", tone="direct"),
         ),
+        skill_runtime_context=skill_context,
         debug=False,
     )
 
     assert output == "done"
+    skill_context = next(
+        message.content
+        for message in captured["messages"]
+        if isinstance(message, HumanMessage) and str(message.content).startswith(SKILL_CONTEXT_MARKER)
+    )
     rendered_user = next(
         message.content
         for message in captured["messages"]
-        if isinstance(message, HumanMessage)
+        if isinstance(message, HumanMessage) and "Runtime State" in str(message.content)
     )
-    assert "Skill: test-driven-development" in rendered_user
-    assert "Skill: verification-before-completion" in rendered_user
+    assert "Skill: test-driven-development" in skill_context
+    assert "Skill: verification-before-completion" in skill_context
     assert "Active workflow skills: test-driven-development" in rendered_user
     assert "User language: Chinese (Simplified) [zh-CN]" in rendered_user
     assert "Tone instruction: Be direct and practical. Lead with the answer or action." in rendered_user
+
+
+@pytest.mark.asyncio
+async def test_subagent_skill_context_matches_orchestrator(tmp_path, monkeypatch):
+    from voidx.agent.agents import get_agent
+    import voidx.agent.graph.subagent as subagent_module
+
+    captured: dict[str, list] = {}
+
+    class FakeModel:
+        def bind_tools(self, _tool_defs):
+            return self
+
+    async def fake_stream_llm(_model, messages, _renderer, _protocol):
+        captured["messages"] = messages
+        return AIMessage(content="done")
+
+    monkeypatch.setattr(subagent_module, "create_chat_model", lambda *_args, **_kwargs: FakeModel())
+    monkeypatch.setattr(subagent_module, "stream_llm", fake_stream_llm)
+    skill_context = await InstructionService(str(tmp_path)).skill_context_for(
+        "Implement the feature",
+        agent="implement",
+        task_intent="implement",
+        interaction_mode=InteractionMode.AUTO.value,
+        scope="Implement the feature",
+    )
+
+    output = await subagent_module.run_subagent(
+        get_agent("implement"),
+        "Implement the feature",
+        None,
+        "test-key",
+        Config(workspace=str(tmp_path)),
+        skill_runtime_context=skill_context,
+        debug=False,
+    )
+
+    assert output == "done"
+    skill_context_messages = [
+        message for message in captured["messages"]
+        if isinstance(message, HumanMessage)
+        and str(message.content).startswith(SKILL_CONTEXT_MARKER)
+    ]
+    task_messages = [
+        message for message in captured["messages"]
+        if isinstance(message, HumanMessage)
+        and "Runtime State" in str(message.content)
+    ]
+    assert len(skill_context_messages) == 1
+    assert len(task_messages) == 1
+    assert "Skill: test-driven-development" in skill_context_messages[0].content
+    assert "Skill: verification-before-completion" in skill_context_messages[0].content
+    assert "Skill: test-driven-development" not in task_messages[0].content
+    assert "Active workflow skills: test-driven-development" in task_messages[0].content
 
 
 @pytest.mark.asyncio
@@ -2259,10 +2546,17 @@ async def test_subagent_parent_history_strips_parent_turn_overlay(tmp_path, monk
         agent_prompt="You are voidx.",
         agent="orchestrator",
         interaction_mode=InteractionMode.AUTO,
-        skill_instructions=["Skill instructions from: parent\nSkill: parent"],
+        skill_context_content=render_skill_context(["Skill instructions from: parent\nSkill: parent"]),
         current_user_text="Parent request",
     ).build().apply_to_messages(parent_messages)
-    assert "Active Skills" in parent_messages[-1].content
+    assert parent_messages[1].content.startswith(SKILL_CONTEXT_MARKER)
+    skill_context = await InstructionService(str(tmp_path)).skill_context_for(
+        "Inspect the workspace",
+        agent="explore",
+        task_intent="inspect",
+        interaction_mode=InteractionMode.AUTO.value,
+        scope="Inspect the workspace",
+    )
 
     output = await subagent_module.run_subagent(
         get_agent("explore"),
@@ -2271,17 +2565,27 @@ async def test_subagent_parent_history_strips_parent_turn_overlay(tmp_path, monk
         "test-key",
         Config(workspace=str(tmp_path)),
         parent_messages=parent_messages,
+        skill_runtime_context=skill_context,
         debug=False,
     )
 
     assert output == "done"
     human_messages = [message for message in captured["messages"] if isinstance(message, HumanMessage)]
-    assert len(human_messages) == 2
-    assert human_messages[0].content == "Parent request"
-    assert "Active Skills" not in human_messages[0].content
-    assert "Runtime State" not in human_messages[0].content
-    assert "Inspect the workspace" in human_messages[1].content
-    assert "Runtime State" in human_messages[1].content
+    skill_context_messages = [
+        message for message in human_messages
+        if str(message.content).startswith(SKILL_CONTEXT_MARKER)
+    ]
+    semantic_human_messages = [
+        message for message in human_messages
+        if not str(message.content).startswith(SKILL_CONTEXT_MARKER)
+    ]
+    assert len(skill_context_messages) == 1
+    assert "Skill instructions from: parent" not in skill_context_messages[0].content
+    assert len(semantic_human_messages) == 2
+    assert semantic_human_messages[0].content == "Parent request"
+    assert "Runtime State" not in semantic_human_messages[0].content
+    assert "Inspect the workspace" in semantic_human_messages[1].content
+    assert "Runtime State" in semantic_human_messages[1].content
 
 
 @pytest.mark.asyncio

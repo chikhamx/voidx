@@ -14,19 +14,27 @@ from __future__ import annotations
 
 import asyncio
 from dataclasses import dataclass, field
+import logging
 from pathlib import Path
 
 import httpx
 
+from voidx.skills.context import render_skill_context
+from voidx.skills.registry import SkillRegistry
 from voidx.skills.runtime import SkillRunState
+from voidx.skills.schema import SkillSelectionConfig
+from voidx.skills.service import SkillService
 
 INSTRUCTION_FILES = ["AGENTS.md", "CLAUDE.md"]  # CLAUDE.md for compat
+
+logger = logging.getLogger(__name__)
 
 
 @dataclass(frozen=True)
 class SkillRuntimeContext:
     instructions: list[str]
     active: list[str]
+    content: str = ""
     runs: list[SkillRunState] = field(default_factory=list)
 
 
@@ -52,12 +60,19 @@ class InstructionService:
         # Cached system paths (refreshed each turn)
         self._system_paths: list[str] = []
         self._file_cache: dict[str, _FileContentCacheEntry] = {}
+        self._skill_registry = SkillRegistry(str(self._workspace))
+        self._skill_service: SkillService | None = None
+        self._skill_service_signature: tuple[tuple[str, ...], tuple[str, ...]] | None = None
+        self._debug = False
 
     # ── public API ──────────────────────────────────────────────────────
 
     def clear(self, message_id: str) -> None:
         """Clear claims for a message (called when message is removed)."""
         self._claims.pop(message_id, None)
+
+    def set_debug(self, value: bool) -> None:
+        self._debug = value
 
     async def system_paths(self) -> list[str]:
         """Discover all instruction file paths. Refreshed each call."""
@@ -72,7 +87,8 @@ class InstructionService:
             if claude_global.exists():
                 paths.append(str(claude_global.resolve()))
 
-        # 2. Project: walk-up from workspace, first match wins
+        # 2. Project: walk up from workspace. At each level, try
+        # INSTRUCTION_FILES in order and stop after the first matching file.
         current = self._workspace
         root = Path(current.anchor)
         while current != root:
@@ -84,9 +100,7 @@ class InstructionService:
             else:
                 current = current.parent
                 continue
-            break  # first match wins (one level only, opencode semantics)
-            # Actually opencode tries each filename at each level
-            # and breaks out on the FIRST filename that has any match
+            break  # first matching instruction file wins
 
         self._system_paths = paths
         return paths
@@ -95,7 +109,18 @@ class InstructionService:
         """Read all system instruction files. Returns list of
         'Instructions from: <path>\n<content>' strings."""
         paths = await self.system_paths()
-        return await self._read_all(paths)
+        instructions = await self._read_all(paths)
+        available_skills = await self.available_skills_section()
+        if available_skills:
+            instructions.append(available_skills)
+        return instructions
+
+    async def available_skills_section(self) -> str:
+        service = self._skill_service_for_current_selection()
+        summaries = await asyncio.to_thread(service.available_skill_summaries)
+        if not summaries:
+            return ""
+        return "## Available Skills\n" + "\n".join(summaries)
 
     async def skill_context_for(
         self,
@@ -107,26 +132,25 @@ class InstructionService:
         task_phase: str = "",
         scope: str = "",
         turn_count: int = 0,
+        exclude_names: list[str] | None = None,
     ) -> SkillRuntimeContext:
-        from voidx.skills.registry import SkillRegistry
-        from voidx.skills.service import SkillService
-
-        selection = self._settings.get_skill_selection() if self._settings is not None else None
-        service = SkillService(
-            SkillRegistry(str(self._workspace)),
-            selection=selection,
-        )
+        service = self._skill_service_for_current_selection()
+        bundled_skills = await asyncio.to_thread(service.enabled_bundled_skills)
+        instructions = [service.render_instruction(skill) for skill in bundled_skills]
         matches = await asyncio.to_thread(
             service.select,
             user_text,
             agent=agent,
             task_intent=task_intent,
             interaction_mode=interaction_mode,
+            scopes=("bundled",),
+            exclude_names=exclude_names or (),
         )
         phase = task_phase or _phase_from_intent(task_intent, interaction_mode)
         return SkillRuntimeContext(
-            instructions=[service.render_instruction(match.skill) for match in matches],
+            instructions=instructions,
             active=[f"{match.name} ({match.reason})" for match in matches],
+            content=render_skill_context(instructions),
             runs=[
                 SkillRunState.from_match(
                     match,
@@ -199,12 +223,29 @@ class InstructionService:
                 content = await self._read_file(str(candidate))
                 if content:
                     results.append(f"Instructions from: {candidate_str}\n{content}")
+                    if self._debug:
+                        logger.debug(
+                            "Injected instruction file for %s: %s",
+                            filepath,
+                            candidate_str,
+                        )
 
             current = current.parent
 
         return results
 
     # ── helpers ─────────────────────────────────────────────────────────
+
+    def _skill_service_for_current_selection(self) -> SkillService:
+        selection = self._settings.get_skill_selection() if self._settings is not None else None
+        signature = _skill_selection_signature(selection)
+        if self._skill_service is None or self._skill_service_signature != signature:
+            self._skill_service = SkillService(
+                self._skill_registry,
+                selection=selection,
+            )
+            self._skill_service_signature = signature
+        return self._skill_service
 
     async def _read_file(self, path: str) -> str:
         target = Path(path)
@@ -272,3 +313,11 @@ def _phase_from_intent(task_intent: str | None, interaction_mode: str | None = N
     if intent in {"inspect", "design", "implement", "review"}:
         return intent
     return ""
+
+
+def _skill_selection_signature(
+    selection: SkillSelectionConfig | None,
+) -> tuple[tuple[str, ...], tuple[str, ...]]:
+    if selection is None:
+        return (), ()
+    return tuple(sorted(selection.enabled)), tuple(sorted(selection.disabled))

@@ -26,6 +26,7 @@ from voidx.agent.tool_messages import sanitize_tool_message_content
 from voidx.agent.tool_filters import filter_unavailable_lsp_tools
 from voidx.config import Config
 from voidx.llm.provider import create_chat_model, resolve_protocol
+from voidx.llm.instruction import SkillRuntimeContext
 from voidx.llm.usage import (
     UsageStats,
     estimate_context_tokens,
@@ -33,9 +34,6 @@ from voidx.llm.usage import (
     extract_token_usage,
 )
 from voidx.memory.context_frames import save_context_frame_from_messages
-from voidx.skills.registry import SkillRegistry
-from voidx.skills.runtime import SkillRunState
-from voidx.skills.service import SkillService
 from voidx.tools.base import ToolContext
 from voidx.tools.registry import ToolRegistry
 from voidx.tools.task_tracker import TaskTracker
@@ -59,8 +57,8 @@ async def run_subagent(
     session_id: str | None = None,
     usage_stats: UsageStats | None = None,
     lsp_manager=None,
-    skill_selection=None,
     parent_tools: ToolRegistry | None = None,
+    skill_runtime_context: SkillRuntimeContext | None = None,
 ) -> str:
     """Run a child agent. Child messages are appended to sub_messages
     (when provided) so the caller can place them after ToolMessages."""
@@ -140,16 +138,7 @@ async def run_subagent(
     interaction_mode = InteractionMode.PLAN.value if agent_def.name == "plan" else InteractionMode.AUTO.value
     mode_prompt = PLAN_MODE_APPEND if InteractionMode.parse(interaction_mode) == InteractionMode.PLAN else ""
     task_intent = _task_intent_for_agent(agent_def.name)
-    skill_service = SkillService(
-        SkillRegistry(config.workspace),
-        selection=skill_selection,
-    )
-    skill_matches = skill_service.select(
-        task_description,
-        agent=agent_def.name,
-        task_intent=task_intent,
-        interaction_mode=interaction_mode,
-    )
+    skills = skill_runtime_context or SkillRuntimeContext(instructions=[], active=[], content="", runs=[])
     context_cache = ContextCompilerCache()
     context, context_cache = RuntimeContextBuilder(
         config=context_config,
@@ -160,16 +149,9 @@ async def run_subagent(
         tool_contract=agent_def.tool_contract,
         agent=agent_def.name,
         interaction_mode=interaction_mode,
-        skill_instructions=[skill_service.render_instruction(match.skill) for match in skill_matches],
-        skill_runs=[
-            SkillRunState.from_match(
-                match,
-                phase="design" if interaction_mode == InteractionMode.PLAN.value else task_intent,
-                scope=task_description,
-            )
-            for match in skill_matches
-        ],
-        active_skill_summaries=[f"{match.name} ({match.reason})" for match in skill_matches],
+        skill_context_content=skills.content,
+        skill_runs=skills.runs,
+        active_skill_summaries=skills.active,
         current_user_text=task_description,
         task_intent=task_intent,
         session_date=datetime.now().astimezone().strftime("%Y-%m-%d %Z"),

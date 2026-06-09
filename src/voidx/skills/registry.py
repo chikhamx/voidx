@@ -45,13 +45,15 @@ class SkillRegistry:
         project_dir: Path | None = None,
     ) -> None:
         self.workspace = Path(workspace).resolve()
-        self.bundled_dir = bundled_dir or (Path(__file__).resolve().parent / "bundled" / "superpowers")
+        self.bundled_dir = bundled_dir or (Path(__file__).resolve().parent / "bundled")
         self.global_dir = global_dir or (Path.home() / ".voidx" / "skills")
         self.project_dir = project_dir or (self.workspace / ".voidx" / "skills")
         self._cache: list[SkillDefinition] | None = None
+        self._cache_signature: tuple[tuple[str, str, int, int], ...] | None = None
 
     def discover(self) -> list[SkillDefinition]:
-        if self._cache is not None:
+        signature = self._discover_signature()
+        if self._cache is not None and self._cache_signature == signature:
             return self._cache
         skills: dict[str, SkillDefinition] = {}
         for scope, root in (
@@ -62,10 +64,12 @@ class SkillRegistry:
             for skill in self._discover_root(root, scope):
                 skills[normalize_skill_name(skill.name)] = skill
         self._cache = sorted(skills.values(), key=lambda item: item.name)
+        self._cache_signature = signature
         return self._cache
 
     def invalidate(self) -> None:
         self._cache = None
+        self._cache_signature = None
 
     def get(self, name: str) -> SkillDefinition | None:
         target = normalize_skill_name(name)
@@ -84,6 +88,23 @@ class SkillRegistry:
             except SkillParseError:
                 continue
         return skills
+
+    def _discover_signature(self) -> tuple[tuple[str, str, int, int], ...]:
+        entries: list[tuple[str, str, int, int]] = []
+        for scope, root in (
+            ("bundled", self.bundled_dir),
+            ("global", self.global_dir),
+            ("project", self.project_dir),
+        ):
+            if not root.exists() or not root.is_dir():
+                continue
+            for skill_file in sorted(root.glob(f"*/{SKILL_FILENAME}")):
+                try:
+                    stat = skill_file.stat()
+                except OSError:
+                    continue
+                entries.append((scope, str(skill_file.resolve()), stat.st_mtime_ns, stat.st_size))
+        return tuple(entries)
 
 
 def parse_skill_file(path: Path, *, scope: SkillScope) -> SkillDefinition:

@@ -47,7 +47,6 @@ class OnIntentResult(BaseModel):
     available_tool_ids: list[str] = Field(default_factory=list)
     needs_user_confirmation: bool = False
     state_patch: ToolStatePatch
-    skill_instructions: list[str] = Field(default_factory=list)
 
 
 IntentResolver = Callable[[OnIntentInput, ToolContext], OnIntentResult | Awaitable[OnIntentResult]]
@@ -114,8 +113,4 @@ def _format_on_intent_output(payload: dict) -> str:
         "available_tool_ids": payload.get("available_tool_ids", []),
         "needs_user_confirmation": payload.get("needs_user_confirmation", False),
     }
-    parts = [json.dumps(compact, ensure_ascii=False, indent=2)]
-    instructions = payload.get("skill_instructions") or []
-    if instructions:
-        parts.append("## Active Skill Instructions\n" + "\n\n".join(instructions))
-    return "\n\n".join(parts)
+    return json.dumps(compact, ensure_ascii=False, indent=2)

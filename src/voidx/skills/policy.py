@@ -22,6 +22,18 @@ WORKFLOW_SKILL_PRIORITY = {
     "requesting-code-review": 60,
 }
 
+WORKFLOW_SKILL_TRANSITIONS: dict[str, tuple[str, ...]] = {
+    "brainstorming": ("writing-design-docs",),
+    "writing-design-docs": ("writing-plans",),
+    "receiving-code-review": (
+        "test-driven-development",
+        "verification-before-completion",
+    ),
+    "systematic-debugging": ("verification-before-completion",),
+    "test-driven-development": ("verification-before-completion",),
+    "verification-before-completion": ("requesting-code-review",),
+}
+
 
 def workflow_skill_activations(
     user_text: str,
@@ -53,8 +65,11 @@ def workflow_skill_activations(
     if agent_name == "plan":
         add("writing-plans", "plan role")
 
-    if intent == "review" and _contains_any(text, _REVIEW_FEEDBACK_TERMS):
-        add("receiving-code-review", "review feedback")
+    if intent == "review":
+        if _contains_any(text, _REVIEW_FEEDBACK_TERMS):
+            add("receiving-code-review", "review feedback")
+        else:
+            add("requesting-code-review", "review intent")
 
     if intent == "design" or intent == "create":
         add("brainstorming", "design/create intent")
@@ -73,6 +88,10 @@ def workflow_skill_activations(
 
 def workflow_skill_sort_key(name: str) -> tuple[int, str]:
     return (WORKFLOW_SKILL_PRIORITY.get(name, 999), name)
+
+
+def workflow_skill_transitions(name: str) -> tuple[str, ...]:
+    return WORKFLOW_SKILL_TRANSITIONS.get(name.strip().lower(), ())
 
 
 def _contains_any(text: str, terms: tuple[str, ...]) -> bool:

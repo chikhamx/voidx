@@ -72,7 +72,6 @@ def refine_intent(
         intent_refined=True,
     )
 
-    service = _skill_service(config, settings)
     return OnIntentResult(
         confirmed_intent=confirmed,
         confidence=inp.confidence,
@@ -82,7 +81,6 @@ def refine_intent(
         available_tool_ids=available_tool_ids,
         needs_user_confirmation=needs_confirmation,
         state_patch=patch,
-        skill_instructions=[service.render_instruction(match.skill) for match in matches],
     )
 
 
@@ -136,13 +134,14 @@ def _available_tools_for_intent(
         "lsp_definition",
         "lsp_references",
         "task_status",
+        "load_skills",
     }
     planning_tools = read_tools | {"agent", "todo", "bash"}
     implementation_tools = set(agent_tools)
     review_tools = read_tools | {"agent", "todo", "bash"}
 
     if intent in {TaskIntent.CHAT, TaskIntent.AMBIGUOUS}:
-        desired = set()
+        desired = {"load_skills"}
     elif intent == TaskIntent.INSPECT:
         desired = read_tools
     elif intent == TaskIntent.DESIGN:
@@ -205,14 +204,17 @@ def _skill_matches(
         agent=ctx.agent,
         task_intent=intent.value,
         interaction_mode=ctx.interaction_mode,
+        scopes=("bundled",),
+        exclude_names=ctx.active_skill_names,
     )
     seen = {normalize_skill_name(match.name) for match in matches}
+    excluded = {normalize_skill_name(name) for name in ctx.active_skill_names}
     for name in inp.suggested_skills:
         normalized = normalize_skill_name(name)
-        if normalized in seen:
+        if normalized in seen or normalized in excluded:
             continue
         skill = service.get(normalized)
-        if skill is None or not service.is_enabled(skill):
+        if skill is None or skill.meta.scope != "bundled" or not service.is_enabled(skill):
             continue
         matches.append(SkillMatch(skill=skill, reason="suggested"))
         seen.add(normalized)
