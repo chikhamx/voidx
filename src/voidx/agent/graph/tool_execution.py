@@ -14,6 +14,7 @@ from voidx.agent.graph.runtime import current_parent_tool_call_id, ui
 from voidx.agent.graph.todo_events import todo_updated_event
 from voidx.agent.task_state import ToolStatePatch
 from voidx.agent.tool_messages import sanitize_tool_message_content
+from voidx.skills.runtime import SkillRunState
 from voidx.tools.base import ToolContext, UserInteraction, UserResponse
 from voidx.runtime.ui import (
     FileChangeAppended,
@@ -69,6 +70,7 @@ class GraphToolExecutionMixin:
             pending_approval=_dump_pending_approval(state.get("pending_approval")),
             goal=state.get("goal", ""),
             goal_turn_count=state.get("goal_turn_count", 0),
+            active_skill_names=_active_skill_names(state.get("skill_runs", []) or []),
             file_mtimes=self._file_mtimes,
             mcp_manager=getattr(self, "_mcp_manager", None),
             lsp_manager=getattr(self, "_lsp_manager", None),
@@ -287,7 +289,10 @@ class GraphToolExecutionMixin:
         ]
         deferred_msgs = [_deferred_message(tc, ctx.workspace) for tc in deferred_for_barrier]
 
-        state_update = _state_update_from_executed_tools(executed)
+        state_update = _state_update_from_executed_tools(
+            executed,
+            current_skill_runs=state.get("skill_runs", []) or [],
+        )
         return {
             "messages": [item.message for item in executed] + extra + denied_msgs + deferred_msgs,
             **state_update,
@@ -306,8 +311,14 @@ class GraphToolExecutionMixin:
         return True
 
 
-def _state_update_from_executed_tools(executed: list[_ExecutedTool]) -> dict:
+def _state_update_from_executed_tools(
+    executed: list[_ExecutedTool],
+    *,
+    current_skill_runs: object = (),
+) -> dict:
     update: dict = {}
+    merged_skill_runs = _merge_skill_runs_for_state(current_skill_runs)
+    skill_runs_changed = False
     for item in executed:
         metadata = getattr(item.result, "metadata", {}) or {}
         raw = metadata.get("state_patch")
@@ -325,10 +336,29 @@ def _state_update_from_executed_tools(executed: list[_ExecutedTool]) -> dict:
             elif field == "pending_approval":
                 update["pending_approval"] = data.get(field)
             elif field == "skill_runs":
-                update["skill_runs"] = patch.skill_runs
+                merged_skill_runs = _merge_skill_runs_for_state(
+                    merged_skill_runs,
+                    patch.skill_runs,
+                )
+                skill_runs_changed = True
             else:
                 update[field] = data.get(field)
+    if skill_runs_changed:
+        update["skill_runs"] = merged_skill_runs
     return update
+
+
+def _merge_skill_runs_for_state(*groups: object) -> list[SkillRunState]:
+    merged: dict[str, SkillRunState] = {}
+    for group in groups:
+        items = group.values() if isinstance(group, dict) else group or []
+        for item in items:
+            try:
+                run = item if isinstance(item, SkillRunState) else SkillRunState.model_validate(item)
+            except (TypeError, ValueError):
+                continue
+            merged[run.name] = run
+    return list(merged.values())
 
 
 def _parallel_subagent_limit(config) -> int:
@@ -430,3 +460,16 @@ def _dump_pending_approval(value: object | None) -> dict | None:
     if hasattr(value, "model_dump"):
         return value.model_dump(mode="json")
     return None
+
+
+def _active_skill_names(value: object) -> list[str]:
+    names: list[str] = []
+    items = value.values() if isinstance(value, dict) else value or []
+    for item in items:
+        if isinstance(item, dict):
+            name = item.get("name")
+        else:
+            name = getattr(item, "name", None)
+        if isinstance(name, str) and name.strip():
+            names.append(name.strip())
+    return names

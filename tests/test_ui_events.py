@@ -30,6 +30,8 @@ from voidx.ui.output.events import (
     ToolFinished,
     ToolResultAppended,
     ToolStarted,
+    TodoCleared,
+    TodoCommitted,
     TodoItemPayload,
     TodoUpdated,
     TurnStarted,
@@ -48,6 +50,27 @@ def _plain(line: str) -> str:
 
 def _rich_plain(line: str) -> str:
     return Text.from_markup(_plain(line)).plain
+
+
+def test_dock_event_consumer_rejects_unsupported_event(isolated_dock):
+    consumer = DockEventConsumer(isolated_dock)
+
+    with pytest.raises(TypeError, match="Unsupported UI event"):
+        consumer.handle(object())
+
+
+@pytest.mark.asyncio
+async def test_ui_event_bus_exposes_consumer_error_on_drain(isolated_dock):
+    bus = UiEventBus()
+    bus.start(DockEventConsumer(isolated_dock))
+    try:
+        await bus.emit(object())
+
+        with pytest.raises(TypeError, match="Unsupported UI event"):
+            await bus.drain()
+        assert isinstance(bus.last_error, TypeError)
+    finally:
+        await bus.stop()
 
 
 @pytest.fixture(autouse=True)
@@ -345,7 +368,7 @@ async def test_file_change_event_updates_tool_node_with_structured_diff(isolated
 
 
 @pytest.mark.asyncio
-async def test_todo_updated_creates_and_updates_single_todo_node(isolated_dock):
+async def test_todo_updated_sets_pinned_state_until_committed(isolated_dock):
     isolated_dock.begin_capture()
     bus = UiEventBus()
     bus.start(DockEventConsumer(isolated_dock))
@@ -375,13 +398,25 @@ async def test_todo_updated_creates_and_updates_single_todo_node(isolated_dock):
 
         assistant = next(node for node in isolated_dock.tree.root.children if node.node_type == "assistant")
         todo_nodes = [node for node in isolated_dock.tree.root.children if node.node_type == "todo"]
+        state = isolated_dock.todo_state()
+
+        assert state is not None
+        assert state.summary == "0/10 done · 0 active · 10 pending"
+        assert len(state.items) == 10
+        assert todo_nodes == []
+        assert not any(node.node_type == "todo" for node in assistant.children)
+
+        await bus.emit(TodoCommitted())
+        await bus.drain()
+
+        todo_nodes = [node for node in isolated_dock.tree.root.children if node.node_type == "todo"]
         rendered = "\n".join(_rich_plain(line) for line in isolated_dock.tree.render(120))
 
+        assert isolated_dock.todo_state() is None
         assert len(todo_nodes) == 1
-        assert isolated_dock.tree.root.children[0] is todo_nodes[0]
+        assert isolated_dock.tree.root.children[-1] is todo_nodes[0]
         assert todo_nodes[0].payload["summary"] == "0/10 done · 0 active · 10 pending"
         assert len(todo_nodes[0].payload["items"]) == 10
-        assert not any(node.node_type == "todo" for node in assistant.children)
         assert "Todo: 0/10 done" in rendered
         assert "task 7" in rendered
         assert "2 more todos" in rendered
@@ -414,13 +449,31 @@ async def test_todo_updated_sets_pinned_todo_state(isolated_dock):
             ("implement pinned display", "in_progress"),
             ("write tests", "pending"),
         ]
-        assert len(todo_nodes) == 1
-        assert todo_nodes[0].payload["summary"] == state.summary
+        assert todo_nodes == []
     finally:
         await bus.stop()
 
 
-def test_restore_tree_hydrates_pinned_todo_state(isolated_dock):
+@pytest.mark.asyncio
+async def test_todo_cleared_removes_pinned_todo_without_transcript_node(isolated_dock):
+    isolated_dock.begin_capture()
+    bus = UiEventBus()
+    bus.start(DockEventConsumer(isolated_dock))
+    try:
+        await bus.emit(TodoUpdated(
+            items=[TodoItemPayload(content="temporary task", status="in_progress")],
+            summary="0/1 done · 1 active · 0 pending",
+        ))
+        await bus.emit(TodoCleared())
+        await bus.drain()
+
+        assert isolated_dock.todo_state() is None
+        assert not any(node.node_type == "todo" for node in isolated_dock.tree.root.children)
+    finally:
+        await bus.stop()
+
+
+def test_restore_tree_does_not_hydrate_committed_todo_state(isolated_dock):
     tree = OutputTree()
     tree.new_node(
         parent=tree.root,
@@ -452,13 +505,7 @@ def test_restore_tree_hydrates_pinned_todo_state(isolated_dock):
 
     isolated_dock.restore_tree(tree)
 
-    state = isolated_dock.todo_state()
-    assert state is not None
-    assert state.summary == "1/2 done · 0 active · 1 pending"
-    assert [(item.content, item.status) for item in state.items] == [
-        ("done task", "completed"),
-        ("next task", "pending"),
-    ]
+    assert isolated_dock.todo_state() is None
 
 
 def test_reset_clears_pinned_todo_state(isolated_dock):
@@ -473,7 +520,7 @@ def test_reset_clears_pinned_todo_state(isolated_dock):
 
 
 @pytest.mark.asyncio
-async def test_todo_updated_keeps_single_root_node_across_turns(isolated_dock):
+async def test_todo_committed_appends_each_turn_todo_and_clears_pinned(isolated_dock):
     isolated_dock.begin_capture()
     bus = UiEventBus()
     bus.start(DockEventConsumer(isolated_dock))
@@ -483,19 +530,26 @@ async def test_todo_updated_keeps_single_root_node_across_turns(isolated_dock):
             items=[TodoItemPayload(content="first task", status="pending")],
             summary="0/1 done · 0 active · 1 pending",
         ))
+        await bus.emit(TodoCommitted())
         await bus.request(TurnStarted(text="second"))
         await bus.emit(TodoUpdated(
             items=[TodoItemPayload(content="second task", status="in_progress")],
             summary="0/1 done · 1 active · 0 pending",
         ))
+        await bus.emit(TodoCommitted())
         await bus.drain()
 
         todo_nodes = [node for node in isolated_dock.tree.root.children if node.node_type == "todo"]
 
-        assert len(todo_nodes) == 1
-        assert isolated_dock.tree.root.children[0] is todo_nodes[0]
-        assert todo_nodes[0].payload["summary"] == "0/1 done · 1 active · 0 pending"
+        assert isolated_dock.todo_state() is None
+        assert len(todo_nodes) == 2
+        assert todo_nodes[0].payload["summary"] == "0/1 done · 0 active · 1 pending"
         assert todo_nodes[0].payload["items"] == [
+            {"content": "first task", "status": "pending"}
+        ]
+        assert isolated_dock.tree.root.children[-1] is todo_nodes[1]
+        assert todo_nodes[1].payload["summary"] == "0/1 done · 1 active · 0 pending"
+        assert todo_nodes[1].payload["items"] == [
             {"content": "second task", "status": "in_progress"}
         ]
     finally:
@@ -503,7 +557,7 @@ async def test_todo_updated_keeps_single_root_node_across_turns(isolated_dock):
 
 
 @pytest.mark.asyncio
-async def test_todo_updated_reorders_existing_root_todo_to_front(isolated_dock):
+async def test_todo_updated_preserves_existing_root_order_until_commit(isolated_dock):
     isolated_dock.begin_capture()
     root = isolated_dock.tree.root
     existing = isolated_dock.tree.new_node(
@@ -531,11 +585,16 @@ async def test_todo_updated_reorders_existing_root_todo_to_front(isolated_dock):
         ))
         await bus.drain()
 
-        assert root.children[0] is todo
-        assert root.children[1] is existing
-        assert root.children[0]._is_last_sibling is False
-        assert root.children[1]._is_last_sibling is True
-        assert todo.payload["summary"] == "0/1 done · 0 active · 1 pending"
+        assert root.children == [existing, todo]
+        assert isolated_dock.todo_state() is not None
+
+        await bus.emit(TodoCommitted())
+        await bus.drain()
+
+        todo_nodes = [node for node in root.children if node.node_type == "todo"]
+        assert root.children[:2] == [existing, todo]
+        assert root.children[-1] is todo_nodes[-1]
+        assert todo_nodes[-1].payload["summary"] == "0/1 done · 0 active · 1 pending"
     finally:
         await bus.stop()
 
@@ -572,9 +631,14 @@ async def test_todo_updated_with_agent_id_updates_global_root_todo(isolated_dock
         assistant = next(node for node in isolated_dock.tree.root.children if node.node_type == "assistant")
         task_tool = next(node for node in assistant.children if node.node_type == "tool_call")
         subagent = next(node for node in task_tool.children if node.node_type == "subagent")
+
+        assert not any(node.node_type == "todo" for node in isolated_dock.tree.root.children)
+        await bus.emit(TodoCommitted())
+        await bus.drain()
+
         todo = next(node for node in isolated_dock.tree.root.children if node.node_type == "todo")
 
-        assert isolated_dock.tree.root.children[0] is todo
+        assert isolated_dock.tree.root.children[-1] is todo
         assert todo.payload["items"] == [{"content": "inspect auth", "status": "in_progress"}]
         assert not any(node.node_type == "todo" for node in assistant.children)
         assert not any(node.node_type == "todo" for node in task_tool.children)
@@ -822,6 +886,56 @@ async def test_capture_console_uses_ui_event_bus_for_subagent_tools(isolated_doc
         expanded = "\n".join(_plain(line) for line in isolated_dock.tree.render(100))
         assert "first" in expanded
         assert tool.children[0].body_lines == ["second"]
+    finally:
+        await ui_events.stop()
+
+
+def test_capture_console_non_event_methods_append_under_parent(isolated_dock):
+    isolated_dock.begin_capture()
+    parent = isolated_dock.tree.new_node(
+        isolated_dock.tree.root,
+        node_type="subagent",
+        header="child",
+        collapsed=False,
+    )
+    capture = CaptureConsole(isolated_dock.tree, parent, agent_id=0)
+
+    capture.print("[bold]hello[/bold]")
+    capture.markdown("**markdown** item")
+    capture.thinking("checked context")
+    capture.sep()
+
+    child_types = [node.node_type for node in parent.children]
+    rendered = "\n".join(_rich_plain(line) for line in isolated_dock.tree.render(100))
+
+    assert child_types == ["message", "message", "thought", "message"]
+    assert "hello" in rendered
+    assert "markdown item" in rendered
+    assert "Thinking" in rendered
+    assert "checked context" in rendered
+    assert "─" in rendered
+    assert all(child.parent is parent for child in parent.children)
+
+
+@pytest.mark.asyncio
+async def test_capture_console_event_methods_remain_noop(isolated_dock):
+    isolated_dock.begin_capture()
+    ui_events.start(DockEventConsumer(isolated_dock))
+    try:
+        parent = await ui_events.request(TurnStarted(text="demo"))
+        capture = CaptureConsole(isolated_dock.tree, parent, agent_id=0)
+
+        capture.print("hello")
+        capture.markdown("**markdown**")
+        capture.thinking("checked context")
+        capture.sep()
+        await ui_events.drain()
+
+        assert parent.children == []
+        rendered = "\n".join(_rich_plain(line) for line in isolated_dock.tree.render(100))
+        assert "hello" not in rendered
+        assert "markdown" not in rendered
+        assert "checked context" not in rendered
     finally:
         await ui_events.stop()
 

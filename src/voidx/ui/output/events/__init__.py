@@ -4,6 +4,8 @@ from __future__ import annotations
 
 import asyncio
 import inspect
+import logging
+from collections.abc import Awaitable
 from dataclasses import dataclass
 from typing import Any
 
@@ -43,6 +45,8 @@ from voidx.ui.output.events.schema import (
     ToolFinished,
     ToolResultAppended,
     ToolStarted,
+    TodoCleared,
+    TodoCommitted,
     TodoItemPayload,
     TodoUpdated,
     TurnStarted,
@@ -51,16 +55,6 @@ from voidx.ui.output.events.schema import (
     WarningAppended,
 )
 from voidx.ui.output.tree import OutputNode
-
-
-TODO_MAX_VISIBLE_ITEMS = 8
-TODO_STATUS_ORDER = ("in_progress", "pending", "completed", "cancelled")
-TODO_ICONS = {
-    "pending": "[dim]○[/dim]",
-    "in_progress": "[#7AA2F7]◐[/#7AA2F7]",
-    "completed": "[#A3BE8C]●[/#A3BE8C]",
-    "cancelled": "[#BF616A]✕[/#BF616A]",
-}
 
 
 @dataclass
@@ -195,12 +189,31 @@ class CompositeEventConsumer:
         """Synchronous variant: apply to primary immediately, schedule mirrors async."""
         result = self._primary.handle(event)
         if inspect.isawaitable(result):
-            asyncio.create_task(result)
+            self._schedule_direct_task(result, target="primary")
         for mirror in self._mirrors:
             mirror_result = mirror.handle(event)
             if inspect.isawaitable(mirror_result):
-                asyncio.create_task(mirror_result)
+                self._schedule_direct_task(mirror_result, target="mirror")
         return result
+
+    def _schedule_direct_task(self, result: Awaitable[Any], *, target: str) -> None:
+        task = asyncio.create_task(result)
+        task.add_done_callback(
+            lambda done: self._log_direct_task_error(done, target)
+        )
+
+    @staticmethod
+    def _log_direct_task_error(task: asyncio.Task[Any], target: str) -> None:
+        if task.cancelled():
+            return
+        exc = task.exception()
+        if exc is None:
+            return
+        logging.getLogger(__name__).warning(
+            "UI event direct %s consumer failed",
+            target,
+            exc_info=(type(exc), exc, exc.__traceback__),
+        )
 
 
 class DockEventConsumer:
@@ -326,7 +339,11 @@ class DockEventConsumer:
                     tool_call_id=e.tool_call_id or None,
                 )
             case TodoUpdated() as e:
-                return self._update_todo_node(e)
+                return self._dock.set_todo_state(e.summary, e.items)
+            case TodoCommitted():
+                return self._dock.commit_todo_state()
+            case TodoCleared():
+                return self._dock.clear_todo_state()
             case FileChangeAppended() as e:
                 parent = self._tool_nodes.get(e.tool_call_id) if e.tool_call_id else None
                 if parent is None:
@@ -396,64 +413,6 @@ class DockEventConsumer:
                 return None
             case _:
                 raise TypeError(f"Unsupported UI event: {event!r}")
-
-    def _update_todo_node(self, event: TodoUpdated) -> OutputNode | None:
-        if not self._dock.active:
-            return None
-        root = self._dock.tree.root
-        todo_node = next((child for child in root.children if child.node_type == "todo"), None)
-        if todo_node is None:
-            todo_node = self._dock.tree.new_node(
-                parent=root,
-                node_type="todo",
-                header="Todo",
-                body_lines=[],
-                collapsed=False,
-                status="done",
-            )
-        self._ensure_root_first_child(todo_node)
-
-        todo_node.header = f"[bold]Todo[/bold]: {escape(event.summary)}"
-        todo_node.body_lines = self._render_todo_lines(event)
-        todo_node.payload = {
-            "items": [item.model_dump(mode="json") for item in event.items],
-            "summary": event.summary,
-        }
-        todo_node.status = "done"
-        todo_node.collapsed = False
-        self._dock.tree.mark_dirty(todo_node.id)
-        self._dock.mark_node_settled(todo_node)
-        self._dock.set_todo_state(event.summary, event.items)
-        return todo_node
-
-    def _ensure_root_first_child(self, node: OutputNode) -> None:
-        root = self._dock.tree.root
-        self._dock.tree.move_child_to_first(root, node)
-
-    def _render_todo_lines(self, event: TodoUpdated) -> list[str]:
-        total = len(event.items)
-        done = sum(1 for item in event.items if item.status == "completed")
-        if total == 0:
-            return ["[dim]No todos[/dim]"]
-
-        bar_len = 20
-        filled = int(bar_len * (done / total))
-        bar = "█" * filled + "░" * (bar_len - filled)
-        lines = [escape(f"[{bar}] {done}/{total} done")]
-
-        ordered_items = [
-            item
-            for status in TODO_STATUS_ORDER
-            for item in event.items
-            if item.status == status
-        ]
-        visible_items = ordered_items[:TODO_MAX_VISIBLE_ITEMS]
-        for item in visible_items:
-            lines.append(f"  {TODO_ICONS[item.status]} {escape(item.content)}")
-        omitted = len(ordered_items) - len(visible_items)
-        if omitted > 0:
-            lines.append(f"  [dim]… {omitted} more todos[/dim]")
-        return lines
 
     def _status_parent(self, event: StatusUpdated) -> OutputNode | None:
         if event.parent_tool_call_id:

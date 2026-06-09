@@ -34,6 +34,7 @@ BASIC_RULES: Ruleset = [
     Rule(permission="clarify", pattern="*", action="allow"),
     Rule(permission="plan_checkpoint", pattern="*", action="allow"),
     Rule(permission="task_status", pattern="*", action="allow"),
+    Rule(permission="load_skills", pattern="*", action="allow"),
     Rule(permission="repo_map", pattern="*", action="allow"),
     Rule(permission="lsp_diagnostics", pattern="*", action="allow"),
     Rule(permission="lsp_symbols", pattern="*", action="allow"),
@@ -333,6 +334,7 @@ def _is_read_only_git_ref_command(subcommand: str, args: list[str]) -> bool:
 def capability_for_tool(tool: str, args: dict) -> PermissionCapability:
     if tool in {
         "read", "glob", "grep", "webfetch", "websearch", "todo", "task_status",
+        "load_skills",
         "repo_map", "lsp_diagnostics", "lsp_symbols", "lsp_definition",
         "lsp_references",
     }:

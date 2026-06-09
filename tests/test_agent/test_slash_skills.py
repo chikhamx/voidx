@@ -64,4 +64,3 @@ async def test_skills_paths_prints_bundled_source(tmp_path, monkeypatch):
 
     rendered = "\n".join(output)
     assert "bundled" in rendered
-    assert "superpowers" in rendered

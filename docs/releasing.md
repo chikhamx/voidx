@@ -12,17 +12,32 @@ and npm.
 The Python package is the canonical implementation. The npm package is a thin
 launcher that installs and runs the matching Python package version.
 
+## Version Files
+
+Bump the version in **all 5 files** before building. Missing any one causes
+breakage (see Common Pitfalls below).
+
+| # | File | Field / Location | Notes |
+|---|------|------------------|-------|
+| 1 | `pyproject.toml` | `version = "X.Y.Z"` | Python package metadata, build entry point |
+| 2 | `src/voidx/__init__.py` | `__version__ = "X.Y.Z"` | Runtime version, read by `voidx --version` |
+| 3 | `npm/package.json` | `"version": "X.Y.Z"` | npm package metadata |
+| 4 | `scripts/install.sh` | `VERSION="${VOIDX_VERSION:-X.Y.Z}"` | Bash installer default version |
+| 5 | `scripts/install.ps1` | `$Version = ... else { "X.Y.Z" }` | PowerShell installer default version |
+
+## Version Policy
+
+- **Patch** (`X.Y.Z+1`): bug fixes, minor improvements
+- **Minor** (`X.Y+1.0`): new features, skills, tools
+- **Major** (`X+1.0.0`): architecture changes, breaking changes
+
 ## Prerequisites
 
 - Python 3.11+
 - Node.js 16+
-- npm account with access to the `@voidx` scope
+- npm account with access to the `@chikhamx` scope
 - PyPI account with access to the `voidx` project
 - Clean working tree, except ignored build outputs
-- Version values aligned in:
-  - `pyproject.toml`
-  - `src/voidx/__init__.py`
-  - `npm/package.json`
 
 ## Preflight
 
@@ -102,6 +117,17 @@ The first npm-launched run creates a user-local Python virtual environment and
 installs the matching PyPI package. Set `VOIDX_NPM_DEBUG=1` if bootstrap
 details are needed.
 
+## Git Tag
+
+After both packages are published:
+
+```bash
+git add -A
+git commit -m "chore: bump version to <version>"
+git tag v<version>
+git push && git push origin v<version>
+```
+
 ## Post-Release Checks
 
 Confirm both package managers report the released version:
@@ -126,6 +152,14 @@ voidx --help
   npm retry. Fix npm packaging and publish the same version.
 - If a bad release is published, publish a new patch version. Do not overwrite
   published artifacts.
+
+## Common Pitfalls
+
+| Mistake | Consequence |
+|---------|-------------|
+| Only bump `pyproject.toml`, not `__init__.py` | `voidx --version` shows old version |
+| Only bump Python files, not `npm/package.json` | `scripts/package.py` build fails (version mismatch check) |
+| Only bump package files, not install scripts | New users get the old version via `curl \| bash` |
 
 ## Notes
 

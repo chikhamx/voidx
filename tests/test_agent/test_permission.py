@@ -158,6 +158,20 @@ def test_on_intent_is_allowed_runtime_tool(tmp_path):
     assert decision.action == "allow"
 
 
+def test_load_skills_is_allowed_read_tool(tmp_path):
+    context = PermissionContext(workspace=str(tmp_path))
+    decision = authorize_tool_call(
+        {"name": "load_skills", "args": {"names": ["docs"]}},
+        context,
+    )
+
+    assert decision.action == "allow"
+    assert classify_tool_call({
+        "name": "load_skills",
+        "args": {"names": ["docs"]},
+    }).capability == PermissionCapability.READ_TOOLS
+
+
 @pytest.mark.parametrize("tool_name", ["clarify", "plan_checkpoint"])
 def test_interactive_runtime_tools_are_allowed(tmp_path, tool_name):
     context = PermissionContext(workspace=str(tmp_path))

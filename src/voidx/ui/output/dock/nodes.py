@@ -80,7 +80,13 @@ class DockNodeMixin(DockStartupNodeMixin, DockStatusNodeMixin, DockPermissionNod
         self.refresh()
         return node
 
-    def append_thought(self, text: str, elapsed: float | None = None) -> OutputNode | None:
+    def append_thought(
+        self,
+        text: str,
+        elapsed: float | None = None,
+        *,
+        parent: OutputNode | None = None,
+    ) -> OutputNode | None:
         clean = _clean(text).strip()
         if not clean:
             return None
@@ -93,7 +99,7 @@ class DockNodeMixin(DockStartupNodeMixin, DockStatusNodeMixin, DockPermissionNod
         if len(lines) > 5:
             body.append(f"[dim]… (+{len(lines) - 5} more lines)[/dim]")
         node = self._tree.new_node(
-            parent=self.ensure_agent(),
+            parent=parent or self.ensure_agent(),
             node_type="thought",
             header=f"[dim]●[/dim] [dim]{escape(summary)}[/dim]",
             body_lines=body,

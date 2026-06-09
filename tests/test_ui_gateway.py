@@ -1,5 +1,6 @@
 import asyncio
 import json
+import logging
 import sys
 from pathlib import Path
 
@@ -40,6 +41,15 @@ def _payloads(client: FakeClient) -> list[object]:
         parse_protocol_envelope(json.loads(message)).payload
         for message in client.messages
     ]
+
+
+async def _wait_for_log_record(caplog, message: str):
+    for _ in range(10):
+        for record in caplog.records:
+            if record.getMessage() == message:
+                return record
+        await asyncio.sleep(0)
+    return None
 
 
 @pytest.mark.asyncio
@@ -166,6 +176,54 @@ async def test_composite_event_consumer_keeps_dock_primary_and_mirrors_events():
     assert dock.current_turn is not None
     payloads = _payloads(client)
     assert any(isinstance(payload, TurnStarted) and payload.text == "demo" for payload in payloads)
+
+
+@pytest.mark.asyncio
+async def test_composite_event_consumer_handle_direct_logs_async_mirror_error(caplog):
+    class FailingMirror:
+        async def handle(self, _event):
+            await asyncio.sleep(0)
+            raise RuntimeError("mirror failed")
+
+    dock = BottomInputDock()
+    dock.begin_capture()
+    consumer = CompositeEventConsumer(
+        primary=DockEventConsumer(dock),
+        mirrors=[FailingMirror()],
+    )
+    caplog.set_level(logging.WARNING, logger="voidx.ui.output.events")
+
+    result = consumer.handle_direct(TurnStarted(text="demo"))
+    record = await _wait_for_log_record(
+        caplog,
+        "UI event direct mirror consumer failed",
+    )
+
+    assert result is dock.current_turn
+    assert record is not None
+    assert isinstance(record.exc_info[1], RuntimeError)
+    assert str(record.exc_info[1]) == "mirror failed"
+
+
+@pytest.mark.asyncio
+async def test_composite_event_consumer_handle_direct_logs_async_primary_error(caplog):
+    class FailingPrimary:
+        async def handle(self, _event):
+            await asyncio.sleep(0)
+            raise RuntimeError("primary failed")
+
+    consumer = CompositeEventConsumer(primary=FailingPrimary())
+    caplog.set_level(logging.WARNING, logger="voidx.ui.output.events")
+
+    consumer.handle_direct(TurnStarted(text="demo"))
+    record = await _wait_for_log_record(
+        caplog,
+        "UI event direct primary consumer failed",
+    )
+
+    assert record is not None
+    assert isinstance(record.exc_info[1], RuntimeError)
+    assert str(record.exc_info[1]) == "primary failed"
 
 
 @pytest.mark.asyncio

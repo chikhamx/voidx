@@ -5,6 +5,21 @@ from __future__ import annotations
 from dataclasses import dataclass
 from typing import Any, Sequence
 
+from rich.markup import escape
+
+
+# These TODO_* names refer to the todo tool/render feature, not pending code work.
+TODO_MAX_VISIBLE_ITEMS = 8
+TODO_STATUS_ORDER = ("in_progress", "pending", "completed", "cancelled")
+TODO_ICONS = {
+    "pending": "[dim]○[/dim]",
+    "in_progress": "[#7AA2F7]◐[/#7AA2F7]",
+    "completed": "[#A3BE8C]●[/#A3BE8C]",
+    "cancelled": "[#BF616A]✕[/#BF616A]",
+}
+TODO_HEADER_STYLE = "#A3BE8C"
+TODO_MUTED_STYLE = "#8F9BA8"
+
 
 @dataclass(frozen=True)
 class DockTodoItem:
@@ -34,6 +49,49 @@ def todo_state_from_payload(payload: dict[str, Any]) -> DockTodoState | None:
         return todo_state_from_items(summary, items)
     except (AttributeError, TypeError, ValueError):
         return None
+
+
+def todo_state_payload(state: DockTodoState) -> dict[str, Any]:
+    return {
+        "summary": state.summary,
+        "items": [
+            {"content": item.content, "status": item.status}
+            for item in state.items
+        ],
+    }
+
+
+def render_todo_header(state: DockTodoState) -> str:
+    return (
+        f"[bold {TODO_HEADER_STYLE}]Todo[/]: "
+        f"[{TODO_MUTED_STYLE}]{escape(state.summary)}[/]"
+    )
+
+
+def render_todo_state_lines(state: DockTodoState) -> list[str]:
+    total = len(state.items)
+    done = sum(1 for item in state.items if item.status == "completed")
+    if total == 0:
+        return ["[dim]No todos[/dim]"]
+
+    bar_len = 20
+    filled = int(bar_len * (done / total))
+    bar = "█" * filled + "░" * (bar_len - filled)
+    lines = [f"[{TODO_MUTED_STYLE}]{escape(f'[{bar}] {done}/{total} done')}[/]"]
+
+    ordered_items = [
+        item
+        for status in TODO_STATUS_ORDER
+        for item in state.items
+        if item.status == status
+    ]
+    visible_items = ordered_items[:TODO_MAX_VISIBLE_ITEMS]
+    for item in visible_items:
+        lines.append(f"  {TODO_ICONS[item.status]} {escape(item.content)}")
+    omitted = len(ordered_items) - len(visible_items)
+    if omitted > 0:
+        lines.append(f"  [dim]… {omitted} more todos[/dim]")
+    return lines
 
 
 def _todo_item_from_value(value: Any) -> DockTodoItem:

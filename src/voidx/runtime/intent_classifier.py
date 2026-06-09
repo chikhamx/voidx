@@ -169,6 +169,9 @@ def classify_intent(
         except Exception:
             pass
 
+    # Artifact fallback intentionally uses the current input's keyword intent,
+    # not the sliding-window classifier text. This preserves state-aware callers
+    # that may treat TaskIntent.AMBIGUOUS specially.
     return _keyword_result(keyword_intent)
 
 

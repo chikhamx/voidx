@@ -44,8 +44,7 @@ where = ["src"]
 
 [tool.setuptools.package-data]
 "voidx.skills" = [
-    "bundled/superpowers/*/SKILL.md",
-    "bundled/superpowers/*/templates/*.md",
+    "bundled/*/SKILL.md",
 ]
 "voidx.data" = [
     "intent_classifier.json",

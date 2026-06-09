@@ -344,7 +344,15 @@ Modify `resolve_turn_intent()`:
    - include a reason telling the model to use `on_intent` / `clarify` before
      editing.
 6. If classifier returns `fallback` or `None`, use existing `infer_task_intent()`
-   as a final defensive fallback.
+   on the **current input text** as the final defensive fallback. Do not use the
+   sliding-window `classifier_text` for keyword fallback.
+
+`ArtifactClassifier` and `infer_task_intent()` both speak the same `TaskIntent`
+enum, including `ambiguous`. The artifact may predict `ambiguous` directly when
+confidence is high enough. When the artifact action is `fallback`, the runtime
+accepts the keyword fallback intent as-is; if keyword/state logic yields
+`AMBIGUOUS`, `resolve_turn_intent()` must preserve `AMBIGUOUS` rather than
+downgrading it to `chat`.
 
 The runtime context should expose classifier metadata only when useful, for
 example:

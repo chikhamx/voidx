@@ -38,8 +38,7 @@ def test_python_package_includes_bundled_skill_templates():
     pyproject = tomllib.loads((ROOT / "pyproject.toml").read_text())
     package_data = pyproject["tool"]["setuptools"]["package-data"]["voidx.skills"]
 
-    assert "bundled/superpowers/*/SKILL.md" in package_data
-    assert "bundled/superpowers/*/templates/*.md" in package_data
+    assert "bundled/*/SKILL.md" in package_data
 
 
 @pytest.mark.skipif(NODE is None, reason="node is not installed")
@@ -148,8 +147,8 @@ def test_npm_launcher_selectPython_uses_bundled_only(tmp_path):
 
 
 @pytest.mark.skipif(NODE is None, reason="node is not installed")
-def test_npm_launcher_selectPython_falls_back_to_system(tmp_path):
-    """selectPython falls back to system Python when bundled Python is missing."""
+def test_npm_launcher_selectPython_bootstraps_bundled_or_reports_clear_error(tmp_path):
+    """selectPython bootstraps bundled Python or reports a clear setup error."""
     env = {
         "PATH": os.environ.get("PATH", ""),
         "VOIDX_NPM_HOME": str(tmp_path / "home"),
@@ -166,8 +165,9 @@ def test_npm_launcher_selectPython_falls_back_to_system(tmp_path):
         capture_output=True,
     )
     assert result.returncode == 0, result.stderr
-    # Should either find a system Python or report a clear error
-    assert result.stdout.startswith("OK:") or result.stdout.startswith("ERROR:")
+    # Bootstrap logs may precede the final probe result.
+    last_line = result.stdout.strip().splitlines()[-1]
+    assert last_line.startswith("OK:bundled") or last_line.startswith("ERROR:")
 
 
 @pytest.mark.skipif(NODE is None, reason="node is not installed")

@@ -50,12 +50,12 @@ BASE_SYSTEM_PROMPT = """You are voidx, a coding agent that lives in the terminal
 
 ## Workflow Skills
 
-- voidx may activate workflow skills such as systematic-debugging,
-  test-driven-development, verification-before-completion,
-  receiving-code-review, requesting-code-review, and writing-plans.
-- The Current Task State lists active workflow skills for this turn.
-- The Active Skills section contains the full instructions for active skills.
-- Follow active workflow skills before acting.
+- voidx has a workflow skill system.
+- Current Task State is the activation source for this turn's workflow skills.
+- Skill Context messages contain bundled workflow skill bodies as a reference
+  library. Follow only skills listed as active in Current Task State, unless the
+  user explicitly references another skill.
+- load_skills can return project/global skill bodies for the current turn.
 """
 
 
@@ -339,7 +339,7 @@ BUILTIN_AGENTS: dict[str, AgentDef] = {
         when_to_use="Default agent for all user interactions. Always use first.",
         tools=[
             "on_intent", "clarify", "plan_checkpoint",
-            "read", "glob", "grep", "bash", "agent", "task_status", "todo",
+            "read", "glob", "grep", "bash", "agent", "task_status", "todo", "load_skills",
             "webfetch", "websearch", "repo_map",
             "lsp_diagnostics", "lsp_symbols", "lsp_definition", "lsp_references",
             "write", "edit", "apply_patch", "lsp_format",
@@ -358,7 +358,7 @@ BUILTIN_AGENTS: dict[str, AgentDef] = {
                     "or answer 'how does X work' questions. Specify thoroughness: "
                     "'quick' for basic, 'medium' for moderate, 'very thorough' for exhaustive.",
         tools=[
-            "read", "glob", "grep", "webfetch", "websearch", "repo_map",
+            "read", "glob", "grep", "load_skills", "webfetch", "websearch", "repo_map",
             "lsp_diagnostics", "lsp_symbols", "lsp_definition", "lsp_references",
         ],
         can_write=False,
@@ -374,7 +374,7 @@ BUILTIN_AGENTS: dict[str, AgentDef] = {
         when_to_use="Use for design/architecture questions, before complex implementations, "
                     "or when the user asks for a plan/approach/solution design.",
         tools=[
-            "read", "glob", "grep", "webfetch", "websearch", "repo_map",
+            "read", "glob", "grep", "load_skills", "webfetch", "websearch", "repo_map",
             "lsp_diagnostics", "lsp_symbols", "lsp_definition", "lsp_references",
         ],
         can_write=False,
@@ -388,7 +388,7 @@ BUILTIN_AGENTS: dict[str, AgentDef] = {
         when_to_use="Use for all code writing, file editing, refactoring, bug fixing, "
                     "and bash execution. Give complete, self-contained task descriptions.",
         tools=[
-            "read", "write", "edit", "apply_patch", "glob", "grep", "bash", "todo", "repo_map",
+            "read", "write", "edit", "apply_patch", "glob", "grep", "bash", "todo", "load_skills", "repo_map",
             "lsp_diagnostics", "lsp_symbols", "lsp_definition", "lsp_references",
             "lsp_format",
         ],
@@ -404,7 +404,7 @@ BUILTIN_AGENTS: dict[str, AgentDef] = {
         when_to_use="ALWAYS invoke after implement finishes non-trivial work. "
                     "Use to verify correctness before reporting completion to the user.",
         tools=[
-            "read", "glob", "grep", "bash", "webfetch", "websearch", "repo_map",
+            "read", "glob", "grep", "bash", "load_skills", "webfetch", "websearch", "repo_map",
             "lsp_diagnostics", "lsp_symbols", "lsp_definition", "lsp_references",
         ],
         can_write=False,

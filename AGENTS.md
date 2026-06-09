@@ -41,6 +41,9 @@
 - Do **not** archive based on keyword search alone — verify the actual implementation files exist and are functional.
 - `docs/design/` is for exploratory/RFC-stage docs; `docs/specs/` is for approved designs awaiting or in implementation.
 
+## Releasing
+- Release flow and version file checklist: `docs/releasing.md` (single source of truth — do not duplicate).
+
 ## Safety
 - Do not commit `.voidx/`, `.env*`, or local credentials.
 - Preserve user work in a dirty tree; never revert unrelated changes.

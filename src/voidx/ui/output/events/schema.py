@@ -175,6 +175,14 @@ class TodoUpdated(UiEventBase):
     summary: str
 
 
+class TodoCommitted(UiEventBase):
+    kind: Literal["todo.committed"] = "todo.committed"
+
+
+class TodoCleared(UiEventBase):
+    kind: Literal["todo.cleared"] = "todo.cleared"
+
+
 class FileChangeAppended(UiEventBase):
     kind: Literal["file_change.appended"] = "file_change.appended"
     tool_call_id: str = ""
@@ -262,6 +270,8 @@ UiEvent: TypeAlias = (
     | ToolFinished
     | ToolResultAppended
     | TodoUpdated
+    | TodoCommitted
+    | TodoCleared
     | FileChangeAppended
     | SubagentStarted
     | SubagentStepStarted

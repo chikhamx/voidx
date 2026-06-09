@@ -2,6 +2,7 @@ from __future__ import annotations
 import time
 
 from rich.markup import escape
+from rich.markdown import Markdown
 
 from voidx.ui.output.agent_display import agent_display_name
 from voidx.ui.output.tree import OutputTree, OutputNode
@@ -146,13 +147,19 @@ class CaptureConsole:
         dock.refresh()
     
     def print(self, *args, **kwargs) -> None:
-        pass
+        if via_events():
+            return
+        dock.capture(lambda console: console.print(*args, **kwargs), parent=self._parent)
     
     def markdown(self, content: str) -> None:
-        pass
+        if via_events():
+            return
+        dock.capture(lambda console: console.print(Markdown(content)), parent=self._parent)
     
     def thinking(self, text: str) -> None:
-        pass
+        if via_events():
+            return
+        dock.append_thought(text, parent=self._parent)
     
     def error(self, message: str) -> None:
         if via_events():
@@ -171,4 +178,6 @@ class CaptureConsole:
         dock.refresh()
     
     def sep(self) -> None:
-        pass
+        if via_events():
+            return
+        dock.append_message("─" * self._dummy.width, style="dim", parent=self._parent)

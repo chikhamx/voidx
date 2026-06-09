@@ -31,6 +31,8 @@ from voidx.runtime.ui import (
     InputSet,
     StatusFinished,
     StatusUpdated,
+    TodoCleared,
+    TodoCommitted,
     TurnStarted,
     WarningAppended,
     dock,
@@ -339,8 +341,6 @@ class GraphTurnMixin:
                     scheduler = getattr(self, "_schedule_session_title_generation", None)
                     if callable(scheduler):
                         scheduler(self._session.id, title_source, title)
-                await self._persist_transcript_snapshot()
-
             elapsed = time.monotonic() - t_turn_start
             stats = self._usage_stats
             turn_calls = stats.total_calls - t_turn_calls_start
@@ -361,6 +361,13 @@ class GraphTurnMixin:
                     "\n".join(change_lines),
                     markup=True,
                 )
+            if via_events():
+                await ui_events.emit(TodoCommitted())
+                await ui_events.drain()
+            else:
+                dock.commit_todo_state()
+            if self._session:
+                await self._persist_transcript_snapshot()
         except (KeyboardInterrupt, asyncio.CancelledError):
             if self._session is not None and user_message_id is not None:
                 await delete_messages_from(self._session.id, user_message_id)
@@ -392,9 +399,11 @@ class GraphTurnMixin:
                 await ui_events.emit(StatusFinished(status_id="turn:analyzing"))
                 await ui_events.emit(StatusFinished(status_id="agent:-1:progress"))
                 await ui_events.emit(StatusFinished(status_id="compaction"))
+                await ui_events.emit(TodoCleared())
                 await ui_events.emit(InputSet(text="", hints=[]))
                 await ui_events.drain()
             else:
+                dock.clear_todo_state()
                 dock.set_input("", [])
 
 

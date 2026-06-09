@@ -68,6 +68,7 @@ class ToolContext(BaseModel):
     pending_approval: dict | None = None
     goal: str = ""
     goal_turn_count: int = 0
+    active_skill_names: list[str] = Field(default_factory=list)
     file_mtimes: dict[str, float] = Field(default_factory=dict)
     mcp_manager: Any | None = None
     lsp_manager: Any | None = None

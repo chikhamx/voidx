@@ -7,6 +7,7 @@ import voidx.runtime.intent_classifier as intent_classifier_module
 from voidx.agent.task_state import TaskState, resolve_turn_intent
 from voidx.runtime.intent import TaskIntent
 from voidx.runtime.intent_classifier import (
+    IntentClassifierResult,
     classify_intent,
     reset_intent_classifier_cache,
 )
@@ -56,6 +57,30 @@ def test_classifier_window_text_does_not_pollute_keyword_fallback():
 
     assert result is not None
     assert result.intent == TaskIntent.CHAT
+    assert result.source == "keyword_classifier"
+
+
+def test_classifier_fallback_can_return_keyword_ambiguous(monkeypatch):
+    class FallbackClassifier:
+        def classify(self, _text):
+            return IntentClassifierResult(
+                intent=TaskIntent.DESIGN,
+                confidence=0.0,
+                action="fallback",
+            )
+
+    monkeypatch.setattr(intent_classifier_module, "_load_classifier", lambda _model_path=None: FallbackClassifier())
+    monkeypatch.setattr(
+        intent_classifier_module,
+        "infer_task_intent",
+        lambda _text, _mode=None: TaskIntent.AMBIGUOUS,
+    )
+
+    result = classify_intent("这个", classifier_text="看看这个 bug [SEP] 这个")
+
+    assert result is not None
+    assert result.intent == TaskIntent.AMBIGUOUS
+    assert result.action == "accept"
     assert result.source == "keyword_classifier"
 
 
