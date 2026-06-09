@@ -75,9 +75,7 @@ class GraphTurnMixin:
         display_text: str | None = None,
     ) -> None:
         t_turn_start = time.monotonic()
-        t_turn_calls_start = self._usage_stats.total_calls
-        t_turn_in_start = self._usage_stats.total_input_tokens
-        t_turn_out_start = self._usage_stats.total_output_tokens
+        self._usage_stats.begin_turn()
         user_message_id: int | None = None
         try:
             session_tracker.begin_turn(self._workspace)
@@ -343,9 +341,9 @@ class GraphTurnMixin:
                         scheduler(self._session.id, title_source, title)
             elapsed = time.monotonic() - t_turn_start
             stats = self._usage_stats
-            turn_calls = stats.total_calls - t_turn_calls_start
-            turn_in = stats.total_input_tokens - t_turn_in_start
-            turn_out = stats.total_output_tokens - t_turn_out_start
+            turn_calls = stats.turn_calls
+            turn_in = stats.turn_input_tokens
+            turn_out = stats.turn_output_tokens
             from voidx.llm.usage import format_token_count
             dock.append_message(
                 f"[dim]✻  {elapsed:.0f}s[/dim]"
@@ -385,6 +383,7 @@ class GraphTurnMixin:
                     }
             raise
         finally:
+            self._usage_stats.end_turn()
             pending_guidance = getattr(self, "_pending_guidance", None)
             if pending_guidance is not None:
                 if pending_guidance:

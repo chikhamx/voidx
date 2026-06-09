@@ -219,7 +219,9 @@ def test_status_summary_renders_model_policy_usage_and_goal(tmp_path):
     assert "default w-write on-fail auto" in summary
     assert "goal" in summary
     assert "ctx 12.3k/128k" in summary
-    assert "↑12.3k ↓678 total 13.0k" in summary
+    assert "cache -- total 13.0k" in summary
+    assert "↑" not in summary
+    assert "↓" not in summary
     assert " in " not in summary
     assert " out " not in summary
     assert "goal running/implement turns 2 ship pure tui" in summary
@@ -277,13 +279,13 @@ def test_status_summary_text_fallback_uses_dim_style(tmp_path):
     assert text.spans == []
 
 
-def test_status_summary_renders_agent_step_from_dock(tmp_path):
+def test_status_summary_omits_agent_step_from_dock(tmp_path):
     tui = _tui(tmp_path)
     dock.record_status("agent:-1:progress", "Agent step 1/50", stage="agent step")
 
     summary = tui._status_summary(80)
 
-    assert "step 1/50" in summary
+    assert "step 1/50" not in summary
     assert "Agent step" not in summary
 
 
@@ -549,6 +551,25 @@ def test_busy_activity_label_rotates_centered_glyphs(tmp_path, monkeypatch):
     tui._busy_activity_tick = 4
     now["value"] = 104.0
     assert tui._busy_activity_label().startswith("◐ Pondering (4s)")
+
+
+def test_busy_activity_label_includes_step_and_turn_tokens(tmp_path, monkeypatch):
+    now = {"value": 100.0}
+    monkeypatch.setattr("voidx.ui.tui.renderer.time.monotonic", lambda: now["value"])
+    stats = UsageStats()
+    stats.total_input_tokens = 10_000
+    stats.total_output_tokens = 1_000
+    stats.begin_turn()
+    stats.total_input_tokens = 126_100
+    stats.total_output_tokens = 1_043
+    status = SimpleNamespace(workspace=str(tmp_path), usage_stats=stats)
+    tui = PureTui(status, COMMANDS)
+    tui._busy = True
+    tui._busy_started_at = 37.0
+    tui._busy_activity_verb = "Pondering"
+    dock.record_status("agent:-1:progress", "Agent step 1/100", stage="agent step")
+
+    assert tui._busy_activity_label() == "◐ Pondering (1m 3s step 1/100 ↑116.1k ↓43)"
 
 
 def test_busy_activity_label_omits_elapsed_without_start_time(tmp_path):

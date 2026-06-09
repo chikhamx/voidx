@@ -36,6 +36,10 @@ class UsageStats:
     total_cache_metric_calls: int = 0
     estimated_cache_calls: int = 0
     total_calls: int = 0
+    turn_active: bool = False
+    turn_start_calls: int = 0
+    turn_start_input_tokens: int = 0
+    turn_start_output_tokens: int = 0
     _cache_context_history: dict[str, list[list[dict[str, str]]]] = field(
         default_factory=dict,
         repr=False,
@@ -45,6 +49,18 @@ class UsageStats:
     @property
     def total_tokens(self) -> int:
         return self.total_input_tokens + self.total_output_tokens
+
+    @property
+    def turn_calls(self) -> int:
+        return self._turn_delta("total_calls")
+
+    @property
+    def turn_input_tokens(self) -> int:
+        return self._turn_delta("total_input_tokens")
+
+    @property
+    def turn_output_tokens(self) -> int:
+        return self._turn_delta("total_output_tokens")
 
     @property
     def cache_observed_tokens(self) -> int:
@@ -91,7 +107,26 @@ class UsageStats:
         self.total_cache_metric_calls = 0
         self.estimated_cache_calls = 0
         self.total_calls = 0
+        self.turn_active = False
+        self.turn_start_calls = 0
+        self.turn_start_input_tokens = 0
+        self.turn_start_output_tokens = 0
         self._cache_context_history.clear()
+
+    def begin_turn(self) -> None:
+        self.turn_active = True
+        self.turn_start_calls = self.total_calls
+        self.turn_start_input_tokens = self.total_input_tokens
+        self.turn_start_output_tokens = self.total_output_tokens
+
+    def end_turn(self) -> None:
+        self.turn_active = False
+
+    def _turn_delta(self, field: str) -> int:
+        if not self.turn_active:
+            return 0
+        start = getattr(self, f"turn_start_{field.removeprefix('total_')}", 0)
+        return max(getattr(self, field, 0) - start, 0)
 
     def update_context(self, tokens: int, limit: int | None = None) -> None:
         self.context_tokens = max(tokens, 0)

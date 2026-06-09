@@ -740,12 +740,9 @@ class _TerminalRendererMixin(_OverlayRendererMixin):
         goal_turns = _call_int(getattr(self.status, "goal_turn_count", None), 0)
         stats = getattr(self.status, "usage_stats", None)
         context_limit = getattr(stats, "context_limit", None) or getattr(self.status, "context_limit", 0)
-        agent_step = active_agent_step_text()
         stats_snapshot = (
             context_limit,
             getattr(stats, "context_tokens", 0) if stats is not None else 0,
-            getattr(stats, "last_input_tokens", 0) if stats is not None else 0,
-            getattr(stats, "last_output_tokens", 0) if stats is not None else 0,
             getattr(stats, "total_tokens", 0) if stats is not None else 0,
             getattr(stats, "cache_hit_rate", None) if stats is not None else None,
         )
@@ -765,7 +762,6 @@ class _TerminalRendererMixin(_OverlayRendererMixin):
             goal_phase,
             goal_turns,
             self._busy,
-            agent_step,
             stats_snapshot,
         )
         model_text = "/".join(part for part in (provider, model) if part)
@@ -780,8 +776,6 @@ class _TerminalRendererMixin(_OverlayRendererMixin):
         state_parts = []
         if include_busy and self._busy:
             state_parts.append("busy")
-        if agent_step:
-            state_parts.append(agent_step)
         if mode:
             state_parts.append(mode)
         if plan:
@@ -796,8 +790,6 @@ class _TerminalRendererMixin(_OverlayRendererMixin):
                 f"ctx {format_token_count(getattr(stats, 'context_tokens', 0))}/"
                 f"{format_token_count(context_limit)}"
                 f" cache {format_cache_hit_rate(stats)}"
-                f" ↑{format_token_count(getattr(stats, 'last_input_tokens', 0))}"
-                f" ↓{format_token_count(getattr(stats, 'last_output_tokens', 0))}"
                 f" total {format_token_count(getattr(stats, 'total_tokens', 0))}"
             )
 
@@ -886,7 +878,24 @@ class _TerminalRendererMixin(_OverlayRendererMixin):
         if started_at is None:
             return f"{glyph} {verb}"
         elapsed = max(0, int(time.monotonic() - started_at))
-        return f"{glyph} {verb} ({self._format_elapsed(elapsed)})"
+        details = [self._format_elapsed(elapsed)]
+        step = active_agent_step_text()
+        if step:
+            details.append(step)
+        token_text = self._turn_token_text()
+        if token_text:
+            details.append(token_text)
+        return f"{glyph} {verb} ({' '.join(details)})"
+
+    def _turn_token_text(self) -> str:
+        stats = getattr(self.status, "usage_stats", None)
+        if stats is None:
+            return ""
+        turn_in = getattr(stats, "turn_input_tokens", 0)
+        turn_out = getattr(stats, "turn_output_tokens", 0)
+        if turn_in <= 0 and turn_out <= 0:
+            return ""
+        return f"↑{format_token_count(turn_in)} ↓{format_token_count(turn_out)}"
 
     @staticmethod
     def _format_elapsed(seconds: int) -> str:

@@ -82,6 +82,34 @@ def test_usage_stats_records_last_and_session_totals():
     assert stats.total_calls == 0
 
 
+def test_usage_stats_tracks_current_turn_totals():
+    stats = UsageStats(context_limit=128_000)
+
+    stats.record_call(extract_token_usage(AIMessage(
+        content="before",
+        usage_metadata={"input_tokens": 100, "output_tokens": 5, "total_tokens": 105},
+    )))
+    stats.begin_turn()
+    stats.record_call(extract_token_usage(AIMessage(
+        content="first",
+        usage_metadata={"input_tokens": 10, "output_tokens": 4, "total_tokens": 14},
+    )))
+    stats.record_call(extract_token_usage(AIMessage(
+        content="second",
+        usage_metadata={"input_tokens": 20, "output_tokens": 6, "total_tokens": 26},
+    )))
+
+    assert stats.turn_calls == 2
+    assert stats.turn_input_tokens == 30
+    assert stats.turn_output_tokens == 10
+
+    stats.end_turn()
+
+    assert stats.turn_calls == 0
+    assert stats.turn_input_tokens == 0
+    assert stats.turn_output_tokens == 0
+
+
 def test_usage_stats_records_cache_hit_rate():
     stats = UsageStats(context_limit=128_000)
 
