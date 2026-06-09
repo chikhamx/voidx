@@ -233,6 +233,7 @@ function ensureVenv(python, venvDir, env) {
   }
 
   if (!fs.existsSync(executable) || readFile(markerPath) !== marker) {
+    const packageSpec = env.VOIDX_NPM_PACKAGE_SPEC || `voidx==${pkg.version}`;
     console.error(
       `\n📦 Downloading ${packageSpec} and dependencies… ` +
         "(1–2 minutes on first run)\n"
