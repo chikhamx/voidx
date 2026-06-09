@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+import logging
 import os
 from html.parser import HTMLParser
 
@@ -16,6 +17,8 @@ from voidx.tools.web_content import (
     search_cache_key,
 )
 from voidx.tools.web_mcp import call_mcp_web_tool
+
+_logger = logging.getLogger(__name__)
 
 
 class WebSearchInput(BaseModel):
@@ -84,7 +87,7 @@ def _parse_duckduckgo_html(html: str) -> list[dict[str, str]]:
     try:
         parser.feed(html)
     except Exception:
-        pass
+        _logger.debug("DuckDuckGo HTML parse failed", exc_info=True)
     return parser.results()
 
 

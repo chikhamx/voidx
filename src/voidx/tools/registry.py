@@ -119,13 +119,17 @@ class ToolRegistry:
         """Generate OpenAI/Anthropic-compatible tool definitions."""
         result = []
         for t in self._tools.values():
+            # MCP tools come from third-party servers whose inputSchema may not
+            # comply with OpenAI strict mode (optional fields, missing
+            # additionalProperties:false).  Only enable strict for builtins.
+            is_mcp = t.id.startswith("mcp__")
             result.append({
                 "type": "function",
                 "function": {
                     "name": t.id,
                     "description": t.description,
                     "parameters": t.parameters,
-                    "strict": True,
+                    **({"strict": True} if not is_mcp else {}),
                 },
             })
         return result

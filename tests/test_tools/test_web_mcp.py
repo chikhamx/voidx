@@ -1,4 +1,5 @@
 import json
+import logging
 import sys
 from pathlib import Path
 
@@ -23,6 +24,19 @@ class FakeMcpManager:
     async def call_tool(self, server: str, tool: str, arguments: dict):
         self.calls.append((server, tool, arguments))
         return McpCallResult(content=[{"type": "text", "text": "mcp ok"}])
+
+
+def test_duckduckgo_parser_logs_parse_failures(monkeypatch, caplog):
+    def broken_feed(self, html):
+        raise RuntimeError("parser broke")
+
+    monkeypatch.setattr(websearch_module._DDGResultParser, "feed", broken_feed)
+
+    with caplog.at_level(logging.DEBUG, logger="voidx.tools.websearch"):
+        results = websearch_module._parse_duckduckgo_html("<html>")
+
+    assert results == []
+    assert "DuckDuckGo HTML parse failed" in caplog.text
 
 
 @pytest.mark.asyncio

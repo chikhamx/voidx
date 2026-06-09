@@ -36,6 +36,7 @@ from voidx.ui.output.events import (
     UiEventBus,
     ui_events,
 )
+from voidx.ui.output.tree import OutputTree
 
 
 _ANSI_RE = re.compile(r"\x1b\[[0-9;?]*[ -/]*[@-~]")
@@ -373,12 +374,14 @@ async def test_todo_updated_creates_and_updates_single_todo_node(isolated_dock):
         await bus.drain()
 
         assistant = next(node for node in isolated_dock.tree.root.children if node.node_type == "assistant")
-        todo_nodes = [node for node in assistant.children if node.node_type == "todo"]
+        todo_nodes = [node for node in isolated_dock.tree.root.children if node.node_type == "todo"]
         rendered = "\n".join(_rich_plain(line) for line in isolated_dock.tree.render(120))
 
         assert len(todo_nodes) == 1
+        assert isolated_dock.tree.root.children[0] is todo_nodes[0]
         assert todo_nodes[0].payload["summary"] == "0/10 done · 0 active · 10 pending"
         assert len(todo_nodes[0].payload["items"]) == 10
+        assert not any(node.node_type == "todo" for node in assistant.children)
         assert "Todo: 0/10 done" in rendered
         assert "task 7" in rendered
         assert "2 more todos" in rendered
@@ -388,7 +391,157 @@ async def test_todo_updated_creates_and_updates_single_todo_node(isolated_dock):
 
 
 @pytest.mark.asyncio
-async def test_todo_updated_with_agent_id_attaches_under_subagent(isolated_dock):
+async def test_todo_updated_sets_pinned_todo_state(isolated_dock):
+    isolated_dock.begin_capture()
+    bus = UiEventBus()
+    bus.start(DockEventConsumer(isolated_dock))
+    try:
+        await bus.emit(TodoUpdated(
+            items=[
+                TodoItemPayload(content="implement pinned display", status="in_progress"),
+                TodoItemPayload(content="write tests", status="pending"),
+            ],
+            summary="0/2 done · 1 active · 1 pending",
+        ))
+        await bus.drain()
+
+        state = isolated_dock.todo_state()
+        todo_nodes = [node for node in isolated_dock.tree.root.children if node.node_type == "todo"]
+
+        assert state is not None
+        assert state.summary == "0/2 done · 1 active · 1 pending"
+        assert [(item.content, item.status) for item in state.items] == [
+            ("implement pinned display", "in_progress"),
+            ("write tests", "pending"),
+        ]
+        assert len(todo_nodes) == 1
+        assert todo_nodes[0].payload["summary"] == state.summary
+    finally:
+        await bus.stop()
+
+
+def test_restore_tree_hydrates_pinned_todo_state(isolated_dock):
+    tree = OutputTree()
+    tree.new_node(
+        parent=tree.root,
+        node_type="todo",
+        header="Todo",
+        collapsed=False,
+        status="done",
+        payload={
+            "summary": "1/2 done · 0 active · 1 pending",
+            "items": [
+                {"content": "done task", "status": "completed"},
+                {"content": "next task", "status": "pending"},
+            ],
+        },
+    )
+    tree.new_node(
+        parent=tree.root,
+        node_type="todo",
+        header="Todo",
+        collapsed=False,
+        status="done",
+        payload={
+            "summary": "stale todo",
+            "items": [
+                {"content": "stale task", "status": "pending"},
+            ],
+        },
+    )
+
+    isolated_dock.restore_tree(tree)
+
+    state = isolated_dock.todo_state()
+    assert state is not None
+    assert state.summary == "1/2 done · 0 active · 1 pending"
+    assert [(item.content, item.status) for item in state.items] == [
+        ("done task", "completed"),
+        ("next task", "pending"),
+    ]
+
+
+def test_reset_clears_pinned_todo_state(isolated_dock):
+    isolated_dock.set_todo_state(
+        "0/1 done · 1 active · 0 pending",
+        [{"content": "active task", "status": "in_progress"}],
+    )
+
+    isolated_dock.reset()
+
+    assert isolated_dock.todo_state() is None
+
+
+@pytest.mark.asyncio
+async def test_todo_updated_keeps_single_root_node_across_turns(isolated_dock):
+    isolated_dock.begin_capture()
+    bus = UiEventBus()
+    bus.start(DockEventConsumer(isolated_dock))
+    try:
+        await bus.request(TurnStarted(text="first"))
+        await bus.emit(TodoUpdated(
+            items=[TodoItemPayload(content="first task", status="pending")],
+            summary="0/1 done · 0 active · 1 pending",
+        ))
+        await bus.request(TurnStarted(text="second"))
+        await bus.emit(TodoUpdated(
+            items=[TodoItemPayload(content="second task", status="in_progress")],
+            summary="0/1 done · 1 active · 0 pending",
+        ))
+        await bus.drain()
+
+        todo_nodes = [node for node in isolated_dock.tree.root.children if node.node_type == "todo"]
+
+        assert len(todo_nodes) == 1
+        assert isolated_dock.tree.root.children[0] is todo_nodes[0]
+        assert todo_nodes[0].payload["summary"] == "0/1 done · 1 active · 0 pending"
+        assert todo_nodes[0].payload["items"] == [
+            {"content": "second task", "status": "in_progress"}
+        ]
+    finally:
+        await bus.stop()
+
+
+@pytest.mark.asyncio
+async def test_todo_updated_reorders_existing_root_todo_to_front(isolated_dock):
+    isolated_dock.begin_capture()
+    root = isolated_dock.tree.root
+    existing = isolated_dock.tree.new_node(
+        parent=root,
+        node_type="message",
+        header="older output",
+        collapsed=False,
+        status="done",
+    )
+    todo = isolated_dock.tree.new_node(
+        parent=root,
+        node_type="todo",
+        header="old todo",
+        collapsed=False,
+        status="done",
+    )
+    assert root.children == [existing, todo]
+
+    bus = UiEventBus()
+    bus.start(DockEventConsumer(isolated_dock))
+    try:
+        await bus.emit(TodoUpdated(
+            items=[TodoItemPayload(content="front task", status="pending")],
+            summary="0/1 done · 0 active · 1 pending",
+        ))
+        await bus.drain()
+
+        assert root.children[0] is todo
+        assert root.children[1] is existing
+        assert root.children[0]._is_last_sibling is False
+        assert root.children[1]._is_last_sibling is True
+        assert todo.payload["summary"] == "0/1 done · 0 active · 1 pending"
+    finally:
+        await bus.stop()
+
+
+@pytest.mark.asyncio
+async def test_todo_updated_with_agent_id_updates_global_root_todo(isolated_dock):
     isolated_dock.begin_capture()
     bus = UiEventBus()
     bus.start(DockEventConsumer(isolated_dock))
@@ -419,10 +572,13 @@ async def test_todo_updated_with_agent_id_attaches_under_subagent(isolated_dock)
         assistant = next(node for node in isolated_dock.tree.root.children if node.node_type == "assistant")
         task_tool = next(node for node in assistant.children if node.node_type == "tool_call")
         subagent = next(node for node in task_tool.children if node.node_type == "subagent")
-        todo = next(node for node in subagent.children if node.node_type == "todo")
+        todo = next(node for node in isolated_dock.tree.root.children if node.node_type == "todo")
 
+        assert isolated_dock.tree.root.children[0] is todo
         assert todo.payload["items"] == [{"content": "inspect auth", "status": "in_progress"}]
         assert not any(node.node_type == "todo" for node in assistant.children)
+        assert not any(node.node_type == "todo" for node in task_tool.children)
+        assert not any(node.node_type == "todo" for node in subagent.children)
     finally:
         await bus.stop()
 

@@ -3,7 +3,7 @@
 from __future__ import annotations
 
 from io import StringIO
-from typing import Callable
+from typing import Any, Callable, Sequence
 
 from rich.console import Console, Group
 from rich.live import Live
@@ -19,6 +19,12 @@ from voidx.ui.output.dock.formatting import (
 from voidx.ui.output.dock.nodes import DockNodeMixin
 from voidx.ui.output.dock.stream import DockStreamMixin
 from voidx.ui.output.dock.state import dock, get_dock, set_dock
+from voidx.ui.output.dock.todo import (
+    DockTodoState,
+    todo_state_from_items,
+    todo_state_from_payload,
+)
+from voidx.ui.output.dock.agent_placeholder import agent_placeholder_header
 from voidx.ui.output.tree import OutputNode, OutputTree
 
 
@@ -40,6 +46,7 @@ class BottomInputDock(DockStreamMixin, DockStatusMixin, DockNodeMixin):
         self._status_nodes: dict[str, OutputNode] = {}
         self._status_ticks: dict[str, int] = {}
         self._status_records: dict[str, DockStatusRecord] = {}
+        self._todo_state: DockTodoState | None = None
         self._permission_node: OutputNode | None = None
         self._settled_node_ids: set[str] = set()
         self._input_text = ""
@@ -64,6 +71,19 @@ class BottomInputDock(DockStreamMixin, DockStatusMixin, DockNodeMixin):
     @property
     def current_agent(self) -> OutputNode | None:
         return self._current_agent
+
+    def set_todo_state(self, summary: str, items: Sequence[Any]) -> None:
+        self._todo_state = todo_state_from_items(summary, items)
+        self.refresh()
+
+    def clear_todo_state(self) -> None:
+        if self._todo_state is None:
+            return
+        self._todo_state = None
+        self.refresh()
+
+    def todo_state(self) -> DockTodoState | None:
+        return self._todo_state
 
     def set_refresh_callback(self, callback: Callable[[], None] | None) -> None:
         self._refresh_callback = callback
@@ -115,6 +135,7 @@ class BottomInputDock(DockStreamMixin, DockStatusMixin, DockNodeMixin):
     def reset(self) -> None:
         self._tree = OutputTree()
         self._settled_node_ids.clear()
+        self._todo_state = None
         self._reset_runtime_nodes()
         self._input_text = ""
         self._cursor_pos = 0
@@ -130,6 +151,7 @@ class BottomInputDock(DockStreamMixin, DockStatusMixin, DockNodeMixin):
         self._settled_node_ids.clear()
         self._mark_tree_settled()
         self._reset_runtime_nodes()
+        self._hydrate_todo_state_from_tree()
         self.refresh()
 
     def _reset_runtime_nodes(self) -> None:
@@ -142,6 +164,16 @@ class BottomInputDock(DockStreamMixin, DockStatusMixin, DockNodeMixin):
         self._status_ticks = {}
         self._status_records = {}
         self._permission_node = None
+
+    def _hydrate_todo_state_from_tree(self) -> None:
+        self._todo_state = None
+        for node in self._tree.root.children:
+            if node.node_type != "todo":
+                continue
+            state = todo_state_from_payload(node.payload)
+            if state is not None:
+                self._todo_state = state
+                return
 
     def start_turn(self, text: str) -> OutputNode:
         self.commit_stream()
@@ -168,7 +200,7 @@ class BottomInputDock(DockStreamMixin, DockStatusMixin, DockNodeMixin):
             self._current_agent = self._tree.new_node(
                 parent=self._tree.root,
                 node_type="assistant",
-                header="[#EBCB8B]●[/#EBCB8B] Working",
+                header=agent_placeholder_header(),
                 collapsed=False,
             )
             self._mark_unsettled(self._current_agent)

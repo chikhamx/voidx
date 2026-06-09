@@ -8,6 +8,7 @@ Supports Python by default. Extensible to other languages.
 
 from __future__ import annotations
 
+import logging
 import re
 from pathlib import Path
 
@@ -17,6 +18,7 @@ from voidx.tools.base import BaseTool, model_to_json_schema, ToolContext, ToolRe
 
 OUTPUT_TOKEN_BUDGET = 4000
 DIR_ENTRY_LIMIT = 200
+_logger = logging.getLogger(__name__)
 
 
 class RepoMapInput(BaseModel):
@@ -166,6 +168,7 @@ def _extract_python_symbols(f: Path, top_level_only: bool = False) -> list[str]:
     try:
         text = f.read_text(encoding="utf-8", errors="replace")
     except Exception:
+        _logger.debug("Failed to extract Python symbols from %s", f, exc_info=True)
         return []
 
     lines: list[str] = []

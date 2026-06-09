@@ -5,6 +5,8 @@ from __future__ import annotations
 import io
 import shutil
 import sys
+import time
+from dataclasses import dataclass
 
 
 from rich.cells import cell_len
@@ -14,9 +16,52 @@ from rich.text import Text
 from voidx.llm.usage import format_cache_hit_rate, format_token_count
 from voidx.ui.output.dock import active_agent_step_text, dock
 from voidx.ui.output.dock.formatting import _text_from_line
+from voidx.ui.tui.activity import (
+    BUSY_ACTIVITY_DEFAULT_VERB,
+    BUSY_ACTIVITY_GLYPHS,
+    BUSY_ACTIVITY_GLYPH_STYLES,
+    BUSY_ACTIVITY_STYLE,
+)
 from voidx.ui.tui.helpers import _clip_cells, _rendered_row_count
 from voidx.ui.tui.overlays import _OverlayRendererMixin
 from voidx.ui.tui.state import StatusSummaryCache
+
+
+@dataclass(frozen=True)
+class StatusSegment:
+    kind: str
+    text: str
+
+
+_STATUS_STYLES = {
+    "model": "#6CB6FF",
+    "policy": "#57AB5A",
+    "state": BUSY_ACTIVITY_STYLE,
+    "usage": "#56D4DD",
+    "goal": "#C698F0",
+    "separator": "#4B5563",
+}
+_STATUS_VARIANTS = (
+    ("model", "policy", "state", "usage", "goal"),
+    ("model", "policy", "usage", "goal"),
+    ("model", "policy", "usage"),
+    ("model", "policy"),
+    ("model",),
+)
+_TODO_PINNED_MAX_ITEMS = 4
+_TODO_PINNED_ORDER = ("in_progress", "pending", "completed", "cancelled")
+_TODO_PINNED_ICONS = {
+    "pending": "○",
+    "in_progress": "◐",
+    "completed": "●",
+    "cancelled": "✕",
+}
+_TODO_PINNED_STYLES = {
+    "pending": "#8F9BA8",
+    "in_progress": "#7AA2F7",
+    "completed": "#A3BE8C",
+    "cancelled": "#BF616A",
+}
 
 
 class _TerminalRendererMixin(_OverlayRendererMixin):
@@ -34,11 +79,13 @@ class _TerminalRendererMixin(_OverlayRendererMixin):
         """Render to terminal: capture Rich output, write with cursor control."""
         width = self._frame_width()
         term_height = shutil.get_terminal_size().lines if self._tty else None
+        render_failed = False
         try:
             renderable = self._render_impl(height=term_height)
         except Exception as exc:
             import traceback
 
+            render_failed = True
             self._pending_tb = traceback.format_exc()
             self._last_error = f"Render error: {exc}"
             renderable = Group(Text(f"Render error: {exc}", style="red"))
@@ -54,6 +101,7 @@ class _TerminalRendererMixin(_OverlayRendererMixin):
             frame_rows = _rendered_row_count(ansi)
             bottom_ansi = self._capture_renderable(self._render_bottom_impl(), width)
             bottom_rows = _rendered_row_count(bottom_ansi)
+            busy_activity_rows = 0 if render_failed else self._busy_activity_row_count(width)
             self._make_room_for_frame(frame_rows, term_height)
             start_row = max(self._visible_committed_rows + 1, 1)
             sys.stdout.write(f"\x1b[{start_row};1H")
@@ -63,6 +111,13 @@ class _TerminalRendererMixin(_OverlayRendererMixin):
             self._last_frame_start_row = start_row
             self._last_bottom_rows = bottom_rows
             self._last_bottom_start_row = start_row + frame_rows - bottom_rows
+            self._last_busy_activity_rows = busy_activity_rows
+            if busy_activity_rows > 0:
+                self._last_busy_activity_start_row = (
+                    start_row + frame_rows - bottom_rows - busy_activity_rows
+                )
+            else:
+                self._last_busy_activity_start_row = 0
             self._position_input_cursor(frame_rows)
             self._has_rendered_frame = True
             sys.stdout.flush()
@@ -155,6 +210,44 @@ class _TerminalRendererMixin(_OverlayRendererMixin):
         sys.stdout.flush()
         return True
 
+    def _render_busy_activity_tick(self) -> bool:
+        if (
+            not self._tty
+            or not self._busy
+            or not self._has_rendered_frame
+            or self._last_busy_activity_rows <= 0
+            or self._last_busy_activity_start_row <= 0
+        ):
+            return False
+
+        width = self._frame_width()
+        try:
+            ansi = self._capture_renderable(
+                Group(*self._render_busy_activity_elements(width)),
+                width,
+            )
+        except Exception:
+            return False
+
+        rows = _rendered_row_count(ansi)
+        if rows != self._last_busy_activity_rows:
+            return False
+
+        lines = ansi.splitlines()
+        if len(lines) != rows:
+            return False
+
+        start_row = self._last_busy_activity_start_row
+        for offset, line in enumerate(lines):
+            sys.stdout.write(f"\x1b[{start_row + offset};1H")
+            sys.stdout.write(line)
+            sys.stdout.write("\x1b[K")
+        frame_end_row = self._last_frame_start_row + self._last_frame_rows - 1
+        sys.stdout.write(f"\x1b[{max(frame_end_row, 1)};1H")
+        self._position_input_cursor(self._last_frame_rows)
+        sys.stdout.flush()
+        return True
+
     def _capture_renderable(self, renderable: object, width: int) -> str:
         capture_width = max(width, 1)
         key = (capture_width, self._console.height)
@@ -238,8 +331,9 @@ class _TerminalRendererMixin(_OverlayRendererMixin):
         status_lines = self._render_hint_lines()
 
         panel_lines = self._render_panel_lines(width)
+        busy_activity_elements = self._render_busy_activity_elements(width)
 
-        fixed_lines = (
+        bottom_fixed_lines = (
             1  # transcript/input separator
             + (1 if self._active_text_prompt is not None else 0)
             + sum(self._input_display_rows(width))
@@ -247,6 +341,16 @@ class _TerminalRendererMixin(_OverlayRendererMixin):
             + len(panel_lines)
             + (1 if panel_lines else 0)
             + len(status_lines)
+        )
+        todo_max_rows = self._pinned_todo_max_rows(
+            render_height,
+            bottom_fixed_lines + len(busy_activity_elements),
+        )
+        pinned_todo_elements = self._render_pinned_todo_elements(width, max_rows=todo_max_rows)
+        fixed_lines = (
+            bottom_fixed_lines
+            + len(pinned_todo_elements)
+            + len(busy_activity_elements)
         )
         body_limit = max(render_height - fixed_lines, 1)
 
@@ -262,6 +366,8 @@ class _TerminalRendererMixin(_OverlayRendererMixin):
             body_limit,
         )
 
+        elements.extend(pinned_todo_elements)
+        elements.extend(busy_activity_elements)
         elements.extend(
             self._render_bottom_elements(width, panel_lines, status_lines)
         )
@@ -290,6 +396,84 @@ class _TerminalRendererMixin(_OverlayRendererMixin):
 
         tail_rows = ansi.splitlines()[-row_limit:]
         return [Text.from_ansi(row) for row in tail_rows]
+
+    def _pinned_todo_max_rows(self, render_height: int, bottom_fixed_lines: int) -> int:
+        if dock.todo_state() is None:
+            return 0
+        available_rows = render_height - bottom_fixed_lines
+        row_budget = 1 + _TODO_PINNED_MAX_ITEMS
+        return max(1, min(row_budget, available_rows))
+
+    def _pinned_todo_row_count(self, width: int, max_rows: int | None = None) -> int:
+        return len(self._render_pinned_todo_elements(width, max_rows=max_rows))
+
+    def _busy_activity_row_count(self, width: int) -> int:
+        return len(self._render_busy_activity_elements(width))
+
+    def _render_busy_activity_elements(self, width: int) -> list[Text]:
+        if not self._busy:
+            return []
+        return [self._busy_activity_text(width)]
+
+    def _busy_activity_text(self, width: int) -> Text:
+        label = _clip_cells(self._busy_activity_label(), width)
+        if not label:
+            return Text()
+        text = Text()
+        text.append(label[:1], style=self._busy_activity_glyph_style())
+        if len(label) > 1:
+            text.append(label[1:], style=BUSY_ACTIVITY_STYLE)
+        return text
+
+    def _busy_activity_glyph_style(self) -> str:
+        return BUSY_ACTIVITY_GLYPH_STYLES[
+            self._busy_activity_tick % len(BUSY_ACTIVITY_GLYPH_STYLES)
+        ]
+
+    def _render_pinned_todo_elements(
+        self,
+        width: int,
+        *,
+        max_rows: int | None = None,
+    ) -> list[Text]:
+        state = dock.todo_state()
+        if state is None:
+            return []
+
+        row_limit = 1 + _TODO_PINNED_MAX_ITEMS if max_rows is None else max_rows
+        if row_limit <= 0:
+            return []
+        elements = [
+            Text(_clip_cells(f"Todo: {state.summary}", width), style="bold #A3BE8C")
+        ]
+        if row_limit <= 1 or not state.items:
+            return elements[:row_limit]
+
+        ordered_items = [
+            item
+            for status in _TODO_PINNED_ORDER
+            for item in state.items
+            if item.status == status
+        ]
+        ordered_items.extend(
+            item for item in state.items if item.status not in _TODO_PINNED_ORDER
+        )
+
+        available_item_rows = row_limit - 1
+        visible_count = available_item_rows
+        if len(ordered_items) > available_item_rows:
+            visible_count = max(available_item_rows - 1, 0)
+        for item in ordered_items[:visible_count]:
+            icon = _TODO_PINNED_ICONS.get(item.status, "○")
+            style = _TODO_PINNED_STYLES.get(item.status, "#8F9BA8")
+            elements.append(Text(_clip_cells(f"  {icon} {item.content}", width), style=style))
+
+        omitted = len(ordered_items) - visible_count
+        if omitted > 0 and len(elements) < row_limit:
+            elements.append(
+                Text(_clip_cells(f"  … {omitted} more todos", width), style="dim")
+            )
+        return elements[:row_limit]
 
     def _render_line_width(self, width: int) -> int:
         return max(width, 1)
@@ -487,9 +671,9 @@ class _TerminalRendererMixin(_OverlayRendererMixin):
 
     def _render_hint_lines(self) -> list:
         lines: list = []
-        status = self._status_summary(self._frame_width())
-        if status:
-            lines.append(Text(status, style="#8F9BA8"))
+        status = self._status_summary_text(self._frame_width())
+        if status.plain:
+            lines.append(status)
         if self._notice:
             lines.append(Text("  " + self._notice, style="#8F9BA8"))
         if self._last_error:
@@ -500,7 +684,6 @@ class _TerminalRendererMixin(_OverlayRendererMixin):
         self._render_state.status_summary_dirty = True
 
     def _status_summary(self, width: int) -> str:
-        from voidx.ui.tui.helpers import _safe_status_value, _call_status, _call_bool, _call_int
         cache = self._render_state.status_summary_cache
         if (
             cache is not None
@@ -508,6 +691,38 @@ class _TerminalRendererMixin(_OverlayRendererMixin):
             and not self._render_state.status_summary_dirty
         ):
             return cache.summary
+
+        snapshot, segments = self._status_segments(include_busy=True)
+        summary, selected = self._select_status_variant(width, segments)
+        self._render_state.status_summary_dirty = False
+        self._render_state.status_summary_cache = StatusSummaryCache(
+            width,
+            snapshot,
+            summary,
+            tuple((segment.kind, segment.text) for segment in selected),
+        )
+        return summary
+
+    def _status_summary_text(self, width: int) -> Text:
+        summary = self._status_summary(width)
+        if not summary:
+            return Text()
+        cache = self._render_state.status_summary_cache
+        selected = ()
+        if cache is not None and cache.width == width and cache.summary == summary:
+            selected = tuple(
+                StatusSegment(kind, text)
+                for kind, text in cache.segments
+            )
+        return self._status_text_from_segments(summary, selected)
+
+    def _status_segments(self, *, include_busy: bool) -> tuple[tuple, tuple[StatusSegment, ...]]:
+        from voidx.ui.tui.helpers import (
+            _call_bool,
+            _call_int,
+            _call_status,
+            _safe_status_value,
+        )
 
         provider = _safe_status_value(getattr(self.status, "provider", ""), "")
         model = _safe_status_value(getattr(self.status, "model", ""), "")
@@ -553,10 +768,6 @@ class _TerminalRendererMixin(_OverlayRendererMixin):
             agent_step,
             stats_snapshot,
         )
-        if cache is not None and cache.width == width and cache.snapshot == snapshot:
-            self._render_state.status_summary_dirty = False
-            return cache.summary
-
         model_text = "/".join(part for part in (provider, model) if part)
         if effort:
             model_text = f"{model_text} {effort}"
@@ -567,7 +778,7 @@ class _TerminalRendererMixin(_OverlayRendererMixin):
         policy_text = " ".join(policy_parts)
 
         state_parts = []
-        if self._busy:
+        if include_busy and self._busy:
             state_parts.append("busy")
         if agent_step:
             state_parts.append(agent_step)
@@ -585,8 +796,8 @@ class _TerminalRendererMixin(_OverlayRendererMixin):
                 f"ctx {format_token_count(getattr(stats, 'context_tokens', 0))}/"
                 f"{format_token_count(context_limit)}"
                 f" cache {format_cache_hit_rate(stats)}"
-                f" in {format_token_count(getattr(stats, 'last_input_tokens', 0))}"
-                f" out {format_token_count(getattr(stats, 'last_output_tokens', 0))}"
+                f" ↑{format_token_count(getattr(stats, 'last_input_tokens', 0))}"
+                f" ↓{format_token_count(getattr(stats, 'last_output_tokens', 0))}"
                 f" total {format_token_count(getattr(stats, 'total_tokens', 0))}"
             )
 
@@ -596,25 +807,90 @@ class _TerminalRendererMixin(_OverlayRendererMixin):
             if goal_label:
                 goal_text += f" {goal_label}"
 
-        variants = [
-            [model_text, policy_text, state_text, usage_text, goal_text],
-            [model_text, policy_text, usage_text, goal_text],
-            [model_text, policy_text, usage_text],
-            [model_text, policy_text],
-            [model_text],
-        ]
-        for variant in variants:
-            summary_text = " | ".join(part for part in variant if part)
-            if not summary_text:
-                self._render_state.status_summary_dirty = False
-                self._render_state.status_summary_cache = StatusSummaryCache(width, snapshot, "")
-                return ""
-            summary = "  " + summary_text
+        segments = tuple(
+            segment
+            for segment in (
+                StatusSegment("model", model_text),
+                StatusSegment("policy", policy_text),
+                StatusSegment("state", state_text),
+                StatusSegment("usage", usage_text),
+                StatusSegment("goal", goal_text),
+            )
+            if segment.text
+        )
+        return snapshot, segments
+
+    def _select_status_variant(
+        self,
+        width: int,
+        segments: tuple[StatusSegment, ...],
+        *,
+        prefix: StatusSegment | None = None,
+    ) -> tuple[str, tuple[StatusSegment, ...]]:
+        by_kind = {segment.kind: segment for segment in segments}
+        prefix_segments = (prefix,) if prefix is not None and prefix.text else ()
+
+        for variant in _STATUS_VARIANTS:
+            selected = tuple(
+                by_kind[kind]
+                for kind in variant
+                if kind in by_kind
+            )
+            candidate = prefix_segments + selected
+            if not candidate:
+                return "", ()
+            summary = self._status_summary_from_segments(candidate)
             if cell_len(summary) <= width:
-                self._render_state.status_summary_dirty = False
-                self._render_state.status_summary_cache = StatusSummaryCache(width, snapshot, summary)
-                return summary
-        summary = _clip_cells("  " + model_text, width)
-        self._render_state.status_summary_dirty = False
-        self._render_state.status_summary_cache = StatusSummaryCache(width, snapshot, summary)
-        return summary
+                return summary, candidate
+
+        fallback = prefix_segments or tuple(
+            segment for segment in segments if segment.kind == "model"
+        )[:1]
+        if not fallback:
+            return "", ()
+        summary = _clip_cells(self._status_summary_from_segments(fallback), width)
+        return summary, ()
+
+    @staticmethod
+    def _status_summary_from_segments(segments: tuple[StatusSegment, ...]) -> str:
+        return "  " + " | ".join(segment.text for segment in segments if segment.text)
+
+    def _status_text_from_segments(
+        self,
+        summary: str,
+        segments: tuple[StatusSegment, ...],
+    ) -> Text:
+        if not summary:
+            return Text()
+        if not segments:
+            return Text(summary, style="#8F9BA8")
+        if summary != self._status_summary_from_segments(segments):
+            return Text(summary, style="#8F9BA8")
+        text = Text("  ")
+        appended = False
+        for segment in segments:
+            if not segment.text:
+                continue
+            if appended:
+                text.append(" | ", style=_STATUS_STYLES["separator"])
+            text.append(segment.text, style=_STATUS_STYLES.get(segment.kind, "#8F9BA8"))
+            appended = True
+        return text
+
+    def _busy_activity_label(self) -> str:
+        started_at = self._busy_started_at
+        glyph = BUSY_ACTIVITY_GLYPHS[
+            self._busy_activity_tick % len(BUSY_ACTIVITY_GLYPHS)
+        ]
+        verb = self._busy_activity_verb or BUSY_ACTIVITY_DEFAULT_VERB
+        if started_at is None:
+            return f"{glyph} {verb}"
+        elapsed = max(0, int(time.monotonic() - started_at))
+        return f"{glyph} {verb} ({self._format_elapsed(elapsed)})"
+
+    @staticmethod
+    def _format_elapsed(seconds: int) -> str:
+        if seconds < 60:
+            return f"{seconds}s"
+        minutes, remainder = divmod(seconds, 60)
+        return f"{minutes}m {remainder}s"

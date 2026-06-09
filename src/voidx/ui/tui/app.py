@@ -8,6 +8,7 @@ from __future__ import annotations
 
 import asyncio
 import os
+import random
 import shutil
 import sys
 import time
@@ -28,6 +29,7 @@ from voidx.ui.tui.helpers import (
     _plain_line,
     _rendered_row_count,
 )
+from voidx.ui.tui import activity as tui_activity
 from voidx.ui.tui.choice_mixin import _ChoicePromptMixin
 from voidx.ui.tui.clipboard_mixin import _ClipboardMixin
 from voidx.ui.tui.input import _InputEditorMixin
@@ -169,6 +171,7 @@ class PureTui(
                 await consumer
             except asyncio.CancelledError:
                 pass
+            await self._stop_busy_activity_timer()
 
     async def run_headless(self, on_submit: SubmitHandler) -> None:
         """Run without TUI — wait forever, input comes from gateway."""
@@ -229,6 +232,46 @@ class PureTui(
             return
         self._flush_committed()
         self._render_frame()
+
+    def _choose_busy_activity_verb(self) -> str:
+        return random.choice(tui_activity.BUSY_ACTIVITY_VERBS)
+
+    def _start_busy_activity_timer(self) -> None:
+        if not self._tty or not self._running or not self._busy:
+            return
+        task = self._busy_activity_timer_task
+        if task is not None and not task.done():
+            return
+        self._busy_activity_timer_task = asyncio.create_task(self._busy_activity_timer())
+
+    async def _stop_busy_activity_timer(self) -> None:
+        task = self._busy_activity_timer_task
+        if task is None:
+            return
+        self._busy_activity_timer_task = None
+        if task is asyncio.current_task():
+            return
+        try:
+            task.cancel()
+        except RuntimeError:
+            return
+        try:
+            await task
+        except asyncio.CancelledError:
+            pass
+        except RuntimeError:
+            pass
+
+    async def _busy_activity_timer(self) -> None:
+        try:
+            while self._running and self._busy:
+                await asyncio.sleep(tui_activity.BUSY_ACTIVITY_TICK_SECONDS)
+                if not self._running or not self._busy:
+                    return
+                self._busy_activity_tick += 1
+                self._render_busy_activity_tick()
+        except asyncio.CancelledError:
+            raise
 
     def _flush_committed(self, *, force: bool = False) -> None:
         """Flush completed content to terminal scrollback.
@@ -487,11 +530,15 @@ class PureTui(
             paste_entries = getattr(item, "paste_entries", [])
 
             self._busy = True
+            self._busy_started_at = time.monotonic()
+            self._busy_activity_verb = self._choose_busy_activity_verb()
+            self._busy_activity_tick = 0
             self._last_error = ""
             self._submit_cancel_requested = False
             self._current_submitted_text = restore_text
             self._current_submitted_paste_entries = [dict(entry) for entry in paste_entries]
             self._current_submit_task = asyncio.create_task(on_submit(submit_text))
+            self._start_busy_activity_timer()
             self.invalidate()
             try:
                 keep_running = await self._current_submit_task
@@ -510,6 +557,10 @@ class PureTui(
                 keep_running = True
             finally:
                 self._busy = False
+                self._busy_started_at = None
+                self._busy_activity_verb = ""
+                self._busy_activity_tick = 0
+                await self._stop_busy_activity_timer()
                 self._current_submit_task = None
                 self._current_submitted_text = ""
                 self._current_submitted_paste_entries = []

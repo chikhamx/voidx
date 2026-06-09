@@ -2,9 +2,12 @@
 
 from __future__ import annotations
 
+import logging
 import sys
 from rich.console import Console
 from voidx.ui.output.tree import OutputTree
+
+_logger = logging.getLogger(__name__)
 
 
 def browse(tree: OutputTree, console: Console) -> None:
@@ -52,6 +55,33 @@ def _rerender(tree, console, total_lines, width):
     return len(lines) + 1, line_map
 
 
+def _mouse_row_from_sequence(raw: str | bytes) -> int | None:
+    try:
+        text = raw.decode() if isinstance(raw, bytes) else raw
+    except UnicodeDecodeError:
+        _logger.debug("Invalid browse mouse sequence: %r", raw, exc_info=True)
+        return None
+    parts = text.split(';')
+    if len(parts) < 3 or parts[0] != '0':
+        return None
+    try:
+        return int(parts[2])
+    except ValueError:
+        _logger.debug("Invalid browse mouse row: %r", raw, exc_info=True)
+        return None
+
+
+def _toggle_node_at_row(tree, console, line_map, total_lines, width, row):
+    node_id = line_map.get(row - 1)
+    if not node_id:
+        return total_lines, line_map
+    node = tree.get(node_id)
+    if not node:
+        return total_lines, line_map
+    node.collapsed = not node.collapsed
+    return _rerender(tree, console, total_lines, width)
+
+
 def _browse_windows(tree, console, line_map, total_lines, width):
     import msvcrt
 
@@ -75,17 +105,10 @@ def _browse_windows(tree, console, line_map, total_lines, width):
                             parts = buf.split(';')
                             if len(parts) >= 3 and parts[0] == '0':
                                 # Left button press
-                                try:
-                                    row = int(parts[2])
-                                    node_id = line_map.get(row - 1)  # 0-based
-                                    if node_id:
-                                        node = tree.get(node_id)
-                                        if node:
-                                            node.collapsed = not node.collapsed
-                                            total_lines, line_map = _rerender(
-                                                tree, console, total_lines, width)
-                                except (ValueError, IndexError):
-                                    pass
+                                row = _mouse_row_from_sequence(buf)
+                                if row is not None:
+                                    total_lines, line_map = _toggle_node_at_row(
+                                        tree, console, line_map, total_lines, width, row)
                         else:
                             # Arrow key or other sequence — exit
                             return
@@ -133,19 +156,10 @@ def _browse_unix(tree, console, line_map, total_lines, width):
                                     if c in (b'M', b'm'):
                                         break
                                     buf += c
-                                parts = buf.decode().split(';')
-                                if len(parts) >= 3 and parts[0] == '0':
-                                    try:
-                                        row = int(parts[2])
-                                        node_id = line_map.get(row - 1)
-                                        if node_id:
-                                            node = tree.get(node_id)
-                                            if node:
-                                                node.collapsed = not node.collapsed
-                                                total_lines, line_map = _rerender(
-                                                    tree, console, total_lines, width)
-                                    except (ValueError, IndexError):
-                                        pass
+                                row = _mouse_row_from_sequence(buf)
+                                if row is not None:
+                                    total_lines, line_map = _toggle_node_at_row(
+                                        tree, console, line_map, total_lines, width, row)
                             else:
                                 return  # Arrow key → exit
                         else:

@@ -53,6 +53,17 @@ def _render_lines(tui: PureTui, *, width: int = 100) -> list[str]:
     return [line.rstrip() for line in capture.get().splitlines()]
 
 
+def _styles_covering(text: Text, needle: str) -> list[str]:
+    assert needle in text.plain
+    start = text.plain.index(needle)
+    end = start + len(needle)
+    return [
+        str(span.style)
+        for span in text.spans
+        if span.start <= start and span.end >= end
+    ]
+
+
 class _FakeStdout:
     def __init__(self) -> None:
         self.text = ""
@@ -208,8 +219,62 @@ def test_status_summary_renders_model_policy_usage_and_goal(tmp_path):
     assert "default w-write on-fail auto" in summary
     assert "goal" in summary
     assert "ctx 12.3k/128k" in summary
-    assert "in 12.3k out 678 total 13.0k" in summary
+    assert "↑12.3k ↓678 total 13.0k" in summary
+    assert " in " not in summary
+    assert " out " not in summary
     assert "goal running/implement turns 2 ship pure tui" in summary
+
+
+def test_status_summary_text_applies_semantic_styles(tmp_path):
+    stats = UsageStats()
+    stats.update_context(12_345, limit=128_000)
+    stats.last_input_tokens = 12_345
+    stats.last_output_tokens = 678
+    stats.total_input_tokens = 12_345
+    stats.total_output_tokens = 678
+    status = SimpleNamespace(
+        provider="mimo",
+        model="mimo-v2.5",
+        workspace=str(tmp_path),
+        interaction_mode=lambda: "auto",
+        goal_label=lambda: "ship",
+        goal_phase=lambda: "implement",
+        goal_status=lambda: "running",
+        goal_turn_count=lambda: 2,
+        reasoning_effort="xhigh",
+        permission_label=lambda: "default",
+        sandbox_label=lambda: "w-write",
+        approval_label=lambda: "on-fail",
+        usage_stats=stats,
+    )
+    tui = PureTui(status, COMMANDS)
+
+    text = tui._status_summary_text(200)
+
+    assert text.plain.startswith("  mimo/mimo-v2.5 xhigh")
+    assert "#6CB6FF" in _styles_covering(text, "mimo/mimo-v2.5 xhigh")
+    assert "#57AB5A" in _styles_covering(text, "default w-write on-fail")
+    assert "#D77757" in _styles_covering(text, "auto")
+    assert "#56D4DD" in _styles_covering(text, "ctx 12.3k/128k")
+    assert "#C698F0" in _styles_covering(text, "goal running/implement turns 2 ship")
+    assert "#4B5563" in _styles_covering(text, "|")
+
+
+def test_status_summary_text_fallback_uses_dim_style(tmp_path):
+    status = SimpleNamespace(
+        provider="anthropic",
+        model="claude-sonnet-4",
+        workspace=str(tmp_path),
+        reasoning_effort="xhigh",
+        permission_label=lambda: "accept-edits",
+    )
+    tui = PureTui(status, COMMANDS)
+
+    text = tui._status_summary_text(18)
+
+    assert cell_len(text.plain) <= 18
+    assert str(text.style) == "#8F9BA8"
+    assert text.spans == []
 
 
 def test_status_summary_renders_agent_step_from_dock(tmp_path):
@@ -287,6 +352,301 @@ def test_status_summary_reuses_cache_until_marked_dirty(tmp_path):
 
     assert "perm-2" in third
     assert calls["permission"] == 2
+
+
+def test_busy_activity_line_renders_below_temporary_agent_not_status(tmp_path, monkeypatch):
+    monkeypatch.setattr("voidx.ui.tui.renderer.time.monotonic", lambda: 103.8)
+    status = SimpleNamespace(
+        provider="mimo",
+        model="mimo-v2.5",
+        workspace=str(tmp_path),
+        interaction_mode=lambda: "auto",
+    )
+    tui = PureTui(status, COMMANDS)
+    tui._console = Console(file=None, force_terminal=True, width=80, height=24, _environ={})
+    tui._busy = True
+    tui._busy_started_at = 100.0
+    tui._busy_activity_verb = "Cogitating"
+    tui._input_lines = ["hello"]
+    tui._cursor_col = len("hello")
+    dock.begin_capture()
+    dock.ensure_agent()
+    dock.start_tool(
+        "Searching",
+        "",
+        tool_name="mcp__tavily__tavily_search",
+        raw_args={"query": "recent AI major events news 2025 2026"},
+    )
+    dock.set_todo_state(
+        "0/1 done · 1 active · 0 pending",
+        [{"content": "active task", "status": "in_progress"}],
+    )
+
+    lines = _render_lines(tui, width=80)
+    agent_index = next(i for i, line in enumerate(lines) if "voidx" in line)
+    todo_index = next(i for i, line in enumerate(lines) if "Todo: 0/1 done" in line)
+    busy_index = next(i for i, line in enumerate(lines) if "Cogitating" in line)
+    input_index = next(i for i, line in enumerate(lines) if line.strip() == "❯ hello")
+    status_index = next(i for i, line in enumerate(lines) if "mimo/mimo-v2.5" in line)
+    status = tui._status_summary_text(120)
+    rendered = "\n".join(_rich_plain(line) for line in lines)
+
+    assert agent_index < todo_index < busy_index < input_index < status_index
+    assert "Cogitating (3s)" in rendered
+    assert rendered.count("Cogitating") == 1
+    assert "voidx" in rendered
+    assert "Cogitating" not in status.plain
+    assert "busy" in status.plain
+    assert "auto" in status.plain
+
+
+def test_agent_placeholder_keeps_stream_reusable(tmp_path):
+    dock.begin_capture()
+    dock.ensure_agent()
+
+    dock.set_stream("final answer")
+
+    rendered = "\n".join(_rich_plain(line) for line in dock.tree.render(80))
+
+    assert "final answer" in rendered
+    assert "● voidx" not in rendered
+    assert "Cogitating" not in rendered
+
+
+def test_agent_placeholder_replaces_legacy_working_header(tmp_path):
+    dock.begin_capture()
+    agent = dock.ensure_agent()
+    agent.header = "[#EBCB8B]●[/#EBCB8B] Working [dim](12s)[/dim]"
+
+    dock.set_stream("final answer")
+
+    rendered = "\n".join(_rich_plain(line) for line in dock.tree.render(80))
+
+    assert "final answer" in rendered
+    assert "Working" not in rendered
+
+
+def test_busy_activity_tick_noops_without_rendered_frame(tmp_path, monkeypatch):
+    monkeypatch.setattr("voidx.ui.tui.renderer.time.monotonic", lambda: 70.0)
+    tui = _tui(tmp_path)
+    tui._busy = True
+    tui._busy_started_at = 0.0
+
+    status = tui._status_summary_text(20)
+
+    assert tui._render_busy_activity_tick() is False
+    assert "Cogitating" not in status.plain
+
+
+def test_busy_activity_label_rotates_centered_glyphs(tmp_path, monkeypatch):
+    now = {"value": 100.0}
+    monkeypatch.setattr("voidx.ui.tui.renderer.time.monotonic", lambda: now["value"])
+    tui = _tui(tmp_path)
+    tui._busy = True
+    tui._busy_started_at = 100.0
+    tui._busy_activity_verb = "Pondering"
+
+    assert tui._busy_activity_label().startswith("◐ Pondering (0s)")
+    tui._busy_activity_tick = 1
+    now["value"] = 101.0
+    assert tui._busy_activity_label().startswith("◓ Pondering (1s)")
+    tui._busy_activity_tick = 3
+    now["value"] = 103.0
+    assert tui._busy_activity_label().startswith("◒ Pondering (3s)")
+    tui._busy_activity_tick = 4
+    now["value"] = 104.0
+    assert tui._busy_activity_label().startswith("◐ Pondering (4s)")
+
+
+def test_busy_activity_label_omits_elapsed_without_start_time(tmp_path):
+    tui = _tui(tmp_path)
+    tui._busy = True
+    tui._busy_started_at = None
+    tui._busy_activity_verb = "Pondering"
+
+    assert tui._busy_activity_label() == "◐ Pondering"
+
+
+def test_busy_activity_glyph_cycles_rainbow_styles(tmp_path):
+    tui = _tui(tmp_path)
+    tui._busy = True
+    tui._busy_started_at = 0.0
+    tui._busy_activity_verb = "Pondering"
+    expected_styles = [
+        "#E06C75",
+        "#D77757",
+        "#E5C07B",
+        "#98C379",
+        "#56D4DD",
+        "#61AFEF",
+        "#C678DD",
+    ]
+
+    for tick, style in enumerate(expected_styles):
+        tui._busy_activity_tick = tick
+        text = tui._busy_activity_text(80)
+
+        assert style in _styles_covering(text, text.plain[:1])
+        assert "#D77757" in _styles_covering(text, " Pondering")
+
+
+@pytest.mark.asyncio
+async def test_busy_activity_verb_randomized_once_per_turn(tmp_path, monkeypatch):
+    now = 20.0
+    monkeypatch.setattr("voidx.ui.tui.app.time.monotonic", lambda: now)
+    monkeypatch.setattr("voidx.ui.tui.app.random.choice", lambda _choices: "Ruminating")
+    tui = _tui(tmp_path)
+    started = asyncio.Event()
+    release = asyncio.Event()
+
+    async def on_submit(_text: str) -> bool:
+        started.set()
+        await release.wait()
+        return True
+
+    consumer = asyncio.create_task(tui._consume(on_submit))
+    try:
+        tui._queue.put_nowait("run")
+        await asyncio.wait_for(started.wait(), timeout=1)
+
+        assert tui._busy_activity_verb == "Ruminating"
+
+        release.set()
+        await asyncio.sleep(0)
+        await asyncio.sleep(0)
+
+        assert tui._busy_activity_verb == ""
+    finally:
+        tui._queue.put_nowait(None)
+        await asyncio.wait_for(consumer, timeout=1)
+
+
+@pytest.mark.asyncio
+async def test_busy_started_at_set_and_cleared_by_consume_loop(tmp_path, monkeypatch):
+    now = 10.0
+    monkeypatch.setattr("voidx.ui.tui.app.time.monotonic", lambda: now)
+    tui = _tui(tmp_path)
+    started = asyncio.Event()
+    release = asyncio.Event()
+
+    async def on_submit(_text: str) -> bool:
+        started.set()
+        await release.wait()
+        return True
+
+    consumer = asyncio.create_task(tui._consume(on_submit))
+    try:
+        tui._queue.put_nowait("run")
+        await asyncio.wait_for(started.wait(), timeout=1)
+
+        assert tui._busy_started_at == 10.0
+
+        release.set()
+        await asyncio.sleep(0)
+        await asyncio.sleep(0)
+
+        assert tui._busy_started_at is None
+    finally:
+        tui._queue.put_nowait(None)
+        await asyncio.wait_for(consumer, timeout=1)
+
+
+def test_busy_activity_tick_repaints_bottom_line_with_pinned_todo(tmp_path, monkeypatch):
+    now = {"value": 1.0}
+    monkeypatch.setattr("voidx.ui.tui.renderer.time.monotonic", lambda: now["value"])
+    fake_stdout = _FakeStdout()
+    monkeypatch.setattr(sys, "stdout", fake_stdout)
+    monkeypatch.setattr(
+        shutil,
+        "get_terminal_size",
+        lambda fallback=None: os.terminal_size((80, 12)),
+    )
+    tui = _tui(tmp_path)
+    tui._running = True
+    tui._tty = True
+    tui._busy = True
+    tui._busy_started_at = 0.0
+    tui._busy_activity_verb = "Brewing"
+    tui._console = Console(file=None, force_terminal=True, width=80, height=12, _environ={})
+    dock.begin_capture()
+    dock.ensure_agent()
+    dock.set_todo_state(
+        "0/1 done · 1 active · 0 pending",
+        [{"content": "active task", "status": "in_progress"}],
+    )
+
+    tui._render_frame()
+    initial = _rich_plain(fake_stdout.text)
+    assert tui._last_busy_activity_start_row == tui._last_bottom_start_row - 1
+    assert "voidx" in initial
+    assert "Todo:" in initial
+    assert "Brewing (1s)" in initial
+    assert initial.count("Brewing") == 1
+
+    fake_stdout.text = ""
+    now["value"] = 2.0
+    monkeypatch.setattr(
+        tui,
+        "_render_frame",
+        lambda: (_ for _ in ()).throw(AssertionError("timer must not full-render")),
+    )
+
+    assert tui._render_busy_activity_tick() is True
+    tick_output = _rich_plain(fake_stdout.text)
+    assert "Brewing (2s)" in tick_output
+    assert "Todo:" not in tick_output
+    assert "active task" not in tick_output
+    assert "voidx" not in tick_output
+    assert "\x1b[J" not in fake_stdout.text
+    assert "\x1b[K" in fake_stdout.text
+
+
+@pytest.mark.asyncio
+async def test_busy_activity_timer_starts_ticks_and_stops(tmp_path, monkeypatch):
+    monkeypatch.setattr("voidx.ui.tui.activity.BUSY_ACTIVITY_TICK_SECONDS", 0.01)
+    tui = _tui(tmp_path)
+    tui._tty = True
+    tui._running = True
+    started = asyncio.Event()
+    release = asyncio.Event()
+    ticked = asyncio.Event()
+    ticks = []
+
+    monkeypatch.setattr(tui, "invalidate", lambda: None)
+
+    def tick() -> bool:
+        ticks.append(tui._busy_activity_tick)
+        ticked.set()
+        return True
+
+    monkeypatch.setattr(tui, "_render_busy_activity_tick", tick)
+
+    async def on_submit(_text: str) -> bool:
+        started.set()
+        await release.wait()
+        return True
+
+    consumer = asyncio.create_task(tui._consume(on_submit))
+    try:
+        tui._queue.put_nowait("run")
+        await asyncio.wait_for(started.wait(), timeout=1)
+
+        assert tui._busy_activity_timer_task is not None
+        await asyncio.wait_for(ticked.wait(), timeout=1)
+        assert ticks[0] >= 1
+
+        release.set()
+        for _ in range(10):
+            await asyncio.sleep(0.01)
+            if tui._busy_activity_timer_task is None:
+                break
+
+        assert tui._busy_activity_timer_task is None
+        assert tui._busy_started_at is None
+        assert tui._busy_activity_tick == 0
+    finally:
+        tui._queue.put_nowait(None)
+        await asyncio.wait_for(consumer, timeout=1)
 
 
 @pytest.mark.asyncio
@@ -755,6 +1115,199 @@ def test_command_panel_keeps_dynamic_status_below_panel(tmp_path):
     assert "↑↓ select" not in lines[status_index]
     assert "Enter accept" not in lines[status_index]
     assert "Esc close" not in lines[status_index]
+
+
+def test_pinned_todo_renders_above_input_and_status(tmp_path):
+    status = SimpleNamespace(
+        provider="mimo",
+        model="mimo-v2.5",
+        workspace=str(tmp_path),
+    )
+    tui = PureTui(status, COMMANDS)
+    tui._console = Console(file=None, force_terminal=True, width=80, height=24, _environ={})
+    dock.tree.new_node(
+        parent=dock.tree.root,
+        node_type="message",
+        header="transcript line",
+        collapsed=False,
+        status="done",
+    )
+    dock.set_todo_state(
+        "0/2 done · 1 active · 1 pending",
+        [
+            {"content": "implement pinned display", "status": "in_progress"},
+            {"content": "write tests", "status": "pending"},
+        ],
+    )
+    tui._input_lines = ["hello"]
+    tui._cursor_col = len("hello")
+
+    lines = _render_lines(tui, width=80)
+
+    transcript_index = next(i for i, line in enumerate(lines) if "transcript line" in line)
+    todo_index = next(i for i, line in enumerate(lines) if "Todo: 0/2 done" in line)
+    input_index = next(i for i, line in enumerate(lines) if line.strip() == "❯ hello")
+    status_index = next(i for i, line in enumerate(lines) if "mimo/mimo-v2.5" in line)
+    assert transcript_index < todo_index < input_index < status_index
+
+
+def test_pinned_todo_reduces_transcript_body_limit(tmp_path):
+    tui = _tui(tmp_path)
+    tui._console = Console(file=None, force_terminal=True, width=80, height=8, _environ={})
+    for index in range(10):
+        dock.tree.new_node(
+            parent=dock.tree.root,
+            node_type="message",
+            header=f"line {index}",
+            collapsed=False,
+            status="done",
+        )
+    dock.set_todo_state(
+        "0/2 done · 1 active · 1 pending",
+        [
+            {"content": "active task", "status": "in_progress"},
+            {"content": "pending task", "status": "pending"},
+        ],
+    )
+
+    lines = _render_lines(tui, width=80)
+
+    transcript_lines = [line for line in lines if "line " in line]
+    assert len(transcript_lines) <= 2
+    assert any("line 9" in line for line in transcript_lines)
+    assert any("Todo: 0/2 done" in line for line in lines)
+    assert any(line.strip().startswith("❯") for line in lines)
+
+
+def test_pinned_todo_shows_four_items_when_row_budget_allows(tmp_path):
+    tui = _tui(tmp_path)
+    tui._console = Console(file=None, force_terminal=True, width=80, height=8, _environ={})
+    dock.set_todo_state(
+        "0/4 done · 1 active · 3 pending",
+        [
+            {"content": "active task", "status": "in_progress"},
+            {"content": "pending task 1", "status": "pending"},
+            {"content": "pending task 2", "status": "pending"},
+            {"content": "pending task 3", "status": "pending"},
+        ],
+    )
+
+    rendered = "\n".join(_render_lines(tui, width=80))
+
+    assert "Todo: 0/4 done" in rendered
+    assert "active task" in rendered
+    assert "pending task 1" in rendered
+    assert "pending task 2" in rendered
+    assert "pending task 3" in rendered
+    assert "more todos" not in rendered
+
+
+def test_pinned_todo_not_in_bottom_impl(tmp_path):
+    tui = _tui(tmp_path)
+    tui._console = Console(file=None, force_terminal=True, width=80, height=24, _environ={})
+    dock.set_todo_state(
+        "0/1 done · 1 active · 0 pending",
+        [{"content": "active task", "status": "in_progress"}],
+    )
+
+    ansi = tui._capture_renderable(tui._render_bottom_impl(), tui._frame_width())
+
+    assert "Todo:" not in ansi
+    assert "active task" not in ansi
+
+
+def test_input_region_render_still_uses_bottom_only_with_pinned_todo(tmp_path, monkeypatch):
+    class FakeStdout:
+        def __init__(self) -> None:
+            self.text = ""
+
+        def write(self, value: str) -> int:
+            self.text += value
+            return len(value)
+
+        def flush(self) -> None:
+            pass
+
+    fake_stdout = FakeStdout()
+    monkeypatch.setattr(sys, "stdout", fake_stdout)
+    monkeypatch.setattr(
+        shutil, "get_terminal_size",
+        lambda fallback=None: os.terminal_size((80, 12)),
+    )
+    tui = _tui(tmp_path)
+    tui._tty = True
+    tui._console = Console(file=None, force_terminal=True, width=80, height=12, _environ={})
+    dock.tree.new_node(
+        parent=dock.tree.root,
+        node_type="message",
+        header="startup banner",
+        collapsed=False,
+        status="done",
+    )
+    dock.set_todo_state(
+        "0/1 done · 1 active · 0 pending",
+        [{"content": "active task", "status": "in_progress"}],
+    )
+
+    tui._render_frame()
+    assert "Todo:" in fake_stdout.text
+    assert "startup banner" in fake_stdout.text
+
+    fake_stdout.text = ""
+    assert tui._process_input(b"x") is True
+    tui._render_after_input()
+
+    assert "Todo:" not in fake_stdout.text
+    assert "startup banner" not in fake_stdout.text
+    assert "x" in fake_stdout.text
+
+
+def test_choice_selection_only_render_still_works_with_pinned_todo(tmp_path, monkeypatch):
+    fake_stdout = _FakeStdout()
+    monkeypatch.setattr(sys, "stdout", fake_stdout)
+    tui = _tui(tmp_path)
+    tui._tty = True
+    tui._has_rendered_frame = True
+    tui._last_bottom_start_row = 7
+    tui._last_frame_rows = 14
+    tui._console = Console(file=None, force_terminal=True, width=80, height=24, _environ={})
+    tui._active_choice = [
+        ("Review", "review", "Inspect the design"),
+        ("Implement", "implement", "Apply the change"),
+    ]
+    tui._choice_prompt = "Intent?"
+    tui._choice_selected = 0
+    dock.set_todo_state(
+        "0/1 done · 1 active · 0 pending",
+        [{"content": "active task", "status": "in_progress"}],
+    )
+    ansi = tui._capture_renderable(tui._render_bottom_impl(), tui._frame_width())
+    tui._last_bottom_rows = _rendered_row_count(ansi)
+
+    tui._choice_selected = 1
+
+    assert tui._render_choice_selection_region() is True
+    assert "\x1b[J" not in fake_stdout.text
+    assert "Todo:" not in fake_stdout.text
+
+
+def test_pinned_todo_summary_only_on_tiny_height_or_width(tmp_path):
+    tui = _tui(tmp_path)
+    tui._console = Console(file=None, force_terminal=True, width=40, height=5, _environ={})
+    dock.set_todo_state(
+        "0/3 done · 1 active · 2 pending",
+        [
+            {"content": "implement pinned display", "status": "in_progress"},
+            {"content": "write tests", "status": "pending"},
+            {"content": "verify flicker", "status": "pending"},
+        ],
+    )
+
+    rendered = "\n".join(_render_lines(tui, width=40))
+
+    assert "Todo: 0/3 done" in rendered
+    assert "implement pinned display" not in rendered
+    assert "write tests" not in rendered
 
 
 def test_transient_output_appends_to_dock(tmp_path):
@@ -1676,6 +2229,23 @@ def test_tree_incremental_render_shifts_sibling_after_ranges():
     # Content is still correct
     assert "extra line 3" in "\n".join(inc)
     assert "read file.py" in "\n".join(inc)
+
+
+def test_output_tree_move_child_to_first_refreshes_sibling_flags():
+    from voidx.ui.output.tree import OutputTree
+
+    tree = OutputTree()
+    root = tree.root
+    first = tree.new_node(root, node_type="message", header="first")
+    second = tree.new_node(root, node_type="message", header="second")
+    third = tree.new_node(root, node_type="message", header="third")
+
+    tree.move_child_to_first(root, third)
+
+    assert root.children == [third, first, second]
+    assert third._is_last_sibling is False
+    assert first._is_last_sibling is False
+    assert second._is_last_sibling is True
 
 
 def test_tree_incremental_render_shifts_click_map():

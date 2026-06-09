@@ -2,12 +2,15 @@
 
 from __future__ import annotations
 
+import logging
 import re
 from pathlib import Path
 
 from pydantic import BaseModel, Field
 
 from voidx.tools.base import BaseTool, model_to_json_schema, ToolContext, ToolResult, resolve_safe, SKIP_DIRS, SKIP_SUFFIXES
+
+_logger = logging.getLogger(__name__)
 
 
 class GlobInput(BaseModel):
@@ -136,6 +139,7 @@ class GrepTool(BaseTool):
                 if count >= 100:
                     break
             except Exception:
+                _logger.debug("Failed to read file during grep: %s", f, exc_info=True)
                 continue
 
         if not results:

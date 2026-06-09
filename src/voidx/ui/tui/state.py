@@ -78,6 +78,7 @@ class StatusSummaryCache:
     width: int
     snapshot: tuple[Any, ...]
     summary: str
+    segments: tuple[tuple[str, str], ...] = ()
 
 
 @dataclass
@@ -102,6 +103,12 @@ class RenderState:
     render_scheduled: bool = False
     status_summary_dirty: bool = True
     status_summary_cache: StatusSummaryCache | None = None
+    busy_started_at: float | None = None
+    busy_activity_verb: str = ""
+    busy_activity_tick: int = 0
+    busy_activity_timer_task: asyncio.Task[None] | None = None
+    last_busy_activity_rows: int = 0
+    last_busy_activity_start_row: int = 0
 
 
 @dataclass
@@ -188,6 +195,12 @@ STATE_FIELD_MAP: dict[str, tuple[str, str]] = {
     "_visible_committed_rows": ("_render_state", "visible_committed_rows"),
     "_was_busy": ("_render_state", "was_busy"),
     "_render_scheduled": ("_render_state", "render_scheduled"),
+    "_busy_started_at": ("_render_state", "busy_started_at"),
+    "_busy_activity_verb": ("_render_state", "busy_activity_verb"),
+    "_busy_activity_tick": ("_render_state", "busy_activity_tick"),
+    "_busy_activity_timer_task": ("_render_state", "busy_activity_timer_task"),
+    "_last_busy_activity_rows": ("_render_state", "last_busy_activity_rows"),
+    "_last_busy_activity_start_row": ("_render_state", "last_busy_activity_start_row"),
     "_external_request_handler": ("_external_state", "request_handler"),
     "_external_command_handler": ("_external_state", "command_handler"),
     "_stdin_fd": ("_terminal_state", "stdin_fd"),

@@ -139,6 +139,28 @@ class OutputTree:
         self._sync_counter(node.id)
         self.mark_dirty()
 
+    def move_child_to_first(self, parent: OutputNode, node: OutputNode) -> None:
+        """Move an existing direct child to the first position.
+
+        ``OutputNode.children`` is the tree's source-of-truth ordering; this
+        method centralizes sibling flag refreshes for callers that need to
+        reorder a child without changing ownership.
+        """
+        if node.parent is not parent or node not in parent.children:
+            raise ValueError("node must be an existing direct child of parent")
+        if parent.children and parent.children[0] is node:
+            return
+        parent.children.remove(node)
+        parent.children.insert(0, node)
+        self._refresh_sibling_flags(parent)
+        self.mark_dirty()
+
+    @staticmethod
+    def _refresh_sibling_flags(parent: OutputNode) -> None:
+        last_index = len(parent.children) - 1
+        for index, child in enumerate(parent.children):
+            child._is_last_sibling = index == last_index
+
     def extend_from(self, other: OutputTree) -> None:
         """Append another tree's root children to this tree."""
         for child in list(other.root.children):

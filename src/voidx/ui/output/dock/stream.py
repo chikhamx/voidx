@@ -5,6 +5,10 @@ from __future__ import annotations
 from rich.markup import escape
 
 from voidx.ui.output.dock.formatting import _ansi_line, _ansi_rgb, _clean, _markdown_lines
+from voidx.ui.output.dock.agent_placeholder import (
+    agent_placeholder_header,
+    is_agent_placeholder_header,
+)
 from voidx.ui.output.tree import OutputNode
 
 
@@ -108,13 +112,13 @@ class DockStreamMixin:
         if (
             self._current_agent is not None
             and self._current_agent.node_type == "assistant"
-            and self._current_agent.header == "[#EBCB8B]●[/#EBCB8B] Working"
+            and is_agent_placeholder_header(self._current_agent.header)
             and not self._current_agent.children
         ):
             return self._current_agent
 
         if self._current_agent is not None:
-            if self._current_agent.header == "[#EBCB8B]●[/#EBCB8B] Working":
+            if is_agent_placeholder_header(self._current_agent.header):
                 self._current_agent.header = "[dim]●[/dim] voidx"
                 self._mark_subtree_settled(self._current_agent)
                 self._tree.mark_dirty()
@@ -145,9 +149,8 @@ class DockStreamMixin:
             and not self._stream_node.children
             and self._stream_text.strip()
         ):
-            self._stream_node.header = "[#EBCB8B]●[/#EBCB8B] Working"
+            self._stream_node.header = agent_placeholder_header()
             self._stream_node.body_lines = []
             self._mark_unsettled(self._stream_node)
             self._tree.mark_dirty()
         self.commit_stream()
-

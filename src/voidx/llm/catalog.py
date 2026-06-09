@@ -12,9 +12,13 @@ Registering a custom fetcher:
 
 from __future__ import annotations
 
+import asyncio
+import logging
 from collections.abc import Awaitable, Callable
 
 import httpx
+
+_logger = logging.getLogger(__name__)
 
 # ── static fallbacks ───────────────────────────────────────────────────────
 
@@ -186,6 +190,8 @@ async def list_models(provider: str) -> list[str]:
             models = await fetcher()
             if models:
                 return await _merge_custom(provider, models)
+        except (httpx.HTTPError, asyncio.TimeoutError, ValueError):
+            _logger.debug("Failed to fetch models for %s", provider, exc_info=True)
         except Exception:
-            pass
+            _logger.debug("Unexpected error fetching models for %s", provider, exc_info=True)
     return await _merge_custom(provider, STATIC_MODELS.get(provider, []))

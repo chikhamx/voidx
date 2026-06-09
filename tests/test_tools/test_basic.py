@@ -2,6 +2,7 @@
 
 import asyncio
 import json
+import logging
 import shlex
 import sys
 from pathlib import Path
@@ -117,6 +118,16 @@ class TestToolRegistry:
             assert "name" in t["function"]
             assert "description" in t["function"]
             assert "parameters" in t["function"]
+
+    def test_builtin_tools_have_strict_mcp_tools_do_not(self):
+        r = ToolRegistry()
+        # Register a fake MCP tool
+        r.register("mcp__tavily__search_abc12345", object(), "MCP search", {"type": "object", "properties": {}})
+        tools = r.tools_for_llm()
+        builtin = next(t for t in tools if t["function"]["name"] == "read")
+        mcp = next(t for t in tools if t["function"]["name"].startswith("mcp__"))
+        assert builtin["function"]["strict"] is True
+        assert "strict" not in mcp["function"]
 
     def test_nested_tool_schemas_keep_defs_and_strict_objects(self):
         r = ToolRegistry()
@@ -1060,6 +1071,52 @@ class TestSearch:
         r = ToolRegistry()
         result = await r.execute_tool("grep", {"pattern": "XYZNOTFOUND"}, ctx)
         assert "No matches" in result.output
+
+    @pytest.mark.asyncio
+    async def test_grep_logs_unreadable_file_and_continues(self, tmp_path, monkeypatch, caplog):
+        bad = tmp_path / "bad.py"
+        good = tmp_path / "good.py"
+        bad.write_text("TODO hidden\n")
+        good.write_text("TODO visible\n")
+        original_read_text = Path.read_text
+
+        def fake_read_text(self, *args, **kwargs):
+            if self == bad:
+                raise OSError("cannot read")
+            return original_read_text(self, *args, **kwargs)
+
+        monkeypatch.setattr(Path, "read_text", fake_read_text)
+        ctx = ToolContext(workspace=str(tmp_path))
+        r = ToolRegistry()
+
+        with caplog.at_level(logging.DEBUG, logger="voidx.tools.search"):
+            result = await r.execute_tool("grep", {"pattern": "TODO", "include": "*.py"}, ctx)
+
+        assert "good.py" in result.output
+        assert "TODO visible" in result.output
+        assert "Failed to read file during grep" in caplog.text
+        assert "bad.py" in caplog.text
+
+    def test_repomap_logs_python_symbol_extraction_failure(self, tmp_path, monkeypatch, caplog):
+        from voidx.tools import repomap as repomap_module
+
+        target = tmp_path / "broken.py"
+        target.write_text("def ok():\n    pass\n")
+        original_read_text = Path.read_text
+
+        def fake_read_text(self, *args, **kwargs):
+            if self == target:
+                raise OSError("cannot read")
+            return original_read_text(self, *args, **kwargs)
+
+        monkeypatch.setattr(Path, "read_text", fake_read_text)
+
+        with caplog.at_level(logging.DEBUG, logger="voidx.tools.repomap"):
+            symbols = repomap_module._extract_python_symbols(target)
+
+        assert symbols == []
+        assert "Failed to extract Python symbols" in caplog.text
+        assert "broken.py" in caplog.text
 
 
 class TestBash:

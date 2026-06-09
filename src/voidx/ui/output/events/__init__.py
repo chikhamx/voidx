@@ -400,19 +400,18 @@ class DockEventConsumer:
     def _update_todo_node(self, event: TodoUpdated) -> OutputNode | None:
         if not self._dock.active:
             return None
-        parent = self._todo_parent(event.agent_id)
-        if parent is None:
-            return None
-        todo_node = next((child for child in parent.children if child.node_type == "todo"), None)
+        root = self._dock.tree.root
+        todo_node = next((child for child in root.children if child.node_type == "todo"), None)
         if todo_node is None:
             todo_node = self._dock.tree.new_node(
-                parent=parent,
+                parent=root,
                 node_type="todo",
                 header="Todo",
                 body_lines=[],
                 collapsed=False,
                 status="done",
             )
+        self._ensure_root_first_child(todo_node)
 
         todo_node.header = f"[bold]Todo[/bold]: {escape(event.summary)}"
         todo_node.body_lines = self._render_todo_lines(event)
@@ -424,15 +423,12 @@ class DockEventConsumer:
         todo_node.collapsed = False
         self._dock.tree.mark_dirty(todo_node.id)
         self._dock.mark_node_settled(todo_node)
-        self._dock.refresh()
+        self._dock.set_todo_state(event.summary, event.items)
         return todo_node
 
-    def _todo_parent(self, agent_id: int) -> OutputNode | None:
-        if agent_id >= 0:
-            return self._agent_parent(agent_id)
-        if self._dock.current_agent is not None:
-            return self._dock.current_agent
-        return self._dock.ensure_agent()
+    def _ensure_root_first_child(self, node: OutputNode) -> None:
+        root = self._dock.tree.root
+        self._dock.tree.move_child_to_first(root, node)
 
     def _render_todo_lines(self, event: TodoUpdated) -> list[str]:
         total = len(event.items)
