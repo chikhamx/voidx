@@ -19,6 +19,29 @@ from voidx.llm.message_markers import GUIDANCE_MARKER
 from voidx.llm.usage import estimate_context_tokens
 
 
+class _NoopUiSink:
+    width = 80
+
+    def print(self, *_args, **_kwargs) -> None:
+        return None
+
+
+class _NoopEvents:
+    async def emit(self, _event) -> bool:
+        return True
+
+
+class _FakeUiPort:
+    def __init__(self, *, via_events: bool = False, events=None) -> None:
+        self._via_events = via_events
+        self.events = events or _NoopEvents()
+        self.ui = _NoopUiSink()
+        self.console = _NoopUiSink()
+
+    def via_events(self) -> bool:
+        return self._via_events
+
+
 def _make_messages_with_tool_calls(n_turns: int = 5) -> list:
     """Build messages where AI messages have tool_calls — the key difference
     between the old select() counting and estimate_context_tokens."""
@@ -395,14 +418,64 @@ class TestCompactionRetry:
         assert COMPACTION_MAX_RETRIES >= 1
 
     @pytest.mark.asyncio
+    async def test_mixin_delegates_to_compaction_coordinator_with_overrides(self):
+        from types import SimpleNamespace
+
+        from voidx.agent.graph.compaction import GraphCompactionMixin
+
+        calls = []
+
+        class FakeCoordinator:
+            async def maybe_compact(
+                self,
+                messages,
+                session_msgs,
+                *,
+                force,
+                ask,
+                run_compaction_agent,
+                persist_compaction,
+            ):
+                calls.append((messages, session_msgs, force, ask))
+                assert await run_compaction_agent(["head"], "previous") == "summary"
+                await persist_compaction(["head"])
+                return ["head"], "tail"
+
+        async def fake_run_agent(_head_messages, _previous_summary):
+            return "summary"
+
+        persisted = []
+
+        async def fake_persist(head_messages):
+            persisted.extend(head_messages)
+
+        host = SimpleNamespace(
+            _compaction_coordinator=FakeCoordinator(),
+            _run_compaction_agent=fake_run_agent,
+            _persist_compaction=fake_persist,
+        )
+
+        result = await GraphCompactionMixin._maybe_compact(
+            host,
+            ["message"],
+            ["row"],
+            force=True,
+            ask=False,
+        )
+
+        assert result == (["head"], "tail")
+        assert calls == [(["message"], ["row"], True, False)]
+        assert persisted == ["head"]
+
+    @pytest.mark.asyncio
     async def test_run_compaction_agent_builds_messages_and_extracts_text(self, monkeypatch):
         """The real compaction agent path should construct chat messages and
         return extracted assistant text."""
         from types import SimpleNamespace
         from unittest.mock import MagicMock
 
-        import voidx.agent.graph.compaction as compaction_module
-        from voidx.agent.graph.compaction import GraphCompactionMixin
+        import voidx.agent.graph.compaction_coordinator as compaction_module
+        from voidx.agent.graph.compaction_coordinator import GraphCompactionCoordinator
 
         captured = {}
 
@@ -428,10 +501,10 @@ class TestCompactionRetry:
                 ),
             ),
             model=object(),
+            _ui=_FakeUiPort(via_events=False),
         )
 
-        result = await GraphCompactionMixin._run_compaction_agent(
-            host,
+        result = await GraphCompactionCoordinator(host).run_compaction_agent(
             [HumanMessage(content="Fix the compaction fallback", id="1")],
             None,
         )
@@ -451,7 +524,7 @@ class TestCompactionRetry:
         before falling back to truncation."""
         from unittest.mock import AsyncMock, MagicMock, patch
 
-        from voidx.agent.graph.compaction import GraphCompactionMixin
+        from voidx.agent.graph.compaction_coordinator import GraphCompactionCoordinator
 
         call_count = 0
 
@@ -472,18 +545,17 @@ class TestCompactionRetry:
         host._session = None
         host._debug = False
         host.model = MagicMock()
-        host._run_compaction_agent = fake_run_agent
-        host._persist_compaction = AsyncMock()
+        host._ui = _FakeUiPort(via_events=False)
+        coordinator = GraphCompactionCoordinator(host)
+        coordinator.run_compaction_agent = fake_run_agent
+        coordinator.persist_compaction = AsyncMock()
         messages = []
         for i in range(8):
             messages.append(HumanMessage(content=f"User message {i}", id=str(i * 2 + 1)))
             messages.append(AIMessage(content=f"Assistant reply {i}"))
 
-        with patch('voidx.agent.graph.compaction.via_events', return_value=False):
-            with patch('voidx.agent.graph.compaction.estimate_context_tokens', return_value=200_000):
-                result = await GraphCompactionMixin._maybe_compact(
-                    host, messages, [], force=True, ask=False,
-                )
+        with patch('voidx.agent.graph.compaction_coordinator.estimate_context_tokens', return_value=200_000):
+            result = await coordinator.maybe_compact(messages, [], force=True, ask=False)
 
         # Should have retried and eventually succeeded
         assert call_count == 3, f"Expected 3 calls (2 failures + 1 success), got {call_count}"
@@ -496,7 +568,7 @@ class TestCompactionRetry:
         from unittest.mock import AsyncMock, MagicMock, patch
 
         from voidx.llm.compaction import COMPACTION_MAX_RETRIES
-        from voidx.agent.graph.compaction import GraphCompactionMixin
+        from voidx.agent.graph.compaction_coordinator import GraphCompactionCoordinator
 
         call_count = 0
 
@@ -515,19 +587,18 @@ class TestCompactionRetry:
         host._session = None
         host._debug = False
         host.model = MagicMock()
-        host._run_compaction_agent = fake_run_agent_always_fail
-        host._persist_compaction = AsyncMock()
+        host._ui = _FakeUiPort(via_events=False)
+        coordinator = GraphCompactionCoordinator(host)
+        coordinator.run_compaction_agent = fake_run_agent_always_fail
+        coordinator.persist_compaction = AsyncMock()
 
         messages = []
         for i in range(8):
             messages.append(HumanMessage(content=f"Fix the auth bug {i}", id=str(i * 2 + 1)))
             messages.append(AIMessage(content=f"Looking at it {i}"))
 
-        with patch('voidx.agent.graph.compaction.via_events', return_value=False):
-            with patch('voidx.agent.graph.compaction.estimate_context_tokens', return_value=200_000):
-                result = await GraphCompactionMixin._maybe_compact(
-                    host, messages, [], force=True, ask=False,
-                )
+        with patch('voidx.agent.graph.compaction_coordinator.estimate_context_tokens', return_value=200_000):
+            result = await coordinator.maybe_compact(messages, [], force=True, ask=False)
 
         # Should have tried COMPACTION_MAX_RETRIES + 1 times (initial + retries)
         assert call_count == COMPACTION_MAX_RETRIES + 1, (
@@ -542,8 +613,7 @@ class TestCompactionRetry:
         """The final fallback status should keep the failure reason visible."""
         from unittest.mock import AsyncMock, MagicMock
 
-        import voidx.agent.graph.compaction as compaction_module
-        from voidx.agent.graph.compaction import GraphCompactionMixin
+        from voidx.agent.graph.compaction_coordinator import GraphCompactionCoordinator
 
         class FakeEvents:
             def __init__(self):
@@ -556,8 +626,8 @@ class TestCompactionRetry:
             raise RuntimeError("LLM always fails")
 
         fake_events = FakeEvents()
-        monkeypatch.setattr(compaction_module, "via_events", lambda: True)
-        monkeypatch.setattr(compaction_module, "ui_events", fake_events)
+        import voidx.agent.graph.compaction_coordinator as compaction_module
+
         monkeypatch.setattr(compaction_module, "estimate_context_tokens", lambda *_args, **_kwargs: 200_000)
 
         host = MagicMock()
@@ -570,17 +640,17 @@ class TestCompactionRetry:
         host._session = None
         host._debug = False
         host.model = MagicMock()
-        host._run_compaction_agent = fake_run_agent_always_fail
-        host._persist_compaction = AsyncMock()
+        host._ui = _FakeUiPort(via_events=True, events=fake_events)
+        coordinator = GraphCompactionCoordinator(host)
+        coordinator.run_compaction_agent = fake_run_agent_always_fail
+        coordinator.persist_compaction = AsyncMock()
 
         messages = []
         for i in range(8):
             messages.append(HumanMessage(content=f"Fix the auth bug {i}", id=str(i * 2 + 1)))
             messages.append(AIMessage(content=f"Looking at it {i}"))
 
-        await GraphCompactionMixin._maybe_compact(
-            host, messages, [], force=True, ask=False,
-        )
+        await coordinator.maybe_compact(messages, [], force=True, ask=False)
 
         finished = [
             event for event in fake_events.events

@@ -809,7 +809,7 @@ class TestDumpPendingApproval:
 
 class TestStateUpdateFromExecutedTools:
     def test_merges_state_patches(self):
-        from voidx.agent.graph.tool_execution import _state_update_from_executed_tools, _ExecutedTool
+        from voidx.agent.graph.tool_executor import _state_update_from_executed_tools, _ExecutedTool
 
         patch1 = ToolStatePatch(task_intent=TaskIntent.IMPLEMENT, intent_source="on_intent")
         patch2 = ToolStatePatch(goal="Refactor auth", goal_phase="implement")
@@ -831,7 +831,7 @@ class TestStateUpdateFromExecutedTools:
         assert update["goal_phase"] == "implement"
 
     def test_later_patch_overrides_earlier(self):
-        from voidx.agent.graph.tool_execution import _state_update_from_executed_tools, _ExecutedTool
+        from voidx.agent.graph.tool_executor import _state_update_from_executed_tools, _ExecutedTool
 
         patch1 = ToolStatePatch(task_intent=TaskIntent.DESIGN, intent_source="on_intent")
         patch2 = ToolStatePatch(task_intent=TaskIntent.IMPLEMENT, intent_source="clarify")
@@ -851,7 +851,7 @@ class TestStateUpdateFromExecutedTools:
         assert update["task_intent"] == "implement"
 
     def test_skill_runs_merge_with_current_state(self):
-        from voidx.agent.graph.tool_execution import _state_update_from_executed_tools, _ExecutedTool
+        from voidx.agent.graph.tool_executor import _state_update_from_executed_tools, _ExecutedTool
 
         current = [
             SkillRunState(name="test-driven-development", reason="existing"),
@@ -874,7 +874,7 @@ class TestStateUpdateFromExecutedTools:
         ]
 
     def test_none_pending_approval_clears_state(self):
-        from voidx.agent.graph.tool_execution import _state_update_from_executed_tools, _ExecutedTool
+        from voidx.agent.graph.tool_executor import _state_update_from_executed_tools, _ExecutedTool
 
         patch = ToolStatePatch(pending_approval=None)
         msg = ToolMessage(content="r", tool_call_id="c1")
@@ -885,7 +885,7 @@ class TestStateUpdateFromExecutedTools:
         assert update["pending_approval"] is None
 
     def test_no_patch_returns_empty(self):
-        from voidx.agent.graph.tool_execution import _state_update_from_executed_tools, _ExecutedTool
+        from voidx.agent.graph.tool_executor import _state_update_from_executed_tools, _ExecutedTool
 
         msg = ToolMessage(content="r", tool_call_id="c1")
         result = ToolResult(output="r", metadata={})

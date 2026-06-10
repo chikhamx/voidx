@@ -25,6 +25,7 @@ from voidx.tools.task_tracker import TaskTracker
 from voidx.ui.output.dock import BottomInputDock, set_dock
 from voidx.ui.output.events import DockEventConsumer, ui_events
 from voidx.ui.protocol import UiSubmitCommand
+from voidx.runtime.ui_port import runtime_ui_port
 
 
 class FakeTui:
@@ -103,6 +104,7 @@ def _graph(session=None, workspace: str = "/tmp/workspace") -> GraphRunLoopMixin
     graph._plan_mode = False
     graph._tracker = TaskTracker()
     graph._session_msg_cache = None
+    graph._ui = runtime_ui_port
     return graph
 
 
@@ -114,8 +116,8 @@ def _disable_external_managers(graph) -> None:
 @pytest.mark.asyncio
 async def test_quiet_slash_command_dispatches_without_turn(monkeypatch):
     FakeTui.instances = []
-    monkeypatch.setattr("voidx.ui.tui.PureTui", FakeTui)
-    monkeypatch.setattr("voidx.agent.graph.run_loop.show_startup", lambda **_: None)
+    monkeypatch.setattr("voidx.agent.graph.run_loop.PureTui", FakeTui)
+    monkeypatch.setattr(runtime_ui_port, "show_startup", lambda **_: None)
 
     graph = GraphRunLoopMixin()
     graph._session = None
@@ -130,6 +132,7 @@ async def test_quiet_slash_command_dispatches_without_turn(monkeypatch):
     graph._usage_stats = UsageStats()
     graph._debug = False
     graph._plan_mode = False
+    graph._ui = runtime_ui_port
 
     dispatched: list[str] = []
 
@@ -844,6 +847,25 @@ async def test_large_uncompacted_resume_forces_compaction_without_truncating(tmp
     assert "older persisted messages were omitted" not in system_content
     assert any(getattr(message, "content", None) == "message 0" for message in captured["messages"])
     assert any(getattr(message, "content", None) == "message 500" for message in captured["messages"])
+
+
+@pytest.mark.asyncio
+async def test_turn_mixin_delegates_run_once_to_component():
+    from voidx.agent.graph.turn_mixin import GraphTurnMixin
+
+    class FakeTurnRunner:
+        def __init__(self):
+            self.calls = []
+
+        async def run_once(self, user_text: str, *, display_text: str | None = None) -> None:
+            self.calls.append((user_text, display_text))
+
+    runner = FakeTurnRunner()
+    host = SimpleNamespace(_turn_runner=runner)
+
+    await GraphTurnMixin._run_once(host, "raw input", display_text="display input")
+
+    assert runner.calls == [("raw input", "display input")]
 
 
 @pytest.mark.asyncio

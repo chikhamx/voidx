@@ -4,14 +4,13 @@ from __future__ import annotations
 
 from typing import TYPE_CHECKING
 
-from voidx.agent.graph.runtime import ui
 from voidx.permission.engine import (
     PermissionContext,
     authorize_tool_call,
     build_pattern,
     classify_tool_call,
 )
-from voidx.runtime.ui import PermissionToolDetail, dock
+from voidx.ui.output.events.schema import PermissionToolDetail
 
 if TYPE_CHECKING:
     from voidx.agent.graph.contracts import GraphPermissionHost
@@ -88,8 +87,8 @@ class GraphPermissionMixin:
         details = [item.model_dump() for item in self._permission_tool_details(tool_calls)]
 
         if not self._app:
-            ui.print("")
-            ui.print(f"  [yellow]Allow tools: [bold]{tool_list}[/bold]?[/yellow]")
+            self._ui.ui.print("")
+            self._ui.ui.print(f"  [yellow]Allow tools: [bold]{tool_list}[/bold]?[/yellow]")
 
         if self._app:
             return await self._app.ask_choice("Allow tool use?", choices, details=details)
@@ -98,7 +97,7 @@ class GraphPermissionMixin:
     def _notice_permission_result(self: GraphPermissionHost, message: str) -> None:
         if self._show_permission_output(message):
             return
-        ui.print(f"[dim]✓ {message}[/dim]")
+        self._ui.ui.print(f"[dim]✓ {message}[/dim]")
 
     def _notify_tool_failure(self: GraphPermissionHost, tc: dict, result) -> None:
         """Notify user when an auto-approved tool (on-failure policy) fails.
@@ -111,10 +110,10 @@ class GraphPermissionMixin:
         error_preview = str(result.output)[:200]
         message = f"[on-failure] '{tool_name}' failed: {error_preview}"
         if not self._show_permission_output(message):
-            ui.print(f"\n[yellow]{message}[/yellow]")
+            self._ui.ui.print(f"\n[yellow]{message}[/yellow]")
 
     def _show_permission_output(self: GraphPermissionHost, message: str) -> bool:
-        dock.append_message(message)
+        self._ui.dock.append_message(message)
         return True
 
     def _clear_failure_check(self: GraphPermissionHost, cid: str) -> None:

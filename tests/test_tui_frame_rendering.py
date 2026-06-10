@@ -1,5 +1,14 @@
 from tests.tui_helpers import *  # noqa: F403
 
+import os
+import re
+import shutil
+import sys
+
+from rich.console import Console
+
+from voidx.ui.output.dock import dock
+
 def test_render_frame_uses_absolute_positioning_to_avoid_scrollback_pollution(
     tmp_path, monkeypatch
 ):

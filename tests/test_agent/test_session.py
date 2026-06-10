@@ -535,3 +535,39 @@ async def test_clear_runtime_state_resets_structured_state():
         assert loaded.task_run.status == TaskRunStatus.IDLE
     finally:
         await delete_session(session.id)
+
+
+@pytest.mark.asyncio
+async def test_graph_session_runtime_persists_and_restores_structured_state():
+    from types import SimpleNamespace
+
+    from voidx.agent.graph.session_runtime import GraphSessionRuntime
+
+    session = await create_session()
+    try:
+        host = SimpleNamespace(
+            _session=session,
+            _interaction_mode=InteractionMode.GOAL,
+            _task_state=TaskState(current_goal="ship 5B"),
+            _task_run=TaskRun(goal="ship 5B", phase=TaskPhase.IMPLEMENT, status=TaskRunStatus.ACTIVE),
+            _compaction_summary="summary",
+        )
+
+        runtime = GraphSessionRuntime(host)
+        await runtime.persist_runtime_state()
+
+        host._interaction_mode = InteractionMode.AUTO
+        host._task_state = TaskState()
+        host._task_run = TaskRun()
+        host._compaction_summary = ""
+
+        await runtime.restore_runtime_state()
+
+        assert host._interaction_mode == InteractionMode.GOAL
+        assert host._task_state.current_goal == "ship 5B"
+        assert host._task_run.goal == "ship 5B"
+        assert host._task_run.phase == TaskPhase.IMPLEMENT
+        assert host._task_run.status == TaskRunStatus.ACTIVE
+        assert host._compaction_summary == "summary"
+    finally:
+        await delete_session(session.id)

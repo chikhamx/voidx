@@ -2,6 +2,7 @@
 
 import sys
 from pathlib import Path
+from types import SimpleNamespace
 from unittest.mock import AsyncMock, MagicMock, patch
 
 sys.path.insert(0, str(Path(__file__).parent.parent.parent / "src"))
@@ -85,7 +86,7 @@ class TestTodoUpdatedEvent:
         assert event.agent_id == -1
 
 
-# ── tool_execution.py integration: top-level todo emits TodoUpdated ──
+# ── tool_executor.py integration: top-level todo emits TodoUpdated ──
 
 
 class TestToolExecutionTodoEmit:
@@ -93,7 +94,7 @@ class TestToolExecutionTodoEmit:
     async def test_top_level_todo_tool_emits_todo_updated(self, tmp_path):
         """When the top-level tool execution runs a 'todo' tool with via_events=True,
         it should call todo_updated_event(result) and emit the result."""
-        from voidx.agent.graph import tool_execution as te_mod
+        from voidx.agent.graph import tool_executor as te_mod
 
         mock_result = ToolResult(
             output="done",
@@ -108,41 +109,36 @@ class TestToolExecutionTodoEmit:
             summary="0/1 done · 0 active · 1 pending",
         )
 
-        with (
-            patch("voidx.agent.graph.tool_execution.via_events", return_value=True),
-            patch("voidx.agent.graph.tool_execution.todo_updated_event", return_value=fake_event) as mock_make,
-            patch("voidx.agent.graph.tool_execution.ui_events") as mock_ui,
-        ):
-            mock_ui.emit = AsyncMock(return_value=True)
+        fake_events = SimpleNamespace(emit=AsyncMock(return_value=True))
+        fake_ui = SimpleNamespace(via_events=lambda: True, events=fake_events)
 
+        with patch("voidx.agent.graph.tool_executor.todo_updated_event", return_value=fake_event) as mock_make:
             tid = "todo"
             tc = {"name": tid, "args": {"todos": [{"content": "task a", "status": "pending"}]}, "id": "tc1"}
 
             # Simulate the code path in execute_one after tool returns
-            # Lines 155-158 of tool_execution.py:
-            #   if via_events() and tid == "todo":
+            #   if self._ui.via_events() and tid == "todo":
             #       todo_event = todo_updated_event(result)
             #       if todo_event is not None:
-            #           await ui_events.emit(todo_event)
-            if te_mod.via_events() and tid == "todo":
+            #           await self._ui.events.emit(todo_event)
+            if fake_ui.via_events() and tid == "todo":
                 todo_event = te_mod.todo_updated_event(mock_result)
                 if todo_event is not None:
-                    await te_mod.ui_events.emit(todo_event)
+                    await fake_ui.events.emit(todo_event)
 
             mock_make.assert_called_once_with(mock_result)
-            mock_ui.emit.assert_called_once_with(fake_event)
+            fake_events.emit.assert_called_once_with(fake_event)
 
     @pytest.mark.asyncio
     async def test_non_todo_tool_skips_todo_event(self, tmp_path):
         """Non-todo tools should not trigger todo_updated_event."""
-        from voidx.agent.graph import tool_execution as te_mod
+        from voidx.agent.graph import tool_executor as te_mod
 
-        with (
-            patch("voidx.agent.graph.tool_execution.via_events", return_value=True),
-            patch("voidx.agent.graph.tool_execution.todo_updated_event") as mock_make,
-        ):
+        fake_ui = SimpleNamespace(via_events=lambda: True)
+
+        with patch("voidx.agent.graph.tool_executor.todo_updated_event") as mock_make:
             tid = "read"
-            if te_mod.via_events() and tid == "todo":
+            if fake_ui.via_events() and tid == "todo":
                 te_mod.todo_updated_event(ToolResult(output="x"))
 
             mock_make.assert_not_called()
@@ -151,24 +147,21 @@ class TestToolExecutionTodoEmit:
     async def test_no_emit_when_todo_updated_event_returns_none(self, tmp_path):
         """If todo_updated_event returns None (e.g. missing metadata),
         ui_events.emit should not be called."""
-        from voidx.agent.graph import tool_execution as te_mod
+        from voidx.agent.graph import tool_executor as te_mod
 
         mock_result = ToolResult(output="done")
 
-        with (
-            patch("voidx.agent.graph.tool_execution.via_events", return_value=True),
-            patch("voidx.agent.graph.tool_execution.todo_updated_event", return_value=None),
-            patch("voidx.agent.graph.tool_execution.ui_events") as mock_ui,
-        ):
-            mock_ui.emit = AsyncMock()
+        fake_events = SimpleNamespace(emit=AsyncMock())
+        fake_ui = SimpleNamespace(via_events=lambda: True, events=fake_events)
 
+        with patch("voidx.agent.graph.tool_executor.todo_updated_event", return_value=None):
             tid = "todo"
-            if te_mod.via_events() and tid == "todo":
+            if fake_ui.via_events() and tid == "todo":
                 todo_event = te_mod.todo_updated_event(mock_result)
                 if todo_event is not None:
-                    await te_mod.ui_events.emit(todo_event)
+                    await fake_ui.events.emit(todo_event)
 
-            mock_ui.emit.assert_not_called()
+            fake_events.emit.assert_not_called()
 
 
 # ── subagent integration: child agent todo emits TodoUpdated with agent_id ──
@@ -195,37 +188,33 @@ class TestSubagentTodoEmit:
             summary="0/1 done · 1 active · 0 pending",
         )
 
-        with (
-            patch("voidx.agent.graph.subagent.via_events", return_value=True),
-            patch("voidx.agent.graph.subagent.todo_updated_event", return_value=fake_event) as mock_make,
-            patch("voidx.agent.graph.subagent.ui_events") as mock_ui,
-        ):
-            mock_ui.emit_direct = MagicMock(return_value=True)
+        fake_events = SimpleNamespace(emit_direct=MagicMock(return_value=True))
+        fake_ui = SimpleNamespace(via_events=lambda: True, events=fake_events)
 
+        with patch("voidx.agent.graph.subagent.todo_updated_event", return_value=fake_event) as mock_make:
             tid = "todo"
             # Simulate the code path in subagent.py run_one (lines 286-289):
-            #   if via_events() and tid == "todo":
+            #   if ui_port.via_events() and tid == "todo":
             #       todo_event = todo_updated_event(result, agent_id=agent_id)
             #       if todo_event is not None:
-            #           ui_events.emit_direct(todo_event)
-            if sub_mod.via_events() and tid == "todo":
+            #           ui_port.events.emit_direct(todo_event)
+            if fake_ui.via_events() and tid == "todo":
                 todo_event = sub_mod.todo_updated_event(mock_result, agent_id=agent_id)
                 if todo_event is not None:
-                    sub_mod.ui_events.emit_direct(todo_event)
+                    fake_ui.events.emit_direct(todo_event)
 
             mock_make.assert_called_once_with(mock_result, agent_id=agent_id)
-            mock_ui.emit_direct.assert_called_once_with(fake_event)
+            fake_events.emit_direct.assert_called_once_with(fake_event)
 
     def test_subagent_non_todo_tool_skips_todo_event(self):
         """Non-todo tools in subagent should not trigger todo_updated_event."""
         from voidx.agent.graph import subagent as sub_mod
 
-        with (
-            patch("voidx.agent.graph.subagent.via_events", return_value=True),
-            patch("voidx.agent.graph.subagent.todo_updated_event") as mock_make,
-        ):
+        fake_ui = SimpleNamespace(via_events=lambda: True)
+
+        with patch("voidx.agent.graph.subagent.todo_updated_event") as mock_make:
             tid = "read"
-            if sub_mod.via_events() and tid == "todo":
+            if fake_ui.via_events() and tid == "todo":
                 sub_mod.todo_updated_event(ToolResult(output="x"), agent_id=0)
 
             mock_make.assert_not_called()
@@ -236,18 +225,15 @@ class TestSubagentTodoEmit:
 
         mock_result = ToolResult(output="done")
 
-        with (
-            patch("voidx.agent.graph.subagent.via_events", return_value=True),
-            patch("voidx.agent.graph.subagent.todo_updated_event", return_value=None),
-            patch("voidx.agent.graph.subagent.ui_events") as mock_ui,
-        ):
-            mock_ui.emit_direct = MagicMock()
+        fake_events = SimpleNamespace(emit_direct=MagicMock())
+        fake_ui = SimpleNamespace(via_events=lambda: True, events=fake_events)
 
+        with patch("voidx.agent.graph.subagent.todo_updated_event", return_value=None):
             tid = "todo"
             agent_id = 5
-            if sub_mod.via_events() and tid == "todo":
+            if fake_ui.via_events() and tid == "todo":
                 todo_event = sub_mod.todo_updated_event(mock_result, agent_id=agent_id)
                 if todo_event is not None:
-                    sub_mod.ui_events.emit_direct(todo_event)
+                    fake_ui.events.emit_direct(todo_event)
 
-            mock_ui.emit_direct.assert_not_called()
+            fake_events.emit_direct.assert_not_called()

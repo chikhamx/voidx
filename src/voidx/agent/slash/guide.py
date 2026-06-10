@@ -2,7 +2,7 @@
 
 from __future__ import annotations
 
-from voidx.agent.slash.runtime import ui
+from voidx.runtime.ui import ui
 
 
 class SlashGuideMixin:
@@ -11,9 +11,8 @@ class SlashGuideMixin:
         if not guidance:
             ui.print("[dim]Usage: /guide <guidance for the next agent step>[/dim]")
             return
-        submitter = getattr(self._g, "submit_guidance", None)
-        if not callable(submitter):
+        if not self.host.can_submit_guidance():
             ui.print("[dim]Guidance is not available in this session.[/dim]")
             return
-        if not submitter(guidance):
+        if not self.host.submit_guidance(guidance):
             ui.print("[dim]No guidance submitted.[/dim]")

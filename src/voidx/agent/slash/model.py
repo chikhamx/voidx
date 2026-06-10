@@ -4,7 +4,8 @@ from __future__ import annotations
 
 import asyncio
 
-from voidx.agent.slash.runtime import PROVIDERS, get_providers, _select_from_list, ui
+from voidx.agent.slash.runtime import PROVIDERS, get_providers, _select_from_list
+from voidx.runtime.ui import ui
 
 
 class SlashModelMixin:
@@ -16,9 +17,9 @@ class SlashModelMixin:
         ui.print("[bold]Configure LLM[/bold]")
 
         # Step 1: choose provider via arrow keys
-        providers = await get_providers(self._g._settings)
+        providers = await get_providers(self.host.settings)
         provider_choices = providers + ["Add custom provider..."]
-        idx = await _select_from_list(self._g._app, "Provider", provider_choices)
+        idx = await _select_from_list(self.host.app, "Provider", provider_choices)
         if idx is None:
             ui.print("[dim]Cancelled.[/dim]")
             return
@@ -29,11 +30,13 @@ class SlashModelMixin:
                 return
             new_provider = new_provider.strip()
             protocol_choices = ["openai", "anthropic", "deepseek"]
-            proto_idx = await _select_from_list(self._g._app, "Protocol", protocol_choices)
+            proto_idx = await _select_from_list(self.host.app, "Protocol", protocol_choices)
             if proto_idx is None:
                 ui.print("[dim]Cancelled.[/dim]")
                 return
             protocol = protocol_choices[proto_idx]
+            if protocol == "deepseek":
+                ui.print("[dim]  deepseek: China-domestic OpenAI-compatible providers (DeepSeek, Qwen, Zhipu, etc.)[/dim]")
             custom_base_url = await self._prompt("Base URL (optional)", default="")
             if custom_base_url is None:
                 ui.print("[dim]Cancelled.[/dim]")
@@ -42,7 +45,7 @@ class SlashModelMixin:
             ui.print(f"[dim]  Custom provider: {new_provider} (protocol={protocol})[/dim]")
         else:
             new_provider = provider_choices[idx]
-            protocol = (await self._g._settings.resolve_protocol(new_provider)) if self._g._settings else None
+            protocol = (await self.host.settings.resolve_protocol(new_provider)) if self.host.settings else None
             custom_base_url = ""
         ui.print(f"[dim]  Provider: {new_provider}[/dim]")
 
@@ -55,14 +58,14 @@ class SlashModelMixin:
             ui.warn("Model list fetch timed out; enter model name manually.")
         model_choices = known + ["Other (enter manually)"]
         ui.print()
-        model_idx = await _select_from_list(self._g._app, "Model", model_choices)
+        model_idx = await _select_from_list(self.host.app, "Model", model_choices)
         if model_idx is None:
             ui.print("[dim]Cancelled.[/dim]")
             return
         if model_choices[model_idx] == "Other (enter manually)":
             new_model = await self._prompt(
                 f"Model name",
-                default=self._g.config.model.model,
+                default=self.host.config.model.model,
             )
             if new_model is None:
                 ui.print("[dim]Cancelled.[/dim]")
@@ -77,8 +80,8 @@ class SlashModelMixin:
 
         # Step 3: API key
         current_key = ""
-        if self._g._settings:
-            current_key = await self._g._settings.resolve_api_key(new_provider) or ""
+        if self.host.settings:
+            current_key = await self.host.settings.resolve_api_key(new_provider) or ""
         masked = self._mask_key(current_key) if current_key else "(not set)"
         ui.print(f"[dim]Current: {masked}[/dim]")
         new_key = await self._prompt("API key", default="", secret=True)
@@ -88,8 +91,8 @@ class SlashModelMixin:
         if new_key.strip():
             api_key = new_key.strip()
         else:
-            if self._g._settings:
-                key = await self._g._settings.resolve_api_key(new_provider)
+            if self.host.settings:
+                key = await self.host.settings.resolve_api_key(new_provider)
                 if not key:
                     ui.error(
                         f"No API key found for '{new_provider}'. Provide one now."
@@ -100,8 +103,8 @@ class SlashModelMixin:
                 return
 
         # Step 4: build and validate
-        base_url = custom_base_url or (await self._g._settings.resolve_base_url(new_provider) if self._g._settings else None)
-        test_cfg = self._g.config.model.model_copy()
+        base_url = custom_base_url or (await self.host.settings.resolve_base_url(new_provider) if self.host.settings else None)
+        test_cfg = self.host.config.model.model_copy()
         test_cfg.provider = new_provider
         test_cfg.model = new_model
         test_cfg.base_url = base_url
@@ -126,15 +129,15 @@ class SlashModelMixin:
             base_url=base_url,
             protocol=protocol,
         )
-        env_path = await self._g._settings.save_profile(profile)
+        env_path = await self.host.settings.save_profile(profile)
 
-        self._g.config.model.provider = new_provider
-        self._g.config.model.model = new_model
-        self._g.config.model.base_url = base_url
-        self._g.config.model.protocol = protocol
+        self.host.config.model.provider = new_provider
+        self.host.config.model.model = new_model
+        self.host.config.model.base_url = base_url
+        self.host.config.model.protocol = protocol
         self._sync_context_limit()
-        self._g.api_key = api_key
-        self._g.model = test_model
+        self.host.api_key = api_key
+        self.host.model = test_model
 
         ui.print(f"  [cyan]{profile_key}[/cyan] [green]✓ configured[/green]")
         ui.print(f"[dim]Saved to {env_path}[/dim]")
@@ -169,10 +172,10 @@ class SlashModelMixin:
     async def _list_models(self) -> None:
         from voidx.llm.catalog import list_models
 
-        current = f"{self._g.config.model.provider}/{self._g.config.model.model}"
+        current = f"{self.host.config.model.provider}/{self.host.config.model.model}"
         ui.print(f"[bold]Current:[/bold] [cyan]{current}[/cyan]\n")
 
-        for provider in await get_providers(self._g._settings):
+        for provider in await get_providers(self.host.settings):
             ui.print(f"  [bold]{provider}[/bold] ", end="")
             try:
                 models = await asyncio.wait_for(list_models(provider), timeout=15.0)
@@ -190,15 +193,15 @@ class SlashModelMixin:
         ui.print("[dim]Usage: /model list|new|reasoning|test|del|switch|<name>[/dim]")
 
     async def _model_list(self) -> None:
-        cfg = self._g.config
-        if self._g._settings is None:
+        cfg = self.host.config
+        if self.host.settings is None:
             ui.error("No Settings reference.")
             return
 
         current = f"{cfg.model.provider}/{cfg.model.model}"
         ui.print(f"[bold]Current:[/bold] [cyan]{current}[/cyan]")
 
-        profiles = await self._g._settings.list_profiles()
+        profiles = await self.host.settings.list_profiles()
         if not profiles:
             ui.print("[dim]No profiles configured. Use /model new.[/dim]")
             return
@@ -214,9 +217,9 @@ class SlashModelMixin:
 
     async def _profile_names(self) -> list[str]:
         """Return names of configured profiles."""
-        if self._g._settings is None:
+        if self.host.settings is None:
             return []
-        return [p.name for p in await self._g._settings.list_profiles()]
+        return [p.name for p in await self.host.settings.list_profiles()]
 
     async def _pick_or_act(self, action: str, target: str, callback) -> None:
         """If *target* is a profile name, call callback(target).
@@ -234,7 +237,7 @@ class SlashModelMixin:
             return
 
         ui.print(f"[bold]{action}[/bold] — select profile (↑↓ Enter, ESC cancel):")
-        idx = await _select_from_list(self._g._app, action, names)
+        idx = await _select_from_list(self.host.app, action, names)
         if idx is None:
             ui.print("[dim]Cancelled.[/dim]")
             return
@@ -244,7 +247,7 @@ class SlashModelMixin:
     async def _model_test(self, target: str) -> None:
         async def _do_test(profile_name: str) -> None:
             from voidx.llm.provider import create_chat_model
-            settings = self._g._settings
+            settings = self.host.settings
             if settings is None:
                 ui.error("No Settings reference.")
                 return
@@ -252,7 +255,7 @@ class SlashModelMixin:
             if not profile:
                 ui.error(f"Profile not found: {profile_name}")
                 return
-            cfg = self._g.config.model.model_copy()
+            cfg = self.host.config.model.model_copy()
             cfg.provider = profile.provider
             cfg.model = profile.model
             cfg.base_url = profile.base_url or await settings.resolve_base_url(profile.provider)
@@ -269,19 +272,19 @@ class SlashModelMixin:
 
     async def _model_del(self, target: str) -> None:
         async def _do_delete(profile_name: str) -> None:
-            if self._g._settings is None:
+            if self.host.settings is None:
                 ui.error("No Settings reference.")
                 return
-            profile = await self._g._settings.resolve_profile(profile_name)
+            profile = await self.host.settings.resolve_profile(profile_name)
             if not profile:
                 ui.error(f"Profile not found: {profile_name}")
                 return
-            env_path = await self._g._settings.delete_profile(profile_name)
-            was_active = (self._g.config.model.provider == profile.provider
-                          and self._g.config.model.model == profile.model)
+            env_path = await self.host.settings.delete_profile(profile_name)
+            was_active = (self.host.config.model.provider == profile.provider
+                          and self.host.config.model.model == profile.model)
             if was_active:
-                self._g.model = None
-                self._g.api_key = None
+                self.host.model = None
+                self.host.api_key = None
                 ui.print(f"[yellow]'{profile_name}' removed. Model disconnected.[/yellow]")
             else:
                 ui.print(f"[dim]'{profile_name}' removed.[/dim]")
@@ -292,7 +295,7 @@ class SlashModelMixin:
     async def _model_switch(self, target: str) -> None:
         async def _do_switch(profile_name: str) -> None:
             from voidx.llm.provider import create_chat_model
-            settings = self._g._settings
+            settings = self.host.settings
             if settings is None:
                 ui.error("No Settings reference.")
                 return
@@ -300,13 +303,13 @@ class SlashModelMixin:
             if not profile:
                 ui.error(f"Profile not found: {profile_name}")
                 return
-            self._g.config.model.provider = profile.provider
-            self._g.config.model.model = profile.model
-            self._g.config.model.base_url = profile.base_url or await settings.resolve_base_url(profile.provider)
-            self._g.config.model.protocol = profile.protocol or await settings.resolve_protocol(profile.provider)
+            self.host.config.model.provider = profile.provider
+            self.host.config.model.model = profile.model
+            self.host.config.model.base_url = profile.base_url or await settings.resolve_base_url(profile.provider)
+            self.host.config.model.protocol = profile.protocol or await settings.resolve_protocol(profile.provider)
             self._sync_context_limit()
-            self._g.api_key = profile.api_key
-            self._g.model = create_chat_model(profile.api_key, self._g.config.model)
+            self.host.api_key = profile.api_key
+            self.host.model = create_chat_model(profile.api_key, self.host.config.model)
             await settings.save_profile(profile)
             ui.print(f"[cyan]{profile.name}[/cyan] ({profile.provider}/{profile.model}) [green]✓ switched[/green]")
 
@@ -318,9 +321,9 @@ class SlashModelMixin:
         if effort and effort in valid:
             new_effort = effort
         elif not effort:
-            current = self._g.config.model.reasoning_effort or "xhigh"
+            current = self.host.config.model.reasoning_effort or "xhigh"
             choices = list(valid)
-            idx = await _select_from_list(self._g._app, "Select effort", choices)
+            idx = await _select_from_list(self.host.app, "Select effort", choices)
             if idx is None:
                 ui.print("[dim]Cancelled.[/dim]")
                 return
@@ -329,12 +332,12 @@ class SlashModelMixin:
             ui.error(f"Invalid effort: '{effort}'. Use: {', '.join(valid)}")
             return
 
-        self._g.config.model.reasoning_effort = new_effort
+        self.host.config.model.reasoning_effort = new_effort
         self._sync_context_limit()
 
-        if self._g.api_key:
+        if self.host.api_key:
             from voidx.llm.provider import create_chat_model
-            self._g.model = create_chat_model(self._g.api_key, self._g.config.model)
+            self.host.model = create_chat_model(self.host.api_key, self.host.config.model)
 
         ui.print(f"Reasoning effort: [cyan]{new_effort}[/cyan] [green]✓[/green]")
 
@@ -356,52 +359,52 @@ class SlashModelMixin:
             new_provider, new_model = spec.split("/", 1)
             new_provider = new_provider.lower()
         else:
-            new_provider = self._g.config.model.provider
+            new_provider = self.host.config.model.provider
             new_model = spec
 
         # Resolve API key for the target provider
-        if self._g._settings is None:
+        if self.host.settings is None:
             ui.error("No Settings reference available.")
             return
-        new_key = await self._g._settings.resolve_api_key(new_provider)
+        new_key = await self.host.settings.resolve_api_key(new_provider)
         if not new_key:
             ui.error(
                 f"No API key found for '{new_provider}'. Use /model new."
             )
             return
 
-        self._g.api_key = new_key
+        self.host.api_key = new_key
 
-        old = f"{self._g.config.model.provider}/{self._g.config.model.model}"
-        self._g.config.model.provider = new_provider
-        self._g.config.model.model = new_model
-        self._g.config.model.base_url = (
-            (await self._g._settings.resolve_base_url(new_provider)) if self._g._settings else None
+        old = f"{self.host.config.model.provider}/{self.host.config.model.model}"
+        self.host.config.model.provider = new_provider
+        self.host.config.model.model = new_model
+        self.host.config.model.base_url = (
+            (await self.host.settings.resolve_base_url(new_provider)) if self.host.settings else None
         )
-        self._g.config.model.protocol = (
-            (await self._g._settings.resolve_protocol(new_provider)) if self._g._settings else None
+        self.host.config.model.protocol = (
+            (await self.host.settings.resolve_protocol(new_provider)) if self.host.settings else None
         )
 
         from voidx.config import Profile
-        existing = await self._g._settings.resolve_profile(f"{new_provider}/{new_model}")
+        existing = await self.host.settings.resolve_profile(f"{new_provider}/{new_model}")
         if existing:
-            self._g.config.model.base_url = existing.base_url or self._g.config.model.base_url
-            self._g.config.model.protocol = existing.protocol or self._g.config.model.protocol
+            self.host.config.model.base_url = existing.base_url or self.host.config.model.base_url
+            self.host.config.model.protocol = existing.protocol or self.host.config.model.protocol
 
         self._sync_context_limit()
 
-        self._g.model = create_chat_model(self._g.api_key, self._g.config.model)
+        self.host.model = create_chat_model(self.host.api_key, self.host.config.model)
 
         new_profile = Profile(
             name=f"{new_provider}/{new_model}",
             api_key=new_key,
-            base_url=self._g.config.model.base_url,
-            protocol=self._g.config.model.protocol,
+            base_url=self.host.config.model.base_url,
+            protocol=self.host.config.model.protocol,
         )
-        await self._g._settings.save_profile(new_profile)
+        await self.host.settings.save_profile(new_profile)
 
-        if self._g._session:
-            await update_session_model(self._g._session.id, new_provider, new_model)
+        if self.host.session:
+            await update_session_model(self.host.session.id, new_provider, new_model)
 
         ui.print(f"[dim]  {old}[/dim]")
         ui.print(f"  [cyan]→ {new_provider}/{new_model}[/cyan] [green]✓[/green]")
@@ -409,13 +412,13 @@ class SlashModelMixin:
     def _sync_context_limit(self) -> None:
         from voidx.llm.provider import get_context_limit
 
-        limit = get_context_limit(self._g.config.model.provider)
-        stats = getattr(self._g, "_usage_stats", None)
+        limit = get_context_limit(self.host.config.model.provider)
+        stats = self.host.usage_stats
         if stats is not None:
             stats.context_limit = limit
-        app = getattr(self._g, "_app", None)
+        app = self.host.app
         if app is not None and hasattr(app, "status"):
             app.status.context_limit = limit
-            app.status.provider = self._g.config.model.provider
-            app.status.model = self._g.config.model.model
-            app.status.reasoning_effort = self._g.config.model.reasoning_effort or "xhigh"
+            app.status.provider = self.host.config.model.provider
+            app.status.model = self.host.config.model.model
+            app.status.reasoning_effort = self.host.config.model.reasoning_effort or "xhigh"

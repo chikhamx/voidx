@@ -1,5 +1,12 @@
 from tests.tui_helpers import *  # noqa: F403
 
+import sys
+
+from rich.console import Console
+from rich.text import Text
+
+from voidx.ui.output.dock import dock
+
 def test_capture_renderable_reuses_console_and_clears_buffer(tmp_path):
     tui = _tui(tmp_path)
 

@@ -1,5 +1,21 @@
 from tests.tui_helpers import *  # noqa: F403
 
+import asyncio
+import os
+import shutil
+import sys
+from types import SimpleNamespace
+
+import pytest
+from rich.cells import cell_len
+from rich.console import Console
+
+from voidx.llm.usage import UsageStats
+from voidx.ui.commands import COMMANDS
+from voidx.ui.output.dock import dock
+from voidx.ui.tui import PureTui, _rendered_row_count
+from voidx.ui.tui.state import InputState, RenderState
+
 def test_pure_tui_groups_runtime_state(tmp_path):
     tui = _tui(tmp_path)
 
@@ -281,7 +297,7 @@ def test_status_summary_reuses_cache_until_marked_dirty(tmp_path):
 
 
 def test_busy_activity_line_renders_below_temporary_agent_not_status(tmp_path, monkeypatch):
-    monkeypatch.setattr("voidx.ui.tui.renderer.time.monotonic", lambda: 103.8)
+    monkeypatch.setattr("voidx.ui.tui.render_activity.time.monotonic", lambda: 103.8)
     status = SimpleNamespace(
         provider="mimo",
         model="mimo-v2.5",
@@ -327,7 +343,7 @@ def test_busy_activity_line_renders_below_temporary_agent_not_status(tmp_path, m
 
 
 def test_todo_busy_and_choice_panel_render_once_in_full_frame(tmp_path, monkeypatch):
-    monkeypatch.setattr("voidx.ui.tui.renderer.time.monotonic", lambda: 105.0)
+    monkeypatch.setattr("voidx.ui.tui.render_activity.time.monotonic", lambda: 105.0)
     tui = _tui(tmp_path)
     tui._console = Console(file=None, force_terminal=True, width=80, height=24, _environ={})
     tui._busy = True
@@ -360,7 +376,7 @@ def test_todo_busy_and_choice_panel_render_once_in_full_frame(tmp_path, monkeypa
 
 
 def test_choice_selection_only_render_skips_todo_and_busy_lines(tmp_path, monkeypatch):
-    monkeypatch.setattr("voidx.ui.tui.renderer.time.monotonic", lambda: 105.0)
+    monkeypatch.setattr("voidx.ui.tui.render_activity.time.monotonic", lambda: 105.0)
     fake_stdout = _FakeStdout()
     monkeypatch.setattr(sys, "stdout", fake_stdout)
     tui = _tui(tmp_path)
@@ -395,7 +411,7 @@ def test_choice_selection_only_render_skips_todo_and_busy_lines(tmp_path, monkey
 
 
 def test_todo_busy_and_text_prompt_render_once_in_full_frame(tmp_path, monkeypatch):
-    monkeypatch.setattr("voidx.ui.tui.renderer.time.monotonic", lambda: 105.0)
+    monkeypatch.setattr("voidx.ui.tui.render_activity.time.monotonic", lambda: 105.0)
     tui = _tui(tmp_path)
     tui._console = Console(file=None, force_terminal=True, width=80, height=24, _environ={})
     tui._busy = True
@@ -446,7 +462,7 @@ def test_agent_placeholder_replaces_legacy_working_header(tmp_path):
 
 
 def test_busy_activity_tick_noops_without_rendered_frame(tmp_path, monkeypatch):
-    monkeypatch.setattr("voidx.ui.tui.renderer.time.monotonic", lambda: 70.0)
+    monkeypatch.setattr("voidx.ui.tui.render_activity.time.monotonic", lambda: 70.0)
     tui = _tui(tmp_path)
     tui._busy = True
     tui._busy_started_at = 0.0
@@ -459,7 +475,7 @@ def test_busy_activity_tick_noops_without_rendered_frame(tmp_path, monkeypatch):
 
 def test_busy_activity_label_rotates_centered_glyphs(tmp_path, monkeypatch):
     now = {"value": 100.0}
-    monkeypatch.setattr("voidx.ui.tui.renderer.time.monotonic", lambda: now["value"])
+    monkeypatch.setattr("voidx.ui.tui.render_activity.time.monotonic", lambda: now["value"])
     tui = _tui(tmp_path)
     tui._busy = True
     tui._busy_started_at = 100.0
@@ -479,7 +495,7 @@ def test_busy_activity_label_rotates_centered_glyphs(tmp_path, monkeypatch):
 
 def test_busy_activity_label_includes_step_and_turn_tokens(tmp_path, monkeypatch):
     now = {"value": 100.0}
-    monkeypatch.setattr("voidx.ui.tui.renderer.time.monotonic", lambda: now["value"])
+    monkeypatch.setattr("voidx.ui.tui.render_activity.time.monotonic", lambda: now["value"])
     stats = UsageStats()
     stats.total_input_tokens = 10_000
     stats.total_output_tokens = 1_000
@@ -591,7 +607,7 @@ async def test_busy_started_at_set_and_cleared_by_consume_loop(tmp_path, monkeyp
 
 def test_busy_activity_tick_repaints_bottom_line_with_pinned_todo(tmp_path, monkeypatch):
     now = {"value": 1.0}
-    monkeypatch.setattr("voidx.ui.tui.renderer.time.monotonic", lambda: now["value"])
+    monkeypatch.setattr("voidx.ui.tui.render_activity.time.monotonic", lambda: now["value"])
     fake_stdout = _FakeStdout()
     monkeypatch.setattr(sys, "stdout", fake_stdout)
     monkeypatch.setattr(

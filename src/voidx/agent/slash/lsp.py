@@ -2,8 +2,8 @@
 
 from __future__ import annotations
 
-from voidx.agent.slash.runtime import ui
 from voidx.lsp.config import lsp_config_path
+from voidx.runtime.ui import ui
 
 
 class SlashLspMixin:
@@ -24,7 +24,7 @@ class SlashLspMixin:
             ui.error("Usage: /lsp [status|doctor|restart|servers]")
 
     def _lsp_status(self) -> None:
-        manager = getattr(self._g, "_lsp_manager", None)
+        manager = self.host.lsp_manager
         if manager is None:
             ui.error("No LSP manager available.")
             return
@@ -45,7 +45,7 @@ class SlashLspMixin:
         ui.print("[dim]Usage: /lsp status|doctor|restart|servers[/dim]")
 
     def _lsp_doctor(self) -> None:
-        manager = getattr(self._g, "_lsp_manager", None)
+        manager = self.host.lsp_manager
         if manager is None:
             ui.error("No LSP manager available.")
             return
@@ -85,7 +85,7 @@ class SlashLspMixin:
             ui.print(f"[green]{msg}[/green]")
 
     async def _lsp_restart(self, language: str | None) -> None:
-        manager = getattr(self._g, "_lsp_manager", None)
+        manager = self.host.lsp_manager
         if manager is None:
             ui.error("No LSP manager available.")
             return
@@ -94,8 +94,8 @@ class SlashLspMixin:
         ui.print(f"[green]✓ restarted {target}[/green]")
 
     def _lsp_servers(self) -> None:
-        manager = getattr(self._g, "_lsp_manager", None)
-        workspace = getattr(self._g, "_workspace", ".")
+        manager = self.host.lsp_manager
+        workspace = self.host.workspace
         ui.print("[bold]LSP servers:[/bold]")
         ui.print(f"[dim]{lsp_config_path(workspace)}[/dim]")
         if manager is None:

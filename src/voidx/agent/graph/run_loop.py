@@ -6,33 +6,24 @@ import asyncio
 from functools import partial
 from typing import TYPE_CHECKING, Any
 
-from voidx.agent.graph.runtime import ui
 from voidx.agent.graph.session_mixin import GraphSessionMixin
 from voidx.agent.graph.transcript_mixin import GraphTranscriptMixin
 from voidx.agent.graph.turn_mixin import GraphTurnMixin
 from voidx.llm.provider import get_context_limit
-from voidx.runtime.ui import (
-    COMMANDS,
-    CompositeEventConsumer,
-    DockEventConsumer,
-    GatewayEventConsumer,
-    GatewayServer,
-    GatewaySession,
-    McpServerStatus,
-    PureTui,
-    StartupShown,
-    UiStatus,
-    dock,
-    emit_web_gateway_bootstrap,
-    get_dock,
-    session_tracker,
-    show_startup,
-    ui_command_kind,
-    ui_events,
-)
+from voidx.ui.commands import COMMANDS
+from voidx.ui.gateway import GatewayEventConsumer, GatewayServer, GatewaySession
+from voidx.ui.gateway.bootstrap import emit_web_gateway_bootstrap
+from voidx.ui.output.events import CompositeEventConsumer, DockEventConsumer
+from voidx.ui.output.events.schema import StartupShown
+from voidx.ui.output.types import McpServerStatus, UiStatus
+from voidx.ui.tui import PureTui
 
 if TYPE_CHECKING:
     from voidx.agent.graph.contracts import GraphRunLoopHost
+
+
+def _ui_command_kind(command: Any) -> str:
+    return str(getattr(command, "kind", "") or "")
 
 
 class GraphRunLoopMixin(GraphTurnMixin, GraphSessionMixin, GraphTranscriptMixin):
@@ -44,7 +35,7 @@ class GraphRunLoopMixin(GraphTurnMixin, GraphSessionMixin, GraphTranscriptMixin)
     ) -> None:
         is_new = self._session is None
         title = self._startup_title()
-        active_dock = get_dock()
+        active_dock = self._ui.get_dock()
         startup_event = StartupShown(
             model=self.config.model.model,
             provider=self.config.model.provider,
@@ -53,9 +44,9 @@ class GraphRunLoopMixin(GraphTurnMixin, GraphSessionMixin, GraphTranscriptMixin)
             is_new=is_new,
             profile_configured=self.model is not None,
         )
-        startup_via_event = active_dock is not None and ui_events.is_running and not prefer_direct
+        startup_via_event = active_dock is not None and self._ui.events.is_running and not prefer_direct
         if startup_via_event:
-            await ui_events.request(startup_event)
+            await self._ui.events.request(startup_event)
             if append_transcript:
                 await self._restore_transcript_snapshot(append=True)
             return
@@ -73,8 +64,8 @@ class GraphRunLoopMixin(GraphTurnMixin, GraphSessionMixin, GraphTranscriptMixin)
                 await self._restore_transcript_snapshot(append=True)
             return
 
-        show_startup(
-            console=ui,
+        self._ui.show_startup(
+            console=self._ui.ui,
             model=self.config.model.model,
             provider=self.config.model.provider,
             workspace=self._workspace,
@@ -82,10 +73,10 @@ class GraphRunLoopMixin(GraphTurnMixin, GraphSessionMixin, GraphTranscriptMixin)
             is_new=is_new,
         )
         if self.model is None:
-            ui.print()
-            ui.print("[yellow]No profile configured — chat is disabled until you set one up.[/yellow]")
-            ui.print(f"[dim]  Use [cyan]/model new[/cyan] to create a profile interactively[/dim]")
-            ui.print()
+            self._ui.ui.print()
+            self._ui.ui.print("[yellow]No profile configured — chat is disabled until you set one up.[/yellow]")
+            self._ui.ui.print(f"[dim]  Use [cyan]/model new[/cyan] to create a profile interactively[/dim]")
+            self._ui.ui.print()
 
     def _startup_title(self: GraphRunLoopHost) -> str:
         title = self._session.title if self._session else "New session"
@@ -104,12 +95,12 @@ class GraphRunLoopMixin(GraphTurnMixin, GraphSessionMixin, GraphTranscriptMixin)
     ) -> None:
         """Interactive REPL with orchestrator agent."""
         self._any_messages_sent = False
-        session_tracker.clear()
+        self._ui.session_tracker.clear()
 
         title = self._startup_title()
 
-        dock.begin_capture()
-        active_dock = get_dock()
+        self._ui.dock.begin_capture()
+        active_dock = self._ui.get_dock()
         gateway_session: GatewaySession | None = None
         gateway_server: GatewayServer | None = None
         lsp_startup_tasks: list[asyncio.Task] = []
@@ -120,12 +111,12 @@ class GraphRunLoopMixin(GraphTurnMixin, GraphSessionMixin, GraphTranscriptMixin)
                     lambda: active_dock.tree,
                     session_id=self._session.id if self._session else "",
                 )
-                ui_events.start(CompositeEventConsumer(
+                self._ui.events.start(CompositeEventConsumer(
                     primary=consumer,
                     mirrors=[GatewayEventConsumer(gateway_session)],
                 ))
             else:
-                ui_events.start(consumer)
+                self._ui.events.start(consumer)
         await self._restore_runtime_state()
         await self._show_startup(append_transcript=True)
 
@@ -193,7 +184,7 @@ class GraphRunLoopMixin(GraphTurnMixin, GraphSessionMixin, GraphTranscriptMixin)
             if web_headless:
                 emit_web_gateway_bootstrap(gateway_server.url)
             else:
-                dock.append_message(f"Web UI gateway: {gateway_server.url}")
+                self._ui.dock.append_message(f"Web UI gateway: {gateway_server.url}")
 
         async def show_lsp_startup() -> None:
             manager = getattr(self, "_lsp_manager", None)
@@ -207,11 +198,11 @@ class GraphRunLoopMixin(GraphTurnMixin, GraphSessionMixin, GraphTranscriptMixin)
                         source = f" [dim][{check.detected_source}][/dim]" if check.detected_source else ""
                         lsp_lines.append(f"  [cyan]{check.language}[/cyan] [dim]→[/dim] {check.resolved_path}{source}")
                 if lsp_lines:
-                    dock.append_message("\n".join(lsp_lines), markup=True)
+                    self._ui.dock.append_message("\n".join(lsp_lines), markup=True)
             except asyncio.CancelledError:
                 raise
             except Exception as exc:
-                dock.append_message(f"[dim]LSP setup failed: {exc}[/dim]", markup=True)
+                self._ui.dock.append_message(f"[dim]LSP setup failed: {exc}[/dim]", markup=True)
 
         if hasattr(self, '_lsp_manager'):
             lsp_startup_tasks.append(asyncio.create_task(show_lsp_startup()))
@@ -221,7 +212,7 @@ class GraphRunLoopMixin(GraphTurnMixin, GraphSessionMixin, GraphTranscriptMixin)
             enabled = [s for s in servers if not s.disabled]
             if enabled:
                 names = ", ".join(s.name for s in enabled)
-                dock.append_message(f"[dim]MCP connecting: {names}…[/dim]", markup=True)
+                self._ui.dock.append_message(f"[dim]MCP connecting: {names}…[/dim]", markup=True)
             await self._mcp_manager.start_all()
 
         async def handle_user_input(user_input: str) -> bool:
@@ -252,17 +243,17 @@ class GraphRunLoopMixin(GraphTurnMixin, GraphSessionMixin, GraphTranscriptMixin)
                 await asyncio.gather(*lsp_startup_tasks, return_exceptions=True)
             if hasattr(self, '_lsp_manager'):
                 await self._lsp_manager.stop_all()
-            if ui_events.is_running:
-                await ui_events.stop()
-            dock.deactivate()
+            if self._ui.events.is_running:
+                await self._ui.events.stop()
+            self._ui.dock.deactivate()
             if exit_message:
-                ui.print(exit_message)
+                self._ui.ui.print(exit_message)
 
     async def _handle_web_command(self: GraphRunLoopHost, app: Any, command: Any) -> None:
         if isinstance(command, dict) and command.get("kind") == "guide":
             self.submit_guidance(str(command.get("text", "")))
             return
-        kind = ui_command_kind(command)
+        kind = _ui_command_kind(command)
         if kind == "submit":
             text = command.text
             if text.strip().startswith("/guide "):
@@ -285,10 +276,10 @@ class GraphRunLoopMixin(GraphTurnMixin, GraphSessionMixin, GraphTranscriptMixin)
             if is_quiet and callable(hide_command_output):
                 hide_command_output()
             if not is_quiet:
-                dock.start_turn(user_input)
+                self._ui.dock.start_turn(user_input)
             dispatched = await self._dispatch_slash(user_input)
             if not dispatched:
-                ui.print(f"[dim]Unknown command: {user_input}  — type [cyan]/help[/cyan] to see available commands[/dim]")
+                self._ui.ui.print(f"[dim]Unknown command: {user_input}  — type [cyan]/help[/cyan] to see available commands[/dim]")
             if is_quiet and callable(hide_command_output):
                 hide_command_output()
             return True, None
@@ -296,7 +287,7 @@ class GraphRunLoopMixin(GraphTurnMixin, GraphSessionMixin, GraphTranscriptMixin)
         try:
             await self._run_once(user_input)
         except (KeyboardInterrupt, asyncio.CancelledError):
-            ui.print(f"\n[dim]Interrupted.[/dim]")
+            self._ui.ui.print(f"\n[dim]Interrupted.[/dim]")
         return True, None
 
     async def _dispatch_slash(self: GraphRunLoopHost, inp: str) -> bool:

@@ -10,7 +10,7 @@ from typing import Any
 
 from langchain_core.messages import AIMessage, AIMessageChunk, ToolMessage
 
-from voidx.runtime.ui import ui_events
+from voidx.runtime.ui_port import AgentUiPort, runtime_ui_port
 
 _REPLAY_UNSAFE_BLOCK_TYPES = {
     "thinking",
@@ -43,6 +43,7 @@ async def stream_llm(
     messages: list,
     renderer: Any,
     protocol: str = "",
+    ui_port: AgentUiPort = runtime_ui_port,
 ) -> AIMessage:
     """Stream LLM response, render live, return merged AIMessage."""
     from voidx.llm.provider import extract_thinking
@@ -68,8 +69,8 @@ async def stream_llm(
         raise
     finally:
         renderer.done()
-        if ui_events.is_running:
-            await ui_events.drain()
+        if ui_port.events.is_running:
+            await ui_port.events.drain()
 
     if not chunks:
         return AIMessage(content="")
@@ -252,7 +253,13 @@ def _stream_visible_content(content: object, thinking: str) -> object:
 def _strip_duplicate_thinking_text(text: str, thinking: str) -> str:
     if not text or not thinking:
         return text
+    # Exact match — provider duplicated reasoning in content field
     if text == thinking or text.strip() == thinking.strip():
+        return ""
+    # Prefix match — streaming chunk where content is a prefix of the
+    # accumulated thinking text (or vice versa).  This happens when a
+    # provider echoes reasoning_content in the content delta incrementally.
+    if thinking.startswith(text) or text.startswith(thinking):
         return ""
     return text
 

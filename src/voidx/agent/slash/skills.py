@@ -2,7 +2,7 @@
 
 from __future__ import annotations
 
-from voidx.agent.slash.runtime import ui
+from voidx.runtime.ui import ui
 from voidx.skills.registry import SkillRegistry
 from voidx.skills.service import SkillService
 
@@ -28,12 +28,12 @@ class SlashSkillsMixin:
 
     def _skill_service(self) -> SkillService:
         selection = (
-            self._g._settings.get_skill_selection()
-            if getattr(self._g, "_settings", None) is not None
+            self.host.settings.get_skill_selection()
+            if self.host.settings is not None
             else None
         )
         return SkillService(
-            SkillRegistry(getattr(self._g, "_workspace", ".")),
+            SkillRegistry(self.host.workspace),
             selection=selection,
         )
 
@@ -75,19 +75,19 @@ class SlashSkillsMixin:
             command = "enable" if enabled else "disable"
             ui.error(f"Usage: /skills {command} <name>")
             return
-        if getattr(self._g, "_settings", None) is None:
+        if self.host.settings is None:
             ui.error("No settings file available.")
             return
         service = self._skill_service()
         if service.get(name) is None:
             ui.error(f"Skill not found: {name}")
             return
-        path = self._g._settings.set_skill_enabled(name, enabled)
+        path = self.host.settings.set_skill_enabled(name, enabled)
         state = "enabled" if enabled else "disabled"
         ui.print(f"[dim]{name} {state}. Saved to {path}[/dim]")
 
     def _skills_paths(self) -> None:
-        registry = SkillRegistry(getattr(self._g, "_workspace", "."))
+        registry = SkillRegistry(self.host.workspace)
         ui.print("[bold]Skill paths:[/bold]")
         ui.print(f"  bundled [dim]{registry.bundled_dir}[/dim]")
         ui.print(f"  global  [dim]{registry.global_dir}[/dim]")

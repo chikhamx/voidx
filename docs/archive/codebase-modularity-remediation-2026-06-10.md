@@ -1,6 +1,6 @@
 # 代码模块化整改分阶段设计
 
-> **Status: In Progress**
+> **Status: Done**
 > **Date:** 2026-06-10
 > **Source:** `docs/reviews/2026-06-09-full-code-review.md`
 
@@ -227,7 +227,8 @@ class SlashHost(Protocol):
 
 1. 先为 `runtime.ui` 包一层 adapter，不改调用语义。
 2. 每次迁移一个 graph module，例如 `streaming.py`、`tool_execution.py`、`permissions.py`。
-3. 保留兼容路径，直到所有 graph 直接导入都消失。
+3. 清点 slash 层 UI 入口：`agent/slash/runtime.py`、`agent/slash/handler.py`、session rollback/dock reset 和 code IDE 状态 helper 可一起迁到 UI port，避免 slash 层继续直接依赖旧 `runtime.ui` facade。
+4. 保留兼容路径，直到所有 graph 直接导入都消失。
 
 **Validation**
 
@@ -248,18 +249,19 @@ class SlashHost(Protocol):
 - 在 UI port 边界稳定后，再评估将部分 mixin 迁移为组合组件。
 - 这一阶段需要单独设计，不应作为 Phase 1-4 的顺手重构。
 
-**Candidate Components**
+**Subphases**
 
-- `TurnRunner`: 管理 `_run_once` 的 turn lifecycle。
-- `ToolExecutor`: 管理 `_execute_tools` 和 permission interaction。
-- `SessionRuntime`: 管理 session persistence、transcript、title generation。
-- `CompactionCoordinator`: 管理 compaction 状态和触发条件。
+- **5A: `CompactionCoordinator`** — 管理 compaction 状态、触发条件、summary agent、持久化 pruning。低风险，已有 `tests/test_compaction.py` 和 core flow 覆盖，作为组合组件模式的首个切片。
+- **5B: `SessionRuntime`** — 管理 session persistence、transcript snapshot、title generation、clear/resume runtime reset。需要在 5A 验证组件接线模式后再做。
+- **5C1: `GraphToolExecutor`** — 先拆 `_execute_tools` tool lifecycle。`GraphToolExecutionMixin` 保留 `_execute_tools` 和 `_tool_result_ok` 旧入口，只作为兼容代理。
+- **5C2: `GraphTurnRunner`** — 拆 `_run_once` turn lifecycle。`GraphTurnMixin` 保留 `_run_once` 和 turn helper 旧入口，只作为兼容代理。
 
 **Constraints**
 
 - `VoidXGraph` 仍是外部入口和 orchestration facade。
 - 每次只迁移一个组件，保留原测试，并为新组件增加 focused tests。
 - 不改变 LangGraph state contract。
+- 保留原有 graph 私有方法名作为兼容代理，例如 `_maybe_compact` 仍可被测试和旧调用点 patch。
 
 **Validation**
 
@@ -279,22 +281,53 @@ class SlashHost(Protocol):
 - **合并 `tools/git.py` Args 模型。** 当前 per-command Pydantic 模型增强了校验和代码可读性。除非工具 schema 需要显著收敛，否则不优先处理。
 - **拆 `agent/runtime_context.py` 顶层 helper。** 可以在触碰 runtime context 功能时顺手做，但单独拆分收益有限。
 - **重构 `ui/output/tree.py`。** tree 同时承担结构和渲染映射，耦合有实际业务原因。需要先明确新边界再动。
-- **修 `lsp/` 包内循环。** 这是整理项，风险低但收益也低，可排在架构主线之后。
 
 ## Implementation Progress
 
 - 2026-06-10: Phase 1A completed. `ApplyPatchTool` moved to `src/voidx/tools/apply_patch.py`; shared file mtime/staleness helpers moved to `src/voidx/tools/file_state.py`.
 - 2026-06-10: Phase 1B completed. `UiEventBus` moved to `src/voidx/ui/output/events/bus.py`; event consumers moved to `src/voidx/ui/output/events/consumers.py`; `events/__init__.py` now provides public re-exports and the `ui_events` singleton.
 - 2026-06-10: Phase 1C completed. `tests/test_pure_tui.py` was removed and split into six focused `tests/test_tui_*.py` files plus `tests/tui_helpers.py`.
+- 2026-06-10: Phase 2 completed. `src/voidx/ui/tui/renderer.py` is now a composition entrypoint; frame, input, busy activity, pinned todo, and status rendering helpers moved to focused `render_*.py` modules.
+- 2026-06-10: Phase 3 completed. `SlashCommandHost` and `SlashHostAdapter` moved to `src/voidx/agent/slash/host.py`; host compatibility for legacy `_app`, `_settings`, `_session`, manager, and task state fields is centralized there. `SlashHandler` no longer owns `_host_*` proxy methods, and slash mixins now access graph-owned state through `self.host`.
+- 2026-06-10: Phase 3 review follow-up completed. Session lifecycle compat fallback was moved fully behind `SlashHostAdapter`; `SlashCommandHost` now documents the adapter surface used by slash mixins, including manager access, guidance capability, and interaction mode value.
+- 2026-06-10: Phase 4 completed. `AgentUiPort` and `RuntimeUiPort` live in `src/voidx/runtime/ui_port.py`; `VoidXGraph` now owns `self._ui`, graph mixins use that port for console, dock, session tracker, and UI event access.
+- 2026-06-10: Phase 4 review follow-up completed. `SlashCommandHost` manager annotations no longer import MCP/LSP managers at runtime; `voidx.lsp` and `voidx.tools` package exports use lazy loading to avoid manager/registry cycles; `AgentUiPort` now exposes typed child protocols for UI sink, dock, event bus, and session tracker; stale `via_events`/`ui_events` test patches were replaced with fake UI ports; `ui_port.__all__` no longer advertises singleton/private helper names.
+- 2026-06-10: Phase 5A completed. `GraphCompactionCoordinator` moved compaction execution behind a composition component while `GraphCompactionMixin` keeps `_maybe_compact`, `_compact_session_history`, `_run_compaction_agent`, and related private method names as compatibility delegates. `VoidXGraph` now owns `_compaction_coordinator`.
+- 2026-06-10: Phase 5B completed. `GraphSessionRuntime` now owns runtime state persistence, transcript snapshot persistence, and smart title generation while `GraphSessionMixin`, `GraphTranscriptMixin`, and `GraphTitleMixin` keep their existing private/public method names as compatibility delegates. `VoidXGraph` now owns `_session_runtime`.
+- 2026-06-10: Phase 5C1 completed. `GraphToolExecutor` now owns tool execution lifecycle, tool UI events, result state patches, barrier/deferred message handling, and child-agent buffer ordering while `GraphToolExecutionMixin` remains a compatibility proxy. `VoidXGraph` now owns `_tool_executor`.
+- 2026-06-10: Phase 5C2 completed. `GraphTurnRunner` now owns top-level turn execution, user message persistence, compaction-before-invoke, runtime snapshot persistence, turn-end transcript/todo cleanup, and cancellation rollback while `GraphTurnMixin` remains a compatibility proxy. `VoidXGraph` now owns `_turn_runner`.
+- 2026-06-10: Phase 5 review follow-up completed. Composition proxy lazy-init branches are documented as bare mixin/test-host compatibility paths, and `tool_execution.py` now only re-exports the compatibility helper surface still used by existing callers; state patch helper tests import directly from `tool_executor.py`.
+- 2026-06-10: Deferred UI/type-boundary follow-up completed. `runtime/ui_port.py` now exposes only graph-facing UI port protocols plus `RuntimeUiPort`/`runtime_ui_port`; event schemas, output tree/types, TUI, gateway, transcript, code-IDE, and slash command imports use their native modules or the runtime UI facade directly. `GraphComponentHost` was split into concrete component host protocols for run loop, compaction, tool execution, and permission surfaces, with `GraphComponentHost` retained only as a whole-graph composite check.
 
 Validated with:
 
 - `.venv/bin/python -m compileall -q src/voidx/tools src/voidx/ui/output/events`
+- `.venv/bin/python -m compileall -q src/voidx/ui/tui`
+- `.venv/bin/python -m compileall -q src/voidx/agent/slash`
+- `.venv/bin/python -m compileall -q src/voidx/agent/slash src/voidx/agent/graph`
+- `.venv/bin/python -m compileall -q src/voidx/runtime src/voidx/agent/graph src/voidx/agent/slash`
+- `rg "^from voidx\.runtime\.ui import" src/voidx/agent`
+- `.venv/bin/python -c "from voidx.lsp.manager import LspManager; print(LspManager.__name__)"`
+- `.venv/bin/python -c "from voidx.tools import ToolRegistry; print(ToolRegistry.__name__)"`
 - `.venv/bin/python -m pytest tests/test_tools/test_basic.py -v`
 - `.venv/bin/python -m pytest tests/test_ui_events.py -v`
 - `.venv/bin/python -m pytest tests/test_agent/test_stream_llm.py -v`
 - `.venv/bin/python -m pytest tests/test_agent/test_core_flow.py -v`
+- `.venv/bin/python -m pytest tests/test_agent/test_slash_model.py tests/test_agent/test_slash_session.py tests/test_agent/test_slash_mcp.py tests/test_agent/test_slash_skills.py tests/test_agent/test_slash_init.py tests/test_lsp.py -q`
+- `.venv/bin/python -m pytest tests/test_agent/test_core_flow.py tests/test_agent/test_stream_llm.py tests/test_ui_events.py tests/test_agent/test_slash_model.py tests/test_agent/test_slash_session.py tests/test_agent/test_slash_mcp.py tests/test_agent/test_slash_skills.py tests/test_agent/test_slash_init.py tests/test_lsp.py -q`
+- `.venv/bin/python -m pytest tests/test_agent/test_slash_model.py tests/test_agent/test_slash_session.py tests/test_agent/test_slash_mcp.py tests/test_agent/test_slash_skills.py tests/test_agent/test_slash_init.py tests/test_agent/test_run_loop.py tests/test_agent/test_todo_events.py tests/test_compaction.py tests/test_lsp.py -q`
+- `.venv/bin/python -m pytest tests/test_compaction.py -q`
+- `.venv/bin/python -m pytest tests/test_agent/test_core_flow.py -q`
+- `.venv/bin/python -m pytest tests/test_agent/test_run_loop.py -q`
+- `.venv/bin/python -m pytest tests/test_agent/test_session.py -q`
+- `.venv/bin/python -m pytest tests/test_agent/test_slash_session.py tests/test_agent/test_session.py -q`
 - `.venv/bin/python -m pytest tests/test_tui_*.py -v`
+- `.venv/bin/python -m pytest tests/test_agent/test_core_flow.py tests/test_agent/test_todo_events.py tests/test_tools/test_basic.py -q`
+- `.venv/bin/python -m compileall -q src/voidx/agent/graph`
+- `git diff --check`
+- `.venv/bin/python -m pytest tests/test_agent/test_run_loop.py tests/test_agent/test_core_flow.py tests/test_compaction.py -q`
+- `.venv/bin/python -m compileall -q src/voidx/runtime src/voidx/agent/graph src/voidx/agent/slash`
+- `.venv/bin/python -m pytest tests/test_agent/test_core_flow.py tests/test_agent/test_run_loop.py tests/test_agent/test_session.py tests/test_agent/test_slash_model.py tests/test_agent/test_slash_session.py tests/test_agent/test_todo_events.py tests/test_tools/test_basic.py tests/test_compaction.py -q`
 
 ## Rollout Order
 
@@ -312,6 +345,4 @@ Validated with:
 
 ## Open Questions
 
-- `AgentUiPort` 是否属于 `agent/graph/contracts.py`，还是应放在 `runtime/` 下作为跨层协议。
-- Slash handler 应优先使用 `Protocol`，还是直接引入不可变 `SlashContext` 加少量 callback。
 - TUI renderer 拆分时，是否同步引入更细的 render state dataclass，还是只做函数提取。

@@ -8,8 +8,9 @@ import shlex
 import sys
 from collections.abc import Mapping
 
-from voidx.agent.slash.runtime import _select_from_list, ui
+from voidx.agent.slash.runtime import _select_from_list
 from voidx.config import McpServerConfig, WebToolRoute
+from voidx.runtime.ui import ui
 
 
 class SlashMcpMixin:
@@ -40,14 +41,14 @@ class SlashMcpMixin:
             await self._mcp_list()
 
     async def _mcp_new(self) -> None:
-        settings = self._g._settings
+        settings = self.host.settings
         if settings is None:
             ui.error("No settings file available.")
             return
 
         ui.print("[bold]Configure MCP server[/bold]")
         choices = ["voidx-web (built-in)", "Tavily MCP", "URL (SSE / Streamable HTTP)", "Custom command"]
-        idx = await _select_from_list(self._g._app, "MCP server type", choices)
+        idx = await _select_from_list(self.host.app, "MCP server type", choices)
         if idx is None:
             ui.print("[dim]Cancelled.[/dim]")
             return
@@ -92,7 +93,7 @@ class SlashMcpMixin:
         for kind, route in web_routes.items():
             settings.set_web_tool_route(kind, route)
 
-        manager = getattr(self._g, "_mcp_manager", None)
+        manager = self.host.mcp_manager
         if manager is not None:
             try:
                 await asyncio.wait_for(manager.restart_all(), timeout=30.0)
@@ -114,7 +115,7 @@ class SlashMcpMixin:
             return None
         name = name.strip() or "voidx-web"
         env = {}
-        tavily_key = self._g._settings.get_tavily_api_key() if self._g._settings else None
+        tavily_key = self.host.settings.get_tavily_api_key() if self.host.settings else None
         if tavily_key:
             env["TAVILY_API_KEY"] = tavily_key
         return McpServerConfig(
@@ -134,7 +135,7 @@ class SlashMcpMixin:
 
         env = {}
         env_key = os.environ.get("TAVILY_API_KEY")
-        tavily_key = self._g._settings.get_tavily_api_key() if self._g._settings else None
+        tavily_key = self.host.settings.get_tavily_api_key() if self.host.settings else None
         if not env_key and tavily_key:
             env["TAVILY_API_KEY"] = tavily_key
         elif not env_key:
@@ -203,7 +204,7 @@ class SlashMcpMixin:
             return None
 
         transport_choices = ["SSE (legacy)", "Streamable HTTP (MCP 2024-11-05)"]
-        t_idx = await _select_from_list(self._g._app, "Transport type", transport_choices)
+        t_idx = await _select_from_list(self.host.app, "Transport type", transport_choices)
         if t_idx is None:
             ui.print("[dim]Cancelled.[/dim]")
             return None
@@ -230,12 +231,12 @@ class SlashMcpMixin:
         return McpServerConfig(name=name, url=url, transport=transport, env=env)
 
     async def _mcp_list(self) -> None:
-        settings = self._g._settings
+        settings = self.host.settings
         if settings is None:
             ui.print("[dim]No settings file available.[/dim]")
             return
 
-        manager = getattr(self._g, "_mcp_manager", None)
+        manager = self.host.mcp_manager
         statuses = manager.statuses() if manager is not None and manager.started else []
         ui.print("[bold]MCP servers:[/bold]")
         ui.print(f"[dim]{settings.path}[/dim]")
@@ -263,7 +264,7 @@ class SlashMcpMixin:
 
     async def _mcp_test(self, target: str) -> None:
         async def _do_test(name: str) -> None:
-            server = self._g._settings.get_mcp_server(name) if self._g._settings else None
+            server = self.host.settings.get_mcp_server(name) if self.host.settings else None
             if server is None:
                 ui.error(f"MCP server not found: {name}")
                 return
@@ -278,11 +279,11 @@ class SlashMcpMixin:
 
     async def _mcp_del(self, target: str) -> None:
         async def _do_delete(name: str) -> None:
-            if self._g._settings is None:
+            if self.host.settings is None:
                 ui.error("No settings file available.")
                 return
-            path = self._g._settings.delete_mcp_server(name)
-            manager = getattr(self._g, "_mcp_manager", None)
+            path = self.host.settings.delete_mcp_server(name)
+            manager = self.host.mcp_manager
             if manager is not None:
                 try:
                     await asyncio.wait_for(manager.restart_all(), timeout=30.0)
@@ -295,7 +296,7 @@ class SlashMcpMixin:
 
     async def _mcp_restart(self, target: str) -> None:
         _ = target
-        manager = getattr(self._g, "_mcp_manager", None)
+        manager = self.host.mcp_manager
         if manager is None:
             ui.error("No MCP manager available.")
             return
@@ -310,15 +311,15 @@ class SlashMcpMixin:
         action = "Disable" if disabled else "Enable"
 
         async def _do_set(name: str) -> None:
-            if self._g._settings is None:
+            if self.host.settings is None:
                 ui.error("No settings file available.")
                 return
             try:
-                path = self._g._settings.set_mcp_server_disabled(name, disabled)
+                path = self.host.settings.set_mcp_server_disabled(name, disabled)
             except KeyError:
                 ui.error(f"MCP server not found: {name}")
                 return
-            manager = getattr(self._g, "_mcp_manager", None)
+            manager = self.host.mcp_manager
             if manager is not None:
                 try:
                     await asyncio.wait_for(manager.restart_all(), timeout=30.0)
@@ -334,7 +335,7 @@ class SlashMcpMixin:
 
     async def _mcp_tools(self, target: str) -> None:
         async def _do_tools(name: str) -> None:
-            manager = getattr(self._g, "_mcp_manager", None)
+            manager = self.host.mcp_manager
             if manager is None:
                 ui.error("No MCP manager available.")
                 return
@@ -358,18 +359,18 @@ class SlashMcpMixin:
         await self._pick_mcp_server("Tools", target, _do_tools)
 
     async def _pick_mcp_server(self, action: str, target: str, callback) -> None:
-        if self._g._settings is None:
+        if self.host.settings is None:
             ui.error("No settings file available.")
             return
         if target:
             await callback(target)
             return
-        names = [server.name for server in self._g._settings.list_mcp_servers()]
+        names = [server.name for server in self.host.settings.list_mcp_servers()]
         if not names:
             ui.print("[yellow]No MCP servers configured. Use /mcp new first.[/yellow]")
             return
         ui.print(f"[bold]{action}[/bold] — select MCP server:")
-        idx = await _select_from_list(self._g._app, action, names)
+        idx = await _select_from_list(self.host.app, action, names)
         if idx is None:
             ui.print("[dim]Cancelled.[/dim]")
             return

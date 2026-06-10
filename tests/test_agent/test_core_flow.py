@@ -3,6 +3,7 @@
 import asyncio
 import sys
 from pathlib import Path
+from types import SimpleNamespace
 
 sys.path.insert(0, str(Path(__file__).parent.parent.parent / "src"))
 
@@ -485,6 +486,38 @@ def test_tool_result_ok_detects_structured_failures():
     assert not GraphToolExecutionMixin._tool_result_ok(ToolResult(output="failed", metadata={"exit_code": 2}))
     assert not GraphToolExecutionMixin._tool_result_ok(ToolResult(output="blocked", metadata={"blocked": True}))
     assert not GraphToolExecutionMixin._tool_result_ok(ToolResult(output="error", metadata={"error": True}))
+
+
+@pytest.mark.asyncio
+async def test_tool_execution_mixin_delegates_to_component():
+    from voidx.agent.graph.tool_execution import GraphToolExecutionMixin
+
+    class FakeToolExecutor:
+        def __init__(self):
+            self.state = None
+            self.tool_result_ok = None
+
+        async def execute_tools(self, state, *, tool_result_ok=None):
+            self.state = state
+            self.tool_result_ok = tool_result_ok
+            return {"messages": []}
+
+    executor = FakeToolExecutor()
+
+    def custom_result_ok(_result):
+        return False
+
+    host = SimpleNamespace(
+        _tool_executor=executor,
+        _tool_result_ok=custom_result_ok,
+    )
+    state = {"messages": []}
+
+    result = await GraphToolExecutionMixin._execute_tools(host, state)
+
+    assert result == {"messages": []}
+    assert executor.state is state
+    assert executor.tool_result_ok is custom_result_ok
 
 
 @pytest.mark.asyncio

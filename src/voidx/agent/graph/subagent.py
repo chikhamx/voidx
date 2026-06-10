@@ -13,7 +13,6 @@ from voidx.agent.graph.convergence import (
     build_convergence_messages,
     generate_fallback_summary,
 )
-from voidx.agent.graph.runtime import console, ui
 from voidx.agent.graph.streaming import extract_text, stream_llm
 from voidx.agent.graph.todo_events import todo_updated_event
 from voidx.agent.runtime_context import (
@@ -37,7 +36,10 @@ from voidx.memory.context_frames import save_context_frame_from_messages
 from voidx.tools.base import ToolContext
 from voidx.tools.registry import ToolRegistry
 from voidx.tools.task_tracker import TaskTracker
-from voidx.runtime.ui import CaptureConsole, OutputTree, StreamingRenderer, ui_events, via_events
+from voidx.runtime.ui_port import AgentUiPort, runtime_ui_port
+from voidx.ui.output.capture import CaptureConsole
+from voidx.ui.output.console import StreamingRenderer
+from voidx.ui.output.tree import OutputTree
 
 
 async def run_subagent(
@@ -59,6 +61,7 @@ async def run_subagent(
     lsp_manager=None,
     parent_tools: ToolRegistry | None = None,
     skill_runtime_context: SkillRuntimeContext | None = None,
+    ui_port: AgentUiPort = runtime_ui_port,
 ) -> str:
     """Run a child agent. Child messages are appended to sub_messages
     (when provided) so the caller can place them after ToolMessages."""
@@ -180,7 +183,7 @@ async def run_subagent(
                 capture = CaptureConsole(capture_tree, parent_node, agent_id=agent_id)
                 capture.step_header(step, agent_def.max_steps, agent_def.name)
             else:
-                ui.step_header(step, agent_def.max_steps, agent_def.name)
+                ui_port.ui.step_header(step, agent_def.max_steps, agent_def.name)
 
             has_tool_budget = step < agent_def.max_steps - 1
             active_tool_defs = tool_defs if has_tool_budget else []
@@ -192,7 +195,7 @@ async def run_subagent(
             )
             llm_messages = [*messages, *convergence_messages]
             model_with_tools = model.bind_tools(active_tool_defs) if active_tool_defs else model
-            renderer = StreamingRenderer(console, debug=debug, agent_id=agent_id, headless=True)
+            renderer = StreamingRenderer(ui_port.console, debug=debug, agent_id=agent_id, headless=True)
             context_tokens = estimate_context_tokens(llm_messages, config.model.model)
             if usage_stats is not None:
                 usage_stats.update_context(context_tokens)
@@ -278,10 +281,10 @@ async def run_subagent(
                 if capture_tree and parent_node is not None:
                     capture.tool_call(tid, targs, tool_call_id=cid)
                 result = await agent_tools.execute_tool(tid, targs, ctx)
-                if via_events() and tid == "todo":
+                if ui_port.via_events() and tid == "todo":
                     todo_event = todo_updated_event(result, agent_id=agent_id)
                     if todo_event is not None:
-                        ui_events.emit_direct(todo_event)
+                        ui_port.events.emit_direct(todo_event)
                 if capture_tree and parent_node is not None:
                     capture.tool_done(tid, 0.0, True, tool_call_id=cid)
                     capture.tool_result(result.output, tool_call_id=cid)

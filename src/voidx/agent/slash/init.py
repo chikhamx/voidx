@@ -4,7 +4,7 @@ from __future__ import annotations
 
 from pathlib import Path
 
-from voidx.agent.slash.runtime import ui
+from voidx.runtime.ui import ui
 
 
 INIT_PROMPT = """\
@@ -83,13 +83,13 @@ class SlashInitMixin:
             ui.error("Usage: /init [force]")
             return
 
-        if self._host_interaction_mode_value() == "plan":
+        if self.host.interaction_mode_value() == "plan":
             ui.error("/init writes AGENTS.md. Run /unplan first.")
             return
 
-        existing = Path(self._host_workspace()) / "AGENTS.md"
+        existing = Path(self.host.workspace) / "AGENTS.md"
         if existing.exists() and arg != "force":
             ui.print("[dim]AGENTS.md already exists. Use /init force to regenerate.[/dim]")
             return
 
-        await self._g.run_synthetic_turn(INIT_PROMPT, display_text="/init")
+        await self.host.run_synthetic_turn(INIT_PROMPT, display_text="/init")

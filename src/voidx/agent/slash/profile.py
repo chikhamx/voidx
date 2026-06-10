@@ -2,8 +2,9 @@
 
 from __future__ import annotations
 
-from voidx.agent.slash.runtime import _select_from_list, ui
+from voidx.agent.slash.runtime import _select_from_list
 from voidx.config import UserProfile
+from voidx.runtime.ui import ui
 
 
 class SlashProfileMixin:
@@ -29,7 +30,7 @@ class SlashProfileMixin:
         for _key, (name, tag) in _LANGUAGE_LABELS.items():
             items.append(f"{name} [{tag}]")
             values.append(tag)
-        if self._host_app() is None:
+        if self.host.app is None:
             await self._lang_headless(values)
             return
         selected = await self._pick_or_reset(
@@ -51,7 +52,7 @@ class SlashProfileMixin:
         for value, (name, description, _instruction) in _TONE_LABELS.items():
             items.append(f"{name} - {description}")
             values.append(value)
-        if self._host_app() is None:
+        if self.host.app is None:
             await self._tone_headless(values)
             return
         selected = await self._pick_or_reset(
@@ -75,7 +76,7 @@ class SlashProfileMixin:
         reset_label: str,
     ) -> str | None:
         items = [*option_items, other_label, reset_label]
-        idx = await _select_from_list(self._host_app(), title, items)
+        idx = await _select_from_list(self.host.app, title, items)
         if idx is None or idx < 0 or idx >= len(items):
             ui.print("[dim]Cancelled.[/dim]")
             return None
@@ -108,7 +109,7 @@ class SlashProfileMixin:
         self._apply_tone(value)
 
     def _apply_language(self, value: str) -> None:
-        settings = self._host_settings()
+        settings = self.host.settings
         if settings is not None:
             settings.set_user_language(value)
             profile = settings.get_user_profile()
@@ -119,7 +120,7 @@ class SlashProfileMixin:
         ui.print(f"Language: [cyan]{profile.language or 'auto-detect'}[/cyan] [green]✓[/green]")
 
     def _apply_tone(self, value: str) -> None:
-        settings = self._host_settings()
+        settings = self.host.settings
         if settings is not None:
             settings.set_user_tone(value)
             profile = settings.get_user_profile()
@@ -130,13 +131,13 @@ class SlashProfileMixin:
         ui.print(f"Tone: [cyan]{profile.tone or 'default'}[/cyan] [green]✓[/green]")
 
     def _current_user_profile(self) -> UserProfile:
-        profile = getattr(self._g.config, "user_profile", None)
+        profile = getattr(self.host.config, "user_profile", None)
         if isinstance(profile, UserProfile):
             return profile.model_copy()
         return UserProfile()
 
     def _set_current_user_profile(self, profile: UserProfile) -> None:
-        self._g.config.user_profile = profile
+        self.host.config.user_profile = profile
 
     def _current_language_label(self) -> str:
         profile = self._current_user_profile()

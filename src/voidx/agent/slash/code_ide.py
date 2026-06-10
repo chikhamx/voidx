@@ -2,14 +2,14 @@
 
 from __future__ import annotations
 
-from voidx.agent.slash.runtime import ui
 from voidx.config import CodeIde
-from voidx.runtime.ui import code_ide_status, detect_code_ides, normalize_ide
+from voidx.runtime.ui import ui
+from voidx.ui.tools.code_ide import code_ide_status, detect_code_ides, normalize_ide
 
 
 class SlashCodeIdeMixin:
     async def _code_ide(self, args: str) -> None:
-        settings = getattr(self._g, "_settings", None)
+        settings = self.host.settings
         if settings is None:
             ui.error("No settings file available.")
             return
@@ -21,7 +21,7 @@ class SlashCodeIdeMixin:
 
         valid = {item.value for item in CodeIde}
         if not value:
-            app = getattr(self._g, "_app", None)
+            app = self.host.app
             if app is not None:
                 detected = detect_code_ides()
                 detected_ids = {item.id for item in detected}

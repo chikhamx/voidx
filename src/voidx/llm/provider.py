@@ -71,9 +71,7 @@ _DEFAULT_BASE_URLS: dict[tuple[str, str], str] = {
     ("mimo", "deepseek"): "https://api.xiaomimimo.com/v1",
     ("mimo-token-plan", "deepseek"): "https://token-plan-cn.xiaomimimo.com/v1",
     ("qwen", "deepseek"): "https://dashscope.aliyuncs.com/compatible-mode/v1",
-    ("qwen", "anthropic"): "https://dashscope.aliyuncs.com/apps/anthropic",
     ("zhipu", "deepseek"): "https://open.bigmodel.cn/api/paas/v4",
-    ("zhipu", "anthropic"): "https://open.bigmodel.cn/api/anthropic",
     ("kimi", "deepseek"): "https://api.moonshot.cn/v1",
     ("doubao", "deepseek"): "https://ark.cn-beijing.volces.com/api/v3",
     ("typex", "deepseek"): "https://newapi.typex-test.cn/v1",
@@ -153,20 +151,23 @@ class DeepSeekChatOpenAI(ChatOpenAI):
             delta = choices[0].get("delta") or {}
             rc = delta.get("reasoning_content")
             if isinstance(rc, str) and rc:
-                msg.additional_kwargs["reasoning_content"] = (
-                    msg.additional_kwargs.get("reasoning_content", "") + rc
-                )
+                # Each _convert_chunk_to_generation_chunk call processes a
+                # single streaming chunk; the message is freshly created by
+                # the parent class, so additional_kwargs is always empty here.
+                msg.additional_kwargs["reasoning_content"] = rc
             # MiniMax uses reasoning_details (list of {type, text}).
             # Unlike reasoning_content (concatenated string), we preserve
             # the original item structure for downstream extraction.
+            # Same as reasoning_content: single-chunk scope, no cross-chunk
+            # accumulation (that happens via LangChain's chunk merging).
             rd = delta.get("reasoning_details")
             if isinstance(rd, list) and rd:
-                for item in rd:
-                    if isinstance(item, dict):
-                        text = item.get("text")
-                        if isinstance(text, str) and text:
-                            msg.additional_kwargs.setdefault("reasoning_details", [])
-                            msg.additional_kwargs["reasoning_details"].append(item)
+                items = [
+                    item for item in rd
+                    if isinstance(item, dict) and isinstance(item.get("text"), str) and item["text"]
+                ]
+                if items:
+                    msg.additional_kwargs["reasoning_details"] = items
 
         return generation_chunk
 
@@ -224,7 +225,7 @@ class DeepSeekChatOpenAI(ChatOpenAI):
 
         # ── Doubao ────────────────────────────────────────────────────────
         if provider == "doubao":
-            if "thinking" not in config.model.lower() and "seed-1.6" not in config.model.lower():
+            if not _supports_doubao_thinking(config.model):
                 return {}
             raw_effort = (config.reasoning_effort or "").strip().lower()
             if effort is None or effort == "none":
@@ -282,6 +283,17 @@ def _supports_qwen_thinking(model: str) -> bool:
 def _supports_zhipu_thinking(model: str) -> bool:
     name = model.lower()
     return any(p in name for p in _ZHIPU_THINKING_MODELS)
+
+
+_DOUBAO_THINKING_MODELS = (
+    "doubao-seed",
+    "seed-1.6",
+)
+
+
+def _supports_doubao_thinking(model: str) -> bool:
+    name = model.lower()
+    return any(p in name for p in _DOUBAO_THINKING_MODELS)
 
 
 # ── Anthropic reasoning ──────────────────────────────────────────────────
