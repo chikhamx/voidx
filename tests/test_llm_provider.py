@@ -212,7 +212,7 @@ def test_custom_provider_reasoning_not_auto_injected():
 
 
 def test_custom_provider_strips_stainless_headers():
-    """Third-party relays get x-stainless-* headers cleared to avoid 403 blocks."""
+    """Third-party relays with openai protocol get x-stainless-* headers cleared."""
     custom = create_chat_model(
         "test-key",
         ModelConfig(provider="my-relay", model="gpt-4o", protocol="openai"),
@@ -235,13 +235,19 @@ def test_custom_provider_strips_stainless_headers():
     )
     assert openrouter.default_headers is None or "x-stainless-lang" not in (openrouter.default_headers or {})
 
-    # DeepSeek protocol custom provider also strips headers
+    # DeepSeek protocol does NOT strip headers
     ds_custom = create_chat_model(
         "test-key",
         ModelConfig(provider="my-relay", model="deepseek-r1", protocol="deepseek"),
     )
-    assert ds_custom.default_headers is not None
-    assert ds_custom.default_headers.get("x-stainless-lang") == ""
+    assert ds_custom.default_headers is None
+
+    # Anthropic protocol does NOT strip headers
+    anthropic_custom = create_chat_model(
+        "test-key",
+        ModelConfig(provider="my-relay", model="claude-sonnet-4-6", protocol="anthropic"),
+    )
+    assert anthropic_custom.default_headers is None
 
 
 def test_typex_reasoning_uses_zhipu_thinking_format():

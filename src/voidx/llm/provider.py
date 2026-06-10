@@ -39,14 +39,12 @@ _STAINLESS_HEADERS_TO_STRIP = {
 }
 
 
-def _strip_stainless_headers(provider: str) -> dict[str, str]:
+def _strip_stainless_headers() -> dict[str, str]:
     """Return headers that clear OpenAI SDK fingerprint for third-party relays.
 
     Many third-party relays block requests carrying x-stainless-* headers
-    to prevent unmodified SDK access.  Official providers are unaffected.
+    to prevent unmodified SDK access.
     """
-    if provider in _OFFICIAL_OPENAI_PROVIDERS:
-        return {}
     return {k: "" for k in _STAINLESS_HEADERS_TO_STRIP} | {"User-Agent": "voidx/1.0"}
 
 
@@ -399,9 +397,6 @@ def create_chat_model(api_key: str, config: ModelConfig) -> BaseChatModel:
         )
         if base_url:
             kwargs["base_url"] = base_url
-        headers = _strip_stainless_headers(config.provider)
-        if headers:
-            kwargs["default_headers"] = headers
         kwargs.update(_reasoning_kwargs(config, protocol))
         return DeepSeekChatOpenAI(**kwargs)
 
@@ -414,9 +409,8 @@ def create_chat_model(api_key: str, config: ModelConfig) -> BaseChatModel:
         )
         if base_url:
             kwargs["base_url"] = base_url
-        headers = _strip_stainless_headers(config.provider)
-        if headers:
-            kwargs["default_headers"] = headers
+        if config.provider not in _OFFICIAL_OPENAI_PROVIDERS:
+            kwargs["default_headers"] = _strip_stainless_headers()
         kwargs.update(_reasoning_kwargs(config, protocol))
         return ChatOpenAI(**kwargs)
 
