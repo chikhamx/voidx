@@ -4,7 +4,7 @@ from __future__ import annotations
 
 from typing import TYPE_CHECKING
 
-from voidx.agent.graph.compaction_coordinator import GraphCompactionCoordinator
+from voidx.agent.graph.compaction_coordinator import CompactionResult, GraphCompactionCoordinator
 
 if TYPE_CHECKING:
     from voidx.agent.graph.contracts import GraphCompactionHost
@@ -36,6 +36,23 @@ class GraphCompactionMixin:
             session_msgs,
             force=force,
             ask=ask,
+            run_compaction_agent=self._run_compaction_agent,
+            persist_compaction=self._persist_compaction,
+        )
+
+    async def _in_turn_compact(
+        self: GraphCompactionHost,
+        messages: list,
+    ) -> CompactionResult | None:
+        count = getattr(self, "_in_turn_compaction_count", 0) + 1
+        self._in_turn_compaction_count = count
+        if count > 2:
+            return None
+        return await _compaction_component_for(self).compact_for_live_state(
+            messages,
+            force=True,
+            ask=False,
+            include_summary_message=True,
             run_compaction_agent=self._run_compaction_agent,
             persist_compaction=self._persist_compaction,
         )

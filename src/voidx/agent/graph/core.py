@@ -20,7 +20,9 @@ from langchain_core.messages import (
     AIMessage,
     BaseMessage,
     HumanMessage,
+    RemoveMessage,
 )
+from langgraph.graph.message import REMOVE_ALL_MESSAGES
 
 from voidx.agent.agents import (
     BASE_SYSTEM_PROMPT,
@@ -97,6 +99,23 @@ if TYPE_CHECKING:
 GUIDANCE_MAX_CHARS = 2_000
 
 
+def _is_context_overflow_error(exc: Exception) -> bool:
+    msg = str(exc).lower()
+    return any(
+        pattern in msg
+        for pattern in (
+            "context_length_exceeded",
+            "context length",
+            "too many tokens",
+            "maximum context",
+            "token limit",
+            "input is too long",
+            "request too large",
+            "context window",
+        )
+    )
+
+
 def _restored_skill_runs(task_run: TaskRun | None) -> list[SkillRunState]:
     if task_run is None:
         return []
@@ -170,6 +189,7 @@ class VoidXGraph(
         self._sub_buffers: dict[str, list[BaseMessage]] = {}
         self._pending_summary: str | None = None
         self._compaction_summary: str = ""
+        self._in_turn_compaction_count: int = 0
         self._session_date: str = session_date(session)
         self._session_msg_cache: list[MessageRow] | None = None
         self._context_cache = ContextCompilerCache()
@@ -597,14 +617,58 @@ class VoidXGraph(
         if not has_tool_budget:
             tool_defs = []
         guidance_messages = self._drain_pending_guidance()
-        base_messages = [*state["messages"], *guidance_messages]
-        convergence_messages, convergence_forced = build_convergence_messages(
-            step=step,
-            max_steps=max_s,
-            has_tool_budget=has_tool_budget,
-            goal=state.get("goal", "") or latest_user_text(base_messages),
-        )
-        llm_messages = [*base_messages, *convergence_messages]
+        state_messages = list(state["messages"])
+        compaction_happened = False
+
+        def rebuild_llm_messages(
+            messages: list[BaseMessage],
+        ) -> tuple[list[BaseMessage], list[HumanMessage], bool]:
+            base_messages = [*messages, *guidance_messages]
+            convergence_messages, convergence_forced = build_convergence_messages(
+                step=step,
+                max_steps=max_s,
+                has_tool_budget=has_tool_budget,
+                goal=state.get("goal", "") or latest_user_text(base_messages),
+            )
+            return [*base_messages, *convergence_messages], convergence_messages, convergence_forced
+
+        async def save_context_frame(
+            messages: list[BaseMessage],
+            token_estimate: int,
+            convergence_messages: list[HumanMessage],
+            convergence_forced: bool,
+        ) -> None:
+            if self._session is None:
+                return
+            await save_context_frame_from_messages(
+                session_id=self._session.id,
+                user_message_id=state.get("user_message_id"),
+                frame_kind="main",
+                agent_role=agent_name,
+                provider=self.config.model.provider,
+                model=self.config.model.model,
+                messages=messages,
+                token_estimate=token_estimate,
+                metadata={
+                    "step": step,
+                    "max_steps": max_s,
+                    "tool_count": len(tool_defs),
+                    "convergence_hint_count": len(convergence_messages),
+                    "convergence_forced": convergence_forced,
+                },
+            )
+
+        def replacement_messages(assistant_msg: AIMessage) -> list[BaseMessage]:
+            if not compaction_happened:
+                return [*guidance_messages, assistant_msg]
+            return [
+                RemoveMessage(id=REMOVE_ALL_MESSAGES),
+                *state_messages,
+                *guidance_messages,
+                assistant_msg,
+            ]
+
+        llm_messages, convergence_messages, convergence_forced = rebuild_llm_messages(state_messages)
 
         agent_name = state.get("agent", "orchestrator")
         if self._debug:
@@ -614,26 +678,19 @@ class VoidXGraph(
         # ── LLM call with retry ────────────────────────────────────────
         context_tokens = estimate_context_tokens(llm_messages, self.config.model.model)
         self._usage_stats.update_context(context_tokens)
-        if self._session is not None:
-            await save_context_frame_from_messages(
-                session_id=self._session.id,
-                user_message_id=state.get("user_message_id"),
-                frame_kind="main",
-                agent_role=agent_name,
-                provider=self.config.model.provider,
-                model=self.config.model.model,
-                messages=llm_messages,
-                token_estimate=context_tokens,
-                metadata={
-                    "step": step,
-                    "max_steps": max_s,
-                    "tool_count": len(tool_defs),
-                    "convergence_hint_count": len(convergence_messages),
-                    "convergence_forced": convergence_forced,
-                },
-            )
+        if self._compaction.is_overflow({"total": context_tokens}):
+            result = await self._in_turn_compact(state_messages)
+            if result is not None:
+                compaction_happened = True
+                state_messages = list(result.live_messages)
+                llm_messages, convergence_messages, convergence_forced = rebuild_llm_messages(state_messages)
+                context_tokens = estimate_context_tokens(llm_messages, self.config.model.model)
+                self._usage_stats.update_context(context_tokens)
+
+        await save_context_frame(llm_messages, context_tokens, convergence_messages, convergence_forced)
         max_retries = 2
-        for attempt in range(max_retries + 1):
+        failed_attempts = 0
+        while True:
             try:
                 renderer = StreamingRenderer(self._ui.console, debug=self._debug)
                 model_with_tools = self.model.bind_tools(tool_defs) if tool_defs else self.model
@@ -650,20 +707,37 @@ class VoidXGraph(
                     self._ui.ui.print()
                 break
             except Exception as e:
-                if attempt < max_retries:
-                    delay = (attempt + 1) * 2
+                if _is_context_overflow_error(e):
+                    result = await self._in_turn_compact(state_messages)
+                    if result is not None:
+                        compaction_happened = True
+                        state_messages = list(result.live_messages)
+                        llm_messages, convergence_messages, convergence_forced = rebuild_llm_messages(state_messages)
+                        context_tokens = estimate_context_tokens(llm_messages, self.config.model.model)
+                        self._usage_stats.update_context(context_tokens)
+                        await save_context_frame(
+                            llm_messages,
+                            context_tokens,
+                            convergence_messages,
+                            convergence_forced,
+                        )
+                        continue
+                if failed_attempts < max_retries:
+                    failed_attempts += 1
+                    delay = failed_attempts * 2
                     self._ui.ui.print(f"[dim]LLM error, retrying in {delay}s: {e}[/dim]")
                     await asyncio.sleep(delay)
                 else:
                     self._ui.ui.error(f"LLM call failed after {max_retries + 1} attempts: {e}")
+                    failure_msg = AIMessage(content=f"LLM call failed: {e}")
                     return {
-                        "messages": [AIMessage(content=f"LLM call failed: {e}")],
+                        "messages": replacement_messages(failure_msg),
                         "step_count": step,
                         "should_continue": False,
                     }
 
         return {
-            "messages": [*guidance_messages, assistant_msg],
+            "messages": replacement_messages(assistant_msg),
             "step_count": step + 1,
             "convergence_forced": convergence_forced,
         }

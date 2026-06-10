@@ -272,6 +272,23 @@ class CompactionService:
             return messages, None
         return selection.head, selection.tail_id
 
+    def truncate_head_to_budget(self, messages: list, *, budget: int, model: str) -> list:
+        """Keep the newest complete turns from head messages within a token budget."""
+        turns = self._turns(messages)
+        if not turns or budget <= 0:
+            return []
+
+        kept: list = []
+        total = 0
+        for turn in reversed(turns):
+            turn_msgs = messages[turn.start:turn.end]
+            size = estimate_context_tokens(turn_msgs, model)
+            if total + size > budget:
+                break
+            kept = [*turn_msgs, *kept]
+            total += size
+        return kept
+
     # ── build compaction prompt ─────────────────────────────────────────
 
     @staticmethod

@@ -1,5 +1,7 @@
 # Turn 内 Compaction 缺失修复 — 技术设计文档
 
+> **Status: Done**
+
 ## Context
 
 voidx 在长对话中触发了压缩阈值却没执行压缩，而是等 LLM 三次报错 "context too long" 后退出。根因是 compaction 检查只在 turn 入口做一次，turn 内部的 LLM 循环不再检查。工具执行产生大量输出后 context 膨胀，LLM 调用必然失败，而 retry 逻辑不区分错误类型，盲目重试不可能成功。
@@ -12,8 +14,8 @@ voidx 在长对话中触发了压缩阈值却没执行压缩，而是等 LLM 三
 
 - 每次 `_call_llm` 前检查 context 是否超阈值，超了直接触发自动压缩
 - LLM 因 context overflow 报错时，自动触发 compaction 后重试
-- compaction agent 直接接收完整 head_messages，不做截断，让 LLM 完整总结
-- compaction agent 的消息结构与主 LLM 调用一致，复用 prompt cache
+- compaction agent 优先接收完整 head_messages，不再通过 `build_prompt` 拼成单条 HumanMessage
+- compaction agent 自身超窗时按完整 turn/tool 边界保留最近 head_messages，再降级到 fallback summary
 - compaction 失败时优雅降级，不丢失对话
 
 ### Non-Goals
@@ -77,7 +79,7 @@ context_parts (截断后的文本片段列表)
 - 截断丢掉了大量细节（文件内容、错误信息、工具输出）
 - `_join_with_char_budget` 从前往后保留，最近的上下文反而可能被丢弃
 - 把所有消息拼成一个大字符串塞进单个 HumanMessage，无法命中 prompt cache
-- compaction agent 用的是 `SystemMessage(COMPACTION_PROMPT) + HumanMessage(prompt)` 的结构，和主 LLM 调用的消息结构完全不同，无法复用缓存
+- compaction agent 用的是 `SystemMessage(COMPACTION_PROMPT) + HumanMessage(prompt)` 的结构，和原始消息序列完全不同，provider 无法复用消息级缓存
 
 ### 问题三：LangGraph state 的 in-place 修改
 
@@ -137,7 +139,26 @@ summary (结构化摘要)
 
 ## Data Model
 
-无新增数据模型。复用现有 `CompactionService` 和 `_maybe_compact` 方法。
+新增一个内部结果对象，专门描述“已完成一次压缩后应该如何更新 live context”。turn 入口现有 `_maybe_compact` 继续保留 mutation 契约；turn 内压缩使用新的非原地 API，避免 LangGraph state reducer 看不到 mutation。
+
+**文件**: `src/voidx/agent/graph/compaction_coordinator.py`
+
+```python
+@dataclass(frozen=True)
+class CompactionResult:
+    summary: str
+    removed_messages: list[BaseMessage]
+    live_messages: list[BaseMessage]
+    tail_id: str | None
+    fallback: bool = False
+```
+
+语义：
+- `removed_messages`: 被摘要覆盖的旧消息
+- `live_messages`: 摘要之后仍保留在 graph state 中的 tail messages；turn 内模式额外保留当前 runtime context 前缀，并插入临时摘要 system message
+- `summary`: 写入 system prompt 的长摘要，也同步更新 `_pending_summary` / `_compaction_summary`
+- `tail_id`: 持久化删除边界，沿用现有 `select_details` 的 tail anchor
+- `fallback`: compaction agent 失败后是否使用了 `fallback_summary`
 
 ## API Contract
 
@@ -247,7 +268,24 @@ def _is_context_overflow_error(exc: Exception) -> bool:
     )
 ```
 
-### 改动 4：新增 `_in_turn_compact` 方法
+### 改动 4：新增非原地 compaction API 和 `_in_turn_compact` 方法
+
+**文件**: `src/voidx/agent/graph/compaction_coordinator.py`
+
+新增 coordinator 方法：
+
+```python
+async def compact_for_live_state(
+    self,
+    messages: list[BaseMessage],
+    *,
+    force: bool = False,
+    include_summary_message: bool = False,
+) -> CompactionResult | None:
+    """Compact without mutating the caller's message list."""
+```
+
+`maybe_compact()` 改为复用这个方法：拿到 `CompactionResult` 后再执行现有的 `messages.clear(); messages.extend(result.live_messages)`，从而保持 turn 入口行为兼容。
 
 **文件**: `src/voidx/agent/graph/compaction.py`
 
@@ -260,18 +298,19 @@ def _is_context_overflow_error(exc: Exception) -> bool:
 async def _in_turn_compact(
     self: GraphCompactionHost,
     messages: list,
-) -> list | None:
-    """Compact within a turn. Returns new messages list or None if compaction failed."""
+) -> CompactionResult | None:
+    """Compact within a turn without mutating LangGraph state."""
     self._in_turn_compaction_count = getattr(self, "_in_turn_compaction_count", 0) + 1
     if self._in_turn_compaction_count > 2:
         logger.warning("In-turn compaction limit reached (2), skipping")
         return None
 
     try:
-        compacted, _ = await self._maybe_compact(messages, ask=False)
-        if compacted is not None:
-            return list(messages)  # messages 已被 _maybe_compact in-place 修改
-        return None
+        return await self._compaction_component().compact_for_live_state(
+            messages,
+            force=True,
+            include_summary_message=True,
+        )
     except Exception as e:
         logger.warning("In-turn compaction failed: %s", e)
         return None
@@ -279,7 +318,7 @@ async def _in_turn_compact(
 
 ### 改动 5：`_run_compaction_agent` 改为直接传完整消息
 
-**文件**: `src/voidx/agent/graph/compaction.py`
+**文件**: `src/voidx/agent/graph/compaction_coordinator.py`
 
 **Before:**
 
@@ -295,22 +334,11 @@ async def _run_compaction_agent(self, head_messages, previous_summary):
 
 ```python
 async def _run_compaction_agent(self, head_messages, previous_summary):
-    messages = [SystemMessage(content=COMPACTION_PROMPT)]
-
-    # 如果有之前的摘要，作为上下文注入
-    if previous_summary:
-        messages.append(HumanMessage(content=(
-            "Below is the previous anchored summary of earlier conversation. "
-            "Preserve still-true details, remove stale details, and merge in new facts.\n\n"
-            f"<previous-summary>\n{previous_summary}\n</previous-summary>"
-        )))
-        messages.append(AIMessage(content="Understood. I will update the summary with the new conversation history."))
-
-    # 直接传入完整的 head_messages，不截断
-    messages.extend(head_messages)
-
-    # 末尾加总结请求
-    messages.append(HumanMessage(content=SUMMARY_REQUEST))
+    messages = _build_compaction_messages(
+        head_messages,
+        previous_summary,
+        COMPACTION_PROMPT,
+    )
 
     assistant_msg = await stream_llm(self.model, messages, renderer, ...)
 ```
@@ -325,59 +353,31 @@ SUMMARY_REQUEST = (
 )
 ```
 
-### 改动 6：`_call_llm` 返回值中包含 compaction 后的 messages
+### 改动 6：`_call_llm` 用 `REMOVE_ALL_MESSAGES` 重建 messages state
 
 **文件**: `src/voidx/agent/graph/core.py`
 
-当 `_call_llm` 内部触发了 compaction，需要通过返回值更新 LangGraph 的 state。因为 `AgentState.messages` 用 `add_messages` reducer，返回新的 messages 列表会触发 reducer 合并。
+当 `_call_llm` 内部触发了 compaction，需要通过返回值更新 LangGraph 的 state。因为 `AgentState.messages` 用 `add_messages` reducer，普通返回新的 messages 列表只会追加/按 id 替换，不会替换整个列表。
 
-但 `add_messages` 的合并逻辑是追加/替换（按 message id），不是替换整个列表。compaction 需要删除旧消息 + 插入摘要，这和 `add_messages` 的语义不兼容。
-
-**方案**: 在 `_call_llm` 返回时，如果发生了 compaction，返回一个特殊标记，让 `_finalize` 节点处理 messages 替换。
-
-```python
-# _call_llm 返回值
-return {
-    "messages": [...guidance_messages, assistant_msg],
-    "step_count": step + 1,
-    "convergence_forced": convergence_forced,
-    "_compacted_messages": new_messages,  # 新增：compaction 后的完整 messages
-}
-```
-
-```python
-# _finalize 处理
-async def _finalize(self, state: AgentState) -> dict:
-    compacted = state.get("_compacted_messages")
-    if compacted is not None:
-        # 替换整个 messages 列表
-        # 需要用 LangGraph 的消息替换机制
-        ...
-    # ... 原有逻辑 ...
-```
-
-**更简单的方案**: 不通过 LangGraph state 传递，而是用实例变量。`_call_llm` 内部 compaction 后，直接修改 `state["messages"]` 列表内容（in-place），然后构建 `llm_messages` 时用修改后的列表。LangGraph 的 `add_messages` reducer 在节点返回时会用返回的 messages 做合并，但 `state["messages"]` 的 in-place 修改在同一节点内是可见的。
-
-验证：`_call_llm` 内部 `state["messages"]` 的 in-place 修改是否影响后续节点？答案是**不影响**，因为 LangGraph 在节点返回后用 reducer 处理返回值，`state["messages"]` 的 in-place 修改会被 reducer 的结果覆盖。
-
-**最终方案**: `_call_llm` 返回值中包含 compaction 产生的摘要消息，通过 `add_messages` reducer 自然合并。同时用 `RemoveMessage` 删除被压缩的旧消息。
+**最终方案**: 使用当前 LangGraph 支持的 `RemoveMessage(id=REMOVE_ALL_MESSAGES)` 清空 messages state，然后返回重建后的 live messages 与本次 assistant 回复。这样不依赖旧消息是否有稳定 id，也不会被未知 id 删除异常卡住。
 
 ```python
 from langchain_core.messages import RemoveMessage
+from langgraph.graph.message import REMOVE_ALL_MESSAGES
 
 # compaction 后，返回：
 return {
     "messages": [
-        # 删除被压缩的旧消息
-        *[RemoveMessage(id=msg.id) for msg in compacted_msgs if hasattr(msg, 'id')],
-        # 插入摘要
-        SystemMessage(content=f"[Compacted summary]\n{summary}"),
-        # 正常的 assistant 回复
+        RemoveMessage(id=REMOVE_ALL_MESSAGES),
+        *compaction_result.live_messages,
+        *guidance_messages,
         assistant_msg,
     ],
     ...
 }
 ```
+
+注意：当前 LangGraph 拓扑中 `prepare` 只在 turn 开始执行一次；如果 turn 内压缩后只设置 `_pending_summary`，本次 retry 看不到摘要。因此 `CompactionResult.live_messages` 会包含一个临时 `SystemMessage("## Long Summary\n...")`，让当前 turn 立即获得摘要上下文。下一 turn 开始时，现有 `_prepare_with_stream()` 会把 `_compaction_summary` 编译进正式 runtime system prompt，并剔除历史 system messages。
 
 ### 改动 7：`build_prompt` 和 `_join_with_char_budget` 保留但不再用于 compaction agent
 
@@ -385,7 +385,7 @@ return {
 
 ### 改动 8：turn 结束时重置 compaction 计数
 
-**文件**: `src/voidx/agent/graph/turn_mixin.py`
+**文件**: `src/voidx/agent/graph/turn_runner.py`
 
 ```python
 # _handle_turn 结束时
@@ -401,7 +401,7 @@ self._in_turn_compaction_count = 0
 | Compaction 成功但 LLM 仍然 overflow | compaction 次数 +1，下次 `_call_llm` 再尝试（最多 2 次） |
 | Compaction 成功但 LLM 因其他原因失败 | 走正常 retry 逻辑 |
 | `_is_context_overflow_error` 误判 | 最坏情况是多做一次不必要的 compaction，不影响正确性 |
-| head_messages 太大导致 compaction agent 也 overflow | `_run_compaction_agent` 的 LLM 调用也会报错，走 `fallback_summary` 降级 |
+| head_messages 太大导致 compaction agent 也 overflow | 先按完整 turn/tool 边界截断 head_messages；仍失败时走 `fallback_summary` 降级 |
 
 ### compaction agent 自身 overflow 的保护
 
@@ -413,16 +413,30 @@ self._in_turn_compaction_count = 0
 
 ```python
 async def _run_compaction_agent(self, head_messages, previous_summary):
-    messages = _build_compaction_messages(head_messages, previous_summary)
+    messages = _build_compaction_messages(
+        head_messages,
+        previous_summary,
+        COMPACTION_PROMPT,
+    )
     context_tokens = estimate_context_tokens(messages, self.config.model.model)
 
     # 如果 compaction agent 自身会 overflow，从头部截断 head_messages
     if context_tokens > self._compaction.context_limit:
+        budget = (
+            self._compaction.context_limit
+            - self._compaction.output_token_max
+            - COMPACTION_PROMPT_HEADROOM
+        )
         head_messages = self._compaction.truncate_head_to_budget(
             head_messages,
-            budget=self._compaction.context_limit - 2000,  # 留给 system + request
+            budget=budget,
+            model=self.config.model.model,
         )
-        messages = _build_compaction_messages(head_messages, previous_summary)
+        messages = _build_compaction_messages(
+            head_messages,
+            previous_summary,
+            COMPACTION_PROMPT,
+        )
 
     assistant_msg = await stream_llm(self.model, messages, renderer, ...)
 ```
@@ -430,7 +444,7 @@ async def _run_compaction_agent(self, head_messages, previous_summary):
 新增 `CompactionService.truncate_head_to_budget`：
 
 ```python
-def truncate_head_to_budget(self, messages: list, budget: int) -> list:
+def truncate_head_to_budget(self, messages: list, *, budget: int, model: str) -> list:
     """Truncate head messages from the front to fit within token budget.
     Preserves turn boundaries."""
     turns = self._turns(messages)
@@ -439,7 +453,7 @@ def truncate_head_to_budget(self, messages: list, budget: int) -> list:
     total = 0
     for turn in reversed(turns):
         turn_msgs = messages[turn.start:turn.end]
-        size = estimate_context_tokens(turn_msgs)
+        size = estimate_context_tokens(turn_msgs, model)
         if total + size > budget:
             break
         kept = turn_msgs + kept
@@ -455,13 +469,13 @@ def truncate_head_to_budget(self, messages: list, budget: int) -> list:
 |------|---------|---------|
 | 直接传完整 head_messages 给 LLM | 保留 build_prompt 截断逻辑 | 完整信息让 LLM 总结更准确；消息结构一致可命中 prompt cache；截断逻辑仍保留给 fallback |
 | 从最新 turn 开始保留（overflow 保护） | 从最早 turn 开始保留 | compaction 时最近的上下文更重要，早期对话可以丢弃 |
-| 用 `RemoveMessage` + 摘要消息更新 state | in-place 修改 state["messages"] | LangGraph 的 `add_messages` reducer 不感知 in-place 修改；`RemoveMessage` 是官方支持的删除机制 |
+| 用 `REMOVE_ALL_MESSAGES` + 重建 live messages 更新 state | 逐条 `RemoveMessage(id=...)` 或 in-place 修改 | 不依赖旧消息 id；LangGraph 的 `add_messages` reducer 不感知 in-place 修改 |
 | compaction 重试上限 2 次 | 不设上限 | 防止 compaction 和 LLM 调用之间的无限循环 |
 | 用实例变量跟踪 compaction 次数 | 用 state 字段 | 实例变量更简单，turn 结束时重置 |
 | `SUMMARY_REQUEST` 作为独立常量 | 嵌入 COMPACTION_PROMPT | 分离指令和触发请求，更清晰；COMPACTION_PROMPT 是 system 级指令，SUMMARY_REQUEST 是用户级请求 |
 
 ## Open Questions
 
-- [ ] `RemoveMessage` 是否被所有 LangGraph 版本支持？需要验证当前依赖版本。
+- [x] `RemoveMessage` 是否被所有 LangGraph 版本支持？当前依赖已支持 `RemoveMessage` 与 `REMOVE_ALL_MESSAGES`。
 - [ ] compaction agent 用完整 head_messages 时，prompt cache 命中率取决于 provider 实现。Anthropic 的 cache 需要 `cache_control` 标记，是否需要在 compaction messages 中加？
-- [ ] `_in_turn_compact` 中 `messages` 的 in-place 修改和 `RemoveMessage` 返回值是否冲突？需要验证执行顺序。
+- [x] `_in_turn_compact` 中 `messages` 的 in-place 修改和 `RemoveMessage` 返回值是否冲突？最终方案不在 turn 内做 in-place 修改，因此无冲突。

@@ -4,16 +4,19 @@ from __future__ import annotations
 
 import logging
 from collections.abc import Awaitable, Callable
+from dataclasses import dataclass
 from typing import TYPE_CHECKING
 
-from langchain_core.messages import HumanMessage, SystemMessage
+from langchain_core.messages import AIMessage, BaseMessage, HumanMessage, SystemMessage
 
 from voidx.agent.graph.streaming import extract_text, stream_llm
 from voidx.agent.message_rows import messages_from_rows
+from voidx.agent.runtime_context import raw_semantic_messages
 from voidx.llm.compaction import COMPACTION_MAX_RETRIES, CompactionService
 from voidx.llm.provider import resolve_protocol
 from voidx.llm.usage import estimate_context_tokens, estimate_message_tokens, extract_token_usage
 from voidx.memory.context_frames import save_context_frame_from_messages
+from voidx.skills.context import is_skill_context_content
 from voidx.ui.output.console import StreamingRenderer
 from voidx.ui.output.events.schema import StatusFinished, StatusUpdated
 
@@ -25,6 +28,24 @@ logger = logging.getLogger(__name__)
 
 RunCompactionAgent = Callable[[list, str | None], Awaitable[str | None]]
 PersistCompaction = Callable[[list], Awaitable[None]]
+SUMMARY_REQUEST = (
+    "Summarize the conversation above into the structured format specified in your instructions. "
+    "Focus on durable facts, decisions, constraints, open work, and final tool outcomes. "
+    "Do not narrate step-by-step; extract what matters for continuing the task."
+)
+COMPACTION_PROMPT_HEADROOM = 2_000
+IN_TURN_SUMMARY_PREFIX = "## Long Summary\n"
+
+
+@dataclass(frozen=True)
+class CompactionResult:
+    """Completed compaction result that can be applied to a live message state."""
+
+    summary: str
+    removed_messages: list[BaseMessage]
+    live_messages: list[BaseMessage]
+    tail_id: str | None
+    fallback: bool = False
 
 
 class GraphCompactionCoordinator:
@@ -48,6 +69,33 @@ class GraphCompactionCoordinator:
         Returns the messages removed from the live context and the persisted
         tail anchor id when compaction removes an older complete turn.
         """
+        result = await self.compact_for_live_state(
+            messages,
+            session_msgs,
+            force=force,
+            ask=ask,
+            run_compaction_agent=run_compaction_agent,
+            persist_compaction=persist_compaction,
+        )
+        if result is None:
+            return None, None
+
+        messages.clear()
+        messages.extend(result.live_messages)
+        return result.removed_messages, result.tail_id
+
+    async def compact_for_live_state(
+        self,
+        messages: list[BaseMessage],
+        session_msgs: list | None = None,
+        *,
+        force: bool = False,
+        ask: bool = True,
+        include_summary_message: bool = False,
+        run_compaction_agent: RunCompactionAgent | None = None,
+        persist_compaction: PersistCompaction | None = None,
+    ) -> CompactionResult | None:
+        """Compact without mutating the caller's message list."""
         host = self.host
         run_agent = run_compaction_agent or self.run_compaction_agent
         persist = persist_compaction or self.persist_compaction
@@ -55,7 +103,7 @@ class GraphCompactionCoordinator:
         tokens = {"total": total_tokens, "input": total_tokens, "output": 0, "reasoning": 0}
 
         if not force and not host._compaction.is_overflow(tokens):
-            return None, None
+            return None
 
         if not force and ask and getattr(host.config, "ask_compact", False):
             should_compact = await self.ask_compact(total_tokens)
@@ -68,7 +116,7 @@ class GraphCompactionCoordinator:
                     ))
                 else:
                     host._ui.ui.print("[dim]Compaction skipped[/dim]")
-                return None, None
+                return None
 
         if host._ui.via_events():
             await host._ui.events.emit(StatusUpdated(
@@ -88,8 +136,11 @@ class GraphCompactionCoordinator:
                 else "[yellow]Compacting context...[/yellow]"
             )
 
-        selection = host._compaction.select_details(messages)
+        runtime_prefix = _runtime_prefix(messages)
+        semantic_messages = raw_semantic_messages(messages)
+        selection = host._compaction.select_details(semantic_messages)
         head_msgs, tail_id = selection.head, selection.tail_id
+        semantic_tail = semantic_messages[selection.keep_from:]
 
         if not selection.should_compact:
             if host._ui.via_events():
@@ -98,7 +149,7 @@ class GraphCompactionCoordinator:
                     label="Compaction skipped: no older complete turn to summarize",
                     remove=False,
                 ))
-            return None, None
+            return None
 
         summary = None
         previous_summary = getattr(host, "_compaction_summary", "") or None
@@ -155,9 +206,6 @@ class GraphCompactionCoordinator:
             host._pending_summary = fallback
             host._compaction_summary = fallback
             host._compaction.compaction_count += 1
-            tail_msgs = messages[selection.keep_from:]
-            messages.clear()
-            messages.extend(tail_msgs)
             await persist(head_msgs)
             if host._ui.via_events():
                 await host._ui.events.emit(StatusFinished(
@@ -167,12 +215,20 @@ class GraphCompactionCoordinator:
                     ok=False,
                     remove=False,
                 ))
-            return head_msgs, tail_id
+            return CompactionResult(
+                summary=fallback,
+                removed_messages=list(head_msgs),
+                live_messages=_live_messages(
+                    runtime_prefix,
+                    semantic_tail,
+                    fallback,
+                    include_summary_message=include_summary_message,
+                ),
+                tail_id=tail_id,
+                fallback=True,
+            )
 
         if summary:
-            tail_msgs = messages[selection.keep_from:]
-            messages.clear()
-            messages.extend(tail_msgs)
             host._pending_summary = summary
             host._compaction_summary = summary
             host._compaction.compaction_count += 1
@@ -192,11 +248,22 @@ class GraphCompactionCoordinator:
                 ok=False,
                 remove=False,
             ))
-            return None, None
+            return None
         else:
-            return None, None
+            return None
 
-        return head_msgs, tail_id
+        return CompactionResult(
+            summary=summary,
+            removed_messages=list(head_msgs),
+            live_messages=_live_messages(
+                runtime_prefix,
+                semantic_tail,
+                summary,
+                include_summary_message=include_summary_message,
+            ),
+            tail_id=tail_id,
+            fallback=False,
+        )
 
     async def ask_compact(self, total_tokens: int) -> bool:
         host = self.host
@@ -278,7 +345,6 @@ class GraphCompactionCoordinator:
         if host.model is None:
             return None
 
-        prompt = host._compaction.build_prompt(head_messages, previous_summary)
         renderer = StreamingRenderer(
             host._ui.console,
             debug=host._debug,
@@ -286,10 +352,27 @@ class GraphCompactionCoordinator:
             headless=True,
         )
 
-        messages = [SystemMessage(content=COMPACTION_PROMPT)]
-        messages.append(HumanMessage(content=prompt))
-
+        messages = _build_compaction_messages(head_messages, previous_summary, COMPACTION_PROMPT)
         context_tokens = estimate_context_tokens(messages, host.config.model.model)
+        if context_tokens > host._compaction.context_limit:
+            budget = max(
+                0,
+                host._compaction.context_limit
+                - host._compaction.output_token_max
+                - COMPACTION_PROMPT_HEADROOM,
+            )
+            head_messages = host._compaction.truncate_head_to_budget(
+                head_messages,
+                budget=budget,
+                model=host.config.model.model,
+            )
+            if not head_messages:
+                raise ValueError("compaction input exceeds context budget")
+            messages = _build_compaction_messages(head_messages, previous_summary, COMPACTION_PROMPT)
+            context_tokens = estimate_context_tokens(messages, host.config.model.model)
+            if context_tokens > host._compaction.context_limit:
+                raise ValueError("compaction input exceeds context budget")
+
         host._usage_stats.update_context(context_tokens)
         if host._session is not None:
             await save_context_frame_from_messages(
@@ -329,6 +412,54 @@ def _content_type_summary(content: object) -> str:
     if isinstance(content, list):
         return ",".join(type(item).__name__ for item in content) or "list(empty)"
     return type(content).__name__
+
+
+def _build_compaction_messages(
+    head_messages: list[BaseMessage],
+    previous_summary: str | None,
+    system_prompt: str,
+) -> list[BaseMessage]:
+    messages: list[BaseMessage] = [SystemMessage(content=system_prompt)]
+    if previous_summary:
+        messages.append(HumanMessage(content=(
+            "Below is the previous anchored summary of earlier conversation. "
+            "Preserve still-true details, remove stale details, and merge in new facts.\n\n"
+            f"<previous-summary>\n{previous_summary}\n</previous-summary>"
+        )))
+        messages.append(AIMessage(
+            content="Understood. I will update the summary with the new conversation history."
+        ))
+    messages.extend(head_messages)
+    messages.append(HumanMessage(content=SUMMARY_REQUEST))
+    return messages
+
+
+def _runtime_prefix(messages: list[BaseMessage]) -> list[BaseMessage]:
+    prefix: list[BaseMessage] = []
+    for message in messages:
+        if isinstance(message, SystemMessage):
+            if isinstance(message.content, str) and message.content.startswith(IN_TURN_SUMMARY_PREFIX):
+                continue
+            prefix.append(message)
+            continue
+        if isinstance(message, HumanMessage) and is_skill_context_content(message.content):
+            prefix.append(message)
+            continue
+        break
+    return prefix
+
+
+def _live_messages(
+    runtime_prefix: list[BaseMessage],
+    semantic_tail: list[BaseMessage],
+    summary: str,
+    *,
+    include_summary_message: bool,
+) -> list[BaseMessage]:
+    if not include_summary_message:
+        return [*runtime_prefix, *semantic_tail]
+    summary_message = SystemMessage(content=f"{IN_TURN_SUMMARY_PREFIX}{summary}")
+    return [*runtime_prefix, summary_message, *semantic_tail]
 
 
 def _max_persisted_message_id(messages: list) -> int | None:

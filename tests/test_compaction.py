@@ -11,6 +11,7 @@ sys.path.insert(0, str(Path(__file__).parent.parent / "src"))
 from voidx.llm.compaction import (
     COMPACTION_MAX_RETRIES,
     COMPACTION_THRESHOLD,
+    CompactionSelection,
     CompactionService,
     DEFAULT_TAIL_TURNS,
     STEP_HINT_MARKER,
@@ -517,6 +518,74 @@ class TestCompactionRetry:
         assert isinstance(captured["messages"][0], SystemMessage)
         assert isinstance(captured["messages"][1], HumanMessage)
         assert "Fix the compaction fallback" in captured["messages"][1].content
+
+    @pytest.mark.asyncio
+    async def test_compact_for_live_state_returns_result_without_mutating_messages(self):
+        from types import SimpleNamespace
+        from unittest.mock import MagicMock
+
+        from voidx.agent.graph.compaction_coordinator import GraphCompactionCoordinator
+
+        host = SimpleNamespace(
+            _compaction=CompactionService(context_limit=128_000, output_token_max=8_192),
+            _pending_summary=None,
+            _compaction_summary="",
+            config=SimpleNamespace(
+                model=SimpleNamespace(model="gpt-4o"),
+                ask_compact=False,
+            ),
+            _session=None,
+            _debug=False,
+            model=MagicMock(),
+            _ui=_FakeUiPort(via_events=False),
+        )
+        host._compaction.select_details = lambda messages: CompactionSelection(
+            head=messages[:2],
+            tail_id=getattr(messages[2], "id", None),
+            keep_from=2,
+            mode="full",
+        )
+        messages = [
+            SystemMessage(content="system prompt"),
+            HumanMessage(content="older question", id="older_user"),
+            AIMessage(content="older answer", id="older_assistant"),
+            HumanMessage(content="current question", id="current_user"),
+        ]
+
+        async def summarize(_head_messages, _previous_summary):
+            return "new summary"
+
+        persisted = []
+
+        async def persist(head_messages):
+            persisted.extend(head_messages)
+
+        result = await GraphCompactionCoordinator(host).compact_for_live_state(
+            messages,
+            force=True,
+            ask=False,
+            include_summary_message=True,
+            run_compaction_agent=summarize,
+            persist_compaction=persist,
+        )
+
+        assert result is not None
+        assert [message.content for message in messages] == [
+            "system prompt",
+            "older question",
+            "older answer",
+            "current question",
+        ]
+        assert [message.content for message in result.removed_messages] == [
+            "older question",
+            "older answer",
+        ]
+        assert isinstance(result.live_messages[0], SystemMessage)
+        assert result.live_messages[0].content == "system prompt"
+        assert isinstance(result.live_messages[1], SystemMessage)
+        assert result.live_messages[1].content == "## Long Summary\nnew summary"
+        assert result.live_messages[-1].content == "current question"
+        assert persisted == result.removed_messages
 
     @pytest.mark.asyncio
     async def test_maybe_compact_retries_on_agent_failure(self):

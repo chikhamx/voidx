@@ -21,7 +21,7 @@ from voidx.tools.registry import ToolRegistry
 from voidx.tools.task_tracker import TaskTracker
 
 if TYPE_CHECKING:
-    from voidx.agent.graph.compaction_coordinator import GraphCompactionCoordinator
+    from voidx.agent.graph.compaction_coordinator import CompactionResult, GraphCompactionCoordinator
     from voidx.agent.graph.session_runtime import GraphSessionRuntime
     from voidx.agent.graph.tool_executor import GraphToolExecutor
     from voidx.agent.graph.turn_runner import GraphTurnRunner
@@ -39,6 +39,7 @@ class GraphCompactionHost(Protocol):
     _usage_stats: UsageStats
     _compaction: CompactionService
     _compaction_coordinator: GraphCompactionCoordinator
+    _in_turn_compaction_count: int
     _pending_summary: str | None
     _compaction_summary: str
     _session_msg_cache: list[Any] | None
@@ -52,6 +53,10 @@ class GraphCompactionHost(Protocol):
         force: bool = False,
         ask: bool = True,
     ) -> tuple[list[BaseMessage] | None, str | None]: ...
+    async def _in_turn_compact(
+        self,
+        messages: list[BaseMessage],
+    ) -> CompactionResult | None: ...
     async def _ask_compact(self, total_tokens: int) -> bool: ...
     async def _persist_compaction(self, head_messages: list[BaseMessage]) -> None: ...
     async def _compact_session_history(self, *, force: bool = True) -> bool: ...

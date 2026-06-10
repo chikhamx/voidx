@@ -3,7 +3,8 @@ from pathlib import Path
 from types import SimpleNamespace
 
 import pytest
-from langchain_core.messages import AIMessage, AIMessageChunk, HumanMessage, SystemMessage, ToolMessage
+from langchain_core.messages import AIMessage, AIMessageChunk, HumanMessage, RemoveMessage, SystemMessage, ToolMessage
+from langgraph.graph.message import REMOVE_ALL_MESSAGES
 from rich.console import Console
 
 sys.path.insert(0, str(Path(__file__).parent.parent.parent / "src"))
@@ -12,6 +13,7 @@ from voidx.agent.graph.streaming import stream_llm as _stream_llm
 from voidx.agent.graph import VoidXGraph
 from voidx.agent.graph.convergence import is_step_hint_message
 from voidx.config import Config, ModelConfig
+from voidx.llm.compaction import CompactionSelection
 from voidx.llm.message_markers import is_guidance_message
 from voidx.memory.context_frames import load_context_frames
 from voidx.memory.session import MessageRow, create_session, delete_session, save_message
@@ -528,6 +530,139 @@ async def test_call_llm_injects_pending_guidance_before_next_model_call(tmp_path
         "Use TypeScript",
     ]
     assert is_guidance_message(model.messages[1])
+    assert graph._pending_guidance == []
+
+
+@pytest.mark.asyncio
+async def test_call_llm_preflight_compacts_and_replaces_message_state(tmp_path, monkeypatch):
+    import voidx.agent.graph.core as graph_module
+
+    monkeypatch.setattr(graph_module, "StreamingRenderer", FakeRenderer)
+
+    graph = VoidXGraph(
+        Config(
+            model=ModelConfig(provider="mimo", model="mimo-v2.5"),
+            workspace=str(tmp_path),
+        ),
+        api_key=None,
+    )
+    graph.model = TrackingStreamingModel()
+    graph._compaction.is_overflow = lambda _tokens: True
+    graph._compaction.select_details = lambda messages: CompactionSelection(
+        head=messages[:2],
+        tail_id=getattr(messages[2], "id", None),
+        keep_from=2,
+        mode="full",
+    )
+
+    async def summarize(_head_messages, _previous_summary):
+        return "preflight summary"
+
+    graph._run_compaction_agent = summarize
+    result = await graph._call_llm({
+        "messages": [
+            SystemMessage(content="system prompt"),
+            HumanMessage(content="older question", id="older_user"),
+            AIMessage(content="older answer", id="older_assistant"),
+            HumanMessage(content="current question", id="current_user"),
+        ],
+        "step_count": 0,
+        "max_steps": 50,
+        "agent": "orchestrator",
+    })
+
+    assert isinstance(result["messages"][0], RemoveMessage)
+    assert result["messages"][0].id == REMOVE_ALL_MESSAGES
+    assert [message.content for message in result["messages"][1:]] == [
+        "system prompt",
+        "## Long Summary\npreflight summary",
+        "current question",
+        "answer",
+    ]
+    assert graph.model.messages is not None
+    assert [message.content for message in graph.model.messages] == [
+        "system prompt",
+        "## Long Summary\npreflight summary",
+        "current question",
+    ]
+
+
+@pytest.mark.asyncio
+async def test_call_llm_overflow_error_compacts_retries_and_preserves_guidance(tmp_path, monkeypatch):
+    import voidx.agent.graph.core as graph_module
+
+    monkeypatch.setattr(graph_module, "StreamingRenderer", FakeRenderer)
+
+    class OverflowThenAnswerModel(TrackingStreamingModel):
+        def __init__(self) -> None:
+            super().__init__()
+            self.calls: list[list] = []
+
+        async def astream(self, messages):
+            self.calls.append(messages)
+            self.messages = messages
+            if len(self.calls) == 1:
+                raise RuntimeError("context window exceeded")
+            yield AIMessageChunk(content="answer")
+
+    graph = VoidXGraph(
+        Config(
+            model=ModelConfig(provider="mimo", model="mimo-v2.5"),
+            workspace=str(tmp_path),
+        ),
+        api_key=None,
+    )
+    model = OverflowThenAnswerModel()
+    graph.model = model
+    graph._compaction.is_overflow = lambda _tokens: False
+    graph._compaction.select_details = lambda messages: CompactionSelection(
+        head=messages[:2],
+        tail_id=getattr(messages[2], "id", None),
+        keep_from=2,
+        mode="full",
+    )
+
+    async def summarize(_head_messages, _previous_summary):
+        return "retry summary"
+
+    graph._run_compaction_agent = summarize
+    assert graph.submit_guidance("Use TypeScript")
+
+    result = await graph._call_llm({
+        "messages": [
+            SystemMessage(content="system prompt"),
+            HumanMessage(content="older question", id="older_user"),
+            AIMessage(content="older answer", id="older_assistant"),
+            HumanMessage(content="current question", id="current_user"),
+        ],
+        "step_count": 0,
+        "max_steps": 50,
+        "agent": "orchestrator",
+    })
+
+    assert len(model.calls) == 2
+    assert [message.content for message in model.calls[0]] == [
+        "system prompt",
+        "older question",
+        "older answer",
+        "current question",
+        "Use TypeScript",
+    ]
+    assert [message.content for message in model.calls[1]] == [
+        "system prompt",
+        "## Long Summary\nretry summary",
+        "current question",
+        "Use TypeScript",
+    ]
+    assert isinstance(result["messages"][0], RemoveMessage)
+    assert result["messages"][0].id == REMOVE_ALL_MESSAGES
+    assert [message.content for message in result["messages"][1:]] == [
+        "system prompt",
+        "## Long Summary\nretry summary",
+        "current question",
+        "Use TypeScript",
+        "answer",
+    ]
     assert graph._pending_guidance == []
 
 

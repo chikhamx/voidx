@@ -384,6 +384,7 @@ class GraphTurnRunner:
                     }
             raise
         finally:
+            host._in_turn_compaction_count = 0
             host._usage_stats.end_turn()
             pending_guidance = getattr(host, "_pending_guidance", None)
             if pending_guidance is not None:
