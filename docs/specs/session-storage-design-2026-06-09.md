@@ -3,6 +3,7 @@
 > **Status: In Progress**
 > Created: 2026-06-09
 > Updated: 2026-06-10 — 补充实测数据、修正 context_frame 存储矛盾、新增文件版本历史、修正 JSONL 写入并发模型、修正重放器 summary 处理
+> Updated: 2026-06-10 — messages 移出 DB 改用 JSONL、DB 路径改为 ~/.voidx/store/、runtime_state 改为每 session 单行替换
 
 ## 1. 问题
 
@@ -44,7 +45,7 @@ Subagent 的 UI 节点混在主 session 的 `transcript_nodes` 里，靠 `agent_
 
 ## 2. 目标
 
-1. **JSONL append-only** 存储 transcript 和 context frames，SQLite 只存索引和元数据
+1. **JSONL append-only** 存储 messages、transcript 和 context frames，SQLite 只存全局配置和索引元数据
 2. **可配置清理策略**，通过 `/session del` 交互式删除过期 session
 3. **Transcript 重放**：从 JSONL 逐行读取重建 OutputTree
 4. **Subagent parent-child chain**：独立 JSONL 文件 + subpath 引用
@@ -57,9 +58,11 @@ Subagent 的 UI 节点混在主 session 的 `transcript_nodes` 里，靠 `agent_
 
 ```
 ~/.voidx/
-├── voidx.db                              # SQLite：索引 + 元数据 + 状态
+├── store/
+│   └── voidx.db                          # SQLite：全局配置 + 索引元数据（< 1 MB）
 ├── sessions/
 │   └── <session-id>/
+│       ├── messages.jsonl                # 对话消息（user/assistant/tool）
 │       ├── transcript.jsonl              # 主对话 transcript
 │       ├── context/
 │       │   └── <frame-id>.jsonl          # 上下文缓存帧（独立文件，不进 transcript）
@@ -67,13 +70,16 @@ Subagent 的 UI 节点混在主 session 的 `transcript_nodes` 里，靠 `agent_
 │       │   └── <agent-run-id>.jsonl      # subagent transcript
 │       └── file-history/
 │           └── <content-hash>@v<N>       # 文件修改版本快照
+├── settings.json                        # 全局用户配置
+└── transcript.log                       # 文本日志
 ```
 
 **原则**：
 
-- 大体积序列化数据（transcript 节点、context frame 消息、文件历史）走 JSONL/文件
-- 需要查询和关联的元数据走 SQLite
+- **SQLite 只存全局性数据**：model_profiles、session 索引、runtime state（每 session 单行）
+- **所有 session 级数据走 JSONL/文件**：messages、transcript、context frames、file-history
 - **context frame 和 transcript 是独立数据流**，不混进同一个 JSONL 文件
+- **DB 路径在 `~/.voidx/store/` 下**，与 session 文件目录分离
 
 ### 3.2 JSONL Transcript 格式
 
@@ -83,6 +89,7 @@ Subagent 的 UI 节点混在主 session 的 `transcript_nodes` 里，靠 `agent_
 
 | type | 用途 | 必选字段 | 替代现有 |
 |------|------|----------|----------|
+| `message` | 对话消息 | `role`, `content`, `tool_calls?`, `tool_call_id?`, `content_format?` | `messages` 表 INSERT |
 | `turn_start` | turn 开始 | `turn_id`, `timestamp`, `user_text` | `turns` 表 INSERT |
 | `turn_end` | turn 结束 | `turn_id`, `timestamp` | `turns` 表 UPDATE |
 | `node` | 新增 UI 节点 | `turn_id`, `node_id`, `node_type`, `header` | `transcript_nodes` INSERT |
@@ -94,9 +101,12 @@ Subagent 的 UI 节点混在主 session 的 `transcript_nodes` 里，靠 `agent_
 #### 示例
 
 ```jsonl
+{"type":"message","role":"user","content":"修复TODO固定框重复渲染","content_format":"text"}
 {"type":"turn_start","turn_id":0,"timestamp":"2026-06-09T07:23:50Z","user_text":"修复TODO固定框重复渲染"}
+{"type":"message","role":"assistant","content":"我来检查一下...","tool_calls":[{"id":"tc_1","name":"read","args":{"file_path":"src/todo.py"}}]}
 {"type":"node","turn_id":0,"node_id":0,"parent_node_id":null,"sort_order":0,"node_type":"assistant","header":"assistant","status":"running","metadata":{"tree_id":"a1b2"}}
 {"type":"node","turn_id":0,"node_id":1,"parent_node_id":0,"sort_order":1,"node_type":"tool_call","header":"Read file","tool_call_id":"tc_1","status":"done"}
+{"type":"message","role":"tool","content":"1\tclass TodoPanel...","tool_call_id":"tc_1"}
 {"type":"node_update","turn_id":0,"node_id":0,"status":"done","elapsed":1.2}
 {"type":"turn_end","turn_id":0,"timestamp":"2026-06-09T07:26:08Z"}
 {"type":"summary","turn_id":0,"content":"修复了 TodoUpdated 双写问题..."}
@@ -110,20 +120,43 @@ Subagent 的 UI 节点混在主 session 的 `transcript_nodes` 里，靠 `agent_
 
 ### 3.3 SQLite 保留的职责
 
-SQLite 只存索引和元数据，不再存大体积序列化数据。
+> **【Updated 2026-06-10】** SQLite 只存全局性配置和索引元数据，不再存任何 session 级数据。所有 session 级数据（messages、transcript、context frames）走 JSONL 文件。DB 路径从 `~/.voidx/voidx.db` 改为 `~/.voidx/store/voidx.db`。
 
 | 表 | 保留 | 变更 |
 |---|---|---|
-| `sessions` | ✅ | 不变 |
-| `messages` | ✅ | 不变（消息量小，查询频繁，需要 JOIN） |
-| `turns` | ✅ | 不变 |
-| `transcript_nodes` | ❌ 废弃 | 数据迁移到 JSONL，Phase 4 删除表 |
+| `sessions` | ✅ | 不变（索引元数据，用于 list/resume 查询） |
+| `messages` | ❌ 废弃 | 数据迁移到 `messages.jsonl`，Phase 4 删除表 |
+| `turns` | ❌ 废弃 | 数据迁移到 transcript.jsonl 的 `turn_start`/`turn_end` record，Phase 4 删除表 |
+| `transcript_nodes` | ❌ 废弃 | 数据迁移到 transcript.jsonl，Phase 4 删除表 |
 | `context_frames` | ✅ 瘦身 | 移除 `messages_json`，新增 `file_path` 指向 JSONL |
-| `session_runtime_state` | ✅ | 不变 |
-| `session_task_runs` | ✅ | 不变 |
-| `message_runtime_snapshots` | ✅ | 不变 |
+| `session_runtime_state` | ✅ | 已是 UPSERT（每 session 单行），不变 |
+| `session_task_runs` | ✅ | 已是 UPSERT（每 session 单行），不变 |
+| `message_runtime_snapshots` | ❌ 废弃 | 合并到 `session_runtime_state`，每 session 只保留最新一份，Phase 4 删除表 |
+| `model_profiles` | ✅ | 不变（全局配置） |
 
-> **【Updated 2026-06-10】** `messages` 表当前 7 MB，Phase 1-4 不变。长期需关注 `tool_calls` JSON 参数膨胀（单个 tool call args 可达数十 KB），后续可考虑大参数只存摘要、完整内容放 JSONL。
+#### DB 路径变更
+
+```python
+# store.py
+DATA_DIR = Path.home() / ".voidx"
+STORE_DIR = DATA_DIR / "store"  # 新增
+# DB 路径: STORE_DIR / "voidx.db"
+```
+
+迁移时自动将 `~/.voidx/voidx.db` 移动到 `~/.voidx/store/voidx.db`。
+
+#### message_runtime_snapshots 合并到 session_runtime_state
+
+当前 `message_runtime_snapshots` 按 `message_id` 存储每条消息的运行时快照，会无限累积。实际 resume 时只需要最新一份。合并到 `session_runtime_state` 表，新增以下列：
+
+```sql
+ALTER TABLE session_runtime_state ADD COLUMN intent_confidence REAL;
+ALTER TABLE session_runtime_state ADD COLUMN intent_source TEXT NOT NULL DEFAULT '';
+ALTER TABLE session_runtime_state ADD COLUMN intent_refined INTEGER NOT NULL DEFAULT 0;
+ALTER TABLE session_runtime_state ADD COLUMN available_tool_ids_json TEXT NOT NULL DEFAULT '[]';
+```
+
+`save_message_runtime_snapshot` 改为更新 `session_runtime_state` 的对应列，不再 INSERT 新行。
 
 #### context_frames 瘦身后的 schema
 
@@ -148,6 +181,18 @@ CREATE TABLE context_frames (
 ```
 
 `messages_json` 列移除。加载 context frame 时，先从 SQLite 查索引（prefix_hash、frame_hash），再从 `file_path` 指向的 JSONL 读取消息内容。
+
+#### messages.jsonl 格式
+
+每行一条消息，与原 `messages` 表字段一一对应：
+
+```jsonl
+{"type":"message","id":1,"role":"user","content":"修复TODO","content_format":"text","created_at":"2026-06-09T07:23:50Z"}
+{"type":"message","id":2,"role":"assistant","content":"我来检查...","tool_calls":[{"id":"tc_1","name":"read","args":{"file_path":"src/todo.py"}}],"created_at":"2026-06-09T07:23:51Z"}
+{"type":"message","id":3,"role":"tool","content":"1\tclass TodoPanel...","tool_call_id":"tc_1","created_at":"2026-06-09T07:23:52Z"}
+```
+
+加载消息时直接逐行读取 JSONL，无需 SQLite 查询。`id` 字段保留用于 compaction 时的 `delete_messages_through` 引用。
 
 ### 3.4 Transcript 重放
 
@@ -530,17 +575,21 @@ async def append_subagent_transcript(
 ### Phase 1：JSONL 写入层（双写，不破坏现有）
 
 - 新增 `src/voidx/memory/jsonl_store.py`
+- 修改 `session.py`：`save_message` 同时写 SQLite + `messages.jsonl`
 - 修改 `transcript_mixin.py`：`_persist_transcript_snapshot` 同时写 SQLite + JSONL
 - 修改 `context_frames.py`：`save_context_frame` 同时写 SQLite 索引 + JSONL 文件
 - 修改 `file_state.py`：write/edit/apply_patch 前保存文件版本快照
 - 新增 `src/voidx/memory/jsonl_replay.py`
 - **验证**：JSONL 文件与 SQLite 数据一致
 
-### Phase 2：JSONL 读取层
+### Phase 2：JSONL 读取层 + DB 路径迁移
 
+- 修改 `load_messages`：优先从 `messages.jsonl` 读取，fallback 到 SQLite
 - 修改 `_restore_transcript_snapshot`：优先从 JSONL 重放，fallback 到 SQLite
 - 修改 `load_context_frames`：从 JSONL 文件读取 messages，SQLite 只查索引
-- **验证**：重放结果与现有 SQLite 读取一致
+- 修改 `store.py`：DB 路径改为 `~/.voidx/store/voidx.db`，自动迁移旧路径
+- 修改 `runtime_state.py`：`message_runtime_snapshots` 合并到 `session_runtime_state`
+- **验证**：重放结果与现有 SQLite 读取一致，DB 路径迁移无数据丢失
 
 ### Phase 3：命令体系 + 清理
 
@@ -549,12 +598,15 @@ async def append_subagent_transcript(
 - 旧命令 `/list` → `/session list`，`/clear` → `/session new` 别名
 - **验证**：命令交互正确，清理逻辑安全
 
-### Phase 4：移除 SQLite 大字段
+### Phase 4：移除 SQLite session 级表
 
+- `messages` 表标记废弃，不再写入
+- `turns` 表标记废弃，不再写入
 - `transcript_nodes` 表标记废弃，不再写入
+- `message_runtime_snapshots` 表标记废弃，不再写入
 - `context_frames` 移除 `messages_json` 列，改用 `file_path`
 - 提供一次性迁移脚本将旧数据转为 JSONL
-- **验证**：全量测试通过，DB 体积显著缩小
+- **验证**：全量测试通过，DB 体积 < 1 MB
 
 ## 5. 文件变更清单
 
@@ -563,11 +615,14 @@ async def append_subagent_transcript(
 | `src/voidx/memory/jsonl_store.py` | 新增 | JSONL append-only 写入器（per-session 锁 + async IO） |
 | `src/voidx/memory/jsonl_replay.py` | 新增 | JSONL 重放器（两遍扫描处理 summary） |
 | `src/voidx/memory/cleanup.py` | 新增 | Session 清理策略 |
+| `src/voidx/memory/session.py` | 修改 | `save_message` → JSONL append，`load_messages` → JSONL 读取 |
 | `src/voidx/memory/transcript.py` | 修改 | 新增 `append_transcript_jsonl()` |
 | `src/voidx/memory/context_frames.py` | 修改 | `messages_json` → `file_path` |
-| `src/voidx/memory/store.py` | 修改 | schema 新增 `context_frames.file_path` |
+| `src/voidx/memory/runtime_state.py` | 修改 | `message_runtime_snapshots` 合并到 `session_runtime_state` |
+| `src/voidx/memory/store.py` | 修改 | DB 路径改为 `~/.voidx/store/`，schema 变更 |
 | `src/voidx/tools/file_state.py` | 修改 | 新增 `save_file_version()` 文件版本快照 |
 | `src/voidx/agent/graph/transcript_mixin.py` | 修改 | 双写 + JSONL 优先读取 |
+| `src/voidx/agent/graph/turn_runner.py` | 修改 | `save_message` → JSONL append |
 | `src/voidx/agent/slash/session.py` | 修改 | `/session` 命令体系 |
 | `src/voidx/agent/slash/handler.py` | 修改 | 注册 `/session` 子命令 |
 | `src/voidx/ui/commands.py` | 修改 | `/session` 命令注册 |
@@ -577,27 +632,32 @@ async def append_subagent_transcript(
 
 | 风险 | 缓解 |
 |------|------|
-| JSONL 文件损坏 | 逐行解析，跳过坏行；SQLite 作为 fallback |
+| JSONL 文件损坏 | 逐行解析，跳过坏行；Phase 1-2 双写期间 SQLite 作为 fallback |
 | 迁移期间数据不一致 | Phase 1-2 双写，确保至少一份数据完整 |
 | 大 session JSONL 重放性能 | 两遍扫描 + 懒加载：只重放最近 N 个 turn，旧 turn 用 summary |
 | `/session del` 误删 | 交互确认 + 预览 + 只删过期 session |
 | 并发写入 JSONL | per-session asyncio.Lock + `asyncio.to_thread()` 避免阻塞事件循环 |
 | 旧版本无法读取新格式 | Phase 1-2 双写期间保持 SQLite 完整，旧版本仍可读 |
 | 文件版本历史占用磁盘 | 随 session 删除一起清理；单个快照通常 < 100 KB |
-| `messages` 表长期膨胀 | Phase 1-4 不变；后续可考虑 `tool_calls` 大参数外置到 JSONL |
+| DB 路径迁移 | 自动检测旧路径 `~/.voidx/voidx.db`，移动到 `~/.voidx/store/voidx.db` |
+| 多进程写锁竞争 | 重构后 SQLite 只写小行（session 元数据、runtime state），竞争基本消除 |
 
 ## 7. 预期收益
 
 | 指标 | 当前 | 重构后 |
 |------|------|--------|
-| DB 文件大小 | 87 MB（清理前 906 MB） | < 10 MB（只有索引和元数据） |
-| DB 膨胀主因 | `context_frames.messages_json` 53 MB (61%) | 移除，改用 JSONL 文件 |
+| DB 文件大小 | 87 MB（清理前 906 MB） | < 1 MB（只有全局配置和索引） |
+| DB 膨胀主因 | `context_frames.messages_json` 53 MB (61%) + `messages` 7 MB (8%) | 全部移出，改用 JSONL 文件 |
+| DB 路径 | `~/.voidx/voidx.db` | `~/.voidx/store/voidx.db` |
+| Message 存储 | SQLite `messages` 表 | `messages.jsonl` append-only |
 | Transcript 持久化 | DELETE + INSERT 全量 | Append-only 增量 |
 | Context frame 存储 | SQLite BLOB | JSONL 文件，按需加载 |
+| Runtime state | `message_runtime_snapshots` 累积 | 合并到 `session_runtime_state`，每 session 单行替换 |
 | Session 清理 | 手动操作 DB | `/session del` 交互式 |
 | Subagent 隔离 | 混在主 transcript | 独立 JSONL + parent-child chain |
 | 文件版本历史 | 无 | `file-history/` 快照，支持后续 undo |
 | 崩溃安全 | WAL 但全量替换风险 | Append-only + fsync，单行损坏可跳过 |
+| 多进程写锁竞争 | 严重（context_frame 0.5MB/次） | 基本消除（SQLite 只写小行） |
 
 ## 8. 与 Claude Code 存储架构对比
 
