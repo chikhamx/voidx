@@ -184,16 +184,17 @@ def test_openai_compatible_reasoning_uses_nested_format():
     assert openrouter.extra_body == {"reasoning": {"effort": "none"}}
 
 
-def test_custom_provider_reasoning_uses_nested_format():
-    """Custom providers (not in known list) with openai protocol get reasoning via extra_body."""
+def test_custom_provider_reasoning_not_auto_injected():
+    """Custom providers with openai protocol do NOT get reasoning params
+    auto-injected — third-party relays may not support them."""
     custom = create_chat_model(
         "test-key",
         ModelConfig(provider="my-relay", model="gpt-5.5", reasoning_effort="high", protocol="openai"),
     )
     assert custom.reasoning_effort is None
-    assert custom.extra_body == {"reasoning": {"effort": "high"}}
+    assert custom.extra_body is None
 
-    # Custom provider with non-reasoning model: no params
+    # Custom provider with non-reasoning model: also no params
     custom_plain = create_chat_model(
         "test-key",
         ModelConfig(provider="my-relay", model="gpt-4o", reasoning_effort="medium", protocol="openai"),
@@ -201,13 +202,46 @@ def test_custom_provider_reasoning_uses_nested_format():
     assert custom_plain.reasoning_effort is None
     assert custom_plain.extra_body is None
 
-    # Custom provider with reasoning off
+    # Custom provider with reasoning off: also no params
     custom_off = create_chat_model(
         "test-key",
         ModelConfig(provider="my-relay", model="gpt-5.5-mini", reasoning_effort="off", protocol="openai"),
     )
     assert custom_off.reasoning_effort is None
-    assert custom_off.extra_body == {"reasoning": {"effort": "none"}}
+    assert custom_off.extra_body is None
+
+
+def test_custom_provider_strips_stainless_headers():
+    """Third-party relays get x-stainless-* headers cleared to avoid 403 blocks."""
+    custom = create_chat_model(
+        "test-key",
+        ModelConfig(provider="my-relay", model="gpt-4o", protocol="openai"),
+    )
+    assert custom.default_headers is not None
+    assert custom.default_headers.get("x-stainless-lang") == ""
+    assert custom.default_headers.get("User-Agent") == "voidx/1.0"
+
+    # Official openai provider keeps default headers
+    official = create_chat_model(
+        "test-key",
+        ModelConfig(provider="openai", model="gpt-4o", protocol="openai"),
+    )
+    assert official.default_headers is None or "x-stainless-lang" not in (official.default_headers or {})
+
+    # Official openrouter provider keeps default headers
+    openrouter = create_chat_model(
+        "test-key",
+        ModelConfig(provider="openrouter", model="gpt-4o", protocol="openai"),
+    )
+    assert openrouter.default_headers is None or "x-stainless-lang" not in (openrouter.default_headers or {})
+
+    # DeepSeek protocol custom provider also strips headers
+    ds_custom = create_chat_model(
+        "test-key",
+        ModelConfig(provider="my-relay", model="deepseek-r1", protocol="deepseek"),
+    )
+    assert ds_custom.default_headers is not None
+    assert ds_custom.default_headers.get("x-stainless-lang") == ""
 
 
 def test_typex_reasoning_uses_zhipu_thinking_format():

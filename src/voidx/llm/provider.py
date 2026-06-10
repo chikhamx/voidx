@@ -24,6 +24,32 @@ from voidx.config import ModelConfig
 
 # ── protocol resolution ───────────────────────────────────────────────────
 
+_OFFICIAL_OPENAI_PROVIDERS = {"openai", "openrouter"}
+
+_STAINLESS_HEADERS_TO_STRIP = {
+    "x-stainless-lang",
+    "x-stainless-os",
+    "x-stainless-arch",
+    "x-stainless-runtime",
+    "x-stainless-runtime-version",
+    "x-stainless-package-version",
+    "x-stainless-async",
+    "x-stainless-raw-response",
+    "x-stainless-retry-count",
+}
+
+
+def _strip_stainless_headers(provider: str) -> dict[str, str]:
+    """Return headers that clear OpenAI SDK fingerprint for third-party relays.
+
+    Many third-party relays block requests carrying x-stainless-* headers
+    to prevent unmodified SDK access.  Official providers are unaffected.
+    """
+    if provider in _OFFICIAL_OPENAI_PROVIDERS:
+        return {}
+    return {k: "" for k in _STAINLESS_HEADERS_TO_STRIP} | {"User-Agent": "voidx/1.0"}
+
+
 _PROVIDER_PROTOCOLS: dict[str, str] = {
     "anthropic": "anthropic",
     "openai": "openai",
@@ -324,14 +350,10 @@ def _openai_reasoning_kwargs(config: ModelConfig) -> dict:
             return {}
         return {"extra_body": {"reasoning": {"effort": effort}}}
 
-    # Custom providers with openai protocol: inject reasoning for known reasoning models
-    if _supports_openai_reasoning(config.model):
-        if effort is None:
-            return {}
-        if effort == "none" and not config.model.lower().startswith("gpt-5"):
-            effort = "low"
-        return {"extra_body": {"reasoning": {"effort": effort}}}
-
+    # Custom providers with openai protocol: do not inject reasoning
+    # parameters automatically — third-party relays may not support them.
+    # Users can set reasoning_effort=None to skip, or a concrete value
+    # if their relay supports it.
     return {}
 
 
@@ -377,6 +399,9 @@ def create_chat_model(api_key: str, config: ModelConfig) -> BaseChatModel:
         )
         if base_url:
             kwargs["base_url"] = base_url
+        headers = _strip_stainless_headers(config.provider)
+        if headers:
+            kwargs["default_headers"] = headers
         kwargs.update(_reasoning_kwargs(config, protocol))
         return DeepSeekChatOpenAI(**kwargs)
 
@@ -389,6 +414,9 @@ def create_chat_model(api_key: str, config: ModelConfig) -> BaseChatModel:
         )
         if base_url:
             kwargs["base_url"] = base_url
+        headers = _strip_stainless_headers(config.provider)
+        if headers:
+            kwargs["default_headers"] = headers
         kwargs.update(_reasoning_kwargs(config, protocol))
         return ChatOpenAI(**kwargs)
 

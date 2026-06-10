@@ -1,6 +1,6 @@
 # 代码模块化整改分阶段设计
 
-> **Status: Pending**
+> **Status: In Progress**
 > **Date:** 2026-06-10
 > **Source:** `docs/reviews/2026-06-09-full-code-review.md`
 
@@ -16,7 +16,7 @@
 
 ## Current Snapshot
 
-以下是 2026-06-10 抽查到的当前工作区状态，用于校正文档中的旧数字：
+以下是 2026-06-10 启动整改前抽查到的工作区状态，用于校正文档中的旧数字：
 
 | 文件 | 当前行数 | 说明 |
 |------|----------|------|
@@ -281,6 +281,21 @@ class SlashHost(Protocol):
 - **重构 `ui/output/tree.py`。** tree 同时承担结构和渲染映射，耦合有实际业务原因。需要先明确新边界再动。
 - **修 `lsp/` 包内循环。** 这是整理项，风险低但收益也低，可排在架构主线之后。
 
+## Implementation Progress
+
+- 2026-06-10: Phase 1A completed. `ApplyPatchTool` moved to `src/voidx/tools/apply_patch.py`; shared file mtime/staleness helpers moved to `src/voidx/tools/file_state.py`.
+- 2026-06-10: Phase 1B completed. `UiEventBus` moved to `src/voidx/ui/output/events/bus.py`; event consumers moved to `src/voidx/ui/output/events/consumers.py`; `events/__init__.py` now provides public re-exports and the `ui_events` singleton.
+- 2026-06-10: Phase 1C completed. `tests/test_pure_tui.py` was removed and split into six focused `tests/test_tui_*.py` files plus `tests/tui_helpers.py`.
+
+Validated with:
+
+- `.venv/bin/python -m compileall -q src/voidx/tools src/voidx/ui/output/events`
+- `.venv/bin/python -m pytest tests/test_tools/test_basic.py -v`
+- `.venv/bin/python -m pytest tests/test_ui_events.py -v`
+- `.venv/bin/python -m pytest tests/test_agent/test_stream_llm.py -v`
+- `.venv/bin/python -m pytest tests/test_agent/test_core_flow.py -v`
+- `.venv/bin/python -m pytest tests/test_tui_*.py -v`
+
 ## Rollout Order
 
 推荐按以下 PR 顺序执行：
@@ -297,8 +312,6 @@ class SlashHost(Protocol):
 
 ## Open Questions
 
-- Phase 1C 的测试拆分是否应保留一个 `tests/test_pure_tui.py` 兼容入口，还是完全删除旧文件。
 - `AgentUiPort` 是否属于 `agent/graph/contracts.py`，还是应放在 `runtime/` 下作为跨层协议。
 - Slash handler 应优先使用 `Protocol`，还是直接引入不可变 `SlashContext` 加少量 callback。
 - TUI renderer 拆分时，是否同步引入更细的 render state dataclass，还是只做函数提取。
-
