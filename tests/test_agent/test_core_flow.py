@@ -41,6 +41,13 @@ def _graph(tmp_path):
     return VoidXGraph(cfg, api_key=None)
 
 
+def _tree_nodes(root):
+    nodes = [root]
+    for child in root.children:
+        nodes.extend(_tree_nodes(child))
+    return nodes
+
+
 def test_agent_tool_result_preview_preserves_short_output():
     assert _agent_result_preview("short child conclusion\nsecond line") == "short child conclusion\nsecond line"
 
@@ -1265,14 +1272,18 @@ async def test_execute_tools_emits_todo_updated_node(tmp_path):
         })
         await ui_events.drain()
 
-        assistant = next(node for node in test_dock.tree.root.children if node.node_type == "assistant")
         todo_state = test_dock.todo_state()
+        tool_nodes = [
+            node
+            for node in _tree_nodes(test_dock.tree.root)
+            if node.node_type in {"tool_call", "tool_result"}
+        ]
 
         assert todo_state is not None
         assert [(item.content, item.status) for item in todo_state.items] == [("wire event", "in_progress")]
         assert todo_state.summary == "0/1 done · 1 active · 0 pending"
         assert not any(node.node_type == "todo" for node in test_dock.tree.root.children)
-        assert not any(node.node_type == "todo" for node in assistant.children)
+        assert tool_nodes == []
         assert [message.tool_call_id for message in result["messages"] if isinstance(message, ToolMessage)] == ["call_todo"]
     finally:
         await ui_events.stop()

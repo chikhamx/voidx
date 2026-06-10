@@ -51,21 +51,18 @@ async def stream_llm(
     renderer.start()
 
     try:
-        async for chunk in model.astream(_sanitize_messages_for_replay(messages)):
+        async for raw_chunk in model.astream(_sanitize_messages_for_replay(messages)):
+            thinking = extract_thinking(raw_chunk, protocol)
+            content = _stream_visible_content(raw_chunk.content, thinking)
+            chunk = (
+                raw_chunk
+                if content == raw_chunk.content
+                else raw_chunk.model_copy(update={"content": content})
+            )
             chunks.append(chunk)
-            content = chunk.content
-            if isinstance(content, str) and content:
-                if _should_render_text_chunk(content):
-                    renderer.feed_text(content)
-            elif isinstance(content, list):
-                for item in content:
-                    if isinstance(item, dict) and item.get("type") == "text":
-                        text = item.get("text", "")
-                        if isinstance(text, str) and _should_render_text_chunk(text):
-                            renderer.feed_text(text)
-            thinking = extract_thinking(chunk, protocol)
             if thinking:
                 renderer.feed_thinking(thinking)
+            _render_stream_content(renderer, content)
     except Exception:
         renderer.discard()
         raise
@@ -221,6 +218,56 @@ def _sanitize_ai_content_for_replay(content: object) -> object:
 
     flush_text()
     return blocks
+
+
+def _stream_visible_content(content: object, thinking: str) -> object:
+    if isinstance(content, str):
+        return _strip_duplicate_thinking_text(content, thinking)
+    if not isinstance(content, list):
+        return content
+
+    blocks: list[object] = []
+    for item in content:
+        if isinstance(item, dict) and item.get("type") in _REPLAY_UNSAFE_BLOCK_TYPES:
+            continue
+        if isinstance(item, str):
+            visible = _strip_duplicate_thinking_text(item, thinking)
+            if visible:
+                blocks.append(visible)
+            continue
+        if isinstance(item, dict) and item.get("type") == "text":
+            text = item.get("text", "")
+            if isinstance(text, str):
+                visible = _strip_duplicate_thinking_text(text, thinking)
+                if visible:
+                    updated = dict(item)
+                    updated["text"] = visible
+                    blocks.append(updated)
+                continue
+        blocks.append(item)
+
+    return blocks if blocks else ""
+
+
+def _strip_duplicate_thinking_text(text: str, thinking: str) -> str:
+    if not text or not thinking:
+        return text
+    if text == thinking or text.strip() == thinking.strip():
+        return ""
+    return text
+
+
+def _render_stream_content(renderer: Any, content: object) -> None:
+    if isinstance(content, str) and content:
+        if _should_render_text_chunk(content):
+            renderer.feed_text(content)
+        return
+    if isinstance(content, list):
+        for item in content:
+            if isinstance(item, dict) and item.get("type") == "text":
+                text = item.get("text", "")
+                if isinstance(text, str) and _should_render_text_chunk(text):
+                    renderer.feed_text(text)
 
 
 def _is_empty_content(content: object) -> bool:

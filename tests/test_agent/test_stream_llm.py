@@ -52,6 +52,15 @@ class FakeUsageStreamingModel:
         )
 
 
+class FakeDuplicatedReasoningStreamingModel:
+    async def astream(self, messages):
+        yield AIMessageChunk(
+            content="622",
+            additional_kwargs={"reasoning_content": "622"},
+        )
+        yield AIMessageChunk(content="final answer")
+
+
 class FakeDsmlStreamingModel:
     def __init__(self) -> None:
         self.messages = None
@@ -132,6 +141,17 @@ async def test_stream_llm_uses_protocol_for_thinking_extraction():
     assert renderer.discarded is False
     assert renderer.text == ["answer"]
     assert renderer.thinking == ["think"]
+
+
+@pytest.mark.asyncio
+async def test_stream_llm_hides_duplicated_reasoning_content():
+    renderer = FakeRenderer()
+
+    msg = await _stream_llm(FakeDuplicatedReasoningStreamingModel(), [], renderer, "openai")
+
+    assert msg.content == "final answer"
+    assert renderer.text == ["final answer"]
+    assert renderer.thinking == ["622"]
 
 
 @pytest.mark.asyncio

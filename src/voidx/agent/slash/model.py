@@ -28,7 +28,7 @@ class SlashModelMixin:
                 ui.error("Provider name is required.")
                 return
             new_provider = new_provider.strip()
-            protocol_choices = ["openai", "anthropic"]
+            protocol_choices = ["openai", "anthropic", "deepseek"]
             proto_idx = await _select_from_list(self._g._app, "Protocol", protocol_choices)
             if proto_idx is None:
                 ui.print("[dim]Cancelled.[/dim]")

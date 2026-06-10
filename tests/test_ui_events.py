@@ -52,6 +52,13 @@ def _rich_plain(line: str) -> str:
     return Text.from_markup(_plain(line)).plain
 
 
+def _tree_nodes(root):
+    nodes = [root]
+    for child in root.children:
+        nodes.extend(_tree_nodes(child))
+    return nodes
+
+
 def test_dock_event_consumer_rejects_unsupported_event(isolated_dock):
     consumer = DockEventConsumer(isolated_dock)
 
@@ -394,17 +401,31 @@ async def test_todo_updated_sets_pinned_state_until_committed(isolated_dock):
             ],
             summary="0/10 done · 0 active · 10 pending",
         ))
+        await bus.emit(ToolResultAppended(
+            tool_call_id="todo_call",
+            text="Todo: 0/10 done · 0 active · 10 pending",
+        ))
+        await bus.emit(ToolFinished(
+            tool_call_id="todo_call",
+            label="Todo",
+            elapsed=0.1,
+            ok=True,
+        ))
         await bus.drain()
 
-        assistant = next(node for node in isolated_dock.tree.root.children if node.node_type == "assistant")
         todo_nodes = [node for node in isolated_dock.tree.root.children if node.node_type == "todo"]
+        tool_nodes = [
+            node
+            for node in _tree_nodes(isolated_dock.tree.root)
+            if node.node_type in {"tool_call", "tool_result"}
+        ]
         state = isolated_dock.todo_state()
 
         assert state is not None
         assert state.summary == "0/10 done · 0 active · 10 pending"
         assert len(state.items) == 10
         assert todo_nodes == []
-        assert not any(node.node_type == "todo" for node in assistant.children)
+        assert tool_nodes == []
 
         await bus.emit(TodoCommitted())
         await bus.drain()
