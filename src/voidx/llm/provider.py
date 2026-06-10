@@ -34,7 +34,6 @@ _STAINLESS_HEADERS_TO_STRIP = {
     "x-stainless-runtime-version",
     "x-stainless-package-version",
     "x-stainless-async",
-    "x-stainless-raw-response",
     "x-stainless-retry-count",
 }
 
@@ -348,10 +347,15 @@ def _openai_reasoning_kwargs(config: ModelConfig) -> dict:
             return {}
         return {"extra_body": {"reasoning": {"effort": effort}}}
 
-    # Custom providers with openai protocol: do not inject reasoning
-    # parameters automatically — third-party relays may not support them.
-    # Users can set reasoning_effort=None to skip, or a concrete value
-    # if their relay supports it.
+    # Custom providers with openai protocol: inject reasoning for known
+    # reasoning models, same as official openai.
+    if _supports_openai_reasoning(config.model):
+        if effort is None:
+            return {}
+        if effort == "none" and not config.model.lower().startswith("gpt-5"):
+            effort = "low"
+        return {"extra_body": {"reasoning": {"effort": effort}}}
+
     return {}
 
 

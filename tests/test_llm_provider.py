@@ -184,17 +184,16 @@ def test_openai_compatible_reasoning_uses_nested_format():
     assert openrouter.extra_body == {"reasoning": {"effort": "none"}}
 
 
-def test_custom_provider_reasoning_not_auto_injected():
-    """Custom providers with openai protocol do NOT get reasoning params
-    auto-injected — third-party relays may not support them."""
+def test_custom_provider_reasoning_uses_nested_format():
+    """Custom providers with openai protocol get reasoning via extra_body for reasoning models."""
     custom = create_chat_model(
         "test-key",
         ModelConfig(provider="my-relay", model="gpt-5.5", reasoning_effort="high", protocol="openai"),
     )
     assert custom.reasoning_effort is None
-    assert custom.extra_body is None
+    assert custom.extra_body == {"reasoning": {"effort": "high"}}
 
-    # Custom provider with non-reasoning model: also no params
+    # Custom provider with non-reasoning model: no params
     custom_plain = create_chat_model(
         "test-key",
         ModelConfig(provider="my-relay", model="gpt-4o", reasoning_effort="medium", protocol="openai"),
@@ -202,13 +201,13 @@ def test_custom_provider_reasoning_not_auto_injected():
     assert custom_plain.reasoning_effort is None
     assert custom_plain.extra_body is None
 
-    # Custom provider with reasoning off: also no params
+    # Custom provider with reasoning off
     custom_off = create_chat_model(
         "test-key",
         ModelConfig(provider="my-relay", model="gpt-5.5-mini", reasoning_effort="off", protocol="openai"),
     )
     assert custom_off.reasoning_effort is None
-    assert custom_off.extra_body is None
+    assert custom_off.extra_body == {"reasoning": {"effort": "none"}}
 
 
 def test_custom_provider_strips_stainless_headers():
@@ -220,6 +219,8 @@ def test_custom_provider_strips_stainless_headers():
     assert custom.default_headers is not None
     assert custom.default_headers.get("x-stainless-lang") == ""
     assert custom.default_headers.get("User-Agent") == "voidx/1.0"
+    # x-stainless-raw-response must NOT be cleared — it controls SDK response type
+    assert "x-stainless-raw-response" not in custom.default_headers
 
     # Official openai provider keeps default headers
     official = create_chat_model(
