@@ -48,6 +48,7 @@ where = ["src"]
 ]
 "voidx.data" = [
     "intent_classifier.json",
+    "templates/*.md",
 ]
 
 [tool.pytest.ini_options]
