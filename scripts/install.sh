@@ -159,6 +159,19 @@ _ensure_path_and_cleanup() {
             fi
         fi
 
+        # npm global
+        if command -v npm &>/dev/null; then
+            NPM_VOIDX=$(npm list -g @chikhamx/voidx 2>/dev/null | grep '@chikhamx/voidx@' || true)
+            if [ -n "${NPM_VOIDX}" ]; then
+                warn "正在卸载 npm 安装的 voidx…"
+                if npm uninstall -g @chikhamx/voidx 2>/dev/null; then
+                    ok "已卸载 npm 安装的 voidx"
+                else
+                    err "卸载失败，请手动执行: npm uninstall -g @chikhamx/voidx"
+                fi
+            fi
+        fi
+
         # Other locations
         case "${FIRST_VOIDX}" in
             /usr/local/bin/voidx|/opt/homebrew/bin/voidx)
