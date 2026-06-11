@@ -8,6 +8,8 @@ from voidx.runtime.task_state import (
     TaskRun,
     TaskRunStatus,
     TaskState,
+    TodoRunItem,
+    TodoRunState,
     ToolStatePatch,
     resolve_turn_intent,
 )
@@ -31,6 +33,8 @@ __all__ = [
     "TaskRun",
     "TaskRunStatus",
     "TaskState",
+    "TodoRunItem",
+    "TodoRunState",
     "ToolStatePatch",
     "reset_ui_sink",
     "resolve_turn_intent",

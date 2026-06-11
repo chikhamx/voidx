@@ -12,7 +12,9 @@ from typing import Any, Iterable
 from langchain_core.messages import BaseMessage, HumanMessage, SystemMessage, ToolMessage
 from pydantic import BaseModel, ConfigDict, Field
 
+from voidx.agent.todo_state import sanitize_todo_replay_messages
 from voidx.agent.message_rows import RowMessageCacheEntry
+from voidx.agent.task_state import TodoRunState
 from voidx.config import ApprovalReviewer, Config, UserProfile
 from voidx.runtime.intent import InteractionMode, TaskIntent, infer_task_intent
 from voidx.skills.context import (
@@ -121,6 +123,8 @@ class ContextCompiler:
             semantic_messages,
             current_user_index,
         )
+        semantic_messages = sanitize_todo_replay_messages(semantic_messages)
+        current_user_index = _last_user_index(semantic_messages)
 
         system_content = self.context.render_system()
         cached_system = self.context.system_message
@@ -536,6 +540,35 @@ def _render_envelope(envelope: RuntimeEnvelope) -> str:
     if tone:
         lines.append(f"- User tone: {tone}")
     return "\n".join(lines)
+
+
+def _coerce_todo_run_state(value: TodoRunState | dict | None) -> TodoRunState | None:
+    if value is None:
+        return None
+    if isinstance(value, TodoRunState):
+        return value
+    if isinstance(value, dict):
+        try:
+            return TodoRunState.model_validate(value)
+        except ValueError:
+            return None
+    return None
+
+
+def _render_todo_run_state(state: TodoRunState) -> str:
+    lines = [state.summary]
+    for item in state.items:
+        lines.append(f"- {item.status}: {item.content}")
+    return "\n".join(line for line in lines if line.strip())
+
+
+def current_todo_context_message(todo_state: TodoRunState | dict | None) -> HumanMessage | None:
+    state = _coerce_todo_run_state(todo_state)
+    if state is None or not state.items:
+        return None
+    return HumanMessage(content=_render_sections([
+        ContextSection(name="Current Todo", content=_render_todo_run_state(state)),
+    ]))
 
 
 _LANGUAGE_LABELS = {

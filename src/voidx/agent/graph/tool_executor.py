@@ -14,7 +14,8 @@ from langchain_core.messages import AIMessage, ToolMessage
 from voidx.diffing import diff_stat
 from voidx.agent.graph.runtime import current_parent_tool_call_id
 from voidx.agent.graph.todo_events import todo_updated_event
-from voidx.agent.task_state import ToolStatePatch
+from voidx.agent.todo_state import apply_todo_state_to_host, todo_run_state_from_result
+from voidx.agent.task_state import TodoRunState, ToolStatePatch
 from voidx.agent.tool_messages import sanitize_tool_message_content
 from voidx.workflow.runtime import WorkflowRunState, WorkflowRunStatus, advance_workflow_states
 from voidx.tools.base import ToolContext, UserInteraction, UserResponse
@@ -26,6 +27,7 @@ from voidx.ui.output.events.schema import (
     ToolFinished,
     ToolResultAppended,
     ToolStarted,
+    WarningAppended,
 )
 
 if TYPE_CHECKING:
@@ -39,9 +41,10 @@ AGENT_RESULT_PREVIEW_CHARS = 1200
 
 @dataclass
 class _ExecutedTool:
-    message: ToolMessage
+    message: ToolMessage | None
     result: object
     tool_call: dict
+    todo_state: TodoRunState | None = None
 
 
 ToolResultOk = Callable[[object], bool]
@@ -107,6 +110,8 @@ class GraphToolExecutor:
             if not update:
                 return
             state_update.update(update)
+            if "todo_state" in update:
+                apply_todo_state_to_host(host, update.get("todo_state"))
             if "task_intent" in update:
                 runtime_task_intent = update.get("task_intent") or "chat"
             if "pending_approval" in update:
@@ -184,10 +189,17 @@ class GraphToolExecutor:
             elif ok:
                 host._clear_failure_check(cid)
 
+            todo_state = todo_run_state_from_result(result) if tid == "todo" and ok else None
             if host._ui.via_events() and tid == "todo":
                 todo_event = todo_updated_event(result)
                 if todo_event is not None:
                     await host._ui.events.emit(todo_event)
+                elif ok:
+                    await host._ui.events.emit(WarningAppended(
+                        message="Todo update ignored: tool returned malformed metadata.",
+                    ))
+            elif tid == "todo" and ok and todo_state is None:
+                host._ui.ui.warn("Todo update ignored: tool returned malformed metadata.")
 
             if host._ui.via_events():
                 await host._ui.events.emit(ToolFinished(
@@ -236,14 +248,11 @@ class GraphToolExecutor:
                 else:
                     host._ui.ui.tool_result(output)
 
-            return _ExecutedTool(
-                message=ToolMessage(
-                    content=sanitize_tool_message_content(result.output, workspace=ctx.workspace),
-                    tool_call_id=cid,
-                ),
-                result=result,
-                tool_call=tc,
+            message = None if tid == "todo" else ToolMessage(
+                content=sanitize_tool_message_content(result.output, workspace=ctx.workspace),
+                tool_call_id=cid,
             )
+            return _ExecutedTool(message=message, result=result, tool_call=tc, todo_state=todo_state)
 
         async def execute_approved(approved: list[dict], *, serial: bool = False) -> list[_ExecutedTool]:
             if not approved:
@@ -365,7 +374,7 @@ class GraphToolExecutor:
             for index, tc in enumerate(tool_calls)
             if tc.get("id", "")
         }
-        tool_messages = [item.message for item in executed] + denied_msgs + blocked_msgs
+        tool_messages = [item.message for item in executed if item.message is not None] + denied_msgs + blocked_msgs
         tool_messages.sort(key=lambda msg: original_order.get(msg.tool_call_id, len(original_order)))
         return {
             "messages": tool_messages,
@@ -394,6 +403,12 @@ def _state_update_from_executed_tools(
     merged_workflow_runs = _merge_workflow_runs_for_state(current_workflow_runs)
     workflow_runs_changed = False
     for item in executed:
+        if item.tool_call.get("name") == "todo" and item.todo_state is not None:
+            if item.todo_state.items:
+                update["todo_state"] = item.todo_state.model_dump(mode="json")
+            else:
+                update["todo_state"] = None
+
         metadata = getattr(item.result, "metadata", {}) or {}
         raw = metadata.get("state_patch")
         if raw is None and isinstance(metadata.get("on_intent"), dict):

@@ -12,6 +12,7 @@ sys.path.insert(0, str(Path(__file__).parent.parent.parent / "src"))
 from voidx.agent.graph.streaming import stream_llm as _stream_llm
 from voidx.agent.graph import VoidXGraph
 from voidx.agent.graph.convergence import is_step_hint_message
+from voidx.agent.task_state import TodoRunState
 from voidx.config import Config, ModelConfig
 from voidx.llm.compaction import CompactionSelection
 from voidx.llm.message_markers import is_guidance_message
@@ -230,6 +231,67 @@ async def test_stream_llm_repairs_missing_tool_results_before_replay():
 
 
 @pytest.mark.asyncio
+async def test_stream_llm_strips_todo_tool_call_before_repair():
+    renderer = FakeRenderer()
+    model = FakeStreamingModel()
+
+    await _stream_llm(
+        model,
+        [
+            HumanMessage(content="hi"),
+            AIMessage(
+                content="",
+                tool_calls=[{"name": "todo", "args": {}, "id": "call_todo", "type": "tool_call"}],
+            ),
+            HumanMessage(content="next"),
+        ],
+        renderer,
+        "anthropic",
+    )
+
+    assert [type(message) for message in model.messages] == [HumanMessage, HumanMessage]
+    assert [message.content for message in model.messages] == ["hi", "next"]
+
+
+@pytest.mark.asyncio
+async def test_stream_llm_preserves_non_todo_call_in_mixed_batch():
+    renderer = FakeRenderer()
+    model = FakeStreamingModel()
+
+    await _stream_llm(
+        model,
+        [
+            HumanMessage(content="hi"),
+            AIMessage(
+                content=[
+                    {"type": "tool_use", "id": "call_todo", "name": "todo", "input": {}},
+                    {"type": "tool_use", "id": "call_read", "name": "read", "input": {}},
+                ],
+                tool_calls=[
+                    {"name": "todo", "args": {}, "id": "call_todo", "type": "tool_call"},
+                    {"name": "read", "args": {}, "id": "call_read", "type": "tool_call"},
+                ],
+            ),
+            ToolMessage(content="read output", tool_call_id="call_read"),
+            HumanMessage(content="next"),
+        ],
+        renderer,
+        "anthropic",
+    )
+
+    replay_ai = model.messages[1]
+    assert isinstance(replay_ai, AIMessage)
+    assert [call["id"] for call in replay_ai.tool_calls] == ["call_read"]
+    assert replay_ai.content == [{"type": "tool_use", "id": "call_read", "name": "read", "input": {}}]
+    assert isinstance(model.messages[2], ToolMessage)
+    assert model.messages[2].tool_call_id == "call_read"
+    assert not any(
+        isinstance(message, ToolMessage) and message.tool_call_id == "call_todo"
+        for message in model.messages
+    )
+
+
+@pytest.mark.asyncio
 async def test_stream_llm_parses_dsml_text_tool_calls():
     renderer = FakeRenderer()
 
@@ -324,6 +386,45 @@ async def test_call_llm_resolves_protocol_for_mimo_provider(tmp_path, monkeypatc
 
     assert result["step_count"] == 1
     assert result["messages"][0].content == "answer"
+
+
+@pytest.mark.asyncio
+async def test_call_llm_injects_current_todo_runtime_context(tmp_path, monkeypatch):
+    import voidx.agent.graph.core as graph_module
+
+    monkeypatch.setattr(graph_module, "StreamingRenderer", FakeRenderer)
+
+    graph = VoidXGraph(
+        Config(
+            model=ModelConfig(provider="mimo", model="mimo-v2.5"),
+            workspace=str(tmp_path),
+        ),
+        api_key=None,
+    )
+    graph.model = FakeStreamingModel()
+    graph._task_state.todo_state = TodoRunState.model_validate({
+        "summary": "0/2 done · 1 active · 1 pending",
+        "items": [
+            {"content": "inspect todo replay", "status": "in_progress"},
+            {"content": "write test", "status": "pending"},
+        ],
+    })
+
+    await graph._call_llm({
+        "messages": [HumanMessage(content="hi")],
+        "step_count": 0,
+        "max_steps": 50,
+        "agent": "orchestrator",
+    })
+
+    todo_messages = [
+        message.content
+        for message in graph.model.messages
+        if isinstance(message, HumanMessage) and "## Current Todo" in str(message.content)
+    ]
+    assert len(todo_messages) == 1
+    assert "0/2 done · 1 active · 1 pending" in todo_messages[0]
+    assert "- in_progress: inspect todo replay" in todo_messages[0]
 
 
 @pytest.mark.asyncio

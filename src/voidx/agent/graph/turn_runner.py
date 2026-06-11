@@ -9,6 +9,7 @@ from typing import TYPE_CHECKING
 
 from langchain_core.messages import AIMessage, HumanMessage, ToolMessage
 
+from voidx.agent.todo_state import sanitize_todo_replay_messages
 from voidx.agent.attachments import build_user_message_payload, serialize_message_content
 from voidx.agent.message_rows import messages_from_rows_incremental
 from voidx.agent.runtime_context import TaskIntent
@@ -297,6 +298,7 @@ class GraphTurnRunner:
                             turn_index = i
                             break
                 new_messages = final["messages"][turn_index + 1:] if turn_index is not None else []
+                new_messages = sanitize_todo_replay_messages(list(new_messages))
 
                 for msg in new_messages:
                     if isinstance(msg, AIMessage):

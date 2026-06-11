@@ -12,6 +12,7 @@ from langchain_core.messages import AIMessage, BaseMessage, HumanMessage, System
 from voidx.agent.graph.streaming import extract_text, stream_llm
 from voidx.agent.message_rows import messages_from_rows
 from voidx.agent.runtime_context import raw_semantic_messages
+from voidx.agent.todo_state import sanitize_todo_replay_messages
 from voidx.llm.compaction import COMPACTION_MAX_RETRIES, CompactionService
 from voidx.llm.provider import resolve_protocol
 from voidx.llm.usage import estimate_context_tokens, estimate_message_tokens, extract_token_usage
@@ -138,7 +139,7 @@ class GraphCompactionCoordinator:
             )
 
         runtime_prefix = _runtime_prefix(messages)
-        semantic_messages = raw_semantic_messages(messages)
+        semantic_messages = sanitize_todo_replay_messages(raw_semantic_messages(messages))
         selection = host._compaction.select_details(semantic_messages)
         head_msgs, tail_id = selection.head, selection.tail_id
         semantic_tail = semantic_messages[selection.keep_from:]

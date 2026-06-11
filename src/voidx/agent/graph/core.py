@@ -62,11 +62,17 @@ from voidx.agent.graph.streaming import extract_text, stream_llm as _stream_llm
 from voidx.agent.graph.subagent import _task_intent_for_agent as _subagent_task_intent_for_agent
 from voidx.agent.graph.subagent import run_subagent as _run_subagent
 from voidx.agent.graph.title_mixin import GraphTitleMixin
+from voidx.agent.todo_state import apply_todo_state_to_host, sanitize_todo_replay_messages
 from voidx.agent.graph.tool_executor import GraphToolExecutor
 from voidx.agent.graph.tool_execution import GraphToolExecutionMixin
 from voidx.agent.graph.turn_runner import GraphTurnRunner
 from voidx.agent.intent_refinement import refine_intent
-from voidx.agent.runtime_context import ContextCompilerCache, InteractionMode, RuntimeContextBuilder
+from voidx.agent.runtime_context import (
+    ContextCompilerCache,
+    InteractionMode,
+    RuntimeContextBuilder,
+    current_todo_context_message,
+)
 from voidx.agent.task_state import TaskRun, TaskState
 from voidx.agent.tool_filters import filter_unavailable_lsp_tools
 from voidx.config import Config, Settings
@@ -489,6 +495,7 @@ class VoidXGraph(
                 "lsp_manager": getattr(self, "_lsp_manager", None),
                 "parent_tools": self.tools,
                 "workflow_runtime_context": workflow_runtime_context,
+                "todo_state_sink": lambda todo_state: apply_todo_state_to_host(self, todo_state),
             }
             if self._current_tree and self._turn_node:
                 kwargs.update({
@@ -650,13 +657,21 @@ class VoidXGraph(
         if not has_tool_budget:
             tool_defs = []
         guidance_messages = self._drain_pending_guidance()
-        state_messages = list(state["messages"])
+        state_messages = sanitize_todo_replay_messages(list(state["messages"]))
         compaction_happened = False
+        raw_todo_state = (
+            state["todo_state"]
+            if "todo_state" in state
+            else getattr(getattr(self, "_task_state", None), "todo_state", None)
+        )
+        todo_context_message = current_todo_context_message(raw_todo_state)
 
         def rebuild_llm_messages(
             messages: list[BaseMessage],
         ) -> tuple[list[BaseMessage], list[HumanMessage], bool]:
             base_messages = [*messages, *guidance_messages]
+            if todo_context_message is not None:
+                base_messages.append(todo_context_message)
             convergence_messages, convergence_forced = build_convergence_messages(
                 step=step,
                 max_steps=max_s,

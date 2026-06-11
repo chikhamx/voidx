@@ -15,6 +15,7 @@ from voidx.agent.graph.convergence import (
 )
 from voidx.agent.graph.streaming import extract_text, stream_llm
 from voidx.agent.graph.todo_events import todo_updated_event
+from voidx.agent.todo_state import todo_run_state_from_result
 from voidx.agent.runtime_context import (
     ContextCompilerCache,
     InteractionMode,
@@ -59,6 +60,7 @@ async def run_subagent(
     lsp_manager=None,
     parent_tools: ToolRegistry | None = None,
     workflow_runtime_context: WorkflowRuntimeContext | None = None,
+    todo_state_sink=None,
     ui_port: AgentUiPort = runtime_ui_port,
 ) -> str:
     """Run a child agent in its own message context."""
@@ -232,6 +234,9 @@ async def run_subagent(
                 if capture_tree and parent_node is not None:
                     capture.tool_call(tid, targs, tool_call_id=cid)
                 result = await agent_tools.execute_tool(tid, targs, ctx)
+                todo_state = todo_run_state_from_result(result) if tid == "todo" else None
+                if todo_state_sink is not None and todo_state is not None and todo_state.items:
+                    todo_state_sink(todo_state)
                 if ui_port.via_events() and tid == "todo":
                     todo_event = todo_updated_event(result, agent_id=agent_id)
                     if todo_event is not None:
@@ -239,12 +244,15 @@ async def run_subagent(
                 if capture_tree and parent_node is not None:
                     capture.tool_done(tid, 0.0, True, tool_call_id=cid)
                     capture.tool_result(result.output, tool_call_id=cid)
+                if tid == "todo":
+                    return None
                 return ToolMessage(
                     content=sanitize_tool_message_content(result.output, workspace=ctx.workspace),
                     tool_call_id=cid,
                 )
 
             tool_msgs = await asyncio.gather(*[run_one(tc) for tc in approved])
+            tool_msgs = [msg for msg in tool_msgs if msg is not None]
             denied_msgs = [
                 ToolMessage(
                     content=sanitize_tool_message_content(reason, workspace=ctx.workspace),

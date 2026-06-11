@@ -1415,12 +1415,126 @@ async def test_execute_tools_emits_todo_updated_node(tmp_path):
         assert todo_state.summary == "0/1 done · 1 active · 0 pending"
         assert not any(node.node_type == "todo" for node in test_dock.tree.root.children)
         assert tool_nodes == []
-        assert [message.tool_call_id for message in result["messages"] if isinstance(message, ToolMessage)] == ["call_todo"]
+        assert result["messages"] == []
+        assert result["todo_state"]["summary"] == "0/1 done · 1 active · 0 pending"
+        assert result["todo_state"]["items"] == [{"content": "wire event", "status": "in_progress"}]
+        assert graph._task_state.todo_state is not None
+        assert graph._task_state.todo_state.items[0].content == "wire event"
     finally:
         await ui_events.stop()
         test_dock.deactivate()
         test_dock.reset()
         set_dock(None)
+
+
+@pytest.mark.asyncio
+async def test_execute_tools_keeps_non_todo_result_in_mixed_batch(tmp_path):
+    graph = _graph(tmp_path)
+
+    class FakeTodoTool:
+        id = "todo"
+        description = "fake todo"
+
+        def parameters_schema(self):
+            return {"type": "object", "properties": {}}
+
+        async def execute(self, args: dict, ctx: ToolContext) -> ToolResult:
+            return ToolResult(
+                output="todo output",
+                metadata={
+                    "todo_summary": "0/1 done · 1 active · 0 pending",
+                    "todo_items": [{"content": "track mixed batch", "status": "in_progress"}],
+                },
+            )
+
+    class FakeReadTool:
+        id = "read"
+        description = "fake read"
+
+        def parameters_schema(self):
+            return {"type": "object", "properties": {}}
+
+        async def execute(self, args: dict, ctx: ToolContext) -> ToolResult:
+            return ToolResult(output="read output")
+
+    graph.tools.register("todo", FakeTodoTool(), "fake todo", {"type": "object", "properties": {}})
+    graph.tools.register("read", FakeReadTool(), "fake read", {"type": "object", "properties": {}})
+
+    async def allow_all(
+        tool_calls,
+        agent_name: str,
+        plan_mode: bool,
+        session_id: str,
+        interaction_mode=None,
+    ):
+        return tool_calls, []
+
+    graph._authorize_tool_calls = allow_all
+    parent = AIMessage(
+        content="",
+        tool_calls=[
+            {"name": "todo", "args": {"todos": []}, "id": "call_todo", "type": "tool_call"},
+            {"name": "read", "args": {}, "id": "call_read", "type": "tool_call"},
+        ],
+    )
+
+    result = await graph._execute_tools({
+        "messages": [parent],
+        "workspace": str(tmp_path),
+        "agent": "orchestrator",
+        "plan_mode": False,
+    })
+
+    assert [message.tool_call_id for message in result["messages"]] == ["call_read"]
+    assert result["messages"][0].content == "read output"
+    assert result["todo_state"]["items"] == [
+        {"content": "track mixed batch", "status": "in_progress"}
+    ]
+
+
+@pytest.mark.asyncio
+async def test_execute_tools_warns_on_malformed_todo_metadata_without_events(tmp_path, monkeypatch):
+    graph = _graph(tmp_path)
+    warnings: list[str] = []
+
+    class FakeTodoTool:
+        id = "todo"
+        description = "fake todo"
+
+        def parameters_schema(self):
+            return {"type": "object", "properties": {}}
+
+        async def execute(self, args: dict, ctx: ToolContext) -> ToolResult:
+            return ToolResult(output="todo output", metadata={"todo_items": "bad"})
+
+    graph.tools.register("todo", FakeTodoTool(), "fake todo", {"type": "object", "properties": {}})
+    monkeypatch.setattr(graph._ui.ui, "warn", warnings.append)
+
+    async def allow_all(
+        tool_calls,
+        agent_name: str,
+        plan_mode: bool,
+        session_id: str,
+        interaction_mode=None,
+    ):
+        return tool_calls, []
+
+    graph._authorize_tool_calls = allow_all
+    parent = AIMessage(
+        content="",
+        tool_calls=[{"name": "todo", "args": {"todos": []}, "id": "call_todo", "type": "tool_call"}],
+    )
+
+    result = await graph._execute_tools({
+        "messages": [parent],
+        "workspace": str(tmp_path),
+        "agent": "orchestrator",
+        "plan_mode": False,
+    })
+
+    assert result["messages"] == []
+    assert "todo_state" not in result
+    assert warnings == ["Todo update ignored: tool returned malformed metadata."]
 
 
 @pytest.mark.asyncio
@@ -2418,6 +2532,54 @@ async def test_run_once_commits_event_todo_at_turn_end(tmp_path):
 
 
 @pytest.mark.asyncio
+async def test_run_once_persists_sanitized_todo_replay_rows(tmp_path):
+    session = await create_session(workspace=str(tmp_path))
+    try:
+        graph = VoidXGraph(Config(workspace=str(tmp_path)), api_key=None, session=session)
+
+        class FakeGraph:
+            async def ainvoke(self, initial, _config):
+                return {
+                    "messages": [
+                        *list(initial["messages"]),
+                        AIMessage(
+                            content="",
+                            tool_calls=[{
+                                "name": "todo",
+                                "args": {"todos": [{"content": "track work", "status": "in_progress"}]},
+                                "id": "call_todo",
+                                "type": "tool_call",
+                            }],
+                        ),
+                        AIMessage(content="done"),
+                    ],
+                }
+
+        graph.graph = FakeGraph()
+
+        test_dock = BottomInputDock()
+        set_dock(test_dock)
+        test_dock.begin_capture()
+        try:
+            await graph._run_once("track todo")
+        finally:
+            test_dock.deactivate()
+            set_dock(None)
+
+        rows = await load_messages(session.id)
+
+        assert [row.role for row in rows] == ["user", "assistant"]
+        assert rows[1].content == "done"
+        assert all(
+            not any(call.get("name") == "todo" for call in (row.tool_calls or []))
+            for row in rows
+        )
+        assert all(row.tool_call_id != "call_todo" for row in rows)
+    finally:
+        await delete_session(session.id)
+
+
+@pytest.mark.asyncio
 async def test_compaction_trims_head_and_injects_summary_into_system_prompt(tmp_path):
     graph = _graph(tmp_path)
     graph._compaction.is_overflow = lambda _tokens: True
@@ -2802,6 +2964,115 @@ async def test_implement_subagent_injects_workflow_nodes(tmp_path, monkeypatch):
     assert "Active workflow nodes: tdd" in rendered_user
     assert "User language: Chinese (Simplified) [zh-CN]" in rendered_user
     assert "Tone instruction: Be direct and practical. Lead with the answer or action." in rendered_user
+
+
+@pytest.mark.asyncio
+async def test_subagent_todo_updates_sink_without_tool_message(tmp_path, monkeypatch):
+    import voidx.agent.graph.subagent as subagent_module
+
+    stream_calls: list[list] = []
+    todo_states: list[object] = []
+
+    class FakeModel:
+        def bind_tools(self, _tool_defs):
+            return self
+
+    async def fake_stream_llm(_model, messages, _renderer, _protocol):
+        stream_calls.append(list(messages))
+        if len(stream_calls) == 1:
+            return AIMessage(
+                content="",
+                tool_calls=[{
+                    "name": "todo",
+                    "args": {"todos": [{"content": "inspect child path", "status": "in_progress"}]},
+                    "id": "call_todo",
+                    "type": "tool_call",
+                }],
+            )
+        return AIMessage(content="done")
+
+    monkeypatch.setattr(subagent_module, "create_chat_model", lambda *_args, **_kwargs: FakeModel())
+    monkeypatch.setattr(subagent_module, "stream_llm", fake_stream_llm)
+
+    output = await subagent_module.run_subagent(
+        AgentDef(
+            name="explore",
+            description="test",
+            when_to_use="test",
+            tools=["todo"],
+            can_write=False,
+            can_delegate=False,
+            max_steps=4,
+        ),
+        "Inspect the workspace",
+        None,
+        "test-key",
+        Config(workspace=str(tmp_path)),
+        parent_tools=ToolRegistry(),
+        todo_state_sink=todo_states.append,
+        debug=False,
+    )
+
+    assert output == "done"
+    assert len(todo_states) == 1
+    assert todo_states[0].items[0].content == "inspect child path"
+    second_call_messages = stream_calls[1]
+    assert not any(
+        isinstance(message, ToolMessage) and message.tool_call_id == "call_todo"
+        for message in second_call_messages
+    )
+
+
+@pytest.mark.asyncio
+async def test_subagent_empty_todo_does_not_clear_parent_state(tmp_path, monkeypatch):
+    import voidx.agent.graph.subagent as subagent_module
+
+    todo_states: list[object] = []
+    calls = 0
+
+    class FakeModel:
+        def bind_tools(self, _tool_defs):
+            return self
+
+    async def fake_stream_llm(_model, _messages, _renderer, _protocol):
+        nonlocal calls
+        calls += 1
+        if calls == 1:
+            return AIMessage(
+                content="",
+                tool_calls=[{
+                    "name": "todo",
+                    "args": {"todos": []},
+                    "id": "call_todo",
+                    "type": "tool_call",
+                }],
+            )
+        return AIMessage(content="done")
+
+    monkeypatch.setattr(subagent_module, "create_chat_model", lambda *_args, **_kwargs: FakeModel())
+    monkeypatch.setattr(subagent_module, "stream_llm", fake_stream_llm)
+
+    output = await subagent_module.run_subagent(
+        AgentDef(
+            name="explore",
+            description="test",
+            when_to_use="test",
+            tools=["todo"],
+            can_write=False,
+            can_delegate=False,
+            max_steps=4,
+        ),
+        "Inspect the workspace",
+        None,
+        "test-key",
+        Config(workspace=str(tmp_path)),
+        parent_tools=ToolRegistry(),
+        todo_state_sink=todo_states.append,
+        debug=False,
+    )
+
+    assert output == "done"
+    assert todo_states == []
 
 
 @pytest.mark.asyncio

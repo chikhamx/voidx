@@ -1,6 +1,6 @@
 # Todo Run State Design
 
-> **Status: Draft**
+> **Status: Done**
 
 ## Goal
 

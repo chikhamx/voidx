@@ -10,6 +10,7 @@ from typing import Any
 
 from langchain_core.messages import AIMessage, AIMessageChunk, ToolMessage
 
+from voidx.agent.todo_state import _DSML_MARKER_RE, sanitize_todo_replay_messages
 from voidx.runtime.ui_port import AgentUiPort, runtime_ui_port
 
 _REPLAY_UNSAFE_BLOCK_TYPES = {
@@ -18,7 +19,6 @@ _REPLAY_UNSAFE_BLOCK_TYPES = {
     "reasoning",
     "reasoning_content",
 }
-_DSML_MARKER_RE = r"\|\|DSML\|\|"
 _DSML_TOOL_CALLS_RE = re.compile(
     rf"<{_DSML_MARKER_RE}tool_calls\b[^>]*>.*?</{_DSML_MARKER_RE}tool_calls>",
     re.DOTALL,
@@ -104,6 +104,7 @@ def _sanitize_messages_for_replay(messages: list) -> list:
                 sanitized.append(message.model_copy(update={"content": content}))
                 continue
         sanitized.append(message)
+    sanitized = sanitize_todo_replay_messages(sanitized)
     return _repair_tool_result_adjacency(sanitized)
 
 

@@ -14,6 +14,7 @@ from voidx.runtime import (
     TaskRun,
     TaskRunStatus,
     TaskState,
+    TodoRunState,
 )
 from voidx.memory.store import _execute_commit, _fetch_one, _now, _write_transaction
 from voidx.workflow.runtime import WorkflowRunState
@@ -74,9 +75,9 @@ async def save_session_runtime_state(
                session_id, interaction_mode, current_intent, previous_intent,
                current_goal, awaiting_implementation_approval, approved_scope,
                pending_approval_json, last_plan_summary, recent_user_texts_json,
-               compaction_summary, updated_at
+               todo_state_json, compaction_summary, updated_at
            )
-           VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+           VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
            ON CONFLICT(session_id) DO UPDATE SET
                interaction_mode = excluded.interaction_mode,
                current_intent = excluded.current_intent,
@@ -87,6 +88,7 @@ async def save_session_runtime_state(
                pending_approval_json = excluded.pending_approval_json,
                last_plan_summary = excluded.last_plan_summary,
                recent_user_texts_json = excluded.recent_user_texts_json,
+               todo_state_json = excluded.todo_state_json,
                compaction_summary = excluded.compaction_summary,
                updated_at = excluded.updated_at""",
         (
@@ -100,6 +102,7 @@ async def save_session_runtime_state(
             _dump_pending_approval(task_state.pending_approval),
             task_state.last_plan_summary,
             _dump_string_list(task_state.recent_user_texts),
+            _dump_todo_state(task_state.todo_state),
             compaction_summary,
             _now(),
         ),
@@ -137,6 +140,7 @@ async def load_task_state(session_id: str) -> TaskState:
         recent_user_texts=_load_string_list(
             row["recent_user_texts_json"] if "recent_user_texts_json" in row.keys() else ""
         )[-2:],
+        todo_state=_load_todo_state(row["todo_state_json"] if "todo_state_json" in row.keys() else ""),
     )
 
 
@@ -218,6 +222,13 @@ def _dump_pending_approval(pending: PendingApproval | None) -> str:
     return json.dumps(pending.model_dump(mode="json"), ensure_ascii=False)
 
 
+def _dump_todo_state(todo_state: TodoRunState | None) -> str:
+    # Empty todo lists represent an explicit clear; do not persist a 0/0 state.
+    if todo_state is None or not todo_state.items:
+        return ""
+    return json.dumps(todo_state.model_dump(mode="json"), ensure_ascii=False)
+
+
 def _dump_string_list(items: list[str]) -> str:
     return json.dumps([item for item in items if isinstance(item, str)][-2:], ensure_ascii=False)
 
@@ -260,6 +271,20 @@ def _load_workflow_runs(raw: str) -> dict[str, WorkflowRunState]:
             continue
         runs[str(name)] = run
     return runs
+
+
+def _load_todo_state(raw: str) -> TodoRunState | None:
+    if not raw:
+        return None
+    try:
+        data = json.loads(raw)
+    except json.JSONDecodeError:
+        return None
+    try:
+        state = TodoRunState.model_validate(data)
+    except ValueError:
+        return None
+    return state if state.items else None
 
 
 async def save_message_runtime_snapshot(snapshot: MessageRuntimeSnapshot) -> None:

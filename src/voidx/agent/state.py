@@ -8,7 +8,7 @@ from langgraph.graph.message import add_messages
 from langchain_core.messages import BaseMessage
 from typing_extensions import NotRequired, TypedDict
 
-from voidx.agent.task_state import PendingApproval
+from voidx.agent.task_state import PendingApproval, TodoRunState
 from voidx.workflow.runtime import WorkflowRunState
 
 
@@ -31,6 +31,7 @@ class AgentState(TypedDict):
     intent_confidence: NotRequired[float]
     intent_source: NotRequired[str]
     intent_refined: NotRequired[bool]
+    todo_state: NotRequired[TodoRunState | dict[str, Any] | None]
     user_message_id: NotRequired[int]
     tool_results: dict[str, str]  # tool_call_id → result text
     step_count: int  # current step number

@@ -103,6 +103,17 @@ class PendingApproval(BaseModel):
     created_turn: int = 0
 
 
+class TodoRunItem(BaseModel):
+    content: str
+    status: Literal["pending", "in_progress", "completed", "cancelled"]
+
+
+class TodoRunState(BaseModel):
+    summary: str = ""
+    items: list[TodoRunItem] = Field(default_factory=list)
+    updated_at: str = ""
+
+
 class TaskRun(BaseModel):
     goal: str = ""
     phase: TaskPhase = TaskPhase.CLARIFY
@@ -168,6 +179,7 @@ class TaskState(BaseModel):
     pending_approval: PendingApproval | None = None
     last_plan_summary: str = ""
     recent_user_texts: list[str] = Field(default_factory=list)
+    todo_state: TodoRunState | None = None
 
     def update_after_turn(
         self,

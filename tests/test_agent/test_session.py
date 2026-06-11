@@ -10,7 +10,14 @@ from langchain_core.messages import AIMessage, HumanMessage, SystemMessage, Tool
 
 from voidx.agent.message_rows import messages_from_rows, messages_from_rows_incremental
 from voidx.agent.runtime_context import InteractionMode, TaskIntent
-from voidx.agent.task_state import PendingApproval, TaskPhase, TaskRun, TaskRunStatus, TaskState
+from voidx.agent.task_state import (
+    PendingApproval,
+    TaskPhase,
+    TaskRun,
+    TaskRunStatus,
+    TaskState,
+    TodoRunState,
+)
 from voidx.memory.context_frames import (
     build_context_frame,
     load_context_frames,
@@ -353,6 +360,14 @@ async def test_runtime_state_round_trips_structured_goal_state():
             pending_approval=PendingApproval(scope="优化 markdown 渲染截断"),
             last_plan_summary="方案",
             recent_user_texts=["看看现状", "给个方案"],
+            todo_state=TodoRunState.model_validate({
+                "summary": "0/2 done · 1 active · 1 pending",
+                "items": [
+                    {"content": "inspect current behavior", "status": "in_progress"},
+                    {"content": "write focused test", "status": "pending"},
+                ],
+                "updated_at": "2026-06-11T00:00:00+00:00",
+            }),
         )
         run = TaskRun(
             goal="优化 markdown 渲染截断",
@@ -391,11 +406,38 @@ async def test_runtime_state_round_trips_structured_goal_state():
         assert loaded.task_state.pending_approval is not None
         assert loaded.task_state.pending_approval.scope == "优化 markdown 渲染截断"
         assert loaded.task_state.recent_user_texts == ["看看现状", "给个方案"]
+        assert loaded.task_state.todo_state is not None
+        assert loaded.task_state.todo_state.summary == "0/2 done · 1 active · 1 pending"
+        assert loaded.task_state.todo_state.items[0].content == "inspect current behavior"
         assert loaded.task_run.goal == "优化 markdown 渲染截断"
         assert loaded.task_run.phase == TaskPhase.DESIGN
         assert loaded.task_run.turn_count == 2
         assert loaded.task_run.workflow_runs["brainstorm"].status == WorkflowRunStatus.ACTIVE
         assert loaded.task_run.workflow_runs["brainstorm"].phase == "design"
+    finally:
+        await delete_session(session.id)
+
+
+@pytest.mark.asyncio
+async def test_runtime_state_empty_todo_persists_as_cleared_state():
+    session = await create_session()
+    try:
+        await save_runtime_state(
+            session.id,
+            RuntimeStateSnapshot(
+                interaction_mode=InteractionMode.AUTO,
+                task_state=TaskState(
+                    todo_state=TodoRunState.model_validate({
+                        "summary": "0/0 done · 0 active · 0 pending",
+                        "items": [],
+                    }),
+                ),
+            ),
+        )
+
+        loaded = await load_runtime_state(session.id)
+
+        assert loaded.task_state.todo_state is None
     finally:
         await delete_session(session.id)
 
