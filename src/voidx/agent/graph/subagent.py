@@ -6,7 +6,7 @@ import asyncio
 import time
 from datetime import datetime
 
-from langchain_core.messages import AIMessage, HumanMessage, SystemMessage, ToolMessage
+from langchain_core.messages import AIMessage, HumanMessage, ToolMessage
 
 from voidx.agent.agents import BASE_SYSTEM_PROMPT, PLAN_MODE_APPEND, AgentDef
 from voidx.agent.graph.convergence import (
@@ -19,13 +19,12 @@ from voidx.agent.runtime_context import (
     ContextCompilerCache,
     InteractionMode,
     RuntimeContextBuilder,
-    raw_semantic_messages,
 )
 from voidx.agent.tool_messages import sanitize_tool_message_content
 from voidx.agent.tool_filters import filter_unavailable_lsp_tools
 from voidx.config import Config
 from voidx.llm.provider import create_chat_model, resolve_protocol
-from voidx.llm.instruction import SkillRuntimeContext
+from voidx.llm.instruction import WorkflowRuntimeContext
 from voidx.llm.usage import (
     UsageStats,
     estimate_context_tokens,
@@ -51,7 +50,6 @@ async def run_subagent(
     tracker: TaskTracker | None = None,
     capture_tree: OutputTree | None = None,
     parent_node=None,
-    parent_messages: list | None = None,
     sub_messages: list | None = None,
     authorize_tools=None,
     debug: bool = True,
@@ -60,11 +58,10 @@ async def run_subagent(
     usage_stats: UsageStats | None = None,
     lsp_manager=None,
     parent_tools: ToolRegistry | None = None,
-    skill_runtime_context: SkillRuntimeContext | None = None,
+    skill_runtime_context: WorkflowRuntimeContext | None = None,
     ui_port: AgentUiPort = runtime_ui_port,
 ) -> str:
-    """Run a child agent. Child messages are appended to sub_messages
-    (when provided) so the caller can place them after ToolMessages."""
+    """Run a child agent in its own message context."""
     model_cfg = config.model.model_copy()
     if model_override:
         model_cfg.model = model_override
@@ -73,75 +70,29 @@ async def run_subagent(
 
     # Child agents get a filtered view of the parent registry so dynamic MCP
     # wrappers can be reused when an agent explicitly opts in.
-    allowed_ids = set(agent_def.tools) - {"agent", "task_status"}
+    allowed_ids = set(agent_def.tools)
+    if not agent_def.can_delegate:
+        allowed_ids.discard("agent")
     base_tools = parent_tools or ToolRegistry()
     if agent_def.mcp_tools and parent_tools is not None:
         allowed_ids.update(tid for tid in parent_tools.ids() if tid.startswith("mcp__"))
     agent_tools = base_tools.filtered_copy(allowed_ids)
 
     model = create_chat_model(api_key, model_cfg)
-    tool_defs = [
-        t for t in agent_tools.tools_for_llm()
-        if t["function"]["name"] not in ("agent", "task_status")
-    ]
+    tool_defs = agent_tools.tools_for_llm()
     tool_defs = filter_unavailable_lsp_tools(tool_defs, lsp_manager)
 
     if sub_messages is None:
         sub_messages = []
 
-    if parent_messages is not None:
-        messages = []
-        raw_parent_messages = raw_semantic_messages(parent_messages)
-        # Copy parent context: skip system prompts, agent-spawning AIMessages,
-        # and their orphaned ToolMessages.
-        skipped_ids: set[str] = set()
-        for m in raw_parent_messages:
-            if isinstance(m, AIMessage) and m.tool_calls:
-                for tc in m.tool_calls:
-                    name = tc.get("name") if isinstance(tc, dict) else getattr(tc, "name", "")
-                    if name == "agent":
-                        tc_id = tc.get("id") if isinstance(tc, dict) else getattr(tc, "id", "")
-                        if tc_id:
-                            skipped_ids.add(tc_id)
-        for m in raw_parent_messages:
-            if isinstance(m, SystemMessage):
-                continue
-            if isinstance(m, AIMessage) and m.tool_calls:
-                if any(
-                    (tc.get("name") if isinstance(tc, dict) else getattr(tc, "name", "")) == "agent"
-                    for tc in m.tool_calls
-                ):
-                    continue
-            if isinstance(m, ToolMessage):
-                tc_id = getattr(m, "tool_call_id", "")
-                if tc_id in skipped_ids:
-                    continue
-            content = m.content
-            if isinstance(content, list):
-                text_parts = [
-                    item.get("text", "") for item in content
-                    if isinstance(item, dict) and item.get("type") == "text"
-                ]
-                if isinstance(m, AIMessage):
-                    messages.append(AIMessage(content="".join(text_parts), tool_calls=m.tool_calls))
-                elif isinstance(m, HumanMessage):
-                    messages.append(HumanMessage(content="".join(text_parts)))
-                elif isinstance(m, ToolMessage):
-                    messages.append(ToolMessage(content="".join(text_parts), tool_call_id=getattr(m, "tool_call_id", "")))
-                else:
-                    messages.append(type(m)(content="".join(text_parts)))
-            else:
-                messages.append(m)
-        messages.append(HumanMessage(content=task_description))
-    else:
-        messages = [HumanMessage(content=task_description)]
+    messages = [HumanMessage(content=task_description)]
 
     context_config = config.model_copy(deep=True)
     context_config.model = model_cfg
     interaction_mode = InteractionMode.PLAN.value if agent_def.name == "plan" else InteractionMode.AUTO.value
     mode_prompt = PLAN_MODE_APPEND if InteractionMode.parse(interaction_mode) == InteractionMode.PLAN else ""
     task_intent = _task_intent_for_agent(agent_def.name)
-    skills = skill_runtime_context or SkillRuntimeContext(instructions=[], active=[], content="", runs=[])
+    skills = skill_runtime_context or WorkflowRuntimeContext(instructions=[], active=[], content="", runs=[])
     context_cache = ContextCompilerCache()
     context, context_cache = RuntimeContextBuilder(
         config=context_config,

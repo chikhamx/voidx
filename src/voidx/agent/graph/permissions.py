@@ -10,6 +10,8 @@ from voidx.permission.engine import (
     build_pattern,
     classify_tool_call,
 )
+from voidx.workflow.policy import workflow_denied_tools, workflow_gate
+from voidx.workflow.runtime import WorkflowRunState, WorkflowRunStatus
 from voidx.ui.output.events.schema import PermissionToolDetail
 
 if TYPE_CHECKING:
@@ -26,10 +28,13 @@ class GraphPermissionMixin:
         plan_mode: bool,
         session_id: str,
         interaction_mode: str | None = None,
+        skill_runs: object = (),
     ) -> tuple[list[dict], list[tuple[dict, str]]]:
         approved: list[dict] = []
         denied: list[tuple[dict, str]] = []
         need_ask: list[dict] = []
+        active_workflows = _active_workflow_names(skill_runs)
+        gate_denied = workflow_denied_tools(active_workflows)
 
         context = PermissionContext.from_service(
             self._permission,
@@ -39,6 +44,12 @@ class GraphPermissionMixin:
         )
 
         for tc in tool_calls:
+            if tc.get("name") == "apply_patch" and agent_name != "implement":
+                denied.append((tc, _apply_patch_agent_denial_reason(agent_name)))
+                continue
+            if tc.get("name") in gate_denied:
+                denied.append((tc, _gate_denial_reason(tc.get("name", ""), active_workflows)))
+                continue
             decision = authorize_tool_call(tc, context)
             if decision.action == "allow":
                 approved.append(decision.tool_call)
@@ -130,3 +141,32 @@ class GraphPermissionMixin:
                 args=classified.args,
             ))
         return details
+
+
+def _active_workflow_names(value: object) -> list[str]:
+    names: list[str] = []
+    items = value.values() if isinstance(value, dict) else value or []
+    for item in items:
+        try:
+            run = item if isinstance(item, WorkflowRunState) else WorkflowRunState.model_validate(item)
+        except (TypeError, ValueError):
+            continue
+        if run.status == WorkflowRunStatus.ACTIVE and run.name.strip():
+            names.append(run.name.strip())
+    return names
+
+
+def _gate_denial_reason(tool_name: str, active_workflows: list[str]) -> str:
+    blockers: list[str] = []
+    for workflow in active_workflows:
+        gate = workflow_gate(workflow)
+        if gate and tool_name in gate.denied_tools:
+            requirement = gate.required_before_transition or gate.description
+            blockers.append(f"{workflow}: {requirement}")
+    details = "; ".join(blockers) if blockers else "active workflow gate"
+    return f"Blocked by workflow gate for tool '{tool_name}': {details}"
+
+
+def _apply_patch_agent_denial_reason(agent_name: str) -> str:
+    agent = agent_name or "unknown"
+    return f"Blocked: apply_patch is only available to implement agent, not {agent}."

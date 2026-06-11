@@ -21,7 +21,14 @@ from voidx.skills.context import (
     skill_context_cache_key,
     strip_skill_tool_context,
 )
-from voidx.skills.runtime import SkillRunState
+from voidx.workflow.context import (
+    is_workflow_context_content,
+    workflow_context_cache_key,
+)
+from voidx.workflow.dag import DEFAULT_WORKFLOW_DAG
+from voidx.workflow.policy import workflow_exit_summaries, workflow_gate
+from voidx.workflow.render import render_dag_overview
+from voidx.workflow.runtime import WorkflowRunState, WorkflowRunStatus
 
 _CONTEXT_MARKER = "VOIDX_RUNTIME_CONTEXT"
 _USER_MESSAGE_DELIMITER = "\n\n## User Message\n"
@@ -85,7 +92,7 @@ class RuntimeContext(BaseModel):
     def section_names(self) -> list[str]:
         names = [section.name for section in self.sections]
         if self.skill_context_content:
-            names.append("Skill Context")
+            names.append(_context_message_section_name(self.skill_context_content))
         names.extend(section.name for section in self.task_sections)
         return names
 
@@ -163,7 +170,7 @@ class RuntimeContextBuilder:
         interaction_mode: str | InteractionMode,
         instructions: Iterable[str] = (),
         skill_context_content: str = "",
-        skill_runs: Iterable[SkillRunState] = (),
+        skill_runs: Iterable[WorkflowRunState] = (),
         active_skill_summaries: Iterable[str] = (),
         summary: str | None = None,
         current_user_text: str = "",
@@ -270,7 +277,7 @@ class RuntimeContextBuilder:
             cache.skill_context_message = None
             return "", None
 
-        key = skill_context_cache_key(content)
+        key = _runtime_context_cache_key(content)
         if cache.skill_context_key == key and cache.skill_context_content:
             return cache.skill_context_content, cache.skill_context_message
 
@@ -290,6 +297,10 @@ class RuntimeContextBuilder:
             sections.append(ContextSection(name="Mode Prompt", content=self.mode_prompt))
         if self.tool_contract:
             sections.append(ContextSection(name="Tool Contract", content=self.tool_contract))
+        sections.append(ContextSection(
+            name="Workflow DAG",
+            content=render_dag_overview(DEFAULT_WORKFLOW_DAG),
+        ))
         sections.append(ContextSection(
             name="Workspace Facts",
             content=f"- Current workspace: {self.workspace}\n- Platform: {_platform_info()}",
@@ -341,9 +352,24 @@ class RuntimeContextBuilder:
             f"- Agent ID: {self.agent_id}",
         ]
         if self.active_skill_summaries:
-            lines.append(f"- Active workflow skills: {'; '.join(self.active_skill_summaries)}")
+            lines.append(f"- Active workflow nodes: {'; '.join(self.active_skill_summaries)}")
         if self.skill_runs:
-            lines.append(f"- Skill run state: {'; '.join(run.state_summary() for run in self.skill_runs)}")
+            lines.append(f"- Workflow run state: {'; '.join(run.state_summary() for run in self.skill_runs)}")
+        for workflow_name in self._active_workflow_node_names():
+            gate = workflow_gate(workflow_name)
+            if gate:
+                if gate.denied_tools:
+                    lines.append(
+                        f"- Workflow gate [{workflow_name}]: denied tools = {', '.join(gate.denied_tools)}"
+                    )
+                requirement = gate.required_before_transition or gate.description
+                if requirement:
+                    lines.append(
+                        f"- Workflow gate [{workflow_name}]: must satisfy {requirement} before proceeding"
+                    )
+            exits = workflow_exit_summaries(workflow_name)
+            if exits:
+                lines.append(f"- Workflow exits [{workflow_name}]: {'; '.join(exits)}")
         if self.intent_refined:
             confidence = (
                 f"{self.intent_confidence:.2f}"
@@ -391,6 +417,19 @@ class RuntimeContextBuilder:
         lines.append("- Permission gate: tool calls are governed by the current permission mode, sandbox, and interaction mode.")
         return "\n".join(lines)
 
+    def _active_workflow_node_names(self) -> list[str]:
+        names: list[str] = []
+        for run in self.skill_runs:
+            if run.status == WorkflowRunStatus.ACTIVE and run.name.strip():
+                names.append(run.name.strip())
+        if names:
+            return names
+        for summary in self.active_skill_summaries:
+            name = summary.split(" ", 1)[0].strip()
+            if name:
+                names.append(name)
+        return names
+
 
 def _render_sections(sections: list[ContextSection]) -> str:
     parts = [_CONTEXT_MARKER]
@@ -401,13 +440,29 @@ def _render_sections(sections: list[ContextSection]) -> str:
     return "\n\n".join(parts)
 
 
+def _is_runtime_context_overlay(content: object) -> bool:
+    return is_skill_context_content(content) or is_workflow_context_content(content)
+
+
+def _context_message_section_name(content: object) -> str:
+    if is_workflow_context_content(content):
+        return "Workflow Context"
+    return "Skill Context"
+
+
+def _runtime_context_cache_key(content: str) -> str:
+    if is_workflow_context_content(content):
+        return workflow_context_cache_key(content)
+    return skill_context_cache_key(content)
+
+
 def raw_semantic_messages(messages: list[BaseMessage]) -> list[BaseMessage]:
     raw: list[BaseMessage] = []
     for message in messages:
         if isinstance(message, SystemMessage):
             continue
         if isinstance(message, HumanMessage):
-            if is_skill_context_content(message.content):
+            if _is_runtime_context_overlay(message.content):
                 continue
             raw.append(_strip_turn_overlay(message))
         else:

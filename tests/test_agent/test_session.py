@@ -42,7 +42,7 @@ from voidx.memory.transcript import (
     load_transcript,
     replace_transcript,
 )
-from voidx.skills.runtime import SkillActivationSource, SkillRunState, SkillRunStatus
+from voidx.workflow.runtime import WorkflowActivationSource, WorkflowRunState, WorkflowRunStatus
 
 
 @pytest.mark.asyncio
@@ -361,10 +361,10 @@ async def test_runtime_state_round_trips_structured_goal_state():
             pending_approval=PendingApproval(scope="优化 markdown 渲染截断", created_turn=2),
             turn_count=2,
             skill_runs={
-                "brainstorming": SkillRunState(
+                "brainstorming": WorkflowRunState(
                     name="brainstorming",
-                    status=SkillRunStatus.ACTIVE,
-                    source=SkillActivationSource.WORKFLOW,
+                    status=WorkflowRunStatus.ACTIVE,
+                    source=WorkflowActivationSource.WORKFLOW,
                     reason="design/create intent",
                     phase="design",
                     scope="优化 markdown 渲染截断",
@@ -394,7 +394,7 @@ async def test_runtime_state_round_trips_structured_goal_state():
         assert loaded.task_run.goal == "优化 markdown 渲染截断"
         assert loaded.task_run.phase == TaskPhase.DESIGN
         assert loaded.task_run.turn_count == 2
-        assert loaded.task_run.skill_runs["brainstorming"].status == SkillRunStatus.ACTIVE
+        assert loaded.task_run.skill_runs["brainstorming"].status == WorkflowRunStatus.ACTIVE
         assert loaded.task_run.skill_runs["brainstorming"].phase == "design"
     finally:
         await delete_session(session.id)

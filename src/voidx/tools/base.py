@@ -9,6 +9,8 @@ from typing import Any
 
 from pydantic import BaseModel, Field
 
+from voidx.workflow.runtime import WorkflowRunState
+
 
 def resolve_safe(workspace: str, file_path: str, extra_paths: list[str] | None = None) -> Path | None:
     """Resolve file path and verify it stays inside workspace (+ optional extra paths).
@@ -69,6 +71,7 @@ class ToolContext(BaseModel):
     goal: str = ""
     goal_turn_count: int = 0
     active_skill_names: list[str] = Field(default_factory=list)
+    skill_runs: list[WorkflowRunState] = Field(default_factory=list)
     file_mtimes: dict[str, float] = Field(default_factory=dict)
     mcp_manager: Any | None = None
     lsp_manager: Any | None = None

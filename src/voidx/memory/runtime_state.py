@@ -16,7 +16,7 @@ from voidx.runtime import (
     TaskState,
 )
 from voidx.memory.store import _execute_commit, _fetch_one, _now, _write_transaction
-from voidx.skills.runtime import SkillRunState
+from voidx.workflow.runtime import WorkflowRunState
 
 
 class RuntimeStateSnapshot(BaseModel):
@@ -205,7 +205,7 @@ async def load_task_run(session_id: str) -> TaskRun:
     )
 
 
-def _dump_skill_runs(skill_runs: dict[str, SkillRunState]) -> str:
+def _dump_skill_runs(skill_runs: dict[str, WorkflowRunState]) -> str:
     return json.dumps(
         {name: run.model_dump(mode="json") for name, run in skill_runs.items()},
         ensure_ascii=False,
@@ -243,7 +243,7 @@ def _load_pending_approval(
     return None
 
 
-def _load_skill_runs(raw: str) -> dict[str, SkillRunState]:
+def _load_skill_runs(raw: str) -> dict[str, WorkflowRunState]:
     if not raw:
         return {}
     try:
@@ -252,10 +252,10 @@ def _load_skill_runs(raw: str) -> dict[str, SkillRunState]:
         return {}
     if not isinstance(data, dict):
         return {}
-    runs: dict[str, SkillRunState] = {}
+    runs: dict[str, WorkflowRunState] = {}
     for name, value in data.items():
         try:
-            run = SkillRunState.model_validate(value)
+            run = WorkflowRunState.model_validate(value)
         except ValueError:
             continue
         runs[str(name)] = run

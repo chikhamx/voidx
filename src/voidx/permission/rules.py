@@ -33,6 +33,7 @@ BASIC_RULES: Ruleset = [
     Rule(permission="on_intent", pattern="*", action="allow"),
     Rule(permission="clarify", pattern="*", action="allow"),
     Rule(permission="plan_checkpoint", pattern="*", action="allow"),
+    Rule(permission="advance_workflow", pattern="*", action="allow"),
     Rule(permission="task_status", pattern="*", action="allow"),
     Rule(permission="load_skills", pattern="*", action="allow"),
     Rule(permission="repo_map", pattern="*", action="allow"),
@@ -43,6 +44,7 @@ BASIC_RULES: Ruleset = [
     Rule(permission="agent", pattern="*", action="allow"),
     Rule(permission="write", pattern="*", action="ask"),
     Rule(permission="edit", pattern="*", action="ask"),
+    Rule(permission="apply_patch", pattern="*", action="ask"),
     Rule(permission="git", pattern="write", action="ask"),
     Rule(permission="bash", pattern="*", action="ask"),
     Rule(permission="lsp_format", pattern="*", action="ask"),
@@ -105,6 +107,7 @@ def repair_tool_name(tool: str) -> str:
         "LspDiagnostics": "lsp_diagnostics", "LspSymbols": "lsp_symbols",
         "LspDefinition": "lsp_definition", "LspReferences": "lsp_references",
         "LspFormat": "lsp_format",
+        "AdvanceWorkflow": "advance_workflow",
     }
     return tool_map.get(tool, tool_map.get(tool.lower(), tool))
 
@@ -334,7 +337,7 @@ def _is_read_only_git_ref_command(subcommand: str, args: list[str]) -> bool:
 def capability_for_tool(tool: str, args: dict) -> PermissionCapability:
     if tool in {
         "read", "glob", "grep", "webfetch", "websearch", "todo", "task_status",
-        "load_skills",
+        "load_skills", "advance_workflow",
         "repo_map", "lsp_diagnostics", "lsp_symbols", "lsp_definition",
         "lsp_references",
     }:

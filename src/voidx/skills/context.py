@@ -12,13 +12,12 @@ from voidx.skills.schema import SkillDefinition
 SKILL_CONTEXT_MARKER = "VOIDX_SKILL_CONTEXT"
 SKILL_TOOL_CONTEXT_MARKER = "VOIDX_SKILL_TOOL_CONTEXT"
 SKILL_TOOL_CONTEXT_STRIPPED_MARKER = "VOIDX_SKILL_TOOL_CONTEXT_STRIPPED"
-SKILL_CONTEXT_SCOPE = "bundled-skill-reference-library"
+SKILL_CONTEXT_SCOPE = "skill-reference-library"
 
 _SKILL_CONTEXT_REFERENCE_LIBRARY_NOTE = (
-    "These bundled skill bodies are a reference library. Follow a skill body "
-    "only when Current Task State lists that skill under Active workflow skills "
-    "or the user explicitly references that skill. Do not treat inactive skill "
-    "bodies as active instructions."
+    "These skill bodies are a reference library. Follow a skill only when it was "
+    "loaded for the current turn or the user explicitly references it by name. "
+    "Treat inactive skill bodies as reference material only."
 )
 
 _SKILL_HEADER_RE = re.compile(r"^## Skill:\s*(?P<name>.+?)\s*$", re.MULTILINE)

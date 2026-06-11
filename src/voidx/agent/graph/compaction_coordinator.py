@@ -17,6 +17,7 @@ from voidx.llm.provider import resolve_protocol
 from voidx.llm.usage import estimate_context_tokens, estimate_message_tokens, extract_token_usage
 from voidx.memory.context_frames import save_context_frame_from_messages
 from voidx.skills.context import is_skill_context_content
+from voidx.workflow.context import is_workflow_context_content
 from voidx.ui.output.console import StreamingRenderer
 from voidx.ui.output.events.schema import StatusFinished, StatusUpdated
 
@@ -442,7 +443,10 @@ def _runtime_prefix(messages: list[BaseMessage]) -> list[BaseMessage]:
                 continue
             prefix.append(message)
             continue
-        if isinstance(message, HumanMessage) and is_skill_context_content(message.content):
+        if isinstance(message, HumanMessage) and (
+            is_skill_context_content(message.content)
+            or is_workflow_context_content(message.content)
+        ):
             prefix.append(message)
             continue
         break

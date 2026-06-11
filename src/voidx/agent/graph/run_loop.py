@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import asyncio
+import logging
 from functools import partial
 from typing import TYPE_CHECKING, Any
 
@@ -20,6 +21,8 @@ from voidx.ui.tui import PureTui
 
 if TYPE_CHECKING:
     from voidx.agent.graph.contracts import GraphRunLoopHost
+
+logger = logging.getLogger(__name__)
 
 
 def _ui_command_kind(command: Any) -> str:
@@ -84,6 +87,33 @@ class GraphRunLoopMixin(GraphTurnMixin, GraphSessionMixin, GraphTranscriptMixin)
             title = title[:57] + "..."
         return title
 
+    async def _show_update_check_if_needed(self: GraphRunLoopHost) -> None:
+        settings = self._settings
+        if settings is None:
+            return
+        try:
+            update_check_due = getattr(settings, "update_check_due", None)
+            if not callable(update_check_due) or not update_check_due():
+                return
+
+            from voidx.selfupdate import check_for_update, upgrade_hint
+
+            result = await check_for_update()
+            mark_update_check = getattr(settings, "mark_update_check", None)
+            if callable(mark_update_check):
+                mark_update_check(result.latest_version)
+            if result.update_available and result.latest_version:
+                self._ui.dock.append_message(
+                    "[yellow]Update available:[/yellow] "
+                    f"voidx {result.current_version} -> {result.latest_version}. "
+                    f"[dim]{upgrade_hint()}[/dim]",
+                    markup=True,
+                )
+        except asyncio.CancelledError:
+            raise
+        except Exception:
+            logger.debug("Startup update check failed", exc_info=True)
+
     async def run(
         self: GraphRunLoopHost,
         *,
@@ -104,6 +134,7 @@ class GraphRunLoopMixin(GraphTurnMixin, GraphSessionMixin, GraphTranscriptMixin)
         gateway_session: GatewaySession | None = None
         gateway_server: GatewayServer | None = None
         lsp_startup_tasks: list[asyncio.Task] = []
+        update_check_task: asyncio.Task[None] | None = None
         if active_dock is not None:
             consumer = DockEventConsumer(active_dock)
             if web:
@@ -170,6 +201,7 @@ class GraphRunLoopMixin(GraphTurnMixin, GraphSessionMixin, GraphTranscriptMixin)
         )
         self._app = app
         app.set_external_command_handler(partial(self._handle_web_command, app))
+        update_check_task = asyncio.create_task(self._show_update_check_if_needed())
 
         if gateway_session is not None:
             gateway_session.set_command_handler(partial(self._handle_web_command, app))
@@ -192,13 +224,38 @@ class GraphRunLoopMixin(GraphTurnMixin, GraphSessionMixin, GraphTranscriptMixin)
                 return
             try:
                 await manager.initialize()
+                checks = manager.doctor()
                 lsp_lines = []
-                for check in manager.doctor():
+                for check in checks:
                     if check.available and check.enabled:
                         source = f" [dim][{check.detected_source}][/dim]" if check.detected_source else ""
-                        lsp_lines.append(f"  [cyan]{check.language}[/cyan] [dim]→[/dim] {check.resolved_path}{source}")
+                        suffix = " [dim](warming...)[/dim]" if hasattr(manager, "warm_up") else ""
+                        lsp_lines.append(
+                            f"  [cyan]{check.language}[/cyan] [dim]→[/dim] "
+                            f"{check.resolved_path}{source}{suffix}"
+                        )
                 if lsp_lines:
                     self._ui.dock.append_message("\n".join(lsp_lines), markup=True)
+                warm_up = getattr(manager, "warm_up", None)
+                if callable(warm_up):
+                    results = await warm_up()
+                    warmup_lines = []
+                    for check in checks:
+                        if not check.available or not check.enabled or check.language not in results:
+                            continue
+                        source = f" [dim][{check.detected_source}][/dim]" if check.detected_source else ""
+                        result = results[check.language]
+                        if result == "ok":
+                            suffix = " [green]ready[/green]"
+                        else:
+                            detail = result.removeprefix("error: ").strip()
+                            suffix = f" [red]failed[/red] [dim]{detail}[/dim]"
+                        warmup_lines.append(
+                            f"  [cyan]{check.language}[/cyan] [dim]→[/dim] "
+                            f"{check.resolved_path}{source}{suffix}"
+                        )
+                    if warmup_lines:
+                        self._ui.dock.append_message("\n".join(warmup_lines), markup=True)
             except asyncio.CancelledError:
                 raise
             except Exception as exc:
@@ -235,6 +292,9 @@ class GraphRunLoopMixin(GraphTurnMixin, GraphSessionMixin, GraphTranscriptMixin)
                 await empty_session_cleanup()
             if gateway_server is not None:
                 await gateway_server.stop()
+            if update_check_task is not None:
+                update_check_task.cancel()
+                await asyncio.gather(update_check_task, return_exceptions=True)
             if hasattr(self, '_mcp_manager'):
                 await self._mcp_manager.stop_all()
             for task in lsp_startup_tasks:

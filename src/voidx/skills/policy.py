@@ -1,121 +1,43 @@
-"""Workflow skill activation policy."""
+"""Compatibility aliases for workflow policy.
+
+Workflow policy now lives in :mod:`voidx.workflow.policy`.
+"""
 
 from __future__ import annotations
 
-from dataclasses import dataclass
-
-
-@dataclass(frozen=True)
-class WorkflowSkillActivation:
-    name: str
-    reason: str
-
-
-WORKFLOW_SKILL_PRIORITY = {
-    "brainstorming": 5,
-    "systematic-debugging": 10,
-    "receiving-code-review": 20,
-    "writing-design-docs": 25,
-    "writing-plans": 30,
-    "test-driven-development": 40,
-    "verification-before-completion": 50,
-    "requesting-code-review": 60,
-}
-
-WORKFLOW_SKILL_TRANSITIONS: dict[str, tuple[str, ...]] = {
-    "brainstorming": ("writing-design-docs",),
-    "writing-design-docs": ("writing-plans",),
-    "receiving-code-review": (
-        "test-driven-development",
-        "verification-before-completion",
-    ),
-    "systematic-debugging": ("verification-before-completion",),
-    "test-driven-development": ("verification-before-completion",),
-    "verification-before-completion": ("requesting-code-review",),
-}
-
-
-def workflow_skill_activations(
-    user_text: str,
-    *,
-    agent: str = "",
-    task_intent: str | None = None,
-    interaction_mode: str | None = None,
-) -> list[WorkflowSkillActivation]:
-    text = user_text.strip().lower()
-    agent_name = (agent or "").strip().lower()
-    intent = (task_intent or "").strip().lower()
-    mode = (interaction_mode or "").strip().lower()
-    activations: dict[str, WorkflowSkillActivation] = {}
-
-    def add(name: str, reason: str) -> None:
-        activations.setdefault(name, WorkflowSkillActivation(name=name, reason=reason))
-
-    if intent == "debug":
-        add("systematic-debugging", "debug intent")
-        add("verification-before-completion", "debug lifecycle")
-
-    if agent_name == "implement":
-        add("test-driven-development", "implement role")
-        add("verification-before-completion", "implement lifecycle")
-    elif intent == "implement":
-        add("test-driven-development", "implement intent")
-        add("verification-before-completion", "implement lifecycle")
-
-    if agent_name == "plan":
-        add("writing-plans", "plan role")
-
-    if intent == "review":
-        if _contains_any(text, _REVIEW_FEEDBACK_TERMS):
-            add("receiving-code-review", "review feedback")
-        else:
-            add("requesting-code-review", "review intent")
-
-    if intent == "design" or intent == "create":
-        add("brainstorming", "design/create intent")
-        if _contains_any(text, _PLAN_TERMS):
-            add("writing-plans", "planning intent")
-
-    if mode == "plan":
-        add("brainstorming", "plan mode")
-        add("writing-plans", "plan mode")
-
-    return sorted(
-        activations.values(),
-        key=lambda item: (WORKFLOW_SKILL_PRIORITY.get(item.name, 999), item.name),
-    )
-
-
-def workflow_skill_sort_key(name: str) -> tuple[int, str]:
-    return (WORKFLOW_SKILL_PRIORITY.get(name, 999), name)
-
-
-def workflow_skill_transitions(name: str) -> tuple[str, ...]:
-    return WORKFLOW_SKILL_TRANSITIONS.get(name.strip().lower(), ())
-
-
-def _contains_any(text: str, terms: tuple[str, ...]) -> bool:
-    return any(term in text for term in terms)
-
-
-_REVIEW_FEEDBACK_TERMS = (
-    "review feedback",
-    "code review feedback",
-    "review comment",
-    "reviewer says",
-    "feedback says",
-    "优化点",
-    "审查意见",
-    "评审意见",
+from voidx.workflow.policy import (
+    WORKFLOW_PRIORITY,
+    WORKFLOW_TRANSITIONS,
+    WorkflowActivation,
+    workflow_activations,
+    workflow_denied_tools,
+    workflow_edges,
+    workflow_exit_summaries,
+    workflow_gate,
+    workflow_sort_key,
+    workflow_transitions,
 )
 
-_PLAN_TERMS = (
-    "implementation plan",
-    "write a plan",
-    "planning",
-    "spec",
-    "requirements",
-    "计划",
-    "实施方案",
-    "需求",
-)
+WorkflowSkillActivation = WorkflowActivation
+WORKFLOW_SKILL_PRIORITY = WORKFLOW_PRIORITY
+WORKFLOW_SKILL_TRANSITIONS = WORKFLOW_TRANSITIONS
+workflow_skill_activations = workflow_activations
+workflow_skill_denied_tools = workflow_denied_tools
+workflow_skill_edges = workflow_edges
+workflow_skill_exit_summaries = workflow_exit_summaries
+workflow_skill_gate = workflow_gate
+workflow_skill_sort_key = workflow_sort_key
+workflow_skill_transitions = workflow_transitions
+
+__all__ = [
+    "WORKFLOW_SKILL_PRIORITY",
+    "WORKFLOW_SKILL_TRANSITIONS",
+    "WorkflowSkillActivation",
+    "workflow_skill_activations",
+    "workflow_skill_denied_tools",
+    "workflow_skill_edges",
+    "workflow_skill_exit_summaries",
+    "workflow_skill_gate",
+    "workflow_skill_sort_key",
+    "workflow_skill_transitions",
+]

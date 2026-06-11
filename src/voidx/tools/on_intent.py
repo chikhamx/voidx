@@ -9,7 +9,7 @@ from collections.abc import Awaitable, Callable
 from pydantic import BaseModel, Field
 
 from voidx.runtime import TaskIntent, ToolStatePatch
-from voidx.skills.runtime import SkillRunState
+from voidx.workflow.runtime import WorkflowRunState
 from voidx.tools.base import BaseTool, ToolContext, ToolResult, model_to_json_schema
 
 
@@ -43,7 +43,7 @@ class OnIntentResult(BaseModel):
     confidence: float
     reason: str
     phase: str
-    active_skill_runs: list[SkillRunState] = Field(default_factory=list)
+    active_skill_runs: list[WorkflowRunState] = Field(default_factory=list)
     available_tool_ids: list[str] = Field(default_factory=list)
     needs_user_confirmation: bool = False
     state_patch: ToolStatePatch
@@ -59,7 +59,7 @@ class OnIntentTool(BaseTool):
         "workspace/tool actions when the current intent is chat or ambiguous but "
         "the user request may require inspecting, designing, reviewing, debugging, "
         "or implementing. The runtime confirms the intent, activates workflow "
-        "skills, returns available tool IDs for the refined intent, and updates "
+        "nodes, returns available tool IDs for the refined intent, and updates "
         "structured task state. This tool does not grant permission; normal "
         "permission checks still apply to later tool calls."
     )

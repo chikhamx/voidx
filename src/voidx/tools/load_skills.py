@@ -28,8 +28,8 @@ class LoadSkillsInput(BaseModel):
     include_bundled: bool = Field(
         default=False,
         description=(
-            "When true, also allow bundled workflow skills. Default false loads "
-            "only project/global user skills."
+            "Legacy compatibility flag. Built-in workflows are structured "
+            "runtime nodes and are not loaded by this tool."
         ),
     )
 
@@ -186,7 +186,7 @@ def _error_result(
         parts.append(f"Disabled skills: {', '.join(disabled)}")
     if bundled_blocked:
         parts.append(
-            "Bundled skills require include_bundled=true: "
+            "Bundled skills are not part of workflow runtime loading: "
             + ", ".join(bundled_blocked)
         )
     return ToolResult(

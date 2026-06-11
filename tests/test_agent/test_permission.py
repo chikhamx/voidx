@@ -10,6 +10,7 @@ import pytest
 from voidx.permission.wildcard import match
 from voidx.permission.evaluate import evaluate, from_config, merge
 from voidx.permission.schema import Rule, Ruleset
+from voidx.permission.rules import BASIC_RULES
 from voidx.permission.engine import (
     PermissionCapability,
     PermissionContext,
@@ -71,6 +72,11 @@ class TestEvaluate:
 
     def test_default_ask(self):
         result = evaluate("unknown", "*")
+        assert result.action == "ask"
+
+    def test_basic_rules_explicitly_gate_apply_patch(self):
+        result = evaluate("apply_patch", "*", BASIC_RULES)
+        assert result.permission == "apply_patch"
         assert result.action == "ask"
 
     def test_multiple_rulesets(self):
@@ -172,7 +178,7 @@ def test_load_skills_is_allowed_read_tool(tmp_path):
     }).capability == PermissionCapability.READ_TOOLS
 
 
-@pytest.mark.parametrize("tool_name", ["clarify", "plan_checkpoint"])
+@pytest.mark.parametrize("tool_name", ["clarify", "plan_checkpoint", "advance_workflow"])
 def test_interactive_runtime_tools_are_allowed(tmp_path, tool_name):
     context = PermissionContext(workspace=str(tmp_path))
     decision = authorize_tool_call(
@@ -259,6 +265,7 @@ def test_permission_engine_classifies_basic_capabilities():
     assert classify_tool_call({"name": "git", "args": {"command": "commit"}}).capability == PermissionCapability.GIT_WRITE
     assert classify_tool_call({"name": "agent", "args": {"agent": "explore"}}).capability == PermissionCapability.AGENT_READONLY
     assert classify_tool_call({"name": "agent", "args": {"agent": "implement"}}).capability == PermissionCapability.AGENT_IMPLEMENT
+    assert classify_tool_call({"name": "advance_workflow", "args": {}}).capability == PermissionCapability.READ_TOOLS
 
 
 def test_permission_engine_default_strategy_and_plan_overlay(tmp_path):

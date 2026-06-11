@@ -11,7 +11,7 @@ from pydantic import BaseModel, Field
 
 from voidx.runtime.intent import InteractionMode, TaskIntent, infer_task_intent
 from voidx.runtime.intent_classifier import IntentClassifierResult, classify_intent
-from voidx.skills.runtime import SkillRunState
+from voidx.workflow.runtime import WorkflowRunState
 
 
 _INTENT_WINDOW_SIZE = 2
@@ -109,7 +109,7 @@ class TaskRun(BaseModel):
     status: TaskRunStatus = TaskRunStatus.IDLE
     pending_approval: PendingApproval | None = None
     turn_count: int = 0
-    skill_runs: dict[str, SkillRunState] = Field(default_factory=dict)
+    skill_runs: dict[str, WorkflowRunState] = Field(default_factory=dict)
 
     @property
     def active(self) -> bool:
@@ -131,9 +131,9 @@ class TaskRun(BaseModel):
         self.turn_count = 0
         self.skill_runs = {}
 
-    def merge_skill_runs(self, runs: list[SkillRunState | dict]) -> None:
+    def merge_skill_runs(self, runs: list[WorkflowRunState | dict]) -> None:
         for item in runs:
-            run = item if isinstance(item, SkillRunState) else SkillRunState.model_validate(item)
+            run = item if isinstance(item, WorkflowRunState) else WorkflowRunState.model_validate(item)
             self.skill_runs[run.name] = run
 
     def update_after_turn(
@@ -227,7 +227,7 @@ class ToolStatePatch(BaseModel):
     goal_status: str | None = None
     pending_approval: PendingApproval | None = None
     available_tool_ids: list[str] | None = None
-    skill_runs: list[SkillRunState] = Field(default_factory=list)
+    skill_runs: list[WorkflowRunState] = Field(default_factory=list)
     intent_confidence: float | None = None
     intent_source: str | None = None
     intent_refined: bool | None = None

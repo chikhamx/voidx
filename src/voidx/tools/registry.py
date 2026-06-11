@@ -25,6 +25,7 @@ from voidx.tools.webfetch import WebFetchTool
 from voidx.tools.websearch import WebSearchTool
 from voidx.tools.clarify import ClarifyTool
 from voidx.tools.plan_checkpoint import PlanCheckpointTool
+from voidx.tools.advance_workflow import AdvanceWorkflowTool
 
 
 class ToolDef(BaseModel):
@@ -54,7 +55,7 @@ class ToolRegistry:
             GlobTool, GrepTool, BashTool,
             LspDiagnosticsTool, LspSymbolsTool,
             LspDefinitionTool, LspReferencesTool, LspFormatTool,
-            ClarifyTool, PlanCheckpointTool,
+            ClarifyTool, PlanCheckpointTool, AdvanceWorkflowTool,
         ]:
             instance = cls()
             self.register(instance.id, instance, instance.description, instance.parameters_schema())

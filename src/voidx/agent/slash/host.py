@@ -302,9 +302,6 @@ class SlashHostAdapter:
             self._set_legacy_attr("_pending_summary", None)
 
         self._set_legacy_attr("_current_messages", None)
-        sub_buffers = self._legacy_attr("_sub_buffers")
-        if sub_buffers is not None:
-            sub_buffers.clear()
         pending_guidance = self._legacy_attr("_pending_guidance")
         if pending_guidance is not None:
             pending_guidance.clear()

@@ -9,7 +9,7 @@ from langchain_core.messages import BaseMessage
 from typing_extensions import NotRequired, TypedDict
 
 from voidx.agent.task_state import PendingApproval
-from voidx.skills.runtime import SkillRunState
+from voidx.workflow.runtime import WorkflowRunState
 
 
 class AgentState(TypedDict):
@@ -26,7 +26,7 @@ class AgentState(TypedDict):
     goal_phase: str
     goal_status: str
     goal_turn_count: int
-    skill_runs: NotRequired[list[SkillRunState]]
+    skill_runs: NotRequired[list[WorkflowRunState]]
     available_tool_ids: NotRequired[list[str]]
     intent_confidence: NotRequired[float]
     intent_source: NotRequired[str]

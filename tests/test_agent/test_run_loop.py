@@ -16,11 +16,12 @@ from voidx.agent.graph.title_mixin import _sanitize_generated_title
 from voidx.agent.runtime_context import InteractionMode, TaskIntent
 from voidx.agent.task_state import PendingApproval, TaskPhase, TaskRun, TaskRunStatus, TaskState
 from voidx.config import Config
-from voidx.llm.instruction import SkillRuntimeContext
+from voidx.llm.instruction import WorkflowRuntimeContext
 from voidx.llm.usage import UsageStats
 from voidx.memory.runtime_state import RuntimeStateSnapshot, save_runtime_state
 from voidx.memory.session import MessageRow, create_session, get_session, load_messages, save_message, update_title
-from voidx.skills.runtime import SkillActivationSource, SkillRunState, SkillRunStatus
+from voidx.selfupdate import UpdateCheckResult
+from voidx.workflow.runtime import WorkflowActivationSource, WorkflowRunState, WorkflowRunStatus
 from voidx.tools.task_tracker import TaskTracker
 from voidx.ui.output.dock import BottomInputDock, set_dock
 from voidx.ui.output.events import DockEventConsumer, ui_events
@@ -81,6 +82,9 @@ class NoopLspManager:
     def doctor(self):
         return []
 
+    async def warm_up(self):
+        return {}
+
     async def stop_all(self):
         return None
 
@@ -111,6 +115,65 @@ def _graph(session=None, workspace: str = "/tmp/workspace") -> GraphRunLoopMixin
 def _disable_external_managers(graph) -> None:
     graph._mcp_manager = NoopMcpManager()
     graph._lsp_manager = NoopLspManager()
+
+
+@pytest.mark.asyncio
+async def test_startup_update_check_appends_update_notice(tmp_path, monkeypatch):
+    from voidx.config import Settings
+
+    graph = _graph(workspace=str(tmp_path))
+    settings = Settings(str(tmp_path))
+    graph._settings = settings
+    messages: list[tuple[str, bool]] = []
+    graph._ui = SimpleNamespace(
+        dock=SimpleNamespace(
+            append_message=lambda text, *, markup=False: messages.append((text, markup)),
+        ),
+    )
+
+    async def fake_check_for_update():
+        return UpdateCheckResult(
+            current_version="1.0.0",
+            latest_version="9.0.0",
+            update_available=True,
+            message="voidx 9.0.0 is available.",
+        )
+
+    monkeypatch.setattr("voidx.selfupdate.check_for_update", fake_check_for_update)
+    monkeypatch.setattr("voidx.selfupdate.upgrade_hint", lambda: "Run /upgrade now")
+
+    await graph._show_update_check_if_needed()
+
+    assert messages == [
+        ("[yellow]Update available:[/yellow] voidx 1.0.0 -> 9.0.0. [dim]Run /upgrade now[/dim]", True)
+    ]
+    assert settings.get_update_check_latest_version() == "9.0.0"
+    assert settings.get_update_check_last_checked_at() is not None
+
+
+@pytest.mark.asyncio
+async def test_startup_update_check_skips_when_ttl_not_due(tmp_path, monkeypatch):
+    from voidx.config import Settings
+
+    graph = _graph(workspace=str(tmp_path))
+    settings = Settings(str(tmp_path))
+    settings.mark_update_check("9.0.0")
+    graph._settings = settings
+    messages: list[str] = []
+    graph._ui = SimpleNamespace(
+        dock=SimpleNamespace(
+            append_message=lambda text, *, markup=False: messages.append(text),
+        ),
+    )
+
+    async def fail_check_for_update():
+        raise AssertionError("check_for_update should not run before TTL expires")
+
+    monkeypatch.setattr("voidx.selfupdate.check_for_update", fail_check_for_update)
+
+    await graph._show_update_check_if_needed()
+
+    assert messages == []
 
 
 @pytest.mark.asyncio
@@ -769,6 +832,63 @@ async def test_run_loop_cancels_lsp_startup_tasks_on_exit(monkeypatch, tmp_path)
 
 
 @pytest.mark.asyncio
+async def test_run_loop_lsp_startup_warms_servers(monkeypatch, tmp_path):
+    class YieldingExitTui(ExitTui):
+        async def run(self, on_submit):
+            await asyncio.sleep(0.01)
+
+    monkeypatch.setattr("voidx.agent.graph.run_loop.PureTui", YieldingExitTui)
+
+    class WarmupLspManager:
+        initialized = False
+        initializing = False
+
+        def __init__(self) -> None:
+            self.warmed = False
+            self.stopped = False
+
+        async def initialize(self):
+            self.initialized = True
+
+        def doctor(self):
+            return [
+                SimpleNamespace(
+                    language="python",
+                    enabled=True,
+                    available=True,
+                    resolved_path="/usr/bin/pyright-langserver",
+                    detected_source="PATH",
+                )
+            ]
+
+        async def warm_up(self):
+            self.warmed = True
+            return {"python": "ok"}
+
+        async def stop_all(self):
+            self.stopped = True
+
+    graph = VoidXGraph(Config(workspace=str(tmp_path)), api_key=None)
+    graph._mcp_manager = NoopMcpManager()
+    manager = WarmupLspManager()
+    graph._lsp_manager = manager
+    test_dock = BottomInputDock()
+    set_dock(test_dock)
+    try:
+        await graph.run()
+
+        assert manager.warmed is True
+        assert manager.stopped is True
+        rendered = "\n".join(test_dock.tree.render(120))
+        assert "warming..." in rendered
+        assert "ready" in rendered
+    finally:
+        test_dock.deactivate()
+        test_dock.reset()
+        set_dock(None)
+
+
+@pytest.mark.asyncio
 async def test_run_once_clears_unconsumed_guidance(tmp_path):
     session = await create_session(
         workspace=str(tmp_path),
@@ -871,10 +991,10 @@ async def test_turn_mixin_delegates_run_once_to_component():
 @pytest.mark.asyncio
 async def test_prepare_includes_restored_skill_runs(tmp_path):
     graph = VoidXGraph(Config(workspace=str(tmp_path)), api_key=None)
-    restored = SkillRunState(
+    restored = WorkflowRunState(
         name="brainstorming",
-        status=SkillRunStatus.ACTIVE,
-        source=SkillActivationSource.WORKFLOW,
+        status=WorkflowRunStatus.ACTIVE,
+        source=WorkflowActivationSource.WORKFLOW,
         reason="resume",
         phase="design",
         scope="resume optimization",
@@ -888,7 +1008,7 @@ async def test_prepare_includes_restored_skill_runs(tmp_path):
             return []
 
         async def skill_context_for(self, *_args, **_kwargs):
-            return SkillRuntimeContext(instructions=[], active=[], runs=[])
+            return WorkflowRuntimeContext(instructions=[], active=[], runs=[])
 
     graph._instruction = FakeInstruction()
     state = {
@@ -914,7 +1034,7 @@ async def test_prepare_includes_restored_skill_runs(tmp_path):
 
     assert result["skill_runs"] == [restored]
     assert (
-        "Skill run state: brainstorming=active "
+        "Workflow run state: brainstorming=active "
         "phase=design source=workflow reason=resume"
     ) in state["messages"][-1].content
 

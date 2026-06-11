@@ -17,6 +17,7 @@ from voidx.agent.slash.model import SlashModelMixin
 from voidx.agent.slash.profile import SlashProfileMixin
 from voidx.agent.slash.session import SlashSessionMixin
 from voidx.agent.slash.skills import SlashSkillsMixin
+from voidx.agent.slash.upgrade import SlashUpgradeMixin
 from voidx.agent.slash.runtime import PROVIDERS, _select_from_list, _w, prompt_text
 from voidx.runtime.ui import ui
 from voidx.ui.commands import COMMANDS
@@ -29,6 +30,7 @@ class SlashHandler(
     SlashLspMixin,
     SlashSessionMixin,
     SlashSkillsMixin,
+    SlashUpgradeMixin,
     SlashMcpMixin,
     SlashProfileMixin,
     SlashModelMixin,
@@ -103,6 +105,7 @@ class SlashHandler(
             "/sandbox": lambda: self._sandbox(args),
             "/approval": lambda: self._approval(args),
             "/usage": self._usage,
+            "/upgrade": lambda: self._upgrade(args),
             "/mcp": lambda: self._mcp(args),
             "/lsp": lambda: self._lsp(args),
             "/skills": lambda: self._skills(args),

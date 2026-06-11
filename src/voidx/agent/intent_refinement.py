@@ -6,12 +6,16 @@ from voidx.agent.agents import get_agent
 from voidx.agent.runtime_context import InteractionMode, TaskIntent
 from voidx.agent.task_state import PendingApproval, TaskPhase, ToolStatePatch
 from voidx.config import Config, Settings
-from voidx.skills.registry import SkillRegistry, normalize_skill_name
-from voidx.skills.runtime import SkillRunState
-from voidx.skills.schema import SkillMatch
-from voidx.skills.service import SkillService
 from voidx.tools.base import ToolContext
 from voidx.tools.on_intent import OnIntentInput, OnIntentResult
+from voidx.workflow.runtime import (
+    WorkflowRunState,
+    WorkflowRunStatus,
+    WorkflowStateEvent,
+    WorkflowStateEventKind,
+    advance_workflow_states,
+)
+from voidx.workflow.service import WorkflowMatch, WorkflowService
 
 
 def refine_intent(
@@ -37,7 +41,7 @@ def refine_intent(
         registered_tool_ids=registered_tool_ids,
         can_attempt_implementation=can_attempt_implementation,
     )
-    matches = _skill_matches(
+    matches = _workflow_matches(
         inp,
         confirmed,
         ctx,
@@ -45,14 +49,16 @@ def refine_intent(
         config=config,
         settings=settings,
     )
-    skill_runs = [
-        SkillRunState.from_match(
-            match,
-            phase=phase,
-            scope=inp.scope,
-            turn_count=ctx.goal_turn_count,
-        )
-        for match in matches
+    skill_runs = _reconciled_skill_runs(
+        matches,
+        confirmed=confirmed,
+        phase=phase,
+        scope=inp.scope,
+        ctx=ctx,
+    )
+    active_skill_runs = [
+        run for run in skill_runs
+        if run.status == WorkflowRunStatus.ACTIVE
     ]
 
     pending_approval = _pending_approval_for_intent(
@@ -77,7 +83,7 @@ def refine_intent(
         confidence=inp.confidence,
         reason=reason,
         phase=phase,
-        active_skill_runs=skill_runs,
+        active_skill_runs=active_skill_runs,
         available_tool_ids=available_tool_ids,
         needs_user_confirmation=needs_confirmation,
         state_patch=patch,
@@ -123,6 +129,7 @@ def _available_tools_for_intent(
 
     read_tools = {
         "on_intent",
+        "advance_workflow",
         "read",
         "glob",
         "grep",
@@ -188,7 +195,7 @@ def _ordered_agent_tools(agent: str, registered_tool_ids: list[str]) -> list[str
     return ordered
 
 
-def _skill_matches(
+def _workflow_matches(
     inp: OnIntentInput,
     intent: TaskIntent,
     ctx: ToolContext,
@@ -196,37 +203,86 @@ def _skill_matches(
     phase: str,
     config: Config,
     settings: Settings | None,
-) -> list[SkillMatch]:
-    service = _skill_service(config, settings)
+) -> list[WorkflowMatch]:
+    del config, settings
+    service = WorkflowService()
     text = inp.scope or inp.reason
     matches = service.select(
         text,
         agent=ctx.agent,
         task_intent=intent.value,
         interaction_mode=ctx.interaction_mode,
-        scopes=("bundled",),
-        exclude_names=ctx.active_skill_names,
     )
-    seen = {normalize_skill_name(match.name) for match in matches}
-    excluded = {normalize_skill_name(name) for name in ctx.active_skill_names}
+    seen = {_normalize_name(match.name) for match in matches}
     for name in inp.suggested_skills:
-        normalized = normalize_skill_name(name)
-        if normalized in seen or normalized in excluded:
+        normalized = _normalize_name(name)
+        if normalized in seen:
             continue
-        skill = service.get(normalized)
-        if skill is None or skill.meta.scope != "bundled" or not service.is_enabled(skill):
+        node = service.get(normalized)
+        if node is None or not node.enabled:
             continue
-        matches.append(SkillMatch(skill=skill, reason="suggested"))
+        matches.append(WorkflowMatch(node=node, reason="suggested"))
         seen.add(normalized)
     return matches
 
 
-def _skill_service(config: Config, settings: Settings | None) -> SkillService:
-    selection = settings.get_skill_selection() if settings is not None else None
-    return SkillService(
-        SkillRegistry(config.workspace),
-        selection=selection,
+def _reconciled_skill_runs(
+    matches: list[WorkflowMatch],
+    *,
+    confirmed: TaskIntent,
+    phase: str,
+    scope: str,
+    ctx: ToolContext,
+) -> list[WorkflowRunState]:
+    current = _current_skill_runs(ctx)
+    desired_names = {_normalize_name(match.name) for match in matches}
+    current_by_name = {_normalize_name(run.name): run for run in current}
+    events = [
+        WorkflowStateEvent(
+            workflow=run.name,
+            kind=WorkflowStateEventKind.SKIPPED,
+            ref="tool:on_intent",
+            ok=True,
+            summary=f"Workflow no longer matches refined intent {confirmed.value}.",
+            reason=f"intent refined to {confirmed.value}",
+        )
+        for run in current
+        if run.status == WorkflowRunStatus.ACTIVE
+        and _normalize_name(run.name) not in desired_names
+    ]
+    reconciled = (
+        advance_workflow_states(current, events, turn_count=ctx.goal_turn_count)
+        if events
+        else current
     )
+    additions = [
+        WorkflowRunState.from_match(
+            match,
+            phase=phase,
+            scope=scope,
+            turn_count=ctx.goal_turn_count,
+        )
+        for match in matches
+        if current_by_name.get(_normalize_name(match.name)) is None
+        or current_by_name[_normalize_name(match.name)].status != WorkflowRunStatus.ACTIVE
+    ]
+    return [*reconciled, *additions]
+
+
+def _current_skill_runs(ctx: ToolContext) -> list[WorkflowRunState]:
+    runs: list[WorkflowRunState] = []
+    for item in ctx.skill_runs:
+        try:
+            run = item if isinstance(item, WorkflowRunState) else WorkflowRunState.model_validate(item)
+        except (TypeError, ValueError):
+            continue
+        if _normalize_name(run.name):
+            runs.append(run.model_copy(deep=True))
+    return runs
+
+
+def _normalize_name(name: str) -> str:
+    return name.strip().lower()
 
 
 def _phase_for_intent(intent: TaskIntent) -> str:

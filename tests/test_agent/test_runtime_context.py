@@ -25,7 +25,7 @@ from voidx.skills.context import (
     SKILL_TOOL_CONTEXT_STRIPPED_MARKER,
     render_skill_context,
 )
-from voidx.skills.runtime import SkillActivationSource, SkillRunState, SkillRunStatus
+from voidx.workflow.runtime import WorkflowActivationSource, WorkflowRunState, WorkflowRunStatus
 
 
 def test_agent_state_marks_runtime_turn_metadata_required():
@@ -67,6 +67,7 @@ def test_runtime_context_section_order_places_skill_context_before_task_state(tm
         "Role Prompt",
         "Mode Prompt",
         "Tool Contract",
+        "Workflow DAG",
         "Workspace Facts",
         "Project Facts",
         "Session Date",
@@ -79,15 +80,33 @@ def test_runtime_context_section_order_places_skill_context_before_task_state(tm
 
     assert context.skill_context_content.startswith(SKILL_CONTEXT_MARKER)
     assert f"Scope: {SKILL_CONTEXT_SCOPE}" in context.skill_context_content
-    assert "Do not treat inactive skill bodies as active instructions." in context.skill_context_content
+    assert "Treat inactive skill bodies as reference material only." in context.skill_context_content
     assert "Skill instructions from: docs" in context.skill_context_content
     assert "Active Skills" not in context.render_task_context()
     system = context.render_system()
     assert system.index("## Role Prompt") < system.index("## Mode Prompt")
     assert system.index("## Mode Prompt") < system.index("## Tool Contract")
-    assert system.index("## Tool Contract") < system.index("## Workspace Facts")
+    assert system.index("## Tool Contract") < system.index("## Workflow DAG")
+    assert system.index("## Workflow DAG") < system.index("## Workspace Facts")
     assert system.index("## Session Date") < system.index("## Long Summary")
     assert "## Runtime State" not in system
+
+
+def test_runtime_context_system_includes_stable_workflow_dag_overview(tmp_path):
+    context = RuntimeContextBuilder(
+        config=Config(workspace=str(tmp_path)),
+        workspace=str(tmp_path),
+        agent_prompt="You are voidx.",
+        agent="orchestrator",
+        interaction_mode=InteractionMode.AUTO,
+    ).build()
+
+    system = context.render_system()
+
+    assert "## Workflow DAG" in system
+    assert "- implement: test-driven-development, verification-before-completion" in system
+    assert "- test-driven-development --implemented--> verification-before-completion" in system
+    assert "## Workflow Node:" not in system
 
 
 def test_runtime_context_applies_task_context_before_current_user(tmp_path):
@@ -502,8 +521,8 @@ def test_skill_context_reference_library_marks_inactive_skills_not_active(tmp_pa
     skill_context = messages[1].content
     task_context = messages[-1].content
     assert "reference library" in skill_context
-    assert "Do not treat inactive skill bodies as active instructions." in skill_context
-    assert "Active workflow skills: test-driven-development (implement role)" in task_context
+    assert "Treat inactive skill bodies as reference material only." in skill_context
+    assert "Active workflow nodes: test-driven-development (implement role)" in task_context
     assert "MUST brainstorm before implementation" not in task_context
 
 
@@ -524,7 +543,7 @@ def test_task_context_only_contains_active_skill_summaries(tmp_path):
 
     context.apply_to_messages(messages)
 
-    assert "Active workflow skills: test-driven-development (implement role)" in messages[-1].content
+    assert "Active workflow nodes: test-driven-development (implement role)" in messages[-1].content
     assert "Full TDD body" not in messages[-1].content
 
 
@@ -610,7 +629,7 @@ def test_current_task_state_records_intent_and_implementation_gate(tmp_path):
     assert "Implementation intent explicit" not in messages[-1].content
 
 
-def test_current_task_state_records_active_workflow_skills(tmp_path):
+def test_current_task_state_records_active_workflow_nodes(tmp_path):
     messages = [HumanMessage(content="实现这个功能")]
     context = RuntimeContextBuilder(
         config=Config(workspace=str(tmp_path)),
@@ -628,10 +647,10 @@ def test_current_task_state_records_active_workflow_skills(tmp_path):
 
     context.apply_to_messages(messages)
 
-    assert "Active workflow skills: test-driven-development (implement role); verification-before-completion (implement lifecycle)" in messages[-1].content
+    assert "Active workflow nodes: test-driven-development (implement role); verification-before-completion (implement lifecycle)" in messages[-1].content
 
 
-def test_current_task_state_records_structured_skill_runs(tmp_path):
+def test_current_task_state_records_structured_workflow_runs(tmp_path):
     messages = [HumanMessage(content="实现这个功能")]
     context = RuntimeContextBuilder(
         config=Config(workspace=str(tmp_path)),
@@ -642,10 +661,10 @@ def test_current_task_state_records_structured_skill_runs(tmp_path):
         current_user_text="实现这个功能",
         task_intent=TaskIntent.IMPLEMENT,
         skill_runs=[
-            SkillRunState(
+            WorkflowRunState(
                 name="test-driven-development",
-                status=SkillRunStatus.ACTIVE,
-                source=SkillActivationSource.WORKFLOW,
+                status=WorkflowRunStatus.ACTIVE,
+                source=WorkflowActivationSource.WORKFLOW,
                 reason="implement role",
                 phase="implement",
                 scope="实现这个功能",
@@ -658,9 +677,10 @@ def test_current_task_state_records_structured_skill_runs(tmp_path):
     context.apply_to_messages(messages)
 
     assert (
-        "Skill run state: test-driven-development=active "
+        "Workflow run state: test-driven-development=active "
         "phase=implement source=workflow reason=implement role"
     ) in messages[-1].content
+    assert "Workflow exits [test-driven-development]: implemented -> verification-before-completion" in messages[-1].content
 
 
 def test_current_task_state_records_user_profile_preferences(tmp_path):

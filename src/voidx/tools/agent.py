@@ -1,4 +1,4 @@
-"""Agent tool — start an isolated child agent with filtered context."""
+"""Agent tool — start an isolated child agent."""
 
 from __future__ import annotations
 
@@ -20,8 +20,8 @@ class AgentInput(BaseModel):
     description: str = Field(
         description=(
             "Complete, self-contained task description for the child agent. "
-            "Include all context it needs because it receives only a filtered "
-            "slice of the parent conversation."
+            "Include all context it needs because caller conversation history "
+            "is not inherited."
         )
     )
     model: str | None = Field(
@@ -37,8 +37,8 @@ class AgentTool(BaseTool):
         "sub-agent work only: broad codebase exploration, implementation, review, "
         "or planning that should run in its own context.\n\n"
         "IMPORTANT: Provide a complete, self-contained task description. "
-        "The child agent receives only a filtered slice of the parent context plus "
-        "your task description."
+        "The child agent receives your task description, its own instructions, "
+        "and runtime context, but not caller conversation history."
     )
 
     def __init__(

@@ -80,7 +80,7 @@ from voidx.llm.usage import (
 )
 from voidx.memory.context_frames import save_context_frame_from_messages
 from voidx.memory.session import MessageRow, SessionInfo
-from voidx.skills.runtime import SkillRunState
+from voidx.workflow.runtime import WorkflowRunState, WorkflowRunStatus
 from voidx.tools.on_intent import OnIntentInput
 from voidx.runtime.ui_port import runtime_ui_port
 from voidx.ui.output.console import StreamingRenderer
@@ -116,28 +116,28 @@ def _is_context_overflow_error(exc: Exception) -> bool:
     )
 
 
-def _restored_skill_runs(task_run: TaskRun | None) -> list[SkillRunState]:
+def _restored_skill_runs(task_run: TaskRun | None) -> list[WorkflowRunState]:
     if task_run is None:
         return []
     return list((task_run.skill_runs or {}).values())
 
 
-def _merge_skill_runs(*groups: list[SkillRunState | dict]) -> list[SkillRunState]:
-    merged: dict[str, SkillRunState] = {}
+def _merge_skill_runs(*groups: list[WorkflowRunState | dict]) -> list[WorkflowRunState]:
+    merged: dict[str, WorkflowRunState] = {}
     for group in groups:
         for item in group:
             try:
-                run = item if isinstance(item, SkillRunState) else SkillRunState.model_validate(item)
+                run = item if isinstance(item, WorkflowRunState) else WorkflowRunState.model_validate(item)
             except ValueError:
                 continue
             merged[run.name] = run
     return list(merged.values())
 
 
-def _skill_names(group: list[SkillRunState | dict]) -> list[str]:
+def _skill_names(group: list[WorkflowRunState | dict]) -> list[str]:
     names: list[str] = []
     for item in group:
-        if isinstance(item, SkillRunState):
+        if isinstance(item, WorkflowRunState):
             name = item.name
         elif isinstance(item, dict):
             name = item.get("name", "")
@@ -145,6 +145,18 @@ def _skill_names(group: list[SkillRunState | dict]) -> list[str]:
             name = ""
         if isinstance(name, str) and name.strip():
             names.append(name.strip())
+    return names
+
+
+def _active_skill_names(group: list[WorkflowRunState | dict]) -> list[str]:
+    names: list[str] = []
+    for item in group:
+        try:
+            run = item if isinstance(item, WorkflowRunState) else WorkflowRunState.model_validate(item)
+        except (TypeError, ValueError):
+            continue
+        if run.status == WorkflowRunStatus.ACTIVE and run.name.strip():
+            names.append(run.name.strip())
     return names
 
 
@@ -186,7 +198,6 @@ class VoidXGraph(
         self._turn_node: OutputNode | None = None
         self._current_tree: OutputTree | None = None
         self._current_messages: list[BaseMessage] | None = None
-        self._sub_buffers: dict[str, list[BaseMessage]] = {}
         self._pending_summary: str | None = None
         self._compaction_summary: str = ""
         self._in_turn_compaction_count: int = 0
@@ -346,7 +357,6 @@ class VoidXGraph(
         self._permission.clear_session_permissions()
         self._usage_stats.reset()
         self._current_messages = None
-        self._sub_buffers.clear()
         self._pending_guidance.clear()
         if old_session_id:
             self._schedule_clear_session_storage(old_session_id)
@@ -411,7 +421,6 @@ class VoidXGraph(
     async def _subagent_runner(self, agent_def: AgentDef, description: str, model_override: str | None) -> str:
         # Apply configured max_steps override
         agent_def = self._apply_max_steps_override(agent_def)
-        parent_messages = getattr(self, '_current_messages', None)
         sub_buffer: list[BaseMessage] = []
         session_id = self._session.id if self._session else "default"
         agent_id = self._next_agent_id
@@ -420,7 +429,7 @@ class VoidXGraph(
         started_at = time.monotonic()
         interaction_mode = InteractionMode.PLAN.value if agent_def.name == "plan" else InteractionMode.AUTO.value
         task_intent = _subagent_task_intent_for_agent(agent_def.name)
-        skill_runtime_context = await self._instruction.skill_context_for(
+        skill_runtime_context = await self._workflow_context_for(
             description,
             agent=agent_def.name,
             task_intent=task_intent,
@@ -433,9 +442,10 @@ class VoidXGraph(
             return await self._authorize_tool_calls(
                 calls,
                 agent_name=agent_name,
-                plan_mode=self._plan_mode,
+                plan_mode=InteractionMode.parse(interaction_mode) == InteractionMode.PLAN,
                 session_id=session_id,
-                interaction_mode=self._interaction_mode.value,
+                interaction_mode=interaction_mode,
+                skill_runs=skill_runtime_context.runs,
             )
 
         if self._ui.via_events():
@@ -451,7 +461,6 @@ class VoidXGraph(
         ok = False
         try:
             kwargs = {
-                "parent_messages": parent_messages,
                 "sub_messages": sub_buffer,
                 "authorize_tools": authorize,
                 "debug": self._debug,
@@ -477,8 +486,6 @@ class VoidXGraph(
                 **kwargs,
             )
             ok = True
-            key = parent_tool_call_id or f"agent:{agent_id}"
-            self._sub_buffers.setdefault(key, []).extend(sub_buffer)
             return result
         finally:
             if self._ui.via_events():
@@ -527,7 +534,7 @@ class VoidXGraph(
         )
         current_user_text = latest_user_text(state.get("messages", []))
         instructions = await self._instruction.system()
-        skill_context = await self._instruction.skill_context_for(
+        skill_context = await self._workflow_context_for(
             current_user_text,
             agent=agent_name,
             task_intent=state.get("task_intent"),
@@ -535,6 +542,7 @@ class VoidXGraph(
             scope=pending_approval_scope(state.get("pending_approval")) or state.get("goal") or current_user_text,
             turn_count=state.get("goal_turn_count", 0),
             exclude_names=_skill_names(state.get("skill_runs", []) or []),
+            active_names=_active_skill_names(state.get("skill_runs", []) or []),
         )
         skill_runs = _merge_skill_runs(
             _restored_skill_runs(getattr(self, "_task_run", None)),
@@ -576,6 +584,12 @@ class VoidXGraph(
         context.apply_to_messages(state.get("messages", []))
 
         return {**base, "skill_runs": skill_runs}
+
+    async def _workflow_context_for(self, *args, **kwargs):
+        workflow_context_for = getattr(self._instruction, "workflow_context_for", None)
+        if workflow_context_for is not None:
+            return await workflow_context_for(*args, **kwargs)
+        return await self._instruction.skill_context_for(*args, **kwargs)
 
     async def _call_llm(self, state: AgentState) -> dict:
         step = state.get("step_count", 0)

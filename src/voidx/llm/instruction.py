@@ -13,17 +13,18 @@ Resolution order:
 from __future__ import annotations
 
 import asyncio
+from collections.abc import Iterable
 from dataclasses import dataclass, field
 import logging
 from pathlib import Path
 
 import httpx
 
-from voidx.skills.context import render_skill_context
 from voidx.skills.registry import SkillRegistry
-from voidx.skills.runtime import SkillRunState
 from voidx.skills.schema import SkillSelectionConfig
 from voidx.skills.service import SkillService
+from voidx.workflow.runtime import WorkflowRunState
+from voidx.workflow.service import WorkflowService
 
 INSTRUCTION_FILES = ["AGENTS.md", "CLAUDE.md"]  # CLAUDE.md for compat
 
@@ -31,11 +32,14 @@ logger = logging.getLogger(__name__)
 
 
 @dataclass(frozen=True)
-class SkillRuntimeContext:
+class WorkflowRuntimeContext:
     instructions: list[str]
     active: list[str]
     content: str = ""
-    runs: list[SkillRunState] = field(default_factory=list)
+    runs: list[WorkflowRunState] = field(default_factory=list)
+
+
+SkillRuntimeContext = WorkflowRuntimeContext
 
 
 @dataclass
@@ -63,6 +67,7 @@ class InstructionService:
         self._skill_registry = SkillRegistry(str(self._workspace))
         self._skill_service: SkillService | None = None
         self._skill_service_signature: tuple[tuple[str, ...], tuple[str, ...]] | None = None
+        self._workflow_service = WorkflowService()
         self._debug = False
 
     # ── public API ──────────────────────────────────────────────────────
@@ -122,7 +127,7 @@ class InstructionService:
             return ""
         return "## Available Skills\n" + "\n".join(summaries)
 
-    async def skill_context_for(
+    async def workflow_context_for(
         self,
         user_text: str,
         *,
@@ -133,34 +138,43 @@ class InstructionService:
         scope: str = "",
         turn_count: int = 0,
         exclude_names: list[str] | None = None,
-    ) -> SkillRuntimeContext:
-        service = self._skill_service_for_current_selection()
-        bundled_skills = await asyncio.to_thread(service.enabled_bundled_skills)
-        instructions = [service.render_instruction(skill) for skill in bundled_skills]
+        active_names: list[str] | None = None,
+    ) -> WorkflowRuntimeContext:
+        service = self._workflow_service
+        nodes = await asyncio.to_thread(service.nodes)
         matches = await asyncio.to_thread(
             service.select,
             user_text,
             agent=agent,
             task_intent=task_intent,
             interaction_mode=interaction_mode,
-            scopes=("bundled",),
             exclude_names=exclude_names or (),
         )
+        active = _merged_names(active_names or (), [match.name for match in matches])
+        instructions = [
+            service.render_instruction(node)
+            for node in nodes
+            if node.name in active
+        ]
         phase = task_phase or _phase_from_intent(task_intent, interaction_mode)
-        return SkillRuntimeContext(
+        return WorkflowRuntimeContext(
             instructions=instructions,
             active=[f"{match.name} ({match.reason})" for match in matches],
-            content=render_skill_context(instructions),
-            runs=[
-                SkillRunState.from_match(
-                    match,
-                    phase=phase,
-                    scope=scope,
-                    turn_count=turn_count,
-                )
-                for match in matches
-            ],
+            content=service.context(active_names=active),
+            runs=service.select_runs(
+                user_text,
+                agent=agent,
+                task_intent=task_intent,
+                interaction_mode=interaction_mode,
+                phase=phase,
+                scope=scope,
+                turn_count=turn_count,
+                exclude_names=exclude_names or (),
+            ),
         )
+
+    async def skill_context_for(self, *args, **kwargs) -> WorkflowRuntimeContext:
+        return await self.workflow_context_for(*args, **kwargs)
 
     async def skills_for(
         self,
@@ -170,7 +184,7 @@ class InstructionService:
         task_intent: str | None = None,
         interaction_mode: str | None = None,
     ) -> list[str]:
-        context = await self.skill_context_for(
+        context = await self.workflow_context_for(
             user_text,
             agent=agent,
             task_intent=task_intent,
@@ -321,3 +335,13 @@ def _skill_selection_signature(
     if selection is None:
         return (), ()
     return tuple(sorted(selection.enabled)), tuple(sorted(selection.disabled))
+
+
+def _merged_names(*groups: Iterable[str]) -> set[str]:
+    names: set[str] = set()
+    for group in groups:
+        for name in group:
+            normalized = name.strip().lower()
+            if normalized:
+                names.add(normalized)
+    return names

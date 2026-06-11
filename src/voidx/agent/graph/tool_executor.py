@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import asyncio
+import inspect
 import time
 from collections.abc import Callable
 from dataclasses import dataclass
@@ -15,7 +16,7 @@ from voidx.agent.graph.runtime import current_parent_tool_call_id
 from voidx.agent.graph.todo_events import todo_updated_event
 from voidx.agent.task_state import ToolStatePatch
 from voidx.agent.tool_messages import sanitize_tool_message_content
-from voidx.skills.runtime import SkillRunState
+from voidx.workflow.runtime import WorkflowRunState, WorkflowRunStatus, advance_workflow_states
 from voidx.tools.base import ToolContext, UserInteraction, UserResponse
 from voidx.ui.output.console import _fmt_args, _title
 from voidx.ui.output.events.schema import (
@@ -72,40 +73,51 @@ class GraphToolExecutor:
         session_id = host._session.id if host._session else "default"
         plan_mode = state.get("plan_mode", False)
         interaction_mode = state.get("interaction_mode")
-        ctx = ToolContext(
-            workspace=state.get("workspace", host._workspace),
-            session_id=session_id,
-            agent=agent_name,
-            interaction_mode=interaction_mode or ("plan" if plan_mode else "auto"),
-            task_intent=state.get("task_intent", "chat"),
-            pending_approval=_dump_pending_approval(state.get("pending_approval")),
-            goal=state.get("goal", ""),
-            goal_turn_count=state.get("goal_turn_count", 0),
-            active_skill_names=_active_skill_names(state.get("skill_runs", []) or []),
-            file_mtimes=host._file_mtimes,
-            mcp_manager=getattr(host, "_mcp_manager", None),
-            lsp_manager=getattr(host, "_lsp_manager", None),
-            sandbox_mode=host._permission.sandbox_mode,
-            sandbox_extra_paths=host._permission.sandbox_workspace_write,
-            interact=_make_interact_callback(getattr(host, "_app", None)),
-        )
+        workspace = state.get("workspace", host._workspace)
+        runtime_task_intent = state.get("task_intent", "chat")
+        runtime_pending_approval = _dump_pending_approval(state.get("pending_approval"))
+        runtime_goal = state.get("goal", "")
+        runtime_skill_runs = _skill_runs_for_state(state.get("skill_runs", []) or [])
+        state_update: dict = {}
+
+        def make_context() -> ToolContext:
+            return ToolContext(
+                workspace=workspace,
+                session_id=session_id,
+                agent=agent_name,
+                interaction_mode=interaction_mode or ("plan" if plan_mode else "auto"),
+                task_intent=str(runtime_task_intent or "chat"),
+                pending_approval=runtime_pending_approval,
+                goal=str(runtime_goal or ""),
+                goal_turn_count=state.get("goal_turn_count", 0),
+                active_skill_names=_active_skill_names(runtime_skill_runs),
+                skill_runs=runtime_skill_runs,
+                file_mtimes=host._file_mtimes,
+                mcp_manager=getattr(host, "_mcp_manager", None),
+                lsp_manager=getattr(host, "_lsp_manager", None),
+                sandbox_mode=host._permission.sandbox_mode,
+                sandbox_extra_paths=host._permission.sandbox_workspace_write,
+                interact=_make_interact_callback(getattr(host, "_app", None)),
+            )
+
+        ctx = make_context()
+
+        def apply_state_update(update: dict) -> None:
+            nonlocal ctx, runtime_goal, runtime_pending_approval, runtime_skill_runs, runtime_task_intent
+            if not update:
+                return
+            state_update.update(update)
+            if "task_intent" in update:
+                runtime_task_intent = update.get("task_intent") or "chat"
+            if "pending_approval" in update:
+                runtime_pending_approval = _dump_pending_approval(update.get("pending_approval"))
+            if "goal" in update:
+                runtime_goal = update.get("goal") or ""
+            if "skill_runs" in update:
+                runtime_skill_runs = _skill_runs_for_state(update.get("skill_runs") or [])
+            ctx = make_context()
 
         tool_calls = last.tool_calls
-        host._sub_buffers = {}
-
-        approved, denied = await host._authorize_tool_calls(
-            tool_calls,
-            agent_name=agent_name,
-            plan_mode=plan_mode,
-            session_id=session_id,
-            interaction_mode=interaction_mode,
-        )
-        barrier_present = any(_is_barrier_tool(tc) for tc in approved)
-        deferred_for_barrier: list[dict] = []
-        if barrier_present:
-            barrier = [tc for tc in approved if _is_barrier_tool(tc)]
-            deferred_for_barrier = [tc for tc in approved if not _is_barrier_tool(tc)]
-            approved = barrier
 
         # ── Phase 2: parallel execution of all approved tools ────────
 
@@ -233,35 +245,36 @@ class GraphToolExecutor:
                 tool_call=tc,
             )
 
-        agent_limit = _parallel_subagent_limit(host.config)
-        agent_semaphore = asyncio.Semaphore(agent_limit)
-        parallel_agent_count = sum(1 for tc in approved if tc.get("name") == "agent")
-        aggregate_status_id = ""
-        show_parallel_status = (
-            agent_limit > 1
-            and parallel_agent_count > 1
-            and not barrier_present
-        )
+        async def execute_approved(approved: list[dict], *, serial: bool = False) -> list[_ExecutedTool]:
+            if not approved:
+                return []
+            if serial:
+                executed = []
+                for tc in approved:
+                    executed.append(await execute_one(tc))
+                return executed
 
-        async def execute_one_limited(tc):
-            if tc.get("name") == "agent":
-                async with agent_semaphore:
-                    return await execute_one(tc)
-            return await execute_one(tc)
+            agent_limit = _parallel_subagent_limit(host.config)
+            agent_semaphore = asyncio.Semaphore(agent_limit)
+            parallel_agent_count = sum(1 for tc in approved if tc.get("name") == "agent")
+            aggregate_status_id = ""
+            show_parallel_status = agent_limit > 1 and parallel_agent_count > 1
 
-        if show_parallel_status and host._ui.via_events():
-            aggregate_status_id = f"parallel-subagents:{id(last)}"
-            await host._ui.events.emit(StatusUpdated(
-                status_id=aggregate_status_id,
-                label=f"Running {parallel_agent_count} child agents",
-                stage="working",
-            ))
+            async def execute_one_limited(tc):
+                if tc.get("name") == "agent":
+                    async with agent_semaphore:
+                        return await execute_one(tc)
+                return await execute_one(tc)
 
-        if barrier_present:
+            if show_parallel_status and host._ui.via_events():
+                aggregate_status_id = f"parallel-subagents:{id(last)}:{id(approved)}"
+                await host._ui.events.emit(StatusUpdated(
+                    status_id=aggregate_status_id,
+                    label=f"Running {parallel_agent_count} child agents",
+                    stage="working",
+                ))
+
             executed = []
-            for tc in approved:
-                executed.append(await execute_one(tc))
-        else:
             try:
                 executed = await asyncio.gather(*[execute_one_limited(tc) for tc in approved])
             finally:
@@ -270,25 +283,74 @@ class GraphToolExecutor:
                         status_id=aggregate_status_id,
                         label=f"Finished {parallel_agent_count} child agents",
                     ))
+            return executed
+
+        executed: list[_ExecutedTool] = []
+        denied: list[tuple[dict, str]] = []
+        blocked_msgs: list[ToolMessage] = []
+        pending = list(tool_calls)
+
+        while pending:
+            prefix, barrier, suffix = _split_at_first_barrier(pending)
+
+            if prefix:
+                approved, segment_denied = await _authorize_tool_calls(
+                    host._authorize_tool_calls,
+                    prefix,
+                    agent_name=agent_name,
+                    plan_mode=plan_mode,
+                    session_id=session_id,
+                    interaction_mode=interaction_mode,
+                    skill_runs=runtime_skill_runs,
+                )
+                denied.extend(segment_denied)
+                segment_executed = await execute_approved(approved)
+                executed.extend(segment_executed)
+                apply_state_update(
+                    _state_update_from_executed_tools(
+                        segment_executed,
+                        current_skill_runs=runtime_skill_runs,
+                    )
+                )
+                pending = ([barrier] if barrier is not None else []) + suffix
+                continue
+
+            if barrier is None:
+                break
+
+            approved, segment_denied = await _authorize_tool_calls(
+                host._authorize_tool_calls,
+                [barrier],
+                agent_name=agent_name,
+                plan_mode=plan_mode,
+                session_id=session_id,
+                interaction_mode=interaction_mode,
+                skill_runs=runtime_skill_runs,
+            )
+            if segment_denied:
+                denied.extend(segment_denied)
+                blocked_msgs.extend(_blocked_after_barrier_messages(suffix, workspace, "denied"))
+                break
+
+            segment_executed = await execute_approved(approved, serial=True)
+            executed.extend(segment_executed)
+            apply_state_update(
+                _state_update_from_executed_tools(
+                    segment_executed,
+                    current_skill_runs=runtime_skill_runs,
+                )
+            )
+            if not segment_executed or not result_ok(segment_executed[-1].result):
+                blocked_msgs.extend(_blocked_after_barrier_messages(suffix, workspace, "failed"))
+                break
+
+            pending = suffix
 
         # Clear on-failure tracking for this batch (full logic in Phase 2)
         host._needs_failure_check.clear()
 
         if host._ui.via_events():
             await host._ui.events.drain()
-
-        # Child-agent messages are buffered by parent tool_call_id. Append them
-        # only after parent ToolMessages so parent tool_use→tool_result
-        # adjacency is preserved for ALL agent calls.
-        sub_buffers: dict[str, list] = getattr(host, "_sub_buffers", {})
-        approved_ids = [tc.get("id", "") for tc in approved]
-        extra: list = []
-        for call_id in approved_ids:
-            extra.extend(sub_buffers.get(call_id, []))
-        for call_id, messages in sub_buffers.items():
-            if call_id not in approved_ids:
-                extra.extend(messages)
-        host._sub_buffers = {}
 
         # Denied tools get error messages
         denied_msgs = [
@@ -298,14 +360,15 @@ class GraphToolExecutor:
             )
             for tc, reason in denied
         ]
-        deferred_msgs = [_deferred_message(tc, ctx.workspace) for tc in deferred_for_barrier]
-
-        state_update = _state_update_from_executed_tools(
-            executed,
-            current_skill_runs=state.get("skill_runs", []) or [],
-        )
+        original_order = {
+            tc.get("id", ""): index
+            for index, tc in enumerate(tool_calls)
+            if tc.get("id", "")
+        }
+        tool_messages = [item.message for item in executed] + denied_msgs + blocked_msgs
+        tool_messages.sort(key=lambda msg: original_order.get(msg.tool_call_id, len(original_order)))
         return {
-            "messages": [item.message for item in executed] + extra + denied_msgs + deferred_msgs,
+            "messages": tool_messages,
             **state_update,
         }
 
@@ -354,18 +417,44 @@ def _state_update_from_executed_tools(
                 skill_runs_changed = True
             else:
                 update[field] = data.get(field)
+
+    # Auto-advance: detect review_has_issues / failed_implementation from
+    # tool results and drive DAG transitions without explicit advance_workflow.
+    auto_events = _auto_advance_from_executed(executed, merged_skill_runs)
+    if auto_events:
+        merged_skill_runs = advance_workflow_states(
+            merged_skill_runs, auto_events,
+        )
+        skill_runs_changed = True
+
     if skill_runs_changed:
         update["skill_runs"] = merged_skill_runs
     return update
 
 
-def _merge_skill_runs_for_state(*groups: object) -> list[SkillRunState]:
-    merged: dict[str, SkillRunState] = {}
+def _auto_advance_from_executed(
+    executed: list[_ExecutedTool],
+    skill_runs: list[WorkflowRunState],
+) -> list:
+    """Check executed tools for auto-advance signals and return events."""
+    from voidx.workflow.auto_advance import auto_advance_events
+
+    tool_items = []
+    for item in executed:
+        tool_items.append({
+            "name": item.tool_call.get("name", ""),
+            "result": item.result,
+        })
+    return auto_advance_events(tool_items, skill_runs=skill_runs)
+
+
+def _merge_skill_runs_for_state(*groups: object) -> list[WorkflowRunState]:
+    merged: dict[str, WorkflowRunState] = {}
     for group in groups:
         items = group.values() if isinstance(group, dict) else group or []
         for item in items:
             try:
-                run = item if isinstance(item, SkillRunState) else SkillRunState.model_validate(item)
+                run = item if isinstance(item, WorkflowRunState) else WorkflowRunState.model_validate(item)
             except (TypeError, ValueError):
                 continue
             merged[run.name] = run
@@ -409,18 +498,61 @@ def _agent_result_preview(text: object) -> str:
 
 
 def _is_barrier_tool(tool_call: dict) -> bool:
-    return tool_call.get("name") in {"on_intent", "clarify", "plan_checkpoint"}
+    return tool_call.get("name") in {"on_intent", "clarify", "plan_checkpoint", "advance_workflow"}
 
 
-def _deferred_message(tool_call: dict, workspace: str) -> ToolMessage:
-    return ToolMessage(
-        content=sanitize_tool_message_content(
-            "Deferred until after a runtime barrier tool updates state. "
-            "Re-issue this tool call if it is still allowed for the updated intent.",
-            workspace=workspace,
-        ),
-        tool_call_id=tool_call.get("id", ""),
-    )
+def _split_at_first_barrier(tool_calls: list[dict]) -> tuple[list[dict], dict | None, list[dict]]:
+    for index, tool_call in enumerate(tool_calls):
+        if _is_barrier_tool(tool_call):
+            return tool_calls[:index], tool_call, tool_calls[index + 1:]
+    return tool_calls, None, []
+
+
+def _blocked_after_barrier_messages(
+    tool_calls: list[dict],
+    workspace: str,
+    outcome: str,
+) -> list[ToolMessage]:
+    return [
+        ToolMessage(
+            content=sanitize_tool_message_content(
+                f"Blocked because a prior runtime barrier was {outcome}.",
+                workspace=workspace,
+            ),
+            tool_call_id=tc.get("id", ""),
+        )
+        for tc in tool_calls
+    ]
+
+
+async def _authorize_tool_calls(
+    authorize,
+    tool_calls: list[dict],
+    *,
+    agent_name: str,
+    plan_mode: bool,
+    session_id: str,
+    interaction_mode: str | None,
+    skill_runs: object,
+):
+    kwargs = {
+        "agent_name": agent_name,
+        "plan_mode": plan_mode,
+        "session_id": session_id,
+        "interaction_mode": interaction_mode,
+    }
+    try:
+        signature = inspect.signature(authorize)
+    except (TypeError, ValueError):
+        kwargs["skill_runs"] = skill_runs
+    else:
+        params = signature.parameters
+        if "skill_runs" in params or any(
+            param.kind == inspect.Parameter.VAR_KEYWORD
+            for param in params.values()
+        ):
+            kwargs["skill_runs"] = skill_runs
+    return await authorize(tool_calls, **kwargs)
 
 
 def _make_interact_callback(app):
@@ -473,14 +605,21 @@ def _dump_pending_approval(value: object | None) -> dict | None:
     return None
 
 
-def _active_skill_names(value: object) -> list[str]:
-    names: list[str] = []
+def _skill_runs_for_state(value: object) -> list[WorkflowRunState]:
+    runs: list[WorkflowRunState] = []
     items = value.values() if isinstance(value, dict) else value or []
     for item in items:
-        if isinstance(item, dict):
-            name = item.get("name")
-        else:
-            name = getattr(item, "name", None)
-        if isinstance(name, str) and name.strip():
-            names.append(name.strip())
+        try:
+            run = item if isinstance(item, WorkflowRunState) else WorkflowRunState.model_validate(item)
+        except (TypeError, ValueError):
+            continue
+        runs.append(run)
+    return runs
+
+
+def _active_skill_names(value: object) -> list[str]:
+    names: list[str] = []
+    for run in _skill_runs_for_state(value):
+        if run.status == WorkflowRunStatus.ACTIVE and run.name.strip():
+            names.append(run.name.strip())
     return names

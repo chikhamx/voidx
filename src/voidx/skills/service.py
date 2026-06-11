@@ -5,9 +5,7 @@ from __future__ import annotations
 import re
 from collections.abc import Iterable
 
-from voidx.skills.policy import workflow_skill_activations, workflow_skill_sort_key
 from voidx.skills.registry import SkillRegistry, normalize_skill_name
-from voidx.skills.runtime import SkillRunState
 from voidx.skills.schema import SkillDefinition, SkillMatch, SkillScope, SkillSelectionConfig
 from voidx.skills.context import render_skill_instruction
 
@@ -85,24 +83,9 @@ class SkillService:
             matches.append(SkillMatch(skill=skill, reason=reason))
 
         if explicit:
-            for name in sorted(explicit, key=workflow_skill_sort_key):
+            for name in sorted(explicit):
                 add_match(skills_by_name.get(name), "explicit")
-            for activation in workflow_skill_activations(
-                text,
-                agent=agent,
-                task_intent=task_intent,
-                interaction_mode=interaction_mode,
-            ):
-                add_match(skills_by_name.get(normalize_skill_name(activation.name)), activation.reason)
             return matches[:limit]
-
-        for activation in workflow_skill_activations(
-            text,
-            agent=agent,
-            task_intent=task_intent,
-            interaction_mode=interaction_mode,
-        ):
-            add_match(skills_by_name.get(normalize_skill_name(activation.name)), activation.reason)
 
         text_matches: list[SkillMatch] = []
         lowered = text.lower()
@@ -112,7 +95,7 @@ class SkillService:
             reason = self._match_reason(skill, lowered)
             if reason:
                 text_matches.append(SkillMatch(skill=skill, reason=reason))
-        text_matches.sort(key=lambda match: workflow_skill_sort_key(match.name))
+        text_matches.sort(key=lambda match: match.name)
         matches.extend(text_matches)
         return matches[:limit]
 
@@ -129,38 +112,6 @@ class SkillService:
     ) -> list[str]:
         return [
             f"{match.name} ({match.reason})"
-            for match in self.select(
-                user_text,
-                agent=agent,
-                task_intent=task_intent,
-                interaction_mode=interaction_mode,
-                limit=limit,
-                scopes=scopes,
-                exclude_names=exclude_names,
-            )
-        ]
-
-    def select_runs(
-        self,
-        user_text: str,
-        *,
-        agent: str = "",
-        task_intent: str | None = None,
-        interaction_mode: str | None = None,
-        phase: str = "",
-        scope: str = "",
-        turn_count: int = 0,
-        limit: int = 5,
-        scopes: Iterable[SkillScope] | None = None,
-        exclude_names: Iterable[str] = (),
-    ) -> list[SkillRunState]:
-        return [
-            SkillRunState.from_match(
-                match,
-                phase=phase,
-                scope=scope,
-                turn_count=turn_count,
-            )
             for match in self.select(
                 user_text,
                 agent=agent,

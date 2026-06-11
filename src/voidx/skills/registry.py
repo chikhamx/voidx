@@ -9,6 +9,7 @@ from typing import Any
 from voidx.skills.schema import SkillDefinition, SkillMeta, SkillScope
 
 SKILL_FILENAME = "SKILL.md"
+DEFAULT_BUNDLED_DIR = Path(__file__).resolve().parent / "bundled"
 
 
 @dataclass
@@ -45,7 +46,7 @@ class SkillRegistry:
         project_dir: Path | None = None,
     ) -> None:
         self.workspace = Path(workspace).resolve()
-        self.bundled_dir = bundled_dir or (Path(__file__).resolve().parent / "bundled")
+        self.bundled_dir = bundled_dir or DEFAULT_BUNDLED_DIR
         self.global_dir = global_dir or (Path.home() / ".voidx" / "skills")
         self.project_dir = project_dir or (self.workspace / ".voidx" / "skills")
         self._cache: list[SkillDefinition] | None = None
