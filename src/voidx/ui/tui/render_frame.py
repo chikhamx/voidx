@@ -234,7 +234,7 @@ class _FrameRendererMixin:
         """Move terminal cursor to the current input cursor position."""
         width = self._frame_width()
         status_lines = self._render_hint_lines()
-        panel_lines = self._render_panel_lines(width)
+        panel_rows = self._visible_panel_row_count(width)
         input_rows = self._input_display_rows(width)
         cursor_row = min(self._cursor_row, max(len(input_rows) - 1, 0))
         current_line = self._current_line()
@@ -257,8 +257,8 @@ class _FrameRendererMixin:
         lines_up = (
             rows_after_cursor
             + 1  # input bottom border
-            + len(panel_lines)
-            + (1 if panel_lines else 0)
+            + panel_rows
+            + (1 if panel_rows else 0)
             + len(status_lines)
         )
         col = cursor_cells % render_width
@@ -277,18 +277,37 @@ class _FrameRendererMixin:
         panel_lines = self._render_panel_lines(width)
         busy_activity_elements = self._render_busy_activity_elements(width)
 
-        bottom_fixed_lines = (
-            1  # transcript/input separator
-            + (1 if self._active_text_prompt is not None else 0)
-            + sum(self._input_display_rows(width))
-            + 1  # input bottom border
-            + len(panel_lines)
-            + (1 if panel_lines else 0)
-            + len(status_lines)
+        base_bottom_rows = _rendered_row_count(
+            self._capture_renderable(
+                Group(*self._render_bottom_elements(width, [], status_lines)),
+                width,
+            )
         )
-        todo_max_rows = self._pinned_todo_max_rows(
-            render_height,
-            bottom_fixed_lines + len(busy_activity_elements),
+        panel_rows = self._panel_row_count(panel_lines, width)
+        if panel_lines:
+            panel_row_limit = max(
+                render_height - base_bottom_rows - len(busy_activity_elements) - 1,
+                0,
+            )
+            self._panel_row_limit = panel_row_limit
+            panel_rows = min(panel_rows, panel_row_limit)
+        else:
+            self._panel_row_limit = None
+        bottom_fixed_lines = (
+            base_bottom_rows
+            + panel_rows
+            + (1 if panel_rows else 0)
+        )
+        todo_budget = max(
+            render_height - bottom_fixed_lines - len(busy_activity_elements),
+            0,
+        )
+        todo_max_rows = min(
+            self._pinned_todo_max_rows(
+                render_height,
+                bottom_fixed_lines + len(busy_activity_elements),
+            ),
+            todo_budget,
         )
         pinned_todo_elements = self._render_pinned_todo_elements(width, max_rows=todo_max_rows)
         fixed_lines = (
@@ -296,7 +315,7 @@ class _FrameRendererMixin:
             + len(pinned_todo_elements)
             + len(busy_activity_elements)
         )
-        body_limit = max(render_height - fixed_lines, 1)
+        body_limit = max(render_height - fixed_lines, 0)
 
         # Transcript — only render uncommitted (active) lines.
         # Committed lines have already been flushed to terminal scrollback.
@@ -377,10 +396,9 @@ class _FrameRendererMixin:
         elements.append(Text(input_border, style="dim"))
 
         # Panels (attachment, command palette, choice)
-        for line in panel_lines:
-            elements.append(Text.from_markup(line))
+        elements.extend(self._render_panel_elements(panel_lines, width))
 
-        if panel_lines:
+        if self._visible_panel_row_count(width, panel_lines=panel_lines):
             elements.append(Text("─" * width, style="dim"))
 
         # Status bar (always at the very bottom)
@@ -399,3 +417,40 @@ class _FrameRendererMixin:
         if self._last_error:
             lines.append(Text("  ⚠ " + self._last_error, style="red"))
         return lines
+
+    def _render_panel_elements(self, panel_lines: list[str], width: int) -> list[Text]:
+        if not panel_lines:
+            return []
+        elements = [Text.from_markup(line) for line in panel_lines]
+        row_limit = self._panel_row_limit
+        if row_limit is None:
+            return elements
+        if row_limit <= 0:
+            return []
+        ansi = self._capture_renderable(Group(*elements), width)
+        rows = ansi.splitlines()
+        if len(rows) <= row_limit:
+            return elements
+        if row_limit == 1:
+            return [Text("…", style="dim")]
+        visible_rows = rows[-(row_limit - 1):]
+        return [Text("…", style="dim")] + [Text.from_ansi(row) for row in visible_rows]
+
+    def _panel_row_count(self, panel_lines: list[str], width: int) -> int:
+        if not panel_lines:
+            return 0
+        elements = [Text.from_markup(line) for line in panel_lines]
+        return _rendered_row_count(self._capture_renderable(Group(*elements), width))
+
+    def _visible_panel_row_count(
+        self,
+        width: int,
+        *,
+        panel_lines: list[str] | None = None,
+    ) -> int:
+        lines = self._render_panel_lines(width) if panel_lines is None else panel_lines
+        rows = self._panel_row_count(lines, width)
+        row_limit = self._panel_row_limit
+        if row_limit is None:
+            return rows
+        return min(rows, max(row_limit, 0))

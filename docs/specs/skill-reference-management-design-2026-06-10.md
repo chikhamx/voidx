@@ -2,16 +2,18 @@
 
 ## Context
 
-当前技能系统已有完整的发现、匹配、状态机、渲染管线，但用户与技能的交互方式有限：
+当前 regular skill 系统已有完整的发现、匹配、渲染管线，但用户与技能的交互方式有限：
 
 - **引用方式单一**：仅支持 `$skill-name` 纯文本引用，无 TUI 交互式选择
-- **管理模式粗糙**：`/skills` 只支持 `list|show|enable|disable|paths`，缺少 auto/manual 模式、install/uninstall
-- **auto 模式缺失**：所有技能默认走 workflow policy 自动匹配或 `$` 显式引用，无法将某个技能固定注入 system prompt
+- **管理模式粗糙**：`/skills` 只支持 `list|show|enable|disable|paths`，缺少 auto/manual 模式
+- **可见性不可控**：manual 技能应默认对 LLM 不可见，只有用户显式引用后才把 name + description 带入用户消息；auto 技能应只把描述固定注入 system prompt，让 LLM 自行决定是否调用 `load_skills`
+
+本文只讨论 global/project `SKILL.md` 技能。当前系统已经没有内置 skill；内置工作流节点由 workflow runtime 管理，不属于本设计范围。
 
 本设计在现有架构上增加两个核心能力：
 
 1. **`#` 技能引用**：TUI 输入框中输入 `#` 弹出技能选择面板，选中后展开为 `$skill-name` 引用
-2. **技能模式管理**：每个技能可设为 `auto`（固定注入描述到 system prompt）或 `manual`（默认，需 `#`/`$` 引用才加载 body）
+2. **技能模式管理**：每个技能可设为 `auto`（仅描述固定注入 system prompt）或 `manual`（默认，需 `#`/`$` 引用才把 name + description 带入用户消息）
 
 ## Goals and Non-Goals
 
@@ -20,16 +22,15 @@
 - `#` 触发技能选择面板，交互方式与 `@` 附件面板一致（上下键 + 回车）
 - `#` 后可继续输入做模糊过滤
 - 选中后输入框展开为 `$skill-name`，走现有显式引用路径
-- `/skills auto <name>` 将技能设为 auto 模式，描述固定注入 system prompt
-- `/skills manual <name>` 将技能设为 manual 模式（默认），仅 `#`/`$` 引用时加载 body
-- `/skills install <source>` 从本地路径或 URL 安装技能到 `~/.voidx/skills/`
-- `/skills uninstall <name>` 删除 global/project 级技能文件（bundled 技能不可卸载，只能 disable）
+- `/skills auto <name>` 将技能设为 auto 模式，描述固定注入 system prompt 的 `## Available Skills` 段落
+- `/skills manual <name>` 将技能设为 manual 模式（默认），从 system prompt 的 `## Available Skills` 段落移除，仅 `#`/`$` 引用时把 name + description 带入用户消息
 - auto 模式技能在 `## Available Skills` 段落中标注 `[auto]`
+- 技能安装/卸载不新增 slash command，由用户直接和 voidx 对话完成
 
 ### Non-Goals
 
-- 不改变现有 workflow policy 的自动激活逻辑
-- 不改变 bundled 技能的转移链和优先级
+- 不改变现有 workflow runtime/policy 的自动激活逻辑
+- 不把内置 workflow node 纳入 `#` 技能选择、`/skills` 管理或 `load_skills` 加载范围
 - 不做技能市场/注册中心（install 仅支持本地路径和 URL）
 - 不做技能版本管理
 - Web UI / Desktop UI 的 `#` 弹窗不在本次范围（仅 TUI）
@@ -54,7 +55,7 @@
            ▼
 ┌─────────────────────────┐
 │  展开为 $skill-name      │  复用现有 _EXPLICIT_REF_RE 匹配路径
-│  走显式引用流程          │  service.select() 中 explicit 分支
+│  走消息包装流程          │  提取 name + description 写入用户消息
 └─────────────────────────┘
 
 
@@ -69,7 +70,7 @@
            ▼
 ┌─────────────────────────┐
 │  instruction.py         │  available_skills_section() 中
-│  auto 技能注入描述       │  auto 技能标注 [auto]，描述更丰富
+│  auto 技能注入描述       │  仅 auto 技能标注 [auto]，manual 不注入
 └─────────────────────────┘
 ```
 
@@ -82,8 +83,8 @@
 ```json
 {
   "version": 1,
-  "enabled": ["brainstorming"],
-  "disabled": ["writing-plans"]
+  "enabled": ["docs-helper"],
+  "disabled": ["sql-review"]
 }
 ```
 
@@ -92,9 +93,9 @@
 ```json
 {
   "version": 2,
-  "enabled": ["brainstorming"],
-  "disabled": ["writing-plans"],
-  "auto": ["systematic-debugging"]
+  "enabled": ["docs-helper"],
+  "disabled": ["sql-review"],
+  "auto": ["docs-helper"]
 }
 ```
 
@@ -131,7 +132,7 @@ class SkillToken:
 @dataclass(frozen=True)
 class SkillCandidate:
     name: str
-    scope: str       # bundled / global / project
+    scope: str       # global / project
     description: str
     mode: str        # auto / manual
 ```
@@ -142,12 +143,12 @@ class SkillCandidate:
 
 - **Signature**: `find_skill_token(text: str, cursor: int) -> SkillToken | None`
 - **Behavior**: 从光标位置向前查找 `#`，要求 `#` 前是行首或空白。返回 token 范围和查询文本。
-- **Edge cases**: `#` 在单词中间不触发（如 `issue#123`）；`##` 不触发（Markdown 标题）
+- **Edge cases**: `#` 在单词中间不触发（如 `issue#123`）；`##` 不触发；`# ` 后出现空白不触发，避免 Markdown 标题输入时持续弹出面板
 
 ### list_skill_candidates(workspace, query, limit) → list[SkillCandidate]
 
 - **Signature**: `list_skill_candidates(workspace: str, query: str, limit: int = 8) -> list[SkillCandidate]`
-- **Behavior**: 从 SkillRegistry 获取所有 enabled 技能，按 query 模糊过滤 name 和 description，返回候选列表
+- **Behavior**: 从 SkillRegistry 获取所有 enabled global/project 技能，按 query 模糊过滤 name 和 description，返回候选列表
 - **Filtering**: query 为空时返回全部；非空时 name 前缀匹配优先，description 包含次之
 
 ### /skills 命令扩展
@@ -159,8 +160,15 @@ class SkillCandidate:
 | `/skills enable <name>` | 启用技能（不变） |
 | `/skills disable <name>` | 禁用技能（不变） |
 | `/skills auto <name>` | 将技能设为 auto 模式（描述固定注入 system prompt） |
-| `/skills manual <name>` | 将技能设为 manual 模式（默认，需引用才加载） |
+| `/skills manual <name>` | 将技能设为 manual 模式（默认，需引用才在用户消息中带入说明） |
 | `/skills paths` | 显示技能目录路径（不变） |
+
+### Skill selection 行为
+
+- `$skill-name` 显式引用会在当前 turn 把对应 enabled 技能的 name + description 带入用户消息，不注入 system prompt，也不自动注入 body
+- 未显式引用时，不再通过 name、triggers 或 description 自动把 skill body 注入当前 turn
+- auto 模式只影响 system prompt 可见性：auto 技能描述出现在 `## Available Skills` 中，LLM 可据此调用 `load_skills`
+- manual 模式技能不出现在 `## Available Skills` 中，LLM 在用户未显式引用时看不到该技能
 
 ### 技能安装与卸载
 
@@ -170,7 +178,7 @@ class SkillCandidate:
 - **卸载/删除技能**："帮我删除 xxx 技能" / "我不需要这个技能了" → voidx 删除对应的 global/project 级技能目录
 - **从 URL 安装**："帮我从这个 URL 安装技能 https://..." → voidx 下载并保存
 
-voidx 通过文件读写工具完成操作，无需专用命令。bundled 技能不可删除，voidx 应提示用户用 `/skills disable` 替代。
+voidx 通过文件读写工具完成操作，无需专用命令。若目标不是 global/project 级 `SKILL.md` 技能，voidx 应报错并说明没有可删除的本地技能目录。
 
 ### TUI 技能面板渲染
 
@@ -178,8 +186,8 @@ voidx 通过文件读写工具完成操作，无需专用命令。bundled 技能
 
 示例：
 ```
-  ❯ brainstorming  [auto]  bundled — Use before creating features...
-    systematic-debugging  [manual]  bundled — Use when debugging bugs...
+  ❯ docs-helper  [auto]  project — Helps write docs...
+    sql-review  [manual]  global — Reviews SQL migrations...
 ```
 
 ### TUI 面板交互
@@ -194,31 +202,36 @@ voidx 通过文件读写工具完成操作，无需专用命令。bundled 技能
 
 ### 多技能引用与消息包装
 
-用户可在一次输入中引用多个技能，例如：`$brainstorming $systematic-debugging 帮我分析这个bug的设计方案`。
+用户可在一次输入中引用多个技能，例如：`$docs-helper $sql-review 帮我分析这个迁移说明`。
 
-发送给 LLM 时，将用户消息包装为自然语言：
-
-```
-用户指定了技能 [brainstorming, systematic-debugging]，帮我分析这个bug的设计方案
-```
+发送给 LLM 时，将用户消息包装为带技能说明的自然语言前缀。
 
 包装规则：
-- 提取用户消息中所有 `$skill-name` 引用，汇总到 `用户指定了技能 [...]` 前缀
+- 提取用户消息中所有 `$skill-name` 引用，按 enabled 技能解析出 name + description，并汇总到用户消息前缀
 - 从用户消息正文中移除 `$skill-name` 标记，保留纯文本
 - 若无 `$` 引用，不添加前缀，原样发送
-- auto 模式技能不在此处重复列出（已在 system prompt 的 Available Skills 段落中）
+- auto 模式不会因为自身 mode 在此处重复列出；若用户显式写了 `$auto-skill`，仍按显式引用包装
+- 显式引用不会把 skill body 注入 system prompt；若 LLM 需要完整正文，应继续调用 `load_skills`
 
-### auto 模式注入行为
+示例：
+```
+用户指定了技能：
+- docs-helper: Helps write docs...
+- sql-review: Reviews SQL migrations...
 
-auto 模式技能在 system prompt 的 `## Available Skills` 段落中标注 `[auto]`，注入完整 name + description：
+帮我分析这个迁移说明
+```
+
+### auto/manual 注入行为
+
+auto 模式技能在 system prompt 的 `## Available Skills` 段落中标注 `[auto]`，注入完整 name + description。manual 技能不出现在该段落中，LLM 在用户未显式引用时看不到该技能的说明或正文。
 
 ```
 ## Available Skills
-- brainstorming [auto]: Use before creating features, building components, or modifying behavior. Explores intent, requirements, and design before implementation.
-- systematic-debugging: Use when debugging bugs, failed tests, build failures, tracebacks, crashes, or unexpected behavior.
+- docs-helper [auto]: Helps write docs and release notes for this repository.
 ```
 
-auto 技能注入完整 `meta.description`；manual 技能仅显示 name。
+auto 技能仅注入 `meta.description`，不注入 body。LLM 判断 auto 技能相关时，应调用 `load_skills` 获取完整正文。manual 技能只在用户通过 `#` 或 `$skill-name` 显式引用后，把 name + description 带到用户消息中；它不进入 system prompt，也不自动加载 body。
 
 ## Error Handling
 
@@ -227,7 +240,7 @@ auto 技能注入完整 `meta.description`；manual 技能仅显示 name。
 | `#` 后无匹配技能 | 面板显示 "No matching skills"，不阻止输入 |
 | `/skills auto` 对 disabled 技能 | 先自动 enable，再设 auto |
 | 用户说"帮我安装技能"但源不存在 | voidx 报错并提示检查路径/URL |
-| 用户说"帮我删除技能"但技能是 bundled | voidx 提示 "Bundled skills cannot be deleted. Use /skills disable instead." |
+| 用户说"帮我删除技能"但本地不存在对应 skill 目录 | voidx 报错并提示该技能不可删除或不存在 |
 | skills.json v1 读取 | 自动迁移到 v2，auto 字段默认为空 |
 
 ## Decisions Log
@@ -235,15 +248,19 @@ auto 技能注入完整 `meta.description`；manual 技能仅显示 name。
 | 决策 | 备选方案 | 选择理由 |
 |------|---------|---------|
 | `#` 选中后展开为 `$skill-name` | `#` 直接作为引用语法 | 复用现有显式引用路径，不增加新的解析分支 |
+| manual 技能默认对 LLM 不可见 | manual 也在 `Available Skills` 中仅列 name | manual 的目的就是用户手动引入；否则 LLM 会看到技能存在并可能主动调用 |
+| manual 显式引用只包装 name + description | 显式引用直接注入 body | 用户引用只表达“这个技能相关”；body 仍应由 LLM 在需要时通过 `load_skills` 拉取，避免隐式扩大上下文 |
 | auto 模式仅注入描述不注入 body | auto 也注入 body | body 可能很长，全注入浪费 token；描述已足够让 LLM 知道何时用 `load_skills` 加载 |
 | install/uninstall 不做独立命令 | 做 `/skills install`/`uninstall` 命令 | 用户直接对话更自然，voidx 已有文件读写能力，无需额外命令入口 |
 | `##` 不触发技能面板 | 允许 `##` 触发 | `##` 是 Markdown 标题，冲突概率高 |
 | skills.json 新增 auto 字段 | 在 SKILL.md frontmatter 中加 mode 字段 | mode 是用户偏好而非技能属性，应存放在用户配置中 |
-| bundled 技能不可 uninstall | 允许删除 bundled 文件 | bundled 随包发布，删除后下次更新会恢复；disable 更合理 |
+| 内置 workflow node 不纳入 skill 管理 | 把 workflow node 当作 bundled skill | 当前系统已经没有内置 skill；workflow node 有独立 runtime、context 和状态机 |
 
 ## Open Questions
 
-- [x] auto 模式是否需要在 `## Available Skills` 中注入完整 description？→ 是，auto 注入完整 name + description，manual 仅显示 name
+- [x] auto 模式是否需要在 `## Available Skills` 中注入完整 description？→ 是，auto 注入完整 name + description；manual 不显示
+- [x] manual 技能通过 `#` 引用时是否注入 system prompt 或 body？→ 不注入。只把 name + description 带到用户消息
 - [x] `/skills install`/`uninstall` 是否需要独立命令？→ 不需要，用户直接与 voidx 对话，voidx 根据意图生成/安装/删除技能
 - [x] 技能面板是否需要显示技能的 mode（auto/manual）？→ 是，`/skills list` 和 `#` 技能面板都显示 mode 状态
 - [x] 多个 `#` 引用时的交互：是否支持一次输入中引用多个技能？→ 支持，每个 `#` 独立展开，发给 LLM 时包装用户消息
+- [x] 是否还有内置 skill 需要管理？→ 没有。内置 workflow node 不属于本设计的 skill 范围

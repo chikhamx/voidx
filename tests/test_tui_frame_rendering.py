@@ -302,6 +302,66 @@ def test_render_frame_clips_single_wrapped_transcript_line_to_terminal_height(
     assert "❯" in fake_stdout.text
 
 
+def test_render_frame_clips_long_choice_panel_to_terminal_height(tmp_path, monkeypatch):
+    class FakeStdout:
+        def __init__(self) -> None:
+            self.text = ""
+
+        def write(self, value: str) -> int:
+            self.text += value
+            return len(value)
+
+        def flush(self) -> None:
+            pass
+
+    fake_stdout = FakeStdout()
+    monkeypatch.setattr(sys, "stdout", fake_stdout)
+    monkeypatch.setattr(
+        shutil,
+        "get_terminal_size",
+        lambda fallback=None: os.terminal_size((80, 12)),
+    )
+
+    tui = _tui(tmp_path)
+    tui._tty = True
+    tui._busy = True
+    tui._busy_started_at = 0.0
+    tui._busy_activity_verb = "Ruminating"
+    tui._console = Console(file=None, force_terminal=True, width=80, height=12, _environ={})
+    tui._active_choice = [
+        ("Approve", "approved", "Proceed with this plan"),
+        ("Modify scope", "modified", "Approve with changes to scope"),
+        ("Reject", "rejected", "Do not proceed"),
+    ]
+    tui._choice_prompt = (
+        "Plan: 新增 `load_doc_template` 工具，让 LLM 在 writing-design-docs 节点激活时能按需读取文档模板。\n\n"
+        "Steps:\n"
+        "1. 新增 src/voidx/tools/load_doc_template.py，用 importlib.resources 读取 "
+        "voidx.data/templates/{doc_type}.md，返回模板内容。\n"
+        "2. 在 orchestrator 的 AgentDef.tools 列表中加入 load_doc_template。\n"
+        "3. 更新 writing-design-docs 节点 step 4 的描述。\n"
+        "4. 添加测试。\n"
+        "5. 跑测试确认无回归。\n\n"
+        "Affected files: src/voidx/tools/load_doc_template.py, "
+        "src/voidx/agent/agents.py, tests/test_tools/test_basic.py"
+    )
+    dock.begin_capture()
+    dock.ensure_agent()
+    for index in range(4):
+        dock.tree.new_node(
+            parent=dock.tree.root,
+            node_type="message",
+            header=f"active line {index}",
+            collapsed=False,
+        )
+
+    tui._render_frame()
+
+    assert tui._last_frame_rows <= 12
+    assert "Approve" in fake_stdout.text
+    assert "Reject" in fake_stdout.text
+
+
 def test_input_display_rows_uses_frame_width_boundary(tmp_path):
     tui = _tui(tmp_path)
     tui._console = Console(file=None, force_terminal=True, width=80, height=24, _environ={})

@@ -109,6 +109,7 @@ class RenderState:
     busy_activity_timer_task: asyncio.Task[None] | None = None
     last_busy_activity_rows: int = 0
     last_busy_activity_start_row: int = 0
+    panel_row_limit: int | None = None
 
 
 @dataclass
@@ -201,6 +202,7 @@ STATE_FIELD_MAP: dict[str, tuple[str, str]] = {
     "_busy_activity_timer_task": ("_render_state", "busy_activity_timer_task"),
     "_last_busy_activity_rows": ("_render_state", "last_busy_activity_rows"),
     "_last_busy_activity_start_row": ("_render_state", "last_busy_activity_start_row"),
+    "_panel_row_limit": ("_render_state", "panel_row_limit"),
     "_external_request_handler": ("_external_state", "request_handler"),
     "_external_command_handler": ("_external_state", "command_handler"),
     "_stdin_fd": ("_terminal_state", "stdin_fd"),
