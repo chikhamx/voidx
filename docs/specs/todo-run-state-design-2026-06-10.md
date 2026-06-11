@@ -80,11 +80,22 @@ When a todo tool finishes successfully:
 
 1. validate `todo_items` / `todo_summary` from tool metadata;
 2. build a `TodoRunState`;
-3. update graph state with `todo_state`;
+3. update graph state with `todo_state` (`AgentState.todo_state`);
 4. update `self._task_state.todo_state`;
 5. mirror to `TaskTracker`;
 6. emit `TodoUpdated` for UI;
 7. do not return a normal todo `ToolMessage`.
+
+The validation/build step should be a single helper shared by tool execution,
+UI event generation, and subagent execution. Silent divergence between
+`TodoUpdated` payload parsing and runtime state parsing would make the pinned UI
+and the runtime context disagree.
+
+The live LangGraph message reducer may still contain the raw assistant message
+that originally requested the todo tool. That is acceptable only as internal
+ephemeral graph state. Any boundary that sends messages to an LLM, saves
+messages, snapshots a context frame, or compacts semantic history must use the
+sanitized replay form described below.
 
 When a todo tool fails or returns malformed metadata:
 
@@ -101,13 +112,30 @@ Before sending messages to the LLM, sanitize todo from semantic replay:
 1. scan assistant messages for tool calls whose `name == "todo"`;
 2. record their tool call ids;
 3. remove those todo calls from `AIMessage.tool_calls`;
-4. remove corresponding content blocks if providers encode tool calls in structured content;
+4. remove corresponding content blocks if providers encode tool calls in structured content (`tool_use`, DSML invoke blocks, etc.);
 5. skip `ToolMessage` rows whose `tool_call_id` belongs to a removed todo call;
 6. if an assistant message has no visible content and no remaining tool calls, drop it.
 
 Mixed tool batches must be preserved. For example, if one assistant message calls `todo` and `read`, only the todo call and its todo result are removed; the `read` call and result stay adjacent.
 
 This sanitizer should run before any missing-tool-result repair, so replay does not synthesize a placeholder for removed todo calls.
+
+Implementation placement:
+
+- `ContextCompiler` can strip legacy persisted rows while assembling semantic
+  history, but it is not sufficient by itself because the graph edge
+  `execute_tools -> call_llm` does not run through `prepare` again.
+- `_call_llm` should sanitize the `llm_messages` it uses for token estimates,
+  context-frame snapshots, compaction inputs, and model invocation.
+- `_stream_llm` should keep a defensive sanitizer before repair, because tests
+  and future callers may invoke it directly.
+- Turn persistence should sanitize newly produced assistant/tool rows before
+  saving them. Otherwise a persisted assistant row can keep a todo tool call
+  without a corresponding tool row, and replay repair will synthesize the exact
+  placeholder this design is meant to avoid.
+
+The sanitizer should be deterministic and idempotent, so it is safe to run at
+multiple boundaries.
 
 ## Runtime Context Rendering
 
@@ -125,6 +153,10 @@ Add a concise section to the runtime task-state overlay when todo state exists:
 
 This is intentionally separate from `ToolMessage` history. It gives the model current progress without preserving every todo tool invocation.
 
+Render this section only when `TaskState.todo_state` exists and has at least one
+item. A successful empty todo list clears runtime todo state immediately; it
+does not render a persistent `0/0` section.
+
 ## Persistence
 
 Add `todo_state_json` to persisted session runtime state.
@@ -136,7 +168,16 @@ Save/load behavior:
 - `/clear` and session reset clear it;
 - resumed sessions can render pinned Todo from restored runtime state if desired.
 
-Normal message persistence should skip todo `ToolMessage` rows once execution no longer returns them. Legacy sessions may still contain old todo tool rows; context sanitization should tolerate and strip them when the preceding assistant todo call id can be identified.
+Normal message persistence must save the sanitized replay form:
+
+- skip todo `ToolMessage` rows once execution no longer returns them;
+- remove todo calls from assistant rows before saving new rows;
+- preserve non-todo calls/results in mixed tool batches with their original
+  adjacency.
+
+Legacy sessions may still contain old todo tool rows; context sanitization
+should tolerate and strip them when the preceding assistant todo call id can be
+identified.
 
 Transcript persistence remains separate:
 
@@ -151,6 +192,9 @@ Subagent todo updates should follow the same model:
 - child todo tool results update run-level todo state through structured metadata;
 - UI events can include `agent_id` as today;
 - child todo tool output should not be appended to the child message buffer as ordinary `ToolMessage` context.
+- parent orchestration should pass a small todo-state callback/sink into
+  `run_subagent()` so child todo updates can update the same session-level
+  runtime state as top-level todo calls.
 
 If child agents need private todo state later, that should be a separate design. This phase keeps a single session-level todo state, matching the current global pinned Todo display.
 
@@ -188,7 +232,12 @@ Regression tests:
 
 ## Open Questions
 
-- Should todo state be shown to the model on every LLM call, or only while items are pending/in-progress?
-- Should a successful empty todo list clear runtime todo state immediately or show `0/0` until turn end?
-- Should failed todo calls be visible to the user as warnings, or stay silent unless debug is enabled?
-- Should final transcript todo nodes be restored into runtime todo state on resume when `todo_state_json` is absent?
+- Resolved: show todo state to the model whenever `TaskState.todo_state` has
+  items, including all-completed lists, because the model still benefits from
+  knowing current progress.
+- Resolved: a successful empty todo list clears runtime todo state immediately.
+- Resolved: malformed todo metadata should create a lightweight warning and
+  leave the prior valid todo state unchanged.
+- Deferred: do not restore runtime state from final transcript todo nodes in
+  this phase. Transcript nodes are user-visible history, not canonical runtime
+  state.

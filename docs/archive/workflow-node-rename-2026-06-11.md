@@ -1,6 +1,6 @@
 # 工作流节点重命名
 
-> **Status: In Progress**
+> **Status: Done**
 
 ## 背景
 
