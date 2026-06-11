@@ -32,9 +32,9 @@ class OnIntentInput(BaseModel):
         default="",
         description="Concise task scope inferred from the current user request.",
     )
-    suggested_skills: list[str] = Field(
+    suggested_workflows: list[str] = Field(
         default_factory=list,
-        description="Optional skill names that may be relevant for this intent.",
+        description="Optional workflow node names that may be relevant for this intent.",
     )
 
 
@@ -43,7 +43,7 @@ class OnIntentResult(BaseModel):
     confidence: float
     reason: str
     phase: str
-    active_skill_runs: list[WorkflowRunState] = Field(default_factory=list)
+    active_workflow_runs: list[WorkflowRunState] = Field(default_factory=list)
     available_tool_ids: list[str] = Field(default_factory=list)
     needs_user_confirmation: bool = False
     state_patch: ToolStatePatch
@@ -105,9 +105,9 @@ def _format_on_intent_output(payload: dict) -> str:
         "confidence": payload.get("confidence"),
         "reason": payload.get("reason"),
         "phase": payload.get("phase"),
-        "active_skill_runs": [
+        "active_workflow_runs": [
             item.get("name")
-            for item in payload.get("active_skill_runs", [])
+            for item in payload.get("active_workflow_runs", [])
             if isinstance(item, dict) and item.get("name")
         ],
         "available_tool_ids": payload.get("available_tool_ids", []),

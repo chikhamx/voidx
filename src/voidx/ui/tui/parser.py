@@ -345,6 +345,8 @@ class _InputParserMixin:
         if final == 0x41:  # Up
             if self._active_choice is not None:
                 self._move_choice(-1)
+            elif self._skill_panel_active():
+                self._move_skill_selection(-1)
             elif self._attachment_panel_active():
                 self._move_attachment_selection(-1)
             elif self._command_panel_active:
@@ -355,6 +357,8 @@ class _InputParserMixin:
         if final == 0x42:  # Down
             if self._active_choice is not None:
                 self._move_choice(1)
+            elif self._skill_panel_active():
+                self._move_skill_selection(1)
             elif self._attachment_panel_active():
                 self._move_attachment_selection(1)
             elif self._command_panel_active:

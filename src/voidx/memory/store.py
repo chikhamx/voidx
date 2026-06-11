@@ -126,7 +126,7 @@ def _init_schema(conn: sqlite3.Connection) -> None:
             awaiting_implementation_approval INTEGER NOT NULL DEFAULT 0,
             pending_approval_json TEXT NOT NULL DEFAULT '',
             turn_count INTEGER NOT NULL DEFAULT 0,
-            skill_runs_json TEXT NOT NULL DEFAULT '{}',
+            workflow_runs_json TEXT NOT NULL DEFAULT '{}',
             updated_at TEXT NOT NULL,
             FOREIGN KEY (session_id) REFERENCES sessions(id) ON DELETE CASCADE
         );
@@ -212,7 +212,7 @@ def _init_schema(conn: sqlite3.Connection) -> None:
         pass
     try:
         conn.execute(
-            "ALTER TABLE session_task_runs ADD COLUMN skill_runs_json TEXT NOT NULL DEFAULT '{}'"
+            "ALTER TABLE session_task_runs ADD COLUMN workflow_runs_json TEXT NOT NULL DEFAULT '{}'"
         )
     except sqlite3.OperationalError:
         pass

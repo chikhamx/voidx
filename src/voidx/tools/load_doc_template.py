@@ -1,4 +1,4 @@
-"""Load a document template by type — used by the writing-design-docs workflow node."""
+"""Load a document template by type — used by the design-doc workflow node."""
 
 from __future__ import annotations
 
@@ -25,7 +25,7 @@ class LoadDocTemplateInput(BaseModel):
 class LoadDocTemplateTool(BaseTool):
     id = "load_doc_template"
     description = (
-        "Load a document template by type. Use when the writing-design-docs "
+        "Load a document template by type. Use when the design-doc "
         "workflow node is active and you need a template for the document "
         "you are writing. Returns the template content with placeholders."
     )

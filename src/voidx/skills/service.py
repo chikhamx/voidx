@@ -2,14 +2,17 @@
 
 from __future__ import annotations
 
-import re
 from collections.abc import Iterable
 
 from voidx.skills.registry import SkillRegistry, normalize_skill_name
-from voidx.skills.schema import SkillDefinition, SkillMatch, SkillScope, SkillSelectionConfig
+from voidx.skills.schema import (
+    EXPLICIT_REF_RE,
+    SkillDefinition,
+    SkillMatch,
+    SkillScope,
+    SkillSelectionConfig,
+)
 from voidx.skills.context import render_skill_instruction
-
-_EXPLICIT_REF_RE = re.compile(r"(?<![\w.-])\$([A-Za-z0-9_.-]+)")
 
 
 class SkillService:
@@ -44,6 +47,13 @@ class SkillService:
         if name in self._normalized(self._selection.enabled):
             return True
         return skill.meta.enabled
+
+    def is_auto(self, skill: SkillDefinition) -> bool:
+        name = normalize_skill_name(skill.name)
+        return self.is_enabled(skill) and name in self._normalized(self._selection.auto)
+
+    def mode(self, skill: SkillDefinition) -> str:
+        return "auto" if self.is_auto(skill) else "manual"
 
     def select(
         self,
@@ -87,17 +97,7 @@ class SkillService:
                 add_match(skills_by_name.get(name), "explicit")
             return matches[:limit]
 
-        text_matches: list[SkillMatch] = []
-        lowered = text.lower()
-        for skill in skills:
-            if normalize_skill_name(skill.name) in seen:
-                continue
-            reason = self._match_reason(skill, lowered)
-            if reason:
-                text_matches.append(SkillMatch(skill=skill, reason=reason))
-        text_matches.sort(key=lambda match: match.name)
-        matches.extend(text_matches)
-        return matches[:limit]
+        return []
 
     def activation_summaries(
         self,
@@ -152,8 +152,10 @@ class SkillService:
         for skill in self.enabled_skills():
             if skill.meta.scope == "bundled" and not include_bundled:
                 continue
+            if not self.is_auto(skill):
+                continue
             description = skill.meta.description.strip() or "(no description)"
-            summaries.append(f"- {skill.name}: {description}")
+            summaries.append(f"- {skill.name} [auto]: {description}")
         return summaries
 
     @staticmethod
@@ -166,52 +168,4 @@ class SkillService:
 
     @staticmethod
     def _explicit_refs(text: str) -> set[str]:
-        return {normalize_skill_name(match.group(1)) for match in _EXPLICIT_REF_RE.finditer(text)}
-
-    @staticmethod
-    def _match_reason(skill: SkillDefinition, lowered_text: str) -> str:
-        name = normalize_skill_name(skill.name)
-        if _contains_phrase(lowered_text, name):
-            return "name"
-
-        for trigger in skill.meta.triggers:
-            normalized = trigger.strip().lower()
-            if normalized and _contains_phrase(lowered_text, normalized):
-                return f"trigger:{trigger}"
-
-        description_terms = _significant_terms(skill.meta.description)
-        if description_terms and sum(1 for term in description_terms if _contains_phrase(lowered_text, term)) >= 2:
-            return "description"
-        return ""
-
-
-def _contains_phrase(text: str, phrase: str) -> bool:
-    if not phrase:
-        return False
-    if _is_cjk_phrase(phrase):
-        return phrase in text
-    pattern = r"(?<![\w.-])" + re.escape(phrase) + r"(?![\w.-])"
-    return bool(re.search(pattern, text))
-
-
-def _is_cjk_phrase(phrase: str) -> bool:
-    return any("\u4e00" <= ch <= "\u9fff" for ch in phrase)
-
-
-def _significant_terms(text: str) -> set[str]:
-    stop = {
-        "with",
-        "from",
-        "that",
-        "this",
-        "when",
-        "into",
-        "using",
-        "skill",
-        "skills",
-    }
-    return {
-        term
-        for term in re.findall(r"[A-Za-z][A-Za-z0-9_-]{3,}", text.lower())
-        if term not in stop
-    }
+        return {normalize_skill_name(match.group(1)) for match in EXPLICIT_REF_RE.finditer(text)}

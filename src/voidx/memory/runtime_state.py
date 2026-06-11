@@ -154,7 +154,7 @@ async def save_session_task_run(session_id: str, task_run: TaskRun) -> None:
     await _execute_commit(
         """INSERT INTO session_task_runs (
                session_id, goal, phase, status, approved_scope,
-               awaiting_implementation_approval, pending_approval_json, turn_count, skill_runs_json,
+               awaiting_implementation_approval, pending_approval_json, turn_count, workflow_runs_json,
                updated_at
            )
            VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
@@ -166,7 +166,7 @@ async def save_session_task_run(session_id: str, task_run: TaskRun) -> None:
                awaiting_implementation_approval = excluded.awaiting_implementation_approval,
                pending_approval_json = excluded.pending_approval_json,
                turn_count = excluded.turn_count,
-               skill_runs_json = excluded.skill_runs_json,
+               workflow_runs_json = excluded.workflow_runs_json,
                updated_at = excluded.updated_at""",
         (
             session_id,
@@ -177,7 +177,7 @@ async def save_session_task_run(session_id: str, task_run: TaskRun) -> None:
             1 if task_run.pending_approval else 0,
             _dump_pending_approval(task_run.pending_approval),
             task_run.turn_count,
-            _dump_skill_runs(task_run.skill_runs),
+            _dump_workflow_runs(task_run.workflow_runs),
             _now(),
         ),
     )
@@ -201,13 +201,13 @@ async def load_task_run(session_id: str) -> TaskRun:
         status=TaskRunStatus(row["status"]),
         pending_approval=pending,
         turn_count=row["turn_count"],
-        skill_runs=_load_skill_runs(row["skill_runs_json"] if "skill_runs_json" in row.keys() else ""),
+        workflow_runs=_load_workflow_runs(row["workflow_runs_json"] if "workflow_runs_json" in row.keys() else ""),
     )
 
 
-def _dump_skill_runs(skill_runs: dict[str, WorkflowRunState]) -> str:
+def _dump_workflow_runs(workflow_runs: dict[str, WorkflowRunState]) -> str:
     return json.dumps(
-        {name: run.model_dump(mode="json") for name, run in skill_runs.items()},
+        {name: run.model_dump(mode="json") for name, run in workflow_runs.items()},
         ensure_ascii=False,
     )
 
@@ -243,7 +243,7 @@ def _load_pending_approval(
     return None
 
 
-def _load_skill_runs(raw: str) -> dict[str, WorkflowRunState]:
+def _load_workflow_runs(raw: str) -> dict[str, WorkflowRunState]:
     if not raw:
         return {}
     try:

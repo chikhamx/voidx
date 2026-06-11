@@ -246,7 +246,7 @@ verdict: PASS | FAIL | NEEDS_CHANGE
 - FAIL for bugs, security issues, or broken functionality.
 - Workflow impact: PASS leaves review workflow completion to the orchestrator.
   FAIL or NEEDS_CHANGE means the orchestrator should advance review with
-  `review_has_issues` into receiving-code-review.
+  `review_has_issues` into review-feedback.
 """
 
 

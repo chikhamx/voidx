@@ -5,7 +5,7 @@ from __future__ import annotations
 from collections.abc import Iterable
 from enum import Enum
 
-from pydantic import AliasChoices, BaseModel, ConfigDict, Field
+from pydantic import BaseModel, Field
 
 from voidx.workflow.context import workflow_body_hash
 
@@ -43,25 +43,13 @@ class WorkflowEvidence(BaseModel):
 
 
 class WorkflowStateEvent(BaseModel):
-    model_config = ConfigDict(populate_by_name=True)
-
-    workflow: str = Field(validation_alias=AliasChoices("workflow", "skill"))
+    workflow: str
     kind: WorkflowStateEventKind
     ref: str = ""
     ok: bool | None = None
     summary: str = ""
     reason: str = ""
     condition: str = ""
-
-    @property
-    def skill(self) -> str:
-        return self.workflow
-
-    @classmethod
-    def model_validate(cls, obj, *args, **kwargs):
-        if isinstance(obj, dict) and "workflow" not in obj and "skill" in obj:
-            obj = {**obj, "workflow": obj.get("skill")}
-        return super().model_validate(obj, *args, **kwargs)
 
 
 class WorkflowRunState(BaseModel):
@@ -288,13 +276,3 @@ def _initial_status_for_event(kind: WorkflowStateEventKind) -> WorkflowRunStatus
     if kind == WorkflowStateEventKind.SATISFIED:
         return WorkflowRunStatus.PENDING
     return WorkflowRunStatus.ACTIVE
-
-
-# Compatibility aliases for persisted fields and older tests/extensions.
-SkillActivationSource = WorkflowActivationSource
-SkillEvidence = WorkflowEvidence
-SkillRunState = WorkflowRunState
-SkillRunStatus = WorkflowRunStatus
-SkillStateEvent = WorkflowStateEvent
-SkillStateEventKind = WorkflowStateEventKind
-advance_skill_states = advance_workflow_states

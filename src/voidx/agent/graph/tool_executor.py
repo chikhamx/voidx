@@ -77,7 +77,7 @@ class GraphToolExecutor:
         runtime_task_intent = state.get("task_intent", "chat")
         runtime_pending_approval = _dump_pending_approval(state.get("pending_approval"))
         runtime_goal = state.get("goal", "")
-        runtime_skill_runs = _skill_runs_for_state(state.get("skill_runs", []) or [])
+        runtime_workflow_runs = _workflow_runs_for_state(state.get("workflow_runs", []) or [])
         state_update: dict = {}
 
         def make_context() -> ToolContext:
@@ -90,8 +90,8 @@ class GraphToolExecutor:
                 pending_approval=runtime_pending_approval,
                 goal=str(runtime_goal or ""),
                 goal_turn_count=state.get("goal_turn_count", 0),
-                active_skill_names=_active_skill_names(runtime_skill_runs),
-                skill_runs=runtime_skill_runs,
+                active_workflow_names=_active_workflow_names(runtime_workflow_runs),
+                workflow_runs=runtime_workflow_runs,
                 file_mtimes=host._file_mtimes,
                 mcp_manager=getattr(host, "_mcp_manager", None),
                 lsp_manager=getattr(host, "_lsp_manager", None),
@@ -103,7 +103,7 @@ class GraphToolExecutor:
         ctx = make_context()
 
         def apply_state_update(update: dict) -> None:
-            nonlocal ctx, runtime_goal, runtime_pending_approval, runtime_skill_runs, runtime_task_intent
+            nonlocal ctx, runtime_goal, runtime_pending_approval, runtime_workflow_runs, runtime_task_intent
             if not update:
                 return
             state_update.update(update)
@@ -113,8 +113,8 @@ class GraphToolExecutor:
                 runtime_pending_approval = _dump_pending_approval(update.get("pending_approval"))
             if "goal" in update:
                 runtime_goal = update.get("goal") or ""
-            if "skill_runs" in update:
-                runtime_skill_runs = _skill_runs_for_state(update.get("skill_runs") or [])
+            if "workflow_runs" in update:
+                runtime_workflow_runs = _workflow_runs_for_state(update.get("workflow_runs") or [])
             ctx = make_context()
 
         tool_calls = last.tool_calls
@@ -301,7 +301,7 @@ class GraphToolExecutor:
                     plan_mode=plan_mode,
                     session_id=session_id,
                     interaction_mode=interaction_mode,
-                    skill_runs=runtime_skill_runs,
+                    workflow_runs=runtime_workflow_runs,
                 )
                 denied.extend(segment_denied)
                 segment_executed = await execute_approved(approved)
@@ -309,7 +309,7 @@ class GraphToolExecutor:
                 apply_state_update(
                     _state_update_from_executed_tools(
                         segment_executed,
-                        current_skill_runs=runtime_skill_runs,
+                        current_workflow_runs=runtime_workflow_runs,
                     )
                 )
                 pending = ([barrier] if barrier is not None else []) + suffix
@@ -325,7 +325,7 @@ class GraphToolExecutor:
                 plan_mode=plan_mode,
                 session_id=session_id,
                 interaction_mode=interaction_mode,
-                skill_runs=runtime_skill_runs,
+                workflow_runs=runtime_workflow_runs,
             )
             if segment_denied:
                 denied.extend(segment_denied)
@@ -337,7 +337,7 @@ class GraphToolExecutor:
             apply_state_update(
                 _state_update_from_executed_tools(
                     segment_executed,
-                    current_skill_runs=runtime_skill_runs,
+                    current_workflow_runs=runtime_workflow_runs,
                 )
             )
             if not segment_executed or not result_ok(segment_executed[-1].result):
@@ -388,11 +388,11 @@ class GraphToolExecutor:
 def _state_update_from_executed_tools(
     executed: list[_ExecutedTool],
     *,
-    current_skill_runs: object = (),
+    current_workflow_runs: object = (),
 ) -> dict:
     update: dict = {}
-    merged_skill_runs = _merge_skill_runs_for_state(current_skill_runs)
-    skill_runs_changed = False
+    merged_workflow_runs = _merge_workflow_runs_for_state(current_workflow_runs)
+    workflow_runs_changed = False
     for item in executed:
         metadata = getattr(item.result, "metadata", {}) or {}
         raw = metadata.get("state_patch")
@@ -409,32 +409,32 @@ def _state_update_from_executed_tools(
                     update["task_intent"] = value
             elif field == "pending_approval":
                 update["pending_approval"] = data.get(field)
-            elif field == "skill_runs":
-                merged_skill_runs = _merge_skill_runs_for_state(
-                    merged_skill_runs,
-                    patch.skill_runs,
+            elif field == "workflow_runs":
+                merged_workflow_runs = _merge_workflow_runs_for_state(
+                    merged_workflow_runs,
+                    patch.workflow_runs,
                 )
-                skill_runs_changed = True
+                workflow_runs_changed = True
             else:
                 update[field] = data.get(field)
 
     # Auto-advance: detect review_has_issues / failed_implementation from
     # tool results and drive DAG transitions without explicit advance_workflow.
-    auto_events = _auto_advance_from_executed(executed, merged_skill_runs)
+    auto_events = _auto_advance_from_executed(executed, merged_workflow_runs)
     if auto_events:
-        merged_skill_runs = advance_workflow_states(
-            merged_skill_runs, auto_events,
+        merged_workflow_runs = advance_workflow_states(
+            merged_workflow_runs, auto_events,
         )
-        skill_runs_changed = True
+        workflow_runs_changed = True
 
-    if skill_runs_changed:
-        update["skill_runs"] = merged_skill_runs
+    if workflow_runs_changed:
+        update["workflow_runs"] = merged_workflow_runs
     return update
 
 
 def _auto_advance_from_executed(
     executed: list[_ExecutedTool],
-    skill_runs: list[WorkflowRunState],
+    workflow_runs: list[WorkflowRunState],
 ) -> list:
     """Check executed tools for auto-advance signals and return events."""
     from voidx.workflow.auto_advance import auto_advance_events
@@ -445,10 +445,10 @@ def _auto_advance_from_executed(
             "name": item.tool_call.get("name", ""),
             "result": item.result,
         })
-    return auto_advance_events(tool_items, skill_runs=skill_runs)
+    return auto_advance_events(tool_items, workflow_runs=workflow_runs)
 
 
-def _merge_skill_runs_for_state(*groups: object) -> list[WorkflowRunState]:
+def _merge_workflow_runs_for_state(*groups: object) -> list[WorkflowRunState]:
     merged: dict[str, WorkflowRunState] = {}
     for group in groups:
         items = group.values() if isinstance(group, dict) else group or []
@@ -533,7 +533,7 @@ async def _authorize_tool_calls(
     plan_mode: bool,
     session_id: str,
     interaction_mode: str | None,
-    skill_runs: object,
+    workflow_runs: object,
 ):
     kwargs = {
         "agent_name": agent_name,
@@ -544,14 +544,14 @@ async def _authorize_tool_calls(
     try:
         signature = inspect.signature(authorize)
     except (TypeError, ValueError):
-        kwargs["skill_runs"] = skill_runs
+        kwargs["workflow_runs"] = workflow_runs
     else:
         params = signature.parameters
-        if "skill_runs" in params or any(
+        if "workflow_runs" in params or any(
             param.kind == inspect.Parameter.VAR_KEYWORD
             for param in params.values()
         ):
-            kwargs["skill_runs"] = skill_runs
+            kwargs["workflow_runs"] = workflow_runs
     return await authorize(tool_calls, **kwargs)
 
 
@@ -605,7 +605,7 @@ def _dump_pending_approval(value: object | None) -> dict | None:
     return None
 
 
-def _skill_runs_for_state(value: object) -> list[WorkflowRunState]:
+def _workflow_runs_for_state(value: object) -> list[WorkflowRunState]:
     runs: list[WorkflowRunState] = []
     items = value.values() if isinstance(value, dict) else value or []
     for item in items:
@@ -617,9 +617,9 @@ def _skill_runs_for_state(value: object) -> list[WorkflowRunState]:
     return runs
 
 
-def _active_skill_names(value: object) -> list[str]:
+def _active_workflow_names(value: object) -> list[str]:
     names: list[str] = []
-    for run in _skill_runs_for_state(value):
+    for run in _workflow_runs_for_state(value):
         if run.status == WorkflowRunStatus.ACTIVE and run.name.strip():
             names.append(run.name.strip())
     return names

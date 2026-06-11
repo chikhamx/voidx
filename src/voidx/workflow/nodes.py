@@ -9,7 +9,7 @@ _TERMINAL_CONDITION = TerminalExit().condition
 
 
 BRAINSTORMING = WorkflowNode(
-    name="brainstorming",
+    name="brainstorm",
     description=(
         "Use before creating features, building components, or modifying behavior. "
         "Explores intent, requirements, and design before implementation."
@@ -50,9 +50,9 @@ BRAINSTORMING = WorkflowNode(
         WorkflowStep(order=5, action="Write design doc", description="Save to docs/specs/<topic>-design-YYYY-MM-DD.md when needed."),
     ],
     decision_rules=[
-        DecisionRule(condition="small_change", description="Highest priority when the change is local/mechanical and does not need a plan: renaming, adding a config field, or fixing a typo goes directly to test-driven-development."),
+        DecisionRule(condition="small_change", description="Highest priority when the change is local/mechanical and does not need a plan: renaming, adding a config field, or fixing a typo goes directly to tdd."),
         DecisionRule(condition="skip_to_plan", description="Use only when the user explicitly says 'just implement it' but the work is not a local/mechanical small_change; confirm the goal in one sentence first."),
-        DecisionRule(condition="skip_to_plan", description="Use only when the request is already a detailed spec with clear requirements and is not a local/mechanical small_change; confirm understanding and go directly to writing-plans."),
+        DecisionRule(condition="skip_to_plan", description="Use only when the request is already a detailed spec with clear requirements and is not a local/mechanical small_change; confirm understanding and go directly to plan."),
         DecisionRule(condition="approved", description="For large refactors or behavior changes, continue through design docs after explicit user approval."),
     ],
     anti_patterns=[
@@ -62,7 +62,7 @@ BRAINSTORMING = WorkflowNode(
 
 
 WRITING_DESIGN_DOCS = WorkflowNode(
-    name="writing-design-docs",
+    name="design-doc",
     description=(
         "Use when writing technical design docs, PRDs, RFCs, API docs, READMEs, "
         "or changelogs. Covers both design-phase and post-implementation documentation."
@@ -134,7 +134,7 @@ WRITING_DESIGN_DOCS = WorkflowNode(
 
 
 WRITING_PLANS = WorkflowNode(
-    name="writing-plans",
+    name="plan",
     description="Use when turning a spec, requirements, or agreed design into an implementation plan before editing code.",
     triggers=["implementation plan", "write a plan", "planning", "spec", "requirements", "计划", "实施方案", "需求"],
     priority=30,
@@ -154,13 +154,13 @@ WRITING_PLANS = WorkflowNode(
         WorkflowStep(order=7, action="Identify risks", description="Edge cases, compatibility, and rollback concerns."),
     ],
     extra_sections={
-        "Execution": "After the plan is approved, follow test-driven-development for each task. Before claiming any task complete, follow verification-before-completion.",
+        "Execution": "After the plan is approved, follow tdd for each task. Before claiming any task complete, follow verify.",
     },
 )
 
 
 TEST_DRIVEN_DEVELOPMENT = WorkflowNode(
-    name="test-driven-development",
+    name="tdd",
     description="Use before implementing features, bug fixes, refactors, or behavior changes.",
     triggers=["implement", "feature", "bugfix", "refactor", "behavior change", "add support", "fix bug", "实现", "修复", "重构", "功能"],
     priority=40,
@@ -184,7 +184,7 @@ TEST_DRIVEN_DEVELOPMENT = WorkflowNode(
 
 
 VERIFICATION_BEFORE_COMPLETION = WorkflowNode(
-    name="verification-before-completion",
+    name="verify",
     description="Use before claiming work is complete, fixed, passing, ready, or safe to merge.",
     triggers=["done", "complete", "fixed", "passing", "ready", "verify", "verified", "looks good", "should work", "完成", "修好了", "通过", "验证", "好了", "没问题了"],
     priority=50,
@@ -219,7 +219,7 @@ VERIFICATION_BEFORE_COMPLETION = WorkflowNode(
 
 
 REQUESTING_CODE_REVIEW = WorkflowNode(
-    name="requesting-code-review",
+    name="review",
     description="Use after substantial implementation work, complex bug fixes, or before merging to request a focused review.",
     triggers=["request review", "ask for review", "before merge", "pre-merge", "review this change", "复核一下", "合并前"],
     priority=60,
@@ -242,13 +242,13 @@ REQUESTING_CODE_REVIEW = WorkflowNode(
             "and specific risks to inspect."
         ),
         "Review Brief": "Include what changed, requirements checked, files changed, verification run, and specific risks to inspect.",
-        "Acting on Feedback": "When review feedback arrives, follow receiving-code-review.",
+        "Acting on Feedback": "When review feedback arrives, follow review-feedback.",
     },
 )
 
 
 RECEIVING_CODE_REVIEW = WorkflowNode(
-    name="receiving-code-review",
+    name="review-feedback",
     description="Use when receiving review feedback, requested optimizations, or reviewer comments before implementing them.",
     triggers=["review feedback", "code review feedback", "reviewer says", "feedback says", "review comment", "优化点", "审查意见", "评审意见"],
     priority=20,
@@ -278,7 +278,7 @@ RECEIVING_CODE_REVIEW = WorkflowNode(
 
 
 SYSTEMATIC_DEBUGGING = WorkflowNode(
-    name="systematic-debugging",
+    name="debug",
     description="Use when debugging bugs, failed tests, build failures, tracebacks, crashes, or unexpected behavior.",
     triggers=["bug", "failed", "failure", "traceback", "error", "crash", "broken", "not working", "unexpected", "test failure", "build failure", "报错", "失败", "异常", "崩溃", "排查", "不对", "结果不对"],
     priority=10,

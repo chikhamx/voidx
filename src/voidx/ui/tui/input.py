@@ -103,6 +103,7 @@ class _InputEditorMixin:
 
     def _clear_attachment_suppression_on_edit(self) -> None:
         self._attachment_panel_suppressed_text = ""
+        self._skill_panel_suppressed_text = ""
 
     def _insert_text(self, text: str) -> None:
         if self._active_choice is not None:
@@ -308,6 +309,12 @@ class _InputEditorMixin:
         self._command_panel_active = False
         self._attachment_selected = 0
         self._attachment_panel_suppressed_text = ""
+        self._attachment_matches_cache_key = None
+        self._attachment_matches_cache = []
+        self._skill_selected = 0
+        self._skill_panel_suppressed_text = ""
+        self._skill_matches_cache_key = None
+        self._skill_matches_cache = []
         self._clear_paste_entries()
 
     def _input_cursor_position(self) -> int:

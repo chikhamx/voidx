@@ -50,9 +50,52 @@ class _OverlayRendererMixin:
     def _render_panel_lines(self, width: int) -> list[str]:
         lines: list[str] = []
         lines.extend(self._render_command_palette(width))
+        lines.extend(self._render_skill_panel(width))
         lines.extend(self._render_attachment_panel(width))
         lines.extend(self._render_choice_overlay(width))
         return lines
+
+    def _render_skill_panel(self, width: int) -> list[str]:
+        if not self._skill_panel_active():
+            return []
+        matches = self._skill_matches()
+        token = self._skill_token()
+        query = token.query if token is not None else ""
+        detail = f"{len(matches)} match{'es' if len(matches) != 1 else ''}"
+        if query:
+            detail += f" for #{_escape_markup(query)}"
+        result = [
+            "[bold]Reference skills[/bold]",
+            f"[dim]{detail}[/dim]",
+        ]
+        if not matches:
+            result.append("    [dim]No matching skills[/dim]")
+            return result
+        selected = min(self._skill_selected, len(matches) - 1)
+        visible_count = min(len(matches), 8)
+        start = max(0, min(selected - visible_count + 1, len(matches) - visible_count))
+        visible = matches[start:start + visible_count]
+        if start > 0:
+            result.append(f"  [dim]... {start} above[/dim]")
+        for offset, candidate in enumerate(visible):
+            index = start + offset
+            marker = "❯" if index == selected else " "
+            name_style = "bold cyan" if index == selected else "dim"
+            mode_style = "green" if candidate.mode == "auto" else "dim"
+            mode_label = _escape_markup(f"[{candidate.mode}]")
+            description = _escape_markup(candidate.description)
+            if len(description) > 80:
+                description = description[:79] + "…"
+            result.append(
+                f"  {marker} [{name_style}]{_escape_markup(candidate.name)}[/{name_style}]"
+                f"  [{mode_style}]{mode_label}[/{mode_style}]"
+                f"  [dim]{_escape_markup(candidate.scope)}[/dim]"
+                f"  [dim]— {description}[/dim]"
+            )
+        remaining = len(matches) - start - len(visible)
+        if remaining > 0:
+            result.append(f"  [dim]... {remaining} below[/dim]")
+        return result
 
     def _render_attachment_panel(self, width: int) -> list[str]:
         if not self._attachment_panel_active():
@@ -110,4 +153,3 @@ class _OverlayRendererMixin:
         if len(filtered) > max_items:
             result.append(f"  [dim]… and {len(filtered) - max_items} more[/dim]")
         return result
-

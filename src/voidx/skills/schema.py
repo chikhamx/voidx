@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+import re
 from pathlib import Path
 from typing import Literal
 
@@ -9,6 +10,7 @@ from pydantic import BaseModel, Field
 
 
 SkillScope = Literal["bundled", "global", "project"]
+EXPLICIT_REF_RE = re.compile(r"(?<![\w.-])\$([A-Za-z0-9_.-]+)")
 
 
 class SkillMeta(BaseModel):
@@ -36,6 +38,7 @@ class SkillDefinition(BaseModel):
 class SkillSelectionConfig(BaseModel):
     enabled: set[str] = Field(default_factory=set)
     disabled: set[str] = Field(default_factory=set)
+    auto: set[str] = Field(default_factory=set)
 
 
 class SkillMatch(BaseModel):

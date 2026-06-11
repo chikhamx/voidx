@@ -42,34 +42,34 @@ def workflow_activations(
         activations.setdefault(name, WorkflowActivation(name=name, reason=reason))
 
     if intent == "debug":
-        add("systematic-debugging", "debug intent")
-        add("test-driven-development", "debug fix lifecycle")
-        add("verification-before-completion", "debug lifecycle")
+        add("debug", "debug intent")
+        add("tdd", "debug fix lifecycle")
+        add("verify", "debug lifecycle")
 
     if agent_name == "implement":
-        add("test-driven-development", "implement role")
-        add("verification-before-completion", "implement lifecycle")
+        add("tdd", "implement role")
+        add("verify", "implement lifecycle")
     elif intent == "implement":
-        add("test-driven-development", "implement intent")
-        add("verification-before-completion", "implement lifecycle")
+        add("tdd", "implement intent")
+        add("verify", "implement lifecycle")
 
     if agent_name == "plan":
-        add("writing-plans", "plan role")
+        add("plan", "plan role")
 
     if intent == "review":
         if _contains_any(text, _REVIEW_FEEDBACK_TERMS):
-            add("receiving-code-review", "review feedback")
+            add("review-feedback", "review feedback")
         else:
-            add("requesting-code-review", "review intent")
+            add("review", "review intent")
 
     if intent == "design":
-        add("brainstorming", "design intent")
+        add("brainstorm", "design intent")
         if _contains_any(text, _PLAN_TERMS):
-            add("writing-plans", "planning intent")
+            add("plan", "planning intent")
 
     if mode == "plan":
-        add("brainstorming", "plan mode")
-        add("writing-plans", "plan mode")
+        add("brainstorm", "plan mode")
+        add("plan", "plan mode")
 
     return sorted(
         activations.values(),

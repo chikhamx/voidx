@@ -49,15 +49,15 @@ def refine_intent(
         config=config,
         settings=settings,
     )
-    skill_runs = _reconciled_skill_runs(
+    workflow_runs = _reconciled_workflow_runs(
         matches,
         confirmed=confirmed,
         phase=phase,
         scope=inp.scope,
         ctx=ctx,
     )
-    active_skill_runs = [
-        run for run in skill_runs
+    active_workflow_runs = [
+        run for run in workflow_runs
         if run.status == WorkflowRunStatus.ACTIVE
     ]
 
@@ -72,7 +72,7 @@ def refine_intent(
         goal_phase=phase,
         pending_approval=pending_approval,
         available_tool_ids=available_tool_ids,
-        skill_runs=skill_runs,
+        workflow_runs=workflow_runs,
         intent_confidence=inp.confidence,
         intent_source="on_intent",
         intent_refined=True,
@@ -83,7 +83,7 @@ def refine_intent(
         confidence=inp.confidence,
         reason=reason,
         phase=phase,
-        active_skill_runs=active_skill_runs,
+        active_workflow_runs=active_workflow_runs,
         available_tool_ids=available_tool_ids,
         needs_user_confirmation=needs_confirmation,
         state_patch=patch,
@@ -214,7 +214,7 @@ def _workflow_matches(
         interaction_mode=ctx.interaction_mode,
     )
     seen = {_normalize_name(match.name) for match in matches}
-    for name in inp.suggested_skills:
+    for name in inp.suggested_workflows:
         normalized = _normalize_name(name)
         if normalized in seen:
             continue
@@ -226,7 +226,7 @@ def _workflow_matches(
     return matches
 
 
-def _reconciled_skill_runs(
+def _reconciled_workflow_runs(
     matches: list[WorkflowMatch],
     *,
     confirmed: TaskIntent,
@@ -234,7 +234,7 @@ def _reconciled_skill_runs(
     scope: str,
     ctx: ToolContext,
 ) -> list[WorkflowRunState]:
-    current = _current_skill_runs(ctx)
+    current = _current_workflow_runs(ctx)
     desired_names = {_normalize_name(match.name) for match in matches}
     current_by_name = {_normalize_name(run.name): run for run in current}
     events = [
@@ -269,9 +269,9 @@ def _reconciled_skill_runs(
     return [*reconciled, *additions]
 
 
-def _current_skill_runs(ctx: ToolContext) -> list[WorkflowRunState]:
+def _current_workflow_runs(ctx: ToolContext) -> list[WorkflowRunState]:
     runs: list[WorkflowRunState] = []
-    for item in ctx.skill_runs:
+    for item in ctx.workflow_runs:
         try:
             run = item if isinstance(item, WorkflowRunState) else WorkflowRunState.model_validate(item)
         except (TypeError, ValueError):

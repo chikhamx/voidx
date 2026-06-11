@@ -5,7 +5,7 @@ WorkflowStateEvent entries to drive DAG transitions, so the LLM does not
 need to call advance_workflow for well-defined conditions:
 
 - review_has_issues: review agent returns FAIL or NEEDS_CHANGE
-- failed_implementation: bash/test execution fails while verification-before-completion is active
+- failed_implementation: bash/test execution fails while verify is active
 
 failed_bug is NOT auto-detected: distinguishing "original bug still present"
 from "implementation broke something" requires semantic analysis that only
@@ -38,7 +38,7 @@ _TEST_COMMAND_RE = re.compile(
 def auto_advance_events(
     executed_tools: list[dict],
     *,
-    skill_runs: list[WorkflowRunState],
+    workflow_runs: list[WorkflowRunState],
 ) -> list[WorkflowStateEvent]:
     """Inspect executed tool results and return auto-advance events.
 
@@ -46,7 +46,7 @@ def auto_advance_events(
     ----------
     executed_tools
         List of dicts with keys: name (tool id), result (ToolResult or similar).
-    skill_runs
+    workflow_runs
         Current workflow run states.
 
     Returns
@@ -56,7 +56,7 @@ def auto_advance_events(
     """
     active_names = {
         run.name
-        for run in skill_runs
+        for run in workflow_runs
         if run.status == WorkflowRunStatus.ACTIVE
     }
     if not active_names:
@@ -96,17 +96,17 @@ def _check_review_result(
     """
     if metadata.get("agent") != "review":
         return None
-    if "requesting-code-review" not in active_names:
+    if "review" not in active_names:
         return None
     if not _REVIEW_VERDICT_RE.search(output):
         return None
 
-    edges = DEFAULT_WORKFLOW_DAG.edges_from("requesting-code-review")
+    edges = DEFAULT_WORKFLOW_DAG.edges_from("review")
     if not any(e.condition == "review_has_issues" for e in edges):
         return None
 
     return WorkflowStateEvent(
-        workflow="requesting-code-review",
+        workflow="review",
         kind=WorkflowStateEventKind.SATISFIED,
         ref="auto:review_has_issues",
         ok=False,
@@ -123,7 +123,7 @@ def _check_bash_result(
     """Detect failed_implementation from bash test failures.
 
     A non-zero exit code from a test/verification command while
-    verification-before-completion is active is treated as a failed_implementation
+    verify is active is treated as a failed_implementation
     signal. Only commands matching known test runners trigger auto-advance;
     arbitrary bash failures (git, ls, docker, etc.) are ignored.
 
@@ -144,15 +144,15 @@ def _check_bash_result(
     if not _TEST_COMMAND_RE.search(command):
         return []
 
-    if "verification-before-completion" not in active_names:
+    if "verify" not in active_names:
         return []
 
-    edges = DEFAULT_WORKFLOW_DAG.edges_from("verification-before-completion")
+    edges = DEFAULT_WORKFLOW_DAG.edges_from("verify")
     if not any(e.condition == "failed_implementation" for e in edges):
         return []
 
     return [WorkflowStateEvent(
-        workflow="verification-before-completion",
+        workflow="verify",
         kind=WorkflowStateEventKind.SATISFIED,
         ref="auto:failed_implementation",
         ok=False,

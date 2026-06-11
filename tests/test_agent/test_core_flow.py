@@ -436,15 +436,15 @@ async def test_graph_authorization_blocks_write_by_active_workflow_gate(tmp_path
         agent_name="orchestrator",
         plan_mode=False,
         session_id="test",
-        skill_runs=[
-            WorkflowRunState(name="brainstorming", status=WorkflowRunStatus.ACTIVE),
+        workflow_runs=[
+            WorkflowRunState(name="brainstorm", status=WorkflowRunStatus.ACTIVE),
         ],
     )
 
     assert approved == []
     assert len(denied) == 1
     assert "Blocked by workflow gate" in denied[0][1]
-    assert "brainstorming" in denied[0][1]
+    assert "brainstorm" in denied[0][1]
 
 
 @pytest.mark.asyncio
@@ -631,13 +631,13 @@ async def test_prepare_injects_plan_mode_prompt(tmp_path):
 
 
 @pytest.mark.asyncio
-async def test_subagent_runner_passes_main_skill_runtime_context(tmp_path, monkeypatch):
+async def test_subagent_runner_passes_main_workflow_runtime_context(tmp_path, monkeypatch):
     import voidx.agent.graph.core as core_module
 
     graph = _graph(tmp_path)
     expected_context = WorkflowRuntimeContext(
         instructions=["instruction"],
-        active=["test-driven-development (implement role)"],
+        active=["tdd (implement role)"],
         content="skill context",
         runs=[],
     )
@@ -658,7 +658,7 @@ async def test_subagent_runner_passes_main_skill_runtime_context(tmp_path, monke
     result = await graph._subagent_runner(get_agent("implement"), "Implement the feature", None)
 
     assert result == "child result"
-    assert captured["skill_runtime_context"] is expected_context
+    assert captured["workflow_runtime_context"] is expected_context
     assert "skill_selection" not in captured
     assert ("parent" + "_messages") not in captured
     assert calls[0]["kwargs"]["agent"] == "implement"
@@ -1557,15 +1557,15 @@ async def test_execute_tools_applies_on_intent_state_patch(tmp_path):
     assert "advance_workflow" in result["available_tool_ids"]
     assert "load_skills" in result["available_tool_ids"]
     assert {
-        run.name for run in result["skill_runs"]
-    } >= {"test-driven-development", "verification-before-completion"}
+        run.name for run in result["workflow_runs"]
+    } >= {"tdd", "verify"}
     assert "confirmed_intent" in result["messages"][0].content
     assert SKILL_TOOL_CONTEXT_MARKER not in result["messages"][0].content
     assert "## Skill:" not in result["messages"][0].content
 
 
 @pytest.mark.asyncio
-async def test_on_intent_excludes_already_active_skill_runs(tmp_path):
+async def test_on_intent_excludes_already_active_workflow_runs(tmp_path):
     graph = _graph(tmp_path)
 
     async def allow_all(
@@ -1602,15 +1602,15 @@ async def test_on_intent_excludes_already_active_skill_runs(tmp_path):
         "plan_mode": False,
         "interaction_mode": "auto",
         "task_intent": "chat",
-        "skill_runs": [{"name": "test-driven-development"}],
+        "workflow_runs": [{"name": "tdd"}],
     })
 
-    assert [run.name for run in result["skill_runs"]] == [
-        "test-driven-development",
-        "verification-before-completion",
+    assert [run.name for run in result["workflow_runs"]] == [
+        "tdd",
+        "verify",
     ]
-    assert "Skill: test-driven-development" not in result["messages"][0].content
-    assert "Skill: verification-before-completion" not in result["messages"][0].content
+    assert "Skill: tdd" not in result["messages"][0].content
+    assert "Skill: verify" not in result["messages"][0].content
     assert SKILL_TOOL_CONTEXT_MARKER not in result["messages"][0].content
 
 
@@ -1652,17 +1652,17 @@ async def test_on_intent_skips_active_workflows_that_no_longer_match(tmp_path):
         "plan_mode": False,
         "interaction_mode": "auto",
         "task_intent": "debug",
-        "skill_runs": [
-            WorkflowRunState(name="systematic-debugging", status=WorkflowRunStatus.ACTIVE),
-            WorkflowRunState(name="test-driven-development", status=WorkflowRunStatus.ACTIVE),
-            WorkflowRunState(name="verification-before-completion", status=WorkflowRunStatus.ACTIVE),
+        "workflow_runs": [
+            WorkflowRunState(name="debug", status=WorkflowRunStatus.ACTIVE),
+            WorkflowRunState(name="tdd", status=WorkflowRunStatus.ACTIVE),
+            WorkflowRunState(name="verify", status=WorkflowRunStatus.ACTIVE),
         ],
     })
 
-    statuses = {run.name: run.status for run in result["skill_runs"]}
-    assert statuses["systematic-debugging"] == WorkflowRunStatus.SKIPPED
-    assert statuses["test-driven-development"] == WorkflowRunStatus.ACTIVE
-    assert statuses["verification-before-completion"] == WorkflowRunStatus.ACTIVE
+    statuses = {run.name: run.status for run in result["workflow_runs"]}
+    assert statuses["debug"] == WorkflowRunStatus.SKIPPED
+    assert statuses["tdd"] == WorkflowRunStatus.ACTIVE
+    assert statuses["verify"] == WorkflowRunStatus.ACTIVE
 
 
 @pytest.mark.asyncio
@@ -1770,7 +1770,7 @@ async def test_on_intent_transaction_executes_following_tools_with_updated_state
 
         async def execute(self, args: dict, ctx: ToolContext) -> ToolResult:
             observed["task_intent"] = ctx.task_intent
-            observed["active_skill_names"] = list(ctx.active_skill_names)
+            observed["active_workflow_names"] = list(ctx.active_workflow_names)
             return ToolResult(output=f"read after intent: {ctx.task_intent}")
 
     graph.tools.register("read", RecordingReadTool(), "fake read", {"type": "object", "properties": {}})
@@ -2062,7 +2062,7 @@ async def test_advance_workflow_transaction_reauthorizes_following_write(tmp_pat
             {
                 "name": "advance_workflow",
                 "args": {
-                    "workflow": "brainstorming",
+                    "workflow": "brainstorm",
                     "condition": "done",
                     "evidence": "stale design gate cleared",
                     "summary": "design gate cleared",
@@ -2086,16 +2086,16 @@ async def test_advance_workflow_transaction_reauthorizes_following_write(tmp_pat
         "plan_mode": False,
         "interaction_mode": "auto",
         "task_intent": "design",
-        "skill_runs": [
-            WorkflowRunState(name="brainstorming", status=WorkflowRunStatus.ACTIVE),
+        "workflow_runs": [
+            WorkflowRunState(name="brainstorm", status=WorkflowRunStatus.ACTIVE),
         ],
     })
 
     assert [message.tool_call_id for message in result["messages"]] == ["call_adv", "call_write"]
     assert "Blocked by workflow gate" not in result["messages"][1].content
     assert (tmp_path / "tmp-repro.txt").read_text() == "x"
-    by_name = {run.name: run for run in result["skill_runs"]}
-    assert by_name["brainstorming"].status == WorkflowRunStatus.SATISFIED
+    by_name = {run.name: run for run in result["workflow_runs"]}
+    assert by_name["brainstorm"].status == WorkflowRunStatus.SATISFIED
 
 
 @pytest.mark.asyncio
@@ -2201,6 +2201,57 @@ async def test_run_synthetic_turn_uses_display_text_without_losing_prompt(tmp_pa
         and message.content == "full initialization prompt with unique model marker"
         for message in captured["messages"]
     )
+
+
+@pytest.mark.asyncio
+async def test_run_once_wraps_explicit_skill_refs_in_user_message(tmp_path):
+    skill_dir = tmp_path / ".voidx" / "skills" / "docs"
+    skill_dir.mkdir(parents=True)
+    (skill_dir / "SKILL.md").write_text(
+        "---\nname: docs\ndescription: Write docs\n---\nDocs body",
+        encoding="utf-8",
+    )
+    session = await create_session(workspace=str(tmp_path))
+    try:
+        graph = VoidXGraph(
+            Config(workspace=str(tmp_path)),
+            api_key=None,
+            session=session,
+            settings=Settings(str(tmp_path)),
+        )
+        captured: dict[str, list] = {}
+
+        class FakeGraph:
+            async def ainvoke(self, initial, _config):
+                captured["messages"] = list(initial["messages"])
+                return {"messages": list(initial["messages"]) + [AIMessage(content="ok")]}
+
+        graph.graph = FakeGraph()
+
+        test_dock = BottomInputDock()
+        set_dock(test_dock)
+        test_dock.begin_capture()
+        try:
+            await graph._run_once("Use $docs for this README")
+            turn_header = test_dock.tree.root.children[0].header
+        finally:
+            test_dock.deactivate()
+            test_dock.reset()
+            set_dock(None)
+
+        user_message = captured["messages"][-1]
+        assert isinstance(user_message, HumanMessage)
+        assert user_message.content.startswith("用户指定了技能：\n- docs: Write docs")
+        assert "Use for this README" in user_message.content
+        assert "$docs" not in user_message.content
+        assert "Docs body" not in user_message.content
+        assert turn_header == "[bold white]❯[/] Use $docs for this README"
+
+        rows = await load_messages(session.id)
+        user_rows = [row for row in rows if row.role == "user"]
+        assert user_rows[-1].content == user_message.content
+    finally:
+        await delete_session(session.id)
 
 
 @pytest.mark.asyncio
@@ -2686,15 +2737,15 @@ async def test_prepare_injects_workflow_nodes_from_task_state(tmp_path):
 
     assert isinstance(messages[1], HumanMessage)
     assert messages[1].content.startswith(WORKFLOW_CONTEXT_MARKER)
-    assert "Workflow Node: test-driven-development" in messages[1].content
-    assert "Workflow Node: verification-before-completion" in messages[1].content
+    assert "Workflow Node: tdd" in messages[1].content
+    assert "Workflow Node: verify" in messages[1].content
     assert isinstance(messages[2], HumanMessage)
-    assert "Active workflow nodes: test-driven-development" in messages[2].content
-    assert [run.name for run in result["skill_runs"]] == [
-        "test-driven-development",
-        "verification-before-completion",
+    assert "Active workflow nodes: tdd" in messages[2].content
+    assert [run.name for run in result["workflow_runs"]] == [
+        "tdd",
+        "verify",
     ]
-    assert "Workflow run state: test-driven-development=active" in messages[2].content
+    assert "Workflow run state: tdd=active" in messages[2].content
 
 
 @pytest.mark.asyncio
@@ -2731,7 +2782,7 @@ async def test_implement_subagent_injects_workflow_nodes(tmp_path, monkeypatch):
             workspace=str(tmp_path),
             user_profile=UserProfile(language="zh-CN", tone="direct"),
         ),
-        skill_runtime_context=workflow_context,
+        workflow_runtime_context=workflow_context,
         debug=False,
     )
 
@@ -2746,9 +2797,9 @@ async def test_implement_subagent_injects_workflow_nodes(tmp_path, monkeypatch):
         for message in captured["messages"]
         if isinstance(message, HumanMessage) and "Runtime State" in str(message.content)
     )
-    assert "Workflow Node: test-driven-development" in workflow_context
-    assert "Workflow Node: verification-before-completion" in workflow_context
-    assert "Active workflow nodes: test-driven-development" in rendered_user
+    assert "Workflow Node: tdd" in workflow_context
+    assert "Workflow Node: verify" in workflow_context
+    assert "Active workflow nodes: tdd" in rendered_user
     assert "User language: Chinese (Simplified) [zh-CN]" in rendered_user
     assert "Tone instruction: Be direct and practical. Lead with the answer or action." in rendered_user
 
@@ -2784,7 +2835,7 @@ async def test_subagent_skill_context_matches_orchestrator(tmp_path, monkeypatch
         None,
         "test-key",
         Config(workspace=str(tmp_path)),
-        skill_runtime_context=workflow_context,
+        workflow_runtime_context=workflow_context,
         debug=False,
     )
 
@@ -2801,10 +2852,10 @@ async def test_subagent_skill_context_matches_orchestrator(tmp_path, monkeypatch
     ]
     assert len(workflow_context_messages) == 1
     assert len(task_messages) == 1
-    assert "Workflow Node: test-driven-development" in workflow_context_messages[0].content
-    assert "Workflow Node: verification-before-completion" in workflow_context_messages[0].content
-    assert "Workflow Node: test-driven-development" not in task_messages[0].content
-    assert "Active workflow nodes: test-driven-development" in task_messages[0].content
+    assert "Workflow Node: tdd" in workflow_context_messages[0].content
+    assert "Workflow Node: verify" in workflow_context_messages[0].content
+    assert "Workflow Node: tdd" not in task_messages[0].content
+    assert "Active workflow nodes: tdd" in task_messages[0].content
 
 
 @pytest.mark.asyncio
@@ -3019,7 +3070,7 @@ async def test_subagent_starts_from_isolated_task_context(tmp_path, monkeypatch)
         None,
         "test-key",
         Config(workspace=str(tmp_path)),
-        skill_runtime_context=workflow_context,
+        workflow_runtime_context=workflow_context,
         debug=False,
     )
 

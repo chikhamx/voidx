@@ -9,8 +9,19 @@ from types import SimpleNamespace
 import pytest
 from rich.console import Console
 
+from voidx.config import Settings
 from voidx.ui.commands import COMMANDS
 from voidx.ui.tui import PureTui
+
+
+def _write_skill(workspace, name: str, description: str) -> None:
+    skill_dir = workspace / ".voidx" / "skills" / name
+    skill_dir.mkdir(parents=True)
+    (skill_dir / "SKILL.md").write_text(
+        f"---\nname: {name}\ndescription: {description}\n---\nSkill body",
+        encoding="utf-8",
+    )
+
 
 def test_choice_enter_submits_selected_value(tmp_path):
     tui = _tui(tmp_path)
@@ -257,6 +268,63 @@ def test_attachment_panel_arrow_selection_accepts_selected_file(tmp_path):
 
     assert tui._get_input_text() == "@file1.txt "
     assert tui._queue.empty()
+
+
+def test_skill_panel_accepts_project_skill(tmp_path):
+    _write_skill(tmp_path, "docs", "docs helper")
+    Settings(str(tmp_path)).set_skill_auto("docs", True)
+    tui = _tui(tmp_path)
+    tui._input_lines = ["#do"]
+    tui._cursor_col = len("#do")
+    tui._update_input_panels()
+
+    assert tui._skill_panel_active()
+    panel = "\n".join(tui._render_skill_panel(100))
+    assert "docs" in panel
+    assert "[auto]" in panel
+    assert "project" in panel
+    assert "docs helper" in panel
+
+    tui._process_input(b"\r")
+
+    assert tui._get_input_text() == "$docs "
+    assert tui._queue.empty()
+
+
+def test_skill_panel_arrow_selection_accepts_selected_skill(tmp_path):
+    _write_skill(tmp_path, "docs", "docs helper")
+    _write_skill(tmp_path, "sql-review", "Reviews SQL")
+    tui = _tui(tmp_path)
+    tui._input_lines = ["#"]
+    tui._cursor_col = len("#")
+    tui._update_input_panels()
+
+    tui._process_input(b"\x1b[B")
+    tui._process_input(b"\r")
+
+    assert tui._get_input_text() == "$sql-review "
+    assert tui._queue.empty()
+
+
+def test_skill_panel_escape_hides_until_text_changes(tmp_path):
+    _write_skill(tmp_path, "docs", "docs helper")
+    tui = _tui(tmp_path)
+    tui._input_lines = ["#do"]
+    tui._cursor_col = len("#do")
+    tui._update_input_panels()
+
+    assert tui._skill_panel_active()
+
+    tui._process_input(b"\x1b")
+
+    assert not tui._skill_panel_active()
+    assert tui._get_input_text() == "#do"
+
+    tui._process_input(b"\x7f")
+    tui._process_input(b"o")
+
+    assert tui._get_input_text() == "#do"
+    assert tui._skill_panel_active()
 
 
 def test_attachment_panel_escape_hides_without_accepting(tmp_path):

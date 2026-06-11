@@ -51,3 +51,21 @@ def test_missing_attachment_token_is_preserved(tmp_path):
 
     assert payload.clean_text == "explain @dataclass"
     assert "Attachment not found: dataclass" in payload.warnings
+
+
+def test_user_message_prefix_removes_extra_spans_without_changing_display(tmp_path):
+    file_path = tmp_path / "src" / "main.py"
+    file_path.parent.mkdir()
+    file_path.write_text("print('hi')\n", encoding="utf-8")
+
+    payload = build_user_message_payload(
+        "use $docs @src/main.py please",
+        str(tmp_path),
+        text_prefix="用户指定了技能：\n- docs: Write docs",
+        extra_removed_spans=[(4, 9)],
+    )
+
+    assert payload.clean_text == "use please"
+    assert payload.display_text == "use $docs please\n[attachments: src/main.py]"
+    assert payload.content.startswith("用户指定了技能：\n- docs: Write docs\n\nuse please")
+    assert "Attached file: src/main.py" in payload.content

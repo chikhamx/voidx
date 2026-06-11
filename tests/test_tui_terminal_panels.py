@@ -375,6 +375,30 @@ def test_input_cursor_position_accounts_for_wrapped_long_line(tmp_path, monkeypa
     assert int(match.group(1)) == 3
 
 
+def test_skill_panel_reuses_candidate_service_between_queries(tmp_path, monkeypatch):
+    import voidx.ui.tui.panels as panels
+
+    services = []
+
+    def fake_list_skill_candidates(workspace, query, limit=8, *, service=None):
+        del workspace, query, limit
+        services.append(service)
+        return []
+
+    monkeypatch.setattr(panels, "list_skill_candidates", fake_list_skill_candidates)
+    tui = _tui(tmp_path)
+
+    tui._input_lines = ["#d"]
+    tui._cursor_col = len("#d")
+    tui._skill_matches()
+    tui._input_lines = ["#do"]
+    tui._cursor_col = len("#do")
+    tui._skill_matches()
+
+    assert services[0] is not None
+    assert services[0] is services[1]
+
+
 def test_tty_render_reuses_previous_frame_region(tmp_path, monkeypatch):
     class FakeStdout:
         def __init__(self) -> None:

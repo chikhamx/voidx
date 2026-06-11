@@ -360,9 +360,9 @@ async def test_runtime_state_round_trips_structured_goal_state():
             status=TaskRunStatus.ACTIVE,
             pending_approval=PendingApproval(scope="优化 markdown 渲染截断", created_turn=2),
             turn_count=2,
-            skill_runs={
-                "brainstorming": WorkflowRunState(
-                    name="brainstorming",
+            workflow_runs={
+                "brainstorm": WorkflowRunState(
+                    name="brainstorm",
                     status=WorkflowRunStatus.ACTIVE,
                     source=WorkflowActivationSource.WORKFLOW,
                     reason="design/create intent",
@@ -394,8 +394,8 @@ async def test_runtime_state_round_trips_structured_goal_state():
         assert loaded.task_run.goal == "优化 markdown 渲染截断"
         assert loaded.task_run.phase == TaskPhase.DESIGN
         assert loaded.task_run.turn_count == 2
-        assert loaded.task_run.skill_runs["brainstorming"].status == WorkflowRunStatus.ACTIVE
-        assert loaded.task_run.skill_runs["brainstorming"].phase == "design"
+        assert loaded.task_run.workflow_runs["brainstorm"].status == WorkflowRunStatus.ACTIVE
+        assert loaded.task_run.workflow_runs["brainstorm"].phase == "design"
     finally:
         await delete_session(session.id)
 

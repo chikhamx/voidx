@@ -94,7 +94,7 @@ class AdvanceWorkflowTool(BaseTool):
             condition=condition,
         )
         updated = advance_workflow_states(runs, [event])
-        patch = ToolStatePatch(skill_runs=updated)
+        patch = ToolStatePatch(workflow_runs=updated)
         payload = {
             "from": selected.name,
             "condition": condition,
@@ -107,18 +107,18 @@ class AdvanceWorkflowTool(BaseTool):
             output=json.dumps(payload, ensure_ascii=False, indent=2),
             metadata={
                 "workflow_transition": payload,
-                "state_patch": patch.model_dump(mode="json", include={"skill_runs"}),
+                "state_patch": patch.model_dump(mode="json", include={"workflow_runs"}),
             },
         )
 
 
 def _current_runs(ctx: ToolContext) -> list[WorkflowRunState]:
-    runs = [item.model_copy(deep=True) for item in ctx.skill_runs]
+    runs = [item.model_copy(deep=True) for item in ctx.workflow_runs]
     if runs:
         return runs
     return [
         WorkflowRunState(name=name, status=WorkflowRunStatus.ACTIVE)
-        for name in ctx.active_skill_names
+        for name in ctx.active_workflow_names
         if name.strip()
     ]
 
@@ -183,7 +183,7 @@ def _ambiguous_target_message(active: list[WorkflowRunState]) -> str:
     lines = [
         "Ambiguous workflow target for terminal condition 'done'.",
         "Pass the workflow node name explicitly, for example:",
-        "advance_workflow(workflow=\"writing-design-docs\", condition=\"done\")",
+        "advance_workflow(workflow=\"design-doc\", condition=\"done\")",
         "Active workflow nodes:",
     ]
     lines.extend(f"- {run.name}" for run in active)

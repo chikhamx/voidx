@@ -48,6 +48,25 @@ async def test_skills_enable_disable_updates_settings(tmp_path):
 
 
 @pytest.mark.asyncio
+async def test_skills_auto_manual_updates_settings(tmp_path):
+    _write_skill(tmp_path, "docs")
+    settings = Settings(str(tmp_path))
+    graph = SimpleNamespace(_settings=settings, _workspace=str(tmp_path))
+    handler = SlashHandler(graph)
+
+    assert await handler.dispatch("/skills auto docs") is True
+    selection = Settings(str(tmp_path)).get_skill_selection()
+    assert selection.enabled == {"docs"}
+    assert selection.disabled == set()
+    assert selection.auto == {"docs"}
+
+    assert await handler.dispatch("/skills manual docs") is True
+    selection = Settings(str(tmp_path)).get_skill_selection()
+    assert selection.enabled == {"docs"}
+    assert selection.auto == set()
+
+
+@pytest.mark.asyncio
 async def test_skills_paths_dispatch(tmp_path):
     graph = SimpleNamespace(_settings=Settings(str(tmp_path)), _workspace=str(tmp_path))
 

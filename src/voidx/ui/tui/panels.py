@@ -2,8 +2,12 @@
 
 from __future__ import annotations
 
+from pathlib import Path
 from typing import Any
 
+from voidx.config import Settings
+from voidx.skills.registry import SkillRegistry
+from voidx.skills.service import SkillService
 from voidx.ui.tools.attachment_tokens import attachment_token_text
 from voidx.ui.tools.file_picker import (
     AttachmentToken,
@@ -11,14 +15,23 @@ from voidx.ui.tools.file_picker import (
     find_attachment_token,
     list_file_candidates,
 )
+from voidx.ui.tools.skill_picker import (
+    SkillCandidate,
+    SkillToken,
+    find_skill_token,
+    list_skill_candidates,
+)
 
 
 class _PanelManagerMixin:
     """Methods: _update_input_panels, _update_command_panel, _attachment_token,
     _attachment_panel_active, _attachment_matches, _attachment_selectable_count,
-    _clamp_attachment_selection, _filtered_commands, _move_command_selection,
-    _move_attachment_selection, _accept_command_panel_selection,
-    _accept_attachment_panel_selection, _move_choice, _finish_choice,
+    _skill_token, _skill_panel_active, _skill_matches,
+    _skill_selectable_count, _clamp_attachment_selection,
+    _clamp_skill_selection, _filtered_commands, _move_command_selection,
+    _move_attachment_selection, _move_skill_selection,
+    _accept_command_panel_selection, _accept_attachment_panel_selection,
+    _accept_skill_panel_selection, _move_choice, _finish_choice,
     _submit_choice_selection, _submit_text_prompt, _cancel_text_prompt,
     _handle_escape, _handle_tab, _normalize_choice_detail."""
 
@@ -36,6 +49,8 @@ class _PanelManagerMixin:
             self._cancel_text_prompt()
         elif self._active_choice is not None:
             self._finish_choice(None)
+        elif self._skill_panel_active():
+            self._skill_panel_suppressed_text = self._get_input_text()
         elif self._attachment_panel_active():
             self._attachment_panel_suppressed_text = self._get_input_text()
         elif self._command_panel_active:
@@ -44,6 +59,9 @@ class _PanelManagerMixin:
 
     def _handle_tab(self) -> None:
         """Tab completion for commands and slash panel."""
+        if self._skill_panel_active():
+            self._accept_skill_panel_selection()
+            return
         if self._attachment_panel_active():
             self._accept_attachment_panel_selection()
             return
@@ -71,6 +89,7 @@ class _PanelManagerMixin:
     def _update_input_panels(self) -> None:
         self._update_command_panel()
         self._clamp_attachment_selection()
+        self._clamp_skill_selection()
 
     def _update_command_panel(self) -> None:
         line = self._current_line()
@@ -87,6 +106,13 @@ class _PanelManagerMixin:
             return None
         return find_attachment_token(self._get_input_text(), self._input_cursor_position())
 
+    def _skill_token(self) -> SkillToken | None:
+        if self._active_choice is not None or self._active_text_prompt is not None:
+            return None
+        if self._command_panel_active:
+            return None
+        return find_skill_token(self._get_input_text(), self._input_cursor_position())
+
     def _attachment_panel_active(self) -> bool:
         text = self._get_input_text()
         return (
@@ -95,6 +121,16 @@ class _PanelManagerMixin:
             and not self._command_panel_active
             and text != self._attachment_panel_suppressed_text
             and self._attachment_token() is not None
+        )
+
+    def _skill_panel_active(self) -> bool:
+        text = self._get_input_text()
+        return (
+            self._active_choice is None
+            and self._active_text_prompt is None
+            and not self._command_panel_active
+            and text != self._skill_panel_suppressed_text
+            and self._skill_token() is not None
         )
 
     def _attachment_matches(self) -> list[FileCandidate]:
@@ -112,8 +148,44 @@ class _PanelManagerMixin:
         self._attachment_matches_cache = matches
         return matches
 
+    def _skill_matches(self) -> list[SkillCandidate]:
+        token = self._skill_token()
+        if token is None:
+            self._skill_matches_cache_key = None
+            self._skill_matches_cache = []
+            return []
+        workspace = str(self.status.workspace)
+        key = (workspace, token.query, token.start, token.end)
+        if key == self._skill_matches_cache_key:
+            return self._skill_matches_cache
+        matches = list_skill_candidates(
+            workspace,
+            token.query,
+            limit=8,
+            service=self._skill_candidate_service(workspace),
+        )
+        self._skill_matches_cache_key = key
+        self._skill_matches_cache = matches
+        return matches
+
+    def _skill_candidate_service(self, workspace: str) -> SkillService:
+        key = (workspace, *_skill_settings_signature(workspace))
+        if key == self._skill_service_cache_key and self._skill_service_cache is not None:
+            return self._skill_service_cache
+        settings = Settings(workspace)
+        service = SkillService(
+            SkillRegistry(workspace),
+            selection=settings.get_skill_selection(),
+        )
+        self._skill_service_cache_key = key
+        self._skill_service_cache = service
+        return service
+
     def _attachment_selectable_count(self) -> int:
         return min(len(self._attachment_matches()), 8)
+
+    def _skill_selectable_count(self) -> int:
+        return min(len(self._skill_matches()), 8)
 
     def _clamp_attachment_selection(self) -> None:
         count = self._attachment_selectable_count()
@@ -121,6 +193,13 @@ class _PanelManagerMixin:
             self._attachment_selected = 0
             return
         self._attachment_selected = max(0, min(self._attachment_selected, count - 1))
+
+    def _clamp_skill_selection(self) -> None:
+        count = self._skill_selectable_count()
+        if count <= 0:
+            self._skill_selected = 0
+            return
+        self._skill_selected = max(0, min(self._skill_selected, count - 1))
 
     def _filtered_commands(self) -> list[tuple[str, str]]:
         line = self._current_line().strip()
@@ -145,6 +224,14 @@ class _PanelManagerMixin:
         self._attachment_selected = max(0, min(self._attachment_selected + delta, count - 1))
         self.invalidate()
 
+    def _move_skill_selection(self, delta: int) -> None:
+        count = self._skill_selectable_count()
+        if count <= 0:
+            self._skill_selected = 0
+            return
+        self._skill_selected = max(0, min(self._skill_selected + delta, count - 1))
+        self.invalidate()
+
     def _accept_command_panel_selection(self) -> bool:
         filtered = self._filtered_commands()
         if not filtered:
@@ -157,6 +244,24 @@ class _PanelManagerMixin:
         self._cursor_row = 0
         self._cursor_col = len(selected)
         self._command_panel_active = False
+        self.invalidate()
+        return True
+
+    def _accept_skill_panel_selection(self) -> bool:
+        token = self._skill_token()
+        if token is None:
+            return False
+        matches = self._skill_matches()
+        if not matches:
+            return False
+        selected = matches[min(self._skill_selected, len(matches) - 1)]
+        replacement = f"${selected.name} "
+        text = self._get_input_text()
+        new_text = text[:token.start] + replacement + text[token.end:]
+        new_cursor = token.start + len(replacement)
+        self._set_input_text_and_cursor(new_text, new_cursor)
+        self._skill_panel_suppressed_text = ""
+        self._skill_selected = 0
         self.invalidate()
         return True
 
@@ -216,3 +321,21 @@ class _PanelManagerMixin:
             value = model_dump()
             return value if isinstance(value, dict) else {}
         return {}
+
+
+def _skill_settings_signature(
+    workspace: str,
+) -> tuple[tuple[int, int] | None, tuple[int, int] | None]:
+    root = Path(workspace).resolve() / ".voidx"
+    return (
+        _file_signature(root / "skills.json"),
+        _file_signature(root / "settings.json"),
+    )
+
+
+def _file_signature(path: Path) -> tuple[int, int] | None:
+    try:
+        stat = path.stat()
+    except OSError:
+        return None
+    return (stat.st_mtime_ns, stat.st_size)

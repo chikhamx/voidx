@@ -1,5 +1,7 @@
 # 技能引用与管理增强 — 技术设计文档
 
+> **Status: Done**
+
 ## Context
 
 当前 regular skill 系统已有完整的发现、匹配、渲染管线，但用户与技能的交互方式有限：
@@ -143,12 +145,12 @@ class SkillCandidate:
 
 - **Signature**: `find_skill_token(text: str, cursor: int) -> SkillToken | None`
 - **Behavior**: 从光标位置向前查找 `#`，要求 `#` 前是行首或空白。返回 token 范围和查询文本。
-- **Edge cases**: `#` 在单词中间不触发（如 `issue#123`）；`##` 不触发；`# ` 后出现空白不触发，避免 Markdown 标题输入时持续弹出面板
+- **Edge cases**: `#` 在单词中间不触发（如 `issue#123`）；`##` 不触发；`#` 后的 token 中若包含空白则不触发（如 `# heading`），避免 Markdown 标题输入时持续弹出面板；`#` 后紧跟光标（空 query）会触发面板，展示全部技能供选择
 
 ### list_skill_candidates(workspace, query, limit) → list[SkillCandidate]
 
 - **Signature**: `list_skill_candidates(workspace: str, query: str, limit: int = 8) -> list[SkillCandidate]`
-- **Behavior**: 从 SkillRegistry 获取所有 enabled global/project 技能，按 query 模糊过滤 name 和 description，返回候选列表
+- **Behavior**: 从 SkillRegistry 获取所有 enabled global/project 技能（排除 bundled scope），按 query 模糊过滤 name 和 description，返回候选列表
 - **Filtering**: query 为空时返回全部；非空时 name 前缀匹配优先，description 包含次之
 
 ### /skills 命令扩展
@@ -180,6 +182,11 @@ class SkillCandidate:
 
 voidx 通过文件读写工具完成操作，无需专用命令。若目标不是 global/project 级 `SKILL.md` 技能，voidx 应报错并说明没有可删除的本地技能目录。
 
+**安全约束**：
+- 删除技能前 voidx 应确认目标目录，避免误删
+- 若技能同时存在于 global 和 project 级，voidx 应询问用户删除哪个（或两者都删）
+- 安装时默认保存到 project 级（`.voidx/skills/`），用户指定 `--global` 时保存到 `~/.voidx/skills/`
+
 ### TUI 技能面板渲染
 
 面板中每个候选项显示：名称、mode（auto 用绿色标注，manual 用 dim）、scope、description 摘要。
@@ -199,6 +206,8 @@ voidx 通过文件读写工具完成操作，无需专用命令。若目标不�
 | ↑ / ↓ | 在候选列表中移动选中项 |
 | Enter / Tab | 选中当前项，将 `#query` 替换为 `$skill-name ` |
 | Esc | 关闭面板，保留 `#query` 文本 |
+
+**与 `@` 附件面板的互斥**：`#` 技能面板和 `@` 附件面板不会同时激活。`find_skill_token` 和 `find_attachment_token` 的触发前缀不同（`#` vs `@`），同一时刻只有一个面板处于活跃状态。
 
 ### 多技能引用与消息包装
 
@@ -256,11 +265,13 @@ auto 技能仅注入 `meta.description`，不注入 body。LLM 判断 auto 技�
 | skills.json 新增 auto 字段 | 在 SKILL.md frontmatter 中加 mode 字段 | mode 是用户偏好而非技能属性，应存放在用户配置中 |
 | 内置 workflow node 不纳入 skill 管理 | 把 workflow node 当作 bundled skill | 当前系统已经没有内置 skill；workflow node 有独立 runtime、context 和状态机 |
 
-## Open Questions
+## Resolved Decisions
 
-- [x] auto 模式是否需要在 `## Available Skills` 中注入完整 description？→ 是，auto 注入完整 name + description；manual 不显示
-- [x] manual 技能通过 `#` 引用时是否注入 system prompt 或 body？→ 不注入。只把 name + description 带到用户消息
-- [x] `/skills install`/`uninstall` 是否需要独立命令？→ 不需要，用户直接与 voidx 对话，voidx 根据意图生成/安装/删除技能
-- [x] 技能面板是否需要显示技能的 mode（auto/manual）？→ 是，`/skills list` 和 `#` 技能面板都显示 mode 状态
-- [x] 多个 `#` 引用时的交互：是否支持一次输入中引用多个技能？→ 支持，每个 `#` 独立展开，发给 LLM 时包装用户消息
-- [x] 是否还有内置 skill 需要管理？→ 没有。内置 workflow node 不属于本设计的 skill 范围
+| 问题 | 决策 |
+|------|------|
+| auto 模式是否需要在 `## Available Skills` 中注入完整 description？ | 是，auto 注入完整 name + description；manual 不显示 |
+| manual 技能通过 `#` 引用时是否注入 system prompt 或 body？ | 不注入。只把 name + description 带到用户消息 |
+| `/skills install`/`uninstall` 是否需要独立命令？ | 不需要，用户直接与 voidx 对话，voidx 根据意图生成/安装/删除技能 |
+| 技能面板是否需要显示技能的 mode（auto/manual）？ | 是，`/skills list` 和 `#` 技能面板都显示 mode 状态 |
+| 多个 `#` 引用时的交互：是否支持一次输入中引用多个技能？ | 支持，每个 `#` 独立展开，发给 LLM 时包装用户消息 |
+| 是否还有内置 skill 需要管理？ | 没有。内置 workflow node 不属于本设计的 skill 范围 |

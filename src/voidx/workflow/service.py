@@ -7,13 +7,12 @@ from collections.abc import Iterable
 
 from pydantic import BaseModel
 
+from voidx.skills.schema import EXPLICIT_REF_RE
 from voidx.workflow.context import render_workflow_context, render_workflow_instruction
 from voidx.workflow.dag import DEFAULT_WORKFLOW_DAG
 from voidx.workflow.policy import workflow_activations, workflow_sort_key
 from voidx.workflow.runtime import WorkflowRunState
 from voidx.workflow.schema import WorkflowNode
-
-_EXPLICIT_REF_RE = re.compile(r"(?<![\w.-])\$([A-Za-z0-9_.-]+)")
 
 
 class WorkflowMatch(BaseModel):
@@ -159,7 +158,7 @@ class WorkflowService:
 
     @staticmethod
     def _explicit_refs(text: str) -> set[str]:
-        return {_normalize(match.group(1)) for match in _EXPLICIT_REF_RE.finditer(text)}
+        return {_normalize(match.group(1)) for match in EXPLICIT_REF_RE.finditer(text)}
 
     @staticmethod
     def _match_reason(node: WorkflowNode, lowered_text: str) -> str:

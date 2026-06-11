@@ -43,7 +43,7 @@ async def test_instruction_service_reuses_skill_service_until_selection_changes(
     await service.available_skills_section()
     second_service = service._skill_service_for_current_selection()
 
-    settings.set_skill_enabled("verification-before-completion", False)
+    settings.set_skill_enabled("verify", False)
     third_service = service._skill_service_for_current_selection()
 
     assert service._skill_registry is first_registry

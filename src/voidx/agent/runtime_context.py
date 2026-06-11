@@ -170,8 +170,8 @@ class RuntimeContextBuilder:
         interaction_mode: str | InteractionMode,
         instructions: Iterable[str] = (),
         skill_context_content: str = "",
-        skill_runs: Iterable[WorkflowRunState] = (),
-        active_skill_summaries: Iterable[str] = (),
+        workflow_runs: Iterable[WorkflowRunState] = (),
+        active_workflow_summaries: Iterable[str] = (),
         summary: str | None = None,
         current_user_text: str = "",
         task_intent: str | TaskIntent | None = None,
@@ -199,8 +199,8 @@ class RuntimeContextBuilder:
         self.interaction_mode = InteractionMode.parse(interaction_mode)
         self.instructions = [item for item in instructions if item.strip()]
         self.skill_context_content = skill_context_content.strip()
-        self.skill_runs = list(skill_runs)
-        self.active_skill_summaries = [item for item in active_skill_summaries if item.strip()]
+        self.workflow_runs = list(workflow_runs)
+        self.active_workflow_summaries = [item for item in active_workflow_summaries if item.strip()]
         self.summary = summary.strip() if summary else ""
         self.current_user_text = current_user_text.strip()
         self.task_intent = (
@@ -351,10 +351,10 @@ class RuntimeContextBuilder:
             f"- Agent: {self.agent}",
             f"- Agent ID: {self.agent_id}",
         ]
-        if self.active_skill_summaries:
-            lines.append(f"- Active workflow nodes: {'; '.join(self.active_skill_summaries)}")
-        if self.skill_runs:
-            lines.append(f"- Workflow run state: {'; '.join(run.state_summary() for run in self.skill_runs)}")
+        if self.active_workflow_summaries:
+            lines.append(f"- Active workflow nodes: {'; '.join(self.active_workflow_summaries)}")
+        if self.workflow_runs:
+            lines.append(f"- Workflow run state: {'; '.join(run.state_summary() for run in self.workflow_runs)}")
         for workflow_name in self._active_workflow_node_names():
             gate = workflow_gate(workflow_name)
             if gate:
@@ -419,12 +419,12 @@ class RuntimeContextBuilder:
 
     def _active_workflow_node_names(self) -> list[str]:
         names: list[str] = []
-        for run in self.skill_runs:
+        for run in self.workflow_runs:
             if run.status == WorkflowRunStatus.ACTIVE and run.name.strip():
                 names.append(run.name.strip())
         if names:
             return names
-        for summary in self.active_skill_summaries:
+        for summary in self.active_workflow_summaries:
             name = summary.split(" ", 1)[0].strip()
             if name:
                 names.append(name)

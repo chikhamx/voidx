@@ -151,19 +151,35 @@ def test_settings_tracks_skill_enable_disable(tmp_path):
     selection = Settings(str(tmp_path)).get_skill_selection()
     saved = json.loads((tmp_path / ".voidx" / "skills.json").read_text(encoding="utf-8"))
 
-    assert saved == {"version": 1, "enabled": ["python"], "disabled": ["docs"]}
+    assert saved == {"version": 2, "enabled": ["python"], "disabled": ["docs"], "auto": []}
     if (tmp_path / ".voidx" / "settings.json").exists():
         assert "skills" not in json.loads((tmp_path / ".voidx" / "settings.json").read_text(encoding="utf-8"))
     assert selection.disabled == {"docs"}
     assert selection.enabled == {"python"}
+    assert selection.auto == set()
 
     settings.set_skill_enabled("docs", True)
     selection = Settings(str(tmp_path)).get_skill_selection()
     saved = json.loads((tmp_path / ".voidx" / "skills.json").read_text(encoding="utf-8"))
 
-    assert saved == {"version": 1, "enabled": ["docs", "python"], "disabled": []}
+    assert saved == {"version": 2, "enabled": ["docs", "python"], "disabled": [], "auto": []}
     assert selection.disabled == set()
     assert selection.enabled == {"docs", "python"}
+    assert selection.auto == set()
+
+    settings.set_skill_auto("docs", True)
+    selection = Settings(str(tmp_path)).get_skill_selection()
+    saved = json.loads((tmp_path / ".voidx" / "skills.json").read_text(encoding="utf-8"))
+
+    assert saved == {"version": 2, "enabled": ["docs", "python"], "disabled": [], "auto": ["docs"]}
+    assert selection.auto == {"docs"}
+
+    settings.set_skill_enabled("docs", False)
+    selection = Settings(str(tmp_path)).get_skill_selection()
+    saved = json.loads((tmp_path / ".voidx" / "skills.json").read_text(encoding="utf-8"))
+
+    assert saved == {"version": 2, "enabled": ["python"], "disabled": ["docs"], "auto": []}
+    assert selection.auto == set()
 
 
 def test_settings_reads_legacy_skill_selection_from_voidx_json(tmp_path):
@@ -176,6 +192,7 @@ def test_settings_reads_legacy_skill_selection_from_voidx_json(tmp_path):
 
     assert selection.enabled == {"docs"}
     assert selection.disabled == {"python"}
+    assert selection.auto == set()
 
 
 async def test_permission_mode_presets_drive_build_config(tmp_path):
@@ -320,7 +337,7 @@ def test_settings_migrates_legacy_skill_selection_on_write(tmp_path):
     state = json.loads((tmp_path / ".voidx" / "skills.json").read_text(encoding="utf-8"))
     saved = json.loads((tmp_path / ".voidx" / "settings.json").read_text(encoding="utf-8"))
 
-    assert state == {"version": 1, "enabled": ["docs", "legacy"], "disabled": []}
+    assert state == {"version": 2, "enabled": ["docs", "legacy"], "disabled": [], "auto": []}
     assert saved == {"tavily_api_key": "tvly-test"}
 
 

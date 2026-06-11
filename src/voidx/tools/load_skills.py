@@ -38,15 +38,16 @@ class LoadSkillsTool(BaseTool):
     id = "load_skills"
     description = (
         "Load enabled skill instructions by normalized skill name. Use this when "
-        "a project/global skill listed in Available Skills is relevant and you "
-        "need its full instructions. This is read-only and does not accept file paths."
+        "a project/global skill listed in Available Skills or explicitly named "
+        "by the user is relevant and you need its full instructions. This is "
+        "read-only and does not accept file paths."
     )
 
     def __init__(self, settings=None) -> None:
         super().__init__()
         self._settings = settings
         self._skill_service: SkillService | None = None
-        self._skill_service_signature: tuple[str, tuple[str, ...], tuple[str, ...]] | None = None
+        self._skill_service_signature: tuple[str, tuple[str, ...], tuple[str, ...], tuple[str, ...]] | None = None
 
     def parameters_schema(self) -> dict:
         return model_to_json_schema(LoadSkillsInput)
@@ -162,11 +163,11 @@ def _looks_like_path(name: str) -> bool:
 def _skill_service_signature(
     workspace: str,
     selection: SkillSelectionConfig | None,
-) -> tuple[str, tuple[str, ...], tuple[str, ...]]:
+) -> tuple[str, tuple[str, ...], tuple[str, ...], tuple[str, ...]]:
     resolved = str(Path(workspace).resolve())
     if selection is None:
-        return resolved, (), ()
-    return resolved, tuple(sorted(selection.enabled)), tuple(sorted(selection.disabled))
+        return resolved, (), (), ()
+    return resolved, tuple(sorted(selection.enabled)), tuple(sorted(selection.disabled)), tuple(sorted(selection.auto))
 
 
 def _error_result(

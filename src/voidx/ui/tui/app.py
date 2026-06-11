@@ -181,6 +181,12 @@ class PureTui(
         """Submit text from web gateway."""
         self._queue.put_nowait(text)
 
+    def invalidate_skill_service_cache(self) -> None:
+        self._skill_matches_cache_key = None
+        self._skill_matches_cache = []
+        self._skill_service_cache_key = None
+        self._skill_service_cache = None
+
     def cancel_external_input(self) -> None:
         """Cancel current submission."""
         self._submit_cancel_requested = True
@@ -392,6 +398,8 @@ class PureTui(
         if not stripped and self._is_input_empty() and not self._notice and not self._ctrl_c_armed:
             return False
         self._reset_ctrl_c()
+        if self._skill_panel_active() and self._accept_skill_panel_selection():
+            return True
         if self._attachment_panel_active() and self._accept_attachment_panel_selection():
             return True
         if self._command_panel_active and self._accept_command_panel_selection():
@@ -505,7 +513,11 @@ class PureTui(
         self._restore_paste_entries(self._current_submitted_paste_entries)
         self._command_panel_active = False
         self._attachment_panel_suppressed_text = ""
+        self._attachment_matches_cache_key = None
+        self._skill_panel_suppressed_text = ""
+        self._skill_matches_cache_key = None
         self._clamp_attachment_selection()
+        self._clamp_skill_selection()
 
     def _request_exit(self) -> None:
         self._running = False

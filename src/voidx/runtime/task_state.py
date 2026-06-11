@@ -109,7 +109,7 @@ class TaskRun(BaseModel):
     status: TaskRunStatus = TaskRunStatus.IDLE
     pending_approval: PendingApproval | None = None
     turn_count: int = 0
-    skill_runs: dict[str, WorkflowRunState] = Field(default_factory=dict)
+    workflow_runs: dict[str, WorkflowRunState] = Field(default_factory=dict)
 
     @property
     def active(self) -> bool:
@@ -121,7 +121,7 @@ class TaskRun(BaseModel):
         self.status = TaskRunStatus.ACTIVE if self.goal else TaskRunStatus.IDLE
         self.pending_approval = None
         self.turn_count = 0
-        self.skill_runs = {}
+        self.workflow_runs = {}
 
     def clear(self) -> None:
         self.goal = ""
@@ -129,12 +129,12 @@ class TaskRun(BaseModel):
         self.status = TaskRunStatus.IDLE
         self.pending_approval = None
         self.turn_count = 0
-        self.skill_runs = {}
+        self.workflow_runs = {}
 
-    def merge_skill_runs(self, runs: list[WorkflowRunState | dict]) -> None:
+    def merge_workflow_runs(self, runs: list[WorkflowRunState | dict]) -> None:
         for item in runs:
             run = item if isinstance(item, WorkflowRunState) else WorkflowRunState.model_validate(item)
-            self.skill_runs[run.name] = run
+            self.workflow_runs[run.name] = run
 
     def update_after_turn(
         self,
@@ -227,7 +227,7 @@ class ToolStatePatch(BaseModel):
     goal_status: str | None = None
     pending_approval: PendingApproval | None = None
     available_tool_ids: list[str] | None = None
-    skill_runs: list[WorkflowRunState] = Field(default_factory=list)
+    workflow_runs: list[WorkflowRunState] = Field(default_factory=list)
     intent_confidence: float | None = None
     intent_source: str | None = None
     intent_refined: bool | None = None

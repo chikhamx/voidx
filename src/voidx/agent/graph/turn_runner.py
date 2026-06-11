@@ -26,6 +26,7 @@ from voidx.memory.session import (
     touch_session,
     update_title,
 )
+from voidx.skills.references import skill_reference_message
 from voidx.ui.output.events.schema import (
     InputSet,
     StatusFinished,
@@ -80,7 +81,19 @@ class GraphTurnRunner:
         user_message_id: int | None = None
         try:
             host._ui.session_tracker.begin_turn(host._workspace)
-            payload = build_user_message_payload(user_text, host._workspace)
+            skill_service = host._skill_service_for_references() if "$" in user_text else None
+            skill_refs = skill_reference_message(
+                user_text,
+                host._workspace,
+                settings=host._settings,
+                service=skill_service,
+            )
+            payload = build_user_message_payload(
+                user_text,
+                host._workspace,
+                text_prefix=skill_refs.prefix,
+                extra_removed_spans=skill_refs.remove_spans,
+            )
             turn_display_text = display_text or payload.display_text
             host._current_tree = host._ui.dock.tree
             if host._ui.via_events():
@@ -244,7 +257,7 @@ class GraphTurnRunner:
                     scope_text=final_scope,
                 )
             if host.model is not None and task_run is not None:
-                task_run.merge_skill_runs(final.get("skill_runs", []))
+                task_run.merge_workflow_runs(final.get("workflow_runs", []))
             await save_message_runtime_snapshot(MessageRuntimeSnapshot(
                 message_id=user_message_id,
                 session_id=host._session.id,

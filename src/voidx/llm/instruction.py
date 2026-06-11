@@ -39,9 +39,6 @@ class WorkflowRuntimeContext:
     runs: list[WorkflowRunState] = field(default_factory=list)
 
 
-SkillRuntimeContext = WorkflowRuntimeContext
-
-
 @dataclass
 class _FileContentCacheEntry:
     mtime_ns: int
@@ -66,7 +63,7 @@ class InstructionService:
         self._file_cache: dict[str, _FileContentCacheEntry] = {}
         self._skill_registry = SkillRegistry(str(self._workspace))
         self._skill_service: SkillService | None = None
-        self._skill_service_signature: tuple[tuple[str, ...], tuple[str, ...]] | None = None
+        self._skill_service_signature: tuple[tuple[str, ...], tuple[str, ...], tuple[str, ...]] | None = None
         self._workflow_service = WorkflowService()
         self._debug = False
 
@@ -172,25 +169,6 @@ class InstructionService:
                 exclude_names=exclude_names or (),
             ),
         )
-
-    async def skill_context_for(self, *args, **kwargs) -> WorkflowRuntimeContext:
-        return await self.workflow_context_for(*args, **kwargs)
-
-    async def skills_for(
-        self,
-        user_text: str,
-        *,
-        agent: str = "",
-        task_intent: str | None = None,
-        interaction_mode: str | None = None,
-    ) -> list[str]:
-        context = await self.workflow_context_for(
-            user_text,
-            agent=agent,
-            task_intent=task_intent,
-            interaction_mode=interaction_mode,
-        )
-        return context.instructions
 
     async def resolve(
         self,
@@ -331,10 +309,10 @@ def _phase_from_intent(task_intent: str | None, interaction_mode: str | None = N
 
 def _skill_selection_signature(
     selection: SkillSelectionConfig | None,
-) -> tuple[tuple[str, ...], tuple[str, ...]]:
+) -> tuple[tuple[str, ...], tuple[str, ...], tuple[str, ...]]:
     if selection is None:
-        return (), ()
-    return tuple(sorted(selection.enabled)), tuple(sorted(selection.disabled))
+        return (), (), ()
+    return tuple(sorted(selection.enabled)), tuple(sorted(selection.disabled)), tuple(sorted(selection.auto))
 
 
 def _merged_names(*groups: Iterable[str]) -> set[str]:

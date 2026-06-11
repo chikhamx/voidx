@@ -64,6 +64,12 @@ class PanelState:
     attachment_suppressed_text: str = ""
     attachment_matches_cache_key: tuple[str, str, int, int] | None = None
     attachment_matches_cache: list[Any] = field(default_factory=list)
+    skill_selected: int = 0
+    skill_suppressed_text: str = ""
+    skill_matches_cache_key: tuple[str, str, int, int] | None = None
+    skill_matches_cache: list[Any] = field(default_factory=list)
+    skill_service_cache_key: tuple[Any, ...] | None = None
+    skill_service_cache: Any | None = None
 
 
 @dataclass
@@ -175,6 +181,12 @@ STATE_FIELD_MAP: dict[str, tuple[str, str]] = {
     "_attachment_panel_suppressed_text": ("_panel_state", "attachment_suppressed_text"),
     "_attachment_matches_cache_key": ("_panel_state", "attachment_matches_cache_key"),
     "_attachment_matches_cache": ("_panel_state", "attachment_matches_cache"),
+    "_skill_selected": ("_panel_state", "skill_selected"),
+    "_skill_panel_suppressed_text": ("_panel_state", "skill_suppressed_text"),
+    "_skill_matches_cache_key": ("_panel_state", "skill_matches_cache_key"),
+    "_skill_matches_cache": ("_panel_state", "skill_matches_cache"),
+    "_skill_service_cache_key": ("_panel_state", "skill_service_cache_key"),
+    "_skill_service_cache": ("_panel_state", "skill_service_cache"),
     "_capture_buffer": ("_capture_state", "buffer"),
     "_capture_console": ("_capture_state", "console"),
     "_capture_console_key": ("_capture_state", "console_key"),

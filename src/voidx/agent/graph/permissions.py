@@ -28,12 +28,12 @@ class GraphPermissionMixin:
         plan_mode: bool,
         session_id: str,
         interaction_mode: str | None = None,
-        skill_runs: object = (),
+        workflow_runs: object = (),
     ) -> tuple[list[dict], list[tuple[dict, str]]]:
         approved: list[dict] = []
         denied: list[tuple[dict, str]] = []
         need_ask: list[dict] = []
-        active_workflows = _active_workflow_names(skill_runs)
+        active_workflows = _active_workflow_names(workflow_runs)
         gate_denied = workflow_denied_tools(active_workflows)
 
         context = PermissionContext.from_service(

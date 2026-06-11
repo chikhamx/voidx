@@ -58,7 +58,7 @@ async def run_subagent(
     usage_stats: UsageStats | None = None,
     lsp_manager=None,
     parent_tools: ToolRegistry | None = None,
-    skill_runtime_context: WorkflowRuntimeContext | None = None,
+    workflow_runtime_context: WorkflowRuntimeContext | None = None,
     ui_port: AgentUiPort = runtime_ui_port,
 ) -> str:
     """Run a child agent in its own message context."""
@@ -92,7 +92,7 @@ async def run_subagent(
     interaction_mode = InteractionMode.PLAN.value if agent_def.name == "plan" else InteractionMode.AUTO.value
     mode_prompt = PLAN_MODE_APPEND if InteractionMode.parse(interaction_mode) == InteractionMode.PLAN else ""
     task_intent = _task_intent_for_agent(agent_def.name)
-    skills = skill_runtime_context or WorkflowRuntimeContext(instructions=[], active=[], content="", runs=[])
+    workflow_context = workflow_runtime_context or WorkflowRuntimeContext(instructions=[], active=[], content="", runs=[])
     context_cache = ContextCompilerCache()
     context, context_cache = RuntimeContextBuilder(
         config=context_config,
@@ -103,9 +103,9 @@ async def run_subagent(
         tool_contract=agent_def.tool_contract,
         agent=agent_def.name,
         interaction_mode=interaction_mode,
-        skill_context_content=skills.content,
-        skill_runs=skills.runs,
-        active_skill_summaries=skills.active,
+        skill_context_content=workflow_context.content,
+        workflow_runs=workflow_context.runs,
+        active_workflow_summaries=workflow_context.active,
         current_user_text=task_description,
         task_intent=task_intent,
         session_date=datetime.now().astimezone().strftime("%Y-%m-%d %Z"),

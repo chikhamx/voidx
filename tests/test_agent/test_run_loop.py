@@ -16,7 +16,6 @@ from voidx.agent.graph.title_mixin import _sanitize_generated_title
 from voidx.agent.runtime_context import InteractionMode, TaskIntent
 from voidx.agent.task_state import PendingApproval, TaskPhase, TaskRun, TaskRunStatus, TaskState
 from voidx.config import Config
-from voidx.llm.instruction import WorkflowRuntimeContext
 from voidx.llm.usage import UsageStats
 from voidx.memory.runtime_state import RuntimeStateSnapshot, save_runtime_state
 from voidx.memory.session import MessageRow, create_session, get_session, load_messages, save_message, update_title
@@ -989,10 +988,10 @@ async def test_turn_mixin_delegates_run_once_to_component():
 
 
 @pytest.mark.asyncio
-async def test_prepare_includes_restored_skill_runs(tmp_path):
+async def test_prepare_includes_restored_workflow_runs(tmp_path):
     graph = VoidXGraph(Config(workspace=str(tmp_path)), api_key=None)
     restored = WorkflowRunState(
-        name="brainstorming",
+        name="brainstorm",
         status=WorkflowRunStatus.ACTIVE,
         source=WorkflowActivationSource.WORKFLOW,
         reason="resume",
@@ -1001,22 +1000,14 @@ async def test_prepare_includes_restored_skill_runs(tmp_path):
         activated_turn=1,
         updated_turn=2,
     )
-    graph._task_run = TaskRun(skill_runs={"brainstorming": restored})
+    graph._task_run = TaskRun(workflow_runs={"brainstorm": restored})
 
-    class FakeInstruction:
-        async def system(self):
-            return []
-
-        async def skill_context_for(self, *_args, **_kwargs):
-            return WorkflowRuntimeContext(instructions=[], active=[], runs=[])
-
-    graph._instruction = FakeInstruction()
     state = {
         "messages": [HumanMessage(content="continue")],
         "workspace": str(tmp_path),
         "agent": "orchestrator",
         "interaction_mode": "auto",
-        "task_intent": "design",
+        "task_intent": "chat",
         "intent_resolution_reason": "resume",
         "pending_approval": None,
         "goal": "resume optimization",
@@ -1032,9 +1023,11 @@ async def test_prepare_includes_restored_skill_runs(tmp_path):
 
     result = await graph._prepare_with_stream(state)
 
-    assert result["skill_runs"] == [restored]
+    assert result["workflow_runs"] == [restored]
+    assert "## Workflow Node: brainstorm" in state["messages"][1].content
+    assert "Present a design and get user approval before writing any code." in state["messages"][1].content
     assert (
-        "Workflow run state: brainstorming=active "
+        "Workflow run state: brainstorm=active "
         "phase=design source=workflow reason=resume"
     ) in state["messages"][-1].content
 

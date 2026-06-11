@@ -16,12 +16,14 @@ class SettingsSkillsMixin:
         return SkillSelectionConfig(
             enabled=set(_string_list(data.get("enabled", []))),
             disabled=set(_string_list(data.get("disabled", []))),
+            auto=set(_string_list(data.get("auto", []))),
         )
 
     def set_skill_enabled(self, name: str, enabled: bool) -> Path:
         skills = self._skills_data()
         enabled_list = _string_list(skills.get("enabled", []))
         disabled_list = _string_list(skills.get("disabled", []))
+        auto_list = _string_list(skills.get("auto", []))
         if enabled:
             if name not in enabled_list:
                 enabled_list.append(name)
@@ -30,9 +32,32 @@ class SettingsSkillsMixin:
             if name not in disabled_list:
                 disabled_list.append(name)
             enabled_list = [item for item in enabled_list if item != name]
-        skills["version"] = 1
+            auto_list = [item for item in auto_list if item != name]
+        skills["version"] = 2
         skills["enabled"] = sorted(enabled_list)
         skills["disabled"] = sorted(disabled_list)
+        skills["auto"] = sorted(auto_list)
+        self._save_skills_data(skills)
+        self._data.pop("skills", None)
+        return self.skills_path
+
+    def set_skill_auto(self, name: str, auto: bool) -> Path:
+        skills = self._skills_data()
+        enabled_list = _string_list(skills.get("enabled", []))
+        disabled_list = _string_list(skills.get("disabled", []))
+        auto_list = _string_list(skills.get("auto", []))
+        if auto:
+            if name not in enabled_list:
+                enabled_list.append(name)
+            disabled_list = [item for item in disabled_list if item != name]
+            if name not in auto_list:
+                auto_list.append(name)
+        else:
+            auto_list = [item for item in auto_list if item != name]
+        skills["version"] = 2
+        skills["enabled"] = sorted(enabled_list)
+        skills["disabled"] = sorted(disabled_list)
+        skills["auto"] = sorted(auto_list)
         self._save_skills_data(skills)
         self._data.pop("skills", None)
         return self.skills_path

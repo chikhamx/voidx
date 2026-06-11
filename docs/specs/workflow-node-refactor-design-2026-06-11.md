@@ -395,13 +395,41 @@ ORCHESTRATOR_WORKFLOW = WorkflowDAG(
 
 **direct-handle** (task)
 
+orchestrator 自己干活时也要走结构化 workflow，和其他 role 一样。direct-handle 不是自由发挥，而是根据意图类型进入对应的内部流程：
+
 | 字段 | 值 |
 |------|----|
 | node_type | `task` |
-| goal | `orchestrator 直接处理小任务：回答问题、查看代码、小范围编辑` |
-| io.input | `{"user_request": "用户请求", "intent": "意图(chat/inspect)"}` |
-| io.output | `{"response": "回答或操作结果"}` |
+| goal | `orchestrator 直接处理：回答问题、查看代码、小范围编辑` |
+| io.input | `{"user_request": "用户请求", "intent": "意图(chat/inspect/small_edit)"}` |
+| io.output | `{"response": "回答或操作结果", "files_changed": "变更文件列表(如有)"}` |
 | tools | `["read","glob","grep","repo_map","bash","write","edit","clarify","webfetch","websearch","lsp_diagnostics","lsp_symbols","lsp_definition","lsp_references"]` |
+
+**workflow steps：**
+
+1. Understand the request — 确认用户意图和范围
+2. Gather context — 读取相关文件、搜索代码、查看状态
+3. Formulate response or action — 组织回答或确定编辑方案
+4. Execute (if editing) — 小范围编辑：先读后改，最小变更
+5. Verify (if editing) — 跑相关测试或检查 diff
+6. Present result — 回答用户或报告变更
+
+**gate：**
+- 如果涉及编辑，必须先读后改（gate denied_tools 不限制，靠 workflow step 约束）
+- 如果用户只要求查看/回答，不得编辑
+
+**闭环检查：** step 6 即闭环——用户的问题被回答或变更被报告。
+
+**Subworkflow: Direct Handle Cycle**
+
+```
+1. Classify: chat(回答) | inspect(查看) | small_edit(小范围编辑)
+2. chat → gather context → formulate response → present result
+3. inspect → gather context → trace references → summarize findings → present result
+4. small_edit → gather context → formulate change → execute → verify → present result
+5. If scope exceeds small_edit → recommend delegation to implement agent
+Exit condition: user's question answered or small change verified
+```
 
 **delegate-explore** (subworkflow)
 
@@ -463,7 +491,7 @@ ORCHESTRATOR_WORKFLOW = WorkflowDAG(
 ```
 Orchestrator Workflow (编排层)
   │
-  ├── direct-handle → orchestrator 自己干活，不进入 default workflow
+  ├── direct-handle → orchestrator 自己干活，走内部 workflow（chat/inspect/small_edit）
   │
   └── delegate-* → 委派给子 agent，子 agent 进入 default workflow
                       │
@@ -474,9 +502,10 @@ Orchestrator Workflow (编排层)
 ```
 
 关键规则：
-- orchestrator 自己在 `direct-handle` 时，不激活 default workflow 的 node
+- orchestrator 自己在 `direct-handle` 时，走内部 workflow（6 步 + subworkflow），不激活 default workflow 的 node
 - orchestrator 委派子 agent 时，子 agent 进入 default workflow 对应的 node
 - orchestrator 的 `intent-classification` 是所有请求的入口，替代现有 prompt 里的 Decision Flow
+- 所有 role（包括 orchestrator 自己）都有结构化 workflow，没有自由发挥
 
 ### 7.5 对现有代码的影响
 
@@ -509,7 +538,6 @@ Orchestrator Workflow (编排层)
 | 代码审查 | requesting/receiving-code-review | ✅ |
 | 调试 | systematic-debugging | ✅ |
 | 探索/理解代码 | ❌ | ❌ 缺失 |
-| 发布/部署 | ❌ | ❌ 缺失 |
 | 紧急修复/回滚 | ❌ | ❌ 缺失（systematic-debugging 无回滚出口） |
 | 持续集成失败 | ❌ | ❌ 缺失（triggers 不覆盖 CI 场景） |
 
@@ -543,39 +571,7 @@ Orchestrator Workflow (编排层)
 - 新增 `Edge(source="exploring-codebase", target="brainstorming", condition="needs_design")` — 探索后发现需要设计
 - `intent_map` 新增 `IntentEntry(intent="inspect", nodes=["exploring-codebase"])`
 
-### 8.3 新增 Node：releasing
-
-**为什么需要**：项目有 `docs/releasing.md` 但没有工作流覆盖，从 verification 到发布之间有断裂。
-
-| 字段 | 值 |
-|------|----|
-| name | `releasing` |
-| node_type | `task` |
-| goal | `完成版本发布流程，确保版本号、changelog、构建、测试一致` |
-| priority | 70 |
-| core_rule | `发布前必须验证版本号、changelog、构建产物三者一致` |
-| io.input | `{"version": "目标版本号", "changes": "本次变更内容"}` |
-| io.output | `{"release_version": "发布的版本号", "artifacts": "构建产物列表", "changelog_path": "changelog 路径"}` |
-| tools | `["read","write","edit","bash","glob","grep","repo_map"]` |
-| triggers | `["release","publish","deploy","version bump","发布","上线","部署","版本更新"]` |
-
-**workflow steps：**
-
-1. Verify version file — 检查版本号是否已更新
-2. Verify changelog — 检查 changelog 是否包含本次变更
-3. Run full test suite — 跑全量测试
-4. Build artifacts — 构建产物
-5. Verify artifacts — 验证产物版本号与目标一致
-6. Tag and push — 打 tag 并推送
-
-**闭环检查：** step 5-6 即闭环——产物验证通过 + tag 推送成功。
-
-**DAG 变更：**
-- 新增 `Edge(source="verification-before-completion", target="releasing", condition="ready_to_release")`
-- 新增 `Edge(source="requesting-code-review", target="releasing", condition="review_passed_release")`
-- `intent_map` 新增 `IntentEntry(intent="implement", nodes=[..., "releasing"])`
-
-### 8.4 systematic-debugging 补充：回滚出口
+### 8.3 systematic-debugging 补充：回滚出口
 
 **为什么需要**：当前 systematic-debugging 只能走 TDD 或 verification，没有"修不了先回滚"的出口。
 
@@ -583,12 +579,12 @@ Orchestrator Workflow (编排层)
 - 新增 `Edge(source="systematic-debugging", target="verification-before-completion", condition="rollback", label="unable to fix, reverting to last known good state")`
 - `systematic-debugging` 的 decision_rules 新增：`DecisionRule(condition="rollback", description="Use when the bug cannot be fixed within reasonable effort and a revert to a known good state is safer than continuing.")`
 
-### 8.5 systematic-debugging 补充：CI triggers
+### 8.4 systematic-debugging 补充：CI triggers
 
 **DAG 变更：**
 - `systematic-debugging` 的 triggers 新增：`"CI failed", "pipeline failed", "CI 挂了", "流水线失败"`
 
-### 8.6 新增 Workflow：explore-workflow
+### 8.5 新增 Workflow：explore-workflow
 
 为 explore agent 提供专属 workflow：
 
@@ -605,21 +601,17 @@ EXPLORE_WORKFLOW = WorkflowDAG(
 )
 ```
 
-### 8.7 完整 DAG 变更汇总
+### 8.6 完整 DAG 变更汇总
 
 **新增 node：**
 - `exploring-codebase` (priority=3)
-- `releasing` (priority=70)
 
 **新增 edge：**
 - `exploring-codebase --needs_design--> brainstorming`
-- `verification-before-completion --ready_to_release--> releasing`
-- `requesting-code-review --review_passed_release--> releasing`
 - `systematic-debugging --rollback--> verification-before-completion`
 
 **intent_map 变更：**
 - 新增 `inspect → exploring-codebase`
-- `implement` nodes 追加 `releasing`
 
 **新增 workflow DAG：**
 - `explore-workflow`
@@ -637,7 +629,6 @@ EXPLORE_WORKFLOW = WorkflowDAG(
 
 ### Phase 2：新增 Node + DAG
 - 新增 `exploring-codebase` node
-- 新增 `releasing` node
 - `systematic-debugging` 补 rollback 出口和 CI triggers
 - `dag.py` 新增 edge 和 intent_map
 - 新增 `explore-workflow` DAG

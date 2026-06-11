@@ -26,7 +26,7 @@ class AgentState(TypedDict):
     goal_phase: str
     goal_status: str
     goal_turn_count: int
-    skill_runs: NotRequired[list[WorkflowRunState]]
+    workflow_runs: NotRequired[list[WorkflowRunState]]
     available_tool_ids: NotRequired[list[str]]
     intent_confidence: NotRequired[float]
     intent_source: NotRequired[str]

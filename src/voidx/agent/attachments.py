@@ -56,7 +56,13 @@ def serialize_message_content(content: str | list[dict[str, Any]]) -> tuple[str,
     return content, "text"
 
 
-def build_user_message_payload(user_text: str, workspace: str) -> UserMessagePayload:
+def build_user_message_payload(
+    user_text: str,
+    workspace: str,
+    *,
+    text_prefix: str = "",
+    extra_removed_spans: list[tuple[int, int]] | None = None,
+) -> UserMessagePayload:
     workspace_path = Path(workspace).resolve()
     tokens = _attachment_tokens(user_text)
     removed_spans: list[tuple[int, int]] = []
@@ -112,8 +118,13 @@ def build_user_message_payload(user_text: str, workspace: str) -> UserMessagePay
         if section:
             text_sections.append(section)
 
+    display_clean_text = _normalize_text(_remove_spans(user_text, removed_spans))
+    if extra_removed_spans:
+        removed_spans.extend(extra_removed_spans)
     clean_text = _normalize_text(_remove_spans(user_text, removed_spans))
     text_content = _build_text_content(clean_text, attachments, text_sections)
+    if text_prefix.strip():
+        text_content = _prefix_text_content(text_prefix.strip(), text_content)
     content: str | list[dict[str, Any]]
     content_format = "text"
     if image_parts:
@@ -122,7 +133,7 @@ def build_user_message_payload(user_text: str, workspace: str) -> UserMessagePay
     else:
         content = text_content
 
-    display_text = _display_text(clean_text, attachments)
+    display_text = _display_text(display_clean_text, attachments)
     title_text = clean_text or (f"Attached {attachments[0].rel_path}" if attachments else user_text)
     return UserMessagePayload(
         raw_text=user_text,
@@ -158,12 +169,21 @@ def _remove_spans(text: str, spans: list[tuple[int, int]]) -> str:
         return text
     result: list[str] = []
     last = 0
-    for start, end in spans:
+    for start, end in sorted(spans):
+        if start < last:
+            continue
         result.append(text[last:start])
         result.append(" ")
         last = end
     result.append(text[last:])
     return "".join(result)
+
+
+def _prefix_text_content(prefix: str, text: str) -> str:
+    text = text.strip()
+    if not text:
+        return prefix
+    return f"{prefix}\n\n{text}"
 
 
 def _resolve_workspace_path(workspace: Path, raw_path: str) -> Path | None:

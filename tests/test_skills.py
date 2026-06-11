@@ -6,6 +6,7 @@ sys.path.insert(0, str(Path(__file__).parent.parent / "src"))
 import pytest
 
 from voidx.llm.instruction import InstructionService
+from voidx.config import Settings
 from voidx.skills.context import SKILL_CONTEXT_MARKER, SKILL_CONTEXT_SCOPE
 from voidx.skills.registry import SkillRegistry, parse_skill_file
 from voidx.workflow.context import WORKFLOW_CONTEXT_MARKER, WORKFLOW_CONTEXT_SCOPE
@@ -24,7 +25,9 @@ from voidx.workflow.runtime import (
     advance_workflow_states,
 )
 from voidx.skills.schema import SkillSelectionConfig
+from voidx.skills.references import skill_reference_message
 from voidx.skills.service import SkillService
+from voidx.ui.tools.skill_picker import list_skill_candidates
 from voidx.workflow.service import WorkflowService
 
 
@@ -164,12 +167,12 @@ def test_registry_does_not_discover_builtin_workflow_by_default(tmp_path):
     skills = {skill.name: skill for skill in registry.discover()}
 
     for name in {
-        "systematic-debugging",
-        "test-driven-development",
-        "verification-before-completion",
-        "receiving-code-review",
-        "requesting-code-review",
-        "writing-plans",
+        "debug",
+        "tdd",
+        "verify",
+        "review-feedback",
+        "review",
+        "plan",
     }:
         assert name not in skills
 
@@ -177,8 +180,8 @@ def test_registry_does_not_discover_builtin_workflow_by_default(tmp_path):
 def test_registry_project_and_global_skills_are_regular_markdown_skills(tmp_path):
     global_dir = tmp_path / "global"
     project_dir = tmp_path / "workspace" / ".voidx" / "skills"
-    _write_skill(global_dir, "systematic-debugging", "---\nname: systematic-debugging\n---\nglobal body")
-    _write_skill(project_dir, "systematic-debugging", "---\nname: systematic-debugging\n---\nproject body")
+    _write_skill(global_dir, "debug", "---\nname: debug\n---\nglobal body")
+    _write_skill(project_dir, "debug", "---\nname: debug\n---\nproject body")
 
     registry = SkillRegistry(
         str(tmp_path / "workspace"),
@@ -186,7 +189,7 @@ def test_registry_project_and_global_skills_are_regular_markdown_skills(tmp_path
         project_dir=project_dir,
     )
 
-    skill = registry.get("systematic-debugging")
+    skill = registry.get("debug")
 
     assert skill is not None
     assert skill.body == "project body"
@@ -205,7 +208,7 @@ def test_skill_service_has_no_builtin_workflow_skills(tmp_path):
     assert service.enabled_bundled_skills() == []
 
 
-def test_skill_service_selects_explicit_and_trigger_matches(tmp_path):
+def test_skill_service_selects_explicit_refs_only(tmp_path):
     project_dir = tmp_path / "workspace" / ".voidx" / "skills"
     _write_skill(
         project_dir,
@@ -227,8 +230,7 @@ def test_skill_service_selects_explicit_and_trigger_matches(tmp_path):
 
     assert [match.name for match in explicit] == ["docs"]
     assert explicit[0].reason == "explicit"
-    assert [match.name for match in trigger] == ["python"]
-    assert trigger[0].reason == "trigger:pytest"
+    assert trigger == []
 
 
 def test_skill_body_parse_cache_keeps_activation_dynamic(tmp_path, monkeypatch):
@@ -255,9 +257,9 @@ def test_skill_body_parse_cache_keeps_activation_dynamic(tmp_path, monkeypatch):
             )
         )
 
-    first = service().select("use alpha")
+    first = service().select("use $alpha")
     first_call_count = len(calls)
-    second = service().select("use beta")
+    second = service().select("use $beta")
 
     assert [match.name for match in first] == ["alpha"]
     assert [match.name for match in second] == ["beta"]
@@ -272,9 +274,9 @@ def test_workflow_service_selects_builtin_workflow_triggers(tmp_path):
     tdd = service.select("implement this feature")
     feedback = service.select("review feedback says this endpoint is overbuilt")
 
-    assert [match.name for match in debug] == ["systematic-debugging"]
-    assert [match.name for match in tdd] == ["test-driven-development"]
-    assert [match.name for match in feedback] == ["receiving-code-review"]
+    assert [match.name for match in debug] == ["debug"]
+    assert [match.name for match in tdd] == ["tdd"]
+    assert [match.name for match in feedback] == ["review-feedback", "review"]
 
 
 def test_workflow_service_selects_workflow_policy_by_role_and_intent(tmp_path):
@@ -298,23 +300,23 @@ def test_workflow_service_selects_workflow_policy_by_role_and_intent(tmp_path):
     )
 
     assert [match.name for match in implement] == [
-        "test-driven-development",
-        "verification-before-completion",
+        "tdd",
+        "verify",
     ]
     assert [match.name for match in debug] == [
-        "systematic-debugging",
-        "test-driven-development",
-        "verification-before-completion",
+        "debug",
+        "tdd",
+        "verify",
     ]
     assert "implement role" in implement[0].reason
     assert "debug intent" in debug[0].reason
-    assert [match.name for match in plan] == ["brainstorming", "writing-plans"]
+    assert [match.name for match in plan] == ["brainstorm", "plan"]
     assert plan[0].reason == "design intent"
     assert plan[1].reason == "plan role"
 
 
-def test_brainstorming_exit_rules_make_small_change_precedence_explicit(tmp_path):
-    node = WorkflowService().get("brainstorming")
+def test_brainstorm_exit_rules_make_small_change_precedence_explicit(tmp_path):
+    node = WorkflowService().get("brainstorm")
 
     assert node is not None
     assert node.decision_rules[0].condition == "small_change"
@@ -337,7 +339,7 @@ def test_workflow_service_activates_requesting_code_review_for_review_intent(tmp
         scopes=("bundled",),
     )
 
-    assert [match.name for match in matches] == ["requesting-code-review"]
+    assert [match.name for match in matches] == ["review"]
     assert matches[0].reason == "review intent"
 
 
@@ -351,7 +353,7 @@ def test_workflow_service_activates_receiving_code_review_for_feedback(tmp_path)
         scopes=("bundled",),
     )
 
-    assert [match.name for match in matches] == ["receiving-code-review"]
+    assert [match.name for match in matches] == ["review-feedback", "review"]
     assert matches[0].reason == "review feedback"
 
 
@@ -368,8 +370,8 @@ def test_workflow_selection_ignores_user_scoped_skills(tmp_path):
     project_dir = tmp_path / "workspace" / ".voidx" / "skills"
     _write_skill(
         project_dir,
-        "test-driven-development",
-        "---\nname: test-driven-development\n---\nProject override body",
+        "tdd",
+        "---\nname: tdd\n---\nProject override body",
     )
     service = WorkflowService()
 
@@ -381,8 +383,8 @@ def test_workflow_selection_ignores_user_scoped_skills(tmp_path):
     )
 
     assert [match.name for match in matches] == [
-        "test-driven-development",
-        "verification-before-completion",
+        "tdd",
+        "verify",
     ]
 
 
@@ -394,10 +396,10 @@ def test_workflow_service_excludes_active_names_from_selection(tmp_path):
         agent="implement",
         task_intent="implement",
         scopes=("bundled",),
-        exclude_names=("test-driven-development",),
+        exclude_names=("tdd",),
     )
 
-    assert [match.name for match in matches] == ["verification-before-completion"]
+    assert [match.name for match in matches] == ["verify"]
 
 
 def test_workflow_service_returns_structured_workflow_runs(tmp_path):
@@ -413,8 +415,8 @@ def test_workflow_service_returns_structured_workflow_runs(tmp_path):
     )
 
     assert [run.name for run in runs] == [
-        "test-driven-development",
-        "verification-before-completion",
+        "tdd",
+        "verify",
     ]
     assert {run.status for run in runs} == {WorkflowRunStatus.ACTIVE}
     assert {run.source for run in runs} == {WorkflowActivationSource.WORKFLOW}
@@ -422,11 +424,11 @@ def test_workflow_service_returns_structured_workflow_runs(tmp_path):
     assert runs[0].scope == "优化 runtime context"
     assert runs[0].activated_turn == 3
     assert runs[0].body_hash
-    assert runs[0].transition_to == ["verification-before-completion"]
+    assert runs[0].transition_to == ["verify"]
     assert runs[1].transition_to == [
-        "requesting-code-review",
-        "test-driven-development",
-        "systematic-debugging",
+        "review",
+        "tdd",
+        "debug",
     ]
 
 
@@ -442,25 +444,25 @@ def test_workflow_run_state_from_match_includes_transition_targets(tmp_path):
 
     run = WorkflowRunState.from_match(match)
 
-    assert run.name == "test-driven-development"
-    assert run.transition_to == ["verification-before-completion"]
+    assert run.name == "tdd"
+    assert run.transition_to == ["verify"]
 
 
 def test_workflow_state_summary_includes_transition_hint():
     run = WorkflowRunState(
-        name="test-driven-development",
+        name="tdd",
         status=WorkflowRunStatus.ACTIVE,
         source=WorkflowActivationSource.WORKFLOW,
         reason="implement intent",
-        transition_to=["verification-before-completion"],
+        transition_to=["verify"],
     )
 
-    assert "next=verification-before-completion" in run.state_summary()
+    assert "next=verify" in run.state_summary()
 
 
 def test_advance_workflow_states_marks_satisfied_from_evidence():
     run = WorkflowRunState(
-        name="test-driven-development",
+        name="tdd",
         status=WorkflowRunStatus.ACTIVE,
         transition_to=[],
     )
@@ -469,7 +471,7 @@ def test_advance_workflow_states_marks_satisfied_from_evidence():
         [run],
         [
             WorkflowStateEvent(
-                workflow="test-driven-development",
+                workflow="tdd",
                 kind=WorkflowStateEventKind.SATISFIED,
                 ref="tool:pytest",
                 ok=True,
@@ -479,7 +481,7 @@ def test_advance_workflow_states_marks_satisfied_from_evidence():
         turn_count=4,
     )
 
-    tdd = next(item for item in states if item.name == "test-driven-development")
+    tdd = next(item for item in states if item.name == "tdd")
     assert tdd.status == WorkflowRunStatus.SATISFIED
     assert tdd.updated_turn == 4
     assert tdd.evidence[0].summary == "focused tests passed"
@@ -487,13 +489,13 @@ def test_advance_workflow_states_marks_satisfied_from_evidence():
 
 def test_advance_workflow_states_does_not_mark_pending_satisfied():
     states = advance_workflow_states(
-        [WorkflowRunState(name="test-driven-development", status=WorkflowRunStatus.PENDING)],
-        [{"workflow": "test-driven-development", "kind": "satisfied"}],
+        [WorkflowRunState(name="tdd", status=WorkflowRunStatus.PENDING)],
+        [{"workflow": "tdd", "kind": "satisfied"}],
         turn_count=4,
     )
 
     assert states[0].status == WorkflowRunStatus.PENDING
-    assert "verification-before-completion" not in [run.name for run in states]
+    assert "verify" not in [run.name for run in states]
 
 
 def test_workflow_terminal_exit_is_structured_and_terminal():
@@ -501,41 +503,41 @@ def test_workflow_terminal_exit_is_structured_and_terminal():
 
     assert condition == DEFAULT_WORKFLOW_DAG.terminal_exit.condition
     assert is_workflow_terminal_condition(f" {condition} ")
-    assert DEFAULT_WORKFLOW_DAG.terminal_exit_summary() in workflow_exit_summaries("test-driven-development")
+    assert DEFAULT_WORKFLOW_DAG.terminal_exit_summary() in workflow_exit_summaries("tdd")
 
     states = advance_workflow_states(
         [
             WorkflowRunState(
-                name="test-driven-development",
+                name="tdd",
                 status=WorkflowRunStatus.ACTIVE,
-                transition_to=["verification-before-completion"],
+                transition_to=["verify"],
             )
         ],
         [
             WorkflowStateEvent(
-                workflow="test-driven-development",
+                workflow="tdd",
                 kind=WorkflowStateEventKind.SATISFIED,
                 condition=condition,
             )
         ],
     )
 
-    assert [run.name for run in states] == ["test-driven-development"]
+    assert [run.name for run in states] == ["tdd"]
     assert states[0].status == WorkflowRunStatus.SATISFIED
 
 
 def test_advance_workflow_states_initializes_missing_run_from_event_kind():
     blocked = advance_workflow_states(
         [],
-        [{"workflow": "systematic-debugging", "kind": "blocked", "reason": "needs repro"}],
+        [{"workflow": "debug", "kind": "blocked", "reason": "needs repro"}],
     )
     skipped = advance_workflow_states(
         [],
-        [{"workflow": "requesting-code-review", "kind": "skipped"}],
+        [{"workflow": "review", "kind": "skipped"}],
     )
     satisfied = advance_workflow_states(
         [],
-        [{"workflow": "test-driven-development", "kind": "satisfied"}],
+        [{"workflow": "tdd", "kind": "satisfied"}],
     )
 
     assert blocked[0].status == WorkflowRunStatus.BLOCKED
@@ -548,16 +550,16 @@ def test_advance_workflow_states_activates_transition_target():
     states = advance_workflow_states(
         [
             WorkflowRunState(
-                name="test-driven-development",
+                name="tdd",
                 status=WorkflowRunStatus.ACTIVE,
                 phase="implement",
                 scope="runtime",
-                transition_to=["verification-before-completion"],
+                transition_to=["verify"],
             )
         ],
         [
             {
-                "workflow": "test-driven-development",
+                "workflow": "tdd",
                 "kind": "satisfied",
                 "summary": "implementation complete",
             }
@@ -566,25 +568,25 @@ def test_advance_workflow_states_activates_transition_target():
     )
 
     by_name = {run.name: run for run in states}
-    assert by_name["test-driven-development"].status == WorkflowRunStatus.SATISFIED
-    successor = by_name["verification-before-completion"]
+    assert by_name["tdd"].status == WorkflowRunStatus.SATISFIED
+    successor = by_name["verify"]
     assert successor.status == WorkflowRunStatus.ACTIVE
     assert successor.source == WorkflowActivationSource.TRANSITION
-    assert successor.reason == "transition from test-driven-development"
+    assert successor.reason == "transition from tdd"
     assert successor.phase == "implement"
     assert successor.scope == "runtime"
 
 
 def test_advance_workflow_states_does_not_advance_without_evidence():
     run = WorkflowRunState(
-        name="test-driven-development",
+        name="tdd",
         status=WorkflowRunStatus.ACTIVE,
-        transition_to=["verification-before-completion"],
+        transition_to=["verify"],
     )
 
     states = advance_workflow_states([run], [], turn_count=6)
 
-    assert [item.name for item in states] == ["test-driven-development"]
+    assert [item.name for item in states] == ["tdd"]
     assert states[0].status == WorkflowRunStatus.ACTIVE
 
 
@@ -592,21 +594,21 @@ def test_advance_workflow_states_does_not_duplicate_existing_successor():
     states = advance_workflow_states(
         [
             WorkflowRunState(
-                name="test-driven-development",
+                name="tdd",
                 status=WorkflowRunStatus.ACTIVE,
-                transition_to=["verification-before-completion"],
+                transition_to=["verify"],
             ),
             WorkflowRunState(
-                name="verification-before-completion",
+                name="verify",
                 status=WorkflowRunStatus.ACTIVE,
                 reason="implement lifecycle",
             ),
         ],
-        [{"workflow": "test-driven-development", "kind": "satisfied"}],
+        [{"workflow": "tdd", "kind": "satisfied"}],
     )
 
-    assert [run.name for run in states].count("verification-before-completion") == 1
-    verification = next(run for run in states if run.name == "verification-before-completion")
+    assert [run.name for run in states].count("verify") == 1
+    verification = next(run for run in states if run.name == "verify")
     assert verification.reason == "implement lifecycle"
 
 
@@ -614,27 +616,27 @@ def test_blocked_or_skipped_workflow_does_not_trigger_successor():
     blocked = advance_workflow_states(
         [
             WorkflowRunState(
-                name="test-driven-development",
+                name="tdd",
                 status=WorkflowRunStatus.BLOCKED,
-                transition_to=["verification-before-completion"],
+                transition_to=["verify"],
             )
         ],
-        [{"workflow": "test-driven-development", "kind": "satisfied"}],
+        [{"workflow": "tdd", "kind": "satisfied"}],
     )
     skipped = advance_workflow_states(
         [
             WorkflowRunState(
-                name="test-driven-development",
+                name="tdd",
                 status=WorkflowRunStatus.ACTIVE,
-                transition_to=["verification-before-completion"],
+                transition_to=["verify"],
             )
         ],
-        [{"workflow": "test-driven-development", "kind": "skipped"}],
+        [{"workflow": "tdd", "kind": "skipped"}],
     )
 
-    assert [run.name for run in blocked] == ["test-driven-development"]
+    assert [run.name for run in blocked] == ["tdd"]
     assert blocked[0].status == WorkflowRunStatus.BLOCKED
-    assert [run.name for run in skipped] == ["test-driven-development"]
+    assert [run.name for run in skipped] == ["tdd"]
     assert skipped[0].status == WorkflowRunStatus.SKIPPED
 
 
@@ -642,14 +644,14 @@ def test_blocked_workflow_can_reactivate_when_condition_clears():
     states = advance_workflow_states(
         [
             WorkflowRunState(
-                name="systematic-debugging",
+                name="debug",
                 status=WorkflowRunStatus.BLOCKED,
                 blocked_reason="needs repro",
             )
         ],
         [
             WorkflowStateEvent(
-                workflow="systematic-debugging",
+                workflow="debug",
                 kind=WorkflowStateEventKind.UNBLOCKED,
                 summary="repro added",
             )
@@ -672,8 +674,8 @@ def test_workflow_service_returns_activation_summaries(tmp_path):
     )
 
     assert summaries == [
-        "test-driven-development (implement role)",
-        "verification-before-completion (implement lifecycle)",
+        "tdd (implement role)",
+        "verify (implement lifecycle)",
     ]
 
 
@@ -689,12 +691,13 @@ def test_skill_service_available_summaries_exclude_bundled_body(tmp_path):
             str(tmp_path / "workspace"),
             global_dir=tmp_path / "global",
             project_dir=project_dir,
-        )
+        ),
+        selection=SkillSelectionConfig(auto={"docs"}),
     )
 
     summaries = service.available_skill_summaries()
 
-    assert summaries == ["- docs: Write docs"]
+    assert summaries == ["- docs [auto]: Write docs"]
     assert "Docs body" not in "\n".join(summaries)
 
 
@@ -706,14 +709,16 @@ async def test_instruction_service_system_includes_available_skills_section(tmp_
         "docs",
         "---\nname: docs\ndescription: Write docs\n---\nDocs body",
     )
+    settings = Settings(str(tmp_path))
+    settings.set_skill_auto("docs", True)
 
-    instructions = await InstructionService(str(tmp_path)).system()
+    instructions = await InstructionService(str(tmp_path), settings=settings).system()
 
     joined = "\n\n".join(instructions)
     assert "## Available Skills" in joined
-    assert "- docs: Write docs" in joined
+    assert "- docs [auto]: Write docs" in joined
     assert "Docs body" not in joined
-    assert "systematic-debugging" not in joined
+    assert "debug" not in joined
 
 
 @pytest.mark.asyncio
@@ -743,10 +748,10 @@ async def test_workflow_context_message_expands_only_active_workflow_nodes(tmp_p
         task_intent="implement",
     )
 
-    assert "## Workflow Node: test-driven-development" in context.content
-    assert "## Workflow Node: verification-before-completion" in context.content
-    assert "## Workflow Node: brainstorming" not in context.content
-    assert "## Workflow Node Summary: brainstorming" in context.content
+    assert "## Workflow Node: tdd" in context.content
+    assert "## Workflow Node: verify" in context.content
+    assert "## Workflow Node: brainstorm" not in context.content
+    assert "## Workflow Node Summary: brainstorm" in context.content
 
 
 @pytest.mark.asyncio
@@ -767,8 +772,8 @@ async def test_workflow_context_message_changes_with_active_workflow_nodes(tmp_p
 
     assert inspect_context.content != implement_context.content
     assert inspect_context.active != implement_context.active
-    assert any("test-driven-development" in item for item in implement_context.active)
-    assert any("verification-before-completion" in item for item in implement_context.active)
+    assert any("tdd" in item for item in implement_context.active)
+    assert any("verify" in item for item in implement_context.active)
 
 
 def test_skill_service_respects_disabled_before_enabled(tmp_path):
@@ -844,7 +849,7 @@ def test_registry_invalidate_clears_cache(tmp_path):
     assert [s.name for s in first] == [s.name for s in second]
 
 
-def test_skill_service_trigger_match_uses_word_boundary(tmp_path):
+def test_skill_service_does_not_implicitly_match_triggers(tmp_path):
     project_dir = tmp_path / "workspace" / ".voidx" / "skills"
     _write_skill(
         project_dir,
@@ -862,7 +867,7 @@ def test_skill_service_trigger_match_uses_word_boundary(tmp_path):
 
     assert service.select("run the latest version") == []
     assert service.select("win the contest") == []
-    assert service.select("write a test for this") != []
+    assert service.select("write a test for this") == []
 
 
 def test_skill_service_renders_instruction_with_source_path(tmp_path):
@@ -889,3 +894,87 @@ def test_skill_service_renders_instruction_with_source_path(tmp_path):
     assert "Body-Hash:" in rendered
     assert "Description: Write documentation" in rendered
     assert "Docs rules" in rendered
+
+
+def test_skill_reference_message_wraps_enabled_explicit_refs(tmp_path):
+    project_dir = tmp_path / "workspace" / ".voidx" / "skills"
+    _write_skill(
+        project_dir,
+        "docs",
+        "---\nname: docs\ndescription: Write documentation\n---\nDocs body",
+    )
+
+    wrapped = skill_reference_message("use $docs for this", str(tmp_path / "workspace"))
+
+    assert wrapped.remove_spans == [(4, 9)]
+    assert wrapped.prefix == "用户指定了技能：\n- docs: Write documentation"
+    assert [skill.name for skill in wrapped.skills] == ["docs"]
+    assert "Docs body" not in wrapped.prefix
+
+
+def test_skill_reference_message_ignores_unknown_refs(tmp_path):
+    wrapped = skill_reference_message("keep $not-a-skill in text", str(tmp_path / "workspace"))
+
+    assert wrapped.prefix == ""
+    assert wrapped.remove_spans == []
+    assert wrapped.skills == []
+
+
+def test_skill_reference_message_uses_provided_service(tmp_path, monkeypatch):
+    workspace = tmp_path / "workspace"
+    project_dir = workspace / ".voidx" / "skills"
+    _write_skill(project_dir, "docs", "---\nname: docs\ndescription: Write docs\n---\nDocs body")
+    service = SkillService(
+        SkillRegistry(
+            str(workspace),
+            bundled_dir=tmp_path / "bundled",
+            global_dir=tmp_path / "global",
+            project_dir=project_dir,
+        )
+    )
+
+    def fail_settings(*_args, **_kwargs):
+        raise AssertionError("Settings should not be constructed when service is supplied")
+
+    monkeypatch.setattr("voidx.skills.references.Settings", fail_settings)
+
+    wrapped = skill_reference_message("use $docs", str(workspace), service=service)
+
+    assert wrapped.remove_spans == [(4, 9)]
+    assert [skill.name for skill in wrapped.skills] == ["docs"]
+
+
+def test_skill_reference_message_ignores_disabled_refs(tmp_path):
+    workspace = tmp_path / "workspace"
+    project_dir = workspace / ".voidx" / "skills"
+    _write_skill(project_dir, "docs", "---\nname: docs\ndescription: Write docs\n---\nDocs body")
+    settings = Settings(str(workspace))
+    settings.set_skill_enabled("docs", False)
+
+    wrapped = skill_reference_message("use $docs for this", str(workspace), settings=settings)
+
+    assert wrapped.prefix == ""
+    assert wrapped.remove_spans == []
+
+
+def test_list_skill_candidates_accepts_prebuilt_service(tmp_path, monkeypatch):
+    workspace = tmp_path / "workspace"
+    project_dir = workspace / ".voidx" / "skills"
+    _write_skill(project_dir, "docs", "---\nname: docs\ndescription: Write docs\n---\nDocs body")
+    service = SkillService(
+        SkillRegistry(
+            str(workspace),
+            bundled_dir=tmp_path / "bundled",
+            global_dir=tmp_path / "global",
+            project_dir=project_dir,
+        )
+    )
+
+    def fail_settings(*_args, **_kwargs):
+        raise AssertionError("Settings should not be constructed when service is supplied")
+
+    monkeypatch.setattr("voidx.ui.tools.skill_picker.Settings", fail_settings)
+
+    candidates = list_skill_candidates(str(workspace), "do", service=service)
+
+    assert [candidate.name for candidate in candidates] == ["docs"]

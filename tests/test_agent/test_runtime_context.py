@@ -104,8 +104,8 @@ def test_runtime_context_system_includes_stable_workflow_dag_overview(tmp_path):
     system = context.render_system()
 
     assert "## Workflow DAG" in system
-    assert "- implement: test-driven-development, verification-before-completion" in system
-    assert "- test-driven-development --implemented--> verification-before-completion" in system
+    assert "- implement: tdd, verify" in system
+    assert "- tdd --implemented--> verify" in system
     assert "## Workflow Node:" not in system
 
 
@@ -411,7 +411,7 @@ def test_runtime_context_strips_historical_skill_tool_context(tmp_path):
     tool_output = (
         '{"confirmed_intent": "implement"}\n\n'
         f"{SKILL_TOOL_CONTEXT_MARKER}\nScope: current-turn\n\n"
-        "## Skill: test-driven-development\n"
+        "## Skill: tdd\n"
         "Source: bundled\n"
         "Body-Hash: abc123\n\n"
         "Full skill body"
@@ -434,19 +434,19 @@ def test_runtime_context_strips_historical_skill_tool_context(tmp_path):
 
     historical_tool = next(message for message in messages if isinstance(message, ToolMessage))
     assert SKILL_TOOL_CONTEXT_STRIPPED_MARKER in historical_tool.content
-    assert "test-driven-development sha256=abc123 source=bundled" in historical_tool.content
+    assert "tdd sha256=abc123 source=bundled" in historical_tool.content
     assert "Full skill body" not in historical_tool.content
 
 
 def test_runtime_context_strips_multiple_historical_skill_tool_context_blocks(tmp_path):
     tool_output = (
         f"{SKILL_TOOL_CONTEXT_MARKER}\nScope: current-turn\n\n"
-        "## Skill: test-driven-development\n"
+        "## Skill: tdd\n"
         "Source: bundled\n"
         "Body-Hash: first\n\n"
         "First body\n\n"
         f"{SKILL_TOOL_CONTEXT_MARKER}\nScope: current-turn\n\n"
-        "## Skill: verification-before-completion\n"
+        "## Skill: verify\n"
         "Source: bundled\n"
         "Body-Hash: second\n\n"
         "Second body"
@@ -469,8 +469,8 @@ def test_runtime_context_strips_multiple_historical_skill_tool_context_blocks(tm
 
     historical_tool = next(message for message in messages if isinstance(message, ToolMessage))
     assert historical_tool.content.count(SKILL_TOOL_CONTEXT_STRIPPED_MARKER) == 2
-    assert "test-driven-development sha256=first source=bundled" in historical_tool.content
-    assert "verification-before-completion sha256=second source=bundled" in historical_tool.content
+    assert "tdd sha256=first source=bundled" in historical_tool.content
+    assert "verify sha256=second source=bundled" in historical_tool.content
     assert "First body" not in historical_tool.content
     assert "Second body" not in historical_tool.content
 
@@ -478,7 +478,7 @@ def test_runtime_context_strips_multiple_historical_skill_tool_context_blocks(tm
 def test_runtime_context_does_not_restrip_already_stripped_skill_tool_context(tmp_path):
     stripped_output = (
         f"{SKILL_TOOL_CONTEXT_STRIPPED_MARKER}\n"
-        "- test-driven-development sha256=abc123 source=bundled"
+        "- tdd sha256=abc123 source=bundled"
     )
     messages = [
         HumanMessage(content="old request"),
@@ -509,10 +509,10 @@ def test_skill_context_reference_library_marks_inactive_skills_not_active(tmp_pa
         agent="orchestrator",
         interaction_mode=InteractionMode.AUTO,
         skill_context_content=render_skill_context([
-            "## Skill: brainstorming\nBody-Hash: aaa\n\nMUST brainstorm before implementation",
-            "## Skill: test-driven-development\nBody-Hash: bbb\n\nTDD rules",
+            "## Skill: brainstorm\nBody-Hash: aaa\n\nMUST brainstorm before implementation",
+            "## Skill: tdd\nBody-Hash: bbb\n\nTDD rules",
         ]),
-        active_skill_summaries=["test-driven-development (implement role)"],
+        active_workflow_summaries=["tdd (implement role)"],
         current_user_text="current request",
     ).build()
 
@@ -522,11 +522,11 @@ def test_skill_context_reference_library_marks_inactive_skills_not_active(tmp_pa
     task_context = messages[-1].content
     assert "reference library" in skill_context
     assert "Treat inactive skill bodies as reference material only." in skill_context
-    assert "Active workflow nodes: test-driven-development (implement role)" in task_context
+    assert "Active workflow nodes: tdd (implement role)" in task_context
     assert "MUST brainstorm before implementation" not in task_context
 
 
-def test_task_context_only_contains_active_skill_summaries(tmp_path):
+def test_task_context_only_contains_active_workflow_summaries(tmp_path):
     messages = [HumanMessage(content="current request")]
     context = RuntimeContextBuilder(
         config=Config(workspace=str(tmp_path)),
@@ -535,15 +535,15 @@ def test_task_context_only_contains_active_skill_summaries(tmp_path):
         agent="orchestrator",
         interaction_mode=InteractionMode.AUTO,
         skill_context_content=render_skill_context([
-            "## Skill: test-driven-development\nBody-Hash: bbb\n\nFull TDD body",
+            "## Skill: tdd\nBody-Hash: bbb\n\nFull TDD body",
         ]),
-        active_skill_summaries=["test-driven-development (implement role)"],
+        active_workflow_summaries=["tdd (implement role)"],
         current_user_text="current request",
     ).build()
 
     context.apply_to_messages(messages)
 
-    assert "Active workflow nodes: test-driven-development (implement role)" in messages[-1].content
+    assert "Active workflow nodes: tdd (implement role)" in messages[-1].content
     assert "Full TDD body" not in messages[-1].content
 
 
@@ -551,7 +551,7 @@ def test_runtime_context_preserves_current_turn_skill_tool_context(tmp_path):
     tool_output = (
         '{"confirmed_intent": "implement"}\n\n'
         f"{SKILL_TOOL_CONTEXT_MARKER}\nScope: current-turn\n\n"
-        "## Skill: test-driven-development\n"
+        "## Skill: tdd\n"
         "Source: bundled\n"
         "Body-Hash: abc123\n\n"
         "Full skill body"
@@ -639,15 +639,15 @@ def test_current_task_state_records_active_workflow_nodes(tmp_path):
         interaction_mode=InteractionMode.AUTO,
         current_user_text="实现这个功能",
         task_intent=TaskIntent.IMPLEMENT,
-        active_skill_summaries=[
-            "test-driven-development (implement role)",
-            "verification-before-completion (implement lifecycle)",
+        active_workflow_summaries=[
+            "tdd (implement role)",
+            "verify (implement lifecycle)",
         ],
     ).build()
 
     context.apply_to_messages(messages)
 
-    assert "Active workflow nodes: test-driven-development (implement role); verification-before-completion (implement lifecycle)" in messages[-1].content
+    assert "Active workflow nodes: tdd (implement role); verify (implement lifecycle)" in messages[-1].content
 
 
 def test_current_task_state_records_structured_workflow_runs(tmp_path):
@@ -660,9 +660,9 @@ def test_current_task_state_records_structured_workflow_runs(tmp_path):
         interaction_mode=InteractionMode.AUTO,
         current_user_text="实现这个功能",
         task_intent=TaskIntent.IMPLEMENT,
-        skill_runs=[
+        workflow_runs=[
             WorkflowRunState(
-                name="test-driven-development",
+                name="tdd",
                 status=WorkflowRunStatus.ACTIVE,
                 source=WorkflowActivationSource.WORKFLOW,
                 reason="implement role",
@@ -677,10 +677,10 @@ def test_current_task_state_records_structured_workflow_runs(tmp_path):
     context.apply_to_messages(messages)
 
     assert (
-        "Workflow run state: test-driven-development=active "
+        "Workflow run state: tdd=active "
         "phase=implement source=workflow reason=implement role"
     ) in messages[-1].content
-    assert "Workflow exits [test-driven-development]: implemented -> verification-before-completion" in messages[-1].content
+    assert "Workflow exits [tdd]: implemented -> verify" in messages[-1].content
 
 
 def test_current_task_state_records_user_profile_preferences(tmp_path):

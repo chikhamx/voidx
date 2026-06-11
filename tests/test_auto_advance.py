@@ -21,7 +21,7 @@ class TestAutoAdvanceReviewHasIssues:
     def test_review_fail_triggers_review_has_issues(self):
         runs = [
             WorkflowRunState(
-                name="requesting-code-review",
+                name="review",
                 status=WorkflowRunStatus.ACTIVE,
             ),
         ]
@@ -31,17 +31,17 @@ class TestAutoAdvanceReviewHasIssues:
         )
         events = auto_advance_events(
             [{"name": "agent", "result": result}],
-            skill_runs=runs,
+            workflow_runs=runs,
         )
         assert len(events) == 1
-        assert events[0].workflow == "requesting-code-review"
+        assert events[0].workflow == "review"
         assert events[0].condition == "review_has_issues"
         assert events[0].kind == WorkflowStateEventKind.SATISFIED
 
     def test_review_needs_change_triggers_review_has_issues(self):
         runs = [
             WorkflowRunState(
-                name="requesting-code-review",
+                name="review",
                 status=WorkflowRunStatus.ACTIVE,
             ),
         ]
@@ -51,7 +51,7 @@ class TestAutoAdvanceReviewHasIssues:
         )
         events = auto_advance_events(
             [{"name": "agent", "result": result}],
-            skill_runs=runs,
+            workflow_runs=runs,
         )
         assert len(events) == 1
         assert events[0].condition == "review_has_issues"
@@ -59,7 +59,7 @@ class TestAutoAdvanceReviewHasIssues:
     def test_review_pass_does_not_trigger(self):
         runs = [
             WorkflowRunState(
-                name="requesting-code-review",
+                name="review",
                 status=WorkflowRunStatus.ACTIVE,
             ),
         ]
@@ -69,14 +69,14 @@ class TestAutoAdvanceReviewHasIssues:
         )
         events = auto_advance_events(
             [{"name": "agent", "result": result}],
-            skill_runs=runs,
+            workflow_runs=runs,
         )
         assert len(events) == 0
 
     def test_non_review_agent_does_not_trigger(self):
         runs = [
             WorkflowRunState(
-                name="requesting-code-review",
+                name="review",
                 status=WorkflowRunStatus.ACTIVE,
             ),
         ]
@@ -86,14 +86,14 @@ class TestAutoAdvanceReviewHasIssues:
         )
         events = auto_advance_events(
             [{"name": "agent", "result": result}],
-            skill_runs=runs,
+            workflow_runs=runs,
         )
         assert len(events) == 0
 
     def test_no_active_requesting_code_review_does_not_trigger(self):
         runs = [
             WorkflowRunState(
-                name="test-driven-development",
+                name="tdd",
                 status=WorkflowRunStatus.ACTIVE,
             ),
         ]
@@ -103,14 +103,14 @@ class TestAutoAdvanceReviewHasIssues:
         )
         events = auto_advance_events(
             [{"name": "agent", "result": result}],
-            skill_runs=runs,
+            workflow_runs=runs,
         )
         assert len(events) == 0
 
     def test_satisfied_requesting_code_review_does_not_trigger(self):
         runs = [
             WorkflowRunState(
-                name="requesting-code-review",
+                name="review",
                 status=WorkflowRunStatus.SATISFIED,
             ),
         ]
@@ -120,14 +120,14 @@ class TestAutoAdvanceReviewHasIssues:
         )
         events = auto_advance_events(
             [{"name": "agent", "result": result}],
-            skill_runs=runs,
+            workflow_runs=runs,
         )
         assert len(events) == 0
 
     def test_verdict_case_insensitive(self):
         runs = [
             WorkflowRunState(
-                name="requesting-code-review",
+                name="review",
                 status=WorkflowRunStatus.ACTIVE,
             ),
         ]
@@ -137,7 +137,7 @@ class TestAutoAdvanceReviewHasIssues:
         )
         events = auto_advance_events(
             [{"name": "agent", "result": result}],
-            skill_runs=runs,
+            workflow_runs=runs,
         )
         assert len(events) == 1
 
@@ -146,7 +146,7 @@ class TestAutoAdvanceFailedImplementation:
     def test_bash_nonzero_triggers_failed_implementation(self):
         runs = [
             WorkflowRunState(
-                name="verification-before-completion",
+                name="verify",
                 status=WorkflowRunStatus.ACTIVE,
             ),
         ]
@@ -156,17 +156,17 @@ class TestAutoAdvanceFailedImplementation:
         )
         events = auto_advance_events(
             [{"name": "bash", "result": result}],
-            skill_runs=runs,
+            workflow_runs=runs,
         )
         assert len(events) == 1
-        assert events[0].workflow == "verification-before-completion"
+        assert events[0].workflow == "verify"
         assert events[0].condition == "failed_implementation"
         assert events[0].kind == WorkflowStateEventKind.SATISFIED
 
     def test_bash_nonzero_nontest_command_does_not_trigger(self):
         runs = [
             WorkflowRunState(
-                name="verification-before-completion",
+                name="verify",
                 status=WorkflowRunStatus.ACTIVE,
             ),
         ]
@@ -176,14 +176,14 @@ class TestAutoAdvanceFailedImplementation:
         )
         events = auto_advance_events(
             [{"name": "bash", "result": result}],
-            skill_runs=runs,
+            workflow_runs=runs,
         )
         assert len(events) == 0
 
     def test_bash_nonzero_docker_does_not_trigger(self):
         runs = [
             WorkflowRunState(
-                name="verification-before-completion",
+                name="verify",
                 status=WorkflowRunStatus.ACTIVE,
             ),
         ]
@@ -193,14 +193,14 @@ class TestAutoAdvanceFailedImplementation:
         )
         events = auto_advance_events(
             [{"name": "bash", "result": result}],
-            skill_runs=runs,
+            workflow_runs=runs,
         )
         assert len(events) == 0
 
     def test_bash_nonzero_npm_test_triggers(self):
         runs = [
             WorkflowRunState(
-                name="verification-before-completion",
+                name="verify",
                 status=WorkflowRunStatus.ACTIVE,
             ),
         ]
@@ -210,7 +210,7 @@ class TestAutoAdvanceFailedImplementation:
         )
         events = auto_advance_events(
             [{"name": "bash", "result": result}],
-            skill_runs=runs,
+            workflow_runs=runs,
         )
         assert len(events) == 1
         assert events[0].condition == "failed_implementation"
@@ -218,7 +218,7 @@ class TestAutoAdvanceFailedImplementation:
     def test_bash_zero_exit_does_not_trigger(self):
         runs = [
             WorkflowRunState(
-                name="verification-before-completion",
+                name="verify",
                 status=WorkflowRunStatus.ACTIVE,
             ),
         ]
@@ -228,14 +228,14 @@ class TestAutoAdvanceFailedImplementation:
         )
         events = auto_advance_events(
             [{"name": "bash", "result": result}],
-            skill_runs=runs,
+            workflow_runs=runs,
         )
         assert len(events) == 0
 
     def test_no_active_verification_does_not_trigger(self):
         runs = [
             WorkflowRunState(
-                name="test-driven-development",
+                name="tdd",
                 status=WorkflowRunStatus.ACTIVE,
             ),
         ]
@@ -245,14 +245,14 @@ class TestAutoAdvanceFailedImplementation:
         )
         events = auto_advance_events(
             [{"name": "bash", "result": result}],
-            skill_runs=runs,
+            workflow_runs=runs,
         )
         assert len(events) == 0
 
     def test_bash_no_exit_code_does_not_trigger(self):
         runs = [
             WorkflowRunState(
-                name="verification-before-completion",
+                name="verify",
                 status=WorkflowRunStatus.ACTIVE,
             ),
         ]
@@ -262,7 +262,7 @@ class TestAutoAdvanceFailedImplementation:
         )
         events = auto_advance_events(
             [{"name": "bash", "result": result}],
-            skill_runs=runs,
+            workflow_runs=runs,
         )
         assert len(events) == 0
 
@@ -271,7 +271,7 @@ class TestAutoAdvanceIntegration:
     def test_auto_advance_events_flow_through_advance_workflow_states(self):
         runs = [
             WorkflowRunState(
-                name="requesting-code-review",
+                name="review",
                 status=WorkflowRunStatus.ACTIVE,
             ),
         ]
@@ -281,18 +281,18 @@ class TestAutoAdvanceIntegration:
         )
         events = auto_advance_events(
             [{"name": "agent", "result": result}],
-            skill_runs=runs,
+            workflow_runs=runs,
         )
         updated = advance_workflow_states(runs, events)
         by_name = {r.name: r for r in updated}
-        assert by_name["requesting-code-review"].status == WorkflowRunStatus.SATISFIED
-        assert "receiving-code-review" in by_name
-        assert by_name["receiving-code-review"].status == WorkflowRunStatus.ACTIVE
+        assert by_name["review"].status == WorkflowRunStatus.SATISFIED
+        assert "review-feedback" in by_name
+        assert by_name["review-feedback"].status == WorkflowRunStatus.ACTIVE
 
     def test_auto_advance_failed_implementation_activates_tdd(self):
         runs = [
             WorkflowRunState(
-                name="verification-before-completion",
+                name="verify",
                 status=WorkflowRunStatus.ACTIVE,
             ),
         ]
@@ -302,13 +302,13 @@ class TestAutoAdvanceIntegration:
         )
         events = auto_advance_events(
             [{"name": "bash", "result": result}],
-            skill_runs=runs,
+            workflow_runs=runs,
         )
         updated = advance_workflow_states(runs, events)
         by_name = {r.name: r for r in updated}
-        assert by_name["verification-before-completion"].status == WorkflowRunStatus.SATISFIED
-        assert "test-driven-development" in by_name
-        assert by_name["test-driven-development"].status == WorkflowRunStatus.ACTIVE
+        assert by_name["verify"].status == WorkflowRunStatus.SATISFIED
+        assert "tdd" in by_name
+        assert by_name["tdd"].status == WorkflowRunStatus.ACTIVE
 
     def test_no_active_runs_produces_no_events(self):
         result = ToolResult(
@@ -317,14 +317,14 @@ class TestAutoAdvanceIntegration:
         )
         events = auto_advance_events(
             [{"name": "agent", "result": result}],
-            skill_runs=[],
+            workflow_runs=[],
         )
         assert len(events) == 0
 
     def test_mixed_tools_only_triggers_matching(self):
         runs = [
             WorkflowRunState(
-                name="requesting-code-review",
+                name="review",
                 status=WorkflowRunStatus.ACTIVE,
             ),
         ]
@@ -341,7 +341,7 @@ class TestAutoAdvanceIntegration:
                 {"name": "agent", "result": review_result},
                 {"name": "bash", "result": bash_result},
             ],
-            skill_runs=runs,
+            workflow_runs=runs,
         )
         assert len(events) == 1
         assert events[0].condition == "review_has_issues"
@@ -349,7 +349,7 @@ class TestAutoAdvanceIntegration:
     def test_idempotent_after_explicit_advance(self):
         runs = [
             WorkflowRunState(
-                name="requesting-code-review",
+                name="review",
                 status=WorkflowRunStatus.SATISFIED,
             ),
         ]
@@ -359,7 +359,7 @@ class TestAutoAdvanceIntegration:
         )
         events = auto_advance_events(
             [{"name": "agent", "result": result}],
-            skill_runs=runs,
+            workflow_runs=runs,
         )
         assert len(events) == 0
 
@@ -368,14 +368,14 @@ class TestAutoAdvanceIntegration:
         auto_advance_events should not produce a duplicate event."""
         runs_after_explicit = [
             WorkflowRunState(
-                name="requesting-code-review",
+                name="review",
                 status=WorkflowRunStatus.SATISFIED,
             ),
             WorkflowRunState(
-                name="receiving-code-review",
+                name="review-feedback",
                 status=WorkflowRunStatus.ACTIVE,
                 source=WorkflowActivationSource.TRANSITION,
-                reason="transition from requesting-code-review via review_has_issues",
+                reason="transition from review via review_has_issues",
             ),
         ]
         result = ToolResult(
@@ -384,14 +384,14 @@ class TestAutoAdvanceIntegration:
         )
         events = auto_advance_events(
             [{"name": "agent", "result": result}],
-            skill_runs=runs_after_explicit,
+            workflow_runs=runs_after_explicit,
         )
         assert len(events) == 0
 
     def test_verdict_in_code_block_does_not_trigger(self):
         runs = [
             WorkflowRunState(
-                name="requesting-code-review",
+                name="review",
                 status=WorkflowRunStatus.ACTIVE,
             ),
         ]
@@ -401,7 +401,7 @@ class TestAutoAdvanceIntegration:
         )
         events = auto_advance_events(
             [{"name": "agent", "result": result}],
-            skill_runs=runs,
+            workflow_runs=runs,
         )
         # The regex uses ^ with MULTILINE, so "verdict: FAIL" inside a code
         # block at line start WILL match. This is a known limitation — the

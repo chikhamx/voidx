@@ -756,19 +756,19 @@ class TestLoadSkillsTool:
     @pytest.mark.asyncio
     async def test_builtin_workflow_nodes_are_not_loaded_as_skills(self, tmp_path):
         blocked = await LoadSkillsTool().execute(
-            {"names": ["systematic-debugging"]},
+            {"names": ["debug"]},
             ToolContext(workspace=str(tmp_path)),
         )
         loaded = await LoadSkillsTool().execute(
-            {"names": ["systematic-debugging"], "include_bundled": True},
+            {"names": ["debug"], "include_bundled": True},
             ToolContext(workspace=str(tmp_path)),
         )
 
         assert blocked.metadata["error"] is True
-        assert blocked.metadata["missing"] == ["systematic-debugging"]
+        assert blocked.metadata["missing"] == ["debug"]
         assert blocked.metadata["bundled_blocked"] == []
         assert loaded.metadata["error"] is True
-        assert loaded.metadata["missing"] == ["systematic-debugging"]
+        assert loaded.metadata["missing"] == ["debug"]
         assert loaded.metadata["loaded_skills"] == []
 
     @pytest.mark.asyncio
@@ -854,14 +854,14 @@ class TestStateUpdateFromExecutedTools:
         update = _state_update_from_executed_tools(executed)
         assert update["task_intent"] == "implement"
 
-    def test_skill_runs_merge_with_current_state(self):
+    def test_workflow_runs_merge_with_current_state(self):
         from voidx.agent.graph.tool_executor import _state_update_from_executed_tools, _ExecutedTool
 
         current = [
-            WorkflowRunState(name="test-driven-development", reason="existing"),
+            WorkflowRunState(name="tdd", reason="existing"),
         ]
-        patch = ToolStatePatch(skill_runs=[
-            WorkflowRunState(name="verification-before-completion", reason="new"),
+        patch = ToolStatePatch(workflow_runs=[
+            WorkflowRunState(name="verify", reason="new"),
         ])
         msg = ToolMessage(content="r", tool_call_id="c1")
         result = ToolResult(
@@ -870,11 +870,11 @@ class TestStateUpdateFromExecutedTools:
         )
 
         executed = [_ExecutedTool(message=msg, result=result, tool_call={"name": "on_intent"})]
-        update = _state_update_from_executed_tools(executed, current_skill_runs=current)
+        update = _state_update_from_executed_tools(executed, current_workflow_runs=current)
 
-        assert [run.name for run in update["skill_runs"]] == [
-            "test-driven-development",
-            "verification-before-completion",
+        assert [run.name for run in update["workflow_runs"]] == [
+            "tdd",
+            "verify",
         ]
 
     def test_none_pending_approval_clears_state(self):
@@ -902,7 +902,7 @@ class TestStateUpdateFromExecutedTools:
 
         current = [
             WorkflowRunState(
-                name="requesting-code-review",
+                name="review",
                 status=WorkflowRunStatus.ACTIVE,
             ),
         ]
@@ -912,19 +912,19 @@ class TestStateUpdateFromExecutedTools:
             metadata={"agent": "review"},
         )
         executed = [_ExecutedTool(message=msg, result=result, tool_call={"name": "agent"})]
-        update = _state_update_from_executed_tools(executed, current_skill_runs=current)
-        assert "skill_runs" in update
-        by_name = {r.name: r for r in update["skill_runs"]}
-        assert by_name["requesting-code-review"].status == WorkflowRunStatus.SATISFIED
-        assert "receiving-code-review" in by_name
-        assert by_name["receiving-code-review"].status == WorkflowRunStatus.ACTIVE
+        update = _state_update_from_executed_tools(executed, current_workflow_runs=current)
+        assert "workflow_runs" in update
+        by_name = {r.name: r for r in update["workflow_runs"]}
+        assert by_name["review"].status == WorkflowRunStatus.SATISFIED
+        assert "review-feedback" in by_name
+        assert by_name["review-feedback"].status == WorkflowRunStatus.ACTIVE
 
     def test_auto_advance_failed_implementation(self):
         from voidx.agent.graph.tool_executor import _state_update_from_executed_tools, _ExecutedTool
 
         current = [
             WorkflowRunState(
-                name="verification-before-completion",
+                name="verify",
                 status=WorkflowRunStatus.ACTIVE,
             ),
         ]
@@ -934,19 +934,19 @@ class TestStateUpdateFromExecutedTools:
             metadata={"exit_code": 1, "command": "pytest tests/"},
         )
         executed = [_ExecutedTool(message=msg, result=result, tool_call={"name": "bash"})]
-        update = _state_update_from_executed_tools(executed, current_skill_runs=current)
-        assert "skill_runs" in update
-        by_name = {r.name: r for r in update["skill_runs"]}
-        assert by_name["verification-before-completion"].status == WorkflowRunStatus.SATISFIED
-        assert "test-driven-development" in by_name
-        assert by_name["test-driven-development"].status == WorkflowRunStatus.ACTIVE
+        update = _state_update_from_executed_tools(executed, current_workflow_runs=current)
+        assert "workflow_runs" in update
+        by_name = {r.name: r for r in update["workflow_runs"]}
+        assert by_name["verify"].status == WorkflowRunStatus.SATISFIED
+        assert "tdd" in by_name
+        assert by_name["tdd"].status == WorkflowRunStatus.ACTIVE
 
     def test_auto_advance_skipped_when_node_already_satisfied(self):
         from voidx.agent.graph.tool_executor import _state_update_from_executed_tools, _ExecutedTool
 
         current = [
             WorkflowRunState(
-                name="requesting-code-review",
+                name="review",
                 status=WorkflowRunStatus.SATISFIED,
             ),
         ]
@@ -956,8 +956,8 @@ class TestStateUpdateFromExecutedTools:
             metadata={"agent": "review"},
         )
         executed = [_ExecutedTool(message=msg, result=result, tool_call={"name": "agent"})]
-        update = _state_update_from_executed_tools(executed, current_skill_runs=current)
-        assert "skill_runs" not in update
+        update = _state_update_from_executed_tools(executed, current_workflow_runs=current)
+        assert "workflow_runs" not in update
 
 
 class TestAdvanceWorkflowTool:
@@ -965,11 +965,11 @@ class TestAdvanceWorkflowTool:
     async def test_advance_workflow_activates_matching_successor(self, tmp_path):
         ctx = ToolContext(
             workspace=str(tmp_path),
-            skill_runs=[
+            workflow_runs=[
                 WorkflowRunState(
-                    name="test-driven-development",
+                    name="tdd",
                     status=WorkflowRunStatus.ACTIVE,
-                    transition_to=["verification-before-completion"],
+                    transition_to=["verify"],
                 )
             ],
         )
@@ -985,21 +985,21 @@ class TestAdvanceWorkflowTool:
 
         payload = json.loads(result.output)
         patch = ToolStatePatch.model_validate(result.metadata["state_patch"])
-        by_name = {run.name: run for run in patch.skill_runs}
+        by_name = {run.name: run for run in patch.workflow_runs}
 
-        assert payload["from"] == "test-driven-development"
-        assert payload["activated"] == ["verification-before-completion"]
-        assert by_name["test-driven-development"].status == WorkflowRunStatus.SATISFIED
-        assert by_name["test-driven-development"].evidence[0].condition == "implemented"
-        assert by_name["verification-before-completion"].status == WorkflowRunStatus.ACTIVE
+        assert payload["from"] == "tdd"
+        assert payload["activated"] == ["verify"]
+        assert by_name["tdd"].status == WorkflowRunStatus.SATISFIED
+        assert by_name["tdd"].evidence[0].condition == "implemented"
+        assert by_name["verify"].status == WorkflowRunStatus.ACTIVE
 
     @pytest.mark.asyncio
     async def test_advance_workflow_reports_invalid_condition(self, tmp_path):
         ctx = ToolContext(
             workspace=str(tmp_path),
-            skill_runs=[
+            workflow_runs=[
                 WorkflowRunState(
-                    name="test-driven-development",
+                    name="tdd",
                     status=WorkflowRunStatus.ACTIVE,
                 )
             ],
@@ -1011,16 +1011,16 @@ class TestAdvanceWorkflowTool:
         )
 
         assert result.metadata["error"] is True
-        assert "implemented -> verification-before-completion" in result.output
+        assert "implemented -> verify" in result.output
         assert "state_patch" not in result.metadata
 
     @pytest.mark.asyncio
     async def test_advance_workflow_done_satisfies_without_successor(self, tmp_path):
         ctx = ToolContext(
             workspace=str(tmp_path),
-            skill_runs=[
+            workflow_runs=[
                 WorkflowRunState(
-                    name="verification-before-completion",
+                    name="verify",
                     status=WorkflowRunStatus.ACTIVE,
                 )
             ],
@@ -1038,19 +1038,19 @@ class TestAdvanceWorkflowTool:
         payload = json.loads(result.output)
         patch = ToolStatePatch.model_validate(result.metadata["state_patch"])
 
-        assert payload["from"] == "verification-before-completion"
+        assert payload["from"] == "verify"
         assert payload["activated"] == []
-        assert patch.skill_runs[0].name == "verification-before-completion"
-        assert patch.skill_runs[0].status == WorkflowRunStatus.SATISFIED
-        assert patch.skill_runs[0].evidence[0].condition == "done"
+        assert patch.workflow_runs[0].name == "verify"
+        assert patch.workflow_runs[0].status == WorkflowRunStatus.SATISFIED
+        assert patch.workflow_runs[0].evidence[0].condition == "done"
 
     @pytest.mark.asyncio
     async def test_advance_workflow_done_requires_workflow_when_ambiguous(self, tmp_path):
         ctx = ToolContext(
             workspace=str(tmp_path),
-            skill_runs=[
-                WorkflowRunState(name="brainstorming", status=WorkflowRunStatus.ACTIVE),
-                WorkflowRunState(name="writing-design-docs", status=WorkflowRunStatus.ACTIVE),
+            workflow_runs=[
+                WorkflowRunState(name="brainstorm", status=WorkflowRunStatus.ACTIVE),
+                WorkflowRunState(name="design-doc", status=WorkflowRunStatus.ACTIVE),
             ],
         )
         result = await ToolRegistry().execute_tool(
@@ -1062,23 +1062,23 @@ class TestAdvanceWorkflowTool:
         assert result.metadata["error"] is True
         assert result.metadata["ambiguous"] is True
         assert "Ambiguous workflow target" in result.output
-        assert "brainstorming" in result.output
-        assert "writing-design-docs" in result.output
+        assert "brainstorm" in result.output
+        assert "design-doc" in result.output
         assert "state_patch" not in result.metadata
 
     @pytest.mark.asyncio
     async def test_advance_workflow_done_with_explicit_workflow(self, tmp_path):
         ctx = ToolContext(
             workspace=str(tmp_path),
-            skill_runs=[
-                WorkflowRunState(name="brainstorming", status=WorkflowRunStatus.ACTIVE),
-                WorkflowRunState(name="writing-design-docs", status=WorkflowRunStatus.ACTIVE),
+            workflow_runs=[
+                WorkflowRunState(name="brainstorm", status=WorkflowRunStatus.ACTIVE),
+                WorkflowRunState(name="design-doc", status=WorkflowRunStatus.ACTIVE),
             ],
         )
         result = await ToolRegistry().execute_tool(
             "advance_workflow",
             {
-                "workflow": "writing-design-docs",
+                "workflow": "design-doc",
                 "condition": "done",
                 "evidence": "reader test passed",
                 "summary": "design doc complete",
@@ -1088,11 +1088,11 @@ class TestAdvanceWorkflowTool:
 
         payload = json.loads(result.output)
         patch = ToolStatePatch.model_validate(result.metadata["state_patch"])
-        by_name = {run.name: run for run in patch.skill_runs}
+        by_name = {run.name: run for run in patch.workflow_runs}
 
-        assert payload["from"] == "writing-design-docs"
-        assert by_name["writing-design-docs"].status == WorkflowRunStatus.SATISFIED
-        assert by_name["brainstorming"].status == WorkflowRunStatus.ACTIVE
+        assert payload["from"] == "design-doc"
+        assert by_name["design-doc"].status == WorkflowRunStatus.SATISFIED
+        assert by_name["brainstorm"].status == WorkflowRunStatus.ACTIVE
 
 
 class TestFileOps:
