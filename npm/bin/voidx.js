@@ -22,7 +22,12 @@ function main(argv = process.argv.slice(2), env = process.env) {
     const venvDir = resolveVenvDir(env);
     ensureVenv(python, venvDir, env);
     const executable = resolveVoidxExecutable(venvDir);
-    const child = spawn(executable, argv, { stdio: "inherit" });
+    const childEnv = {
+      ...env,
+      VOIDX_LAUNCHED_BY_NPM: "1",
+      VOIDX_NPM_PACKAGE_VERSION: pkg.version,
+    };
+    const child = spawn(executable, argv, { stdio: "inherit", env: childEnv });
     child.on("exit", (code, signal) => {
       if (signal) {
         process.kill(process.pid, signal);

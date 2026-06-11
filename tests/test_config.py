@@ -237,6 +237,30 @@ async def test_parallel_subagents_settings_round_trip(tmp_path):
     )
 
 
+def test_update_check_settings_round_trip(tmp_path):
+    settings = Settings(str(tmp_path))
+
+    assert settings.get_update_check_enabled() is True
+    assert settings.update_check_due(now=1000) is True
+    assert settings.get_update_check_last_checked_at() is None
+    assert settings.get_update_check_latest_version() is None
+
+    settings.mark_update_check("9.0.0", now=1000)
+
+    loaded = Settings(str(tmp_path))
+    assert loaded.get_update_check_enabled() is True
+    assert loaded.get_update_check_last_checked_at() == 1000
+    assert loaded.get_update_check_latest_version() == "9.0.0"
+    assert loaded.update_check_due(now=1000 + 60) is False
+    assert loaded.update_check_due(now=1000 + 24 * 60 * 60) is True
+
+    loaded.set_update_check_enabled(False)
+
+    disabled = Settings(str(tmp_path))
+    assert disabled.get_update_check_enabled() is False
+    assert disabled.update_check_due(now=1000 + 48 * 60 * 60) is False
+
+
 async def test_user_profile_round_trips_and_builds_config(tmp_path):
     settings = Settings(str(tmp_path))
 

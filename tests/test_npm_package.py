@@ -34,6 +34,13 @@ def test_npm_package_matches_python_version():
     assert (ROOT / "npm" / "bin" / "voidx.js").is_file()
 
 
+def test_npm_launcher_marks_python_environment():
+    source = (ROOT / "npm" / "bin" / "voidx.js").read_text(encoding="utf-8")
+
+    assert 'VOIDX_LAUNCHED_BY_NPM: "1"' in source
+    assert "VOIDX_NPM_PACKAGE_VERSION: pkg.version" in source
+
+
 def test_python_package_includes_bundled_skill_templates():
     pyproject = tomllib.loads((ROOT / "pyproject.toml").read_text())
     package_data = pyproject["tool"]["setuptools"]["package-data"]["voidx.skills"]

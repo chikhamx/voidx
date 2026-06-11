@@ -15,6 +15,7 @@ from voidx.config.settings_custom import SettingsCustomProviderMixin
 from voidx.config.settings_mcp import SettingsMcpMixin
 from voidx.config.settings_permissions import SettingsPermissionMixin
 from voidx.config.settings_skills import SettingsSkillsMixin
+from voidx.config.settings_update import SettingsUpdateMixin
 from voidx.config.settings_web import SettingsWebMixin
 
 SETTINGS_FILE = ".voidx/settings.json"
@@ -29,6 +30,7 @@ class Settings(
     SettingsMcpMixin,
     SettingsWebMixin,
     SettingsSkillsMixin,
+    SettingsUpdateMixin,
     SettingsPermissionMixin,
     SettingsCodeIdeMixin,
     SettingsCustomProviderMixin,

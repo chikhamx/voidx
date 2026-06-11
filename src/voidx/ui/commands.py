@@ -81,6 +81,12 @@ COMMANDS: list[tuple[str, str]] = [
     ("/title auto", "Regenerate session title"),
     ("/tone", "Set response tone preference"),
     ("/unplan", "Return to auto mode"),
+    ("/upgrade", "Check for voidx updates"),
+    ("/upgrade check", "Check PyPI for a newer voidx version"),
+    ("/upgrade now", "Upgrade voidx in the current Python environment"),
+    ("/upgrade off", "Disable startup update checks"),
+    ("/upgrade on", "Enable startup update checks"),
+    ("/upgrade status", "Show update check status"),
     ("/usage", "Show token usage for this session"),
 ]
 
