@@ -117,6 +117,83 @@ _cleanup_legacy() {
 
 _cleanup_legacy
 
+# ── Ensure PATH and remove conflicting voidx ──────────────────────────────
+_ensure_path_and_cleanup() {
+    # Add BIN_DIR to PATH if missing
+    if ! echo ":${PATH}:" | grep -q ":${BIN_DIR}:"; then
+        export PATH="${BIN_DIR}:${PATH}"
+
+        SHELL_NAME=$(basename "${SHELL:-/bin/bash}")
+        PROFILE_FILE=""
+        case "${SHELL_NAME}" in
+            zsh)  PROFILE_FILE="${HOME}/.zshrc" ;;
+            bash) PROFILE_FILE="${HOME}/.bashrc" ;;
+            *)    PROFILE_FILE="${HOME}/.profile" ;;
+        esac
+
+        EXPORT_LINE="export PATH=\"${BIN_DIR}:\$PATH\""
+        if [ -f "${PROFILE_FILE}" ] && grep -qF "${EXPORT_LINE}" "${PROFILE_FILE}" 2>/dev/null; then
+            : # already present
+        else
+            printf '\n%s\n' "${EXPORT_LINE}" >> "${PROFILE_FILE}"
+            info "已将 ${BIN_DIR} 添加到 ${PROFILE_FILE}"
+        fi
+    fi
+
+    # Remove conflicting voidx from PATH
+    FIRST_VOIDX=$(which voidx 2>/dev/null || true)
+    if [ -n "${FIRST_VOIDX}" ] && [ "${FIRST_VOIDX}" != "${VOIDX_LINK}" ]; then
+        FIRST_REAL=$(readlink -f "${FIRST_VOIDX}" 2>/dev/null || echo "${FIRST_VOIDX}")
+        warn "发现旧版 voidx: ${FIRST_VOIDX} → ${FIRST_REAL}"
+
+        # Homebrew
+        if command -v brew &>/dev/null; then
+            BREW_VOIDX=$(brew list voidx 2>/dev/null || true)
+            if [ -n "${BREW_VOIDX}" ]; then
+                warn "正在卸载 Homebrew 安装的 voidx…"
+                if brew uninstall voidx 2>/dev/null; then
+                    ok "已卸载 Homebrew 安装的 voidx"
+                else
+                    err "卸载失败，请手动执行: brew uninstall voidx"
+                fi
+            fi
+        fi
+
+        # Other locations
+        case "${FIRST_VOIDX}" in
+            /usr/local/bin/voidx|/opt/homebrew/bin/voidx)
+                if [ -w "${FIRST_VOIDX}" ] || [ -w "$(dirname "${FIRST_VOIDX}")" ]; then
+                    warn "正在删除旧版: ${FIRST_VOIDX}"
+                    rm -f "${FIRST_VOIDX}"
+                    ok "已删除 ${FIRST_VOIDX}"
+                else
+                    warn "无权限删除 ${FIRST_VOIDX}，请手动执行: sudo rm ${FIRST_VOIDX}"
+                fi
+                ;;
+        esac
+    fi
+
+    # Verify installation
+    ACTUAL_VERSION=$("${VOIDX_BIN}" --version 2>/dev/null | grep -oE '[0-9]+\.[0-9]+\.[0-9]+' | head -1 || true)
+    if [ -n "${ACTUAL_VERSION}" ] && [ "${ACTUAL_VERSION}" != "${VERSION}" ]; then
+        warn "安装的版本 (${ACTUAL_VERSION}) 与预期版本 (${VERSION}) 不一致"
+        warn "可能存在其他 voidx 安装，请检查:"
+        FOUND_OTHER=false
+        while IFS= read -r p; do
+            REAL=$(readlink -f "$p" 2>/dev/null || echo "$p")
+            if [ "$REAL" != "${VOIDX_BIN}" ]; then
+                warn "  ${p} → ${REAL}"
+                FOUND_OTHER=true
+            fi
+        done < <(which -a voidx 2>/dev/null || true)
+        if [ "${FOUND_OTHER}" = true ]; then
+            info "请删除上述旧版 voidx，或确保 ${BIN_DIR} 在 PATH 最前面"
+        fi
+    elif [ -n "${ACTUAL_VERSION}" ]; then
+        ok "版本验证通过: voidx ${ACTUAL_VERSION}"
+    fi
+}
+
 # ── Prerequisites ────────────────────────────────────────────────────────────
 if ! command -v curl &>/dev/null; then
     err "curl is required but not found. Please install curl first."
@@ -166,6 +243,8 @@ if [ -f "${VOIDX_BIN}" ] && [ -f "${MARKER_PATH}" ]; then
             ln -sf "${VOIDX_BIN}" "${VOIDX_LINK}"
             info "Updated symlink: ${VOIDX_LINK} → ${VOIDX_BIN}"
         fi
+        # Even on reinstall, ensure PATH and no conflicting versions
+        _ensure_path_and_cleanup
         exit 0
     fi
 fi
@@ -295,83 +374,6 @@ printf '%b' "${MARKER}" > "${MARKER_PATH}"
 # ── Done ────────────────────────────────────────────────────────────────────
 printf "\n${GREEN}${BOLD}✅ voidx ${VERSION} installed!${NC}\n\n"
 
-# ── Ensure BIN_DIR is in PATH ──────────────────────────────────────────────
-# Add BIN_DIR to the user's shell profile if missing, and prepend to current PATH.
-if ! echo ":${PATH}:" | grep -q ":${BIN_DIR}:"; then
-    export PATH="${BIN_DIR}:${PATH}"
-
-    # Find the user's shell profile file
-    SHELL_NAME=$(basename "${SHELL:-/bin/bash}")
-    PROFILE_FILE=""
-    case "${SHELL_NAME}" in
-        zsh)  PROFILE_FILE="${HOME}/.zshrc" ;;
-        bash) PROFILE_FILE="${HOME}/.bashrc" ;;
-        *)    PROFILE_FILE="${HOME}/.profile" ;;
-    esac
-
-    # Add export line if not already there
-    EXPORT_LINE="export PATH=\"${BIN_DIR}:\$PATH\""
-    if [ -f "${PROFILE_FILE}" ] && grep -qF "${EXPORT_LINE}" "${PROFILE_FILE}" 2>/dev/null; then
-        : # already present
-    else
-        printf '\n%s\n' "${EXPORT_LINE}" >> "${PROFILE_FILE}"
-        info "已将 ${BIN_DIR} 添加到 ${PROFILE_FILE}"
-    fi
-fi
-
-# ── Remove conflicting voidx from PATH ───────────────────────────────────────
-# If another voidx is found before ours, remove it so the new version takes effect.
-FIRST_VOIDX=$(which voidx 2>/dev/null || true)
-if [ -n "${FIRST_VOIDX}" ] && [ "${FIRST_VOIDX}" != "${VOIDX_LINK}" ]; then
-    FIRST_REAL=$(readlink -f "${FIRST_VOIDX}" 2>/dev/null || echo "${FIRST_VOIDX}")
-    warn "发现旧版 voidx: ${FIRST_VOIDX} → ${FIRST_REAL}"
-
-    # Homebrew
-    if command -v brew &>/dev/null; then
-        BREW_VOIDX=$(brew list voidx 2>/dev/null || true)
-        if [ -n "${BREW_VOIDX}" ]; then
-            warn "正在卸载 Homebrew 安装的 voidx…"
-            if brew uninstall voidx 2>/dev/null; then
-                ok "已卸载 Homebrew 安装的 voidx"
-            else
-                err "卸载失败，请手动执行: brew uninstall voidx"
-            fi
-        fi
-    fi
-
-    # Other locations — remove the file or symlink if it's not ours
-    case "${FIRST_VOIDX}" in
-        /usr/local/bin/voidx|/opt/homebrew/bin/voidx)
-            if [ -w "${FIRST_VOIDX}" ] || [ -w "$(dirname "${FIRST_VOIDX}")" ]; then
-                warn "正在删除旧版: ${FIRST_VOIDX}"
-                rm -f "${FIRST_VOIDX}"
-                ok "已删除 ${FIRST_VOIDX}"
-            else
-                warn "无权限删除 ${FIRST_VOIDX}，请手动执行: sudo rm ${FIRST_VOIDX}"
-            fi
-            ;;
-    esac
-fi
-
-# ── Verify installation ────────────────────────────────────────────────────
-ACTUAL_VERSION=$("${VOIDX_BIN}" --version 2>/dev/null | grep -oE '[0-9]+\.[0-9]+\.[0-9]+' | head -1 || true)
-if [ -n "${ACTUAL_VERSION}" ] && [ "${ACTUAL_VERSION}" != "${VERSION}" ]; then
-    warn "安装的版本 (${ACTUAL_VERSION}) 与预期版本 (${VERSION}) 不一致"
-    warn "可能存在其他 voidx 安装，请检查:"
-    # Find all voidx in PATH
-    FOUND_OTHER=false
-    while IFS= read -r p; do
-        REAL=$(readlink -f "$p" 2>/dev/null || echo "$p")
-        if [ "$REAL" != "${VOIDX_BIN}" ]; then
-            warn "  ${p} → ${REAL}"
-            FOUND_OTHER=true
-        fi
-    done < <(which -a voidx 2>/dev/null || true)
-    if [ "${FOUND_OTHER}" = true ]; then
-        info "请删除上述旧版 voidx，或确保 ${BIN_DIR} 在 PATH 最前面"
-    fi
-elif [ -n "${ACTUAL_VERSION}" ]; then
-    ok "版本验证通过: voidx ${ACTUAL_VERSION}"
-fi
+_ensure_path_and_cleanup
 
 info "Run: voidx"
