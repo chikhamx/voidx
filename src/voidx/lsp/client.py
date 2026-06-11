@@ -15,6 +15,7 @@ from voidx.lsp.schema import LspServerConfig, parse_diagnostics
 log = logging.getLogger(__name__)
 
 NotificationHandler = Callable[[str, dict[str, Any]], None]
+LSP_REQUEST_TIMEOUT_SECONDS = 30.0
 
 
 def encode_lsp_message(payload: dict[str, Any]) -> bytes:
@@ -90,7 +91,7 @@ class LspClient:
     def capabilities(self) -> dict[str, Any]:
         return self._capabilities
 
-    async def start(self, *, root_uri: str, timeout: float = 10.0) -> None:
+    async def start(self, *, root_uri: str, timeout: float = LSP_REQUEST_TIMEOUT_SECONDS) -> None:
         if self.connected:
             return
         try:
@@ -142,7 +143,13 @@ class LspClient:
         self._process = None
         self._cancel_tasks()
 
-    async def request(self, method: str, params: Any = None, *, timeout: float = 10.0) -> Any:
+    async def request(
+        self,
+        method: str,
+        params: Any = None,
+        *,
+        timeout: float = LSP_REQUEST_TIMEOUT_SECONDS,
+    ) -> Any:
         if self._process is None or self._process.stdin is None:
             raise LspConnectionError("LSP client is not started")
         if self._process.returncode is not None:

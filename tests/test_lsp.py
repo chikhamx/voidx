@@ -9,8 +9,8 @@ sys.path.insert(0, str(Path(__file__).parent.parent / "src"))
 
 from voidx.agent.slash import SlashHandler
 from voidx.agent.tool_filters import filter_unavailable_lsp_tools
-from voidx.lsp.client import encode_lsp_message
-from voidx.lsp.errors import LspServerUnavailable
+from voidx.lsp.client import LSP_REQUEST_TIMEOUT_SECONDS, encode_lsp_message
+from voidx.lsp.errors import LspConnectionError, LspServerUnavailable
 from voidx.lsp.manager import LspManager, apply_text_edits
 from voidx.lsp.schema import LspServerConfig
 from voidx.tools.base import ToolContext
@@ -229,6 +229,132 @@ async def test_lsp_tool_waits_for_initialization(tmp_path):
         await manager.stop_all()
 
 
+@pytest.mark.asyncio
+async def test_lsp_manager_warm_up_starts_available_servers(tmp_path):
+    _write_fake_lsp(tmp_path)
+    manager = LspManager(str(tmp_path))
+    manager._servers = {
+        "python": LspServerConfig(
+            language="python",
+            command=sys.executable,
+            args=[str(tmp_path / "fake_lsp.py")],
+            extensions=[".py"],
+            resolved_command=sys.executable,
+        )
+    }
+    manager._initialized = True
+
+    try:
+        result = await manager.warm_up(timeout=1.0)
+        statuses = {status.language: status for status in manager.statuses()}
+
+        assert result == {"python": "ok"}
+        assert statuses["python"].status == "connected"
+    finally:
+        await manager.stop_all()
+
+
+@pytest.mark.asyncio
+async def test_lsp_manager_warm_up_skips_unavailable_servers(tmp_path):
+    manager = LspManager(str(tmp_path))
+    manager._servers = {
+        "python": LspServerConfig(
+            language="python",
+            command="missing-lsp-bin",
+            extensions=[".py"],
+        )
+    }
+    manager._initialized = True
+
+    result = await manager.warm_up(timeout=0.01)
+
+    assert result == {}
+    status = manager.statuses()[0]
+    assert status.language == "python"
+    assert status.status == "disconnected"
+
+
+@pytest.mark.asyncio
+async def test_lsp_manager_warm_up_records_per_server_errors(tmp_path, monkeypatch):
+    manager = LspManager(str(tmp_path))
+    manager._servers = {
+        "python": LspServerConfig(
+            language="python",
+            command=sys.executable,
+            extensions=[".py"],
+            resolved_command=sys.executable,
+        )
+    }
+    manager._initialized = True
+
+    async def fake_ensure_client(language: str, *, timeout: float = LSP_REQUEST_TIMEOUT_SECONDS):
+        raise LspConnectionError(f"{language} failed")
+
+    monkeypatch.setattr(manager, "_ensure_client", fake_ensure_client)
+
+    result = await manager.warm_up(timeout=1.0)
+
+    assert result == {"python": "error: python failed"}
+    assert any(
+        status.language == "python" and status.status == "error" and status.error_message == "python failed"
+        for status in manager.statuses()
+    )
+
+
+@pytest.mark.asyncio
+async def test_lsp_manager_requests_use_extended_timeout(tmp_path):
+    (tmp_path / "sample.py").write_text("class Foo:\n    pass\n", encoding="utf-8")
+    manager = LspManager(str(tmp_path))
+    manager._servers = {
+        "python": LspServerConfig(
+            language="python",
+            command=sys.executable,
+            extensions=[".py"],
+            resolved_command=sys.executable,
+        )
+    }
+    manager._initialized = True
+    requests: list[tuple[str, float]] = []
+
+    class FakeClient:
+        connected = True
+        pid = 123
+        error_message = ""
+
+        async def request(self, method, params=None, *, timeout=0):
+            requests.append((method, timeout))
+            if method == "textDocument/documentSymbol":
+                return []
+            if method == "workspace/symbol":
+                return []
+            if method == "textDocument/definition":
+                return None
+            if method == "textDocument/references":
+                return []
+            if method == "textDocument/formatting":
+                return []
+            return None
+
+        async def notify(self, method, params=None):
+            return None
+
+    manager._clients["python"] = FakeClient()
+
+    await manager.document_symbols("sample.py")
+    await manager.workspace_symbols("")
+    await manager.definition("sample.py", 1, 0)
+    await manager.references("sample.py", 1, 0)
+    await manager.format_document("sample.py")
+
+    assert requests == [
+        ("textDocument/documentSymbol", LSP_REQUEST_TIMEOUT_SECONDS),
+        ("workspace/symbol", LSP_REQUEST_TIMEOUT_SECONDS),
+        ("textDocument/definition", LSP_REQUEST_TIMEOUT_SECONDS),
+        ("textDocument/references", LSP_REQUEST_TIMEOUT_SECONDS),
+        ("textDocument/formatting", LSP_REQUEST_TIMEOUT_SECONDS),
+    ]
+
+
 def test_lsp_doctor_reports_initializing_without_io(monkeypatch, tmp_path):
     def fail_load(_workspace):
         raise AssertionError("load_lsp_servers should not run from doctor/statuses")
@@ -242,6 +368,21 @@ def test_lsp_doctor_reports_initializing_without_io(monkeypatch, tmp_path):
     assert checks[0].language == "*"
     assert "initializing" in checks[0].error_message
     assert statuses[0].status == "initializing"
+
+
+def test_lsp_warmup_languages_does_not_mutate_resolved_command(monkeypatch, tmp_path):
+    manager = LspManager(str(tmp_path))
+    manager._servers = {
+        "python": LspServerConfig(
+            language="python",
+            command="pyright-langserver",
+            extensions=[".py"],
+        )
+    }
+    monkeypatch.setattr("voidx.lsp.manager._resolve_command", lambda command: "/bin/pyright-langserver")
+
+    assert manager._warmup_languages() == ["python"]
+    assert manager._servers["python"].resolved_command == ""
 
 
 def test_tool_filter_uses_cached_lsp_availability():

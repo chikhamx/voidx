@@ -4,10 +4,11 @@ from __future__ import annotations
 
 import asyncio
 import shutil
+from collections import defaultdict
 from pathlib import Path
 from typing import Any
 
-from voidx.lsp.client import LspClient
+from voidx.lsp.client import LSP_REQUEST_TIMEOUT_SECONDS, LspClient
 from voidx.lsp.config import install_hint_for, language_for_path, load_lsp_servers
 from voidx.lsp.errors import LspConnectionError, LspServerUnavailable
 from voidx.lsp.schema import (
@@ -35,6 +36,7 @@ class LspManager:
         self._initializing = False
         self._initialization_error = ""
         self._initialize_lock = asyncio.Lock()
+        self._client_locks: defaultdict[str, asyncio.Lock] = defaultdict(asyncio.Lock)
 
     @property
     def servers(self) -> dict[str, LspServerConfig]:
@@ -80,6 +82,28 @@ class LspManager:
         self._clients.clear()
         self._open_docs.clear()
         await asyncio.gather(*(client.stop() for client in clients), return_exceptions=True)
+
+    async def warm_up(self, *, timeout: float = LSP_REQUEST_TIMEOUT_SECONDS) -> dict[str, str]:
+        await self.initialize()
+
+        async def start_language(language: str) -> tuple[str, str]:
+            try:
+                await self._ensure_client(language, timeout=timeout)
+            except asyncio.CancelledError:
+                raise
+            except (LspConnectionError, LspServerUnavailable) as exc:
+                self._errors[language] = str(exc)
+                return language, f"error: {exc}"
+            except Exception as exc:
+                self._errors[language] = str(exc)
+                return language, f"error: {exc}"
+            return language, "ok"
+
+        languages = self._warmup_languages()
+        if not languages:
+            return {}
+        pairs = await asyncio.gather(*(start_language(language) for language in languages))
+        return dict(pairs)
 
     async def restart(self, language: str | None = None) -> None:
         await self.initialize()
@@ -173,7 +197,7 @@ class LspManager:
         client, uri = await self.open_document(file_path)
         value = await client.request("textDocument/documentSymbol", {
             "textDocument": {"uri": uri},
-        })
+        }, timeout=LSP_REQUEST_TIMEOUT_SECONDS)
         return parse_document_symbols(uri, value)
 
     async def workspace_symbols(self, query: str) -> list[LspSymbol]:
@@ -184,7 +208,11 @@ class LspManager:
                 client = await self._ensure_client(language)
             except LspServerUnavailable:
                 continue
-            value = await client.request("workspace/symbol", {"query": query})
+            value = await client.request(
+                "workspace/symbol",
+                {"query": query},
+                timeout=LSP_REQUEST_TIMEOUT_SECONDS,
+            )
             symbols.extend(parse_document_symbols(file_uri(self.workspace), value))
         return symbols
 
@@ -193,7 +221,7 @@ class LspManager:
         value = await client.request("textDocument/definition", {
             "textDocument": {"uri": uri},
             "position": _position(line, character),
-        })
+        }, timeout=LSP_REQUEST_TIMEOUT_SECONDS)
         return parse_locations(value)
 
     async def references(
@@ -209,7 +237,7 @@ class LspManager:
             "textDocument": {"uri": uri},
             "position": _position(line, character),
             "context": {"includeDeclaration": include_declaration},
-        })
+        }, timeout=LSP_REQUEST_TIMEOUT_SECONDS)
         return parse_locations(value)
 
     async def format_document(self, file_path: str) -> tuple[bool, str, str]:
@@ -219,7 +247,7 @@ class LspManager:
         edits = await client.request("textDocument/formatting", {
             "textDocument": {"uri": uri},
             "options": {"tabSize": 4, "insertSpaces": True},
-        })
+        }, timeout=LSP_REQUEST_TIMEOUT_SECONDS)
         new_text = apply_text_edits(old_text, edits if isinstance(edits, list) else [])
         if new_text == old_text:
             return False, old_text, old_text
@@ -254,24 +282,42 @@ class LspManager:
         self._open_docs[uri] = (language, version, text)
         return client, uri
 
-    async def _ensure_client(self, language: str) -> LspClient:
+    async def _ensure_client(
+        self,
+        language: str,
+        *,
+        timeout: float = LSP_REQUEST_TIMEOUT_SECONDS,
+    ) -> LspClient:
         await self.initialize()
-        config = self._servers.get(language)
-        if config is None or not config.enabled:
-            raise LspServerUnavailable(f"No enabled LSP server for language: {language}")
-        client = self._clients.get(language)
-        if client is not None and client.connected:
+        async with self._client_locks[language]:
+            config = self._servers.get(language)
+            if config is None or not config.enabled:
+                raise LspServerUnavailable(f"No enabled LSP server for language: {language}")
+            client = self._clients.get(language)
+            if client is not None and client.connected:
+                return client
+            self._check_command(config)
+            client = LspClient(config, cwd=self.workspace)
+            try:
+                await client.start(root_uri=file_uri(self.workspace), timeout=timeout)
+            except Exception as exc:
+                await client.stop()
+                self._errors[language] = str(exc)
+                raise
+            self._errors.pop(language, None)
+            self._clients[language] = client
             return client
-        self._check_command(config)
-        client = LspClient(config, cwd=self.workspace)
-        try:
-            await client.start(root_uri=file_uri(self.workspace))
-        except LspConnectionError as exc:
-            self._errors[language] = str(exc)
-            raise
-        self._errors.pop(language, None)
-        self._clients[language] = client
-        return client
+
+    def _warmup_languages(self) -> list[str]:
+        languages: list[str] = []
+        for language, config in self._servers.items():
+            if not config.enabled:
+                continue
+            resolved = config.resolved_command or _resolve_command(config.command)
+            if not resolved:
+                continue
+            languages.append(language)
+        return languages
 
     def _resolve_path(self, file_path: str) -> Path:
         path = resolve_safe(self.workspace, file_path)
@@ -292,6 +338,8 @@ class LspManager:
     def _check_command(self, config: LspServerConfig) -> None:
         resolved = config.resolved_command or _resolve_command(config.command)
         if resolved:
+            if not config.resolved_command:
+                config.resolved_command = resolved
             return
         message = f"Command not found for {config.language} LSP: {config.command}"
         self._errors[config.language] = message
