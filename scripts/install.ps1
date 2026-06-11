@@ -85,26 +85,6 @@ if (Get-Command npm -ErrorAction SilentlyContinue) {
     }
 }
 
-# winget
-if (Get-Command winget -ErrorAction SilentlyContinue) {
-    try { $WingetResult = winget list voidx 2>$null } catch { $WingetResult = $null }
-    if ($WingetResult -and ($WingetResult | Select-String "voidx")) {
-        Write-Host "  ⚠️  Found winget-installed voidx, uninstalling…" -ForegroundColor Yellow
-        try { winget uninstall voidx 2>$null } catch {}
-        Write-Host "  ✅ Uninstalled winget-installed voidx" -ForegroundColor Green
-    }
-}
-
-# scoop
-if (Get-Command scoop -ErrorAction SilentlyContinue) {
-    try { $ScoopResult = scoop list voidx 2>$null } catch { $ScoopResult = $null }
-    if ($ScoopResult -and ($ScoopResult | Select-String "voidx")) {
-        Write-Host "  ⚠️  Found scoop-installed voidx, uninstalling…" -ForegroundColor Yellow
-        try { scoop uninstall voidx 2>$null } catch {}
-        Write-Host "  ✅ Uninstalled scoop-installed voidx" -ForegroundColor Green
-    }
-}
-
 # Old npm-venv directory from v2.x early releases
 $OldNpmVenv = Join-Path $VoidxHome "npm-venv"
 if (Test-Path $OldNpmVenv) {
@@ -126,11 +106,90 @@ if (Test-Path $OldVenvScripts) {
     }
 }
 
+# ── Ensure PATH and verify installation ──────────────────────────────────────
+function Ensure-PathAndVerify {
+    $VoidxScriptsDir = Join-Path $VenvDir "Scripts"
+    $CurrentPath = [Environment]::GetEnvironmentVariable("Path", "User")
+    if ($CurrentPath -notlike "*$VoidxScriptsDir*") {
+        # Prepend so the new voidx takes priority over any stale installations
+        [Environment]::SetEnvironmentVariable("Path", "$VoidxScriptsDir;$CurrentPath", "User")
+        $env:Path = "$VoidxScriptsDir;$env:Path"
+        Write-Host "  ✅ Prepended $VoidxScriptsDir to user PATH" -ForegroundColor Green
+    }
+
+    # Remove conflicting voidx from PATH
+    $FirstVoidx = Get-Command voidx -ErrorAction SilentlyContinue
+    if ($FirstVoidx) {
+        $FirstPath = if ($FirstVoidx.CommandType -eq "Application") { $FirstVoidx.Source } else { $FirstVoidx.Definition }
+        if ($FirstPath -and ($FirstPath -ne $VoidxBin)) {
+            Write-Host "  ⚠️  Found conflicting voidx: $FirstPath" -ForegroundColor Yellow
+
+            # winget
+            if (Get-Command winget -ErrorAction SilentlyContinue) {
+                try { $WingetResult = winget list voidx 2>$null } catch { $WingetResult = $null }
+                if ($WingetResult -and ($WingetResult | Select-String "voidx")) {
+                    Write-Host "  ⚠️  Uninstalling winget-installed voidx…" -ForegroundColor Yellow
+                    try { winget uninstall voidx 2>$null } catch {}
+                    Write-Host "  ✅ Uninstalled winget-installed voidx" -ForegroundColor Green
+                }
+            }
+
+            # scoop
+            if (Get-Command scoop -ErrorAction SilentlyContinue) {
+                try { $ScoopResult = scoop list voidx 2>$null } catch { $ScoopResult = $null }
+                if ($ScoopResult -and ($ScoopResult | Select-String "voidx")) {
+                    Write-Host "  ⚠️  Uninstalling scoop-installed voidx…" -ForegroundColor Yellow
+                    try { scoop uninstall voidx 2>$null } catch {}
+                    Write-Host "  ✅ Uninstalled scoop-installed voidx" -ForegroundColor Green
+                }
+            }
+
+            # Remove stale exe in common locations
+            $StaleLocations = @(
+                (Join-Path $env:LOCALAPPDATA "Microsoft\WinGet\Links\voidx.exe"),
+                (Join-Path $env:LOCALAPPDATA "scoop\shims\voidx.exe")
+            )
+            foreach ($Stale in $StaleLocations) {
+                if ((Test-Path $Stale) -and ($Stale -ne $VoidxBin)) {
+                    Write-Host "  ⚠️  Removing stale: $Stale" -ForegroundColor Yellow
+                    Remove-Item $Stale -Force -ErrorAction SilentlyContinue
+                    Write-Host "  ✅ Removed $Stale" -ForegroundColor Green
+                }
+            }
+        }
+    }
+
+    # Verify installation
+    $ActualVersion = $null
+    try {
+        $VerOutput = & $VoidxBin --version 2>$null
+        if ($VerOutput -match '(\d+\.\d+\.\d+)') {
+            $ActualVersion = $Matches[1]
+        }
+    } catch {}
+
+    if ($ActualVersion -and ($ActualVersion -ne $Version)) {
+        Write-Host "  ⚠️  Installed version ($ActualVersion) does not match expected ($Version)" -ForegroundColor Yellow
+        Write-Host "  ⚠️  Another voidx may be in PATH. Check:" -ForegroundColor Yellow
+        $AllVoidx = Get-Command voidx -All -ErrorAction SilentlyContinue
+        foreach ($V in $AllVoidx) {
+            $RealPath = if ($V.CommandType -eq "Application") { $V.Source } else { $V.Definition }
+            if ($RealPath -ne $VoidxBin) {
+                Write-Host "  ⚠️    $RealPath" -ForegroundColor Yellow
+            }
+        }
+        Write-Host "  ℹ️  Remove the old version or ensure $VoidxScriptsDir is first in PATH" -ForegroundColor Cyan
+    } elseif ($ActualVersion) {
+        Write-Host "  ✅ Version verified: voidx $ActualVersion" -ForegroundColor Green
+    }
+}
+
 # ── Check if already installed ──────────────────────────────────────────────
 if ((Test-Path $VoidxBin) -and (Test-Path $MarkerPath)) {
     $Existing = Get-Content $MarkerPath -Raw -ErrorAction SilentlyContinue
     if ($Existing -eq $Marker) {
         Write-Host "  ✅ voidx $Version already installed at $VenvDir" -ForegroundColor Green
+        Ensure-PathAndVerify
         exit 0
     }
 }
@@ -270,39 +329,7 @@ if ($LASTEXITCODE -ne 0) {
 # ── Write marker ────────────────────────────────────────────────────────────
 Set-Content -Path $MarkerPath -Value $Marker -NoNewline
 
-# ── Add to PATH ──────────────────────────────────────────────────────────────
-$VoidxScriptsDir = Join-Path $VenvDir "Scripts"
-$CurrentPath = [Environment]::GetEnvironmentVariable("Path", "User")
-if ($CurrentPath -notlike "*$VoidxScriptsDir*") {
-    # Prepend so the new voidx takes priority over any stale installations
-    [Environment]::SetEnvironmentVariable("Path", "$VoidxScriptsDir;$CurrentPath", "User")
-    $env:Path = "$VoidxScriptsDir;$env:Path"
-    Write-Host "  ✅ Prepended $VoidxScriptsDir to user PATH" -ForegroundColor Green
-}
-
-# ── Verify installation ────────────────────────────────────────────────────
-$ActualVersion = $null
-try {
-    $VerOutput = & $VoidxBin --version 2>$null
-    if ($VerOutput -match '(\d+\.\d+\.\d+)') {
-        $ActualVersion = $Matches[1]
-    }
-} catch {}
-
-if ($ActualVersion -and ($ActualVersion -ne $Version)) {
-    Write-Host "  ⚠️  Installed version ($ActualVersion) does not match expected ($Version)" -ForegroundColor Yellow
-    Write-Host "  ⚠️  Another voidx may be in PATH. Check:" -ForegroundColor Yellow
-    $AllVoidx = Get-Command voidx -All -ErrorAction SilentlyContinue
-    foreach ($V in $AllVoidx) {
-        $RealPath = if ($V.CommandType -eq "Application") { $V.Source } else { $V.Definition }
-        if ($RealPath -ne $VoidxBin) {
-            Write-Host "  ⚠️    $RealPath" -ForegroundColor Yellow
-        }
-    }
-    Write-Host "  ℹ️  Remove the old version or ensure $VoidxScriptsDir is first in PATH" -ForegroundColor Cyan
-} elseif ($ActualVersion) {
-    Write-Host "  ✅ Version verified: voidx $ActualVersion" -ForegroundColor Green
-}
+Ensure-PathAndVerify
 
 Write-Host ""
 Write-Host "  ✅ voidx $Version installed!" -ForegroundColor Green
