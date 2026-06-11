@@ -354,6 +354,7 @@ BUILTIN_AGENTS: dict[str, AgentDef] = {
         tools=[
             "on_intent", "clarify", "plan_checkpoint", "advance_workflow",
             "read", "glob", "grep", "bash", "agent", "task_status", "todo", "load_skills",
+            "load_doc_template",
             "webfetch", "websearch", "repo_map",
             "lsp_diagnostics", "lsp_symbols", "lsp_definition", "lsp_references",
             "write", "edit", "lsp_format",

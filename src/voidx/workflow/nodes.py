@@ -99,7 +99,7 @@ WRITING_DESIGN_DOCS = WorkflowNode(
         WorkflowStep(order=1, action="Identify the scenario", description="Design-phase document or post-implementation documentation."),
         WorkflowStep(order=2, action="Identify the document type", description="Pick the structure that fits the reader's needs."),
         WorkflowStep(order=3, action="Gather context", description="Read relevant code, specs, and existing docs. Do not write from memory alone."),
-        WorkflowStep(order=4, action="Load the template", description="Use templates/{doc_type}.md when the document type has a repository template."),
+        WorkflowStep(order=4, action="Load the template", description="Use load_doc_template to load the template for the document type."),
         WorkflowStep(order=5, action="Write the first draft", description="Use real paths, commands, and field names. Use [TBD] only when information is missing."),
         WorkflowStep(order=6, action="Reader test", description="Re-read as a fresh reader and fill any gaps."),
         WorkflowStep(order=7, action="Verify accuracy", description="Check examples, paths, and API shapes against the actual implementation."),

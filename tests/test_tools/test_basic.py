@@ -24,6 +24,7 @@ from voidx.tools.todo import TodoInput, TodoWriteTool
 from voidx.tools.registry import ToolRegistry
 from voidx.tools.clarify import ClarifyTool, ClarifyInput, ClarifyOption, _infer_state_patch
 from voidx.tools.load_skills import LoadSkillsTool
+from voidx.tools.load_doc_template import LoadDocTemplateTool, LoadDocTemplateInput
 from voidx.tools.on_intent import OnIntentResult, OnIntentTool
 from voidx.tools.plan_checkpoint import PlanCheckpointTool
 from voidx.agent.task_state import ToolStatePatch, PendingApproval
@@ -1615,3 +1616,35 @@ class TestTaskTracker:
 
         result2 = await tool.execute({"task_id": "t1"}, ctx)
         assert "t1" in result2.output
+
+
+class TestLoadDocTemplate:
+    @pytest.mark.asyncio
+    async def test_load_valid_template(self, tmp_path):
+        tool = LoadDocTemplateTool()
+        ctx = ToolContext(workspace=str(tmp_path))
+        for doc_type in ("prd", "tech-design", "rfc", "api-doc", "readme"):
+            result = await tool.execute({"doc_type": doc_type}, ctx)
+            assert result.title == f"Template: {doc_type}"
+            assert len(result.output) > 50
+            assert result.metadata["doc_type"] == doc_type
+
+    @pytest.mark.asyncio
+    async def test_invalid_doc_type(self, tmp_path):
+        tool = LoadDocTemplateTool()
+        ctx = ToolContext(workspace=str(tmp_path))
+        result = await tool.execute({"doc_type": "nonexistent"}, ctx)
+        assert "Unknown doc_type" in result.output
+        assert "nonexistent" in result.output
+
+    @pytest.mark.asyncio
+    async def test_case_insensitive(self, tmp_path):
+        tool = LoadDocTemplateTool()
+        ctx = ToolContext(workspace=str(tmp_path))
+        result = await tool.execute({"doc_type": "PRD"}, ctx)
+        assert result.title == "Template: prd"
+
+    @pytest.mark.asyncio
+    async def test_input_schema(self):
+        schema = LoadDocTemplateInput.model_json_schema()
+        assert "doc_type" in schema["properties"]
