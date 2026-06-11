@@ -1,26 +1,29 @@
 # Workflow Node 结构化定义设计
 
-> **Status: In Progress**
+> **Status: Done**
 > **Date:** 2026-06-09
-> **Scope:** 将 workflow skill 从自由格式 markdown 升级为结构化 WorkflowNode schema，支撑 DAG runtime 编排
-> **Depends on:** `workflow-skill-dag-design-2026-06-09.md`
+> **Scope:** 将内置 workflow 从自由格式 markdown 升级为结构化 WorkflowNode schema，支撑 DAG runtime 编排
+> **Role:** Workflow node 结构、DAG、gate、priority、workflow context body 的单一事实源
+> **Runtime companion:** `workflow-skill-dag-design-2026-06-09.md`
+
+> **Implementation note:** 最终实现已迁移为独立 `src/voidx/workflow/` 子系统。内置 workflow 不再作为 bundled `SKILL.md` 存在；`src/voidx/skills/` 只保留 project/global Markdown skill 发现与加载，`voidx.skills.runtime/policy` 仅为兼容转发层。
 
 ## 问题
 
-当前 skill 定义是自由格式的 SKILL.md 文件：
+迁移前，内置 workflow 以自由格式 `SKILL.md` 文件存在：
 
 1. **Runtime 无法解析 skill 语义**：gate、workflow、transition、decision rules 都写在 markdown body 里，只有 LLM 能读懂，runtime 无法提取结构化信息
 2. **DAG 编排无法实现**：条件边、gate 约束、decision rules 都需要 machine-readable 的结构，自由文本无法支撑
-3. **Skill 之间结构不统一**：8 个 skill 的 section 命名和内容组织各不相同（有的有 Gate，有的没有；有的有 Transition，有的没有）
-4. **Skill body 与 policy 容易不同步**：transition 声明在 markdown 里，实际行为在 `policy.py` 里，两处维护
+3. **Node 之间结构不统一**：8 个 workflow 的 section 命名和内容组织各不相同（有的有 Gate，有的没有；有的有 Transition，有的没有）
+4. **Workflow body 与 policy 容易不同步**：transition 声明在 markdown 里，实际行为在 `policy.py` 里，两处维护
 
 ## 目标
 
-1. Workflow skill 抽象为 **WorkflowNode**——独立的、自包含的节点，只声明 gate + workflow + decision_rules，不知道出边
+1. 内置 workflow 抽象为 **WorkflowNode**——独立的、自包含的节点，只声明 gate + workflow + decision_rules，不知道出边
 2. Node 之间的边由 **Policy 层编排**（WorkflowDAG），Node 正交组合，可复用
-3. SKILL.md 保留为 **LLM 可读的指令**，但从 WorkflowNode 自动生成，不再手写
+3. Workflow Context body 从 WorkflowNode 渲染，不再生成或维护内置 `SKILL.md`
 4. `policy.py` 中的 DAG、gate、priority 全部从 WorkflowNode + WorkflowDAG 推导，single source of truth
-5. 向后兼容：project/global skill 仍可用 SKILL.md，结构化只对 bundled workflow node 强制
+5. 向后兼容：project/global skill 仍可用 `SKILL.md`；内置 workflow 不再进入 SkillRegistry
 
 ## 核心设计原则：Node 与 Edge 分离
 
@@ -82,12 +85,12 @@ until the design is presented and approved.
 
 Runtime 只能解析 frontmatter（name, description, triggers），body 是不透明字符串。
 
-### 目标：结构化 schema + 自动生成 body
+### 目标：结构化 schema + workflow context body
 
 ```python
-# src/voidx/skills/bundled/brainstorming.py
+# src/voidx/workflow/nodes.py
 
-from voidx.skills.schema import (
+from voidx.workflow.schema import (
     WorkflowNode,
     NodeGate,
     DecisionRule,
@@ -105,7 +108,12 @@ BRAINSTORMING = WorkflowNode(
     priority=5,
     gate=NodeGate(
         denied_tools=("write", "edit", "apply_patch", "lsp_format"),
-        description="Do not write code or take implementation action until the design is presented and approved.",
+        description=(
+            "Do not write code, invoke implementation workflows, or take implementation "
+            "action until the design is presented and approved. This applies regardless "
+            "of perceived simplicity."
+        ),
+        required_before_transition="design approved by user",
     ),
     core_rule="Present a design and get user approval before writing any code.",
     workflow=[
@@ -120,6 +128,7 @@ BRAINSTORMING = WorkflowNode(
         DecisionRule(condition="skip_to_plan", description="If the user explicitly says 'just implement it', skip to writing-plans but still confirm the goal in one sentence first."),
         DecisionRule(condition="skip_to_plan", description="If the user's request is already a detailed spec with clear requirements, confirm understanding and go directly to writing-plans."),
         DecisionRule(condition="small_change", description="For small, well-scoped changes (renaming, adding a config field, fixing a typo), confirm the goal in one sentence and go directly to test-driven-development."),
+        DecisionRule(condition="approved", description="For large refactors or behavior changes, continue through design docs after explicit user approval."),
     ],
     anti_patterns=[
         '"This is too simple to need a design" is where unexamined assumptions cause the most wasted work.',
@@ -129,20 +138,34 @@ BRAINSTORMING = WorkflowNode(
 
 Runtime 可以直接读取 `gate.denied_tools`、`decision_rules`，不需要解析 markdown。边信息从 `WorkflowDAG` 获取。
 
+## 实际 node 定义补充
+
+最终实现集中在 `src/voidx/workflow/nodes.py`，8 个 node 不再拆成 8 个文件。实现比本文早期示例更完整，补回了从旧手写内容迁移时容易丢失的段落：
+
+| Node | 实际补充内容 |
+|------|--------------|
+| `brainstorming` | `approved` decision rule；gate 描述包含 "regardless of perceived simplicity"；`required_before_transition="design approved by user"` |
+| `writing-design-docs` | `Two Scenarios`、`PRD-Specific Rules` extra sections；workflow step 包含 "Identify the scenario" 和模板加载步骤 |
+| `verification-before-completion` | `Regression Tests` extra section；`Red Flags` 更完整 |
+| `requesting-code-review` | `When to Request`、`How to Request` extra sections |
+| `receiving-code-review` | `Source-Specific Rules`、`Handling Unclear Feedback`、`YAGNI Check` extra sections |
+| `systematic-debugging` | `Four Phases`、`Flaky or Non-Reproducible Failures` extra sections；workflow steps 按 Phase 结构化 |
+
 ## Schema 定义
 
 ### WorkflowNode — 自包含的节点
 
 ```python
-# src/voidx/skills/schema.py — 新增
+# src/voidx/workflow/schema.py — 新增
 
 from pydantic import BaseModel, Field
 
 
 class NodeGate(BaseModel):
-    """Runtime-enforced constraints for a skill node."""
+    """Runtime-enforced constraints for a workflow node."""
     denied_tools: tuple[str, ...] = ()
     description: str = ""  # LLM-readable explanation of the gate
+    required_before_transition: str = ""  # concrete evidence required before leaving this node
 
 
 class DecisionRule(BaseModel):
@@ -163,14 +186,14 @@ class WorkflowStep(BaseModel):
 
 
 class WorkflowNode(BaseModel):
-    """A self-contained workflow skill node.
+    """A self-contained workflow node.
 
     A Node declares its own gate, workflow, and decision rules.
     It does NOT declare edges — edges are defined in WorkflowDAG.
     This separation allows Nodes to be composed orthogonally
     in different DAGs.
 
-    The SKILL.md body is auto-generated from this node.
+    The workflow context body is rendered from this node.
     """
     name: str
     description: str = ""
@@ -270,8 +293,8 @@ class WorkflowDAG(BaseModel):
 
 - `WorkflowNode` 不知道自己连着谁——它只声明 gate、workflow、decision_rules
 - `Edge` 的 source/target 都是 node name 字符串，不是引用——解耦
-- `WorkflowDAG.intent_map` 替代了 `workflow_skill_activations()` 中的硬编码 intent→skill 映射
-- `WorkflowDAG.all_denied_tools()` 直接给权限层用，不需要再查 `WORKFLOW_SKILL_GATES`
+- `WorkflowDAG.intent_map` 和 `workflow_activations()` 替代旧 policy 中的硬编码 intent→workflow 映射
+- `WorkflowDAG.all_denied_tools()` 直接给权限层用，不需要再维护独立 gate 表
 
 ## 8 个 WorkflowNode 定义
 
@@ -631,30 +654,14 @@ SYSTEMATIC_DEBUGGING = WorkflowNode(
 所有边和入口映射集中定义在编排层：
 
 ```python
-# src/voidx/skills/bundled/dag.py
+# src/voidx/workflow/dag.py
 
-from voidx.skills.schema import Edge, IntentEntry, WorkflowDAG
-from voidx.skills.bundled.brainstorming import BRAINSTORMING
-from voidx.skills.bundled.writing_design_docs import WRITING_DESIGN_DOCS
-from voidx.skills.bundled.writing_plans import WRITING_PLANS
-from voidx.skills.bundled.test_driven_development import TEST_DRIVEN_DEVELOPMENT
-from voidx.skills.bundled.verification_before_completion import VERIFICATION_BEFORE_COMPLETION
-from voidx.skills.bundled.requesting_code_review import REQUESTING_CODE_REVIEW
-from voidx.skills.bundled.receiving_code_review import RECEIVING_CODE_REVIEW
-from voidx.skills.bundled.systematic_debugging import SYSTEMATIC_DEBUGGING
+from voidx.workflow.nodes import BUILTIN_WORKFLOW_NODES
+from voidx.workflow.schema import Edge, IntentEntry, WorkflowDAG
 
 DEFAULT_WORKFLOW_DAG = WorkflowDAG(
     name="default",
-    nodes={
-        "brainstorming": BRAINSTORMING,
-        "writing-design-docs": WRITING_DESIGN_DOCS,
-        "writing-plans": WRITING_PLANS,
-        "test-driven-development": TEST_DRIVEN_DEVELOPMENT,
-        "verification-before-completion": VERIFICATION_BEFORE_COMPLETION,
-        "requesting-code-review": REQUESTING_CODE_REVIEW,
-        "receiving-code-review": RECEIVING_CODE_REVIEW,
-        "systematic-debugging": SYSTEMATIC_DEBUGGING,
-    },
+    nodes=BUILTIN_WORKFLOW_NODES,
     edges=[
         # brainstorming 出边
         Edge("brainstorming", "writing-design-docs", "approved", "design approved"),
@@ -699,7 +706,7 @@ DEFAULT_WORKFLOW_DAG = WorkflowDAG(
 
 - 之前：每个 WorkflowNode 内嵌 `edges`，Node 自己声明出边
 - 现在：`WorkflowNode` 不含 `edges`，所有边集中在 `WorkflowDAG.edges` 中
-- `WorkflowDAG.intent_map` 替代了 `workflow_skill_activations()` 中的硬编码逻辑
+- `WorkflowDAG.intent_map` 支撑 `workflow_activations()` 的 intent→workflow 映射
 - 新增 Node 只需加到 `nodes` 字典和 `edges` 列表，不需要改已有 Node
 
 ## Transition 机制：Node 完成后的出口选择
@@ -873,7 +880,7 @@ LLM:
 
 ## Context 层级设计：Node 信息放在哪一层
 
-### 当前 context 层级
+### 迁移前 context 层级
 
 | 层 | 消息类型 | 内容 | 变化频率 | 缓存 |
 |---|---|---|---|---|
@@ -881,7 +888,9 @@ LLM:
 | `skill_context_content` | HumanMessage | 所有 bundled skill 完整 body（参考库） | 中 | hash 缓存 |
 | `task_sections` | 拼到 UserMessage 前 | Runtime State, DateTime, Task State | 高 | 无 |
 
-当前所有 bundled skill 的完整 body 都放在 `skill_context_content`（HumanMessage），作为参考库。不管是否激活，全部注入。
+迁移前所有 bundled skill 的完整 body 都放在 `skill_context_content`（HumanMessage），作为参考库。不管是否激活，全部注入。
+
+最终实现中，内置 workflow 不再作为 bundled skill：`Workflow DAG` 在 stable system section，`VOIDX_WORKFLOW_CONTEXT` 在独立 HumanMessage，`Current Task State` 每轮列 active node、gate 和 exits。`skill_context_content` 字段名仅作为 RuntimeContextBuilder 兼容载体保留。
 
 ### Node 信息的三类
 
@@ -928,365 +937,121 @@ UserMessage:
 - ❌ 活跃 Node 的完整 workflow + decision_rules 每轮重复注入
 - ❌ 非活跃 Node 的定义 LLM 看不到（无法提前了解流程）
 
-#### 方案 3：分层放置（推荐）
+#### 方案 3：分层放置（最终实现状态）
 
-```
-SystemMessage (stable, 缓存):
-  Base System
-  Role Prompt
-  ...
-  [不变] Workflow DAG Overview  ← B 类：DAG 拓扑摘要
+最终实现采用三类信息分层，但落地形态和早期设计不同：
 
-HumanMessage (workflow_node_context, 缓存):  ← 新增独立层，优先级更高
-  VOIDX_WORKFLOW_NODE_CONTEXT
-  Scope: workflow-node-reference-library
-  [不变] 所有 WorkflowNode 的完整定义  ← A 类
-
-HumanMessage (skill_context, 缓存):
-  VOIDX_SKILL_CONTEXT
-  Scope: bundled-skill-reference-library
-  [不变] 所有 skill 的摘要（不含 body，body 已在 workflow_node_context）
-
-UserMessage (task_sections, 每轮):
-  Current Task State
-    - Active Node: brainstorming (phase=design)
-    - Available exits: approved → writing-design-docs | skip_to_plan → writing-plans | small_change → test-driven-development | done → end
-    - Gate: denied_tools=(write, edit, apply_patch, lsp_format)
-  [每轮变] 运行时状态  ← C 类
-```
-
-### 方案 3 详解
-
-#### A 类：Node 定义 → workflow_node_context（新增独立 HumanMessage 层）
-
-**不和 skill_context_content 混放**。Node 定义是结构化 schema，语义不同于 skill 参考库。
-
-新增 `workflow_node_context` 字段到 `RuntimeContext`，作为独立的 HumanMessage 注入，**放在 skill_context 前面**。
-
-```python
-# runtime_context.py
-
-class RuntimeContext(BaseModel):
-    sections: list[ContextSection]
-    task_sections: list[ContextSection] = Field(default_factory=list)
-    workflow_node_context: str = ""           # 新增：Node 完整定义
-    skill_context_content: str = ""           # skill 摘要（不含 body）
-    system_content: str | None = None
-    system_message: SystemMessage | None = Field(default=None, exclude=True)
-    workflow_node_message: HumanMessage | None = Field(default=None, exclude=True)  # 新增
-    skill_context_message: HumanMessage | None = Field(default=None, exclude=True)
-```
+| 层 | 设计目标 | 实际实现 |
+|----|----------|----------|
+| A. Node 定义 | 独立 HumanMessage，承载 WorkflowNode 渲染结果 | ✅ 已实现为 `VOIDX_WORKFLOW_CONTEXT`，active node 渲染完整定义，inactive node 只渲染摘要。为了兼容现有编译器字段，内容仍通过 `RuntimeContext.skill_context_content` 传递，但 marker 和 section name 是 Workflow Context |
+| B. DAG 拓扑 | stable system section，`render_dag_overview()` | ✅ 已实现于 `src/voidx/workflow/render.py`，并由 `RuntimeContextBuilder` 注入 stable `Workflow DAG` system section |
+| C. 运行时状态 | 每轮 task_sections 注入 active node、gate、exits | ✅ 已实现于 `src/voidx/agent/runtime_context.py`，输出 `Active workflow nodes`、`Workflow run state`、`Workflow gate`、`Workflow exits` |
 
 消息组装顺序：
-```
-[SystemMessage: sections]
-  → [HumanMessage: workflow_node_context] # Node 完整定义（新增，优先级更高）
-  → [HumanMessage: skill_context]         # skill 摘要
-  → [对话历史]
-  → [UserMessage: task_sections + 用户输入]
+
+```text
+[SystemMessage: stable sections]
+  -> [HumanMessage: VOIDX_WORKFLOW_CONTEXT]  # active node 完整定义 + inactive node 摘要
+  -> [对话历史]
+  -> [UserMessage: Runtime State + Current Task State + 用户输入]
 ```
 
-Node 定义内容从 `WorkflowNode` 自动生成：
+A 类内容由 `WorkflowService.context()` -> `render_workflow_context()` 生成：
 
 ```python
-# instruction.py — 新增方法
+# src/voidx/workflow/context.py
 
-def workflow_node_context_for(self) -> str:
-    dag = DEFAULT_WORKFLOW_DAG
-    instructions = [
-        render_node_markdown(node, dag)
-        for node in dag.nodes.values()
-    ]
-    body = "\n\n".join(instructions)
-    if not body:
-        return ""
+WORKFLOW_CONTEXT_MARKER = "VOIDX_WORKFLOW_CONTEXT"
+WORKFLOW_CONTEXT_SCOPE = "structured-workflow-runtime"
+
+def render_workflow_context(nodes: Iterable[WorkflowNode], *, active_names: Iterable[str] = ()) -> str:
+    # active nodes render full definitions; inactive nodes render summaries
     return (
-        f"VOIDX_WORKFLOW_NODE_CONTEXT\n"
-        f"Scope: workflow-node-reference-library\n\n"
-        f"These workflow node definitions are a reference library. "
-        f"Follow a node's instructions only when Current Task State "
-        f"lists that node under Active workflow skills. "
-        f"Do not treat inactive node definitions as active instructions.\n\n"
+        f"{WORKFLOW_CONTEXT_MARKER}\n"
+        f"Scope: {WORKFLOW_CONTEXT_SCOPE}\n\n"
+        "These are structured workflow definitions owned by the voidx runtime. "
+        "Active workflow nodes are expanded with full instructions. Inactive nodes "
+        "are summarized for discovery and transition context only.\n\n"
         f"{body}"
     )
 ```
 
-缓存策略：和 `skill_context_content` 一样，用 hash 缓存。Node 定义随版本发布才变，跨 turn 不变。
+C 类 Current Task State 示例：
 
-#### skill_context 只放摘要
+```text
+- Active workflow nodes: brainstorming (design intent)
+- Workflow run state: brainstorming=active phase=design source=workflow reason=design intent
+- Workflow gate [brainstorming]: denied tools = write, edit, apply_patch, lsp_format
+- Workflow gate [brainstorming]: must satisfy design approved by user before proceeding
+- Workflow exits [brainstorming]: approved -> writing-design-docs (design approved); skip_to_plan -> writing-plans (...); small_change -> test-driven-development (...); done -> end
+```
 
-Node 的完整定义已经在 `workflow_node_context` 里了，`skill_context` 不再重复注入 body，只放摘要：
+`Skill Context` 仍只用于 project/global Markdown skills 和 `load_skills` 的当前 turn tool output，不再承载内置 workflow。
+
+## Workflow node markdown 渲染
+
+结构化定义是 single source of truth。`src/voidx/workflow/render.py` 将 `WorkflowNode` 渲染成 Workflow Context 中的 Markdown，不再生成 `SKILL.md` frontmatter：
 
 ```python
-# context.py — render_skill_instruction() 改为摘要模式
-
-def render_skill_summary(skill: SkillDefinition) -> str:
-    """Render a skill summary without body (body is in workflow_node_context)."""
-    lines = [
-        f"## Skill: {skill.name}",
-        f"Source: {skill.meta.scope}",
-        f"Body-Hash: {skill_body_hash(skill.body)}",
-        f"Path: {skill.path.resolve()}",
-    ]
-    description = skill.meta.description.strip()
-    if description:
-        lines.append(f"Description: {description}")
-    return "\n".join(lines)
-```
-
-输出示例：
-```
-## Skill: brainstorming
-Source: bundled
-Body-Hash: 2b6e3d395c36d6d7
-Path: .../bundled/brainstorming/SKILL.md
-Description: Use before creating features, building components, or modifying behavior.
-```
-
-**为什么 skill_context 还保留**：
-
-- 非 bundled 的 skill（global/project）没有对应的 WorkflowNode，body 仍需在 skill_context 中
-- 摘要让 LLM 知道有哪些 skill 可用，需要详情时通过 `load_skills` 工具按需加载
-- 摘要模式大幅减少 token：从每个 skill ~200-500 token 降到 ~30 token
-
-#### B 类：DAG 拓扑 → stable sections（SystemMessage）
-
-**新增**一个 stable section，描述全局 DAG 拓扑。内容极小（~100 token），但让 LLM 理解整体流程。
-
-```python
-# runtime_context.py — _build_stable_sections()
-
-def _build_stable_sections(self):
-    sections = [
-        ContextSection(name="Base System", content=self.base_system_prompt),
-        ...
-    ]
-    # DAG 拓扑摘要
-    dag = DEFAULT_WORKFLOW_DAG
-    if dag.nodes:
-        sections.append(ContextSection(
-            name="Workflow DAG",
-            content=render_dag_overview(dag),
-        ))
-    return sections
-
-
-def render_dag_overview(dag: WorkflowDAG) -> str:
-    """Render a compact DAG overview for system prompt."""
-    lines = ["Workflow nodes and transitions:"]
-    for name, node in dag.nodes.items():
-        edges = dag.edges_from(name)
-        if edges:
-            exits = ", ".join(f"{e.condition}→{e.target}" for e in edges)
-            lines.append(f"  {name}: {exits}")
-        else:
-            lines.append(f"  {name}: (terminal)")
-    lines.append("")
-    lines.append("Entry points by intent:")
-    for entry in dag.intent_map:
-        lines.append(f"  {entry.intent} → {', '.join(entry.nodes)}")
-    return "\n".join(lines)
-```
-
-输出示例：
-```
-Workflow nodes and transitions:
-  brainstorming: approved→writing-design-docs, skip_to_plan→writing-plans, small_change→test-driven-development
-  writing-design-docs: completed→writing-plans
-  writing-plans: approved→test-driven-development
-  test-driven-development: implemented→verification-before-completion
-  verification-before-completion: passed_substantial→requesting-code-review, failed_implementation→test-driven-development, failed_bug→systematic-debugging
-  requesting-code-review: review_has_issues→receiving-code-review
-  receiving-code-review: feedback_valid→test-driven-development, feedback_verified→verification-before-completion
-  systematic-debugging: nontrivial_fix→test-driven-development, trivial_fix→verification-before-completion
-
-Entry points by intent:
-  debug → systematic-debugging, verification-before-completion
-  implement → test-driven-development, verification-before-completion
-  design → brainstorming
-  review → requesting-code-review
-```
-
-~100 token，放在 system prompt 里几乎无开销，但 LLM 能理解全局流程。
-
-#### C 类：运行时状态 → task_sections（UserMessage，每轮）
-
-**增强** `Current Task State`，加入当前活跃 Node 的出边和 gate 约束。
-
-```python
-# runtime_context.py — _current_task_state()
-
-def _current_task_state(self):
-    lines = [
-        f"- Mode: {self.interaction_mode.value}",
-        f"- Intent: {self.task_intent.value}",
-        f"- Agent: {self.agent}",
-        f"- Agent ID: {self.agent_id}",
-    ]
-    if self.skill_runs:
-        lines.append(f"- Skill run state: {'; '.join(run.state_summary() for run in self.skill_runs)}")
-        # 新增：当前活跃 Node 的出边和 gate
-        dag = DEFAULT_WORKFLOW_DAG
-        for run in self.skill_runs:
-            if run.status == "active":
-                edges = dag.edges_from(run.name)
-                node = dag.nodes.get(run.name)
-                if edges:
-                    exits = " | ".join(f"{e.condition}→{e.target}" for e in edges) + " | done→end"
-                    lines.append(f"  Available exits ({run.name}): {exits}")
-                if node and node.gate and node.gate.denied_tools:
-                    lines.append(f"  Gate ({run.name}): denied_tools={node.gate.denied_tools}")
-    ...
-```
-
-输出示例：
-```
-- Skill run state: brainstorming=active phase=design
-  Available exits (brainstorming): approved→writing-design-docs | skip_to_plan→writing-plans | small_change→test-driven-development | done→end
-  Gate (brainstorming): denied_tools=('write', 'edit', 'apply_patch', 'lsp_format')
-```
-
-### 为什么这样分层
-
-| 问题 | 回答 |
-|------|------|
-| 为什么 Node 定义不放 system_prompt？ | 8 个 Node ~2000-4000 token，system_prompt 每轮都占，且大部分 Node 当前不活跃 |
-| 为什么 workflow_node_context 放 skill_context 前面？ | Node 定义是结构化的、优先级更高，skill 摘要是补充 |
-| 为什么 DAG 拓扑放 system_prompt？ | ~100 token，几乎无开销，但让 LLM 理解全局流程，知道"下一步可以去哪" |
-| 为什么运行时状态放 task_sections？ | 每轮都变，不能缓存，但信息量小（~50 token），放 UserMessage 前缀 |
-| 为什么 skill_context 只放摘要？ | 完整定义已在 workflow_node_context，重复注入浪费 token。摘要 ~30 token/skill vs 完整 ~200-500 token/skill |
-| 非 bundled skill 的 body 怎么办？ | global/project skill 没有对应 WorkflowNode，body 仍在 skill_context 中完整注入 |
-
-### 未来优化：按需加载
-
-当前 workflow_node_context 把所有 Node 定义都注入。未来可以优化为只注入活跃 Node 的定义：
-
-```python
-# 未来优化：只注入活跃 Node
-active_names = {run.name for run in self.skill_runs if run.status == "active"}
-instructions = [
-    render_node_markdown(node, dag)
-    for name, node in dag.nodes.items()
-    if name in active_names
-]
-```
-
-这会把 workflow_node_context 的 token 开销从 ~2000-4000 降到 ~200-500（只注入 1-2 个活跃 Node）。
-但第一期先保持全量注入，确保行为一致。
-
-## 自动生成 SKILL.md
-
-结构化定义是 single source of truth。SKILL.md 从 `WorkflowNode` 自动生成，供 LLM 阅读：
-
-```python
-# src/voidx/skills/render.py
+# src/voidx/workflow/render.py
 
 def render_node_markdown(node: WorkflowNode, dag: WorkflowDAG | None = None) -> str:
-    """Render a WorkflowNode into the SKILL.md format that LLMs read.
-
-    dag is optional — when provided, transitions are injected from DAG edges,
-    since the node itself doesn't know its outgoing edges.
-    """
-    sections = []
-
-    # Frontmatter
-    frontmatter_lines = [f"name: {node.name}"]
-    if node.description:
-        frontmatter_lines.append(f"description: {node.description}")
-    if node.triggers:
-        frontmatter_lines.append("triggers:")
-        for trigger in node.triggers:
-            frontmatter_lines.append(f"  - {trigger}")
-    frontmatter = "\n".join(frontmatter_lines)
-
-    # Title + core rule
-    body_lines = [f"# {node.name.replace('-', ' ').title()} for voidx", ""]
-    if node.description:
-        body_lines.append(node.description)
-        body_lines.append("")
+    lines = [
+        f"## Workflow Node: {node.name}",
+        f"Description: {node.description}",
+        f"Priority: {node.priority}",
+    ]
     if node.core_rule:
-        body_lines.append(f"Core rule: {node.core_rule}")
-        body_lines.append("")
-
-    # Gate
+        lines.extend(["", "### Core Rule", node.core_rule])
     if node.gate:
-        body_lines.append("## Gate")
-        body_lines.append("")
-        body_lines.append(node.gate.description)
-        body_lines.append("")
-
-    # Anti-patterns
-    if node.anti_patterns:
-        body_lines.append("## Anti-Patterns")
-        body_lines.append("")
-        for ap in node.anti_patterns:
-            body_lines.append(f"- {ap}")
-        body_lines.append("")
-
-    # Workflow
+        lines.extend(["", "### Gate"])
+        if node.gate.denied_tools:
+            lines.append(f"Denied tools: {', '.join(node.gate.denied_tools)}")
+        if node.gate.required_before_transition:
+            lines.append(f"Required before transition: {node.gate.required_before_transition}")
+        if node.gate.description:
+            lines.append(node.gate.description)
     if node.workflow:
-        body_lines.append("## Workflow")
-        body_lines.append("")
+        lines.extend(["", "### Workflow"])
         for step in node.workflow:
-            desc = f" — {step.description}" if step.description else ""
-            body_lines.append(f"{step.order}. **{step.action}**{desc}")
-        body_lines.append("")
-
-    # Decision rules
-    if node.decision_rules:
-        body_lines.append("## Decision Rules")
-        body_lines.append("")
-        for rule in node.decision_rules:
-            body_lines.append(f"- {rule.description}")
-        body_lines.append("")
-
-    # Allowed exceptions
-    if node.allowed_exceptions:
-        body_lines.append("## Allowed Exceptions")
-        body_lines.append("")
-        for exc in node.allowed_exceptions:
-            body_lines.append(f"- {exc}")
-        body_lines.append("")
-
-    # Extra sections
-    for title, content in node.extra_sections.items():
-        body_lines.append(f"## {title}")
-        body_lines.append("")
-        body_lines.append(content)
-        body_lines.append("")
-
-    body = "\n".join(body_lines)
-    return f"---\n{frontmatter}\n---\n\n{body}\n"
+            suffix = f": {step.description}" if step.description else ""
+            lines.append(f"{step.order}. {step.action}{suffix}")
+    if dag:
+        edges = dag.edges_from(node.name)
+        if edges:
+            lines.extend(["", "### Available Exits"])
+            for edge in edges:
+                lines.append(f"- `{edge.condition}` -> `{edge.target}`")
+            lines.append("- `done` -> end this workflow node")
+    return "\n".join(lines).strip() + "\n"
 ```
 
 ## 与现有架构的集成
 
-### SkillRegistry 改造
+### WorkflowService 与 SkillRegistry 分离
 
 ```python
-# src/voidx/skills/registry.py
+# src/voidx/workflow/service.py
 
-class SkillRegistry:
-    def discover(self) -> list[SkillDefinition]:
-        skills: dict[str, SkillDefinition] = {}
-        # Bundled skills: 从 WorkflowNode + WorkflowDAG 加载
-        dag = DEFAULT_WORKFLOW_DAG
-        for name, node in dag.nodes.items():
-            skill = _node_to_definition(node, dag, self.bundled_dir)
-            skills[normalize_skill_name(node.name)] = skill
-        # Global/project skills: 仍从 SKILL.md 加载
-        for scope, root in (("global", self.global_dir), ("project", self.project_dir)):
-            for skill in self._discover_root(root, scope):
-                skills[normalize_skill_name(skill.name)] = skill
-        return sorted(skills.values(), key=lambda item: item.name)
+class WorkflowService:
+    def nodes(self) -> list[WorkflowNode]:
+        return sorted(DEFAULT_WORKFLOW_DAG.nodes.values(), key=lambda node: workflow_sort_key(node.name))
+
+    def select(self, user_text: str, *, task_intent: str | None = None, agent: str = "") -> list[WorkflowMatch]:
+        ...
+
+    def context(self) -> str:
+        return render_workflow_context(self.nodes())
 ```
+
+`SkillRegistry` 保持 project/global Markdown skill discovery；默认不再发现内置 workflow node。
 
 ### policy.py 简化
 
-`WORKFLOW_SKILL_TRANSITIONS` 和 `WORKFLOW_SKILL_PRIORITY` 不再需要手动维护，从 `WorkflowNode` 自动推导：
+`WORKFLOW_TRANSITIONS` 和 `WORKFLOW_PRIORITY` 不再需要手动维护，从 `WorkflowNode` 自动推导：
 
 ```python
-# src/voidx/skills/policy.py
+# src/voidx/workflow/policy.py
 
 def _dag_from_workflow() -> dict[str, list[Edge]]:
     """Build the transition map from WorkflowDAG."""
@@ -1305,70 +1070,64 @@ def _gates_from_workflow() -> dict[str, NodeGate]:
 ### WorkflowDAG 注册
 
 ```python
-# src/voidx/skills/bundled/__init__.py
+# src/voidx/workflow/nodes.py
 
-from voidx.skills.bundled.brainstorming import BRAINSTORMING
-from voidx.skills.bundled.writing_design_docs import WRITING_DESIGN_DOCS
-from voidx.skills.bundled.writing_plans import WRITING_PLANS
-from voidx.skills.bundled.test_driven_development import TEST_DRIVEN_DEVELOPMENT
-from voidx.skills.bundled.verification_before_completion import VERIFICATION_BEFORE_COMPLETION
-from voidx.skills.bundled.requesting_code_review import REQUESTING_CODE_REVIEW
-from voidx.skills.bundled.receiving_code_review import RECEIVING_CODE_REVIEW
-from voidx.skills.bundled.systematic_debugging import SYSTEMATIC_DEBUGGING
+from voidx.workflow.nodes import BRAINSTORMING
+from voidx.workflow.nodes import WRITING_DESIGN_DOCS
+from voidx.workflow.nodes import WRITING_PLANS
+from voidx.workflow.nodes import TEST_DRIVEN_DEVELOPMENT
+from voidx.workflow.nodes import VERIFICATION_BEFORE_COMPLETION
+from voidx.workflow.nodes import REQUESTING_CODE_REVIEW
+from voidx.workflow.nodes import RECEIVING_CODE_REVIEW
+from voidx.workflow.nodes import SYSTEMATIC_DEBUGGING
 
-BUNDLED_WORKFLOW_NODES = {
-    "brainstorming": BRAINSTORMING,
-    "writing-design-docs": WRITING_DESIGN_DOCS,
-    "writing-plans": WRITING_PLANS,
-    "test-driven-development": TEST_DRIVEN_DEVELOPMENT,
-    "verification-before-completion": VERIFICATION_BEFORE_COMPLETION,
-    "requesting-code-review": REQUESTING_CODE_REVIEW,
-    "receiving-code-review": RECEIVING_CODE_REVIEW,
-    "systematic-debugging": SYSTEMATIC_DEBUGGING,
-}
+BUILTIN_WORKFLOW_NODES = [
+    BRAINSTORMING,
+    WRITING_DESIGN_DOCS,
+    WRITING_PLANS,
+    TEST_DRIVEN_DEVELOPMENT,
+    VERIFICATION_BEFORE_COMPLETION,
+    REQUESTING_CODE_REVIEW,
+    RECEIVING_CODE_REVIEW,
+    SYSTEMATIC_DEBUGGING,
+]
 ```
 
 ## 向后兼容
 
 | 场景 | 处理方式 |
 |------|---------|
-| Bundled skill | 从 `WorkflowNode` Python 定义加载，SKILL.md 自动生成 |
+| 内置 workflow node | 从 `src/voidx/workflow/nodes.py` 加载，不进入 SkillRegistry，不生成 `SKILL.md` |
 | Global skill (`~/.voidx/skills/`) | 仍从 SKILL.md 加载，无 gate/edges（runtime 不强制） |
 | Project skill (`.voidx/skills/`) | 仍从 SKILL.md 加载，无 gate/edges（runtime 不强制） |
-| `SkillDefinition.body` | 对 bundled skill，从 `WorkflowNode` 自动生成；对 user skill，仍读 SKILL.md |
-| `SkillDefinition.meta` | 对 bundled skill，从 `WorkflowNode` 推导；对 user skill，仍读 frontmatter |
+| `SkillDefinition.body` | 只用于 Markdown skills；Workflow Context body 由 `WorkflowNode` 渲染 |
+| `voidx.skills.runtime/policy` | 保留兼容 alias，转发到 `voidx.workflow.runtime/policy` |
 
 ## 修改清单
 
 | # | 文件 | 修改内容 | 优先级 |
 |---|------|---------|--------|
-| 1 | `src/voidx/skills/schema.py` | 新增 `NodeGate`, `Edge`, `DecisionRule`, `WorkflowStep`, `WorkflowNode`, `IntentEntry`, `WorkflowDAG` | P0 |
-| 2 | `src/voidx/skills/bundled/brainstorming.py` | 结构化定义 | P0 |
-| 3 | `src/voidx/skills/bundled/writing_design_docs.py` | 结构化定义 | P0 |
-| 4 | `src/voidx/skills/bundled/writing_plans.py` | 结构化定义 | P0 |
-| 5 | `src/voidx/skills/bundled/test_driven_development.py` | 结构化定义 | P0 |
-| 6 | `src/voidx/skills/bundled/verification_before_completion.py` | 结构化定义 | P0 |
-| 7 | `src/voidx/skills/bundled/requesting_code_review.py` | 结构化定义 | P0 |
-| 8 | `src/voidx/skills/bundled/receiving_code_review.py` | 结构化定义 | P0 |
-| 9 | `src/voidx/skills/bundled/systematic_debugging.py` | 结构化定义 | P0 |
-| 10 | `src/voidx/skills/bundled/dag.py` | 新增 `DEFAULT_WORKFLOW_DAG` 定义 | P0 |
-| 11 | `src/voidx/skills/bundled/__init__.py` | 注册 `BUNDLED_WORKFLOW_NODES` | P0 |
-| 12 | `src/voidx/tools/advance_workflow.py` | 新增 `advance_workflow` 工具（出口选择） | P0 |
-| 13 | `src/voidx/skills/render.py` | 新增 `render_node_markdown(node, dag)` | P1 |
-| 14 | `src/voidx/skills/registry.py` | bundled skill 从 `WorkflowNode` + `WorkflowDAG` 加载 | P1 |
-| 15 | `src/voidx/skills/policy.py` | DAG/gate/priority 从 `WorkflowDAG` 推导 | P1 |
-| 16 | `src/voidx/skills/context.py` | `render_skill_instruction()` 适配 `WorkflowNode`，注入出边信息 | P1 |
-| 17 | `src/voidx/skills/bundled/*/SKILL.md` | 改为自动生成（或删除，由 render 动态生成） | P2 |
+| 1 | `src/voidx/workflow/schema.py` | 新增 `NodeGate`, `Edge`, `DecisionRule`, `WorkflowStep`, `WorkflowNode`, `IntentEntry`, `WorkflowDAG` | P0 |
+| 2 | `src/voidx/workflow/nodes.py` | 8 个内置 workflow node 和 `BUILTIN_WORKFLOW_NODES` | P0 |
+| 3 | `src/voidx/workflow/dag.py` | `DEFAULT_WORKFLOW_DAG` 和条件边 | P0 |
+| 4 | `src/voidx/tools/advance_workflow.py` | 出口选择工具 | P0 |
+| 5 | `src/voidx/agent/graph/permissions.py` | active workflow gate denied_tools 检查 | P0 |
+| 6 | `src/voidx/workflow/runtime.py` | `advance_workflow_states()` 支持 condition + evidence | P1 |
+| 7 | `src/voidx/agent/runtime_context.py` | Current Task State 注入 active nodes、gate 和 exits | P1 |
+| 8 | `src/voidx/workflow/policy.py` | priority / transition / activation 从 DAG 推导 | P1 |
+| 9 | `src/voidx/workflow/render.py` | `render_node_markdown(node, dag)` 输出 Workflow Context markdown | P1 |
+| 10 | `src/voidx/workflow/service.py` | workflow selection、runs、context | P1 |
+| 11 | `src/voidx/workflow/context.py` | `VOIDX_WORKFLOW_CONTEXT` 渲染与缓存 key | P1 |
 
 ## 风险
 
 | 风险 | 缓解 |
 |------|------|
 | 结构化定义丢失 markdown 的表达力 | `extra_sections` 和 `gate.description` 保留自由文本，LLM 仍可读到完整指导 |
-| 自动生成的 SKILL.md 与手写版有差异 | 生成后 diff 对比，确保语义等价 |
-| Global/project skill 无法使用 gate/edges | 第一期只对 bundled skill 结构化，user skill 保持 SKILL.md 格式 |
+| Workflow Context markdown 与旧手写 SKILL.md 有差异 | 结构化 node 保留旧语义，测试覆盖关键内容和 context marker |
+| Global/project skill 无法使用 gate/edges | 内置 workflow 与外部 Markdown skill 分离，user skill 保持 SKILL.md 格式 |
 | WorkflowNode 字段过多增加维护成本 | 字段都有默认值，简单 node 只需 name + description |
 | WorkflowDAG 与 Node 不同步 | DAG 引用不存在的 node name 时启动报错，用 Pydantic validator 校验 |
-| LLM 不调用 advance_workflow | Node 完成后 LLM 忘记选出口 → 默认结束，行为安全但可能跳过后续流程 |
+| LLM 不调用 advance_workflow | Node 会保持 active，gate 持续生效；因此 `advance_workflow` 必须在需要推进 workflow 的回合对 orchestrator 可见 |
 | LLM 选错 condition | advance_workflow 返回可用出口列表，LLM 可重试 |
 | 多个活跃 Node 同时存在 | advance_workflow 只处理第一个匹配的，避免歧义 |

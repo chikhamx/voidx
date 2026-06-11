@@ -1,5 +1,7 @@
 # LSP 启动预热与超时优化 — 技术设计文档
 
+> **Status: Done** — 已实现启动预热、30s LSP 请求超时、启动 UI warmup 状态展示和测试覆盖。
+
 ## Context
 
 voidx 的 LSP 工具（`lsp_diagnostics`、`lsp_symbols`、`lsp_definition`、`lsp_references`、`lsp_format`）在首次调用时几乎必然超时。根本原因有两个：
@@ -47,10 +49,12 @@ voidx 的 LSP 工具（`lsp_diagnostics`、`lsp_symbols`、`lsp_definition`、`l
 启动 → show_lsp_startup()
          ├── manager.initialize()          # 加载配置
          ├── manager.warm_up()             # 新增：预热所有可用服务器
-         │   └── 对每个 enabled + available 的服务器:
-         │       └── _ensure_client()      # 启动进程 + initialize 握手
+         │   └── 对每个 enabled 且命令可解析的服务器:
+         │       └── _ensure_client(language, timeout=30.0)
+         │           └── client.start(timeout=30.0)  # 启动进程 + initialize 握手
          └── 显示预热结果
-              "python → pyright-langserver ✓"  或  "python → pyright-langserver (connecting…)"
+              "python → pyright-langserver (warming…)"
+              "python → pyright-langserver ✓ ready"  或  "python → pyright-langserver failed: <reason>"
 
 首次工具调用 → open_document() → _ensure_client()
                                 └── client 已连接，直接复用    # 无冷启动
@@ -67,9 +71,15 @@ voidx 的 LSP 工具（`lsp_diagnostics`、`lsp_symbols`、`lsp_definition`、`l
 ### `LspManager.warm_up()`
 
 - **Signature**: `async def warm_up(self, *, timeout: float = 30.0) -> dict[str, str]`
-- **Behavior**: 对所有 `enabled` 且 `resolved_command` 存在的服务器，并发调用 `_ensure_client()`。返回 `{language: status}` 映射，status 为 `"ok"` / `"error: <message>"`。
+- **Behavior**: 对所有 `enabled` 且命令可解析的服务器并发预热；不可解析的服务器跳过，不写入 error。可预热服务器调用 `_ensure_client(language, timeout=timeout)`。返回 `{language: status}` 映射，status 为 `"ok"` / `"error: <message>"`。
 - **Errors**: 单个服务器预热失败不影响其他服务器。失败信息记入 `self._errors`。
 - **Timeout**: 每个服务器的 `client.start()` 传入 `timeout` 参数（默认 30s）。
+
+### `LspManager._ensure_client()`
+
+- **Before**: `async def _ensure_client(self, language: str) -> LspClient`
+- **After**: `async def _ensure_client(self, language: str, *, timeout: float = 30.0) -> LspClient`
+- **Behavior**: 已连接时直接复用；未连接时用传入 timeout 调用 `client.start()`。
 
 ### `LspClient.start()` timeout 参数
 
@@ -93,13 +103,23 @@ voidx 的 LSP 工具（`lsp_diagnostics`、`lsp_symbols`、`lsp_definition`、`l
 | `references` | `textDocument/references` | 默认 10s | 30s |
 | `format_document` | `textDocument/formatting` | 默认 10s | 30s |
 
+### 启动 UI
+
+`show_lsp_startup()` 仍在后台 task 中运行，不阻塞 REPL。展示分两步：
+
+1. `manager.initialize()` 后先打印可用服务器列表，状态为 `warming...`，让用户知道已检测到但仍在预热。
+2. `manager.warm_up()` 返回后打印结果：成功显示 `ready`，失败显示 `failed: <message>`。
+
+如果 `warm_up()` 不存在（测试或旧 adapter fake manager），run loop 保持只展示 doctor 检测结果，避免破坏轻量 mock。
+
 ## Error Handling
 
 | 失败场景 | 处理策略 |
 |---------|---------|
 | 预热时某个 LSP 服务器启动超时 | 记入 `self._errors`，返回 `"error: LSP request timed out"`，不影响其他服务器 |
 | 预热时 LSP 服务器进程崩溃 | `_ensure_client()` 抛 `LspConnectionError`，捕获后记入 `self._errors` |
-| 预热时命令不存在 | `_check_command()` 抛 `LspServerUnavailable`，捕获后记入 `self._errors` |
+| 预热前命令不可解析 | 跳过该服务器，不写入 `self._errors`，保持 `disconnected` 状态 |
+| 预热时命令在解析后消失 | `_ensure_client()` 抛 `LspServerUnavailable`，捕获后记入 `self._errors` |
 | 预热整体被取消（用户退出） | `show_lsp_startup()` 已有 `asyncio.CancelledError` 处理，预热任务随主循环一起取消 |
 | 预热后服务器断连 | 下次工具调用时 `_ensure_client()` 检测到 `not client.connected`，重新启动 |
 
@@ -112,6 +132,17 @@ voidx 的 LSP 工具（`lsp_diagnostics`、`lsp_symbols`、`lsp_definition`、`l
 | 默认超时从 10s 提到 30s | 提到 60s 或不设超时 | 30s 覆盖绝大多数项目；60s 过于保守；不设超时风险太大 |
 | 预热失败不阻塞启动 | 预热失败时阻止使用 LSP 工具 | LSP 是辅助功能，不应因预热失败影响核心流程 |
 | `warm_up()` 返回状态映射 | 无返回值，靠 `statuses()` 查询 | 启动 UI 需要直接拿到结果来展示，`statuses()` 需要额外调用 |
+
+## Test Plan
+
+| 测试 | 覆盖 |
+|------|------|
+| `test_lsp_manager_warm_up_starts_available_servers` | `warm_up()` 预热 fake LSP，并让 status 变为 `connected` |
+| `test_lsp_manager_warm_up_skips_unavailable_servers` | 命令不可解析的服务器不预热、不写 error |
+| `test_lsp_manager_warm_up_records_per_server_errors` | 单个语言预热失败写入 `_errors`，不影响其它语言 |
+| `test_lsp_manager_requests_use_extended_timeout` | manager 的 symbol/definition/references/format 调用显式传 `timeout=30.0` |
+| `test_run_loop_lsp_startup_warms_servers` | 启动后台 task 调用 `manager.warm_up()` 并显示 ready/failed |
+| 现有 `test_run_loop_cancels_lsp_startup_tasks_on_exit` | 启动 task 取消路径仍然可取消 |
 
 ## Open Questions
 
