@@ -30,40 +30,57 @@ def workflow_activations(
     *,
     agent: str = "",
     task_intent: str | None = None,
+    goal_type: str | None = None,
     interaction_mode: str | None = None,
+    runtime_trigger: str | None = None,
 ) -> list[WorkflowActivation]:
     text = user_text.strip().lower()
     agent_name = (agent or "").strip().lower()
     intent = (task_intent or "").strip().lower()
+    goal = (goal_type or "").strip().lower()
     mode = (interaction_mode or "").strip().lower()
+    trigger = (runtime_trigger or "").strip().lower()
     activations: dict[str, WorkflowActivation] = {}
 
     def add(name: str, reason: str) -> None:
         activations.setdefault(name, WorkflowActivation(name=name, reason=reason))
 
-    if intent == "debug":
-        add("debug", "debug intent")
-        add("tdd", "debug fix lifecycle")
-        add("verify", "debug lifecycle")
+    if trigger:
+        add(trigger, f"runtime:{trigger}")
+
+    if intent != "coding":
+        return sorted(
+            activations.values(),
+            key=lambda item: (WORKFLOW_PRIORITY.get(item.name, 999), item.name),
+        )
+
+    if goal:
+        entry = DEFAULT_WORKFLOW_DAG.entry(goal)
+        if entry is not None:
+            for name in entry.nodes:
+                add(name, entry.reason)
+
+    if goal == "bugfix":
+        add("tdd", "bugfix lifecycle")
+        add("verify", "bugfix lifecycle")
+    elif goal == "debug":
+        add("debug", "goal:debug")
 
     if agent_name == "implement":
-        add("tdd", "implement role")
-        add("verify", "implement lifecycle")
-    elif intent == "implement":
-        add("tdd", "implement intent")
+        add("tdd", "implement persona")
         add("verify", "implement lifecycle")
 
     if agent_name == "plan":
-        add("plan", "plan role")
+        add("plan", "plan persona")
 
-    if intent == "review":
+    if goal == "review":
         if _contains_any(text, _REVIEW_FEEDBACK_TERMS):
             add("review-feedback", "review feedback")
         else:
-            add("review", "review intent")
+            add("review", "goal:review")
 
-    if intent == "design":
-        add("brainstorm", "design intent")
+    if goal == "design":
+        add("brainstorm", "goal:design")
         if _contains_any(text, _PLAN_TERMS):
             add("plan", "planning intent")
 
@@ -91,6 +108,11 @@ def workflow_edges(name: str) -> tuple[Edge, ...]:
 
 def workflow_gate(name: str) -> NodeGate | None:
     return DEFAULT_WORKFLOW_DAG.gate_for(name)
+
+
+def workflow_personas(name: str) -> tuple[str, ...]:
+    node = DEFAULT_WORKFLOW_DAG.nodes.get(name.strip().lower())
+    return tuple(node.personas) if node else ()
 
 
 def workflow_denied_tools(active_names: list[str]) -> set[str]:

@@ -10,6 +10,7 @@ from voidx.workflow.policy import (
     workflow_edges,
     workflow_exit_summaries,
     workflow_gate,
+    workflow_personas,
     workflow_sort_key,
     workflow_transitions,
 )
@@ -26,7 +27,7 @@ from voidx.workflow.render import render_dag_overview, render_node_markdown, ren
 from voidx.workflow.schema import (
     DecisionRule,
     Edge,
-    IntentEntry,
+    GoalEntry,
     NodeGate,
     WorkflowDAG,
     WorkflowNode,
@@ -50,7 +51,7 @@ __all__ = [
     "WorkflowStateEventKind",
     "DecisionRule",
     "Edge",
-    "IntentEntry",
+    "GoalEntry",
     "NodeGate",
     "WorkflowStep",
     "advance_workflow_states",
@@ -63,6 +64,7 @@ __all__ = [
     "workflow_edges",
     "workflow_exit_summaries",
     "workflow_gate",
+    "workflow_personas",
     "workflow_sort_key",
     "workflow_transitions",
 ]

@@ -11,12 +11,12 @@ def render_dag_overview(dag: WorkflowDAG) -> str:
         "Workflow node definitions live in the separate Workflow Context message.",
         "Use Current Task State to determine which nodes are active for this turn.",
         "",
-        "Entry intents:",
+        "Entry goal types:",
     ]
-    if dag.intent_map:
-        for entry in sorted(dag.intent_map, key=lambda item: item.intent):
+    if dag.goal_map:
+        for entry in sorted(dag.goal_map, key=lambda item: item.goal_type):
             reason = f" ({entry.reason})" if entry.reason else ""
-            lines.append(f"- {entry.intent}: {', '.join(entry.nodes)}{reason}")
+            lines.append(f"- {entry.goal_type}: {', '.join(entry.nodes)}{reason}")
     else:
         lines.append("- none")
 
@@ -63,10 +63,8 @@ def render_node_markdown(node: WorkflowNode, dag: WorkflowDAG | None = None) -> 
         lines.append(f"Triggers: {', '.join(node.triggers)}")
     if node.core_rule:
         lines.extend(["", "### Core Rule", node.core_rule])
-    if node.gate.description or node.gate.denied_tools or node.gate.required_before_transition:
+    if node.gate.description or node.gate.required_before_transition:
         lines.extend(["", "### Gate"])
-        if node.gate.denied_tools:
-            lines.append(f"Denied tools: {', '.join(node.gate.denied_tools)}")
         if node.gate.required_before_transition:
             lines.append(f"Required before transition: {node.gate.required_before_transition}")
         if node.gate.description:

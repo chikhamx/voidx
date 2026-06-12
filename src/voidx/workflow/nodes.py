@@ -33,6 +33,7 @@ BRAINSTORMING = WorkflowNode(
     ],
     priority=5,
     core_rule="Present a design and get user approval before writing any code.",
+    personas=["coordinate", "explore"],
     gate=NodeGate(
         denied_tools=("write", "edit", "apply_patch", "lsp_format"),
         description=(
@@ -91,6 +92,7 @@ WRITING_DESIGN_DOCS = WorkflowNode(
     ],
     priority=25,
     core_rule="Write for the reader who has zero context.",
+    personas=["plan"],
     gate=NodeGate(
         description="Do not skip the reader test. Every document must pass a fresh-read check before being considered complete.",
         required_before_transition="doc passes reader test",
@@ -139,6 +141,7 @@ WRITING_PLANS = WorkflowNode(
     triggers=["implementation plan", "write a plan", "planning", "spec", "requirements", "计划", "实施方案", "需求"],
     priority=30,
     core_rule="Plans must be executable: exact paths, concrete commands, and voidx tool names.",
+    personas=["plan"],
     gate=NodeGate(
         denied_tools=("write", "edit", "apply_patch", "lsp_format"),
         description="Do not start implementation until the plan is approved. The plan must be executable with exact paths and commands.",
@@ -165,6 +168,7 @@ TEST_DRIVEN_DEVELOPMENT = WorkflowNode(
     triggers=["implement", "feature", "bugfix", "refactor", "behavior change", "add support", "fix bug", "实现", "修复", "重构", "功能"],
     priority=40,
     core_rule="Write a test that fails for the intended reason before writing the implementation.",
+    personas=["implement"],
     gate=NodeGate(
         description="If you wrote implementation code before a failing test, delete the implementation and start from the test.",
         required_before_transition="test written, red verified, implementation green",
@@ -189,6 +193,7 @@ VERIFICATION_BEFORE_COMPLETION = WorkflowNode(
     triggers=["done", "complete", "fixed", "passing", "ready", "verify", "verified", "looks good", "should work", "完成", "修好了", "通过", "验证", "好了", "没问题了"],
     priority=50,
     core_rule="Evidence before completion claims.",
+    personas=["review"],
     gate=NodeGate(
         description="Before claiming any status, identify the proving command, run it in this turn, read the output, and report the evidence.",
         required_before_transition="verification command run with evidence",
@@ -224,6 +229,7 @@ REQUESTING_CODE_REVIEW = WorkflowNode(
     triggers=["request review", "ask for review", "before merge", "pre-merge", "review this change", "复核一下", "合并前"],
     priority=60,
     core_rule="Review early, review often.",
+    personas=["review"],
     gate=NodeGate(
         description="Do not merge to main or mark substantial work complete without requesting review.",
         required_before_transition="review requested with required brief fields",
@@ -253,6 +259,7 @@ RECEIVING_CODE_REVIEW = WorkflowNode(
     triggers=["review feedback", "code review feedback", "reviewer says", "feedback says", "review comment", "优化点", "审查意见", "评审意见"],
     priority=20,
     core_rule="Verify feedback against the codebase before changing code.",
+    personas=["implement"],
     gate=NodeGate(
         description="Do not implement any feedback item before verifying it against the codebase.",
         required_before_transition="feedback verified against codebase",
@@ -283,6 +290,7 @@ SYSTEMATIC_DEBUGGING = WorkflowNode(
     triggers=["bug", "failed", "failure", "traceback", "error", "crash", "broken", "not working", "unexpected", "test failure", "build failure", "报错", "失败", "异常", "崩溃", "排查", "不对", "结果不对"],
     priority=10,
     core_rule="Find the root cause before changing code.",
+    personas=["explore"],
     gate=NodeGate(
         denied_tools=("write", "edit", "apply_patch", "lsp_format"),
         description="Root cause investigation must complete before proposing or applying any fix.",
@@ -310,7 +318,33 @@ SYSTEMATIC_DEBUGGING = WorkflowNode(
 )
 
 
+COMPACTION = WorkflowNode(
+    name="compaction",
+    description="Runtime-only workflow for summarizing conversation history during context compaction.",
+    triggers=[],
+    priority=1,
+    core_rule=(
+        "Preserve durable facts, explicit decisions, constraints, open work, and final tool outcomes. "
+        "Remove stale transient execution detail."
+    ),
+    personas=["coordinate"],
+    workflow=[
+        WorkflowStep(order=1, action="Identify durable state", description="Extract user decisions, requirements, constraints, and current task state."),
+        WorkflowStep(order=2, action="Preserve work evidence", description="Keep final tool outcomes, changed files, verification results, and unresolved failures."),
+        WorkflowStep(order=3, action="Drop transient detail", description="Remove step-by-step narration, redundant tool chatter, and stale hypotheses."),
+        WorkflowStep(order=4, action="Write continuation summary", description="Produce a compact summary that a later turn can rely on without the removed messages."),
+    ],
+    extra_sections={
+        "Output Contract": (
+            "Write a structured summary only. Do not address the user, do not include markdown fences, "
+            "and do not invent facts that are not present in the conversation."
+        ),
+    },
+)
+
+
 BUILTIN_WORKFLOW_NODES = [
+    COMPACTION,
     BRAINSTORMING,
     WRITING_DESIGN_DOCS,
     WRITING_PLANS,

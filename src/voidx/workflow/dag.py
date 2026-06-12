@@ -3,7 +3,7 @@
 from __future__ import annotations
 
 from voidx.workflow.nodes import BUILTIN_WORKFLOW_NODES
-from voidx.workflow.schema import Edge, IntentEntry, WorkflowDAG
+from voidx.workflow.schema import Edge, GoalEntry, WorkflowDAG
 
 
 DEFAULT_WORKFLOW_DAG = WorkflowDAG(
@@ -25,10 +25,14 @@ DEFAULT_WORKFLOW_DAG = WorkflowDAG(
         Edge(source="debug", target="tdd", condition="nontrivial_fix", label="fix requires TDD"),
         Edge(source="debug", target="verify", condition="trivial_fix", label="fix is trivial"),
     ],
-    intent_map=[
-        IntentEntry(intent="debug", nodes=["debug", "tdd", "verify"], reason="debug intent"),
-        IntentEntry(intent="implement", nodes=["tdd", "verify"], reason="implement intent"),
-        IntentEntry(intent="design", nodes=["brainstorm"], reason="design intent"),
-        IntentEntry(intent="review", nodes=["review"], reason="review intent"),
+    goal_map=[
+        GoalEntry(goal_type="debug", nodes=["debug"], reason="goal:debug"),
+        GoalEntry(goal_type="bugfix", nodes=["debug", "tdd", "verify"], reason="goal:bugfix"),
+        GoalEntry(goal_type="feature", nodes=["brainstorm"], reason="goal:feature"),
+        GoalEntry(goal_type="refactor", nodes=["brainstorm", "plan"], reason="goal:refactor"),
+        GoalEntry(goal_type="design", nodes=["brainstorm"], reason="goal:design"),
+        GoalEntry(goal_type="doc", nodes=["design-doc"], reason="goal:doc"),
+        GoalEntry(goal_type="review", nodes=["review"], reason="goal:review"),
+        GoalEntry(goal_type="chore", nodes=["tdd", "verify"], reason="goal:chore"),
     ],
 )

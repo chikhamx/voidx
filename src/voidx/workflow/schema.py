@@ -29,6 +29,7 @@ class WorkflowNode(BaseModel):
     priority: int = 100
     enabled: bool = True
     core_rule: str = ""
+    personas: list[str] = Field(default_factory=list)
     gate: NodeGate = Field(default_factory=NodeGate)
     workflow: list[WorkflowStep] = Field(default_factory=list)
     decision_rules: list[DecisionRule] = Field(default_factory=list)
@@ -74,17 +75,17 @@ class TerminalExit(BaseModel):
         return normalized
 
 
-class IntentEntry(BaseModel):
-    intent: str
+class GoalEntry(BaseModel):
+    goal_type: str
     nodes: list[str]
     reason: str
 
-    @field_validator("intent")
+    @field_validator("goal_type")
     @classmethod
-    def _normalize_intent(cls, value: str) -> str:
+    def _normalize_goal_type(cls, value: str) -> str:
         normalized = value.strip().lower()
         if not normalized:
-            raise ValueError("workflow intent cannot be empty")
+            raise ValueError("workflow goal type cannot be empty")
         return normalized
 
     @field_validator("nodes")
@@ -97,7 +98,7 @@ class WorkflowDAG(BaseModel):
     name: str
     nodes: dict[str, WorkflowNode]
     edges: list[Edge] = Field(default_factory=list)
-    intent_map: list[IntentEntry] = Field(default_factory=list)
+    goal_map: list[GoalEntry] = Field(default_factory=list)
     terminal_exit: TerminalExit = Field(default_factory=TerminalExit)
 
     @field_validator("nodes", mode="before")
@@ -115,10 +116,10 @@ class WorkflowDAG(BaseModel):
                 raise ValueError(f"workflow edge references unknown source: {edge.source}")
             if edge.target not in names:
                 raise ValueError(f"workflow edge references unknown target: {edge.target}")
-        for entry in self.intent_map:
+        for entry in self.goal_map:
             missing = [node for node in entry.nodes if node not in names]
             if missing:
-                raise ValueError(f"workflow intent {entry.intent} references unknown nodes: {missing}")
+                raise ValueError(f"workflow goal {entry.goal_type} references unknown nodes: {missing}")
         return self
 
     def edges_from(self, name: str) -> list[Edge]:
@@ -129,14 +130,14 @@ class WorkflowDAG(BaseModel):
         target = name.strip().lower()
         return [edge for edge in self.edges if edge.target == target]
 
-    def entry_nodes(self, intent: str) -> list[str]:
-        entry = self.entry(intent)
+    def entry_nodes(self, goal_type: str) -> list[str]:
+        entry = self.entry(goal_type)
         return list(entry.nodes) if entry else []
 
-    def entry(self, intent: str) -> IntentEntry | None:
-        normalized = intent.strip().lower()
-        for entry in self.intent_map:
-            if entry.intent == normalized:
+    def entry(self, goal_type: str) -> GoalEntry | None:
+        normalized = goal_type.strip().lower()
+        for entry in self.goal_map:
+            if entry.goal_type == normalized:
                 return entry
         return None
 

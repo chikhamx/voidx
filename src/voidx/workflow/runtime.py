@@ -57,8 +57,9 @@ class WorkflowRunState(BaseModel):
     status: WorkflowRunStatus = WorkflowRunStatus.PENDING
     source: WorkflowActivationSource = WorkflowActivationSource.WORKFLOW
     reason: str = ""
-    phase: str = ""
+    goal_type: str = ""
     scope: str = ""
+    personas: list[str] = Field(default_factory=list)
     activated_turn: int = 0
     updated_turn: int = 0
     evidence: list[WorkflowEvidence] = Field(default_factory=list)
@@ -71,7 +72,7 @@ class WorkflowRunState(BaseModel):
         cls,
         match,
         *,
-        phase: str = "",
+        goal_type: str = "",
         scope: str = "",
         turn_count: int = 0,
         status: WorkflowRunStatus = WorkflowRunStatus.ACTIVE,
@@ -84,8 +85,9 @@ class WorkflowRunState(BaseModel):
             status=status,
             source=source_from_reason(match.reason),
             reason=match.reason,
-            phase=phase,
+            goal_type=goal_type,
             scope=scope,
+            personas=list(getattr(match.node, "personas", []) or []),
             activated_turn=turn_count,
             updated_turn=turn_count,
             body_hash=body_hash or (workflow_body_hash(body) if body else ""),
@@ -96,8 +98,8 @@ class WorkflowRunState(BaseModel):
         parts = [
             f"{self.name}={self.status.value}",
         ]
-        if self.phase:
-            parts.append(f"phase={self.phase}")
+        if self.goal_type:
+            parts.append(f"goal_type={self.goal_type}")
         parts.append(f"source={self.source.value}")
         if self.reason:
             parts.append(f"reason={self.reason}")
@@ -222,8 +224,9 @@ def _activate_transition_targets(
                 if condition
                 else f"transition from {run.name}"
             ),
-            phase=run.phase,
+            goal_type=run.goal_type,
             scope=run.scope,
+            personas=list(_workflow_personas(key)),
             activated_turn=turn_count,
             updated_turn=turn_count,
             transition_to=list(_workflow_transitions(key)),
@@ -266,6 +269,12 @@ def _workflow_edges(name: str):
     from voidx.workflow.policy import workflow_edges
 
     return workflow_edges(name)
+
+
+def _workflow_personas(name: str) -> tuple[str, ...]:
+    from voidx.workflow.policy import workflow_personas
+
+    return workflow_personas(name)
 
 
 def _initial_status_for_event(kind: WorkflowStateEventKind) -> WorkflowRunStatus:

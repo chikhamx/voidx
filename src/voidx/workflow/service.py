@@ -44,14 +44,16 @@ class WorkflowService:
         *,
         agent: str = "",
         task_intent: str | None = None,
+        goal_type: str | None = None,
         interaction_mode: str | None = None,
+        runtime_trigger: str | None = None,
         limit: int = 5,
         scopes: Iterable[str] | None = None,
         exclude_names: Iterable[str] = (),
     ) -> list[WorkflowMatch]:
         del scopes
         text = user_text.strip()
-        has_context = bool(agent or task_intent or interaction_mode)
+        has_context = bool(agent or task_intent or goal_type or interaction_mode or runtime_trigger)
         if not text and not has_context:
             return []
 
@@ -77,20 +79,23 @@ class WorkflowService:
             text,
             agent=agent,
             task_intent=task_intent,
+            goal_type=goal_type,
             interaction_mode=interaction_mode,
+            runtime_trigger=runtime_trigger,
         ):
             add_match(self.get(activation.name), activation.reason)
 
-        lowered = text.lower()
-        text_matches: list[WorkflowMatch] = []
-        for node in self.nodes():
-            if _normalize(node.name) in seen or _normalize(node.name) in excluded:
-                continue
-            reason = self._match_reason(node, lowered)
-            if reason:
-                text_matches.append(WorkflowMatch(node=node, reason=reason))
-        text_matches.sort(key=lambda match: workflow_sort_key(match.name))
-        matches.extend(text_matches)
+        if not goal_type:
+            lowered = text.lower()
+            text_matches: list[WorkflowMatch] = []
+            for node in self.nodes():
+                if _normalize(node.name) in seen or _normalize(node.name) in excluded:
+                    continue
+                reason = self._match_reason(node, lowered)
+                if reason:
+                    text_matches.append(WorkflowMatch(node=node, reason=reason))
+            text_matches.sort(key=lambda match: workflow_sort_key(match.name))
+            matches.extend(text_matches)
         return matches[:limit]
 
     def activation_summaries(
@@ -99,7 +104,9 @@ class WorkflowService:
         *,
         agent: str = "",
         task_intent: str | None = None,
+        goal_type: str | None = None,
         interaction_mode: str | None = None,
+        runtime_trigger: str | None = None,
         limit: int = 5,
         scopes: Iterable[str] | None = None,
         exclude_names: Iterable[str] = (),
@@ -110,43 +117,29 @@ class WorkflowService:
                 user_text,
                 agent=agent,
                 task_intent=task_intent,
+                goal_type=goal_type,
                 interaction_mode=interaction_mode,
+                runtime_trigger=runtime_trigger,
                 limit=limit,
                 scopes=scopes,
                 exclude_names=exclude_names,
             )
         ]
 
-    def select_runs(
+    def runs_from_matches(
         self,
-        user_text: str,
+        matches: list[WorkflowMatch],
         *,
-        agent: str = "",
-        task_intent: str | None = None,
-        interaction_mode: str | None = None,
-        phase: str = "",
+        goal_type: str | None = None,
         scope: str = "",
-        turn_count: int = 0,
-        limit: int = 5,
-        scopes: Iterable[str] | None = None,
-        exclude_names: Iterable[str] = (),
     ) -> list[WorkflowRunState]:
         return [
             WorkflowRunState.from_match(
                 match,
-                phase=phase,
+                goal_type=goal_type or _goal_type_from_reason(match.reason),
                 scope=scope,
-                turn_count=turn_count,
             )
-            for match in self.select(
-                user_text,
-                agent=agent,
-                task_intent=task_intent,
-                interaction_mode=interaction_mode,
-                limit=limit,
-                scopes=scopes,
-                exclude_names=exclude_names,
-            )
+            for match in matches
         ]
 
     def context(self, *, active_names: Iterable[str] = ()) -> str:
@@ -195,3 +188,9 @@ def _significant_terms(description: str) -> list[str]:
     terms = re.findall(r"[A-Za-z][A-Za-z0-9_-]{3,}", description.lower())
     stop = {"when", "with", "this", "that", "from", "into", "before", "after", "your"}
     return [term for term in terms if term not in stop][:8]
+
+
+def _goal_type_from_reason(reason: str) -> str:
+    if reason.startswith("goal:"):
+        return reason.removeprefix("goal:")
+    return ""
