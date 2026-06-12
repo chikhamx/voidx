@@ -1,4 +1,4 @@
-"""Shared runtime mode and task intent classification."""
+"""Shared runtime mode and coarse task intent classification."""
 
 from __future__ import annotations
 
@@ -30,60 +30,125 @@ class InteractionMode(str, Enum):
 
 
 class TaskIntent(str, Enum):
-    CHAT = "chat"
-    INSPECT = "inspect"
-    DESIGN = "design"
-    REVIEW = "review"
-    IMPLEMENT = "implement"
-    DEBUG = "debug"
-    AMBIGUOUS = "ambiguous"
+    CODING = "coding"
+    GENERAL = "general"
 
 
-_IMPLEMENT_HINTS = (
-    "fix", "implement", "change", "edit", "write", "refactor", "patch",
-    "apply", "do it", "go ahead", "start coding",
-    "\u4fee\u590d", "\u5b9e\u73b0", "\u4fee\u6539", "\u6539\u4e00\u4e0b",
-    "\u76f4\u63a5\u6539", "\u5f00\u59cb\u5e72", "\u5f00\u59cb\u505a",
-    "\u52a8\u624b", "\u843d\u5730", "\u7ee7\u7eed\u6539",
-    "\u7ee7\u7eed\u505a", "\u7ee7\u7eed\u5b9e\u73b0",
-    "\u7ee7\u7eed\u4fee\u590d",
+_CODING_HINTS = (
+    "agent",
+    "api",
+    "architecture",
+    "bug",
+    "build",
+    "code",
+    "commit",
+    "debug",
+    "design",
+    "diff",
+    "doc",
+    "docs",
+    "error",
+    "exception",
+    "fix",
+    "implementation",
+    "implement",
+    "issue",
+    "lint",
+    "log",
+    "patch",
+    "pr",
+    "pull request",
+    "refactor",
+    "release",
+    "repo",
+    "review",
+    "runtime",
+    "schema",
+    "spec",
+    "stacktrace",
+    "test",
+    "traceback",
+    "workflow",
+    "\u4ee3\u7801",
+    "\u4ed3\u5e93",
+    "\u4fee\u590d",
+    "\u5b9e\u73b0",
+    "\u4fee\u6539",
+    "\u91cd\u6784",
+    "\u8bbe\u8ba1",
+    "\u65b9\u6848",
+    "\u67b6\u6784",
+    "\u600e\u4e48\u6539",
+    "\u5982\u4f55\u6539",
+    "\u8c03\u8bd5",
+    "\u6392\u67e5",
+    "\u62a5\u9519",
+    "\u5931\u8d25",
+    "\u9519\u8bef",
+    "\u6d4b\u8bd5",
+    "\u5355\u6d4b",
+    "\u6587\u6863",
+    "\u89c4\u683c",
+    "\u89c4\u5212",
+    "\u5ba1\u67e5",
+    "\u8bc4\u5ba1",
+    "\u770b\u770b",
+    "\u770b\u4e00\u4e0b",
+    "\u68c0\u67e5",
+    "\u68b3\u7406",
+    "\u4f18\u5316",
+    "\u843d\u5730",
+    "\u76f4\u63a5\u6539",
+    "\u7ee7\u7eed\u6539",
+    "\u7ee7\u7eed\u505a",
+    "\u7ee7\u7eed\u5b9e\u73b0",
 )
-_DESIGN_HINTS = (
-    "design", "plan", "proposal", "approach", "architecture", "suggest",
-    "\u8bbe\u8ba1", "\u65b9\u6848", "\u5efa\u8bae", "\u600e\u4e48\u6539",
-    "\u5982\u4f55\u6539", "\u8ba8\u8bba", "\u89c4\u5212",
+
+_GENERAL_HINTS = (
+    "hello",
+    "hi",
+    "hey",
+    "thanks",
+    "thank you",
+    "appreciate it",
+    "sounds good",
+    "good to know",
+    "makes sense",
+    "nice",
+    "\u4f60\u597d",
+    "\u8c22\u8c22",
+    "\u8f9b\u82e6\u4e86",
+    "\u597d\u7684",
+    "\u597d\u4e86",
+    "\u5bf9\u53ef\u4ee5",
+    "\u5bf9\uff0c\u53ef\u4ee5",
+    "\u55ef",
+    "\u6536\u5230",
 )
-_INSPECT_HINTS = (
-    "look at", "inspect", "analyze", "explain", "understand", "check",
-    "what is", "why", "how does",
-    "\u770b\u770b", "\u770b\u4e00\u4e0b", "\u5206\u6790", "\u68b3\u7406",
-    "\u4e86\u89e3", "\u68c0\u67e5", "\u73b0\u72b6", "\u662f\u4ec0\u4e48",
-    "\u4e3a\u4ec0\u4e48",
-)
-_REVIEW_HINTS = ("review", "\u5ba1\u67e5", "\u590d\u6838", "\u8bc4\u5ba1")
-_DEBUG_HINTS = (
-    "debug", "bug", "error", "traceback",
-    "\u62a5\u9519", "\u6392\u67e5", "\u62a5\u9519\u95ee\u9898", "\u5f02\u5e38\u95ee\u9898",
+
+_CODEISH_PATTERNS = (
+    r"\b[a-zA-Z_][\w.-]*/[a-zA-Z_][\w./-]*\b",
+    r"\b[\w./-]+\.(py|ts|tsx|js|jsx|rs|go|java|kt|swift|md|toml|yaml|yml|json|sql|sh)\b",
+    r"\b[a-zA-Z_][\w.]*\(\)",
+    r"`[^`]+`",
 )
 
 
 def infer_task_intent(text: str, interaction_mode: str | InteractionMode | None = None) -> TaskIntent:
     mode = InteractionMode.parse(interaction_mode)
     if mode == InteractionMode.PLAN:
-        return TaskIntent.DESIGN
+        return TaskIntent.CODING
 
     normalized = text.lower()
-    if _contains_any(normalized, _IMPLEMENT_HINTS):
-        return TaskIntent.IMPLEMENT
-    if _contains_any(normalized, _REVIEW_HINTS):
-        return TaskIntent.REVIEW
-    if _contains_any(normalized, _DEBUG_HINTS):
-        return TaskIntent.DEBUG
-    if _contains_any(normalized, _DESIGN_HINTS):
-        return TaskIntent.DESIGN
-    if _contains_any(normalized, _INSPECT_HINTS):
-        return TaskIntent.INSPECT
-    return TaskIntent.CHAT
+    if not normalized.strip():
+        return TaskIntent.GENERAL
+    if _contains_any(normalized, _CODING_HINTS):
+        return TaskIntent.CODING
+    if any(re.search(pattern, text, re.IGNORECASE) for pattern in _CODEISH_PATTERNS):
+        return TaskIntent.CODING
+    if _contains_any(normalized, _GENERAL_HINTS):
+        return TaskIntent.GENERAL
+    return TaskIntent.CODING
 
 
 def _contains_any(text: str, hints: tuple[str, ...]) -> bool:
@@ -91,6 +156,8 @@ def _contains_any(text: str, hints: tuple[str, ...]) -> bool:
 
 
 def _contains_hint(text: str, hint: str) -> bool:
-    if hint.isascii() and hint.isalpha() and len(hint) <= 3:
-        return re.search(rf"(?<![A-Za-z]){re.escape(hint)}(?![A-Za-z])", text) is not None
+    if hint.isascii() and re.fullmatch(r"[A-Za-z0-9_ -]+", hint):
+        words = re.findall(r"[A-Za-z0-9_]+", hint)
+        if len(words) == 1:
+            return re.search(rf"(?<![A-Za-z0-9_]){re.escape(hint)}(?![A-Za-z0-9_])", text) is not None
     return hint in text

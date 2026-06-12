@@ -55,10 +55,10 @@ class ArtifactClassifier:
         self.safe_accept_intents = {
             TaskIntent(str(item))
             for item in artifact.get("safe_accept_intents", [])
-            if str(item) != TaskIntent.IMPLEMENT.value
+            if str(item) in {intent.value for intent in TaskIntent}
         }
         if not self.safe_accept_intents:
-            self.safe_accept_intents = {intent for intent in TaskIntent if intent != TaskIntent.IMPLEMENT}
+            self.safe_accept_intents = set(TaskIntent)
 
         self.vocabulary = {str(key): int(value) for key, value in artifact["vocabulary"].items()}
         self.idf = [float(value) for value in artifact["idf"]]
@@ -73,11 +73,7 @@ class ArtifactClassifier:
 
     def classify(self, text: str) -> IntentClassifierResult:
         intent, confidence = self.predict(text)
-        if intent == TaskIntent.IMPLEMENT:
-            action: Literal["accept", "suggest", "fallback"] = (
-                "suggest" if confidence >= self.suggest_confidence else "fallback"
-            )
-        elif intent in self.safe_accept_intents and confidence >= self.accept_confidence:
+        if intent in self.safe_accept_intents and confidence >= self.accept_confidence:
             action = "accept"
         else:
             action = "fallback"
@@ -155,9 +151,11 @@ def classify_intent(
         keyword_intent = infer_task_intent(text, mode)
     except Exception:
         mode = InteractionMode.AUTO
-        keyword_intent = TaskIntent.CHAT
+        keyword_intent = TaskIntent.GENERAL
 
-    if mode == InteractionMode.PLAN or keyword_intent == TaskIntent.IMPLEMENT:
+    if mode == InteractionMode.PLAN or keyword_intent == TaskIntent.CODING:
+        return _keyword_result(keyword_intent)
+    if classifier_text and keyword_intent == TaskIntent.GENERAL:
         return _keyword_result(keyword_intent)
 
     classifier = _load_classifier(model_path)
@@ -170,8 +168,7 @@ def classify_intent(
             pass
 
     # Artifact fallback intentionally uses the current input's keyword intent,
-    # not the sliding-window classifier text. This preserves state-aware callers
-    # that may treat TaskIntent.AMBIGUOUS specially.
+    # not the sliding-window classifier text.
     return _keyword_result(keyword_intent)
 
 

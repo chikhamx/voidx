@@ -36,8 +36,19 @@ DEFAULT_EVAL = ROOT / "data" / "intent" / "eval.jsonl"
 DEFAULT_MODEL = ROOT / "src" / "voidx" / "data" / "intent_classifier.json"
 DEFAULT_REPORT = ROOT / "docs" / "reports" / "intent-classifier-eval.md"
 
-INTENTS = ["chat", "inspect", "design", "review", "implement", "debug", "ambiguous"]
-SAFE_ACCEPT_INTENTS = ["chat", "inspect", "design", "review", "debug", "ambiguous"]
+INTENTS = ["coding", "general"]
+INTENT_LABEL_ALIASES = {
+    "coding": "coding",
+    "general": "general",
+    "chat": "general",
+    "ambiguous": "general",
+    "inspect": "coding",
+    "design": "coding",
+    "review": "coding",
+    "implement": "coding",
+    "debug": "coding",
+}
+SAFE_ACCEPT_INTENTS = ["coding", "general"]
 NGRAM_RANGE = (2, 5)
 MAX_FEATURES = 50_000
 
@@ -48,8 +59,8 @@ class GateThresholds:
     max_avg_latency_ms: float = 1.0
     max_p95_latency_ms: float = 1.0
     min_macro_f1: float = 0.85
-    max_implement_false_positives: int = 0
-    min_inspect_design_recall: float = 0.90
+    min_coding_recall: float = 0.90
+    min_general_precision: float = 0.80
 
 
 def load_jsonl(path: Path) -> list[dict[str, Any]]:
@@ -60,8 +71,10 @@ def load_jsonl(path: Path) -> list[dict[str, Any]]:
             if not line:
                 continue
             row = json.loads(line)
-            if row.get("intent") not in INTENTS:
+            intent = INTENT_LABEL_ALIASES.get(str(row.get("intent") or ""))
+            if intent not in INTENTS:
                 raise ValueError(f"{path}:{line_no} has invalid intent: {row.get('intent')!r}")
+            row["intent"] = intent
             rows.append(row)
     return rows
 
@@ -105,11 +118,20 @@ def train_logistic_regression(train_rows: list[dict[str, Any]]) -> dict[str, Any
 
     vectorizer = pipeline.named_steps["tfidf"]
     classifier = pipeline.named_steps["clf"]
+    classes = [str(value) for value in classifier.classes_]
+    coef = [[float(value) for value in row] for row in classifier.coef_]
+    intercept = [float(value) for value in classifier.intercept_]
+    if len(classes) == 2 and len(coef) == 1 and len(intercept) == 1:
+        positive_row = coef[0]
+        positive_bias = intercept[0]
+        coef = [[-value for value in positive_row], positive_row]
+        intercept = [-positive_bias, positive_bias]
+
     return {
         "schema_version": 1,
         "model_type": "char_wb_tfidf_logreg",
         "created_at": datetime.now(UTC).isoformat(),
-        "classes": [str(value) for value in classifier.classes_],
+        "classes": classes,
         "safe_accept_intents": SAFE_ACCEPT_INTENTS,
         "decision_thresholds": {
             "accept_confidence": DEFAULT_ACCEPT_CONFIDENCE,
@@ -126,8 +148,8 @@ def train_logistic_regression(train_rows: list[dict[str, Any]]) -> dict[str, Any
         },
         "vocabulary": {str(key): int(value) for key, value in vectorizer.vocabulary_.items()},
         "idf": [float(value) for value in vectorizer.idf_],
-        "coef": [[float(value) for value in row] for row in classifier.coef_],
-        "intercept": [float(value) for value in classifier.intercept_],
+        "coef": coef,
+        "intercept": intercept,
     }
 
 
@@ -187,13 +209,13 @@ def evaluate_predictions(labels: list[str], predictions: list[str], confidences:
         f1_values.append(f1)
         recall_values[intent] = recall
 
-    implement_fp = sum(1 for expected, actual in zip(labels, predictions, strict=True) if actual == "implement" and expected != "implement")
-    inspect_design_recall = (recall_values["inspect"] + recall_values["design"]) / 2
+    general_precision = per_label["general"]["precision"]
+    coding_recall = recall_values["coding"]
     return {
         "accuracy": round(correct / total if total else 0.0, 4),
         "macro_f1": round(sum(f1_values) / len(f1_values), 4),
-        "implement_false_positives": implement_fp,
-        "inspect_design_recall": round(inspect_design_recall, 4),
+        "coding_recall": round(coding_recall, 4),
+        "general_precision": general_precision,
         "per_label": per_label,
         "confusion_matrix": [[confusion[row][col] for col in INTENTS] for row in INTENTS],
         "avg_confidence": round(statistics.mean(confidences) if confidences else 0.0, 4),
@@ -245,15 +267,15 @@ def gate_results(metrics: dict[str, Any], thresholds: GateThresholds | None = No
             "required": f">= {limits.min_macro_f1}",
             "passed": metrics["evaluation"]["macro_f1"] >= limits.min_macro_f1,
         },
-        "implement_false_positives": {
-            "value": metrics["evaluation"]["implement_false_positives"],
-            "required": f"<= {limits.max_implement_false_positives}",
-            "passed": metrics["evaluation"]["implement_false_positives"] <= limits.max_implement_false_positives,
+        "coding_recall": {
+            "value": metrics["evaluation"]["coding_recall"],
+            "required": f">= {limits.min_coding_recall}",
+            "passed": metrics["evaluation"]["coding_recall"] >= limits.min_coding_recall,
         },
-        "inspect_design_recall": {
-            "value": metrics["evaluation"]["inspect_design_recall"],
-            "required": f">= {limits.min_inspect_design_recall}",
-            "passed": metrics["evaluation"]["inspect_design_recall"] >= limits.min_inspect_design_recall,
+        "general_precision": {
+            "value": metrics["evaluation"]["general_precision"],
+            "required": f">= {limits.min_general_precision}",
+            "passed": metrics["evaluation"]["general_precision"] >= limits.min_general_precision,
         },
     }
     return checks
@@ -279,8 +301,8 @@ def write_report(metrics: dict[str, Any], report_path: Path) -> None:
         "|--------|-------|------|--------|",
         f"| Accuracy | {evaluation['accuracy']} | informational | yes |",
         f"| Macro F1 | {evaluation['macro_f1']} | {gates['macro_f1']['required']} | {_mark(gates['macro_f1']['passed'])} |",
-        f"| Implement false positives | {evaluation['implement_false_positives']} | {gates['implement_false_positives']['required']} | {_mark(gates['implement_false_positives']['passed'])} |",
-        f"| Inspect/Design recall | {evaluation['inspect_design_recall']} | {gates['inspect_design_recall']['required']} | {_mark(gates['inspect_design_recall']['passed'])} |",
+        f"| Coding recall | {evaluation['coding_recall']} | {gates['coding_recall']['required']} | {_mark(gates['coding_recall']['passed'])} |",
+        f"| General precision | {evaluation['general_precision']} | {gates['general_precision']['required']} | {_mark(gates['general_precision']['passed'])} |",
         f"| Average inference latency (ms) | {latency['avg_ms']} | {gates['average_latency']['required']} | {_mark(gates['average_latency']['passed'])} |",
         f"| p95 inference latency (ms) | {latency['p95_ms']} | {gates['p95_latency']['required']} | {_mark(gates['p95_latency']['passed'])} |",
         f"| Model artifact size (KB) | {metrics['model_size_kb']} | {gates['model_size']['required']} | {_mark(gates['model_size']['passed'])} |",

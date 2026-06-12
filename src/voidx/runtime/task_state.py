@@ -1,4 +1,4 @@
-"""Multi-turn task intent state shared across runtime layers."""
+"""Multi-turn task state shared across runtime layers."""
 
 from __future__ import annotations
 
@@ -10,7 +10,6 @@ from typing import Literal
 from pydantic import BaseModel, Field
 
 from voidx.runtime.intent import InteractionMode, TaskIntent, infer_task_intent
-from voidx.runtime.intent_classifier import IntentClassifierResult, classify_intent
 from voidx.workflow.runtime import WorkflowRunState
 
 
@@ -54,7 +53,7 @@ _APPROVAL_ONLY_HINTS = {
     "\u5c31\u8fd9\u6837",
 }
 
-_DIRECT_IMPLEMENT_COMMANDS = {
+_DIRECT_WRITE_COMMANDS = {
     "change",
     "edit",
     "fix",
@@ -79,27 +78,110 @@ _DIRECT_IMPLEMENT_COMMANDS = {
     "\u5f00\u59cb\u505a",
 }
 
+_WRITE_HINTS = (
+    "apply",
+    "change",
+    "edit",
+    "fix",
+    "implement",
+    "modify",
+    "patch",
+    "refactor",
+    "write",
+    "\u6539",
+    "\u4fee",
+    "\u4fee\u590d",
+    "\u4fee\u6539",
+    "\u5b9e\u73b0",
+    "\u843d\u5730",
+    "\u7ee7\u7eed\u6539",
+    "\u7ee7\u7eed\u505a",
+)
 
-class TaskPhase(str, Enum):
-    CLARIFY = "clarify"
+_REVIEW_HINTS = ("review", "code review", "\u5ba1\u67e5", "\u590d\u6838", "\u8bc4\u5ba1")
+_DEBUG_HINTS = (
+    "debug",
+    "traceback",
+    "stacktrace",
+    "\u62a5\u9519",
+    "\u6392\u67e5",
+    "\u8c03\u8bd5",
+    "\u5f02\u5e38",
+)
+_BUGFIX_HINTS = ("bug", "failing", "failure", "failed", "\u6545\u969c", "\u9519\u8bef", "\u95ee\u9898")
+_REFACTOR_HINTS = ("refactor", "rename", "cleanup", "\u91cd\u6784", "\u6539\u540d", "\u6e05\u7406")
+_FEATURE_HINTS = ("feature", "add", "support", "\u65b0\u589e", "\u6dfb\u52a0", "\u652f\u6301")
+_DOC_HINTS = ("doc", "docs", "readme", "spec", "\u6587\u6863", "\u89c4\u683c", "\u8bf4\u660e")
+_DESIGN_HINTS = (
+    "design",
+    "plan",
+    "proposal",
+    "approach",
+    "architecture",
+    "suggest",
+    "\u8bbe\u8ba1",
+    "\u65b9\u6848",
+    "\u5efa\u8bae",
+    "\u600e\u4e48\u6539",
+    "\u5982\u4f55\u6539",
+    "\u8ba8\u8bba",
+    "\u89c4\u5212",
+)
+_INSPECT_HINTS = (
+    "look at",
+    "inspect",
+    "analyze",
+    "explain",
+    "understand",
+    "check",
+    "\u770b\u770b",
+    "\u770b\u4e00\u4e0b",
+    "\u5206\u6790",
+    "\u68b3\u7406",
+    "\u4e86\u89e3",
+    "\u68c0\u67e5",
+    "\u73b0\u72b6",
+)
+
+
+class GoalType(str, Enum):
+    BUGFIX = "bugfix"
+    DEBUG = "debug"
+    REFACTOR = "refactor"
+    FEATURE = "feature"
+    CHORE = "chore"
     INSPECT = "inspect"
     DESIGN = "design"
-    IMPLEMENT = "implement"
-    VERIFY = "verify"
+    DOC = "doc"
     REVIEW = "review"
-    DONE = "done"
 
 
-class TaskRunStatus(str, Enum):
-    IDLE = "idle"
-    ACTIVE = "active"
-    DONE = "done"
+class Goal(BaseModel):
+    type: GoalType
+    target: str = ""
+    expected_result: str = ""
+    user_requested_write: bool = False
+    needs_confirmation: bool = False
+
+    @property
+    def label(self) -> str:
+        target = self.target.strip()
+        return target or self.expected_result.strip() or self.type.value
+
+
+class GoalResolution(BaseModel):
+    intent: TaskIntent = TaskIntent.CODING
+    goal: Goal | None = None
+    confidence: float = Field(default=1.0, ge=0, le=1)
+    reason: str = ""
+    confirmed_approval: "PendingApproval | None" = None
+    title: str | None = None
 
 
 class PendingApproval(BaseModel):
     kind: Literal["implementation"] = "implementation"
     scope: str
-    source_intent: TaskIntent = TaskIntent.DESIGN
+    source_goal_type: GoalType = GoalType.DESIGN
     created_turn: int = 0
 
 
@@ -114,98 +196,61 @@ class TodoRunState(BaseModel):
     updated_at: str = ""
 
 
-class TaskRun(BaseModel):
-    goal: str = ""
-    phase: TaskPhase = TaskPhase.CLARIFY
-    status: TaskRunStatus = TaskRunStatus.IDLE
-    pending_approval: PendingApproval | None = None
-    turn_count: int = 0
-    workflow_runs: dict[str, WorkflowRunState] = Field(default_factory=dict)
-
-    @property
-    def active(self) -> bool:
-        return self.status == TaskRunStatus.ACTIVE and bool(self.goal)
-
-    def set_goal(self, goal: str) -> None:
-        self.goal = _summarize_scope(goal)
-        self.phase = TaskPhase.CLARIFY
-        self.status = TaskRunStatus.ACTIVE if self.goal else TaskRunStatus.IDLE
-        self.pending_approval = None
-        self.turn_count = 0
-        self.workflow_runs = {}
-
-    def clear(self) -> None:
-        self.goal = ""
-        self.phase = TaskPhase.CLARIFY
-        self.status = TaskRunStatus.IDLE
-        self.pending_approval = None
-        self.turn_count = 0
-        self.workflow_runs = {}
-
-    def merge_workflow_runs(self, runs: list[WorkflowRunState | dict]) -> None:
-        for item in runs:
-            run = item if isinstance(item, WorkflowRunState) else WorkflowRunState.model_validate(item)
-            self.workflow_runs[run.name] = run
-
-    def update_after_turn(
-        self,
-        resolution: "IntentResolution",
-        user_text: str,
-        *,
-        scope_text: str | None = None,
-    ) -> None:
-        if not self.goal:
-            self.set_goal(scope_text or user_text)
-        if not self.goal:
-            return
-
-        self.status = TaskRunStatus.ACTIVE
-        self.turn_count += 1
-        self.phase = _phase_for_intent(resolution.intent)
-        if resolution.intent == TaskIntent.AMBIGUOUS:
-            return
-        self.pending_approval = _next_pending_approval(
-            resolution,
-            resolution.intent,
-            _summarize_scope(scope_text or self.goal or user_text),
-            turn_count=self.turn_count,
-        )
-
-
 class TaskState(BaseModel):
-    current_intent: TaskIntent = TaskIntent.CHAT
+    current_intent: TaskIntent = TaskIntent.CODING
     previous_intent: TaskIntent | None = None
-    current_goal: str = ""
+    current_goal: Goal | None = None
     pending_approval: PendingApproval | None = None
-    last_plan_summary: str = ""
+    workflow_runs: dict[str, WorkflowRunState] = Field(default_factory=dict)
     recent_user_texts: list[str] = Field(default_factory=list)
     todo_state: TodoRunState | None = None
 
     def update_after_turn(
         self,
-        resolution: "IntentResolution",
+        resolution: GoalResolution,
         user_text: str,
         *,
         scope_text: str | None = None,
     ) -> None:
         self.previous_intent = self.current_intent
         self.current_intent = resolution.intent
-        goal_text = scope_text or (
-            resolution.confirmed_approval.scope
-            if resolution.confirmed_approval
-            else user_text
-        )
-        self.current_goal = _summarize_scope(goal_text)
+        if resolution.confirmed_approval:
+            goal_type = (
+                GoalType.FEATURE
+                if resolution.confirmed_approval.source_goal_type == GoalType.DESIGN
+                else resolution.confirmed_approval.source_goal_type
+            )
+            self.current_goal = goal_from_text(
+                resolution.confirmed_approval.scope,
+                goal_type=goal_type,
+                user_requested_write=True,
+                needs_confirmation=False,
+            )
+        elif resolution.goal is not None:
+            self.current_goal = resolution.goal
+        elif resolution.intent == TaskIntent.GENERAL:
+            self.current_goal = None
         self._record_user_text(user_text)
-        if resolution.intent == TaskIntent.AMBIGUOUS:
+        self.pending_approval = _next_pending_approval(resolution, self.current_goal)
+
+    def set_goal(self, goal: Goal | str | None) -> None:
+        if goal is None:
+            self.current_goal = None
+            self.pending_approval = None
+            self.workflow_runs = {}
             return
-        if resolution.intent == TaskIntent.DESIGN:
-            self.last_plan_summary = self.current_goal
-        self.pending_approval = _next_pending_approval(
-            resolution,
-            resolution.intent,
-            self.current_goal,
-        )
+        self.current_goal = goal if isinstance(goal, Goal) else goal_from_text(goal)
+        self.current_intent = TaskIntent.CODING
+        self.pending_approval = None
+        self.workflow_runs = {}
+
+    def clear_goal(self) -> None:
+        self.set_goal(None)
+
+    def merge_workflow_runs(self, runs: list[WorkflowRunState | dict]) -> None:
+        for item in runs:
+            run = item if isinstance(item, WorkflowRunState) else WorkflowRunState.model_validate(item)
+            self.workflow_runs[run.name] = run
 
     def intent_window_text(self, current_text: str) -> str:
         current = _summarize_scope(current_text)
@@ -224,89 +269,127 @@ class TaskState(BaseModel):
         self.recent_user_texts = [*self.recent_user_texts, item][-_INTENT_WINDOW_SIZE:]
 
 
-class IntentResolution(BaseModel):
-    intent: TaskIntent
-    reason: str
-    confirmed_approval: PendingApproval | None = None
+IntentResolution = GoalResolution
 
 
 class ToolStatePatch(BaseModel):
     """Structured state updates requested by runtime tools."""
+
     task_intent: TaskIntent | None = None
-    intent_resolution_reason: str | None = None
-    goal: str | None = None
-    goal_phase: str | None = None
-    goal_status: str | None = None
+    goal: Goal | None = None
     pending_approval: PendingApproval | None = None
-    available_tool_ids: list[str] | None = None
+    persona: str | None = None
     workflow_runs: list[WorkflowRunState] = Field(default_factory=list)
-    intent_confidence: float | None = None
-    intent_source: str | None = None
-    intent_refined: bool | None = None
 
 
 def resolve_turn_intent(
     text: str,
     interaction_mode: str | InteractionMode | None = None,
     task_state: TaskState | None = None,
-) -> IntentResolution:
+) -> GoalResolution:
     mode = InteractionMode.parse(interaction_mode)
     state = task_state or TaskState()
 
     if mode == InteractionMode.PLAN:
-        return _resolution(TaskIntent.DESIGN, "interaction mode forces design")
+        return _resolution(TaskIntent.CODING, "interaction mode forces coding")
 
     if _is_approval_only(text):
         if state.pending_approval:
             return _resolution(
-                TaskIntent.IMPLEMENT,
+                TaskIntent.CODING,
                 "user confirmed the pending implementation plan",
                 confirmed_approval=state.pending_approval,
             )
         return _resolution(
-            TaskIntent.AMBIGUOUS,
+            TaskIntent.GENERAL,
             "approval phrase without a pending implementation plan",
+            confidence=0.6,
         )
 
-    if _is_direct_implementation_command(text):
+    if _is_direct_write_command(text):
         return _resolution(
-            TaskIntent.IMPLEMENT,
+            TaskIntent.CODING,
             "direct short command asks to modify the current task",
         )
 
-    classification = classify_intent(
-        text,
-        mode,
-        classifier_text=state.intent_window_text(text),
-    )
-    if classification is not None:
-        if classification.action == "accept":
-            return _resolution(
-                classification.intent,
-                _intent_classifier_reason(classification),
-            )
-        if classification.action == "suggest" and classification.intent == TaskIntent.IMPLEMENT:
-            return _resolution(
-                TaskIntent.AMBIGUOUS,
-                f"local classifier suggested implement confidence={classification.confidence:.2f}; confirmation required",
-            )
+    if mode == InteractionMode.GOAL and state.current_goal is not None:
+        return _resolution(
+            TaskIntent.CODING,
+            "goal mode keeps the turn scoped to the current goal",
+        )
 
     intent = infer_task_intent(text, mode)
-    return _resolution(intent, f"keyword classifier matched {intent.value}")
+    return _resolution(intent, f"local classifier matched {intent.value}")
+
+
+def goal_from_text(
+    text: str,
+    *,
+    goal_type: GoalType | str | None = None,
+    user_requested_write: bool | None = None,
+    needs_confirmation: bool | None = None,
+    expected_result: str = "",
+) -> Goal:
+    normalized_type = GoalType(goal_type) if goal_type is not None else infer_goal_type(text)
+    target = _summarize_scope(text)
+    requested_write = _user_requested_write(text) if user_requested_write is None else user_requested_write
+    confirmation = (
+        _needs_confirmation(normalized_type, requested_write)
+        if needs_confirmation is None
+        else needs_confirmation
+    )
+    return Goal(
+        type=normalized_type,
+        target=target,
+        expected_result=expected_result,
+        user_requested_write=requested_write,
+        needs_confirmation=confirmation,
+    )
+
+
+def infer_goal_type(text: str) -> GoalType:
+    normalized = text.lower()
+    if _contains_any(normalized, _REVIEW_HINTS):
+        return GoalType.REVIEW
+    if _contains_any(normalized, _DEBUG_HINTS):
+        return GoalType.DEBUG
+    if _contains_any(normalized, _BUGFIX_HINTS) and _user_requested_write(normalized):
+        return GoalType.BUGFIX
+    if _contains_any(normalized, _REFACTOR_HINTS):
+        return GoalType.REFACTOR
+    if _contains_any(normalized, _DOC_HINTS):
+        return GoalType.DOC
+    if _contains_any(normalized, _DESIGN_HINTS):
+        return GoalType.DESIGN
+    if _contains_any(normalized, _FEATURE_HINTS):
+        return GoalType.FEATURE
+    if _contains_any(normalized, _INSPECT_HINTS):
+        return GoalType.INSPECT
+    if _contains_any(normalized, _WRITE_HINTS):
+        return GoalType.FEATURE
+    return GoalType.CHORE
+
+
+def goal_label(goal: Goal | dict | None) -> str:
+    value = _coerce_goal(goal)
+    return value.label if value is not None else ""
+
+
+def goal_type_value(goal: Goal | dict | None) -> str:
+    value = _coerce_goal(goal)
+    return value.type.value if value is not None else ""
 
 
 def _next_pending_approval(
-    resolution: IntentResolution,
-    intent: TaskIntent,
-    scope: str,
-    *,
-    turn_count: int = 0,
+    resolution: GoalResolution,
+    goal: Goal | None,
 ) -> PendingApproval | None:
-    if intent == TaskIntent.DESIGN:
+    if resolution.confirmed_approval is not None:
+        return None
+    if goal is not None and goal.type == GoalType.DESIGN:
         return PendingApproval(
-            scope=scope,
-            source_intent=TaskIntent.DESIGN,
-            created_turn=turn_count,
+            scope=goal.label,
+            source_goal_type=goal.type,
         )
     return None
 
@@ -315,27 +398,59 @@ def _resolution(
     intent: TaskIntent,
     reason: str,
     *,
+    goal: Goal | None = None,
+    confidence: float = 1.0,
     confirmed_approval: PendingApproval | None = None,
-) -> IntentResolution:
-    return IntentResolution(
+) -> GoalResolution:
+    return GoalResolution(
         intent=intent,
+        goal=goal,
+        confidence=confidence,
         reason=reason,
         confirmed_approval=confirmed_approval,
     )
 
 
-def _intent_classifier_reason(result: IntentClassifierResult) -> str:
-    if result.source == "keyword_classifier":
-        return f"keyword classifier matched {result.intent.value}"
-    return f"local classifier matched {result.intent.value} confidence={result.confidence:.2f}"
+def _coerce_goal(goal: Goal | dict | None) -> Goal | None:
+    if goal is None:
+        return None
+    if isinstance(goal, Goal):
+        return goal
+    if isinstance(goal, dict):
+        try:
+            return Goal.model_validate(goal)
+        except ValueError:
+            return None
+    return None
+
+
+def _contains_any(text: str, hints: tuple[str, ...]) -> bool:
+    return any(_contains_hint(text, hint) for hint in hints)
+
+
+def _contains_hint(text: str, hint: str) -> bool:
+    if hint.isascii() and re.fullmatch(r"[A-Za-z0-9_ -]+", hint):
+        words = re.findall(r"[A-Za-z0-9_]+", hint)
+        if len(words) == 1:
+            return re.search(rf"(?<![A-Za-z0-9_]){re.escape(hint)}(?![A-Za-z0-9_])", text) is not None
+    return hint in text
+
+
+def _needs_confirmation(goal_type: GoalType, user_requested_write: bool) -> bool:
+    return goal_type == GoalType.DESIGN and not user_requested_write
+
+
+def _user_requested_write(text: str) -> bool:
+    normalized = text.lower()
+    return _contains_any(normalized, _WRITE_HINTS)
 
 
 def _is_approval_only(text: str) -> bool:
     return _normalize_approval_text(text) in _APPROVAL_ONLY_HINTS
 
 
-def _is_direct_implementation_command(text: str) -> bool:
-    return _normalize_approval_text(text) in _DIRECT_IMPLEMENT_COMMANDS
+def _is_direct_write_command(text: str) -> bool:
+    return _normalize_approval_text(text) in _DIRECT_WRITE_COMMANDS
 
 
 def _normalize_approval_text(text: str) -> str:
@@ -347,30 +462,22 @@ def _summarize_scope(text: str) -> str:
     return first_line[:160]
 
 
-def _phase_for_intent(intent: TaskIntent) -> TaskPhase:
-    if intent == TaskIntent.INSPECT:
-        return TaskPhase.INSPECT
-    if intent == TaskIntent.DESIGN:
-        return TaskPhase.DESIGN
-    if intent == TaskIntent.IMPLEMENT:
-        return TaskPhase.IMPLEMENT
-    if intent == TaskIntent.REVIEW:
-        return TaskPhase.REVIEW
-    if intent == TaskIntent.DEBUG:
-        return TaskPhase.INSPECT
-    return TaskPhase.CLARIFY
-
-
 __all__ = [
     "InteractionMode",
     "TaskIntent",
     "infer_task_intent",
+    "Goal",
+    "GoalResolution",
+    "GoalType",
     "IntentResolution",
     "PendingApproval",
-    "TaskPhase",
-    "TaskRun",
-    "TaskRunStatus",
     "TaskState",
+    "TodoRunItem",
+    "TodoRunState",
     "ToolStatePatch",
+    "goal_from_text",
+    "goal_label",
+    "goal_type_value",
+    "infer_goal_type",
     "resolve_turn_intent",
 ]
