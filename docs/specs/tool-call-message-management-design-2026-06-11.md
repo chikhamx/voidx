@@ -34,12 +34,20 @@ voidx 的 tool call message 管理目前存在三个问题：
 
 LLM 调用 `read`，LLM 就收到完整文件内容——无论 display policy 是 show、summary 还是 hidden。summary 模式只是让终端里少显示几行，hidden 模式只是让终端里什么都不显示，LLM 那边该看什么看什么。
 
+这个原则适用于**有语义结果需要交还给 LLM 的工具**。但有一类 runtime-only / barrier 工具本来就不应该把结果放进对话上下文：它们只负责更新运行时状态、完成审批/同步屏障、采集用户选择或推进控制流。对这类工具，hidden 不只是 UI display policy，也可能配合 ToolMessage suppression：
+
+- **UI hidden**：不创建 tool call 节点，不发射 `ToolStarted` / `ToolFinished` / `ToolResultAppended` 给普通 UI。
+- **ToolMessage suppressed**：不把工具结果追加到 LLM messages；LLM 通过 runtime state、后续用户消息或控制流状态获知结果。
+- **Failure visible**：如果 hidden/barrier 工具失败且需要用户知道，应通过 warning/error/status 事件显示失败，而不是把正常工具节点重新露出来。
+
 | 场景 | LLM 收到 | 用户在终端看到 |
 |------|---------|--------------|
 | `read` + display=show | 完整文件内容 | 完整文件内容 |
 | `read` + display=summary | 完整文件内容 | 前 3 行 + "… +153 more lines" |
 | `read` + display=hidden | 完整文件内容 | 什么都不显示 |
 | `grep` + display=summary | 完整匹配结果 | 前 5 行 + "… +195 more lines" |
+| `todo` | 不生成 ToolMessage（runtime state 已保存） | 不显示重复工具节点 |
+| `plan_checkpoint` / barrier tool | 通常不生成 ToolMessage，除非该 barrier 的结果是后续推理必须读取的语义数据 | 不显示工具节点；必要时显示独立 warning/status |
 
 同理，Large Result Persistence 也只影响 LLM context 路径——超大结果写磁盘后 LLM 收到 preview + 路径，但 UI 可以选择显示 preview 或从磁盘读取完整内容。
 
@@ -64,7 +72,8 @@ ToolResult (raw output + diff + metadata + summary)
      │    ├── summary → 渲染 tool_call header + 摘要行
      │    └── hidden  → 不创建节点，不发射事件
      │
-     └──► 注意：UI display 的 summary/hidden 不改变 LLM 收到的 ToolMessage 内容
+     └──► 注意：UI display 的 summary/hidden 默认不改变 LLM 收到的 ToolMessage 内容；
+          runtime-only/barrier 工具可显式声明 suppress_tool_message=True
 ```
 
 ### 改进 A：Tool Display Policy
@@ -82,6 +91,7 @@ class ToolDisplayMode(str, Enum):
 class ToolDisplayRule(BaseModel):
     tool_name: str
     mode: ToolDisplayMode = ToolDisplayMode.SHOW
+    suppress_tool_message: bool = False  # True 时不把工具结果追加到 LLM messages
     summary_max_lines: int = 3       # summary 模式显示的最大行数
     auto_summary_lines: int = 50     # 结果超过此行数自动降级为 summary
     auto_summary_chars: int = 5000   # 结果超过此字符数自动降级为 summary
@@ -110,12 +120,36 @@ class ToolDisplayPolicy(BaseModel):
 | **agent** | 子 agent 最终结果 | SHOW（结果预览） | 已有预览机制，保持现状 |
 | **webfetch** | 抓取内容 | SHOW + 自适应 summary | LLM 需要完整内容，用户看 preview 即可 |
 | **websearch** | 搜索结果 | SUMMARY | LLM 需要完整结果，用户只需摘要 |
-| **todo** | 不需要（已有 runtime state） | HIDDEN | 已通过 runtime state 管理 |
-| **task_status** | 不需要 | HIDDEN | 纯状态查询 |
-| **on_intent** | 不需要 | HIDDEN | 纯意图解析 |
+| **todo** | 不生成 ToolMessage（已有 runtime state） | HIDDEN | 已通过 runtime state 管理，避免 UI 和 LLM context 都重复 |
+| **task_status** | 子 agent / worker task 当前状态 | HIDDEN | 仍在工具注册和子 agent tracker 中使用；UI 不显示工具节点，但 LLM 需要收到状态结果 |
+| **load_doc_template** | 文档模板内容 | HIDDEN | 模板内容只给 LLM 写文档用，用户不需要看到工具节点或 `Load_doc_templateing` 过程 |
 | **lsp_*** | LSP 结果 | SUMMARY | LLM 需要完整结果，用户只需摘要 |
-| **plan_checkpoint** | 审批结果 | HIDDEN | 纯流程控制 |
-| **clarify** | 用户回答 | HIDDEN | 纯交互控制 |
+| **plan_checkpoint** | 通常不生成 ToolMessage | HIDDEN | barrier/审批控制工具，不应污染 UI 和普通对话上下文 |
+| **clarify** | 通常不生成 ToolMessage；用户回答进入后续用户消息或 runtime state | HIDDEN | barrier/交互控制工具，不显示工具节点 |
+
+#### Runtime-only / Barrier 工具
+
+Barrier 工具用于改变执行状态，而不是向 LLM 提供一段新的语义材料。状态查询工具可以同样 UI hidden，但不一定 suppress ToolMessage：
+
+- `todo`：更新任务状态；现有行为是既不在 UI 重复显示，也不创建 ToolMessage。
+- `task_status` 不属于 suppress ToolMessage 的 barrier：它仍由 `TaskStatusTool` 注册，并读取子 agent 运行期间写入的 `TaskTracker` 状态。默认 UI hidden，但 ToolMessage 必须保留给 LLM。
+- `load_doc_template` 同样不 suppress ToolMessage：它是 LLM 的模板加载工具，默认 UI hidden，但模板内容必须进入 ToolMessage。
+- `plan_checkpoint`：审批或 checkpoint barrier；正常路径不显示工具节点，结果由控制流消费。
+- `clarify`：用户交互 barrier；用户回答应作为用户输入或 runtime state 进入上下文，而不是作为工具结果回灌。
+
+这类工具需要显式建模为：
+
+```python
+class ToolDisplayRule(BaseModel):
+    tool_name: str
+    mode: ToolDisplayMode = ToolDisplayMode.SHOW
+    suppress_tool_message: bool = False  # runtime-only/barrier 工具设为 True
+    summary_max_lines: int = 3
+    auto_summary_lines: int = 50
+    auto_summary_chars: int = 5000
+```
+
+`mode=HIDDEN` 只表示 UI 不显示；`suppress_tool_message=True` 才表示不把结果追加到 LLM messages。大多数普通工具即使 hidden，也仍然返回 ToolMessage；runtime-only/barrier 工具两者都关闭。
 
 #### bash 的特殊性
 
@@ -138,12 +172,12 @@ bash 无法在执行前判断 output 语义，所以只能**按大小自适应**
 
 ```python
 DEFAULT_DISPLAY_RULES: dict[str, ToolDisplayRule] = {
-    # ── Hidden：纯控制流工具，用户不需要看到 ──
-    "todo": ToolDisplayRule(tool_name="todo", mode=ToolDisplayMode.HIDDEN),
+    # ── Hidden：runtime-only / barrier / 状态工具 ──
+    "todo": ToolDisplayRule(tool_name="todo", mode=ToolDisplayMode.HIDDEN, suppress_tool_message=True),
     "task_status": ToolDisplayRule(tool_name="task_status", mode=ToolDisplayMode.HIDDEN),
-    "on_intent": ToolDisplayRule(tool_name="on_intent", mode=ToolDisplayMode.HIDDEN),
-    "plan_checkpoint": ToolDisplayRule(tool_name="plan_checkpoint", mode=ToolDisplayMode.HIDDEN),
-    "clarify": ToolDisplayRule(tool_name="clarify", mode=ToolDisplayMode.HIDDEN),
+    "load_doc_template": ToolDisplayRule(tool_name="load_doc_template", mode=ToolDisplayMode.HIDDEN),
+    "plan_checkpoint": ToolDisplayRule(tool_name="plan_checkpoint", mode=ToolDisplayMode.HIDDEN, suppress_tool_message=True),
+    "clarify": ToolDisplayRule(tool_name="clarify", mode=ToolDisplayMode.HIDDEN, suppress_tool_message=True),
 
     # ── Summary：搜索/查询类，用户只需摘要 ──
     "grep": ToolDisplayRule(
@@ -262,7 +296,7 @@ mode, summary_lines = policy.resolve_display_mode(tid, result.output)
 
 if mode == ToolDisplayMode.HIDDEN:
     # 不发射 ToolStarted / ToolFinished / ToolResultAppended
-    # 但仍然执行工具，仍然返回 ToolMessage 给 LLM
+    # 但仍然执行工具；是否返回 ToolMessage 由 suppress_tool_message 单独决定
     pass
 else:
     # 发射事件，携带 display_mode
@@ -276,6 +310,18 @@ else:
         summary_max_lines=summary_lines,  # 新增字段
     ))
 ```
+
+ToolMessage 构造也必须查询同一条 rule，但不能只看 display mode：
+
+```python
+rule = policy.rule_for(tid)
+message = None if rule.suppress_tool_message else ToolMessage(
+    content=sanitize_tool_message_content(result.output, workspace=ctx.workspace),
+    tool_call_id=cid,
+)
+```
+
+这保留现有 `todo` 语义：`todo` 不只是 UI 上不重复显示，也不会再进入 tool call 上下文。后续新增 barrier 工具必须显式选择 `suppress_tool_message=True`，避免误把普通 hidden 工具的语义结果从 LLM context 中删掉。
 
 **2. `events/schema.py` — 事件增加显示模式字段**
 
@@ -433,17 +479,20 @@ return _ExecutedTool(
 )
 
 # 改为：
-sanitized = maybe_persist_tool_result(
-    result.output,
-    tool_use_id=cid,
-    tool_name=tid,
-)
-sanitized = sanitize_tool_message_content(sanitized, workspace=ctx.workspace)
+rule = policy.rule_for(tid)
+if rule.suppress_tool_message:
+    message = None
+else:
+    sanitized = maybe_persist_tool_result(
+        result.output,
+        tool_use_id=cid,
+        tool_name=tid,
+    )
+    sanitized = sanitize_tool_message_content(sanitized, workspace=ctx.workspace)
 
-return _ExecutedTool(
-    message=ToolMessage(content=sanitized, tool_call_id=cid),
-    ...
-)
+    message = ToolMessage(content=sanitized, tool_call_id=cid)
+
+return _ExecutedTool(message=message, ...)
 ```
 
 注意：`maybe_persist_tool_result()` 在 `sanitize_tool_message_content()` **之前**运行，因为：
@@ -585,6 +634,10 @@ tool_display:
       summary_max_lines: 10
     todo:
       mode: hidden
+      suppress_tool_message: true
+    plan_checkpoint:
+      mode: hidden
+      suppress_tool_message: true
 
 tool_result:
   persist_threshold: 50000    # 字符数，0 = 禁用持久化

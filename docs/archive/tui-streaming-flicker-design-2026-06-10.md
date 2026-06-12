@@ -1,5 +1,7 @@
 # TUI 流式输出闪烁优化 — 技术设计文档
 
+> **Status: Done**
+
 ## Context
 
 voidx TUI 在 LLM 流式输出长文本时屏幕严重闪烁。根本原因是 `_render_frame` 每次都先清屏再重绘，而流式输出时这个操作频率极高（每秒最多 20 次），清屏与重绘之间的空白帧肉眼可见。
@@ -41,9 +43,9 @@ LLM 流式输出 token
 
 | 因素 | 位置 | 影响 |
 |------|------|------|
-| **`\x1b[J` 清屏再重绘** | `renderer.py:108` | 每帧都先擦后画，中间有空白帧 |
-| **刷新频率过高** | `streaming.py:27` FLUSH_INTERVAL=0.05 | 每 50ms 触发一次全帧渲染 |
-| **invalidate 无节流** | `app.py:227` `loop.call_soon` | 零延迟调度，不同事件循环 tick 间不合并 |
+| **`\x1b[J` 清屏再重绘** | `src/voidx/ui/tui/render_frame.py` `_render_frame` | 每帧都先擦后画，中间有空白帧 |
+| **刷新频率过高** | `src/voidx/ui/output/console/streaming.py` `FLUSH_INTERVAL=0.05` | 每 50ms 触发一次全帧渲染 |
+| **invalidate 无节流** | `src/voidx/ui/tui/app.py` `loop.call_soon` | 零延迟调度，不同事件循环 tick 间不合并 |
 
 ### 为什么短输出不闪
 
@@ -151,7 +153,7 @@ def _render_frame(self) -> None:
 
 | 位置 | Before | After |
 |------|--------|-------|
-| `streaming.py:27` | `0.05` (50ms, 20fps) | `0.1` (100ms, 10fps) |
+| `src/voidx/ui/output/console/streaming.py` | `0.05` (50ms, 20fps) | `0.1` (100ms, 10fps) |
 
 10fps 对流式文字输出足够流畅，同时将渲染负载减半。
 
@@ -177,10 +179,10 @@ loop.call_later(0.016, self._run_scheduled_render)  # ~60fps 上限
 
 | 条件 | 位置 |
 |------|------|
-| 终端尺寸变化 | `_render_frame` 入口检测 |
-| `_flush_committed` 刷新了已提交内容 | `_flush_committed` 末尾 |
-| `consume_clear_screen_request` | `_render_frame` 清屏分支 |
-| `_make_room_for_frame` 滚动 | `_render_frame` 滚动分支 |
+| 终端尺寸变化 | `src/voidx/ui/tui/render_frame.py` `_render_frame` 入口检测 |
+| `_flush_committed` 刷新了已提交内容 | `src/voidx/ui/tui/app.py` `_flush_committed` 末尾 |
+| `consume_clear_screen_request` | `src/voidx/ui/tui/render_frame.py` `_render_frame` 清屏分支 |
+| `_make_room_for_frame` 滚动 | `src/voidx/ui/tui/render_frame.py` `_render_frame` 滚动分支 |
 
 ## Error Handling
 
