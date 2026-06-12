@@ -15,7 +15,8 @@ from voidx.diffing import diff_stat
 from voidx.agent.graph.runtime import current_parent_tool_call_id
 from voidx.agent.graph.todo_events import todo_updated_event
 from voidx.agent.todo_state import apply_todo_state_to_host, todo_run_state_from_result
-from voidx.agent.task_state import TodoRunState, ToolStatePatch
+from voidx.agent.task_state import Goal, PendingApproval, TaskState, TodoRunState, ToolStatePatch, goal_label
+from voidx.runtime.intent import TaskIntent
 from voidx.agent.tool_messages import sanitize_tool_message_content
 from voidx.workflow.runtime import WorkflowRunState, WorkflowRunStatus, advance_workflow_states
 from voidx.tools.base import ToolContext, UserInteraction, UserResponse
@@ -72,27 +73,29 @@ class GraphToolExecutor:
             host._turn_node = host._ui.dock.current_agent
 
         host._current_messages = state["messages"]
-        agent_name = state.get("agent", "orchestrator")
+        agent_name = "voidx"
+        runtime_persona = state.get("persona", "coordinate")
         session_id = host._session.id if host._session else "default"
         plan_mode = state.get("plan_mode", False)
         interaction_mode = state.get("interaction_mode")
         workspace = state.get("workspace", host._workspace)
-        runtime_task_intent = state.get("task_intent", "chat")
-        runtime_pending_approval = _dump_pending_approval(state.get("pending_approval"))
-        runtime_goal = state.get("goal", "")
-        runtime_workflow_runs = _workflow_runs_for_state(state.get("workflow_runs", []) or [])
+        runtime_task_state = _task_state_for_state(state.get("task_state"))
+        runtime_task_intent = runtime_task_state.current_intent.value
+        runtime_pending_approval = _dump_pending_approval(runtime_task_state.pending_approval)
+        runtime_goal = runtime_task_state.current_goal
+        runtime_workflow_runs = list((runtime_task_state.workflow_runs or {}).values())
         state_update: dict = {}
 
         def make_context() -> ToolContext:
             return ToolContext(
                 workspace=workspace,
                 session_id=session_id,
-                agent=agent_name,
+                persona=runtime_persona,
                 interaction_mode=interaction_mode or ("plan" if plan_mode else "auto"),
-                task_intent=str(runtime_task_intent or "chat"),
+                task_intent=str(runtime_task_intent or "coding"),
                 pending_approval=runtime_pending_approval,
-                goal=str(runtime_goal or ""),
-                goal_turn_count=state.get("goal_turn_count", 0),
+                goal_type=runtime_goal.type.value if runtime_goal is not None else "",
+                goal_target=goal_label(runtime_goal),
                 active_workflow_names=_active_workflow_names(runtime_workflow_runs),
                 workflow_runs=runtime_workflow_runs,
                 file_mtimes=host._file_mtimes,
@@ -106,20 +109,38 @@ class GraphToolExecutor:
         ctx = make_context()
 
         def apply_state_update(update: dict) -> None:
-            nonlocal ctx, runtime_goal, runtime_pending_approval, runtime_workflow_runs, runtime_task_intent
+            nonlocal ctx, runtime_goal, runtime_pending_approval, runtime_workflow_runs, runtime_task_intent, runtime_task_state, runtime_persona
             if not update:
                 return
-            state_update.update(update)
+            if "persona" in update:
+                runtime_persona = update.get("persona") or runtime_persona
+                state_update["persona"] = runtime_persona
+            if "task_state" in update:
+                runtime_task_state = _task_state_for_state(update.get("task_state"))
+                runtime_goal = runtime_task_state.current_goal
+                state_update["task_state"] = runtime_task_state.model_dump(mode="json")
             if "todo_state" in update:
                 apply_todo_state_to_host(host, update.get("todo_state"))
+                runtime_task_state.todo_state = _todo_state_for_state(update.get("todo_state"))
+                state_update["todo_state"] = update.get("todo_state")
+                state_update["task_state"] = runtime_task_state.model_dump(mode="json")
             if "task_intent" in update:
-                runtime_task_intent = update.get("task_intent") or "chat"
+                runtime_task_intent = update.get("task_intent") or "coding"
+                runtime_task_state.current_intent = TaskIntent(runtime_task_intent)
+                state_update["task_state"] = runtime_task_state.model_dump(mode="json")
             if "pending_approval" in update:
                 runtime_pending_approval = _dump_pending_approval(update.get("pending_approval"))
-            if "goal" in update:
-                runtime_goal = update.get("goal") or ""
+                runtime_task_state.pending_approval = _pending_approval_for_state(runtime_pending_approval)
+                state_update["task_state"] = runtime_task_state.model_dump(mode="json")
+            if "current_goal" in update:
+                raw_goal = update.get("current_goal")
+                runtime_goal = _goal_for_state(raw_goal)
+                runtime_task_state.current_goal = runtime_goal
+                state_update["task_state"] = runtime_task_state.model_dump(mode="json")
             if "workflow_runs" in update:
                 runtime_workflow_runs = _workflow_runs_for_state(update.get("workflow_runs") or [])
+                runtime_task_state.workflow_runs = {run.name: run for run in runtime_workflow_runs}
+                state_update["task_state"] = runtime_task_state.model_dump(mode="json")
             ctx = make_context()
 
         tool_calls = last.tool_calls
@@ -307,6 +328,7 @@ class GraphToolExecutor:
                     host._authorize_tool_calls,
                     prefix,
                     agent_name=agent_name,
+                    runtime_persona=runtime_persona,
                     plan_mode=plan_mode,
                     session_id=session_id,
                     interaction_mode=interaction_mode,
@@ -331,6 +353,7 @@ class GraphToolExecutor:
                 host._authorize_tool_calls,
                 [barrier],
                 agent_name=agent_name,
+                runtime_persona=runtime_persona,
                 plan_mode=plan_mode,
                 session_id=session_id,
                 interaction_mode=interaction_mode,
@@ -411,8 +434,6 @@ def _state_update_from_executed_tools(
 
         metadata = getattr(item.result, "metadata", {}) or {}
         raw = metadata.get("state_patch")
-        if raw is None and isinstance(metadata.get("on_intent"), dict):
-            raw = metadata["on_intent"].get("state_patch")
         if raw is None:
             continue
         patch = ToolStatePatch.model_validate(raw)
@@ -430,8 +451,10 @@ def _state_update_from_executed_tools(
                     patch.workflow_runs,
                 )
                 workflow_runs_changed = True
-            else:
-                update[field] = data.get(field)
+            elif field == "goal":
+                update["current_goal"] = data.get(field)
+            elif field == "persona":
+                update["persona"] = data.get(field) or "coordinate"
 
     # Auto-advance: detect review_has_issues / failed_implementation from
     # tool results and drive DAG transitions without explicit advance_workflow.
@@ -508,12 +531,12 @@ def _agent_result_preview(text: object) -> str:
     if omitted_chars:
         suffixes.append(f"{omitted_chars} more chars")
     if suffixes:
-        preview = f"{preview}\n... ({'; '.join(suffixes)} omitted; full result passed to orchestrator)"
+        preview = f"{preview}\n... ({'; '.join(suffixes)} omitted; full result passed to voidx)"
     return preview
 
 
 def _is_barrier_tool(tool_call: dict) -> bool:
-    return tool_call.get("name") in {"on_intent", "clarify", "plan_checkpoint", "advance_workflow"}
+    return tool_call.get("name") in {"clarify", "plan_checkpoint", "advance_workflow"}
 
 
 def _split_at_first_barrier(tool_calls: list[dict]) -> tuple[list[dict], dict | None, list[dict]]:
@@ -549,25 +572,25 @@ async def _authorize_tool_calls(
     session_id: str,
     interaction_mode: str | None,
     workflow_runs: object,
+    runtime_persona: str | None = None,
 ):
     kwargs = {
         "agent_name": agent_name,
+        "runtime_persona": runtime_persona,
         "plan_mode": plan_mode,
         "session_id": session_id,
         "interaction_mode": interaction_mode,
     }
+    kwargs["workflow_runs"] = workflow_runs
     try:
         signature = inspect.signature(authorize)
     except (TypeError, ValueError):
-        kwargs["workflow_runs"] = workflow_runs
-    else:
-        params = signature.parameters
-        if "workflow_runs" in params or any(
-            param.kind == inspect.Parameter.VAR_KEYWORD
-            for param in params.values()
-        ):
-            kwargs["workflow_runs"] = workflow_runs
-    return await authorize(tool_calls, **kwargs)
+        return await authorize(tool_calls, **kwargs)
+    params = signature.parameters
+    if any(param.kind == inspect.Parameter.VAR_KEYWORD for param in params.values()):
+        return await authorize(tool_calls, **kwargs)
+    filtered = {key: value for key, value in kwargs.items() if key in params}
+    return await authorize(tool_calls, **filtered)
 
 
 def _make_interact_callback(app):
@@ -617,6 +640,56 @@ def _dump_pending_approval(value: object | None) -> dict | None:
         return value
     if hasattr(value, "model_dump"):
         return value.model_dump(mode="json")
+    return None
+
+
+def _task_state_for_state(value: object) -> TaskState:
+    if isinstance(value, TaskState):
+        return value.model_copy(deep=True)
+    if isinstance(value, dict):
+        try:
+            return TaskState.model_validate(value)
+        except ValueError:
+            return TaskState()
+    return TaskState()
+
+
+def _goal_for_state(value: object | None) -> Goal | None:
+    if value is None:
+        return None
+    if isinstance(value, Goal):
+        return value
+    if isinstance(value, dict):
+        try:
+            return Goal.model_validate(value)
+        except ValueError:
+            return None
+    return None
+
+
+def _pending_approval_for_state(value: object | None) -> PendingApproval | None:
+    if value is None:
+        return None
+    if isinstance(value, PendingApproval):
+        return value
+    if isinstance(value, dict):
+        try:
+            return PendingApproval.model_validate(value)
+        except ValueError:
+            return None
+    return None
+
+
+def _todo_state_for_state(value: object | None) -> TodoRunState | None:
+    if value is None:
+        return None
+    if isinstance(value, TodoRunState):
+        return value
+    if isinstance(value, dict):
+        try:
+            return TodoRunState.model_validate(value)
+        except ValueError:
+            return None
     return None
 
 

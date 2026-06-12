@@ -45,11 +45,11 @@ class VoidConsole:
         "lsp_diagnostics": "checking", "lsp_symbols": "indexing",
         "lsp_definition": "locating", "lsp_references": "finding",
         "lsp_format": "formatting",
-        "plan_checkpoint": "checking", "on_intent": "resolving",
+        "plan_checkpoint": "checking",
     }
 
     _AGENT_GERUND: dict[str, str] = {
-        "orchestrator": "thinking",
+        "voidx": "thinking",
         "explore": "exploring",
         "plan": "planning",
         "implement": "implementing",
@@ -210,7 +210,7 @@ class VoidConsole:
 
     def step_header(self, n: int, max_n: int, agent: str = "") -> None:
         gerund = _title(self._AGENT_GERUND.get(agent, agent))
-        label = f"Agent step {n}/{max_n}" if agent == "orchestrator" else f"{gerund} {n}/{max_n}"
+        label = f"Agent step {n}/{max_n}" if agent == "voidx" else f"{gerund} {n}/{max_n}"
         if via_events():
             ui_events.emit_direct(StatusUpdated(
                 status_id="agent:-1:progress",

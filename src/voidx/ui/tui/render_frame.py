@@ -5,6 +5,7 @@ from __future__ import annotations
 import io
 import shutil
 import sys
+import time
 
 from rich.cells import cell_len
 from rich.console import Console, Group
@@ -13,6 +14,7 @@ from rich.text import Text
 from voidx.ui.output.dock import dock
 from voidx.ui.output.dock.formatting import _text_from_line
 from voidx.ui.tui.helpers import _rendered_row_count
+from voidx.ui.tui.state import RenderStats
 
 
 class _FrameRendererMixin:
@@ -21,6 +23,7 @@ class _FrameRendererMixin:
 
     def _render_frame(self) -> None:
         """Render to terminal: capture Rich output, write with cursor control."""
+        started_at = time.perf_counter()
         width = self._frame_width()
         term_height = shutil.get_terminal_size().lines if self._tty else None
         render_failed = False
@@ -38,19 +41,41 @@ class _FrameRendererMixin:
 
         if self._tty:
             term_height = term_height or shutil.get_terminal_size().lines
+            force_full = render_failed
+            if (
+                self._prev_frame_width != 0
+                and (
+                    self._prev_frame_width != width
+                    or self._prev_frame_term_height != term_height
+                )
+            ):
+                self._invalidate_frame_cache()
+                force_full = True
             if dock.consume_clear_screen_request():
                 self._committed_line_count = 0
                 self._visible_committed_rows = 0
+                self._invalidate_frame_cache()
+                force_full = True
                 sys.stdout.write("\x1b[2J\x1b[H")
             frame_rows = _rendered_row_count(ansi)
             bottom_ansi = self._capture_renderable(self._render_bottom_impl(), width)
             bottom_rows = _rendered_row_count(bottom_ansi)
             busy_activity_rows = 0 if render_failed else self._busy_activity_row_count(width)
-            self._make_room_for_frame(frame_rows, term_height)
+            scrolled = self._make_room_for_frame(frame_rows, term_height)
+            if scrolled:
+                self._invalidate_frame_cache()
+                force_full = True
             start_row = max(self._visible_committed_rows + 1, 1)
-            sys.stdout.write(f"\x1b[{start_row};1H")
-            sys.stdout.write("\x1b[J")
-            sys.stdout.write(ansi)
+            lines = ansi.splitlines()
+            prev_lines = self._prev_frame_lines
+            if (
+                not force_full
+                and prev_lines is not None
+                and self._prev_frame_start_row == start_row
+            ):
+                changed_lines, strategy = self._render_diff(start_row, prev_lines, lines)
+            else:
+                changed_lines, strategy = self._render_full(start_row, lines)
             self._last_frame_rows = frame_rows
             self._last_frame_start_row = start_row
             self._last_bottom_rows = bottom_rows
@@ -64,6 +89,16 @@ class _FrameRendererMixin:
                 self._last_busy_activity_start_row = 0
             self._position_input_cursor(frame_rows)
             self._has_rendered_frame = True
+            self._prev_frame_lines = lines
+            self._prev_frame_start_row = start_row
+            self._prev_frame_width = width
+            self._prev_frame_term_height = term_height
+            self._render_stats = RenderStats(
+                total_lines=len(lines),
+                changed_lines=changed_lines,
+                render_ms=(time.perf_counter() - started_at) * 1000,
+                strategy=strategy,
+            )
             sys.stdout.flush()
             if self._pending_tb:
                 sys.stderr.write(self._pending_tb)
@@ -72,20 +107,62 @@ class _FrameRendererMixin:
         else:
             return
 
-    def _make_room_for_frame(self, frame_rows: int, term_height: int) -> None:
+    def _render_full(self, start_row: int, lines: list[str]) -> tuple[int, str]:
+        sys.stdout.write(f"\x1b[{start_row};1H")
+        sys.stdout.write("\x1b[J")
+        sys.stdout.write("\n".join(lines))
+        return len(lines), "full"
+
+    def _render_diff(
+        self,
+        start_row: int,
+        prev_lines: list[str],
+        new_lines: list[str],
+    ) -> tuple[int, str]:
+        total = max(len(prev_lines), len(new_lines))
+        changed = [
+            index
+            for index in range(total)
+            if index >= len(prev_lines)
+            or index >= len(new_lines)
+            or prev_lines[index] != new_lines[index]
+        ]
+        if total and len(changed) / total > 0.8:
+            return self._render_full(start_row, new_lines)
+
+        wrote_tail_clear = False
+        for index in changed:
+            row = start_row + index
+            sys.stdout.write(f"\x1b[{row};1H")
+            if index >= len(new_lines):
+                sys.stdout.write("\x1b[J")
+                wrote_tail_clear = True
+                break
+            sys.stdout.write("\x1b[K")
+            sys.stdout.write(new_lines[index])
+        return len(changed), "diff-tail-clear" if wrote_tail_clear else "diff"
+
+    def _invalidate_frame_cache(self) -> None:
+        self._prev_frame_lines = None
+        self._prev_frame_start_row = 1
+        self._prev_frame_width = 0
+        self._prev_frame_term_height = None
+
+    def _make_room_for_frame(self, frame_rows: int, term_height: int) -> bool:
         visible = max(0, min(self._visible_committed_rows, term_height))
         if visible != self._visible_committed_rows:
             self._visible_committed_rows = visible
         overlap = visible + frame_rows - term_height
         if overlap <= 0:
-            return
+            return False
         scroll_rows = min(overlap, visible)
         if scroll_rows <= 0:
             self._visible_committed_rows = 0
-            return
+            return False
         sys.stdout.write(f"\x1b[{term_height};1H")
         sys.stdout.write("\n" * scroll_rows)
         self._visible_committed_rows = visible - scroll_rows
+        return True
 
     def _render_input_region(self) -> None:
         if not self._tty or not self._has_rendered_frame or self._last_bottom_rows <= 0:

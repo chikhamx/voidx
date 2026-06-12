@@ -1,4 +1,4 @@
-"""Tool definition filters shared by primary and worker-role loops."""
+"""Tool definition filters shared by primary and worker-persona loops."""
 
 from __future__ import annotations
 

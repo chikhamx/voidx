@@ -1,4 +1,4 @@
-"""Task tracker — shared state for running worker-role status."""
+"""Task tracker — shared state for running worker-persona status."""
 
 from __future__ import annotations
 
@@ -24,7 +24,7 @@ class TaskState:
 
 
 class TaskTracker:
-    """Thread-safe registry for running worker-role tasks."""
+    """Thread-safe registry for running worker-persona tasks."""
 
     def __init__(self):
         self._lock = threading.Lock()
@@ -86,7 +86,7 @@ class TaskTracker:
         """Format all tasks as a status report string."""
         tasks = self.list_all()
         if not tasks:
-            return "No worker-role tasks."
+            return "No worker-persona tasks."
 
         lines = []
         for t in tasks:

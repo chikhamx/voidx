@@ -94,7 +94,7 @@ class AdvanceWorkflowTool(BaseTool):
             condition=condition,
         )
         updated = advance_workflow_states(runs, [event])
-        patch = ToolStatePatch(workflow_runs=updated)
+        patch = ToolStatePatch(workflow_runs=updated, persona=_active_persona(updated))
         payload = {
             "from": selected.name,
             "condition": condition,
@@ -107,7 +107,7 @@ class AdvanceWorkflowTool(BaseTool):
             output=json.dumps(payload, ensure_ascii=False, indent=2),
             metadata={
                 "workflow_transition": payload,
-                "state_patch": patch.model_dump(mode="json", include={"workflow_runs"}),
+                "state_patch": patch.model_dump(mode="json", include={"workflow_runs", "persona"}),
             },
         )
 
@@ -204,3 +204,14 @@ def _activated_successors(
         for run in after
         if run.status == WorkflowRunStatus.ACTIVE and run.name not in before_active
     ]
+
+
+def _active_persona(runs: list[WorkflowRunState]) -> str | None:
+    personas: list[str] = []
+    for run in runs:
+        if run.status != WorkflowRunStatus.ACTIVE:
+            continue
+        personas.extend(persona for persona in run.personas if persona)
+    if not personas:
+        return None
+    return ",".join(dict.fromkeys(personas))

@@ -35,7 +35,7 @@ SUMMARY_REQUEST = (
     "Focus on durable facts, decisions, constraints, open work, and final tool outcomes. "
     "Do not narrate step-by-step; extract what matters for continuing the task."
 )
-COMPACTION_PROMPT_HEADROOM = 2_000
+COMPACTION_PERSONA_HEADROOM = 2_000
 IN_TURN_SUMMARY_PREFIX = "## Long Summary\n"
 
 
@@ -341,7 +341,7 @@ class GraphCompactionCoordinator:
         previous_summary: str | None,
     ) -> str | None:
         """Run the compaction agent to generate a structured summary."""
-        from voidx.agent.agents import COMPACTION_PROMPT
+        from voidx.agent.agents import BASE_SYSTEM_PROMPT, COMPACTION_PERSONA
 
         host = self.host
         if host.model is None:
@@ -354,14 +354,27 @@ class GraphCompactionCoordinator:
             headless=True,
         )
 
-        messages = _build_compaction_messages(head_messages, previous_summary, COMPACTION_PROMPT)
+        workflow_context = await host._instruction.workflow_context_for(
+            SUMMARY_REQUEST,
+            agent="compaction",
+            task_intent="coding",
+            interaction_mode="auto",
+            runtime_trigger="compaction",
+            scope="conversation compaction",
+        )
+        messages = _build_compaction_messages(
+            head_messages,
+            previous_summary,
+            BASE_SYSTEM_PROMPT + "\n\n" + COMPACTION_PERSONA,
+            workflow_context_content=workflow_context.content,
+        )
         context_tokens = estimate_context_tokens(messages, host.config.model.model)
         if context_tokens > host._compaction.context_limit:
             budget = max(
                 0,
                 host._compaction.context_limit
                 - host._compaction.output_token_max
-                - COMPACTION_PROMPT_HEADROOM,
+                - COMPACTION_PERSONA_HEADROOM,
             )
             head_messages = host._compaction.truncate_head_to_budget(
                 head_messages,
@@ -370,7 +383,12 @@ class GraphCompactionCoordinator:
             )
             if not head_messages:
                 raise ValueError("compaction input exceeds context budget")
-            messages = _build_compaction_messages(head_messages, previous_summary, COMPACTION_PROMPT)
+            messages = _build_compaction_messages(
+                head_messages,
+                previous_summary,
+                BASE_SYSTEM_PROMPT + "\n\n" + COMPACTION_PERSONA,
+                workflow_context_content=workflow_context.content,
+            )
             context_tokens = estimate_context_tokens(messages, host.config.model.model)
             if context_tokens > host._compaction.context_limit:
                 raise ValueError("compaction input exceeds context budget")
@@ -380,7 +398,7 @@ class GraphCompactionCoordinator:
             await save_context_frame_from_messages(
                 session_id=host._session.id,
                 frame_kind="compaction",
-                agent_role="compaction",
+                agent_persona="compaction",
                 provider=host.config.model.provider,
                 model=host.config.model.model,
                 messages=messages,
@@ -388,6 +406,7 @@ class GraphCompactionCoordinator:
                 metadata={
                     "head_message_count": len(head_messages),
                     "has_previous_summary": previous_summary is not None,
+                    "active_workflows": workflow_context.active,
                 },
             )
         assistant_msg = await stream_llm(host.model, messages, renderer, resolve_protocol(host.config.model))
@@ -420,8 +439,12 @@ def _build_compaction_messages(
     head_messages: list[BaseMessage],
     previous_summary: str | None,
     system_prompt: str,
+    *,
+    workflow_context_content: str = "",
 ) -> list[BaseMessage]:
     messages: list[BaseMessage] = [SystemMessage(content=system_prompt)]
+    if workflow_context_content.strip():
+        messages.append(HumanMessage(content=workflow_context_content.strip()))
     if previous_summary:
         messages.append(HumanMessage(content=(
             "Below is the previous anchored summary of earlier conversation. "

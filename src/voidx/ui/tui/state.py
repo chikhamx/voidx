@@ -87,6 +87,14 @@ class StatusSummaryCache:
     segments: tuple[tuple[str, str], ...] = ()
 
 
+@dataclass(frozen=True)
+class RenderStats:
+    total_lines: int
+    changed_lines: int
+    render_ms: float
+    strategy: str
+
+
 @dataclass
 class RenderState:
     running: bool = False
@@ -116,6 +124,11 @@ class RenderState:
     last_busy_activity_rows: int = 0
     last_busy_activity_start_row: int = 0
     panel_row_limit: int | None = None
+    prev_frame_lines: list[str] | None = None
+    prev_frame_start_row: int = 1
+    prev_frame_width: int = 0
+    prev_frame_term_height: int | None = None
+    render_stats: RenderStats | None = None
 
 
 @dataclass
@@ -215,6 +228,11 @@ STATE_FIELD_MAP: dict[str, tuple[str, str]] = {
     "_last_busy_activity_rows": ("_render_state", "last_busy_activity_rows"),
     "_last_busy_activity_start_row": ("_render_state", "last_busy_activity_start_row"),
     "_panel_row_limit": ("_render_state", "panel_row_limit"),
+    "_prev_frame_lines": ("_render_state", "prev_frame_lines"),
+    "_prev_frame_start_row": ("_render_state", "prev_frame_start_row"),
+    "_prev_frame_width": ("_render_state", "prev_frame_width"),
+    "_prev_frame_term_height": ("_render_state", "prev_frame_term_height"),
+    "_render_stats": ("_render_state", "render_stats"),
     "_external_request_handler": ("_external_state", "request_handler"),
     "_external_command_handler": ("_external_state", "command_handler"),
     "_stdin_fd": ("_terminal_state", "stdin_fd"),

@@ -1,11 +1,7 @@
-"""Agent graph — LangGraph state machine with 5-agent system.
+"""Agent graph — LangGraph state machine.
 
-Agents:
-  orchestrator — primary, coordinates, can make small direct edits
-  explore     — read-only codebase search
-  plan        — read-only architecture design
-  implement   — delegated coding agent for broad or isolated changes
-  review      — read-only code review (PASS/FAIL/NEEDS_CHANGE)
+voidx uses one primary agent identity (`voidx`) and runtime thinking-mode
+personas (`coordinate`, `explore`, `plan`, `implement`, `review`).
 
 Depth limit = 1: child agents cannot start further child agents.
 """
@@ -29,7 +25,7 @@ from voidx.agent.agents import (
     PLAN_MODE_APPEND,
     AgentDef,
     get_agent,
-    role_prompt_for_llm,
+    persona_prompt_for_llm,
 )
 from voidx.agent.graph.compaction import GraphCompactionMixin
 from voidx.agent.graph.compaction_coordinator import GraphCompactionCoordinator
@@ -45,7 +41,6 @@ from voidx.agent.graph.topology import (
     build_graph,
     latest_ai_message,
     latest_user_text,
-    pending_approval_scope,
     prepare_state,
     session_date,
 )
@@ -59,21 +54,24 @@ from voidx.agent.graph.wiring import (
 )
 from voidx.agent.state import AgentState
 from voidx.agent.graph.streaming import extract_text, stream_llm as _stream_llm
-from voidx.agent.graph.subagent import _task_intent_for_agent as _subagent_task_intent_for_agent
+from voidx.logging.request_log import log_llm_exchange
+from voidx.agent.graph.subagent import (
+    _goal_type_for_agent as _subagent_goal_type_for_agent,
+    _task_intent_for_agent as _subagent_task_intent_for_agent,
+)
 from voidx.agent.graph.subagent import run_subagent as _run_subagent
 from voidx.agent.graph.title_mixin import GraphTitleMixin
 from voidx.agent.todo_state import apply_todo_state_to_host, sanitize_todo_replay_messages
 from voidx.agent.graph.tool_executor import GraphToolExecutor
 from voidx.agent.graph.tool_execution import GraphToolExecutionMixin
 from voidx.agent.graph.turn_runner import GraphTurnRunner
-from voidx.agent.intent_refinement import refine_intent
 from voidx.agent.runtime_context import (
     ContextCompilerCache,
     InteractionMode,
     RuntimeContextBuilder,
     current_todo_context_message,
 )
-from voidx.agent.task_state import TaskRun, TaskState
+from voidx.agent.task_state import TaskState, goal_label, goal_type_value
 from voidx.agent.tool_filters import filter_unavailable_lsp_tools
 from voidx.config import Config, Settings
 from voidx.llm.instruction import InstructionService
@@ -89,7 +87,6 @@ from voidx.memory.session import MessageRow, SessionInfo
 from voidx.runtime.ui_port import runtime_ui_port
 from voidx.skills.registry import SkillRegistry
 from voidx.skills.service import SkillService
-from voidx.tools.on_intent import OnIntentInput
 from voidx.ui.output.console import StreamingRenderer
 from voidx.ui.output.events.schema import (
     GuidanceSubmitted,
@@ -122,12 +119,6 @@ def _is_context_overflow_error(exc: Exception) -> bool:
             "context window",
         )
     )
-
-
-def _restored_workflow_runs(task_run: TaskRun | None) -> list[WorkflowRunState]:
-    if task_run is None:
-        return []
-    return list((task_run.workflow_runs or {}).values())
 
 
 def _merge_workflow_runs(*groups: list[WorkflowRunState | dict]) -> list[WorkflowRunState]:
@@ -168,6 +159,59 @@ def _active_workflow_names(group: list[WorkflowRunState | dict]) -> list[str]:
     return names
 
 
+def _persona_for_workflow_runs(
+    group: list[WorkflowRunState | dict],
+    *,
+    fallback: str = "coordinate",
+) -> str:
+    personas: list[str] = []
+    for item in group:
+        try:
+            run = item if isinstance(item, WorkflowRunState) else WorkflowRunState.model_validate(item)
+        except (TypeError, ValueError):
+            continue
+        if run.status != WorkflowRunStatus.ACTIVE:
+            continue
+        personas.extend(persona.strip() for persona in run.personas if persona.strip())
+    if not personas:
+        return fallback or "coordinate"
+    return ",".join(dict.fromkeys(personas))
+
+
+def _agent_static_tool_defs(agent: AgentDef | None, all_tool_defs: list[dict]) -> list[dict]:
+    """Apply AgentDef's static tool catalog visibility.
+
+    This is not runtime persona/workflow policy. Runtime policy is enforced by
+    the tool-engine during authorization; this only prevents tools outside the
+    current agent identity's declared catalog from being advertised to the LLM.
+    """
+    if agent is None:
+        return all_tool_defs
+    agent_tool_ids = set(agent.tools)
+    mcp_allowed = bool(agent.mcp_tools)
+    return [
+        tool_def
+        for tool_def in all_tool_defs
+        if (
+            tool_def["function"]["name"] in agent_tool_ids
+            or (mcp_allowed and tool_def["function"]["name"].startswith("mcp__"))
+        )
+    ]
+
+
+def _task_state_for_context(value: object, fallback: TaskState | None = None) -> TaskState:
+    if isinstance(value, TaskState):
+        return value.model_copy(deep=True)
+    if isinstance(value, dict):
+        try:
+            return TaskState.model_validate(value)
+        except ValueError:
+            pass
+    if fallback is not None:
+        return fallback.model_copy(deep=True)
+    return TaskState()
+
+
 class VoidXGraph(
     GraphTitleMixin,
     GraphRunLoopMixin,
@@ -190,7 +234,6 @@ class VoidXGraph(
         self._tracker, self.tools = build_tool_registry(
             settings=settings,
             config=config,
-            on_intent_resolver=self._resolve_on_intent,
             subagent_runner=self._subagent_runner,
         )
 
@@ -215,7 +258,6 @@ class VoidXGraph(
         self._app: PureTui | None = None
         self._next_agent_id: int = 0
         self._task_state = TaskState()
-        self._task_run = TaskRun()
         self._needs_failure_check: dict[str, dict] = {}
         self._pending_guidance: list[str] = []
         self._clear_session_tasks: set[asyncio.Task[None]] = set()
@@ -257,10 +299,6 @@ class VoidXGraph(
     @property
     def settings(self) -> Settings | None:
         return self._settings
-
-    @property
-    def task_run(self) -> TaskRun:
-        return self._task_run
 
     @property
     def task_state(self) -> TaskState:
@@ -316,8 +354,8 @@ class VoidXGraph(
     def debug_enabled(self) -> bool:
         return self._debug
 
-    def set_task_run(self, task_run: TaskRun) -> None:
-        self._task_run = task_run
+    def set_task_state(self, task_state: TaskState) -> None:
+        self._task_state = task_state
 
     def submit_guidance(self, text: str) -> bool:
         guidance = " ".join(text.strip().split())
@@ -434,16 +472,13 @@ class VoidXGraph(
         await update_title(self._session.id, title)
         self._session = self._session.model_copy(update={"title": title})
 
-    def _resolve_on_intent(self, inp: OnIntentInput, ctx):
-        return refine_intent(
-            inp,
-            ctx,
-            config=self.config,
-            settings=self._settings,
-            registered_tool_ids=self.tools.ids(),
-        )
-
-    async def _subagent_runner(self, agent_def: AgentDef, description: str, model_override: str | None) -> str:
+    async def _subagent_runner(
+        self,
+        agent_def: AgentDef,
+        description: str,
+        model_override: str | None,
+        runtime_persona: str = "explore",
+    ) -> str:
         # Apply configured max_steps override
         agent_def = self._apply_max_steps_override(agent_def)
         sub_buffer: list[BaseMessage] = []
@@ -452,21 +487,23 @@ class VoidXGraph(
         self._next_agent_id += 1
         parent_tool_call_id = _current_parent_tool_call_id.get()
         started_at = time.monotonic()
-        interaction_mode = InteractionMode.PLAN.value if agent_def.name == "plan" else InteractionMode.AUTO.value
-        task_intent = _subagent_task_intent_for_agent(agent_def.name)
+        interaction_mode = InteractionMode.PLAN.value if runtime_persona == "plan" else InteractionMode.AUTO.value
+        task_intent = _subagent_task_intent_for_agent(runtime_persona)
+        goal_type = _subagent_goal_type_for_agent(runtime_persona, description)
         workflow_runtime_context = await self._workflow_context_for(
             description,
-            agent=agent_def.name,
+            agent=runtime_persona,
             task_intent=task_intent,
+            goal_type=goal_type,
             interaction_mode=interaction_mode,
             scope=description,
-            turn_count=getattr(getattr(self, "_task_run", None), "turn_count", 0),
         )
 
         async def authorize(calls, agent_name: str):
             return await self._authorize_tool_calls(
                 calls,
                 agent_name=agent_name,
+                runtime_persona=runtime_persona,
                 plan_mode=InteractionMode.parse(interaction_mode) == InteractionMode.PLAN,
                 session_id=session_id,
                 interaction_mode=interaction_mode,
@@ -509,6 +546,7 @@ class VoidXGraph(
                 self.api_key,
                 self.config,
                 self._tracker,
+                runtime_persona=runtime_persona,
                 **kwargs,
             )
             ok = True
@@ -544,10 +582,11 @@ class VoidXGraph(
 
     async def _prepare_with_stream(self, state: AgentState) -> dict:
         base = prepare_state(state)
-        agent_name = state.get("agent", "orchestrator")
-        self._current_agent = self._apply_max_steps_override(get_agent(agent_name))
-        role_prompt = (
-            role_prompt_for_llm(
+        agent_id = "voidx"
+        runtime_persona = state.get("persona", "coordinate")
+        self._current_agent = self._apply_max_steps_override(get_agent(agent_id))
+        persona_prompt = (
+            persona_prompt_for_llm(
                 self._current_agent,
                 parallel_subagents_enabled=self.config.parallel_subagents.enabled,
             )
@@ -560,17 +599,16 @@ class VoidXGraph(
         )
         current_user_text = latest_user_text(state.get("messages", []))
         instructions = await self._instruction.system()
-        existing_workflow_runs = _merge_workflow_runs(
-            _restored_workflow_runs(getattr(self, "_task_run", None)),
-            state.get("workflow_runs", []) or [],
-        )
+        task_state = _task_state_for_context(state.get("task_state"), getattr(self, "_task_state", None))
+        current_goal = task_state.current_goal
+        existing_workflow_runs = list((task_state.workflow_runs or {}).values())
         workflow_context = await self._workflow_context_for(
             current_user_text,
-            agent=agent_name,
-            task_intent=state.get("task_intent"),
+            agent=runtime_persona,
+            task_intent=task_state.current_intent.value,
+            goal_type=goal_type_value(current_goal),
             interaction_mode=interaction_mode,
-            scope=pending_approval_scope(state.get("pending_approval")) or state.get("goal") or current_user_text,
-            turn_count=state.get("goal_turn_count", 0),
+            scope=goal_label(current_goal) or current_user_text,
             exclude_names=_workflow_names(existing_workflow_runs),
             active_names=_active_workflow_names(existing_workflow_runs),
         )
@@ -578,6 +616,7 @@ class VoidXGraph(
             existing_workflow_runs,
             workflow_context.runs,
         )
+        runtime_persona = _persona_for_workflow_runs(workflow_runs, fallback=runtime_persona)
         mode_prompt = PLAN_MODE_APPEND if InteractionMode.parse(interaction_mode) == InteractionMode.PLAN else ""
         summary = self._pending_summary or self._compaction_summary
         self._pending_summary = None
@@ -586,33 +625,28 @@ class VoidXGraph(
             config=self.config,
             workspace=state.get("workspace", "."),
             base_system_prompt=BASE_SYSTEM_PROMPT,
-            role_prompt=role_prompt,
+            persona_prompt=persona_prompt,
             mode_prompt=mode_prompt,
             tool_contract=tool_contract,
-            agent=agent_name,
+            persona=runtime_persona,
             interaction_mode=interaction_mode,
             instructions=instructions,
-            skill_context_content=workflow_context.content,
+            workflow_context_content=workflow_context.content,
             workflow_runs=workflow_runs,
             active_workflow_summaries=workflow_context.active,
             summary=summary,
             current_user_text=current_user_text,
-            task_intent=state.get("task_intent"),
-            intent_resolution_reason=state.get("intent_resolution_reason", ""),
-            pending_approval=state.get("pending_approval"),
-            goal=state.get("goal", ""),
-            goal_phase=state.get("goal_phase", ""),
-            goal_status=state.get("goal_status", ""),
-            goal_turn_count=state.get("goal_turn_count", 0),
-            available_tool_ids=state.get("available_tool_ids", []),
-            intent_confidence=state.get("intent_confidence"),
-            intent_source=state.get("intent_source", ""),
-            intent_refined=state.get("intent_refined", False),
+            task_state=task_state,
             session_date=self._session_date,
         ).build_incremental(self._context_cache)
         context.apply_to_messages(state.get("messages", []))
 
-        return {**base, "workflow_runs": workflow_runs}
+        task_state.workflow_runs = {run.name: run for run in workflow_runs}
+        return {
+            **base,
+            "persona": runtime_persona,
+            "task_state": task_state.model_dump(mode="json"),
+        }
 
     async def _workflow_context_for(self, *args, **kwargs):
         return await self._instruction.workflow_context_for(*args, **kwargs)
@@ -632,25 +666,8 @@ class VoidXGraph(
                 "should_continue": False,
             }
 
-        agent = get_agent(state.get("agent", "orchestrator"))
-        agent_tool_ids = set(agent.tools) if agent else None
-        mcp_allowed = bool(agent and agent.mcp_tools)
-        all_tool_defs = self.tools.tools_for_llm()
-
-        # Filter tools based on agent's allowlist
-        if agent_tool_ids is not None:
-            tool_defs = [
-                t for t in all_tool_defs
-                if (
-                    t["function"]["name"] in agent_tool_ids
-                    or (mcp_allowed and t["function"]["name"].startswith("mcp__"))
-                )
-            ]
-        else:
-            tool_defs = all_tool_defs
-        if "available_tool_ids" in state:
-            visible = set(state.get("available_tool_ids") or [])
-            tool_defs = [t for t in tool_defs if t["function"]["name"] in visible]
+        agent = get_agent("voidx")
+        tool_defs = _agent_static_tool_defs(agent, self.tools.tools_for_llm())
         tool_defs = filter_unavailable_lsp_tools(tool_defs, getattr(self, "_lsp_manager", None))
 
         has_tool_budget = step < max_s - 1
@@ -676,7 +693,8 @@ class VoidXGraph(
                 step=step,
                 max_steps=max_s,
                 has_tool_budget=has_tool_budget,
-                goal=state.get("goal", "") or latest_user_text(base_messages),
+                goal=goal_label(_task_state_for_context(state.get("task_state"), self._task_state).current_goal)
+                or latest_user_text(base_messages),
             )
             return [*base_messages, *convergence_messages], convergence_messages, convergence_forced
 
@@ -692,7 +710,7 @@ class VoidXGraph(
                 session_id=self._session.id,
                 user_message_id=state.get("user_message_id"),
                 frame_kind="main",
-                agent_role=agent_name,
+                agent_persona=agent_name,
                 provider=self.config.model.provider,
                 model=self.config.model.model,
                 messages=messages,
@@ -718,7 +736,7 @@ class VoidXGraph(
 
         llm_messages, convergence_messages, convergence_forced = rebuild_llm_messages(state_messages)
 
-        agent_name = state.get("agent", "orchestrator")
+        agent_name = state.get("persona", "coordinate")
         if self._debug:
             self._ui.ui.print()
         self._ui.ui.step_header(step, max_s, agent_name)
@@ -743,6 +761,14 @@ class VoidXGraph(
                 renderer = StreamingRenderer(self._ui.console, debug=self._debug)
                 model_with_tools = self.model.bind_tools(tool_defs) if tool_defs else self.model
                 assistant_msg = await _stream_llm(model_with_tools, llm_messages, renderer, resolve_protocol(self.config.model))
+                log_llm_exchange(
+                    llm_messages,
+                    assistant_msg,
+                    model=self.config.model.model,
+                    provider=self.config.model.provider,
+                    step=step,
+                    session_id=self._session.id if self._session else None,
+                )
                 self._usage_stats.record_call(
                     extract_token_usage(assistant_msg),
                     fallback_input_tokens=context_tokens,

@@ -18,6 +18,7 @@ from voidx.ui.output.events import CompositeEventConsumer, DockEventConsumer
 from voidx.ui.output.events.schema import StartupShown
 from voidx.ui.output.types import McpServerStatus, UiStatus
 from voidx.ui.tui import PureTui
+from voidx.agent.task_state import goal_label, goal_type_value
 
 if TYPE_CHECKING:
     from voidx.agent.graph.contracts import GraphRunLoopHost
@@ -173,11 +174,9 @@ class GraphRunLoopMixin(GraphTurnMixin, GraphSessionMixin, GraphTranscriptMixin)
                     "value",
                     "plan" if getattr(self, "_plan_mode", False) else "auto",
                 ),
-                goal_label=lambda: getattr(getattr(self, "_task_run", None), "goal", ""),
-                goal_phase=lambda: getattr(getattr(getattr(self, "_task_run", None), "phase", None), "value", "clarify"),
-                goal_status=lambda: getattr(getattr(getattr(self, "_task_run", None), "status", None), "value", "idle"),
-                goal_turn_count=lambda: getattr(getattr(self, "_task_run", None), "turn_count", 0),
-                goal_awaiting_approval=lambda: bool(getattr(getattr(self, "_task_run", None), "pending_approval", None)),
+                goal_label=lambda: goal_label(getattr(getattr(self, "_task_state", None), "current_goal", None)),
+                goal_type=lambda: goal_type_value(getattr(getattr(self, "_task_state", None), "current_goal", None)),
+                goal_awaiting_approval=lambda: bool(getattr(getattr(self, "_task_state", None), "pending_approval", None)),
                 mcp_servers=lambda: [
                     McpServerStatus(
                         name=s.name,

@@ -308,7 +308,7 @@ def _tool_header(
     raw_args: dict[str, Any],
 ) -> str:
     if tool_name == "agent":
-        agent_name = raw_args.get("agent") or raw_args.get("role") or _tool_display_value(tool_name, args, raw_args)
+        agent_name = raw_args.get("agent") or _tool_display_value(tool_name, args, raw_args)
         return f"[bold]{escape(agent_display_name(agent_name))}[/bold]"
     name = _tool_display_name(tool_name, label)
     value = _tool_display_value(tool_name, args, raw_args)
@@ -337,7 +337,6 @@ def _tool_display_name(tool_name: str, label: str) -> str:
         "todo": "Todo",
         "task_status": "Status",
         "plan_checkpoint": "Checkpoint",
-        "on_intent": "Intent",
     }
     label_mapping = {
         "Reading": "Read",
@@ -368,9 +367,7 @@ def _tool_display_value(tool_name: str, args: str, raw_args: dict[str, Any]) -> 
     elif tool_name == "bash":
         value = str(raw_args.get("command") or "").replace("\n", "; ")
     elif tool_name == "agent":
-        value = raw_args.get("agent") or raw_args.get("role") or raw_args.get("description")
-    elif tool_name == "on_intent":
-        value = raw_args.get("intent")
+        value = raw_args.get("agent") or raw_args.get("description")
     elif tool_name == "plan_checkpoint":
         value = raw_args.get("plan_summary")
     elif tool_name in {"webfetch", "websearch"}:

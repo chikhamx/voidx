@@ -12,7 +12,6 @@ from voidx.llm.provider import get_context_limit
 from voidx.llm.usage import UsageStats
 from voidx.permission.service import PermissionService
 from voidx.tools.agent import AgentTool
-from voidx.tools.on_intent import OnIntentInput, OnIntentTool
 from voidx.tools.registry import ToolRegistry
 from voidx.tools.task_tracker import TaskTracker
 
@@ -29,14 +28,10 @@ def build_tool_registry(
     *,
     settings: Settings | None,
     config: Config,
-    on_intent_resolver: Callable[[OnIntentInput, Any], Any],
     subagent_runner: Callable[..., Any],
 ) -> tuple[TaskTracker, ToolRegistry]:
     tracker = TaskTracker()
     registry = ToolRegistry(settings=settings, tracker=tracker)
-
-    intent_tool = OnIntentTool(resolver=on_intent_resolver)
-    registry.register("on_intent", intent_tool, intent_tool.description, intent_tool.parameters_schema())
 
     register_agent_tool(
         registry,

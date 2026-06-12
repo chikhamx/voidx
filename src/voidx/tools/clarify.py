@@ -6,7 +6,7 @@ import json
 
 from pydantic import BaseModel, Field
 
-from voidx.runtime import TaskIntent, ToolStatePatch
+from voidx.runtime import GoalType, TaskIntent, ToolStatePatch, goal_from_text
 from voidx.tools.base import (
     BaseTool,
     ToolContext,
@@ -114,27 +114,35 @@ def _infer_state_patch(inp: ClarifyInput, response: UserResponse) -> ToolStatePa
 
     normalized = answer.lower()
     intent_map = {
-        "chat": TaskIntent.CHAT,
-        "inspect": TaskIntent.INSPECT,
-        "design": TaskIntent.DESIGN,
-        "review": TaskIntent.REVIEW,
-        "implement": TaskIntent.IMPLEMENT,
-        "debug": TaskIntent.DEBUG,
+        "general": TaskIntent.GENERAL,
+        "coding": TaskIntent.CODING,
+        "chat": TaskIntent.GENERAL,
+        "inspect": TaskIntent.CODING,
+        "design": TaskIntent.CODING,
+        "review": TaskIntent.CODING,
+        "implement": TaskIntent.CODING,
+        "debug": TaskIntent.CODING,
+    }
+    goal_type_map = {
+        "inspect": GoalType.INSPECT,
+        "design": GoalType.DESIGN,
+        "review": GoalType.REVIEW,
+        "implement": GoalType.FEATURE,
+        "debug": GoalType.DEBUG,
     }
     if normalized in intent_map:
         return ToolStatePatch(
             task_intent=intent_map[normalized],
-            intent_resolution_reason=f"clarify: user selected {normalized}",
-            intent_source="clarify",
-            intent_refined=True,
+            goal=(
+                goal_from_text(answer, goal_type=goal_type_map[normalized])
+                if normalized in goal_type_map
+                else None
+            ),
         )
 
     if "scope" in inp.context.lower():
         return ToolStatePatch(
-            goal=answer,
-            intent_resolution_reason="clarify: user refined scope",
-            intent_source="clarify",
-            intent_refined=True,
+            goal=goal_from_text(answer, goal_type=GoalType.CHORE),
         )
     return None
 

@@ -91,9 +91,8 @@ class _StatusRendererMixin:
         plan = _call_bool(getattr(self.status, "plan_mode", None))
         debug = _call_bool(getattr(self.status, "debug", None))
         goal_label = _call_status(getattr(self.status, "goal_label", None), "")
-        goal_status = _call_status(getattr(self.status, "goal_status", None), "idle")
-        goal_phase = _call_status(getattr(self.status, "goal_phase", None), "clarify")
-        goal_turns = _call_int(getattr(self.status, "goal_turn_count", None), 0)
+        goal_type = _call_status(getattr(self.status, "goal_type", None), "")
+        goal_awaiting = _call_bool(getattr(self.status, "goal_awaiting_approval", None))
         stats = getattr(self.status, "usage_stats", None)
         context_limit = getattr(stats, "context_limit", None) or getattr(self.status, "context_limit", 0)
         stats_snapshot = (
@@ -114,9 +113,8 @@ class _StatusRendererMixin:
             plan,
             debug,
             goal_label,
-            goal_status,
-            goal_phase,
-            goal_turns,
+            goal_type,
+            goal_awaiting,
             self._busy,
             stats_snapshot,
         )
@@ -150,8 +148,12 @@ class _StatusRendererMixin:
             )
 
         goal_text = ""
-        if goal_label or goal_status != "idle":
-            goal_text = f"goal {goal_status}/{goal_phase} turns {goal_turns}"
+        if goal_label or goal_type or goal_awaiting:
+            goal_text = "goal"
+            if goal_type:
+                goal_text += f" {goal_type}"
+            if goal_awaiting:
+                goal_text += " awaiting-approval"
             if goal_label:
                 goal_text += f" {goal_label}"
 

@@ -29,9 +29,7 @@ class UiStatus:
     plan_mode: Callable[[], bool]
     interaction_mode: Callable[[], str] = field(default_factory=lambda: lambda: "auto")
     goal_label: Callable[[], str] = field(default_factory=lambda: lambda: "")
-    goal_phase: Callable[[], str] = field(default_factory=lambda: lambda: "clarify")
-    goal_status: Callable[[], str] = field(default_factory=lambda: lambda: "idle")
-    goal_turn_count: Callable[[], int] = field(default_factory=lambda: lambda: 0)
+    goal_type: Callable[[], str] = field(default_factory=lambda: lambda: "")
     goal_awaiting_approval: Callable[[], bool] = field(default_factory=lambda: lambda: False)
     reasoning_effort: str = "xhigh"
     permission_label: Callable[[], str] = field(default_factory=lambda: lambda: "default")

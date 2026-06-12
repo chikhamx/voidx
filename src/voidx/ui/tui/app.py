@@ -85,6 +85,7 @@ class PureTui(
     """Scrollable transcript with a fixed bottom input — pure Rich + raw stdin."""
 
     INPUT_HISTORY_LIMIT = 1000
+    RENDER_THROTTLE_SECONDS = 0.016
 
     def __getattr__(self, name: str) -> Any:
         mapping = STATE_FIELD_MAP.get(name)
@@ -230,7 +231,7 @@ class PureTui(
             except RuntimeError:
                 self._run_scheduled_render()
                 return
-            loop.call_soon(self._run_scheduled_render)
+            loop.call_later(self.RENDER_THROTTLE_SECONDS, self._run_scheduled_render)
 
     def _run_scheduled_render(self) -> None:
         self._render_scheduled = False
@@ -346,6 +347,7 @@ class PureTui(
             term_height,
             self._visible_committed_rows + flush_rows,
         )
+        self._invalidate_frame_cache()
 
         sys.stdout.flush()
 

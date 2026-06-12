@@ -75,7 +75,7 @@ class CaptureConsole:
         detail = f"({_fmt_args(args)})"
         if tool_name == "agent":
             detail = ""
-            gerund = agent_display_name(args.get("agent") or args.get("role"))
+            gerund = agent_display_name(args.get("agent"))
         elif tool_name == "bash":
             command = str(args.get("command") or "")
             detail = ""

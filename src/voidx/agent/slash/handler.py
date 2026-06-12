@@ -197,38 +197,33 @@ class SlashHandler(
 
     async def _goal(self, arg: str) -> None:
         from voidx.agent.runtime_context import InteractionMode
-        from voidx.agent.task_state import TaskRun
+        from voidx.agent.task_state import TaskState, goal_label, goal_type_value
 
-        task_run = self.host.task_run
-        if task_run is None:
-            task_run = TaskRun()
-            self.host.set_task_run(task_run)
-
+        task_state = self.host.task_state or TaskState()
         goal = arg.strip()
         if goal.lower() in {"clear", "reset"}:
-            task_run.clear()
-            task_state = self.host.task_state
-            if task_state is not None:
-                task_state.pending_approval = None
+            task_state.clear_goal()
+            self.host.set_task_state(task_state)
             self._set_interaction_mode(InteractionMode.AUTO.value)
             await self.host.persist_runtime_state()
             ui.print("[dim]Goal cleared.[/dim]")
             return
 
         if not goal:
-            if task_run.goal:
+            if task_state.current_goal is not None:
                 ui.print(
-                    f"Goal: [cyan]{task_run.goal}[/cyan] "
-                    f"[dim]({task_run.phase.value}, {task_run.status.value}, turns {task_run.turn_count})[/dim]"
+                    f"Goal: [cyan]{goal_label(task_state.current_goal)}[/cyan] "
+                    f"[dim]({goal_type_value(task_state.current_goal)})[/dim]"
                 )
             else:
                 ui.print("Usage: /goal <goal>|clear")
             return
 
-        task_run.set_goal(goal)
+        task_state.set_goal(goal)
+        self.host.set_task_state(task_state)
         self._set_interaction_mode(InteractionMode.GOAL.value)
         await self.host.persist_runtime_state()
-        ui.print(f"[dim]Goal set to [cyan]{task_run.goal}[/cyan][/dim]")
+        ui.print(f"[dim]Goal set to [cyan]{goal_label(task_state.current_goal)}[/cyan][/dim]")
 
     def _usage(self) -> None:
         from voidx.llm.usage import format_cache_hit_rate, format_token_count

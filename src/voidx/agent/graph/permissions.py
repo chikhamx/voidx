@@ -10,6 +10,7 @@ from voidx.permission.engine import (
     build_pattern,
     classify_tool_call,
 )
+from voidx.permission.rules import PermissionCapability
 from voidx.workflow.policy import workflow_denied_tools, workflow_gate
 from voidx.workflow.runtime import WorkflowRunState, WorkflowRunStatus
 from voidx.ui.output.events.schema import PermissionToolDetail
@@ -29,6 +30,7 @@ class GraphPermissionMixin:
         session_id: str,
         interaction_mode: str | None = None,
         workflow_runs: object = (),
+        runtime_persona: str | None = None,
     ) -> tuple[list[dict], list[tuple[dict, str]]]:
         approved: list[dict] = []
         denied: list[tuple[dict, str]] = []
@@ -44,14 +46,18 @@ class GraphPermissionMixin:
         )
 
         for tc in tool_calls:
-            if tc.get("name") == "apply_patch" and agent_name != "implement":
-                denied.append((tc, _apply_patch_agent_denial_reason(agent_name)))
-                continue
             if tc.get("name") in gate_denied:
                 denied.append((tc, _gate_denial_reason(tc.get("name", ""), active_workflows)))
                 continue
+            classified = classify_tool_call(tc)
             decision = authorize_tool_call(tc, context)
             if decision.action == "allow":
+                if (
+                    decision.source != "session"
+                    and _persona_requires_approval(classified.capability, runtime_persona or agent_name)
+                ):
+                    need_ask.append(decision.tool_call)
+                    continue
                 approved.append(decision.tool_call)
                 if decision.failure_check:
                     self._needs_failure_check[decision.tool_call.get("id", "")] = decision.tool_call
@@ -167,6 +173,12 @@ def _gate_denial_reason(tool_name: str, active_workflows: list[str]) -> str:
     return f"Blocked by workflow gate for tool '{tool_name}': {details}"
 
 
-def _apply_patch_agent_denial_reason(agent_name: str) -> str:
-    agent = agent_name or "unknown"
-    return f"Blocked: apply_patch is only available to implement agent, not {agent}."
+def _persona_requires_approval(capability: PermissionCapability, runtime_persona: str) -> bool:
+    if capability not in {PermissionCapability.FILE_WRITE, PermissionCapability.FILE_FORMAT}:
+        return False
+    personas = {
+        item.strip()
+        for item in (runtime_persona or "coordinate").split(",")
+        if item.strip()
+    }
+    return "implement" not in personas

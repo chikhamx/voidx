@@ -4,11 +4,10 @@ from __future__ import annotations
 
 import asyncio
 import time
-from datetime import datetime
 
 from langchain_core.messages import AIMessage, HumanMessage, ToolMessage
 
-from voidx.agent.agents import BASE_SYSTEM_PROMPT, PLAN_MODE_APPEND, AgentDef
+from voidx.agent.agents import BASE_SYSTEM_PROMPT, PLAN_MODE_APPEND, SUB_VOIDX_PROMPT, AgentDef
 from voidx.agent.graph.convergence import (
     build_convergence_messages,
     generate_fallback_summary,
@@ -21,6 +20,7 @@ from voidx.agent.runtime_context import (
     InteractionMode,
     RuntimeContextBuilder,
 )
+from voidx.runtime.task_state import Goal, GoalType, TaskIntent, TaskState
 from voidx.agent.tool_messages import sanitize_tool_message_content
 from voidx.agent.tool_filters import filter_unavailable_lsp_tools
 from voidx.config import Config
@@ -49,6 +49,7 @@ async def run_subagent(
     api_key: str,
     config: Config,
     tracker: TaskTracker | None = None,
+    runtime_persona: str | None = None,
     capture_tree: OutputTree | None = None,
     parent_node=None,
     sub_messages: list | None = None,
@@ -64,6 +65,7 @@ async def run_subagent(
     ui_port: AgentUiPort = runtime_ui_port,
 ) -> str:
     """Run a child agent in its own message context."""
+    persona = (runtime_persona or agent_def.name).strip() or "explore"
     model_cfg = config.model.model_copy()
     if model_override:
         model_cfg.model = model_override
@@ -91,27 +93,41 @@ async def run_subagent(
 
     context_config = config.model_copy(deep=True)
     context_config.model = model_cfg
-    interaction_mode = InteractionMode.PLAN.value if agent_def.name == "plan" else InteractionMode.AUTO.value
+    interaction_mode = InteractionMode.PLAN.value if persona == "plan" else InteractionMode.AUTO.value
     mode_prompt = PLAN_MODE_APPEND if InteractionMode.parse(interaction_mode) == InteractionMode.PLAN else ""
-    task_intent = _task_intent_for_agent(agent_def.name)
+    task_intent = _task_intent_for_agent(persona)
+    goal_type = _goal_type_for_agent(persona, task_description)
     workflow_context = workflow_runtime_context or WorkflowRuntimeContext(instructions=[], active=[], content="", runs=[])
     context_cache = ContextCompilerCache()
+
+    sub_goal = None
+    if goal_type:
+        sub_goal = Goal(
+            type=GoalType(goal_type),
+            target=task_description,
+            expected_result="",
+            user_requested_write=agent_def.can_write,
+            needs_confirmation=False,
+        )
+    sub_task_state = TaskState(
+        current_intent=TaskIntent(task_intent),
+        current_goal=sub_goal,
+    )
+
     context, context_cache = RuntimeContextBuilder(
         config=context_config,
         workspace=config.workspace,
         base_system_prompt=BASE_SYSTEM_PROMPT,
-        role_prompt=agent_def.role_prompt,
+        persona_prompt=_agent_prompt(agent_def),
         mode_prompt=mode_prompt,
         tool_contract=agent_def.tool_contract,
-        agent=agent_def.name,
+        persona=persona,
         interaction_mode=interaction_mode,
-        skill_context_content=workflow_context.content,
+        workflow_context_content=workflow_context.content,
         workflow_runs=workflow_context.runs,
         active_workflow_summaries=workflow_context.active,
         current_user_text=task_description,
-        task_intent=task_intent,
-        session_date=datetime.now().astimezone().strftime("%Y-%m-%d %Z"),
-        agent_id=agent_id,
+        task_state=sub_task_state,
     ).build_incremental(context_cache)
     context.apply_to_messages(messages)
 
@@ -123,9 +139,9 @@ async def run_subagent(
     )
 
     # Register with tracker
-    task_id = f"sub_{agent_def.name}_{int(time.time())}"
+    task_id = f"sub_{agent_def.name}_{persona}_{int(time.time())}"
     if tracker:
-        tracker.start(task_id, agent_def.name, task_description, agent_def.max_steps)
+        tracker.start(task_id, persona, task_description, agent_def.max_steps)
 
     try:
         for step in range(1, agent_def.max_steps + 1):
@@ -134,9 +150,9 @@ async def run_subagent(
 
             if capture_tree and parent_node is not None:
                 capture = CaptureConsole(capture_tree, parent_node, agent_id=agent_id)
-                capture.step_header(step, agent_def.max_steps, agent_def.name)
+                capture.step_header(step, agent_def.max_steps, persona)
             else:
-                ui_port.ui.step_header(step, agent_def.max_steps, agent_def.name)
+                ui_port.ui.step_header(step, agent_def.max_steps, persona)
 
             has_tool_budget = step < agent_def.max_steps - 1
             active_tool_defs = tool_defs if has_tool_budget else []
@@ -156,7 +172,7 @@ async def run_subagent(
                 await save_context_frame_from_messages(
                     session_id=session_id,
                     frame_kind="worker",
-                    agent_role=agent_def.name,
+                    agent_persona=persona,
                     provider=config.model.provider,
                     model=config.model.model,
                     messages=llm_messages,
@@ -275,10 +291,26 @@ async def run_subagent(
 
 
 def _task_intent_for_agent(agent_name: str) -> str:
-    if agent_name == "implement":
-        return "implement"
+    return "coding" if agent_name in {"implement", "review", "plan", "explore"} else "general"
+
+
+def _goal_type_for_agent(agent_name: str, task_description: str = "") -> str:
     if agent_name == "review":
         return "review"
     if agent_name == "plan":
         return "design"
-    return "inspect"
+    if agent_name == "implement":
+        lowered = task_description.lower()
+        if "bug" in lowered or "fix" in lowered or "failed" in lowered or "failure" in lowered:
+            return "bugfix"
+        return "feature"
+    if agent_name == "explore":
+        return "inspect"
+    return ""
+
+
+def _agent_prompt(agent_def: AgentDef) -> str:
+    try:
+        return agent_def.persona_prompt
+    except ValueError:
+        return SUB_VOIDX_PROMPT

@@ -86,7 +86,7 @@ class UserProfile(BaseModel):
 class AgentMaxSteps(BaseModel):
     """Per-agent step limits and graph recursion limit.
 
-    Step fields (orchestrator, explore, etc.) are convergence ceilings: the
+    Step fields (voidx, explore, etc.) are convergence ceilings: the
     agent loop reserves the last step for a tool-free final answer, so
     max_steps=3 yields one tool-call step and one final answer step.
     Setting any step field to 0 normalizes it to _NO_LIMIT_FALLBACK (500).
@@ -95,7 +95,7 @@ class AgentMaxSteps(BaseModel):
     ~2 recursions (call_llm → execute_tools → call_llm), so the effective
     limit is derived as max(recursion_limit, 2 * max_steps + 10) at runtime.
     """
-    orchestrator: int = Field(default=100, ge=0, le=500)
+    voidx: int = Field(default=100, ge=0, le=500)
     explore: int = Field(default=25, ge=0, le=500)
     plan: int = Field(default=30, ge=0, le=500)
     implement: int = Field(default=100, ge=0, le=500)

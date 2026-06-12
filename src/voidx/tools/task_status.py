@@ -1,4 +1,4 @@
-"""TaskStatus tool — check worker-role progress. Claude Code aligned."""
+"""TaskStatus tool — check worker-persona progress. Claude Code aligned."""
 
 from __future__ import annotations
 

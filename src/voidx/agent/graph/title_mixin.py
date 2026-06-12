@@ -9,7 +9,7 @@ from voidx.agent.graph.session_mixin import _session_runtime_for
 from voidx.agent.graph.session_runtime import (
     SMART_TITLE_CHARS,
     TEMPORARY_TITLE_CHARS,
-    TITLE_PROMPT_USER_CHARS,
+    TITLE_PERSONA_USER_CHARS,
     TITLE_TIMEOUT_SECONDS,
     _collapse_whitespace,
     _message_row_title_text,
@@ -92,7 +92,7 @@ __all__ = [
     "GraphTitleMixin",
     "SMART_TITLE_CHARS",
     "TEMPORARY_TITLE_CHARS",
-    "TITLE_PROMPT_USER_CHARS",
+    "TITLE_PERSONA_USER_CHARS",
     "TITLE_TIMEOUT_SECONDS",
     "_collapse_whitespace",
     "_message_row_title_text",

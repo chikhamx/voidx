@@ -7,11 +7,6 @@ import re
 from collections.abc import Callable
 from typing import TYPE_CHECKING
 
-from langchain_core.messages import AIMessage, HumanMessage, SystemMessage
-
-from voidx.agent.agents import TITLE_PROMPT
-from voidx.agent.graph.streaming import extract_text
-from voidx.llm.usage import estimate_context_tokens, estimate_message_tokens, extract_token_usage
 from voidx.memory.runtime_state import (
     RuntimeStateSnapshot,
     clear_runtime_state,
@@ -34,7 +29,7 @@ if TYPE_CHECKING:
 
 
 TITLE_TIMEOUT_SECONDS = 10.0
-TITLE_PROMPT_USER_CHARS = 500
+TITLE_PERSONA_USER_CHARS = 500
 TEMPORARY_TITLE_CHARS = 80
 SMART_TITLE_CHARS = 60
 
@@ -47,12 +42,11 @@ class GraphSessionRuntime:
 
     def reset_runtime_state_memory(self) -> None:
         from voidx.agent.runtime_context import InteractionMode
-        from voidx.agent.task_state import TaskRun, TaskState
+        from voidx.agent.task_state import TaskState
 
         host = self.host
         host._interaction_mode = InteractionMode.AUTO
         host._task_state = TaskState()
-        host._task_run = TaskRun()
         host._compaction_summary = ""
         host._pending_summary = None
 
@@ -63,26 +57,26 @@ class GraphSessionRuntime:
         snapshot = await load_runtime_state(host._session.id)
         host._interaction_mode = snapshot.interaction_mode
         host._task_state = snapshot.task_state
-        host._task_run = snapshot.task_run
         host._compaction_summary = snapshot.compaction_summary
+        if snapshot.session_time:
+            host._session_date = snapshot.session_time
 
     async def persist_runtime_state(self) -> None:
         host = self.host
         if host._session is None:
             return
         from voidx.agent.runtime_context import InteractionMode
-        from voidx.agent.task_state import TaskRun, TaskState
+        from voidx.agent.task_state import TaskState
 
         interaction_mode = getattr(host, "_interaction_mode", None) or InteractionMode.AUTO
         task_state = getattr(host, "_task_state", None) or TaskState()
-        task_run = getattr(host, "_task_run", None) or TaskRun()
         await save_runtime_state(
             host._session.id,
             RuntimeStateSnapshot(
                 interaction_mode=interaction_mode,
                 task_state=task_state,
-                task_run=task_run,
                 compaction_summary=getattr(host, "_compaction_summary", ""),
+                session_time=getattr(host, "_session_date", ""),
             ),
         )
 
@@ -140,25 +134,9 @@ class GraphSessionRuntime:
         generate_session_title: Callable[[str, int, str, str], asyncio.Future | asyncio.Task | object] | None = None,
         finish_title_task: Callable[[asyncio.Task[None]], None] | None = None,
     ) -> None:
-        host = self.host
         invalidate = invalidate_session_title_generation or self.invalidate_session_title_generation
         invalidate()
-        if host.model is None:
-            return
-
-        generation_id = host._title_generation
-        generate = generate_session_title or self.generate_session_title
-        task = asyncio.create_task(
-            generate(
-                session_id,
-                generation_id,
-                first_user_text,
-                temporary_title,
-            ),
-            name=f"voidx-title-{session_id}",
-        )
-        host._title_task = task
-        task.add_done_callback(finish_title_task or self.finish_title_task)
+        del session_id, first_user_text, temporary_title, generate_session_title, finish_title_task
 
     def finish_title_task(self, task: asyncio.Task[None]) -> None:
         host = self.host
@@ -201,33 +179,8 @@ class GraphSessionRuntime:
             host._session = host._session.model_copy(update={"title": title})
 
     async def run_title_agent(self, first_user_text: str) -> str | None:
-        host = self.host
-        if host.model is None:
-            return None
-
-        messages = [
-            SystemMessage(content=TITLE_PROMPT),
-            HumanMessage(content=f"First user message:\n\n{first_user_text[:TITLE_PROMPT_USER_CHARS]}"),
-        ]
-        context_tokens = estimate_context_tokens(messages, host.config.model.model)
-        host._usage_stats.update_context(context_tokens)
-        result = await asyncio.wait_for(
-            host.model.ainvoke(messages),
-            timeout=TITLE_TIMEOUT_SECONDS,
-        )
-        assistant = result if isinstance(result, AIMessage) else AIMessage(content=getattr(result, "content", str(result)))
-        try:
-            host._usage_stats.record_call(
-                extract_token_usage(assistant),
-                fallback_input_tokens=context_tokens,
-                fallback_output_tokens=estimate_message_tokens(assistant, host.config.model.model),
-                messages=messages,
-                model=host.config.model.model,
-                cache_key=f"{host.config.model.provider}/{host.config.model.model}",
-            )
-        except Exception:
-            pass
-        return _sanitize_generated_title(extract_text(assistant))
+        del first_user_text
+        return None
 
     def can_apply_generated_title(
         self,

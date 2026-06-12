@@ -7,7 +7,7 @@ from inspect import isawaitable
 from typing import TYPE_CHECKING, Any, Protocol
 
 from voidx.agent.runtime_context import ContextCompilerCache, InteractionMode
-from voidx.agent.task_state import TaskRun, TaskState
+from voidx.agent.task_state import TaskState
 from voidx.config import Config, Settings
 from voidx.llm.usage import UsageStats
 from voidx.memory.session import SessionInfo
@@ -32,7 +32,6 @@ class SlashCommandHost(Protocol):
     @property
     def settings(self) -> Settings | None: ...
     @property
-    def task_run(self) -> TaskRun | None: ...
     @property
     def task_state(self) -> TaskState | None: ...
     @property
@@ -49,7 +48,7 @@ class SlashCommandHost(Protocol):
     def interaction_mode_value(self) -> str: ...
     def debug_enabled(self) -> bool: ...
     def invalidate_skill_service_cache(self) -> None: ...
-    def set_task_run(self, task_run: TaskRun) -> None: ...
+    def set_task_state(self, task_state: TaskState) -> None: ...
     def can_submit_guidance(self) -> bool: ...
     def submit_guidance(self, text: str) -> bool: ...
     async def clear_current_session(self) -> bool: ...
@@ -114,10 +113,6 @@ class SlashHostAdapter:
     @property
     def settings(self) -> Settings | None:
         return self._value("settings", "_settings")
-
-    @property
-    def task_run(self) -> TaskRun | None:
-        return self._value("task_run", "_task_run")
 
     @property
     def task_state(self) -> TaskState | None:
@@ -214,12 +209,12 @@ class SlashHostAdapter:
             current = "plan" if self._legacy_attr("_plan_mode", False) else "auto"
         return current
 
-    def set_task_run(self, task_run: TaskRun) -> None:
-        method = self._method("set_task_run")
+    def set_task_state(self, task_state: TaskState) -> None:
+        method = self._method("set_task_state")
         if method is not None:
-            method(task_run)
+            method(task_state)
             return
-        self._set_legacy_attr("_task_run", task_run)
+        self._set_legacy_attr("_task_state", task_state)
 
     def submit_guidance(self, text: str) -> bool:
         method = self._method("submit_guidance")
@@ -303,7 +298,6 @@ class SlashHostAdapter:
         else:
             self._set_legacy_attr("_interaction_mode", InteractionMode.AUTO)
             self._set_legacy_attr("_task_state", TaskState())
-            self._set_legacy_attr("_task_run", TaskRun())
             self._set_legacy_attr("_compaction_summary", "")
             self._set_legacy_attr("_pending_summary", None)
 

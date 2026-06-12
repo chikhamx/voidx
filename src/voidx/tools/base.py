@@ -64,12 +64,12 @@ class ToolContext(BaseModel):
     """Context passed to every tool execution. Mutable file_mtimes for staleness guard."""
     workspace: str
     session_id: str = "default"
-    agent: str = "build"
+    persona: str = "voidx"
     interaction_mode: str = "auto"
-    task_intent: str = "chat"
+    task_intent: str = "coding"
     pending_approval: dict | None = None
-    goal: str = ""
-    goal_turn_count: int = 0
+    goal_type: str = ""
+    goal_target: str = ""
     active_workflow_names: list[str] = Field(default_factory=list)
     workflow_runs: list[WorkflowRunState] = Field(default_factory=list)
     file_mtimes: dict[str, float] = Field(default_factory=dict)

@@ -1,10 +1,10 @@
-"""Display labels for agent roles."""
+"""Display labels for agent personas."""
 
 from __future__ import annotations
 
 
 _AGENT_DISPLAY_NAMES = {
-    "orchestrator": "voidx",
+    "voidx": "voidx",
     "agent": "Agent",
     "explore": "Explorer",
     "plan": "Planner",

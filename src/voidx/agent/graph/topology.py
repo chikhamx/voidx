@@ -40,8 +40,7 @@ def build_graph(host: Any):
 
 
 def prepare_state(state: AgentState) -> dict:
-    agent_name = state.get("agent", "orchestrator")
-    agent_def = get_agent(agent_name)
+    agent_def = get_agent("voidx")
 
     return {
         "step_count": state.get("step_count", 0) + 1,
@@ -86,10 +85,3 @@ def session_date(session: SessionInfo | None) -> str:
             pass
     return datetime.now().astimezone().strftime("%Y-%m-%d %Z")
 
-
-def pending_approval_scope(value: object | None) -> str:
-    if value is None:
-        return ""
-    if isinstance(value, dict):
-        return str(value.get("scope") or "").strip()
-    return str(getattr(value, "scope", "") or "").strip()

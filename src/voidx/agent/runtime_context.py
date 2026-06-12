@@ -14,7 +14,7 @@ from pydantic import BaseModel, ConfigDict, Field
 
 from voidx.agent.todo_state import sanitize_todo_replay_messages
 from voidx.agent.message_rows import RowMessageCacheEntry
-from voidx.agent.task_state import TodoRunState
+from voidx.agent.task_state import Goal, TodoRunState
 from voidx.config import ApprovalReviewer, Config, UserProfile
 from voidx.runtime.intent import InteractionMode, TaskIntent, infer_task_intent
 from voidx.skills.context import (
@@ -27,9 +27,7 @@ from voidx.workflow.context import (
     is_workflow_context_content,
     workflow_context_cache_key,
 )
-from voidx.workflow.dag import DEFAULT_WORKFLOW_DAG
 from voidx.workflow.policy import workflow_exit_summaries, workflow_gate
-from voidx.workflow.render import render_dag_overview
 from voidx.workflow.runtime import WorkflowRunState, WorkflowRunStatus
 
 _CONTEXT_MARKER = "VOIDX_RUNTIME_CONTEXT"
@@ -41,6 +39,9 @@ class ContextCompilerCache:
     stable_prefix_key: str = ""
     stable_system_content: str = ""
     stable_system_message: SystemMessage | None = None
+    workflow_context_key: str = ""
+    workflow_context_content: str = ""
+    workflow_context_message: HumanMessage | None = None
     skill_context_key: str = ""
     skill_context_content: str = ""
     skill_context_message: HumanMessage | None = None
@@ -64,15 +65,12 @@ class ExecutionPolicy(BaseModel):
 
 
 class RuntimeEnvelope(BaseModel):
-    date: str
     workspace: str
     provider: str
     model: str
     interaction_mode: InteractionMode
     permission_profile: str
     execution_policy: ExecutionPolicy
-    agent: str
-    agent_id: int = -1
     user_profile: UserProfile = Field(default_factory=UserProfile)
 
 
@@ -86,15 +84,19 @@ class RuntimeContext(BaseModel):
 
     sections: list[ContextSection]
     task_sections: list[ContextSection] = Field(default_factory=list)
+    workflow_context_content: str = ""
     skill_context_content: str = ""
     system_content: str | None = None
     system_message: SystemMessage | None = Field(default=None, exclude=True)
+    workflow_context_message: HumanMessage | None = Field(default=None, exclude=True)
     skill_context_message: HumanMessage | None = Field(default=None, exclude=True)
 
     def section_names(self) -> list[str]:
         names = [section.name for section in self.sections]
+        if self.workflow_context_content:
+            names.append("Workflow Context")
         if self.skill_context_content:
-            names.append(_context_message_section_name(self.skill_context_content))
+            names.append("Skill Context")
         names.extend(section.name for section in self.task_sections)
         return names
 
@@ -141,19 +143,25 @@ class ContextCompiler:
                 current = semantic_messages[current_user_index]
                 semantic_messages[current_user_index] = _prepend_task_context(current, task_context)
 
-        skill_context_message = self._skill_context_message()
-        if skill_context_message is None:
-            return [prefix, *semantic_messages]
-        return [prefix, skill_context_message, *semantic_messages]
+        # Compile order: SystemMessage, workflow context, skill context, semantic history
+        result = [prefix]
+        wf_msg = self._context_message(self.context.workflow_context_content, self.context.workflow_context_message)
+        if wf_msg is not None:
+            result.append(wf_msg)
+        sk_msg = self._context_message(self.context.skill_context_content, self.context.skill_context_message)
+        if sk_msg is not None:
+            result.append(sk_msg)
+        result.extend(semantic_messages)
+        return result
 
     def apply_to_messages(self, messages: list[BaseMessage]) -> None:
         messages[:] = self.compile_messages(messages)
 
-    def _skill_context_message(self) -> HumanMessage | None:
-        content = self.context.skill_context_content.strip()
+    @staticmethod
+    def _context_message(content: str, cached: HumanMessage | None) -> HumanMessage | None:
+        content = content.strip()
         if not content:
             return None
-        cached = self.context.skill_context_message
         if cached is not None and cached.content == content:
             return cached
         return HumanMessage(content=content)
@@ -165,73 +173,57 @@ class RuntimeContextBuilder:
         *,
         config: Config,
         workspace: str,
-        agent_prompt: str | None = None,
         base_system_prompt: str | None = None,
-        role_prompt: str = "",
+        persona_prompt: str = "",
         mode_prompt: str = "",
         tool_contract: str = "",
-        agent: str,
+        persona: str,
         interaction_mode: str | InteractionMode,
         instructions: Iterable[str] = (),
+        workflow_context_content: str = "",
         skill_context_content: str = "",
         workflow_runs: Iterable[WorkflowRunState] = (),
         active_workflow_summaries: Iterable[str] = (),
         summary: str | None = None,
         current_user_text: str = "",
-        task_intent: str | TaskIntent | None = None,
-        intent_resolution_reason: str = "",
-        pending_approval: object | None = None,
-        goal: str = "",
-        goal_phase: str = "",
-        goal_status: str = "",
-        goal_turn_count: int = 0,
-        available_tool_ids: Iterable[str] = (),
-        intent_confidence: float | None = None,
-        intent_source: str = "",
-        intent_refined: bool = False,
+        task_state: "TaskState | None" = None,
         session_date: str | None = None,
-        current_datetime: str | None = None,
-        agent_id: int = -1,
     ) -> None:
+        from voidx.runtime.task_state import TaskState as _TaskState
+
+        ts = task_state if isinstance(task_state, _TaskState) else _TaskState()
         self.config = config
         self.workspace = workspace
-        self.base_system_prompt = (base_system_prompt or agent_prompt or "").strip()
-        self.role_prompt = role_prompt.strip()
+        self.base_system_prompt = (base_system_prompt or "").strip()
+        self.persona_prompt = persona_prompt.strip()
         self.mode_prompt = mode_prompt.strip()
         self.tool_contract = tool_contract.strip()
-        self.agent = agent
+        self.persona = persona.strip()
         self.interaction_mode = InteractionMode.parse(interaction_mode)
         self.instructions = [item for item in instructions if item.strip()]
+        self.workflow_context_content = workflow_context_content.strip()
         self.skill_context_content = skill_context_content.strip()
         self.workflow_runs = list(workflow_runs)
         self.active_workflow_summaries = [item for item in active_workflow_summaries if item.strip()]
         self.summary = summary.strip() if summary else ""
         self.current_user_text = current_user_text.strip()
-        self.task_intent = (
-            TaskIntent(task_intent)
-            if task_intent is not None
-            else infer_task_intent(self.current_user_text, self.interaction_mode)
-        )
-        self.intent_resolution_reason = intent_resolution_reason.strip()
-        self.pending_approval = pending_approval
-        self.goal = goal.strip()
-        self.goal_phase = goal_phase.strip()
-        self.goal_status = goal_status.strip()
-        self.goal_turn_count = goal_turn_count
-        self.available_tool_ids = [item for item in available_tool_ids if item.strip()]
-        self.intent_confidence = intent_confidence
-        self.intent_source = intent_source.strip()
-        self.intent_refined = intent_refined
+        self.task_intent = ts.current_intent
+        self.pending_approval = ts.pending_approval
+        self.current_goal = ts.current_goal
         self.user_profile = config.user_profile
         now = datetime.now().astimezone()
         self.session_date = (session_date or now.strftime("%Y-%m-%d %Z")).strip()
-        self.current_datetime = (current_datetime or now.strftime("%Y-%m-%d %H:%M %Z")).strip()
-        self.agent_id = agent_id
 
     def build(self) -> RuntimeContext:
         return RuntimeContext(
             sections=self._build_stable_sections(),
             task_sections=self._build_task_sections(),
+            workflow_context_content=self.workflow_context_content,
+            workflow_context_message=(
+                HumanMessage(content=self.workflow_context_content)
+                if self.workflow_context_content
+                else None
+            ),
             skill_context_content=self.skill_context_content,
             skill_context_message=(
                 HumanMessage(content=self.skill_context_content)
@@ -259,52 +251,66 @@ class RuntimeContextBuilder:
             cache.stable_system_content = system_content
             cache.stable_system_message = system_message
 
-        skill_context_content, skill_context_message = self._incremental_skill_context(cache)
+        wf_content, wf_message = self._incremental_context_content(
+            cache, "workflow", self.workflow_context_content,
+        )
+        sk_content, sk_message = self._incremental_context_content(
+            cache, "skill", self.skill_context_content,
+        )
 
         return RuntimeContext(
             sections=sections,
             task_sections=self._build_task_sections(),
-            skill_context_content=skill_context_content,
+            workflow_context_content=wf_content,
+            skill_context_content=sk_content,
             system_content=system_content,
             system_message=system_message,
-            skill_context_message=skill_context_message,
+            workflow_context_message=wf_message,
+            skill_context_message=sk_message,
         ), cache
 
-    def _incremental_skill_context(
-        self,
+    @staticmethod
+    def _incremental_context_content(
         cache: ContextCompilerCache,
+        kind: str,
+        content: str,
     ) -> tuple[str, HumanMessage | None]:
-        content = self.skill_context_content.strip()
+        content = content.strip()
+        if kind == "workflow":
+            key_attr = "workflow_context_key"
+            content_attr = "workflow_context_content"
+            message_attr = "workflow_context_message"
+        else:
+            key_attr = "skill_context_key"
+            content_attr = "skill_context_content"
+            message_attr = "skill_context_message"
+
         if not content:
-            cache.skill_context_key = ""
-            cache.skill_context_content = ""
-            cache.skill_context_message = None
+            setattr(cache, key_attr, "")
+            setattr(cache, content_attr, "")
+            setattr(cache, message_attr, None)
             return "", None
 
         key = _runtime_context_cache_key(content)
-        if cache.skill_context_key == key and cache.skill_context_content:
-            return cache.skill_context_content, cache.skill_context_message
+        if getattr(cache, key_attr) == key and getattr(cache, content_attr):
+            return getattr(cache, content_attr), getattr(cache, message_attr)
 
         message = HumanMessage(content=content)
-        cache.skill_context_key = key
-        cache.skill_context_content = content
-        cache.skill_context_message = message
+        setattr(cache, key_attr, key)
+        setattr(cache, content_attr, content)
+        setattr(cache, message_attr, message)
         return content, message
 
     def _build_stable_sections(self) -> list[ContextSection]:
         sections = [
             ContextSection(name="Base System", content=self.base_system_prompt),
         ]
-        if self.role_prompt:
-            sections.append(ContextSection(name="Role Prompt", content=self.role_prompt))
+        if self.persona_prompt:
+            sections.append(ContextSection(name="Agent Role", content=self.persona_prompt))
         if self.mode_prompt:
-            sections.append(ContextSection(name="Mode Prompt", content=self.mode_prompt))
+            sections.append(ContextSection(name="Mode", content=self.mode_prompt))
         if self.tool_contract:
             sections.append(ContextSection(name="Tool Contract", content=self.tool_contract))
-        sections.append(ContextSection(
-            name="Workflow DAG",
-            content=render_dag_overview(DEFAULT_WORKFLOW_DAG),
-        ))
         sections.append(ContextSection(
             name="Workspace Facts",
             content=f"- Current workspace: {self.workspace}\n- Platform: {_platform_info()}",
@@ -315,7 +321,7 @@ class RuntimeContextBuilder:
                 name="Project Facts",
                 content="\n\n".join(self.instructions),
             ))
-        sections.append(ContextSection(name="Session Date", content=self.session_date))
+        sections.append(ContextSection(name="Session Time", content=self.session_date))
         if self.summary:
             sections.append(ContextSection(
                 name="Long Summary",
@@ -325,21 +331,17 @@ class RuntimeContextBuilder:
 
     def _build_task_sections(self) -> list[ContextSection]:
         envelope = RuntimeEnvelope(
-            date=self.session_date,
             workspace=self.workspace,
             provider=self.config.model.provider,
             model=self.config.model.model,
             interaction_mode=self.interaction_mode,
             permission_profile=self.config.permission_mode.value,
             execution_policy=ExecutionPolicy.from_config(self.config),
-            agent=self.agent,
-            agent_id=self.agent_id,
             user_profile=self.user_profile,
         )
 
         task_sections = [
             ContextSection(name="Runtime State", content=_render_envelope(envelope)),
-            ContextSection(name="Current DateTime", content=self.current_datetime),
         ]
         task_sections.append(ContextSection(
             name="Current Task State",
@@ -350,11 +352,17 @@ class RuntimeContextBuilder:
 
     def _current_task_state(self) -> str:
         lines = [
-            f"- Mode: {self.interaction_mode.value}",
+            f"- Current persona: {self.persona}",
             f"- Intent: {self.task_intent.value}",
-            f"- Agent: {self.agent}",
-            f"- Agent ID: {self.agent_id}",
         ]
+        if self.current_goal is not None:
+            lines.extend([
+                f"- Goal type: {self.current_goal.type.value}",
+                f"- Goal target: {self.current_goal.target or 'not set'}",
+                f"- Goal expected result: {self.current_goal.expected_result or 'not set'}",
+                f"- User requested write: {str(self.current_goal.user_requested_write).lower()}",
+                f"- Goal needs confirmation: {str(self.current_goal.needs_confirmation).lower()}",
+            ])
         if self.active_workflow_summaries:
             lines.append(f"- Active workflow nodes: {'; '.join(self.active_workflow_summaries)}")
         if self.workflow_runs:
@@ -362,10 +370,6 @@ class RuntimeContextBuilder:
         for workflow_name in self._active_workflow_node_names():
             gate = workflow_gate(workflow_name)
             if gate:
-                if gate.denied_tools:
-                    lines.append(
-                        f"- Workflow gate [{workflow_name}]: denied tools = {', '.join(gate.denied_tools)}"
-                    )
                 requirement = gate.required_before_transition or gate.description
                 if requirement:
                     lines.append(
@@ -374,20 +378,6 @@ class RuntimeContextBuilder:
             exits = workflow_exit_summaries(workflow_name)
             if exits:
                 lines.append(f"- Workflow exits [{workflow_name}]: {'; '.join(exits)}")
-        if self.intent_refined:
-            confidence = (
-                f"{self.intent_confidence:.2f}"
-                if self.intent_confidence is not None
-                else "unknown"
-            )
-            source = self.intent_source or "runtime"
-            lines.append(f"- Intent refined: true source={source} confidence={confidence}")
-        if self.intent_confidence is not None and self.intent_confidence < 0.6:
-            lines.append("- Suggestion: use clarify to resolve intent ambiguity before proceeding.")
-        if self.available_tool_ids:
-            lines.append(f"- Runtime-visible tools: {', '.join(self.available_tool_ids)}")
-        if self.intent_resolution_reason:
-            lines.append(f"- Intent resolution: {self.intent_resolution_reason}")
         language = self.user_profile.language.strip()
         if language:
             display = _language_display(language)
@@ -403,14 +393,8 @@ class RuntimeContextBuilder:
         pending = _render_pending_approval(self.pending_approval)
         if pending:
             lines.append(f"- Pending approval: {pending}")
-        if self.task_intent == TaskIntent.DESIGN and pending:
+        if self.current_goal is not None and self.current_goal.type.value == "design" and pending:
             lines.append("- Suggestion: use plan_checkpoint to get explicit approval before implementing.")
-        if self.interaction_mode == InteractionMode.GOAL:
-            lines.append("- Goal mode: true")
-            lines.append(f"- Goal: {self.goal or 'not set'}")
-            lines.append(f"- Goal phase: {self.goal_phase or 'clarify'}")
-            lines.append(f"- Goal status: {self.goal_status or 'idle'}")
-            lines.append(f"- Goal turn count: {self.goal_turn_count}")
         if self.current_user_text:
             first_line = self.current_user_text.splitlines()[0][:160]
             lines.append(f"- Latest user request: {first_line}")
@@ -446,12 +430,6 @@ def _render_sections(sections: list[ContextSection]) -> str:
 
 def _is_runtime_context_overlay(content: object) -> bool:
     return is_skill_context_content(content) or is_workflow_context_content(content)
-
-
-def _context_message_section_name(content: object) -> str:
-    if is_workflow_context_content(content):
-        return "Workflow Context"
-    return "Skill Context"
 
 
 def _runtime_context_cache_key(content: str) -> str:
@@ -528,8 +506,6 @@ def _render_envelope(envelope: RuntimeEnvelope) -> str:
         f"- Sandbox: {policy.sandbox_mode}",
         f"- Approval policy: {policy.approval_policy}",
         f"- Approval reviewer: {policy.approval_reviewer}",
-        f"- Agent: {envelope.agent}",
-        f"- Agent ID: {envelope.agent_id}",
     ]
     if policy.extra_write_paths:
         lines.append(f"- Extra write paths: {', '.join(policy.extra_write_paths)}")
@@ -550,6 +526,19 @@ def _coerce_todo_run_state(value: TodoRunState | dict | None) -> TodoRunState | 
     if isinstance(value, dict):
         try:
             return TodoRunState.model_validate(value)
+        except ValueError:
+            return None
+    return None
+
+
+def _coerce_goal(value: Goal | dict | None) -> Goal | None:
+    if value is None:
+        return None
+    if isinstance(value, Goal):
+        return value
+    if isinstance(value, dict):
+        try:
+            return Goal.model_validate(value)
         except ValueError:
             return None
     return None

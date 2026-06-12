@@ -9,7 +9,7 @@ from langchain_core.messages import BaseMessage
 
 from voidx.agent.runtime_context import ContextCompilerCache, InteractionMode
 from voidx.agent.state import AgentState
-from voidx.agent.task_state import TaskRun, TaskState
+from voidx.agent.task_state import TaskState
 from voidx.config import Config, Settings
 from voidx.llm.compaction import CompactionService
 from voidx.llm.instruction import InstructionService
@@ -43,6 +43,7 @@ class GraphCompactionHost(Protocol):
     _pending_summary: str | None
     _compaction_summary: str
     _session_msg_cache: list[Any] | None
+    _instruction: InstructionService
 
     async def _persist_runtime_state(self) -> None: ...
     async def _maybe_compact(
@@ -94,6 +95,7 @@ class GraphToolExecutionHost(Protocol):
         session_id: str,
         interaction_mode: str | None = None,
         workflow_runs: object = (),
+        runtime_persona: str | None = None,
     ) -> tuple[list[dict], list[tuple[dict, str]]]: ...
     def _notify_tool_failure(self, tc: dict, result: Any) -> None: ...
     def _clear_failure_check(self, cid: str) -> None: ...
@@ -119,6 +121,7 @@ class GraphPermissionHost(Protocol):
         session_id: str,
         interaction_mode: str | None = None,
         workflow_runs: object = (),
+        runtime_persona: str | None = None,
     ) -> tuple[list[dict], list[tuple[dict, str]]]: ...
     async def _ask_and_apply_permission(
         self,
@@ -159,7 +162,6 @@ class GraphRunLoopHost(Protocol):
     _session_runtime: GraphSessionRuntime
     _turn_runner: GraphTurnRunner
     _task_state: TaskState
-    _task_run: TaskRun
     _clear_session_tasks: set[asyncio.Task[None]]
     _title_generation: int
     _title_task: asyncio.Task[None] | None

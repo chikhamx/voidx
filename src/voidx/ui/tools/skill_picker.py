@@ -74,6 +74,11 @@ def list_skill_candidates(
             prefix_matches.append(candidate)
         elif query_lower in name_lower or query_lower in desc_lower:
             other_matches.append(candidate)
-    prefix_matches.sort(key=lambda item: item.name.lower())
-    other_matches.sort(key=lambda item: item.name.lower())
+    prefix_matches.sort(key=_skill_candidate_sort_key)
+    other_matches.sort(key=_skill_candidate_sort_key)
     return [*prefix_matches, *other_matches][:limit]
+
+
+def _skill_candidate_sort_key(candidate: SkillCandidate) -> tuple[int, str]:
+    scope_rank = 0 if candidate.scope == "project" else 1
+    return (scope_rank, candidate.name.lower())

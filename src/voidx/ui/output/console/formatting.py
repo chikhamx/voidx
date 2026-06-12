@@ -90,7 +90,7 @@ def _fmt_args_short(tool_name: str, args: dict[str, object]) -> str:
         shortened = value[:77] + "..." if len(value) > 80 else value
         return _escape_rich(shortened)
     if tool_name == "agent":
-        return _escape_rich(agent_display_name(args.get("agent") or args.get("role")))
+        return _escape_rich(agent_display_name(args.get("agent")))
     if tool_name in {"webfetch", "websearch"}:
         value = args.get("url") or args.get("query")
         return _escape_rich(str(value)) if value else ""

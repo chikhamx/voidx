@@ -30,7 +30,6 @@ BASIC_RULES: Ruleset = [
     Rule(permission="webfetch", pattern="*", action="allow"),
     Rule(permission="websearch", pattern="*", action="allow"),
     Rule(permission="todo", pattern="*", action="allow"),
-    Rule(permission="on_intent", pattern="*", action="allow"),
     Rule(permission="clarify", pattern="*", action="allow"),
     Rule(permission="plan_checkpoint", pattern="*", action="allow"),
     Rule(permission="advance_workflow", pattern="*", action="allow"),
@@ -41,7 +40,7 @@ BASIC_RULES: Ruleset = [
     Rule(permission="lsp_symbols", pattern="*", action="allow"),
     Rule(permission="lsp_definition", pattern="*", action="allow"),
     Rule(permission="lsp_references", pattern="*", action="allow"),
-    Rule(permission="agent", pattern="*", action="allow"),
+    Rule(permission="agent", pattern="sub-voidx", action="allow"),
     Rule(permission="write", pattern="*", action="ask"),
     Rule(permission="edit", pattern="*", action="ask"),
     Rule(permission="apply_patch", pattern="*", action="ask"),
@@ -118,6 +117,9 @@ def build_pattern(tool: str, args: dict) -> str:
     if tool in _FILE_PATTERN_TOOLS:
         return str(args.get("file_path", "*"))
     if tool == "agent":
+        persona = delegated_persona(args)
+        if persona == "implement":
+            return persona
         return delegated_agent(args) or "*"
     if tool == "git":
         return "read" if _is_read_only_git_tool_command(args) else "write"
@@ -126,6 +128,10 @@ def build_pattern(tool: str, args: dict) -> str:
 
 def delegated_agent(args: dict) -> str:
     return str(args.get("agent") or "")
+
+
+def delegated_persona(args: dict) -> str:
+    return str(args.get("persona") or "")
 
 
 def is_safe_bash(command: str) -> bool:
@@ -351,7 +357,8 @@ def capability_for_tool(tool: str, args: dict) -> PermissionCapability:
     if tool == "git":
         return PermissionCapability.GIT_READ if _is_read_only_git_tool_command(args) else PermissionCapability.GIT_WRITE
     if tool == "agent":
-        return PermissionCapability.AGENT_IMPLEMENT if delegated_agent(args) == "implement" else PermissionCapability.AGENT_READONLY
+        delegated = delegated_persona(args) or delegated_agent(args)
+        return PermissionCapability.AGENT_IMPLEMENT if delegated == "implement" else PermissionCapability.AGENT_READONLY
     if tool.startswith("mcp__") or tool.startswith("mcp/"):
         return PermissionCapability.MCP_TOOLS
     return PermissionCapability.OTHER

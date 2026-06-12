@@ -24,7 +24,7 @@ from voidx.ui.output.events import (
 class StreamingRenderer:
     """Smooth streaming with Rich Live + Markdown rendering."""
 
-    FLUSH_INTERVAL = 0.05
+    FLUSH_INTERVAL = 0.1
 
     def __init__(
         self,

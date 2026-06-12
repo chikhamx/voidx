@@ -9,12 +9,13 @@ from typing import TYPE_CHECKING
 
 from langchain_core.messages import AIMessage, HumanMessage, ToolMessage
 
+from voidx.agent.goal_resolver import resolve_goal_for_turn
 from voidx.agent.todo_state import sanitize_todo_replay_messages
 from voidx.agent.attachments import build_user_message_payload, serialize_message_content
 from voidx.agent.message_rows import messages_from_rows_incremental
 from voidx.agent.runtime_context import TaskIntent
 from voidx.agent.state import AgentState
-from voidx.agent.task_state import IntentResolution, PendingApproval, resolve_turn_intent
+from voidx.agent.task_state import PendingApproval, TaskState, goal_label
 from voidx.memory.runtime_state import MessageRuntimeSnapshot, save_message_runtime_snapshot
 from voidx.memory.session import (
     MessageRow,
@@ -37,6 +38,7 @@ from voidx.ui.output.events.schema import (
     TurnStarted,
     WarningAppended,
 )
+from voidx.workflow.runtime import WorkflowRunStatus
 
 if TYPE_CHECKING:
     from voidx.agent.graph.contracts import GraphRunLoopHost
@@ -62,6 +64,29 @@ def _resolve_recursion_limit(steps, agent_name: str) -> int:
     configured = getattr(steps, 'recursion_limit', 500) if steps is not None else 500
     max_steps = getattr(steps, agent_name, 100) if steps is not None else 100
     return max(configured, 2 * max_steps + 10)
+
+
+def _initial_persona_for_goal(task_state: TaskState) -> str:
+    personas: list[str] = []
+    for run in (task_state.workflow_runs or {}).values():
+        if run.status == WorkflowRunStatus.ACTIVE:
+            personas.extend(persona for persona in run.personas if persona)
+    if personas:
+        return ",".join(dict.fromkeys(personas))
+
+    goal = task_state.current_goal
+    goal_type = goal.type.value if goal is not None else ""
+    return {
+        "inspect": "explore",
+        "design": "plan",
+        "doc": "plan",
+        "bugfix": "implement",
+        "feature": "implement",
+        "refactor": "implement",
+        "chore": "implement",
+        "debug": "explore",
+        "review": "review",
+    }.get(goal_type, "coordinate")
 
 
 class GraphTurnRunner:
@@ -160,24 +185,27 @@ class GraphTurnRunner:
                 "value",
                 "plan" if getattr(host, "_plan_mode", False) else "auto",
             )
-            task_run = getattr(host, "_task_run", None)
-            if interaction_mode == "goal" and task_run is not None and not task_run.goal:
-                task_run.set_goal(payload.title_text)
-            intent_resolution = resolve_turn_intent(
+            base_task_state = _load_task_state(getattr(host, "_task_state", None))
+            if interaction_mode == "goal" and base_task_state.current_goal is None:
+                base_task_state.set_goal(payload.title_text)
+            intent_resolution = await resolve_goal_for_turn(
+                model=host.model,
+                user_text=payload.title_text,
+                interaction_mode=interaction_mode,
+                task_state=base_task_state,
+                workspace=host._workspace,
+                session_time=getattr(host, "_session_date", ""),
+                title_requested=_should_request_resolver_title(host._session, is_first_user_message),
+            )
+            turn_task_state = base_task_state.model_copy(deep=True)
+            turn_task_state.update_after_turn(
+                intent_resolution,
                 payload.title_text,
-                interaction_mode,
-                getattr(host, "_task_state", None),
-            )
-            task_intent = intent_resolution.intent
-            goal_scope = (
-                task_run.goal
-                if interaction_mode == "goal" and task_run is not None and task_run.goal
-                else payload.title_text
-            )
-            pending_approval = _active_pending_approval(
-                getattr(host, "_task_state", None),
-                task_run,
-                interaction_mode,
+                scope_text=(
+                    goal_label(base_task_state.current_goal)
+                    if interaction_mode == "goal"
+                    else payload.title_text
+                ),
             )
 
             saved_user_content, user_content_format = serialize_message_content(payload.content)
@@ -204,18 +232,12 @@ class GraphTurnRunner:
                 "workspace": host._workspace,
                 "tool_results": {},
                 "step_count": 0,
-                "max_steps": _resolve_max_steps(host.config, "orchestrator"),
+                "max_steps": _resolve_max_steps(host.config, "voidx"),
                 "should_continue": True,
-                "agent": "orchestrator",
+                "persona": _initial_persona_for_goal(turn_task_state),
                 "plan_mode": host._plan_mode,
                 "interaction_mode": interaction_mode,
-                "task_intent": task_intent.value,
-                "intent_resolution_reason": intent_resolution.reason,
-                "pending_approval": _dump_pending_approval(pending_approval),
-                "goal": task_run.goal if task_run is not None else "",
-                "goal_phase": task_run.phase.value if task_run is not None else "",
-                "goal_status": task_run.status.value if task_run is not None else "",
-                "goal_turn_count": task_run.turn_count if task_run is not None else 0,
+                "task_state": turn_task_state.model_dump(mode="json"),
                 "user_message_id": user_message_id,
             }
 
@@ -230,54 +252,20 @@ class GraphTurnRunner:
                 await host._ui.events.emit(StatusFinished(status_id="turn:analyzing"))
 
             recursion_limit = _resolve_recursion_limit(
-                getattr(host.config, 'agent_max_steps', None), "orchestrator",
+                getattr(host.config, 'agent_max_steps', None), "voidx",
             )
             final = await host.graph.ainvoke(initial, {"recursion_limit": recursion_limit})
-            final_task_intent = TaskIntent(final.get("task_intent", task_intent.value))
-            final_intent_resolution_reason = final.get(
-                "intent_resolution_reason",
-                intent_resolution.reason,
-            )
-            final_pending_approval = _load_pending_approval(final.get("pending_approval"))
-            final_scope = final_pending_approval.scope if final_pending_approval else goal_scope
-            final_resolution = IntentResolution(
-                intent=final_task_intent,
-                reason=final_intent_resolution_reason,
-                confirmed_approval=intent_resolution.confirmed_approval,
-            )
-            if host.model is not None and hasattr(host, "_task_state"):
-                host._task_state.update_after_turn(
-                    final_resolution,
-                    payload.title_text,
-                    scope_text=final_scope,
-                )
-            if host.model is not None and interaction_mode == "goal" and task_run is not None:
-                task_run.update_after_turn(
-                    final_resolution,
-                    payload.title_text,
-                    scope_text=final_scope,
-                )
-            if host.model is not None and task_run is not None:
-                task_run.merge_workflow_runs(final.get("workflow_runs", []))
+            final_task_state = _load_task_state(final.get("task_state"), fallback=turn_task_state)
+            if host.model is not None:
+                host._task_state = final_task_state
             await save_message_runtime_snapshot(MessageRuntimeSnapshot(
                 message_id=user_message_id,
                 session_id=host._session.id,
                 interaction_mode=interaction_mode,
-                task_intent=final_task_intent,
-                intent_resolution_reason=final_intent_resolution_reason,
-                goal=task_run.goal if task_run is not None else "",
-                goal_phase=task_run.phase.value if task_run is not None else "",
-                goal_status=task_run.status.value if task_run is not None else "",
-                goal_turn_count=task_run.turn_count if task_run is not None else 0,
-                pending_approval=_active_pending_approval(
-                    getattr(host, "_task_state", None),
-                    task_run,
-                    interaction_mode,
-                ),
-                intent_confidence=final.get("intent_confidence"),
-                intent_source=final.get("intent_source", ""),
-                intent_refined=bool(final.get("intent_refined", False)),
-                available_tool_ids=list(final.get("available_tool_ids", []) or []),
+                task_intent=final_task_state.current_intent,
+                current_goal=final_task_state.current_goal,
+                pending_approval=final_task_state.pending_approval,
+                workflow_runs=final_task_state.workflow_runs,
             ))
             await host._persist_runtime_state()
 
@@ -349,12 +337,9 @@ class GraphTurnRunner:
                 # Auto-title on first message
                 if is_first_user_message:
                     title_source = payload.title_text
-                    title = host._temporary_session_title(title_source)
+                    title = intent_resolution.title or host._temporary_session_title(title_source)
                     await update_title(host._session.id, title)
                     host._session = host._session.model_copy(update={"title": title})
-                    scheduler = getattr(host, "_schedule_session_title_generation", None)
-                    if callable(scheduler):
-                        scheduler(host._session.id, title_source, title)
             elapsed = time.monotonic() - t_turn_start
             stats = host._usage_stats
             turn_calls = stats.turn_calls
@@ -423,12 +408,19 @@ class GraphTurnRunner:
                 host._ui.dock.set_input("", [])
 
 
-def _active_pending_approval(task_state, task_run, interaction_mode: str) -> PendingApproval | None:
-    if interaction_mode == "goal" and task_run is not None:
-        return getattr(task_run, "pending_approval", None)
-    if task_state is not None:
-        return getattr(task_state, "pending_approval", None)
-    return None
+def _load_task_state(value: TaskState | dict | None, *, fallback: TaskState | None = None) -> TaskState:
+    if isinstance(value, TaskState):
+        return value.model_copy(deep=True)
+    if isinstance(value, dict):
+        return TaskState.model_validate(value)
+    return fallback.model_copy(deep=True) if fallback is not None else TaskState()
+
+
+def _should_request_resolver_title(session, is_first_user_message: bool) -> bool:
+    if not is_first_user_message or session is None:
+        return False
+    title = (getattr(session, "title", "") or "").strip()
+    return not title or title == "New session"
 
 
 def _dump_pending_approval(value: PendingApproval | dict | None) -> dict | None:
@@ -437,11 +429,3 @@ def _dump_pending_approval(value: PendingApproval | dict | None) -> dict | None:
     if isinstance(value, dict):
         return value
     return value.model_dump(mode="json")
-
-
-def _load_pending_approval(value: PendingApproval | dict | None) -> PendingApproval | None:
-    if value is None:
-        return None
-    if isinstance(value, PendingApproval):
-        return value
-    return PendingApproval.model_validate(value)

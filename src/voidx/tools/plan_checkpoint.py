@@ -6,7 +6,7 @@ import json
 
 from pydantic import BaseModel, Field
 
-from voidx.runtime import TaskIntent, ToolStatePatch
+from voidx.runtime import GoalType, TaskIntent, ToolStatePatch, goal_from_text
 from voidx.tools.base import BaseTool, ToolContext, ToolResult, UserInteraction, model_to_json_schema
 
 
@@ -100,26 +100,36 @@ def _decision_result(
     if decision == "approved":
         scope = inp.plan_summary.strip()
         patch = ToolStatePatch(
-            task_intent=TaskIntent.IMPLEMENT,
-            intent_resolution_reason="plan_checkpoint: user approved",
-            goal=scope,
-            goal_phase="implement",
+            task_intent=TaskIntent.CODING,
+            goal=goal_from_text(
+                scope,
+                goal_type=GoalType.FEATURE,
+                user_requested_write=True,
+                needs_confirmation=False,
+            ),
             pending_approval=None,
         )
     elif decision == "modified":
         scope = modified_scope or inp.plan_summary.strip()
         patch = ToolStatePatch(
-            task_intent=TaskIntent.IMPLEMENT,
-            intent_resolution_reason="plan_checkpoint: user approved with modifications",
-            goal=scope,
-            goal_phase="implement",
+            task_intent=TaskIntent.CODING,
+            goal=goal_from_text(
+                scope,
+                goal_type=GoalType.FEATURE,
+                user_requested_write=True,
+                needs_confirmation=False,
+            ),
             pending_approval=None,
         )
     else:
         patch = ToolStatePatch(
-            task_intent=TaskIntent.DESIGN,
-            intent_resolution_reason="plan_checkpoint: user rejected",
-            goal_phase="design",
+            task_intent=TaskIntent.CODING,
+            goal=goal_from_text(
+                inp.plan_summary,
+                goal_type=GoalType.DESIGN,
+                user_requested_write=False,
+                needs_confirmation=True,
+            ),
             pending_approval=None,
         )
 
