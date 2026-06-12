@@ -1,6 +1,5 @@
 #!/usr/bin/env bash
-# voidx installer — downloads a standalone Python, creates an isolated venv,
-# and installs voidx. No Python, pip, or npm required.
+# voidx installer — prefers npm when available, falls back to PBS+venv+pip.
 #
 # Usage:
 #   curl -fsSL https://raw.githubusercontent.com/.../install.sh | bash
@@ -10,9 +9,10 @@
 # Environment variables:
 #   VOIDX_VERSION         — version to install (default: 2.3.0)
 #   VOIDX_HOME            — install directory (default: ~/.local/share/voidx)
-#   VOIDX_PYTHON_MIRROR   — mirror for python-build-standalone downloads
-#   VOIDX_PIP_INDEX       — custom PyPI index URL
+#   VOIDX_PYTHON_MIRROR   — mirror for python-build-standalone downloads (fallback only)
+#   VOIDX_PIP_INDEX       — custom PyPI index URL (fallback only)
 #   VOIDX_BIN_DIR         — directory for the voidx symlink (default: ~/.local/bin)
+#   VOIDX_SKIP_NPM        — set to 1 to skip npm and force PBS+venv+pip fallback
 
 set -euo pipefail
 
@@ -117,6 +117,112 @@ _cleanup_legacy() {
 
 _cleanup_legacy
 
+# ── Prerequisites ────────────────────────────────────────────────────────────
+if ! command -v curl &>/dev/null; then
+    err "curl is required but not found. Please install curl first."
+    exit 1
+fi
+
+# ══════════════════════════════════════════════════════════════════════════════
+# npm installation path
+# ══════════════════════════════════════════════════════════════════════════════
+_install_via_npm() {
+    step "npm" "正在通过 npm 安装 voidx ${VERSION}…"
+
+    # Remove old symlink-based install at ~/.local/bin/voidx that points to venv
+    # (npm uses its own launcher, not a symlink to the venv)
+    local old_link="${HOME}/.local/bin/voidx"
+    if [ -L "${old_link}" ]; then
+        local target
+        target=$(readlink "${old_link}" 2>/dev/null || echo "")
+        case "${target}" in
+            */share/voidx/venv/bin/voidx)
+                warn "正在删除旧版符号链接: ${old_link} → ${target}"
+                rm -f "${old_link}"
+                ok "已删除旧版符号链接"
+                ;;
+        esac
+    fi
+
+    # Run npm install
+    if ! npm install -g "@chikhamx/voidx@${VERSION}"; then
+        err "npm install 失败，正在回退到直接安装…"
+        return 1
+    fi
+
+    # Find the npm-installed voidx binary
+    local npm_bin_dir
+    npm_bin_dir="$(npm prefix -g 2>/dev/null)/bin"
+
+    if [ ! -x "${npm_bin_dir}/voidx" ]; then
+        # Try alternative detection
+        npm_bin_dir="$(npm bin -g 2>/dev/null || true)"
+        if [ ! -x "${npm_bin_dir}/voidx" ]; then
+            err "npm 安装成功但未找到 voidx 二进制文件，正在回退到直接安装…"
+            return 1
+        fi
+    fi
+
+    ok "npm 安装完成: ${npm_bin_dir}/voidx"
+
+    # Ensure npm global bin dir is in PATH
+    if ! echo ":${PATH}:" | grep -q ":${npm_bin_dir}:"; then
+        export PATH="${npm_bin_dir}:${PATH}"
+
+        SHELL_NAME=$(basename "${SHELL:-/bin/bash}")
+        PROFILE_FILE=""
+        case "${SHELL_NAME}" in
+            zsh)  PROFILE_FILE="${HOME}/.zshrc" ;;
+            bash) PROFILE_FILE="${HOME}/.bashrc" ;;
+            *)    PROFILE_FILE="${HOME}/.profile" ;;
+        esac
+
+        EXPORT_LINE="export PATH=\"${npm_bin_dir}:\$PATH\""
+        if [ -f "${PROFILE_FILE}" ] && grep -qF "${EXPORT_LINE}" "${PROFILE_FILE}" 2>/dev/null; then
+            : # already present
+        else
+            printf '\n%s\n' "${EXPORT_LINE}" >> "${PROFILE_FILE}"
+            info "已将 ${npm_bin_dir} 添加到 ${PROFILE_FILE}"
+        fi
+    fi
+
+    # Verify installation
+    local actual_version
+    actual_version=$(voidx --version 2>/dev/null | grep -oE '[0-9]+\.[0-9]+\.[0-9]+' | head -1 || true)
+    if [ -n "${actual_version}" ]; then
+        ok "版本验证通过: voidx ${actual_version}"
+    else
+        warn "无法验证 voidx 版本，请确认 PATH 中包含 ${npm_bin_dir}"
+    fi
+
+    printf "\n${GREEN}${BOLD}✅ voidx ${VERSION} installed via npm!${NC}\n\n"
+    info "Run: voidx"
+    exit 0
+}
+
+# ── Check if npm installation is available ──────────────────────────────────
+if [ "${VOIDX_SKIP_NPM:-0}" != "1" ] && command -v npm &>/dev/null; then
+    # Check if npm-installed voidx already reports the correct version
+    EXISTING_NPM_VERSION=$(voidx --version 2>/dev/null | grep -oE '[0-9]+\.[0-9]+\.[0-9]+' | head -1 || true)
+    if [ "${EXISTING_NPM_VERSION}" = "${VERSION}" ]; then
+        ok "voidx ${VERSION} 已通过 npm 安装"
+        exit 0
+    fi
+
+    # Try npm installation; fall back to PBS on failure
+    if ! _install_via_npm; then
+        warn "npm 安装失败，正在使用直接安装方式…"
+    else
+        # npm install succeeded and already exited 0
+        # This line is unreachable but clarifies intent
+        exit 0
+    fi
+fi
+
+# ══════════════════════════════════════════════════════════════════════════════
+# Fallback: PBS + venv + pip direct installation
+# ══════════════════════════════════════════════════════════════════════════════
+
 # ── Ensure PATH and remove conflicting voidx ──────────────────────────────
 _ensure_path_and_cleanup() {
     # Add BIN_DIR to PATH if missing
@@ -206,12 +312,6 @@ _ensure_path_and_cleanup() {
         ok "版本验证通过: voidx ${ACTUAL_VERSION}"
     fi
 }
-
-# ── Prerequisites ────────────────────────────────────────────────────────────
-if ! command -v curl &>/dev/null; then
-    err "curl is required but not found. Please install curl first."
-    exit 1
-fi
 
 # ── Platform detection ──────────────────────────────────────────────────────
 OS="$(uname -s)"
