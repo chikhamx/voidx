@@ -230,7 +230,6 @@ async def clear_messages(session_id: str) -> None:
         conn.execute("DELETE FROM context_frames WHERE session_id = ?", (session_id,))
         conn.execute("DELETE FROM message_runtime_snapshots WHERE session_id = ?", (session_id,))
         conn.execute("DELETE FROM session_runtime_state WHERE session_id = ?", (session_id,))
-        conn.execute("DELETE FROM session_task_runs WHERE session_id = ?", (session_id,))
         conn.execute("DELETE FROM transcript_nodes WHERE session_id = ?", (session_id,))
         conn.execute("DELETE FROM turns WHERE session_id = ?", (session_id,))
         conn.execute("DELETE FROM messages WHERE session_id = ?", (session_id,))

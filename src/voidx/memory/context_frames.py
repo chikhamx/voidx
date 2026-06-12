@@ -17,7 +17,7 @@ class ContextFrameRecord(BaseModel):
     session_id: str
     user_message_id: int | None = None
     frame_kind: str = "main"
-    agent_role: str = "orchestrator"
+    agent_persona: str = "voidx"
     provider: str
     model: str
     prefix_hash: str
@@ -36,7 +36,7 @@ def build_context_frame(
     provider: str,
     model: str,
     frame_kind: str = "main",
-    agent_role: str = "orchestrator",
+    agent_persona: str = "voidx",
     user_message_id: int | None = None,
     token_estimate: int = 0,
     metadata: dict[str, Any] | None = None,
@@ -46,7 +46,7 @@ def build_context_frame(
         session_id=session_id,
         user_message_id=user_message_id,
         frame_kind=frame_kind,
-        agent_role=agent_role,
+        agent_persona=agent_persona,
         provider=provider,
         model=model,
         prefix_hash=_hash_payload(_stable_prefix_payload(serialized)),
@@ -61,7 +61,7 @@ def build_context_frame(
 async def save_context_frame(record: ContextFrameRecord) -> int:
     cur = await _execute_commit(
         """INSERT INTO context_frames (
-               session_id, user_message_id, frame_kind, agent_role, provider,
+               session_id, user_message_id, frame_kind, agent_persona, provider,
                model, prefix_hash, frame_hash, message_count, token_estimate,
                messages_json, metadata_json, created_at
            )
@@ -70,7 +70,7 @@ async def save_context_frame(record: ContextFrameRecord) -> int:
             record.session_id,
             record.user_message_id,
             record.frame_kind,
-            record.agent_role,
+            record.agent_persona,
             record.provider,
             record.model,
             record.prefix_hash,
@@ -92,7 +92,7 @@ async def save_context_frame_from_messages(
     provider: str,
     model: str,
     frame_kind: str = "main",
-    agent_role: str = "orchestrator",
+    agent_persona: str = "voidx",
     user_message_id: int | None = None,
     token_estimate: int = 0,
     metadata: dict[str, Any] | None = None,
@@ -103,7 +103,7 @@ async def save_context_frame_from_messages(
         provider=provider,
         model=model,
         frame_kind=frame_kind,
-        agent_role=agent_role,
+        agent_persona=agent_persona,
         user_message_id=user_message_id,
         token_estimate=token_estimate,
         metadata=metadata,
@@ -124,7 +124,7 @@ async def load_context_frames(session_id: str, limit: int = 50) -> list[ContextF
             session_id=row["session_id"],
             user_message_id=row["user_message_id"],
             frame_kind=row["frame_kind"],
-            agent_role=row["agent_role"],
+            agent_persona=row["agent_persona"],
             provider=row["provider"],
             model=row["model"],
             prefix_hash=row["prefix_hash"],

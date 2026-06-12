@@ -104,30 +104,15 @@ def _init_schema(conn: sqlite3.Connection) -> None:
         CREATE TABLE IF NOT EXISTS session_runtime_state (
             session_id TEXT PRIMARY KEY,
             interaction_mode TEXT NOT NULL DEFAULT 'auto',
-            current_intent TEXT NOT NULL DEFAULT 'chat',
+            current_intent TEXT NOT NULL DEFAULT 'coding',
             previous_intent TEXT,
-            current_goal TEXT NOT NULL DEFAULT '',
-            awaiting_implementation_approval INTEGER NOT NULL DEFAULT 0,
-            approved_scope TEXT NOT NULL DEFAULT '',
+            current_goal_json TEXT,
             pending_approval_json TEXT NOT NULL DEFAULT '',
-            last_plan_summary TEXT NOT NULL DEFAULT '',
+            workflow_runs_json TEXT NOT NULL DEFAULT '{}',
             recent_user_texts_json TEXT NOT NULL DEFAULT '[]',
             todo_state_json TEXT NOT NULL DEFAULT '',
             compaction_summary TEXT NOT NULL DEFAULT '',
-            updated_at TEXT NOT NULL,
-            FOREIGN KEY (session_id) REFERENCES sessions(id) ON DELETE CASCADE
-        );
-
-        CREATE TABLE IF NOT EXISTS session_task_runs (
-            session_id TEXT PRIMARY KEY,
-            goal TEXT NOT NULL DEFAULT '',
-            phase TEXT NOT NULL DEFAULT 'clarify',
-            status TEXT NOT NULL DEFAULT 'idle',
-            approved_scope TEXT NOT NULL DEFAULT '',
-            awaiting_implementation_approval INTEGER NOT NULL DEFAULT 0,
-            pending_approval_json TEXT NOT NULL DEFAULT '',
-            turn_count INTEGER NOT NULL DEFAULT 0,
-            workflow_runs_json TEXT NOT NULL DEFAULT '{}',
+            session_time TEXT NOT NULL,
             updated_at TEXT NOT NULL,
             FOREIGN KEY (session_id) REFERENCES sessions(id) ON DELETE CASCADE
         );
@@ -136,20 +121,10 @@ def _init_schema(conn: sqlite3.Connection) -> None:
             message_id INTEGER PRIMARY KEY,
             session_id TEXT NOT NULL,
             interaction_mode TEXT NOT NULL DEFAULT 'auto',
-            task_intent TEXT NOT NULL DEFAULT 'chat',
-            implementation_allowed INTEGER NOT NULL DEFAULT 0,
-            intent_resolution_reason TEXT NOT NULL DEFAULT '',
-            goal TEXT NOT NULL DEFAULT '',
-            goal_phase TEXT NOT NULL DEFAULT 'clarify',
-            goal_status TEXT NOT NULL DEFAULT 'idle',
-            goal_turn_count INTEGER NOT NULL DEFAULT 0,
-            awaiting_implementation_approval INTEGER NOT NULL DEFAULT 0,
-            approved_scope TEXT NOT NULL DEFAULT '',
+            task_intent TEXT NOT NULL DEFAULT 'coding',
+            current_goal_json TEXT,
             pending_approval_json TEXT NOT NULL DEFAULT '',
-            intent_confidence REAL,
-            intent_source TEXT NOT NULL DEFAULT '',
-            intent_refined INTEGER NOT NULL DEFAULT 0,
-            available_tool_ids_json TEXT NOT NULL DEFAULT '[]',
+            workflow_runs_json TEXT NOT NULL DEFAULT '{}',
             created_at TEXT NOT NULL,
             FOREIGN KEY (message_id) REFERENCES messages(id) ON DELETE CASCADE,
             FOREIGN KEY (session_id) REFERENCES sessions(id) ON DELETE CASCADE
@@ -163,7 +138,7 @@ def _init_schema(conn: sqlite3.Connection) -> None:
             session_id TEXT NOT NULL,
             user_message_id INTEGER,
             frame_kind TEXT NOT NULL DEFAULT 'main',
-            agent_role TEXT NOT NULL DEFAULT 'orchestrator',
+            agent_persona TEXT NOT NULL DEFAULT 'voidx',
             provider TEXT NOT NULL,
             model TEXT NOT NULL,
             prefix_hash TEXT NOT NULL,
@@ -205,33 +180,6 @@ def _init_schema(conn: sqlite3.Connection) -> None:
         )
     except sqlite3.OperationalError:
         pass
-    try:
-        conn.execute(
-            "ALTER TABLE session_runtime_state ADD COLUMN compaction_summary TEXT NOT NULL DEFAULT ''"
-        )
-    except sqlite3.OperationalError:
-        pass
-    try:
-        conn.execute(
-            "ALTER TABLE session_task_runs ADD COLUMN workflow_runs_json TEXT NOT NULL DEFAULT '{}'"
-        )
-    except sqlite3.OperationalError:
-        pass
-    for statement in (
-        "ALTER TABLE session_runtime_state ADD COLUMN pending_approval_json TEXT NOT NULL DEFAULT ''",
-        "ALTER TABLE session_task_runs ADD COLUMN pending_approval_json TEXT NOT NULL DEFAULT ''",
-        "ALTER TABLE message_runtime_snapshots ADD COLUMN pending_approval_json TEXT NOT NULL DEFAULT ''",
-        "ALTER TABLE message_runtime_snapshots ADD COLUMN intent_confidence REAL",
-        "ALTER TABLE message_runtime_snapshots ADD COLUMN intent_source TEXT NOT NULL DEFAULT ''",
-        "ALTER TABLE message_runtime_snapshots ADD COLUMN intent_refined INTEGER NOT NULL DEFAULT 0",
-        "ALTER TABLE message_runtime_snapshots ADD COLUMN available_tool_ids_json TEXT NOT NULL DEFAULT '[]'",
-        "ALTER TABLE session_runtime_state ADD COLUMN recent_user_texts_json TEXT NOT NULL DEFAULT '[]'",
-        "ALTER TABLE session_runtime_state ADD COLUMN todo_state_json TEXT NOT NULL DEFAULT ''",
-    ):
-        try:
-            conn.execute(statement)
-        except sqlite3.OperationalError:
-            pass
 
 
 async def _execute_commit(sql: str, params: tuple = ()) -> sqlite3.Cursor:

@@ -130,10 +130,10 @@ class InstructionService:
         *,
         agent: str = "",
         task_intent: str | None = None,
+        goal_type: str | None = None,
         interaction_mode: str | None = None,
-        task_phase: str = "",
         scope: str = "",
-        turn_count: int = 0,
+        runtime_trigger: str | None = None,
         exclude_names: list[str] | None = None,
         active_names: list[str] | None = None,
     ) -> WorkflowRuntimeContext:
@@ -144,7 +144,9 @@ class InstructionService:
             user_text,
             agent=agent,
             task_intent=task_intent,
+            goal_type=goal_type,
             interaction_mode=interaction_mode,
+            runtime_trigger=runtime_trigger,
             exclude_names=exclude_names or (),
         )
         active = _merged_names(active_names or (), [match.name for match in matches])
@@ -153,21 +155,11 @@ class InstructionService:
             for node in nodes
             if node.name in active
         ]
-        phase = task_phase or _phase_from_intent(task_intent, interaction_mode)
         return WorkflowRuntimeContext(
             instructions=instructions,
             active=[f"{match.name} ({match.reason})" for match in matches],
             content=service.context(active_names=active),
-            runs=service.select_runs(
-                user_text,
-                agent=agent,
-                task_intent=task_intent,
-                interaction_mode=interaction_mode,
-                phase=phase,
-                scope=scope,
-                turn_count=turn_count,
-                exclude_names=exclude_names or (),
-            ),
+            runs=service.runs_from_matches(matches, goal_type=goal_type, scope=scope),
         )
 
     async def resolve(
@@ -294,17 +286,6 @@ class InstructionService:
                         if p:
                             paths.add(p)
         return paths
-
-
-def _phase_from_intent(task_intent: str | None, interaction_mode: str | None = None) -> str:
-    if (interaction_mode or "").strip().lower() == "plan":
-        return "design"
-    intent = (task_intent or "").strip().lower()
-    if intent == "debug":
-        return "inspect"
-    if intent in {"inspect", "design", "implement", "review"}:
-        return intent
-    return ""
 
 
 def _skill_selection_signature(
