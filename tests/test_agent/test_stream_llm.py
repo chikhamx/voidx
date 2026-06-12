@@ -381,7 +381,7 @@ async def test_call_llm_resolves_protocol_for_mimo_provider(tmp_path, monkeypatc
         "messages": [HumanMessage(content="hi")],
         "step_count": 0,
         "max_steps": 1,
-        "agent": "orchestrator",
+        "persona": "voidx",
     })
 
     assert result["step_count"] == 1
@@ -414,7 +414,7 @@ async def test_call_llm_injects_current_todo_runtime_context(tmp_path, monkeypat
         "messages": [HumanMessage(content="hi")],
         "step_count": 0,
         "max_steps": 50,
-        "agent": "orchestrator",
+        "persona": "voidx",
     })
 
     todo_messages = [
@@ -446,7 +446,7 @@ async def test_call_llm_updates_usage_stats(tmp_path, monkeypatch):
         "messages": [HumanMessage(content="hi")],
         "step_count": 0,
         "max_steps": 1,
-        "agent": "orchestrator",
+        "persona": "voidx",
     })
 
     assert result["step_count"] == 1
@@ -490,14 +490,14 @@ async def test_call_llm_persists_context_frame_for_session(tmp_path, monkeypatch
             ],
             "step_count": 0,
             "max_steps": 1,
-            "agent": "orchestrator",
+            "persona": "voidx",
             "user_message_id": user_message_id,
         })
 
         frames = await load_context_frames(session.id)
         assert len(frames) == 1
         assert frames[0].frame_kind == "main"
-        assert frames[0].agent_role == "orchestrator"
+        assert frames[0].agent_persona == "voidx"
         assert frames[0].user_message_id == user_message_id
         assert frames[0].messages[-1]["content"] == "hi"
     finally:
@@ -524,7 +524,7 @@ async def test_call_llm_does_not_bind_tools_when_no_tool_step_budget(tmp_path, m
         "messages": [HumanMessage(content="hi")],
         "step_count": 49,
         "max_steps": 50,
-        "agent": "orchestrator",
+        "persona": "voidx",
     })
 
     assert result["messages"][0].content == "answer"
@@ -552,7 +552,7 @@ async def test_call_llm_adds_step_hint_to_payload_only(tmp_path, monkeypatch):
         "messages": state_messages,
         "step_count": 46,
         "max_steps": 50,
-        "agent": "orchestrator",
+        "persona": "voidx",
     })
 
     assert result["messages"][0].content == "answer"
@@ -585,7 +585,7 @@ async def test_call_llm_final_step_injects_prompt_and_disables_tools(tmp_path, m
         "messages": [HumanMessage(content="finish the task")],
         "step_count": 49,
         "max_steps": 50,
-        "agent": "orchestrator",
+        "persona": "voidx",
     })
 
     assert result["convergence_forced"] is True
@@ -618,7 +618,7 @@ async def test_call_llm_injects_pending_guidance_before_next_model_call(tmp_path
         "messages": [HumanMessage(content="finish the task")],
         "step_count": 0,
         "max_steps": 50,
-        "agent": "orchestrator",
+        "persona": "voidx",
     })
 
     assert len(result["messages"]) == 2
@@ -669,7 +669,7 @@ async def test_call_llm_preflight_compacts_and_replaces_message_state(tmp_path, 
         ],
         "step_count": 0,
         "max_steps": 50,
-        "agent": "orchestrator",
+        "persona": "voidx",
     })
 
     assert isinstance(result["messages"][0], RemoveMessage)
@@ -738,7 +738,7 @@ async def test_call_llm_overflow_error_compacts_retries_and_preserves_guidance(t
         ],
         "step_count": 0,
         "max_steps": 50,
-        "agent": "orchestrator",
+        "persona": "voidx",
     })
 
     assert len(model.calls) == 2
@@ -788,7 +788,7 @@ async def test_call_llm_guidance_does_not_replace_final_convergence_goal(tmp_pat
         "messages": [HumanMessage(content="finish the task")],
         "step_count": 49,
         "max_steps": 50,
-        "agent": "orchestrator",
+        "persona": "voidx",
     })
 
     assert result["convergence_forced"] is True
@@ -820,7 +820,7 @@ async def test_call_llm_context_frame_records_transient_final_prompt(tmp_path, m
             "messages": [HumanMessage(content="finish the task")],
             "step_count": 49,
             "max_steps": 50,
-            "agent": "orchestrator",
+            "persona": "voidx",
         })
 
         frames = await load_context_frames(session.id)
@@ -892,7 +892,7 @@ async def test_call_llm_filters_lsp_tools_when_no_lsp_server_is_available(tmp_pa
         "messages": [HumanMessage(content="hi")],
         "step_count": 0,
         "max_steps": 50,
-        "agent": "orchestrator",
+        "persona": "voidx",
     })
 
     tool_names = [tool["function"]["name"] for tool in model.bound_tools]
@@ -901,7 +901,7 @@ async def test_call_llm_filters_lsp_tools_when_no_lsp_server_is_available(tmp_pa
 
 
 @pytest.mark.asyncio
-async def test_available_tool_ids_can_hide_mcp_tools(tmp_path, monkeypatch):
+async def test_available_tool_ids_no_longer_filter_llm_tools(tmp_path, monkeypatch):
     import voidx.agent.graph.core as graph_module
 
     monkeypatch.setattr(graph_module, "StreamingRenderer", FakeRenderer)
@@ -926,12 +926,33 @@ async def test_available_tool_ids_can_hide_mcp_tools(tmp_path, monkeypatch):
         "messages": [HumanMessage(content="hi")],
         "step_count": 0,
         "max_steps": 50,
-        "agent": "orchestrator",
+        "persona": "coordinate",
         "available_tool_ids": ["read", "grep"],
     })
 
     tool_names = [tool["function"]["name"] for tool in model.bound_tools]
-    assert tool_names == ["read", "grep"]
+    assert "read" in tool_names
+    assert "grep" in tool_names
+    assert "mcp__demo__send_message_12345678" in tool_names
+
+
+def test_agent_static_tool_defs_hide_unlisted_non_mcp_tools_but_allow_mcp():
+    from voidx.agent.agents import get_agent
+    from voidx.agent.graph.core import _agent_static_tool_defs
+
+    agent = get_agent("voidx")
+    all_tool_defs = [
+        {"function": {"name": "read"}},
+        {"function": {"name": "private_debug_tool"}},
+        {"function": {"name": "mcp__demo__send_message_12345678"}},
+    ]
+
+    visible = _agent_static_tool_defs(agent, all_tool_defs)
+
+    assert [tool["function"]["name"] for tool in visible] == [
+        "read",
+        "mcp__demo__send_message_12345678",
+    ]
 
 
 @pytest.mark.asyncio
@@ -960,7 +981,7 @@ async def test_orchestrator_sees_mcp_tools(tmp_path, monkeypatch):
         "messages": [HumanMessage(content="hi")],
         "step_count": 0,
         "max_steps": 50,
-        "agent": "orchestrator",
+        "persona": "voidx",
     })
 
     tool_names = [tool["function"]["name"] for tool in model.bound_tools]
@@ -968,7 +989,7 @@ async def test_orchestrator_sees_mcp_tools(tmp_path, monkeypatch):
 
 
 @pytest.mark.asyncio
-async def test_non_mcp_agent_does_not_see_mcp_tools(tmp_path, monkeypatch):
+async def test_runtime_persona_does_not_change_agent_mcp_tool_visibility(tmp_path, monkeypatch):
     import voidx.agent.graph.core as graph_module
 
     monkeypatch.setattr(graph_module, "StreamingRenderer", FakeRenderer)
@@ -993,12 +1014,12 @@ async def test_non_mcp_agent_does_not_see_mcp_tools(tmp_path, monkeypatch):
         "messages": [HumanMessage(content="hi")],
         "step_count": 0,
         "max_steps": 50,
-        "agent": "explore",
+        "persona": "explore",
     })
 
     tool_names = [tool["function"]["name"] for tool in model.bound_tools]
     assert "read" in tool_names
-    assert "mcp__demo__send_message_12345678" not in tool_names
+    assert "mcp__demo__send_message_12345678" in tool_names
 
 
 @pytest.mark.asyncio
@@ -1024,7 +1045,7 @@ async def test_call_llm_keeps_lsp_tools_when_a_lsp_server_is_available(tmp_path,
         "messages": [HumanMessage(content="hi")],
         "step_count": 0,
         "max_steps": 50,
-        "agent": "orchestrator",
+        "persona": "voidx",
     })
 
     tool_names = [tool["function"]["name"] for tool in model.bound_tools]

@@ -10,7 +10,9 @@ sys.path.insert(0, str(Path(__file__).parent.parent.parent / "src"))
 import pytest
 from langchain_core.messages import AIMessage, AIMessageChunk, HumanMessage, SystemMessage, ToolMessage
 
-from voidx.agent.agents import AgentDef, ORCHESTRATOR_PROMPT, REVIEW_PROMPT, get_agent, role_prompt_for_llm
+import voidx.memory.store as store
+
+from voidx.agent.agents import AgentDef, BASE_SYSTEM_PROMPT, VOIDX_PROMPT, get_agent, persona_prompt_for_llm
 from voidx.agent.graph.convergence import is_step_hint_message
 from voidx.agent.graph.runtime import current_parent_tool_call_id
 from voidx.agent.graph import VoidXGraph
@@ -30,10 +32,11 @@ from voidx.memory.session import (
 )
 from voidx.memory.transcript import load_transcript
 from voidx.permission.service import PermissionService
+from voidx.runtime import Goal, GoalType, PendingApproval, TaskIntent
 from voidx.skills.context import SKILL_CONTEXT_MARKER, SKILL_TOOL_CONTEXT_MARKER, render_skill_context
 from voidx.workflow.context import WORKFLOW_CONTEXT_MARKER
 from voidx.workflow.runtime import WorkflowRunState, WorkflowRunStatus
-from voidx.agent.task_state import ToolStatePatch
+from voidx.agent.task_state import TaskState, ToolStatePatch
 from voidx.tools.base import ToolContext, ToolResult
 from voidx.tools.registry import ToolRegistry
 from voidx.ui.output.dock import BottomInputDock, set_dock
@@ -43,6 +46,26 @@ from voidx.ui.output.events import DockEventConsumer, TurnStarted, ui_events
 def _graph(tmp_path):
     cfg = Config(workspace=str(tmp_path))
     return VoidXGraph(cfg, api_key=None)
+
+
+def _task_state_json(**kwargs):
+    return TaskState(**kwargs).model_dump(mode="json")
+
+
+def _result_task_state(result: dict) -> TaskState:
+    return TaskState.model_validate(result["task_state"])
+
+
+@pytest.fixture(autouse=True)
+def isolated_memory_store(tmp_path):
+    if store._conn is not None:
+        store._conn.close()
+    store._conn = None
+    store.DATA_DIR = tmp_path / ".voidx"
+    yield
+    if store._conn is not None:
+        store._conn.close()
+    store._conn = None
 
 
 def _tree_nodes(root):
@@ -65,7 +88,7 @@ def test_agent_tool_result_preview_omits_extra_lines():
     assert "child result line 5" in preview
     assert "child result line 6" not in preview
     assert "child result line 7" not in preview
-    assert "... (2 more lines omitted; full result passed to orchestrator)" in preview
+    assert "... (2 more lines omitted; full result passed to voidx)" in preview
 
 
 def test_agent_tool_result_preview_caps_long_single_line():
@@ -75,7 +98,7 @@ def test_agent_tool_result_preview_caps_long_single_line():
 
     assert preview.startswith("x" * AGENT_RESULT_PREVIEW_CHARS)
     assert len(preview.splitlines()[0]) == AGENT_RESULT_PREVIEW_CHARS
-    assert "... (17 more chars omitted; full result passed to orchestrator)" in preview
+    assert "... (17 more chars omitted; full result passed to voidx)" in preview
 
 
 async def _execute_fake_agent_tool_with_output(tmp_path, output: str, *, debug: bool = False):
@@ -118,7 +141,7 @@ async def _execute_fake_agent_tool_with_output(tmp_path, output: str, *, debug: 
         result = await graph._execute_tools({
             "messages": [parent],
             "workspace": str(tmp_path),
-            "agent": "orchestrator",
+            "persona": "voidx",
             "plan_mode": False,
         })
         await ui_events.drain()
@@ -148,7 +171,7 @@ async def test_agent_tool_result_previewed_in_ui(tmp_path):
     assert "child final line 5" in final_texts[0]
     assert "child final line 6" not in final_texts[0]
     assert "child final line 7" not in rendered
-    assert "... (2 more lines omitted; full result passed to orchestrator)" in final_texts[0]
+    assert "... (2 more lines omitted; full result passed to voidx)" in final_texts[0]
     assert any(isinstance(message, ToolMessage) and message.content == output for message in messages)
 
 
@@ -165,7 +188,7 @@ async def test_agent_tool_result_preview_does_not_depend_on_debug(tmp_path):
     assert len(final_texts) == 1
     assert "debug child line 5" in final_texts[0]
     assert "debug child line 6" not in final_texts[0]
-    assert "... (2 more lines omitted; full result passed to orchestrator)" in final_texts[0]
+    assert "... (2 more lines omitted; full result passed to voidx)" in final_texts[0]
 
 
 def test_graph_registers_agent_tool_not_task_tool(tmp_path):
@@ -174,7 +197,7 @@ def test_graph_registers_agent_tool_not_task_tool(tmp_path):
 
     assert "agent" in ids
     assert "agent_parallel" not in ids
-    assert "on_intent" in ids
+    assert "on_intent" not in ids
     assert "clarify" in ids
     assert "plan_checkpoint" in ids
     assert "load_skills" in ids
@@ -188,10 +211,10 @@ def test_agent_parallel_tool_not_registered_when_disabled(tmp_path):
 
 
 def test_parallel_subagents_disabled_prompt_hides_capability():
-    agent = get_agent("orchestrator")
+    agent = get_agent("voidx")
     assert agent is not None
 
-    prompt = role_prompt_for_llm(agent, parallel_subagents_enabled=False)
+    prompt = persona_prompt_for_llm(agent, parallel_subagents_enabled=False)
 
     assert "Delegate at most one child agent in a response" in prompt
     assert "multiple `agent` tool calls" not in prompt
@@ -199,10 +222,10 @@ def test_parallel_subagents_disabled_prompt_hides_capability():
 
 
 def test_parallel_subagents_enabled_prompt_exposes_capability():
-    agent = get_agent("orchestrator")
+    agent = get_agent("voidx")
     assert agent is not None
 
-    prompt = role_prompt_for_llm(agent, parallel_subagents_enabled=True)
+    prompt = persona_prompt_for_llm(agent, parallel_subagents_enabled=True)
 
     assert "multiple `agent` tool calls" in prompt
     assert "run concurrently" in prompt
@@ -233,14 +256,16 @@ def test_agent_tool_description_exposes_parallel_when_enabled(tmp_path):
     assert "run concurrently" in agent_def.description
 
 
-def test_orchestrator_prompt_makes_workflow_gate_precedence_explicit():
-    assert "workflow gate takes precedence" in ORCHESTRATOR_PROMPT
-    assert "unless blocked by an active workflow gate" in ORCHESTRATOR_PROMPT
-    assert "apply_patch is implement-only" in ORCHESTRATOR_PROMPT
+def test_voidx_persona_prompt_declares_core_rules():
+    assert "Runtime workflow gates take precedence over persona prompts" in VOIDX_PROMPT
+    assert "Subagents do not interact with the user" in VOIDX_PROMPT
+    assert "Switch persona" not in VOIDX_PROMPT
+    assert "implement persona" not in VOIDX_PROMPT
 
 
-def test_review_prompt_documents_workflow_verdict_transition():
-    assert "review_has_issues" in REVIEW_PROMPT
+def test_base_system_prompt_registers_all_runtime_personas():
+    for persona in ("coordinate", "explore", "plan", "implement", "review"):
+        assert f"**{persona}**" in BASE_SYSTEM_PROMPT
 
 
 @pytest.mark.asyncio
@@ -311,39 +336,39 @@ def test_graph_session_date_uses_session_creation_date(tmp_path):
     assert graph._session_date.startswith("2026-06-06 ")
 
 
-def test_on_intent_schema_inlines_task_intent_enum(tmp_path):
-    graph = _graph(tmp_path)
-    schema = graph.tools.get_def("on_intent").parameters
-
-    assert "$ref" not in schema["properties"]["intent"]
-    assert schema["properties"]["intent"]["enum"] == [
-        "chat",
-        "inspect",
-        "design",
-        "review",
-        "implement",
-        "debug",
-        "ambiguous",
-    ]
-
-
 def test_orchestrator_has_direct_edit_tools():
-    agent = get_agent("orchestrator")
-    implement = get_agent("implement")
+    agent = get_agent("voidx")
+    subagent = get_agent("sub-voidx")
 
     assert agent is not None
-    assert implement is not None
+    assert subagent is not None
     assert {"write", "edit", "lsp_format"}.issubset(set(agent.tools))
     assert "apply_patch" not in agent.tools
-    assert {"write", "edit", "apply_patch", "lsp_format"}.issubset(set(implement.tools))
+    assert {"write", "edit", "apply_patch", "lsp_format"}.issubset(set(subagent.tools))
     assert {"clarify", "plan_checkpoint", "load_skills"}.issubset(set(agent.tools))
-    for visible_agent in (get_agent("orchestrator"), get_agent("explore"), get_agent("plan"), get_agent("implement"), get_agent("review")):
+    assert get_agent("explore") is None
+    assert get_agent("plan") is None
+    assert get_agent("implement") is None
+    assert get_agent("review") is None
+    for visible_agent in (get_agent("voidx"), get_agent("sub-voidx")):
         assert visible_agent is not None
         assert "load_skills" in visible_agent.tools
     assert agent.can_write is True
 
 
-def test_role_prompt_rejects_unregistered_agent_name():
+def test_tool_contract_labels_agent_identity_not_runtime_persona():
+    agent = get_agent("voidx")
+    subagent = get_agent("sub-voidx")
+
+    assert agent is not None
+    assert subagent is not None
+    assert "- Agent identity: voidx" in agent.tool_contract
+    assert "- Persona: voidx" not in agent.tool_contract
+    assert "- Agent identity: sub-voidx" in subagent.tool_contract
+    assert "- Persona: sub-voidx" not in subagent.tool_contract
+
+
+def test_persona_prompt_rejects_unregistered_agent_name():
     agent = AgentDef(
         name="orchesrator",
         description="typo",
@@ -353,21 +378,22 @@ def test_role_prompt_rejects_unregistered_agent_name():
         can_delegate=False,
     )
 
-    with pytest.raises(ValueError, match="No role prompt registered"):
-        _ = agent.role_prompt
+    with pytest.raises(ValueError, match="No persona prompt registered"):
+        _ = agent.persona_prompt
 
 
-def test_promptless_builtin_agents_are_explicit():
-    agent = get_agent("compaction")
-
-    assert agent is not None
-    assert agent.role_prompt == ""
+def test_hidden_personas_have_registered_prompts():
+    assert get_agent("compaction") is not None
+    assert get_agent("compaction").persona_prompt != ""
+    assert get_agent("title") is not None
+    assert get_agent("title").persona_prompt != ""
 
 
 def test_permission_decision_splits_readonly_and_implement_agents():
     service = PermissionService()
 
-    assert service.decide("agent", "explore") == "allow"
+    assert service.decide("agent", "explore") == "ask"
+    assert service.decide("agent", "sub-voidx") == "allow"
     assert service.decide("agent", "implement") == "ask"
 
 
@@ -376,8 +402,9 @@ async def test_graph_authorization_auto_allows_readonly_agent(tmp_path):
     graph = _graph(tmp_path)
     graph._permission.approval_policy = "untrusted"
     approved, denied = await graph._authorize_tool_calls(
-        [{"name": "agent", "args": {"agent": "explore"}, "id": "call_1"}],
-        agent_name="orchestrator",
+        [{"name": "agent", "args": {"agent": "sub-voidx", "persona": "explore"}, "id": "call_1"}],
+        agent_name="voidx",
+        runtime_persona="coordinate",
         plan_mode=False,
         session_id="test",
     )
@@ -398,15 +425,16 @@ async def test_graph_authorization_prompts_for_implement_agent(tmp_path):
     graph._ask_tool_permission = approve
 
     approved, denied = await graph._authorize_tool_calls(
-        [{"name": "agent", "args": {"agent": "implement"}, "id": "call_1"}],
-        agent_name="orchestrator",
+        [{"name": "agent", "args": {"agent": "sub-voidx", "persona": "implement"}, "id": "call_1"}],
+        agent_name="voidx",
+        runtime_persona="coordinate",
         plan_mode=False,
         session_id="test",
     )
 
     assert [tc["name"] for tc in approved] == ["agent"]
     assert denied == []
-    assert [[tc["args"]["agent"] for tc in batch] for batch in asked] == [["implement"]]
+    assert [[tc["args"]["persona"] for tc in batch] for batch in asked] == [["implement"]]
 
 
 @pytest.mark.asyncio
@@ -416,7 +444,7 @@ async def test_graph_authorization_respects_session_deny_for_safe_bash(tmp_path)
 
     approved, denied = await graph._authorize_tool_calls(
         [{"name": "bash", "args": {"command": "ls"}, "id": "call_1"}],
-        agent_name="orchestrator",
+        agent_name="voidx",
         plan_mode=False,
         session_id="test",
     )
@@ -433,7 +461,7 @@ async def test_graph_authorization_blocks_write_by_active_workflow_gate(tmp_path
 
     approved, denied = await graph._authorize_tool_calls(
         [{"name": "write", "args": {"file_path": "app.py", "content": "x"}, "id": "call_1"}],
-        agent_name="orchestrator",
+        agent_name="voidx",
         plan_mode=False,
         session_id="test",
         workflow_runs=[
@@ -448,30 +476,39 @@ async def test_graph_authorization_blocks_write_by_active_workflow_gate(tmp_path
 
 
 @pytest.mark.asyncio
-async def test_graph_authorization_blocks_apply_patch_outside_implement(tmp_path):
+async def test_graph_authorization_asks_for_persona_blocked_write(tmp_path):
     graph = _graph(tmp_path)
     graph._permission.approval_policy = "on-request"
+    asked: list[list[dict]] = []
+
+    async def approve(tool_calls):
+        asked.append(tool_calls)
+        return "y"
+
+    graph._ask_tool_permission = approve
 
     approved, denied = await graph._authorize_tool_calls(
         [{"name": "apply_patch", "args": {"patch": ""}, "id": "call_1"}],
-        agent_name="orchestrator",
+        agent_name="voidx",
+        runtime_persona="coordinate",
         plan_mode=False,
         session_id="test",
     )
 
-    assert approved == []
-    assert len(denied) == 1
-    assert "apply_patch is only available to implement agent" in denied[0][1]
+    assert [tc["name"] for tc in approved] == ["apply_patch"]
+    assert denied == []
+    assert [[tc["name"] for tc in batch] for batch in asked] == [["apply_patch"]]
 
 
 @pytest.mark.asyncio
-async def test_graph_authorization_allows_apply_patch_for_implement(tmp_path):
+async def test_graph_authorization_allows_apply_patch_for_implement_persona(tmp_path):
     graph = _graph(tmp_path)
     graph._permission.approval_policy = "on-request"
 
     approved, denied = await graph._authorize_tool_calls(
         [{"name": "apply_patch", "args": {"patch": ""}, "id": "call_1"}],
-        agent_name="implement",
+        agent_name="voidx",
+        runtime_persona="implement",
         plan_mode=False,
         session_id="test",
     )
@@ -500,7 +537,8 @@ async def test_permission_result_uses_transient_output(tmp_path):
 
     approved, denied = await graph._authorize_tool_calls(
         [{"name": "write", "args": {"file_path": "app.py", "content": "x"}, "id": "call_1"}],
-        agent_name="orchestrator",
+        agent_name="voidx",
+        runtime_persona="implement",
         plan_mode=False,
         session_id="test",
     )
@@ -517,7 +555,8 @@ async def test_graph_on_request_auto_approves_need_ask_tools(tmp_path):
 
     approved, denied = await graph._authorize_tool_calls(
         [{"name": "write", "args": {"file_path": "app.py", "content": "x"}, "id": "call_1"}],
-        agent_name="orchestrator",
+        agent_name="voidx",
+        runtime_persona="implement",
         plan_mode=False,
         session_id="test",
     )
@@ -537,7 +576,7 @@ async def test_graph_on_failure_still_asks_for_unsafe_bash(tmp_path):
     graph._ask_tool_permission = deny
     approved, denied = await graph._authorize_tool_calls(
         [{"name": "bash", "args": {"command": "python -m pytest"}, "id": "call_1"}],
-        agent_name="orchestrator",
+        agent_name="voidx",
         plan_mode=False,
         session_id="test",
     )
@@ -594,7 +633,7 @@ async def test_graph_authorization_blocks_lsp_format_in_plan_mode(tmp_path):
 
     approved, denied = await graph._authorize_tool_calls(
         [{"name": "lsp_format", "args": {"file_path": "src/app.py"}, "id": "call_1"}],
-        agent_name="orchestrator",
+        agent_name="voidx",
         plan_mode=True,
         session_id="test",
     )
@@ -622,11 +661,11 @@ async def test_prepare_injects_plan_mode_prompt(tmp_path):
         "messages": messages,
         "workspace": str(tmp_path),
         "plan_mode": True,
-        "agent": "orchestrator",
+        "persona": "voidx",
     })
 
     assert isinstance(messages[0], SystemMessage)
-    assert "## Mode Prompt" in messages[0].content
+    assert "## Mode" in messages[0].content
     assert "## PLAN MODE ACTIVE" in messages[0].content
 
 
@@ -637,7 +676,7 @@ async def test_subagent_runner_passes_main_workflow_runtime_context(tmp_path, mo
     graph = _graph(tmp_path)
     expected_context = WorkflowRuntimeContext(
         instructions=["instruction"],
-        active=["tdd (implement role)"],
+        active=["tdd (implement persona)"],
         content="skill context",
         runs=[],
     )
@@ -655,14 +694,20 @@ async def test_subagent_runner_passes_main_workflow_runtime_context(tmp_path, mo
     graph._instruction.workflow_context_for = fake_workflow_context_for
     monkeypatch.setattr(core_module, "_run_subagent", fake_run_subagent)
 
-    result = await graph._subagent_runner(get_agent("implement"), "Implement the feature", None)
+    result = await graph._subagent_runner(
+        get_agent("sub-voidx"),
+        "Implement the feature",
+        None,
+        runtime_persona="implement",
+    )
 
     assert result == "child result"
     assert captured["workflow_runtime_context"] is expected_context
     assert "skill_selection" not in captured
     assert ("parent" + "_messages") not in captured
     assert calls[0]["kwargs"]["agent"] == "implement"
-    assert calls[0]["kwargs"]["task_intent"] == "implement"
+    assert calls[0]["kwargs"]["task_intent"] == "coding"
+    assert calls[0]["kwargs"]["goal_type"] == "feature"
     assert calls[0]["kwargs"]["scope"] == "Implement the feature"
 
 
@@ -688,7 +733,12 @@ async def test_subagent_runner_authorizes_with_child_interaction_mode(tmp_path, 
     graph._authorize_tool_calls = fake_authorize
     monkeypatch.setattr(core_module, "_run_subagent", fake_run_subagent)
 
-    result = await graph._subagent_runner(get_agent("plan"), "Plan the feature", None)
+    result = await graph._subagent_runner(
+        get_agent("sub-voidx"),
+        "Plan the feature",
+        None,
+        runtime_persona="plan",
+    )
 
     assert result == "child result"
     assert authorize_calls[0]["plan_mode"] is True
@@ -702,7 +752,8 @@ async def test_graph_authorization_does_not_treat_goal_as_read_only_mode(tmp_pat
 
     approved, denied = await graph._authorize_tool_calls(
         [{"name": "edit", "args": {"file_path": "src/app.py"}, "id": "call_1"}],
-        agent_name="orchestrator",
+        agent_name="voidx",
+        runtime_persona="implement",
         plan_mode=False,
         session_id="test",
         interaction_mode="goal",
@@ -719,7 +770,7 @@ async def test_graph_authorization_allows_read_only_bash(tmp_path):
 
     approved, denied = await graph._authorize_tool_calls(
         [{"name": "bash", "args": {"command": "ls"}, "id": "call_1"}],
-        agent_name="orchestrator",
+        agent_name="voidx",
         plan_mode=False,
         session_id="test",
         interaction_mode="auto",
@@ -742,7 +793,7 @@ async def test_graph_authorization_prompts_for_edit(tmp_path):
 
     approved, denied = await graph._authorize_tool_calls(
         [{"name": "edit", "args": {"file_path": "src/app.py"}, "id": "call_1"}],
-        agent_name="orchestrator",
+        agent_name="voidx",
         plan_mode=False,
         session_id="test",
         interaction_mode="auto",
@@ -765,7 +816,7 @@ async def test_graph_authorization_respects_session_allow_for_edit(tmp_path):
 
     approved, denied = await graph._authorize_tool_calls(
         [{"name": "edit", "args": {"file_path": "src/app.py"}, "id": "call_1"}],
-        agent_name="orchestrator",
+        agent_name="voidx",
         plan_mode=False,
         session_id="test",
         interaction_mode="auto",
@@ -788,7 +839,7 @@ async def test_graph_authorization_prompts_for_unsafe_bash(tmp_path):
 
     approved, denied = await graph._authorize_tool_calls(
         [{"name": "bash", "args": {"command": "python -m pytest"}, "id": "call_1"}],
-        agent_name="orchestrator",
+        agent_name="voidx",
         plan_mode=False,
         session_id="test",
         interaction_mode="auto",
@@ -845,7 +896,7 @@ async def test_parallel_subagents_disabled_serializes_agent_calls(tmp_path):
     result = await graph._execute_tools({
         "messages": [parent],
         "workspace": str(tmp_path),
-        "agent": "orchestrator",
+        "persona": "voidx",
         "plan_mode": False,
     })
 
@@ -906,7 +957,7 @@ async def test_parallel_subagents_enabled_runs_agent_calls_concurrently(tmp_path
     await graph._execute_tools({
         "messages": [parent],
         "workspace": str(tmp_path),
-        "agent": "orchestrator",
+        "persona": "voidx",
         "plan_mode": False,
     })
 
@@ -960,7 +1011,7 @@ async def test_parallel_subagents_preserves_tool_message_order(tmp_path):
     result = await graph._execute_tools({
         "messages": [parent],
         "workspace": str(tmp_path),
-        "agent": "orchestrator",
+        "persona": "voidx",
         "plan_mode": False,
     })
 
@@ -1021,7 +1072,7 @@ async def test_parallel_subagents_respects_max_concurrent(tmp_path):
     await graph._execute_tools({
         "messages": [parent],
         "workspace": str(tmp_path),
-        "agent": "orchestrator",
+        "persona": "voidx",
         "plan_mode": False,
     })
 
@@ -1075,7 +1126,7 @@ async def test_parallel_subagents_failure_isolated(tmp_path):
     result = await graph._execute_tools({
         "messages": [parent],
         "workspace": str(tmp_path),
-        "agent": "orchestrator",
+        "persona": "voidx",
         "plan_mode": False,
     })
 
@@ -1144,7 +1195,7 @@ async def test_parallel_subagents_continue_after_barrier_transaction(tmp_path):
     result = await graph._execute_tools({
         "messages": [parent],
         "workspace": str(tmp_path),
-        "agent": "orchestrator",
+        "persona": "voidx",
         "plan_mode": False,
     })
 
@@ -1199,7 +1250,7 @@ async def test_parallel_subagents_plan_mode_blocks_implement(tmp_path):
     result = await graph._execute_tools({
         "messages": [parent],
         "workspace": str(tmp_path),
-        "agent": "orchestrator",
+        "persona": "voidx",
         "plan_mode": True,
         "interaction_mode": "plan",
     })
@@ -1266,7 +1317,7 @@ async def test_parallel_subagents_aggregate_ui_status_enabled_only(tmp_path):
             await graph._execute_tools({
                 "messages": [parent],
                 "workspace": str(tmp_path),
-                "agent": "orchestrator",
+                "persona": "voidx",
                 "plan_mode": False,
             })
             await ui_events.drain()
@@ -1336,7 +1387,7 @@ async def test_execute_tools_does_not_inject_parallel_child_agent_buffers(tmp_pa
     result = await graph._execute_tools({
         "messages": [parent],
         "workspace": str(tmp_path),
-        "agent": "orchestrator",
+        "persona": "voidx",
         "plan_mode": False,
     })
 
@@ -1398,7 +1449,7 @@ async def test_execute_tools_emits_todo_updated_node(tmp_path):
         result = await graph._execute_tools({
             "messages": [parent],
             "workspace": str(tmp_path),
-            "agent": "orchestrator",
+            "persona": "voidx",
             "plan_mode": False,
         })
         await ui_events.drain()
@@ -1481,7 +1532,7 @@ async def test_execute_tools_keeps_non_todo_result_in_mixed_batch(tmp_path):
     result = await graph._execute_tools({
         "messages": [parent],
         "workspace": str(tmp_path),
-        "agent": "orchestrator",
+        "persona": "voidx",
         "plan_mode": False,
     })
 
@@ -1528,7 +1579,7 @@ async def test_execute_tools_warns_on_malformed_todo_metadata_without_events(tmp
     result = await graph._execute_tools({
         "messages": [parent],
         "workspace": str(tmp_path),
-        "agent": "orchestrator",
+        "persona": "voidx",
         "plan_mode": False,
     })
 
@@ -1588,7 +1639,7 @@ async def test_subagent_full_output_reaches_orchestrator(tmp_path, monkeypatch):
         result = await graph._execute_tools({
             "messages": [parent],
             "workspace": str(tmp_path),
-            "agent": "orchestrator",
+            "persona": "voidx",
             "plan_mode": False,
         })
         await ui_events.drain()
@@ -1609,7 +1660,7 @@ async def test_subagent_full_output_reaches_orchestrator(tmp_path, monkeypatch):
         assert "child final line 1" in final_result_text
         assert "child final line 5" in final_result_text
         assert "child final line 6" not in final_result_text
-        assert "... (2 more lines omitted; full result passed to orchestrator)" in final_result_text
+        assert "... (2 more lines omitted; full result passed to voidx)" in final_result_text
         assert "child hidden thought" not in rendered
         assert "child final line 7" not in rendered
         tool_messages = [message for message in result["messages"] if isinstance(message, ToolMessage)]
@@ -1624,7 +1675,7 @@ async def test_subagent_full_output_reaches_orchestrator(tmp_path, monkeypatch):
 
 
 @pytest.mark.asyncio
-async def test_execute_tools_applies_on_intent_state_patch(tmp_path):
+async def test_execute_tools_does_not_apply_removed_on_intent_state_patch(tmp_path):
     graph = _graph(tmp_path)
 
     async def allow_all(
@@ -1639,301 +1690,21 @@ async def test_execute_tools_applies_on_intent_state_patch(tmp_path):
     graph._authorize_tool_calls = allow_all
     parent = AIMessage(
         content="",
-        tool_calls=[
-            {
-                "name": "on_intent",
-                "args": {
-                    "intent": "implement",
-                    "confidence": 0.92,
-                    "reason": "user asked to implement the approved design",
-                    "scope": "实现 on_intent runtime callback",
-                },
-                "id": "call_intent",
-                "type": "tool_call",
-            }
-        ],
+        tool_calls=[{"name": "on_intent", "args": {}, "id": "call_intent", "type": "tool_call"}],
     )
 
     result = await graph._execute_tools({
         "messages": [parent],
         "workspace": str(tmp_path),
-        "agent": "orchestrator",
+        "persona": "coordinate",
         "plan_mode": False,
         "interaction_mode": "auto",
-        "task_intent": "chat",
+        "task_state": _task_state_json(current_intent=TaskIntent.GENERAL),
     })
 
-    assert result["task_intent"] == "implement"
-    assert result["pending_approval"] is None
-    assert result["intent_source"] == "on_intent"
-    assert result["intent_refined"] is True
-    assert "write" in result["available_tool_ids"]
-    assert "advance_workflow" in result["available_tool_ids"]
-    assert "load_skills" in result["available_tool_ids"]
-    assert {
-        run.name for run in result["workflow_runs"]
-    } >= {"tdd", "verify"}
-    assert "confirmed_intent" in result["messages"][0].content
-    assert SKILL_TOOL_CONTEXT_MARKER not in result["messages"][0].content
-    assert "## Skill:" not in result["messages"][0].content
-
-
-@pytest.mark.asyncio
-async def test_on_intent_excludes_already_active_workflow_runs(tmp_path):
-    graph = _graph(tmp_path)
-
-    async def allow_all(
-        tool_calls,
-        agent_name: str,
-        plan_mode: bool,
-        session_id: str,
-        interaction_mode=None,
-    ):
-        return tool_calls, []
-
-    graph._authorize_tool_calls = allow_all
-    parent = AIMessage(
-        content="",
-        tool_calls=[
-            {
-                "name": "on_intent",
-                "args": {
-                    "intent": "implement",
-                    "confidence": 0.92,
-                    "reason": "user asked to implement the approved design",
-                    "scope": "实现 on_intent runtime callback",
-                },
-                "id": "call_intent",
-                "type": "tool_call",
-            }
-        ],
-    )
-
-    result = await graph._execute_tools({
-        "messages": [parent],
-        "workspace": str(tmp_path),
-        "agent": "orchestrator",
-        "plan_mode": False,
-        "interaction_mode": "auto",
-        "task_intent": "chat",
-        "workflow_runs": [{"name": "tdd"}],
-    })
-
-    assert [run.name for run in result["workflow_runs"]] == [
-        "tdd",
-        "verify",
-    ]
-    assert "Skill: tdd" not in result["messages"][0].content
-    assert "Skill: verify" not in result["messages"][0].content
-    assert SKILL_TOOL_CONTEXT_MARKER not in result["messages"][0].content
-
-
-@pytest.mark.asyncio
-async def test_on_intent_skips_active_workflows_that_no_longer_match(tmp_path):
-    graph = _graph(tmp_path)
-
-    async def allow_all(
-        tool_calls,
-        agent_name: str,
-        plan_mode: bool,
-        session_id: str,
-        interaction_mode=None,
-    ):
-        return tool_calls, []
-
-    graph._authorize_tool_calls = allow_all
-    parent = AIMessage(
-        content="",
-        tool_calls=[
-            {
-                "name": "on_intent",
-                "args": {
-                    "intent": "implement",
-                    "confidence": 0.92,
-                    "reason": "root cause is known and the user asked to implement",
-                    "scope": "修复 runtime workflow gate",
-                },
-                "id": "call_intent",
-                "type": "tool_call",
-            }
-        ],
-    )
-
-    result = await graph._execute_tools({
-        "messages": [parent],
-        "workspace": str(tmp_path),
-        "agent": "orchestrator",
-        "plan_mode": False,
-        "interaction_mode": "auto",
-        "task_intent": "debug",
-        "workflow_runs": [
-            WorkflowRunState(name="debug", status=WorkflowRunStatus.ACTIVE),
-            WorkflowRunState(name="tdd", status=WorkflowRunStatus.ACTIVE),
-            WorkflowRunState(name="verify", status=WorkflowRunStatus.ACTIVE),
-        ],
-    })
-
-    statuses = {run.name: run.status for run in result["workflow_runs"]}
-    assert statuses["debug"] == WorkflowRunStatus.SKIPPED
-    assert statuses["tdd"] == WorkflowRunStatus.ACTIVE
-    assert statuses["verify"] == WorkflowRunStatus.ACTIVE
-
-
-@pytest.mark.asyncio
-async def test_on_intent_downgrades_implementation_in_plan_mode(tmp_path):
-    graph = _graph(tmp_path)
-
-    async def allow_all(
-        tool_calls,
-        agent_name: str,
-        plan_mode: bool,
-        session_id: str,
-        interaction_mode=None,
-    ):
-        return tool_calls, []
-
-    graph._authorize_tool_calls = allow_all
-    parent = AIMessage(
-        content="",
-        tool_calls=[
-            {
-                "name": "on_intent",
-                "args": {
-                    "intent": "implement",
-                    "confidence": 0.95,
-                    "reason": "model thinks this asks for code changes",
-                    "scope": "设计 runtime callback",
-                },
-                "id": "call_intent",
-                "type": "tool_call",
-            }
-        ],
-    )
-
-    result = await graph._execute_tools({
-        "messages": [parent],
-        "workspace": str(tmp_path),
-        "agent": "orchestrator",
-        "plan_mode": True,
-        "interaction_mode": "plan",
-        "task_intent": "chat",
-    })
-
-    assert result["task_intent"] == "design"
-    assert result["pending_approval"]["scope"] == "设计 runtime callback"
-    assert "write" not in result["available_tool_ids"]
-    assert "edit" not in result["available_tool_ids"]
-    assert "load_skills" in result["available_tool_ids"]
-
-
-@pytest.mark.asyncio
-async def test_on_intent_keeps_load_skills_visible_for_chat(tmp_path):
-    graph = _graph(tmp_path)
-
-    async def allow_all(
-        tool_calls,
-        agent_name: str,
-        plan_mode: bool,
-        session_id: str,
-        interaction_mode=None,
-    ):
-        return tool_calls, []
-
-    graph._authorize_tool_calls = allow_all
-    parent = AIMessage(
-        content="",
-        tool_calls=[
-            {
-                "name": "on_intent",
-                "args": {
-                    "intent": "chat",
-                    "confidence": 0.9,
-                    "reason": "general chat",
-                    "scope": "general chat",
-                },
-                "id": "call_intent",
-                "type": "tool_call",
-            }
-        ],
-    )
-
-    result = await graph._execute_tools({
-        "messages": [parent],
-        "workspace": str(tmp_path),
-        "agent": "orchestrator",
-        "plan_mode": False,
-        "interaction_mode": "auto",
-        "task_intent": "chat",
-    })
-
-    assert result["task_intent"] == "chat"
-    assert result["available_tool_ids"] == ["load_skills"]
-
-
-@pytest.mark.asyncio
-async def test_on_intent_transaction_executes_following_tools_with_updated_state(tmp_path):
-    graph = _graph(tmp_path)
-    observed: dict[str, object] = {}
-
-    class RecordingReadTool:
-        id = "read"
-        description = "fake read"
-
-        def parameters_schema(self):
-            return {"type": "object", "properties": {}}
-
-        async def execute(self, args: dict, ctx: ToolContext) -> ToolResult:
-            observed["task_intent"] = ctx.task_intent
-            observed["active_workflow_names"] = list(ctx.active_workflow_names)
-            return ToolResult(output=f"read after intent: {ctx.task_intent}")
-
-    graph.tools.register("read", RecordingReadTool(), "fake read", {"type": "object", "properties": {}})
-
-    async def allow_all(
-        tool_calls,
-        agent_name: str,
-        plan_mode: bool,
-        session_id: str,
-        interaction_mode=None,
-    ):
-        return tool_calls, []
-
-    graph._authorize_tool_calls = allow_all
-    parent = AIMessage(
-        content="",
-        tool_calls=[
-            {
-                "name": "on_intent",
-                "args": {
-                    "intent": "inspect",
-                    "confidence": 0.84,
-                    "reason": "needs repository inspection",
-                    "scope": "检查 agent runtime",
-                },
-                "id": "call_intent",
-                "type": "tool_call",
-            },
-            {
-                "name": "read",
-                "args": {"file_path": "src/app.py"},
-                "id": "call_read",
-                "type": "tool_call",
-            },
-        ],
-    )
-
-    result = await graph._execute_tools({
-        "messages": [parent],
-        "workspace": str(tmp_path),
-        "agent": "orchestrator",
-        "plan_mode": False,
-        "interaction_mode": "auto",
-        "task_intent": "chat",
-    })
-
-    assert [message.tool_call_id for message in result["messages"]] == ["call_intent", "call_read"]
-    assert result["messages"][1].content == "read after intent: inspect"
-    assert observed["task_intent"] == "inspect"
+    assert "task_state" not in result
+    assert result["messages"][0].tool_call_id == "call_intent"
+    assert "Unknown tool: on_intent" in result["messages"][0].content
 
 
 @pytest.mark.asyncio
@@ -1950,8 +1721,9 @@ async def test_plan_checkpoint_transaction_executes_following_tools_with_updated
 
         async def execute(self, args: dict, ctx: ToolContext) -> ToolResult:
             observed["task_intent"] = ctx.task_intent
-            observed["goal"] = ctx.goal
-            return ToolResult(output=f"read after plan: {ctx.task_intent}:{ctx.goal}")
+            observed["goal_target"] = ctx.goal_target
+            observed["goal_type"] = ctx.goal_type
+            return ToolResult(output=f"read after plan: {ctx.task_intent}:{ctx.goal_type}:{ctx.goal_target}")
 
     graph.tools.register("read", RecordingReadTool(), "fake read", {"type": "object", "properties": {}})
 
@@ -1994,22 +1766,27 @@ async def test_plan_checkpoint_transaction_executes_following_tools_with_updated
     result = await graph._execute_tools({
         "messages": [parent],
         "workspace": str(tmp_path),
-        "agent": "orchestrator",
+        "persona": "voidx",
         "plan_mode": False,
         "interaction_mode": "auto",
-        "task_intent": "design",
-        "pending_approval": {"kind": "implementation", "scope": "Update runtime state handling"},
+        "task_state": _task_state_json(
+            current_intent=TaskIntent.CODING,
+            pending_approval=PendingApproval(scope="Update runtime state handling"),
+        ),
     })
 
     assert [message.tool_call_id for message in result["messages"]] == ["call_plan", "call_read"]
-    assert result["task_intent"] == "implement"
-    assert result["goal"] == "Update runtime state handling"
-    assert result["goal_phase"] == "implement"
-    assert result["pending_approval"] is None
-    assert result["messages"][1].content == "read after plan: implement:Update runtime state handling"
+    task_state = _result_task_state(result)
+    assert task_state.current_intent == TaskIntent.CODING
+    assert task_state.current_goal is not None
+    assert task_state.current_goal.target == "Update runtime state handling"
+    assert task_state.current_goal.type == GoalType.FEATURE
+    assert task_state.pending_approval is None
+    assert result["messages"][1].content == "read after plan: coding:feature:Update runtime state handling"
     assert observed == {
-        "task_intent": "implement",
-        "goal": "Update runtime state handling",
+        "task_intent": "coding",
+        "goal_type": "feature",
+        "goal_target": "Update runtime state handling",
     }
 
 
@@ -2063,7 +1840,7 @@ async def test_barrier_failure_blocks_following_tools(tmp_path):
     result = await graph._execute_tools({
         "messages": [parent],
         "workspace": str(tmp_path),
-        "agent": "orchestrator",
+        "persona": "voidx",
         "plan_mode": False,
     })
 
@@ -2078,18 +1855,21 @@ async def test_multiple_barriers_apply_patches_in_order(tmp_path):
     graph = _graph(tmp_path)
     observed: list[str] = []
 
-    class FakeIntentTool:
-        id = "on_intent"
-        description = "fake intent barrier"
+    class FakeClarifyTool:
+        id = "clarify"
+        description = "fake clarify barrier"
 
         def parameters_schema(self):
             return {"type": "object", "properties": {}}
 
         async def execute(self, args: dict, ctx: ToolContext) -> ToolResult:
-            observed.append(f"on_intent:{ctx.task_intent}:{ctx.goal}")
-            patch = ToolStatePatch(task_intent="inspect", goal="after intent")
+            observed.append(f"clarify:{ctx.task_intent}:{ctx.goal_type}:{ctx.goal_target}")
+            patch = ToolStatePatch(
+                task_intent=TaskIntent.CODING,
+                goal=Goal(type=GoalType.INSPECT, target="after intent"),
+            )
             return ToolResult(
-                output="intent ok",
+                output="clarify ok",
                 metadata={"state_patch": patch.model_dump(mode="json", exclude_unset=True)},
             )
 
@@ -2101,8 +1881,11 @@ async def test_multiple_barriers_apply_patches_in_order(tmp_path):
             return {"type": "object", "properties": {}}
 
         async def execute(self, args: dict, ctx: ToolContext) -> ToolResult:
-            observed.append(f"plan_checkpoint:{ctx.task_intent}:{ctx.goal}")
-            patch = ToolStatePatch(task_intent="implement", goal="after plan")
+            observed.append(f"plan_checkpoint:{ctx.task_intent}:{ctx.goal_type}:{ctx.goal_target}")
+            patch = ToolStatePatch(
+                task_intent=TaskIntent.CODING,
+                goal=Goal(type=GoalType.FEATURE, target="after plan", user_requested_write=True),
+            )
             return ToolResult(
                 output="plan ok",
                 metadata={"state_patch": patch.model_dump(mode="json", exclude_unset=True)},
@@ -2116,10 +1899,10 @@ async def test_multiple_barriers_apply_patches_in_order(tmp_path):
             return {"type": "object", "properties": {}}
 
         async def execute(self, args: dict, ctx: ToolContext) -> ToolResult:
-            observed.append(f"read:{ctx.task_intent}:{ctx.goal}")
-            return ToolResult(output=f"read after barriers: {ctx.task_intent}:{ctx.goal}")
+            observed.append(f"read:{ctx.task_intent}:{ctx.goal_type}:{ctx.goal_target}")
+            return ToolResult(output=f"read after barriers: {ctx.task_intent}:{ctx.goal_type}:{ctx.goal_target}")
 
-    graph.tools.register("on_intent", FakeIntentTool(), "fake intent", {"type": "object", "properties": {}})
+    graph.tools.register("clarify", FakeClarifyTool(), "fake clarify", {"type": "object", "properties": {}})
     graph.tools.register("plan_checkpoint", FakePlanTool(), "fake plan", {"type": "object", "properties": {}})
     graph.tools.register("read", RecordingReadTool(), "fake read", {"type": "object", "properties": {}})
 
@@ -2136,7 +1919,7 @@ async def test_multiple_barriers_apply_patches_in_order(tmp_path):
     parent = AIMessage(
         content="",
         tool_calls=[
-            {"name": "on_intent", "args": {}, "id": "call_intent", "type": "tool_call"},
+            {"name": "clarify", "args": {}, "id": "call_clarify", "type": "tool_call"},
             {"name": "plan_checkpoint", "args": {}, "id": "call_plan", "type": "tool_call"},
             {"name": "read", "args": {"file_path": "src/app.py"}, "id": "call_read", "type": "tool_call"},
         ],
@@ -2145,25 +1928,27 @@ async def test_multiple_barriers_apply_patches_in_order(tmp_path):
     result = await graph._execute_tools({
         "messages": [parent],
         "workspace": str(tmp_path),
-        "agent": "orchestrator",
+        "persona": "voidx",
         "plan_mode": False,
         "interaction_mode": "auto",
-        "task_intent": "chat",
+        "task_state": _task_state_json(current_intent=TaskIntent.GENERAL),
     })
 
     assert [message.tool_call_id for message in result["messages"]] == [
-        "call_intent",
+        "call_clarify",
         "call_plan",
         "call_read",
     ]
     assert observed == [
-        "on_intent:chat:",
-        "plan_checkpoint:inspect:after intent",
-        "read:implement:after plan",
+        "clarify:general::",
+        "plan_checkpoint:coding:inspect:after intent",
+        "read:coding:feature:after plan",
     ]
-    assert result["task_intent"] == "implement"
-    assert result["goal"] == "after plan"
-    assert result["messages"][2].content == "read after barriers: implement:after plan"
+    task_state = _result_task_state(result)
+    assert task_state.current_intent == TaskIntent.CODING
+    assert task_state.current_goal is not None
+    assert task_state.current_goal.target == "after plan"
+    assert result["messages"][2].content == "read after barriers: coding:feature:after plan"
 
 
 @pytest.mark.asyncio
@@ -2174,12 +1959,12 @@ async def test_advance_workflow_transaction_reauthorizes_following_write(tmp_pat
         content="",
         tool_calls=[
             {
-                "name": "advance_workflow",
-                "args": {
-                    "workflow": "brainstorm",
-                    "condition": "done",
-                    "evidence": "stale design gate cleared",
-                    "summary": "design gate cleared",
+                    "name": "advance_workflow",
+                    "args": {
+                        "workflow": "brainstorm",
+                        "condition": "small_change",
+                        "evidence": "stale design gate cleared",
+                        "summary": "design gate cleared",
                 },
                 "id": "call_adv",
                 "type": "tool_call",
@@ -2196,19 +1981,21 @@ async def test_advance_workflow_transaction_reauthorizes_following_write(tmp_pat
     result = await graph._execute_tools({
         "messages": [parent],
         "workspace": str(tmp_path),
-        "agent": "orchestrator",
+        "persona": "voidx",
         "plan_mode": False,
         "interaction_mode": "auto",
-        "task_intent": "design",
-        "workflow_runs": [
-            WorkflowRunState(name="brainstorm", status=WorkflowRunStatus.ACTIVE),
-        ],
+        "task_state": _task_state_json(
+            current_intent=TaskIntent.CODING,
+            workflow_runs={
+                "brainstorm": WorkflowRunState(name="brainstorm", status=WorkflowRunStatus.ACTIVE),
+            },
+        ),
     })
 
     assert [message.tool_call_id for message in result["messages"]] == ["call_adv", "call_write"]
     assert "Blocked by workflow gate" not in result["messages"][1].content
     assert (tmp_path / "tmp-repro.txt").read_text() == "x"
-    by_name = {run.name: run for run in result["workflow_runs"]}
+    by_name = {run.name: run for run in _result_task_state(result).workflow_runs.values()}
     assert by_name["brainstorm"].status == WorkflowRunStatus.SATISFIED
 
 
@@ -2613,7 +2400,7 @@ async def test_compaction_trims_head_and_injects_summary_into_system_prompt(tmp_
     state = {
         "messages": messages,
         "workspace": str(tmp_path),
-        "agent": "orchestrator",
+        "persona": "voidx",
         "plan_mode": False,
         "tool_results": {},
         "step_count": 0,
@@ -2857,7 +2644,7 @@ async def test_prepare_does_not_auto_inject_project_skill_body(tmp_path):
     state = {
         "messages": messages,
         "workspace": str(tmp_path),
-        "agent": "orchestrator",
+        "persona": "voidx",
         "plan_mode": False,
         "tool_results": {},
         "step_count": 0,
@@ -2885,10 +2672,14 @@ async def test_prepare_injects_workflow_nodes_from_task_state(tmp_path):
     state = {
         "messages": messages,
         "workspace": str(tmp_path),
-        "agent": "orchestrator",
+        "persona": "voidx",
         "plan_mode": False,
         "interaction_mode": "auto",
-        "task_intent": "implement",
+        "task_intent": "coding",
+        "task_state": TaskState(
+            current_intent=TaskIntent.CODING,
+            current_goal=Goal(type=GoalType.BUGFIX, target="修复 runtime bug"),
+        ).model_dump(mode="json"),
         "tool_results": {},
         "step_count": 0,
         "max_steps": 50,
@@ -2899,15 +2690,18 @@ async def test_prepare_injects_workflow_nodes_from_task_state(tmp_path):
 
     assert isinstance(messages[1], HumanMessage)
     assert messages[1].content.startswith(WORKFLOW_CONTEXT_MARKER)
+    assert "Workflow Node: debug" in messages[1].content
     assert "Workflow Node: tdd" in messages[1].content
     assert "Workflow Node: verify" in messages[1].content
     assert isinstance(messages[2], HumanMessage)
-    assert "Active workflow nodes: tdd" in messages[2].content
-    assert [run.name for run in result["workflow_runs"]] == [
+    assert "Active workflow nodes: debug" in messages[2].content
+    result_task_state = TaskState.model_validate(result["task_state"])
+    assert [name for name in (result_task_state.workflow_runs or {})] == [
+        "debug",
         "tdd",
         "verify",
     ]
-    assert "Workflow run state: tdd=active" in messages[2].content
+    assert "Workflow run state: debug=active" in messages[2].content
 
 
 @pytest.mark.asyncio
@@ -2930,13 +2724,14 @@ async def test_implement_subagent_injects_workflow_nodes(tmp_path, monkeypatch):
     workflow_context = await InstructionService(str(tmp_path)).workflow_context_for(
         "Implement the feature",
         agent="implement",
-        task_intent="implement",
+        task_intent="coding",
+        goal_type="feature",
         interaction_mode=InteractionMode.AUTO.value,
         scope="Implement the feature",
     )
 
     output = await subagent_module.run_subagent(
-        get_agent("implement"),
+        get_agent("sub-voidx"),
         "Implement the feature",
         None,
         "test-key",
@@ -2944,6 +2739,7 @@ async def test_implement_subagent_injects_workflow_nodes(tmp_path, monkeypatch):
             workspace=str(tmp_path),
             user_profile=UserProfile(language="zh-CN", tone="direct"),
         ),
+        runtime_persona="implement",
         workflow_runtime_context=workflow_context,
         debug=False,
     )
@@ -2959,9 +2755,10 @@ async def test_implement_subagent_injects_workflow_nodes(tmp_path, monkeypatch):
         for message in captured["messages"]
         if isinstance(message, HumanMessage) and "Runtime State" in str(message.content)
     )
+    assert "Workflow Node: brainstorm" in workflow_context
     assert "Workflow Node: tdd" in workflow_context
     assert "Workflow Node: verify" in workflow_context
-    assert "Active workflow nodes: tdd" in rendered_user
+    assert "Active workflow nodes: brainstorm" in rendered_user
     assert "User language: Chinese (Simplified) [zh-CN]" in rendered_user
     assert "Tone instruction: Be direct and practical. Lead with the answer or action." in rendered_user
 
@@ -3095,17 +2892,19 @@ async def test_subagent_skill_context_matches_orchestrator(tmp_path, monkeypatch
     workflow_context = await InstructionService(str(tmp_path)).workflow_context_for(
         "Implement the feature",
         agent="implement",
-        task_intent="implement",
+        task_intent="coding",
+        goal_type="feature",
         interaction_mode=InteractionMode.AUTO.value,
         scope="Implement the feature",
     )
 
     output = await subagent_module.run_subagent(
-        get_agent("implement"),
+        get_agent("sub-voidx"),
         "Implement the feature",
         None,
         "test-key",
         Config(workspace=str(tmp_path)),
+        runtime_persona="implement",
         workflow_runtime_context=workflow_context,
         debug=False,
     )
@@ -3123,10 +2922,11 @@ async def test_subagent_skill_context_matches_orchestrator(tmp_path, monkeypatch
     ]
     assert len(workflow_context_messages) == 1
     assert len(task_messages) == 1
+    assert "Workflow Node: brainstorm" in workflow_context_messages[0].content
     assert "Workflow Node: tdd" in workflow_context_messages[0].content
     assert "Workflow Node: verify" in workflow_context_messages[0].content
     assert "Workflow Node: tdd" not in task_messages[0].content
-    assert "Active workflow nodes: tdd" in task_messages[0].content
+    assert "Active workflow nodes: brainstorm" in task_messages[0].content
 
 
 @pytest.mark.asyncio
@@ -3320,8 +3120,8 @@ async def test_subagent_starts_from_isolated_task_context(tmp_path, monkeypatch)
     RuntimeContextBuilder(
         config=Config(workspace=str(tmp_path)),
         workspace=str(tmp_path),
-        agent_prompt="You are voidx.",
-        agent="orchestrator",
+        base_system_prompt="You are voidx.",
+        persona="voidx",
         interaction_mode=InteractionMode.AUTO,
         skill_context_content=render_skill_context(["Skill instructions from: parent\nSkill: parent"]),
         current_user_text="Parent request",
@@ -3330,17 +3130,19 @@ async def test_subagent_starts_from_isolated_task_context(tmp_path, monkeypatch)
     workflow_context = await InstructionService(str(tmp_path)).workflow_context_for(
         "Inspect the workspace",
         agent="explore",
-        task_intent="inspect",
+        task_intent="coding",
+        goal_type="inspect",
         interaction_mode=InteractionMode.AUTO.value,
         scope="Inspect the workspace",
     )
 
     output = await subagent_module.run_subagent(
-        get_agent("explore"),
+        get_agent("sub-voidx"),
         "Inspect the workspace",
         None,
         "test-key",
         Config(workspace=str(tmp_path)),
+        runtime_persona="explore",
         workflow_runtime_context=workflow_context,
         debug=False,
     )

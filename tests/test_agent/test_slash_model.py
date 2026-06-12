@@ -9,7 +9,7 @@ sys.path.insert(0, str(Path(__file__).parent.parent.parent / "src"))
 
 from voidx.agent.slash import SlashHandler
 from voidx.agent.slash.runtime import _select_from_list
-from voidx.agent.task_state import PendingApproval, TaskRun, TaskState
+from voidx.agent.task_state import GoalType, PendingApproval, TaskState, goal_from_text
 from voidx.config import (
     CodeIde,
     ApprovalPolicy,
@@ -833,32 +833,32 @@ async def test_goal_dispatch_sets_goal_and_goal_mode():
         _interaction_mode=None,
         _plan_mode=False,
         _app=None,
-        _task_run=TaskRun(),
+        _task_state=TaskState(),
     )
 
     assert await SlashHandler(graph).dispatch("/goal 优化 markdown 渲染截断") is True
 
     assert graph._interaction_mode.value == "goal"
     assert graph._plan_mode is False
-    assert graph._task_run.goal == "优化 markdown 渲染截断"
-    assert graph._task_run.status.value == "active"
+    assert graph._task_state.current_goal is not None
+    assert graph._task_state.current_goal.target == "优化 markdown 渲染截断"
 
 
 @pytest.mark.asyncio
 async def test_goal_clear_resets_goal_and_returns_to_auto():
-    run = TaskRun()
-    run.set_goal("优化 markdown 渲染截断")
-    state = TaskState(pending_approval=PendingApproval(scope="优化 markdown 渲染截断"))
+    state = TaskState(
+        current_goal=goal_from_text("优化 markdown 渲染截断", goal_type=GoalType.DESIGN),
+        pending_approval=PendingApproval(scope="优化 markdown 渲染截断"),
+    )
     graph = SimpleNamespace(
         _interaction_mode=None,
         _plan_mode=False,
         _app=None,
-        _task_run=run,
         _task_state=state,
     )
 
     assert await SlashHandler(graph).dispatch("/goal clear") is True
 
     assert graph._interaction_mode.value == "auto"
-    assert graph._task_run.goal == ""
+    assert graph._task_state.current_goal is None
     assert graph._task_state.pending_approval is None

@@ -448,22 +448,22 @@ async def test_save_profile_persists_model_in_db_and_only_current_profile_in_jso
 
 
 def test_agent_max_steps_normalizes_zero_to_fallback():
-    steps = AgentMaxSteps(orchestrator=0, explore=0, recursion_limit=0)
-    assert steps.orchestrator == 500
+    steps = AgentMaxSteps(voidx=0, explore=0, recursion_limit=0)
+    assert steps.voidx == 500
     assert steps.explore == 500
     assert steps.recursion_limit == 500
 
 
 def test_agent_max_steps_preserves_positive_values():
-    steps = AgentMaxSteps(orchestrator=50, explore=10, recursion_limit=100)
-    assert steps.orchestrator == 50
+    steps = AgentMaxSteps(voidx=50, explore=10, recursion_limit=100)
+    assert steps.voidx == 50
     assert steps.explore == 10
     assert steps.recursion_limit == 100
 
 
 def test_agent_max_steps_defaults():
     steps = AgentMaxSteps()
-    assert steps.orchestrator == 100
+    assert steps.voidx == 100
     assert steps.explore == 25
     assert steps.plan == 30
     assert steps.implement == 100
@@ -474,5 +474,5 @@ def test_agent_max_steps_defaults():
 def test_settings_get_agent_max_steps_no_double_normalization(tmp_path):
     settings = Settings(str(tmp_path))
     steps = settings.get_agent_max_steps()
-    assert steps.orchestrator == 100
+    assert steps.voidx == 100
     assert steps.recursion_limit == 500

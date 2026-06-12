@@ -6,6 +6,7 @@ from types import MethodType, SimpleNamespace
 
 import pytest
 from langchain_core.messages import AIMessage, HumanMessage
+import voidx.memory.store as store
 
 sys.path.insert(0, str(Path(__file__).parent.parent.parent / "src"))
 
@@ -14,7 +15,7 @@ from voidx.agent.graph import VoidXGraph
 from voidx.agent.graph.run_loop import GraphRunLoopMixin
 from voidx.agent.graph.title_mixin import _sanitize_generated_title
 from voidx.agent.runtime_context import InteractionMode, TaskIntent
-from voidx.agent.task_state import PendingApproval, TaskPhase, TaskRun, TaskRunStatus, TaskState
+from voidx.agent.task_state import Goal, GoalResolution, GoalType, PendingApproval, TaskState, goal_from_text
 from voidx.config import Config
 from voidx.llm.usage import UsageStats
 from voidx.memory.runtime_state import RuntimeStateSnapshot, save_runtime_state
@@ -26,6 +27,18 @@ from voidx.ui.output.dock import BottomInputDock, set_dock
 from voidx.ui.output.events import DockEventConsumer, ui_events
 from voidx.ui.protocol import UiSubmitCommand
 from voidx.runtime.ui_port import runtime_ui_port
+
+
+@pytest.fixture(autouse=True)
+def isolated_memory_store(tmp_path):
+    if store._conn is not None:
+        store._conn.close()
+    store._conn = None
+    store.DATA_DIR = tmp_path / ".voidx"
+    yield
+    if store._conn is not None:
+        store._conn.close()
+    store._conn = None
 
 
 class FakeTui:
@@ -254,8 +267,7 @@ async def test_clear_reprints_startup(tmp_path):
     )
     graph = _graph(session=session, workspace=str(tmp_path))
     graph._interaction_mode = InteractionMode.GOAL
-    graph._task_state = TaskState(current_goal="修复 UI")
-    graph._task_run = TaskRun(goal="修复 UI", phase=TaskPhase.DESIGN, status=TaskRunStatus.ACTIVE)
+    graph._task_state = TaskState(current_goal=goal_from_text("修复 UI", goal_type=GoalType.DESIGN))
     restore_calls: list[bool] = []
 
     async def fake_restore(self, *, append: bool = False) -> bool:
@@ -278,8 +290,7 @@ async def test_clear_reprints_startup(tmp_path):
         assert graph._session is None
         assert graph._session_msg_cache == []
         assert graph._interaction_mode == InteractionMode.AUTO
-        assert graph._task_state.current_goal == ""
-        assert graph._task_run.status == TaskRunStatus.IDLE
+        assert graph._task_state.current_goal is None
         assert restore_calls == []
         if getattr(graph, "_clear_session_tasks", None):
             await asyncio.gather(*graph._clear_session_tasks)
@@ -299,8 +310,7 @@ async def test_clear_detaches_old_session_and_cleans_storage_in_background(tmp_p
     await save_message(MessageRow(session_id=session.id, role="user", content="old question"))
     graph = VoidXGraph(Config(workspace=str(tmp_path)), api_key=None, session=session)
     graph._interaction_mode = InteractionMode.GOAL
-    graph._task_state = TaskState(current_goal="old goal")
-    graph._task_run = TaskRun(goal="old goal", phase=TaskPhase.DESIGN, status=TaskRunStatus.ACTIVE)
+    graph._task_state = TaskState(current_goal=goal_from_text("old goal", goal_type=GoalType.DESIGN))
 
     test_dock = BottomInputDock()
     set_dock(test_dock)
@@ -406,16 +416,9 @@ async def test_resume_restores_structured_runtime_state(tmp_path):
         RuntimeStateSnapshot(
             interaction_mode=InteractionMode.GOAL,
             task_state=TaskState(
-                current_intent=TaskIntent.DESIGN,
-                current_goal="优化 markdown 渲染截断",
+                current_intent=TaskIntent.CODING,
+                current_goal=goal_from_text("优化 markdown 渲染截断", goal_type=GoalType.DESIGN),
                 pending_approval=PendingApproval(scope="优化 markdown 渲染截断"),
-            ),
-            task_run=TaskRun(
-                goal="优化 markdown 渲染截断",
-                phase=TaskPhase.DESIGN,
-                status=TaskRunStatus.ACTIVE,
-                pending_approval=PendingApproval(scope="优化 markdown 渲染截断", created_turn=2),
-                turn_count=2,
             ),
         ),
     )
@@ -427,11 +430,10 @@ async def test_resume_restores_structured_runtime_state(tmp_path):
         await SlashHandler(graph)._resume(f"/resume {session.id}")
 
         assert graph._interaction_mode == InteractionMode.GOAL
-        assert graph._task_state.current_intent == TaskIntent.DESIGN
+        assert graph._task_state.current_intent == TaskIntent.CODING
+        assert graph._task_state.current_goal is not None
+        assert graph._task_state.current_goal.target == "优化 markdown 渲染截断"
         assert graph._task_state.pending_approval is not None
-        assert graph._task_run.goal == "优化 markdown 渲染截断"
-        assert graph._task_run.phase == TaskPhase.DESIGN
-        assert graph._task_run.turn_count == 2
     finally:
         test_dock.deactivate()
         test_dock.reset()
@@ -453,7 +455,6 @@ async def test_run_once_cancel_deletes_pending_user_message(tmp_path):
     )
     graph._interaction_mode = InteractionMode.AUTO
     graph._task_state = TaskState()
-    graph._task_run = None
 
     async def fake_maybe_compact(self, messages, session_messages, **_kwargs):
         return messages, None
@@ -493,17 +494,26 @@ async def test_run_once_cancel_deletes_pending_user_message(tmp_path):
 async def test_smart_title_generation_updates_matching_session(tmp_path):
     graph = VoidXGraph(Config(workspace=str(tmp_path)), api_key=None)
 
-    class FakeTitleModel:
+    class StructuredTitleModel:
+        def with_structured_output(self, schema):
+            assert schema is GoalResolution
+            return self
+
         async def ainvoke(self, messages):
-            assert messages[0].content.startswith("You are voidx title agent")
             assert "看看这个项目" in messages[1].content
-            return AIMessage(content='"项目结构分析"')
+            return GoalResolution(
+                intent=TaskIntent.CODING,
+                goal=None,
+                confidence=0.9,
+                reason="workspace inspection",
+                title="项目结构分析",
+            )
 
     class FakeGraph:
         async def ainvoke(self, initial, _config):
             return {"messages": list(initial["messages"]) + [AIMessage(content="ok")]}
 
-    graph.model = FakeTitleModel()
+    graph.model = StructuredTitleModel()
     graph.graph = FakeGraph()
     test_dock = BottomInputDock()
     set_dock(test_dock)
@@ -523,6 +533,51 @@ async def test_smart_title_generation_updates_matching_session(tmp_path):
         test_dock.deactivate()
         test_dock.reset()
         set_dock(None)
+
+
+@pytest.mark.asyncio
+async def test_run_once_resolves_structured_goal_before_graph_invoke(tmp_path):
+    graph = VoidXGraph(Config(workspace=str(tmp_path)), api_key=None)
+    captured: dict[str, object] = {}
+
+    class StructuredGoalModel:
+        def with_structured_output(self, schema):
+            assert schema is GoalResolution
+            return self
+
+        async def ainvoke(self, messages):
+            captured["resolver_messages"] = messages
+            return GoalResolution(
+                intent=TaskIntent.CODING,
+                goal=Goal(type=GoalType.REVIEW, target="runtime context", user_requested_write=False),
+                confidence=0.93,
+                reason="review requested",
+            )
+
+    class FakeGraph:
+        async def ainvoke(self, initial, _config):
+            captured["initial"] = initial
+            return {"messages": list(initial["messages"]) + [AIMessage(content="ok")]}
+
+    graph.model = StructuredGoalModel()
+    graph.graph = FakeGraph()
+    test_dock = BottomInputDock()
+    set_dock(test_dock)
+    test_dock.begin_capture()
+    try:
+        await graph._run_once("review runtime context")
+    finally:
+        test_dock.deactivate()
+        test_dock.reset()
+        set_dock(None)
+
+    initial = captured["initial"]
+    assert initial["task_state"]["current_intent"] == "coding"
+    assert initial["task_state"]["current_goal"]["type"] == "review"
+    assert initial["task_state"]["current_goal"]["target"] == "runtime context"
+    rows = await load_messages(graph._session.id)
+    assert [row.role for row in rows] == ["user", "assistant"]
+    assert all("GoalResolution JSON schema" not in row.content for row in rows)
 
 
 @pytest.mark.asyncio
@@ -565,25 +620,10 @@ async def test_smart_title_does_not_override_manual_title(tmp_path):
     await update_title(session.id, "temporary")
     session = session.model_copy(update={"title": "temporary"})
     graph = VoidXGraph(Config(workspace=str(tmp_path)), api_key=None, session=session)
-    started = asyncio.Event()
-    release = asyncio.Event()
-
-    class SlowTitleModel:
-        async def ainvoke(self, _messages):
-            started.set()
-            await release.wait()
-            return AIMessage(content="Generated")
-
-    graph.model = SlowTitleModel()
     graph._schedule_session_title_generation(session.id, "first request", "temporary")
-    task = graph._title_task
-    assert task is not None
-    await asyncio.wait_for(started.wait(), timeout=1)
+    assert graph._title_task is None
 
     await graph.set_session_title("Manual title")
-    release.set()
-    with contextlib.suppress(asyncio.CancelledError):
-        await task
 
     loaded = await get_session(session.id)
     assert loaded is not None
@@ -596,25 +636,10 @@ async def test_smart_title_does_not_update_after_clear(tmp_path):
     await update_title(session.id, "temporary")
     session = session.model_copy(update={"title": "temporary"})
     graph = VoidXGraph(Config(workspace=str(tmp_path)), api_key=None, session=session)
-    started = asyncio.Event()
-    release = asyncio.Event()
-
-    class SlowTitleModel:
-        async def ainvoke(self, _messages):
-            started.set()
-            await release.wait()
-            return AIMessage(content="Generated")
-
-    graph.model = SlowTitleModel()
     graph._schedule_session_title_generation(session.id, "first request", "temporary")
-    task = graph._title_task
-    assert task is not None
-    await asyncio.wait_for(started.wait(), timeout=1)
+    assert graph._title_task is None
 
     await graph.clear_current_session()
-    release.set()
-    with contextlib.suppress(asyncio.CancelledError):
-        await task
     if graph._clear_session_tasks:
         await asyncio.gather(*graph._clear_session_tasks)
 
@@ -633,25 +658,10 @@ async def test_smart_title_does_not_update_resumed_session(tmp_path):
     await update_title(resumed.id, "Resumed title")
     resumed = resumed.model_copy(update={"title": "Resumed title"})
     graph = VoidXGraph(Config(workspace=str(tmp_path)), api_key=None, session=session)
-    started = asyncio.Event()
-    release = asyncio.Event()
-
-    class SlowTitleModel:
-        async def ainvoke(self, _messages):
-            started.set()
-            await release.wait()
-            return AIMessage(content="Generated")
-
-    graph.model = SlowTitleModel()
     graph._schedule_session_title_generation(session.id, "first request", "temporary")
-    task = graph._title_task
-    assert task is not None
-    await asyncio.wait_for(started.wait(), timeout=1)
+    assert graph._title_task is None
 
     await graph.resume_session(resumed)
-    release.set()
-    with contextlib.suppress(asyncio.CancelledError):
-        await task
 
     loaded_old = await get_session(session.id)
     loaded_resumed = await get_session(resumed.id)
@@ -669,24 +679,10 @@ async def test_smart_title_requires_database_title_to_remain_temporary(tmp_path)
     await update_title(session.id, "temporary")
     session = session.model_copy(update={"title": "temporary"})
     graph = VoidXGraph(Config(workspace=str(tmp_path)), api_key=None, session=session)
-    started = asyncio.Event()
-    release = asyncio.Event()
-
-    class SlowTitleModel:
-        async def ainvoke(self, _messages):
-            started.set()
-            await release.wait()
-            return AIMessage(content="Generated")
-
-    graph.model = SlowTitleModel()
     graph._schedule_session_title_generation(session.id, "first request", "temporary")
-    task = graph._title_task
-    assert task is not None
-    await asyncio.wait_for(started.wait(), timeout=1)
+    assert graph._title_task is None
 
     await update_title(session.id, "Manual title")
-    release.set()
-    await task
 
     loaded = await get_session(session.id)
     assert loaded is not None
@@ -710,14 +706,12 @@ async def test_title_auto_uses_first_user_message(tmp_path):
     graph.model = FakeTitleModel()
 
     assert await graph.regenerate_session_title() is True
-    task = graph._title_task
-    assert task is not None
-    await task
+    assert graph._title_task is None
 
     loaded = await get_session(session.id)
     assert loaded is not None
-    assert loaded.title == "First request title"
-    assert prompts == ["First user message:\n\nfirst user request"]
+    assert loaded.title == "first user request"
+    assert prompts == []
 
 
 def test_sanitize_generated_title_rejects_markdown():
@@ -995,26 +989,22 @@ async def test_prepare_includes_restored_workflow_runs(tmp_path):
         status=WorkflowRunStatus.ACTIVE,
         source=WorkflowActivationSource.WORKFLOW,
         reason="resume",
-        phase="design",
+        goal_type="design",
         scope="resume optimization",
-        activated_turn=1,
-        updated_turn=2,
     )
-    graph._task_run = TaskRun(workflow_runs={"brainstorm": restored})
+    graph._task_state = TaskState(
+        current_intent=TaskIntent.CODING,
+        current_goal=goal_from_text("resume optimization", goal_type=GoalType.DESIGN),
+        workflow_runs={"brainstorm": restored},
+    )
 
     state = {
         "messages": [HumanMessage(content="continue")],
         "workspace": str(tmp_path),
-        "agent": "orchestrator",
+        "persona": "voidx",
         "interaction_mode": "auto",
-        "task_intent": "chat",
         "intent_resolution_reason": "resume",
-        "pending_approval": None,
-        "goal": "resume optimization",
-        "goal_phase": "design",
-        "goal_status": "active",
-        "goal_turn_count": 2,
-        "available_tool_ids": [],
+        "task_state": graph._task_state.model_dump(mode="json"),
         "step_count": 0,
         "max_steps": 50,
         "tool_results": {},
@@ -1023,12 +1013,13 @@ async def test_prepare_includes_restored_workflow_runs(tmp_path):
 
     result = await graph._prepare_with_stream(state)
 
-    assert result["workflow_runs"] == [restored]
+    result_task_state = TaskState.model_validate(result["task_state"])
+    assert list(result_task_state.workflow_runs.values()) == [restored]
     assert "## Workflow Node: brainstorm" in state["messages"][1].content
     assert "Present a design and get user approval before writing any code." in state["messages"][1].content
     assert (
         "Workflow run state: brainstorm=active "
-        "phase=design source=workflow reason=resume"
+        "goal_type=design source=workflow reason=resume"
     ) in state["messages"][-1].content
 
 
@@ -1036,21 +1027,21 @@ def test_resolve_recursion_limit_derives_minimum_from_max_steps():
     from voidx.agent.graph.turn_mixin import _resolve_recursion_limit
     from voidx.config.models import AgentMaxSteps
 
-    # Default: orchestrator=100, recursion_limit=500 → 2*100+10=210 < 500, so 500
+    # Default: voidx=100, recursion_limit=500 → 2*100+10=210 < 500, so 500
     steps = AgentMaxSteps()
-    assert _resolve_recursion_limit(steps, "orchestrator") == 500
+    assert _resolve_recursion_limit(steps, "voidx") == 500
 
-    # High orchestrator steps, low recursion_limit → derived minimum wins
-    steps = AgentMaxSteps(orchestrator=500, recursion_limit=500)
-    assert _resolve_recursion_limit(steps, "orchestrator") == 1010
+    # High voidx steps, low recursion_limit → derived minimum wins
+    steps = AgentMaxSteps(voidx=500, recursion_limit=500)
+    assert _resolve_recursion_limit(steps, "voidx") == 1010
 
     # High recursion_limit, low max_steps → configured limit wins
-    steps = AgentMaxSteps(orchestrator=50, recursion_limit=1000)
-    assert _resolve_recursion_limit(steps, "orchestrator") == 1000
+    steps = AgentMaxSteps(voidx=50, recursion_limit=1000)
+    assert _resolve_recursion_limit(steps, "voidx") == 1000
 
     # Exact boundary: 2*max_steps+10 == recursion_limit
-    steps = AgentMaxSteps(orchestrator=245, recursion_limit=500)
-    assert _resolve_recursion_limit(steps, "orchestrator") == 500
+    steps = AgentMaxSteps(voidx=245, recursion_limit=500)
+    assert _resolve_recursion_limit(steps, "voidx") == 500
 
 
 def test_resolve_recursion_limit_uses_correct_agent_field():

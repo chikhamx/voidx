@@ -61,6 +61,35 @@ def test_render_frame_uses_absolute_positioning_to_avoid_scrollback_pollution(
     assert row <= 30, f"Frame start row {row} exceeds terminal height 30"
 
 
+def test_render_frame_diff_updates_stream_without_clearing_entire_frame(
+    tmp_path, monkeypatch
+):
+    fake_stdout = _FakeStdout()
+    monkeypatch.setattr(sys, "stdout", fake_stdout)
+    monkeypatch.setattr(
+        shutil,
+        "get_terminal_size",
+        lambda fallback=None: os.terminal_size((80, 20)),
+    )
+
+    tui = _tui(tmp_path)
+    tui._tty = True
+    tui._console = Console(file=None, force_terminal=True, width=80, height=20, _environ={})
+    dock.begin_capture()
+    dock.set_stream("first line")
+
+    tui._render_frame()
+    assert "\x1b[J" in fake_stdout.text
+
+    fake_stdout.text = ""
+    dock.set_stream("first line\nsecond line")
+    tui._render_frame()
+
+    assert "\x1b[J" not in fake_stdout.text
+    assert "\x1b[K" in fake_stdout.text
+    assert "second line" in fake_stdout.text
+
+
 def test_render_frame_starts_below_short_committed_history(tmp_path, monkeypatch):
     class FakeStdout:
         def __init__(self) -> None:

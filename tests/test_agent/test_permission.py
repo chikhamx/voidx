@@ -143,11 +143,12 @@ def test_permission_service_status_label_ignores_session_overrides():
 def test_permission_service_splits_readonly_and_implement_agents():
     service = PermissionService()
 
-    assert service.decide("agent", "explore") == "allow"
+    assert service.decide("agent", "explore") == "ask"
+    assert service.decide("agent", "sub-voidx") == "allow"
     assert service.decide("agent", "implement") == "ask"
 
 
-def test_on_intent_is_allowed_runtime_tool(tmp_path):
+def test_on_intent_is_not_a_runtime_allow_tool(tmp_path):
     context = PermissionContext(workspace=str(tmp_path))
     decision = authorize_tool_call(
         {
@@ -161,7 +162,7 @@ def test_on_intent_is_allowed_runtime_tool(tmp_path):
         context,
     )
 
-    assert decision.action == "allow"
+    assert decision.action == "ask"
 
 
 def test_load_skills_is_allowed_read_tool(tmp_path):

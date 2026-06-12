@@ -285,21 +285,25 @@ def test_workflow_service_selects_workflow_policy_by_role_and_intent(tmp_path):
     implement = service.select(
         "对，可以",
         agent="implement",
-        task_intent="implement",
+        task_intent="coding",
+        goal_type="feature",
     )
     debug = service.select(
         "fix this bug",
-        agent="orchestrator",
-        task_intent="debug",
+        agent="voidx",
+        task_intent="coding",
+        goal_type="bugfix",
     )
     plan = service.select(
         "给个方案",
         agent="plan",
-        task_intent="design",
+        task_intent="coding",
+        goal_type="design",
         interaction_mode="plan",
     )
 
     assert [match.name for match in implement] == [
+        "brainstorm",
         "tdd",
         "verify",
     ]
@@ -308,11 +312,11 @@ def test_workflow_service_selects_workflow_policy_by_role_and_intent(tmp_path):
         "tdd",
         "verify",
     ]
-    assert "implement role" in implement[0].reason
-    assert "debug intent" in debug[0].reason
+    assert "goal:feature" in implement[0].reason
+    assert "goal:bugfix" in debug[0].reason
     assert [match.name for match in plan] == ["brainstorm", "plan"]
-    assert plan[0].reason == "design intent"
-    assert plan[1].reason == "plan role"
+    assert plan[0].reason == "goal:design"
+    assert plan[1].reason == "plan persona"
 
 
 def test_brainstorm_exit_rules_make_small_change_precedence_explicit(tmp_path):
@@ -334,13 +338,14 @@ def test_workflow_service_activates_requesting_code_review_for_review_intent(tmp
 
     matches = service.select(
         "review 一下代码",
-        agent="orchestrator",
-        task_intent="review",
+        agent="voidx",
+        task_intent="coding",
+        goal_type="review",
         scopes=("bundled",),
     )
 
     assert [match.name for match in matches] == ["review"]
-    assert matches[0].reason == "review intent"
+    assert matches[0].reason == "goal:review"
 
 
 def test_workflow_service_activates_receiving_code_review_for_feedback(tmp_path):
@@ -348,8 +353,9 @@ def test_workflow_service_activates_receiving_code_review_for_feedback(tmp_path)
 
     matches = service.select(
         "review feedback says this path is unsafe",
-        agent="orchestrator",
-        task_intent="review",
+        agent="voidx",
+        task_intent="coding",
+        goal_type="review",
         scopes=("bundled",),
     )
 
@@ -378,11 +384,13 @@ def test_workflow_selection_ignores_user_scoped_skills(tmp_path):
     matches = service.select(
         "implement this feature",
         agent="implement",
-        task_intent="implement",
+        task_intent="coding",
+        goal_type="feature",
         scopes=("bundled",),
     )
 
     assert [match.name for match in matches] == [
+        "brainstorm",
         "tdd",
         "verify",
     ]
@@ -394,38 +402,46 @@ def test_workflow_service_excludes_active_names_from_selection(tmp_path):
     matches = service.select(
         "implement this feature",
         agent="implement",
-        task_intent="implement",
+        task_intent="coding",
+        goal_type="feature",
         scopes=("bundled",),
         exclude_names=("tdd",),
     )
 
-    assert [match.name for match in matches] == ["verify"]
+    assert [match.name for match in matches] == ["brainstorm", "verify"]
 
 
 def test_workflow_service_returns_structured_workflow_runs(tmp_path):
     service = WorkflowService()
 
-    runs = service.select_runs(
+    matches = service.select(
         "对，可以",
         agent="implement",
-        task_intent="implement",
-        phase="implement",
+        task_intent="coding",
+        goal_type="feature",
+    )
+    runs = service.runs_from_matches(
+        matches,
+        goal_type="feature",
         scope="优化 runtime context",
-        turn_count=3,
     )
 
     assert [run.name for run in runs] == [
+        "brainstorm",
         "tdd",
         "verify",
     ]
     assert {run.status for run in runs} == {WorkflowRunStatus.ACTIVE}
     assert {run.source for run in runs} == {WorkflowActivationSource.WORKFLOW}
-    assert runs[0].phase == "implement"
+    assert runs[0].goal_type == "feature"
     assert runs[0].scope == "优化 runtime context"
-    assert runs[0].activated_turn == 3
+    assert runs[0].personas == ["coordinate", "explore"]
+    assert runs[1].personas == ["implement"]
+    assert runs[2].personas == ["review"]
     assert runs[0].body_hash
-    assert runs[0].transition_to == ["verify"]
-    assert runs[1].transition_to == [
+    assert runs[0].transition_to == ["design-doc", "plan", "tdd"]
+    assert runs[1].transition_to == ["verify"]
+    assert runs[2].transition_to == [
         "review",
         "tdd",
         "debug",
@@ -438,14 +454,17 @@ def test_workflow_run_state_from_match_includes_transition_targets(tmp_path):
     match = service.select(
         "implement this feature",
         agent="implement",
-        task_intent="implement",
+        task_intent="coding",
+        goal_type="feature",
         scopes=("bundled",),
     )[0]
 
-    run = WorkflowRunState.from_match(match)
+    run = WorkflowRunState.from_match(match, goal_type="feature")
 
-    assert run.name == "tdd"
-    assert run.transition_to == ["verify"]
+    assert run.name == "brainstorm"
+    assert run.goal_type == "feature"
+    assert run.personas == ["coordinate", "explore"]
+    assert run.transition_to == ["design-doc", "plan", "tdd"]
 
 
 def test_workflow_state_summary_includes_transition_hint():
@@ -552,7 +571,7 @@ def test_advance_workflow_states_activates_transition_target():
             WorkflowRunState(
                 name="tdd",
                 status=WorkflowRunStatus.ACTIVE,
-                phase="implement",
+                goal_type="feature",
                 scope="runtime",
                 transition_to=["verify"],
             )
@@ -573,8 +592,9 @@ def test_advance_workflow_states_activates_transition_target():
     assert successor.status == WorkflowRunStatus.ACTIVE
     assert successor.source == WorkflowActivationSource.TRANSITION
     assert successor.reason == "transition from tdd"
-    assert successor.phase == "implement"
+    assert successor.goal_type == "feature"
     assert successor.scope == "runtime"
+    assert successor.personas == ["review"]
 
 
 def test_advance_workflow_states_does_not_advance_without_evidence():
@@ -670,11 +690,13 @@ def test_workflow_service_returns_activation_summaries(tmp_path):
     summaries = service.activation_summaries(
         "对，可以",
         agent="implement",
-        task_intent="implement",
+        task_intent="coding",
+        goal_type="feature",
     )
 
     assert summaries == [
-        "tdd (implement role)",
+        "brainstorm (goal:feature)",
+        "tdd (implement persona)",
         "verify (implement lifecycle)",
     ]
 
@@ -727,7 +749,7 @@ async def test_workflow_context_message_summarizes_inactive_workflow_nodes(tmp_p
 
     context = await InstructionService(str(tmp_path)).workflow_context_for(
         "hello",
-        task_intent="chat",
+        task_intent="general",
     )
 
     assert context.content.startswith(WORKFLOW_CONTEXT_MARKER)
@@ -745,13 +767,13 @@ async def test_workflow_context_message_expands_only_active_workflow_nodes(tmp_p
     context = await InstructionService(str(tmp_path)).workflow_context_for(
         "Implement the feature",
         agent="implement",
-        task_intent="implement",
+        task_intent="coding",
+        goal_type="feature",
     )
 
+    assert "## Workflow Node: brainstorm" in context.content
     assert "## Workflow Node: tdd" in context.content
     assert "## Workflow Node: verify" in context.content
-    assert "## Workflow Node: brainstorm" not in context.content
-    assert "## Workflow Node Summary: brainstorm" in context.content
 
 
 @pytest.mark.asyncio
@@ -761,13 +783,15 @@ async def test_workflow_context_message_changes_with_active_workflow_nodes(tmp_p
     instruction = InstructionService(str(tmp_path))
     inspect_context = await instruction.workflow_context_for(
         "看看代码",
-        agent="orchestrator",
-        task_intent="inspect",
+        agent="voidx",
+        task_intent="coding",
+        goal_type="inspect",
     )
     implement_context = await instruction.workflow_context_for(
         "Implement the feature",
         agent="implement",
-        task_intent="implement",
+        task_intent="coding",
+        goal_type="feature",
     )
 
     assert inspect_context.content != implement_context.content

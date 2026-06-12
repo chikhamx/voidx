@@ -1,5 +1,4 @@
 import json
-import time
 from pathlib import Path
 
 import voidx.runtime.intent_classifier as intent_classifier_module
@@ -7,7 +6,7 @@ import voidx.runtime.intent_classifier as intent_classifier_module
 from voidx.agent.task_state import TaskState, resolve_turn_intent
 from voidx.runtime.intent import TaskIntent
 from voidx.runtime.intent_classifier import (
-    IntentClassifierResult,
+    ArtifactClassifier,
     classify_intent,
     reset_intent_classifier_cache,
 )
@@ -17,37 +16,20 @@ ROOT = Path(__file__).resolve().parents[1]
 MODEL = ROOT / "src" / "voidx" / "data" / "intent_classifier.json"
 
 
-def test_classifier_high_confidence_safe_intent():
+def test_classifier_returns_coarse_coding_intent_for_workspace_request():
     result = classify_intent("看看这个设计文档")
 
     assert result is not None
-    assert result.intent == TaskIntent.INSPECT
-    assert result.action == "accept"
-    assert result.source == "local_classifier"
-
-
-def test_classifier_missing_model_falls_back():
-    result = classify_intent("看看 voidx 的 agent 编排", model_path=ROOT / "missing-intent-model.json")
-
-    assert result is not None
-    assert result.intent == TaskIntent.INSPECT
+    assert result.intent == TaskIntent.CODING
     assert result.action == "accept"
     assert result.source == "keyword_classifier"
 
 
-def test_classifier_low_confidence_uses_keyword_fallback(tmp_path):
-    artifact = json.loads(MODEL.read_text(encoding="utf-8"))
-    artifact["decision_thresholds"] = {
-        "accept_confidence": 1.01,
-        "suggest_confidence": 1.01,
-    }
-    model_path = tmp_path / "intent_classifier.json"
-    _write_model(model_path, artifact)
-
-    result = classify_intent("看看 voidx 的 agent 编排", model_path=model_path)
+def test_classifier_missing_model_falls_back_to_keywords():
+    result = classify_intent("看看 voidx 的 agent 编排", model_path=ROOT / "missing-intent-model.json")
 
     assert result is not None
-    assert result.intent == TaskIntent.INSPECT
+    assert result.intent == TaskIntent.CODING
     assert result.action == "accept"
     assert result.source == "keyword_classifier"
 
@@ -56,57 +38,31 @@ def test_classifier_window_text_does_not_pollute_keyword_fallback():
     result = classify_intent("好了", classifier_text="修复这个bug [SEP] 好了")
 
     assert result is not None
-    assert result.intent == TaskIntent.CHAT
+    assert result.intent == TaskIntent.GENERAL
     assert result.source == "keyword_classifier"
 
 
-def test_classifier_fallback_can_return_keyword_ambiguous(monkeypatch):
+def test_embedded_classifier_artifact_uses_coarse_intents():
+    artifact = json.loads(MODEL.read_text(encoding="utf-8"))
+    classifier = ArtifactClassifier(artifact)
+
+    assert {intent.value for intent in classifier.classes} == {"coding", "general"}
+    assert len(classifier.coef) == len(classifier.classes)
+    assert len(classifier.intercept) == len(classifier.classes)
+
+
+def test_classifier_fallback_uses_current_keyword_intent(monkeypatch):
     class FallbackClassifier:
         def classify(self, _text):
-            return IntentClassifierResult(
-                intent=TaskIntent.DESIGN,
-                confidence=0.0,
-                action="fallback",
-            )
+            raise AssertionError("coding keyword should bypass artifact classifier")
 
     monkeypatch.setattr(intent_classifier_module, "_load_classifier", lambda _model_path=None: FallbackClassifier())
-    monkeypatch.setattr(
-        intent_classifier_module,
-        "infer_task_intent",
-        lambda _text, _mode=None: TaskIntent.AMBIGUOUS,
-    )
 
-    result = classify_intent("这个", classifier_text="看看这个 bug [SEP] 这个")
+    result = classify_intent("fix this issue")
 
     assert result is not None
-    assert result.intent == TaskIntent.AMBIGUOUS
-    assert result.action == "accept"
+    assert result.intent == TaskIntent.CODING
     assert result.source == "keyword_classifier"
-
-
-def test_classifier_reload_after_model_replacement(tmp_path):
-    reset_intent_classifier_cache()
-    model_path = tmp_path / "intent_classifier.json"
-    artifact = json.loads(MODEL.read_text(encoding="utf-8"))
-    _write_model(model_path, artifact)
-
-    first = classify_intent("hello", model_path=model_path)
-
-    assert first is not None
-    assert first.intent == TaskIntent.CHAT
-
-    replacement = json.loads(MODEL.read_text(encoding="utf-8"))
-    replacement["intercept"] = [-100.0 for _ in replacement["classes"]]
-    replacement["intercept"][replacement["classes"].index("review")] = 100.0
-    replacement["replacement_marker"] = "force signature change"
-    time.sleep(0.01)
-    _write_model(model_path, replacement)
-
-    second = classify_intent("hello", model_path=model_path)
-
-    assert second is not None
-    assert second.intent == TaskIntent.REVIEW
-    assert second.source == "local_classifier"
 
 
 def test_embedded_model_signature_uses_content_hash(monkeypatch):
@@ -130,7 +86,17 @@ def test_embedded_model_signature_uses_content_hash(monkeypatch):
 
 def test_classifier_cache_is_bounded(tmp_path):
     reset_intent_classifier_cache()
-    artifact = json.loads(MODEL.read_text(encoding="utf-8"))
+    artifact = {
+        "schema_version": 1,
+        "model_type": "char_wb_tfidf_logreg",
+        "classes": ["coding", "general"],
+        "safe_accept_intents": ["coding", "general"],
+        "vocabulary": {" x": 0},
+        "idf": [1.0],
+        "coef": [[1.0], [-1.0]],
+        "intercept": [0.0, 0.0],
+        "ngram_range": [2, 2],
+    }
 
     for index in range(9):
         model_path = tmp_path / f"intent_classifier_{index}.json"
@@ -140,51 +106,37 @@ def test_classifier_cache_is_bounded(tmp_path):
     assert len(intent_classifier_module._CACHE) <= 8
 
 
-def test_classifier_implement_prediction_is_suggest_only():
-    result = classify_intent("写一个新接口")
-
-    assert result is not None
-    assert result.intent == TaskIntent.IMPLEMENT
-    assert result.action == "suggest"
-    assert result.source == "local_classifier"
-
-
-def test_resolve_turn_intent_requires_confirmation_for_ml_implement_prediction():
-    resolution = resolve_turn_intent("写一个新接口", "auto", TaskState())
-
-    assert resolution.intent == TaskIntent.AMBIGUOUS
-    assert "local classifier suggested implement" in resolution.reason
-
-
-def test_keyword_implement_preserves_existing_behavior():
+def test_direct_write_request_sets_coding_feature_goal():
     resolution = resolve_turn_intent("开始实现这个优化", "auto", TaskState())
 
-    assert resolution.intent == TaskIntent.IMPLEMENT
-    assert resolution.reason == "keyword classifier matched implement"
+    assert resolution.intent == TaskIntent.CODING
+    assert resolution.goal is None
 
 
-def test_plan_mode_ignores_classifier():
+def test_plan_mode_forces_coding_design_goal():
     resolution = resolve_turn_intent("写一个新接口", "plan", TaskState())
 
-    assert resolution.intent == TaskIntent.DESIGN
-    assert resolution.reason == "interaction mode forces design"
+    assert resolution.intent == TaskIntent.CODING
+    assert resolution.goal is None
+    assert resolution.reason == "interaction mode forces coding"
 
 
-def test_approval_phrase_without_pending_plan_stays_ambiguous():
+def test_approval_phrase_without_pending_plan_requires_confirmation():
     resolution = resolve_turn_intent("对，可以", "auto", TaskState())
 
-    assert resolution.intent == TaskIntent.AMBIGUOUS
+    assert resolution.intent == TaskIntent.GENERAL
+    assert resolution.goal is None
     assert resolution.reason == "approval phrase without a pending implementation plan"
 
 
-def test_chinese_and_mixed_input_classification():
+def test_chinese_and_mixed_input_classification_is_coarse_coding():
     chinese = classify_intent("为什么运行失败")
     mixed = classify_intent("review this PR")
 
     assert chinese is not None
-    assert chinese.intent == TaskIntent.DEBUG
+    assert chinese.intent == TaskIntent.CODING
     assert mixed is not None
-    assert mixed.intent == TaskIntent.REVIEW
+    assert mixed.intent == TaskIntent.CODING
 
 
 def _write_model(path: Path, artifact: dict) -> None:

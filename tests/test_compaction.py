@@ -489,11 +489,22 @@ class TestCompactionRetry:
 
         monkeypatch.setattr(compaction_module, "stream_llm", fake_stream_llm)
 
+        class FakeInstruction:
+            async def workflow_context_for(self, text, **kwargs):
+                captured["workflow_text"] = text
+                captured["workflow_kwargs"] = kwargs
+                return SimpleNamespace(
+                    instructions=["compaction workflow"],
+                    active=["compaction"],
+                    content="## Workflow Context\ncompaction workflow",
+                )
+
         host = SimpleNamespace(
             _compaction=CompactionService(context_limit=128_000, output_token_max=8_192),
             _debug=False,
             _session=None,
             _usage_stats=MagicMock(),
+            _instruction=FakeInstruction(),
             config=SimpleNamespace(
                 model=SimpleNamespace(
                     provider="openai",
@@ -517,7 +528,11 @@ class TestCompactionRetry:
         assert captured["renderer"]._stream_to_dock is False
         assert isinstance(captured["messages"][0], SystemMessage)
         assert isinstance(captured["messages"][1], HumanMessage)
-        assert "Fix the compaction fallback" in captured["messages"][1].content
+        assert "compaction workflow" in captured["messages"][1].content
+        assert isinstance(captured["messages"][2], HumanMessage)
+        assert "Fix the compaction fallback" in captured["messages"][2].content
+        assert captured["workflow_kwargs"]["runtime_trigger"] == "compaction"
+        assert captured["workflow_kwargs"]["agent"] == "compaction"
 
     @pytest.mark.asyncio
     async def test_compact_for_live_state_returns_result_without_mutating_messages(self):

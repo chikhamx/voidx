@@ -75,7 +75,8 @@ def test_training_script_writes_model(tmp_path):
     assert result.returncode == 0, result.stderr
     artifact = json.loads(model_path.read_text(encoding="utf-8"))
     assert artifact["model_type"] == "char_wb_tfidf_logreg"
-    assert artifact["classes"]
+    assert artifact["classes"] == ["coding", "general"]
+    assert len(artifact["coef"]) == 2
     assert report_path.is_file()
 
 
@@ -85,8 +86,8 @@ def test_eval_report_contains_required_metrics():
     for phrase in [
         "Accuracy",
         "Macro F1",
-        "Implement false positives",
-        "Inspect/Design recall",
+        "Coding recall",
+        "General precision",
         "Average inference latency",
         "p95 inference latency",
         "Model artifact size",
@@ -96,21 +97,21 @@ def test_eval_report_contains_required_metrics():
         assert phrase in text
 
 
-def test_eval_gate_rejects_implement_false_positive():
+def test_eval_gate_rejects_low_coding_recall():
     module = _load_training_module()
     metrics = {
         "model_size_kb": 1.0,
         "latency": {"avg_ms": 0.1, "p95_ms": 0.1},
         "evaluation": {
             "macro_f1": 0.99,
-            "implement_false_positives": 1,
-            "inspect_design_recall": 0.99,
+            "coding_recall": 0.5,
+            "general_precision": 0.99,
         },
     }
 
     checks = module.gate_results(metrics)
 
-    assert checks["implement_false_positives"]["passed"] is False
+    assert checks["coding_recall"]["passed"] is False
     assert module.gate_passed(metrics) is False
 
 
@@ -134,7 +135,8 @@ def test_phase_a_artifact_metrics_pass_gate():
     artifact = module.load_artifact(MODEL)
 
     assert module.gate_passed(artifact["metrics"]) is True
-    assert artifact["metrics"]["evaluation"]["implement_false_positives"] == 0
+    assert artifact["metrics"]["evaluation"]["coding_recall"] >= 0.9
+    assert artifact["metrics"]["evaluation"]["general_precision"] >= 0.8
 
 
 def test_resolve_turn_intent_keeps_design_behavior_after_classifier_integration():
@@ -142,8 +144,9 @@ def test_resolve_turn_intent_keeps_design_behavior_after_classifier_integration(
 
     resolution = resolve_turn_intent("给个优化方案", "auto", TaskState())
 
-    assert resolution.intent.value == "design"
-    assert "classifier matched design" in resolution.reason
+    assert resolution.intent.value == "coding"
+    assert resolution.goal is None
+    assert "local classifier matched coding" in resolution.reason
 
 
 def test_package_data_includes_intent_classifier():

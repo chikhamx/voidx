@@ -141,9 +141,8 @@ def test_status_summary_renders_model_policy_usage_and_goal(tmp_path):
         plan_mode=lambda: False,
         interaction_mode=lambda: "goal",
         goal_label=lambda: "ship pure tui",
-        goal_phase=lambda: "implement",
-        goal_status=lambda: "running",
-        goal_turn_count=lambda: 2,
+        goal_type=lambda: "feature",
+        goal_awaiting_approval=lambda: False,
         reasoning_effort="xhigh",
         permission_label=lambda: "default",
         sandbox_label=lambda: "w-write",
@@ -164,7 +163,7 @@ def test_status_summary_renders_model_policy_usage_and_goal(tmp_path):
     assert "↓" not in summary
     assert " in " not in summary
     assert " out " not in summary
-    assert "goal running/implement turns 2 ship pure tui" in summary
+    assert "goal feature ship pure tui" in summary
 
 
 def test_status_summary_text_applies_semantic_styles(tmp_path):
@@ -180,9 +179,8 @@ def test_status_summary_text_applies_semantic_styles(tmp_path):
         workspace=str(tmp_path),
         interaction_mode=lambda: "auto",
         goal_label=lambda: "ship",
-        goal_phase=lambda: "implement",
-        goal_status=lambda: "running",
-        goal_turn_count=lambda: 2,
+        goal_type=lambda: "feature",
+        goal_awaiting_approval=lambda: False,
         reasoning_effort="xhigh",
         permission_label=lambda: "default",
         sandbox_label=lambda: "w-write",
@@ -198,7 +196,7 @@ def test_status_summary_text_applies_semantic_styles(tmp_path):
     assert "#57AB5A" in _styles_covering(text, "default w-write on-fail")
     assert "#D77757" in _styles_covering(text, "auto")
     assert "#56D4DD" in _styles_covering(text, "ctx 12.3k/128k")
-    assert "#C698F0" in _styles_covering(text, "goal running/implement turns 2 ship")
+    assert "#C698F0" in _styles_covering(text, "goal feature ship")
     assert "#4B5563" in _styles_covering(text, "|")
 
 
@@ -704,7 +702,7 @@ async def test_busy_activity_timer_starts_ticks_and_stops(tmp_path, monkeypatch)
 
 
 @pytest.mark.asyncio
-async def test_invalidate_coalesces_render_until_next_loop(tmp_path, monkeypatch):
+async def test_invalidate_coalesces_render_until_throttle_window(tmp_path, monkeypatch):
     tui = _tui(tmp_path)
     tui._running = True
     calls = {"flush": 0, "render": 0}
@@ -718,6 +716,10 @@ async def test_invalidate_coalesces_render_until_next_loop(tmp_path, monkeypatch
     assert calls == {"flush": 0, "render": 0}
 
     await asyncio.sleep(0)
+
+    assert calls == {"flush": 0, "render": 0}
+
+    await asyncio.sleep(0.03)
 
     assert calls == {"flush": 1, "render": 1}
     assert tui._render_scheduled is False

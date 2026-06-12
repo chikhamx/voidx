@@ -426,10 +426,12 @@ def test_tty_render_reuses_previous_frame_region(tmp_path, monkeypatch):
     tui._cursor_col = 1
     tui._render_frame()
 
-    # Normal-buffer mode: relative cursor movement instead of absolute \x1b[H
+    # Stable second frames update only changed rows instead of clearing
+    # the whole live frame.
     assert "\x1b[H" not in fake_stdout.text
     assert "\x1b[" in fake_stdout.text
-    assert "\x1b[J" in fake_stdout.text
+    assert "\x1b[J" not in fake_stdout.text
+    assert "\x1b[K" in fake_stdout.text
 
 
 def test_command_panel_renders_below_input_with_bottom_rule(tmp_path):
