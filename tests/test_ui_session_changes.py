@@ -31,55 +31,6 @@ def test_session_change_tracker_rolls_back_turn_files(tmp_path):
     assert session_tracker.files == []
 
 
-def test_session_change_tracker_captures_apply_patch_targets(tmp_path):
-    tracker = SessionChangeTracker()
-    tracker.begin_turn(str(tmp_path))
-
-    existing = tmp_path / "existing.py"
-    existing.write_text("old\n", encoding="utf-8")
-    deleted = tmp_path / "deleted.py"
-    deleted.write_text("gone\n", encoding="utf-8")
-    created = tmp_path / "created.py"
-
-    patch = """--- a/existing.py
-+++ b/existing.py
-@@ -1,1 +1,1 @@
--old
-+new
---- /dev/null
-+++ b/created.py
-@@ -0,0 +1,1 @@
-+hello
---- a/deleted.py
-+++ /dev/null
-@@ -1,1 +0,0 @@
--gone
-"""
-
-    tracker.capture_tool_call("apply_patch", {"patch": patch}, str(tmp_path))
-
-    existing.write_text("new\n", encoding="utf-8")
-    created.write_text("hello\n", encoding="utf-8")
-    deleted.unlink()
-    tracker.record_diff(make_file_diff("existing.py", "old\n", "new\n"))
-    tracker.record_diff(make_file_diff("created.py", "", "hello\n", old_label="/dev/null", new_label="b/created.py"))
-    tracker.record_diff(make_file_diff("deleted.py", "gone\n", "", old_label="a/deleted.py", new_label="/dev/null"))
-    tracker.finish_turn()
-
-    lines = tracker.change_summary_lines()
-    assert len(lines) == 3
-    assert any("existing.py" in line for line in lines)
-    assert any("created.py" in line and "Created" in line for line in lines)
-    assert any("deleted.py" in line for line in lines)
-
-    result = tracker.rollback_current()
-
-    assert result.ok
-    assert existing.read_text(encoding="utf-8") == "old\n"
-    assert not created.exists()
-    assert deleted.read_text(encoding="utf-8") == "gone\n"
-
-
 def test_change_summary_lines_empty_before_finish(tmp_path):
     tracker = SessionChangeTracker()
     tracker.begin_turn(str(tmp_path))

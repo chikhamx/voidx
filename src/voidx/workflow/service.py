@@ -7,7 +7,7 @@ from collections.abc import Iterable
 
 from pydantic import BaseModel
 
-from voidx.skills.schema import EXPLICIT_REF_RE
+from voidx.runtime.reference_tokens import EXPLICIT_REF_RE
 from voidx.workflow.context import render_workflow_context, render_workflow_instruction
 from voidx.workflow.dag import DEFAULT_WORKFLOW_DAG
 from voidx.workflow.policy import workflow_activations, workflow_sort_key

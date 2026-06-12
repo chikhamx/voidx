@@ -20,15 +20,25 @@ from voidx.permission.engine import (
     PermissionContext,
     authorize_tool_call,
     classify_tool_call,
+    is_safe_bash,
     sandbox_denial_reason,
     tool_call_from_pattern,
 )
 from voidx.permission.schema import Action
+from voidx.permission.sandbox import check_sandbox_bash
 
 PermissionNotifier = Callable[[str], None]
 
 
 DEFAULT_RULES = BASIC_RULES
+
+
+def is_safe_bash_command(command: str) -> bool:
+    return is_safe_bash(command)
+
+
+def bash_sandbox_denial(command: str, workspace: str, extra_paths: list[str]) -> str | None:
+    return check_sandbox_bash(command, workspace, extra_paths)
 
 # ── types ──────────────────────────────────────────────────────────────────
 

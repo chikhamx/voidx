@@ -234,7 +234,7 @@ BUILTIN_AGENTS: dict[str, AgentDef] = {
         when_to_use="Use for delegated child work that benefits from isolated context. "
                     "Set the runtime persona for the desired thinking mode.",
         tools=[
-            "read", "write", "edit", "apply_patch", "glob", "grep", "bash", "todo", "load_skills", "repo_map",
+            "read", "write", "edit", "glob", "grep", "bash", "todo", "load_skills", "repo_map",
             "lsp_diagnostics", "lsp_symbols", "lsp_definition", "lsp_references",
             "lsp_format",
         ],

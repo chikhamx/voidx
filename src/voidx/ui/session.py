@@ -225,12 +225,6 @@ class SessionChangeTracker:
         workspace: str,
         extra_paths: list[str] | None = None,
     ) -> None:
-        if tool_name == "apply_patch":
-            patch = args.get("patch")
-            if not isinstance(patch, str) or not patch:
-                return
-            self._capture_patch_files(patch, workspace, extra_paths)
-            return
         if tool_name not in {"write", "edit", "lsp_format"}:
             return
         file_path = args.get("file_path")

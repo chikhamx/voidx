@@ -35,7 +35,7 @@ BRAINSTORMING = WorkflowNode(
     core_rule="Present a design and get user approval before writing any code.",
     personas=["coordinate", "explore"],
     gate=NodeGate(
-        denied_tools=("write", "edit", "apply_patch", "lsp_format"),
+        denied_tools=("write", "edit", "lsp_format"),
         description=(
             "Do not write code, invoke implementation workflows, or take implementation "
             "action until the design is presented and approved. This applies regardless "
@@ -143,7 +143,7 @@ WRITING_PLANS = WorkflowNode(
     core_rule="Plans must be executable: exact paths, concrete commands, and voidx tool names.",
     personas=["plan"],
     gate=NodeGate(
-        denied_tools=("write", "edit", "apply_patch", "lsp_format"),
+        denied_tools=("write", "edit", "lsp_format"),
         description="Do not start implementation until the plan is approved. The plan must be executable with exact paths and commands.",
         required_before_transition="plan is executable and approved",
     ),
@@ -292,7 +292,7 @@ SYSTEMATIC_DEBUGGING = WorkflowNode(
     core_rule="Find the root cause before changing code.",
     personas=["explore"],
     gate=NodeGate(
-        denied_tools=("write", "edit", "apply_patch", "lsp_format"),
+        denied_tools=("write", "edit", "lsp_format"),
         description="Root cause investigation must complete before proposing or applying any fix.",
         required_before_transition="root cause identified with evidence",
     ),

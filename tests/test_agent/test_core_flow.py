@@ -343,8 +343,7 @@ def test_orchestrator_has_direct_edit_tools():
     assert agent is not None
     assert subagent is not None
     assert {"write", "edit", "lsp_format"}.issubset(set(agent.tools))
-    assert "apply_patch" not in agent.tools
-    assert {"write", "edit", "apply_patch", "lsp_format"}.issubset(set(subagent.tools))
+    assert {"write", "edit", "lsp_format"}.issubset(set(subagent.tools))
     assert {"clarify", "plan_checkpoint", "load_skills"}.issubset(set(agent.tools))
     assert get_agent("explore") is None
     assert get_agent("plan") is None
@@ -488,33 +487,16 @@ async def test_graph_authorization_asks_for_persona_blocked_write(tmp_path):
     graph._ask_tool_permission = approve
 
     approved, denied = await graph._authorize_tool_calls(
-        [{"name": "apply_patch", "args": {"patch": ""}, "id": "call_1"}],
+        [{"name": "edit", "args": {"file_path": "test.py", "edits": []}, "id": "call_1"}],
         agent_name="voidx",
         runtime_persona="coordinate",
         plan_mode=False,
         session_id="test",
     )
 
-    assert [tc["name"] for tc in approved] == ["apply_patch"]
+    assert [tc["name"] for tc in approved] == ["edit"]
     assert denied == []
-    assert [[tc["name"] for tc in batch] for batch in asked] == [["apply_patch"]]
-
-
-@pytest.mark.asyncio
-async def test_graph_authorization_allows_apply_patch_for_implement_persona(tmp_path):
-    graph = _graph(tmp_path)
-    graph._permission.approval_policy = "on-request"
-
-    approved, denied = await graph._authorize_tool_calls(
-        [{"name": "apply_patch", "args": {"patch": ""}, "id": "call_1"}],
-        agent_name="voidx",
-        runtime_persona="implement",
-        plan_mode=False,
-        session_id="test",
-    )
-
-    assert [tc["name"] for tc in approved] == ["apply_patch"]
-    assert denied == []
+    assert [[tc["name"] for tc in batch] for batch in asked] == [["edit"]]
 
 
 @pytest.mark.asyncio

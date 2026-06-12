@@ -43,7 +43,6 @@ BASIC_RULES: Ruleset = [
     Rule(permission="agent", pattern="sub-voidx", action="allow"),
     Rule(permission="write", pattern="*", action="ask"),
     Rule(permission="edit", pattern="*", action="ask"),
-    Rule(permission="apply_patch", pattern="*", action="ask"),
     Rule(permission="git", pattern="write", action="ask"),
     Rule(permission="bash", pattern="*", action="ask"),
     Rule(permission="lsp_format", pattern="*", action="ask"),
@@ -348,7 +347,7 @@ def capability_for_tool(tool: str, args: dict) -> PermissionCapability:
         "lsp_references",
     }:
         return PermissionCapability.READ_TOOLS
-    if tool in {"write", "edit", "apply_patch"}:
+    if tool in {"write", "edit"}:
         return PermissionCapability.FILE_WRITE
     if tool == "lsp_format":
         return PermissionCapability.FILE_FORMAT
@@ -365,7 +364,7 @@ def capability_for_tool(tool: str, args: dict) -> PermissionCapability:
 
 
 _FILE_PATTERN_TOOLS = {
-    "read", "write", "edit", "apply_patch",
+    "read", "write", "edit",
     "lsp_diagnostics", "lsp_symbols", "lsp_definition",
     "lsp_references", "lsp_format",
 }

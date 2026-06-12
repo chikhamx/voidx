@@ -2,15 +2,14 @@
 
 from __future__ import annotations
 
-import re
 from pathlib import Path
 from typing import Literal
 
 from pydantic import BaseModel, Field
 
+from voidx.runtime.reference_tokens import EXPLICIT_REF_RE
 
 SkillScope = Literal["bundled", "global", "project"]
-EXPLICIT_REF_RE = re.compile(r"(?<![\w.-])\$([A-Za-z0-9_.-]+)")
 
 
 class SkillMeta(BaseModel):

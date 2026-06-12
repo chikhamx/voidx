@@ -5,7 +5,6 @@ from __future__ import annotations
 from pydantic import BaseModel, ConfigDict
 
 from voidx.tools.base import ToolContext, ToolResult  # noqa: F401 — re-export
-from voidx.tools.apply_patch import ApplyPatchTool
 from voidx.tools.file_ops import FileReadTool, FileWriteTool, FileEditTool
 from voidx.tools.git import GitTool
 from voidx.tools.lsp import (
@@ -50,7 +49,7 @@ class ToolRegistry:
 
     def _register_builtins(self) -> None:
         for cls in [
-            FileReadTool, FileWriteTool, FileEditTool, ApplyPatchTool,
+            FileReadTool, FileWriteTool, FileEditTool,
             GitTool,
             RepoMapTool,
             GlobTool, GrepTool, BashTool,

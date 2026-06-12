@@ -84,7 +84,7 @@ class Settings(
     # ── profiles API ─────────────────────────────────────────────────────
 
     async def list_profiles(self) -> list[Profile]:
-        from voidx.memory.model_profiles import list_model_profiles_async
+        from voidx.memory.service import list_model_profiles_async
 
         return [
             Profile(
@@ -107,7 +107,7 @@ class Settings(
         return profiles[0] if profiles else None
 
     async def save_profile(self, profile: Profile) -> Path:
-        from voidx.memory.model_profiles import ModelProfileRow, save_model_profile_async
+        from voidx.memory.service import ModelProfileRow, save_model_profile_async
 
         await save_model_profile_async(ModelProfileRow(
             name=profile.name,
@@ -122,7 +122,7 @@ class Settings(
         return self._path
 
     async def delete_profile(self, name: str) -> Path:
-        from voidx.memory.model_profiles import delete_model_profile_async
+        from voidx.memory.service import delete_model_profile_async
 
         await delete_model_profile_async(name)
         if self._data.get("current_profile") == name:
@@ -241,7 +241,7 @@ class Settings(
         )
 
     async def _get_profile(self, name: str) -> Profile | None:
-        from voidx.memory.model_profiles import get_model_profile_async
+        from voidx.memory.service import get_model_profile_async
 
         row = await get_model_profile_async(name)
         if row is None:
@@ -254,7 +254,7 @@ class Settings(
         )
 
     async def _migrate_legacy_profiles(self) -> None:
-        from voidx.memory.model_profiles import ModelProfileRow, save_model_profile_async
+        from voidx.memory.service import ModelProfileRow, save_model_profile_async
 
         profiles_data = self._data.get("profiles", {})
         if not isinstance(profiles_data, dict):

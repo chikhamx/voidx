@@ -11,8 +11,7 @@ from contextlib import suppress
 
 from pydantic import BaseModel, Field
 
-from voidx.permission.engine import is_safe_bash
-from voidx.permission.sandbox import check_sandbox_bash
+from voidx.permission.service import bash_sandbox_denial, is_safe_bash_command
 from voidx.tools.base import BaseTool, model_to_json_schema, ToolContext, ToolResult
 
 # Patterns that are always blocked regardless of permission
@@ -60,10 +59,10 @@ def _sandbox_denial(command: str, ctx: ToolContext) -> str | None:
     if ctx.sandbox_mode == "danger-full-access":
         return None
     if ctx.sandbox_mode == "read-only":
-        if is_safe_bash(command):
+        if is_safe_bash_command(command):
             return None
         return f"SANDBOX READ-ONLY: 'bash' is not allowed.\n  command: {command.strip()[:120]}"
-    return check_sandbox_bash(command, ctx.workspace, ctx.sandbox_extra_paths)
+    return bash_sandbox_denial(command, ctx.workspace, ctx.sandbox_extra_paths)
 
 
 async def _terminate_process(proc: asyncio.subprocess.Process) -> None:
