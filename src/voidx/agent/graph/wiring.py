@@ -8,12 +8,10 @@ from typing import Any
 from voidx.agent.agents import child_agent_descriptions_for_llm, get_agent, get_subagents
 from voidx.config import Config, Settings
 from voidx.llm.compaction import CompactionService
-from voidx.llm.provider import get_context_limit
+from voidx.llm.service import get_context_limit
 from voidx.llm.usage import UsageStats
 from voidx.permission.service import PermissionService
-from voidx.tools.agent import AgentTool
-from voidx.tools.registry import ToolRegistry
-from voidx.tools.task_tracker import TaskTracker
+from voidx.tools.service import AgentTool, ToolRegistry, TaskTracker
 
 
 def bind_settings_to_catalog(settings: Settings | None) -> None:

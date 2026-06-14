@@ -11,7 +11,7 @@ from datetime import datetime
 from pathlib import Path
 from typing import Callable
 
-from voidx.agent.attachments import MAX_IMAGE_ATTACHMENT_BYTES
+from voidx.runtime.attachments import MAX_IMAGE_ATTACHMENT_BYTES
 
 CLIPBOARD_ATTACHMENT_DIR = ".voidx/attachments"
 KEEP_ORIGINAL_BYTES = 3_000_000

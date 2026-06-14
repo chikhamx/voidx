@@ -7,20 +7,24 @@ from collections.abc import Awaitable, Callable
 from dataclasses import dataclass
 from typing import TYPE_CHECKING
 
-from langchain_core.messages import AIMessage, BaseMessage, HumanMessage, SystemMessage
+from langchain_core.messages import BaseMessage, HumanMessage, SystemMessage
 
 from voidx.agent.graph.streaming import extract_text, stream_llm
 from voidx.agent.message_rows import messages_from_rows
 from voidx.agent.runtime_context import raw_semantic_messages
 from voidx.agent.todo_state import sanitize_todo_replay_messages
-from voidx.llm.compaction import COMPACTION_MAX_RETRIES, CompactionService
-from voidx.llm.provider import resolve_protocol
+from voidx.llm.compaction import (
+    COMPACTION_MAX_RETRIES,
+    COMPACTION_REQUEST,
+    SUMMARY_TEMPLATE,
+    CompactionService,
+)
+from voidx.llm.service import resolve_protocol
 from voidx.llm.usage import estimate_context_tokens, estimate_message_tokens, extract_token_usage
-from voidx.memory.context_frames import save_context_frame_from_messages
-from voidx.skills.context import is_skill_context_content
-from voidx.workflow.context import is_workflow_context_content
-from voidx.ui.output.console import StreamingRenderer
-from voidx.ui.output.events.schema import StatusFinished, StatusUpdated
+from voidx.memory.service import save_context_frame_from_messages
+from voidx.runtime.ui import StatusFinished, StatusUpdated, StreamingRenderer
+from voidx.skills.service import is_skill_context_content
+from voidx.workflow.service import is_workflow_context_content
 
 if TYPE_CHECKING:
     from voidx.agent.graph.contracts import GraphCompactionHost
@@ -30,12 +34,7 @@ logger = logging.getLogger(__name__)
 
 RunCompactionAgent = Callable[[list, str | None], Awaitable[str | None]]
 PersistCompaction = Callable[[list], Awaitable[None]]
-SUMMARY_REQUEST = (
-    "Summarize the conversation above into the structured format specified in your instructions. "
-    "Focus on durable facts, decisions, constraints, open work, and final tool outcomes. "
-    "Do not narrate step-by-step; extract what matters for continuing the task."
-)
-COMPACTION_PERSONA_HEADROOM = 2_000
+COMPACTION_REQUEST_HEADROOM = 2_000
 IN_TURN_SUMMARY_PREFIX = "## Long Summary\n"
 
 
@@ -158,6 +157,7 @@ class GraphCompactionCoordinator:
         last_error: Exception | None = None
         returned_no_summary = False
 
+        self._active_compaction_source_messages = list(messages)
         for attempt in range(1, COMPACTION_MAX_RETRIES + 2):
             try:
                 if host._ui.via_events():
@@ -186,6 +186,7 @@ class GraphCompactionCoordinator:
                         ))
                     else:
                         host._ui.ui.print(f"[dim]Compaction agent failed ({e}) — retrying ({attempt}/{COMPACTION_MAX_RETRIES})[/dim]")
+        self._active_compaction_source_messages = None
 
         if not summary:
             if last_error:
@@ -290,7 +291,7 @@ class GraphCompactionCoordinator:
         last_message_id = _max_persisted_message_id(head_messages)
         if last_message_id is None:
             return
-        from voidx.memory.session import delete_messages_through
+        from voidx.memory.service import delete_messages_through
 
         await delete_messages_through(host._session.id, last_message_id)
 
@@ -321,7 +322,7 @@ class GraphCompactionCoordinator:
         if cache is not None:
             rows = list(cache)
         else:
-            from voidx.memory.session import load_messages
+            from voidx.memory.service import load_messages
             rows = await load_messages(host._session.id)
 
         messages = messages_from_rows(rows)
@@ -340,9 +341,7 @@ class GraphCompactionCoordinator:
         head_messages: list,
         previous_summary: str | None,
     ) -> str | None:
-        """Run the compaction agent to generate a structured summary."""
-        from voidx.agent.agents import BASE_SYSTEM_PROMPT, COMPACTION_PERSONA
-
+        """Run the compaction behavior to generate a structured summary."""
         host = self.host
         if host.model is None:
             return None
@@ -354,27 +353,38 @@ class GraphCompactionCoordinator:
             headless=True,
         )
 
-        workflow_context = await host._instruction.workflow_context_for(
-            SUMMARY_REQUEST,
-            agent="compaction",
-            task_intent="coding",
-            interaction_mode="auto",
-            runtime_trigger="compaction",
-            scope="conversation compaction",
+        request_message = HumanMessage(content=_compaction_request_text(previous_summary))
+        source_messages = (
+            getattr(self, "_active_compaction_source_messages", None)
+            or getattr(host, "_current_messages", None)
+            or []
         )
-        messages = _build_compaction_messages(
-            head_messages,
-            previous_summary,
-            BASE_SYSTEM_PROMPT + "\n\n" + COMPACTION_PERSONA,
-            workflow_context_content=workflow_context.content,
-        )
-        context_tokens = estimate_context_tokens(messages, host.config.model.model)
+        pruned_chars = 0
+        input_mode = "fallback"
+        messages: list[BaseMessage]
+
+        if source_messages:
+            candidate = list(source_messages)
+            pruned_chars = host._compaction.prune(candidate)
+            candidate_messages = [*candidate, request_message]
+            candidate_tokens = estimate_context_tokens(candidate_messages, host.config.model.model)
+            if candidate_tokens <= host._compaction.context_limit:
+                messages = candidate_messages
+                context_tokens = candidate_tokens
+                input_mode = "main_context"
+            else:
+                messages = [*head_messages, request_message]
+                context_tokens = estimate_context_tokens(messages, host.config.model.model)
+        else:
+            messages = [*head_messages, request_message]
+            context_tokens = estimate_context_tokens(messages, host.config.model.model)
+
         if context_tokens > host._compaction.context_limit:
             budget = max(
                 0,
                 host._compaction.context_limit
                 - host._compaction.output_token_max
-                - COMPACTION_PERSONA_HEADROOM,
+                - COMPACTION_REQUEST_HEADROOM,
             )
             head_messages = host._compaction.truncate_head_to_budget(
                 head_messages,
@@ -383,22 +393,18 @@ class GraphCompactionCoordinator:
             )
             if not head_messages:
                 raise ValueError("compaction input exceeds context budget")
-            messages = _build_compaction_messages(
-                head_messages,
-                previous_summary,
-                BASE_SYSTEM_PROMPT + "\n\n" + COMPACTION_PERSONA,
-                workflow_context_content=workflow_context.content,
-            )
+            messages = [*head_messages, request_message]
             context_tokens = estimate_context_tokens(messages, host.config.model.model)
             if context_tokens > host._compaction.context_limit:
                 raise ValueError("compaction input exceeds context budget")
+            input_mode = "fallback"
 
         host._usage_stats.update_context(context_tokens)
         if host._session is not None:
             await save_context_frame_from_messages(
                 session_id=host._session.id,
                 frame_kind="compaction",
-                agent_persona="compaction",
+                agent_persona="compaction-behavior",
                 provider=host.config.model.provider,
                 model=host.config.model.model,
                 messages=messages,
@@ -406,7 +412,9 @@ class GraphCompactionCoordinator:
                 metadata={
                     "head_message_count": len(head_messages),
                     "has_previous_summary": previous_summary is not None,
-                    "active_workflows": workflow_context.active,
+                    "input_mode": input_mode,
+                    "source_message_count": len(source_messages),
+                    "pruned_chars": pruned_chars,
                 },
             )
         assistant_msg = await stream_llm(host.model, messages, renderer, resolve_protocol(host.config.model))
@@ -435,28 +443,18 @@ def _content_type_summary(content: object) -> str:
     return type(content).__name__
 
 
-def _build_compaction_messages(
-    head_messages: list[BaseMessage],
-    previous_summary: str | None,
-    system_prompt: str,
-    *,
-    workflow_context_content: str = "",
-) -> list[BaseMessage]:
-    messages: list[BaseMessage] = [SystemMessage(content=system_prompt)]
-    if workflow_context_content.strip():
-        messages.append(HumanMessage(content=workflow_context_content.strip()))
+def _compaction_request_text(previous_summary: str | None) -> str:
+    previous_summary_section = ""
     if previous_summary:
-        messages.append(HumanMessage(content=(
+        previous_summary_section = (
             "Below is the previous anchored summary of earlier conversation. "
             "Preserve still-true details, remove stale details, and merge in new facts.\n\n"
             f"<previous-summary>\n{previous_summary}\n</previous-summary>"
-        )))
-        messages.append(AIMessage(
-            content="Understood. I will update the summary with the new conversation history."
-        ))
-    messages.extend(head_messages)
-    messages.append(HumanMessage(content=SUMMARY_REQUEST))
-    return messages
+        )
+    return COMPACTION_REQUEST.format(
+        previous_summary_section=previous_summary_section,
+        template=SUMMARY_TEMPLATE,
+    ).strip()
 
 
 def _runtime_prefix(messages: list[BaseMessage]) -> list[BaseMessage]:

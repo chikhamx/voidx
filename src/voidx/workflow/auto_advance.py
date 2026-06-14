@@ -17,7 +17,7 @@ from __future__ import annotations
 import re
 
 from voidx.workflow.dag import DEFAULT_WORKFLOW_DAG
-from voidx.workflow.runtime import (
+from voidx.workflow.types import (
     WorkflowRunState,
     WorkflowRunStatus,
     WorkflowStateEvent,

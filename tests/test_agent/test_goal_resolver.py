@@ -9,7 +9,7 @@ from langchain_core.messages import AIMessage
 from voidx.agent.goal_resolver import resolve_goal_for_turn
 from voidx.agent.graph import VoidXGraph
 from voidx.agent.runtime_context import TaskIntent
-from voidx.agent.task_state import Goal, GoalResolution, GoalType, TaskState
+from voidx.agent.task_state import Goal, GoalResolution, GoalType, PendingApproval, TaskState
 from voidx.config import Config
 from voidx.memory.session import (
     MessageRow,
@@ -66,6 +66,78 @@ async def test_goal_resolver_uses_structured_llm_result():
     assert model.messages is not None
     assert "GoalResolution JSON schema" in model.messages[0].content
     assert "review 这个文件" in model.messages[1].content
+    assert "title_requested" not in model.messages[0].content
+    assert "title_requested" not in model.messages[1].content
+
+
+def test_goal_resolution_schema_excludes_approval_and_title_fields():
+    properties = GoalResolution.model_json_schema()["properties"]
+
+    assert "confirmed_approval" not in properties
+    assert "title" not in properties
+    assert "next_workflow" in properties
+
+
+@pytest.mark.asyncio
+async def test_goal_resolver_propagates_valid_next_workflow():
+    model = StructuredModel(
+        {
+            "intent": "coding",
+            "goal": {
+                "type": "doc",
+                "target": "写 workflow approval spec",
+                "expected_result": "",
+                "user_requested_write": True,
+                "needs_confirmation": False,
+            },
+            "confidence": 0.92,
+            "reason": "user approved design and requested spec",
+            "next_workflow": "design-doc",
+        }
+    )
+    state = TaskState(
+        pending_approval=PendingApproval(
+            scope="workflow approval auto advance",
+            source_goal_type=GoalType.DESIGN,
+        )
+    )
+
+    result = await resolve_goal_for_turn(
+        model=model,
+        user_text="可以，先写一个 spec",
+        interaction_mode="auto",
+        task_state=state,
+        workspace="/tmp/workspace",
+        session_time="2026-06-14 CST",
+    )
+
+    assert result.next_workflow == "design-doc"
+    assert result.goal is not None
+    assert result.goal.type == GoalType.DOC
+
+
+@pytest.mark.asyncio
+async def test_goal_resolver_drops_unknown_next_workflow():
+    model = StructuredModel(
+        {
+            "intent": "coding",
+            "goal": None,
+            "confidence": 0.7,
+            "reason": "bad workflow target",
+            "next_workflow": "nonexistent",
+        }
+    )
+
+    result = await resolve_goal_for_turn(
+        model=model,
+        user_text="继续",
+        interaction_mode="auto",
+        task_state=TaskState(),
+        workspace="/tmp/workspace",
+        session_time="2026-06-14 CST",
+    )
+
+    assert result.next_workflow is None
 
 
 @pytest.mark.asyncio
@@ -121,25 +193,20 @@ async def test_goal_resolver_falls_back_when_structured_output_fails():
 
 
 @pytest.mark.asyncio
-async def test_run_once_writes_structured_goal_to_initial_task_state(tmp_path):
-    """Structured goal is in initial["task_state"] before graph invoke, and resolver messages never enter history."""
+async def test_run_once_uses_local_fallback_and_keeps_resolver_messages_out_of_history(tmp_path):
+    """Default run loop does not call the structured resolver, and resolver messages never enter history."""
     session = await create_session(workspace=str(tmp_path))
     try:
         graph = VoidXGraph(Config(workspace=str(tmp_path)), api_key=None, session=session)
 
-        expected_goal = Goal(
-            type=GoalType.REVIEW,
-            target="src/voidx/runtime/task_state.py",
-            user_requested_write=False,
-        )
-        graph.model = StructuredModel(
-            GoalResolution(
-                intent=TaskIntent.CODING,
-                goal=expected_goal,
-                confidence=0.91,
-                reason="review requested",
-            )
-        )
+        class ResolverShouldNotRunModel:
+            def with_structured_output(self, _schema):
+                raise AssertionError("default run loop should not call structured goal resolver")
+
+            async def ainvoke(self, _messages):
+                raise AssertionError("default run loop should not call resolver ainvoke")
+
+        graph.model = ResolverShouldNotRunModel()
 
         captured_initial: dict = {}
 
@@ -160,15 +227,16 @@ async def test_run_once_writes_structured_goal_to_initial_task_state(tmp_path):
             test_dock.reset()
             set_dock(None)
 
-        # Resolver goal is written to initial task_state before graph invoke.
+        # Local fallback initializes task state before graph invoke.
         ts = captured_initial.get("task_state", {})
         if isinstance(ts, dict):
-            assert ts.get("current_goal", {}).get("type") == "review"
-            assert ts.get("current_goal", {}).get("target") == "src/voidx/runtime/task_state.py"
+            assert ts.get("current_intent") == "coding"
+            assert ts.get("current_goal") is None
+            assert ts.get("recent_user_texts") == ["review 这个文件"]
         else:
-            goal = ts.current_goal
-            assert goal is not None
-            assert goal.type == GoalType.REVIEW
+            assert ts.current_intent == TaskIntent.CODING
+            assert ts.current_goal is None
+            assert ts.recent_user_texts == ["review 这个文件"]
 
         # Resolver messages are not persisted to user-visible history.
         rows = await load_messages(session.id)
@@ -177,3 +245,71 @@ async def test_run_once_writes_structured_goal_to_initial_task_state(tmp_path):
             assert "You are voidx resolving" not in (row.content or "")
     finally:
         await delete_session(session.id)
+
+
+@pytest.mark.asyncio
+async def test_goal_resolver_plain_approval_with_pending_approval_returns_no_next_workflow():
+    model = StructuredModel(
+        {
+            "intent": "coding",
+            "goal": {
+                "type": "feature",
+                "target": "workflow approval auto advance",
+                "expected_result": "",
+                "user_requested_write": True,
+                "needs_confirmation": False,
+            },
+            "confidence": 0.8,
+            "reason": "user approved pending design",
+            "next_workflow": None,
+        }
+    )
+    state = TaskState(
+        pending_approval=PendingApproval(
+            scope="workflow approval auto advance",
+            source_goal_type=GoalType.DESIGN,
+        )
+    )
+
+    result = await resolve_goal_for_turn(
+        model=model,
+        user_text="可以",
+        interaction_mode="auto",
+        task_state=state,
+        workspace="/tmp/workspace",
+        session_time="2026-06-14 CST",
+    )
+
+    assert result.next_workflow is None
+    assert result.goal is not None
+    assert result.goal.type == GoalType.FEATURE
+    assert result.goal.user_requested_write is True
+
+
+@pytest.mark.asyncio
+async def test_goal_resolver_normal_request_returns_no_next_workflow():
+    model = StructuredModel(
+        GoalResolution(
+            intent=TaskIntent.CODING,
+            goal=Goal(
+                type=GoalType.INSPECT,
+                target="runtime state",
+                user_requested_write=False,
+            ),
+            confidence=0.9,
+            reason="inspection request",
+        )
+    )
+
+    result = await resolve_goal_for_turn(
+        model=model,
+        user_text="看看 runtime 状态",
+        interaction_mode="auto",
+        task_state=TaskState(),
+        workspace="/tmp/workspace",
+        session_time="2026-06-14 CST",
+    )
+
+    assert result.next_workflow is None
+    assert result.goal is not None
+    assert result.goal.type == GoalType.INSPECT

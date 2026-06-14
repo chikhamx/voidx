@@ -9,11 +9,14 @@ from langchain_core.messages import AIMessage, HumanMessage, SystemMessage, Tool
 from typing_extensions import NotRequired
 
 from voidx.agent.runtime_context import (
+    COMPACTION_GUIDE_MARKER,
     ContextCompilerCache,
     InteractionMode,
     RuntimeContextBuilder,
     TaskIntent,
     infer_task_intent,
+    is_goal_resolution_guide_content,
+    raw_semantic_messages,
 )
 from voidx.agent.state import AgentState
 from voidx.agent.task_state import GoalType, PendingApproval, TaskState, goal_from_text
@@ -131,6 +134,76 @@ def test_runtime_context_applies_task_context_before_current_user(tmp_path):
     assert "## User Message" in messages[-1].content
     assert isinstance(messages[-1], HumanMessage)
     assert messages[-1].content.endswith("current request")
+
+
+def test_runtime_context_inserts_goal_resolution_guide_before_current_user(tmp_path):
+    messages = [
+        HumanMessage(content="old question"),
+        AIMessage(content="old answer"),
+        HumanMessage(content="current request"),
+    ]
+    context = RuntimeContextBuilder(
+        config=Config(workspace=str(tmp_path)),
+        workspace=str(tmp_path),
+        base_system_prompt="You are voidx.",
+        persona="voidx",
+        interaction_mode=InteractionMode.AUTO,
+        current_user_text="current request",
+        task_state=TaskState(recent_user_texts=["approved plan", "continue"]),
+        include_goal_resolution_guide=True,
+    ).build()
+
+    context.apply_to_messages(messages)
+
+    guide_indexes = [
+        index
+        for index, message in enumerate(messages)
+        if isinstance(message, HumanMessage) and is_goal_resolution_guide_content(message.content)
+    ]
+    assert guide_indexes == [3]
+    assert '"recent_user_texts": [\n    "approved plan",\n    "continue"\n  ]' in messages[3].content
+    assert messages[2].content == "old answer"
+    assert "Runtime State" in messages[4].content
+    assert messages[4].content.endswith("current request")
+
+    context.apply_to_messages(messages)
+
+    assert sum(
+        1
+        for message in messages
+        if isinstance(message, HumanMessage) and is_goal_resolution_guide_content(message.content)
+    ) == 1
+
+
+def test_runtime_context_reuses_goal_resolution_guide_message_incrementally(tmp_path):
+    cache = ContextCompilerCache()
+    kwargs = dict(
+        config=Config(workspace=str(tmp_path)),
+        workspace=str(tmp_path),
+        base_system_prompt="You are voidx.",
+        persona="voidx",
+        interaction_mode=InteractionMode.AUTO,
+        current_user_text="current request",
+        include_goal_resolution_guide=True,
+    )
+
+    first, cache = RuntimeContextBuilder(**kwargs).build_incremental(cache)
+    second, cache = RuntimeContextBuilder(**kwargs).build_incremental(cache)
+
+    assert first.goal_resolution_guide_message is not None
+    assert second.goal_resolution_guide_message is first.goal_resolution_guide_message
+
+
+def test_raw_semantic_messages_strips_compaction_guide_overlay():
+    messages = [
+        HumanMessage(content="old question"),
+        HumanMessage(content=f"{COMPACTION_GUIDE_MARKER}\nScope: inline-context-compaction"),
+        HumanMessage(content="current request"),
+    ]
+
+    raw = raw_semantic_messages(messages)
+
+    assert [message.content for message in raw] == ["old question", "current request"]
 
 
 def test_runtime_context_system_uses_session_date_not_runtime_state(tmp_path):
@@ -664,6 +737,37 @@ def test_current_task_state_records_structured_workflow_runs(tmp_path):
         "goal_type=feature source=workflow reason=implement persona"
     ) in messages[-1].content
     assert "Workflow exits [tdd]: implemented -> verify" in messages[-1].content
+    assert "Workflow gate [tdd]" not in messages[-1].content
+    assert "test written, red verified, implementation green" not in messages[-1].content
+
+
+def test_current_task_state_lists_feedback_design_and_plan_exits(tmp_path):
+    messages = [HumanMessage(content="处理 review 反馈")]
+    context = RuntimeContextBuilder(
+        config=Config(workspace=str(tmp_path)),
+        workspace=str(tmp_path),
+        base_system_prompt="You are voidx.",
+        persona="implement",
+        interaction_mode=InteractionMode.AUTO,
+        current_user_text="处理 review 反馈",
+        task_state=TaskState(current_intent=TaskIntent.CODING),
+        workflow_runs=[
+            WorkflowRunState(
+                name="feedback",
+                status=WorkflowRunStatus.ACTIVE,
+                source=WorkflowActivationSource.TRANSITION,
+                reason="review returned issues",
+                goal_type="review",
+                scope="review feedback",
+            )
+        ],
+    ).build()
+
+    context.apply_to_messages(messages)
+
+    assert "Workflow exits [feedback]:" in messages[-1].content
+    assert "needs_design -> brainstorm" in messages[-1].content
+    assert "needs_plan -> plan" in messages[-1].content
 
 
 def test_current_task_state_records_user_profile_preferences(tmp_path):

@@ -23,6 +23,5 @@ class AgentState(TypedDict):
     user_message_id: NotRequired[int]
     tool_results: dict[str, str]  # tool_call_id → result text
     step_count: int  # current step number
-    max_steps: int  # safety limit
     should_continue: bool  # router flag
     convergence_forced: NotRequired[bool]  # final no-tools convergence prompt was injected

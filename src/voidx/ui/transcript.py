@@ -5,7 +5,7 @@ from __future__ import annotations
 from collections import defaultdict
 from typing import Literal, cast
 
-from voidx.memory.transcript import TranscriptNodeRow
+from voidx.memory.service import TranscriptNodeRow
 from voidx.ui.output.tree import OutputNode, OutputTree
 
 NodeType = Literal[

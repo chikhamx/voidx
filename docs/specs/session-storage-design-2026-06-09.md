@@ -5,6 +5,8 @@
 > Updated: 2026-06-10 — 补充实测数据、修正 context_frame 存储矛盾、新增文件版本历史、修正 JSONL 写入并发模型、修正重放器 summary 处理
 > Updated: 2026-06-10 — messages 移出 DB 改用 JSONL、DB 路径改为 ~/.voidx/store/、runtime_state 改为每 session 单行替换
 > Updated: 2026-06-12 — 对齐当前代码：补充 message 删除语义、session message_count 索引、现有 rollback 能力、runtime_state/schema 命名差异、subagent 捕获入口
+> Updated: 2026-06-13 — 补充删除级联、clear/reset 完整语义、transcript replay 索引、迁移原子性和回滚方案
+> Updated: 2026-06-14 — 收敛 messages/transcript/log 边界：messages 是模型历史，transcript 只存 UI 结构和引用，文本 transcript log 退出目标存储
 
 ## 1. 问题
 
@@ -55,6 +57,33 @@ Subagent 的 UI 节点混在主 session 的 `transcript_nodes` 里，靠 `agent_
 5. **`/session` 命令体系**：`list` / `new` / `resume` / `del`
 6. **文件版本历史**：每次 write/edit/lsp_format/apply_patch 前保存原始内容快照，支持后续跨 session undo
 
+### 2.1 设计主线
+
+本重构不是简单“把 SQLite 换成 JSONL”，而是把大 payload、可重放事件流和轻量索引拆开。目标状态按数据流划分：
+
+| 数据流 | 写入位置 | SQLite 保留 | 关键约束 |
+|--------|----------|-------------|----------|
+| Session 索引与全局配置 | `~/.voidx/store/voidx.db` | `sessions`、`model_profiles`、轻量计数和索引 | list/resume 不再依赖 `messages` 表 |
+| LLM messages | `sessions/<sid>/messages.jsonl` | `sessions.message_count` | `message_deleted` / `session_cleared` 必须完整表达删除和清空语义 |
+| UI transcript | `sessions/<sid>/transcript.jsonl` + `transcript.idx.json` | 无大 payload | 只存 UI 结构、状态和 message/tool 引用；大 session replay 必须优先 index/checkpoint seek |
+| Context frames | `context/<frame-id>.jsonl` + SQLite frame 索引 | `context_frames` 瘦身索引 | 删除必须跟随 message 范围级联，不能留下过期 frame |
+| Runtime/debug state | `session_runtime_state` + `runtime.jsonl`，可选 `runtime_debug.jsonl` | 最新 runtime state | resume 只依赖最新 runtime，per-message 历史只用于 debug/兼容 |
+| Subagent 与文件历史 | `subagents/*.jsonl`、`file-history/` | 无 | 独立生命周期，随 session 删除一起清理 |
+
+### 2.2 不变量
+
+后续实现和迁移必须满足这些不变量：
+
+1. Phase 4 后，SQLite 不再保存 session 级大 payload：`messages.content`、`transcript_nodes` 文本、`context_frames.messages_json`、per-message runtime snapshot 都应退出主 DB。
+2. 每条 `message` JSONL record 都必须显式带 `content_format`；JSONL 不能依赖 SQLite migration default。
+3. `delete_messages_from()`、`delete_messages_through()`、`clear_messages()` 的 JSONL replay 结果必须与当前 SQLite 硬删除等价，包括 context frame 和 runtime snapshot 级联。
+4. `list_sessions()` / `get_session()` 在移除 `messages` 表前必须切到 `sessions.message_count`，并提供从 JSONL 幂等重算计数的修复路径。
+5. Transcript replay 对大 session 必须使用 `transcript.idx.json` / checkpoint；索引缺失或损坏时才允许二遍扫描并重建索引。
+6. DB 路径迁移必须 copy/validate/atomic replace，旧 DB 保留 `.bak`，不能在未验证新 DB 前删除旧文件。
+7. `/session del` 必须先 dry-run 产生候选集合和预估影响；交互确认和实际删除复用同一候选计算。
+8. `transcript.jsonl` 不能成为第二份 message history：可引用 `message_id` / `tool_call_id`，但不复制完整 user/assistant/tool content。
+9. 文本 `transcript.log` 和普通 logging 只用于 debug/观测，不参与 session resume、replay、迁移或清理语义。
+
 ## 3. 设计
 
 ### 3.0 当前代码对齐要点
@@ -80,14 +109,16 @@ Subagent 的 UI 节点混在主 session 的 `transcript_nodes` 里，靠 `agent_
 │   └── <session-id>/
 │       ├── messages.jsonl                # 对话消息（user/assistant/tool）
 │       ├── transcript.jsonl              # 主对话 transcript
+│       ├── transcript.idx.json           # transcript replay/checkpoint 索引
+│       ├── runtime.jsonl                 # runtime 删除 tombstone
 │       ├── context/
-│       │   └── <frame-id>.jsonl          # 上下文缓存帧（独立文件，不进 transcript）
+│       │   ├── <frame-id>.jsonl          # 上下文缓存帧（独立文件，不进 transcript）
+│       │   └── deletes.jsonl             # context frame 删除 tombstone
 │       ├── subagents/
 │       │   └── <agent-run-id>.jsonl      # subagent transcript
 │       └── file-history/
 │           └── <content-hash>@v<N>       # 文件修改版本快照
-├── settings.json                        # 全局用户配置
-└── transcript.log                       # 文本日志
+└── settings.json                        # 全局用户配置
 ```
 
 **原则**：
@@ -95,25 +126,36 @@ Subagent 的 UI 节点混在主 session 的 `transcript_nodes` 里，靠 `agent_
 - **SQLite 只存轻量数据**：model_profiles、session 索引和计数、context frame 索引、runtime state（每 session 单行）
 - **所有大体积 session payload 走 JSONL/文件**：messages、transcript、context frame messages、file-history
 - **context frame 和 transcript 是独立数据流**，不混进同一个 JSONL 文件
+- **messages 和 transcript 不互相复制**：`messages.jsonl` 是模型上下文 source of truth；`transcript.jsonl` 是 UI OutputTree source of truth，只保存结构、状态、引用和无法从 message 恢复的展示信息
+- **文本 transcript log 退出目标存储**：现有 `transcript.log` 若继续存在，只能作为 legacy/debug 日志，不能作为 replay/resume/迁移来源；普通 Python logging 也只做观测和排障，按日志策略 rotate
 - **DB 路径在 `~/.voidx/store/` 下**，与 session 文件目录分离
 
 ### 3.2 JSONL 数据流格式
 
 每行一个 JSON 对象。参考 Claude Code 的 record type 体系，但适配 voidx 的 OutputTree 模型。
 
-Messages 和 transcript 必须是两个独立数据流：`messages.jsonl` 保存 LLM 对话历史，`transcript.jsonl` 保存 UI OutputTree 事件。不要把 `message` record 混进 `transcript.jsonl`。
+Messages 和 transcript 必须是两个独立数据流：
+
+- `messages.jsonl` 保存 LLM 对话历史，是继续对话、compaction、工具结果回传给模型的唯一权威来源。
+- `transcript.jsonl` 保存 UI OutputTree 事件，是恢复界面结构和展示状态的唯一权威来源。它可以保存 `message_id`、`tool_call_id`、`agent_run_id`、短 preview、状态、耗时、折叠/排序/父子关系等 UI 信息，但不能保存一份完整可喂给模型的 message history。
+
+因此不要把 `message` record 混进 `transcript.jsonl`，也不要把 UI-only 字段混进 `messages.jsonl`。
 
 #### Record 类型
 
 | type | 文件 | 用途 | 必选字段 | 替代现有 |
 |------|------|------|----------|----------|
-| `message` | `messages.jsonl` | 对话消息 | `id`, `role`, `content`, `tool_calls?`, `tool_call_id?`, `content_format?` | `messages` 表 INSERT |
-| `message_delete_range` | `messages.jsonl` | 删除消息范围（cancel/compaction） | `first_id?`, `through_id?`, `reason` | `delete_messages_from` / `delete_messages_through` |
-| `turn_start` | `transcript.jsonl` | turn 开始 | `turn_id`, `timestamp`, `user_text` | `turns` 表 INSERT |
+| `message` | `messages.jsonl` | 对话消息 | `id`, `role`, `content`, `content_format`, `tool_calls?`, `tool_call_id?` | `messages` 表 INSERT |
+| `message_deleted` | `messages.jsonl` | 删除消息范围（cancel/compaction） | `mode`, `first_message_id?`, `last_message_id?`, `reason` | `delete_messages_from` / `delete_messages_through` |
+| `session_cleared` | `messages.jsonl` | 清空当前 session 消息和运行时状态 | `reason`, `cleared_at`, `previous_message_count` | `clear_messages` |
+| `turn_start` | `transcript.jsonl` | turn 开始 | `turn_id`, `timestamp`, `user_message_id?`, `user_preview?` | `turns` 表 INSERT |
 | `turn_end` | `transcript.jsonl` | turn 结束 | `turn_id`, `timestamp` | `turns` 表 UPDATE |
-| `node` | `transcript.jsonl` | 新增 UI 节点 | `turn_id`, `node_id`, `node_type`, `header` | `transcript_nodes` INSERT |
+| `node` | `transcript.jsonl` | 新增 UI 节点 | `turn_id`, `node_id`, `node_type`, `header`, `message_id?`, `tool_call_id?` | `transcript_nodes` INSERT |
 | `node_update` | `transcript.jsonl` | 节点增量更新 | `turn_id`, `node_id` + 变更字段 | `transcript_nodes` UPDATE |
 | `summary` | `transcript.jsonl` | compaction 摘要 | `turn_id`, `content` | `compaction_summary` 字段 |
+| `transcript_reset` | `transcript.jsonl` | 清空或替换 UI transcript | `reason`, `created_at` | `clear_messages` / `replace_transcript` |
+| `context_frame_deleted` | `context/deletes.jsonl` | 删除 context frame 范围 | `mode`, `first_user_message_id?`, `last_user_message_id?`, `reason` | context frame 级联删除 |
+| `runtime_state_deleted` | `runtime.jsonl` | 删除 session/runtime snapshot 范围 | `mode`, `message_id?`, `first_message_id?`, `last_message_id?`, `reason` | runtime state 级联删除 |
 
 > **【Updated 2026-06-10】** 移除了 `context_frame` record type。Context frame 是 LLM 调用级别的快照（每次调用存一条），和 transcript（UI 节点流）是完全不同的数据流。混进 transcript.jsonl 会导致：重放 transcript 时需要跳过大量 context_frame 记录；context frame 的生命周期和 transcript 不同（compaction 后旧 frame 可删，transcript 要保留 summary）。Context frame 只走 `context/<frame-id>.jsonl` 独立文件。
 
@@ -125,26 +167,84 @@ Messages 和 transcript 必须是两个独立数据流：`messages.jsonl` 保存
 {"type":"message","id":1,"role":"user","content":"修复TODO固定框重复渲染","content_format":"text","created_at":"2026-06-09T07:23:50Z"}
 {"type":"message","id":2,"role":"assistant","content":"我来检查一下...","tool_calls":[{"id":"tc_1","name":"read","args":{"file_path":"src/todo.py"}}],"content_format":"text","created_at":"2026-06-09T07:23:51Z"}
 {"type":"message","id":3,"role":"tool","content":"1\tclass TodoPanel...","tool_call_id":"tc_1","content_format":"text","created_at":"2026-06-09T07:23:52Z"}
-{"type":"message_delete_range","through_id":2,"reason":"compaction","created_at":"2026-06-09T08:00:00Z"}
+{"type":"message_deleted","mode":"through","last_message_id":2,"reason":"compaction","created_at":"2026-06-09T08:00:00Z"}
 ```
+
+`content_format` 必须写入每条 message record，默认值为 `"text"`。当前 `MessageRow.content_format` 有 SQLite migration 默认值，但 JSONL 没有 schema default；省略该字段会让 structured attachment / DeepSeek thinking block 的恢复路径变得不确定。
 
 `transcript.jsonl`：
 
 ```jsonl
-{"type":"turn_start","turn_id":0,"timestamp":"2026-06-09T07:23:50Z","user_text":"修复TODO固定框重复渲染"}
-{"type":"node","turn_id":0,"node_id":0,"parent_node_id":null,"sort_order":0,"node_type":"assistant","header":"assistant","status":"running","metadata":{"tree_id":"a1b2","payload":{}}}
+{"type":"turn_start","turn_id":0,"timestamp":"2026-06-09T07:23:50Z","user_message_id":1,"user_preview":"修复TODO固定框重复渲染"}
+{"type":"node","turn_id":0,"node_id":0,"parent_node_id":null,"sort_order":0,"node_type":"assistant","header":"assistant","message_id":2,"status":"running","metadata":{"tree_id":"a1b2","payload":{}}}
 {"type":"node","turn_id":0,"node_id":1,"parent_node_id":0,"sort_order":1,"node_type":"tool_call","header":"Read file","tool_call_id":"tc_1","status":"done"}
 {"type":"node_update","turn_id":0,"node_id":0,"status":"done","elapsed":1.2}
 {"type":"turn_end","turn_id":0,"timestamp":"2026-06-09T07:26:08Z"}
 {"type":"summary","turn_id":0,"content":"修复了 TodoUpdated 双写问题..."}
 ```
 
+`user_preview` 和类似 preview 字段只用于列表/首屏展示，可截断；完整 user/assistant/tool content 必须回到 `messages.jsonl` 通过 `message_id` 或 `tool_call_id` 查。纯 UI 节点、summary、错误提示等没有对应 message 的内容，可以直接存入 transcript。
+
 #### 设计决策
 
 - **`node` vs `node_update`**：新增节点用 `node`（全字段），状态变更用 `node_update`（只写变更字段）。重放时先建节点再 patch，避免全量替换。
+- **`node_update` 合并语义**：同一 `(turn_id, node_id)` 的多个 update 按文件顺序应用，后写字段覆盖先写字段；`body_lines` 默认替换全量，追加内容必须用 `body_append` 明确表达；`metadata` 默认 shallow merge，清空字段用 `null` 或 `metadata_delete` 列表明确表达。
 - **`summary`**：compaction 产生的摘要。重放时遇到 `summary`，跳过该 turn 之前的 node 记录，只保留 summary 内容。这是懒加载的基础。
 - **字段映射**：`node` 的字段与现有 `TranscriptNodeRow` 一一对应，迁移成本低。`metadata` 必须保留当前 `tree_to_transcript_rows()` 写入的 `tree_id`、`header_style`、`agent_name`、`step_info`、`meta`、`payload`。
-- **消息删除**：`messages.jsonl` 是 append-only，但当前代码有 `delete_messages_from()` 和 `delete_messages_through()`。读取 messages 时必须先读全量 record，再应用 `message_delete_range` tombstone；同时更新 SQLite 中的 `sessions.message_count`。
+- **message 引用**：message-backed UI 节点必须优先写 `message_id` / `tool_call_id`，不把完整 `content`、`tool_calls`、`tool_result` 复制进 transcript；replay 时按需 join `messages.jsonl` 补齐展示文本。
+- **消息删除**：`messages.jsonl` 是 append-only，但当前代码有 `delete_messages_from()` 和 `delete_messages_through()`。读取 messages 时必须先读全量 record，再应用 `message_deleted` tombstone；同时更新 SQLite 中的 `sessions.message_count`。
+- **删除字段命名**：record 字段使用当前代码名 `first_message_id` / `last_message_id` / `user_message_id`，不要再引入 `first_id` / `through_id` 这类不对应代码的别名。
+
+#### 删除级联语义
+
+当前 SQLite 删除不是只删 `messages`：
+
+- `delete_messages_from(session_id, first_message_id)` 删除 `context_frames.user_message_id >= first_message_id`、`message_runtime_snapshots.message_id >= first_message_id`、`messages.id >= first_message_id`，然后 touch session
+- `delete_messages_through(session_id, last_message_id)` 删除 `context_frames.user_message_id <= last_message_id`、`message_runtime_snapshots.message_id <= last_message_id`、`messages.id <= last_message_id`，然后 touch session
+- `clear_messages(session_id)` 删除 context frames、message runtime snapshots、session runtime state、transcript nodes、turns、messages
+
+JSONL 方案必须为这些级联删除留下可重放记录，而不是只写 message tombstone：
+
+```jsonl
+{"type":"message_deleted","mode":"from","first_message_id":42,"reason":"cancel","created_at":"..."}
+{"type":"context_frame_deleted","mode":"from","first_user_message_id":42,"reason":"cancel","created_at":"..."}
+{"type":"runtime_state_deleted","mode":"from","first_message_id":42,"reason":"cancel","created_at":"..."}
+```
+
+`mode` 取值：
+
+- `from`: 删除 `id >= first_message_id`
+- `through`: 删除 `id <= last_message_id`
+- `all`: 删除该 session 全部记录
+
+范围删除读取规则：
+
+1. `messages.jsonl` loader 应用 `message_deleted`
+2. `load_context_frames()` 读取 SQLite 索引后应用 `context_frame_deleted`，再读取剩余 `file_path`
+3. runtime state loader 应用 `runtime_state_deleted`；`mode=all` 返回默认 runtime state
+4. `sessions.message_count` 可从 JSONL 重算，并作为索引修复来源
+
+### 3.2.1 `clear_messages()` 硬重置语义
+
+当前 `clear_messages(session_id)` 是 6 步硬重置，不只是 “`session_cleared` + message_count=0”：
+
+1. 删除 `context_frames`
+2. 删除 `message_runtime_snapshots`
+3. 删除 `session_runtime_state`
+4. 删除 `transcript_nodes`
+5. 删除 `turns`
+6. 删除 `messages`
+
+JSONL 对应操作：
+
+- `messages.jsonl`: append `{"type":"session_cleared","reason":"clear_messages",...}`，loader 忽略该行之前所有 message 和 message delete record
+- `transcript.jsonl`: append `{"type":"transcript_reset","reason":"clear_messages",...}`，replay 从最后一个 reset 后开始
+- `context/deletes.jsonl`: append `{"type":"context_frame_deleted","mode":"all","reason":"clear_messages",...}`
+- `runtime.jsonl`: append `{"type":"runtime_state_deleted","mode":"all","reason":"clear_messages",...}`
+- SQLite: `sessions.message_count = 0`，删除/失效 context frame 索引行，删除 `session_runtime_state`
+- Files: 可保留旧 JSONL 作为 append-only history，也可在 compaction/maintenance 中 rewrite；读取语义必须以 reset marker 为准
+
+`/clear` 新建 session 与 `clear_messages()` 不同：`/clear` 当前会 detach/创建新 session；它不应向旧 session 追加 `session_cleared`，除非明确复用原 session id。
 
 ### 3.3 SQLite 保留的职责
 
@@ -160,17 +260,6 @@ Messages 和 transcript 必须是两个独立数据流：`messages.jsonl` 保存
 | `session_runtime_state` | ✅ | 已是 UPSERT（每 session 单行），不变 |
 | `message_runtime_snapshots` | ❌ 废弃 | 合并到 `session_runtime_state`，每 session 只保留最新一份，Phase 4 删除表 |
 | `model_profiles` | ✅ | 不变（全局配置） |
-
-#### DB 路径变更
-
-```python
-# store.py
-DATA_DIR = Path.home() / ".voidx"
-STORE_DIR = DATA_DIR / "store"  # 新增
-# DB 路径: STORE_DIR / "voidx.db"
-```
-
-迁移时自动将 `~/.voidx/voidx.db` 移动到 `~/.voidx/store/voidx.db`。
 
 #### message_runtime_snapshots 合并到 session_runtime_state
 
@@ -189,7 +278,37 @@ compaction_summary TEXT NOT NULL DEFAULT '',
 session_time TEXT NOT NULL
 ```
 
-因此合并时不新增 `intent_confidence` / `intent_source` / `intent_refined` / `available_tool_ids_json`。这些字段来自旧 intent refinement 设计，当前代码已无对应 schema。`save_message_runtime_snapshot()` 改为兼容适配器：把 `interaction_mode`、`task_intent`、`current_goal`、`pending_approval`、`workflow_runs` 写入同 session 的 `session_runtime_state`，不再 INSERT 新行。若后续还需要 per-message 调试历史，应另设 debug-only 日志，不放主 DB。
+因此合并时不新增 `intent_confidence` / `intent_source` / `intent_refined` / `available_tool_ids_json`。这些字段来自旧 intent refinement 设计，当前代码已无对应 schema。
+
+合并方案不能只把 `save_message_runtime_snapshot()` 改成覆盖最新 state，因为当前测试和调试路径仍可能按 `message_id` 调 `load_message_runtime_snapshot()`。迁移分两层：
+
+- Runtime 恢复主路径：`save_message_runtime_snapshot()` 同步更新同 session 的 `session_runtime_state`，作为 resume 唯一来源
+- Debug/兼容路径：Phase 1-2 继续双写 `message_runtime_snapshots`；Phase 3 提供 `runtime_debug.jsonl` 或兼容 loader，允许按 `message_id` 查询历史快照；Phase 4 才停止写 DB 表
+
+`load_message_runtime_snapshot(message_id)` 在迁移期应先查 debug JSONL/旧 DB，找不到再返回 `None`。不要把 per-message 历史悄悄映射为最新 session runtime state，否则会制造错误的调试结果。
+
+#### DB 路径变更
+
+```python
+# store.py
+DATA_DIR = Path.home() / ".voidx"
+STORE_DIR = DATA_DIR / "store"  # 新增
+# DB 路径: STORE_DIR / "voidx.db"
+```
+
+迁移时自动将 `~/.voidx/voidx.db` 移动到 `~/.voidx/store/voidx.db`。
+
+DB 路径迁移必须是可恢复的：
+
+1. 确保没有已打开 `_conn`，关闭旧连接
+2. 创建 `~/.voidx/store/`
+3. 若旧 DB 存在且新 DB 不存在，先复制到 `store/voidx.db.tmp`
+4. 对 tmp 文件 fsync，校验能打开并通过 `PRAGMA integrity_check`
+5. atomic replace 为 `store/voidx.db`
+6. 旧 `~/.voidx/voidx.db` 保留为 `.bak`，不要立即删除
+7. WAL/SHM 文件存在时同步处理或在迁移前 checkpoint
+
+若新旧 DB 同时存在，以新 DB 为准并记录 warning；不做覆盖。
 
 #### context_frames 瘦身后的 schema
 
@@ -223,8 +342,8 @@ CREATE TABLE context_frames (
 
 ```jsonl
 {"type":"message","id":1,"role":"user","content":"修复TODO","content_format":"text","created_at":"2026-06-09T07:23:50Z"}
-{"type":"message","id":2,"role":"assistant","content":"我来检查...","tool_calls":[{"id":"tc_1","name":"read","args":{"file_path":"src/todo.py"}}],"created_at":"2026-06-09T07:23:51Z"}
-{"type":"message","id":3,"role":"tool","content":"1\tclass TodoPanel...","tool_call_id":"tc_1","created_at":"2026-06-09T07:23:52Z"}
+{"type":"message","id":2,"role":"assistant","content":"我来检查...","content_format":"text","tool_calls":[{"id":"tc_1","name":"read","args":{"file_path":"src/todo.py"}}],"created_at":"2026-06-09T07:23:51Z"}
+{"type":"message","id":3,"role":"tool","content":"1\tclass TodoPanel...","content_format":"text","tool_call_id":"tc_1","created_at":"2026-06-09T07:23:52Z"}
 ```
 
 加载消息时直接逐行读取 JSONL，无需 SQLite 查询。`id` 字段保留用于 compaction 时的 `delete_messages_through` 引用。
@@ -240,8 +359,8 @@ ALTER TABLE sessions ADD COLUMN message_count INTEGER NOT NULL DEFAULT 0;
 维护规则：
 
 - `save_message()` 双写时递增 `sessions.message_count`
-- `clear_messages()` 置 0，并追加/写入 JSONL clear marker
-- `delete_messages_from()` / `delete_messages_through()` 追加 `message_delete_range`，并按 loader 或已知范围重新计算/更新 `message_count`
+- `clear_messages()` 置 0，并追加/写入 `session_cleared` / `transcript_reset` 等 reset marker
+- `delete_messages_from()` / `delete_messages_through()` 追加 `message_deleted`，并按 loader 或已知范围重新计算/更新 `message_count`
 - `list_sessions()` / `get_session()` 改为读取 `sessions.message_count`，不再 JOIN `messages`
 
 ### 3.4 Transcript 重放
@@ -267,6 +386,33 @@ replay_transcript_jsonl(session_id)   # 逐行读取 JSONL
 
 > **【Updated 2026-06-10】** 修正 summary 处理逻辑。原设计在流式重放中遇到 summary 时回溯删除已添加节点，这在树结构上很复杂且容易出错。改为两遍重放：第一遍扫描 summary 位置，第二遍只重放 summary 之后的 node。
 
+> **【Updated 2026-06-13】** 两遍扫描只能作为 fallback。大 session 必须有 seek/index 机制，否则每次 resume 都 O(file size)。新增 `transcript.idx.json`，写入 transcript 时同步维护 summary/reset/checkpoint 偏移。
+
+#### Transcript index
+
+`transcript.idx.json` 存轻量 replay 索引：
+
+```json
+{
+  "version": 1,
+  "transcript_size": 1234567,
+  "last_reset_offset": 120,
+  "turn_offsets": {"0": 121, "1": 9320},
+  "summary_offsets": {"0": 53120},
+  "last_checkpoint_offset": 980000,
+  "last_checkpoint_path": "transcript.checkpoint.json"
+}
+```
+
+规则：
+
+- `append_transcript()` 每次写入后记录新行起始 byte offset
+- `summary` 更新 `summary_offsets[turn_id]`
+- `transcript_reset` 更新 `last_reset_offset`
+- 每 N 条 record 或文件超过阈值后写 `transcript.checkpoint.json`，包含最近可恢复 `OutputTree` snapshot 和 offset
+- replay 优先从 checkpoint/last_reset/last summary offset seek；只有索引缺失、损坏或 size 不匹配时才回退两遍扫描并重建 index
+- index 写入采用 temp file + fsync + atomic replace，避免半写
+
 ```python
 # src/voidx/memory/jsonl_replay.py
 
@@ -274,6 +420,9 @@ async def replay_transcript_jsonl(session_id: str) -> OutputTree | None:
     path = _session_dir(session_id) / "transcript.jsonl"
     if not path.exists():
         return None
+    index = await load_transcript_index(session_id)
+    if index and index.matches(path):
+        return await replay_transcript_from_index(path, index)
 
     # 第一遍：扫描 summary 位置，确定每个 turn 的有效起始点
     summarized_turns: dict[int, int] = {}  # turn_id → 最后一个 summary 的行号
@@ -388,6 +537,16 @@ async def restore_transcript_snapshot(self, *, append=False):
 
 因此 JSONL 写入不能只靠“`agent_run_id` 不为空的节点路由到 subagent 文件”。更稳的衔接方式是：主 transcript 记录 `subagent` wrapper 节点和 parent-child 引用；subagent 细节文件从 `SubagentStarted` / `SubagentStepStarted` / `ToolStarted(agent_id=...)` 等 UI events 或 CaptureConsole 统一事件入口写入。这样不会依赖恢复时重新拆分已经扁平化的 `OutputTree`。
 
+具体写入接口：
+
+- `append_subagent_event(session_id, subagent_id, record)` 写 `sessions/<sid>/subagents/<subagent_id>.jsonl`
+- `SubagentStarted` 写 `subagent_start`，包含 `parent_tool_call_id`、`parent_turn_id`、`parent_node_id`、`agent_name`、`description`
+- `SubagentStepStarted` 写 `turn_start` 或 `subagent_step_start`
+- `ToolStarted` / `ToolFinished` / `ToolResultAppended` 若 `agent_id >= 0`，同时写入对应 subagent JSONL
+- `SubagentFinished` 写 `subagent_end`，包含 `ok`、`elapsed`
+
+主 transcript 的 `subagent` node 只保存 wrapper 和 `agent_run_id`。完整细节延迟读取 `subagents/<agent_run_id>.jsonl`，避免主 transcript 继续膨胀。
+
 ### 3.6 文件版本历史
 
 > **【Updated 2026-06-10】** 新增章节。对比 Claude Code 的 `file-history/` 目录，voidx 缺少文件修改的版本快照能力。
@@ -399,7 +558,7 @@ sessions/<session-id>/file-history/
 └── <content-hash>@v<N>              # 文件内容快照
 ```
 
-- `content-hash`：文件路径的 SHA-256 前 16 位，用于区分不同文件
+- `content-hash`：文件路径的 SHA-256，文件名可用前 16 位短 hash，但必须在 manifest 中保存完整 hash
 - `v<N>`：版本号，从 1 递增
 
 #### 写入时机
@@ -423,15 +582,25 @@ def save_file_version(ctx: ToolContext, path: Path) -> None:
     if not path.exists() or path.is_dir():
         return
     content = path.read_text(encoding="utf-8", errors="replace")
-    content_hash = hashlib.sha256(str(path).encode()).hexdigest()[:16]
-    version = _next_version(ctx, content_hash)
+    full_hash = hashlib.sha256(str(path.resolve()).encode()).hexdigest()
+    short_hash = full_hash[:16]
+    version = _next_version(ctx, full_hash)
     snapshot_path = (
-        _session_dir(ctx.session_id) / "file-history" / f"{content_hash}@v{version}"
+        _session_dir(ctx.session_id) / "file-history" / f"{short_hash}@v{version}"
     )
     snapshot_path.parent.mkdir(parents=True, exist_ok=True)
     snapshot_path.write_text(content, encoding="utf-8")
+    _append_file_history_manifest(ctx, path, full_hash, short_hash, version)
     record_mtime(ctx, path)
 ```
+
+必须同时维护 `file-history/manifest.jsonl`：
+
+```jsonl
+{"full_hash":"...","short_hash":"a1b2c3d4e5f6a7b8","version":1,"path":"src/app.py","snapshot":"a1b2c3d4e5f6a7b8@v1","created_at":"..."}
+```
+
+恢复时用 `full_hash + path` 校验，发现 short hash 碰撞时改用 `full_hash@v<N>` 文件名或给短文件名加后缀；不能只依赖 16 位短 hash。
 
 #### 与 Claude Code 的对比
 
@@ -460,6 +629,7 @@ Phase 1 只做存储，不提供 undo 命令。后续可扩展 `/undo` 命令从
 | `/session del 15d` | 删除 15 天前的 session | **新增** |
 | `/session del 30d` | 删除 30 天前的 session | **新增** |
 | `/session del all` | 删除所有 session | **新增** |
+| `/session del --dry-run 7d` | 只预览，不删除 | **新增** |
 
 #### `/session del` 交互流程
 
@@ -484,6 +654,8 @@ Will delete 42 sessions (7 days old):
 Confirm? [y/N]
 ```
 
+`--dry-run` 只输出同样的预览和候选 session id，不弹确认、不删除 SQLite 或文件。交互式 `/session del` 内部也先调用 dry-run 计算函数，再进入 confirm/apply，保证预览和实际删除使用同一候选集合。
+
 > **【Updated 2026-06-10】** 磁盘空间估算改为从 SQLite `length()` 估算 messages + context_frames 大小，加上 `os.path.getsize` 遍历 session 目录的 JSONL 文件大小。对于大量 session，先在 SQLite 中按 `updated_at` 过滤出候选 session，再计算大小，避免全量遍历。
 
 确认后执行删除：SQLite 行 + JSONL 文件 + context 文件 + file-history 文件，一条不留。
@@ -491,7 +663,7 @@ Confirm? [y/N]
 注意区分两类删除：
 
 - 删除整个 session：删除 `sessions` 行并 `shutil.rmtree(sessions/<session-id>)`
-- 保留 session 但清理消息：`clear_messages()`、`delete_messages_from()`、`delete_messages_through()` 追加 `message_delete_range` / clear marker，并同步 `sessions.message_count`
+- 保留 session 但清理消息：`clear_messages()`、`delete_messages_from()`、`delete_messages_through()` 追加 `message_deleted` / `session_cleared` 等 tombstone，并同步 `sessions.message_count`
 
 #### 向后兼容
 
@@ -576,6 +748,7 @@ from pathlib import Path
 from typing import Any
 
 _session_locks: dict[str, asyncio.Lock] = {}
+_session_lock_refs: dict[str, int] = {}
 _locks_lock = asyncio.Lock()
 
 
@@ -640,35 +813,59 @@ async def append_subagent_transcript(
         await asyncio.to_thread(_append_jsonl_sync, path, records)
 ```
 
+`_session_locks` 不能无限增长。实现需要在 session 删除/clear cleanup 时调用 `drop_session_lock(session_id)`；也可以用 LRU/weakref 维护最近活跃锁。删除锁前必须确认没有正在持有的写入任务，或者只在 `_locks_lock` 下标记为可回收，等引用计数为 0 再移除。
+
 ## 4. 迁移计划
 
 ### Phase 1：JSONL 写入层（双写，不破坏现有）
 
 - 新增 `src/voidx/memory/jsonl_store.py`
+- 新增 transcript index/checkpoint 写入：`transcript.idx.json` + 可选 `transcript.checkpoint.json`
 - 修改 `session.py`：`save_message` 同时写 SQLite + `messages.jsonl`，维护 `sessions.message_count`
-- 修改 `session.py`：`clear_messages` / `delete_messages_from` / `delete_messages_through` 同时写 JSONL tombstone
+- 修改 `session.py`：`clear_messages` / `delete_messages_from` / `delete_messages_through` 同时写 message/context/runtime tombstone
 - 修改 `session_runtime.py`：`persist_transcript_snapshot` 同时写 SQLite + JSONL
 - 修改 `context_frames.py`：`save_context_frame` 同时写 SQLite 索引 + JSONL 文件
+- 修改 `runtime_state.py`：runtime 恢复主路径写 `session_runtime_state`，debug/兼容路径继续双写 per-message snapshot
 - 修改 `ui/session.py` 或 `file_state.py`：write/edit/lsp_format/apply_patch 前保存持久文件版本快照，并保留当前内存 rollback
 - 新增 `src/voidx/memory/jsonl_replay.py`
-- **验证**：JSONL 文件与 SQLite 数据一致
+
+验证闸门：
+
+- save/load parity：同一 session 的 SQLite messages、JSONL messages、`content_format`、tool call 字段完全一致
+- transcript payload boundary：message-backed transcript 节点只写 `message_id` / `tool_call_id` / preview / UI metadata，不复制完整 message content 或 tool result
+- tombstone parity：`delete_messages_from()` / `delete_messages_through()` 同时写 message/context/runtime 删除记录
+- clear parity：`clear_messages()` 同时覆盖 6 类当前 SQLite 删除对象，并写入 reset marker
+- transcript index：append transcript 后 `transcript.idx.json` size/offset 与文件匹配，索引损坏时能回退扫描并重建
 
 ### Phase 2：JSONL 读取层 + DB 路径迁移
 
 - 修改 `load_messages`：优先从 `messages.jsonl` 读取，fallback 到 SQLite
-- 修改 `GraphSessionRuntime.restore_transcript_snapshot`：优先从 JSONL 重放，fallback 到 SQLite
+- 修改 `GraphSessionRuntime.restore_transcript_snapshot`：优先从 JSONL index/checkpoint 重放，fallback 到 SQLite
 - 修改 `load_context_frames`：从 JSONL 文件读取 messages，SQLite 只查索引
-- 修改 `store.py`：DB 路径改为 `~/.voidx/store/voidx.db`，自动迁移旧路径
-- 修改 `runtime_state.py`：`message_runtime_snapshots` 合并到 `session_runtime_state`
+- 修改 `store.py`：DB 路径改为 `~/.voidx/store/voidx.db`，用 tmp copy + integrity_check + atomic replace 迁移旧路径
+- 修改 `runtime_state.py`：`message_runtime_snapshots` 合并到 `session_runtime_state`，并保留 debug/兼容读取路径
 - 修改 `list_sessions` / `get_session`：读取 `sessions.message_count`，不再 JOIN `messages`
-- **验证**：重放结果与现有 SQLite 读取一致，DB 路径迁移无数据丢失
+
+验证闸门：
+
+- replay equivalence：同一 transcript 从 SQLite 和 JSONL replay 后 OutputTree 结构一致；message-backed 节点按引用 join `messages.jsonl` 补齐展示文本
+- message count：`list_sessions()` / `get_session()` 不 JOIN `messages`，计数可从 JSONL 重算修复
+- path migration：旧 DB、WAL/SHM、损坏 tmp、新旧 DB 同时存在等场景都有测试覆盖
+- runtime resume：resume 只依赖 `session_runtime_state` 最新状态，per-message debug 查询不误读最新状态
 
 ### Phase 3：命令体系 + 清理
 
 - 新增 `/session` 命令命名空间
-- 实现 `/session del` 交互式清理
+- 实现 `/session del` 交互式清理和 `/session del --dry-run`
 - 旧命令 `/list` → `/session list`，`/clear` → `/session new` 别名
-- **验证**：命令交互正确，清理逻辑安全
+
+验证闸门：
+
+- dry-run 不删除 SQLite 行和 session 目录，并输出候选 session id、数量、空间估算
+- 交互确认和 apply 使用 dry-run 同一候选集合，避免预览/实际删除漂移
+- session 删除失败时不提前删除 DB 索引；DB 删除失败时可由下一次 cleanup 幂等修复
+- `/clear` 作为 `/session new` 别名时不污染旧 session 的 `messages.jsonl`
+- `transcript.log` 不作为 `/session del --dry-run` 的空间估算或删除正确性来源；若存在，只随日志策略或 legacy cleanup 处理
 
 ### Phase 4：移除 SQLite session 级表
 
@@ -679,23 +876,31 @@ async def append_subagent_transcript(
 - `context_frames` 移除 `messages_json` 列，改用 `file_path`
 - `sessions.message_count` 成为 list/resume 的唯一消息数量索引
 - 提供一次性迁移脚本将旧数据转为 JSONL
-- **验证**：全量测试通过，DB 体积 < 1 MB
+- 提供 Phase 4 回滚方案：保留旧 DB `.bak` 和 schema version 标记；若 JSONL 读取失败或新版本启动失败，可切回旧 DB 读取路径；删除旧表前至少经过一个 release 的双写/双读验证窗口
+
+验证闸门：
+
+- full migration：旧 DB 能完整导出 messages/transcript/context/runtime debug 到 JSONL/索引文件
+- rollback drill：迁移后人为破坏 JSONL/index，启动路径能报告错误并切回旧 DB fallback 或 `.bak`
+- schema cleanup：删除旧表前有 schema version gate，旧版本不会误读半迁移 DB
+- size gate：样本 DB 迁移后主 DB 只剩轻量索引和配置，目标 < 1 MB
 
 ## 5. 文件变更清单
 
 | 文件 | 操作 | 说明 |
 |------|------|------|
 | `src/voidx/memory/jsonl_store.py` | 新增 | JSONL append-only 写入器（per-session 锁 + async IO） |
-| `src/voidx/memory/jsonl_replay.py` | 新增 | JSONL 重放器（两遍扫描处理 summary） |
+| `src/voidx/memory/jsonl_replay.py` | 新增 | JSONL 重放器（优先 index/checkpoint，fallback 二遍扫描） |
+| `src/voidx/memory/jsonl_index.py` | 新增 | transcript index/checkpoint 管理 |
 | `src/voidx/memory/cleanup.py` | 新增 | Session 清理策略 |
-| `src/voidx/memory/session.py` | 修改 | `save_message` → JSONL append，`load_messages` → JSONL 读取 |
+| `src/voidx/memory/session.py` | 修改 | `save_message` → JSONL append，`load_messages` → JSONL 读取，delete/clear tombstone |
 | `src/voidx/memory/transcript.py` | 修改 | 新增 `append_transcript_jsonl()` |
-| `src/voidx/memory/context_frames.py` | 修改 | `messages_json` → `file_path` |
-| `src/voidx/memory/runtime_state.py` | 修改 | `message_runtime_snapshots` 合并到 `session_runtime_state` |
+| `src/voidx/memory/context_frames.py` | 修改 | `messages_json` → `file_path`，支持 `context_frame_deleted` |
+| `src/voidx/memory/runtime_state.py` | 修改 | `message_runtime_snapshots` 合并到 `session_runtime_state`，保留 debug/兼容读取 |
 | `src/voidx/memory/store.py` | 修改 | DB 路径改为 `~/.voidx/store/`，schema 变更 |
 | `src/voidx/tools/file_state.py` | 修改 | 新增 `save_file_version()` 文件版本快照 |
 | `src/voidx/ui/session.py` | 修改 | 复用现有 write/edit/lsp_format/apply_patch 捕获入口，补持久 file-history |
-| `src/voidx/agent/graph/session_runtime.py` | 修改 | transcript 双写 + JSONL 优先读取 |
+| `src/voidx/agent/graph/session_runtime.py` | 修改 | transcript 双写 + JSONL 优先读取；message-backed 节点写引用不写完整 payload |
 | `src/voidx/agent/graph/transcript_mixin.py` | 修改 | 如有需要仅保留代理调用 |
 | `src/voidx/agent/graph/turn_runner.py` | 修改 | `save_message` → JSONL append |
 | `src/voidx/agent/slash/session.py` | 修改 | `/session` 命令体系 |
@@ -710,14 +915,19 @@ async def append_subagent_transcript(
 |------|------|
 | JSONL 文件损坏 | 逐行解析，跳过坏行；Phase 1-2 双写期间 SQLite 作为 fallback |
 | 迁移期间数据不一致 | Phase 1-2 双写，确保至少一份数据完整 |
-| append-only 与删除语义冲突 | `message_delete_range` / clear marker 作为 tombstone，loader 统一应用 |
+| append-only 与删除语义冲突 | `message_deleted` / `session_cleared` 作为 tombstone，loader 统一应用 |
+| 删除级联遗漏 context/runtime | `message_deleted`、`context_frame_deleted`、`runtime_state_deleted` 必须同入口写入，并用 parity 测试覆盖 |
+| transcript 重复保存 message payload | transcript schema 限定为 `message_id` / `tool_call_id` 引用 + UI metadata；完整 content 只读 `messages.jsonl` |
+| 文本 log 被误当 session 存储 | `transcript.log` 和普通 logging 明确不参与 replay/resume/迁移，按 debug 日志策略 rotate/清理 |
 | `message_count` 与 JSONL 不一致 | 所有 save/delete/clear 入口同步更新索引并可幂等重算；测试覆盖 list/resume 计数 |
-| 大 session JSONL 重放性能 | 两遍扫描 + 懒加载：只重放最近 N 个 turn，旧 turn 用 summary |
-| `/session del` 误删 | 交互确认 + 预览 + 只删过期 session |
+| 大 session JSONL 重放性能 | `transcript.idx.json` + checkpoint seek 是主路径；二遍扫描只在索引缺失/损坏时 fallback 并重建 |
+| `/session del` 误删 | dry-run 预览 + 交互确认；预览和 apply 复用同一候选集合 |
 | 并发写入 JSONL | per-session asyncio.Lock + `asyncio.to_thread()` 避免阻塞事件循环 |
+| per-session lock 字典泄漏 | session cleanup 时回收 lock，或使用 LRU/weakref + 引用计数 |
 | 旧版本无法读取新格式 | Phase 1-2 双写期间保持 SQLite 完整，旧版本仍可读 |
 | 文件版本历史占用磁盘 | 随 session 删除一起清理；单个快照通常 < 100 KB |
-| DB 路径迁移 | 自动检测旧路径 `~/.voidx/voidx.db`，移动到 `~/.voidx/store/voidx.db` |
+| DB 路径迁移 | tmp copy + fsync + integrity_check + atomic replace；旧 DB 保留 `.bak` |
+| Phase 4 回滚困难 | 一个 release 的双写验证窗口 + schema version + 旧 DB `.bak` |
 | 多进程写锁竞争 | 重构后 SQLite 只写小行（session 元数据、runtime state），竞争基本消除 |
 
 ## 7. 预期收益
@@ -728,7 +938,8 @@ async def append_subagent_transcript(
 | DB 膨胀主因 | `context_frames.messages_json` 53 MB (61%) + `messages` 7 MB (8%) | 全部移出，改用 JSONL 文件 |
 | DB 路径 | `~/.voidx/voidx.db` | `~/.voidx/store/voidx.db` |
 | Message 存储 | SQLite `messages` 表 | `messages.jsonl` append-only |
-| Transcript 持久化 | DELETE + INSERT 全量 | Append-only 增量 |
+| Transcript 持久化 | DELETE + INSERT 全量，可能重复 UI 文本 | Append-only UI 事件 + message/tool 引用 |
+| 文本 transcript log | 可作为额外对话日志存在 | 退出目标 session 存储，只保留 legacy/debug 角色 |
 | Context frame 存储 | SQLite BLOB | JSONL 文件，按需加载 |
 | Runtime state | `message_runtime_snapshots` 累积 | 合并到 `session_runtime_state`，每 session 单行替换 |
 | Session 清理 | 手动操作 DB | `/session del` 交互式 |

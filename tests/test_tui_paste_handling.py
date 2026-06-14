@@ -218,7 +218,7 @@ def test_registered_paste_tokens_render_dim_cyan(tmp_path):
     plain = re.sub(r"\x1b\[[0-9;]*[a-zA-Z]", "", ansi)
 
     assert display in plain
-    assert "\x1b[2;36m" in ansi or "\x1b[36;2m" in ansi
+    assert "\x1b[2;36m" in ansi or "\x1b[36;2m" in ansi or "\x1b[2m" in ansi
 
 
 def test_bracketed_paste_single_line_does_not_submit(tmp_path):

@@ -6,8 +6,7 @@ from pathlib import Path
 from typing import Any
 
 from voidx.config import Settings
-from voidx.skills.registry import SkillRegistry
-from voidx.skills.service import SkillService
+from voidx.skills.service import SkillRegistry, SkillService
 from voidx.ui.tools.attachment_tokens import attachment_token_text
 from voidx.ui.tools.file_picker import (
     AttachmentToken,

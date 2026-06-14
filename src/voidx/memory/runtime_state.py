@@ -15,7 +15,7 @@ from voidx.runtime import (
     TaskState,
     TodoRunState,
 )
-from voidx.workflow.runtime import WorkflowRunState
+from voidx.workflow.types import WorkflowRunState
 
 
 class RuntimeStateSnapshot(BaseModel):

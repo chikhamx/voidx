@@ -15,8 +15,17 @@ class WorkflowActivation:
 
 
 WORKFLOW_PRIORITY = {
-    name: node.priority
-    for name, node in DEFAULT_WORKFLOW_DAG.nodes.items()
+    name: index
+    for index, name in enumerate((
+        "debug",
+        "feedback",
+        "brainstorm",
+        "design-doc",
+        "plan",
+        "tdd",
+        "verify",
+        "review",
+    ))
 }
 
 WORKFLOW_TRANSITIONS: dict[str, tuple[str, ...]] = {
@@ -35,7 +44,7 @@ def workflow_activations(
     runtime_trigger: str | None = None,
 ) -> list[WorkflowActivation]:
     text = user_text.strip().lower()
-    agent_name = (agent or "").strip().lower()
+    persona = (agent or "").strip().lower()
     intent = (task_intent or "").strip().lower()
     goal = (goal_type or "").strip().lower()
     mode = (interaction_mode or "").strip().lower()
@@ -66,27 +75,33 @@ def workflow_activations(
     elif goal == "debug":
         add("debug", "goal:debug")
 
-    if agent_name == "implement":
+    if persona == "implement":
         add("tdd", "implement persona")
         add("verify", "implement lifecycle")
 
-    if agent_name == "plan":
+    has_active_predecessor = "brainstorm" in activations or "design-doc" in activations
+
+    if persona == "plan" and not has_active_predecessor:
         add("plan", "plan persona")
 
     if goal == "review":
         if _contains_any(text, _REVIEW_FEEDBACK_TERMS):
-            add("review-feedback", "review feedback")
+            add("feedback", "review feedback")
         else:
             add("review", "goal:review")
 
     if goal == "design":
         add("brainstorm", "goal:design")
-        if _contains_any(text, _PLAN_TERMS):
+        if (
+            mode != "plan"
+            and not has_active_predecessor
+            and _contains_any(text, _PLAN_TERMS)
+            and _explicit_plan_request(text)
+        ):
             add("plan", "planning intent")
 
     if mode == "plan":
         add("brainstorm", "plan mode")
-        add("plan", "plan mode")
 
     return sorted(
         activations.values(),
@@ -110,12 +125,19 @@ def workflow_gate(name: str) -> NodeGate | None:
     return DEFAULT_WORKFLOW_DAG.gate_for(name)
 
 
+def workflow_tools(name: str) -> tuple[str, ...]:
+    node = DEFAULT_WORKFLOW_DAG.nodes.get(name.strip().lower())
+    return tuple(node.tools) if node else ()
+
+
 def workflow_personas(name: str) -> tuple[str, ...]:
     node = DEFAULT_WORKFLOW_DAG.nodes.get(name.strip().lower())
-    return tuple(node.personas) if node else ()
+    return (node.persona,) if node else ()
 
 
 def workflow_denied_tools(active_names: list[str]) -> set[str]:
+    if not active_names:
+        return set()
     return DEFAULT_WORKFLOW_DAG.all_denied_tools(active_names)
 
 
@@ -166,4 +188,18 @@ _PLAN_TERMS = (
     "计划",
     "实施方案",
     "需求",
+)
+
+
+def _explicit_plan_request(text: str) -> bool:
+    return _contains_any(text, _EXPLICIT_PLAN_TERMS)
+
+
+_EXPLICIT_PLAN_TERMS = (
+    "implementation plan",
+    "write a plan",
+    "directly write a plan",
+    "直接写计划",
+    "写实施计划",
+    "实施计划",
 )

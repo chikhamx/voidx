@@ -10,7 +10,7 @@ from voidx.agent.runtime_context import ContextCompilerCache, InteractionMode
 from voidx.agent.task_state import TaskState
 from voidx.config import Config, Settings
 from voidx.llm.usage import UsageStats
-from voidx.memory.session import SessionInfo
+from voidx.memory.service import SessionInfo
 from voidx.permission.service import PermissionService
 
 if TYPE_CHECKING:
@@ -324,7 +324,7 @@ class SlashHostAdapter:
             task.add_done_callback(tasks.discard)
 
     async def _clear_session_storage_compat(self, session_id: str) -> None:
-        from voidx.memory.session import clear_messages, update_title
+        from voidx.memory.service import clear_messages, update_title
         from voidx.runtime.ui import ui
 
         try:
@@ -351,7 +351,7 @@ class SlashHostAdapter:
         if session is None:
             return False
 
-        from voidx.memory.session import update_title
+        from voidx.memory.service import update_title
 
         self._invalidate_session_title_generation()
         await update_title(session.id, title)

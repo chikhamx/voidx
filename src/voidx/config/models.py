@@ -2,11 +2,9 @@
 
 from __future__ import annotations
 
-from pydantic import BaseModel, Field, model_validator
+from pydantic import BaseModel, Field
 
 from voidx.config.enums import ApprovalPolicy, ApprovalReviewer, PermissionMode, SandboxMode
-
-_NO_LIMIT_FALLBACK = 500
 
 class Profile(BaseModel):
     """A named LLM configuration.  Name is ``provider/model`` (e.g. ``mimo/mimo-v2.5-pro``)."""
@@ -83,41 +81,6 @@ class UserProfile(BaseModel):
     tone: str = ""
 
 
-class AgentMaxSteps(BaseModel):
-    """Per-agent step limits and graph recursion limit.
-
-    Step fields (voidx, explore, etc.) are convergence ceilings: the
-    agent loop reserves the last step for a tool-free final answer, so
-    max_steps=3 yields one tool-call step and one final answer step.
-    Setting any step field to 0 normalizes it to _NO_LIMIT_FALLBACK (500).
-
-    recursion_limit caps LangGraph node transitions. Each LLM step consumes
-    ~2 recursions (call_llm → execute_tools → call_llm), so the effective
-    limit is derived as max(recursion_limit, 2 * max_steps + 10) at runtime.
-    """
-    voidx: int = Field(default=100, ge=0, le=500)
-    explore: int = Field(default=25, ge=0, le=500)
-    plan: int = Field(default=30, ge=0, le=500)
-    implement: int = Field(default=100, ge=0, le=500)
-    review: int = Field(default=30, ge=0, le=500)
-    compaction: int = Field(default=3, ge=0, le=500)
-    title: int = Field(default=2, ge=0, le=500)
-    recursion_limit: int = Field(default=500, ge=0, le=2000)
-
-    @model_validator(mode="before")
-    @classmethod
-    def _normalize_zeros(cls, data: dict | object) -> dict | object:
-        if not isinstance(data, dict):
-            return data
-        updates = {}
-        for name, field_info in cls.model_fields.items():
-            value = data.get(name)
-            if value == 0:
-                updates[name] = _NO_LIMIT_FALLBACK
-        data.update(updates)
-        return data
-
-
 class ParallelSubagentsConfig(BaseModel):
     """Runtime gate for concurrent child-agent execution."""
 
@@ -130,7 +93,6 @@ class Config(BaseModel):
     agent: AgentConfig = Field(default_factory=lambda: AgentConfig(
         name="build", description="Primary coding agent.",
     ))
-    agent_max_steps: AgentMaxSteps = Field(default_factory=AgentMaxSteps)
     parallel_subagents: ParallelSubagentsConfig = Field(default_factory=ParallelSubagentsConfig)
     workspace: str = "."
     permission_mode: PermissionMode = PermissionMode.DEFAULT

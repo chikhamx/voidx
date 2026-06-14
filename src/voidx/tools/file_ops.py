@@ -61,12 +61,22 @@ class FileReadTool(BaseTool):
 
 class FileWriteInput(BaseModel):
     file_path: str = Field(description="Path to write the file to")
-    content: str = Field(description="Content to write")
+    content: str = Field(
+        description=(
+            "Content to write. Keep under ~150 lines for best results; for larger files write "
+            "a skeleton with unique placeholders and use edit to replace them incrementally."
+        )
+    )
 
 
 class FileWriteTool(BaseTool):
     id = "write"
-    description = "Write content to a file. Creates parent directories. Overwrites existing files."
+    description = (
+        "Write content to a file. Creates parent directories. Overwrites existing files. "
+        "For files around 150 lines or larger, write a skeleton first (imports, class/function "
+        "signatures, docstrings, and unique placeholders), then use edit to replace placeholders "
+        "with implementation blocks incrementally. This avoids output truncation and reduces wait time."
+    )
 
     def parameters_schema(self) -> dict:
         return model_to_json_schema(FileWriteInput)
@@ -98,9 +108,18 @@ class FileWriteTool(BaseTool):
             new_label=f"b/{inp.file_path}",
         )
 
+        output = f"File written: {inp.file_path} ({size} bytes)"
+        line_count = inp.content.count("\n") + 1
+        if line_count > 200:
+            output += (
+                f"\nNote: This file is large ({line_count} lines). "
+                "For future writes of similar size, consider writing a skeleton first "
+                "and using edit to add content incrementally."
+            )
+
         return ToolResult(
             title=f"Wrote {size} bytes to {inp.file_path}",
-            output=f"File written: {inp.file_path} ({size} bytes)",
+            output=output,
             metadata={"file": inp.file_path, "size": size},
             diff=diff,
         )

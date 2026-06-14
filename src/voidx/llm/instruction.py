@@ -23,8 +23,8 @@ import httpx
 from voidx.skills.registry import SkillRegistry
 from voidx.skills.schema import SkillSelectionConfig
 from voidx.skills.service import SkillService
-from voidx.workflow.runtime import WorkflowRunState
 from voidx.workflow.service import WorkflowService
+from voidx.workflow.types import WorkflowRunState
 
 INSTRUCTION_FILES = ["AGENTS.md", "CLAUDE.md"]  # CLAUDE.md for compat
 

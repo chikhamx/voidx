@@ -9,7 +9,6 @@ from voidx.config.enums import (
 )
 from voidx.config.models import (
     AgentConfig,
-    AgentMaxSteps,
     Config,
     McpServerConfig,
     ModelConfig,
@@ -28,7 +27,6 @@ __all__ = [
     "SETTINGS_FILE",
     "SKILLS_STATE_FILE",
     "AgentConfig",
-    "AgentMaxSteps",
     "ApprovalPolicy",
     "ApprovalReviewer",
     "CodeIde",

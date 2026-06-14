@@ -15,6 +15,7 @@ from voidx.workflow.policy import (
     workflow_exit_summaries,
     workflow_gate,
     workflow_sort_key,
+    workflow_tools,
     workflow_transitions,
 )
 
@@ -27,6 +28,7 @@ workflow_skill_edges = workflow_edges
 workflow_skill_exit_summaries = workflow_exit_summaries
 workflow_skill_gate = workflow_gate
 workflow_skill_sort_key = workflow_sort_key
+workflow_skill_tools = workflow_tools
 workflow_skill_transitions = workflow_transitions
 
 __all__ = [
@@ -39,5 +41,6 @@ __all__ = [
     "workflow_skill_exit_summaries",
     "workflow_skill_gate",
     "workflow_skill_sort_key",
+    "workflow_skill_tools",
     "workflow_skill_transitions",
 ]

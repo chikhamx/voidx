@@ -6,7 +6,7 @@ from typing import Any, Literal, TypeAlias
 
 from pydantic import BaseModel, ConfigDict, Field
 
-from voidx.tools.todo import TodoStatus
+from voidx.runtime.todo import TodoStatus
 
 
 class UiEventBase(BaseModel):
@@ -214,6 +214,9 @@ class SubagentFinished(UiEventBase):
     subagent_id: str
     ok: bool = True
     elapsed: float | None = None
+    final_step: int | None = None
+    max_steps: int | None = None
+    finish_reason: str = ""
 
 
 class PermissionToolDetail(BaseModel):

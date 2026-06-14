@@ -4,7 +4,7 @@ from pathlib import Path
 sys.path.insert(0, str(Path(__file__).parent.parent.parent / "src"))
 
 from voidx.agent.runtime_context import TaskIntent
-from voidx.agent.task_state import GoalType, PendingApproval, TaskState, resolve_turn_intent
+from voidx.agent.task_state import GoalType, PendingApproval, TaskState, goal_from_text, resolve_turn_intent
 
 
 def test_inspect_turn_is_coding_without_implementation_approval():
@@ -39,9 +39,11 @@ def test_approval_phrase_confirms_pending_design():
     state.update_after_turn(resolution, "对，可以")
 
     assert resolution.intent == TaskIntent.CODING
-    assert resolution.goal is None
-    assert resolution.confirmed_approval is not None
-    assert resolution.confirmed_approval.scope == "给个优化方案"
+    assert resolution.goal is not None
+    assert resolution.goal.target == "给个优化方案"
+    assert resolution.goal.type == GoalType.FEATURE
+    assert resolution.goal.user_requested_write is True
+    assert not hasattr(resolution, "confirmed_approval")
     assert state.current_goal is not None
     assert state.current_goal.type == GoalType.FEATURE
     assert state.current_goal.user_requested_write is True
@@ -55,9 +57,11 @@ def test_confirm_phrase_confirms_pending_design():
     resolution = resolve_turn_intent("确认", "auto", state)
 
     assert resolution.intent == TaskIntent.CODING
-    assert resolution.goal is None
-    assert resolution.confirmed_approval is not None
-    assert resolution.confirmed_approval.scope == "给个优化方案"
+    assert resolution.goal is not None
+    assert resolution.goal.target == "给个优化方案"
+    assert resolution.goal.type == GoalType.FEATURE
+    assert resolution.goal.user_requested_write is True
+    assert not hasattr(resolution, "confirmed_approval")
 
 
 def test_approval_phrase_without_pending_design_is_general_confirmation_needed():
@@ -72,7 +76,7 @@ def test_direct_implementation_request_does_not_need_pending_design():
 
     assert resolution.intent == TaskIntent.CODING
     assert resolution.goal is None
-    assert resolution.confirmed_approval is None
+    assert not hasattr(resolution, "confirmed_approval")
 
 
 def test_short_modify_command_is_explicit_write_request():
@@ -174,6 +178,42 @@ def test_goal_mode_confirmation_clears_pending_approval():
     assert state.current_goal is not None
     assert state.current_goal.user_requested_write is True
     assert state.pending_approval is None
+
+
+def test_design_goal_only_creates_pending_approval_when_confirmation_needed():
+    state = TaskState()
+    design = goal_from_text(
+        "写设计文档",
+        goal_type=GoalType.DESIGN,
+        user_requested_write=True,
+        needs_confirmation=False,
+    )
+
+    state.update_after_turn(
+        resolve_turn_intent("看看", "auto", state).model_copy(update={"goal": design}),
+        "写设计文档",
+    )
+
+    assert state.current_goal == design
+    assert state.pending_approval is None
+
+
+def test_design_goal_needing_confirmation_creates_pending_approval():
+    state = TaskState()
+    design = goal_from_text(
+        "给个实现方案",
+        goal_type=GoalType.DESIGN,
+        user_requested_write=False,
+        needs_confirmation=True,
+    )
+
+    state.update_after_turn(
+        resolve_turn_intent("给个实现方案", "auto", state).model_copy(update={"goal": design}),
+        "给个实现方案",
+    )
+
+    assert state.pending_approval is not None
+    assert state.pending_approval.scope == "给个实现方案"
 
 
 def test_clear_goal_resets_goal_state():

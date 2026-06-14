@@ -14,11 +14,10 @@ from voidx.config import Config, Settings
 from voidx.llm.compaction import CompactionService
 from voidx.llm.instruction import InstructionService
 from voidx.llm.usage import UsageStats
-from voidx.memory.session import SessionInfo
+from voidx.memory.service import SessionInfo
 from voidx.permission.service import PermissionService
 from voidx.runtime.ui_port import AgentUiPort
-from voidx.tools.registry import ToolRegistry
-from voidx.tools.task_tracker import TaskTracker
+from voidx.tools.service import ToolRegistry, TaskTracker
 
 if TYPE_CHECKING:
     from voidx.agent.graph.compaction_coordinator import CompactionResult, GraphCompactionCoordinator
@@ -90,12 +89,12 @@ class GraphToolExecutionHost(Protocol):
     async def _authorize_tool_calls(
         self,
         tool_calls: list[dict],
-        agent_name: str,
+        *,
+        runtime_persona: str = "coordinate",
         plan_mode: bool,
         session_id: str,
         interaction_mode: str | None = None,
         workflow_runs: object = (),
-        runtime_persona: str | None = None,
     ) -> tuple[list[dict], list[tuple[dict, str]]]: ...
     def _notify_tool_failure(self, tc: dict, result: Any) -> None: ...
     def _clear_failure_check(self, cid: str) -> None: ...
@@ -116,12 +115,12 @@ class GraphPermissionHost(Protocol):
     async def _authorize_tool_calls(
         self,
         tool_calls: list[dict],
-        agent_name: str,
+        *,
+        runtime_persona: str = "coordinate",
         plan_mode: bool,
         session_id: str,
         interaction_mode: str | None = None,
         workflow_runs: object = (),
-        runtime_persona: str | None = None,
     ) -> tuple[list[dict], list[tuple[dict, str]]]: ...
     async def _ask_and_apply_permission(
         self,

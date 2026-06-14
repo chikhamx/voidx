@@ -12,7 +12,7 @@ sys.path.insert(0, str(Path(__file__).parent.parent.parent / "src"))
 from voidx.agent.graph.streaming import stream_llm as _stream_llm
 from voidx.agent.graph import VoidXGraph
 from voidx.agent.graph.convergence import is_step_hint_message
-from voidx.agent.task_state import TodoRunState
+from voidx.agent.task_state import TaskState, TodoRunState
 from voidx.config import Config, ModelConfig
 from voidx.llm.compaction import CompactionSelection
 from voidx.llm.message_markers import is_guidance_message
@@ -21,6 +21,7 @@ from voidx.memory.session import MessageRow, create_session, delete_session, sav
 from voidx.ui.output.console import StreamingRenderer
 from voidx.ui.output.dock import ANSI_LINE_PREFIX, BottomInputDock, set_dock
 from voidx.ui.output.events import DockEventConsumer, ui_events
+from voidx.workflow.runtime import WorkflowRunState, WorkflowRunStatus
 
 
 def _plain(line: str) -> str:
@@ -505,7 +506,7 @@ async def test_call_llm_persists_context_frame_for_session(tmp_path, monkeypatch
 
 
 @pytest.mark.asyncio
-async def test_call_llm_does_not_bind_tools_when_no_tool_step_budget(tmp_path, monkeypatch):
+async def test_call_llm_ignores_legacy_max_steps_for_tool_binding(tmp_path, monkeypatch):
     import voidx.agent.graph.core as graph_module
 
     monkeypatch.setattr(graph_module, "StreamingRenderer", FakeRenderer)
@@ -528,11 +529,11 @@ async def test_call_llm_does_not_bind_tools_when_no_tool_step_budget(tmp_path, m
     })
 
     assert result["messages"][0].content == "answer"
-    assert model.bound_tools is None
+    assert model.bound_tools is not None
 
 
 @pytest.mark.asyncio
-async def test_call_llm_adds_step_hint_to_payload_only(tmp_path, monkeypatch):
+async def test_call_llm_does_not_add_main_agent_step_hint(tmp_path, monkeypatch):
     import voidx.agent.graph.core as graph_module
 
     monkeypatch.setattr(graph_module, "StreamingRenderer", FakeRenderer)
@@ -560,13 +561,12 @@ async def test_call_llm_adds_step_hint_to_payload_only(tmp_path, monkeypatch):
     assert len(state_messages) == 1
     assert not any(is_step_hint_message(message) for message in result["messages"])
     assert model.messages is not None
-    assert len(model.messages) == 2
-    assert is_step_hint_message(model.messages[-1])
-    assert "Start converging" in model.messages[-1].content
+    assert len(model.messages) == 1
+    assert not any(is_step_hint_message(message) for message in model.messages)
 
 
 @pytest.mark.asyncio
-async def test_call_llm_final_step_injects_prompt_and_disables_tools(tmp_path, monkeypatch):
+async def test_call_llm_ignores_legacy_final_step_budget(tmp_path, monkeypatch):
     import voidx.agent.graph.core as graph_module
 
     monkeypatch.setattr(graph_module, "StreamingRenderer", FakeRenderer)
@@ -588,12 +588,10 @@ async def test_call_llm_final_step_injects_prompt_and_disables_tools(tmp_path, m
         "persona": "voidx",
     })
 
-    assert result["convergence_forced"] is True
-    assert model.bound_tools is None
+    assert result["convergence_forced"] is False
+    assert model.bound_tools is not None
     assert model.messages is not None
-    assert is_step_hint_message(model.messages[-1])
-    assert "FINAL response step" in model.messages[-1].content
-    assert "Original goal: finish the task" in model.messages[-1].content
+    assert not any(is_step_hint_message(message) for message in model.messages)
     assert not any(is_step_hint_message(message) for message in result["messages"])
 
 
@@ -689,6 +687,48 @@ async def test_call_llm_preflight_compacts_and_replaces_message_state(tmp_path, 
 
 
 @pytest.mark.asyncio
+async def test_call_llm_appends_inline_compaction_guide_when_budget_allows(tmp_path, monkeypatch):
+    import voidx.agent.graph.core as graph_module
+
+    monkeypatch.setattr(graph_module, "StreamingRenderer", FakeRenderer)
+
+    graph = VoidXGraph(
+        Config(
+            model=ModelConfig(provider="mimo", model="mimo-v2.5"),
+            workspace=str(tmp_path),
+        ),
+        api_key=None,
+    )
+    graph.model = TrackingStreamingModel()
+    graph._compaction.is_overflow = lambda _tokens: False
+    graph._compaction.usable_window = lambda: 0
+    graph._compaction.context_limit = 1_000_000
+    graph._compaction.select_details = lambda messages: CompactionSelection(
+        head=messages[:2],
+        tail_id=getattr(messages[2], "id", None),
+        keep_from=2,
+        mode="normal",
+    )
+
+    await graph._call_llm({
+        "messages": [
+            SystemMessage(content="system prompt"),
+            HumanMessage(content="older question", id="older_user"),
+            AIMessage(content="older answer", id="older_assistant"),
+            HumanMessage(content="current question", id="current_user"),
+        ],
+        "step_count": 1,
+        "max_steps": 50,
+        "persona": "voidx",
+    })
+
+    assert graph.model.messages is not None
+    assert graph.model.messages[-1].content.startswith("VOIDX_COMPACTION_GUIDE")
+    assert "tail_anchor_id: current_user" in graph.model.messages[-1].content
+    assert "compact_context" in graph.model.messages[-1].content
+
+
+@pytest.mark.asyncio
 async def test_call_llm_overflow_error_compacts_retries_and_preserves_guidance(tmp_path, monkeypatch):
     import voidx.agent.graph.core as graph_module
 
@@ -768,7 +808,7 @@ async def test_call_llm_overflow_error_compacts_retries_and_preserves_guidance(t
 
 
 @pytest.mark.asyncio
-async def test_call_llm_guidance_does_not_replace_final_convergence_goal(tmp_path, monkeypatch):
+async def test_call_llm_guidance_does_not_create_main_agent_convergence_hint(tmp_path, monkeypatch):
     import voidx.agent.graph.core as graph_module
 
     monkeypatch.setattr(graph_module, "StreamingRenderer", FakeRenderer)
@@ -791,16 +831,14 @@ async def test_call_llm_guidance_does_not_replace_final_convergence_goal(tmp_pat
         "persona": "voidx",
     })
 
-    assert result["convergence_forced"] is True
+    assert result["convergence_forced"] is False
     assert model.messages is not None
-    assert is_guidance_message(model.messages[-2])
-    assert is_step_hint_message(model.messages[-1])
-    assert "Original goal: finish the task" in model.messages[-1].content
-    assert "Original goal: Use TypeScript" not in model.messages[-1].content
+    assert is_guidance_message(model.messages[-1])
+    assert not any(is_step_hint_message(message) for message in model.messages)
 
 
 @pytest.mark.asyncio
-async def test_call_llm_context_frame_records_transient_final_prompt(tmp_path, monkeypatch):
+async def test_call_llm_context_frame_records_no_main_agent_convergence_hint(tmp_path, monkeypatch):
     import voidx.agent.graph.core as graph_module
 
     monkeypatch.setattr(graph_module, "StreamingRenderer", FakeRenderer)
@@ -824,9 +862,9 @@ async def test_call_llm_context_frame_records_transient_final_prompt(tmp_path, m
         })
 
         frames = await load_context_frames(session.id)
-        assert frames[0].metadata["convergence_forced"] is True
-        assert frames[0].metadata["convergence_hint_count"] == 1
-        assert "FINAL response step" in frames[0].messages[-1]["content"]
+        assert frames[0].metadata["convergence_forced"] is False
+        assert frames[0].metadata["convergence_hint_count"] == 0
+        assert all("FINAL response step" not in message["content"] for message in frames[0].messages)
     finally:
         await delete_session(session.id)
 
@@ -934,6 +972,45 @@ async def test_available_tool_ids_no_longer_filter_llm_tools(tmp_path, monkeypat
     assert "read" in tool_names
     assert "grep" in tool_names
     assert "mcp__demo__send_message_12345678" in tool_names
+
+
+@pytest.mark.asyncio
+async def test_call_llm_keeps_bound_tools_fixed_across_active_workflow_node(tmp_path, monkeypatch):
+    import voidx.agent.graph.core as graph_module
+
+    monkeypatch.setattr(graph_module, "StreamingRenderer", FakeRenderer)
+
+    graph = VoidXGraph(
+        Config(
+            model=ModelConfig(provider="openai", model="gpt-4o"),
+            workspace=str(tmp_path),
+        ),
+        api_key=None,
+    )
+    model = TrackingStreamingModel()
+    graph.model = model
+    task_state = TaskState(
+        workflow_runs={
+            "brainstorm": WorkflowRunState(name="brainstorm", status=WorkflowRunStatus.ACTIVE)
+        }
+    )
+
+    await graph._call_llm({
+        "messages": [HumanMessage(content="hi")],
+        "step_count": 0,
+        "max_steps": 50,
+        "persona": "coordinate",
+        "task_state": task_state.model_dump(mode="json"),
+    })
+
+    tool_names = [tool["function"]["name"] for tool in model.bound_tools]
+    assert "read" in tool_names
+    assert "grep" in tool_names
+    assert "clarify" in tool_names
+    assert "advance_workflow" in tool_names
+    assert "bash" in tool_names
+    assert "write" in tool_names
+    assert "edit" in tool_names
 
 
 def test_agent_static_tool_defs_hide_unlisted_non_mcp_tools_but_allow_mcp():

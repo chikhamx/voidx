@@ -286,8 +286,8 @@ class TestAutoAdvanceIntegration:
         updated = advance_workflow_states(runs, events)
         by_name = {r.name: r for r in updated}
         assert by_name["review"].status == WorkflowRunStatus.SATISFIED
-        assert "review-feedback" in by_name
-        assert by_name["review-feedback"].status == WorkflowRunStatus.ACTIVE
+        assert "feedback" in by_name
+        assert by_name["feedback"].status == WorkflowRunStatus.ACTIVE
 
     def test_auto_advance_failed_implementation_activates_tdd(self):
         runs = [
@@ -372,7 +372,7 @@ class TestAutoAdvanceIntegration:
                 status=WorkflowRunStatus.SATISFIED,
             ),
             WorkflowRunState(
-                name="review-feedback",
+                name="feedback",
                 status=WorkflowRunStatus.ACTIVE,
                 source=WorkflowActivationSource.TRANSITION,
                 reason="transition from review via review_has_issues",

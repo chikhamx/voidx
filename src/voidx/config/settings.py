@@ -229,7 +229,6 @@ class Settings(
 
         return Config(
             model=cfg,
-            agent_max_steps=self.get_agent_max_steps(),
             parallel_subagents=self.get_parallel_subagents(),
             permission_mode=permission_mode,
             sandbox_mode=sandbox_mode,

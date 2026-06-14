@@ -3,8 +3,7 @@
 from __future__ import annotations
 
 from voidx.runtime.ui import ui
-from voidx.skills.registry import SkillRegistry
-from voidx.skills.service import SkillService
+from voidx.skills.service import SkillRegistry, SkillService
 
 
 class SlashSkillsMixin:

@@ -10,7 +10,7 @@ from typing import Literal
 from pydantic import BaseModel, Field
 
 from voidx.runtime.intent import InteractionMode, TaskIntent, infer_task_intent
-from voidx.workflow.runtime import WorkflowRunState
+from voidx.workflow.types import WorkflowRunState
 
 
 _INTENT_WINDOW_SIZE = 2
@@ -174,8 +174,7 @@ class GoalResolution(BaseModel):
     goal: Goal | None = None
     confidence: float = Field(default=1.0, ge=0, le=1)
     reason: str = ""
-    confirmed_approval: "PendingApproval | None" = None
-    title: str | None = None
+    next_workflow: str | None = None
 
 
 class PendingApproval(BaseModel):
@@ -212,21 +211,10 @@ class TaskState(BaseModel):
         *,
         scope_text: str | None = None,
     ) -> None:
+        del scope_text
         self.previous_intent = self.current_intent
         self.current_intent = resolution.intent
-        if resolution.confirmed_approval:
-            goal_type = (
-                GoalType.FEATURE
-                if resolution.confirmed_approval.source_goal_type == GoalType.DESIGN
-                else resolution.confirmed_approval.source_goal_type
-            )
-            self.current_goal = goal_from_text(
-                resolution.confirmed_approval.scope,
-                goal_type=goal_type,
-                user_requested_write=True,
-                needs_confirmation=False,
-            )
-        elif resolution.goal is not None:
+        if resolution.goal is not None:
             self.current_goal = resolution.goal
         elif resolution.intent == TaskIntent.GENERAL:
             self.current_goal = None
@@ -295,10 +283,20 @@ def resolve_turn_intent(
 
     if _is_approval_only(text):
         if state.pending_approval:
+            goal_type = (
+                GoalType.FEATURE
+                if state.pending_approval.source_goal_type == GoalType.DESIGN
+                else state.pending_approval.source_goal_type
+            )
             return _resolution(
                 TaskIntent.CODING,
                 "user confirmed the pending implementation plan",
-                confirmed_approval=state.pending_approval,
+                goal=goal_from_text(
+                    state.pending_approval.scope,
+                    goal_type=goal_type,
+                    user_requested_write=True,
+                    needs_confirmation=False,
+                ),
             )
         return _resolution(
             TaskIntent.GENERAL,
@@ -384,9 +382,8 @@ def _next_pending_approval(
     resolution: GoalResolution,
     goal: Goal | None,
 ) -> PendingApproval | None:
-    if resolution.confirmed_approval is not None:
-        return None
-    if goal is not None and goal.type == GoalType.DESIGN:
+    del resolution
+    if goal is not None and goal.type == GoalType.DESIGN and goal.needs_confirmation:
         return PendingApproval(
             scope=goal.label,
             source_goal_type=goal.type,
@@ -400,14 +397,14 @@ def _resolution(
     *,
     goal: Goal | None = None,
     confidence: float = 1.0,
-    confirmed_approval: PendingApproval | None = None,
+    next_workflow: str | None = None,
 ) -> GoalResolution:
     return GoalResolution(
         intent=intent,
         goal=goal,
         confidence=confidence,
         reason=reason,
-        confirmed_approval=confirmed_approval,
+        next_workflow=next_workflow,
     )
 
 

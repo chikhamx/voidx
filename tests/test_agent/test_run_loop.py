@@ -15,7 +15,7 @@ from voidx.agent.graph import VoidXGraph
 from voidx.agent.graph.run_loop import GraphRunLoopMixin
 from voidx.agent.graph.title_mixin import _sanitize_generated_title
 from voidx.agent.runtime_context import InteractionMode, TaskIntent
-from voidx.agent.task_state import Goal, GoalResolution, GoalType, PendingApproval, TaskState, goal_from_text
+from voidx.agent.task_state import GoalResolution, GoalType, PendingApproval, TaskState, goal_from_text
 from voidx.config import Config
 from voidx.llm.usage import UsageStats
 from voidx.memory.runtime_state import RuntimeStateSnapshot, save_runtime_state
@@ -491,10 +491,10 @@ async def test_run_once_cancel_deletes_pending_user_message(tmp_path):
 
 
 @pytest.mark.asyncio
-async def test_smart_title_generation_updates_matching_session(tmp_path):
+async def test_first_turn_without_goal_uses_temporary_session_title(tmp_path):
     graph = VoidXGraph(Config(workspace=str(tmp_path)), api_key=None)
 
-    class StructuredTitleModel:
+    class StructuredGoalModel:
         def with_structured_output(self, schema):
             assert schema is GoalResolution
             return self
@@ -506,14 +506,13 @@ async def test_smart_title_generation_updates_matching_session(tmp_path):
                 goal=None,
                 confidence=0.9,
                 reason="workspace inspection",
-                title="项目结构分析",
             )
 
     class FakeGraph:
         async def ainvoke(self, initial, _config):
             return {"messages": list(initial["messages"]) + [AIMessage(content="ok")]}
 
-    graph.model = StructuredTitleModel()
+    graph.model = StructuredGoalModel()
     graph.graph = FakeGraph()
     test_dock = BottomInputDock()
     set_dock(test_dock)
@@ -527,8 +526,8 @@ async def test_smart_title_generation_updates_matching_session(tmp_path):
         assert graph._session is not None
         loaded = await get_session(graph._session.id)
         assert loaded is not None
-        assert loaded.title == "项目结构分析"
-        assert graph._session.title == "项目结构分析"
+        assert loaded.title == "看看这个项目"
+        assert graph._session.title == "看看这个项目"
     finally:
         test_dock.deactivate()
         test_dock.reset()
@@ -536,23 +535,16 @@ async def test_smart_title_generation_updates_matching_session(tmp_path):
 
 
 @pytest.mark.asyncio
-async def test_run_once_resolves_structured_goal_before_graph_invoke(tmp_path):
+async def test_run_once_uses_local_goal_fallback_before_graph_invoke(tmp_path):
     graph = VoidXGraph(Config(workspace=str(tmp_path)), api_key=None)
     captured: dict[str, object] = {}
 
     class StructuredGoalModel:
         def with_structured_output(self, schema):
-            assert schema is GoalResolution
-            return self
+            raise AssertionError("default run loop should not call structured goal resolver")
 
         async def ainvoke(self, messages):
-            captured["resolver_messages"] = messages
-            return GoalResolution(
-                intent=TaskIntent.CODING,
-                goal=Goal(type=GoalType.REVIEW, target="runtime context", user_requested_write=False),
-                confidence=0.93,
-                reason="review requested",
-            )
+            raise AssertionError("default run loop should not call resolver ainvoke")
 
     class FakeGraph:
         async def ainvoke(self, initial, _config):
@@ -573,11 +565,91 @@ async def test_run_once_resolves_structured_goal_before_graph_invoke(tmp_path):
 
     initial = captured["initial"]
     assert initial["task_state"]["current_intent"] == "coding"
-    assert initial["task_state"]["current_goal"]["type"] == "review"
-    assert initial["task_state"]["current_goal"]["target"] == "runtime context"
+    assert initial["task_state"]["current_goal"] is None
+    assert initial["task_state"]["recent_user_texts"] == ["review runtime context"]
     rows = await load_messages(graph._session.id)
     assert [row.role for row in rows] == ["user", "assistant"]
     assert all("GoalResolution JSON schema" not in row.content for row in rows)
+
+
+@pytest.mark.asyncio
+async def test_run_once_does_not_preadvance_workflow_without_resolver_next_workflow(tmp_path):
+    graph = VoidXGraph(Config(workspace=str(tmp_path)), api_key=None)
+    pending = PendingApproval(scope="agent_name 语义清理", source_goal_type=GoalType.DESIGN)
+    graph._task_state = TaskState(
+        current_goal=goal_from_text("agent_name 语义清理", goal_type=GoalType.DESIGN),
+        pending_approval=pending,
+        workflow_runs={
+            "brainstorm": WorkflowRunState(
+                name="brainstorm",
+                status=WorkflowRunStatus.ACTIVE,
+                goal_type="design",
+                scope="agent_name 语义清理",
+            )
+        },
+    )
+    captured: dict[str, object] = {}
+
+    class StructuredGoalModel:
+        def with_structured_output(self, schema):
+            raise AssertionError("default run loop should not call structured goal resolver")
+
+        async def ainvoke(self, messages):
+            raise AssertionError("default run loop should not call resolver ainvoke")
+
+    class FakeGraph:
+        async def ainvoke(self, initial, _config):
+            captured["initial"] = initial
+            return {"messages": list(initial["messages"]) + [AIMessage(content="ok")], "task_state": initial["task_state"]}
+
+    graph.model = StructuredGoalModel()
+    graph.graph = FakeGraph()
+    test_dock = BottomInputDock()
+    set_dock(test_dock)
+    test_dock.begin_capture()
+    try:
+        await graph._run_once("可以，先写一个 spec")
+    finally:
+        test_dock.deactivate()
+        test_dock.reset()
+        set_dock(None)
+
+    initial = captured["initial"]
+    state = TaskState.model_validate(initial["task_state"])
+    assert state.workflow_runs["brainstorm"].status == WorkflowRunStatus.ACTIVE
+    assert "design-doc" not in state.workflow_runs
+    assert initial["persona"] == "plan"
+
+
+@pytest.mark.asyncio
+async def test_run_once_uses_user_text_for_first_session_title_without_resolver_goal(tmp_path):
+    graph = VoidXGraph(Config(workspace=str(tmp_path)), api_key=None)
+
+    class StructuredGoalModel:
+        def with_structured_output(self, schema):
+            raise AssertionError("default run loop should not call structured goal resolver")
+
+        async def ainvoke(self, messages):
+            raise AssertionError("default run loop should not call resolver ainvoke")
+
+    class FakeGraph:
+        async def ainvoke(self, initial, _config):
+            return {"messages": list(initial["messages"]) + [AIMessage(content="ok")], "task_state": initial["task_state"]}
+
+    graph.model = StructuredGoalModel()
+    graph.graph = FakeGraph()
+    test_dock = BottomInputDock()
+    set_dock(test_dock)
+    test_dock.begin_capture()
+    try:
+        await graph._run_once("review runtime")
+    finally:
+        test_dock.deactivate()
+        test_dock.reset()
+        set_dock(None)
+
+    assert graph._session is not None
+    assert graph._session.title == "review runtime"
 
 
 @pytest.mark.asyncio
@@ -1023,30 +1095,41 @@ async def test_prepare_includes_restored_workflow_runs(tmp_path):
     ) in state["messages"][-1].content
 
 
-def test_resolve_recursion_limit_derives_minimum_from_max_steps():
+def test_resolve_recursion_limit_uses_graph_safety_default():
     from voidx.agent.graph.turn_mixin import _resolve_recursion_limit
-    from voidx.config.models import AgentMaxSteps
 
-    # Default: voidx=100, recursion_limit=500 → 2*100+10=210 < 500, so 500
-    steps = AgentMaxSteps()
-    assert _resolve_recursion_limit(steps, "voidx") == 500
-
-    # High voidx steps, low recursion_limit → derived minimum wins
-    steps = AgentMaxSteps(voidx=500, recursion_limit=500)
-    assert _resolve_recursion_limit(steps, "voidx") == 1010
-
-    # High recursion_limit, low max_steps → configured limit wins
-    steps = AgentMaxSteps(voidx=50, recursion_limit=1000)
-    assert _resolve_recursion_limit(steps, "voidx") == 1000
-
-    # Exact boundary: 2*max_steps+10 == recursion_limit
-    steps = AgentMaxSteps(voidx=245, recursion_limit=500)
-    assert _resolve_recursion_limit(steps, "voidx") == 500
+    assert _resolve_recursion_limit() == 500
 
 
-def test_resolve_recursion_limit_uses_correct_agent_field():
+def test_resolve_recursion_limit_ignores_legacy_agent_fields():
     from voidx.agent.graph.turn_mixin import _resolve_recursion_limit
-    from voidx.config.models import AgentMaxSteps
 
-    steps = AgentMaxSteps(implement=200, recursion_limit=300)
-    assert _resolve_recursion_limit(steps, "implement") == 410
+    class LegacySteps:
+        voidx = 500
+        implement = 200
+        recursion_limit = 300
+
+    assert _resolve_recursion_limit(LegacySteps(), "implement") == 500
+
+
+def test_main_agent_has_no_static_max_steps():
+    from voidx.agent.agents import get_agent
+    from voidx.agent.graph.topology import prepare_state
+
+    agent = get_agent("voidx")
+    assert agent is not None
+    assert not hasattr(agent, "max_steps")
+    assert "Max steps" not in agent.tool_contract
+
+    prepared = prepare_state({
+        "messages": [],
+        "workspace": ".",
+        "persona": "coordinate",
+        "plan_mode": False,
+        "interaction_mode": "auto",
+        "tool_results": {},
+        "step_count": 0,
+        "should_continue": True,
+    })
+
+    assert prepared == {"step_count": 1}

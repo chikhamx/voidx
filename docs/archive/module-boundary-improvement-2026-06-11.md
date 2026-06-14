@@ -1,12 +1,31 @@
+> **Status: Done**
+
 # 模块边界改进 — 技术设计文档
 
 ## Context
 
-voidx 项目当前主模块职责划分和命名整体合理，但模块间仍存在循环依赖、跨层访问、高耦合等问题。以下内容按 2026-06-12 的代码现状校准：当前已有 `lsp/service.py`、`permission/service.py`、`skills/service.py`、`workflow/service.py`，尚未有 `memory/service.py` 和 `llm/service.py`。随着功能增长，这些问题会导致：
+voidx 项目当前主模块职责划分和命名整体合理，但模块间仍存在循环依赖、跨层访问、高耦合等问题。以下内容按 2026-06-13 的代码现状校准：当前已有 `lsp/service.py`、`permission/service.py`、`skills/service.py`、`workflow/service.py`、`memory/service.py`、`llm/service.py`、`tools/service.py`，并已将部分跨层共享类型和常量下沉到 `runtime/`。随着功能增长，这些问题会导致：
 
 - 改动一个模块需要理解多个模块的内部实现
 - 测试隔离困难，mock 链过长
 - 新增功能时难以确定代码归属
+
+## Implementation Progress
+
+当前已完成并由 `tests/test_module_boundaries.py` 守住的边界：
+
+- `workflow ↔ skills`：`EXPLICIT_REF_RE` 已下沉到 `runtime/reference_tokens.py`；workflow 状态类型已下沉到 `workflow/types.py`
+- `config → memory`：`config/settings.py` 已改走 `memory/service.py`
+- `tools → permission`：`tools/bash.py` 已改走 `permission/service.py`
+- `agent → llm/memory/permission/workflow/tools/skills/ui`：agent 侧已禁止访问已迁移模块的内部实现，统一走 `*.service`、`workflow.types`、`runtime.ui` / `runtime.ui_port`
+- `ui → memory/tools/skills/agent`：已迁移可低风险下沉的展示类型和常量，包括 `TranscriptNodeRow`、`SkillRegistry`、`resolve_safe`、`TodoStatus`、`MAX_IMAGE_ATTACHMENT_BYTES`
+- `runtime/memory/tools` 的 workflow 类型依赖：只读类型导入已改走 `workflow.types`，状态推进和 workflow policy 调用改走 `workflow.service`
+
+仍未一次性收紧的边界：
+
+- `agent` 仍直接使用 `llm.compaction`、`llm.instruction`、`llm.usage`、`llm.message_markers`、`llm.catalog` 等已存在的 LLM 子服务/展示 helper；后续若要进一步收口，应扩展 `llm/service.py` 或拆出更明确的 `llm/types.py` / `llm/formatting.py`
+- `ui` 仍直接使用 `llm.usage` 的展示格式化函数和 `UsageStats`；这是 UI 展示层和 LLM 统计 DTO 的边界，建议单独拆 `runtime/usage.py` 或 `llm/usage_service.py`
+- `runtime/ui_port.py` 仍在 `TYPE_CHECKING` 下引用 UI event/tree 类型；这属于协议类型耦合，暂未强行拆分
 
 ## Goals and Non-Goals
 
@@ -70,8 +89,8 @@ voidx 项目当前主模块职责划分和命名整体合理，但模块间仍�
 
 **现状**：
 - `skills/policy.py` → `workflow.policy`（获取 `workflow_denied_tools`、`workflow_gate` 等）
-- `skills/runtime.py` → `workflow.runtime`（获取 `WorkflowRunState`、`WorkflowRunStatus`）
-- `workflow/service.py` → `skills.schema`（获取 `EXPLICIT_REF_RE`，当前是模块级直接导入）
+- `skills/runtime.py` 已改为从 `workflow.types` 获取 `WorkflowRunState`、`WorkflowRunStatus` 等纯类型
+- `workflow/service.py` 已改为从 `runtime.reference_tokens` 获取 `EXPLICIT_REF_RE`
 
 **方案：拆成两个稳定公共边界**
 
@@ -105,8 +124,8 @@ skills/
 ### 问题 2：config → memory 跨层访问
 
 **现状**：
-- `config/settings.py` 直接导入 `memory.model_profiles` 的 `list_model_profiles_async`、`get_model_profile_async`、`save_model_profile_async`、`delete_model_profile_async`、`ModelProfileRow`
-- 当前代码没有 `memory/service.py`
+- `config/settings.py` 已改为导入 `memory.service` 的 `list_model_profiles_async`、`get_model_profile_async`、`save_model_profile_async`、`delete_model_profile_async`、`ModelProfileRow`
+- `memory/service.py` 同时作为 agent/UI 使用的 session、runtime state、transcript facade
 
 **方案：通过 service 层间接访问**
 
@@ -129,7 +148,8 @@ config/settings.py → memory/service.py → memory.model_profiles (通过 servi
 **现状**：
 - `agent` 依赖全部 12 个其他模块，其中 7 个是重度依赖
 - 大量胶水代码分散在 `agent/graph/core.py`、`run_loop.py`、`turn_runner.py`、`tool_executor.py`、`session_runtime.py`、`subagent.py`、`compaction_coordinator.py` 等文件
-- 当前仍有直接跨模块导入，例如 `agent/graph/run_loop.py` 导入 `llm.provider`、`ui.gateway`、`ui.tui`，`agent/graph/turn_runner.py` 导入 `memory.session`、`memory.runtime_state`、`skills.references`，`agent/graph/tool_executor.py` 导入 `workflow.runtime`、`tools.base`、`ui.output.console`
+- 当前已移除 `agent` 对 `llm.provider`、`memory` 内部持久化模块、`workflow.runtime/context/policy/auto_advance`、`tools.base/registry/task_tracker/agent`、`skills.context/references/registry`、具体 `voidx.ui.*` 实现的直接导入
+- 剩余直接导入主要是 `llm.compaction`、`llm.instruction`、`llm.usage`、`llm.message_markers`、`llm.catalog` 这类 LLM 子服务或展示 helper
 
 **方案：引入 facade service 层，将协调逻辑下沉**
 
@@ -159,7 +179,9 @@ agent/graph/*.py → llm.service, memory.service, permission.service, runtime.ui
 **现状**：
 - `ui` 直接导入 `agent`、`llm`、`memory`、`tools`、`skills`
 - `runtime/ui_port.py` 已定义 agent-facing UI Protocol，位置合理，当前不移动
-- 仍存在双向耦合：`agent/graph` 直接导入具体 UI 实现，`ui` 内部也直接导入业务模块的类型/工具函数（例如 `ui/transcript.py` → `memory.transcript`、`ui/tools/clipboard_image.py` → `agent.attachments`、`ui/tui/render_status.py` → `llm.usage`、`ui/output/events/schema.py` → `tools.todo`）
+- agent → UI 方向已改为 `runtime.ui_port` / `runtime.ui` facade
+- UI 内部已移除低风险业务直连：`ui/transcript.py` → `memory.service`，`ui/session.py` → `tools.service`，`ui/tools/clipboard_image.py` → `runtime.attachments`，`ui/output/events/schema.py` → `runtime.todo`，skill picker/panel → `skills.service`
+- 仍存在 UI 展示层对 `llm.usage` 的格式化/统计 DTO 依赖，后续应拆为更稳定的 usage DTO 或 formatting facade
 
 **方案：把 UI 边界分成两个方向治理**
 
@@ -231,6 +253,11 @@ EXPLICIT_REF_RE: re.Pattern
 | `memory/service.py` | `list_model_profiles_async()`, `get_model_profile_async()`, `save_model_profile_async()`, `delete_model_profile_async()` | 替代 config 直接访问 model_profiles |
 | `llm/service.py` | `create_chat_model()`, `resolve_protocol()`, `get_context_limit()` 等薄 facade；后续再收 compaction/usage | agent 不再直接导入 provider 内部实现 |
 | `permission/service.py` | `is_safe_bash_command()`, `bash_sandbox_denial()` | tools 不再直接导入 engine/sandbox |
+| `tools/service.py` | `ToolRegistry`, `ToolContext`, `ToolResult`, `TaskTracker`, `AgentTool` 等薄 facade | agent 不再直接导入 tools 内部实现文件 |
+| `skills/service.py` | `SkillRegistry`, skill context helpers, `skill_reference_message()` | agent/UI 不再直接导入 skills registry/context/reference 实现 |
+| `workflow/service.py` | `advance_workflow_states()`, `auto_advance_events()`, workflow policy/context helpers | agent/tools 不再直接导入 workflow runtime/policy/context |
+| `runtime/todo.py` | `TodoStatus` | UI event schema 不再依赖 `tools.todo` |
+| `runtime/attachments.py` | `MAX_IMAGE_ATTACHMENT_BYTES` | UI clipboard image helper 不再依赖 `agent.attachments` |
 
 ## Error Handling
 

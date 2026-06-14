@@ -43,7 +43,8 @@ def build_final_convergence_prompt(step: int, max_steps: int, goal: str) -> str:
         f"[Step {step}/{max_steps}] FINAL response step. No tools are available.\n\n"
         "Provide the best final answer now:\n"
         "1. Result: what was accomplished or learned\n"
-        "2. Pending: what remains uncertain, blocked, or needs follow-up\n\n"
+        "2. Pending: what remains uncertain, blocked, or needs follow-up\n"
+        "3. Resume point: if work is incomplete, state exactly where the next attempt should start (file, line, command)\n\n"
         f"Original goal: {goal or '(unknown)'}\n"
         "Do not describe tool calls or request more tool use."
     )

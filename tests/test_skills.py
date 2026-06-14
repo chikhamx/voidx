@@ -5,6 +5,7 @@ sys.path.insert(0, str(Path(__file__).parent.parent / "src"))
 
 import pytest
 
+from voidx.llm.compaction import COMPACTION_REQUEST
 from voidx.llm.instruction import InstructionService
 from voidx.config import Settings
 from voidx.skills.context import SKILL_CONTEXT_MARKER, SKILL_CONTEXT_SCOPE
@@ -13,8 +14,11 @@ from voidx.workflow.context import WORKFLOW_CONTEXT_MARKER, WORKFLOW_CONTEXT_SCO
 from voidx.workflow.dag import DEFAULT_WORKFLOW_DAG
 from voidx.workflow.policy import (
     is_workflow_terminal_condition,
+    workflow_denied_tools,
+    workflow_edges,
     workflow_exit_summaries,
     workflow_terminal_condition,
+    workflow_transitions,
 )
 from voidx.workflow.runtime import (
     WorkflowActivationSource,
@@ -170,7 +174,7 @@ def test_registry_does_not_discover_builtin_workflow_by_default(tmp_path):
         "debug",
         "tdd",
         "verify",
-        "review-feedback",
+        "feedback",
         "review",
         "plan",
     }:
@@ -276,7 +280,61 @@ def test_workflow_service_selects_builtin_workflow_triggers(tmp_path):
 
     assert [match.name for match in debug] == ["debug"]
     assert [match.name for match in tdd] == ["tdd"]
-    assert [match.name for match in feedback] == ["review-feedback", "review"]
+    assert [match.name for match in feedback] == ["feedback", "review"]
+
+
+def test_builtin_workflow_nodes_declare_execution_contracts():
+    for node in WorkflowService().nodes():
+        assert node.goal
+        assert node.persona
+        assert node.io.input
+        assert node.io.output
+        assert isinstance(node.tools, list)
+        assert not hasattr(node, "triggers")
+        assert not hasattr(node, "priority")
+        assert not hasattr(node, "enabled")
+        assert not hasattr(node, "core_rule")
+        assert not hasattr(node, "decision_rules")
+        assert not hasattr(node, "extra_sections")
+
+
+def test_workflow_internal_subworkflows_are_structured_and_local():
+    service = WorkflowService()
+
+    tdd = service.get("tdd")
+    debug = service.get("debug")
+    review = service.get("review")
+    brainstorm = service.get("brainstorm")
+
+    assert tdd is not None and tdd.subworkflow is not None
+    assert tdd.subworkflow.name == "TDD Cycle"
+    assert tdd.subworkflow.exit_condition
+    assert [step.action for step in tdd.subworkflow.steps][:3] == [
+        "Pick the next task from the plan",
+        "Write a failing test",
+        "Run the test and confirm RED",
+    ]
+    assert debug is not None and debug.subworkflow is not None
+    assert debug.subworkflow.name == "Debug Cycle"
+    assert review is not None and review.subworkflow is not None
+    assert review.subworkflow.name == "Review Cycle"
+    assert review.subworkflow.description
+    assert brainstorm is not None and brainstorm.subworkflow is None
+
+
+def test_workflow_render_expands_execution_contract():
+    service = WorkflowService()
+    rendered = service.render_instruction(service.get("tdd"))
+
+    assert "### Goal" in rendered
+    assert "### Persona" in rendered
+    assert "### Input" in rendered
+    assert "### Output" in rendered
+    assert "### Tools" in rendered
+    assert "### Internal Subworkflow: TDD Cycle" in rendered
+    assert "Exit condition: all plan tasks implemented and broader test set green" in rendered
+    assert "### Core Rule" not in rendered
+    assert "### Decision Rules" not in rendered
 
 
 def test_workflow_service_selects_workflow_policy_by_role_and_intent(tmp_path):
@@ -314,23 +372,24 @@ def test_workflow_service_selects_workflow_policy_by_role_and_intent(tmp_path):
     ]
     assert "goal:feature" in implement[0].reason
     assert "goal:bugfix" in debug[0].reason
-    assert [match.name for match in plan] == ["brainstorm", "plan"]
+    assert [match.name for match in plan] == ["brainstorm"]
     assert plan[0].reason == "goal:design"
-    assert plan[1].reason == "plan persona"
 
 
 def test_brainstorm_exit_rules_make_small_change_precedence_explicit(tmp_path):
-    node = WorkflowService().get("brainstorm")
+    edges = DEFAULT_WORKFLOW_DAG.edges_from("brainstorm")
 
-    assert node is not None
-    assert node.decision_rules[0].condition == "small_change"
+    assert edges[0].condition == "approved"
+    small_change = next(edge for edge in edges if edge.condition == "small_change")
+    assert small_change.target == "tdd"
+    assert "local or mechanical" in small_change.description
     skip_descriptions = [
-        rule.description
-        for rule in node.decision_rules
-        if rule.condition == "skip_to_plan"
+        edge.description
+        for edge in edges
+        if edge.condition == "skip_to_plan"
     ]
     assert skip_descriptions
-    assert all("not a local/mechanical small_change" in item for item in skip_descriptions)
+    assert all("detailed spec" in item for item in skip_descriptions)
 
 
 def test_workflow_service_activates_requesting_code_review_for_review_intent(tmp_path):
@@ -359,7 +418,7 @@ def test_workflow_service_activates_receiving_code_review_for_feedback(tmp_path)
         scopes=("bundled",),
     )
 
-    assert [match.name for match in matches] == ["review-feedback", "review"]
+    assert [match.name for match in matches] == ["feedback", "review"]
     assert matches[0].reason == "review feedback"
 
 
@@ -435,7 +494,7 @@ def test_workflow_service_returns_structured_workflow_runs(tmp_path):
     assert {run.source for run in runs} == {WorkflowActivationSource.WORKFLOW}
     assert runs[0].goal_type == "feature"
     assert runs[0].scope == "优化 runtime context"
-    assert runs[0].personas == ["coordinate", "explore"]
+    assert runs[0].personas == ["explore"]
     assert runs[1].personas == ["implement"]
     assert runs[2].personas == ["review"]
     assert runs[0].body_hash
@@ -459,11 +518,11 @@ def test_workflow_run_state_from_match_includes_transition_targets(tmp_path):
         scopes=("bundled",),
     )[0]
 
-    run = WorkflowRunState.from_match(match, goal_type="feature")
+    run = service.runs_from_matches([match], goal_type="feature")[0]
 
     assert run.name == "brainstorm"
     assert run.goal_type == "feature"
-    assert run.personas == ["coordinate", "explore"]
+    assert run.personas == ["explore"]
     assert run.transition_to == ["design-doc", "plan", "tdd"]
 
 
@@ -477,6 +536,33 @@ def test_workflow_state_summary_includes_transition_hint():
     )
 
     assert "next=verify" in run.state_summary()
+
+
+def test_workflow_denied_tools_aggregates_all_active_gates():
+    assert workflow_denied_tools(["debug", "tdd"]) >= {"write", "edit"}
+
+
+def test_feedback_workflow_exposes_design_and_plan_exits():
+    assert workflow_transitions("feedback") == (
+        "tdd",
+        "verify",
+        "brainstorm",
+        "plan",
+    )
+
+    edges = {edge.condition: edge for edge in workflow_edges("feedback")}
+    assert edges["needs_design"].target == "brainstorm"
+    assert edges["needs_plan"].target == "plan"
+    assert "design" in edges["needs_design"].description.lower()
+    assert "plan" in edges["needs_plan"].description.lower()
+
+    feedback = DEFAULT_WORKFLOW_DAG.nodes["feedback"]
+    assert "deferred_items" in feedback.io.output
+    step = next(item for item in feedback.workflow if item.order == 6)
+    assert "needs_design" in step.description
+    assert "needs_plan" in step.description
+    assert any("needs_design" in rule for rule in feedback.rules)
+    assert any("needs_plan" in rule for rule in feedback.rules)
 
 
 def test_advance_workflow_states_marks_satisfied_from_evidence():
@@ -495,6 +581,8 @@ def test_advance_workflow_states_marks_satisfied_from_evidence():
                 ref="tool:pytest",
                 ok=True,
                 summary="focused tests passed",
+                reason="focused tests passed",
+                condition="implemented",
             )
         ],
         turn_count=4,
@@ -537,6 +625,7 @@ def test_workflow_terminal_exit_is_structured_and_terminal():
                 workflow="tdd",
                 kind=WorkflowStateEventKind.SATISFIED,
                 condition=condition,
+                reason="terminal state verified",
             )
         ],
     )
@@ -581,6 +670,8 @@ def test_advance_workflow_states_activates_transition_target():
                 "workflow": "tdd",
                 "kind": "satisfied",
                 "summary": "implementation complete",
+                "reason": "focused tests passed",
+                "condition": "implemented",
             }
         ],
         turn_count=5,
@@ -591,10 +682,50 @@ def test_advance_workflow_states_activates_transition_target():
     successor = by_name["verify"]
     assert successor.status == WorkflowRunStatus.ACTIVE
     assert successor.source == WorkflowActivationSource.TRANSITION
-    assert successor.reason == "transition from tdd"
+    assert successor.reason == "transition from tdd via implemented"
     assert successor.goal_type == "feature"
     assert successor.scope == "runtime"
     assert successor.personas == ["review"]
+
+
+@pytest.mark.parametrize(
+    ("condition", "target", "persona"),
+    [
+        ("needs_design", "brainstorm", ["explore"]),
+        ("needs_plan", "plan", ["plan"]),
+    ],
+)
+def test_advance_workflow_states_routes_feedback_to_deferred_workflow(condition, target, persona):
+    states = advance_workflow_states(
+        [
+            WorkflowRunState(
+                name="feedback",
+                status=WorkflowRunStatus.ACTIVE,
+                goal_type="review",
+                scope="review feedback",
+            )
+        ],
+        [
+            WorkflowStateEvent(
+                workflow="feedback",
+                kind=WorkflowStateEventKind.SATISFIED,
+                summary="actionable feedback implemented; remaining item deferred",
+                reason="remaining feedback requires design or planning",
+                condition=condition,
+            )
+        ],
+        turn_count=8,
+    )
+
+    by_name = {run.name: run for run in states}
+    assert by_name["feedback"].status == WorkflowRunStatus.SATISFIED
+    successor = by_name[target]
+    assert successor.status == WorkflowRunStatus.ACTIVE
+    assert successor.source == WorkflowActivationSource.TRANSITION
+    assert successor.reason == f"transition from feedback via {condition}"
+    assert successor.goal_type == "review"
+    assert successor.scope == "review feedback"
+    assert successor.personas == persona
 
 
 def test_advance_workflow_states_does_not_advance_without_evidence():
@@ -607,6 +738,74 @@ def test_advance_workflow_states_does_not_advance_without_evidence():
     states = advance_workflow_states([run], [], turn_count=6)
 
     assert [item.name for item in states] == ["tdd"]
+    assert states[0].status == WorkflowRunStatus.ACTIVE
+
+
+def test_advance_workflow_states_does_not_repeat_transition_from_satisfied_node():
+    states = advance_workflow_states(
+        [
+            WorkflowRunState(
+                name="tdd",
+                status=WorkflowRunStatus.SATISFIED,
+                transition_to=["verify"],
+            )
+        ],
+        [
+            WorkflowStateEvent(
+                workflow="tdd",
+                kind=WorkflowStateEventKind.SATISFIED,
+                reason="duplicate completion signal",
+                condition="implemented",
+            )
+        ],
+    )
+
+    assert [run.name for run in states] == ["tdd"]
+    assert states[0].status == WorkflowRunStatus.SATISFIED
+
+
+def test_advance_workflow_states_rejects_invalid_condition_without_satisfying_node():
+    states = advance_workflow_states(
+        [
+            WorkflowRunState(
+                name="tdd",
+                status=WorkflowRunStatus.ACTIVE,
+                transition_to=["verify"],
+            )
+        ],
+        [
+            WorkflowStateEvent(
+                workflow="tdd",
+                kind=WorkflowStateEventKind.SATISFIED,
+                reason="invalid condition should not advance",
+                condition="approved",
+            )
+        ],
+    )
+
+    assert [run.name for run in states] == ["tdd"]
+    assert states[0].status == WorkflowRunStatus.ACTIVE
+
+
+def test_advance_workflow_states_requires_gate_evidence_before_transition():
+    states = advance_workflow_states(
+        [
+            WorkflowRunState(
+                name="tdd",
+                status=WorkflowRunStatus.ACTIVE,
+                transition_to=["verify"],
+            )
+        ],
+        [
+            WorkflowStateEvent(
+                workflow="tdd",
+                kind=WorkflowStateEventKind.SATISFIED,
+                condition="implemented",
+            )
+        ],
+    )
+
+    assert [run.name for run in states] == ["tdd"]
     assert states[0].status == WorkflowRunStatus.ACTIVE
 
 
@@ -624,7 +823,14 @@ def test_advance_workflow_states_does_not_duplicate_existing_successor():
                 reason="implement lifecycle",
             ),
         ],
-        [{"workflow": "tdd", "kind": "satisfied"}],
+        [
+            {
+                "workflow": "tdd",
+                "kind": "satisfied",
+                "reason": "focused tests passed",
+                "condition": "implemented",
+            }
+        ],
     )
 
     assert [run.name for run in states].count("verify") == 1
@@ -744,7 +950,7 @@ async def test_instruction_service_system_includes_available_skills_section(tmp_
 
 
 @pytest.mark.asyncio
-async def test_workflow_context_message_summarizes_inactive_workflow_nodes(tmp_path, monkeypatch):
+async def test_workflow_context_message_renders_fixed_full_workflow_nodes(tmp_path, monkeypatch):
     monkeypatch.setattr(Path, "home", staticmethod(lambda: tmp_path / "home"))
 
     context = await InstructionService(str(tmp_path)).workflow_context_for(
@@ -755,13 +961,26 @@ async def test_workflow_context_message_summarizes_inactive_workflow_nodes(tmp_p
     assert context.content.startswith(WORKFLOW_CONTEXT_MARKER)
     assert f"Scope: {WORKFLOW_CONTEXT_SCOPE}" in context.content
     assert "structured workflow definitions" in context.content
-    assert "## Workflow Node:" not in context.content
+    assert "compaction" not in context.content
     for node in WorkflowService().nodes():
-        assert f"## Workflow Node Summary: {node.name}" in context.content
+        assert f"## Workflow Node: {node.name}" in context.content
+        assert f"## Workflow Node Summary: {node.name}" not in context.content
+
+
+def test_compaction_is_not_a_global_workflow_node():
+    assert WorkflowService().get("compaction") is None
+    assert "compaction" not in DEFAULT_WORKFLOW_DAG.nodes
+
+
+def test_compaction_request_contains_runtime_workflow_instructions():
+    assert "Preserve durable facts" in COMPACTION_REQUEST
+    assert "Remove stale transient execution detail" in COMPACTION_REQUEST
+    assert "Write a structured summary only" in COMPACTION_REQUEST
+    assert "do not invent facts" in COMPACTION_REQUEST
 
 
 @pytest.mark.asyncio
-async def test_workflow_context_message_expands_only_active_workflow_nodes(tmp_path, monkeypatch):
+async def test_workflow_context_message_expands_all_workflow_nodes(tmp_path, monkeypatch):
     monkeypatch.setattr(Path, "home", staticmethod(lambda: tmp_path / "home"))
 
     context = await InstructionService(str(tmp_path)).workflow_context_for(
@@ -777,7 +996,7 @@ async def test_workflow_context_message_expands_only_active_workflow_nodes(tmp_p
 
 
 @pytest.mark.asyncio
-async def test_workflow_context_message_changes_with_active_workflow_nodes(tmp_path, monkeypatch):
+async def test_workflow_context_message_stays_fixed_with_active_workflow_nodes(tmp_path, monkeypatch):
     monkeypatch.setattr(Path, "home", staticmethod(lambda: tmp_path / "home"))
 
     instruction = InstructionService(str(tmp_path))
@@ -794,7 +1013,7 @@ async def test_workflow_context_message_changes_with_active_workflow_nodes(tmp_p
         goal_type="feature",
     )
 
-    assert inspect_context.content != implement_context.content
+    assert inspect_context.content == implement_context.content
     assert inspect_context.active != implement_context.active
     assert any("tdd" in item for item in implement_context.active)
     assert any("verify" in item for item in implement_context.active)

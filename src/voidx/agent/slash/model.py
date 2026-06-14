@@ -12,7 +12,7 @@ class SlashModelMixin:
     async def _model_new(self) -> None:
         """Interactive model configuration — create or update a named profile."""
         from voidx.config import Profile
-        from voidx.llm.provider import create_chat_model
+        from voidx.llm.service import create_chat_model
 
         ui.print("[bold]Configure LLM[/bold]")
 
@@ -246,7 +246,7 @@ class SlashModelMixin:
 
     async def _model_test(self, target: str) -> None:
         async def _do_test(profile_name: str) -> None:
-            from voidx.llm.provider import create_chat_model
+            from voidx.llm.service import create_chat_model
             settings = self.host.settings
             if settings is None:
                 ui.error("No Settings reference.")
@@ -294,7 +294,7 @@ class SlashModelMixin:
 
     async def _model_switch(self, target: str) -> None:
         async def _do_switch(profile_name: str) -> None:
-            from voidx.llm.provider import create_chat_model
+            from voidx.llm.service import create_chat_model
             settings = self.host.settings
             if settings is None:
                 ui.error("No Settings reference.")
@@ -336,14 +336,14 @@ class SlashModelMixin:
         self._sync_context_limit()
 
         if self.host.api_key:
-            from voidx.llm.provider import create_chat_model
+            from voidx.llm.service import create_chat_model
             self.host.model = create_chat_model(self.host.api_key, self.host.config.model)
 
         ui.print(f"Reasoning effort: [cyan]{new_effort}[/cyan] [green]✓[/green]")
 
     async def _switch_model(self, model_spec: str) -> None:
-        from voidx.llm.provider import create_chat_model
-        from voidx.memory.session import update_session_model
+        from voidx.llm.service import create_chat_model
+        from voidx.memory.service import update_session_model
 
         if not model_spec:
             await self._list_models()
@@ -410,7 +410,7 @@ class SlashModelMixin:
         ui.print(f"  [cyan]→ {new_provider}/{new_model}[/cyan] [green]✓[/green]")
 
     def _sync_context_limit(self) -> None:
-        from voidx.llm.provider import get_context_limit
+        from voidx.llm.service import get_context_limit
 
         limit = get_context_limit(self.host.config.model.provider)
         stats = self.host.usage_stats

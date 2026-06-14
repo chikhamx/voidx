@@ -10,6 +10,7 @@ from langchain_core.messages import AIMessage, HumanMessage, SystemMessage
 
 from voidx.agent.runtime_context import InteractionMode, TaskIntent
 from voidx.agent.task_state import Goal, GoalResolution, GoalType, TaskState, goal_from_text, resolve_turn_intent
+from voidx.workflow.dag import DEFAULT_WORKFLOW_DAG
 
 
 GOAL_RESOLVER_TIMEOUT_SECONDS = 20
@@ -23,11 +24,8 @@ async def resolve_goal_for_turn(
     task_state: TaskState,
     workspace: str,
     session_time: str,
-    title_requested: bool = False,
 ) -> GoalResolution:
     fallback = resolve_turn_intent(user_text, interaction_mode, task_state)
-    if fallback.confirmed_approval is not None:
-        return fallback
     if model is None:
         return fallback
 
@@ -44,7 +42,6 @@ async def resolve_goal_for_turn(
                 task_state,
                 workspace,
                 session_time,
-                title_requested=title_requested,
             )),
             timeout=GOAL_RESOLVER_TIMEOUT_SECONDS,
         )
@@ -59,7 +56,6 @@ async def resolve_goal_for_turn(
         user_text=user_text,
         interaction_mode=interaction_mode,
         task_state=task_state,
-        title_requested=title_requested,
     )
 
 
@@ -69,8 +65,6 @@ def _resolver_messages(
     task_state: TaskState,
     workspace: str,
     session_time: str,
-    *,
-    title_requested: bool = False,
 ) -> list:
     schema = json.dumps(GoalResolution.model_json_schema(), ensure_ascii=False)
     pending = (
@@ -92,7 +86,6 @@ def _resolver_messages(
         "pending_approval": pending,
         "recent_user_texts": task_state.recent_user_texts[-2:],
         "latest_user_text": user_text,
-        "title_requested": title_requested,
     }
     system = (
         "You are voidx resolving the current user's goal before normal work begins.\n"
@@ -104,10 +97,9 @@ def _resolver_messages(
         "- Do not infer write permission from analysis words like look at, inspect, 看看, 分析, or 建议.\n"
         "- Set user_requested_write=true only when the user explicitly asks to change, fix, implement, edit, write, apply, or continue an approved implementation.\n"
         "- Set needs_confirmation=true when approval/write intent is ambiguous.\n"
-        "- If pending_approval is present and the user clearly approves it, use that scope as the goal target and set user_requested_write=true.\n"
+        "- If the user's intent clearly indicates which workflow should be active next, set next_workflow to that node name, such as design-doc, plan, or tdd.\n"
+        "- Do not set next_workflow based on vague or ambiguous approval.\n"
         "- In plan mode, return a design goal with needs_confirmation=true.\n"
-        "- If title_requested=true, optionally set title to a concise session title. Return null or empty when the user text is too short or unclear.\n"
-        "- If title_requested=false, leave title null.\n\n"
         f"GoalResolution JSON schema:\n{schema}"
     )
     return [
@@ -142,16 +134,11 @@ def _normalize_resolution(
     user_text: str,
     interaction_mode: str | InteractionMode | None,
     task_state: TaskState,
-    title_requested: bool = False,
 ) -> GoalResolution:
     mode = InteractionMode.parse(interaction_mode)
     confidence = resolution.confidence
     reason = resolution.reason.strip() or "structured goal resolver"
-    title = _normalize_title(resolution.title) if title_requested else None
-
-    fallback = resolve_turn_intent(user_text, interaction_mode, task_state)
-    if fallback.confirmed_approval is not None:
-        return fallback.model_copy(update={"title": title})
+    next_workflow = _normalize_next_workflow(resolution.next_workflow)
 
     if mode == InteractionMode.PLAN:
         goal = _copy_goal(
@@ -166,7 +153,7 @@ def _normalize_resolution(
             goal=goal,
             confidence=confidence,
             reason=f"{reason}; plan mode forces design goal",
-            title=title,
+            next_workflow=next_workflow,
         )
 
     if resolution.intent == TaskIntent.GENERAL:
@@ -175,7 +162,7 @@ def _normalize_resolution(
             goal=None,
             confidence=confidence,
             reason=reason,
-            title=title,
+            next_workflow=next_workflow,
         )
 
     goal = resolution.goal
@@ -187,8 +174,7 @@ def _normalize_resolution(
         goal=goal,
         confidence=confidence,
         reason=reason,
-        confirmed_approval=resolution.confirmed_approval,
-        title=title,
+        next_workflow=next_workflow,
     )
 
 
@@ -211,8 +197,10 @@ def _copy_goal(
     )
 
 
-def _normalize_title(value: str | None) -> str | None:
-    title = (value or "").strip().strip("\"'").strip()
-    if not title or "```" in title:
+def _normalize_next_workflow(value: str | None) -> str | None:
+    workflow = (value or "").strip().lower()
+    if not workflow:
         return None
-    return title[:60].rstrip() or None
+    if workflow not in DEFAULT_WORKFLOW_DAG.nodes:
+        return None
+    return workflow

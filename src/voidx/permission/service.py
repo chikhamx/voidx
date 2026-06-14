@@ -19,6 +19,7 @@ from voidx.permission.engine import (
     BASIC_RULES,
     PermissionContext,
     authorize_tool_call,
+    build_pattern,
     classify_tool_call,
     is_safe_bash,
     sandbox_denial_reason,

@@ -7,19 +7,20 @@ import json
 from pydantic import BaseModel, Field
 
 from voidx.runtime import ToolStatePatch
-from voidx.workflow.policy import (
+from voidx.workflow.service import (
+    advance_workflow_states,
     is_workflow_terminal_condition,
     workflow_edges,
+    workflow_gate,
     workflow_sort_key,
     workflow_terminal_condition,
     workflow_terminal_description,
 )
-from voidx.workflow.runtime import (
+from voidx.workflow.types import (
     WorkflowRunState,
     WorkflowRunStatus,
     WorkflowStateEvent,
     WorkflowStateEventKind,
-    advance_workflow_states,
 )
 from voidx.tools.base import BaseTool, ToolContext, ToolResult, model_to_json_schema
 
@@ -84,13 +85,24 @@ class AdvanceWorkflowTool(BaseTool):
                 metadata={"error": True, "condition": condition, "workflow": workflow},
             )
 
+        evidence = inp.evidence.strip()
+        if _requires_gate_evidence(selected.name, condition) and not evidence:
+            return ToolResult(
+                title="workflow: evidence required",
+                output=(
+                    f"Workflow node {selected.name!r} requires non-empty evidence "
+                    "before advance_workflow can satisfy its gate."
+                ),
+                metadata={"error": True, "condition": condition, "workflow": selected.name},
+            )
+
         event = WorkflowStateEvent(
             workflow=selected.name,
             kind=WorkflowStateEventKind.SATISFIED,
             ref="tool:advance_workflow",
             ok=True,
             summary=inp.summary or f"Workflow node {selected.name} completed.",
-            reason=inp.evidence,
+            reason=evidence,
             condition=condition,
         )
         updated = advance_workflow_states(runs, [event])
@@ -100,7 +112,7 @@ class AdvanceWorkflowTool(BaseTool):
             "condition": condition,
             "activated": _activated_successors(runs, updated),
             "summary": event.summary,
-            "evidence": inp.evidence,
+            "evidence": evidence,
         }
         return ToolResult(
             title=f"workflow: {selected.name} -> {condition}",
@@ -126,6 +138,10 @@ def _current_runs(ctx: ToolContext) -> list[WorkflowRunState]:
 def _active_runs(runs: list[WorkflowRunState]) -> list[WorkflowRunState]:
     active = [run for run in runs if run.status == WorkflowRunStatus.ACTIVE]
     return sorted(active, key=lambda run: workflow_sort_key(run.name))
+
+
+def _requires_gate_evidence(workflow: str, condition: str) -> bool:
+    return workflow_gate(workflow) is not None or bool(workflow_edges(workflow)) or is_workflow_terminal_condition(condition)
 
 
 def _select_run(

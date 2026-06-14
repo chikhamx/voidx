@@ -29,10 +29,7 @@ from voidx.agent.agents import (
 )
 from voidx.agent.graph.compaction import GraphCompactionMixin
 from voidx.agent.graph.compaction_coordinator import GraphCompactionCoordinator
-from voidx.agent.graph.convergence import (
-    build_convergence_messages,
-    generate_fallback_summary,
-)
+from voidx.agent.graph.convergence import generate_fallback_summary
 from voidx.agent.graph.permissions import GraphPermissionMixin
 from voidx.agent.graph.runtime import current_parent_tool_call_id as _current_parent_tool_call_id
 from voidx.agent.graph.run_loop import GraphRunLoopMixin
@@ -66,36 +63,37 @@ from voidx.agent.graph.tool_executor import GraphToolExecutor
 from voidx.agent.graph.tool_execution import GraphToolExecutionMixin
 from voidx.agent.graph.turn_runner import GraphTurnRunner
 from voidx.agent.runtime_context import (
+    COMPACTION_GUIDE_MARKER,
     ContextCompilerCache,
     InteractionMode,
     RuntimeContextBuilder,
     current_todo_context_message,
+    raw_semantic_messages,
 )
 from voidx.agent.task_state import TaskState, goal_label, goal_type_value
 from voidx.agent.tool_filters import filter_unavailable_lsp_tools
 from voidx.config import Config, Settings
 from voidx.llm.instruction import InstructionService
-from voidx.llm.provider import create_chat_model, resolve_protocol
+from voidx.llm.service import create_chat_model, resolve_protocol
 from voidx.llm.message_markers import GUIDANCE_MARKER
 from voidx.llm.usage import (
     estimate_context_tokens,
     estimate_message_tokens,
     extract_token_usage,
 )
-from voidx.memory.context_frames import save_context_frame_from_messages
-from voidx.memory.session import MessageRow, SessionInfo
-from voidx.runtime.ui_port import runtime_ui_port
-from voidx.skills.registry import SkillRegistry
-from voidx.skills.service import SkillService
-from voidx.ui.output.console import StreamingRenderer
-from voidx.ui.output.events.schema import (
+from voidx.memory.service import MessageRow, SessionInfo, save_context_frame_from_messages
+from voidx.runtime.ui import (
     GuidanceSubmitted,
+    OutputNode,
+    OutputTree,
+    PureTui,
+    StreamingRenderer,
     SubagentFinished,
     SubagentStarted,
 )
-from voidx.ui.output.tree import OutputNode, OutputTree
-from voidx.ui.tui import PureTui
-from voidx.workflow.runtime import WorkflowRunState, WorkflowRunStatus
+from voidx.runtime.ui_port import runtime_ui_port
+from voidx.skills.service import SkillRegistry, SkillService
+from voidx.workflow.types import WorkflowRunState, WorkflowRunStatus
 
 if TYPE_CHECKING:
     from voidx.agent.graph.contracts import GraphComponentHost
@@ -118,6 +116,26 @@ def _is_context_overflow_error(exc: Exception) -> bool:
             "request too large",
             "context window",
         )
+    )
+
+
+def _render_inline_compaction_guide(*, tail_anchor_id: str, head_count: int, previous_summary: str) -> str:
+    previous = previous_summary.strip() or "(none)"
+    return (
+        f"{COMPACTION_GUIDE_MARKER}\n"
+        "Scope: inline-context-compaction\n\n"
+        "The conversation is large enough to compact older context without a separate compaction request.\n"
+        "If you can preserve the durable facts now, call compact_context before continuing.\n\n"
+        "Rules:\n"
+        "- Summarize only older context before the tail anchor.\n"
+        "- Preserve durable facts, decisions, constraints, changed files, verification results, blockers, and next steps.\n"
+        "- Drop transient narration, repeated tool outputs, and stale execution detail.\n"
+        "- Do not answer the user through compact_context; use it only to update runtime memory.\n"
+        "- After compact_context succeeds, continue with the user's request normally.\n\n"
+        "Current compaction request:\n"
+        f"- tail_anchor_id: {tail_anchor_id}\n"
+        f"- older_messages_to_summarize: {head_count}\n"
+        f"- previous_summary:\n{previous}"
     )
 
 
@@ -433,7 +451,7 @@ class VoidXGraph(
         task.add_done_callback(self._clear_session_tasks.discard)
 
     async def _clear_session_storage(self, session_id: str) -> None:
-        from voidx.memory.session import clear_messages, update_title
+        from voidx.memory.service import clear_messages, update_title
 
         try:
             await clear_messages(session_id)
@@ -466,7 +484,7 @@ class VoidXGraph(
         if self._session is None:
             return
 
-        from voidx.memory.session import update_title
+        from voidx.memory.service import update_title
 
         self._invalidate_session_title_generation()
         await update_title(self._session.id, title)
@@ -478,9 +496,9 @@ class VoidXGraph(
         description: str,
         model_override: str | None,
         runtime_persona: str = "explore",
+        *,
+        max_steps: int,
     ) -> str:
-        # Apply configured max_steps override
-        agent_def = self._apply_max_steps_override(agent_def)
         sub_buffer: list[BaseMessage] = []
         session_id = self._session.id if self._session else "default"
         agent_id = self._next_agent_id
@@ -499,10 +517,9 @@ class VoidXGraph(
             scope=description,
         )
 
-        async def authorize(calls, agent_name: str):
+        async def authorize(calls):
             return await self._authorize_tool_calls(
                 calls,
-                agent_name=agent_name,
                 runtime_persona=runtime_persona,
                 plan_mode=InteractionMode.parse(interaction_mode) == InteractionMode.PLAN,
                 session_id=session_id,
@@ -514,13 +531,14 @@ class VoidXGraph(
             await self._ui.events.emit(SubagentStarted(
                 agent_id=agent_id,
                 subagent_id=f"agent_{agent_id}",
-                name=agent_def.name,
+                name=runtime_persona,
                 description=description,
                 parent_agent_id=-1,
                 parent_tool_call_id=parent_tool_call_id,
             ))
 
         ok = False
+        run_metadata: dict[str, object] = {}
         try:
             kwargs = {
                 "sub_messages": sub_buffer,
@@ -533,6 +551,7 @@ class VoidXGraph(
                 "parent_tools": self.tools,
                 "workflow_runtime_context": workflow_runtime_context,
                 "todo_state_sink": lambda todo_state: apply_todo_state_to_host(self, todo_state),
+                "run_metadata": run_metadata,
             }
             if self._current_tree and self._turn_node:
                 kwargs.update({
@@ -547,6 +566,7 @@ class VoidXGraph(
                 self.config,
                 self._tracker,
                 runtime_persona=runtime_persona,
+                max_steps=max_steps,
                 **kwargs,
             )
             ok = True
@@ -558,22 +578,15 @@ class VoidXGraph(
                     subagent_id=f"agent_{agent_id}",
                     ok=ok,
                     elapsed=time.monotonic() - started_at,
+                    final_step=run_metadata.get("final_step") if ok else None,
+                    max_steps=run_metadata.get("max_steps") if ok else max_steps,
+                    finish_reason=str(run_metadata.get("finish_reason") or ("final_answer" if ok else "error")),
                 ))
 
     def set_debug(self, value: bool) -> None:
         self._debug = value
         self._instruction.set_debug(value)
         self._ui.ui.set_debug(value)
-
-    def _apply_max_steps_override(self, agent_def: AgentDef) -> AgentDef:
-        """Override agent_def.max_steps with configured value if present."""
-        steps_map = getattr(self.config, 'agent_max_steps', None)
-        if steps_map is None:
-            return agent_def
-        configured = getattr(steps_map, agent_def.name, None)
-        if configured is not None:
-            return agent_def.with_max_steps(configured)
-        return agent_def
 
     def _build(self) -> None:
         self.graph = build_graph(self)
@@ -584,7 +597,7 @@ class VoidXGraph(
         base = prepare_state(state)
         agent_id = "voidx"
         runtime_persona = state.get("persona", "coordinate")
-        self._current_agent = self._apply_max_steps_override(get_agent(agent_id))
+        self._current_agent = get_agent(agent_id)
         persona_prompt = (
             persona_prompt_for_llm(
                 self._current_agent,
@@ -638,6 +651,7 @@ class VoidXGraph(
             current_user_text=current_user_text,
             task_state=task_state,
             session_date=self._session_date,
+            include_goal_resolution_guide=state.get("step_count", 0) == 0,
         ).build_incremental(self._context_cache)
         context.apply_to_messages(state.get("messages", []))
 
@@ -651,11 +665,32 @@ class VoidXGraph(
     async def _workflow_context_for(self, *args, **kwargs):
         return await self._instruction.workflow_context_for(*args, **kwargs)
 
+    def _inline_compaction_guide_for(self, messages: list[BaseMessage]) -> HumanMessage | None:
+        total_tokens = estimate_context_tokens(messages, self.config.model.model)
+        tokens = {"total": total_tokens, "input": total_tokens, "output": 0, "reasoning": 0}
+        if self._compaction.is_overflow(tokens):
+            return None
+        if total_tokens < self._compaction.usable_window():
+            return None
+
+        semantic_messages = sanitize_todo_replay_messages(raw_semantic_messages(messages))
+        selection = self._compaction.select_details(semantic_messages)
+        if not selection.should_compact:
+            return None
+        content = _render_inline_compaction_guide(
+            tail_anchor_id=selection.tail_id or "",
+            head_count=len(selection.head),
+            previous_summary=self._compaction_summary,
+        )
+        guide = HumanMessage(content=content)
+        guide_tokens = estimate_context_tokens([*messages, guide], self.config.model.model)
+        guide_budget = {"total": guide_tokens, "input": guide_tokens, "output": 0, "reasoning": 0}
+        if guide_tokens > self._compaction.context_limit or self._compaction.is_overflow(guide_budget):
+            return None
+        return guide
+
     async def _call_llm(self, state: AgentState) -> dict:
         step = state.get("step_count", 0)
-        max_s = state.get("max_steps", 100)  # fallback: orchestrator default
-        if step > max_s:
-            return {"should_continue": False}
 
         if self.model is None:
             return {
@@ -668,11 +703,12 @@ class VoidXGraph(
 
         agent = get_agent("voidx")
         tool_defs = _agent_static_tool_defs(agent, self.tools.tools_for_llm())
+        runtime_task_state = _task_state_for_context(
+            state.get("task_state"),
+            getattr(self, "_task_state", None),
+        )
         tool_defs = filter_unavailable_lsp_tools(tool_defs, getattr(self, "_lsp_manager", None))
 
-        has_tool_budget = step < max_s - 1
-        if not has_tool_budget:
-            tool_defs = []
         guidance_messages = self._drain_pending_guidance()
         state_messages = sanitize_todo_replay_messages(list(state["messages"]))
         compaction_happened = False
@@ -689,14 +725,10 @@ class VoidXGraph(
             base_messages = [*messages, *guidance_messages]
             if todo_context_message is not None:
                 base_messages.append(todo_context_message)
-            convergence_messages, convergence_forced = build_convergence_messages(
-                step=step,
-                max_steps=max_s,
-                has_tool_budget=has_tool_budget,
-                goal=goal_label(_task_state_for_context(state.get("task_state"), self._task_state).current_goal)
-                or latest_user_text(base_messages),
-            )
-            return [*base_messages, *convergence_messages], convergence_messages, convergence_forced
+            inline_compaction_guide = self._inline_compaction_guide_for(base_messages)
+            if inline_compaction_guide is not None:
+                base_messages.append(inline_compaction_guide)
+            return base_messages, [], False
 
         async def save_context_frame(
             messages: list[BaseMessage],
@@ -710,14 +742,13 @@ class VoidXGraph(
                 session_id=self._session.id,
                 user_message_id=state.get("user_message_id"),
                 frame_kind="main",
-                agent_persona=agent_name,
+                agent_persona=persona,
                 provider=self.config.model.provider,
                 model=self.config.model.model,
                 messages=messages,
                 token_estimate=token_estimate,
                 metadata={
                     "step": step,
-                    "max_steps": max_s,
                     "tool_count": len(tool_defs),
                     "convergence_hint_count": len(convergence_messages),
                     "convergence_forced": convergence_forced,
@@ -736,10 +767,9 @@ class VoidXGraph(
 
         llm_messages, convergence_messages, convergence_forced = rebuild_llm_messages(state_messages)
 
-        agent_name = state.get("persona", "coordinate")
+        persona = state.get("persona", "coordinate")
         if self._debug:
             self._ui.ui.print()
-        self._ui.ui.step_header(step, max_s, agent_name)
 
         # ── LLM call with retry ────────────────────────────────────────
         context_tokens = estimate_context_tokens(llm_messages, self.config.model.model)
@@ -819,8 +849,6 @@ class VoidXGraph(
     def _router(self, state: AgentState) -> str:
         last = state["messages"][-1]
         if isinstance(last, AIMessage) and last.tool_calls:
-            if state.get("step_count", 0) >= state.get("max_steps", 100):  # fallback: orchestrator default
-                return "end"
             return "execute"
         return "end"
 

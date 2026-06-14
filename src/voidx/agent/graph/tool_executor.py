@@ -9,7 +9,8 @@ from collections.abc import Callable
 from dataclasses import dataclass
 from typing import TYPE_CHECKING
 
-from langchain_core.messages import AIMessage, ToolMessage
+from langchain_core.messages import AIMessage, RemoveMessage, ToolMessage
+from langgraph.graph.message import REMOVE_ALL_MESSAGES
 
 from voidx.diffing import diff_stat
 from voidx.agent.graph.runtime import current_parent_tool_call_id
@@ -18,10 +19,10 @@ from voidx.agent.todo_state import apply_todo_state_to_host, todo_run_state_from
 from voidx.agent.task_state import Goal, PendingApproval, TaskState, TodoRunState, ToolStatePatch, goal_label
 from voidx.runtime.intent import TaskIntent
 from voidx.agent.tool_messages import sanitize_tool_message_content
-from voidx.workflow.runtime import WorkflowRunState, WorkflowRunStatus, advance_workflow_states
-from voidx.tools.base import ToolContext, UserInteraction, UserResponse
-from voidx.ui.output.console import _fmt_args, _title
-from voidx.ui.output.events.schema import (
+from voidx.workflow.service import advance_workflow_states, auto_advance_events, is_workflow_terminal_condition
+from voidx.workflow.types import WorkflowRunState, WorkflowRunStatus
+from voidx.tools.service import ToolContext, UserInteraction, UserResponse
+from voidx.runtime.ui import (
     FileChangeAppended,
     StatusFinished,
     StatusUpdated,
@@ -29,6 +30,8 @@ from voidx.ui.output.events.schema import (
     ToolResultAppended,
     ToolStarted,
     WarningAppended,
+    _fmt_args,
+    _title,
 )
 
 if TYPE_CHECKING:
@@ -73,7 +76,6 @@ class GraphToolExecutor:
             host._turn_node = host._ui.dock.current_agent
 
         host._current_messages = state["messages"]
-        agent_name = "voidx"
         runtime_persona = state.get("persona", "coordinate")
         session_id = host._session.id if host._session else "default"
         plan_mode = state.get("plan_mode", False)
@@ -190,7 +192,7 @@ class GraphToolExecutor:
                     current_parent_tool_call_id.reset(parent_tool_token)
                 ok = result_ok(result)
             except Exception as e:
-                from voidx.tools.base import ToolResult
+                from voidx.tools.service import ToolResult
                 error_text = sanitize_tool_message_content(
                     f"Tool execution error: {e}",
                     workspace=ctx.workspace,
@@ -327,7 +329,6 @@ class GraphToolExecutor:
                 approved, segment_denied = await _authorize_tool_calls(
                     host._authorize_tool_calls,
                     prefix,
-                    agent_name=agent_name,
                     runtime_persona=runtime_persona,
                     plan_mode=plan_mode,
                     session_id=session_id,
@@ -352,7 +353,6 @@ class GraphToolExecutor:
             approved, segment_denied = await _authorize_tool_calls(
                 host._authorize_tool_calls,
                 [barrier],
-                agent_name=agent_name,
                 runtime_persona=runtime_persona,
                 plan_mode=plan_mode,
                 session_id=session_id,
@@ -399,6 +399,19 @@ class GraphToolExecutor:
         }
         tool_messages = [item.message for item in executed if item.message is not None] + denied_msgs + blocked_msgs
         tool_messages.sort(key=lambda msg: original_order.get(msg.tool_call_id, len(original_order)))
+        compacted_messages = await _inline_compaction_messages(host, state.get("messages", []), executed)
+        if compacted_messages:
+            tool_messages = compacted_messages + tool_messages
+        if (
+            not denied_msgs
+            and not blocked_msgs
+            and _terminal_workflow_completed(
+                executed,
+                workflow_runs=runtime_workflow_runs,
+                result_ok=result_ok,
+            )
+        ):
+            state_update["should_continue"] = False
         return {
             "messages": tool_messages,
             **state_update,
@@ -470,13 +483,50 @@ def _state_update_from_executed_tools(
     return update
 
 
+async def _inline_compaction_messages(host, messages: list, executed: list[_ExecutedTool]) -> list:
+    summary = _inline_compaction_summary(executed)
+    if not summary:
+        return []
+
+    async def use_submitted_summary(_head_messages, _previous_summary):
+        return summary
+
+    # The LLM has already produced the summary via compact_context, so this
+    # path bypasses budget gating and only reuses the coordinator's split,
+    # persistence, and live-message replacement logic.
+    result = await host._compaction_component().compact_for_live_state(
+        list(messages),
+        force=True,
+        ask=False,
+        include_summary_message=True,
+        run_compaction_agent=use_submitted_summary,
+        persist_compaction=host._persist_compaction,
+    )
+    if result is None:
+        return []
+    return [
+        RemoveMessage(id=REMOVE_ALL_MESSAGES),
+        *result.live_messages,
+    ]
+
+
+def _inline_compaction_summary(executed: list[_ExecutedTool]) -> str:
+    for item in executed:
+        metadata = getattr(item.result, "metadata", {}) or {}
+        raw = metadata.get("inline_compaction")
+        if not isinstance(raw, dict):
+            continue
+        summary = str(raw.get("summary") or "").strip()
+        if summary:
+            return summary
+    return ""
+
+
 def _auto_advance_from_executed(
     executed: list[_ExecutedTool],
     workflow_runs: list[WorkflowRunState],
 ) -> list:
     """Check executed tools for auto-advance signals and return events."""
-    from voidx.workflow.auto_advance import auto_advance_events
-
     tool_items = []
     for item in executed:
         tool_items.append({
@@ -484,6 +534,34 @@ def _auto_advance_from_executed(
             "result": item.result,
         })
     return auto_advance_events(tool_items, workflow_runs=workflow_runs)
+
+
+def _terminal_workflow_completed(
+    executed: list[_ExecutedTool],
+    *,
+    workflow_runs: list[WorkflowRunState],
+    result_ok: ToolResultOk,
+) -> bool:
+    if not executed:
+        return False
+    if any(not result_ok(item.result) for item in executed):
+        return False
+
+    saw_terminal_advance = False
+    for item in executed:
+        if item.tool_call.get("name") != "advance_workflow":
+            continue
+        metadata = getattr(item.result, "metadata", {}) or {}
+        transition = metadata.get("workflow_transition") or {}
+        if not isinstance(transition, dict):
+            continue
+        condition = str(transition.get("condition") or "")
+        if is_workflow_terminal_condition(condition):
+            saw_terminal_advance = True
+            break
+    if not saw_terminal_advance:
+        return False
+    return not any(run.status == WorkflowRunStatus.ACTIVE for run in workflow_runs)
 
 
 def _merge_workflow_runs_for_state(*groups: object) -> list[WorkflowRunState]:
@@ -536,7 +614,7 @@ def _agent_result_preview(text: object) -> str:
 
 
 def _is_barrier_tool(tool_call: dict) -> bool:
-    return tool_call.get("name") in {"clarify", "plan_checkpoint", "advance_workflow"}
+    return tool_call.get("name") in {"clarify", "plan_checkpoint", "advance_workflow", "compact_context"}
 
 
 def _split_at_first_barrier(tool_calls: list[dict]) -> tuple[list[dict], dict | None, list[dict]]:
@@ -567,15 +645,13 @@ async def _authorize_tool_calls(
     authorize,
     tool_calls: list[dict],
     *,
-    agent_name: str,
+    runtime_persona: str = "coordinate",
     plan_mode: bool,
     session_id: str,
     interaction_mode: str | None,
     workflow_runs: object,
-    runtime_persona: str | None = None,
 ):
     kwargs = {
-        "agent_name": agent_name,
         "runtime_persona": runtime_persona,
         "plan_mode": plan_mode,
         "session_id": session_id,

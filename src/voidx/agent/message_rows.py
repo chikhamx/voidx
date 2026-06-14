@@ -11,7 +11,7 @@ from typing import Any
 from langchain_core.messages import AIMessage, BaseMessage, HumanMessage, SystemMessage, ToolMessage
 
 from voidx.agent.attachments import parse_structured_content
-from voidx.memory.session import MessageRow
+from voidx.memory.service import MessageRow
 
 
 @dataclass

@@ -143,8 +143,7 @@ def test_permission_service_status_label_ignores_session_overrides():
 def test_permission_service_splits_readonly_and_implement_agents():
     service = PermissionService()
 
-    assert service.decide("agent", "explore") == "ask"
-    assert service.decide("agent", "sub-voidx") == "allow"
+    assert service.decide("agent", "voidx") == "allow"
     assert service.decide("agent", "implement") == "ask"
 
 
@@ -179,7 +178,7 @@ def test_load_skills_is_allowed_read_tool(tmp_path):
     }).capability == PermissionCapability.READ_TOOLS
 
 
-@pytest.mark.parametrize("tool_name", ["clarify", "plan_checkpoint", "advance_workflow"])
+@pytest.mark.parametrize("tool_name", ["clarify", "plan_checkpoint", "advance_workflow", "compact_context"])
 def test_interactive_runtime_tools_are_allowed(tmp_path, tool_name):
     context = PermissionContext(workspace=str(tmp_path))
     decision = authorize_tool_call(
@@ -263,9 +262,14 @@ def test_permission_engine_classifies_basic_capabilities():
     assert classify_tool_call({"name": "bash", "args": {"command": "git branch new-feature"}}).capability == PermissionCapability.BASH_WRITE
     assert classify_tool_call({"name": "git", "args": {"command": "status"}}).capability == PermissionCapability.GIT_READ
     assert classify_tool_call({"name": "git", "args": {"command": "commit"}}).capability == PermissionCapability.GIT_WRITE
-    assert classify_tool_call({"name": "agent", "args": {"agent": "explore"}}).capability == PermissionCapability.AGENT_READONLY
-    assert classify_tool_call({"name": "agent", "args": {"agent": "implement"}}).capability == PermissionCapability.AGENT_IMPLEMENT
+    readonly_agent = classify_tool_call({"name": "agent", "args": {"agent": "explore"}})
+    assert readonly_agent.capability == PermissionCapability.AGENT_READONLY
+    assert readonly_agent.pattern == "voidx"
+    implement_agent = classify_tool_call({"name": "agent", "args": {"agent": "implement"}})
+    assert implement_agent.capability == PermissionCapability.AGENT_IMPLEMENT
+    assert implement_agent.pattern == "implement"
     assert classify_tool_call({"name": "advance_workflow", "args": {}}).capability == PermissionCapability.READ_TOOLS
+    assert classify_tool_call({"name": "compact_context", "args": {}}).capability == PermissionCapability.READ_TOOLS
 
 
 def test_permission_engine_default_strategy_and_plan_overlay(tmp_path):

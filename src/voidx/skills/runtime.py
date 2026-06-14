@@ -2,14 +2,14 @@
 
 from __future__ import annotations
 
-from voidx.workflow.runtime import (
+from voidx.workflow.runtime import advance_workflow_states
+from voidx.workflow.types import (
     WorkflowActivationSource,
     WorkflowEvidence,
     WorkflowRunState,
     WorkflowRunStatus,
     WorkflowStateEvent,
     WorkflowStateEventKind,
-    advance_workflow_states,
     source_from_reason,
 )
 

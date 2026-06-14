@@ -7,7 +7,13 @@ import time
 
 from langchain_core.messages import AIMessage, HumanMessage, ToolMessage
 
-from voidx.agent.agents import BASE_SYSTEM_PROMPT, PLAN_MODE_APPEND, SUB_VOIDX_PROMPT, AgentDef
+from voidx.agent.agents import (
+    BASE_SYSTEM_PROMPT,
+    CHILD_RUN_CONSTRAINTS,
+    PLAN_MODE_APPEND,
+    AgentDef,
+    child_run_agent_def,
+)
 from voidx.agent.graph.convergence import (
     build_convergence_messages,
     generate_fallback_summary,
@@ -24,7 +30,7 @@ from voidx.runtime.task_state import Goal, GoalType, TaskIntent, TaskState
 from voidx.agent.tool_messages import sanitize_tool_message_content
 from voidx.agent.tool_filters import filter_unavailable_lsp_tools
 from voidx.config import Config
-from voidx.llm.provider import create_chat_model, resolve_protocol
+from voidx.llm.service import create_chat_model, resolve_protocol
 from voidx.llm.instruction import WorkflowRuntimeContext
 from voidx.llm.usage import (
     UsageStats,
@@ -32,14 +38,10 @@ from voidx.llm.usage import (
     estimate_message_tokens,
     extract_token_usage,
 )
-from voidx.memory.context_frames import save_context_frame_from_messages
-from voidx.tools.base import ToolContext
-from voidx.tools.registry import ToolRegistry
-from voidx.tools.task_tracker import TaskTracker
+from voidx.memory.service import save_context_frame_from_messages
+from voidx.runtime.ui import CaptureConsole, OutputTree, StreamingRenderer
+from voidx.tools.service import ToolContext, ToolRegistry, TaskTracker
 from voidx.runtime.ui_port import AgentUiPort, runtime_ui_port
-from voidx.ui.output.capture import CaptureConsole
-from voidx.ui.output.console import StreamingRenderer
-from voidx.ui.output.tree import OutputTree
 
 
 async def run_subagent(
@@ -50,6 +52,9 @@ async def run_subagent(
     config: Config,
     tracker: TaskTracker | None = None,
     runtime_persona: str | None = None,
+    *,
+    max_steps: int,
+    run_metadata: dict[str, object] | None = None,
     capture_tree: OutputTree | None = None,
     parent_node=None,
     sub_messages: list | None = None,
@@ -65,7 +70,9 @@ async def run_subagent(
     ui_port: AgentUiPort = runtime_ui_port,
 ) -> str:
     """Run a child agent in its own message context."""
-    persona = (runtime_persona or agent_def.name).strip() or "explore"
+    agent_def = child_run_agent_def(agent_def)
+    persona = (runtime_persona or "explore").strip() or "explore"
+    step_budget = max_steps
     model_cfg = config.model.model_copy()
     if model_override:
         model_cfg.model = model_override
@@ -119,6 +126,7 @@ async def run_subagent(
         workspace=config.workspace,
         base_system_prompt=BASE_SYSTEM_PROMPT,
         persona_prompt=_agent_prompt(agent_def),
+        runtime_constraints=CHILD_RUN_CONSTRAINTS,
         mode_prompt=mode_prompt,
         tool_contract=agent_def.tool_contract,
         persona=persona,
@@ -141,24 +149,32 @@ async def run_subagent(
     # Register with tracker
     task_id = f"sub_{agent_def.name}_{persona}_{int(time.time())}"
     if tracker:
-        tracker.start(task_id, persona, task_description, agent_def.max_steps)
+        tracker.start(task_id, persona, task_description, step_budget)
+
+    def mark_finished(step: int, reason: str) -> None:
+        if run_metadata is not None:
+            run_metadata.update({
+                "final_step": step,
+                "max_steps": step_budget,
+                "finish_reason": reason,
+            })
 
     try:
-        for step in range(1, agent_def.max_steps + 1):
+        for step in range(1, step_budget + 1):
             if tracker:
                 tracker.update(task_id, step=step)
 
             if capture_tree and parent_node is not None:
                 capture = CaptureConsole(capture_tree, parent_node, agent_id=agent_id)
-                capture.step_header(step, agent_def.max_steps, persona)
+                capture.step_header(step, step_budget, persona)
             else:
-                ui_port.ui.step_header(step, agent_def.max_steps, persona)
+                ui_port.ui.step_header(step, step_budget, persona)
 
-            has_tool_budget = step < agent_def.max_steps - 1
+            has_tool_budget = step < step_budget - 1
             active_tool_defs = tool_defs if has_tool_budget else []
             convergence_messages, convergence_forced = build_convergence_messages(
                 step=step,
-                max_steps=agent_def.max_steps,
+                max_steps=step_budget,
                 has_tool_budget=has_tool_budget,
                 goal=task_description,
             )
@@ -179,7 +195,7 @@ async def run_subagent(
                     token_estimate=context_tokens,
                     metadata={
                         "step": step,
-                        "max_steps": agent_def.max_steps,
+                        "max_steps": step_budget,
                         "tool_count": len(active_tool_defs),
                         "agent_id": agent_id,
                         "convergence_hint_count": len(convergence_messages),
@@ -210,11 +226,12 @@ async def run_subagent(
                     "goal": task_description,
                     "tool_results": {},
                     "step_count": step,
-                    "max_steps": agent_def.max_steps,
+                    "max_steps": step_budget,
                 })
                 if tracker:
                     tracker.update(task_id, last_output=text[:200])
                     tracker.finish(task_id, "completed")
+                mark_finished(step, "step_limit")
                 return text
 
             if not assistant_msg.tool_calls:
@@ -225,11 +242,12 @@ async def run_subagent(
                         "goal": task_description,
                         "tool_results": {},
                         "step_count": step,
-                        "max_steps": agent_def.max_steps,
+                        "max_steps": step_budget,
                     })
                 if tracker:
                     tracker.update(task_id, last_output=text[:200])
                     tracker.finish(task_id, "completed")
+                mark_finished(step, "final_answer")
                 return text
 
             # Update tracker with preview
@@ -238,7 +256,7 @@ async def run_subagent(
                 tracker.update(task_id, last_output=text_preview)
 
             if authorize_tools:
-                approved, denied = await authorize_tools(assistant_msg.tool_calls, agent_def.name)
+                approved, denied = await authorize_tools(assistant_msg.tool_calls)
             else:
                 approved = list(assistant_msg.tool_calls)
                 denied = []
@@ -281,36 +299,35 @@ async def run_subagent(
 
         if tracker:
             tracker.finish(task_id, "completed")
+        mark_finished(step_budget, "step_limit")
         return extract_text(messages[-1]) if messages else "Max steps reached."
 
     except Exception as e:
         if tracker:
             tracker.update(task_id, last_output=str(e)[:200])
             tracker.finish(task_id, "error")
+        mark_finished(0, "error")
         raise
 
 
-def _task_intent_for_agent(agent_name: str) -> str:
-    return "coding" if agent_name in {"implement", "review", "plan", "explore"} else "general"
+def _task_intent_for_agent(persona: str) -> str:
+    return "coding" if persona in {"implement", "review", "plan", "explore"} else "general"
 
 
-def _goal_type_for_agent(agent_name: str, task_description: str = "") -> str:
-    if agent_name == "review":
+def _goal_type_for_agent(persona: str, task_description: str = "") -> str:
+    if persona == "review":
         return "review"
-    if agent_name == "plan":
+    if persona == "plan":
         return "design"
-    if agent_name == "implement":
+    if persona == "implement":
         lowered = task_description.lower()
         if "bug" in lowered or "fix" in lowered or "failed" in lowered or "failure" in lowered:
             return "bugfix"
         return "feature"
-    if agent_name == "explore":
+    if persona == "explore":
         return "inspect"
     return ""
 
 
 def _agent_prompt(agent_def: AgentDef) -> str:
-    try:
-        return agent_def.persona_prompt
-    except ValueError:
-        return SUB_VOIDX_PROMPT
+    return agent_def.persona_prompt

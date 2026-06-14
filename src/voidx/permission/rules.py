@@ -33,6 +33,7 @@ BASIC_RULES: Ruleset = [
     Rule(permission="clarify", pattern="*", action="allow"),
     Rule(permission="plan_checkpoint", pattern="*", action="allow"),
     Rule(permission="advance_workflow", pattern="*", action="allow"),
+    Rule(permission="compact_context", pattern="*", action="allow"),
     Rule(permission="task_status", pattern="*", action="allow"),
     Rule(permission="load_skills", pattern="*", action="allow"),
     Rule(permission="repo_map", pattern="*", action="allow"),
@@ -40,7 +41,7 @@ BASIC_RULES: Ruleset = [
     Rule(permission="lsp_symbols", pattern="*", action="allow"),
     Rule(permission="lsp_definition", pattern="*", action="allow"),
     Rule(permission="lsp_references", pattern="*", action="allow"),
-    Rule(permission="agent", pattern="sub-voidx", action="allow"),
+    Rule(permission="agent", pattern="voidx", action="allow"),
     Rule(permission="write", pattern="*", action="ask"),
     Rule(permission="edit", pattern="*", action="ask"),
     Rule(permission="git", pattern="write", action="ask"),
@@ -106,6 +107,7 @@ def repair_tool_name(tool: str) -> str:
         "LspDefinition": "lsp_definition", "LspReferences": "lsp_references",
         "LspFormat": "lsp_format",
         "AdvanceWorkflow": "advance_workflow",
+        "CompactContext": "compact_context",
     }
     return tool_map.get(tool, tool_map.get(tool.lower(), tool))
 
@@ -117,9 +119,9 @@ def build_pattern(tool: str, args: dict) -> str:
         return str(args.get("file_path", "*"))
     if tool == "agent":
         persona = delegated_persona(args)
-        if persona == "implement":
-            return persona
-        return delegated_agent(args) or "*"
+        if persona == "implement" or (not persona and delegated_agent(args) == "implement"):
+            return "implement"
+        return "voidx"
     if tool == "git":
         return "read" if _is_read_only_git_tool_command(args) else "write"
     return "*"
@@ -342,7 +344,7 @@ def _is_read_only_git_ref_command(subcommand: str, args: list[str]) -> bool:
 def capability_for_tool(tool: str, args: dict) -> PermissionCapability:
     if tool in {
         "read", "glob", "grep", "webfetch", "websearch", "todo", "task_status",
-        "load_skills", "advance_workflow",
+        "load_skills", "advance_workflow", "compact_context",
         "repo_map", "lsp_diagnostics", "lsp_symbols", "lsp_definition",
         "lsp_references",
     }:

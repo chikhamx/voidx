@@ -7,13 +7,9 @@ from pydantic import BaseModel, Field, field_validator, model_validator
 
 class NodeGate(BaseModel):
     denied_tools: tuple[str, ...] = Field(default_factory=tuple)
+    allowed_paths: tuple[str, ...] = Field(default_factory=tuple)
     description: str = ""
     required_before_transition: str = ""
-
-
-class DecisionRule(BaseModel):
-    condition: str
-    description: str
 
 
 class WorkflowStep(BaseModel):
@@ -22,27 +18,47 @@ class WorkflowStep(BaseModel):
     description: str = ""
 
 
+class NodeIO(BaseModel):
+    input: dict[str, str]
+    output: dict[str, str]
+
+
+class NodeSubworkflow(BaseModel):
+    name: str
+    description: str = ""
+    steps: list[WorkflowStep]
+    exit_condition: str
+
+    @field_validator("name", "exit_condition")
+    @classmethod
+    def _require_text(cls, value: str) -> str:
+        normalized = value.strip()
+        if not normalized:
+            raise ValueError("node subworkflow fields cannot be empty")
+        return normalized
+
+
 class WorkflowNode(BaseModel):
     name: str
+    goal: str
     description: str
-    triggers: list[str] = Field(default_factory=list)
-    priority: int = 100
-    enabled: bool = True
-    core_rule: str = ""
-    personas: list[str] = Field(default_factory=list)
+    io: NodeIO
+    tools: list[str]
+    persona: str
     gate: NodeGate = Field(default_factory=NodeGate)
     workflow: list[WorkflowStep] = Field(default_factory=list)
-    decision_rules: list[DecisionRule] = Field(default_factory=list)
-    anti_patterns: list[str] = Field(default_factory=list)
-    allowed_exceptions: list[str] = Field(default_factory=list)
-    extra_sections: dict[str, str] = Field(default_factory=dict)
+    subworkflow: NodeSubworkflow | None = None
+    rules: list[str] = Field(default_factory=list)
+    exceptions: list[str] = Field(default_factory=list)
 
-    @field_validator("name")
+    @field_validator("name", "goal", "description", "persona")
     @classmethod
-    def _normalize_name(cls, value: str) -> str:
-        normalized = value.strip().lower()
+    def _normalize_text(cls, value: str, info) -> str:
+        normalized = value.strip()
         if not normalized:
-            raise ValueError("workflow node name cannot be empty")
+            raise ValueError(f"workflow node {info.field_name} cannot be empty")
+        if info.field_name == "name":
+            return normalized.lower()
         return normalized
 
 
@@ -51,6 +67,7 @@ class Edge(BaseModel):
     target: str
     condition: str
     label: str = ""
+    description: str = ""
 
     @field_validator("source", "target", "condition")
     @classmethod

@@ -9,7 +9,7 @@ from typing import Any
 
 from pydantic import BaseModel, Field
 
-from voidx.workflow.runtime import WorkflowRunState
+from voidx.workflow.types import WorkflowRunState
 
 
 def resolve_safe(workspace: str, file_path: str, extra_paths: list[str] | None = None) -> Path | None:

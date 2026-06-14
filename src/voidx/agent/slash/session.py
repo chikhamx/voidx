@@ -3,9 +3,7 @@
 from __future__ import annotations
 
 from voidx.agent.slash.runtime import _select_from_list
-from voidx.runtime.ui import ui
-from voidx.ui.output.dock import get_dock
-from voidx.ui.session import session_tracker
+from voidx.runtime.ui import get_dock, session_tracker, ui
 
 
 class SlashSessionMixin:
@@ -62,7 +60,7 @@ class SlashSessionMixin:
         await self._show_startup(prefer_direct=True)
 
     async def _list_sessions(self) -> None:
-        from voidx.memory.session import list_sessions
+        from voidx.memory.service import list_sessions
 
         sessions = await list_sessions()
         if not sessions:
@@ -84,7 +82,7 @@ class SlashSessionMixin:
             await self._resume(f"/resume {sessions[idx].id}")
 
     async def _resume(self, cmd: str) -> None:
-        from voidx.memory.session import get_session, list_sessions
+        from voidx.memory.service import get_session, list_sessions
 
         sid = cmd.removeprefix("/resume").strip()
         if not sid:

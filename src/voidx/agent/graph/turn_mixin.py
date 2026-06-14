@@ -7,7 +7,6 @@ from typing import TYPE_CHECKING
 from voidx.agent.graph.turn_runner import (
     RESUME_FORCE_COMPACT_MESSAGE_COUNT,
     GraphTurnRunner,
-    _resolve_max_steps,
     _resolve_recursion_limit,
 )
 

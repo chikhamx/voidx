@@ -2,38 +2,34 @@
 
 from __future__ import annotations
 
-from voidx.workflow.schema import DecisionRule, NodeGate, TerminalExit, WorkflowNode, WorkflowStep
-
-
-_TERMINAL_CONDITION = TerminalExit().condition
+from voidx.workflow.schema import NodeGate, NodeIO, NodeSubworkflow, WorkflowNode, WorkflowStep
 
 
 BRAINSTORMING = WorkflowNode(
     name="brainstorm",
+    goal="确认需求和设计方案，获得用户批准",
     description=(
         "Use before creating features, building components, or modifying behavior. "
         "Explores intent, requirements, and design before implementation."
     ),
-    triggers=[
-        "create feature",
-        "build component",
-        "add functionality",
-        "new feature",
-        "design",
-        "brainstorm",
-        "refactor",
-        "restructure",
-        "新功能",
-        "实现新功能",
-        "设计",
-        "头脑风暴",
-        "需求澄清",
-        "重构",
-        "重组",
+    persona="explore",
+    io=NodeIO(
+        input={"user_request": "用户原始请求"},
+        output={
+            "design": "批准的设计方案或确认的变更范围",
+            "scope": "确认的变更边界",
+        },
+    ),
+    tools=[
+        "read",
+        "glob",
+        "grep",
+        "repo_map",
+        "clarify",
+        "plan_checkpoint",
+        "webfetch",
+        "websearch",
     ],
-    priority=5,
-    core_rule="Present a design and get user approval before writing any code.",
-    personas=["coordinate", "explore"],
     gate=NodeGate(
         denied_tools=("write", "edit", "lsp_format"),
         description=(
@@ -46,53 +42,46 @@ BRAINSTORMING = WorkflowNode(
     workflow=[
         WorkflowStep(order=1, action="Explore context", description="Check files, docs, recent commits to understand the current state."),
         WorkflowStep(order=2, action="Ask clarifying questions", description="One at a time. Understand purpose, constraints, and success criteria."),
-        WorkflowStep(order=3, action="Propose 2-3 approaches", description="With trade-offs and your recommendation."),
+        WorkflowStep(order=3, action="Propose approaches", description="Present trade-offs and a recommendation."),
         WorkflowStep(order=4, action="Present design for approval", description="Scale to complexity and get user approval."),
-        WorkflowStep(order=5, action="Write design doc", description="Save to docs/specs/<topic>-design-YYYY-MM-DD.md when needed."),
     ],
-    decision_rules=[
-        DecisionRule(condition="small_change", description="Highest priority when the change is local/mechanical and does not need a plan: renaming, adding a config field, or fixing a typo goes directly to tdd."),
-        DecisionRule(condition="skip_to_plan", description="Use only when the user explicitly says 'just implement it' but the work is not a local/mechanical small_change; confirm the goal in one sentence first."),
-        DecisionRule(condition="skip_to_plan", description="Use only when the request is already a detailed spec with clear requirements and is not a local/mechanical small_change; confirm understanding and go directly to plan."),
-        DecisionRule(condition="approved", description="For large refactors or behavior changes, continue through design docs after explicit user approval."),
-    ],
-    anti_patterns=[
-        '"This is too simple to need a design" is where unexamined assumptions cause the most wasted work.',
+    rules=[
+        "Present a design and get user approval before writing any code.",
+        "Do not write the design document inside brainstorm; transition to design-doc if a document is needed.",
+        '"This is too simple to need a design" is where unexamined assumptions cause wasted work.',
     ],
 )
 
 
 WRITING_DESIGN_DOCS = WorkflowNode(
     name="design-doc",
+    goal="产出通过读者测试的结构化文档",
     description=(
         "Use when writing technical design docs, PRDs, RFCs, API docs, READMEs, "
         "or changelogs. Covers both design-phase and post-implementation documentation."
     ),
-    triggers=[
-        "design doc",
-        "technical design",
-        "architecture doc",
-        "RFC",
-        "API doc",
-        "API 文档",
-        "README",
-        "changelog",
-        "release notes",
-        "write docs",
-        "document this",
-        "PRD",
-        "product requirements",
-        "需求文档",
-        "产品需求",
-        "技术设计",
-        "架构文档",
-        "接口文档",
-        "写文档",
-        "变更日志",
+    persona="plan",
+    io=NodeIO(
+        input={
+            "design": "批准的设计方案",
+            "doc_type": "文档类型(prd/tech-design/rfc/api-doc/readme)",
+        },
+        output={
+            "doc_path": "文档保存路径",
+            "doc_type": "实际文档类型",
+        },
+    ),
+    tools=[
+        "read",
+        "glob",
+        "grep",
+        "write",
+        "edit",
+        "load_doc_template",
+        "repo_map",
+        "webfetch",
+        "websearch",
     ],
-    priority=25,
-    core_rule="Write for the reader who has zero context.",
-    personas=["plan"],
     gate=NodeGate(
         description="Do not skip the reader test. Every document must pass a fresh-read check before being considered complete.",
         required_before_transition="doc passes reader test",
@@ -106,44 +95,43 @@ WRITING_DESIGN_DOCS = WorkflowNode(
         WorkflowStep(order=6, action="Reader test", description="Re-read as a fresh reader and fill any gaps."),
         WorkflowStep(order=7, action="Verify accuracy", description="Check examples, paths, and API shapes against the actual implementation."),
     ],
-    extra_sections={
-        "Two Scenarios": (
-            "- Design-phase docs explain intended behavior, options, trade-offs, and implementation plan.\n"
-            "- Post-implementation docs explain shipped behavior, exact usage, APIs, and operational notes."
-        ),
-        "PRD-Specific Rules": (
-            "- State user problem, goals, non-goals, acceptance criteria, and launch constraints.\n"
-            "- Keep implementation details out unless they affect product behavior."
-        ),
-        "Document Types": (
-            "| Type | doc_type | When to use |\n"
-            "|------|----------|-------------|\n"
-            "| Product Requirements Doc | `prd` | A product feature needs a structured spec before implementation |\n"
-            "| Technical Design Doc | `tech-design` | A feature needs architecture decisions before implementation |\n"
-            "| RFC / Decision Doc | `rfc` | A significant technical decision needs team alignment |\n"
-            "| API Documentation | `api-doc` | Implementation is done and others need to integrate |\n"
-            "| README / Usage Guide | `readme` | Implementation is done and others need to use or contribute |"
-        ),
-        "Principles": (
-            "- Write for the reader, not the writer.\n"
-            "- Start with the most useful information.\n"
-            "- Show, don't tell.\n"
-            "- Link, don't duplicate.\n"
-            "- Outdated docs are worse than no docs."
-        ),
-    },
+    rules=[
+        "Write for the reader who has zero context.",
+        "Start with the most useful information.",
+        "Link instead of duplicating existing source material.",
+    ],
 )
 
 
 WRITING_PLANS = WorkflowNode(
     name="plan",
+    goal="产出可执行的实施计划，获得用户批准",
     description="Use when turning a spec, requirements, or agreed design into an implementation plan before editing code.",
-    triggers=["implementation plan", "write a plan", "planning", "spec", "requirements", "计划", "实施方案", "需求"],
-    priority=30,
-    core_rule="Plans must be executable: exact paths, concrete commands, and voidx tool names.",
-    personas=["plan"],
+    persona="plan",
+    io=NodeIO(
+        input={
+            "spec": "设计文档或需求规格",
+            "scope": "变更范围",
+        },
+        output={
+            "plan": "实施计划，含任务列表、文件结构、测试定义",
+            "tasks": "有序任务清单",
+            "test_commands": "相关验证命令",
+        },
+    ),
+    tools=[
+        "read",
+        "glob",
+        "grep",
+        "repo_map",
+        "webfetch",
+        "websearch",
+        "write",
+        "edit",
+    ],
     gate=NodeGate(
         denied_tools=("write", "edit", "lsp_format"),
+        allowed_paths=("docs/specs/**", "docs/design/**"),
         description="Do not start implementation until the plan is approved. The plan must be executable with exact paths and commands.",
         required_before_transition="plan is executable and approved",
     ),
@@ -155,111 +143,190 @@ WRITING_PLANS = WorkflowNode(
         WorkflowStep(order=5, action="Write tasks", description="Ordered steps with checkboxes; each step is one small action."),
         WorkflowStep(order=6, action="Define tests", description="Targeted commands and expected results per task."),
         WorkflowStep(order=7, action="Identify risks", description="Edge cases, compatibility, and rollback concerns."),
+        WorkflowStep(order=8, action="Verify plan is executable", description="Every task has a file path and a test command."),
     ],
-    extra_sections={
-        "Execution": "After the plan is approved, follow tdd for each task. Before claiming any task complete, follow verify.",
-    },
+    rules=[
+        "Plans must be executable: exact paths, concrete commands, and voidx tool names.",
+        "After the plan is approved, follow tdd for each task.",
+    ],
 )
 
 
 TEST_DRIVEN_DEVELOPMENT = WorkflowNode(
     name="tdd",
+    goal="按 TDD 循环完成实现，测试全绿",
     description="Use before implementing features, bug fixes, refactors, or behavior changes.",
-    triggers=["implement", "feature", "bugfix", "refactor", "behavior change", "add support", "fix bug", "实现", "修复", "重构", "功能"],
-    priority=40,
-    core_rule="Write a test that fails for the intended reason before writing the implementation.",
-    personas=["implement"],
+    persona="implement",
+    io=NodeIO(
+        input={
+            "plan": "实施计划",
+            "task": "当前要实现的任务",
+        },
+        output={
+            "files_changed": "修改的文件列表",
+            "tests_written": "编写的测试列表",
+            "test_result": "测试运行结果",
+        },
+    ),
+    tools=[
+        "read",
+        "write",
+        "edit",
+        "bash",
+        "glob",
+        "grep",
+        "repo_map",
+        "lsp_diagnostics",
+        "lsp_format",
+    ],
     gate=NodeGate(
         description="If you wrote implementation code before a failing test, delete the implementation and start from the test.",
         required_before_transition="test written, red verified, implementation green",
     ),
     workflow=[
-        WorkflowStep(order=1, action="Write failing test", description="Identify the smallest behavior to prove."),
-        WorkflowStep(order=2, action="Verify red", description="Run the targeted test and confirm it fails for the expected reason."),
-        WorkflowStep(order=3, action="Implement minimal code", description="Make the smallest code change that makes the test pass."),
-        WorkflowStep(order=4, action="Verify green", description="Run the targeted test again and confirm it passes."),
-        WorkflowStep(order=5, action="Refactor", description="Refactor only after the test is green."),
-        WorkflowStep(order=6, action="Run broader test set", description="Run the relevant broader test set before reporting completion."),
+        WorkflowStep(order=1, action="Run the internal TDD cycle"),
+        WorkflowStep(order=2, action="Confirm implementation output", description="List files changed, tests written, and targeted test result."),
     ],
-    allowed_exceptions=[
-        "Pure documentation, prompt-only edits, generated assets, or configuration-only changes. If you skip TDD, say why briefly.",
+    subworkflow=NodeSubworkflow(
+        name="TDD Cycle",
+        description="Repeat until all implementation tasks are complete.",
+        steps=[
+            WorkflowStep(order=1, action="Pick the next task from the plan"),
+            WorkflowStep(order=2, action="Write a failing test"),
+            WorkflowStep(order=3, action="Run the test and confirm RED"),
+            WorkflowStep(order=4, action="Implement minimal code"),
+            WorkflowStep(order=5, action="Run the test and confirm GREEN"),
+            WorkflowStep(order=6, action="Refactor if needed"),
+            WorkflowStep(order=7, action="Run the broader test set"),
+        ],
+        exit_condition="all plan tasks implemented and broader test set green",
+    ),
+    rules=[
+        "Write a test that fails for the intended reason before writing implementation.",
+        "Keep refactors behind green tests.",
+    ],
+    exceptions=[
+        "Pure documentation, prompt-only edits, generated assets, or configuration-only changes.",
     ],
 )
 
 
 VERIFICATION_BEFORE_COMPLETION = WorkflowNode(
     name="verify",
+    goal="用可复现的证据证明变更达到预期状态",
     description="Use before claiming work is complete, fixed, passing, ready, or safe to merge.",
-    triggers=["done", "complete", "fixed", "passing", "ready", "verify", "verified", "looks good", "should work", "完成", "修好了", "通过", "验证", "好了", "没问题了"],
-    priority=50,
-    core_rule="Evidence before completion claims.",
-    personas=["review"],
+    persona="review",
+    io=NodeIO(
+        input={
+            "claim": "声称完成的状态(done/fixed/passing)",
+            "files_changed": "变更文件",
+            "test_commands": "相关测试命令",
+        },
+        output={
+            "evidence": "验证证据，包含命令和输出",
+            "verified": "是否通过",
+            "scope": "变更影响范围(substantial/routine)",
+        },
+    ),
+    tools=[
+        "bash",
+        "read",
+        "glob",
+        "grep",
+        "repo_map",
+        "lsp_diagnostics",
+    ],
     gate=NodeGate(
         description="Before claiming any status, identify the proving command, run it in this turn, read the output, and report the evidence.",
         required_before_transition="verification command run with evidence",
     ),
-    decision_rules=[
-        DecisionRule(condition=_TERMINAL_CONDITION, description=f"Verification passed but the change is small or routine — no code review needed. Use '{_TERMINAL_CONDITION}' instead of 'passed_substantial'."),
+    workflow=[
+        WorkflowStep(order=1, action="Identify proving commands"),
+        WorkflowStep(order=2, action="Run fresh verification"),
+        WorkflowStep(order=3, action="Read output and classify result"),
+        WorkflowStep(order=4, action="Report evidence"),
     ],
-    extra_sections={
-        "Regression Tests": (
-            "For regression claims, prove the test catches the old behavior: write or identify the test, "
-            "confirm it fails without the fix when practical, restore the fix, then confirm it passes."
-        ),
-        "Common Failure Modes": (
-            "| Claim | Requires | Not Sufficient |\n"
-            "|-------|----------|----------------|\n"
-            "| Tests pass | Test command output: 0 failures | Previous run, 'should pass' |\n"
-            "| Build succeeds | Build command: exit 0 | Linter passing, logs look good |\n"
-            "| Bug fixed | Original symptom no longer reproduces | Code changed, assumed fixed |"
-        ),
-        "Red Flags": (
-            "- Using 'should', 'probably', or 'seems to'.\n"
-            "- Relying on earlier runs or partial checks.\n"
-            "- Claiming completion before reading command output.\n"
-            "- Trusting generated reports without checking the actual diff and test output."
-        ),
-    },
+    rules=[
+        "Evidence before completion claims.",
+        "Use done instead of passed_substantial when verification passed but the change is small or routine.",
+        "Do not rely on earlier runs or partial checks.",
+    ],
 )
 
 
 REQUESTING_CODE_REVIEW = WorkflowNode(
     name="review",
+    goal="发起结构化的代码审查请求并收集 verdict",
     description="Use after substantial implementation work, complex bug fixes, or before merging to request a focused review.",
-    triggers=["request review", "ask for review", "before merge", "pre-merge", "review this change", "复核一下", "合并前"],
-    priority=60,
-    core_rule="Review early, review often.",
-    personas=["review"],
+    persona="review",
+    io=NodeIO(
+        input={
+            "files_changed": "变更文件",
+            "verification_evidence": "验证证据",
+            "risks": "风险点",
+        },
+        output={
+            "review_brief": "审查简报",
+            "review_result": "审查结果(PASS/FAIL/NEEDS_CHANGE)",
+        },
+    ),
+    tools=[
+        "agent",
+        "read",
+        "glob",
+        "grep",
+    ],
     gate=NodeGate(
         description="Do not merge to main or mark substantial work complete without requesting review.",
         required_before_transition="review requested with required brief fields",
     ),
-    anti_patterns=[
-        "Do not ask for review with only 'please review'. Include context, verification, and risk areas.",
+    workflow=[
+        WorkflowStep(order=1, action="Run the internal review cycle"),
+        WorkflowStep(order=2, action="Confirm review is completed and collect verdict"),
     ],
-    extra_sections={
-        "When to Request": (
-            "- Substantial implementation work.\n"
-            "- Complex bug fixes or risky refactors.\n"
-            "- Before merge or release when review would catch integration mistakes."
-        ),
-        "How to Request": (
-            "Include what changed, requirements checked, files changed, verification run, "
-            "and specific risks to inspect."
-        ),
-        "Review Brief": "Include what changed, requirements checked, files changed, verification run, and specific risks to inspect.",
-        "Acting on Feedback": "When review feedback arrives, follow review-feedback.",
-    },
+    subworkflow=NodeSubworkflow(
+        name="Review Cycle",
+        description="Repeat until review verdict is resolved and either PASS is reached or feedback is routed.",
+        steps=[
+            WorkflowStep(order=1, action="Construct review brief"),
+            WorkflowStep(order=2, action="Delegate to review agent"),
+            WorkflowStep(order=3, action="Collect verdict"),
+            WorkflowStep(order=4, action="Route verdict"),
+        ],
+        exit_condition="review verdict is PASS, or feedback is handed off to feedback",
+    ),
+    rules=[
+        "Include what changed, requirements checked, files changed, verification run, and specific risks to inspect.",
+        "Do not ask for review with only 'please review'.",
+    ],
 )
 
 
 RECEIVING_CODE_REVIEW = WorkflowNode(
-    name="review-feedback",
+    name="feedback",
+    goal="验证并实施有效的审查反馈",
     description="Use when receiving review feedback, requested optimizations, or reviewer comments before implementing them.",
-    triggers=["review feedback", "code review feedback", "reviewer says", "feedback says", "review comment", "优化点", "审查意见", "评审意见"],
-    priority=20,
-    core_rule="Verify feedback against the codebase before changing code.",
-    personas=["implement"],
+    persona="implement",
+    io=NodeIO(
+        input={
+            "feedback": "审查反馈内容",
+            "source": "反馈来源(human/external)",
+        },
+        output={
+            "changes_made": "根据反馈做的变更",
+            "feedback_status": "每条反馈的处理状态(accepted/rejected/deferred)",
+            "deferred_items": "需要设计、分析或规划而非直接实施的反馈项",
+        },
+    ),
+    tools=[
+        "read",
+        "write",
+        "edit",
+        "bash",
+        "glob",
+        "grep",
+        "repo_map",
+    ],
     gate=NodeGate(
         description="Do not implement any feedback item before verifying it against the codebase.",
         required_before_transition="feedback verified against codebase",
@@ -270,81 +337,78 @@ RECEIVING_CODE_REVIEW = WorkflowNode(
         WorkflowStep(order=3, action="Check code and tests"),
         WorkflowStep(order=4, action="Decide correctness", description="For this codebase."),
         WorkflowStep(order=5, action="Push back when wrong", description="With technical reasons."),
-        WorkflowStep(order=6, action="Implement valid feedback", description="One coherent item at a time."),
+        WorkflowStep(order=6, action="Implement valid feedback", description="One coherent item at a time. If an item requires design exploration or impact analysis rather than direct code change, defer it and route via needs_design. If an item has clear requirements but needs a structured implementation plan, route via needs_plan."),
         WorkflowStep(order=7, action="Verify", description="Run targeted tests or commands before reporting."),
     ],
-    extra_sections={
-        "Source-Specific Rules": (
-            "- Human partner feedback is trusted after understanding; still clarify unclear scope.\n"
-            "- External reviewer feedback must be verified against this codebase before implementation."
-        ),
-        "Handling Unclear Feedback": "If any item is unclear, clarify before implementing the batch.",
-        "YAGNI Check": "If feedback asks to implement a 'proper' feature, grep for actual usage first; remove unused paths instead of expanding them.",
-    },
+    rules=[
+        "Verify feedback against the codebase before changing code.",
+        "Clarify unclear feedback before implementing the batch.",
+        "If feedback asks for a proper feature, grep for actual usage before expanding the code.",
+        "If some feedback items need design or analysis rather than direct implementation, implement the actionable items first, then use needs_design to route the remaining items to brainstorm.",
+        "If some feedback items have clear requirements but need a structured implementation plan, use needs_plan to route them to plan.",
+    ],
 )
 
 
 SYSTEMATIC_DEBUGGING = WorkflowNode(
     name="debug",
+    goal="定位根因并修复，验证修复有效",
     description="Use when debugging bugs, failed tests, build failures, tracebacks, crashes, or unexpected behavior.",
-    triggers=["bug", "failed", "failure", "traceback", "error", "crash", "broken", "not working", "unexpected", "test failure", "build failure", "报错", "失败", "异常", "崩溃", "排查", "不对", "结果不对"],
-    priority=10,
-    core_rule="Find the root cause before changing code.",
-    personas=["explore"],
+    persona="explore",
+    io=NodeIO(
+        input={
+            "error": "错误信息或异常表现",
+            "scenario": "问题发生的场景和上下文",
+            "reproduction": "复现步骤",
+        },
+        output={
+            "root_cause": "根因描述",
+            "fix": "修复内容",
+            "fix_type": "修复类型(trivial/nontrivial)",
+        },
+    ),
+    tools=[
+        "read",
+        "glob",
+        "grep",
+        "bash",
+        "repo_map",
+        "lsp_diagnostics",
+        "lsp_symbols",
+        "lsp_definition",
+    ],
     gate=NodeGate(
         denied_tools=("write", "edit", "lsp_format"),
         description="Root cause investigation must complete before proposing or applying any fix.",
         required_before_transition="root cause identified with evidence",
     ),
     workflow=[
-        WorkflowStep(order=1, action="Phase 1: Root cause investigation", description="Read the full error, reproduce consistently, check recent changes, and trace data flow."),
-        WorkflowStep(order=2, action="Phase 2: Pattern analysis", description="Find working examples and compare differences."),
-        WorkflowStep(order=3, action="Phase 3: Hypothesis and testing", description="Form one concrete hypothesis and test it minimally."),
-        WorkflowStep(order=4, action="Phase 4: Implementation", description="Make the smallest fix only after root cause is known."),
-        WorkflowStep(order=5, action="Run reproduction command again"),
-        WorkflowStep(order=6, action="Run broader test set"),
+        WorkflowStep(order=1, action="Run the internal debug cycle"),
+        WorkflowStep(order=2, action="Classify fix type", description="Decide trivial_fix, nontrivial_fix, or done."),
     ],
-    anti_patterns=[
-        '"I will just try this fix" is guessing, not debugging.',
-        "Skipping root-cause investigation guarantees rework.",
-    ],
-    extra_sections={
-        "Flaky or Non-Reproducible Failures": (
-            "Do not guess. Gather more observations, isolate variables, add diagnostics at component boundaries, "
-            "and only change code after a supported hypothesis exists."
-        ),
-        "Four Phases": "Root cause investigation -> Pattern analysis -> Hypothesis and testing -> Implementation.",
-    },
-)
-
-
-COMPACTION = WorkflowNode(
-    name="compaction",
-    description="Runtime-only workflow for summarizing conversation history during context compaction.",
-    triggers=[],
-    priority=1,
-    core_rule=(
-        "Preserve durable facts, explicit decisions, constraints, open work, and final tool outcomes. "
-        "Remove stale transient execution detail."
+    subworkflow=NodeSubworkflow(
+        name="Debug Cycle",
+        description="Repeat until root cause is confirmed and fix direction is known.",
+        steps=[
+            WorkflowStep(order=1, action="Clarify the problem scenario", description="Confirm what the user was doing, expected behavior, actual behavior, and environment before investigating."),
+            WorkflowStep(order=2, action="Read the full error and reproduce consistently"),
+            WorkflowStep(order=3, action="Find working examples and compare differences"),
+            WorkflowStep(order=4, action="Form one concrete hypothesis"),
+            WorkflowStep(order=5, action="Test the hypothesis minimally"),
+            WorkflowStep(order=6, action="Implement the smallest supported fix"),
+            WorkflowStep(order=7, action="Run reproduction and broader tests"),
+        ],
+        exit_condition="root cause confirmed and original symptom no longer reproduces",
     ),
-    personas=["coordinate"],
-    workflow=[
-        WorkflowStep(order=1, action="Identify durable state", description="Extract user decisions, requirements, constraints, and current task state."),
-        WorkflowStep(order=2, action="Preserve work evidence", description="Keep final tool outcomes, changed files, verification results, and unresolved failures."),
-        WorkflowStep(order=3, action="Drop transient detail", description="Remove step-by-step narration, redundant tool chatter, and stale hypotheses."),
-        WorkflowStep(order=4, action="Write continuation summary", description="Produce a compact summary that a later turn can rely on without the removed messages."),
+    rules=[
+        "Find the root cause before changing code.",
+        '"I will just try this fix" is guessing, not debugging.',
+        "For flaky failures, gather observations and isolate variables before changing code.",
     ],
-    extra_sections={
-        "Output Contract": (
-            "Write a structured summary only. Do not address the user, do not include markdown fences, "
-            "and do not invent facts that are not present in the conversation."
-        ),
-    },
 )
 
 
 BUILTIN_WORKFLOW_NODES = [
-    COMPACTION,
     BRAINSTORMING,
     WRITING_DESIGN_DOCS,
     WRITING_PLANS,

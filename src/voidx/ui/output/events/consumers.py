@@ -292,14 +292,29 @@ class DockEventConsumer:
             case SubagentFinished() as e:
                 node = self._agent_parent(e.agent_id)
                 label = "completed" if e.ok else "failed"
-                elapsed = f" ({e.elapsed:.1f}s)" if e.elapsed is not None else ""
+                details: list[str] = []
+                if e.final_step is not None and e.max_steps is not None:
+                    details.append(f"{e.final_step}/{e.max_steps}")
+                if e.finish_reason:
+                    details.append(e.finish_reason.replace("_", " "))
+                if e.elapsed is not None:
+                    details.append(f"{e.elapsed:.1f}s")
+                suffix = f" ({', '.join(details)})" if details else ""
                 self._dock.finish_status(f"agent:{e.agent_id}:progress")
                 if node is None:
                     return None
                 color = "dim" if e.ok else "red"
                 icon = "●" if e.ok else "✗"
                 role_name = str(node.payload.get("role_name") or node.agent_name or e.subagent_id)
-                node.header = f"[{color}]{icon}[/{color}] [{color}]{escape(role_name)} {label}{elapsed}[/{color}]"
+                header = f"[{color}]{icon}[/{color}] [{color}]{escape(role_name)} {label}{suffix}[/{color}]"
+                node.header = header
+                if (
+                    node.parent is not None
+                    and node.parent.node_type == "tool_call"
+                    and node.parent.payload.get("tool_name") == "agent"
+                ):
+                    node.parent.header = header
+                    node.parent.status = "done" if e.ok else "error"
                 node.status = "done" if e.ok else "error"
                 node.elapsed = e.elapsed
                 node.collapsed = False
@@ -344,4 +359,3 @@ class DockEventConsumer:
         self._agent_nodes[agent_id] = node
         self._dock.refresh()
         return node
-

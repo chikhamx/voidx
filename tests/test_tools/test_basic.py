@@ -14,10 +14,10 @@ import pytest
 from langchain_core.messages import ToolMessage
 
 from voidx.tools.base import ToolContext, ToolResult, BaseTool, UserInteraction, UserResponse
-from voidx.tools.file_ops import FileReadInput, FileWriteInput, FileEditInput, EditEntry
+from voidx.tools.file_ops import FileReadInput, FileWriteInput, FileEditInput, EditEntry, FileWriteTool
 from voidx.tools.search import GlobInput, GrepInput
 from voidx.tools.bash import BashInput
-from voidx.tools.agent import AgentInput
+from voidx.tools.agent import AgentInput, AgentTool
 from voidx.tools.task_tracker import TaskTracker
 from voidx.tools.task_status import TaskStatusTool
 from voidx.tools.todo import TodoInput, TodoWriteTool
@@ -83,10 +83,29 @@ class TestToolSchemas:
         assert inp.timeout == 120
 
     def test_agent_input_uses_child_agent_schema(self):
-        assert AgentInput.model_validate({"agent": "explore", "description": "inspect"}).agent == "explore"
+        inp = AgentInput.model_validate({
+            "persona": "explore",
+            "description": "inspect auth flow",
+            "max_steps": 5,
+            "delegation_reason": "user_requested",
+            "expected_output": "Summarize findings.",
+            "parent_evidence": "User explicitly requested a child agent.",
+        })
+        assert inp.agent == "voidx"
+        assert inp.persona == "explore"
         schema = AgentInput.model_json_schema()
         assert "agent" in schema["properties"]
+        assert "sub-voidx" not in str(schema)
+        assert "persona" in schema["required"]
+        assert "max_steps" in schema["required"]
+        assert "delegation_reason" in schema["required"]
+        assert "expected_output" in schema["required"]
+        assert "parent_evidence" in schema["required"]
         assert "subagent_type" not in schema["properties"]
+
+    def test_agent_input_requires_delegation_budget_and_evidence(self):
+        with pytest.raises(ValueError):
+            AgentInput.model_validate({"agent": "explore", "description": "inspect"})
 
 
 class TestToolRegistry:
@@ -162,6 +181,303 @@ class TestToolRegistry:
 
 
 class TestInteractiveTools:
+    @pytest.mark.asyncio
+    async def test_agent_tool_fails_when_max_steps_missing(self, tmp_path):
+        calls: list[object] = []
+
+        async def runner(*args, **kwargs):
+            calls.append((args, kwargs))
+            return "should not run"
+
+        tool = AgentTool(
+            runner,
+            agent_resolver=lambda name: type("Agent", (), {"name": name, "model": None})(),
+            available_agents=["voidx"],
+        )
+
+        result = await tool.execute(
+            {
+                "agent": "voidx",
+                "persona": "review",
+                "description": "Review one file",
+                "delegation_reason": "isolated_review",
+                "expected_output": "verdict: PASS | FAIL | NEEDS_CHANGE",
+                "parent_evidence": "Changed files: src/app.py",
+            },
+            ToolContext(workspace=str(tmp_path)),
+        )
+
+        assert result.metadata["error"] is True
+        assert "max_steps" in result.output
+        assert calls == []
+
+    @pytest.mark.asyncio
+    async def test_agent_tool_rejects_missing_delegation_reason(self, tmp_path):
+        calls: list[object] = []
+
+        async def runner(*args, **kwargs):
+            calls.append((args, kwargs))
+            return "should not run"
+
+        tool = AgentTool(
+            runner,
+            agent_resolver=lambda name: type("Agent", (), {"name": name, "model": None})(),
+            available_agents=["voidx"],
+        )
+
+        result = await tool.execute(
+            {
+                "agent": "voidx",
+                "persona": "explore",
+                "description": "Inspect auth flow",
+                "max_steps": 5,
+                "expected_output": "Summarize findings.",
+                "parent_evidence": "User requested delegated inspection.",
+            },
+            ToolContext(workspace=str(tmp_path)),
+        )
+
+        assert result.metadata["error"] is True
+        assert result.metadata["validation_error"] is True
+        assert "delegation_reason" in result.output
+        assert calls == []
+
+    @pytest.mark.asyncio
+    async def test_agent_tool_rejects_missing_parent_evidence(self, tmp_path):
+        calls: list[object] = []
+
+        async def runner(*args, **kwargs):
+            calls.append((args, kwargs))
+            return "should not run"
+
+        tool = AgentTool(
+            runner,
+            agent_resolver=lambda name: type("Agent", (), {"name": name, "model": None})(),
+            available_agents=["voidx"],
+        )
+
+        result = await tool.execute(
+            {
+                "agent": "voidx",
+                "persona": "explore",
+                "description": "Inspect auth flow",
+                "max_steps": 5,
+                "delegation_reason": "user_requested",
+                "expected_output": "Summarize findings.",
+            },
+            ToolContext(workspace=str(tmp_path)),
+        )
+
+        assert result.metadata["error"] is True
+        assert result.metadata["validation_error"] is True
+        assert "parent_evidence" in result.output
+        assert calls == []
+
+    @pytest.mark.asyncio
+    async def test_agent_tool_passes_delegated_max_steps(self, tmp_path):
+        captured: dict[str, object] = {}
+
+        async def runner(agent_def, description, model, runtime_persona, *, max_steps):
+            captured.update({
+                "agent": agent_def.name,
+                "description": description,
+                "model": model,
+                "runtime_persona": runtime_persona,
+                "max_steps": max_steps,
+            })
+            return "child result"
+
+        tool = AgentTool(
+            runner,
+            agent_resolver=lambda name: type("Agent", (), {"name": name, "model": None})(),
+            available_agents=["voidx"],
+        )
+
+        result = await tool.execute(
+            {
+                "agent": "voidx",
+                "persona": "review",
+                "description": "Review one file",
+                "max_steps": 5,
+                "delegation_reason": "isolated_review",
+                "expected_output": "verdict: PASS | FAIL | NEEDS_CHANGE",
+                "parent_evidence": "Changed files: src/app.py; verification: pytest tests/test_app.py",
+            },
+            ToolContext(workspace=str(tmp_path)),
+        )
+
+        assert result.output == "child result"
+        assert result.metadata["max_steps"] == 5
+        assert captured == {
+            "agent": "voidx",
+            "description": "Review one file",
+            "model": None,
+            "runtime_persona": "review",
+            "max_steps": 5,
+        }
+
+    @pytest.mark.asyncio
+    async def test_agent_tool_accepts_isolated_review_with_evidence(self, tmp_path):
+        captured: dict[str, object] = {}
+
+        async def runner(agent_def, description, model, runtime_persona, *, max_steps):
+            captured.update({
+                "agent": agent_def.name,
+                "description": description,
+                "model": model,
+                "runtime_persona": runtime_persona,
+                "max_steps": max_steps,
+            })
+            return "review result"
+
+        tool = AgentTool(
+            runner,
+            agent_resolver=lambda name: type("Agent", (), {"name": name, "model": None})(),
+            available_agents=["voidx"],
+        )
+
+        result = await tool.execute(
+            {
+                "agent": "voidx",
+                "persona": "review",
+                "description": "Review one changed file",
+                "max_steps": 5,
+                "delegation_reason": "isolated_review",
+                "expected_output": "Return verdict: PASS | FAIL | NEEDS_CHANGE with issues.",
+                "parent_evidence": "Changed files: src/app.py; verification: pytest tests/test_app.py",
+            },
+            ToolContext(workspace=str(tmp_path), goal_type="feature"),
+        )
+
+        assert result.output == "review result"
+        assert captured["runtime_persona"] == "review"
+        assert captured["max_steps"] == 5
+
+    @pytest.mark.asyncio
+    async def test_agent_tool_rejects_review_without_verdict_contract(self, tmp_path):
+        calls: list[object] = []
+
+        async def runner(*args, **kwargs):
+            calls.append((args, kwargs))
+            return "should not run"
+
+        tool = AgentTool(
+            runner,
+            agent_resolver=lambda name: type("Agent", (), {"name": name, "model": None})(),
+            available_agents=["voidx"],
+        )
+
+        result = await tool.execute(
+            {
+                "agent": "voidx",
+                "persona": "review",
+                "description": "Review the current change",
+                "max_steps": 5,
+                "delegation_reason": "isolated_review",
+                "expected_output": "Summarize findings.",
+                "parent_evidence": "Changed files: src/app.py; verification: pytest tests/test_app.py",
+            },
+            ToolContext(workspace=str(tmp_path), goal_type="feature"),
+        )
+
+        assert result.metadata["delegation_rejected"] is True
+        assert "verdict: PASS | FAIL | NEEDS_CHANGE" in result.output
+        assert calls == []
+
+    @pytest.mark.asyncio
+    async def test_agent_tool_rejects_review_without_target_and_verification(self, tmp_path):
+        calls: list[object] = []
+
+        async def runner(*args, **kwargs):
+            calls.append((args, kwargs))
+            return "should not run"
+
+        tool = AgentTool(
+            runner,
+            agent_resolver=lambda name: type("Agent", (), {"name": name, "model": None})(),
+            available_agents=["voidx"],
+        )
+
+        result = await tool.execute(
+            {
+                "agent": "voidx",
+                "persona": "review",
+                "description": "Review the current change",
+                "max_steps": 5,
+                "delegation_reason": "isolated_review",
+                "expected_output": "verdict: PASS | FAIL | NEEDS_CHANGE",
+                "parent_evidence": "I made a small change.",
+            },
+            ToolContext(workspace=str(tmp_path), goal_type="feature"),
+        )
+
+        assert result.metadata["delegation_rejected"] is True
+        assert "changed files or review target" in result.output
+        assert calls == []
+
+    @pytest.mark.asyncio
+    async def test_agent_tool_rejects_parallel_reason_when_parallel_disabled(self, tmp_path):
+        calls: list[object] = []
+
+        async def runner(*args, **kwargs):
+            calls.append((args, kwargs))
+            return "should not run"
+
+        tool = AgentTool(
+            runner,
+            agent_resolver=lambda name: type("Agent", (), {"name": name, "model": None})(),
+            available_agents=["voidx"],
+            parallel_subagents_enabled=False,
+        )
+
+        result = await tool.execute(
+            {
+                "agent": "voidx",
+                "persona": "explore",
+                "description": "Inspect independent module boundaries",
+                "max_steps": 5,
+                "delegation_reason": "parallel_independent",
+                "expected_output": "Summarize findings.",
+                "parent_evidence": "Identified two independent modules to inspect.",
+            },
+            ToolContext(workspace=str(tmp_path), goal_type="feature"),
+        )
+
+        assert result.metadata["delegation_rejected"] is True
+        assert "parallel subagents" in result.output
+        assert calls == []
+
+    @pytest.mark.asyncio
+    async def test_agent_tool_rejects_implement_for_chore_goal(self, tmp_path):
+        calls: list[object] = []
+
+        async def runner(*args, **kwargs):
+            calls.append((args, kwargs))
+            return "should not run"
+
+        tool = AgentTool(
+            runner,
+            agent_resolver=lambda name: type("Agent", (), {"name": name, "model": None})(),
+            available_agents=["voidx"],
+        )
+
+        result = await tool.execute(
+            {
+                "agent": "voidx",
+                "persona": "implement",
+                "description": "Implement the requested cleanup",
+                "max_steps": 5,
+                "delegation_reason": "context_isolation",
+                "expected_output": "Describe the implementation result.",
+                "parent_evidence": "Reviewed src/app.py and identified the cleanup.",
+            },
+            ToolContext(workspace=str(tmp_path), goal_type="chore"),
+        )
+
+        assert result.metadata["delegation_rejected"] is True
+        assert "feature, bugfix, or refactor" in result.output
+        assert calls == []
+
     @pytest.mark.asyncio
     async def test_clarify_uses_interaction_callback_and_returns_state_patch(self, tmp_path):
         requests = []
@@ -900,8 +1216,8 @@ class TestStateUpdateFromExecutedTools:
         assert "workflow_runs" in update
         by_name = {r.name: r for r in update["workflow_runs"]}
         assert by_name["review"].status == WorkflowRunStatus.SATISFIED
-        assert "review-feedback" in by_name
-        assert by_name["review-feedback"].status == WorkflowRunStatus.ACTIVE
+        assert "feedback" in by_name
+        assert by_name["feedback"].status == WorkflowRunStatus.ACTIVE
 
     def test_auto_advance_failed_implementation(self):
         from voidx.agent.graph.tool_executor import _state_update_from_executed_tools, _ExecutedTool
@@ -978,6 +1294,44 @@ class TestAdvanceWorkflowTool:
         assert by_name["verify"].status == WorkflowRunStatus.ACTIVE
 
     @pytest.mark.asyncio
+    @pytest.mark.parametrize(
+        ("condition", "target"),
+        [
+            ("needs_design", "brainstorm"),
+            ("needs_plan", "plan"),
+        ],
+    )
+    async def test_advance_workflow_routes_feedback_deferred_items(self, tmp_path, condition, target):
+        ctx = ToolContext(
+            workspace=str(tmp_path),
+            workflow_runs=[
+                WorkflowRunState(
+                    name="feedback",
+                    status=WorkflowRunStatus.ACTIVE,
+                )
+            ],
+        )
+        result = await ToolRegistry().execute_tool(
+            "advance_workflow",
+            {
+                "condition": condition,
+                "evidence": "actionable feedback implemented; remaining item deferred",
+                "summary": "feedback requires design or planning",
+            },
+            ctx,
+        )
+
+        payload = json.loads(result.output)
+        patch = ToolStatePatch.model_validate(result.metadata["state_patch"])
+        by_name = {run.name: run for run in patch.workflow_runs}
+
+        assert payload["from"] == "feedback"
+        assert payload["activated"] == [target]
+        assert by_name["feedback"].status == WorkflowRunStatus.SATISFIED
+        assert by_name["feedback"].evidence[0].condition == condition
+        assert by_name[target].status == WorkflowRunStatus.ACTIVE
+
+    @pytest.mark.asyncio
     async def test_advance_workflow_reports_invalid_condition(self, tmp_path):
         ctx = ToolContext(
             workspace=str(tmp_path),
@@ -996,6 +1350,28 @@ class TestAdvanceWorkflowTool:
 
         assert result.metadata["error"] is True
         assert "implemented -> verify" in result.output
+        assert "state_patch" not in result.metadata
+
+    @pytest.mark.asyncio
+    async def test_advance_workflow_requires_evidence_for_non_terminal_exit(self, tmp_path):
+        ctx = ToolContext(
+            workspace=str(tmp_path),
+            workflow_runs=[
+                WorkflowRunState(
+                    name="tdd",
+                    status=WorkflowRunStatus.ACTIVE,
+                )
+            ],
+        )
+        result = await ToolRegistry().execute_tool(
+            "advance_workflow",
+            {"condition": "implemented", "summary": "implementation complete"},
+            ctx,
+        )
+
+        assert result.metadata["error"] is True
+        assert "evidence" in result.output.lower()
+        assert "gate" in result.output.lower()
         assert "state_patch" not in result.metadata
 
     @pytest.mark.asyncio
@@ -1029,6 +1405,28 @@ class TestAdvanceWorkflowTool:
         assert patch.workflow_runs[0].evidence[0].condition == "done"
 
     @pytest.mark.asyncio
+    async def test_advance_workflow_done_requires_evidence(self, tmp_path):
+        ctx = ToolContext(
+            workspace=str(tmp_path),
+            workflow_runs=[
+                WorkflowRunState(
+                    name="verify",
+                    status=WorkflowRunStatus.ACTIVE,
+                )
+            ],
+        )
+        result = await ToolRegistry().execute_tool(
+            "advance_workflow",
+            {"condition": "done", "summary": "verification complete"},
+            ctx,
+        )
+
+        assert result.metadata["error"] is True
+        assert "evidence" in result.output.lower()
+        assert "gate" in result.output.lower()
+        assert "state_patch" not in result.metadata
+
+    @pytest.mark.asyncio
     async def test_advance_workflow_done_requires_workflow_when_ambiguous(self, tmp_path):
         ctx = ToolContext(
             workspace=str(tmp_path),
@@ -1048,6 +1446,28 @@ class TestAdvanceWorkflowTool:
         assert "Ambiguous workflow target" in result.output
         assert "brainstorm" in result.output
         assert "design-doc" in result.output
+        assert "state_patch" not in result.metadata
+
+    @pytest.mark.asyncio
+    async def test_advance_workflow_rejects_internal_subworkflow_as_target(self, tmp_path):
+        ctx = ToolContext(
+            workspace=str(tmp_path),
+            workflow_runs=[
+                WorkflowRunState(name="tdd", status=WorkflowRunStatus.ACTIVE),
+            ],
+        )
+        result = await ToolRegistry().execute_tool(
+            "advance_workflow",
+            {
+                "workflow": "TDD Cycle",
+                "condition": "done",
+                "evidence": "red-green-refactor completed",
+            },
+            ctx,
+        )
+
+        assert result.metadata["error"] is True
+        assert "Invalid workflow target" in result.output
         assert "state_patch" not in result.metadata
 
     @pytest.mark.asyncio
@@ -1082,6 +1502,18 @@ class TestAdvanceWorkflowTool:
 class TestFileOps:
     """File operations work on real files."""
 
+    def test_write_guidance_is_exposed_to_model(self):
+        description = FileWriteTool.description
+        schema = FileWriteTool().parameters_schema()
+        content_description = schema["properties"]["content"]["description"]
+
+        assert "150 lines" in description
+        assert "skeleton" in description
+        assert "unique placeholders" in description
+        assert "edit" in description
+        assert "150 lines" in content_description
+        assert "unique placeholders" in content_description
+
     @pytest.mark.asyncio
     async def test_read(self, tmp_path):
         f = tmp_path / "test.txt"
@@ -1099,7 +1531,22 @@ class TestFileOps:
         r = ToolRegistry()
         result = await r.execute_tool("write", {"file_path": "out.txt", "content": "hello"}, ctx)
         assert "File written" in result.output
+        assert "Note:" not in result.output
         assert (tmp_path / "out.txt").read_text() == "hello"
+
+    @pytest.mark.asyncio
+    async def test_write_warns_after_large_file_is_written(self, tmp_path):
+        ctx = ToolContext(workspace=str(tmp_path))
+        r = ToolRegistry()
+        content = "\n".join(f"line {i}" for i in range(201))
+
+        result = await r.execute_tool("write", {"file_path": "large.txt", "content": content}, ctx)
+
+        assert "File written: large.txt" in result.output
+        assert "This file is large (201 lines)" in result.output
+        assert "skeleton" in result.output
+        assert "edit" in result.output
+        assert (tmp_path / "large.txt").read_text() == content
 
     @pytest.mark.asyncio
     async def test_edit(self, tmp_path):

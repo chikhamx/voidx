@@ -9,27 +9,27 @@ from typing import TYPE_CHECKING
 
 from langchain_core.messages import AIMessage, HumanMessage, ToolMessage
 
-from voidx.agent.goal_resolver import resolve_goal_for_turn
 from voidx.agent.todo_state import sanitize_todo_replay_messages
 from voidx.agent.attachments import build_user_message_payload, serialize_message_content
 from voidx.agent.message_rows import messages_from_rows_incremental
 from voidx.agent.runtime_context import TaskIntent
 from voidx.agent.state import AgentState
-from voidx.agent.task_state import PendingApproval, TaskState, goal_label
-from voidx.memory.runtime_state import MessageRuntimeSnapshot, save_message_runtime_snapshot
-from voidx.memory.session import (
+from voidx.agent.task_state import TaskState, goal_label, resolve_turn_intent
+from voidx.memory.service import (
     MessageRow,
-    _now,
+    MessageRuntimeSnapshot,
     count_messages,
     create_session,
     delete_messages_from,
     load_messages,
+    memory_now,
     save_message,
+    save_message_runtime_snapshot,
     touch_session,
     update_title,
 )
-from voidx.skills.references import skill_reference_message
-from voidx.ui.output.events.schema import (
+from voidx.skills.service import skill_reference_message
+from voidx.runtime.ui import (
     InputSet,
     StatusFinished,
     StatusUpdated,
@@ -38,32 +38,20 @@ from voidx.ui.output.events.schema import (
     TurnStarted,
     WarningAppended,
 )
-from voidx.workflow.runtime import WorkflowRunStatus
+from voidx.workflow.service import reconcile_workflow_runs_for_turn
+from voidx.workflow.types import WorkflowRunStatus
 
 if TYPE_CHECKING:
     from voidx.agent.graph.contracts import GraphRunLoopHost
 
 
 RESUME_FORCE_COMPACT_MESSAGE_COUNT = 500
+DEFAULT_RECURSION_LIMIT = 500
 
 
-def _resolve_max_steps(config, agent_name: str) -> int:
-    """Resolve max_steps from config, with fallback for test mocks."""
-    steps = getattr(config, 'agent_max_steps', None)
-    if steps is not None:
-        return getattr(steps, agent_name, 100)
-    return 100
-
-
-def _resolve_recursion_limit(steps, agent_name: str) -> int:
-    """Derive effective recursion limit from max_steps.
-
-    Each LLM step consumes ~2 graph recursions (call_llm → execute_tools → call_llm),
-    so the limit must be at least 2 * max_steps + margin to avoid premature cutoff.
-    """
-    configured = getattr(steps, 'recursion_limit', 500) if steps is not None else 500
-    max_steps = getattr(steps, agent_name, 100) if steps is not None else 100
-    return max(configured, 2 * max_steps + 10)
+def _resolve_recursion_limit(*_args, **_kwargs) -> int:
+    """Return the graph safety guard, independent of agent step budgets."""
+    return DEFAULT_RECURSION_LIMIT
 
 
 def _initial_persona_for_goal(task_state: TaskState) -> str:
@@ -188,14 +176,10 @@ class GraphTurnRunner:
             base_task_state = _load_task_state(getattr(host, "_task_state", None))
             if interaction_mode == "goal" and base_task_state.current_goal is None:
                 base_task_state.set_goal(payload.title_text)
-            intent_resolution = await resolve_goal_for_turn(
-                model=host.model,
-                user_text=payload.title_text,
-                interaction_mode=interaction_mode,
-                task_state=base_task_state,
-                workspace=host._workspace,
-                session_time=getattr(host, "_session_date", ""),
-                title_requested=_should_request_resolver_title(host._session, is_first_user_message),
+            intent_resolution = resolve_turn_intent(
+                payload.title_text,
+                interaction_mode,
+                base_task_state,
             )
             turn_task_state = base_task_state.model_copy(deep=True)
             turn_task_state.update_after_turn(
@@ -207,6 +191,14 @@ class GraphTurnRunner:
                     else payload.title_text
                 ),
             )
+            reconciled_workflow_runs = reconcile_workflow_runs_for_turn(
+                goal_resolution=intent_resolution,
+                after_state=turn_task_state,
+            )
+            turn_task_state.workflow_runs = {
+                run.name: run
+                for run in reconciled_workflow_runs
+            }
 
             saved_user_content, user_content_format = serialize_message_content(payload.content)
             user_message_id = await save_message(MessageRow(
@@ -214,7 +206,7 @@ class GraphTurnRunner:
                 role="user",
                 content=saved_user_content,
                 content_format=user_content_format,
-                created_at=_now(),
+                created_at=memory_now(),
             ))
             if host._session_msg_cache is not None:
                 host._session_msg_cache.append(MessageRow(
@@ -223,7 +215,7 @@ class GraphTurnRunner:
                     role="user",
                     content=saved_user_content,
                     content_format=user_content_format,
-                    created_at=_now(),
+                    created_at=memory_now(),
                 ))
             host._any_messages_sent = True
 
@@ -232,7 +224,6 @@ class GraphTurnRunner:
                 "workspace": host._workspace,
                 "tool_results": {},
                 "step_count": 0,
-                "max_steps": _resolve_max_steps(host.config, "voidx"),
                 "should_continue": True,
                 "persona": _initial_persona_for_goal(turn_task_state),
                 "plan_mode": host._plan_mode,
@@ -251,9 +242,7 @@ class GraphTurnRunner:
             if host._ui.via_events():
                 await host._ui.events.emit(StatusFinished(status_id="turn:analyzing"))
 
-            recursion_limit = _resolve_recursion_limit(
-                getattr(host.config, 'agent_max_steps', None), "voidx",
-            )
+            recursion_limit = _resolve_recursion_limit()
             final = await host.graph.ainvoke(initial, {"recursion_limit": recursion_limit})
             final_task_state = _load_task_state(final.get("task_state"), fallback=turn_task_state)
             if host.model is not None:
@@ -303,7 +292,7 @@ class GraphTurnRunner:
                             content=saved,
                             content_format=fmt,
                             tool_calls=msg.tool_calls if msg.tool_calls else None,
-                            created_at=_now(),
+                            created_at=memory_now(),
                         ))
                         if host._session_msg_cache is not None:
                             host._session_msg_cache.append(MessageRow(
@@ -313,7 +302,7 @@ class GraphTurnRunner:
                                 content=saved,
                                 content_format=fmt,
                                 tool_calls=msg.tool_calls if msg.tool_calls else None,
-                                created_at=_now(),
+                                created_at=memory_now(),
                             ))
                     elif isinstance(msg, ToolMessage):
                         row_id = await save_message(MessageRow(
@@ -321,7 +310,7 @@ class GraphTurnRunner:
                             role="tool",
                             content=str(msg.content),
                             tool_call_id=getattr(msg, "tool_call_id", None),
-                            created_at=_now(),
+                            created_at=memory_now(),
                         ))
                         if host._session_msg_cache is not None:
                             host._session_msg_cache.append(MessageRow(
@@ -330,14 +319,18 @@ class GraphTurnRunner:
                                 role="tool",
                                 content=str(msg.content),
                                 tool_call_id=getattr(msg, "tool_call_id", None),
-                                created_at=_now(),
+                                created_at=memory_now(),
                             ))
                 await touch_session(host._session.id)
 
                 # Auto-title on first message
                 if is_first_user_message:
-                    title_source = payload.title_text
-                    title = intent_resolution.title or host._temporary_session_title(title_source)
+                    goal = intent_resolution.goal
+                    title = (
+                        goal.target.strip()
+                        if goal is not None and goal.target.strip()
+                        else host._temporary_session_title(payload.title_text)
+                    )
                     await update_title(host._session.id, title)
                     host._session = host._session.model_copy(update={"title": title})
             elapsed = time.monotonic() - t_turn_start
@@ -414,18 +407,3 @@ def _load_task_state(value: TaskState | dict | None, *, fallback: TaskState | No
     if isinstance(value, dict):
         return TaskState.model_validate(value)
     return fallback.model_copy(deep=True) if fallback is not None else TaskState()
-
-
-def _should_request_resolver_title(session, is_first_user_message: bool) -> bool:
-    if not is_first_user_message or session is None:
-        return False
-    title = (getattr(session, "title", "") or "").strip()
-    return not title or title == "New session"
-
-
-def _dump_pending_approval(value: PendingApproval | dict | None) -> dict | None:
-    if value is None:
-        return None
-    if isinstance(value, dict):
-        return value
-    return value.model_dump(mode="json")

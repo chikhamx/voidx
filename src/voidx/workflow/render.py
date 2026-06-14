@@ -36,10 +36,8 @@ def render_node_summary(node: WorkflowNode, dag: WorkflowDAG | None = None) -> s
     lines: list[str] = [
         f"## Workflow Node Summary: {node.name}",
         f"Description: {node.description}",
-        f"Priority: {node.priority}",
+        f"Goal: {node.goal}",
     ]
-    if node.triggers:
-        lines.append(f"Triggers: {', '.join(node.triggers)}")
     if dag:
         exits = dag.edges_from(node.name)
         if exits:
@@ -57,42 +55,60 @@ def render_node_markdown(node: WorkflowNode, dag: WorkflowDAG | None = None) -> 
     lines: list[str] = [
         f"## Workflow Node: {node.name}",
         f"Description: {node.description}",
-        f"Priority: {node.priority}",
     ]
-    if node.triggers:
-        lines.append(f"Triggers: {', '.join(node.triggers)}")
-    if node.core_rule:
-        lines.extend(["", "### Core Rule", node.core_rule])
+    if node.goal:
+        lines.extend(["", "### Goal", node.goal])
+    if node.persona:
+        lines.extend(["", "### Persona", node.persona])
+    if node.io.input:
+        lines.extend(["", "### Input"])
+        lines.extend(f"- `{name}`: {description}" for name, description in node.io.input.items())
+    if node.io.output:
+        lines.extend(["", "### Output"])
+        lines.extend(f"- `{name}`: {description}" for name, description in node.io.output.items())
+    lines.extend(["", "### Tools"])
+    if node.tools:
+        lines.extend(f"- `{tool}`" for tool in node.tools)
+    else:
+        lines.append("- none")
     if node.gate.description or node.gate.required_before_transition:
         lines.extend(["", "### Gate"])
         if node.gate.required_before_transition:
             lines.append(f"Required before transition: {node.gate.required_before_transition}")
         if node.gate.description:
             lines.append(node.gate.description)
+        if node.gate.denied_tools:
+            lines.append(f"Denied tools: {', '.join(node.gate.denied_tools)}")
+        if node.gate.allowed_paths:
+            lines.append(f"Allowed paths: {', '.join(node.gate.allowed_paths)}")
     if node.workflow:
         lines.extend(["", "### Workflow"])
         for step in sorted(node.workflow, key=lambda item: item.order):
             suffix = f": {step.description}" if step.description else ""
             lines.append(f"{step.order}. {step.action}{suffix}")
-    if node.decision_rules:
-        lines.extend(["", "### Decision Rules"])
-        for rule in node.decision_rules:
-            lines.append(f"- `{rule.condition}`: {rule.description}")
+    if node.subworkflow:
+        sub = node.subworkflow
+        lines.extend(["", f"### Internal Subworkflow: {sub.name}"])
+        if sub.description:
+            lines.append(f"Description: {sub.description}")
+        for step in sorted(sub.steps, key=lambda item: item.order):
+            suffix = f": {step.description}" if step.description else ""
+            lines.append(f"{step.order}. {step.action}{suffix}")
+        lines.append(f"Exit condition: {sub.exit_condition}")
     if dag:
         edges = dag.edges_from(node.name)
         if edges:
             lines.extend(["", "### Available Exits"])
             for edge in edges:
                 label = f" ({edge.label})" if edge.label else ""
-                lines.append(f"- `{edge.condition}` -> `{edge.target}`{label}")
+                description = f": {edge.description}" if edge.description else ""
+                lines.append(f"- `{edge.condition}` -> `{edge.target}`{label}{description}")
             terminal = dag.terminal_exit
             lines.append(f"- `{terminal.condition}` -> {terminal.description}")
-    if node.allowed_exceptions:
-        lines.extend(["", "### Allowed Exceptions"])
-        lines.extend(f"- {item}" for item in node.allowed_exceptions)
-    if node.anti_patterns:
-        lines.extend(["", "### Anti-Patterns"])
-        lines.extend(f"- {item}" for item in node.anti_patterns)
-    for title, body in node.extra_sections.items():
-        lines.extend(["", f"### {title}", body.strip()])
+    if node.rules:
+        lines.extend(["", "### Rules"])
+        lines.extend(f"- {item}" for item in node.rules)
+    if node.exceptions:
+        lines.extend(["", "### Exceptions"])
+        lines.extend(f"- {item}" for item in node.exceptions)
     return "\n".join(lines).strip() + "\n"

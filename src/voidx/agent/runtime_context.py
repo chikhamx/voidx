@@ -17,20 +17,22 @@ from voidx.agent.message_rows import RowMessageCacheEntry
 from voidx.agent.task_state import Goal, TodoRunState
 from voidx.config import ApprovalReviewer, Config, UserProfile
 from voidx.runtime.intent import InteractionMode, TaskIntent, infer_task_intent
-from voidx.skills.context import (
+from voidx.skills.service import (
     has_skill_tool_context,
     is_skill_context_content,
     skill_context_cache_key,
     strip_skill_tool_context,
 )
-from voidx.workflow.context import (
+from voidx.workflow.service import (
     is_workflow_context_content,
+    workflow_exit_summaries,
     workflow_context_cache_key,
 )
-from voidx.workflow.policy import workflow_exit_summaries, workflow_gate
-from voidx.workflow.runtime import WorkflowRunState, WorkflowRunStatus
+from voidx.workflow.types import WorkflowRunState, WorkflowRunStatus
 
 _CONTEXT_MARKER = "VOIDX_RUNTIME_CONTEXT"
+_GOAL_RESOLUTION_GUIDE_MARKER = "VOIDX_GOAL_RESOLUTION_GUIDE"
+COMPACTION_GUIDE_MARKER = "VOIDX_COMPACTION_GUIDE"
 _USER_MESSAGE_DELIMITER = "\n\n## User Message\n"
 
 
@@ -45,6 +47,9 @@ class ContextCompilerCache:
     skill_context_key: str = ""
     skill_context_content: str = ""
     skill_context_message: HumanMessage | None = None
+    goal_resolution_guide_key: str = ""
+    goal_resolution_guide_content: str = ""
+    goal_resolution_guide_message: HumanMessage | None = None
     row_messages: dict[int, RowMessageCacheEntry] = dataclass_field(default_factory=dict)
 
 
@@ -86,10 +91,12 @@ class RuntimeContext(BaseModel):
     task_sections: list[ContextSection] = Field(default_factory=list)
     workflow_context_content: str = ""
     skill_context_content: str = ""
+    goal_resolution_guide_content: str = ""
     system_content: str | None = None
     system_message: SystemMessage | None = Field(default=None, exclude=True)
     workflow_context_message: HumanMessage | None = Field(default=None, exclude=True)
     skill_context_message: HumanMessage | None = Field(default=None, exclude=True)
+    goal_resolution_guide_message: HumanMessage | None = Field(default=None, exclude=True)
 
     def section_names(self) -> list[str]:
         names = [section.name for section in self.sections]
@@ -97,6 +104,8 @@ class RuntimeContext(BaseModel):
             names.append("Workflow Context")
         if self.skill_context_content:
             names.append("Skill Context")
+        if self.goal_resolution_guide_content:
+            names.append("Goal Resolution Guide")
         names.extend(section.name for section in self.task_sections)
         return names
 
@@ -142,6 +151,16 @@ class ContextCompiler:
             else:
                 current = semantic_messages[current_user_index]
                 semantic_messages[current_user_index] = _prepend_task_context(current, task_context)
+        guide_msg = self._context_message(
+            self.context.goal_resolution_guide_content,
+            self.context.goal_resolution_guide_message,
+        )
+        if guide_msg is not None:
+            current_user_index = _last_user_index(semantic_messages)
+            if current_user_index is None:
+                semantic_messages.append(guide_msg)
+            else:
+                semantic_messages.insert(current_user_index, guide_msg)
 
         # Compile order: SystemMessage, workflow context, skill context, semantic history
         result = [prefix]
@@ -176,6 +195,7 @@ class RuntimeContextBuilder:
         base_system_prompt: str | None = None,
         persona_prompt: str = "",
         mode_prompt: str = "",
+        runtime_constraints: str = "",
         tool_contract: str = "",
         persona: str,
         interaction_mode: str | InteractionMode,
@@ -188,6 +208,7 @@ class RuntimeContextBuilder:
         current_user_text: str = "",
         task_state: "TaskState | None" = None,
         session_date: str | None = None,
+        include_goal_resolution_guide: bool = False,
     ) -> None:
         from voidx.runtime.task_state import TaskState as _TaskState
 
@@ -197,6 +218,7 @@ class RuntimeContextBuilder:
         self.base_system_prompt = (base_system_prompt or "").strip()
         self.persona_prompt = persona_prompt.strip()
         self.mode_prompt = mode_prompt.strip()
+        self.runtime_constraints = runtime_constraints.strip()
         self.tool_contract = tool_contract.strip()
         self.persona = persona.strip()
         self.interaction_mode = InteractionMode.parse(interaction_mode)
@@ -210,11 +232,14 @@ class RuntimeContextBuilder:
         self.task_intent = ts.current_intent
         self.pending_approval = ts.pending_approval
         self.current_goal = ts.current_goal
+        self.recent_user_texts = list(ts.recent_user_texts)
         self.user_profile = config.user_profile
         now = datetime.now().astimezone()
         self.session_date = (session_date or now.strftime("%Y-%m-%d %Z")).strip()
+        self.include_goal_resolution_guide = include_goal_resolution_guide
 
     def build(self) -> RuntimeContext:
+        goal_guide_content = self._goal_resolution_guide_content()
         return RuntimeContext(
             sections=self._build_stable_sections(),
             task_sections=self._build_task_sections(),
@@ -228,6 +253,12 @@ class RuntimeContextBuilder:
             skill_context_message=(
                 HumanMessage(content=self.skill_context_content)
                 if self.skill_context_content
+                else None
+            ),
+            goal_resolution_guide_content=goal_guide_content,
+            goal_resolution_guide_message=(
+                HumanMessage(content=goal_guide_content)
+                if goal_guide_content
                 else None
             ),
         )
@@ -257,16 +288,21 @@ class RuntimeContextBuilder:
         sk_content, sk_message = self._incremental_context_content(
             cache, "skill", self.skill_context_content,
         )
+        goal_guide_content, goal_guide_message = self._incremental_context_content(
+            cache, "goal_resolution_guide", self._goal_resolution_guide_content(),
+        )
 
         return RuntimeContext(
             sections=sections,
             task_sections=self._build_task_sections(),
             workflow_context_content=wf_content,
             skill_context_content=sk_content,
+            goal_resolution_guide_content=goal_guide_content,
             system_content=system_content,
             system_message=system_message,
             workflow_context_message=wf_message,
             skill_context_message=sk_message,
+            goal_resolution_guide_message=goal_guide_message,
         ), cache
 
     @staticmethod
@@ -280,6 +316,10 @@ class RuntimeContextBuilder:
             key_attr = "workflow_context_key"
             content_attr = "workflow_context_content"
             message_attr = "workflow_context_message"
+        elif kind == "goal_resolution_guide":
+            key_attr = "goal_resolution_guide_key"
+            content_attr = "goal_resolution_guide_content"
+            message_attr = "goal_resolution_guide_message"
         else:
             key_attr = "skill_context_key"
             content_attr = "skill_context_content"
@@ -307,6 +347,8 @@ class RuntimeContextBuilder:
         ]
         if self.persona_prompt:
             sections.append(ContextSection(name="Agent Role", content=self.persona_prompt))
+        if self.runtime_constraints:
+            sections.append(ContextSection(name="Runtime Constraints", content=self.runtime_constraints))
         if self.mode_prompt:
             sections.append(ContextSection(name="Mode", content=self.mode_prompt))
         if self.tool_contract:
@@ -350,6 +392,42 @@ class RuntimeContextBuilder:
 
         return task_sections
 
+    def _goal_resolution_guide_content(self) -> str:
+        if not self.include_goal_resolution_guide:
+            return ""
+        current_goal = (
+            self.current_goal.model_dump(mode="json")
+            if self.current_goal is not None
+            else None
+        )
+        pending = (
+            self.pending_approval.model_dump(mode="json")
+            if self.pending_approval is not None
+            else None
+        )
+        context = {
+            "workspace": self.workspace,
+            "session_time": self.session_date,
+            "interaction_mode": self.interaction_mode.value,
+            "current_intent": self.task_intent.value,
+            "current_goal": current_goal,
+            "pending_approval": pending,
+            "recent_user_texts": self.recent_user_texts,
+            "latest_user_text": self.current_user_text,
+        }
+        return (
+            f"{_GOAL_RESOLUTION_GUIDE_MARKER}\n"
+            "Scope: turn-initial-goal-resolution\n\n"
+            "Before responding, determine the user's intent and goal for this turn.\n"
+            "Rules:\n"
+            "- Use intent=general only for non-code, non-workspace conversation.\n"
+            "- Use intent=coding for codebase inspection, design, docs, review, debugging, or edits.\n"
+            "- Do not infer write permission from analysis words like look at, inspect, 看看, 分析, or 建议.\n"
+            "- If the user's intent clearly indicates which workflow should be active next, call advance_workflow to transition.\n"
+            "- Do not call advance_workflow based on vague or ambiguous approval.\n\n"
+            f"Current context:\n{json.dumps(context, ensure_ascii=False, indent=2)}"
+        )
+
     def _current_task_state(self) -> str:
         lines = [
             f"- Current persona: {self.persona}",
@@ -368,13 +446,6 @@ class RuntimeContextBuilder:
         if self.workflow_runs:
             lines.append(f"- Workflow run state: {'; '.join(run.state_summary() for run in self.workflow_runs)}")
         for workflow_name in self._active_workflow_node_names():
-            gate = workflow_gate(workflow_name)
-            if gate:
-                requirement = gate.required_before_transition or gate.description
-                if requirement:
-                    lines.append(
-                        f"- Workflow gate [{workflow_name}]: must satisfy {requirement} before proceeding"
-                    )
             exits = workflow_exit_summaries(workflow_name)
             if exits:
                 lines.append(f"- Workflow exits [{workflow_name}]: {'; '.join(exits)}")
@@ -429,7 +500,31 @@ def _render_sections(sections: list[ContextSection]) -> str:
 
 
 def _is_runtime_context_overlay(content: object) -> bool:
-    return is_skill_context_content(content) or is_workflow_context_content(content)
+    return (
+        is_skill_context_content(content)
+        or is_workflow_context_content(content)
+        or is_goal_resolution_guide_content(content)
+        or is_compaction_guide_content(content)
+    )
+
+
+def is_goal_resolution_guide_content(content: object) -> bool:
+    return _starts_with_marker(content, _GOAL_RESOLUTION_GUIDE_MARKER)
+
+
+def is_compaction_guide_content(content: object) -> bool:
+    return _starts_with_marker(content, COMPACTION_GUIDE_MARKER)
+
+
+def _starts_with_marker(content: object, marker: str) -> bool:
+    if isinstance(content, str):
+        return content.lstrip().startswith(marker)
+    if isinstance(content, list) and content:
+        first = content[0]
+        if isinstance(first, dict) and first.get("type") == "text":
+            text = first.get("text", "")
+            return isinstance(text, str) and text.lstrip().startswith(marker)
+    return False
 
 
 def _runtime_context_cache_key(content: str) -> str:

@@ -7,25 +7,24 @@ import re
 from collections.abc import Callable
 from typing import TYPE_CHECKING
 
-from voidx.memory.runtime_state import (
+from voidx.memory.service import (
+    MessageRow,
     RuntimeStateSnapshot,
     clear_runtime_state,
-    load_runtime_state,
-    save_runtime_state,
-)
-from voidx.memory.session import (
     count_messages,
     delete_session,
+    load_runtime_state,
     load_messages,
+    load_transcript,
+    replace_transcript,
+    save_runtime_state,
     update_title,
     update_title_if_current,
 )
-from voidx.memory.transcript import load_transcript, replace_transcript
-from voidx.ui.transcript import transcript_rows_to_tree, tree_to_transcript_rows
+from voidx.runtime.ui import transcript_rows_to_tree, tree_to_transcript_rows
 
 if TYPE_CHECKING:
     from voidx.agent.graph.contracts import GraphRunLoopHost
-    from voidx.memory.session import MessageRow
 
 
 TITLE_TIMEOUT_SECONDS = 10.0

@@ -81,7 +81,21 @@ Rules:
 - Deduplicate repeated requests, tool results, and progress updates.
 - Prefer durable facts, decisions, constraints, open work, and final tool outcomes over step-by-step narration.
 - When a previous summary exists, keep still-true details, drop stale details, and merge new facts without duplicating old bullets.
+- Preserve failed tool calls and error messages — they are critical for debugging and avoiding repeated mistakes.
 - Do not mention the summary process or that context was compacted."""
+
+COMPACTION_REQUEST = """Summarize the conversation above into the structured format below.
+Focus on durable facts, decisions, constraints, open work, and final tool outcomes.
+Do not narrate step-by-step execution.
+Preserve durable facts, explicit decisions, constraints, open work, and final tool outcomes.
+Remove stale transient execution detail.
+Keep final tool outcomes, changed files, verification results, and unresolved failures.
+Write a structured summary only. Do not address the user, do not include markdown fences,
+and do not invent facts that are not present in the conversation.
+
+{previous_summary_section}
+
+{template}"""
 
 
 @dataclass

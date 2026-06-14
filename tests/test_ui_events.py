@@ -1065,11 +1065,15 @@ async def test_child_agent_stream_and_progress_attach_under_agent_node(isolated_
             subagent_id="agent_0",
             ok=True,
             elapsed=2.5,
+            final_step=1,
+            max_steps=3,
+            finish_reason="final_answer",
         ))
         await bus.drain()
 
         rendered = "\n".join(_rich_plain(line) for line in isolated_dock.tree.render(100))
         assert "explore agent completed (2.5s)" not in rendered
+        assert "Explorer completed (1/3, final answer, 2.5s)" in rendered
         assert "Explorer" in rendered
         assert 'Agent("explore")' not in rendered
         assert "subagent completed" not in rendered

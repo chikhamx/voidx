@@ -6,7 +6,7 @@ import hashlib
 from collections.abc import Iterable
 
 from voidx.workflow.dag import DEFAULT_WORKFLOW_DAG
-from voidx.workflow.render import render_node_markdown, render_node_summary
+from voidx.workflow.render import render_node_markdown
 from voidx.workflow.schema import WorkflowNode
 
 WORKFLOW_CONTEXT_MARKER = "VOIDX_WORKFLOW_CONTEXT"
@@ -14,9 +14,10 @@ WORKFLOW_CONTEXT_SCOPE = "structured-workflow-runtime"
 
 _WORKFLOW_CONTEXT_NOTE = (
     "These are structured workflow definitions owned by the voidx runtime. "
-    "Active workflow nodes are expanded with full instructions. Inactive nodes "
-    "are summarized for discovery and transition context only; do not follow "
-    "their gates or workflow steps unless Current Task State lists them as active."
+    "The full workflow definitions are kept stable for prompt-cache reuse. "
+    "Use Current Task State to determine which nodes are active for this turn; "
+    "do not follow a node's gates or workflow steps unless Current Task State "
+    "lists it as active."
 )
 
 
@@ -37,13 +38,10 @@ def render_workflow_context(
     *,
     active_names: Iterable[str] = (),
 ) -> str:
-    active = {name.strip().lower() for name in active_names if name.strip()}
+    del active_names
     rendered: list[str] = []
     for node in nodes:
-        if node.name in active:
-            rendered.append(render_workflow_instruction(node).strip())
-        else:
-            rendered.append(render_node_summary(node, DEFAULT_WORKFLOW_DAG).strip())
+        rendered.append(render_workflow_instruction(node).strip())
     body = "\n\n".join(item for item in rendered if item)
     if not body:
         return ""

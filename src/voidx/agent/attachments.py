@@ -10,9 +10,10 @@ from dataclasses import dataclass, field
 from pathlib import Path
 from typing import Any
 
+from voidx.runtime.attachments import MAX_IMAGE_ATTACHMENT_BYTES
+
 IMAGE_EXTENSIONS = {".png", ".jpg", ".jpeg", ".gif", ".webp"}
 MAX_TEXT_ATTACHMENT_BYTES = 200_000
-MAX_IMAGE_ATTACHMENT_BYTES = 5_000_000
 MAX_DIR_LISTING_ITEMS = 500
 _DIR_TREE_SKIP = {"__pycache__", ".git", ".hg", ".svn", "node_modules", ".venv", "venv", "dist", "build", ".pytest_cache", ".mypy_cache"}
 _ATTACHMENT_RE = re.compile(r'(?<!\S)(?:@(?:"([^"]+)"|(\S+))|\[image-([^\]]+)\])')

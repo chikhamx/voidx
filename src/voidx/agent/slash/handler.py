@@ -19,8 +19,7 @@ from voidx.agent.slash.session import SlashSessionMixin
 from voidx.agent.slash.skills import SlashSkillsMixin
 from voidx.agent.slash.upgrade import SlashUpgradeMixin
 from voidx.agent.slash.runtime import PROVIDERS, _select_from_list, _w, prompt_text
-from voidx.runtime.ui import ui
-from voidx.ui.commands import COMMANDS
+from voidx.runtime.ui import COMMANDS, ui
 
 
 class SlashHandler(

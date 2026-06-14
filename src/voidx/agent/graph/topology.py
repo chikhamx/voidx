@@ -8,15 +8,11 @@ from typing import Any
 from langchain_core.messages import AIMessage, BaseMessage, HumanMessage
 from langgraph.graph import END, StateGraph
 
-from voidx.agent.agents import get_agent
 from voidx.agent.graph.convergence import is_step_hint_message
 from voidx.agent.state import AgentState
 from voidx.llm.message_markers import is_guidance_message
 
-
-_MAX_STEPS_FALLBACK = 100
-
-from voidx.memory.session import SessionInfo
+from voidx.memory.service import SessionInfo
 
 
 def build_graph(host: Any):
@@ -33,19 +29,25 @@ def build_graph(host: Any):
         "execute": "execute_tools",
         "end": "finalize",
     })
-    workflow.add_edge("execute_tools", "call_llm")
+    workflow.add_conditional_edges("execute_tools", route_after_execute_tools, {
+        "call_llm": "call_llm",
+        "end": "finalize",
+    })
     workflow.add_edge("finalize", END)
 
     return workflow.compile()
 
 
 def prepare_state(state: AgentState) -> dict:
-    agent_def = get_agent("voidx")
-
     return {
         "step_count": state.get("step_count", 0) + 1,
-        "max_steps": state.get("max_steps", agent_def.max_steps if agent_def else _MAX_STEPS_FALLBACK),
     }
+
+
+def route_after_execute_tools(state: AgentState) -> str:
+    if state.get("should_continue") is False:
+        return "end"
+    return "call_llm"
 
 
 def latest_user_text(messages: list[BaseMessage]) -> str:
@@ -84,4 +86,3 @@ def session_date(session: SessionInfo | None) -> str:
         except ValueError:
             pass
     return datetime.now().astimezone().strftime("%Y-%m-%d %Z")
-
