@@ -280,7 +280,21 @@ def test_workflow_service_selects_builtin_workflow_triggers(tmp_path):
 
     assert [match.name for match in debug] == ["debug"]
     assert [match.name for match in tdd] == ["tdd"]
-    assert [match.name for match in feedback] == ["feedback", "review"]
+    assert [match.name for match in feedback] == ["feedback"]
+
+
+def test_workflow_service_select_from_start_returns_single_match():
+    service = WorkflowService()
+
+    review = service.select_from_start("review")
+    debug = service.select_from_start("debug")
+    unknown = service.select_from_start("nonexistent")
+
+    assert [match.name for match in review] == ["review"]
+    assert review[0].reason == "goal_resolver"
+    assert [match.name for match in debug] == ["debug"]
+    assert debug[0].reason == "goal_resolver"
+    assert unknown == []
 
 
 def test_builtin_workflow_nodes_declare_execution_contracts():
@@ -501,7 +515,6 @@ def test_workflow_service_returns_structured_workflow_runs(tmp_path):
     assert runs[0].transition_to == ["design-doc", "plan", "tdd"]
     assert runs[1].transition_to == ["verify"]
     assert runs[2].transition_to == [
-        "review",
         "tdd",
         "debug",
     ]

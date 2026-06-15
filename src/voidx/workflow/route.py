@@ -9,16 +9,16 @@ def workflow_route_start(route: object) -> str:
     if route is None:
         return ""
     if isinstance(route, dict):
-        return str(route.get("start") or "").strip().lower()
-    return str(getattr(route, "start", "") or "").strip().lower()
+        return str(route.get("join") or route.get("start", "")).strip().lower()
+    return str(getattr(route, "join", "") or getattr(route, "start", "")).strip().lower()
 
 
 def workflow_route_end(route: object) -> str:
     if route is None:
         return ""
     if isinstance(route, dict):
-        return str(route.get("end") or "").strip().lower()
-    return str(getattr(route, "end", "") or "").strip().lower()
+        return str(route.get("leave") or route.get("end", "")).strip().lower()
+    return str(getattr(route, "leave", "") or getattr(route, "end", "")).strip().lower()
 
 
 def workflow_transition_target(workflow: str, condition: str) -> str:

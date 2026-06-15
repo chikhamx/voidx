@@ -24,6 +24,21 @@ from voidx.ui.output.dock.nodes_permission import DockPermissionNodeMixin
 
 
 class DockNodeMixin(DockStartupNodeMixin, DockStatusNodeMixin, DockPermissionNodeMixin):
+    def _new_settled_node(
+        self,
+        target: OutputNode,
+        *,
+        before_active_stream: bool,
+        **kwargs: Any,
+    ) -> OutputNode:
+        reference = self._stream_node if before_active_stream else None
+        if reference is not None and reference.parent is not None:
+            node = self._tree.new_node_before(reference, **kwargs)
+        else:
+            node = self._tree.new_node(parent=target, **kwargs)
+        self._mark_settled(node)
+        return node
+
     def append_message(self, text: str, *, style: str = "", parent: OutputNode | None = None, markup: bool = False) -> OutputNode | None:
         clean = _clean(text)
         if not clean.strip():
@@ -36,14 +51,14 @@ class DockNodeMixin(DockStartupNodeMixin, DockStatusNodeMixin, DockPermissionNod
         body_lines = lines[1:] if markup else [escape(line) for line in lines[1:]]
         if style:
             body_lines = [f"[{style}]{line}[/]" for line in body_lines]
-        node = self._tree.new_node(
-            parent=target,
+        node = self._new_settled_node(
+            target,
+            before_active_stream=parent is None,
             node_type="message",
             header=header,
             body_lines=body_lines,
             collapsed=False,
         )
-        self._mark_settled(node)
         self.refresh()
         return node
 
@@ -52,15 +67,15 @@ class DockNodeMixin(DockStartupNodeMixin, DockStatusNodeMixin, DockPermissionNod
         if not clean.strip():
             return None
         lines = [_strip_ansi_trailing_space(line) for line in (clean.splitlines() or [clean])]
-        node = self._tree.new_node(
-            parent=parent or self._tree.root,
+        node = self._new_settled_node(
+            parent or self._tree.root,
+            before_active_stream=parent is None,
             node_type="error",
             header=f"[red]✗ {escape(lines[0])}[/red]",
             body_lines=[f"[red]  {escape(line)}[/red]" for line in lines[1:]],
             collapsed=False,
             status="error",
         )
-        self._mark_settled(node)
         self.refresh()
         return node
 
@@ -69,14 +84,14 @@ class DockNodeMixin(DockStartupNodeMixin, DockStatusNodeMixin, DockPermissionNod
         if not clean.strip():
             return None
         lines = [_strip_ansi_trailing_space(line) for line in (clean.splitlines() or [clean])]
-        node = self._tree.new_node(
-            parent=parent or self._tree.root,
+        node = self._new_settled_node(
+            parent or self._tree.root,
+            before_active_stream=parent is None,
             node_type="message",
             header=_ansi_line(lines[0]),
             body_lines=[_ansi_line(line) for line in lines[1:]],
             collapsed=False,
         )
-        self._mark_settled(node)
         self.refresh()
         return node
 
@@ -169,6 +184,7 @@ class DockNodeMixin(DockStartupNodeMixin, DockStatusNodeMixin, DockPermissionNod
         node.header = f"[{color}]{icon}[/{color}] {tool_body}{suffix}"
         node.elapsed = elapsed
         node.status = "done" if ok else "error"
+        self._mark_settled(node)
         self._tree.mark_dirty()
         self.refresh()
 

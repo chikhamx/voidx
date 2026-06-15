@@ -217,6 +217,60 @@ def test_flush_committed_does_not_pad_short_history_to_bottom(tmp_path, monkeypa
     assert fake_stdout.text.count("\n") < 10
 
 
+def test_flush_committed_counts_trailing_blank_separator_row(tmp_path, monkeypatch):
+    fake_stdout = _FakeStdout()
+    monkeypatch.setattr(sys, "stdout", fake_stdout)
+    monkeypatch.setattr(
+        shutil,
+        "get_terminal_size",
+        lambda fallback=None: os.terminal_size((80, 30)),
+    )
+
+    tui = _tui(tmp_path)
+    tui._tty = True
+    tui._console = Console(file=fake_stdout, force_terminal=True, width=80, height=30, _environ={})
+    dock.begin_capture()
+    dock.start_turn("hello")
+    dock.set_stream("let me check")
+
+    tui._flush_committed()
+
+    assert tui._committed_line_count == 2
+    assert tui._visible_committed_rows == 2
+
+
+def test_flush_committed_counts_blank_separator_flushed_by_itself(tmp_path, monkeypatch):
+    fake_stdout = _FakeStdout()
+    monkeypatch.setattr(sys, "stdout", fake_stdout)
+    monkeypatch.setattr(
+        shutil,
+        "get_terminal_size",
+        lambda fallback=None: os.terminal_size((80, 30)),
+    )
+
+    tui = _tui(tmp_path)
+    tui._tty = True
+    tui._console = Console(file=fake_stdout, force_terminal=True, width=80, height=30, _environ={})
+    dock.begin_capture()
+    dock.start_turn("hello")
+    dock.set_stream("first assistant")
+    dock.commit_stream(refresh=False)
+    tool = dock.start_tool(
+        "Reading",
+        'file_path="x.py"',
+        tool_name="read",
+        raw_args={"file_path": "x.py"},
+    )
+    dock.finish_tool_node(tool, "Read", 0.1, True)
+    tui._flush_committed(force=True)
+
+    dock.set_stream("second assistant")
+    tui._flush_committed()
+
+    assert tui._committed_line_count == 5
+    assert tui._visible_committed_rows == 5
+
+
 def test_render_frame_pins_to_bottom_after_history_fills_terminal(tmp_path, monkeypatch):
     class FakeStdout:
         def __init__(self) -> None:

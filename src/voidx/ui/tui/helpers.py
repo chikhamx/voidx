@@ -104,10 +104,7 @@ def _call_int(func: object, fallback: int) -> int:
 def _rendered_row_count(text: str) -> int:
     if not text:
         return 0
-    rows = text.count("\n")
-    if not text.endswith("\n"):
-        rows += 1
-    return rows
+    return text.count("\n") + 1
 
 
 def _clip_cells(text: str, width: int) -> str:

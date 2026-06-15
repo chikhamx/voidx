@@ -161,8 +161,8 @@ def test_dock_clear_screen_request_is_consumed_publicly():
 def test_rendered_row_count_tracks_terminal_cursor_rows():
     assert _rendered_row_count("") == 0
     assert _rendered_row_count("one") == 1
-    assert _rendered_row_count("one\n") == 1
-    assert _rendered_row_count("one\ntwo\n") == 2
+    assert _rendered_row_count("one\n") == 2
+    assert _rendered_row_count("one\ntwo\n") == 3
 
 
 def test_render_impl_clips_transcript_to_visible_tail(tmp_path):

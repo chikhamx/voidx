@@ -29,6 +29,7 @@ from voidx.workflow.types import WorkflowRunState
 INSTRUCTION_FILES = ["AGENTS.md", "CLAUDE.md"]  # CLAUDE.md for compat
 
 logger = logging.getLogger(__name__)
+_WORKFLOW_START_UNSET = object()
 
 
 @dataclass(frozen=True)
@@ -136,19 +137,31 @@ class InstructionService:
         runtime_trigger: str | None = None,
         exclude_names: list[str] | None = None,
         active_names: list[str] | None = None,
+        workflow_start: str | None | object = _WORKFLOW_START_UNSET,
     ) -> WorkflowRuntimeContext:
         service = self._workflow_service
         nodes = await asyncio.to_thread(service.nodes)
-        matches = await asyncio.to_thread(
-            service.select,
-            user_text,
-            agent=agent,
-            task_intent=task_intent,
-            goal_type=goal_type,
-            interaction_mode=interaction_mode,
-            runtime_trigger=runtime_trigger,
-            exclude_names=exclude_names or (),
-        )
+
+        if workflow_start is not _WORKFLOW_START_UNSET and workflow_start:
+            matches = await asyncio.to_thread(
+                service.select_from_start,
+                str(workflow_start),
+                goal_type=goal_type,
+            )
+        elif workflow_start is _WORKFLOW_START_UNSET:
+            matches = await asyncio.to_thread(
+                service.select,
+                user_text,
+                agent=agent,
+                task_intent=task_intent,
+                goal_type=goal_type,
+                interaction_mode=interaction_mode,
+                runtime_trigger=runtime_trigger,
+                exclude_names=exclude_names or (),
+            )
+        else:
+            matches = []
+
         active = _merged_names(active_names or (), [match.name for match in matches])
         instructions = [
             service.render_instruction(node)

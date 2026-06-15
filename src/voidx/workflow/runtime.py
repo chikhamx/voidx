@@ -4,6 +4,9 @@ from __future__ import annotations
 
 from collections.abc import Iterable
 
+from collections import deque
+
+from voidx.workflow.policy import is_workflow_terminal_condition
 from voidx.workflow.types import (
     WorkflowActivationSource,
     WorkflowEvidence,
@@ -79,12 +82,15 @@ def advance_workflow_states(
         if event.kind == WorkflowStateEventKind.SATISFIED:
             run.status = WorkflowRunStatus.SATISFIED
             run.blocked_reason = ""
-            _activate_transition_targets(
-                states,
-                run,
-                turn_count=turn_count,
-                condition=event.condition,
-            )
+            if is_workflow_terminal_condition(event.condition):
+                _cascade_skip_downstream(states, run, turn_count=turn_count)
+            else:
+                _activate_transition_targets(
+                    states,
+                    run,
+                    turn_count=turn_count,
+                    condition=event.condition,
+                )
         elif event.kind == WorkflowStateEventKind.BLOCKED:
             run.status = WorkflowRunStatus.BLOCKED
             run.blocked_reason = event.reason or event.summary
@@ -130,6 +136,73 @@ def _activate_transition_targets(
             updated_turn=turn_count,
             transition_to=list(_workflow_transitions(key)),
         )
+
+
+def _cascade_skip_downstream(
+    states: dict[str, WorkflowRunState],
+    run: WorkflowRunState,
+    *,
+    turn_count: int,
+) -> None:
+    downstream = _reachable_downstream(run.name)
+    for name in downstream:
+        target = states.get(_workflow_key(name))
+        if target is None or target.status != WorkflowRunStatus.ACTIVE:
+            continue
+        if _has_other_active_precursor(states, name, exclude=run.name):
+            continue
+        target.status = WorkflowRunStatus.SKIPPED
+        target.updated_turn = turn_count
+        target.blocked_reason = ""
+        target.evidence.append(
+            WorkflowEvidence(
+                kind=WorkflowStateEventKind.SKIPPED.value,
+                ref=f"cascade:upstream_{run.name}_done",
+                ok=True,
+                summary=f"Upstream node {run.name} exited with done; downstream skipped.",
+                condition="done",
+            )
+        )
+
+
+def _reachable_downstream(name: str) -> list[str]:
+    start = _workflow_key(name)
+    if not start:
+        return []
+    result: list[str] = []
+    seen = {start}
+    pending: deque[str] = deque([start])
+    while pending:
+        current = pending.popleft()
+        for edge in _workflow_edges(current):
+            target = _workflow_key(edge.target)
+            if not target or target in seen:
+                continue
+            seen.add(target)
+            result.append(target)
+            pending.append(target)
+    return result
+
+
+def _has_other_active_precursor(
+    states: dict[str, WorkflowRunState],
+    name: str,
+    *,
+    exclude: str,
+) -> bool:
+    target = _workflow_key(name)
+    excluded = _workflow_key(exclude)
+    if not target:
+        return False
+    for source in list(states):
+        if source == excluded:
+            continue
+        run = states.get(source)
+        if run is None or run.status != WorkflowRunStatus.ACTIVE:
+            continue
+        if any(_workflow_key(edge.target) == target for edge in _workflow_edges(source)):
+            return True
+    return False
 
 
 def _ensure_transition_metadata(run: WorkflowRunState) -> None:

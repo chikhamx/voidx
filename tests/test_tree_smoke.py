@@ -165,6 +165,36 @@ def test_agent_subagent_render_flattens_wrapper_node():
     assert "│" not in map_line.partition("Map")[0]
 
 
+def test_transparent_subagent_spaces_ai_message_after_tools():
+    tree = OutputTree()
+    assistant = tree.new_node(tree.root, node_type="assistant", header="● Working")
+    agent_tool = tree.new_node(
+        assistant,
+        node_type="tool_call",
+        header="● Reviewer",
+        payload={"tool_name": "agent"},
+    )
+    subagent = tree.new_node(
+        agent_tool,
+        node_type="subagent",
+        header="● review agent completed",
+        agent_name="review",
+    )
+    tree.new_node(subagent, node_type="tool_call", header='● Read("core.py")')
+    tree.new_node(subagent, node_type="tool_call", header='● Read("provider.py")')
+    tree.new_node(subagent, node_type="assistant", header="● 审查报告引用的行号与当前代码不匹配。")
+    tree.new_node(subagent, node_type="tool_call", header='● Search("while True")')
+
+    lines = [_plain(line) for line in tree.render(120)]
+    provider_index = next(index for index, line in enumerate(lines) if 'Read("provider.py")' in line)
+    message_index = next(index for index, line in enumerate(lines) if "审查报告引用" in line)
+    search_index = next(index for index, line in enumerate(lines) if 'Search("while True")' in line)
+
+    assert lines[provider_index + 1] == ""
+    assert message_index == provider_index + 2
+    assert search_index == message_index + 1
+
+
 @pytest.mark.parametrize(
     ("agent", "display"),
     [

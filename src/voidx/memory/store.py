@@ -94,7 +94,6 @@ def _init_schema(conn: sqlite3.Connection) -> None:
             current_intent TEXT NOT NULL DEFAULT 'coding',
             previous_intent TEXT,
             current_goal_json TEXT,
-            pending_approval_json TEXT NOT NULL DEFAULT '',
             workflow_route_json TEXT NOT NULL DEFAULT '',
             workflow_runs_json TEXT NOT NULL DEFAULT '{}',
             recent_user_texts_json TEXT NOT NULL DEFAULT '[]',
@@ -153,6 +152,12 @@ def _init_schema(conn: sqlite3.Connection) -> None:
     try:
         conn.execute(
             "ALTER TABLE session_runtime_state ADD COLUMN workflow_route_json TEXT NOT NULL DEFAULT ''"
+        )
+    except sqlite3.OperationalError:
+        pass
+    try:
+        conn.execute(
+            "ALTER TABLE session_runtime_state DROP COLUMN pending_approval_json"
         )
     except sqlite3.OperationalError:
         pass

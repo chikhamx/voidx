@@ -140,6 +140,33 @@ class OutputTree:
         self._sync_counter(node.id)
         return node
 
+    def new_node_before(
+        self,
+        reference: OutputNode,
+        *,
+        node_id: str | None = None,
+        **kwargs,
+    ) -> OutputNode:
+        """Create a sibling node immediately before ``reference``."""
+        parent = reference.parent
+        if parent is None:
+            raise ValueError("reference node must have a parent")
+        if reference not in parent.children:
+            raise ValueError("reference node is not attached to its parent")
+        if node_id is None:
+            self._counter += 1
+            node_id = f"n{self._counter}"
+        node = OutputNode(id=node_id, **kwargs)
+        node.parent = parent
+        node.depth = reference.depth
+        index = parent.children.index(reference)
+        parent.children.insert(index, node)
+        self._register_subtree(node)
+        self._sync_counter(node.id)
+        self._refresh_sibling_flags(parent)
+        self.mark_dirty()
+        return node
+
     def add_node(self, parent: OutputNode, node: OutputNode) -> None:
         """Attach an existing node and register its subtree."""
         parent.add_child(node)
@@ -413,7 +440,7 @@ class OutputTree:
         if node is self.root:
             prev = None
             for child in node.children:
-                if _needs_gap_after_turn(prev, child):
+                if _needs_gap_between_root_blocks(prev, child):
                     lines.append("")
                 prev = child
                 self._walk_render(child, [], lines, line_map, click_map)
@@ -592,10 +619,28 @@ def _pad_diff_background_row(line: str, width: int) -> str:
     return line.replace(marker, f"{padding}{marker}", 1)
 
 
-def _needs_gap_after_turn(prev: OutputNode | None, child: OutputNode) -> bool:
-    if prev is None or prev.node_type != "turn":
+def _needs_gap_between_root_blocks(prev: OutputNode | None, child: OutputNode) -> bool:
+    if prev is None:
         return False
-    return child.node_type == "assistant" or (child.node_type == "message" and bool(child.header))
+    if _is_empty_message_spacer(prev) or _is_empty_message_spacer(child):
+        return False
+    if child.node_type == "turn":
+        return _is_visible_root_block(prev)
+    if prev.node_type == "turn":
+        return _is_visible_root_assistant(child) or (child.node_type == "message" and bool(child.header))
+    return _is_visible_root_assistant(prev) and _is_visible_root_assistant(child)
+
+
+def _is_visible_root_block(node: OutputNode) -> bool:
+    if node.node_type == "root":
+        return False
+    if _is_empty_message_spacer(node):
+        return False
+    return bool(node.header or node.body_lines or node.children)
+
+
+def _is_visible_root_assistant(node: OutputNode) -> bool:
+    return node.node_type == "assistant" and bool(node.header or node.body_lines or node.children)
 
 
 def _needs_gap_between_agent_blocks(
@@ -603,13 +648,15 @@ def _needs_gap_between_agent_blocks(
     prev: OutputNode | None,
     child: OutputNode,
 ) -> bool:
-    if parent.node_type != "assistant" or prev is None:
+    if parent.node_type != "assistant" and not _is_transparent_agent_subagent(parent):
+        return False
+    if prev is None:
         return False
     if _is_empty_message_spacer(prev) or _is_empty_message_spacer(child):
         return False
     prev_text = _is_visible_agent_text(prev)
     child_text = _is_visible_agent_text(child)
-    return prev_text and child_text
+    return child_text and (prev_text or prev.node_type == "tool_call")
 
 
 def _is_visible_agent_text(node: OutputNode) -> bool:

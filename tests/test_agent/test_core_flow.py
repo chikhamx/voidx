@@ -42,12 +42,12 @@ from voidx.memory.session import (
 )
 from voidx.memory.transcript import load_transcript
 from voidx.permission.service import PermissionService
-from voidx.runtime import Goal, GoalType, PendingApproval, TaskIntent
+from voidx.runtime import GoalSpec, GoalType, IntentResolution, TaskIntent
 from voidx.skills.context import SKILL_CONTEXT_MARKER, SKILL_TOOL_CONTEXT_MARKER, render_skill_context
 from voidx.workflow.context import WORKFLOW_CONTEXT_MARKER
 from voidx.workflow.policy import workflow_activations
 from voidx.workflow.runtime import WorkflowRunState, WorkflowRunStatus
-from voidx.agent.task_state import TaskState, ToolStatePatch
+from voidx.agent.task_state import TaskState, ToolStatePatch, WorkflowRoute
 from voidx.tools.base import ToolContext, ToolResult
 from voidx.tools.agent import AgentTool
 from voidx.tools.registry import ToolRegistry
@@ -2350,7 +2350,6 @@ async def test_plan_checkpoint_transaction_executes_following_tools_with_updated
         "interaction_mode": "auto",
         "task_state": _task_state_json(
             current_intent=TaskIntent.CODING,
-            pending_approval=PendingApproval(scope="Update runtime state handling"),
         ),
     })
 
@@ -2358,9 +2357,8 @@ async def test_plan_checkpoint_transaction_executes_following_tools_with_updated
     task_state = _result_task_state(result)
     assert task_state.current_intent == TaskIntent.CODING
     assert task_state.current_goal is not None
-    assert task_state.current_goal.target == "Update runtime state handling"
+    assert task_state.current_goal.desc == "Update runtime state handling"
     assert task_state.current_goal.type == GoalType.FEATURE
-    assert task_state.pending_approval is None
     assert result["messages"][1].content == "read after plan: coding:feature:Update runtime state handling"
     assert observed == {
         "task_intent": "coding",
@@ -2443,8 +2441,8 @@ async def test_multiple_barriers_apply_patches_in_order(tmp_path):
         async def execute(self, args: dict, ctx: ToolContext) -> ToolResult:
             observed.append(f"clarify:{ctx.task_intent}:{ctx.goal_type}:{ctx.goal_target}")
             patch = ToolStatePatch(
-                task_intent=TaskIntent.CODING,
-                goal=Goal(type=GoalType.INSPECT, target="after intent"),
+                intent=IntentResolution(type=TaskIntent.CODING, desc="after intent"),
+                goal=GoalSpec(type=GoalType.INSPECT, desc="after intent"),
             )
             return ToolResult(
                 output="clarify ok",
@@ -2461,8 +2459,8 @@ async def test_multiple_barriers_apply_patches_in_order(tmp_path):
         async def execute(self, args: dict, ctx: ToolContext) -> ToolResult:
             observed.append(f"plan_checkpoint:{ctx.task_intent}:{ctx.goal_type}:{ctx.goal_target}")
             patch = ToolStatePatch(
-                task_intent=TaskIntent.CODING,
-                goal=Goal(type=GoalType.FEATURE, target="after plan", user_requested_write=True),
+                intent=IntentResolution(type=TaskIntent.CODING, desc="after plan"),
+                goal=GoalSpec(type=GoalType.FEATURE, desc="after plan"),
             )
             return ToolResult(
                 output="plan ok",
@@ -2524,7 +2522,7 @@ async def test_multiple_barriers_apply_patches_in_order(tmp_path):
     task_state = _result_task_state(result)
     assert task_state.current_intent == TaskIntent.CODING
     assert task_state.current_goal is not None
-    assert task_state.current_goal.target == "after plan"
+    assert task_state.current_goal.desc == "after plan"
     assert result["messages"][2].content == "read after barriers: coding:feature:after plan"
 
 
@@ -2532,6 +2530,14 @@ async def test_multiple_barriers_apply_patches_in_order(tmp_path):
 async def test_advance_workflow_transaction_reauthorizes_following_write(tmp_path):
     graph = _graph(tmp_path)
     graph._permission.approval_policy = "on-request"
+    invalidations = 0
+
+    class FakeApp:
+        def invalidate(self):
+            nonlocal invalidations
+            invalidations += 1
+
+    graph._app = FakeApp()
     parent = AIMessage(
         content="",
         tool_calls=[
@@ -2574,6 +2580,8 @@ async def test_advance_workflow_transaction_reauthorizes_following_write(tmp_pat
     assert (tmp_path / "tmp-repro.txt").read_text() == "x"
     by_name = {run.name: run for run in _result_task_state(result).workflow_runs.values()}
     assert by_name["brainstorm"].status == WorkflowRunStatus.SATISFIED
+    assert graph._task_state.workflow_runs["brainstorm"].status == WorkflowRunStatus.SATISFIED
+    assert invalidations > 0
 
 
 @pytest.mark.asyncio
@@ -2752,7 +2760,7 @@ async def test_multiple_advance_workflow_done_calls_finish_batch_before_stopping
     assert result["should_continue"] is False
     by_name = {run.name: run for run in _result_task_state(result).workflow_runs.values()}
     assert by_name["design-doc"].status == WorkflowRunStatus.SATISFIED
-    assert by_name["verify"].status == WorkflowRunStatus.SATISFIED
+    assert by_name["verify"].status == WorkflowRunStatus.SKIPPED
 
 
 @pytest.mark.asyncio
@@ -3687,7 +3695,8 @@ async def test_prepare_injects_workflow_nodes_from_task_state(tmp_path):
         "task_intent": "coding",
         "task_state": TaskState(
             current_intent=TaskIntent.CODING,
-            current_goal=Goal(type=GoalType.BUGFIX, target="修复 runtime bug"),
+            current_goal=GoalSpec(type=GoalType.BUGFIX, desc="修复 runtime bug"),
+            workflow_route=WorkflowRoute(join="debug", leave="verify"),
         ).model_dump(mode="json"),
         "tool_results": {},
         "step_count": 0,
@@ -3708,12 +3717,46 @@ async def test_prepare_injects_workflow_nodes_from_task_state(tmp_path):
         if isinstance(message, HumanMessage) and "Active workflow nodes: debug" in str(message.content)
     )
     result_task_state = TaskState.model_validate(result["task_state"])
-    assert [name for name in (result_task_state.workflow_runs or {})] == [
-        "debug",
-        "tdd",
-        "verify",
-    ]
+    assert [name for name in (result_task_state.workflow_runs or {})] == ["debug"]
     assert "Workflow run state: debug=active" in task_context_message.content
+
+
+@pytest.mark.asyncio
+async def test_prepare_syncs_triggered_workflow_to_status_state(tmp_path):
+    graph = VoidXGraph(
+        Config(workspace=str(tmp_path)),
+        api_key=None,
+        settings=Settings(str(tmp_path)),
+    )
+    invalidations = 0
+
+    class FakeApp:
+        def invalidate(self):
+            nonlocal invalidations
+            invalidations += 1
+
+    graph._app = FakeApp()
+    result = await graph._prepare_with_stream({
+        "messages": [HumanMessage(content="debug this flaky test")],
+        "workspace": str(tmp_path),
+        "persona": "coordinate",
+        "plan_mode": False,
+        "interaction_mode": "auto",
+        "task_state": TaskState(
+            current_intent=TaskIntent.CODING,
+            current_goal=GoalSpec(type=GoalType.BUGFIX, desc="debug this flaky test"),
+            workflow_route=WorkflowRoute(join="debug", leave="verify"),
+        ).model_dump(mode="json"),
+        "tool_results": {},
+        "step_count": 0,
+        "max_steps": 50,
+        "should_continue": True,
+    })
+
+    result_task_state = TaskState.model_validate(result["task_state"])
+    assert result_task_state.workflow_runs["debug"].status == WorkflowRunStatus.ACTIVE
+    assert graph._task_state.workflow_runs["debug"].status == WorkflowRunStatus.ACTIVE
+    assert invalidations > 0
 
 
 @pytest.mark.asyncio

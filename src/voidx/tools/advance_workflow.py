@@ -64,10 +64,20 @@ class AdvanceWorkflowTool(BaseTool):
         runs = _current_runs(ctx)
         active = _active_runs(runs)
         if not active:
-            return _error_result(
-                title="workflow: no active node",
-                output="No active workflow node is available to advance.",
-                metadata={"error": True},
+            patch = ToolStatePatch(workflow_runs=runs, persona=_active_persona(runs))
+            payload = {
+                "condition": condition,
+                "activated": [],
+                "summary": inp.summary or "No active workflow nodes remain.",
+            }
+            return ToolResult(
+                title="workflow: done",
+                output=json.dumps(payload, ensure_ascii=False, indent=2),
+                summary=payload["summary"],
+                metadata={
+                    "workflow_transition": payload,
+                    "state_patch": patch.model_dump(mode="json", include={"workflow_runs", "persona"}),
+                },
             )
 
         if not workflow and is_workflow_terminal_condition(condition) and len(active) > 1:

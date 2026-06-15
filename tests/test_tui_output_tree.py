@@ -244,6 +244,38 @@ def test_tree_inserts_gap_between_user_turn_and_assistant_without_spacer():
     assert "reply" in _rich_plain(lines[2])
 
 
+def test_tree_inserts_gap_between_root_assistant_messages_without_spacer():
+    from voidx.ui.output.tree import OutputTree
+
+    tree = OutputTree()
+    tree.new_node(tree.root, node_type="turn", header="❯ user")
+    tree.new_node(tree.root, node_type="assistant", header="● first reply")
+    tree.new_node(tree.root, node_type="assistant", header="● second reply")
+
+    lines = tree.render(80)
+
+    first_index = next(index for index, line in enumerate(lines) if "first reply" in _rich_plain(line))
+    second_index = next(index for index, line in enumerate(lines) if "second reply" in _rich_plain(line))
+    assert lines[first_index + 1] == ""
+    assert second_index == first_index + 2
+
+
+def test_tree_inserts_gap_before_user_turn_after_assistant_without_spacer():
+    from voidx.ui.output.tree import OutputTree
+
+    tree = OutputTree()
+    tree.new_node(tree.root, node_type="turn", header="❯ first user")
+    tree.new_node(tree.root, node_type="assistant", header="● first reply")
+    tree.new_node(tree.root, node_type="turn", header="❯ next user")
+
+    lines = tree.render(80)
+
+    reply_index = next(index for index, line in enumerate(lines) if "first reply" in _rich_plain(line))
+    next_user_index = next(index for index, line in enumerate(lines) if "next user" in _rich_plain(line))
+    assert lines[reply_index + 1] == ""
+    assert next_user_index == reply_index + 2
+
+
 def test_agent_placeholder_does_not_render_as_visible_row():
     test_dock = dock
     test_dock.begin_capture()
@@ -318,6 +350,25 @@ def test_uncommitted_stream_under_transparent_agent_does_not_flush():
         test_dock.reset()
 
 
+def test_settled_root_log_flushes_before_uncommitted_stream():
+    test_dock = dock
+    test_dock.begin_capture()
+    try:
+        test_dock.set_stream("streaming reply")
+        test_dock.append_ansi("\x1b[2mLLM error, retrying in 2s: boom\x1b[0m")
+
+        lines = test_dock.tree.render(100)
+        limit = test_dock.safe_flush_line_count(100, 0)
+        flushed = "\n".join(_rich_plain(line) for line in lines[:limit])
+        active = "\n".join(_rich_plain(line) for line in lines[limit:])
+
+        assert "LLM error, retrying in 2s: boom" in flushed
+        assert "streaming reply" in active
+    finally:
+        test_dock.deactivate()
+        test_dock.reset()
+
+
 def test_stream_reply_aligns_with_user_turn_start():
     test_dock = dock
     test_dock.begin_capture()
@@ -351,6 +402,31 @@ def test_user_turn_and_stream_reply_are_separated_by_blank_line():
 
         assert plain_lines[user_index + 1] == ""
         assert reply_index == user_index + 2
+    finally:
+        test_dock.deactivate()
+        test_dock.reset()
+
+
+def test_stream_reply_and_following_tool_share_same_ai_message_block():
+    test_dock = dock
+    test_dock.begin_capture()
+    try:
+        test_dock.start_turn("看看这个\n[attachments: docs/specs/code-review-2026-06-10.md]")
+        test_dock.set_stream("我来验证这份审查报告中的问题是否与当前代码库一致。")
+        test_dock.commit_stream()
+        test_dock.start_tool(
+            "Reading",
+            'file_path="src/voidx/agent/graph/core.py"',
+            tool_name="read",
+            raw_args={"file_path": "src/voidx/agent/graph/core.py"},
+        )
+
+        plain_lines = [_rich_plain(line) for line in test_dock.tree.render(120)]
+        reply_index = next(index for index, line in enumerate(plain_lines) if "我来验证" in line)
+        read_index = next(index for index, line in enumerate(plain_lines) if "Read" in line)
+
+        assert plain_lines[reply_index - 1] == ""
+        assert read_index == reply_index + 1
     finally:
         test_dock.deactivate()
         test_dock.reset()
@@ -425,7 +501,7 @@ def test_tool_call_text_aligns_with_assistant_text_start():
     assert metadata_line.index("loading") == reply_line.index("reply text")
 
 
-def test_agent_text_blocks_have_vertical_spacing_but_tools_stay_attached():
+def test_agent_text_blocks_are_spaced_after_tool_calls():
     from voidx.ui.output.tree import OutputTree
 
     tree = OutputTree()
@@ -446,7 +522,8 @@ def test_agent_text_blocks_have_vertical_spacing_but_tools_stay_attached():
 
     assert first_tool == first_text + 1
     assert second_tool == first_tool + 1
-    assert second_text == second_tool + 1
+    assert plain_lines[second_tool + 1] == ""
+    assert second_text == second_tool + 2
     assert plain_lines[second_text + 1] == ""
     assert third_text == second_text + 2
 

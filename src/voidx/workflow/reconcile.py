@@ -2,7 +2,7 @@
 
 from __future__ import annotations
 
-from voidx.runtime.task_state import GoalResolution, TaskState
+from voidx.runtime.task_state import GoalResolution, GoalType, TaskState
 from voidx.workflow.dag import DEFAULT_WORKFLOW_DAG
 from voidx.workflow.policy import workflow_sort_key
 from voidx.workflow.runtime import advance_workflow_states
@@ -38,6 +38,8 @@ def reconcile_workflow_runs_for_turn(
     )
     if override is not None:
         return override
+    if not target and not any(run.status == WorkflowRunStatus.ACTIVE for run in runs):
+        return []
     events = _reconcile_events(
         goal_resolution=goal_resolution,
         runs=runs,
@@ -144,8 +146,10 @@ def _has_explicit_write_intent(
     goal_resolution: GoalResolution,
     after_state: TaskState,
 ) -> bool:
-    goal = goal_resolution.goal or after_state.current_goal
-    return bool(goal is not None and goal.user_requested_write)
+    plan = goal_resolution.plan
+    if plan is not None and plan.join:
+        return plan.join in {"tdd", "debug", "feedback"}
+    return False
 
 
 def _reconcile_events(
@@ -180,7 +184,7 @@ def _resolve_auto_transition(
                     ref=f"auto:turn_reconcile:{run.name}_to_{target}",
                     ok=True,
                     summary=f"User intent implies transition from {run.name} to {target}.",
-                    reason=f"workflow_start={target} from goal resolver",
+                    reason=f"plan.join={target} from goal resolver",
                     condition=edge.condition,
                 )
     return None
@@ -209,7 +213,7 @@ def _activate_initial_start(
             name=target,
             status=WorkflowRunStatus.ACTIVE,
             source=WorkflowActivationSource.TRANSITION,
-            reason="resolver workflow_start",
+            reason="resolver plan.join",
             goal_type=goal.type.value if goal is not None else "",
             scope=goal.label if goal is not None else "",
             personas=list(_workflow_personas(target)),
@@ -222,7 +226,10 @@ def _activate_initial_start(
 
 
 def _route_target(goal_resolution: GoalResolution) -> str:
-    return (goal_resolution.workflow_start or "").strip().lower()
+    plan = goal_resolution.plan
+    if plan is None:
+        return ""
+    return plan.join.strip().lower()
 
 
 def _has_active(runs: list[WorkflowRunState], name: str) -> bool:

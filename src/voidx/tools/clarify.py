@@ -6,7 +6,7 @@ import json
 
 from pydantic import BaseModel, Field
 
-from voidx.runtime import GoalType, TaskIntent, ToolStatePatch, goal_from_text
+from voidx.runtime import GoalSpec, GoalType, IntentResolution, TaskIntent, ToolStatePatch
 from voidx.tools.base import (
     BaseTool,
     ToolContext,
@@ -133,9 +133,9 @@ def _infer_state_patch(inp: ClarifyInput, response: UserResponse) -> ToolStatePa
     }
     if normalized in intent_map:
         return ToolStatePatch(
-            task_intent=intent_map[normalized],
+            intent=IntentResolution(type=intent_map[normalized], desc=answer),
             goal=(
-                goal_from_text(answer, goal_type=goal_type_map[normalized])
+                GoalSpec(type=goal_type_map[normalized], desc=answer)
                 if normalized in goal_type_map
                 else None
             ),
@@ -143,7 +143,7 @@ def _infer_state_patch(inp: ClarifyInput, response: UserResponse) -> ToolStatePa
 
     if "scope" in inp.context.lower():
         return ToolStatePatch(
-            goal=goal_from_text(answer, goal_type=GoalType.CHORE),
+            goal=GoalSpec(type=GoalType.CHORE, desc=answer),
         )
     return None
 

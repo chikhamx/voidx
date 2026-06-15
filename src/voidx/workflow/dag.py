@@ -16,7 +16,6 @@ DEFAULT_WORKFLOW_DAG = WorkflowDAG(
         Edge(source="design-doc", target="plan", condition="completed", label="doc passes reader test", description="Use after the document passes reader test and accuracy verification."),
         Edge(source="plan", target="tdd", condition="approved", label="plan approved", description="Use after the implementation plan is executable and user-approved."),
         Edge(source="tdd", target="verify", condition="implemented", label="implementation complete", description="Use after implementation and relevant tests are green."),
-        Edge(source="verify", target="review", condition="passed_substantial", label="verification passed after substantial work", description="Use when verification passed and the change merits code review."),
         Edge(source="verify", target="tdd", condition="failed_implementation", label="verification failed due to implementation issue", description="Use when verification points to implementation work."),
         Edge(source="verify", target="debug", condition="failed_bug", label="verification exposed a bug", description="Use when verification exposes a bug or unclear root cause."),
         Edge(source="review", target="feedback", condition="review_has_issues", label="review returned issues", description="Use when the review verdict includes required changes."),
@@ -36,5 +35,6 @@ DEFAULT_WORKFLOW_DAG = WorkflowDAG(
         GoalEntry(goal_type="doc", nodes=["design-doc"], reason="goal:doc"),
         GoalEntry(goal_type="review", nodes=["review"], reason="goal:review"),
         GoalEntry(goal_type="chore", nodes=["tdd", "verify"], reason="goal:chore"),
+        GoalEntry(goal_type="inspect", nodes=[], reason="goal:inspect"),
     ],
 )

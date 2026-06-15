@@ -39,7 +39,7 @@ class FileReadTool(BaseTool):
         start = (inp.offset or 1) - 1
         if start >= len(lines):
             return ToolResult(
-                title=f"Read 0 lines from {inp.file_path}",
+                title=f"Read 0 lines",
                 output=f"Offset {inp.offset} is beyond end of file (file has {len(lines)} lines).",
                 metadata={"file": inp.file_path, "lines": 0, "total_lines": len(lines)},
             )
@@ -53,9 +53,9 @@ class FileReadTool(BaseTool):
         record_mtime(ctx, path)
 
         return ToolResult(
-            title=f"Read {len(sliced)} lines from {inp.file_path}",
+            title=f"Read {len(sliced)} lines",
             output="\n".join(numbered),
-            summary=f"Read {len(sliced)}/{len(lines)} lines from {inp.file_path}",
+            summary=f"Read {len(sliced)}/{len(lines)} lines",
             metadata={"file": inp.file_path, "lines": len(sliced), "total_lines": len(lines)},
         )
 
@@ -120,9 +120,9 @@ class FileWriteTool(BaseTool):
             )
 
         return ToolResult(
-            title=f"Wrote {size} bytes to {inp.file_path}",
+            title=f"Wrote {size} bytes",
             output=output,
-            summary=f"Wrote {size} bytes to {inp.file_path}",
+            summary=f"Wrote {size} bytes",
             metadata={"file": inp.file_path, "size": size},
             diff=diff,
         )
@@ -200,9 +200,9 @@ class FileEditTool(BaseTool):
         diff = make_file_diff(inp.file_path, original, content)
 
         return ToolResult(
-            title=f"Edited {inp.file_path} ({len(inp.edits)} edits)",
+            title=f"Edited ({len(inp.edits)} edits)",
             output=f"File edited: {inp.file_path} ({len(inp.edits)} replacements)\n{diff}",
-            summary=f"Edited {inp.file_path} ({len(inp.edits)} replacements)",
+            summary=f"Edited ({len(inp.edits)} replacements)",
             metadata={"file": inp.file_path, "replacements": len(inp.edits)},
             diff=diff,
         )

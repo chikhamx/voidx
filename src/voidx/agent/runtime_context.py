@@ -14,7 +14,7 @@ from pydantic import BaseModel, ConfigDict, Field
 
 from voidx.agent.todo_state import sanitize_todo_replay_messages
 from voidx.agent.message_rows import RowMessageCacheEntry
-from voidx.agent.task_state import Goal, TodoRunState
+from voidx.agent.task_state import GoalSpec, TodoRunState
 from voidx.config import ApprovalReviewer, Config, UserProfile
 from voidx.runtime.intent import InteractionMode, TaskIntent, infer_task_intent
 from voidx.skills.service import (
@@ -230,7 +230,6 @@ class RuntimeContextBuilder:
         self.summary = summary.strip() if summary else ""
         self.current_user_text = current_user_text.strip()
         self.task_intent = ts.current_intent
-        self.pending_approval = ts.pending_approval
         self.current_goal = ts.current_goal
         self.workflow_route = ts.workflow_route
         self.recent_user_texts = list(ts.recent_user_texts)
@@ -401,18 +400,13 @@ class RuntimeContextBuilder:
             if self.current_goal is not None
             else None
         )
-        pending = (
-            self.pending_approval.model_dump(mode="json")
-            if self.pending_approval is not None
-            else None
-        )
         context = {
             "workspace": self.workspace,
             "session_time": self.session_date,
             "interaction_mode": self.interaction_mode.value,
             "current_intent": self.task_intent.value,
             "current_goal": current_goal,
-            "pending_approval": pending,
+
             "recent_user_texts": self.recent_user_texts,
             "latest_user_text": self.current_user_text,
         }
@@ -437,19 +431,16 @@ class RuntimeContextBuilder:
         if self.current_goal is not None:
             lines.extend([
                 f"- Goal type: {self.current_goal.type.value}",
-                f"- Goal target: {self.current_goal.target or 'not set'}",
-                f"- Goal expected result: {self.current_goal.expected_result or 'not set'}",
-                f"- User requested write: {str(self.current_goal.user_requested_write).lower()}",
-                f"- Goal needs confirmation: {str(self.current_goal.needs_confirmation).lower()}",
+                f"- Goal: {self.current_goal.desc or 'not set'}",
             ])
         if self.active_workflow_summaries:
             lines.append(f"- Active workflow nodes: {'; '.join(self.active_workflow_summaries)}")
         if self.workflow_runs:
             lines.append(f"- Workflow run state: {'; '.join(run.state_summary() for run in self.workflow_runs)}")
-        if self.workflow_route is not None and (self.workflow_route.start or self.workflow_route.end):
-            start = self.workflow_route.start or "not set"
-            end = self.workflow_route.end or "not set"
-            lines.append(f"- Workflow route: {start} -> {end}")
+        if self.workflow_route is not None and (self.workflow_route.join or self.workflow_route.leave):
+            join = self.workflow_route.join or "not set"
+            leave = self.workflow_route.leave or "not set"
+            lines.append(f"- Workflow route: {join} -> {leave}")
         for workflow_name in self._active_workflow_node_names():
             exits = workflow_exit_summaries(workflow_name)
             if exits:
@@ -466,11 +457,7 @@ class RuntimeContextBuilder:
         if tone:
             lines.append(f"- User tone preference: {tone}")
             lines.append(f"- Tone instruction: {_tone_instruction(tone)}")
-        pending = _render_pending_approval(self.pending_approval)
-        if pending:
-            lines.append(f"- Pending approval: {pending}")
-        if self.current_goal is not None and self.current_goal.type.value == "design" and pending:
-            lines.append("- Suggestion: use plan_checkpoint to get explicit approval before implementing.")
+
         if self.current_user_text:
             first_line = self.current_user_text.splitlines()[0][:160]
             lines.append(f"- Latest user request: {first_line}")
@@ -631,14 +618,14 @@ def _coerce_todo_run_state(value: TodoRunState | dict | None) -> TodoRunState | 
     return None
 
 
-def _coerce_goal(value: Goal | dict | None) -> Goal | None:
+def _coerce_goal(value: GoalSpec | dict | None) -> GoalSpec | None:
     if value is None:
         return None
-    if isinstance(value, Goal):
+    if isinstance(value, GoalSpec):
         return value
     if isinstance(value, dict):
         try:
-            return Goal.model_validate(value)
+            return GoalSpec.model_validate(value)
         except ValueError:
             return None
     return None
@@ -728,20 +715,6 @@ def _tone_instruction(value: str) -> str:
     if label is None:
         return f"Keep the response tone {text}."
     return label[2]
-
-
-def _render_pending_approval(value: object | None) -> str:
-    if value is None:
-        return ""
-    if isinstance(value, dict):
-        kind = str(value.get("kind") or "implementation")
-        scope = str(value.get("scope") or "").strip()
-    else:
-        kind = str(getattr(value, "kind", "implementation") or "implementation")
-        scope = str(getattr(value, "scope", "") or "").strip()
-    if not scope:
-        return kind
-    return f"{kind} scope={scope}"
 
 
 def _platform_info() -> str:

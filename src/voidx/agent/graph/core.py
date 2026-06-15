@@ -202,6 +202,13 @@ def _persona_for_workflow_runs(
     return ",".join(dict.fromkeys(personas))
 
 
+def _invalidate_tui(host: object) -> None:
+    app = getattr(host, "_app", None)
+    invalidate = getattr(app, "invalidate", None)
+    if callable(invalidate):
+        invalidate()
+
+
 def _agent_static_tool_defs(agent: AgentDef | None, all_tool_defs: list[dict]) -> list[dict]:
     """Apply AgentDef's static tool catalog visibility.
 
@@ -643,6 +650,11 @@ class VoidXGraph(
         task_state = _task_state_for_context(state.get("task_state"), getattr(self, "_task_state", None))
         current_goal = task_state.current_goal
         existing_workflow_runs = list((task_state.workflow_runs or {}).values())
+        workflow_start = (
+            task_state.workflow_route.join
+            if task_state.workflow_route and task_state.workflow_route.join
+            else None
+        )
         workflow_context = await self._workflow_context_for(
             current_user_text,
             agent=runtime_persona,
@@ -652,6 +664,7 @@ class VoidXGraph(
             scope=goal_label(current_goal) or current_user_text,
             exclude_names=_workflow_names(existing_workflow_runs),
             active_names=_active_workflow_names(existing_workflow_runs),
+            workflow_start=workflow_start,
         )
         workflow_runs = _merge_workflow_runs(
             existing_workflow_runs,
@@ -684,6 +697,8 @@ class VoidXGraph(
         context.apply_to_messages(state.get("messages", []))
 
         task_state.workflow_runs = {run.name: run for run in workflow_runs}
+        self._task_state = task_state.model_copy(deep=True)
+        _invalidate_tui(self)
         return {
             **base,
             "persona": runtime_persona,

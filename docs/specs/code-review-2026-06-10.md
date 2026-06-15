@@ -16,7 +16,7 @@
 | In-turn compaction | `compaction_coordinator.py`, `compaction.py`, `core.py`, `contracts.py` | ~800 行新增/修改 |
 | 模块化重构 | `turn_runner.py`, `tool_executor.py`, `host.py`, `session_runtime.py`, `render_*.py`, `bus.py`, `consumers.py` | ~2000 行拆分 |
 | Provider 修复 | `provider.py` | ~350 行修改 |
-| 新工具 | `apply_patch.py`, `file_state.py` | ~450 行新增 |
+| 新工具 | `file_state.py` | ~150 行新增 |
 
 ---
 
@@ -227,57 +227,7 @@ _OVERFLOW_PATTERNS = (
 
 ---
 
-### M2. apply_patch 拒绝合法的空上下文行
 
-**文件**: `src/voidx/tools/apply_patch.py:285-289`
-
-```python
-if not current:
-    raise ValueError(f"Malformed hunk line in {file_patch.display_path}: empty unprefixed line")
-```
-
-**问题**: 标准 unified diff 中，空上下文行有时以真正的空行（无空格前缀）出现。`git apply` 对此容错处理，但此解析器会拒绝。
-
-**建议修复**:
-
-```python
-if not current:
-    # 容错：将空行视为空上下文行
-    hunk_lines.append(_HunkLine(kind=" ", text=""))
-    i += 1
-    continue
-```
-
----
-
-### M3. apply_patch 多文件写入无原子性保证
-
-**文件**: `src/voidx/tools/apply_patch.py:134-149`
-
-```python
-if not inp.dry_run:
-    written: list[_PatchPlan] = []
-    try:
-        for plan in plans:
-            if plan.status == "delete":
-                plan.path.unlink()
-            else:
-                plan.path.parent.mkdir(parents=True, exist_ok=True)
-                plan.path.write_text(plan.new_content, encoding="utf-8")
-            written.append(plan)
-    except Exception as exc:
-        _restore_written_plans(written)
-        return ToolResult(
-            output=f"Patch write failed and rollback was attempted: {exc}",
-            metadata={"error": True},
-        )
-```
-
-**问题**: 如果 5 个文件 patch 中第 3 个写入失败，文件 1-2 已写入新内容，文件 4-5 仍为旧内容。rollback 恢复文件 1-2 到原始状态，但 patch 整体处于不一致状态（部分新、部分旧）。
-
-**建议**: 这是文件级 patch 的固有限制。短期建议在返回的错误信息中明确说明部分写入已发生，长期可考虑先写临时文件再 rename。
-
----
 
 ## Low Severity
 
@@ -296,28 +246,7 @@ def _strip_stainless_headers() -> dict[str, str]:
 
 ---
 
-### L2. Compaction agent 传入原始消息含非文本内容
 
-**文件**: `src/voidx/agent/graph/compaction_coordinator.py:432`
-
-```python
-def _build_compaction_messages(
-    head_messages: list[BaseMessage],
-    previous_summary: str | None,
-    system_prompt: str,
-) -> list[BaseMessage]:
-    messages: list[BaseMessage] = [SystemMessage(content=system_prompt)]
-    ...
-    messages.extend(head_messages)  # ← 直接传入原始消息
-    messages.append(HumanMessage(content=SUMMARY_REQUEST))
-    return messages
-```
-
-**问题**: AIMessage 中的 `tool_calls` 大参数 dict、图片等非文本内容会全部传给 compaction LLM，浪费 token 或导致不支持的内容类型错误。
-
-**建议**: 考虑在传入前剥离 `tool_calls` 和媒体内容，只保留文本摘要。
-
----
 
 ### L3. `truncate_head_to_budget` 的 O(n²) prepend 模式
 
@@ -372,8 +301,8 @@ return [m for s, e in reversed(ranges) for m in messages[s:e]]
 | 严重度 | 数量 | 必须修复 |
 |--------|------|---------|
 | 🔴 High | 3 | ✅ 全部 |
-| 🟡 Medium | 3 | M1, M2 建议修复 |
-| 🟢 Low | 3 | 可后续处理 |
+| 🟡 Medium | 1 | M1 建议修复 |
+| 🟢 Low | 2 | 可后续处理 |
 
 **关键行动项**:
 
@@ -381,4 +310,3 @@ return [m for s, e in reversed(ranges) for m in messages[s:e]]
 2. **H2**: 给 `_live_messages` 的 summary SystemMessage 加稳定 id
 3. **H3**: 在 compaction retry loop 中单独 catch ValueError 并 break
 4. **M1**: 收窄 `_is_context_overflow_error` 的匹配模式
-5. **M2**: apply_patch 容错处理空上下文行

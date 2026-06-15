@@ -61,16 +61,16 @@ class LspTool(BaseTool):
         try:
             if inp.operation == "diagnostics":
                 output = await service.diagnostics(inp.file_path)
-                return ToolResult(title="LSP diagnostics", output=output, summary=f"diagnostics for {inp.file_path}")
+                return ToolResult(title="LSP diagnostics", output=output, summary="diagnostics")
             elif inp.operation == "symbols":
                 query = ""
                 output = await service.symbols(inp.file_path, query)
-                return ToolResult(title="LSP symbols", output=output, summary=f"symbols for {inp.file_path}")
+                return ToolResult(title="LSP symbols", output=output, summary="symbols")
             elif inp.operation == "definition":
                 if inp.file_path is None:
                     return ToolResult(output="file_path is required for definition operation.", metadata={"error": True})
                 output = await service.definition(inp.file_path, inp.line, inp.character)
-                return ToolResult(title="LSP definition", output=output, summary=f"definition at {inp.file_path}:{inp.line}")
+                return ToolResult(title="LSP definition", output=output, summary=f"definition at line {inp.line}")
             elif inp.operation == "references":
                 if inp.file_path is None:
                     return ToolResult(output="file_path is required for references operation.", metadata={"error": True})
@@ -78,7 +78,7 @@ class LspTool(BaseTool):
                     inp.file_path, inp.line, inp.character,
                     include_declaration=inp.include_declaration,
                 )
-                return ToolResult(title="LSP references", output=output, summary=f"references at {inp.file_path}:{inp.line}")
+                return ToolResult(title="LSP references", output=output, summary=f"references at line {inp.line}")
             else:
                 return ToolResult(output=f"Unknown LSP operation: {inp.operation}", metadata={"error": True})
         except LspError as exc:

@@ -113,7 +113,7 @@ class GraphCompactionCoordinator:
                     await host._ui.events.emit(StatusFinished(
                         status_id="compaction",
                         label="Compaction skipped",
-                        remove=False,
+                        remove=True,
                     ))
                 else:
                     host._ui.ui.print("[dim]Compaction skipped[/dim]")
@@ -151,7 +151,7 @@ class GraphCompactionCoordinator:
                 await host._ui.events.emit(StatusFinished(
                     status_id="compaction",
                     label="Compaction skipped: no older complete turn to summarize",
-                    remove=False,
+                    remove=True,
                 ))
             return None
 
@@ -219,7 +219,7 @@ class GraphCompactionCoordinator:
                     label=f"Compaction fallback summarized {len(head_msgs)} messages",
                     detail=f"{failure_detail}; using extracted summary",
                     ok=False,
-                    remove=False,
+                    remove=True,
                 ))
             return CompactionResult(
                 summary=fallback,
@@ -243,7 +243,7 @@ class GraphCompactionCoordinator:
                 await host._ui.events.emit(StatusFinished(
                     status_id="compaction",
                     label=f"Compacted {len(head_msgs)} messages into summary",
-                    remove=False,
+                    remove=True,
                 ))
             else:
                 host._ui.ui.print(f"[dim]Compacted: {len(head_msgs)} messages → summary[/dim]")
@@ -252,7 +252,7 @@ class GraphCompactionCoordinator:
                 status_id="compaction",
                 label="Compaction produced no summary",
                 ok=False,
-                remove=False,
+                remove=True,
             ))
             return None
         else:

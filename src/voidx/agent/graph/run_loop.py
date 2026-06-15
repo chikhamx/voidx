@@ -194,7 +194,7 @@ class GraphRunLoopMixin(GraphTurnMixin, GraphSessionMixin, GraphTranscriptMixin)
                 ),
                 goal_label=lambda: goal_label(getattr(getattr(self, "_task_state", None), "current_goal", None)),
                 goal_type=lambda: goal_type_value(getattr(getattr(self, "_task_state", None), "current_goal", None)),
-                goal_awaiting_approval=lambda: bool(getattr(getattr(self, "_task_state", None), "pending_approval", None)),
+                goal_awaiting_approval=lambda: False,
                 active_workflows=lambda: _active_workflow_names(getattr(self, "_task_state", None)),
                 mcp_servers=lambda: [
                     McpServerStatus(

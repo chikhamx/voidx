@@ -24,7 +24,7 @@ from voidx.agent.graph.runtime_guards import (
 )
 from voidx.agent.graph.todo_events import todo_updated_event
 from voidx.agent.todo_state import apply_todo_state_to_host, todo_run_state_from_result
-from voidx.agent.task_state import Goal, PendingApproval, TaskState, TodoRunState, ToolStatePatch, goal_label
+from voidx.agent.task_state import GoalSpec, TaskState, TodoRunState, ToolStatePatch, goal_label
 from voidx.runtime.intent import TaskIntent
 from voidx.agent.tool_messages import sanitize_tool_message_content
 from voidx.workflow.service import advance_workflow_states, auto_advance_events, is_workflow_terminal_condition
@@ -60,6 +60,12 @@ from voidx.runtime.ui import (
 
 if TYPE_CHECKING:
     from voidx.agent.graph.contracts import GraphToolExecutionHost
+
+
+def _invalidate_tui(host: object) -> None:
+    app = getattr(host, "_app", None)
+    if app is not None and callable(getattr(app, "invalidate", None)):
+        app.invalidate()
 
 
 _OTHER_VALUE_PREFIX = "__voidx_choice_prompt_other__"
@@ -110,7 +116,6 @@ class GraphToolExecutor:
             fallback=getattr(host, "_task_state", None),
         )
         runtime_task_intent = runtime_task_state.current_intent.value
-        runtime_pending_approval = _dump_pending_approval(runtime_task_state.pending_approval)
         runtime_goal = runtime_task_state.current_goal
         runtime_workflow_runs = list((runtime_task_state.workflow_runs or {}).values())
         turn_count = int(state.get("step_count", 0) or 0)
@@ -124,7 +129,6 @@ class GraphToolExecutor:
                 persona=runtime_persona,
                 interaction_mode=interaction_mode or ("plan" if plan_mode else "auto"),
                 task_intent=str(runtime_task_intent or "coding"),
-                pending_approval=runtime_pending_approval,
                 goal_type=runtime_goal.type.value if runtime_goal is not None else "",
                 goal_target=goal_label(runtime_goal),
                 active_workflow_names=_active_workflow_names(runtime_workflow_runs),
@@ -143,7 +147,7 @@ class GraphToolExecutor:
         ctx = make_context()
 
         def apply_state_update(update: dict) -> None:
-            nonlocal ctx, runtime_goal, runtime_pending_approval, runtime_workflow_runs, runtime_task_intent, runtime_task_state, runtime_persona
+            nonlocal ctx, runtime_goal, runtime_workflow_runs, runtime_task_intent, runtime_task_state, runtime_persona
             if not update:
                 return
             if "persona" in update:
@@ -164,10 +168,6 @@ class GraphToolExecutor:
                 runtime_task_intent = update.get("task_intent") or "coding"
                 runtime_task_state.current_intent = TaskIntent(runtime_task_intent)
                 state_update["task_state"] = runtime_task_state.model_dump(mode="json")
-            if "pending_approval" in update:
-                runtime_pending_approval = _dump_pending_approval(update.get("pending_approval"))
-                runtime_task_state.pending_approval = _pending_approval_for_state(runtime_pending_approval)
-                state_update["task_state"] = runtime_task_state.model_dump(mode="json")
             if "current_goal" in update:
                 raw_goal = update.get("current_goal")
                 runtime_goal = _goal_for_state(raw_goal)
@@ -177,6 +177,10 @@ class GraphToolExecutor:
                 runtime_workflow_runs = _workflow_runs_for_state(update.get("workflow_runs") or [])
                 runtime_task_state.workflow_runs = {run.name: run for run in runtime_workflow_runs}
                 state_update["task_state"] = runtime_task_state.model_dump(mode="json")
+            # Sync runtime task state to host so status bar updates immediately
+            if "task_state" in state_update:
+                host._task_state = runtime_task_state.model_copy(deep=True)
+                _invalidate_tui(host)
             ctx = make_context()
 
         tool_calls = last.tool_calls
@@ -717,12 +721,10 @@ def _state_update_from_executed_tools(
         patch = ToolStatePatch.model_validate(raw)
         data = patch.model_dump(mode="json")
         for field in patch.model_fields_set:
-            if field == "task_intent":
+            if field == "intent":
                 value = data.get(field)
                 if value is not None:
-                    update["task_intent"] = value
-            elif field == "pending_approval":
-                update["pending_approval"] = data.get(field)
+                    update["task_intent"] = value.get("type") or "coding"
             elif field == "workflow_runs":
                 route_limited = _explicit_advance_route_limited_runs(
                     item,
@@ -1165,16 +1167,6 @@ def _other_choice_value(options: list[tuple[str, str, str]]) -> str:
     return value
 
 
-def _dump_pending_approval(value: object | None) -> dict | None:
-    if value is None:
-        return None
-    if isinstance(value, dict):
-        return value
-    if hasattr(value, "model_dump"):
-        return value.model_dump(mode="json")
-    return None
-
-
 def _task_state_for_state(value: object, fallback: TaskState | None = None) -> TaskState:
     if isinstance(value, TaskState):
         return value.model_copy(deep=True)
@@ -1188,27 +1180,14 @@ def _task_state_for_state(value: object, fallback: TaskState | None = None) -> T
     return TaskState()
 
 
-def _goal_for_state(value: object | None) -> Goal | None:
+def _goal_for_state(value: object | None) -> GoalSpec | None:
     if value is None:
         return None
-    if isinstance(value, Goal):
+    if isinstance(value, GoalSpec):
         return value
     if isinstance(value, dict):
         try:
-            return Goal.model_validate(value)
-        except ValueError:
-            return None
-    return None
-
-
-def _pending_approval_for_state(value: object | None) -> PendingApproval | None:
-    if value is None:
-        return None
-    if isinstance(value, PendingApproval):
-        return value
-    if isinstance(value, dict):
-        try:
-            return PendingApproval.model_validate(value)
+            return GoalSpec.model_validate(value)
         except ValueError:
             return None
     return None

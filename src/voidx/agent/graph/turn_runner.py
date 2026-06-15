@@ -206,6 +206,11 @@ class GraphTurnRunner:
                 for run in reconciled_workflow_runs
             }
 
+            # Sync resolved goal and workflow to host so status bar updates immediately
+            if host.model is not None:
+                host._task_state = turn_task_state.model_copy(deep=True)
+                _invalidate_tui(host)
+
             saved_user_content, user_content_format = serialize_message_content(payload.content)
             user_message_id = await save_message(MessageRow(
                 session_id=host._session.id,
@@ -259,7 +264,6 @@ class GraphTurnRunner:
                 interaction_mode=interaction_mode,
                 task_intent=final_task_state.current_intent,
                 current_goal=final_task_state.current_goal,
-                pending_approval=final_task_state.pending_approval,
                 workflow_runs=final_task_state.workflow_runs,
             ))
             await host._persist_runtime_state()
@@ -333,8 +337,8 @@ class GraphTurnRunner:
                 if is_first_user_message:
                     goal = intent_resolution.goal
                     title = (
-                        goal.target.strip()
-                        if goal is not None and goal.target.strip()
+                        goal.desc.strip()
+                        if goal is not None and goal.desc.strip()
                         else host._temporary_session_title(payload.title_text)
                     )
                     await update_title(host._session.id, title)
@@ -405,6 +409,12 @@ class GraphTurnRunner:
             else:
                 host._ui.dock.clear_todo_state()
                 host._ui.dock.set_input("", [])
+
+
+def _invalidate_tui(host: object) -> None:
+    app = getattr(host, "_app", None)
+    if app is not None and callable(getattr(app, "invalidate", None)):
+        app.invalidate()
 
 
 def _load_task_state(value: TaskState | dict | None, *, fallback: TaskState | None = None) -> TaskState:

@@ -32,7 +32,7 @@ from voidx.agent.runtime_context import (
     InteractionMode,
     RuntimeContextBuilder,
 )
-from voidx.runtime.task_state import Goal, GoalType, TaskIntent, TaskState
+from voidx.runtime.task_state import GoalSpec, GoalType, TaskIntent, TaskState
 from voidx.agent.tool_messages import sanitize_tool_message_content
 from voidx.agent.tool_filters import filter_unavailable_lsp_tools
 from voidx.config import Config
@@ -116,13 +116,10 @@ async def run_subagent(
 
     sub_goal = None
     if goal_type:
-        sub_goal = Goal(
+        sub_goal = GoalSpec(
             type=GoalType(goal_type),
-            target=task_description,
-            expected_result="",
-            user_requested_write=agent_def.can_write,
-            needs_confirmation=False,
-    )
+            desc=task_description,
+        )
     sub_task_state = TaskState(
         current_intent=TaskIntent(task_intent),
         current_goal=sub_goal,

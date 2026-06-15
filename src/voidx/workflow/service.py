@@ -162,6 +162,18 @@ class WorkflowService:
             matches.extend(text_matches)
         return matches[:limit]
 
+    def select_from_start(
+        self,
+        workflow_start: str,
+        *,
+        goal_type: str | None = None,
+    ) -> list[WorkflowMatch]:
+        name = _normalize(workflow_start)
+        node = self.get(name)
+        if node is None:
+            return []
+        return [WorkflowMatch(node=node, reason="goal_resolver")]
+
     def activation_summaries(
         self,
         user_text: str,
@@ -220,8 +232,6 @@ class WorkflowService:
     @staticmethod
     def _match_reason(node: WorkflowNode, lowered_text: str) -> str:
         name = _normalize(node.name)
-        if _contains_phrase(lowered_text, name):
-            return "name"
         for trigger in _TEXT_TRIGGERS.get(name, ()):
             normalized = trigger.strip().lower()
             if normalized and _contains_phrase(lowered_text, normalized):

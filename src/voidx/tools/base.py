@@ -68,12 +68,11 @@ class ToolContext(BaseModel):
     persona: str = "voidx"
     interaction_mode: str = "auto"
     task_intent: str = "coding"
-    pending_approval: dict | None = None
     goal_type: str = ""
     goal_target: str = ""
     active_workflow_names: list[str] = Field(default_factory=list)
     workflow_runs: list[WorkflowRunState] = Field(default_factory=list)
-    workflow_route: dict[str, str] | None = None
+    workflow_route: dict[str, str | None] | None = None
     file_mtimes: dict[str, float] = Field(default_factory=dict)
     mcp_manager: Any | None = None
     lsp_manager: Any | None = None

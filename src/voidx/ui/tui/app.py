@@ -296,6 +296,11 @@ class PureTui(
         tree_lines = dock.tree.render(width)
         total = len(tree_lines)
 
+        # After a dock.reset() the tree shrinks below the old committed
+        # count.  Reset so the new (smaller) content flushes correctly.
+        if self._committed_line_count > total:
+            self._committed_line_count = 0
+
         if force:
             flush_limit = total
         else:
@@ -339,7 +344,10 @@ class PureTui(
             except Exception:
                 rendered_lines.append(Text(line))
 
-        flush_rows = _rendered_row_count(self._capture_renderable(Group(*rendered_lines), width))
+        flush_rows = max(
+            _rendered_row_count(self._capture_renderable(Group(*rendered_lines), width)),
+            len(flush_lines),
+        )
 
         for rendered in rendered_lines:
             self._console.print(rendered)

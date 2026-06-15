@@ -19,7 +19,7 @@ from voidx.agent.runtime_context import (
     raw_semantic_messages,
 )
 from voidx.agent.state import AgentState
-from voidx.agent.task_state import GoalType, PendingApproval, TaskState, WorkflowRoute, goal_from_text
+from voidx.agent.task_state import GoalSpec, GoalType, TaskState, WorkflowRoute
 from voidx.config import Config, UserProfile
 from voidx.skills.context import (
     SKILL_CONTEXT_MARKER,
@@ -752,7 +752,7 @@ def test_current_task_state_records_workflow_route(tmp_path):
         current_user_text="review 完并修复问题",
         task_state=TaskState(
             current_intent=TaskIntent.CODING,
-            workflow_route=WorkflowRoute(start="review", end="verify"),
+            workflow_route=WorkflowRoute(join="review", leave="verify"),
         ),
     ).build()
 
@@ -832,7 +832,7 @@ def test_current_task_state_records_refined_intent_without_visible_tools(tmp_pat
     assert "Runtime-visible tools" not in messages[-1].content
 
 
-def test_current_task_state_records_multiturn_approval_state(tmp_path):
+def test_current_task_state_records_current_goal(tmp_path):
     messages = [HumanMessage(content="给个方案")]
     context = RuntimeContextBuilder(
         config=Config(workspace=str(tmp_path)),
@@ -843,8 +843,7 @@ def test_current_task_state_records_multiturn_approval_state(tmp_path):
         current_user_text="给个方案",
         task_state=TaskState(
             current_intent=TaskIntent.CODING,
-            pending_approval=PendingApproval(scope="优化 runtime context"),
-            current_goal=goal_from_text("优化 runtime context", goal_type=GoalType.DESIGN),
+            current_goal=GoalSpec(type=GoalType.DESIGN, desc="优化 runtime context"),
         ),
     ).build()
 
@@ -852,8 +851,8 @@ def test_current_task_state_records_multiturn_approval_state(tmp_path):
 
     assert "Intent: coding" in messages[-1].content
     assert "Goal type: design" in messages[-1].content
-    assert "Pending approval: implementation scope=优化 runtime context" in messages[-1].content
-    assert "Suggestion: use plan_checkpoint" in messages[-1].content
+    assert "Goal: 优化 runtime context" in messages[-1].content
+    assert "Pending approval" not in messages[-1].content
 
 
 def test_current_task_state_records_goal_run(tmp_path):
@@ -867,7 +866,7 @@ def test_current_task_state_records_goal_run(tmp_path):
         current_user_text="给个方案",
         task_state=TaskState(
             current_intent=TaskIntent.CODING,
-            current_goal=goal_from_text("优化 markdown 渲染截断", goal_type=GoalType.DESIGN),
+            current_goal=GoalSpec(type=GoalType.DESIGN, desc="优化 markdown 渲染截断"),
         ),
     ).build()
 
@@ -875,4 +874,4 @@ def test_current_task_state_records_goal_run(tmp_path):
 
     assert "Current persona: voidx" in messages[-1].content
     assert "Goal type: design" in messages[-1].content
-    assert "Goal target: 优化 markdown 渲染截断" in messages[-1].content
+    assert "Goal: 优化 markdown 渲染截断" in messages[-1].content

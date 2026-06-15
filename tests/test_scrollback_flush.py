@@ -16,7 +16,7 @@ def test_committed_count_tracks_flushed_lines():
     assert len(lines) > 0
 
     # Simulate: flush startup, turn, and the visual gap before the reply.
-    committed = 4
+    committed = 5
     assert committed <= len(lines)
     # The remaining lines are the "active frame"
     active = lines[committed:]

@@ -10,9 +10,8 @@ import voidx.memory.store as store
 from voidx.memory.jsonl_store import append_session_record, read_session_records
 from voidx.memory.store import _execute_commit, _fetch_one, _now, _write_transaction
 from voidx.runtime import (
-    Goal,
+    GoalSpec,
     InteractionMode,
-    PendingApproval,
     TaskIntent,
     TaskState,
     TodoRunState,
@@ -33,8 +32,7 @@ class MessageRuntimeSnapshot(BaseModel):
     session_id: str
     interaction_mode: InteractionMode = InteractionMode.AUTO
     task_intent: TaskIntent = TaskIntent.CODING
-    current_goal: Goal | None = None
-    pending_approval: PendingApproval | None = None
+    current_goal: GoalSpec | None = None
     workflow_route: WorkflowRoute | None = None
     workflow_runs: dict[str, WorkflowRunState] = Field(default_factory=dict)
     created_at: str = Field(default_factory=_now)
@@ -71,17 +69,16 @@ async def save_session_runtime_state(
     await _execute_commit(
         """INSERT INTO session_runtime_state (
                session_id, interaction_mode, current_intent, previous_intent,
-               current_goal_json, pending_approval_json, workflow_route_json, workflow_runs_json,
+               current_goal_json, workflow_route_json, workflow_runs_json,
                recent_user_texts_json, todo_state_json, compaction_summary,
                session_time, updated_at
            )
-           VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+           VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
            ON CONFLICT(session_id) DO UPDATE SET
                interaction_mode = excluded.interaction_mode,
                current_intent = excluded.current_intent,
                previous_intent = excluded.previous_intent,
                current_goal_json = excluded.current_goal_json,
-               pending_approval_json = excluded.pending_approval_json,
                workflow_route_json = excluded.workflow_route_json,
                workflow_runs_json = excluded.workflow_runs_json,
                recent_user_texts_json = excluded.recent_user_texts_json,
@@ -95,7 +92,6 @@ async def save_session_runtime_state(
             task_state.current_intent.value,
             task_state.previous_intent.value if task_state.previous_intent else None,
             _dump_goal(task_state.current_goal),
-            _dump_pending_approval(task_state.pending_approval),
             _dump_workflow_route(task_state.workflow_route),
             _dump_workflow_runs(task_state.workflow_runs),
             _dump_string_list(task_state.recent_user_texts),
@@ -134,7 +130,6 @@ async def load_task_state_with_session_time(session_id: str) -> tuple[TaskState,
             current_intent=TaskIntent(row["current_intent"]),
             previous_intent=TaskIntent(row["previous_intent"]) if row["previous_intent"] else None,
             current_goal=_load_goal(row["current_goal_json"]),
-            pending_approval=_load_pending_approval(row["pending_approval_json"]),
             workflow_route=_load_workflow_route(row["workflow_route_json"]),
             workflow_runs=_load_workflow_runs(row["workflow_runs_json"]),
             recent_user_texts=_load_string_list(row["recent_user_texts_json"])[-2:],
@@ -161,20 +156,14 @@ def _dump_workflow_runs(workflow_runs: dict[str, WorkflowRunState]) -> str:
     )
 
 
-def _dump_goal(goal: Goal | None) -> str:
+def _dump_goal(goal: GoalSpec | None) -> str:
     if goal is None:
         return ""
     return json.dumps(goal.model_dump(mode="json"), ensure_ascii=False)
 
 
-def _dump_pending_approval(pending: PendingApproval | None) -> str:
-    if pending is None:
-        return ""
-    return json.dumps(pending.model_dump(mode="json"), ensure_ascii=False)
-
-
 def _dump_workflow_route(route: WorkflowRoute | None) -> str:
-    if route is None or not (route.start or route.end):
+    if route is None or not (route.join or route.leave):
         return ""
     return json.dumps(route.model_dump(mode="json"), ensure_ascii=False)
 
@@ -189,7 +178,7 @@ def _dump_string_list(items: list[str]) -> str:
     return json.dumps([item for item in items if isinstance(item, str)][-2:], ensure_ascii=False)
 
 
-def _load_goal(raw: str) -> Goal | None:
+def _load_goal(raw: str) -> GoalSpec | None:
     if not raw:
         return None
     try:
@@ -197,20 +186,7 @@ def _load_goal(raw: str) -> Goal | None:
     except json.JSONDecodeError:
         return None
     try:
-        return Goal.model_validate(data)
-    except ValueError:
-        return None
-
-
-def _load_pending_approval(raw: str) -> PendingApproval | None:
-    if not raw:
-        return None
-    try:
-        data = json.loads(raw)
-    except json.JSONDecodeError:
-        return None
-    try:
-        return PendingApproval.model_validate(data)
+        return GoalSpec.model_validate(data)
     except ValueError:
         return None
 
@@ -226,7 +202,7 @@ def _load_workflow_route(raw: str) -> WorkflowRoute | None:
         route = WorkflowRoute.model_validate(data)
     except ValueError:
         return None
-    return route if route.start or route.end else None
+    return route if route.join or route.leave else None
 
 
 def _load_workflow_runs(raw: str) -> dict[str, WorkflowRunState]:
@@ -266,15 +242,14 @@ async def save_message_runtime_snapshot(snapshot: MessageRuntimeSnapshot) -> Non
     await _execute_commit(
         """INSERT INTO session_runtime_state (
                session_id, interaction_mode, current_intent,
-               current_goal_json, pending_approval_json, workflow_route_json, workflow_runs_json,
+               current_goal_json, workflow_route_json, workflow_runs_json,
                session_time, updated_at
            )
-           VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)
+           VALUES (?, ?, ?, ?, ?, ?, ?, ?)
            ON CONFLICT(session_id) DO UPDATE SET
                interaction_mode = excluded.interaction_mode,
                current_intent = excluded.current_intent,
                current_goal_json = excluded.current_goal_json,
-               pending_approval_json = excluded.pending_approval_json,
                workflow_route_json = excluded.workflow_route_json,
                workflow_runs_json = excluded.workflow_runs_json,
                updated_at = excluded.updated_at""",
@@ -283,7 +258,6 @@ async def save_message_runtime_snapshot(snapshot: MessageRuntimeSnapshot) -> Non
             snapshot.interaction_mode.value,
             snapshot.task_intent.value,
             _dump_goal(snapshot.current_goal),
-            _dump_pending_approval(snapshot.pending_approval),
             _dump_workflow_route(snapshot.workflow_route),
             _dump_workflow_runs(snapshot.workflow_runs),
             "",
@@ -309,7 +283,6 @@ def _message_runtime_snapshot_record(snapshot: MessageRuntimeSnapshot) -> dict:
         "interaction_mode": snapshot.interaction_mode.value,
         "task_intent": snapshot.task_intent.value,
         "current_goal": _dump_goal(snapshot.current_goal),
-        "pending_approval": _dump_pending_approval(snapshot.pending_approval),
         "workflow_route": _dump_workflow_route(snapshot.workflow_route),
         "workflow_runs": _dump_workflow_runs(snapshot.workflow_runs),
         "created_at": snapshot.created_at,
@@ -349,7 +322,6 @@ def _message_runtime_snapshot_from_record(record: dict) -> MessageRuntimeSnapsho
             interaction_mode=InteractionMode(str(record["interaction_mode"])),
             task_intent=TaskIntent(str(record["task_intent"])),
             current_goal=_load_goal(str(record.get("current_goal") or "")),
-            pending_approval=_load_pending_approval(str(record.get("pending_approval") or "")),
             workflow_route=_load_workflow_route(str(record.get("workflow_route") or "")),
             workflow_runs=_load_workflow_runs(str(record.get("workflow_runs") or "")),
             created_at=str(record.get("created_at") or _now()),

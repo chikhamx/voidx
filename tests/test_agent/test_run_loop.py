@@ -15,7 +15,14 @@ from voidx.agent.graph import VoidXGraph
 from voidx.agent.graph.run_loop import GraphRunLoopMixin
 from voidx.agent.graph.title_mixin import _sanitize_generated_title
 from voidx.agent.runtime_context import InteractionMode, TaskIntent
-from voidx.agent.task_state import GoalResolution, GoalType, PendingApproval, TaskState, goal_from_text
+from voidx.agent.task_state import (
+    GoalResolution,
+    GoalSpec,
+    GoalType,
+    IntentResolution,
+    PlanResolution,
+    TaskState,
+)
 from voidx.config import Config
 from voidx.llm.usage import UsageStats
 from voidx.memory.runtime_state import RuntimeStateSnapshot, save_runtime_state
@@ -267,7 +274,7 @@ async def test_clear_reprints_startup(tmp_path):
     )
     graph = _graph(session=session, workspace=str(tmp_path))
     graph._interaction_mode = InteractionMode.GOAL
-    graph._task_state = TaskState(current_goal=goal_from_text("修复 UI", goal_type=GoalType.DESIGN))
+    graph._task_state = TaskState(current_goal=GoalSpec(type=GoalType.DESIGN, desc="修复 UI"))
     restore_calls: list[bool] = []
 
     async def fake_restore(self, *, append: bool = False) -> bool:
@@ -310,7 +317,7 @@ async def test_clear_detaches_old_session_and_cleans_storage_in_background(tmp_p
     await save_message(MessageRow(session_id=session.id, role="user", content="old question"))
     graph = VoidXGraph(Config(workspace=str(tmp_path)), api_key=None, session=session)
     graph._interaction_mode = InteractionMode.GOAL
-    graph._task_state = TaskState(current_goal=goal_from_text("old goal", goal_type=GoalType.DESIGN))
+    graph._task_state = TaskState(current_goal=GoalSpec(type=GoalType.DESIGN, desc="old goal"))
 
     test_dock = BottomInputDock()
     set_dock(test_dock)
@@ -417,8 +424,7 @@ async def test_resume_restores_structured_runtime_state(tmp_path):
             interaction_mode=InteractionMode.GOAL,
             task_state=TaskState(
                 current_intent=TaskIntent.CODING,
-                current_goal=goal_from_text("优化 markdown 渲染截断", goal_type=GoalType.DESIGN),
-                pending_approval=PendingApproval(scope="优化 markdown 渲染截断"),
+                current_goal=GoalSpec(type=GoalType.DESIGN, desc="优化 markdown 渲染截断"),
             ),
         ),
     )
@@ -432,8 +438,7 @@ async def test_resume_restores_structured_runtime_state(tmp_path):
         assert graph._interaction_mode == InteractionMode.GOAL
         assert graph._task_state.current_intent == TaskIntent.CODING
         assert graph._task_state.current_goal is not None
-        assert graph._task_state.current_goal.target == "优化 markdown 渲染截断"
-        assert graph._task_state.pending_approval is not None
+        assert graph._task_state.current_goal.desc == "优化 markdown 渲染截断"
     finally:
         test_dock.deactivate()
         test_dock.reset()
@@ -502,10 +507,9 @@ async def test_first_turn_without_goal_uses_temporary_session_title(tmp_path):
         async def ainvoke(self, messages):
             assert "看看这个项目" in messages[1].content
             return GoalResolution(
-                intent=TaskIntent.CODING,
+                intent=IntentResolution(type=TaskIntent.CODING, desc="workspace inspection"),
                 goal=None,
-                confidence=0.9,
-                reason="workspace inspection",
+                plan=None,
             )
 
     class FakeGraph:
@@ -535,7 +539,7 @@ async def test_first_turn_without_goal_uses_temporary_session_title(tmp_path):
 
 
 @pytest.mark.asyncio
-async def test_run_once_uses_local_goal_fallback_when_structured_resolver_fails(tmp_path):
+async def test_run_once_uses_general_fallback_when_structured_resolver_fails(tmp_path):
     graph = VoidXGraph(Config(workspace=str(tmp_path)), api_key=None)
     captured: dict[str, object] = {}
 
@@ -564,7 +568,7 @@ async def test_run_once_uses_local_goal_fallback_when_structured_resolver_fails(
         set_dock(None)
 
     initial = captured["initial"]
-    assert initial["task_state"]["current_intent"] == "coding"
+    assert initial["task_state"]["current_intent"] == "general"
     assert initial["task_state"]["current_goal"] is None
     assert initial["task_state"]["recent_user_texts"] == ["review runtime context"]
     rows = await load_messages(graph._session.id)
@@ -573,12 +577,10 @@ async def test_run_once_uses_local_goal_fallback_when_structured_resolver_fails(
 
 
 @pytest.mark.asyncio
-async def test_run_once_does_not_preadvance_workflow_without_resolver_workflow_start(tmp_path):
+async def test_run_once_does_not_preadvance_workflow_without_resolver_join(tmp_path):
     graph = VoidXGraph(Config(workspace=str(tmp_path)), api_key=None)
-    pending = PendingApproval(scope="agent_name 语义清理", source_goal_type=GoalType.DESIGN)
     graph._task_state = TaskState(
-        current_goal=goal_from_text("agent_name 语义清理", goal_type=GoalType.DESIGN),
-        pending_approval=pending,
+        current_goal=GoalSpec(type=GoalType.DESIGN, desc="agent_name 语义清理"),
         workflow_runs={
             "brainstorm": WorkflowRunState(
                 name="brainstorm",
@@ -618,15 +620,65 @@ async def test_run_once_does_not_preadvance_workflow_without_resolver_workflow_s
     state = TaskState.model_validate(initial["task_state"])
     assert state.workflow_runs["brainstorm"].status == WorkflowRunStatus.ACTIVE
     assert "design-doc" not in state.workflow_runs
-    assert initial["persona"] == "plan"
+    assert initial["persona"] == "coordinate"
+
+
+@pytest.mark.asyncio
+async def test_run_once_clears_stale_completed_workflow_when_resolver_has_no_join(tmp_path):
+    graph = VoidXGraph(Config(workspace=str(tmp_path)), api_key=None)
+    graph._task_state = TaskState(
+        current_goal=GoalSpec(type=GoalType.CHORE, desc="检查检查，准备push吧"),
+        workflow_runs={
+            "verify": WorkflowRunState(
+                name="verify",
+                status=WorkflowRunStatus.SATISFIED,
+                reason="transition from tdd via implemented",
+            )
+        },
+    )
+    captured: dict[str, object] = {}
+
+    class StructuredGoalModel:
+        def with_structured_output(self, schema):
+            assert schema is GoalResolution
+            return self
+
+        async def ainvoke(self, messages):
+            assert "GoalResolution JSON schema" in messages[0].content
+            return {
+                "intent": {"type": "coding", "desc": "plain follow-up request"},
+                "goal": None,
+                "plan": None,
+            }
+
+    class FakeGraph:
+        async def ainvoke(self, initial, _config):
+            captured["initial"] = initial
+            return {"messages": list(initial["messages"]) + [AIMessage(content="ok")], "task_state": initial["task_state"]}
+
+    graph.model = StructuredGoalModel()
+    graph.graph = FakeGraph()
+    test_dock = BottomInputDock()
+    set_dock(test_dock)
+    test_dock.begin_capture()
+    try:
+        await graph._run_once("检查检查，准备push吧")
+    finally:
+        test_dock.deactivate()
+        test_dock.reset()
+        set_dock(None)
+
+    initial = captured["initial"]
+    state = TaskState.model_validate(initial["task_state"])
+    assert state.workflow_runs == {}
+    assert initial["persona"] == "implement"
 
 
 @pytest.mark.asyncio
 async def test_run_once_preadvances_workflow_from_resolver_workflow_start(tmp_path):
     graph = VoidXGraph(Config(workspace=str(tmp_path)), api_key=None)
     graph._task_state = TaskState(
-        current_goal=goal_from_text("agent_name 语义清理", goal_type=GoalType.DESIGN),
-        pending_approval=PendingApproval(scope="agent_name 语义清理", source_goal_type=GoalType.DESIGN),
+        current_goal=GoalSpec(type=GoalType.DESIGN, desc="agent_name 语义清理"),
         workflow_runs={
             "brainstorm": WorkflowRunState(
                 name="brainstorm",
@@ -646,18 +698,9 @@ async def test_run_once_preadvances_workflow_from_resolver_workflow_start(tmp_pa
         async def ainvoke(self, messages):
             assert "GoalResolution JSON schema" in messages[0].content
             return {
-                "intent": "coding",
-                "goal": {
-                    "type": "doc",
-                    "target": "agent_name 语义清理",
-                    "expected_result": "",
-                    "user_requested_write": True,
-                    "needs_confirmation": False,
-                },
-                "confidence": 0.9,
-                "reason": "user requested spec",
-                "workflow_start": "design-doc",
-                "workflow_end": "design-doc",
+                "intent": {"type": "coding", "desc": "user requested spec"},
+                "goal": {"type": "doc", "desc": "agent_name 语义清理"},
+                "plan": {"join": "design-doc", "leave": "design-doc"},
             }
 
     class FakeGraph:
@@ -689,6 +732,12 @@ async def test_run_once_preadvances_workflow_from_resolver_workflow_start(tmp_pa
 async def test_run_once_activates_workflow_start_from_resolver_route(tmp_path):
     graph = VoidXGraph(Config(workspace=str(tmp_path)), api_key=None)
     captured: dict[str, object] = {}
+    invalidations = 0
+
+    class FakeApp:
+        def invalidate(self):
+            nonlocal invalidations
+            invalidations += 1
 
     class StructuredGoalModel:
         def with_structured_output(self, schema):
@@ -698,27 +747,25 @@ async def test_run_once_activates_workflow_start_from_resolver_route(tmp_path):
         async def ainvoke(self, messages):
             assert "GoalResolution JSON schema" in messages[0].content
             return {
-                "intent": "coding",
-                "goal": {
-                    "type": "review",
-                    "target": "current diff",
-                    "expected_result": "review findings",
-                    "user_requested_write": False,
-                    "needs_confirmation": False,
-                },
-                "confidence": 0.94,
-                "reason": "review only",
-                "workflow_start": "review",
-                "workflow_end": "review",
+                "intent": {"type": "coding", "desc": "review only"},
+                "goal": {"type": "review", "desc": "current diff"},
+                "plan": {"join": "review", "leave": "review"},
             }
 
     class FakeGraph:
         async def ainvoke(self, initial, _config):
             captured["initial"] = initial
+            assert graph._task_state.current_goal is not None
+            assert graph._task_state.current_goal.desc == "current diff"
+            assert graph._task_state.workflow_route is not None
+            assert graph._task_state.workflow_route.join == "review"
+            assert graph._task_state.workflow_runs["review"].status == WorkflowRunStatus.ACTIVE
+            assert invalidations > 0
             return {"messages": list(initial["messages"]) + [AIMessage(content="ok")], "task_state": initial["task_state"]}
 
     graph.model = StructuredGoalModel()
     graph.graph = FakeGraph()
+    graph._app = FakeApp()
     test_dock = BottomInputDock()
     set_dock(test_dock)
     test_dock.begin_capture()
@@ -732,10 +779,10 @@ async def test_run_once_activates_workflow_start_from_resolver_route(tmp_path):
     initial = captured["initial"]
     state = TaskState.model_validate(initial["task_state"])
     assert state.workflow_route is not None
-    assert state.workflow_route.start == "review"
-    assert state.workflow_route.end == "review"
+    assert state.workflow_route.join == "review"
+    assert state.workflow_route.leave == "review"
     assert state.workflow_runs["review"].status == WorkflowRunStatus.ACTIVE
-    assert state.workflow_runs["review"].reason == "resolver workflow_start"
+    assert state.workflow_runs["review"].reason == "resolver plan.join"
     assert initial["persona"] == "review"
 
 
@@ -743,8 +790,7 @@ async def test_run_once_activates_workflow_start_from_resolver_route(tmp_path):
 async def test_run_once_overrides_stale_brainstorm_when_resolver_requests_tdd(tmp_path):
     graph = VoidXGraph(Config(workspace=str(tmp_path)), api_key=None)
     graph._task_state = TaskState(
-        current_goal=goal_from_text("LSP 工具合并", goal_type=GoalType.DESIGN),
-        pending_approval=PendingApproval(scope="LSP 工具合并", source_goal_type=GoalType.DESIGN),
+        current_goal=GoalSpec(type=GoalType.DESIGN, desc="LSP 工具合并"),
         workflow_runs={
             "brainstorm": WorkflowRunState(
                 name="brainstorm",
@@ -764,18 +810,9 @@ async def test_run_once_overrides_stale_brainstorm_when_resolver_requests_tdd(tm
         async def ainvoke(self, messages):
             assert "GoalResolution JSON schema" in messages[0].content
             return {
-                "intent": "coding",
-                "goal": {
-                    "type": "feature",
-                    "target": "LSP 工具合并",
-                    "expected_result": "",
-                    "user_requested_write": True,
-                    "needs_confirmation": False,
-                },
-                "confidence": 0.94,
-                "reason": "user explicitly requested implementation",
-                "workflow_start": "tdd",
-                "workflow_end": "verify",
+                "intent": {"type": "coding", "desc": "user explicitly requested implementation"},
+                "goal": {"type": "feature", "desc": "LSP 工具合并"},
+                "plan": {"join": "tdd", "leave": "verify"},
             }
 
     class FakeGraph:
@@ -814,10 +851,9 @@ async def test_run_once_uses_user_text_for_first_session_title_without_resolver_
 
         async def ainvoke(self, _messages):
             return GoalResolution(
-                intent=TaskIntent.CODING,
+                intent=IntentResolution(type=TaskIntent.CODING, desc="review request"),
                 goal=None,
-                confidence=0.9,
-                reason="review request",
+                plan=None,
             )
 
     class FakeGraph:
@@ -1254,7 +1290,7 @@ async def test_prepare_includes_restored_workflow_runs(tmp_path):
     )
     graph._task_state = TaskState(
         current_intent=TaskIntent.CODING,
-        current_goal=goal_from_text("resume optimization", goal_type=GoalType.DESIGN),
+        current_goal=GoalSpec(type=GoalType.DESIGN, desc="resume optimization"),
         workflow_runs={"brainstorm": restored},
     )
 

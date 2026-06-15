@@ -1,38 +1,50 @@
-import sys
-from pathlib import Path
-
-sys.path.insert(0, str(Path(__file__).parent.parent / "src"))
-
-from voidx.runtime.task_state import GoalResolution, GoalType, PendingApproval, TaskState, goal_from_text
+from voidx.runtime.intent import TaskIntent
+from voidx.runtime.task_state import (
+    GoalResolution,
+    GoalSpec,
+    GoalType,
+    IntentResolution,
+    PlanResolution,
+    TaskState,
+)
 from voidx.workflow.reconcile import reconcile_workflow_runs_for_turn
 from voidx.workflow.runtime import WorkflowRunState, WorkflowRunStatus
 
 
-def _state_with_run(run: WorkflowRunState, *, pending: PendingApproval | None = None) -> TaskState:
+def _goal(desc: str = "agent_name semantic cleanup", goal_type: GoalType = GoalType.DESIGN) -> GoalSpec:
+    return GoalSpec(type=goal_type, desc=desc)
+
+
+def _resolution(
+    *,
+    goal: GoalSpec | None = None,
+    join: str | None = None,
+    leave: str | None = None,
+) -> GoalResolution:
+    return GoalResolution(
+        intent=IntentResolution(type=TaskIntent.CODING, desc="test resolution"),
+        goal=goal,
+        plan=PlanResolution(join=join, leave=leave) if join is not None else None,
+    )
+
+
+def _state_with_run(run: WorkflowRunState, *, goal: GoalSpec | None = None) -> TaskState:
     return TaskState(
-        current_goal=goal_from_text("agent_name 语义清理", goal_type=GoalType.DESIGN),
-        pending_approval=pending,
+        current_goal=goal or _goal(),
         workflow_runs={run.name: run},
     )
 
 
-def test_reconcile_advances_brainstorm_to_design_doc_when_user_approves_spec():
+def test_reconcile_advances_brainstorm_to_design_doc_when_join_requests_design_doc():
     run = WorkflowRunState(
         name="brainstorm",
         status=WorkflowRunStatus.ACTIVE,
         goal_type="design",
-        scope="agent_name 语义清理",
+        scope="agent_name semantic cleanup",
     )
-    state = _state_with_run(
-        run,
-        pending=PendingApproval(scope="agent_name 语义清理", source_goal_type=GoalType.DESIGN),
-    )
-    resolution = GoalResolution(
-        goal=goal_from_text("写一个 spec", goal_type=GoalType.DOC, user_requested_write=True),
-        workflow_start="design-doc",
-        workflow_end="design-doc",
-    )
-    state.update_after_turn(resolution, "可以，先写一个 spec")
+    goal = _goal("write a spec", GoalType.DOC)
+    state = _state_with_run(run, goal=goal)
+    resolution = _resolution(goal=goal, join="design-doc", leave="design-doc")
 
     updated = reconcile_workflow_runs_for_turn(
         goal_resolution=resolution,
@@ -49,25 +61,17 @@ def test_reconcile_advances_brainstorm_to_design_doc_when_user_approves_spec():
     assert by_name["design-doc"].activated_turn == 7
 
 
-def test_reconcile_does_not_advance_plain_approval_without_doc_request():
+def test_reconcile_does_not_advance_without_plan_join():
     run = WorkflowRunState(name="brainstorm", status=WorkflowRunStatus.ACTIVE)
-    state = _state_with_run(
-        run,
-        pending=PendingApproval(scope="agent_name 语义清理", source_goal_type=GoalType.DESIGN),
-    )
-    resolution = GoalResolution(
-        goal=goal_from_text("agent_name 语义清理", goal_type=GoalType.FEATURE, user_requested_write=True),
-    )
-    state.update_after_turn(resolution, "可以")
+    state = _state_with_run(run)
+    resolution = _resolution(goal=_goal("keep discussing", GoalType.FEATURE))
 
     updated = reconcile_workflow_runs_for_turn(
         goal_resolution=resolution,
         after_state=state,
     )
 
-    by_name = {item.name: item for item in updated}
-    assert by_name["brainstorm"].status == WorkflowRunStatus.ACTIVE
-    assert "design-doc" not in by_name
+    assert updated == [run]
 
 
 def test_reconcile_preserves_unrelated_active_workflow_runs():
@@ -76,23 +80,24 @@ def test_reconcile_preserves_unrelated_active_workflow_runs():
         status=WorkflowRunStatus.ACTIVE,
         reason="transition from tdd via implemented",
     )
-    before = TaskState(workflow_runs={"verify": verify})
-    after = before.model_copy(deep=True)
-    after.current_goal = goal_from_text("写一个 spec", goal_type=GoalType.DOC, user_requested_write=True)
-    resolution = GoalResolution(goal=after.current_goal)
+    state = TaskState(
+        current_goal=_goal("write a spec", GoalType.DOC),
+        workflow_runs={"verify": verify},
+    )
+    resolution = _resolution(goal=state.current_goal)
 
     updated = reconcile_workflow_runs_for_turn(
         goal_resolution=resolution,
-        after_state=after,
+        after_state=state,
     )
 
     assert updated == [verify]
 
 
-def test_reconcile_activates_workflow_start_when_no_workflow_is_active():
-    goal = goal_from_text("review current diff", goal_type=GoalType.REVIEW, user_requested_write=False)
+def test_reconcile_activates_plan_join_when_no_workflow_is_active():
+    goal = _goal("review current diff", GoalType.REVIEW)
     state = TaskState(current_goal=goal)
-    resolution = GoalResolution(goal=goal, workflow_start="review", workflow_end="review")
+    resolution = _resolution(goal=goal, join="review", leave="review")
 
     updated = reconcile_workflow_runs_for_turn(
         goal_resolution=resolution,
@@ -102,15 +107,33 @@ def test_reconcile_activates_workflow_start_when_no_workflow_is_active():
 
     by_name = {item.name: item for item in updated}
     assert by_name["review"].status == WorkflowRunStatus.ACTIVE
-    assert by_name["review"].reason == "resolver workflow_start"
+    assert by_name["review"].reason == "resolver plan.join"
     assert by_name["review"].goal_type == "review"
     assert by_name["review"].activated_turn == 2
 
 
-def test_reconcile_advances_brainstorm_to_plan_when_workflow_start_requests_plan():
+def test_reconcile_clears_completed_workflow_runs_when_next_turn_has_no_join():
+    verify = WorkflowRunState(
+        name="verify",
+        status=WorkflowRunStatus.SATISFIED,
+        reason="transition from tdd via implemented",
+    )
+    state = TaskState(workflow_runs={"verify": verify})
+    resolution = _resolution(goal=_goal("prepare push", GoalType.CHORE))
+
+    updated = reconcile_workflow_runs_for_turn(
+        goal_resolution=resolution,
+        after_state=state,
+        turn_count=12,
+    )
+
+    assert updated == []
+
+
+def test_reconcile_advances_brainstorm_to_plan_when_join_requests_plan():
     run = WorkflowRunState(name="brainstorm", status=WorkflowRunStatus.ACTIVE)
     state = _state_with_run(run)
-    resolution = GoalResolution(workflow_start="plan")
+    resolution = _resolution(join="plan")
 
     updated = reconcile_workflow_runs_for_turn(
         goal_resolution=resolution,
@@ -125,55 +148,11 @@ def test_reconcile_advances_brainstorm_to_plan_when_workflow_start_requests_plan
     assert by_name["plan"].activated_turn == 3
 
 
-def test_reconcile_supersedes_brainstorm_when_write_intent_requests_plan():
+def test_reconcile_supersedes_brainstorm_when_join_requests_tdd():
     run = WorkflowRunState(name="brainstorm", status=WorkflowRunStatus.ACTIVE)
-    goal = goal_from_text("按这个 spec 做", goal_type=GoalType.FEATURE, user_requested_write=True)
-    state = _state_with_run(run)
-    state.current_goal = goal
-    resolution = GoalResolution(goal=goal, workflow_start="plan")
-
-    updated = reconcile_workflow_runs_for_turn(
-        goal_resolution=resolution,
-        after_state=state,
-        turn_count=6,
-    )
-
-    by_name = {item.name: item for item in updated}
-    assert by_name["brainstorm"].status == WorkflowRunStatus.SATISFIED
-    assert by_name["brainstorm"].evidence[-1].ref == "auto:turn_reconcile:brainstorm_superseded_by_plan"
-    assert by_name["brainstorm"].evidence[-1].condition == "superseded_by_intent"
-    assert by_name["plan"].status == WorkflowRunStatus.ACTIVE
-    assert by_name["plan"].reason == "intent override from brainstorm"
-    assert by_name["plan"].activated_turn == 6
-
-
-def test_reconcile_supersedes_brainstorm_when_write_intent_requests_tdd():
-    run = WorkflowRunState(name="brainstorm", status=WorkflowRunStatus.ACTIVE)
-    goal = goal_from_text("开干", goal_type=GoalType.FEATURE, user_requested_write=True)
-    state = _state_with_run(run)
-    state.current_goal = goal
-    resolution = GoalResolution(goal=goal, workflow_start="tdd")
-
-    updated = reconcile_workflow_runs_for_turn(
-        goal_resolution=resolution,
-        after_state=state,
-        turn_count=10,
-    )
-
-    by_name = {item.name: item for item in updated}
-    assert by_name["brainstorm"].status == WorkflowRunStatus.SATISFIED
-    assert by_name["brainstorm"].evidence[-1].condition == "superseded_by_intent"
-    assert by_name["tdd"].status == WorkflowRunStatus.ACTIVE
-    assert by_name["tdd"].reason == "intent override from brainstorm"
-    assert by_name["tdd"].activated_turn == 10
-
-
-def test_reconcile_supersedes_brainstorm_when_workflow_start_requests_tdd():
-    run = WorkflowRunState(name="brainstorm", status=WorkflowRunStatus.ACTIVE)
-    goal = goal_from_text("开干", goal_type=GoalType.FEATURE, user_requested_write=True)
-    state = _state_with_run(run)
-    state.current_goal = goal
-    resolution = GoalResolution(goal=goal, workflow_start="tdd", workflow_end="verify")
+    goal = _goal("start implementation", GoalType.FEATURE)
+    state = _state_with_run(run, goal=goal)
+    resolution = _resolution(goal=goal, join="tdd", leave="verify")
 
     updated = reconcile_workflow_runs_for_turn(
         goal_resolution=resolution,
@@ -189,11 +168,11 @@ def test_reconcile_supersedes_brainstorm_when_workflow_start_requests_tdd():
     assert by_name["tdd"].activated_turn == 11
 
 
-def test_reconcile_keeps_debug_dag_transition_when_write_intent_requests_tdd():
+def test_reconcile_keeps_debug_dag_transition_when_join_requests_tdd():
     debug = WorkflowRunState(name="debug", status=WorkflowRunStatus.ACTIVE)
-    goal = goal_from_text("直接实现修复", goal_type=GoalType.BUGFIX, user_requested_write=True)
+    goal = _goal("implement bug fix", GoalType.BUGFIX)
     state = TaskState(current_goal=goal, workflow_runs={"debug": debug})
-    resolution = GoalResolution(goal=goal, workflow_start="tdd")
+    resolution = _resolution(goal=goal, join="tdd")
 
     updated = reconcile_workflow_runs_for_turn(
         goal_resolution=resolution,
@@ -215,7 +194,7 @@ def test_reconcile_does_not_satisfy_source_when_target_is_already_active():
             "design-doc": design_doc,
         },
     )
-    resolution = GoalResolution(workflow_start="design-doc")
+    resolution = _resolution(join="design-doc")
 
     updated = reconcile_workflow_runs_for_turn(
         goal_resolution=resolution,
@@ -228,10 +207,10 @@ def test_reconcile_does_not_satisfy_source_when_target_is_already_active():
     assert by_name["brainstorm"].evidence == []
 
 
-def test_reconcile_ignores_unknown_workflow_start():
+def test_reconcile_ignores_unknown_plan_join():
     run = WorkflowRunState(name="brainstorm", status=WorkflowRunStatus.ACTIVE)
     state = _state_with_run(run)
-    resolution = GoalResolution(workflow_start="nonexistent")
+    resolution = _resolution(join="nonexistent")
 
     updated = reconcile_workflow_runs_for_turn(
         goal_resolution=resolution,
@@ -241,14 +220,14 @@ def test_reconcile_ignores_unknown_workflow_start():
     assert updated == [run]
 
 
-def test_reconcile_advances_verify_to_review_when_workflow_start_requests_review():
+def test_reconcile_does_not_advance_verify_to_review_without_dag_edge():
     verify = WorkflowRunState(
         name="verify",
         status=WorkflowRunStatus.ACTIVE,
         reason="transition from tdd via implemented",
     )
     state = TaskState(workflow_runs={"verify": verify})
-    resolution = GoalResolution(workflow_start="review")
+    resolution = _resolution(join="review")
 
     updated = reconcile_workflow_runs_for_turn(
         goal_resolution=resolution,
@@ -256,14 +235,10 @@ def test_reconcile_advances_verify_to_review_when_workflow_start_requests_review
         turn_count=5,
     )
 
-    by_name = {item.name: item for item in updated}
-    assert by_name["verify"].status == WorkflowRunStatus.SATISFIED
-    assert by_name["verify"].evidence[-1].condition == "passed_substantial"
-    assert by_name["review"].status == WorkflowRunStatus.ACTIVE
-    assert by_name["review"].activated_turn == 5
+    assert updated == [verify]
 
 
-def test_reconcile_advances_feedback_to_brainstorm_when_workflow_start_requests_brainstorm():
+def test_reconcile_advances_feedback_to_brainstorm_when_join_requests_brainstorm():
     feedback = WorkflowRunState(
         name="feedback",
         status=WorkflowRunStatus.ACTIVE,
@@ -271,7 +246,7 @@ def test_reconcile_advances_feedback_to_brainstorm_when_workflow_start_requests_
         scope="review feedback",
     )
     state = TaskState(workflow_runs={"feedback": feedback})
-    resolution = GoalResolution(workflow_start="brainstorm")
+    resolution = _resolution(join="brainstorm")
 
     updated = reconcile_workflow_runs_for_turn(
         goal_resolution=resolution,
@@ -287,7 +262,7 @@ def test_reconcile_advances_feedback_to_brainstorm_when_workflow_start_requests_
     assert by_name["brainstorm"].activated_turn == 8
 
 
-def test_reconcile_advances_feedback_to_plan_when_workflow_start_requests_plan_from_feedback():
+def test_reconcile_advances_feedback_to_plan_when_join_requests_plan_from_feedback():
     feedback = WorkflowRunState(
         name="feedback",
         status=WorkflowRunStatus.ACTIVE,
@@ -295,7 +270,7 @@ def test_reconcile_advances_feedback_to_plan_when_workflow_start_requests_plan_f
         scope="review feedback",
     )
     state = TaskState(workflow_runs={"feedback": feedback})
-    resolution = GoalResolution(workflow_start="plan")
+    resolution = _resolution(join="plan")
 
     updated = reconcile_workflow_runs_for_turn(
         goal_resolution=resolution,
@@ -315,7 +290,7 @@ def test_reconcile_picks_first_source_when_multiple_active_nodes_target_same_wor
     debug = WorkflowRunState(name="debug", status=WorkflowRunStatus.ACTIVE)
     tdd = WorkflowRunState(name="tdd", status=WorkflowRunStatus.ACTIVE)
     state = TaskState(workflow_runs={"debug": debug, "tdd": tdd})
-    resolution = GoalResolution(workflow_start="verify")
+    resolution = _resolution(join="verify")
 
     updated = reconcile_workflow_runs_for_turn(
         goal_resolution=resolution,

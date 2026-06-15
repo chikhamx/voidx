@@ -8,7 +8,6 @@ from voidx.agent.graph.tool_executor import (
     AGENT_RESULT_PREVIEW_CHARS,
     GraphToolExecutor,
     _agent_result_preview,
-    _dump_pending_approval,
     _make_interact_callback,
     todo_updated_event,
 )

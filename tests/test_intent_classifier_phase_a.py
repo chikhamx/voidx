@@ -139,14 +139,10 @@ def test_phase_a_artifact_metrics_pass_gate():
     assert artifact["metrics"]["evaluation"]["general_precision"] >= 0.8
 
 
-def test_resolve_turn_intent_keeps_design_behavior_after_classifier_integration():
-    from voidx.agent.task_state import TaskState, resolve_turn_intent
+def test_keyword_intent_keeps_design_behavior_after_classifier_integration():
+    from voidx.runtime.intent import infer_task_intent
 
-    resolution = resolve_turn_intent("给个优化方案", "auto", TaskState())
-
-    assert resolution.intent.value == "coding"
-    assert resolution.goal is None
-    assert "local classifier matched coding" in resolution.reason
+    assert infer_task_intent("给个优化方案", "auto").value == "coding"
 
 
 def test_package_data_includes_intent_classifier():

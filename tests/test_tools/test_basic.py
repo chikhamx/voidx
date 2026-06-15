@@ -28,7 +28,7 @@ from voidx.tools.clarify import ClarifyTool, ClarifyInput, ClarifyOption, _infer
 from voidx.tools.load_skills import LoadSkillsTool
 from voidx.tools.load_doc_template import LoadDocTemplateTool, LoadDocTemplateInput
 from voidx.tools.plan_checkpoint import PlanCheckpointTool
-from voidx.agent.task_state import GoalType, ToolStatePatch, PendingApproval, goal_from_text
+from voidx.agent.task_state import GoalSpec, GoalType, IntentResolution, ToolStatePatch
 from voidx.agent.runtime_context import TaskIntent
 from voidx.skills.context import SKILL_TOOL_CONTEXT_MARKER
 from voidx.workflow.runtime import WorkflowRunState, WorkflowRunStatus
@@ -593,11 +593,11 @@ class TestInteractiveTools:
 
         assert requests
         assert result.metadata["clarify_answer"] == "implement"
-        assert result.metadata["state_patch"]["task_intent"] == "coding"
+        assert result.metadata["state_patch"]["intent"]["type"] == "coding"
         assert result.metadata["state_patch"]["goal"]["type"] == "feature"
 
     @pytest.mark.asyncio
-    async def test_plan_checkpoint_approval_clears_pending_approval(self, tmp_path):
+    async def test_plan_checkpoint_approval_sets_implementation_goal(self, tmp_path):
         async def interact(request):
             return UserResponse(value="approved")
 
@@ -608,10 +608,9 @@ class TestInteractiveTools:
 
         assert result.metadata["plan_decision"] == "approved"
         patch = result.metadata["state_patch"]
-        assert patch["task_intent"] == "coding"
-        assert patch["goal"]["target"] == "Update runtime state handling"
+        assert patch["intent"]["type"] == "coding"
+        assert patch["goal"]["desc"] == "Update runtime state handling"
         assert patch["goal"]["type"] == "feature"
-        assert patch["pending_approval"] is None
 
     @pytest.mark.asyncio
     async def test_plan_checkpoint_blocks_without_interaction(self, tmp_path):
@@ -713,7 +712,7 @@ class TestInteractiveTools:
 
         assert result.metadata["plan_decision"] == "rejected"
         patch = result.metadata["state_patch"]
-        assert patch["task_intent"] == "coding"
+        assert patch["intent"]["type"] == "coding"
         assert patch["goal"]["type"] == "design"
 
     @pytest.mark.asyncio
@@ -733,8 +732,8 @@ class TestInteractiveTools:
 
         assert result.metadata["plan_decision"] == "modified"
         patch = result.metadata["state_patch"]
-        assert patch["task_intent"] == "coding"
-        assert patch["goal"]["target"] == "Only refactor the login function"
+        assert patch["intent"]["type"] == "coding"
+        assert patch["goal"]["desc"] == "Only refactor the login function"
         assert len(interact_calls) == 2
         assert "Describe the modified scope" in interact_calls[1].prompt
 
@@ -753,8 +752,8 @@ class TestInteractiveTools:
         assert payload["decision"] == "modified"
         assert payload["modified_scope"] == "Only update the login form"
         patch = result.metadata["state_patch"]
-        assert patch["task_intent"] == "coding"
-        assert patch["goal"]["target"] == "Only update the login form"
+        assert patch["intent"]["type"] == "coding"
+        assert patch["goal"]["desc"] == "Only update the login form"
 
     @pytest.mark.asyncio
     async def test_plan_checkpoint_modified_scope_cancelled_falls_back_to_summary(self, tmp_path):
@@ -770,7 +769,7 @@ class TestInteractiveTools:
 
         assert result.metadata["plan_decision"] == "modified"
         patch = result.metadata["state_patch"]
-        assert patch["goal"]["target"] == "Refactor auth module"
+        assert patch["goal"]["desc"] == "Refactor auth module"
 
     @pytest.mark.asyncio
     async def test_plan_checkpoint_user_cancels_treated_as_rejected(self, tmp_path):
@@ -824,7 +823,8 @@ class TestInferStatePatch:
         patch = _infer_state_patch(inp, response)
 
         assert patch is not None
-        assert patch.task_intent == TaskIntent.CODING
+        assert patch.intent is not None
+        assert patch.intent.type == TaskIntent.CODING
         assert patch.goal is not None
         assert patch.goal.type == GoalType.FEATURE
 
@@ -834,7 +834,8 @@ class TestInferStatePatch:
         patch = _infer_state_patch(inp, response)
 
         assert patch is not None
-        assert patch.task_intent == TaskIntent.CODING
+        assert patch.intent is not None
+        assert patch.intent.type == TaskIntent.CODING
 
     def test_scope_context_updates_goal(self):
         inp = ClarifyInput(question="Which files?", context="This determines the scope of changes")
@@ -843,7 +844,7 @@ class TestInferStatePatch:
 
         assert patch is not None
         assert patch.goal is not None
-        assert patch.goal.target == "Only auth.py and tests"
+        assert patch.goal.desc == "Only auth.py and tests"
 
     def test_no_match_returns_none(self):
         inp = ClarifyInput(question="What color?")
@@ -862,43 +863,21 @@ class TestInferStatePatch:
 
 class TestToolStatePatch:
     def test_model_fields_set_tracks_explicit_fields(self):
-        patch = ToolStatePatch(task_intent=TaskIntent.CODING)
-        assert "task_intent" in patch.model_fields_set
+        patch = ToolStatePatch(intent=IntentResolution(type=TaskIntent.CODING, desc="clarified"))
+        assert "intent" in patch.model_fields_set
         assert "goal" not in patch.model_fields_set
-
-    def test_none_pending_approval_is_explicit(self):
-        patch = ToolStatePatch(pending_approval=None)
-        assert "pending_approval" in patch.model_fields_set
-        data = patch.model_dump(mode="json", exclude_unset=True)
-        assert data["pending_approval"] is None
 
     def test_full_patch_round_trips(self):
         patch = ToolStatePatch(
-            task_intent=TaskIntent.CODING,
-            goal=goal_from_text("Refactor auth", goal_type=GoalType.FEATURE),
-            pending_approval=None,
+            intent=IntentResolution(type=TaskIntent.CODING, desc="clarified"),
+            goal=GoalSpec(type=GoalType.FEATURE, desc="Refactor auth"),
         )
         data = patch.model_dump(mode="json")
         restored = ToolStatePatch.model_validate(data)
-        assert restored.task_intent == TaskIntent.CODING
+        assert restored.intent is not None
+        assert restored.intent.type == TaskIntent.CODING
         assert restored.goal is not None
-        assert restored.goal.target == "Refactor auth"
-        assert restored.pending_approval is None
-
-
-class TestPendingApproval:
-    def test_default_kind_is_implementation(self):
-        pa = PendingApproval(scope="Refactor auth")
-        assert pa.kind == "implementation"
-        assert pa.source_goal_type == GoalType.DESIGN
-
-    def test_round_trip(self):
-        pa = PendingApproval(scope="Fix bug", source_goal_type=GoalType.DESIGN, created_turn=3)
-        data = pa.model_dump(mode="json")
-        restored = PendingApproval.model_validate(data)
-        assert restored.scope == "Fix bug"
-        assert restored.source_goal_type == GoalType.DESIGN
-        assert restored.created_turn == 3
+        assert restored.goal.desc == "Refactor auth"
 
 
 class TestUserInteractionModels:
@@ -1167,34 +1146,12 @@ class TestLoadSkillsTool:
         assert "output truncated" in result.output
 
 
-class TestDumpPendingApproval:
-    def test_none_returns_none(self):
-        from voidx.agent.graph.tool_execution import _dump_pending_approval
-        assert _dump_pending_approval(None) is None
-
-    def test_dict_passthrough(self):
-        from voidx.agent.graph.tool_execution import _dump_pending_approval
-        d = {"kind": "implementation", "scope": "Fix bug"}
-        assert _dump_pending_approval(d) is d
-
-    def test_pydantic_model_dump(self):
-        from voidx.agent.graph.tool_execution import _dump_pending_approval
-        pa = PendingApproval(scope="Refactor auth")
-        result = _dump_pending_approval(pa)
-        assert result["kind"] == "implementation"
-        assert result["scope"] == "Refactor auth"
-
-    def test_other_type_returns_none(self):
-        from voidx.agent.graph.tool_execution import _dump_pending_approval
-        assert _dump_pending_approval(42) is None
-
-
 class TestStateUpdateFromExecutedTools:
     def test_merges_state_patches(self):
         from voidx.agent.graph.tool_executor import _state_update_from_executed_tools, _ExecutedTool
 
-        patch1 = ToolStatePatch(task_intent=TaskIntent.CODING, intent_source="clarify")
-        patch2 = ToolStatePatch(goal=goal_from_text("Refactor auth", goal_type=GoalType.FEATURE))
+        patch1 = ToolStatePatch(intent=IntentResolution(type=TaskIntent.CODING, desc="clarify"))
+        patch2 = ToolStatePatch(goal=GoalSpec(type=GoalType.FEATURE, desc="Refactor auth"))
 
         msg1 = ToolMessage(content="result1", tool_call_id="c1")
         msg2 = ToolMessage(content="result2", tool_call_id="c2")
@@ -1209,14 +1166,14 @@ class TestStateUpdateFromExecutedTools:
 
         update = _state_update_from_executed_tools(executed)
         assert update["task_intent"] == "coding"
-        assert update["current_goal"]["target"] == "Refactor auth"
+        assert update["current_goal"]["desc"] == "Refactor auth"
         assert update["current_goal"]["type"] == "feature"
 
     def test_later_patch_overrides_earlier(self):
         from voidx.agent.graph.tool_executor import _state_update_from_executed_tools, _ExecutedTool
 
-        patch1 = ToolStatePatch(task_intent=TaskIntent.GENERAL, intent_source="clarify")
-        patch2 = ToolStatePatch(task_intent=TaskIntent.CODING, intent_source="clarify")
+        patch1 = ToolStatePatch(intent=IntentResolution(type=TaskIntent.GENERAL, desc="clarify"))
+        patch2 = ToolStatePatch(intent=IntentResolution(type=TaskIntent.CODING, desc="clarify"))
 
         msg1 = ToolMessage(content="r1", tool_call_id="c1")
         msg2 = ToolMessage(content="r2", tool_call_id="c2")
@@ -1270,17 +1227,6 @@ class TestStateUpdateFromExecutedTools:
             "tdd",
             "verify",
         ]
-
-    def test_none_pending_approval_clears_state(self):
-        from voidx.agent.graph.tool_executor import _state_update_from_executed_tools, _ExecutedTool
-
-        patch = ToolStatePatch(pending_approval=None)
-        msg = ToolMessage(content="r", tool_call_id="c1")
-        result = ToolResult(output="r", metadata={"state_patch": patch.model_dump(mode="json", exclude_unset=True)})
-
-        executed = [_ExecutedTool(message=msg, result=result, tool_call={"name": "plan_checkpoint"})]
-        update = _state_update_from_executed_tools(executed)
-        assert update["pending_approval"] is None
 
     def test_no_patch_returns_empty(self):
         from voidx.agent.graph.tool_executor import _state_update_from_executed_tools, _ExecutedTool

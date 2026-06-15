@@ -8,16 +8,17 @@ from langchain_core.messages import AIMessage
 
 from voidx.agent.goal_resolver import resolve_goal_for_turn
 from voidx.agent.graph import VoidXGraph
-from voidx.agent.runtime_context import TaskIntent
-from voidx.agent.task_state import Goal, GoalResolution, GoalType, PendingApproval, TaskState
-from voidx.config import Config
-from voidx.memory.session import (
-    MessageRow,
-    create_session,
-    delete_session,
-    load_messages,
-    save_message,
+from voidx.agent.task_state import (
+    GoalResolution,
+    GoalSpec,
+    GoalType,
+    IntentResolution,
+    PlanResolution,
+    TaskState,
 )
+from voidx.config import Config
+from voidx.memory.session import create_session, delete_session, load_messages
+from voidx.runtime.intent import TaskIntent
 from voidx.ui.output.dock import BottomInputDock, set_dock
 
 
@@ -39,14 +40,9 @@ class StructuredModel:
 async def test_goal_resolver_uses_structured_llm_result():
     model = StructuredModel(
         GoalResolution(
-            intent=TaskIntent.CODING,
-            goal=Goal(
-                type=GoalType.REVIEW,
-                target="src/voidx/runtime/task_state.py",
-                user_requested_write=False,
-            ),
-            confidence=0.91,
-            reason="review requested",
+            intent=IntentResolution(type=TaskIntent.CODING, desc="review requested"),
+            goal=GoalSpec(type=GoalType.REVIEW, desc="src/voidx/runtime/task_state.py"),
+            plan=PlanResolution(join="review", leave="review"),
         )
     )
 
@@ -59,13 +55,16 @@ async def test_goal_resolver_uses_structured_llm_result():
         session_time="2026-06-12 CST",
     )
 
-    assert result.intent == TaskIntent.CODING
+    assert result.intent.type == TaskIntent.CODING
+    assert result.intent.desc == "review requested"
     assert result.goal is not None
     assert result.goal.type == GoalType.REVIEW
-    assert result.goal.target == "src/voidx/runtime/task_state.py"
+    assert result.goal.desc == "src/voidx/runtime/task_state.py"
+    assert result.plan == PlanResolution(join="review", leave="review")
     assert model.messages is not None
     assert "GoalResolution JSON schema" in model.messages[0].content
-    assert "set workflow_start=tdd and workflow_end=verify" in model.messages[0].content
+    assert "Available join values" in model.messages[0].content
+    assert "workflow_start" not in model.messages[0].content
     assert "next_workflow" not in model.messages[0].content
     assert "Do not choose brainstorm" in model.messages[0].content
     assert "review 这个文件" in model.messages[1].content
@@ -73,13 +72,14 @@ async def test_goal_resolver_uses_structured_llm_result():
     assert "title_requested" not in model.messages[1].content
 
 
-def test_goal_resolution_schema_excludes_approval_and_title_fields():
+def test_goal_resolution_schema_excludes_removed_fields():
     properties = GoalResolution.model_json_schema()["properties"]
 
+    assert set(properties) == {"intent", "goal", "plan"}
     assert "confirmed_approval" not in properties
     assert "title" not in properties
-    assert "workflow_start" in properties
-    assert "workflow_end" in properties
+    assert "workflow_start" not in properties
+    assert "workflow_end" not in properties
     assert "next_workflow" not in properties
 
 
@@ -87,18 +87,9 @@ def test_goal_resolution_schema_excludes_approval_and_title_fields():
 async def test_goal_resolver_propagates_review_only_route():
     model = StructuredModel(
         {
-            "intent": "coding",
-            "goal": {
-                "type": "review",
-                "target": "current diff",
-                "expected_result": "review findings",
-                "user_requested_write": False,
-                "needs_confirmation": False,
-            },
-            "confidence": 0.94,
-            "reason": "review only",
-            "workflow_start": "review",
-            "workflow_end": "review",
+            "intent": {"type": "coding", "desc": "review only"},
+            "goal": {"type": "review", "desc": "current diff"},
+            "plan": {"join": "review", "leave": "review"},
         }
     )
 
@@ -111,127 +102,86 @@ async def test_goal_resolver_propagates_review_only_route():
         session_time="2026-06-14 CST",
     )
 
-    assert result.workflow_start == "review"
-    assert result.workflow_end == "review"
+    assert result.plan == PlanResolution(join="review", leave="review")
     assert result.goal is not None
-    assert result.goal.user_requested_write is False
+    assert result.goal.desc == "current diff"
 
 
 @pytest.mark.asyncio
-async def test_goal_resolver_propagates_review_and_fix_route():
+async def test_goal_resolver_defaults_review_route_leave_to_join():
     model = StructuredModel(
         {
-            "intent": "coding",
-            "goal": {
-                "type": "review",
-                "target": "current diff",
-                "expected_result": "review findings fixed and verified",
-                "user_requested_write": True,
-                "needs_confirmation": False,
-            },
-            "confidence": 0.94,
-            "reason": "review then fix",
-            "workflow_start": "review",
-            "workflow_end": "verify",
+            "intent": {"type": "coding", "desc": "review only"},
+            "goal": {"type": "review", "desc": "current diff"},
+            "plan": {"join": "review"},
         }
     )
 
     result = await resolve_goal_for_turn(
         model=model,
-        user_text="review 完并修复问题",
+        user_text="review 一下这个",
         interaction_mode="auto",
         task_state=TaskState(),
         workspace="/tmp/workspace",
         session_time="2026-06-14 CST",
     )
 
-    assert result.workflow_start == "review"
-    assert result.workflow_end == "verify"
-    assert result.goal is not None
-    assert result.goal.user_requested_write is True
+    assert result.plan == PlanResolution(join="review", leave="review")
 
 
 @pytest.mark.asyncio
-async def test_goal_resolver_defaults_review_write_route_end_to_verify():
+async def test_goal_resolver_defaults_write_route_leave_to_verify():
     model = StructuredModel(
         {
-            "intent": "coding",
-            "goal": {
-                "type": "review",
-                "target": "current diff",
-                "expected_result": "review findings fixed",
-                "user_requested_write": True,
-                "needs_confirmation": False,
-            },
-            "confidence": 0.9,
-            "reason": "review then fix",
-            "workflow_start": "review",
+            "intent": {"type": "coding", "desc": "implement spec"},
+            "goal": {"type": "feature", "desc": "implement current spec"},
+            "plan": {"join": "tdd"},
         }
     )
 
     result = await resolve_goal_for_turn(
         model=model,
-        user_text="review 完并修复问题",
+        user_text="按这个 spec 实现",
         interaction_mode="auto",
         task_state=TaskState(),
         workspace="/tmp/workspace",
         session_time="2026-06-14 CST",
     )
 
-    assert result.workflow_start == "review"
-    assert result.workflow_end == "verify"
+    assert result.plan == PlanResolution(join="tdd", leave="verify")
 
 
 @pytest.mark.asyncio
-async def test_goal_resolver_propagates_valid_workflow_start():
+async def test_goal_resolver_propagates_valid_plan_join():
     model = StructuredModel(
         {
-            "intent": "coding",
-            "goal": {
-                "type": "doc",
-                "target": "写 workflow approval spec",
-                "expected_result": "",
-                "user_requested_write": True,
-                "needs_confirmation": False,
-            },
-            "confidence": 0.92,
-            "reason": "user approved design and requested spec",
-            "workflow_start": "design-doc",
-            "workflow_end": "design-doc",
+            "intent": {"type": "coding", "desc": "user requested spec"},
+            "goal": {"type": "doc", "desc": "write workflow approval spec"},
+            "plan": {"join": "design-doc", "leave": "design-doc"},
         }
-    )
-    state = TaskState(
-        pending_approval=PendingApproval(
-            scope="workflow approval auto advance",
-            source_goal_type=GoalType.DESIGN,
-        )
     )
 
     result = await resolve_goal_for_turn(
         model=model,
         user_text="可以，先写一个 spec",
         interaction_mode="auto",
-        task_state=state,
+        task_state=TaskState(),
         workspace="/tmp/workspace",
         session_time="2026-06-14 CST",
     )
 
-    assert result.workflow_start == "design-doc"
-    assert result.workflow_end == "design-doc"
+    assert result.plan == PlanResolution(join="design-doc", leave="design-doc")
     assert result.goal is not None
     assert result.goal.type == GoalType.DOC
 
 
 @pytest.mark.asyncio
-async def test_goal_resolver_drops_unknown_workflow_route():
+async def test_goal_resolver_drops_unknown_plan_route():
     model = StructuredModel(
         {
-            "intent": "coding",
-            "goal": None,
-            "confidence": 0.7,
-            "reason": "bad workflow target",
-            "workflow_start": "nonexistent",
-            "workflow_end": "also-missing",
+            "intent": {"type": "coding", "desc": "bad workflow target"},
+            "goal": {"type": "feature", "desc": "continue"},
+            "plan": {"join": "nonexistent", "leave": "also-missing"},
         }
     )
 
@@ -244,24 +194,38 @@ async def test_goal_resolver_drops_unknown_workflow_route():
         session_time="2026-06-14 CST",
     )
 
-    assert result.workflow_start is None
-    assert result.workflow_end is None
+    assert result.plan == PlanResolution(join="brainstorm", leave="verify")
+
+
+@pytest.mark.asyncio
+async def test_goal_resolver_drops_non_entry_plan_join():
+    model = StructuredModel(
+        {
+            "intent": {"type": "coding", "desc": "bad workflow entry"},
+            "goal": {"type": "feature", "desc": "continue"},
+            "plan": {"join": "verify", "leave": "verify"},
+        }
+    )
+
+    result = await resolve_goal_for_turn(
+        model=model,
+        user_text="继续",
+        interaction_mode="auto",
+        task_state=TaskState(),
+        workspace="/tmp/workspace",
+        session_time="2026-06-14 CST",
+    )
+
+    assert result.plan == PlanResolution(join="brainstorm", leave="verify")
 
 
 @pytest.mark.asyncio
 async def test_goal_resolver_plan_mode_forces_design_goal():
     model = StructuredModel(
         {
-            "intent": "coding",
-            "goal": {
-                "type": "feature",
-                "target": "实现登录",
-                "expected_result": "",
-                "user_requested_write": True,
-                "needs_confirmation": False,
-            },
-            "confidence": 0.8,
-            "reason": "model saw implementation words",
+            "intent": {"type": "coding", "desc": "model saw implementation words"},
+            "goal": {"type": "feature", "desc": "implement login"},
+            "plan": {"join": "tdd", "leave": "verify"},
         }
     )
 
@@ -274,15 +238,38 @@ async def test_goal_resolver_plan_mode_forces_design_goal():
         session_time="2026-06-12 CST",
     )
 
-    assert result.intent == TaskIntent.CODING
-    assert result.goal is not None
-    assert result.goal.type == GoalType.DESIGN
-    assert result.goal.user_requested_write is False
-    assert result.goal.needs_confirmation is True
+    assert result.intent.type == TaskIntent.CODING
+    assert result.goal == GoalSpec(type=GoalType.DESIGN, desc="implement login")
+    assert result.plan == PlanResolution(join="brainstorm", leave="verify")
 
 
 @pytest.mark.asyncio
-async def test_goal_resolver_falls_back_when_structured_output_fails():
+async def test_goal_resolver_goal_mode_keeps_current_goal():
+    current_goal = GoalSpec(type=GoalType.CHORE, desc="clean up runtime state")
+    model = StructuredModel(
+        {
+            "intent": {"type": "general", "desc": "model was unsure"},
+            "goal": None,
+            "plan": None,
+        }
+    )
+
+    result = await resolve_goal_for_turn(
+        model=model,
+        user_text="继续",
+        interaction_mode="goal",
+        task_state=TaskState(current_goal=current_goal),
+        workspace="/tmp/workspace",
+        session_time="2026-06-12 CST",
+    )
+
+    assert result.intent.type == TaskIntent.CODING
+    assert result.goal == current_goal
+    assert result.plan == PlanResolution(join="tdd", leave="verify")
+
+
+@pytest.mark.asyncio
+async def test_goal_resolver_falls_back_to_general_when_structured_output_fails():
     class BrokenModel:
         def with_structured_output(self, _schema):
             raise RuntimeError("unsupported")
@@ -296,13 +283,13 @@ async def test_goal_resolver_falls_back_when_structured_output_fails():
         session_time="2026-06-12 CST",
     )
 
-    assert result.intent == TaskIntent.CODING
+    assert result.intent.type == TaskIntent.GENERAL
     assert result.goal is None
+    assert result.plan is None
 
 
 @pytest.mark.asyncio
 async def test_run_once_uses_goal_resolver_and_keeps_resolver_messages_out_of_history(tmp_path):
-    """Default run loop calls the structured resolver, and resolver messages never enter history."""
     session = await create_session(workspace=str(tmp_path))
     try:
         graph = VoidXGraph(Config(workspace=str(tmp_path)), api_key=None, session=session)
@@ -319,14 +306,9 @@ async def test_run_once_uses_goal_resolver_and_keeps_resolver_messages_out_of_hi
                 assert "GoalResolution JSON schema" in messages[0].content
                 assert "review 这个文件" in messages[1].content
                 return GoalResolution(
-                    intent=TaskIntent.CODING,
-                    goal=Goal(
-                        type=GoalType.REVIEW,
-                        target="review 这个文件",
-                        user_requested_write=False,
-                    ),
-                    confidence=0.9,
-                    reason="review request",
+                    intent=IntentResolution(type=TaskIntent.CODING, desc="review request"),
+                    goal=GoalSpec(type=GoalType.REVIEW, desc="review 这个文件"),
+                    plan=PlanResolution(join="review", leave="review"),
                 )
 
         resolver_model = ResolverShouldRunModel()
@@ -353,17 +335,11 @@ async def test_run_once_uses_goal_resolver_and_keeps_resolver_messages_out_of_hi
 
         assert resolver_model.called is True
         ts = captured_initial.get("task_state", {})
-        if isinstance(ts, dict):
-            assert ts.get("current_intent") == "coding"
-            assert ts.get("current_goal", {}).get("type") == "review"
-            assert ts.get("recent_user_texts") == ["review 这个文件"]
-        else:
-            assert ts.current_intent == TaskIntent.CODING
-            assert ts.current_goal is not None
-            assert ts.current_goal.type == GoalType.REVIEW
-            assert ts.recent_user_texts == ["review 这个文件"]
+        assert ts.get("current_intent") == "coding"
+        assert ts.get("current_goal", {}).get("type") == "review"
+        assert ts.get("workflow_route") == {"join": "review", "leave": "review"}
+        assert ts.get("recent_user_texts") == ["review 这个文件"]
 
-        # Resolver messages are not persisted to user-visible history.
         rows = await load_messages(session.id)
         for row in rows:
             assert "GoalResolution JSON schema" not in (row.content or "")
@@ -373,56 +349,12 @@ async def test_run_once_uses_goal_resolver_and_keeps_resolver_messages_out_of_hi
 
 
 @pytest.mark.asyncio
-async def test_goal_resolver_plain_approval_with_pending_approval_returns_no_workflow_route():
-    model = StructuredModel(
-        {
-            "intent": "coding",
-            "goal": {
-                "type": "feature",
-                "target": "workflow approval auto advance",
-                "expected_result": "",
-                "user_requested_write": True,
-                "needs_confirmation": False,
-            },
-            "confidence": 0.8,
-            "reason": "user approved pending design",
-        }
-    )
-    state = TaskState(
-        pending_approval=PendingApproval(
-            scope="workflow approval auto advance",
-            source_goal_type=GoalType.DESIGN,
-        )
-    )
-
-    result = await resolve_goal_for_turn(
-        model=model,
-        user_text="可以",
-        interaction_mode="auto",
-        task_state=state,
-        workspace="/tmp/workspace",
-        session_time="2026-06-14 CST",
-    )
-
-    assert result.workflow_start is None
-    assert result.workflow_end is None
-    assert result.goal is not None
-    assert result.goal.type == GoalType.FEATURE
-    assert result.goal.user_requested_write is True
-
-
-@pytest.mark.asyncio
 async def test_goal_resolver_normal_request_returns_no_workflow_route():
     model = StructuredModel(
         GoalResolution(
-            intent=TaskIntent.CODING,
-            goal=Goal(
-                type=GoalType.INSPECT,
-                target="runtime state",
-                user_requested_write=False,
-            ),
-            confidence=0.9,
-            reason="inspection request",
+            intent=IntentResolution(type=TaskIntent.CODING, desc="inspection request"),
+            goal=GoalSpec(type=GoalType.INSPECT, desc="runtime state"),
+            plan=None,
         )
     )
 
@@ -435,7 +367,6 @@ async def test_goal_resolver_normal_request_returns_no_workflow_route():
         session_time="2026-06-14 CST",
     )
 
-    assert result.workflow_start is None
-    assert result.workflow_end is None
+    assert result.plan == PlanResolution(join="", leave=None)
     assert result.goal is not None
     assert result.goal.type == GoalType.INSPECT

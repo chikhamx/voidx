@@ -3,8 +3,7 @@ from pathlib import Path
 
 import voidx.runtime.intent_classifier as intent_classifier_module
 
-from voidx.agent.task_state import TaskState, resolve_turn_intent
-from voidx.runtime.intent import TaskIntent
+from voidx.runtime.intent import TaskIntent, infer_task_intent
 from voidx.runtime.intent_classifier import (
     ArtifactClassifier,
     classify_intent,
@@ -107,26 +106,15 @@ def test_classifier_cache_is_bounded(tmp_path):
 
 
 def test_direct_write_request_sets_coding_feature_goal():
-    resolution = resolve_turn_intent("开始实现这个优化", "auto", TaskState())
-
-    assert resolution.intent == TaskIntent.CODING
-    assert resolution.goal is None
+    assert infer_task_intent("开始实现这个优化", "auto") == TaskIntent.CODING
 
 
 def test_plan_mode_forces_coding_design_goal():
-    resolution = resolve_turn_intent("写一个新接口", "plan", TaskState())
-
-    assert resolution.intent == TaskIntent.CODING
-    assert resolution.goal is None
-    assert resolution.reason == "interaction mode forces coding"
+    assert infer_task_intent("写一个新接口", "plan") == TaskIntent.CODING
 
 
 def test_approval_phrase_without_pending_plan_requires_confirmation():
-    resolution = resolve_turn_intent("对，可以", "auto", TaskState())
-
-    assert resolution.intent == TaskIntent.GENERAL
-    assert resolution.goal is None
-    assert resolution.reason == "approval phrase without a pending implementation plan"
+    assert infer_task_intent("对，可以", "auto") == TaskIntent.GENERAL
 
 
 def test_chinese_and_mixed_input_classification_is_coarse_coding():

@@ -27,18 +27,7 @@ class _FrameRendererMixin:
         width = self._frame_width()
         term_height = shutil.get_terminal_size().lines if self._tty else None
         render_failed = False
-        try:
-            renderable = self._render_impl(height=term_height)
-        except Exception as exc:
-            import traceback
-
-            render_failed = True
-            self._pending_tb = traceback.format_exc()
-            self._last_error = f"Render error: {exc}"
-            renderable = Group(Text(f"Render error: {exc}", style="red"))
-
-        ansi = self._capture_renderable(renderable, width)
-
+        clear_screen = False
         if self._tty:
             term_height = term_height or shutil.get_terminal_size().lines
             force_full = render_failed
@@ -56,6 +45,21 @@ class _FrameRendererMixin:
                 self._visible_committed_rows = 0
                 self._invalidate_frame_cache()
                 force_full = True
+                clear_screen = True
+        try:
+            renderable = self._render_impl(height=term_height)
+        except Exception as exc:
+            import traceback
+
+            render_failed = True
+            self._pending_tb = traceback.format_exc()
+            self._last_error = f"Render error: {exc}"
+            renderable = Group(Text(f"Render error: {exc}", style="red"))
+
+        ansi = self._capture_renderable(renderable, width)
+
+        if self._tty:
+            if clear_screen:
                 sys.stdout.write("\x1b[2J\x1b[H")
             frame_rows = _rendered_row_count(ansi)
             bottom_ansi = self._capture_renderable(self._render_bottom_impl(), width)
@@ -288,10 +292,9 @@ class _FrameRendererMixin:
             self._capture_buffer.truncate(0)
         self._capture_console.print(renderable)
         ansi = self._capture_buffer.getvalue()
-        # Strip the trailing newline added by Console.print so that writing
-        # the captured output to the terminal never advances the cursor past
-        # the last rendered line (which would trigger an unwanted scroll).
-        return ansi.rstrip("\n")
+        # Strip only the newline added by Console.print. Meaningful trailing
+        # blank rows are part of the transcript and must still count.
+        return ansi[:-1] if ansi.endswith("\n") else ansi
 
     def _move_to_frame_top_sequence(self) -> str:
         if not self._has_rendered_frame:

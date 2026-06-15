@@ -68,7 +68,20 @@ def _markdown_lines(text: str, width: int) -> list[str]:
         parts = stripped.splitlines() or [stripped]
         lines.extend(parts)
 
-    return [line for line in lines if _clean(line).strip()]
+    # Preserve single blank lines (paragraph breaks) but collapse runs.
+    # Drop lines that are pure ANSI decoration with no visible text.
+    result: list[str] = []
+    prev_blank = False
+    for line in lines:
+        is_blank = not line or not _clean(line).strip()
+        if is_blank:
+            if not prev_blank:
+                result.append("")
+            prev_blank = True
+        else:
+            result.append(line)
+            prev_blank = False
+    return result
 
 
 def _strip_ansi_trailing_space(line: str) -> str:
