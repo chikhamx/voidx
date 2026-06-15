@@ -635,6 +635,7 @@ def _result(
     return ToolResult(
         title=f"git: {command}",
         output=json.dumps(payload, ensure_ascii=False, indent=2),
+        summary=f"git {command}: {'ok' if ok else 'failed'}",
         metadata={
             "command": command,
             "ok": ok,

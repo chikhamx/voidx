@@ -14,7 +14,10 @@ from voidx.lsp.errors import LspConnectionError, LspServerUnavailable
 from voidx.lsp.manager import LspManager, apply_text_edits
 from voidx.lsp.schema import LspServerConfig
 from voidx.tools.base import ToolContext
+from voidx.tools.lsp import LspFormatTool
 from voidx.tools.registry import ToolRegistry
+import voidx.memory.store as store
+import voidx.tools.lsp as lsp_module
 
 
 FAKE_LSP_SERVER = r'''
@@ -387,7 +390,7 @@ def test_lsp_warmup_languages_does_not_mutate_resolved_command(monkeypatch, tmp_
 
 def test_tool_filter_uses_cached_lsp_availability():
     tool_defs = [
-        {"function": {"name": "lsp_symbols"}},
+        {"function": {"name": "lsp"}},
         {"function": {"name": "read_file"}},
     ]
 
@@ -417,15 +420,44 @@ async def test_lsp_tools_use_context_manager(tmp_path):
     ctx = ToolContext(workspace=str(tmp_path), lsp_manager=manager)
 
     try:
-        symbols = await registry.execute_tool("lsp_symbols", {"file_path": "sample.py"}, ctx)
-        formatted = await registry.execute_tool("lsp_format", {"file_path": "sample.py"}, ctx)
+        symbols = await registry.execute_tool("lsp", {"operation": "symbols", "file_path": "sample.py"}, ctx)
 
         assert "Foo" in symbols.output
         assert "bar" in symbols.output
-        assert "File formatted" in formatted.output
-        assert formatted.diff
     finally:
         await manager.stop_all()
+
+
+@pytest.mark.asyncio
+async def test_lsp_format_tool_saves_file_version_before_format(tmp_path, monkeypatch):
+    monkeypatch.setattr(store, "DATA_DIR", tmp_path / ".voidx")
+    target = tmp_path / "sample.py"
+    target.write_text("print( 1 )\n", encoding="utf-8")
+
+    class FakeService:
+        async def format(self, file_path):
+            path = tmp_path / file_path
+            old_text = path.read_text(encoding="utf-8")
+            new_text = "print(1)\n"
+            path.write_text(new_text, encoding="utf-8")
+            return True, old_text, new_text
+
+    monkeypatch.setattr(lsp_module, "_service", lambda _ctx: FakeService())
+
+    result = await LspFormatTool().execute(
+        {"file_path": "sample.py"},
+        ToolContext(workspace=str(tmp_path), session_id="sid-1", lsp_manager=object()),
+    )
+
+    assert result.metadata.get("error") is not True
+    history_dir = store.DATA_DIR / "sessions" / "sid-1" / "file-history"
+    rows = [
+        json.loads(line)
+        for line in (history_dir / "manifest.jsonl").read_text(encoding="utf-8").splitlines()
+    ]
+    assert rows[0]["path"] == "sample.py"
+    assert rows[0]["tool"] == "lsp_format"
+    assert (history_dir / rows[0]["snapshot"]).read_text(encoding="utf-8") == "print( 1 )\n"
 
 
 @pytest.mark.asyncio

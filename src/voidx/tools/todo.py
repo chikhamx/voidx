@@ -76,6 +76,7 @@ class TodoWriteTool(BaseTool):
         return ToolResult(
             title=f"Todo: {done}/{total} done · {in_progress} active · {pending} pending",
             output="\n".join(lines),
+            summary=f"{done}/{total} done · {in_progress} active · {pending} pending",
             metadata={
                 "total": total, "done": done, "in_progress": in_progress,
                 "pending": pending, "cancelled": cancelled,

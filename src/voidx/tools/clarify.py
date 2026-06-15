@@ -97,6 +97,7 @@ class ClarifyTool(BaseTool):
         return ToolResult(
             title=f"clarify: {response.value}",
             output=json.dumps(payload, ensure_ascii=False, indent=2),
+            summary=f"answer: {response.value}",
             metadata=metadata,
         )
 

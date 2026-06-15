@@ -64,14 +64,14 @@ class AdvanceWorkflowTool(BaseTool):
         runs = _current_runs(ctx)
         active = _active_runs(runs)
         if not active:
-            return ToolResult(
+            return _error_result(
                 title="workflow: no active node",
                 output="No active workflow node is available to advance.",
                 metadata={"error": True},
             )
 
         if not workflow and is_workflow_terminal_condition(condition) and len(active) > 1:
-            return ToolResult(
+            return _error_result(
                 title="workflow: ambiguous target",
                 output=_ambiguous_target_message(active),
                 metadata={"error": True, "ambiguous": True, "condition": condition},
@@ -79,7 +79,7 @@ class AdvanceWorkflowTool(BaseTool):
 
         selected = _select_run(active, condition, workflow=workflow)
         if selected is None:
-            return ToolResult(
+            return _error_result(
                 title="workflow: invalid exit",
                 output=_invalid_condition_message(condition, active, workflow=workflow),
                 metadata={"error": True, "condition": condition, "workflow": workflow},
@@ -87,7 +87,7 @@ class AdvanceWorkflowTool(BaseTool):
 
         evidence = inp.evidence.strip()
         if _requires_gate_evidence(selected.name, condition) and not evidence:
-            return ToolResult(
+            return _error_result(
                 title="workflow: evidence required",
                 output=(
                     f"Workflow node {selected.name!r} requires non-empty evidence "
@@ -117,11 +117,21 @@ class AdvanceWorkflowTool(BaseTool):
         return ToolResult(
             title=f"workflow: {selected.name} -> {condition}",
             output=json.dumps(payload, ensure_ascii=False, indent=2),
+            summary=f"{selected.name} -> {condition}",
             metadata={
                 "workflow_transition": payload,
                 "state_patch": patch.model_dump(mode="json", include={"workflow_runs", "persona"}),
             },
         )
+
+
+def _error_result(title: str, output: str, metadata: dict) -> ToolResult:
+    return ToolResult(
+        title=title,
+        output=output,
+        summary=output.splitlines()[0] if output else title,
+        metadata=metadata,
+    )
 
 
 def _current_runs(ctx: ToolContext) -> list[WorkflowRunState]:

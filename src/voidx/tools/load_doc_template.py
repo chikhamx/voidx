@@ -58,5 +58,6 @@ class LoadDocTemplateTool(BaseTool):
         return ToolResult(
             title=f"Template: {doc_type}",
             output=content,
+            summary=f"template: {doc_type}",
             metadata={"doc_type": doc_type},
         )

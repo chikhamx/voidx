@@ -11,7 +11,7 @@ def filter_unavailable_lsp_tools(tool_defs: list[dict], lsp_manager: Any | None)
     return [
         tool
         for tool in tool_defs
-        if not str(tool.get("function", {}).get("name", "")).startswith("lsp_")
+        if not str(tool.get("function", {}).get("name", "")).startswith("lsp")
     ]
 
 

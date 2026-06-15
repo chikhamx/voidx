@@ -149,6 +149,7 @@ class BashTool(BaseTool):
         return ToolResult(
             title=f"Bash: {inp.command}",
             output="\n".join(output_parts) or "(no output)",
+            summary=f"exit {exit_code}",
             metadata={
                 "command": inp.command,
                 "exit_code": exit_code,

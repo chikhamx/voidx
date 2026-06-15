@@ -43,6 +43,7 @@ class CompactContextTool(BaseTool):
         return ToolResult(
             title="context compacted",
             output="Compacted older context into the runtime summary.",
+            summary="context compacted",
             metadata={
                 "inline_compaction": {
                     "summary": summary,

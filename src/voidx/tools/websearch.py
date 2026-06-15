@@ -269,6 +269,7 @@ class WebSearchTool(BaseTool):
         return ToolResult(
             title=f"Search: {query}",
             output="\n\n".join(formatted),
+            summary=f"{len(normalized)} results",
             metadata={
                 "query": query,
                 "results": len(normalized),

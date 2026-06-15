@@ -42,6 +42,7 @@ class TaskStatusTool(BaseTool):
             return ToolResult(
                 title=f"Task {inp.task_id}: {task.status}",
                 output=self._tracker.format_status(),
+                summary=f"task {inp.task_id}: {task.status}",
                 metadata={
                     "task_id": task.id, "agent": task.agent,
                     "status": task.status, "step": task.step,
@@ -53,5 +54,6 @@ class TaskStatusTool(BaseTool):
         return ToolResult(
             title=f"Tasks: {len(running)} running, {len(self._tracker.list_all())} total",
             output=output,
+            summary=f"{len(running)} running, {len(self._tracker.list_all())} total",
             metadata={"running": len(running), "total": len(self._tracker._tasks)},
         )

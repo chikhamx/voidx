@@ -6,7 +6,7 @@ from pydantic import BaseModel, Field
 
 from voidx.diffing import make_file_diff
 from voidx.tools.base import BaseTool, model_to_json_schema, ToolContext, ToolResult, resolve_safe
-from voidx.tools.file_state import check_staleness, record_mtime
+from voidx.tools.file_state import check_staleness, record_mtime, save_file_version
 
 
 class FileReadInput(BaseModel):
@@ -55,6 +55,7 @@ class FileReadTool(BaseTool):
         return ToolResult(
             title=f"Read {len(sliced)} lines from {inp.file_path}",
             output="\n".join(numbered),
+            summary=f"Read {len(sliced)}/{len(lines)} lines from {inp.file_path}",
             metadata={"file": inp.file_path, "lines": len(sliced), "total_lines": len(lines)},
         )
 
@@ -93,6 +94,7 @@ class FileWriteTool(BaseTool):
 
         old_content = ""
         if path.exists():
+            await save_file_version(ctx, path, display_path=inp.file_path, tool_name=self.id)
             old_content = path.read_text(encoding="utf-8", errors="replace")
 
         path.parent.mkdir(parents=True, exist_ok=True)
@@ -120,6 +122,7 @@ class FileWriteTool(BaseTool):
         return ToolResult(
             title=f"Wrote {size} bytes to {inp.file_path}",
             output=output,
+            summary=f"Wrote {size} bytes to {inp.file_path}",
             metadata={"file": inp.file_path, "size": size},
             diff=diff,
         )
@@ -190,6 +193,7 @@ class FileEditTool(BaseTool):
 
             content = content.replace(edit.old_string, edit.new_string)
 
+        await save_file_version(ctx, path, display_path=inp.file_path, tool_name=self.id)
         path.write_text(content, encoding="utf-8")
         record_mtime(ctx, path)
 
@@ -198,6 +202,7 @@ class FileEditTool(BaseTool):
         return ToolResult(
             title=f"Edited {inp.file_path} ({len(inp.edits)} edits)",
             output=f"File edited: {inp.file_path} ({len(inp.edits)} replacements)\n{diff}",
+            summary=f"Edited {inp.file_path} ({len(inp.edits)} replacements)",
             metadata={"file": inp.file_path, "replacements": len(inp.edits)},
             diff=diff,
         )

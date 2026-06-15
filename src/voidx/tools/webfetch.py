@@ -122,6 +122,7 @@ class WebFetchTool(BaseTool):
             result = ToolResult(
                 title=f"Fetched: {canonicalize_url(resp.url)}",
                 output=output,
+                summary=f"Fetched {len(output)} chars from {canonicalize_url(resp.url)}",
                 metadata={
                     "url": inp.url,
                     "canonical_url": extracted["url"],

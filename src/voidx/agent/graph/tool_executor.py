@@ -4,6 +4,7 @@ from __future__ import annotations
 
 import asyncio
 import inspect
+import json
 import time
 from collections.abc import Callable
 from dataclasses import dataclass
@@ -20,12 +21,28 @@ from voidx.agent.task_state import Goal, PendingApproval, TaskState, TodoRunStat
 from voidx.runtime.intent import TaskIntent
 from voidx.agent.tool_messages import sanitize_tool_message_content
 from voidx.workflow.service import advance_workflow_states, auto_advance_events, is_workflow_terminal_condition
-from voidx.workflow.types import WorkflowRunState, WorkflowRunStatus
-from voidx.tools.service import ToolContext, UserInteraction, UserResponse
+from voidx.workflow.route import (
+    workflow_path_reaches,
+    workflow_route_end,
+    workflow_route_start,
+    workflow_transition_target,
+)
+from voidx.workflow.types import (
+    WorkflowEvidence,
+    WorkflowRunState,
+    WorkflowRunStatus,
+    WorkflowStateEvent,
+    WorkflowStateEventKind,
+)
+from voidx.tools.service import ToolContext, ToolResult, UserInteraction, UserResponse
+from voidx.agent.tool_result_storage import maybe_persist_tool_result
 from voidx.runtime.ui import (
+    DEFAULT_DISPLAY_RULES,
     FileChangeAppended,
     StatusFinished,
     StatusUpdated,
+    ToolDisplayMode,
+    ToolDisplayPolicy,
     ToolFinished,
     ToolResultAppended,
     ToolStarted,
@@ -86,7 +103,9 @@ class GraphToolExecutor:
         runtime_pending_approval = _dump_pending_approval(runtime_task_state.pending_approval)
         runtime_goal = runtime_task_state.current_goal
         runtime_workflow_runs = list((runtime_task_state.workflow_runs or {}).values())
+        turn_count = int(state.get("step_count", 0) or 0)
         state_update: dict = {}
+        display_policy = getattr(host, "_display_policy", None) or ToolDisplayPolicy(rules=DEFAULT_DISPLAY_RULES)
 
         def make_context() -> ToolContext:
             return ToolContext(
@@ -100,6 +119,9 @@ class GraphToolExecutor:
                 goal_target=goal_label(runtime_goal),
                 active_workflow_names=_active_workflow_names(runtime_workflow_runs),
                 workflow_runs=runtime_workflow_runs,
+                workflow_route=runtime_task_state.workflow_route.model_dump(mode="json")
+                if runtime_task_state.workflow_route is not None
+                else None,
                 file_mtimes=host._file_mtimes,
                 mcp_manager=getattr(host, "_mcp_manager", None),
                 lsp_manager=getattr(host, "_lsp_manager", None),
@@ -117,6 +139,8 @@ class GraphToolExecutor:
             if "persona" in update:
                 runtime_persona = update.get("persona") or runtime_persona
                 state_update["persona"] = runtime_persona
+            if "should_continue" in update:
+                state_update["should_continue"] = bool(update.get("should_continue"))
             if "task_state" in update:
                 runtime_task_state = _task_state_for_state(update.get("task_state"))
                 runtime_goal = runtime_task_state.current_goal
@@ -156,6 +180,11 @@ class GraphToolExecutor:
 
             tool_event_id = cid or f"{tid}:{id(tc)}"
             tool_node = None
+            rule = display_policy.rule_for(tid)
+            # ToolStarted uses the static rule mode (pre-execution); ToolResultAppended
+            # may resolve to SUMMARY via auto-summary downgrade after output is available.
+            initial_display_mode = rule.mode
+            initial_summary_max_lines = rule.summary_max_lines
             if host._ui.via_events():
                 gerund = _title(host._ui.ui._TOOL_GERUND.get(tid, tid + "ing"))
                 tool_node = await host._ui.events.request(ToolStarted(
@@ -164,22 +193,26 @@ class GraphToolExecutor:
                     label=gerund,
                     args=_fmt_args(targs),
                     raw_args=targs,
+                    display_mode=initial_display_mode,
+                    summary_max_lines=initial_summary_max_lines,
                 ))
                 if host._ui.dock.active and host._ui.dock.current_agent is not None:
                     host._turn_node = host._ui.dock.current_agent
             elif host._ui.dock.active:
-                gerund = _title(host._ui.ui._TOOL_GERUND.get(tid, tid + "ing"))
-                tool_node = host._ui.dock.start_tool(
-                    gerund,
-                    _fmt_args(targs),
-                    tool_call_id=tool_event_id,
-                    tool_name=tid,
-                    raw_args=targs,
-                )
-                if host._ui.dock.current_agent is not None:
-                    host._turn_node = host._ui.dock.current_agent
+                if initial_display_mode != ToolDisplayMode.HIDDEN:
+                    gerund = _title(host._ui.ui._TOOL_GERUND.get(tid, tid + "ing"))
+                    tool_node = host._ui.dock.start_tool(
+                        gerund,
+                        _fmt_args(targs),
+                        tool_call_id=tool_event_id,
+                        tool_name=tid,
+                        raw_args=targs,
+                    )
+                    if host._ui.dock.current_agent is not None:
+                        host._turn_node = host._ui.dock.current_agent
             else:
-                host._ui.ui.tool_call(tid, targs)
+                if initial_display_mode != ToolDisplayMode.HIDDEN:
+                    host._ui.ui.tool_call(tid, targs)
 
             t0 = time.monotonic()
             ok = True
@@ -225,16 +258,28 @@ class GraphToolExecutor:
                 host._ui.ui.warn("Todo update ignored: tool returned malformed metadata.")
 
             if host._ui.via_events():
-                await host._ui.events.emit(ToolFinished(
-                    tool_call_id=tool_event_id,
-                    label=_title(tid),
-                    elapsed=elapsed,
-                    ok=ok,
-                ))
+                if not ok and initial_display_mode == ToolDisplayMode.HIDDEN:
+                    await host._ui.events.emit(WarningAppended(
+                        message=f"{tid} failed: {result.summary or 'unknown error'}",
+                    ))
+                else:
+                    await host._ui.events.emit(ToolFinished(
+                        tool_call_id=tool_event_id,
+                        label=_title(tid),
+                        elapsed=elapsed,
+                        ok=ok,
+                        detail=result.summary if result.summary else "",
+                    ))
             elif tool_node:
-                host._ui.dock.finish_tool_node(tool_node, _title(tid), elapsed, ok)
+                if not ok and initial_display_mode == ToolDisplayMode.HIDDEN:
+                    host._ui.ui.warn(f"{tid} failed: {result.summary or 'unknown error'}")
+                else:
+                    host._ui.dock.finish_tool_node(tool_node, _title(tid), elapsed, ok)
             else:
-                host._ui.ui.tool_done(tid, elapsed, ok)
+                if not ok and initial_display_mode == ToolDisplayMode.HIDDEN:
+                    host._ui.ui.warn(f"{tid} failed: {result.summary or 'unknown error'}")
+                else:
+                    host._ui.ui.tool_done(tid, elapsed, ok)
 
             # Render diff to terminal (if any)
             if getattr(result, "diff", None) and ok:
@@ -255,24 +300,38 @@ class GraphToolExecutor:
                     host._ui.ui.print(f"  [green]+{added}[/green] [red]−{removed}[/red]")
                 if host._debug and not tool_node:
                     host._ui.ui.diff(result.diff)
-            elif host._debug or tid == "agent":
+            else:
                 output = _agent_result_preview(result.output) if tid == "agent" else result.output
+                resolved_mode, resolved_max = display_policy.resolve_display_mode(tid, output, result_ok=ok)
                 if host._ui.via_events():
                     await host._ui.events.emit(ToolResultAppended(
                         tool_call_id=tool_event_id,
                         text=output,
+                        display_mode=resolved_mode,
+                        summary_max_lines=resolved_max,
                     ))
                 elif tool_node:
+                    display_output = output
+                    if resolved_mode == ToolDisplayMode.SUMMARY:
+                        lines = display_output.splitlines()
+                        if len(lines) > resolved_max:
+                            display_output = "\n".join(lines[:resolved_max]) + f"\n… +{len(lines) - resolved_max} more lines"
                     host._ui.dock.append_tool_result(
-                        output,
+                        display_output,
                         parent=tool_node,
                         tool_call_id=tool_event_id,
                     )
                 else:
                     host._ui.ui.tool_result(output)
 
-            message = None if tid == "todo" else ToolMessage(
-                content=sanitize_tool_message_content(result.output, workspace=ctx.workspace),
+            # maybe_persist before sanitize (persist needs raw content)
+            llm_content = maybe_persist_tool_result(
+                result.output, tool_event_id, tid,
+                session_id=host._session.id if host._session else "default",
+            )
+            llm_content = sanitize_tool_message_content(llm_content, workspace=ctx.workspace)
+            message = ToolMessage(
+                content=llm_content,
                 tool_call_id=cid,
             )
             return _ExecutedTool(message=message, result=result, tool_call=tc, todo_state=todo_state)
@@ -280,15 +339,16 @@ class GraphToolExecutor:
         async def execute_approved(approved: list[dict], *, serial: bool = False) -> list[_ExecutedTool]:
             if not approved:
                 return []
+            unique_calls, duplicate_sources = _dedupe_repeated_read_calls(approved)
             if serial:
                 executed = []
-                for tc in approved:
+                for tc in unique_calls:
                     executed.append(await execute_one(tc))
-                return executed
+                return _restore_deduped_read_results(approved, executed, duplicate_sources)
 
             agent_limit = _parallel_subagent_limit(host.config)
             agent_semaphore = asyncio.Semaphore(agent_limit)
-            parallel_agent_count = sum(1 for tc in approved if tc.get("name") == "agent")
+            parallel_agent_count = sum(1 for tc in unique_calls if tc.get("name") == "agent")
             aggregate_status_id = ""
             show_parallel_status = agent_limit > 1 and parallel_agent_count > 1
 
@@ -299,7 +359,7 @@ class GraphToolExecutor:
                 return await execute_one(tc)
 
             if show_parallel_status and host._ui.via_events():
-                aggregate_status_id = f"parallel-subagents:{id(last)}:{id(approved)}"
+                aggregate_status_id = f"parallel-subagents:{id(last)}:{id(unique_calls)}"
                 await host._ui.events.emit(StatusUpdated(
                     status_id=aggregate_status_id,
                     label=f"Running {parallel_agent_count} child agents",
@@ -308,14 +368,14 @@ class GraphToolExecutor:
 
             executed = []
             try:
-                executed = await asyncio.gather(*[execute_one_limited(tc) for tc in approved])
+                executed = await asyncio.gather(*[execute_one_limited(tc) for tc in unique_calls])
             finally:
                 if aggregate_status_id:
                     await host._ui.events.emit(StatusFinished(
                         status_id=aggregate_status_id,
                         label=f"Finished {parallel_agent_count} child agents",
                     ))
-            return executed
+            return _restore_deduped_read_results(approved, executed, duplicate_sources)
 
         executed: list[_ExecutedTool] = []
         denied: list[tuple[dict, str]] = []
@@ -342,6 +402,8 @@ class GraphToolExecutor:
                     _state_update_from_executed_tools(
                         segment_executed,
                         current_workflow_runs=runtime_workflow_runs,
+                        current_workflow_route=runtime_task_state.workflow_route,
+                        turn_count=turn_count,
                     )
                 )
                 pending = ([barrier] if barrier is not None else []) + suffix
@@ -367,11 +429,13 @@ class GraphToolExecutor:
             segment_executed = await execute_approved(approved, serial=True)
             executed.extend(segment_executed)
             apply_state_update(
-                _state_update_from_executed_tools(
-                    segment_executed,
-                    current_workflow_runs=runtime_workflow_runs,
+                    _state_update_from_executed_tools(
+                        segment_executed,
+                        current_workflow_runs=runtime_workflow_runs,
+                        current_workflow_route=runtime_task_state.workflow_route,
+                        turn_count=turn_count,
+                    )
                 )
-            )
             if not segment_executed or not result_ok(segment_executed[-1].result):
                 blocked_msgs.extend(_blocked_after_barrier_messages(suffix, workspace, "failed"))
                 break
@@ -434,6 +498,8 @@ def _state_update_from_executed_tools(
     executed: list[_ExecutedTool],
     *,
     current_workflow_runs: object = (),
+    current_workflow_route: object = None,
+    turn_count: int = 0,
 ) -> dict:
     update: dict = {}
     merged_workflow_runs = _merge_workflow_runs_for_state(current_workflow_runs)
@@ -459,24 +525,39 @@ def _state_update_from_executed_tools(
             elif field == "pending_approval":
                 update["pending_approval"] = data.get(field)
             elif field == "workflow_runs":
-                merged_workflow_runs = _merge_workflow_runs_for_state(
+                route_limited = _explicit_advance_route_limited_runs(
+                    item,
                     merged_workflow_runs,
-                    patch.workflow_runs,
+                    current_workflow_route=current_workflow_route,
+                    turn_count=turn_count,
                 )
+                if route_limited is not None:
+                    merged_workflow_runs = route_limited
+                    update["should_continue"] = False
+                else:
+                    merged_workflow_runs = _merge_workflow_runs_for_state(
+                        merged_workflow_runs,
+                        patch.workflow_runs,
+                    )
                 workflow_runs_changed = True
             elif field == "goal":
                 update["current_goal"] = data.get(field)
             elif field == "persona":
                 update["persona"] = data.get(field) or "coordinate"
 
-    # Auto-advance: detect review_has_issues / failed_implementation from
-    # tool results and drive DAG transitions without explicit advance_workflow.
+    # Auto-advance: detect structured tool result signals and drive DAG
+    # transitions without explicit advance_workflow.
     auto_events = _auto_advance_from_executed(executed, merged_workflow_runs)
     if auto_events:
-        merged_workflow_runs = advance_workflow_states(
-            merged_workflow_runs, auto_events,
+        merged_workflow_runs, stop_after_auto = _advance_auto_events_for_route(
+            merged_workflow_runs,
+            auto_events,
+            current_workflow_route=current_workflow_route,
+            turn_count=turn_count,
         )
         workflow_runs_changed = True
+        if stop_after_auto:
+            update["should_continue"] = False
 
     if workflow_runs_changed:
         update["workflow_runs"] = merged_workflow_runs
@@ -534,6 +615,182 @@ def _auto_advance_from_executed(
             "result": item.result,
         })
     return auto_advance_events(tool_items, workflow_runs=workflow_runs)
+
+
+def _explicit_advance_route_limited_runs(
+    item: _ExecutedTool,
+    workflow_runs: list[WorkflowRunState],
+    *,
+    current_workflow_route: object = None,
+    turn_count: int = 0,
+) -> list[WorkflowRunState] | None:
+    if item.tool_call.get("name") != "advance_workflow":
+        return None
+    metadata = getattr(item.result, "metadata", {}) or {}
+    transition = metadata.get("workflow_transition") or {}
+    if not isinstance(transition, dict):
+        return None
+    workflow = str(transition.get("from") or "").strip().lower()
+    condition = str(transition.get("condition") or "").strip().lower()
+    target = workflow_transition_target(workflow, condition)
+    if not _auto_event_satisfies_route_terminal(
+        workflow,
+        target,
+        route_start=workflow_route_start(current_workflow_route),
+        route_end=workflow_route_end(current_workflow_route),
+    ):
+        return None
+    event = WorkflowStateEvent(
+        workflow=workflow,
+        kind=WorkflowStateEventKind.SATISFIED,
+        ref="tool:advance_workflow",
+        ok=True,
+        summary=str(transition.get("summary") or ""),
+        reason=str(transition.get("evidence") or ""),
+        condition=condition,
+    )
+    return _satisfy_workflow_without_transition(workflow_runs, event, turn_count=turn_count)
+
+
+def _advance_auto_events_for_route(
+    workflow_runs: list[WorkflowRunState],
+    auto_events: list,
+    *,
+    current_workflow_route: object = None,
+    turn_count: int = 0,
+) -> tuple[list[WorkflowRunState], bool]:
+    route_start = workflow_route_start(current_workflow_route)
+    route_end = workflow_route_end(current_workflow_route)
+    runs = list(workflow_runs)
+    should_stop = False
+    for event in auto_events:
+        target = workflow_transition_target(event.workflow, event.condition)
+        if _auto_event_satisfies_route_terminal(
+            event.workflow,
+            target,
+            route_start=route_start,
+            route_end=route_end,
+        ):
+            runs = _satisfy_workflow_without_transition(runs, event, turn_count=turn_count)
+            should_stop = True
+            continue
+        runs = advance_workflow_states(runs, [event])
+        if _auto_event_should_stop_after_transition(
+            event.ok,
+            target,
+            route_end=route_end,
+        ):
+            should_stop = True
+    return runs, should_stop
+
+
+def _auto_event_satisfies_route_terminal(
+    workflow: str,
+    target: str,
+    *,
+    route_start: str,
+    route_end: str,
+) -> bool:
+    if not route_end or workflow != route_end:
+        return False
+    if not target:
+        return True
+    if route_start and route_start != route_end and workflow_path_reaches(target, route_end):
+        return False
+    return True
+
+
+def _auto_event_should_stop_after_transition(
+    ok: bool | None,
+    target: str,
+    *,
+    route_end: str,
+) -> bool:
+    if route_end:
+        return bool(target) and target != route_end and not workflow_path_reaches(target, route_end)
+    return ok is False
+
+
+def _satisfy_workflow_without_transition(
+    workflow_runs: list[WorkflowRunState],
+    event,
+    *,
+    turn_count: int = 0,
+) -> list[WorkflowRunState]:
+    target = str(getattr(event, "workflow", "") or "").strip().lower()
+    updated: list[WorkflowRunState] = []
+    for run in workflow_runs:
+        copy = run.model_copy(deep=True)
+        if copy.name == target and copy.status == WorkflowRunStatus.ACTIVE:
+            copy.status = WorkflowRunStatus.SATISFIED
+            copy.updated_turn = turn_count
+            copy.blocked_reason = ""
+            copy.evidence.append(
+                WorkflowEvidence(
+                    kind=event.kind.value,
+                    ref=event.ref,
+                    ok=event.ok,
+                    summary=event.summary,
+                    condition=event.condition,
+                )
+            )
+        updated.append(copy)
+    return updated
+
+
+def _dedupe_repeated_read_calls(tool_calls: list[dict]) -> tuple[list[dict], dict[str, str]]:
+    unique: list[dict] = []
+    duplicate_sources: dict[str, str] = {}
+    seen_reads: dict[str, str] = {}
+    for call in tool_calls:
+        if call.get("name") != "read":
+            seen_reads.clear()
+            unique.append(call)
+            continue
+
+        key = _read_call_key(call)
+        call_id = str(call.get("id") or "")
+        if key in seen_reads and call_id:
+            duplicate_sources[call_id] = seen_reads[key]
+            continue
+
+        seen_reads[key] = call_id or "earlier read"
+        unique.append(call)
+    return unique, duplicate_sources
+
+
+def _read_call_key(tool_call: dict) -> str:
+    args = tool_call.get("args") or {}
+    return json.dumps(args, sort_keys=True, separators=(",", ":"), default=str)
+
+
+def _restore_deduped_read_results(
+    original_calls: list[dict],
+    unique_executed: list[_ExecutedTool],
+    duplicate_sources: dict[str, str],
+) -> list[_ExecutedTool]:
+    if not duplicate_sources:
+        return unique_executed
+
+    restored: list[_ExecutedTool] = []
+    unique_iter = iter(unique_executed)
+    for call in original_calls:
+        call_id = str(call.get("id") or "")
+        source = duplicate_sources.get(call_id)
+        if source is None:
+            restored.append(next(unique_iter))
+            continue
+        output = f"Skipped duplicate read; same arguments already requested in tool call {source}."
+        restored.append(_ExecutedTool(
+            message=ToolMessage(content=output, tool_call_id=call_id),
+            result=ToolResult(
+                title="read: duplicate skipped",
+                output=output,
+                metadata={"deduplicated": True, "duplicate_of": source},
+            ),
+            tool_call=call,
+        ))
+    return restored
 
 
 def _terminal_workflow_completed(

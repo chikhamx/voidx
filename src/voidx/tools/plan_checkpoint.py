@@ -143,6 +143,7 @@ def _decision_result(
     return ToolResult(
         title=f"plan: {decision}",
         output=json.dumps(result.model_dump(mode="json"), ensure_ascii=False, indent=2),
+        summary=f"plan {decision}",
         metadata={
             "plan_decision": decision,
             "state_patch": patch.model_dump(mode="json", exclude_unset=True),

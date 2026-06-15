@@ -147,6 +147,7 @@ class AgentTool(BaseTool):
             return ToolResult(
                 title=f"{agent_def_name}/{runtime_persona}: {inp.description[:60]}",
                 output=output,
+                summary=f"{agent_def_name}/{runtime_persona} completed",
                 metadata={
                     "agent": agent_def_name,
                     "persona": runtime_persona,

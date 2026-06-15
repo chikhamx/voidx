@@ -97,6 +97,7 @@ async def call_mcp_web_tool(
     return ToolResult(
         title=title,
         output=format_mcp_call_result(result),
+        summary=f"MCP {kind} via {route.server}/{route.tool}",
         metadata={
             "backend": "mcp",
             "kind": kind,

@@ -59,6 +59,7 @@ class GlobTool(BaseTool):
         return ToolResult(
             title=f"Glob: {inp.pattern} → {total} files",
             output="\n".join(shown),
+            summary=f"{total} files matched",
             metadata={"pattern": inp.pattern, "matches": total, "truncated": total > 200},
         )
 
@@ -151,5 +152,6 @@ class GrepTool(BaseTool):
         return ToolResult(
             title=f"Grep: {inp.pattern} → {count} matches",
             output="\n".join(results),
+            summary=f"{count} matches",
             metadata={"pattern": inp.pattern, "matches": count},
         )

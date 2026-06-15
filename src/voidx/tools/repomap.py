@@ -97,6 +97,7 @@ class RepoMapTool(BaseTool):
         return ToolResult(
             title=f"Repo map: {root.relative_to(base)} ({len(entries)} files)",
             output="\n".join(entries),
+            summary=f"{len(entries)} files mapped",
             metadata={
                 "root": str(root.relative_to(base)),
                 "files": len(entries),

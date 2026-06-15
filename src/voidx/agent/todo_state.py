@@ -12,8 +12,15 @@ from voidx.agent.task_state import TodoRunItem, TodoRunState
 
 
 _DSML_MARKER_RE = r"\|\|DSML\|\|"
-_DSML_TODO_INVOKE_RE = re.compile(
-    rf"<{_DSML_MARKER_RE}invoke\b(?=[^>]*\bname=\"todo\")[^>]*>.*?</{_DSML_MARKER_RE}invoke>",
+# Tools whose ToolMessage should be sanitized on replay.
+# This is the source of truth — display_policy.DEFAULT_DISPLAY_RULES references this set
+# via REPLAY_SANITIZED_TOOL_NAMES to keep replay_sanitize flags in sync.
+_REPLAY_SANITIZED_TOOL_NAMES = frozenset({
+    "todo",
+})
+_REPLAY_SANITIZED_TOOL_PATTERN = "|".join(sorted(map(re.escape, _REPLAY_SANITIZED_TOOL_NAMES)))
+_DSML_RUNTIME_INVOKE_RE = re.compile(
+    rf"<{_DSML_MARKER_RE}invoke\b(?=[^>]*\bname=\"(?:{_REPLAY_SANITIZED_TOOL_PATTERN})\")[^>]*>.*?</{_DSML_MARKER_RE}invoke>",
     re.DOTALL,
 )
 
@@ -60,14 +67,26 @@ def apply_todo_state_to_host(host: object, raw_state: object) -> None:
             tracker.clear_todos()
 
 
-def sanitize_todo_replay_messages(messages: list[BaseMessage]) -> list[BaseMessage]:
-    """Remove todo tool calls and matching tool results from semantic replay."""
+def sanitize_todo_replay_messages(
+    messages: list[BaseMessage],
+    *,
+    preserve_latest_tool_exchange: bool = False,
+    preserve_trailing_ai_tool_calls: bool = False,
+) -> list[BaseMessage]:
+    """Remove runtime-only tool calls and matching tool results from semantic replay."""
     sanitized: list[BaseMessage] = []
     removed_tool_call_ids: set[str] = set()
+    preserved_tool_call_ids = (
+        _latest_runtime_tool_exchange_ids(messages)
+        if preserve_latest_tool_exchange
+        else set()
+    )
+    if preserve_trailing_ai_tool_calls:
+        preserved_tool_call_ids.update(_trailing_ai_runtime_tool_call_ids(messages))
 
     for message in messages:
         if isinstance(message, AIMessage):
-            cleaned = _sanitize_ai_todo_calls(message)
+            cleaned = _sanitize_ai_runtime_calls(message, preserved_tool_call_ids)
             removed_tool_call_ids.update(cleaned.removed_ids)
             if cleaned.message is not None:
                 sanitized.append(cleaned.message)
@@ -89,7 +108,7 @@ class _SanitizedAI:
         self.removed_ids = removed_ids
 
 
-def _sanitize_ai_todo_calls(message: AIMessage) -> _SanitizedAI:
+def _sanitize_ai_runtime_calls(message: AIMessage, preserved_ids: set[str]) -> _SanitizedAI:
     removed_ids: set[str] = set()
     kept_calls: list[dict[str, Any]] = []
     calls_changed = False
@@ -98,18 +117,19 @@ def _sanitize_ai_todo_calls(message: AIMessage) -> _SanitizedAI:
         if not isinstance(call, dict):
             kept_calls.append(call)
             continue
-        if call.get("name") == "todo":
+        call_id = str(call.get("id") or "")
+        if call.get("name") in _REPLAY_SANITIZED_TOOL_NAMES and call_id not in preserved_ids:
             calls_changed = True
-            call_id = call.get("id")
             if call_id:
-                removed_ids.add(str(call_id))
+                removed_ids.add(call_id)
             continue
         kept_calls.append(call)
 
-    content, content_changed = _sanitize_todo_content(message.content, removed_ids)
-    additional_kwargs, kwargs_changed = _sanitize_todo_additional_kwargs(
+    content, content_changed = _sanitize_runtime_tool_content(message.content, removed_ids, preserved_ids)
+    additional_kwargs, kwargs_changed = _sanitize_runtime_tool_additional_kwargs(
         getattr(message, "additional_kwargs", {}) or {},
         removed_ids,
+        preserved_ids,
     )
 
     if not calls_changed and not content_changed and not kwargs_changed:
@@ -127,9 +147,13 @@ def _sanitize_ai_todo_calls(message: AIMessage) -> _SanitizedAI:
     return _SanitizedAI(message.model_copy(update=update), removed_ids)
 
 
-def _sanitize_todo_content(content: object, removed_ids: set[str]) -> tuple[object, bool]:
+def _sanitize_runtime_tool_content(
+    content: object,
+    removed_ids: set[str],
+    preserved_ids: set[str],
+) -> tuple[object, bool]:
     if isinstance(content, str):
-        cleaned = _DSML_TODO_INVOKE_RE.sub("", content)
+        cleaned = _DSML_RUNTIME_INVOKE_RE.sub("", content)
         return cleaned, cleaned != content
     if not isinstance(content, list):
         return content, False
@@ -141,9 +165,11 @@ def _sanitize_todo_content(content: object, removed_ids: set[str]) -> tuple[obje
             block_type = item.get("type")
             block_id = str(item.get("id") or "")
             block_name = item.get("name")
-            if block_type == "tool_use" and (
-                block_name == "todo" or (block_id and block_id in removed_ids)
-            ):
+            should_remove = block_type == "tool_use" and (
+                block_name in _REPLAY_SANITIZED_TOOL_NAMES
+                or (block_id and block_id in removed_ids)
+            )
+            if should_remove and block_id not in preserved_ids:
                 changed = True
                 if block_id:
                     removed_ids.add(block_id)
@@ -152,9 +178,10 @@ def _sanitize_todo_content(content: object, removed_ids: set[str]) -> tuple[obje
     return kept, changed
 
 
-def _sanitize_todo_additional_kwargs(
+def _sanitize_runtime_tool_additional_kwargs(
     additional_kwargs: dict[str, Any],
     removed_ids: set[str],
+    preserved_ids: set[str],
 ) -> tuple[dict[str, Any], bool]:
     raw_calls = additional_kwargs.get("tool_calls")
     if not isinstance(raw_calls, list):
@@ -169,7 +196,8 @@ def _sanitize_todo_additional_kwargs(
         function = call.get("function")
         name = function.get("name") if isinstance(function, dict) else call.get("name")
         call_id = str(call.get("id") or "")
-        if name == "todo" or (call_id and call_id in removed_ids):
+        should_remove = name in _REPLAY_SANITIZED_TOOL_NAMES or (call_id and call_id in removed_ids)
+        if should_remove and call_id not in preserved_ids:
             changed = True
             if call_id:
                 removed_ids.add(call_id)
@@ -184,6 +212,41 @@ def _sanitize_todo_additional_kwargs(
     else:
         update.pop("tool_calls", None)
     return update, True
+
+
+def _latest_runtime_tool_exchange_ids(messages: list[BaseMessage]) -> set[str]:
+    trailing_tool_ids: set[str] = set()
+    index = len(messages) - 1
+    while index >= 0 and isinstance(messages[index], ToolMessage):
+        tool_call_id = str(getattr(messages[index], "tool_call_id", "") or "")
+        if tool_call_id:
+            trailing_tool_ids.add(tool_call_id)
+        index -= 1
+
+    if not trailing_tool_ids or index < 0 or not isinstance(messages[index], AIMessage):
+        return set()
+
+    preserved: set[str] = set()
+    for call in getattr(messages[index], "tool_calls", None) or []:
+        if not isinstance(call, dict):
+            continue
+        call_id = str(call.get("id") or "")
+        if call_id in trailing_tool_ids and call.get("name") in _REPLAY_SANITIZED_TOOL_NAMES:
+            preserved.add(call_id)
+    return preserved
+
+
+def _trailing_ai_runtime_tool_call_ids(messages: list[BaseMessage]) -> set[str]:
+    if not messages or not isinstance(messages[-1], AIMessage):
+        return set()
+    preserved: set[str] = set()
+    for call in getattr(messages[-1], "tool_calls", None) or []:
+        if not isinstance(call, dict):
+            continue
+        call_id = str(call.get("id") or "")
+        if call_id and call.get("name") in _REPLAY_SANITIZED_TOOL_NAMES:
+            preserved.add(call_id)
+    return preserved
 
 
 def _is_empty_content(content: object) -> bool:

@@ -118,6 +118,7 @@ class LoadSkillsTool(BaseTool):
         return ToolResult(
             title=f"Loaded skills: {', '.join(item['name'] for item in loaded)}",
             output=output,
+            summary=f"loaded {len(loaded)} skills",
             metadata={
                 "loaded_skills": loaded,
                 "count": len(loaded),

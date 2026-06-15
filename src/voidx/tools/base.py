@@ -38,6 +38,7 @@ class ToolResult(BaseModel):
     """Result from tool execution. Typed so the agent can reason about it."""
     title: str = ""
     output: str
+    summary: str = ""
     metadata: dict = {}
     diff: str | None = None  # unified diff for edit/write tools
 
@@ -72,6 +73,7 @@ class ToolContext(BaseModel):
     goal_target: str = ""
     active_workflow_names: list[str] = Field(default_factory=list)
     workflow_runs: list[WorkflowRunState] = Field(default_factory=list)
+    workflow_route: dict[str, str] | None = None
     file_mtimes: dict[str, float] = Field(default_factory=dict)
     mcp_manager: Any | None = None
     lsp_manager: Any | None = None

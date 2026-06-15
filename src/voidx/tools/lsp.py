@@ -2,119 +2,93 @@
 
 from __future__ import annotations
 
+from typing import Literal
+
 from pydantic import BaseModel, Field
 
 from voidx.diffing import make_file_diff
 from voidx.lsp.errors import LspError
 from voidx.lsp.service import LspService
 from voidx.tools.base import BaseTool, ToolContext, ToolResult, model_to_json_schema, resolve_safe
+from voidx.tools.file_state import save_file_version
 
 
-class LspDiagnosticsInput(BaseModel):
+class LspInput(BaseModel):
+    operation: Literal[
+        "diagnostics",
+        "definition",
+        "references",
+        "symbols",
+    ] = Field(description="The LSP operation to perform.")
+
     file_path: str | None = Field(
         default=None,
-        description="File to check. If omitted, returns cached diagnostics for already opened files.",
+        description="Absolute or relative path to the file. "
+        "Required for all operations except diagnostics (when omitted, returns cached diagnostics for opened files).",
+    )
+
+    line: int = Field(
+        default=1,
+        ge=1,
+        description="1-based line number. Required for definition, references.",
+    )
+
+    character: int = Field(
+        default=0,
+        ge=0,
+        description="0-based character offset. Required for definition, references.",
+    )
+
+    include_declaration: bool = Field(
+        default=True,
+        description="Include the symbol declaration in results. Only for references operation.",
     )
 
 
-class LspSymbolsInput(BaseModel):
-    file_path: str | None = Field(default=None, description="File for document symbols.")
-    query: str = Field(default="", description="Workspace symbol query when file_path is omitted.")
+class LspTool(BaseTool):
+    id = "lsp"
+    description = "Language server operations: diagnostics, definitions, references, and document symbols."
+
+    def parameters_schema(self) -> dict:
+        return model_to_json_schema(LspInput)
+
+    async def execute(self, args: dict, ctx: ToolContext) -> ToolResult:
+        inp = LspInput.model_validate(args)
+        service = _service(ctx)
+        if service is None:
+            return ToolResult(output="LSP manager not available.", metadata={"error": True})
+
+        try:
+            if inp.operation == "diagnostics":
+                output = await service.diagnostics(inp.file_path)
+                return ToolResult(title="LSP diagnostics", output=output, summary=f"diagnostics for {inp.file_path}")
+            elif inp.operation == "symbols":
+                query = ""
+                output = await service.symbols(inp.file_path, query)
+                return ToolResult(title="LSP symbols", output=output, summary=f"symbols for {inp.file_path}")
+            elif inp.operation == "definition":
+                if inp.file_path is None:
+                    return ToolResult(output="file_path is required for definition operation.", metadata={"error": True})
+                output = await service.definition(inp.file_path, inp.line, inp.character)
+                return ToolResult(title="LSP definition", output=output, summary=f"definition at {inp.file_path}:{inp.line}")
+            elif inp.operation == "references":
+                if inp.file_path is None:
+                    return ToolResult(output="file_path is required for references operation.", metadata={"error": True})
+                output = await service.references(
+                    inp.file_path, inp.line, inp.character,
+                    include_declaration=inp.include_declaration,
+                )
+                return ToolResult(title="LSP references", output=output, summary=f"references at {inp.file_path}:{inp.line}")
+            else:
+                return ToolResult(output=f"Unknown LSP operation: {inp.operation}", metadata={"error": True})
+        except LspError as exc:
+            return ToolResult(output=f"LSP {inp.operation} failed: {exc}", metadata={"error": True})
 
 
-class LspPositionInput(BaseModel):
-    file_path: str = Field(description="File containing the position.")
-    line: int = Field(description="1-based line number.", ge=1)
-    character: int = Field(default=0, description="0-based character offset.", ge=0)
-
-
-class LspReferencesInput(LspPositionInput):
-    include_declaration: bool = Field(default=True, description="Include the symbol declaration in results.")
-
+# ── LspFormatTool kept but not registered ───────────────────────────────────
 
 class LspFormatInput(BaseModel):
     file_path: str = Field(description="File to format with the configured language server.")
-
-
-class LspDiagnosticsTool(BaseTool):
-    id = "lsp_diagnostics"
-    description = "Get LSP diagnostics for a file, or cached diagnostics for opened files when file_path is omitted."
-
-    def parameters_schema(self) -> dict:
-        return model_to_json_schema(LspDiagnosticsInput)
-
-    async def execute(self, args: dict, ctx: ToolContext) -> ToolResult:
-        inp = LspDiagnosticsInput.model_validate(args)
-        service = _service(ctx)
-        if service is None:
-            return ToolResult(output="LSP manager not available.", metadata={"error": True})
-        try:
-            output = await service.diagnostics(inp.file_path)
-            return ToolResult(title="LSP diagnostics", output=output)
-        except LspError as exc:
-            return ToolResult(output=f"LSP diagnostics failed: {exc}", metadata={"error": True})
-
-
-class LspSymbolsTool(BaseTool):
-    id = "lsp_symbols"
-    description = "List document symbols for file_path, or workspace symbols for query."
-
-    def parameters_schema(self) -> dict:
-        return model_to_json_schema(LspSymbolsInput)
-
-    async def execute(self, args: dict, ctx: ToolContext) -> ToolResult:
-        inp = LspSymbolsInput.model_validate(args)
-        service = _service(ctx)
-        if service is None:
-            return ToolResult(output="LSP manager not available.", metadata={"error": True})
-        try:
-            output = await service.symbols(inp.file_path, inp.query)
-            return ToolResult(title="LSP symbols", output=output)
-        except LspError as exc:
-            return ToolResult(output=f"LSP symbols failed: {exc}", metadata={"error": True})
-
-
-class LspDefinitionTool(BaseTool):
-    id = "lsp_definition"
-    description = "Find definition locations for a symbol at file_path:line:character."
-
-    def parameters_schema(self) -> dict:
-        return model_to_json_schema(LspPositionInput)
-
-    async def execute(self, args: dict, ctx: ToolContext) -> ToolResult:
-        inp = LspPositionInput.model_validate(args)
-        service = _service(ctx)
-        if service is None:
-            return ToolResult(output="LSP manager not available.", metadata={"error": True})
-        try:
-            output = await service.definition(inp.file_path, inp.line, inp.character)
-            return ToolResult(title="LSP definition", output=output)
-        except LspError as exc:
-            return ToolResult(output=f"LSP definition failed: {exc}", metadata={"error": True})
-
-
-class LspReferencesTool(BaseTool):
-    id = "lsp_references"
-    description = "Find references for a symbol at file_path:line:character."
-
-    def parameters_schema(self) -> dict:
-        return model_to_json_schema(LspReferencesInput)
-
-    async def execute(self, args: dict, ctx: ToolContext) -> ToolResult:
-        inp = LspReferencesInput.model_validate(args)
-        service = _service(ctx)
-        if service is None:
-            return ToolResult(output="LSP manager not available.", metadata={"error": True})
-        try:
-            output = await service.references(
-                inp.file_path,
-                inp.line,
-                inp.character,
-                include_declaration=inp.include_declaration,
-            )
-            return ToolResult(title="LSP references", output=output)
-        except LspError as exc:
-            return ToolResult(output=f"LSP references failed: {exc}", metadata={"error": True})
 
 
 class LspFormatTool(BaseTool):
@@ -129,11 +103,13 @@ class LspFormatTool(BaseTool):
         service = _service(ctx)
         if service is None:
             return ToolResult(output="LSP manager not available.", metadata={"error": True})
+        path = resolve_safe(ctx.workspace, inp.file_path, ctx.sandbox_extra_paths)
+        if path is not None and path.exists() and path.is_file():
+            await save_file_version(ctx, path, display_path=inp.file_path, tool_name=self.id)
         try:
             changed, old_text, new_text = await service.format(inp.file_path)
         except LspError as exc:
             return ToolResult(output=f"LSP format failed: {exc}", metadata={"error": True})
-        path = resolve_safe(ctx.workspace, inp.file_path, ctx.sandbox_extra_paths)
         if path is not None and path.exists():
             ctx.file_mtimes[str(path.resolve())] = path.stat().st_mtime
         if not changed:

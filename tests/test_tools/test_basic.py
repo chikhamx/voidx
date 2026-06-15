@@ -14,7 +14,9 @@ import pytest
 from langchain_core.messages import ToolMessage
 
 from voidx.tools.base import ToolContext, ToolResult, BaseTool, UserInteraction, UserResponse
-from voidx.tools.file_ops import FileReadInput, FileWriteInput, FileEditInput, EditEntry, FileWriteTool
+from voidx.tools.file_ops import FileReadInput, FileWriteInput, FileEditInput, EditEntry, FileWriteTool, FileEditTool
+from voidx.tools.file_state import save_file_version
+import voidx.tools.file_state as file_state
 from voidx.tools.search import GlobInput, GrepInput
 from voidx.tools.bash import BashInput
 from voidx.tools.agent import AgentInput, AgentTool
@@ -30,6 +32,7 @@ from voidx.agent.task_state import GoalType, ToolStatePatch, PendingApproval, go
 from voidx.agent.runtime_context import TaskIntent
 from voidx.skills.context import SKILL_TOOL_CONTEXT_MARKER
 from voidx.workflow.runtime import WorkflowRunState, WorkflowRunStatus
+import voidx.memory.store as store
 
 
 class TestToolSchemas:
@@ -126,11 +129,8 @@ class TestToolRegistry:
         assert "plan_checkpoint" in ids
         assert "advance_workflow" in ids
         assert "load_skills" in ids
-        assert "lsp_diagnostics" in ids
-        assert "lsp_symbols" in ids
-        assert "lsp_definition" in ids
-        assert "lsp_references" in ids
-        assert "lsp_format" in ids
+        assert "lsp" in ids
+        assert "lsp_format" not in ids
 
     def test_tools_for_llm(self):
         r = ToolRegistry()
@@ -181,6 +181,100 @@ class TestToolRegistry:
 
 
 class TestInteractiveTools:
+    @pytest.mark.asyncio
+    async def test_write_tool_saves_existing_file_version_before_overwrite(self, tmp_path, monkeypatch):
+        monkeypatch.setattr(store, "DATA_DIR", tmp_path / ".voidx")
+        target = tmp_path / "app.py"
+        target.write_text("old\n", encoding="utf-8")
+
+        result = await FileWriteTool().execute(
+            {"file_path": "app.py", "content": "new\n"},
+            ToolContext(workspace=str(tmp_path), session_id="sid-1"),
+        )
+
+        assert result.metadata.get("error") is not True
+        history_dir = store.DATA_DIR / "sessions" / "sid-1" / "file-history"
+        manifest_rows = [
+            json.loads(line)
+            for line in (history_dir / "manifest.jsonl").read_text(encoding="utf-8").splitlines()
+        ]
+        assert len(manifest_rows) == 1
+        row = manifest_rows[0]
+        assert row["path"] == "app.py"
+        assert row["version"] == 1
+        assert row["snapshot"].endswith("@v1")
+        assert (history_dir / row["snapshot"]).read_text(encoding="utf-8") == "old\n"
+
+    @pytest.mark.asyncio
+    async def test_write_tool_does_not_save_file_version_for_created_file(self, tmp_path, monkeypatch):
+        monkeypatch.setattr(store, "DATA_DIR", tmp_path / ".voidx")
+
+        result = await FileWriteTool().execute(
+            {"file_path": "created.py", "content": "hello\n"},
+            ToolContext(workspace=str(tmp_path), session_id="sid-1"),
+        )
+
+        assert result.metadata.get("error") is not True
+        assert not (store.DATA_DIR / "sessions" / "sid-1" / "file-history").exists()
+
+    @pytest.mark.asyncio
+    async def test_edit_tool_saves_next_file_version_before_edit(self, tmp_path, monkeypatch):
+        monkeypatch.setattr(store, "DATA_DIR", tmp_path / ".voidx")
+        target = tmp_path / "app.py"
+        target.write_text("one\n", encoding="utf-8")
+        ctx = ToolContext(workspace=str(tmp_path), session_id="sid-1")
+
+        await FileWriteTool().execute({"file_path": "app.py", "content": "two\n"}, ctx)
+        result = await FileEditTool().execute(
+            {"file_path": "app.py", "edits": [{"old_string": "two", "new_string": "three"}]},
+            ctx,
+        )
+
+        assert result.metadata.get("error") is not True
+        history_dir = store.DATA_DIR / "sessions" / "sid-1" / "file-history"
+        rows = [
+            json.loads(line)
+            for line in (history_dir / "manifest.jsonl").read_text(encoding="utf-8").splitlines()
+        ]
+        assert [row["version"] for row in rows] == [1, 2]
+        assert (history_dir / rows[0]["snapshot"]).read_text(encoding="utf-8") == "one\n"
+        assert (history_dir / rows[1]["snapshot"]).read_text(encoding="utf-8") == "two\n"
+
+    @pytest.mark.asyncio
+    async def test_save_file_version_uses_full_hash_name_on_short_hash_collision(self, tmp_path, monkeypatch):
+        monkeypatch.setattr(store, "DATA_DIR", tmp_path / ".voidx")
+        first = tmp_path / "first.py"
+        second = tmp_path / "second.py"
+        first.write_text("first\n", encoding="utf-8")
+        second.write_text("second\n", encoding="utf-8")
+        hashes = iter([
+            "a" * 16 + "1" * 48,
+            "a" * 16 + "2" * 48,
+        ])
+
+        class FakeHash:
+            def __init__(self, value: str):
+                self._value = value
+
+            def hexdigest(self) -> str:
+                return self._value
+
+        monkeypatch.setattr(file_state.hashlib, "sha256", lambda _value: FakeHash(next(hashes)))
+        ctx = ToolContext(workspace=str(tmp_path), session_id="sid-1")
+
+        await save_file_version(ctx, first, display_path="first.py", tool_name="edit")
+        await save_file_version(ctx, second, display_path="second.py", tool_name="edit")
+
+        history_dir = store.DATA_DIR / "sessions" / "sid-1" / "file-history"
+        rows = [
+            json.loads(line)
+            for line in (history_dir / "manifest.jsonl").read_text(encoding="utf-8").splitlines()
+        ]
+        assert rows[0]["snapshot"] == f"{'a' * 16}@v1"
+        assert rows[1]["snapshot"] == f"{'a' * 16}{'2' * 48}@v1"
+        assert (history_dir / rows[0]["snapshot"]).read_text(encoding="utf-8") == "first\n"
+        assert (history_dir / rows[1]["snapshot"]).read_text(encoding="utf-8") == "second\n"
+
     @pytest.mark.asyncio
     async def test_agent_tool_fails_when_max_steps_missing(self, tmp_path):
         calls: list[object] = []
@@ -1219,6 +1313,33 @@ class TestStateUpdateFromExecutedTools:
         assert "feedback" in by_name
         assert by_name["feedback"].status == WorkflowRunStatus.ACTIVE
 
+    def test_auto_advance_route_terminal_updates_turn(self):
+        from voidx.agent.graph.tool_executor import _state_update_from_executed_tools, _ExecutedTool
+
+        current = [
+            WorkflowRunState(
+                name="review",
+                status=WorkflowRunStatus.ACTIVE,
+                updated_turn=3,
+            ),
+        ]
+        msg = ToolMessage(content="review result", tool_call_id="c1")
+        result = ToolResult(
+            output="verdict: FAIL\n\n## Issues\n- bug found",
+            metadata={"agent": "review"},
+        )
+        executed = [_ExecutedTool(message=msg, result=result, tool_call={"name": "agent"})]
+        update = _state_update_from_executed_tools(
+            executed,
+            current_workflow_runs=current,
+            current_workflow_route={"start": "review", "end": "review"},
+            turn_count=9,
+        )
+
+        by_name = {r.name: r for r in update["workflow_runs"]}
+        assert by_name["review"].status == WorkflowRunStatus.SATISFIED
+        assert by_name["review"].updated_turn == 9
+
     def test_auto_advance_failed_implementation(self):
         from voidx.agent.graph.tool_executor import _state_update_from_executed_tools, _ExecutedTool
 
@@ -1240,6 +1361,51 @@ class TestStateUpdateFromExecutedTools:
         assert by_name["verify"].status == WorkflowRunStatus.SATISFIED
         assert "tdd" in by_name
         assert by_name["tdd"].status == WorkflowRunStatus.ACTIVE
+
+    def test_auto_advance_failed_implementation_without_route_stops_generically(self):
+        from voidx.agent.graph.tool_executor import _state_update_from_executed_tools, _ExecutedTool
+
+        current = [
+            WorkflowRunState(
+                name="verify",
+                status=WorkflowRunStatus.ACTIVE,
+            ),
+        ]
+        msg = ToolMessage(content="test output", tool_call_id="c1")
+        result = ToolResult(
+            output="1 failed, 2 passed",
+            metadata={"exit_code": 1, "command": "pytest tests/"},
+        )
+        executed = [_ExecutedTool(message=msg, result=result, tool_call={"name": "bash"})]
+        update = _state_update_from_executed_tools(executed, current_workflow_runs=current)
+
+        assert update["should_continue"] is False
+
+    def test_auto_advance_failed_implementation_can_loop_back_to_route_end(self):
+        from voidx.agent.graph.tool_executor import _state_update_from_executed_tools, _ExecutedTool
+
+        current = [
+            WorkflowRunState(
+                name="verify",
+                status=WorkflowRunStatus.ACTIVE,
+            ),
+        ]
+        msg = ToolMessage(content="test output", tool_call_id="c1")
+        result = ToolResult(
+            output="1 failed, 2 passed",
+            metadata={"exit_code": 1, "command": "pytest tests/"},
+        )
+        executed = [_ExecutedTool(message=msg, result=result, tool_call={"name": "bash"})]
+        update = _state_update_from_executed_tools(
+            executed,
+            current_workflow_runs=current,
+            current_workflow_route={"start": "tdd", "end": "verify"},
+        )
+
+        by_name = {r.name: r for r in update["workflow_runs"]}
+        assert by_name["verify"].status == WorkflowRunStatus.SATISFIED
+        assert by_name["tdd"].status == WorkflowRunStatus.ACTIVE
+        assert update.get("should_continue", True) is True
 
     def test_auto_advance_skipped_when_node_already_satisfied(self):
         from voidx.agent.graph.tool_executor import _state_update_from_executed_tools, _ExecutedTool
@@ -1292,6 +1458,103 @@ class TestAdvanceWorkflowTool:
         assert by_name["tdd"].status == WorkflowRunStatus.SATISFIED
         assert by_name["tdd"].evidence[0].condition == "implemented"
         assert by_name["verify"].status == WorkflowRunStatus.ACTIVE
+
+    @pytest.mark.asyncio
+    async def test_advance_workflow_leaves_route_boundaries_to_runtime(self, tmp_path):
+        ctx = ToolContext(
+            workspace=str(tmp_path),
+            workflow_route={"start": "review", "end": "review"},
+            workflow_runs=[
+                WorkflowRunState(
+                    name="review",
+                    status=WorkflowRunStatus.ACTIVE,
+                )
+            ],
+        )
+        result = await ToolRegistry().execute_tool(
+            "advance_workflow",
+            {
+                "workflow": "review",
+                "condition": "review_has_issues",
+                "evidence": "review verdict failed with actionable issues",
+                "summary": "review completed",
+            },
+            ctx,
+        )
+
+        payload = json.loads(result.output)
+        patch = ToolStatePatch.model_validate(result.metadata["state_patch"])
+        by_name = {run.name: run for run in patch.workflow_runs}
+
+        assert result.metadata.get("error") is not True
+        assert payload["from"] == "review"
+        assert payload["activated"] == ["feedback"]
+        assert by_name["review"].status == WorkflowRunStatus.SATISFIED
+        assert by_name["feedback"].status == WorkflowRunStatus.ACTIVE
+
+    @pytest.mark.asyncio
+    async def test_advance_workflow_does_not_error_on_non_review_route_boundary(self, tmp_path):
+        ctx = ToolContext(
+            workspace=str(tmp_path),
+            workflow_route={"start": "tdd", "end": "tdd"},
+            workflow_runs=[
+                WorkflowRunState(
+                    name="tdd",
+                    status=WorkflowRunStatus.ACTIVE,
+                )
+            ],
+        )
+        result = await ToolRegistry().execute_tool(
+            "advance_workflow",
+            {
+                "workflow": "tdd",
+                "condition": "implemented",
+                "evidence": "implementation complete with focused test coverage",
+                "summary": "implementation complete",
+            },
+            ctx,
+        )
+
+        payload = json.loads(result.output)
+        patch = ToolStatePatch.model_validate(result.metadata["state_patch"])
+        by_name = {run.name: run for run in patch.workflow_runs}
+
+        assert result.metadata.get("error") is not True
+        assert payload["from"] == "tdd"
+        assert payload["activated"] == ["verify"]
+        assert by_name["tdd"].status == WorkflowRunStatus.SATISFIED
+        assert by_name["verify"].status == WorkflowRunStatus.ACTIVE
+
+    @pytest.mark.asyncio
+    async def test_advance_workflow_allows_transition_on_path_to_route_end(self, tmp_path):
+        ctx = ToolContext(
+            workspace=str(tmp_path),
+            workflow_route={"start": "review", "end": "verify"},
+            workflow_runs=[
+                WorkflowRunState(
+                    name="review",
+                    status=WorkflowRunStatus.ACTIVE,
+                )
+            ],
+        )
+        result = await ToolRegistry().execute_tool(
+            "advance_workflow",
+            {
+                "workflow": "review",
+                "condition": "review_has_issues",
+                "evidence": "review verdict failed with actionable issues",
+                "summary": "review completed",
+            },
+            ctx,
+        )
+
+        payload = json.loads(result.output)
+        patch = ToolStatePatch.model_validate(result.metadata["state_patch"])
+        by_name = {run.name: run for run in patch.workflow_runs}
+
+        assert payload["from"] == "review"
+        assert payload["activated"] == ["feedback"]
+        assert by_name["feedback"].status == WorkflowRunStatus.ACTIVE
 
     @pytest.mark.asyncio
     @pytest.mark.parametrize(
@@ -1422,6 +1685,7 @@ class TestAdvanceWorkflowTool:
         )
 
         assert result.metadata["error"] is True
+        assert result.summary
         assert "evidence" in result.output.lower()
         assert "gate" in result.output.lower()
         assert "state_patch" not in result.metadata
