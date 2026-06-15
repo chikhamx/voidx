@@ -15,8 +15,8 @@ def test_committed_count_tracks_flushed_lines():
     lines = tree.render(80)
     assert len(lines) > 0
 
-    # Simulate: flush first 3 lines (startup + turn)
-    committed = 3
+    # Simulate: flush startup, turn, and the visual gap before the reply.
+    committed = 4
     assert committed <= len(lines)
     # The remaining lines are the "active frame"
     active = lines[committed:]

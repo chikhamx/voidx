@@ -306,9 +306,9 @@ class OutputTree:
         old_start, old_end = self._node_ranges[nid]
         node = self._all[nid]
 
-        # Capture pre-walk keys so we can shift newly written ranges.
-        # _walk_render writes ranges relative to new_lines start (0).
-        pre_keys = set(self._node_ranges.keys())
+        # _walk_render writes ranges for the dirty subtree relative to
+        # new_lines start (0); only that subtree should be shifted.
+        subtree_ids = _subtree_ids(node)
 
         new_lines: list[str] = []
         prefix = self._node_prefixes.get(nid, [])
@@ -317,14 +317,10 @@ class OutputTree:
         self._walk_render(node, prefix, new_lines, sub_line_map, sub_click_map)
 
         # Shift ranges written by _walk_render from relative → absolute.
-        new_keys = set(self._node_ranges.keys()) - pre_keys
-        changed_keys = {
-            k for k in (set(self._node_ranges.keys()) & pre_keys)
-            if self._node_ranges[k][0] < old_start
-        }
-        for r_nid in new_keys | changed_keys:
-            s, e = self._node_ranges[r_nid]
-            self._node_ranges[r_nid] = (s + old_start, e + old_start)
+        for r_nid in subtree_ids:
+            if r_nid in self._node_ranges:
+                s, e = self._node_ranges[r_nid]
+                self._node_ranges[r_nid] = (s + old_start, e + old_start)
 
         # Splice: everything before + new subtree + everything after
         self._cached_lines = (
@@ -417,7 +413,7 @@ class OutputTree:
         if node is self.root:
             prev = None
             for child in node.children:
-                if prev is not None and prev.node_type == "turn" and child.node_type == "message" and child.header:
+                if _needs_gap_after_turn(prev, child):
                     lines.append("")
                 prev = child
                 self._walk_render(child, [], lines, line_map, click_map)
@@ -570,6 +566,19 @@ def _pad_diff_background_row(line: str, width: int) -> str:
     visible = cell_len(Text.from_markup(line).plain)
     padding = " " * max(0, width - visible)
     return line.replace(marker, f"{padding}{marker}", 1)
+
+
+def _needs_gap_after_turn(prev: OutputNode | None, child: OutputNode) -> bool:
+    if prev is None or prev.node_type != "turn":
+        return False
+    return child.node_type == "assistant" or (child.node_type == "message" and bool(child.header))
+
+
+def _subtree_ids(node: OutputNode) -> set[str]:
+    ids = {node.id}
+    for child in node.children:
+        ids.update(_subtree_ids(child))
+    return ids
 
 
 def _is_clickable(node: OutputNode) -> bool:

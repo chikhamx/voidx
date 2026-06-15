@@ -189,6 +189,20 @@ def test_tree_line_map_tracks_non_clickable_body_rows():
     assert tree._click_map == {}
 
 
+def test_tree_inserts_gap_between_user_turn_and_assistant_without_spacer():
+    from voidx.ui.output.tree import OutputTree
+
+    tree = OutputTree()
+    tree.new_node(tree.root, node_type="turn", header="❯ user")
+    tree.new_node(tree.root, node_type="assistant", header="● reply")
+
+    lines = tree.render(80)
+
+    assert "user" in _rich_plain(lines[0])
+    assert lines[1] == ""
+    assert "reply" in _rich_plain(lines[2])
+
+
 def test_turn_render_uses_full_width_user_background(tmp_path):
     test_dock = dock
     test_dock.begin_capture()
