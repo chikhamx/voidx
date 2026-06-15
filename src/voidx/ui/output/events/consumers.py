@@ -50,6 +50,7 @@ from voidx.ui.output.events.schema import (
     UiEvent,
     WarningAppended,
 )
+from voidx.ui.output.display_policy import ToolDisplayMode
 from voidx.ui.output.tree import OutputNode
 
 
@@ -110,7 +111,7 @@ class DockEventConsumer:
     def __init__(self, target: BottomInputDock) -> None:
         self._dock = target
         self._tool_nodes: dict[str, OutputNode] = {}
-        self._suppressed_tool_ids: set[str] = set()
+        self._hidden_tool_ids: set[str] = set()
         self._agent_nodes: dict[int, OutputNode] = {}
 
     def handle(self, event: UiEvent) -> Any:
@@ -123,12 +124,12 @@ class DockEventConsumer:
                 return self._dock.refresh()
             case ResetRequested():
                 self._tool_nodes.clear()
-                self._suppressed_tool_ids.clear()
+                self._hidden_tool_ids.clear()
                 self._agent_nodes.clear()
                 return self._dock.reset()
             case TurnStarted(text=text):
                 self._tool_nodes.clear()
-                self._suppressed_tool_ids.clear()
+                self._hidden_tool_ids.clear()
                 self._agent_nodes.clear()
                 return self._dock.start_turn(text)
             case StartupShown() as e:
@@ -202,8 +203,8 @@ class DockEventConsumer:
             case AssistantStreamDiscarded():
                 return self._dock.discard_stream()
             case ToolStarted() as e:
-                if e.tool_name == "todo":
-                    self._suppressed_tool_ids.add(e.tool_call_id)
+                if e.display_mode == ToolDisplayMode.HIDDEN:
+                    self._hidden_tool_ids.add(e.tool_call_id)
                     return None
                 parent = self._agent_parent(e.agent_id)
                 node = self._dock.start_tool(
@@ -217,7 +218,7 @@ class DockEventConsumer:
                 self._tool_nodes[e.tool_call_id] = node
                 return node
             case ToolFinished() as e:
-                if e.tool_call_id in self._suppressed_tool_ids:
+                if e.tool_call_id in self._hidden_tool_ids:
                     return None
                 node = self._tool_nodes.get(e.tool_call_id)
                 if node is None:
@@ -225,13 +226,20 @@ class DockEventConsumer:
                     return None
                 return self._dock.finish_tool_node(node, e.label, e.elapsed, e.ok, e.detail)
             case ToolResultAppended() as e:
-                if e.tool_call_id in self._suppressed_tool_ids:
+                if e.tool_call_id in self._hidden_tool_ids:
                     return None
+                text = e.text
+                if e.display_mode == ToolDisplayMode.SUMMARY:
+                    lines = text.splitlines()
+                    if len(lines) > e.summary_max_lines:
+                        truncated = "\n".join(lines[:e.summary_max_lines])
+                        omitted = len(lines) - e.summary_max_lines
+                        text = f"{truncated}\n[dim]… +{omitted} more lines[/dim]"
                 parent = self._tool_nodes.get(e.tool_call_id) if e.tool_call_id else None
                 if parent is None:
                     parent = self._stream_parent(e.agent_id)
                 return self._dock.append_tool_result(
-                    e.text,
+                    text,
                     parent=parent,
                     collapsed=e.collapsed,
                     tool_call_id=e.tool_call_id or None,
@@ -244,7 +252,7 @@ class DockEventConsumer:
                 return self._dock.clear_todo_state()
             case FileChangeAppended() as e:
                 parent = self._tool_nodes.get(e.tool_call_id) if e.tool_call_id else None
-                if e.tool_call_id in self._suppressed_tool_ids:
+                if e.tool_call_id in self._hidden_tool_ids:
                     return None
                 if parent is None:
                     parent = self._stream_parent(e.agent_id)

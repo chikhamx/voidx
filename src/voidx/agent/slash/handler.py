@@ -87,6 +87,7 @@ class SlashHandler(
             "/clear": self._clear,
             "/code-ide": lambda: self._code_ide(args),
             "/list": self._list_sessions,
+            "/session": lambda: self._session(args),
             "/resume": lambda: self._resume(inp),
             "/rollback": self._rollback,
             "/title": lambda: self._set_title(inp),
@@ -160,7 +161,7 @@ class SlashHandler(
             InteractionMode.GOAL: "Goal",
         }
         notes = {
-            InteractionMode.PLAN: "write/edit/bash/lsp_format blocked",
+            InteractionMode.PLAN: "write/edit/bash blocked",
             InteractionMode.GOAL: "keep work scoped to the current goal",
         }
         suffix = f" — {notes[parsed]}" if parsed in notes else ""

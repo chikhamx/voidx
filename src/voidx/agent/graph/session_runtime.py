@@ -22,6 +22,7 @@ from voidx.memory.service import (
     update_title_if_current,
 )
 from voidx.runtime.ui import transcript_rows_to_tree, tree_to_transcript_rows
+from voidx.agent.tool_result_storage import cleanup_session_results
 
 if TYPE_CHECKING:
     from voidx.agent.graph.contracts import GraphRunLoopHost
@@ -82,7 +83,9 @@ class GraphSessionRuntime:
     async def clear_runtime_state(self, *, reset_runtime_state_memory: Callable[[], None] | None = None) -> None:
         host = self.host
         if host._session is not None:
-            await clear_runtime_state(host._session.id)
+            session_id = host._session.id
+            await clear_runtime_state(session_id)
+            cleanup_session_results(session_id)
         reset = reset_runtime_state_memory or self.reset_runtime_state_memory
         reset()
 

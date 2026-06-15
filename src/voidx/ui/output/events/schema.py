@@ -9,6 +9,9 @@ from pydantic import BaseModel, ConfigDict, Field
 from voidx.runtime.todo import TodoStatus
 
 
+from voidx.ui.output.display_policy import ToolDisplayMode
+
+
 class UiEventBase(BaseModel):
     model_config = ConfigDict(frozen=True)
     agent_id: int = -1
@@ -144,6 +147,8 @@ class ToolStarted(UiEventBase):
     args: str = ""
     tool_name: str = ""
     raw_args: dict[str, Any] = Field(default_factory=dict)
+    display_mode: ToolDisplayMode = ToolDisplayMode.SHOW
+    summary_max_lines: int = 3
 
 
 class ToolFinished(UiEventBase):
@@ -160,6 +165,8 @@ class ToolResultAppended(UiEventBase):
     tool_call_id: str = ""
     text: str
     collapsed: bool = False
+    display_mode: ToolDisplayMode = ToolDisplayMode.SHOW
+    summary_max_lines: int = 3
 
 
 class TodoItemPayload(BaseModel):

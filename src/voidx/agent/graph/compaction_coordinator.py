@@ -138,7 +138,10 @@ class GraphCompactionCoordinator:
             )
 
         runtime_prefix = _runtime_prefix(messages)
-        semantic_messages = sanitize_todo_replay_messages(raw_semantic_messages(messages))
+        semantic_messages = sanitize_todo_replay_messages(
+            raw_semantic_messages(messages),
+            preserve_trailing_ai_tool_calls=True,
+        )
         selection = host._compaction.select_details(semantic_messages)
         head_msgs, tail_id = selection.head, selection.tail_id
         semantic_tail = semantic_messages[selection.keep_from:]

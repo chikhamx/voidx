@@ -47,35 +47,38 @@ def _strip_stainless_headers() -> dict[str, str]:
     return {k: "" for k in _STAINLESS_HEADERS_TO_STRIP} | {"User-Agent": "voidx/1.0"}
 
 
+PROTOCOL_DEEPSEEK = "deepseek"
+
+
 _PROVIDER_PROTOCOLS: dict[str, str] = {
     "anthropic": "anthropic",
     "openai": "openai",
     "openrouter": "openai",
-    # China-domestic providers — all use the "deepseek" protocol
-    "deepseek": "deepseek",
-    "mimo": "deepseek",
-    "mimo-token-plan": "deepseek",
-    "qwen": "deepseek",
-    "zhipu": "deepseek",
-    "kimi": "deepseek",
-    "doubao": "deepseek",
-    "typex": "deepseek",
-    "minimax": "deepseek",
+    # China-domestic providers — all use the deepseek protocol
+    "deepseek": PROTOCOL_DEEPSEEK,
+    "mimo": PROTOCOL_DEEPSEEK,
+    "mimo-token-plan": PROTOCOL_DEEPSEEK,
+    "qwen": PROTOCOL_DEEPSEEK,
+    "zhipu": PROTOCOL_DEEPSEEK,
+    "kimi": PROTOCOL_DEEPSEEK,
+    "doubao": PROTOCOL_DEEPSEEK,
+    "typex": PROTOCOL_DEEPSEEK,
+    "minimax": PROTOCOL_DEEPSEEK,
 }
 
 _DEFAULT_BASE_URLS: dict[tuple[str, str], str] = {
     ("anthropic", "anthropic"): "https://api.anthropic.com",
     ("openai", "openai"): "https://api.openai.com/v1",
     ("openrouter", "openai"): "https://openrouter.ai/api/v1",
-    ("deepseek", "deepseek"): "https://api.deepseek.com/v1",
-    ("mimo", "deepseek"): "https://api.xiaomimimo.com/v1",
-    ("mimo-token-plan", "deepseek"): "https://token-plan-cn.xiaomimimo.com/v1",
-    ("qwen", "deepseek"): "https://dashscope.aliyuncs.com/compatible-mode/v1",
-    ("zhipu", "deepseek"): "https://open.bigmodel.cn/api/paas/v4",
-    ("kimi", "deepseek"): "https://api.moonshot.cn/v1",
-    ("doubao", "deepseek"): "https://ark.cn-beijing.volces.com/api/v3",
-    ("typex", "deepseek"): "https://newapi.typex-test.cn/v1",
-    ("minimax", "deepseek"): "https://api.minimax.io/v1",
+    ("deepseek", PROTOCOL_DEEPSEEK): "https://api.deepseek.com/v1",
+    ("mimo", PROTOCOL_DEEPSEEK): "https://api.xiaomimimo.com/v1",
+    ("mimo-token-plan", PROTOCOL_DEEPSEEK): "https://token-plan-cn.xiaomimimo.com/v1",
+    ("qwen", PROTOCOL_DEEPSEEK): "https://dashscope.aliyuncs.com/compatible-mode/v1",
+    ("zhipu", PROTOCOL_DEEPSEEK): "https://open.bigmodel.cn/api/paas/v4",
+    ("kimi", PROTOCOL_DEEPSEEK): "https://api.moonshot.cn/v1",
+    ("doubao", PROTOCOL_DEEPSEEK): "https://ark.cn-beijing.volces.com/api/v3",
+    ("typex", PROTOCOL_DEEPSEEK): "https://newapi.typex-test.cn/v1",
+    ("minimax", PROTOCOL_DEEPSEEK): "https://api.minimax.io/v1",
 }
 
 
@@ -193,7 +196,7 @@ class DeepSeekChatOpenAI(ChatOpenAI):
         provider = config.provider
 
         # ── DeepSeek ──────────────────────────────────────────────────────
-        if provider == "deepseek":
+        if provider == PROTOCOL_DEEPSEEK:
             if effort is None:
                 return {}
             if effort == "none":
@@ -381,7 +384,7 @@ def _reasoning_kwargs(config: ModelConfig, protocol: str) -> dict:
         return {}
     if protocol == "openai":
         return _openai_reasoning_kwargs(config)
-    if protocol == "deepseek":
+    if protocol == PROTOCOL_DEEPSEEK:
         return DeepSeekChatOpenAI.reasoning_kwargs(config)
     return {}
 
@@ -404,7 +407,7 @@ def create_chat_model(api_key: str, config: ModelConfig) -> BaseChatModel:
         kwargs.update(_reasoning_kwargs(config, protocol))
         return ChatAnthropic(**kwargs)
 
-    if protocol == "deepseek":
+    if protocol == PROTOCOL_DEEPSEEK:
         kwargs = dict(
             api_key=api_key,
             model=config.model,
@@ -512,7 +515,7 @@ def _extract_thinking_openai(chunk: AIMessageChunk) -> str:
 def extract_thinking(chunk: AIMessageChunk, protocol: str) -> str:
     if protocol == "anthropic":
         return _extract_thinking_anthropic(chunk)
-    # Both "openai" and "deepseek" protocols use the OpenAI-compatible
+    # Both openai and deepseek protocols use the OpenAI-compatible
     # extraction path (reasoning_content in additional_kwargs).
     return _extract_thinking_openai(chunk)
 
@@ -522,7 +525,7 @@ def extract_thinking(chunk: AIMessageChunk, protocol: str) -> str:
 def get_context_limit(provider: str, protocol: str = "") -> int:
     """Return context-window limit for *provider*.  Falls back to *protocol* for unknown providers."""
     limits: dict[str, int] = {
-        "deepseek": 1_000_000,
+        PROTOCOL_DEEPSEEK: 1_000_000,
         "anthropic": 200_000,
         "openai": 1_050_000,
         "openrouter": 128_000,

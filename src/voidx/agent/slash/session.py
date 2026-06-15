@@ -7,6 +7,108 @@ from voidx.runtime.ui import get_dock, session_tracker, ui
 
 
 class SlashSessionMixin:
+    async def _session(self, args: str) -> None:
+        subcommand, _, rest = args.strip().partition(" ")
+        if subcommand in {"list", "ls"}:
+            await self._list_sessions()
+            return
+        if subcommand == "new":
+            await self._clear()
+            return
+        if subcommand == "resume":
+            await self._resume(f"/resume {rest}".rstrip())
+            return
+        if subcommand in {"del", "delete"}:
+            await self._session_del(rest)
+            return
+        ui.print("[dim]Usage: /session list|new|resume|del[/dim]")
+
+    async def _session_del(self, args: str) -> None:
+        parts = args.split()
+        dry_run = "--dry-run" in parts
+        scope_parts = [part for part in parts if part != "--dry-run"]
+        if not scope_parts:
+            selected_scope = await self._select_session_delete_scope()
+            if selected_scope is None:
+                ui.print("[dim]Deletion cancelled.[/dim]")
+                return
+            scope = selected_scope
+        else:
+            scope = scope_parts[0]
+
+        from voidx.memory.cleanup import apply_session_delete_plan, plan_session_delete
+
+        try:
+            plan = await plan_session_delete(scope)
+        except ValueError as exc:
+            ui.error(str(exc))
+            return
+
+        self._print_session_delete_plan(plan, dry_run=dry_run)
+        if dry_run or not plan.candidates:
+            return
+
+        confirmed = await self._confirm_session_delete()
+        if not confirmed:
+            ui.print("[dim]Deletion cancelled.[/dim]")
+            return
+
+        deleted = await apply_session_delete_plan(plan)
+        ui.print(f"[green]Deleted {deleted} session(s).[/green]")
+
+    def _print_session_delete_plan(self, plan, *, dry_run: bool) -> None:
+        label = "Dry run" if dry_run else "Delete preview"
+        ui.print(
+            f"[bold]{label}:[/bold] "
+            f"{plan.total_sessions} session(s), "
+            f"{plan.empty_sessions} empty, "
+            f"{plan.sessions_with_messages} with messages, "
+            f"{_format_bytes(plan.bytes_to_reclaim)} reclaimable"
+        )
+        if not plan.candidates:
+            ui.print("[dim]No sessions match deletion scope.[/dim]")
+            return
+        for candidate in plan.candidates:
+            title = candidate.title[:50] + ("..." if len(candidate.title) > 50 else "")
+            workspace = candidate.workspace[:40] + ("..." if len(candidate.workspace) > 40 else "")
+            updated = candidate.updated_at[:10]
+            ui.print(
+                f"  {candidate.session_id[:8]} | {updated} | {candidate.message_count} msgs | "
+                f"{_format_bytes(candidate.bytes_to_reclaim)} | {workspace} | {title}"
+            )
+
+    async def _confirm_session_delete(self) -> bool:
+        app = self.host.app
+        if app is not None and hasattr(app, "ask_choice"):
+            choice = await app.ask_choice(
+                "Delete these sessions?",
+                [
+                    ("Cancel", "no", "Keep saved sessions"),
+                    ("Delete", "yes", "Permanently remove listed sessions"),
+                ],
+            )
+            return choice == "yes"
+        answer = await self._prompt("Delete these sessions? Type y to confirm", default="")
+        return (answer or "").strip().lower() in {"y", "yes"}
+
+    async def _select_session_delete_scope(self) -> str | None:
+        app = self.host.app
+        if app is None or not hasattr(app, "ask_choice"):
+            return "30d"
+        choice = await app.ask_choice(
+            "Delete sessions older than:",
+            [
+                ("7 days", "7d", "Delete sessions older than 7 days"),
+                ("15 days", "15d", "Delete sessions older than 15 days"),
+                ("30 days", "30d", "Delete sessions older than 30 days"),
+                ("All sessions", "all", "Delete every saved session"),
+                ("Cancel", "cancel", "Keep saved sessions"),
+            ],
+        )
+        if choice in {None, "cancel"}:
+            return None
+        return str(choice)
+
     async def _rollback(self) -> None:
         if not session_tracker.has_rollbackable_changes:
             ui.print("[dim]No file changes to roll back.[/dim]")
@@ -77,6 +179,9 @@ class SlashSessionMixin:
         app = self.host.app
         if app is not None:
             idx = await _select_from_list(app, "Resume session?", items)
+        else:
+            for item in items:
+                ui.print(f"  {item}")
 
         if idx is not None:
             await self._resume(f"/resume {sessions[idx].id}")
@@ -135,3 +240,14 @@ class SlashSessionMixin:
 
     async def _show_startup(self, **kwargs) -> None:
         await self.host.show_startup(**kwargs)
+
+
+def _format_bytes(value: int) -> str:
+    units = ("B", "KB", "MB", "GB")
+    size = float(max(value, 0))
+    for unit in units:
+        if size < 1024 or unit == units[-1]:
+            if unit == "B":
+                return f"{int(size)} B"
+            return f"{size:.1f} {unit}"
+        size /= 1024

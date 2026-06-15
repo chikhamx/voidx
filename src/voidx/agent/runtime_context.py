@@ -232,6 +232,7 @@ class RuntimeContextBuilder:
         self.task_intent = ts.current_intent
         self.pending_approval = ts.pending_approval
         self.current_goal = ts.current_goal
+        self.workflow_route = ts.workflow_route
         self.recent_user_texts = list(ts.recent_user_texts)
         self.user_profile = config.user_profile
         now = datetime.now().astimezone()
@@ -445,6 +446,10 @@ class RuntimeContextBuilder:
             lines.append(f"- Active workflow nodes: {'; '.join(self.active_workflow_summaries)}")
         if self.workflow_runs:
             lines.append(f"- Workflow run state: {'; '.join(run.state_summary() for run in self.workflow_runs)}")
+        if self.workflow_route is not None and (self.workflow_route.start or self.workflow_route.end):
+            start = self.workflow_route.start or "not set"
+            end = self.workflow_route.end or "not set"
+            lines.append(f"- Workflow route: {start} -> {end}")
         for workflow_name in self._active_workflow_node_names():
             exits = workflow_exit_summaries(workflow_name)
             if exits:
@@ -470,7 +475,7 @@ class RuntimeContextBuilder:
             first_line = self.current_user_text.splitlines()[0][:160]
             lines.append(f"- Latest user request: {first_line}")
         if self.interaction_mode == InteractionMode.PLAN:
-            lines.append("- Constraint: plan mode blocks write/edit/lsp_format, write-capable bash, and implement delegation.")
+            lines.append("- Constraint: plan mode blocks write/edit, write-capable bash, and implement delegation.")
         elif self.interaction_mode == InteractionMode.GOAL:
             lines.append("- Constraint: goal mode should keep work scoped to the current user goal and task state.")
         lines.append("- Permission gate: tool calls are governed by the current permission mode, sandbox, and interaction mode.")

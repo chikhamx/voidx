@@ -7,6 +7,13 @@ from dataclasses import dataclass, field
 from typing import Any
 from typing import Literal
 
+from rich.cells import cell_len
+from rich.text import Text
+
+
+USER_ROW_STYLE = "white on #3a3937"
+TOOL_META_BRANCH = "[dim]└[/dim] "
+
 
 @dataclass
 class OutputNode:
@@ -102,6 +109,7 @@ class OutputTree:
         self._node_prefixes: dict[str, list[str]] = {}  # id → prefix_parts
         self._cached_lines: list[str] = []
         self._cached_width: int = 0
+        self._render_width: int = 80
 
     def startup_line_count(self) -> int:
         """Return the number of rendered lines occupied by startup nodes."""
@@ -225,6 +233,7 @@ class OutputTree:
         return self._incremental_render(console_width)
 
     def _full_render(self, console_width: int) -> list[str]:
+        self._render_width = console_width
         self._line_map.clear()
         self._click_map.clear()
         self._node_ranges.clear()
@@ -254,6 +263,7 @@ class OutputTree:
         """
         if not self._dirty_nodes:
             return self._cached_lines
+        self._render_width = console_width
 
         dirty_with_ranges = [
             (nid, self._node_ranges.get(nid, (0, 0)))
@@ -365,6 +375,7 @@ class OutputTree:
         node = self._all.get(node_id)
         if not node:
             return []
+        self._render_width = console_width
 
         lines: list[str] = []
         # Title bar
@@ -425,6 +436,8 @@ class OutputTree:
         if node.depth == 1:
             if node.collapsed:
                 line = node.collapse_summary
+                if node.node_type == "turn":
+                    line = _full_width_row(line, self._render_width)
                 lines.append(line)
                 if line_map is not None:
                     line_map[len(lines) - 1] = node.id
@@ -435,6 +448,8 @@ class OutputTree:
                 return
 
             line = node.header if node.header else ""
+            if node.node_type == "turn":
+                line = _full_width_row(line, self._render_width)
             lines.append(line)
             if line_map is not None:
                 line_map[len(lines) - 1] = node.id
@@ -443,7 +458,10 @@ class OutputTree:
 
             body_prefix = "  " if node.node_type == "turn" else ""
             for bl in node.body_lines:
-                lines.append(f"{body_prefix}{bl}")
+                body_line = f"{body_prefix}{bl}"
+                if node.node_type == "turn":
+                    body_line = _full_width_row(body_line, self._render_width)
+                lines.append(body_line)
                 if line_map is not None:
                     line_map[len(lines) - 1] = node.id
 
@@ -480,9 +498,16 @@ class OutputTree:
             and node.parent is not None
             and node.parent.node_type == "tool_call"
         )
+        tool_call_row = node.node_type == "tool_call"
+        tool_metadata_body = tool_call_row and "diff_text" not in node.payload
 
         if node.collapsed:
-            line = f"{indent if inline_tool_result else aligned_prefix}{node.collapse_summary}"
+            if inline_tool_result:
+                line = f"{indent}{_tool_meta_line(node.collapse_summary)}"
+            elif tool_call_row:
+                line = f"{indent}{node.collapse_summary}"
+            else:
+                line = f"{aligned_prefix}{node.collapse_summary}"
             lines.append(line)
             if line_map is not None:
                 line_map[len(lines) - 1] = node.id
@@ -493,7 +518,7 @@ class OutputTree:
             return
 
         # Header line
-        current_prefix = indent if inline_tool_result else aligned_prefix
+        current_prefix = indent if inline_tool_result or tool_call_row else aligned_prefix
         line = f"{current_prefix}{node.header}" if node.header else current_prefix
         lines.append(line)
         if line_map is not None:
@@ -507,7 +532,10 @@ class OutputTree:
 
         # Body lines
         for bl in node.body_lines:
-            lines.append(f"{cont}{bl}")
+            body_line = f"{indent}{_tool_meta_line(bl)}" if tool_metadata_body else f"{cont}{bl}"
+            if node.payload.get("diff_text"):
+                body_line = _pad_diff_background_row(body_line, self._render_width)
+            lines.append(body_line)
             if line_map is not None:
                 line_map[len(lines) - 1] = node.id
             if click_map is not None and _is_clickable(node):
@@ -519,6 +547,29 @@ class OutputTree:
             self._walk_render(child, new_parts, lines, line_map, click_map)
         self._node_ranges[node.id] = (start, len(lines))
         self._node_prefixes[node.id] = list(prefix_parts)
+
+
+def _full_width_row(line: str, width: int) -> str:
+    visible = cell_len(Text.from_markup(line).plain)
+    padding = " " * max(0, width - visible)
+    return f"[{USER_ROW_STYLE}]{line}{padding}[/]"
+
+
+def _tool_meta_line(line: str) -> str:
+    return f"{TOOL_META_BRANCH}{line}"
+
+
+def _pad_diff_background_row(line: str, width: int) -> str:
+    marker = ""
+    if "[/on #003b0a]" in line:
+        marker = "[/on #003b0a]"
+    elif "[/on #4a0000]" in line:
+        marker = "[/on #4a0000]"
+    if not marker:
+        return line
+    visible = cell_len(Text.from_markup(line).plain)
+    padding = " " * max(0, width - visible)
+    return line.replace(marker, f"{padding}{marker}", 1)
 
 
 def _is_clickable(node: OutputNode) -> bool:

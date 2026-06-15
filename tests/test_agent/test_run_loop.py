@@ -535,16 +535,16 @@ async def test_first_turn_without_goal_uses_temporary_session_title(tmp_path):
 
 
 @pytest.mark.asyncio
-async def test_run_once_uses_local_goal_fallback_before_graph_invoke(tmp_path):
+async def test_run_once_uses_local_goal_fallback_when_structured_resolver_fails(tmp_path):
     graph = VoidXGraph(Config(workspace=str(tmp_path)), api_key=None)
     captured: dict[str, object] = {}
 
     class StructuredGoalModel:
-        def with_structured_output(self, schema):
-            raise AssertionError("default run loop should not call structured goal resolver")
+        def with_structured_output(self, _schema):
+            raise RuntimeError("structured resolver unavailable")
 
-        async def ainvoke(self, messages):
-            raise AssertionError("default run loop should not call resolver ainvoke")
+        async def ainvoke(self, _messages):
+            raise AssertionError("resolver should fail before invoking")
 
     class FakeGraph:
         async def ainvoke(self, initial, _config):
@@ -573,7 +573,7 @@ async def test_run_once_uses_local_goal_fallback_before_graph_invoke(tmp_path):
 
 
 @pytest.mark.asyncio
-async def test_run_once_does_not_preadvance_workflow_without_resolver_next_workflow(tmp_path):
+async def test_run_once_does_not_preadvance_workflow_without_resolver_workflow_start(tmp_path):
     graph = VoidXGraph(Config(workspace=str(tmp_path)), api_key=None)
     pending = PendingApproval(scope="agent_name 语义清理", source_goal_type=GoalType.DESIGN)
     graph._task_state = TaskState(
@@ -591,11 +591,11 @@ async def test_run_once_does_not_preadvance_workflow_without_resolver_next_workf
     captured: dict[str, object] = {}
 
     class StructuredGoalModel:
-        def with_structured_output(self, schema):
-            raise AssertionError("default run loop should not call structured goal resolver")
+        def with_structured_output(self, _schema):
+            raise RuntimeError("structured resolver unavailable")
 
-        async def ainvoke(self, messages):
-            raise AssertionError("default run loop should not call resolver ainvoke")
+        async def ainvoke(self, _messages):
+            raise AssertionError("resolver should fail before invoking")
 
     class FakeGraph:
         async def ainvoke(self, initial, _config):
@@ -622,15 +622,203 @@ async def test_run_once_does_not_preadvance_workflow_without_resolver_next_workf
 
 
 @pytest.mark.asyncio
+async def test_run_once_preadvances_workflow_from_resolver_workflow_start(tmp_path):
+    graph = VoidXGraph(Config(workspace=str(tmp_path)), api_key=None)
+    graph._task_state = TaskState(
+        current_goal=goal_from_text("agent_name 语义清理", goal_type=GoalType.DESIGN),
+        pending_approval=PendingApproval(scope="agent_name 语义清理", source_goal_type=GoalType.DESIGN),
+        workflow_runs={
+            "brainstorm": WorkflowRunState(
+                name="brainstorm",
+                status=WorkflowRunStatus.ACTIVE,
+                goal_type="design",
+                scope="agent_name 语义清理",
+            )
+        },
+    )
+    captured: dict[str, object] = {}
+
+    class StructuredGoalModel:
+        def with_structured_output(self, schema):
+            assert schema is GoalResolution
+            return self
+
+        async def ainvoke(self, messages):
+            assert "GoalResolution JSON schema" in messages[0].content
+            return {
+                "intent": "coding",
+                "goal": {
+                    "type": "doc",
+                    "target": "agent_name 语义清理",
+                    "expected_result": "",
+                    "user_requested_write": True,
+                    "needs_confirmation": False,
+                },
+                "confidence": 0.9,
+                "reason": "user requested spec",
+                "workflow_start": "design-doc",
+                "workflow_end": "design-doc",
+            }
+
+    class FakeGraph:
+        async def ainvoke(self, initial, _config):
+            captured["initial"] = initial
+            return {"messages": list(initial["messages"]) + [AIMessage(content="ok")], "task_state": initial["task_state"]}
+
+    graph.model = StructuredGoalModel()
+    graph.graph = FakeGraph()
+    test_dock = BottomInputDock()
+    set_dock(test_dock)
+    test_dock.begin_capture()
+    try:
+        await graph._run_once("可以，先写一个 spec")
+    finally:
+        test_dock.deactivate()
+        test_dock.reset()
+        set_dock(None)
+
+    initial = captured["initial"]
+    state = TaskState.model_validate(initial["task_state"])
+    assert state.workflow_runs["brainstorm"].status == WorkflowRunStatus.SATISFIED
+    assert state.workflow_runs["brainstorm"].evidence[-1].condition == "approved"
+    assert state.workflow_runs["design-doc"].status == WorkflowRunStatus.ACTIVE
+    assert initial["persona"] == "plan"
+
+
+@pytest.mark.asyncio
+async def test_run_once_activates_workflow_start_from_resolver_route(tmp_path):
+    graph = VoidXGraph(Config(workspace=str(tmp_path)), api_key=None)
+    captured: dict[str, object] = {}
+
+    class StructuredGoalModel:
+        def with_structured_output(self, schema):
+            assert schema is GoalResolution
+            return self
+
+        async def ainvoke(self, messages):
+            assert "GoalResolution JSON schema" in messages[0].content
+            return {
+                "intent": "coding",
+                "goal": {
+                    "type": "review",
+                    "target": "current diff",
+                    "expected_result": "review findings",
+                    "user_requested_write": False,
+                    "needs_confirmation": False,
+                },
+                "confidence": 0.94,
+                "reason": "review only",
+                "workflow_start": "review",
+                "workflow_end": "review",
+            }
+
+    class FakeGraph:
+        async def ainvoke(self, initial, _config):
+            captured["initial"] = initial
+            return {"messages": list(initial["messages"]) + [AIMessage(content="ok")], "task_state": initial["task_state"]}
+
+    graph.model = StructuredGoalModel()
+    graph.graph = FakeGraph()
+    test_dock = BottomInputDock()
+    set_dock(test_dock)
+    test_dock.begin_capture()
+    try:
+        await graph._run_once("review 一下这个")
+    finally:
+        test_dock.deactivate()
+        test_dock.reset()
+        set_dock(None)
+
+    initial = captured["initial"]
+    state = TaskState.model_validate(initial["task_state"])
+    assert state.workflow_route is not None
+    assert state.workflow_route.start == "review"
+    assert state.workflow_route.end == "review"
+    assert state.workflow_runs["review"].status == WorkflowRunStatus.ACTIVE
+    assert state.workflow_runs["review"].reason == "resolver workflow_start"
+    assert initial["persona"] == "review"
+
+
+@pytest.mark.asyncio
+async def test_run_once_overrides_stale_brainstorm_when_resolver_requests_tdd(tmp_path):
+    graph = VoidXGraph(Config(workspace=str(tmp_path)), api_key=None)
+    graph._task_state = TaskState(
+        current_goal=goal_from_text("LSP 工具合并", goal_type=GoalType.DESIGN),
+        pending_approval=PendingApproval(scope="LSP 工具合并", source_goal_type=GoalType.DESIGN),
+        workflow_runs={
+            "brainstorm": WorkflowRunState(
+                name="brainstorm",
+                status=WorkflowRunStatus.ACTIVE,
+                goal_type="design",
+                scope="LSP 工具合并",
+            )
+        },
+    )
+    captured: dict[str, object] = {}
+
+    class StructuredGoalModel:
+        def with_structured_output(self, schema):
+            assert schema is GoalResolution
+            return self
+
+        async def ainvoke(self, messages):
+            assert "GoalResolution JSON schema" in messages[0].content
+            return {
+                "intent": "coding",
+                "goal": {
+                    "type": "feature",
+                    "target": "LSP 工具合并",
+                    "expected_result": "",
+                    "user_requested_write": True,
+                    "needs_confirmation": False,
+                },
+                "confidence": 0.94,
+                "reason": "user explicitly requested implementation",
+                "workflow_start": "tdd",
+                "workflow_end": "verify",
+            }
+
+    class FakeGraph:
+        async def ainvoke(self, initial, _config):
+            captured["initial"] = initial
+            return {"messages": list(initial["messages"]) + [AIMessage(content="ok")], "task_state": initial["task_state"]}
+
+    graph.model = StructuredGoalModel()
+    graph.graph = FakeGraph()
+    test_dock = BottomInputDock()
+    set_dock(test_dock)
+    test_dock.begin_capture()
+    try:
+        await graph._run_once("开干")
+    finally:
+        test_dock.deactivate()
+        test_dock.reset()
+        set_dock(None)
+
+    initial = captured["initial"]
+    state = TaskState.model_validate(initial["task_state"])
+    assert state.workflow_runs["brainstorm"].status == WorkflowRunStatus.SATISFIED
+    assert state.workflow_runs["brainstorm"].evidence[-1].condition == "superseded_by_intent"
+    assert state.workflow_runs["tdd"].status == WorkflowRunStatus.ACTIVE
+    assert initial["persona"] == "implement"
+
+
+@pytest.mark.asyncio
 async def test_run_once_uses_user_text_for_first_session_title_without_resolver_goal(tmp_path):
     graph = VoidXGraph(Config(workspace=str(tmp_path)), api_key=None)
 
     class StructuredGoalModel:
         def with_structured_output(self, schema):
-            raise AssertionError("default run loop should not call structured goal resolver")
+            assert schema is GoalResolution
+            return self
 
-        async def ainvoke(self, messages):
-            raise AssertionError("default run loop should not call resolver ainvoke")
+        async def ainvoke(self, _messages):
+            return GoalResolution(
+                intent=TaskIntent.CODING,
+                goal=None,
+                confidence=0.9,
+                reason="review request",
+            )
 
     class FakeGraph:
         async def ainvoke(self, initial, _config):

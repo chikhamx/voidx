@@ -2,6 +2,7 @@ from tests.tui_helpers import *  # noqa: F403
 
 import sys
 
+from rich.cells import cell_len
 from rich.console import Console
 from rich.text import Text
 
@@ -186,6 +187,153 @@ def test_tree_line_map_tracks_non_clickable_body_rows():
     assert lines == ["header", "body"]
     assert line_map == {0: message.id, 1: message.id}
     assert tree._click_map == {}
+
+
+def test_turn_render_uses_full_width_user_background(tmp_path):
+    test_dock = dock
+    test_dock.begin_capture()
+    try:
+        test_dock.start_turn("m_virtual_comment_views需要封装")
+
+        lines = test_dock.tree.render(48)
+        text = Text.from_markup(lines[0])
+
+        assert text.plain.startswith("❯ m_virtual_comment_views需要封装")
+        assert cell_len(text.plain) == 48
+        assert any("on #3a3937" in str(span.style) for span in text.spans)
+    finally:
+        test_dock.deactivate()
+        test_dock.reset()
+
+
+def test_tool_call_renders_metadata_with_branch_rows():
+    from voidx.ui.output.tree import OutputTree
+
+    tree = OutputTree()
+    assistant = tree.new_node(tree.root, node_type="assistant", header="● voidx")
+    tool = tree.new_node(
+        assistant,
+        node_type="tool_call",
+        header="[#A3BE8C]●[/#A3BE8C] [bold]Bash[/bold](rg error)",
+        body_lines=[
+            "[dim]Running in the background (↓ to manage)[/dim]",
+            "[dim](timeout 2m)[/dim]",
+        ],
+    )
+
+    lines = tree.render(80)
+    plain_lines = [_rich_plain(line).lstrip() for line in lines]
+
+    assert plain_lines[1].startswith("● Bash(rg error)")
+    assert plain_lines[2].startswith("└ Running in the background")
+    assert plain_lines[3].startswith("└ (timeout 2m)")
+    assert all("├" not in line.partition("Bash")[0] for line in plain_lines if "Bash" in line)
+    assert tree._line_map[1] == tool.id
+    assert tree._line_map[2] == tool.id
+
+
+def test_file_change_body_lines_do_not_render_as_tool_metadata():
+    test_dock = dock
+    test_dock.begin_capture()
+    try:
+        tool = test_dock.start_tool(
+            "Editing",
+            'file_path="src/app.py"',
+            tool_name="edit",
+            raw_args={"file_path": "src/app.py"},
+        )
+        test_dock.append_file_change(
+            "\n".join(
+                [
+                    "--- a/src/app.py",
+                    "+++ b/src/app.py",
+                    "@@ -1,3 +1,3 @@",
+                    " alpha",
+                    "-old",
+                    "+new",
+                    " omega",
+                ]
+            ),
+            parent=tool,
+        )
+
+        plain_lines = [_rich_plain(line).lstrip() for line in test_dock.tree.render(100)]
+        diff_lines = [
+            line
+            for line in plain_lines
+            if "old" in line or "new" in line or "alpha" in line or "omega" in line
+        ]
+
+        assert diff_lines
+        assert all(not line.startswith("└") for line in diff_lines)
+    finally:
+        test_dock.deactivate()
+        test_dock.reset()
+
+
+def test_file_change_add_remove_background_extends_to_render_width():
+    test_dock = dock
+    test_dock.begin_capture()
+    try:
+        tool = test_dock.start_tool(
+            "Editing",
+            'file_path="src/app.py"',
+            tool_name="edit",
+            raw_args={"file_path": "src/app.py"},
+        )
+        test_dock.append_file_change(
+            "\n".join(
+                [
+                    "--- a/src/app.py",
+                    "+++ b/src/app.py",
+                    "@@ -1,2 +1,2 @@",
+                    "-old",
+                    "+new",
+                ]
+            ),
+            parent=tool,
+        )
+
+        lines = test_dock.tree.render(72)
+        changed = [
+            Text.from_markup(line)
+            for line in lines
+            if "old" in Text.from_markup(line).plain or "new" in Text.from_markup(line).plain
+        ]
+
+        assert len(changed) == 2
+        for text in changed:
+            assert cell_len(text.plain) == 72
+            assert text.plain.endswith(" ")
+            assert any("on #003b0a" in str(span.style) or "on #4a0000" in str(span.style) for span in text.spans)
+    finally:
+        test_dock.deactivate()
+        test_dock.reset()
+
+
+def test_committed_todo_state_omits_progress_bar():
+    test_dock = dock
+    test_dock.begin_capture()
+    try:
+        test_dock.set_todo_state(
+            "1/2 done · 0 active · 1 pending",
+            [
+                {"content": "finished task", "status": "completed"},
+                {"content": "next task", "status": "pending"},
+            ],
+        )
+        test_dock.commit_todo_state()
+
+        rendered = "\n".join(_rich_plain(line) for line in test_dock.tree.render(100))
+
+        assert "Todo: 1/2 done" in rendered
+        assert "finished task" in rendered
+        assert "next task" in rendered
+        assert "█" not in rendered
+        assert "░" not in rendered
+    finally:
+        test_dock.deactivate()
+        test_dock.reset()
 
 
 def test_safe_flush_line_count_stops_at_unsettled_ancestor():

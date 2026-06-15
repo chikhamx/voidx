@@ -12,7 +12,7 @@ from voidx.permission.service import (
     classify_tool_call,
 )
 from voidx.permission.rules import PermissionCapability
-from voidx.workflow.service import workflow_gate, workflow_sort_key, workflow_tools
+from voidx.workflow.service import workflow_gate, workflow_sort_key
 from voidx.workflow.types import WorkflowRunState, WorkflowRunStatus
 from voidx.runtime.ui import PermissionToolDetail
 
@@ -47,19 +47,15 @@ class GraphPermissionMixin:
 
         for tc in tool_calls:
             classified = classify_tool_call(tc)
-            gate_denial = _gate_denial_reason(classified, active_workflows)
-            if gate_denial:
-                denied.append((classified.tool_call, gate_denial))
-                continue
-            tool_denial = _workflow_tool_denial(classified.name, active_workflows)
-            if tool_denial:
-                denied.append((classified.tool_call, tool_denial))
-                continue
+            gate_requires_approval = _workflow_gate_requires_approval(classified, active_workflows)
             decision = authorize_tool_call(tc, context)
             if decision.action == "allow":
                 if (
-                    decision.source != "session"
-                    and _persona_requires_approval(classified.capability, runtime_persona or "coordinate")
+                    gate_requires_approval
+                    or (
+                        decision.source != "session"
+                        and _persona_requires_approval(classified.capability, runtime_persona or "coordinate")
+                    )
                 ):
                     need_ask.append(decision.tool_call)
                     continue
@@ -167,29 +163,16 @@ def _active_workflow_names(value: object) -> list[str]:
     return names
 
 
-def _gate_denial_reason(classified, active_workflows: list[str]) -> str:
+def _workflow_gate_requires_approval(classified, active_workflows: list[str]) -> bool:
     workflow = _current_workflow_name(active_workflows)
     if not workflow:
-        return ""
+        return False
     gate = workflow_gate(workflow)
     if gate is None or classified.name not in gate.denied_tools:
-        return ""
+        return False
     if _matches_allowed_path(classified.args.get("file_path", ""), gate.allowed_paths):
-        return ""
-    requirement = gate.required_before_transition or gate.description or "active workflow gate"
-    return f"Blocked by workflow gate for tool '{classified.name}': {workflow}: {requirement}"
-
-
-def _workflow_tool_denial(tool_name: str, active_workflows: list[str]) -> str:
-    if tool_name in _WORKFLOW_CONTROL_TOOLS:
-        return ""
-    workflow = _current_workflow_name(active_workflows)
-    if not workflow:
-        return ""
-    allowed = set(workflow_tools(workflow))
-    if tool_name in allowed:
-        return ""
-    return f"Tool '{tool_name}' is not allowed by workflow node '{workflow}'."
+        return False
+    return True
 
 
 def _current_workflow_name(active_workflows: list[str]) -> str:
@@ -203,9 +186,6 @@ def _matches_allowed_path(file_path: object, patterns: tuple[str, ...]) -> bool:
         return False
     normalized = file_path.strip().replace("\\", "/")
     return any(fnmatch(normalized, pattern) for pattern in patterns)
-
-
-_WORKFLOW_CONTROL_TOOLS = {"advance_workflow", "compact_context"}
 
 
 def _persona_requires_approval(capability: PermissionCapability, runtime_persona: str) -> bool:

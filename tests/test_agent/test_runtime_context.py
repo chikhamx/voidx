@@ -19,7 +19,7 @@ from voidx.agent.runtime_context import (
     raw_semantic_messages,
 )
 from voidx.agent.state import AgentState
-from voidx.agent.task_state import GoalType, PendingApproval, TaskState, goal_from_text
+from voidx.agent.task_state import GoalType, PendingApproval, TaskState, WorkflowRoute, goal_from_text
 from voidx.config import Config, UserProfile
 from voidx.skills.context import (
     SKILL_CONTEXT_MARKER,
@@ -739,6 +739,26 @@ def test_current_task_state_records_structured_workflow_runs(tmp_path):
     assert "Workflow exits [tdd]: implemented -> verify" in messages[-1].content
     assert "Workflow gate [tdd]" not in messages[-1].content
     assert "test written, red verified, implementation green" not in messages[-1].content
+
+
+def test_current_task_state_records_workflow_route(tmp_path):
+    messages = [HumanMessage(content="review 完并修复问题")]
+    context = RuntimeContextBuilder(
+        config=Config(workspace=str(tmp_path)),
+        workspace=str(tmp_path),
+        base_system_prompt="You are voidx.",
+        persona="review",
+        interaction_mode=InteractionMode.AUTO,
+        current_user_text="review 完并修复问题",
+        task_state=TaskState(
+            current_intent=TaskIntent.CODING,
+            workflow_route=WorkflowRoute(start="review", end="verify"),
+        ),
+    ).build()
+
+    context.apply_to_messages(messages)
+
+    assert "Workflow route: review -> verify" in messages[-1].content
 
 
 def test_current_task_state_lists_feedback_design_and_plan_exits(tmp_path):

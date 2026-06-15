@@ -6,6 +6,7 @@ import shutil
 import sys
 from types import SimpleNamespace
 
+from rich.cells import cell_len
 from rich.console import Console
 
 from voidx.ui.commands import COMMANDS
@@ -255,8 +256,47 @@ def test_dock_multiline_turn_body_aligns_under_prompt(tmp_path):
         turn = dock.start_turn("1、你\n2、好\n3、你是谁")
 
         lines = dock.tree.render(100)
-        assert lines[:3] == ["[bold white]❯[/] 1、你", "  2、好", "  3、你是谁"]
+        plain_lines = [_rich_plain(line) for line in lines[:3]]
+        assert [line.rstrip() for line in plain_lines] == ["❯ 1、你", "  2、好", "  3、你是谁"]
+        assert all(cell_len(line) == 100 for line in plain_lines)
         assert turn.body_lines == ["2、好", "3、你是谁"]
+    finally:
+        dock.deactivate()
+        dock.reset()
+
+
+def test_dock_turn_preserves_long_single_line_input(tmp_path):
+    dock.deactivate()
+    dock.reset()
+    dock.begin_capture()
+    try:
+        text = "long-input-" + ("x" * 240) + "-tail"
+        turn = dock.start_turn(text)
+
+        rendered = "\n".join(dock.tree.render(80))
+
+        assert text in rendered
+        assert "tail" in rendered
+        assert turn.body_lines == []
+    finally:
+        dock.deactivate()
+        dock.reset()
+
+
+def test_dock_turn_preserves_long_multiline_input(tmp_path):
+    dock.deactivate()
+    dock.reset()
+    dock.begin_capture()
+    try:
+        second = "second-" + ("y" * 180)
+        third = "third-tail"
+        turn = dock.start_turn(f"first\n{second}\n{third}")
+
+        rendered = "\n".join(dock.tree.render(100))
+
+        assert second in rendered
+        assert third in rendered
+        assert turn.body_lines == [second, third]
     finally:
         dock.deactivate()
         dock.reset()
@@ -300,6 +340,30 @@ def test_dock_tool_collapsed_summary_does_not_duplicate_elapsed(tmp_path):
 
         rendered = "\n".join(_rich_plain(line) for line in dock.tree.render(120))
         assert rendered.count("(2.5s)") == 1
+    finally:
+        dock.deactivate()
+        dock.reset()
+
+
+def test_dock_tool_summary_does_not_replace_tool_header(tmp_path):
+    dock.deactivate()
+    dock.reset()
+    dock.begin_capture()
+    try:
+        tool = dock.start_tool(
+            "Running",
+            "",
+            tool_name="bash",
+            raw_args={"command": "git status --short"},
+        )
+        dock.finish_tool_node(tool, "bash", 0.1, True, "exit 0")
+
+        rendered_lines = [_rich_plain(line).strip() for line in dock.tree.render(120)]
+        rendered = "\n".join(rendered_lines)
+
+        assert 'Bash("git status --short")' in rendered
+        assert "exit 0" in rendered
+        assert "exit 0" not in rendered_lines
     finally:
         dock.deactivate()
         dock.reset()

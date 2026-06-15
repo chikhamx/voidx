@@ -165,6 +165,7 @@ class DockNodeMixin(DockStartupNodeMixin, DockStatusNodeMixin, DockPermissionNod
         suffix = f" [dim]({elapsed:.1f}s)[/dim]" if elapsed >= 2 else ""
         if detail:
             suffix += f" [dim]{detail}[/dim]"
+            node.payload["summary"] = detail
         node.header = f"[{color}]{icon}[/{color}] {tool_body}{suffix}"
         node.elapsed = elapsed
         node.status = "done" if ok else "error"
@@ -328,7 +329,7 @@ def _tool_display_name(tool_name: str, label: str) -> str:
         "glob": "Search",
         "edit": "Update",
         "write": "Update",
-        "lsp_format": "Update",
+        "lsp": "Lsp",
         "bash": "Bash",
         "agent": "Agent",
         "webfetch": "Fetch",
@@ -356,7 +357,7 @@ def _tool_display_name(tool_name: str, label: str) -> str:
 
 def _tool_display_value(tool_name: str, args: str, raw_args: dict[str, Any]) -> str:
     value: object = ""
-    if tool_name in {"read", "edit", "write", "lsp_format"}:
+    if tool_name in {"read", "edit", "write", "lsp"}:
         value = raw_args.get("file_path") or raw_args.get("path")
     elif tool_name == "grep":
         pattern = raw_args.get("pattern") or raw_args.get("query")

@@ -13,6 +13,8 @@ from langchain_core.messages import AIMessage, AIMessageChunk, ToolMessage
 from voidx.agent.todo_state import _DSML_MARKER_RE, sanitize_todo_replay_messages
 from voidx.runtime.ui_port import AgentUiPort, runtime_ui_port
 
+_PROTOCOL_DEEPSEEK = "deepseek"
+
 _REPLAY_UNSAFE_BLOCK_TYPES = {
     "thinking",
     "redacted_thinking",
@@ -52,7 +54,7 @@ async def stream_llm(
     renderer.start()
 
     try:
-        async for raw_chunk in model.astream(_sanitize_messages_for_replay(messages)):
+        async for raw_chunk in model.astream(_sanitize_messages_for_replay(messages, protocol=protocol)):
             thinking = extract_thinking(raw_chunk, protocol)
             content = _stream_visible_content(raw_chunk.content, thinking)
             chunk = (
@@ -92,19 +94,27 @@ async def stream_llm(
     return AIMessage(**kwargs)
 
 
-def _sanitize_messages_for_replay(messages: list) -> list:
-    """Remove reasoning-only blocks before replaying assistant history."""
+def _sanitize_messages_for_replay(messages: list, *, protocol: str = "") -> list:
+    """Remove reasoning-only blocks before replaying assistant history.
+
+    For deepseek protocol, reasoning_content/thinking blocks are preserved
+    because the DeepSeek API requires them to be passed back in multi-turn
+    conversations when thinking mode is enabled.
+    """
     sanitized = []
     for message in messages:
         if isinstance(message, AIMessage):
-            content = _sanitize_ai_content_for_replay(message.content)
+            content = _sanitize_ai_content_for_replay(message.content, protocol=protocol)
             if _is_empty_content(content) and not getattr(message, "tool_calls", None):
                 continue
             if content != message.content:
                 sanitized.append(message.model_copy(update={"content": content}))
                 continue
         sanitized.append(message)
-    sanitized = sanitize_todo_replay_messages(sanitized)
+    sanitized = sanitize_todo_replay_messages(
+        sanitized,
+        preserve_latest_tool_exchange=True,
+    )
     return _repair_tool_result_adjacency(sanitized)
 
 
@@ -172,7 +182,7 @@ def _ai_tool_call_ids(message: AIMessage) -> list[str]:
     return result
 
 
-def _sanitize_ai_content_for_replay(content: object) -> object:
+def _sanitize_ai_content_for_replay(content: object, *, protocol: str = "") -> object:
     if isinstance(content, str):
         cleaned, _ = _extract_dsml_tool_calls_from_text(content)
         return cleaned
@@ -202,6 +212,10 @@ def _sanitize_ai_content_for_replay(content: object) -> object:
 
         block_type = item.get("type")
         if block_type in _REPLAY_UNSAFE_BLOCK_TYPES:
+            if protocol == _PROTOCOL_DEEPSEEK:
+                blocks.append(item)
+                has_non_text = True
+                continue
             continue
         if block_type == "text":
             text = item.get("text", "")

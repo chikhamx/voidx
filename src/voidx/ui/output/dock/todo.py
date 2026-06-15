@@ -70,14 +70,10 @@ def render_todo_header(state: DockTodoState) -> str:
 
 def render_todo_state_lines(state: DockTodoState) -> list[str]:
     total = len(state.items)
-    done = sum(1 for item in state.items if item.status == "completed")
     if total == 0:
         return ["[dim]No todos[/dim]"]
 
-    bar_len = 20
-    filled = int(bar_len * (done / total))
-    bar = "█" * filled + "░" * (bar_len - filled)
-    lines = [f"[{TODO_MUTED_STYLE}]{escape(f'[{bar}] {done}/{total} done')}[/]"]
+    lines: list[str] = []
 
     ordered_items = [
         item

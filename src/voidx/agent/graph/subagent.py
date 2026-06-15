@@ -39,6 +39,7 @@ from voidx.llm.usage import (
     extract_token_usage,
 )
 from voidx.memory.service import save_context_frame_from_messages
+from voidx.memory.subagents import append_subagent_event
 from voidx.runtime.ui import CaptureConsole, OutputTree, StreamingRenderer
 from voidx.tools.service import ToolContext, ToolRegistry, TaskTracker
 from voidx.runtime.ui_port import AgentUiPort, runtime_ui_port
@@ -141,6 +142,7 @@ async def run_subagent(
 
     ctx = ToolContext(
         workspace=config.workspace,
+        session_id=session_id or "default",
         lsp_manager=lsp_manager,
         sandbox_mode=config.sandbox_mode.value,
         sandbox_extra_paths=config.sandbox_workspace_write,
@@ -219,6 +221,19 @@ async def run_subagent(
                 )
             messages.append(assistant_msg)
             sub_messages.append(assistant_msg)
+            if session_id:
+                tool_calls = getattr(assistant_msg, "tool_calls", None) or []
+                tool_refs = [
+                    {"name": tc.get("name", ""), "id": tc.get("id", "")}
+                    for tc in tool_calls
+                    if isinstance(tc, dict)
+                ]
+                await append_subagent_event(session_id, f"agent_{agent_id}", {
+                    "type": "assistant_message",
+                    "step": step,
+                    "content_preview": (assistant_msg.content or "")[:200],
+                    "tool_call_refs": tool_refs,
+                })
 
             if not has_tool_budget and assistant_msg.tool_calls:
                 text = generate_fallback_summary({
@@ -275,11 +290,20 @@ async def run_subagent(
                     todo_event = todo_updated_event(result, agent_id=agent_id)
                     if todo_event is not None:
                         ui_port.events.emit_direct(todo_event)
+                if session_id:
+                    await append_subagent_event(session_id, f"agent_{agent_id}", {
+                        "type": "tool_result",
+                        "step": step,
+                        "tool_name": tid,
+                        "tool_call_id": cid,
+                        "args": targs,
+                        "content": result.output,
+                        "summary": result.summary,
+                        "ok": True,
+                    })
                 if capture_tree and parent_node is not None:
                     capture.tool_done(tid, 0.0, True, tool_call_id=cid)
                     capture.tool_result(result.output, tool_call_id=cid)
-                if tid == "todo":
-                    return None
                 return ToolMessage(
                     content=sanitize_tool_message_content(result.output, workspace=ctx.workspace),
                     tool_call_id=cid,

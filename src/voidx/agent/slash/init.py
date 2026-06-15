@@ -46,7 +46,7 @@ Cover:
 
 - Workflow skills: mention only skills that exist in the local skill registry
   or are already referenced by this project.
-- Permission awareness: note write/edit/bash/lsp_format/agent(implement)
+- Permission awareness: note write/edit/bash/agent(implement)
   approval expectations when relevant.
 
 ### Document Lifecycle

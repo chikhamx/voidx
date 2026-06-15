@@ -32,6 +32,7 @@ from voidx.ui.output.events import (
     via_events,
 )
 from voidx.ui.output.console.streaming import StreamingRenderer
+from voidx.ui.output.display_policy import ToolDisplayMode, ToolDisplayPolicy, ToolDisplayRule
 
 
 class VoidConsole:
@@ -42,9 +43,7 @@ class VoidConsole:
         "glob": "finding", "grep": "searching", "bash": "running",
         "agent": "delegating", "webfetch": "fetching", "websearch": "searching",
         "todo": "updating", "task_status": "checking", "repo_map": "mapping",
-        "lsp_diagnostics": "checking", "lsp_symbols": "indexing",
-        "lsp_definition": "locating", "lsp_references": "finding",
-        "lsp_format": "formatting",
+        "lsp": "using",
         "plan_checkpoint": "checking",
     }
 
@@ -61,6 +60,12 @@ class VoidConsole:
         self._debug = True
         self._pending_tools: dict[str, list[dict[str, object]]] = {}
         self._event_tool_ids: dict[str, list[str]] = {}
+        self._display_policy: ToolDisplayPolicy | None = None
+
+    def _get_display_rule(self, tool_name: str) -> ToolDisplayRule:
+        from voidx.ui.output.display_policy import ToolDisplayPolicy, DEFAULT_DISPLAY_RULES
+        policy = self._display_policy or ToolDisplayPolicy(rules=DEFAULT_DISPLAY_RULES)
+        return policy.rule_for(tool_name)
 
     @property
     def console(self) -> Console:
@@ -115,6 +120,9 @@ class VoidConsole:
         if not self._debug:
             self._pending_tools.setdefault(tool_name, []).append(args)
             return
+        _rule = self._get_display_rule(tool_name)
+        if _rule.mode == ToolDisplayMode.HIDDEN:
+            return
         gerund = _title(self._TOOL_GERUND.get(tool_name, tool_name + "ing"))
         if via_events():
             event_id = _event_tool_id(tool_name)
@@ -125,6 +133,8 @@ class VoidConsole:
                 label=gerund,
                 args=_fmt_args(args),
                 raw_args=args,
+                display_mode=_rule.mode,
+                summary_max_lines=_rule.summary_max_lines,
             ))
             return
         if dock.active:
@@ -133,6 +143,11 @@ class VoidConsole:
         self.print(f"  {_next_spin()} [bold]{gerund}[/bold]({_fmt_args(args)})")
 
     def tool_done(self, tool_name: str, elapsed: float, ok: bool = True) -> None:
+        _rule = self._get_display_rule(tool_name)
+        if _rule.mode == ToolDisplayMode.HIDDEN:
+            if not self._debug:
+                self._pending_tools.pop(tool_name, None)
+            return
         icon = _done_spin() if ok else "[red]●[/red]"
         style = "green" if ok else "red"
         label = _title(tool_name)
@@ -151,6 +166,8 @@ class VoidConsole:
                     label=label,
                     args=detail,
                     raw_args=args,
+                    display_mode=_rule.mode,
+                    summary_max_lines=_rule.summary_max_lines,
                 ))
                 ui_events.emit_direct(ToolFinished(
                     tool_call_id=event_id,
@@ -183,10 +200,25 @@ class VoidConsole:
             return
         self.print(f"  {icon} [{style}]{label}[/{style}] [dim]({elapsed:.1f}s)[/dim]")
 
-    def tool_result(self, text: str) -> None:
+    def tool_result(self, text: str, *, tool_name: str = "") -> None:
         if via_events():
-            ui_events.emit_direct(ToolResultAppended(text=text))
+            _rule = self._get_display_rule(tool_name)
+            if _rule.mode == ToolDisplayMode.HIDDEN:
+                return
+            ui_events.emit_direct(ToolResultAppended(
+                text=text,
+                display_mode=_rule.mode,
+                summary_max_lines=_rule.summary_max_lines,
+            ))
             return
+        _rule = self._get_display_rule(tool_name)
+        if _rule.mode == ToolDisplayMode.HIDDEN:
+            return
+        if _rule.mode == ToolDisplayMode.SUMMARY:
+            lines = text.splitlines()
+            max_lines = _rule.summary_max_lines
+            if len(lines) > max_lines:
+                text = "\n".join(lines[:max_lines]) + f"\n… +{len(lines) - max_lines} more lines"
         if dock.active:
             dock.append_tool_result(text)
             return

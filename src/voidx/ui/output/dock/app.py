@@ -191,7 +191,7 @@ class BottomInputDock(DockStreamMixin, DockStatusMixin, DockNodeMixin):
         self._current_agent = None
         if self._tree.root.children:
             self._append_root_spacer()
-        preview = _clean(text)[:160]
+        preview = _clean(text)
         lines = [_strip_ansi_trailing_space(line) for line in (preview.splitlines() or [preview])]
         self._current_turn = self._tree.new_node(
             parent=self._tree.root,

@@ -223,12 +223,12 @@ class PermissionService:
         )
         if self.sandbox_workspace_write:
             lines.append(f"  Extra write paths: [dim]{', '.join(self.sandbox_workspace_write)}[/dim]")
-        lines.append("  [green]Always allowed:[/green] read, glob, grep, webfetch, websearch, todo, task_status, repo_map, lsp read tools, read-only agents, read-only bash")
+        lines.append("  [green]Always allowed:[/green] read, glob, grep, webfetch, websearch, todo, task_status, repo_map, lsp, read-only agents, read-only bash")
         if self._session_allow:
             lines.append(f"  [green]Session allow:[/green] {', '.join(sorted(self._session_allow))}")
         if self._session_deny:
             lines.append(f"  [red]Session deny:[/red] {', '.join(sorted(self._session_deny))}")
-        lines.append("  [yellow]Ask first:[/yellow] write, edit, write-capable bash, lsp_format, agent=implement, mcp__*")
+        lines.append("  [yellow]Ask first:[/yellow] write, edit, write-capable bash, agent=implement, mcp__*")
         lines.append("")
         lines.append("  Commands: /permission-mode  /allow <tool>  /deny <tool>  /sandbox [r-o|w-write|danger]  /approval [ask|on-fail|auto]")
         return "\n".join(lines)

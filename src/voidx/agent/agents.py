@@ -203,8 +203,8 @@ BUILTIN_AGENTS: dict[str, AgentDef] = {
             "read", "glob", "grep", "bash", "agent", "task_status", "todo", "load_skills",
             "load_doc_template",
             "webfetch", "websearch", "repo_map",
-            "lsp_diagnostics", "lsp_symbols", "lsp_definition", "lsp_references",
-            "write", "edit", "lsp_format",
+            "lsp",
+            "write", "edit",
         ],
         can_write=True,
         can_delegate=True,
@@ -221,8 +221,7 @@ PERSONA_PROMPTS = {
 
 CHILD_RUN_TOOLS = [
     "read", "write", "edit", "glob", "grep", "bash", "todo", "load_skills", "repo_map",
-    "lsp_diagnostics", "lsp_symbols", "lsp_definition", "lsp_references",
-    "lsp_format",
+    "lsp",
 ]
 
 

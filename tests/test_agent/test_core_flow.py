@@ -1,6 +1,7 @@
 """Regression tests for core graph behavior."""
 
 import asyncio
+import json
 import sys
 from pathlib import Path
 from types import SimpleNamespace
@@ -368,7 +369,7 @@ def test_orchestrator_has_direct_edit_tools():
     agent = get_agent("voidx")
 
     assert agent is not None
-    assert {"write", "edit", "lsp_format"}.issubset(set(agent.tools))
+    assert {"write", "edit"}.issubset(set(agent.tools))
     assert {"clarify", "plan_checkpoint", "load_skills"}.issubset(set(agent.tools))
     assert get_agent("sub-voidx") is None
     assert get_agent("explore") is None
@@ -513,9 +514,16 @@ async def test_graph_authorization_respects_session_deny_for_safe_bash(tmp_path)
 
 
 @pytest.mark.asyncio
-async def test_graph_authorization_blocks_write_by_active_workflow_gate(tmp_path):
+async def test_graph_authorization_asks_for_write_by_active_workflow_gate(tmp_path):
     graph = _graph(tmp_path)
     graph._permission.approval_policy = "on-request"
+    asked: list[list[dict]] = []
+
+    async def approve(tool_calls):
+        asked.append(tool_calls)
+        return "y"
+
+    graph._ask_tool_permission = approve
 
     approved, denied = await graph._authorize_tool_calls(
         [{"name": "write", "args": {"file_path": "app.py", "content": "x"}, "id": "call_1"}],
@@ -526,10 +534,9 @@ async def test_graph_authorization_blocks_write_by_active_workflow_gate(tmp_path
         ],
     )
 
-    assert approved == []
-    assert len(denied) == 1
-    assert "Blocked by workflow gate" in denied[0][1]
-    assert "brainstorm" in denied[0][1]
+    assert [[call["id"] for call in batch] for batch in asked] == [["call_1"]]
+    assert [call["id"] for call in approved] == ["call_1"]
+    assert denied == []
 
 
 @pytest.mark.asyncio
@@ -563,6 +570,13 @@ async def test_graph_authorization_uses_current_workflow_gate_only(tmp_path):
 async def test_graph_authorization_allows_plan_gate_doc_paths_only(tmp_path):
     graph = _graph(tmp_path)
     graph._permission.approval_policy = "on-request"
+    asked: list[list[dict]] = []
+
+    async def deny(tool_calls):
+        asked.append(tool_calls)
+        return "n"
+
+    graph._ask_tool_permission = deny
 
     approved, denied = await graph._authorize_tool_calls(
         [
@@ -592,8 +606,9 @@ async def test_graph_authorization_allows_plan_gate_doc_paths_only(tmp_path):
     )
 
     assert [call["id"] for call in approved] == ["call_docs"]
+    assert [[call["id"] for call in batch] for batch in asked] == [["call_src"]]
     assert [call["id"] for call, _reason in denied] == ["call_src"]
-    assert "plan" in denied[0][1]
+    assert denied[0][1] == "User denied: edit"
 
 
 @pytest.mark.asyncio
@@ -623,27 +638,60 @@ async def test_graph_authorization_allowed_paths_match_nested_docs(tmp_path):
 
 
 @pytest.mark.asyncio
-async def test_graph_authorization_blocks_tools_outside_active_workflow_node_allowlist(tmp_path):
+async def test_graph_authorization_does_not_block_tools_outside_active_workflow_node_allowlist(tmp_path):
     graph = _graph(tmp_path)
     graph._permission.approval_policy = "on-request"
 
     approved, denied = await graph._authorize_tool_calls(
         [{
-            "name": "bash",
-            "args": {"command": "pytest"},
-            "id": "call_bash",
+            "name": "todo",
+            "args": {"todos": [{"content": "track work", "status": "in_progress"}]},
+            "id": "call_todo",
         }],
         runtime_persona="implement",
         plan_mode=False,
         session_id="test",
         workflow_runs=[
-            WorkflowRunState(name="brainstorm", status=WorkflowRunStatus.ACTIVE),
+            WorkflowRunState(name="tdd", status=WorkflowRunStatus.ACTIVE),
         ],
     )
 
-    assert approved == []
-    assert [call["id"] for call, _reason in denied] == ["call_bash"]
-    assert "not allowed by workflow node" in denied[0][1]
+    assert [call["id"] for call in approved] == ["call_todo"]
+    assert denied == []
+
+
+@pytest.mark.asyncio
+async def test_graph_authorization_asks_for_workflow_gate_tools_instead_of_denying(tmp_path):
+    graph = _graph(tmp_path)
+    graph._permission.approval_policy = "on-request"
+    asked: list[list[dict]] = []
+
+    async def approve(tool_calls):
+        asked.append(tool_calls)
+        return "y"
+
+    graph._ask_tool_permission = approve
+
+    approved, denied = await graph._authorize_tool_calls(
+        [{
+            "name": "edit",
+            "args": {
+                "file_path": "src/app.py",
+                "edits": [{"old_string": "old", "new_string": "new"}],
+            },
+            "id": "call_src",
+        }],
+        runtime_persona="implement",
+        plan_mode=False,
+        session_id="test",
+        workflow_runs=[
+            WorkflowRunState(name="plan", status=WorkflowRunStatus.ACTIVE),
+        ],
+    )
+
+    assert [[call["id"] for call in batch] for batch in asked] == [["call_src"]]
+    assert [call["id"] for call in approved] == ["call_src"]
+    assert denied == []
 
 
 @pytest.mark.asyncio
@@ -782,14 +830,13 @@ async def test_graph_authorization_blocks_lsp_format_in_plan_mode(tmp_path):
     graph = _graph(tmp_path)
 
     approved, denied = await graph._authorize_tool_calls(
-        [{"name": "lsp_format", "args": {"file_path": "src/app.py"}, "id": "call_1"}],
+        [{"name": "lsp", "args": {"operation": "diagnostics", "file_path": "src/app.py"}, "id": "call_1"}],
         plan_mode=True,
         session_id="test",
     )
 
-    assert approved == []
-    assert len(denied) == 1
-    assert "BLOCKED by plan mode" in denied[0][1]
+    assert approved == [{"name": "lsp", "args": {"operation": "diagnostics", "file_path": "src/app.py"}, "id": "call_1"}]
+    assert denied == []
 
 
 @pytest.mark.asyncio
@@ -869,6 +916,52 @@ async def test_subagent_runner_passes_main_workflow_runtime_context(tmp_path, mo
     assert calls[0]["kwargs"]["task_intent"] == "coding"
     assert calls[0]["kwargs"]["goal_type"] == "feature"
     assert calls[0]["kwargs"]["scope"] == "Implement the feature"
+
+
+@pytest.mark.asyncio
+async def test_subagent_runner_persists_lifecycle_jsonl(tmp_path, monkeypatch):
+    import voidx.agent.graph.core as core_module
+
+    graph = _graph(tmp_path)
+    graph._session = await create_session(workspace=str(tmp_path))
+
+    async def fake_workflow_context_for(*_args, **_kwargs):
+        return WorkflowRuntimeContext(instructions=[], active=[], content="", runs=[])
+
+    async def fake_run_subagent(*_args, **kwargs):
+        kwargs["run_metadata"].update({
+            "final_step": 2,
+            "max_steps": 4,
+            "finish_reason": "final_answer",
+        })
+        return "child result"
+
+    graph._instruction.workflow_context_for = fake_workflow_context_for
+    monkeypatch.setattr(core_module, "_run_subagent", fake_run_subagent)
+
+    try:
+        result = await graph._subagent_runner(
+            get_agent("voidx"),
+            "Inspect storage design",
+            None,
+            runtime_persona="explore",
+            max_steps=4,
+        )
+
+        path = store.DATA_DIR / "sessions" / graph._session.id / "subagents" / "agent_0.jsonl"
+        rows = [json.loads(line) for line in path.read_text(encoding="utf-8").splitlines()]
+
+        assert result == "child result"
+        assert [row["type"] for row in rows] == ["subagent_start", "subagent_finish"]
+        assert rows[0]["agent_run_id"] == "agent_0"
+        assert rows[0]["persona"] == "explore"
+        assert rows[0]["description"] == "Inspect storage design"
+        assert rows[1]["ok"] is True
+        assert rows[1]["final_step"] == 2
+        assert rows[1]["max_steps"] == 4
+        assert rows[1]["finish_reason"] == "final_answer"
+    finally:
+        await delete_session(graph._session.id)
 
 
 @pytest.mark.asyncio
@@ -1171,6 +1264,68 @@ async def test_parallel_subagents_preserves_tool_message_order(tmp_path):
     tool_messages = [msg for msg in result["messages"] if isinstance(msg, ToolMessage)]
     assert [msg.tool_call_id for msg in tool_messages] == ["call_a", "call_b"]
     assert [msg.content for msg in tool_messages] == ["done call_a", "done call_b"]
+
+
+@pytest.mark.asyncio
+async def test_execute_tools_deduplicates_repeated_read_calls_in_same_segment(tmp_path):
+    graph = _graph(tmp_path)
+    calls: list[dict] = []
+
+    class FakeTools:
+        async def execute_tool(self, tid, targs, _ctx):
+            calls.append({"name": tid, "args": dict(targs)})
+            return ToolResult(output=f"read {len(calls)}")
+
+    async def allow_all(tool_calls, **_kwargs):
+        return tool_calls, []
+
+    graph.tools = FakeTools()
+    graph._authorize_tool_calls = allow_all
+    parent = AIMessage(
+        content="",
+        tool_calls=[
+            {
+                "name": "read",
+                "args": {"file_path": "src/voidx/workflow/reconcile.py"},
+                "id": "call_read_1",
+                "type": "tool_call",
+            },
+            {
+                "name": "read",
+                "args": {"file_path": "src/voidx/workflow/reconcile.py"},
+                "id": "call_read_2",
+                "type": "tool_call",
+            },
+            {
+                "name": "read",
+                "args": {"file_path": "src/voidx/workflow/reconcile.py"},
+                "id": "call_read_3",
+                "type": "tool_call",
+            },
+        ],
+    )
+
+    result = await graph._execute_tools({
+        "messages": [parent],
+        "workspace": str(tmp_path),
+        "persona": "voidx",
+        "plan_mode": False,
+    })
+
+    assert calls == [
+        {"name": "read", "args": {"file_path": "src/voidx/workflow/reconcile.py"}}
+    ]
+    tool_messages = [msg for msg in result["messages"] if isinstance(msg, ToolMessage)]
+    assert [msg.tool_call_id for msg in tool_messages] == [
+        "call_read_1",
+        "call_read_2",
+        "call_read_3",
+    ]
+    assert "read 1" == tool_messages[0].content
+    assert "Skipped duplicate read" in tool_messages[1].content
+    assert "call_read_1" in tool_messages[1].content
+    assert "Skipped duplicate read" in tool_messages[2].content
+    assert "call_read_1" in tool_messages[2].content
 
 
 @pytest.mark.asyncio
@@ -1613,7 +1768,8 @@ async def test_execute_tools_emits_todo_updated_node(tmp_path):
         assert todo_state.summary == "0/1 done · 1 active · 0 pending"
         assert not any(node.node_type == "todo" for node in test_dock.tree.root.children)
         assert tool_nodes == []
-        assert result["messages"] == []
+        assert [message.tool_call_id for message in result["messages"]] == ["call_todo"]
+        assert result["messages"][0].content == "todo output"
         assert result["todo_state"]["summary"] == "0/1 done · 1 active · 0 pending"
         assert result["todo_state"]["items"] == [{"content": "wire event", "status": "in_progress"}]
         assert graph._task_state.todo_state is not None
@@ -1682,8 +1838,8 @@ async def test_execute_tools_keeps_non_todo_result_in_mixed_batch(tmp_path):
         "plan_mode": False,
     })
 
-    assert [message.tool_call_id for message in result["messages"]] == ["call_read"]
-    assert result["messages"][0].content == "read output"
+    assert [message.tool_call_id for message in result["messages"]] == ["call_todo", "call_read"]
+    assert [message.content for message in result["messages"]] == ["todo output", "read output"]
     assert result["todo_state"]["items"] == [
         {"content": "track mixed batch", "status": "in_progress"}
     ]
@@ -1728,7 +1884,8 @@ async def test_execute_tools_warns_on_malformed_todo_metadata_without_events(tmp
         "plan_mode": False,
     })
 
-    assert result["messages"] == []
+    assert [message.tool_call_id for message in result["messages"]] == ["call_todo"]
+    assert result["messages"][0].content == "todo output"
     assert "todo_state" not in result
     assert warnings == ["Todo update ignored: tool returned malformed metadata."]
 
@@ -2248,6 +2405,90 @@ async def test_advance_workflow_done_stops_before_followup_llm_when_workflow_com
 
 
 @pytest.mark.asyncio
+async def test_advance_workflow_route_end_satisfies_without_successor(tmp_path):
+    graph = _graph(tmp_path)
+    parent = AIMessage(
+        content="",
+        tool_calls=[
+            {
+                "name": "advance_workflow",
+                "args": {
+                    "workflow": "review",
+                    "condition": "review_has_issues",
+                    "evidence": "review verdict failed with actionable issues",
+                    "summary": "review completed",
+                },
+                "id": "call_adv",
+                "type": "tool_call",
+            },
+        ],
+    )
+
+    result = await graph._execute_tools({
+        "messages": [parent],
+        "workspace": str(tmp_path),
+        "persona": "voidx",
+        "plan_mode": False,
+        "interaction_mode": "auto",
+        "task_state": _task_state_json(
+            current_intent=TaskIntent.CODING,
+            workflow_route={"start": "review", "end": "review"},
+            workflow_runs={
+                "review": WorkflowRunState(name="review", status=WorkflowRunStatus.ACTIVE),
+            },
+        ),
+    })
+
+    assert "review_has_issues" in result["messages"][0].content
+    assert result["should_continue"] is False
+    by_name = {run.name: run for run in _result_task_state(result).workflow_runs.values()}
+    assert by_name["review"].status == WorkflowRunStatus.SATISFIED
+    assert "feedback" not in by_name
+
+
+@pytest.mark.asyncio
+async def test_advance_workflow_route_end_satisfies_non_review_without_successor(tmp_path):
+    graph = _graph(tmp_path)
+    parent = AIMessage(
+        content="",
+        tool_calls=[
+            {
+                "name": "advance_workflow",
+                "args": {
+                    "workflow": "tdd",
+                    "condition": "implemented",
+                    "evidence": "implementation complete with focused test coverage",
+                    "summary": "implementation complete",
+                },
+                "id": "call_adv",
+                "type": "tool_call",
+            },
+        ],
+    )
+
+    result = await graph._execute_tools({
+        "messages": [parent],
+        "workspace": str(tmp_path),
+        "persona": "voidx",
+        "plan_mode": False,
+        "interaction_mode": "auto",
+        "task_state": _task_state_json(
+            current_intent=TaskIntent.CODING,
+            workflow_route={"start": "tdd", "end": "tdd"},
+            workflow_runs={
+                "tdd": WorkflowRunState(name="tdd", status=WorkflowRunStatus.ACTIVE),
+            },
+        ),
+    })
+
+    assert "implemented" in result["messages"][0].content
+    assert result["should_continue"] is False
+    by_name = {run.name: run for run in _result_task_state(result).workflow_runs.values()}
+    assert by_name["tdd"].status == WorkflowRunStatus.SATISFIED
+    assert "verify" not in by_name
+
+
+@pytest.mark.asyncio
 async def test_multiple_advance_workflow_done_calls_finish_batch_before_stopping(tmp_path):
     graph = _graph(tmp_path)
     parent = AIMessage(
@@ -2341,6 +2582,151 @@ async def test_advance_workflow_non_terminal_transition_keeps_followup_llm_enabl
     by_name = {run.name: run for run in _result_task_state(result).workflow_runs.values()}
     assert by_name["tdd"].status == WorkflowRunStatus.SATISFIED
     assert by_name["verify"].status == WorkflowRunStatus.ACTIVE
+
+
+@pytest.mark.asyncio
+async def test_auto_review_has_issues_stops_before_feedback_followup(tmp_path):
+    graph = _graph(tmp_path)
+
+    class FakeTools:
+        async def execute_tool(self, tid, _targs, _ctx):
+            assert tid == "agent"
+            return ToolResult(
+                output="verdict: FAIL\n\n## Issues\n- reviewer found a bug",
+                metadata={"agent": "review"},
+            )
+
+    async def allow_all(tool_calls, **_kwargs):
+        return tool_calls, []
+
+    graph.tools = FakeTools()
+    graph._authorize_tool_calls = allow_all
+    parent = AIMessage(
+        content="",
+        tool_calls=[
+            {
+                "name": "agent",
+                "args": {"agent": "review", "description": "review recent changes"},
+                "id": "call_review",
+                "type": "tool_call",
+            },
+        ],
+    )
+
+    result = await graph._execute_tools({
+        "messages": [parent],
+        "workspace": str(tmp_path),
+        "persona": "voidx",
+        "plan_mode": False,
+        "interaction_mode": "auto",
+        "task_state": _task_state_json(
+            current_intent=TaskIntent.CODING,
+            workflow_runs={
+                "review": WorkflowRunState(name="review", status=WorkflowRunStatus.ACTIVE),
+            },
+        ),
+    })
+
+    assert result["should_continue"] is False
+    by_name = {run.name: run for run in _result_task_state(result).workflow_runs.values()}
+    assert by_name["review"].status == WorkflowRunStatus.SATISFIED
+    assert by_name["feedback"].status == WorkflowRunStatus.ACTIVE
+
+
+@pytest.mark.asyncio
+async def test_auto_review_has_issues_review_only_route_stops_without_feedback(tmp_path):
+    graph = _graph(tmp_path)
+
+    class FakeTools:
+        async def execute_tool(self, tid, _targs, _ctx):
+            assert tid == "agent"
+            return ToolResult(
+                output="verdict: FAIL\n\n## Issues\n- reviewer found a bug",
+                metadata={"agent": "review"},
+            )
+
+    async def allow_all(tool_calls, **_kwargs):
+        return tool_calls, []
+
+    graph.tools = FakeTools()
+    graph._authorize_tool_calls = allow_all
+    parent = AIMessage(
+        content="",
+        tool_calls=[{
+            "name": "agent",
+            "args": {"agent": "review", "description": "review recent changes"},
+            "id": "call_review",
+            "type": "tool_call",
+        }],
+    )
+
+    result = await graph._execute_tools({
+        "messages": [parent],
+        "workspace": str(tmp_path),
+        "persona": "voidx",
+        "plan_mode": False,
+        "interaction_mode": "auto",
+        "task_state": _task_state_json(
+            current_intent=TaskIntent.CODING,
+            workflow_route={"start": "review", "end": "review"},
+            workflow_runs={
+                "review": WorkflowRunState(name="review", status=WorkflowRunStatus.ACTIVE),
+            },
+        ),
+    })
+
+    assert result["should_continue"] is False
+    by_name = {run.name: run for run in _result_task_state(result).workflow_runs.values()}
+    assert by_name["review"].status == WorkflowRunStatus.SATISFIED
+    assert "feedback" not in by_name
+
+
+@pytest.mark.asyncio
+async def test_auto_review_has_issues_review_and_fix_route_continues_to_feedback(tmp_path):
+    graph = _graph(tmp_path)
+
+    class FakeTools:
+        async def execute_tool(self, tid, _targs, _ctx):
+            assert tid == "agent"
+            return ToolResult(
+                output="verdict: FAIL\n\n## Issues\n- reviewer found a bug",
+                metadata={"agent": "review"},
+            )
+
+    async def allow_all(tool_calls, **_kwargs):
+        return tool_calls, []
+
+    graph.tools = FakeTools()
+    graph._authorize_tool_calls = allow_all
+    parent = AIMessage(
+        content="",
+        tool_calls=[{
+            "name": "agent",
+            "args": {"agent": "review", "description": "review recent changes"},
+            "id": "call_review",
+            "type": "tool_call",
+        }],
+    )
+
+    result = await graph._execute_tools({
+        "messages": [parent],
+        "workspace": str(tmp_path),
+        "persona": "voidx",
+        "plan_mode": False,
+        "interaction_mode": "auto",
+        "task_state": _task_state_json(
+            current_intent=TaskIntent.CODING,
+            workflow_route={"start": "review", "end": "verify"},
+            workflow_runs={
+                "review": WorkflowRunState(name="review", status=WorkflowRunStatus.ACTIVE),
+            },
+        ),
+    })
+
+    assert result.get("should_continue", True) is True
+    by_name = {run.name: run for run in _result_task_state(result).workflow_runs.values()}
+    assert by_name["review"].status == WorkflowRunStatus.SATISFIED
+    assert by_name["feedback"].status == WorkflowRunStatus.ACTIVE
 
 
 def test_execute_tools_router_honors_should_continue_false():
@@ -2714,6 +3100,66 @@ async def test_run_once_persists_sanitized_todo_replay_rows(tmp_path):
             for row in rows
         )
         assert all(row.tool_call_id != "call_todo" for row in rows)
+    finally:
+        await delete_session(session.id)
+
+
+@pytest.mark.asyncio
+async def test_run_once_persists_user_decision_tool_replay_rows(tmp_path):
+    session = await create_session(workspace=str(tmp_path))
+    try:
+        graph = VoidXGraph(Config(workspace=str(tmp_path)), api_key=None, session=session)
+
+        class FakeGraph:
+            async def ainvoke(self, initial, _config):
+                return {
+                    "messages": [
+                        *list(initial["messages"]),
+                        AIMessage(
+                            content="",
+                            tool_calls=[{
+                                "name": "clarify",
+                                "args": {"question": "Which scope?"},
+                                "id": "call_clarify",
+                                "type": "tool_call",
+                            }],
+                        ),
+                        ToolMessage(content='{"answer": "frontend"}', tool_call_id="call_clarify"),
+                        AIMessage(
+                            content="",
+                            tool_calls=[{
+                                "name": "plan_checkpoint",
+                                "args": {"plan_summary": "Update frontend flow"},
+                                "id": "call_plan",
+                                "type": "tool_call",
+                            }],
+                        ),
+                        ToolMessage(content='{"decision": "approved"}', tool_call_id="call_plan"),
+                        AIMessage(content="done"),
+                    ],
+                }
+
+        graph.graph = FakeGraph()
+
+        test_dock = BottomInputDock()
+        set_dock(test_dock)
+        test_dock.begin_capture()
+        try:
+            await graph._run_once("need a decision")
+        finally:
+            test_dock.deactivate()
+            set_dock(None)
+
+        rows = await load_messages(session.id)
+        assistant_rows = [row for row in rows if row.role == "assistant"]
+        tool_rows = [row for row in rows if row.role == "tool"]
+
+        assert [call["name"] for row in assistant_rows for call in (row.tool_calls or [])] == [
+            "clarify",
+            "plan_checkpoint",
+        ]
+        assert [row.tool_call_id for row in tool_rows] == ["call_clarify", "call_plan"]
+        assert [row.content for row in tool_rows] == ['{"answer": "frontend"}', '{"decision": "approved"}']
     finally:
         await delete_session(session.id)
 
@@ -3129,7 +3575,118 @@ async def test_implement_subagent_injects_workflow_nodes(tmp_path, monkeypatch):
 
 
 @pytest.mark.asyncio
-async def test_subagent_todo_updates_sink_without_tool_message(tmp_path, monkeypatch):
+async def test_run_subagent_persists_assistant_messages_to_subagent_jsonl(tmp_path, monkeypatch):
+    import voidx.agent.graph.subagent as subagent_module
+
+    session = await create_session(workspace=str(tmp_path))
+
+    class FakeModel:
+        def bind_tools(self, _tool_defs):
+            return self
+
+    async def fake_stream_llm(_model, _messages, _renderer, _protocol):
+        return AIMessage(content="child answer")
+
+    monkeypatch.setattr(subagent_module, "create_chat_model", lambda *_args, **_kwargs: FakeModel())
+    monkeypatch.setattr(subagent_module, "stream_llm", fake_stream_llm)
+
+    try:
+        output = await subagent_module.run_subagent(
+            get_agent("voidx"),
+            "Inspect child path",
+            None,
+            "test-key",
+            Config(workspace=str(tmp_path)),
+            runtime_persona="explore",
+            max_steps=4,
+            session_id=session.id,
+            agent_id=3,
+            debug=False,
+        )
+
+        path = store.DATA_DIR / "sessions" / session.id / "subagents" / "agent_3.jsonl"
+        rows = [json.loads(line) for line in path.read_text(encoding="utf-8").splitlines()]
+
+        assert output == "child answer"
+        assert rows[-1]["type"] == "assistant_message"
+        assert rows[-1]["agent_run_id"] == "agent_3"
+        assert rows[-1]["step"] == 1
+        assert rows[-1]["content_preview"] == "child answer"
+    finally:
+        await delete_session(session.id)
+
+
+@pytest.mark.asyncio
+async def test_run_subagent_persists_tool_results_to_subagent_jsonl(tmp_path, monkeypatch):
+    import voidx.agent.graph.subagent as subagent_module
+
+    session = await create_session(workspace=str(tmp_path))
+    stream_calls: list[list] = []
+
+    class FakeModel:
+        def bind_tools(self, _tool_defs):
+            return self
+
+    class FakeToolRegistry:
+        def filtered_copy(self, _allowed_ids):
+            return self
+
+        def tools_for_llm(self):
+            return [{"name": "read", "description": "read", "input_schema": {}}]
+
+        async def execute_tool(self, tid, _targs, _ctx):
+            assert tid == "read"
+            assert _ctx.session_id == session.id
+            return ToolResult(output="file contents")
+
+    async def fake_stream_llm(_model, messages, _renderer, _protocol):
+        stream_calls.append(list(messages))
+        if len(stream_calls) == 1:
+            return AIMessage(
+                content="",
+                tool_calls=[{"name": "read", "args": {"file_path": "x.py"}, "id": "call_read", "type": "tool_call"}],
+            )
+        return AIMessage(content="done")
+
+    monkeypatch.setattr(subagent_module, "create_chat_model", lambda *_args, **_kwargs: FakeModel())
+    monkeypatch.setattr(subagent_module, "stream_llm", fake_stream_llm)
+    monkeypatch.setattr(subagent_module, "ToolRegistry", FakeToolRegistry)
+
+    try:
+        output = await subagent_module.run_subagent(
+            AgentDef(
+                name="explore",
+                description="test",
+                when_to_use="test",
+                tools=["read"],
+                can_write=False,
+                can_delegate=False,
+            ),
+            "Inspect child path",
+            None,
+            "test-key",
+            Config(workspace=str(tmp_path)),
+            runtime_persona="explore",
+            max_steps=4,
+            session_id=session.id,
+            agent_id=5,
+            debug=False,
+        )
+
+        path = store.DATA_DIR / "sessions" / session.id / "subagents" / "agent_5.jsonl"
+        rows = [json.loads(line) for line in path.read_text(encoding="utf-8").splitlines()]
+
+        assert output == "done"
+        assert any(row["type"] == "tool_result" and row["tool_call_id"] == "call_read" for row in rows)
+        tool_row = next(row for row in rows if row["type"] == "tool_result")
+        assert tool_row["tool_name"] == "read"
+        assert tool_row["content"] == "file contents"
+    finally:
+        await delete_session(session.id)
+
+
+@pytest.mark.asyncio
+async def test_subagent_todo_updates_sink_with_current_tool_message(tmp_path, monkeypatch):
     import voidx.agent.graph.subagent as subagent_module
 
     stream_calls: list[list] = []
@@ -3179,7 +3736,7 @@ async def test_subagent_todo_updates_sink_without_tool_message(tmp_path, monkeyp
     assert len(todo_states) == 1
     assert todo_states[0].items[0].content == "inspect child path"
     second_call_messages = stream_calls[1]
-    assert not any(
+    assert any(
         isinstance(message, ToolMessage) and message.tool_call_id == "call_todo"
         for message in second_call_messages
     )

@@ -85,6 +85,7 @@ class GraphToolExecutionHost(Protocol):
     _lsp_manager: Any
     _needs_failure_check: dict[str, dict]
     _tool_executor: GraphToolExecutor
+    _display_policy: Any
 
     async def _authorize_tool_calls(
         self,

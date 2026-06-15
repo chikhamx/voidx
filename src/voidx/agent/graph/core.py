@@ -81,7 +81,12 @@ from voidx.llm.usage import (
     estimate_message_tokens,
     extract_token_usage,
 )
-from voidx.memory.service import MessageRow, SessionInfo, save_context_frame_from_messages
+from voidx.memory.service import (
+    MessageRow,
+    SessionInfo,
+    append_subagent_event,
+    save_context_frame_from_messages,
+)
 from voidx.runtime.ui import (
     GuidanceSubmitted,
     OutputNode,
@@ -287,6 +292,10 @@ class VoidXGraph(
         self._tool_executor = GraphToolExecutor(self)
         self._turn_runner = GraphTurnRunner(self)
         self._skill_service: SkillService | None = None
+
+        from voidx.runtime.ui import ToolDisplayPolicy, DEFAULT_DISPLAY_RULES
+        display_config = getattr(config, "display_policy", None) or {}
+        self._display_policy = ToolDisplayPolicy.from_config(display_config, defaults=DEFAULT_DISPLAY_RULES)
 
         self._build()
         from voidx.agent.slash import SlashHandler
@@ -504,6 +513,7 @@ class VoidXGraph(
         agent_id = self._next_agent_id
         self._next_agent_id += 1
         parent_tool_call_id = _current_parent_tool_call_id.get()
+        agent_run_id = f"agent_{agent_id}"
         started_at = time.monotonic()
         interaction_mode = InteractionMode.PLAN.value if runtime_persona == "plan" else InteractionMode.AUTO.value
         task_intent = _subagent_task_intent_for_agent(runtime_persona)
@@ -530,12 +540,22 @@ class VoidXGraph(
         if self._ui.via_events():
             await self._ui.events.emit(SubagentStarted(
                 agent_id=agent_id,
-                subagent_id=f"agent_{agent_id}",
+                subagent_id=agent_run_id,
                 name=runtime_persona,
                 description=description,
                 parent_agent_id=-1,
                 parent_tool_call_id=parent_tool_call_id,
             ))
+        if self._session:
+            await append_subagent_event(session_id, agent_run_id, {
+                "type": "subagent_start",
+                "agent_id": agent_id,
+                "persona": runtime_persona,
+                "description": description,
+                "parent_agent_id": -1,
+                "parent_tool_call_id": parent_tool_call_id,
+                "max_steps": max_steps,
+            })
 
         ok = False
         run_metadata: dict[str, object] = {}
@@ -575,13 +595,23 @@ class VoidXGraph(
             if self._ui.via_events():
                 await self._ui.events.emit(SubagentFinished(
                     agent_id=agent_id,
-                    subagent_id=f"agent_{agent_id}",
+                    subagent_id=agent_run_id,
                     ok=ok,
                     elapsed=time.monotonic() - started_at,
                     final_step=run_metadata.get("final_step") if ok else None,
                     max_steps=run_metadata.get("max_steps") if ok else max_steps,
                     finish_reason=str(run_metadata.get("finish_reason") or ("final_answer" if ok else "error")),
                 ))
+            if self._session:
+                await append_subagent_event(session_id, agent_run_id, {
+                    "type": "subagent_finish",
+                    "agent_id": agent_id,
+                    "ok": ok,
+                    "elapsed": time.monotonic() - started_at,
+                    "final_step": run_metadata.get("final_step") if ok else None,
+                    "max_steps": run_metadata.get("max_steps") if ok else max_steps,
+                    "finish_reason": str(run_metadata.get("finish_reason") or ("final_answer" if ok else "error")),
+                })
 
     def set_debug(self, value: bool) -> None:
         self._debug = value
@@ -710,7 +740,10 @@ class VoidXGraph(
         tool_defs = filter_unavailable_lsp_tools(tool_defs, getattr(self, "_lsp_manager", None))
 
         guidance_messages = self._drain_pending_guidance()
-        state_messages = sanitize_todo_replay_messages(list(state["messages"]))
+        state_messages = sanitize_todo_replay_messages(
+            list(state["messages"]),
+            preserve_latest_tool_exchange=True,
+        )
         compaction_happened = False
         raw_todo_state = (
             state["todo_state"]

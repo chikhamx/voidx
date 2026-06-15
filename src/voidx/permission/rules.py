@@ -37,16 +37,12 @@ BASIC_RULES: Ruleset = [
     Rule(permission="task_status", pattern="*", action="allow"),
     Rule(permission="load_skills", pattern="*", action="allow"),
     Rule(permission="repo_map", pattern="*", action="allow"),
-    Rule(permission="lsp_diagnostics", pattern="*", action="allow"),
-    Rule(permission="lsp_symbols", pattern="*", action="allow"),
-    Rule(permission="lsp_definition", pattern="*", action="allow"),
-    Rule(permission="lsp_references", pattern="*", action="allow"),
+    Rule(permission="lsp", pattern="*", action="allow"),
     Rule(permission="agent", pattern="voidx", action="allow"),
     Rule(permission="write", pattern="*", action="ask"),
     Rule(permission="edit", pattern="*", action="ask"),
     Rule(permission="git", pattern="write", action="ask"),
     Rule(permission="bash", pattern="*", action="ask"),
-    Rule(permission="lsp_format", pattern="*", action="ask"),
     Rule(permission="agent", pattern="implement", action="ask"),
     Rule(permission="mcp__*", pattern="*", action="ask"),
     Rule(permission="mcp/*", pattern="*", action="ask"),
@@ -103,9 +99,8 @@ def repair_tool_name(tool: str) -> str:
         "readfile": "read", "writefile": "write",
         "search": "grep", "find": "glob",
         "RepoMap": "repo_map", "repomap": "repo_map", "Repo_map": "repo_map",
-        "LspDiagnostics": "lsp_diagnostics", "LspSymbols": "lsp_symbols",
-        "LspDefinition": "lsp_definition", "LspReferences": "lsp_references",
-        "LspFormat": "lsp_format",
+        "LspDiagnostics": "lsp", "LspSymbols": "lsp",
+        "LspDefinition": "lsp", "LspReferences": "lsp",
         "AdvanceWorkflow": "advance_workflow",
         "CompactContext": "compact_context",
     }
@@ -345,14 +340,11 @@ def capability_for_tool(tool: str, args: dict) -> PermissionCapability:
     if tool in {
         "read", "glob", "grep", "webfetch", "websearch", "todo", "task_status",
         "load_skills", "advance_workflow", "compact_context",
-        "repo_map", "lsp_diagnostics", "lsp_symbols", "lsp_definition",
-        "lsp_references",
+        "repo_map", "lsp",
     }:
         return PermissionCapability.READ_TOOLS
     if tool in {"write", "edit"}:
         return PermissionCapability.FILE_WRITE
-    if tool == "lsp_format":
-        return PermissionCapability.FILE_FORMAT
     if tool == "bash":
         return PermissionCapability.BASH_READ if is_safe_bash(str(args.get("command", ""))) else PermissionCapability.BASH_WRITE
     if tool == "git":
@@ -367,8 +359,7 @@ def capability_for_tool(tool: str, args: dict) -> PermissionCapability:
 
 _FILE_PATTERN_TOOLS = {
     "read", "write", "edit",
-    "lsp_diagnostics", "lsp_symbols", "lsp_definition",
-    "lsp_references", "lsp_format",
+    "lsp",
 }
 
 

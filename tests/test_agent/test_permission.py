@@ -216,11 +216,7 @@ def test_mcp_tool_execution_requires_permission(tmp_path):
 def test_permission_service_allows_read_only_lsp_tools_but_asks_for_format():
     service = PermissionService()
 
-    assert service.decide("lsp_diagnostics") == "allow"
-    assert service.decide("lsp_symbols") == "allow"
-    assert service.decide("lsp_definition") == "allow"
-    assert service.decide("lsp_references") == "allow"
-    assert service.decide("lsp_format", "src/app.py") == "ask"
+    assert service.decide("lsp") == "allow"
 
 
 def test_permission_service_mode_presets_update_sandbox_and_approval():

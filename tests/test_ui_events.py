@@ -12,6 +12,7 @@ sys.path.insert(0, str(Path(__file__).parent.parent / "src"))
 from voidx.ui.output.capture import CaptureConsole
 from voidx.ui.output.console import StreamingRenderer
 from voidx.ui.output.dock import ANSI_LINE_PREFIX, BottomInputDock, set_dock
+from voidx.ui.output.display_policy import ToolDisplayMode
 from voidx.ui.output.events import (
     AssistantStreamCommitted,
     AssistantStreamUpdated,
@@ -386,6 +387,7 @@ async def test_todo_updated_sets_pinned_state_until_committed(isolated_dock):
             tool_name="todo",
             label="Updating",
             args="",
+            display_mode=ToolDisplayMode.HIDDEN,
         ))
         await bus.emit(TodoUpdated(
             items=[

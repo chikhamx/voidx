@@ -254,6 +254,87 @@ async def test_stream_llm_strips_todo_tool_call_before_repair():
     assert [message.content for message in model.messages] == ["hi", "next"]
 
 
+@pytest.mark.parametrize("tool_name", ["compact_context", "advance_workflow"])
+@pytest.mark.asyncio
+async def test_stream_llm_preserves_runtime_tool_calls_when_not_sanitized(tool_name):
+    renderer = FakeRenderer()
+    model = FakeStreamingModel()
+
+    await _stream_llm(
+        model,
+        [
+            HumanMessage(content="hi"),
+            AIMessage(
+                content="",
+                tool_calls=[{"name": tool_name, "args": {}, "id": "call_runtime", "type": "tool_call"}],
+            ),
+            ToolMessage(content="runtime output", tool_call_id="call_runtime"),
+            HumanMessage(content="next"),
+        ],
+        renderer,
+        "anthropic",
+    )
+
+    # compact_context/advance_workflow are NOT in _REPLAY_SANITIZED_TOOL_NAMES,
+    # so their tool calls and ToolMessages are preserved for the LLM.
+    assert [type(message) for message in model.messages] == [HumanMessage, AIMessage, ToolMessage, HumanMessage]
+
+
+@pytest.mark.parametrize("tool_name", ["plan_checkpoint", "clarify"])
+@pytest.mark.asyncio
+async def test_stream_llm_preserves_user_decision_tool_calls_for_replay(tool_name):
+    renderer = FakeRenderer()
+    model = FakeStreamingModel()
+
+    await _stream_llm(
+        model,
+        [
+            HumanMessage(content="hi"),
+            AIMessage(
+                content="",
+                tool_calls=[{"name": tool_name, "args": {}, "id": "call_decision", "type": "tool_call"}],
+            ),
+            ToolMessage(content="user decision", tool_call_id="call_decision"),
+            HumanMessage(content="next"),
+        ],
+        renderer,
+        "anthropic",
+    )
+
+    assert [type(message) for message in model.messages] == [
+        HumanMessage,
+        AIMessage,
+        ToolMessage,
+        HumanMessage,
+    ]
+    assert model.messages[1].tool_calls[0]["name"] == tool_name
+    assert model.messages[2].content == "user decision"
+
+
+@pytest.mark.asyncio
+async def test_stream_llm_preserves_current_todo_tool_result():
+    renderer = FakeRenderer()
+    model = FakeStreamingModel()
+
+    await _stream_llm(
+        model,
+        [
+            HumanMessage(content="hi"),
+            AIMessage(
+                content="",
+                tool_calls=[{"name": "todo", "args": {}, "id": "call_todo", "type": "tool_call"}],
+            ),
+            ToolMessage(content="todo output", tool_call_id="call_todo"),
+        ],
+        renderer,
+        "anthropic",
+    )
+
+    assert [type(message) for message in model.messages] == [HumanMessage, AIMessage, ToolMessage]
+    assert model.messages[1].tool_calls[0]["id"] == "call_todo"
+    assert model.messages[2].tool_call_id == "call_todo"
+
+
 @pytest.mark.asyncio
 async def test_stream_llm_preserves_non_todo_call_in_mixed_batch():
     renderer = FakeRenderer()
@@ -1126,5 +1207,4 @@ async def test_call_llm_keeps_lsp_tools_when_a_lsp_server_is_available(tmp_path,
     })
 
     tool_names = [tool["function"]["name"] for tool in model.bound_tools]
-    assert "lsp_diagnostics" in tool_names
-    assert "lsp_symbols" in tool_names
+    assert "lsp" in tool_names

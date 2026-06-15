@@ -9,6 +9,8 @@ import pytest
 sys.path.insert(0, str(Path(__file__).parent.parent.parent / "src"))
 
 from voidx.agent.slash import SlashHandler
+import voidx.memory.store as store
+from voidx.memory.session import MessageRow, create_session, delete_session, get_session, save_message
 from voidx.ui.commands import COMMANDS
 from voidx.ui.output.diff import make_file_diff
 from voidx.ui.session import session_tracker
@@ -26,11 +28,37 @@ class FakeChoiceApp:
         return self.result
 
 
+class SequencedChoiceApp:
+    def __init__(self, results: list[str | None]) -> None:
+        self.results = results
+        self.prompts: list[str] = []
+        self.choices_history = []
+
+    async def ask_choice(self, prompt, choices):
+        self.prompts.append(prompt)
+        self.choices_history.append(choices)
+        return self.results.pop(0) if self.results else None
+
+
 @pytest.fixture(autouse=True)
 def clear_session_tracker():
     session_tracker.clear()
     yield
     session_tracker.clear()
+
+
+@pytest.fixture
+def isolated_memory_store(tmp_path):
+    if store._conn is not None:
+        store._conn.close()
+    store._conn = None
+    previous_data_dir = store.DATA_DIR
+    store.DATA_DIR = tmp_path / ".voidx"
+    yield
+    if store._conn is not None:
+        store._conn.close()
+    store._conn = None
+    store.DATA_DIR = previous_data_dir
 
 
 def _graph(app=None):
@@ -129,6 +157,229 @@ async def test_rollback_command_no_changes_prints_message(monkeypatch):
 
 def test_rollback_command_is_in_palette():
     assert ("/rollback", "Revert file changes from the current turn") in COMMANDS
+
+
+@pytest.mark.asyncio
+async def test_session_del_dry_run_lists_candidates_without_deleting(monkeypatch, isolated_memory_store):
+    output = _capture_output(monkeypatch)
+    old_session = await create_session(workspace="/tmp/old-workspace")
+    recent_session = await create_session()
+    try:
+        await save_message(MessageRow(session_id=old_session.id, role="user", content="old"))
+        await store._execute_commit(
+            "UPDATE sessions SET title = ?, updated_at = ? WHERE id = ?",
+            ("Old Session", "2026-01-01T00:00:00+00:00", old_session.id),
+        )
+        await store._execute_commit(
+            "UPDATE sessions SET title = ?, updated_at = ? WHERE id = ?",
+            ("Recent Session", "2026-06-14T00:00:00+00:00", recent_session.id),
+        )
+
+        assert await SlashHandler(_graph()).dispatch("/session del --dry-run 7d") is True
+
+        assert any("Dry run" in line for line in output)
+        assert any(old_session.id[:8] in line and "Old Session" in line for line in output)
+        assert any("2026-01-01" in line and "/tmp/old-workspace" in line for line in output)
+        assert all(recent_session.id[:8] not in line for line in output)
+        assert await get_session(old_session.id) is not None
+        assert await get_session(recent_session.id) is not None
+    finally:
+        await delete_session(old_session.id)
+        await delete_session(recent_session.id)
+
+
+@pytest.mark.asyncio
+async def test_session_del_cancel_keeps_candidates(monkeypatch, isolated_memory_store):
+    output = _capture_output(monkeypatch)
+    old_session = await create_session()
+    recent_session = await create_session()
+    try:
+        await save_message(MessageRow(session_id=old_session.id, role="user", content="old"))
+        await store._execute_commit(
+            "UPDATE sessions SET title = ?, updated_at = ? WHERE id = ?",
+            ("Old Session", "2000-01-01T00:00:00+00:00", old_session.id),
+        )
+        await store._execute_commit(
+            "UPDATE sessions SET title = ?, updated_at = ? WHERE id = ?",
+            ("Future Session", "2999-01-01T00:00:00+00:00", recent_session.id),
+        )
+
+        app = FakeChoiceApp(result="no")
+
+        assert await SlashHandler(_graph(app)).dispatch("/session del 7d") is True
+
+        assert app.prompt == "Delete these sessions?"
+        assert app.choices[0][1] == "no"
+        assert app.choices[1][1] == "yes"
+        assert any("Delete preview" in line for line in output)
+        assert any("Deletion cancelled." in line for line in output)
+        assert await get_session(old_session.id) is not None
+        assert await get_session(recent_session.id) is not None
+    finally:
+        await delete_session(old_session.id)
+        await delete_session(recent_session.id)
+
+
+@pytest.mark.asyncio
+async def test_session_del_confirm_deletes_candidates_only(monkeypatch, isolated_memory_store):
+    output = _capture_output(monkeypatch)
+    old_session = await create_session()
+    recent_session = await create_session()
+    try:
+        await save_message(MessageRow(session_id=old_session.id, role="user", content="old"))
+        await save_message(MessageRow(session_id=recent_session.id, role="user", content="recent"))
+        await store._execute_commit(
+            "UPDATE sessions SET title = ?, updated_at = ? WHERE id = ?",
+            ("Old Session", "2000-01-01T00:00:00+00:00", old_session.id),
+        )
+        await store._execute_commit(
+            "UPDATE sessions SET title = ?, updated_at = ? WHERE id = ?",
+            ("Future Session", "2999-01-01T00:00:00+00:00", recent_session.id),
+        )
+
+        assert await SlashHandler(_graph(FakeChoiceApp(result="yes"))).dispatch("/session del 7d") is True
+
+        assert any("Deleted 1 session(s)" in line for line in output)
+        assert await get_session(old_session.id) is None
+        assert await get_session(recent_session.id) is not None
+    finally:
+        await delete_session(old_session.id)
+        await delete_session(recent_session.id)
+
+
+@pytest.mark.asyncio
+async def test_session_del_without_scope_asks_for_scope_before_confirm(monkeypatch, isolated_memory_store):
+    output = _capture_output(monkeypatch)
+    old_session = await create_session()
+    recent_session = await create_session()
+    try:
+        await save_message(MessageRow(session_id=old_session.id, role="user", content="old"))
+        await store._execute_commit(
+            "UPDATE sessions SET title = ?, updated_at = ? WHERE id = ?",
+            ("Old Session", "2000-01-01T00:00:00+00:00", old_session.id),
+        )
+        await store._execute_commit(
+            "UPDATE sessions SET title = ?, updated_at = ? WHERE id = ?",
+            ("Future Session", "2999-01-01T00:00:00+00:00", recent_session.id),
+        )
+
+        app = SequencedChoiceApp(["7d", "yes"])
+
+        assert await SlashHandler(_graph(app)).dispatch("/session del") is True
+
+        assert app.prompts == ["Delete sessions older than:", "Delete these sessions?"]
+        assert app.choices_history[0][0][1] == "7d"
+        assert app.choices_history[0][-1][1] == "cancel"
+        assert any("Deleted 1 session(s)" in line for line in output)
+        assert await get_session(old_session.id) is None
+        assert await get_session(recent_session.id) is not None
+    finally:
+        await delete_session(old_session.id)
+        await delete_session(recent_session.id)
+
+
+@pytest.mark.asyncio
+async def test_session_del_without_scope_can_cancel_scope_selection(monkeypatch, isolated_memory_store):
+    output = _capture_output(monkeypatch)
+    session = await create_session()
+    try:
+        app = SequencedChoiceApp(["cancel"])
+
+        assert await SlashHandler(_graph(app)).dispatch("/session del") is True
+
+        assert app.prompts == ["Delete sessions older than:"]
+        assert any("Deletion cancelled." in line for line in output)
+        assert await get_session(session.id) is not None
+    finally:
+        await delete_session(session.id)
+
+
+def test_session_del_dry_run_command_is_in_palette():
+    assert ("/session del --dry-run", "Preview session deletion candidates") in COMMANDS
+
+
+def test_session_del_command_is_in_palette():
+    assert ("/session del", "Delete old saved sessions") in COMMANDS
+
+
+@pytest.mark.asyncio
+async def test_session_list_alias_lists_saved_sessions(monkeypatch, isolated_memory_store):
+    output = _capture_output(monkeypatch)
+    session = await create_session()
+    try:
+        await store._execute_commit(
+            "UPDATE sessions SET title = ?, updated_at = ? WHERE id = ?",
+            ("Listed Session", "2026-06-15T00:00:00+00:00", session.id),
+        )
+
+        assert await SlashHandler(_graph()).dispatch("/session list") is True
+
+        assert any("Sessions:" in line for line in output)
+        assert any(session.id[:8] in line and "Listed Session" in line for line in output)
+    finally:
+        await delete_session(session.id)
+
+
+@pytest.mark.asyncio
+async def test_session_new_alias_clears_current_session(monkeypatch):
+    output = _capture_output(monkeypatch)
+    calls: list[str] = []
+
+    async def clear_current_session() -> bool:
+        calls.append("clear")
+        return True
+
+    async def show_startup(**kwargs) -> bool:
+        calls.append(f"startup:{kwargs}")
+        return True
+
+    graph = SimpleNamespace(
+        clear_current_session=clear_current_session,
+        show_startup=show_startup,
+    )
+
+    assert await SlashHandler(graph).dispatch("/session new") is True
+
+    assert calls == ["clear", "startup:{'prefer_direct': True}"]
+    assert output == []
+
+
+@pytest.mark.asyncio
+async def test_session_resume_alias_resumes_saved_session(monkeypatch, isolated_memory_store):
+    output = _capture_output(monkeypatch)
+    session = await create_session()
+    calls: list[str] = []
+    try:
+        await store._execute_commit(
+            "UPDATE sessions SET title = ?, updated_at = ? WHERE id = ?",
+            ("Resume Me", "2026-06-15T00:00:00+00:00", session.id),
+        )
+
+        async def resume_session(resumed) -> bool:
+            calls.append(f"resume:{resumed.id}")
+            return True
+
+        async def restore_transcript_snapshot(*, append: bool = False) -> bool:
+            calls.append(f"restore:{append}")
+            return True
+
+        graph = SimpleNamespace(
+            resume_session=resume_session,
+            restore_transcript_snapshot=restore_transcript_snapshot,
+        )
+
+        assert await SlashHandler(graph).dispatch(f"/session resume {session.id}") is True
+
+        assert calls == [f"resume:{session.id}", "restore:True"]
+        assert any(f"Resumed: {session.id}" in line and "Resume Me" in line for line in output)
+    finally:
+        await delete_session(session.id)
+
+
+def test_session_namespace_commands_are_in_palette():
+    assert ("/session list", "List saved sessions") in COMMANDS
+    assert ("/session new", "Start a new session with empty context") in COMMANDS
+    assert ("/session resume", "Resume a saved session") in COMMANDS
 
 
 @pytest.mark.asyncio
