@@ -151,12 +151,8 @@ class DockEventConsumer:
                 return self._dock.append_thought(text, elapsed)
             case WarningAppended(message=message):
                 return self._dock.append_message(f"! {message}", style="yellow")
-            case GuidanceSubmitted() as e:
-                suffix = " [dim](truncated)[/dim]" if e.truncated else ""
-                return self._dock.append_message(
-                    f"[dim][guide][/dim] {escape(e.text)}{suffix}",
-                    markup=True,
-                )
+            case GuidanceSubmitted():
+                return None
             case ErrorAppended() as e:
                 return self._dock.append_error(e.message, parent=self._agent_parent(e.agent_id))
             case DiffAppended() as e:

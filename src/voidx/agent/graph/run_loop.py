@@ -36,6 +36,18 @@ def _ui_command_kind(command: Any) -> str:
     return str(getattr(command, "kind", "") or "")
 
 
+def _active_workflow_names(task_state: Any) -> list[str]:
+    runs = getattr(task_state, "workflow_runs", None) or {}
+    values = runs.values() if isinstance(runs, dict) else runs
+    names: list[str] = []
+    for run in values:
+        status = getattr(getattr(run, "status", ""), "value", getattr(run, "status", ""))
+        name = str(getattr(run, "name", "") or "").strip()
+        if status == "active" and name:
+            names.append(name)
+    return names
+
+
 class GraphRunLoopMixin(GraphTurnMixin, GraphSessionMixin, GraphTranscriptMixin):
     async def _show_startup(
         self: GraphRunLoopHost,
@@ -183,6 +195,7 @@ class GraphRunLoopMixin(GraphTurnMixin, GraphSessionMixin, GraphTranscriptMixin)
                 goal_label=lambda: goal_label(getattr(getattr(self, "_task_state", None), "current_goal", None)),
                 goal_type=lambda: goal_type_value(getattr(getattr(self, "_task_state", None), "current_goal", None)),
                 goal_awaiting_approval=lambda: bool(getattr(getattr(self, "_task_state", None), "pending_approval", None)),
+                active_workflows=lambda: _active_workflow_names(getattr(self, "_task_state", None)),
                 mcp_servers=lambda: [
                     McpServerStatus(
                         name=s.name,

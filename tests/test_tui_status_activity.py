@@ -200,6 +200,59 @@ def test_status_summary_text_applies_semantic_styles(tmp_path):
     assert "#4B5563" in _styles_covering(text, "|")
 
 
+def test_status_summary_renders_active_workflow_name(tmp_path):
+    status = SimpleNamespace(
+        provider="mimo",
+        model="mimo-v2.5",
+        workspace=str(tmp_path),
+        interaction_mode=lambda: "auto",
+        active_workflows=lambda: ["tdd"],
+    )
+    tui = PureTui(status, COMMANDS)
+
+    summary = tui._status_summary(120)
+
+    assert "tdd" in summary
+    assert "workflow tdd" not in summary
+
+
+def test_status_summary_text_renders_workflow_name_as_rainbow(tmp_path):
+    status = SimpleNamespace(
+        provider="mimo",
+        model="mimo-v2.5",
+        workspace=str(tmp_path),
+        interaction_mode=lambda: "auto",
+        active_workflows=lambda: ["review"],
+    )
+    tui = PureTui(status, COMMANDS)
+
+    text = tui._status_summary_text(120)
+    start = text.plain.index("review")
+    styles = {
+        str(span.style)
+        for index in range(start, start + len("review"))
+        for span in text.spans
+        if span.start <= index < span.end
+    }
+
+    assert len(styles) >= 4
+    assert "workflow review" not in text.plain
+
+
+def test_active_workflow_names_extracts_active_runs():
+    from voidx.agent.graph.run_loop import _active_workflow_names
+    from voidx.workflow.types import WorkflowRunState, WorkflowRunStatus
+
+    state = SimpleNamespace(
+        workflow_runs={
+            "tdd": WorkflowRunState(name="tdd", status=WorkflowRunStatus.ACTIVE),
+            "verify": WorkflowRunState(name="verify", status=WorkflowRunStatus.PENDING),
+        }
+    )
+
+    assert _active_workflow_names(state) == ["tdd"]
+
+
 def test_status_summary_text_fallback_uses_dim_style(tmp_path):
     status = SimpleNamespace(
         provider="anthropic",
@@ -323,7 +376,7 @@ def test_busy_activity_line_renders_below_temporary_agent_not_status(tmp_path, m
     )
 
     lines = _render_lines(tui, width=80)
-    agent_index = next(i for i, line in enumerate(lines) if "voidx" in line)
+    tool_index = next(i for i, line in enumerate(lines) if "Search(" in line)
     todo_index = next(i for i, line in enumerate(lines) if "Todo: 0/1 done" in line)
     busy_index = next(i for i, line in enumerate(lines) if "Cogitating" in line)
     input_index = next(i for i, line in enumerate(lines) if line.strip() == "❯ hello")
@@ -331,12 +384,12 @@ def test_busy_activity_line_renders_below_temporary_agent_not_status(tmp_path, m
     status = tui._status_summary_text(120)
     rendered = "\n".join(_rich_plain(line) for line in lines)
 
-    assert agent_index < todo_index < busy_index < input_index < status_index
+    assert tool_index < todo_index < busy_index < input_index < status_index
     assert "Cogitating (3s)" in rendered
     assert rendered.count("Cogitating") == 1
-    assert "voidx" in rendered
+    assert "voidx" not in rendered
     assert "Cogitating" not in status.plain
-    assert "busy" in status.plain
+    assert "busy" not in status.plain
     assert "auto" in status.plain
 
 
@@ -630,7 +683,7 @@ def test_busy_activity_tick_repaints_bottom_line_with_pinned_todo(tmp_path, monk
     tui._render_frame()
     initial = _rich_plain(fake_stdout.text)
     assert tui._last_busy_activity_start_row == tui._last_bottom_start_row - 1
-    assert "voidx" in initial
+    assert "voidx" not in initial
     assert "Todo:" in initial
     assert "Brewing (1s)" in initial
     assert initial.count("Brewing") == 1

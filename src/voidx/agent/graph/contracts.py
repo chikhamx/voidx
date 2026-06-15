@@ -21,6 +21,7 @@ from voidx.tools.service import ToolRegistry, TaskTracker
 
 if TYPE_CHECKING:
     from voidx.agent.graph.compaction_coordinator import CompactionResult, GraphCompactionCoordinator
+    from voidx.agent.graph.runtime_guards import RuntimeGuardState
     from voidx.agent.graph.session_runtime import GraphSessionRuntime
     from voidx.agent.graph.tool_executor import GraphToolExecutor
     from voidx.agent.graph.turn_runner import GraphTurnRunner
@@ -84,6 +85,7 @@ class GraphToolExecutionHost(Protocol):
     _mcp_manager: Any
     _lsp_manager: Any
     _needs_failure_check: dict[str, dict]
+    _runtime_guards: RuntimeGuardState
     _tool_executor: GraphToolExecutor
     _display_policy: Any
 
@@ -170,6 +172,7 @@ class GraphRunLoopHost(Protocol):
     _slash: Any
     _any_messages_sent: bool
     _pending_guidance: list[str]
+    _runtime_guards: RuntimeGuardState
 
     @property
     def _plan_mode(self) -> bool: ...

@@ -85,10 +85,8 @@ class GraphPermissionMixin:
         if choice == "a":
             for tc in need_ask:
                 self._permission.allow_silent(tc["name"])
-            self._notice_permission_result(f"{len(need_ask)} tools allowed for this session")
             approved.extend(need_ask)
         elif choice == "y":
-            self._notice_permission_result(f"{len(need_ask)} tools allowed once")
             approved.extend(need_ask)
         else:
             self._notice_permission_result(f"{len(need_ask)} tools denied")

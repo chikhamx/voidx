@@ -421,9 +421,13 @@ class OutputTree:
 
         start = len(lines)
 
-        if _is_transparent_agent_subagent(node):
+        if is_transparent_container(node):
+            prev_child = None
             for child in node.children:
+                if _needs_gap_between_agent_blocks(node, prev_child, child):
+                    lines.append("")
                 self._walk_render(child, prefix_parts, lines, line_map, click_map)
+                prev_child = child
             self._node_ranges[node.id] = (start, len(lines))
             self._node_prefixes[node.id] = list(prefix_parts)
             return
@@ -463,8 +467,12 @@ class OutputTree:
 
             # Children get box-drawing, indented under this node
             new_parts = [" "]
+            prev_child = None
             for child in node.children:
+                if _needs_gap_between_agent_blocks(node, prev_child, child):
+                    lines.append("")
                 self._walk_render(child, new_parts, lines, line_map, click_map)
+                prev_child = child
             self._node_ranges[node.id] = (start, len(lines))
             self._node_prefixes[node.id] = []
             return
@@ -496,12 +504,18 @@ class OutputTree:
         )
         tool_call_row = node.node_type == "tool_call"
         tool_metadata_body = tool_call_row and "diff_text" not in node.payload
+        tool_prefix = aligned_prefix if tool_call_row and suppress_connector else indent
+        transparent_assistant_child = (
+            node.node_type == "assistant"
+            and node.parent is not None
+            and _is_transparent_assistant_container(node.parent)
+        )
 
         if node.collapsed:
             if inline_tool_result:
                 line = f"{indent}{_tool_meta_line(node.collapse_summary)}"
             elif tool_call_row:
-                line = f"{indent}{node.collapse_summary}"
+                line = f"{tool_prefix}{node.collapse_summary}"
             else:
                 line = f"{aligned_prefix}{node.collapse_summary}"
             lines.append(line)
@@ -514,7 +528,11 @@ class OutputTree:
             return
 
         # Header line
-        current_prefix = indent if inline_tool_result or tool_call_row else aligned_prefix
+        current_prefix = indent if inline_tool_result else (
+            tool_prefix if tool_call_row else (
+                "" if transparent_assistant_child else aligned_prefix
+            )
+        )
         line = f"{current_prefix}{node.header}" if node.header else current_prefix
         lines.append(line)
         if line_map is not None:
@@ -524,11 +542,13 @@ class OutputTree:
 
         # Continuation for body lines and children
         cont_suffix = self.BOX_SPACE if suppress_connector or effectively_last else self.BOX_VERT
-        cont = indent if inline_tool_result else indent + cont_suffix
+        cont = indent if inline_tool_result else (
+            indent if transparent_assistant_child else indent + cont_suffix
+        )
 
         # Body lines
         for bl in node.body_lines:
-            body_line = f"{indent}{_tool_meta_line(bl)}" if tool_metadata_body else f"{cont}{bl}"
+            body_line = f"{tool_prefix}{_tool_meta_line(bl)}" if tool_metadata_body else f"{cont}{bl}"
             if node.payload.get("diff_text"):
                 body_line = _pad_diff_background_row(body_line, self._render_width)
             lines.append(body_line)
@@ -539,8 +559,12 @@ class OutputTree:
 
         # Children
         new_parts = prefix_parts if inline_tool_result else prefix_parts + [cont_suffix]
+        prev_child = None
         for child in node.children:
+            if _needs_gap_between_agent_blocks(node, prev_child, child):
+                lines.append("")
             self._walk_render(child, new_parts, lines, line_map, click_map)
+            prev_child = child
         self._node_ranges[node.id] = (start, len(lines))
         self._node_prefixes[node.id] = list(prefix_parts)
 
@@ -574,6 +598,35 @@ def _needs_gap_after_turn(prev: OutputNode | None, child: OutputNode) -> bool:
     return child.node_type == "assistant" or (child.node_type == "message" and bool(child.header))
 
 
+def _needs_gap_between_agent_blocks(
+    parent: OutputNode,
+    prev: OutputNode | None,
+    child: OutputNode,
+) -> bool:
+    if parent.node_type != "assistant" or prev is None:
+        return False
+    if _is_empty_message_spacer(prev) or _is_empty_message_spacer(child):
+        return False
+    prev_text = _is_visible_agent_text(prev)
+    child_text = _is_visible_agent_text(child)
+    return prev_text and child_text
+
+
+def _is_visible_agent_text(node: OutputNode) -> bool:
+    if node.node_type not in {"assistant", "message"}:
+        return False
+    return bool(node.header or node.body_lines)
+
+
+def _is_empty_message_spacer(node: OutputNode) -> bool:
+    return (
+        node.node_type == "message"
+        and not node.header
+        and not node.body_lines
+        and not node.children
+    )
+
+
 def _subtree_ids(node: OutputNode) -> set[str]:
     ids = {node.id}
     for child in node.children:
@@ -603,6 +656,14 @@ def _is_inline_tool_result(node: OutputNode) -> bool:
         and node.parent is not None
         and node.parent.node_type == "tool_call"
     )
+
+
+def is_transparent_container(node: OutputNode) -> bool:
+    return _is_transparent_assistant_container(node) or _is_transparent_agent_subagent(node)
+
+
+def _is_transparent_assistant_container(node: OutputNode) -> bool:
+    return node.node_type == "assistant" and not node.header and not node.body_lines
 
 
 def _is_transparent_agent_subagent(node: OutputNode) -> bool:

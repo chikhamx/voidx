@@ -14,6 +14,7 @@ from voidx.agent.attachments import build_user_message_payload, serialize_messag
 from voidx.agent.message_rows import messages_from_rows_incremental
 from voidx.agent.goal_resolver import resolve_goal_for_turn
 from voidx.agent.runtime_context import TaskIntent
+from voidx.agent.graph.runtime_guards import RuntimeGuardState
 from voidx.agent.state import AgentState
 from voidx.agent.task_state import TaskState, goal_label
 from voidx.memory.service import (
@@ -93,6 +94,7 @@ class GraphTurnRunner:
         host = self.host
         t_turn_start = time.monotonic()
         host._usage_stats.begin_turn()
+        host._runtime_guards = RuntimeGuardState()
         user_message_id: int | None = None
         try:
             host._ui.session_tracker.begin_turn(host._workspace)

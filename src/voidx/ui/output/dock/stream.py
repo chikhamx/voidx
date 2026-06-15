@@ -4,11 +4,8 @@ from __future__ import annotations
 
 from rich.markup import escape
 
+from voidx.ui.output.dock.agent_placeholder import is_agent_placeholder_header
 from voidx.ui.output.dock.formatting import _ansi_line, _ansi_rgb, _clean, _markdown_lines
-from voidx.ui.output.dock.agent_placeholder import (
-    agent_placeholder_header,
-    is_agent_placeholder_header,
-)
 from voidx.ui.output.tree import OutputNode
 
 
@@ -19,16 +16,18 @@ class DockStreamMixin:
         *,
         parent: OutputNode | None = None,
         phase: str = "text",
+        refresh: bool = True,
     ) -> bool:
         if not self._active:
             return False
         self._stream_text = text
         self._update_stream_node(parent=parent, phase=phase)
         self._mark_unsettled(self._stream_node)
-        self.refresh()
+        if refresh:
+            self.refresh()
         return True
 
-    def commit_stream(self) -> bool:
+    def commit_stream(self, *, refresh: bool = True) -> bool:
         if not self._active:
             return False
         stream_node = self._stream_node
@@ -36,17 +35,14 @@ class DockStreamMixin:
             self._mark_settled(stream_node)
         self._stream_node = None
         self._stream_text = ""
-        self.refresh()
+        if refresh:
+            self.refresh()
         return True
 
     def discard_stream(self) -> bool:
         if not self._active:
             return False
-        if self._stream_node and not self._stream_text.strip():
-            self._remove_node(self._stream_node)
-            if self._current_agent is self._stream_node:
-                self._current_agent = None
-        elif self._stream_node:
+        if self._stream_node:
             self._remove_node(self._stream_node)
             if self._current_agent is self._stream_node:
                 self._current_agent = None
@@ -101,56 +97,17 @@ class DockStreamMixin:
             self._tree.mark_dirty()
 
     def _new_stream_node(self, *, parent: OutputNode | None = None) -> OutputNode:
-        if parent is not None:
-            return self._tree.new_node(
-                parent=parent,
-                node_type="assistant",
-                header="",
-                collapsed=False,
-            )
-
-        if (
-            self._current_agent is not None
-            and self._current_agent.node_type == "assistant"
-            and is_agent_placeholder_header(self._current_agent.header)
-            and not self._current_agent.children
-        ):
-            return self._current_agent
-
-        if self._current_agent is not None:
-            if is_agent_placeholder_header(self._current_agent.header):
-                self._current_agent.header = "[dim]●[/dim] voidx"
-                self._mark_subtree_settled(self._current_agent)
-                self._tree.mark_dirty()
-            self._append_root_spacer()
-            self._current_agent = self._tree.new_node(
-                parent=self._tree.root,
-                node_type="assistant",
-                header="",
-                collapsed=False,
-            )
-            self._mark_unsettled(self._current_agent)
-            return self._current_agent
-
-        self._append_root_spacer()
-        self._current_agent = self._tree.new_node(
-            parent=self._tree.root,
+        target = parent or self.ensure_agent()
+        if parent is None and is_agent_placeholder_header(target.header):
+            target.header = ""
+            target.body_lines = []
+            self._tree.mark_dirty()
+        return self._tree.new_node(
+            parent=target,
             node_type="assistant",
             header="",
             collapsed=False,
         )
-        self._mark_unsettled(self._current_agent)
-        return self._current_agent
 
     def _settle_stream_for_tool(self) -> None:
-        if (
-            self._stream_node is not None
-            and self._stream_node is self._current_agent
-            and not self._stream_node.children
-            and self._stream_text.strip()
-        ):
-            self._stream_node.header = agent_placeholder_header()
-            self._stream_node.body_lines = []
-            self._mark_unsettled(self._stream_node)
-            self._tree.mark_dirty()
         self.commit_stream()

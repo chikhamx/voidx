@@ -19,6 +19,7 @@ from voidx.ui.output.events import (
     DockEventConsumer,
     ErrorAppended,
     FileChangeAppended,
+    GuidanceSubmitted,
     PermissionPromptCleared,
     PermissionPromptShown,
     PermissionToolDetail,
@@ -65,6 +66,24 @@ def test_dock_event_consumer_rejects_unsupported_event(isolated_dock):
 
     with pytest.raises(TypeError, match="Unsupported UI event"):
         consumer.handle(object())
+
+
+def test_streaming_renderer_done_refreshes_direct_dock_once(isolated_dock, monkeypatch):
+    isolated_dock.begin_capture()
+    refreshes = 0
+
+    def counted_refresh():
+        nonlocal refreshes
+        refreshes += 1
+
+    monkeypatch.setattr(isolated_dock, "refresh", counted_refresh)
+    renderer = StreamingRenderer(Console(), debug=False)
+    renderer.feed_text("hello")
+    refreshes = 0
+
+    renderer.done()
+
+    assert refreshes == 1
 
 
 @pytest.mark.asyncio
@@ -309,6 +328,22 @@ async def test_permission_prompt_event_does_not_pollute_transcript(isolated_dock
 
         await bus.emit(PermissionPromptCleared())
         await bus.drain()
+    finally:
+        await bus.stop()
+
+
+@pytest.mark.asyncio
+async def test_guidance_submitted_event_does_not_render_message(isolated_dock):
+    isolated_dock.begin_capture()
+    bus = UiEventBus()
+    bus.start(DockEventConsumer(isolated_dock))
+    try:
+        await bus.emit(GuidanceSubmitted(text="看可以调用LoginDevice::get_chatters"))
+        await bus.drain()
+
+        rendered = "\n".join(_plain(line) for line in isolated_dock.tree.render(100))
+        assert "LoginDevice::get_chatters" not in rendered
+        assert "[guide]" not in rendered
     finally:
         await bus.stop()
 

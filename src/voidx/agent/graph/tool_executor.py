@@ -15,6 +15,13 @@ from langgraph.graph.message import REMOVE_ALL_MESSAGES
 
 from voidx.diffing import diff_stat
 from voidx.agent.graph.runtime import current_parent_tool_call_id
+from voidx.agent.graph.runtime_guards import (
+    GuardDecision,
+    GuardGuidance,
+    RuntimeGuardState,
+    build_failure_key,
+    cycle_summary_from_tools,
+)
 from voidx.agent.graph.todo_events import todo_updated_event
 from voidx.agent.todo_state import apply_todo_state_to_host, todo_run_state_from_result
 from voidx.agent.task_state import Goal, PendingApproval, TaskState, TodoRunState, ToolStatePatch, goal_label
@@ -98,7 +105,10 @@ class GraphToolExecutor:
         plan_mode = state.get("plan_mode", False)
         interaction_mode = state.get("interaction_mode")
         workspace = state.get("workspace", host._workspace)
-        runtime_task_state = _task_state_for_state(state.get("task_state"))
+        runtime_task_state = _task_state_for_state(
+            state.get("task_state"),
+            fallback=getattr(host, "_task_state", None),
+        )
         runtime_task_intent = runtime_task_state.current_intent.value
         runtime_pending_approval = _dump_pending_approval(runtime_task_state.pending_approval)
         runtime_goal = runtime_task_state.current_goal
@@ -170,6 +180,22 @@ class GraphToolExecutor:
             ctx = make_context()
 
         tool_calls = last.tool_calls
+        guard_state = _runtime_guard_state(host)
+        repetitive_decision = guard_state.repetitive_tools.decision_for_pending(list(tool_calls))
+        if repetitive_decision.action in {"skip", "terminate"}:
+            tool_messages = _runtime_guard_tool_messages(
+                tool_calls,
+                repetitive_decision.message,
+                metadata=repetitive_decision.metadata,
+            )
+            result: dict = {"messages": tool_messages}
+            if repetitive_decision.action == "terminate":
+                result["messages"] = [
+                    *tool_messages,
+                    AIMessage(content=repetitive_decision.message),
+                ]
+                result["should_continue"] = False
+            return result
 
         # ── Phase 2: parallel execution of all approved tools ────────
 
@@ -339,12 +365,14 @@ class GraphToolExecutor:
         async def execute_approved(approved: list[dict], *, serial: bool = False) -> list[_ExecutedTool]:
             if not approved:
                 return []
-            unique_calls, duplicate_sources = _dedupe_repeated_read_calls(approved)
+            runnable, blocked = _split_runtime_guard_blocked_calls(approved, guard_state)
+            unique_calls, duplicate_sources = _dedupe_repeated_read_calls(runnable)
             if serial:
                 executed = []
                 for tc in unique_calls:
                     executed.append(await execute_one(tc))
-                return _restore_deduped_read_results(approved, executed, duplicate_sources)
+                restored = _restore_deduped_read_results(runnable, executed, duplicate_sources)
+                return _restore_runtime_guard_blocked_results(approved, restored, blocked)
 
             agent_limit = _parallel_subagent_limit(host.config)
             agent_semaphore = asyncio.Semaphore(agent_limit)
@@ -375,12 +403,15 @@ class GraphToolExecutor:
                         status_id=aggregate_status_id,
                         label=f"Finished {parallel_agent_count} child agents",
                     ))
-            return _restore_deduped_read_results(approved, executed, duplicate_sources)
+            restored = _restore_deduped_read_results(runnable, executed, duplicate_sources)
+            return _restore_runtime_guard_blocked_results(approved, restored, blocked)
 
         executed: list[_ExecutedTool] = []
         denied: list[tuple[dict, str]] = []
         blocked_msgs: list[ToolMessage] = []
         pending = list(tool_calls)
+        cycle_previous_todo_state = runtime_task_state.todo_state
+        cycle_workflow_changed = False
 
         while pending:
             prefix, barrier, suffix = _split_at_first_barrier(pending)
@@ -398,14 +429,14 @@ class GraphToolExecutor:
                 denied.extend(segment_denied)
                 segment_executed = await execute_approved(approved)
                 executed.extend(segment_executed)
-                apply_state_update(
-                    _state_update_from_executed_tools(
-                        segment_executed,
-                        current_workflow_runs=runtime_workflow_runs,
-                        current_workflow_route=runtime_task_state.workflow_route,
-                        turn_count=turn_count,
-                    )
+                segment_update = _state_update_from_executed_tools(
+                    segment_executed,
+                    current_workflow_runs=runtime_workflow_runs,
+                    current_workflow_route=runtime_task_state.workflow_route,
+                    turn_count=turn_count,
                 )
+                cycle_workflow_changed = cycle_workflow_changed or "workflow_runs" in segment_update
+                apply_state_update(segment_update)
                 pending = ([barrier] if barrier is not None else []) + suffix
                 continue
 
@@ -428,14 +459,14 @@ class GraphToolExecutor:
 
             segment_executed = await execute_approved(approved, serial=True)
             executed.extend(segment_executed)
-            apply_state_update(
-                    _state_update_from_executed_tools(
-                        segment_executed,
-                        current_workflow_runs=runtime_workflow_runs,
-                        current_workflow_route=runtime_task_state.workflow_route,
-                        turn_count=turn_count,
-                    )
-                )
+            segment_update = _state_update_from_executed_tools(
+                segment_executed,
+                current_workflow_runs=runtime_workflow_runs,
+                current_workflow_route=runtime_task_state.workflow_route,
+                turn_count=turn_count,
+            )
+            cycle_workflow_changed = cycle_workflow_changed or "workflow_runs" in segment_update
+            apply_state_update(segment_update)
             if not segment_executed or not result_ok(segment_executed[-1].result):
                 blocked_msgs.extend(_blocked_after_barrier_messages(suffix, workspace, "failed"))
                 break
@@ -444,6 +475,16 @@ class GraphToolExecutor:
 
         # Clear on-failure tracking for this batch (full logic in Phase 2)
         host._needs_failure_check.clear()
+
+        no_progress_decision = await _record_runtime_guard_outcomes(
+            host,
+            guard_state,
+            executed,
+            previous_todo_state=cycle_previous_todo_state,
+            next_todo_state=runtime_task_state.todo_state,
+            workflow_changed=cycle_workflow_changed,
+            result_ok=result_ok,
+        )
 
         if host._ui.via_events():
             await host._ui.events.drain()
@@ -476,6 +517,9 @@ class GraphToolExecutor:
             )
         ):
             state_update["should_continue"] = False
+        if no_progress_decision.action == "terminate":
+            tool_messages.append(AIMessage(content=no_progress_decision.message))
+            state_update["should_continue"] = False
         return {
             "messages": tool_messages,
             **state_update,
@@ -492,6 +536,161 @@ class GraphToolExecutor:
             except (TypeError, ValueError):
                 return False
         return True
+
+
+def _runtime_guard_state(host) -> RuntimeGuardState:
+    state = getattr(host, "_runtime_guards", None)
+    if state is None:
+        state = RuntimeGuardState()
+        host._runtime_guards = state
+    return state
+
+
+def _split_runtime_guard_blocked_calls(
+    tool_calls: list[dict],
+    guard_state: RuntimeGuardState,
+) -> tuple[list[dict], dict[int, _ExecutedTool]]:
+    runnable: list[dict] = []
+    blocked: dict[int, _ExecutedTool] = {}
+    for call in tool_calls:
+        if guard_state.tool_failures.should_block(call):
+            blocked[id(call)] = _runtime_guard_blocked_tool(call)
+        else:
+            runnable.append(call)
+    return runnable, blocked
+
+
+def _runtime_guard_blocked_tool(tool_call: dict) -> _ExecutedTool:
+    tool_name = str(tool_call.get("name") or "tool")
+    message = (
+        f"Runtime guard blocked repeated failed tool call: {tool_name}. "
+        "Stop retrying it with the same arguments; summarize the failure, use a different approach, "
+        "or ask the user for the missing input."
+    )
+    result = ToolResult(
+        title="runtime guard: repeated failure",
+        output=message,
+        summary="runtime guard blocked repeated failed tool call",
+        metadata={
+            "blocked": True,
+            "runtime_guard": "tool_failure_loop",
+            "error_kind": "runtime_guard_blocked",
+        },
+    )
+    return _ExecutedTool(
+        message=ToolMessage(content=message, tool_call_id=tool_call.get("id", "")),
+        result=result,
+        tool_call=tool_call,
+    )
+
+
+def _restore_runtime_guard_blocked_results(
+    original_calls: list[dict],
+    runnable_executed: list[_ExecutedTool],
+    blocked: dict[int, _ExecutedTool],
+) -> list[_ExecutedTool]:
+    if not blocked:
+        return runnable_executed
+    restored: list[_ExecutedTool] = []
+    runnable_iter = iter(runnable_executed)
+    for call in original_calls:
+        item = blocked.get(id(call))
+        if item is not None:
+            restored.append(item)
+        else:
+            restored.append(next(runnable_iter))
+    return restored
+
+
+def _runtime_guard_tool_messages(
+    tool_calls: list[dict],
+    message: str,
+    *,
+    metadata: dict | None = None,
+) -> list[ToolMessage]:
+    return [
+        ToolMessage(content=message, tool_call_id=call.get("id", ""))
+        for call in tool_calls
+    ]
+
+
+async def _record_runtime_guard_outcomes(
+    host,
+    guard_state: RuntimeGuardState,
+    executed: list[_ExecutedTool],
+    *,
+    previous_todo_state,
+    next_todo_state,
+    workflow_changed: bool,
+    result_ok: ToolResultOk,
+) -> GuardDecision:
+    for item in executed:
+        metadata = getattr(item.result, "metadata", {}) or {}
+        if metadata.get("runtime_guard"):
+            continue
+        if result_ok(item.result):
+            guard_state.tool_failures.record_success(item.tool_call)
+            continue
+        key = build_failure_key(item.tool_call, item.result)
+        guidance = guard_state.tool_failures.record_failure(
+            key,
+            str(getattr(item.result, "summary", "") or getattr(item.result, "output", ""))[:500],
+        )
+        _submit_guard_guidance(host, guidance)
+
+    summary = cycle_summary_from_tools(
+        executed,
+        previous_todo_state=previous_todo_state,
+        next_todo_state=next_todo_state,
+        workflow_changed=workflow_changed,
+        result_ok=result_ok,
+    )
+    if summary.tool_names:
+        guidance = guard_state.repetitive_tools.record_cycle(summary)
+        _submit_guard_guidance(host, guidance)
+        guidance = guard_state.no_progress.record_cycle(summary)
+        _submit_guard_guidance(host, guidance)
+        no_progress_decision = guard_state.no_progress.decision()
+        if no_progress_decision.action == "terminate":
+            return no_progress_decision
+        status, wall_clock_decision = guard_state.wall_clock.record_check(
+            label="voidx",
+            latest_action=_latest_action_from_summary(summary),
+        )
+        await _emit_wall_clock_status(host, status)
+        return wall_clock_decision
+    return GuardDecision()
+
+
+async def _emit_wall_clock_status(host, guidance: GuardGuidance | None) -> None:
+    if guidance is None:
+        return
+    if host._ui.via_events():
+        await host._ui.events.emit(StatusUpdated(
+            status_id="runtime-guard:wall-clock",
+            label=guidance.message,
+            stage="working",
+        ))
+        return
+    host._ui.ui.warn(guidance.message)
+
+
+def _latest_action_from_summary(summary) -> str:
+    if summary.only_tool:
+        return summary.only_tool
+    return ", ".join(summary.tool_names[:3])
+
+
+def _submit_guard_guidance(host, guidance: GuardGuidance | None) -> None:
+    if guidance is None:
+        return
+    submit = getattr(host, "submit_guidance", None)
+    if callable(submit):
+        submit(guidance.message)
+        return
+    pending = getattr(host, "_pending_guidance", None)
+    if isinstance(pending, list):
+        pending.append(guidance.message)
 
 
 def _state_update_from_executed_tools(
@@ -976,14 +1175,16 @@ def _dump_pending_approval(value: object | None) -> dict | None:
     return None
 
 
-def _task_state_for_state(value: object) -> TaskState:
+def _task_state_for_state(value: object, fallback: TaskState | None = None) -> TaskState:
     if isinstance(value, TaskState):
         return value.model_copy(deep=True)
     if isinstance(value, dict):
         try:
             return TaskState.model_validate(value)
         except ValueError:
-            return TaskState()
+            pass
+    if fallback is not None:
+        return fallback.model_copy(deep=True)
     return TaskState()
 
 

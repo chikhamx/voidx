@@ -18,6 +18,12 @@ from voidx.agent.graph.convergence import (
     build_convergence_messages,
     generate_fallback_summary,
 )
+from voidx.agent.graph.runtime_guards import (
+    RuntimeGuardState,
+    WallClockGuardState,
+    build_failure_key,
+    cycle_summary_from_tools,
+)
 from voidx.agent.graph.streaming import extract_text, stream_llm
 from voidx.agent.graph.todo_events import todo_updated_event
 from voidx.agent.todo_state import todo_run_state_from_result
@@ -116,11 +122,13 @@ async def run_subagent(
             expected_result="",
             user_requested_write=agent_def.can_write,
             needs_confirmation=False,
-        )
+    )
     sub_task_state = TaskState(
         current_intent=TaskIntent(task_intent),
         current_goal=sub_goal,
     )
+    guard_state = RuntimeGuardState(wall_clock=WallClockGuardState.for_subagent())
+    pending_guard_guidance: list[str] = []
 
     context, context_cache = RuntimeContextBuilder(
         config=context_config,
@@ -161,6 +169,13 @@ async def run_subagent(
                 "finish_reason": reason,
             })
 
+    def drain_guard_guidance() -> list[HumanMessage]:
+        messages: list[HumanMessage] = []
+        while pending_guard_guidance:
+            text = pending_guard_guidance.pop(0)
+            messages.append(HumanMessage(content=text))
+        return messages
+
     try:
         for step in range(1, step_budget + 1):
             if tracker:
@@ -180,7 +195,7 @@ async def run_subagent(
                 has_tool_budget=has_tool_budget,
                 goal=task_description,
             )
-            llm_messages = [*messages, *convergence_messages]
+            llm_messages = [*messages, *drain_guard_guidance(), *convergence_messages]
             model_with_tools = model.bind_tools(active_tool_defs) if active_tool_defs else model
             renderer = StreamingRenderer(ui_port.console, debug=debug, agent_id=agent_id, headless=True)
             context_tokens = estimate_context_tokens(llm_messages, config.model.model)
@@ -270,6 +285,25 @@ async def run_subagent(
             if tracker and text_preview:
                 tracker.update(task_id, last_output=text_preview)
 
+            repetitive_decision = guard_state.repetitive_tools.decision_for_pending(list(assistant_msg.tool_calls))
+            if repetitive_decision.action in {"skip", "terminate"}:
+                guard_tool_msgs = [
+                    ToolMessage(
+                        content=sanitize_tool_message_content(repetitive_decision.message, workspace=ctx.workspace),
+                        tool_call_id=tc.get("id", ""),
+                    )
+                    for tc in assistant_msg.tool_calls
+                ]
+                messages.extend(guard_tool_msgs)
+                sub_messages.extend(guard_tool_msgs)
+                if repetitive_decision.action == "terminate":
+                    if tracker:
+                        tracker.update(task_id, last_output=repetitive_decision.message[:200])
+                        tracker.finish(task_id, "completed")
+                    mark_finished(step, "guard_terminated")
+                    return repetitive_decision.message
+                continue
+
             if authorize_tools:
                 approved, denied = await authorize_tools(assistant_msg.tool_calls)
             else:
@@ -304,13 +338,18 @@ async def run_subagent(
                 if capture_tree and parent_node is not None:
                     capture.tool_done(tid, 0.0, True, tool_call_id=cid)
                     capture.tool_result(result.output, tool_call_id=cid)
-                return ToolMessage(
-                    content=sanitize_tool_message_content(result.output, workspace=ctx.workspace),
-                    tool_call_id=cid,
-                )
+                return {
+                    "tool_message": ToolMessage(
+                        content=sanitize_tool_message_content(result.output, workspace=ctx.workspace),
+                        tool_call_id=cid,
+                    ),
+                    "result": result,
+                    "tool_call": tc,
+                    "todo_state": todo_state,
+                }
 
-            tool_msgs = await asyncio.gather(*[run_one(tc) for tc in approved])
-            tool_msgs = [msg for msg in tool_msgs if msg is not None]
+            executed = await asyncio.gather(*[run_one(tc) for tc in approved])
+            executed = [item for item in executed if item is not None]
             denied_msgs = [
                 ToolMessage(
                     content=sanitize_tool_message_content(reason, workspace=ctx.workspace),
@@ -318,8 +357,73 @@ async def run_subagent(
                 )
                 for tc, reason in denied
             ]
+            tool_msgs = [item["tool_message"] for item in executed]
             messages.extend(tool_msgs + denied_msgs)
             sub_messages.extend(tool_msgs + denied_msgs)
+
+            def result_ok(result) -> bool:
+                metadata = getattr(result, "metadata", {}) or {}
+                if metadata.get("error") or metadata.get("blocked") or metadata.get("timeout"):
+                    return False
+                if "exit_code" in metadata:
+                    try:
+                        return int(metadata.get("exit_code") or 0) == 0
+                    except (TypeError, ValueError):
+                        return False
+                return True
+
+            for item in executed:
+                metadata = getattr(item["result"], "metadata", {}) or {}
+                if metadata.get("runtime_guard"):
+                    continue
+                if result_ok(item["result"]):
+                    guard_state.tool_failures.record_success(item["tool_call"])
+                    continue
+                key = build_failure_key(item["tool_call"], item["result"])
+                guidance = guard_state.tool_failures.record_failure(
+                    key,
+                    str(getattr(item["result"], "summary", "") or getattr(item["result"], "output", ""))[:500],
+                )
+                if guidance is not None:
+                    pending_guard_guidance.append(guidance.message)
+
+            next_todo_state = sub_task_state.todo_state
+            for item in executed:
+                if item["todo_state"] is not None:
+                    next_todo_state = item["todo_state"]
+            summary = cycle_summary_from_tools(
+                executed,
+                previous_todo_state=sub_task_state.todo_state,
+                next_todo_state=next_todo_state,
+                workflow_changed=False,
+                result_ok=result_ok,
+            )
+            sub_task_state.todo_state = next_todo_state
+            guidance = guard_state.repetitive_tools.record_cycle(summary)
+            if guidance is not None:
+                pending_guard_guidance.append(guidance.message)
+            guidance = guard_state.no_progress.record_cycle(summary)
+            if guidance is not None:
+                pending_guard_guidance.append(guidance.message)
+            no_progress_decision = guard_state.no_progress.decision()
+            if no_progress_decision.action == "terminate":
+                if tracker:
+                    tracker.update(task_id, last_output=no_progress_decision.message[:200])
+                    tracker.finish(task_id, "completed")
+                mark_finished(step, "guard_terminated")
+                return no_progress_decision.message
+            wall_status, wall_clock_decision = guard_state.wall_clock.record_check(
+                label=agent_def.name or persona,
+                latest_action=summary.only_tool or ", ".join(summary.tool_names[:3]),
+            )
+            if wall_status is not None:
+                ui_port.ui.warn(wall_status.message)
+            if wall_clock_decision.action == "terminate":
+                if tracker:
+                    tracker.update(task_id, last_output=wall_clock_decision.message[:200])
+                    tracker.finish(task_id, "completed")
+                mark_finished(step, "guard_terminated")
+                return wall_clock_decision.message
 
         if tracker:
             tracker.finish(task_id, "completed")

@@ -31,6 +31,7 @@ class UiStatus:
     goal_label: Callable[[], str] = field(default_factory=lambda: lambda: "")
     goal_type: Callable[[], str] = field(default_factory=lambda: lambda: "")
     goal_awaiting_approval: Callable[[], bool] = field(default_factory=lambda: lambda: False)
+    active_workflows: Callable[[], list[str]] = field(default_factory=lambda: lambda: [])
     reasoning_effort: str = "xhigh"
     permission_label: Callable[[], str] = field(default_factory=lambda: lambda: "default")
     sandbox_label: Callable[[], str] = field(default_factory=lambda: lambda: "w-write")

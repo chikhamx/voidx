@@ -29,17 +29,21 @@ _STATUS_STYLES = {
     "model": "#6CB6FF",
     "policy": "#57AB5A",
     "state": BUSY_ACTIVITY_STYLE,
+    "workflow": "#8BD5FF",
     "usage": "#56D4DD",
     "goal": "#C698F0",
     "separator": "#4B5563",
 }
 _STATUS_VARIANTS = (
+    ("model", "policy", "state", "workflow", "usage", "goal"),
     ("model", "policy", "state", "usage", "goal"),
     ("model", "policy", "usage", "goal"),
     ("model", "policy", "usage"),
     ("model", "policy"),
     ("model",),
 )
+
+_WORKFLOW_RAINBOW = ("#FF6B6B", "#FFD93D", "#6BCB77", "#4D96FF", "#B983FF")
 
 
 class _StatusRendererMixin:
@@ -93,6 +97,7 @@ class _StatusRendererMixin:
         goal_label = _call_status(getattr(self.status, "goal_label", None), "")
         goal_type = _call_status(getattr(self.status, "goal_type", None), "")
         goal_awaiting = _call_bool(getattr(self.status, "goal_awaiting_approval", None))
+        active_workflows = _call_workflows(getattr(self.status, "active_workflows", None))
         stats = getattr(self.status, "usage_stats", None)
         context_limit = getattr(stats, "context_limit", None) or getattr(self.status, "context_limit", 0)
         stats_snapshot = (
@@ -115,6 +120,7 @@ class _StatusRendererMixin:
             goal_label,
             goal_type,
             goal_awaiting,
+            tuple(active_workflows),
             self._busy,
             stats_snapshot,
         )
@@ -128,8 +134,6 @@ class _StatusRendererMixin:
         policy_text = " ".join(policy_parts)
 
         state_parts = []
-        if include_busy and self._busy:
-            state_parts.append("busy")
         if mode:
             state_parts.append(mode)
         if plan:
@@ -157,12 +161,17 @@ class _StatusRendererMixin:
             if goal_label:
                 goal_text += f" {goal_label}"
 
+        workflow_text = ""
+        if active_workflows:
+            workflow_text = ", ".join(active_workflows)
+
         segments = tuple(
             segment
             for segment in (
                 StatusSegment("model", model_text),
                 StatusSegment("policy", policy_text),
                 StatusSegment("state", state_text),
+                StatusSegment("workflow", workflow_text),
                 StatusSegment("usage", usage_text),
                 StatusSegment("goal", goal_text),
             )
@@ -223,6 +232,38 @@ class _StatusRendererMixin:
                 continue
             if appended:
                 text.append(" | ", style=_STATUS_STYLES["separator"])
-            text.append(segment.text, style=_STATUS_STYLES.get(segment.kind, "#8F9BA8"))
+            if segment.kind == "workflow":
+                _append_rainbow(text, segment.text)
+            else:
+                text.append(segment.text, style=_STATUS_STYLES.get(segment.kind, "#8F9BA8"))
             appended = True
         return text
+
+
+def _append_rainbow(text: Text, value: str) -> None:
+    color_index = 0
+    for char in value:
+        if char.isspace():
+            text.append(char, style=_STATUS_STYLES["workflow"])
+            continue
+        text.append(char, style=_WORKFLOW_RAINBOW[color_index % len(_WORKFLOW_RAINBOW)])
+        color_index += 1
+
+
+def _call_workflows(func: object) -> list[str]:
+    if not callable(func):
+        return []
+    try:
+        value = func()
+    except Exception:
+        return []
+    if not value:
+        return []
+    if isinstance(value, str):
+        items = [value]
+    else:
+        try:
+            items = list(value)
+        except TypeError:
+            return []
+    return [str(item).strip() for item in items if str(item).strip()]

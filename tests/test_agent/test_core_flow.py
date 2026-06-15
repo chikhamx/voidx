@@ -24,6 +24,7 @@ from voidx.agent.agents import (
 )
 from voidx.agent.graph.convergence import is_step_hint_message
 from voidx.agent.graph.runtime import current_parent_tool_call_id
+from voidx.agent.graph.runtime_guards import RuntimeGuardState, WallClockGuardState
 from voidx.agent.graph import VoidXGraph
 from voidx.agent.graph.tool_execution import AGENT_RESULT_PREVIEW_CHARS, _agent_result_preview
 from voidx.agent.message_rows import RowMessageCacheEntry
@@ -722,6 +723,9 @@ async def test_graph_authorization_asks_for_persona_blocked_write(tmp_path):
 async def test_permission_result_uses_transient_output(tmp_path):
     graph = _graph(tmp_path)
     graph._permission.approval_policy = "untrusted"
+    test_dock = BottomInputDock()
+    set_dock(test_dock)
+    test_dock.begin_capture()
 
     class FakeApp:
         def __init__(self):
@@ -735,17 +739,22 @@ async def test_permission_result_uses_transient_output(tmp_path):
 
     app = FakeApp()
     graph._app = app
+    try:
+        approved, denied = await graph._authorize_tool_calls(
+            [{"name": "write", "args": {"file_path": "app.py", "content": "x"}, "id": "call_1"}],
+            runtime_persona="implement",
+            plan_mode=False,
+            session_id="test",
+        )
 
-    approved, denied = await graph._authorize_tool_calls(
-        [{"name": "write", "args": {"file_path": "app.py", "content": "x"}, "id": "call_1"}],
-        runtime_persona="implement",
-        plan_mode=False,
-        session_id="test",
-    )
-
-    assert [tc["name"] for tc in approved] == ["write"]
-    assert denied == []
-    assert app.notices == []
+        assert [tc["name"] for tc in approved] == ["write"]
+        assert denied == []
+        assert app.notices == []
+        rendered = "\n".join(test_dock.tree.render(100))
+        assert "tools allowed for this session" not in rendered
+    finally:
+        test_dock.deactivate()
+        set_dock(None)
 
 
 @pytest.mark.asyncio
@@ -791,6 +800,61 @@ def test_tool_result_ok_detects_structured_failures():
     assert not GraphToolExecutionMixin._tool_result_ok(ToolResult(output="failed", metadata={"exit_code": 2}))
     assert not GraphToolExecutionMixin._tool_result_ok(ToolResult(output="blocked", metadata={"blocked": True}))
     assert not GraphToolExecutionMixin._tool_result_ok(ToolResult(output="error", metadata={"error": True}))
+
+
+@pytest.mark.asyncio
+async def test_execute_tools_escalates_and_blocks_repeated_tool_failure(tmp_path):
+    graph = _graph(tmp_path)
+    calls: list[dict] = []
+
+    class FakeTools:
+        async def execute_tool(self, tid, targs, _ctx):
+            calls.append({"name": tid, "args": dict(targs)})
+            return ToolResult(
+                output=f"File not found: {targs['file_path']}",
+                metadata={"error": True, "error_kind": "file_not_found"},
+            )
+
+    async def allow_all(tool_calls, **_kwargs):
+        return tool_calls, []
+
+    graph.tools = FakeTools()
+    graph._authorize_tool_calls = allow_all
+
+    async def run_read(call_id: str):
+        parent = AIMessage(
+            content="",
+            tool_calls=[{
+                "name": "read",
+                "args": {"file_path": "missing.py"},
+                "id": call_id,
+                "type": "tool_call",
+            }],
+        )
+        return await graph._execute_tools({
+            "messages": [parent],
+            "workspace": str(tmp_path),
+            "persona": "voidx",
+            "plan_mode": False,
+        })
+
+    await run_read("call_1")
+    assert graph._pending_guidance == []
+
+    await run_read("call_2")
+    assert any("failed twice" in item for item in graph._pending_guidance)
+
+    await run_read("call_3")
+    assert any("failed 3 times" in item and "Stop retrying it now" in item for item in graph._pending_guidance)
+
+    result = await run_read("call_4")
+    assert calls == [
+        {"name": "read", "args": {"file_path": "missing.py"}},
+        {"name": "read", "args": {"file_path": "missing.py"}},
+        {"name": "read", "args": {"file_path": "missing.py"}},
+    ]
+    assert result["messages"][0].tool_call_id == "call_4"
+    assert "Runtime guard blocked repeated failed tool call" in result["messages"][0].content
 
 
 @pytest.mark.asyncio
@@ -1779,6 +1843,153 @@ async def test_execute_tools_emits_todo_updated_node(tmp_path):
         test_dock.deactivate()
         test_dock.reset()
         set_dock(None)
+
+
+@pytest.mark.asyncio
+async def test_execute_tools_warns_then_skips_repeated_todo_without_progress(tmp_path):
+    graph = _graph(tmp_path)
+    calls = 0
+
+    class FakeTodoTool:
+        id = "todo"
+        description = "fake todo"
+
+        def parameters_schema(self):
+            return {"type": "object", "properties": {}}
+
+        async def execute(self, args: dict, ctx: ToolContext) -> ToolResult:
+            nonlocal calls
+            calls += 1
+            return ToolResult(
+                output="todo output",
+                metadata={
+                    "todo_summary": "0/1 done · 0 active · 1 pending",
+                    "todo_items": [{"content": "same task", "status": "pending"}],
+                },
+            )
+
+    async def allow_all(tool_calls, **_kwargs):
+        return tool_calls, []
+
+    graph.tools.register("todo", FakeTodoTool(), "fake todo", {"type": "object", "properties": {}})
+    graph._authorize_tool_calls = allow_all
+
+    async def run_todo(call_id: str):
+        parent = AIMessage(
+            content="",
+            tool_calls=[{"name": "todo", "args": {"todos": []}, "id": call_id, "type": "tool_call"}],
+        )
+        return await graph._execute_tools({
+            "messages": [parent],
+            "workspace": str(tmp_path),
+            "persona": "voidx",
+            "plan_mode": False,
+        })
+
+    await run_todo("call_todo_1")
+    await run_todo("call_todo_2")
+    assert graph._pending_guidance == []
+
+    await run_todo("call_todo_3")
+    assert any("only called todo" in item for item in graph._pending_guidance)
+
+    result = await run_todo("call_todo_4")
+    assert calls == 3
+    assert result["messages"][0].tool_call_id == "call_todo_4"
+    assert "Runtime guard skipped repeated todo call" in result["messages"][0].content
+    assert result.get("should_continue", True) is True
+
+
+@pytest.mark.asyncio
+async def test_execute_tools_no_progress_guidance_and_termination(tmp_path):
+    graph = _graph(tmp_path)
+    calls: list[str] = []
+
+    class FakeTools:
+        async def execute_tool(self, tid, _targs, _ctx):
+            calls.append(tid)
+            return ToolResult(output=f"{tid} ok")
+
+    async def allow_all(tool_calls, **_kwargs):
+        return tool_calls, []
+
+    graph.tools = FakeTools()
+    graph._authorize_tool_calls = allow_all
+
+    async def run_tool(tool_name: str, call_id: str):
+        parent = AIMessage(
+            content="",
+            tool_calls=[{"name": tool_name, "args": {}, "id": call_id, "type": "tool_call"}],
+        )
+        return await graph._execute_tools({
+            "messages": [parent],
+            "workspace": str(tmp_path),
+            "persona": "voidx",
+            "plan_mode": False,
+        })
+
+    await run_tool("plan_checkpoint", "call_1")
+    await run_tool("advance_workflow", "call_2")
+    assert graph._pending_guidance == []
+
+    await run_tool("plan_checkpoint", "call_3")
+    assert any("No meaningful progress" in item for item in graph._pending_guidance)
+
+    await run_tool("advance_workflow", "call_4")
+    result = await run_tool("plan_checkpoint", "call_5")
+
+    assert calls == [
+        "plan_checkpoint",
+        "advance_workflow",
+        "plan_checkpoint",
+        "advance_workflow",
+        "plan_checkpoint",
+    ]
+    assert result["should_continue"] is False
+    assert any(
+        isinstance(message, AIMessage) and "No meaningful progress" in str(message.content)
+        for message in result["messages"]
+    )
+
+
+@pytest.mark.asyncio
+async def test_execute_tools_wall_clock_guard_terminates_at_boundary(tmp_path):
+    graph = _graph(tmp_path)
+    graph._runtime_guards = RuntimeGuardState(
+        wall_clock=WallClockGuardState(
+            started_at=0.0,
+            status_threshold_seconds=1.0,
+            confirm_threshold_seconds=2.0,
+        )
+    )
+
+    class FakeTools:
+        async def execute_tool(self, tid, _targs, _ctx):
+            assert tid == "read"
+            return ToolResult(output="contents")
+
+    async def allow_all(tool_calls, **_kwargs):
+        return tool_calls, []
+
+    graph.tools = FakeTools()
+    graph._authorize_tool_calls = allow_all
+    parent = AIMessage(
+        content="",
+        tool_calls=[{"name": "read", "args": {"file_path": "x.py"}, "id": "call_read", "type": "tool_call"}],
+    )
+
+    result = await graph._execute_tools({
+        "messages": [parent],
+        "workspace": str(tmp_path),
+        "persona": "voidx",
+        "plan_mode": False,
+    })
+
+    assert result["should_continue"] is False
+    assert any(
+        isinstance(message, AIMessage) and "This turn has been running" in str(message.content)
+        for message in result["messages"]
+    )
 
 
 @pytest.mark.asyncio
@@ -3683,6 +3894,284 @@ async def test_run_subagent_persists_tool_results_to_subagent_jsonl(tmp_path, mo
         assert tool_row["content"] == "file contents"
     finally:
         await delete_session(session.id)
+
+
+@pytest.mark.asyncio
+async def test_run_subagent_injects_failure_loop_guidance(tmp_path, monkeypatch):
+    import voidx.agent.graph.subagent as subagent_module
+
+    stream_calls: list[list] = []
+    tool_calls = 0
+
+    class FakeModel:
+        def bind_tools(self, _tool_defs):
+            return self
+
+    class FakeToolRegistry:
+        def filtered_copy(self, _allowed_ids):
+            return self
+
+        def tools_for_llm(self):
+            return [{"name": "read", "description": "read", "input_schema": {}}]
+
+        async def execute_tool(self, tid, targs, _ctx):
+            nonlocal tool_calls
+            tool_calls += 1
+            assert tid == "read"
+            return ToolResult(
+                output=f"File not found: {targs['file_path']}",
+                metadata={"error": True, "error_kind": "file_not_found"},
+            )
+
+    async def fake_stream_llm(_model, messages, _renderer, _protocol):
+        stream_calls.append(list(messages))
+        if len(stream_calls) <= 2:
+            return AIMessage(
+                content="",
+                tool_calls=[{
+                    "name": "read",
+                    "args": {"file_path": "missing.py"},
+                    "id": f"call_read_{len(stream_calls)}",
+                    "type": "tool_call",
+                }],
+            )
+        assert any("failed twice" in str(message.content) for message in messages)
+        return AIMessage(content="done")
+
+    monkeypatch.setattr(subagent_module, "create_chat_model", lambda *_args, **_kwargs: FakeModel())
+    monkeypatch.setattr(subagent_module, "stream_llm", fake_stream_llm)
+    monkeypatch.setattr(subagent_module, "ToolRegistry", FakeToolRegistry)
+
+    output = await subagent_module.run_subagent(
+        AgentDef(
+            name="explore",
+            description="test",
+            when_to_use="test",
+            tools=["read"],
+            can_write=False,
+            can_delegate=False,
+        ),
+        "Inspect child path",
+        None,
+        "test-key",
+        Config(workspace=str(tmp_path)),
+        runtime_persona="explore",
+        max_steps=5,
+        debug=False,
+    )
+
+    assert output == "done"
+    assert tool_calls == 2
+
+
+@pytest.mark.asyncio
+async def test_run_subagent_terminates_after_no_progress_cycles(tmp_path, monkeypatch):
+    import voidx.agent.graph.subagent as subagent_module
+
+    stream_calls: list[list] = []
+    executed_tools: list[str] = []
+
+    class FakeModel:
+        def bind_tools(self, _tool_defs):
+            return self
+
+    class FakeToolRegistry:
+        def filtered_copy(self, _allowed_ids):
+            return self
+
+        def tools_for_llm(self):
+            return [
+                {"name": "plan_checkpoint", "description": "checkpoint", "input_schema": {}},
+                {"name": "advance_workflow", "description": "advance", "input_schema": {}},
+            ]
+
+        async def execute_tool(self, tid, _targs, _ctx):
+            executed_tools.append(tid)
+            return ToolResult(output=f"{tid} ok")
+
+    async def fake_stream_llm(_model, messages, _renderer, _protocol):
+        stream_calls.append(list(messages))
+        if len(stream_calls) == 4:
+            assert any("No meaningful progress" in str(message.content) for message in messages)
+        if len(stream_calls) <= 5:
+            tool_name = "plan_checkpoint" if len(stream_calls) % 2 else "advance_workflow"
+            return AIMessage(
+                content="",
+                tool_calls=[{
+                    "name": tool_name,
+                    "args": {},
+                    "id": f"call_{len(stream_calls)}",
+                    "type": "tool_call",
+                }],
+            )
+        return AIMessage(content="missed guard termination")
+
+    monkeypatch.setattr(subagent_module, "create_chat_model", lambda *_args, **_kwargs: FakeModel())
+    monkeypatch.setattr(subagent_module, "stream_llm", fake_stream_llm)
+    monkeypatch.setattr(subagent_module, "ToolRegistry", FakeToolRegistry)
+
+    output = await subagent_module.run_subagent(
+        AgentDef(
+            name="explore",
+            description="test",
+            when_to_use="test",
+            tools=["plan_checkpoint", "advance_workflow"],
+            can_write=False,
+            can_delegate=False,
+        ),
+        "Inspect child path",
+        None,
+        "test-key",
+        Config(workspace=str(tmp_path)),
+        runtime_persona="explore",
+        max_steps=8,
+        debug=False,
+    )
+
+    assert "No meaningful progress" in output
+    assert executed_tools == [
+        "plan_checkpoint",
+        "advance_workflow",
+        "plan_checkpoint",
+        "advance_workflow",
+        "plan_checkpoint",
+    ]
+
+
+@pytest.mark.asyncio
+async def test_run_subagent_wall_clock_guard_terminates_at_boundary(tmp_path, monkeypatch):
+    import voidx.agent.graph.subagent as subagent_module
+
+    executed_tools: list[str] = []
+
+    class FakeModel:
+        def bind_tools(self, _tool_defs):
+            return self
+
+    class FakeToolRegistry:
+        def filtered_copy(self, _allowed_ids):
+            return self
+
+        def tools_for_llm(self):
+            return [{"name": "plan_checkpoint", "description": "checkpoint", "input_schema": {}}]
+
+        async def execute_tool(self, tid, _targs, _ctx):
+            executed_tools.append(tid)
+            return ToolResult(output=f"{tid} ok")
+
+    async def fake_stream_llm(_model, _messages, _renderer, _protocol):
+        if not executed_tools:
+            return AIMessage(
+                content="",
+                tool_calls=[{
+                    "name": "plan_checkpoint",
+                    "args": {},
+                    "id": "call_plan",
+                    "type": "tool_call",
+                }],
+            )
+        return AIMessage(content="missed guard termination")
+
+    monkeypatch.setattr(subagent_module, "create_chat_model", lambda *_args, **_kwargs: FakeModel())
+    monkeypatch.setattr(subagent_module, "stream_llm", fake_stream_llm)
+    monkeypatch.setattr(subagent_module, "ToolRegistry", FakeToolRegistry)
+    monkeypatch.setattr(
+        subagent_module.WallClockGuardState,
+        "for_subagent",
+        classmethod(lambda cls: WallClockGuardState(
+            started_at=0.0,
+            status_threshold_seconds=1.0,
+            confirm_threshold_seconds=2.0,
+        )),
+    )
+
+    output = await subagent_module.run_subagent(
+        AgentDef(
+            name="explore",
+            description="test",
+            when_to_use="test",
+            tools=["plan_checkpoint"],
+            can_write=False,
+            can_delegate=False,
+        ),
+        "Inspect child path",
+        None,
+        "test-key",
+        Config(workspace=str(tmp_path)),
+        runtime_persona="explore",
+        max_steps=4,
+        debug=False,
+    )
+
+    assert executed_tools == ["plan_checkpoint"]
+    assert "This turn has been running" in output
+
+
+@pytest.mark.asyncio
+async def test_run_subagent_repetitive_guard_runs_before_authorization(tmp_path, monkeypatch):
+    import voidx.agent.graph.subagent as subagent_module
+
+    stream_calls: list[list] = []
+    authorized_batches: list[list[str]] = []
+    executed_tools: list[str] = []
+
+    class FakeModel:
+        def bind_tools(self, _tool_defs):
+            return self
+
+    class FakeToolRegistry:
+        def filtered_copy(self, _allowed_ids):
+            return self
+
+        def tools_for_llm(self):
+            return [{"name": "todo", "description": "todo", "input_schema": {}}]
+
+        async def execute_tool(self, tid, _targs, _ctx):
+            executed_tools.append(tid)
+            return ToolResult(output="todo output")
+
+    async def fake_stream_llm(_model, messages, _renderer, _protocol):
+        stream_calls.append(list(messages))
+        return AIMessage(
+            content="",
+            tool_calls=[{
+                "name": "todo",
+                "args": {"todos": []},
+                "id": f"call_todo_{len(stream_calls)}",
+                "type": "tool_call",
+            }],
+        )
+
+    async def authorize(tool_calls):
+        authorized_batches.append([call.get("name", "") for call in tool_calls])
+        return list(tool_calls), []
+
+    monkeypatch.setattr(subagent_module, "create_chat_model", lambda *_args, **_kwargs: FakeModel())
+    monkeypatch.setattr(subagent_module, "stream_llm", fake_stream_llm)
+    monkeypatch.setattr(subagent_module, "ToolRegistry", FakeToolRegistry)
+
+    output = await subagent_module.run_subagent(
+        AgentDef(
+            name="explore",
+            description="test",
+            when_to_use="test",
+            tools=["todo"],
+            can_write=False,
+            can_delegate=False,
+        ),
+        "Inspect child path",
+        None,
+        "test-key",
+        Config(workspace=str(tmp_path)),
+        runtime_persona="explore",
+        max_steps=6,
+        authorize_tools=authorize,
+        debug=False,
+    )
+
+    assert "Runtime guard stopped this turn" in output
+    assert executed_tools == ["todo", "todo"]
+    assert authorized_batches == [["todo"], ["todo"]]
 
 
 @pytest.mark.asyncio

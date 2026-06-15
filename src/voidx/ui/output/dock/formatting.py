@@ -12,6 +12,28 @@ from rich.text import Text
 _ANSI_RE = re.compile(r'\x1b\[[0-9;]*[a-zA-Z]')
 _ANSI_SGR_RE = re.compile(r"\x1b\[([0-9;]*)m")
 ANSI_LINE_PREFIX = "\x00voidx-ansi\x00"
+_FORMAT_CONSOLES: dict[int, tuple[StringIO, Console]] = {}
+
+
+def _format_console(width: int) -> tuple[StringIO, Console]:
+    render_width = max(width or 80, 1)
+    cached = _FORMAT_CONSOLES.get(render_width)
+    if cached is None:
+        buffer = StringIO()
+        console = Console(
+            file=buffer,
+            force_terminal=True,
+            color_system="truecolor",
+            width=render_width,
+            _environ={},
+        )
+        cached = (buffer, console)
+        _FORMAT_CONSOLES[render_width] = cached
+    else:
+        buffer, _console = cached
+        buffer.seek(0)
+        buffer.truncate(0)
+    return cached
 
 
 def _clean(text: str) -> str:
@@ -37,14 +59,7 @@ def _text_from_line(line: str) -> Text:
 
 
 def _markdown_lines(text: str, width: int) -> list[str]:
-    buffer = StringIO()
-    console = Console(
-        file=buffer,
-        force_terminal=True,
-        color_system="truecolor",
-        width=width or 80,
-        _environ={},
-    )
+    buffer, console = _format_console(width or 80)
     console.print(Markdown(text), end="")
 
     lines: list[str] = []
@@ -59,14 +74,7 @@ def _markdown_lines(text: str, width: int) -> list[str]:
 def _strip_ansi_trailing_space(line: str) -> str:
     text = Text.from_ansi(_strip_ansi_backgrounds(line))
     text.rstrip()
-    buffer = StringIO()
-    console = Console(
-        file=buffer,
-        force_terminal=True,
-        color_system="truecolor",
-        width=10_000,
-        _environ={},
-    )
+    buffer, console = _format_console(10_000)
     console.print(text, end="")
     return buffer.getvalue()
 

@@ -21,6 +21,47 @@ def test_capture_renderable_reuses_console_and_clears_buffer(tmp_path):
     assert "second" in second
 
 
+def test_render_impl_reuses_base_bottom_row_count_when_unchanged(tmp_path, monkeypatch):
+    tui = _tui(tmp_path)
+    calls = 0
+    original = tui._capture_renderable
+
+    def counted_capture(renderable, width):
+        nonlocal calls
+        calls += 1
+        return original(renderable, width)
+
+    monkeypatch.setattr(tui, "_capture_renderable", counted_capture)
+
+    tui._render_impl(height=24)
+    assert calls == 1
+
+    tui._render_impl(height=24)
+    assert calls == 1
+
+
+def test_render_impl_reuses_panel_capture_for_count_and_clipping(tmp_path, monkeypatch):
+    tui = _tui(tmp_path)
+    monkeypatch.setattr(
+        tui,
+        "_render_panel_lines",
+        lambda width: [f"[bold]item {index}[/]" for index in range(8)],
+    )
+    calls = 0
+    original = tui._capture_renderable
+
+    def counted_capture(renderable, width):
+        nonlocal calls
+        calls += 1
+        return original(renderable, width)
+
+    monkeypatch.setattr(tui, "_capture_renderable", counted_capture)
+
+    tui._render_impl(height=8)
+
+    assert calls == 2
+
+
 def test_input_history_is_bounded(tmp_path):
     tui = _tui(tmp_path)
     limit = tui.INPUT_HISTORY_LIMIT
@@ -203,6 +244,118 @@ def test_tree_inserts_gap_between_user_turn_and_assistant_without_spacer():
     assert "reply" in _rich_plain(lines[2])
 
 
+def test_agent_placeholder_does_not_render_as_visible_row():
+    test_dock = dock
+    test_dock.begin_capture()
+    try:
+        test_dock.ensure_agent()
+
+        rendered = "\n".join(_rich_plain(line) for line in test_dock.tree.render(80))
+
+        assert "voidx" not in rendered
+        assert "●" not in rendered
+        assert not rendered.strip()
+    finally:
+        test_dock.deactivate()
+        test_dock.reset()
+
+
+def test_tool_without_prior_stream_renders_without_voidx_parent():
+    test_dock = dock
+    test_dock.begin_capture()
+    try:
+        test_dock.start_tool(
+            "Running",
+            'command="pwd"',
+            tool_name="bash",
+            raw_args={"command": "pwd"},
+        )
+
+        plain_lines = [_rich_plain(line).strip() for line in test_dock.tree.render(100)]
+        visible = [line for line in plain_lines if line]
+
+        assert visible
+        assert all("voidx" not in line for line in visible)
+        assert visible[0].startswith("● Bash(")
+    finally:
+        test_dock.deactivate()
+        test_dock.reset()
+
+
+def test_finished_tool_under_transparent_agent_can_flush():
+    test_dock = dock
+    test_dock.begin_capture()
+    try:
+        test_dock.start_turn("demo")
+        tool = test_dock.start_tool(
+            "Reading",
+            'file_path="x.py"',
+            tool_name="read",
+            raw_args={"file_path": "x.py"},
+        )
+        test_dock.finish_tool_node(tool, "Read", 0.1, True)
+        test_dock.append_tool_result("result")
+
+        lines = test_dock.tree.render(100)
+        limit = test_dock.safe_flush_line_count(100, 0)
+
+        assert limit == len(lines)
+        assert "Read" in "\n".join(lines[:limit])
+    finally:
+        test_dock.deactivate()
+        test_dock.reset()
+
+
+def test_uncommitted_stream_under_transparent_agent_does_not_flush():
+    test_dock = dock
+    test_dock.begin_capture()
+    try:
+        test_dock.set_stream("streaming reply")
+
+        assert test_dock.safe_flush_line_count(100, 0) == 0
+    finally:
+        test_dock.deactivate()
+        test_dock.reset()
+
+
+def test_stream_reply_aligns_with_user_turn_start():
+    test_dock = dock
+    test_dock.begin_capture()
+    try:
+        test_dock.start_turn("你好")
+        test_dock.set_stream("好，我来看看。")
+
+        raw_lines = test_dock.tree.render(100)
+        plain_lines = [_rich_plain(line) for line in raw_lines]
+        user_line = next(line for line in plain_lines if "你好" in line)
+        reply_index = next(index for index, line in enumerate(plain_lines) if "好，我来看看。" in line)
+        reply_line = raw_lines[reply_index]
+
+        assert user_line.index("❯") == 0
+        assert not reply_line.startswith(" ")
+    finally:
+        test_dock.deactivate()
+        test_dock.reset()
+
+
+def test_user_turn_and_stream_reply_are_separated_by_blank_line():
+    test_dock = dock
+    test_dock.begin_capture()
+    try:
+        test_dock.start_turn("review一下TUI的渲染那块")
+        test_dock.set_stream("好的，我来审查 TUI 渲染模块。")
+
+        plain_lines = [_rich_plain(line) for line in test_dock.tree.render(100)]
+        user_index = next(index for index, line in enumerate(plain_lines) if "review一下" in line)
+        reply_index = next(index for index, line in enumerate(plain_lines) if "好的，我来审查" in line)
+
+        assert plain_lines[user_index + 1] == ""
+        assert reply_index == user_index + 2
+    finally:
+        test_dock.deactivate()
+        test_dock.reset()
+
+
 def test_turn_render_uses_full_width_user_background(tmp_path):
     test_dock = dock
     test_dock.begin_capture()
@@ -244,6 +397,58 @@ def test_tool_call_renders_metadata_with_branch_rows():
     assert all("├" not in line.partition("Bash")[0] for line in plain_lines if "Bash" in line)
     assert tree._line_map[1] == tool.id
     assert tree._line_map[2] == tool.id
+
+
+def test_tool_call_text_aligns_with_assistant_text_start():
+    from voidx.ui.output.tree import OutputTree
+
+    tree = OutputTree()
+    assistant = tree.new_node(tree.root, node_type="assistant", header="● voidx")
+    tree.new_node(
+        assistant,
+        node_type="assistant",
+        header="[#A3BE8C]●[/#A3BE8C] reply text",
+    )
+    tree.new_node(
+        assistant,
+        node_type="tool_call",
+        header="[#A3BE8C]●[/#A3BE8C] [bold]Read[/bold](\"src/file.py\")",
+        body_lines=["[dim]loading[/dim]"],
+    )
+
+    plain_lines = [_rich_plain(line) for line in tree.render(80)]
+    reply_line = next(line for line in plain_lines if "reply text" in line)
+    read_line = next(line for line in plain_lines if "Read" in line)
+    metadata_line = next(line for line in plain_lines if "loading" in line)
+
+    assert read_line.index("Read") == reply_line.index("reply text")
+    assert metadata_line.index("loading") == reply_line.index("reply text")
+
+
+def test_agent_text_blocks_have_vertical_spacing_but_tools_stay_attached():
+    from voidx.ui.output.tree import OutputTree
+
+    tree = OutputTree()
+    assistant = tree.new_node(tree.root, node_type="assistant", header="")
+    tree.new_node(assistant, node_type="assistant", header="开始修复。")
+    tree.new_node(assistant, node_type="tool_call", header="[#A3BE8C]●[/#A3BE8C] [bold]Bash[/bold](sed)")
+    tree.new_node(assistant, node_type="tool_call", header="[#A3BE8C]●[/#A3BE8C] [bold]Bash[/bold](rg)")
+    tree.new_node(assistant, node_type="assistant", header="现在确认一下。")
+    tree.new_node(assistant, node_type="assistant", header="继续说明。")
+
+    plain_lines = [_rich_plain(line) for line in tree.render(80)]
+
+    first_text = plain_lines.index("开始修复。")
+    first_tool = next(index for index, line in enumerate(plain_lines) if "Bash(sed)" in line)
+    second_tool = next(index for index, line in enumerate(plain_lines) if "Bash(rg)" in line)
+    second_text = plain_lines.index("现在确认一下。")
+    third_text = plain_lines.index("继续说明。")
+
+    assert first_tool == first_text + 1
+    assert second_tool == first_tool + 1
+    assert second_text == second_tool + 1
+    assert plain_lines[second_text + 1] == ""
+    assert third_text == second_text + 2
 
 
 def test_file_change_body_lines_do_not_render_as_tool_metadata():
@@ -350,32 +555,30 @@ def test_committed_todo_state_omits_progress_bar():
         test_dock.reset()
 
 
-def test_safe_flush_line_count_stops_at_unsettled_ancestor():
+def test_safe_flush_line_count_stops_at_unsettled_stream_after_finished_tool():
     test_dock = dock
     test_dock.begin_capture()
-    test_dock.start_turn("demo")
-    tool = test_dock.start_tool(
-        "Reading",
-        'file_path="x.py"',
-        tool_name="read",
-        raw_args={"file_path": "x.py"},
-    )
-    test_dock.finish_tool_node(tool, "Read", 0.1, True)
-    test_dock.append_tool_result("result")
+    try:
+        test_dock.start_turn("demo")
+        tool = test_dock.start_tool(
+            "Reading",
+            'file_path="x.py"',
+            tool_name="read",
+            raw_args={"file_path": "x.py"},
+        )
+        test_dock.finish_tool_node(tool, "Read", 0.1, True)
+        test_dock.append_tool_result("result")
+        test_dock.set_stream("● final answer")
 
-    lines = test_dock.tree.render(100)
-    blocked_limit = test_dock.safe_flush_line_count(100, 0)
+        lines = test_dock.tree.render(100)
+        limit = test_dock.safe_flush_line_count(100, 0)
 
-    assert blocked_limit < len(lines)
-    assert "Read" in "\n".join(lines[blocked_limit:])
-
-    test_dock.set_stream("● final answer")
-    lines = test_dock.tree.render(100)
-    advanced_limit = test_dock.safe_flush_line_count(100, 0)
-
-    assert advanced_limit > blocked_limit
-    assert "Read" in "\n".join(lines[:advanced_limit])
-    assert "final answer" in "\n".join(lines[advanced_limit:])
+        assert 0 < limit < len(lines)
+        assert "Read" in "\n".join(lines[:limit])
+        assert "final answer" in "\n".join(lines[limit:])
+    finally:
+        test_dock.deactivate()
+        test_dock.reset()
 
 
 def test_safe_flush_line_count_requires_settled_ancestors():

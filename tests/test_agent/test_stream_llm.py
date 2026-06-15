@@ -677,7 +677,7 @@ async def test_call_llm_ignores_legacy_final_step_budget(tmp_path, monkeypatch):
 
 
 @pytest.mark.asyncio
-async def test_call_llm_injects_pending_guidance_before_next_model_call(tmp_path, monkeypatch):
+async def test_call_llm_injects_pending_guidance_without_returning_it_to_state(tmp_path, monkeypatch):
     import voidx.agent.graph.core as graph_module
 
     monkeypatch.setattr(graph_module, "StreamingRenderer", FakeRenderer)
@@ -700,10 +700,9 @@ async def test_call_llm_injects_pending_guidance_before_next_model_call(tmp_path
         "persona": "voidx",
     })
 
-    assert len(result["messages"]) == 2
-    assert result["messages"][0].content == "Use TypeScript"
-    assert is_guidance_message(result["messages"][0])
-    assert result["messages"][1].content == "answer"
+    assert len(result["messages"]) == 1
+    assert result["messages"][0].content == "answer"
+    assert not any(is_guidance_message(message) for message in result["messages"])
     assert model.messages is not None
     assert [message.content for message in model.messages] == [
         "finish the task",
@@ -882,7 +881,6 @@ async def test_call_llm_overflow_error_compacts_retries_and_preserves_guidance(t
         "system prompt",
         "## Long Summary\nretry summary",
         "current question",
-        "Use TypeScript",
         "answer",
     ]
     assert graph._pending_guidance == []

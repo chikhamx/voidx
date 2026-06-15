@@ -152,8 +152,11 @@ class StreamingRenderer:
                         text=self._accumulated,
                         phase="text",
                     )):
-                        dock.set_stream(self._accumulated, phase="text")
-                if self._accumulated:
+                        dock.set_stream(
+                            self._accumulated,
+                            phase="text",
+                            refresh=False,
+                        )
                     if not ui_events.emit_nowait(AssistantStreamCommitted(agent_id=self._agent_id)):
                         dock.commit_stream()
                 elif self._thinking_full:

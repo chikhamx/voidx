@@ -354,13 +354,8 @@ class _FrameRendererMixin:
         panel_lines = self._render_panel_lines(width)
         busy_activity_elements = self._render_busy_activity_elements(width)
 
-        base_bottom_rows = _rendered_row_count(
-            self._capture_renderable(
-                Group(*self._render_bottom_elements(width, [], status_lines)),
-                width,
-            )
-        )
-        panel_rows = self._panel_row_count(panel_lines, width)
+        base_bottom_rows = self._base_bottom_row_count(width, status_lines)
+        panel_rows, panel_ansi = self._panel_row_count_and_ansi(panel_lines, width)
         if panel_lines:
             panel_row_limit = max(
                 render_height - base_bottom_rows - len(busy_activity_elements) - 1,
@@ -409,7 +404,12 @@ class _FrameRendererMixin:
         elements.extend(pinned_todo_elements)
         elements.extend(busy_activity_elements)
         elements.extend(
-            self._render_bottom_elements(width, panel_lines, status_lines)
+            self._render_bottom_elements(
+                width,
+                panel_lines,
+                status_lines,
+                panel_ansi=panel_ansi,
+            )
         )
 
         return Group(*elements)
@@ -452,6 +452,8 @@ class _FrameRendererMixin:
         width: int,
         panel_lines: list[str],
         status_lines: list,
+        *,
+        panel_ansi: str | None = None,
     ) -> list:
         elements: list = []
 
@@ -473,9 +475,14 @@ class _FrameRendererMixin:
         elements.append(Text(input_border, style="dim"))
 
         # Panels (attachment, command palette, choice)
-        elements.extend(self._render_panel_elements(panel_lines, width))
+        panel_elements = self._render_panel_elements(
+            panel_lines,
+            width,
+            panel_ansi=panel_ansi,
+        )
+        elements.extend(panel_elements)
 
-        if self._visible_panel_row_count(width, panel_lines=panel_lines):
+        if panel_elements:
             elements.append(Text("─" * width, style="dim"))
 
         # Status bar (always at the very bottom)
@@ -495,7 +502,41 @@ class _FrameRendererMixin:
             lines.append(Text("  ⚠ " + self._last_error, style="red"))
         return lines
 
-    def _render_panel_elements(self, panel_lines: list[str], width: int) -> list[Text]:
+    def _base_bottom_row_count(self, width: int, status_lines: list) -> int:
+        elements = self._render_bottom_elements(width, [], status_lines)
+        key = (
+            width,
+            self._console.height,
+            tuple(self._renderable_cache_key(element) for element in elements),
+        )
+        if key == self._base_bottom_rows_cache_key:
+            return self._base_bottom_rows_cache_count
+        count = _rendered_row_count(self._capture_renderable(Group(*elements), width))
+        self._base_bottom_rows_cache_key = key
+        self._base_bottom_rows_cache_count = count
+        return count
+
+    @staticmethod
+    def _renderable_cache_key(renderable: object) -> tuple:
+        if isinstance(renderable, Text):
+            return (
+                "text",
+                renderable.plain,
+                str(renderable.style),
+                tuple(
+                    (span.start, span.end, str(span.style))
+                    for span in renderable.spans
+                ),
+            )
+        return ("repr", repr(renderable))
+
+    def _render_panel_elements(
+        self,
+        panel_lines: list[str],
+        width: int,
+        *,
+        panel_ansi: str | None = None,
+    ) -> list[Text]:
         if not panel_lines:
             return []
         elements = [Text.from_markup(line) for line in panel_lines]
@@ -504,7 +545,9 @@ class _FrameRendererMixin:
             return elements
         if row_limit <= 0:
             return []
-        ansi = self._capture_renderable(Group(*elements), width)
+        ansi = panel_ansi
+        if ansi is None:
+            ansi = self._capture_renderable(Group(*elements), width)
         rows = ansi.splitlines()
         if len(rows) <= row_limit:
             return elements
@@ -513,11 +556,19 @@ class _FrameRendererMixin:
         visible_rows = rows[-(row_limit - 1):]
         return [Text("…", style="dim")] + [Text.from_ansi(row) for row in visible_rows]
 
-    def _panel_row_count(self, panel_lines: list[str], width: int) -> int:
+    def _panel_row_count_and_ansi(
+        self,
+        panel_lines: list[str],
+        width: int,
+    ) -> tuple[int, str | None]:
         if not panel_lines:
-            return 0
+            return 0, None
         elements = [Text.from_markup(line) for line in panel_lines]
-        return _rendered_row_count(self._capture_renderable(Group(*elements), width))
+        ansi = self._capture_renderable(Group(*elements), width)
+        return _rendered_row_count(ansi), ansi
+
+    def _panel_row_count(self, panel_lines: list[str], width: int) -> int:
+        return self._panel_row_count_and_ansi(panel_lines, width)[0]
 
     def _visible_panel_row_count(
         self,

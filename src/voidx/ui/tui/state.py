@@ -124,6 +124,8 @@ class RenderState:
     last_busy_activity_rows: int = 0
     last_busy_activity_start_row: int = 0
     panel_row_limit: int | None = None
+    base_bottom_rows_cache_key: tuple[Any, ...] | None = None
+    base_bottom_rows_cache_count: int = 0
     prev_frame_lines: list[str] | None = None
     prev_frame_start_row: int = 1
     prev_frame_width: int = 0
@@ -228,6 +230,8 @@ STATE_FIELD_MAP: dict[str, tuple[str, str]] = {
     "_last_busy_activity_rows": ("_render_state", "last_busy_activity_rows"),
     "_last_busy_activity_start_row": ("_render_state", "last_busy_activity_start_row"),
     "_panel_row_limit": ("_render_state", "panel_row_limit"),
+    "_base_bottom_rows_cache_key": ("_render_state", "base_bottom_rows_cache_key"),
+    "_base_bottom_rows_cache_count": ("_render_state", "base_bottom_rows_cache_count"),
     "_prev_frame_lines": ("_render_state", "prev_frame_lines"),
     "_prev_frame_start_row": ("_render_state", "prev_frame_start_row"),
     "_prev_frame_width": ("_render_state", "prev_frame_width"),

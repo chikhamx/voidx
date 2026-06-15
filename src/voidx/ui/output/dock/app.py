@@ -26,11 +26,10 @@ from voidx.ui.output.dock.todo import (
     todo_state_payload,
     todo_state_from_items,
 )
-from voidx.ui.output.dock.agent_placeholder import agent_placeholder_header
-from voidx.ui.output.tree import OutputNode, OutputTree
-
-
 from voidx.ui.output.dock.status import DockStatusMixin, DockStatusRecord, active_agent_step_text
+from voidx.ui.output.tree import OutputNode, OutputTree, is_transparent_container
+
+
 class BottomInputDock(DockStreamMixin, DockStatusMixin, DockNodeMixin):
     """Render agent output above a fixed input box with Rich Live/Layout."""
 
@@ -57,6 +56,7 @@ class BottomInputDock(DockStreamMixin, DockStatusMixin, DockNodeMixin):
         self._refresh_callback: Callable[[], None] | None = None
         self._width_provider: Callable[[], int] | None = None
         self._needs_clear_screen: bool = False
+        self._needs_force_flush: bool = False
 
     @property
     def active(self) -> bool:
@@ -111,6 +111,11 @@ class BottomInputDock(DockStreamMixin, DockStatusMixin, DockNodeMixin):
     def set_width_provider(self, callback: Callable[[], int] | None) -> None:
         self._width_provider = callback
 
+    def consume_force_flush_request(self) -> bool:
+        requested = self._needs_force_flush
+        self._needs_force_flush = False
+        return requested
+
     def consume_clear_screen_request(self) -> bool:
         requested = self._needs_clear_screen
         self._needs_clear_screen = False
@@ -161,6 +166,7 @@ class BottomInputDock(DockStreamMixin, DockStatusMixin, DockNodeMixin):
         self._cursor_pos = 0
         self._hints = []
         self._needs_clear_screen = True
+        self._needs_force_flush = True
         self.refresh()
 
     def restore_tree(self, tree: OutputTree, *, append: bool = False) -> None:
@@ -210,7 +216,7 @@ class BottomInputDock(DockStreamMixin, DockStatusMixin, DockNodeMixin):
             self._current_agent = self._tree.new_node(
                 parent=self._tree.root,
                 node_type="assistant",
-                header=agent_placeholder_header(),
+                header="",
                 collapsed=False,
             )
             self._mark_unsettled(self._current_agent)
@@ -343,7 +349,7 @@ class BottomInputDock(DockStreamMixin, DockStatusMixin, DockNodeMixin):
     def _is_node_chain_settled(self, node_id: str) -> bool:
         node = self._tree.get(node_id)
         while node is not None and node is not self._tree.root:
-            if node.id not in self._settled_node_ids:
+            if node.id not in self._settled_node_ids and not is_transparent_container(node):
                 return False
             node = node.parent
         return True

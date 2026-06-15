@@ -290,6 +290,8 @@ class PureTui(
         With ``force=True``, flush regardless of busy-state transition
         (used for startup banner).
         """
+        if dock.consume_force_flush_request():
+            force = True
         width = self._frame_width()
         tree_lines = dock.tree.render(width)
         total = len(tree_lines)

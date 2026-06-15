@@ -32,6 +32,7 @@ from voidx.agent.graph.compaction_coordinator import GraphCompactionCoordinator
 from voidx.agent.graph.convergence import generate_fallback_summary
 from voidx.agent.graph.permissions import GraphPermissionMixin
 from voidx.agent.graph.runtime import current_parent_tool_call_id as _current_parent_tool_call_id
+from voidx.agent.graph.runtime_guards import RuntimeGuardState
 from voidx.agent.graph.run_loop import GraphRunLoopMixin
 from voidx.agent.graph.session_runtime import GraphSessionRuntime
 from voidx.agent.graph.topology import (
@@ -282,6 +283,7 @@ class VoidXGraph(
         self._next_agent_id: int = 0
         self._task_state = TaskState()
         self._needs_failure_check: dict[str, dict] = {}
+        self._runtime_guards = RuntimeGuardState()
         self._pending_guidance: list[str] = []
         self._clear_session_tasks: set[asyncio.Task[None]] = set()
         self._title_generation: int = 0
@@ -393,12 +395,8 @@ class VoidXGraph(
             guidance = guidance[:GUIDANCE_MAX_CHARS].rstrip()
             truncated = True
         self._pending_guidance.append(guidance)
-        if (
-            not self._ui.via_events()
-            or not self._ui.events.emit_direct(GuidanceSubmitted(text=guidance, truncated=truncated))
-        ):
-            suffix = " [dim](truncated)[/dim]" if truncated else ""
-            self._ui.dock.append_message(f"[dim][guide][/dim] {guidance}{suffix}", markup=True)
+        if self._ui.via_events():
+            self._ui.events.emit_direct(GuidanceSubmitted(text=guidance, truncated=truncated))
         return True
 
     def _drain_pending_guidance(self) -> list[HumanMessage]:
@@ -790,11 +788,10 @@ class VoidXGraph(
 
         def replacement_messages(assistant_msg: AIMessage) -> list[BaseMessage]:
             if not compaction_happened:
-                return [*guidance_messages, assistant_msg]
+                return [assistant_msg]
             return [
                 RemoveMessage(id=REMOVE_ALL_MESSAGES),
                 *state_messages,
-                *guidance_messages,
                 assistant_msg,
             ]
 
