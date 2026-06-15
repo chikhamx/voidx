@@ -5,11 +5,17 @@ from __future__ import annotations
 import asyncio
 import sqlite3
 import threading
+import time
 from datetime import datetime, timezone
 from pathlib import Path
 from typing import Callable, TypeVar
 
 DATA_DIR = Path.home() / ".voidx"
+_SQLITE_TIMEOUT_SECONDS = 30.0
+_SQLITE_BUSY_TIMEOUT_MS = 30000
+_SQLITE_LOCK_MAX_ATTEMPTS = 4
+_SQLITE_LOCK_RETRY_DELAY_SECONDS = 0.05
+_SQLITE_LOCK_RETRY_MAX_DELAY_SECONDS = 0.5
 
 _conn: sqlite3.Connection | None = None
 _init_lock = threading.Lock()
@@ -26,16 +32,47 @@ def _get_db() -> sqlite3.Connection:
     with _init_lock:
         if _conn is not None:
             return _conn
-        DATA_DIR.mkdir(parents=True, exist_ok=True)
-        db_path = DATA_DIR / "voidx.db"
-        conn = sqlite3.connect(str(db_path), check_same_thread=False)
+        _conn = _run_with_locked_retry(_open_db)
+        return _conn
+
+
+def _prepare_db_path() -> Path:
+    DATA_DIR.mkdir(parents=True, exist_ok=True)
+    store_dir = DATA_DIR / "store"
+    store_dir.mkdir(parents=True, exist_ok=True)
+    return store_dir / "voidx.db"
+
+
+def _open_db() -> sqlite3.Connection:
+    db_path = _prepare_db_path()
+    conn = sqlite3.connect(str(db_path), check_same_thread=False, timeout=_SQLITE_TIMEOUT_SECONDS)
+    try:
         conn.row_factory = sqlite3.Row
         conn.execute("PRAGMA journal_mode=WAL")
         conn.execute("PRAGMA foreign_keys=ON")
-        conn.execute("PRAGMA busy_timeout=5000")
+        conn.execute(f"PRAGMA busy_timeout={_SQLITE_BUSY_TIMEOUT_MS}")
         _init_schema(conn)
-        _conn = conn
-        return _conn
+        return conn
+    except Exception:
+        conn.close()
+        raise
+
+
+def _is_database_locked(exc: BaseException) -> bool:
+    return isinstance(exc, sqlite3.OperationalError) and "database is locked" in str(exc).lower()
+
+
+def _run_with_locked_retry(operation: Callable[[], T]) -> T:
+    delay = _SQLITE_LOCK_RETRY_DELAY_SECONDS
+    for attempt in range(1, _SQLITE_LOCK_MAX_ATTEMPTS + 1):
+        try:
+            return operation()
+        except sqlite3.OperationalError as exc:
+            if not _is_database_locked(exc) or attempt >= _SQLITE_LOCK_MAX_ATTEMPTS:
+                raise
+            time.sleep(delay)
+            delay = min(delay * 2, _SQLITE_LOCK_RETRY_MAX_DELAY_SECONDS)
+    raise RuntimeError("unreachable sqlite retry state")
 
 
 def _init_schema(conn: sqlite3.Connection) -> None:
@@ -47,59 +84,9 @@ def _init_schema(conn: sqlite3.Connection) -> None:
             model_provider TEXT NOT NULL DEFAULT 'anthropic',
             model_name TEXT NOT NULL DEFAULT 'claude-sonnet-4-6',
             created_at TEXT NOT NULL,
-            updated_at TEXT NOT NULL
-        );
-
-        CREATE TABLE IF NOT EXISTS messages (
-            id INTEGER PRIMARY KEY AUTOINCREMENT,
-            session_id TEXT NOT NULL,
-            role TEXT NOT NULL CHECK(role IN ('system', 'user', 'assistant', 'tool')),
-            content TEXT NOT NULL DEFAULT '',
-            tool_calls TEXT,
-            tool_call_id TEXT,
-            created_at TEXT NOT NULL,
-            FOREIGN KEY (session_id) REFERENCES sessions(id) ON DELETE CASCADE
-        );
-
-        CREATE INDEX IF NOT EXISTS idx_messages_session
-            ON messages(session_id, id);
-
-        CREATE TABLE IF NOT EXISTS turns (
-            session_id TEXT NOT NULL,
-            turn_id INTEGER NOT NULL,
-            user_message_id INTEGER,
-            created_at TEXT NOT NULL,
-            completed_at TEXT,
-            PRIMARY KEY (session_id, turn_id),
-            FOREIGN KEY (session_id) REFERENCES sessions(id) ON DELETE CASCADE,
-            FOREIGN KEY (user_message_id) REFERENCES messages(id) ON DELETE SET NULL
-        );
-
-        CREATE TABLE IF NOT EXISTS transcript_nodes (
-            session_id TEXT NOT NULL,
-            turn_id INTEGER NOT NULL,
-            node_id INTEGER NOT NULL,
-            parent_node_id INTEGER,
-            sort_order INTEGER NOT NULL,
-            node_type TEXT NOT NULL,
-            header TEXT NOT NULL DEFAULT '',
-            body_json TEXT NOT NULL DEFAULT '[]',
-            status TEXT NOT NULL DEFAULT 'running',
-            collapsed INTEGER NOT NULL DEFAULT 0,
-            elapsed REAL,
-            message_id INTEGER,
-            tool_call_id TEXT,
-            agent_run_id TEXT,
-            metadata_json TEXT NOT NULL DEFAULT '{}',
-            created_at TEXT NOT NULL,
             updated_at TEXT NOT NULL,
-            PRIMARY KEY (session_id, turn_id, node_id),
-            FOREIGN KEY (session_id, turn_id) REFERENCES turns(session_id, turn_id) ON DELETE CASCADE,
-            FOREIGN KEY (message_id) REFERENCES messages(id) ON DELETE SET NULL
+            message_count INTEGER NOT NULL DEFAULT 0
         );
-
-        CREATE INDEX IF NOT EXISTS idx_transcript_nodes_session
-            ON transcript_nodes(session_id, turn_id, sort_order);
 
         CREATE TABLE IF NOT EXISTS session_runtime_state (
             session_id TEXT PRIMARY KEY,
@@ -108,6 +95,7 @@ def _init_schema(conn: sqlite3.Connection) -> None:
             previous_intent TEXT,
             current_goal_json TEXT,
             pending_approval_json TEXT NOT NULL DEFAULT '',
+            workflow_route_json TEXT NOT NULL DEFAULT '',
             workflow_runs_json TEXT NOT NULL DEFAULT '{}',
             recent_user_texts_json TEXT NOT NULL DEFAULT '[]',
             todo_state_json TEXT NOT NULL DEFAULT '',
@@ -116,22 +104,6 @@ def _init_schema(conn: sqlite3.Connection) -> None:
             updated_at TEXT NOT NULL,
             FOREIGN KEY (session_id) REFERENCES sessions(id) ON DELETE CASCADE
         );
-
-        CREATE TABLE IF NOT EXISTS message_runtime_snapshots (
-            message_id INTEGER PRIMARY KEY,
-            session_id TEXT NOT NULL,
-            interaction_mode TEXT NOT NULL DEFAULT 'auto',
-            task_intent TEXT NOT NULL DEFAULT 'coding',
-            current_goal_json TEXT,
-            pending_approval_json TEXT NOT NULL DEFAULT '',
-            workflow_runs_json TEXT NOT NULL DEFAULT '{}',
-            created_at TEXT NOT NULL,
-            FOREIGN KEY (message_id) REFERENCES messages(id) ON DELETE CASCADE,
-            FOREIGN KEY (session_id) REFERENCES sessions(id) ON DELETE CASCADE
-        );
-
-        CREATE INDEX IF NOT EXISTS idx_message_runtime_snapshots_session
-            ON message_runtime_snapshots(session_id, message_id);
 
         CREATE TABLE IF NOT EXISTS context_frames (
             id INTEGER PRIMARY KEY AUTOINCREMENT,
@@ -145,11 +117,10 @@ def _init_schema(conn: sqlite3.Connection) -> None:
             frame_hash TEXT NOT NULL,
             message_count INTEGER NOT NULL,
             token_estimate INTEGER NOT NULL DEFAULT 0,
-            messages_json TEXT NOT NULL,
+            file_path TEXT NOT NULL,
             metadata_json TEXT NOT NULL DEFAULT '{}',
             created_at TEXT NOT NULL,
-            FOREIGN KEY (session_id) REFERENCES sessions(id) ON DELETE CASCADE,
-            FOREIGN KEY (user_message_id) REFERENCES messages(id) ON DELETE SET NULL
+            FOREIGN KEY (session_id) REFERENCES sessions(id) ON DELETE CASCADE
         );
 
         CREATE INDEX IF NOT EXISTS idx_context_frames_session
@@ -173,37 +144,82 @@ def _init_schema(conn: sqlite3.Connection) -> None:
         CREATE INDEX IF NOT EXISTS idx_model_profiles_provider
             ON model_profiles(provider);
     """)
-    # Migration: add content_format column for existing SQLite stores.
     try:
         conn.execute(
-            "ALTER TABLE messages ADD COLUMN content_format TEXT NOT NULL DEFAULT 'text'"
+            "ALTER TABLE sessions ADD COLUMN message_count INTEGER NOT NULL DEFAULT 0"
         )
     except sqlite3.OperationalError:
         pass
+    try:
+        conn.execute(
+            "ALTER TABLE session_runtime_state ADD COLUMN workflow_route_json TEXT NOT NULL DEFAULT ''"
+        )
+    except sqlite3.OperationalError:
+        pass
+    _cleanup_legacy_payload_schema(conn)
+    conn.commit()
+
+
+def _cleanup_legacy_payload_schema(conn: sqlite3.Connection) -> None:
+    if not any(_table_exists(conn, table) for table in (
+        "messages",
+        "turns",
+        "transcript_nodes",
+        "message_runtime_snapshots",
+    )):
+        return
+
+    conn.commit()
+    foreign_keys_enabled = bool(conn.execute("PRAGMA foreign_keys").fetchone()[0])
+    conn.execute("PRAGMA foreign_keys=OFF")
+    try:
+        for table in ("transcript_nodes", "turns", "message_runtime_snapshots", "messages"):
+            conn.execute(f"DROP TABLE IF EXISTS {table}")
+        conn.commit()
+    except Exception:
+        conn.rollback()
+        raise
+    finally:
+        conn.execute(f"PRAGMA foreign_keys={'ON' if foreign_keys_enabled else 'OFF'}")
+
+
+def _table_exists(conn: sqlite3.Connection, table: str) -> bool:
+    row = conn.execute(
+        "SELECT 1 FROM sqlite_master WHERE type = 'table' AND name = ?",
+        (table,),
+    ).fetchone()
+    return row is not None
+
+
+
 
 
 async def _execute_commit(sql: str, params: tuple = ()) -> sqlite3.Cursor:
     def _run():
         conn = _get_db()
         with _write_lock:
-            cur = conn.execute(sql, params)
-            conn.commit()
-        return cur
-    return await asyncio.to_thread(_run)
+            try:
+                cur = conn.execute(sql, params)
+                conn.commit()
+                return cur
+            except Exception:
+                conn.rollback()
+                raise
+    return await asyncio.to_thread(lambda: _run_with_locked_retry(_run))
 
 
 async def _fetch_all(sql: str, params: tuple = ()) -> list[sqlite3.Row]:
     def _run():
         conn = _get_db()
         return conn.execute(sql, params).fetchall()
-    return await asyncio.to_thread(_run)
+    return await asyncio.to_thread(lambda: _run_with_locked_retry(_run))
 
 
 async def _fetch_one(sql: str, params: tuple = ()) -> sqlite3.Row | None:
     def _run():
         conn = _get_db()
         return conn.execute(sql, params).fetchone()
-    return await asyncio.to_thread(_run)
+    return await asyncio.to_thread(lambda: _run_with_locked_retry(_run))
 
 
 async def _write_transaction(callback: Callable[[sqlite3.Connection], T]) -> T:
@@ -218,4 +234,4 @@ async def _write_transaction(callback: Callable[[sqlite3.Connection], T]) -> T:
                 conn.rollback()
                 raise
 
-    return await asyncio.to_thread(_run)
+    return await asyncio.to_thread(lambda: _run_with_locked_retry(_run))

@@ -6,12 +6,15 @@ timestamp-based listing, message hydration.
 
 from __future__ import annotations
 
-import json
+import asyncio
+import shutil
 import uuid
 
 from pydantic import BaseModel, Field
 
+from voidx.memory.jsonl_store import append_session_record, drop_session_lock, read_session_records, session_dir
 from voidx.memory.store import _execute_commit, _fetch_all, _fetch_one, _now, _write_transaction
+from voidx.memory.transcript import append_transcript_reset
 
 
 def _uid() -> str:
@@ -68,25 +71,19 @@ async def get_session(session_id: str) -> SessionInfo | None:
     )
     if not row:
         return None
-    count_row = await _fetch_one(
-        "SELECT COUNT(*) as cnt FROM messages WHERE session_id = ?",
-        (session_id,),
-    )
     return SessionInfo(
         id=row["id"], title=row["title"], workspace=row["workspace"],
         model_provider=row["model_provider"], model_name=row["model_name"],
         created_at=row["created_at"], updated_at=row["updated_at"],
-        message_count=count_row["cnt"] if count_row else 0,
+        message_count=row["message_count"],
     )
 
 
 async def list_sessions(limit: int = 50) -> list[SessionInfo]:
     rows = await _fetch_all(
-        """SELECT s.*, COUNT(m.id) as cnt
-           FROM sessions s
-           LEFT JOIN messages m ON s.id = m.session_id
-           GROUP BY s.id
-           ORDER BY s.updated_at DESC
+        """SELECT *
+           FROM sessions
+           ORDER BY updated_at DESC
            LIMIT ?""",
         (limit,),
     )
@@ -95,7 +92,7 @@ async def list_sessions(limit: int = 50) -> list[SessionInfo]:
             id=row["id"], title=row["title"], workspace=row["workspace"],
             model_provider=row["model_provider"], model_name=row["model_name"],
             created_at=row["created_at"], updated_at=row["updated_at"],
-            message_count=row["cnt"] or 0,
+            message_count=row["message_count"],
         )
         for row in rows
     ]
@@ -103,12 +100,10 @@ async def list_sessions(limit: int = 50) -> list[SessionInfo]:
 
 async def latest_session_for_workspace(workspace: str) -> SessionInfo | None:
     row = await _fetch_one(
-        """SELECT s.*, COUNT(m.id) as cnt
-           FROM sessions s
-           LEFT JOIN messages m ON s.id = m.session_id
-           WHERE s.workspace = ?
-           GROUP BY s.id
-           ORDER BY s.updated_at DESC
+        """SELECT *
+           FROM sessions
+           WHERE workspace = ?
+           ORDER BY updated_at DESC
            LIMIT 1""",
         (workspace,),
     )
@@ -118,7 +113,7 @@ async def latest_session_for_workspace(workspace: str) -> SessionInfo | None:
         id=row["id"], title=row["title"], workspace=row["workspace"],
         model_provider=row["model_provider"], model_name=row["model_name"],
         created_at=row["created_at"], updated_at=row["updated_at"],
-        message_count=row["cnt"] or 0,
+        message_count=row["message_count"],
     )
 
 
@@ -170,69 +165,176 @@ async def touch_session(session_id: str) -> None:
 
 
 async def delete_session(session_id: str) -> None:
+    dir_path = session_dir(session_id)
+    if dir_path.exists():
+        await asyncio.to_thread(shutil.rmtree, dir_path)
     await _execute_commit(
         "DELETE FROM sessions WHERE id = ?", (session_id,)
     )
+    await drop_session_lock(session_id)
 
 
 # ── message persistence ─────────────────────────────────────────────────
 
 async def save_message(msg: MessageRow) -> int:
     """Save a message row. Returns the auto-generated id."""
-    cur = await _execute_commit(
-        """INSERT INTO messages (session_id, role, content, content_format, tool_calls, tool_call_id, created_at)
-           VALUES (?, ?, ?, ?, ?, ?, ?)""",
-        (
-            msg.session_id,
-            msg.role,
-            msg.content,
-            msg.content_format,
-            json.dumps(msg.tool_calls) if msg.tool_calls else None,
-            msg.tool_call_id,
-            msg.created_at,
-        ),
+    row_id = await _next_message_id(msg.session_id)
+
+    def _run(conn):
+        conn.execute(
+            "UPDATE sessions SET message_count = message_count + 1 WHERE id = ?",
+            (msg.session_id,),
+        )
+
+    await _write_transaction(_run)
+    record = {
+        "type": "message",
+        "id": row_id,
+        "role": msg.role,
+        "content": msg.content,
+        "content_format": msg.content_format,
+        "created_at": msg.created_at,
+    }
+    if msg.tool_calls:
+        record["tool_calls"] = msg.tool_calls
+    if msg.tool_call_id:
+        record["tool_call_id"] = msg.tool_call_id
+    await append_session_record(msg.session_id, "messages.jsonl", record)
+    return row_id
+
+
+async def _next_message_id(session_id: str) -> int:
+    row = await _fetch_one(
+        "SELECT message_count FROM sessions WHERE id = ?",
+        (session_id,),
     )
-    return cur.lastrowid
+    next_from_count = int(row["message_count"] or 0) + 1 if row is not None else 1
+    records = await read_session_records(session_id, "messages.jsonl") or []
+    max_id = 0
+    for record in records:
+        message_id = record.get("id")
+        if record.get("type") == "message" and isinstance(message_id, int):
+            max_id = max(max_id, message_id)
+    return max(next_from_count, max_id + 1)
 
 
 async def load_messages(session_id: str) -> list[MessageRow]:
     """Load all messages for a session, ordered by id."""
-    rows = await _fetch_all(
-        "SELECT * FROM messages WHERE session_id = ? ORDER BY id ASC",
-        (session_id,),
-    )
-    return [
-        MessageRow(
-            id=row["id"],
-            session_id=row["session_id"],
-            role=row["role"],
-            content=row["content"],
-            content_format=row["content_format"],
-            tool_calls=json.loads(row["tool_calls"]) if row["tool_calls"] else None,
-            tool_call_id=row["tool_call_id"],
-            created_at=row["created_at"],
+    return await _load_messages_jsonl(session_id) or []
+
+
+async def _load_messages_jsonl(session_id: str) -> list[MessageRow] | None:
+    records = await read_session_records(session_id, "messages.jsonl")
+    if records is None:
+        return None
+
+    messages: dict[int, MessageRow] = {}
+    for record in records:
+        rtype = record.get("type")
+        if rtype == "session_cleared":
+            messages.clear()
+            continue
+        if rtype == "message_deleted":
+            mode = record.get("mode")
+            if mode == "all":
+                messages.clear()
+            elif mode == "from":
+                first_message_id = record.get("first_message_id")
+                if isinstance(first_message_id, int):
+                    for message_id in list(messages):
+                        if message_id >= first_message_id:
+                            del messages[message_id]
+            elif mode == "through":
+                last_message_id = record.get("last_message_id")
+                if isinstance(last_message_id, int):
+                    for message_id in list(messages):
+                        if message_id <= last_message_id:
+                            del messages[message_id]
+            continue
+        if rtype != "message":
+            continue
+        message_id = record.get("id")
+        if not isinstance(message_id, int):
+            continue
+        messages[message_id] = MessageRow(
+            id=message_id,
+            session_id=session_id,
+            role=str(record.get("role", "")),
+            content=str(record.get("content", "")),
+            content_format=str(record.get("content_format", "text") or "text"),
+            tool_calls=record.get("tool_calls") if isinstance(record.get("tool_calls"), list) else None,
+            tool_call_id=record.get("tool_call_id") if isinstance(record.get("tool_call_id"), str) else None,
+            created_at=str(record.get("created_at", "")) or _now(),
         )
-        for row in rows
-    ]
+    return [messages[key] for key in sorted(messages)]
 
 
 async def count_messages(session_id: str) -> int:
     """Count persisted messages for a session."""
     row = await _fetch_one(
-        "SELECT COUNT(*) AS cnt FROM messages WHERE session_id = ?",
+        "SELECT message_count AS cnt FROM sessions WHERE id = ?",
         (session_id,),
     )
     return int(row["cnt"] or 0) if row else 0
 
 
+async def _append_delete_cascade_records(
+    session_id: str,
+    *,
+    mode: str,
+    reason: str,
+    first_message_id: int | None = None,
+    last_message_id: int | None = None,
+) -> None:
+    created_at = _now()
+    context_record = {
+        "type": "context_frame_deleted",
+        "mode": mode,
+        "reason": reason,
+        "created_at": created_at,
+    }
+    runtime_record = {
+        "type": "runtime_state_deleted",
+        "mode": mode,
+        "reason": reason,
+        "created_at": created_at,
+    }
+    if first_message_id is not None:
+        context_record["first_user_message_id"] = first_message_id
+        runtime_record["first_message_id"] = first_message_id
+    if last_message_id is not None:
+        context_record["last_user_message_id"] = last_message_id
+        runtime_record["last_message_id"] = last_message_id
+
+    await append_session_record(session_id, "context/deletes.jsonl", context_record)
+    await append_session_record(session_id, "runtime.jsonl", runtime_record)
+
+
 async def clear_messages(session_id: str) -> None:
+    previous_message_count = 0
+    row = await _fetch_one(
+        "SELECT message_count FROM sessions WHERE id = ?",
+        (session_id,),
+    )
+    previous_message_count = int(row["message_count"] or 0) if row else 0
+
+    await append_session_record(session_id, "messages.jsonl", {
+        "type": "session_cleared",
+        "reason": "clear_messages",
+        "cleared_at": _now(),
+        "previous_message_count": previous_message_count,
+    })
+    await _append_delete_cascade_records(
+        session_id,
+        mode="all",
+        reason="clear_messages",
+    )
+    await append_transcript_reset(session_id, reason="clear_messages")
+
     def _run(conn):
         conn.execute("DELETE FROM context_frames WHERE session_id = ?", (session_id,))
-        conn.execute("DELETE FROM message_runtime_snapshots WHERE session_id = ?", (session_id,))
         conn.execute("DELETE FROM session_runtime_state WHERE session_id = ?", (session_id,))
-        conn.execute("DELETE FROM transcript_nodes WHERE session_id = ?", (session_id,))
-        conn.execute("DELETE FROM turns WHERE session_id = ?", (session_id,))
-        conn.execute("DELETE FROM messages WHERE session_id = ?", (session_id,))
+        conn.execute("UPDATE sessions SET message_count = 0 WHERE id = ?", (session_id,))
 
     await _write_transaction(_run)
 
@@ -243,16 +345,22 @@ async def delete_messages_from(session_id: str, first_message_id: int) -> None:
             "DELETE FROM context_frames WHERE session_id = ? AND user_message_id >= ?",
             (session_id, first_message_id),
         )
-        conn.execute(
-            "DELETE FROM message_runtime_snapshots WHERE session_id = ? AND message_id >= ?",
-            (session_id, first_message_id),
-        )
-        conn.execute(
-            "DELETE FROM messages WHERE session_id = ? AND id >= ?",
-            (session_id, first_message_id),
-        )
 
     await _write_transaction(_run)
+    await append_session_record(session_id, "messages.jsonl", {
+        "type": "message_deleted",
+        "mode": "from",
+        "first_message_id": first_message_id,
+        "reason": "delete_messages_from",
+        "created_at": _now(),
+    })
+    await _append_delete_cascade_records(
+        session_id,
+        mode="from",
+        reason="delete_messages_from",
+        first_message_id=first_message_id,
+    )
+    await _refresh_message_count_from_jsonl(session_id)
     await touch_session(session_id)
 
 
@@ -262,36 +370,34 @@ async def delete_messages_through(session_id: str, last_message_id: int) -> None
             "DELETE FROM context_frames WHERE session_id = ? AND user_message_id <= ?",
             (session_id, last_message_id),
         )
-        conn.execute(
-            "DELETE FROM message_runtime_snapshots WHERE session_id = ? AND message_id <= ?",
-            (session_id, last_message_id),
-        )
-        conn.execute(
-            "DELETE FROM messages WHERE session_id = ? AND id <= ?",
-            (session_id, last_message_id),
-        )
 
     await _write_transaction(_run)
+    await append_session_record(session_id, "messages.jsonl", {
+        "type": "message_deleted",
+        "mode": "through",
+        "last_message_id": last_message_id,
+        "reason": "delete_messages_through",
+        "created_at": _now(),
+    })
+    await _append_delete_cascade_records(
+        session_id,
+        mode="through",
+        reason="delete_messages_through",
+        last_message_id=last_message_id,
+    )
+    await _refresh_message_count_from_jsonl(session_id)
     await touch_session(session_id)
+
+
+async def _refresh_message_count_from_jsonl(session_id: str) -> None:
+    messages = await _load_messages_jsonl(session_id) or []
+    await _execute_commit(
+        "UPDATE sessions SET message_count = ? WHERE id = ?",
+        (len(messages), session_id),
+    )
 
 
 async def last_messages(session_id: str, n: int = 20) -> list[MessageRow]:
     """Last N messages for a session."""
-    rows = await _fetch_all(
-        "SELECT * FROM messages WHERE session_id = ? ORDER BY id DESC LIMIT ?",
-        (session_id, n),
-    )
-    rows = list(reversed(rows))
-    return [
-        MessageRow(
-            id=row["id"],
-            session_id=row["session_id"],
-            role=row["role"],
-            content=row["content"],
-            content_format=row["content_format"],
-            tool_calls=json.loads(row["tool_calls"]) if row["tool_calls"] else None,
-            tool_call_id=row["tool_call_id"],
-            created_at=row["created_at"],
-        )
-        for row in rows
-    ]
+    messages = await load_messages(session_id)
+    return messages[-max(n, 0):] if n > 0 else []

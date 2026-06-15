@@ -3,6 +3,12 @@
 from __future__ import annotations
 
 from voidx.memory.context_frames import save_context_frame_from_messages
+from voidx.memory.cleanup import (
+    SessionDeleteCandidate,
+    SessionDeletePlan,
+    apply_session_delete_plan,
+    plan_session_delete,
+)
 from voidx.memory.model_profiles import (
     ModelProfileRow,
     delete_model_profile_async,
@@ -36,7 +42,14 @@ from voidx.memory.session import (
     update_title,
     update_title_if_current,
 )
-from voidx.memory.transcript import TranscriptNodeRow, TranscriptTurnRow, load_transcript, replace_transcript
+from voidx.memory.subagents import append_subagent_event
+from voidx.memory.transcript import (
+    TranscriptNodeRow,
+    TranscriptTurnRow,
+    append_transcript_summary,
+    load_transcript,
+    replace_transcript,
+)
 from voidx.memory import session as _session
 
 
@@ -48,9 +61,14 @@ __all__ = [
     "MessageRuntimeSnapshot",
     "ModelProfileRow",
     "RuntimeStateSnapshot",
+    "SessionDeleteCandidate",
+    "SessionDeletePlan",
     "SessionInfo",
     "TranscriptNodeRow",
     "TranscriptTurnRow",
+    "append_subagent_event",
+    "append_transcript_summary",
+    "apply_session_delete_plan",
     "clear_messages",
     "clear_runtime_state",
     "count_messages",
@@ -67,6 +85,7 @@ __all__ = [
     "load_runtime_state",
     "load_transcript",
     "memory_now",
+    "plan_session_delete",
     "replace_transcript",
     "save_context_frame_from_messages",
     "save_message",

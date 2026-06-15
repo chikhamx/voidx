@@ -4,11 +4,13 @@ from __future__ import annotations
 
 import hashlib
 import json
+from datetime import datetime, timezone
 from typing import Any
 
 from langchain_core.messages import AIMessage, BaseMessage, HumanMessage, SystemMessage, ToolMessage
 from pydantic import BaseModel, Field
 
+from voidx.memory.jsonl_store import read_session_records, write_session_records
 from voidx.memory.store import _execute_commit, _fetch_all, _now
 
 
@@ -63,7 +65,7 @@ async def save_context_frame(record: ContextFrameRecord) -> int:
         """INSERT INTO context_frames (
                session_id, user_message_id, frame_kind, agent_persona, provider,
                model, prefix_hash, frame_hash, message_count, token_estimate,
-               messages_json, metadata_json, created_at
+               file_path, metadata_json, created_at
            )
            VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)""",
         (
@@ -77,12 +79,23 @@ async def save_context_frame(record: ContextFrameRecord) -> int:
             record.frame_hash,
             record.message_count,
             record.token_estimate,
-            json.dumps(record.messages, ensure_ascii=False, sort_keys=True),
+            "",
             json.dumps(record.metadata, ensure_ascii=False, sort_keys=True),
             record.created_at,
         ),
     )
-    return cur.lastrowid
+    frame_id = cur.lastrowid
+    file_path = f"context/{frame_id}.jsonl"
+    await _execute_commit(
+        "UPDATE context_frames SET file_path = ? WHERE id = ?",
+        (file_path, frame_id),
+    )
+    await write_session_records(
+        record.session_id,
+        file_path,
+        record.messages,
+    )
+    return frame_id
 
 
 async def save_context_frame_from_messages(
@@ -114,12 +127,25 @@ async def load_context_frames(session_id: str, limit: int = 50) -> list[ContextF
     rows = await _fetch_all(
         """SELECT * FROM context_frames
            WHERE session_id = ?
-           ORDER BY id DESC
-           LIMIT ?""",
-        (session_id, limit),
+           ORDER BY id DESC""",
+        (session_id,),
     )
-    records = [
-        ContextFrameRecord(
+    delete_records = [
+        record for record in (await read_session_records(session_id, "context/deletes.jsonl") or [])
+        if record.get("type") == "context_frame_deleted"
+    ]
+    visible_rows = []
+    for row in rows:
+        if _context_frame_deleted(row, delete_records):
+            continue
+        visible_rows.append(row)
+        if len(visible_rows) >= limit:
+            break
+
+    records: list[ContextFrameRecord] = []
+    for row in visible_rows:
+        messages = await read_session_records(session_id, row["file_path"])
+        records.append(ContextFrameRecord(
             id=row["id"],
             session_id=row["session_id"],
             user_message_id=row["user_message_id"],
@@ -131,13 +157,47 @@ async def load_context_frames(session_id: str, limit: int = 50) -> list[ContextF
             frame_hash=row["frame_hash"],
             message_count=row["message_count"],
             token_estimate=row["token_estimate"],
-            messages=json.loads(row["messages_json"]),
+            messages=messages or [],
             metadata=json.loads(row["metadata_json"]),
             created_at=row["created_at"],
-        )
-        for row in rows
-    ]
+        ))
     return list(reversed(records))
+
+
+def _context_frame_deleted(row: Any, delete_records: list[dict[str, Any]]) -> bool:
+    """Check whether a context frame row was soft-deleted.
+
+    A delete record applies to frames created *before* the delete timestamp.
+    If the frame was created after the delete (e.g. new frames added in the
+    same session after a compaction reset), it is NOT considered deleted.
+    """
+    for record in delete_records:
+        deleted_at = record.get("created_at")
+        # Frame created after this delete — skip, it's newer than the delete
+        if deleted_at and _parse_iso(row["created_at"]) > _parse_iso(deleted_at):
+            continue
+        mode = record.get("mode")
+        if mode == "all":
+            return True
+        user_message_id = row["user_message_id"]
+        if not isinstance(user_message_id, int):
+            continue
+        if mode == "from":
+            first_user_message_id = record.get("first_user_message_id")
+            if isinstance(first_user_message_id, int) and user_message_id >= first_user_message_id:
+                return True
+        elif mode == "through":
+            last_user_message_id = record.get("last_user_message_id")
+            if isinstance(last_user_message_id, int) and user_message_id <= last_user_message_id:
+                return True
+    return False
+
+
+def _parse_iso(value: str) -> datetime:
+    try:
+        return datetime.fromisoformat(value)
+    except (ValueError, TypeError):
+        return datetime.min.replace(tzinfo=timezone.utc)
 
 
 def _serialize_message(message: BaseMessage) -> dict[str, Any]:
