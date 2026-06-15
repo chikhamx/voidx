@@ -9,7 +9,15 @@ from typing import Any
 from langchain_core.messages import AIMessage, HumanMessage, SystemMessage
 
 from voidx.agent.runtime_context import InteractionMode, TaskIntent
-from voidx.agent.task_state import Goal, GoalResolution, GoalType, TaskState, goal_from_text, resolve_turn_intent
+from voidx.agent.task_state import (
+    Goal,
+    GoalResolution,
+    GoalType,
+    TaskState,
+    default_workflow_end_for_goal,
+    goal_from_text,
+    resolve_turn_intent,
+)
 from voidx.workflow.dag import DEFAULT_WORKFLOW_DAG
 
 
@@ -97,8 +105,15 @@ def _resolver_messages(
         "- Do not infer write permission from analysis words like look at, inspect, 看看, 分析, or 建议.\n"
         "- Set user_requested_write=true only when the user explicitly asks to change, fix, implement, edit, write, apply, or continue an approved implementation.\n"
         "- Set needs_confirmation=true when approval/write intent is ambiguous.\n"
-        "- If the user's intent clearly indicates which workflow should be active next, set next_workflow to that node name, such as design-doc, plan, or tdd.\n"
-        "- Do not set next_workflow based on vague or ambiguous approval.\n"
+        "- Set workflow_start to the first workflow node that should run for this turn.\n"
+        "- Set workflow_end to the workflow node where automatic workflow progression must stop.\n"
+        "- Use workflow_start=review and workflow_end=review for review-only requests.\n"
+        "- Use workflow_start=review and workflow_end=verify only when the user explicitly asks to fix, implement, apply, or continue after review findings.\n"
+        "- If the user explicitly asks to implement an already detailed spec, set workflow_start=tdd and workflow_end=verify.\n"
+        "- If the user asks to turn a spec into an implementation plan, set workflow_start=plan.\n"
+        "- If the user asks to write or revise a design/spec document, set workflow_start=design-doc.\n"
+        "- Do not choose brainstorm when the request already contains an approved or sufficiently detailed spec.\n"
+        "- Do not set workflow_start or workflow_end based on vague or ambiguous approval.\n"
         "- In plan mode, return a design goal with needs_confirmation=true.\n"
         f"GoalResolution JSON schema:\n{schema}"
     )
@@ -138,7 +153,10 @@ def _normalize_resolution(
     mode = InteractionMode.parse(interaction_mode)
     confidence = resolution.confidence
     reason = resolution.reason.strip() or "structured goal resolver"
-    next_workflow = _normalize_next_workflow(resolution.next_workflow)
+    workflow_start = _normalize_workflow_route_node(resolution.workflow_start)
+    workflow_end = _normalize_workflow_route_node(resolution.workflow_end)
+    if workflow_start and not workflow_end:
+        workflow_end = default_workflow_end_for_goal(resolution.goal, workflow_start)
 
     if mode == InteractionMode.PLAN:
         goal = _copy_goal(
@@ -153,7 +171,8 @@ def _normalize_resolution(
             goal=goal,
             confidence=confidence,
             reason=f"{reason}; plan mode forces design goal",
-            next_workflow=next_workflow,
+            workflow_start=workflow_start,
+            workflow_end=workflow_end,
         )
 
     if resolution.intent == TaskIntent.GENERAL:
@@ -162,7 +181,8 @@ def _normalize_resolution(
             goal=None,
             confidence=confidence,
             reason=reason,
-            next_workflow=next_workflow,
+            workflow_start=workflow_start,
+            workflow_end=workflow_end,
         )
 
     goal = resolution.goal
@@ -174,7 +194,8 @@ def _normalize_resolution(
         goal=goal,
         confidence=confidence,
         reason=reason,
-        next_workflow=next_workflow,
+        workflow_start=workflow_start,
+        workflow_end=workflow_end,
     )
 
 
@@ -197,7 +218,7 @@ def _copy_goal(
     )
 
 
-def _normalize_next_workflow(value: str | None) -> str | None:
+def _normalize_workflow_route_node(value: str | None) -> str | None:
     workflow = (value or "").strip().lower()
     if not workflow:
         return None

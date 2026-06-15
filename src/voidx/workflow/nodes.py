@@ -31,7 +31,7 @@ BRAINSTORMING = WorkflowNode(
         "websearch",
     ],
     gate=NodeGate(
-        denied_tools=("write", "edit", "lsp_format"),
+        denied_tools=("write", "edit"),
         description=(
             "Do not write code, invoke implementation workflows, or take implementation "
             "action until the design is presented and approved. This applies regardless "
@@ -130,7 +130,7 @@ WRITING_PLANS = WorkflowNode(
         "edit",
     ],
     gate=NodeGate(
-        denied_tools=("write", "edit", "lsp_format"),
+        denied_tools=("write", "edit"),
         allowed_paths=("docs/specs/**", "docs/design/**"),
         description="Do not start implementation until the plan is approved. The plan must be executable with exact paths and commands.",
         required_before_transition="plan is executable and approved",
@@ -176,8 +176,7 @@ TEST_DRIVEN_DEVELOPMENT = WorkflowNode(
         "glob",
         "grep",
         "repo_map",
-        "lsp_diagnostics",
-        "lsp_format",
+        "lsp",
     ],
     gate=NodeGate(
         description="If you wrote implementation code before a failing test, delete the implementation and start from the test.",
@@ -234,7 +233,7 @@ VERIFICATION_BEFORE_COMPLETION = WorkflowNode(
         "glob",
         "grep",
         "repo_map",
-        "lsp_diagnostics",
+        "lsp",
     ],
     gate=NodeGate(
         description="Before claiming any status, identify the proving command, run it in this turn, read the output, and report the evidence.",
@@ -373,12 +372,10 @@ SYSTEMATIC_DEBUGGING = WorkflowNode(
         "grep",
         "bash",
         "repo_map",
-        "lsp_diagnostics",
-        "lsp_symbols",
-        "lsp_definition",
+        "lsp",
     ],
     gate=NodeGate(
-        denied_tools=("write", "edit", "lsp_format"),
+        denied_tools=("write", "edit"),
         description="Root cause investigation must complete before proposing or applying any fix.",
         required_before_transition="root cause identified with evidence",
     ),

@@ -4,7 +4,15 @@ from pathlib import Path
 sys.path.insert(0, str(Path(__file__).parent.parent.parent / "src"))
 
 from voidx.agent.runtime_context import TaskIntent
-from voidx.agent.task_state import GoalType, PendingApproval, TaskState, goal_from_text, resolve_turn_intent
+from voidx.agent.task_state import (
+    GoalType,
+    PendingApproval,
+    TaskState,
+    WorkflowRoute,
+    goal_from_text,
+    resolve_turn_intent,
+)
+from voidx.workflow.runtime import WorkflowRunState, WorkflowRunStatus
 
 
 def test_inspect_turn_is_coding_without_implementation_approval():
@@ -161,6 +169,25 @@ def test_goal_mode_uses_task_state_current_goal():
     assert state.current_goal.type == GoalType.CHORE
     assert state.current_goal.target == "优化 markdown 渲染截断"
     assert state.pending_approval is None
+
+
+def test_set_goal_resets_previous_workflow_context():
+    state = TaskState(
+        current_goal=goal_from_text("review diff", goal_type=GoalType.REVIEW),
+        pending_approval=PendingApproval(scope="review diff", source_goal_type=GoalType.REVIEW),
+        workflow_route=WorkflowRoute(start="review", end="review"),
+        workflow_runs={
+            "review": WorkflowRunState(name="review", status=WorkflowRunStatus.ACTIVE),
+        },
+    )
+
+    state.set_goal(goal_from_text("修复 UI", goal_type=GoalType.BUGFIX))
+
+    assert state.current_goal is not None
+    assert state.current_goal.type == GoalType.BUGFIX
+    assert state.pending_approval is None
+    assert state.workflow_route is None
+    assert state.workflow_runs == {}
 
 
 def test_goal_mode_confirmation_clears_pending_approval():

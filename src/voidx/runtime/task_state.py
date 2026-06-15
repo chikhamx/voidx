@@ -174,7 +174,8 @@ class GoalResolution(BaseModel):
     goal: Goal | None = None
     confidence: float = Field(default=1.0, ge=0, le=1)
     reason: str = ""
-    next_workflow: str | None = None
+    workflow_start: str | None = None
+    workflow_end: str | None = None
 
 
 class PendingApproval(BaseModel):
@@ -182,6 +183,11 @@ class PendingApproval(BaseModel):
     scope: str
     source_goal_type: GoalType = GoalType.DESIGN
     created_turn: int = 0
+
+
+class WorkflowRoute(BaseModel):
+    start: str = ""
+    end: str = ""
 
 
 class TodoRunItem(BaseModel):
@@ -200,6 +206,7 @@ class TaskState(BaseModel):
     previous_intent: TaskIntent | None = None
     current_goal: Goal | None = None
     pending_approval: PendingApproval | None = None
+    workflow_route: WorkflowRoute | None = None
     workflow_runs: dict[str, WorkflowRunState] = Field(default_factory=dict)
     recent_user_texts: list[str] = Field(default_factory=list)
     todo_state: TodoRunState | None = None
@@ -220,16 +227,20 @@ class TaskState(BaseModel):
             self.current_goal = None
         self._record_user_text(user_text)
         self.pending_approval = _next_pending_approval(resolution, self.current_goal)
+        self.workflow_route = _workflow_route_from_resolution(resolution, self.current_goal)
 
     def set_goal(self, goal: Goal | str | None) -> None:
         if goal is None:
             self.current_goal = None
-            self.pending_approval = None
-            self.workflow_runs = {}
+            self._reset_workflow_context()
             return
         self.current_goal = goal if isinstance(goal, Goal) else goal_from_text(goal)
         self.current_intent = TaskIntent.CODING
+        self._reset_workflow_context()
+
+    def _reset_workflow_context(self) -> None:
         self.pending_approval = None
+        self.workflow_route = None
         self.workflow_runs = {}
 
     def clear_goal(self) -> None:
@@ -391,20 +402,58 @@ def _next_pending_approval(
     return None
 
 
+def _workflow_route_from_resolution(
+    resolution: GoalResolution,
+    goal: Goal | None,
+) -> WorkflowRoute | None:
+    start = (resolution.workflow_start or "").strip().lower()
+    end = (resolution.workflow_end or "").strip().lower()
+    if not start:
+        start = _workflow_start_for_goal(goal)
+    if not end:
+        end = default_workflow_end_for_goal(goal, start)
+    if not start and not end:
+        return None
+    return WorkflowRoute(start=start, end=end)
+
+
+def _workflow_start_for_goal(goal: Goal | None) -> str:
+    if goal is None:
+        return ""
+    return {
+        GoalType.BUGFIX: "debug",
+        GoalType.DEBUG: "debug",
+        GoalType.REFACTOR: "brainstorm",
+        GoalType.FEATURE: "brainstorm",
+        GoalType.DESIGN: "brainstorm",
+        GoalType.DOC: "design-doc",
+        GoalType.REVIEW: "review",
+        GoalType.CHORE: "tdd",
+        GoalType.INSPECT: "",
+    }.get(goal.type, "")
+
+
+def default_workflow_end_for_goal(goal: Goal | None, start: str) -> str:
+    if goal is not None:
+        if goal.type == GoalType.REVIEW and goal.user_requested_write:
+            return "verify"
+        if start == "tdd" and goal.user_requested_write:
+            return "verify"
+    return start
+
+
 def _resolution(
     intent: TaskIntent,
     reason: str,
     *,
     goal: Goal | None = None,
     confidence: float = 1.0,
-    next_workflow: str | None = None,
 ) -> GoalResolution:
     return GoalResolution(
         intent=intent,
         goal=goal,
         confidence=confidence,
         reason=reason,
-        next_workflow=next_workflow,
     )
 
 
@@ -468,10 +517,12 @@ __all__ = [
     "GoalType",
     "IntentResolution",
     "PendingApproval",
+    "WorkflowRoute",
     "TaskState",
     "TodoRunItem",
     "TodoRunState",
     "ToolStatePatch",
+    "default_workflow_end_for_goal",
     "goal_from_text",
     "goal_label",
     "goal_type_value",
