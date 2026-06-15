@@ -1,3 +1,4 @@
+> **Status: Done**
 # Spec: 合并 LSP 工具为统一 `lsp` 工具
 
 > **Status**: In Progress

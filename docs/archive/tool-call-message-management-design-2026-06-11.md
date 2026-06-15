@@ -1,6 +1,6 @@
 # Tool Call Message Management — 技术设计文档
 
-> **Status: Draft**
+> **Status: Done**
 
 ## Context
 
@@ -34,10 +34,10 @@ voidx 的 tool call message 管理目前存在三个问题：
 
 LLM 调用 `read`，LLM 就收到完整文件内容——无论 display policy 是 show、summary 还是 hidden。summary 模式只是让终端里少显示几行，hidden 模式只是让终端里什么都不显示，LLM 那边该看什么看什么。
 
-这个原则适用于**有语义结果需要交还给 LLM 的工具**。但有一类 runtime-only / barrier 工具本来就不应该把结果放进对话上下文：它们只负责更新运行时状态、完成审批/同步屏障、采集用户选择或推进控制流。对这类工具，hidden 不只是 UI display policy，也可能配合 ToolMessage suppression：
+这个原则适用于**有语义结果需要交还给 LLM 的工具**。但有一类 runtime-only / barrier 工具，其结果不需要长期留在对话上下文中：它们只负责更新运行时状态、完成审批/同步屏障、采集用户选择或推进控制流。对这类工具，hidden 不只是 UI display policy，还需要在 replay 时从 LLM 历史中移除：
 
 - **UI hidden**：不创建 tool call 节点，不发射 `ToolStarted` / `ToolFinished` / `ToolResultAppended` 给普通 UI。
-- **ToolMessage suppressed**：不把工具结果追加到 LLM messages；LLM 通过 runtime state、后续用户消息或控制流状态获知结果。
+- **Replay sanitized**：当前轮正常返回 ToolMessage（LLM 协议要求每个 tool_call 都有对应回复），下一轮构建消息时通过 `_REPLAY_SANITIZED_TOOL_NAMES` 从历史中移除 AIMessage tool_call + 对应 ToolMessage。LLM 通过 runtime state、后续用户消息或控制流状态获知结果。
 - **Failure visible**：如果 hidden/barrier 工具失败且需要用户知道，应通过 warning/error/status 事件显示失败，而不是把正常工具节点重新露出来。
 
 | 场景 | LLM 收到 | 用户在终端看到 |
@@ -46,8 +46,8 @@ LLM 调用 `read`，LLM 就收到完整文件内容——无论 display policy �
 | `read` + display=summary | 完整文件内容 | 前 3 行 + "… +153 more lines" |
 | `read` + display=hidden | 完整文件内容 | 什么都不显示 |
 | `grep` + display=summary | 完整匹配结果 | 前 5 行 + "… +195 more lines" |
-| `todo` | 不生成 ToolMessage（runtime state 已保存） | 不显示重复工具节点 |
-| `plan_checkpoint` / barrier tool | 通常不生成 ToolMessage，除非该 barrier 的结果是后续推理必须读取的语义数据 | 不显示工具节点；必要时显示独立 warning/status |
+| `todo` | 当前轮正常返回 ToolMessage，下一轮 replay 时移除（runtime state 已保存） | 不显示重复工具节点 |
+| `plan_checkpoint` / barrier tool | 当前轮正常返回 ToolMessage，下一轮 replay 时移除 | 不显示工具节点；必要时显示独立 warning/status |
 
 同理，Large Result Persistence 也只影响 LLM context 路径——超大结果写磁盘后 LLM 收到 preview + 路径，但 UI 可以选择显示 preview 或从磁盘读取完整内容。
 
@@ -62,7 +62,7 @@ Tool Execution
 ToolResult (raw output + diff + metadata + summary)
      │
      ├──► LLM Context Path（不受 display policy 影响）
-     │    maybe_persist_large_result()  ──► ToolMessage (preview + path) or ToolMessage (full)
+     │    maybe_persist_tool_result()  ──► ToolMessage (preview + path) or ToolMessage (full)
      │    sanitize_tool_message_content()
      │
      └──► UI Display Path（受 display policy 控制）
@@ -72,8 +72,9 @@ ToolResult (raw output + diff + metadata + summary)
      │    ├── summary → 渲染 tool_call header + 摘要行
      │    └── hidden  → 不创建节点，不发射事件
      │
-     └──► 注意：UI display 的 summary/hidden 默认不改变 LLM 收到的 ToolMessage 内容；
-          runtime-only/barrier 工具可显式声明 suppress_tool_message=True
+     └──► 注意：UI display 的 summary/hidden 不改变 LLM 收到的 ToolMessage 内容；
+          runtime-only/barrier 工具当前轮正常返回 ToolMessage，下一轮通过
+          _REPLAY_SANITIZED_TOOL_NAMES 从历史中移除
 ```
 
 ### 改进 A：Tool Display Policy
@@ -91,7 +92,6 @@ class ToolDisplayMode(str, Enum):
 class ToolDisplayRule(BaseModel):
     tool_name: str
     mode: ToolDisplayMode = ToolDisplayMode.SHOW
-    suppress_tool_message: bool = False  # True 时不把工具结果追加到 LLM messages
     summary_max_lines: int = 3       # summary 模式显示的最大行数
     auto_summary_lines: int = 50     # 结果超过此行数自动降级为 summary
     auto_summary_chars: int = 5000   # 结果超过此字符数自动降级为 summary
@@ -111,8 +111,8 @@ class ToolDisplayPolicy(BaseModel):
 | 工具 | LLM context 需要什么 | UI display 默认策略 | 理由 |
 |------|---------------------|--------------------|------|
 | **read** | 完整文件内容 | SHOW | LLM 需要完整内容做判断，用户也想看完整内容 |
-| **write** | 确认写入成功 + 文件路径 | SHOW（有 diff 时显示 diff） | LLM 不需要看到写入的完整内容（它刚生成的），用户想确认写了什么 |
-| **edit** | 确认修改成功 + diff 统计 | SHOW（显示 diff） | LLM 不需要完整 diff（它刚生成的），用户想确认改了什么 |
+| **write** | 完整 output（含 diff） | SHOW（有 diff 时显示 diff） | LLM 收到完整 output；虽然 LLM 刚生成内容，但保持一致性，不做特殊截断 |
+| **edit** | 完整 output（含 diff） | SHOW（显示 diff） | LLM 收到完整 output；虽然 LLM 刚生成内容，但保持一致性，不做特殊截断 |
 | **bash** | exit code + output | SHOW + 自适应 summary | 语义取决于命令类型（见下文），小结果完整显示，大结果 preview |
 | **grep** | 完整匹配结果 | SUMMARY | LLM 需要完整匹配做判断，用户只需摘要（匹配数 + 前几行） |
 | **glob** | 完整文件列表 | SUMMARY | LLM 需要完整列表，用户只需摘要（文件数 + 前几个） |
@@ -122,9 +122,13 @@ class ToolDisplayPolicy(BaseModel):
 | **websearch** | 搜索结果 | SUMMARY | LLM 需要完整结果，用户只需摘要 |
 | **todo** | 不生成 ToolMessage（已有 runtime state） | HIDDEN | 已通过 runtime state 管理，避免 UI 和 LLM context 都重复 |
 | **task_status** | 子 agent / worker task 当前状态 | HIDDEN | 仍在工具注册和子 agent tracker 中使用；UI 不显示工具节点，但 LLM 需要收到状态结果 |
-| **load_doc_template** | 文档模板内容 | HIDDEN | 模板内容只给 LLM 写文档用，用户不需要看到工具节点或 `Load_doc_templateing` 过程 |
-| **lsp_*** | LSP 结果 | SUMMARY | LLM 需要完整结果，用户只需摘要 |
+| **load_doc_template** | 文档模板内容 | HIDDEN | 模板内容只给 LLM 写文档用，用户不需要看到工具节点或加载过程 |
+| **lsp** | LSP 结果（diagnostics/symbols/definition/references） | SUMMARY | LLM 需要完整结果，用户只需摘要 |
 | **plan_checkpoint** | 通常不生成 ToolMessage | HIDDEN | barrier/审批控制工具，不应污染 UI 和普通对话上下文 |
+| **git** | 完整 git 命令输出 | SHOW | 和 bash 类似，用户想看 git 操作结果 |
+| **compact_context** | 不生成 ToolMessage（compaction barrier） | HIDDEN | compaction 控制流 barrier，结果由 runtime 消费 |
+| **advance_workflow** | 不生成 ToolMessage（workflow 控制流 barrier） | HIDDEN | workflow 转移 barrier，结果由控制流消费 |
+| **load_skills** | 技能内容 | HIDDEN | 和 load_doc_template 同类，技能内容只给 LLM 用 |
 | **clarify** | 通常不生成 ToolMessage；用户回答进入后续用户消息或 runtime state | HIDDEN | barrier/交互控制工具，不显示工具节点 |
 
 #### Runtime-only / Barrier 工具
@@ -134,22 +138,13 @@ Barrier 工具用于改变执行状态，而不是向 LLM 提供一段新的语�
 - `todo`：更新任务状态；现有行为是既不在 UI 重复显示，也不创建 ToolMessage。
 - `task_status` 不属于 suppress ToolMessage 的 barrier：它仍由 `TaskStatusTool` 注册，并读取子 agent 运行期间写入的 `TaskTracker` 状态。默认 UI hidden，但 ToolMessage 必须保留给 LLM。
 - `load_doc_template` 同样不 suppress ToolMessage：它是 LLM 的模板加载工具，默认 UI hidden，但模板内容必须进入 ToolMessage。
+- `load_skills` 同样不 suppress ToolMessage：和 load_doc_template 同类，技能内容只给 LLM 用，默认 UI hidden，但内容必须进入 ToolMessage。
 - `plan_checkpoint`：审批或 checkpoint barrier；正常路径不显示工具节点，结果由控制流消费。
+- `compact_context`：compaction barrier；提交压缩摘要后由 runtime 消费，不生成 ToolMessage。
+- `advance_workflow`：workflow 转移 barrier；推进工作流状态后由控制流消费，不生成 ToolMessage。
 - `clarify`：用户交互 barrier；用户回答应作为用户输入或 runtime state 进入上下文，而不是作为工具结果回灌。
 
-这类工具需要显式建模为：
-
-```python
-class ToolDisplayRule(BaseModel):
-    tool_name: str
-    mode: ToolDisplayMode = ToolDisplayMode.SHOW
-    suppress_tool_message: bool = False  # runtime-only/barrier 工具设为 True
-    summary_max_lines: int = 3
-    auto_summary_lines: int = 50
-    auto_summary_chars: int = 5000
-```
-
-`mode=HIDDEN` 只表示 UI 不显示；`suppress_tool_message=True` 才表示不把结果追加到 LLM messages。大多数普通工具即使 hidden，也仍然返回 ToolMessage；runtime-only/barrier 工具两者都关闭。
+这类工具的 barrier 语义通过 `_REPLAY_SANITIZED_TOOL_NAMES` 实现。`mode=HIDDEN` 只表示 UI 不显示；当前轮所有工具（包括 hidden 工具）都正常返回 ToolMessage（LLM 协议要求每个 tool_call 都有对应回复），下一轮构建消息时通过 `sanitize_todo_replay_messages()` 从历史中移除 AIMessage tool_call + 对应 ToolMessage。大多数普通工具即使 hidden，也仍然返回 ToolMessage 且不进入 replay sanitize；runtime-only/barrier 工具则两者都生效。
 
 #### bash 的特殊性
 
@@ -173,11 +168,14 @@ bash 无法在执行前判断 output 语义，所以只能**按大小自适应**
 ```python
 DEFAULT_DISPLAY_RULES: dict[str, ToolDisplayRule] = {
     # ── Hidden：runtime-only / barrier / 状态工具 ──
-    "todo": ToolDisplayRule(tool_name="todo", mode=ToolDisplayMode.HIDDEN, suppress_tool_message=True),
+    "todo": ToolDisplayRule(tool_name="todo", mode=ToolDisplayMode.HIDDEN),
     "task_status": ToolDisplayRule(tool_name="task_status", mode=ToolDisplayMode.HIDDEN),
     "load_doc_template": ToolDisplayRule(tool_name="load_doc_template", mode=ToolDisplayMode.HIDDEN),
-    "plan_checkpoint": ToolDisplayRule(tool_name="plan_checkpoint", mode=ToolDisplayMode.HIDDEN, suppress_tool_message=True),
-    "clarify": ToolDisplayRule(tool_name="clarify", mode=ToolDisplayMode.HIDDEN, suppress_tool_message=True),
+    "plan_checkpoint": ToolDisplayRule(tool_name="plan_checkpoint", mode=ToolDisplayMode.HIDDEN),
+    "compact_context": ToolDisplayRule(tool_name="compact_context", mode=ToolDisplayMode.HIDDEN),
+    "advance_workflow": ToolDisplayRule(tool_name="advance_workflow", mode=ToolDisplayMode.HIDDEN),
+    "load_skills": ToolDisplayRule(tool_name="load_skills", mode=ToolDisplayMode.HIDDEN),
+    "clarify": ToolDisplayRule(tool_name="clarify", mode=ToolDisplayMode.HIDDEN),
 
     # ── Summary：搜索/查询类，用户只需摘要 ──
     "grep": ToolDisplayRule(
@@ -200,23 +198,8 @@ DEFAULT_DISPLAY_RULES: dict[str, ToolDisplayRule] = {
         mode=ToolDisplayMode.SUMMARY,
         summary_max_lines=5,
     ),
-    "lsp_diagnostics": ToolDisplayRule(
-        tool_name="lsp_diagnostics",
-        mode=ToolDisplayMode.SUMMARY,
-        summary_max_lines=5,
-    ),
-    "lsp_symbols": ToolDisplayRule(
-        tool_name="lsp_symbols",
-        mode=ToolDisplayMode.SUMMARY,
-        summary_max_lines=5,
-    ),
-    "lsp_references": ToolDisplayRule(
-        tool_name="lsp_references",
-        mode=ToolDisplayMode.SUMMARY,
-        summary_max_lines=5,
-    ),
-    "lsp_definition": ToolDisplayRule(
-        tool_name="lsp_definition",
+    "lsp": ToolDisplayRule(
+        tool_name="lsp",
         mode=ToolDisplayMode.SUMMARY,
         summary_max_lines=5,
     ),
@@ -243,8 +226,8 @@ DEFAULT_DISPLAY_RULES: dict[str, ToolDisplayRule] = {
     # ── Show：文件操作类，用户想确认变更 ──
     "write": ToolDisplayRule(tool_name="write", mode=ToolDisplayMode.SHOW),
     "edit": ToolDisplayRule(tool_name="edit", mode=ToolDisplayMode.SHOW),
-    "apply_patch": ToolDisplayRule(tool_name="apply_patch", mode=ToolDisplayMode.SHOW),
     "agent": ToolDisplayRule(tool_name="agent", mode=ToolDisplayMode.SHOW),
+    "git": ToolDisplayRule(tool_name="git", mode=ToolDisplayMode.SHOW),
 }
 ```
 
@@ -289,6 +272,20 @@ def resolve_display_mode(
 
 **1. `tool_executor.py` — 事件发射前查询策略**
 
+`host._display_policy` 在 `GraphRunLoopHost.__init__()` 中初始化，从 profile 配置加载：
+
+```python
+# host 初始化时
+from voidx.ui.output.display_policy import ToolDisplayPolicy, DEFAULT_DISPLAY_RULES
+
+self._display_policy = ToolDisplayPolicy.from_config(
+    profile_config.get("tool_display", {}),
+    defaults=DEFAULT_DISPLAY_RULES,
+)
+```
+
+子 agent 继承父 agent 的 display policy——子 agent 的 `GraphToolExecutor` 通过同一个 `host` 实例访问 `_display_policy`，无需单独初始化。
+
 ```python
 # execute_one() 中，发射 ToolStarted 之前
 policy = host._display_policy  # 从 host 获取
@@ -296,8 +293,15 @@ mode, summary_lines = policy.resolve_display_mode(tid, result.output)
 
 if mode == ToolDisplayMode.HIDDEN:
     # 不发射 ToolStarted / ToolFinished / ToolResultAppended
-    # 但仍然执行工具；是否返回 ToolMessage 由 suppress_tool_message 单独决定
-    pass
+    # 但仍然执行工具；所有工具当前轮都正常返回 ToolMessage
+    # barrier 工具的 ToolMessage 在下一轮通过 _REPLAY_SANITIZED_TOOL_NAMES 从历史中移除
+    #
+    # 失败时：发射独立的 WarningAppended，不创建 tool_call 节点
+    # 这样 hidden 工具的错误仍能被用户看到，但不会破坏 UI 隐藏语义
+    if not ok:
+        await host._ui.events.emit(WarningAppended(
+            message=f"{tid} failed: {result.output[:200]}",
+        ))
 else:
     # 发射事件，携带 display_mode
     await host._ui.events.request(ToolStarted(
@@ -314,14 +318,15 @@ else:
 ToolMessage 构造也必须查询同一条 rule，但不能只看 display mode：
 
 ```python
-rule = policy.rule_for(tid)
-message = None if rule.suppress_tool_message else ToolMessage(
+# 所有工具当前轮都正常返回 ToolMessage（LLM 协议要求每个 tool_call 都有对应回复）
+# barrier 工具的 ToolMessage 在下一轮通过 sanitize_todo_replay_messages() 从历史中移除
+message = ToolMessage(
     content=sanitize_tool_message_content(result.output, workspace=ctx.workspace),
     tool_call_id=cid,
 )
 ```
 
-这保留现有 `todo` 语义：`todo` 不只是 UI 上不重复显示，也不会再进入 tool call 上下文。后续新增 barrier 工具必须显式选择 `suppress_tool_message=True`，避免误把普通 hidden 工具的语义结果从 LLM context 中删掉。
+所有工具（包括 hidden 工具）当前轮都正常返回 ToolMessage。barrier 工具（`todo`、`plan_checkpoint`、`clarify`、`compact_context`、`advance_workflow`）的 AIMessage tool_call + 对应 ToolMessage 在下一轮构建消息时通过 `sanitize_todo_replay_messages()` 从历史中移除。后续新增 barrier 工具必须将其名称加入 `_REPLAY_SANITIZED_TOOL_NAMES`，避免其语义结果长期留在 LLM context 中。
 
 **2. `events/schema.py` — 事件增加显示模式字段**
 
@@ -430,7 +435,9 @@ def maybe_persist_tool_result(
     if len(content) <= threshold:
         return content
 
-    # Read 工具豁免：避免循环依赖（Read 自己控制输出大小）
+    # Read 工具豁免：read 的结果用户可能需要完整看到，
+    # 持久化后 LLM 还得再 read 一次才能看到完整内容，不如直接截断。
+    # 且 read 工具本身没有输出大小控制，大文件仍由 sanitize 截断处理。
     if tool_name == "read":
         return content
 
@@ -479,18 +486,14 @@ return _ExecutedTool(
 )
 
 # 改为：
-rule = policy.rule_for(tid)
-if rule.suppress_tool_message:
-    message = None
-else:
-    sanitized = maybe_persist_tool_result(
-        result.output,
-        tool_use_id=cid,
-        tool_name=tid,
-    )
-    sanitized = sanitize_tool_message_content(sanitized, workspace=ctx.workspace)
+sanitized = maybe_persist_tool_result(
+    result.output,
+    tool_use_id=cid,
+    tool_name=tid,
+)
+sanitized = sanitize_tool_message_content(sanitized, workspace=ctx.workspace)
 
-    message = ToolMessage(content=sanitized, tool_call_id=cid)
+message = ToolMessage(content=sanitized, tool_call_id=cid)
 
 return _ExecutedTool(message=message, ...)
 ```
@@ -498,6 +501,8 @@ return _ExecutedTool(message=message, ...)
 注意：`maybe_persist_tool_result()` 在 `sanitize_tool_message_content()` **之前**运行，因为：
 1. 持久化需要原始完整内容
 2. sanitize 处理路径替换和脱敏，应在 preview 生成后执行
+
+这意味着 preview 中可能包含真实路径（workspace 路径、home 路径）。这是可接受的：preview 是给 LLM 看的内部上下文，不是用户可见的 UI 文本。`sanitize_tool_message_content()` 在 preview 生成后对整个返回值（含 preview）做路径替换，确保 LLM context 中的路径统一为 `<workspace>` / `~`。磁盘上的持久化文件保留原始内容，LLM 通过 `read` 工具读取时也会经过 sanitize。
 
 #### 清理策略
 
@@ -577,6 +582,8 @@ summary 在两个地方使用：
 1. **`ToolFinished` 事件** — `detail` 字段使用 summary，替代当前的空字符串
 2. **`OutputNode.collapse_summary`** — 折叠时显示 summary 而非截断 header
 
+注意：UI hidden 的工具（如 `task_status`、`load_doc_template`、`load_skills`）不创建 UI 节点，因此 summary 对它们没有 UI 意义。但这些工具仍应填充 summary——它作为 `ToolResult` 的结构化元数据，未来可能用于 LLM context 路径的精简（例如当 ToolMessage 需要截断时，summary 可替代截断 header）。当前实现中，hidden+非 suppress 工具的 summary 仅作为元数据保留，不消费。
+
 ```python
 # tool_executor.py
 await host._ui.events.emit(ToolFinished(
@@ -634,10 +641,8 @@ tool_display:
       summary_max_lines: 10
     todo:
       mode: hidden
-      suppress_tool_message: true
     plan_checkpoint:
       mode: hidden
-      suppress_tool_message: true
 
 tool_result:
   persist_threshold: 50000    # 字符数，0 = 禁用持久化
@@ -667,7 +672,7 @@ tool_result:
 
 ## Open Questions
 
-- [ ] 持久化文件路径是否需要脱敏（workspace 路径替换）？目前 sanitize 在 persist 之后运行，preview 中可能包含真实路径
-- [ ] summary 模式下，用户能否通过 browse 模式展开查看完整结果？还是需要单独的"展开"交互？
-- [ ] 子 agent 的工具调用是否继承父 agent 的 display policy？还是子 agent 有自己的策略？
-- [ ] MCP 工具的 display mode 默认值应该是什么？SHOW 还是 SUMMARY？
+- [x] 持久化文件路径是否需要脱敏？→ 不需要单独处理。`sanitize_tool_message_content()` 在 preview 生成后对整个返回值做路径替换，确保 LLM context 中路径统一为 `<workspace>` / `~`。磁盘文件保留原始内容，LLM 通过 `read` 读取时也会经过 sanitize。
+- [x] summary 模式下，用户能否通过 browse 模式展开查看完整结果？→ 暂不支持。summary 模式下用户只能看到截断后的摘要行，无法在终端内展开查看完整结果。后续可考虑 browse 模式或展开交互，但不在本次实现范围内。
+- [x] 子 agent 的工具调用是否继承父 agent 的 display policy？→ 继承。子 agent 的 `GraphToolExecutor` 通过同一个 `host` 实例访问 `_display_policy`，无需单独初始化。
+- [x] MCP 工具的 display mode 默认值应该是什么？→ SUMMARY。MCP 工具的输出格式不可预测，默认 SUMMARY 可避免大输出撑爆终端；LLM 仍收到完整 ToolMessage。
