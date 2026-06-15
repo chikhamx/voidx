@@ -5,15 +5,8 @@ from __future__ import annotations
 
 class SettingsCustomProviderMixin:
     async def list_custom_models(self, provider: str) -> list[str]:
-        """Return user-added custom model names for a provider."""
-        custom = self._data.get("custom_models", {})
+        """Return custom model names derived from saved DB profiles."""
         result: list[str] = []
-        if not isinstance(custom, dict):
-            models = []
-        else:
-            models = custom.get(provider, [])
-        if isinstance(models, list):
-            result.extend(str(model) for model in models)
         for profile in await self.list_profiles():
             if profile.provider == provider and profile.model not in result:
                 result.append(profile.model)
@@ -40,19 +33,8 @@ class SettingsCustomProviderMixin:
     # ── custom providers ──────────────────────────────────────────────────
 
     def list_custom_providers(self) -> list[dict[str, str]]:
-        """Return list of {name, protocol, base_url} for custom providers."""
-        providers = self._data.get("custom_providers", {})
-        if not isinstance(providers, dict):
-            return []
-        result: list[dict[str, str]] = []
-        for name, fields in providers.items():
-            if isinstance(fields, dict):
-                result.append({
-                    "name": name,
-                    "protocol": fields.get("protocol", "openai"),
-                    "base_url": fields.get("base_url", ""),
-                })
-        return result
+        """Legacy provider definitions are no longer read at runtime."""
+        return []
 
     def add_custom_provider(self, name: str, protocol: str = "openai", base_url: str = "") -> None:
         """Legacy no-op. Provider protocol/base URL live on saved DB profiles."""

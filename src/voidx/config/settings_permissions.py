@@ -11,15 +11,15 @@ from voidx.config.settings_utils import string_list as _string_list
 
 class SettingsPermissionMixin:
     def get_permission_mode(self) -> PermissionMode:
-        raw = self._data.get("permission_mode")
+        raw = self._effective_data().get("permission_mode")
         if raw is not None:
             try:
                 return PermissionMode(raw)
             except ValueError:
                 return PermissionMode.CUSTOM
         if (
-            "sandbox_mode" in self._data
-            or "approval_policy" in self._data
+            "sandbox_mode" in self._effective_data()
+            or "approval_policy" in self._effective_data()
             or self.get_sandbox_workspace_write()
         ):
             return PermissionMode.CUSTOM
@@ -37,7 +37,7 @@ class SettingsPermissionMixin:
         return self._path
 
     def get_sandbox_mode(self) -> SandboxMode:
-        raw = self._data.get("sandbox_mode", "workspace-write")
+        raw = self._effective_data().get("sandbox_mode", "workspace-write")
         try:
             return SandboxMode(raw)
         except ValueError:
@@ -50,7 +50,7 @@ class SettingsPermissionMixin:
         return self._path
 
     def get_sandbox_workspace_write(self) -> list[str]:
-        paths = self._data.get("sandbox_workspace_write", [])
+        paths = self._effective_data().get("sandbox_workspace_write", [])
         return _string_list(paths)
 
     def set_sandbox_workspace_write(self, paths: list[str]) -> Path:
@@ -60,7 +60,7 @@ class SettingsPermissionMixin:
         return self._path
 
     def get_approval_policy(self) -> ApprovalPolicy:
-        raw = self._data.get("approval_policy", "untrusted")
+        raw = self._effective_data().get("approval_policy", "untrusted")
         try:
             return ApprovalPolicy(raw)
         except ValueError:
@@ -73,7 +73,7 @@ class SettingsPermissionMixin:
         return self._path
 
     def get_approval_reviewer(self) -> ApprovalReviewer:
-        raw = self._data.get("approval_reviewer", "user")
+        raw = self._effective_data().get("approval_reviewer", "user")
         try:
             return ApprovalReviewer(raw)
         except ValueError:

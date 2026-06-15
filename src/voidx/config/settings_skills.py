@@ -38,7 +38,8 @@ class SettingsSkillsMixin:
         skills["disabled"] = sorted(disabled_list)
         skills["auto"] = sorted(auto_list)
         self._save_skills_data(skills)
-        self._data.pop("skills", None)
+        if self._data.pop("skills", None) is not None:
+            self._save()
         return self.skills_path
 
     def set_skill_auto(self, name: str, auto: bool) -> Path:
@@ -59,7 +60,8 @@ class SettingsSkillsMixin:
         skills["disabled"] = sorted(disabled_list)
         skills["auto"] = sorted(auto_list)
         self._save_skills_data(skills)
-        self._data.pop("skills", None)
+        if self._data.pop("skills", None) is not None:
+            self._save()
         return self.skills_path
 
     def _skills_data(self) -> dict:

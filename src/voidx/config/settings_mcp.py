@@ -9,7 +9,8 @@ from voidx.config.models import McpServerConfig
 
 class SettingsMcpMixin:
     def list_mcp_servers(self) -> list[McpServerConfig]:
-        servers_data = self._data.get("mcpServers") or self._data.get("mcp_servers") or {}
+        data = self._effective_data()
+        servers_data = data.get("mcpServers") or data.get("mcp_servers") or {}
         if not isinstance(servers_data, dict):
             return []
 
@@ -30,36 +31,39 @@ class SettingsMcpMixin:
         return None
 
     def save_mcp_server(self, server: McpServerConfig) -> Path:
-        servers = self._mcp_servers_data()
+        servers, _path, target = self._target_mapping("mcpServers")
         servers[server.name] = server.model_dump(exclude={"name"}, exclude_none=True)
-        self._data["mcpServers"] = servers
-        self._save()
-        return self._path
+        return self._save_target_mapping("mcpServers", servers, target)
 
     def delete_mcp_server(self, name: str) -> Path:
-        servers = self._mcp_servers_data()
-        servers.pop(name, None)
-        self._data["mcpServers"] = servers
-        self.clear_web_routes_for_server(name)
-        self._save()
-        return self._path
+        servers, _path, target = self._target_mapping("mcpServers")
+        if name in servers:
+            servers.pop(name, None)
+        elif self.get_mcp_server(name) is not None and target == "workspace":
+            servers[name] = {"disabled": True}
+        path = self._save_target_mapping("mcpServers", servers, target)
+        self.clear_web_routes_for_server(name, save=True)
+        return path
 
     def set_mcp_server_disabled(self, name: str, disabled: bool) -> Path:
-        servers = self._mcp_servers_data()
+        servers, _path, target = self._target_mapping("mcpServers")
         fields = servers.get(name)
         if not isinstance(fields, dict):
-            raise KeyError(name)
+            effective_fields = self._mcp_servers_data().get(name)
+            if not isinstance(effective_fields, dict):
+                raise KeyError(name)
+            fields = {} if target == "workspace" else effective_fields
         servers[name] = {**fields, "disabled": disabled}
-        self._data["mcpServers"] = servers
+        path = self._save_target_mapping("mcpServers", servers, target)
         if disabled:
-            self.clear_web_routes_for_server(name)
-        self._save()
-        return self._path
+            self.clear_web_routes_for_server(name, save=True)
+        return path
 
     def _mcp_servers_data(self) -> dict:
-        servers = self._data.get("mcpServers")
+        data = self._effective_data()
+        servers = data.get("mcpServers")
         if not isinstance(servers, dict):
-            servers = self._data.get("mcp_servers")
+            servers = data.get("mcp_servers")
         if not isinstance(servers, dict):
             servers = {}
         return dict(servers)

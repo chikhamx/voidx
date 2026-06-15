@@ -7,7 +7,7 @@ from enum import Enum
 class SandboxMode(str, Enum):
     """Filesystem boundary control — mirrors Codex CLI sandbox modes.
 
-    read-only:        All write/edit/bash/lsp_format tools are denied.
+    read-only:        All write/edit/bash tools are denied.
     workspace-write:  Only writes inside the workspace (+ extra_paths) are allowed.
     danger-full-access: No filesystem restrictions (current voidx behaviour).
     """

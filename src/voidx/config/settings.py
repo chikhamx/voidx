@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import json
+from copy import deepcopy
 from pathlib import Path
 
 from voidx.config.enums import PermissionMode
@@ -22,6 +23,29 @@ SETTINGS_FILE = ".voidx/settings.json"
 SKILLS_STATE_FILE = ".voidx/skills.json"
 _LEGACY_SETTINGS_FILE = "voidx.json"
 _PROFILE_UNSET = object()
+GLOBAL_KEYS = frozenset({
+    "current_profile",
+    "mcpServers",
+    "tavily_api_key",
+    "codeIde",
+    "userProfile",
+    "web",
+    "update_check",
+    "parallel_subagents",
+})
+WORKSPACE_ONLY_KEYS = frozenset({
+    "permission_mode",
+    "sandbox_mode",
+    "sandbox_workspace_write",
+    "approval_policy",
+    "approval_reviewer",
+    "ask_compact",
+    "skills",
+})
+
+
+def _settings_home() -> Path:
+    return Path.home()
 
 
 class Settings(
@@ -40,19 +64,26 @@ class Settings(
     def __init__(self, workspace: str = ".") -> None:
         self._workspace = Path(workspace).resolve()
         self._path = self._workspace / SETTINGS_FILE
+        self._global_path = _settings_home() / SETTINGS_FILE
         self._migrate_legacy_file()
         self._data: dict = self._load()
+        self._global_data: dict = {} if self._global_path == self._path else self._load_path(self._global_path)
         self._runtime_keys: dict[str, str] = {}
+        self._effective_cache: dict | None = None
 
     @classmethod
     async def create(cls, workspace: str = ".") -> Settings:
         settings = cls.__new__(cls)
         settings._workspace = Path(workspace).resolve()
         settings._path = settings._workspace / SETTINGS_FILE
+        settings._global_path = _settings_home() / SETTINGS_FILE
         settings._migrate_legacy_file()
         settings._data = settings._load()
+        settings._global_data = {} if settings._global_path == settings._path else settings._load_path(settings._global_path)
         settings._runtime_keys = {}
+        settings._effective_cache = None
         await settings._migrate_legacy_profiles()
+        await settings._migrate_to_global()
         return settings
 
     def _migrate_legacy_file(self) -> None:
@@ -62,16 +93,91 @@ class Settings(
             legacy.rename(self._path)
 
     def _load(self) -> dict:
-        if self._path.exists():
+        return self._load_path(self._path)
+
+    def _load_path(self, path: Path) -> dict:
+        if path.exists():
             try:
-                return json.loads(self._path.read_text(encoding="utf-8"))
+                return json.loads(path.read_text(encoding="utf-8"))
             except (json.JSONDecodeError, OSError):
                 pass
         return {}
 
     def _save(self) -> None:
+        self._effective_cache = None
         self._path.parent.mkdir(parents=True, exist_ok=True)
         self._path.write_text(json.dumps(self._data, indent=2, ensure_ascii=False), encoding="utf-8")
+
+    def _save_global(self) -> None:
+        self._effective_cache = None
+        self._global_path.parent.mkdir(parents=True, exist_ok=True)
+        self._global_path.write_text(
+            json.dumps(self._global_data, indent=2, ensure_ascii=False),
+            encoding="utf-8",
+        )
+
+    def _effective_data(self) -> dict:
+        if self._effective_cache is not None:
+            return deepcopy(self._effective_cache)
+        merged: dict = {}
+        for key, value in self._global_data.items():
+            if key in GLOBAL_KEYS:
+                merged[key] = deepcopy(value)
+        for key, value in self._data.items():
+            if key not in GLOBAL_KEYS:
+                continue
+            if key in merged and isinstance(value, dict) and isinstance(merged[key], dict):
+                merged[key] = {**merged[key], **value}
+            else:
+                merged[key] = deepcopy(value)
+        for key, value in self._data.items():
+            if key not in GLOBAL_KEYS:
+                merged[key] = deepcopy(value)
+        self._effective_cache = deepcopy(merged)
+        return merged
+
+    def _write_target(self, key: str) -> tuple[dict, Path, str]:
+        if self._global_path == self._path:
+            return self._data, self._path, "workspace"
+        if key in WORKSPACE_ONLY_KEYS:
+            return self._data, self._path, "workspace"
+        if key in GLOBAL_KEYS and key not in self._data:
+            return self._global_data, self._global_path, "global"
+        return self._data, self._path, "workspace"
+
+    def _save_target(self, target: str) -> None:
+        if target == "global":
+            self._save_global()
+        else:
+            self._save()
+
+    def _set_setting(self, key: str, value) -> Path:
+        data, path, target = self._write_target(key)
+        data[key] = value
+        self._save_target(target)
+        return path
+
+    def _pop_setting(self, key: str) -> Path:
+        data, path, target = self._write_target(key)
+        data.pop(key, None)
+        self._save_target(target)
+        return path
+
+    def _target_mapping(self, key: str) -> tuple[dict, Path, str]:
+        data, path, target = self._write_target(key)
+        value = data.get(key)
+        if isinstance(value, dict):
+            return dict(value), path, target
+        return {}, path, target
+
+    def _save_target_mapping(self, key: str, value: dict, target: str) -> Path:
+        if target == "global":
+            self._global_data[key] = value
+            self._save_global()
+            return self._global_path
+        self._data[key] = value
+        self._save()
+        return self._path
 
     @property
     def path(self) -> Path:
@@ -98,7 +204,7 @@ class Settings(
 
     async def resolve_profile(self, name: str = "") -> Profile | None:
         if not name:
-            name = self._data.get("current_profile", "")
+            name = self._effective_data().get("current_profile", "")
         if name:
             profile = await self._get_profile(name)
             if profile is not None:
@@ -117,22 +223,19 @@ class Settings(
             base_url=profile.base_url,
             protocol=profile.protocol,
         ))
-        self._data["current_profile"] = profile.name
-        self._save()
-        return self._path
+        return self._set_setting("current_profile", profile.name)
 
     async def delete_profile(self, name: str) -> Path:
         from voidx.memory.service import delete_model_profile_async
 
         await delete_model_profile_async(name)
-        if self._data.get("current_profile") == name:
+        if self._effective_data().get("current_profile") == name:
             profiles = await self.list_profiles()
             next_profile = profiles[0] if profiles else None
             if next_profile is not None:
-                self._data["current_profile"] = next_profile.name
+                return self._set_setting("current_profile", next_profile.name)
             else:
-                self._data.pop("current_profile", None)
-        self._save()
+                return self._pop_setting("current_profile")
         return self._path
 
     # ── cross-profile lookups ────────────────────────────────────────────
@@ -152,13 +255,14 @@ class Settings(
     # ── user profile ──────────────────────────────────────────────────────
 
     def get_user_profile(self) -> UserProfile:
-        raw = self._data.get("userProfile")
+        data = self._effective_data()
+        raw = data.get("userProfile")
         if not isinstance(raw, dict):
-            raw = self._data.get("user_profile")
+            raw = data.get("user_profile")
         if not isinstance(raw, dict):
             raw = {}
-        language = raw.get("language", self._data.get("user_language", ""))
-        tone = raw.get("tone", self._data.get("user_tone", ""))
+        language = raw.get("language", data.get("user_language", ""))
+        tone = raw.get("tone", data.get("user_tone", ""))
         return UserProfile(
             language=_normalize_user_language(language),
             tone=_normalize_user_tone(tone),
@@ -181,14 +285,16 @@ class Settings(
         if profile.tone:
             payload["tone"] = profile.tone
         if payload:
-            self._data["userProfile"] = payload
+            path = self._set_setting("userProfile", payload)
         else:
-            self._data.pop("userProfile", None)
-        self._data.pop("user_profile", None)
-        self._data.pop("user_language", None)
-        self._data.pop("user_tone", None)
-        self._save()
-        return self._path
+            path = self._pop_setting("userProfile")
+        changed = False
+        for key in ("user_profile", "user_language", "user_tone"):
+            if self._data.pop(key, None) is not None:
+                changed = True
+        if changed:
+            self._save()
+        return path
 
     # ── build config for graph ───────────────────────────────────────────
 
@@ -205,15 +311,6 @@ class Settings(
             model = "claude-sonnet-4-6"
             base_url = None
             protocol = None
-
-        # Check if provider is a custom provider
-        if not base_url:
-            for cp in self.list_custom_providers():
-                if cp["name"] == provider:
-                    protocol = protocol or cp["protocol"]
-                    if cp["base_url"]:
-                        base_url = cp["base_url"]
-                    break
 
         cfg = ModelConfig(provider=provider, model=model, base_url=base_url)
         if protocol:
@@ -235,7 +332,10 @@ class Settings(
             sandbox_workspace_write=self.get_sandbox_workspace_write(),
             approval_policy=approval_policy,
             approval_reviewer=approval_reviewer,
-            ask_compact=bool(self._data.get("askCompact", self._data.get("ask_compact", False))),
+            ask_compact=bool(self._effective_data().get(
+                "askCompact",
+                self._effective_data().get("ask_compact", False),
+            )),
             user_profile=self.get_user_profile(),
         )
 
@@ -312,6 +412,22 @@ class Settings(
             changed = True
         if changed:
             self._save()
+
+    async def _migrate_to_global(self) -> None:
+        if self._global_path == self._path or self._global_path.exists():
+            return
+        global_items = {
+            key: deepcopy(self._data[key])
+            for key in GLOBAL_KEYS
+            if key in self._data
+        }
+        if not global_items:
+            return
+        self._global_data = global_items
+        self._save_global()
+        for key in global_items:
+            self._data.pop(key, None)
+        self._save()
 
 
 def _normalize_user_language(value: object) -> str:

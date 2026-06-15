@@ -9,13 +9,11 @@ from voidx.config.enums import CodeIde
 
 class SettingsCodeIdeMixin:
     def get_code_ide(self) -> CodeIde:
-        raw = self._data.get("codeIde", CodeIde.TRAE.value)
+        raw = self._effective_data().get("codeIde", CodeIde.TRAE.value)
         try:
             return CodeIde(raw)
         except ValueError:
             return CodeIde.TRAE
 
     def set_code_ide(self, ide: CodeIde) -> Path:
-        self._data["codeIde"] = ide.value
-        self._save()
-        return self._path
+        return self._set_setting("codeIde", ide.value)

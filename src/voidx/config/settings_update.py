@@ -18,9 +18,7 @@ class SettingsUpdateMixin:
     def set_update_check_enabled(self, enabled: bool) -> Path:
         data = self._update_check_data()
         data["enabled"] = bool(enabled)
-        self._data["update_check"] = data
-        self._save()
-        return self._path
+        return self._set_setting("update_check", data)
 
     def get_update_check_last_checked_at(self) -> int | None:
         data = self._update_check_data()
@@ -63,10 +61,8 @@ class SettingsUpdateMixin:
             data["last_latest_version"] = latest_version
         else:
             data.pop("last_latest_version", None)
-        self._data["update_check"] = data
-        self._save()
-        return self._path
+        return self._set_setting("update_check", data)
 
     def _update_check_data(self) -> dict[str, Any]:
-        data = self._data.get("update_check", {})
+        data = self._effective_data().get("update_check", {})
         return dict(data) if isinstance(data, dict) else {}
