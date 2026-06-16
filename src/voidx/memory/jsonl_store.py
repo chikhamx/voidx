@@ -76,11 +76,13 @@ def _write_json_sync(path: Path, value: dict[str, Any]) -> None:
         f.flush()
         os.fsync(f.fileno())
     os.replace(tmp_path, path)
-    dir_fd = os.open(path.parent, os.O_RDONLY)
-    try:
-        os.fsync(dir_fd)
-    finally:
-        os.close(dir_fd)
+    # Windows: os.open(dir) not supported, skip dir fsync
+    if os.name != "nt":
+        dir_fd = os.open(path.parent, os.O_RDONLY)
+        try:
+            os.fsync(dir_fd)
+        finally:
+            os.close(dir_fd)
 
 
 def _read_jsonl_sync(path: Path) -> list[dict[str, Any]]:

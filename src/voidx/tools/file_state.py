@@ -120,6 +120,8 @@ def _append_manifest_row(path: Path, row: dict) -> None:
 
 
 def _fsync_dir(path: Path) -> None:
+    if os.name == "nt":
+        return  # Windows does not support opening directories as file descriptors
     fd = os.open(path, os.O_RDONLY)
     try:
         os.fsync(fd)

@@ -344,7 +344,7 @@ class McpClient(StreamableHttpTransportMixin, SseTransportMixin, StdioTransportM
         self._proc = None
         if proc and proc.returncode is None:
             try:
-                proc.send_signal(signal.SIGTERM)
+                proc.terminate()  # cross-platform: SIGTERM on Unix, TerminateProcess on Windows
                 try:
                     await asyncio.wait_for(proc.wait(), timeout=5.0)
                 except asyncio.TimeoutError:
