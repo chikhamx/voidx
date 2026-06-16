@@ -124,20 +124,6 @@ class WorkflowRoute(BaseModel):
     join: str = ""
     leave: str | None = None
 
-    @model_validator(mode="before")
-    @classmethod
-    def _migrate_legacy_names(cls, value: object) -> object:
-        if not isinstance(value, dict):
-            return value
-        if "join" in value or "leave" in value:
-            return value
-        migrated = dict(value)
-        if "start" in migrated:
-            migrated["join"] = migrated.get("start")
-        if "end" in migrated:
-            migrated["leave"] = migrated.get("end")
-        return migrated
-
 
 class TodoRunItem(BaseModel):
     content: str

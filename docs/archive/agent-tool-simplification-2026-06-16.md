@@ -1,6 +1,6 @@
 # Agent Tool Workflow 化调用契约 — 技术设计
 
-> **Status: In Progress**
+> **Status: Done**
 
 ## Context
 
@@ -269,10 +269,11 @@ Recommended minimum result formats:
 
 ### Phase 4: Cleanup
 
-- Remove obsolete review keyword validation.
-- Remove runner compatibility checks for old `max_steps` / `persona` signatures once tests and callers are migrated.
-- Update workflow docs and prompts to use `goal_resolution` examples.
-- Remove `delegation_reason` handling from the public agent tool schema and related tests.
+- Remove obsolete review keyword validation. ✅ Done — removed with `expected_output` field in Phase 1.
+- Remove runner compatibility checks for old `max_steps` / `persona` signatures once tests and callers are migrated. ✅ Done — runner already uses `goal_resolution` + `result_contract`.
+- Update workflow docs and prompts to use `goal_resolution` examples. ✅ Done — prompts and tool description use new schema.
+- Remove `delegation_reason` handling from the public agent tool schema and related tests. ✅ Done — field removed in Phase 1.
+- Remove `WorkflowRoute._migrate_legacy_names` and migrate test code from `start`/`end` to `join`/`leave`. ✅ Done.
 
 ## Tests
 

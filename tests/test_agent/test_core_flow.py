@@ -2761,7 +2761,7 @@ async def test_advance_workflow_route_end_satisfies_without_successor(tmp_path):
         "interaction_mode": "auto",
         "task_state": _task_state_json(
             current_intent=TaskIntent.CODING,
-            workflow_route={"start": "review", "end": "review"},
+            workflow_route={"join": "review", "leave": "review"},
             workflow_runs={
                 "review": WorkflowRunState(name="review", status=WorkflowRunStatus.ACTIVE),
             },
@@ -2803,7 +2803,7 @@ async def test_advance_workflow_route_end_satisfies_non_review_without_successor
         "interaction_mode": "auto",
         "task_state": _task_state_json(
             current_intent=TaskIntent.CODING,
-            workflow_route={"start": "tdd", "end": "tdd"},
+            workflow_route={"join": "tdd", "leave": "tdd"},
             workflow_runs={
                 "tdd": WorkflowRunState(name="tdd", status=WorkflowRunStatus.ACTIVE),
             },
@@ -2997,7 +2997,7 @@ async def test_auto_review_has_issues_review_only_route_stops_without_feedback(t
         "interaction_mode": "auto",
         "task_state": _task_state_json(
             current_intent=TaskIntent.CODING,
-            workflow_route={"start": "review", "end": "review"},
+            workflow_route={"join": "review", "leave": "review"},
             workflow_runs={
                 "review": WorkflowRunState(name="review", status=WorkflowRunStatus.ACTIVE),
             },
@@ -3045,7 +3045,7 @@ async def test_auto_review_has_issues_review_and_fix_route_continues_to_feedback
         "interaction_mode": "auto",
         "task_state": _task_state_json(
             current_intent=TaskIntent.CODING,
-            workflow_route={"start": "review", "end": "verify"},
+            workflow_route={"join": "review", "leave": "verify"},
             workflow_runs={
                 "review": WorkflowRunState(name="review", status=WorkflowRunStatus.ACTIVE),
             },

@@ -1200,7 +1200,7 @@ class TestStateUpdateFromExecutedTools:
         update = _state_update_from_executed_tools(
             executed,
             current_workflow_runs=current,
-            current_workflow_route={"start": "review", "end": "review"},
+            current_workflow_route={"join": "review", "leave": "review"},
             turn_count=9,
         )
 
@@ -1267,7 +1267,7 @@ class TestStateUpdateFromExecutedTools:
         update = _state_update_from_executed_tools(
             executed,
             current_workflow_runs=current,
-            current_workflow_route={"start": "tdd", "end": "verify"},
+            current_workflow_route={"join": "tdd", "leave": "verify"},
         )
 
         by_name = {r.name: r for r in update["workflow_runs"]}
@@ -1331,7 +1331,7 @@ class TestAdvanceWorkflowTool:
     async def test_advance_workflow_leaves_route_boundaries_to_runtime(self, tmp_path):
         ctx = ToolContext(
             workspace=str(tmp_path),
-            workflow_route={"start": "review", "end": "review"},
+            workflow_route={"join": "review", "leave": "review"},
             workflow_runs=[
                 WorkflowRunState(
                     name="review",
@@ -1364,7 +1364,7 @@ class TestAdvanceWorkflowTool:
     async def test_advance_workflow_does_not_error_on_non_review_route_boundary(self, tmp_path):
         ctx = ToolContext(
             workspace=str(tmp_path),
-            workflow_route={"start": "tdd", "end": "tdd"},
+            workflow_route={"join": "tdd", "leave": "tdd"},
             workflow_runs=[
                 WorkflowRunState(
                     name="tdd",
@@ -1397,7 +1397,7 @@ class TestAdvanceWorkflowTool:
     async def test_advance_workflow_allows_transition_on_path_to_route_end(self, tmp_path):
         ctx = ToolContext(
             workspace=str(tmp_path),
-            workflow_route={"start": "review", "end": "verify"},
+            workflow_route={"join": "review", "leave": "verify"},
             workflow_runs=[
                 WorkflowRunState(
                     name="review",
