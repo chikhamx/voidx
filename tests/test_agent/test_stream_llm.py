@@ -20,7 +20,7 @@ from voidx.memory.context_frames import load_context_frames
 from voidx.memory.session import MessageRow, create_session, delete_session, save_message
 from voidx.ui.output.console import StreamingRenderer
 from voidx.ui.output.dock import ANSI_LINE_PREFIX, BottomInputDock, set_dock
-from voidx.ui.output.events import DockEventConsumer, ui_events
+from voidx.ui.output.events import AnsiAppended, DockEventConsumer, StatusFinished, StatusUpdated, ui_events
 from voidx.workflow.runtime import WorkflowRunState, WorkflowRunStatus
 
 
@@ -107,6 +107,19 @@ class TrackingStreamingModel(FakeStreamingModel):
     def bind_tools(self, tool_defs):
         self.bound_tools = tool_defs
         return self
+
+
+class FailsOnceStreamingModel(FakeStreamingModel):
+    def __init__(self) -> None:
+        super().__init__()
+        self.calls = 0
+
+    async def astream(self, messages):
+        self.calls += 1
+        if self.calls == 1:
+            raise ConnectionError("Connection error.")
+        self.messages = messages
+        yield AIMessageChunk(content="answer")
 
 
 class FakeRenderer:
@@ -644,6 +657,70 @@ async def test_call_llm_does_not_add_main_agent_step_hint(tmp_path, monkeypatch)
     assert model.messages is not None
     assert len(model.messages) == 1
     assert not any(is_step_hint_message(message) for message in model.messages)
+
+
+@pytest.mark.asyncio
+async def test_call_llm_retry_uses_transient_status_event(tmp_path, monkeypatch):
+    import voidx.agent.graph.core as graph_module
+
+    async def no_sleep(_delay: float) -> None:
+        return None
+
+    monkeypatch.setattr(graph_module, "StreamingRenderer", FakeRenderer)
+    monkeypatch.setattr(graph_module.asyncio, "sleep", no_sleep)
+
+    events: list[object] = []
+
+    class RecordingConsumer:
+        def handle(self, event):
+            events.append(event)
+            return None
+
+    test_dock = BottomInputDock()
+    set_dock(test_dock)
+    test_dock.begin_capture()
+    ui_events.start(RecordingConsumer())
+    try:
+        graph = VoidXGraph(
+            Config(
+                model=ModelConfig(provider="mimo", model="mimo-v2.5"),
+                workspace=str(tmp_path),
+            ),
+            api_key=None,
+        )
+        graph.model = FailsOnceStreamingModel()
+
+        result = await graph._call_llm({
+            "messages": [HumanMessage(content="hi")],
+            "step_count": 0,
+            "max_steps": 1,
+            "persona": "voidx",
+        })
+        await ui_events.drain()
+    finally:
+        await ui_events.stop()
+        test_dock.deactivate()
+        test_dock.reset()
+        set_dock(None)
+
+    assert result["messages"][0].content == "answer"
+    assert not any(
+        isinstance(event, AnsiAppended) and "LLM error, retrying" in event.text
+        for event in events
+    )
+    assert any(
+        isinstance(event, StatusUpdated)
+        and event.status_id == "llm:retry"
+        and event.label == "LLM error, retrying in 2s"
+        and event.detail == "Connection error."
+        for event in events
+    )
+    assert any(
+        isinstance(event, StatusFinished)
+        and event.status_id == "llm:retry"
+        and event.remove is True
+        for event in events
+    )
 
 
 @pytest.mark.asyncio

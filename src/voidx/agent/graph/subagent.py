@@ -32,7 +32,7 @@ from voidx.agent.runtime_context import (
     InteractionMode,
     RuntimeContextBuilder,
 )
-from voidx.runtime.task_state import GoalSpec, GoalType, TaskIntent, TaskState
+from voidx.runtime.task_state import GoalResolution, TaskState, WorkflowRoute
 from voidx.agent.tool_messages import sanitize_tool_message_content
 from voidx.agent.tool_filters import filter_unavailable_lsp_tools
 from voidx.config import Config
@@ -60,7 +60,9 @@ async def run_subagent(
     tracker: TaskTracker | None = None,
     runtime_persona: str | None = None,
     *,
-    max_steps: int,
+    goal_resolution: GoalResolution,
+    result_contract,
+    step_budget: int,
     run_metadata: dict[str, object] | None = None,
     capture_tree: OutputTree | None = None,
     parent_node=None,
@@ -79,7 +81,6 @@ async def run_subagent(
     """Run a child agent in its own message context."""
     agent_def = child_run_agent_def(agent_def)
     persona = (runtime_persona or "explore").strip() or "explore"
-    step_budget = max_steps
     model_cfg = config.model.model_copy()
     if model_override:
         model_cfg.model = model_override
@@ -103,26 +104,20 @@ async def run_subagent(
     if sub_messages is None:
         sub_messages = []
 
-    messages = [HumanMessage(content=task_description)]
+    messages = [HumanMessage(content=_task_payload(task_description, result_contract))]
 
     context_config = config.model_copy(deep=True)
     context_config.model = model_cfg
     interaction_mode = InteractionMode.PLAN.value if persona == "plan" else InteractionMode.AUTO.value
     mode_prompt = PLAN_MODE_APPEND if InteractionMode.parse(interaction_mode) == InteractionMode.PLAN else ""
-    task_intent = _task_intent_for_agent(persona)
-    goal_type = _goal_type_for_agent(persona, task_description)
     workflow_context = workflow_runtime_context or WorkflowRuntimeContext(instructions=[], active=[], content="", runs=[])
     context_cache = ContextCompilerCache()
-
-    sub_goal = None
-    if goal_type:
-        sub_goal = GoalSpec(
-            type=GoalType(goal_type),
-            desc=task_description,
-        )
+    plan = goal_resolution.plan
     sub_task_state = TaskState(
-        current_intent=TaskIntent(task_intent),
-        current_goal=sub_goal,
+        current_intent=goal_resolution.intent.type,
+        current_goal=goal_resolution.goal,
+        workflow_route=WorkflowRoute(join=plan.join, leave=plan.leave) if plan is not None else None,
+        workflow_runs={run.name: run for run in workflow_context.runs},
     )
     guard_state = RuntimeGuardState(wall_clock=WallClockGuardState.for_subagent())
     pending_guard_guidance: list[str] = []
@@ -435,24 +430,19 @@ async def run_subagent(
         raise
 
 
-def _task_intent_for_agent(persona: str) -> str:
-    return "coding" if persona in {"implement", "review", "plan", "explore"} else "general"
-
-
-def _goal_type_for_agent(persona: str, task_description: str = "") -> str:
-    if persona == "review":
-        return "review"
-    if persona == "plan":
-        return "design"
-    if persona == "implement":
-        lowered = task_description.lower()
-        if "bug" in lowered or "fix" in lowered or "failed" in lowered or "failure" in lowered:
-            return "bugfix"
-        return "feature"
-    if persona == "explore":
-        return "inspect"
-    return ""
-
-
 def _agent_prompt(agent_def: AgentDef) -> str:
     return agent_def.persona_prompt
+
+
+def _task_payload(task_description: str, result_contract) -> str:
+    schema_name = str(getattr(result_contract, "schema_name", "") or "agent_result")
+    result_format = str(getattr(result_contract, "format", "") or "").strip()
+    if not result_format:
+        return task_description
+    return (
+        f"{task_description}\n\n"
+        "Result contract:\n"
+        f"- schema_name: {schema_name}\n"
+        f"- format: {result_format}\n"
+        "Return the final answer using this contract."
+    )

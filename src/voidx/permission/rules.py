@@ -7,6 +7,7 @@ from dataclasses import dataclass
 from enum import Enum
 
 from voidx.permission.schema import Rule, Ruleset
+from voidx.workflow.policy import workflow_personas
 
 
 class PermissionCapability(str, Enum):
@@ -127,7 +128,18 @@ def delegated_agent(args: dict) -> str:
 
 
 def delegated_persona(args: dict) -> str:
-    return str(args.get("persona") or "")
+    explicit = str(args.get("persona") or "")
+    if explicit:
+        return explicit
+    goal_resolution = args.get("goal_resolution")
+    if not isinstance(goal_resolution, dict):
+        return ""
+    plan = goal_resolution.get("plan")
+    if not isinstance(plan, dict):
+        return ""
+    join = str(plan.get("join") or "").strip().lower()
+    personas = [persona for persona in workflow_personas(join) if persona]
+    return ",".join(dict.fromkeys(personas))
 
 
 def is_safe_bash(command: str) -> bool:

@@ -309,9 +309,13 @@ def normalize_tool_args(tool_name: str, args: dict[str, Any]) -> str:
     if tool_name == "bash":
         return " ".join(str(args.get("command") or "").split())
     if tool_name == "agent":
+        goal_resolution = args.get("goal_resolution")
+        plan = goal_resolution.get("plan") if isinstance(goal_resolution, dict) else {}
+        goal = goal_resolution.get("goal") if isinstance(goal_resolution, dict) else {}
         return stable_json({
-            "persona": args.get("persona") or args.get("agent"),
-            "delegation_reason": args.get("delegation_reason"),
+            "agent": args.get("agent"),
+            "goal": goal,
+            "plan": plan,
         })
     payload = stable_json(args)
     return hashlib.sha256(payload.encode("utf-8")).hexdigest()[:16]

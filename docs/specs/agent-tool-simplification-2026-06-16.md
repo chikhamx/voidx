@@ -1,101 +1,305 @@
-# Agent Tool 调用参数简化 — 技术设计
+# Agent Tool Workflow 化调用契约 — 技术设计
 
 > **Status: In Progress**
 
 ## Context
 
-`AgentTool`（`src/voidx/tools/agent.py`）是 voidx 指派子 agent 的唯一入口。当前 `AgentInput` 有 8 个字段，其中 6 个必填，且多个 persona 存在**隐式校验**——规则未写入字段 description，LLM 无法预知，只能碰运气。实际使用中已出现连续 3 次调用被拒的情况。
+`AgentTool`（`src/voidx/tools/agent.py`）是 voidx 指派子 agent 的唯一入口。当前 tool 调用契约仍然偏向“指定一个 persona 跑一个子循环”：
 
-## 问题分析
+- 调用方必须传 `persona`，但 runtime 里 workflow 已经能决定 persona。
+- 调用方必须传 `max_steps`，但 step budget 属于 runtime 策略，不应暴露给 LLM 拼参数。
+- 子 agent 自己从 `persona` 推断 `intent` / `goal`，这和主 agent 的 `resolve_goal_for_turn` 契约不一致。
+- `expected_output` / `parent_evidence` 是自由文本，并通过关键词做隐式校验，LLM 不容易一次填对。
 
-### 问题 1：必填参数过多
+目标是把 `agent` tool 从“persona 委派工具”改成“workflow 子任务启动工具”：调用方显式给出一个和主 agent resolver 兼容的 `goal_resolution`，子 agent 必须进入 workflow，persona 随 workflow 自动决定，结果用结构化 `result` 契约返回。
 
-`AgentInput` 当前字段：
+## 当前问题
 
-| 字段 | 必填 | 说明 |
+### 问题 1：LLM 需要填写 runtime 内部参数
+
+当前 `AgentInput` 有 8 个字段：
+
+| 字段 | 必填 | 问题 |
 |------|------|------|
-| `agent` | 否（default="voidx"） | 子 agent 标识 |
-| `persona` | 是 | 运行角色 |
-| `description` | 是 | 任务描述（最少 12 字符） |
-| `model` | 否 | 模型覆盖 |
-| `max_steps` | 是 | 步数预算 |
-| `delegation_reason` | 是 | 委派原因 |
-| `expected_output` | 是 | 期望输出格式 |
-| `parent_evidence` | 是 | 父 agent 已有证据 |
+| `agent` | 否 | 仍保留 agent identity，默认 `voidx` |
+| `persona` | 是 | 应由 workflow 决定，不应由调用方指定 |
+| `description` | 是 | 合理，但需要保持自包含 |
+| `model` | 否 | 可保留为高级覆盖 |
+| `max_steps` | 是 | runtime 策略，不应由 LLM 指定 |
+| `delegation_reason` | 是 | 委派策略不应暴露为子 agent 必填入参 |
+| `expected_output` | 是 | 自由文本，和结构化结果契约重复 |
+| `parent_evidence` | 是 | 自由文本，存在关键词隐式校验 |
 
-6 个必填字段，LLM 每次调用都要凑齐，容易遗漏或填写不规范。此外 `description` 有最小长度限制（12 字符），但字段 description 中未提及。
+`max_steps` 和 `persona` 是最明显的泄漏：前者是执行预算，后者已经可以从 workflow active node 推导。
 
-### 问题 2：多个 persona 隐式校验
+### 问题 2：子 agent 没有显式任务状态
 
-`_delegation_rejection`（agent.py:190-207）和 `_review_delegation_rejection`（agent.py:210-259）对多个 persona 做了隐式校验：
+主 agent 每轮会得到 `GoalResolution(intent, goal, plan)`，并写入 `TaskState.current_intent`、`TaskState.current_goal` 和 `TaskState.workflow_route`。子 agent 当前没有接收这套结构，而是在 `run_subagent` 中通过 persona 推断：
 
-#### 2a：review persona 关键词匹配
+- `review` -> `goal_type=review`
+- `plan` -> `goal_type=design`
+- `implement` -> `goal_type=feature/bugfix`
+- `explore` -> `goal_type=inspect`
 
-**expected_output 校验**：必须同时包含 `verdict`、`pass`、`fail`、`needs_change` 四个关键词（子串匹配，如 `"failure"` 也能匹配 `"fail"`）。
+这种推断会让子 agent 的上下文比主 agent 弱，也会让 workflow route 无法成为强约束。
 
-**parent_evidence 校验**：
-- 必须包含文件目标标记：`changed files` / `files changed` / `review target` / `target:` / `file:` / `files:`
-- 必须包含验证证据标记：`verification` / `verified` / `tests:` / `test:` / `pytest` / `not verified` / `not run` / `未验证` / `未运行`
+### 问题 3：workflow route 不是必填契约
 
-这些规则**没有写在任何字段的 description 里**，LLM 看不到，只能被拒后猜测原因。
+当前 `plan.join` / `plan.leave` 只存在于主 resolver 结果中。子 agent 可以不进入 workflow，或者只靠 persona 激活 workflow。新的契约应要求：
 
-#### 2b：implement persona goal_type 校验
+- `goal_resolution.plan.join` 必须存在。
+- `goal_resolution.plan.leave` 必须存在。
+- `plan.join` 和 `plan.leave` 必须是已知 workflow node。
+- 如果 LLM 没给，tool 返回简短提示，不启动子 agent。
 
-`implement` persona 要求当前 goal_type 为 `feature`、`bugfix` 或 `refactor`（agent.py:205-206），否则被拒。但 `persona` 字段的 description 只说 "Use implement only when the user explicitly asked to modify code"，未提及 goal_type 限制。
+### 问题 4：输出契约仍是自由文本
 
-#### 2c：parallel_independent 前置条件校验
+`expected_output` 要求子 agent 怎么写，但不是结构化字段。`review` 场景还依赖 `verdict` / `PASS` / `FAIL` / `NEEDS_CHANGE` 关键词匹配。新的调用契约应显式要求 `result`，并让子 agent 最终输出可解析的结构化结果。
 
-`delegation_reason` 为 `parallel_independent` 时，要求 parallel subagents 已启用（agent.py:197-198），否则被拒。但 `delegation_reason` 的枚举值 description 中未说明此前置条件。
+## 目标
 
-### 问题 3：校验失败缺少示例格式指引
+1. 子 agent 必须进入 workflow：调用方必须指定 `goal_resolution.plan.join` 和 `goal_resolution.plan.leave`。
+2. 移除 `max_steps` 入参：执行预算由 runtime 内部策略决定。
+3. 子 agent 接收和主 resolver 相同语义的 `intent` / `goal` / `plan`。
+4. 移除 `persona` 入参：runtime 根据 workflow runs 决定 persona。
+5. 子 agent 返回结构化 `result`。
+6. 缺少关键字段时，tool 返回简短、可修复的提示。
 
-`_delegation_rejection` 返回的 rejection message 描述了原因（如 "must include changed files or review target"），但没有给出**示例格式**。对于关键词匹配类校验，LLM 可能反复试错——知道要包含 "changed files"，但不确定该写成什么格式。
+## 非目标
 
-### 问题 4：关键词匹配脆弱
+- 不在本设计中重新设计 workflow DAG。
+- 不在本设计中改变主 agent 的 `resolve_goal_for_turn` 输出语义。
+- 不在本设计中让子 agent 和用户交互。
+- 不要求一次性删除所有兼容逻辑；可以分阶段迁移测试和调用点。
 
-- 大小写：代码做了 `.lower()` 处理，这点没问题
-- 语义等价：写 "review the files" 不包含 `changed files` 或 `file:`，会被拒——但语义上已经说明了审查目标
-- 中英文：`未验证`/`未运行` 被支持，但其他中文表述不在列表中
+## 推荐方案
 
-## 根因
+### 新输入模型
 
-校验的出发点是好的——确保子 agent 有足够上下文。但实现方式是**拒绝后不给示例格式**，且规则对 LLM 不可见。这导致：
+将 `AgentInput` 改为面向 workflow 子任务：
 
-1. LLM 反复试错（浪费 token）
-2. 关键词匹配脆弱（语义等价但措辞不同会被拒；子串匹配导致误匹配）
-3. 规则对 LLM 不可见，等于黑盒校验
-4. 隐式校验不限于 review persona，implement 和 parallel_independent 也有同类问题
+```python
+class AgentResultContract(BaseModel):
+    schema_name: str = Field(
+        default="agent_result",
+        description="Name of the structured result contract the child agent must return.",
+    )
+    format: str = Field(
+        description="Concrete structured result fields and allowed values.",
+    )
 
-## 改进方案
 
-### 方案 A：规则前置到 description（最小改动）
+class AgentInput(BaseModel):
+    agent: str = Field(default="voidx", description="Child agent identity to run. Use voidx.")
+    description: str = Field(
+        description=(
+            "Complete, self-contained task description for the child agent. "
+            "Caller conversation history is not inherited."
+        )
+    )
+    goal_resolution: GoalResolution = Field(
+        description=(
+            "Child task intent, required goal, and workflow route. "
+            "plan.join and plan.leave are required and must name workflow nodes."
+        )
+    )
+    result: AgentResultContract = Field(
+        description="Structured result the child agent must return."
+    )
+    model: str | None = Field(default=None, description="Optional model override.")
+```
 
-把所有 persona 的校验规则写进对应字段的 Field description。
+字段变化：
 
-**优点**：改动最小，LLM 一次填对
-**缺点**：所有 persona 都看到其他 persona 的规则，description 变长；子串匹配的脆弱性仍在
+| 旧字段 | 新处理 |
+|--------|--------|
+| `persona` | 删除，由 workflow active runs 推导 |
+| `max_steps` | 删除，由 runtime 内部策略决定 |
+| `delegation_reason` | 删除，委派策略由 orchestrator/prompt 决定 |
+| `expected_output` | 删除，合并到 `result.format` |
+| `parent_evidence` | 删除，放入 `description` 或 `goal_resolution.goal.desc` |
+| `goal_resolution` | 新增，复用主 resolver 语义 |
+| `result` | 新增，要求结构化输出契约 |
 
-### 方案 B：review 专属结构化字段
+### 调用示例
 
-用 discriminated union，review persona 使用 `ReviewAgentInput`，含结构化的 `files_changed: list[str]` 和 `test_commands: list[str]` 字段，替代自由文本的关键词匹配。
+Review 子任务：
 
-**优点**：类型安全，校验可靠，不需要关键词匹配
-**缺点**：增加类型复杂度，需要改 AgentInput 模型
+```json
+{
+  "agent": "voidx",
+  "description": "Review the AgentTool API migration plan. Focus on workflow routing, compatibility risks, and tests.",
+  "goal_resolution": {
+    "intent": {
+      "type": "coding",
+      "desc": "delegated workflow review"
+    },
+    "goal": {
+      "type": "review",
+      "desc": "review AgentTool workflow API migration"
+    },
+    "plan": {
+      "join": "review",
+      "leave": "review"
+    }
+  },
+  "result": {
+    "schema_name": "review_result",
+    "format": "Return JSON-like fields: verdict=PASS|FAIL|NEEDS_CHANGE, findings, risks, verification_notes, next_actions."
+  }
+}
+```
 
-### 方案 C：合并 expected_output + parent_evidence
+Implementation 子任务：
 
-将 `expected_output` 和 `parent_evidence` 合并为一个 `context` 字段，校验逻辑内化到 tool 执行中。
+```json
+{
+  "agent": "voidx",
+  "description": "Implement the AgentTool schema migration and update focused tests.",
+  "goal_resolution": {
+    "intent": {
+      "type": "coding",
+      "desc": "delegated implementation"
+    },
+    "goal": {
+      "type": "feature",
+      "desc": "migrate AgentTool to workflow-based child task API"
+    },
+    "plan": {
+      "join": "tdd",
+      "leave": "verify"
+    }
+  },
+  "result": {
+    "schema_name": "implementation_result",
+    "format": "Return JSON-like fields: status, files_changed, tests_run, risks, followups."
+  }
+}
+```
 
-**优点**：减少一个必填参数
-**缺点**：当前两个字段本身就是自由文本 `str`，合并不会丢失结构化信息；但合并后校验逻辑更难区分 expected_output 和 parent_evidence 各自的规则
+## Validation Rules
 
-### 推荐：方案 A + 方案 B 的组合
+`AgentTool.execute` should reject before launching a child agent when:
 
-1. **短期**：方案 A——把校验规则写进 description，立即减少试错
-2. **中期**：方案 B——review persona 用结构化字段替代关键词匹配
+- `description.strip()` is too short or not self-contained.
+- `goal_resolution.intent.type` is missing.
+- `goal_resolution.goal` is missing.
+- `goal_resolution.plan` is missing.
+- `goal_resolution.plan.join` is empty.
+- `goal_resolution.plan.leave` is empty.
+- `plan.join` or `plan.leave` is not a known workflow node.
+- `result.format` is empty.
+- `goal.type == "review"` but `plan.join != "review"`.
 
-## 待定
+Error messages should be short and directly repairable. Examples:
 
-- 方案选择需确认
-- 是否同步简化 `delegation_reason` 枚举（4 个值是否都有必要）——注意 `delegation_reason` 是 `Literal` 类型，LLM 能从 schema 看到枚举选项，比关键词校验透明得多，问题性质不同
-- `max_steps` 是否可改为可选（由 runtime 根据任务复杂度自动决定）
+- `Child agent delegation rejected. Provide goal_resolution.plan.join and plan.leave.`
+- `Child agent delegation rejected. goal_resolution.goal is required.`
+- `Child agent delegation rejected. plan.join must be a known workflow node.`
+- `Child agent delegation rejected. result.format is required.`
+- `Child agent delegation rejected. review goals must enter plan.join=review.`
+
+## Runtime Flow
+
+1. `AgentTool` validates `AgentInput`.
+2. It converts `goal_resolution` into a child `TaskState`:
+   - `current_intent = goal_resolution.intent.type`
+   - `current_goal = goal_resolution.goal`
+   - `workflow_route = WorkflowRoute(join=plan.join, leave=plan.leave)`
+3. The child run reconciles workflow runs from `goal_resolution`.
+4. Runtime derives `persona` from active workflow runs using existing workflow persona policy.
+5. Runtime derives interaction mode from workflow/persona policy instead of accepting `persona` as input.
+6. Runtime chooses step budget internally.
+7. Child prompt includes the `result` contract and must finish with structured result fields.
+8. `AgentTool` returns the child output plus metadata containing `intent`, `goal`, `workflow_route`, and `result.schema_name`; subagent lifecycle metadata records the derived persona, step budget, and finish details.
+
+## Step Budget Policy
+
+Remove `max_steps` from tool schema and choose the budget inside runtime. Initial policy can be simple:
+
+| Workflow | Budget |
+|----------|--------|
+| `review` | 4 |
+| `verify` | 4 |
+| `plan` / `design-doc` | 5 |
+| `debug` / `tdd` / `feedback` | 6 |
+| fallback | 5 |
+
+This keeps the model from inventing budgets while preserving bounded child loops. The exact numbers can move to a helper such as `_subagent_step_budget(goal_resolution)`.
+
+## Structured Result Contract
+
+`result` is a contract, not the final result at call time. The child agent must return final text shaped by this contract. The first implementation should enforce this through prompt/context instructions and metadata. A dedicated `finish_child_task` tool is not part of this design; the child agent's final output is the result.
+
+Recommended minimum result formats:
+
+| Goal type | `schema_name` | Required fields |
+|-----------|---------------|-----------------|
+| `review` | `review_result` | `verdict`, `findings`, `risks`, `verification_notes`, `next_actions` |
+| `feature` / `bugfix` / `refactor` | `implementation_result` | `status`, `files_changed`, `tests_run`, `risks`, `followups` |
+| `design` | `design_result` | `decision`, `options_considered`, `recommended_plan`, `open_questions` |
+| `inspect` | `inspection_result` | `summary`, `evidence`, `risks`, `recommended_next_steps` |
+
+## Migration Plan
+
+### Phase 1: Schema and validation
+
+- Add `AgentResultContract`.
+- Replace `persona`, `max_steps`, `delegation_reason`, `expected_output`, and `parent_evidence` with `goal_resolution` and `result`.
+- Add validation for required `plan.join` / `plan.leave`.
+- Validate workflow node names against `DEFAULT_WORKFLOW_DAG.nodes`.
+- Update rejection messages with short repair hints.
+- Update schema tests to assert removed and added fields.
+
+### Phase 2: Runtime wiring
+
+- Change `AgentTool` runner call to pass `goal_resolution` and `result`.
+- Change `Graph._subagent_runner` to accept `goal_resolution` instead of `runtime_persona` and `max_steps`.
+- Build child `TaskState` from `goal_resolution`.
+- Reconcile child workflow runs and derive persona from active workflow runs.
+- Replace persona-based `_subagent_task_intent_for_agent` and `_subagent_goal_type_for_agent` usage for delegated runs.
+- Select step budget internally.
+
+### Phase 3: Result contract prompting
+
+- Add result contract text to child runtime context.
+- Ensure final child response follows `result.format`.
+- Store `result.schema_name` in subagent metadata/events.
+- Keep the external return value compatible as text initially, but shape it as structured text.
+
+### Phase 4: Cleanup
+
+- Remove obsolete review keyword validation.
+- Remove runner compatibility checks for old `max_steps` / `persona` signatures once tests and callers are migrated.
+- Update workflow docs and prompts to use `goal_resolution` examples.
+- Remove `delegation_reason` handling from the public agent tool schema and related tests.
+
+## Tests
+
+Focused tests should cover:
+
+- Tool schema no longer requires `persona`, `max_steps`, `delegation_reason`, `expected_output`, or `parent_evidence`.
+- Tool schema requires `description`, `goal_resolution`, and `result`.
+- Missing `goal_resolution.plan.join` rejects with a short repair hint.
+- Missing `goal_resolution.plan.leave` rejects with a short repair hint.
+- Missing `goal_resolution.goal` rejects with a short repair hint.
+- Unknown workflow node rejects before child execution.
+- Review goals reject unless `plan.join=review`.
+- Child runner receives `goal_resolution` and `result`.
+- Child runtime derives persona from workflow runs.
+- Step budget is chosen internally and appears in metadata/events.
+- Review child result prompt requires `verdict=PASS|FAIL|NEEDS_CHANGE`.
+
+Relevant focused commands:
+
+```bash
+.venv/bin/python -m pytest tests/test_tools/test_basic.py -v
+.venv/bin/python -m pytest tests/test_agent/test_core_flow.py -v
+.venv/bin/python -m pytest tests/test_workflow_reconcile.py -v
+```
+
+## Decisions
+
+- `delegation_reason` is removed from the public schema. Delegation policy belongs to the orchestrator and prompts, not this tool's required arguments.
+- `goal_resolution.goal` is required. A child agent without a concrete goal should not be launched; `intent` may be `general`, but general child tasks should be rare.
+- No `finish_child_task` tool is planned. The child agent's final output should follow the `result` contract directly.

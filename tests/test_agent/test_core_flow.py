@@ -42,14 +42,14 @@ from voidx.memory.session import (
 )
 from voidx.memory.transcript import load_transcript
 from voidx.permission.service import PermissionService
-from voidx.runtime import GoalSpec, GoalType, IntentResolution, TaskIntent
+from voidx.runtime import GoalResolution, GoalSpec, GoalType, IntentResolution, PlanResolution, TaskIntent
 from voidx.skills.context import SKILL_CONTEXT_MARKER, SKILL_TOOL_CONTEXT_MARKER, render_skill_context
 from voidx.workflow.context import WORKFLOW_CONTEXT_MARKER
 from voidx.workflow.policy import workflow_activations
 from voidx.workflow.runtime import WorkflowRunState, WorkflowRunStatus
 from voidx.agent.task_state import TaskState, ToolStatePatch, WorkflowRoute
 from voidx.tools.base import ToolContext, ToolResult
-from voidx.tools.agent import AgentTool
+from voidx.tools.agent import AgentResultContract, AgentTool
 from voidx.tools.registry import ToolRegistry
 from voidx.ui.output.dock import BottomInputDock, set_dock
 from voidx.ui.output.events import DockEventConsumer, TurnStarted, ui_events
@@ -66,6 +66,48 @@ def _task_state_json(**kwargs):
 
 def _result_task_state(result: dict) -> TaskState:
     return TaskState.model_validate(result["task_state"])
+
+
+def _child_goal_resolution(
+    goal_type: GoalType = GoalType.FEATURE,
+    *,
+    desc: str = "Implement the feature",
+    join: str = "tdd",
+    leave: str = "verify",
+) -> GoalResolution:
+    return GoalResolution(
+        intent=IntentResolution(type=TaskIntent.CODING, desc="delegated child task"),
+        goal=GoalSpec(type=goal_type, desc=desc),
+        plan=PlanResolution(join=join, leave=leave),
+    )
+
+
+def _child_result_contract(schema_name: str = "implementation_result") -> AgentResultContract:
+    result_format = (
+        "verdict=PASS|FAIL|NEEDS_CHANGE, findings, risks, verification_notes, next_actions"
+        if schema_name == "review_result"
+        else "status, files_changed, tests_run, risks, followups"
+    )
+    return AgentResultContract(
+        schema_name=schema_name,
+        format=result_format,
+    )
+
+
+def _subagent_contract_kwargs(
+    *,
+    goal_type: GoalType = GoalType.INSPECT,
+    desc: str = "Inspect the workspace",
+    join: str = "review",
+    leave: str = "review",
+    schema_name: str = "inspection_result",
+    step_budget: int = 4,
+) -> dict:
+    return {
+        "goal_resolution": _child_goal_resolution(goal_type, desc=desc, join=join, leave=leave),
+        "result_contract": _child_result_contract(schema_name),
+        "step_budget": step_budget,
+    }
 
 
 @pytest.fixture(autouse=True)
@@ -278,11 +320,9 @@ def test_orchestrator_prompt_mentions_delegation_gate():
     assert "simple searches" in prompt
     assert "straightforward tasks you can do directly" in prompt
     assert {
-        "persona",
-        "max_steps",
-        "delegation_reason",
-        "expected_output",
-        "parent_evidence",
+        "description",
+        "goal_resolution",
+        "result",
     }.issubset(set(schema["required"]))
 
 
@@ -465,7 +505,16 @@ async def test_graph_authorization_auto_allows_readonly_agent(tmp_path):
     graph = _graph(tmp_path)
     graph._permission.approval_policy = "untrusted"
     approved, denied = await graph._authorize_tool_calls(
-        [{"name": "agent", "args": {"agent": "voidx", "persona": "explore"}, "id": "call_1"}],
+        [{
+            "name": "agent",
+            "args": {
+                "agent": "voidx",
+                "description": "Review current change",
+                "goal_resolution": _child_goal_resolution(GoalType.REVIEW, desc="Review current change", join="review", leave="review").model_dump(mode="json"),
+                "result": _child_result_contract("review_result").model_dump(mode="json"),
+            },
+            "id": "call_1",
+        }],
         runtime_persona="coordinate",
         plan_mode=False,
         session_id="test",
@@ -487,7 +536,16 @@ async def test_graph_authorization_prompts_for_implement_agent(tmp_path):
     graph._ask_tool_permission = approve
 
     approved, denied = await graph._authorize_tool_calls(
-        [{"name": "agent", "args": {"agent": "voidx", "persona": "implement"}, "id": "call_1"}],
+        [{
+            "name": "agent",
+            "args": {
+                "agent": "voidx",
+                "description": "Implement feature",
+                "goal_resolution": _child_goal_resolution(GoalType.FEATURE, desc="Implement feature", join="tdd", leave="verify").model_dump(mode="json"),
+                "result": _child_result_contract().model_dump(mode="json"),
+            },
+            "id": "call_1",
+        }],
         runtime_persona="coordinate",
         plan_mode=False,
         session_id="test",
@@ -495,7 +553,7 @@ async def test_graph_authorization_prompts_for_implement_agent(tmp_path):
 
     assert [tc["name"] for tc in approved] == ["agent"]
     assert denied == []
-    assert [[tc["args"]["persona"] for tc in batch] for batch in asked] == [["implement"]]
+    assert [[tc["args"]["goal_resolution"]["plan"]["join"] for tc in batch] for batch in asked] == [["tdd"]]
 
 
 @pytest.mark.asyncio
@@ -929,13 +987,15 @@ async def test_prepare_injects_plan_mode_prompt(tmp_path):
     assert "## PLAN MODE ACTIVE" in messages[0].content
 
 
-def test_run_subagent_requires_explicit_max_steps():
+def test_run_subagent_uses_workflow_contract_instead_of_model_budget():
     import inspect
 
     from voidx.agent.graph.subagent import run_subagent
 
-    parameter = inspect.signature(run_subagent).parameters["max_steps"]
-    assert parameter.default is inspect.Parameter.empty
+    parameters = inspect.signature(run_subagent).parameters
+    assert "max_steps" not in parameters
+    assert parameters["goal_resolution"].default is inspect.Parameter.empty
+    assert parameters["result_contract"].default is inspect.Parameter.empty
 
 
 @pytest.mark.asyncio
@@ -943,11 +1003,21 @@ async def test_subagent_runner_passes_main_workflow_runtime_context(tmp_path, mo
     import voidx.agent.graph.core as core_module
 
     graph = _graph(tmp_path)
+    goal_resolution = _child_goal_resolution()
+    result_contract = _child_result_contract()
     expected_context = WorkflowRuntimeContext(
         instructions=["instruction"],
         active=["tdd (implement persona)"],
         content="skill context",
-        runs=[],
+        runs=[
+            WorkflowRunState(
+                name="tdd",
+                status=WorkflowRunStatus.ACTIVE,
+                goal_type="feature",
+                scope="Implement the feature",
+                personas=["implement"],
+            )
+        ],
     )
     calls: list[dict] = []
     captured: dict[str, object] = {}
@@ -967,19 +1037,23 @@ async def test_subagent_runner_passes_main_workflow_runtime_context(tmp_path, mo
         get_agent("voidx"),
         "Implement the feature",
         None,
-        runtime_persona="implement",
-        max_steps=8,
+        goal_resolution,
+        result_contract,
     )
 
     assert result == "child result"
-    assert captured["max_steps"] == 8
+    assert captured["step_budget"] > 0
+    assert captured["goal_resolution"] == goal_resolution
+    assert captured["result_contract"] == result_contract
+    assert captured["runtime_persona"] == "implement"
     assert captured["workflow_runtime_context"] is expected_context
     assert "skill_selection" not in captured
     assert ("parent" + "_messages") not in captured
-    assert calls[0]["kwargs"]["agent"] == "implement"
+    assert calls[0]["kwargs"]["agent"] == ""
     assert calls[0]["kwargs"]["task_intent"] == "coding"
     assert calls[0]["kwargs"]["goal_type"] == "feature"
     assert calls[0]["kwargs"]["scope"] == "Implement the feature"
+    assert calls[0]["kwargs"]["workflow_start"] == "tdd"
 
 
 @pytest.mark.asyncio
@@ -988,9 +1062,24 @@ async def test_subagent_runner_persists_lifecycle_jsonl(tmp_path, monkeypatch):
 
     graph = _graph(tmp_path)
     graph._session = await create_session(workspace=str(tmp_path))
+    goal_resolution = _child_goal_resolution(GoalType.INSPECT, desc="Inspect storage design", join="review", leave="review")
+    result_contract = _child_result_contract("inspection_result")
 
     async def fake_workflow_context_for(*_args, **_kwargs):
-        return WorkflowRuntimeContext(instructions=[], active=[], content="", runs=[])
+        return WorkflowRuntimeContext(
+            instructions=[],
+            active=[],
+            content="",
+            runs=[
+                WorkflowRunState(
+                    name="review",
+                    status=WorkflowRunStatus.ACTIVE,
+                    goal_type="inspect",
+                    scope="Inspect storage design",
+                    personas=["review"],
+                )
+            ],
+        )
 
     async def fake_run_subagent(*_args, **kwargs):
         kwargs["run_metadata"].update({
@@ -1008,8 +1097,8 @@ async def test_subagent_runner_persists_lifecycle_jsonl(tmp_path, monkeypatch):
             get_agent("voidx"),
             "Inspect storage design",
             None,
-            runtime_persona="explore",
-            max_steps=4,
+            goal_resolution,
+            result_contract,
         )
 
         path = store.DATA_DIR / "sessions" / graph._session.id / "subagents" / "agent_0.jsonl"
@@ -1018,8 +1107,10 @@ async def test_subagent_runner_persists_lifecycle_jsonl(tmp_path, monkeypatch):
         assert result == "child result"
         assert [row["type"] for row in rows] == ["subagent_start", "subagent_finish"]
         assert rows[0]["agent_run_id"] == "agent_0"
-        assert rows[0]["persona"] == "explore"
+        assert rows[0]["persona"] == "review"
         assert rows[0]["description"] == "Inspect storage design"
+        assert rows[0]["goal_resolution"]["goal"]["type"] == "inspect"
+        assert rows[0]["result_schema"] == "inspection_result"
         assert rows[1]["ok"] is True
         assert rows[1]["final_step"] == 2
         assert rows[1]["max_steps"] == 4
@@ -1034,9 +1125,24 @@ async def test_subagent_runner_authorizes_with_child_interaction_mode(tmp_path, 
 
     graph = _graph(tmp_path)
     authorize_calls: list[dict] = []
+    goal_resolution = _child_goal_resolution(GoalType.DESIGN, desc="Plan the feature", join="plan", leave="plan")
+    result_contract = _child_result_contract("design_result")
 
     async def fake_workflow_context_for(*_args, **_kwargs):
-        return WorkflowRuntimeContext(instructions=[], active=[], content="", runs=[])
+        return WorkflowRuntimeContext(
+            instructions=[],
+            active=[],
+            content="",
+            runs=[
+                WorkflowRunState(
+                    name="plan",
+                    status=WorkflowRunStatus.ACTIVE,
+                    goal_type="design",
+                    scope="Plan the feature",
+                    personas=["plan"],
+                )
+            ],
+        )
 
     async def fake_authorize(tool_calls, **kwargs):
         authorize_calls.append(kwargs)
@@ -1054,8 +1160,8 @@ async def test_subagent_runner_authorizes_with_child_interaction_mode(tmp_path, 
         get_agent("voidx"),
         "Plan the feature",
         None,
-        runtime_persona="plan",
-        max_steps=6,
+        goal_resolution,
+        result_contract,
     )
 
     assert result == "child result"
@@ -2140,20 +2246,24 @@ async def test_subagent_full_output_reaches_orchestrator(tmp_path, monkeypatch):
         graph._turn_node = await ui_events.request(TurnStarted(text="demo"))
         parent = AIMessage(
             content="",
-            tool_calls=[{
-                "name": "agent",
-                "args": {
-                    "agent": "voidx",
-                    "persona": "explore",
-                    "description": "inspect auth flow",
-                    "max_steps": 5,
-                    "delegation_reason": "user_requested",
-                    "expected_output": "Return the full auth flow findings.",
-                    "parent_evidence": "User requested delegated inspection.",
-                },
-                "id": "call_agent",
-                "type": "tool_call",
-            }],
+                tool_calls=[{
+                    "name": "agent",
+                    "args": {
+                        "agent": "voidx",
+                        "description": "inspect auth flow",
+                        "goal_resolution": {
+                            "intent": {"type": "coding", "desc": "delegated inspection"},
+                            "goal": {"type": "inspect", "desc": "inspect auth flow"},
+                            "plan": {"join": "review", "leave": "review"},
+                        },
+                        "result": {
+                            "schema_name": "inspection_result",
+                            "format": "Return the full auth flow findings.",
+                        },
+                    },
+                    "id": "call_agent",
+                    "type": "tool_call",
+                }],
         )
 
         result = await graph._execute_tools({
@@ -3795,7 +3905,14 @@ async def test_implement_subagent_injects_workflow_nodes(tmp_path, monkeypatch):
             user_profile=UserProfile(language="zh-CN", tone="direct"),
         ),
         runtime_persona="implement",
-        max_steps=4,
+        **_subagent_contract_kwargs(
+            goal_type=GoalType.FEATURE,
+            desc="Implement the feature",
+            join="tdd",
+            leave="verify",
+            schema_name="implementation_result",
+            step_budget=4,
+        ),
         workflow_runtime_context=workflow_context,
         debug=False,
     )
@@ -3852,7 +3969,7 @@ async def test_run_subagent_persists_assistant_messages_to_subagent_jsonl(tmp_pa
             "test-key",
             Config(workspace=str(tmp_path)),
             runtime_persona="explore",
-            max_steps=4,
+            **_subagent_contract_kwargs(desc="Inspect child path", step_budget=4),
             session_id=session.id,
             agent_id=3,
             debug=False,
@@ -3921,7 +4038,7 @@ async def test_run_subagent_persists_tool_results_to_subagent_jsonl(tmp_path, mo
             "test-key",
             Config(workspace=str(tmp_path)),
             runtime_persona="explore",
-            max_steps=4,
+            **_subagent_contract_kwargs(desc="Inspect child path", step_budget=4),
             session_id=session.id,
             agent_id=5,
             debug=False,
@@ -3999,7 +4116,7 @@ async def test_run_subagent_injects_failure_loop_guidance(tmp_path, monkeypatch)
         "test-key",
         Config(workspace=str(tmp_path)),
         runtime_persona="explore",
-        max_steps=5,
+        **_subagent_contract_kwargs(desc="Inspect child path", step_budget=5),
         debug=False,
     )
 
@@ -4067,7 +4184,7 @@ async def test_run_subagent_terminates_after_no_progress_cycles(tmp_path, monkey
         "test-key",
         Config(workspace=str(tmp_path)),
         runtime_persona="explore",
-        max_steps=8,
+        **_subagent_contract_kwargs(desc="Inspect child path", step_budget=8),
         debug=False,
     )
 
@@ -4142,7 +4259,7 @@ async def test_run_subagent_wall_clock_guard_terminates_at_boundary(tmp_path, mo
         "test-key",
         Config(workspace=str(tmp_path)),
         runtime_persona="explore",
-        max_steps=4,
+        **_subagent_contract_kwargs(desc="Inspect child path", step_budget=4),
         debug=False,
     )
 
@@ -4207,7 +4324,7 @@ async def test_run_subagent_repetitive_guard_runs_before_authorization(tmp_path,
         "test-key",
         Config(workspace=str(tmp_path)),
         runtime_persona="explore",
-        max_steps=6,
+        **_subagent_contract_kwargs(desc="Inspect child path", step_budget=6),
         authorize_tools=authorize,
         debug=False,
     )
@@ -4258,7 +4375,7 @@ async def test_subagent_todo_updates_sink_with_current_tool_message(tmp_path, mo
         None,
         "test-key",
         Config(workspace=str(tmp_path)),
-        max_steps=4,
+        **_subagent_contract_kwargs(step_budget=4),
         parent_tools=ToolRegistry(),
         todo_state_sink=todo_states.append,
         debug=False,
@@ -4316,7 +4433,7 @@ async def test_subagent_empty_todo_does_not_clear_parent_state(tmp_path, monkeyp
         None,
         "test-key",
         Config(workspace=str(tmp_path)),
-        max_steps=4,
+        **_subagent_contract_kwargs(step_budget=4),
         parent_tools=ToolRegistry(),
         todo_state_sink=todo_states.append,
         debug=False,
@@ -4359,7 +4476,14 @@ async def test_subagent_skill_context_matches_orchestrator(tmp_path, monkeypatch
         "test-key",
         Config(workspace=str(tmp_path)),
         runtime_persona="implement",
-        max_steps=4,
+        **_subagent_contract_kwargs(
+            goal_type=GoalType.FEATURE,
+            desc="Implement the feature",
+            join="tdd",
+            leave="verify",
+            schema_name="implementation_result",
+            step_budget=4,
+        ),
         workflow_runtime_context=workflow_context,
         debug=False,
     )
@@ -4422,7 +4546,7 @@ async def test_subagent_without_mcp_tools_excludes_parent_mcp_tools(tmp_path, mo
         None,
         "test-key",
         Config(workspace=str(tmp_path)),
-        max_steps=3,
+        **_subagent_contract_kwargs(step_budget=3),
         parent_tools=parent_tools,
         debug=False,
     )
@@ -4492,7 +4616,7 @@ async def test_subagent_with_mcp_tools_copies_parent_mcp_tools(tmp_path, monkeyp
         None,
         "test-key",
         Config(workspace=str(tmp_path)),
-        max_steps=4,
+        **_subagent_contract_kwargs(desc="Send the message", step_budget=4),
         parent_tools=parent_tools,
         debug=False,
     )
@@ -4542,7 +4666,7 @@ async def test_subagent_tool_filter_always_blocks_nested_agent_tool(tmp_path, mo
             None,
             "test-key",
             Config(workspace=str(tmp_path)),
-            max_steps=3,
+            **_subagent_contract_kwargs(step_budget=3),
             parent_tools=parent_tools,
             debug=False,
         )
@@ -4598,7 +4722,7 @@ async def test_subagent_starts_from_isolated_task_context(tmp_path, monkeypatch)
         "test-key",
         Config(workspace=str(tmp_path)),
         runtime_persona="explore",
-        max_steps=4,
+        **_subagent_contract_kwargs(step_budget=4),
         workflow_runtime_context=workflow_context,
         debug=False,
     )
@@ -4620,6 +4744,52 @@ async def test_subagent_starts_from_isolated_task_context(tmp_path, monkeypatch)
     assert "Parent request" not in semantic_human_messages[0].content
     assert "Inspect the workspace" in semantic_human_messages[0].content
     assert "Runtime State" in semantic_human_messages[0].content
+
+
+@pytest.mark.asyncio
+async def test_subagent_injects_result_contract_into_task_payload(tmp_path, monkeypatch):
+    import voidx.agent.graph.subagent as subagent_module
+
+    captured: dict[str, list] = {}
+
+    class FakeModel:
+        def bind_tools(self, _tool_defs):
+            return self
+
+    async def fake_stream_llm(_model, messages, _renderer, _protocol):
+        captured["messages"] = messages
+        return AIMessage(content="done")
+
+    monkeypatch.setattr(subagent_module, "create_chat_model", lambda *_args, **_kwargs: FakeModel())
+    monkeypatch.setattr(subagent_module, "stream_llm", fake_stream_llm)
+
+    output = await subagent_module.run_subagent(
+        get_agent("voidx"),
+        "Inspect the workspace",
+        None,
+        "test-key",
+        Config(workspace=str(tmp_path)),
+        runtime_persona="review",
+        **_subagent_contract_kwargs(
+            goal_type=GoalType.REVIEW,
+            desc="Inspect the workspace",
+            join="review",
+            leave="review",
+            schema_name="review_result",
+            step_budget=4,
+        ),
+        debug=False,
+    )
+
+    assert output == "done"
+    task_payload = next(
+        message.content
+        for message in captured["messages"]
+        if isinstance(message, HumanMessage) and "Result contract" in str(message.content)
+    )
+    assert "Result contract" in task_payload
+    assert "review_result" in task_payload
+    assert "verdict=PASS|FAIL|NEEDS_CHANGE" in task_payload
 
 
 @pytest.mark.asyncio
@@ -4653,7 +4823,7 @@ async def test_subagent_adds_last_tool_step_hint_to_payload_only(tmp_path, monke
         None,
         "test-key",
         Config(workspace=str(tmp_path)),
-        max_steps=3,
+        **_subagent_contract_kwargs(step_budget=3),
         sub_messages=sub_messages,
         debug=False,
     )
@@ -4725,7 +4895,7 @@ async def test_subagent_final_step_fallback_does_not_leak_hint_to_sub_messages(t
         None,
         "test-key",
         Config(workspace=str(tmp_path)),
-        max_steps=3,
+        **_subagent_contract_kwargs(step_budget=3),
         sub_messages=sub_messages,
         debug=False,
     )

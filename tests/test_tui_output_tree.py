@@ -350,19 +350,26 @@ def test_uncommitted_stream_under_transparent_agent_does_not_flush():
         test_dock.reset()
 
 
-def test_settled_root_log_flushes_before_uncommitted_stream():
+def test_transient_retry_status_does_not_flush_before_uncommitted_stream():
     test_dock = dock
     test_dock.begin_capture()
     try:
         test_dock.set_stream("streaming reply")
-        test_dock.append_ansi("\x1b[2mLLM error, retrying in 2s: boom\x1b[0m")
+        test_dock.set_status(
+            "llm:retry",
+            "LLM error, retrying in 2s",
+            "boom",
+            stage="working",
+        )
 
         lines = test_dock.tree.render(100)
         limit = test_dock.safe_flush_line_count(100, 0)
         flushed = "\n".join(_rich_plain(line) for line in lines[:limit])
         active = "\n".join(_rich_plain(line) for line in lines[limit:])
 
-        assert "LLM error, retrying in 2s: boom" in flushed
+        assert "LLM error, retrying in 2s" not in flushed
+        assert "LLM error, retrying in 2s" in active
+        assert "boom" in active
         assert "streaming reply" in active
     finally:
         test_dock.deactivate()

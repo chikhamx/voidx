@@ -10,7 +10,7 @@ from __future__ import annotations
 
 import asyncio
 import time
-from typing import TYPE_CHECKING
+from typing import TYPE_CHECKING, Any
 
 from langchain_core.messages import (
     AIMessage,
@@ -53,10 +53,6 @@ from voidx.agent.graph.wiring import (
 from voidx.agent.state import AgentState
 from voidx.agent.graph.streaming import extract_text, stream_llm as _stream_llm
 from voidx.logging.request_log import log_llm_exchange
-from voidx.agent.graph.subagent import (
-    _goal_type_for_agent as _subagent_goal_type_for_agent,
-    _task_intent_for_agent as _subagent_task_intent_for_agent,
-)
 from voidx.agent.graph.subagent import run_subagent as _run_subagent
 from voidx.agent.graph.title_mixin import GraphTitleMixin
 from voidx.agent.todo_state import apply_todo_state_to_host, sanitize_todo_replay_messages
@@ -71,7 +67,7 @@ from voidx.agent.runtime_context import (
     current_todo_context_message,
     raw_semantic_messages,
 )
-from voidx.agent.task_state import TaskState, goal_label, goal_type_value
+from voidx.agent.task_state import GoalResolution, TaskState, goal_label, goal_type_value
 from voidx.agent.tool_filters import filter_unavailable_lsp_tools
 from voidx.config import Config, Settings
 from voidx.llm.instruction import InstructionService
@@ -94,11 +90,14 @@ from voidx.runtime.ui import (
     OutputTree,
     PureTui,
     StreamingRenderer,
+    StatusFinished,
+    StatusUpdated,
     SubagentFinished,
     SubagentStarted,
 )
 from voidx.runtime.ui_port import runtime_ui_port
 from voidx.skills.service import SkillRegistry, SkillService
+from voidx.workflow import workflow_personas
 from voidx.workflow.types import WorkflowRunState, WorkflowRunStatus
 
 if TYPE_CHECKING:
@@ -200,6 +199,33 @@ def _persona_for_workflow_runs(
     if not personas:
         return fallback or "coordinate"
     return ",".join(dict.fromkeys(personas))
+
+
+def _persona_for_child_workflow(group: list[WorkflowRunState | dict], join: str) -> str:
+    persona = _persona_for_workflow_runs(group, fallback="")
+    if persona:
+        return persona
+    personas = [item for item in workflow_personas(join) if item.strip()]
+    return ",".join(dict.fromkeys(personas)) or "explore"
+
+
+def _interaction_mode_for_persona(persona: str) -> str:
+    personas = {item.strip() for item in persona.split(",") if item.strip()}
+    return InteractionMode.PLAN.value if "plan" in personas else InteractionMode.AUTO.value
+
+
+def _subagent_step_budget(goal_resolution: GoalResolution) -> int:
+    plan = goal_resolution.plan
+    join = (plan.join if plan is not None else "").strip().lower()
+    return {
+        "review": 4,
+        "verify": 4,
+        "plan": 5,
+        "design-doc": 5,
+        "debug": 6,
+        "tdd": 6,
+        "feedback": 6,
+    }.get(join, 5)
 
 
 def _invalidate_tui(host: object) -> None:
@@ -509,9 +535,8 @@ class VoidXGraph(
         agent_def: AgentDef,
         description: str,
         model_override: str | None,
-        runtime_persona: str = "explore",
-        *,
-        max_steps: int,
+        goal_resolution: GoalResolution,
+        result_contract: Any,
     ) -> str:
         sub_buffer: list[BaseMessage] = []
         session_id = self._session.id if self._session else "default"
@@ -520,17 +545,22 @@ class VoidXGraph(
         parent_tool_call_id = _current_parent_tool_call_id.get()
         agent_run_id = f"agent_{agent_id}"
         started_at = time.monotonic()
-        interaction_mode = InteractionMode.PLAN.value if runtime_persona == "plan" else InteractionMode.AUTO.value
-        task_intent = _subagent_task_intent_for_agent(runtime_persona)
-        goal_type = _subagent_goal_type_for_agent(runtime_persona, description)
+        goal = goal_resolution.goal
+        plan = goal_resolution.plan
+        workflow_start = plan.join if plan is not None else ""
+        goal_type = goal.type.value if goal is not None else ""
         workflow_runtime_context = await self._workflow_context_for(
             description,
-            agent=runtime_persona,
-            task_intent=task_intent,
+            agent="",
+            task_intent=goal_resolution.intent.type.value,
             goal_type=goal_type,
-            interaction_mode=interaction_mode,
-            scope=description,
+            interaction_mode=InteractionMode.AUTO.value,
+            scope=goal.label if goal is not None else description,
+            workflow_start=workflow_start,
         )
+        runtime_persona = _persona_for_child_workflow(workflow_runtime_context.runs, workflow_start)
+        interaction_mode = _interaction_mode_for_persona(runtime_persona)
+        max_steps = _subagent_step_budget(goal_resolution)
 
         async def authorize(calls):
             return await self._authorize_tool_calls(
@@ -560,6 +590,8 @@ class VoidXGraph(
                 "parent_agent_id": -1,
                 "parent_tool_call_id": parent_tool_call_id,
                 "max_steps": max_steps,
+                "goal_resolution": goal_resolution.model_dump(mode="json"),
+                "result_schema": result_contract.schema_name,
             })
 
         ok = False
@@ -591,7 +623,9 @@ class VoidXGraph(
                 self.config,
                 self._tracker,
                 runtime_persona=runtime_persona,
-                max_steps=max_steps,
+                goal_resolution=goal_resolution,
+                result_contract=result_contract,
+                step_budget=max_steps,
                 **kwargs,
             )
             ok = True
@@ -831,6 +865,7 @@ class VoidXGraph(
         await save_context_frame(llm_messages, context_tokens, convergence_messages, convergence_forced)
         max_retries = 2
         failed_attempts = 0
+        retry_status_active = False
         while True:
             try:
                 renderer = StreamingRenderer(self._ui.console, debug=self._debug)
@@ -854,6 +889,8 @@ class VoidXGraph(
                 )
                 if self._debug or not assistant_msg.tool_calls:
                     self._ui.ui.print()
+                if retry_status_active and self._ui.via_events():
+                    await self._ui.events.emit(StatusFinished(status_id="llm:retry"))
                 break
             except Exception as e:
                 if _is_context_overflow_error(e):
@@ -874,9 +911,19 @@ class VoidXGraph(
                 if failed_attempts < max_retries:
                     failed_attempts += 1
                     delay = failed_attempts * 2
-                    self._ui.ui.print(f"[dim]LLM error, retrying in {delay}s: {e}[/dim]")
+                    if self._ui.via_events():
+                        retry_status_active = True
+                        await self._ui.events.emit(StatusUpdated(
+                            status_id="llm:retry",
+                            label=f"LLM error, retrying in {delay}s",
+                            detail=str(e),
+                        ))
+                    else:
+                        self._ui.ui.print(f"[dim]LLM error, retrying in {delay}s: {e}[/dim]")
                     await asyncio.sleep(delay)
                 else:
+                    if retry_status_active and self._ui.via_events():
+                        await self._ui.events.emit(StatusFinished(status_id="llm:retry"))
                     self._ui.ui.error(f"LLM call failed after {max_retries + 1} attempts: {e}")
                     failure_msg = AIMessage(content=f"LLM call failed: {e}")
                     return {

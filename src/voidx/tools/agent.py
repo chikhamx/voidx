@@ -3,12 +3,22 @@
 from __future__ import annotations
 
 from collections.abc import Callable, Iterable
-import inspect
 from typing import Any, Literal
 
 from pydantic import BaseModel, Field, ValidationError
 
+from voidx.runtime.task_state import GoalResolution
 from voidx.tools.base import BaseTool, ToolContext, ToolResult, model_to_json_schema
+from voidx.workflow.dag import DEFAULT_WORKFLOW_DAG
+
+
+class AgentResultContract(BaseModel):
+    schema_name: str = Field(
+        default="agent_result",
+        description="Name of the structured result contract the child agent must return.",
+    )
+    format: str = Field(description="Concrete structured result fields and allowed values.")
+
 
 class AgentInput(BaseModel):
     agent: str = Field(
@@ -17,12 +27,6 @@ class AgentInput(BaseModel):
             "Child agent identity to run. Use voidx."
         )
     )
-    persona: str = Field(
-        description=(
-            "Runtime persona for the child agent: explore, plan, implement, or review. "
-            "Use implement only when the user explicitly asked to modify code."
-        ),
-    )
     description: str = Field(
         description=(
             "Complete, self-contained task description for the child agent. "
@@ -30,22 +34,14 @@ class AgentInput(BaseModel):
             "is not inherited."
         )
     )
-    model: str | None = Field(
-        default=None,
-        description="Optional model override for this child agent.",
+    goal_resolution: GoalResolution = Field(
+        description=(
+            "Child task intent, required goal, and workflow route. "
+            "plan.join and plan.leave are required and must name workflow nodes."
+        )
     )
-    max_steps: int = Field(
-        ge=3,
-        description="Step budget chosen by voidx for this delegated task.",
-    )
-    delegation_reason: Literal[
-        "user_requested",
-        "parallel_independent",
-        "isolated_review",
-        "context_isolation",
-    ] = Field(description="Why this task needs a child agent instead of direct handling.")
-    expected_output: str = Field(description="Structured result the child agent must return.")
-    parent_evidence: str = Field(description="Facts the parent agent already gathered before delegating.")
+    result: AgentResultContract = Field(description="Structured result the child agent must return.")
+    model: str | None = Field(default=None, description="Optional model override for this child agent.")
 
 
 class AgentTool(BaseTool):
@@ -104,13 +100,12 @@ class AgentTool(BaseTool):
             return ToolResult(
                 output=(
                     "Child agent delegation rejected."
-                    f"{detail} The main agent must provide persona, description, max_steps, "
-                    "delegation_reason, expected_output, and parent_evidence for each delegated task."
+                    f"{detail} The main agent must provide description, goal_resolution, "
+                    "and result for each delegated task."
                 ),
                 metadata={"error": True, "validation_error": True},
             )
         requested_agent = inp.agent
-        runtime_persona = inp.persona
 
         if self._agent_resolver is None:
             return ToolResult(
@@ -134,25 +129,25 @@ class AgentTool(BaseTool):
             )
 
         try:
-            if _runner_accepts_persona(self._run_child_agent):
-                if _runner_accepts_max_steps(self._run_child_agent):
-                    output = await self._run_child_agent(
-                        agent_def, inp.description, inp.model, runtime_persona,
-                        max_steps=inp.max_steps,
-                    )
-                else:
-                    output = await self._run_child_agent(agent_def, inp.description, inp.model, runtime_persona)
-            else:
-                output = await self._run_child_agent(agent_def, inp.description, inp.model)
+            output = await self._run_child_agent(
+                agent_def,
+                inp.description,
+                inp.model,
+                inp.goal_resolution,
+                inp.result,
+            )
+            goal = inp.goal_resolution.goal
+            plan = inp.goal_resolution.plan
             return ToolResult(
-                title=f"{agent_def_name}/{runtime_persona}: {inp.description[:60]}",
+                title=f"{agent_def_name}: {inp.description[:60]}",
                 output=output,
-                summary=f"{agent_def_name}/{runtime_persona} completed",
+                summary=f"{agent_def_name} completed",
                 metadata={
                     "agent": agent_def_name,
-                    "persona": runtime_persona,
-                    "max_steps": inp.max_steps,
-                    "delegation_reason": inp.delegation_reason,
+                    "intent": inp.goal_resolution.intent.model_dump(mode="json"),
+                    "goal": goal.model_dump(mode="json") if goal is not None else None,
+                    "workflow_route": plan.model_dump(mode="json") if plan is not None else None,
+                    "result_schema": inp.result.schema_name,
                     "model": inp.model or getattr(agent_def, "model", None) or "default",
                 },
             )
@@ -163,98 +158,30 @@ class AgentTool(BaseTool):
             )
 
 
-def _runner_accepts_persona(runner) -> bool:
-    try:
-        signature = inspect.signature(runner)
-    except (TypeError, ValueError):
-        return True
-    params = signature.parameters
-    if any(param.kind == inspect.Parameter.VAR_POSITIONAL for param in params.values()):
-        return True
-    if any(param.kind == inspect.Parameter.VAR_KEYWORD for param in params.values()):
-        return True
-    return len(params) >= 4
-
-
-def _runner_accepts_max_steps(runner) -> bool:
-    try:
-        signature = inspect.signature(runner)
-    except (TypeError, ValueError):
-        return True
-    params = signature.parameters
-    if any(param.kind == inspect.Parameter.VAR_KEYWORD for param in params.values()):
-        return True
-    return "max_steps" in params
-
-
 def _delegation_rejection(inp: AgentInput, ctx: ToolContext, *, parallel_enabled: bool) -> str:
+    del ctx, parallel_enabled
     if len(inp.description.strip()) < 12:
         return "Child agent delegation rejected. Description must be a complete, self-contained brief."
-    if not inp.expected_output.strip():
-        return "Child agent delegation rejected. expected_output is required."
-    if not inp.parent_evidence.strip():
-        return "Child agent delegation rejected. parent_evidence is required."
-    if inp.delegation_reason == "parallel_independent" and not parallel_enabled:
-        return "Child agent delegation rejected. parallel_independent requires parallel subagents to be enabled."
-    if inp.delegation_reason == "isolated_review" and inp.persona != "review":
-        return "Child agent delegation rejected. isolated_review requires persona='review'."
-    if inp.persona == "review" or inp.delegation_reason == "isolated_review":
-        review_rejection = _review_delegation_rejection(inp)
-        if review_rejection:
-            return review_rejection
-    if inp.persona == "implement" and ctx.goal_type not in {"feature", "bugfix", "refactor"}:
-        return "Child agent delegation rejected. implement persona requires a feature, bugfix, or refactor goal."
-    return ""
-
-
-def _review_delegation_rejection(inp: AgentInput) -> str:
-    expected = inp.expected_output.lower()
-    if not (
-        "verdict" in expected
-        and "pass" in expected
-        and "fail" in expected
-        and "needs_change" in expected
-    ):
-        return (
-            "Child agent delegation rejected. Review expected_output must request "
-            "verdict: PASS | FAIL | NEEDS_CHANGE."
-        )
-
-    evidence = inp.parent_evidence.lower()
-    has_target = any(
-        marker in evidence
-        for marker in (
-            "changed files",
-            "files changed",
-            "review target",
-            "target:",
-            "file:",
-            "files:",
-        )
-    )
-    if not has_target:
-        return (
-            "Child agent delegation rejected. Review parent_evidence must include "
-            "changed files or review target."
-        )
-
-    has_verification = any(
-        marker in evidence
-        for marker in (
-            "verification",
-            "verified",
-            "tests:",
-            "test:",
-            "pytest",
-            "not verified",
-            "not run",
-            "未验证",
-            "未运行",
-        )
-    )
-    if not has_verification:
-        return (
-            "Child agent delegation rejected. Review parent_evidence must include "
-            "verification commands or an explicit not-verified reason."
-        )
+    goal = inp.goal_resolution.goal
+    if goal is None:
+        return "Child agent delegation rejected. goal_resolution.goal is required."
+    plan = inp.goal_resolution.plan
+    if plan is None:
+        return "Child agent delegation rejected. Provide goal_resolution.plan.join and plan.leave."
+    join = plan.join.strip().lower()
+    leave = (plan.leave or "").strip().lower()
+    if not join and not leave:
+        return "Child agent delegation rejected. Provide goal_resolution.plan.join and plan.leave."
+    if not join:
+        return "Child agent delegation rejected. goal_resolution.plan.join is required."
+    if not leave:
+        return "Child agent delegation rejected. goal_resolution.plan.leave is required."
+    if join not in DEFAULT_WORKFLOW_DAG.nodes:
+        return "Child agent delegation rejected. plan.join must be a known workflow node."
+    if leave not in DEFAULT_WORKFLOW_DAG.nodes:
+        return "Child agent delegation rejected. plan.leave must be a known workflow node."
+    if goal.type.value == "review" and join != "review":
+        return "Child agent delegation rejected. review goals must enter plan.join=review."
+    if not inp.result.format.strip():
+        return "Child agent delegation rejected. result.format is required."
     return ""
