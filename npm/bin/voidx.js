@@ -202,6 +202,9 @@ function ensureVenv(python, venvDir, env) {
     return;
   }
 
+  // v2 → v3 migration: clean up legacy data before first v3 run
+  runV2CleanupIfNeeded(venvDir, env);
+
   fs.mkdirSync(path.dirname(venvDir), { recursive: true });
   const venvPython = resolveVenvPython(venvDir);
 
@@ -295,6 +298,62 @@ function ensureVenv(python, venvDir, env) {
   }
 
   fs.writeFileSync(markerPath, marker);
+}
+
+// ── v2 → v3 migration ─────────────────────────────────────────────────────
+
+function runV2CleanupIfNeeded(venvDir, env) {
+  const markerPath = path.join(venvDir, ".voidx-install-version");
+  const oldMarker = readFile(markerPath).trim();
+  if (!oldMarker) return; // fresh install, nothing to migrate
+
+  const oldVersion = parseVersion(oldMarker.split("\n")[0]);
+  if (!oldVersion) return;
+
+  // Only run cleanup when upgrading from < 3.0.0
+  const v3 = [3, 0, 0];
+  if (
+    oldVersion[0] > v3[0] ||
+    (oldVersion[0] === v3[0] && oldVersion[1] > v3[1]) ||
+    (oldVersion[0] === v3[0] && oldVersion[1] === v3[1] && oldVersion[2] >= v3[2])
+  ) {
+    return;
+  }
+
+  console.error("\n🔄 Upgrading from v2 — cleaning up legacy data…\n");
+
+  const venvPython = resolveVenvPython(venvDir);
+  if (!fs.existsSync(venvPython)) return; // venv not built yet, will clean after install
+
+  // Download and run the cleanup script from GitHub
+  const scriptUrl =
+    "https://raw.githubusercontent.com/chikhamx/voidx/master/scripts/clean_v2_data.py";
+  const tmpScript = path.join(os.tmpdir(), "voidx-clean-v2-data.py");
+
+  try {
+    const curlResult = spawnSync(
+      process.platform === "win32" ? "curl.exe" : "curl",
+      ["-fsSL", scriptUrl, "-o", tmpScript],
+      { encoding: "utf8", windowsHide: true, timeout: 15000 }
+    );
+    if (curlResult.error || curlResult.status !== 0) {
+      console.error("  ⚠️  Could not download v2 cleanup script, skipping.");
+      return;
+    }
+
+    const pyResult = spawnSync(
+      venvPython,
+      [tmpScript],
+      { encoding: "utf8", stdio: "inherit", windowsHide: true, timeout: 30000 }
+    );
+    if (pyResult.error || pyResult.status !== 0) {
+      console.error("  ⚠️  v2 cleanup script failed, continuing anyway.");
+    }
+
+    try { fs.unlinkSync(tmpScript); } catch {}
+  } catch (err) {
+    console.error(`  ⚠️  v2 cleanup error: ${err.message}`);
+  }
 }
 
 // ── Helpers ────────────────────────────────────────────────────────────────
