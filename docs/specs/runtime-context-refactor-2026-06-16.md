@@ -38,7 +38,7 @@
 8. Inline Compaction Guide（HumanMessage，如有，追加到末尾）
 ```
 
-注：Todo 已合并进 Task State，不再独立；## User Message 已移除。
+注：Todo 已合并进 Task State，不再独立；`## User Message` 改为 `## Task Context`（见下方）。
 
 ### Task State 跟随最新消息
 
@@ -76,7 +76,7 @@
 2. **剥离**：`raw_semantic_messages()` 中的 `_strip_turn_overlay()` 扩展为对所有消息类型生效，不仅限于 HumanMessage
 3. **定位**：`compile_messages()` 中将 `_last_user_index()` 替换为 `len(semantic_messages) - 1`，始终拼到最后一条消息
 4. **标记**：`VOIDX_RUNTIME_CONTEXT` 前缀作为统一标记，`_is_turn_overlay_text()` 已通过前缀检测工作，无需修改
-5. **分隔符**：`## User Message` 已移除（见下方），不再使用 `## Preceding Message` 替代。Task State 直接拼到消息 content 前面，以 `VOIDX_RUNTIME_CONTEXT` 标记开头，以空行与原始内容分隔。剥离时通过 `_CONTEXT_MARKER` 前缀定位，按第一个空行分割，取空行之后的部分作为原始内容
+5. **分隔符**：`## User Message` 改为 `## Task Context`（见下方）。Task State 拼到消息 content 前面时，以 `VOIDX_RUNTIME_CONTEXT` 标记开头，以 `## Task Context` 分隔 Task State 与原始消息内容。剥离时通过 `_CONTEXT_MARKER` 前缀定位，按 `## Task Context` 分割，取 `## Task Context` 之后的部分作为原始内容。`## Task Context` 是类型无关的分隔符，无论拼到 HumanMessage / AIMessage / ToolMessage 上语义都正确
 6. **持久化**：`compile_messages()` 返回的是编译后的消息列表，不修改 AgentState 中的原始消息。持久化时从 AgentState 的原始消息中取内容，天然不含 overlay，无需额外处理
 7. **AIMessage content 格式**：AIMessage 的 content 可能是 list（含 tool_calls 的结构化内容），`_prepend_task_context()` 和 `_strip_turn_overlay()` 需要处理 list 格式：拼接时在 list 头部插入 text block，剥离时移除头部 text block。但需注意：AIMessage 的 content 在 `sanitize_todo_replay_messages()` 和 `_sanitize_ai_content_for_replay()` 中已被处理，实际到达 `compile_messages()` 时通常是 string 或已清理的 list
 8. **Goal Resolution Guide 定位**：当前代码中 Goal Resolution Guide 通过 `_last_user_index()` 定位插入位置。改为末尾定位后，Goal Resolution Guide 仍应 insert 到**最后一个 HumanMessage** 之前（而非最后一条消息之前），因为 Goal Resolution Guide 的语义是指导 LLM 解析用户意图，应紧邻用户消息
@@ -194,7 +194,7 @@ Runtime State 从 Task Context 中拆出，作为独立 HumanMessage 放在 Skil
 
 | 字段 | 改动 |
 |------|------|
-| Latest user request | 去掉 `[:160]` 截断，保留完整用户请求文本 |
+| Latest user request | 移除。用户原始消息通过消息本体传递，`## Task Context` 分隔符后即为原始内容，无需在 Task State 中重复 |
 | Constraint | Interaction mode 的值合并进 Constraint 行：`plan mode — blocks write/edit...` / `goal mode — keep work scoped...`，auto 模式不输出 |
 
 ### 新增字段
@@ -213,17 +213,36 @@ Runtime State 从 Task Context 中拆出，作为独立 HumanMessage 放在 Skil
 - Workflow route
 - Workflow exits
 - Active todo              ← 新增
-- Latest user request      ← 不截断
+- ~~Latest user request~~   ← 已移除，用户消息通过消息本体传递
 - Constraint               ← 仅 plan/goal 模式，合并 interaction mode 值
 ```
 
 ## 其他改动
 
-### 去掉 ## User Message
+### `## User Message` 改为 `## Task Context`
 
-`_prepend_task_context()` 不再追加 `## User Message` 分隔线和用户原始消息。用户请求只通过 Task State 中的 `Latest user request` 行呈现，完整且不截断。
+`_prepend_task_context()` 中的 `## User Message` 分隔符改为 `## Task Context`，同时不再追加用户原始消息文本。
 
-由于 Task State 现在拼到任意类型的消息上（不再仅限 HumanMessage），`## User Message` 分隔符语义不再适用。Task State 描述的是当前运行时状态，LLM 能从上下文理解其含义，无需额外分隔符。
+原因：
+- Task State 现在拼到任意类型的消息上（不再仅限 HumanMessage），`## User Message` 分隔符语义不再适用
+- `## Task Context` 是类型无关的分隔符，无论拼到 HumanMessage / AIMessage / ToolMessage 上语义都正确
+- 用户原始消息通过消息本体传递，不需要在 Task State 中重复
+- `Latest user request` 字段因此移除（见下方），不再需要
+
+拼接后的消息结构示例：
+
+```
+VOIDX_RUNTIME_CONTEXT
+## Runtime State
+...
+## Current Task State
+...
+
+## Task Context
+<原始消息内容>
+```
+
+剥离时通过 `VOIDX_RUNTIME_CONTEXT` 前缀定位，按 `## Task Context` 分割，取其后的部分作为原始内容。
 
 ### Todo 合并进 Task State
 
@@ -246,7 +265,7 @@ Runtime State 从 Task Context 中拆出，作为独立 HumanMessage 放在 Skil
 
 | 文件 | 改动 |
 |------|------|
-| `src/voidx/agent/runtime_context.py` | _current_task_state() 字段重构、_render_envelope() 字段重构、Runtime State 拆为独立消息、_prepend_task_context() 去掉 ## User Message 并支持所有消息类型、_strip_turn_overlay() 扩展到 AIMessage/ToolMessage、compile_messages() 中 _last_user_index 改为末尾定位、删除废弃函数 |
+| `src/voidx/agent/runtime_context.py` | _current_task_state() 字段重构（移除 Latest user request 等）、_render_envelope() 字段重构、Runtime State 拆为独立消息、_prepend_task_context() 将 `## User Message` 改为 `## Task Context` 并支持所有消息类型、_strip_turn_overlay() 扩展到 AIMessage/ToolMessage、compile_messages() 中 _last_user_index 改为末尾定位、删除废弃函数 |
 | `src/voidx/agent/graph/core.py` | 移除 current_todo_context_message 的生成和追加、Runtime State 独立消息的组装 |
 | `src/voidx/runtime/task_state.py` | 新增 `TurnExchange` 模型和 `TaskState.recent_exchanges` 字段（Goal Resolver 重构所需） |
 | `src/voidx/agent/goal_resolver.py` | 上下文从 JSON context 改为 `recent_exchanges` 消息对、SystemMessage 精简、移除 workspace/session_time 参数（详见 `docs/specs/goal-resolver-refactor-2026-06-16.md`） |
