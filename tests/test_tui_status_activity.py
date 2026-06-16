@@ -240,7 +240,7 @@ def test_status_summary_text_renders_workflow_name_as_rainbow(tmp_path):
 
 
 def test_active_workflow_names_extracts_active_runs():
-    from voidx.agent.graph.run_loop import _active_workflow_names
+    from voidx.agent.graph.workflow_utils import active_workflow_names as _active_workflow_names
     from voidx.workflow.types import WorkflowRunState, WorkflowRunStatus
 
     state = SimpleNamespace(

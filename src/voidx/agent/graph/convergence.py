@@ -7,6 +7,7 @@ from typing import Any
 
 from langchain_core.messages import AIMessage, BaseMessage, HumanMessage, ToolMessage
 
+from voidx.llm.compaction import _dedupe, _message_text
 from voidx.llm.message_markers import (
     STEP_HINT_MARKER,
     is_guidance_message,
@@ -141,30 +142,3 @@ def _extract_file_mentions_from_messages(messages: list[BaseMessage]) -> list[st
 
 def _tool_message_count(messages: list[BaseMessage]) -> int:
     return sum(1 for message in messages if isinstance(message, ToolMessage))
-
-
-def _dedupe(items: list[str]) -> list[str]:
-    seen: set[str] = set()
-    result: list[str] = []
-    for item in items:
-        if item in seen:
-            continue
-        seen.add(item)
-        result.append(item)
-    return result
-
-
-def _message_text(message: BaseMessage) -> str:
-    content = getattr(message, "content", "")
-    if isinstance(content, str):
-        return content
-    if isinstance(content, list):
-        parts = [
-            str(item.get("text", ""))
-            for item in content
-            if isinstance(item, dict) and item.get("type") == "text"
-        ]
-        return "\n".join(part for part in parts if part)
-    if isinstance(message, AIMessage | ToolMessage):
-        return str(content)
-    return str(content)

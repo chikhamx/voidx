@@ -9,7 +9,7 @@ from typing import Literal
 
 from pydantic import BaseModel, Field, model_validator
 
-from voidx.runtime.intent import InteractionMode, TaskIntent, infer_task_intent
+from voidx.runtime.intent import InteractionMode, TaskIntent, _contains_any, infer_task_intent
 from voidx.workflow.types import WorkflowRunState
 
 
@@ -294,18 +294,6 @@ def _coerce_goal(goal: GoalSpec | dict | None) -> GoalSpec | None:
         except ValueError:
             return None
     return None
-
-
-def _contains_any(text: str, hints: tuple[str, ...]) -> bool:
-    return any(_contains_hint(text, hint) for hint in hints)
-
-
-def _contains_hint(text: str, hint: str) -> bool:
-    if hint.isascii() and re.fullmatch(r"[A-Za-z0-9_ -]+", hint):
-        words = re.findall(r"[A-Za-z0-9_]+", hint)
-        if len(words) == 1:
-            return re.search(rf"(?<![A-Za-z0-9_]){re.escape(hint)}(?![A-Za-z0-9_])", text) is not None
-    return hint in text
 
 
 def _has_implementation_action_hint(text: str) -> bool:

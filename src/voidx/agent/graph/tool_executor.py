@@ -15,6 +15,7 @@ from langgraph.graph.message import REMOVE_ALL_MESSAGES
 
 from voidx.diffing import diff_stat
 from voidx.logging.tool_log import log_tool_event
+from voidx.agent.graph.workflow_utils import active_workflow_names
 from voidx.agent.graph.runtime import current_parent_tool_call_id
 from voidx.agent.graph.runtime_guards import (
     GuardDecision,
@@ -132,7 +133,7 @@ class GraphToolExecutor:
                 task_intent=str(runtime_task_intent or "coding"),
                 goal_type=runtime_goal.type.value if runtime_goal is not None else "",
                 goal_target=goal_label(runtime_goal),
-                active_workflow_names=_active_workflow_names(runtime_workflow_runs),
+                active_workflow_names=active_workflow_names(runtime_workflow_runs),
                 workflow_runs=runtime_workflow_runs,
                 workflow_route=runtime_task_state.workflow_route.model_dump(mode="json")
                 if runtime_task_state.workflow_route is not None
@@ -1217,10 +1218,3 @@ def _workflow_runs_for_state(value: object) -> list[WorkflowRunState]:
         runs.append(run)
     return runs
 
-
-def _active_workflow_names(value: object) -> list[str]:
-    names: list[str] = []
-    for run in _workflow_runs_for_state(value):
-        if run.status == WorkflowRunStatus.ACTIVE and run.name.strip():
-            names.append(run.name.strip())
-    return names

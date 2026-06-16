@@ -97,6 +97,7 @@ from voidx.runtime.ui import (
 )
 from voidx.runtime.ui_port import runtime_ui_port
 from voidx.skills.service import SkillRegistry, SkillService
+from voidx.agent.graph.workflow_utils import active_workflow_names
 from voidx.workflow import workflow_personas
 from voidx.workflow.types import WorkflowRunState, WorkflowRunStatus
 
@@ -167,18 +168,6 @@ def _workflow_names(group: list[WorkflowRunState | dict]) -> list[str]:
             name = ""
         if isinstance(name, str) and name.strip():
             names.append(name.strip())
-    return names
-
-
-def _active_workflow_names(group: list[WorkflowRunState | dict]) -> list[str]:
-    names: list[str] = []
-    for item in group:
-        try:
-            run = item if isinstance(item, WorkflowRunState) else WorkflowRunState.model_validate(item)
-        except (TypeError, ValueError):
-            continue
-        if run.status == WorkflowRunStatus.ACTIVE and run.name.strip():
-            names.append(run.name.strip())
     return names
 
 
@@ -697,7 +686,7 @@ class VoidXGraph(
             interaction_mode=interaction_mode,
             scope=goal_label(current_goal) or current_user_text,
             exclude_names=_workflow_names(existing_workflow_runs),
-            active_names=_active_workflow_names(existing_workflow_runs),
+            active_names=active_workflow_names(existing_workflow_runs),
             workflow_start=workflow_start,
         )
         workflow_runs = _merge_workflow_runs(

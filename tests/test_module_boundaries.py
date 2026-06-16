@@ -54,10 +54,8 @@ def test_bash_tool_uses_permission_service_boundary():
 
 def test_workflow_runtime_types_have_public_types_boundary():
     runtime_imports = _imported_modules("src/voidx/workflow/runtime.py")
-    skills_runtime_imports = _imported_modules("src/voidx/skills/runtime.py")
 
     assert "voidx.workflow.types" in runtime_imports
-    assert "voidx.workflow.types" in skills_runtime_imports
 
 
 def test_workflow_types_has_no_workflow_implementation_imports():

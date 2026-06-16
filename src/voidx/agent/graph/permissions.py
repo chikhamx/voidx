@@ -5,6 +5,7 @@ from __future__ import annotations
 from fnmatch import fnmatch
 from typing import TYPE_CHECKING
 
+from voidx.agent.graph.workflow_utils import active_workflow_names
 from voidx.permission.service import (
     PermissionContext,
     authorize_tool_call,
@@ -36,7 +37,7 @@ class GraphPermissionMixin:
         approved: list[dict] = []
         denied: list[tuple[dict, str]] = []
         need_ask: list[dict] = []
-        active_workflows = _active_workflow_names(workflow_runs)
+        active_workflows = active_workflow_names(workflow_runs)
 
         context = PermissionContext.from_service(
             self._permission,
@@ -146,19 +147,6 @@ class GraphPermissionMixin:
                 args=classified.args,
             ))
         return details
-
-
-def _active_workflow_names(value: object) -> list[str]:
-    names: list[str] = []
-    items = value.values() if isinstance(value, dict) else value or []
-    for item in items:
-        try:
-            run = item if isinstance(item, WorkflowRunState) else WorkflowRunState.model_validate(item)
-        except (TypeError, ValueError):
-            continue
-        if run.status == WorkflowRunStatus.ACTIVE and run.name.strip():
-            names.append(run.name.strip())
-    return names
 
 
 def _workflow_gate_requires_approval(classified, active_workflows: list[str]) -> bool:

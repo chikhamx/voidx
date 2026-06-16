@@ -12,6 +12,7 @@ from pathlib import Path
 from typing import Callable
 
 from voidx.runtime.attachments import MAX_IMAGE_ATTACHMENT_BYTES
+from voidx.ui.tools.file_picker import format_size as _format_size
 
 CLIPBOARD_ATTACHMENT_DIR = ".voidx/attachments"
 KEEP_ORIGINAL_BYTES = 3_000_000
@@ -238,9 +239,3 @@ def _safe_unlink(path: Path) -> None:
         return
 
 
-def _format_size(size: int) -> str:
-    if size < 1024:
-        return f"{size} B"
-    if size < 1024 * 1024:
-        return f"{size / 1024:.1f} KB"
-    return f"{size / (1024 * 1024):.1f} MB"

@@ -10,6 +10,7 @@ from typing import TYPE_CHECKING, Any
 from voidx.agent.graph.session_mixin import GraphSessionMixin
 from voidx.agent.graph.transcript_mixin import GraphTranscriptMixin
 from voidx.agent.graph.turn_mixin import GraphTurnMixin
+from voidx.agent.graph.workflow_utils import active_workflow_names
 from voidx.llm.service import get_context_limit
 from voidx.runtime.ui import (
     COMMANDS,
@@ -35,18 +36,6 @@ logger = logging.getLogger(__name__)
 
 def _ui_command_kind(command: Any) -> str:
     return str(getattr(command, "kind", "") or "")
-
-
-def _active_workflow_names(task_state: Any) -> list[str]:
-    runs = getattr(task_state, "workflow_runs", None) or {}
-    values = runs.values() if isinstance(runs, dict) else runs
-    names: list[str] = []
-    for run in values:
-        status = getattr(getattr(run, "status", ""), "value", getattr(run, "status", ""))
-        name = str(getattr(run, "name", "") or "").strip()
-        if status == "active" and name:
-            names.append(name)
-    return names
 
 
 class GraphRunLoopMixin(GraphTurnMixin, GraphSessionMixin, GraphTranscriptMixin):
@@ -196,7 +185,7 @@ class GraphRunLoopMixin(GraphTurnMixin, GraphSessionMixin, GraphTranscriptMixin)
                 goal_label=lambda: goal_label(getattr(getattr(self, "_task_state", None), "current_goal", None)),
                 goal_type=lambda: goal_type_value(getattr(getattr(self, "_task_state", None), "current_goal", None)),
                 goal_awaiting_approval=lambda: False,
-                active_workflows=lambda: _active_workflow_names(getattr(self, "_task_state", None)),
+                active_workflows=lambda: active_workflow_names(getattr(self, "_task_state", None)),
                 mcp_servers=lambda: [
                     McpServerStatus(
                         name=s.name,
