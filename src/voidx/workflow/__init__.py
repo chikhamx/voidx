@@ -4,8 +4,6 @@ from __future__ import annotations
 
 from voidx.workflow.dag import DEFAULT_WORKFLOW_DAG
 from voidx.workflow.policy import (
-    WorkflowActivation,
-    workflow_activations,
     workflow_denied_tools,
     workflow_edges,
     workflow_exit_summaries,
@@ -40,7 +38,6 @@ from voidx.workflow.service import WorkflowMatch, WorkflowService
 
 __all__ = [
     "DEFAULT_WORKFLOW_DAG",
-    "WorkflowActivation",
     "WorkflowActivationSource",
     "WorkflowDAG",
     "WorkflowEvidence",
@@ -62,7 +59,6 @@ __all__ = [
     "render_dag_overview",
     "render_node_markdown",
     "render_node_summary",
-    "workflow_activations",
     "workflow_denied_tools",
     "workflow_edges",
     "workflow_exit_summaries",

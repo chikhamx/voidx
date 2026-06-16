@@ -1,17 +1,9 @@
-"""Workflow activation and gate policy."""
+"""Workflow gate policy."""
 
 from __future__ import annotations
 
-from dataclasses import dataclass
-
 from voidx.workflow.dag import DEFAULT_WORKFLOW_DAG
 from voidx.workflow.schema import Edge, NodeGate
-
-
-@dataclass(frozen=True)
-class WorkflowActivation:
-    name: str
-    reason: str
 
 
 WORKFLOW_PRIORITY = {
@@ -32,81 +24,6 @@ WORKFLOW_TRANSITIONS: dict[str, tuple[str, ...]] = {
     name: tuple(edge.target for edge in DEFAULT_WORKFLOW_DAG.edges_from(name))
     for name in DEFAULT_WORKFLOW_DAG.nodes
 }
-
-
-def workflow_activations(
-    user_text: str,
-    *,
-    agent: str = "",
-    task_intent: str | None = None,
-    goal_type: str | None = None,
-    interaction_mode: str | None = None,
-    runtime_trigger: str | None = None,
-) -> list[WorkflowActivation]:
-    text = user_text.strip().lower()
-    persona = (agent or "").strip().lower()
-    intent = (task_intent or "").strip().lower()
-    goal = (goal_type or "").strip().lower()
-    mode = (interaction_mode or "").strip().lower()
-    trigger = (runtime_trigger or "").strip().lower()
-    activations: dict[str, WorkflowActivation] = {}
-
-    def add(name: str, reason: str) -> None:
-        activations.setdefault(name, WorkflowActivation(name=name, reason=reason))
-
-    if trigger:
-        add(trigger, f"runtime:{trigger}")
-
-    if intent != "coding":
-        return sorted(
-            activations.values(),
-            key=lambda item: (WORKFLOW_PRIORITY.get(item.name, 999), item.name),
-        )
-
-    if goal:
-        entry = DEFAULT_WORKFLOW_DAG.entry(goal)
-        if entry is not None:
-            for name in entry.nodes:
-                add(name, entry.reason)
-
-    if goal == "bugfix":
-        add("tdd", "bugfix lifecycle")
-        add("verify", "bugfix lifecycle")
-    elif goal == "debug":
-        add("debug", "goal:debug")
-
-    if persona == "implement":
-        add("tdd", "implement persona")
-        add("verify", "implement lifecycle")
-
-    has_active_predecessor = "brainstorm" in activations or "design-doc" in activations
-
-    if persona == "plan" and not has_active_predecessor:
-        add("plan", "plan persona")
-
-    if goal == "review":
-        if _contains_any(text, _REVIEW_FEEDBACK_TERMS):
-            add("feedback", "review feedback")
-        else:
-            add("review", "goal:review")
-
-    if goal == "design":
-        add("brainstorm", "goal:design")
-        if (
-            mode != "plan"
-            and not has_active_predecessor
-            and _contains_any(text, _PLAN_TERMS)
-            and _explicit_plan_request(text)
-        ):
-            add("plan", "planning intent")
-
-    if mode == "plan":
-        add("brainstorm", "plan mode")
-
-    return sorted(
-        activations.values(),
-        key=lambda item: (WORKFLOW_PRIORITY.get(item.name, 999), item.name),
-    )
 
 
 def workflow_sort_key(name: str) -> tuple[int, str]:
@@ -163,43 +80,3 @@ def workflow_terminal_description() -> str:
 def is_workflow_terminal_condition(condition: str) -> bool:
     return DEFAULT_WORKFLOW_DAG.is_terminal_condition(condition)
 
-
-def _contains_any(text: str, terms: tuple[str, ...]) -> bool:
-    return any(term in text for term in terms)
-
-
-_REVIEW_FEEDBACK_TERMS = (
-    "review feedback",
-    "code review feedback",
-    "review comment",
-    "reviewer says",
-    "feedback says",
-    "优化点",
-    "审查意见",
-    "评审意见",
-)
-
-_PLAN_TERMS = (
-    "implementation plan",
-    "write a plan",
-    "planning",
-    "spec",
-    "requirements",
-    "计划",
-    "实施方案",
-    "需求",
-)
-
-
-def _explicit_plan_request(text: str) -> bool:
-    return _contains_any(text, _EXPLICIT_PLAN_TERMS)
-
-
-_EXPLICIT_PLAN_TERMS = (
-    "implementation plan",
-    "write a plan",
-    "directly write a plan",
-    "直接写计划",
-    "写实施计划",
-    "实施计划",
-)

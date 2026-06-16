@@ -229,13 +229,14 @@ class NoProgressState(BaseModel):
 class WallClockGuardState(BaseModel):
     started_at: float = Field(default_factory=time.monotonic)
     status_threshold_seconds: float = 300.0
-    confirm_threshold_seconds: float = 600.0
+    confirm_threshold_seconds: float = 1800.0
     status_emitted: bool = False
     confirm_emitted: bool = False
+    latest_action: str = ""
 
     @classmethod
     def for_subagent(cls) -> WallClockGuardState:
-        return cls(status_threshold_seconds=90.0, confirm_threshold_seconds=180.0)
+        return cls(status_threshold_seconds=300.0, confirm_threshold_seconds=900.0)
 
     def record_check(
         self,
@@ -246,6 +247,8 @@ class WallClockGuardState(BaseModel):
     ) -> tuple[GuardGuidance | None, GuardDecision]:
         current = time.monotonic() if now is None else now
         elapsed = max(0.0, current - self.started_at)
+        if latest_action:
+            self.latest_action = latest_action
         status = None
         if elapsed >= self.status_threshold_seconds and not self.status_emitted:
             self.status_emitted = True

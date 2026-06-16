@@ -22,6 +22,7 @@ class LoadSkillsInput(BaseModel):
         max_length=_MAX_SKILL_NAMES,
         description=(
             "Skill names to load. Use normalized skill names only, not paths. "
+            "Normalized names are lowercase, hyphen-separated (e.g. 'react-patterns'). "
             f"At most {_MAX_SKILL_NAMES} names."
         ),
     )

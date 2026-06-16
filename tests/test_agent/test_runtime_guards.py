@@ -274,15 +274,15 @@ def test_no_progress_guard_counts_repeated_same_evidence_as_stalled():
 def test_wall_clock_guard_has_subagent_preset():
     guard = WallClockGuardState.for_subagent()
 
-    assert guard.status_threshold_seconds == 90.0
-    assert guard.confirm_threshold_seconds == 180.0
+    assert guard.status_threshold_seconds == 300.0
+    assert guard.confirm_threshold_seconds == 900.0
 
 
 def test_wall_clock_guard_emits_status_once_then_terminates():
     guard = WallClockGuardState(
         started_at=100.0,
         status_threshold_seconds=300.0,
-        confirm_threshold_seconds=600.0,
+        confirm_threshold_seconds=1800.0,
     )
 
     status, decision = guard.record_check(now=399.0, label="voidx", latest_action="grep src/")
@@ -299,10 +299,10 @@ def test_wall_clock_guard_emits_status_once_then_terminates():
     assert status is None
     assert decision.action == "allow"
 
-    status, decision = guard.record_check(now=701.0, label="voidx", latest_action="read tests/")
+    status, decision = guard.record_check(now=1901.0, label="voidx", latest_action="read tests/")
     assert status is None
     assert decision.action == "terminate"
-    assert "10m01s" in decision.message
+    assert "30m01s" in decision.message
 
 
 def test_error_kind_from_result_does_not_match_generic_exception_text():

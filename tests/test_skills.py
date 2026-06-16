@@ -271,18 +271,6 @@ def test_skill_body_parse_cache_keeps_activation_dynamic(tmp_path, monkeypatch):
     assert len(calls) == first_call_count
 
 
-def test_workflow_service_selects_builtin_workflow_triggers(tmp_path):
-    service = WorkflowService()
-
-    debug = service.select("pytest failed with a traceback")
-    tdd = service.select("implement this feature")
-    feedback = service.select("review feedback says this endpoint is overbuilt")
-
-    assert [match.name for match in debug] == ["debug"]
-    assert [match.name for match in tdd] == ["tdd"]
-    assert [match.name for match in feedback] == ["feedback"]
-
-
 def test_workflow_service_select_from_start_returns_single_match():
     service = WorkflowService()
 
@@ -351,45 +339,6 @@ def test_workflow_render_expands_execution_contract():
     assert "### Decision Rules" not in rendered
 
 
-def test_workflow_service_selects_workflow_policy_by_role_and_intent(tmp_path):
-    service = WorkflowService()
-
-    implement = service.select(
-        "对，可以",
-        agent="implement",
-        task_intent="coding",
-        goal_type="feature",
-    )
-    debug = service.select(
-        "fix this bug",
-        agent="voidx",
-        task_intent="coding",
-        goal_type="bugfix",
-    )
-    plan = service.select(
-        "给个方案",
-        agent="plan",
-        task_intent="coding",
-        goal_type="design",
-        interaction_mode="plan",
-    )
-
-    assert [match.name for match in implement] == [
-        "brainstorm",
-        "tdd",
-        "verify",
-    ]
-    assert [match.name for match in debug] == [
-        "debug",
-        "tdd",
-        "verify",
-    ]
-    assert "goal:feature" in implement[0].reason
-    assert "goal:bugfix" in debug[0].reason
-    assert [match.name for match in plan] == ["brainstorm"]
-    assert plan[0].reason == "goal:design"
-
-
 def test_brainstorm_exit_rules_make_small_change_precedence_explicit(tmp_path):
     edges = DEFAULT_WORKFLOW_DAG.edges_from("brainstorm")
 
@@ -406,36 +355,6 @@ def test_brainstorm_exit_rules_make_small_change_precedence_explicit(tmp_path):
     assert all("detailed spec" in item for item in skip_descriptions)
 
 
-def test_workflow_service_activates_requesting_code_review_for_review_intent(tmp_path):
-    service = WorkflowService()
-
-    matches = service.select(
-        "review 一下代码",
-        agent="voidx",
-        task_intent="coding",
-        goal_type="review",
-        scopes=("bundled",),
-    )
-
-    assert [match.name for match in matches] == ["review"]
-    assert matches[0].reason == "goal:review"
-
-
-def test_workflow_service_activates_receiving_code_review_for_feedback(tmp_path):
-    service = WorkflowService()
-
-    matches = service.select(
-        "review feedback says this path is unsafe",
-        agent="voidx",
-        task_intent="coding",
-        goal_type="review",
-        scopes=("bundled",),
-    )
-
-    assert [match.name for match in matches] == ["feedback", "review"]
-    assert matches[0].reason == "review feedback"
-
-
 def test_skill_transitions_are_soft_constraints_documented():
     doc = Path(__file__).parent.parent / "docs" / "archive" / "skill-state-machine-2026-06-08.md"
     text = doc.read_text(encoding="utf-8")
@@ -443,100 +362,6 @@ def test_skill_transitions_are_soft_constraints_documented():
     assert "transition 是 **soft constraint**" in text
     assert "runtime 不强制推进依赖链" in text
     assert "transition_to: list[str]" in text
-
-
-def test_workflow_selection_ignores_user_scoped_skills(tmp_path):
-    project_dir = tmp_path / "workspace" / ".voidx" / "skills"
-    _write_skill(
-        project_dir,
-        "tdd",
-        "---\nname: tdd\n---\nProject override body",
-    )
-    service = WorkflowService()
-
-    matches = service.select(
-        "implement this feature",
-        agent="implement",
-        task_intent="coding",
-        goal_type="feature",
-        scopes=("bundled",),
-    )
-
-    assert [match.name for match in matches] == [
-        "brainstorm",
-        "tdd",
-        "verify",
-    ]
-
-
-def test_workflow_service_excludes_active_names_from_selection(tmp_path):
-    service = WorkflowService()
-
-    matches = service.select(
-        "implement this feature",
-        agent="implement",
-        task_intent="coding",
-        goal_type="feature",
-        scopes=("bundled",),
-        exclude_names=("tdd",),
-    )
-
-    assert [match.name for match in matches] == ["brainstorm", "verify"]
-
-
-def test_workflow_service_returns_structured_workflow_runs(tmp_path):
-    service = WorkflowService()
-
-    matches = service.select(
-        "对，可以",
-        agent="implement",
-        task_intent="coding",
-        goal_type="feature",
-    )
-    runs = service.runs_from_matches(
-        matches,
-        goal_type="feature",
-        scope="优化 runtime context",
-    )
-
-    assert [run.name for run in runs] == [
-        "brainstorm",
-        "tdd",
-        "verify",
-    ]
-    assert {run.status for run in runs} == {WorkflowRunStatus.ACTIVE}
-    assert {run.source for run in runs} == {WorkflowActivationSource.WORKFLOW}
-    assert runs[0].goal_type == "feature"
-    assert runs[0].scope == "优化 runtime context"
-    assert runs[0].personas == ["explore"]
-    assert runs[1].personas == ["implement"]
-    assert runs[2].personas == ["review"]
-    assert runs[0].body_hash
-    assert runs[0].transition_to == ["design-doc", "plan", "tdd"]
-    assert runs[1].transition_to == ["verify"]
-    assert runs[2].transition_to == [
-        "tdd",
-        "debug",
-    ]
-
-
-def test_workflow_run_state_from_match_includes_transition_targets(tmp_path):
-    service = WorkflowService()
-
-    match = service.select(
-        "implement this feature",
-        agent="implement",
-        task_intent="coding",
-        goal_type="feature",
-        scopes=("bundled",),
-    )[0]
-
-    run = service.runs_from_matches([match], goal_type="feature")[0]
-
-    assert run.name == "brainstorm"
-    assert run.goal_type == "feature"
-    assert run.personas == ["explore"]
-    assert run.transition_to == ["design-doc", "plan", "tdd"]
 
 
 def test_workflow_state_summary_includes_transition_hint():
@@ -903,22 +728,6 @@ def test_blocked_workflow_can_reactivate_when_condition_clears():
     assert states[0].updated_turn == 7
 
 
-def test_workflow_service_returns_activation_summaries(tmp_path):
-    service = WorkflowService()
-
-    summaries = service.activation_summaries(
-        "对，可以",
-        agent="implement",
-        task_intent="coding",
-        goal_type="feature",
-    )
-
-    assert summaries == [
-        "brainstorm (goal:feature)",
-        "tdd (implement persona)",
-        "verify (implement lifecycle)",
-    ]
-
 
 def test_skill_service_available_summaries_exclude_bundled_body(tmp_path):
     project_dir = tmp_path / "workspace" / ".voidx" / "skills"
@@ -1018,18 +827,20 @@ async def test_workflow_context_message_stays_fixed_with_active_workflow_nodes(t
         agent="voidx",
         task_intent="coding",
         goal_type="inspect",
+        workflow_start="brainstorm",
     )
     implement_context = await instruction.workflow_context_for(
         "Implement the feature",
         agent="implement",
         task_intent="coding",
         goal_type="feature",
+        workflow_start="tdd",
     )
 
     assert inspect_context.content == implement_context.content
     assert inspect_context.active != implement_context.active
+    assert any("brainstorm" in item for item in inspect_context.active)
     assert any("tdd" in item for item in implement_context.active)
-    assert any("verify" in item for item in implement_context.active)
 
 
 def test_skill_service_respects_disabled_before_enabled(tmp_path):

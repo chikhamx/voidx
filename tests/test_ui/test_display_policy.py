@@ -76,10 +76,16 @@ class TestToolDisplayPolicy:
         mode, _ = policy.resolve_display_mode("write", long_output, result_ok=True)
         assert mode == ToolDisplayMode.SUMMARY
 
-    def test_resolve_display_mode_failure_always_show(self):
+    def test_resolve_display_mode_visible_failure_stays_show(self):
         policy = ToolDisplayPolicy(rules=DEFAULT_DISPLAY_RULES)
-        mode, _ = policy.resolve_display_mode("todo", "error", result_ok=False)
+        mode, _ = policy.resolve_display_mode("bash", "error", result_ok=False)
         assert mode == ToolDisplayMode.SHOW
+
+    @pytest.mark.parametrize("tool_name", ["clarify", "plan_checkpoint"])
+    def test_resolve_display_mode_hidden_failure_stays_hidden(self, tool_name):
+        policy = ToolDisplayPolicy(rules=DEFAULT_DISPLAY_RULES)
+        mode, _ = policy.resolve_display_mode(tool_name, "error", result_ok=False)
+        assert mode == ToolDisplayMode.HIDDEN
 
     def test_resolve_display_mode_hidden_stays_hidden(self):
         policy = ToolDisplayPolicy(rules=DEFAULT_DISPLAY_RULES)

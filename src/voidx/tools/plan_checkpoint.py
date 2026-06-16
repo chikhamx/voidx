@@ -44,9 +44,8 @@ class PlanCheckpointTool(BaseTool):
     description = (
         "Present a concrete implementation plan for user approval before changing "
         "files, running write-capable commands, or delegating implementation. The "
-        "user can approve, modify scope, or reject. This is a barrier tool: later "
-        "tool calls in the same response are deferred until the decision updates "
-        "runtime state."
+        "user can approve, modify scope, or reject. Later tool calls in the "
+        "same response are deferred until the decision updates runtime state."
     )
 
     def parameters_schema(self) -> dict:

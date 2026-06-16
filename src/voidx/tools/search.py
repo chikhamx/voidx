@@ -8,6 +8,7 @@ from pathlib import Path
 
 from pydantic import BaseModel, Field
 
+from voidx.logging.tool_log import log_tool_event
 from voidx.tools.base import BaseTool, model_to_json_schema, ToolContext, ToolResult, resolve_safe, SKIP_DIRS, SKIP_SUFFIXES
 
 _logger = logging.getLogger(__name__)
@@ -139,8 +140,8 @@ class GrepTool(BaseTool):
                             break
                 if count >= 100:
                     break
-            except Exception:
-                _logger.debug("Failed to read file during grep: %s", f, exc_info=True)
+            except Exception as exc:
+                log_tool_event("grep_read_failed", tool_name="search", message=f"Failed to read file during grep: {f}: {exc}")
                 continue
 
         if not results:

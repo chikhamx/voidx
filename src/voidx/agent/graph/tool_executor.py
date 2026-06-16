@@ -14,6 +14,7 @@ from langchain_core.messages import AIMessage, RemoveMessage, ToolMessage
 from langgraph.graph.message import REMOVE_ALL_MESSAGES
 
 from voidx.diffing import diff_stat
+from voidx.logging.tool_log import log_tool_event
 from voidx.agent.graph.runtime import current_parent_tool_call_id
 from voidx.agent.graph.runtime_guards import (
     GuardDecision,
@@ -287,12 +288,16 @@ class GraphToolExecutor:
             elif tid == "todo" and ok and todo_state is None:
                 host._ui.ui.warn("Todo update ignored: tool returned malformed metadata.")
 
+            if not ok and initial_display_mode == ToolDisplayMode.HIDDEN:
+                log_tool_event(
+                    "hidden_tool_failure",
+                    tool_name=tid,
+                    message=result.summary or "unknown error",
+                    session_id=host._session.id if host._session else None,
+                )
+
             if host._ui.via_events():
-                if not ok and initial_display_mode == ToolDisplayMode.HIDDEN:
-                    await host._ui.events.emit(WarningAppended(
-                        message=f"{tid} failed: {result.summary or 'unknown error'}",
-                    ))
-                else:
+                if initial_display_mode != ToolDisplayMode.HIDDEN:
                     await host._ui.events.emit(ToolFinished(
                         tool_call_id=tool_event_id,
                         label=_title(tid),
@@ -301,14 +306,10 @@ class GraphToolExecutor:
                         detail=result.summary if result.summary else "",
                     ))
             elif tool_node:
-                if not ok and initial_display_mode == ToolDisplayMode.HIDDEN:
-                    host._ui.ui.warn(f"{tid} failed: {result.summary or 'unknown error'}")
-                else:
+                if initial_display_mode != ToolDisplayMode.HIDDEN:
                     host._ui.dock.finish_tool_node(tool_node, _title(tid), elapsed, ok)
             else:
-                if not ok and initial_display_mode == ToolDisplayMode.HIDDEN:
-                    host._ui.ui.warn(f"{tid} failed: {result.summary or 'unknown error'}")
-                else:
+                if initial_display_mode != ToolDisplayMode.HIDDEN:
                     host._ui.ui.tool_done(tid, elapsed, ok)
 
             # Render diff to terminal (if any)
@@ -333,26 +334,27 @@ class GraphToolExecutor:
             else:
                 output = _agent_result_preview(result.output) if tid == "agent" else result.output
                 resolved_mode, resolved_max = display_policy.resolve_display_mode(tid, output, result_ok=ok)
-                if host._ui.via_events():
-                    await host._ui.events.emit(ToolResultAppended(
-                        tool_call_id=tool_event_id,
-                        text=output,
-                        display_mode=resolved_mode,
-                        summary_max_lines=resolved_max,
-                    ))
-                elif tool_node:
-                    display_output = output
-                    if resolved_mode == ToolDisplayMode.SUMMARY:
-                        lines = display_output.splitlines()
-                        if len(lines) > resolved_max:
-                            display_output = "\n".join(lines[:resolved_max]) + f"\n… +{len(lines) - resolved_max} more lines"
-                    host._ui.dock.append_tool_result(
-                        display_output,
-                        parent=tool_node,
-                        tool_call_id=tool_event_id,
-                    )
-                else:
-                    host._ui.ui.tool_result(output)
+                if resolved_mode != ToolDisplayMode.HIDDEN:
+                    if host._ui.via_events():
+                        await host._ui.events.emit(ToolResultAppended(
+                            tool_call_id=tool_event_id,
+                            text=output,
+                            display_mode=resolved_mode,
+                            summary_max_lines=resolved_max,
+                        ))
+                    elif tool_node:
+                        display_output = output
+                        if resolved_mode == ToolDisplayMode.SUMMARY:
+                            lines = display_output.splitlines()
+                            if len(lines) > resolved_max:
+                                display_output = "\n".join(lines[:resolved_max]) + f"\n… +{len(lines) - resolved_max} more lines"
+                        host._ui.dock.append_tool_result(
+                            display_output,
+                            parent=tool_node,
+                            tool_call_id=tool_event_id,
+                        )
+                    else:
+                        host._ui.ui.tool_result(output)
 
             # maybe_persist before sanitize (persist needs raw content)
             llm_content = maybe_persist_tool_result(
@@ -675,8 +677,6 @@ async def _emit_wall_clock_status(host, guidance: GuardGuidance | None) -> None:
             label=guidance.message,
             stage="working",
         ))
-        return
-    host._ui.ui.warn(guidance.message)
 
 
 def _latest_action_from_summary(summary) -> str:

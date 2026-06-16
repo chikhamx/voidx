@@ -25,6 +25,7 @@ DEFAULT_WORKFLOW_DAG = WorkflowDAG(
         Edge(source="feedback", target="plan", condition="needs_plan", label="feedback requires implementation planning", description="Use when some feedback items have clear requirements but need a structured implementation plan before coding."),
         Edge(source="debug", target="tdd", condition="nontrivial_fix", label="fix requires TDD", description="Use when the fix requires a nontrivial implementation change."),
         Edge(source="debug", target="verify", condition="trivial_fix", label="fix is trivial", description="Use when the fix is small enough to verify directly."),
+        Edge(source="verify", target="review", condition="passed_substantial", label="verification passed with substantial changes", description="Use when verification passes and the change is substantial enough to warrant review."),
     ],
     goal_map=[
         GoalEntry(goal_type="debug", nodes=["debug"], reason="goal:debug"),
@@ -35,6 +36,6 @@ DEFAULT_WORKFLOW_DAG = WorkflowDAG(
         GoalEntry(goal_type="doc", nodes=["design-doc"], reason="goal:doc"),
         GoalEntry(goal_type="review", nodes=["review"], reason="goal:review"),
         GoalEntry(goal_type="chore", nodes=["tdd", "verify"], reason="goal:chore"),
-        GoalEntry(goal_type="inspect", nodes=[], reason="goal:inspect"),
+        GoalEntry(goal_type="inspect", nodes=["brainstorm"], reason="goal:inspect"),
     ],
 )

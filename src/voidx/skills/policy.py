@@ -8,8 +8,6 @@ from __future__ import annotations
 from voidx.workflow.policy import (
     WORKFLOW_PRIORITY,
     WORKFLOW_TRANSITIONS,
-    WorkflowActivation,
-    workflow_activations,
     workflow_denied_tools,
     workflow_edges,
     workflow_exit_summaries,
@@ -19,10 +17,8 @@ from voidx.workflow.policy import (
     workflow_transitions,
 )
 
-WorkflowSkillActivation = WorkflowActivation
 WORKFLOW_SKILL_PRIORITY = WORKFLOW_PRIORITY
 WORKFLOW_SKILL_TRANSITIONS = WORKFLOW_TRANSITIONS
-workflow_skill_activations = workflow_activations
 workflow_skill_denied_tools = workflow_denied_tools
 workflow_skill_edges = workflow_edges
 workflow_skill_exit_summaries = workflow_exit_summaries
@@ -34,8 +30,6 @@ workflow_skill_transitions = workflow_transitions
 __all__ = [
     "WORKFLOW_SKILL_PRIORITY",
     "WORKFLOW_SKILL_TRANSITIONS",
-    "WorkflowSkillActivation",
-    "workflow_skill_activations",
     "workflow_skill_denied_tools",
     "workflow_skill_edges",
     "workflow_skill_exit_summaries",

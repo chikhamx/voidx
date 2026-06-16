@@ -49,8 +49,8 @@ class ClarifyTool(BaseTool):
     description = (
         "Ask the user one structured clarifying question with optional choices. "
         "Use when intent, scope, or requirements are ambiguous and explicit input "
-        "is needed before proceeding. This is a barrier tool: later tool calls in "
-        "the same response are deferred until the answer updates runtime state."
+        "is needed before proceeding. Later tool calls in the same response "
+        "are deferred until the answer updates runtime state."
     )
 
     def parameters_schema(self) -> dict:

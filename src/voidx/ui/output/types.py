@@ -41,3 +41,4 @@ class UiStatus:
     mcp_servers: Callable[[], list[McpServerStatus]] = field(default_factory=lambda: lambda: [])
     mcp_config_path: str = ""
     code_ide: Callable[[], str] = field(default_factory=lambda: lambda: "trae")
+    latest_action: Callable[[], str] = field(default_factory=lambda: lambda: "")

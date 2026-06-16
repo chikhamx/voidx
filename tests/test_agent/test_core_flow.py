@@ -18,6 +18,7 @@ from voidx.agent.agents import (
     AgentDef,
     BASE_SYSTEM_PROMPT,
     VOIDX_PROMPT,
+    child_agent_descriptions_for_llm,
     get_agent,
     get_visible_agents,
     persona_prompt_for_llm,
@@ -45,7 +46,6 @@ from voidx.permission.service import PermissionService
 from voidx.runtime import GoalResolution, GoalSpec, GoalType, IntentResolution, PlanResolution, TaskIntent
 from voidx.skills.context import SKILL_CONTEXT_MARKER, SKILL_TOOL_CONTEXT_MARKER, render_skill_context
 from voidx.workflow.context import WORKFLOW_CONTEXT_MARKER
-from voidx.workflow.policy import workflow_activations
 from voidx.workflow.runtime import WorkflowRunState, WorkflowRunStatus
 from voidx.agent.task_state import TaskState, ToolStatePatch, WorkflowRoute
 from voidx.tools.base import ToolContext, ToolResult
@@ -326,6 +326,25 @@ def test_orchestrator_prompt_mentions_delegation_gate():
     }.issubset(set(schema["required"]))
 
 
+def test_orchestrator_prompt_matches_agent_workflow_schema():
+    agent = get_agent("voidx")
+    assert agent is not None
+
+    prompt = persona_prompt_for_llm(agent, parallel_subagents_enabled=False)
+    child_descriptions = child_agent_descriptions_for_llm()
+    tool_description = AgentTool(runner=None).description
+
+    assert "goal_resolution.plan.join" in prompt
+    assert "goal_resolution.plan.leave" in prompt
+    assert "goal_resolution.goal" in prompt
+    assert "result.format" in prompt
+    assert "Do not provide `persona` or `max_steps`" not in prompt
+    assert "goal_resolution.plan.join" in tool_description
+    assert "result.format" in tool_description
+    assert "persona" not in child_descriptions
+    assert "requested runtime persona" not in child_descriptions
+
+
 def test_voidx_persona_prompt_declares_core_rules():
     assert "Runtime workflow gates take precedence over persona prompts" in VOIDX_PROMPT
     assert "Subagents do not interact with the user" in VOIDX_PROMPT
@@ -453,39 +472,6 @@ def test_brainstorm_workflow_does_not_write_design_doc():
 
     assert "Write design doc" not in actions
     assert not any("docs/specs" in description for description in descriptions)
-
-
-def test_refactor_goal_starts_with_brainstorm_only():
-    activations = workflow_activations(
-        "Refactor workflow gates",
-        task_intent="coding",
-        goal_type="refactor",
-    )
-
-    assert [activation.name for activation in activations] == ["brainstorm"]
-
-
-def test_plan_mode_does_not_pre_activate_plan_gate():
-    activations = workflow_activations(
-        "写 spec 文档",
-        task_intent="coding",
-        goal_type="design",
-        interaction_mode=InteractionMode.PLAN.value,
-    )
-
-    assert [activation.name for activation in activations] == ["brainstorm"]
-
-
-def test_plan_mode_explicit_plan_request_still_starts_with_brainstorm_only():
-    activations = workflow_activations(
-        "直接写实施计划",
-        agent="plan",
-        task_intent="coding",
-        goal_type="design",
-        interaction_mode=InteractionMode.PLAN.value,
-    )
-
-    assert [activation.name for activation in activations] == ["brainstorm"]
 
 
 def test_internal_title_and_compaction_are_not_registered_agents():
@@ -1944,6 +1930,72 @@ async def test_execute_tools_emits_todo_updated_node(tmp_path):
         assert result["todo_state"]["items"] == [{"content": "wire event", "status": "in_progress"}]
         assert graph._task_state.todo_state is not None
         assert graph._task_state.todo_state.items[0].content == "wire event"
+    finally:
+        await ui_events.stop()
+        test_dock.deactivate()
+        test_dock.reset()
+        set_dock(None)
+
+
+@pytest.mark.parametrize("tool_name", ["clarify", "plan_checkpoint"])
+@pytest.mark.asyncio
+async def test_execute_tools_keeps_hidden_tool_failures_out_of_ui(tmp_path, tool_name):
+    graph = _graph(tmp_path)
+
+    class FakeHiddenTool:
+        id = tool_name
+        description = f"fake {tool_name}"
+
+        def parameters_schema(self):
+            return {"type": "object", "properties": {}}
+
+        async def execute(self, args: dict, ctx: ToolContext) -> ToolResult:
+            return ToolResult(output=f"{tool_name} failed internally", metadata={"error": True})
+
+    graph.tools.register(tool_name, FakeHiddenTool(), f"fake {tool_name}", {"type": "object", "properties": {}})
+
+    async def allow_all(
+        tool_calls,
+        plan_mode: bool,
+        session_id: str,
+        interaction_mode=None,
+    ):
+        return tool_calls, []
+
+    graph._authorize_tool_calls = allow_all
+    test_dock = BottomInputDock()
+    set_dock(test_dock)
+    test_dock.begin_capture()
+    ui_events.start(DockEventConsumer(test_dock))
+    try:
+        await ui_events.request(TurnStarted(text="demo"))
+        parent = AIMessage(
+            content="",
+            tool_calls=[{
+                "name": tool_name,
+                "args": {},
+                "id": f"call_{tool_name}",
+                "type": "tool_call",
+            }],
+        )
+
+        result = await graph._execute_tools({
+            "messages": [parent],
+            "workspace": str(tmp_path),
+            "persona": "voidx",
+            "plan_mode": False,
+        })
+        await ui_events.drain()
+
+        visible_nodes = [
+            node
+            for node in _tree_nodes(test_dock.tree.root)
+            if node.node_type in {"warn", "tool_call", "tool_result"}
+        ]
+
+        assert visible_nodes == []
+        assert [message.tool_call_id for message in result["messages"]] == [f"call_{tool_name}"]
+        assert result["messages"][0].content == f"{tool_name} failed internally"
     finally:
         await ui_events.stop()
         test_dock.deactivate()
@@ -3893,6 +3945,7 @@ async def test_implement_subagent_injects_workflow_nodes(tmp_path, monkeypatch):
         goal_type="feature",
         interaction_mode=InteractionMode.AUTO.value,
         scope="Implement the feature",
+        workflow_start="tdd",
     )
 
     output = await subagent_module.run_subagent(
@@ -3937,10 +3990,8 @@ async def test_implement_subagent_injects_workflow_nodes(tmp_path, monkeypatch):
         for message in captured["messages"]
         if isinstance(message, HumanMessage) and "Runtime State" in str(message.content)
     )
-    assert "Workflow Node: brainstorm" in workflow_context
     assert "Workflow Node: tdd" in workflow_context
-    assert "Workflow Node: verify" in workflow_context
-    assert "Active workflow nodes: brainstorm" in rendered_user
+    assert "Active workflow nodes: tdd" in rendered_user
     assert "User language: Chinese (Simplified) [zh-CN]" in rendered_user
     assert "Tone instruction: Be direct and practical. Lead with the answer or action." in rendered_user
 
@@ -4467,6 +4518,7 @@ async def test_subagent_skill_context_matches_orchestrator(tmp_path, monkeypatch
         goal_type="feature",
         interaction_mode=InteractionMode.AUTO.value,
         scope="Implement the feature",
+        workflow_start="tdd",
     )
 
     output = await subagent_module.run_subagent(
@@ -4501,11 +4553,9 @@ async def test_subagent_skill_context_matches_orchestrator(tmp_path, monkeypatch
     ]
     assert len(workflow_context_messages) == 1
     assert len(task_messages) == 1
-    assert "Workflow Node: brainstorm" in workflow_context_messages[0].content
     assert "Workflow Node: tdd" in workflow_context_messages[0].content
-    assert "Workflow Node: verify" in workflow_context_messages[0].content
     assert "Workflow Node: tdd" not in task_messages[0].content
-    assert "Active workflow nodes: brainstorm" in task_messages[0].content
+    assert "Active workflow nodes: tdd" in task_messages[0].content
 
 
 @pytest.mark.asyncio

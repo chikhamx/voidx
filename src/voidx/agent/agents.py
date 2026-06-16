@@ -45,7 +45,7 @@ BASE_SYSTEM_PROMPT = """You are voidx, a coding agent that lives in the terminal
 - Do not expose internal persona names unless the user asks about architecture.
 - Never claim work is complete until it has been verified.
 - When Current Task State lists an active workflow gate, that workflow gate takes precedence
-  over persona prompts, delegation rules, and the decision flow below.
+  over persona prompts and delegation rules.
 
 ## Workflow Runtime
 
@@ -71,9 +71,10 @@ VOIDX_PROMPT = """## Coordination
 
 voidx has five thinking modes (personas). The active persona is shown in Current Task State.
 Switch persona automatically when entering a workflow node.
+- Personas are thinking modes within the same agent, not separate agents. The runtime updates the active persona when workflow nodes change.
 
 - **coordinate**: Default. Assess, plan next steps, coordinate work, delegate when parallel speedup is needed.
-- **explore**: Evidence gathering and codebase search. Search broadly, report with concrete paths and lines.
+- **explore**: Read-only evidence gathering and codebase search. Search broadly, report with concrete paths and lines. Do not write or edit files.
 - **plan**: Design and architecture. Study existing patterns, output structured implementable plans.
 - **implement**: Build and execute. Write minimal precise edits, run tests to verify.
 - **review**: Verify and critique. Check correctness, completeness, style, security. Produce PASS/FAIL verdicts.
@@ -96,7 +97,7 @@ CHILD_RUN_CONSTRAINTS = """- Follow the runtime persona shown in Current Task St
 - Do not interact with the user directly.
 - Do not start another child agent.
 - If a tool call fails, report the error clearly and attempt an alternative approach if one exists.
-- Structure your final output with clear sections: what you found, what you did, and what remains uncertain.
+- Follow the structured result format specified in the agent tool call for your final output.
 - Runtime workflow gates take precedence over persona prompts and delegation rules."""
 
 # Plan mode prompt — injected when plan_mode=True
@@ -162,6 +163,10 @@ def persona_prompt_for_llm(agent: AgentDef, *, parallel_subagents_enabled: bool 
 
 
 _SCHEDULING_COMMON = """- Each child-agent brief must be complete and self-contained.
+- Each `agent` call must provide `description`, `goal_resolution`, and `result`.
+- `goal_resolution.goal` is required. `goal_resolution.plan.join` and
+  `goal_resolution.plan.leave` are required workflow nodes that route the child run.
+- Use `result.format` to define the structured fields the child agent must return.
 - Keep dependent child-agent work sequential: wait for the result before
   delegating follow-up work that depends on it.
 - Batch independent read/search tools when useful; keep dependent tool work
@@ -204,7 +209,7 @@ BUILTIN_AGENTS: dict[str, AgentDef] = {
             "load_doc_template",
             "webfetch", "websearch", "repo_map",
             "lsp",
-            "write", "edit",
+            "write", "edit", "git",
         ],
         can_write=True,
         can_delegate=True,
@@ -244,7 +249,7 @@ def child_run_agent_def(agent: AgentDef) -> AgentDef:
     tools = CHILD_RUN_TOOLS if agent.name == "voidx" else agent.tools
     return agent.model_copy(update={
         "name": "voidx",
-        "description": "Isolated child run of voidx with a requested runtime persona.",
+        "description": "Isolated child run of voidx that follows the supplied workflow route.",
         "when_to_use": "Use for delegated child work that benefits from isolated context.",
         "tools": tools,
         "can_delegate": False,

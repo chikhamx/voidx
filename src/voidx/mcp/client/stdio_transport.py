@@ -7,6 +7,7 @@ import json
 import logging
 
 from voidx.mcp.client.errors import McpConnectionError
+from voidx.logging.tool_log import log_tool_event
 
 log = logging.getLogger(__name__)
 
@@ -110,5 +111,6 @@ class StdioTransportMixin:
                 text = line.decode("utf-8", errors="replace").rstrip()
                 if text:
                     log.debug("[MCP stderr:%s] %s", self._server_name, text)
-        except Exception:
+        except Exception as exc:
+            log_tool_event("mcp_stderr_reader_failed", tool_name=self._server_name, message=str(exc))
             pass

@@ -20,6 +20,7 @@ from voidx.llm.compaction import (
     CompactionService,
 )
 from voidx.llm.service import resolve_protocol
+from voidx.logging.tool_log import log_tool_event
 from voidx.llm.usage import estimate_context_tokens, estimate_message_tokens, extract_token_usage
 from voidx.memory.service import save_context_frame_from_messages
 from voidx.runtime.ui import StatusFinished, StatusUpdated, StreamingRenderer
@@ -436,6 +437,10 @@ class GraphCompactionCoordinator:
             "Compaction agent returned empty text: message_type=%s content_type=%s",
             type(assistant_msg).__name__,
             _content_type_summary(getattr(assistant_msg, "content", None)),
+        )
+        log_tool_event(
+            "compaction_empty_result",
+            message=f"Compaction agent returned empty text: message_type={type(assistant_msg).__name__} content_type={_content_type_summary(getattr(assistant_msg, 'content', None))}",
         )
         return None
 

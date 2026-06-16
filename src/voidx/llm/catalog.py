@@ -18,6 +18,8 @@ from collections.abc import Awaitable, Callable
 
 import httpx
 
+from voidx.logging.tool_log import log_tool_event
+
 _logger = logging.getLogger(__name__)
 
 # ── static fallbacks ───────────────────────────────────────────────────────
@@ -190,8 +192,10 @@ async def list_models(provider: str) -> list[str]:
             models = await fetcher()
             if models:
                 return await _merge_custom(provider, models)
-        except (httpx.HTTPError, asyncio.TimeoutError, ValueError):
+        except (httpx.HTTPError, asyncio.TimeoutError, ValueError) as exc:
             _logger.debug("Failed to fetch models for %s", provider, exc_info=True)
-        except Exception:
+            log_tool_event("catalog_fetch_failed", tool_name="catalog", message=f"Failed to fetch models for {provider}: {exc}")
+        except Exception as exc:
             _logger.debug("Unexpected error fetching models for %s", provider, exc_info=True)
+            log_tool_event("catalog_fetch_unexpected", tool_name="catalog", message=f"Unexpected error fetching models for {provider}: {exc}")
     return await _merge_custom(provider, STATIC_MODELS.get(provider, []))

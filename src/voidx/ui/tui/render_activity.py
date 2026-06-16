@@ -57,6 +57,9 @@ class _ActivityRendererMixin:
         token_text = self._turn_token_text()
         if token_text:
             details.append(token_text)
+        latest = self._latest_action_text()
+        if latest:
+            details.append(latest)
         return f"{glyph} {verb} ({' '.join(details)})"
 
     def _turn_token_text(self) -> str:
@@ -68,6 +71,15 @@ class _ActivityRendererMixin:
         if turn_in <= 0 and turn_out <= 0:
             return ""
         return f"↑{format_token_count(turn_in)} ↓{format_token_count(turn_out)}"
+
+    def _latest_action_text(self) -> str:
+        fn = getattr(self.status, "latest_action", None)
+        if fn is None:
+            return ""
+        action = fn()
+        if not action:
+            return ""
+        return f"→{action}"
 
     @staticmethod
     def _format_elapsed(seconds: int) -> str:

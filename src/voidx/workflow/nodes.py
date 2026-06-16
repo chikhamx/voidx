@@ -7,17 +7,17 @@ from voidx.workflow.schema import NodeGate, NodeIO, NodeSubworkflow, WorkflowNod
 
 BRAINSTORMING = WorkflowNode(
     name="brainstorm",
-    goal="确认需求和设计方案，获得用户批准",
+    goal="Confirm requirements and design, get user approval",
     description=(
         "Use before creating features, building components, or modifying behavior. "
         "Explores intent, requirements, and design before implementation."
     ),
     persona="explore",
     io=NodeIO(
-        input={"user_request": "用户原始请求"},
+        input={"user_request": "User's original request"},
         output={
-            "design": "批准的设计方案或确认的变更范围",
-            "scope": "确认的变更边界",
+            "design": "Approved design or confirmed change scope",
+            "scope": "Confirmed change boundaries",
         },
     ),
     tools=[
@@ -55,7 +55,7 @@ BRAINSTORMING = WorkflowNode(
 
 WRITING_DESIGN_DOCS = WorkflowNode(
     name="design-doc",
-    goal="产出通过读者测试的结构化文档",
+    goal="Produce a structured document that passes the reader test",
     description=(
         "Use when writing technical design docs, PRDs, RFCs, API docs, READMEs, "
         "or changelogs. Covers both design-phase and post-implementation documentation."
@@ -63,12 +63,12 @@ WRITING_DESIGN_DOCS = WorkflowNode(
     persona="plan",
     io=NodeIO(
         input={
-            "design": "批准的设计方案",
-            "doc_type": "文档类型(prd/tech-design/rfc/api-doc/readme)",
+            "design": "Approved design",
+            "doc_type": "Document type (prd/tech-design/rfc/api-doc/readme)",
         },
         output={
-            "doc_path": "文档保存路径",
-            "doc_type": "实际文档类型",
+            "doc_path": "Document save path",
+            "doc_type": "Actual document type",
         },
     ),
     tools=[
@@ -105,18 +105,18 @@ WRITING_DESIGN_DOCS = WorkflowNode(
 
 WRITING_PLANS = WorkflowNode(
     name="plan",
-    goal="产出可执行的实施计划，获得用户批准",
+    goal="Produce an executable implementation plan, get user approval",
     description="Use when turning a spec, requirements, or agreed design into an implementation plan before editing code.",
     persona="plan",
     io=NodeIO(
         input={
-            "spec": "设计文档或需求规格",
-            "scope": "变更范围",
+            "spec": "Design document or requirements spec",
+            "scope": "Change scope",
         },
         output={
-            "plan": "实施计划，含任务列表、文件结构、测试定义",
-            "tasks": "有序任务清单",
-            "test_commands": "相关验证命令",
+            "plan": "Implementation plan with task list, file structure, test definitions",
+            "tasks": "Ordered task list",
+            "test_commands": "Related verification commands",
         },
     ),
     tools=[
@@ -132,7 +132,7 @@ WRITING_PLANS = WorkflowNode(
     gate=NodeGate(
         denied_tools=("write", "edit"),
         allowed_paths=("docs/specs/**", "docs/design/**"),
-        description="Do not start implementation until the plan is approved. The plan must be executable with exact paths and commands.",
+        description="Do not write implementation code until the plan is approved. Write/edit is allowed only under docs/specs/ and docs/design/ for plan documents.",
         required_before_transition="plan is executable and approved",
     ),
     workflow=[
@@ -154,18 +154,18 @@ WRITING_PLANS = WorkflowNode(
 
 TEST_DRIVEN_DEVELOPMENT = WorkflowNode(
     name="tdd",
-    goal="按 TDD 循环完成实现，测试全绿",
+    goal="Complete implementation via TDD cycle, all tests green",
     description="Use before implementing features, bug fixes, refactors, or behavior changes.",
     persona="implement",
     io=NodeIO(
         input={
-            "plan": "实施计划",
-            "task": "当前要实现的任务",
+            "plan": "Implementation plan",
+            "task": "Current task to implement",
         },
         output={
-            "files_changed": "修改的文件列表",
-            "tests_written": "编写的测试列表",
-            "test_result": "测试运行结果",
+            "files_changed": "List of changed files",
+            "tests_written": "List of tests written",
+            "test_result": "Test run result",
         },
     ),
     tools=[
@@ -212,19 +212,19 @@ TEST_DRIVEN_DEVELOPMENT = WorkflowNode(
 
 VERIFICATION_BEFORE_COMPLETION = WorkflowNode(
     name="verify",
-    goal="用可复现的证据证明变更达到预期状态",
+    goal="Prove changes reach expected state with reproducible evidence",
     description="Use before claiming work is complete, fixed, passing, ready, or safe to merge.",
     persona="review",
     io=NodeIO(
         input={
-            "claim": "声称完成的状态(done/fixed/passing)",
-            "files_changed": "变更文件",
-            "test_commands": "相关测试命令",
+            "claim": "Claimed completion status (done/fixed/passing)",
+            "files_changed": "Changed files",
+            "test_commands": "Related test commands",
         },
         output={
-            "evidence": "验证证据，包含命令和输出",
-            "verified": "是否通过",
-            "scope": "变更影响范围(substantial/routine)",
+            "evidence": "Verification evidence including commands and output",
+            "verified": "Whether verified",
+            "scope": "Change impact scope (substantial/routine)",
         },
     ),
     tools=[
@@ -247,7 +247,6 @@ VERIFICATION_BEFORE_COMPLETION = WorkflowNode(
     ],
     rules=[
         "Evidence before completion claims.",
-        "Use done instead of passed_substantial when verification passed but the change is small or routine.",
         "Do not rely on earlier runs or partial checks.",
     ],
 )
@@ -255,18 +254,18 @@ VERIFICATION_BEFORE_COMPLETION = WorkflowNode(
 
 REQUESTING_CODE_REVIEW = WorkflowNode(
     name="review",
-    goal="发起结构化的代码审查请求并收集 verdict",
+    goal="Initiate structured code review request and collect verdict",
     description="Use after substantial implementation work, complex bug fixes, or before merging to request a focused review.",
     persona="review",
     io=NodeIO(
         input={
-            "files_changed": "变更文件",
-            "verification_evidence": "验证证据",
-            "risks": "风险点",
+            "files_changed": "Changed files",
+            "verification_evidence": "Verification evidence",
+            "risks": "Risk points",
         },
         output={
-            "review_brief": "审查简报",
-            "review_result": "审查结果(PASS/FAIL/NEEDS_CHANGE)",
+            "review_brief": "Review brief",
+            "review_result": "Review result (PASS/FAIL)",
         },
     ),
     tools=[
@@ -303,18 +302,18 @@ REQUESTING_CODE_REVIEW = WorkflowNode(
 
 RECEIVING_CODE_REVIEW = WorkflowNode(
     name="feedback",
-    goal="验证并实施有效的审查反馈",
+    goal="Verify and implement valid review feedback",
     description="Use when receiving review feedback, requested optimizations, or reviewer comments before implementing them.",
     persona="implement",
     io=NodeIO(
         input={
-            "feedback": "审查反馈内容",
-            "source": "反馈来源(human/external)",
+            "feedback": "Review feedback content",
+            "source": "Feedback source (human/external)",
         },
         output={
-            "changes_made": "根据反馈做的变更",
-            "feedback_status": "每条反馈的处理状态(accepted/rejected/deferred)",
-            "deferred_items": "需要设计、分析或规划而非直接实施的反馈项",
+            "changes_made": "Changes made based on feedback",
+            "feedback_status": "Per-item feedback status (accepted/rejected/deferred)",
+            "deferred_items": "Items needing design/analysis/planning rather than direct implementation",
         },
     ),
     tools=[
@@ -336,7 +335,7 @@ RECEIVING_CODE_REVIEW = WorkflowNode(
         WorkflowStep(order=3, action="Check code and tests"),
         WorkflowStep(order=4, action="Decide correctness", description="For this codebase."),
         WorkflowStep(order=5, action="Push back when wrong", description="With technical reasons."),
-        WorkflowStep(order=6, action="Implement valid feedback", description="One coherent item at a time. If an item requires design exploration or impact analysis rather than direct code change, defer it and route via needs_design. If an item has clear requirements but needs a structured implementation plan, route via needs_plan."),
+        WorkflowStep(order=6, action="Implement valid feedback", description="One coherent item at a time. Route items needing design to needs_design; items needing planning to needs_plan."),
         WorkflowStep(order=7, action="Verify", description="Run targeted tests or commands before reporting."),
     ],
     rules=[
@@ -351,19 +350,19 @@ RECEIVING_CODE_REVIEW = WorkflowNode(
 
 SYSTEMATIC_DEBUGGING = WorkflowNode(
     name="debug",
-    goal="定位根因并修复，验证修复有效",
+    goal="Locate root cause and confirm fix direction",
     description="Use when debugging bugs, failed tests, build failures, tracebacks, crashes, or unexpected behavior.",
     persona="explore",
     io=NodeIO(
         input={
-            "error": "错误信息或异常表现",
-            "scenario": "问题发生的场景和上下文",
-            "reproduction": "复现步骤",
+            "error": "Error message or abnormal behavior",
+            "scenario": "Scenario and context where the problem occurs",
+            "reproduction": "Reproduction steps",
         },
         output={
-            "root_cause": "根因描述",
-            "fix": "修复内容",
-            "fix_type": "修复类型(trivial/nontrivial)",
+            "root_cause": "Root cause description",
+            "fix_direction": "Fix direction description",
+            "fix_type": "Fix type (trivial/nontrivial)",
         },
     ),
     tools=[
@@ -391,11 +390,9 @@ SYSTEMATIC_DEBUGGING = WorkflowNode(
             WorkflowStep(order=2, action="Read the full error and reproduce consistently"),
             WorkflowStep(order=3, action="Find working examples and compare differences"),
             WorkflowStep(order=4, action="Form one concrete hypothesis"),
-            WorkflowStep(order=5, action="Test the hypothesis minimally"),
-            WorkflowStep(order=6, action="Implement the smallest supported fix"),
-            WorkflowStep(order=7, action="Run reproduction and broader tests"),
+            WorkflowStep(order=5, action="Test the hypothesis minimally", description="Read-only: inspect logs, check config, compare outputs."),
         ],
-        exit_condition="root cause confirmed and original symptom no longer reproduces",
+        exit_condition="root cause confirmed and fix direction is known",
     ),
     rules=[
         "Find the root cause before changing code.",

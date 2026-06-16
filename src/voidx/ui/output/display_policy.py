@@ -54,6 +54,9 @@ class ToolDisplayPolicy(BaseModel):
         auto_lines = rule.auto_summary_lines
         auto_chars = rule.auto_summary_chars
 
+        if mode == ToolDisplayMode.HIDDEN:
+            return mode, summary_lines
+
         if not result_ok:
             return ToolDisplayMode.SHOW, summary_lines
 

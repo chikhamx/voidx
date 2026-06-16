@@ -8,6 +8,7 @@ from html.parser import HTMLParser
 
 from pydantic import BaseModel, Field
 
+from voidx.logging.tool_log import log_tool_event
 from voidx.tools.base import BaseTool, model_to_json_schema, ToolContext, ToolResult
 from voidx.tools.web_content import (
     WEB_TOOL_CACHE,
@@ -86,8 +87,8 @@ def _parse_duckduckgo_html(html: str) -> list[dict[str, str]]:
     parser = _DDGResultParser()
     try:
         parser.feed(html)
-    except Exception:
-        _logger.debug("DuckDuckGo HTML parse failed", exc_info=True)
+    except Exception as exc:
+        log_tool_event("websearch_parse_failed", tool_name="websearch", message=f"DuckDuckGo HTML parse failed: {exc}")
     return parser.results()
 
 

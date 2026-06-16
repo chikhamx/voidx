@@ -13,6 +13,7 @@ from urllib.parse import quote
 import httpx
 
 from voidx import __version__
+from voidx.logging.tool_log import log_tool_event
 
 logger = logging.getLogger(__name__)
 
@@ -66,7 +67,7 @@ async def check_for_update(current: str = __version__) -> UpdateCheckResult:
     try:
         latest = await fetch_latest_version()
     except Exception as exc:
-        logger.debug("Update check failed", exc_info=True)
+        log_tool_event("update_check_failed", tool_name="selfupdate", message=f"Update check failed: {exc}")
         return UpdateCheckResult(
             current_version=current,
             latest_version=None,

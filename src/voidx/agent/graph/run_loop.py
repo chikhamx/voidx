@@ -25,6 +25,7 @@ from voidx.runtime.ui import (
     emit_web_gateway_bootstrap,
 )
 from voidx.agent.task_state import goal_label, goal_type_value
+from voidx.logging.tool_log import log_tool_event
 
 if TYPE_CHECKING:
     from voidx.agent.graph.contracts import GraphRunLoopHost
@@ -130,8 +131,8 @@ class GraphRunLoopMixin(GraphTurnMixin, GraphSessionMixin, GraphTranscriptMixin)
                 )
         except asyncio.CancelledError:
             raise
-        except Exception:
-            logger.debug("Startup update check failed", exc_info=True)
+        except Exception as exc:
+            log_tool_event("startup_update_check_failed", message=f"Startup update check failed: {exc}")
 
     async def run(
         self: GraphRunLoopHost,
@@ -213,6 +214,11 @@ class GraphRunLoopMixin(GraphTurnMixin, GraphSessionMixin, GraphTranscriptMixin)
                     self._settings.get_code_ide().value
                     if self._settings is not None
                     else "trae"
+                ),
+                latest_action=lambda: getattr(
+                    getattr(getattr(self, "_runtime_guards", None), "wall_clock", None),
+                    "latest_action",
+                    "",
                 ),
             ),
             COMMANDS,

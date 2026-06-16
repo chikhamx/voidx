@@ -14,6 +14,7 @@ from pathlib import Path
 
 from pydantic import BaseModel, Field
 
+from voidx.logging.tool_log import log_tool_event
 from voidx.tools.base import BaseTool, model_to_json_schema, ToolContext, ToolResult, resolve_safe, SKIP_DIRS, SKIP_SUFFIXES
 
 OUTPUT_TOKEN_BUDGET = 4000
@@ -168,8 +169,8 @@ def _extract_top_level(f: Path) -> list[str]:
 def _extract_python_symbols(f: Path, top_level_only: bool = False) -> list[str]:
     try:
         text = f.read_text(encoding="utf-8", errors="replace")
-    except Exception:
-        _logger.debug("Failed to extract Python symbols from %s", f, exc_info=True)
+    except Exception as exc:
+        log_tool_event("repomap_extract_failed", tool_name="repomap", message=f"Failed to extract Python symbols from {f}: {exc}")
         return []
 
     lines: list[str] = []

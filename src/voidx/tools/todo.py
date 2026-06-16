@@ -29,7 +29,7 @@ class TodoWriteTool(BaseTool):
     id = "todo"
     description = (
         "Create and manage a task list. Each call REPLACES the entire list — "
-        "pass the full updated list. Items:[{id, status, content}] "
+        "pass the full updated list. Items:[{status, content}] "
         "Status: pending → in_progress → completed."
     )
 

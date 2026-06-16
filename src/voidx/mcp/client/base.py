@@ -13,6 +13,7 @@ import httpx
 
 from voidx.config import McpServerConfig
 from voidx.mcp.client.errors import McpConnectionError, McpProtocolError, McpTimeoutError
+from voidx.logging.tool_log import log_tool_event
 from voidx.mcp.client.http_transport import StreamableHttpTransportMixin
 from voidx.mcp.client.sse_transport import SseTransportMixin
 from voidx.mcp.client.stdio_transport import StdioTransportMixin
@@ -140,7 +141,8 @@ class McpClient(StreamableHttpTransportMixin, SseTransportMixin, StdioTransportM
                 line = json.dumps(notif.to_dict(), ensure_ascii=False) + "\n"
                 self._writer.write(line.encode("utf-8"))
                 await asyncio.wait_for(self._writer.drain(), timeout=5.0)
-            except Exception:
+            except Exception as exc:
+                log_tool_event("mcp_shutdown_notification_failed", tool_name=self._server_name, message=str(exc))
                 pass
         await self._cleanup()
         log.info("MCP client '%s' stopped", self._server_name)

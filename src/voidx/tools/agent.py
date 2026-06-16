@@ -3,7 +3,7 @@
 from __future__ import annotations
 
 from collections.abc import Callable, Iterable
-from typing import Any, Literal
+from typing import Any
 
 from pydantic import BaseModel, Field, ValidationError
 
@@ -47,13 +47,14 @@ class AgentInput(BaseModel):
 class AgentTool(BaseTool):
     id = "agent"
     description = (
-        "Start an isolated child agent for a delegated task. Use this ONLY when "
+        "Start an isolated child agent for a delegated task. Use ONLY when "
         "you need to run multiple independent tasks in parallel, or the user "
         "explicitly asks for a child agent. Do not use for single-file reads, "
-        "simple searches, or straightforward tasks you can do directly.\n\n"
-        "IMPORTANT: Provide a complete, self-contained task description. "
-        "The child agent receives your task description, its own instructions, "
-        "and runtime context, but not caller conversation history."
+        "simple searches, or straightforward tasks you can do directly. "
+        "Each call must include goal_resolution.goal, goal_resolution.plan.join, "
+        "goal_resolution.plan.leave, and result.format. "
+        "The child agent receives your task description and runtime context, "
+        "but not caller conversation history."
     )
 
     def __init__(

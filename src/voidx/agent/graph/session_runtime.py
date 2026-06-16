@@ -21,6 +21,7 @@ from voidx.memory.service import (
     update_title,
     update_title_if_current,
 )
+from voidx.logging.tool_log import log_tool_event
 from voidx.runtime.ui import transcript_rows_to_tree, tree_to_transcript_rows
 from voidx.agent.tool_result_storage import cleanup_session_results
 
@@ -148,7 +149,8 @@ class GraphSessionRuntime:
             task.result()
         except asyncio.CancelledError:
             return
-        except Exception:
+        except Exception as exc:
+            log_tool_event("session_title_task_failed", message=str(exc))
             return
 
     async def generate_session_title(
@@ -167,12 +169,11 @@ class GraphSessionRuntime:
             title = await run_agent(first_user_text)
         except asyncio.CancelledError:
             raise
-        except Exception:
+        except Exception as exc:
+            log_tool_event("session_title_generation_failed", message=str(exc))
             return
 
         if not title:
-            return
-        if not can_apply(session_id, generation_id, temporary_title):
             return
 
         applied = await update_title_if_current(session_id, temporary_title, title)
@@ -239,7 +240,8 @@ class GraphSessionRuntime:
             await delete_session(session.id)
             host._session = None
             host._session_msg_cache = []
-        except Exception:
+        except Exception as exc:
+            log_tool_event("session_cleanup_failed", message=str(exc))
             return
 
 

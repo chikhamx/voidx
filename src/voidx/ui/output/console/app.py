@@ -7,6 +7,7 @@ from rich.markdown import Markdown
 from rich.panel import Panel
 from rich.text import Text
 
+from voidx.logging.tool_log import log_tool_event
 from voidx.ui.output.console.formatting import (
     _capture_ansi,
     _done_spin,
@@ -225,6 +226,7 @@ class VoidConsole:
         self.print(text)
 
     def error(self, message: str) -> None:
+        log_tool_event("ui_error", message=message)
         if via_events():
             ui_events.emit_direct(ErrorAppended(message=message))
             return
@@ -234,6 +236,7 @@ class VoidConsole:
         self._console.print(Panel(message, border_style="red", title="error"))
 
     def warn(self, message: str) -> None:
+        log_tool_event("ui_warn", message=message)
         self.print(f"[yellow]! {message}[/yellow]")
 
     def sep(self) -> None:
