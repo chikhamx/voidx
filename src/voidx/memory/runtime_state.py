@@ -70,10 +70,10 @@ async def save_session_runtime_state(
         """INSERT INTO session_runtime_state (
                session_id, interaction_mode, current_intent, previous_intent,
                current_goal_json, workflow_route_json, workflow_runs_json,
-               recent_user_texts_json, todo_state_json, compaction_summary,
+               todo_state_json, compaction_summary,
                session_time, updated_at
            )
-           VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+           VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
            ON CONFLICT(session_id) DO UPDATE SET
                interaction_mode = excluded.interaction_mode,
                current_intent = excluded.current_intent,
@@ -81,7 +81,6 @@ async def save_session_runtime_state(
                current_goal_json = excluded.current_goal_json,
                workflow_route_json = excluded.workflow_route_json,
                workflow_runs_json = excluded.workflow_runs_json,
-               recent_user_texts_json = excluded.recent_user_texts_json,
                todo_state_json = excluded.todo_state_json,
                compaction_summary = excluded.compaction_summary,
                session_time = excluded.session_time,
@@ -94,7 +93,6 @@ async def save_session_runtime_state(
             _dump_goal(task_state.current_goal),
             _dump_workflow_route(task_state.workflow_route),
             _dump_workflow_runs(task_state.workflow_runs),
-            _dump_string_list(task_state.recent_user_texts),
             _dump_todo_state(task_state.todo_state),
             compaction_summary,
             session_time,
@@ -132,7 +130,6 @@ async def load_task_state_with_session_time(session_id: str) -> tuple[TaskState,
             current_goal=_load_goal(row["current_goal_json"]),
             workflow_route=_load_workflow_route(row["workflow_route_json"]),
             workflow_runs=_load_workflow_runs(row["workflow_runs_json"]),
-            recent_user_texts=_load_string_list(row["recent_user_texts_json"])[-2:],
             todo_state=_load_todo_state(row["todo_state_json"]),
         ),
         row["session_time"] or "",
@@ -172,10 +169,6 @@ def _dump_todo_state(todo_state: TodoRunState | None) -> str:
     if todo_state is None or not todo_state.items:
         return ""
     return json.dumps(todo_state.model_dump(mode="json"), ensure_ascii=False)
-
-
-def _dump_string_list(items: list[str]) -> str:
-    return json.dumps([item for item in items if isinstance(item, str)][-2:], ensure_ascii=False)
 
 
 def _load_goal(raw: str) -> GoalSpec | None:
@@ -345,18 +338,6 @@ async def _runtime_snapshot_deleted(session_id: str, message_id: int) -> bool:
         if mode == "message" and message_id == int(record.get("message_id") or -1):
             return True
     return False
-
-
-def _load_string_list(raw: str) -> list[str]:
-    if not raw:
-        return []
-    try:
-        data = json.loads(raw)
-    except json.JSONDecodeError:
-        return []
-    if not isinstance(data, list):
-        return []
-    return [item for item in data if isinstance(item, str)]
 
 
 async def clear_runtime_state(session_id: str) -> None:

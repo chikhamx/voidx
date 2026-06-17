@@ -32,11 +32,11 @@ BASIC_RULES: Ruleset = [
     Rule(permission="websearch", pattern="*", action="allow"),
     Rule(permission="todo", pattern="*", action="allow"),
     Rule(permission="clarify", pattern="*", action="allow"),
-    Rule(permission="plan_checkpoint", pattern="*", action="allow"),
+    Rule(permission="checkpoint", pattern="*", action="allow"),
     Rule(permission="advance_workflow", pattern="*", action="allow"),
-    Rule(permission="compact_context", pattern="*", action="allow"),
+    Rule(permission="compact", pattern="*", action="allow"),
     Rule(permission="task_status", pattern="*", action="allow"),
-    Rule(permission="load_skills", pattern="*", action="allow"),
+    Rule(permission="skill", pattern="*", action="allow"),
     Rule(permission="repo_map", pattern="*", action="allow"),
     Rule(permission="lsp", pattern="*", action="allow"),
     Rule(permission="agent", pattern="voidx", action="allow"),
@@ -103,7 +103,7 @@ def repair_tool_name(tool: str) -> str:
         "LspDiagnostics": "lsp", "LspSymbols": "lsp",
         "LspDefinition": "lsp", "LspReferences": "lsp",
         "AdvanceWorkflow": "advance_workflow",
-        "CompactContext": "compact_context",
+        "CompactContext": "compact",
     }
     return tool_map.get(tool, tool_map.get(tool.lower(), tool))
 
@@ -131,6 +131,9 @@ def delegated_persona(args: dict) -> str:
     explicit = str(args.get("persona") or "")
     if explicit:
         return explicit
+    mode = str(args.get("mode") or "").strip().lower()
+    if mode == "implement":
+        return "implement"
     goal_resolution = args.get("goal_resolution")
     if not isinstance(goal_resolution, dict):
         return ""
@@ -351,7 +354,7 @@ def _is_read_only_git_ref_command(subcommand: str, args: list[str]) -> bool:
 def capability_for_tool(tool: str, args: dict) -> PermissionCapability:
     if tool in {
         "read", "glob", "grep", "webfetch", "websearch", "todo", "task_status",
-        "load_skills", "advance_workflow", "compact_context",
+        "skill", "advance_workflow", "compact",
         "repo_map", "lsp",
     }:
         return PermissionCapability.READ_TOOLS

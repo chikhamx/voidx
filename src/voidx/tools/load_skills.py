@@ -36,7 +36,7 @@ class LoadSkillsInput(BaseModel):
 
 
 class LoadSkillsTool(BaseTool):
-    id = "load_skills"
+    id = "skill"
     description = (
         "Load enabled skill instructions by normalized skill name. Use this when "
         "a project/global skill listed in Available Skills or explicitly named "
@@ -112,7 +112,7 @@ class LoadSkillsTool(BaseTool):
         if len(output) > _MAX_OUTPUT_CHARS:
             output = (
                 output[:_MAX_OUTPUT_CHARS].rstrip()
-                + "\n\n[load_skills output truncated: total skill body limit reached]"
+                + "\n\n[skill output truncated: total skill body limit reached]"
             )
             truncated = True
 
@@ -193,7 +193,7 @@ def _error_result(
             + ", ".join(bundled_blocked)
         )
     return ToolResult(
-        title="load_skills failed",
+        title="skill failed",
         output="\n".join(parts),
         metadata={
             "error": True,

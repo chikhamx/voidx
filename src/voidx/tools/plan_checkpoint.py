@@ -40,7 +40,7 @@ class PlanCheckpointResult(BaseModel):
 
 
 class PlanCheckpointTool(BaseTool):
-    id = "plan_checkpoint"
+    id = "checkpoint"
     description = (
         "Present a concrete implementation plan for user approval before changing "
         "files, running write-capable commands, or delegating implementation. The "

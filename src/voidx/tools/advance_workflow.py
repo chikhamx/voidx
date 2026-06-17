@@ -17,6 +17,7 @@ from voidx.workflow.service import (
     workflow_terminal_description,
 )
 from voidx.workflow.types import (
+    WorkflowEvidence,
     WorkflowRunState,
     WorkflowRunStatus,
     WorkflowStateEvent,
@@ -115,7 +116,11 @@ class AdvanceWorkflowTool(BaseTool):
             reason=evidence,
             condition=condition,
         )
-        updated = advance_workflow_states(runs, [event])
+        updated = (
+            _satisfy_explicit_terminal_run(runs, event)
+            if workflow and is_workflow_terminal_condition(condition)
+            else advance_workflow_states(runs, [event])
+        )
         patch = ToolStatePatch(workflow_runs=updated, persona=_active_persona(updated))
         payload = {
             "from": selected.name,
@@ -153,6 +158,71 @@ def _current_runs(ctx: ToolContext) -> list[WorkflowRunState]:
         for name in ctx.active_workflow_names
         if name.strip()
     ]
+
+
+def _satisfy_explicit_terminal_run(
+    runs: list[WorkflowRunState],
+    event: WorkflowStateEvent,
+) -> list[WorkflowRunState]:
+    updated = [run.model_copy(deep=True) for run in runs]
+    for run in updated:
+        if run.name != event.workflow:
+            continue
+        run.status = WorkflowRunStatus.SATISFIED
+        run.blocked_reason = ""
+        run.evidence.append(
+            WorkflowEvidence(
+                kind=event.kind.value,
+                ref=event.ref,
+                ok=event.ok,
+                summary=event.summary,
+                condition=event.condition,
+            )
+        )
+        break
+    _skip_downstream_active_runs(updated, event.workflow)
+    return updated
+
+
+def _skip_downstream_active_runs(runs: list[WorkflowRunState], workflow: str) -> None:
+    by_name = {run.name: run for run in runs}
+    source_order = workflow_sort_key(workflow)
+    for name in _reachable_downstream_names(workflow):
+        if workflow_sort_key(name) <= source_order:
+            continue
+        target = by_name.get(name)
+        if target is None or target.status != WorkflowRunStatus.ACTIVE:
+            continue
+        target.status = WorkflowRunStatus.SKIPPED
+        target.blocked_reason = ""
+        target.evidence.append(
+            WorkflowEvidence(
+                kind=WorkflowStateEventKind.SKIPPED.value,
+                ref=f"cascade:upstream_{workflow}_done",
+                ok=True,
+                summary=f"Upstream node {workflow} exited with done; downstream skipped.",
+                condition=workflow_terminal_condition(),
+            )
+        )
+
+
+def _reachable_downstream_names(workflow: str) -> list[str]:
+    start = workflow.strip().lower()
+    if not start:
+        return []
+    result: list[str] = []
+    seen = {start}
+    pending = [start]
+    while pending:
+        current = pending.pop(0)
+        for edge in workflow_edges(current):
+            target = edge.target.strip().lower()
+            if not target or target in seen:
+                continue
+            seen.add(target)
+            result.append(target)
+            pending.append(target)
+    return result
 
 
 def _active_runs(runs: list[WorkflowRunState]) -> list[WorkflowRunState]:
@@ -219,7 +289,7 @@ def _ambiguous_target_message(active: list[WorkflowRunState]) -> str:
     lines = [
         "Ambiguous workflow target for terminal condition 'done'.",
         "Pass the workflow node name explicitly, for example:",
-        "advance_workflow(workflow=\"design-doc\", condition=\"done\")",
+        "advance_workflow(workflow=\"design\", condition=\"done\")",
         "Active workflow nodes:",
     ]
     lines.extend(f"- {run.name}" for run in active)

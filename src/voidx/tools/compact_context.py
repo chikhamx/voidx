@@ -26,7 +26,7 @@ class CompactContextInput(BaseModel):
 
 
 class CompactContextTool(BaseTool):
-    id = "compact_context"
+    id = "compact"
     description = (
         "Submit a structured summary for older conversation context when "
         "VOIDX_COMPACTION_GUIDE is present. This updates runtime memory and "

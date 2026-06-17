@@ -141,6 +141,7 @@ class GrepTool(BaseTool):
                 if count >= 100:
                     break
             except Exception as exc:
+                _logger.debug("Failed to read file during grep: %s: %s", f, exc, exc_info=True)
                 log_tool_event("grep_read_failed", tool_name="search", message=f"Failed to read file during grep: {f}: {exc}")
                 continue
 

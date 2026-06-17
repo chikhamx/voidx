@@ -170,6 +170,7 @@ def _extract_python_symbols(f: Path, top_level_only: bool = False) -> list[str]:
     try:
         text = f.read_text(encoding="utf-8", errors="replace")
     except Exception as exc:
+        _logger.debug("Failed to extract Python symbols from %s: %s", f, exc, exc_info=True)
         log_tool_event("repomap_extract_failed", tool_name="repomap", message=f"Failed to extract Python symbols from {f}: {exc}")
         return []
 
