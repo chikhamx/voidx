@@ -85,8 +85,12 @@ class ToolContext(BaseModel):
         # Pydantic v2 deep-copies dict fields, breaking reference sharing
         # with the host.  Store these as private attributes so mutations
         # propagate across tool calls via the shared host dicts.
-        fm = data.pop("file_mtimes", None) or {}
-        frc = data.pop("file_read_coverage", None) or {}
+        fm = data.pop("file_mtimes", None)
+        if fm is None:
+            fm = {}
+        frc = data.pop("file_read_coverage", None)
+        if frc is None:
+            frc = {}
         super().__init__(**data)
         self._file_mtimes = fm
         self._file_read_coverage = frc
