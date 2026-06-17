@@ -353,7 +353,7 @@ def _tool_display_name(tool_name: str, label: str) -> str:
         "repo_map": "Map",
         "todo": "Todo",
         "task_status": "Status",
-        "plan_checkpoint": "Checkpoint",
+        "checkpoint": "Checkpoint",
     }
     label_mapping = {
         "Reading": "Read",
@@ -385,7 +385,7 @@ def _tool_display_value(tool_name: str, args: str, raw_args: dict[str, Any]) -> 
         value = str(raw_args.get("command") or "").replace("\n", "; ")
     elif tool_name == "agent":
         value = raw_args.get("agent") or raw_args.get("description")
-    elif tool_name == "plan_checkpoint":
+    elif tool_name == "checkpoint":
         value = raw_args.get("plan_summary")
     elif tool_name in {"webfetch", "websearch"}:
         value = raw_args.get("url") or raw_args.get("query")

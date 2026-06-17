@@ -107,16 +107,16 @@ class ToolDisplayPolicy(BaseModel):
 
 DEFAULT_DISPLAY_RULES: dict[str, ToolDisplayRule] = {
     # ── Hidden：runtime-only / barrier / 状态工具 ──
-    # Of these, only todo/compact_context/advance_workflow
+    # Of these, only todo/compact/advance_workflow
     # also suppress ToolMessage on replay — see voidx.agent.todo_state._REPLAY_SANITIZED_TOOL_NAMES
-    # The rest (task_status, load_doc_template, load_skills) keep ToolMessage for the LLM.
+    # The rest (task_status, document, skill) keep ToolMessage for the LLM.
     "todo": ToolDisplayRule(tool_name="todo", mode=ToolDisplayMode.HIDDEN, replay_sanitize=True),
     "task_status": ToolDisplayRule(tool_name="task_status", mode=ToolDisplayMode.HIDDEN),
-    "load_doc_template": ToolDisplayRule(tool_name="load_doc_template", mode=ToolDisplayMode.HIDDEN),
-    "plan_checkpoint": ToolDisplayRule(tool_name="plan_checkpoint", mode=ToolDisplayMode.HIDDEN),
-    "compact_context": ToolDisplayRule(tool_name="compact_context", mode=ToolDisplayMode.HIDDEN, replay_sanitize=True),
+    "document": ToolDisplayRule(tool_name="document", mode=ToolDisplayMode.HIDDEN),
+    "checkpoint": ToolDisplayRule(tool_name="checkpoint", mode=ToolDisplayMode.HIDDEN),
+    "compact": ToolDisplayRule(tool_name="compact", mode=ToolDisplayMode.HIDDEN, replay_sanitize=True),
     "advance_workflow": ToolDisplayRule(tool_name="advance_workflow", mode=ToolDisplayMode.HIDDEN, replay_sanitize=True),
-    "load_skills": ToolDisplayRule(tool_name="load_skills", mode=ToolDisplayMode.HIDDEN),
+    "skill": ToolDisplayRule(tool_name="skill", mode=ToolDisplayMode.HIDDEN),
     "clarify": ToolDisplayRule(tool_name="clarify", mode=ToolDisplayMode.HIDDEN),
     # ── Summary：搜索/查询类 ──
     "grep": ToolDisplayRule(tool_name="grep", mode=ToolDisplayMode.SUMMARY, summary_max_lines=5),

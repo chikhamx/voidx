@@ -45,7 +45,7 @@ class VoidConsole:
         "agent": "delegating", "webfetch": "fetching", "websearch": "searching",
         "todo": "updating", "task_status": "checking", "repo_map": "mapping",
         "lsp": "using",
-        "plan_checkpoint": "checking",
+        "checkpoint": "checking",
     }
 
     _AGENT_GERUND: dict[str, str] = {
