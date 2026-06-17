@@ -50,6 +50,20 @@ def clear_read_coverage(ctx: ToolContext, resolved: Path) -> None:
     ctx.file_read_coverage.pop(str(resolved.resolve()), None)
 
 
+def _merge_ranges(ranges: list[dict]) -> list[dict]:
+    if not ranges:
+        return []
+    sorted_ranges = sorted(ranges, key=lambda r: r["start_line"])
+    merged = [sorted_ranges[0].copy()]
+    for r in sorted_ranges[1:]:
+        last = merged[-1]
+        if r["start_line"] <= last["end_line"] + 1:
+            last["end_line"] = max(last["end_line"], r["end_line"])
+        else:
+            merged.append(r.copy())
+    return merged
+
+
 def record_read_range(ctx: ToolContext, resolved: Path, start_line: int, end_line: int) -> None:
     if not resolved.exists() or end_line < start_line:
         return
@@ -59,7 +73,7 @@ def record_read_range(ctx: ToolContext, resolved: Path, start_line: int, end_lin
     ranges = existing.get("ranges", []) if existing.get("fingerprint") == fingerprint else []
     ctx.file_read_coverage[key] = {
         "fingerprint": fingerprint,
-        "ranges": [*ranges, asdict(ReadLineRange(start_line, end_line))],
+        "ranges": _merge_ranges([*ranges, asdict(ReadLineRange(start_line, end_line))]),
     }
     record_mtime(ctx, resolved)
 

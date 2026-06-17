@@ -165,7 +165,11 @@ class FileWriteTool(BaseTool):
         path.write_text(inp.content, encoding="utf-8")
         size = len(inp.content)
         record_mtime(ctx, path)
-        clear_read_coverage(ctx, path)
+        line_count = len(_split_display_lines(inp.content).lines)
+        if line_count > 0:
+            record_read_range(ctx, path, 1, line_count)
+        else:
+            clear_read_coverage(ctx, path)
 
         diff = make_file_diff(
             inp.file_path,
@@ -281,7 +285,11 @@ class FileEditTool(BaseTool):
         await save_file_version(ctx, path, display_path=inp.file_path, tool_name=self.id)
         path.write_text(content, encoding="utf-8")
         record_mtime(ctx, path)
-        clear_read_coverage(ctx, path)
+        new_total = len(lines)
+        if new_total > 0:
+            record_read_range(ctx, path, 1, new_total)
+        else:
+            clear_read_coverage(ctx, path)
 
         diff = make_file_diff(inp.file_path, original, content)
 

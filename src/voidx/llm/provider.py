@@ -1,10 +1,11 @@
 """LLM Provider layer — typed abstraction over LangChain ChatModels.
 
-Three protocols:
+Four protocols:
   - ``anthropic``  — first-party Anthropic API
   - ``openai``     — OpenAI and OpenAI-compatible (OpenRouter, custom relays)
   - ``deepseek``   — China-domestic OpenAI-compatible providers (DeepSeek, Qwen,
                      Zhipu/GLM, Doubao, Mimo, Kimi, Typex, MiniMax, etc.)
+  - ``gemini``     — Google Gemini native API (via langchain-google-genai)
 
 The ``deepseek`` protocol uses :class:`DeepSeekChatOpenAI`, a ``ChatOpenAI``
 subclass that preserves ``reasoning_content`` in streaming chunks (LangChain
@@ -64,6 +65,7 @@ _PROVIDER_PROTOCOLS: dict[str, str] = {
     "doubao": PROTOCOL_DEEPSEEK,
     "typex": PROTOCOL_DEEPSEEK,
     "minimax": PROTOCOL_DEEPSEEK,
+    "gemini": "gemini",
 }
 
 _DEFAULT_BASE_URLS: dict[tuple[str, str], str] = {
@@ -299,6 +301,47 @@ def _supports_doubao_thinking(model: str) -> bool:
     return any(p in name for p in _DOUBAO_THINKING_MODELS)
 
 
+_GEMINI3_PREFIXES = (
+    "gemini-3",
+    "gemini-4",
+)
+
+
+def _is_gemini3_plus(model: str) -> bool:
+    """Whether a Gemini model uses thinking_level (3+) vs thinking_budget (2.5)."""
+    return any(model.lower().startswith(p) for p in _GEMINI3_PREFIXES)
+
+
+_GEMINI_THINKING_BUDGETS = {
+    "minimal": 1_024,
+    "low": 4_096,
+    "medium": 8_192,
+    "high": 16_384,
+    "xhigh": 32_768,
+    "max": 65_536,
+}
+
+
+def _gemini_reasoning_kwargs(config: ModelConfig) -> dict:
+    effort = _normalized_effort(config.reasoning_effort)
+    if effort in (None, "none"):
+        return {}
+    kwargs: dict = {"include_thoughts": True}
+    if _is_gemini3_plus(config.model):
+        level_map = {
+            "minimal": "minimal",
+            "low": "low",
+            "medium": "medium",
+            "high": "high",
+            "xhigh": "high",
+            "max": "high",
+        }
+        kwargs["thinking_level"] = level_map.get(effort, "medium")
+    else:
+        kwargs["thinking_budget"] = _GEMINI_THINKING_BUDGETS.get(effort, 8_192)
+    return kwargs
+
+
 # ── Anthropic reasoning ──────────────────────────────────────────────────
 
 _REASONING_PREFIXES = (
@@ -386,6 +429,8 @@ def _reasoning_kwargs(config: ModelConfig, protocol: str) -> dict:
         return _openai_reasoning_kwargs(config)
     if protocol == PROTOCOL_DEEPSEEK:
         return DeepSeekChatOpenAI.reasoning_kwargs(config)
+    if protocol == "gemini":
+        return _gemini_reasoning_kwargs(config)
     return {}
 
 
@@ -434,9 +479,24 @@ def create_chat_model(api_key: str, config: ModelConfig) -> BaseChatModel:
         return ChatOpenAI(**kwargs)
 
     if protocol == "gemini":
-        raise NotImplementedError(
-            "Gemini protocol not yet supported. Use 'openai' or 'anthropic'."
+        try:
+            from langchain_google_genai import ChatGoogleGenerativeAI
+        except ImportError:
+            raise ImportError(
+                "langchain-google-genai is required for Gemini protocol. "
+                "Install with: pip install voidx[gemini]"
+            )
+        kwargs = dict(
+            model=config.model,
+            temperature=config.temperature,
+            max_tokens=config.max_tokens,
         )
+        if api_key:
+            kwargs["api_key"] = api_key
+        if base_url:
+            kwargs["base_url"] = base_url
+        kwargs.update(_reasoning_kwargs(config, protocol))
+        return ChatGoogleGenerativeAI(**kwargs)
 
     raise ValueError(f"Unknown protocol: {protocol}")
 
@@ -515,6 +575,8 @@ def _extract_thinking_openai(chunk: AIMessageChunk) -> str:
 def extract_thinking(chunk: AIMessageChunk, protocol: str) -> str:
     if protocol == "anthropic":
         return _extract_thinking_anthropic(chunk)
+    if protocol == "gemini":
+        return _extract_thinking_anthropic(chunk) or _extract_thinking_openai(chunk)
     # Both openai and deepseek protocols use the OpenAI-compatible
     # extraction path (reasoning_content in additional_kwargs).
     return _extract_thinking_openai(chunk)
@@ -537,6 +599,7 @@ def get_context_limit(provider: str, protocol: str = "") -> int:
         "doubao": 256_000,
         "typex": 128_000,
         "minimax": 1_000_000,
+        "gemini": 1_000_000,
     }
     if provider in limits:
         return limits[provider]

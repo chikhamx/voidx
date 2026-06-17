@@ -1998,7 +1998,7 @@ class TestFileOps:
         assert (tmp_path / "overlap.txt").read_text() == "one\ntwo\nthree\n"
 
     @pytest.mark.asyncio
-    async def test_edit_clears_read_coverage_after_success(self, tmp_path):
+    async def test_edit_preserves_read_coverage_after_success(self, tmp_path):
         f = tmp_path / "coverage.txt"
         f.write_text("one\ntwo\n")
         ctx = ToolContext(workspace=str(tmp_path))
@@ -2017,9 +2017,57 @@ class TestFileOps:
         )
 
         assert first.metadata.get("error") is not True
-        assert "read" in second.output.lower()
-        assert second.metadata.get("error")
-        assert (tmp_path / "coverage.txt").read_text() == "ONE\ntwo\n"
+        assert second.metadata.get("error") is not True
+        assert (tmp_path / "coverage.txt").read_text() == "ONE\nTWO"
+
+    @pytest.mark.asyncio
+    async def test_merge_overlapping_read_ranges(self, tmp_path):
+        f = tmp_path / "merge.txt"
+        f.write_text("\n".join(str(i) for i in range(1, 101)) + "\n")
+        ctx = ToolContext(workspace=str(tmp_path))
+        r = ToolRegistry()
+        await r.execute_tool("read", {"file_path": "merge.txt", "offset": 1, "limit": 50}, ctx)
+        await r.execute_tool("read", {"file_path": "merge.txt", "offset": 40, "limit": 61}, ctx)
+
+        result = await r.execute_tool(
+            "edit",
+            {"file_path": "merge.txt", "edits": [{"operation": "replace", "start_line": 1, "end_line": 1, "new_string": "CHANGED"}]},
+            ctx,
+        )
+        assert result.metadata.get("error") is not True
+
+    @pytest.mark.asyncio
+    async def test_merge_adjacent_read_ranges(self, tmp_path):
+        f = tmp_path / "adjacent.txt"
+        f.write_text("\n".join(str(i) for i in range(1, 101)) + "\n")
+        ctx = ToolContext(workspace=str(tmp_path))
+        r = ToolRegistry()
+        await r.execute_tool("read", {"file_path": "adjacent.txt", "offset": 1, "limit": 50}, ctx)
+        await r.execute_tool("read", {"file_path": "adjacent.txt", "offset": 51, "limit": 50}, ctx)
+
+        result = await r.execute_tool(
+            "edit",
+            {"file_path": "adjacent.txt", "edits": [{"operation": "replace", "start_line": 50, "end_line": 51, "new_string": "MERGED"}]},
+            ctx,
+        )
+        assert result.metadata.get("error") is not True
+
+    @pytest.mark.asyncio
+    async def test_non_adjacent_ranges_not_covered(self, tmp_path):
+        f = tmp_path / "gap.txt"
+        f.write_text("\n".join(str(i) for i in range(1, 31)) + "\n")
+        ctx = ToolContext(workspace=str(tmp_path))
+        r = ToolRegistry()
+        await r.execute_tool("read", {"file_path": "gap.txt", "offset": 1, "limit": 10}, ctx)
+        await r.execute_tool("read", {"file_path": "gap.txt", "offset": 20, "limit": 11}, ctx)
+
+        result = await r.execute_tool(
+            "edit",
+            {"file_path": "gap.txt", "edits": [{"operation": "replace", "start_line": 15, "end_line": 15, "new_string": "GAP"}]},
+            ctx,
+        )
+        assert "read" in result.output.lower()
+        assert result.metadata.get("error")
 
     @pytest.mark.asyncio
     async def test_read_after_external_change_drops_old_line_coverage(self, tmp_path):
@@ -2042,7 +2090,7 @@ class TestFileOps:
         assert (tmp_path / "external.txt").read_text() == "one changed\ntwo\nthree\n"
 
     @pytest.mark.asyncio
-    async def test_write_clears_read_coverage_after_success(self, tmp_path):
+    async def test_write_preserves_read_coverage_after_success(self, tmp_path):
         f = tmp_path / "write-clear.txt"
         f.write_text("old\n")
         ctx = ToolContext(workspace=str(tmp_path))
@@ -2056,9 +2104,8 @@ class TestFileOps:
             ctx,
         )
 
-        assert "read" in result.output.lower()
-        assert result.metadata.get("error")
-        assert (tmp_path / "write-clear.txt").read_text() == "new\n"
+        assert result.metadata.get("error") is not True
+        assert (tmp_path / "write-clear.txt").read_text() == "NEW"
 
     @pytest.mark.asyncio
     async def test_edit_preserves_missing_trailing_newline_when_unchanged(self, tmp_path):
