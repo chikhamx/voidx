@@ -418,10 +418,12 @@ function buildPythonDownloadUrl(mirrorBase, tag, filename) {
   return `${mirrorBase}/${tag}/${filename}`;
 }
 
-main().catch((err) => {
-  console.error(`\n❌ Setup failed: ${err.message}\n`);
-  process.exit(1);
-});
+if (require.main === module) {
+  main().catch((err) => {
+    console.error(`\n❌ Setup failed: ${err.message}\n`);
+    process.exit(1);
+  });
+}
 
 module.exports = {
   buildPythonDownloadUrl,
