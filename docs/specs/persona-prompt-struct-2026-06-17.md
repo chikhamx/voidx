@@ -18,13 +18,13 @@
 3. 新增 persona 需要手动编辑大字符串
 4. 无法做条件性规则筛选（如 plan mode 下禁用某些规则）
 5. 测试只能做字符串包含检查，无法做结构化断言
-6. `VOIDX_PROMPT` 中的 Coordination/Responsibilities/Rules 与 `BASE_SYSTEM_PROMPT` 的 Global Rules 大量重复（11 条中有 3 条完全重复、2 条内部重复），且语义上属于 agent 级别而非 persona 级别
+6. `VOIDX_PROMPT` 中的 Coordination/Responsibilities/Rules 与 `BASE_SYSTEM_PROMPT` 的 Global Rules 大量重复（10 条中有 3 条完全重复、2 组内部重复），且语义上属于 agent 级别而非 persona 级别
 
 ## 目标
 
 将纯字符串 prompt 拆分为 Pydantic 结构化模型：
 - `BASE_SYSTEM_PROMPT` → `BaseSystemPrompt` 模型
-- `VOIDX_PROMPT` 中的 Coordination/Responsibilities/Rules → 合并入 `BaseSystemPrompt.global_rules`（去重后 4 条新增，消除与 Global Rules 的重复）
+- `VOIDX_PROMPT` 中的 Coordination/Responsibilities/Rules → 合并入 `BaseSystemPrompt.global_rules`（去重后 5 条新增，消除与 Global Rules 的重复）
 - 5 个 persona 各自独立的 `PersonaPrompt` 模型（只定义思维方式）
 - Persona 描述有意简化：行为规则由 workflow node 定义覆盖，prompt 只声明思维模式
 
@@ -49,13 +49,13 @@ class BaseSystemPrompt(BaseModel):
 |------|---------|
 | `identity` | "You are voidx, an autonomous coding agent." |
 | `communication_style` | 8 条规则，每条拆为 label + detail |
-| `global_rules` | 11 条规则（原 6 条 + 从 AgentPrompt 合并 4 条去重后 + 从 Workflow Runtime 迁入 1 条），每条拆为 label + detail |
+| `global_rules` | 12 条规则（原 6 条 + 从 AgentPrompt 合并 5 条去重后 + 从 Workflow Runtime 迁入 1 条），每条拆为 label + detail |
 
 `workflow_runtime` 的 4 条元规则从 `BaseSystemPrompt` 中移出，放入独立的 `WorkflowRuntimePrompt`（见下文）。skill 规则迁入 `BaseSystemPrompt.global_rules`。
 
 原 `AgentPrompt`（Coordination/Responsibilities/Rules）整体合并入 `global_rules`，原因：
 
-1. **大量重复** — 11 条规则中有 3 条与 Global Rules 完全重复（"Don't expose persona names" / "Never claim work done until verified" / "Workflow gates take precedence"），2 条内部重复（"Assess before acting" ≈ "Before acting, assess what's known" / "Delegate only when needed" 出现两次）
+1. **大量重复** — 10 条规则中有 3 条与 Global Rules 完全重复（"Don't expose persona names" / "Never claim work done until verified" / "Workflow gates take precedence"），2 组内部重复（"Assess before acting" ≈ "Before acting, assess what's known" / "Delegate only when needed" 出现两次）
 2. **语义属于 agent 级别** — Coordination/Responsibilities/Rules 描述的是 voidx agent 的行为约束，与 persona 的思维模式无关，无论当前 persona 是 coordinate 还是 implement 都生效
 3. **减少层级** — 合并后 L2 Persona 层只保留 PersonaModel（全部 5 个 persona 描述），不再有 AgentPrompt 的中间层
 
@@ -63,7 +63,7 @@ class BaseSystemPrompt(BaseModel):
 
 ```python
 class WorkflowRuntimePrompt(BaseModel):
-    rules: list[PromptRule]  # 元规则（5 条）
+    rules: list[PromptRule]  # 元规则（4 条）
     node_definitions: str  # 全部 workflow node 的完整定义（由 render_workflow_context() 生成）
 ```
 
@@ -198,7 +198,7 @@ BASE_SYSTEM = BaseSystemPrompt(
         PromptRule(label="", detail="Do not expose internal persona names unless the user asks about architecture."),
         PromptRule(label="", detail="Never claim work is complete until it has been verified."),
         PromptRule(label="", detail="When Current Task State lists an active workflow gate, that workflow gate takes precedence over persona prompts and delegation rules."),
-        # ── 从 AgentPrompt 合并（去重后 4 条）──
+        # ── 从 AgentPrompt 合并（去重后 5 条）──
         # "Coordinate without exposing persona names" → 与第 4 条重复，删除
         # "Only declare work done after verification" → 与第 5 条重复，删除
         # "Workflow gates take precedence" → 与第 6 条重复，删除
@@ -208,8 +208,6 @@ BASE_SYSTEM = BaseSystemPrompt(
         PromptRule(label="", detail="Pick the smallest next action that makes progress toward the goal."),
         PromptRule(label="", detail="Delegate only when you need to run multiple independent tasks in parallel, or the user explicitly asks for a child agent. Do not delegate single-file reads, simple searches, or straightforward tasks you can do directly."),
         PromptRule(label="", detail="Subagents do not interact with the user."),
-        # Child-agent scheduling 规则（原 AgentPrompt.rules）
-        # ... (child-agent scheduling detail)
         # ── 从 Workflow Runtime 迁入（1 条）──
         PromptRule(label="", detail="skill can return project/global skill bodies for the current turn."),
     ],
@@ -250,7 +248,7 @@ PERSONA_MODEL = PersonaModel(
 | `persona_prompt` | `str` | `str`（不变） | 由 `PERSONA_MODEL.render()` 生成，静态内容，不随当前 persona 变化 |
 | 新增 `workflow_runtime` | — | `WorkflowRuntimePrompt | None` | L3 Workflow 层，包含元规则 + 全部 workflow node 完整定义 |
 | 移除 `tool_contract` | `str` | — | `## Tool Contract` section 整体移除，由 bind_tools 和 runtime 层兜底 |
-| 新增 `available_skills` | — | `str` | 独立注入 `## Available Skills` section（L4），位于 Workflow 之后 |
+| `available_skills` | — | — | 不新增独立 section；继续由 `InstructionService.system()` 追加到 `Project Facts` |
 | 合并 `workspace` + RuntimeEnvelope | 分散在两处 | `## Runtime State` section | Workspace Facts + RuntimeEnvelope 合并，消除 workspace 重复 |
 | 移除 `skill_context_content` | `str` | — | HumanMessage 路径从未使用，skill 正文统一走 `skill` tool → ToolMessage |
 | 移除 `workflow_context_content` | `str` | — | HumanMessage 路径移除，node 定义合并入 `WorkflowRuntimePrompt.node_definitions` |
@@ -297,7 +295,7 @@ def persona_prompt() -> str:
 
 不再需要 `persona` 参数——Persona Model 渲染全部 5 个 persona 的描述，不随当前 persona 变化。Current Task State 中的 `Current persona: <name>` 告诉 LLM 当前激活哪个。
 
-Child-agent scheduling 规则从独立 `## Child-Agent Scheduling` section 简化为 `BaseSystemPrompt.global_rules` 中的一条 PromptRule，不再需要 `_parallel_subagents_prompt` 函数和 `parallel_subagents_enabled` 参数。
+Child-agent scheduling 规则不再单独渲染成 `## Child-Agent Scheduling` section；并发子代理行为由 `agent` 工具和运行时调度控制，不再需要 `_parallel_subagents_prompt` 函数或 `parallel_subagents_enabled` 参数。
 
 ## 改造后的 Context 结构
 
@@ -308,11 +306,10 @@ Child-agent scheduling 规则从独立 `## Child-Agent Scheduling` section 简�
 | L1 VoidX Agent | Base System | `BASE_SYSTEM.render()` | 身份、沟通风格、全局规则（含原 AgentPrompt 合并规则） |
 | L2 Persona | Persona | `PERSONA_MODEL.render()` | 全部 5 个 persona 的描述（静态，不随当前 persona 变化） |
 | L3 Workflow | Workflow Runtime | `WORKFLOW_RUNTIME.render()` | 元规则 + 全部 workflow node 完整定义（原 HumanMessage 合并到 SystemMessage） |
-| L4 Skills | Available Skills | `InstructionService.available_skills_section()` | 可用 skill 索引 |
 | — | ~~Tool Contract~~ | `agent_def.tool_contract` | **整体移除** |
-| L5 Project | Project Facts | `InstructionService.system()` | AGENTS.md 项目指令 |
-| L6 Runtime | Runtime State | 动态生成 | 工作区、平台、sandbox、语言、语气 |
-| L7 Session | Session Time | 动态生成 | 当前日期时区 |
+| L4 Project | Project Facts | `InstructionService.system()` | AGENTS.md 项目指令 + Available Skills |
+| L5 Runtime | Runtime State | 动态生成 | 工作区、平台、sandbox、语言、语气 |
+| L6 Session | Session Time | 动态生成 | 当前日期时区 |
 
 ### Tool Contract 精简
 
@@ -439,18 +436,13 @@ SystemMessage
 │  └─ ## Workflow Node: design
 │     └─ ...
 │
-├─ ── L4: Skills ──────────────────────────────────────────────────────
-│
-├─ ## Available Skills         ← InstructionService.available_skills_section()
-│  └─ - skill-name [auto]: description
-│
-├─ ── L5: Project ──────────────────────────────────────────────────
+├─ ── L4: Project ──────────────────────────────────────────────────
 │
 ├─ ## Project Facts               ← InstructionService.system()
 │  └─ Instructions from: project AGENTS.md
-│     └─ (AGENTS.md content)
+│     └─ (AGENTS.md content + Available Skills)
 │
-├─ ── L6: Runtime ───────────────────────────────────────────────────
+├─ ── L5: Runtime ───────────────────────────────────────────────────
 │
 ├─ ## Runtime State               ← 合并 Workspace Facts + RuntimeEnvelope
 │  ├─ - Current workspace: <workspace>
@@ -462,7 +454,7 @@ SystemMessage
 │  └─ - Tone instruction: Prefer short answers. Remove filler and avoid
 │       restating obvious context.
 │
-├─ ── L7: Session ───────────────────────────────────────────────────
+├─ ── L6: Session ───────────────────────────────────────────────────
 │
 └─ ## Session Time
    └─ 2026-06-17 CST
@@ -488,14 +480,14 @@ HumanMessage (用户消息 + task context)   ← _prepend_task_context() 将 tas
 
 ### 为什么 workflow node 定义移入 SystemMessage
 
-改造前，workflow node 的完整定义放在独立 HumanMessage (workflow context) 中，与 SystemMessage 中的 5 条元规则分离。改造后，两者合并到 SystemMessage 的 L3 Workflow 层——元规则在前，node 定义紧随其后。
+改造前，workflow node 的完整定义放在独立 HumanMessage (workflow context) 中，与 SystemMessage 中的 4 条元规则分离。改造后，两者合并到 SystemMessage 的 L3 Workflow 层——元规则在前，node 定义紧随其后。
 
 **移除独立 HumanMessage 的原因：**
 
 1. **语义完整** — 元规则和它所约束的数据应该在一起。LLM 看到 "follow ONLY nodes listed as active" 时，需要同时看到 node 定义才能理解规则的含义。分离在两个 message 中增加了理解负担。
 2. **减少消息帧复杂度** — 少一个 HumanMessage，消息帧更简洁。
 
-**Skill context 统一走 tool 调用** — `render_skill_context()` 和 `skill_context_content` HumanMessage 路径从未被实际使用，移除。Skill 正文统一通过 LLM 调用 `skill` tool → `ToolMessage`（`VOIDX_SKILL_TOOL_CONTEXT` 标记）注入，更符合 LLM 交互模型。
+**Skill context 统一走 tool 调用** — `render_skill_context()` 和 `skill_context_content` HumanMessage 路径从未被实际使用，移除。旧 session 中已持久化的 `VOIDX_SKILL_CONTEXT` 不做兼容处理。Skill 正文统一通过 LLM 调用 `skill` tool → `ToolMessage`（`VOIDX_SKILL_TOOL_CONTEXT` 标记）注入，更符合 LLM 交互模型。
 
 ### 与改造前的差异
 
@@ -508,13 +500,13 @@ HumanMessage (用户消息 + task context)   ← _prepend_task_context() 将 tas
 | Persona 描述 | 嵌在 VOIDX_PROMPT 的 `## Persona Model` 中，5 个 persona 列表 | `## Persona Model` 保留全部 5 个 persona 描述，由 `PersonaModel.render()` 渲染 |
 | Tool Contract | `## Tool Contract` section（identity + 权限 + 工具列表 + MCP + 约束） | **整体移除** — 由 bind_tools 和 runtime 层兜底 |
 | Workflow node 定义 | 独立 HumanMessage (workflow context) | 合并到 L3 Workflow Runtime section 内 |
-| Available Skills | 嵌在 `## Project Facts` 内 | 独立 L4 层，位于 Workflow 之后 |
+| Available Skills | 嵌在 `## Project Facts` 内 | 仍嵌在 `## Project Facts` 内（由 `InstructionService.system()` 追加） |
 | Skill 正文 | HumanMessage (skill context)（`VOIDX_SKILL_CONTEXT` 标记） | **移除** — 统一走 `skill` tool → ToolMessage（`VOIDX_SKILL_TOOL_CONTEXT` 标记） |
 | Workspace + RuntimeEnvelope | `## Workspace Facts` + HumanMessage(RuntimeEnvelope) | 合并为 `## Runtime State`（L6），消除 workspace 重复 |
 
 **有意的内容变化：**
 1. 改造前 `## Persona Model` 列出全部 5 个 persona 的行为描述，改造后保留全部 5 个描述，由 `PersonaModel.render()` 渲染。Current Task State 中的 `Current persona: <name>` 告诉 LLM 当前激活哪个 persona。
-2. 改造前 Coordination/Responsibilities/Rules 在 `## Agent Role` section 中，改造后合并入 `## Global Rules`。去重后 Global Rules 从 6 条变为 11 条——3 条完全重复的规则只保留一份，2 条内部重复的规则合并为一条，1 条 skill 规则从 Workflow Runtime 迁入。
+2. 改造前 Coordination/Responsibilities/Rules 在 `## Agent Role` section 中，改造后合并入 `## Global Rules`。去重后 Global Rules 从 6 条变为 12 条——3 条完全重复的规则只保留一份，2 组内部重复的规则合并为一组，1 条 skill 规则从 Workflow Runtime 迁入。
 
 ### 子 Agent 的 Context 差异
 
@@ -526,14 +518,14 @@ HumanMessage (用户消息 + task context)   ← _prepend_task_context() 将 tas
 
 ## 兼容性
 
-- `BaseSystemPrompt.render()` + `WorkflowRuntimePrompt.render()` 拼接后与当前 `BASE_SYSTEM_PROMPT` 文本一致（Global Rules 部分含合并后的去重规则）
-- **AgentPrompt 整体合并入 BaseSystemPrompt.global_rules**：Coordination/Responsibilities/Rules 的 11 条规则去重后 4 条合并入 Global Rules，L2 Persona 层不再包含 Coordination/Responsibilities/Rules
+- `BaseSystemPrompt.render()` + `WorkflowRuntimePrompt.render()` 拼接后与目标 Base System 文本一致（包含 `You are voidx, an autonomous coding agent.`、合并后的 Global Rules、独立 Workflow Runtime）
+- **AgentPrompt 整体合并入 BaseSystemPrompt.global_rules**：Coordination/Responsibilities/Rules 的 10 条规则去重后 5 条合并入 Global Rules，L2 Persona 层不再包含 Coordination/Responsibilities/Rules
 - Persona 描述保持不变：全部 5 个 persona 的行为描述由 `PersonaModel.render()` 渲染，与当前 `VOIDX_PROMPT` 的 `## Persona Model` section 一致
 - **Workflow context 合并**：HumanMessage (workflow context) 移除，全部 workflow node 完整定义并入 SystemMessage L3 Workflow 层（`WorkflowRuntimePrompt.node_definitions`）
-- **Child-Agent Scheduling 简化**：从独立 `## Child-Agent Scheduling` section 简化为 `BaseSystemPrompt.global_rules` 中的一条 PromptRule，`_parallel_subagents_prompt` 函数移除
+- **Child-Agent Scheduling 简化**：不再单独渲染 `## Child-Agent Scheduling` section，`_parallel_subagents_prompt` 函数移除；并发子代理行为由 `agent` 工具和运行时调度控制
 - **Tool Contract 整体移除**：`AgentDef.tool_contract` property 删除，`## Tool Contract` section 不再渲染。所有信息由 bind_tools 和 runtime 层兜底
 - **Workflow node 定义移入 SystemMessage**：从独立 HumanMessage (workflow context) 移入 L3 Workflow Runtime section，元规则与定义数据合并
-- **Available Skills 归属变更**：从 `## Project Facts` 移出，作为独立 L4 层放在 Workflow 之后，由 `InstructionService.available_skills_section()` 渲染
+- **Available Skills 归属变更**：不再拆成独立 L4；继续由 `InstructionService.system()` 追加到 `## Project Facts`
 - **Skill context HumanMessage 移除**：`render_skill_context()` 和 `skill_context_content` HumanMessage 路径从未被实际使用，移除。Skill 正文统一走 `skill` tool → ToolMessage（`VOIDX_SKILL_TOOL_CONTEXT` 标记）
 - **Workspace Facts + RuntimeEnvelope 合并**：`## Workspace Facts` section 和 HumanMessage(RuntimeEnvelope) 合并为 `## Runtime State` section，消除 workspace 字段重复
 - `CHILD_RUN_CONSTRAINTS` 和 `PLAN_MODE_APPEND` 暂时保持纯字符串，后续可纳入结构化
@@ -542,21 +534,21 @@ HumanMessage (用户消息 + task context)   ← _prepend_task_context() 将 tas
 
 ## 测试策略
 
-1. **渲染一致性测试**：`BASE_SYSTEM.render() + "\n\n" + WORKFLOW_RUNTIME.render()` 输出 == 当前 `BASE_SYSTEM_PROMPT` 完整字符串（Global Rules 含合并后的去重规则）
-2. **workflow runtime 渲染测试**：`WORKFLOW_RUNTIME.render()` 输出 == 当前 `BASE_SYSTEM_PROMPT` 中的 `## Workflow Runtime` section + 当前 HumanMessage 中的 workflow node 完整定义
+1. **渲染一致性测试**：`BASE_SYSTEM.render() + "\n\n" + WORKFLOW_RUNTIME.render()` 输出 == 显式维护的目标快照（包含 `autonomous coding agent`、合并后的 12 条 Global Rules、独立 Workflow Runtime）
+2. **workflow runtime 渲染测试**：`WORKFLOW_RUNTIME.render()` 输出 == 目标 `## Workflow Runtime` section + workflow node 完整定义
 3. **PersonaModel 渲染测试**：`PERSONA_MODEL.render()` 输出 == 当前 `VOIDX_PROMPT` 中的 `## Persona Model` section（含全部 5 个 persona 描述）
 4. **PromptRule 渲染测试**：有 label 时输出 `**label** detail`，无 label 时输出 `detail`
-5. **结构化断言测试**：可以断言 `BASE_SYSTEM.communication_style` 有 8 条规则、`BASE_SYSTEM.global_rules` 有 11 条规则、`PERSONA_MODEL.personas` 有 5 个条目
+5. **结构化断言测试**：可以断言 `BASE_SYSTEM.communication_style` 有 8 条规则、`BASE_SYSTEM.global_rules` 有 12 条规则、`PERSONA_MODEL.personas` 有 5 个条目
 6. **persona 描述一致性测试**：每个 `PersonaPrompt.description` 与当前 `VOIDX_PROMPT` 中对应 persona 的描述一致
 7. **去重验证测试**：`BASE_SYSTEM.global_rules` 中不包含与原 AgentPrompt 重复的规则（"Don't expose persona names" / "Never claim work done" / "Workflow gates take precedence" 只出现一次）
-8. **现有测试保持通过**：不改变 LLM 看到的内容
+8. **现有测试更新后保持通过**：明确覆盖 intentional deltas（Tool Contract 移除、workflow context 进 SystemMessage、Available Skills 保持在 Project Facts、skill HumanMessage 路径移除）
 
 ## 文件变更清单
 
 | 文件 | 变更 |
 |------|------|
-| `src/voidx/agent/agents.py` | 新增 PromptRule、BaseSystemPrompt、WorkflowRuntimePrompt、PersonaPrompt、PersonaModel 模型；AgentPrompt 整体合并入 BaseSystemPrompt.global_rules（去重后 4 条新增）；替换字符串常量为模型实例；移除 AgentDef.persona_prompt property；移除 AgentDef.tool_contract property；移除 _parallel_subagents_prompt 函数（调度规则纳入 global_rules）；移除 PERSONA_PROMPTS dict；新增 PERSONA_MODEL；persona_prompt_for_llm → persona_prompt()（静态，不随 persona 变化） |
-| `src/voidx/agent/runtime_context.py` | RuntimeContextBuilder 新增 workflow_runtime 参数；base_system_prompt 参数类型从 str 改为 BaseSystemPrompt；workflow_runtime section 含元规则 + node 完整定义；移除 Tool Contract section 渲染；新增 available_skills 参数，独立渲染 L4 Skills section；合并 Workspace Facts + RuntimeEnvelope 为 Runtime State section；移除 workflow_context_content HumanMessage 及相关编译逻辑；移除 skill_context_content 参数及相关 HumanMessage 编译逻辑 |
+| `src/voidx/agent/agents.py` | 新增 PromptRule、BaseSystemPrompt、WorkflowRuntimePrompt、PersonaPrompt、PersonaModel 模型；AgentPrompt 整体合并入 BaseSystemPrompt.global_rules（去重后 5 条新增）；替换字符串常量为模型实例；移除 AgentDef.persona_prompt property；移除 AgentDef.tool_contract property；移除 _parallel_subagents_prompt 函数（并发子代理行为交给 agent 工具和运行时）；移除 PERSONA_PROMPTS dict；新增 PERSONA_MODEL；persona_prompt_for_llm → persona_prompt()（静态，不随 persona 变化） |
+| `src/voidx/agent/runtime_context.py` | RuntimeContextBuilder 新增 workflow_runtime 参数；base_system_prompt 参数类型从 str 改为 BaseSystemPrompt；workflow_runtime section 含元规则 + node 完整定义；移除 Tool Contract section 渲染；不再新增独立 available_skills 参数；合并 Workspace Facts + RuntimeEnvelope 为 Runtime State section；移除 workflow_context_content HumanMessage 及相关编译逻辑；移除 skill_context_content 参数及相关 HumanMessage 编译逻辑 |
 | `src/voidx/agent/graph/core.py` | 更新 BASE_SYSTEM_PROMPT 引用为 BASE_SYSTEM；新增 WORKFLOW_RUNTIME 引用；更新 persona_prompt_for_llm 调用为 persona_prompt() |
 | `src/voidx/agent/graph/subagent.py` | 同上；移除 _agent_prompt 函数，改用 persona_prompt() |
 | `tests/test_agent/test_agents.py` | 新增：PromptRule 渲染测试、BaseSystemPrompt 渲染一致性测试（含合并后 global_rules）、WorkflowRuntimePrompt 渲染测试、PersonaModel 渲染测试、结构化断言测试、persona 描述一致性测试、去重验证测试 |
