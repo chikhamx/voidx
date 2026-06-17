@@ -11,7 +11,7 @@ from voidx.runtime.intent_classifier import (
 )
 
 
-ROOT = Path(__file__).resolve().parents[1]
+ROOT = Path(__file__).resolve().parents[2]
 MODEL = ROOT / "src" / "voidx" / "data" / "intent_classifier.json"
 
 

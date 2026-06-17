@@ -8,7 +8,7 @@ from pathlib import Path
 import pytest
 
 
-ROOT = Path(__file__).resolve().parents[1]
+ROOT = Path(__file__).resolve().parents[2]
 SCRIPT = ROOT / "scripts" / "train_intent_classifier.py"
 MODEL = ROOT / "src" / "voidx" / "data" / "intent_classifier.json"
 REPORT = ROOT / "docs" / "reports" / "intent-classifier-eval.md"

@@ -1,4 +1,4 @@
-from tests.tui_helpers import *  # noqa: F403
+from tui_helpers import *  # noqa: F403
 
 import asyncio
 import contextlib
