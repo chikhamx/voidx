@@ -51,6 +51,9 @@ def test_general_turn_clears_current_goal_and_route():
     state = TaskState(
         current_goal=GoalSpec(type=GoalType.FEATURE, desc="build feature"),
         workflow_route=WorkflowRoute(join="tdd", leave="verify"),
+        workflow_runs={
+            "tdd": WorkflowRunState(name="tdd", status=WorkflowRunStatus.ACTIVE),
+        },
     )
 
     state.update_after_turn(_resolution(intent=TaskIntent.GENERAL), "thanks")
@@ -58,6 +61,53 @@ def test_general_turn_clears_current_goal_and_route():
     assert state.current_intent == TaskIntent.GENERAL
     assert state.current_goal is None
     assert state.workflow_route is None
+    assert state.workflow_runs == {}
+
+
+def test_update_after_turn_clears_workflow_when_goal_changes():
+    old_goal = GoalSpec(type=GoalType.DESIGN, desc="runtime context design")
+    new_goal = GoalSpec(type=GoalType.REVIEW, desc="current diff")
+    state = TaskState(
+        current_goal=old_goal,
+        workflow_route=WorkflowRoute(join="brainstorm", leave="design"),
+        workflow_runs={
+            "brainstorm": WorkflowRunState(name="brainstorm", status=WorkflowRunStatus.ACTIVE),
+        },
+    )
+
+    state.update_after_turn(
+        _resolution(
+            goal=new_goal,
+            plan=PlanResolution(join="review", leave="review"),
+        ),
+        "review this",
+    )
+
+    assert state.current_goal == new_goal
+    assert state.workflow_route == WorkflowRoute(join="review", leave="review")
+    assert state.workflow_runs == {}
+
+
+def test_update_after_turn_preserves_workflow_for_same_goal():
+    goal = GoalSpec(type=GoalType.FEATURE, desc="build feature")
+    active = WorkflowRunState(name="tdd", status=WorkflowRunStatus.ACTIVE)
+    state = TaskState(
+        current_goal=goal,
+        workflow_route=WorkflowRoute(join="tdd", leave="verify"),
+        workflow_runs={"tdd": active},
+    )
+
+    state.update_after_turn(
+        _resolution(
+            goal=GoalSpec(type=GoalType.FEATURE, desc="build feature"),
+            plan=PlanResolution(join="tdd", leave="verify"),
+        ),
+        "continue",
+    )
+
+    assert state.current_goal == goal
+    assert state.workflow_route == WorkflowRoute(join="tdd", leave="verify")
+    assert state.workflow_runs == {"tdd": active}
 
 
 def test_coding_turn_without_goal_keeps_existing_goal_but_clears_route():

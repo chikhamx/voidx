@@ -139,6 +139,7 @@ class GraphToolExecutor:
                 if runtime_task_state.workflow_route is not None
                 else None,
                 file_mtimes=host._file_mtimes,
+                file_read_coverage=host._file_read_coverage,
                 mcp_manager=getattr(host, "_mcp_manager", None),
                 lsp_manager=getattr(host, "_lsp_manager", None),
                 sandbox_mode=host._permission.sandbox_mode,
@@ -1217,4 +1218,3 @@ def _workflow_runs_for_state(value: object) -> list[WorkflowRunState]:
             continue
         runs.append(run)
     return runs
-

@@ -38,6 +38,14 @@ def reconcile_workflow_runs_for_turn(
     )
     if override is not None:
         return override
+    if target and target in DEFAULT_WORKFLOW_DAG.nodes and _has_active(runs, target):
+        compacted = _satisfy_other_active_runs(
+            runs,
+            target=target,
+            turn_count=turn_count,
+        )
+        if compacted is not None:
+            return compacted
     if not target and not any(run.status == WorkflowRunStatus.ACTIVE for run in runs):
         return []
     events = _reconcile_events(
@@ -150,6 +158,41 @@ def _has_explicit_write_intent(
     if plan is not None and plan.join:
         return plan.join in {"tdd", "debug", "feedback"}
     return False
+
+
+def _satisfy_other_active_runs(
+    runs: list[WorkflowRunState],
+    *,
+    target: str,
+    turn_count: int,
+) -> list[WorkflowRunState] | None:
+    others = [
+        run for run in runs
+        if run.status == WorkflowRunStatus.ACTIVE and run.name != target
+    ]
+    if not others:
+        return None
+
+    updated = [run.model_copy(deep=True) for run in runs]
+    for run in updated:
+        if run.status != WorkflowRunStatus.ACTIVE or run.name == target:
+            continue
+        run.status = WorkflowRunStatus.SATISFIED
+        run.updated_turn = turn_count
+        run.blocked_reason = ""
+        run.evidence.append(
+            WorkflowEvidence(
+                kind=WorkflowStateEventKind.SATISFIED.value,
+                ref=f"auto:turn_reconcile:{run.name}_superseded_by_active_{target}",
+                ok=True,
+                summary=(
+                    "Resolver selected an already-active target workflow; "
+                    "stale active workflow was closed."
+                ),
+                condition="superseded_by_active_target",
+            )
+        )
+    return updated
 
 
 def _reconcile_events(

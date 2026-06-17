@@ -185,7 +185,7 @@ def test_reconcile_keeps_debug_dag_transition_when_join_requests_tdd():
     assert by_name["tdd"].status == WorkflowRunStatus.ACTIVE
 
 
-def test_reconcile_does_not_satisfy_source_when_target_is_already_active():
+def test_reconcile_satisfies_other_active_runs_when_target_is_already_active():
     brainstorm = WorkflowRunState(name="brainstorm", status=WorkflowRunStatus.ACTIVE)
     design = WorkflowRunState(name="design", status=WorkflowRunStatus.ACTIVE)
     state = TaskState(
@@ -202,9 +202,36 @@ def test_reconcile_does_not_satisfy_source_when_target_is_already_active():
     )
 
     by_name = {item.name: item for item in updated}
-    assert by_name["brainstorm"].status == WorkflowRunStatus.ACTIVE
+    assert by_name["brainstorm"].status == WorkflowRunStatus.SATISFIED
+    assert by_name["brainstorm"].evidence[-1].condition == "superseded_by_active_target"
     assert by_name["design"].status == WorkflowRunStatus.ACTIVE
-    assert by_name["brainstorm"].evidence == []
+
+
+def test_reconcile_keeps_single_active_target_when_no_other_active_runs():
+    design = WorkflowRunState(name="design", status=WorkflowRunStatus.ACTIVE)
+    state = TaskState(workflow_runs={"design": design})
+    resolution = _resolution(join="design")
+
+    updated = reconcile_workflow_runs_for_turn(
+        goal_resolution=resolution,
+        after_state=state,
+    )
+
+    assert updated == [design]
+
+
+def test_reconcile_preserves_active_workflow_without_join_for_same_goal():
+    tdd = WorkflowRunState(name="tdd", status=WorkflowRunStatus.ACTIVE)
+    goal = _goal("build feature", GoalType.FEATURE)
+    state = TaskState(current_goal=goal, workflow_runs={"tdd": tdd})
+    resolution = _resolution(goal=goal)
+
+    updated = reconcile_workflow_runs_for_turn(
+        goal_resolution=resolution,
+        after_state=state,
+    )
+
+    assert updated == [tdd]
 
 
 def test_reconcile_ignores_unknown_plan_join():

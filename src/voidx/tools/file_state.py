@@ -6,11 +6,24 @@ import asyncio
 import hashlib
 import json
 import os
+from dataclasses import asdict, dataclass
 from datetime import datetime, timezone
 from pathlib import Path
 
 from voidx.memory.jsonl_store import session_dir
 from voidx.tools.base import ToolContext
+
+
+@dataclass(frozen=True)
+class FileFingerprint:
+    mtime_ns: int
+    size: int
+
+
+@dataclass(frozen=True)
+class ReadLineRange:
+    start_line: int
+    end_line: int
 
 
 def check_staleness(ctx: ToolContext, resolved: Path) -> str | None:
@@ -19,8 +32,8 @@ def check_staleness(ctx: ToolContext, resolved: Path) -> str | None:
         return None
     if not resolved.exists():
         return f"File deleted since last read: {resolved}"
-    current_mtime = resolved.stat().st_mtime
-    if current_mtime != ctx.file_mtimes[key]:
+    current_fingerprint = asdict(file_fingerprint(resolved))
+    if current_fingerprint != ctx.file_mtimes[key]:
         return (
             f"File was modified since last read: {resolved}. "
             "Please re-read the file before editing."
@@ -30,7 +43,59 @@ def check_staleness(ctx: ToolContext, resolved: Path) -> str | None:
 
 def record_mtime(ctx: ToolContext, resolved: Path) -> None:
     if resolved.exists():
-        ctx.file_mtimes[str(resolved.resolve())] = resolved.stat().st_mtime
+        ctx.file_mtimes[str(resolved.resolve())] = asdict(file_fingerprint(resolved))
+
+
+def clear_read_coverage(ctx: ToolContext, resolved: Path) -> None:
+    ctx.file_read_coverage.pop(str(resolved.resolve()), None)
+
+
+def record_read_range(ctx: ToolContext, resolved: Path, start_line: int, end_line: int) -> None:
+    if not resolved.exists() or end_line < start_line:
+        return
+    key = str(resolved.resolve())
+    fingerprint = asdict(file_fingerprint(resolved))
+    existing = ctx.file_read_coverage.get(key, {})
+    ranges = existing.get("ranges", []) if existing.get("fingerprint") == fingerprint else []
+    ctx.file_read_coverage[key] = {
+        "fingerprint": fingerprint,
+        "ranges": [*ranges, asdict(ReadLineRange(start_line, end_line))],
+    }
+    record_mtime(ctx, resolved)
+
+
+def check_read_coverage(ctx: ToolContext, resolved: Path, start_line: int, end_line: int) -> str | None:
+    if covered_read_range(ctx, resolved, start_line, end_line) is not None:
+        return None
+    key = str(resolved.resolve())
+    coverage = ctx.file_read_coverage.get(key)
+    if coverage is None:
+        return f"Lines {start_line}-{end_line} in {resolved} must be read before editing."
+    if coverage.get("fingerprint") != asdict(file_fingerprint(resolved)):
+        return (
+            f"File was modified since last read: {resolved}. "
+            "Please re-read the file before editing."
+        )
+    return f"Lines {start_line}-{end_line} in {resolved} must be read before editing."
+
+
+def covered_read_range(ctx: ToolContext, resolved: Path, start_line: int, end_line: int) -> ReadLineRange | None:
+    key = str(resolved.resolve())
+    coverage = ctx.file_read_coverage.get(key)
+    if coverage is None:
+        return None
+    if coverage.get("fingerprint") != asdict(file_fingerprint(resolved)):
+        return None
+    ranges = coverage.get("ranges", [])
+    for item in ranges:
+        if item.get("start_line") <= start_line and end_line <= item.get("end_line"):
+            return ReadLineRange(int(item.get("start_line")), int(item.get("end_line")))
+    return None
+
+
+def file_fingerprint(resolved: Path) -> FileFingerprint:
+    stat = resolved.stat()
+    return FileFingerprint(mtime_ns=stat.st_mtime_ns, size=stat.st_size)
 
 
 async def save_file_version(

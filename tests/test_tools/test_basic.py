@@ -14,7 +14,15 @@ import pytest
 from langchain_core.messages import ToolMessage
 
 from voidx.tools.base import ToolContext, ToolResult, BaseTool, UserInteraction, UserResponse
-from voidx.tools.file_ops import FileReadInput, FileWriteInput, FileEditInput, EditEntry, FileWriteTool, FileEditTool
+from voidx.tools.file_ops import (
+    FileReadInput,
+    FileWriteInput,
+    FileEditInput,
+    EditEntry,
+    FileReadTool,
+    FileWriteTool,
+    FileEditTool,
+)
 from voidx.tools.file_state import save_file_version
 import voidx.tools.file_state as file_state
 from voidx.tools.search import GlobInput, GrepInput
@@ -67,10 +75,28 @@ class TestToolSchemas:
         assert inp.offset == 10
         assert inp.limit == 5
 
+    def test_read_input_rejects_zero_and_negative_values(self):
+        with pytest.raises(ValueError):
+            FileReadInput(file_path="foo.py", offset=0)
+        with pytest.raises(ValueError):
+            FileReadInput(file_path="foo.py", limit=0)
+        with pytest.raises(ValueError):
+            FileReadInput(file_path="foo.py", offset=-1)
+        with pytest.raises(ValueError):
+            FileReadInput(file_path="foo.py", limit=-2)
+
     def test_edit_input(self):
-        inp = FileEditInput(file_path="x.py", edits=[EditEntry(old_string="a", new_string="b")])
+        inp = FileEditInput(
+            file_path="x.py",
+            edits=[EditEntry(operation="replace", start_line=1, end_line=1, new_string="b")],
+        )
         assert inp.file_path == "x.py"
         assert len(inp.edits) == 1
+        assert inp.edits[0].operation == "replace"
+
+    def test_edit_input_requires_explicit_operation(self):
+        with pytest.raises(ValueError):
+            EditEntry(start_line=1, end_line=1, new_string="b")
 
     def test_glob_input(self):
         inp = GlobInput(pattern="**/*.py")
@@ -232,8 +258,9 @@ class TestInteractiveTools:
         ctx = ToolContext(workspace=str(tmp_path), session_id="sid-1")
 
         await FileWriteTool().execute({"file_path": "app.py", "content": "two\n"}, ctx)
+        await FileReadTool().execute({"file_path": "app.py"}, ctx)
         result = await FileEditTool().execute(
-            {"file_path": "app.py", "edits": [{"old_string": "two", "new_string": "three"}]},
+            {"file_path": "app.py", "edits": [{"operation": "replace", "start_line": 1, "end_line": 1, "new_string": "three"}]},
             ctx,
         )
 
@@ -1714,10 +1741,12 @@ class TestFileOps:
 
         assert "150 lines" in description
         assert "skeleton" in description
-        assert "unique placeholders" in description
+        assert "anchor" in description
         assert "edit" in description
+        assert "read" in description
         assert "150 lines" in content_description
-        assert "unique placeholders" in content_description
+        assert "anchor" in content_description
+        assert "read" in content_description
 
     @pytest.mark.asyncio
     async def test_read(self, tmp_path):
@@ -1729,6 +1758,66 @@ class TestFileOps:
         expected = "1\tline1\n2\tline2\n3\tline3"
         assert result.output.strip() == expected
         assert result.metadata["lines"] == 3
+        assert result.metadata["total_lines"] == 3
+
+    @pytest.mark.asyncio
+    async def test_read_empty_file_reports_zero_lines(self, tmp_path):
+        f = tmp_path / "empty.txt"
+        f.write_text("")
+        ctx = ToolContext(workspace=str(tmp_path))
+        r = ToolRegistry()
+
+        result = await r.execute_tool("read", {"file_path": "empty.txt"}, ctx)
+
+        assert result.metadata["lines"] == 0
+        assert result.metadata["total_lines"] == 0
+        assert "Read 0 lines" in result.title
+
+    def test_record_mtime_uses_ns_and_size_fingerprint(self, tmp_path):
+        f = tmp_path / "fingerprint.txt"
+        f.write_text("one\n")
+        ctx = ToolContext(workspace=str(tmp_path))
+
+        file_state.record_mtime(ctx, f)
+        stored = ctx.file_mtimes[str(f.resolve())]
+
+        assert isinstance(stored, dict)
+        assert "mtime_ns" in stored
+        assert "size" in stored
+        assert stored["size"] == 4
+
+    def test_check_staleness_detects_size_change_even_when_mtime_ns_matches(self, tmp_path):
+        f = tmp_path / "fingerprint-size.txt"
+        f.write_text("one\n")
+        ctx = ToolContext(workspace=str(tmp_path))
+        file_state.record_mtime(ctx, f)
+        f.write_text("one plus more\n")
+        key = str(f.resolve())
+        current = file_state.file_fingerprint(f)
+        ctx.file_mtimes[key] = {"mtime_ns": current.mtime_ns, "size": 4}
+
+        stale = file_state.check_staleness(ctx, f)
+
+        assert stale is not None
+        assert "modified since last read" in stale
+
+    @pytest.mark.asyncio
+    async def test_read_fully_covered_range_returns_already_read_summary(self, tmp_path):
+        f = tmp_path / "covered.txt"
+        f.write_text("\n".join(f"line {i}" for i in range(1, 121)) + "\n")
+        ctx = ToolContext(workspace=str(tmp_path))
+        r = ToolRegistry()
+        first = await r.execute_tool("read", {"file_path": "covered.txt", "offset": 1, "limit": 100}, ctx)
+
+        second = await r.execute_tool("read", {"file_path": "covered.txt", "offset": 50, "limit": 51}, ctx)
+
+        assert "1\tline 1" in first.output
+        assert "already read" in second.output.lower()
+        assert "50-100" in second.output
+        assert "50\tline 50" not in second.output
+        assert second.metadata["already_read"] is True
+        assert second.metadata["lines"] == 0
+        assert second.metadata["covered_lines"] == 51
 
     @pytest.mark.asyncio
     async def test_write(self, tmp_path):
@@ -1754,51 +1843,451 @@ class TestFileOps:
         assert (tmp_path / "large.txt").read_text() == content
 
     @pytest.mark.asyncio
-    async def test_edit(self, tmp_path):
-        f = tmp_path / "edit.txt"
-        f.write_text("hello world")
+    async def test_write_line_count_matches_read_display_lines(self, tmp_path):
         ctx = ToolContext(workspace=str(tmp_path))
         r = ToolRegistry()
+        exactly_200_with_final_newline = "\n".join(f"line {i}" for i in range(200)) + "\n"
+
+        result = await r.execute_tool(
+            "write",
+            {"file_path": "exactly-200.txt", "content": exactly_200_with_final_newline},
+            ctx,
+        )
+
+        assert "Note:" not in result.output
+        assert (tmp_path / "exactly-200.txt").read_text() == exactly_200_with_final_newline
+
+    @pytest.mark.asyncio
+    async def test_edit(self, tmp_path):
+        f = tmp_path / "edit.txt"
+        f.write_text("hello world\nkeep\n")
+        ctx = ToolContext(workspace=str(tmp_path))
+        r = ToolRegistry()
+        await r.execute_tool("read", {"file_path": "edit.txt"}, ctx)
         result = await r.execute_tool(
             "edit",
-            {"file_path": "edit.txt", "edits": [{"old_string": "hello", "new_string": "hi"}]},
+            {"file_path": "edit.txt", "edits": [{"operation": "replace", "start_line": 1, "end_line": 1, "new_string": "hi world"}]},
             ctx,
         )
         assert "File edited" in result.output
-        assert (tmp_path / "edit.txt").read_text() == "hi world"
+        assert (tmp_path / "edit.txt").read_text() == "hi world\nkeep\n"
 
     @pytest.mark.asyncio
     async def test_edit_output_contains_diff(self, tmp_path):
         f = tmp_path / "edit.txt"
-        f.write_text("hello world")
+        f.write_text("hello world\n")
         ctx = ToolContext(workspace=str(tmp_path))
         r = ToolRegistry()
+        await r.execute_tool("read", {"file_path": "edit.txt"}, ctx)
         result = await r.execute_tool(
             "edit",
-            {"file_path": "edit.txt", "edits": [{"old_string": "hello", "new_string": "hi"}]},
+            {"file_path": "edit.txt", "edits": [{"operation": "replace", "start_line": 1, "end_line": 1, "new_string": "hi world"}]},
             ctx,
         )
         assert "File edited" in result.output
         assert result.diff is not None
-        assert "-hello" in result.diff
-        assert "+hi" in result.diff
+        assert "-hello world" in result.diff
+        assert "+hi world" in result.diff
         # output should also contain the diff text
         assert "-hello" in result.output or "diff" in result.output.lower()
 
     @pytest.mark.asyncio
-    async def test_edit_rejects_multiple_matches(self, tmp_path):
-        f = tmp_path / "multi.txt"
-        f.write_text("foo bar foo baz")
+    async def test_edit_line_range_out_of_bounds(self, tmp_path):
+        f = tmp_path / "short.txt"
+        f.write_text("one\n")
         ctx = ToolContext(workspace=str(tmp_path))
         r = ToolRegistry()
+        await r.execute_tool("read", {"file_path": "short.txt"}, ctx)
         result = await r.execute_tool(
             "edit",
-            {"file_path": "multi.txt", "edits": [{"old_string": "foo", "new_string": "qux"}]},
+            {"file_path": "short.txt", "edits": [{"operation": "replace", "start_line": 2, "end_line": 2, "new_string": "two"}]},
             ctx,
         )
-        assert "2 times" in result.output or "matches" in result.output
+        assert "out of range" in result.output
         assert result.metadata.get("error")
-        assert (tmp_path / "multi.txt").read_text() == "foo bar foo baz"
+        assert (tmp_path / "short.txt").read_text() == "one\n"
+
+    @pytest.mark.asyncio
+    async def test_edit_requires_read_coverage_for_replace(self, tmp_path):
+        f = tmp_path / "unread.txt"
+        f.write_text("one\n")
+        ctx = ToolContext(workspace=str(tmp_path))
+        r = ToolRegistry()
+
+        result = await r.execute_tool(
+            "edit",
+            {"file_path": "unread.txt", "edits": [{"operation": "replace", "start_line": 1, "end_line": 1, "new_string": "two"}]},
+            ctx,
+        )
+
+        assert "read" in result.output.lower()
+        assert result.metadata.get("error")
+        assert (tmp_path / "unread.txt").read_text() == "one\n"
+
+    @pytest.mark.asyncio
+    async def test_edit_insert_before_and_after_line(self, tmp_path):
+        f = tmp_path / "insert.txt"
+        f.write_text("middle\nend\n")
+        ctx = ToolContext(workspace=str(tmp_path))
+        r = ToolRegistry()
+        await r.execute_tool("read", {"file_path": "insert.txt"}, ctx)
+
+        result = await r.execute_tool(
+            "edit",
+            {
+                "file_path": "insert.txt",
+                "edits": [
+                    {"operation": "insert_before", "start_line": 1, "new_string": "top\n"},
+                    {"operation": "insert_after", "start_line": 2, "new_string": "bottom\n"},
+                ],
+            },
+            ctx,
+        )
+
+        assert result.metadata.get("error") is not True
+        assert "operations" in result.output
+        assert "replacements" not in result.output
+        assert result.metadata["operations"] == 2
+        assert (tmp_path / "insert.txt").read_text() == "top\nmiddle\nend\nbottom\n"
+
+    @pytest.mark.asyncio
+    async def test_single_read_allows_one_batch_edit_with_multiple_covered_ranges(self, tmp_path):
+        f = tmp_path / "batch.txt"
+        f.write_text("one\ntwo\nthree\nfour\n")
+        ctx = ToolContext(workspace=str(tmp_path))
+        r = ToolRegistry()
+        await r.execute_tool("read", {"file_path": "batch.txt"}, ctx)
+
+        result = await r.execute_tool(
+            "edit",
+            {
+                "file_path": "batch.txt",
+                "edits": [
+                    {"operation": "replace", "start_line": 1, "end_line": 1, "new_string": "ONE"},
+                    {"operation": "replace", "start_line": 3, "end_line": 4, "new_string": "THREE\nFOUR\n"},
+                ],
+            },
+            ctx,
+        )
+
+        assert result.metadata.get("error") is not True
+        assert (tmp_path / "batch.txt").read_text() == "ONE\ntwo\nTHREE\nFOUR\n"
+
+    @pytest.mark.asyncio
+    async def test_edit_rejects_overlapping_ranges(self, tmp_path):
+        f = tmp_path / "overlap.txt"
+        f.write_text("one\ntwo\nthree\n")
+        ctx = ToolContext(workspace=str(tmp_path))
+        r = ToolRegistry()
+        await r.execute_tool("read", {"file_path": "overlap.txt"}, ctx)
+
+        result = await r.execute_tool(
+            "edit",
+            {
+                "file_path": "overlap.txt",
+                "edits": [
+                    {"operation": "replace", "start_line": 1, "end_line": 2, "new_string": "x"},
+                    {"operation": "replace", "start_line": 2, "end_line": 3, "new_string": "y"},
+                ],
+            },
+            ctx,
+        )
+
+        assert "overlap" in result.output.lower()
+        assert result.metadata.get("error")
+        assert (tmp_path / "overlap.txt").read_text() == "one\ntwo\nthree\n"
+
+    @pytest.mark.asyncio
+    async def test_edit_clears_read_coverage_after_success(self, tmp_path):
+        f = tmp_path / "coverage.txt"
+        f.write_text("one\ntwo\n")
+        ctx = ToolContext(workspace=str(tmp_path))
+        r = ToolRegistry()
+        await r.execute_tool("read", {"file_path": "coverage.txt"}, ctx)
+        first = await r.execute_tool(
+            "edit",
+            {"file_path": "coverage.txt", "edits": [{"operation": "replace", "start_line": 1, "end_line": 1, "new_string": "ONE"}]},
+            ctx,
+        )
+
+        second = await r.execute_tool(
+            "edit",
+            {"file_path": "coverage.txt", "edits": [{"operation": "replace", "start_line": 2, "end_line": 2, "new_string": "TWO"}]},
+            ctx,
+        )
+
+        assert first.metadata.get("error") is not True
+        assert "read" in second.output.lower()
+        assert second.metadata.get("error")
+        assert (tmp_path / "coverage.txt").read_text() == "ONE\ntwo\n"
+
+    @pytest.mark.asyncio
+    async def test_read_after_external_change_drops_old_line_coverage(self, tmp_path):
+        f = tmp_path / "external.txt"
+        f.write_text("one\ntwo\nthree\n")
+        ctx = ToolContext(workspace=str(tmp_path))
+        r = ToolRegistry()
+        await r.execute_tool("read", {"file_path": "external.txt", "offset": 1, "limit": 1}, ctx)
+        f.write_text("one changed\ntwo\nthree\n")
+        await r.execute_tool("read", {"file_path": "external.txt", "offset": 3, "limit": 1}, ctx)
+
+        result = await r.execute_tool(
+            "edit",
+            {"file_path": "external.txt", "edits": [{"operation": "replace", "start_line": 1, "end_line": 1, "new_string": "ONE"}]},
+            ctx,
+        )
+
+        assert "read" in result.output.lower()
+        assert result.metadata.get("error")
+        assert (tmp_path / "external.txt").read_text() == "one changed\ntwo\nthree\n"
+
+    @pytest.mark.asyncio
+    async def test_write_clears_read_coverage_after_success(self, tmp_path):
+        f = tmp_path / "write-clear.txt"
+        f.write_text("old\n")
+        ctx = ToolContext(workspace=str(tmp_path))
+        r = ToolRegistry()
+        await r.execute_tool("read", {"file_path": "write-clear.txt"}, ctx)
+        await r.execute_tool("write", {"file_path": "write-clear.txt", "content": "new\n"}, ctx)
+
+        result = await r.execute_tool(
+            "edit",
+            {"file_path": "write-clear.txt", "edits": [{"operation": "replace", "start_line": 1, "end_line": 1, "new_string": "NEW"}]},
+            ctx,
+        )
+
+        assert "read" in result.output.lower()
+        assert result.metadata.get("error")
+        assert (tmp_path / "write-clear.txt").read_text() == "new\n"
+
+    @pytest.mark.asyncio
+    async def test_edit_preserves_missing_trailing_newline_when_unchanged(self, tmp_path):
+        f = tmp_path / "no-eof.txt"
+        f.write_text("one\ntwo")
+        ctx = ToolContext(workspace=str(tmp_path))
+        r = ToolRegistry()
+        await r.execute_tool("read", {"file_path": "no-eof.txt"}, ctx)
+
+        result = await r.execute_tool(
+            "edit",
+            {"file_path": "no-eof.txt", "edits": [{"operation": "replace", "start_line": 1, "end_line": 1, "new_string": "ONE\n"}]},
+            ctx,
+        )
+
+        assert result.metadata.get("error") is not True
+        assert (tmp_path / "no-eof.txt").read_text() == "ONE\ntwo"
+
+    @pytest.mark.asyncio
+    async def test_edit_leading_newline_in_new_string_creates_intentional_blank_line(self, tmp_path):
+        f = tmp_path / "leading.txt"
+        f.write_text("one\ntwo\n")
+        ctx = ToolContext(workspace=str(tmp_path))
+        r = ToolRegistry()
+        await r.execute_tool("read", {"file_path": "leading.txt"}, ctx)
+
+        result = await r.execute_tool(
+            "edit",
+            {"file_path": "leading.txt", "edits": [{"operation": "replace", "start_line": 2, "end_line": 2, "new_string": "\nTWO\n"}]},
+            ctx,
+        )
+
+        assert result.metadata.get("error") is not True
+        assert (tmp_path / "leading.txt").read_text() == "one\n\nTWO\n"
+
+    @pytest.mark.asyncio
+    async def test_write_allows_empty_file_but_edit_rejects_empty_file(self, tmp_path):
+        ctx = ToolContext(workspace=str(tmp_path))
+        r = ToolRegistry()
+        await r.execute_tool("write", {"file_path": "empty.txt", "content": ""}, ctx)
+        await r.execute_tool("read", {"file_path": "empty.txt"}, ctx)
+
+        result = await r.execute_tool(
+            "edit",
+            {"file_path": "empty.txt", "edits": [{"operation": "insert_after", "start_line": 1, "new_string": "x"}]},
+            ctx,
+        )
+
+        assert "empty" in result.output.lower() or "out of range" in result.output.lower()
+        assert result.metadata.get("error")
+        assert (tmp_path / "empty.txt").read_text() == ""
+
+    @pytest.mark.asyncio
+    async def test_edit_reverse_order_application(self, tmp_path):
+        f = tmp_path / "reverse.txt"
+        f.write_text("a\nb\nc\nd\ne\nf\n")
+        ctx = ToolContext(workspace=str(tmp_path))
+        r = ToolRegistry()
+        await r.execute_tool("read", {"file_path": "reverse.txt"}, ctx)
+
+        result = await r.execute_tool(
+            "edit",
+            {
+                "file_path": "reverse.txt",
+                "edits": [
+                    {"operation": "replace", "start_line": 2, "end_line": 3, "new_string": "B\nC"},
+                    {"operation": "replace", "start_line": 5, "end_line": 5, "new_string": "E"},
+                ],
+            },
+            ctx,
+        )
+
+        assert result.metadata.get("error") is not True
+        assert (tmp_path / "reverse.txt").read_text() == "a\nB\nC\nd\nE\nf\n"
+
+    @pytest.mark.asyncio
+    async def test_edit_delete_lines(self, tmp_path):
+        f = tmp_path / "delete.txt"
+        f.write_text("one\ntwo\nthree\nfour\n")
+        ctx = ToolContext(workspace=str(tmp_path))
+        r = ToolRegistry()
+        await r.execute_tool("read", {"file_path": "delete.txt"}, ctx)
+
+        result = await r.execute_tool(
+            "edit",
+            {"file_path": "delete.txt", "edits": [{"operation": "replace", "start_line": 2, "end_line": 3, "new_string": ""}]},
+            ctx,
+        )
+
+        assert result.metadata.get("error") is not True
+        assert (tmp_path / "delete.txt").read_text() == "one\nfour\n"
+
+    @pytest.mark.asyncio
+    async def test_edit_single_line(self, tmp_path):
+        f = tmp_path / "single.txt"
+        f.write_text("one\ntwo\nthree\n")
+        ctx = ToolContext(workspace=str(tmp_path))
+        r = ToolRegistry()
+        await r.execute_tool("read", {"file_path": "single.txt"}, ctx)
+
+        result = await r.execute_tool(
+            "edit",
+            {"file_path": "single.txt", "edits": [{"operation": "replace", "start_line": 2, "end_line": 2, "new_string": "TWO"}]},
+            ctx,
+        )
+
+        assert result.metadata.get("error") is not True
+        assert (tmp_path / "single.txt").read_text() == "one\nTWO\nthree\n"
+
+    @pytest.mark.asyncio
+    async def test_edit_requires_read_coverage_for_insert_anchor(self, tmp_path):
+        f = tmp_path / "insert-anchor.txt"
+        f.write_text("one\ntwo\n")
+        ctx = ToolContext(workspace=str(tmp_path))
+        r = ToolRegistry()
+
+        result = await r.execute_tool(
+            "edit",
+            {"file_path": "insert-anchor.txt", "edits": [{"operation": "insert_after", "start_line": 1, "new_string": "mid\n"}]},
+            ctx,
+        )
+
+        assert "read" in result.output.lower()
+        assert result.metadata.get("error")
+        assert (tmp_path / "insert-anchor.txt").read_text() == "one\ntwo\n"
+
+    @pytest.mark.asyncio
+    async def test_edit_preserves_trailing_newline_when_unchanged(self, tmp_path):
+        f = tmp_path / "trailing.txt"
+        f.write_text("one\ntwo\nthree\n")
+        ctx = ToolContext(workspace=str(tmp_path))
+        r = ToolRegistry()
+        await r.execute_tool("read", {"file_path": "trailing.txt"}, ctx)
+
+        result = await r.execute_tool(
+            "edit",
+            {"file_path": "trailing.txt", "edits": [{"operation": "replace", "start_line": 1, "end_line": 1, "new_string": "ONE"}]},
+            ctx,
+        )
+
+        assert result.metadata.get("error") is not True
+        assert (tmp_path / "trailing.txt").read_text() == "ONE\ntwo\nthree\n"
+
+    @pytest.mark.asyncio
+    async def test_edit_trailing_newline_in_new_string_does_not_add_blank_line(self, tmp_path):
+        f = tmp_path / "no-blank.txt"
+        f.write_text("one\ntwo\n")
+        ctx = ToolContext(workspace=str(tmp_path))
+        r = ToolRegistry()
+        await r.execute_tool("read", {"file_path": "no-blank.txt"}, ctx)
+
+        result = await r.execute_tool(
+            "edit",
+            {"file_path": "no-blank.txt", "edits": [{"operation": "replace", "start_line": 1, "end_line": 1, "new_string": "ONE\n"}]},
+            ctx,
+        )
+
+        assert result.metadata.get("error") is not True
+        assert (tmp_path / "no-blank.txt").read_text() == "ONE\ntwo\n"
+
+    @pytest.mark.asyncio
+    async def test_edit_rejects_duplicate_ranges(self, tmp_path):
+        f = tmp_path / "dup.txt"
+        f.write_text("one\ntwo\nthree\n")
+        ctx = ToolContext(workspace=str(tmp_path))
+        r = ToolRegistry()
+        await r.execute_tool("read", {"file_path": "dup.txt"}, ctx)
+
+        result = await r.execute_tool(
+            "edit",
+            {
+                "file_path": "dup.txt",
+                "edits": [
+                    {"operation": "replace", "start_line": 2, "end_line": 2, "new_string": "X"},
+                    {"operation": "replace", "start_line": 2, "end_line": 2, "new_string": "Y"},
+                ],
+            },
+            ctx,
+        )
+
+        assert "overlap" in result.output.lower()
+        assert result.metadata.get("error")
+        assert (tmp_path / "dup.txt").read_text() == "one\ntwo\nthree\n"
+
+    @pytest.mark.asyncio
+    async def test_edit_rejects_insert_inside_replacement_range(self, tmp_path):
+        f = tmp_path / "inside.txt"
+        f.write_text("one\ntwo\nthree\nfour\n")
+        ctx = ToolContext(workspace=str(tmp_path))
+        r = ToolRegistry()
+        await r.execute_tool("read", {"file_path": "inside.txt"}, ctx)
+
+        result = await r.execute_tool(
+            "edit",
+            {
+                "file_path": "inside.txt",
+                "edits": [
+                    {"operation": "replace", "start_line": 2, "end_line": 3, "new_string": "X"},
+                    {"operation": "insert_before", "start_line": 2, "new_string": "Y\n"},
+                ],
+            },
+            ctx,
+        )
+
+        assert "inside" in result.output.lower() or "replacement" in result.output.lower()
+        assert result.metadata.get("error")
+        assert (tmp_path / "inside.txt").read_text() == "one\ntwo\nthree\nfour\n"
+
+    @pytest.mark.asyncio
+    async def test_read_coverage_uses_mtime_ns_and_size_fingerprint(self, tmp_path):
+        import voidx.tools.file_state as fs
+
+        f = tmp_path / "fp.txt"
+        f.write_text("hello\n")
+        ctx = ToolContext(workspace=str(tmp_path))
+        r = ToolRegistry()
+        await r.execute_tool("read", {"file_path": "fp.txt"}, ctx)
+
+        key = str((tmp_path / "fp.txt").resolve())
+        coverage = ctx.file_read_coverage[key]
+        fp = fs.file_fingerprint(tmp_path / "fp.txt")
+        assert coverage["fingerprint"] == {"mtime_ns": fp.mtime_ns, "size": fp.size}
+
+        result = await r.execute_tool(
+            "edit",
+            {"file_path": "fp.txt", "edits": [{"operation": "replace", "start_line": 1, "end_line": 1, "new_string": "HELLO"}]},
+            ctx,
+        )
+        assert result.metadata.get("error") is not True
 
     @pytest.mark.asyncio
     async def test_read_nonexistent(self, tmp_path):

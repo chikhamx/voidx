@@ -290,7 +290,8 @@ class VoidXGraph(
         self._instruction.set_debug(self._debug)
         self._ui.ui.set_debug(self._debug)
 
-        self._file_mtimes: dict[str, float] = {}
+        self._file_mtimes: dict[str, dict[str, int]] = {}
+        self._file_read_coverage: dict[str, dict] = {}
         self._turn_node: OutputNode | None = None
         self._current_tree: OutputTree | None = None
         self._current_messages: list[BaseMessage] | None = None

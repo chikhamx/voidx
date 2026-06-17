@@ -618,7 +618,7 @@ async def test_run_once_does_not_preadvance_workflow_without_resolver_join(tmp_p
 
     initial = captured["initial"]
     state = TaskState.model_validate(initial["task_state"])
-    assert state.workflow_runs["brainstorm"].status == WorkflowRunStatus.ACTIVE
+    assert state.workflow_runs == {}
     assert "design" not in state.workflow_runs
     assert initial["persona"] == "coordinate"
 
@@ -724,9 +724,9 @@ async def test_run_once_preadvances_workflow_from_resolver_workflow_start(tmp_pa
 
     initial = captured["initial"]
     state = TaskState.model_validate(initial["task_state"])
-    assert state.workflow_runs["brainstorm"].status == WorkflowRunStatus.SATISFIED
-    assert state.workflow_runs["brainstorm"].evidence[-1].condition == "approved"
+    assert "brainstorm" not in state.workflow_runs
     assert state.workflow_runs["design"].status == WorkflowRunStatus.ACTIVE
+    assert state.workflow_runs["design"].reason == "resolver plan.join"
     assert initial["persona"] == "plan"
 
 
@@ -790,6 +790,114 @@ async def test_run_once_activates_workflow_start_from_resolver_route(tmp_path):
 
 
 @pytest.mark.asyncio
+async def test_run_once_new_goal_does_not_inherit_old_active_workflow(tmp_path):
+    graph = VoidXGraph(Config(workspace=str(tmp_path)), api_key=None)
+    graph._task_state = TaskState(
+        current_goal=GoalSpec(type=GoalType.DESIGN, desc="runtime context design"),
+        workflow_runs={
+            "brainstorm": WorkflowRunState(
+                name="brainstorm",
+                status=WorkflowRunStatus.ACTIVE,
+                goal_type="design",
+                scope="runtime context design",
+            )
+        },
+    )
+    captured: dict[str, object] = {}
+
+    class StructuredGoalModel:
+        def with_structured_output(self, schema):
+            assert schema is GoalResolution
+            return self
+
+        async def ainvoke(self, messages):
+            assert messages[-1].content == "review 一下这个"
+            return {
+                "intent": {"type": "coding", "desc": "new review goal"},
+                "goal": {"type": "review", "desc": "current diff"},
+                "plan": {"join": "review", "leave": "review"},
+            }
+
+    class FakeGraph:
+        async def ainvoke(self, initial, _config):
+            captured["initial"] = initial
+            assert graph._task_state.workflow_runs["review"].status == WorkflowRunStatus.ACTIVE
+            assert "brainstorm" not in graph._task_state.workflow_runs
+            return {"messages": list(initial["messages"]) + [AIMessage(content="ok")], "task_state": initial["task_state"]}
+
+    graph.model = StructuredGoalModel()
+    graph.graph = FakeGraph()
+    test_dock = BottomInputDock()
+    set_dock(test_dock)
+    test_dock.begin_capture()
+    try:
+        await graph._run_once("review 一下这个")
+    finally:
+        test_dock.deactivate()
+        test_dock.reset()
+        set_dock(None)
+
+    state = TaskState.model_validate(captured["initial"]["task_state"])
+    assert list(state.workflow_runs) == ["review"]
+    assert state.workflow_runs["review"].status == WorkflowRunStatus.ACTIVE
+    assert graph._task_state.workflow_runs == state.workflow_runs
+
+
+@pytest.mark.asyncio
+async def test_run_once_general_turn_clears_active_workflow(tmp_path):
+    graph = VoidXGraph(Config(workspace=str(tmp_path)), api_key=None)
+    graph._task_state = TaskState(
+        current_goal=GoalSpec(type=GoalType.FEATURE, desc="build feature"),
+        workflow_runs={
+            "tdd": WorkflowRunState(
+                name="tdd",
+                status=WorkflowRunStatus.ACTIVE,
+                goal_type="feature",
+                scope="build feature",
+            )
+        },
+    )
+    captured: dict[str, object] = {}
+
+    class StructuredGoalModel:
+        def with_structured_output(self, schema):
+            assert schema is GoalResolution
+            return self
+
+        async def ainvoke(self, messages):
+            assert messages[-1].content == "谢谢"
+            return {
+                "intent": {"type": "general", "desc": "thanks"},
+                "goal": None,
+                "plan": None,
+            }
+
+    class FakeGraph:
+        async def ainvoke(self, initial, _config):
+            captured["initial"] = initial
+            assert graph._task_state.workflow_runs == {}
+            return {"messages": list(initial["messages"]) + [AIMessage(content="ok")], "task_state": initial["task_state"]}
+
+    graph.model = StructuredGoalModel()
+    graph.graph = FakeGraph()
+    test_dock = BottomInputDock()
+    set_dock(test_dock)
+    test_dock.begin_capture()
+    try:
+        await graph._run_once("谢谢")
+    finally:
+        test_dock.deactivate()
+        test_dock.reset()
+        set_dock(None)
+
+    state = TaskState.model_validate(captured["initial"]["task_state"])
+    assert state.current_intent == TaskIntent.GENERAL
+    assert state.current_goal is None
+    assert state.workflow_runs == {}
+    assert graph._task_state.workflow_runs == {}
+
+
+@pytest.mark.asyncio
 async def test_run_once_overrides_stale_brainstorm_when_resolver_requests_tdd(tmp_path):
     graph = VoidXGraph(Config(workspace=str(tmp_path)), api_key=None)
     graph._task_state = TaskState(
@@ -838,9 +946,9 @@ async def test_run_once_overrides_stale_brainstorm_when_resolver_requests_tdd(tm
 
     initial = captured["initial"]
     state = TaskState.model_validate(initial["task_state"])
-    assert state.workflow_runs["brainstorm"].status == WorkflowRunStatus.SATISFIED
-    assert state.workflow_runs["brainstorm"].evidence[-1].condition == "superseded_by_intent"
+    assert "brainstorm" not in state.workflow_runs
     assert state.workflow_runs["tdd"].status == WorkflowRunStatus.ACTIVE
+    assert state.workflow_runs["tdd"].reason == "resolver plan.join"
     assert initial["persona"] == "implement"
 
 

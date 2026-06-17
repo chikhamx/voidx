@@ -10,7 +10,7 @@ from voidx.diffing import make_file_diff
 from voidx.lsp.errors import LspError
 from voidx.lsp.service import LspService
 from voidx.tools.base import BaseTool, ToolContext, ToolResult, model_to_json_schema, resolve_safe
-from voidx.tools.file_state import save_file_version
+from voidx.tools.file_state import clear_read_coverage, record_mtime, save_file_version
 
 
 class LspInput(BaseModel):
@@ -110,10 +110,13 @@ class LspFormatTool(BaseTool):
             changed, old_text, new_text = await service.format(inp.file_path)
         except LspError as exc:
             return ToolResult(output=f"LSP format failed: {exc}", metadata={"error": True})
-        if path is not None and path.exists():
-            ctx.file_mtimes[str(path.resolve())] = path.stat().st_mtime
         if not changed:
+            if path is not None and path.exists():
+                record_mtime(ctx, path)
             return ToolResult(output=f"No formatting changes for {inp.file_path}.")
+        if path is not None and path.exists():
+            record_mtime(ctx, path)
+            clear_read_coverage(ctx, path)
 
         diff = make_file_diff(inp.file_path, old_text, new_text)
         return ToolResult(

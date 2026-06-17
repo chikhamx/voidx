@@ -62,7 +62,7 @@ UserInteractionCallback = Callable[[UserInteraction], Awaitable[UserResponse]]
 
 
 class ToolContext(BaseModel):
-    """Context passed to every tool execution. Mutable file_mtimes for staleness guard."""
+    """Context passed to every tool execution. Mutable file fingerprints for staleness guard."""
     workspace: str
     session_id: str = "default"
     persona: str = "voidx"
@@ -73,7 +73,8 @@ class ToolContext(BaseModel):
     active_workflow_names: list[str] = Field(default_factory=list)
     workflow_runs: list[WorkflowRunState] = Field(default_factory=list)
     workflow_route: dict[str, str | None] | None = None
-    file_mtimes: dict[str, float] = Field(default_factory=dict)
+    file_mtimes: dict[str, dict[str, int]] = Field(default_factory=dict)
+    file_read_coverage: dict[str, dict[str, Any]] = Field(default_factory=dict)
     mcp_manager: Any | None = None
     lsp_manager: Any | None = None
     sandbox_mode: str = "workspace-write"

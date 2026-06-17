@@ -597,7 +597,7 @@ async def test_graph_authorization_uses_current_workflow_gate_only(tmp_path):
             "name": "edit",
             "args": {
                 "file_path": "docs/specs/example-design-2026-06-13.md",
-                "edits": [{"old_string": "old", "new_string": "new"}],
+                "edits": [{"operation": "replace", "start_line": 1, "end_line": 1, "new_string": "new"}],
             },
             "id": "call_1",
         }],
@@ -632,7 +632,7 @@ async def test_graph_authorization_allows_plan_gate_doc_paths_only(tmp_path):
                 "name": "edit",
                 "args": {
                     "file_path": "docs/specs/example-design-2026-06-13.md",
-                    "edits": [{"old_string": "old", "new_string": "new"}],
+                    "edits": [{"operation": "replace", "start_line": 1, "end_line": 1, "new_string": "new"}],
                 },
                 "id": "call_docs",
             },
@@ -640,7 +640,7 @@ async def test_graph_authorization_allows_plan_gate_doc_paths_only(tmp_path):
                 "name": "edit",
                 "args": {
                     "file_path": "src/app.py",
-                    "edits": [{"old_string": "old", "new_string": "new"}],
+                    "edits": [{"operation": "replace", "start_line": 1, "end_line": 1, "new_string": "new"}],
                 },
                 "id": "call_src",
             },
@@ -669,7 +669,7 @@ async def test_graph_authorization_allowed_paths_match_nested_docs(tmp_path):
             "name": "edit",
             "args": {
                 "file_path": "docs/specs/nested/example-design-2026-06-13.md",
-                "edits": [{"old_string": "old", "new_string": "new"}],
+                "edits": [{"operation": "replace", "start_line": 1, "end_line": 1, "new_string": "new"}],
             },
             "id": "call_nested_docs",
         }],
@@ -725,7 +725,7 @@ async def test_graph_authorization_asks_for_workflow_gate_tools_instead_of_denyi
             "name": "edit",
             "args": {
                 "file_path": "src/app.py",
-                "edits": [{"old_string": "old", "new_string": "new"}],
+                "edits": [{"operation": "replace", "start_line": 1, "end_line": 1, "new_string": "new"}],
             },
             "id": "call_src",
         }],

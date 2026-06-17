@@ -160,12 +160,19 @@ class TaskState(BaseModel):
         scope_text: str | None = None,
     ) -> None:
         del scope_text
+        del user_text
+        previous_goal = self.current_goal
         self.previous_intent = self.current_intent
         self.current_intent = resolution.intent.type
-        if resolution.goal is not None:
-            self.current_goal = resolution.goal
-        elif resolution.intent.type == TaskIntent.GENERAL:
+        if resolution.intent.type == TaskIntent.GENERAL:
             self.current_goal = None
+            self._reset_workflow_context()
+            return
+        if resolution.goal is not None:
+            goal_changed = not _same_goal(previous_goal, resolution.goal)
+            self.current_goal = resolution.goal
+            if goal_changed:
+                self._reset_workflow_context()
         self.workflow_route = _workflow_route_from_resolution(resolution)
 
     def set_goal(self, goal: GoalSpec | str | None) -> None:
@@ -225,6 +232,12 @@ def _workflow_route_from_resolution(resolution: GoalResolution) -> WorkflowRoute
     if plan is None:
         return None
     return WorkflowRoute(join=plan.join, leave=plan.leave)
+
+
+def _same_goal(left: GoalSpec | None, right: GoalSpec | None) -> bool:
+    if left is None or right is None:
+        return left is right
+    return left.type == right.type and left.desc == right.desc
 
 
 def _default_join_for_goal_type(goal_type: GoalType) -> str:
