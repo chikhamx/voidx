@@ -50,6 +50,8 @@ class GraphSessionRuntime:
         host._task_state = TaskState()
         host._compaction_summary = ""
         host._pending_summary = None
+        host._file_read_coverage.clear()
+        host._file_mtimes.clear()
 
     async def restore_runtime_state(self) -> None:
         host = self.host

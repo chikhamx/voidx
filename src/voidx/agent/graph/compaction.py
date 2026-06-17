@@ -48,7 +48,7 @@ class GraphCompactionMixin:
         self._in_turn_compaction_count = count
         if count > 2:
             return None
-        return await _compaction_component_for(self).compact_for_live_state(
+        result = await _compaction_component_for(self).compact_for_live_state(
             messages,
             force=True,
             ask=False,
@@ -56,6 +56,10 @@ class GraphCompactionMixin:
             run_compaction_agent=self._run_compaction_agent,
             persist_compaction=self._persist_compaction,
         )
+        if result is not None:
+            self._file_read_coverage.clear()
+            self._file_mtimes.clear()
+        return result
 
     async def _ask_compact(self: GraphCompactionHost, total_tokens: int) -> bool:
         return await _compaction_component_for(self).ask_compact(total_tokens)
@@ -64,11 +68,15 @@ class GraphCompactionMixin:
         await _compaction_component_for(self).persist_compaction(head_messages)
 
     async def _compact_session_history(self: GraphCompactionHost, *, force: bool = True) -> bool:
-        return await _compaction_component_for(self).compact_session_history(
+        result = await _compaction_component_for(self).compact_session_history(
             force=force,
             run_compaction_agent=self._run_compaction_agent,
             persist_compaction=self._persist_compaction,
         )
+        if result:
+            self._file_read_coverage.clear()
+            self._file_mtimes.clear()
+        return result
 
     async def _run_compaction_agent(
         self: GraphCompactionHost,
