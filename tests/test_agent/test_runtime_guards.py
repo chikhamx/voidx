@@ -200,8 +200,8 @@ def test_repetitive_tool_cycle_resets_after_progress():
 def test_no_progress_guard_warns_then_terminates_and_resets_on_progress():
     guards = RuntimeGuardState()
     stalled = ToolCycleSummary(
-        tool_names=["plan_checkpoint"],
-        only_tool="plan_checkpoint",
+        tool_names=["checkpoint"],
+        only_tool="checkpoint",
         call_count=1,
         has_progress=False,
     )
@@ -237,8 +237,8 @@ def test_no_progress_guard_warns_then_terminates_and_resets_on_progress():
 def test_no_progress_guard_counts_repeated_same_evidence_as_stalled():
     guards = RuntimeGuardState()
     stalled = ToolCycleSummary(
-        tool_names=["plan_checkpoint"],
-        only_tool="plan_checkpoint",
+        tool_names=["checkpoint"],
+        only_tool="checkpoint",
         call_count=1,
         has_progress=False,
     )

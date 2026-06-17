@@ -19,7 +19,7 @@ from voidx.agent.runtime_context import (
     raw_semantic_messages,
 )
 from voidx.agent.state import AgentState
-from voidx.agent.task_state import GoalSpec, GoalType, TaskState, WorkflowRoute
+from voidx.agent.task_state import GoalSpec, GoalType, TaskState, TodoRunState, WorkflowRoute
 from voidx.config import Config, UserProfile
 from voidx.skills.context import (
     SKILL_CONTEXT_MARKER,
@@ -57,7 +57,6 @@ def test_runtime_context_section_order_places_skill_context_before_task_state(tm
         instructions=["Instructions from: AGENTS.md\nFollow project rules."],
         skill_context_content=render_skill_context(["Skill instructions from: docs\nSkill: docs"]),
         summary="Previous summary.",
-        current_user_text="Review auth.py",
     ).build()
 
     assert context.section_names() == [
@@ -108,7 +107,17 @@ def test_runtime_context_applies_task_context_before_current_user(tmp_path):
         HumanMessage(content="old question"),
         AIMessage(content="old answer"),
         HumanMessage(content="current request"),
+        ToolMessage(content="tool result", tool_call_id="call_1"),
     ]
+    task_state = TaskState(
+        todo_state=TodoRunState.model_validate({
+            "summary": "1/2 done",
+            "items": [
+                {"content": "write tests", "status": "completed"},
+                {"content": "update runtime context", "status": "in_progress"},
+            ],
+        })
+    )
     context = RuntimeContextBuilder(
         config=Config(workspace=str(tmp_path)),
         workspace=str(tmp_path),
@@ -116,7 +125,7 @@ def test_runtime_context_applies_task_context_before_current_user(tmp_path):
         persona="voidx",
         interaction_mode=InteractionMode.PLAN,
         skill_context_content=render_skill_context(["Skill instructions from: docs\nSkill: docs"]),
-        current_user_text="current request",
+        task_state=task_state,
     ).build()
 
     context.apply_to_messages(messages)
@@ -124,19 +133,24 @@ def test_runtime_context_applies_task_context_before_current_user(tmp_path):
     assert isinstance(messages[0], SystemMessage)
     assert isinstance(messages[1], HumanMessage)
     assert messages[1].content.startswith(SKILL_CONTEXT_MARKER)
+    assert isinstance(messages[2], HumanMessage)
+    assert "## Runtime State" in messages[2].content
     assert all(not isinstance(message, SystemMessage) for message in messages[1:])
-    assert isinstance(messages[-1], HumanMessage)
-    assert messages[2].content == "old question"
+    assert isinstance(messages[-1], ToolMessage)
+    assert messages[3].content == "old question"
+    assert messages[5].content == "current request"
     assert "Active Skills" not in messages[-1].content
-    assert "Runtime State" in messages[-1].content
     assert "Current DateTime" not in messages[-1].content
+    assert "## Runtime State" not in messages[-1].content
     assert "Current Task State" in messages[-1].content
-    assert "## User Message" in messages[-1].content
-    assert isinstance(messages[-1], HumanMessage)
-    assert messages[-1].content.endswith("current request")
+    assert "Active todo: 2 items" in messages[-1].content
+    assert "- completed: write tests" in messages[-1].content
+    assert "- in_progress: update runtime context" in messages[-1].content
+    assert "## Task Context" in messages[-1].content
+    assert messages[-1].content.endswith("tool result")
 
 
-def test_runtime_context_inserts_goal_resolution_guide_before_current_user(tmp_path):
+def test_runtime_context_omits_goal_resolution_guide(tmp_path):
     messages = [
         HumanMessage(content="old question"),
         AIMessage(content="old answer"),
@@ -148,9 +162,7 @@ def test_runtime_context_inserts_goal_resolution_guide_before_current_user(tmp_p
         base_system_prompt="You are voidx.",
         persona="voidx",
         interaction_mode=InteractionMode.AUTO,
-        current_user_text="current request",
-        task_state=TaskState(recent_user_texts=["approved plan", "continue"]),
-        include_goal_resolution_guide=True,
+        task_state=TaskState(),
     ).build()
 
     context.apply_to_messages(messages)
@@ -160,10 +172,11 @@ def test_runtime_context_inserts_goal_resolution_guide_before_current_user(tmp_p
         for index, message in enumerate(messages)
         if isinstance(message, HumanMessage) and is_goal_resolution_guide_content(message.content)
     ]
-    assert guide_indexes == [3]
-    assert '"recent_user_texts": [\n    "approved plan",\n    "continue"\n  ]' in messages[3].content
-    assert messages[2].content == "old answer"
-    assert "Runtime State" in messages[4].content
+    assert guide_indexes == []
+    assert "Runtime State" in messages[1].content
+    assert messages[2].content == "old question"
+    assert messages[3].content == "old answer"
+    assert "Current Task State" in messages[4].content
     assert messages[4].content.endswith("current request")
 
     context.apply_to_messages(messages)
@@ -172,10 +185,10 @@ def test_runtime_context_inserts_goal_resolution_guide_before_current_user(tmp_p
         1
         for message in messages
         if isinstance(message, HumanMessage) and is_goal_resolution_guide_content(message.content)
-    ) == 1
+    ) == 0
 
 
-def test_runtime_context_reuses_goal_resolution_guide_message_incrementally(tmp_path):
+def test_runtime_context_omits_goal_resolution_guide_incrementally(tmp_path):
     cache = ContextCompilerCache()
     kwargs = dict(
         config=Config(workspace=str(tmp_path)),
@@ -183,15 +196,13 @@ def test_runtime_context_reuses_goal_resolution_guide_message_incrementally(tmp_
         base_system_prompt="You are voidx.",
         persona="voidx",
         interaction_mode=InteractionMode.AUTO,
-        current_user_text="current request",
-        include_goal_resolution_guide=True,
     )
 
     first, cache = RuntimeContextBuilder(**kwargs).build_incremental(cache)
     second, cache = RuntimeContextBuilder(**kwargs).build_incremental(cache)
 
-    assert first.goal_resolution_guide_message is not None
-    assert second.goal_resolution_guide_message is first.goal_resolution_guide_message
+    assert "Goal Resolution Guide" not in first.section_names()
+    assert "Goal Resolution Guide" not in second.section_names()
 
 
 def test_raw_semantic_messages_strips_compaction_guide_overlay():
@@ -214,7 +225,6 @@ def test_runtime_context_system_uses_session_date_not_runtime_state(tmp_path):
         persona="voidx",
         interaction_mode=InteractionMode.AUTO,
         session_date="2026-06-06 CST",
-        current_user_text="first",
         task_state=TaskState(current_intent=TaskIntent.GENERAL),
     ).build()
     second = RuntimeContextBuilder(
@@ -224,16 +234,16 @@ def test_runtime_context_system_uses_session_date_not_runtime_state(tmp_path):
         persona="voidx",
         interaction_mode=InteractionMode.AUTO,
         session_date="2026-06-06 CST",
-        current_user_text="second",
         task_state=TaskState(current_intent=TaskIntent.CODING),
     ).build()
 
     assert first.render_system() == second.render_system()
     latest = [HumanMessage(content="second")]
     second.apply_to_messages(latest)
-    assert "2026-06-06 10:02 CST" not in latest[-1].content
-    assert "Runtime State" in latest[-1].content
-    assert "Current DateTime" not in latest[-1].content
+    assert "2026-06-06 10:02 CST" not in latest[1].content
+    assert "Runtime State" in latest[1].content
+    assert "Runtime State" not in latest[-1].content
+    assert "Current DateTime" not in latest[1].content
 
 
 def test_runtime_context_incremental_reuses_stable_system_message(tmp_path):
@@ -245,7 +255,6 @@ def test_runtime_context_incremental_reuses_stable_system_message(tmp_path):
         persona="voidx",
         interaction_mode=InteractionMode.AUTO,
         session_date="2026-06-06 CST",
-        current_user_text="first",
     ).build_incremental(cache)
     second, cache = RuntimeContextBuilder(
         config=Config(workspace=str(tmp_path)),
@@ -254,7 +263,6 @@ def test_runtime_context_incremental_reuses_stable_system_message(tmp_path):
         persona="voidx",
         interaction_mode=InteractionMode.AUTO,
         session_date="2026-06-06 CST",
-        current_user_text="second",
     ).build_incremental(cache)
 
     assert second.system_message is first.system_message
@@ -270,7 +278,6 @@ def test_runtime_context_incremental_reuses_skill_context_message(tmp_path):
         persona="voidx",
         interaction_mode=InteractionMode.AUTO,
         skill_context_content=f"{SKILL_CONTEXT_MARKER}\n\n## Skill: docs\nBody-Hash: abc\n\nDocs rules",
-        current_user_text="first",
     ).build_incremental(cache)
     second, cache = RuntimeContextBuilder(
         config=Config(workspace=str(tmp_path)),
@@ -279,7 +286,6 @@ def test_runtime_context_incremental_reuses_skill_context_message(tmp_path):
         persona="voidx",
         interaction_mode=InteractionMode.AUTO,
         skill_context_content=f"{SKILL_CONTEXT_MARKER}\n\n## Skill: docs\nBody-Hash: abc\n\nDocs rules",
-        current_user_text="second",
     ).build_incremental(cache)
 
     assert first.skill_context_message is not None
@@ -305,7 +311,6 @@ def test_skill_context_cache_key_uses_sorted_name_and_body_hash(tmp_path):
         persona="voidx",
         interaction_mode=InteractionMode.AUTO,
         skill_context_content=first_content,
-        current_user_text="first",
     ).build_incremental(cache)
     second, cache = RuntimeContextBuilder(
         config=Config(workspace=str(tmp_path)),
@@ -314,7 +319,6 @@ def test_skill_context_cache_key_uses_sorted_name_and_body_hash(tmp_path):
         persona="voidx",
         interaction_mode=InteractionMode.AUTO,
         skill_context_content=second_content,
-        current_user_text="second",
     ).build_incremental(cache)
 
     assert first.skill_context_message is not None
@@ -330,7 +334,6 @@ def test_skill_context_cache_rebuilds_when_body_hash_changes(tmp_path):
         persona="voidx",
         interaction_mode=InteractionMode.AUTO,
         skill_context_content=f"{SKILL_CONTEXT_MARKER}\n\n## Skill: docs\nBody-Hash: old\n\nOld docs rules",
-        current_user_text="first",
     ).build_incremental(cache)
     second, cache = RuntimeContextBuilder(
         config=Config(workspace=str(tmp_path)),
@@ -339,7 +342,6 @@ def test_skill_context_cache_rebuilds_when_body_hash_changes(tmp_path):
         persona="voidx",
         interaction_mode=InteractionMode.AUTO,
         skill_context_content=f"{SKILL_CONTEXT_MARKER}\n\n## Skill: docs\nBody-Hash: new\n\nNew docs rules",
-        current_user_text="second",
     ).build_incremental(cache)
 
     assert first.skill_context_message is not None
@@ -359,7 +361,6 @@ def test_stable_prefix_rebuilds_on_summary_change(tmp_path):
         interaction_mode=InteractionMode.AUTO,
         session_date="2026-06-06 CST",
         summary="old summary",
-        current_user_text="first",
     ).build_incremental(cache)
     second, cache = RuntimeContextBuilder(
         config=Config(workspace=str(tmp_path)),
@@ -369,7 +370,6 @@ def test_stable_prefix_rebuilds_on_summary_change(tmp_path):
         interaction_mode=InteractionMode.AUTO,
         session_date="2026-06-06 CST",
         summary="new summary",
-        current_user_text="second",
     ).build_incremental(cache)
 
     assert second.system_message is not first.system_message
@@ -386,7 +386,6 @@ def test_runtime_context_recompile_does_not_duplicate_turn_overlay(tmp_path):
         persona="voidx",
         interaction_mode=InteractionMode.AUTO,
         session_date="2026-06-06 CST",
-        current_user_text="current request",
     ).build()
     second = RuntimeContextBuilder(
         config=Config(workspace=str(tmp_path)),
@@ -395,7 +394,6 @@ def test_runtime_context_recompile_does_not_duplicate_turn_overlay(tmp_path):
         persona="voidx",
         interaction_mode=InteractionMode.AUTO,
         session_date="2026-06-06 CST",
-        current_user_text="current request",
     ).build()
 
     first.apply_to_messages(messages)
@@ -423,7 +421,6 @@ def test_runtime_context_preserves_multimodal_user_message_without_extra_system(
         persona="voidx",
         interaction_mode=InteractionMode.GOAL,
         skill_context_content=render_skill_context(["Skill instructions from: docs\nSkill: docs"]),
-        current_user_text="describe image",
     ).build()
 
     context.apply_to_messages(messages)
@@ -431,15 +428,116 @@ def test_runtime_context_preserves_multimodal_user_message_without_extra_system(
     assert isinstance(messages[0], SystemMessage)
     assert isinstance(messages[1], HumanMessage)
     assert messages[1].content.startswith(SKILL_CONTEXT_MARKER)
+    assert isinstance(messages[2], HumanMessage)
+    assert "## Runtime State" in messages[2].content
     assert all(not isinstance(message, SystemMessage) for message in messages[1:])
     assert isinstance(messages[-1], HumanMessage)
     assert isinstance(messages[-1].content, list)
     assert messages[-1].content[0]["type"] == "text"
-    assert "Runtime State" in messages[-1].content[0]["text"]
+    assert "Current Task State" in messages[-1].content[0]["text"]
+    assert "## Runtime State" not in messages[-1].content[0]["text"]
+    assert "## Task Context" in messages[-1].content[0]["text"]
     assert "Current DateTime" not in messages[-1].content[0]["text"]
     assert "Active Skills" not in messages[-1].content[0]["text"]
     assert messages[-1].content[1]["type"] == "text"
     assert messages[-1].content[2]["type"] == "image_url"
+
+
+def test_runtime_context_migrates_task_overlay_from_ai_message_to_latest_message(tmp_path):
+    messages = [
+        HumanMessage(content="current request"),
+        AIMessage(content=(
+            "VOIDX_RUNTIME_CONTEXT\n\n"
+            "## Current Task State\n- Intent: coding\n\n"
+            "## Task Context\nassistant visible text"
+        )),
+        ToolMessage(content="latest tool result", tool_call_id="call_latest"),
+    ]
+    context = RuntimeContextBuilder(
+        config=Config(workspace=str(tmp_path)),
+        workspace=str(tmp_path),
+        base_system_prompt="You are voidx.",
+        persona="voidx",
+        interaction_mode=InteractionMode.AUTO,
+    ).build()
+
+    context.apply_to_messages(messages)
+
+    assistant_message = next(message for message in messages if isinstance(message, AIMessage))
+    latest_tool = next(message for message in messages if isinstance(message, ToolMessage))
+    assert assistant_message.content == "assistant visible text"
+    assert isinstance(latest_tool.content, str)
+    assert latest_tool.content.startswith("VOIDX_RUNTIME_CONTEXT")
+    assert latest_tool.content.endswith("latest tool result")
+
+
+def test_runtime_context_migrates_task_overlay_from_ai_list_content_to_latest_message(tmp_path):
+    messages = [
+        HumanMessage(content="current request"),
+        AIMessage(content=[
+            {
+                "type": "text",
+                "text": (
+                    "VOIDX_RUNTIME_CONTEXT\n\n"
+                    "## Current Task State\n- Intent: coding\n\n"
+                    "## Task Context\nassistant visible text"
+                ),
+            },
+            {"type": "text", "text": "assistant second block"},
+        ]),
+        ToolMessage(content="latest tool result", tool_call_id="call_latest"),
+    ]
+    context = RuntimeContextBuilder(
+        config=Config(workspace=str(tmp_path)),
+        workspace=str(tmp_path),
+        base_system_prompt="You are voidx.",
+        persona="voidx",
+        interaction_mode=InteractionMode.AUTO,
+    ).build()
+
+    context.apply_to_messages(messages)
+
+    assistant_message = next(message for message in messages if isinstance(message, AIMessage))
+    latest_tool = next(message for message in messages if isinstance(message, ToolMessage))
+    assert assistant_message.content == [
+        {"type": "text", "text": "assistant visible text"},
+        {"type": "text", "text": "assistant second block"},
+    ]
+    assert isinstance(latest_tool.content, str)
+    assert latest_tool.content.startswith("VOIDX_RUNTIME_CONTEXT")
+    assert latest_tool.content.endswith("latest tool result")
+
+
+def test_runtime_context_migrates_task_overlay_from_tool_message_to_latest_message(tmp_path):
+    messages = [
+        HumanMessage(content="current request"),
+        ToolMessage(
+            content=(
+                "VOIDX_RUNTIME_CONTEXT\n\n"
+                "## Current Task State\n- Intent: coding\n\n"
+                "## Task Context\ntool visible text"
+            ),
+            tool_call_id="call_old",
+        ),
+        AIMessage(content="latest assistant reply"),
+    ]
+    context = RuntimeContextBuilder(
+        config=Config(workspace=str(tmp_path)),
+        workspace=str(tmp_path),
+        base_system_prompt="You are voidx.",
+        persona="voidx",
+        interaction_mode=InteractionMode.AUTO,
+    ).build()
+
+    context.apply_to_messages(messages)
+
+    old_tool = next(message for message in messages if isinstance(message, ToolMessage))
+    latest_ai = next(message for message in messages if isinstance(message, AIMessage))
+    assert old_tool.content == "tool visible text"
+    assert old_tool.tool_call_id == "call_old"
+    assert isinstance(latest_ai.content, str)
+    assert latest_ai.content.startswith("VOIDX_RUNTIME_CONTEXT")
+    assert latest_ai.content.endswith("latest assistant reply")
 
 
 def test_runtime_context_drops_previous_skill_context_overlay(tmp_path):
@@ -454,7 +552,6 @@ def test_runtime_context_drops_previous_skill_context_overlay(tmp_path):
         persona="voidx",
         interaction_mode=InteractionMode.AUTO,
         skill_context_content=f"{SKILL_CONTEXT_MARKER}\n\n## Skill: docs\nBody-Hash: new\n\nNew body",
-        current_user_text="current request",
     ).build()
 
     context.apply_to_messages(messages)
@@ -484,7 +581,6 @@ def test_runtime_context_strips_historical_skill_tool_context(tmp_path):
         base_system_prompt="You are voidx.",
         persona="voidx",
         interaction_mode=InteractionMode.AUTO,
-        current_user_text="current request",
     ).build()
 
     context.apply_to_messages(messages)
@@ -493,6 +589,114 @@ def test_runtime_context_strips_historical_skill_tool_context(tmp_path):
     assert SKILL_TOOL_CONTEXT_STRIPPED_MARKER in historical_tool.content
     assert "tdd sha256=abc123 source=bundled" in historical_tool.content
     assert "Full skill body" not in historical_tool.content
+
+
+def test_runtime_context_strips_tool_skill_context_before_latest_ai_message(tmp_path):
+    tool_output = (
+        '{"loaded": true}\n\n'
+        f"{SKILL_TOOL_CONTEXT_MARKER}\nScope: current-turn\n\n"
+        "## Skill: tdd\n"
+        "Source: bundled\n"
+        "Body-Hash: abc123\n\n"
+        "Full skill body"
+    )
+    messages = [
+        HumanMessage(content="current request"),
+        ToolMessage(content=tool_output, tool_call_id="call_skills"),
+        AIMessage(content="latest reply"),
+    ]
+    context = RuntimeContextBuilder(
+        config=Config(workspace=str(tmp_path)),
+        workspace=str(tmp_path),
+        base_system_prompt="You are voidx.",
+        persona="voidx",
+        interaction_mode=InteractionMode.AUTO,
+    ).build()
+
+    context.apply_to_messages(messages)
+
+    historical_tool = next(message for message in messages if isinstance(message, ToolMessage))
+    latest_ai = next(message for message in messages if isinstance(message, AIMessage))
+    assert SKILL_TOOL_CONTEXT_STRIPPED_MARKER in historical_tool.content
+    assert "Full skill body" not in historical_tool.content
+    assert latest_ai.content.startswith("VOIDX_RUNTIME_CONTEXT")
+
+
+def test_runtime_context_preserves_latest_tool_skill_context(tmp_path):
+    tool_output = (
+        '{"loaded": true}\n\n'
+        f"{SKILL_TOOL_CONTEXT_MARKER}\nScope: current-turn\n\n"
+        "## Skill: tdd\n"
+        "Source: bundled\n"
+        "Body-Hash: abc123\n\n"
+        "Full skill body"
+    )
+    messages = [
+        HumanMessage(content="current request"),
+        ToolMessage(content=tool_output, tool_call_id="call_latest"),
+    ]
+    context = RuntimeContextBuilder(
+        config=Config(workspace=str(tmp_path)),
+        workspace=str(tmp_path),
+        base_system_prompt="You are voidx.",
+        persona="voidx",
+        interaction_mode=InteractionMode.AUTO,
+    ).build()
+
+    context.apply_to_messages(messages)
+
+    latest_tool = next(message for message in messages if isinstance(message, ToolMessage))
+    assert SKILL_TOOL_CONTEXT_MARKER in latest_tool.content
+    assert "Full skill body" in latest_tool.content
+    assert latest_tool.content.startswith("VOIDX_RUNTIME_CONTEXT")
+
+
+def test_runtime_context_preserves_current_tool_skill_context_batch(tmp_path):
+    first_tool_output = (
+        '{"loaded": "first"}\n\n'
+        f"{SKILL_TOOL_CONTEXT_MARKER}\nScope: current-turn\n\n"
+        "## Skill: tdd\n"
+        "Source: bundled\n"
+        "Body-Hash: first\n\n"
+        "First skill body"
+    )
+    second_tool_output = (
+        '{"loaded": "second"}\n\n'
+        f"{SKILL_TOOL_CONTEXT_MARKER}\nScope: current-turn\n\n"
+        "## Skill: verify\n"
+        "Source: bundled\n"
+        "Body-Hash: second\n\n"
+        "Second skill body"
+    )
+    messages = [
+        HumanMessage(content="current request"),
+        AIMessage(
+            content="",
+            tool_calls=[
+                {"name": "skill", "args": {}, "id": "call_first"},
+                {"name": "skill", "args": {}, "id": "call_second"},
+            ],
+        ),
+        ToolMessage(content=first_tool_output, tool_call_id="call_first"),
+        ToolMessage(content=second_tool_output, tool_call_id="call_second"),
+    ]
+    context = RuntimeContextBuilder(
+        config=Config(workspace=str(tmp_path)),
+        workspace=str(tmp_path),
+        base_system_prompt="You are voidx.",
+        persona="voidx",
+        interaction_mode=InteractionMode.AUTO,
+    ).build()
+
+    context.apply_to_messages(messages)
+
+    tool_messages = [message for message in messages if isinstance(message, ToolMessage)]
+    assert len(tool_messages) == 2
+    assert SKILL_TOOL_CONTEXT_MARKER in tool_messages[0].content
+    assert "First skill body" in tool_messages[0].content
+    assert SKILL_TOOL_CONTEXT_MARKER in tool_messages[1].content
+    assert "Second skill body" in tool_messages[1].content
+    assert tool_messages[1].content.startswith("VOIDX_RUNTIME_CONTEXT")
 
 
 def test_runtime_context_strips_multiple_historical_skill_tool_context_blocks(tmp_path):
@@ -519,7 +723,6 @@ def test_runtime_context_strips_multiple_historical_skill_tool_context_blocks(tm
         base_system_prompt="You are voidx.",
         persona="voidx",
         interaction_mode=InteractionMode.AUTO,
-        current_user_text="current request",
     ).build()
 
     context.apply_to_messages(messages)
@@ -548,7 +751,6 @@ def test_runtime_context_does_not_restrip_already_stripped_skill_tool_context(tm
         base_system_prompt="You are voidx.",
         persona="voidx",
         interaction_mode=InteractionMode.AUTO,
-        current_user_text="current request",
     ).build()
 
     context.apply_to_messages(messages)
@@ -570,7 +772,6 @@ def test_skill_context_reference_library_marks_inactive_skills_not_active(tmp_pa
             "## Skill: tdd\nBody-Hash: bbb\n\nTDD rules",
         ]),
         active_workflow_summaries=["tdd (implement persona)"],
-        current_user_text="current request",
     ).build()
 
     context.apply_to_messages(messages)
@@ -595,7 +796,6 @@ def test_task_context_only_contains_active_workflow_summaries(tmp_path):
             "## Skill: tdd\nBody-Hash: bbb\n\nFull TDD body",
         ]),
         active_workflow_summaries=["tdd (implement persona)"],
-        current_user_text="current request",
     ).build()
 
     context.apply_to_messages(messages)
@@ -624,7 +824,6 @@ def test_runtime_context_preserves_current_turn_skill_tool_context(tmp_path):
         base_system_prompt="You are voidx.",
         persona="voidx",
         interaction_mode=InteractionMode.AUTO,
-        current_user_text="current request",
     ).build()
 
     context.apply_to_messages(messages)
@@ -678,7 +877,6 @@ def test_current_task_state_records_intent_and_implementation_gate(tmp_path):
         base_system_prompt="You are voidx.",
         persona="voidx",
         interaction_mode=InteractionMode.AUTO,
-        current_user_text="看看这个项目",
     ).build()
 
     context.apply_to_messages(messages)
@@ -695,7 +893,6 @@ def test_current_task_state_records_active_workflow_nodes(tmp_path):
         base_system_prompt="You are voidx.",
         persona="implement",
         interaction_mode=InteractionMode.AUTO,
-        current_user_text="实现这个功能",
         task_state=TaskState(current_intent=TaskIntent.CODING),
         active_workflow_summaries=[
             "tdd (implement persona)",
@@ -716,7 +913,6 @@ def test_current_task_state_records_structured_workflow_runs(tmp_path):
         base_system_prompt="You are voidx.",
         persona="implement",
         interaction_mode=InteractionMode.AUTO,
-        current_user_text="实现这个功能",
         task_state=TaskState(current_intent=TaskIntent.CODING),
         workflow_runs=[
             WorkflowRunState(
@@ -732,10 +928,7 @@ def test_current_task_state_records_structured_workflow_runs(tmp_path):
 
     context.apply_to_messages(messages)
 
-    assert (
-        "Workflow run state: tdd=active "
-        "goal_type=feature source=workflow reason=implement persona"
-    ) in messages[-1].content
+    assert "Workflow run state:" not in messages[-1].content
     assert "Workflow exits [tdd]: implemented -> verify" in messages[-1].content
     assert "Workflow gate [tdd]" not in messages[-1].content
     assert "test written, red verified, implementation green" not in messages[-1].content
@@ -749,7 +942,6 @@ def test_current_task_state_records_workflow_route(tmp_path):
         base_system_prompt="You are voidx.",
         persona="review",
         interaction_mode=InteractionMode.AUTO,
-        current_user_text="review 完并修复问题",
         task_state=TaskState(
             current_intent=TaskIntent.CODING,
             workflow_route=WorkflowRoute(join="review", leave="verify"),
@@ -769,7 +961,6 @@ def test_current_task_state_lists_feedback_design_and_plan_exits(tmp_path):
         base_system_prompt="You are voidx.",
         persona="implement",
         interaction_mode=InteractionMode.AUTO,
-        current_user_text="处理 review 反馈",
         task_state=TaskState(current_intent=TaskIntent.CODING),
         workflow_runs=[
             WorkflowRunState(
@@ -801,17 +992,15 @@ def test_current_task_state_records_user_profile_preferences(tmp_path):
         base_system_prompt="You are voidx.",
         persona="voidx",
         interaction_mode=InteractionMode.AUTO,
-        current_user_text="继续",
         task_state=TaskState(current_intent=TaskIntent.CODING),
     ).build()
 
     context.apply_to_messages(messages)
 
-    assert "User language: Chinese (Simplified) [zh-CN]" in messages[-1].content
-    assert "User language preference: Chinese (Simplified) [zh-CN]" in messages[-1].content
-    assert "Language instruction: Prefer responding in Chinese (Simplified)" in messages[-1].content
-    assert "User tone: direct" in messages[-1].content
-    assert "Tone instruction: Be direct and practical. Lead with the answer or action." in messages[-1].content
+    assert "Language instruction: Prefer responding in Chinese (Simplified)" in messages[1].content
+    assert "Tone instruction: Be direct and practical. Lead with the answer or action." in messages[1].content
+    assert "User language" not in messages[-1].content
+    assert "User tone" not in messages[-1].content
 
 
 def test_current_task_state_records_refined_intent_without_visible_tools(tmp_path):
@@ -822,7 +1011,6 @@ def test_current_task_state_records_refined_intent_without_visible_tools(tmp_pat
         base_system_prompt="You are voidx.",
         persona="voidx",
         interaction_mode=InteractionMode.AUTO,
-        current_user_text="继续",
         task_state=TaskState(current_intent=TaskIntent.CODING),
     ).build()
 
@@ -840,7 +1028,6 @@ def test_current_task_state_records_current_goal(tmp_path):
         base_system_prompt="You are voidx.",
         persona="voidx",
         interaction_mode=InteractionMode.AUTO,
-        current_user_text="给个方案",
         task_state=TaskState(
             current_intent=TaskIntent.CODING,
             current_goal=GoalSpec(type=GoalType.DESIGN, desc="优化 runtime context"),
@@ -863,7 +1050,6 @@ def test_current_task_state_records_goal_run(tmp_path):
         base_system_prompt="You are voidx.",
         persona="voidx",
         interaction_mode=InteractionMode.GOAL,
-        current_user_text="给个方案",
         task_state=TaskState(
             current_intent=TaskIntent.CODING,
             current_goal=GoalSpec(type=GoalType.DESIGN, desc="优化 markdown 渲染截断"),

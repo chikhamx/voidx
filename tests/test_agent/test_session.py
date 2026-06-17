@@ -20,6 +20,7 @@ from voidx.agent.task_state import (
     GoalType,
     TaskState,
     TodoRunState,
+    TurnExchange,
     WorkflowRoute,
 )
 from voidx.memory.context_frames import (
@@ -86,6 +87,20 @@ def _read_jsonl(path: Path) -> list[dict]:
 async def _table_names() -> set[str]:
     rows = await store._fetch_all("SELECT name FROM sqlite_master WHERE type = 'table'")
     return {str(row["name"]) for row in rows}
+
+
+async def _table_columns(table: str) -> set[str]:
+    rows = await store._fetch_all(f"PRAGMA table_info({table})")
+    return {str(row["name"]) for row in rows}
+
+
+@pytest.mark.asyncio
+async def test_runtime_state_schema_drops_recent_user_texts_column():
+    await create_session()
+
+    columns = await _table_columns("session_runtime_state")
+
+    assert "recent_user_texts_json" not in columns
 
 
 @pytest.mark.asyncio
@@ -1426,7 +1441,10 @@ async def test_runtime_state_round_trips_structured_goal_state():
             previous_intent=TaskIntent.CODING,
             current_goal=GoalSpec(type=GoalType.DESIGN, desc="优化 markdown 渲染截断"),
             workflow_route=WorkflowRoute(join="brainstorm", leave="plan"),
-            recent_user_texts=["看看现状", "给个方案"],
+            recent_exchanges=[
+                TurnExchange(user_text="看看现状", assistant_text="现状如下"),
+                TurnExchange(user_text="给个方案", assistant_text="方案如下"),
+            ],
             workflow_runs={
                 "brainstorm": WorkflowRunState(
                     name="brainstorm",
@@ -1468,7 +1486,7 @@ async def test_runtime_state_round_trips_structured_goal_state():
         assert loaded.task_state.workflow_route is not None
         assert loaded.task_state.workflow_route.join == "brainstorm"
         assert loaded.task_state.workflow_route.leave == "plan"
-        assert loaded.task_state.recent_user_texts == ["看看现状", "给个方案"]
+        assert loaded.task_state.recent_exchanges == []
         assert loaded.task_state.todo_state is not None
         assert loaded.task_state.todo_state.summary == "0/2 done · 1 active · 1 pending"
         assert loaded.task_state.todo_state.items[0].content == "inspect current behavior"

@@ -10,6 +10,7 @@ from voidx.agent.task_state import (
     IntentResolution,
     PlanResolution,
     TaskState,
+    TurnExchange,
     WorkflowRoute,
 )
 from voidx.runtime.intent import TaskIntent
@@ -30,7 +31,7 @@ def _resolution(
 
 
 def test_update_after_turn_records_intent_goal_and_route():
-    state = TaskState()
+    state = TaskState(recent_exchanges=[TurnExchange(user_text="之前", assistant_text="已处理")])
     goal = GoalSpec(type=GoalType.REVIEW, desc="review diff")
     resolution = _resolution(
         goal=goal,
@@ -43,7 +44,7 @@ def test_update_after_turn_records_intent_goal_and_route():
     assert state.current_intent == TaskIntent.CODING
     assert state.current_goal == goal
     assert state.workflow_route == WorkflowRoute(join="review", leave="review")
-    assert state.recent_user_texts == ["review this"]
+    assert state.recent_exchanges[-1] == TurnExchange(user_text="之前", assistant_text="已处理")
 
 
 def test_general_turn_clears_current_goal_and_route():
@@ -73,13 +74,14 @@ def test_coding_turn_without_goal_keeps_existing_goal_but_clears_route():
 
 
 def test_intent_window_keeps_only_two_recent_user_inputs():
-    state = TaskState()
+    state = TaskState(
+        recent_exchanges=[
+            TurnExchange(user_text="first", assistant_text=""),
+            TurnExchange(user_text="second", assistant_text="reply"),
+        ]
+    )
 
-    for text in ["first", "second", "third"]:
-        state.update_after_turn(_resolution(), text)
-
-    assert state.recent_user_texts == ["second", "third"]
-    assert state.intent_window_text("fourth") == "third [SEP] fourth"
+    assert state.intent_window_text("third") == "second [SEP] third"
 
 
 def test_set_goal_from_string_infers_goal_and_resets_workflow_context():

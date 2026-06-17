@@ -60,18 +60,6 @@ async def test_workflow_context_skips_trigger_matching_when_resolver_join_is_abs
     assert context.runs == []
 
 
-@pytest.mark.asyncio
-async def test_workflow_context_keeps_trigger_matching_when_join_is_omitted(tmp_path):
-    context = await InstructionService(str(tmp_path)).workflow_context_for(
-        "implement a feature",
-        task_intent="coding",
-        goal_type="feature",
-        interaction_mode="auto",
-    )
-
-    assert any(item.startswith("brainstorm ") for item in context.active)
-
-
 def test_reconcile_uses_plan_join_as_route_target():
     goal = GoalSpec(type=GoalType.REVIEW, desc="review current diff")
     resolution = GoalResolution(

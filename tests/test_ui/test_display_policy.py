@@ -81,7 +81,7 @@ class TestToolDisplayPolicy:
         mode, _ = policy.resolve_display_mode("bash", "error", result_ok=False)
         assert mode == ToolDisplayMode.SHOW
 
-    @pytest.mark.parametrize("tool_name", ["clarify", "plan_checkpoint"])
+    @pytest.mark.parametrize("tool_name", ["clarify", "checkpoint"])
     def test_resolve_display_mode_hidden_failure_stays_hidden(self, tool_name):
         policy = ToolDisplayPolicy(rules=DEFAULT_DISPLAY_RULES)
         mode, _ = policy.resolve_display_mode(tool_name, "error", result_ok=False)
@@ -142,8 +142,8 @@ class TestToolDisplayPolicy:
 
 class TestDefaultDisplayRules:
     def test_hidden_tools(self):
-        hidden_tools = ["todo", "task_status", "load_doc_template", "plan_checkpoint",
-                        "compact_context", "advance_workflow", "load_skills", "clarify"]
+        hidden_tools = ["todo", "task_status", "document", "checkpoint",
+                        "compact", "advance_workflow", "skill", "clarify"]
         for name in hidden_tools:
             assert DEFAULT_DISPLAY_RULES[name].mode == ToolDisplayMode.HIDDEN, f"{name} should be hidden"
 

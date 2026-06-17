@@ -12,6 +12,7 @@ sys.path.insert(0, str(Path(__file__).parent.parent.parent / "src"))
 from voidx.agent.graph.streaming import stream_llm as _stream_llm
 from voidx.agent.graph import VoidXGraph
 from voidx.agent.graph.convergence import is_step_hint_message
+from voidx.agent.runtime_context import RuntimeContextBuilder
 from voidx.agent.task_state import TaskState, TodoRunState
 from voidx.config import Config, ModelConfig
 from voidx.llm.compaction import CompactionSelection
@@ -267,7 +268,7 @@ async def test_stream_llm_strips_todo_tool_call_before_repair():
     assert [message.content for message in model.messages] == ["hi", "next"]
 
 
-@pytest.mark.parametrize("tool_name", ["compact_context", "advance_workflow"])
+@pytest.mark.parametrize("tool_name", ["compact", "advance_workflow"])
 @pytest.mark.asyncio
 async def test_stream_llm_preserves_runtime_tool_calls_when_not_sanitized(tool_name):
     renderer = FakeRenderer()
@@ -288,12 +289,12 @@ async def test_stream_llm_preserves_runtime_tool_calls_when_not_sanitized(tool_n
         "anthropic",
     )
 
-    # compact_context/advance_workflow are NOT in _REPLAY_SANITIZED_TOOL_NAMES,
+    # compact/advance_workflow are NOT in _REPLAY_SANITIZED_TOOL_NAMES,
     # so their tool calls and ToolMessages are preserved for the LLM.
     assert [type(message) for message in model.messages] == [HumanMessage, AIMessage, ToolMessage, HumanMessage]
 
 
-@pytest.mark.parametrize("tool_name", ["plan_checkpoint", "clarify"])
+@pytest.mark.parametrize("tool_name", ["checkpoint", "clarify"])
 @pytest.mark.asyncio
 async def test_stream_llm_preserves_user_decision_tool_calls_for_replay(tool_name):
     renderer = FakeRenderer()
@@ -505,8 +506,18 @@ async def test_call_llm_injects_current_todo_runtime_context(tmp_path, monkeypat
         ],
     })
 
+    messages = [HumanMessage(content="hi")]
+    RuntimeContextBuilder(
+        config=graph.config,
+        workspace=str(tmp_path),
+        base_system_prompt="You are voidx.",
+        persona="voidx",
+        interaction_mode="auto",
+        task_state=graph._task_state,
+    ).build().apply_to_messages(messages)
+
     await graph._call_llm({
-        "messages": [HumanMessage(content="hi")],
+        "messages": messages,
         "step_count": 0,
         "max_steps": 50,
         "persona": "voidx",
@@ -515,10 +526,11 @@ async def test_call_llm_injects_current_todo_runtime_context(tmp_path, monkeypat
     todo_messages = [
         message.content
         for message in graph.model.messages
-        if isinstance(message, HumanMessage) and "## Current Todo" in str(message.content)
+        if isinstance(message, HumanMessage) and "Active todo" in str(message.content)
     ]
     assert len(todo_messages) == 1
-    assert "0/2 done · 1 active · 1 pending" in todo_messages[0]
+    assert "## Current Todo" not in todo_messages[0]
+    assert "Active todo: 2 items" in todo_messages[0]
     assert "- in_progress: inspect todo replay" in todo_messages[0]
 
 
@@ -882,7 +894,7 @@ async def test_call_llm_appends_inline_compaction_guide_when_budget_allows(tmp_p
     assert graph.model.messages is not None
     assert graph.model.messages[-1].content.startswith("VOIDX_COMPACTION_GUIDE")
     assert "tail_anchor_id: current_user" in graph.model.messages[-1].content
-    assert "compact_context" in graph.model.messages[-1].content
+    assert "compact" in graph.model.messages[-1].content
 
 
 @pytest.mark.asyncio

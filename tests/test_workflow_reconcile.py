@@ -35,7 +35,7 @@ def _state_with_run(run: WorkflowRunState, *, goal: GoalSpec | None = None) -> T
     )
 
 
-def test_reconcile_advances_brainstorm_to_design_doc_when_join_requests_design_doc():
+def test_reconcile_advances_brainstorm_to_design_when_join_requests_design():
     run = WorkflowRunState(
         name="brainstorm",
         status=WorkflowRunStatus.ACTIVE,
@@ -44,7 +44,7 @@ def test_reconcile_advances_brainstorm_to_design_doc_when_join_requests_design_d
     )
     goal = _goal("write a spec", GoalType.DOC)
     state = _state_with_run(run, goal=goal)
-    resolution = _resolution(goal=goal, join="design-doc", leave="design-doc")
+    resolution = _resolution(goal=goal, join="design", leave="design")
 
     updated = reconcile_workflow_runs_for_turn(
         goal_resolution=resolution,
@@ -54,11 +54,11 @@ def test_reconcile_advances_brainstorm_to_design_doc_when_join_requests_design_d
 
     by_name = {item.name: item for item in updated}
     assert by_name["brainstorm"].status == WorkflowRunStatus.SATISFIED
-    assert by_name["brainstorm"].evidence[-1].ref == "auto:turn_reconcile:brainstorm_to_design-doc"
+    assert by_name["brainstorm"].evidence[-1].ref == "auto:turn_reconcile:brainstorm_to_design"
     assert by_name["brainstorm"].evidence[-1].condition == "approved"
-    assert by_name["design-doc"].status == WorkflowRunStatus.ACTIVE
-    assert by_name["design-doc"].reason == "transition from brainstorm via approved"
-    assert by_name["design-doc"].activated_turn == 7
+    assert by_name["design"].status == WorkflowRunStatus.ACTIVE
+    assert by_name["design"].reason == "transition from brainstorm via approved"
+    assert by_name["design"].activated_turn == 7
 
 
 def test_reconcile_does_not_advance_without_plan_join():
@@ -187,14 +187,14 @@ def test_reconcile_keeps_debug_dag_transition_when_join_requests_tdd():
 
 def test_reconcile_does_not_satisfy_source_when_target_is_already_active():
     brainstorm = WorkflowRunState(name="brainstorm", status=WorkflowRunStatus.ACTIVE)
-    design_doc = WorkflowRunState(name="design-doc", status=WorkflowRunStatus.ACTIVE)
+    design = WorkflowRunState(name="design", status=WorkflowRunStatus.ACTIVE)
     state = TaskState(
         workflow_runs={
             "brainstorm": brainstorm,
-            "design-doc": design_doc,
+            "design": design,
         },
     )
-    resolution = _resolution(join="design-doc")
+    resolution = _resolution(join="design")
 
     updated = reconcile_workflow_runs_for_turn(
         goal_resolution=resolution,
@@ -203,7 +203,7 @@ def test_reconcile_does_not_satisfy_source_when_target_is_already_active():
 
     by_name = {item.name: item for item in updated}
     assert by_name["brainstorm"].status == WorkflowRunStatus.ACTIVE
-    assert by_name["design-doc"].status == WorkflowRunStatus.ACTIVE
+    assert by_name["design"].status == WorkflowRunStatus.ACTIVE
     assert by_name["brainstorm"].evidence == []
 
 
@@ -220,7 +220,7 @@ def test_reconcile_ignores_unknown_plan_join():
     assert updated == [run]
 
 
-def test_reconcile_does_not_advance_verify_to_review_without_dag_edge():
+def test_reconcile_advances_verify_to_review_when_dag_edge_exists():
     verify = WorkflowRunState(
         name="verify",
         status=WorkflowRunStatus.ACTIVE,
@@ -235,7 +235,10 @@ def test_reconcile_does_not_advance_verify_to_review_without_dag_edge():
         turn_count=5,
     )
 
-    assert updated == [verify]
+    assert len(updated) == 2
+    by_name = {r.name: r for r in updated}
+    assert by_name["verify"].status == WorkflowRunStatus.SATISFIED
+    assert by_name["review"].status == WorkflowRunStatus.ACTIVE
 
 
 def test_reconcile_advances_feedback_to_brainstorm_when_join_requests_brainstorm():

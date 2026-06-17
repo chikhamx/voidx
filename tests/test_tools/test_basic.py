@@ -87,29 +87,25 @@ class TestToolSchemas:
 
     def test_agent_input_uses_child_agent_schema(self):
         inp = AgentInput.model_validate({
-            "description": "inspect auth flow",
-            "goal_resolution": {
-                "intent": {"type": "coding", "desc": "delegated inspection"},
-                "goal": {"type": "inspect", "desc": "inspect auth flow"},
-                "plan": {"join": "review", "leave": "review"},
-            },
-            "result": {
-                "schema_name": "inspection_result",
-                "format": "summary, evidence, risks, recommended_next_steps",
-            },
+            "agent": "voidx",
+            "mode": "inspect",
+            "task": "Inspect auth flow",
+            "target": "src/voidx/auth.py",
         })
         assert inp.agent == "voidx"
-        assert inp.goal_resolution.goal is not None
-        assert inp.goal_resolution.goal.type == GoalType.INSPECT
-        assert inp.goal_resolution.plan is not None
-        assert inp.goal_resolution.plan.join == "review"
-        assert inp.result.schema_name == "inspection_result"
+        assert inp.mode == "inspect"
+        assert inp.task == "Inspect auth flow"
+        assert inp.target == "src/voidx/auth.py"
+        assert inp.result_preset == "auto"
         schema = AgentInput.model_json_schema()
         assert "agent" in schema["properties"]
         assert "sub-voidx" not in str(schema)
-        assert "description" in schema["required"]
-        assert "goal_resolution" in schema["required"]
-        assert "result" in schema["required"]
+        assert "mode" in schema["required"]
+        assert "task" in schema["required"]
+        assert "target" in schema["required"]
+        assert "description" not in schema["required"]
+        assert "goal_resolution" not in schema["required"]
+        assert "result" not in schema["required"]
         assert "persona" not in schema["required"]
         assert "max_steps" not in schema["required"]
         assert "delegation_reason" not in schema["required"]
@@ -117,9 +113,9 @@ class TestToolSchemas:
         assert "parent_evidence" not in schema["required"]
         assert "subagent_type" not in schema["properties"]
 
-    def test_agent_input_requires_goal_resolution_and_result(self):
+    def test_agent_input_requires_mode_task_and_target(self):
         with pytest.raises(ValueError):
-            AgentInput.model_validate({"agent": "explore", "description": "inspect"})
+            AgentInput.model_validate({"agent": "voidx", "task": "inspect"})
 
 
 class TestToolRegistry:
@@ -137,9 +133,9 @@ class TestToolRegistry:
         assert "bash" in ids
         assert "repo_map" in ids
         assert "clarify" in ids
-        assert "plan_checkpoint" in ids
+        assert "checkpoint" in ids
         assert "advance_workflow" in ids
-        assert "load_skills" in ids
+        assert "skill" in ids
         assert "lsp" in ids
         assert "lsp_format" not in ids
 
@@ -167,7 +163,7 @@ class TestToolRegistry:
     def test_nested_tool_schemas_keep_defs_and_strict_objects(self):
         r = ToolRegistry()
         clarify = r.get_def("clarify").parameters
-        checkpoint = r.get_def("plan_checkpoint").parameters
+        checkpoint = r.get_def("checkpoint").parameters
 
         assert "$defs" in clarify
         assert "$defs" in checkpoint
@@ -289,22 +285,15 @@ class TestInteractiveTools:
     def _agent_args(self, **overrides):
         args = {
             "agent": "voidx",
-            "description": "Review one changed file",
-            "goal_resolution": {
-                "intent": {"type": "coding", "desc": "delegated review"},
-                "goal": {"type": "review", "desc": "review one changed file"},
-                "plan": {"join": "review", "leave": "review"},
-            },
-            "result": {
-                "schema_name": "review_result",
-                "format": "verdict=PASS|FAIL|NEEDS_CHANGE, findings, risks, next_actions",
-            },
+            "mode": "review",
+            "task": "Review one changed file",
+            "target": "src/voidx/tools/agent.py",
         }
         args.update(overrides)
         return args
 
     @pytest.mark.asyncio
-    async def test_agent_tool_rejects_missing_goal_resolution_goal(self, tmp_path):
+    async def test_agent_tool_rejects_missing_target(self, tmp_path):
         calls: list[object] = []
 
         async def runner(*args, **kwargs):
@@ -318,19 +307,16 @@ class TestInteractiveTools:
         )
 
         result = await tool.execute(
-            self._agent_args(goal_resolution={
-                "intent": {"type": "coding", "desc": "delegated review"},
-                "plan": {"join": "review", "leave": "review"},
-            }),
+            self._agent_args(target=""),
             ToolContext(workspace=str(tmp_path)),
         )
 
         assert result.metadata["error"] is True
-        assert "goal_resolution.goal" in result.output
+        assert "target" in result.output
         assert calls == []
 
     @pytest.mark.asyncio
-    async def test_agent_tool_rejects_missing_plan_join(self, tmp_path):
+    async def test_agent_tool_rejects_implement_without_success_criteria(self, tmp_path):
         calls: list[object] = []
 
         async def runner(*args, **kwargs):
@@ -344,21 +330,21 @@ class TestInteractiveTools:
         )
 
         result = await tool.execute(
-            self._agent_args(goal_resolution={
-                "intent": {"type": "coding", "desc": "delegated review"},
-                "goal": {"type": "review", "desc": "review one changed file"},
-                "plan": {"join": "", "leave": "review"},
-            }),
+            self._agent_args(
+                mode="implement",
+                task="Implement the agent mode contract",
+                target="src/voidx/tools/agent.py",
+            ),
             ToolContext(workspace=str(tmp_path)),
         )
 
         assert result.metadata["error"] is True
         assert result.metadata["delegation_rejected"] is True
-        assert "plan.join" in result.output
+        assert "success_criteria" in result.output
         assert calls == []
 
     @pytest.mark.asyncio
-    async def test_agent_tool_rejects_missing_plan_leave(self, tmp_path):
+    async def test_agent_tool_rejects_invalid_preset_for_mode(self, tmp_path):
         calls: list[object] = []
 
         async def runner(*args, **kwargs):
@@ -372,27 +358,26 @@ class TestInteractiveTools:
         )
 
         result = await tool.execute(
-            self._agent_args(goal_resolution={
-                "intent": {"type": "coding", "desc": "delegated review"},
-                "goal": {"type": "review", "desc": "review one changed file"},
-                "plan": {"join": "review", "leave": ""},
-            }),
+            self._agent_args(result_preset="implementation"),
             ToolContext(workspace=str(tmp_path)),
         )
 
         assert result.metadata["error"] is True
         assert result.metadata["delegation_rejected"] is True
-        assert "plan.leave" in result.output
+        assert "result_preset" in result.output
         assert calls == []
 
     @pytest.mark.asyncio
-    async def test_agent_tool_rejects_unknown_workflow_node(self, tmp_path):
+    async def test_agent_tool_rejects_missing_internal_result_preset_without_crashing(self, tmp_path, monkeypatch):
+        import voidx.tools.agent as agent_module
+
         calls: list[object] = []
 
         async def runner(*args, **kwargs):
             calls.append((args, kwargs))
             return "should not run"
 
+        monkeypatch.delitem(agent_module._RESULT_PRESETS, "review")
         tool = AgentTool(
             runner,
             agent_resolver=lambda name: type("Agent", (), {"name": name, "model": None})(),
@@ -400,20 +385,17 @@ class TestInteractiveTools:
         )
 
         result = await tool.execute(
-            self._agent_args(goal_resolution={
-                "intent": {"type": "coding", "desc": "delegated review"},
-                "goal": {"type": "review", "desc": "review one changed file"},
-                "plan": {"join": "unknown", "leave": "review"},
-            }),
+            self._agent_args(result_preset="review"),
             ToolContext(workspace=str(tmp_path)),
         )
 
+        assert result.metadata["error"] is True
         assert result.metadata["delegation_rejected"] is True
-        assert "known workflow node" in result.output
+        assert "result_preset" in result.output
         assert calls == []
 
     @pytest.mark.asyncio
-    async def test_agent_tool_passes_goal_resolution_and_result_contract(self, tmp_path):
+    async def test_agent_tool_normalizes_review_mode_to_goal_resolution_and_result_contract(self, tmp_path):
         captured: dict[str, object] = {}
 
         async def runner(agent_def, description, model, goal_resolution, result):
@@ -438,19 +420,25 @@ class TestInteractiveTools:
         )
 
         assert result.output == "child result"
-        assert result.metadata["goal"] == {"type": "review", "desc": "review one changed file"}
+        assert result.metadata["goal"] == {"type": "review", "desc": "review: src/voidx/tools/agent.py"}
         assert result.metadata["workflow_route"] == {"join": "review", "leave": "review"}
         assert result.metadata["result_schema"] == "review_result"
+        assert "Target: src/voidx/tools/agent.py" in captured["description"]
+        assert "Result contract:" not in captured["description"]
         assert captured["goal_resolution"].goal.type == GoalType.REVIEW
         assert captured["result"].schema_name == "review_result"
+        assert "PASS|FAIL|NEEDS_CHANGE" in captured["result"].format
 
     @pytest.mark.asyncio
-    async def test_agent_tool_rejects_empty_result_format(self, tmp_path):
-        calls: list[object] = []
+    async def test_agent_tool_normalizes_inspect_without_goal_map(self, tmp_path):
+        captured: dict[str, object] = {}
 
-        async def runner(*args, **kwargs):
-            calls.append((args, kwargs))
-            return "should not run"
+        async def runner(agent_def, description, model, goal_resolution, result):
+            captured.update({
+                "goal_resolution": goal_resolution,
+                "result": result,
+            })
+            return "child result"
 
         tool = AgentTool(
             runner,
@@ -459,21 +447,31 @@ class TestInteractiveTools:
         )
 
         result = await tool.execute(
-            self._agent_args(result={"schema_name": "review_result", "format": "   "}),
+            self._agent_args(
+                mode="inspect",
+                task="Inspect the runtime module",
+                target="src/voidx/runtime",
+            ),
             ToolContext(workspace=str(tmp_path)),
         )
 
-        assert result.metadata["delegation_rejected"] is True
-        assert "result.format" in result.output
-        assert calls == []
+        assert result.output == "child result"
+        goal_resolution = captured["goal_resolution"]
+        assert goal_resolution.goal.type == GoalType.INSPECT
+        assert goal_resolution.plan.join == "review"
+        assert goal_resolution.plan.leave == "review"
+        assert captured["result"].schema_name == "inspection_result"
 
     @pytest.mark.asyncio
-    async def test_agent_tool_rejects_review_goal_outside_review_workflow(self, tmp_path):
-        calls: list[object] = []
+    async def test_agent_tool_normalizes_feedback_review_goal_without_review_join_rejection(self, tmp_path):
+        captured: dict[str, object] = {}
 
-        async def runner(*args, **kwargs):
-            calls.append((args, kwargs))
-            return "should not run"
+        async def runner(agent_def, description, model, goal_resolution, result):
+            captured.update({
+                "goal_resolution": goal_resolution,
+                "result": result,
+            })
+            return "child result"
 
         tool = AgentTool(
             runner,
@@ -482,17 +480,92 @@ class TestInteractiveTools:
         )
 
         result = await tool.execute(
-            self._agent_args(goal_resolution={
-                "intent": {"type": "coding", "desc": "delegated review"},
-                "goal": {"type": "review", "desc": "review one changed file"},
-                "plan": {"join": "tdd", "leave": "verify"},
-            }),
+            self._agent_args(
+                mode="feedback",
+                task="Address the review feedback",
+                target="review comment about agent routing",
+                success_criteria="Return accepted/rejected status and verification notes.",
+            ),
             ToolContext(workspace=str(tmp_path)),
         )
 
-        assert result.metadata["delegation_rejected"] is True
-        assert "review goals" in result.output
-        assert calls == []
+        assert result.output == "child result"
+        goal_resolution = captured["goal_resolution"]
+        assert goal_resolution.goal.type == GoalType.REVIEW
+        assert goal_resolution.plan.join == "feedback"
+        assert goal_resolution.plan.leave == "verify"
+        assert captured["result"].schema_name == "feedback_result"
+
+    @pytest.mark.asyncio
+    async def test_agent_tool_normalizes_implement_mode_to_tdd_verify_route(self, tmp_path):
+        captured: dict[str, object] = {}
+
+        async def runner(agent_def, description, model, goal_resolution, result):
+            captured.update({
+                "goal_resolution": goal_resolution,
+                "result": result,
+            })
+            return "child result"
+
+        tool = AgentTool(
+            runner,
+            agent_resolver=lambda name: type("Agent", (), {"name": name, "model": None})(),
+            available_agents=["voidx"],
+        )
+
+        result = await tool.execute(
+            self._agent_args(
+                mode="implement",
+                task="Implement the agent mode contract",
+                target="src/voidx/tools/agent.py",
+                success_criteria="Focused tests pass for the new agent input schema.",
+            ),
+            ToolContext(workspace=str(tmp_path)),
+        )
+
+        assert result.output == "child result"
+        goal_resolution = captured["goal_resolution"]
+        assert goal_resolution.goal.type == GoalType.FEATURE
+        assert goal_resolution.plan.join == "tdd"
+        assert goal_resolution.plan.leave == "verify"
+        assert captured["result"].schema_name == "implementation_result"
+
+    @pytest.mark.asyncio
+    async def test_agent_tool_auto_result_preset_follows_mode(self, tmp_path):
+        expected = {
+            "inspect": "inspection_result",
+            "review": "review_result",
+            "debug": "debug_result",
+            "plan": "plan_result",
+            "implement": "implementation_result",
+            "feedback": "feedback_result",
+        }
+        captured: list[str] = []
+
+        async def runner(agent_def, description, model, goal_resolution, result):
+            captured.append(result.schema_name)
+            return "child result"
+
+        tool = AgentTool(
+            runner,
+            agent_resolver=lambda name: type("Agent", (), {"name": name, "model": None})(),
+            available_agents=["voidx"],
+        )
+
+        for mode, schema_name in expected.items():
+            result = await tool.execute(
+                self._agent_args(
+                    mode=mode,
+                    task=f"Run {mode} child agent task",
+                    target=f"target/{mode}",
+                    success_criteria="Return structured status and verification notes.",
+                ),
+                ToolContext(workspace=str(tmp_path)),
+            )
+            assert result.output == "child result"
+            assert result.metadata["result_schema"] == schema_name
+
+        assert captured == list(expected.values())
 
     @pytest.mark.asyncio
     async def test_clarify_uses_interaction_callback_and_returns_state_patch(self, tmp_path):
@@ -1564,7 +1637,7 @@ class TestAdvanceWorkflowTool:
             workspace=str(tmp_path),
             workflow_runs=[
                 WorkflowRunState(name="brainstorm", status=WorkflowRunStatus.ACTIVE),
-                WorkflowRunState(name="design-doc", status=WorkflowRunStatus.ACTIVE),
+                WorkflowRunState(name="design", status=WorkflowRunStatus.ACTIVE),
             ],
         )
         result = await ToolRegistry().execute_tool(
@@ -1577,7 +1650,7 @@ class TestAdvanceWorkflowTool:
         assert result.metadata["ambiguous"] is True
         assert "Ambiguous workflow target" in result.output
         assert "brainstorm" in result.output
-        assert "design-doc" in result.output
+        assert "design" in result.output
         assert "state_patch" not in result.metadata
 
     @pytest.mark.asyncio
@@ -1608,13 +1681,13 @@ class TestAdvanceWorkflowTool:
             workspace=str(tmp_path),
             workflow_runs=[
                 WorkflowRunState(name="brainstorm", status=WorkflowRunStatus.ACTIVE),
-                WorkflowRunState(name="design-doc", status=WorkflowRunStatus.ACTIVE),
+                WorkflowRunState(name="design", status=WorkflowRunStatus.ACTIVE),
             ],
         )
         result = await ToolRegistry().execute_tool(
             "advance_workflow",
             {
-                "workflow": "design-doc",
+                "workflow": "design",
                 "condition": "done",
                 "evidence": "reader test passed",
                 "summary": "design doc complete",
@@ -1626,8 +1699,8 @@ class TestAdvanceWorkflowTool:
         patch = ToolStatePatch.model_validate(result.metadata["state_patch"])
         by_name = {run.name: run for run in patch.workflow_runs}
 
-        assert payload["from"] == "design-doc"
-        assert by_name["design-doc"].status == WorkflowRunStatus.SATISFIED
+        assert payload["from"] == "design"
+        assert by_name["design"].status == WorkflowRunStatus.SATISFIED
         assert by_name["brainstorm"].status == WorkflowRunStatus.ACTIVE
 
 

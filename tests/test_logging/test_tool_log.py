@@ -47,7 +47,7 @@ class TestLogToolEvent:
         log_file = tmp_path / "agent_events.jsonl"
         log_tool_event(
             "hidden_tool_failure",
-            tool_name="plan_checkpoint",
+            tool_name="checkpoint",
             message="timeout",
             session_id="sess-123",
             log_path=log_file,

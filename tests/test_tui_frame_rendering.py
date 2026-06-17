@@ -417,12 +417,12 @@ def test_render_frame_clips_long_choice_panel_to_terminal_height(tmp_path, monke
         ("Reject", "rejected", "Do not proceed"),
     ]
     tui._choice_prompt = (
-        "Plan: 新增 `load_doc_template` 工具，让 LLM 在 design-doc 节点激活时能按需读取文档模板。\n\n"
+        "Plan: 新增 `document` 工具，让 LLM 在 design 节点激活时能按需读取文档模板。\n\n"
         "Steps:\n"
         "1. 新增 src/voidx/tools/load_doc_template.py，用 importlib.resources 读取 "
         "voidx.data/templates/{doc_type}.md，返回模板内容。\n"
-        "2. 在 orchestrator 的 AgentDef.tools 列表中加入 load_doc_template。\n"
-        "3. 更新 design-doc 节点 step 4 的描述。\n"
+        "2. 在 orchestrator 的 AgentDef.tools 列表中加入 document。\n"
+        "3. 更新 design 节点 step 4 的描述。\n"
         "4. 添加测试。\n"
         "5. 跑测试确认无回归。\n\n"
         "Affected files: src/voidx/tools/load_doc_template.py, "

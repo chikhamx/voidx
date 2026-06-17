@@ -252,8 +252,8 @@ def test_graph_registers_agent_tool_not_task_tool(tmp_path):
     assert "agent_parallel" not in ids
     assert "on_intent" not in ids
     assert "clarify" in ids
-    assert "plan_checkpoint" in ids
-    assert "load_skills" in ids
+    assert "checkpoint" in ids
+    assert "skill" in ids
     assert "task" not in ids
 
 
@@ -320,10 +320,12 @@ def test_orchestrator_prompt_mentions_delegation_gate():
     assert "simple searches" in prompt
     assert "straightforward tasks you can do directly" in prompt
     assert {
-        "description",
-        "goal_resolution",
-        "result",
+        "mode",
+        "task",
+        "target",
     }.issubset(set(schema["required"]))
+    assert "goal_resolution" not in schema["required"]
+    assert "result" not in schema["required"]
 
 
 def test_orchestrator_prompt_matches_agent_workflow_schema():
@@ -334,13 +336,14 @@ def test_orchestrator_prompt_matches_agent_workflow_schema():
     child_descriptions = child_agent_descriptions_for_llm()
     tool_description = AgentTool(runner=None).description
 
-    assert "goal_resolution.plan.join" in prompt
-    assert "goal_resolution.plan.leave" in prompt
-    assert "goal_resolution.goal" in prompt
-    assert "result.format" in prompt
+    assert "`mode`, `task`, and one concrete `target`" in prompt
+    assert "Use one child agent per target" in prompt
+    assert "`success_criteria` for `implement` and `feedback`" in prompt
+    assert "`result_preset` as `auto`" in prompt
     assert "Do not provide `persona` or `max_steps`" not in prompt
-    assert "goal_resolution.plan.join" in tool_description
-    assert "result.format" in tool_description
+    assert "mode, task, and one concrete target" in tool_description
+    assert "success_criteria for implement and feedback" in tool_description
+    assert "result_preset" in tool_description
     assert "persona" not in child_descriptions
     assert "requested runtime persona" not in child_descriptions
 
@@ -430,14 +433,14 @@ def test_orchestrator_has_direct_edit_tools():
 
     assert agent is not None
     assert {"write", "edit"}.issubset(set(agent.tools))
-    assert {"clarify", "plan_checkpoint", "load_skills"}.issubset(set(agent.tools))
+    assert {"clarify", "checkpoint", "skill"}.issubset(set(agent.tools))
     assert get_agent("sub-voidx") is None
     assert get_agent("explore") is None
     assert get_agent("plan") is None
     assert get_agent("implement") is None
     assert get_agent("review") is None
     assert get_visible_agents() == [agent]
-    assert "load_skills" in agent.tools
+    assert "skill" in agent.tools
     assert agent.can_write is True
 
 
@@ -463,7 +466,7 @@ def test_persona_prompt_rejects_unregistered_agent_name():
         _ = agent.persona_prompt
 
 
-def test_brainstorm_workflow_does_not_write_design_doc():
+def test_brainstorm_workflow_does_not_write_design():
     from voidx.workflow.dag import DEFAULT_WORKFLOW_DAG
 
     node = DEFAULT_WORKFLOW_DAG.nodes["brainstorm"]
@@ -602,7 +605,7 @@ async def test_graph_authorization_uses_current_workflow_gate_only(tmp_path):
         plan_mode=False,
         session_id="test",
         workflow_runs=[
-            WorkflowRunState(name="design-doc", status=WorkflowRunStatus.ACTIVE),
+            WorkflowRunState(name="design", status=WorkflowRunStatus.ACTIVE),
             WorkflowRunState(name="plan", status=WorkflowRunStatus.ACTIVE),
         ],
     )
@@ -1611,14 +1614,14 @@ async def test_parallel_subagents_continue_after_barrier_transaction(tmp_path):
     executed: list[str] = []
 
     class FakeBarrierTool:
-        id = "plan_checkpoint"
+        id = "checkpoint"
         description = "fake barrier"
 
         def parameters_schema(self):
             return {"type": "object", "properties": {}}
 
         async def execute(self, args: dict, ctx: ToolContext) -> ToolResult:
-            executed.append("plan_checkpoint")
+            executed.append("checkpoint")
             return ToolResult(output="checkpoint ok")
 
     class FakeAgentTool:
@@ -1632,7 +1635,7 @@ async def test_parallel_subagents_continue_after_barrier_transaction(tmp_path):
             executed.append("agent")
             return ToolResult(output="agent ok")
 
-    graph.tools.register("plan_checkpoint", FakeBarrierTool(), "fake barrier", {"type": "object", "properties": {}})
+    graph.tools.register("checkpoint", FakeBarrierTool(), "fake barrier", {"type": "object", "properties": {}})
     graph.tools.register("agent", FakeAgentTool(), "fake agent", {"type": "object", "properties": {}})
 
     async def allow_all(
@@ -1648,7 +1651,7 @@ async def test_parallel_subagents_continue_after_barrier_transaction(tmp_path):
     parent = AIMessage(
         content="",
         tool_calls=[
-            {"name": "plan_checkpoint", "args": {}, "id": "call_plan", "type": "tool_call"},
+            {"name": "checkpoint", "args": {}, "id": "call_plan", "type": "tool_call"},
             {"name": "agent", "args": {"description": "a"}, "id": "call_agent", "type": "tool_call"},
         ],
     )
@@ -1660,7 +1663,7 @@ async def test_parallel_subagents_continue_after_barrier_transaction(tmp_path):
         "plan_mode": False,
     })
 
-    assert executed == ["plan_checkpoint", "agent"]
+    assert executed == ["checkpoint", "agent"]
     assert [msg.tool_call_id for msg in result["messages"]] == ["call_plan", "call_agent"]
     assert result["messages"][0].content == "checkpoint ok"
     assert result["messages"][1].content == "agent ok"
@@ -1937,7 +1940,7 @@ async def test_execute_tools_emits_todo_updated_node(tmp_path):
         set_dock(None)
 
 
-@pytest.mark.parametrize("tool_name", ["clarify", "plan_checkpoint"])
+@pytest.mark.parametrize("tool_name", ["clarify", "checkpoint"])
 @pytest.mark.asyncio
 async def test_execute_tools_keeps_hidden_tool_failures_out_of_ui(tmp_path, tool_name):
     graph = _graph(tmp_path)
@@ -2086,22 +2089,22 @@ async def test_execute_tools_no_progress_guidance_and_termination(tmp_path):
             "plan_mode": False,
         })
 
-    await run_tool("plan_checkpoint", "call_1")
+    await run_tool("checkpoint", "call_1")
     await run_tool("advance_workflow", "call_2")
     assert graph._pending_guidance == []
 
-    await run_tool("plan_checkpoint", "call_3")
+    await run_tool("checkpoint", "call_3")
     assert any("No meaningful progress" in item for item in graph._pending_guidance)
 
     await run_tool("advance_workflow", "call_4")
-    result = await run_tool("plan_checkpoint", "call_5")
+    result = await run_tool("checkpoint", "call_5")
 
     assert calls == [
-        "plan_checkpoint",
+        "checkpoint",
         "advance_workflow",
-        "plan_checkpoint",
+        "checkpoint",
         "advance_workflow",
-        "plan_checkpoint",
+        "checkpoint",
     ]
     assert result["should_continue"] is False
     assert any(
@@ -2302,16 +2305,10 @@ async def test_subagent_full_output_reaches_orchestrator(tmp_path, monkeypatch):
                     "name": "agent",
                     "args": {
                         "agent": "voidx",
-                        "description": "inspect auth flow",
-                        "goal_resolution": {
-                            "intent": {"type": "coding", "desc": "delegated inspection"},
-                            "goal": {"type": "inspect", "desc": "inspect auth flow"},
-                            "plan": {"join": "review", "leave": "review"},
-                        },
-                        "result": {
-                            "schema_name": "inspection_result",
-                            "format": "Return the full auth flow findings.",
-                        },
+                        "mode": "inspect",
+                        "task": "Inspect the auth flow",
+                        "target": "src/voidx/auth.py",
+                        "result_preset": "inspection",
                     },
                     "id": "call_agent",
                     "type": "tool_call",
@@ -2413,7 +2410,7 @@ async def test_compact_context_tool_applies_inline_summary_and_replaces_live_mes
         content="",
         tool_calls=[
             {
-                "name": "compact_context",
+                "name": "compact",
                 "args": {"summary": "inline summary", "tail_anchor_id": "current_user"},
                 "id": "call_compact",
                 "type": "tool_call",
@@ -2490,7 +2487,7 @@ async def test_plan_checkpoint_transaction_executes_following_tools_with_updated
         content="",
         tool_calls=[
             {
-                "name": "plan_checkpoint",
+                "name": "checkpoint",
                 "args": {"plan_summary": "Update runtime state handling"},
                 "id": "call_plan",
                 "type": "tool_call",
@@ -2535,14 +2532,14 @@ async def test_barrier_failure_blocks_following_tools(tmp_path):
     executed: list[str] = []
 
     class FailingBarrierTool:
-        id = "plan_checkpoint"
+        id = "checkpoint"
         description = "fake failing barrier"
 
         def parameters_schema(self):
             return {"type": "object", "properties": {}}
 
         async def execute(self, args: dict, ctx: ToolContext) -> ToolResult:
-            executed.append("plan_checkpoint")
+            executed.append("checkpoint")
             return ToolResult(output="barrier failed", metadata={"error": True})
 
     class ExplodingReadTool:
@@ -2555,7 +2552,7 @@ async def test_barrier_failure_blocks_following_tools(tmp_path):
         async def execute(self, args: dict, ctx: ToolContext) -> ToolResult:
             pytest.fail("read should be blocked after failed barrier")
 
-    graph.tools.register("plan_checkpoint", FailingBarrierTool(), "fake failing barrier", {"type": "object", "properties": {}})
+    graph.tools.register("checkpoint", FailingBarrierTool(), "fake failing barrier", {"type": "object", "properties": {}})
     graph.tools.register("read", ExplodingReadTool(), "fake read", {"type": "object", "properties": {}})
 
     async def allow_all(
@@ -2570,7 +2567,7 @@ async def test_barrier_failure_blocks_following_tools(tmp_path):
     parent = AIMessage(
         content="",
         tool_calls=[
-            {"name": "plan_checkpoint", "args": {}, "id": "call_plan", "type": "tool_call"},
+            {"name": "checkpoint", "args": {}, "id": "call_plan", "type": "tool_call"},
             {"name": "read", "args": {"file_path": "src/app.py"}, "id": "call_read", "type": "tool_call"},
         ],
     )
@@ -2582,7 +2579,7 @@ async def test_barrier_failure_blocks_following_tools(tmp_path):
         "plan_mode": False,
     })
 
-    assert executed == ["plan_checkpoint"]
+    assert executed == ["checkpoint"]
     assert [message.tool_call_id for message in result["messages"]] == ["call_plan", "call_read"]
     assert result["messages"][0].content == "barrier failed"
     assert result["messages"][1].content == "Blocked because a prior runtime barrier was failed."
@@ -2612,14 +2609,14 @@ async def test_multiple_barriers_apply_patches_in_order(tmp_path):
             )
 
     class FakePlanTool:
-        id = "plan_checkpoint"
+        id = "checkpoint"
         description = "fake plan barrier"
 
         def parameters_schema(self):
             return {"type": "object", "properties": {}}
 
         async def execute(self, args: dict, ctx: ToolContext) -> ToolResult:
-            observed.append(f"plan_checkpoint:{ctx.task_intent}:{ctx.goal_type}:{ctx.goal_target}")
+            observed.append(f"checkpoint:{ctx.task_intent}:{ctx.goal_type}:{ctx.goal_target}")
             patch = ToolStatePatch(
                 intent=IntentResolution(type=TaskIntent.CODING, desc="after plan"),
                 goal=GoalSpec(type=GoalType.FEATURE, desc="after plan"),
@@ -2641,7 +2638,7 @@ async def test_multiple_barriers_apply_patches_in_order(tmp_path):
             return ToolResult(output=f"read after barriers: {ctx.task_intent}:{ctx.goal_type}:{ctx.goal_target}")
 
     graph.tools.register("clarify", FakeClarifyTool(), "fake clarify", {"type": "object", "properties": {}})
-    graph.tools.register("plan_checkpoint", FakePlanTool(), "fake plan", {"type": "object", "properties": {}})
+    graph.tools.register("checkpoint", FakePlanTool(), "fake plan", {"type": "object", "properties": {}})
     graph.tools.register("read", RecordingReadTool(), "fake read", {"type": "object", "properties": {}})
 
     async def allow_all(
@@ -2657,7 +2654,7 @@ async def test_multiple_barriers_apply_patches_in_order(tmp_path):
         content="",
         tool_calls=[
             {"name": "clarify", "args": {}, "id": "call_clarify", "type": "tool_call"},
-            {"name": "plan_checkpoint", "args": {}, "id": "call_plan", "type": "tool_call"},
+            {"name": "checkpoint", "args": {}, "id": "call_plan", "type": "tool_call"},
             {"name": "read", "args": {"file_path": "src/app.py"}, "id": "call_read", "type": "tool_call"},
         ],
     )
@@ -2678,7 +2675,7 @@ async def test_multiple_barriers_apply_patches_in_order(tmp_path):
     ]
     assert observed == [
         "clarify:general::",
-        "plan_checkpoint:coding:inspect:after intent",
+        "checkpoint:coding:inspect:after intent",
         "read:coding:feature:after plan",
     ]
     task_state = _result_task_state(result)
@@ -2878,7 +2875,7 @@ async def test_multiple_advance_workflow_done_calls_finish_batch_before_stopping
             {
                 "name": "advance_workflow",
                 "args": {
-                    "workflow": "design-doc",
+                    "workflow": "design",
                     "condition": "done",
                     "evidence": "design doc archived",
                     "summary": "design doc complete",
@@ -2909,7 +2906,7 @@ async def test_multiple_advance_workflow_done_calls_finish_batch_before_stopping
         "task_state": _task_state_json(
             current_intent=TaskIntent.CODING,
             workflow_runs={
-                "design-doc": WorkflowRunState(name="design-doc", status=WorkflowRunStatus.ACTIVE),
+                "design": WorkflowRunState(name="design", status=WorkflowRunStatus.ACTIVE),
                 "verify": WorkflowRunState(name="verify", status=WorkflowRunStatus.ACTIVE),
             },
         ),
@@ -2921,7 +2918,7 @@ async def test_multiple_advance_workflow_done_calls_finish_batch_before_stopping
     ]
     assert result["should_continue"] is False
     by_name = {run.name: run for run in _result_task_state(result).workflow_runs.values()}
-    assert by_name["design-doc"].status == WorkflowRunStatus.SATISFIED
+    assert by_name["design"].status == WorkflowRunStatus.SATISFIED
     assert by_name["verify"].status == WorkflowRunStatus.SKIPPED
 
 
@@ -3509,7 +3506,7 @@ async def test_run_once_persists_user_decision_tool_replay_rows(tmp_path):
                         AIMessage(
                             content="",
                             tool_calls=[{
-                                "name": "plan_checkpoint",
+                                "name": "checkpoint",
                                 "args": {"plan_summary": "Update frontend flow"},
                                 "id": "call_plan",
                                 "type": "tool_call",
@@ -3537,7 +3534,7 @@ async def test_run_once_persists_user_decision_tool_replay_rows(tmp_path):
 
         assert [call["name"] for row in assistant_rows for call in (row.tool_calls or [])] == [
             "clarify",
-            "plan_checkpoint",
+            "checkpoint",
         ]
         assert [row.tool_call_id for row in tool_rows] == ["call_clarify", "call_plan"]
         assert [row.content for row in tool_rows] == ['{"answer": "frontend"}', '{"decision": "approved"}']
@@ -3880,7 +3877,7 @@ async def test_prepare_injects_workflow_nodes_from_task_state(tmp_path):
     )
     result_task_state = TaskState.model_validate(result["task_state"])
     assert [name for name in (result_task_state.workflow_runs or {})] == ["debug"]
-    assert "Workflow run state: debug=active" in task_context_message.content
+    assert "Workflow run state:" not in task_context_message.content
 
 
 @pytest.mark.asyncio
@@ -3985,15 +3982,24 @@ async def test_implement_subagent_injects_workflow_nodes(tmp_path, monkeypatch):
         for message in captured["messages"]
         if isinstance(message, HumanMessage) and str(message.content).startswith(WORKFLOW_CONTEXT_MARKER)
     )
-    rendered_user = next(
+    runtime_state = next(
         message.content
         for message in captured["messages"]
         if isinstance(message, HumanMessage) and "Runtime State" in str(message.content)
     )
+    rendered_user = next(
+        message.content
+        for message in captured["messages"]
+        if (
+            isinstance(message, HumanMessage)
+            and str(message.content).startswith("VOIDX_RUNTIME_CONTEXT")
+            and "## Current Task State" in str(message.content)
+        )
+    )
     assert "Workflow Node: tdd" in workflow_context
     assert "Active workflow nodes: tdd" in rendered_user
-    assert "User language: Chinese (Simplified) [zh-CN]" in rendered_user
-    assert "Tone instruction: Be direct and practical. Lead with the answer or action." in rendered_user
+    assert "Language instruction: Prefer responding in Chinese (Simplified)" in runtime_state
+    assert "Tone instruction: Be direct and practical. Lead with the answer or action." in runtime_state
 
 
 @pytest.mark.asyncio
@@ -4192,7 +4198,7 @@ async def test_run_subagent_terminates_after_no_progress_cycles(tmp_path, monkey
 
         def tools_for_llm(self):
             return [
-                {"name": "plan_checkpoint", "description": "checkpoint", "input_schema": {}},
+                {"name": "checkpoint", "description": "checkpoint", "input_schema": {}},
                 {"name": "advance_workflow", "description": "advance", "input_schema": {}},
             ]
 
@@ -4205,7 +4211,7 @@ async def test_run_subagent_terminates_after_no_progress_cycles(tmp_path, monkey
         if len(stream_calls) == 4:
             assert any("No meaningful progress" in str(message.content) for message in messages)
         if len(stream_calls) <= 5:
-            tool_name = "plan_checkpoint" if len(stream_calls) % 2 else "advance_workflow"
+            tool_name = "checkpoint" if len(stream_calls) % 2 else "advance_workflow"
             return AIMessage(
                 content="",
                 tool_calls=[{
@@ -4226,7 +4232,7 @@ async def test_run_subagent_terminates_after_no_progress_cycles(tmp_path, monkey
             name="explore",
             description="test",
             when_to_use="test",
-            tools=["plan_checkpoint", "advance_workflow"],
+            tools=["checkpoint", "advance_workflow"],
             can_write=False,
             can_delegate=False,
         ),
@@ -4241,11 +4247,11 @@ async def test_run_subagent_terminates_after_no_progress_cycles(tmp_path, monkey
 
     assert "No meaningful progress" in output
     assert executed_tools == [
-        "plan_checkpoint",
+        "checkpoint",
         "advance_workflow",
-        "plan_checkpoint",
+        "checkpoint",
         "advance_workflow",
-        "plan_checkpoint",
+        "checkpoint",
     ]
 
 
@@ -4264,7 +4270,7 @@ async def test_run_subagent_wall_clock_guard_terminates_at_boundary(tmp_path, mo
             return self
 
         def tools_for_llm(self):
-            return [{"name": "plan_checkpoint", "description": "checkpoint", "input_schema": {}}]
+            return [{"name": "checkpoint", "description": "checkpoint", "input_schema": {}}]
 
         async def execute_tool(self, tid, _targs, _ctx):
             executed_tools.append(tid)
@@ -4275,7 +4281,7 @@ async def test_run_subagent_wall_clock_guard_terminates_at_boundary(tmp_path, mo
             return AIMessage(
                 content="",
                 tool_calls=[{
-                    "name": "plan_checkpoint",
+                    "name": "checkpoint",
                     "args": {},
                     "id": "call_plan",
                     "type": "tool_call",
@@ -4301,7 +4307,7 @@ async def test_run_subagent_wall_clock_guard_terminates_at_boundary(tmp_path, mo
             name="explore",
             description="test",
             when_to_use="test",
-            tools=["plan_checkpoint"],
+            tools=["checkpoint"],
             can_write=False,
             can_delegate=False,
         ),
@@ -4314,7 +4320,7 @@ async def test_run_subagent_wall_clock_guard_terminates_at_boundary(tmp_path, mo
         debug=False,
     )
 
-    assert executed_tools == ["plan_checkpoint"]
+    assert executed_tools == ["checkpoint"]
     assert "This turn has been running" in output
 
 
@@ -4549,7 +4555,8 @@ async def test_subagent_skill_context_matches_orchestrator(tmp_path, monkeypatch
     task_messages = [
         message for message in captured["messages"]
         if isinstance(message, HumanMessage)
-        and "Runtime State" in str(message.content)
+        and str(message.content).startswith("VOIDX_RUNTIME_CONTEXT")
+        and "## Current Task State" in str(message.content)
     ]
     assert len(workflow_context_messages) == 1
     assert len(task_messages) == 1
@@ -4753,7 +4760,6 @@ async def test_subagent_starts_from_isolated_task_context(tmp_path, monkeypatch)
         persona="voidx",
         interaction_mode=InteractionMode.AUTO,
         skill_context_content=render_skill_context(["Skill instructions from: parent\nSkill: parent"]),
-        current_user_text="Parent request",
     ).build().apply_to_messages(inherited_messages)
     assert inherited_messages[1].content.startswith(SKILL_CONTEXT_MARKER)
     workflow_context = await InstructionService(str(tmp_path)).workflow_context_for(
@@ -4786,6 +4792,7 @@ async def test_subagent_starts_from_isolated_task_context(tmp_path, monkeypatch)
     semantic_human_messages = [
         message for message in human_messages
         if not str(message.content).startswith((SKILL_CONTEXT_MARKER, WORKFLOW_CONTEXT_MARKER))
+        and "Runtime State" not in str(message.content)
         and not is_step_hint_message(message)
     ]
     assert len(workflow_context_messages) == 1
@@ -4793,7 +4800,7 @@ async def test_subagent_starts_from_isolated_task_context(tmp_path, monkeypatch)
     assert len(semantic_human_messages) == 1
     assert "Parent request" not in semantic_human_messages[0].content
     assert "Inspect the workspace" in semantic_human_messages[0].content
-    assert "Runtime State" in semantic_human_messages[0].content
+    assert "Current Task State" in semantic_human_messages[0].content
 
 
 @pytest.mark.asyncio

@@ -164,21 +164,21 @@ def test_on_intent_is_not_a_runtime_allow_tool(tmp_path):
     assert decision.action == "ask"
 
 
-def test_load_skills_is_allowed_read_tool(tmp_path):
+def test_skill_is_allowed_read_tool(tmp_path):
     context = PermissionContext(workspace=str(tmp_path))
     decision = authorize_tool_call(
-        {"name": "load_skills", "args": {"names": ["docs"]}},
+        {"name": "skill", "args": {"names": ["docs"]}},
         context,
     )
 
     assert decision.action == "allow"
     assert classify_tool_call({
-        "name": "load_skills",
+        "name": "skill",
         "args": {"names": ["docs"]},
     }).capability == PermissionCapability.READ_TOOLS
 
 
-@pytest.mark.parametrize("tool_name", ["clarify", "plan_checkpoint", "advance_workflow", "compact_context"])
+@pytest.mark.parametrize("tool_name", ["clarify", "checkpoint", "advance_workflow", "compact"])
 def test_interactive_runtime_tools_are_allowed(tmp_path, tool_name):
     context = PermissionContext(workspace=str(tmp_path))
     decision = authorize_tool_call(
@@ -264,8 +264,11 @@ def test_permission_engine_classifies_basic_capabilities():
     implement_agent = classify_tool_call({"name": "agent", "args": {"agent": "implement"}})
     assert implement_agent.capability == PermissionCapability.AGENT_IMPLEMENT
     assert implement_agent.pattern == "implement"
+    mode_implement_agent = classify_tool_call({"name": "agent", "args": {"agent": "voidx", "mode": "implement"}})
+    assert mode_implement_agent.capability == PermissionCapability.AGENT_IMPLEMENT
+    assert mode_implement_agent.pattern == "implement"
     assert classify_tool_call({"name": "advance_workflow", "args": {}}).capability == PermissionCapability.READ_TOOLS
-    assert classify_tool_call({"name": "compact_context", "args": {}}).capability == PermissionCapability.READ_TOOLS
+    assert classify_tool_call({"name": "compact", "args": {}}).capability == PermissionCapability.READ_TOOLS
 
 
 def test_permission_engine_default_strategy_and_plan_overlay(tmp_path):
@@ -277,6 +280,7 @@ def test_permission_engine_default_strategy_and_plan_overlay(tmp_path):
     assert authorize_tool_call({"name": "git", "args": {"command": "commit"}}, context).action == "ask"
     assert authorize_tool_call({"name": "edit", "args": {"file_path": "x.py"}}, context).action == "ask"
     assert authorize_tool_call({"name": "agent", "args": {"agent": "implement"}}, context).action == "ask"
+    assert authorize_tool_call({"name": "agent", "args": {"agent": "voidx", "mode": "implement"}}, context).action == "ask"
 
     plan = PermissionContext(workspace=str(tmp_path), interaction_mode="plan")
     safe_bash = authorize_tool_call({"name": "bash", "args": {"command": "ls"}}, plan)
@@ -285,6 +289,7 @@ def test_permission_engine_default_strategy_and_plan_overlay(tmp_path):
     git_write = authorize_tool_call({"name": "git", "args": {"command": "restore"}}, plan)
     edit = authorize_tool_call({"name": "edit", "args": {"file_path": "x.py"}}, plan)
     implement = authorize_tool_call({"name": "agent", "args": {"agent": "implement"}}, plan)
+    mode_implement = authorize_tool_call({"name": "agent", "args": {"agent": "voidx", "mode": "implement"}}, plan)
 
     assert safe_bash.action == "allow"
     assert unsafe_bash.action == "deny"
@@ -292,6 +297,7 @@ def test_permission_engine_default_strategy_and_plan_overlay(tmp_path):
     assert git_write.action == "deny"
     assert edit.action == "deny"
     assert implement.action == "deny"
+    assert mode_implement.action == "deny"
 
 
 def test_permission_engine_policy_presets(tmp_path):

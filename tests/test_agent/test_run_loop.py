@@ -570,7 +570,7 @@ async def test_run_once_uses_general_fallback_when_structured_resolver_fails(tmp
     initial = captured["initial"]
     assert initial["task_state"]["current_intent"] == "general"
     assert initial["task_state"]["current_goal"] is None
-    assert initial["task_state"]["recent_user_texts"] == ["review runtime context"]
+    assert initial["task_state"]["recent_exchanges"] == []
     rows = await load_messages(graph._session.id)
     assert [row.role for row in rows] == ["user", "assistant"]
     assert all("GoalResolution JSON schema" not in row.content for row in rows)
@@ -619,7 +619,7 @@ async def test_run_once_does_not_preadvance_workflow_without_resolver_join(tmp_p
     initial = captured["initial"]
     state = TaskState.model_validate(initial["task_state"])
     assert state.workflow_runs["brainstorm"].status == WorkflowRunStatus.ACTIVE
-    assert "design-doc" not in state.workflow_runs
+    assert "design" not in state.workflow_runs
     assert initial["persona"] == "coordinate"
 
 
@@ -644,7 +644,8 @@ async def test_run_once_clears_stale_completed_workflow_when_resolver_has_no_joi
             return self
 
         async def ainvoke(self, messages):
-            assert "GoalResolution JSON schema" in messages[0].content
+            assert "GoalResolution JSON schema" not in messages[0].content
+            assert messages[-1].content == "检查检查，准备push吧"
             return {
                 "intent": {"type": "coding", "desc": "plain follow-up request"},
                 "goal": None,
@@ -696,11 +697,12 @@ async def test_run_once_preadvances_workflow_from_resolver_workflow_start(tmp_pa
             return self
 
         async def ainvoke(self, messages):
-            assert "GoalResolution JSON schema" in messages[0].content
+            assert "GoalResolution JSON schema" not in messages[0].content
+            assert messages[-1].content == "可以，先写一个 spec"
             return {
                 "intent": {"type": "coding", "desc": "user requested spec"},
                 "goal": {"type": "doc", "desc": "agent_name 语义清理"},
-                "plan": {"join": "design-doc", "leave": "design-doc"},
+                "plan": {"join": "design", "leave": "design"},
             }
 
     class FakeGraph:
@@ -724,7 +726,7 @@ async def test_run_once_preadvances_workflow_from_resolver_workflow_start(tmp_pa
     state = TaskState.model_validate(initial["task_state"])
     assert state.workflow_runs["brainstorm"].status == WorkflowRunStatus.SATISFIED
     assert state.workflow_runs["brainstorm"].evidence[-1].condition == "approved"
-    assert state.workflow_runs["design-doc"].status == WorkflowRunStatus.ACTIVE
+    assert state.workflow_runs["design"].status == WorkflowRunStatus.ACTIVE
     assert initial["persona"] == "plan"
 
 
@@ -745,7 +747,8 @@ async def test_run_once_activates_workflow_start_from_resolver_route(tmp_path):
             return self
 
         async def ainvoke(self, messages):
-            assert "GoalResolution JSON schema" in messages[0].content
+            assert "GoalResolution JSON schema" not in messages[0].content
+            assert messages[-1].content == "review 一下这个"
             return {
                 "intent": {"type": "coding", "desc": "review only"},
                 "goal": {"type": "review", "desc": "current diff"},
@@ -808,7 +811,8 @@ async def test_run_once_overrides_stale_brainstorm_when_resolver_requests_tdd(tm
             return self
 
         async def ainvoke(self, messages):
-            assert "GoalResolution JSON schema" in messages[0].content
+            assert "GoalResolution JSON schema" not in messages[0].content
+            assert messages[-1].content == "开干"
             return {
                 "intent": {"type": "coding", "desc": "user explicitly requested implementation"},
                 "goal": {"type": "feature", "desc": "LSP 工具合并"},
@@ -1313,10 +1317,8 @@ async def test_prepare_includes_restored_workflow_runs(tmp_path):
     assert list(result_task_state.workflow_runs.values()) == [restored]
     assert "## Workflow Node: brainstorm" in state["messages"][1].content
     assert "Present a design and get user approval before writing any code." in state["messages"][1].content
-    assert (
-        "Workflow run state: brainstorm=active "
-        "goal_type=design source=workflow reason=resume"
-    ) in state["messages"][-1].content
+    assert "Workflow run state:" not in state["messages"][-1].content
+    assert "Workflow exits [brainstorm]" in state["messages"][-1].content
 
 
 def test_resolve_recursion_limit_uses_graph_safety_default():

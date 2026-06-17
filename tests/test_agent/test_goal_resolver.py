@@ -4,10 +4,11 @@ from pathlib import Path
 sys.path.insert(0, str(Path(__file__).parent.parent.parent / "src"))
 
 import pytest
-from langchain_core.messages import AIMessage
+from langchain_core.messages import AIMessage, HumanMessage, SystemMessage, ToolMessage
 
 from voidx.agent.goal_resolver import resolve_goal_for_turn
 from voidx.agent.graph import VoidXGraph
+from voidx.agent.graph.turn_runner import _turn_exchange_from_final_messages
 from voidx.agent.task_state import (
     GoalResolution,
     GoalSpec,
@@ -15,6 +16,7 @@ from voidx.agent.task_state import (
     IntentResolution,
     PlanResolution,
     TaskState,
+    TurnExchange,
 )
 from voidx.config import Config
 from voidx.memory.session import create_session, delete_session, load_messages
@@ -38,6 +40,11 @@ class StructuredModel:
 
 @pytest.mark.asyncio
 async def test_goal_resolver_uses_structured_llm_result():
+    task_state = TaskState(
+        recent_exchanges=[
+            TurnExchange(user_text="之前说继续", assistant_text="我已经完成了 review 检查。"),
+        ],
+    )
     model = StructuredModel(
         GoalResolution(
             intent=IntentResolution(type=TaskIntent.CODING, desc="review requested"),
@@ -50,9 +57,7 @@ async def test_goal_resolver_uses_structured_llm_result():
         model=model,
         user_text="review 这个文件",
         interaction_mode="auto",
-        task_state=TaskState(),
-        workspace="/tmp/workspace",
-        session_time="2026-06-12 CST",
+        task_state=task_state,
     )
 
     assert result.intent.type == TaskIntent.CODING
@@ -62,14 +67,22 @@ async def test_goal_resolver_uses_structured_llm_result():
     assert result.goal.desc == "src/voidx/runtime/task_state.py"
     assert result.plan == PlanResolution(join="review", leave="review")
     assert model.messages is not None
-    assert "GoalResolution JSON schema" in model.messages[0].content
+    assert [type(message) for message in model.messages] == [
+        SystemMessage,
+        HumanMessage,
+        AIMessage,
+        HumanMessage,
+    ]
+    assert "GoalResolution JSON schema" not in model.messages[0].content
     assert "Available join values" in model.messages[0].content
     assert "workflow_start" not in model.messages[0].content
     assert "next_workflow" not in model.messages[0].content
-    assert "Do not choose brainstorm" in model.messages[0].content
-    assert "review 这个文件" in model.messages[1].content
+    assert "Do not choose brainstorm" not in model.messages[0].content
+    assert model.messages[1].content == "之前说继续"
+    assert model.messages[2].content == "我已经完成了 review 检查。"
+    assert model.messages[3].content == "review 这个文件"
     assert "title_requested" not in model.messages[0].content
-    assert "title_requested" not in model.messages[1].content
+    assert all("title_requested" not in message.content for message in model.messages[1:])
 
 
 def test_goal_resolution_schema_excludes_removed_fields():
@@ -81,6 +94,25 @@ def test_goal_resolution_schema_excludes_removed_fields():
     assert "workflow_start" not in properties
     assert "workflow_end" not in properties
     assert "next_workflow" not in properties
+
+
+def test_turn_exchange_records_only_terminal_ai_reply():
+    exchange = _turn_exchange_from_final_messages(
+        "review 这个文件",
+        [
+            AIMessage(content="old assistant reply"),
+            ToolMessage(content="tool output", tool_call_id="call_1"),
+        ],
+    )
+
+    assert exchange is None
+
+    exchange = _turn_exchange_from_final_messages(
+        "review 这个文件",
+        [AIMessage(content="final assistant reply")],
+    )
+
+    assert exchange == TurnExchange(user_text="review 这个文件", assistant_text="final assistant reply")
 
 
 @pytest.mark.asyncio
@@ -98,8 +130,6 @@ async def test_goal_resolver_propagates_review_only_route():
         user_text="review 一下这个",
         interaction_mode="auto",
         task_state=TaskState(),
-        workspace="/tmp/workspace",
-        session_time="2026-06-14 CST",
     )
 
     assert result.plan == PlanResolution(join="review", leave="review")
@@ -122,8 +152,6 @@ async def test_goal_resolver_defaults_review_route_leave_to_join():
         user_text="review 一下这个",
         interaction_mode="auto",
         task_state=TaskState(),
-        workspace="/tmp/workspace",
-        session_time="2026-06-14 CST",
     )
 
     assert result.plan == PlanResolution(join="review", leave="review")
@@ -144,8 +172,6 @@ async def test_goal_resolver_defaults_write_route_leave_to_verify():
         user_text="按这个 spec 实现",
         interaction_mode="auto",
         task_state=TaskState(),
-        workspace="/tmp/workspace",
-        session_time="2026-06-14 CST",
     )
 
     assert result.plan == PlanResolution(join="tdd", leave="verify")
@@ -157,7 +183,7 @@ async def test_goal_resolver_propagates_valid_plan_join():
         {
             "intent": {"type": "coding", "desc": "user requested spec"},
             "goal": {"type": "doc", "desc": "write workflow approval spec"},
-            "plan": {"join": "design-doc", "leave": "design-doc"},
+            "plan": {"join": "design", "leave": "design"},
         }
     )
 
@@ -166,11 +192,9 @@ async def test_goal_resolver_propagates_valid_plan_join():
         user_text="可以，先写一个 spec",
         interaction_mode="auto",
         task_state=TaskState(),
-        workspace="/tmp/workspace",
-        session_time="2026-06-14 CST",
     )
 
-    assert result.plan == PlanResolution(join="design-doc", leave="design-doc")
+    assert result.plan == PlanResolution(join="design", leave="design")
     assert result.goal is not None
     assert result.goal.type == GoalType.DOC
 
@@ -190,8 +214,6 @@ async def test_goal_resolver_drops_unknown_plan_route():
         user_text="继续",
         interaction_mode="auto",
         task_state=TaskState(),
-        workspace="/tmp/workspace",
-        session_time="2026-06-14 CST",
     )
 
     assert result.plan == PlanResolution(join="brainstorm", leave="verify")
@@ -212,8 +234,6 @@ async def test_goal_resolver_drops_non_entry_plan_join():
         user_text="继续",
         interaction_mode="auto",
         task_state=TaskState(),
-        workspace="/tmp/workspace",
-        session_time="2026-06-14 CST",
     )
 
     assert result.plan == PlanResolution(join="brainstorm", leave="verify")
@@ -234,8 +254,6 @@ async def test_goal_resolver_plan_mode_forces_design_goal():
         user_text="实现登录",
         interaction_mode="plan",
         task_state=TaskState(),
-        workspace="/tmp/workspace",
-        session_time="2026-06-12 CST",
     )
 
     assert result.intent.type == TaskIntent.CODING
@@ -259,8 +277,6 @@ async def test_goal_resolver_goal_mode_keeps_current_goal():
         user_text="继续",
         interaction_mode="goal",
         task_state=TaskState(current_goal=current_goal),
-        workspace="/tmp/workspace",
-        session_time="2026-06-12 CST",
     )
 
     assert result.intent.type == TaskIntent.CODING
@@ -279,8 +295,6 @@ async def test_goal_resolver_falls_back_to_general_when_structured_output_fails(
         user_text="看看 runtime 状态",
         interaction_mode="auto",
         task_state=TaskState(),
-        workspace="/tmp/workspace",
-        session_time="2026-06-12 CST",
     )
 
     assert result.intent.type == TaskIntent.GENERAL
@@ -303,8 +317,8 @@ async def test_run_once_uses_goal_resolver_and_keeps_resolver_messages_out_of_hi
 
             async def ainvoke(self, messages):
                 self.called = True
-                assert "GoalResolution JSON schema" in messages[0].content
-                assert "review 这个文件" in messages[1].content
+                assert "GoalResolution JSON schema" not in messages[0].content
+                assert messages[-1].content == "review 这个文件"
                 return GoalResolution(
                     intent=IntentResolution(type=TaskIntent.CODING, desc="review request"),
                     goal=GoalSpec(type=GoalType.REVIEW, desc="review 这个文件"),
@@ -338,7 +352,10 @@ async def test_run_once_uses_goal_resolver_and_keeps_resolver_messages_out_of_hi
         assert ts.get("current_intent") == "coding"
         assert ts.get("current_goal", {}).get("type") == "review"
         assert ts.get("workflow_route") == {"join": "review", "leave": "review"}
-        assert ts.get("recent_user_texts") == ["review 这个文件"]
+        assert ts.get("recent_exchanges") == []
+        assert graph._task_state.recent_exchanges == [
+            TurnExchange(user_text="review 这个文件", assistant_text="ok")
+        ]
 
         rows = await load_messages(session.id)
         for row in rows:
@@ -363,8 +380,6 @@ async def test_goal_resolver_normal_request_returns_no_workflow_route():
         user_text="看看 runtime 状态",
         interaction_mode="auto",
         task_state=TaskState(),
-        workspace="/tmp/workspace",
-        session_time="2026-06-14 CST",
     )
 
     assert result.plan == PlanResolution(join="", leave=None)
