@@ -8,12 +8,12 @@ import time
 from langchain_core.messages import AIMessage, HumanMessage, ToolMessage
 
 from voidx.agent.agents import (
-    BASE_SYSTEM_PROMPT,
     CHILD_RUN_CONSTRAINTS,
     PLAN_MODE_APPEND,
     AgentDef,
     child_run_agent_def,
 )
+from voidx.agent.prompts import BASE_SYSTEM, WORKFLOW_RUNTIME, persona_prompt
 from voidx.agent.graph.convergence import (
     build_convergence_messages,
     generate_fallback_summary,
@@ -125,14 +125,13 @@ async def run_subagent(
     context, context_cache = RuntimeContextBuilder(
         config=context_config,
         workspace=config.workspace,
-        base_system_prompt=BASE_SYSTEM_PROMPT,
-        persona_prompt=_agent_prompt(agent_def),
+        base_system_prompt=BASE_SYSTEM,
+        workflow_runtime=WORKFLOW_RUNTIME,
+        persona_prompt=persona_prompt(),
         runtime_constraints=CHILD_RUN_CONSTRAINTS,
         mode_prompt=mode_prompt,
-        tool_contract=agent_def.tool_contract,
         persona=persona,
         interaction_mode=interaction_mode,
-        workflow_context_content=workflow_context.content,
         workflow_runs=workflow_context.runs,
         active_workflow_summaries=workflow_context.active,
         task_state=sub_task_state,
@@ -429,8 +428,6 @@ async def run_subagent(
         raise
 
 
-def _agent_prompt(agent_def: AgentDef) -> str:
-    return agent_def.persona_prompt
 
 
 def _task_payload(task_description: str, result_contract) -> str:

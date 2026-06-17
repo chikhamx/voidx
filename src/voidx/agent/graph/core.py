@@ -21,12 +21,11 @@ from langchain_core.messages import (
 from langgraph.graph.message import REMOVE_ALL_MESSAGES
 
 from voidx.agent.agents import (
-    BASE_SYSTEM_PROMPT,
     PLAN_MODE_APPEND,
     AgentDef,
     get_agent,
-    persona_prompt_for_llm,
 )
+from voidx.agent.prompts import BASE_SYSTEM, WORKFLOW_RUNTIME, persona_prompt
 from voidx.agent.graph.compaction import GraphCompactionMixin
 from voidx.agent.graph.compaction_coordinator import GraphCompactionCoordinator
 from voidx.agent.graph.convergence import generate_fallback_summary
@@ -656,14 +655,7 @@ class VoidXGraph(
         agent_id = "voidx"
         runtime_persona = state.get("persona", "coordinate")
         self._current_agent = get_agent(agent_id)
-        persona_prompt = (
-            persona_prompt_for_llm(
-                self._current_agent,
-                parallel_subagents_enabled=self.config.parallel_subagents.enabled,
-            )
-            if self._current_agent else ""
-        )
-        tool_contract = self._current_agent.tool_contract if self._current_agent else ""
+        rendered_persona_prompt = persona_prompt() if self._current_agent else ""
 
         interaction_mode = state.get("interaction_mode") or (
             InteractionMode.PLAN.value if state.get("plan_mode", False) else self._interaction_mode.value
@@ -701,14 +693,13 @@ class VoidXGraph(
         context, self._context_cache = RuntimeContextBuilder(
             config=self.config,
             workspace=state.get("workspace", "."),
-            base_system_prompt=BASE_SYSTEM_PROMPT,
-            persona_prompt=persona_prompt,
+            base_system_prompt=BASE_SYSTEM,
+            workflow_runtime=WORKFLOW_RUNTIME,
+            persona_prompt=rendered_persona_prompt,
             mode_prompt=mode_prompt,
-            tool_contract=tool_contract,
             persona=runtime_persona,
             interaction_mode=interaction_mode,
             instructions=instructions,
-            workflow_context_content=workflow_context.content,
             workflow_runs=workflow_runs,
             active_workflow_summaries=workflow_context.active,
             summary=summary,

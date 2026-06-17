@@ -10,6 +10,7 @@ from dataclasses import asdict, dataclass
 from datetime import datetime, timezone
 from pathlib import Path
 
+from voidx.diffing import FileDiff
 from voidx.memory.jsonl_store import session_dir
 from voidx.tools.base import ToolContext
 
@@ -24,6 +25,13 @@ class FileFingerprint:
 class ReadLineRange:
     start_line: int
     end_line: int
+
+
+@dataclass(frozen=True)
+class DiffSpan:
+    old_start: int
+    old_end: int
+    offset: int
 
 
 def check_staleness(ctx: ToolContext, resolved: Path) -> str | None:
@@ -76,6 +84,117 @@ def record_read_range(ctx: ToolContext, resolved: Path, start_line: int, end_lin
         "ranges": _merge_ranges([*ranges, asdict(ReadLineRange(start_line, end_line))]),
     }
     record_mtime(ctx, resolved)
+
+
+def remap_read_coverage_from_file_diff(
+    ctx: ToolContext,
+    resolved: Path,
+    file_diff: FileDiff,
+    *,
+    old_ranges: list[dict],
+) -> None:
+    if not resolved.exists():
+        clear_read_coverage(ctx, resolved)
+        return
+
+    remapped: list[dict] = []
+    spans = [
+        DiffSpan(
+            old_start=hunk.old_start,
+            old_end=hunk.old_start + hunk.old_count - 1,
+            offset=hunk.new_count - hunk.old_count,
+        )
+        for hunk in sorted(file_diff.hunks, key=lambda item: item.old_start)
+    ]
+    for item in old_ranges:
+        start = int(item.get("start_line", 0))
+        end = int(item.get("end_line", 0))
+        if start > 0 and end >= start:
+            remapped.extend(_remap_old_range(start, end, spans))
+
+    visible_lines = [
+        line.new_lineno
+        for hunk in file_diff.hunks
+        for line in hunk.lines
+        if line.kind in {"add", "context"} and line.new_lineno is not None
+    ]
+    visible_ranges = [
+        asdict(ReadLineRange(start, end))
+        for start, end in _line_numbers_to_ranges(visible_lines)
+    ]
+
+    ranges = _merge_ranges([*remapped, *visible_ranges])
+    key = str(resolved.resolve())
+    if ranges:
+        ctx.file_read_coverage[key] = {
+            "fingerprint": asdict(file_fingerprint(resolved)),
+            "ranges": ranges,
+        }
+    else:
+        clear_read_coverage(ctx, resolved)
+    record_mtime(ctx, resolved)
+
+
+def _remap_old_range(start: int, end: int, spans: list[DiffSpan]) -> list[dict]:
+    ranges: list[dict] = []
+    cursor = start
+    cumulative_offset = 0
+
+    for span in spans:
+        if cursor > end:
+            break
+        if span.old_end < span.old_start:
+            if span.old_start == 0:
+                cumulative_offset += span.offset
+                continue
+            if cursor <= min(end, span.old_start):
+                keep_end = min(end, span.old_start)
+                ranges.append(asdict(ReadLineRange(
+                    cursor + cumulative_offset,
+                    keep_end + cumulative_offset,
+                )))
+                cursor = keep_end + 1
+            cumulative_offset += span.offset
+            continue
+        if end < span.old_start:
+            ranges.append(asdict(ReadLineRange(
+                cursor + cumulative_offset,
+                end + cumulative_offset,
+            )))
+            return ranges
+        if cursor < span.old_start:
+            keep_end = min(end, span.old_start - 1)
+            ranges.append(asdict(ReadLineRange(
+                cursor + cumulative_offset,
+                keep_end + cumulative_offset,
+            )))
+            cursor = keep_end + 1
+        if cursor <= span.old_end:
+            cursor = span.old_end + 1
+        cumulative_offset += span.offset
+
+    if cursor <= end:
+        ranges.append(asdict(ReadLineRange(
+            cursor + cumulative_offset,
+            end + cumulative_offset,
+        )))
+    return [item for item in ranges if item["start_line"] > 0 and item["end_line"] >= item["start_line"]]
+
+
+def _line_numbers_to_ranges(line_numbers: list[int]) -> list[tuple[int, int]]:
+    values = sorted(set(line_numbers))
+    if not values:
+        return []
+    ranges: list[tuple[int, int]] = []
+    start = prev = values[0]
+    for value in values[1:]:
+        if value == prev + 1:
+            prev = value
+            continue
+        ranges.append((start, prev))
+        start = prev = value
+    ranges.append((start, prev))
+    return ranges
 
 
 def check_read_coverage(ctx: ToolContext, resolved: Path, start_line: int, end_line: int) -> str | None:

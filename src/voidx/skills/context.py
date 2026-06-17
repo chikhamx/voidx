@@ -9,16 +9,8 @@ from typing import Any
 
 from voidx.skills.schema import SkillDefinition
 
-SKILL_CONTEXT_MARKER = "VOIDX_SKILL_CONTEXT"
 SKILL_TOOL_CONTEXT_MARKER = "VOIDX_SKILL_TOOL_CONTEXT"
 SKILL_TOOL_CONTEXT_STRIPPED_MARKER = "VOIDX_SKILL_TOOL_CONTEXT_STRIPPED"
-SKILL_CONTEXT_SCOPE = "skill-reference-library"
-
-_SKILL_CONTEXT_REFERENCE_LIBRARY_NOTE = (
-    "These skill bodies are a reference library. Follow a skill only when it was "
-    "loaded for the current turn or the user explicitly references it by name. "
-    "Treat inactive skill bodies as reference material only."
-)
 
 _SKILL_HEADER_RE = re.compile(r"^## Skill:\s*(?P<name>.+?)\s*$", re.MULTILINE)
 _SKILL_TOOL_CONTEXT_MARKER_RE = re.compile(
@@ -28,14 +20,6 @@ _SKILL_TOOL_CONTEXT_MARKER_RE = re.compile(
 
 def skill_body_hash(body: str) -> str:
     return hashlib.sha256(body.encode("utf-8")).hexdigest()[:16]
-
-
-def skill_context_cache_key(content: str) -> str:
-    entries = _skill_block_cache_entries(content)
-    if entries:
-        encoded = "|".join(f"{name}:{body_hash}" for name, body_hash in sorted(entries))
-        return hashlib.sha256(encoded.encode("utf-8")).hexdigest()
-    return hashlib.sha256(content.encode("utf-8")).hexdigest()
 
 
 def render_skill_instruction(skill: SkillDefinition) -> str:
@@ -51,34 +35,11 @@ def render_skill_instruction(skill: SkillDefinition) -> str:
     return "\n".join(lines) + f"\n\n{skill.body.strip()}"
 
 
-def render_skill_context(instructions: Iterable[str]) -> str:
-    body = "\n\n".join(item.strip() for item in instructions if item.strip())
-    if not body:
-        return ""
-    return (
-        f"{SKILL_CONTEXT_MARKER}\n"
-        f"Scope: {SKILL_CONTEXT_SCOPE}\n\n"
-        f"{_SKILL_CONTEXT_REFERENCE_LIBRARY_NOTE}\n\n"
-        f"{body}"
-    )
-
-
 def render_skill_tool_context(instructions: Iterable[str]) -> str:
     body = "\n\n".join(item.strip() for item in instructions if item.strip())
     if not body:
         return ""
     return f"{SKILL_TOOL_CONTEXT_MARKER}\nScope: current-turn\n\n{body}"
-
-
-def is_skill_context_content(content: Any) -> bool:
-    if isinstance(content, str):
-        return content.lstrip().startswith(SKILL_CONTEXT_MARKER)
-    if isinstance(content, list) and content:
-        first = content[0]
-        if isinstance(first, dict) and first.get("type") == "text":
-            text = first.get("text", "")
-            return isinstance(text, str) and text.lstrip().startswith(SKILL_CONTEXT_MARKER)
-    return False
 
 
 def strip_skill_tool_context(content: Any) -> Any:
@@ -144,19 +105,6 @@ def _skill_block_summaries(block: str) -> list[str]:
         body_hash = _field_value(section, "Body-Hash") or "unknown"
         summaries.append(f"- {name} sha256={body_hash} source={source}")
     return summaries
-
-
-def _skill_block_cache_entries(block: str) -> list[tuple[str, str]]:
-    entries: list[tuple[str, str]] = []
-    matches = list(_SKILL_HEADER_RE.finditer(block))
-    for index, match in enumerate(matches):
-        name = match.group("name").strip()
-        end = matches[index + 1].start() if index + 1 < len(matches) else len(block)
-        section = block[match.end():end]
-        body_hash = _field_value(section, "Body-Hash")
-        if name and body_hash:
-            entries.append((name, body_hash))
-    return entries
 
 
 def _field_value(text: str, field: str) -> str:

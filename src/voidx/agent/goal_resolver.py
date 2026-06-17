@@ -6,9 +6,11 @@ import asyncio
 import json
 from typing import Any
 
-from langchain_core.messages import AIMessage, HumanMessage, SystemMessage
+from langchain_core.messages import AIMessage, BaseMessage, HumanMessage, SystemMessage
+from pydantic import BaseModel
 
-from voidx.runtime.intent import InteractionMode, TaskIntent
+from voidx.logging.request_log import log_llm_diagnostic, serialize_llm_message
+from voidx.runtime.intent import InteractionMode, TaskIntent, infer_task_intent
 from voidx.runtime.task_state import (
     GoalResolution,
     GoalSpec,
@@ -18,6 +20,7 @@ from voidx.runtime.task_state import (
     TaskState,
     _default_join_for_goal_type,
     _default_leave_for_goal_type,
+    infer_goal_type,
 )
 from voidx.workflow.dag import DEFAULT_WORKFLOW_DAG
 
@@ -37,26 +40,55 @@ async def resolve_goal_for_turn(
         goal=None,
         plan=None,
     )
+    fallback_reason = ""
+    fallback_error_type = ""
+    fallback_error = ""
     if model is None:
-        return _normalize_resolution(fallback, user_text, interaction_mode, task_state)
+        fallback_reason = "model_unavailable"
+        normalized = _normalize_resolution(fallback, user_text, interaction_mode, task_state)
+        _log_goal_resolver_decision(normalized, user_text, task_state, fallback_reason, fallback_error_type, fallback_error)
+        return normalized
 
     structured = getattr(model, "with_structured_output", None)
     if not callable(structured):
-        return _normalize_resolution(fallback, user_text, interaction_mode, task_state)
+        fallback_reason = "structured_output_unsupported"
+        normalized = _normalize_resolution(fallback, user_text, interaction_mode, task_state)
+        _log_goal_resolver_decision(normalized, user_text, task_state, fallback_reason, fallback_error_type, fallback_error)
+        return normalized
 
     try:
         runnable = structured(GoalResolution)
+        resolver_messages = _resolver_messages_from_exchanges(user_text, task_state)
         raw = await asyncio.wait_for(
-            runnable.ainvoke(_resolver_messages_from_exchanges(user_text, task_state)),
+            runnable.ainvoke(resolver_messages),
             timeout=GOAL_RESOLVER_TIMEOUT_SECONDS,
         )
+        _log_goal_resolver_exchange(resolver_messages, raw=raw)
         resolution = _coerce_resolution(raw)
-    except Exception:
+    except Exception as exc:
+        fallback_reason = "structured_output_error"
+        fallback_error_type = type(exc).__name__
+        fallback_error = _truncate_error_text(str(exc))
+        if "resolver_messages" in locals():
+            _log_goal_resolver_exchange(
+                resolver_messages,
+                error_type=fallback_error_type,
+                error=fallback_error,
+            )
         resolution = None
 
     if resolution is None:
-        return _normalize_resolution(fallback, user_text, interaction_mode, task_state)
-    return _normalize_resolution(resolution, user_text, interaction_mode, task_state)
+        fallback_reason = fallback_reason or "invalid_structured_output"
+        fallback_resolution = (
+            _local_coding_fallback(user_text, interaction_mode)
+            if fallback_error_type == "ValidationError"
+            else fallback
+        )
+        normalized = _normalize_resolution(fallback_resolution, user_text, interaction_mode, task_state)
+    else:
+        normalized = _normalize_resolution(resolution, user_text, interaction_mode, task_state)
+    _log_goal_resolver_decision(normalized, user_text, task_state, fallback_reason, fallback_error_type, fallback_error)
+    return normalized
 
 
 def _resolver_messages_from_exchanges(user_text: str, task_state: TaskState) -> list:
@@ -70,11 +102,106 @@ def _resolver_messages_from_exchanges(user_text: str, task_state: TaskState) -> 
     return messages
 
 
+def _log_goal_resolver_decision(
+    resolution: GoalResolution,
+    user_text: str,
+    task_state: TaskState,
+    fallback_reason: str,
+    fallback_error_type: str,
+    fallback_error: str,
+) -> None:
+    goal = resolution.goal
+    plan = resolution.plan
+    log_llm_diagnostic(
+        "goal_resolver_decision",
+        intent=resolution.intent.type.value,
+        goal_type=goal.type.value if goal is not None else "",
+        goal_desc=goal.desc if goal is not None else "",
+        plan_join=plan.join if plan is not None else "",
+        plan_leave=plan.leave if plan is not None and plan.leave is not None else "",
+        fallback_reason=fallback_reason,
+        fallback_error_type=fallback_error_type,
+        fallback_error=fallback_error,
+        active_workflows=_active_workflow_names(task_state),
+        user_text=user_text,
+    )
+
+
+def _log_goal_resolver_exchange(
+    messages: list[BaseMessage],
+    *,
+    raw: object | None = None,
+    error_type: str = "",
+    error: str = "",
+) -> None:
+    response: dict[str, Any] = {}
+    if error_type or error:
+        response["error_type"] = error_type
+        response["error"] = error
+    else:
+        response["raw"] = _raw_response_for_log(raw)
+    log_llm_diagnostic(
+        "goal_resolver_exchange",
+        request={"messages": [serialize_llm_message(message) for message in messages]},
+        response=response,
+    )
+
+
+def _raw_response_for_log(value: object) -> object:
+    if isinstance(value, BaseModel):
+        return value.model_dump(mode="json")
+    if isinstance(value, AIMessage):
+        return {
+            "content": value.content,
+            "tool_calls": getattr(value, "tool_calls", None) or [],
+            "usage_metadata": getattr(value, "usage_metadata", None) or {},
+        }
+    if isinstance(value, (str, int, float, bool)) or value is None:
+        return value
+    if isinstance(value, (dict, list, tuple)):
+        return value
+    return repr(value)
+
+
+def _local_coding_fallback(
+    user_text: str,
+    interaction_mode: str | InteractionMode | None,
+) -> GoalResolution:
+    intent = infer_task_intent(user_text, interaction_mode)
+    if intent == TaskIntent.GENERAL:
+        return GoalResolution(
+            intent=IntentResolution(type=TaskIntent.GENERAL, desc="local fallback classified as general"),
+            goal=None,
+            plan=None,
+        )
+    goal_type = infer_goal_type(user_text)
+    join = _default_join_for_goal_type(goal_type)
+    leave = _default_leave_for_goal_type(goal_type)
+    return GoalResolution(
+        intent=IntentResolution(type=TaskIntent.CODING, desc="local fallback after resolver validation error"),
+        goal=GoalSpec(type=goal_type, desc=user_text),
+        plan=PlanResolution(join=join, leave=leave),
+    )
+
+
+def _truncate_error_text(value: str, limit: int = 2000) -> str:
+    text = " ".join(value.split())
+    if len(text) <= limit:
+        return text
+    return text[:limit].rstrip() + "..."
+
+
 def _resolver_system_prompt(task_state: TaskState) -> str:
     available_joins = ", ".join(sorted(_ALLOWED_JOIN_NODES))
+    goal_types = ", ".join(item.value for item in GoalType)
     lines = [
         "You are resolving the user's intent and goal for this turn.",
         "Return structured data matching the GoalResolution schema.",
+        "",
+        "GoalResolution schema:",
+        "- intent: {type: 'coding' | 'general', desc: string}",
+        f"- goal: null or {{type: one of [{goal_types}], desc: string}}",
+        f"- plan: null or {{join: one of [{available_joins}], leave: null or workflow node name}}",
         "",
         "Rules:\n"
         "- intent.type=general only for non-code, non-workspace conversation.\n"
@@ -221,3 +348,11 @@ def _current_active_join(task_state: TaskState) -> str:
         if getattr(run.status, "value", run.status) == "active":
             return name
     return ""
+
+
+def _active_workflow_names(task_state: TaskState) -> list[str]:
+    return [
+        name
+        for name, run in task_state.workflow_runs.items()
+        if getattr(run.status, "value", run.status) == "active"
+    ]

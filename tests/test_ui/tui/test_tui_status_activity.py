@@ -213,7 +213,36 @@ def test_status_summary_renders_active_workflow_name(tmp_path):
     summary = tui._status_summary(120)
 
     assert "tdd" in summary
-    assert "workflow tdd" not in summary
+    assert "wf tdd" not in summary
+
+
+def test_status_summary_prefers_active_workflow_over_usage_when_narrow(tmp_path):
+    stats = UsageStats(
+        context_tokens=12_300,
+        context_limit=128_000,
+        total_input_tokens=30_000,
+        total_output_tokens=15_600,
+    )
+    status = SimpleNamespace(
+        provider="openai",
+        model="gpt-5-codex",
+        workspace=str(tmp_path),
+        interaction_mode=lambda: "auto",
+        active_workflows=lambda: ["debug"],
+        permission_label=lambda: "default",
+        sandbox_label=lambda: "w-write",
+        approval_label=lambda: "on-fail",
+        approval_reviewer_label=lambda: "user",
+        usage_stats=stats,
+        reasoning_effort="xhigh",
+    )
+    tui = PureTui(status, COMMANDS)
+
+    summary = tui._status_summary(100)
+
+    assert "debug" in summary
+    assert "wf debug" not in summary
+    assert "ctx 12.3k/128k" not in summary
 
 
 def test_status_summary_text_renders_workflow_name_as_rainbow(tmp_path):
@@ -227,6 +256,8 @@ def test_status_summary_text_renders_workflow_name_as_rainbow(tmp_path):
     tui = PureTui(status, COMMANDS)
 
     text = tui._status_summary_text(120)
+    assert "review" in text.plain
+    assert "wf review" not in text.plain
     start = text.plain.index("review")
     styles = {
         str(span.style)

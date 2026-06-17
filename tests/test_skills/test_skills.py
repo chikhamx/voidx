@@ -8,7 +8,6 @@ import pytest
 from voidx.llm.compaction import COMPACTION_REQUEST
 from voidx.llm.instruction import InstructionService
 from voidx.config import Settings
-from voidx.skills.context import SKILL_CONTEXT_MARKER, SKILL_CONTEXT_SCOPE
 from voidx.skills.registry import SkillRegistry, parse_skill_file
 from voidx.workflow.context import WORKFLOW_CONTEXT_MARKER, WORKFLOW_CONTEXT_SCOPE
 from voidx.workflow.dag import DEFAULT_WORKFLOW_DAG

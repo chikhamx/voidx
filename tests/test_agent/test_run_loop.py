@@ -1422,8 +1422,8 @@ async def test_prepare_includes_restored_workflow_runs(tmp_path):
 
     result_task_state = TaskState.model_validate(result["task_state"])
     assert list(result_task_state.workflow_runs.values()) == [restored]
-    assert "## Workflow Node: brainstorm" in state["messages"][1].content
-    assert "Present a design and get user approval before writing any code." in state["messages"][1].content
+    assert "## Workflow Node: brainstorm" in state["messages"][0].content
+    assert "Present a design and get user approval before writing any code." in state["messages"][0].content
     assert "Workflow run state:" not in state["messages"][-1].content
     assert "Workflow exits [brainstorm]" in state["messages"][-1].content
 
@@ -1452,7 +1452,6 @@ def test_main_agent_has_no_static_max_steps():
     agent = get_agent("voidx")
     assert agent is not None
     assert not hasattr(agent, "max_steps")
-    assert "Max steps" not in agent.tool_contract
 
     prepared = prepare_state({
         "messages": [],

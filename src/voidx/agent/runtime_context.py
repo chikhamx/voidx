@@ -12,6 +12,7 @@ from typing import Any, Iterable
 from langchain_core.messages import BaseMessage, HumanMessage, SystemMessage, ToolMessage
 from pydantic import BaseModel, ConfigDict, Field
 
+from voidx.agent.prompts import BaseSystemPrompt, WorkflowRuntimePrompt
 from voidx.agent.todo_state import sanitize_todo_replay_messages
 from voidx.agent.message_rows import RowMessageCacheEntry
 from voidx.agent.task_state import GoalSpec, TodoRunState
@@ -19,14 +20,11 @@ from voidx.config import Config, UserProfile
 from voidx.runtime.intent import InteractionMode, TaskIntent, infer_task_intent
 from voidx.skills.service import (
     has_skill_tool_context,
-    is_skill_context_content,
-    skill_context_cache_key,
     strip_skill_tool_context,
 )
 from voidx.workflow.service import (
     is_workflow_context_content,
     workflow_exit_summaries,
-    workflow_context_cache_key,
 )
 from voidx.workflow.types import WorkflowRunState, WorkflowRunStatus
 
@@ -44,15 +42,6 @@ class ContextCompilerCache:
     stable_prefix_key: str = ""
     stable_system_content: str = ""
     stable_system_message: SystemMessage | None = None
-    workflow_context_key: str = ""
-    workflow_context_content: str = ""
-    workflow_context_message: HumanMessage | None = None
-    skill_context_key: str = ""
-    skill_context_content: str = ""
-    skill_context_message: HumanMessage | None = None
-    runtime_state_key: str = ""
-    runtime_state_content: str = ""
-    runtime_state_message: HumanMessage | None = None
     row_messages: dict[int, RowMessageCacheEntry] = dataclass_field(default_factory=dict)
 
 
@@ -72,6 +61,7 @@ class ExecutionPolicy(BaseModel):
 
 class RuntimeEnvelope(BaseModel):
     workspace: str
+    platform: str
     execution_policy: ExecutionPolicy
     user_profile: UserProfile = Field(default_factory=UserProfile)
 
@@ -86,23 +76,11 @@ class RuntimeContext(BaseModel):
 
     sections: list[ContextSection]
     task_sections: list[ContextSection] = Field(default_factory=list)
-    workflow_context_content: str = ""
-    skill_context_content: str = ""
-    runtime_state_content: str = ""
     system_content: str | None = None
     system_message: SystemMessage | None = Field(default=None, exclude=True)
-    workflow_context_message: HumanMessage | None = Field(default=None, exclude=True)
-    skill_context_message: HumanMessage | None = Field(default=None, exclude=True)
-    runtime_state_message: HumanMessage | None = Field(default=None, exclude=True)
 
     def section_names(self) -> list[str]:
         names = [section.name for section in self.sections]
-        if self.workflow_context_content:
-            names.append("Workflow Context")
-        if self.skill_context_content:
-            names.append("Skill Context")
-        if self.runtime_state_content:
-            names.append("Runtime State")
         names.extend(section.name for section in self.task_sections)
         return names
 
@@ -144,31 +122,13 @@ class ContextCompiler:
             else:
                 semantic_messages[-1] = _prepend_task_context(semantic_messages[-1], task_context)
 
-        # Compile order: SystemMessage, workflow context, skill context, semantic history
+        # Compile order: SystemMessage, semantic history.
         result = [prefix]
-        wf_msg = self._context_message(self.context.workflow_context_content, self.context.workflow_context_message)
-        if wf_msg is not None:
-            result.append(wf_msg)
-        sk_msg = self._context_message(self.context.skill_context_content, self.context.skill_context_message)
-        if sk_msg is not None:
-            result.append(sk_msg)
-        rt_msg = self._context_message(self.context.runtime_state_content, self.context.runtime_state_message)
-        if rt_msg is not None:
-            result.append(rt_msg)
         result.extend(semantic_messages)
         return result
 
     def apply_to_messages(self, messages: list[BaseMessage]) -> None:
         messages[:] = self.compile_messages(messages)
-
-    @staticmethod
-    def _context_message(content: str, cached: HumanMessage | None) -> HumanMessage | None:
-        content = content.strip()
-        if not content:
-            return None
-        if cached is not None and cached.content == content:
-            return cached
-        return HumanMessage(content=content)
 
 
 class RuntimeContextBuilder:
@@ -177,16 +137,14 @@ class RuntimeContextBuilder:
         *,
         config: Config,
         workspace: str,
-        base_system_prompt: str | None = None,
+        base_system_prompt: str | BaseSystemPrompt | None = None,
+        workflow_runtime: WorkflowRuntimePrompt | str | None = None,
         persona_prompt: str = "",
         mode_prompt: str = "",
         runtime_constraints: str = "",
-        tool_contract: str = "",
         persona: str,
         interaction_mode: str | InteractionMode,
         instructions: Iterable[str] = (),
-        workflow_context_content: str = "",
-        skill_context_content: str = "",
         workflow_runs: Iterable[WorkflowRunState] = (),
         active_workflow_summaries: Iterable[str] = (),
         summary: str | None = None,
@@ -198,16 +156,15 @@ class RuntimeContextBuilder:
         ts = task_state if isinstance(task_state, _TaskState) else _TaskState()
         self.config = config
         self.workspace = workspace
-        self.base_system_prompt = (base_system_prompt or "").strip()
+        self.structured_prompts = isinstance(base_system_prompt, BaseSystemPrompt) or workflow_runtime is not None
+        self.base_system_prompt = _render_prompt_input(base_system_prompt)
+        self.workflow_runtime = _render_prompt_input(workflow_runtime)
         self.persona_prompt = persona_prompt.strip()
         self.mode_prompt = mode_prompt.strip()
         self.runtime_constraints = runtime_constraints.strip()
-        self.tool_contract = tool_contract.strip()
         self.persona = persona.strip()
         self.interaction_mode = InteractionMode.parse(interaction_mode)
         self.instructions = [item for item in instructions if item.strip()]
-        self.workflow_context_content = workflow_context_content.strip()
-        self.skill_context_content = skill_context_content.strip()
         self.workflow_runs = list(workflow_runs)
         self.active_workflow_summaries = [item for item in active_workflow_summaries if item.strip()]
         self.summary = summary.strip() if summary else ""
@@ -223,20 +180,6 @@ class RuntimeContextBuilder:
         return RuntimeContext(
             sections=self._build_stable_sections(),
             task_sections=self._build_task_sections(),
-            workflow_context_content=self.workflow_context_content,
-            workflow_context_message=(
-                HumanMessage(content=self.workflow_context_content)
-                if self.workflow_context_content
-                else None
-            ),
-            skill_context_content=self.skill_context_content,
-            skill_context_message=(
-                HumanMessage(content=self.skill_context_content)
-                if self.skill_context_content
-                else None
-            ),
-            runtime_state_content=self._runtime_state_content(),
-            runtime_state_message=HumanMessage(content=self._runtime_state_content()),
         )
 
     def build_incremental(
@@ -258,79 +201,32 @@ class RuntimeContextBuilder:
             cache.stable_system_content = system_content
             cache.stable_system_message = system_message
 
-        wf_content, wf_message = self._incremental_context_content(
-            cache, "workflow", self.workflow_context_content,
-        )
-        sk_content, sk_message = self._incremental_context_content(
-            cache, "skill", self.skill_context_content,
-        )
-        rt_content, rt_message = self._incremental_context_content(
-            cache, "runtime", self._runtime_state_content(),
-        )
         return RuntimeContext(
             sections=sections,
             task_sections=self._build_task_sections(),
-            workflow_context_content=wf_content,
-            skill_context_content=sk_content,
-            runtime_state_content=rt_content,
             system_content=system_content,
             system_message=system_message,
-            workflow_context_message=wf_message,
-            skill_context_message=sk_message,
-            runtime_state_message=rt_message,
         ), cache
-
-    @staticmethod
-    def _incremental_context_content(
-        cache: ContextCompilerCache,
-        kind: str,
-        content: str,
-    ) -> tuple[str, HumanMessage | None]:
-        content = content.strip()
-        if kind == "workflow":
-            key_attr = "workflow_context_key"
-            content_attr = "workflow_context_content"
-            message_attr = "workflow_context_message"
-        elif kind == "runtime":
-            key_attr = "runtime_state_key"
-            content_attr = "runtime_state_content"
-            message_attr = "runtime_state_message"
-        else:
-            key_attr = "skill_context_key"
-            content_attr = "skill_context_content"
-            message_attr = "skill_context_message"
-
-        if not content:
-            setattr(cache, key_attr, "")
-            setattr(cache, content_attr, "")
-            setattr(cache, message_attr, None)
-            return "", None
-
-        key = _runtime_context_cache_key(kind, content)
-        if getattr(cache, key_attr) == key and getattr(cache, content_attr):
-            return getattr(cache, content_attr), getattr(cache, message_attr)
-
-        message = HumanMessage(content=content)
-        setattr(cache, key_attr, key)
-        setattr(cache, content_attr, content)
-        setattr(cache, message_attr, message)
-        return content, message
 
     def _build_stable_sections(self) -> list[ContextSection]:
         sections = [
             ContextSection(name="Base System", content=self.base_system_prompt),
         ]
         if self.persona_prompt:
-            sections.append(ContextSection(name="Agent Role", content=self.persona_prompt))
+            persona_section = "Persona" if self.structured_prompts else "Agent Role"
+            sections.append(ContextSection(name=persona_section, content=self.persona_prompt))
         if self.runtime_constraints:
             sections.append(ContextSection(name="Runtime Constraints", content=self.runtime_constraints))
         if self.mode_prompt:
             sections.append(ContextSection(name="Mode", content=self.mode_prompt))
-        if self.tool_contract:
-            sections.append(ContextSection(name="Tool Contract", content=self.tool_contract))
+        if self.workflow_runtime:
+            sections.append(ContextSection(
+                name="Workflow Runtime",
+                content=_strip_section_heading("Workflow Runtime", self.workflow_runtime),
+            ))
         sections.append(ContextSection(
-            name="Workspace Facts",
-            content=f"- Current workspace: {self.workspace}\n- Platform: {_platform_info()}",
+            name="Runtime State",
+            content=self._runtime_state_content(),
         ))
 
         if self.instructions:
@@ -354,10 +250,11 @@ class RuntimeContextBuilder:
     def _runtime_state_content(self) -> str:
         envelope = RuntimeEnvelope(
             workspace=self.workspace,
+            platform=_platform_info(),
             execution_policy=ExecutionPolicy.from_config(self.config),
             user_profile=self.user_profile,
         )
-        return _render_sections([ContextSection(name="Runtime State", content=_render_envelope(envelope))])
+        return _render_envelope(envelope)
 
     def _current_task_state(self) -> str:
         lines = [
@@ -413,10 +310,30 @@ def _render_sections(sections: list[ContextSection]) -> str:
     return "\n\n".join(parts)
 
 
+def _render_prompt_input(value: object) -> str:
+    if value is None:
+        return ""
+    render = getattr(value, "render", None)
+    if callable(render):
+        return str(render()).strip()
+    return str(value).strip()
+
+
+def _strip_section_heading(name: str, content: str) -> str:
+    heading = f"## {name}"
+    stripped = content.strip()
+    if stripped == heading:
+        return ""
+    if stripped.startswith(heading + "\n"):
+        return stripped[len(heading):].lstrip()
+    return stripped
+
+
 def _is_runtime_context_overlay(content: object) -> bool:
     return (
-        is_skill_context_content(content)
-        or is_workflow_context_content(content)
+        # Back-compat: old sessions may contain standalone workflow context
+        # HumanMessages from before workflow runtime joined the SystemMessage.
+        is_workflow_context_content(content)
         or is_goal_resolution_guide_content(content)
         or is_compaction_guide_content(content)
         or _is_standalone_runtime_context(content)
@@ -451,14 +368,6 @@ def _is_standalone_runtime_context(content: object) -> bool:
             text = first.get("text", "")
             return isinstance(text, str) and text.startswith(_CONTEXT_MARKER) and not _is_turn_overlay_text(text)
     return False
-
-
-def _runtime_context_cache_key(kind: str, content: str) -> str:
-    if kind == "workflow" or is_workflow_context_content(content):
-        return workflow_context_cache_key(content)
-    if kind == "runtime":
-        return _stable_hash(content)
-    return skill_context_cache_key(content)
 
 
 def raw_semantic_messages(messages: list[BaseMessage]) -> list[BaseMessage]:
@@ -548,6 +457,7 @@ def _render_envelope(envelope: RuntimeEnvelope) -> str:
     policy = envelope.execution_policy
     lines = [
         f"- Workspace: {envelope.workspace}",
+        f"- Platform: {envelope.platform}",
         f"- Sandbox: {policy.sandbox_mode}",
         f"- Approval policy: {policy.approval_policy}",
     ]

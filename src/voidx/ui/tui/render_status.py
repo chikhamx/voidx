@@ -36,6 +36,9 @@ _STATUS_STYLES = {
 }
 _STATUS_VARIANTS = (
     ("model", "policy", "state", "workflow", "usage", "goal"),
+    ("model", "policy", "state", "workflow", "goal"),
+    ("model", "policy", "workflow", "goal"),
+    ("model", "policy", "workflow"),
     ("model", "policy", "state", "usage", "goal"),
     ("model", "policy", "usage", "goal"),
     ("model", "policy", "usage"),

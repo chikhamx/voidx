@@ -2,19 +2,22 @@
 
 from __future__ import annotations
 
+from dataclasses import asdict
 from typing import Literal, NamedTuple
 
 from pydantic import BaseModel, Field
 
-from voidx.diffing import make_file_diff
+from voidx.diffing import FileDiff, make_file_diff, parse_unified_diff
 from voidx.tools.base import BaseTool, model_to_json_schema, ToolContext, ToolResult, resolve_safe
 from voidx.tools.file_state import (
     check_read_coverage,
     check_staleness,
     clear_read_coverage,
     covered_read_range,
+    file_fingerprint,
     record_mtime,
     record_read_range,
+    remap_read_coverage_from_file_diff,
     save_file_version,
 )
 
@@ -22,6 +25,11 @@ from voidx.tools.file_state import (
 class DisplayLines(NamedTuple):
     lines: list[str]
     trailing_newline: bool
+
+
+class AnchorResolution(NamedTuple):
+    edits: list["EditEntry"]
+    hints: list[str]
 
 
 def _split_display_lines(text: str) -> DisplayLines:
@@ -198,19 +206,33 @@ class FileWriteTool(BaseTool):
 
 
 class EditEntry(BaseModel):
-    operation: Literal["replace", "insert_before", "insert_after"] = Field(
-        description="Edit operation. Use replace for an inclusive line range, or insert relative to start_line.",
+    operation: Literal["replace", "insert"] = Field(
+        description=(
+            "Edit operation. Use replace for an inclusive line range, or insert to add content "
+            "after start_line. For insert, start_line=0 inserts at the beginning of the file."
+        ),
     )
-    start_line: int = Field(description="1-based replacement start line or insertion anchor line")
+    start_line: int = Field(description="1-based replacement start line or insert-after anchor line; 0 means file start for insert")
     end_line: int | None = Field(
         default=None,
-        description="1-based replacement end line, inclusive. Required for replace; omitted for insertions.",
+        description="1-based replacement end line, inclusive. Required for replace; omitted for insert.",
     )
     new_string: str = Field(
         description=(
             "Replacement or inserted content. A trailing newline does not add an extra blank line; "
             "start with a newline only when an intentional blank first line is desired."
         )
+    )
+    scope: str | None = Field(
+        default=None,
+        description="Optional nearby stable line, such as a function/class definition, used to limit anchor search.",
+    )
+    anchor: str | None = Field(
+        default=None,
+        description=(
+            "Optional expected content at start_line. If it does not match, edit searches and "
+            "corrects the line when unique, or returns an ambiguity error when multiple matches exist."
+        ),
     )
 
 
@@ -227,8 +249,10 @@ class FileEditTool(BaseTool):
     id = "edit"
     description = (
         "Edit a single file by 1-based line numbers after reading the target lines. "
-        "Use replace with start_line/end_line, or insert_before/insert_after with start_line. "
-        "Multiple edits apply atomically from bottom to top; read again after a successful edit."
+        "Use replace with start_line/end_line, or insert to add content after start_line "
+        "(start_line=0 inserts at the beginning). For edits after line shifts, provide "
+        "anchor and optionally scope so the tool can verify or correct the target line. "
+        "Multiple edits apply atomically from bottom to top."
     )
 
     def parameters_schema(self) -> dict:
@@ -256,27 +280,42 @@ class FileEditTool(BaseTool):
         display = _split_display_lines(original)
         lines = list(display.lines)
         total_lines = len(lines)
-        if total_lines == 0:
-            return ToolResult(output=f"Cannot edit empty file by line number: {inp.file_path}", metadata={"error": True})
 
         validation_error = _validate_line_edits(inp.edits, total_lines)
         if validation_error:
             return ToolResult(output=validation_error, metadata={"error": True})
 
-        for i, edit in enumerate(inp.edits):
+        resolution = _resolve_anchored_edits(lines, inp.edits)
+        if isinstance(resolution, str):
+            return ToolResult(output=resolution, metadata={"error": True})
+        edits = resolution.edits
+
+        validation_error = _validate_line_edits(edits, total_lines)
+        if validation_error:
+            return ToolResult(output=validation_error, metadata={"error": True})
+
+        for i, edit in enumerate(edits):
+            if edit.operation == "insert" and edit.start_line == 0:
+                continue
             range_end = edit.end_line if edit.operation == "replace" else edit.start_line
             coverage_error = check_read_coverage(ctx, path, edit.start_line, range_end or edit.start_line)
             if coverage_error:
                 return ToolResult(output=f"Edit {i}: {coverage_error}", metadata={"error": True})
 
-        trailing_newline = _result_trailing_newline(inp.edits, total_lines, display.trailing_newline)
-        for edit in sorted(inp.edits, key=lambda item: item.start_line, reverse=True):
+        key = str(path.resolve())
+        existing_coverage = ctx.file_read_coverage.get(key, {})
+        current_fingerprint = asdict(file_fingerprint(path))
+        old_ranges = [
+            item.copy()
+            for item in existing_coverage.get("ranges", [])
+        ] if existing_coverage.get("fingerprint") == current_fingerprint else []
+
+        trailing_newline = _result_trailing_newline(edits, total_lines, display.trailing_newline)
+        for edit in sorted(edits, key=lambda item: item.start_line, reverse=True):
             new_lines = _split_edit_lines(edit.new_string)
             if edit.operation == "replace":
                 assert edit.end_line is not None
                 lines[edit.start_line - 1:edit.end_line] = new_lines
-            elif edit.operation == "insert_before":
-                lines[edit.start_line - 1:edit.start_line - 1] = new_lines
             else:
                 lines[edit.start_line:edit.start_line] = new_lines
 
@@ -284,20 +323,22 @@ class FileEditTool(BaseTool):
 
         await save_file_version(ctx, path, display_path=inp.file_path, tool_name=self.id)
         path.write_text(content, encoding="utf-8")
-        record_mtime(ctx, path)
-        new_total = len(lines)
-        if new_total > 0:
-            record_read_range(ctx, path, 1, new_total)
-        else:
-            clear_read_coverage(ctx, path)
-
         diff = make_file_diff(inp.file_path, original, content)
+        parsed = parse_unified_diff(diff)
+        file_diff = parsed.files[0] if parsed.files else FileDiff(path=inp.file_path)
+        remap_read_coverage_from_file_diff(ctx, path, file_diff, old_ranges=old_ranges)
+
+        hints = [*resolution.hints, *_line_shift_hints(edits)]
+        details = "\n".join([*hints, diff]) if hints else diff
+        output = f"File edited: {inp.file_path} ({len(edits)} operations)"
+        if details:
+            output = f"{output}\n{details}"
 
         return ToolResult(
-            title=f"Edited ({len(inp.edits)} edits)",
-            output=f"File edited: {inp.file_path} ({len(inp.edits)} operations)\n{diff}",
-            summary=f"Edited ({len(inp.edits)} operations)",
-            metadata={"file": inp.file_path, "operations": len(inp.edits)},
+            title=f"Edited ({len(edits)} edits)",
+            output=output,
+            summary=f"Edited ({len(edits)} operations)",
+            metadata={"file": inp.file_path, "operations": len(edits)},
             diff=diff,
         )
 
@@ -306,9 +347,9 @@ def _validate_line_edits(edits: list[EditEntry], total_lines: int) -> str | None
     replacements: list[tuple[int, int]] = []
     insertion_anchors: set[int] = set()
     for i, edit in enumerate(edits):
-        if edit.start_line < 1 or edit.start_line > total_lines:
-            return f"Edit {i}: line number out of range for file with {total_lines} lines."
         if edit.operation == "replace":
+            if edit.start_line < 1 or edit.start_line > total_lines:
+                return f"Edit {i}: line number out of range for file with {total_lines} lines."
             if edit.end_line is None:
                 return f"Edit {i}: end_line is required for replace."
             if edit.end_line < edit.start_line:
@@ -317,10 +358,14 @@ def _validate_line_edits(edits: list[EditEntry], total_lines: int) -> str | None
                 return f"Edit {i}: line number out of range for file with {total_lines} lines."
             replacements.append((edit.start_line, edit.end_line))
         else:
+            if edit.start_line < 0 or edit.start_line > total_lines:
+                return f"Edit {i}: line number out of range for file with {total_lines} lines."
             if edit.end_line is not None:
                 return f"Edit {i}: end_line must be omitted for insertions."
             if edit.new_string == "":
                 return f"Edit {i}: insertion content must not be empty."
+            if edit.start_line == 0 and edit.anchor:
+                return f"Edit {i}: anchor cannot be used with insert at start_line 0."
             if edit.start_line in insertion_anchors:
                 return f"Edit {i}: multiple insertions at the same anchor are ambiguous."
             insertion_anchors.add(edit.start_line)
@@ -335,13 +380,143 @@ def _validate_line_edits(edits: list[EditEntry], total_lines: int) -> str | None
     return None
 
 
+def _resolve_anchored_edits(lines: list[str], edits: list[EditEntry]) -> AnchorResolution | str:
+    resolved: list[EditEntry] = []
+    hints: list[str] = []
+    for i, edit in enumerate(edits):
+        scope_bounds: tuple[int, int] | None = None
+        if edit.scope:
+            scope_matches = _find_text_lines(lines, edit.scope)
+            if not scope_matches:
+                return f"Edit {i}: scope {edit.scope!r} not found. Read the file to get current content."
+            if len(scope_matches) > 1:
+                return f"Edit {i}: scope {edit.scope!r} is ambiguous at lines {_format_lines(scope_matches)}."
+            scope_bounds = _scope_search_bounds(lines, scope_matches[0])
+
+        if not edit.anchor:
+            resolved.append(edit)
+            continue
+
+        if 1 <= edit.start_line <= len(lines) and edit.anchor in lines[edit.start_line - 1]:
+            resolved.append(edit)
+            continue
+
+        search_start, search_end = scope_bounds if scope_bounds is not None else (1, len(lines))
+        matches = _find_text_lines(lines, edit.anchor, start_line=search_start, end_line=search_end)
+        if not matches:
+            return f"Edit {i}: anchor {edit.anchor!r} not found. Read the file to get current content."
+        if len(matches) > 1:
+            return f"Edit {i}: anchor {edit.anchor!r} is ambiguous at lines {_format_lines(matches)}."
+
+        new_start = matches[0]
+        old_start = edit.start_line
+        update = {"start_line": new_start}
+        if edit.operation == "replace":
+            assert edit.end_line is not None
+            update["end_line"] = new_start + (edit.end_line - edit.start_line)
+        corrected = edit.model_copy(update=update)
+        hints.append(
+            f"Line corrected: edit {i} start_line {old_start} -> {new_start} "
+            f"(matched anchor {edit.anchor!r})"
+        )
+        resolved.append(corrected)
+    return AnchorResolution(resolved, hints)
+
+
+def _find_text_lines(lines: list[str], text: str, *, start_line: int = 1, end_line: int | None = None) -> list[int]:
+    if end_line is None:
+        end_line = len(lines)
+    start_line = max(start_line, 1)
+    end_line = min(end_line, len(lines))
+    return [
+        lineno
+        for lineno in range(start_line, end_line + 1)
+        if text in lines[lineno - 1]
+    ]
+
+
+def _scope_search_bounds(lines: list[str], scope_line: int) -> tuple[int, int]:
+    if scope_line < 1 or scope_line > len(lines):
+        return 1, len(lines)
+    scope_text = lines[scope_line - 1]
+    if "{" in scope_text and scope_text.count("{") > scope_text.count("}"):
+        balance = 0
+        brace_end: int | None = None
+        for lineno in range(scope_line, len(lines) + 1):
+            balance += lines[lineno - 1].count("{")
+            balance -= lines[lineno - 1].count("}")
+            if lineno > scope_line and balance <= 0:
+                brace_end = lineno
+                break
+        if brace_end is not None:
+            return scope_line, brace_end
+        # No closing brace was found. Fall through to the text/indent fallback below.
+    stripped = scope_text.strip()
+    if stripped.endswith(":"):
+        indent = _indent_width(scope_text)
+        for lineno in range(scope_line + 1, len(lines) + 1):
+            line = lines[lineno - 1]
+            if line.strip() and _indent_width(line) <= indent:
+                return scope_line, lineno - 1
+        return scope_line, len(lines)
+
+    indent = _indent_width(scope_text)
+    for lineno in range(scope_line + 1, len(lines) + 1):
+        line = lines[lineno - 1]
+        if line.strip() and _indent_width(line) <= indent and _looks_like_structure_start(line):
+            return scope_line, lineno - 1
+    return scope_line, len(lines)
+
+
+def _indent_width(line: str) -> int:
+    return len(line) - len(line.lstrip(" \t"))
+
+
+def _looks_like_structure_start(line: str) -> bool:
+    stripped = line.lstrip()
+    return stripped.startswith((
+        "async def ",
+        "def ",
+        "class ",
+        "function ",
+        "fn ",
+        "struct ",
+        "enum ",
+        "interface ",
+        "type ",
+    ))
+
+
+def _format_lines(lines: list[int]) -> str:
+    return ", ".join(str(line) for line in lines)
+
+
+def _line_shift_hints(edits: list[EditEntry]) -> list[str]:
+    hints: list[str] = []
+    for edit in sorted(edits, key=lambda item: item.start_line):
+        new_count = len(_split_edit_lines(edit.new_string))
+        if edit.operation == "replace":
+            assert edit.end_line is not None
+            offset = new_count - (edit.end_line - edit.start_line + 1)
+            if offset:
+                hints.append(f"Line shift: lines after {edit.end_line} shifted by {offset:+d}")
+        else:
+            if new_count == 0:
+                continue
+            if edit.start_line == 0:
+                hints.append(f"Line shift: all existing lines shifted by {new_count:+d}")
+            else:
+                hints.append(f"Line shift: lines after {edit.start_line} shifted by {new_count:+d}")
+    return hints
+
+
 def _result_trailing_newline(edits: list[EditEntry], total_lines: int, original_trailing_newline: bool) -> bool:
     trailing_newline = original_trailing_newline
     for edit in edits:
         touches_final = (
             edit.operation == "replace" and edit.end_line == total_lines
         ) or (
-            edit.operation == "insert_after" and edit.start_line == total_lines
+            edit.operation == "insert" and edit.start_line == total_lines
         )
         if touches_final:
             trailing_newline = edit.new_string.endswith("\n")

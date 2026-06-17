@@ -11,6 +11,7 @@ from langchain_core.messages import AIMessage, HumanMessage, SystemMessage, Tool
 from voidx.logging.request_log import (
     _serialize_message,
     _serialize_response,
+    log_llm_diagnostic,
     log_llm_exchange,
 )
 
@@ -233,3 +234,24 @@ class TestLogLlmExchange:
             provider="openai",
             step=0,
         )
+
+
+class TestLogLlmDiagnostic:
+    def test_writes_jsonl_event(self, tmp_path, monkeypatch):
+        from voidx.logging import request_log
+
+        monkeypatch.setattr(request_log, "_DEFAULT_LOG_DIR", tmp_path)
+
+        log_llm_diagnostic(
+            "goal_resolver_decision",
+            intent="general",
+            plan_join="",
+            fallback_reason="structured_output_error",
+        )
+
+        log_file = tmp_path / "llm_requests.jsonl"
+        entry = json.loads(log_file.read_text(encoding="utf-8").strip())
+        assert entry["event"] == "goal_resolver_decision"
+        assert entry["intent"] == "general"
+        assert entry["plan_join"] == ""
+        assert entry["fallback_reason"] == "structured_output_error"

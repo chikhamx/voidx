@@ -24,7 +24,6 @@ from voidx.logging.tool_log import log_tool_event
 from voidx.llm.usage import estimate_context_tokens, estimate_message_tokens, extract_token_usage
 from voidx.memory.service import save_context_frame_from_messages
 from voidx.runtime.ui import StatusFinished, StatusUpdated, StreamingRenderer
-from voidx.skills.service import is_skill_context_content
 from voidx.workflow.service import is_workflow_context_content
 
 if TYPE_CHECKING:
@@ -473,10 +472,9 @@ def _runtime_prefix(messages: list[BaseMessage]) -> list[BaseMessage]:
                 continue
             prefix.append(message)
             continue
-        if isinstance(message, HumanMessage) and (
-            is_skill_context_content(message.content)
-            or is_workflow_context_content(message.content)
-        ):
+        # Back-compat only: sessions created before workflow runtime moved into
+        # the stable SystemMessage may still have persisted workflow prefixes.
+        if isinstance(message, HumanMessage) and is_workflow_context_content(message.content):
             prefix.append(message)
             continue
         break

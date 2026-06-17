@@ -16,13 +16,11 @@ import voidx.memory.store as store
 
 from voidx.agent.agents import (
     AgentDef,
-    BASE_SYSTEM_PROMPT,
-    VOIDX_PROMPT,
     child_agent_descriptions_for_llm,
     get_agent,
     get_visible_agents,
-    persona_prompt_for_llm,
 )
+from voidx.agent.prompts import BASE_SYSTEM, PERSONA_MODEL, persona_prompt
 from voidx.agent.graph.convergence import is_step_hint_message
 from voidx.agent.graph.runtime import current_parent_tool_call_id
 from voidx.agent.graph.runtime_guards import RuntimeGuardState, WallClockGuardState
@@ -44,7 +42,7 @@ from voidx.memory.session import (
 from voidx.memory.transcript import load_transcript
 from voidx.permission.service import PermissionService
 from voidx.runtime import GoalResolution, GoalSpec, GoalType, IntentResolution, PlanResolution, TaskIntent
-from voidx.skills.context import SKILL_CONTEXT_MARKER, SKILL_TOOL_CONTEXT_MARKER, render_skill_context
+from voidx.skills.context import SKILL_TOOL_CONTEXT_MARKER
 from voidx.workflow.context import WORKFLOW_CONTEXT_MARKER
 from voidx.workflow.runtime import WorkflowRunState, WorkflowRunStatus
 from voidx.agent.task_state import TaskState, ToolStatePatch, WorkflowRoute
@@ -263,26 +261,12 @@ def test_agent_parallel_tool_not_registered_when_disabled(tmp_path):
     assert "agent_parallel" not in graph.tools.ids()
 
 
-def test_parallel_subagents_disabled_prompt_hides_capability():
-    agent = get_agent("voidx")
-    assert agent is not None
+def test_persona_prompt_does_not_render_child_agent_scheduling():
+    prompt = persona_prompt()
 
-    prompt = persona_prompt_for_llm(agent, parallel_subagents_enabled=False)
-
-    assert "Delegate at most one child agent in a response" in prompt
-    assert "multiple `agent` tool calls" not in prompt
-    assert "run concurrently" not in prompt
-
-
-def test_parallel_subagents_enabled_prompt_exposes_capability():
-    agent = get_agent("voidx")
-    assert agent is not None
-
-    prompt = persona_prompt_for_llm(agent, parallel_subagents_enabled=True)
-
-    assert "multiple `agent` tool calls" in prompt
-    assert "run concurrently" in prompt
+    assert "## Child-Agent Scheduling" not in prompt
     assert "Delegate at most one child agent in a response" not in prompt
+    assert "multiple `agent` tool calls" not in prompt
 
 
 def test_agent_tool_description_hides_parallel_when_disabled(tmp_path):
@@ -310,10 +294,7 @@ def test_agent_tool_description_exposes_parallel_when_enabled(tmp_path):
 
 
 def test_orchestrator_prompt_mentions_delegation_gate():
-    agent = get_agent("voidx")
-    assert agent is not None
-
-    prompt = persona_prompt_for_llm(agent, parallel_subagents_enabled=False)
+    prompt = BASE_SYSTEM.render()
     schema = AgentTool(runner=None).parameters_schema()
 
     assert "Do not delegate single-file reads" in prompt
@@ -329,18 +310,9 @@ def test_orchestrator_prompt_mentions_delegation_gate():
 
 
 def test_orchestrator_prompt_matches_agent_workflow_schema():
-    agent = get_agent("voidx")
-    assert agent is not None
-
-    prompt = persona_prompt_for_llm(agent, parallel_subagents_enabled=False)
     child_descriptions = child_agent_descriptions_for_llm()
     tool_description = AgentTool(runner=None).description
 
-    assert "`mode`, `task`, and one concrete `target`" in prompt
-    assert "Use one child agent per target" in prompt
-    assert "`success_criteria` for `implement` and `feedback`" in prompt
-    assert "`result_preset` as `auto`" in prompt
-    assert "Do not provide `persona` or `max_steps`" not in prompt
     assert "mode, task, and one concrete target" in tool_description
     assert "success_criteria for implement and feedback" in tool_description
     assert "result_preset" in tool_description
@@ -349,15 +321,15 @@ def test_orchestrator_prompt_matches_agent_workflow_schema():
 
 
 def test_voidx_persona_prompt_declares_core_rules():
-    assert "Runtime workflow gates take precedence over persona prompts" in VOIDX_PROMPT
-    assert "Subagents do not interact with the user" in VOIDX_PROMPT
-    assert "Switch persona" in VOIDX_PROMPT
-    assert "implement persona" not in VOIDX_PROMPT
+    assert "workflow gate takes precedence over persona prompts" in BASE_SYSTEM.render()
+    assert "Subagents do not interact with the user" in BASE_SYSTEM.render()
+    assert "Switch persona" in PERSONA_MODEL.render()
+    assert "implement persona" not in PERSONA_MODEL.render()
 
 
 def test_base_system_prompt_registers_all_runtime_personas():
     for persona in ("coordinate", "explore", "plan", "implement", "review"):
-        assert f"**{persona}**" in VOIDX_PROMPT
+        assert f"**{persona}**" in PERSONA_MODEL.render()
 
 
 @pytest.mark.asyncio
@@ -444,15 +416,14 @@ def test_orchestrator_has_direct_edit_tools():
     assert agent.can_write is True
 
 
-def test_tool_contract_labels_agent_identity_not_runtime_persona():
+def test_agent_def_no_longer_renders_tool_contract():
     agent = get_agent("voidx")
 
     assert agent is not None
-    assert "- Agent identity: voidx" in agent.tool_contract
-    assert "- Persona: voidx" not in agent.tool_contract
+    assert not hasattr(agent, "tool_contract")
 
 
-def test_persona_prompt_rejects_unregistered_agent_name():
+def test_agent_def_no_longer_owns_persona_prompt():
     agent = AgentDef(
         name="orchesrator",
         description="typo",
@@ -462,8 +433,7 @@ def test_persona_prompt_rejects_unregistered_agent_name():
         can_delegate=False,
     )
 
-    with pytest.raises(ValueError, match="No persona prompt registered"):
-        _ = agent.persona_prompt
+    assert not hasattr(agent, "persona_prompt")
 
 
 def test_brainstorm_workflow_does_not_write_design():
@@ -3149,7 +3119,7 @@ async def test_session_persistence_saves_only_new_ai_and_tool_messages(tmp_path)
 
 
 @pytest.mark.asyncio
-async def test_skill_context_overlay_not_persisted_to_user_history(tmp_path):
+async def test_runtime_context_overlay_not_persisted_to_user_history(tmp_path):
     session = await create_session(workspace=str(tmp_path))
     try:
         graph = VoidXGraph(Config(workspace=str(tmp_path)), api_key=None, session=session)
@@ -3159,7 +3129,7 @@ async def test_skill_context_overlay_not_persisted_to_user_history(tmp_path):
                 return {
                     "messages": [
                         *initial["messages"],
-                        HumanMessage(content=f"{SKILL_CONTEXT_MARKER}\n\n## Skill: docs\nBody-Hash: abc\n\nDocs body"),
+                        HumanMessage(content="VOIDX_RUNTIME_CONTEXT\n\n## Runtime State\n- Workspace: tmp"),
                         AIMessage(content="new answer"),
                     ]
                 }
@@ -3178,7 +3148,7 @@ async def test_skill_context_overlay_not_persisted_to_user_history(tmp_path):
 
         rows = await load_messages(session.id)
         assert [row.content for row in rows if row.role == "user"] == ["new question"]
-        assert all(SKILL_CONTEXT_MARKER not in row.content for row in rows)
+        assert all("VOIDX_RUNTIME_CONTEXT" not in row.content for row in rows)
         assert all("Docs body" not in row.content for row in rows)
     finally:
         await delete_session(session.id)
@@ -3832,9 +3802,16 @@ async def test_prepare_does_not_auto_inject_project_skill_body(tmp_path):
 
     assert isinstance(messages[0], SystemMessage)
     assert isinstance(messages[1], HumanMessage)
-    assert messages[1].content.startswith(WORKFLOW_CONTEXT_MARKER)
-    assert "Skill: docs" not in messages[1].content
-    assert "Write concise docs." not in messages[1].content
+    assert "## Workflow Runtime" in messages[0].content
+    assert "## Workflow Node:" in messages[0].content
+    assert all(
+        not (
+            isinstance(message, HumanMessage)
+            and str(message.content).startswith(WORKFLOW_CONTEXT_MARKER)
+        )
+        for message in messages
+    )
+    assert "Write concise docs." not in "\n".join(str(message.content) for message in messages)
 
 
 @pytest.mark.asyncio
@@ -3865,11 +3842,17 @@ async def test_prepare_injects_workflow_nodes_from_task_state(tmp_path):
 
     result = await graph._prepare_with_stream(state)
 
-    assert isinstance(messages[1], HumanMessage)
-    assert messages[1].content.startswith(WORKFLOW_CONTEXT_MARKER)
-    assert "Workflow Node: debug" in messages[1].content
-    assert "Workflow Node: tdd" in messages[1].content
-    assert "Workflow Node: verify" in messages[1].content
+    assert isinstance(messages[0], SystemMessage)
+    assert "Workflow Node: debug" in messages[0].content
+    assert "Workflow Node: tdd" in messages[0].content
+    assert "Workflow Node: verify" in messages[0].content
+    assert all(
+        not (
+            isinstance(message, HumanMessage)
+            and str(message.content).startswith(WORKFLOW_CONTEXT_MARKER)
+        )
+        for message in messages
+    )
     task_context_message = next(
         message
         for message in messages
@@ -3973,20 +3956,20 @@ async def test_implement_subagent_injects_workflow_nodes(tmp_path, monkeypatch):
         for message in captured["messages"]
         if isinstance(message, SystemMessage)
     )
-    assert "## Agent Role\n## Coordination" in system_prompt
+    assert "## Persona\n## Persona Model" in system_prompt
+    assert "## Workflow Runtime" in system_prompt
+    assert "## Workflow Node:" in system_prompt
     assert "## Runtime Constraints" in system_prompt
     assert "Do not interact with the user directly." in system_prompt
     assert "Do not start another child agent." in system_prompt
-    workflow_context = next(
-        message.content
+    assert all(
+        not (
+            isinstance(message, HumanMessage)
+            and str(message.content).startswith(WORKFLOW_CONTEXT_MARKER)
+        )
         for message in captured["messages"]
-        if isinstance(message, HumanMessage) and str(message.content).startswith(WORKFLOW_CONTEXT_MARKER)
     )
-    runtime_state = next(
-        message.content
-        for message in captured["messages"]
-        if isinstance(message, HumanMessage) and "Runtime State" in str(message.content)
-    )
+    runtime_state = system_prompt
     rendered_user = next(
         message.content
         for message in captured["messages"]
@@ -3996,10 +3979,14 @@ async def test_implement_subagent_injects_workflow_nodes(tmp_path, monkeypatch):
             and "## Current Task State" in str(message.content)
         )
     )
-    assert "Workflow Node: tdd" in workflow_context
+    assert "Workflow Node: tdd" in system_prompt
     assert "Active workflow nodes: tdd" in rendered_user
     assert "Language instruction: Prefer responding in Chinese (Simplified)" in runtime_state
     assert "Tone instruction: Be direct and practical. Lead with the answer or action." in runtime_state
+    assert all(
+        not (isinstance(message, HumanMessage) and "## Runtime State" in str(message.content))
+        for message in captured["messages"]
+    )
 
 
 @pytest.mark.asyncio
@@ -4547,20 +4534,26 @@ async def test_subagent_skill_context_matches_orchestrator(tmp_path, monkeypatch
     )
 
     assert output == "done"
-    workflow_context_messages = [
-        message for message in captured["messages"]
-        if isinstance(message, HumanMessage)
-        and str(message.content).startswith(WORKFLOW_CONTEXT_MARKER)
-    ]
+    system_prompt = next(
+        message.content
+        for message in captured["messages"]
+        if isinstance(message, SystemMessage)
+    )
     task_messages = [
         message for message in captured["messages"]
         if isinstance(message, HumanMessage)
         and str(message.content).startswith("VOIDX_RUNTIME_CONTEXT")
         and "## Current Task State" in str(message.content)
     ]
-    assert len(workflow_context_messages) == 1
+    assert all(
+        not (
+            isinstance(message, HumanMessage)
+            and str(message.content).startswith(WORKFLOW_CONTEXT_MARKER)
+        )
+        for message in captured["messages"]
+    )
     assert len(task_messages) == 1
-    assert "Workflow Node: tdd" in workflow_context_messages[0].content
+    assert "Workflow Node: tdd" in system_prompt
     assert "Workflow Node: tdd" not in task_messages[0].content
     assert "Active workflow nodes: tdd" in task_messages[0].content
 
@@ -4759,9 +4752,7 @@ async def test_subagent_starts_from_isolated_task_context(tmp_path, monkeypatch)
         base_system_prompt="You are voidx.",
         persona="voidx",
         interaction_mode=InteractionMode.AUTO,
-        skill_context_content=render_skill_context(["Skill instructions from: parent\nSkill: parent"]),
     ).build().apply_to_messages(inherited_messages)
-    assert inherited_messages[1].content.startswith(SKILL_CONTEXT_MARKER)
     workflow_context = await InstructionService(str(tmp_path)).workflow_context_for(
         "Inspect the workspace",
         agent="explore",
@@ -4784,6 +4775,11 @@ async def test_subagent_starts_from_isolated_task_context(tmp_path, monkeypatch)
     )
 
     assert output == "done"
+    system_prompt = next(
+        message.content
+        for message in captured["messages"]
+        if isinstance(message, SystemMessage)
+    )
     human_messages = [message for message in captured["messages"] if isinstance(message, HumanMessage)]
     workflow_context_messages = [
         message for message in human_messages
@@ -4791,12 +4787,12 @@ async def test_subagent_starts_from_isolated_task_context(tmp_path, monkeypatch)
     ]
     semantic_human_messages = [
         message for message in human_messages
-        if not str(message.content).startswith((SKILL_CONTEXT_MARKER, WORKFLOW_CONTEXT_MARKER))
-        and "Runtime State" not in str(message.content)
+        if not str(message.content).startswith(WORKFLOW_CONTEXT_MARKER)
         and not is_step_hint_message(message)
     ]
-    assert len(workflow_context_messages) == 1
-    assert "Skill instructions from: parent" not in workflow_context_messages[0].content
+    assert workflow_context_messages == []
+    assert "## Workflow Runtime" in system_prompt
+    assert "## Workflow Node:" in system_prompt
     assert len(semantic_human_messages) == 1
     assert "Parent request" not in semantic_human_messages[0].content
     assert "Inspect the workspace" in semantic_human_messages[0].content

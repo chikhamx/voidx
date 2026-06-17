@@ -61,6 +61,10 @@ def _serialize_message(msg: BaseMessage) -> dict[str, Any]:
     return result
 
 
+def serialize_llm_message(msg: BaseMessage) -> dict[str, Any]:
+    return _serialize_message(msg)
+
+
 def _serialize_response(msg: AIMessage) -> dict[str, Any]:
     content = msg.content
     if isinstance(content, list):
@@ -99,10 +103,6 @@ def log_llm_exchange(
     session_id: str | None = None,
 ) -> None:
     try:
-        log_dir = _DEFAULT_LOG_DIR
-        log_dir.mkdir(parents=True, exist_ok=True)
-        log_path = log_dir / _LOG_FILE_NAME
-
         entry: dict[str, Any] = {
             "ts": datetime.now(timezone.utc).isoformat(),
             "model": model,
@@ -116,8 +116,27 @@ def log_llm_exchange(
         if session_id is not None:
             entry["session_id"] = session_id
 
-        line = json.dumps(entry, ensure_ascii=False, default=str)
-        with log_path.open("a", encoding="utf-8") as f:
-            f.write(line + "\n")
+        _append_log_entry(entry)
     except Exception:
         logger.warning("Failed to write LLM request log", exc_info=True)
+
+
+def log_llm_diagnostic(event: str, **fields: Any) -> None:
+    try:
+        entry: dict[str, Any] = {
+            "ts": datetime.now(timezone.utc).isoformat(),
+            "event": event,
+            **fields,
+        }
+        _append_log_entry(entry)
+    except Exception:
+        logger.warning("Failed to write LLM diagnostic log", exc_info=True)
+
+
+def _append_log_entry(entry: dict[str, Any]) -> None:
+    log_dir = _DEFAULT_LOG_DIR
+    log_dir.mkdir(parents=True, exist_ok=True)
+    log_path = log_dir / _LOG_FILE_NAME
+    line = json.dumps(entry, ensure_ascii=False, default=str)
+    with log_path.open("a", encoding="utf-8") as f:
+        f.write(line + "\n")

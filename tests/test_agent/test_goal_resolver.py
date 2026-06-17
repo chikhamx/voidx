@@ -1,3 +1,4 @@
+import json
 import sys
 from pathlib import Path
 
@@ -74,7 +75,9 @@ async def test_goal_resolver_uses_structured_llm_result():
         AIMessage,
         HumanMessage,
     ]
-    assert "GoalResolution JSON schema" not in model.messages[0].content
+    assert "GoalResolution schema:" in model.messages[0].content
+    assert "goal: null or {type:" in model.messages[0].content
+    assert "plan: null or {join:" in model.messages[0].content
     assert "Available join values" in model.messages[0].content
     assert "workflow_start" not in model.messages[0].content
     assert "next_workflow" not in model.messages[0].content
@@ -301,6 +304,110 @@ async def test_goal_resolver_falls_back_to_general_when_structured_output_fails(
     assert result.intent.type == TaskIntent.GENERAL
     assert result.goal is None
     assert result.plan is None
+
+
+@pytest.mark.asyncio
+async def test_goal_resolver_logs_fallback_decision(tmp_path, monkeypatch):
+    from voidx.logging import request_log
+
+    monkeypatch.setattr(request_log, "_DEFAULT_LOG_DIR", tmp_path)
+
+    class BrokenModel:
+        def with_structured_output(self, _schema):
+            raise RuntimeError("unsupported")
+
+    await resolve_goal_for_turn(
+        model=BrokenModel(),
+        user_text="修一下 workflow 状态栏",
+        interaction_mode="auto",
+        task_state=TaskState(),
+    )
+
+    entry = json.loads((tmp_path / "llm_requests.jsonl").read_text(encoding="utf-8").strip())
+    assert entry["event"] == "goal_resolver_decision"
+    assert entry["intent"] == "general"
+    assert entry["goal_type"] == ""
+    assert entry["plan_join"] == ""
+    assert entry["fallback_reason"] == "structured_output_error"
+    assert entry["fallback_error_type"] == "RuntimeError"
+    assert entry["active_workflows"] == []
+
+
+@pytest.mark.asyncio
+async def test_goal_resolver_logs_native_request_and_response(tmp_path, monkeypatch):
+    from voidx.logging import request_log
+
+    monkeypatch.setattr(request_log, "_DEFAULT_LOG_DIR", tmp_path)
+
+    class RawResponseModel:
+        def with_structured_output(self, _schema):
+            return self
+
+        async def ainvoke(self, _messages):
+            return {
+                "intent": {"type": "coding", "desc": "bug fix"},
+                "goal": {"type": "bugfix", "desc": "帮我修一个 bug"},
+                "plan": {"join": "debug", "leave": "verify"},
+            }
+
+    await resolve_goal_for_turn(
+        model=RawResponseModel(),
+        user_text="帮我修一个 bug",
+        interaction_mode="auto",
+        task_state=TaskState(),
+    )
+
+    entries = [
+        json.loads(line)
+        for line in (tmp_path / "llm_requests.jsonl").read_text(encoding="utf-8").splitlines()
+    ]
+    exchange = next(entry for entry in entries if entry.get("event") == "goal_resolver_exchange")
+    assert exchange["request"]["messages"][0]["role"] == "system"
+    assert "GoalResolution schema:" in exchange["request"]["messages"][0]["content"]
+    assert exchange["request"]["messages"][-1] == {"role": "human", "content": "帮我修一个 bug"}
+    assert exchange["response"]["raw"]["goal"]["type"] == "bugfix"
+    assert exchange["response"]["raw"]["plan"]["join"] == "debug"
+
+
+@pytest.mark.asyncio
+async def test_goal_resolver_validation_error_falls_back_to_local_coding_route(tmp_path, monkeypatch):
+    from voidx.logging import request_log
+
+    monkeypatch.setattr(request_log, "_DEFAULT_LOG_DIR", tmp_path)
+
+    class InvalidStructuredModel:
+        def with_structured_output(self, _schema):
+            return self
+
+        async def ainvoke(self, _messages):
+            return GoalResolution.model_validate({
+                "intent": {"type": "coding", "desc": "bug fix"},
+                "goal": {"type": "bug", "desc": "帮我修一个 bug"},
+                "plan": {"join": "debug", "leave": "verify"},
+            })
+
+    result = await resolve_goal_for_turn(
+        model=InvalidStructuredModel(),
+        user_text="帮我修一个 bug",
+        interaction_mode="auto",
+        task_state=TaskState(),
+    )
+
+    assert result.intent.type == TaskIntent.CODING
+    assert result.goal == GoalSpec(type=GoalType.BUGFIX, desc="帮我修一个 bug")
+    assert result.plan == PlanResolution(join="debug", leave="verify")
+
+    entries = [
+        json.loads(line)
+        for line in (tmp_path / "llm_requests.jsonl").read_text(encoding="utf-8").splitlines()
+    ]
+    exchange = next(entry for entry in entries if entry.get("event") == "goal_resolver_exchange")
+    assert exchange["response"]["error_type"] == "ValidationError"
+    assert "bug" in exchange["response"]["error"]
+    entry = next(entry for entry in entries if entry.get("event") == "goal_resolver_decision")
+    assert entry["fallback_reason"] == "structured_output_error"
+    assert entry["fallback_error_type"] == "ValidationError"
+    assert "bug" in entry["fallback_error"]
 
 
 @pytest.mark.asyncio
