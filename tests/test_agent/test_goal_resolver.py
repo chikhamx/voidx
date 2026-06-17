@@ -17,6 +17,7 @@ from voidx.agent.task_state import (
     PlanResolution,
     TaskState,
     TurnExchange,
+    WorkflowRoute,
 )
 from voidx.config import Config
 from voidx.memory.session import create_session, delete_session, load_messages
@@ -385,3 +386,237 @@ async def test_goal_resolver_normal_request_returns_no_workflow_route():
     assert result.plan == PlanResolution(join="", leave=None)
     assert result.goal is not None
     assert result.goal.type == GoalType.INSPECT
+
+
+@pytest.mark.asyncio
+async def test_general_intent_with_active_workflow_preserves_coding():
+    """GENERAL intent from LLM + active workflow → override to CODING, keep goal/join."""
+    from voidx.workflow.types import WorkflowRunState
+
+    task_state = TaskState(
+        current_intent=TaskIntent.CODING,
+        current_goal=GoalSpec(type=GoalType.FEATURE, desc="implement edit tool"),
+        workflow_route=WorkflowRoute(join="tdd"),
+        workflow_runs={"tdd": WorkflowRunState(name="tdd", status="active")},
+    )
+    model = StructuredModel(
+        GoalResolution(
+            intent=IntentResolution(type=TaskIntent.GENERAL, desc=""),
+            goal=None,
+            plan=None,
+        )
+    )
+
+    result = await resolve_goal_for_turn(
+        model=model,
+        user_text="改",
+        interaction_mode="auto",
+        task_state=task_state,
+    )
+
+    assert result.intent.type == TaskIntent.CODING
+    assert result.intent.desc == "continuation of active workflow"
+    assert result.goal is not None
+    assert result.goal.type == GoalType.FEATURE
+    assert result.goal.desc == "implement edit tool"
+    assert result.plan is not None
+    assert result.plan.join == "tdd"
+
+
+@pytest.mark.asyncio
+async def test_general_intent_without_active_workflow_falls_back():
+    """GENERAL intent + no active workflow → stays GENERAL, goal=null."""
+    model = StructuredModel(
+        GoalResolution(
+            intent=IntentResolution(type=TaskIntent.GENERAL, desc=""),
+            goal=None,
+            plan=None,
+        )
+    )
+
+    result = await resolve_goal_for_turn(
+        model=model,
+        user_text="改",
+        interaction_mode="auto",
+        task_state=TaskState(),
+    )
+
+    assert result.intent.type == TaskIntent.GENERAL
+    assert result.goal is None
+    assert result.plan is None
+
+
+@pytest.mark.asyncio
+async def test_general_intent_with_workflow_route_but_no_goal_falls_back():
+    """GENERAL intent + active workflow route but no current_goal → falls back to GENERAL."""
+    from voidx.workflow.types import WorkflowRunState
+
+    task_state = TaskState(
+        workflow_route=WorkflowRoute(join="tdd"),
+        workflow_runs={"tdd": WorkflowRunState(name="tdd", status="active")},
+    )
+    model = StructuredModel(
+        GoalResolution(
+            intent=IntentResolution(type=TaskIntent.GENERAL, desc=""),
+            goal=None,
+            plan=None,
+        )
+    )
+
+    result = await resolve_goal_for_turn(
+        model=model,
+        user_text="改",
+        interaction_mode="auto",
+        task_state=task_state,
+    )
+
+    assert result.intent.type == TaskIntent.GENERAL
+    assert result.goal is None
+    assert result.plan is None
+
+
+@pytest.mark.asyncio
+async def test_general_intent_with_active_workflow_from_runs():
+    """GENERAL intent + active workflow in workflow_runs (no route) → override to CODING."""
+    from voidx.workflow.types import WorkflowRunState
+
+    task_state = TaskState(
+        current_intent=TaskIntent.CODING,
+        current_goal=GoalSpec(type=GoalType.BUGFIX, desc="fix resolver crash"),
+        workflow_runs={"debug": WorkflowRunState(name="debug", status="active")},
+    )
+    model = StructuredModel(
+        GoalResolution(
+            intent=IntentResolution(type=TaskIntent.GENERAL, desc=""),
+            goal=None,
+            plan=None,
+        )
+    )
+
+    result = await resolve_goal_for_turn(
+        model=model,
+        user_text="继续",
+        interaction_mode="auto",
+        task_state=task_state,
+    )
+
+    assert result.intent.type == TaskIntent.CODING
+    assert result.goal is not None
+    assert result.goal.type == GoalType.BUGFIX
+    assert result.plan is not None
+    assert result.plan.join == "debug"
+
+
+@pytest.mark.asyncio
+async def test_resolver_prompt_includes_active_workflow_state():
+    """When current_goal is set, the system prompt includes active workflow info."""
+    from voidx.workflow.types import WorkflowRunState
+
+    task_state = TaskState(
+        current_intent=TaskIntent.CODING,
+        current_goal=GoalSpec(type=GoalType.FEATURE, desc="implement edit tool"),
+        workflow_route=WorkflowRoute(join="tdd"),
+        workflow_runs={"tdd": WorkflowRunState(name="tdd", status="active")},
+    )
+    model = StructuredModel(
+        GoalResolution(
+            intent=IntentResolution(type=TaskIntent.CODING, desc="continue"),
+            goal=GoalSpec(type=GoalType.FEATURE, desc="implement edit tool"),
+            plan=PlanResolution(join="tdd", leave="verify"),
+        )
+    )
+
+    await resolve_goal_for_turn(
+        model=model,
+        user_text="改",
+        interaction_mode="auto",
+        task_state=task_state,
+    )
+
+    assert model.messages is not None
+    system_prompt = model.messages[0].content
+    assert "Current state:" in system_prompt
+    assert "intent: coding" in system_prompt
+    assert "goal: feature" in system_prompt
+    assert "active workflows: tdd" in system_prompt
+
+
+@pytest.mark.asyncio
+async def test_resolver_prompt_no_current_state_when_no_goal():
+    """When no current_goal, the system prompt omits current state section."""
+    model = StructuredModel(
+        GoalResolution(
+            intent=IntentResolution(type=TaskIntent.CODING, desc="review"),
+            goal=GoalSpec(type=GoalType.REVIEW, desc="review code"),
+            plan=PlanResolution(join="review", leave="review"),
+        )
+    )
+
+    await resolve_goal_for_turn(
+        model=model,
+        user_text="review 一下",
+        interaction_mode="auto",
+        task_state=TaskState(),
+    )
+
+    assert model.messages is not None
+    system_prompt = model.messages[0].content
+    assert "Current state:" not in system_prompt
+    assert "active workflows" not in system_prompt
+
+
+@pytest.mark.asyncio
+async def test_resolver_prompt_includes_short_continuation_rule():
+    """The system prompt includes the short continuation rule for active workflows."""
+    model = StructuredModel(
+        GoalResolution(
+            intent=IntentResolution(type=TaskIntent.CODING, desc="review"),
+            goal=GoalSpec(type=GoalType.REVIEW, desc="review code"),
+            plan=PlanResolution(join="review", leave="review"),
+        )
+    )
+
+    await resolve_goal_for_turn(
+        model=model,
+        user_text="review 一下",
+        interaction_mode="auto",
+        task_state=TaskState(),
+    )
+
+    assert model.messages is not None
+    system_prompt = model.messages[0].content
+    assert "short continuation" in system_prompt
+    assert "active workflow" in system_prompt
+
+
+@pytest.mark.asyncio
+async def test_intent_window_size_4_includes_more_context():
+    """With _INTENT_WINDOW_SIZE=4, the resolver sees up to 3 previous exchanges."""
+    exchanges = [
+        TurnExchange(user_text="实现一个 edit tool", assistant_text="好的，开始实现"),
+        TurnExchange(user_text="先写测试", assistant_text="测试已写好"),
+        TurnExchange(user_text="运行测试", assistant_text="测试通过了"),
+    ]
+    task_state = TaskState(recent_exchanges=exchanges)
+    model = StructuredModel(
+        GoalResolution(
+            intent=IntentResolution(type=TaskIntent.CODING, desc="continue"),
+            goal=GoalSpec(type=GoalType.FEATURE, desc="implement edit tool"),
+            plan=PlanResolution(join="tdd", leave="verify"),
+        )
+    )
+
+    await resolve_goal_for_turn(
+        model=model,
+        user_text="改",
+        interaction_mode="auto",
+        task_state=task_state,
+    )
+
+    assert model.messages is not None
+    user_messages = [m for m in model.messages[1:] if isinstance(m, HumanMessage)]
+    assert len(user_messages) == 4
+    assert user_messages[0].content == "实现一个 edit tool"
+    assert user_messages[1].content == "先写测试"
+    assert user_messages[2].content == "运行测试"
+    assert user_messages[3].content == "改"

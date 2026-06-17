@@ -84,6 +84,7 @@ def _resolver_system_prompt(task_state: TaskState) -> str:
         "- plan.leave is the workflow node after which automatic progression stops. Optional.\n"
         f"- Available join values: {available_joins}.\n"
         "- If intent does not clearly match any join value, set goal=null and plan=null.\n"
+        "- If the user message is a short continuation (e.g. ok, continue, go on, 改) and there is an active workflow, set intent=coding, keep the current goal, and set plan.join to the active workflow name.\n"
         "- goal and plan are bound: if goal is set, plan must be set with join; if goal is null, plan must be null.\n"
     ]
     if task_state.current_goal is not None:
@@ -172,8 +173,15 @@ def _normalize_resolution(
             plan=plan,
         )
 
-    # general intent: no goal, no plan
+    # general intent with active workflow: preserve current workflow
     if resolution.intent.type == TaskIntent.GENERAL:
+        current_join = _current_active_join(task_state)
+        if current_join and task_state.current_goal is not None:
+            return GoalResolution(
+                intent=IntentResolution(type=TaskIntent.CODING, desc="continuation of active workflow"),
+                goal=task_state.current_goal,
+                plan=PlanResolution(join=current_join, leave=None),
+            )
         return GoalResolution(
             intent=resolution.intent,
             goal=None,
@@ -183,15 +191,6 @@ def _normalize_resolution(
     # coding intent: fill default join/leave when needed
     goal = resolution.goal
     if goal is not None:
-        if plan is not None and plan.join == "brainstorm" and _has_implementation_signals(user_text):
-            plan = PlanResolution(
-                join=_default_join_for_goal_type(goal.type),
-                leave=plan.leave,
-            )
-        if plan is not None and _is_vague_continuation(user_text) and task_state.current_goal is not None:
-            current_join = _current_active_join(task_state)
-            if current_join:
-                plan = PlanResolution(join=current_join, leave=plan.leave)
         if plan is None:
             plan = PlanResolution(
                 join=_default_join_for_goal_type(goal.type),
@@ -213,49 +212,6 @@ def _normalize_resolution(
         goal=goal,
         plan=plan,
     )
-
-
-_IMPLEMENTATION_SIGNALS = (
-    "implement",
-    "code",
-    "edit",
-    "modify",
-    "patch",
-    "fix",
-    "refactor",
-    "write",
-    "开干",
-    "实现",
-    "修改",
-    "修复",
-    "落地",
-    "继续改",
-    "继续做",
-)
-
-_VAGUE_CONTINUATIONS = {
-    "continue",
-    "go on",
-    "ok",
-    "okay",
-    "yes",
-    "y",
-    "继续",
-    "好的",
-    "可以",
-    "行",
-    "嗯",
-}
-
-
-def _has_implementation_signals(text: str) -> bool:
-    normalized = text.lower()
-    return any(signal in normalized for signal in _IMPLEMENTATION_SIGNALS)
-
-
-def _is_vague_continuation(text: str) -> bool:
-    normalized = text.strip().lower()
-    return normalized in _VAGUE_CONTINUATIONS
 
 
 def _current_active_join(task_state: TaskState) -> str:

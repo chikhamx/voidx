@@ -47,12 +47,29 @@ def test_update_after_turn_records_intent_goal_and_route():
     assert state.recent_exchanges[-1] == TurnExchange(user_text="之前", assistant_text="已处理")
 
 
-def test_general_turn_clears_current_goal_and_route():
+def test_general_turn_preserves_active_workflow():
     state = TaskState(
         current_goal=GoalSpec(type=GoalType.FEATURE, desc="build feature"),
         workflow_route=WorkflowRoute(join="tdd", leave="verify"),
         workflow_runs={
             "tdd": WorkflowRunState(name="tdd", status=WorkflowRunStatus.ACTIVE),
+        },
+    )
+
+    state.update_after_turn(_resolution(intent=TaskIntent.GENERAL), "thanks")
+
+    assert state.current_intent == TaskIntent.GENERAL
+    assert state.current_goal is not None
+    assert state.workflow_route is not None
+    assert "tdd" in state.workflow_runs
+
+
+def test_general_turn_clears_when_no_active_workflow():
+    state = TaskState(
+        current_goal=GoalSpec(type=GoalType.FEATURE, desc="build feature"),
+        workflow_route=WorkflowRoute(join="tdd", leave="verify"),
+        workflow_runs={
+            "tdd": WorkflowRunState(name="tdd", status=WorkflowRunStatus.SATISFIED),
         },
     )
 
@@ -123,15 +140,37 @@ def test_coding_turn_without_goal_keeps_existing_goal_but_clears_route():
     assert state.workflow_route is None
 
 
-def test_intent_window_keeps_only_two_recent_user_inputs():
+def test_intent_window_keeps_recent_user_inputs():
     state = TaskState(
+        recent_exchanges=[
+            TurnExchange(user_text="first", assistant_text=""),
+            TurnExchange(user_text="second", assistant_text="reply"),
+            TurnExchange(user_text="third", assistant_text="reply"),
+        ]
+    )
+
+    assert state.intent_window_text("fourth") == "first [SEP] second [SEP] third [SEP] fourth"
+
+    state2 = TaskState(
         recent_exchanges=[
             TurnExchange(user_text="first", assistant_text=""),
             TurnExchange(user_text="second", assistant_text="reply"),
         ]
     )
 
-    assert state.intent_window_text("third") == "second [SEP] third"
+    assert state2.intent_window_text("third") == "first [SEP] second [SEP] third"
+
+    # window size 4: 5 exchanges should truncate to last 4
+    state3 = TaskState(
+        recent_exchanges=[
+            TurnExchange(user_text="a", assistant_text=""),
+            TurnExchange(user_text="b", assistant_text=""),
+            TurnExchange(user_text="c", assistant_text=""),
+            TurnExchange(user_text="d", assistant_text=""),
+        ]
+    )
+
+    assert state3.intent_window_text("e") == "b [SEP] c [SEP] d [SEP] e"
 
 
 def test_set_goal_from_string_infers_goal_and_resets_workflow_context():

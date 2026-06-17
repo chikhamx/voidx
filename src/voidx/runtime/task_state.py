@@ -13,7 +13,7 @@ from voidx.runtime.intent import InteractionMode, TaskIntent, _contains_any, inf
 from voidx.workflow.types import WorkflowRunState
 
 
-_INTENT_WINDOW_SIZE = 2
+_INTENT_WINDOW_SIZE = 4
 _INTENT_WINDOW_SEPARATOR = " [SEP] "
 
 
@@ -165,8 +165,9 @@ class TaskState(BaseModel):
         self.previous_intent = self.current_intent
         self.current_intent = resolution.intent.type
         if resolution.intent.type == TaskIntent.GENERAL:
-            self.current_goal = None
-            self._reset_workflow_context()
+            if not self._has_active_workflow():
+                self.current_goal = None
+                self._reset_workflow_context()
             return
         if resolution.goal is not None:
             goal_changed = not _same_goal(previous_goal, resolution.goal)
@@ -186,6 +187,12 @@ class TaskState(BaseModel):
             self.current_goal = GoalSpec(type=infer_goal_type(goal), desc=goal)
         self.current_intent = TaskIntent.CODING
         self._reset_workflow_context()
+
+    def _has_active_workflow(self) -> bool:
+        return any(
+            getattr(run.status, "value", run.status) == "active"
+            for run in self.workflow_runs.values()
+        )
 
     def _reset_workflow_context(self) -> None:
         self.workflow_route = None

@@ -1,6 +1,6 @@
 # Gemini Provider 集成设计
 
-> **Status: Draft**
+> **Status: Done**
 
 ## 问题
 

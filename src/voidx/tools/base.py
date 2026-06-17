@@ -52,7 +52,7 @@ class UserInteraction(BaseModel):
 
 
 class UserResponse(BaseModel):
-    """The user's response to a tool interaction request."""
+    """The user's response to a user interaction."""
     value: str
     cancelled: bool = False
     free_text: bool = False
@@ -73,8 +73,6 @@ class ToolContext(BaseModel):
     active_workflow_names: list[str] = Field(default_factory=list)
     workflow_runs: list[WorkflowRunState] = Field(default_factory=list)
     workflow_route: dict[str, str | None] | None = None
-    file_mtimes: dict[str, dict[str, int]] = Field(default_factory=dict)
-    file_read_coverage: dict[str, dict[str, Any]] = Field(default_factory=dict)
     mcp_manager: Any | None = None
     lsp_manager: Any | None = None
     sandbox_mode: str = "workspace-write"
@@ -82,6 +80,24 @@ class ToolContext(BaseModel):
     interact: UserInteractionCallback | None = Field(default=None, exclude=True)
 
     model_config = {"arbitrary_types_allowed": True}
+
+    def __init__(self, **data: Any) -> None:
+        # Pydantic v2 deep-copies dict fields, breaking reference sharing
+        # with the host.  Store these as private attributes so mutations
+        # propagate across tool calls via the shared host dicts.
+        fm = data.pop("file_mtimes", None) or {}
+        frc = data.pop("file_read_coverage", None) or {}
+        super().__init__(**data)
+        self._file_mtimes = fm
+        self._file_read_coverage = frc
+
+    @property
+    def file_mtimes(self) -> dict[str, dict[str, int]]:
+        return self._file_mtimes
+
+    @property
+    def file_read_coverage(self) -> dict[str, dict[str, Any]]:
+        return self._file_read_coverage
 
 
 class BaseTool(ABC):
