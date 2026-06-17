@@ -16,7 +16,7 @@ from voidx.workflow.types import (
 )
 
 
-OVERRIDEABLE_PRECURSORS = {"brainstorm", "plan", "design-doc"}
+OVERRIDEABLE_PRECURSORS = {"brainstorm", "plan", "design"}
 OVERRIDE_TARGETS = {"plan", "tdd"}
 SUPERSEDED_BY_INTENT = "superseded_by_intent"
 

@@ -136,13 +136,20 @@ class TodoRunState(BaseModel):
     updated_at: str = ""
 
 
+class TurnExchange(BaseModel):
+    """Compact user/assistant pair retained for turn-level intent resolution."""
+
+    user_text: str
+    assistant_text: str = ""
+
+
 class TaskState(BaseModel):
     current_intent: TaskIntent = TaskIntent.CODING
     previous_intent: TaskIntent | None = None
     current_goal: GoalSpec | None = None
     workflow_route: WorkflowRoute | None = None
     workflow_runs: dict[str, WorkflowRunState] = Field(default_factory=dict)
-    recent_user_texts: list[str] = Field(default_factory=list)
+    recent_exchanges: list[TurnExchange] = Field(default_factory=list)
     todo_state: TodoRunState | None = None
 
     def update_after_turn(
@@ -159,7 +166,6 @@ class TaskState(BaseModel):
             self.current_goal = resolution.goal
         elif resolution.intent.type == TaskIntent.GENERAL:
             self.current_goal = None
-        self._record_user_text(user_text)
         self.workflow_route = _workflow_route_from_resolution(resolution)
 
     def set_goal(self, goal: GoalSpec | str | None) -> None:
@@ -189,18 +195,17 @@ class TaskState(BaseModel):
     def intent_window_text(self, current_text: str) -> str:
         current = _summarize_scope(current_text)
         previous = [
+            _summarize_scope(exchange.user_text)
+            for exchange in self.recent_exchanges[-(_INTENT_WINDOW_SIZE - 1):]
+            if exchange.user_text
+        ]
+        previous = [
             item
-            for item in self.recent_user_texts[-(_INTENT_WINDOW_SIZE - 1):]
+            for item in previous
             if item
         ]
         parts = [*previous, current] if current else previous
         return _INTENT_WINDOW_SEPARATOR.join(parts[-_INTENT_WINDOW_SIZE:])
-
-    def _record_user_text(self, text: str) -> None:
-        item = _summarize_scope(text)
-        if not item:
-            return
-        self.recent_user_texts = [*self.recent_user_texts, item][-_INTENT_WINDOW_SIZE:]
 
 
 class ToolStatePatch(BaseModel):
@@ -229,7 +234,7 @@ def _default_join_for_goal_type(goal_type: GoalType) -> str:
         GoalType.REFACTOR: "brainstorm",
         GoalType.FEATURE: "brainstorm",
         GoalType.DESIGN: "brainstorm",
-        GoalType.DOC: "design-doc",
+        GoalType.DOC: "design",
         GoalType.REVIEW: "review",
         GoalType.CHORE: "tdd",
         GoalType.INSPECT: "",
@@ -317,6 +322,7 @@ __all__ = [
     "GoalType",
     "WorkflowRoute",
     "TaskState",
+    "TurnExchange",
     "TodoRunItem",
     "TodoRunState",
     "ToolStatePatch",

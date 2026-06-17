@@ -31,8 +31,6 @@ async def resolve_goal_for_turn(
     user_text: str,
     interaction_mode: str | InteractionMode | None,
     task_state: TaskState,
-    workspace: str,
-    session_time: str,
 ) -> GoalResolution:
     fallback = GoalResolution(
         intent=IntentResolution(type=TaskIntent.GENERAL, desc=""),
@@ -49,13 +47,7 @@ async def resolve_goal_for_turn(
     try:
         runnable = structured(GoalResolution)
         raw = await asyncio.wait_for(
-            runnable.ainvoke(_resolver_messages(
-                user_text,
-                interaction_mode,
-                task_state,
-                workspace,
-                session_time,
-            )),
+            runnable.ainvoke(_resolver_messages_from_exchanges(user_text, task_state)),
             timeout=GOAL_RESOLVER_TIMEOUT_SECONDS,
         )
         resolution = _coerce_resolution(raw)
@@ -67,61 +59,47 @@ async def resolve_goal_for_turn(
     return _normalize_resolution(resolution, user_text, interaction_mode, task_state)
 
 
-def _resolver_messages(
-    user_text: str,
-    interaction_mode: str | InteractionMode | None,
-    task_state: TaskState,
-    workspace: str,
-    session_time: str,
-) -> list:
-    schema = json.dumps(GoalResolution.model_json_schema(), ensure_ascii=False)
-    current_goal = (
-        task_state.current_goal.model_dump(mode="json")
-        if task_state.current_goal is not None
-        else None
-    )
-    context = {
-        "workspace": workspace,
-        "session_time": session_time,
-        "interaction_mode": InteractionMode.parse(interaction_mode).value,
-        "current_intent": task_state.current_intent.value,
-        "current_goal": current_goal,
+def _resolver_messages_from_exchanges(user_text: str, task_state: TaskState) -> list:
+    messages = [SystemMessage(content=_resolver_system_prompt(task_state))]
+    for exchange in task_state.recent_exchanges:
+        if exchange.user_text:
+            messages.append(HumanMessage(content=exchange.user_text))
+        if exchange.assistant_text:
+            messages.append(AIMessage(content=exchange.assistant_text))
+    messages.append(HumanMessage(content=user_text))
+    return messages
 
-        "recent_user_texts": task_state.recent_user_texts[-2:],
-        "latest_user_text": user_text,
-    }
+
+def _resolver_system_prompt(task_state: TaskState) -> str:
     available_joins = ", ".join(sorted(_ALLOWED_JOIN_NODES))
-    system = (
-        "You are voidx resolving the current user's goal before normal work begins.\n"
-        "Return only structured data matching the GoalResolution schema.\n\n"
+    lines = [
+        "You are resolving the user's intent and goal for this turn.",
+        "Return structured data matching the GoalResolution schema.",
+        "",
         "Rules:\n"
         "- intent.type=general only for non-code, non-workspace conversation.\n"
         "- intent.type=coding for codebase inspection, design, docs, review, debugging, or edits.\n"
         "- Pick exactly one goal.type when intent is coding and a concrete workspace goal exists.\n"
-        "- plan.join is the workflow node the agent should enter. Required when goal is set; null when goal is null.\n"
+        "- plan.join is the workflow node to enter. Required when goal is set; null when goal is null.\n"
         "- plan.leave is the workflow node after which automatic progression stops. Optional.\n"
         f"- Available join values: {available_joins}.\n"
-        "- Choose join based on the user's primary intent:\n"
-        "  - debug: user reports a bug, error, crash, or unexpected behavior to investigate.\n"
-        "  - brainstorm: user wants to explore requirements, design a feature, or discuss approach before coding.\n"
-        "  - design-doc: user asks to write or revise a design/spec/PRD/RFC/API doc.\n"
-        "  - plan: user asks to turn a spec or requirements into an implementation plan.\n"
-        "  - tdd: user explicitly asks to implement an already detailed spec or continue an approved implementation.\n"
-        "  - review: user asks for code review or pre-merge review.\n"
-        "  - feedback: user provides review feedback or reviewer comments to act on.\n"
-        "- If the user's intent does not clearly match any join value, set goal to null and plan to null. The agent will work without workflow constraints.\n"
-        "- Do not choose brainstorm when the request already contains an approved or sufficiently detailed spec.\n"
-        "- Do not set join or leave based on vague or ambiguous approval.\n"
+        "- If intent does not clearly match any join value, set goal=null and plan=null.\n"
         "- goal and plan are bound: if goal is set, plan must be set with join; if goal is null, plan must be null.\n"
-        f"GoalResolution JSON schema:\n{schema}"
-    )
-    return [
-        SystemMessage(content=system),
-        HumanMessage(content=json.dumps(context, ensure_ascii=False, indent=2)),
     ]
+    if task_state.current_goal is not None:
+        active = _current_active_join(task_state)
+        lines.extend([
+            "",
+            "Current state:",
+            f"- intent: {task_state.current_intent.value}",
+            f"- goal: {task_state.current_goal.type.value} — {task_state.current_goal.label}",
+        ])
+        if active:
+            lines.append(f"- active workflows: {active}")
+    return "\n".join(lines)
 
 
-_ALLOWED_JOIN_NODES = {"debug", "brainstorm", "design-doc", "plan", "tdd", "review", "feedback"}
+_ALLOWED_JOIN_NODES = {"debug", "brainstorm", "design", "plan", "tdd", "review", "feedback"}
 
 
 def _coerce_resolution(value: object) -> GoalResolution | None:
@@ -205,6 +183,15 @@ def _normalize_resolution(
     # coding intent: fill default join/leave when needed
     goal = resolution.goal
     if goal is not None:
+        if plan is not None and plan.join == "brainstorm" and _has_implementation_signals(user_text):
+            plan = PlanResolution(
+                join=_default_join_for_goal_type(goal.type),
+                leave=plan.leave,
+            )
+        if plan is not None and _is_vague_continuation(user_text) and task_state.current_goal is not None:
+            current_join = _current_active_join(task_state)
+            if current_join:
+                plan = PlanResolution(join=current_join, leave=plan.leave)
         if plan is None:
             plan = PlanResolution(
                 join=_default_join_for_goal_type(goal.type),
@@ -226,3 +213,55 @@ def _normalize_resolution(
         goal=goal,
         plan=plan,
     )
+
+
+_IMPLEMENTATION_SIGNALS = (
+    "implement",
+    "code",
+    "edit",
+    "modify",
+    "patch",
+    "fix",
+    "refactor",
+    "write",
+    "开干",
+    "实现",
+    "修改",
+    "修复",
+    "落地",
+    "继续改",
+    "继续做",
+)
+
+_VAGUE_CONTINUATIONS = {
+    "continue",
+    "go on",
+    "ok",
+    "okay",
+    "yes",
+    "y",
+    "继续",
+    "好的",
+    "可以",
+    "行",
+    "嗯",
+}
+
+
+def _has_implementation_signals(text: str) -> bool:
+    normalized = text.lower()
+    return any(signal in normalized for signal in _IMPLEMENTATION_SIGNALS)
+
+
+def _is_vague_continuation(text: str) -> bool:
+    normalized = text.strip().lower()
+    return normalized in _VAGUE_CONTINUATIONS
+
+
+def _current_active_join(task_state: TaskState) -> str:
+    if task_state.workflow_route is not None and task_state.workflow_route.join:
+        return task_state.workflow_route.join
+    for name, run in task_state.workflow_runs.items():
+        if getattr(run.status, "value", run.status) == "active":
+            return name
+    return ""

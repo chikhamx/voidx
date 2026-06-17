@@ -11,7 +11,7 @@ from typing import Any, Literal
 from pydantic import BaseModel, Field
 
 
-LOW_VALUE_REPETITIVE_TOOLS = frozenset({"todo", "advance_workflow", "plan_checkpoint"})
+LOW_VALUE_REPETITIVE_TOOLS = frozenset({"todo", "advance_workflow", "checkpoint"})
 REPETITIVE_TOOL_EXEMPTIONS = frozenset({"bash", "read", "grep"})
 EVIDENCE_TEXT_LIMIT = 500
 
@@ -317,6 +317,10 @@ def normalize_tool_args(tool_name: str, args: dict[str, Any]) -> str:
         goal = goal_resolution.get("goal") if isinstance(goal_resolution, dict) else {}
         return stable_json({
             "agent": args.get("agent"),
+            "mode": args.get("mode"),
+            "task": args.get("task"),
+            "target": args.get("target"),
+            "result_preset": args.get("result_preset"),
             "goal": goal,
             "plan": plan,
         })

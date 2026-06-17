@@ -16,7 +16,7 @@ from voidx.agent.goal_resolver import resolve_goal_for_turn
 from voidx.agent.runtime_context import TaskIntent
 from voidx.agent.graph.runtime_guards import RuntimeGuardState
 from voidx.agent.state import AgentState
-from voidx.agent.task_state import TaskState, goal_label
+from voidx.agent.task_state import TaskState, TurnExchange, goal_label
 from voidx.memory.service import (
     MessageRow,
     MessageRuntimeSnapshot,
@@ -49,6 +49,8 @@ if TYPE_CHECKING:
 
 RESUME_FORCE_COMPACT_MESSAGE_COUNT = 500
 DEFAULT_RECURSION_LIMIT = 500
+RECENT_EXCHANGE_LIMIT = 3
+ASSISTANT_TEXT_MAX_CHARS = 500
 
 
 def _resolve_recursion_limit(*_args, **_kwargs) -> int:
@@ -177,6 +179,8 @@ class GraphTurnRunner:
                 "plan" if getattr(host, "_plan_mode", False) else "auto",
             )
             base_task_state = _load_task_state(getattr(host, "_task_state", None))
+            if not base_task_state.recent_exchanges and session_msgs:
+                base_task_state.recent_exchanges = _rebuild_exchanges_from_session_msgs(session_msgs)
             if interaction_mode == "goal" and base_task_state.current_goal is None:
                 base_task_state.set_goal(payload.title_text)
             intent_resolution = await resolve_goal_for_turn(
@@ -184,8 +188,6 @@ class GraphTurnRunner:
                 user_text=payload.title_text,
                 interaction_mode=interaction_mode,
                 task_state=base_task_state,
-                workspace=host._workspace,
-                session_time=getattr(host, "_session_date", ""),
             )
             turn_task_state = base_task_state.model_copy(deep=True)
             turn_task_state.update_after_turn(
@@ -256,6 +258,12 @@ class GraphTurnRunner:
             recursion_limit = _resolve_recursion_limit()
             final = await host.graph.ainvoke(initial, {"recursion_limit": recursion_limit})
             final_task_state = _load_task_state(final.get("task_state"), fallback=turn_task_state)
+            exchange = _turn_exchange_from_final_messages(payload.title_text, final.get("messages", []))
+            if exchange is not None:
+                final_task_state.recent_exchanges = [
+                    *final_task_state.recent_exchanges,
+                    exchange,
+                ][-RECENT_EXCHANGE_LIMIT:]
             if host.model is not None:
                 host._task_state = final_task_state
             await save_message_runtime_snapshot(MessageRuntimeSnapshot(
@@ -423,3 +431,61 @@ def _load_task_state(value: TaskState | dict | None, *, fallback: TaskState | No
     if isinstance(value, dict):
         return TaskState.model_validate(value)
     return fallback.model_copy(deep=True) if fallback is not None else TaskState()
+
+
+def _turn_exchange_from_final_messages(user_text: str, messages: list[object]) -> TurnExchange | None:
+    last = messages[-1] if messages else None
+    if not isinstance(last, AIMessage) or last.tool_calls:
+        return None
+    assistant_text = _truncate_assistant_text(_message_text(last).strip())
+    if not assistant_text:
+        return None
+    return TurnExchange(user_text=user_text, assistant_text=assistant_text)
+
+
+def _rebuild_exchanges_from_session_msgs(
+    session_msgs: list[MessageRow],
+    max_exchanges: int = RECENT_EXCHANGE_LIMIT,
+) -> list[TurnExchange]:
+    exchanges: list[TurnExchange] = []
+    i = len(session_msgs) - 1
+    while i >= 0 and len(exchanges) < max_exchanges:
+        if session_msgs[i].role != "assistant" or session_msgs[i].tool_calls:
+            i -= 1
+            continue
+        assistant_text = _truncate_assistant_text(session_msgs[i].content.strip())
+        if not assistant_text:
+            i -= 1
+            continue
+        j = i - 1
+        while j >= 0 and session_msgs[j].role != "user":
+            j -= 1
+        if j < 0:
+            break
+        user_text = session_msgs[j].content.strip()
+        if user_text:
+            exchanges.append(TurnExchange(user_text=user_text, assistant_text=assistant_text))
+        i = j - 1
+    exchanges.reverse()
+    return exchanges
+
+
+def _truncate_assistant_text(text: str) -> str:
+    if len(text) <= ASSISTANT_TEXT_MAX_CHARS:
+        return text
+    return "..." + text[-(ASSISTANT_TEXT_MAX_CHARS - 3):]
+
+
+def _message_text(message: AIMessage) -> str:
+    content = message.content
+    if isinstance(content, str):
+        return content
+    if isinstance(content, list):
+        parts: list[str] = []
+        for item in content:
+            if isinstance(item, dict) and item.get("type") == "text":
+                text = item.get("text", "")
+                if isinstance(text, str):
+                    parts.append(text)
+        return "\n".join(parts)
+    return str(content)

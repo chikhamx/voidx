@@ -56,7 +56,7 @@ BASE_SYSTEM_PROMPT = """You are voidx, a coding agent that lives in the terminal
   State, unless the user explicitly references another node by name.
 - When a node is not listed as active, its definition is reference only. Do not
   follow its gate, internal workflow steps, or transition instructions.
-- load_skills can return project/global skill bodies for the current turn.
+- skill can return project/global skill bodies for the current turn.
 """
 
 
@@ -163,10 +163,11 @@ def persona_prompt_for_llm(agent: AgentDef, *, parallel_subagents_enabled: bool 
 
 
 _SCHEDULING_COMMON = """- Each child-agent brief must be complete and self-contained.
-- Each `agent` call must provide `description`, `goal_resolution`, and `result`.
-- `goal_resolution.goal` is required. `goal_resolution.plan.join` and
-  `goal_resolution.plan.leave` are required workflow nodes that route the child run.
-- Use `result.format` to define the structured fields the child agent must return.
+- Each `agent` call must provide `mode`, `task`, and one concrete `target`.
+- Use one child agent per target. For multiple independent targets, issue multiple
+  `agent` calls instead of combining them.
+- Use `success_criteria` for `implement` and `feedback` modes.
+- Leave `result_preset` as `auto` unless a supported preset is specifically needed.
 - Keep dependent child-agent work sequential: wait for the result before
   delegating follow-up work that depends on it.
 - Batch independent read/search tools when useful; keep dependent tool work
@@ -204,9 +205,9 @@ BUILTIN_AGENTS: dict[str, AgentDef] = {
                     "delegates broad work to specialists, reviews results.",
         when_to_use="Default agent for all user interactions. Always use first.",
         tools=[
-            "clarify", "plan_checkpoint", "advance_workflow", "compact_context",
-            "read", "glob", "grep", "bash", "agent", "task_status", "todo", "load_skills",
-            "load_doc_template",
+            "clarify", "checkpoint", "advance_workflow", "compact",
+            "read", "glob", "grep", "bash", "agent", "task_status", "todo", "skill",
+            "document",
             "webfetch", "websearch", "repo_map",
             "lsp",
             "write", "edit", "git",
@@ -225,7 +226,7 @@ PERSONA_PROMPTS = {
 
 
 CHILD_RUN_TOOLS = [
-    "read", "write", "edit", "glob", "grep", "bash", "todo", "load_skills", "repo_map",
+    "read", "write", "edit", "glob", "grep", "bash", "todo", "skill", "repo_map",
     "lsp",
 ]
 

@@ -135,7 +135,6 @@ async def run_subagent(
         workflow_context_content=workflow_context.content,
         workflow_runs=workflow_context.runs,
         active_workflow_summaries=workflow_context.active,
-        current_user_text=task_description,
         task_state=sub_task_state,
     ).build_incremental(context_cache)
     context.apply_to_messages(messages)

@@ -12,7 +12,7 @@ WORKFLOW_PRIORITY = {
         "debug",
         "feedback",
         "brainstorm",
-        "design-doc",
+        "design",
         "plan",
         "tdd",
         "verify",

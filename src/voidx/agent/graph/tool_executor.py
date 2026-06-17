@@ -774,7 +774,7 @@ async def _inline_compaction_messages(host, messages: list, executed: list[_Exec
     async def use_submitted_summary(_head_messages, _previous_summary):
         return summary
 
-    # The LLM has already produced the summary via compact_context, so this
+    # The LLM has already produced the summary via compact, so this
     # path bypasses budget gating and only reuses the coordinator's split,
     # persistence, and live-message replacement logic.
     result = await host._compaction_component().compact_for_live_state(
@@ -1073,7 +1073,7 @@ def _agent_result_preview(text: object) -> str:
 
 
 def _is_barrier_tool(tool_call: dict) -> bool:
-    return tool_call.get("name") in {"clarify", "plan_checkpoint", "advance_workflow", "compact_context"}
+    return tool_call.get("name") in {"clarify", "checkpoint", "advance_workflow", "compact"}
 
 
 def _split_at_first_barrier(tool_calls: list[dict]) -> tuple[list[dict], dict | None, list[dict]]:

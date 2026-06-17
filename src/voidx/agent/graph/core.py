@@ -64,7 +64,6 @@ from voidx.agent.runtime_context import (
     ContextCompilerCache,
     InteractionMode,
     RuntimeContextBuilder,
-    current_todo_context_message,
     raw_semantic_messages,
 )
 from voidx.agent.task_state import GoalResolution, TaskState, goal_label, goal_type_value
@@ -131,13 +130,13 @@ def _render_inline_compaction_guide(*, tail_anchor_id: str, head_count: int, pre
         f"{COMPACTION_GUIDE_MARKER}\n"
         "Scope: inline-context-compaction\n\n"
         "The conversation is large enough to compact older context without a separate compaction request.\n"
-        "If you can preserve the durable facts now, call compact_context before continuing.\n\n"
+        "If you can preserve the durable facts now, call compact before continuing.\n\n"
         "Rules:\n"
         "- Summarize only older context before the tail anchor.\n"
         "- Preserve durable facts, decisions, constraints, changed files, verification results, blockers, and next steps.\n"
         "- Drop transient narration, repeated tool outputs, and stale execution detail.\n"
-        "- Do not answer the user through compact_context; use it only to update runtime memory.\n"
-        "- After compact_context succeeds, continue with the user's request normally.\n\n"
+        "- Do not answer the user through compact; use it only to update runtime memory.\n"
+        "- After compact succeeds, continue with the user's request normally.\n\n"
         "Current compaction request:\n"
         f"- tail_anchor_id: {tail_anchor_id}\n"
         f"- older_messages_to_summarize: {head_count}\n"
@@ -210,7 +209,7 @@ def _subagent_step_budget(goal_resolution: GoalResolution) -> int:
         "review": 4,
         "verify": 4,
         "plan": 5,
-        "design-doc": 5,
+        "design": 5,
         "debug": 6,
         "tdd": 6,
         "feedback": 6,
@@ -712,10 +711,8 @@ class VoidXGraph(
             workflow_runs=workflow_runs,
             active_workflow_summaries=workflow_context.active,
             summary=summary,
-            current_user_text=current_user_text,
             task_state=task_state,
             session_date=self._session_date,
-            include_goal_resolution_guide=state.get("step_count", 0) == 0,
         ).build_incremental(self._context_cache)
         context.apply_to_messages(state.get("messages", []))
 
@@ -786,14 +783,13 @@ class VoidXGraph(
             if "todo_state" in state
             else getattr(getattr(self, "_task_state", None), "todo_state", None)
         )
-        todo_context_message = current_todo_context_message(raw_todo_state)
+        if raw_todo_state is not None:
+            runtime_task_state.todo_state = raw_todo_state
 
         def rebuild_llm_messages(
             messages: list[BaseMessage],
         ) -> tuple[list[BaseMessage], list[HumanMessage], bool]:
             base_messages = [*messages, *guidance_messages]
-            if todo_context_message is not None:
-                base_messages.append(todo_context_message)
             inline_compaction_guide = self._inline_compaction_guide_for(base_messages)
             if inline_compaction_guide is not None:
                 base_messages.append(inline_compaction_guide)
