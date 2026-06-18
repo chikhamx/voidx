@@ -26,6 +26,7 @@ from voidx.tools.file_state import (
 
 READ_OUTPUT_MAX_CHARS = DEFAULT_TOOL_MESSAGE_MAX_CHARS
 BINARY_DETECTION_BYTES = 8 * 1024
+TEXT_REPLACE_WINDOW_LINES = 30
 
 
 class DisplayLines(NamedTuple):
@@ -85,16 +86,16 @@ def _read_continuation_note(next_offset: int) -> str:
     )
 
 
-def _overlong_line_output(line_number: int, line: str) -> str:
+def _overlong_line_output(line_number: int, line: str, max_chars: int) -> str:
     note = (
         f"[Line {line_number} exceeds the read output budget "
         f"({READ_OUTPUT_MAX_CHARS} chars) and was not marked as read.]"
     )
     prefix = f"{line_number}\t"
     marker = "..."
-    fragment_budget = READ_OUTPUT_MAX_CHARS - len(prefix) - len(marker) - 2 - len(note)
+    fragment_budget = max_chars - len(prefix) - len(marker) - 2 - len(note)
     if fragment_budget <= 0:
-        return note[:READ_OUTPUT_MAX_CHARS]
+        return note[:max_chars]
     return f"{prefix}{line[:fragment_budget]}{marker}\n\n{note}"
 
 
@@ -120,7 +121,21 @@ def _bounded_truncated_output(numbered: list[str], start_line: int, next_offset:
     )
 
 
-def _bounded_numbered_read_output(lines: list[str], start_line: int) -> BoundedReadOutput:
+def _bounded_numbered_read_output(
+    lines: list[str],
+    start_line: int,
+    *,
+    max_chars: int = READ_OUTPUT_MAX_CHARS,
+) -> BoundedReadOutput:
+    if max_chars <= 0:
+        return BoundedReadOutput(
+            output="",
+            lines=0,
+            end_line=start_line - 1,
+            next_offset=start_line if lines else None,
+            truncated_by_chars=bool(lines),
+            truncated_single_line=False,
+        )
     numbered: list[str] = []
     output_len = 0
     for index, line in enumerate(lines):
@@ -128,20 +143,20 @@ def _bounded_numbered_read_output(lines: list[str], start_line: int) -> BoundedR
         rendered = f"{line_number}\t{line}"
         candidate_len = output_len + (1 if numbered else 0) + len(rendered)
         is_last_requested_line = index == len(lines) - 1
-        if is_last_requested_line and candidate_len <= READ_OUTPUT_MAX_CHARS:
+        if is_last_requested_line and candidate_len <= max_chars:
             numbered.append(rendered)
             output_len = candidate_len
             continue
         if not is_last_requested_line:
             next_offset = line_number + 1
             candidate_with_note_len = candidate_len + 2 + len(_read_continuation_note(next_offset))
-            if candidate_with_note_len <= READ_OUTPUT_MAX_CHARS:
+            if candidate_with_note_len <= max_chars:
                 numbered.append(rendered)
                 output_len = candidate_len
                 continue
         if not numbered:
             return BoundedReadOutput(
-                output=_overlong_line_output(line_number, line),
+                output=_overlong_line_output(line_number, line, max_chars),
                 lines=0,
                 end_line=line_number - 1,
                 next_offset=line_number,
@@ -211,21 +226,29 @@ class FileReadTool(BaseTool):
         if covered_range is not None:
             record_mtime(ctx, path)
             covered_lines = requested_end - requested_start + 1
-            output = (
-                f"Lines {requested_start}-{requested_end} in {inp.file_path} were already read "
-                f"from the current file version (covered by prior read {covered_range.start_line}-{covered_range.end_line}). "
-                "Use the previous read output; no content repeated."
+            note = (
+                f"[Lines {requested_start}-{requested_end} were already read "
+                f"(covered by prior read {covered_range.start_line}-{covered_range.end_line}). "
+                "Content repeated for reference.]\n"
             )
+            content_budget = READ_OUTPUT_MAX_CHARS - len(note)
+            bounded = _bounded_numbered_read_output(sliced, start + 1, max_chars=content_budget)
+            output = f"{note}{bounded.output}" if bounded.output else note.rstrip()
             return ToolResult(
-                title="Read skipped (already read)",
+                title=f"Read {bounded.lines} lines (already read)",
                 output=output,
                 summary=f"Already read {covered_lines}/{len(lines)} lines",
                 metadata={
                     "file": inp.file_path,
-                    "lines": 0,
+                    "lines": bounded.lines,
                     "covered_lines": covered_lines,
                     "total_lines": len(lines),
                     "already_read": True,
+                    "start_line": start + 1,
+                    "end_line": bounded.end_line,
+                    "next_offset": bounded.next_offset,
+                    "truncated_by_chars": bounded.truncated_by_chars,
+                    "truncated_single_line": bounded.truncated_single_line,
                 },
             )
 
@@ -374,6 +397,46 @@ class FileEditInput(BaseModel):
     )
 
 
+class FileInsertInput(BaseModel):
+    file_path: str = Field(description="Path to edit")
+    lineno: int = Field(
+        ge=-1,
+        description=(
+            "Insert after this 1-based line number. Use 0 to insert at the beginning of the file, "
+            "or -1 to insert at the end."
+        ),
+    )
+    new_string: str = Field(
+        description=(
+            "Content to insert. A trailing newline does not add an extra blank line; "
+            "start with a newline only when an intentional blank first line is desired."
+        )
+    )
+
+
+class FileReplaceInput(BaseModel):
+    file_path: str = Field(description="Path to edit")
+    lineno: int = Field(
+        ge=1,
+        description=(
+            "Required search start hint. The tool searches within ±30 lines of this line "
+            "for prefix/suffix text matches. Not used as a precise target line."
+        ),
+    )
+    prefix: str = Field(
+        description="Text snippet that marks the beginning of the target text segment.",
+    )
+    suffix: str = Field(
+        description="Text snippet that marks the end of the target text segment.",
+    )
+    new_string: str = Field(
+        description=(
+            "Replacement content. A trailing newline does not add an extra blank line; "
+            "start with a newline only when an intentional blank first line is desired."
+        )
+    )
+
+
 class FileEditTool(BaseTool):
     id = "edit"
     description = (
@@ -388,93 +451,283 @@ class FileEditTool(BaseTool):
 
     async def execute(self, args: dict, ctx: ToolContext) -> ToolResult:
         inp = FileEditInput.model_validate(args)
-        path = resolve_safe(ctx.workspace, inp.file_path, ctx.sandbox_extra_paths)
-        if path is None:
-            return ToolResult(output=f"Path traversal blocked: {inp.file_path}", metadata={"error": True})
-        if not path.exists():
-            return ToolResult(output=f"File not found: {inp.file_path}", metadata={"error": True})
-
         if not inp.edits:
             return ToolResult(
                 output="No edits provided. The 'edits' array must contain at least one entry.",
                 metadata={"error": True},
             )
-
-        stale = check_staleness(ctx, path)
-        if stale:
-            return ToolResult(output=stale, metadata={"error": True})
-
-        original = path.read_text(encoding="utf-8", errors="replace")
-        display = _split_display_lines(original)
-        lines = list(display.lines)
-        total_lines = len(lines)
-
-        for i, edit in enumerate(inp.edits):
-            if edit.operation == "insert" and edit.new_string == "":
-                return ToolResult(
-                    title="No changes",
-                    output=f"Edit {i}: insertion content is empty; no changes applied.",
-                    summary="No changes",
-                    metadata={"file": inp.file_path, "operations": 0},
-                )
-
-        resolution = _resolve_paragraph_edits(lines, inp.edits)
-        if isinstance(resolution, str):
-            return ToolResult(output=resolution, metadata={"error": True})
-        edits = resolution.edits
-
-        validation_error = _validate_resolved_edits(edits, total_lines)
-        if validation_error:
-            return ToolResult(output=validation_error, metadata={"error": True})
-
-        for i, edit in enumerate(edits):
-            if (edit.start_line, edit.end_line) == (0, 0):
-                continue
-            coverage_error = check_read_coverage(ctx, path, edit.start_line, edit.end_line)
-            if coverage_error:
-                return ToolResult(output=f"Edit {i}: {coverage_error}", metadata={"error": True})
-
-        key = str(path.resolve())
-        existing_coverage = ctx.file_read_coverage.get(key, {})
-        current_fingerprint = asdict(file_fingerprint(path))
-        old_ranges = [
-            item.copy()
-            for item in existing_coverage.get("ranges", [])
-        ] if existing_coverage.get("fingerprint") == current_fingerprint else []
-
-        trailing_newline = _result_trailing_newline(edits, total_lines, display.trailing_newline)
-        for edit in sorted(edits, key=lambda item: item.start_line, reverse=True):
-            new_lines = _split_edit_lines(edit.new_string)
-            if edit.operation == "replace":
-                if (edit.start_line, edit.end_line) == (0, 0):
-                    lines[0:0] = new_lines
-                else:
-                    lines[edit.start_line - 1:edit.end_line] = new_lines
-            else:
-                lines[edit.start_line:edit.start_line] = new_lines
-
-        content = _join_display_lines(lines, trailing_newline=trailing_newline)
-
-        await save_file_version(ctx, path, display_path=inp.file_path, tool_name=self.id)
-        path.write_text(content, encoding="utf-8")
-        diff = make_file_diff(inp.file_path, original, content)
-        parsed = parse_unified_diff(diff)
-        file_diff = parsed.files[0] if parsed.files else FileDiff(path=inp.file_path)
-        remap_read_coverage_from_file_diff(ctx, path, file_diff, old_ranges=old_ranges)
-
-        hints = [*resolution.hints, *_line_shift_hints(edits)]
-        details = "\n".join([*hints, diff]) if hints else diff
-        output = f"File edited: {inp.file_path} ({len(edits)} operations)"
-        if details:
-            output = f"{output}\n{details}"
-
-        return ToolResult(
-            title=f"Edited ({len(edits)} edits)",
-            output=output,
-            summary=f"Edited ({len(edits)} operations)",
-            metadata={"file": inp.file_path, "operations": len(edits)},
-            diff=diff,
+        return await _execute_paragraph_edits(
+            ctx,
+            file_path=inp.file_path,
+            edit_entries=inp.edits,
+            tool_name=self.id,
         )
+
+
+class FileInsertTool(BaseTool):
+    id = "insert"
+    description = (
+        "Insert content into a file.\n"
+        "lineno=0 → insert at the beginning of the file.\n"
+        "lineno=-1 → insert at the end of the file.\n"
+        "lineno>0 → insert after that line number; read the target line first."
+    )
+
+    def parameters_schema(self) -> dict:
+        return model_to_json_schema(FileInsertInput)
+
+    async def execute(self, args: dict, ctx: ToolContext) -> ToolResult:
+        inp = FileInsertInput.model_validate(args)
+        if inp.new_string == "":
+            return ToolResult(
+                title="No changes",
+                output="Insertion content is empty; no changes applied.",
+                summary="No changes",
+                metadata={"file": inp.file_path, "operations": 0},
+            )
+        path = resolve_safe(ctx.workspace, inp.file_path, ctx.sandbox_extra_paths)
+        if path is None:
+            return ToolResult(output=f"Path traversal blocked: {inp.file_path}", metadata={"error": True})
+        resolved_lineno = inp.lineno
+        if path.exists():
+            total_lines = len(_split_display_lines(path.read_text(encoding="utf-8", errors="replace")).lines)
+            if inp.lineno == -1:
+                resolved_lineno = total_lines
+            elif inp.lineno > total_lines:
+                return ToolResult(
+                    output=f"Cannot insert after line {inp.lineno}: file has {total_lines} lines.",
+                    metadata={"error": True},
+                )
+        return await _execute_direct_edits(
+            ctx,
+            file_path=inp.file_path,
+            edits=[ResolvedEdit("insert", resolved_lineno, resolved_lineno, inp.new_string)],
+            tool_name=self.id,
+        )
+
+
+class FileReplaceTool(BaseTool):
+    id = "replace"
+    description = (
+        "Replace thunk [prefix ... suffix] → new_string in a file. "
+        "Searches nearest the lineno hint; replaces only the matched segment, not the whole line. "
+        "Read the target lines first."
+    )
+
+    def parameters_schema(self) -> dict:
+        return model_to_json_schema(FileReplaceInput)
+
+    async def execute(self, args: dict, ctx: ToolContext) -> ToolResult:
+        inp = FileReplaceInput.model_validate(args)
+        return await _execute_text_replace(
+            ctx,
+            file_path=inp.file_path,
+            lineno=inp.lineno,
+            prefix=inp.prefix,
+            suffix=inp.suffix,
+            new_string=inp.new_string,
+            tool_name=self.id,
+        )
+
+
+def _resolve_edit_target(ctx: ToolContext, file_path: str):
+    path = resolve_safe(ctx.workspace, file_path, ctx.sandbox_extra_paths)
+    if path is None:
+        return None, ToolResult(output=f"Path traversal blocked: {file_path}", metadata={"error": True})
+    if not path.exists():
+        return None, ToolResult(output=f"File not found: {file_path}", metadata={"error": True})
+    stale = check_staleness(ctx, path)
+    if stale:
+        return None, ToolResult(output=stale, metadata={"error": True})
+    return path, None
+
+
+async def _execute_paragraph_edits(
+    ctx: ToolContext,
+    *,
+    file_path: str,
+    edit_entries: list[EditEntry],
+    tool_name: str,
+) -> ToolResult:
+    path, error = _resolve_edit_target(ctx, file_path)
+    if error is not None:
+        return error
+    assert path is not None
+
+    original = path.read_text(encoding="utf-8", errors="replace")
+    display = _split_display_lines(original)
+    lines = list(display.lines)
+
+    for i, edit in enumerate(edit_entries):
+        if edit.operation == "insert" and edit.new_string == "":
+            return ToolResult(
+                title="No changes",
+                output=f"Edit {i}: insertion content is empty; no changes applied.",
+                summary="No changes",
+                metadata={"file": file_path, "operations": 0},
+            )
+
+    resolution = _resolve_paragraph_edits(lines, edit_entries)
+    if isinstance(resolution, str):
+        return ToolResult(output=resolution, metadata={"error": True})
+    return await _apply_resolved_edits(
+        ctx,
+        path=path,
+        file_path=file_path,
+        edits=resolution.edits,
+        original=original,
+        display=display,
+        tool_name=tool_name,
+        hints=resolution.hints,
+    )
+
+
+async def _execute_direct_edits(
+    ctx: ToolContext,
+    *,
+    file_path: str,
+    edits: list[ResolvedEdit],
+    tool_name: str,
+) -> ToolResult:
+    path, error = _resolve_edit_target(ctx, file_path)
+    if error is not None:
+        return error
+    assert path is not None
+
+    original = path.read_text(encoding="utf-8", errors="replace")
+    display = _split_display_lines(original)
+    return await _apply_resolved_edits(
+        ctx,
+        path=path,
+        file_path=file_path,
+        edits=edits,
+        original=original,
+        display=display,
+        tool_name=tool_name,
+        hints=[],
+    )
+
+
+async def _execute_text_replace(
+    ctx: ToolContext,
+    *,
+    file_path: str,
+    lineno: int,
+    prefix: str,
+    suffix: str,
+    new_string: str,
+    tool_name: str,
+) -> ToolResult:
+    path, error = _resolve_edit_target(ctx, file_path)
+    if error is not None:
+        return error
+    assert path is not None
+
+    original = path.read_text(encoding="utf-8", errors="replace")
+    display = _split_display_lines(original)
+    match = _find_text_segment(display.lines, lineno, prefix, suffix)
+    if isinstance(match, str):
+        return ToolResult(output=match, metadata={"error": True})
+
+    start_offset, end_offset, start_line, end_line = match
+    coverage_error = check_read_coverage(ctx, path, start_line, end_line)
+    if coverage_error:
+        return ToolResult(output=f"Edit 0: {coverage_error}", metadata={"error": True})
+
+    key = str(path.resolve())
+    existing_coverage = ctx.file_read_coverage.get(key, {})
+    current_fingerprint = asdict(file_fingerprint(path))
+    old_ranges = [
+        item.copy()
+        for item in existing_coverage.get("ranges", [])
+    ] if existing_coverage.get("fingerprint") == current_fingerprint else []
+
+    content = f"{original[:start_offset]}{new_string}{original[end_offset:]}"
+    await save_file_version(ctx, path, display_path=file_path, tool_name=tool_name)
+    path.write_text(content, encoding="utf-8")
+    diff = make_file_diff(file_path, original, content)
+    parsed = parse_unified_diff(diff)
+    file_diff = parsed.files[0] if parsed.files else FileDiff(path=file_path)
+    remap_read_coverage_from_file_diff(ctx, path, file_diff, old_ranges=old_ranges)
+
+    output = f"File edited: {file_path} (1 operations)"
+    if diff:
+        output = f"{output}\n{diff}"
+    return ToolResult(
+        title="Edited (1 edits)",
+        output=output,
+        summary="Edited (1 operations)",
+        metadata={"file": file_path, "operations": 1},
+        diff=diff,
+    )
+
+
+async def _apply_resolved_edits(
+    ctx: ToolContext,
+    *,
+    path,
+    file_path: str,
+    edits: list[ResolvedEdit],
+    original: str,
+    display: DisplayLines,
+    tool_name: str,
+    hints: list[str],
+) -> ToolResult:
+    lines = list(display.lines)
+    total_lines = len(lines)
+    validation_error = _validate_resolved_edits(edits, total_lines)
+    if validation_error:
+        return ToolResult(output=validation_error, metadata={"error": True})
+
+    for i, edit in enumerate(edits):
+        # (0, 0) is the convention for beginning-of-file insert/prepend —
+        # no prior read is required since there are no existing lines to verify.
+        if (edit.start_line, edit.end_line) == (0, 0):
+            continue
+        coverage_error = check_read_coverage(ctx, path, edit.start_line, edit.end_line)
+        if coverage_error:
+            return ToolResult(output=f"Edit {i}: {coverage_error}", metadata={"error": True})
+
+    key = str(path.resolve())
+    existing_coverage = ctx.file_read_coverage.get(key, {})
+    current_fingerprint = asdict(file_fingerprint(path))
+    old_ranges = [
+        item.copy()
+        for item in existing_coverage.get("ranges", [])
+    ] if existing_coverage.get("fingerprint") == current_fingerprint else []
+
+    trailing_newline = _result_trailing_newline(edits, total_lines, display.trailing_newline)
+    for edit in sorted(edits, key=lambda item: item.start_line, reverse=True):
+        new_lines = _split_edit_lines(edit.new_string)
+        if edit.operation == "replace":
+            if (edit.start_line, edit.end_line) == (0, 0):
+                lines[0:0] = new_lines
+            else:
+                lines[edit.start_line - 1:edit.end_line] = new_lines
+        else:
+            lines[edit.start_line:edit.start_line] = new_lines
+
+    content = _join_display_lines(lines, trailing_newline=trailing_newline)
+
+    await save_file_version(ctx, path, display_path=file_path, tool_name=tool_name)
+    path.write_text(content, encoding="utf-8")
+    diff = make_file_diff(file_path, original, content)
+    parsed = parse_unified_diff(diff)
+    file_diff = parsed.files[0] if parsed.files else FileDiff(path=file_path)
+    remap_read_coverage_from_file_diff(ctx, path, file_diff, old_ranges=old_ranges)
+
+    details = "\n".join([*hints, *_line_shift_hints(edits), diff])
+    output = f"File edited: {file_path} ({len(edits)} operations)"
+    if details:
+        output = f"{output}\n{details}"
+
+    return ToolResult(
+        title=f"Edited ({len(edits)} edits)",
+        output=output,
+        summary=f"Edited ({len(edits)} operations)",
+        metadata={"file": file_path, "operations": len(edits)},
+        diff=diff,
+    )
 
 
 def _validate_resolved_edits(edits: list[ResolvedEdit], total_lines: int) -> str | None:
@@ -505,6 +758,62 @@ def _validate_resolved_edits(edits: list[ResolvedEdit], total_lines: int) -> str
             if start <= location <= end:
                 return "Insert location must not be inside a replacement range."
     return None
+
+
+def _find_text_segment(
+    lines: list[str],
+    lineno: int,
+    prefix: str,
+    suffix: str,
+) -> tuple[int, int, int, int] | str:
+    if prefix == "" or suffix == "":
+        return "prefix and suffix must not be empty."
+
+    total_lines = len(lines)
+    window_start = max(1, lineno - TEXT_REPLACE_WINDOW_LINES)
+    window_end = min(total_lines, lineno + TEXT_REPLACE_WINDOW_LINES)
+    if window_start > window_end:
+        return (
+            f"prefix {prefix!r} not found within ±{TEXT_REPLACE_WINDOW_LINES} "
+            f"lines of line {lineno}. Read the file to get current content."
+        )
+
+    text, line_starts = _window_text(lines, window_start, window_end)
+    matches = _find_snippet_matches(text, line_starts, window_start, prefix)
+    if not matches:
+        return (
+            f"prefix {prefix!r} not found within ±{TEXT_REPLACE_WINDOW_LINES} "
+            f"lines of line {lineno}. Read the file to get current content."
+        )
+
+    distances = [abs(match_line - lineno) for _, match_line in matches]
+    min_distance = min(distances)
+    nearest = [
+        match
+        for match, distance in zip(matches, distances)
+        if distance == min_distance
+    ]
+    if len(nearest) > 1:
+        nearest_lines = sorted({line for _, line in nearest})
+        return (
+            f"prefix {prefix!r} is ambiguous at lines {_format_lines(nearest_lines)}. "
+            "Provide a more specific prefix or adjust lineno."
+        )
+
+    prefix_offset, start_line = nearest[0]
+    suffix_offset = text.find(suffix, prefix_offset)
+    if suffix_offset == -1:
+        return f"suffix {suffix!r} not found after prefix at line {start_line}. Read the file to get current content."
+
+    suffix_end_offset = suffix_offset + len(suffix)
+    end_line = _line_for_offset(line_starts, window_start, suffix_end_offset - 1)
+    window_global_offset = _global_offset_for_line(lines, window_start)
+    return (
+        window_global_offset + prefix_offset,
+        window_global_offset + suffix_end_offset,
+        start_line,
+        end_line,
+    )
 
 
 def _resolve_paragraph_edits(lines: list[str], edits: list[EditEntry]) -> ParagraphResolution | str:
@@ -585,6 +894,12 @@ def _find_snippet_matches(text: str, line_starts: list[int], window_start: int, 
         matches.append((offset, _line_for_offset(line_starts, window_start, offset)))
         offset = text.find(snippet, offset + 1)
     return matches
+
+
+def _global_offset_for_line(lines: list[str], line_number: int) -> int:
+    if line_number <= 1:
+        return 0
+    return len("\n".join(lines[:line_number - 1])) + 1
 
 
 def _line_for_offset(line_starts: list[int], window_start: int, offset: int) -> int:
