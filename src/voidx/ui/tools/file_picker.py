@@ -35,7 +35,7 @@ class FileCandidate:
     rel_path: str
     kind: str
     size: int
-
+    mtime: float = 0.0
 
 def find_attachment_token(text: str, cursor: int) -> AttachmentToken | None:
     cursor = max(0, min(cursor, len(text)))
@@ -87,7 +87,7 @@ def list_file_candidates(workspace: str, query: str, limit: int = 8) -> list[Fil
 
     candidates: list[FileCandidate] = []
     try:
-        entries = sorted(os.scandir(scan_dir), key=lambda e: e.name.lower())
+        entries = list(os.scandir(scan_dir))
     except (OSError, PermissionError):
         return []
 
@@ -101,12 +101,18 @@ def list_file_candidates(workspace: str, query: str, limit: int = 8) -> list[Fil
         if filter_lower and not name.lower().startswith(filter_lower):
             continue
 
+        try:
+            mtime = entry.stat().st_mtime
+        except OSError:
+            mtime = 0.0
+
         rel_prefix = (dir_part + "/") if dir_part else ""
         if entry.is_dir():
             candidates.append(FileCandidate(
                 rel_path=rel_prefix + name + "/",
                 kind="dir",
                 size=0,
+                mtime=mtime,
             ))
         else:
             rel_path = rel_prefix + name
@@ -114,12 +120,10 @@ def list_file_candidates(workspace: str, query: str, limit: int = 8) -> list[Fil
                 rel_path=rel_path,
                 kind="image" if is_image_file(rel_path) else "file",
                 size=0,
+                mtime=mtime,
             ))
 
-    candidates.sort(key=lambda item: (
-        item.kind != "dir",
-        item.rel_path.lower(),
-    ))
+    candidates.sort(key=lambda item: -item.mtime)
     return candidates[:limit]
 
 

@@ -6,7 +6,7 @@ import json
 
 from pydantic import BaseModel, Field
 
-from voidx.runtime import GoalSpec, GoalType, IntentResolution, TaskIntent, ToolStatePatch
+from voidx.runtime import GoalSpec, GoalType, IntentResolution, PlanResolution, TaskIntent, ToolStatePatch
 from voidx.tools.base import BaseTool, ToolContext, ToolResult, UserInteraction, model_to_json_schema
 
 
@@ -44,8 +44,9 @@ class PlanCheckpointTool(BaseTool):
     description = (
         "Present a concrete implementation plan for user approval before changing "
         "files, running write-capable commands, or delegating implementation. The "
-        "user can approve, modify scope, or reject. Later tool calls in the "
-        "same response are deferred until the decision updates runtime state."
+        "user can approve, request a design document first, modify scope, or "
+        "reject. Later tool calls in the same response are deferred until the "
+        "decision updates runtime state."
     )
 
     def parameters_schema(self) -> dict:
@@ -66,7 +67,12 @@ class PlanCheckpointTool(BaseTool):
         response = await ctx.interact(UserInteraction(
             prompt=_build_prompt(inp),
             options=[
-                ("Approve", "approved", "Proceed with this plan"),
+                ("Implement directly", "approved", "Proceed with implementation"),
+                (
+                    "Document first",
+                    "needs_doc",
+                    "Approve plan and write a design document before implementation",
+                ),
                 ("Modify scope", "modified", "Approve with changes to scope"),
                 ("Reject", "rejected", "Do not proceed"),
             ],
@@ -87,6 +93,8 @@ class PlanCheckpointTool(BaseTool):
             return _decision_result(inp, decision="modified", modified_scope=modified_scope)
         if response.value == "approved":
             return _decision_result(inp, decision="approved")
+        if response.value == "needs_doc":
+            return _decision_result(inp, decision="needs_doc")
         return _decision_result(inp, decision="modified", modified_scope=response.value.strip())
 
 
@@ -101,6 +109,20 @@ def _decision_result(
         patch = ToolStatePatch(
             intent=IntentResolution(type=TaskIntent.CODING, desc=scope),
             goal=GoalSpec(type=GoalType.FEATURE, desc=scope),
+            plan=PlanResolution(join="tdd", leave="verify"),
+        )
+        next_step_hint = "Plan approved. Proceed to implementation."
+    elif decision == "needs_doc":
+        scope = inp.plan_summary.strip()
+        patch = ToolStatePatch(
+            intent=IntentResolution(type=TaskIntent.CODING, desc=scope),
+            goal=GoalSpec(type=GoalType.DOC, desc=scope),
+            plan=PlanResolution(join="design", leave="design"),
+        )
+        next_step_hint = (
+            "Plan approved with doc request. Write a design document before "
+            "implementing. Use the `document` tool to load a template and "
+            "write the doc."
         )
     elif decision == "modified":
         scope = modified_scope or inp.plan_summary.strip()
@@ -108,11 +130,13 @@ def _decision_result(
             intent=IntentResolution(type=TaskIntent.CODING, desc=scope),
             goal=GoalSpec(type=GoalType.FEATURE, desc=scope),
         )
+        next_step_hint = ""
     else:
         patch = ToolStatePatch(
             intent=IntentResolution(type=TaskIntent.CODING, desc=inp.plan_summary),
-            goal=GoalSpec(type=GoalType.DESIGN, desc=inp.plan_summary),
+            goal=GoalSpec(type=GoalType.FEATURE, desc=inp.plan_summary),
         )
+        next_step_hint = ""
 
     result = PlanCheckpointResult(
         plan_summary=inp.plan_summary,
@@ -129,6 +153,7 @@ def _decision_result(
             "plan_decision": decision,
             "state_patch": patch.model_dump(mode="json", exclude_unset=True),
         },
+        next_step_hint=next_step_hint,
     )
 
 
