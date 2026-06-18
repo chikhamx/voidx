@@ -366,17 +366,19 @@ class EditEntry(BaseModel):
     )
     prefix: str = Field(
         description=(
-            "Text snippet that marks the beginning of the target paragraph. Can be a substring "
-            "within a line or a short multi-line snippet. Must not be empty, except for "
-            "beginning-of-file insertion/prepend with lineno=0."
+            "Text snippet that marks the beginning of the target paragraph. "
+            "Too short may match the wrong location; too long may drift from the target. "
+            "Aim for a distinctive 10-40 character snippet. "
+            "Must not be empty, except for beginning-of-file insertion/prepend with lineno=0."
         ),
     )
     suffix: str = Field(
         description=(
-            "Text snippet that marks the end of the target paragraph. Can be a substring within "
-            "a line or a short multi-line snippet. For single-line targets, prefix and suffix can "
-            "match the same line. Must not be empty, except for beginning-of-file insertion/prepend "
-            "with lineno=0."
+            "Text snippet that marks the end of the target paragraph. "
+            "Searched after the prefix, so it must not appear inside the prefix itself. "
+            "Too short may match inside the prefix or earlier text; too long may overshoot. "
+            "Aim for a distinctive 10-40 character snippet. "
+            "Must not be empty, except for beginning-of-file insertion/prepend with lineno=0."
         ),
     )
     new_string: str = Field(
@@ -423,10 +425,19 @@ class FileReplaceInput(BaseModel):
         ),
     )
     prefix: str = Field(
-        description="Non-empty substring at the beginning of the old_string.",
+        description=(
+            "Non-empty substring at the beginning of the old_string. "
+            "Too short may match the wrong location; too long may drift from the target. "
+            "Aim for a distinctive 10-40 character snippet."
+        ),
     )
     suffix: str = Field(
-        description="Non-empty substring at the end of the old_string.",
+        description=(
+            "Non-empty substring at the end of the old_string. "
+            "Searched after the prefix, so it must not appear inside the prefix itself. "
+            "Too short may match inside the prefix or earlier text; too long may overshoot. "
+            "Aim for a distinctive 10-40 character snippet."
+        ),
     )
     new_string: str = Field(
         description=(
@@ -797,7 +808,14 @@ def _find_text_segment(
         )
 
     prefix_offset, start_line = nearest[0]
-    suffix_offset = text.find(suffix, prefix_offset)
+    suffix_offset = text.find(suffix, prefix_offset + len(prefix))
+    if suffix_offset != -1:
+        candidate_end = suffix_offset + len(suffix) - 1
+        candidate_line = _line_for_offset(line_starts, window_start, candidate_end)
+        if candidate_line != start_line and prefix == suffix:
+            suffix_offset = text.find(suffix, prefix_offset)
+    if suffix_offset == -1:
+        suffix_offset = text.find(suffix, prefix_offset)
     if suffix_offset == -1:
         return f"suffix {suffix!r} not found after prefix at line {start_line}. Read the file to get current content."
 
@@ -863,7 +881,14 @@ def _find_paragraph(
         return f"prefix {prefix!r} is ambiguous at lines {_format_lines(nearest_lines)}. Provide a more specific prefix or adjust lineno."
 
     prefix_offset, start_line = nearest[0]
-    suffix_offset = text.find(suffix, prefix_offset)
+    suffix_offset = text.find(suffix, prefix_offset + len(prefix))
+    if suffix_offset != -1:
+        suffix_end_offset = suffix_offset + len(suffix) - 1
+        end_line = _line_for_offset(line_starts, window_start, suffix_end_offset)
+        if end_line != start_line and prefix == suffix:
+            suffix_offset = text.find(suffix, prefix_offset)
+    if suffix_offset == -1:
+        suffix_offset = text.find(suffix, prefix_offset)
     if suffix_offset == -1:
         return f"suffix {suffix!r} not found after prefix at line {start_line}. Read the file to get current content."
     suffix_end_offset = suffix_offset + len(suffix) - 1

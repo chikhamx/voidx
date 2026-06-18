@@ -120,16 +120,17 @@ class TestToolRegistry:
         assert builtin["function"]["strict"] is True
         assert "strict" not in mcp["function"]
 
-    def test_nested_tool_schemas_keep_defs_and_strict_objects(self):
+    def test_nested_tool_schemas_keep_defs_and_checkpoint_is_flat(self):
         r = ToolRegistry()
         clarify = r.get_def("clarify").parameters
         checkpoint = r.get_def("checkpoint").parameters
 
         assert "$defs" in clarify
-        assert "$defs" in checkpoint
         assert clarify["$defs"]["ClarifyOption"]["additionalProperties"] is False
-        assert checkpoint["$defs"]["PlanStep"]["additionalProperties"] is False
-        assert checkpoint["$defs"]["PlanAlternative"]["additionalProperties"] is False
+        assert "$defs" not in checkpoint
+        assert checkpoint["properties"]["steps"]["items"]["type"] == "string"
+        assert "alternatives" not in checkpoint["properties"]
+        assert "estimated_steps" not in checkpoint["properties"]
 
     def test_unknown_tool(self):
         r = ToolRegistry()
@@ -145,4 +146,3 @@ class TestToolRegistry:
         assert r.get("write") is None
         names = [tool["function"]["name"] for tool in r.tools_for_llm()]
         assert names == ["read", "grep"]
-

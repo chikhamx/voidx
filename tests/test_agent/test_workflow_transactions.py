@@ -243,6 +243,10 @@ async def test_plan_checkpoint_transaction_executes_following_tools_with_updated
             observed["task_intent"] = ctx.task_intent
             observed["goal_target"] = ctx.goal_target
             observed["goal_type"] = ctx.goal_type
+            observed["workflow_turns"] = {
+                run.name: (run.status.value, run.updated_turn)
+                for run in ctx.workflow_runs
+            }
             return ToolResult(output=f"read after plan: {ctx.task_intent}:{ctx.goal_type}:{ctx.goal_target}")
 
     graph.tools.register("read", RecordingReadTool(), "fake read", {"type": "object", "properties": {}})
@@ -288,8 +292,12 @@ async def test_plan_checkpoint_transaction_executes_following_tools_with_updated
         "persona": "voidx",
         "plan_mode": False,
         "interaction_mode": "auto",
+        "step_count": 5,
         "task_state": _task_state_json(
             current_intent=TaskIntent.CODING,
+            workflow_runs={
+                "debug": WorkflowRunState(name="debug", status=WorkflowRunStatus.ACTIVE),
+            },
         ),
     })
 
@@ -304,6 +312,9 @@ async def test_plan_checkpoint_transaction_executes_following_tools_with_updated
         "task_intent": "coding",
         "goal_type": "feature",
         "goal_target": "Update runtime state handling",
+        "workflow_turns": {
+            "debug": ("satisfied", 5),
+            "tdd": ("active", 5),
+        },
     }
-
 

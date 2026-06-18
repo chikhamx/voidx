@@ -140,6 +140,7 @@ class GraphToolExecutor:
                 task_intent=str(runtime_task_intent or "coding"),
                 goal_type=runtime_goal.type.value if runtime_goal is not None else "",
                 goal_target=goal_label(runtime_goal),
+                turn_count=turn_count,
                 active_workflow_names=active_workflow_names(runtime_workflow_runs),
                 workflow_runs=runtime_workflow_runs,
                 workflow_route=runtime_task_state.workflow_route.model_dump(mode="json")

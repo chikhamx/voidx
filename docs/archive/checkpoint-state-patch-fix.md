@@ -1,3 +1,5 @@
+> **Status: Done**
+
 # Checkpoint 工具 state_patch 不完整导致工作流状态不一致 — 问题分析报告
 
 ## Context
@@ -100,18 +102,30 @@ checkpoint 缺少这一步。
 
 approved / needs_doc 场景下，工作流指令已足够引导 LLM，`next_step_hint` 多余。将其清空，避免与工作流指令冲突或产生歧义。
 
-### 修复 3（可选）：考虑 should_continue
+### 修复 3（验证项）：确认 should_continue 不被误触发
 
 当 checkpoint 批准且工作流路由终端被满足时，`_explicit_advance_route_limited_runs` 会设置 `should_continue = False`。这在 workflow 工具中是合理的（advance 后 turn 结束，下一轮从新节点开始），但对 checkpoint 可能不合适——我们希望 LLM 在同一 turn 内继续工作。
 
-需要确认：修复 1 后，`_collect_state_update_from_executed` 中的逻辑是否会误触发 `should_continue = False`。如果会，需要在 checkpoint 场景中避免。
+代码复核后，这里不需要独立修复：
+
+- `_explicit_advance_route_limited_runs` 只在 `item.tool_call.get("name") == "workflow"` 时生效，checkpoint 带 `workflow_runs` 不会走这个分支。
+- auto-advance 当前只检查 `agent` 和 `bash` 工具结果，不会从 checkpoint 结果生成 workflow event。
+
+因此该项应作为回归验证：checkpoint 批准后应更新 `workflow_runs`，但不应把 `should_continue` 设为 `False`。
+
+### 实现注意事项
+
+不要在 checkpoint 中硬编码 workflow persona 或 transition 映射。目标节点的 persona、后继节点等信息应复用 `WorkflowService` / workflow policy 中的既有定义；如果需要通用的“关闭当前 active 节点并激活目标节点”逻辑，应抽成 workflow 共享 helper，避免 checkpoint 和 workflow 工具各自维护 DAG 状态规则。
+
+checkpoint 构建 `workflow_runs` 时还应沿用当前 turn count：被满足的当前节点需要设置 `updated_turn`，新激活的目标节点需要设置 `activated_turn` 和 `updated_turn`，与 workflow 工具和 executor 里的 `_satisfy_workflow_without_transition` 行为保持一致。
 
 ## 涉及文件
 
 | 文件 | 修改内容 |
 |------|---------|
 | `src/voidx/tools/plan_checkpoint.py` | `_decision_result` 增加 workflow_runs 参数，approved/needs_doc 时构建完整 state_patch |
-| `tests/test_tools/test_interactive_tools.py` | 更新现有测试，验证 state_patch 包含 workflow_runs |
+| `tests/test_tools/test_interactive_tools_clarify.py` | 更新现有 checkpoint 测试，验证 state_patch 包含 workflow_runs |
+| `tests/test_tools/test_state_update_from_executed_tools.py` 或 executor 级测试 | 验证 checkpoint 的 workflow_runs patch 不会触发 `should_continue = False`，并能让后续工具看到更新后的 workflow 状态 |
 
 ## 风险
 

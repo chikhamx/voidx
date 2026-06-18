@@ -71,6 +71,7 @@ class ToolContext(BaseModel):
     task_intent: str = "coding"
     goal_type: str = ""
     goal_target: str = ""
+    turn_count: int = 0
     active_workflow_names: list[str] = Field(default_factory=list)
     workflow_runs: list[WorkflowRunState] = Field(default_factory=list)
     workflow_route: dict[str, str | None] | None = None

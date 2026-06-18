@@ -8,27 +8,25 @@ from pydantic import BaseModel, Field
 
 from voidx.runtime import GoalSpec, GoalType, IntentResolution, PlanResolution, TaskIntent, ToolStatePatch
 from voidx.tools.base import BaseTool, ToolContext, ToolResult, UserInteraction, model_to_json_schema
-
-
-class PlanStep(BaseModel):
-    description: str = Field(description="What this implementation step does.")
-    files: list[str] = Field(default_factory=list, description="Files touched by this step.")
-    tool: str = Field(default="", description="Primary tool expected for this step.")
-
-
-class PlanAlternative(BaseModel):
-    name: str = Field(description="Short name for this alternative.")
-    description: str = Field(description="What this approach would do differently.")
-    trade_off: str = Field(default="", description="Why this alternative was not chosen.")
+from voidx.workflow.policy import workflow_transitions
+from voidx.workflow.service import WorkflowService
+from voidx.workflow.types import (
+    WorkflowActivationSource,
+    WorkflowEvidence,
+    WorkflowRunState,
+    WorkflowRunStatus,
+    WorkflowStateEventKind,
+)
 
 
 class PlanCheckpointInput(BaseModel):
     plan_summary: str = Field(description="Concise implementation plan summary.")
-    steps: list[PlanStep] = Field(default_factory=list, description="Ordered implementation steps.")
-    affected_files: list[str] = Field(default_factory=list, description="Files that may change.")
-    risks: list[str] = Field(default_factory=list, description="Risks or trade-offs for the user.")
-    alternatives: list[PlanAlternative] = Field(default_factory=list, description="Alternatives considered.")
-    estimated_steps: int = Field(default=0, ge=0, description="Rough tool-call step estimate.")
+    steps: list[str] = Field(default_factory=list, description="Ordered implementation steps.")
+    affected_files: list[str] = Field(
+        default_factory=list,
+        description="All files that may be created or modified across all steps.",
+    )
+    risks: list[str] = Field(default_factory=list, description="Risks, edge cases, or trade-offs to consider.")
 
 
 class PlanCheckpointResult(BaseModel):
@@ -92,9 +90,19 @@ class PlanCheckpointTool(BaseTool):
             modified_scope = "" if scope_response.cancelled else scope_response.value.strip()
             return _decision_result(inp, decision="modified", modified_scope=modified_scope)
         if response.value == "approved":
-            return _decision_result(inp, decision="approved")
+            return _decision_result(
+                inp,
+                decision="approved",
+                workflow_runs=ctx.workflow_runs,
+                turn_count=ctx.turn_count,
+            )
         if response.value == "needs_doc":
-            return _decision_result(inp, decision="needs_doc")
+            return _decision_result(
+                inp,
+                decision="needs_doc",
+                workflow_runs=ctx.workflow_runs,
+                turn_count=ctx.turn_count,
+            )
         return _decision_result(inp, decision="modified", modified_scope=response.value.strip())
 
 
@@ -103,6 +111,8 @@ def _decision_result(
     *,
     decision: str,
     modified_scope: str = "",
+    workflow_runs: list[WorkflowRunState] | None = None,
+    turn_count: int = 0,
 ) -> ToolResult:
     if decision == "approved":
         scope = inp.plan_summary.strip()
@@ -110,20 +120,30 @@ def _decision_result(
             intent=IntentResolution(type=TaskIntent.CODING, desc=scope),
             goal=GoalSpec(type=GoalType.FEATURE, desc=scope),
             plan=PlanResolution(join="tdd", leave="verify"),
+            workflow_runs=_checkpoint_workflow_runs(
+                workflow_runs or (),
+                target="tdd",
+                scope=scope,
+                decision=decision,
+                turn_count=turn_count,
+            ),
         )
-        next_step_hint = "Plan approved. Proceed to implementation."
+        next_step_hint = ""
     elif decision == "needs_doc":
         scope = inp.plan_summary.strip()
         patch = ToolStatePatch(
             intent=IntentResolution(type=TaskIntent.CODING, desc=scope),
             goal=GoalSpec(type=GoalType.DOC, desc=scope),
             plan=PlanResolution(join="design", leave="design"),
+            workflow_runs=_checkpoint_workflow_runs(
+                workflow_runs or (),
+                target="design",
+                scope=scope,
+                decision=decision,
+                turn_count=turn_count,
+            ),
         )
-        next_step_hint = (
-            "Plan approved with doc request. Write a design document before "
-            "implementing. Use the `document` tool to load a template and "
-            "write the doc."
-        )
+        next_step_hint = ""
     elif decision == "modified":
         scope = modified_scope or inp.plan_summary.strip()
         patch = ToolStatePatch(
@@ -162,20 +182,68 @@ def _build_prompt(inp: PlanCheckpointInput) -> str:
     if inp.steps:
         parts.append("\nSteps:")
         for index, step in enumerate(inp.steps, 1):
-            files = f" ({', '.join(step.files)})" if step.files else ""
-            parts.append(f"{index}. {step.description}{files}")
+            parts.append(f"{index}. {step}")
     if inp.affected_files:
         parts.append(f"\nAffected files: {', '.join(inp.affected_files)}")
     if inp.risks:
         parts.append("\nRisks:")
         parts.extend(f"- {risk}" for risk in inp.risks)
-    if inp.alternatives:
-        parts.append("\nAlternatives:")
-        for alt in inp.alternatives:
-            line = f"- {alt.name}: {alt.description}"
-            if alt.trade_off:
-                line = f"{line} ({alt.trade_off})"
-            parts.append(line)
-    if inp.estimated_steps:
-        parts.append(f"\nEstimated steps: {inp.estimated_steps}")
     return "\n".join(parts)
+
+
+def _checkpoint_workflow_runs(
+    current: list[WorkflowRunState] | tuple[WorkflowRunState, ...],
+    *,
+    target: str,
+    scope: str,
+    decision: str,
+    turn_count: int = 0,
+) -> list[WorkflowRunState]:
+    target_name = target.strip().lower()
+    service = WorkflowService()
+    node = service.get(target_name)
+    if node is None:
+        return [run.model_copy(deep=True) for run in current]
+
+    updated = [run.model_copy(deep=True) for run in current]
+    for run in updated:
+        if run.status != WorkflowRunStatus.ACTIVE or run.name == target_name:
+            continue
+        run.status = WorkflowRunStatus.SATISFIED
+        run.updated_turn = turn_count
+        run.blocked_reason = ""
+        run.evidence.append(
+            WorkflowEvidence(
+                kind=WorkflowStateEventKind.SATISFIED.value,
+                ref="tool:checkpoint",
+                ok=True,
+                summary=f"Checkpoint {decision}; workflow superseded by {target_name}.",
+                condition=f"checkpoint_{decision}",
+            )
+        )
+
+    existing = next((run for run in updated if run.name == target_name), None)
+    if existing is None:
+        updated.append(WorkflowRunState(name=target_name))
+        existing = updated[-1]
+
+    existing.status = WorkflowRunStatus.ACTIVE
+    existing.source = WorkflowActivationSource.TRANSITION
+    existing.reason = f"checkpoint:{decision}"
+    existing.goal_type = ""
+    existing.scope = scope
+    existing.personas = [node.persona] if node.persona else []
+    existing.activated_turn = turn_count
+    existing.updated_turn = turn_count
+    existing.blocked_reason = ""
+    existing.transition_to = list(workflow_transitions(target_name))
+    existing.evidence.append(
+        WorkflowEvidence(
+            kind=WorkflowStateEventKind.ACTIVATED.value,
+            ref="tool:checkpoint",
+            ok=True,
+            summary=f"Checkpoint {decision}; activated {target_name}.",
+            condition=f"checkpoint_{decision}",
+        )
+    )
+    return updated

@@ -12,6 +12,7 @@ sys.path.insert(0, str(Path(__file__).parent.parent.parent / "src"))
 import pytest
 
 from langchain_core.messages import ToolMessage
+from pydantic import ValidationError
 
 from voidx.agent.tool_messages import DEFAULT_TOOL_MESSAGE_MAX_CHARS
 from voidx.tools.base import ToolContext, ToolResult, BaseTool, UserInteraction, UserResponse
@@ -37,7 +38,7 @@ from voidx.tools.registry import ToolRegistry
 from voidx.tools.clarify import ClarifyTool, ClarifyInput, ClarifyOption, _infer_state_patch
 from voidx.tools.load_skills import LoadSkillsTool
 from voidx.tools.load_doc_template import LoadDocTemplateTool, LoadDocTemplateInput
-from voidx.tools.plan_checkpoint import PlanCheckpointTool
+from voidx.tools.plan_checkpoint import PlanCheckpointInput, PlanCheckpointTool, _build_prompt
 from voidx.agent.task_state import GoalSpec, GoalResolution, GoalType, IntentResolution, PlanResolution, ToolStatePatch
 from voidx.agent.runtime_context import TaskIntent
 from voidx.skills.context import SKILL_TOOL_CONTEXT_MARKER
@@ -113,7 +114,112 @@ class TestInteractiveTools:
         assert patch["goal"]["desc"] == "Update runtime state handling"
         assert patch["goal"]["type"] == "feature"
         assert patch["plan"] == {"join": "tdd", "leave": "verify"}
-        assert result.next_step_hint == "Plan approved. Proceed to implementation."
+        assert patch["workflow_runs"][0]["name"] == "tdd"
+        assert patch["workflow_runs"][0]["status"] == "active"
+        assert result.next_step_hint == ""
+
+    def test_plan_checkpoint_prompt_renders_flat_steps_and_scope_details(self):
+        prompt = _build_prompt(PlanCheckpointInput(
+            plan_summary="Simplify checkpoint input",
+            steps=[
+                "Replace nested step objects with strings",
+                "Update schema tests",
+            ],
+            affected_files=[
+                "src/voidx/tools/plan_checkpoint.py",
+                "tests/test_tools/test_tool_registry.py",
+            ],
+            risks=[
+                "Old object-shaped steps should fail validation",
+            ],
+        ))
+
+        assert "Plan: Simplify checkpoint input" in prompt
+        assert "1. Replace nested step objects with strings" in prompt
+        assert "2. Update schema tests" in prompt
+        assert (
+            "Affected files: src/voidx/tools/plan_checkpoint.py, "
+            "tests/test_tools/test_tool_registry.py"
+        ) in prompt
+        assert "- Old object-shaped steps should fail validation" in prompt
+        assert "Alternatives:" not in prompt
+        assert "Estimated steps:" not in prompt
+
+    def test_plan_checkpoint_rejects_legacy_object_steps(self):
+        with pytest.raises(ValidationError):
+            PlanCheckpointInput.model_validate({
+                "plan_summary": "Simplify checkpoint input",
+                "steps": [
+                    {
+                        "description": "Update the model",
+                        "files": ["src/voidx/tools/plan_checkpoint.py"],
+                        "tool": "edit",
+                    },
+                ],
+            })
+
+    @pytest.mark.asyncio
+    async def test_plan_checkpoint_approval_satisfies_active_workflow_and_activates_tdd(self, tmp_path):
+        async def interact(request):
+            return UserResponse(value="approved")
+
+        result = await PlanCheckpointTool().execute(
+            {"plan_summary": "Fix runtime state handling"},
+            ToolContext(
+                workspace=str(tmp_path),
+                interact=interact,
+                workflow_runs=[
+                    WorkflowRunState(name="debug", status=WorkflowRunStatus.ACTIVE),
+                ],
+                turn_count=7,
+            ),
+        )
+
+        patch = result.metadata["state_patch"]
+        by_name = {run["name"]: run for run in patch["workflow_runs"]}
+        assert by_name["debug"]["status"] == "satisfied"
+        assert by_name["debug"]["updated_turn"] == 7
+        assert by_name["tdd"]["status"] == "active"
+        assert by_name["tdd"]["activated_turn"] == 7
+        assert by_name["tdd"]["updated_turn"] == 7
+        assert by_name["tdd"]["personas"] == ["implement"]
+
+    @pytest.mark.asyncio
+    async def test_plan_checkpoint_workflow_patch_does_not_stop_turn(self, tmp_path):
+        from langchain_core.messages import ToolMessage
+
+        from voidx.agent.graph.tool_executor import _ExecutedTool, _state_update_from_executed_tools
+
+        async def interact(request):
+            return UserResponse(value="approved")
+
+        checkpoint = await PlanCheckpointTool().execute(
+            {"plan_summary": "Fix runtime state handling"},
+            ToolContext(
+                workspace=str(tmp_path),
+                interact=interact,
+                workflow_runs=[
+                    WorkflowRunState(name="debug", status=WorkflowRunStatus.ACTIVE),
+                ],
+            ),
+        )
+        executed = [_ExecutedTool(
+            message=ToolMessage(content=checkpoint.output, tool_call_id="call_checkpoint"),
+            result=checkpoint,
+            tool_call={"name": "checkpoint"},
+        )]
+
+        update = _state_update_from_executed_tools(
+            executed,
+            current_workflow_runs=[
+                WorkflowRunState(name="debug", status=WorkflowRunStatus.ACTIVE),
+            ],
+        )
+
+        by_name = {run.name: run for run in update["workflow_runs"]}
+        assert by_name["debug"].status == WorkflowRunStatus.SATISFIED
+        assert by_name["tdd"].status == WorkflowRunStatus.ACTIVE
+        assert update.get("should_continue") is not False
 
     @pytest.mark.asyncio
     async def test_plan_checkpoint_blocks_without_interaction(self, tmp_path):
@@ -242,7 +348,29 @@ class TestInteractiveTools:
         assert patch["intent"]["type"] == "coding"
         assert patch["goal"]["type"] == "doc"
         assert patch["plan"] == {"join": "design", "leave": "design"}
-        assert "design document" in result.next_step_hint
+        assert result.next_step_hint == ""
+
+    @pytest.mark.asyncio
+    async def test_plan_checkpoint_needs_doc_satisfies_active_workflow_and_activates_design(self, tmp_path):
+        async def interact(request):
+            return UserResponse(value="needs_doc")
+
+        result = await PlanCheckpointTool().execute(
+            {"plan_summary": "Document runtime state handling"},
+            ToolContext(
+                workspace=str(tmp_path),
+                interact=interact,
+                workflow_runs=[
+                    WorkflowRunState(name="debug", status=WorkflowRunStatus.ACTIVE),
+                ],
+            ),
+        )
+
+        patch = result.metadata["state_patch"]
+        by_name = {run["name"]: run for run in patch["workflow_runs"]}
+        assert by_name["debug"]["status"] == "satisfied"
+        assert by_name["design"]["status"] == "active"
+        assert by_name["design"]["personas"] == ["plan"]
 
     @pytest.mark.asyncio
     async def test_plan_checkpoint_modified_updates_scope(self, tmp_path):
@@ -349,5 +477,3 @@ class TestInteractiveTools:
             "design document" in PlanCheckpointTool.description
             or "Document first" in PlanCheckpointTool.description
         )
-
-
