@@ -164,9 +164,9 @@ class TestToolSchemas:
         assert inp.prefix == "old"
         assert set(schema["properties"]) == {"file_path", "lineno", "prefix", "suffix", "new_string"}
         assert "30" in schema["properties"]["lineno"]["description"]
-        assert "text segment" in schema["properties"]["prefix"]["description"].lower()
-        assert "included in the replaced text" in schema["properties"]["suffix"]["description"].lower()
-        assert "do not use text you want to keep" in FileReplaceTool().description.lower()
+        assert "beginning of the old_string" in schema["properties"]["prefix"]["description"].lower()
+        assert "end of the old_string" in schema["properties"]["suffix"]["description"].lower()
+        assert "everything from prefix through suffix is replaced" in FileReplaceTool().description.lower()
         assert "operation" not in schema["properties"]
         assert "edits" not in schema["properties"]
         assert "old_text" not in schema["properties"]

@@ -398,12 +398,12 @@ class FileEditInput(BaseModel):
 
 
 class FileInsertInput(BaseModel):
-    file_path: str = Field(description="Path to edit")
+    file_path: str = Field(description="Path to insert")
     lineno: int = Field(
         ge=-1,
         description=(
-            "Insert after this 1-based line number. Use 0 to insert at the beginning of the file, "
-            "or -1 to insert at the end."
+            "Insert after this line (1-based). "
+            "0 → beginning of file, -1 → end of file."
         ),
     )
     new_string: str = Field(
@@ -419,15 +419,14 @@ class FileReplaceInput(BaseModel):
     lineno: int = Field(
         ge=1,
         description=(
-            "Required search start hint. The tool searches within ±30 lines of this line "
-            "for prefix/suffix text matches. Not used as a precise target line."
+            "Approximate line (1-based) of the old_string. Searches within ±30 lines."
         ),
     )
     prefix: str = Field(
-        description="Text snippet that marks the beginning of the target text segment.",
+        description="Non-empty substring at the beginning of the old_string.",
     )
     suffix: str = Field(
-        description="Text snippet that marks the end of the target text segment.",
+        description="Non-empty substring at the end of the old_string.",
     )
     new_string: str = Field(
         description=(
@@ -467,10 +466,7 @@ class FileEditTool(BaseTool):
 class FileInsertTool(BaseTool):
     id = "insert"
     description = (
-        "Insert content into a file.\n"
-        "lineno=0 → insert at the beginning of the file.\n"
-        "lineno=-1 → insert at the end of the file.\n"
-        "lineno>0 → insert after that line number; read the target line first."
+        "Insert content into a file. Read the target line first."
     )
 
     def parameters_schema(self) -> dict:
@@ -509,8 +505,8 @@ class FileInsertTool(BaseTool):
 class FileReplaceTool(BaseTool):
     id = "replace"
     description = (
-        "Replace chunk [prefix ... suffix] → new_string in a file. "
-        "Searches nearest the lineno hint; replaces only the matched segment, not the whole line. "
+        "Replace old_string → new_string in a file. "
+        "Everything from prefix through suffix is replaced. "
         "Read the target lines first."
     )
 
