@@ -11,7 +11,7 @@ from typing import Any, Literal
 from pydantic import BaseModel, Field
 
 
-LOW_VALUE_REPETITIVE_TOOLS = frozenset({"todo", "advance_workflow", "checkpoint"})
+LOW_VALUE_REPETITIVE_TOOLS = frozenset({"todo", "workflow", "checkpoint"})
 REPETITIVE_TOOL_EXEMPTIONS = frozenset({"bash", "read", "grep"})
 EVIDENCE_TEXT_LIMIT = 500
 

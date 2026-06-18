@@ -12,7 +12,7 @@ from langchain_core.messages import AIMessage, HumanMessage, ToolMessage
 from voidx.agent.todo_state import sanitize_todo_replay_messages
 from voidx.agent.attachments import build_user_message_payload, serialize_message_content
 from voidx.agent.message_rows import messages_from_rows_incremental
-from voidx.agent.goal_resolver import resolve_goal_for_turn
+from voidx.agent.goal_resolver import resolve_goal_for_turn, resolve_goal_mode, resolve_plan_mode
 from voidx.agent.runtime_context import TaskIntent
 from voidx.agent.graph.runtime_guards import RuntimeGuardState
 from voidx.agent.state import AgentState
@@ -183,12 +183,17 @@ class GraphTurnRunner:
                 base_task_state.recent_exchanges = _rebuild_exchanges_from_session_msgs(session_msgs)
             if interaction_mode == "goal" and base_task_state.current_goal is None:
                 base_task_state.set_goal(payload.title_text)
-            intent_resolution = await resolve_goal_for_turn(
-                model=host.model,
-                user_text=payload.title_text,
-                interaction_mode=interaction_mode,
-                task_state=base_task_state,
-            )
+            if interaction_mode == "plan":
+                intent_resolution = resolve_plan_mode(payload.title_text, base_task_state)
+            elif interaction_mode == "goal":
+                intent_resolution = resolve_goal_mode(payload.title_text, base_task_state)
+            else:
+                intent_resolution = await resolve_goal_for_turn(
+                    model=host.model,
+                    user_text=payload.title_text,
+                    interaction_mode=interaction_mode,
+                    task_state=base_task_state,
+                )
             turn_task_state = base_task_state.model_copy(deep=True)
             turn_task_state.update_after_turn(
                 intent_resolution,

@@ -26,7 +26,14 @@ from voidx.agent.graph.runtime_guards import (
 )
 from voidx.agent.graph.todo_events import todo_updated_event
 from voidx.agent.todo_state import apply_todo_state_to_host, todo_run_state_from_result
-from voidx.agent.task_state import GoalSpec, TaskState, TodoRunState, ToolStatePatch, goal_label
+from voidx.agent.task_state import (
+    GoalSpec,
+    TaskState,
+    TodoRunState,
+    ToolStatePatch,
+    WorkflowRoute,
+    goal_label,
+)
 from voidx.runtime.intent import TaskIntent
 from voidx.agent.tool_messages import sanitize_tool_message_content
 from voidx.workflow.service import advance_workflow_states, auto_advance_events, is_workflow_terminal_condition
@@ -175,6 +182,14 @@ class GraphToolExecutor:
                 raw_goal = update.get("current_goal")
                 runtime_goal = _goal_for_state(raw_goal)
                 runtime_task_state.current_goal = runtime_goal
+                state_update["task_state"] = runtime_task_state.model_dump(mode="json")
+            if "workflow_route" in update:
+                raw_route = update.get("workflow_route")
+                runtime_task_state.workflow_route = (
+                    WorkflowRoute.model_validate(raw_route)
+                    if raw_route
+                    else None
+                )
                 state_update["task_state"] = runtime_task_state.model_dump(mode="json")
             if "workflow_runs" in update:
                 runtime_workflow_runs = _workflow_runs_for_state(update.get("workflow_runs") or [])
@@ -363,6 +378,9 @@ class GraphToolExecutor:
                 result.output, tool_event_id, tid,
                 session_id=host._session.id if host._session else "default",
             )
+            next_step_hint = getattr(result, "next_step_hint", "").strip()
+            if next_step_hint:
+                llm_content = f"{llm_content}\n\nNext step hint: {next_step_hint}"
             llm_content = sanitize_tool_message_content(llm_content, workspace=ctx.workspace)
             message = ToolMessage(
                 content=llm_content,
@@ -745,11 +763,14 @@ def _state_update_from_executed_tools(
                 workflow_runs_changed = True
             elif field == "goal":
                 update["current_goal"] = data.get(field)
+            elif field == "plan":
+                value = data.get(field)
+                update["workflow_route"] = value if value is not None else None
             elif field == "persona":
                 update["persona"] = data.get(field) or "coordinate"
 
     # Auto-advance: detect structured tool result signals and drive DAG
-    # transitions without explicit advance_workflow.
+    # transitions without explicit workflow.
     auto_events = _auto_advance_from_executed(executed, merged_workflow_runs)
     if auto_events:
         merged_workflow_runs, stop_after_auto = _advance_auto_events_for_route(
@@ -827,11 +848,13 @@ def _explicit_advance_route_limited_runs(
     current_workflow_route: object = None,
     turn_count: int = 0,
 ) -> list[WorkflowRunState] | None:
-    if item.tool_call.get("name") != "advance_workflow":
+    if item.tool_call.get("name") != "workflow":
         return None
     metadata = getattr(item.result, "metadata", {}) or {}
     transition = metadata.get("workflow_transition") or {}
     if not isinstance(transition, dict):
+        return None
+    if str(transition.get("action") or "").strip().lower() != "advance":
         return None
     workflow = str(transition.get("from") or "").strip().lower()
     condition = str(transition.get("condition") or "").strip().lower()
@@ -846,7 +869,7 @@ def _explicit_advance_route_limited_runs(
     event = WorkflowStateEvent(
         workflow=workflow,
         kind=WorkflowStateEventKind.SATISFIED,
-        ref="tool:advance_workflow",
+        ref="tool:workflow",
         ok=True,
         summary=str(transition.get("summary") or ""),
         reason=str(transition.get("evidence") or ""),
@@ -1009,14 +1032,15 @@ def _terminal_workflow_completed(
 
     saw_terminal_advance = False
     for item in executed:
-        if item.tool_call.get("name") != "advance_workflow":
+        if item.tool_call.get("name") != "workflow":
             continue
         metadata = getattr(item.result, "metadata", {}) or {}
         transition = metadata.get("workflow_transition") or {}
         if not isinstance(transition, dict):
             continue
-        condition = str(transition.get("condition") or "")
-        if is_workflow_terminal_condition(condition):
+        if str(transition.get("action") or "").strip().lower() != "done":
+            continue
+        if not any(run.status == WorkflowRunStatus.ACTIVE for run in workflow_runs):
             saw_terminal_advance = True
             break
     if not saw_terminal_advance:
@@ -1074,7 +1098,7 @@ def _agent_result_preview(text: object) -> str:
 
 
 def _is_barrier_tool(tool_call: dict) -> bool:
-    return tool_call.get("name") in {"clarify", "checkpoint", "advance_workflow", "compact"}
+    return tool_call.get("name") in {"clarify", "checkpoint", "workflow", "compact"}
 
 
 def _split_at_first_barrier(tool_calls: list[dict]) -> tuple[list[dict], dict | None, list[dict]]:

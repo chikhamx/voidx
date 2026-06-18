@@ -33,7 +33,7 @@ BASIC_RULES: Ruleset = [
     Rule(permission="todo", pattern="*", action="allow"),
     Rule(permission="clarify", pattern="*", action="allow"),
     Rule(permission="checkpoint", pattern="*", action="allow"),
-    Rule(permission="advance_workflow", pattern="*", action="allow"),
+    Rule(permission="workflow", pattern="*", action="allow"),
     Rule(permission="compact", pattern="*", action="allow"),
     Rule(permission="task_status", pattern="*", action="allow"),
     Rule(permission="skill", pattern="*", action="allow"),
@@ -102,7 +102,6 @@ def repair_tool_name(tool: str) -> str:
         "RepoMap": "repo_map", "repomap": "repo_map", "Repo_map": "repo_map",
         "LspDiagnostics": "lsp", "LspSymbols": "lsp",
         "LspDefinition": "lsp", "LspReferences": "lsp",
-        "AdvanceWorkflow": "advance_workflow",
         "CompactContext": "compact",
     }
     return tool_map.get(tool, tool_map.get(tool.lower(), tool))
@@ -354,7 +353,7 @@ def _is_read_only_git_ref_command(subcommand: str, args: list[str]) -> bool:
 def capability_for_tool(tool: str, args: dict) -> PermissionCapability:
     if tool in {
         "read", "glob", "grep", "webfetch", "websearch", "todo", "task_status",
-        "skill", "advance_workflow", "compact",
+        "skill", "workflow", "compact",
         "repo_map", "lsp",
     }:
         return PermissionCapability.READ_TOOLS
