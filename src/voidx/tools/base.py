@@ -41,6 +41,7 @@ class ToolResult(BaseModel):
     summary: str = ""
     metadata: dict = {}
     diff: str | None = None  # unified diff for edit/write tools
+    next_step_hint: str = ""
 
 
 class UserInteraction(BaseModel):

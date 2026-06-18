@@ -239,12 +239,8 @@ def _can_satisfy_run(run: WorkflowRunState, event: WorkflowStateEvent) -> bool:
 
 
 def _gate_satisfied(workflow: str, event: WorkflowStateEvent) -> bool:
-    gate = _workflow_gate(workflow)
-    if gate is None:
-        return True
-    if not gate.required_before_transition and not gate.description:
-        return True
-    return bool(event.reason.strip())
+    del workflow, event
+    return True
 
 
 def _workflow_key(name: str) -> str:

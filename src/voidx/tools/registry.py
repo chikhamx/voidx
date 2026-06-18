@@ -18,7 +18,7 @@ from voidx.tools.webfetch import WebFetchTool
 from voidx.tools.websearch import WebSearchTool
 from voidx.tools.clarify import ClarifyTool
 from voidx.tools.plan_checkpoint import PlanCheckpointTool
-from voidx.tools.advance_workflow import AdvanceWorkflowTool
+from voidx.tools.workflow import WorkflowTool
 from voidx.tools.compact_context import CompactContextTool
 from voidx.tools.load_doc_template import LoadDocTemplateTool
 
@@ -49,7 +49,7 @@ class ToolRegistry:
             RepoMapTool,
             GlobTool, GrepTool, BashTool,
             LspTool,
-            ClarifyTool, PlanCheckpointTool, AdvanceWorkflowTool, CompactContextTool, LoadDocTemplateTool,
+            ClarifyTool, PlanCheckpointTool, WorkflowTool, CompactContextTool, LoadDocTemplateTool,
         ]:
             instance = cls()
             self.register(instance.id, instance, instance.description, instance.parameters_schema())

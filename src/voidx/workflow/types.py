@@ -25,6 +25,7 @@ class WorkflowActivationSource(str, Enum):
 
 
 class WorkflowStateEventKind(str, Enum):
+    ACTIVATED = "activated"
     SATISFIED = "satisfied"
     BLOCKED = "blocked"
     UNBLOCKED = "unblocked"

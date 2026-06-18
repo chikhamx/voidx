@@ -2,14 +2,14 @@
 
 Detects structured signals from tool results and automatically produces
 WorkflowStateEvent entries to drive DAG transitions, so the LLM does not
-need to call advance_workflow for well-defined conditions:
+need to call workflow for well-defined conditions:
 
 - review_has_issues: review agent returns FAIL or NEEDS_CHANGE
 - failed_implementation: bash/test execution fails while verify is active
 
 failed_bug is NOT auto-detected: distinguishing "original bug still present"
 from "implementation broke something" requires semantic analysis that only
-the LLM can provide via explicit advance_workflow.
+the LLM can provide via explicit workflow.
 """
 
 from __future__ import annotations

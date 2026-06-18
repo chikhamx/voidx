@@ -17,6 +17,7 @@ _DSML_MARKER_RE = r"\|\|DSML\|\|"
 # via REPLAY_SANITIZED_TOOL_NAMES to keep replay_sanitize flags in sync.
 _REPLAY_SANITIZED_TOOL_NAMES = frozenset({
     "todo",
+    "workflow",
 })
 _REPLAY_SANITIZED_TOOL_PATTERN = "|".join(sorted(map(re.escape, _REPLAY_SANITIZED_TOOL_NAMES)))
 _DSML_RUNTIME_INVOKE_RE = re.compile(
