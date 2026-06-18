@@ -1,0 +1,143 @@
+"""Smoke tests for tool system — types, execution, error handling."""
+
+import asyncio
+import json
+import logging
+import shlex
+import sys
+from pathlib import Path
+
+sys.path.insert(0, str(Path(__file__).parent.parent.parent / "src"))
+
+import pytest
+
+from langchain_core.messages import ToolMessage
+
+from voidx.agent.tool_messages import DEFAULT_TOOL_MESSAGE_MAX_CHARS
+from voidx.tools.base import ToolContext, ToolResult, BaseTool, UserInteraction, UserResponse
+from voidx.tools.file_ops import (
+    FileReadInput,
+    FileWriteInput,
+    FileEditInput,
+    EditEntry,
+    FileReadTool,
+    FileWriteTool,
+    FileEditTool,
+    _find_paragraph,
+)
+from voidx.tools.file_state import save_file_version
+import voidx.tools.file_state as file_state
+from voidx.tools.search import GlobInput, GrepInput
+from voidx.tools.bash import BashInput
+from voidx.tools.agent import AgentInput, AgentTool
+from voidx.tools.task_tracker import TaskTracker
+from voidx.tools.task_status import TaskStatusTool
+from voidx.tools.todo import TodoInput, TodoWriteTool
+from voidx.tools.registry import ToolRegistry
+from voidx.tools.clarify import ClarifyTool, ClarifyInput, ClarifyOption, _infer_state_patch
+from voidx.tools.load_skills import LoadSkillsTool
+from voidx.tools.load_doc_template import LoadDocTemplateTool, LoadDocTemplateInput
+from voidx.tools.plan_checkpoint import PlanCheckpointTool
+from voidx.agent.task_state import GoalSpec, GoalResolution, GoalType, IntentResolution, PlanResolution, ToolStatePatch
+from voidx.agent.runtime_context import TaskIntent
+from voidx.skills.context import SKILL_TOOL_CONTEXT_MARKER
+from voidx.workflow.runtime import WorkflowRunState, WorkflowRunStatus
+from voidx.workflow.types import WorkflowStateEventKind
+import voidx.memory.store as store
+
+
+def _replace(lineno: int, prefix: str, suffix: str | None = None, new_string: str = "") -> dict:
+    return {
+        "operation": "replace",
+        "lineno": lineno,
+        "prefix": prefix,
+        "suffix": prefix if suffix is None else suffix,
+        "new_string": new_string,
+    }
+
+
+def _insert(lineno: int, prefix: str, suffix: str | None = None, new_string: str = "") -> dict:
+    return {
+        "operation": "insert",
+        "lineno": lineno,
+        "prefix": prefix,
+        "suffix": prefix if suffix is None else suffix,
+        "new_string": new_string,
+    }
+
+
+def _insert_bof(new_string: str) -> dict:
+    return {"operation": "insert", "lineno": 0, "prefix": "", "suffix": "", "new_string": new_string}
+
+
+
+class TestToolRegistry:
+    """Registry knows all tools."""
+
+    def test_all_tools_registered(self):
+        r = ToolRegistry()
+        ids = r.ids()
+        assert "read" in ids
+        assert "write" in ids
+        assert "edit" in ids
+        assert "glob" in ids
+        assert "grep" in ids
+        assert "git" in ids
+        assert "bash" in ids
+        assert "repo_map" in ids
+        assert "clarify" in ids
+        assert "checkpoint" in ids
+        assert "workflow" in ids
+        assert "advance_workflow" not in ids
+        assert "skill" in ids
+        assert "lsp" in ids
+        assert "lsp_format" not in ids
+
+    def test_tools_for_llm(self):
+        r = ToolRegistry()
+        tools = r.tools_for_llm()
+        assert len(tools) == len(r.ids())
+        assert len(tools) >= 10
+        for t in tools:
+            assert t["type"] == "function"
+            assert "name" in t["function"]
+            assert "description" in t["function"]
+            assert "parameters" in t["function"]
+
+    def test_builtin_tools_have_strict_mcp_tools_do_not(self):
+        r = ToolRegistry()
+        # Register a fake MCP tool
+        r.register("mcp__tavily__search_abc12345", object(), "MCP search", {"type": "object", "properties": {}})
+        tools = r.tools_for_llm()
+        builtin = next(t for t in tools if t["function"]["name"] == "read")
+        mcp = next(t for t in tools if t["function"]["name"].startswith("mcp__"))
+        assert builtin["function"]["strict"] is True
+        assert "strict" not in mcp["function"]
+
+    def test_nested_tool_schemas_keep_defs_and_strict_objects(self):
+        r = ToolRegistry()
+        clarify = r.get_def("clarify").parameters
+        checkpoint = r.get_def("checkpoint").parameters
+
+        assert "$defs" in clarify
+        assert "$defs" in checkpoint
+        assert clarify["$defs"]["ClarifyOption"]["additionalProperties"] is False
+        assert checkpoint["$defs"]["PlanStep"]["additionalProperties"] is False
+        assert checkpoint["$defs"]["PlanAlternative"]["additionalProperties"] is False
+
+    def test_unknown_tool(self):
+        r = ToolRegistry()
+        assert r.get("nonexistent") is None
+
+    def test_filter_tools_retains_only_allowed_tools(self):
+        r = ToolRegistry()
+
+        r.filter_tools({"read", "grep"})
+
+        assert set(r.ids()) == {"read", "grep"}
+        assert r.get("read") is not None
+        assert r.get("write") is None
+        names = [tool["function"]["name"] for tool in r.tools_for_llm()]
+        assert names == ["read", "grep"]
+
+
