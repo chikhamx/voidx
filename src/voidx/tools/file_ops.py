@@ -509,7 +509,7 @@ class FileInsertTool(BaseTool):
 class FileReplaceTool(BaseTool):
     id = "replace"
     description = (
-        "Replace thunk [prefix ... suffix] → new_string in a file. "
+        "Replace chunk [prefix ... suffix] → new_string in a file. "
         "Searches nearest the lineno hint; replaces only the matched segment, not the whole line. "
         "Read the target lines first."
     )
