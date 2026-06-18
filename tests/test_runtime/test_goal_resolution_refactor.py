@@ -11,7 +11,7 @@ from voidx.runtime.task_state import (
     TaskState,
     ToolStatePatch,
 )
-from voidx.tools.advance_workflow import AdvanceWorkflowTool
+from voidx.tools.workflow import WorkflowTool
 from voidx.tools.service import ToolContext
 from voidx.tools.service import ToolResult
 from voidx.workflow.reconcile import reconcile_workflow_runs_for_turn
@@ -105,9 +105,9 @@ def test_terminal_done_cascade_skips_active_downstream_nodes():
 
 
 @pytest.mark.asyncio
-async def test_advance_workflow_no_active_node_returns_done_not_error(tmp_path):
-    result = await AdvanceWorkflowTool().execute(
-        {"condition": "done", "summary": "nothing left to advance"},
+async def test_workflow_done_no_active_node_returns_guidance_success_not_error(tmp_path):
+    result = await WorkflowTool().execute(
+        {"action": "done"},
         ToolContext(workspace=str(tmp_path), workflow_runs=[]),
     )
 

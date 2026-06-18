@@ -143,9 +143,14 @@ class TestToolDisplayPolicy:
 class TestDefaultDisplayRules:
     def test_hidden_tools(self):
         hidden_tools = ["todo", "task_status", "document", "checkpoint",
-                        "compact", "advance_workflow", "skill", "clarify"]
+                        "compact", "workflow", "skill", "clarify"]
         for name in hidden_tools:
             assert DEFAULT_DISPLAY_RULES[name].mode == ToolDisplayMode.HIDDEN, f"{name} should be hidden"
+
+    def test_replay_sanitize_tools(self):
+        assert DEFAULT_DISPLAY_RULES["todo"].replay_sanitize is True
+        assert DEFAULT_DISPLAY_RULES["workflow"].replay_sanitize is True
+        assert DEFAULT_DISPLAY_RULES["compact"].replay_sanitize is False
 
     def test_summary_tools(self):
         summary_tools = ["grep", "glob", "repo_map", "websearch", "lsp"]

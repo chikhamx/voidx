@@ -178,7 +178,7 @@ def test_skill_is_allowed_read_tool(tmp_path):
     }).capability == PermissionCapability.READ_TOOLS
 
 
-@pytest.mark.parametrize("tool_name", ["clarify", "checkpoint", "advance_workflow", "compact"])
+@pytest.mark.parametrize("tool_name", ["clarify", "checkpoint", "workflow", "compact"])
 def test_interactive_runtime_tools_are_allowed(tmp_path, tool_name):
     context = PermissionContext(workspace=str(tmp_path))
     decision = authorize_tool_call(
@@ -267,7 +267,8 @@ def test_permission_engine_classifies_basic_capabilities():
     mode_implement_agent = classify_tool_call({"name": "agent", "args": {"agent": "voidx", "mode": "implement"}})
     assert mode_implement_agent.capability == PermissionCapability.AGENT_IMPLEMENT
     assert mode_implement_agent.pattern == "implement"
-    assert classify_tool_call({"name": "advance_workflow", "args": {}}).capability == PermissionCapability.READ_TOOLS
+    assert classify_tool_call({"name": "workflow", "args": {}}).capability == PermissionCapability.READ_TOOLS
+    assert classify_tool_call({"name": "advance_workflow", "args": {}}).name == "advance_workflow"
     assert classify_tool_call({"name": "compact", "args": {}}).capability == PermissionCapability.READ_TOOLS
 
 

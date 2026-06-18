@@ -363,8 +363,8 @@ class TestAutoAdvanceIntegration:
         )
         assert len(events) == 0
 
-    def test_explicit_advance_workflow_plus_auto_advance_no_duplicate(self):
-        """When advance_workflow already satisfied a node in the same batch,
+    def test_explicit_workflow_advance_plus_auto_advance_no_duplicate(self):
+        """When workflow advance already satisfied a node in the same batch,
         auto_advance_events should not produce a duplicate event."""
         runs_after_explicit = [
             WorkflowRunState(

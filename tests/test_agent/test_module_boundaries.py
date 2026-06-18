@@ -86,7 +86,7 @@ def test_cross_module_workflow_type_consumers_use_public_boundaries():
     files = [
         "src/voidx/memory/runtime_state.py",
         "src/voidx/runtime/task_state.py",
-        "src/voidx/tools/advance_workflow.py",
+        "src/voidx/tools/workflow.py",
         "src/voidx/tools/base.py",
         "src/voidx/workflow/auto_advance.py",
     ]
