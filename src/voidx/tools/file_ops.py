@@ -2,11 +2,13 @@
 
 from __future__ import annotations
 
+from bisect import bisect_right
 from dataclasses import asdict
 from typing import Literal, NamedTuple
 
 from pydantic import BaseModel, Field
 
+from voidx.agent.tool_messages import DEFAULT_TOOL_MESSAGE_MAX_CHARS
 from voidx.diffing import FileDiff, make_file_diff, parse_unified_diff
 from voidx.tools.base import BaseTool, model_to_json_schema, ToolContext, ToolResult, resolve_safe
 from voidx.tools.file_state import (
@@ -22,14 +24,34 @@ from voidx.tools.file_state import (
 )
 
 
+READ_OUTPUT_MAX_CHARS = DEFAULT_TOOL_MESSAGE_MAX_CHARS
+BINARY_DETECTION_BYTES = 8 * 1024
+
+
 class DisplayLines(NamedTuple):
     lines: list[str]
     trailing_newline: bool
 
 
-class AnchorResolution(NamedTuple):
-    edits: list["EditEntry"]
+class ResolvedEdit(NamedTuple):
+    operation: Literal["replace", "insert"]
+    start_line: int
+    end_line: int
+    new_string: str
+
+
+class ParagraphResolution(NamedTuple):
+    edits: list[ResolvedEdit]
     hints: list[str]
+
+
+class BoundedReadOutput(NamedTuple):
+    output: str
+    lines: int
+    end_line: int
+    next_offset: int | None
+    truncated_by_chars: bool
+    truncated_single_line: bool
 
 
 def _split_display_lines(text: str) -> DisplayLines:
@@ -56,6 +78,89 @@ def _join_display_lines(lines: list[str], *, trailing_newline: bool) -> str:
     return f"{text}\n" if trailing_newline else text
 
 
+def _read_continuation_note(next_offset: int) -> str:
+    return (
+        f"[Read output capped at {READ_OUTPUT_MAX_CHARS} chars. "
+        f"Next unread line: {next_offset}. Use offset={next_offset} to continue.]"
+    )
+
+
+def _overlong_line_output(line_number: int, line: str) -> str:
+    note = (
+        f"[Line {line_number} exceeds the read output budget "
+        f"({READ_OUTPUT_MAX_CHARS} chars) and was not marked as read.]"
+    )
+    prefix = f"{line_number}\t"
+    marker = "..."
+    fragment_budget = READ_OUTPUT_MAX_CHARS - len(prefix) - len(marker) - 2 - len(note)
+    if fragment_budget <= 0:
+        return note[:READ_OUTPUT_MAX_CHARS]
+    return f"{prefix}{line[:fragment_budget]}{marker}\n\n{note}"
+
+
+def _numbered_output_with_note(numbered: list[str], next_offset: int) -> str:
+    output = "\n".join(numbered)
+    note = _read_continuation_note(next_offset)
+    return f"{output}\n\n{note}" if output else note
+
+
+def _binary_null_byte_detected(path) -> bool:
+    with path.open("rb") as handle:
+        return b"\0" in handle.read(BINARY_DETECTION_BYTES)
+
+
+def _bounded_truncated_output(numbered: list[str], start_line: int, next_offset: int) -> BoundedReadOutput:
+    return BoundedReadOutput(
+        output=_numbered_output_with_note(numbered, next_offset),
+        lines=len(numbered),
+        end_line=start_line + len(numbered) - 1,
+        next_offset=next_offset,
+        truncated_by_chars=True,
+        truncated_single_line=False,
+    )
+
+
+def _bounded_numbered_read_output(lines: list[str], start_line: int) -> BoundedReadOutput:
+    numbered: list[str] = []
+    output_len = 0
+    for index, line in enumerate(lines):
+        line_number = start_line + index
+        rendered = f"{line_number}\t{line}"
+        candidate_len = output_len + (1 if numbered else 0) + len(rendered)
+        is_last_requested_line = index == len(lines) - 1
+        if is_last_requested_line and candidate_len <= READ_OUTPUT_MAX_CHARS:
+            numbered.append(rendered)
+            output_len = candidate_len
+            continue
+        if not is_last_requested_line:
+            next_offset = line_number + 1
+            candidate_with_note_len = candidate_len + 2 + len(_read_continuation_note(next_offset))
+            if candidate_with_note_len <= READ_OUTPUT_MAX_CHARS:
+                numbered.append(rendered)
+                output_len = candidate_len
+                continue
+        if not numbered:
+            return BoundedReadOutput(
+                output=_overlong_line_output(line_number, line),
+                lines=0,
+                end_line=line_number - 1,
+                next_offset=line_number,
+                truncated_by_chars=True,
+                truncated_single_line=True,
+            )
+        return _bounded_truncated_output(numbered, start_line, line_number)
+
+    end_line = start_line + len(numbered) - 1
+    return BoundedReadOutput(
+        output="\n".join(numbered),
+        lines=len(numbered),
+        end_line=end_line,
+        next_offset=None,
+        truncated_by_chars=False,
+        truncated_single_line=False,
+    )
+
+
 class FileReadInput(BaseModel):
     file_path: str = Field(description="Absolute or relative path to the file")
     offset: int | None = Field(default=None, ge=1, description="Line number to start reading from (1-based)")
@@ -78,6 +183,15 @@ class FileReadTool(BaseTool):
             return ToolResult(output=f"File not found: {inp.file_path}", metadata={"error": True})
         if path.is_dir():
             return ToolResult(output=f"Path is a directory: {inp.file_path}", metadata={"error": True})
+        if _binary_null_byte_detected(path):
+            return ToolResult(
+                title="Read blocked (binary file)",
+                output=(
+                    f"Cannot read {inp.file_path}: file appears to be binary "
+                    f"(null byte found in first {BINARY_DETECTION_BYTES} bytes)."
+                ),
+                metadata={"file": inp.file_path, "lines": 0, "binary": True, "error": True},
+            )
 
         display = _split_display_lines(path.read_text(encoding="utf-8", errors="replace"))
         lines = display.lines
@@ -115,19 +229,26 @@ class FileReadTool(BaseTool):
                 },
             )
 
-        numbered = []
-        for i, line in enumerate(sliced, start=start + 1):
-            numbered.append(f"{i}\t{line}")
+        bounded = _bounded_numbered_read_output(sliced, start + 1)
 
         record_mtime(ctx, path)
-        if sliced:
-            record_read_range(ctx, path, start + 1, start + len(sliced))
+        if bounded.lines > 0:
+            record_read_range(ctx, path, start + 1, bounded.end_line)
 
         return ToolResult(
-            title=f"Read {len(sliced)} lines",
-            output="\n".join(numbered),
-            summary=f"Read {len(sliced)}/{len(lines)} lines",
-            metadata={"file": inp.file_path, "lines": len(sliced), "total_lines": len(lines)},
+            title=f"Read {bounded.lines} lines",
+            output=bounded.output,
+            summary=f"Read {bounded.lines}/{len(lines)} lines",
+            metadata={
+                "file": inp.file_path,
+                "lines": bounded.lines,
+                "total_lines": len(lines),
+                "start_line": start + 1,
+                "end_line": bounded.end_line,
+                "next_offset": bounded.next_offset,
+                "truncated_by_chars": bounded.truncated_by_chars,
+                "truncated_single_line": bounded.truncated_single_line,
+            },
         )
 
 
@@ -136,7 +257,7 @@ class FileWriteInput(BaseModel):
     content: str = Field(
         description=(
             "Content to write. Keep under ~150 lines for best results; for larger files write "
-            "a small non-empty skeleton with anchor lines, read it, then use edit to fill it incrementally."
+            "a small non-empty skeleton with prefix/suffix markers, read it, then use edit to fill it incrementally."
         )
     )
 
@@ -146,8 +267,8 @@ class FileWriteTool(BaseTool):
     description = (
         "Write content to a file. Creates parent directories. Overwrites existing files. "
         "For files around 150 lines or larger, write a skeleton first (imports, class/function "
-        "signatures, docstrings, and anchor placeholders), read it for line numbers, then use edit "
-        "to replace anchors or insert implementation blocks incrementally. This avoids output "
+        "signatures, docstrings, and prefix/suffix markers), read it, then use edit "
+        "to replace or insert implementation blocks incrementally. This avoids output "
         "truncation and reduces wait time."
     )
 
@@ -193,7 +314,7 @@ class FileWriteTool(BaseTool):
             output += (
                 f"\nNote: This file is large ({line_count} lines). "
                 "For future writes of similar size, consider writing a skeleton first "
-                "with anchor lines, reading it, and using edit to add content incrementally."
+                "with prefix/suffix markers, reading it, and using edit to add content incrementally."
             )
 
         return ToolResult(
@@ -208,14 +329,32 @@ class FileWriteTool(BaseTool):
 class EditEntry(BaseModel):
     operation: Literal["replace", "insert"] = Field(
         description=(
-            "Edit operation. Use replace for an inclusive line range, or insert to add content "
-            "after start_line. For insert, start_line=0 inserts at the beginning of the file."
+            "Edit operation. Use replace to replace a paragraph matched by prefix/suffix, "
+            "or insert to add content after a matched paragraph."
         ),
     )
-    start_line: int = Field(description="1-based replacement start line or insert-after anchor line; 0 means file start for insert")
-    end_line: int | None = Field(
-        default=None,
-        description="1-based replacement end line, inclusive. Required for replace; omitted for insert.",
+    lineno: int = Field(
+        ge=0,
+        description=(
+            "Required search start hint. Use 1-based line numbers for normal edits; use 0 as a "
+            "beginning-of-file hint. The tool searches within ±100 lines of this line for "
+            "prefix/suffix matches. Not used as a precise target line."
+        ),
+    )
+    prefix: str = Field(
+        description=(
+            "Text snippet that marks the beginning of the target paragraph. Can be a substring "
+            "within a line or a short multi-line snippet. Must not be empty, except for "
+            "beginning-of-file insertion/prepend with lineno=0."
+        ),
+    )
+    suffix: str = Field(
+        description=(
+            "Text snippet that marks the end of the target paragraph. Can be a substring within "
+            "a line or a short multi-line snippet. For single-line targets, prefix and suffix can "
+            "match the same line. Must not be empty, except for beginning-of-file insertion/prepend "
+            "with lineno=0."
+        ),
     )
     new_string: str = Field(
         description=(
@@ -223,24 +362,14 @@ class EditEntry(BaseModel):
             "start with a newline only when an intentional blank first line is desired."
         )
     )
-    scope: str | None = Field(
-        default=None,
-        description="Optional nearby stable line, such as a function/class definition, used to limit anchor search.",
-    )
-    anchor: str | None = Field(
-        default=None,
-        description=(
-            "Optional expected content at start_line. If it does not match, edit searches and "
-            "corrects the line when unique, or returns an ambiguity error when multiple matches exist."
-        ),
-    )
 
 
 class FileEditInput(BaseModel):
     file_path: str = Field(description="Path to edit")
     edits: list[EditEntry] = Field(
         description=(
-            "Line-based edits to apply atomically. Read the target lines first; ranges use 1-based line numbers."
+            "Prefix/suffix paragraph edits to apply atomically. Read the target lines first; lineno "
+            "is a search hint and prefix/suffix are the locators."
         )
     )
 
@@ -248,10 +377,9 @@ class FileEditInput(BaseModel):
 class FileEditTool(BaseTool):
     id = "edit"
     description = (
-        "Edit a single file by 1-based line numbers after reading the target lines. "
-        "Use replace with start_line/end_line, or insert to add content after start_line "
-        "(start_line=0 inserts at the beginning). For edits after line shifts, provide "
-        "anchor and optionally scope so the tool can verify or correct the target line. "
+        "Edit a single file by matching prefix/suffix text snippets near a required lineno hint. "
+        "Use replace to replace the matched paragraph, or insert to add content after it. "
+        "Use lineno=0 with empty prefix/suffix for beginning-of-file prepend. "
         "Multiple edits apply atomically from bottom to top."
     )
 
@@ -281,24 +409,28 @@ class FileEditTool(BaseTool):
         lines = list(display.lines)
         total_lines = len(lines)
 
-        validation_error = _validate_line_edits(inp.edits, total_lines)
-        if validation_error:
-            return ToolResult(output=validation_error, metadata={"error": True})
+        for i, edit in enumerate(inp.edits):
+            if edit.operation == "insert" and edit.new_string == "":
+                return ToolResult(
+                    title="No changes",
+                    output=f"Edit {i}: insertion content is empty; no changes applied.",
+                    summary="No changes",
+                    metadata={"file": inp.file_path, "operations": 0},
+                )
 
-        resolution = _resolve_anchored_edits(lines, inp.edits)
+        resolution = _resolve_paragraph_edits(lines, inp.edits)
         if isinstance(resolution, str):
             return ToolResult(output=resolution, metadata={"error": True})
         edits = resolution.edits
 
-        validation_error = _validate_line_edits(edits, total_lines)
+        validation_error = _validate_resolved_edits(edits, total_lines)
         if validation_error:
             return ToolResult(output=validation_error, metadata={"error": True})
 
         for i, edit in enumerate(edits):
-            if edit.operation == "insert" and edit.start_line == 0:
+            if (edit.start_line, edit.end_line) == (0, 0):
                 continue
-            range_end = edit.end_line if edit.operation == "replace" else edit.start_line
-            coverage_error = check_read_coverage(ctx, path, edit.start_line, range_end or edit.start_line)
+            coverage_error = check_read_coverage(ctx, path, edit.start_line, edit.end_line)
             if coverage_error:
                 return ToolResult(output=f"Edit {i}: {coverage_error}", metadata={"error": True})
 
@@ -314,8 +446,10 @@ class FileEditTool(BaseTool):
         for edit in sorted(edits, key=lambda item: item.start_line, reverse=True):
             new_lines = _split_edit_lines(edit.new_string)
             if edit.operation == "replace":
-                assert edit.end_line is not None
-                lines[edit.start_line - 1:edit.end_line] = new_lines
+                if (edit.start_line, edit.end_line) == (0, 0):
+                    lines[0:0] = new_lines
+                else:
+                    lines[edit.start_line - 1:edit.end_line] = new_lines
             else:
                 lines[edit.start_line:edit.start_line] = new_lines
 
@@ -343,163 +477,137 @@ class FileEditTool(BaseTool):
         )
 
 
-def _validate_line_edits(edits: list[EditEntry], total_lines: int) -> str | None:
+def _validate_resolved_edits(edits: list[ResolvedEdit], total_lines: int) -> str | None:
     replacements: list[tuple[int, int]] = []
-    insertion_anchors: set[int] = set()
+    insertion_locations: set[int] = set()
     for i, edit in enumerate(edits):
         if edit.operation == "replace":
-            if edit.start_line < 1 or edit.start_line > total_lines:
+            if (edit.start_line, edit.end_line) == (0, 0):
+                insertion_locations.add(0)
+                continue
+            if edit.start_line < 1 or edit.end_line > total_lines:
                 return f"Edit {i}: line number out of range for file with {total_lines} lines."
-            if edit.end_line is None:
-                return f"Edit {i}: end_line is required for replace."
             if edit.end_line < edit.start_line:
                 return f"Edit {i}: start_line must be <= end_line."
-            if edit.end_line > total_lines:
-                return f"Edit {i}: line number out of range for file with {total_lines} lines."
             replacements.append((edit.start_line, edit.end_line))
         else:
             if edit.start_line < 0 or edit.start_line > total_lines:
                 return f"Edit {i}: line number out of range for file with {total_lines} lines."
-            if edit.end_line is not None:
-                return f"Edit {i}: end_line must be omitted for insertions."
-            if edit.new_string == "":
-                return f"Edit {i}: insertion content must not be empty."
-            if edit.start_line == 0 and edit.anchor:
-                return f"Edit {i}: anchor cannot be used with insert at start_line 0."
-            if edit.start_line in insertion_anchors:
-                return f"Edit {i}: multiple insertions at the same anchor are ambiguous."
-            insertion_anchors.add(edit.start_line)
+            if edit.start_line in insertion_locations:
+                return f"Edit {i}: multiple insertions at the same resolved location are ambiguous."
+            insertion_locations.add(edit.start_line)
 
     for i, (start, end) in enumerate(replacements):
         for other_start, other_end in replacements[i + 1:]:
             if start <= other_end and other_start <= end:
                 return "Edit ranges must not overlap."
-        for anchor in insertion_anchors:
-            if start <= anchor <= end:
-                return "Insertion anchor must not be inside a replacement range."
+        for location in insertion_locations:
+            if start <= location <= end:
+                return "Insert location must not be inside a replacement range."
     return None
 
 
-def _resolve_anchored_edits(lines: list[str], edits: list[EditEntry]) -> AnchorResolution | str:
-    resolved: list[EditEntry] = []
-    hints: list[str] = []
+def _resolve_paragraph_edits(lines: list[str], edits: list[EditEntry]) -> ParagraphResolution | str:
+    resolved: list[ResolvedEdit] = []
     for i, edit in enumerate(edits):
-        scope_bounds: tuple[int, int] | None = None
-        if edit.scope:
-            scope_matches = _find_text_lines(lines, edit.scope)
-            if not scope_matches:
-                return f"Edit {i}: scope {edit.scope!r} not found. Read the file to get current content."
-            if len(scope_matches) > 1:
-                return f"Edit {i}: scope {edit.scope!r} is ambiguous at lines {_format_lines(scope_matches)}."
-            scope_bounds = _scope_search_bounds(lines, scope_matches[0])
-
-        if not edit.anchor:
-            resolved.append(edit)
-            continue
-
-        if 1 <= edit.start_line <= len(lines) and edit.anchor in lines[edit.start_line - 1]:
-            resolved.append(edit)
-            continue
-
-        search_start, search_end = scope_bounds if scope_bounds is not None else (1, len(lines))
-        matches = _find_text_lines(lines, edit.anchor, start_line=search_start, end_line=search_end)
-        if not matches:
-            return f"Edit {i}: anchor {edit.anchor!r} not found. Read the file to get current content."
-        if len(matches) > 1:
-            return f"Edit {i}: anchor {edit.anchor!r} is ambiguous at lines {_format_lines(matches)}."
-
-        new_start = matches[0]
-        old_start = edit.start_line
-        update = {"start_line": new_start}
-        if edit.operation == "replace":
-            assert edit.end_line is not None
-            update["end_line"] = new_start + (edit.end_line - edit.start_line)
-        corrected = edit.model_copy(update=update)
-        hints.append(
-            f"Line corrected: edit {i} start_line {old_start} -> {new_start} "
-            f"(matched anchor {edit.anchor!r})"
-        )
-        resolved.append(corrected)
-    return AnchorResolution(resolved, hints)
+        found = _find_paragraph(lines, edit.operation, edit.lineno, edit.prefix, edit.suffix)
+        if isinstance(found, str):
+            return f"Edit {i}: {found}"
+        start_line, end_line = found
+        resolved.append(ResolvedEdit(edit.operation, start_line, end_line, edit.new_string))
+    return ParagraphResolution(resolved, [])
 
 
-def _find_text_lines(lines: list[str], text: str, *, start_line: int = 1, end_line: int | None = None) -> list[int]:
-    if end_line is None:
-        end_line = len(lines)
-    start_line = max(start_line, 1)
-    end_line = min(end_line, len(lines))
-    return [
-        lineno
-        for lineno in range(start_line, end_line + 1)
-        if text in lines[lineno - 1]
+def _find_paragraph(
+    lines: list[str],
+    operation: Literal["replace", "insert"],
+    lineno: int,
+    prefix: str,
+    suffix: str,
+) -> tuple[int, int] | str:
+    del operation
+    if lineno == 0 and prefix == "" and suffix == "":
+        return (0, 0)
+    if prefix == "" or suffix == "":
+        return "prefix and suffix must not be empty (except beginning-of-file insertion/prepend with lineno=0)."
+
+    total_lines = len(lines)
+    if lineno == 0:
+        window_start, window_end = 1, min(total_lines, 100)
+    else:
+        window_start = max(1, lineno - 100)
+        window_end = min(total_lines, lineno + 100)
+    if window_start > window_end:
+        return f"prefix {prefix!r} not found within ±100 lines of line {lineno}. Read the file to get current content."
+
+    text, line_starts = _window_text(lines, window_start, window_end)
+    matches = _find_snippet_matches(text, line_starts, window_start, prefix)
+    if not matches:
+        return f"prefix {prefix!r} not found within ±100 lines of line {lineno}. Read the file to get current content."
+
+    target_line = 0 if lineno == 0 else lineno
+    distances = [abs(match_line - target_line) for _, match_line in matches]
+    min_distance = min(distances)
+    nearest = [
+        match
+        for match, distance in zip(matches, distances)
+        if distance == min_distance
     ]
+    nearest_lines = sorted({line for _, line in nearest})
+    if len(nearest_lines) > 1:
+        return f"prefix {prefix!r} is ambiguous at lines {_format_lines(nearest_lines)}. Provide a more specific prefix or adjust lineno."
+
+    prefix_offset, start_line = nearest[0]
+    suffix_offset = text.find(suffix, prefix_offset)
+    if suffix_offset == -1:
+        return f"suffix {suffix!r} not found after prefix at line {start_line}. Read the file to get current content."
+    suffix_end_offset = suffix_offset + len(suffix) - 1
+    end_line = _line_for_offset(line_starts, window_start, suffix_end_offset)
+    return (start_line, end_line)
 
 
-def _scope_search_bounds(lines: list[str], scope_line: int) -> tuple[int, int]:
-    if scope_line < 1 or scope_line > len(lines):
-        return 1, len(lines)
-    scope_text = lines[scope_line - 1]
-    if "{" in scope_text and scope_text.count("{") > scope_text.count("}"):
-        balance = 0
-        brace_end: int | None = None
-        for lineno in range(scope_line, len(lines) + 1):
-            balance += lines[lineno - 1].count("{")
-            balance -= lines[lineno - 1].count("}")
-            if lineno > scope_line and balance <= 0:
-                brace_end = lineno
-                break
-        if brace_end is not None:
-            return scope_line, brace_end
-        # No closing brace was found. Fall through to the text/indent fallback below.
-    stripped = scope_text.strip()
-    if stripped.endswith(":"):
-        indent = _indent_width(scope_text)
-        for lineno in range(scope_line + 1, len(lines) + 1):
-            line = lines[lineno - 1]
-            if line.strip() and _indent_width(line) <= indent:
-                return scope_line, lineno - 1
-        return scope_line, len(lines)
-
-    indent = _indent_width(scope_text)
-    for lineno in range(scope_line + 1, len(lines) + 1):
-        line = lines[lineno - 1]
-        if line.strip() and _indent_width(line) <= indent and _looks_like_structure_start(line):
-            return scope_line, lineno - 1
-    return scope_line, len(lines)
+def _window_text(lines: list[str], start_line: int, end_line: int) -> tuple[str, list[int]]:
+    selected = lines[start_line - 1:end_line]
+    starts: list[int] = []
+    offset = 0
+    for i, line in enumerate(selected):
+        starts.append(offset)
+        offset += len(line)
+        if i < len(selected) - 1:
+            offset += 1
+    return "\n".join(selected), starts
 
 
-def _indent_width(line: str) -> int:
-    return len(line) - len(line.lstrip(" \t"))
+def _find_snippet_matches(text: str, line_starts: list[int], window_start: int, snippet: str) -> list[tuple[int, int]]:
+    matches: list[tuple[int, int]] = []
+    offset = text.find(snippet)
+    while offset != -1:
+        matches.append((offset, _line_for_offset(line_starts, window_start, offset)))
+        offset = text.find(snippet, offset + 1)
+    return matches
 
 
-def _looks_like_structure_start(line: str) -> bool:
-    stripped = line.lstrip()
-    return stripped.startswith((
-        "async def ",
-        "def ",
-        "class ",
-        "function ",
-        "fn ",
-        "struct ",
-        "enum ",
-        "interface ",
-        "type ",
-    ))
+def _line_for_offset(line_starts: list[int], window_start: int, offset: int) -> int:
+    index = bisect_right(line_starts, offset) - 1
+    return window_start + max(index, 0)
 
 
 def _format_lines(lines: list[int]) -> str:
     return ", ".join(str(line) for line in lines)
 
 
-def _line_shift_hints(edits: list[EditEntry]) -> list[str]:
+def _line_shift_hints(edits: list[ResolvedEdit]) -> list[str]:
     hints: list[str] = []
     for edit in sorted(edits, key=lambda item: item.start_line):
         new_count = len(_split_edit_lines(edit.new_string))
         if edit.operation == "replace":
-            assert edit.end_line is not None
-            offset = new_count - (edit.end_line - edit.start_line + 1)
+            old_count = 0 if (edit.start_line, edit.end_line) == (0, 0) else edit.end_line - edit.start_line + 1
+            offset = new_count - old_count
             if offset:
-                hints.append(f"Line shift: lines after {edit.end_line} shifted by {offset:+d}")
+                if edit.end_line == 0:
+                    hints.append(f"Line shift: all existing lines shifted by {offset:+d}")
+                else:
+                    hints.append(f"Line shift: lines after {edit.end_line} shifted by {offset:+d}")
         else:
             if new_count == 0:
                 continue
@@ -510,7 +618,7 @@ def _line_shift_hints(edits: list[EditEntry]) -> list[str]:
     return hints
 
 
-def _result_trailing_newline(edits: list[EditEntry], total_lines: int, original_trailing_newline: bool) -> bool:
+def _result_trailing_newline(edits: list[ResolvedEdit], total_lines: int, original_trailing_newline: bool) -> bool:
     trailing_newline = original_trailing_newline
     for edit in edits:
         touches_final = (

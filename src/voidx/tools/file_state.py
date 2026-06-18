@@ -198,6 +198,7 @@ def _line_numbers_to_ranges(line_numbers: list[int]) -> list[tuple[int, int]]:
 
 
 def check_read_coverage(ctx: ToolContext, resolved: Path, start_line: int, end_line: int) -> str | None:
+    """Return None when the range is covered, otherwise return an edit-blocking message."""
     if covered_read_range(ctx, resolved, start_line, end_line) is not None:
         return None
     key = str(resolved.resolve())
