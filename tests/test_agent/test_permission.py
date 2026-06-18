@@ -237,6 +237,8 @@ def test_permission_service_mode_presets_update_sandbox_and_approval():
     service.set_permission_mode("accept-edits")
     assert service.sandbox_mode == "workspace-write"
     assert service.decide("edit", "src/app.py") == "allow"
+    assert service.decide("insert", "src/app.py") == "allow"
+    assert service.decide("replace", "src/app.py") == "allow"
     assert service.decide("bash", "python -m pytest") == "ask"
 
     service.set_permission_mode("full-access")
@@ -249,6 +251,8 @@ def test_permission_service_mode_presets_update_sandbox_and_approval():
 def test_permission_engine_classifies_basic_capabilities():
     assert classify_tool_call({"name": "read", "args": {"file_path": "x.py"}}).capability == PermissionCapability.READ_TOOLS
     assert classify_tool_call({"name": "edit", "args": {"file_path": "x.py"}}).capability == PermissionCapability.FILE_WRITE
+    assert classify_tool_call({"name": "insert", "args": {"file_path": "x.py"}}).capability == PermissionCapability.FILE_WRITE
+    assert classify_tool_call({"name": "replace", "args": {"file_path": "x.py"}}).capability == PermissionCapability.FILE_WRITE
     assert classify_tool_call({"name": "bash", "args": {"command": "ls"}}).capability == PermissionCapability.BASH_READ
     assert classify_tool_call({"name": "bash", "args": {"command": "ls | sort | head"}}).capability == PermissionCapability.BASH_READ
     assert classify_tool_call({"name": "bash", "args": {"command": "python -m pytest"}}).capability == PermissionCapability.BASH_WRITE
@@ -317,6 +321,8 @@ def test_permission_engine_policy_presets(tmp_path):
     )
 
     assert authorize_tool_call({"name": "edit", "args": {"file_path": "x.py"}}, accept_edits).action == "allow"
+    assert authorize_tool_call({"name": "insert", "args": {"file_path": "x.py"}}, accept_edits).action == "allow"
+    assert authorize_tool_call({"name": "replace", "args": {"file_path": "x.py"}}, accept_edits).action == "allow"
     assert authorize_tool_call({"name": "bash", "args": {"command": "python -m pytest"}}, accept_edits).action == "ask"
     assert authorize_tool_call({"name": "bash", "args": {"command": "python -m pytest"}}, full_access).action == "allow"
 
@@ -336,6 +342,8 @@ def test_permission_engine_read_only_sandbox_allows_read_bash_but_blocks_writes(
     assert authorize_tool_call({"name": "git", "args": {"command": "commit"}}, context).action == "deny"
     assert authorize_tool_call({"name": "bash", "args": {"command": "python -m pytest"}}, context).action == "deny"
     assert authorize_tool_call({"name": "edit", "args": {"file_path": "x.py"}}, context).action == "deny"
+    assert authorize_tool_call({"name": "insert", "args": {"file_path": "x.py"}}, context).action == "deny"
+    assert authorize_tool_call({"name": "replace", "args": {"file_path": "x.py"}}, context).action == "deny"
 
 
 def test_sandbox_bash_tracks_cd_before_relative_write(tmp_path):

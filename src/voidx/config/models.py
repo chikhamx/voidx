@@ -105,3 +105,11 @@ class Config(BaseModel):
     approval_reviewer: ApprovalReviewer = ApprovalReviewer.USER
     ask_compact: bool = False
     user_profile: UserProfile = Field(default_factory=UserProfile)
+    log_llm_exchange: bool = Field(
+        default=False,
+        description="Log full LLM request/response exchanges to llm_requests.jsonl.",
+    )
+    log_llm_diagnostic: bool = Field(
+        default=True,
+        description="Log goal-resolver diagnostic events to llm_requests.jsonl.",
+    )

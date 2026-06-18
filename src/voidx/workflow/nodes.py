@@ -31,7 +31,7 @@ BRAINSTORMING = WorkflowNode(
         "websearch",
     ],
     gate=NodeGate(
-        denied_tools=("write", "edit"),
+        denied_tools=("write", "edit", "insert", "replace"),
         description=(
             "Do not write code, invoke implementation workflows, or take implementation "
             "action until the design is presented and approved. This applies regardless "
@@ -77,6 +77,8 @@ WRITING_DESIGN_DOCS = WorkflowNode(
         "grep",
         "write",
         "edit",
+        "insert",
+        "replace",
         "document",
         "repo_map",
         "webfetch",
@@ -128,9 +130,11 @@ WRITING_PLANS = WorkflowNode(
         "websearch",
         "write",
         "edit",
+        "insert",
+        "replace",
     ],
     gate=NodeGate(
-        denied_tools=("write", "edit"),
+        denied_tools=("write", "edit", "insert", "replace"),
         allowed_paths=("docs/specs/**", "docs/design/**"),
         description="Do not write implementation code until the plan is approved. Write/edit is allowed only under docs/specs/ and docs/design/ for plan documents.",
         required_before_transition="plan is executable and approved",
@@ -172,6 +176,8 @@ TEST_DRIVEN_DEVELOPMENT = WorkflowNode(
         "read",
         "write",
         "edit",
+        "insert",
+        "replace",
         "bash",
         "glob",
         "grep",
@@ -320,6 +326,8 @@ RECEIVING_CODE_REVIEW = WorkflowNode(
         "read",
         "write",
         "edit",
+        "insert",
+        "replace",
         "bash",
         "glob",
         "grep",
@@ -374,7 +382,7 @@ SYSTEMATIC_DEBUGGING = WorkflowNode(
         "lsp",
     ],
     gate=NodeGate(
-        denied_tools=("write", "edit"),
+        denied_tools=("write", "edit", "insert", "replace"),
         description="Root cause investigation must complete before proposing or applying any fix.",
         required_before_transition="root cause identified with evidence",
     ),

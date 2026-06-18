@@ -58,7 +58,7 @@ BUILTIN_AGENTS: dict[str, AgentDef] = {
             "document",
             "webfetch", "websearch", "repo_map",
             "lsp",
-            "write", "edit", "git",
+            "write", "insert", "replace", "edit", "git",
         ],
         can_write=True,
         can_delegate=True,
@@ -68,7 +68,7 @@ BUILTIN_AGENTS: dict[str, AgentDef] = {
 }
 
 CHILD_RUN_TOOLS = [
-    "read", "write", "edit", "glob", "grep", "bash", "todo", "skill", "repo_map",
+    "read", "write", "insert", "replace", "edit", "glob", "grep", "bash", "todo", "skill", "repo_map",
     "lsp",
 ]
 

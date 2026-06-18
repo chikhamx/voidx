@@ -296,7 +296,7 @@ def test_orchestrator_has_direct_edit_tools():
     agent = get_agent("voidx")
 
     assert agent is not None
-    assert {"write", "edit"}.issubset(set(agent.tools))
+    assert {"write", "insert", "replace", "edit"}.issubset(set(agent.tools))
     assert {"clarify", "checkpoint", "skill"}.issubset(set(agent.tools))
     assert get_agent("sub-voidx") is None
     assert get_agent("explore") is None
@@ -342,5 +342,4 @@ def test_brainstorm_workflow_does_not_write_design():
 def test_internal_title_and_compaction_are_not_registered_agents():
     assert get_agent("compaction") is None
     assert get_agent("title") is None
-
 

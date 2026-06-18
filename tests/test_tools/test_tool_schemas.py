@@ -19,10 +19,14 @@ from voidx.tools.file_ops import (
     FileReadInput,
     FileWriteInput,
     FileEditInput,
+    FileInsertInput,
+    FileReplaceInput,
     EditEntry,
     FileReadTool,
     FileWriteTool,
     FileEditTool,
+    FileInsertTool,
+    FileReplaceTool,
     _find_paragraph,
 )
 from voidx.tools.file_state import save_file_version
@@ -146,6 +150,27 @@ class TestToolSchemas:
         with pytest.raises(ValueError):
             EditEntry(lineno=1, prefix="a", suffix="a", new_string="b")
 
+    def test_insert_input_only_needs_line_and_content(self):
+        inp = FileInsertInput(file_path="x.py", lineno=3, new_string="added\n")
+        schema = FileInsertTool().parameters_schema()
+
+        assert inp.lineno == 3
+        assert set(schema["properties"]) == {"file_path", "lineno", "new_string"}
+
+    def test_replace_input_uses_prefix_suffix_text_segment_without_operation(self):
+        inp = FileReplaceInput(file_path="x.py", lineno=3, prefix="old", suffix="old", new_string="new")
+        schema = FileReplaceTool().parameters_schema()
+
+        assert inp.prefix == "old"
+        assert set(schema["properties"]) == {"file_path", "lineno", "prefix", "suffix", "new_string"}
+        assert "30" in schema["properties"]["lineno"]["description"]
+        assert "text segment" in schema["properties"]["prefix"]["description"].lower()
+        assert "included in the replaced text" in schema["properties"]["suffix"]["description"].lower()
+        assert "do not use text you want to keep" in FileReplaceTool().description.lower()
+        assert "operation" not in schema["properties"]
+        assert "edits" not in schema["properties"]
+        assert "old_text" not in schema["properties"]
+
     def test_glob_input(self):
         inp = GlobInput(pattern="**/*.py")
         assert inp.pattern == "**/*.py"
@@ -190,5 +215,3 @@ class TestToolSchemas:
     def test_agent_input_requires_mode_task_and_target(self):
         with pytest.raises(ValueError):
             AgentInput.model_validate({"agent": "voidx", "task": "inspect"})
-
-

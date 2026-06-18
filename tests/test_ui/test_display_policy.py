@@ -158,7 +158,7 @@ class TestDefaultDisplayRules:
             assert DEFAULT_DISPLAY_RULES[name].mode == ToolDisplayMode.SUMMARY, f"{name} should be summary"
 
     def test_show_tools(self):
-        show_tools = ["bash", "read", "write", "edit", "agent", "webfetch", "git"]
+        show_tools = ["bash", "read", "write", "edit", "insert", "replace", "agent", "webfetch", "git"]
         for name in show_tools:
             assert DEFAULT_DISPLAY_RULES[name].mode == ToolDisplayMode.SHOW, f"{name} should be show"
 

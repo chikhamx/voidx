@@ -5,7 +5,7 @@ from __future__ import annotations
 from pydantic import BaseModel, ConfigDict
 
 from voidx.tools.base import ToolContext, ToolResult  # noqa: F401 — re-export
-from voidx.tools.file_ops import FileReadTool, FileWriteTool, FileEditTool
+from voidx.tools.file_ops import FileReadTool, FileWriteTool, FileEditTool, FileInsertTool, FileReplaceTool
 from voidx.tools.git import GitTool
 from voidx.tools.lsp import LspTool
 from voidx.tools.repomap import RepoMapTool
@@ -44,7 +44,7 @@ class ToolRegistry:
 
     def _register_builtins(self) -> None:
         for cls in [
-            FileReadTool, FileWriteTool, FileEditTool,
+            FileReadTool, FileWriteTool, FileEditTool, FileInsertTool, FileReplaceTool,
             GitTool,
             RepoMapTool,
             GlobTool, GrepTool, BashTool,
@@ -116,6 +116,8 @@ class ToolRegistry:
         """Generate OpenAI/Anthropic-compatible tool definitions."""
         result = []
         for t in self._tools.values():
+            if t.id == "edit":
+                continue
             # MCP tools come from third-party servers whose inputSchema may not
             # comply with OpenAI strict mode (optional fields, missing
             # additionalProperties:false).  Only enable strict for builtins.

@@ -855,6 +855,7 @@ class VoidXGraph(
                     provider=self.config.model.provider,
                     step=step,
                     session_id=self._session.id if self._session else None,
+                    enabled=self.config.log_llm_exchange,
                 )
                 self._usage_stats.record_call(
                     extract_token_usage(assistant_msg),

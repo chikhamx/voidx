@@ -344,10 +344,11 @@ def _tool_display_name(tool_name: str, label: str) -> str:
         "grep": "Search",
         "glob": "Search",
         "edit": "Update",
+        "insert": "Update",
+        "replace": "Update",
         "write": "Update",
         "lsp": "Lsp",
         "bash": "Bash",
-        "agent": "Agent",
         "webfetch": "Fetch",
         "websearch": "Search",
         "repo_map": "Map",
@@ -373,7 +374,7 @@ def _tool_display_name(tool_name: str, label: str) -> str:
 
 def _tool_display_value(tool_name: str, args: str, raw_args: dict[str, Any]) -> str:
     value: object = ""
-    if tool_name in {"read", "edit", "write", "lsp"}:
+    if tool_name in {"read", "edit", "insert", "replace", "write", "lsp"}:
         value = raw_args.get("file_path") or raw_args.get("path")
     elif tool_name == "grep":
         pattern = raw_args.get("pattern") or raw_args.get("query")

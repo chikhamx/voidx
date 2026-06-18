@@ -240,7 +240,9 @@ async def test_call_llm_keeps_bound_tools_fixed_across_active_workflow_node(tmp_
     assert "workflow" in tool_names
     assert "bash" in tool_names
     assert "write" in tool_names
-    assert "edit" in tool_names
+    assert "insert" in tool_names
+    assert "replace" in tool_names
+    assert "edit" not in tool_names
 
 
 def test_agent_static_tool_defs_hide_unlisted_non_mcp_tools_but_allow_mcp():

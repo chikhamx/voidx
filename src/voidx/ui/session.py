@@ -225,7 +225,7 @@ class SessionChangeTracker:
         workspace: str,
         extra_paths: list[str] | None = None,
     ) -> None:
-        if tool_name not in {"write", "edit"}:
+        if tool_name not in {"write", "edit", "insert", "replace"}:
             return
         file_path = args.get("file_path")
         if not isinstance(file_path, str) or not file_path:

@@ -255,3 +255,61 @@ class TestLogLlmDiagnostic:
         assert entry["intent"] == "general"
         assert entry["plan_join"] == ""
         assert entry["fallback_reason"] == "structured_output_error"
+
+
+class TestLogLlmExchangeToggle:
+    def test_enabled_false_skips_write(self, tmp_path, monkeypatch):
+        from voidx.logging import request_log
+
+        monkeypatch.setattr(request_log, "_DEFAULT_LOG_DIR", tmp_path)
+
+        log_llm_exchange(
+            [HumanMessage(content="hi")],
+            AIMessage(content="hey"),
+            model="gpt-4",
+            provider="openai",
+            step=0,
+            enabled=False,
+        )
+
+        log_file = tmp_path / "llm_requests.jsonl"
+        assert not log_file.exists()
+
+    def test_enabled_true_writes(self, tmp_path, monkeypatch):
+        from voidx.logging import request_log
+
+        monkeypatch.setattr(request_log, "_DEFAULT_LOG_DIR", tmp_path)
+
+        log_llm_exchange(
+            [HumanMessage(content="hi")],
+            AIMessage(content="hey"),
+            model="gpt-4",
+            provider="openai",
+            step=0,
+            enabled=True,
+        )
+
+        log_file = tmp_path / "llm_requests.jsonl"
+        assert log_file.exists()
+
+
+class TestLogLlmDiagnosticToggle:
+    def test_enabled_false_skips_write(self, tmp_path, monkeypatch):
+        from voidx.logging import request_log
+
+        monkeypatch.setattr(request_log, "_DEFAULT_LOG_DIR", tmp_path)
+
+        log_llm_diagnostic("test_event", enabled=False, key="value")
+
+        log_file = tmp_path / "llm_requests.jsonl"
+        assert not log_file.exists()
+
+    def test_enabled_true_writes(self, tmp_path, monkeypatch):
+        from voidx.logging import request_log
+
+        monkeypatch.setattr(request_log, "_DEFAULT_LOG_DIR", tmp_path)
+
+        log_llm_diagnostic("test_event", enabled=True, key="value")
+
+        log_file = tmp_path / "llm_requests.jsonl"
+        assert log_file.exists()

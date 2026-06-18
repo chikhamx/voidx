@@ -131,6 +131,8 @@ DEFAULT_DISPLAY_RULES: dict[str, ToolDisplayRule] = {
     # ── Show ──
     "write": ToolDisplayRule(tool_name="write", mode=ToolDisplayMode.SHOW),
     "edit": ToolDisplayRule(tool_name="edit", mode=ToolDisplayMode.SHOW),
+    "insert": ToolDisplayRule(tool_name="insert", mode=ToolDisplayMode.SHOW),
+    "replace": ToolDisplayRule(tool_name="replace", mode=ToolDisplayMode.SHOW),
     "agent": ToolDisplayRule(tool_name="agent", mode=ToolDisplayMode.SHOW),
     "git": ToolDisplayRule(tool_name="git", mode=ToolDisplayMode.SHOW),
 }

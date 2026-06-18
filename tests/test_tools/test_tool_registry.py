@@ -80,6 +80,8 @@ class TestToolRegistry:
         assert "read" in ids
         assert "write" in ids
         assert "edit" in ids
+        assert "insert" in ids
+        assert "replace" in ids
         assert "glob" in ids
         assert "grep" in ids
         assert "git" in ids
@@ -96,8 +98,12 @@ class TestToolRegistry:
     def test_tools_for_llm(self):
         r = ToolRegistry()
         tools = r.tools_for_llm()
-        assert len(tools) == len(r.ids())
+        assert len(tools) == len([tool_id for tool_id in r.ids() if tool_id != "edit"])
         assert len(tools) >= 10
+        names = [t["function"]["name"] for t in tools]
+        assert "insert" in names
+        assert "replace" in names
+        assert "edit" not in names
         for t in tools:
             assert t["type"] == "function"
             assert "name" in t["function"]
@@ -139,5 +145,4 @@ class TestToolRegistry:
         assert r.get("write") is None
         names = [tool["function"]["name"] for tool in r.tools_for_llm()]
         assert names == ["read", "grep"]
-
 

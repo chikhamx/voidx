@@ -282,7 +282,7 @@ class RuntimeContextBuilder:
             for item in todo_state.items:
                 lines.append(f"  - {item.status}: {item.content}")
         if self.interaction_mode == InteractionMode.PLAN:
-            lines.append("- Constraint: plan mode blocks write/edit, write-capable bash, and implement delegation.")
+            lines.append("- Constraint: plan mode blocks write/insert/replace/edit, write-capable bash, and implement delegation.")
         elif self.interaction_mode == InteractionMode.GOAL:
             lines.append("- Constraint: goal mode should keep work scoped to the current user goal and task state.")
         return "\n".join(lines)

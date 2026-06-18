@@ -60,6 +60,7 @@ async def resolve_goal_for_turn(
     user_text: str,
     interaction_mode: str | InteractionMode | None,
     task_state: TaskState,
+    log_diagnostic: bool = True,
 ) -> GoalResolution:
     fallback = GoalResolution(
         intent=IntentResolution(type=TaskIntent.GENERAL, desc=""),
@@ -73,14 +74,14 @@ async def resolve_goal_for_turn(
     if model is None:
         fallback_reason = "model_unavailable"
         normalized = _normalize_resolution(fallback, user_text, interaction_mode, task_state)
-        _log_goal_resolver_decision(normalized, user_text, task_state, fallback_reason, fallback_error_type, fallback_error)
+        _log_goal_resolver_decision(normalized, user_text, task_state, fallback_reason, fallback_error_type, fallback_error, enabled=log_diagnostic)
         return normalized
 
     structured = getattr(model, "with_structured_output", None)
     if not callable(structured):
         fallback_reason = "structured_output_unsupported"
         normalized = _normalize_resolution(fallback, user_text, interaction_mode, task_state)
-        _log_goal_resolver_decision(normalized, user_text, task_state, fallback_reason, fallback_error_type, fallback_error)
+        _log_goal_resolver_decision(normalized, user_text, task_state, fallback_reason, fallback_error_type, fallback_error, enabled=log_diagnostic)
         return normalized
 
     try:
@@ -90,7 +91,7 @@ async def resolve_goal_for_turn(
             runnable.ainvoke(resolver_messages),
             timeout=GOAL_RESOLVER_TIMEOUT_SECONDS,
         )
-        _log_goal_resolver_exchange(resolver_messages, raw=raw)
+        _log_goal_resolver_exchange(resolver_messages, raw=raw, enabled=log_diagnostic)
         resolution = _coerce_resolution(raw)
     except Exception as exc:
         fallback_reason = "structured_output_error"
@@ -102,6 +103,7 @@ async def resolve_goal_for_turn(
                 resolver_messages,
                 error_type=fallback_error_type,
                 error=fallback_error,
+                enabled=log_diagnostic,
             )
         resolution = None
 
@@ -115,7 +117,7 @@ async def resolve_goal_for_turn(
         normalized = _normalize_resolution(fallback_resolution, user_text, interaction_mode, task_state)
     else:
         normalized = _normalize_resolution(resolution, user_text, interaction_mode, task_state)
-    _log_goal_resolver_decision(normalized, user_text, task_state, fallback_reason, fallback_error_type, fallback_error)
+    _log_goal_resolver_decision(normalized, user_text, task_state, fallback_reason, fallback_error_type, fallback_error, enabled=log_diagnostic)
     return normalized
 
 
@@ -137,11 +139,14 @@ def _log_goal_resolver_decision(
     fallback_reason: str,
     fallback_error_type: str,
     fallback_error: str,
+    *,
+    enabled: bool = True,
 ) -> None:
     goal = resolution.goal
     plan = resolution.plan
     log_llm_diagnostic(
         "goal_resolver_decision",
+        enabled=enabled,
         intent=resolution.intent.type.value,
         goal_type=goal.type.value if goal is not None else "",
         goal_desc=goal.desc if goal is not None else "",
@@ -161,6 +166,7 @@ def _log_goal_resolver_exchange(
     raw: object | None = None,
     error_type: str = "",
     error: str = "",
+    enabled: bool = True,
 ) -> None:
     response: dict[str, Any] = {}
     if error_type or error:
@@ -170,6 +176,7 @@ def _log_goal_resolver_exchange(
         response["raw"] = _raw_response_for_log(raw)
     log_llm_diagnostic(
         "goal_resolver_exchange",
+        enabled=enabled,
         request={"messages": [serialize_llm_message(message) for message in messages]},
         response=response,
     )
@@ -291,6 +298,7 @@ def _normalize_resolution(
     user_text: str,
     interaction_mode: str | InteractionMode | None,
     task_state: TaskState,
+    log_diagnostic: bool = True,
 ) -> GoalResolution:
     mode = InteractionMode.parse(interaction_mode)
 

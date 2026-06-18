@@ -13,7 +13,7 @@ import pytest
 
 from langchain_core.messages import ToolMessage
 
-from voidx.agent.tool_messages import DEFAULT_TOOL_MESSAGE_MAX_CHARS
+from voidx.agent.tool_messages import DEFAULT_TOOL_MESSAGE_MAX_CHARS, sanitize_tool_message_content
 from voidx.tools.base import ToolContext, ToolResult, BaseTool, UserInteraction, UserResponse
 from voidx.tools.file_ops import (
     FileReadInput,
@@ -205,10 +205,34 @@ class TestFileOps:
         assert "1\tline 1" in first.output
         assert "already read" in second.output.lower()
         assert "50-100" in second.output
-        assert "50\tline 50" not in second.output
+        assert "50\tline 50" in second.output
         assert second.metadata["already_read"] is True
-        assert second.metadata["lines"] == 0
+        assert second.metadata["lines"] == 51
         assert second.metadata["covered_lines"] == 51
+
+    @pytest.mark.asyncio
+    async def test_already_read_repeated_output_stays_within_llm_message_budget(self, tmp_path):
+        f = tmp_path / "covered-long.txt"
+        f.write_text(
+            ("\n" * 99_999)
+            + "\n".join(f"line {i:06d} " + ("x" * 80) for i in range(100_000, 100_200))
+            + "\n"
+        )
+        ctx = ToolContext(workspace=str(tmp_path))
+        r = ToolRegistry()
+        first = await r.execute_tool("read", {"file_path": "covered-long.txt", "offset": 100_000}, ctx)
+        assert first.metadata["truncated_by_chars"] is True
+
+        second = await r.execute_tool(
+            "read",
+            {"file_path": "covered-long.txt", "offset": 100_000, "limit": first.metadata["lines"]},
+            ctx,
+        )
+
+        assert second.metadata["already_read"] is True
+        assert len(second.output) <= DEFAULT_TOOL_MESSAGE_MAX_CHARS
+        sanitized = sanitize_tool_message_content(second.output, workspace=str(tmp_path))
+        assert "[Tool output truncated" not in sanitized
 
     @pytest.mark.asyncio
     async def test_write(self, tmp_path):

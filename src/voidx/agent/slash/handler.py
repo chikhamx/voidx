@@ -113,6 +113,7 @@ class SlashHandler(
             "/tone": lambda: self._tone(args),
             "/parallel": lambda: self._parallel(args),
             "/debug": lambda: self._debug(args),
+            "/log": lambda: self._log(args),
             "/compact": compact,
             "/diff": self._show_diff,
             "/tavily": lambda: self._tavily(args),
@@ -161,7 +162,7 @@ class SlashHandler(
             InteractionMode.GOAL: "Goal",
         }
         notes = {
-            InteractionMode.PLAN: "write/edit/bash blocked",
+            InteractionMode.PLAN: "write/insert/replace/edit/bash blocked",
             InteractionMode.GOAL: "keep work scoped to the current goal",
         }
         suffix = f" — {notes[parsed]}" if parsed in notes else ""
@@ -347,6 +348,48 @@ class SlashHandler(
 
         state = "on" if self.host.debug_enabled() else "off"
         ui.print(f"[dim]debug {state}[/dim]")
+
+
+    def _log(self, arg: str) -> None:
+        config = self.host.config
+        if config is None:
+            ui.error("No config available.")
+            return
+
+        parts = arg.strip().split()
+        if not parts:
+            ex = "on" if config.log_llm_exchange else "off"
+            di = "on" if config.log_llm_diagnostic else "off"
+            ui.print(f"[dim]log exchange {ex}, diagnostic {di}[/dim]")
+            return
+
+        target = parts[0].lower()
+        if target not in ("exchange", "diagnostic"):
+            ui.error("Usage: /log [exchange|diagnostic] [on|off]")
+            return
+
+        if len(parts) < 2:
+            if target == "exchange":
+                config.log_llm_exchange = not config.log_llm_exchange
+            else:
+                config.log_llm_diagnostic = not config.log_llm_diagnostic
+        else:
+            value = parts[1].lower()
+            if value in ("on", "true", "1", "yes"):
+                flag = True
+            elif value in ("off", "false", "0", "no"):
+                flag = False
+            else:
+                ui.error("Usage: /log [exchange|diagnostic] [on|off]")
+                return
+            if target == "exchange":
+                config.log_llm_exchange = flag
+            else:
+                config.log_llm_diagnostic = flag
+
+        ex = "on" if config.log_llm_exchange else "off"
+        di = "on" if config.log_llm_diagnostic else "off"
+        ui.print(f"[dim]log exchange {ex}, diagnostic {di}[/dim]")
 
     def _parallel(self, arg: str) -> None:
         settings = self.host.settings

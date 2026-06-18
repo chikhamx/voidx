@@ -101,7 +101,10 @@ def log_llm_exchange(
     provider: str,
     step: int,
     session_id: str | None = None,
+    enabled: bool = True,
 ) -> None:
+    if not enabled:
+        return
     try:
         entry: dict[str, Any] = {
             "ts": datetime.now(timezone.utc).isoformat(),
@@ -121,7 +124,9 @@ def log_llm_exchange(
         logger.warning("Failed to write LLM request log", exc_info=True)
 
 
-def log_llm_diagnostic(event: str, **fields: Any) -> None:
+def log_llm_diagnostic(event: str, *, enabled: bool = True, **fields: Any) -> None:
+    if not enabled:
+        return
     try:
         entry: dict[str, Any] = {
             "ts": datetime.now(timezone.utc).isoformat(),
