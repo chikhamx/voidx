@@ -1,6 +1,6 @@
 # 代码模块化：待办项
 
-> **Status: Open**
+> **Status: Deferred**
 > **Date:** 2026-06-10
 > **Source:** `docs/archive/codebase-modularity-remediation-2026-06-10.md`
 

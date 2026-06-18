@@ -1,5 +1,7 @@
 # workflow 工具改造 — 技术设计文档
 
+> **Status: Done**
+
 ## Context
 
 当前 `advance_workflow` 工具只支持一种操作：选择退出条件推进当前活跃节点。LLM 无法主动"进入"某个工作流节点——进入由 `goal_resolver` 在 turn 开始时自动决定。这导致：
@@ -14,11 +16,11 @@
 
 - 将 `advance_workflow` 重命名为 `workflow`，tool id 从 `"advance_workflow"` 改为 `"workflow"`。
 - 新增 `action` 参数，支持 `enter` / `advance` / `done` 三种操作。
-- `enter`：LLM 主动激活一个工作流节点，无需等待 goal_resolver。**进入新节点前先关闭当前所有活跃节点**，保证任意时刻只有一个 active workflow。
+- `enter`：LLM 主动激活一个工作流节点，无需等待 goal_resolver。**进入新节点前先关闭当前所有活跃节点**，保证 `workflow` 工具写入后的状态最多只有一个 active workflow。
 - `advance`：选择退出条件推进到后继节点（等价于旧版 `condition=xxx`）。
 - `done`：关闭当前所有活跃节点，不激活后继（等价于旧版 `condition="done"`）。
 - 更新所有引用 `advance_workflow` 的代码和配置。
-- 降低 LLM 调用时的报错率（详见防错机制章节）。
+- 降低 LLM 调用后中断率：业务层不返回错误，只返回可执行的 guidance（详见防错机制章节）。
 
 ### Non-Goals
 
@@ -29,29 +31,31 @@
 
 ## Architecture
 
-### 单一 Active Workflow 约束
+### `workflow` 写入后的单一 Active Workflow 约束
 
-**核心规则：任意时刻最多只有一个 active workflow 节点。**
+**核心规则：`workflow` 工具成功写入 state_patch 后，最多只有一个 active workflow 节点。**
+
+这不是全系统不变量：turn start 的 `goal_resolver` / `reconcile` 仍按现有逻辑运行，历史 session 或自动协调逻辑也可能在工具调用前留下多个 active 节点。`workflow` 工具负责在自己的输出状态中归一化 active 节点数量。
 
 - `enter`：进入新节点前，先关闭当前所有活跃节点（SATISFIED + 级联跳过下游），再激活目标节点。
-- `advance`：推进当前活跃节点，后继节点自动成为唯一 active。
+- `advance`：推进选中的活跃节点，关闭其它旧 active 节点，后继节点自动成为唯一 active。
 - `done`：关闭当前所有活跃节点，不激活后继。
 
-这消除了多活跃节点歧义问题——`workflow` 参数在 `advance`/`done` 中不再需要指定目标节点，因为只有一个活跃节点。
+正常情况下这消除了多活跃节点歧义问题——`workflow` 参数在 `advance`/`done` 中不需要指定目标节点。若工具调用前继承了多个 active 节点，`advance` 通过 `condition` 自动匹配唯一来源；匹配到多个来源时返回 no-op guidance，并提示 LLM 传 `workflow` 消歧。
 
 ```
 workflow(action="enter", workflow="debug")
   → 关闭当前所有活跃节点（SATISFIED + 级联跳过下游）
     旧节点 evidence 自动生成："replaced by enter:debug"
-  → 校验节点存在于 DAG nodes（忽略大小写；subworkflow 内部名称如 "TDD Cycle" 不在 DAG nodes 中，自然被拒绝）
+  → 校验节点存在于 DAG nodes（忽略大小写；subworkflow 内部名称如 "TDD Cycle" 不在 DAG nodes 中，返回 no-op guidance）
   → 创建 WorkflowRunState(status=ACTIVE, source=MANUAL)
   → 返回 state_patch（含 persona 切换）
 
 workflow(action="advance", condition="nontrivial_fix", evidence="...")
   → 校验有活跃节点
-  → 校验 condition 匹配出边（忽略大小写）
-  → 校验 evidence 非空（gate 要求）
+  → 校验 condition 匹配唯一活跃节点的出边（忽略大小写；必要时用 workflow 消歧）
   → 构建 SATISFIED 事件，调用 advance_workflow_states
+  → 关闭其它旧 active 节点（SATISFIED，condition="superseded_by_workflow_advance"）
   → 返回 state_patch（含后继节点激活 + persona 切换）
 
 workflow(action="done", evidence="...")
@@ -79,14 +83,14 @@ auto_advance (post-tool)
 
 ## 防错与降错机制
 
-> 核心原则：**让 LLM 难以犯错，而非犯错后纠正**。通过 schema 约束、智能默认值、忽略大小写匹配、参数互斥校验，将报错率降到最低。
+> 核心原则：**让 LLM 难以犯错；即使犯错，也给出下一次该怎么调用。** 通过 schema 约束、智能默认值、忽略大小写匹配、参数互斥校验和 guidance payload，将无效调用变成可恢复提示。
 
 ### 1. Schema 层面：消除默认值陷阱
 
 **问题**：旧版 `condition` 默认值为 `"done"`，LLM 只传 `workflow="xxx"` 不传 condition 时，会意外触发 done。
 
 **方案**：
-- `action` 无默认值，LLM 必须显式选择 `enter` / `advance` / `done`。
+- `action` 无默认值，LLM 必须显式选择 `enter` / `advance` / `done`；执行层缺失或非法 action 时返回 guidance，不从旧参数推断 action。
 - `condition` 默认值从 `"done"` 改为 `""`（空字符串），不再有隐式行为。
 - `workflow` 默认值保持 `""`，但 description 中明确标注何时必填。
 - 移除 `summary` 参数——与 `evidence` 语义重叠，LLM 经常只填 summary 不填 evidence，导致 gate 质量保证失效。统一使用 `evidence` 即可。
@@ -116,26 +120,40 @@ class WorkflowInput(BaseModel):
     )
 ```
 
-### 2. 参数互斥校验：提前拦截无效组合
+`evidence` 在 schema description 中仍标注为 `advance` / `done` 必填，用于引导 LLM 提供高质量 gate 证据；执行层不因为空 evidence 报错，避免 workflow 状态机卡死。
 
-**问题**：LLM 可能传 `action="advance"` 但不传 `condition`，或 `action="enter"` 但传了 `condition`。
+### 2. 参数组合检查：无效组合返回 guidance
 
-**方案**：在 execute 入口做参数组合校验，返回结构化错误信息：
+**问题**：LLM 可能不传 `action`，或传 `action="advance"` 但不传 `condition`，或 `action="enter"` 但传了 `condition`。
+
+**方案**：在 execute 入口做参数组合检查。业务层不返回 error result；无法应用状态变更时返回结构化 no-op guidance：
+
+```json
+{
+  "action": "advance",
+  "applied": false,
+  "reason": "condition_required",
+  "guidance": "Call workflow with an exit condition from the active node.",
+  "available_exits": ["nontrivial_fix -> tdd", "trivial_fix -> verify", "done -> end the current workflow node"],
+  "suggested_call": "workflow(action=\"advance\", condition=\"nontrivial_fix\", evidence=\"...\")"
+}
+```
 
 | action | 缺失参数 | 多余参数 | 处理 |
 |--------|---------|---------|------|
-| `enter` | `workflow` 为空 | `condition` 非空 | 报错 + 忽略 condition |
-| `advance` | `condition` 为空 | — | 报错，列出可用 condition |
-| `advance` | `evidence` 为空 | — | 报错（gate 要求） |
-| `done` | `evidence` 为空 | `condition` 非空 | 报错 + 忽略 condition |
+| 缺失 / 非法 | `action` 为空或不是 `enter` / `advance` / `done` | — | no-op guidance，列出可用 action；不从旧 `condition`/`workflow` 推断 |
+| `enter` | `workflow` 为空 | `condition` 非空 | no-op guidance；忽略 condition |
+| `advance` | `condition` 为空 | — | no-op guidance，列出可用 condition |
+| `advance` | — | — | `evidence` 为空时不报错，但 response 保持空 evidence |
+| `done` | — | `condition` 非空 | 忽略 condition，不报错 |
 
-对于"多余参数"场景，**不报错**，只忽略多余参数并在 response 中提示。这避免了 LLM 因传了不该传的参数而被拒绝。
+对于"多余参数"场景，忽略多余参数并在 response 中提示。这避免了 LLM 因传了不该传的参数而中断。
 
 ### 3. condition 忽略大小写匹配：容忍大小写差异
 
 **问题**：LLM 可能传入大小写不一致的 condition，如 `"NonTrivial_Fix"` 而非 `"nontrivial_fix"`。
 
-**方案**：condition 匹配时忽略大小写，但**不做模糊匹配**（如下划线/连字符/空格差异、前缀匹配等）。匹配不上时返回错误，列出可用选项让 LLM 自行修正。
+**方案**：condition 匹配时忽略大小写，但**不做模糊匹配**（如下划线/连字符/空格差异、前缀匹配等）。匹配不上时返回 no-op guidance，列出可用选项让 LLM 自行修正。
 
 ```python
 def _match_condition(condition: str, edges: tuple[Edge, ...]) -> Edge | None:
@@ -148,10 +166,10 @@ def _match_condition(condition: str, edges: tuple[Edge, ...]) -> Edge | None:
 
 忽略大小写命中时，在 response 中使用 DAG 中的原始 condition 值（而非 LLM 传入的值），确保后续状态一致。
 
-匹配失败时，错误信息列出所有可用退出条件：
+匹配失败时，guidance 列出所有可用退出条件：
 
 ```
-Invalid condition 'Non_Trivial_Fix' for node 'debug'.
+Invalid condition 'Non_Trivial_Fix' for node 'debug'. No workflow state was changed.
 Available exits:
   - nontrivial_fix -> tdd (fix requires TDD)
   - trivial_fix -> verify (fix is trivial)
@@ -163,7 +181,7 @@ Correct usage: workflow(action="advance", condition="nontrivial_fix", evidence="
 
 **问题**：LLM 可能传入大小写不一致的节点名，如 `"Debug"` 而非 `"debug"`。
 
-**方案**：与 condition 一致，节点名匹配时忽略大小写，不做模糊匹配。匹配不上时返回错误，列出所有可用节点名。
+**方案**：与 condition 一致，节点名匹配时忽略大小写，不做模糊匹配。匹配不上时返回 no-op guidance，列出所有可用节点名。
 
 ```python
 def _match_node(name: str, dag_nodes: dict[str, WorkflowNode]) -> str | None:
@@ -174,26 +192,27 @@ def _match_node(name: str, dag_nodes: dict[str, WorkflowNode]) -> str | None:
     return None
 ```
 
-### 5. 重复调用幂等保护
+### 5. 重复调用保护
 
 **问题**：LLM 可能在同一 turn 内重复调用 `workflow`。
 
 **不需要并发锁**：`workflow` 是 barrier tool（见 `tool_executor.py` `_is_barrier_tool`），同一 turn 内多个 tool calls 时，`workflow` 会作为分割点串行执行，不存在真正的并发竞态。因此不需要 `_state_lock` 或原子操作。
 
-**方案**：只处理重复调用（幂等）：
+**方案**：只处理自然幂等的重复调用：
 
 - `enter` 同一节点已 ACTIVE → 返回成功（幂等），response 中标记 `"already_active": true`
-- `advance` 同一 condition 已 SATISFIED → 返回成功（幂等），response 中标记 `"already_satisfied": true`
 - `done` 无活跃节点 → 返回成功（幂等），response 中标记 `"no_active_nodes": true`
 
-### 6. 错误信息自修复引导
+`advance` 不做“已 SATISFIED 的重复调用”特殊处理。`workflow` 是 barrier tool，同一批 tool calls 会串行切分，实际重复 `advance` 的概率很低；若无法应用状态变更，返回普通 no-op guidance 即可。
 
-**问题**：旧版错误信息只说"invalid condition"，LLM 需要额外一轮调用才能修正。
+### 6. Guidance 自修复引导
 
-**方案**：所有错误信息都包含**可直接复制使用的正确调用示例**：
+**问题**：旧版无效调用只说"invalid condition"，LLM 需要额外一轮调用才能修正。
+
+**方案**：所有 guidance 都包含**可直接复制使用的正确调用示例**：
 
 ```
-Invalid condition 'non_trivial_fix' for node 'debug'.
+Invalid condition 'non_trivial_fix' for node 'debug'. No workflow state was changed.
 Available exits:
   - nontrivial_fix -> tdd (fix requires TDD)
   - trivial_fix -> verify (fix is trivial)
@@ -229,14 +248,14 @@ Correct usage: workflow(action="advance", condition="nontrivial_fix", evidence="
 
 | 机制 | 解决的出错模式 | 降错效果 |
 |------|--------------|---------|
-| action 无默认值 | 旧版 condition="done" 陷阱 | 消除隐式行为 |
+| action 无默认值且不做旧参数推断 | 旧版 condition="done" 陷阱 / 空参数误判为 advance | 消除隐式行为 |
 | condition 默认值改空 | LLM 不传 condition 意外触发 done | 消除默认值陷阱 |
 | 移除 summary 参数 | summary/evidence 语义重叠，LLM 只填 summary | 统一为 evidence，消除混淆 |
-| 参数互斥校验 | action 与参数组合错误 | 提前拦截，忽略多余参数 |
+| 参数组合检查 | action 与参数组合无效 | no-op guidance，忽略多余参数 |
 | condition 忽略大小写 | condition 大小写不一致 | 容忍大小写差异 |
 | enter 节点名忽略大小写 | 节点名大小写不一致 | 容忍大小写差异 |
-| 重复调用幂等 | 同一 turn 内重复操作 | 返回成功，不报错 |
-| 错误信息含修复示例 | 报错后 LLM 不知道怎么改 | 一轮修正而非两轮 |
+| 重复调用保护 | 同一 turn 内重复 enter/done | 自然幂等场景返回成功 |
+| guidance 含修复示例 | 无效调用后 LLM 不知道怎么改 | 一轮修正而非两轮 |
 | 成功响应含 next_hints | LLM 不知道下一步做什么 | 减少无效调用 |
 
 ## Data Model
@@ -259,9 +278,24 @@ WorkflowInput
 │   done:    忽略（传了不报错）
 └── evidence: str  ← 默认 ""
     enter:   可选
-    advance: 必填
-    done:    必填
+    advance: schema/description 要求填写；runtime 不因空值报错
+    done:    schema/description 要求填写；runtime 不因空值报错
 ```
+
+### WorkflowStateEventKind（新增）
+
+为避免 activation evidence 使用未声明字符串，新增事件类型：
+
+```python
+class WorkflowStateEventKind(str, Enum):
+    ACTIVATED = "activated"
+    SATISFIED = "satisfied"
+    BLOCKED = "blocked"
+    UNBLOCKED = "unblocked"
+    SKIPPED = "skipped"
+```
+
+`ACTIVATED` 仅用于记录 `enter` 创建或重新激活节点的 evidence；不改变 `advance_workflow_states()` 的 transition 语义。
 
 ### enter 创建的 WorkflowRunState
 
@@ -276,7 +310,7 @@ WorkflowRunState
 ├── personas:     [node.persona]  ← 从 DAG 节点定义读取
 ├── activated_turn: ctx 当前 turn
 ├── updated_turn:   ctx 当前 turn
-├── evidence:     [WorkflowEvidence(kind="activated", ref="tool:workflow", ok=True, summary="", condition="enter")]
+├── evidence:     [WorkflowEvidence(kind=WorkflowStateEventKind.ACTIVATED.value, ref="tool:workflow", ok=True, summary="Manual workflow activation.", condition="enter")]
 ├── blocked_reason: ""
 ├── body_hash:    ""
 └── transition_to: [后继节点名列表]
@@ -320,6 +354,25 @@ WorkflowRunState
 - **Tool ID**: `workflow`
 - **Description**: Manage workflow node lifecycle. Use `enter` to activate a workflow node, `advance` to transition via an exit condition, or `done` to end a node without activating successors.
 - **Parameters**: `WorkflowInput` schema（见 Data Model）
+### Guidance response
+
+When `workflow` cannot apply a state change, it returns a no-op guidance payload instead of an error:
+
+```json
+{
+  "action": "advance",
+  "applied": false,
+  "reason": "condition_required",
+  "guidance": "Call workflow with a valid exit condition from the active node.",
+  "available_exits": ["nontrivial_fix -> tdd", "trivial_fix -> verify", "done -> end the current workflow node"],
+  "suggested_call": "workflow(action=\"advance\", condition=\"nontrivial_fix\", evidence=\"...\")"
+}
+```
+
+The payload may also include `already_active`, `no_active_nodes`, `activated`, `next_hints`, and `evidence` when useful.
+
+Guidance responses must not set `metadata.error = true`. Use `metadata.workflow_guidance` for machine-readable guidance, and omit `state_patch` unless the response actually changes workflow state.
+
 ### action="enter"
 
 - **Request**: `workflow(action="enter", workflow="debug")`
@@ -344,9 +397,9 @@ WorkflowRunState
     "evidence": ""
   }
   ```
-- **Errors**:
-  - 节点不存在且忽略大小写也无法匹配 → `workflow: invalid node`，列出所有可用节点名
-  - workflow 为空 → `workflow: node required`
+- **Guidance**:
+  - 节点不存在且忽略大小写也无法匹配 → 返回 no-op guidance，列出所有可用节点名
+  - workflow 为空 → 返回 no-op guidance，提示 node required
 
 ### action="advance"
 
@@ -362,11 +415,10 @@ WorkflowRunState
     "evidence": "Root cause confirmed: off-by-one in parser"
   }
   ```
-- **Errors**:
-  - 无活跃节点 → 返回空结果（同旧版）
-  - condition 为空 → `workflow: condition required`，列出可用退出条件
-  - condition 不匹配出边且忽略大小写也无法匹配 → `workflow: invalid exit`，列出可用退出条件 + 修复示例
-  - evidence 为空 → `workflow: evidence required`
+- **Guidance**:
+  - 无活跃节点 → 返回 no-op guidance
+  - condition 为空 → 返回 no-op guidance，列出可用退出条件
+  - condition 不匹配出边且忽略大小写也无法匹配 → 返回 no-op guidance，列出可用退出条件 + 修复示例
 
 ### action="done"
 
@@ -389,23 +441,24 @@ WorkflowRunState
     "evidence": ""
   }
   ```
-- **Errors**:
-  - evidence 为空 → `workflow: evidence required`
+- **Guidance**:
+  - 无。无活跃节点时返回幂等成功；`condition` 非空时忽略。
 
-## Error Handling
+## Guidance Handling
 
-| 失败场景 | 处理策略 |
+| 无法应用状态变更场景 | 处理策略 |
 |---------|---------|
-| `enter` 节点不存在 | 忽略大小写匹配 → 匹配则继续，否则返回错误 + 可用节点列表 |
+| `enter` 节点不存在 | 忽略大小写匹配 → 匹配则继续，否则返回 guidance + 可用节点列表 |
 | `enter` 节点已 ACTIVE | 返回成功（幂等），标记 `already_active: true` |
-| `enter` workflow 为空 | 返回错误，提示必填 |
+| `enter` workflow 为空 | 返回 guidance，提示必填 |
 | `enter` 传了 condition | 忽略 condition，不报错 |
-| `advance` condition 为空 | 返回错误，列出可用退出条件 + 修复示例 |
-| `advance` condition 不匹配 | 忽略大小写匹配 → 匹配则继续，否则返回错误 + 可用退出条件 + 修复示例 |
-| `advance`/`done` 无活跃节点 | 返回空结果 payload（同旧版） |
-| `advance`/`done` evidence 为空 | 返回 gate 错误 |
+| `advance` condition 为空 | 返回 guidance，列出可用退出条件 + 修复示例 |
+| `advance` condition 不匹配 | 忽略大小写匹配 → 匹配则继续，否则返回 guidance + 可用退出条件 + 修复示例 |
+| `advance` 无活跃节点 | 返回 guidance payload（同旧版语义） |
+| `done` 无活跃节点 | 返回成功（幂等），标记 `no_active_nodes: true` |
+| `advance`/`done` evidence 为空 | 不报错；metadata 中保留空 evidence |
 | `done` 传了 condition | 忽略 condition，不报错 |
-| 重复调用（同一操作） | 返回成功（幂等） |
+| 重复 `enter` 同一节点 / `done` 无活跃节点 | 返回成功（幂等） |
 
 ## Migration
 
@@ -413,14 +466,16 @@ WorkflowRunState
 
 | 文件 | 变更 |
 |------|------|
-| `src/voidx/tools/advance_workflow.py` | 重命名为 `src/voidx/tools/workflow.py`；类名 `AdvanceWorkflowTool` → `WorkflowTool`；id 改为 `"workflow"`；重写 `WorkflowInput` 和 `execute`；新增忽略大小写匹配、幂等逻辑 |
+| `src/voidx/tools/workflow.py` | 新增 `WorkflowTool`；tool id 为 `"workflow"`；重写 `WorkflowInput` 和 `execute`；新增忽略大小写匹配、guidance payload、`enter`/`done` 幂等逻辑 |
+| `src/voidx/tools/advance_workflow.py` | 删除旧工具模块，不保留 `advance_workflow` tool id 兼容 |
+| `src/voidx/workflow/types.py` | 新增 `WorkflowStateEventKind.ACTIVATED`，用于 `enter` activation evidence |
 | `src/voidx/tools/registry.py` | import 从 `advance_workflow` → `workflow`；类名更新 |
-| `src/voidx/permission/rules.py` | 4 处更新：L36 `BASIC_RULES` 中 `"advance_workflow"` → `"workflow"`；L105 `repair_tool_name` 映射 `"AdvanceWorkflow": "advance_workflow"` → `"AdvanceWorkflow": "workflow"`；L357 `capability_for_tool` 集合中 `"advance_workflow"` → `"workflow"` |
+| `src/voidx/permission/rules.py` | `BASIC_RULES` 中 `"advance_workflow"` → `"workflow"`；不保留 `"advance_workflow"` / `"AdvanceWorkflow"` repair alias |
 | `src/voidx/ui/output/display_policy.py` | `DEFAULT_DISPLAY_RULES` key `"advance_workflow"` → `"workflow"` |
 | `src/voidx/agent/graph/runtime_guards.py` | `LOW_VALUE_REPETITIVE_TOOLS` frozenset 中 `"advance_workflow"` → `"workflow"` |
 | `src/voidx/agent/agents.py` | `BUILTIN_AGENTS["voidx"].tools` 列表中 `"advance_workflow"` → `"workflow"` |
-| `src/voidx/agent/graph/tool_executor.py` | 4 处字符串引用：L830 `tool_call.get("name") != "advance_workflow"` → `"workflow"`；L849 `ref="tool:advance_workflow"` → `"tool:workflow"`；L1012 同 L830；L1077 `_is_barrier_tool` frozenset 中 `"advance_workflow"` → `"workflow"` |
-| `src/voidx/agent/todo_state.py` | `_REPLAY_SANITIZED_TOOL_NAMES` 当前为 `{"todo"}`，不包含 `"advance_workflow"`，无需更新 |
+| `src/voidx/agent/graph/tool_executor.py` | 所有外部工具名判断仅接受 `"workflow"`；`ref="tool:advance_workflow"` → `"tool:workflow"`；`_is_barrier_tool` 仅包含 `"workflow"` |
+| `src/voidx/agent/todo_state.py` | `_REPLAY_SANITIZED_TOOL_NAMES` 加入 `"workflow"`；workflow ToolMessage 下一轮不进入语义上下文，状态通过 Current Task State 提供 |
 
 ### 不变的内部函数
 
@@ -433,12 +488,16 @@ WorkflowRunState
 
 ### 测试迁移
 
-- `tests/test_tools/test_basic.py`：tool id 断言更新，advance_workflow 相关测试用例更新为 workflow
+- `tests/test_tools/test_basic.py`：tool id 断言更新，旧 `advance_workflow` tool id 返回 unknown tool
 - `tests/test_workflow/test_auto_advance.py`：内部函数调用不变
+- `tests/test_runtime/test_goal_resolution_refactor.py`：tool import/name 更新，内部 runtime 函数调用不变
+- `tests/test_agent/test_permission.py`：基础 allow rule 与 capability 断言更新
 - `tests/test_agent/test_core_flow.py`：tool call name 更新
 - `tests/test_agent/test_stream_llm.py`：parametrize 更新
 - `tests/test_agent/test_run_loop.py`：引用更新
 - `tests/test_agent/test_module_boundaries.py`：路径更新
+- `tests/test_ui/test_display_policy.py`：隐藏/回放 sanitize 工具名更新
+- `tests/test_skills/test_skills.py`：仅保留内部 `advance_workflow_states` 命名，不迁移为 tool id
 
 ## Decisions Log
 
@@ -450,10 +509,12 @@ WorkflowRunState
 | `advance_workflow_states` 内部函数名不变 | 一并重命名 | 它是 runtime 内部函数，不是 LLM API，重命名收益低、影响面大 |
 | `enter` 时 source=MANUAL | source=EXPLICIT | MANUAL 更准确——是 LLM 主动发起而非用户显式指定 |
 | `enter` 允许重新进入 SATISFIED/SKIPPED/BLOCKED 节点 | 只允许进入不存在于 runs 的节点 | 实际场景中 LLM 可能需要重新进入已完成的工作流（如再次 debug），禁止会限制灵活性 |
-| condition 忽略大小写匹配 | 严格匹配 + 报错 / 模糊匹配 | 忽略大小写是最低成本的容错，模糊匹配（下划线/连字符/前缀）容易误匹配，不如让 LLM 看到正确选项后自行修正 |
+| condition 忽略大小写匹配 | 严格匹配后仅返回 guidance / 模糊匹配 | 忽略大小写是最低成本的容错，模糊匹配（下划线/连字符/前缀）容易误匹配，不如让 LLM 看到正确选项后自行修正 |
 | 移除 summary 参数 | 保留 summary + evidence 兜底 | summary 与 evidence 语义重叠，LLM 经常只填 summary 导致 gate 失效；统一为 evidence 更清晰 |
-| 单一 active workflow 约束 | 允许多个 active 节点 | 单一 active 消除歧义问题，简化 LLM 调用；`enter` 自动关闭旧节点，`done` 关闭所有 |
+| `workflow` 写入后最多一个 active workflow | 允许 tool 写入后保留多个 active / 建立全系统不变量 | 工具写入后单 active 消除 LLM 调用歧义；不扩大 scope 去重写 goal_resolver/reconcile |
 | `done` 关闭所有活跃节点 | 只关闭指定节点 | 单一 active 约束下通常只有一个，关闭所有更安全，避免遗漏 |
-| 重复调用幂等返回成功 | 重复调用报错 | 幂等更友好，LLM 不需要记住"是否已经调用过" |
+| `advance` 不做重复 SATISFIED 幂等 | 对已 SATISFIED 的同 condition 返回特殊幂等响应 | `workflow` 是 barrier tool，重复 advance 概率低；无法应用时返回普通 no-op guidance 更简单 |
 | `enter` 关闭旧节点 evidence 自动生成 | 复用 LLM 传入的 evidence 参数 | `enter` 的 evidence 是可选的，不应因没传而无法关闭旧节点；旧节点关闭原因是"被替换"，自动生成更准确 |
+| `advance`/`done` 空 evidence 不报错 | runtime gate 强制返回 guidance | schema description 继续引导 LLM 提供 evidence；runtime 容忍空值避免工作流卡死 |
+| `enter` activation evidence 新增 `ACTIVATED` 类型 | 直接写 `kind="activated"` 字符串 / 复用 `SATISFIED` | 类型模型显式表达激活事件，避免证据记录出现未声明语义 |
 | 不需要并发锁 | 加 `_state_lock` 原子操作 | `workflow` 是 barrier tool，tool_executor 保证串行执行，不存在并发竞态 |
