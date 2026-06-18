@@ -227,6 +227,7 @@ class ToolStatePatch(BaseModel):
 
     intent: IntentResolution | None = None
     goal: GoalSpec | None = None
+    plan: PlanResolution | None = None
     persona: str | None = None
     workflow_runs: list[WorkflowRunState] = Field(default_factory=list)
 
@@ -245,28 +246,6 @@ def _same_goal(left: GoalSpec | None, right: GoalSpec | None) -> bool:
     if left is None or right is None:
         return left is right
     return left.type == right.type and left.desc == right.desc
-
-
-def _default_join_for_goal_type(goal_type: GoalType) -> str:
-    return {
-        GoalType.BUGFIX: "debug",
-        GoalType.DEBUG: "debug",
-        GoalType.REFACTOR: "brainstorm",
-        GoalType.FEATURE: "brainstorm",
-        GoalType.DESIGN: "brainstorm",
-        GoalType.DOC: "design",
-        GoalType.REVIEW: "review",
-        GoalType.CHORE: "tdd",
-        GoalType.INSPECT: "",
-    }.get(goal_type, "")
-
-
-def _default_leave_for_goal_type(goal_type: GoalType) -> str | None:
-    if goal_type in {GoalType.BUGFIX, GoalType.DEBUG, GoalType.REFACTOR, GoalType.FEATURE, GoalType.CHORE}:
-        return "verify"
-    if goal_type in {GoalType.DESIGN, GoalType.DOC, GoalType.REVIEW}:
-        return _default_join_for_goal_type(goal_type)
-    return None
 
 
 # ── goal type inference ─────────────────────────────────────────────

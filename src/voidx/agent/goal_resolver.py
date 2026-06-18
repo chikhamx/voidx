@@ -7,10 +7,10 @@ import json
 from typing import Any
 
 from langchain_core.messages import AIMessage, BaseMessage, HumanMessage, SystemMessage
-from pydantic import BaseModel
+from pydantic import BaseModel, ValidationError as PydanticValidationError
 
 from voidx.logging.request_log import log_llm_diagnostic, serialize_llm_message
-from voidx.runtime.intent import InteractionMode, TaskIntent, infer_task_intent
+from voidx.runtime.intent import InteractionMode, TaskIntent, _contains_any, infer_task_intent
 from voidx.runtime.task_state import (
     GoalResolution,
     GoalSpec,
@@ -18,14 +18,40 @@ from voidx.runtime.task_state import (
     IntentResolution,
     PlanResolution,
     TaskState,
-    _default_join_for_goal_type,
-    _default_leave_for_goal_type,
     infer_goal_type,
 )
 from voidx.workflow.dag import DEFAULT_WORKFLOW_DAG
 
 
 GOAL_RESOLVER_TIMEOUT_SECONDS = 20
+
+
+def resolve_plan_mode(user_text: str, task_state: TaskState) -> GoalResolution:
+    """PLAN mode: construct result directly without LLM call."""
+    desc = (
+        task_state.current_goal.desc
+        if task_state.current_goal and task_state.current_goal.desc.strip()
+        else user_text
+    )
+    return GoalResolution(
+        intent=IntentResolution(type=TaskIntent.CODING, desc="plan mode"),
+        goal=GoalSpec(type=GoalType.DESIGN, desc=desc),
+        plan=PlanResolution(join="brainstorm", leave="brainstorm"),
+    )
+
+
+def resolve_goal_mode(user_text: str, task_state: TaskState) -> GoalResolution:
+    """GOAL mode: construct result directly without LLM call.
+
+    The user must specify a goal to enter goal mode. Fixed entry from plan node;
+    plan will clarify via questions before planning.
+    """
+    goal = task_state.current_goal or GoalSpec(type=GoalType.FEATURE, desc=user_text)
+    return GoalResolution(
+        intent=IntentResolution(type=TaskIntent.CODING, desc="goal mode"),
+        goal=goal,
+        plan=PlanResolution(join="plan", leave=None),
+    )
 
 
 async def resolve_goal_for_turn(
@@ -43,6 +69,7 @@ async def resolve_goal_for_turn(
     fallback_reason = ""
     fallback_error_type = ""
     fallback_error = ""
+    fallback_is_validation_error = False
     if model is None:
         fallback_reason = "model_unavailable"
         normalized = _normalize_resolution(fallback, user_text, interaction_mode, task_state)
@@ -69,6 +96,7 @@ async def resolve_goal_for_turn(
         fallback_reason = "structured_output_error"
         fallback_error_type = type(exc).__name__
         fallback_error = _truncate_error_text(str(exc))
+        fallback_is_validation_error = isinstance(exc, PydanticValidationError)
         if "resolver_messages" in locals():
             _log_goal_resolver_exchange(
                 resolver_messages,
@@ -81,7 +109,7 @@ async def resolve_goal_for_turn(
         fallback_reason = fallback_reason or "invalid_structured_output"
         fallback_resolution = (
             _local_coding_fallback(user_text, interaction_mode)
-            if fallback_error_type == "ValidationError"
+            if fallback_is_validation_error
             else fallback
         )
         normalized = _normalize_resolution(fallback_resolution, user_text, interaction_mode, task_state)
@@ -175,12 +203,10 @@ def _local_coding_fallback(
             plan=None,
         )
     goal_type = infer_goal_type(user_text)
-    join = _default_join_for_goal_type(goal_type)
-    leave = _default_leave_for_goal_type(goal_type)
     return GoalResolution(
         intent=IntentResolution(type=TaskIntent.CODING, desc="local fallback after resolver validation error"),
         goal=GoalSpec(type=goal_type, desc=user_text),
-        plan=PlanResolution(join=join, leave=leave),
+        plan=_fallback_plan_for_text(user_text),
     )
 
 
@@ -203,16 +229,26 @@ def _resolver_system_prompt(task_state: TaskState) -> str:
         f"- goal: null or {{type: one of [{goal_types}], desc: string}}",
         f"- plan: null or {{join: one of [{available_joins}], leave: null or workflow node name}}",
         "",
+        "Available join values:",
+        "- brainstorm: Confirm requirements and design, get user approval",
+        "- design: Produce a structured document that passes the reader test",
+        "- plan: Produce an executable implementation plan, get user approval",
+        "- tdd: Complete implementation via TDD cycle, all tests green",
+        "- verify: Prove changes reach expected state with reproducible evidence",
+        "- review: Initiate structured code review request and collect verdict",
+        "- feedback: Verify and implement valid review feedback",
+        "- debug: Locate root cause and confirm fix direction",
+        "",
         "Rules:\n"
         "- intent.type=general only for non-code, non-workspace conversation.\n"
         "- intent.type=coding for codebase inspection, design, docs, review, debugging, or edits.\n"
         "- Pick exactly one goal.type when intent is coding and a concrete workspace goal exists.\n"
         "- plan.join is the workflow node to enter. Required when goal is set; null when goal is null.\n"
         "- plan.leave is the workflow node after which automatic progression stops. Optional.\n"
-        f"- Available join values: {available_joins}.\n"
         "- If intent does not clearly match any join value, set goal=null and plan=null.\n"
         "- If the user message is a short continuation (e.g. ok, continue, go on, 改) and there is an active workflow, set intent=coding, keep the current goal, and set plan.join to the active workflow name.\n"
         "- goal and plan are bound: if goal is set, plan must be set with join; if goal is null, plan must be null.\n"
+        "- goal.desc: a short summary of the user's request in their language (1-2 sentences).\n"
     ]
     if task_state.current_goal is not None:
         active = _current_active_join(task_state)
@@ -266,40 +302,6 @@ def _normalize_resolution(
         elif plan.leave and plan.leave not in DEFAULT_WORKFLOW_DAG.nodes:
             plan = PlanResolution(join=plan.join, leave=None)
 
-    # plan mode: force design goal + brainstorm
-    if mode == InteractionMode.PLAN:
-        desc = (
-            resolution.goal.desc
-            if resolution.goal is not None and resolution.goal.desc.strip()
-            else user_text
-        )
-        return GoalResolution(
-            intent=IntentResolution(type=TaskIntent.CODING, desc="plan mode forces design goal"),
-            goal=GoalSpec(type=GoalType.DESIGN, desc=desc),
-            plan=PlanResolution(
-                join="brainstorm",
-                leave=plan.leave if plan is not None else None,
-            ),
-        )
-
-    # goal mode: keep current_goal unchanged
-    if mode == InteractionMode.GOAL and task_state.current_goal is not None:
-        current = task_state.current_goal
-        goal = GoalSpec(type=current.type, desc=current.desc)
-        if plan is None:
-            plan = PlanResolution(
-                join=_default_join_for_goal_type(current.type),
-                leave=_default_leave_for_goal_type(current.type),
-            )
-        return GoalResolution(
-            intent=IntentResolution(
-                type=TaskIntent.CODING,
-                desc="goal mode keeps the turn scoped to the current goal",
-            ),
-            goal=goal,
-            plan=plan,
-        )
-
     # general intent with active workflow: preserve current workflow
     if resolution.intent.type == TaskIntent.GENERAL:
         current_join = _current_active_join(task_state)
@@ -315,30 +317,62 @@ def _normalize_resolution(
             plan=None,
         )
 
-    # coding intent: fill default join/leave when needed
+    # coding intent: require explicit plan routing instead of deriving workflow
+    # from goal.type. GoalType is semantic; plan.join/leave are routing.
     goal = resolution.goal
-    if goal is not None:
-        if plan is None:
-            plan = PlanResolution(
-                join=_default_join_for_goal_type(goal.type),
-                leave=_default_leave_for_goal_type(goal.type),
-            )
-        elif not plan.join:
-            plan = PlanResolution(
-                join=_default_join_for_goal_type(goal.type),
-                leave=plan.leave or _default_leave_for_goal_type(goal.type),
-            )
-        elif not plan.leave:
-            plan = PlanResolution(
-                join=plan.join,
-                leave=_default_leave_for_goal_type(goal.type),
-            )
+    if goal is not None and (plan is None or not plan.join):
+        goal = None
+        plan = None
 
     return GoalResolution(
         intent=resolution.intent,
         goal=goal,
         plan=plan,
     )
+
+
+def _fallback_plan_for_text(user_text: str) -> PlanResolution:
+    normalized = user_text.lower()
+    if _contains_any(normalized, ("review", "code review", "审查", "复核", "评审")):
+        return PlanResolution(join="review", leave="review")
+    if _contains_any(normalized, (
+        "debug",
+        "traceback",
+        "stacktrace",
+        "bug",
+        "failing",
+        "failure",
+        "failed",
+        "报错",
+        "排查",
+        "调试",
+        "异常",
+        "故障",
+        "错误",
+        "问题",
+    )):
+        return PlanResolution(join="debug", leave="verify")
+    if _contains_any(normalized, ("doc", "docs", "readme", "spec", "文档", "规格", "说明")):
+        return PlanResolution(join="design", leave="design")
+    if _contains_any(normalized, (
+        "implement",
+        "apply",
+        "change",
+        "edit",
+        "fix",
+        "modify",
+        "patch",
+        "refactor",
+        "write",
+        "改",
+        "修",
+        "修复",
+        "修改",
+        "实现",
+        "落地",
+    )):
+        return PlanResolution(join="tdd", leave="verify")
+    return PlanResolution(join="brainstorm", leave="brainstorm")
 
 
 def _current_active_join(task_state: TaskState) -> str:

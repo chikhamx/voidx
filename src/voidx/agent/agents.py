@@ -53,7 +53,7 @@ BUILTIN_AGENTS: dict[str, AgentDef] = {
                     "delegates broad work to specialists, reviews results.",
         when_to_use="Default agent for all user interactions. Always use first.",
         tools=[
-            "clarify", "checkpoint", "advance_workflow", "compact",
+            "clarify", "checkpoint", "workflow", "compact",
             "read", "glob", "grep", "bash", "agent", "task_status", "todo", "skill",
             "document",
             "webfetch", "websearch", "repo_map",
