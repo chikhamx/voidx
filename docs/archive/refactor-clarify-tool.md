@@ -1,3 +1,5 @@
+> **Status: Done**
+
 # Refactor: Simplify clarify tool
 
 ## Goal
