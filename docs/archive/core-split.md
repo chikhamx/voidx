@@ -1,3 +1,5 @@
+> **Status: Done**
+
 # 拆分 agent/graph/core.py — 技术设计文档
 
 ## Context

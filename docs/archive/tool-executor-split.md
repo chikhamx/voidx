@@ -1,6 +1,6 @@
 # Spec: 拆分 tool_executor.py
 
-> **Status: In Progress**
+> **Status: Done**
 
 ## 背景
 
