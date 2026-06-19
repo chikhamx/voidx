@@ -34,7 +34,7 @@ from voidx.tools.task_tracker import TaskTracker
 from voidx.tools.task_status import TaskStatusTool
 from voidx.tools.todo import TodoInput, TodoWriteTool
 from voidx.tools.registry import ToolRegistry
-from voidx.tools.clarify import ClarifyTool, ClarifyInput, ClarifyOption, _infer_state_patch
+from voidx.tools.clarify import ClarifyTool, ClarifyInput, _infer_state_patch
 from voidx.tools.load_skills import LoadSkillsTool
 from voidx.tools.load_doc_template import LoadDocTemplateTool, LoadDocTemplateInput
 from voidx.tools.plan_checkpoint import PlanCheckpointTool
@@ -146,7 +146,7 @@ class TestFileOps:
         assert f.read_text() == "zero\none\ntwo\n"
 
     @pytest.mark.asyncio
-    async def test_replace_tool_replaces_exact_text_segment_near_lineno(self, tmp_path):
+    async def test_replace_tool_replaces_whole_line_range_near_start_and_end(self, tmp_path):
         f = tmp_path / "replace-tool.txt"
         f.write_text("one\ntwo = 2\nthree\n")
         ctx = ToolContext(workspace=str(tmp_path))
@@ -157,7 +157,8 @@ class TestFileOps:
             "replace",
             {
                 "file_path": "replace-tool.txt",
-                "lineno": 2,
+                "start_no": 2,
+                "end_no": 2,
                 "prefix": "two",
                 "suffix": "two",
                 "new_string": "TWO",
@@ -166,7 +167,52 @@ class TestFileOps:
         )
 
         assert result.metadata.get("error") is not True
-        assert f.read_text() == "one\nTWO = 2\nthree\n"
+        assert f.read_text() == "one\nTWO\nthree\n"
+
+    @pytest.mark.asyncio
+    async def test_replace_selects_best_valid_line_range_pair(self, tmp_path):
+        f = tmp_path / "pair-score.txt"
+        f.write_text(
+            "preamble\n"
+            "target start decoy\n"
+            "noise\n"
+            "target end decoy\n"
+            "middle\n"
+            "target start real\n"
+            "body\n"
+            "target end real\n"
+            "tail\n"
+        )
+        ctx = ToolContext(workspace=str(tmp_path))
+        r = ToolRegistry()
+        await r.execute_tool("read", {"file_path": "pair-score.txt"}, ctx)
+
+        result = await r.execute_tool(
+            "replace",
+            {
+                "file_path": "pair-score.txt",
+                "start_no": 6,
+                "end_no": 8,
+                "prefix": "target start",
+                "suffix": "target end",
+                "new_string": "replacement\nblock\n",
+            },
+            ctx,
+        )
+
+        assert result.metadata.get("error") is not True
+        assert result.metadata["start_line"] == 6
+        assert result.metadata["end_line"] == 8
+        assert f.read_text() == (
+            "preamble\n"
+            "target start decoy\n"
+            "noise\n"
+            "target end decoy\n"
+            "middle\n"
+            "replacement\n"
+            "block\n"
+            "tail\n"
+        )
 
     @pytest.mark.asyncio
     async def test_edit_rejects_overlapping_ranges(self, tmp_path):
@@ -530,7 +576,7 @@ class TestFileOps:
 
         result = await r.execute_tool(
             "replace",
-            {"file_path": "delete.txt", "lineno": 2, "prefix": "two\n", "suffix": "two\n", "new_string": ""},
+            {"file_path": "delete.txt", "start_no": 2, "end_no": 2, "prefix": "two", "suffix": "two", "new_string": ""},
             ctx,
         )
 
@@ -547,7 +593,7 @@ class TestFileOps:
 
         result = await r.execute_tool(
             "replace",
-            {"file_path": "multi.txt", "lineno": 1, "prefix": "def foo():", "suffix": "pass", "new_string": "def foo():\n    return 42"},
+            {"file_path": "multi.txt", "start_no": 1, "end_no": 2, "prefix": "def foo():", "suffix": "pass", "new_string": "def foo():\n    return 42"},
             ctx,
         )
 
@@ -555,7 +601,7 @@ class TestFileOps:
         assert f.read_text() == "def foo():\n    return 42\n\ndef bar():\n    pass\n"
 
     @pytest.mark.asyncio
-    async def test_replace_rejects_text_outside_30_line_window(self, tmp_path):
+    async def test_replace_rejects_text_outside_three_line_window(self, tmp_path):
         f = tmp_path / "window.txt"
         f.write_text("\n".join(f"line {i}" for i in range(1, 80)) + "\n")
         ctx = ToolContext(workspace=str(tmp_path))
@@ -564,12 +610,12 @@ class TestFileOps:
 
         result = await r.execute_tool(
             "replace",
-            {"file_path": "window.txt", "lineno": 1, "prefix": "line 40", "suffix": "line 40", "new_string": "LINE 40"},
+            {"file_path": "window.txt", "start_no": 1, "end_no": 1, "prefix": "line 40", "suffix": "line 40", "new_string": "LINE 40"},
             ctx,
         )
 
         assert result.metadata.get("error")
-        assert "30" in result.output
+        assert "3" in result.output
         assert "line 40" in f.read_text()
 
     @pytest.mark.asyncio
@@ -582,7 +628,7 @@ class TestFileOps:
 
         result = await r.execute_tool(
             "replace",
-            {"file_path": "nope.txt", "lineno": 1, "prefix": "nonexistent", "suffix": "nonexistent", "new_string": "X"},
+            {"file_path": "nope.txt", "start_no": 1, "end_no": 1, "prefix": "nonexistent", "suffix": "nonexistent", "new_string": "X"},
             ctx,
         )
 
@@ -599,10 +645,430 @@ class TestFileOps:
 
         result = await r.execute_tool(
             "replace",
-            {"file_path": "ambiguous.txt", "lineno": 2, "prefix": "target", "suffix": "target", "new_string": "TARGET"},
+            {"file_path": "ambiguous.txt", "start_no": 2, "end_no": 2, "prefix": "target", "suffix": "target", "new_string": "TARGET"},
             ctx,
         )
 
         assert result.metadata.get("error")
         assert "ambiguous" in result.output.lower()
         assert f.read_text() == "target\nmiddle\ntarget\n"
+
+    @pytest.mark.asyncio
+    async def test_replace_rejects_suffix_match_on_wrong_declared_end_line(self, tmp_path):
+        f = tmp_path / "wrong-end.txt"
+        f.write_text("hello world\nfoo bar\nbaz\n")
+        ctx = ToolContext(workspace=str(tmp_path))
+        r = ToolRegistry()
+        await r.execute_tool("read", {"file_path": "wrong-end.txt"}, ctx)
+
+        result = await r.execute_tool(
+            "replace",
+            {
+                "file_path": "wrong-end.txt",
+                "start_no": 1,
+                "end_no": 3,
+                "prefix": "hello",
+                "suffix": "world",
+                "new_string": "replacement\n",
+            },
+            ctx,
+        )
+
+        assert result.metadata.get("error")
+        assert "no valid replace range" in result.output
+        assert f.read_text() == "hello world\nfoo bar\nbaz\n"
+
+    @pytest.mark.asyncio
+    async def test_replace_allows_empty_prefix_for_empty_start_line(self, tmp_path):
+        f = tmp_path / "empty-start.txt"
+        f.write_text("top\n\nbody\nend\n")
+        ctx = ToolContext(workspace=str(tmp_path))
+        r = ToolRegistry()
+        await r.execute_tool("read", {"file_path": "empty-start.txt"}, ctx)
+
+        result = await r.execute_tool(
+            "replace",
+            {
+                "file_path": "empty-start.txt",
+                "start_no": 2,
+                "end_no": 3,
+                "prefix": "",
+                "suffix": "body",
+                "new_string": "replacement\n",
+            },
+            ctx,
+        )
+
+        assert result.metadata.get("error") is not True
+        assert result.metadata["start_line"] == 2
+        assert result.metadata["end_line"] == 3
+        assert f.read_text() == "top\nreplacement\nend\n"
+
+    @pytest.mark.asyncio
+    async def test_replace_allows_empty_suffix_for_empty_end_line(self, tmp_path):
+        f = tmp_path / "empty-end.txt"
+        f.write_text("top\nbody\n\nend\n")
+        ctx = ToolContext(workspace=str(tmp_path))
+        r = ToolRegistry()
+        await r.execute_tool("read", {"file_path": "empty-end.txt"}, ctx)
+
+        result = await r.execute_tool(
+            "replace",
+            {
+                "file_path": "empty-end.txt",
+                "start_no": 2,
+                "end_no": 3,
+                "prefix": "body",
+                "suffix": "",
+                "new_string": "replacement\n",
+            },
+            ctx,
+        )
+
+        assert result.metadata.get("error") is not True
+        assert result.metadata["start_line"] == 2
+        assert result.metadata["end_line"] == 3
+        assert f.read_text() == "top\nreplacement\nend\n"
+
+    @pytest.mark.asyncio
+    async def test_replace_empty_anchor_does_not_match_non_empty_line(self, tmp_path):
+        f = tmp_path / "empty-anchor-missing.txt"
+        f.write_text("top\nbody\nend\n")
+        ctx = ToolContext(workspace=str(tmp_path))
+        r = ToolRegistry()
+        await r.execute_tool("read", {"file_path": "empty-anchor-missing.txt"}, ctx)
+
+        result = await r.execute_tool(
+            "replace",
+            {
+                "file_path": "empty-anchor-missing.txt",
+                "start_no": 2,
+                "end_no": 2,
+                "prefix": "",
+                "suffix": "body",
+                "new_string": "replacement\n",
+            },
+            ctx,
+        )
+
+        assert result.metadata.get("error")
+        assert "empty line" in result.output
+        assert f.read_text() == "top\nbody\nend\n"
+
+    @pytest.mark.asyncio
+    async def test_replace_trailing_newline_does_not_corrupt_next_line(self, tmp_path):
+        """Regression: new_string ending with \\n must not insert a blank line before the next line."""
+        f = tmp_path / "trailing.txt"
+        f.write_text("line1\nline2\nline3\n")
+        ctx = ToolContext(workspace=str(tmp_path))
+        r = ToolRegistry()
+        await r.execute_tool("read", {"file_path": "trailing.txt"}, ctx)
+
+        result = await r.execute_tool(
+            "replace",
+            {"file_path": "trailing.txt", "start_no": 2, "end_no": 2, "prefix": "line2", "suffix": "line2", "new_string": "NEW2\n"},
+            ctx,
+        )
+
+        assert result.metadata.get("error") is not True
+        assert f.read_text() == "line1\nNEW2\nline3\n"
+
+    @pytest.mark.asyncio
+    async def test_replace_trailing_newline_multiline_does_not_corrupt_next_line(self, tmp_path):
+        """Regression: multi-line new_string ending with \\n must not insert blank line."""
+        f = tmp_path / "multi-trailing.txt"
+        f.write_text("line1\nline2\nline3\nline4\n")
+        ctx = ToolContext(workspace=str(tmp_path))
+        r = ToolRegistry()
+        await r.execute_tool("read", {"file_path": "multi-trailing.txt"}, ctx)
+
+        result = await r.execute_tool(
+            "replace",
+            {"file_path": "multi-trailing.txt", "start_no": 2, "end_no": 3, "prefix": "line2", "suffix": "line3", "new_string": "NEW_A\nNEW_B\n"},
+            ctx,
+        )
+
+        assert result.metadata.get("error") is not True
+        assert f.read_text() == "line1\nNEW_A\nNEW_B\nline4\n"
+
+    @pytest.mark.asyncio
+    async def test_replace_trailing_newline_on_last_line(self, tmp_path):
+        """Regression: replacing last line with trailing-newline new_string must not add extra blank line."""
+        f = tmp_path / "last-line.txt"
+        f.write_text("line1\nline2\nline3\n")
+        ctx = ToolContext(workspace=str(tmp_path))
+        r = ToolRegistry()
+        await r.execute_tool("read", {"file_path": "last-line.txt"}, ctx)
+
+        result = await r.execute_tool(
+            "replace",
+            {"file_path": "last-line.txt", "start_no": 3, "end_no": 3, "prefix": "line3", "suffix": "line3", "new_string": "NEW3\n"},
+            ctx,
+        )
+
+        assert result.metadata.get("error") is not True
+        assert f.read_text() == "line1\nline2\nNEW3\n"
+
+    @pytest.mark.asyncio
+    async def test_replace_trailing_newline_no_trailing_newline_file(self, tmp_path):
+        """File without trailing newline: new_string ending with \\n must not add extra blank line."""
+        f = tmp_path / "no-trailing.txt"
+        f.write_text("line1\nline2\nline3")
+        ctx = ToolContext(workspace=str(tmp_path))
+        r = ToolRegistry()
+        await r.execute_tool("read", {"file_path": "no-trailing.txt"}, ctx)
+
+        result = await r.execute_tool(
+            "replace",
+            {"file_path": "no-trailing.txt", "start_no": 2, "end_no": 2, "prefix": "line2", "suffix": "line2", "new_string": "NEW2\n"},
+            ctx,
+        )
+
+        assert result.metadata.get("error") is not True
+        assert f.read_text() == "line1\nNEW2\nline3"
+
+    @pytest.mark.asyncio
+    async def test_replace_no_trailing_newline_preserves_next_line(self, tmp_path):
+        """new_string without trailing \\n: next line must be untouched (baseline)."""
+        f = tmp_path / "baseline.txt"
+        f.write_text("line1\nline2\nline3\n")
+        ctx = ToolContext(workspace=str(tmp_path))
+        r = ToolRegistry()
+        await r.execute_tool("read", {"file_path": "baseline.txt"}, ctx)
+
+        result = await r.execute_tool(
+            "replace",
+            {"file_path": "baseline.txt", "start_no": 2, "end_no": 2, "prefix": "line2", "suffix": "line2", "new_string": "NEW2"},
+            ctx,
+        )
+
+        assert result.metadata.get("error") is not True
+        assert f.read_text() == "line1\nNEW2\nline3\n"
+
+    @pytest.mark.asyncio
+    async def test_replace_double_trailing_newline_intentional_blank_line(self, tmp_path):
+        """new_string ending with \\n\\n (intentional blank line after replacement)."""
+        f = tmp_path / "double-newline.txt"
+        f.write_text("line1\nline2\nline3\nline4\n")
+        ctx = ToolContext(workspace=str(tmp_path))
+        r = ToolRegistry()
+        await r.execute_tool("read", {"file_path": "double-newline.txt"}, ctx)
+
+        result = await r.execute_tool(
+            "replace",
+            {"file_path": "double-newline.txt", "start_no": 2, "end_no": 2, "prefix": "line2", "suffix": "line2", "new_string": "NEW2\n\n"},
+            ctx,
+        )
+
+        assert result.metadata.get("error") is not True
+        assert f.read_text() == "line1\nNEW2\n\nline3\nline4\n"
+
+    @pytest.mark.asyncio
+    async def test_replace_trailing_newline_python_code(self, tmp_path):
+        """Realistic: replace function body in Python code with trailing newline."""
+        f = tmp_path / "code.py"
+        f.write_text("def foo():\n    return 1\n\ndef bar():\n    return 2\n")
+        ctx = ToolContext(workspace=str(tmp_path))
+        r = ToolRegistry()
+        await r.execute_tool("read", {"file_path": "code.py"}, ctx)
+
+        result = await r.execute_tool(
+            "replace",
+            {"file_path": "code.py", "start_no": 1, "end_no": 2, "prefix": "def foo():", "suffix": "return 1", "new_string": "def foo():\n    return 42\n"},
+            ctx,
+        )
+
+        assert result.metadata.get("error") is not True
+        assert f.read_text() == "def foo():\n    return 42\n\ndef bar():\n    return 2\n"
+
+    @pytest.mark.asyncio
+    async def test_replace_trailing_newline_multiline_to_single_line(self, tmp_path):
+        """Replace multi-line segment with single line ending in \\n."""
+        f = tmp_path / "multi-to-single.txt"
+        f.write_text("line1\nline2\nline3\nline4\nline5\n")
+        ctx = ToolContext(workspace=str(tmp_path))
+        r = ToolRegistry()
+        await r.execute_tool("read", {"file_path": "multi-to-single.txt"}, ctx)
+
+        result = await r.execute_tool(
+            "replace",
+            {"file_path": "multi-to-single.txt", "start_no": 2, "end_no": 4, "prefix": "line2", "suffix": "line4", "new_string": "REPLACED\n"},
+            ctx,
+        )
+
+        assert result.metadata.get("error") is not True
+        assert f.read_text() == "line1\nREPLACED\nline5\n"
+
+    @pytest.mark.asyncio
+    async def test_replace_trailing_newline_single_line_file(self, tmp_path):
+        """Single-line file: replace with trailing-newline new_string."""
+        f = tmp_path / "single.txt"
+        f.write_text("only_line\n")
+        ctx = ToolContext(workspace=str(tmp_path))
+        r = ToolRegistry()
+        await r.execute_tool("read", {"file_path": "single.txt"}, ctx)
+
+        result = await r.execute_tool(
+            "replace",
+            {"file_path": "single.txt", "start_no": 1, "end_no": 1, "prefix": "only_line", "suffix": "only_line", "new_string": "REPLACED\n"},
+            ctx,
+        )
+
+        assert result.metadata.get("error") is not True
+        assert f.read_text() == "REPLACED\n"
+
+    @pytest.mark.asyncio
+    async def test_replace_trailing_newline_two_line_file(self, tmp_path):
+        """Two-line file: replace first line with trailing-newline new_string."""
+        f = tmp_path / "two.txt"
+        f.write_text("line1\nline2\n")
+        ctx = ToolContext(workspace=str(tmp_path))
+        r = ToolRegistry()
+        await r.execute_tool("read", {"file_path": "two.txt"}, ctx)
+
+        result = await r.execute_tool(
+            "replace",
+            {"file_path": "two.txt", "start_no": 1, "end_no": 1, "prefix": "line1", "suffix": "line1", "new_string": "NEW1\n"},
+            ctx,
+        )
+
+        assert result.metadata.get("error") is not True
+        assert f.read_text() == "NEW1\nline2\n"
+
+    @pytest.mark.asyncio
+    async def test_replace_sequential_trailing_newline_replaces(self, tmp_path):
+        """Two sequential replaces both with trailing newline: no cumulative blank lines."""
+        f = tmp_path / "sequential.txt"
+        f.write_text("line1\nline2\nline3\nline4\n")
+        ctx = ToolContext(workspace=str(tmp_path))
+        r = ToolRegistry()
+        await r.execute_tool("read", {"file_path": "sequential.txt"}, ctx)
+
+        r1 = await r.execute_tool(
+            "replace",
+            {"file_path": "sequential.txt", "start_no": 2, "end_no": 2, "prefix": "line2", "suffix": "line2", "new_string": "NEW2\n"},
+            ctx,
+        )
+        assert r1.metadata.get("error") is not True
+
+        # Read again to update coverage after first edit
+        await r.execute_tool("read", {"file_path": "sequential.txt"}, ctx)
+
+        r2 = await r.execute_tool(
+            "replace",
+            {"file_path": "sequential.txt", "start_no": 3, "end_no": 3, "prefix": "line3", "suffix": "line3", "new_string": "NEW3\n"},
+            ctx,
+        )
+        assert r2.metadata.get("error") is not True
+
+        assert f.read_text() == "line1\nNEW2\nNEW3\nline4\n"
+
+    @pytest.mark.asyncio
+    async def test_replace_new_string_with_leading_and_trailing_newline(self, tmp_path):
+        """new_string starting with \\n and ending with \\n: intentional blank line before and after."""
+        f = tmp_path / "lead-trail.txt"
+        f.write_text("line1\nline2\nline3\n")
+        ctx = ToolContext(workspace=str(tmp_path))
+        r = ToolRegistry()
+        await r.execute_tool("read", {"file_path": "lead-trail.txt"}, ctx)
+
+        result = await r.execute_tool(
+            "replace",
+            {"file_path": "lead-trail.txt", "start_no": 2, "end_no": 2, "prefix": "line2", "suffix": "line2", "new_string": "\nNEW2\n"},
+            ctx,
+        )
+
+        assert result.metadata.get("error") is not True
+        assert f.read_text() == "line1\n\nNEW2\nline3\n"
+
+    @pytest.mark.asyncio
+    async def test_replace_trailing_newline_replace_with_empty(self, tmp_path):
+        """Delete a line (empty new_string): next line must not be corrupted."""
+        f = tmp_path / "delete.txt"
+        f.write_text("line1\nline2\nline3\n")
+        ctx = ToolContext(workspace=str(tmp_path))
+        r = ToolRegistry()
+        await r.execute_tool("read", {"file_path": "delete.txt"}, ctx)
+
+        result = await r.execute_tool(
+            "replace",
+            {"file_path": "delete.txt", "start_no": 2, "end_no": 2, "prefix": "line2", "suffix": "line2", "new_string": ""},
+            ctx,
+        )
+
+        assert result.metadata.get("error") is not True
+        assert f.read_text() == "line1\nline3\n"
+
+    @pytest.mark.asyncio
+    async def test_replace_suffix_partial_match_replaces_whole_line(self, tmp_path):
+        """A suffix substring in the middle of the line still replaces the whole line."""
+        f = tmp_path / "partial-suffix.txt"
+        f.write_text("    remap_read_coverage_from_file_diff(ctx, path, file_diff, old_ranges=old_ranges)\n")
+        ctx = ToolContext(workspace=str(tmp_path))
+        r = ToolRegistry()
+        await r.execute_tool("read", {"file_path": "partial-suffix.txt"}, ctx)
+
+        result = await r.execute_tool(
+            "replace",
+            {
+                "file_path": "partial-suffix.txt",
+                "start_no": 1,
+                "end_no": 1,
+                "prefix": "remap_read_coverage_from_file_diff",
+                "suffix": "remap_read_coverage_from_file_diff",
+                "new_string": "replacement()",
+            },
+            ctx,
+        )
+
+        assert result.metadata.get("error") is not True
+        assert f.read_text() == "replacement()\n"
+
+    @pytest.mark.asyncio
+    async def test_replace_suffix_at_line_end_replaces_whole_line(self, tmp_path):
+        f = tmp_path / "full-suffix.txt"
+        f.write_text("    remap_read_coverage_from_file_diff(ctx, path, file_diff, old_ranges=old_ranges)\n")
+        ctx = ToolContext(workspace=str(tmp_path))
+        r = ToolRegistry()
+        await r.execute_tool("read", {"file_path": "full-suffix.txt"}, ctx)
+
+        result = await r.execute_tool(
+            "replace",
+            {
+                "file_path": "full-suffix.txt",
+                "start_no": 1,
+                "end_no": 1,
+                "prefix": "remap_read_coverage_from_file_diff",
+                "suffix": "old_ranges=old_ranges)",
+                "new_string": "replacement()\n",
+            },
+            ctx,
+        )
+
+        assert result.metadata.get("error") is not True
+        assert f.read_text() == "replacement()\n"
+
+    @pytest.mark.asyncio
+    async def test_replace_suffix_partial_midline_does_not_leave_tail(self, tmp_path):
+        f = tmp_path / "midline-suffix.py"
+        f.write_text('    if new_string.endswith("\\n") and tail.startswith("\\n"):\n    content = "hello"\n')
+        ctx = ToolContext(workspace=str(tmp_path))
+        r = ToolRegistry()
+        await r.execute_tool("read", {"file_path": "midline-suffix.py"}, ctx)
+
+        result = await r.execute_tool(
+            "replace",
+            {
+                "file_path": "midline-suffix.py",
+                "start_no": 1,
+                "end_no": 1,
+                "prefix": "if new_string.endswith",
+                "suffix": "tail.startswith",
+                "new_string": '    if (new_string == "" or new_string.endswith("\\n")) and tail.startswith("\\n"):',
+            },
+            ctx,
+        )
+
+        assert result.metadata.get("error") is not True
+        content = f.read_text()
+        assert content == '    if (new_string == "" or new_string.endswith("\\n")) and tail.startswith("\\n"):\n    content = "hello"\n'

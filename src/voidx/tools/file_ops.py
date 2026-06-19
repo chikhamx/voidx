@@ -6,7 +6,7 @@ from bisect import bisect_right
 from dataclasses import asdict
 from typing import Literal, NamedTuple
 
-from pydantic import BaseModel, Field
+from pydantic import BaseModel, Field, model_validator
 
 from voidx.agent.tool_messages import DEFAULT_TOOL_MESSAGE_MAX_CHARS
 from voidx.diffing import FileDiff, make_file_diff, parse_unified_diff
@@ -26,7 +26,8 @@ from voidx.tools.file_state import (
 
 READ_OUTPUT_MAX_CHARS = DEFAULT_TOOL_MESSAGE_MAX_CHARS
 BINARY_DETECTION_BYTES = 8 * 1024
-TEXT_REPLACE_WINDOW_LINES = 30
+TEXT_REPLACE_LINE_RADIUS = 3
+TEXT_REPLACE_SPAN_TOLERANCE = 2
 
 
 class DisplayLines(NamedTuple):
@@ -418,33 +419,47 @@ class FileInsertInput(BaseModel):
 
 class FileReplaceInput(BaseModel):
     file_path: str = Field(description="Path to edit")
-    lineno: int = Field(
+    start_no: int = Field(
         ge=1,
         description=(
-            "Approximate line (1-based) of the old_string. Searches within ±30 lines."
+            "Exact first line (1-based) to replace. "
+            "Use the line number from the latest read output."
+        ),
+    )
+    end_no: int = Field(
+        ge=1,
+        description=(
+            "Exact last line (1-based) to replace. "
+            "Use the line number from the latest read output."
         ),
     )
     prefix: str = Field(
         description=(
-            "Non-empty substring at the beginning of the old_string. "
-            "Too short may match the wrong location; too long may drift from the target. "
-            "Aim for a distinctive 10-40 character snippet."
+            "Substring expected anywhere on the first line to replace. "
+            "Use an empty string only when the first line is empty. "
+            "Aim for a distinctive snippet."
         ),
     )
     suffix: str = Field(
         description=(
-            "Non-empty substring at the end of the old_string. "
-            "Searched after the prefix, so it must not appear inside the prefix itself. "
-            "Too short may match inside the prefix or earlier text; too long may overshoot. "
-            "Aim for a distinctive 10-40 character snippet."
+            "Substring expected anywhere on the last line to replace. "
+            "Use an empty string only when the last line is empty. "
+            "Aim for a distinctive snippet."
         ),
     )
     new_string: str = Field(
         description=(
-            "Replacement content. A trailing newline does not add an extra blank line; "
+            "Replacement content. May contain any number of lines. "
+            "A trailing newline does not add an extra blank line; "
             "start with a newline only when an intentional blank first line is desired."
         )
     )
+
+    @model_validator(mode="after")
+    def _validate_line_order(self) -> "FileReplaceInput":
+        if self.end_no < self.start_no:
+            raise ValueError("end_no must be greater than or equal to start_no")
+        return self
 
 
 class FileEditTool(BaseTool):
@@ -516,8 +531,9 @@ class FileInsertTool(BaseTool):
 class FileReplaceTool(BaseTool):
     id = "replace"
     description = (
-        "Replace old_string → new_string in a file. "
-        "Everything from prefix through suffix is replaced. "
+        "Replace whole lines in a file. "
+        "Provide the exact start_no/end_no from the latest read output, "
+        "plus prefix/suffix substrings from the first and last lines. "
         "Read the target lines first."
     )
 
@@ -529,7 +545,8 @@ class FileReplaceTool(BaseTool):
         return await _execute_text_replace(
             ctx,
             file_path=inp.file_path,
-            lineno=inp.lineno,
+            start_no=inp.start_no,
+            end_no=inp.end_no,
             prefix=inp.prefix,
             suffix=inp.suffix,
             new_string=inp.new_string,
@@ -619,7 +636,8 @@ async def _execute_text_replace(
     ctx: ToolContext,
     *,
     file_path: str,
-    lineno: int,
+    start_no: int,
+    end_no: int,
     prefix: str,
     suffix: str,
     new_string: str,
@@ -632,7 +650,7 @@ async def _execute_text_replace(
 
     original = path.read_text(encoding="utf-8", errors="replace")
     display = _split_display_lines(original)
-    match = _find_text_segment(display.lines, lineno, prefix, suffix)
+    match = _find_text_segment(display.lines, start_no, end_no, prefix, suffix)
     if isinstance(match, str):
         return ToolResult(output=match, metadata={"error": True})
 
@@ -649,7 +667,10 @@ async def _execute_text_replace(
         for item in existing_coverage.get("ranges", [])
     ] if existing_coverage.get("fingerprint") == current_fingerprint else []
 
-    content = f"{original[:start_offset]}{new_string}{original[end_offset:]}"
+    tail = original[end_offset:]
+    if (new_string == "" or new_string.endswith("\n")) and tail.startswith("\n"):
+        tail = tail[1:]
+    content = f"{original[:start_offset]}{new_string}{tail}"
     await save_file_version(ctx, path, display_path=file_path, tool_name=tool_name)
     path.write_text(content, encoding="utf-8")
     diff = make_file_diff(file_path, original, content)
@@ -664,7 +685,12 @@ async def _execute_text_replace(
         title="Edited (1 edits)",
         output=output,
         summary="Edited (1 operations)",
-        metadata={"file": file_path, "operations": 1},
+        metadata={
+            "file": file_path,
+            "operations": 1,
+            "start_line": start_line,
+            "end_line": end_line,
+        },
         diff=diff,
     )
 
@@ -769,65 +795,102 @@ def _validate_resolved_edits(edits: list[ResolvedEdit], total_lines: int) -> str
 
 def _find_text_segment(
     lines: list[str],
-    lineno: int,
+    start_no: int,
+    end_no: int,
     prefix: str,
     suffix: str,
 ) -> tuple[int, int, int, int] | str:
-    if prefix == "" or suffix == "":
-        return "prefix and suffix must not be empty."
-
-    total_lines = len(lines)
-    window_start = max(1, lineno - TEXT_REPLACE_WINDOW_LINES)
-    window_end = min(total_lines, lineno + TEXT_REPLACE_WINDOW_LINES)
-    if window_start > window_end:
+    prefix_lines = _find_line_candidates(lines, start_no, prefix)
+    if not prefix_lines:
+        prefix_target = "empty line" if prefix == "" else f"prefix {prefix!r}"
         return (
-            f"prefix {prefix!r} not found within ±{TEXT_REPLACE_WINDOW_LINES} "
-            f"lines of line {lineno}. Read the file to get current content."
+            f"{prefix_target} not found within ±{TEXT_REPLACE_LINE_RADIUS} "
+            f"lines of start_no {start_no}. Read the file to get current content."
         )
 
-    text, line_starts = _window_text(lines, window_start, window_end)
-    matches = _find_snippet_matches(text, line_starts, window_start, prefix)
-    if not matches:
+    suffix_lines = _find_line_candidates(lines, end_no, suffix)
+    if not suffix_lines:
+        suffix_target = "empty line" if suffix == "" else f"suffix {suffix!r}"
         return (
-            f"prefix {prefix!r} not found within ±{TEXT_REPLACE_WINDOW_LINES} "
-            f"lines of line {lineno}. Read the file to get current content."
+            f"{suffix_target} not found within ±{TEXT_REPLACE_LINE_RADIUS} "
+            f"lines of end_no {end_no}. Read the file to get current content."
         )
 
-    distances = [abs(match_line - lineno) for _, match_line in matches]
-    min_distance = min(distances)
-    nearest = [
-        match
-        for match, distance in zip(matches, distances)
-        if distance == min_distance
-    ]
-    if len(nearest) > 1:
-        nearest_lines = sorted({line for _, line in nearest})
+    ranked = _rank_line_range_pairs(prefix_lines, suffix_lines, start_no, end_no)
+    if not ranked:
         return (
-            f"prefix {prefix!r} is ambiguous at lines {_format_lines(nearest_lines)}. "
-            "Provide a more specific prefix or adjust lineno."
+            "no valid replace range found: candidate ranges did not match "
+            f"expected span {end_no - start_no} with less than "
+            f"{TEXT_REPLACE_SPAN_TOLERANCE} lines of drift. "
+            f"prefix candidates: {_format_lines(prefix_lines)}; "
+            f"suffix candidates: {_format_lines(suffix_lines)}."
         )
 
-    prefix_offset, start_line = nearest[0]
-    suffix_offset = text.find(suffix, prefix_offset + len(prefix))
-    if suffix_offset != -1:
-        candidate_end = suffix_offset + len(suffix) - 1
-        candidate_line = _line_for_offset(line_starts, window_start, candidate_end)
-        if candidate_line != start_line and prefix == suffix:
-            suffix_offset = text.find(suffix, prefix_offset)
-    if suffix_offset == -1:
-        suffix_offset = text.find(suffix, prefix_offset)
-    if suffix_offset == -1:
-        return f"suffix {suffix!r} not found after prefix at line {start_line}. Read the file to get current content."
+    best_score = ranked[0][0]
+    best = [item for item in ranked if item[0] == best_score]
+    if len(best) > 1:
+        ranges = ", ".join(f"{start}-{end}" for _, start, end in best)
+        return (
+            f"replace range is ambiguous: candidate ranges {ranges} have the same score. "
+            "Provide more specific prefix/suffix or adjust start_no/end_no."
+        )
 
-    suffix_end_offset = suffix_offset + len(suffix)
-    end_line = _line_for_offset(line_starts, window_start, suffix_end_offset - 1)
-    window_global_offset = _global_offset_for_line(lines, window_start)
+    _, start_line, end_line = ranked[0]
+    start_offset = _global_offset_for_line(lines, start_line)
+    end_offset = _global_offset_for_line(lines, end_line) + len(lines[end_line - 1])
     return (
-        window_global_offset + prefix_offset,
-        window_global_offset + suffix_end_offset,
+        start_offset,
+        end_offset,
         start_line,
         end_line,
     )
+
+
+def _find_line_candidates(
+    lines: list[str],
+    target_line: int,
+    snippet: str,
+    radius: int = TEXT_REPLACE_LINE_RADIUS,
+) -> list[int]:
+    start = max(1, target_line - radius)
+    end = min(len(lines), target_line + radius)
+    if start > end:
+        return []
+    return [
+        line_no
+        for line_no in range(start, end + 1)
+        if _line_matches_replace_anchor(lines[line_no - 1], snippet)
+    ]
+
+
+def _line_matches_replace_anchor(line: str, snippet: str) -> bool:
+    if snippet == "":
+        return line == ""
+    return snippet in line
+
+
+def _rank_line_range_pairs(
+    prefix_lines: list[int],
+    suffix_lines: list[int],
+    start_no: int,
+    end_no: int,
+) -> list[tuple[tuple[int, int, int, int], int, int]]:
+    expected_span = end_no - start_no
+    ranked: list[tuple[tuple[int, int, int, int], int, int]] = []
+    for prefix_line in prefix_lines:
+        for suffix_line in suffix_lines:
+            actual_span = suffix_line - prefix_line
+            span_delta = abs(actual_span - expected_span)
+            if actual_span < 0 or span_delta >= TEXT_REPLACE_SPAN_TOLERANCE:
+                continue
+            score = (
+                abs(prefix_line - start_no) + abs(suffix_line - end_no),
+                span_delta,
+                abs(prefix_line - start_no),
+                abs(suffix_line - end_no),
+            )
+            ranked.append((score, prefix_line, suffix_line))
+    return sorted(ranked)
 
 
 def _resolve_paragraph_edits(lines: list[str], edits: list[EditEntry]) -> ParagraphResolution | str:
