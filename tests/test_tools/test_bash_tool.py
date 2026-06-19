@@ -114,4 +114,21 @@ class TestBash:
         assert result.metadata["timeout"] is True
         assert not (tmp_path / "late.txt").exists()
 
+    @pytest.mark.asyncio
+    async def test_bash_route_hint_metadata(self, tmp_path):
+        ctx = ToolContext(workspace=str(tmp_path))
+        r = ToolRegistry()
+        result = await r.execute_tool("bash", {"command": "git status"}, ctx)
+        if "route_hint" in result.metadata:
+            hint = result.metadata["route_hint"]
+            assert hint["tool_id"] == "git"
+            assert hint["command"] == "git status"
+
+    @pytest.mark.asyncio
+    async def test_bash_no_route_hint_for_complex_commands(self, tmp_path):
+        ctx = ToolContext(workspace=str(tmp_path))
+        r = ToolRegistry()
+        result = await r.execute_tool("bash", {"command": "ls -la"}, ctx)
+        assert "route_hint" not in result.metadata
+
 

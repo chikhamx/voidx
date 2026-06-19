@@ -13,6 +13,7 @@ from pydantic import BaseModel, Field
 
 from voidx.permission.service import bash_sandbox_denial, is_safe_bash_command
 from voidx.tools.base import BaseTool, model_to_json_schema, ToolContext, ToolResult
+from voidx.tools.bash_router import try_hint
 
 # Patterns that are always blocked regardless of permission
 _BLOCKED = [
@@ -146,7 +147,7 @@ class BashTool(BaseTool):
                 "Use non-interactive flags or pipe input via echo/heredoc."
             )
 
-        return ToolResult(
+        result = ToolResult(
             title=f"Bash: {inp.command}",
             output="\n".join(output_parts) or "(no output)",
             summary=f"exit {exit_code}",
@@ -157,3 +158,16 @@ class BashTool(BaseTool):
                 "stderr_size": len(stderr) if stderr else 0,
             },
         )
+
+        hint = try_hint(inp.command)
+        if hint is not None:
+            result = ToolResult(
+                title=result.title,
+                output=result.output + f"\n[{hint.ui_label}]",
+                summary=result.summary,
+                metadata={**result.metadata, "route_hint": {"tool_id": hint.tool_id, "command": inp.command}},
+                diff=result.diff,
+                next_step_hint=hint.llm_hint,
+            )
+
+        return result
