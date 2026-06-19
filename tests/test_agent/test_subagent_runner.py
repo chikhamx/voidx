@@ -147,7 +147,7 @@ def test_run_subagent_uses_workflow_contract_instead_of_model_budget():
 
 @pytest.mark.asyncio
 async def test_subagent_runner_passes_main_workflow_runtime_context(tmp_path, monkeypatch):
-    import voidx.agent.graph.core as core_module
+    import voidx.agent.graph.core._voidx_graph as core_module
 
     graph = _graph(tmp_path)
     goal_resolution = _child_goal_resolution()
@@ -205,7 +205,7 @@ async def test_subagent_runner_passes_main_workflow_runtime_context(tmp_path, mo
 
 @pytest.mark.asyncio
 async def test_subagent_runner_persists_lifecycle_jsonl(tmp_path, monkeypatch):
-    import voidx.agent.graph.core as core_module
+    import voidx.agent.graph.core._voidx_graph as core_module
 
     graph = _graph(tmp_path)
     graph._session = await create_session(workspace=str(tmp_path))
@@ -268,7 +268,7 @@ async def test_subagent_runner_persists_lifecycle_jsonl(tmp_path, monkeypatch):
 
 @pytest.mark.asyncio
 async def test_subagent_runner_authorizes_with_child_interaction_mode(tmp_path, monkeypatch):
-    import voidx.agent.graph.core as core_module
+    import voidx.agent.graph.core._voidx_graph as core_module
 
     graph = _graph(tmp_path)
     authorize_calls: list[dict] = []

@@ -40,7 +40,7 @@ from tests.test_agent._stream_llm_helpers import (
 
 @pytest.mark.asyncio
 async def test_call_llm_ignores_legacy_max_steps_for_tool_binding(tmp_path, monkeypatch):
-    import voidx.agent.graph.core as graph_module
+    import voidx.agent.graph.core.llm as graph_module
 
     monkeypatch.setattr(graph_module, "StreamingRenderer", FakeRenderer)
 
@@ -67,7 +67,7 @@ async def test_call_llm_ignores_legacy_max_steps_for_tool_binding(tmp_path, monk
 
 @pytest.mark.asyncio
 async def test_call_llm_does_not_add_main_agent_step_hint(tmp_path, monkeypatch):
-    import voidx.agent.graph.core as graph_module
+    import voidx.agent.graph.core.llm as graph_module
 
     monkeypatch.setattr(graph_module, "StreamingRenderer", FakeRenderer)
 
@@ -100,7 +100,7 @@ async def test_call_llm_does_not_add_main_agent_step_hint(tmp_path, monkeypatch)
 
 @pytest.mark.asyncio
 async def test_call_llm_retry_uses_transient_status_event(tmp_path, monkeypatch):
-    import voidx.agent.graph.core as graph_module
+    import voidx.agent.graph.core.llm as graph_module
 
     async def no_sleep(_delay: float) -> None:
         return None

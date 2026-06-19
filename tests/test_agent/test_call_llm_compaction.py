@@ -39,7 +39,7 @@ from tests.test_agent._stream_llm_helpers import (
 
 @pytest.mark.asyncio
 async def test_call_llm_resolves_protocol_for_mimo_provider(tmp_path, monkeypatch):
-    import voidx.agent.graph.core as graph_module
+    import voidx.agent.graph.core.llm as graph_module
 
     monkeypatch.setattr(graph_module, "StreamingRenderer", FakeRenderer)
 
@@ -65,7 +65,7 @@ async def test_call_llm_resolves_protocol_for_mimo_provider(tmp_path, monkeypatc
 
 @pytest.mark.asyncio
 async def test_call_llm_injects_current_todo_runtime_context(tmp_path, monkeypatch):
-    import voidx.agent.graph.core as graph_module
+    import voidx.agent.graph.core.llm as graph_module
 
     monkeypatch.setattr(graph_module, "StreamingRenderer", FakeRenderer)
 
@@ -115,7 +115,7 @@ async def test_call_llm_injects_current_todo_runtime_context(tmp_path, monkeypat
 
 @pytest.mark.asyncio
 async def test_call_llm_updates_usage_stats(tmp_path, monkeypatch):
-    import voidx.agent.graph.core as graph_module
+    import voidx.agent.graph.core.llm as graph_module
 
     monkeypatch.setattr(graph_module, "StreamingRenderer", FakeRenderer)
 
@@ -145,7 +145,7 @@ async def test_call_llm_updates_usage_stats(tmp_path, monkeypatch):
 
 @pytest.mark.asyncio
 async def test_call_llm_persists_context_frame_for_session(tmp_path, monkeypatch):
-    import voidx.agent.graph.core as graph_module
+    import voidx.agent.graph.core.llm as graph_module
 
     monkeypatch.setattr(graph_module, "StreamingRenderer", FakeRenderer)
     session = await create_session(workspace=str(tmp_path))

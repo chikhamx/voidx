@@ -193,7 +193,7 @@ class GraphTurnRunner:
                     user_text=payload.title_text,
                     interaction_mode=interaction_mode,
                     task_state=base_task_state,
-                    log_diagnostic=host.config.log_llm_diagnostic,
+                    log_diagnostic=bool(getattr(host.config, "log_llm_diagnostic", False)),
                 )
             turn_task_state = base_task_state.model_copy(deep=True)
             turn_task_state.update_after_turn(

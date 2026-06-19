@@ -39,7 +39,7 @@ from tests.test_agent._stream_llm_helpers import (
 
 @pytest.mark.asyncio
 async def test_call_llm_guidance_does_not_create_main_agent_convergence_hint(tmp_path, monkeypatch):
-    import voidx.agent.graph.core as graph_module
+    import voidx.agent.graph.core.llm as graph_module
 
     monkeypatch.setattr(graph_module, "StreamingRenderer", FakeRenderer)
 
@@ -69,7 +69,7 @@ async def test_call_llm_guidance_does_not_create_main_agent_convergence_hint(tmp
 
 @pytest.mark.asyncio
 async def test_call_llm_context_frame_records_no_main_agent_convergence_hint(tmp_path, monkeypatch):
-    import voidx.agent.graph.core as graph_module
+    import voidx.agent.graph.core.llm as graph_module
 
     monkeypatch.setattr(graph_module, "StreamingRenderer", FakeRenderer)
     session = await create_session(workspace=str(tmp_path))
@@ -139,7 +139,7 @@ async def test_finalize_uses_fallback_only_for_invalid_forced_convergence(tmp_pa
 
 @pytest.mark.asyncio
 async def test_call_llm_filters_lsp_tools_when_no_lsp_server_is_available(tmp_path, monkeypatch):
-    import voidx.agent.graph.core as graph_module
+    import voidx.agent.graph.core.llm as graph_module
 
     monkeypatch.setattr(graph_module, "StreamingRenderer", FakeRenderer)
 
@@ -170,7 +170,7 @@ async def test_call_llm_filters_lsp_tools_when_no_lsp_server_is_available(tmp_pa
 
 @pytest.mark.asyncio
 async def test_available_tool_ids_no_longer_filter_llm_tools(tmp_path, monkeypatch):
-    import voidx.agent.graph.core as graph_module
+    import voidx.agent.graph.core.llm as graph_module
 
     monkeypatch.setattr(graph_module, "StreamingRenderer", FakeRenderer)
 
@@ -206,7 +206,7 @@ async def test_available_tool_ids_no_longer_filter_llm_tools(tmp_path, monkeypat
 
 @pytest.mark.asyncio
 async def test_call_llm_keeps_bound_tools_fixed_across_active_workflow_node(tmp_path, monkeypatch):
-    import voidx.agent.graph.core as graph_module
+    import voidx.agent.graph.core.llm as graph_module
 
     monkeypatch.setattr(graph_module, "StreamingRenderer", FakeRenderer)
 
@@ -266,7 +266,7 @@ def test_agent_static_tool_defs_hide_unlisted_non_mcp_tools_but_allow_mcp():
 
 @pytest.mark.asyncio
 async def test_orchestrator_sees_mcp_tools(tmp_path, monkeypatch):
-    import voidx.agent.graph.core as graph_module
+    import voidx.agent.graph.core.llm as graph_module
 
     monkeypatch.setattr(graph_module, "StreamingRenderer", FakeRenderer)
 
@@ -299,7 +299,7 @@ async def test_orchestrator_sees_mcp_tools(tmp_path, monkeypatch):
 
 @pytest.mark.asyncio
 async def test_runtime_persona_does_not_change_agent_mcp_tool_visibility(tmp_path, monkeypatch):
-    import voidx.agent.graph.core as graph_module
+    import voidx.agent.graph.core.llm as graph_module
 
     monkeypatch.setattr(graph_module, "StreamingRenderer", FakeRenderer)
 
@@ -333,7 +333,7 @@ async def test_runtime_persona_does_not_change_agent_mcp_tool_visibility(tmp_pat
 
 @pytest.mark.asyncio
 async def test_call_llm_keeps_lsp_tools_when_a_lsp_server_is_available(tmp_path, monkeypatch):
-    import voidx.agent.graph.core as graph_module
+    import voidx.agent.graph.core.llm as graph_module
 
     monkeypatch.setattr(graph_module, "StreamingRenderer", FakeRenderer)
 
