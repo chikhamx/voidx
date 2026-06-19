@@ -6,6 +6,7 @@ import asyncio
 from datetime import datetime, timedelta, timezone
 import json
 import os
+import re
 from pathlib import Path
 from typing import Any, Literal
 
@@ -16,8 +17,11 @@ from voidx.tools.base import BaseTool, ToolContext, ToolResult, model_to_json_sc
 
 GIT_TIMEOUT_SECONDS = 15
 DIFF_HUNK_MAX_CHARS = 12_000
+HOOK_OUTPUT_MAX_CHARS = 4000
 LOG_LIMIT_MAX = 50
 BLAME_RANGE_MAX = 200
+_BRANCH_NAME_RE = re.compile(r"^(?!\.)(?!-)[a-zA-Z0-9/_-]+(\.[a-zA-Z0-9/_-]+)*$")
+_BRANCH_NAME_DENY = re.compile(r"\.\.|[@~^:\\\s]|\.lock$")
 
 GIT_READ_COMMANDS = {
     "status",
@@ -26,8 +30,21 @@ GIT_READ_COMMANDS = {
     "blame",
     "branch_list",
     "remote_list",
+    "show",
+    "tag_list",
 }
-GIT_WRITE_COMMANDS = {"add", "commit", "restore"}
+GIT_WRITE_COMMANDS = {
+    "add",
+    "commit",
+    "restore",
+    "switch",
+    "branch_create",
+    "branch_delete",
+    "tag_create",
+    "tag_delete",
+    "stash_push",
+    "stash_pop",
+}
 
 
 class GitStatusArgs(BaseModel):
@@ -38,6 +55,7 @@ class GitDiffArgs(BaseModel):
     cached: bool = False
     pathspec: list[str] = Field(default_factory=list)
     ref: str = ""
+    base: str = ""
 
 
 class GitLogArgs(BaseModel):
@@ -45,6 +63,7 @@ class GitLogArgs(BaseModel):
     path: str = ""
     author: str = ""
     since: str = ""
+    until: str = ""
 
 
 class GitBlameArgs(BaseModel):
@@ -72,6 +91,55 @@ class GitRestoreArgs(BaseModel):
     worktree: bool = True
 
 
+
+class GitSwitchArgs(BaseModel):
+    branch: str = Field(min_length=1)
+    create: bool = False
+    start_point: str = ""
+
+
+class GitShowArgs(BaseModel):
+    ref: str = "HEAD"
+    stat: bool = False
+    pathspec: list[str] = Field(default_factory=list)
+
+
+class GitBranchCreateArgs(BaseModel):
+    name: str = Field(min_length=1)
+    start_point: str = ""
+
+
+class GitBranchDeleteArgs(BaseModel):
+    name: str = Field(min_length=1)
+    force: bool = False
+
+
+class GitTagListArgs(BaseModel):
+    pattern: str = ""
+    sort: str = ""
+
+
+class GitTagCreateArgs(BaseModel):
+    name: str = Field(min_length=1)
+    ref: str = ""
+    message: str = ""
+    force: bool = False
+
+
+class GitTagDeleteArgs(BaseModel):
+    name: str = Field(min_length=1)
+
+
+class GitStashPushArgs(BaseModel):
+    message: str = ""
+    pathspec: list[str] = Field(default_factory=list)
+
+
+class GitStashPopArgs(BaseModel):
+    index: int = Field(default=0, ge=0)
+    keep: bool = False
+
+
 class GitArgs(BaseModel):
     pathspec: list[str] = Field(default_factory=list)
     cached: bool = False
@@ -80,6 +148,7 @@ class GitArgs(BaseModel):
     path: str = ""
     author: str = ""
     since: str = ""
+    until: str = ""
     start: int | None = None
     end: int | None = None
     all: bool = False
@@ -87,6 +156,17 @@ class GitArgs(BaseModel):
     message: str = ""
     staged: bool = False
     worktree: bool = True
+    branch: str = ""
+    create: bool = False
+    start_point: str = ""
+    stat: bool = False
+    base: str = ""
+    name: str = ""
+    force: bool = False
+    pattern: str = ""
+    sort: str = ""
+    index: int = 0
+    keep: bool = False
 
 
 class GitInput(BaseModel):
@@ -100,6 +180,15 @@ class GitInput(BaseModel):
         "add",
         "commit",
         "restore",
+        "show",
+        "switch",
+        "branch_create",
+        "branch_delete",
+        "tag_list",
+        "tag_create",
+        "tag_delete",
+        "stash_push",
+        "stash_pop",
     ] = Field(description="Git operation to run.")
     args: GitArgs = Field(default_factory=GitArgs, description="Command-specific arguments.")
 
@@ -113,8 +202,9 @@ class GitTool(BaseTool):
     id = "git"
     description = (
         "Inspect and perform explicit path-scoped Git operations with structured JSON output. "
-        "Read commands are status, diff, log, blame, branch_list, remote_list. "
-        "Write commands are add, commit, restore and require approval."
+        "Read commands are status, diff, log, blame, branch_list, remote_list, show, tag_list. "
+        "Write commands are add, commit, restore, switch, branch_create, branch_delete, "
+        "tag_create, tag_delete, stash_push, stash_pop and require approval."
     )
 
     def parameters_schema(self) -> dict:
@@ -145,6 +235,24 @@ class GitTool(BaseTool):
                 return await _git_commit(_args_dict(inp.args), ctx, repo)
             if inp.command == "restore":
                 return await _git_restore(_args_dict(inp.args), ctx, repo)
+            if inp.command == "show":
+                return await _git_show(_args_dict(inp.args), ctx, repo)
+            if inp.command == "switch":
+                return await _git_switch(_args_dict(inp.args), ctx, repo)
+            if inp.command == "branch_create":
+                return await _git_branch_create(_args_dict(inp.args), ctx, repo)
+            if inp.command == "branch_delete":
+                return await _git_branch_delete(_args_dict(inp.args), ctx, repo)
+            if inp.command == "tag_list":
+                return await _git_tag_list(_args_dict(inp.args), ctx, repo)
+            if inp.command == "tag_create":
+                return await _git_tag_create(_args_dict(inp.args), ctx, repo)
+            if inp.command == "tag_delete":
+                return await _git_tag_delete(_args_dict(inp.args), ctx, repo)
+            if inp.command == "stash_push":
+                return await _git_stash_push(_args_dict(inp.args), ctx, repo)
+            if inp.command == "stash_pop":
+                return await _git_stash_pop(_args_dict(inp.args), ctx, repo)
         except ValueError as exc:
             return _result(inp.command, ctx, repo=repo, ok=False, error=str(exc))
 
@@ -162,21 +270,25 @@ async def _git_status(args: dict[str, Any], ctx: ToolContext, repo: GitRepo) -> 
     if proc["returncode"] != 0:
         return _result("status", ctx, repo=repo, ok=False, error=proc["stderr"] or proc["stdout"])
     entries = _parse_status(proc["stdout"], repo, ctx.workspace)
-    return _result("status", ctx, repo=repo, data={"entries": entries})
+    branch_proc = await _run_git(repo, ["symbolic-ref", "--short", "HEAD"], read_only=True)
+    branch = branch_proc["stdout"].strip() if branch_proc["returncode"] == 0 else ""
+    return _result("status", ctx, repo=repo, data={"entries": entries, "branch": branch})
 
 
 async def _git_diff(args: dict[str, Any], ctx: ToolContext, repo: GitRepo) -> ToolResult:
     inp = GitDiffArgs.model_validate(args)
     pathspec = _pathspecs(inp.pathspec, ctx, repo, allow_empty=True)
-    base = ["diff"]
+    base_argv = ["diff"]
     if inp.cached:
-        base.append("--cached")
-    if inp.ref:
-        base.append(inp.ref)
-    proc = await _run_git(repo, [*base, "--numstat", "--", *pathspec], read_only=True)
+        base_argv.append("--cached")
+    if inp.base and inp.ref:
+        base_argv.extend([inp.base, inp.ref])
+    elif inp.ref:
+        base_argv.append(inp.ref)
+    proc = await _run_git(repo, [*base_argv, "--numstat", "--", *pathspec], read_only=True)
     if proc["returncode"] != 0:
         return _result("diff", ctx, repo=repo, ok=False, error=proc["stderr"] or proc["stdout"])
-    hunk_proc = await _run_git(repo, [*base, "--unified=3", "--", *pathspec], read_only=True)
+    hunk_proc = await _run_git(repo, [*base_argv, "--unified=3", "--", *pathspec], read_only=True)
     if hunk_proc["returncode"] != 0:
         return _result("diff", ctx, repo=repo, ok=False, error=hunk_proc["stderr"] or hunk_proc["stdout"])
     hunks_by_path = _diff_hunks_by_path(hunk_proc["stdout"], repo, ctx.workspace)
@@ -213,6 +325,8 @@ async def _git_log(args: dict[str, Any], ctx: ToolContext, repo: GitRepo) -> Too
         argv.append(f"--author={inp.author}")
     if inp.since:
         argv.append(f"--since={inp.since}")
+    if inp.until:
+        argv.append(f"--until={inp.until}")
     if inp.path:
         argv.extend(["--", *_pathspecs([inp.path], ctx, repo, allow_empty=False)])
     proc = await _run_git(repo, argv, read_only=True)
@@ -321,11 +435,22 @@ async def _git_commit(args: dict[str, Any], ctx: ToolContext, repo: GitRepo) -> 
     rev = await _run_git(repo, ["rev-parse", "HEAD"], read_only=True)
     commit_hash = rev["stdout"].strip() if rev["returncode"] == 0 else ""
     files_changed = await _commit_files(ctx, repo, "HEAD")
+    hook_output = ""
+    if proc.get("stderr") or proc.get("stdout"):
+        parts = []
+        if proc.get("stdout"):
+            parts.append(proc["stdout"].strip())
+        if proc.get("stderr"):
+            parts.append(proc["stderr"].strip())
+        hook_output = "\n---\n".join(parts)
+        if len(hook_output) > HOOK_OUTPUT_MAX_CHARS:
+            hook_output = hook_output[:HOOK_OUTPUT_MAX_CHARS] + "[truncated]"
     return _result("commit", ctx, repo=repo, data={
         "hash": commit_hash,
         "message": message,
         "files_changed": files_changed,
         "unstaged_uncommitted": await _unstaged_files(ctx, repo),
+        "hook_output": hook_output,
     })
 
 
@@ -348,6 +473,263 @@ async def _git_restore(args: dict[str, Any], ctx: ToolContext, repo: GitRepo) ->
         "warning": "restore may overwrite worktree files; use /rollback for current-turn agent edits",
     })
 
+
+
+async def _git_show(args: dict[str, Any], ctx: ToolContext, repo: GitRepo) -> ToolResult:
+    inp = GitShowArgs.model_validate(args)
+    pathspec = _pathspecs(inp.pathspec, ctx, repo, allow_empty=True)
+    ref = inp.ref or "HEAD"
+    meta_argv = [
+        "show", f"--format=%H%x1f%an%x1f%ad%x1f%s%x1f%P", "--no-patch", ref,
+    ]
+    meta_proc = await _run_git(repo, meta_argv, read_only=True)
+    if meta_proc["returncode"] != 0:
+        return _result("show", ctx, repo=repo, ok=False, error="ref_not_found")
+    meta_line = meta_proc["stdout"].strip()
+    parts = meta_line.split("\x1f")
+    if len(parts) < 4:
+        return _result("show", ctx, repo=repo, ok=False, error="failed to parse commit metadata")
+    commit_hash, author, date, message = parts[0], parts[1], parts[2], parts[3]
+    parents = parts[4].split() if len(parts) > 4 and parts[4] else []
+    is_merge = len(parents) > 1
+    if inp.stat:
+        numstat_argv = ["show", "--format=", "--numstat", ref, "--", *pathspec]
+        numstat_proc = await _run_git(repo, numstat_argv, read_only=True)
+        if numstat_proc["returncode"] != 0:
+            return _result("show", ctx, repo=repo, ok=False, error=numstat_proc["stderr"] or numstat_proc["stdout"])
+        shortstat_argv = ["show", "--format=", "--shortstat", ref, "--", *pathspec]
+        shortstat_proc = await _run_git(repo, shortstat_argv, read_only=True)
+        if shortstat_proc["returncode"] != 0:
+            return _result("show", ctx, repo=repo, ok=False, error=shortstat_proc["stderr"] or shortstat_proc["stdout"])
+        files_changed, stats = _parse_show_numstat(numstat_proc["stdout"], shortstat_proc["stdout"], repo, ctx.workspace)
+        return _result("show", ctx, repo=repo, data={
+            "hash": commit_hash, "author": author, "date": date, "message": message,
+            "parents": parents, "merge": is_merge,
+            "files_changed": files_changed, "stats": stats,
+            "hunks": [], "truncated": False,
+        })
+    diff_argv = ["show", "--format=", "--unified=3", ref, "--", *pathspec]
+    diff_proc = await _run_git(repo, diff_argv, read_only=True)
+    if diff_proc["returncode"] != 0:
+        return _result("show", ctx, repo=repo, ok=False, error=diff_proc["stderr"] or diff_proc["stdout"])
+    numstat_argv = ["show", "--format=", "--numstat", ref, "--", *pathspec]
+    numstat_proc = await _run_git(repo, numstat_argv, read_only=True)
+    if numstat_proc["returncode"] != 0:
+        return _result("show", ctx, repo=repo, ok=False, error=numstat_proc["stderr"] or numstat_proc["stdout"])
+    hunks_by_path = _diff_hunks_by_path(diff_proc["stdout"], repo, ctx.workspace)
+    files_changed = []
+    total_add = 0
+    total_del = 0
+    for line in numstat_proc["stdout"].splitlines():
+        p = line.split("\t")
+        if len(p) < 3:
+            continue
+        added_raw, removed_raw, repo_path = p[0], p[1], p[2]
+        binary = added_raw == "-" or removed_raw == "-"
+        display_path = _display_path(repo_path, repo, ctx.workspace)
+        if not binary:
+            total_add += int(added_raw)
+            total_del += int(removed_raw)
+        files_changed.append(display_path)
+    hunks = []
+    truncated = False
+    if not is_merge:
+        for path in files_changed:
+            path_hunks, path_trunc = hunks_by_path.get(path, ([], False))
+            hunks.extend(path_hunks)
+            truncated = truncated or path_trunc
+    return _result("show", ctx, repo=repo, data={
+        "hash": commit_hash, "author": author, "date": date, "message": message,
+        "parents": parents, "merge": is_merge,
+        "files_changed": files_changed,
+        "stats": {"additions": total_add, "deletions": total_del},
+        "hunks": hunks, "truncated": truncated,
+    })
+
+
+async def _git_switch(args: dict[str, Any], ctx: ToolContext, repo: GitRepo) -> ToolResult:
+    inp = GitSwitchArgs.model_validate(args)
+    if not _BRANCH_NAME_RE.match(inp.branch) or _BRANCH_NAME_DENY.search(inp.branch):
+        raise ValueError(f"invalid branch name: {inp.branch}")
+    prev_proc = await _run_git(repo, ["symbolic-ref", "--short", "HEAD"], read_only=True)
+    previous_branch = prev_proc["stdout"].strip() if prev_proc["returncode"] == 0 else ""
+    if inp.create:
+        argv = ["switch", "-c", inp.branch]
+        if inp.start_point:
+            argv.append(inp.start_point)
+    else:
+        status_proc = await _run_git(repo, ["status", "--porcelain"], read_only=True)
+        if status_proc["returncode"] == 0 and status_proc["stdout"].strip():
+            dirty_files = [
+                _display_path(line[3:].strip(), repo, ctx.workspace)
+                for line in status_proc["stdout"].splitlines()
+                if line.strip()
+            ]
+            proc = await _run_git(repo, ["switch", inp.branch])
+            if proc["returncode"] != 0:
+                return _result("switch", ctx, repo=repo, ok=False, error="dirty_conflict",
+                               data={"dirty_files": dirty_files,
+                                     "suggestion": "stash_push before switching branches"})
+        else:
+            proc = await _run_git(repo, ["switch", inp.branch])
+            if proc["returncode"] != 0:
+                stderr = proc["stderr"] or proc["stdout"]
+                if "did not match" in stderr or "not found" in stderr.lower() or "invalid reference" in stderr.lower():
+                    return _result("switch", ctx, repo=repo, ok=False, error="branch_not_found")
+                return _result("switch", ctx, repo=repo, ok=False, error=stderr)
+        return _result("switch", ctx, repo=repo, data={
+            "branch": inp.branch, "created": False, "previous_branch": previous_branch,
+        })
+    proc = await _run_git(repo, argv)
+    if proc["returncode"] != 0:
+        return _result("switch", ctx, repo=repo, ok=False, error=proc["stderr"] or proc["stdout"])
+    return _result("switch", ctx, repo=repo, data={
+        "branch": inp.branch, "created": True, "previous_branch": previous_branch,
+    })
+
+
+async def _git_branch_create(args: dict[str, Any], ctx: ToolContext, repo: GitRepo) -> ToolResult:
+    inp = GitBranchCreateArgs.model_validate(args)
+    if not _BRANCH_NAME_RE.match(inp.name) or _BRANCH_NAME_DENY.search(inp.name):
+        raise ValueError(f"invalid branch name: {inp.name}")
+    argv = ["branch", inp.name]
+    if inp.start_point:
+        argv.append(inp.start_point)
+    proc = await _run_git(repo, argv)
+    if proc["returncode"] != 0:
+        return _result("branch_create", ctx, repo=repo, ok=False, error=proc["stderr"] or proc["stdout"])
+    rev_proc = await _run_git(repo, ["rev-parse", "--short", inp.name], read_only=True)
+    branch_hash = rev_proc["stdout"].strip() if rev_proc["returncode"] == 0 else ""
+    return _result("branch_create", ctx, repo=repo, data={
+        "name": inp.name, "start_point": inp.start_point or "HEAD", "hash": branch_hash,
+    })
+
+
+async def _git_branch_delete(args: dict[str, Any], ctx: ToolContext, repo: GitRepo) -> ToolResult:
+    inp = GitBranchDeleteArgs.model_validate(args)
+    if not _BRANCH_NAME_RE.match(inp.name) or _BRANCH_NAME_DENY.search(inp.name):
+        raise ValueError(f"invalid branch name: {inp.name}")
+    argv = ["branch"]
+    if inp.force:
+        argv.append("-D")
+    else:
+        argv.append("-d")
+    argv.append(inp.name)
+    proc = await _run_git(repo, argv)
+    if proc["returncode"] != 0:
+        stderr = proc["stderr"] or proc["stdout"]
+        if "not found" in stderr.lower() or "did not match" in stderr:
+            return _result("branch_delete", ctx, repo=repo, ok=False, error="branch_not_found")
+        if "cannot delete" in stderr.lower():
+            return _result("branch_delete", ctx, repo=repo, ok=False, error="cannot_delete_current_branch")
+        if "not fully merged" in stderr.lower() or "unmerged" in stderr.lower():
+            return _result("branch_delete", ctx, repo=repo, ok=False, error="branch_not_merged")
+        return _result("branch_delete", ctx, repo=repo, ok=False, error=stderr)
+    return _result("branch_delete", ctx, repo=repo, data={"name": inp.name, "force": inp.force})
+
+
+async def _git_tag_list(args: dict[str, Any], ctx: ToolContext, repo: GitRepo) -> ToolResult:
+    inp = GitTagListArgs.model_validate(args)
+    argv = ["tag", "-l", "--format=%(refname:short) %(objectname:short)"]
+    if inp.pattern:
+        argv.append(inp.pattern)
+    if inp.sort:
+        argv.append(f"--sort={inp.sort}")
+    proc = await _run_git(repo, argv, read_only=True)
+    if proc["returncode"] != 0:
+        return _result("tag_list", ctx, repo=repo, ok=False, error=proc["stderr"] or proc["stdout"])
+    entries = []
+    for line in proc["stdout"].splitlines():
+        line = line.strip()
+        if not line:
+            continue
+        parts = line.split(None, 1)
+        tag_name = parts[0]
+        tag_hash = parts[1] if len(parts) > 1 else ""
+        entries.append({"name": tag_name, "hash": tag_hash})
+    return _result("tag_list", ctx, repo=repo, data={"entries": entries})
+
+
+async def _git_tag_create(args: dict[str, Any], ctx: ToolContext, repo: GitRepo) -> ToolResult:
+    inp = GitTagCreateArgs.model_validate(args)
+    argv = ["tag"]
+    if inp.message:
+        argv.extend(["-a", "-m", inp.message])
+    if inp.force:
+        argv.append("-f")
+    argv.append(inp.name)
+    if inp.ref:
+        argv.append(inp.ref)
+    proc = await _run_git(repo, argv)
+    if proc["returncode"] != 0:
+        stderr = proc["stderr"] or proc["stdout"]
+        if "already exists" in stderr:
+            return _result("tag_create", ctx, repo=repo, ok=False, error="tag_already_exists")
+        return _result("tag_create", ctx, repo=repo, ok=False, error=stderr)
+    rev_proc = await _run_git(repo, ["rev-list", "-1", inp.name], read_only=True)
+    tag_hash = rev_proc["stdout"].strip()[:7] if rev_proc["returncode"] == 0 else ""
+    return _result("tag_create", ctx, repo=repo, data={
+        "name": inp.name, "ref": inp.ref or "HEAD", "hash": tag_hash,
+        "annotated": bool(inp.message),
+    })
+
+
+async def _git_tag_delete(args: dict[str, Any], ctx: ToolContext, repo: GitRepo) -> ToolResult:
+    inp = GitTagDeleteArgs.model_validate(args)
+    proc = await _run_git(repo, ["tag", "-d", inp.name])
+    if proc["returncode"] != 0:
+        return _result("tag_delete", ctx, repo=repo, ok=False, error=proc["stderr"] or proc["stdout"])
+    return _result("tag_delete", ctx, repo=repo, data={"name": inp.name})
+
+
+async def _git_stash_push(args: dict[str, Any], ctx: ToolContext, repo: GitRepo) -> ToolResult:
+    inp = GitStashPushArgs.model_validate(args)
+    argv = ["stash", "push"]
+    if inp.message:
+        argv.extend(["-m", inp.message])
+    if inp.pathspec:
+        pathspec = _pathspecs(inp.pathspec, ctx, repo, allow_empty=False)
+        argv.append("--")
+        argv.extend(pathspec)
+    proc = await _run_git(repo, argv)
+    if proc["returncode"] != 0:
+        return _result("stash_push", ctx, repo=repo, ok=False, error=proc["stderr"] or proc["stdout"])
+    stash_msg = proc["stdout"].strip()
+    files_stashed = []
+    show_proc = await _run_git(repo, ["stash", "show", "--name-only", "stash@{0}"], read_only=True)
+    if show_proc["returncode"] == 0:
+        files_stashed = [_display_path(l, repo, ctx.workspace) for l in show_proc["stdout"].splitlines() if l.strip()]
+    return _result("stash_push", ctx, repo=repo, data={
+        "index": 0, "message": stash_msg, "files_stashed": files_stashed,
+    })
+
+
+async def _git_stash_pop(args: dict[str, Any], ctx: ToolContext, repo: GitRepo) -> ToolResult:
+    inp = GitStashPopArgs.model_validate(args)
+    subcmd = "apply" if inp.keep else "pop"
+    stash_ref = f"stash@{{{inp.index}}}"
+    show_proc = await _run_git(repo, ["stash", "show", "--name-only", stash_ref], read_only=True)
+    stash_files = []
+    if show_proc["returncode"] == 0:
+        stash_files = [_display_path(l, repo, ctx.workspace) for l in show_proc["stdout"].splitlines() if l.strip()]
+    argv = ["stash", subcmd, stash_ref]
+    proc = await _run_git(repo, argv)
+    if proc["returncode"] != 0:
+        stderr = proc["stderr"] or proc["stdout"]
+        conflicts = []
+        if "CONFLICT" in proc["stdout"] or "CONFLICT" in stderr:
+            for line in (proc["stdout"] + stderr).splitlines():
+                if line.startswith("CONFLICT"):
+                    parts = line.split()
+                    if len(parts) >= 3:
+                        conflicts.append(parts[-1])
+        return _result("stash_pop", ctx, repo=repo, ok=False, error=stderr,
+                       data={"index": inp.index, "applied": False, "kept": inp.keep,
+                             "conflicts": conflicts, "files_restored": stash_files})
+    return _result("stash_pop", ctx, repo=repo, data={
+        "index": inp.index, "applied": True, "kept": inp.keep,
+        "conflicts": [], "files_restored": stash_files,
+    })
 
 async def _discover_repo(ctx: ToolContext) -> GitRepo | None:
     proc = await _run_process(["git", "rev-parse", "--show-toplevel"], cwd=ctx.workspace, read_only=True)
@@ -411,6 +793,22 @@ def _pathspecs(paths: list[str], ctx: ToolContext, repo: GitRepo, *, allow_empty
         result.append(rel.as_posix())
     return result
 
+
+
+def _parse_show_numstat(numstat_raw: str, shortstat_raw: str, repo: GitRepo, workspace: str) -> tuple[list[str], dict[str, int]]:
+    files_changed = []
+    for line in numstat_raw.splitlines():
+        parts = line.split("\t")
+        if len(parts) < 3:
+            continue
+        repo_path = parts[2]
+        display_path = _display_path(repo_path, repo, workspace)
+        files_changed.append(display_path)
+    ins = re.search(r"(\d+) insertion", shortstat_raw)
+    dels = re.search(r"(\d+) deletion", shortstat_raw)
+    total_add = int(ins.group(1)) if ins else 0
+    total_del = int(dels.group(1)) if dels else 0
+    return files_changed, {"additions": total_add, "deletions": total_del}
 
 def _parse_status(raw: str, repo: GitRepo, workspace: str) -> list[dict[str, Any]]:
     tokens = [token for token in raw.split("\0") if token]

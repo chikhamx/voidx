@@ -385,4 +385,6 @@ def _is_read_only_git_tool_command(args: dict) -> bool:
         "blame",
         "branch_list",
         "remote_list",
+        "show",
+        "tag_list",
     }

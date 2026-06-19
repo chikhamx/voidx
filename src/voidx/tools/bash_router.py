@@ -41,6 +41,25 @@ def _shell_words(command: str) -> list[str]:
         return []
 
 
+
+_RE_CD_PREFIX = re.compile(r"^cd\s+\S+\s*&&\s+")
+
+
+def _strip_cd_prefix(command: str) -> str:
+    """Strip a leading ``cd <dir> &&`` if it's the only && in the command.
+
+    ``cd /path && sed ...`` → ``sed ...``
+    ``cd /path && cmd1 && cmd2`` → unchanged (multiple &&)
+    """
+    m = _RE_CD_PREFIX.match(command)
+    if not m:
+        return command
+    remainder = command[m.end():]
+    # If remainder still contains &&, there are multiple commands — don't strip.
+    if _RE_AMP.search(remainder):
+        return command
+    return remainder
+
 # ---------------------------------------------------------------------------
 # Main dispatch
 # ---------------------------------------------------------------------------
@@ -48,8 +67,8 @@ def _shell_words(command: str) -> list[str]:
 _RE_AMP = re.compile(r"&&|\s&$")
 
 _UNHINTABLE_GIT_SUBCOMMANDS = frozenset({
-    "push", "pull", "merge", "rebase", "stash", "cherry-pick",
-    "reset", "checkout", "switch", "fetch", "clone", "init",
+    "push", "pull", "merge", "rebase", "cherry-pick",
+    "reset", "checkout", "fetch", "clone", "init",
     "submodule", "filter-branch", "bisect",
 })
 
@@ -58,6 +77,11 @@ def _try_hint_impl(command: str) -> RouteHint | None:
     stripped = command.strip()
     if not stripped:
         return None
+
+    # Strip "cd <dir> &&" prefix — cd is a no-op for hint detection,
+    # but LLMs frequently use "cd /path && <cmd>" to set working directory.
+    # Only strip if there's exactly one && (cd && cmd1 && cmd2 is still excluded).
+    stripped = _strip_cd_prefix(stripped)
 
     if any(ch in stripped for ch in ("|", ";", "$")):
         return None
@@ -110,6 +134,9 @@ def _hint_git(stripped: str, words: list[str]) -> RouteHint | None:
         "remote": _hint_git_remote,
         "add": _hint_git_add,
         "restore": _hint_git_restore,
+        "show": _hint_git_show,
+        "switch": _hint_git_switch,
+        "stash": _hint_git_stash,
     }
     hinter = mapping.get(subcommand)
     if hinter is None:
@@ -383,6 +410,181 @@ def _hint_git_restore(rest: list[str]) -> RouteHint | None:
         tool_id="git", ui_label="→ git",
         llm_hint=f'Prefer git(command="restore", args={{{args_str}}}) for permission-scoped git operations.',
     )
+
+
+def _hint_git_show(rest: list[str]) -> RouteHint | None:
+    ref = ""
+    stat = False
+    pathspec: list[str] = []
+    i = 0
+    while i < len(rest):
+        if rest[i] == "--stat":
+            stat = True
+            i += 1
+        elif rest[i] == "--" and i + 1 < len(rest):
+            pathspec = rest[i + 1:]
+            break
+        elif rest[i].startswith("-"):
+            return None
+        elif not ref:
+            ref = rest[i]
+            i += 1
+        else:
+            return None
+    args_parts: list[str] = []
+    if ref:
+        args_parts.append(f'"ref": "{ref}"')
+    if stat:
+        args_parts.append('"stat": true')
+    if pathspec:
+        args_parts.append(f'"pathspec": {pathspec}')
+    args_str = ", ".join(args_parts)
+    if args_str:
+        return RouteHint(
+            tool_id="git", ui_label="→ git",
+            llm_hint=f'Prefer git(command="show", args={{{args_str}}}) for structured JSON output.',
+        )
+    return RouteHint(
+        tool_id="git", ui_label="→ git",
+        llm_hint='Prefer git(command="show") for structured JSON output.',
+    )
+
+
+def _hint_git_switch(rest: list[str]) -> RouteHint | None:
+    if not rest:
+        return None
+    create = False
+    branch = ""
+    start_point = ""
+    i = 0
+    while i < len(rest):
+        if rest[i] == "-c" or rest[i] == "--create":
+            create = True
+            i += 1
+        elif rest[i].startswith("-"):
+            return None
+        elif not branch:
+            branch = rest[i]
+            i += 1
+        elif not start_point:
+            start_point = rest[i]
+            i += 1
+        else:
+            return None
+    if not branch:
+        return None
+    args_parts = [f'"branch": "{branch}"']
+    if create:
+        args_parts.append('"create": true')
+    if start_point:
+        args_parts.append(f'"start_point": "{start_point}"')
+    args_str = ", ".join(args_parts)
+    return RouteHint(
+        tool_id="git", ui_label="→ git",
+        llm_hint=f'Prefer git(command="switch", args={{{args_str}}}) for permission-scoped git operations.',
+    )
+
+
+def _hint_git_tag(rest: list[str]) -> RouteHint | None:
+    if not rest:
+        return RouteHint(
+            tool_id="git", ui_label="→ git",
+            llm_hint='Prefer git(command="tag_list") for structured JSON output.',
+        )
+    if rest[0] == "-l" or rest[0] == "--list":
+        pattern = rest[1] if len(rest) > 1 and not rest[1].startswith("-") else ""
+        if pattern:
+            return RouteHint(
+                tool_id="git", ui_label="→ git",
+                llm_hint=f'Prefer git(command="tag_list", args={{"pattern": "{pattern}"}}) for structured JSON output.',
+            )
+        return RouteHint(
+            tool_id="git", ui_label="→ git",
+            llm_hint='Prefer git(command="tag_list") for structured JSON output.',
+        )
+    if rest[0] == "-d" or rest[0] == "--delete":
+        name = rest[1] if len(rest) > 1 and not rest[1].startswith("-") else ""
+        if name:
+            return RouteHint(
+                tool_id="git", ui_label="→ git",
+                llm_hint=f'Prefer git(command="tag_delete", args={{"name": "{name}"}}) for permission-scoped git operations.',
+            )
+        return None
+    if rest[0].startswith("-"):
+        return None
+    name = rest[0]
+    args_parts = [f'"name": "{name}"']
+    i = 1
+    while i < len(rest):
+        if rest[i] == "-a" or rest[i] == "-f":
+            i += 1
+        elif rest[i] == "-m" and i + 1 < len(rest):
+            i += 2
+        elif rest[i].startswith("-"):
+            return None
+        else:
+            i += 1
+    return RouteHint(
+        tool_id="git", ui_label="→ git",
+        llm_hint=f'Prefer git(command="tag_create", args={{{", ".join(args_parts)}}}) for permission-scoped git operations.',
+    )
+
+
+def _hint_git_stash(rest: list[str]) -> RouteHint | None:
+    if not rest:
+        return RouteHint(
+            tool_id="git", ui_label="→ git",
+            llm_hint='Prefer git(command="stash_push") or git(command="stash_pop") for structured output.',
+        )
+    if rest[0] == "push":
+        message = ""
+        pathspec: list[str] = []
+        i = 1
+        while i < len(rest):
+            if rest[i] == "-m" and i + 1 < len(rest):
+                message = rest[i + 1]
+                i += 2
+            elif rest[i] == "--" and i + 1 < len(rest):
+                pathspec = rest[i + 1:]
+                break
+            elif rest[i].startswith("-"):
+                return None
+            else:
+                i += 1
+        args_parts: list[str] = []
+        if message:
+            args_parts.append(f'"message": "{message}"')
+        if pathspec:
+            args_parts.append(f'"pathspec": {pathspec}')
+        args_str = ", ".join(args_parts)
+        if args_str:
+            return RouteHint(
+                tool_id="git", ui_label="→ git",
+                llm_hint=f'Prefer git(command="stash_push", args={{{args_str}}}) for structured output.',
+            )
+        return RouteHint(
+            tool_id="git", ui_label="→ git",
+            llm_hint='Prefer git(command="stash_push") for structured output.',
+        )
+    if rest[0] == "pop" or rest[0] == "apply":
+        index = 0
+        if len(rest) > 1 and rest[1].startswith("stash@{"):
+            try:
+                idx_str = rest[1].rstrip("}").split("{")[1]
+                index = int(idx_str)
+            except (ValueError, IndexError):
+                pass
+        keep = rest[0] == "apply"
+        args_parts = [f'"index": {index}']
+        if keep:
+            args_parts.append('"keep": true')
+        args_str = ", ".join(args_parts)
+        return RouteHint(
+            tool_id="git", ui_label="→ git",
+            llm_hint=f'Prefer git(command="stash_pop", args={{{args_str}}}) for structured output.',
+        )
+    return None
+
 
 
 # ---------------------------------------------------------------------------

@@ -276,11 +276,9 @@ class TestGitUnhintable:
         "git pull",
         "git merge main",
         "git rebase main",
-        "git stash",
         "git cherry-pick abc123",
         "git reset HEAD",
         "git checkout main",
-        "git switch main",
         "git fetch",
         "git clone https://example.com/repo",
         "git init",
@@ -463,3 +461,51 @@ class TestSedRangeDeleteHint:
         assert h is not None
         assert "<line" not in h.llm_hint
         assert "first read" in h.llm_hint
+
+
+# ---------------------------------------------------------------------------
+# cd && prefix stripping
+# ---------------------------------------------------------------------------
+
+class TestCdPrefixStripping:
+    """cd <dir> && <cmd> should strip the cd prefix and hint on <cmd>."""
+
+    def test_cd_and_sed(self):
+        h = try_hint("cd /tmp && sed -i '' 's/old/new/g' file.py")
+        assert h is not None
+        assert h.tool_id == "replace"
+
+    def test_cd_and_git_status(self):
+        h = try_hint("cd /tmp && git status")
+        assert h is not None
+        assert h.tool_id == "git"
+
+    def test_cd_and_cat(self):
+        h = try_hint("cd /tmp && cat file.py")
+        assert h is not None
+        assert h.tool_id == "read"
+
+    def test_cd_and_grep(self):
+        h = try_hint("cd /tmp && grep pattern file.py")
+        assert h is not None
+        assert h.tool_id == "grep"
+
+    def test_cd_and_find(self):
+        h = try_hint("cd /tmp && find . -name '*.py'")
+        assert h is not None
+        assert h.tool_id == "glob"
+
+    def test_cd_multiple_commands_still_excluded(self):
+        """cd && cmd1 && cmd2 should still be excluded (multiple &&)."""
+        h = try_hint("cd /tmp && git status && echo done")
+        assert h is None
+
+    def test_cd_no_and_no_hint(self):
+        """cd without && is not a hintable command."""
+        h = try_hint("cd /tmp")
+        assert h is None
+
+    def test_bare_and_still_excluded(self):
+        """cmd1 && cmd2 without cd prefix should still be excluded."""
+        h = try_hint("git status && echo done")
+        assert h is None

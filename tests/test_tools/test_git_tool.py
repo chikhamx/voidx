@@ -33,6 +33,10 @@ def _init_repo(path: Path) -> Path:
     return path
 
 
+def _default_branch(repo: Path) -> str:
+    return _run(repo, "symbolic-ref", "--short", "HEAD").strip()
+
+
 def _payload(result):
     return json.loads(result.output)
 
@@ -346,3 +350,714 @@ async def test_git_restore_rejects_outside_workspace(tmp_path):
     assert payload["ok"] is False
     assert result.metadata["error"] is True
     assert "outside allowed workspace" in payload["error"]
+
+
+@pytest.mark.asyncio
+async def test_git_status_returns_branch(tmp_path):
+    repo = _init_repo(tmp_path / "repo")
+    (repo / "app.py").write_text("print('hi')\n", encoding="utf-8")
+    _run(repo, "add", "app.py")
+    _run(repo, "commit", "-m", "initial")
+
+    result = await GitTool().execute(
+        {"command": "status"},
+        ToolContext(workspace=str(repo)),
+    )
+
+    payload = _payload(result)
+    assert payload["ok"] is True
+    assert payload["data"]["branch"] in ("main", "master")
+
+
+@pytest.mark.asyncio
+async def test_git_show_structured(tmp_path):
+    repo = _init_repo(tmp_path / "repo")
+    (repo / "app.py").write_text("print('hi')\n", encoding="utf-8")
+    _run(repo, "add", "app.py")
+    _run(repo, "commit", "-m", "initial")
+
+    result = await GitTool().execute(
+        {"command": "show"},
+        ToolContext(workspace=str(repo)),
+    )
+
+    payload = _payload(result)
+    assert payload["ok"] is True
+    assert payload["data"]["hash"]
+    assert payload["data"]["author"] == "VoidX Tests"
+    assert payload["data"]["message"] == "initial"
+    assert payload["data"]["merge"] is False
+    assert "app.py" in payload["data"]["files_changed"]
+
+
+@pytest.mark.asyncio
+async def test_git_show_stat_mode(tmp_path):
+    repo = _init_repo(tmp_path / "repo")
+    (repo / "app.py").write_text("print('hi')\n", encoding="utf-8")
+    _run(repo, "add", "app.py")
+    _run(repo, "commit", "-m", "initial")
+
+    result = await GitTool().execute(
+        {"command": "show", "args": {"stat": True}},
+        ToolContext(workspace=str(repo)),
+    )
+
+    payload = _payload(result)
+    assert payload["ok"] is True
+    assert payload["data"]["hunks"] == []
+
+
+@pytest.mark.asyncio
+async def test_git_show_ref_not_found(tmp_path):
+    repo = _init_repo(tmp_path / "repo")
+    (repo / "app.py").write_text("print('hi')\n", encoding="utf-8")
+    _run(repo, "add", "app.py")
+    _run(repo, "commit", "-m", "initial")
+
+    result = await GitTool().execute(
+        {"command": "show", "args": {"ref": "nonexistent"}},
+        ToolContext(workspace=str(repo)),
+    )
+
+    payload = _payload(result)
+    assert payload["ok"] is False
+    assert payload["error"] == "ref_not_found"
+
+
+@pytest.mark.asyncio
+async def test_git_switch_creates_and_switches(tmp_path):
+    repo = _init_repo(tmp_path / "repo")
+    (repo / "app.py").write_text("print('hi')\n", encoding="utf-8")
+    _run(repo, "add", "app.py")
+    _run(repo, "commit", "-m", "initial")
+
+    result = await GitTool().execute(
+        {"command": "switch", "args": {"branch": "feature-x", "create": True}},
+        ToolContext(workspace=str(repo)),
+    )
+
+    payload = _payload(result)
+    assert payload["ok"] is True
+    assert payload["data"]["branch"] == "feature-x"
+    assert payload["data"]["created"] is True
+    assert payload["data"]["previous_branch"] in ("main", "master")
+
+
+@pytest.mark.asyncio
+async def test_git_switch_invalid_branch_name(tmp_path):
+    repo = _init_repo(tmp_path / "repo")
+    (repo / "app.py").write_text("print('hi')\n", encoding="utf-8")
+    _run(repo, "add", "app.py")
+    _run(repo, "commit", "-m", "initial")
+
+    result = await GitTool().execute(
+        {"command": "switch", "args": {"branch": "../evil"}},
+        ToolContext(workspace=str(repo)),
+    )
+
+    payload = _payload(result)
+    assert payload["ok"] is False
+    assert "invalid branch name" in payload["error"]
+
+
+@pytest.mark.asyncio
+async def test_git_switch_branch_not_found(tmp_path):
+    repo = _init_repo(tmp_path / "repo")
+    (repo / "app.py").write_text("print('hi')\n", encoding="utf-8")
+    _run(repo, "add", "app.py")
+    _run(repo, "commit", "-m", "initial")
+
+    result = await GitTool().execute(
+        {"command": "switch", "args": {"branch": "nonexistent"}},
+        ToolContext(workspace=str(repo)),
+    )
+
+    payload = _payload(result)
+    assert payload["ok"] is False
+    assert payload["error"] == "branch_not_found"
+
+
+@pytest.mark.asyncio
+async def test_git_branch_create_and_delete(tmp_path):
+    repo = _init_repo(tmp_path / "repo")
+    (repo / "app.py").write_text("print('hi')\n", encoding="utf-8")
+    _run(repo, "add", "app.py")
+    _run(repo, "commit", "-m", "initial")
+
+    create_result = await GitTool().execute(
+        {"command": "branch_create", "args": {"name": "feature-y"}},
+        ToolContext(workspace=str(repo)),
+    )
+    create_payload = _payload(create_result)
+    assert create_payload["ok"] is True
+    assert create_payload["data"]["name"] == "feature-y"
+    assert create_payload["data"]["hash"]
+
+    delete_result = await GitTool().execute(
+        {"command": "branch_delete", "args": {"name": "feature-y"}},
+        ToolContext(workspace=str(repo)),
+    )
+    delete_payload = _payload(delete_result)
+    assert delete_payload["ok"] is True
+    assert delete_payload["data"]["name"] == "feature-y"
+
+
+@pytest.mark.asyncio
+async def test_git_branch_delete_current_branch_fails(tmp_path):
+    repo = _init_repo(tmp_path / "repo")
+    (repo / "app.py").write_text("print('hi')\n", encoding="utf-8")
+    _run(repo, "add", "app.py")
+    _run(repo, "commit", "-m", "initial")
+    branch_name = _run(repo, "symbolic-ref", "--short", "HEAD").strip()
+
+    result = await GitTool().execute(
+        {"command": "branch_delete", "args": {"name": branch_name}},
+        ToolContext(workspace=str(repo)),
+    )
+
+    payload = _payload(result)
+    assert payload["ok"] is False
+    assert payload["error"] == "cannot_delete_current_branch"
+
+
+@pytest.mark.asyncio
+async def test_git_tag_create_list_delete(tmp_path):
+    repo = _init_repo(tmp_path / "repo")
+    (repo / "app.py").write_text("print('hi')\n", encoding="utf-8")
+    _run(repo, "add", "app.py")
+    _run(repo, "commit", "-m", "initial")
+
+    create_result = await GitTool().execute(
+        {"command": "tag_create", "args": {"name": "v1.0.0", "message": "release"}},
+        ToolContext(workspace=str(repo)),
+    )
+    create_payload = _payload(create_result)
+    assert create_payload["ok"] is True
+    assert create_payload["data"]["name"] == "v1.0.0"
+    assert create_payload["data"]["annotated"] is True
+
+    list_result = await GitTool().execute(
+        {"command": "tag_list"},
+        ToolContext(workspace=str(repo)),
+    )
+    list_payload = _payload(list_result)
+    assert list_payload["ok"] is True
+    assert any(e["name"] == "v1.0.0" for e in list_payload["data"]["entries"])
+
+    delete_result = await GitTool().execute(
+        {"command": "tag_delete", "args": {"name": "v1.0.0"}},
+        ToolContext(workspace=str(repo)),
+    )
+    delete_payload = _payload(delete_result)
+    assert delete_payload["ok"] is True
+    assert delete_payload["data"]["name"] == "v1.0.0"
+
+
+@pytest.mark.asyncio
+async def test_git_stash_push_and_pop(tmp_path):
+    repo = _init_repo(tmp_path / "repo")
+    (repo / "app.py").write_text("print('hi')\n", encoding="utf-8")
+    _run(repo, "add", "app.py")
+    _run(repo, "commit", "-m", "initial")
+    (repo / "app.py").write_text("print('modified')\n", encoding="utf-8")
+
+    push_result = await GitTool().execute(
+        {"command": "stash_push", "args": {"message": "wip"}},
+        ToolContext(workspace=str(repo)),
+    )
+    push_payload = _payload(push_result)
+    assert push_payload["ok"] is True
+    assert "wip" in push_payload["data"]["message"] or push_payload["data"]["message"]
+
+    pop_result = await GitTool().execute(
+        {"command": "stash_pop"},
+        ToolContext(workspace=str(repo)),
+    )
+    pop_payload = _payload(pop_result)
+    assert pop_payload["ok"] is True
+    assert pop_payload["data"]["applied"] is True
+
+
+@pytest.mark.asyncio
+async def test_git_diff_with_base_ref(tmp_path):
+    repo = _init_repo(tmp_path / "repo")
+    (repo / "app.py").write_text("print('old')\n", encoding="utf-8")
+    _run(repo, "add", "app.py")
+    _run(repo, "commit", "-m", "initial")
+    _run(repo, "checkout", "-b", "feature")
+    (repo / "app.py").write_text("print('new')\n", encoding="utf-8")
+    _run(repo, "add", "app.py")
+    _run(repo, "commit", "-m", "update")
+
+    result = await GitTool().execute(
+        {"command": "diff", "args": {"base": "HEAD~1", "ref": "feature"}},
+        ToolContext(workspace=str(repo)),
+    )
+
+    payload = _payload(result)
+    assert payload["ok"] is True
+    assert any(e["path"] == "app.py" for e in payload["data"]["entries"])
+
+
+@pytest.mark.asyncio
+async def test_git_log_with_until(tmp_path):
+    repo = _init_repo(tmp_path / "repo")
+    (repo / "app.py").write_text("print('hi')\n", encoding="utf-8")
+    _run(repo, "add", "app.py")
+    _run(repo, "commit", "-m", "initial")
+
+    result = await GitTool().execute(
+        {"command": "log", "args": {"limit": 5, "until": "2099-01-01"}},
+        ToolContext(workspace=str(repo)),
+    )
+
+    payload = _payload(result)
+    assert payload["ok"] is True
+    assert len(payload["data"]["entries"]) >= 1
+
+
+@pytest.mark.asyncio
+async def test_git_commit_returns_hook_output(tmp_path):
+    repo = _init_repo(tmp_path / "repo")
+    (repo / "app.py").write_text("print('hi')\n", encoding="utf-8")
+    _run(repo, "add", "app.py")
+
+    result = await GitTool().execute(
+        {"command": "commit", "args": {"message": "initial"}},
+        ToolContext(workspace=str(repo)),
+    )
+
+    payload = _payload(result)
+    assert payload["ok"] is True
+    assert "hook_output" in payload["data"]
+
+
+@pytest.mark.asyncio
+async def test_git_switch_dirty_conflict(tmp_path):
+    repo = _init_repo(tmp_path / "repo")
+    (repo / "app.py").write_text("line1\n", encoding="utf-8")
+    _run(repo, "add", "app.py")
+    _run(repo, "commit", "-m", "initial")
+    main_branch = _default_branch(repo)
+    _run(repo, "checkout", "-b", "feature")
+    (repo / "app.py").write_text("feature-line1\n", encoding="utf-8")
+    _run(repo, "add", "app.py")
+    _run(repo, "commit", "-m", "feature change")
+    _run(repo, "checkout", main_branch)
+    (repo / "app.py").write_text("main-dirty-line1\n", encoding="utf-8")
+    _run(repo, "add", "app.py")
+
+    result = await GitTool().execute(
+        {"command": "switch", "args": {"branch": "feature"}},
+        ToolContext(workspace=str(repo)),
+    )
+
+    payload = _payload(result)
+    assert payload["ok"] is False
+    assert payload["error"] == "dirty_conflict"
+    assert "dirty_files" in payload["data"]
+    assert "stash_push" in payload["data"]["suggestion"]
+
+
+@pytest.mark.asyncio
+async def test_git_switch_dirty_no_conflict(tmp_path):
+    repo = _init_repo(tmp_path / "repo")
+    (repo / "app.py").write_text("print('hi')\n", encoding="utf-8")
+    (repo / "other.txt").write_text("hello\n", encoding="utf-8")
+    _run(repo, "add", "app.py", "other.txt")
+    _run(repo, "commit", "-m", "initial")
+    main_branch = _default_branch(repo)
+    _run(repo, "checkout", "-b", "feature")
+    (repo / "feature_file.txt").write_text("new\n", encoding="utf-8")
+    _run(repo, "add", "feature_file.txt")
+    _run(repo, "commit", "-m", "feature addition")
+    _run(repo, "checkout", main_branch)
+    (repo / "untracked_new.txt").write_text("dirty\n", encoding="utf-8")
+
+    result = await GitTool().execute(
+        {"command": "switch", "args": {"branch": "feature"}},
+        ToolContext(workspace=str(repo)),
+    )
+
+    payload = _payload(result)
+    assert payload["ok"] is True
+    assert payload["data"]["branch"] == "feature"
+
+
+@pytest.mark.asyncio
+async def test_git_switch_with_start_point(tmp_path):
+    repo = _init_repo(tmp_path / "repo")
+    (repo / "app.py").write_text("print('hi')\n", encoding="utf-8")
+    _run(repo, "add", "app.py")
+    _run(repo, "commit", "-m", "initial")
+    commit_hash = _run(repo, "rev-parse", "HEAD").strip()
+
+    result = await GitTool().execute(
+        {"command": "switch", "args": {"branch": "from-commit", "create": True, "start_point": commit_hash}},
+        ToolContext(workspace=str(repo)),
+    )
+
+    payload = _payload(result)
+    assert payload["ok"] is True
+    assert payload["data"]["created"] is True
+
+
+@pytest.mark.asyncio
+async def test_git_branch_create_with_start_point(tmp_path):
+    repo = _init_repo(tmp_path / "repo")
+    (repo / "app.py").write_text("print('hi')\n", encoding="utf-8")
+    _run(repo, "add", "app.py")
+    _run(repo, "commit", "-m", "initial")
+
+    result = await GitTool().execute(
+        {"command": "branch_create", "args": {"name": "from-head", "start_point": "HEAD"}},
+        ToolContext(workspace=str(repo)),
+    )
+
+    payload = _payload(result)
+    assert payload["ok"] is True
+    assert payload["data"]["name"] == "from-head"
+    assert payload["data"]["start_point"] == "HEAD"
+
+
+@pytest.mark.asyncio
+async def test_git_branch_delete_not_merged(tmp_path):
+    repo = _init_repo(tmp_path / "repo")
+    (repo / "app.py").write_text("print('hi')\n", encoding="utf-8")
+    _run(repo, "add", "app.py")
+    _run(repo, "commit", "-m", "initial")
+    main_branch = _default_branch(repo)
+    _run(repo, "checkout", "-b", "feature")
+    (repo / "new_file.txt").write_text("new\n", encoding="utf-8")
+    _run(repo, "add", "new_file.txt")
+    _run(repo, "commit", "-m", "feature work")
+    _run(repo, "checkout", main_branch)
+
+    result = await GitTool().execute(
+        {"command": "branch_delete", "args": {"name": "feature"}},
+        ToolContext(workspace=str(repo)),
+    )
+
+    payload = _payload(result)
+    assert payload["ok"] is False
+    assert payload["error"] == "branch_not_merged"
+
+
+@pytest.mark.asyncio
+async def test_git_branch_delete_force_unmerged(tmp_path):
+    repo = _init_repo(tmp_path / "repo")
+    (repo / "app.py").write_text("print('hi')\n", encoding="utf-8")
+    _run(repo, "add", "app.py")
+    _run(repo, "commit", "-m", "initial")
+    main_branch = _default_branch(repo)
+    _run(repo, "checkout", "-b", "feature")
+    (repo / "new_file.txt").write_text("new\n", encoding="utf-8")
+    _run(repo, "add", "new_file.txt")
+    _run(repo, "commit", "-m", "feature work")
+    _run(repo, "checkout", main_branch)
+
+    result = await GitTool().execute(
+        {"command": "branch_delete", "args": {"name": "feature", "force": True}},
+        ToolContext(workspace=str(repo)),
+    )
+
+    payload = _payload(result)
+    assert payload["ok"] is True
+    assert payload["data"]["force"] is True
+
+
+@pytest.mark.asyncio
+async def test_git_branch_create_invalid_name(tmp_path):
+    repo = _init_repo(tmp_path / "repo")
+    (repo / "app.py").write_text("print('hi')\n", encoding="utf-8")
+    _run(repo, "add", "app.py")
+    _run(repo, "commit", "-m", "initial")
+
+    result = await GitTool().execute(
+        {"command": "branch_create", "args": {"name": "evil..name"}},
+        ToolContext(workspace=str(repo)),
+    )
+
+    payload = _payload(result)
+    assert payload["ok"] is False
+    assert "invalid branch name" in payload["error"]
+
+
+@pytest.mark.asyncio
+async def test_git_tag_create_already_exists(tmp_path):
+    repo = _init_repo(tmp_path / "repo")
+    (repo / "app.py").write_text("print('hi')\n", encoding="utf-8")
+    _run(repo, "add", "app.py")
+    _run(repo, "commit", "-m", "initial")
+
+    await GitTool().execute(
+        {"command": "tag_create", "args": {"name": "v1.0.0"}},
+        ToolContext(workspace=str(repo)),
+    )
+
+    result = await GitTool().execute(
+        {"command": "tag_create", "args": {"name": "v1.0.0"}},
+        ToolContext(workspace=str(repo)),
+    )
+
+    payload = _payload(result)
+    assert payload["ok"] is False
+    assert payload["error"] == "tag_already_exists"
+
+
+@pytest.mark.asyncio
+async def test_git_tag_create_force_overwrite(tmp_path):
+    repo = _init_repo(tmp_path / "repo")
+    (repo / "app.py").write_text("print('hi')\n", encoding="utf-8")
+    _run(repo, "add", "app.py")
+    _run(repo, "commit", "-m", "initial")
+
+    await GitTool().execute(
+        {"command": "tag_create", "args": {"name": "v1.0.0"}},
+        ToolContext(workspace=str(repo)),
+    )
+
+    result = await GitTool().execute(
+        {"command": "tag_create", "args": {"name": "v1.0.0", "force": True}},
+        ToolContext(workspace=str(repo)),
+    )
+
+    payload = _payload(result)
+    assert payload["ok"] is True
+
+
+@pytest.mark.asyncio
+async def test_git_tag_list_with_pattern(tmp_path):
+    repo = _init_repo(tmp_path / "repo")
+    (repo / "app.py").write_text("print('hi')\n", encoding="utf-8")
+    _run(repo, "add", "app.py")
+    _run(repo, "commit", "-m", "initial")
+    _run(repo, "tag", "v1.0.0")
+    _run(repo, "tag", "v2.0.0")
+    _run(repo, "tag", "release-candidate")
+
+    result = await GitTool().execute(
+        {"command": "tag_list", "args": {"pattern": "v*"}},
+        ToolContext(workspace=str(repo)),
+    )
+
+    payload = _payload(result)
+    assert payload["ok"] is True
+    names = [e["name"] for e in payload["data"]["entries"]]
+    assert "v1.0.0" in names
+    assert "v2.0.0" in names
+    assert "release-candidate" not in names
+
+
+@pytest.mark.asyncio
+async def test_git_tag_list_returns_hash(tmp_path):
+    repo = _init_repo(tmp_path / "repo")
+    (repo / "app.py").write_text("print('hi')\n", encoding="utf-8")
+    _run(repo, "add", "app.py")
+    _run(repo, "commit", "-m", "initial")
+    _run(repo, "tag", "v1.0.0")
+
+    result = await GitTool().execute(
+        {"command": "tag_list"},
+        ToolContext(workspace=str(repo)),
+    )
+
+    payload = _payload(result)
+    assert payload["ok"] is True
+    entry = payload["data"]["entries"][0]
+    assert entry["name"] == "v1.0.0"
+    assert entry["hash"]
+
+
+@pytest.mark.asyncio
+async def test_git_tag_create_lightweight(tmp_path):
+    repo = _init_repo(tmp_path / "repo")
+    (repo / "app.py").write_text("print('hi')\n", encoding="utf-8")
+    _run(repo, "add", "app.py")
+    _run(repo, "commit", "-m", "initial")
+
+    result = await GitTool().execute(
+        {"command": "tag_create", "args": {"name": "v0.1.0"}},
+        ToolContext(workspace=str(repo)),
+    )
+
+    payload = _payload(result)
+    assert payload["ok"] is True
+    assert payload["data"]["annotated"] is False
+
+
+@pytest.mark.asyncio
+async def test_git_stash_push_with_pathspec(tmp_path):
+    repo = _init_repo(tmp_path / "repo")
+    (repo / "app.py").write_text("print('hi')\n", encoding="utf-8")
+    (repo / "other.txt").write_text("hello\n", encoding="utf-8")
+    _run(repo, "add", "app.py", "other.txt")
+    _run(repo, "commit", "-m", "initial")
+    (repo / "app.py").write_text("print('modified')\n", encoding="utf-8")
+    (repo / "other.txt").write_text("modified\n", encoding="utf-8")
+
+    result = await GitTool().execute(
+        {"command": "stash_push", "args": {"pathspec": ["app.py"]}},
+        ToolContext(workspace=str(repo)),
+    )
+
+    payload = _payload(result)
+    assert payload["ok"] is True
+    assert "app.py" in payload["data"]["files_stashed"]
+
+
+@pytest.mark.asyncio
+async def test_git_stash_push_pathspec_rejects_outside_workspace(tmp_path):
+    repo = _init_repo(tmp_path / "repo")
+    (repo / "app.py").write_text("print('hi')\n", encoding="utf-8")
+    _run(repo, "add", "app.py")
+    _run(repo, "commit", "-m", "initial")
+    outside = tmp_path / "outside.txt"
+    outside.write_text("outside\n", encoding="utf-8")
+
+    result = await GitTool().execute(
+        {"command": "stash_push", "args": {"pathspec": [str(outside)]}},
+        ToolContext(workspace=str(repo)),
+    )
+
+    payload = _payload(result)
+    assert payload["ok"] is False
+    assert "outside allowed workspace" in payload["error"]
+
+
+@pytest.mark.asyncio
+async def test_git_stash_pop_with_keep(tmp_path):
+    repo = _init_repo(tmp_path / "repo")
+    (repo / "app.py").write_text("print('hi')\n", encoding="utf-8")
+    _run(repo, "add", "app.py")
+    _run(repo, "commit", "-m", "initial")
+    (repo / "app.py").write_text("print('modified')\n", encoding="utf-8")
+
+    await GitTool().execute(
+        {"command": "stash_push", "args": {"message": "wip"}},
+        ToolContext(workspace=str(repo)),
+    )
+
+    result = await GitTool().execute(
+        {"command": "stash_pop", "args": {"keep": True}},
+        ToolContext(workspace=str(repo)),
+    )
+
+    payload = _payload(result)
+    assert payload["ok"] is True
+    assert payload["data"]["applied"] is True
+    assert payload["data"]["kept"] is True
+
+    stash_list = _run(repo, "stash", "list")
+    assert stash_list.strip()
+
+
+@pytest.mark.asyncio
+async def test_git_stash_pop_returns_files_restored(tmp_path):
+    repo = _init_repo(tmp_path / "repo")
+    (repo / "app.py").write_text("print('hi')\n", encoding="utf-8")
+    _run(repo, "add", "app.py")
+    _run(repo, "commit", "-m", "initial")
+    (repo / "app.py").write_text("print('modified')\n", encoding="utf-8")
+
+    await GitTool().execute(
+        {"command": "stash_push"},
+        ToolContext(workspace=str(repo)),
+    )
+
+    result = await GitTool().execute(
+        {"command": "stash_pop"},
+        ToolContext(workspace=str(repo)),
+    )
+
+    payload = _payload(result)
+    assert payload["ok"] is True
+    assert payload["data"]["applied"] is True
+    assert "app.py" in payload["data"]["files_restored"]
+
+
+@pytest.mark.asyncio
+async def test_git_show_with_pathspec(tmp_path):
+    repo = _init_repo(tmp_path / "repo")
+    (repo / "app.py").write_text("print('hi')\n", encoding="utf-8")
+    (repo / "other.txt").write_text("hello\n", encoding="utf-8")
+    _run(repo, "add", "app.py", "other.txt")
+    _run(repo, "commit", "-m", "initial")
+
+    result = await GitTool().execute(
+        {"command": "show", "args": {"pathspec": ["app.py"]}},
+        ToolContext(workspace=str(repo)),
+    )
+
+    payload = _payload(result)
+    assert payload["ok"] is True
+    assert "app.py" in payload["data"]["files_changed"]
+    assert "other.txt" not in payload["data"]["files_changed"]
+
+
+@pytest.mark.asyncio
+async def test_git_show_stat_returns_files_and_stats(tmp_path):
+    repo = _init_repo(tmp_path / "repo")
+    (repo / "app.py").write_text("print('hi')\n", encoding="utf-8")
+    _run(repo, "add", "app.py")
+    _run(repo, "commit", "-m", "initial")
+
+    result = await GitTool().execute(
+        {"command": "show", "args": {"stat": True}},
+        ToolContext(workspace=str(repo)),
+    )
+
+    payload = _payload(result)
+    assert payload["ok"] is True
+    assert payload["data"]["files_changed"]
+    assert "additions" in payload["data"]["stats"]
+    assert "deletions" in payload["data"]["stats"]
+
+
+@pytest.mark.asyncio
+async def test_git_switch_denied_branch_names(tmp_path):
+    repo = _init_repo(tmp_path / "repo")
+    (repo / "app.py").write_text("print('hi')\n", encoding="utf-8")
+    _run(repo, "add", "app.py")
+    _run(repo, "commit", "-m", "initial")
+
+    for bad_name in ["evil..name", "name@{today}", "name~1", "name^", "name:foo", "name.lock"]:
+        result = await GitTool().execute(
+            {"command": "switch", "args": {"branch": bad_name, "create": True}},
+            ToolContext(workspace=str(repo)),
+        )
+        payload = _payload(result)
+        assert payload["ok"] is False, f"expected rejection for branch name: {bad_name}"
+        assert "invalid branch name" in payload["error"]
+
+
+@pytest.mark.asyncio
+async def test_git_tag_delete_nonexistent(tmp_path):
+    repo = _init_repo(tmp_path / "repo")
+    (repo / "app.py").write_text("print('hi')\n", encoding="utf-8")
+    _run(repo, "add", "app.py")
+    _run(repo, "commit", "-m", "initial")
+
+    result = await GitTool().execute(
+        {"command": "tag_delete", "args": {"name": "nonexistent"}},
+        ToolContext(workspace=str(repo)),
+    )
+
+    payload = _payload(result)
+    assert payload["ok"] is False
+
+
+@pytest.mark.asyncio
+async def test_git_stash_pop_nonexistent_index(tmp_path):
+    repo = _init_repo(tmp_path / "repo")
+    (repo / "app.py").write_text("print('hi')\n", encoding="utf-8")
+    _run(repo, "add", "app.py")
+    _run(repo, "commit", "-m", "initial")
+
+    result = await GitTool().execute(
+        {"command": "stash_pop", "args": {"index": 99}},
+        ToolContext(workspace=str(repo)),
+    )
+
+    payload = _payload(result)
+    assert payload["ok"] is False
