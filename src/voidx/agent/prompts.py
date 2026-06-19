@@ -121,6 +121,14 @@ BASE_SYSTEM = BaseSystemPrompt(
         ),
         PromptRule(detail="Subagents do not interact with the user."),
         PromptRule(detail="skill can return project/global skill bodies for the current turn."),
+        PromptRule(
+            detail=(
+                'When you intend to continue work but have not called any tool this turn, '
+                'call workflow(action="enter", workflow="<node>") to activate the next workflow node, '
+                'or workflow(action="advance", ...) to transition the current one. '
+                'Do not end a turn with only text that promises a next action.'
+            ),
+        ),
     ],
 )
 

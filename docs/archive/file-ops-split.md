@@ -1,3 +1,5 @@
+> **Status: Done**
+
 # 拆分 tools/file_ops.py — 技术设计文档
 
 ## Context
