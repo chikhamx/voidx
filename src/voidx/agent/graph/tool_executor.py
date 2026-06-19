@@ -1160,18 +1160,22 @@ def _make_interact_callback(app):
 
     async def interact(request: UserInteraction) -> UserResponse:
         timeout = request.timeout
-        if request.options:
+        if request.options and _is_tuple_options(request.options):
             other_value = _other_choice_value(request.options)
-            choices = [
-                *request.options,
-                ("Other (type your answer)", other_value, ""),
-            ]
+            choices = [*request.options, ("Other…", other_value, "Type a custom answer")]
             result = await app.ask_choice(request.prompt, choices, timeout=timeout)
             if result == other_value:
                 result = await app.ask_text(request.prompt, timeout=timeout)
                 if result is None:
                     return UserResponse(value="", cancelled=True)
                 return UserResponse(value=result, free_text=True)
+        elif request.options:
+            suggestions = " / ".join(str(o) for o in request.options)
+            prompt = f"{request.prompt} ({suggestions})"
+            result = await app.ask_text(prompt, timeout=timeout)
+            if result is None:
+                return UserResponse(value="", cancelled=True)
+            return UserResponse(value=result, free_text=True)
         else:
             result = await app.ask_text(request.prompt, timeout=timeout)
             if result is None:
@@ -1184,8 +1188,18 @@ def _make_interact_callback(app):
     return interact
 
 
-def _other_choice_value(options: list[tuple[str, str, str]]) -> str:
-    used = {value for _, value, _ in options}
+def _is_tuple_options(options: list[str | tuple[str, str, str]]) -> bool:
+    # Mixed str/tuple lists are not allowed — routing is determined by the first element.
+    return bool(options) and isinstance(options[0], tuple)
+
+
+def _other_choice_value(options: list[str | tuple[str, str, str]]) -> str:
+    used: set[str] = set()
+    for opt in options:
+        if isinstance(opt, tuple):
+            used.add(opt[1])
+        else:
+            used.add(opt)
     value = _OTHER_VALUE_PREFIX
     index = 1
     while value in used:

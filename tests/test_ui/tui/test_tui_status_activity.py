@@ -32,10 +32,7 @@ def test_pure_tui_groups_runtime_state(tmp_path):
 
 def test_choice_render_handles_unselected_items_and_details(tmp_path):
     tui = _tui(tmp_path)
-    tui._active_choice = [
-        ("Yes [once]", "y", "Allow [only] once"),
-        ("No", "n", "Deny"),
-    ]
+    tui._active_choice = [("y", "y", ""), ("n", "n", "")]
     tui._choice_prompt = "Allow [tool]?"
     tui._choice_selected = 0
     tui._choice_details = [{"name": "write", "pattern": "src/[file].py"}]
@@ -48,10 +45,7 @@ def test_choice_render_handles_unselected_items_and_details(tmp_path):
 
 def test_choice_move_marks_selection_only_render(tmp_path):
     tui = _tui(tmp_path)
-    tui._active_choice = [
-        ("Yes", "y", "Allow"),
-        ("No", "n", "Deny"),
-    ]
+    tui._active_choice = [("y", "y", ""), ("n", "n", "")]
     tui._choice_selected = 0
 
     tui._move_choice(1)
@@ -62,7 +56,7 @@ def test_choice_move_marks_selection_only_render(tmp_path):
 
 def test_choice_move_single_option_does_not_request_render(tmp_path):
     tui = _tui(tmp_path)
-    tui._active_choice = [("Yes", "y", "Allow")]
+    tui._active_choice = [("y", "y", "")]
     tui._choice_selected = 0
 
     tui._move_choice(1)
@@ -80,10 +74,7 @@ def test_choice_selection_only_render_does_not_clear_to_screen_end(tmp_path, mon
     tui._last_bottom_start_row = 7
     tui._last_frame_rows = 14
     tui._console = Console(file=None, force_terminal=True, width=80, height=24, _environ={})
-    tui._active_choice = [
-        ("Review", "review", "Inspect the design"),
-        ("Implement", "implement", "Apply the change"),
-    ]
+    tui._active_choice = [("review", "review", ""), ("implement", "implement", "")]
     tui._choice_prompt = "Intent?"
     tui._choice_selected = 0
     ansi = tui._capture_renderable(tui._render_bottom_impl(), tui._frame_width())
@@ -104,10 +95,7 @@ def test_choice_selection_only_render_falls_back_when_row_count_changes(tmp_path
     tui._last_bottom_start_row = 7
     tui._last_frame_rows = 14
     tui._console = Console(file=None, force_terminal=True, width=80, height=24, _environ={})
-    tui._active_choice = [
-        ("Review", "review", "Inspect the design"),
-        ("Implement", "implement", "Apply the change"),
-    ]
+    tui._active_choice = [("review", "review", ""), ("implement", "implement", "")]
     tui._choice_prompt = "Intent?"
     tui._choice_selected = 0
     ansi = tui._capture_renderable(tui._render_bottom_impl(), tui._frame_width())

@@ -38,7 +38,7 @@ from voidx.tools.task_tracker import TaskTracker
 from voidx.tools.task_status import TaskStatusTool
 from voidx.tools.todo import TodoInput, TodoWriteTool
 from voidx.tools.registry import ToolRegistry
-from voidx.tools.clarify import ClarifyTool, ClarifyInput, ClarifyOption, _infer_state_patch
+from voidx.tools.clarify import ClarifyTool, ClarifyInput, _infer_state_patch
 from voidx.tools.load_skills import LoadSkillsTool
 from voidx.tools.load_doc_template import LoadDocTemplateTool, LoadDocTemplateInput
 from voidx.tools.plan_checkpoint import PlanCheckpointTool
@@ -157,19 +157,27 @@ class TestToolSchemas:
         assert inp.lineno == 3
         assert set(schema["properties"]) == {"file_path", "lineno", "new_string"}
 
-    def test_replace_input_uses_prefix_suffix_text_segment_without_operation(self):
-        inp = FileReplaceInput(file_path="x.py", lineno=3, prefix="old", suffix="old", new_string="new")
+    def test_replace_input_uses_start_end_line_range_without_operation(self):
+        inp = FileReplaceInput(file_path="x.py", start_no=3, end_no=5, prefix="old", suffix="tail", new_string="new")
         schema = FileReplaceTool().parameters_schema()
 
         assert inp.prefix == "old"
-        assert set(schema["properties"]) == {"file_path", "lineno", "prefix", "suffix", "new_string"}
-        assert "30" in schema["properties"]["lineno"]["description"]
-        assert "beginning of the old_string" in schema["properties"]["prefix"]["description"].lower()
-        assert "end of the old_string" in schema["properties"]["suffix"]["description"].lower()
-        assert "everything from prefix through suffix is replaced" in FileReplaceTool().description.lower()
+        assert inp.end_no == 5
+        assert set(schema["properties"]) == {"file_path", "start_no", "end_no", "prefix", "suffix", "new_string"}
+        assert "exact first line" in schema["properties"]["start_no"]["description"].lower()
+        assert "exact last line" in schema["properties"]["end_no"]["description"].lower()
+        assert "first line" in schema["properties"]["prefix"]["description"].lower()
+        assert "empty string" in schema["properties"]["prefix"]["description"].lower()
+        assert "last line" in schema["properties"]["suffix"]["description"].lower()
+        assert "empty string" in schema["properties"]["suffix"]["description"].lower()
+        assert "whole lines" in FileReplaceTool().description.lower()
         assert "operation" not in schema["properties"]
         assert "edits" not in schema["properties"]
         assert "old_text" not in schema["properties"]
+
+    def test_replace_input_rejects_reversed_line_range(self):
+        with pytest.raises(ValueError):
+            FileReplaceInput(file_path="x.py", start_no=5, end_no=3, prefix="old", suffix="tail", new_string="new")
 
     def test_glob_input(self):
         inp = GlobInput(pattern="**/*.py")

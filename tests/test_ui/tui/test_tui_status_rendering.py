@@ -26,10 +26,7 @@ def test_todo_busy_and_choice_panel_render_once_in_full_frame(tmp_path, monkeypa
     tui._busy_activity_verb = "Working"
     tui._input_lines = ["review change"]
     tui._cursor_col = len("review change")
-    tui._active_choice = [
-        ("Review", "review", "Inspect the change"),
-        ("Implement", "implement", "Apply the change"),
-    ]
+    tui._active_choice = [("review", "review", ""), ("implement", "implement", "")]
     tui._choice_prompt = "Intent?"
     tui._choice_selected = 0
     dock.begin_capture()
@@ -63,10 +60,7 @@ def test_choice_selection_only_render_skips_todo_and_busy_lines(tmp_path, monkey
     tui._busy_started_at = 100.0
     tui._busy_activity_verb = "Working"
     tui._console = Console(file=None, force_terminal=True, width=80, height=24, _environ={})
-    tui._active_choice = [
-        ("Review", "review", "Inspect the change"),
-        ("Implement", "implement", "Apply the change"),
-    ]
+    tui._active_choice = [("review", "review", ""), ("implement", "implement", "")]
     tui._choice_prompt = "Intent?"
     tui._choice_selected = 0
     dock.set_todo_state(

@@ -34,7 +34,7 @@ from voidx.tools.task_tracker import TaskTracker
 from voidx.tools.task_status import TaskStatusTool
 from voidx.tools.todo import TodoInput, TodoWriteTool
 from voidx.tools.registry import ToolRegistry
-from voidx.tools.clarify import ClarifyTool, ClarifyInput, ClarifyOption, _infer_state_patch
+from voidx.tools.clarify import ClarifyTool, ClarifyInput, _infer_state_patch
 from voidx.tools.load_skills import LoadSkillsTool
 from voidx.tools.load_doc_template import LoadDocTemplateTool, LoadDocTemplateInput
 from voidx.tools.plan_checkpoint import PlanCheckpointTool
@@ -75,7 +75,6 @@ class TestUserInteractionModels:
     def test_user_interaction_defaults(self):
         ui = UserInteraction(prompt="What?")
         assert ui.options == []
-        assert ui.blocking is True
         assert ui.timeout is None
 
     def test_user_response_cancelled(self):
@@ -85,7 +84,7 @@ class TestUserInteractionModels:
     def test_user_interaction_with_options(self):
         ui = UserInteraction(
             prompt="Choose",
-            options=[("A", "a", "Option A"), ("B", "b", "Option B")],
+            options=["a", "b"],
             timeout=60.0,
         )
         assert len(ui.options) == 2

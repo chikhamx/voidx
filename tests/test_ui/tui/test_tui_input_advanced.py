@@ -135,10 +135,7 @@ def test_ctrl_a_e_ignore_active_choice(tmp_path):
     tui = _tui(tmp_path)
     tui._input_lines = ["draft"]
     tui._cursor_col = 3
-    tui._active_choice = [
-        ("Yes", "y", "Allow"),
-        ("No", "n", "Deny"),
-    ]
+    tui._active_choice = [("y", "y", ""), ("n", "n", "")]
 
     tui._process_input(b"\x01\x05")
 

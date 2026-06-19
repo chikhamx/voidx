@@ -34,7 +34,7 @@ from voidx.tools.task_tracker import TaskTracker
 from voidx.tools.task_status import TaskStatusTool
 from voidx.tools.todo import TodoInput, TodoWriteTool
 from voidx.tools.registry import ToolRegistry
-from voidx.tools.clarify import ClarifyTool, ClarifyInput, ClarifyOption, _infer_state_patch
+from voidx.tools.clarify import ClarifyTool, ClarifyInput, _infer_state_patch
 from voidx.tools.load_skills import LoadSkillsTool
 from voidx.tools.load_doc_template import LoadDocTemplateTool, LoadDocTemplateInput
 from voidx.tools.plan_checkpoint import PlanCheckpointTool
@@ -70,16 +70,39 @@ def _insert_bof(new_string: str) -> dict:
     return {"operation": "insert", "lineno": 0, "prefix": "", "suffix": "", "new_string": new_string}
 
 
-
 class TestMakeInteractCallback:
     @pytest.mark.asyncio
     async def test_returns_none_when_app_is_none(self):
-        from voidx.agent.graph.tool_execution import _make_interact_callback
+        from voidx.agent.graph.tool_executor import _make_interact_callback
         assert _make_interact_callback(None) is None
 
     @pytest.mark.asyncio
-    async def test_ask_choice_with_options(self):
-        from voidx.agent.graph.tool_execution import _make_interact_callback
+    async def test_str_options_route_to_ask_text(self):
+        from voidx.agent.graph.tool_executor import _make_interact_callback
+
+        calls = []
+
+        class FakeApp:
+            async def ask_choice(self, prompt, choices, **kwargs):
+                calls.append(("choice", prompt, choices))
+                return "choice"
+
+            async def ask_text(self, prompt, **kwargs):
+                calls.append(("text", prompt, kwargs))
+                return "user answer"
+
+        callback = _make_interact_callback(FakeApp())
+        response = await callback(UserInteraction(
+            prompt="Choose",
+            options=["a", "b"],
+        ))
+        assert response.value == "user answer"
+        assert response.free_text is True
+        assert [c[0] for c in calls] == ["text"]
+
+    @pytest.mark.asyncio
+    async def test_tuple_options_route_to_ask_choice(self):
+        from voidx.agent.graph.tool_executor import _make_interact_callback
 
         class FakeApp:
             async def ask_choice(self, prompt, choices, **kwargs):
@@ -91,15 +114,15 @@ class TestMakeInteractCallback:
         callback = _make_interact_callback(FakeApp())
         response = await callback(UserInteraction(
             prompt="Choose",
-            options=[("A", "a", "desc a"), ("B", "b", "desc b")],
+            options=[("Label A", "a", "desc a"), ("Label B", "b", "desc b")],
         ))
         assert response.value == "b"
         assert not response.cancelled
         assert not response.free_text
 
     @pytest.mark.asyncio
-    async def test_ask_choice_appends_other_option(self):
-        from voidx.agent.graph.tool_execution import _make_interact_callback
+    async def test_tuple_options_appends_other_choice(self):
+        from voidx.agent.graph.tool_executor import _make_interact_callback
 
         captured_choices = []
 
@@ -114,16 +137,17 @@ class TestMakeInteractCallback:
         callback = _make_interact_callback(FakeApp())
         response = await callback(UserInteraction(
             prompt="Choose",
-            options=[("A", "a", "desc a")],
+            options=[("Label A", "a", "desc a")],
         ))
 
         assert response.value == "a"
-        assert captured_choices[-1][0] == "Other (type your answer)"
-        assert captured_choices[-1][2] == ""
+        last_label, last_value, last_desc = captured_choices[-1]
+        assert last_label == "Other…"
+        assert last_value.startswith("__voidx_choice_prompt_other")
 
     @pytest.mark.asyncio
-    async def test_ask_choice_other_invokes_text_and_marks_free_text(self):
-        from voidx.agent.graph.tool_execution import _make_interact_callback
+    async def test_tuple_options_other_invokes_text_and_marks_free_text(self):
+        from voidx.agent.graph.tool_executor import _make_interact_callback
 
         calls = []
 
@@ -139,7 +163,7 @@ class TestMakeInteractCallback:
         callback = _make_interact_callback(FakeApp())
         response = await callback(UserInteraction(
             prompt="Choose",
-            options=[("A", "a", "desc a")],
+            options=[("Label A", "a", "desc a")],
         ))
 
         assert response.value == "custom answer"
@@ -147,8 +171,8 @@ class TestMakeInteractCallback:
         assert [call[0] for call in calls] == ["choice", "text"]
 
     @pytest.mark.asyncio
-    async def test_ask_choice_other_sentinel_collision_preserves_real_option(self):
-        from voidx.agent.graph.tool_execution import _make_interact_callback
+    async def test_tuple_options_other_sentinel_collision_preserves_real_option(self):
+        from voidx.agent.graph.tool_executor import _make_interact_callback
 
         text_called = False
         captured_choices = []
@@ -166,17 +190,18 @@ class TestMakeInteractCallback:
         callback = _make_interact_callback(FakeApp())
         response = await callback(UserInteraction(
             prompt="Choose",
-            options=[("Real Other", "__voidx_choice_prompt_other__", "desc")],
+            options=[("Other", "__voidx_choice_prompt_other__", "sentinel value")],
         ))
 
         assert response.value == "__voidx_choice_prompt_other__"
         assert response.free_text is False
         assert text_called is False
-        assert captured_choices[-1][1] == "__voidx_choice_prompt_other___1"
+        last_label, last_value, last_desc = captured_choices[-1]
+        assert last_value == "__voidx_choice_prompt_other___1"
 
     @pytest.mark.asyncio
     async def test_ask_text_without_options(self):
-        from voidx.agent.graph.tool_execution import _make_interact_callback
+        from voidx.agent.graph.tool_executor import _make_interact_callback
 
         class FakeApp:
             async def ask_choice(self, prompt, choices, **kwargs):
@@ -191,7 +216,7 @@ class TestMakeInteractCallback:
 
     @pytest.mark.asyncio
     async def test_cancelled_when_app_returns_none(self):
-        from voidx.agent.graph.tool_execution import _make_interact_callback
+        from voidx.agent.graph.tool_executor import _make_interact_callback
 
         class FakeApp:
             async def ask_choice(self, prompt, choices, **kwargs):
@@ -203,9 +228,8 @@ class TestMakeInteractCallback:
         callback = _make_interact_callback(FakeApp())
         response = await callback(UserInteraction(
             prompt="Choose",
-            options=[("A", "a", "desc")],
+            options=[("Label A", "a", "desc a")],
         ))
+
         assert response.cancelled is True
         assert response.value == ""
-
-

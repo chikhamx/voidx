@@ -25,10 +25,12 @@ class _OverlayRendererMixin:
             i = start + offset
             marker = "❯" if i == self._choice_selected else " "
             label_text = _escape_markup(label)
-            desc_text = _escape_markup(desc)
             if i == self._choice_selected:
                 label_text = f"[bold blue]{label_text}[/bold blue]"
-            line = f"  {marker} {label_text}  {desc_text}"
+            if desc:
+                line = f"  {marker} {label_text}  [dim]{_escape_markup(desc)}[/dim]"
+            else:
+                line = f"  {marker} {label_text}"
             # Truncate to fit terminal width (Rich markup makes exact measurement
             # expensive; use a generous safety margin)
             max_len = max(width * 2, 80)

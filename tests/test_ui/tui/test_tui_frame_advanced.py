@@ -150,11 +150,7 @@ def test_render_frame_clips_long_choice_panel_to_terminal_height(tmp_path, monke
     tui._busy_started_at = 0.0
     tui._busy_activity_verb = "Ruminating"
     tui._console = Console(file=None, force_terminal=True, width=80, height=12, _environ={})
-    tui._active_choice = [
-        ("Approve", "approved", "Proceed with this plan"),
-        ("Modify scope", "modified", "Approve with changes to scope"),
-        ("Reject", "rejected", "Do not proceed"),
-    ]
+    tui._active_choice = [("approved", "approved", ""), ("modified", "modified", ""), ("rejected", "rejected", "")]
     tui._choice_prompt = (
         "Plan: 新增 `document` 工具，让 LLM 在 design 节点激活时能按需读取文档模板。\n\n"
         "Steps:\n"
@@ -180,8 +176,8 @@ def test_render_frame_clips_long_choice_panel_to_terminal_height(tmp_path, monke
     tui._render_frame()
 
     assert tui._last_frame_rows <= 12
-    assert "Approve" in fake_stdout.text
-    assert "Reject" in fake_stdout.text
+    assert "approved" in fake_stdout.text
+    assert "rejected" in fake_stdout.text
 
 
 def test_input_display_rows_uses_frame_width_boundary(tmp_path):

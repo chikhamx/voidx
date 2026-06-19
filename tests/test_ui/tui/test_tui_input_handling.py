@@ -25,10 +25,7 @@ def _write_skill(workspace, name: str, description: str) -> None:
 
 def test_choice_enter_submits_selected_value(tmp_path):
     tui = _tui(tmp_path)
-    tui._active_choice = [
-        ("Yes", "y", "Allow"),
-        ("No", "n", "Deny"),
-    ]
+    tui._active_choice = [("y", "y", ""), ("n", "n", "")]
     tui._choice_selected = 1
 
     tui._process_input(b"\r")
@@ -39,10 +36,7 @@ def test_choice_enter_submits_selected_value(tmp_path):
 
 def test_choice_quick_key_finishes_single_character_value(tmp_path):
     tui = _tui(tmp_path)
-    tui._active_choice = [
-        ("Yes", "y", "Allow"),
-        ("No", "n", "Deny"),
-    ]
+    tui._active_choice = [("y", "y", ""), ("n", "n", "")]
 
     tui._process_input(b"n")
 
@@ -52,10 +46,7 @@ def test_choice_quick_key_finishes_single_character_value(tmp_path):
 
 def test_choice_text_does_not_select_by_non_ascii_label_prefix(tmp_path):
     tui = _tui(tmp_path)
-    tui._active_choice = [
-        ("中文", "zh", "Chinese"),
-        ("English", "en", "English"),
-    ]
+    tui._active_choice = [("zh", "zh", ""), ("en", "en", "")]
     tui._choice_selected = 1
 
     tui._process_input("中".encode("utf-8"))
@@ -67,10 +58,7 @@ def test_choice_text_does_not_select_by_non_ascii_label_prefix(tmp_path):
 
 def test_alt_key_does_not_trigger_choice_quick_select(tmp_path):
     tui = _tui(tmp_path)
-    tui._active_choice = [
-        ("Yes", "y", "Allow"),
-        ("No", "n", "Deny"),
-    ]
+    tui._active_choice = [("y", "y", ""), ("n", "n", "")]
 
     changed = tui._process_input(b"\x1bn")
 
@@ -86,7 +74,7 @@ def test_ask_choice_accepts_permission_details(tmp_path):
         task = asyncio.create_task(
             tui.ask_choice(
                 "Allow tool use?",
-                [("Yes", "y", "Allow"), ("No", "n", "Deny")],
+                ["y", "n"],
                 details=[{"name": "edit", "pattern": "src/app.py"}],
             )
         )
@@ -104,7 +92,7 @@ def test_ask_choice_timeout_returns_none_and_clears_prompt(tmp_path):
     async def run_prompt():
         return await tui.ask_choice(
             "Allow tool use?",
-            [("Yes", "y", "Allow"), ("No", "n", "Deny")],
+            ["y", "n"],
             timeout=0.001,
         )
 
@@ -118,7 +106,7 @@ def test_ask_choice_ignores_stale_queue_values_after_timeout(tmp_path):
     async def run_prompt():
         return await tui.ask_choice(
             "Allow tool use?",
-            [("Yes", "y", "Allow"), ("No", "n", "Deny")],
+            ["y", "n"],
             timeout=0.001,
         )
 

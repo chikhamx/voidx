@@ -17,29 +17,17 @@ from voidx.tools.base import (
 )
 
 
-class ClarifyOption(BaseModel):
-    label: str = Field(description="Short display label.")
-    value: str = Field(description="Machine-readable answer value.")
-    description: str = Field(default="", description="One-line explanation of this option.")
-
-
 class ClarifyInput(BaseModel):
     question: str = Field(description="The specific question to ask the user.")
-    options: list[ClarifyOption] = Field(
+    options: list[str] = Field(
         default_factory=list,
         description="Suggested answers. Leave empty for open-ended questions.",
     )
-    context: str = Field(
-        default="",
-        description="Why this question matters or what decision depends on the answer.",
-    )
-    blocking: bool = Field(default=True, description="Whether the agent should wait for the answer.")
 
 
 class ClarifyResult(BaseModel):
     question: str
     answer: str
-    selected_option: str | None = None
     cancelled: bool = False
     state_patch: ToolStatePatch | None = None
 
@@ -69,9 +57,8 @@ class ClarifyTool(BaseTool):
             )
 
         response = await ctx.interact(UserInteraction(
-            prompt=_prompt(inp),
-            options=[(opt.label, opt.value, opt.description) for opt in inp.options],
-            blocking=inp.blocking,
+            prompt=inp.question,
+            options=inp.options,
             timeout=120.0,
         ))
         if response.cancelled:
@@ -81,12 +68,10 @@ class ClarifyTool(BaseTool):
                 metadata={"clarify_cancelled": True},
             )
 
-        patch = _infer_state_patch(inp, response)
-        selected_option = _selected_option(inp, response)
+        patch = _infer_state_patch(response)
         result = ClarifyResult(
             question=inp.question,
             answer=response.value,
-            selected_option=selected_option,
             state_patch=patch,
         )
         payload = result.model_dump(mode="json")
@@ -102,13 +87,7 @@ class ClarifyTool(BaseTool):
         )
 
 
-def _prompt(inp: ClarifyInput) -> str:
-    if not inp.context:
-        return inp.question
-    return f"{inp.question}\n\n{inp.context}"
-
-
-def _infer_state_patch(inp: ClarifyInput, response: UserResponse) -> ToolStatePatch | None:
+def _infer_state_patch(response: UserResponse) -> ToolStatePatch | None:
     answer = response.value.strip()
     if not answer:
         return None
@@ -141,17 +120,4 @@ def _infer_state_patch(inp: ClarifyInput, response: UserResponse) -> ToolStatePa
             ),
         )
 
-    if "scope" in inp.context.lower():
-        return ToolStatePatch(
-            goal=GoalSpec(type=GoalType.CHORE, desc=answer),
-        )
-    return None
-
-
-def _selected_option(inp: ClarifyInput, response: UserResponse) -> str | None:
-    if response.free_text:
-        return None
-    option_values = {option.value for option in inp.options}
-    if response.value in option_values:
-        return response.value
     return None

@@ -308,7 +308,7 @@ class _PanelManagerMixin:
     def _submit_choice_selection(self) -> None:
         if self._active_choice is None:
             return
-        _, value, _ = self._active_choice[self._choice_selected]
+        _label, value, _desc = self._active_choice[self._choice_selected]
         self._finish_choice(value)
 
     @staticmethod

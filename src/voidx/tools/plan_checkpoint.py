@@ -37,6 +37,21 @@ class PlanCheckpointResult(BaseModel):
     state_patch: ToolStatePatch | None = None
 
 
+_CHECKPOINT_OPTIONS: list[tuple[str, str, str]] = [
+    ("Implement directly", "approved", "Start implementing the plan"),
+    ("Document first", "needs_doc", "Write a design document before implementing"),
+    ("Modify scope", "modified", "Adjust the plan scope"),
+    ("Reject", "rejected", "Do not proceed"),
+]
+
+_DECISION_MAP: dict[str, str] = {
+    "approved": "approved",
+    "needs_doc": "needs_doc",
+    "modified": "modified",
+    "rejected": "rejected",
+}
+
+
 class PlanCheckpointTool(BaseTool):
     id = "checkpoint"
     description = (
@@ -64,39 +79,29 @@ class PlanCheckpointTool(BaseTool):
 
         response = await ctx.interact(UserInteraction(
             prompt=_build_prompt(inp),
-            options=[
-                ("Implement directly", "approved", "Proceed with implementation"),
-                (
-                    "Document first",
-                    "needs_doc",
-                    "Approve plan and write a design document before implementation",
-                ),
-                ("Modify scope", "modified", "Approve with changes to scope"),
-                ("Reject", "rejected", "Do not proceed"),
-            ],
-            blocking=True,
+            options=_CHECKPOINT_OPTIONS,
             timeout=120.0,
         ))
-        if response.cancelled or response.value == "rejected":
+        decision = _DECISION_MAP.get(response.value, "modified")
+        if response.cancelled or decision == "rejected":
             return _decision_result(inp, decision="rejected")
         if response.free_text:
             return _decision_result(inp, decision="modified", modified_scope=response.value.strip())
-        if response.value == "modified":
+        if decision == "modified":
             scope_response = await ctx.interact(UserInteraction(
                 prompt="Describe the modified scope:",
-                blocking=True,
                 timeout=120.0,
             ))
             modified_scope = "" if scope_response.cancelled else scope_response.value.strip()
             return _decision_result(inp, decision="modified", modified_scope=modified_scope)
-        if response.value == "approved":
+        if decision == "approved":
             return _decision_result(
                 inp,
                 decision="approved",
                 workflow_runs=ctx.workflow_runs,
                 turn_count=ctx.turn_count,
             )
-        if response.value == "needs_doc":
+        if decision == "needs_doc":
             return _decision_result(
                 inp,
                 decision="needs_doc",

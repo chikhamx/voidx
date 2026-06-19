@@ -110,8 +110,8 @@ class _InputEditorMixin:
             if len(text) != 1 or not text.isascii():
                 return
             quick = text.lower()
-            for _, value, _ in self._active_choice:
-                if len(value) == 1 and value.lower() == quick:
+            for label, value, _desc in self._active_choice:
+                if len(label) == 1 and label.lower() == quick:
                     self._finish_choice(value)
                     self.invalidate()
                     return

@@ -371,10 +371,7 @@ def test_choice_selection_only_render_still_works_with_pinned_todo(tmp_path, mon
     tui._last_bottom_start_row = 7
     tui._last_frame_rows = 14
     tui._console = Console(file=None, force_terminal=True, width=80, height=24, _environ={})
-    tui._active_choice = [
-        ("Review", "review", "Inspect the design"),
-        ("Implement", "implement", "Apply the change"),
-    ]
+    tui._active_choice = [("review", "review", ""), ("implement", "implement", "")]
     tui._choice_prompt = "Intent?"
     tui._choice_selected = 0
     dock.set_todo_state(

@@ -35,7 +35,7 @@ from voidx.tools.task_tracker import TaskTracker
 from voidx.tools.task_status import TaskStatusTool
 from voidx.tools.todo import TodoInput, TodoWriteTool
 from voidx.tools.registry import ToolRegistry
-from voidx.tools.clarify import ClarifyTool, ClarifyInput, ClarifyOption, _infer_state_patch
+from voidx.tools.clarify import ClarifyTool, ClarifyInput, _infer_state_patch
 from voidx.tools.load_skills import LoadSkillsTool
 from voidx.tools.load_doc_template import LoadDocTemplateTool, LoadDocTemplateInput
 from voidx.tools.plan_checkpoint import PlanCheckpointInput, PlanCheckpointTool, _build_prompt
@@ -85,10 +85,7 @@ class TestInteractiveTools:
         result = await ClarifyTool().execute(
             {
                 "question": "What should I do?",
-                "options": [
-                    {"label": "Implement", "value": "implement", "description": "Make the change"},
-                    {"label": "Inspect", "value": "inspect", "description": "Only inspect"},
-                ],
+                "options": ["implement", "inspect"],
             },
             ToolContext(workspace=str(tmp_path), interact=interact),
         )
@@ -279,35 +276,13 @@ class TestInteractiveTools:
         result = await ClarifyTool().execute(
             {
                 "question": "What should I do?",
-                "options": [
-                    {"label": "Implement", "value": "implement", "description": "Make the change"},
-                    {"label": "Inspect", "value": "inspect", "description": "Only inspect"},
-                ],
+                "options": ["implement", "inspect"],
             },
             ToolContext(workspace=str(tmp_path), interact=interact),
         )
 
         payload = json.loads(result.output)
         assert payload["answer"] == "Audit the auth flow first"
-        assert payload["selected_option"] is None
-
-    @pytest.mark.asyncio
-    async def test_clarify_passes_context_in_prompt(self, tmp_path):
-        requests = []
-
-        async def interact(request):
-            requests.append(request)
-            return UserResponse(value="refactor")
-
-        result = await ClarifyTool().execute(
-            {
-                "question": "What should I do?",
-                "context": "This determines the implementation scope",
-            },
-            ToolContext(workspace=str(tmp_path), interact=interact),
-        )
-
-        assert "This determines the implementation scope" in requests[0].prompt
 
     @pytest.mark.asyncio
     async def test_plan_checkpoint_rejected_keeps_feature_goal_without_hint(self, tmp_path):
@@ -338,11 +313,7 @@ class TestInteractiveTools:
             ToolContext(workspace=str(tmp_path), interact=interact),
         )
 
-        assert (
-            "Document first",
-            "needs_doc",
-            "Approve plan and write a design document before implementation",
-        ) in requests[0].options
+        assert any(label == "Document first" for label, _, _ in requests[0].options)
         assert result.metadata["plan_decision"] == "needs_doc"
         patch = result.metadata["state_patch"]
         assert patch["intent"]["type"] == "coding"

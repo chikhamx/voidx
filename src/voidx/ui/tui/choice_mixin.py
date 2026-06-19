@@ -6,6 +6,17 @@ import asyncio
 from typing import Any
 
 
+def _normalize_choices(choices: list[str | tuple[str, str, str]]) -> list[tuple[str, str, str]]:
+    """Normalize mixed choice format to (label, value, desc) tuples."""
+    result: list[tuple[str, str, str]] = []
+    for choice in choices:
+        if isinstance(choice, str):
+            result.append((choice, choice, ""))
+        else:
+            result.append(choice)
+    return result
+
+
 class _ChoicePromptMixin:
     def _init_choice_prompt_state(self) -> None:
         self._choice_queue: asyncio.Queue[str | None] = asyncio.Queue()
@@ -18,17 +29,18 @@ class _ChoicePromptMixin:
     async def ask_choice(
         self,
         prompt: str,
-        choices: list[tuple[str, str, str]],
+        choices: list[str | tuple[str, str, str]],
         selected: int = 0,
         anchor: str = "",
         details: list[dict[str, Any]] | None = None,
         timeout: float | None = None,
     ) -> str | None:
+        normalized = _normalize_choices(choices)
         self._reset_queue_for_current_loop("_choice_queue")
         self._drain_queue(self._choice_queue)
         self._choice_prompt = prompt
-        self._active_choice = choices
-        self._choice_selected = max(0, min(selected, len(choices) - 1))
+        self._active_choice = normalized
+        self._choice_selected = max(0, min(selected, len(normalized) - 1))
         self._choice_details = [self._normalize_choice_detail(item) for item in (details or [])]
         self._choice_anchor = anchor
         self.invalidate()
@@ -45,4 +57,3 @@ class _ChoicePromptMixin:
             self._choice_details = []
             self._choice_anchor = ""
             self.invalidate()
-

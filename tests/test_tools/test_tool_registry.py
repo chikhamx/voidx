@@ -34,7 +34,7 @@ from voidx.tools.task_tracker import TaskTracker
 from voidx.tools.task_status import TaskStatusTool
 from voidx.tools.todo import TodoInput, TodoWriteTool
 from voidx.tools.registry import ToolRegistry
-from voidx.tools.clarify import ClarifyTool, ClarifyInput, ClarifyOption, _infer_state_patch
+from voidx.tools.clarify import ClarifyTool, ClarifyInput, _infer_state_patch
 from voidx.tools.load_skills import LoadSkillsTool
 from voidx.tools.load_doc_template import LoadDocTemplateTool, LoadDocTemplateInput
 from voidx.tools.plan_checkpoint import PlanCheckpointTool
@@ -125,8 +125,7 @@ class TestToolRegistry:
         clarify = r.get_def("clarify").parameters
         checkpoint = r.get_def("checkpoint").parameters
 
-        assert "$defs" in clarify
-        assert clarify["$defs"]["ClarifyOption"]["additionalProperties"] is False
+        assert clarify["properties"]["options"]["items"]["type"] == "string"
         assert "$defs" not in checkpoint
         assert checkpoint["properties"]["steps"]["items"]["type"] == "string"
         assert "alternatives" not in checkpoint["properties"]

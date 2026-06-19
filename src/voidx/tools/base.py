@@ -45,15 +45,21 @@ class ToolResult(BaseModel):
 
 
 class UserInteraction(BaseModel):
-    """A request for user input from a tool."""
+    """A request for user input from a tool.
+
+    options format determines routing:
+    - list[str]: clarify-style, routed to ask_text (free text with suggestions)
+    - list[tuple[str, str, str]]: choice-style, routed to ask_choice (label, value, desc)
+    """
+
     prompt: str
-    options: list[tuple[str, str, str]] = Field(default_factory=list)
-    blocking: bool = True
+    options: list[str | tuple[str, str, str]] = Field(default_factory=list)
     timeout: float | None = None
 
 
 class UserResponse(BaseModel):
     """The user's response to a user interaction."""
+
     value: str
     cancelled: bool = False
     free_text: bool = False
@@ -64,6 +70,7 @@ UserInteractionCallback = Callable[[UserInteraction], Awaitable[UserResponse]]
 
 class ToolContext(BaseModel):
     """Context passed to every tool execution. Mutable file fingerprints for staleness guard."""
+
     workspace: str
     session_id: str = "default"
     persona: str = "voidx"
