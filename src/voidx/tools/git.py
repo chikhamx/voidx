@@ -337,6 +337,15 @@ class GitTool(BaseTool):
             if inp.command == "rebase":
                 return await _git_rebase(_args_dict(inp.args), ctx, repo)
         except ValueError as exc:
+            from pydantic import ValidationError as _VE
+            if isinstance(exc, _VE):
+                fields = [". ".join(str(p) for p in e.get("loc", ())) for e in exc.errors() if e.get("loc")]
+                if fields:
+                    return _result(inp.command, ctx, repo=repo, ok=False,
+                                   error=f"Invalid argument: {', '.join(fields)}. Check the parameter schema and retry.")
+                detail = "; ".join(e.get("msg", str(e)) for e in exc.errors())
+                return _result(inp.command, ctx, repo=repo, ok=False,
+                               error=f"Invalid argument: {detail}. Check the parameter schema and retry.")
             return _result(inp.command, ctx, repo=repo, ok=False, error=str(exc))
 
         return _result(inp.command, ctx, repo=repo, ok=False, error="unsupported_command")

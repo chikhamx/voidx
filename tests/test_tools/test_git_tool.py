@@ -9,7 +9,7 @@ import pytest
 sys.path.insert(0, str(Path(__file__).parent.parent.parent / "src"))
 
 from voidx.tools import git as git_mod
-from voidx.tools.base import ToolContext
+from voidx.tools.base import ToolContext, ToolResult
 from voidx.tools.git import GitTool
 
 
@@ -1232,6 +1232,46 @@ async def test_git_push_remote_not_found(tmp_path):
     assert "remote_not_found" in payload["error"]
 
 
+
+
+@pytest.mark.asyncio
+async def test_git_validation_error_returns_friendly_message(tmp_path):
+    repo = _init_repo(tmp_path / "repo")
+    (repo / "file.txt").write_text("hello\n", encoding="utf-8")
+    _run(repo, "add", "file.txt")
+    _run(repo, "commit", "-m", "initial")
+
+    # add requires non-empty paths list — pass empty to trigger ValidationError
+    result = await GitTool().execute(
+        {"command": "add", "args": {"paths": []}},
+        ToolContext(workspace=str(repo)),
+    )
+
+    # Should return a ToolResult (not raise), with a readable error
+    assert isinstance(result, ToolResult)
+    payload = json.loads(result.output)
+    assert payload["ok"] is False
+    assert "paths" in payload["error"].lower()
+    assert "invalid argument" in payload["error"].lower()
+
+
+@pytest.mark.asyncio
+async def test_git_commit_empty_message_returns_friendly_error(tmp_path):
+    repo = _init_repo(tmp_path / "repo")
+    (repo / "file.txt").write_text("hello\n", encoding="utf-8")
+    _run(repo, "add", "file.txt")
+    _run(repo, "commit", "-m", "initial")
+
+    result = await GitTool().execute(
+        {"command": "commit", "args": {"message": ""}},
+        ToolContext(workspace=str(repo)),
+    )
+
+    assert isinstance(result, ToolResult)
+    payload = json.loads(result.output)
+    assert payload["ok"] is False
+    assert "message" in payload["error"].lower()
+    assert "invalid argument" in payload["error"].lower()
 @pytest.mark.asyncio
 async def test_git_fetch_from_remote(tmp_path):
     remote = _init_remote(tmp_path / "remote")
