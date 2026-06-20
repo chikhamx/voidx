@@ -44,6 +44,28 @@ class TestSedHintWording:
         assert "prefix/suffix are line content anchors" in h.llm_hint
 
 
+class TestSedSlashInPattern:
+    """sed with escaped slashes or alternate delimiters in pattern."""
+
+    def test_global_substitution_escaped_slash(self):
+        h = try_hint("sed -i 's/assert \"Exploring (1\\/3)\"/assert New/g' file.py")
+        assert h is not None
+        assert h.tool_id == "replace"
+        assert "Exploring" in h.llm_hint
+
+    def test_global_substitution_pipe_delimiter(self):
+        h = try_hint("sed -i 's|assert \"Exploring (1/3)\"|assert New|g' file.py")
+        assert h is not None
+        assert h.tool_id == "replace"
+        assert "Exploring" in h.llm_hint
+
+    def test_global_substitution_hash_delimiter(self):
+        h = try_hint("sed -i 's#old/path#new/path#g' file.py")
+        assert h is not None
+        assert h.tool_id == "replace"
+        assert "old/path" in h.llm_hint
+
+
 # ---------------------------------------------------------------------------
 # #3: echo/printf content with double quotes → no hint
 # ---------------------------------------------------------------------------

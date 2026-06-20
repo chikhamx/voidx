@@ -16,6 +16,7 @@ from voidx.tools.file_state import (
 
 from .edit_resolve import (
     _find_text_segment,
+    _global_offset_for_line,
     _resolve_paragraph_edits,
     _result_trailing_newline,
     _validate_resolved_edits,
@@ -95,6 +96,58 @@ class FileReplaceInput(BaseModel):
             raise ValueError("end_no must be greater than or equal to start_no")
         return self
 
+
+
+class FileDeleteInput(BaseModel):
+    file_path: str = Field(description="Path to the file")
+    lineno: int = Field(
+        ge=1,
+        description=(
+            "Line number to delete (1-based). "
+            "Use the line number from the latest read output."
+        ),
+    )
+    anchor: str = Field(
+        default="",
+        description=(
+            "Substring expected anywhere on the target line. "
+            "Aim for a distinctive snippet. "
+            "Empty string skips anchor verification."
+        ),
+    )
+
+
+class FileDeleteTool(BaseTool):
+    id = "delete"
+    description = (
+        "Delete a single line from a file. "
+        "Provide the line number from the latest read output and an anchor snippet "
+        "to verify the target line. For deleting multiple consecutive lines, use replace instead. "
+        "Read the target line first."
+    )
+
+    def parameters_schema(self) -> dict:
+        return model_to_json_schema(FileDeleteInput)
+
+    async def execute(self, args: dict, ctx: ToolContext) -> ToolResult:
+        inp = FileDeleteInput.model_validate(args)
+        if inp.anchor:
+            return await _execute_text_replace(
+                ctx,
+                file_path=inp.file_path,
+                start_no=inp.lineno,
+                end_no=inp.lineno,
+                prefix=inp.anchor,
+                suffix=inp.anchor,
+                new_string="",
+                tool_name=self.id,
+            )
+        return await _execute_line_delete(
+            ctx,
+            file_path=inp.file_path,
+            lineno=inp.lineno,
+            tool_name=self.id,
+        )
 
 class FileEditTool(BaseTool):
     id = "edit"
@@ -328,6 +381,72 @@ async def _execute_text_replace(
         diff=diff,
     )
 
+
+
+async def _execute_line_delete(
+    ctx: ToolContext,
+    *,
+    file_path: str,
+    lineno: int,
+    tool_name: str,
+) -> ToolResult:
+    path, error = _resolve_edit_target(ctx, file_path)
+    if error is not None:
+        return error
+    assert path is not None
+
+    original = path.read_text(encoding="utf-8", errors="replace")
+    display = _split_display_lines(original)
+    lines = list(display.lines)
+
+    if lineno < 1 or lineno > len(lines):
+        return ToolResult(
+            output=f"Line {lineno} out of range (file has {len(lines)} lines).",
+            metadata={"error": True},
+        )
+
+    coverage_error = check_read_coverage(ctx, path, lineno, lineno)
+    if coverage_error:
+        return ToolResult(output=f"{coverage_error}", metadata={"error": True})
+
+    key = str(path.resolve())
+    existing_coverage = ctx.file_read_coverage.get(key, {})
+    current_fingerprint = asdict(file_fingerprint(path))
+    old_ranges = [
+        item.copy()
+        for item in existing_coverage.get("ranges", [])
+    ] if existing_coverage.get("fingerprint") == current_fingerprint else []
+
+    start_offset = _global_offset_for_line(lines, lineno)
+    end_offset = _global_offset_for_line(lines, lineno) + len(lines[lineno - 1])
+
+    tail = original[end_offset:]
+    if tail.startswith("\n"):
+        tail = tail[1:]
+    content = f"{original[:start_offset]}{tail}"
+
+    await save_file_version(ctx, path, display_path=file_path, tool_name=tool_name)
+    path.write_text(content, encoding="utf-8")
+    diff = make_file_diff(file_path, original, content)
+    parsed = parse_unified_diff(diff)
+    file_diff = parsed.files[0] if parsed.files else FileDiff(path=file_path)
+    remap_read_coverage_from_file_diff(ctx, path, file_diff, old_ranges=old_ranges)
+
+    output = f"File edited: {file_path} (1 operations)"
+    if diff:
+        output = f"{output}\n{diff}"
+    return ToolResult(
+        title="Edited (1 edits)",
+        output=output,
+        summary="Edited (1 operations)",
+        metadata={
+            "file": file_path,
+            "operations": 1,
+            "start_line": lineno,
+            "end_line": lineno,
+        },
+        diff=diff,
+    )
 
 async def _apply_resolved_edits(
     ctx: ToolContext,

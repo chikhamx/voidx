@@ -214,8 +214,6 @@ async def test_subagent_streaming_is_headless(isolated_dock):
             agent_id=0,
             subagent_id="agent_0",
             name="Exploring",
-            step=1,
-            max_steps=3,
         ))
         # Child agent tools still emit events (CaptureConsole is not headless)
         await bus.emit(ToolStarted(
@@ -265,14 +263,14 @@ async def test_capture_console_uses_ui_event_bus_for_subagent_tools(isolated_doc
         parent = await ui_events.request(TurnStarted(text="demo"))
         capture = CaptureConsole(isolated_dock.tree, parent, agent_id=0)
 
-        capture.step_header(1, 2, "explore")
+        capture.step_header("explore")
         capture.tool_call("read", {"file_path": "x.py"})
         capture.tool_done("read", 0.0, True)
         capture.tool_result("first\nsecond")
         await ui_events.drain()
 
         rendered = "\n".join(_rich_plain(line) for line in isolated_dock.tree.render(100))
-        assert "Exploring (1/2)" in rendered
+        assert "Exploring" in rendered
         assert 'Read("x.py")' in rendered
         assert "[cyan]" not in rendered
 
@@ -410,8 +408,6 @@ async def test_child_agent_stream_and_progress_attach_under_agent_node(isolated_
             agent_id=0,
             subagent_id="agent_0",
             name="Exploring",
-            step=1,
-            max_steps=3,
         ))
         await bus.emit(AssistantStreamUpdated(agent_id=0, text="● found the auth flow"))
         await bus.emit(AssistantStreamCommitted(agent_id=0))
@@ -433,7 +429,7 @@ async def test_child_agent_stream_and_progress_attach_under_agent_node(isolated_
         assert "Task:" not in rendered
         assert "inspect auth.py" not in rendered
         assert "Agent ID" not in rendered
-        assert "Exploring (1/3)" in rendered
+        assert "Exploring" in rendered
         assert "found the auth flow" in rendered
 
         await bus.emit(SubagentFinished(
@@ -441,15 +437,13 @@ async def test_child_agent_stream_and_progress_attach_under_agent_node(isolated_
             subagent_id="agent_0",
             ok=True,
             elapsed=2.5,
-            final_step=1,
-            max_steps=3,
             finish_reason="final_answer",
         ))
         await bus.drain()
 
         rendered = "\n".join(_rich_plain(line) for line in isolated_dock.tree.render(100))
         assert "explore agent completed (2.5s)" not in rendered
-        assert "Explorer completed (1/3, final answer, 2.5s)" in rendered
+        assert "Explorer completed (final answer, 2.5s)" in rendered
         assert "Explorer" in rendered
         assert 'Agent("explore")' not in rendered
         assert "subagent completed" not in rendered

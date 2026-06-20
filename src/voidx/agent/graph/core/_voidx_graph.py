@@ -22,7 +22,6 @@ from voidx.agent.graph.core.helpers import (
     _interaction_mode_for_persona,
     _invalidate_tui,
     _persona_for_child_workflow,
-    _subagent_step_budget,
 )
 from voidx.agent.graph.core.llm import GraphLlmMixin
 from voidx.agent.graph.permissions import GraphPermissionMixin
@@ -368,7 +367,6 @@ class VoidXGraph(
         )
         runtime_persona = _persona_for_child_workflow(workflow_runtime_context.runs, workflow_start)
         interaction_mode = _interaction_mode_for_persona(runtime_persona)
-        max_steps = _subagent_step_budget(goal_resolution)
 
         async def authorize(calls):
             return await self._authorize_tool_calls(
@@ -397,7 +395,6 @@ class VoidXGraph(
                 "description": description,
                 "parent_agent_id": -1,
                 "parent_tool_call_id": parent_tool_call_id,
-                "max_steps": max_steps,
                 "goal_resolution": goal_resolution.model_dump(mode="json"),
                 "result_schema": result_contract.schema_name,
             })
@@ -433,7 +430,6 @@ class VoidXGraph(
                 runtime_persona=runtime_persona,
                 goal_resolution=goal_resolution,
                 result_contract=result_contract,
-                step_budget=max_steps,
                 **kwargs,
             )
             ok = True
@@ -445,8 +441,6 @@ class VoidXGraph(
                     subagent_id=agent_run_id,
                     ok=ok,
                     elapsed=time.monotonic() - started_at,
-                    final_step=run_metadata.get("final_step") if ok else None,
-                    max_steps=run_metadata.get("max_steps") if ok else max_steps,
                     finish_reason=str(run_metadata.get("finish_reason") or ("final_answer" if ok else "error")),
                 ))
             if self._session:
@@ -455,8 +449,6 @@ class VoidXGraph(
                     "agent_id": agent_id,
                     "ok": ok,
                     "elapsed": time.monotonic() - started_at,
-                    "final_step": run_metadata.get("final_step") if ok else None,
-                    "max_steps": run_metadata.get("max_steps") if ok else max_steps,
                     "finish_reason": str(run_metadata.get("finish_reason") or ("final_answer" if ok else "error")),
                 })
 

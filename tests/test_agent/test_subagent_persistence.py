@@ -106,12 +106,10 @@ def _subagent_contract_kwargs(
     join: str = "review",
     leave: str = "review",
     schema_name: str = "inspection_result",
-    step_budget: int = 4,
 ) -> dict:
     return {
         "goal_resolution": _child_goal_resolution(goal_type, desc=desc, join=join, leave=leave),
         "result_contract": _child_result_contract(schema_name),
-        "step_budget": step_budget,
     }
 
 
@@ -158,7 +156,7 @@ async def test_run_subagent_persists_assistant_messages_to_subagent_jsonl(tmp_pa
             "test-key",
             Config(workspace=str(tmp_path)),
             runtime_persona="explore",
-            **_subagent_contract_kwargs(desc="Inspect child path", step_budget=4),
+            **_subagent_contract_kwargs(desc="Inspect child path"),
             session_id=session.id,
             agent_id=3,
             debug=False,
@@ -227,7 +225,7 @@ async def test_run_subagent_persists_tool_results_to_subagent_jsonl(tmp_path, mo
             "test-key",
             Config(workspace=str(tmp_path)),
             runtime_persona="explore",
-            **_subagent_contract_kwargs(desc="Inspect child path", step_budget=4),
+            **_subagent_contract_kwargs(desc="Inspect child path"),
             session_id=session.id,
             agent_id=5,
             debug=False,
@@ -305,7 +303,7 @@ async def test_run_subagent_injects_failure_loop_guidance(tmp_path, monkeypatch)
         "test-key",
         Config(workspace=str(tmp_path)),
         runtime_persona="explore",
-        **_subagent_contract_kwargs(desc="Inspect child path", step_budget=5),
+        **_subagent_contract_kwargs(desc="Inspect child path"),
         debug=False,
     )
 
@@ -373,7 +371,7 @@ async def test_run_subagent_terminates_after_no_progress_cycles(tmp_path, monkey
         "test-key",
         Config(workspace=str(tmp_path)),
         runtime_persona="explore",
-        **_subagent_contract_kwargs(desc="Inspect child path", step_budget=8),
+        **_subagent_contract_kwargs(desc="Inspect child path"),
         debug=False,
     )
 

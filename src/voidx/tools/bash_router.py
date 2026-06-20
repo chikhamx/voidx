@@ -83,7 +83,7 @@ def _try_hint_impl(command: str) -> RouteHint | None:
     # Only strip if there's exactly one && (cd && cmd1 && cmd2 is still excluded).
     stripped = _strip_cd_prefix(stripped)
 
-    if any(ch in stripped for ch in ("|", ";", "$")):
+    if ";" in stripped or "$" in stripped:
         return None
     if _RE_AMP.search(stripped):
         return None
@@ -92,6 +92,10 @@ def _try_hint_impl(command: str) -> RouteHint | None:
 
     words = _shell_words(stripped)
     if not words:
+        return None
+
+    # "|" inside quotes is not a pipe — check after shell splitting instead.
+    if "|" in stripped and "|" in words:
         return None
 
     prog = words[0].lower()
@@ -845,7 +849,9 @@ def _hint_grep(words: list[str]) -> RouteHint | None:
     i = 0
     while i < len(args):
         a = args[i]
-        if a in ("-r", "-R"):
+        if a in ("-r", "-R", "-n", "--line-number"):
+            i += 1
+        elif len(a) > 2 and a.startswith("-") and not a.startswith("--") and all(c in "rRn" for c in a[1:]):
             i += 1
         elif a == "--include" and i + 1 < len(args):
             include = args[i + 1]
@@ -945,11 +951,57 @@ def _hint_grep(words: list[str]) -> RouteHint | None:
 # sed hints
 # ---------------------------------------------------------------------------
 
-_SED_SIMPLE = re.compile(r"^(\d+)s/([^/]*)/([^/]*)/?$")
-_SED_GLOBAL = re.compile(r"^s/([^/]*)/([^/]*)/g?$")
 _SED_RANGE_DELETE = re.compile(r"^(\d+),(\d+)d$")
 _SED_LINE_DELETE = re.compile(r"^(\d+)d$")
 _SED_PATTERN_DELETE = re.compile(r"^/(.+)/d$")
+
+
+def _sed_split(script: str) -> tuple[str, str, str, str] | None:
+    """Parse a sed substitution script into (line_prefix, old, new, flags).
+
+    Supports any delimiter (``s/old/new/``, ``s|old|new|``, ``s#old#new#``)
+    and escaped delimiters within old/new (e.g. ``\\/``).
+    Returns None if the script is not a valid substitution.
+    """
+    m = re.match(r"^(\d*)s", script)
+    if not m:
+        return None
+    line_prefix = m.group(1)
+    rest = script[m.end():]
+    if not rest:
+        return None
+    delim = rest[0]
+    if delim.isalnum() or delim == "\\":
+        return None
+    parts: list[str] = []
+    current: list[str] = []
+    i = 1
+    while i < len(rest):
+        ch = rest[i]
+        if ch == "\\" and i + 1 < len(rest):
+            current.append(rest[i + 1])
+            i += 2
+            continue
+        if ch == delim:
+            parts.append("".join(current))
+            current = []
+            i += 1
+            if len(parts) == 3:
+                # Everything after the closing delimiter is flags
+                flags = rest[i:]
+                return line_prefix, parts[0], parts[1], flags
+            continue
+        current.append(ch)
+        i += 1
+    # Reached end of string
+    if len(parts) == 2:
+        # current holds whatever came after the second delimiter (flags)
+        flags = "".join(current)
+        return line_prefix, parts[0], parts[1], flags
+    if len(parts) == 1 and current:
+        # Only one delimiter seen — s/oldnew (malformed)
+        return line_prefix, parts[0], "".join(current), ""
+    return None
 
 
 def _hint_sed(words: list[str]) -> RouteHint | None:
@@ -972,22 +1024,25 @@ def _hint_sed(words: list[str]) -> RouteHint | None:
     if i != len(args) or script is None or path is None:
         return None
 
-    m = _SED_SIMPLE.match(script)
-    if m:
-        line_no, old_text, new_text = int(m.group(1)), m.group(2), m.group(3)
+    parsed = _sed_split(script)
+    if parsed:
+        line_prefix, old_text, new_text, flags = parsed
+        is_global = "g" in flags
         if "&" not in new_text and r"\1" not in new_text:
+            if line_prefix:
+                line_no = int(line_prefix)
+                return RouteHint(
+                    tool_id="replace", ui_label="→ replace",
+                    llm_hint=f'Prefer replace(file_path="{path}", start_no={line_no}, end_no={line_no}, prefix="{old_text}", suffix="{old_text}", new_string="{new_text}") — prefix/suffix are line content anchors for locating the edit, new_string is the replacement. Enables staleness checking and diff output.',
+                )
+            if is_global:
+                return RouteHint(
+                    tool_id="replace", ui_label="→ replace",
+                    llm_hint=f'For global substitution: first read {path} to locate lines, then use replace(file_path, start_no, end_no, prefix="{old_text}", suffix="{old_text}", new_string="{new_text}") — prefix/suffix are line content anchors for locating the edit.',
+                )
             return RouteHint(
                 tool_id="replace", ui_label="→ replace",
-                llm_hint=f'Prefer replace(file_path="{path}", start_no={line_no}, end_no={line_no}, prefix="{old_text}", suffix="{old_text}", new_string="{new_text}") — prefix/suffix are line content anchors for locating the edit, new_string is the replacement. Enables staleness checking and diff output.',
-            )
-
-    m = _SED_GLOBAL.match(script)
-    if m:
-        old_text, new_text = m.group(1), m.group(2)
-        if "&" not in new_text and r"\1" not in new_text:
-            return RouteHint(
-                tool_id="replace", ui_label="→ replace",
-                llm_hint=f'For global substitution: first read {path} to locate lines, then use replace(file_path, start_no, end_no, prefix="{old_text}", suffix="{old_text}", new_string="{new_text}") — prefix/suffix are line content anchors for locating the edit.',
+                llm_hint=f'Prefer replace(file_path="{path}", start_no, end_no, prefix="{old_text}", suffix="{old_text}", new_string="{new_text}") — prefix/suffix are line content anchors for locating the edit, new_string is the replacement. Enables staleness checking and diff output.',
             )
 
     m = _SED_RANGE_DELETE.match(script)

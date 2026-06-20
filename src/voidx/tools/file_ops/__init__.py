@@ -3,6 +3,8 @@
 from __future__ import annotations
 
 from .edit_execute import (
+    FileDeleteInput,
+    FileDeleteTool,
     FileEditInput,
     FileEditTool,
     FileInsertInput,
@@ -16,6 +18,8 @@ from .types import EditEntry
 from .write import FileWriteInput, FileWriteTool
 
 __all__ = [
+    "FileDeleteTool",
+    "FileDeleteInput",
     "FileReadTool",
     "FileReadInput",
     "FileWriteTool",

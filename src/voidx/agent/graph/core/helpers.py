@@ -102,18 +102,6 @@ def _interaction_mode_for_persona(persona: str) -> str:
     return InteractionMode.PLAN.value if "plan" in personas else InteractionMode.AUTO.value
 
 
-def _subagent_step_budget(goal_resolution: GoalResolution) -> int:
-    plan = goal_resolution.plan
-    join = (plan.join if plan is not None else "").strip().lower()
-    return {
-        "review": 4,
-        "verify": 4,
-        "plan": 5,
-        "design": 5,
-        "debug": 6,
-        "tdd": 6,
-        "feedback": 6,
-    }.get(join, 5)
 
 
 def _invalidate_tui(host: object) -> None:

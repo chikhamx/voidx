@@ -57,7 +57,6 @@ async def test_call_llm_ignores_legacy_max_steps_for_tool_binding(tmp_path, monk
     result = await graph._call_llm({
         "messages": [HumanMessage(content="hi")],
         "step_count": 49,
-        "max_steps": 50,
         "persona": "voidx",
     })
 
@@ -85,7 +84,6 @@ async def test_call_llm_does_not_add_main_agent_step_hint(tmp_path, monkeypatch)
     result = await graph._call_llm({
         "messages": state_messages,
         "step_count": 46,
-        "max_steps": 50,
         "persona": "voidx",
     })
 
@@ -132,7 +130,6 @@ async def test_call_llm_retry_uses_transient_status_event(tmp_path, monkeypatch)
         result = await graph._call_llm({
             "messages": [HumanMessage(content="hi")],
             "step_count": 0,
-            "max_steps": 1,
             "persona": "voidx",
         })
         await ui_events.drain()

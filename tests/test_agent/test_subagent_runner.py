@@ -106,12 +106,10 @@ def _subagent_contract_kwargs(
     join: str = "review",
     leave: str = "review",
     schema_name: str = "inspection_result",
-    step_budget: int = 4,
 ) -> dict:
     return {
         "goal_resolution": _child_goal_resolution(goal_type, desc=desc, join=join, leave=leave),
         "result_contract": _child_result_contract(schema_name),
-        "step_budget": step_budget,
     }
 
 
@@ -189,7 +187,6 @@ async def test_subagent_runner_passes_main_workflow_runtime_context(tmp_path, mo
     )
 
     assert result == "child result"
-    assert captured["step_budget"] > 0
     assert captured["goal_resolution"] == goal_resolution
     assert captured["result_contract"] == result_contract
     assert captured["runtime_persona"] == "implement"
@@ -230,8 +227,6 @@ async def test_subagent_runner_persists_lifecycle_jsonl(tmp_path, monkeypatch):
 
     async def fake_run_subagent(*_args, **kwargs):
         kwargs["run_metadata"].update({
-            "final_step": 2,
-            "max_steps": 4,
             "finish_reason": "final_answer",
         })
         return "child result"
@@ -259,8 +254,6 @@ async def test_subagent_runner_persists_lifecycle_jsonl(tmp_path, monkeypatch):
         assert rows[0]["goal_resolution"]["goal"]["type"] == "inspect"
         assert rows[0]["result_schema"] == "inspection_result"
         assert rows[1]["ok"] is True
-        assert rows[1]["final_step"] == 2
-        assert rows[1]["max_steps"] == 4
         assert rows[1]["finish_reason"] == "final_answer"
     finally:
         await delete_session(graph._session.id)

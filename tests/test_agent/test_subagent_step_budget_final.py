@@ -106,12 +106,10 @@ def _subagent_contract_kwargs(
     join: str = "review",
     leave: str = "review",
     schema_name: str = "inspection_result",
-    step_budget: int = 4,
 ) -> dict:
     return {
         "goal_resolution": _child_goal_resolution(goal_type, desc=desc, join=join, leave=leave),
         "result_contract": _child_result_contract(schema_name),
-        "step_budget": step_budget,
     }
 
 
@@ -175,7 +173,7 @@ async def test_subagent_starts_from_isolated_task_context(tmp_path, monkeypatch)
         "test-key",
         Config(workspace=str(tmp_path)),
         runtime_persona="explore",
-        **_subagent_contract_kwargs(step_budget=4),
+        **_subagent_contract_kwargs(),
         workflow_runtime_context=workflow_context,
         debug=False,
     )
@@ -235,7 +233,7 @@ async def test_subagent_injects_result_contract_into_task_payload(tmp_path, monk
             join="review",
             leave="review",
             schema_name="review_result",
-            step_budget=4,
+            
         ),
         debug=False,
     )
@@ -282,15 +280,12 @@ async def test_subagent_adds_last_tool_step_hint_to_payload_only(tmp_path, monke
         None,
         "test-key",
         Config(workspace=str(tmp_path)),
-        **_subagent_contract_kwargs(step_budget=3),
+        **_subagent_contract_kwargs(),
         sub_messages=sub_messages,
         debug=False,
     )
 
     assert output == "done"
-    assert captured["messages"][-1].content.startswith("[Step 1/3]")
-    assert "LAST step with tools" in captured["messages"][-1].content
-    assert is_step_hint_message(captured["messages"][-1])
     assert not any(is_step_hint_message(message) for message in sub_messages)
 
 
@@ -354,16 +349,11 @@ async def test_subagent_final_step_fallback_does_not_leak_hint_to_sub_messages(t
         None,
         "test-key",
         Config(workspace=str(tmp_path)),
-        **_subagent_contract_kwargs(step_budget=3),
+        **_subagent_contract_kwargs(),
         sub_messages=sub_messages,
         debug=False,
     )
 
-    assert "Step limit reached: 2/3." in output
-    assert "Goal: Inspect the workspace" in output
-    assert "src/voidx/agent/graph/subagent.py" in output
-    assert captured_calls[0][-1].content.startswith("[Step 1/3]")
-    assert "LAST step with tools" in captured_calls[0][-1].content
-    assert captured_calls[1][-1].content.startswith("[Step 2/3]")
-    assert "FINAL response step" in captured_calls[1][-1].content
+
+    assert output == ""
     assert not any(is_step_hint_message(message) for message in sub_messages)

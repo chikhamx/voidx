@@ -9,7 +9,6 @@ from voidx.agent.graph.runtime_guards import (
     build_failure_key,
     cycle_summary_from_tools,
 )
-from voidx.runtime.ui import StatusUpdated
 from voidx.tools.service import ToolResult
 
 from .types import _ExecutedTool, ToolResultOk
@@ -130,24 +129,7 @@ async def _record_runtime_guard_outcomes(
         no_progress_decision = guard_state.no_progress.decision()
         if no_progress_decision.action == "terminate":
             return no_progress_decision
-        status, wall_clock_decision = guard_state.wall_clock.record_check(
-            label="voidx",
-            latest_action=_latest_action_from_summary(summary),
-        )
-        await _emit_wall_clock_status(host, status)
-        return wall_clock_decision
     return GuardDecision()
-
-
-async def _emit_wall_clock_status(host, guidance: GuardGuidance | None) -> None:
-    if guidance is None:
-        return
-    if host._ui.via_events():
-        await host._ui.events.emit(StatusUpdated(
-            status_id="runtime-guard:wall-clock",
-            label=guidance.message,
-            stage="working",
-        ))
 
 
 def _latest_action_from_summary(summary) -> str:

@@ -261,7 +261,7 @@ class DockEventConsumer:
                 parent = self._agent_parent(e.agent_id)
                 return self._dock.set_status(
                     f"agent:{e.agent_id}:progress",
-                    f"{e.name} ({e.step}/{e.max_steps})",
+                    e.name,
                     parent=parent,
                     stage="agent step",
                 )
@@ -297,8 +297,6 @@ class DockEventConsumer:
                 node = self._agent_parent(e.agent_id)
                 label = "completed" if e.ok else "failed"
                 details: list[str] = []
-                if e.final_step is not None and e.max_steps is not None:
-                    details.append(f"{e.final_step}/{e.max_steps}")
                 if e.finish_reason:
                     details.append(e.finish_reason.replace("_", " "))
                 if e.elapsed is not None:

@@ -37,21 +37,18 @@ class CaptureConsole:
     def console(self) -> _DummyConsole:
         return self._dummy
 
-    def step_header(self, n: int, max_n: int, agent: str = "") -> None:
+    def step_header(self, agent: str = "") -> None:
         if via_events():
             ui_events.emit_direct(SubagentStepStarted(
                 agent_id=self._agent_id,
                 subagent_id=agent or "subagent",
                 name=_title(VoidConsole._AGENT_GERUND.get(agent, agent)),
-                step=n,
-                max_steps=max_n,
             ))
             return
         gerund = _title(VoidConsole._AGENT_GERUND.get(agent, agent))
         self._tree.new_node(
             parent=self._parent, node_type="turn",
-            header=f"⟳ {gerund} ({n}/{max_n})",
-            step_info=f"step {n}/{max_n}",
+            header=f"⟳ {gerund}",
             agent_name=agent if agent else None,
             collapsed=False,
         )

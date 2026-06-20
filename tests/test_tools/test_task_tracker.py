@@ -76,15 +76,14 @@ class TestTaskTracker:
 
     def test_start_and_update(self):
         tracker = TaskTracker()
-        tracker.start("t1", "implement", "write foo.py", max_steps=5)
+        tracker.start("t1", "implement", "write foo.py")
         t = tracker.get("t1")
         assert t is not None
         assert t.status == "running"
         assert t.agent == "implement"
 
-        tracker.update("t1", step=3, last_output="writing file...")
+        tracker.update("t1", last_output="writing file...")
         t = tracker.get("t1")
-        assert t.step == 3
         assert "writing file" in t.last_output
 
     def test_finish(self):
@@ -104,8 +103,8 @@ class TestTaskTracker:
 
     def test_format_status(self):
         tracker = TaskTracker()
-        tracker.start("t1", "implement", "write foo.py", max_steps=5)
-        tracker.update("t1", step=2, last_output="found target")
+        tracker.start("t1", "implement", "write foo.py")
+        tracker.update("t1", last_output="found target")
         output = tracker.format_status()
         assert "implement" in output
         assert "running" in output

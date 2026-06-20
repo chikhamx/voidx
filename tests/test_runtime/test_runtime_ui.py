@@ -21,7 +21,7 @@ def test_noop_ui_sink_does_not_load_ui_modules():
         ui.print("hello")
         ui.warn("warn")
         ui.error("error")
-        ui.step_header(1, 2, "agent")
+        ui.step_header("agent")
         ui.tool_call("read", {})
         ui.tool_done("read", 0.1)
         ui.tool_result("ok")

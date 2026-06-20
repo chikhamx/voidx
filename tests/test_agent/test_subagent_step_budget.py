@@ -106,12 +106,10 @@ def _subagent_contract_kwargs(
     join: str = "review",
     leave: str = "review",
     schema_name: str = "inspection_result",
-    step_budget: int = 4,
 ) -> dict:
     return {
         "goal_resolution": _child_goal_resolution(goal_type, desc=desc, join=join, leave=leave),
         "result_contract": _child_result_contract(schema_name),
-        "step_budget": step_budget,
     }
 
 
@@ -176,8 +174,7 @@ async def test_run_subagent_wall_clock_guard_terminates_at_boundary(tmp_path, mo
         "for_subagent",
         classmethod(lambda cls: WallClockGuardState(
             started_at=0.0,
-            status_threshold_seconds=1.0,
-            confirm_threshold_seconds=2.0,
+            limit_seconds=2.0,
         )),
     )
 
@@ -195,7 +192,7 @@ async def test_run_subagent_wall_clock_guard_terminates_at_boundary(tmp_path, mo
         "test-key",
         Config(workspace=str(tmp_path)),
         runtime_persona="explore",
-        **_subagent_contract_kwargs(desc="Inspect child path", step_budget=4),
+        **_subagent_contract_kwargs(desc="Inspect child path"),
         debug=False,
     )
 
@@ -260,7 +257,7 @@ async def test_run_subagent_repetitive_guard_runs_before_authorization(tmp_path,
         "test-key",
         Config(workspace=str(tmp_path)),
         runtime_persona="explore",
-        **_subagent_contract_kwargs(desc="Inspect child path", step_budget=6),
+        **_subagent_contract_kwargs(desc="Inspect child path"),
         authorize_tools=authorize,
         debug=False,
     )
@@ -311,7 +308,7 @@ async def test_subagent_todo_updates_sink_with_current_tool_message(tmp_path, mo
         None,
         "test-key",
         Config(workspace=str(tmp_path)),
-        **_subagent_contract_kwargs(step_budget=4),
+        **_subagent_contract_kwargs(),
         parent_tools=ToolRegistry(),
         todo_state_sink=todo_states.append,
         debug=False,
@@ -369,7 +366,7 @@ async def test_subagent_empty_todo_does_not_clear_parent_state(tmp_path, monkeyp
         None,
         "test-key",
         Config(workspace=str(tmp_path)),
-        **_subagent_contract_kwargs(step_budget=4),
+        **_subagent_contract_kwargs(),
         parent_tools=ToolRegistry(),
         todo_state_sink=todo_states.append,
         debug=False,

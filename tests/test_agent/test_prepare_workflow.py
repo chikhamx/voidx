@@ -106,12 +106,10 @@ def _subagent_contract_kwargs(
     join: str = "review",
     leave: str = "review",
     schema_name: str = "inspection_result",
-    step_budget: int = 4,
 ) -> dict:
     return {
         "goal_resolution": _child_goal_resolution(goal_type, desc=desc, join=join, leave=leave),
         "result_contract": _child_result_contract(schema_name),
-        "step_budget": step_budget,
     }
 
 
@@ -155,7 +153,6 @@ async def test_prepare_does_not_auto_inject_project_skill_body(tmp_path):
         "plan_mode": False,
         "tool_results": {},
         "step_count": 0,
-        "max_steps": 50,
         "should_continue": True,
     }
 
@@ -197,7 +194,6 @@ async def test_prepare_injects_workflow_nodes_from_task_state(tmp_path):
         ).model_dump(mode="json"),
         "tool_results": {},
         "step_count": 0,
-        "max_steps": 50,
         "should_continue": True,
     }
 
@@ -252,7 +248,6 @@ async def test_prepare_syncs_triggered_workflow_to_status_state(tmp_path):
         ).model_dump(mode="json"),
         "tool_results": {},
         "step_count": 0,
-        "max_steps": 50,
         "should_continue": True,
     })
 
@@ -305,7 +300,6 @@ async def test_implement_subagent_injects_workflow_nodes(tmp_path, monkeypatch):
             join="tdd",
             leave="verify",
             schema_name="implementation_result",
-            step_budget=4,
         ),
         workflow_runtime_context=workflow_context,
         debug=False,

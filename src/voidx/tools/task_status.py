@@ -45,7 +45,7 @@ class TaskStatusTool(BaseTool):
                 summary=f"task {inp.task_id}: {task.status}",
                 metadata={
                     "task_id": task.id, "agent": task.agent,
-                    "status": task.status, "step": task.step,
+                    "status": task.status,
                 },
             )
 

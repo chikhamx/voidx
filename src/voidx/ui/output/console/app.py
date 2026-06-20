@@ -243,9 +243,9 @@ class VoidConsole:
         w = self._console.width or 80
         self.print("─" * w, style="dim")
 
-    def step_header(self, n: int, max_n: int, agent: str = "") -> None:
+    def step_header(self, agent: str = "") -> None:
         gerund = _title(self._AGENT_GERUND.get(agent, agent))
-        label = f"Agent step {n}/{max_n}" if agent == "voidx" else f"{gerund} {n}/{max_n}"
+        label = f"Agent step" if agent == "voidx" else f"{gerund}"
         if via_events():
             ui_events.emit_direct(StatusUpdated(
                 status_id="agent:-1:progress",
@@ -257,7 +257,7 @@ class VoidConsole:
             return
         if dock.active:
             return
-        self.print(f"  {_next_spin()} [dim]{gerund} ({n}/{max_n})[/dim]")
+        self.print(f"  {_next_spin()} [dim]{gerund}[/dim]")
 
     def diff(self, diff_text: str, title: str = "") -> None:
         from voidx.ui.output.diff import render_diff
@@ -286,9 +286,9 @@ class TreeAwareConsole:
     def console(self) -> Console:
         return self._console
 
-    def step_header(self, n: int, max_n: int, agent: str = "") -> None:
+    def step_header(self, agent: str = "") -> None:
         gerund = _title(VoidConsole._AGENT_GERUND.get(agent, agent))
-        self._console.print(f"  {_next_spin()} [dim]{gerund} ({n}/{max_n})[/dim]")
+        self._console.print(f"  {_next_spin()} [dim]{gerund}[/dim]")
 
     def tool_call(self, tool_name: str, args: dict[str, object]) -> None:
         gerund = _title(VoidConsole._TOOL_GERUND.get(tool_name, tool_name + "ing"))

@@ -274,35 +274,28 @@ def test_no_progress_guard_counts_repeated_same_evidence_as_stalled():
 def test_wall_clock_guard_has_subagent_preset():
     guard = WallClockGuardState.for_subagent()
 
-    assert guard.status_threshold_seconds == 300.0
-    assert guard.confirm_threshold_seconds == 900.0
+    assert guard.limit_seconds == 1800.0
 
 
-def test_wall_clock_guard_emits_status_once_then_terminates():
-    guard = WallClockGuardState(
-        started_at=100.0,
-        status_threshold_seconds=300.0,
-        confirm_threshold_seconds=1800.0,
-    )
-
-    status, decision = guard.record_check(now=399.0, label="voidx", latest_action="grep src/")
-    assert status is None
+def test_wall_clock_guard_default_is_disabled():
+    guard = WallClockGuardState()
+    assert guard.limit_seconds == 0.0
+    decision = guard.record_check(now=99999.0, label="voidx")
     assert decision.action == "allow"
 
-    status, decision = guard.record_check(now=401.0, label="voidx", latest_action="grep src/")
-    assert status is not None
-    assert status.kind == "wall_clock_status"
-    assert "voidx still running (5m01s, latest action: grep src/)" in status.message
+
+def test_wall_clock_guard_terminates_at_limit():
+    guard = WallClockGuardState(started_at=100.0, limit_seconds=1800.0)
+
+    decision = guard.record_check(now=1899.0, label="sub", latest_action="grep src/")
     assert decision.action == "allow"
 
-    status, decision = guard.record_check(now=500.0, label="voidx", latest_action="read tests/")
-    assert status is None
-    assert decision.action == "allow"
-
-    status, decision = guard.record_check(now=1901.0, label="voidx", latest_action="read tests/")
-    assert status is None
+    decision = guard.record_check(now=1901.0, label="sub", latest_action="read tests/")
     assert decision.action == "terminate"
     assert "30m01s" in decision.message
+
+    decision = guard.record_check(now=99999.0, label="sub")
+    assert decision.action == "allow"
 
 
 def test_error_kind_from_result_does_not_match_generic_exception_text():

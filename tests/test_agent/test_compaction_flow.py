@@ -106,12 +106,10 @@ def _subagent_contract_kwargs(
     join: str = "review",
     leave: str = "review",
     schema_name: str = "inspection_result",
-    step_budget: int = 4,
 ) -> dict:
     return {
         "goal_resolution": _child_goal_resolution(goal_type, desc=desc, join=join, leave=leave),
         "result_contract": _child_result_contract(schema_name),
-        "step_budget": step_budget,
     }
 
 
@@ -172,7 +170,6 @@ async def test_compaction_trims_head_and_injects_summary_into_system_prompt(tmp_
         "plan_mode": False,
         "tool_results": {},
         "step_count": 0,
-        "max_steps": 50,
         "should_continue": True,
     }
 

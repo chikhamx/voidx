@@ -57,7 +57,6 @@ async def test_call_llm_guidance_does_not_create_main_agent_convergence_hint(tmp
     result = await graph._call_llm({
         "messages": [HumanMessage(content="finish the task")],
         "step_count": 49,
-        "max_steps": 50,
         "persona": "voidx",
     })
 
@@ -87,7 +86,6 @@ async def test_call_llm_context_frame_records_no_main_agent_convergence_hint(tmp
         await graph._call_llm({
             "messages": [HumanMessage(content="finish the task")],
             "step_count": 49,
-            "max_steps": 50,
             "persona": "voidx",
         })
 
@@ -115,7 +113,6 @@ async def test_finalize_uses_fallback_only_for_invalid_forced_convergence(tmp_pa
         "goal": "",
         "tool_results": {"tc1": "read src/voidx/agent/graph/core.py"},
         "step_count": 50,
-        "max_steps": 50,
         "convergence_forced": True,
     })
     valid_forced = await graph._finalize({
@@ -133,8 +130,8 @@ async def test_finalize_uses_fallback_only_for_invalid_forced_convergence(tmp_pa
     assert normal == {}
     assert valid_forced == {}
     assert valid_forced_with_tool_tail == {}
-    assert "Step limit reached: 50/50." in fallback["messages"][0].content
     assert "src/voidx/agent/graph/core.py" in fallback["messages"][0].content
+    assert "Pending" in fallback["messages"][0].content
 
 
 @pytest.mark.asyncio
@@ -159,7 +156,6 @@ async def test_call_llm_filters_lsp_tools_when_no_lsp_server_is_available(tmp_pa
     await graph._call_llm({
         "messages": [HumanMessage(content="hi")],
         "step_count": 0,
-        "max_steps": 50,
         "persona": "voidx",
     })
 
@@ -193,7 +189,6 @@ async def test_available_tool_ids_no_longer_filter_llm_tools(tmp_path, monkeypat
     await graph._call_llm({
         "messages": [HumanMessage(content="hi")],
         "step_count": 0,
-        "max_steps": 50,
         "persona": "coordinate",
         "available_tool_ids": ["read", "grep"],
     })
@@ -228,7 +223,6 @@ async def test_call_llm_keeps_bound_tools_fixed_across_active_workflow_node(tmp_
     await graph._call_llm({
         "messages": [HumanMessage(content="hi")],
         "step_count": 0,
-        "max_steps": 50,
         "persona": "coordinate",
         "task_state": task_state.model_dump(mode="json"),
     })
@@ -289,7 +283,6 @@ async def test_orchestrator_sees_mcp_tools(tmp_path, monkeypatch):
     await graph._call_llm({
         "messages": [HumanMessage(content="hi")],
         "step_count": 0,
-        "max_steps": 50,
         "persona": "voidx",
     })
 
@@ -322,7 +315,6 @@ async def test_runtime_persona_does_not_change_agent_mcp_tool_visibility(tmp_pat
     await graph._call_llm({
         "messages": [HumanMessage(content="hi")],
         "step_count": 0,
-        "max_steps": 50,
         "persona": "explore",
     })
 
@@ -353,7 +345,6 @@ async def test_call_llm_keeps_lsp_tools_when_a_lsp_server_is_available(tmp_path,
     await graph._call_llm({
         "messages": [HumanMessage(content="hi")],
         "step_count": 0,
-        "max_steps": 50,
         "persona": "voidx",
     })
 

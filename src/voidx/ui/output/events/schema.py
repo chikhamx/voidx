@@ -211,8 +211,6 @@ class SubagentStepStarted(UiEventBase):
     agent_id: int
     subagent_id: str
     name: str
-    step: int
-    max_steps: int
 
 
 class SubagentFinished(UiEventBase):
@@ -221,8 +219,6 @@ class SubagentFinished(UiEventBase):
     subagent_id: str
     ok: bool = True
     elapsed: float | None = None
-    final_step: int | None = None
-    max_steps: int | None = None
     finish_reason: str = ""
 
 

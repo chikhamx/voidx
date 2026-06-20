@@ -55,7 +55,6 @@ async def test_call_llm_resolves_protocol_for_mimo_provider(tmp_path, monkeypatc
     result = await graph._call_llm({
         "messages": [HumanMessage(content="hi")],
         "step_count": 0,
-        "max_steps": 1,
         "persona": "voidx",
     })
 
@@ -98,7 +97,6 @@ async def test_call_llm_injects_current_todo_runtime_context(tmp_path, monkeypat
     await graph._call_llm({
         "messages": messages,
         "step_count": 0,
-        "max_steps": 50,
         "persona": "voidx",
     })
 
@@ -131,7 +129,6 @@ async def test_call_llm_updates_usage_stats(tmp_path, monkeypatch):
     result = await graph._call_llm({
         "messages": [HumanMessage(content="hi")],
         "step_count": 0,
-        "max_steps": 1,
         "persona": "voidx",
     })
 
@@ -175,7 +172,6 @@ async def test_call_llm_persists_context_frame_for_session(tmp_path, monkeypatch
                 HumanMessage(content="hi"),
             ],
             "step_count": 0,
-            "max_steps": 1,
             "persona": "voidx",
             "user_message_id": user_message_id,
         })

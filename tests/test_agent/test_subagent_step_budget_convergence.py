@@ -106,12 +106,10 @@ def _subagent_contract_kwargs(
     join: str = "review",
     leave: str = "review",
     schema_name: str = "inspection_result",
-    step_budget: int = 4,
 ) -> dict:
     return {
         "goal_resolution": _child_goal_resolution(goal_type, desc=desc, join=join, leave=leave),
         "result_contract": _child_result_contract(schema_name),
-        "step_budget": step_budget,
     }
 
 
@@ -174,7 +172,7 @@ async def test_subagent_skill_context_matches_orchestrator(tmp_path, monkeypatch
             join="tdd",
             leave="verify",
             schema_name="implementation_result",
-            step_budget=4,
+            
         ),
         workflow_runtime_context=workflow_context,
         debug=False,
@@ -243,7 +241,7 @@ async def test_subagent_without_mcp_tools_excludes_parent_mcp_tools(tmp_path, mo
         None,
         "test-key",
         Config(workspace=str(tmp_path)),
-        **_subagent_contract_kwargs(step_budget=3),
+        **_subagent_contract_kwargs(),
         parent_tools=parent_tools,
         debug=False,
     )
@@ -313,7 +311,7 @@ async def test_subagent_with_mcp_tools_copies_parent_mcp_tools(tmp_path, monkeyp
         None,
         "test-key",
         Config(workspace=str(tmp_path)),
-        **_subagent_contract_kwargs(desc="Send the message", step_budget=4),
+        **_subagent_contract_kwargs(desc="Send the message"),
         parent_tools=parent_tools,
         debug=False,
     )
@@ -363,7 +361,7 @@ async def test_subagent_tool_filter_always_blocks_nested_agent_tool(tmp_path, mo
             None,
             "test-key",
             Config(workspace=str(tmp_path)),
-            **_subagent_contract_kwargs(step_budget=3),
+            **_subagent_contract_kwargs(),
             parent_tools=parent_tools,
             debug=False,
         )

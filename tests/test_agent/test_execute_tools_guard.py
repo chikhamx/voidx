@@ -106,12 +106,10 @@ def _subagent_contract_kwargs(
     join: str = "review",
     leave: str = "review",
     schema_name: str = "inspection_result",
-    step_budget: int = 4,
 ) -> dict:
     return {
         "goal_resolution": _child_goal_resolution(goal_type, desc=desc, join=join, leave=leave),
         "result_contract": _child_result_contract(schema_name),
-        "step_budget": step_budget,
     }
 
 
@@ -133,45 +131,6 @@ def _tree_nodes(root):
         nodes.extend(_tree_nodes(child))
     return nodes
 
-
-@pytest.mark.asyncio
-async def test_execute_tools_wall_clock_guard_terminates_at_boundary(tmp_path):
-    graph = _graph(tmp_path)
-    graph._runtime_guards = RuntimeGuardState(
-        wall_clock=WallClockGuardState(
-            started_at=0.0,
-            status_threshold_seconds=1.0,
-            confirm_threshold_seconds=2.0,
-        )
-    )
-
-    class FakeTools:
-        async def execute_tool(self, tid, _targs, _ctx):
-            assert tid == "read"
-            return ToolResult(output="contents")
-
-    async def allow_all(tool_calls, **_kwargs):
-        return tool_calls, []
-
-    graph.tools = FakeTools()
-    graph._authorize_tool_calls = allow_all
-    parent = AIMessage(
-        content="",
-        tool_calls=[{"name": "read", "args": {"file_path": "x.py"}, "id": "call_read", "type": "tool_call"}],
-    )
-
-    result = await graph._execute_tools({
-        "messages": [parent],
-        "workspace": str(tmp_path),
-        "persona": "voidx",
-        "plan_mode": False,
-    })
-
-    assert result["should_continue"] is False
-    assert any(
-        isinstance(message, AIMessage) and "This turn has been running" in str(message.content)
-        for message in result["messages"]
-    )
 
 
 @pytest.mark.asyncio

@@ -14,10 +14,6 @@ from voidx.agent.agents import (
     child_run_agent_def,
 )
 from voidx.agent.prompts import BASE_SYSTEM, WORKFLOW_RUNTIME, persona_prompt
-from voidx.agent.graph.convergence import (
-    build_convergence_messages,
-    generate_fallback_summary,
-)
 from voidx.agent.graph.runtime_guards import (
     RuntimeGuardState,
     WallClockGuardState,
@@ -51,6 +47,8 @@ from voidx.tools.service import ToolContext, ToolRegistry, TaskTracker
 from voidx.runtime.ui_port import AgentUiPort, runtime_ui_port
 
 
+_SAFETY_STEP_LIMIT = 50
+
 async def run_subagent(
     agent_def: AgentDef,
     task_description: str,
@@ -62,7 +60,6 @@ async def run_subagent(
     *,
     goal_resolution: GoalResolution,
     result_contract,
-    step_budget: int,
     run_metadata: dict[str, object] | None = None,
     capture_tree: OutputTree | None = None,
     parent_node=None,
@@ -149,15 +146,14 @@ async def run_subagent(
     # Register with tracker
     task_id = f"sub_{agent_def.name}_{persona}_{int(time.time())}"
     if tracker:
-        tracker.start(task_id, persona, task_description, step_budget)
+        tracker.start(task_id, persona, task_description)
 
-    def mark_finished(step: int, reason: str) -> None:
+    def mark_finished(reason: str) -> None:
         if run_metadata is not None:
             run_metadata.update({
-                "final_step": step,
-                "max_steps": step_budget,
                 "finish_reason": reason,
             })
+
 
     def drain_guard_guidance() -> list[HumanMessage]:
         messages: list[HumanMessage] = []
@@ -167,26 +163,18 @@ async def run_subagent(
         return messages
 
     try:
-        for step in range(1, step_budget + 1):
-            if tracker:
-                tracker.update(task_id, step=step)
+        step = 0
+        while step < _SAFETY_STEP_LIMIT:
+            step += 1
 
             if capture_tree and parent_node is not None:
                 capture = CaptureConsole(capture_tree, parent_node, agent_id=agent_id)
-                capture.step_header(step, step_budget, persona)
+                capture.step_header(persona)
             else:
-                ui_port.ui.step_header(step, step_budget, persona)
+                ui_port.ui.step_header(persona)
 
-            has_tool_budget = step < step_budget - 1
-            active_tool_defs = tool_defs if has_tool_budget else []
-            convergence_messages, convergence_forced = build_convergence_messages(
-                step=step,
-                max_steps=step_budget,
-                has_tool_budget=has_tool_budget,
-                goal=task_description,
-            )
-            llm_messages = [*messages, *drain_guard_guidance(), *convergence_messages]
-            model_with_tools = model.bind_tools(active_tool_defs) if active_tool_defs else model
+            llm_messages = [*messages, *drain_guard_guidance()]
+            model_with_tools = model.bind_tools(tool_defs) if tool_defs else model
             renderer = StreamingRenderer(ui_port.console, debug=debug, agent_id=agent_id, headless=True)
             context_tokens = estimate_context_tokens(llm_messages, config.model.model)
             if usage_stats is not None:
@@ -202,11 +190,8 @@ async def run_subagent(
                     token_estimate=context_tokens,
                     metadata={
                         "step": step,
-                        "max_steps": step_budget,
-                        "tool_count": len(active_tool_defs),
+                        "tool_count": len(tool_defs),
                         "agent_id": agent_id,
-                        "convergence_hint_count": len(convergence_messages),
-                        "convergence_forced": convergence_forced,
                     },
                 )
             assistant_msg = await stream_llm(
@@ -240,34 +225,12 @@ async def run_subagent(
                     "tool_call_refs": tool_refs,
                 })
 
-            if not has_tool_budget and assistant_msg.tool_calls:
-                text = generate_fallback_summary({
-                    "messages": messages,
-                    "goal": task_description,
-                    "tool_results": {},
-                    "step_count": step,
-                    "max_steps": step_budget,
-                })
-                if tracker:
-                    tracker.update(task_id, last_output=text[:200])
-                    tracker.finish(task_id, "completed")
-                mark_finished(step, "step_limit")
-                return text
-
             if not assistant_msg.tool_calls:
                 text = extract_text(assistant_msg)
-                if convergence_forced and len(text.strip()) < 20:
-                    text = generate_fallback_summary({
-                        "messages": messages,
-                        "goal": task_description,
-                        "tool_results": {},
-                        "step_count": step,
-                        "max_steps": step_budget,
-                    })
                 if tracker:
                     tracker.update(task_id, last_output=text[:200])
                     tracker.finish(task_id, "completed")
-                mark_finished(step, "final_answer")
+                mark_finished("final_answer")
                 return text
 
             # Update tracker with preview
@@ -290,7 +253,7 @@ async def run_subagent(
                     if tracker:
                         tracker.update(task_id, last_output=repetitive_decision.message[:200])
                         tracker.finish(task_id, "completed")
-                    mark_finished(step, "guard_terminated")
+                    mark_finished("guard_terminated")
                     return repetitive_decision.message
                 continue
 
@@ -400,31 +363,29 @@ async def run_subagent(
                 if tracker:
                     tracker.update(task_id, last_output=no_progress_decision.message[:200])
                     tracker.finish(task_id, "completed")
-                mark_finished(step, "guard_terminated")
+                mark_finished("guard_terminated")
                 return no_progress_decision.message
-            wall_status, wall_clock_decision = guard_state.wall_clock.record_check(
+            wall_clock_decision = guard_state.wall_clock.record_check(
                 label=agent_def.name or persona,
                 latest_action=summary.only_tool or ", ".join(summary.tool_names[:3]),
             )
-            if wall_status is not None:
-                ui_port.ui.warn(wall_status.message)
             if wall_clock_decision.action == "terminate":
                 if tracker:
                     tracker.update(task_id, last_output=wall_clock_decision.message[:200])
                     tracker.finish(task_id, "completed")
-                mark_finished(step, "guard_terminated")
+                mark_finished("guard_terminated")
                 return wall_clock_decision.message
 
         if tracker:
             tracker.finish(task_id, "completed")
-        mark_finished(step_budget, "step_limit")
-        return extract_text(messages[-1]) if messages else "Max steps reached."
+        mark_finished("safety_limit")
+        return extract_text(messages[-1]) if messages else "Safety step limit reached."
 
     except Exception as e:
         if tracker:
             tracker.update(task_id, last_output=str(e)[:200])
             tracker.finish(task_id, "error")
-        mark_finished(0, "error")
+        mark_finished("error")
         raise
 
 

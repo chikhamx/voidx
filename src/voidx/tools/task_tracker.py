@@ -16,8 +16,6 @@ class TaskState:
     agent: str
     description: str
     status: TaskStatus = "pending"
-    step: int = 0
-    max_steps: int = 0
     last_output: str = ""  # most recent text preview
     created_at: float = field(default_factory=time.time)
     updated_at: float = field(default_factory=time.time)
@@ -31,10 +29,10 @@ class TaskTracker:
         self._tasks: dict[str, TaskState] = {}
         self._todos: list = []  # type: ignore[type-arg]
 
-    def start(self, task_id: str, agent: str, description: str, max_steps: int = 100) -> TaskState:
+    def start(self, task_id: str, agent: str, description: str) -> TaskState:
         state = TaskState(
             id=task_id, agent=agent, description=description,
-            status="running", max_steps=max_steps,
+            status="running",
         )
         with self._lock:
             self._tasks[task_id] = state
@@ -92,10 +90,9 @@ class TaskTracker:
         for t in tasks:
             icon = {"pending": "○", "running": "◐", "completed": "●", "error": "✕", "cancelled": "◌"}[t.status]
             elapsed = int(time.time() - t.created_at)
-            step_info = f"step {t.step}/{t.max_steps}" if t.max_steps else ""
             preview = t.last_output[:100] if t.last_output else ""
             lines.append(
-                f"{icon} [{t.id}] {t.agent} — {t.status} ({step_info}, {elapsed}s)\n"
+                f"{icon} [{t.id}] {t.agent} — {t.status} ({elapsed}s)\n"
                 f"   {t.description[:120]}\n"
                 + (f"   last: {preview}" if preview else "")
             )

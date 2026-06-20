@@ -228,41 +228,31 @@ class NoProgressState(BaseModel):
 
 class WallClockGuardState(BaseModel):
     started_at: float = Field(default_factory=time.monotonic)
-    status_threshold_seconds: float = 300.0
-    confirm_threshold_seconds: float = 1800.0
-    status_emitted: bool = False
-    confirm_emitted: bool = False
+    limit_seconds: float = 0.0
+    terminated: bool = False
     latest_action: str = ""
 
     @classmethod
     def for_subagent(cls) -> WallClockGuardState:
-        return cls(status_threshold_seconds=300.0, confirm_threshold_seconds=900.0)
+        return cls(limit_seconds=1800.0)
 
     def record_check(
         self,
         *,
         now: float | None = None,
-        label: str = "voidx",
+        label: str = "",
         latest_action: str = "",
-    ) -> tuple[GuardGuidance | None, GuardDecision]:
+    ) -> GuardDecision:
+        if self.limit_seconds <= 0 or self.terminated:
+            return GuardDecision()
         current = time.monotonic() if now is None else now
         elapsed = max(0.0, current - self.started_at)
         if latest_action:
             self.latest_action = latest_action
-        status = None
-        if elapsed >= self.status_threshold_seconds and not self.status_emitted:
-            self.status_emitted = True
-            detail = f", latest action: {latest_action}" if latest_action else ""
-            status = GuardGuidance(
-                kind="wall_clock_status",
-                level="light",
-                message=f"{label} still running ({format_duration(elapsed)}{detail})",
-                metadata={"elapsed_seconds": elapsed, "latest_action": latest_action},
-            )
-        if elapsed < self.confirm_threshold_seconds or self.confirm_emitted:
-            return status, GuardDecision()
-        self.confirm_emitted = True
-        return status, GuardDecision(
+        if elapsed < self.limit_seconds:
+            return GuardDecision()
+        self.terminated = True
+        return GuardDecision(
             action="terminate",
             message=(
                 f"This turn has been running for {format_duration(elapsed)}. "
