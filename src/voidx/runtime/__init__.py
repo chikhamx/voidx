@@ -1,6 +1,6 @@
 """Runtime contracts shared by agent, tools, and persistence."""
 
-from voidx.runtime.intent import InteractionMode, TaskIntent, infer_task_intent
+from voidx.runtime.intent import InteractionMode, TaskIntent
 from voidx.runtime.task_state import (
     GoalResolution,
     GoalSpec,
@@ -30,7 +30,6 @@ __all__ = [
     "NoOpAgentUiSink",
     "InteractionMode",
     "TaskIntent",
-    "infer_task_intent",
     "GoalSpec",
     "GoalResolution",
     "GoalType",

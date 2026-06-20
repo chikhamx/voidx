@@ -834,8 +834,14 @@ def _hint_grep(words: list[str]) -> RouteHint | None:
     prog = words[0].lower()
     args = words[1:]
     include = None
+    excludes: list[str] = []
     pattern = None
     path = None
+    ignore_case = False
+    whole_word = False
+    context_lines = 0
+    after_context = 0
+    before_context = 0
     i = 0
     while i < len(args):
         a = args[i]
@@ -847,12 +853,60 @@ def _hint_grep(words: list[str]) -> RouteHint | None:
         elif a.startswith("--include="):
             include = a.split("=", 1)[1]
             i += 1
+        elif a == "--exclude" and i + 1 < len(args):
+            excludes.append(args[i + 1])
+            i += 2
+        elif a.startswith("--exclude="):
+            excludes.append(a.split("=", 1)[1])
+            i += 1
         elif a == "-t" and i + 1 < len(args) and prog == "rg":
             type_name = args[i + 1]
             include = _RG_TYPE_MAP.get(type_name)
             if include is None:
                 return None
             i += 2
+        elif a in ("-i", "--ignore-case"):
+            ignore_case = True
+            i += 1
+        elif a in ("-w", "--word-regexp"):
+            whole_word = True
+            i += 1
+        elif a in ("-C", "--context") and i + 1 < len(args):
+            try:
+                context_lines = int(args[i + 1])
+            except ValueError:
+                return None
+            i += 2
+        elif a.startswith("-C"):
+            try:
+                context_lines = int(a[2:])
+            except ValueError:
+                return None
+            i += 1
+        elif a in ("-A", "--after-context") and i + 1 < len(args):
+            try:
+                after_context = int(args[i + 1])
+            except ValueError:
+                return None
+            i += 2
+        elif a.startswith("-A") and len(a) > 2:
+            try:
+                after_context = int(a[2:])
+            except ValueError:
+                return None
+            i += 1
+        elif a in ("-B", "--before-context") and i + 1 < len(args):
+            try:
+                before_context = int(args[i + 1])
+            except ValueError:
+                return None
+            i += 2
+        elif a.startswith("-B") and len(a) > 2:
+            try:
+                before_context = int(a[2:])
+            except ValueError:
+                return None
+            i += 1
         elif a.startswith("-") and a not in ("-e",):
             return None
         elif pattern is None:
@@ -867,11 +921,20 @@ def _hint_grep(words: list[str]) -> RouteHint | None:
         return None
     if prog == "fgrep":
         pattern = re.escape(pattern)
+    effective_context = context_lines or max(after_context, before_context)
     parts = [f'pattern="{pattern}"']
     if path:
         parts.append(f'path="{path}"')
     if include:
         parts.append(f'include="{include}"')
+    if excludes:
+        parts.append(f'exclude={excludes}')
+    if ignore_case:
+        parts.append("ignore_case=True")
+    if whole_word:
+        parts.append("whole_word=True")
+    if effective_context > 0:
+        parts.append(f"context_lines={effective_context}")
     return RouteHint(
         tool_id="grep", ui_label="→ grep",
         llm_hint=f'Prefer grep({", ".join(parts)}) — skips .git, node_modules, and binary files automatically.',
@@ -885,6 +948,7 @@ def _hint_grep(words: list[str]) -> RouteHint | None:
 _SED_SIMPLE = re.compile(r"^(\d+)s/([^/]*)/([^/]*)/?$")
 _SED_GLOBAL = re.compile(r"^s/([^/]*)/([^/]*)/g?$")
 _SED_RANGE_DELETE = re.compile(r"^(\d+),(\d+)d$")
+_SED_LINE_DELETE = re.compile(r"^(\d+)d$")
 _SED_PATTERN_DELETE = re.compile(r"^/(.+)/d$")
 
 
@@ -934,6 +998,14 @@ def _hint_sed(words: list[str]) -> RouteHint | None:
             llm_hint=f'For line range deletion: first read {path} to see lines {start}-{end}, then use replace(file_path, start_no={start}, end_no={end}, prefix=<first_line_content>, suffix=<last_line_content>, new_string="").',
         )
 
+
+    m = _SED_LINE_DELETE.match(script)
+    if m:
+        line_no = int(m.group(1))
+        return RouteHint(
+            tool_id="replace", ui_label="→ replace",
+            llm_hint=f'For single line deletion: first read {path} to see line {line_no}, then use replace(file_path, start_no={line_no}, end_no={line_no}, prefix=<line_content>, suffix=<line_content>, new_string="").',
+        )
     m = _SED_PATTERN_DELETE.match(script)
     if m:
         pat = m.group(1)

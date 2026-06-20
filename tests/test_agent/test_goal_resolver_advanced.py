@@ -42,7 +42,7 @@ class StructuredModel:
         return self.result
 
 @pytest.mark.asyncio
-async def test_goal_resolver_validation_error_falls_back_to_local_coding_route(tmp_path, monkeypatch):
+async def test_goal_resolver_validation_error_falls_back_to_general(tmp_path, monkeypatch):
     from voidx.logging import request_log
 
     monkeypatch.setattr(request_log, "_DEFAULT_LOG_DIR", tmp_path)
@@ -65,9 +65,9 @@ async def test_goal_resolver_validation_error_falls_back_to_local_coding_route(t
         task_state=TaskState(),
     )
 
-    assert result.intent.type == TaskIntent.CODING
-    assert result.goal == GoalSpec(type=GoalType.BUGFIX, desc="帮我修一个 bug")
-    assert result.plan == PlanResolution(join="debug", leave="verify")
+    assert result.intent.type == TaskIntent.GENERAL
+    assert result.goal is None
+    assert result.plan is None
 
     entries = [
         json.loads(line)

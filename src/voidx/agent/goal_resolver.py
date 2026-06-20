@@ -10,7 +10,7 @@ from langchain_core.messages import AIMessage, BaseMessage, HumanMessage, System
 from pydantic import BaseModel, ValidationError as PydanticValidationError
 
 from voidx.logging.request_log import log_llm_diagnostic, serialize_llm_message
-from voidx.runtime.intent import InteractionMode, TaskIntent, _contains_any, infer_task_intent
+from voidx.runtime.intent import InteractionMode, TaskIntent, _contains_any
 from voidx.runtime.task_state import (
     GoalResolution,
     GoalSpec,
@@ -70,7 +70,6 @@ async def resolve_goal_for_turn(
     fallback_reason = ""
     fallback_error_type = ""
     fallback_error = ""
-    fallback_is_validation_error = False
     if model is None:
         fallback_reason = "model_unavailable"
         normalized = _normalize_resolution(fallback, user_text, interaction_mode, task_state)
@@ -97,7 +96,6 @@ async def resolve_goal_for_turn(
         fallback_reason = "structured_output_error"
         fallback_error_type = type(exc).__name__
         fallback_error = _truncate_error_text(str(exc))
-        fallback_is_validation_error = isinstance(exc, PydanticValidationError)
         if "resolver_messages" in locals():
             _log_goal_resolver_exchange(
                 resolver_messages,
@@ -109,11 +107,7 @@ async def resolve_goal_for_turn(
 
     if resolution is None:
         fallback_reason = fallback_reason or "invalid_structured_output"
-        fallback_resolution = (
-            _local_coding_fallback(user_text, interaction_mode)
-            if fallback_is_validation_error
-            else fallback
-        )
+        fallback_resolution = fallback
         normalized = _normalize_resolution(fallback_resolution, user_text, interaction_mode, task_state)
     else:
         normalized = _normalize_resolution(resolution, user_text, interaction_mode, task_state)
@@ -196,25 +190,6 @@ def _raw_response_for_log(value: object) -> object:
     if isinstance(value, (dict, list, tuple)):
         return value
     return repr(value)
-
-
-def _local_coding_fallback(
-    user_text: str,
-    interaction_mode: str | InteractionMode | None,
-) -> GoalResolution:
-    intent = infer_task_intent(user_text, interaction_mode)
-    if intent == TaskIntent.GENERAL:
-        return GoalResolution(
-            intent=IntentResolution(type=TaskIntent.GENERAL, desc="local fallback classified as general"),
-            goal=None,
-            plan=None,
-        )
-    goal_type = infer_goal_type(user_text)
-    return GoalResolution(
-        intent=IntentResolution(type=TaskIntent.CODING, desc="local fallback after resolver validation error"),
-        goal=GoalSpec(type=goal_type, desc=user_text),
-        plan=_fallback_plan_for_text(user_text),
-    )
 
 
 def _truncate_error_text(value: str, limit: int = 2000) -> str:
@@ -338,49 +313,6 @@ def _normalize_resolution(
         plan=plan,
     )
 
-
-def _fallback_plan_for_text(user_text: str) -> PlanResolution:
-    normalized = user_text.lower()
-    if _contains_any(normalized, ("review", "code review", "审查", "复核", "评审")):
-        return PlanResolution(join="review", leave="review")
-    if _contains_any(normalized, (
-        "debug",
-        "traceback",
-        "stacktrace",
-        "bug",
-        "failing",
-        "failure",
-        "failed",
-        "报错",
-        "排查",
-        "调试",
-        "异常",
-        "故障",
-        "错误",
-        "问题",
-    )):
-        return PlanResolution(join="debug", leave="verify")
-    if _contains_any(normalized, ("doc", "docs", "readme", "spec", "文档", "规格", "说明")):
-        return PlanResolution(join="design", leave="design")
-    if _contains_any(normalized, (
-        "implement",
-        "apply",
-        "change",
-        "edit",
-        "fix",
-        "modify",
-        "patch",
-        "refactor",
-        "write",
-        "改",
-        "修",
-        "修复",
-        "修改",
-        "实现",
-        "落地",
-    )):
-        return PlanResolution(join="tdd", leave="verify")
-    return PlanResolution(join="brainstorm", leave="brainstorm")
 
 
 def _current_active_join(task_state: TaskState) -> str:

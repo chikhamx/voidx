@@ -14,7 +14,6 @@ from voidx.agent.runtime_context import (
     InteractionMode,
     RuntimeContextBuilder,
     TaskIntent,
-    infer_task_intent,
     is_goal_resolution_guide_content,
     raw_semantic_messages,
 )

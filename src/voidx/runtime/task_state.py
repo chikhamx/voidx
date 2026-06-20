@@ -9,7 +9,7 @@ from typing import Literal
 
 from pydantic import BaseModel, Field, model_validator
 
-from voidx.runtime.intent import InteractionMode, TaskIntent, _contains_any, infer_task_intent
+from voidx.runtime.intent import InteractionMode, TaskIntent, _contains_any
 from voidx.workflow.types import WorkflowRunState
 
 
@@ -313,7 +313,6 @@ def _summarize_scope(text: str) -> str:
 __all__ = [
     "InteractionMode",
     "TaskIntent",
-    "infer_task_intent",
     "GoalSpec",
     "IntentResolution",
     "PlanResolution",

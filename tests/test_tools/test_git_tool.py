@@ -1061,3 +1061,600 @@ async def test_git_stash_pop_nonexistent_index(tmp_path):
 
     payload = _payload(result)
     assert payload["ok"] is False
+
+
+# ── push / pull / fetch / merge / rebase ──
+
+
+def _init_remote(path: Path) -> Path:
+    path.mkdir()
+    _run(path, "init", "--bare")
+    return path
+
+
+def _clone_repo(remote: Path, local: Path) -> Path:
+    local.parent.mkdir(parents=True, exist_ok=True)
+    _run(local.parent, "clone", str(remote), local.name)
+    _run(local, "config", "user.email", "voidx@example.com")
+    _run(local, "config", "user.name", "VoidX Tests")
+    return local
+
+
+@pytest.mark.asyncio
+async def test_git_push_to_remote(tmp_path):
+    remote = _init_remote(tmp_path / "remote")
+    repo = _clone_repo(remote, tmp_path / "repo")
+    (repo / "file.txt").write_text("hello\n", encoding="utf-8")
+    _run(repo, "add", "file.txt")
+    _run(repo, "commit", "-m", "initial")
+
+    result = await GitTool().execute(
+        {"command": "push", "args": {"remote": "origin"}},
+        ToolContext(workspace=str(repo)),
+    )
+
+    payload = _payload(result)
+    assert payload["ok"] is True
+    assert payload["data"]["remote"] == "origin"
+
+
+@pytest.mark.asyncio
+async def test_git_push_with_branch(tmp_path):
+    remote = _init_remote(tmp_path / "remote")
+    repo = _clone_repo(remote, tmp_path / "repo")
+    (repo / "file.txt").write_text("hello\n", encoding="utf-8")
+    _run(repo, "add", "file.txt")
+    _run(repo, "commit", "-m", "initial")
+    _run(repo, "checkout", "-b", "feature")
+    (repo / "feat.txt").write_text("feat\n", encoding="utf-8")
+    _run(repo, "add", "feat.txt")
+    _run(repo, "commit", "-m", "feature work")
+
+    result = await GitTool().execute(
+        {"command": "push", "args": {"remote": "origin", "branch": "feature"}},
+        ToolContext(workspace=str(repo)),
+    )
+
+    payload = _payload(result)
+    assert payload["ok"] is True
+    assert payload["data"]["branch"] == "feature"
+
+
+@pytest.mark.asyncio
+async def test_git_push_rejected_non_ff(tmp_path):
+    remote = _init_remote(tmp_path / "remote")
+    repo = _clone_repo(remote, tmp_path / "repo")
+    (repo / "file.txt").write_text("hello\n", encoding="utf-8")
+    _run(repo, "add", "file.txt")
+    _run(repo, "commit", "-m", "initial")
+    _run(repo, "push", "origin", _default_branch(repo))
+
+    # diverge remote
+    repo2 = _clone_repo(remote, tmp_path / "repo2")
+    (repo2 / "file.txt").write_text("changed\n", encoding="utf-8")
+    _run(repo2, "add", "file.txt")
+    _run(repo2, "commit", "-m", "remote change")
+    _run(repo2, "push", "origin", _default_branch(repo2))
+
+    # diverge local
+    (repo / "other.txt").write_text("local\n", encoding="utf-8")
+    _run(repo, "add", "other.txt")
+    _run(repo, "commit", "-m", "local change")
+
+    result = await GitTool().execute(
+        {"command": "push", "args": {"remote": "origin"}},
+        ToolContext(workspace=str(repo)),
+    )
+
+    payload = _payload(result)
+    assert payload["ok"] is False
+    assert "push_rejected" in payload["error"]
+
+
+@pytest.mark.asyncio
+async def test_git_push_force(tmp_path):
+    remote = _init_remote(tmp_path / "remote")
+    repo = _clone_repo(remote, tmp_path / "repo")
+    (repo / "file.txt").write_text("hello\n", encoding="utf-8")
+    _run(repo, "add", "file.txt")
+    _run(repo, "commit", "-m", "initial")
+    _run(repo, "push", "origin", _default_branch(repo))
+
+    # diverge remote
+    repo2 = _clone_repo(remote, tmp_path / "repo2")
+    (repo2 / "file.txt").write_text("changed\n", encoding="utf-8")
+    _run(repo2, "add", "file.txt")
+    _run(repo2, "commit", "-m", "remote change")
+    _run(repo2, "push", "origin", _default_branch(repo2))
+
+    # diverge local
+    (repo / "other.txt").write_text("local\n", encoding="utf-8")
+    _run(repo, "add", "other.txt")
+    _run(repo, "commit", "-m", "local change")
+
+    result = await GitTool().execute(
+        {"command": "push", "args": {"remote": "origin", "force": True}},
+        ToolContext(workspace=str(repo)),
+    )
+
+    payload = _payload(result)
+    assert payload["ok"] is True
+    assert payload["data"]["force"] is True
+
+
+@pytest.mark.asyncio
+async def test_git_push_remote_not_found(tmp_path):
+    repo = _init_repo(tmp_path / "repo")
+    (repo / "file.txt").write_text("hello\n", encoding="utf-8")
+    _run(repo, "add", "file.txt")
+    _run(repo, "commit", "-m", "initial")
+
+    result = await GitTool().execute(
+        {"command": "push", "args": {"remote": "nonexistent"}},
+        ToolContext(workspace=str(repo)),
+    )
+
+    payload = _payload(result)
+    assert payload["ok"] is False
+    assert "remote_not_found" in payload["error"]
+
+
+@pytest.mark.asyncio
+async def test_git_fetch_from_remote(tmp_path):
+    remote = _init_remote(tmp_path / "remote")
+    repo = _clone_repo(remote, tmp_path / "repo")
+
+    result = await GitTool().execute(
+        {"command": "fetch", "args": {"remote": "origin"}},
+        ToolContext(workspace=str(repo)),
+    )
+
+    payload = _payload(result)
+    assert payload["ok"] is True
+    assert payload["data"]["remote"] == "origin"
+
+
+@pytest.mark.asyncio
+async def test_git_fetch_remote_not_found(tmp_path):
+    repo = _init_repo(tmp_path / "repo")
+    (repo / "file.txt").write_text("hello\n", encoding="utf-8")
+    _run(repo, "add", "file.txt")
+    _run(repo, "commit", "-m", "initial")
+
+    result = await GitTool().execute(
+        {"command": "fetch", "args": {"remote": "nonexistent"}},
+        ToolContext(workspace=str(repo)),
+    )
+
+    payload = _payload(result)
+    assert payload["ok"] is False
+    assert "remote_not_found" in payload["error"]
+
+
+@pytest.mark.asyncio
+async def test_git_pull_fast_forward(tmp_path):
+    remote = _init_remote(tmp_path / "remote")
+    repo = _clone_repo(remote, tmp_path / "repo")
+
+    # push a commit from another clone
+    repo2 = _clone_repo(remote, tmp_path / "repo2")
+    (repo2 / "new.txt").write_text("new\n", encoding="utf-8")
+    _run(repo2, "add", "new.txt")
+    _run(repo2, "commit", "-m", "add new")
+    _run(repo2, "push", "origin", _default_branch(repo2))
+
+    result = await GitTool().execute(
+        {"command": "pull", "args": {"remote": "origin"}},
+        ToolContext(workspace=str(repo)),
+    )
+
+    payload = _payload(result)
+    assert payload["ok"] is True
+    assert payload["data"]["remote"] == "origin"
+
+
+@pytest.mark.asyncio
+async def test_git_pull_merge_conflict(tmp_path):
+    remote = _init_remote(tmp_path / "remote")
+    repo = _clone_repo(remote, tmp_path / "repo")
+    (repo / "file.txt").write_text("base\n", encoding="utf-8")
+    _run(repo, "add", "file.txt")
+    _run(repo, "commit", "-m", "initial")
+    _run(repo, "push", "origin", _default_branch(repo))
+
+    # remote change
+    repo2 = _clone_repo(remote, tmp_path / "repo2")
+    (repo2 / "file.txt").write_text("remote change\n", encoding="utf-8")
+    _run(repo2, "add", "file.txt")
+    _run(repo2, "commit", "-m", "remote")
+    _run(repo2, "push", "origin", _default_branch(repo2))
+
+    # local change to same file
+    (repo / "file.txt").write_text("local change\n", encoding="utf-8")
+    _run(repo, "add", "file.txt")
+    _run(repo, "commit", "-m", "local")
+
+    result = await GitTool().execute(
+        {"command": "pull", "args": {"remote": "origin"}},
+        ToolContext(workspace=str(repo)),
+    )
+
+    payload = _payload(result)
+    assert payload["ok"] is False
+    assert "conflict" in payload["error"].lower() or "merge_conflict" in payload["error"]
+    # clean up for other tests
+    subprocess.run(["git", "merge", "--abort"], cwd=repo, stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL)
+
+
+@pytest.mark.asyncio
+async def test_git_merge_branch(tmp_path):
+    repo = _init_repo(tmp_path / "repo")
+    (repo / "base.txt").write_text("base\n", encoding="utf-8")
+    _run(repo, "add", "base.txt")
+    _run(repo, "commit", "-m", "initial")
+
+    _run(repo, "checkout", "-b", "feature")
+    (repo / "feat.txt").write_text("feat\n", encoding="utf-8")
+    _run(repo, "add", "feat.txt")
+    _run(repo, "commit", "-m", "feature work")
+
+    _run(repo, "checkout", _default_branch(repo))
+
+    result = await GitTool().execute(
+        {"command": "merge", "args": {"branch": "feature"}},
+        ToolContext(workspace=str(repo)),
+    )
+
+    payload = _payload(result)
+    assert payload["ok"] is True
+    assert payload["data"]["branch"] == "feature"
+
+
+@pytest.mark.asyncio
+async def test_git_merge_no_ff(tmp_path):
+    repo = _init_repo(tmp_path / "repo")
+    (repo / "base.txt").write_text("base\n", encoding="utf-8")
+    _run(repo, "add", "base.txt")
+    _run(repo, "commit", "-m", "initial")
+
+    _run(repo, "checkout", "-b", "feature")
+    (repo / "feat.txt").write_text("feat\n", encoding="utf-8")
+    _run(repo, "add", "feat.txt")
+    _run(repo, "commit", "-m", "feature work")
+
+    _run(repo, "checkout", _default_branch(repo))
+
+    result = await GitTool().execute(
+        {"command": "merge", "args": {"branch": "feature", "no_ff": True}},
+        ToolContext(workspace=str(repo)),
+    )
+
+    payload = _payload(result)
+    assert payload["ok"] is True
+    assert payload["data"]["fast_forward"] is False
+
+
+@pytest.mark.asyncio
+async def test_git_merge_conflict(tmp_path):
+    repo = _init_repo(tmp_path / "repo")
+    default = _default_branch(repo)
+    (repo / "file.txt").write_text("base\n", encoding="utf-8")
+    _run(repo, "add", "file.txt")
+    _run(repo, "commit", "-m", "initial")
+
+    _run(repo, "checkout", "-b", "feature")
+    (repo / "file.txt").write_text("feature\n", encoding="utf-8")
+    _run(repo, "add", "file.txt")
+    _run(repo, "commit", "-m", "feature change")
+
+    _run(repo, "checkout", default)
+    (repo / "file.txt").write_text("main\n", encoding="utf-8")
+    _run(repo, "add", "file.txt")
+    _run(repo, "commit", "-m", "main change")
+
+    result = await GitTool().execute(
+        {"command": "merge", "args": {"branch": "feature"}},
+        ToolContext(workspace=str(repo)),
+    )
+
+    payload = _payload(result)
+    assert payload["ok"] is False
+    assert "conflict" in payload["error"].lower() or "merge_conflict" in payload["error"]
+    assert len(payload["data"].get("conflicts", [])) > 0
+    # clean up
+    subprocess.run(["git", "merge", "--abort"], cwd=repo, stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL)
+
+
+@pytest.mark.asyncio
+async def test_git_merge_branch_not_found(tmp_path):
+    repo = _init_repo(tmp_path / "repo")
+    (repo / "base.txt").write_text("base\n", encoding="utf-8")
+    _run(repo, "add", "base.txt")
+    _run(repo, "commit", "-m", "initial")
+
+    result = await GitTool().execute(
+        {"command": "merge", "args": {"branch": "nonexistent"}},
+        ToolContext(workspace=str(repo)),
+    )
+
+    payload = _payload(result)
+    assert payload["ok"] is False
+    assert "branch_not_found" in payload["error"] or "not found" in payload["error"].lower()
+
+
+@pytest.mark.asyncio
+async def test_git_rebase_onto_branch(tmp_path):
+    repo = _init_repo(tmp_path / "repo")
+    default = _default_branch(repo)
+    (repo / "base.txt").write_text("base\n", encoding="utf-8")
+    _run(repo, "add", "base.txt")
+    _run(repo, "commit", "-m", "initial")
+
+    _run(repo, "checkout", "-b", "feature")
+    (repo / "feat.txt").write_text("feat\n", encoding="utf-8")
+    _run(repo, "add", "feat.txt")
+    _run(repo, "commit", "-m", "feature work")
+
+    _run(repo, "checkout", default)
+    (repo / "main.txt").write_text("main\n", encoding="utf-8")
+    _run(repo, "add", "main.txt")
+    _run(repo, "commit", "-m", "main work")
+
+    _run(repo, "checkout", "feature")
+
+    result = await GitTool().execute(
+        {"command": "rebase", "args": {"branch": default}},
+        ToolContext(workspace=str(repo)),
+    )
+
+    payload = _payload(result)
+    assert payload["ok"] is True
+    assert payload["data"]["branch"] == default
+
+
+@pytest.mark.asyncio
+async def test_git_rebase_conflict(tmp_path):
+    repo = _init_repo(tmp_path / "repo")
+    default = _default_branch(repo)
+    (repo / "file.txt").write_text("base\n", encoding="utf-8")
+    _run(repo, "add", "file.txt")
+    _run(repo, "commit", "-m", "initial")
+
+    _run(repo, "checkout", "-b", "feature")
+    (repo / "file.txt").write_text("feature\n", encoding="utf-8")
+    _run(repo, "add", "file.txt")
+    _run(repo, "commit", "-m", "feature change")
+
+    _run(repo, "checkout", default)
+    (repo / "file.txt").write_text("main\n", encoding="utf-8")
+    _run(repo, "add", "file.txt")
+    _run(repo, "commit", "-m", "main change")
+
+    _run(repo, "checkout", "feature")
+
+    result = await GitTool().execute(
+        {"command": "rebase", "args": {"branch": default}},
+        ToolContext(workspace=str(repo)),
+    )
+
+    payload = _payload(result)
+    assert payload["ok"] is False
+    assert "conflict" in payload["error"].lower() or "rebase_conflict" in payload["error"]
+    # clean up
+    subprocess.run(["git", "rebase", "--abort"], cwd=repo, stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL)
+
+
+@pytest.mark.asyncio
+async def test_git_rebase_abort(tmp_path):
+    repo = _init_repo(tmp_path / "repo")
+    default = _default_branch(repo)
+    (repo / "file.txt").write_text("base\n", encoding="utf-8")
+    _run(repo, "add", "file.txt")
+    _run(repo, "commit", "-m", "initial")
+
+    _run(repo, "checkout", "-b", "feature")
+    (repo / "file.txt").write_text("feature\n", encoding="utf-8")
+    _run(repo, "add", "file.txt")
+    _run(repo, "commit", "-m", "feature change")
+
+    _run(repo, "checkout", default)
+    (repo / "file.txt").write_text("main\n", encoding="utf-8")
+    _run(repo, "add", "file.txt")
+    _run(repo, "commit", "-m", "main change")
+
+    _run(repo, "checkout", "feature")
+    # start a rebase that will conflict
+    subprocess.run(
+        ["git", "rebase", default],
+        cwd=repo,
+        stdout=subprocess.DEVNULL,
+        stderr=subprocess.DEVNULL,
+    )
+
+    result = await GitTool().execute(
+        {"command": "rebase", "args": {"abort": True}},
+        ToolContext(workspace=str(repo)),
+    )
+
+    payload = _payload(result)
+    assert payload["ok"] is True
+
+
+@pytest.mark.asyncio
+async def test_git_rebase_mutual_exclusive_continue_abort(tmp_path):
+    repo = _init_repo(tmp_path / "repo")
+    (repo / "file.txt").write_text("base\n", encoding="utf-8")
+    _run(repo, "add", "file.txt")
+    _run(repo, "commit", "-m", "initial")
+
+    result = await GitTool().execute(
+        {"command": "rebase", "args": {"continue_rebase": True, "abort": True}},
+        ToolContext(workspace=str(repo)),
+    )
+
+    payload = _payload(result)
+    assert payload["ok"] is False
+    assert "mutually exclusive" in payload["error"]
+
+
+@pytest.mark.asyncio
+async def test_git_rebase_requires_branch(tmp_path):
+    repo = _init_repo(tmp_path / "repo")
+    (repo / "file.txt").write_text("base\n", encoding="utf-8")
+    _run(repo, "add", "file.txt")
+    _run(repo, "commit", "-m", "initial")
+
+    result = await GitTool().execute(
+        {"command": "rebase", "args": {}},
+        ToolContext(workspace=str(repo)),
+    )
+
+    payload = _payload(result)
+    assert payload["ok"] is False
+    assert "branch is required" in payload["error"]
+
+
+# ── Review fix tests ──────────────────────────────────────────────
+
+
+@pytest.mark.asyncio
+async def test_git_push_all_branches_and_branch_mutually_exclusive(tmp_path):
+    repo = _init_repo(tmp_path / "repo")
+    (repo / "file.txt").write_text("hello\n", encoding="utf-8")
+    _run(repo, "add", "file.txt")
+    _run(repo, "commit", "-m", "initial")
+
+    result = await GitTool().execute(
+        {"command": "push", "args": {"all_branches": True, "branch": "feature"}},
+        ToolContext(workspace=str(repo)),
+    )
+
+    payload = _payload(result)
+    assert payload["ok"] is False
+    assert "mutually exclusive" in payload["error"]
+
+
+@pytest.mark.asyncio
+async def test_git_fetch_all_and_branch_mutually_exclusive(tmp_path):
+    repo = _init_repo(tmp_path / "repo")
+    (repo / "file.txt").write_text("hello\n", encoding="utf-8")
+    _run(repo, "add", "file.txt")
+    _run(repo, "commit", "-m", "initial")
+
+    result = await GitTool().execute(
+        {"command": "fetch", "args": {"all": True, "branch": "feature"}},
+        ToolContext(workspace=str(repo)),
+    )
+
+    payload = _payload(result)
+    assert payload["ok"] is False
+    assert "mutually exclusive" in payload["error"]
+
+
+@pytest.mark.asyncio
+async def test_git_push_rejects_unsafe_remote(tmp_path):
+    repo = _init_repo(tmp_path / "repo")
+    (repo / "file.txt").write_text("hello\n", encoding="utf-8")
+    _run(repo, "add", "file.txt")
+    _run(repo, "commit", "-m", "initial")
+
+    result = await GitTool().execute(
+        {"command": "push", "args": {"remote": "origin --upload-pack=evil"}},
+        ToolContext(workspace=str(repo)),
+    )
+
+    payload = _payload(result)
+    assert payload["ok"] is False
+    assert "invalid remote" in payload["error"]
+
+
+@pytest.mark.asyncio
+async def test_git_pull_rejects_unsafe_remote(tmp_path):
+    repo = _init_repo(tmp_path / "repo")
+    (repo / "file.txt").write_text("hello\n", encoding="utf-8")
+    _run(repo, "add", "file.txt")
+    _run(repo, "commit", "-m", "initial")
+
+    result = await GitTool().execute(
+        {"command": "pull", "args": {"remote": "origin; rm -rf /"}},
+        ToolContext(workspace=str(repo)),
+    )
+
+    payload = _payload(result)
+    assert payload["ok"] is False
+    assert "invalid remote" in payload["error"]
+
+
+@pytest.mark.asyncio
+async def test_git_fetch_rejects_unsafe_remote(tmp_path):
+    repo = _init_repo(tmp_path / "repo")
+    (repo / "file.txt").write_text("hello\n", encoding="utf-8")
+    _run(repo, "add", "file.txt")
+    _run(repo, "commit", "-m", "initial")
+
+    result = await GitTool().execute(
+        {"command": "fetch", "args": {"remote": "origin`whoami`"}},
+        ToolContext(workspace=str(repo)),
+    )
+
+    payload = _payload(result)
+    assert payload["ok"] is False
+    assert "invalid remote" in payload["error"]
+
+
+@pytest.mark.asyncio
+async def test_git_rebase_rejects_unsafe_onto(tmp_path):
+    repo = _init_repo(tmp_path / "repo")
+    (repo / "file.txt").write_text("hello\n", encoding="utf-8")
+    _run(repo, "add", "file.txt")
+    _run(repo, "commit", "-m", "initial")
+
+    result = await GitTool().execute(
+        {"command": "rebase", "args": {"branch": "main", "onto": "main; echo pwned"}},
+        ToolContext(workspace=str(repo)),
+    )
+
+    payload = _payload(result)
+    assert payload["ok"] is False
+    assert "invalid ref" in payload["error"]
+
+
+@pytest.mark.asyncio
+async def test_git_merge_allows_commit_hash(tmp_path):
+    repo = _init_repo(tmp_path / "repo")
+    (repo / "base.txt").write_text("base\n", encoding="utf-8")
+    _run(repo, "add", "base.txt")
+    _run(repo, "commit", "-m", "initial")
+
+    _run(repo, "checkout", "-b", "feature")
+    (repo / "feat.txt").write_text("feat\n", encoding="utf-8")
+    _run(repo, "add", "feat.txt")
+    _run(repo, "commit", "-m", "feature work")
+    rev = _run(repo, "rev-parse", "HEAD").strip()
+
+    _run(repo, "checkout", _default_branch(repo))
+
+    result = await GitTool().execute(
+        {"command": "merge", "args": {"branch": rev}},
+        ToolContext(workspace=str(repo)),
+    )
+
+    payload = _payload(result)
+    assert payload["ok"] is True
+
+
+@pytest.mark.asyncio
+async def test_git_merge_rejects_unsafe_branch(tmp_path):
+    repo = _init_repo(tmp_path / "repo")
+    (repo / "file.txt").write_text("hello\n", encoding="utf-8")
+    _run(repo, "add", "file.txt")
+    _run(repo, "commit", "-m", "initial")
+
+    result = await GitTool().execute(
+        {"command": "merge", "args": {"branch": "main; echo pwned"}},
+        ToolContext(workspace=str(repo)),
+    )
+
+    payload = _payload(result)
+    assert payload["ok"] is False
+    assert "invalid ref" in payload["error"]

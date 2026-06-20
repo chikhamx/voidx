@@ -14,7 +14,6 @@ from voidx.agent.runtime_context import (
     InteractionMode,
     RuntimeContextBuilder,
     TaskIntent,
-    infer_task_intent,
     is_goal_resolution_guide_content,
     raw_semantic_messages,
 )
@@ -37,29 +36,6 @@ def test_interaction_mode_parse_is_safe():
     with pytest.raises(ValueError):
         InteractionMode.parse("review")
 
-
-def test_intent_classifier_does_not_treat_inspection_as_implementation():
-    assert infer_task_intent("看看 voidx 的 agent 编排") == TaskIntent.CODING
-    assert infer_task_intent("可以看看这个项目") == TaskIntent.CODING
-    assert infer_task_intent("有什么更好的优化方案") == TaskIntent.CODING
-    assert infer_task_intent("可以，直接改") == TaskIntent.CODING
-    assert infer_task_intent("对，可以") == TaskIntent.GENERAL
-
-
-def test_keyword_intent_defaults_broad_problem_to_coding():
-    assert infer_task_intent("有什么问题吗") == TaskIntent.CODING
-    assert infer_task_intent("看看这个问题") == TaskIntent.CODING
-    assert infer_task_intent("这个问题怎么解决") == TaskIntent.CODING
-    assert infer_task_intent("这个报错问题怎么处理") == TaskIntent.CODING
-
-
-def test_keyword_intent_uses_word_boundaries_for_short_english_hints():
-    assert infer_task_intent("fix this issue") == TaskIntent.CODING
-    assert infer_task_intent("prefix handling") == TaskIntent.CODING
-    assert infer_task_intent("suffix handling") == TaskIntent.CODING
-    assert infer_task_intent("这个可以改吗") == TaskIntent.CODING
-    assert infer_task_intent("这个可以开始了吗") == TaskIntent.CODING
-    assert infer_task_intent("谢谢") == TaskIntent.GENERAL
 
 
 def test_current_task_state_records_intent_and_implementation_gate(tmp_path):

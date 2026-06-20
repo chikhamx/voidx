@@ -17,7 +17,7 @@ from voidx.agent.todo_state import sanitize_todo_replay_messages
 from voidx.agent.message_rows import RowMessageCacheEntry
 from voidx.agent.task_state import GoalSpec, TodoRunState
 from voidx.config import Config, UserProfile
-from voidx.runtime.intent import InteractionMode, TaskIntent, infer_task_intent
+from voidx.runtime.intent import InteractionMode, TaskIntent
 from voidx.skills.service import (
     has_skill_tool_context,
     strip_skill_tool_context,

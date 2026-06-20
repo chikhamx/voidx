@@ -10,18 +10,21 @@ import re
 from pathlib import Path
 from typing import Any, Literal
 
-from pydantic import BaseModel, Field
+from pydantic import BaseModel, Field, model_validator
 
 from voidx.tools.base import BaseTool, ToolContext, ToolResult, model_to_json_schema, resolve_safe
 
 
 GIT_TIMEOUT_SECONDS = 15
+GIT_REMOTE_TIMEOUT_SECONDS = 60
 DIFF_HUNK_MAX_CHARS = 12_000
 HOOK_OUTPUT_MAX_CHARS = 4000
 LOG_LIMIT_MAX = 50
 BLAME_RANGE_MAX = 200
 _BRANCH_NAME_RE = re.compile(r"^(?!\.)(?!-)[a-zA-Z0-9/_-]+(\.[a-zA-Z0-9/_-]+)*$")
 _BRANCH_NAME_DENY = re.compile(r"\.\.|[@~^:\\\s]|\.lock$")
+_SAFE_REMOTE_RE = re.compile(r"^[a-zA-Z0-9][a-zA-Z0-9._/-]*$")
+_SAFE_REF_RE = re.compile(r"^[a-zA-Z0-9][a-zA-Z0-9._/@+-]*$")
 
 GIT_READ_COMMANDS = {
     "status",
@@ -44,6 +47,11 @@ GIT_WRITE_COMMANDS = {
     "tag_delete",
     "stash_push",
     "stash_pop",
+    "push",
+    "pull",
+    "fetch",
+    "merge",
+    "rebase",
 }
 
 
@@ -140,6 +148,58 @@ class GitStashPopArgs(BaseModel):
     keep: bool = False
 
 
+
+class GitPushArgs(BaseModel):
+    remote: str = "origin"
+    branch: str = ""
+    force: bool = False
+    all_branches: bool = False
+
+    @model_validator(mode="after")
+    def _validate_push_args(self):
+        if self.all_branches and self.branch:
+            raise ValueError("all_branches and branch are mutually exclusive")
+        return self
+
+
+class GitPullArgs(BaseModel):
+    remote: str = "origin"
+    branch: str = ""
+
+
+class GitFetchArgs(BaseModel):
+    remote: str = "origin"
+    branch: str = ""
+    all: bool = False
+    prune: bool = False
+
+    @model_validator(mode="after")
+    def _validate_fetch_args(self):
+        if self.all and self.branch:
+            raise ValueError("all and branch are mutually exclusive")
+        return self
+
+
+class GitMergeArgs(BaseModel):
+    branch: str = Field(min_length=1)
+    message: str = ""
+    no_ff: bool = False
+
+
+class GitRebaseArgs(BaseModel):
+    branch: str = ""
+    onto: str = ""
+    continue_rebase: bool = False
+    abort: bool = False
+
+    @model_validator(mode="after")
+    def _validate_rebase_args(self):
+        if self.continue_rebase and self.abort:
+            raise ValueError("continue_rebase and abort are mutually exclusive")
+        if not self.continue_rebase and not self.abort and not self.branch:
+            raise ValueError("branch is required when not continuing or aborting a rebase")
+        return self
+
 class GitArgs(BaseModel):
     pathspec: list[str] = Field(default_factory=list)
     cached: bool = False
@@ -167,6 +227,13 @@ class GitArgs(BaseModel):
     sort: str = ""
     index: int = 0
     keep: bool = False
+    remote: str = "origin"
+    all_branches: bool = False
+    prune: bool = False
+    no_ff: bool = False
+    onto: str = ""
+    continue_rebase: bool = False
+    abort: bool = False
 
 
 class GitInput(BaseModel):
@@ -189,6 +256,11 @@ class GitInput(BaseModel):
         "tag_delete",
         "stash_push",
         "stash_pop",
+        "push",
+        "pull",
+        "fetch",
+        "merge",
+        "rebase",
     ] = Field(description="Git operation to run.")
     args: GitArgs = Field(default_factory=GitArgs, description="Command-specific arguments.")
 
@@ -204,7 +276,8 @@ class GitTool(BaseTool):
         "Inspect and perform explicit path-scoped Git operations with structured JSON output. "
         "Read commands are status, diff, log, blame, branch_list, remote_list, show, tag_list. "
         "Write commands are add, commit, restore, switch, branch_create, branch_delete, "
-        "tag_create, tag_delete, stash_push, stash_pop and require approval."
+        "tag_create, tag_delete, stash_push, stash_pop, push, pull, fetch, merge, rebase "
+        "and require approval."
     )
 
     def parameters_schema(self) -> dict:
@@ -253,6 +326,16 @@ class GitTool(BaseTool):
                 return await _git_stash_push(_args_dict(inp.args), ctx, repo)
             if inp.command == "stash_pop":
                 return await _git_stash_pop(_args_dict(inp.args), ctx, repo)
+            if inp.command == "push":
+                return await _git_push(_args_dict(inp.args), ctx, repo)
+            if inp.command == "pull":
+                return await _git_pull(_args_dict(inp.args), ctx, repo)
+            if inp.command == "fetch":
+                return await _git_fetch(_args_dict(inp.args), ctx, repo)
+            if inp.command == "merge":
+                return await _git_merge(_args_dict(inp.args), ctx, repo)
+            if inp.command == "rebase":
+                return await _git_rebase(_args_dict(inp.args), ctx, repo)
         except ValueError as exc:
             return _result(inp.command, ctx, repo=repo, ok=False, error=str(exc))
 
@@ -731,6 +814,187 @@ async def _git_stash_pop(args: dict[str, Any], ctx: ToolContext, repo: GitRepo) 
         "conflicts": [], "files_restored": stash_files,
     })
 
+
+
+async def _git_push(args: dict[str, Any], ctx: ToolContext, repo: GitRepo) -> ToolResult:
+    inp = GitPushArgs.model_validate(args)
+    if not _SAFE_REMOTE_RE.match(inp.remote):
+        raise ValueError(f"invalid remote name: {inp.remote}")
+    remote_check = await _run_git(repo, ["remote", "get-url", inp.remote], read_only=True)
+    if remote_check["returncode"] != 0:
+        return _result("push", ctx, repo=repo, ok=False, error="remote_not_found")
+    argv = ["push"]
+    if inp.force:
+        argv.append("--force")
+    if inp.all_branches:
+        argv.append("--all")
+    argv.append(inp.remote)
+    if inp.branch:
+        if not _BRANCH_NAME_RE.match(inp.branch) or _BRANCH_NAME_DENY.search(inp.branch):
+            raise ValueError(f"invalid branch name: {inp.branch}")
+        argv.append(inp.branch)
+    proc = await _run_git(repo, argv, timeout=GIT_REMOTE_TIMEOUT_SECONDS)
+    if proc["returncode"] != 0:
+        stderr = proc["stderr"] or proc["stdout"]
+        if "[rejected]" in stderr or "non-fast-forward" in stderr.lower() or "fetch first" in stderr.lower():
+            return _result("push", ctx, repo=repo, ok=False, error="push_rejected",
+                           data={"remote": inp.remote, "branch": inp.branch, "force": inp.force,
+                                 "suggestion": "use force=True to overwrite remote history"})
+        return _result("push", ctx, repo=repo, ok=False, error=stderr)
+    summary = proc["stdout"].strip() or proc["stderr"].strip() or "pushed"
+    return _result("push", ctx, repo=repo, data={
+        "remote": inp.remote, "branch": inp.branch, "force": inp.force,
+        "summary": summary.split("\n")[-1] if "\n" in summary else summary,
+    })
+
+
+async def _git_pull(args: dict[str, Any], ctx: ToolContext, repo: GitRepo) -> ToolResult:
+    inp = GitPullArgs.model_validate(args)
+    if not _SAFE_REMOTE_RE.match(inp.remote):
+        raise ValueError(f"invalid remote name: {inp.remote}")
+    remote_check = await _run_git(repo, ["remote", "get-url", inp.remote], read_only=True)
+    if remote_check["returncode"] != 0:
+        return _result("pull", ctx, repo=repo, ok=False, error="remote_not_found")
+    argv = ["pull"]
+    argv.append(inp.remote)
+    if inp.branch:
+        if not _BRANCH_NAME_RE.match(inp.branch) or _BRANCH_NAME_DENY.search(inp.branch):
+            raise ValueError(f"invalid branch name: {inp.branch}")
+        argv.append(inp.branch)
+    proc = await _run_git(repo, argv, timeout=GIT_REMOTE_TIMEOUT_SECONDS)
+    if proc["returncode"] != 0:
+        stderr = proc["stderr"] or proc["stdout"]
+        combined = proc["stdout"] + stderr
+        if "CONFLICT" in combined:
+            conflicts = _parse_conflicts(combined)
+            return _result("pull", ctx, repo=repo, ok=False, error="merge_conflict",
+                           data={"remote": inp.remote, "branch": inp.branch, "conflicts": conflicts})
+        return _result("pull", ctx, repo=repo, ok=False, error=stderr)
+    fast_forward = "Fast-forward" in proc["stdout"]
+    summary = proc["stdout"].strip() or "Already up to date."
+    return _result("pull", ctx, repo=repo, data={
+        "remote": inp.remote, "branch": inp.branch,
+        "fast_forward": fast_forward, "summary": summary.split("\n")[-1] if "\n" in summary else summary,
+    })
+
+
+async def _git_fetch(args: dict[str, Any], ctx: ToolContext, repo: GitRepo) -> ToolResult:
+    inp = GitFetchArgs.model_validate(args)
+    if not _SAFE_REMOTE_RE.match(inp.remote):
+        raise ValueError(f"invalid remote name: {inp.remote}")
+    if not inp.all:
+        remote_check = await _run_git(repo, ["remote", "get-url", inp.remote], read_only=True)
+        if remote_check["returncode"] != 0:
+            return _result("fetch", ctx, repo=repo, ok=False, error="remote_not_found")
+    argv = ["fetch"]
+    if inp.prune:
+        argv.append("--prune")
+    if inp.all:
+        argv.append("--all")
+        proc = await _run_git(repo, argv, timeout=GIT_REMOTE_TIMEOUT_SECONDS)
+    else:
+        argv.append(inp.remote)
+        if inp.branch:
+            if not _BRANCH_NAME_RE.match(inp.branch) or _BRANCH_NAME_DENY.search(inp.branch):
+                raise ValueError(f"invalid branch name: {inp.branch}")
+            argv.append(inp.branch)
+        proc = await _run_git(repo, argv, timeout=GIT_REMOTE_TIMEOUT_SECONDS)
+    if proc["returncode"] != 0:
+        stderr = proc["stderr"] or proc["stdout"]
+        if "not found" in stderr.lower() or "does not appear" in stderr.lower() or "no such remote" in stderr.lower():
+            return _result("fetch", ctx, repo=repo, ok=False, error="remote_not_found")
+        return _result("fetch", ctx, repo=repo, ok=False, error=stderr)
+    summary = proc["stdout"].strip() or proc["stderr"].strip() or "Already up to date."
+    return _result("fetch", ctx, repo=repo, data={
+        "remote": inp.remote, "summary": summary.split("\n")[-1] if "\n" in summary else summary,
+    })
+
+
+async def _git_merge(args: dict[str, Any], ctx: ToolContext, repo: GitRepo) -> ToolResult:
+    inp = GitMergeArgs.model_validate(args)
+    if not _SAFE_REF_RE.match(inp.branch):
+        raise ValueError(f"invalid ref: {inp.branch}")
+    argv = ["merge"]
+    if inp.no_ff:
+        argv.append("--no-ff")
+    if inp.message:
+        argv.extend(["-m", inp.message])
+    argv.append(inp.branch)
+    proc = await _run_git(repo, argv, timeout=GIT_REMOTE_TIMEOUT_SECONDS)
+    if proc["returncode"] != 0:
+        stderr = proc["stderr"] or proc["stdout"]
+        combined = proc["stdout"] + stderr
+        if "CONFLICT" in combined:
+            conflicts = _parse_conflicts(combined)
+            return _result("merge", ctx, repo=repo, ok=False, error="merge_conflict",
+                           data={"branch": inp.branch, "conflicts": conflicts})
+        if "not found" in stderr.lower() or "not something we can merge" in stderr.lower():
+            return _result("merge", ctx, repo=repo, ok=False, error="branch_not_found")
+        return _result("merge", ctx, repo=repo, ok=False, error=stderr)
+    fast_forward = "Fast-forward" in proc["stdout"]
+    rev = await _run_git(repo, ["rev-parse", "--short", "HEAD"], read_only=True)
+    commit_hash = rev["stdout"].strip() if rev["returncode"] == 0 else ""
+    return _result("merge", ctx, repo=repo, data={
+        "branch": inp.branch, "fast_forward": fast_forward, "hash": commit_hash, "conflicts": [],
+    })
+
+
+async def _git_rebase(args: dict[str, Any], ctx: ToolContext, repo: GitRepo) -> ToolResult:
+    inp = GitRebaseArgs.model_validate(args)
+    argv = ["rebase"]
+    if inp.abort:
+        argv.append("--abort")
+        proc = await _run_git(repo, argv)
+        if proc["returncode"] != 0:
+            return _result("rebase", ctx, repo=repo, ok=False, error=proc["stderr"] or proc["stdout"])
+        return _result("rebase", ctx, repo=repo, data={"aborted": True})
+    if inp.continue_rebase:
+        argv.append("--continue")
+        proc = await _run_git(repo, argv)
+        if proc["returncode"] != 0:
+            combined = proc["stdout"] + (proc["stderr"] or "")
+            if "CONFLICT" in combined:
+                conflicts = _parse_conflicts(combined)
+                return _result("rebase", ctx, repo=repo, ok=False, error="rebase_conflict",
+                               data={"branch": inp.branch, "conflicts": conflicts})
+            return _result("rebase", ctx, repo=repo, ok=False, error=proc["stderr"] or proc["stdout"])
+        return _result("rebase", ctx, repo=repo, data={"branch": inp.branch, "summary": "Rebase continued successfully"})
+    if inp.onto:
+        if not _SAFE_REF_RE.match(inp.onto):
+            raise ValueError(f"invalid ref: {inp.onto}")
+        argv.extend(["--onto", inp.onto])
+    if inp.branch:
+        if not _BRANCH_NAME_RE.match(inp.branch) or _BRANCH_NAME_DENY.search(inp.branch):
+            raise ValueError(f"invalid branch name: {inp.branch}")
+        argv.append(inp.branch)
+    proc = await _run_git(repo, argv)
+    if proc["returncode"] != 0:
+        combined = proc["stdout"] + (proc["stderr"] or "")
+        if "CONFLICT" in combined:
+            conflicts = _parse_conflicts(combined)
+            return _result("rebase", ctx, repo=repo, ok=False, error="rebase_conflict",
+                           data={"branch": inp.branch, "conflicts": conflicts,
+                                 "suggestion": "use abort=True to cancel or continue_rebase=True after resolving"})
+        stderr = proc["stderr"] or proc["stdout"]
+        if "not found" in stderr.lower() or "invalid reference" in stderr.lower():
+            return _result("rebase", ctx, repo=repo, ok=False, error="branch_not_found")
+        return _result("rebase", ctx, repo=repo, ok=False, error=stderr)
+    return _result("rebase", ctx, repo=repo, data={
+        "branch": inp.branch, "onto": inp.onto, "summary": "Rebased successfully",
+    })
+
+
+def _parse_conflicts(output: str) -> list[str]:
+    conflicts = []
+    for line in output.splitlines():
+        stripped = line.strip()
+        if stripped.startswith("CONFLICT"):
+            parts = stripped.split()
+            if len(parts) >= 3:
+                conflicts.append(parts[-1])
+    return conflicts
+
+
 async def _discover_repo(ctx: ToolContext) -> GitRepo | None:
     proc = await _run_process(["git", "rev-parse", "--show-toplevel"], cwd=ctx.workspace, read_only=True)
     if proc["returncode"] != 0:
@@ -741,11 +1005,12 @@ async def _discover_repo(ctx: ToolContext) -> GitRepo | None:
     )
 
 
-async def _run_git(repo: GitRepo, args: list[str], *, read_only: bool = False) -> dict[str, Any]:
-    return await _run_process(["git", *args], cwd=repo.repo_root, read_only=read_only)
+async def _run_git(repo: GitRepo, args: list[str], *, read_only: bool = False, timeout: int | None = None) -> dict[str, Any]:
+    return await _run_process(["git", *args], cwd=repo.repo_root, read_only=read_only, timeout=timeout)
 
 
-async def _run_process(args: list[str], *, cwd: str, read_only: bool = False) -> dict[str, Any]:
+async def _run_process(args: list[str], *, cwd: str, read_only: bool = False, timeout: int | None = None) -> dict[str, Any]:
+    effective_timeout = timeout or GIT_TIMEOUT_SECONDS
     env = {
         **os.environ,
         "GIT_TERMINAL_PROMPT": "0",
@@ -761,11 +1026,11 @@ async def _run_process(args: list[str], *, cwd: str, read_only: bool = False) ->
             stdout=asyncio.subprocess.PIPE,
             stderr=asyncio.subprocess.PIPE,
         )
-        stdout, stderr = await asyncio.wait_for(proc.communicate(), timeout=GIT_TIMEOUT_SECONDS)
+        stdout, stderr = await asyncio.wait_for(proc.communicate(), timeout=effective_timeout)
     except asyncio.TimeoutError:
         proc.kill()
         await proc.wait()
-        return {"returncode": -1, "stdout": "", "stderr": f"git command timed out after {GIT_TIMEOUT_SECONDS}s"}
+        return {"returncode": -1, "stdout": "", "stderr": f"git command timed out after {effective_timeout}s"}
     except FileNotFoundError:
         return {"returncode": -1, "stdout": "", "stderr": "git executable not found"}
     return {

@@ -16,6 +16,7 @@ dependencies = [
     "tiktoken>=0.8.0",
     "httpx>=0.28.0",
     "websockets>=14",
+    "pathspec>=0.12",
 ]
 
 [project.scripts]
@@ -48,7 +49,6 @@ where = ["src"]
     "bundled/*/SKILL.md",
 ]
 "voidx.data" = [
-    "intent_classifier.json",
     "templates/*.md",
 ]
 

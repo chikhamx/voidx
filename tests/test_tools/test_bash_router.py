@@ -292,21 +292,69 @@ class TestGitUnhintable:
 # ---------------------------------------------------------------------------
 
 class TestGrepSemanticFlags:
-    """grep -i, -w, -v, -l, -c, -A/-B/-C → no hint (semantic difference)."""
+    """grep -v, -l, -c, -A/-B → no hint (semantic difference)."""
 
     @pytest.mark.parametrize("cmd", [
-        "grep -i pattern file.py",
-        "grep -w pattern file.py",
         "grep -v pattern file.py",
         "grep -l pattern file.py",
         "grep -c pattern file.py",
-        "grep -A3 pattern file.py",
-        "grep -B2 pattern file.py",
-        "grep -C1 pattern file.py",
     ])
     def test_semantic_grep_flags_no_hint(self, cmd):
         assert try_hint(cmd) is None
 
+
+class TestGrepSupportedFlags:
+    """grep -i, -w, -C now map to built-in grep parameters."""
+
+    def test_grep_ignore_case(self):
+        h = try_hint("grep -i pattern file.py")
+        assert h is not None
+        assert h.tool_id == "grep"
+        assert "ignore_case=True" in h.llm_hint
+
+    def test_grep_whole_word(self):
+        h = try_hint("grep -w pattern file.py")
+        assert h is not None
+        assert h.tool_id == "grep"
+        assert "whole_word=True" in h.llm_hint
+
+    def test_grep_context(self):
+        h = try_hint("grep -C1 pattern file.py")
+        assert h is not None
+        assert h.tool_id == "grep"
+        assert "context_lines=1" in h.llm_hint
+
+    def test_grep_context_long(self):
+        h = try_hint("grep --context 2 pattern file.py")
+        assert h is not None
+        assert h.tool_id == "grep"
+        assert "context_lines=2" in h.llm_hint
+
+
+    def test_grep_after_context(self):
+        h = try_hint("grep -A2 pattern file.py")
+        assert h is not None
+        assert h.tool_id == "grep"
+        assert "context_lines=2" in h.llm_hint
+
+    def test_grep_before_context(self):
+        h = try_hint("grep -B3 pattern file.py")
+        assert h is not None
+        assert h.tool_id == "grep"
+        assert "context_lines=3" in h.llm_hint
+
+    def test_grep_after_and_before_context_takes_max(self):
+        h = try_hint("grep -A2 -B5 pattern file.py")
+        assert h is not None
+        assert h.tool_id == "grep"
+        assert "context_lines=5" in h.llm_hint
+
+    def test_grep_exclude_multiple(self):
+        h = try_hint("grep --exclude=*.min.js --exclude=*.map pattern")
+        assert h is not None
+        assert h.tool_id == "grep"
+        assert "*.min.js" in h.llm_hint
+        assert "*.map" in h.llm_hint
 
 # ---------------------------------------------------------------------------
 # Comprehensive: basic positive cases
@@ -509,3 +557,26 @@ class TestCdPrefixStripping:
         """cmd1 && cmd2 without cd prefix should still be excluded."""
         h = try_hint("git status && echo done")
         assert h is None
+
+
+# ---------------------------------------------------------------------------
+# Regression: sed single-line delete (73d) must produce a hint
+# ---------------------------------------------------------------------------
+
+class TestSedSingleLineDelete:
+    """sed -i '' '73d' file must produce a replace hint (was silently executed)."""
+
+    def test_single_line_delete_macos(self):
+        h = try_hint("sed -i '' '73d' file.py")
+        assert h is not None
+        assert h.tool_id == "replace"
+
+    def test_single_line_delete_linux(self):
+        h = try_hint("sed -i '73d' file.py")
+        assert h is not None
+        assert h.tool_id == "replace"
+
+    def test_single_line_delete_mentions_read_first(self):
+        h = try_hint("sed -i '' '73d' file.py")
+        assert h is not None
+        assert "first read" in h.llm_hint
