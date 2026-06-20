@@ -146,6 +146,9 @@ async def test_run_subagent_wall_clock_guard_terminates_at_boundary(tmp_path, mo
         def filtered_copy(self, _allowed_ids):
             return self
 
+        def ids(self):
+            return ["read"]
+
         def tools_for_llm(self):
             return [{"name": "checkpoint", "description": "checkpoint", "input_schema": {}}]
 
@@ -183,7 +186,6 @@ async def test_run_subagent_wall_clock_guard_terminates_at_boundary(tmp_path, mo
             name="explore",
             description="test",
             when_to_use="test",
-            tools=["checkpoint"],
             can_write=False,
             can_delegate=False,
         ),
@@ -215,6 +217,9 @@ async def test_run_subagent_repetitive_guard_runs_before_authorization(tmp_path,
     class FakeToolRegistry:
         def filtered_copy(self, _allowed_ids):
             return self
+
+        def ids(self):
+            return ["read"]
 
         def tools_for_llm(self):
             return [{"name": "todo", "description": "todo", "input_schema": {}}]
@@ -248,7 +253,6 @@ async def test_run_subagent_repetitive_guard_runs_before_authorization(tmp_path,
             name="explore",
             description="test",
             when_to_use="test",
-            tools=["todo"],
             can_write=False,
             can_delegate=False,
         ),
@@ -300,7 +304,6 @@ async def test_subagent_todo_updates_sink_with_current_tool_message(tmp_path, mo
             name="explore",
             description="test",
             when_to_use="test",
-            tools=["todo"],
             can_write=False,
             can_delegate=False,
         ),
@@ -358,7 +361,6 @@ async def test_subagent_empty_todo_does_not_clear_parent_state(tmp_path, monkeyp
             name="explore",
             description="test",
             when_to_use="test",
-            tools=["todo"],
             can_write=False,
             can_delegate=False,
         ),

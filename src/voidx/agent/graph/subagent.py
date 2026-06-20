@@ -84,16 +84,13 @@ async def run_subagent(
     elif agent_def.model:
         model_cfg.model = agent_def.model
 
-    # Child agents get a filtered view of the parent registry so dynamic MCP
-    # wrappers can be reused when an agent explicitly opts in.
-    allowed_ids = set(agent_def.tools)
+    # Child agents inherit the full parent tool registry.
+    # Access control is handled by the permission layer and workflow denied_tools.
+    agent_tools = parent_tools or ToolRegistry()
     if not agent_def.can_delegate:
-        allowed_ids.discard("agent")
-    base_tools = parent_tools or ToolRegistry()
-    if agent_def.mcp_tools and parent_tools is not None:
-        allowed_ids.update(tid for tid in parent_tools.ids() if tid.startswith("mcp__"))
-    agent_tools = base_tools.filtered_copy(allowed_ids)
-
+        agent_tools = agent_tools.filtered_copy(
+            set(agent_tools.ids()) - {"agent"}
+        )
     model = create_chat_model(api_key, model_cfg)
     tool_defs = agent_tools.tools_for_llm()
     tool_defs = filter_unavailable_lsp_tools(tool_defs, lsp_manager)

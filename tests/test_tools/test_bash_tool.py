@@ -119,10 +119,21 @@ class TestBash:
         ctx = ToolContext(workspace=str(tmp_path))
         r = ToolRegistry()
         result = await r.execute_tool("bash", {"command": "git status"}, ctx)
-        if "route_hint" in result.metadata:
-            hint = result.metadata["route_hint"]
-            assert hint["tool_id"] == "git"
-            assert hint["command"] == "git status"
+        hint = result.metadata["route_hint"]
+        assert hint["tool_id"] == "git"
+        assert hint["command"] == "git status"
+        assert result.metadata["skipped"] is True
+
+    @pytest.mark.asyncio
+    async def test_bash_route_hint_skips_execution(self, tmp_path):
+        ctx = ToolContext(workspace=str(tmp_path))
+        r = ToolRegistry()
+        result = await r.execute_tool("bash", {"command": "echo 'hello' > out.txt"}, ctx)
+
+        assert not (tmp_path / "out.txt").exists()
+        assert result.metadata["skipped"] is True
+        assert result.metadata["route_hint"]["tool_id"] == "write"
+        assert result.next_step_hint
 
     @pytest.mark.asyncio
     async def test_bash_no_route_hint_for_complex_commands(self, tmp_path):
@@ -130,5 +141,4 @@ class TestBash:
         r = ToolRegistry()
         result = await r.execute_tool("bash", {"command": "ls -la"}, ctx)
         assert "route_hint" not in result.metadata
-
 

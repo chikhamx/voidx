@@ -86,6 +86,31 @@ class TestSearch:
         assert "sub/b.py" in result.output.replace("\\", "/")
 
     @pytest.mark.asyncio
+    async def test_glob_ignore_case(self, tmp_path):
+        (tmp_path / "App.PY").touch()
+        (tmp_path / "notes.txt").touch()
+        ctx = ToolContext(workspace=str(tmp_path))
+        r = ToolRegistry()
+        result = await r.execute_tool("glob", {"pattern": "**/*.py", "ignore_case": True}, ctx)
+        assert "App.PY" in result.output
+        assert "notes.txt" not in result.output
+
+    @pytest.mark.asyncio
+    async def test_glob_max_depth(self, tmp_path):
+        (tmp_path / "a.py").touch()
+        (tmp_path / "sub").mkdir()
+        (tmp_path / "sub" / "b.py").touch()
+        (tmp_path / "sub" / "nested").mkdir()
+        (tmp_path / "sub" / "nested" / "c.py").touch()
+        ctx = ToolContext(workspace=str(tmp_path))
+        r = ToolRegistry()
+        result = await r.execute_tool("glob", {"pattern": "**/*.py", "max_depth": 2}, ctx)
+        output = result.output.replace("\\", "/")
+        assert "a.py" in output
+        assert "sub/b.py" in output
+        assert "sub/nested/c.py" not in output
+
+    @pytest.mark.asyncio
     async def test_grep(self, tmp_path):
         (tmp_path / "code.py").write_text("TODO: fix this\nprint('ok')\n")
         ctx = ToolContext(workspace=str(tmp_path))

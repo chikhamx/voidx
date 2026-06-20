@@ -239,24 +239,6 @@ async def test_call_llm_keeps_bound_tools_fixed_across_active_workflow_node(tmp_
     assert "edit" not in tool_names
 
 
-def test_agent_static_tool_defs_hide_unlisted_non_mcp_tools_but_allow_mcp():
-    from voidx.agent.agents import get_agent
-    from voidx.agent.graph.core import _agent_static_tool_defs
-
-    agent = get_agent("voidx")
-    all_tool_defs = [
-        {"function": {"name": "read"}},
-        {"function": {"name": "private_debug_tool"}},
-        {"function": {"name": "mcp__demo__send_message_12345678"}},
-    ]
-
-    visible = _agent_static_tool_defs(agent, all_tool_defs)
-
-    assert [tool["function"]["name"] for tool in visible] == [
-        "read",
-        "mcp__demo__send_message_12345678",
-    ]
-
 
 @pytest.mark.asyncio
 async def test_orchestrator_sees_mcp_tools(tmp_path, monkeypatch):

@@ -204,7 +204,7 @@ async def test_subagent_skill_context_matches_orchestrator(tmp_path, monkeypatch
 
 
 @pytest.mark.asyncio
-async def test_subagent_without_mcp_tools_excludes_parent_mcp_tools(tmp_path, monkeypatch):
+async def test_subagent_inherits_parent_mcp_tools(tmp_path, monkeypatch):
     import voidx.agent.graph.subagent as subagent_module
 
     captured: dict[str, list] = {}
@@ -233,7 +233,6 @@ async def test_subagent_without_mcp_tools_excludes_parent_mcp_tools(tmp_path, mo
             name="explore",
             description="test",
             when_to_use="test",
-            tools=["read"],
             can_write=False,
             can_delegate=False,
         ),
@@ -248,9 +247,7 @@ async def test_subagent_without_mcp_tools_excludes_parent_mcp_tools(tmp_path, mo
 
     assert output == "done"
     tool_names = [tool["function"]["name"] for tool in captured["tool_defs"]]
-    assert "read" in tool_names
-    assert "mcp__demo__send_message_12345678" not in tool_names
-
+    assert "mcp__demo__send_message_12345678" in tool_names
 
 @pytest.mark.asyncio
 async def test_subagent_with_mcp_tools_copies_parent_mcp_tools(tmp_path, monkeypatch):
@@ -302,10 +299,8 @@ async def test_subagent_with_mcp_tools_copies_parent_mcp_tools(tmp_path, monkeyp
             name="explore",
             description="test",
             when_to_use="test",
-            tools=["read"],
             can_write=False,
             can_delegate=False,
-            mcp_tools=True,
         ),
         "Send the message",
         None,
@@ -353,7 +348,6 @@ async def test_subagent_tool_filter_always_blocks_nested_agent_tool(tmp_path, mo
                 name="explore",
                 description="test",
                 when_to_use="test",
-                tools=["read", "agent", "task_status"],
                 can_write=False,
                 can_delegate=can_delegate,
             ),

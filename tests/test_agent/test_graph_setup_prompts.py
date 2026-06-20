@@ -291,21 +291,23 @@ def test_graph_session_date_uses_session_creation_date(tmp_path):
 
 
 def test_orchestrator_has_direct_edit_tools():
+    from voidx.tools.registry import ToolRegistry
+
     agent = get_agent("voidx")
+    registry = ToolRegistry()
+    tool_ids = set(registry.ids())
 
     assert agent is not None
-    assert {"write", "insert", "replace", "edit"}.issubset(set(agent.tools))
-    assert {"clarify", "checkpoint", "skill"}.issubset(set(agent.tools))
+    assert {"write", "insert", "replace", "edit", "delete"}.issubset(tool_ids)
+    assert {"clarify", "checkpoint", "skill"}.issubset(tool_ids)
     assert get_agent("sub-voidx") is None
     assert get_agent("explore") is None
     assert get_agent("plan") is None
     assert get_agent("implement") is None
     assert get_agent("review") is None
     assert get_visible_agents() == [agent]
-    assert "skill" in agent.tools
+    assert "skill" in tool_ids
     assert agent.can_write is True
-
-
 def test_agent_def_no_longer_renders_tool_contract():
     agent = get_agent("voidx")
 
@@ -318,7 +320,6 @@ def test_agent_def_no_longer_owns_persona_prompt():
         name="orchesrator",
         description="typo",
         when_to_use="never",
-        tools=[],
         can_write=False,
         can_delegate=False,
     )

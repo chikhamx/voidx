@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import logging
+import fnmatch
 import re
 from pathlib import Path
 
@@ -15,6 +16,8 @@ _logger = logging.getLogger(__name__)
 
 class GlobInput(BaseModel):
     pattern: str = Field(description="Glob pattern to match files, e.g. '**/*.py' or 'src/**/*.ts'")
+    ignore_case: bool = Field(default=False, description="Case-insensitive glob matching when true")
+    max_depth: int | None = Field(default=None, ge=0, description="Maximum path depth from workspace root when set")
 
 
 class GlobTool(BaseTool):
@@ -42,10 +45,41 @@ class GlobTool(BaseTool):
                     return False
             return True
 
+        def _within_depth(p: Path) -> bool:
+            if inp.max_depth is None:
+                return True
+            return len(p.relative_to(base).parts) <= inp.max_depth
+
+        def _relative(p: Path) -> str:
+            return str(p.relative_to(base)).replace("\\", "/")
+
+        def _glob_pattern_variants(pattern: str) -> set[str]:
+            variants = {pattern}
+            pending = [pattern]
+            while pending:
+                current = pending.pop()
+                idx = current.find("**/")
+                while idx != -1:
+                    variant = current[:idx] + current[idx + 3:]
+                    if variant not in variants:
+                        variants.add(variant)
+                        pending.append(variant)
+                    idx = current.find("**/", idx + 1)
+            return variants
+
+        if inp.ignore_case:
+            patterns = _glob_pattern_variants(inp.pattern.lower())
+            candidates = (
+                p for p in base.rglob("*")
+                if any(fnmatch.fnmatchcase(_relative(p).lower(), pattern) for pattern in patterns)
+            )
+        else:
+            candidates = base.glob(inp.pattern)
+
         matches = sorted(
-            str(p.relative_to(base)).replace("\\", "/")
-            for p in base.glob(inp.pattern)
-            if _visible_path(p)
+            _relative(p)
+            for p in candidates
+            if _visible_path(p) and _within_depth(p)
         )
 
         if not matches:

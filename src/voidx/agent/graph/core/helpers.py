@@ -111,25 +111,6 @@ def _invalidate_tui(host: object) -> None:
         invalidate()
 
 
-def _agent_static_tool_defs(agent: AgentDef | None, all_tool_defs: list[dict]) -> list[dict]:
-    """Apply AgentDef's static tool catalog visibility.
-
-    This is not runtime persona/workflow policy. Runtime policy is enforced by
-    the tool-engine during authorization; this only prevents tools outside the
-    current agent identity's declared catalog from being advertised to the LLM.
-    """
-    if agent is None:
-        return all_tool_defs
-    agent_tool_ids = set(agent.tools)
-    mcp_allowed = bool(agent.mcp_tools)
-    return [
-        tool_def
-        for tool_def in all_tool_defs
-        if (
-            tool_def["function"]["name"] in agent_tool_ids
-            or (mcp_allowed and tool_def["function"]["name"].startswith("mcp__"))
-        )
-    ]
 
 
 def _task_state_for_context(value: object, fallback: TaskState | None = None) -> TaskState:

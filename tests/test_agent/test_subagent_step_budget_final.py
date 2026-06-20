@@ -272,7 +272,6 @@ async def test_subagent_adds_last_tool_step_hint_to_payload_only(tmp_path, monke
             name="explore",
             description="test",
             when_to_use="test",
-            tools=["fake_tool"],
             can_write=False,
             can_delegate=False,
         ),
@@ -303,6 +302,9 @@ async def test_subagent_final_step_fallback_does_not_leak_hint_to_sub_messages(t
     class FakeToolRegistry:
         def filtered_copy(self, _allowed_ids):
             return self
+
+        def ids(self):
+            return ["read"]
 
         def tools_for_llm(self):
             return [{
@@ -341,7 +343,6 @@ async def test_subagent_final_step_fallback_does_not_leak_hint_to_sub_messages(t
             name="explore",
             description="test",
             when_to_use="test",
-            tools=["fake_tool"],
             can_write=False,
             can_delegate=False,
         ),

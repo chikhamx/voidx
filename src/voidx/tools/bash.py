@@ -115,6 +115,23 @@ class BashTool(BaseTool):
         if blocked:
             return ToolResult(output=blocked, metadata={"command": inp.command, "blocked": True})
 
+        hint = try_hint(inp.command)
+        if hint is not None:
+            return ToolResult(
+                title=f"Bash route hint: {inp.command}",
+                output=(
+                    f"[{hint.ui_label}]\n"
+                    "Command not executed because a specialized tool is available."
+                ),
+                summary="route hint",
+                metadata={
+                    "command": inp.command,
+                    "skipped": True,
+                    "route_hint": {"tool_id": hint.tool_id, "command": inp.command},
+                },
+                next_step_hint=hint.llm_hint,
+            )
+
         try:
             proc = await asyncio.create_subprocess_shell(
                 inp.command,
@@ -158,16 +175,5 @@ class BashTool(BaseTool):
                 "stderr_size": len(stderr) if stderr else 0,
             },
         )
-
-        hint = try_hint(inp.command)
-        if hint is not None:
-            result = ToolResult(
-                title=result.title,
-                output=result.output + f"\n[{hint.ui_label}]",
-                summary=result.summary,
-                metadata={**result.metadata, "route_hint": {"tool_id": hint.tool_id, "command": inp.command}},
-                diff=result.diff,
-                next_step_hint=hint.llm_hint,
-            )
 
         return result

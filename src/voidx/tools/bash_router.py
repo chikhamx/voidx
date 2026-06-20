@@ -36,9 +36,38 @@ def try_hint(command: str) -> RouteHint | None:
 
 def _shell_words(command: str) -> list[str]:
     try:
-        return shlex.split(command)
+        lexer = shlex.shlex(command, posix=True, punctuation_chars=True)
+        lexer.whitespace_split = True
+        return list(lexer)
     except ValueError:
         return []
+
+
+def _has_shell_expansion(command: str) -> bool:
+    """Return true for unquoted shell variable/command expansion markers."""
+    in_single = False
+    in_double = False
+    escaped = False
+    for i, ch in enumerate(command):
+        if escaped:
+            escaped = False
+            continue
+        if ch == "\\":
+            escaped = True
+            continue
+        if ch == "'" and not in_double:
+            in_single = not in_single
+            continue
+        if ch == '"' and not in_single:
+            in_double = not in_double
+            continue
+        if ch == "`" and not in_single:
+            return True
+        if ch == "$" and not in_single:
+            nxt = command[i + 1:i + 2]
+            if nxt and (nxt == "(" or nxt == "{" or nxt == "_" or nxt.isalnum()):
+                return True
+    return False
 
 
 
@@ -72,6 +101,30 @@ _UNHINTABLE_GIT_SUBCOMMANDS = frozenset({
     "submodule", "filter-branch", "bisect",
 })
 
+_GIT_GLOBAL_OPTIONS_WITH_VALUE = frozenset({
+    "-C", "-c", "--git-dir", "--work-tree", "--namespace", "--exec-path",
+})
+
+
+def _git_subcommand(words: list[str]) -> tuple[str, list[str]]:
+    index = 1
+    while index < len(words):
+        word = words[index]
+        if word in _GIT_GLOBAL_OPTIONS_WITH_VALUE:
+            index += 2
+            continue
+        if any(word.startswith(f"{option}=") for option in _GIT_GLOBAL_OPTIONS_WITH_VALUE if option.startswith("--")):
+            index += 1
+            continue
+        if word == "--":
+            index += 1
+            continue
+        if word.startswith("-"):
+            index += 1
+            continue
+        return word, words[index + 1:]
+    return "", []
+
 
 def _try_hint_impl(command: str) -> RouteHint | None:
     stripped = command.strip()
@@ -83,11 +136,9 @@ def _try_hint_impl(command: str) -> RouteHint | None:
     # Only strip if there's exactly one && (cd && cmd1 && cmd2 is still excluded).
     stripped = _strip_cd_prefix(stripped)
 
-    if ";" in stripped or "$" in stripped:
+    if ";" in stripped or _has_shell_expansion(stripped):
         return None
     if _RE_AMP.search(stripped):
-        return None
-    if "`" in stripped or "$(" in stripped:
         return None
 
     words = _shell_words(stripped)
@@ -95,7 +146,7 @@ def _try_hint_impl(command: str) -> RouteHint | None:
         return None
 
     # "|" inside quotes is not a pipe — check after shell splitting instead.
-    if "|" in stripped and "|" in words:
+    if any(w in {"|", "|&"} for w in words):
         return None
 
     prog = words[0].lower()
@@ -123,8 +174,9 @@ def _try_hint_impl(command: str) -> RouteHint | None:
 # ---------------------------------------------------------------------------
 
 def _hint_git(stripped: str, words: list[str]) -> RouteHint | None:
-    subcommand = words[1]
-    rest = words[2:]
+    subcommand, rest = _git_subcommand(words)
+    if not subcommand:
+        return None
     if subcommand in _UNHINTABLE_GIT_SUBCOMMANDS:
         return None
     if subcommand == "commit":
@@ -140,6 +192,7 @@ def _hint_git(stripped: str, words: list[str]) -> RouteHint | None:
         "restore": _hint_git_restore,
         "show": _hint_git_show,
         "switch": _hint_git_switch,
+        "tag": _hint_git_tag,
         "stash": _hint_git_stash,
     }
     hinter = mapping.get(subcommand)
@@ -177,7 +230,7 @@ def _hint_git_diff(rest: list[str]) -> RouteHint | None:
     pathspec: list[str] = []
     i = 0
     while i < len(rest):
-        if rest[i] == "--cached":
+        if rest[i] in ("--cached", "--staged"):
             cached = True
             i += 1
         elif rest[i] == "--" and i + 1 < len(rest):
@@ -321,11 +374,38 @@ def _hint_git_branch(rest: list[str]) -> RouteHint | None:
             tool_id="git", ui_label="→ git",
             llm_hint='Prefer git(command="branch_list", args={"all": true}) for structured JSON output.',
         )
-    return None
+    if rest[0] in ("-d", "-D", "--delete"):
+        force = rest[0] == "-D"
+        if len(rest) != 2 or rest[1].startswith("-"):
+            return None
+        args_parts = [f'"name": "{rest[1]}"']
+        if force:
+            args_parts.append('"force": true')
+        return RouteHint(
+            tool_id="git", ui_label="→ git",
+            llm_hint=f'Prefer git(command="branch_delete", args={{{", ".join(args_parts)}}}) for permission-scoped git operations.',
+        )
+    if rest[0].startswith("-"):
+        return None
+    name = rest[0]
+    start_point = ""
+    if len(rest) > 2:
+        return None
+    if len(rest) == 2:
+        if rest[1].startswith("-"):
+            return None
+        start_point = rest[1]
+    args_parts = [f'"name": "{name}"']
+    if start_point:
+        args_parts.append(f'"start_point": "{start_point}"')
+    return RouteHint(
+        tool_id="git", ui_label="→ git",
+        llm_hint=f'Prefer git(command="branch_create", args={{{", ".join(args_parts)}}}) for permission-scoped git operations.',
+    )
 
 
 def _hint_git_remote(rest: list[str]) -> RouteHint | None:
-    if rest == ["-v"]:
+    if rest in (["-v"], ["--verbose"]):
         return RouteHint(
             tool_id="git", ui_label="→ git",
             llm_hint='Prefer git(command="remote_list") for structured JSON output.',
@@ -337,10 +417,18 @@ def _hint_git_add(rest: list[str]) -> RouteHint | None:
     if not rest:
         return None
     paths: list[str] = []
-    for a in rest:
+    i = 0
+    while i < len(rest):
+        a = rest[i]
+        if a == "--":
+            paths.extend(rest[i + 1:])
+            break
         if a.startswith("-"):
             return None
         paths.append(a)
+        i += 1
+    if not paths:
+        return None
     return RouteHint(
         tool_id="git", ui_label="→ git",
         llm_hint=f'Prefer git(command="add", args={{"paths": {paths}}}) for permission-scoped git operations.',
@@ -399,6 +487,9 @@ def _hint_git_restore(rest: list[str]) -> RouteHint | None:
         if rest[i] == "--staged":
             staged = True
             i += 1
+        elif rest[i] == "--":
+            paths.extend(rest[i + 1:])
+            break
         elif rest[i].startswith("-"):
             return None
         else:
@@ -517,17 +608,33 @@ def _hint_git_tag(rest: list[str]) -> RouteHint | None:
     if rest[0].startswith("-"):
         return None
     name = rest[0]
-    args_parts = [f'"name": "{name}"']
+    ref = ""
+    message = ""
+    force = False
     i = 1
     while i < len(rest):
-        if rest[i] == "-a" or rest[i] == "-f":
+        if rest[i] == "-a":
+            i += 1
+        elif rest[i] == "-f":
+            force = True
             i += 1
         elif rest[i] == "-m" and i + 1 < len(rest):
+            message = rest[i + 1]
             i += 2
         elif rest[i].startswith("-"):
             return None
-        else:
+        elif not ref:
+            ref = rest[i]
             i += 1
+        else:
+            return None
+    args_parts = [f'"name": "{name}"']
+    if ref:
+        args_parts.append(f'"ref": "{ref}"')
+    if message:
+        args_parts.append(f'"message": "{message}"')
+    if force:
+        args_parts.append('"force": true')
     return RouteHint(
         tool_id="git", ui_label="→ git",
         llm_hint=f'Prefer git(command="tag_create", args={{{", ".join(args_parts)}}}) for permission-scoped git operations.',
@@ -743,20 +850,16 @@ _RE_HEREDOC_MARKER = re.compile(r"<<\s*['\"]?(\w+)['\"]?")
 
 
 def _hint_write_heredoc(stripped: str) -> RouteHint | None:
-    is_append = ">>" in stripped
-    redirect_op = ">>" if is_append else ">"
+    words = _shell_words(stripped)
     path = None
+    is_append = False
+    for i, word in enumerate(words):
+        if word in (">", ">>") and i + 1 < len(words):
+            is_append = word == ">>"
+            path = words[i + 1]
+            break
 
-    if redirect_op in stripped and "<<" in stripped:
-        redirect_idx = stripped.index(redirect_op)
-        heredoc_idx = stripped.index("<<")
-        if redirect_idx < heredoc_idx:
-            between = stripped[redirect_idx + len(redirect_op):heredoc_idx].strip()
-            path = between.strip("'\"")
-        else:
-            return None
-
-    if not path:
+    if path is None:
         return None
 
     marker_match = _RE_HEREDOC_MARKER.search(stripped)
@@ -800,11 +903,25 @@ def _hint_find(words: list[str]) -> RouteHint | None:
         return None
     args = words[1:]
     name_pattern = None
+    ignore_case = False
+    max_depth = None
     base_dir = "."
     i = 0
     while i < len(args):
         if args[i] == "-name" and i + 1 < len(args):
             name_pattern = args[i + 1]
+            i += 2
+        elif args[i] == "-iname" and i + 1 < len(args):
+            name_pattern = args[i + 1]
+            ignore_case = True
+            i += 2
+        elif args[i] == "-maxdepth" and i + 1 < len(args):
+            try:
+                max_depth = int(args[i + 1])
+            except ValueError:
+                return None
+            if max_depth < 0:
+                return None
             i += 2
         elif args[i] == "-type" and i + 1 < len(args):
             if args[i + 1] != "f":
@@ -818,9 +935,14 @@ def _hint_find(words: list[str]) -> RouteHint | None:
     if name_pattern is None:
         return None
     glob_pattern = f"**/{name_pattern}" if base_dir == "." else f"{base_dir}/**/{name_pattern}"
+    parts = [f'pattern="{glob_pattern}"']
+    if ignore_case:
+        parts.append("ignore_case=True")
+    if max_depth is not None:
+        parts.append(f"max_depth={max_depth}")
     return RouteHint(
         tool_id="glob", ui_label="→ glob",
-        llm_hint=f'Prefer glob(pattern="{glob_pattern}") — skips .git, node_modules, and build dirs automatically.',
+        llm_hint=f'Prefer glob({", ".join(parts)}) — skips .git, node_modules, and build dirs automatically.',
     )
 
 
@@ -832,6 +954,22 @@ _RG_TYPE_MAP = {
     "py": "*.py", "js": "*.js", "ts": "*.ts",
     "rs": "*.rs", "go": "*.go", "java": "*.java", "rb": "*.rb",
 }
+
+
+def _parse_grep_short_flags(flags: str) -> dict[str, bool] | None:
+    parsed = {"recursive": False, "line_number": False, "ignore_case": False, "whole_word": False}
+    for flag in flags:
+        if flag in ("r", "R"):
+            parsed["recursive"] = True
+        elif flag == "n":
+            parsed["line_number"] = True
+        elif flag == "i":
+            parsed["ignore_case"] = True
+        elif flag == "w":
+            parsed["whole_word"] = True
+        else:
+            return None
+    return parsed
 
 
 def _hint_grep(words: list[str]) -> RouteHint | None:
@@ -850,8 +988,6 @@ def _hint_grep(words: list[str]) -> RouteHint | None:
     while i < len(args):
         a = args[i]
         if a in ("-r", "-R", "-n", "--line-number"):
-            i += 1
-        elif len(a) > 2 and a.startswith("-") and not a.startswith("--") and all(c in "rRn" for c in a[1:]):
             i += 1
         elif a == "--include" and i + 1 < len(args):
             include = args[i + 1]
@@ -877,6 +1013,11 @@ def _hint_grep(words: list[str]) -> RouteHint | None:
         elif a in ("-w", "--word-regexp"):
             whole_word = True
             i += 1
+        elif a == "-e" and i + 1 < len(args):
+            if pattern is not None:
+                return None
+            pattern = args[i + 1]
+            i += 2
         elif a in ("-C", "--context") and i + 1 < len(args):
             try:
                 context_lines = int(args[i + 1])
@@ -912,6 +1053,13 @@ def _hint_grep(words: list[str]) -> RouteHint | None:
                 before_context = int(a[2:])
             except ValueError:
                 return None
+            i += 1
+        elif len(a) > 2 and a.startswith("-") and not a.startswith("--"):
+            parsed_flags = _parse_grep_short_flags(a[1:])
+            if parsed_flags is None:
+                return None
+            ignore_case = ignore_case or parsed_flags["ignore_case"]
+            whole_word = whole_word or parsed_flags["whole_word"]
             i += 1
         elif a.startswith("-") and a not in ("-e",):
             return None

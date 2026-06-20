@@ -37,7 +37,6 @@ from voidx.runtime.ui import (
 )
 
 from .helpers import (
-    _agent_static_tool_defs,
     _invalidate_tui,
     _merge_workflow_runs,
     _persona_for_workflow_runs,
@@ -159,8 +158,7 @@ class GraphLlmMixin:
                 "should_continue": False,
             }
 
-        agent = get_agent("voidx")
-        tool_defs = _agent_static_tool_defs(agent, self.tools.tools_for_llm())
+        tool_defs = self.tools.tools_for_llm()
         runtime_task_state = _task_state_for_context(
             state.get("task_state"),
             getattr(self, "_task_state", None),

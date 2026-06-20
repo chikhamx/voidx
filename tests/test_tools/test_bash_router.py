@@ -228,6 +228,28 @@ class TestGitBranchFlags:
         assert "all" not in h.llm_hint
 
 
+class TestGitBranchMutations:
+    """git branch create/delete forms should route to structured git operations."""
+
+    def test_branch_create(self):
+        h = try_hint("git branch feature-x")
+        assert h is not None
+        assert "branch_create" in h.llm_hint
+        assert '"name": "feature-x"' in h.llm_hint
+
+    def test_branch_delete(self):
+        h = try_hint("git branch -d feature-x")
+        assert h is not None
+        assert "branch_delete" in h.llm_hint
+        assert '"name": "feature-x"' in h.llm_hint
+
+    def test_branch_force_delete(self):
+        h = try_hint("git branch -D feature-x")
+        assert h is not None
+        assert "branch_delete" in h.llm_hint
+        assert '"force": true' in h.llm_hint
+
+
 class TestGitDiffSeparator:
     """git diff -- <paths> must extract pathspec after --."""
 
@@ -241,6 +263,11 @@ class TestGitDiffSeparator:
         assert h is not None
         assert "cached" in h.llm_hint
         assert "src/main.py" in h.llm_hint
+
+    def test_diff_staged_alias(self):
+        h = try_hint("git diff --staged")
+        assert h is not None
+        assert '"cached": true' in h.llm_hint
 
 
 # ---------------------------------------------------------------------------
@@ -260,6 +287,62 @@ class TestGitDoubleDashPaths:
         h = try_hint("git log -- src/main.py")
         assert h is not None
         assert "src/main.py" in h.llm_hint
+
+    def test_add_double_dash(self):
+        h = try_hint("git add -- src/main.py")
+        assert h is not None
+        assert "src/main.py" in h.llm_hint
+
+    def test_restore_double_dash(self):
+        h = try_hint("git restore -- src/main.py")
+        assert h is not None
+        assert "src/main.py" in h.llm_hint
+
+
+class TestGitGlobalOptions:
+    """git global options before the subcommand should not suppress hints."""
+
+    def test_git_c_status(self):
+        h = try_hint("git -C /tmp status")
+        assert h is not None
+        assert "status" in h.llm_hint
+
+    def test_git_no_pager_diff(self):
+        h = try_hint("git --no-pager diff")
+        assert h is not None
+        assert "diff" in h.llm_hint
+
+    def test_git_config_log(self):
+        h = try_hint("git -c core.quotepath=false log -5")
+        assert h is not None
+        assert '"limit": 5' in h.llm_hint
+
+
+class TestGitTagHints:
+    """git tag forms should route to structured tag operations."""
+
+    def test_tag_list(self):
+        h = try_hint("git tag")
+        assert h is not None
+        assert "tag_list" in h.llm_hint
+
+    def test_tag_list_pattern(self):
+        h = try_hint("git tag -l 'v*'")
+        assert h is not None
+        assert "tag_list" in h.llm_hint
+        assert '"pattern": "v*"' in h.llm_hint
+
+    def test_tag_delete(self):
+        h = try_hint("git tag -d v1.0.0")
+        assert h is not None
+        assert "tag_delete" in h.llm_hint
+
+    def test_tag_create_with_ref(self):
+        h = try_hint("git tag v1.0.0 HEAD")
+        assert h is not None
+        assert "tag_create" in h.llm_hint
+        assert '"name": "v1.0.0"' in h.llm_hint
+        assert '"ref": "HEAD"' in h.llm_hint
 
 
 # ---------------------------------------------------------------------------
@@ -378,6 +461,25 @@ class TestGrepSupportedFlags:
         assert "*.min.js" in h.llm_hint
         assert "*.map" in h.llm_hint
 
+    def test_grep_short_flag_combo(self):
+        h = try_hint("grep -in pattern file.py")
+        assert h is not None
+        assert h.tool_id == "grep"
+        assert "ignore_case=True" in h.llm_hint
+        assert 'path="file.py"' in h.llm_hint
+
+    def test_grep_e_pattern(self):
+        h = try_hint("grep -e pattern file.py")
+        assert h is not None
+        assert h.tool_id == "grep"
+        assert 'pattern="pattern"' in h.llm_hint
+
+    def test_grep_single_quoted_regex_anchor(self):
+        h = try_hint("grep 'foo$' file.py")
+        assert h is not None
+        assert h.tool_id == "grep"
+        assert 'pattern="foo$"' in h.llm_hint
+
 # ---------------------------------------------------------------------------
 # Comprehensive: basic positive cases
 # ---------------------------------------------------------------------------
@@ -437,6 +539,18 @@ class TestBasicPositive:
         assert h is not None
         assert h.tool_id == "glob"
         assert "**/*.py" in h.llm_hint
+
+    def test_find_iname(self):
+        h = try_hint("find . -iname '*.py'")
+        assert h is not None
+        assert h.tool_id == "glob"
+        assert "ignore_case=True" in h.llm_hint
+
+    def test_find_maxdepth(self):
+        h = try_hint("find . -maxdepth 2 -name '*.py'")
+        assert h is not None
+        assert h.tool_id == "glob"
+        assert "max_depth=2" in h.llm_hint
 
     def test_grep_basic(self):
         h = try_hint("grep pattern file.py")
@@ -498,6 +612,18 @@ class TestEchoRedirectInContent:
         assert h.tool_id == "write"
         assert 'file_path="file.txt"' in h.llm_hint
 
+    def test_echo_redirect_without_spaces(self):
+        h = try_hint("echo 'hello'>file.txt")
+        assert h is not None
+        assert h.tool_id == "write"
+        assert 'file_path="file.txt"' in h.llm_hint
+
+    def test_echo_append_without_spaces(self):
+        h = try_hint("echo 'hello'>>file.txt")
+        assert h is not None
+        assert h.tool_id == "insert"
+        assert 'file_path="file.txt"' in h.llm_hint
+
 
 # ---------------------------------------------------------------------------
 # Regression: git log -N shorthand
@@ -531,6 +657,16 @@ class TestSedRangeDeleteHint:
         assert h is not None
         assert "<line" not in h.llm_hint
         assert "first read" in h.llm_hint
+
+
+class TestSedRegexAnchor:
+    """Single-quoted sed scripts containing $ regex anchors should still hint."""
+
+    def test_substitution_with_end_anchor(self):
+        h = try_hint("sed -i 's/foo$/bar/' file.py")
+        assert h is not None
+        assert h.tool_id == "replace"
+        assert "foo$" in h.llm_hint
 
 
 # ---------------------------------------------------------------------------

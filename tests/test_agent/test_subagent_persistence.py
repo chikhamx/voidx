@@ -189,6 +189,9 @@ async def test_run_subagent_persists_tool_results_to_subagent_jsonl(tmp_path, mo
         def filtered_copy(self, _allowed_ids):
             return self
 
+        def ids(self):
+            return ["read"]
+
         def tools_for_llm(self):
             return [{"name": "read", "description": "read", "input_schema": {}}]
 
@@ -216,7 +219,6 @@ async def test_run_subagent_persists_tool_results_to_subagent_jsonl(tmp_path, mo
                 name="explore",
                 description="test",
                 when_to_use="test",
-                tools=["read"],
                 can_write=False,
                 can_delegate=False,
             ),
@@ -258,6 +260,9 @@ async def test_run_subagent_injects_failure_loop_guidance(tmp_path, monkeypatch)
         def filtered_copy(self, _allowed_ids):
             return self
 
+        def ids(self):
+            return ["read"]
+
         def tools_for_llm(self):
             return [{"name": "read", "description": "read", "input_schema": {}}]
 
@@ -294,7 +299,6 @@ async def test_run_subagent_injects_failure_loop_guidance(tmp_path, monkeypatch)
             name="explore",
             description="test",
             when_to_use="test",
-            tools=["read"],
             can_write=False,
             can_delegate=False,
         ),
@@ -325,6 +329,9 @@ async def test_run_subagent_terminates_after_no_progress_cycles(tmp_path, monkey
     class FakeToolRegistry:
         def filtered_copy(self, _allowed_ids):
             return self
+
+        def ids(self):
+            return ["checkpoint", "workflow"]
 
         def tools_for_llm(self):
             return [
@@ -362,7 +369,6 @@ async def test_run_subagent_terminates_after_no_progress_cycles(tmp_path, monkey
             name="explore",
             description="test",
             when_to_use="test",
-            tools=["checkpoint", "workflow"],
             can_write=False,
             can_delegate=False,
         ),
