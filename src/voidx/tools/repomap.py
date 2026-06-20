@@ -50,7 +50,8 @@ class RepoMapTool(BaseTool):
 
     async def execute(self, args: dict, ctx: ToolContext) -> ToolResult:
         inp = RepoMapInput.model_validate(args)
-        base = Path(ctx.workspace)
+        base = Path(ctx.workspace).resolve()
+        extra_resolved = [Path(ep).expanduser().resolve() for ep in (ctx.sandbox_extra_paths or [])]
         if inp.path:
             root = resolve_safe(ctx.workspace, inp.path, ctx.sandbox_extra_paths)
             if root is None:
@@ -70,7 +71,7 @@ class RepoMapTool(BaseTool):
         total_tokens = 0
 
         for f in files:
-            rel = str(f.relative_to(base)).replace("\\", "/")
+            rel = _display_path(f, base, extra_resolved)
 
             if detail == "overview":
                 symbols = _extract_top_level(f)
@@ -95,17 +96,33 @@ class RepoMapTool(BaseTool):
         if not entries:
             return ToolResult(output=f"No recognizable symbols found in: {root}")
 
+        root_display = _display_path(root, base, extra_resolved)
         return ToolResult(
-            title=f"Repo map: {root.relative_to(base)} ({len(entries)} files)",
+            title=f"Repo map: {root_display} ({len(entries)} files)",
             output="\n".join(entries),
             summary=f"{len(entries)} files mapped",
             metadata={
-                "root": str(root.relative_to(base)),
+                "root": root_display,
                 "files": len(entries),
                 "detail": detail,
             },
         )
 
+
+
+def _display_path(path: Path, base: Path, extra_roots: list[Path]) -> str:
+    """Return a display-friendly path: relative to workspace if inside, relative to
+    an extra root if inside one, otherwise absolute."""
+    try:
+        return path.relative_to(base).as_posix()
+    except ValueError:
+        pass
+    for extra in extra_roots:
+        try:
+            return path.relative_to(extra).as_posix()
+        except ValueError:
+            pass
+    return str(path)
 
 # ── file collection ──────────────────────────────────────────────────────────
 

@@ -5,7 +5,7 @@ from __future__ import annotations
 import ipaddress
 import socket
 from dataclasses import dataclass
-from urllib.parse import urlparse
+from urllib.parse import urljoin, urlparse
 
 import httpx
 from pydantic import BaseModel, Field
@@ -34,15 +34,28 @@ _PRIVATE_RANGES = (
 
 
 def _is_private_host(host: str) -> bool:
-    """Check if a hostname or IP resolves to a private/internal address."""
+    """Check if a hostname or IP resolves to a private/internal address.
+
+    Uses getaddrinfo to check ALL A/AAAA records (not just the first one),
+    preventing DNS rebinding attacks where one record is public and another is private.
+    """
     try:
         addr = ipaddress.ip_address(host)
+        return any(addr in net for net in _PRIVATE_RANGES)
     except ValueError:
+        pass
+    try:
+        addrinfos = socket.getaddrinfo(host, None, socket.AF_UNSPEC, socket.SOCK_STREAM)
+    except (socket.gaierror, OSError):
+        return False
+    for _, _, _, _, sockaddr in addrinfos:
         try:
-            addr = ipaddress.ip_address(socket.gethostbyname(host))
-        except (socket.gaierror, OSError):
-            return False
-    return any(addr in net for net in _PRIVATE_RANGES)
+            addr = ipaddress.ip_address(sockaddr[0])
+        except (ValueError, IndexError):
+            continue
+        if any(addr in net for net in _PRIVATE_RANGES):
+            return True
+    return False
 
 
 class WebFetchInput(BaseModel):
@@ -145,12 +158,26 @@ class WebFetchTool(BaseTool):
             )
 
 
+_MAX_REDIRECTS = 10
+
+
 async def _fetch_url(url: str) -> _FetchResponse:
-    async with httpx.AsyncClient(timeout=20, follow_redirects=True) as client:
-        resp = await client.get(url, headers={"User-Agent": "voidx/0.1"})
+    async with httpx.AsyncClient(timeout=20, follow_redirects=False) as client:
+        current_url = url
+        for _ in range(_MAX_REDIRECTS + 1):
+            resp = await client.get(current_url, headers={"User-Agent": "voidx/0.1"})
+            if resp.status_code not in (301, 302, 303, 307, 308):
+                break
+            location = resp.headers.get("location")
+            if not location:
+                break
+            current_url = urljoin(current_url, location)
+            redirect_host = urlparse(current_url).hostname
+            if redirect_host and _is_private_host(redirect_host):
+                raise ValueError(f"redirect target {redirect_host} resolves to a private/internal address")
         resp.raise_for_status()
         return _FetchResponse(
-            url=str(resp.url),
+            url=current_url,
             status_code=resp.status_code,
             text=resp.text,
             content_type=resp.headers.get("content-type", ""),

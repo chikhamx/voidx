@@ -823,6 +823,24 @@ async def _git_push(args: dict[str, Any], ctx: ToolContext, repo: GitRepo) -> To
     remote_check = await _run_git(repo, ["remote", "get-url", inp.remote], read_only=True)
     if remote_check["returncode"] != 0:
         return _result("push", ctx, repo=repo, ok=False, error="remote_not_found")
+
+    _PROTECTED_BRANCHES = {"main", "master"}
+
+    if inp.force:
+        if inp.all_branches:
+            return _result("push", ctx, repo=repo, ok=False,
+                           error="force push with --all is blocked: would force-push protected branches",
+                           data={"remote": inp.remote, "force": True, "all_branches": True})
+        target_branch = inp.branch
+        if not target_branch:
+            head_proc = await _run_git(repo, ["symbolic-ref", "--short", "HEAD"], read_only=True)
+            if head_proc["returncode"] == 0:
+                target_branch = head_proc["stdout"].strip()
+        if target_branch and target_branch in _PROTECTED_BRANCHES:
+            return _result("push", ctx, repo=repo, ok=False,
+                           error=f"force push to protected branch '{target_branch}' is blocked",
+                           data={"remote": inp.remote, "branch": target_branch, "force": True})
+
     argv = ["push"]
     if inp.force:
         argv.append("--force")

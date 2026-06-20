@@ -1160,26 +1160,59 @@ async def test_git_push_force(tmp_path):
     _run(repo, "commit", "-m", "initial")
     _run(repo, "push", "origin", _default_branch(repo))
 
-    # diverge remote
-    repo2 = _clone_repo(remote, tmp_path / "repo2")
-    (repo2 / "file.txt").write_text("changed\n", encoding="utf-8")
-    _run(repo2, "add", "file.txt")
-    _run(repo2, "commit", "-m", "remote change")
-    _run(repo2, "push", "origin", _default_branch(repo2))
-
-    # diverge local
+    # switch to feature branch so force push is allowed
+    _run(repo, "checkout", "-b", "feature")
     (repo / "other.txt").write_text("local\n", encoding="utf-8")
     _run(repo, "add", "other.txt")
     _run(repo, "commit", "-m", "local change")
 
     result = await GitTool().execute(
-        {"command": "push", "args": {"remote": "origin", "force": True}},
+        {"command": "push", "args": {"remote": "origin", "force": True, "branch": "feature"}},
         ToolContext(workspace=str(repo)),
     )
 
     payload = _payload(result)
     assert payload["ok"] is True
     assert payload["data"]["force"] is True
+
+
+@pytest.mark.asyncio
+async def test_git_push_force_blocked_on_protected_branch(tmp_path):
+    remote = _init_remote(tmp_path / "remote")
+    repo = _clone_repo(remote, tmp_path / "repo")
+    (repo / "file.txt").write_text("hello\n", encoding="utf-8")
+    _run(repo, "add", "file.txt")
+    _run(repo, "commit", "-m", "initial")
+    _run(repo, "push", "origin", _default_branch(repo))
+
+    branch = _default_branch(repo)
+    result = await GitTool().execute(
+        {"command": "push", "args": {"remote": "origin", "force": True, "branch": branch}},
+        ToolContext(workspace=str(repo)),
+    )
+
+    payload = _payload(result)
+    assert payload["ok"] is False
+    assert "protected" in payload["error"].lower()
+
+
+@pytest.mark.asyncio
+async def test_git_push_force_all_branches_blocked(tmp_path):
+    remote = _init_remote(tmp_path / "remote")
+    repo = _clone_repo(remote, tmp_path / "repo")
+    (repo / "file.txt").write_text("hello\n", encoding="utf-8")
+    _run(repo, "add", "file.txt")
+    _run(repo, "commit", "-m", "initial")
+    _run(repo, "push", "origin", _default_branch(repo))
+
+    result = await GitTool().execute(
+        {"command": "push", "args": {"remote": "origin", "force": True, "all_branches": True}},
+        ToolContext(workspace=str(repo)),
+    )
+
+    payload = _payload(result)
+    assert payload["ok"] is False
+    assert "protected" in payload["error"].lower()
 
 
 @pytest.mark.asyncio
