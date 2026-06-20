@@ -236,6 +236,8 @@ def _hint_git_diff(rest: list[str]) -> RouteHint | None:
         elif rest[i] == "--" and i + 1 < len(rest):
             pathspec = rest[i + 1:]
             break
+        elif rest[i] in ("--stat", "--shortstat", "--name-only"):
+            i += 1
         elif rest[i].startswith("-"):
             return None
         elif not ref:

@@ -6,7 +6,7 @@ from typing import TYPE_CHECKING, Any
 from langchain_core.messages import AIMessage, BaseMessage, HumanMessage, RemoveMessage
 from langgraph.graph.message import REMOVE_ALL_MESSAGES
 
-from voidx.agent.agents import PLAN_MODE_APPEND, get_agent
+from voidx.agent.agents import get_agent
 from voidx.agent.prompts import BASE_SYSTEM, WORKFLOW_RUNTIME, persona_prompt
 from voidx.agent.runtime_context import (
     ContextCompilerCache,
@@ -88,7 +88,6 @@ class GraphLlmMixin:
             workflow_context.runs,
         )
         runtime_persona = _persona_for_workflow_runs(workflow_runs, fallback=runtime_persona)
-        mode_prompt = PLAN_MODE_APPEND if InteractionMode.parse(interaction_mode) == InteractionMode.PLAN else ""
         summary = self._pending_summary or self._compaction_summary
         self._pending_summary = None
 
@@ -98,7 +97,6 @@ class GraphLlmMixin:
             base_system_prompt=BASE_SYSTEM,
             workflow_runtime=WORKFLOW_RUNTIME,
             persona_prompt=rendered_persona_prompt,
-            mode_prompt=mode_prompt,
             persona=runtime_persona,
             interaction_mode=interaction_mode,
             instructions=instructions,

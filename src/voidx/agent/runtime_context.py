@@ -140,8 +140,6 @@ class RuntimeContextBuilder:
         base_system_prompt: str | BaseSystemPrompt | None = None,
         workflow_runtime: WorkflowRuntimePrompt | str | None = None,
         persona_prompt: str = "",
-        mode_prompt: str = "",
-        runtime_constraints: str = "",
         persona: str,
         interaction_mode: str | InteractionMode,
         instructions: Iterable[str] = (),
@@ -160,8 +158,6 @@ class RuntimeContextBuilder:
         self.base_system_prompt = _render_prompt_input(base_system_prompt)
         self.workflow_runtime = _render_prompt_input(workflow_runtime)
         self.persona_prompt = persona_prompt.strip()
-        self.mode_prompt = mode_prompt.strip()
-        self.runtime_constraints = runtime_constraints.strip()
         self.persona = persona.strip()
         self.interaction_mode = InteractionMode.parse(interaction_mode)
         self.instructions = [item for item in instructions if item.strip()]
@@ -215,10 +211,6 @@ class RuntimeContextBuilder:
         if self.persona_prompt:
             persona_section = "Persona" if self.structured_prompts else "Agent Role"
             sections.append(ContextSection(name=persona_section, content=self.persona_prompt))
-        if self.runtime_constraints:
-            sections.append(ContextSection(name="Runtime Constraints", content=self.runtime_constraints))
-        if self.mode_prompt:
-            sections.append(ContextSection(name="Mode", content=self.mode_prompt))
         if self.workflow_runtime:
             sections.append(ContextSection(
                 name="Workflow Runtime",

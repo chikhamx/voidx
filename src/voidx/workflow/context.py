@@ -14,10 +14,7 @@ WORKFLOW_CONTEXT_SCOPE = "structured-workflow-runtime"
 
 _WORKFLOW_CONTEXT_NOTE = (
     "These are structured workflow definitions owned by the voidx runtime. "
-    "The full workflow definitions are kept stable for prompt-cache reuse. "
-    "Use Current Task State to determine which nodes are active for this turn; "
-    "do not follow a node's gates or workflow steps unless Current Task State "
-    "lists it as active."
+    "The full workflow definitions are kept stable for prompt-cache reuse."
 )
 
 

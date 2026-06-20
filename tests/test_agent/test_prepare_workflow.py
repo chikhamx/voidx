@@ -265,7 +265,8 @@ async def test_implement_subagent_injects_workflow_nodes(tmp_path, monkeypatch):
     captured: dict[str, list] = {}
 
     class FakeModel:
-        def bind_tools(self, _tool_defs):
+        def bind_tools(self, tool_defs):
+            captured["tool_ids"] = [tool.get("name") for tool in tool_defs]
             return self
 
     async def fake_stream_llm(_model, messages, _renderer, _protocol):
@@ -314,9 +315,20 @@ async def test_implement_subagent_injects_workflow_nodes(tmp_path, monkeypatch):
     assert "## Persona\n## Persona Model" in system_prompt
     assert "## Workflow Runtime" in system_prompt
     assert "## Workflow Node:" in system_prompt
-    assert "## Runtime Constraints" in system_prompt
-    assert "Do not interact with the user directly." in system_prompt
-    assert "Do not start another child agent." in system_prompt
+    assert "## Runtime Constraints" not in system_prompt
+    assert "agent" not in captured["tool_ids"]
+    assert "clarify" not in captured["tool_ids"]
+    assert "checkpoint" not in captured["tool_ids"]
+    task_payload = next(
+        message.content
+        for message in captured["messages"]
+        if isinstance(message, HumanMessage)
+        and "Implement the feature" in str(message.content)
+    )
+    assert "Child run constraints:" not in task_payload
+    assert "Do not interact with the user directly." not in task_payload
+    assert "Do not start another child agent." not in task_payload
+    assert "Result contract:" in task_payload
     assert all(
         not (
             isinstance(message, HumanMessage)
@@ -342,5 +354,3 @@ async def test_implement_subagent_injects_workflow_nodes(tmp_path, monkeypatch):
         not (isinstance(message, HumanMessage) and "## Runtime State" in str(message.content))
         for message in captured["messages"]
     )
-
-

@@ -15,24 +15,6 @@ from __future__ import annotations
 
 from pydantic import BaseModel
 
-CHILD_RUN_CONSTRAINTS = """- Follow the runtime persona shown in Current Task State.
-- Execute only the delegated task in this isolated child run.
-- Do not interact with the user directly.
-- Do not start another child agent.
-- If a tool call fails, report the error clearly and attempt an alternative approach if one exists.
-- Follow the structured result format specified in the agent tool call for your final output.
-- Runtime workflow gates take precedence over persona prompts and delegation rules."""
-
-# Plan mode prompt — injected when plan_mode=True
-PLAN_MODE_APPEND = """
-## PLAN MODE ACTIVE
-You are in plan mode. Write/edit/delete tools are BLOCKED at the permission level.
-- You CAN: read, glob, grep, bash (non-destructive commands only; no file writes, installs, or system changes), agent(plan/explore/review)
-- You CANNOT: write, edit, delete, agent(implement), bash (destructive)
-- Focus on analysis, design, and creating structured plans.
-- When ready to implement, tell the user to exit plan mode.
-"""
-
 # ── agent definitions ─────────────────────────────────────────────────────
 
 class AgentDef(BaseModel):

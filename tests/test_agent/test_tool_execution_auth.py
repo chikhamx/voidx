@@ -320,7 +320,7 @@ async def test_graph_authorization_blocks_lsp_format_in_plan_mode(tmp_path):
 
 
 @pytest.mark.asyncio
-async def test_prepare_injects_plan_mode_prompt(tmp_path):
+async def test_prepare_renders_plan_mode_constraint_without_mode_prompt(tmp_path):
     graph = _graph(tmp_path)
 
     async def empty_system():
@@ -341,7 +341,8 @@ async def test_prepare_injects_plan_mode_prompt(tmp_path):
     })
 
     assert isinstance(messages[0], SystemMessage)
-    assert "## Mode" in messages[0].content
-    assert "## PLAN MODE ACTIVE" in messages[0].content
-
+    assert "## Mode" not in messages[0].content
+    assert "## PLAN MODE ACTIVE" not in messages[0].content
+    assert "## Current Task State" in messages[-1].content
+    assert "plan mode blocks write/insert/replace/edit" in messages[-1].content
 

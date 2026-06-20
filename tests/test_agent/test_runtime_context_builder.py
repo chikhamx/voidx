@@ -52,9 +52,9 @@ def test_runtime_context_section_order_places_runtime_state_before_task_state(tm
         config=Config(workspace=str(tmp_path)),
         workspace=str(tmp_path),
         base_system_prompt="You are voidx.",
+        workflow_runtime="Workflow definitions.",
         persona="voidx",
         persona_prompt="Coordinate work.",
-        mode_prompt="Plan mode is active.",
         interaction_mode="goal",
         instructions=["Instructions from: AGENTS.md\nFollow project rules."],
         summary="Previous summary.",
@@ -62,8 +62,8 @@ def test_runtime_context_section_order_places_runtime_state_before_task_state(tm
 
     assert context.section_names() == [
         "Base System",
-        "Agent Role",
-        "Mode",
+        "Persona",
+        "Workflow Runtime",
         "Runtime State",
         "Project Facts",
         "Session Time",
@@ -73,10 +73,12 @@ def test_runtime_context_section_order_places_runtime_state_before_task_state(tm
 
     assert "Active Skills" not in context.render_task_context()
     system = context.render_system()
-    assert system.index("## Agent Role") < system.index("## Mode")
-    assert system.index("## Mode") < system.index("## Runtime State")
+    assert system.index("## Persona") < system.index("## Workflow Runtime")
+    assert system.index("## Workflow Runtime") < system.index("## Runtime State")
     assert system.index("## Runtime State") < system.index("## Project Facts")
     assert system.index("## Session Time") < system.index("## Long Summary")
+    assert "## Mode" not in system
+    assert "## Runtime Constraints" not in system
     assert "## Workspace Facts" not in system
     assert f"- Workspace: {tmp_path}" in system
     assert "- Platform:" in system
@@ -98,6 +100,8 @@ def test_runtime_context_system_omits_stable_workflow_dag_overview(tmp_path):
     assert "## Workflow DAG" not in system
     assert "Workflow node definitions" not in system
     assert "## Workflow Node:" not in system
+    assert "## Runtime Constraints" not in system
+    assert "## Mode" not in system
 
 
 def test_runtime_context_applies_task_context_before_current_user(tmp_path):
@@ -461,5 +465,3 @@ def test_runtime_context_migrates_task_overlay_from_tool_message_to_latest_messa
     assert isinstance(latest_ai.content, str)
     assert latest_ai.content.startswith("VOIDX_RUNTIME_CONTEXT")
     assert latest_ai.content.endswith("latest assistant reply")
-
-

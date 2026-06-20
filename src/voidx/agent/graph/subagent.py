@@ -7,12 +7,7 @@ import time
 
 from langchain_core.messages import AIMessage, HumanMessage, ToolMessage
 
-from voidx.agent.agents import (
-    CHILD_RUN_CONSTRAINTS,
-    PLAN_MODE_APPEND,
-    AgentDef,
-    child_run_agent_def,
-)
+from voidx.agent.agents import AgentDef, child_run_agent_def
 from voidx.agent.prompts import BASE_SYSTEM, WORKFLOW_RUNTIME, persona_prompt
 from voidx.agent.graph.runtime_guards import (
     RuntimeGuardState,
@@ -87,10 +82,9 @@ async def run_subagent(
     # Child agents inherit the full parent tool registry.
     # Access control is handled by the permission layer and workflow denied_tools.
     agent_tools = parent_tools or ToolRegistry()
+    blocked_child_tools = {"agent", "clarify", "checkpoint"}
     if not agent_def.can_delegate:
-        agent_tools = agent_tools.filtered_copy(
-            set(agent_tools.ids()) - {"agent"}
-        )
+        agent_tools = agent_tools.filtered_copy(set(agent_tools.ids()) - blocked_child_tools)
     model = create_chat_model(api_key, model_cfg)
     tool_defs = agent_tools.tools_for_llm()
     tool_defs = filter_unavailable_lsp_tools(tool_defs, lsp_manager)
@@ -103,7 +97,6 @@ async def run_subagent(
     context_config = config.model_copy(deep=True)
     context_config.model = model_cfg
     interaction_mode = InteractionMode.PLAN.value if persona == "plan" else InteractionMode.AUTO.value
-    mode_prompt = PLAN_MODE_APPEND if InteractionMode.parse(interaction_mode) == InteractionMode.PLAN else ""
     workflow_context = workflow_runtime_context or WorkflowRuntimeContext(instructions=[], active=[], content="", runs=[])
     context_cache = ContextCompilerCache()
     plan = goal_resolution.plan
@@ -122,8 +115,6 @@ async def run_subagent(
         base_system_prompt=BASE_SYSTEM,
         workflow_runtime=WORKFLOW_RUNTIME,
         persona_prompt=persona_prompt(),
-        runtime_constraints=CHILD_RUN_CONSTRAINTS,
-        mode_prompt=mode_prompt,
         persona=persona,
         interaction_mode=interaction_mode,
         workflow_runs=workflow_context.runs,
@@ -391,12 +382,12 @@ async def run_subagent(
 def _task_payload(task_description: str, result_contract) -> str:
     schema_name = str(getattr(result_contract, "schema_name", "") or "agent_result")
     result_format = str(getattr(result_contract, "format", "") or "").strip()
-    if not result_format:
-        return task_description
-    return (
-        f"{task_description}\n\n"
-        "Result contract:\n"
-        f"- schema_name: {schema_name}\n"
-        f"- format: {result_format}\n"
-        "Return the final answer using this contract."
-    )
+    parts = [task_description]
+    if result_format:
+        parts.append(
+            "Result contract:\n"
+            f"- schema_name: {schema_name}\n"
+            f"- format: {result_format}\n"
+            "Return the final answer using this contract."
+        )
+    return "\n\n".join(parts)

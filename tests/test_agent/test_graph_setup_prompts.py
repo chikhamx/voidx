@@ -183,13 +183,14 @@ def test_agent_tool_description_exposes_parallel_when_enabled(tmp_path):
     assert "run concurrently" in agent_def.description
 
 
-def test_orchestrator_prompt_mentions_delegation_gate():
+def test_agent_tool_description_owns_delegation_gate():
     prompt = BASE_SYSTEM.render()
+    tool_description = AgentTool(runner=None).description
     schema = AgentTool(runner=None).parameters_schema()
 
-    assert "Do not delegate single-file reads" in prompt
-    assert "simple searches" in prompt
-    assert "straightforward tasks you can do directly" in prompt
+    assert "Do not delegate single-file reads" not in prompt
+    assert "simple searches" in tool_description
+    assert "straightforward tasks you can do directly" in tool_description
     assert {
         "mode",
         "task",
@@ -212,7 +213,7 @@ def test_orchestrator_prompt_matches_agent_workflow_schema():
 
 def test_voidx_persona_prompt_declares_core_rules():
     assert "workflow gate takes precedence over persona prompts" in BASE_SYSTEM.render()
-    assert "Subagents do not interact with the user" in BASE_SYSTEM.render()
+    assert "Subagents do not interact with the user" not in BASE_SYSTEM.render()
     assert "Switch persona" in PERSONA_MODEL.render()
     assert "implement persona" not in PERSONA_MODEL.render()
 
@@ -341,4 +342,3 @@ def test_brainstorm_workflow_does_not_write_design():
 def test_internal_title_and_compaction_are_not_registered_agents():
     assert get_agent("compaction") is None
     assert get_agent("title") is None
-

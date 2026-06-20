@@ -2,6 +2,8 @@
 
 from __future__ import annotations
 
+import asyncio
+from contextlib import contextmanager
 import ipaddress
 import socket
 from dataclasses import dataclass
@@ -33,6 +35,24 @@ _PRIVATE_RANGES = (
 )
 
 
+class PrivateHostBlocked(OSError):
+    """Raised when a fetch resolves to a private/internal address."""
+
+
+_DNS_RESOLUTION_LOCK = asyncio.Lock()
+
+
+def _addrinfos_include_private(addrinfos) -> bool:
+    for _, _, _, _, sockaddr in addrinfos:
+        try:
+            addr = ipaddress.ip_address(sockaddr[0])
+        except (ValueError, IndexError):
+            continue
+        if any(addr in net for net in _PRIVATE_RANGES):
+            return True
+    return False
+
+
 def _is_private_host(host: str) -> bool:
     """Check if a hostname or IP resolves to a private/internal address.
 
@@ -48,14 +68,49 @@ def _is_private_host(host: str) -> bool:
         addrinfos = socket.getaddrinfo(host, None, socket.AF_UNSPEC, socket.SOCK_STREAM)
     except (socket.gaierror, OSError):
         return False
-    for _, _, _, _, sockaddr in addrinfos:
-        try:
-            addr = ipaddress.ip_address(sockaddr[0])
-        except (ValueError, IndexError):
-            continue
-        if any(addr in net for net in _PRIVATE_RANGES):
+    return _addrinfos_include_private(addrinfos)
+
+
+@contextmanager
+def _guard_private_dns():
+    original_getaddrinfo = socket.getaddrinfo
+
+    def guarded_getaddrinfo(host, *args, **kwargs):
+        addrinfos = original_getaddrinfo(host, *args, **kwargs)
+        if _addrinfos_include_private(addrinfos):
+            raise PrivateHostBlocked(f"{host} resolves to a private/internal address")
+        return addrinfos
+
+    socket.getaddrinfo = guarded_getaddrinfo
+    try:
+        yield
+    finally:
+        socket.getaddrinfo = original_getaddrinfo
+
+
+def _blocked_metadata(url: str, *, final_url: str | None = None) -> dict:
+    metadata = {"url": url, "blocked": True}
+    if final_url is not None:
+        metadata["final_url"] = final_url
+    return metadata
+
+
+def _contains_private_host_block(exc: BaseException) -> bool:
+    seen: set[int] = set()
+
+    def visit(value: BaseException | None) -> bool:
+        if value is None or id(value) in seen:
+            return False
+        seen.add(id(value))
+        if isinstance(value, PrivateHostBlocked):
             return True
-    return False
+        if hasattr(value, "exceptions"):
+            for item in getattr(value, "exceptions"):
+                if isinstance(item, BaseException) and visit(item):
+                    return True
+        return visit(value.__cause__) or visit(value.__context__)
+
+    return visit(exc)
 
 
 class WebFetchInput(BaseModel):
@@ -151,7 +206,17 @@ class WebFetchTool(BaseTool):
             )
             WEB_TOOL_CACHE.set(key, result, ttl_seconds=1800)
             return result
+        except PrivateHostBlocked as e:
+            return ToolResult(
+                output=f"Blocked: {e}",
+                metadata=_blocked_metadata(inp.url),
+            )
         except Exception as e:
+            if _contains_private_host_block(e):
+                return ToolResult(
+                    output=f"Blocked: {e}",
+                    metadata=_blocked_metadata(inp.url),
+                )
             return ToolResult(
                 output=f"Failed to fetch {inp.url}: {e}",
                 metadata={"url": inp.url, "error": str(e)},
@@ -162,23 +227,27 @@ _MAX_REDIRECTS = 10
 
 
 async def _fetch_url(url: str) -> _FetchResponse:
-    async with httpx.AsyncClient(timeout=20, follow_redirects=False) as client:
-        current_url = url
-        for _ in range(_MAX_REDIRECTS + 1):
-            resp = await client.get(current_url, headers={"User-Agent": "voidx/0.1"})
-            if resp.status_code not in (301, 302, 303, 307, 308):
-                break
-            location = resp.headers.get("location")
-            if not location:
-                break
-            current_url = urljoin(current_url, location)
-            redirect_host = urlparse(current_url).hostname
-            if redirect_host and _is_private_host(redirect_host):
-                raise ValueError(f"redirect target {redirect_host} resolves to a private/internal address")
-        resp.raise_for_status()
-        return _FetchResponse(
-            url=current_url,
-            status_code=resp.status_code,
-            text=resp.text,
-            content_type=resp.headers.get("content-type", ""),
-        )
+    async with _DNS_RESOLUTION_LOCK:
+        with _guard_private_dns():
+            async with httpx.AsyncClient(timeout=20, follow_redirects=False) as client:
+                current_url = url
+                for redirect_count in range(_MAX_REDIRECTS + 1):
+                    resp = await client.get(current_url, headers={"User-Agent": "voidx/0.1"})
+                    if resp.status_code not in (301, 302, 303, 307, 308):
+                        break
+                    location = resp.headers.get("location")
+                    if not location:
+                        break
+                    if redirect_count >= _MAX_REDIRECTS:
+                        raise ValueError(f"too many redirects fetching {url}")
+                    current_url = urljoin(current_url, location)
+                    redirect_host = urlparse(current_url).hostname
+                    if redirect_host and _is_private_host(redirect_host):
+                        raise PrivateHostBlocked(f"redirect target {redirect_host} resolves to a private/internal address")
+                resp.raise_for_status()
+                return _FetchResponse(
+                    url=current_url,
+                    status_code=resp.status_code,
+                    text=resp.text,
+                    content_type=resp.headers.get("content-type", ""),
+                )
