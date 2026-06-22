@@ -311,7 +311,7 @@ async def test_resolver_prompt_includes_active_workflow_state():
 
     assert model.messages is not None
     request = model.messages[1].content
-    assert "## Current State" in request
+    assert "# Context" in request
     assert "intent: coding" in request
     assert "goal: implement edit tool" in request
     assert "active workflows: tdd" in request
@@ -337,7 +337,7 @@ async def test_resolver_prompt_no_current_state_when_no_goal():
 
     assert model.messages is not None
     request = model.messages[1].content
-    assert "## Current State" in request
+    assert "# Context" in request
     assert "goal: none" in request
     assert "active workflows: none" in request
 
@@ -363,7 +363,7 @@ async def test_resolver_prompt_omits_short_continuation_rule():
     assert model.messages is not None
     request = model.messages[1].content
     assert "short continuation" not in request
-    assert "## Return Fields" in request
+    assert "## Return Fields" not in request
 
 
 @pytest.mark.asyncio
@@ -398,4 +398,4 @@ async def test_intent_window_size_4_includes_more_context():
     assert "先写测试" in content
     assert "运行测试" in content
     assert "改" in content
-    assert "## ResolverGoal Schema" in content
+    assert "## ResolverGoal Schema" not in content

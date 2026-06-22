@@ -1006,3 +1006,183 @@ class TestFileOps:
         assert result.metadata.get("error") is not True
         content = f.read_text()
         assert content == '    if (new_string == "" or new_string.endswith("\\n")) and tail.startswith("\\n"):\n    content = "hello"\n'
+
+    @pytest.mark.asyncio
+    async def test_replace_single_line_prefix_eq_suffix_avoids_cross_line(self, tmp_path):
+        """Single-line replace: prefix and suffix on different lines must not silently expand range."""
+        f = tmp_path / "crossline.txt"
+        f.write_text("    return\n    offset = 1\n    pass\n")
+        ctx = ToolContext(workspace=str(tmp_path))
+        r = ToolRegistry()
+        await r.execute_tool("read", {"file_path": "crossline.txt"}, ctx)
+
+        result = await r.execute_tool(
+            "replace",
+            {
+                "file_path": "crossline.txt",
+                "start_no": 1,
+                "end_no": 1,
+                "prefix": "return",
+                "suffix": "offset",
+                "new_string": "REPLACED",
+            },
+            ctx,
+        )
+
+        assert result.metadata.get("error")
+        assert f.read_text() == "    return\n    offset = 1\n    pass\n"
+
+    @pytest.mark.asyncio
+    async def test_replace_single_line_different_prefix_suffix_on_same_line(self, tmp_path):
+        """Single-line replace: different prefix/suffix both on the target line should work."""
+        f = tmp_path / "same-line.txt"
+        f.write_text("    return offset + 1\n    pass\n")
+        ctx = ToolContext(workspace=str(tmp_path))
+        r = ToolRegistry()
+        await r.execute_tool("read", {"file_path": "same-line.txt"}, ctx)
+
+        result = await r.execute_tool(
+            "replace",
+            {
+                "file_path": "same-line.txt",
+                "start_no": 1,
+                "end_no": 1,
+                "prefix": "return",
+                "suffix": "offset",
+                "new_string": "    return value + 1",
+            },
+            ctx,
+        )
+
+        assert result.metadata.get("error") is not True
+        assert f.read_text() == "    return value + 1\n    pass\n"
+
+    @pytest.mark.asyncio
+    async def test_replace_single_line_prefix_eq_suffix_duplicate_lines(self, tmp_path):
+        """Single-line replace: prefix==suffix with duplicate lines, start_no disambiguates."""
+        f = tmp_path / "dup.txt"
+        f.write_text("    pass\n    pass\n    pass\n")
+        ctx = ToolContext(workspace=str(tmp_path))
+        r = ToolRegistry()
+        await r.execute_tool("read", {"file_path": "dup.txt"}, ctx)
+
+        result = await r.execute_tool(
+            "replace",
+            {
+                "file_path": "dup.txt",
+                "start_no": 2,
+                "end_no": 2,
+                "prefix": "pass",
+                "suffix": "pass",
+                "new_string": "DONE",
+            },
+            ctx,
+        )
+
+        assert result.metadata.get("error") is not True
+        assert result.metadata["start_line"] == 2
+        assert result.metadata["end_line"] == 2
+        assert f.read_text() == "    pass\nDONE\n    pass\n"
+
+    @pytest.mark.asyncio
+    async def test_replace_single_line_equidistant_ambiguity_still_errors(self, tmp_path):
+        """Single-line replace: equidistant duplicate lines should still report ambiguity."""
+        f = tmp_path / "equidistant.txt"
+        f.write_text("    pass\n    x = 1\n    pass\n")
+        ctx = ToolContext(workspace=str(tmp_path))
+        r = ToolRegistry()
+        await r.execute_tool("read", {"file_path": "equidistant.txt"}, ctx)
+
+        result = await r.execute_tool(
+            "replace",
+            {
+                "file_path": "equidistant.txt",
+                "start_no": 2,
+                "end_no": 2,
+                "prefix": "pass",
+                "suffix": "pass",
+                "new_string": "DONE",
+            },
+            ctx,
+        )
+
+        assert result.metadata.get("error")
+        assert "ambiguous" in result.output.lower()
+        assert f.read_text() == "    pass\n    x = 1\n    pass\n"
+
+    @pytest.mark.asyncio
+    async def test_replace_single_line_suffix_not_on_prefix_line_errors(self, tmp_path):
+        """Single-line replace: suffix found nearby but not on the same line as prefix should error."""
+        f = tmp_path / "suffix-wrong-line.txt"
+        f.write_text("    return\n    offset = 1\n    pass\n")
+        ctx = ToolContext(workspace=str(tmp_path))
+        r = ToolRegistry()
+        await r.execute_tool("read", {"file_path": "suffix-wrong-line.txt"}, ctx)
+
+        result = await r.execute_tool(
+            "replace",
+            {
+                "file_path": "suffix-wrong-line.txt",
+                "start_no": 1,
+                "end_no": 1,
+                "prefix": "return",
+                "suffix": "offset",
+                "new_string": "REPLACED",
+            },
+            ctx,
+        )
+
+        assert result.metadata.get("error")
+        assert f.read_text() == "    return\n    offset = 1\n    pass\n"
+
+    @pytest.mark.asyncio
+    async def test_replace_single_line_empty_prefix_suffix_on_empty_line(self, tmp_path):
+        """Single-line replace: empty prefix/suffix matching an empty line."""
+        f = tmp_path / "empty-line.txt"
+        f.write_text("top\n\nbody\n")
+        ctx = ToolContext(workspace=str(tmp_path))
+        r = ToolRegistry()
+        await r.execute_tool("read", {"file_path": "empty-line.txt"}, ctx)
+
+        result = await r.execute_tool(
+            "replace",
+            {
+                "file_path": "empty-line.txt",
+                "start_no": 2,
+                "end_no": 2,
+                "prefix": "",
+                "suffix": "",
+                "new_string": "INSERTED",
+            },
+            ctx,
+        )
+
+        assert result.metadata.get("error") is not True
+        assert result.metadata["start_line"] == 2
+        assert result.metadata["end_line"] == 2
+        assert f.read_text() == "top\nINSERTED\nbody\n"
+
+    @pytest.mark.asyncio
+    async def test_replace_single_line_cross_line_rejection_message(self, tmp_path):
+        """Single-line replace: cross-line rejection mentions suffix not on same line."""
+        f = tmp_path / "crossline-msg.txt"
+        f.write_text("    return\n    offset = 1\n    pass\n")
+        ctx = ToolContext(workspace=str(tmp_path))
+        r = ToolRegistry()
+        await r.execute_tool("read", {"file_path": "crossline-msg.txt"}, ctx)
+
+        result = await r.execute_tool(
+            "replace",
+            {
+                "file_path": "crossline-msg.txt",
+                "start_no": 1,
+                "end_no": 1,
+                "prefix": "return",
+                "suffix": "offset",
+                "new_string": "REPLACED",
+            },
+            ctx,
+        )
+
+        assert result.metadata.get("error")
+        assert "not on the same line" in result.output

@@ -71,20 +71,20 @@ async def test_goal_resolver_uses_structured_llm_result():
         SystemMessage,
         HumanMessage,
     ]
-    assert "Resolve this turn into intent, goal, workflow, and kind_hint." in model.messages[0].content
+    assert "You are a goal resolver." in model.messages[0].content
+    assert "## Output Schema" in model.messages[0].content
+    assert "## Field Rules" in model.messages[0].content
+    assert "## Available Workflows" in model.messages[0].content
     request = model.messages[1].content
-    assert "## Recent Conversation Content" in request
+    assert "# Recent Conversation" in request
     assert "之前说继续" in request
     assert "我已经完成了 review 检查。" in request
-    assert "## Current User Content" in request
+    assert "# Current User Question" in request
     assert "review 这个文件" in request
-    assert "## Return Fields" in request
-    assert request.rstrip().endswith(
-        "- kind_hint: null or string (non-authoritative semantic hint; not used for routing)"
-    )
-    assert "goal: null or {type:" not in request
-    assert "plan: null or {join:" not in request
-    assert "- workflow: null or one of" in request
+    assert "## Return Fields" not in request
+    assert "## ResolverGoal Schema" not in request
+    assert "## Available Workflows" not in request
+    assert request.rstrip().endswith("review 这个文件")
     assert "workflow_start" not in model.messages[0].content
     assert "next_workflow" not in model.messages[0].content
     assert "Do not choose brainstorm" not in model.messages[0].content
@@ -442,9 +442,9 @@ async def test_goal_resolver_logs_native_request_and_response(tmp_path, monkeypa
     ]
     exchange = next(entry for entry in entries if entry.get("event") == "goal_resolver_exchange")
     assert exchange["request"]["messages"][0]["role"] == "system"
-    assert "intent, goal, workflow, and kind_hint" in exchange["request"]["messages"][0]["content"]
+    assert "You are a goal resolver." in exchange["request"]["messages"][0]["content"]
+    assert "## ResolverGoal Schema" not in exchange["request"]["messages"][-1]["content"]
     assert exchange["request"]["messages"][-1]["role"] == "human"
-    assert "## ResolverGoal Schema" in exchange["request"]["messages"][-1]["content"]
     assert "帮我修一个 bug" in exchange["request"]["messages"][-1]["content"]
     assert exchange["response"]["raw"]["kind_hint"] == "bugfix"
     assert exchange["response"]["raw"]["workflow"] == "debug"

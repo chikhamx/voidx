@@ -49,6 +49,9 @@ def _find_text_segment(
     prefix: str,
     suffix: str,
 ) -> tuple[int, int, int, int] | str:
+    if start_no == end_no:
+        return _find_single_line_segment(lines, start_no, prefix, suffix)
+
     prefix_lines = _find_line_candidates(lines, start_no, prefix)
     if not prefix_lines:
         prefix_target = "empty line" if prefix == "" else f"prefix {prefix!r}"
@@ -93,6 +96,50 @@ def _find_text_segment(
         start_line,
         end_line,
     )
+
+
+def _find_single_line_segment(
+    lines: list[str],
+    target_line: int,
+    prefix: str,
+    suffix: str,
+) -> tuple[int, int, int, int] | str:
+    prefix_lines = _find_line_candidates(lines, target_line, prefix)
+    if not prefix_lines:
+        prefix_target = "empty line" if prefix == "" else f"prefix {prefix!r}"
+        return (
+            f"{prefix_target} not found within ±{TEXT_REPLACE_LINE_RADIUS} "
+            f"lines of line {target_line}. Read the file to get current content."
+        )
+
+    if suffix != "" and suffix != prefix:
+        prefix_lines = [
+            line_no
+            for line_no in prefix_lines
+            if _line_matches_replace_anchor(lines[line_no - 1], suffix)
+        ]
+        if not prefix_lines:
+            return (
+                f"prefix {prefix!r} found but suffix {suffix!r} not on the same line "
+                f"within ±{TEXT_REPLACE_LINE_RADIUS} lines of line {target_line}. "
+                "Read the file to get current content."
+            )
+
+    prefix_lines.sort(key=lambda l: abs(l - target_line))
+    best_dist = abs(prefix_lines[0] - target_line)
+    best = [l for l in prefix_lines if abs(l - target_line) == best_dist]
+
+    if len(best) > 1:
+        return (
+            f"single-line match ambiguous: lines {_format_lines(best)} all match "
+            f"anchors at the same distance from line {target_line}. "
+            "Provide a more specific prefix/suffix."
+        )
+
+    matched_line = best[0]
+    start_offset = _global_offset_for_line(lines, matched_line)
+    end_offset = start_offset + len(lines[matched_line - 1])
+    return (start_offset, end_offset, matched_line, matched_line)
 
 
 def _find_line_candidates(

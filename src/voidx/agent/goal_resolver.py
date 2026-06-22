@@ -230,8 +230,36 @@ def _truncate_error_text(value: str, limit: int = 2000) -> str:
 
 def _resolver_system_prompt() -> str:
     return (
-        "Resolve this turn into intent, goal, workflow, and kind_hint.\n"
-        "Read the Markdown request. Return only structured data matching the schema at the end."
+        "You are a goal resolver. Classify the user's current turn into intent, goal, workflow, and kind_hint.\n"
+        "\n"
+        "## Output Schema\n"
+        "\n"
+        "Return a JSON object matching this template:\n"
+        "\n"
+        "{\n"
+        '  "intent": "coding" or "general",\n'
+        '  "goal": null or "<short summary of the user\'s request in their language, 1-2 sentences>",\n'
+        '  "workflow": null or "<one of the workflows listed below>",\n'
+        '  "kind_hint": null or "<semantic hint: review | debug | feature | inspect | refactor | test | docs>"\n'
+        "}\n"
+        "\n"
+        "## Field Rules\n"
+        "\n"
+        '- **intent**: "coding" for codebase/workspace work; "general" for non-code conversation.\n'
+        "- **goal**: Short user-language summary when a workflow should start; null otherwise. Must be set exactly when workflow is set, and null exactly when workflow is null.\n"
+        "- **workflow**: The workflow to start, or null. Must be set exactly when goal is set.\n"
+        "- **kind_hint**: Optional semantic hint. Advisory only; never overrides workflow selection.\n"
+        "\n"
+        "## Available Workflows\n"
+        "\n"
+        "- brainstorm: Confirm requirements and design, get user approval\n"
+        "- debug: Locate root cause and confirm fix direction\n"
+        "- design: Produce a structured document that passes the reader test\n"
+        "- feedback: Verify and implement valid review feedback\n"
+        "- plan: Produce an executable implementation plan, get user approval\n"
+        "- review: Initiate structured code review request and collect verdict\n"
+        "- tdd: Complete implementation via TDD cycle, all tests green\n"
+        "- verify: Prove changes reach expected state with reproducible evidence\n"
     )
 
 
@@ -239,52 +267,22 @@ def _resolver_request_markdown(user_text: str, task_state: TaskState) -> str:
     recent_content = _recent_exchanges_content(task_state)
     active = ", ".join(_active_workflow_names(task_state)) or "none"
     goal = task_state.current_goal.label if task_state.current_goal is not None else "none"
-    return "\n".join([
-        "# Goal Resolver Request",
-        "",
-        "## Current State",
+    sections = [
+        "# Context",
         "",
         f"- intent: {task_state.current_intent.value}",
         f"- goal: {goal}",
         f"- active workflows: {active}",
         "",
-        "## Recent Conversation Content",
+        "# Recent Conversation",
         "",
-        "```text",
         recent_content,
-        "```",
         "",
-        "## Current User Content",
+        "# Current User Question",
         "",
-        "```text",
         user_text,
-        "```",
-        "",
-        "## Available Workflows",
-        "",
-        "- brainstorm: Confirm requirements and design, get user approval",
-        "- debug: Locate root cause and confirm fix direction",
-        "- design: Produce a structured document that passes the reader test",
-        "- feedback: Verify and implement valid review feedback",
-        "- plan: Produce an executable implementation plan, get user approval",
-        "- review: Initiate structured code review request and collect verdict",
-        "- tdd: Complete implementation via TDD cycle, all tests green",
-        "- verify: Prove changes reach expected state with reproducible evidence",
-        "",
-        "## Return Fields",
-        "",
-        '- intent: "coding" for codebase/workspace work; "general" for non-code conversation.',
-        "- goal: short user-language summary, or null when no workflow should start.",
-        "- workflow: workflow to start, or null. Must be set exactly when goal is set.",
-        "- kind_hint: optional semantic hint such as review/debug/feature/inspect. Advisory only; never overrides workflow.",
-        "",
-        "## ResolverGoal Schema",
-        "",
-        "- intent: 'coding' | 'general'",
-        "- goal: null or string (short summary of the user's request in their language, 1-2 sentences)",
-        "- workflow: null or one of [brainstorm, debug, design, feedback, plan, review, tdd, verify]",
-        "- kind_hint: null or string (non-authoritative semantic hint; not used for routing)",
-    ])
+    ]
+    return "\n".join(sections)
 
 
 _ALLOWED_JOIN_NODES = {"debug", "brainstorm", "design", "plan", "tdd", "review", "feedback", "verify"}
@@ -405,10 +403,16 @@ def _normalize_resolution(
 def _recent_exchanges_content(task_state: TaskState) -> str:
     blocks: list[str] = []
     for index, exchange in enumerate(task_state.recent_exchanges, start=1):
-        parts = [part for part in (exchange.user_text.strip(), exchange.assistant_text.strip()) if part]
-        if not parts:
+        lines: list[str] = [f"## Turn {index}", ""]
+        user_text = exchange.user_text.strip()
+        assistant_text = exchange.assistant_text.strip()
+        if user_text:
+            lines.append(f"**Human**: {user_text}")
+        if assistant_text:
+            lines.append(f"**Assistant**: {assistant_text}")
+        if len(lines) <= 2:
             continue
-        blocks.append(f"### Content {index}\n\n" + "\n\n".join(parts))
+        blocks.append("\n".join(lines))
     return "\n\n".join(blocks)
 
 
