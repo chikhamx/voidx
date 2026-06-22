@@ -7,7 +7,7 @@ import shlex
 from dataclasses import dataclass
 from typing import Literal
 
-_HintableTool = Literal["read", "git", "write", "replace", "insert", "glob", "grep"]
+_HintableTool = Literal["read", "git", "file", "line", "replace", "glob", "grep"]
 
 _HEREDOC_MAX_CONTENT = 200
 
@@ -835,12 +835,12 @@ def _hint_write_echo(stripped: str, words: list[str]) -> RouteHint | None:
 
     if is_append:
         return RouteHint(
-            tool_id="insert", ui_label="→ insert",
-            llm_hint=f'Prefer insert(file_path="{path}", lineno=-1, new_string="{content}") for file tracking and diff output.',
+            tool_id="line", ui_label="→ line",
+            llm_hint=f'Prefer line(file_path="{path}", op="insert", lineno=-1, new_string="{content}") for file tracking and diff output.',
         )
     return RouteHint(
-        tool_id="write", ui_label="→ write",
-        llm_hint=f'Prefer write(file_path="{path}", content="{content}") for file tracking and diff output.',
+        tool_id="file", ui_label="→ file",
+        llm_hint=f'Prefer file(file_path="{path}", op="create") then line(file_path="{path}", op="insert", lineno=0, new_string="{content}") for file tracking and diff output.',
     )
 
 
@@ -887,12 +887,12 @@ def _hint_write_heredoc(stripped: str) -> RouteHint | None:
 
     if is_append:
         return RouteHint(
-            tool_id="insert", ui_label="→ insert",
-            llm_hint=f'Prefer insert(file_path="{path}", lineno=-1, new_string="{content}") for file tracking and diff output.',
+            tool_id="line", ui_label="→ line",
+            llm_hint=f'Prefer line(file_path="{path}", op="insert", lineno=-1, new_string="{content}") for file tracking and diff output.',
         )
     return RouteHint(
-        tool_id="write", ui_label="→ write",
-        llm_hint=f'Prefer write(file_path="{path}", content="{content}") for file tracking and diff output.',
+        tool_id="file", ui_label="→ file",
+        llm_hint=f'Prefer file(file_path="{path}", op="create") then line(file_path="{path}", op="insert", lineno=0, new_string="{content}") for file tracking and diff output.',
     )
 
 
@@ -1199,8 +1199,8 @@ def _hint_sed(words: list[str]) -> RouteHint | None:
     if m:
         start, end = int(m.group(1)), int(m.group(2))
         return RouteHint(
-            tool_id="replace", ui_label="→ replace",
-            llm_hint=f'For line range deletion: first read {path} to see lines {start}-{end}, then use replace(file_path, start_no={start}, end_no={end}, prefix=<first_line_content>, suffix=<last_line_content>, new_string="").',
+            tool_id="line", ui_label="→ line",
+            llm_hint=f'For line range deletion: first read {path} to see lines {start}-{end}, then use line(file_path="{path}", op="delete", lineno={start}, end_no={end}).',
         )
 
 
@@ -1208,8 +1208,8 @@ def _hint_sed(words: list[str]) -> RouteHint | None:
     if m:
         line_no = int(m.group(1))
         return RouteHint(
-            tool_id="replace", ui_label="→ replace",
-            llm_hint=f'For single line deletion: first read {path} to see line {line_no}, then use replace(file_path, start_no={line_no}, end_no={line_no}, prefix=<line_content>, suffix=<line_content>, new_string="").',
+            tool_id="line", ui_label="→ line",
+            llm_hint=f'For single line deletion: first read {path} to see line {line_no}, then use line(file_path="{path}", op="delete", lineno={line_no}).',
         )
     m = _SED_PATTERN_DELETE.match(script)
     if m:

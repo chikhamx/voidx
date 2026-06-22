@@ -4,7 +4,6 @@ from voidx.runtime.intent import InteractionMode, TaskIntent
 from voidx.runtime.task_state import (
     GoalResolution,
     GoalSpec,
-    GoalType,
     IntentResolution,
     PlanResolution,
     TaskState,
@@ -14,8 +13,7 @@ from voidx.runtime.task_state import (
     TurnExchange,
     WorkflowRoute,
     goal_label,
-    goal_type_value,
-    infer_goal_type,
+    goal_type_from_join,
 )
 from voidx.runtime.ui import (
     AgentUiSink,
@@ -32,7 +30,6 @@ __all__ = [
     "TaskIntent",
     "GoalSpec",
     "GoalResolution",
-    "GoalType",
     "IntentResolution",
     "PlanResolution",
     "TaskState",
@@ -42,8 +39,7 @@ __all__ = [
     "TurnExchange",
     "WorkflowRoute",
     "goal_label",
-    "goal_type_value",
-    "infer_goal_type",
+    "goal_type_from_join",
     "reset_ui_sink",
     "set_ui_sink",
     "use_noop_ui_sink",

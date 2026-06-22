@@ -119,7 +119,8 @@ def strategy_action_for_tool(classified: ClassifiedToolCall, context: Permission
         return "allow"
     if classified.capability in {PermissionCapability.BASH_READ, PermissionCapability.GIT_READ}:
         return "allow"
-    return evaluate(classified.name, classified.pattern, BASIC_RULES).action
+    permission = "edit" if classified.name in {"file", "line", "replace"} else classified.name
+    return evaluate(permission, classified.pattern, BASIC_RULES).action
 
 
 def resolve_approval(classified: ClassifiedToolCall, context: PermissionContext) -> PermissionDecision:
@@ -147,6 +148,8 @@ def resolve_approval(classified: ClassifiedToolCall, context: PermissionContext)
 
 
 def _session_rule_matches(tool: str, rule: str) -> bool:
+    if rule == "edit" and tool in {"file", "line", "replace"}:
+        return True
     if wildcard_match(tool, rule):
         return True
     if rule.startswith("mcp/"):

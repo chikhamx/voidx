@@ -2,14 +2,11 @@
 
 from __future__ import annotations
 
-import re
-
-from enum import Enum
 from typing import Literal
 
 from pydantic import BaseModel, Field, model_validator
 
-from voidx.runtime.intent import InteractionMode, TaskIntent, _contains_any
+from voidx.runtime.intent import InteractionMode, TaskIntent
 from voidx.workflow.types import WorkflowRunState
 
 
@@ -17,96 +14,18 @@ _INTENT_WINDOW_SIZE = 4
 _INTENT_WINDOW_SEPARATOR = " [SEP] "
 
 
-_WRITE_HINTS = (
-    "apply",
-    "change",
-    "edit",
-    "fix",
-    "implement",
-    "modify",
-    "patch",
-    "refactor",
-    "write",
-    "\u6539",
-    "\u4fee",
-    "\u4fee\u590d",
-    "\u4fee\u6539",
-    "\u5b9e\u73b0",
-    "\u843d\u5730",
-    "\u7ee7\u7eed\u6539",
-    "\u7ee7\u7eed\u505a",
-)
-
-_REVIEW_HINTS = ("review", "code review", "\u5ba1\u67e5", "\u590d\u6838", "\u8bc4\u5ba1")
-_DEBUG_HINTS = (
-    "debug",
-    "traceback",
-    "stacktrace",
-    "\u62a5\u9519",
-    "\u6392\u67e5",
-    "\u8c03\u8bd5",
-    "\u5f02\u5e38",
-)
-_BUGFIX_HINTS = ("bug", "failing", "failure", "failed", "\u6545\u969c", "\u9519\u8bef", "\u95ee\u9898")
-_REFACTOR_HINTS = ("refactor", "rename", "cleanup", "\u91cd\u6784", "\u6539\u540d", "\u6e05\u7406")
-_FEATURE_HINTS = ("feature", "add", "support", "\u65b0\u589e", "\u6dfb\u52a0", "\u652f\u6301")
-_DOC_HINTS = ("doc", "docs", "readme", "spec", "\u6587\u6863", "\u89c4\u683c", "\u8bf4\u660e")
-_DESIGN_HINTS = (
-    "design",
-    "plan",
-    "proposal",
-    "approach",
-    "architecture",
-    "suggest",
-    "\u8bbe\u8ba1",
-    "\u65b9\u6848",
-    "\u5efa\u8bae",
-    "\u600e\u4e48\u6539",
-    "\u5982\u4f55\u6539",
-    "\u8ba8\u8bba",
-    "\u89c4\u5212",
-)
-_INSPECT_HINTS = (
-    "look at",
-    "inspect",
-    "analyze",
-    "explain",
-    "understand",
-    "check",
-    "\u770b\u770b",
-    "\u770b\u4e00\u4e0b",
-    "\u5206\u6790",
-    "\u68b3\u7406",
-    "\u4e86\u89e3",
-    "\u68c0\u67e5",
-    "\u73b0\u72b6",
-)
-
-
-class GoalType(str, Enum):
-    BUGFIX = "bugfix"
-    DEBUG = "debug"
-    REFACTOR = "refactor"
-    FEATURE = "feature"
-    CHORE = "chore"
-    INSPECT = "inspect"
-    DESIGN = "design"
-    DOC = "doc"
-    REVIEW = "review"
-
-
 class IntentResolution(BaseModel):
+    model_config = {"extra": "ignore"}
     type: TaskIntent = TaskIntent.CODING
-    desc: str = ""
 
 
 class GoalSpec(BaseModel):
-    type: GoalType
+    model_config = {"extra": "ignore"}
     desc: str = ""
 
     @property
     def label(self) -> str:
-        return self.desc.strip() or self.type.value
+        return self.desc.strip() or ""
 
 
 class PlanResolution(BaseModel):
@@ -115,7 +34,7 @@ class PlanResolution(BaseModel):
 
 
 class GoalResolution(BaseModel):
-    intent: IntentResolution = Field(default_factory=lambda: IntentResolution(type=TaskIntent.CODING, desc=""))
+    intent: IntentResolution = Field(default_factory=lambda: IntentResolution(type=TaskIntent.CODING))
     goal: GoalSpec | None = None
     plan: PlanResolution | None = None
 
@@ -184,7 +103,7 @@ class TaskState(BaseModel):
         if isinstance(goal, GoalSpec):
             self.current_goal = goal
         else:
-            self.current_goal = GoalSpec(type=infer_goal_type(goal), desc=goal)
+            self.current_goal = GoalSpec(desc=goal)
         self.current_intent = TaskIntent.CODING
         self._reset_workflow_context()
 
@@ -245,33 +164,7 @@ def _workflow_route_from_resolution(resolution: GoalResolution) -> WorkflowRoute
 def _same_goal(left: GoalSpec | None, right: GoalSpec | None) -> bool:
     if left is None or right is None:
         return left is right
-    return left.type == right.type and left.desc == right.desc
-
-
-# ── goal type inference ─────────────────────────────────────────────
-
-
-def infer_goal_type(text: str) -> GoalType:
-    normalized = text.lower()
-    if _contains_any(normalized, _REVIEW_HINTS):
-        return GoalType.REVIEW
-    if _contains_any(normalized, _DEBUG_HINTS):
-        return GoalType.DEBUG
-    if _contains_any(normalized, _BUGFIX_HINTS) and _has_implementation_action_hint(normalized):
-        return GoalType.BUGFIX
-    if _contains_any(normalized, _REFACTOR_HINTS):
-        return GoalType.REFACTOR
-    if _contains_any(normalized, _DOC_HINTS):
-        return GoalType.DOC
-    if _contains_any(normalized, _DESIGN_HINTS):
-        return GoalType.DESIGN
-    if _contains_any(normalized, _FEATURE_HINTS):
-        return GoalType.FEATURE
-    if _contains_any(normalized, _INSPECT_HINTS):
-        return GoalType.INSPECT
-    if _contains_any(normalized, _WRITE_HINTS):
-        return GoalType.FEATURE
-    return GoalType.CHORE
+    return left.desc == right.desc
 
 
 def goal_label(goal: GoalSpec | dict | None) -> str:
@@ -279,9 +172,22 @@ def goal_label(goal: GoalSpec | dict | None) -> str:
     return value.label if value is not None else ""
 
 
-def goal_type_value(goal: GoalSpec | dict | None) -> str:
-    value = _coerce_goal(goal)
-    return value.type.value if value is not None else ""
+_JOIN_GOAL_TYPE_MAP: dict[str, str] = {
+    "brainstorm": "design",
+    "debug": "debug",
+    "design": "doc",
+    "feedback": "review",
+    "plan": "design",
+    "review": "review",
+    "tdd": "feature",
+    "verify": "feature",
+}
+
+
+def goal_type_from_join(join: str | None) -> str:
+    if not join:
+        return ""
+    return _JOIN_GOAL_TYPE_MAP.get(join, "")
 
 
 # ── internal helpers ────────────────────────────────────────────────
@@ -294,15 +200,10 @@ def _coerce_goal(goal: GoalSpec | dict | None) -> GoalSpec | None:
         return goal
     if isinstance(goal, dict):
         try:
-            return GoalSpec.model_validate(goal)
+            return GoalSpec.model_validate({k: v for k, v in goal.items() if k in GoalSpec.model_fields})
         except ValueError:
             return None
     return None
-
-
-def _has_implementation_action_hint(text: str) -> bool:
-    normalized = text.lower()
-    return _contains_any(normalized, _WRITE_HINTS)
 
 
 def _summarize_scope(text: str) -> str:
@@ -317,7 +218,6 @@ __all__ = [
     "IntentResolution",
     "PlanResolution",
     "GoalResolution",
-    "GoalType",
     "WorkflowRoute",
     "TaskState",
     "TurnExchange",
@@ -325,6 +225,5 @@ __all__ = [
     "TodoRunState",
     "ToolStatePatch",
     "goal_label",
-    "goal_type_value",
-    "infer_goal_type",
+    "goal_type_from_join",
 ]

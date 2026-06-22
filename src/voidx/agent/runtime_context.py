@@ -255,7 +255,6 @@ class RuntimeContextBuilder:
         ]
         if self.current_goal is not None:
             lines.extend([
-                f"- Goal type: {self.current_goal.type.value}",
                 f"- Goal: {self.current_goal.desc or 'not set'}",
             ])
         if self.active_workflow_summaries:

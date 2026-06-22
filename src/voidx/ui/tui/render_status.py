@@ -36,12 +36,14 @@ _STATUS_STYLES = {
 }
 _STATUS_VARIANTS = (
     ("model", "policy", "state", "workflow", "usage", "goal"),
+    ("model", "policy", "state", "workflow", "usage"),
     ("model", "policy", "state", "workflow", "goal"),
-    ("model", "policy", "workflow", "goal"),
-    ("model", "policy", "workflow"),
     ("model", "policy", "state", "usage", "goal"),
+    ("model", "policy", "workflow", "usage", "goal"),
+    ("model", "policy", "state", "workflow"),
     ("model", "policy", "usage", "goal"),
     ("model", "policy", "usage"),
+    ("model", "policy", "goal"),
     ("model", "policy"),
     ("model",),
 )
@@ -121,8 +123,6 @@ class _StatusRendererMixin:
             plan,
             debug,
             goal_label,
-            goal_type,
-            goal_awaiting,
             tuple(active_workflows),
             self._busy,
             stats_snapshot,
@@ -155,14 +155,8 @@ class _StatusRendererMixin:
             )
 
         goal_text = ""
-        if goal_label or goal_type or goal_awaiting:
-            goal_text = "goal"
-            if goal_type:
-                goal_text += f" {goal_type}"
-            if goal_awaiting:
-                goal_text += " awaiting-approval"
-            if goal_label:
-                goal_text += f" {goal_label}"
+        if goal_label:
+            goal_text = goal_label
 
         workflow_text = ""
         if active_workflows:

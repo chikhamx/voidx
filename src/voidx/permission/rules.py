@@ -40,7 +40,6 @@ BASIC_RULES: Ruleset = [
     Rule(permission="repo_map", pattern="*", action="allow"),
     Rule(permission="lsp", pattern="*", action="allow"),
     Rule(permission="agent", pattern="voidx", action="allow"),
-    Rule(permission="write", pattern="*", action="ask"),
     Rule(permission="edit", pattern="*", action="ask"),
     Rule(permission="git", pattern="write", action="ask"),
     Rule(permission="bash", pattern="*", action="ask"),
@@ -90,19 +89,20 @@ def tool_call_from_pattern(tool: str, pattern: str = "*") -> dict:
 
 def repair_tool_name(tool: str) -> str:
     tool_map = {
-        "Read": "read", "Write": "write", "Edit": "edit", "Delete": "delete",
-        "MultiEdit": "edit", "multiEdit": "edit", "multi_edit": "edit",
+        "Read": "read", "Write": "file", "Edit": "replace", "Delete": "line",
+        "MultiEdit": "replace", "multiEdit": "replace", "multi_edit": "replace",
         "Glob": "glob", "Grep": "grep", "Bash": "bash",
         "Agent": "agent", "TodoWrite": "todo", "Todo": "todo",
         "WebFetch": "webfetch", "WebSearch": "websearch",
-        "read_file": "read", "write_file": "write",
-        "edit_file": "edit", "shell": "bash",
-        "readfile": "read", "writefile": "write",
+        "read_file": "read", "write_file": "file",
+        "edit_file": "replace", "shell": "bash",
+        "readfile": "read", "writefile": "file",
         "search": "grep", "find": "glob",
         "RepoMap": "repo_map", "repomap": "repo_map", "Repo_map": "repo_map",
         "LspDiagnostics": "lsp", "LspSymbols": "lsp",
         "LspDefinition": "lsp", "LspReferences": "lsp",
         "CompactContext": "compact",
+        "write": "file", "edit": "replace", "insert": "line", "delete": "line",
     }
     return tool_map.get(tool, tool_map.get(tool.lower(), tool))
 
@@ -357,7 +357,7 @@ def capability_for_tool(tool: str, args: dict) -> PermissionCapability:
         "repo_map", "lsp",
     }:
         return PermissionCapability.READ_TOOLS
-    if tool in {"write", "edit", "insert", "replace", "delete"}:
+    if tool in {"file", "line", "replace"}:
         return PermissionCapability.FILE_WRITE
     if tool == "bash":
         return PermissionCapability.BASH_READ if is_safe_bash(str(args.get("command", ""))) else PermissionCapability.BASH_WRITE
@@ -372,7 +372,7 @@ def capability_for_tool(tool: str, args: dict) -> PermissionCapability:
 
 
 _FILE_PATTERN_TOOLS = {
-    "read", "write", "edit", "insert", "replace", "delete",
+    "read", "file", "line", "replace",
     "lsp",
 }
 

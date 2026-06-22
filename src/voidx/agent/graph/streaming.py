@@ -38,6 +38,15 @@ _DSML_BOILERPLATE_RE = re.compile(
     r"(commands?\s*(列表|list).*(注册|register)|注册.*commands?\s*(列表|list))",
     re.IGNORECASE,
 )
+_LEGACY_XML_TOOL_CALL_RE = re.compile(
+    r"<tool_call\b[^>]*>.*?</tool_call>",
+    re.DOTALL | re.IGNORECASE,
+)
+_LEGACY_XML_ARG_PAIR_RE = re.compile(
+    r"<arg_key\b[^>]*>(.*?)</arg_key>\s*<arg_value\b[^>]*>(.*?)</arg_value>",
+    re.DOTALL | re.IGNORECASE,
+)
+_LEGACY_XML_NAME_ATTR_RE = re.compile(r'\bname="([^"]+)"', re.IGNORECASE)
 
 
 async def stream_llm(
@@ -79,9 +88,10 @@ async def stream_llm(
 
     merged = chunks[0] + chunks[1:] if len(chunks) > 1 else chunks[0]
 
-    _, dsml_tool_calls = _extract_dsml_tool_calls(merged.content)
+    content_without_dsml, dsml_tool_calls = _extract_dsml_tool_calls(merged.content)
+    _, legacy_xml_tool_calls = _extract_legacy_xml_tool_calls(content_without_dsml)
     content = _sanitize_ai_content_for_replay(merged.content)
-    tool_calls = merged.tool_calls or dsml_tool_calls
+    tool_calls = merged.tool_calls or [*dsml_tool_calls, *legacy_xml_tool_calls]
     kwargs = {
         "content": content,
         "tool_calls": tool_calls,
@@ -185,6 +195,7 @@ def _ai_tool_call_ids(message: AIMessage) -> list[str]:
 def _sanitize_ai_content_for_replay(content: object, *, protocol: str = "") -> object:
     if isinstance(content, str):
         cleaned, _ = _extract_dsml_tool_calls_from_text(content)
+        cleaned, _ = _extract_legacy_xml_tool_calls_from_text(cleaned)
         return cleaned
     if not isinstance(content, list):
         return content
@@ -202,6 +213,7 @@ def _sanitize_ai_content_for_replay(content: object, *, protocol: str = "") -> o
         if isinstance(item, str):
             if item:
                 cleaned, _ = _extract_dsml_tool_calls_from_text(item)
+                cleaned, _ = _extract_legacy_xml_tool_calls_from_text(cleaned)
                 if cleaned:
                     text_parts.append(cleaned)
             continue
@@ -221,6 +233,7 @@ def _sanitize_ai_content_for_replay(content: object, *, protocol: str = "") -> o
             text = item.get("text", "")
             if isinstance(text, str) and text:
                 cleaned, _ = _extract_dsml_tool_calls_from_text(text)
+                cleaned, _ = _extract_legacy_xml_tool_calls_from_text(cleaned)
                 if cleaned:
                     text_parts.append(cleaned)
             continue
@@ -306,6 +319,8 @@ def _should_render_text_chunk(text: str) -> bool:
     normalized = _normalize_dsml(text).strip()
     if "DSML" in normalized and "<|" in normalized:
         return False
+    if _looks_like_legacy_xml_tool_call(normalized):
+        return False
     return not _DSML_BOILERPLATE_RE.search(normalized)
 
 
@@ -328,6 +343,36 @@ def _extract_dsml_tool_calls(content: object) -> tuple[object, list[dict]]:
             text = item.get("text", "")
             if isinstance(text, str):
                 cleaned, found = _extract_dsml_tool_calls_from_text(text)
+                calls.extend(found)
+                if cleaned:
+                    updated = dict(item)
+                    updated["text"] = cleaned
+                    blocks.append(updated)
+                continue
+        blocks.append(item)
+
+    return (blocks if blocks else ""), calls
+
+
+def _extract_legacy_xml_tool_calls(content: object) -> tuple[object, list[dict]]:
+    if isinstance(content, str):
+        return _extract_legacy_xml_tool_calls_from_text(content)
+    if not isinstance(content, list):
+        return content, []
+
+    blocks: list[object] = []
+    calls: list[dict] = []
+    for item in content:
+        if isinstance(item, str):
+            cleaned, found = _extract_legacy_xml_tool_calls_from_text(item)
+            calls.extend(found)
+            if cleaned:
+                blocks.append(cleaned)
+            continue
+        if isinstance(item, dict) and item.get("type") == "text":
+            text = item.get("text", "")
+            if isinstance(text, str):
+                cleaned, found = _extract_legacy_xml_tool_calls_from_text(text)
                 calls.extend(found)
                 if cleaned:
                     updated = dict(item)
@@ -369,6 +414,111 @@ def _extract_dsml_tool_calls_from_text(text: str) -> tuple[str, list[dict]]:
     if calls and _DSML_BOILERPLATE_RE.search(cleaned) and len(cleaned) <= 160:
         cleaned = ""
     return cleaned, calls
+
+
+def _extract_legacy_xml_tool_calls_from_text(text: str) -> tuple[str, list[dict]]:
+    calls: list[dict] = []
+
+    for block_match in _LEGACY_XML_TOOL_CALL_RE.finditer(text):
+        block = block_match.group(0)
+        name = _legacy_xml_tool_name(block)
+        if not name:
+            continue
+        args = _legacy_xml_args(block)
+        calls.append({
+            "name": _normalize_legacy_xml_tool_name(name),
+            "args": args,
+            "id": f"call_xml_{uuid.uuid4().hex[:12]}",
+            "type": "tool_call",
+        })
+
+    cleaned = _LEGACY_XML_TOOL_CALL_RE.sub("", text).strip() if calls else text
+    return cleaned, calls
+
+
+def _legacy_xml_tool_name(block: str) -> str:
+    for tag in ("tool_name", "name", "tool"):
+        value = _legacy_xml_tag_text(block, tag)
+        if value:
+            return value.strip()
+    opening = block.split(">", 1)[0]
+    attr_match = _LEGACY_XML_NAME_ATTR_RE.search(opening)
+    if attr_match:
+        return html.unescape(attr_match.group(1)).strip()
+    args = _legacy_xml_arg_pairs(block)
+    for key in ("tool_name", "name", "tool"):
+        value = args.pop(key, None)
+        if value is not None:
+            return str(value).strip()
+    return ""
+
+
+def _normalize_legacy_xml_tool_name(name: str) -> str:
+    return name.strip().replace("-", "_").lower()
+
+
+def _legacy_xml_args(block: str) -> dict[str, object]:
+    return {
+        key: value
+        for key, value in _legacy_xml_arg_pairs(block).items()
+        if key not in {"tool_name", "name", "tool"}
+    }
+
+
+def _legacy_xml_arg_pairs(block: str) -> dict[str, object]:
+    args: dict[str, object] = {}
+    for pair in _LEGACY_XML_ARG_PAIR_RE.finditer(block):
+        key = html.unescape(pair.group(1)).strip()
+        if not key:
+            continue
+        args[key] = _decode_legacy_xml_arg(pair.group(2))
+    return args
+
+
+def _legacy_xml_tag_text(block: str, tag: str) -> str:
+    match = re.search(
+        rf"<{re.escape(tag)}\b[^>]*>(.*?)</{re.escape(tag)}>",
+        block,
+        re.DOTALL | re.IGNORECASE,
+    )
+    if not match:
+        return ""
+    return html.unescape(match.group(1)).strip()
+
+
+def _decode_legacy_xml_arg(raw: str) -> object:
+    value = html.unescape(raw)
+    stripped = value.strip()
+    lowered = stripped.lower()
+    if lowered == "true":
+        return True
+    if lowered == "false":
+        return False
+    if re.fullmatch(r"[+-]?\d+", stripped):
+        try:
+            return int(stripped)
+        except ValueError:
+            return stripped
+    if re.fullmatch(r"[+-]?(?:\d+\.\d*|\d*\.\d+)", stripped):
+        try:
+            return float(stripped)
+        except ValueError:
+            return stripped
+    if stripped.startswith(("{", "[", '"')):
+        try:
+            return json.loads(stripped)
+        except json.JSONDecodeError:
+            return value
+    return value
+
+
+def _looks_like_legacy_xml_tool_call(text: str) -> bool:
+    lowered = text.lower()
+    return (
+        "<tool_call" in lowered
+        or "</tool_call>" in lowered
+        or ("<arg_key" in lowered and "<arg_value" in lowered)
+    )
 
 
 def _normalize_dsml(text: str) -> str:

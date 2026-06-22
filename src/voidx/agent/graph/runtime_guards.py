@@ -284,7 +284,7 @@ def tool_call_key(tool_call: dict[str, Any]) -> str:
 
 
 def normalize_tool_args(tool_name: str, args: dict[str, Any]) -> str:
-    if tool_name in {"read", "write", "edit", "insert", "replace", "lsp_format"}:
+    if tool_name in {"read", "file", "line", "replace", "lsp_format"}:
         return str(args.get("file_path") or "")
     if tool_name == "lsp":
         return stable_json({

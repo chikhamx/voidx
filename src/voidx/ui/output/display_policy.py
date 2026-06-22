@@ -129,9 +129,8 @@ DEFAULT_DISPLAY_RULES: dict[str, ToolDisplayRule] = {
     "read": ToolDisplayRule(tool_name="read", mode=ToolDisplayMode.SHOW, auto_summary_lines=100),
     "webfetch": ToolDisplayRule(tool_name="webfetch", mode=ToolDisplayMode.SHOW, auto_summary_lines=50, auto_summary_chars=10000),
     # ── Show ──
-    "write": ToolDisplayRule(tool_name="write", mode=ToolDisplayMode.SHOW),
-    "edit": ToolDisplayRule(tool_name="edit", mode=ToolDisplayMode.SHOW),
-    "insert": ToolDisplayRule(tool_name="insert", mode=ToolDisplayMode.SHOW),
+    "file": ToolDisplayRule(tool_name="file", mode=ToolDisplayMode.SHOW),
+    "line": ToolDisplayRule(tool_name="line", mode=ToolDisplayMode.SHOW),
     "replace": ToolDisplayRule(tool_name="replace", mode=ToolDisplayMode.SHOW),
     "agent": ToolDisplayRule(tool_name="agent", mode=ToolDisplayMode.SHOW),
     "git": ToolDisplayRule(tool_name="git", mode=ToolDisplayMode.SHOW),

@@ -15,7 +15,7 @@ from voidx.agent.runtime_context import (
     raw_semantic_messages,
 )
 from voidx.agent.state import AgentState
-from voidx.agent.task_state import GoalResolution, TaskState, goal_label, goal_type_value
+from voidx.agent.task_state import GoalResolution, TaskState, goal_label, goal_type_from_join
 from voidx.agent.todo_state import sanitize_todo_replay_messages
 from voidx.agent.tool_filters import filter_unavailable_lsp_tools
 from voidx.agent.graph.streaming import extract_text, stream_llm as _stream_llm
@@ -76,7 +76,7 @@ class GraphLlmMixin:
             current_user_text,
             agent=runtime_persona,
             task_intent=task_state.current_intent.value,
-            goal_type=goal_type_value(current_goal),
+            goal_type=goal_type_from_join(workflow_start),
             interaction_mode=interaction_mode,
             scope=goal_label(current_goal) or current_user_text,
             exclude_names=_workflow_names(existing_workflow_runs),

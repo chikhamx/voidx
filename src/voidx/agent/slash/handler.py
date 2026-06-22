@@ -198,7 +198,7 @@ class SlashHandler(
 
     async def _goal(self, arg: str) -> None:
         from voidx.agent.runtime_context import InteractionMode
-        from voidx.agent.task_state import TaskState, goal_label, goal_type_value
+        from voidx.agent.task_state import TaskState, goal_label
 
         task_state = self.host.task_state or TaskState()
         goal = arg.strip()
@@ -212,10 +212,7 @@ class SlashHandler(
 
         if not goal:
             if task_state.current_goal is not None:
-                ui.print(
-                    f"Goal: [cyan]{goal_label(task_state.current_goal)}[/cyan] "
-                    f"[dim]({goal_type_value(task_state.current_goal)})[/dim]"
-                )
+                ui.print(f"Goal: [cyan]{goal_label(task_state.current_goal)}[/cyan]")
             else:
                 ui.print("Usage: /goal <goal>|clear")
             return

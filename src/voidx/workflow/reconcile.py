@@ -2,7 +2,7 @@
 
 from __future__ import annotations
 
-from voidx.runtime.task_state import GoalResolution, GoalType, TaskState
+from voidx.runtime.task_state import GoalResolution, TaskState, goal_type_from_join
 from voidx.workflow.dag import DEFAULT_WORKFLOW_DAG
 from voidx.workflow.policy import workflow_sort_key
 from voidx.workflow.runtime import advance_workflow_states
@@ -249,7 +249,6 @@ def _activate_initial_start(
     if any(run.status == WorkflowRunStatus.ACTIVE for run in runs):
         return None
 
-    goal = after_state.current_goal
     updated = [run.model_copy(deep=True) for run in runs]
     updated.append(
         WorkflowRunState(
@@ -257,8 +256,8 @@ def _activate_initial_start(
             status=WorkflowRunStatus.ACTIVE,
             source=WorkflowActivationSource.TRANSITION,
             reason="resolver plan.join",
-            goal_type=goal.type.value if goal is not None else "",
-            scope=goal.label if goal is not None else "",
+            goal_type=goal_type_from_join(target),
+            scope=after_state.current_goal.label if after_state.current_goal is not None else "",
             personas=list(_workflow_personas(target)),
             activated_turn=turn_count,
             updated_turn=turn_count,

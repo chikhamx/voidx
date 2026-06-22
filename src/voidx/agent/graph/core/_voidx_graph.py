@@ -48,7 +48,7 @@ from voidx.agent.runtime_context import (
     ContextCompilerCache,
     InteractionMode,
 )
-from voidx.agent.task_state import GoalResolution, TaskState
+from voidx.agent.task_state import GoalResolution, TaskState, goal_type_from_join
 from voidx.agent.todo_state import apply_todo_state_to_host
 from voidx.config import Config, Settings
 from voidx.llm.instruction import InstructionService
@@ -355,7 +355,7 @@ class VoidXGraph(
         goal = goal_resolution.goal
         plan = goal_resolution.plan
         workflow_start = plan.join if plan is not None else ""
-        goal_type = goal.type.value if goal is not None else ""
+        goal_type = goal_type_from_join(workflow_start)
         workflow_runtime_context = await self._workflow_context_for(
             description,
             agent="",

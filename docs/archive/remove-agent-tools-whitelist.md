@@ -1,6 +1,6 @@
 # Remove AgentDef.tools Whitelist
 
-> **Status: In Progress**
+> **Status: Done**
 
 ## Problem
 

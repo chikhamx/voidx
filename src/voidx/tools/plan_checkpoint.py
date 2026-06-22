@@ -6,7 +6,7 @@ import json
 
 from pydantic import BaseModel, Field
 
-from voidx.runtime import GoalSpec, GoalType, IntentResolution, PlanResolution, TaskIntent, ToolStatePatch
+from voidx.runtime import GoalSpec, IntentResolution, PlanResolution, TaskIntent, ToolStatePatch
 from voidx.tools.base import BaseTool, ToolContext, ToolResult, UserInteraction, model_to_json_schema
 from voidx.workflow.policy import workflow_transitions
 from voidx.workflow.service import WorkflowService
@@ -122,8 +122,8 @@ def _decision_result(
     if decision == "approved":
         scope = inp.plan_summary.strip()
         patch = ToolStatePatch(
-            intent=IntentResolution(type=TaskIntent.CODING, desc=scope),
-            goal=GoalSpec(type=GoalType.FEATURE, desc=scope),
+            intent=IntentResolution(type=TaskIntent.CODING),
+            goal=GoalSpec(desc=scope),
             plan=PlanResolution(join="tdd", leave="verify"),
             workflow_runs=_checkpoint_workflow_runs(
                 workflow_runs or (),
@@ -137,8 +137,8 @@ def _decision_result(
     elif decision == "needs_doc":
         scope = inp.plan_summary.strip()
         patch = ToolStatePatch(
-            intent=IntentResolution(type=TaskIntent.CODING, desc=scope),
-            goal=GoalSpec(type=GoalType.DOC, desc=scope),
+            intent=IntentResolution(type=TaskIntent.CODING),
+            goal=GoalSpec(desc=scope),
             plan=PlanResolution(join="design", leave="design"),
             workflow_runs=_checkpoint_workflow_runs(
                 workflow_runs or (),
@@ -152,14 +152,14 @@ def _decision_result(
     elif decision == "modified":
         scope = modified_scope or inp.plan_summary.strip()
         patch = ToolStatePatch(
-            intent=IntentResolution(type=TaskIntent.CODING, desc=scope),
-            goal=GoalSpec(type=GoalType.FEATURE, desc=scope),
+            intent=IntentResolution(type=TaskIntent.CODING),
+            goal=GoalSpec(desc=scope),
         )
         next_step_hint = ""
     else:
         patch = ToolStatePatch(
-            intent=IntentResolution(type=TaskIntent.CODING, desc=inp.plan_summary),
-            goal=GoalSpec(type=GoalType.FEATURE, desc=inp.plan_summary),
+            intent=IntentResolution(type=TaskIntent.CODING),
+            goal=GoalSpec(desc=inp.plan_summary),
         )
         next_step_hint = ""
 

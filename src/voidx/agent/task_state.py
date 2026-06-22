@@ -3,7 +3,6 @@
 from voidx.runtime.task_state import (
     GoalResolution,
     GoalSpec,
-    GoalType,
     IntentResolution,
     PlanResolution,
     TaskState,
@@ -13,14 +12,12 @@ from voidx.runtime.task_state import (
     TurnExchange,
     WorkflowRoute,
     goal_label,
-    goal_type_value,
-    infer_goal_type,
+    goal_type_from_join,
 )
 
 __all__ = [
     "GoalSpec",
     "GoalResolution",
-    "GoalType",
     "IntentResolution",
     "PlanResolution",
     "TaskState",
@@ -30,6 +27,5 @@ __all__ = [
     "TurnExchange",
     "WorkflowRoute",
     "goal_label",
-    "goal_type_value",
-    "infer_goal_type",
+    "goal_type_from_join",
 ]

@@ -42,6 +42,7 @@ class ToolResult(BaseModel):
     metadata: dict = {}
     diff: str | None = None  # unified diff for edit/write tools
     next_step_hint: str = ""
+    display: str = ""  # human-readable format for UI; LLM sees output
 
 
 class UserInteraction(BaseModel):

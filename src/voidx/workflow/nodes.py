@@ -31,7 +31,7 @@ BRAINSTORMING = WorkflowNode(
         "websearch",
     ],
     gate=NodeGate(
-        denied_tools=("write", "edit", "insert", "replace", "delete"),
+        denied_tools=("file", "line", "replace"),
         description=(
             "Do not write code, invoke implementation workflows, or take implementation "
             "action until the design is presented and approved. This applies regardless "
@@ -75,9 +75,8 @@ WRITING_DESIGN_DOCS = WorkflowNode(
         "read",
         "glob",
         "grep",
-        "write",
-        "edit",
-        "insert",
+        "file",
+        "line",
         "replace",
         "document",
         "repo_map",
@@ -128,15 +127,14 @@ WRITING_PLANS = WorkflowNode(
         "repo_map",
         "webfetch",
         "websearch",
-        "write",
-        "edit",
-        "insert",
+        "file",
+        "line",
         "replace",
     ],
     gate=NodeGate(
-        denied_tools=("write", "edit", "insert", "replace", "delete"),
+        denied_tools=("file", "line", "replace"),
         allowed_paths=("docs/specs/**", "docs/design/**"),
-        description="Do not write implementation code until the plan is approved. Write/edit is allowed only under docs/specs/ and docs/design/ for plan documents.",
+        description="Do not write implementation code until the plan is approved. File edits are allowed only under docs/specs/ and docs/design/ for plan documents.",
         required_before_transition="plan is executable and approved",
     ),
     workflow=[
@@ -174,9 +172,8 @@ TEST_DRIVEN_DEVELOPMENT = WorkflowNode(
     ),
     tools=[
         "read",
-        "write",
-        "edit",
-        "insert",
+        "file",
+        "line",
         "replace",
         "bash",
         "glob",
@@ -324,9 +321,8 @@ RECEIVING_CODE_REVIEW = WorkflowNode(
     ),
     tools=[
         "read",
-        "write",
-        "edit",
-        "insert",
+        "file",
+        "line",
         "replace",
         "bash",
         "glob",
@@ -382,7 +378,7 @@ SYSTEMATIC_DEBUGGING = WorkflowNode(
         "lsp",
     ],
     gate=NodeGate(
-        denied_tools=("write", "edit", "insert", "replace", "delete"),
+        denied_tools=("file", "line", "replace"),
         description="Root cause investigation must complete before proposing or applying any fix.",
         required_before_transition="root cause identified with evidence",
     ),

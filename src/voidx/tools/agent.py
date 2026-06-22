@@ -12,7 +12,6 @@ from voidx.runtime.intent import TaskIntent
 from voidx.runtime.task_state import (
     GoalResolution,
     GoalSpec,
-    GoalType,
     IntentResolution,
     PlanResolution,
 )
@@ -72,13 +71,13 @@ class NormalizedAgentDelegation:
     model: str | None
 
 
-_MODE_ROUTES: dict[str, tuple[GoalType, str, str]] = {
-    "inspect": (GoalType.INSPECT, "review", "review"),
-    "review": (GoalType.REVIEW, "review", "review"),
-    "debug": (GoalType.DEBUG, "debug", "debug"),
-    "plan": (GoalType.DESIGN, "plan", "plan"),
-    "implement": (GoalType.FEATURE, "tdd", "verify"),
-    "feedback": (GoalType.REVIEW, "feedback", "verify"),
+_MODE_ROUTES: dict[str, tuple[str, str, str]] = {
+    "inspect": ("inspect", "review", "review"),
+    "review": ("review", "review", "review"),
+    "debug": ("debug", "debug", "debug"),
+    "plan": ("design", "plan", "plan"),
+    "implement": ("feature", "tdd", "verify"),
+    "feedback": ("review", "feedback", "verify"),
 }
 
 _AUTO_PRESETS: dict[str, str] = {
@@ -245,13 +244,13 @@ class AgentTool(BaseTool):
 
 
 def normalize_agent_input(inp: AgentInput) -> NormalizedAgentDelegation:
-    goal_type, join, leave = _MODE_ROUTES[inp.mode]
+    _goal_type, join, leave = _MODE_ROUTES[inp.mode]
     preset = _AUTO_PRESETS[inp.mode] if inp.result_preset == "auto" else inp.result_preset
     result_contract = _RESULT_PRESETS[preset]
     description = _description_for_child(inp)
     goal_resolution = GoalResolution(
-        intent=IntentResolution(type=TaskIntent.CODING, desc=inp.task.strip()),
-        goal=GoalSpec(type=goal_type, desc=f"{inp.mode}: {inp.target.strip()}"),
+        intent=IntentResolution(type=TaskIntent.CODING),
+        goal=GoalSpec(desc=f"{inp.mode}: {inp.target.strip()}"),
         plan=PlanResolution(join=join, leave=leave),
     )
     return NormalizedAgentDelegation(

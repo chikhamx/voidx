@@ -58,6 +58,24 @@ def clear_read_coverage(ctx: ToolContext, resolved: Path) -> None:
     ctx.file_read_coverage.pop(str(resolved.resolve()), None)
 
 
+def clear_file_tracking(ctx: ToolContext, resolved: Path) -> None:
+    key = str(resolved.resolve())
+    ctx.file_read_coverage.pop(key, None)
+    ctx.file_mtimes.pop(key, None)
+
+
+def move_file_tracking(ctx: ToolContext, source: Path, dest: Path) -> None:
+    source_key = str(source.resolve())
+    dest_key = str(dest.resolve())
+    coverage = ctx.file_read_coverage.pop(source_key, None)
+    ctx.file_mtimes.pop(source_key, None)
+    if coverage is not None and dest.exists():
+        moved = coverage.copy()
+        moved["fingerprint"] = asdict(file_fingerprint(dest))
+        ctx.file_read_coverage[dest_key] = moved
+    record_mtime(ctx, dest)
+
+
 def _merge_ranges(ranges: list[dict]) -> list[dict]:
     if not ranges:
         return []

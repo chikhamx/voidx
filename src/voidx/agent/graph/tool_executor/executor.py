@@ -8,7 +8,7 @@ from langchain_core.messages import AIMessage, ToolMessage
 from voidx.agent.graph.runtime import current_parent_tool_call_id
 from voidx.agent.graph.workflow_utils import active_workflow_names
 from voidx.agent.todo_state import todo_run_state_from_result
-from voidx.agent.task_state import goal_label
+from voidx.agent.task_state import goal_label, goal_type_from_join
 from voidx.agent.tool_messages import sanitize_tool_message_content
 from voidx.agent.tool_result_storage import maybe_persist_tool_result
 from voidx.agent.graph.todo_events import todo_updated_event
@@ -99,7 +99,11 @@ class GraphToolExecutor:
                 persona=runtime_persona_ref[0],
                 interaction_mode=interaction_mode or ("plan" if plan_mode else "auto"),
                 task_intent=str(runtime_persona_ref[1] or "coding"),
-                goal_type=runtime_task_state_ref[1].type.value if runtime_task_state_ref[1] is not None else "",
+                goal_type=goal_type_from_join(
+                    runtime_task_state_ref[0].workflow_route.join
+                    if runtime_task_state_ref[0].workflow_route is not None
+                    else None
+                ),
                 goal_target=goal_label(runtime_task_state_ref[1]),
                 turn_count=turn_count,
                 active_workflow_names=active_workflow_names(runtime_task_state_ref[2]),
@@ -204,8 +208,8 @@ class GraphToolExecutor:
                 host._ui.session_tracker.record_diff(result.diff)
                 await notify_tool_diff(host, result, tool_event_id, tool_node)
             else:
-                output = _agent_result_preview(result.output) if tid == "agent" else result.output
-                await notify_tool_text_output(host, output, tid, tool_event_id, tool_node, display_policy, ok)
+                ui_output = _agent_result_preview(result.output) if tid == "agent" else (result.display or result.output)
+                await notify_tool_text_output(host, ui_output, tid, tool_event_id, tool_node, display_policy, ok)
 
             llm_content = maybe_persist_tool_result(
                 result.output, tool_event_id, tid,

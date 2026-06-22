@@ -4,6 +4,7 @@ from __future__ import annotations
 
 import logging
 import fnmatch
+import json
 import re
 from pathlib import Path
 
@@ -83,18 +84,23 @@ class GlobTool(BaseTool):
         )
 
         if not matches:
+            payload = {"pattern": inp.pattern, "matches": 0, "truncated": False, "files": []}
             return ToolResult(
-                output=f"No files matched pattern: {inp.pattern}",
+                output=json.dumps(payload, ensure_ascii=False),
+                display=f"No files matched pattern: {inp.pattern}",
                 metadata={"pattern": inp.pattern, "matches": 0},
             )
 
         total = len(matches)
         shown = matches[:200]
+        truncated = total > 200
+        payload = {"pattern": inp.pattern, "matches": total, "truncated": truncated, "files": shown}
         return ToolResult(
             title=f"Glob: {inp.pattern} → {total} files",
-            output="\n".join(shown),
+            output=json.dumps(payload, ensure_ascii=False),
+            display="\n".join(shown),
             summary=f"{total} files matched",
-            metadata={"pattern": inp.pattern, "matches": total, "truncated": total > 200},
+            metadata={"pattern": inp.pattern, "matches": total, "truncated": truncated},
         )
 
 
@@ -260,14 +266,18 @@ class GrepTool(BaseTool):
                 continue
 
         if not results:
+            payload = {"pattern": inp.pattern, "matches": 0, "truncated": False, "results": []}
             return ToolResult(
-                output=f"No matches found for: {inp.pattern}",
+                output=json.dumps(payload, ensure_ascii=False),
+                display=f"No matches found for: {inp.pattern}",
                 metadata={"pattern": inp.pattern, "matches": 0, "match_details": [], "truncated": False},
             )
 
+        payload = {"pattern": inp.pattern, "matches": count, "truncated": truncated, "results": match_details}
         return ToolResult(
             title=f"Grep: {inp.pattern} → {count} matches",
-            output="\n".join(results),
+            output=json.dumps(payload, ensure_ascii=False),
+            display="\n".join(results),
             summary=f"{count} matches",
             metadata={"pattern": inp.pattern, "matches": count, "match_details": match_details, "truncated": truncated},
         )

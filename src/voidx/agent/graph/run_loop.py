@@ -25,7 +25,7 @@ from voidx.runtime.ui import (
     UiStatus,
     emit_web_gateway_bootstrap,
 )
-from voidx.agent.task_state import goal_label, goal_type_value
+from voidx.agent.task_state import goal_label, goal_type_from_join
 from voidx.logging.tool_log import log_tool_event
 
 if TYPE_CHECKING:
@@ -183,7 +183,9 @@ class GraphRunLoopMixin(GraphTurnMixin, GraphSessionMixin, GraphTranscriptMixin)
                     "plan" if getattr(self, "_plan_mode", False) else "auto",
                 ),
                 goal_label=lambda: goal_label(getattr(getattr(self, "_task_state", None), "current_goal", None)),
-                goal_type=lambda: goal_type_value(getattr(getattr(self, "_task_state", None), "current_goal", None)),
+                goal_type=lambda: goal_type_from_join(
+                    getattr(getattr(getattr(self, "_task_state", None), "workflow_route", None), "join", None)
+                ),
                 goal_awaiting_approval=lambda: False,
                 active_workflows=lambda: active_workflow_names(getattr(self, "_task_state", None)),
                 mcp_servers=lambda: [

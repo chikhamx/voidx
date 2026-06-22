@@ -228,7 +228,7 @@ class PermissionService:
             lines.append(f"  [green]Session allow:[/green] {', '.join(sorted(self._session_allow))}")
         if self._session_deny:
             lines.append(f"  [red]Session deny:[/red] {', '.join(sorted(self._session_deny))}")
-        lines.append("  [yellow]Ask first:[/yellow] write, insert, replace, edit, write-capable bash, agent=implement, mcp__*")
+        lines.append("  [yellow]Ask first:[/yellow] file, line, replace, edit, write-capable bash, agent=implement, mcp__*")
         lines.append("")
         lines.append("  Commands: /permission-mode  /allow <tool>  /deny <tool>  /sandbox [r-o|w-write|danger]  /approval [ask|on-fail|auto]")
         return "\n".join(lines)

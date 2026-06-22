@@ -6,7 +6,7 @@ import json
 
 from pydantic import BaseModel, Field
 
-from voidx.runtime import GoalSpec, GoalType, IntentResolution, TaskIntent, ToolStatePatch
+from voidx.runtime import GoalSpec, IntentResolution, TaskIntent, ToolStatePatch
 from voidx.tools.base import (
     BaseTool,
     ToolContext,
@@ -103,21 +103,11 @@ def _infer_state_patch(response: UserResponse) -> ToolStatePatch | None:
         "implement": TaskIntent.CODING,
         "debug": TaskIntent.CODING,
     }
-    goal_type_map = {
-        "inspect": GoalType.INSPECT,
-        "design": GoalType.DESIGN,
-        "review": GoalType.REVIEW,
-        "implement": GoalType.FEATURE,
-        "debug": GoalType.DEBUG,
-    }
     if normalized in intent_map:
+        goal_modes = {"inspect", "design", "review", "implement", "debug"}
         return ToolStatePatch(
-            intent=IntentResolution(type=intent_map[normalized], desc=answer),
-            goal=(
-                GoalSpec(type=goal_type_map[normalized], desc=answer)
-                if normalized in goal_type_map
-                else None
-            ),
+            intent=IntentResolution(type=intent_map[normalized]),
+            goal=GoalSpec(desc=answer) if normalized in goal_modes else None,
         )
 
     return None

@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import asyncio
+import json
 import os
 import re
 import signal
@@ -109,11 +110,21 @@ class BashTool(BaseTool):
 
         blocked = _check_command(inp.command)
         if blocked:
-            return ToolResult(output=blocked, metadata={"command": inp.command, "blocked": True})
+            payload = {"ok": False, "exit_code": -1, "stdout": "", "stderr": blocked, "blocked": True}
+            return ToolResult(
+                output=json.dumps(payload, ensure_ascii=False),
+                display=blocked,
+                metadata={"command": inp.command, "blocked": True},
+            )
 
         blocked = _sandbox_denial(inp.command, ctx)
         if blocked:
-            return ToolResult(output=blocked, metadata={"command": inp.command, "blocked": True})
+            payload = {"ok": False, "exit_code": -1, "stdout": "", "stderr": blocked, "blocked": True}
+            return ToolResult(
+                output=json.dumps(payload, ensure_ascii=False),
+                display=blocked,
+                metadata={"command": inp.command, "blocked": True},
+            )
 
         hint = try_hint(inp.command)
         if hint is not None:
@@ -146,33 +157,45 @@ class BashTool(BaseTool):
             )
         except asyncio.TimeoutError:
             await _terminate_process(proc)
+            payload = {"ok": False, "exit_code": -1, "stdout": "", "stderr": "", "timeout": True}
+            display = f"Command timed out after {inp.timeout}s: {inp.command}"
             return ToolResult(
-                output=f"Command timed out after {inp.timeout}s: {inp.command}",
+                output=json.dumps(payload, ensure_ascii=False),
+                display=display,
                 metadata={"command": inp.command, "exit_code": -1, "timeout": True},
             )
 
-        output_parts = []
-        if stdout:
-            output_parts.append(stdout.decode("utf-8", errors="replace"))
-        if stderr:
-            output_parts.append(f"[stderr]\n{stderr.decode('utf-8', errors='replace')}")
-
+        stdout_text = stdout.decode("utf-8", errors="replace") if stdout else ""
+        stderr_text = stderr.decode("utf-8", errors="replace") if stderr else ""
         exit_code = proc.returncode or 0
-        if exit_code != 0 and not stdout and not stderr:
-            output_parts.append(
+
+        display_parts = []
+        if stdout_text:
+            display_parts.append(stdout_text)
+        if stderr_text:
+            display_parts.append(f"[stderr]\n{stderr_text}")
+        if exit_code != 0 and not stdout_text and not stderr_text:
+            display_parts.append(
                 "Interactive commands that read from stdin are not supported. "
                 "Use non-interactive flags or pipe input via echo/heredoc."
             )
 
+        payload = {
+            "ok": exit_code == 0,
+            "exit_code": exit_code,
+            "stdout": stdout_text,
+            "stderr": stderr_text,
+        }
+
         result = ToolResult(
             title=f"Bash: {inp.command}",
-            output="\n".join(output_parts) or "(no output)",
+            output=json.dumps(payload, ensure_ascii=False),
+            display="\n".join(display_parts) or "(no output)",
             summary=f"exit {exit_code}",
             metadata={
                 "command": inp.command,
                 "exit_code": exit_code,
-                "stdout_size": len(stdout) if stdout else 0,
-                "stderr_size": len(stderr) if stderr else 0,
+                "ok": exit_code == 0,
             },
         )
 

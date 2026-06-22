@@ -16,7 +16,7 @@ from voidx.agent.goal_resolver import resolve_goal_for_turn, resolve_goal_mode, 
 from voidx.agent.runtime_context import TaskIntent
 from voidx.agent.graph.runtime_guards import RuntimeGuardState
 from voidx.agent.state import AgentState
-from voidx.agent.task_state import TaskState, TurnExchange, goal_label
+from voidx.agent.task_state import TaskState, TurnExchange, goal_label, goal_type_from_join
 from voidx.memory.service import (
     MessageRow,
     MessageRuntimeSnapshot,
@@ -66,19 +66,23 @@ def _initial_persona_for_goal(task_state: TaskState) -> str:
     if personas:
         return ",".join(dict.fromkeys(personas))
 
-    goal = task_state.current_goal
-    goal_type = goal.type.value if goal is not None else ""
+    join = task_state.workflow_route.join if task_state.workflow_route is not None else ""
     return {
-        "inspect": "explore",
+        "brainstorm": "plan",
+        "debug": "explore",
         "design": "plan",
-        "doc": "plan",
-        "bugfix": "implement",
-        "feature": "implement",
-        "refactor": "implement",
-        "chore": "implement",
+        "feedback": "review",
+        "plan": "plan",
+        "review": "review",
+        "tdd": "implement",
+        "verify": "review",
+    }.get(join, {
         "debug": "explore",
         "review": "review",
-    }.get(goal_type, "coordinate")
+        "feature": "implement",
+        "design": "plan",
+        "doc": "plan",
+    }.get(goal_type_from_join(join), "coordinate"))
 
 
 class GraphTurnRunner:
