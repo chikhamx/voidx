@@ -16,6 +16,8 @@ Token budget constants (from opencode):
 
 from __future__ import annotations
 
+PRUNE_ARGS_PLACEHOLDER_DIFF = "[omitted: see diff in tool result]"
+
 from dataclasses import dataclass
 from typing import Literal
 
@@ -98,6 +100,67 @@ and do not invent facts that are not present in the conversation.
 {template}"""
 
 
+
+
+def _tool_result_has_diff(messages: list, ai_msg_index: int, tool_call_id: str) -> bool:
+    """Check if the ToolMessage for a given tool_call_id contains a diff marker.
+
+    Searches from ai_msg_index forward until the next HumanMessage (turn boundary).
+    """
+    for j in range(ai_msg_index + 1, len(messages)):
+        msg = messages[j]
+        if isinstance(msg, HumanMessage):
+            break
+        if hasattr(msg, "tool_call_id") and msg.tool_call_id == tool_call_id:
+            content = str(getattr(msg, "content", ""))
+            return "---" in content and "+++" in content
+    return False
+
+
+def _prune_ai_tool_call_args(
+    tool_calls: list[dict],
+    messages: list,
+    ai_msg_index: int,
+) -> tuple[list[dict] | None, int]:
+    """Omit large content/new_string args in file-edit tool calls.
+
+    Returns (new_tool_calls, saved_chars). new_tool_calls is None if no changes.
+    Only prunes when the corresponding tool result contains a diff
+    (so the LLM can still see the content via the diff).
+    """
+    changed = False
+    saved_chars = 0
+    new_tool_calls: list[dict] = []
+
+    for tc in tool_calls:
+        tc_copy = {**tc, "args": dict(tc.get("args", {}))}
+        args = tc_copy["args"]
+        name = tc.get("name", "")
+        tc_id = tc.get("id", "")
+
+        if name == "write" and "content" in args:
+            placeholder = f"[omitted: {args['content'].count(chr(10)) + 1} lines written]"
+            if len(args["content"]) > len(placeholder) and _tool_result_has_diff(messages, ai_msg_index, tc_id):
+                saved_chars += len(args["content"]) - len(placeholder)
+                args["content"] = placeholder
+                changed = True
+        elif name == "replace" and "new_string" in args:
+            placeholder = PRUNE_ARGS_PLACEHOLDER_DIFF
+            if len(args["new_string"]) > len(placeholder) and _tool_result_has_diff(messages, ai_msg_index, tc_id):
+                saved_chars += len(args["new_string"]) - len(placeholder)
+                args["new_string"] = placeholder
+                changed = True
+        elif name == "line" and args.get("op") == "insert" and "new_string" in args:
+            placeholder = PRUNE_ARGS_PLACEHOLDER_DIFF
+            if len(args["new_string"]) > len(placeholder) and _tool_result_has_diff(messages, ai_msg_index, tc_id):
+                saved_chars += len(args["new_string"]) - len(placeholder)
+                args["new_string"] = placeholder
+                changed = True
+
+        new_tool_calls.append(tc_copy)
+
+    return (new_tool_calls if changed else None, saved_chars)
+
 @dataclass
 class Turn:
     """A conversation turn starts at a user message and ends before the next."""
@@ -167,11 +230,14 @@ class CompactionService:
         - Already compacted parts stop further pruning
         - Cumulative tool output > PRUNE_PROTECT → truncate to TOOL_OUTPUT_MAX_CHARS
         - Only prune if total pruned > PRUNE_MINIMUM
+        - For old AIMessage tool_calls, omit large content/new_string args
+          when the corresponding tool result contains a diff
         """
         turns_seen = 0
         accumulated = 0
         pruned_chars = 0
         to_prune: list[tuple[int, str]] = []  # (msg_index, truncated_text)
+        ai_to_rebuild: dict[int, list[dict]] = {}  # (msg_index, new_tool_calls)
 
         for i in range(len(messages) - 1, -1, -1):
             msg = messages[i]
@@ -184,6 +250,19 @@ class CompactionService:
 
             if isinstance(msg, AIMessage) and hasattr(msg, "summary") and msg.summary:
                 break  # stop at compaction boundary
+
+            # Prune AIMessage tool_calls args for old turns
+            if (
+                isinstance(msg, AIMessage)
+                and turns_seen >= 2
+                and hasattr(msg, "tool_calls")
+                and msg.tool_calls
+            ):
+                new_tcs, saved = _prune_ai_tool_call_args(msg.tool_calls, messages, i)
+                if new_tcs is not None:
+                    ai_to_rebuild[i] = new_tcs
+                    pruned_chars += saved
+                continue
 
             # Tool messages have role="tool" and a tool_call_id
             if not hasattr(msg, "tool_call_id") or not msg.tool_call_id:
@@ -213,9 +292,11 @@ class CompactionService:
                     content=truncated,
                     tool_call_id=messages[idx].tool_call_id,
                 )
-            return pruned_chars
 
-        return 0
+        for idx, new_tcs in ai_to_rebuild.items():
+            messages[idx] = messages[idx].model_copy(update={"tool_calls": new_tcs})
+
+        return pruned_chars
 
     # ── Layer 3: compaction ─────────────────────────────────────────────
 
