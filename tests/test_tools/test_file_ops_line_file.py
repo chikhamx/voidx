@@ -39,6 +39,33 @@ class TestFileTool:
         assert (tmp_path / "new.txt").read_text(encoding="utf-8") == "hello\n"
 
     @pytest.mark.asyncio
+    async def test_file_create_returns_next_step_hint_for_line_tool(self, tmp_path):
+        ctx = ToolContext(workspace=str(tmp_path))
+        r = ToolRegistry()
+
+        result = await r.execute_tool("file", {"file_path": "hint.txt", "op": "create"}, ctx)
+
+        assert result.metadata.get("error") is not True
+        assert "line tool" in result.next_step_hint
+        assert "hint.txt" in result.next_step_hint
+        assert "30 lines" in result.next_step_hint
+        assert "lineno=-1" in result.next_step_hint
+
+    @pytest.mark.asyncio
+    async def test_file_create_overwrite_has_no_next_step_hint(self, tmp_path, monkeypatch):
+        monkeypatch.setattr(store, "DATA_DIR", tmp_path / ".voidx")
+        (tmp_path / "existing.txt").write_text("old\n", encoding="utf-8")
+        ctx = ToolContext(workspace=str(tmp_path), session_id="sid-1")
+        r = ToolRegistry()
+
+        result = await r.execute_tool(
+            "file", {"file_path": "existing.txt", "op": "create", "overwrite": True}, ctx
+        )
+
+        assert result.metadata.get("error") is not True
+        assert result.next_step_hint == ""
+
+    @pytest.mark.asyncio
     async def test_file_create_overwrite_saves_version_and_clears_coverage(self, tmp_path, monkeypatch):
         monkeypatch.setattr(store, "DATA_DIR", tmp_path / ".voidx")
         target = tmp_path / "existing.txt"

@@ -87,12 +87,19 @@ async def _create_file(ctx: ToolContext, inp: FileInput) -> ToolResult:
 
     diff = make_file_diff(inp.file_path, old_content, "") if overwritten and old_content else ""
     title = "File overwritten" if overwritten else "File created"
+    hint = ""
+    if not overwritten:
+        hint = (
+            f"Use the line tool to append content to {inp.file_path} in batches of up to 30 lines. "
+            f"Start with line(file_path=\"{inp.file_path}\", op=\"insert\", lineno=-1, new_string=\"...\")."
+        )
     return ToolResult(
         title=title,
         output=f"{title}: {inp.file_path}",
         summary=title,
         metadata={"file": inp.file_path, "operation": "create", "overwritten": overwritten},
         diff=diff or None,
+        next_step_hint=hint,
     )
 
 
