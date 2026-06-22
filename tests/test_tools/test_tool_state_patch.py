@@ -15,16 +15,11 @@ from langchain_core.messages import ToolMessage
 
 from voidx.agent.tool_messages import DEFAULT_TOOL_MESSAGE_MAX_CHARS
 from voidx.tools.base import ToolContext, ToolResult, BaseTool, UserInteraction, UserResponse
-from voidx.tools.file_ops import (
-    FileReadInput,
-    FileWriteInput,
-    FileEditInput,
-    EditEntry,
-    FileReadTool,
-    FileWriteTool,
-    FileEditTool,
-    _find_paragraph,
-)
+from voidx.tools.file_ops import FileReadInput, FileReadTool
+from voidx.tools.file_ops.write import FileWriteInput, FileWriteTool
+from voidx.tools.file_ops.edit_execute import FileEditInput, FileEditTool
+from voidx.tools.file_ops.types import EditEntry
+from voidx.tools.file_ops.edit_resolve import _find_paragraph
 from voidx.tools.file_state import save_file_version
 import voidx.tools.file_state as file_state
 from voidx.tools.search import GlobInput, GrepInput
@@ -38,7 +33,7 @@ from voidx.tools.clarify import ClarifyTool, ClarifyInput, _infer_state_patch
 from voidx.tools.load_skills import LoadSkillsTool
 from voidx.tools.load_doc_template import LoadDocTemplateTool, LoadDocTemplateInput
 from voidx.tools.plan_checkpoint import PlanCheckpointTool
-from voidx.agent.task_state import GoalSpec, GoalResolution, GoalType, IntentResolution, PlanResolution, ToolStatePatch
+from voidx.agent.task_state import GoalSpec, GoalResolution, IntentResolution, PlanResolution, ToolStatePatch
 from voidx.agent.runtime_context import TaskIntent
 from voidx.skills.context import SKILL_TOOL_CONTEXT_MARKER
 from voidx.workflow.runtime import WorkflowRunState, WorkflowRunStatus
@@ -73,14 +68,14 @@ def _insert_bof(new_string: str) -> dict:
 
 class TestToolStatePatch:
     def test_model_fields_set_tracks_explicit_fields(self):
-        patch = ToolStatePatch(intent=IntentResolution(type=TaskIntent.CODING, desc="clarified"))
+        patch = ToolStatePatch(intent=IntentResolution(type=TaskIntent.CODING))
         assert "intent" in patch.model_fields_set
         assert "goal" not in patch.model_fields_set
 
     def test_full_patch_round_trips(self):
         patch = ToolStatePatch(
-            intent=IntentResolution(type=TaskIntent.CODING, desc="clarified"),
-            goal=GoalSpec(type=GoalType.FEATURE, desc="Refactor auth"),
+            intent=IntentResolution(type=TaskIntent.CODING),
+            goal=GoalSpec(desc="Refactor auth"),
         )
         data = patch.model_dump(mode="json")
         restored = ToolStatePatch.model_validate(data)

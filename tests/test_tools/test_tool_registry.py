@@ -17,13 +17,9 @@ from voidx.agent.tool_messages import DEFAULT_TOOL_MESSAGE_MAX_CHARS
 from voidx.tools.base import ToolContext, ToolResult, BaseTool, UserInteraction, UserResponse
 from voidx.tools.file_ops import (
     FileReadInput,
-    FileWriteInput,
-    FileEditInput,
-    EditEntry,
+    FileInput,
+    LineInput,
     FileReadTool,
-    FileWriteTool,
-    FileEditTool,
-    _find_paragraph,
 )
 from voidx.tools.file_state import save_file_version
 import voidx.tools.file_state as file_state
@@ -38,7 +34,7 @@ from voidx.tools.clarify import ClarifyTool, ClarifyInput, _infer_state_patch
 from voidx.tools.load_skills import LoadSkillsTool
 from voidx.tools.load_doc_template import LoadDocTemplateTool, LoadDocTemplateInput
 from voidx.tools.plan_checkpoint import PlanCheckpointTool
-from voidx.agent.task_state import GoalSpec, GoalResolution, GoalType, IntentResolution, PlanResolution, ToolStatePatch
+from voidx.agent.task_state import GoalSpec, GoalResolution, IntentResolution, PlanResolution, ToolStatePatch
 from voidx.agent.runtime_context import TaskIntent
 from voidx.skills.context import SKILL_TOOL_CONTEXT_MARKER
 from voidx.workflow.runtime import WorkflowRunState, WorkflowRunStatus
@@ -78,10 +74,13 @@ class TestToolRegistry:
         r = ToolRegistry()
         ids = r.ids()
         assert "read" in ids
-        assert "write" in ids
-        assert "edit" in ids
-        assert "insert" in ids
+        assert "file" in ids
+        assert "line" in ids
         assert "replace" in ids
+        assert "write" not in ids
+        assert "edit" not in ids
+        assert "insert" not in ids
+        assert "delete" not in ids
         assert "glob" in ids
         assert "grep" in ids
         assert "git" in ids
@@ -98,11 +97,13 @@ class TestToolRegistry:
     def test_tools_for_llm(self):
         r = ToolRegistry()
         tools = r.tools_for_llm()
-        assert len(tools) == len([tool_id for tool_id in r.ids() if tool_id != "edit"])
+        assert len(tools) == len(r.ids())
         assert len(tools) >= 10
         names = [t["function"]["name"] for t in tools]
-        assert "insert" in names
+        assert "file" in names
+        assert "line" in names
         assert "replace" in names
+        assert "write" not in names
         assert "edit" not in names
         for t in tools:
             assert t["type"] == "function"
@@ -142,6 +143,6 @@ class TestToolRegistry:
 
         assert set(r.ids()) == {"read", "grep"}
         assert r.get("read") is not None
-        assert r.get("write") is None
+        assert r.get("file") is None
         names = [tool["function"]["name"] for tool in r.tools_for_llm()]
         assert names == ["read", "grep"]

@@ -20,7 +20,6 @@ from voidx.agent.runtime_context import InteractionMode, TaskIntent
 from voidx.agent.task_state import (
     GoalResolution,
     GoalSpec,
-    GoalType,
     IntentResolution,
     PlanResolution,
     TaskState,
@@ -183,7 +182,7 @@ async def test_clear_reprints_startup(tmp_path):
     )
     graph = _graph(session=session, workspace=str(tmp_path))
     graph._interaction_mode = InteractionMode.GOAL
-    graph._task_state = TaskState(current_goal=GoalSpec(type=GoalType.DESIGN, desc="修复 UI"))
+    graph._task_state = TaskState(current_goal=GoalSpec(desc="修复 UI"))
     restore_calls: list[bool] = []
 
     async def fake_restore(self, *, append: bool = False) -> bool:
@@ -226,7 +225,7 @@ async def test_clear_detaches_old_session_and_cleans_storage_in_background(tmp_p
     await save_message(MessageRow(session_id=session.id, role="user", content="old question"))
     graph = VoidXGraph(Config(workspace=str(tmp_path)), api_key=None, session=session)
     graph._interaction_mode = InteractionMode.GOAL
-    graph._task_state = TaskState(current_goal=GoalSpec(type=GoalType.DESIGN, desc="old goal"))
+    graph._task_state = TaskState(current_goal=GoalSpec(desc="old goal"))
 
     test_dock = BottomInputDock()
     set_dock(test_dock)
@@ -333,7 +332,7 @@ async def test_resume_restores_structured_runtime_state(tmp_path):
             interaction_mode=InteractionMode.GOAL,
             task_state=TaskState(
                 current_intent=TaskIntent.CODING,
-                current_goal=GoalSpec(type=GoalType.DESIGN, desc="优化 markdown 渲染截断"),
+                current_goal=GoalSpec(desc="优化 markdown 渲染截断"),
             ),
         ),
     )

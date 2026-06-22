@@ -41,7 +41,7 @@ from voidx.memory.session import (
 )
 from voidx.memory.transcript import load_transcript
 from voidx.permission.service import PermissionService
-from voidx.runtime import GoalResolution, GoalSpec, GoalType, IntentResolution, PlanResolution, TaskIntent
+from voidx.runtime import GoalResolution, GoalSpec, IntentResolution, PlanResolution, TaskIntent
 from voidx.skills.context import SKILL_TOOL_CONTEXT_MARKER
 from voidx.workflow.context import WORKFLOW_CONTEXT_MARKER
 from voidx.workflow.runtime import WorkflowRunState, WorkflowRunStatus
@@ -74,15 +74,15 @@ def _result_task_state(result: dict) -> TaskState:
 
 
 def _child_goal_resolution(
-    goal_type: GoalType = GoalType.FEATURE,
+    goal_type: str = "feature",
     *,
     desc: str = "Implement the feature",
     join: str = "tdd",
     leave: str = "verify",
 ) -> GoalResolution:
     return GoalResolution(
-        intent=IntentResolution(type=TaskIntent.CODING, desc="delegated child task"),
-        goal=GoalSpec(type=goal_type, desc=desc),
+        intent=IntentResolution(type=TaskIntent.CODING),
+        goal=GoalSpec(desc=desc),
         plan=PlanResolution(join=join, leave=leave),
     )
 
@@ -101,7 +101,7 @@ def _child_result_contract(schema_name: str = "implementation_result") -> AgentR
 
 def _subagent_contract_kwargs(
     *,
-    goal_type: GoalType = GoalType.INSPECT,
+    goal_type: str = "inspect",
     desc: str = "Inspect the workspace",
     join: str = "review",
     leave: str = "review",
@@ -299,7 +299,11 @@ def test_orchestrator_has_direct_edit_tools():
     tool_ids = set(registry.ids())
 
     assert agent is not None
-    assert {"write", "insert", "replace", "edit", "delete"}.issubset(tool_ids)
+    assert {"file", "line", "replace"}.issubset(tool_ids)
+    assert "write" not in tool_ids
+    assert "insert" not in tool_ids
+    assert "edit" not in tool_ids
+    assert "delete" not in tool_ids
     assert {"clarify", "checkpoint", "skill"}.issubset(tool_ids)
     assert get_agent("sub-voidx") is None
     assert get_agent("explore") is None

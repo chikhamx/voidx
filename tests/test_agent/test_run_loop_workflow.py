@@ -20,7 +20,6 @@ from voidx.agent.runtime_context import InteractionMode, TaskIntent
 from voidx.agent.task_state import (
     GoalResolution,
     GoalSpec,
-    GoalType,
     IntentResolution,
     PlanResolution,
     TaskState,
@@ -57,7 +56,7 @@ async def test_first_turn_without_goal_uses_temporary_session_title(tmp_path):
         async def ainvoke(self, messages):
             assert "看看这个项目" in messages[1].content
             return GoalResolution(
-                intent=IntentResolution(type=TaskIntent.CODING, desc="workspace inspection"),
+                intent=IntentResolution(type=TaskIntent.CODING),
                 goal=None,
                 plan=None,
             )
@@ -130,7 +129,7 @@ async def test_run_once_uses_general_fallback_when_structured_resolver_fails(tmp
 async def test_run_once_does_not_preadvance_workflow_without_resolver_join(tmp_path):
     graph = VoidXGraph(Config(workspace=str(tmp_path)), api_key=None)
     graph._task_state = TaskState(
-        current_goal=GoalSpec(type=GoalType.DESIGN, desc="agent_name 语义清理"),
+        current_goal=GoalSpec(desc="agent_name 语义清理"),
         workflow_runs={
             "brainstorm": WorkflowRunState(
                 name="brainstorm",

@@ -20,7 +20,6 @@ from voidx.agent.runtime_context import InteractionMode, TaskIntent
 from voidx.agent.task_state import (
     GoalResolution,
     GoalSpec,
-    GoalType,
     IntentResolution,
     PlanResolution,
     TaskState,

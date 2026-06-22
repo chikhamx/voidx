@@ -16,16 +16,11 @@ from pydantic import ValidationError
 
 from voidx.agent.tool_messages import DEFAULT_TOOL_MESSAGE_MAX_CHARS
 from voidx.tools.base import ToolContext, ToolResult, BaseTool, UserInteraction, UserResponse
-from voidx.tools.file_ops import (
-    FileReadInput,
-    FileWriteInput,
-    FileEditInput,
-    EditEntry,
-    FileReadTool,
-    FileWriteTool,
-    FileEditTool,
-    _find_paragraph,
-)
+from voidx.tools.file_ops import FileReadInput, FileReadTool
+from voidx.tools.file_ops.write import FileWriteInput, FileWriteTool
+from voidx.tools.file_ops.edit_execute import FileEditInput, FileEditTool
+from voidx.tools.file_ops.edit_resolve import _find_paragraph
+from voidx.tools.file_ops.types import EditEntry
 from voidx.tools.file_state import save_file_version
 import voidx.tools.file_state as file_state
 from voidx.tools.search import GlobInput, GrepInput
@@ -39,7 +34,7 @@ from voidx.tools.clarify import ClarifyTool, ClarifyInput, _infer_state_patch
 from voidx.tools.load_skills import LoadSkillsTool
 from voidx.tools.load_doc_template import LoadDocTemplateTool, LoadDocTemplateInput
 from voidx.tools.plan_checkpoint import PlanCheckpointInput, PlanCheckpointTool, _build_prompt
-from voidx.agent.task_state import GoalSpec, GoalResolution, GoalType, IntentResolution, PlanResolution, ToolStatePatch
+from voidx.agent.task_state import GoalSpec, GoalResolution, IntentResolution, PlanResolution, ToolStatePatch
 from voidx.agent.runtime_context import TaskIntent
 from voidx.skills.context import SKILL_TOOL_CONTEXT_MARKER
 from voidx.workflow.runtime import WorkflowRunState, WorkflowRunStatus
@@ -93,7 +88,7 @@ class TestInteractiveTools:
         assert requests
         assert result.metadata["clarify_answer"] == "implement"
         assert result.metadata["state_patch"]["intent"]["type"] == "coding"
-        assert result.metadata["state_patch"]["goal"]["type"] == "feature"
+        assert result.metadata["state_patch"]["goal"]["desc"] == "implement"
 
     @pytest.mark.asyncio
     async def test_plan_checkpoint_approval_sets_implementation_goal(self, tmp_path):
@@ -109,7 +104,6 @@ class TestInteractiveTools:
         patch = result.metadata["state_patch"]
         assert patch["intent"]["type"] == "coding"
         assert patch["goal"]["desc"] == "Update runtime state handling"
-        assert patch["goal"]["type"] == "feature"
         assert patch["plan"] == {"join": "tdd", "leave": "verify"}
         assert patch["workflow_runs"][0]["name"] == "tdd"
         assert patch["workflow_runs"][0]["status"] == "active"
@@ -297,7 +291,7 @@ class TestInteractiveTools:
         assert result.metadata["plan_decision"] == "rejected"
         patch = result.metadata["state_patch"]
         assert patch["intent"]["type"] == "coding"
-        assert patch["goal"]["type"] == "feature"
+        assert patch["goal"]["desc"] == "Refactor auth module"
         assert result.next_step_hint == ""
 
     @pytest.mark.asyncio
@@ -317,7 +311,7 @@ class TestInteractiveTools:
         assert result.metadata["plan_decision"] == "needs_doc"
         patch = result.metadata["state_patch"]
         assert patch["intent"]["type"] == "coding"
-        assert patch["goal"]["type"] == "doc"
+        assert patch["goal"]["desc"] == "Add checkpoint document option"
         assert patch["plan"] == {"join": "design", "leave": "design"}
         assert result.next_step_hint == ""
 
@@ -362,7 +356,6 @@ class TestInteractiveTools:
         patch = result.metadata["state_patch"]
         assert patch["intent"]["type"] == "coding"
         assert patch["goal"]["desc"] == "Only refactor the login function"
-        assert patch["goal"]["type"] == "feature"
         assert result.next_step_hint == ""
         assert len(interact_calls) == 2
         assert "Describe the modified scope" in interact_calls[1].prompt

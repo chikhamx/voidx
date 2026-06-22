@@ -2,6 +2,7 @@ from __future__ import annotations
 
 import sys
 from pathlib import Path
+from datetime import datetime, timedelta, timezone
 from types import SimpleNamespace
 
 import pytest
@@ -165,21 +166,22 @@ async def test_session_del_dry_run_lists_candidates_without_deleting(monkeypatch
     old_session = await create_session(workspace="/tmp/old-workspace")
     recent_session = await create_session()
     try:
+        now = datetime.now(timezone.utc)
         await save_message(MessageRow(session_id=old_session.id, role="user", content="old"))
         await store._execute_commit(
             "UPDATE sessions SET title = ?, updated_at = ? WHERE id = ?",
-            ("Old Session", "2026-01-01T00:00:00+00:00", old_session.id),
+            ("Old Session", (now - timedelta(days=30)).isoformat(), old_session.id),
         )
         await store._execute_commit(
             "UPDATE sessions SET title = ?, updated_at = ? WHERE id = ?",
-            ("Recent Session", "2026-06-14T00:00:00+00:00", recent_session.id),
+            ("Recent Session", (now - timedelta(days=1)).isoformat(), recent_session.id),
         )
 
         assert await SlashHandler(_graph()).dispatch("/session del --dry-run 7d") is True
 
         assert any("Dry run" in line for line in output)
         assert any(old_session.id[:8] in line and "Old Session" in line for line in output)
-        assert any("2026-01-01" in line and "/tmp/old-workspace" in line for line in output)
+        assert any("/tmp/old-workspace" in line for line in output)
         assert all(recent_session.id[:8] not in line for line in output)
         assert await get_session(old_session.id) is not None
         assert await get_session(recent_session.id) is not None

@@ -17,7 +17,6 @@ import voidx.memory.jsonl_store as jsonl_store
 from voidx.agent.runtime_context import InteractionMode, TaskIntent
 from voidx.agent.task_state import (
     GoalSpec,
-    GoalType,
     TaskState,
     TodoRunState,
     TurnExchange,
@@ -63,7 +62,7 @@ async def test_runtime_state_round_trips_structured_goal_state():
         state = TaskState(
             current_intent=TaskIntent.CODING,
             previous_intent=TaskIntent.CODING,
-            current_goal=GoalSpec(type=GoalType.DESIGN, desc="优化 markdown 渲染截断"),
+            current_goal=GoalSpec(desc="优化 markdown 渲染截断"),
             workflow_route=WorkflowRoute(join="brainstorm", leave="plan"),
             recent_exchanges=[
                 TurnExchange(user_text="看看现状", assistant_text="现状如下"),
@@ -105,7 +104,7 @@ async def test_runtime_state_round_trips_structured_goal_state():
         assert loaded.task_state.current_intent == TaskIntent.CODING
         assert loaded.task_state.previous_intent == TaskIntent.CODING
         assert loaded.task_state.current_goal is not None
-        assert loaded.task_state.current_goal.type == GoalType.DESIGN
+        assert loaded.task_state.current_goal.desc == "优化 markdown 渲染截断"
         assert loaded.task_state.current_goal.desc == "优化 markdown 渲染截断"
         assert loaded.task_state.workflow_route is not None
         assert loaded.task_state.workflow_route.join == "brainstorm"
@@ -154,7 +153,7 @@ async def test_message_runtime_snapshot_round_trips_per_turn_state():
             session_id=session.id,
             interaction_mode=InteractionMode.GOAL,
             task_intent=TaskIntent.CODING,
-            current_goal=GoalSpec(type=GoalType.DESIGN, desc="优化 markdown 渲染截断"),
+            current_goal=GoalSpec(desc="优化 markdown 渲染截断"),
             workflow_route=WorkflowRoute(join="brainstorm", leave="plan"),
             workflow_runs={
                 "brainstorm": WorkflowRunState(
@@ -172,7 +171,7 @@ async def test_message_runtime_snapshot_round_trips_per_turn_state():
         assert loaded.interaction_mode == InteractionMode.GOAL
         assert loaded.task_intent == TaskIntent.CODING
         assert loaded.current_goal is not None
-        assert loaded.current_goal.type == GoalType.DESIGN
+        assert loaded.current_goal.desc == "优化 markdown 渲染截断"
         assert loaded.workflow_route is not None
         assert loaded.workflow_route.join == "brainstorm"
         assert loaded.workflow_route.leave == "plan"
@@ -191,7 +190,7 @@ async def test_message_runtime_snapshot_round_trips_from_runtime_debug_jsonl():
             session_id=session.id,
             interaction_mode=InteractionMode.GOAL,
             task_intent=TaskIntent.CODING,
-            current_goal=GoalSpec(type=GoalType.DESIGN, desc="优化 markdown 渲染截断"),
+            current_goal=GoalSpec(desc="优化 markdown 渲染截断"),
             workflow_route=WorkflowRoute(join="brainstorm", leave="plan"),
             workflow_runs={
                 "brainstorm": WorkflowRunState(
@@ -210,7 +209,7 @@ async def test_message_runtime_snapshot_round_trips_from_runtime_debug_jsonl():
         assert loaded is not None
         assert loaded.interaction_mode == InteractionMode.GOAL
         assert loaded.current_goal is not None
-        assert loaded.current_goal.type == GoalType.DESIGN
+        assert loaded.current_goal.desc == "优化 markdown 渲染截断"
         assert loaded.workflow_route is not None
         assert loaded.workflow_route.join == "brainstorm"
         assert loaded.workflow_runs["brainstorm"].goal_type == "design"
@@ -228,7 +227,7 @@ async def test_message_runtime_snapshot_does_not_write_legacy_snapshot_table():
             session_id=session.id,
             interaction_mode=InteractionMode.GOAL,
             task_intent=TaskIntent.CODING,
-            current_goal=GoalSpec(type=GoalType.DESIGN, desc="优化 markdown 渲染截断"),
+            current_goal=GoalSpec(desc="优化 markdown 渲染截断"),
         ))
 
         tables = await _table_names()
@@ -238,7 +237,7 @@ async def test_message_runtime_snapshot_does_not_write_legacy_snapshot_table():
         assert loaded is not None
         assert loaded.message_id == message_id
         assert loaded.current_goal is not None
-        assert loaded.current_goal.type == GoalType.DESIGN
+        assert loaded.current_goal.desc == "优化 markdown 渲染截断"
     finally:
         await delete_session(session.id)
 
@@ -253,7 +252,7 @@ async def test_message_runtime_snapshot_updates_latest_session_runtime_state():
             session_id=session.id,
             interaction_mode=InteractionMode.GOAL,
             task_intent=TaskIntent.CODING,
-            current_goal=GoalSpec(type=GoalType.DESIGN, desc="优化 markdown 渲染截断"),
+            current_goal=GoalSpec(desc="优化 markdown 渲染截断"),
             workflow_route=WorkflowRoute(join="brainstorm", leave="plan"),
             workflow_runs={
                 "brainstorm": WorkflowRunState(
@@ -270,7 +269,7 @@ async def test_message_runtime_snapshot_updates_latest_session_runtime_state():
         assert loaded.interaction_mode == InteractionMode.GOAL
         assert loaded.task_state.current_intent == TaskIntent.CODING
         assert loaded.task_state.current_goal is not None
-        assert loaded.task_state.current_goal.type == GoalType.DESIGN
+        assert loaded.task_state.current_goal.desc == "优化 markdown 渲染截断"
         assert loaded.task_state.workflow_route is not None
         assert loaded.task_state.workflow_route.join == "brainstorm"
         assert loaded.task_state.workflow_runs["brainstorm"].goal_type == "design"
@@ -298,7 +297,7 @@ async def test_delete_session_cascades_all_child_tables():
         ))
         await save_runtime_state(session.id, RuntimeStateSnapshot(
             interaction_mode=InteractionMode.GOAL,
-            task_state=TaskState(current_goal=GoalSpec(type=GoalType.CHORE, desc="test goal")),
+            task_state=TaskState(current_goal=GoalSpec(desc="test goal")),
         ))
         await save_message_runtime_snapshot(MessageRuntimeSnapshot(
             message_id=msg_id,
@@ -329,7 +328,7 @@ async def test_clear_messages_cascades_runtime_state():
         msg_id = await save_message(MessageRow(session_id=session.id, role="user", content="test"))
         await save_runtime_state(session.id, RuntimeStateSnapshot(
             interaction_mode=InteractionMode.GOAL,
-            task_state=TaskState(current_goal=GoalSpec(type=GoalType.CHORE, desc="test goal")),
+            task_state=TaskState(current_goal=GoalSpec(desc="test goal")),
         ))
         await save_message_runtime_snapshot(MessageRuntimeSnapshot(
             message_id=msg_id,
@@ -357,7 +356,7 @@ async def test_clear_runtime_state_resets_structured_state():
             session.id,
             RuntimeStateSnapshot(
                 interaction_mode=InteractionMode.GOAL,
-                task_state=TaskState(current_goal=GoalSpec(type=GoalType.FEATURE, desc="修复 UI")),
+                task_state=TaskState(current_goal=GoalSpec(desc="修复 UI")),
             ),
         )
 
@@ -381,7 +380,7 @@ async def test_graph_session_runtime_persists_and_restores_structured_state():
         host = SimpleNamespace(
             _session=session,
             _interaction_mode=InteractionMode.GOAL,
-            _task_state=TaskState(current_goal=GoalSpec(type=GoalType.CHORE, desc="ship 5B")),
+            _task_state=TaskState(current_goal=GoalSpec(desc="ship 5B")),
             _compaction_summary="summary",
             _session_date="2026-06-11 CST",
         )

@@ -15,20 +15,11 @@ from langchain_core.messages import ToolMessage
 
 from voidx.agent.tool_messages import DEFAULT_TOOL_MESSAGE_MAX_CHARS
 from voidx.tools.base import ToolContext, ToolResult, BaseTool, UserInteraction, UserResponse
-from voidx.tools.file_ops import (
-    FileReadInput,
-    FileWriteInput,
-    FileEditInput,
-    FileInsertInput,
-    FileReplaceInput,
-    EditEntry,
-    FileReadTool,
-    FileWriteTool,
-    FileEditTool,
-    FileInsertTool,
-    FileReplaceTool,
-    _find_paragraph,
-)
+from voidx.tools.file_ops import FileReadInput, FileReplaceInput, FileInput, LineInput, FileReadTool, FileTool, LineTool, FileReplaceTool
+from voidx.tools.file_ops.write import FileWriteInput, FileWriteTool
+from voidx.tools.file_ops.edit_execute import FileEditInput, FileEditTool
+from voidx.tools.file_ops.types import EditEntry
+from voidx.tools.file_ops.edit_resolve import _find_paragraph
 from voidx.tools.file_state import save_file_version
 import voidx.tools.file_state as file_state
 from voidx.tools.search import GlobInput, GrepInput
@@ -42,7 +33,7 @@ from voidx.tools.clarify import ClarifyTool, ClarifyInput, _infer_state_patch
 from voidx.tools.load_skills import LoadSkillsTool
 from voidx.tools.load_doc_template import LoadDocTemplateTool, LoadDocTemplateInput
 from voidx.tools.plan_checkpoint import PlanCheckpointTool
-from voidx.agent.task_state import GoalSpec, GoalResolution, GoalType, IntentResolution, PlanResolution, ToolStatePatch
+from voidx.agent.task_state import GoalSpec, GoalResolution, IntentResolution, PlanResolution, ToolStatePatch
 from voidx.agent.runtime_context import TaskIntent
 from voidx.skills.context import SKILL_TOOL_CONTEXT_MARKER
 from voidx.workflow.runtime import WorkflowRunState, WorkflowRunStatus
@@ -117,45 +108,37 @@ class TestToolSchemas:
         with pytest.raises(ValueError):
             FileReadInput(file_path="foo.py", limit=-2)
 
-    def test_edit_input(self):
-        inp = FileEditInput(
-            file_path="x.py",
-            edits=[EditEntry(operation="replace", lineno=1, prefix="a", suffix="a", new_string="b")],
-        )
+    def test_file_input_requires_dest_path_for_move(self):
+        inp = FileInput(file_path="x.py", op="create")
         assert inp.file_path == "x.py"
-        assert len(inp.edits) == 1
-        assert inp.edits[0].operation == "replace"
-
-    def test_edit_input_supports_single_insert_operation(self):
-        inp = FileEditInput(
-            file_path="x.py",
-            edits=[EditEntry(operation="insert", lineno=0, prefix="", suffix="", new_string="header\n")],
-        )
-        assert inp.edits[0].operation == "insert"
-        assert inp.edits[0].lineno == 0
-
-    def test_edit_schema_describes_prefix_suffix_matching(self):
-        schema = EditEntry.model_json_schema()
-        assert "prefix" in schema["properties"]
-        assert "suffix" in schema["properties"]
-        assert "snippet" in schema["properties"]["prefix"]["description"].lower()
-        assert "100" in schema["properties"]["lineno"]["description"]
-
-    def test_find_paragraph_supports_multiline_snippets(self):
-        lines = ["def f():", "    value = 1", "    return value", "", "def g():", "    pass"]
-
-        assert _find_paragraph(lines, "replace", 2, "def f():\n    value", "return value") == (1, 3)
-
-    def test_edit_input_requires_explicit_operation(self):
+        assert inp.op == "create"
         with pytest.raises(ValueError):
-            EditEntry(lineno=1, prefix="a", suffix="a", new_string="b")
+            FileInput(file_path="x.py", op="move")
 
-    def test_insert_input_only_needs_line_and_content(self):
-        inp = FileInsertInput(file_path="x.py", lineno=3, new_string="added\n")
-        schema = FileInsertTool().parameters_schema()
+    def test_file_schema_describes_file_operations(self):
+        schema = FileTool().parameters_schema()
+        assert set(schema["properties"]) == {"file_path", "op", "dest_path", "overwrite"}
+        assert "create" in schema["properties"]["op"]["description"]
+        assert "move" in schema["properties"]["dest_path"]["description"]
 
-        assert inp.lineno == 3
-        assert set(schema["properties"]) == {"file_path", "lineno", "new_string"}
+    def test_line_input_supports_insert_and_delete(self):
+        insert = LineInput(file_path="x.py", op="insert", lineno=3, new_string="added\n")
+        delete = LineInput(file_path="x.py", op="delete", lineno=3, end_no=5)
+        assert insert.lineno == 3
+        assert delete.end_no == 5
+
+    def test_line_delete_rejects_invalid_line_range(self):
+        with pytest.raises(ValueError):
+            LineInput(file_path="x.py", op="delete", lineno=0)
+        with pytest.raises(ValueError):
+            LineInput(file_path="x.py", op="delete", lineno=5, end_no=3)
+
+    def test_line_schema_has_combined_insert_delete_fields(self):
+        schema = LineTool().parameters_schema()
+
+        assert set(schema["properties"]) == {"file_path", "op", "lineno", "end_no", "new_string"}
+        assert "insert" in schema["properties"]["op"]["description"]
+        assert "delete" in schema["properties"]["op"]["description"]
 
     def test_replace_input_uses_start_end_line_range_without_operation(self):
         inp = FileReplaceInput(file_path="x.py", start_no=3, end_no=5, prefix="old", suffix="tail", new_string="new")

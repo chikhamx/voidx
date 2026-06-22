@@ -41,7 +41,7 @@ from voidx.memory.session import (
 )
 from voidx.memory.transcript import load_transcript
 from voidx.permission.service import PermissionService
-from voidx.runtime import GoalResolution, GoalSpec, GoalType, IntentResolution, PlanResolution, TaskIntent
+from voidx.runtime import GoalResolution, GoalSpec, IntentResolution, PlanResolution, TaskIntent
 from voidx.skills.context import SKILL_TOOL_CONTEXT_MARKER
 from voidx.workflow.context import WORKFLOW_CONTEXT_MARKER
 from voidx.workflow.runtime import WorkflowRunState, WorkflowRunStatus
@@ -74,15 +74,15 @@ def _result_task_state(result: dict) -> TaskState:
 
 
 def _child_goal_resolution(
-    goal_type: GoalType = GoalType.FEATURE,
+    goal_type: str = "feature",
     *,
     desc: str = "Implement the feature",
     join: str = "tdd",
     leave: str = "verify",
 ) -> GoalResolution:
     return GoalResolution(
-        intent=IntentResolution(type=TaskIntent.CODING, desc="delegated child task"),
-        goal=GoalSpec(type=goal_type, desc=desc),
+        intent=IntentResolution(type=TaskIntent.CODING),
+        goal=GoalSpec(desc=desc),
         plan=PlanResolution(join=join, leave=leave),
     )
 
@@ -101,7 +101,7 @@ def _child_result_contract(schema_name: str = "implementation_result") -> AgentR
 
 def _subagent_contract_kwargs(
     *,
-    goal_type: GoalType = GoalType.INSPECT,
+    goal_type: str = "inspect",
     desc: str = "Inspect the workspace",
     join: str = "review",
     leave: str = "review",
@@ -149,7 +149,7 @@ async def test_graph_authorization_auto_allows_readonly_agent(tmp_path):
             "args": {
                 "agent": "voidx",
                 "description": "Review current change",
-                "goal_resolution": _child_goal_resolution(GoalType.REVIEW, desc="Review current change", join="review", leave="review").model_dump(mode="json"),
+                "goal_resolution": _child_goal_resolution("review", desc="Review current change", join="review", leave="review").model_dump(mode="json"),
                 "result": _child_result_contract("review_result").model_dump(mode="json"),
             },
             "id": "call_1",
@@ -180,7 +180,7 @@ async def test_graph_authorization_prompts_for_implement_agent(tmp_path):
             "args": {
                 "agent": "voidx",
                 "description": "Implement feature",
-                "goal_resolution": _child_goal_resolution(GoalType.FEATURE, desc="Implement feature", join="tdd", leave="verify").model_dump(mode="json"),
+                "goal_resolution": _child_goal_resolution("feature", desc="Implement feature", join="tdd", leave="verify").model_dump(mode="json"),
                 "result": _child_result_contract().model_dump(mode="json"),
             },
             "id": "call_1",
@@ -297,7 +297,7 @@ async def test_graph_authorization_allows_plan_gate_doc_paths_only(tmp_path):
     assert [call["id"] for call in approved] == ["call_docs"]
     assert [[call["id"] for call in batch] for batch in asked] == [["call_src"]]
     assert [call["id"] for call, _reason in denied] == ["call_src"]
-    assert denied[0][1] == "User denied: edit"
+    assert denied[0][1] == "User denied: replace"
 
 
 @pytest.mark.asyncio
@@ -396,9 +396,9 @@ async def test_graph_authorization_asks_for_persona_blocked_write(tmp_path):
         session_id="test",
     )
 
-    assert [tc["name"] for tc in approved] == ["edit"]
+    assert [tc["name"] for tc in approved] == ["replace"]
     assert denied == []
-    assert [[tc["name"] for tc in batch] for batch in asked] == [["edit"]]
+    assert len(asked) == 1
 
 
 @pytest.mark.asyncio
@@ -429,7 +429,7 @@ async def test_permission_result_uses_transient_output(tmp_path):
             session_id="test",
         )
 
-        assert [tc["name"] for tc in approved] == ["write"]
+        assert [tc["name"] for tc in approved] == ["file"]
         assert denied == []
         assert app.notices == []
         rendered = "\n".join(test_dock.tree.render(100))
@@ -437,5 +437,4 @@ async def test_permission_result_uses_transient_output(tmp_path):
     finally:
         test_dock.deactivate()
         set_dock(None)
-
 

@@ -18,7 +18,6 @@ from voidx.agent.message_rows import messages_from_rows, messages_from_rows_incr
 from voidx.agent.runtime_context import InteractionMode, TaskIntent
 from voidx.agent.task_state import (
     GoalSpec,
-    GoalType,
     TaskState,
     TodoRunState,
     TurnExchange,
@@ -201,7 +200,7 @@ async def test_delete_messages_through_keeps_latest_session_runtime_state():
             interaction_mode=InteractionMode.GOAL,
             task_state=TaskState(
                 current_intent=TaskIntent.CODING,
-                current_goal=GoalSpec(type=GoalType.FEATURE, desc="keep runtime"),
+                current_goal=GoalSpec(desc="keep runtime"),
             ),
             compaction_summary="summary",
             session_time="session-time",

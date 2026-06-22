@@ -1,9 +1,5 @@
 """Smoke tests for tool system — types, execution, error handling."""
 
-import asyncio
-import json
-import logging
-import shlex
 import sys
 from pathlib import Path
 
@@ -11,82 +7,29 @@ sys.path.insert(0, str(Path(__file__).parent.parent.parent / "src"))
 
 import pytest
 
-from langchain_core.messages import ToolMessage
-
 from voidx.agent.tool_messages import DEFAULT_TOOL_MESSAGE_MAX_CHARS, sanitize_tool_message_content
-from voidx.tools.base import ToolContext, ToolResult, BaseTool, UserInteraction, UserResponse
-from voidx.tools.file_ops import (
-    FileReadInput,
-    FileWriteInput,
-    FileEditInput,
-    EditEntry,
-    FileReadTool,
-    FileWriteTool,
-    FileEditTool,
-    _find_paragraph,
-)
+from voidx.tools.base import ToolContext, ToolResult
+from voidx.tools.file_ops import FileReadInput, FileReadTool
 from voidx.tools.file_state import save_file_version
 import voidx.tools.file_state as file_state
-from voidx.tools.search import GlobInput, GrepInput
-from voidx.tools.bash import BashInput
-from voidx.tools.agent import AgentInput, AgentTool
-from voidx.tools.task_tracker import TaskTracker
-from voidx.tools.task_status import TaskStatusTool
-from voidx.tools.todo import TodoInput, TodoWriteTool
 from voidx.tools.registry import ToolRegistry
-from voidx.tools.clarify import ClarifyTool, ClarifyInput, _infer_state_patch
-from voidx.tools.load_skills import LoadSkillsTool
-from voidx.tools.load_doc_template import LoadDocTemplateTool, LoadDocTemplateInput
-from voidx.tools.plan_checkpoint import PlanCheckpointTool
-from voidx.agent.task_state import GoalSpec, GoalResolution, GoalType, IntentResolution, PlanResolution, ToolStatePatch
-from voidx.agent.runtime_context import TaskIntent
-from voidx.skills.context import SKILL_TOOL_CONTEXT_MARKER
-from voidx.workflow.runtime import WorkflowRunState, WorkflowRunStatus
-from voidx.workflow.types import WorkflowStateEventKind
 import voidx.memory.store as store
-
-
-def _replace(lineno: int, prefix: str, suffix: str | None = None, new_string: str = "") -> dict:
-    return {
-        "operation": "replace",
-        "lineno": lineno,
-        "prefix": prefix,
-        "suffix": prefix if suffix is None else suffix,
-        "new_string": new_string,
-    }
-
-
-def _insert(lineno: int, prefix: str, suffix: str | None = None, new_string: str = "") -> dict:
-    return {
-        "operation": "insert",
-        "lineno": lineno,
-        "prefix": prefix,
-        "suffix": prefix if suffix is None else suffix,
-        "new_string": new_string,
-    }
-
-
-def _insert_bof(new_string: str) -> dict:
-    return {"operation": "insert", "lineno": 0, "prefix": "", "suffix": "", "new_string": new_string}
 
 
 
 class TestFileOps:
     """File operations work on real files."""
 
-    def test_write_guidance_is_exposed_to_model(self):
-        description = FileWriteTool.description
-        schema = FileWriteTool().parameters_schema()
-        content_description = schema["properties"]["content"]["description"]
-
-        assert "150 lines" in description
-        assert "skeleton" in description
-        assert "prefix/suffix" in description
-        assert "edit" in description
-        assert "read" in description
-        assert "150 lines" in content_description
-        assert "prefix/suffix" in content_description
-        assert "read" in content_description
+    def test_file_tool_guidance_is_exposed_to_model(self):
+        from voidx.tools.file_ops.file import FileTool
+        from voidx.tools.file_ops.line import LineTool
+        file_desc = FileTool.description.lower()
+        line_desc = LineTool.description.lower()
+        assert "create" in file_desc
+        assert "delete" in file_desc
+        assert "move" in file_desc
+        assert "insert" in line_desc
+        assert "delete" in line_desc
 
     @pytest.mark.asyncio
     async def test_read(self, tmp_path):
@@ -235,87 +178,91 @@ class TestFileOps:
         assert "[Tool output truncated" not in sanitized
 
     @pytest.mark.asyncio
-    async def test_write(self, tmp_path):
+    @pytest.mark.asyncio
+    async def test_file_create_and_line_insert(self, tmp_path):
         ctx = ToolContext(workspace=str(tmp_path))
         r = ToolRegistry()
-        result = await r.execute_tool("write", {"file_path": "out.txt", "content": "hello"}, ctx)
-        assert "File written" in result.output
-        assert "Note:" not in result.output
+        await r.execute_tool("file", {"file_path": "out.txt", "op": "create"}, ctx)
+        result = await r.execute_tool(
+            "line",
+            {"file_path": "out.txt", "op": "insert", "lineno": 0, "new_string": "hello"},
+            ctx,
+        )
+        assert result.metadata.get("error") is not True
         assert (tmp_path / "out.txt").read_text() == "hello"
 
     @pytest.mark.asyncio
-    async def test_write_warns_after_large_file_is_written(self, tmp_path):
+    async def test_file_create_overwrite_and_line_insert(self, tmp_path):
         ctx = ToolContext(workspace=str(tmp_path))
         r = ToolRegistry()
-        content = "\n".join(f"line {i}" for i in range(201))
-
-        result = await r.execute_tool("write", {"file_path": "large.txt", "content": content}, ctx)
-
-        assert "File written: large.txt" in result.output
-        assert "This file is large (201 lines)" in result.output
-        assert "skeleton" in result.output
-        assert "edit" in result.output
-        assert (tmp_path / "large.txt").read_text() == content
+        (tmp_path / "out.txt").write_text("old")
+        await r.execute_tool("read", {"file_path": "out.txt"}, ctx)
+        await r.execute_tool("file", {"file_path": "out.txt", "op": "create", "overwrite": True}, ctx)
+        result = await r.execute_tool(
+            "line",
+            {"file_path": "out.txt", "op": "insert", "lineno": 0, "new_string": "new"},
+            ctx,
+        )
+        assert result.metadata.get("error") is not True
+        assert (tmp_path / "out.txt").read_text() == "new"
 
     @pytest.mark.asyncio
-    async def test_write_line_count_matches_read_display_lines(self, tmp_path):
+    async def test_line_insert_line_count_matches_read_display_lines(self, tmp_path):
         ctx = ToolContext(workspace=str(tmp_path))
         r = ToolRegistry()
         exactly_200_with_final_newline = "\n".join(f"line {i}" for i in range(200)) + "\n"
-
-        result = await r.execute_tool(
-            "write",
-            {"file_path": "exactly-200.txt", "content": exactly_200_with_final_newline},
+        await r.execute_tool("file", {"file_path": "exactly-200.txt", "op": "create"}, ctx)
+        await r.execute_tool(
+            "line",
+            {"file_path": "exactly-200.txt", "op": "insert", "lineno": 0, "new_string": exactly_200_with_final_newline},
             ctx,
         )
 
-        assert "Note:" not in result.output
         assert (tmp_path / "exactly-200.txt").read_text() == exactly_200_with_final_newline
 
     @pytest.mark.asyncio
-    async def test_edit(self, tmp_path):
+    @pytest.mark.asyncio
+    async def test_replace(self, tmp_path):
         f = tmp_path / "edit.txt"
         f.write_text("hello world\nkeep\n")
         ctx = ToolContext(workspace=str(tmp_path))
         r = ToolRegistry()
         await r.execute_tool("read", {"file_path": "edit.txt"}, ctx)
         result = await r.execute_tool(
-            "edit",
-            {"file_path": "edit.txt", "edits": [_replace(1, "hello world", new_string="hi world")]},
+            "replace",
+            {"file_path": "edit.txt", "start_no": 1, "end_no": 1, "prefix": "hello world", "suffix": "hello world", "new_string": "hi world"},
             ctx,
         )
         assert "File edited" in result.output
         assert (tmp_path / "edit.txt").read_text() == "hi world\nkeep\n"
 
     @pytest.mark.asyncio
-    async def test_edit_output_contains_diff(self, tmp_path):
+    async def test_replace_output_contains_diff(self, tmp_path):
         f = tmp_path / "edit.txt"
         f.write_text("hello world\n")
         ctx = ToolContext(workspace=str(tmp_path))
         r = ToolRegistry()
         await r.execute_tool("read", {"file_path": "edit.txt"}, ctx)
         result = await r.execute_tool(
-            "edit",
-            {"file_path": "edit.txt", "edits": [_replace(1, "hello world", new_string="hi world")]},
+            "replace",
+            {"file_path": "edit.txt", "start_no": 1, "end_no": 1, "prefix": "hello world", "suffix": "hello world", "new_string": "hi world"},
             ctx,
         )
         assert "File edited" in result.output
         assert result.diff is not None
         assert "-hello world" in result.diff
         assert "+hi world" in result.diff
-        # output should also contain the diff text
-        assert "-hello" in result.output or "diff" in result.output.lower()
 
     @pytest.mark.asyncio
-    async def test_edit_line_range_out_of_bounds(self, tmp_path):
+    async def test_replace_line_range_out_of_bounds(self, tmp_path):
         f = tmp_path / "short.txt"
         f.write_text("one\n")
         ctx = ToolContext(workspace=str(tmp_path))
         r = ToolRegistry()
         await r.execute_tool("read", {"file_path": "short.txt"}, ctx)
         result = await r.execute_tool(
-            "edit",
-            {"file_path": "short.txt", "edits": [_replace(2, "two", new_string="two")]},
+            "replace",
+            {"file_path": "short.txt", "start_no": 2, "end_no": 2, "prefix": "two", "suffix": "two", "new_string": "two"},
             ctx,
         )
         assert "not found" in result.output
@@ -323,15 +270,15 @@ class TestFileOps:
         assert (tmp_path / "short.txt").read_text() == "one\n"
 
     @pytest.mark.asyncio
-    async def test_edit_requires_read_coverage_for_replace(self, tmp_path):
+    async def test_replace_requires_read_coverage(self, tmp_path):
         f = tmp_path / "unread.txt"
         f.write_text("one\n")
         ctx = ToolContext(workspace=str(tmp_path))
         r = ToolRegistry()
 
         result = await r.execute_tool(
-            "edit",
-            {"file_path": "unread.txt", "edits": [_replace(1, "one", new_string="two")]},
+            "replace",
+            {"file_path": "unread.txt", "start_no": 1, "end_no": 1, "prefix": "one", "suffix": "one", "new_string": "two"},
             ctx,
         )
 
@@ -340,27 +287,24 @@ class TestFileOps:
         assert (tmp_path / "unread.txt").read_text() == "one\n"
 
     @pytest.mark.asyncio
-    async def test_edit_insert_line_and_file_start(self, tmp_path):
+    async def test_line_insert_at_bof_and_eof(self, tmp_path):
         f = tmp_path / "insert.txt"
         f.write_text("middle\nend\n")
         ctx = ToolContext(workspace=str(tmp_path))
         r = ToolRegistry()
         await r.execute_tool("read", {"file_path": "insert.txt"}, ctx)
 
+        await r.execute_tool(
+            "line",
+            {"file_path": "insert.txt", "op": "insert", "lineno": 0, "new_string": "top\n"},
+            ctx,
+        )
+        await r.execute_tool("read", {"file_path": "insert.txt"}, ctx)
         result = await r.execute_tool(
-            "edit",
-            {
-                "file_path": "insert.txt",
-                "edits": [
-                    _insert_bof("top\n"),
-                    _insert(2, "end", new_string="bottom\n"),
-                ],
-            },
+            "line",
+            {"file_path": "insert.txt", "op": "insert", "lineno": -1, "new_string": "bottom\n"},
             ctx,
         )
 
         assert result.metadata.get("error") is not True
-        assert "operations" in result.output
-        assert "replacements" not in result.output
-        assert result.metadata["operations"] == 2
         assert (tmp_path / "insert.txt").read_text() == "top\nmiddle\nend\nbottom\n"

@@ -18,7 +18,7 @@ from voidx.agent.runtime_context import (
     raw_semantic_messages,
 )
 from voidx.agent.state import AgentState
-from voidx.agent.task_state import GoalSpec, GoalType, TaskState, TodoRunState, WorkflowRoute
+from voidx.agent.task_state import GoalSpec, TaskState, TodoRunState, WorkflowRoute
 from voidx.config import Config, UserProfile
 from voidx.skills.context import (
     SKILL_TOOL_CONTEXT_MARKER,

@@ -18,7 +18,7 @@ from voidx.agent.runtime_context import (
     raw_semantic_messages,
 )
 from voidx.agent.state import AgentState
-from voidx.agent.task_state import GoalSpec, GoalType, TaskState, TodoRunState, WorkflowRoute
+from voidx.agent.task_state import GoalSpec, TaskState, TodoRunState, WorkflowRoute
 from voidx.config import Config, UserProfile
 from voidx.skills.context import (
     SKILL_TOOL_CONTEXT_MARKER,
@@ -199,14 +199,13 @@ def test_current_task_state_records_current_goal(tmp_path):
         interaction_mode=InteractionMode.AUTO,
         task_state=TaskState(
             current_intent=TaskIntent.CODING,
-            current_goal=GoalSpec(type=GoalType.DESIGN, desc="优化 runtime context"),
+            current_goal=GoalSpec(desc="优化 runtime context"),
         ),
     ).build()
 
     context.apply_to_messages(messages)
 
     assert "Intent: coding" in messages[-1].content
-    assert "Goal type: design" in messages[-1].content
     assert "Goal: 优化 runtime context" in messages[-1].content
     assert "Pending approval" not in messages[-1].content
 
@@ -221,12 +220,11 @@ def test_current_task_state_records_goal_run(tmp_path):
         interaction_mode=InteractionMode.GOAL,
         task_state=TaskState(
             current_intent=TaskIntent.CODING,
-            current_goal=GoalSpec(type=GoalType.DESIGN, desc="优化 markdown 渲染截断"),
+            current_goal=GoalSpec(desc="优化 markdown 渲染截断"),
         ),
     ).build()
 
     context.apply_to_messages(messages)
 
     assert "Current persona: voidx" in messages[-1].content
-    assert "Goal type: design" in messages[-1].content
     assert "Goal: 优化 markdown 渲染截断" in messages[-1].content

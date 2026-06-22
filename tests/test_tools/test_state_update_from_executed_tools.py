@@ -15,16 +15,11 @@ from langchain_core.messages import ToolMessage
 
 from voidx.agent.tool_messages import DEFAULT_TOOL_MESSAGE_MAX_CHARS
 from voidx.tools.base import ToolContext, ToolResult, BaseTool, UserInteraction, UserResponse
-from voidx.tools.file_ops import (
-    FileReadInput,
-    FileWriteInput,
-    FileEditInput,
-    EditEntry,
-    FileReadTool,
-    FileWriteTool,
-    FileEditTool,
-    _find_paragraph,
-)
+from voidx.tools.file_ops import FileReadInput, FileReadTool
+from voidx.tools.file_ops.write import FileWriteInput, FileWriteTool
+from voidx.tools.file_ops.edit_execute import FileEditInput, FileEditTool
+from voidx.tools.file_ops.types import EditEntry
+from voidx.tools.file_ops.edit_resolve import _find_paragraph
 from voidx.tools.file_state import save_file_version
 import voidx.tools.file_state as file_state
 from voidx.tools.search import GlobInput, GrepInput
@@ -38,7 +33,7 @@ from voidx.tools.clarify import ClarifyTool, ClarifyInput, _infer_state_patch
 from voidx.tools.load_skills import LoadSkillsTool
 from voidx.tools.load_doc_template import LoadDocTemplateTool, LoadDocTemplateInput
 from voidx.tools.plan_checkpoint import PlanCheckpointTool
-from voidx.agent.task_state import GoalSpec, GoalResolution, GoalType, IntentResolution, PlanResolution, ToolStatePatch
+from voidx.agent.task_state import GoalSpec, GoalResolution, IntentResolution, PlanResolution, ToolStatePatch
 from voidx.agent.runtime_context import TaskIntent
 from voidx.skills.context import SKILL_TOOL_CONTEXT_MARKER
 from voidx.workflow.runtime import WorkflowRunState, WorkflowRunStatus
@@ -75,9 +70,9 @@ class TestStateUpdateFromExecutedTools:
     def test_merges_state_patches(self):
         from voidx.agent.graph.tool_executor import _state_update_from_executed_tools, _ExecutedTool
 
-        patch1 = ToolStatePatch(intent=IntentResolution(type=TaskIntent.CODING, desc="clarify"))
+        patch1 = ToolStatePatch(intent=IntentResolution(type=TaskIntent.CODING))
         patch2 = ToolStatePatch(
-            goal=GoalSpec(type=GoalType.FEATURE, desc="Refactor auth"),
+            goal=GoalSpec(desc="Refactor auth"),
             plan=PlanResolution(join="tdd", leave="verify"),
         )
 
@@ -95,14 +90,14 @@ class TestStateUpdateFromExecutedTools:
         update = _state_update_from_executed_tools(executed)
         assert update["task_intent"] == "coding"
         assert update["current_goal"]["desc"] == "Refactor auth"
-        assert update["current_goal"]["type"] == "feature"
+        assert "type" not in update["current_goal"]
         assert update["workflow_route"] == {"join": "tdd", "leave": "verify"}
 
     def test_later_patch_overrides_earlier(self):
         from voidx.agent.graph.tool_executor import _state_update_from_executed_tools, _ExecutedTool
 
-        patch1 = ToolStatePatch(intent=IntentResolution(type=TaskIntent.GENERAL, desc="clarify"))
-        patch2 = ToolStatePatch(intent=IntentResolution(type=TaskIntent.CODING, desc="clarify"))
+        patch1 = ToolStatePatch(intent=IntentResolution(type=TaskIntent.GENERAL))
+        patch2 = ToolStatePatch(intent=IntentResolution(type=TaskIntent.CODING))
 
         msg1 = ToolMessage(content="r1", tool_call_id="c1")
         msg2 = ToolMessage(content="r2", tool_call_id="c2")
@@ -299,5 +294,4 @@ class TestStateUpdateFromExecutedTools:
         executed = [_ExecutedTool(message=msg, result=result, tool_call={"name": "agent"})]
         update = _state_update_from_executed_tools(executed, current_workflow_runs=current)
         assert "workflow_runs" not in update
-
 

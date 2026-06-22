@@ -2,7 +2,6 @@ from voidx.runtime.intent import TaskIntent
 from voidx.runtime.task_state import (
     GoalResolution,
     GoalSpec,
-    GoalType,
     IntentResolution,
     PlanResolution,
     TaskState,
@@ -11,8 +10,8 @@ from voidx.workflow.reconcile import reconcile_workflow_runs_for_turn
 from voidx.workflow.runtime import WorkflowRunState, WorkflowRunStatus
 
 
-def _goal(desc: str = "agent_name semantic cleanup", goal_type: GoalType = GoalType.DESIGN) -> GoalSpec:
-    return GoalSpec(type=goal_type, desc=desc)
+def _goal(desc: str = "agent_name semantic cleanup") -> GoalSpec:
+    return GoalSpec(desc=desc)
 
 
 def _resolution(
@@ -22,7 +21,7 @@ def _resolution(
     leave: str | None = None,
 ) -> GoalResolution:
     return GoalResolution(
-        intent=IntentResolution(type=TaskIntent.CODING, desc="test resolution"),
+        intent=IntentResolution(type=TaskIntent.CODING),
         goal=goal,
         plan=PlanResolution(join=join, leave=leave) if join is not None else None,
     )
@@ -42,7 +41,7 @@ def test_reconcile_advances_brainstorm_to_design_when_join_requests_design():
         goal_type="design",
         scope="agent_name semantic cleanup",
     )
-    goal = _goal("write a spec", GoalType.DOC)
+    goal = _goal("write a spec")
     state = _state_with_run(run, goal=goal)
     resolution = _resolution(goal=goal, join="design", leave="design")
 
@@ -64,7 +63,7 @@ def test_reconcile_advances_brainstorm_to_design_when_join_requests_design():
 def test_reconcile_does_not_advance_without_plan_join():
     run = WorkflowRunState(name="brainstorm", status=WorkflowRunStatus.ACTIVE)
     state = _state_with_run(run)
-    resolution = _resolution(goal=_goal("keep discussing", GoalType.FEATURE))
+    resolution = _resolution(goal=_goal("keep discussing"))
 
     updated = reconcile_workflow_runs_for_turn(
         goal_resolution=resolution,
@@ -81,7 +80,7 @@ def test_reconcile_preserves_unrelated_active_workflow_runs():
         reason="transition from tdd via implemented",
     )
     state = TaskState(
-        current_goal=_goal("write a spec", GoalType.DOC),
+        current_goal=_goal("write a spec"),
         workflow_runs={"verify": verify},
     )
     resolution = _resolution(goal=state.current_goal)
@@ -95,7 +94,7 @@ def test_reconcile_preserves_unrelated_active_workflow_runs():
 
 
 def test_reconcile_activates_plan_join_when_no_workflow_is_active():
-    goal = _goal("review current diff", GoalType.REVIEW)
+    goal = _goal("review current diff")
     state = TaskState(current_goal=goal)
     resolution = _resolution(goal=goal, join="review", leave="review")
 
@@ -119,7 +118,7 @@ def test_reconcile_clears_completed_workflow_runs_when_next_turn_has_no_join():
         reason="transition from tdd via implemented",
     )
     state = TaskState(workflow_runs={"verify": verify})
-    resolution = _resolution(goal=_goal("prepare push", GoalType.CHORE))
+    resolution = _resolution(goal=_goal("prepare push"))
 
     updated = reconcile_workflow_runs_for_turn(
         goal_resolution=resolution,
@@ -150,7 +149,7 @@ def test_reconcile_advances_brainstorm_to_plan_when_join_requests_plan():
 
 def test_reconcile_supersedes_brainstorm_when_join_requests_tdd():
     run = WorkflowRunState(name="brainstorm", status=WorkflowRunStatus.ACTIVE)
-    goal = _goal("start implementation", GoalType.FEATURE)
+    goal = _goal("start implementation")
     state = _state_with_run(run, goal=goal)
     resolution = _resolution(goal=goal, join="tdd", leave="verify")
 
@@ -170,7 +169,7 @@ def test_reconcile_supersedes_brainstorm_when_join_requests_tdd():
 
 def test_reconcile_keeps_debug_dag_transition_when_join_requests_tdd():
     debug = WorkflowRunState(name="debug", status=WorkflowRunStatus.ACTIVE)
-    goal = _goal("implement bug fix", GoalType.BUGFIX)
+    goal = _goal("implement bug fix")
     state = TaskState(current_goal=goal, workflow_runs={"debug": debug})
     resolution = _resolution(goal=goal, join="tdd")
 
@@ -222,7 +221,7 @@ def test_reconcile_keeps_single_active_target_when_no_other_active_runs():
 
 def test_reconcile_preserves_active_workflow_without_join_for_same_goal():
     tdd = WorkflowRunState(name="tdd", status=WorkflowRunStatus.ACTIVE)
-    goal = _goal("build feature", GoalType.FEATURE)
+    goal = _goal("build feature")
     state = TaskState(current_goal=goal, workflow_runs={"tdd": tdd})
     resolution = _resolution(goal=goal)
 

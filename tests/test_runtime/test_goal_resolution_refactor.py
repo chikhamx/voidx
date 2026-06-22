@@ -5,7 +5,6 @@ from voidx.runtime.intent import TaskIntent
 from voidx.runtime.task_state import (
     GoalResolution,
     GoalSpec,
-    GoalType,
     IntentResolution,
     PlanResolution,
     TaskState,
@@ -22,6 +21,16 @@ from voidx.workflow.types import (
     WorkflowStateEvent,
     WorkflowStateEventKind,
 )
+
+
+def test_goal_type_compatibility_exports_are_removed():
+    import voidx.agent.task_state as agent_task_state
+    import voidx.runtime as runtime
+
+    for module in (runtime, agent_task_state):
+        assert not hasattr(module, "GoalType")
+        assert not hasattr(module, "infer_goal_type")
+        assert not hasattr(module, "goal_type_value")
 
 
 def test_state_update_applies_intent_resolution_patch():
@@ -61,9 +70,9 @@ async def test_workflow_context_skips_trigger_matching_when_resolver_join_is_abs
 
 
 def test_reconcile_uses_plan_join_as_route_target():
-    goal = GoalSpec(type=GoalType.REVIEW, desc="review current diff")
+    goal = GoalSpec(desc="review current diff")
     resolution = GoalResolution(
-        intent=IntentResolution(type=TaskIntent.CODING, desc="review requested"),
+        intent=IntentResolution(type=TaskIntent.CODING),
         goal=goal,
         plan=PlanResolution(join="review", leave="review"),
     )

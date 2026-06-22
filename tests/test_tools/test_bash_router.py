@@ -82,7 +82,7 @@ class TestEchoDoubleQuoteSafety:
     def test_single_quoted_simple_content_hint(self):
         h = try_hint("echo 'hello world' > file.txt")
         assert h is not None
-        assert h.tool_id == "write"
+        assert h.tool_id == "file"
 
     def test_unquoted_content_no_hint(self):
         assert try_hint("echo hello > file.txt") is None
@@ -131,18 +131,18 @@ class TestHeadOldStyleDigits:
 # ---------------------------------------------------------------------------
 
 class TestHeredocOrderings:
-    """cat > path << 'EOF' and cat >> path << 'EOF' (append → insert)."""
+    """cat > path << 'EOF' and cat >> path << 'EOF' (append → line)."""
 
     def test_heredoc_write(self):
         h = try_hint("cat > out.txt << 'EOF'\nhello\nEOF")
         assert h is not None
-        assert h.tool_id == "write"
+        assert h.tool_id == "file"
         assert "hello" in h.llm_hint
 
-    def test_heredoc_append_uses_insert(self):
+    def test_heredoc_append_uses_line(self):
         h = try_hint("cat >> out.txt << 'EOF'\nhello\nEOF")
         assert h is not None
-        assert h.tool_id == "insert"
+        assert h.tool_id == "line"
 
     def test_heredoc_content_with_dquote_no_hint(self):
         assert try_hint("cat > out.txt << 'EOF'\nshe said \"hi\"\nEOF") is None
@@ -180,13 +180,13 @@ class TestRouteHintToolIdLiteral:
     """RouteHint.tool_id must be one of the Literal values."""
 
     def test_all_tool_ids_are_valid(self):
-        valid = {"read", "git", "write", "replace", "insert", "glob", "grep"}
+        valid = {"read", "git", "file", "line", "replace", "glob", "grep"}
         for cmd, expected_id in [
             ("cat file.py", "read"),
             ("git status", "git"),
-            ("echo 'x' > f", "write"),
+            ("echo 'x' > f", "file"),
             ("sed -i '3s/a/b/' f", "replace"),
-            ("echo 'x' >> f", "insert"),
+            ("echo 'x' >> f", "line"),
             ("find . -name '*.py'", "glob"),
             ("grep pattern file.py", "grep"),
         ]:
@@ -573,12 +573,12 @@ class TestBasicPositive:
     def test_echo_write(self):
         h = try_hint("echo 'hello' > file.txt")
         assert h is not None
-        assert h.tool_id == "write"
+        assert h.tool_id == "file"
 
     def test_echo_append(self):
         h = try_hint("echo 'hello' >> file.txt")
         assert h is not None
-        assert h.tool_id == "insert"
+        assert h.tool_id == "line"
 
     def test_unknown_command_no_hint(self):
         assert try_hint("python3 script.py") is None
@@ -597,31 +597,31 @@ class TestEchoRedirectInContent:
     def test_echo_content_with_gt(self):
         h = try_hint("echo 'x > y' > file.txt")
         assert h is not None
-        assert h.tool_id == "write"
+        assert h.tool_id == "file"
         assert 'file_path="file.txt"' in h.llm_hint
 
     def test_echo_content_with_double_gt_append(self):
         h = try_hint("echo 'a >> b' >> file.txt")
         assert h is not None
-        assert h.tool_id == "insert"
+        assert h.tool_id == "line"
         assert 'file_path="file.txt"' in h.llm_hint
 
     def test_printf_content_with_gt(self):
         h = try_hint("printf 'x > y' > file.txt")
         assert h is not None
-        assert h.tool_id == "write"
+        assert h.tool_id == "file"
         assert 'file_path="file.txt"' in h.llm_hint
 
     def test_echo_redirect_without_spaces(self):
         h = try_hint("echo 'hello'>file.txt")
         assert h is not None
-        assert h.tool_id == "write"
+        assert h.tool_id == "file"
         assert 'file_path="file.txt"' in h.llm_hint
 
     def test_echo_append_without_spaces(self):
         h = try_hint("echo 'hello'>>file.txt")
         assert h is not None
-        assert h.tool_id == "insert"
+        assert h.tool_id == "line"
         assert 'file_path="file.txt"' in h.llm_hint
 
 
@@ -727,12 +727,12 @@ class TestSedSingleLineDelete:
     def test_single_line_delete_macos(self):
         h = try_hint("sed -i '' '73d' file.py")
         assert h is not None
-        assert h.tool_id == "replace"
+        assert h.tool_id == "line"
 
     def test_single_line_delete_linux(self):
         h = try_hint("sed -i '73d' file.py")
         assert h is not None
-        assert h.tool_id == "replace"
+        assert h.tool_id == "line"
 
     def test_single_line_delete_mentions_read_first(self):
         h = try_hint("sed -i '' '73d' file.py")

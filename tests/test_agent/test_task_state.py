@@ -6,7 +6,6 @@ sys.path.insert(0, str(Path(__file__).parent.parent.parent / "src"))
 from voidx.agent.task_state import (
     GoalResolution,
     GoalSpec,
-    GoalType,
     IntentResolution,
     PlanResolution,
     TaskState,
@@ -24,7 +23,7 @@ def _resolution(
     plan: PlanResolution | None = None,
 ) -> GoalResolution:
     return GoalResolution(
-        intent=IntentResolution(type=intent, desc="test resolution"),
+        intent=IntentResolution(type=intent),
         goal=goal,
         plan=plan,
     )
@@ -32,7 +31,7 @@ def _resolution(
 
 def test_update_after_turn_records_intent_goal_and_route():
     state = TaskState(recent_exchanges=[TurnExchange(user_text="之前", assistant_text="已处理")])
-    goal = GoalSpec(type=GoalType.REVIEW, desc="review diff")
+    goal = GoalSpec(desc="review diff")
     resolution = _resolution(
         goal=goal,
         plan=PlanResolution(join="review", leave="review"),
@@ -49,7 +48,7 @@ def test_update_after_turn_records_intent_goal_and_route():
 
 def test_general_turn_preserves_active_workflow():
     state = TaskState(
-        current_goal=GoalSpec(type=GoalType.FEATURE, desc="build feature"),
+        current_goal=GoalSpec(desc="build feature"),
         workflow_route=WorkflowRoute(join="tdd", leave="verify"),
         workflow_runs={
             "tdd": WorkflowRunState(name="tdd", status=WorkflowRunStatus.ACTIVE),
@@ -66,7 +65,7 @@ def test_general_turn_preserves_active_workflow():
 
 def test_general_turn_clears_when_no_active_workflow():
     state = TaskState(
-        current_goal=GoalSpec(type=GoalType.FEATURE, desc="build feature"),
+        current_goal=GoalSpec(desc="build feature"),
         workflow_route=WorkflowRoute(join="tdd", leave="verify"),
         workflow_runs={
             "tdd": WorkflowRunState(name="tdd", status=WorkflowRunStatus.SATISFIED),
@@ -82,8 +81,8 @@ def test_general_turn_clears_when_no_active_workflow():
 
 
 def test_update_after_turn_clears_workflow_when_goal_changes():
-    old_goal = GoalSpec(type=GoalType.DESIGN, desc="runtime context design")
-    new_goal = GoalSpec(type=GoalType.REVIEW, desc="current diff")
+    old_goal = GoalSpec(desc="runtime context design")
+    new_goal = GoalSpec(desc="current diff")
     state = TaskState(
         current_goal=old_goal,
         workflow_route=WorkflowRoute(join="brainstorm", leave="design"),
@@ -106,7 +105,7 @@ def test_update_after_turn_clears_workflow_when_goal_changes():
 
 
 def test_update_after_turn_preserves_workflow_for_same_goal():
-    goal = GoalSpec(type=GoalType.FEATURE, desc="build feature")
+    goal = GoalSpec(desc="build feature")
     active = WorkflowRunState(name="tdd", status=WorkflowRunStatus.ACTIVE)
     state = TaskState(
         current_goal=goal,
@@ -116,7 +115,7 @@ def test_update_after_turn_preserves_workflow_for_same_goal():
 
     state.update_after_turn(
         _resolution(
-            goal=GoalSpec(type=GoalType.FEATURE, desc="build feature"),
+            goal=GoalSpec(desc="build feature"),
             plan=PlanResolution(join="tdd", leave="verify"),
         ),
         "continue",
@@ -128,7 +127,7 @@ def test_update_after_turn_preserves_workflow_for_same_goal():
 
 
 def test_coding_turn_without_goal_keeps_existing_goal_but_clears_route():
-    goal = GoalSpec(type=GoalType.FEATURE, desc="build feature")
+    goal = GoalSpec(desc="build feature")
     state = TaskState(
         current_goal=goal,
         workflow_route=WorkflowRoute(join="brainstorm", leave="verify"),
@@ -173,9 +172,9 @@ def test_intent_window_keeps_recent_user_inputs():
     assert state3.intent_window_text("e") == "b [SEP] c [SEP] d [SEP] e"
 
 
-def test_set_goal_from_string_infers_goal_and_resets_workflow_context():
+def test_set_goal_from_string_sets_goal_and_resets_workflow_context():
     state = TaskState(
-        current_goal=GoalSpec(type=GoalType.REVIEW, desc="review diff"),
+        current_goal=GoalSpec(desc="review diff"),
         workflow_route=WorkflowRoute(join="review", leave="review"),
         workflow_runs={
             "review": WorkflowRunState(name="review", status=WorkflowRunStatus.ACTIVE),
@@ -185,7 +184,6 @@ def test_set_goal_from_string_infers_goal_and_resets_workflow_context():
     state.set_goal("修复 bug")
 
     assert state.current_goal is not None
-    assert state.current_goal.type == GoalType.BUGFIX
     assert state.current_goal.desc == "修复 bug"
     assert state.workflow_route is None
     assert state.workflow_runs == {}
@@ -198,7 +196,7 @@ def test_set_goal_accepts_goal_spec_and_resets_workflow_context():
             "review": WorkflowRunState(name="review", status=WorkflowRunStatus.ACTIVE),
         },
     )
-    goal = GoalSpec(type=GoalType.DOC, desc="write release notes")
+    goal = GoalSpec(desc="write release notes")
 
     state.set_goal(goal)
 

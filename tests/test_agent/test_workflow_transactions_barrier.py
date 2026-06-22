@@ -41,7 +41,7 @@ from voidx.memory.session import (
 )
 from voidx.memory.transcript import load_transcript
 from voidx.permission.service import PermissionService
-from voidx.runtime import GoalResolution, GoalSpec, GoalType, IntentResolution, PlanResolution, TaskIntent
+from voidx.runtime import GoalResolution, GoalSpec, IntentResolution, PlanResolution, TaskIntent
 from voidx.skills.context import SKILL_TOOL_CONTEXT_MARKER
 from voidx.workflow.context import WORKFLOW_CONTEXT_MARKER
 from voidx.workflow.runtime import WorkflowRunState, WorkflowRunStatus
@@ -74,15 +74,15 @@ def _result_task_state(result: dict) -> TaskState:
 
 
 def _child_goal_resolution(
-    goal_type: GoalType = GoalType.FEATURE,
+    goal_type: str = "feature",
     *,
     desc: str = "Implement the feature",
     join: str = "tdd",
     leave: str = "verify",
 ) -> GoalResolution:
     return GoalResolution(
-        intent=IntentResolution(type=TaskIntent.CODING, desc="delegated child task"),
-        goal=GoalSpec(type=goal_type, desc=desc),
+        intent=IntentResolution(type=TaskIntent.CODING),
+        goal=GoalSpec(desc=desc),
         plan=PlanResolution(join=join, leave=leave),
     )
 
@@ -101,7 +101,7 @@ def _child_result_contract(schema_name: str = "implementation_result") -> AgentR
 
 def _subagent_contract_kwargs(
     *,
-    goal_type: GoalType = GoalType.INSPECT,
+    goal_type: str = "inspect",
     desc: str = "Inspect the workspace",
     join: str = "review",
     leave: str = "review",
@@ -206,8 +206,8 @@ async def test_multiple_barriers_apply_patches_in_order(tmp_path):
         async def execute(self, args: dict, ctx: ToolContext) -> ToolResult:
             observed.append(f"clarify:{ctx.task_intent}:{ctx.goal_type}:{ctx.goal_target}")
             patch = ToolStatePatch(
-                intent=IntentResolution(type=TaskIntent.CODING, desc="after intent"),
-                goal=GoalSpec(type=GoalType.INSPECT, desc="after intent"),
+                intent=IntentResolution(type=TaskIntent.CODING),
+                goal=GoalSpec(desc="after intent"),
             )
             return ToolResult(
                 output="clarify ok",
@@ -224,8 +224,8 @@ async def test_multiple_barriers_apply_patches_in_order(tmp_path):
         async def execute(self, args: dict, ctx: ToolContext) -> ToolResult:
             observed.append(f"checkpoint:{ctx.task_intent}:{ctx.goal_type}:{ctx.goal_target}")
             patch = ToolStatePatch(
-                intent=IntentResolution(type=TaskIntent.CODING, desc="after plan"),
-                goal=GoalSpec(type=GoalType.FEATURE, desc="after plan"),
+                intent=IntentResolution(type=TaskIntent.CODING),
+                goal=GoalSpec(desc="after plan"),
             )
             return ToolResult(
                 output="plan ok",
@@ -281,14 +281,14 @@ async def test_multiple_barriers_apply_patches_in_order(tmp_path):
     ]
     assert observed == [
         "clarify:general::",
-        "checkpoint:coding:inspect:after intent",
-        "read:coding:feature:after plan",
+        "checkpoint:coding::after intent",
+        "read:coding::after plan",
     ]
     task_state = _result_task_state(result)
     assert task_state.current_intent == TaskIntent.CODING
     assert task_state.current_goal is not None
     assert task_state.current_goal.desc == "after plan"
-    assert result["messages"][2].content == "read after barriers: coding:feature:after plan"
+    assert result["messages"][2].content == "read after barriers: coding::after plan"
 
 
 @pytest.mark.asyncio
@@ -307,20 +307,20 @@ async def test_workflow_transaction_reauthorizes_following_write(tmp_path):
         content="",
         tool_calls=[
             {
-                    "name": "workflow",
-                    "args": {
-                        "action": "advance",
-                        "workflow": "brainstorm",
-                        "condition": "small_change",
-                        "evidence": "stale design gate cleared",
-                        "summary": "design gate cleared",
+                "name": "workflow",
+                "args": {
+                    "action": "advance",
+                    "workflow": "brainstorm",
+                    "condition": "small_change",
+                    "evidence": "stale design gate cleared",
+                    "summary": "design gate cleared",
                 },
                 "id": "call_adv",
                 "type": "tool_call",
             },
             {
-                "name": "write",
-                "args": {"file_path": "tmp-repro.txt", "content": "x"},
+                "name": "file",
+                "args": {"file_path": "tmp-repro.txt", "op": "create"},
                 "id": "call_write",
                 "type": "tool_call",
             },
@@ -343,10 +343,9 @@ async def test_workflow_transaction_reauthorizes_following_write(tmp_path):
 
     assert [message.tool_call_id for message in result["messages"]] == ["call_adv", "call_write"]
     assert "Blocked by workflow gate" not in result["messages"][1].content
-    assert (tmp_path / "tmp-repro.txt").read_text() == "x"
+    assert (tmp_path / "tmp-repro.txt").exists()
     by_name = {run.name: run for run in _result_task_state(result).workflow_runs.values()}
     assert by_name["brainstorm"].status == WorkflowRunStatus.SATISFIED
     assert graph._task_state.workflow_runs["brainstorm"].status == WorkflowRunStatus.SATISFIED
     assert invalidations > 0
-
 

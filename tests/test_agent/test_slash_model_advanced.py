@@ -9,7 +9,7 @@ sys.path.insert(0, str(Path(__file__).parent.parent.parent / "src"))
 
 from voidx.agent.slash import SlashHandler
 from voidx.agent.slash.runtime import _select_from_list
-from voidx.agent.task_state import GoalSpec, GoalType, TaskState
+from voidx.agent.task_state import GoalSpec, TaskState
 from voidx.config import (
     CodeIde,
     ApprovalPolicy,
@@ -446,7 +446,7 @@ async def test_goal_dispatch_sets_goal_and_goal_mode():
 @pytest.mark.asyncio
 async def test_goal_clear_resets_goal_and_returns_to_auto():
     state = TaskState(
-        current_goal=GoalSpec(type=GoalType.DESIGN, desc="优化 markdown 渲染截断"),
+        current_goal=GoalSpec(desc="优化 markdown 渲染截断"),
     )
     graph = SimpleNamespace(
         _interaction_mode=None,

@@ -17,14 +17,8 @@ from voidx.agent.graph import VoidXGraph
 from voidx.agent.graph.run_loop import GraphRunLoopMixin
 from voidx.agent.graph.title_mixin import _sanitize_generated_title
 from voidx.agent.runtime_context import InteractionMode, TaskIntent
-from voidx.agent.task_state import (
-    GoalResolution,
-    GoalSpec,
-    GoalType,
-    IntentResolution,
-    PlanResolution,
-    TaskState,
-)
+from voidx.agent.goal_resolver import ResolverGoal
+from voidx.agent.task_state import GoalSpec, TaskState
 from voidx.config import Config
 from voidx.llm.usage import UsageStats
 from voidx.memory.runtime_state import RuntimeStateSnapshot, save_runtime_state
@@ -50,7 +44,7 @@ from tests.test_agent._run_loop_helpers import (
 async def test_run_once_clears_stale_completed_workflow_when_resolver_has_no_join(tmp_path):
     graph = VoidXGraph(Config(workspace=str(tmp_path)), api_key=None)
     graph._task_state = TaskState(
-        current_goal=GoalSpec(type=GoalType.CHORE, desc="检查检查，准备push吧"),
+        current_goal=GoalSpec(desc="检查检查，准备push吧"),
         workflow_runs={
             "verify": WorkflowRunState(
                 name="verify",
@@ -63,16 +57,18 @@ async def test_run_once_clears_stale_completed_workflow_when_resolver_has_no_joi
 
     class StructuredGoalModel:
         def with_structured_output(self, schema):
-            assert schema is GoalResolution
+            assert schema is ResolverGoal
             return self
 
         async def ainvoke(self, messages):
             assert "GoalResolution JSON schema" not in messages[0].content
-            assert messages[-1].content == "检查检查，准备push吧"
+            assert "## ResolverGoal Schema" in messages[-1].content
+            assert "检查检查，准备push吧" in messages[-1].content
             return {
-                "intent": {"type": "coding", "desc": "plain follow-up request"},
+                "intent": "coding",
                 "goal": None,
-                "plan": None,
+                "workflow": None,
+                "kind_hint": "chore",
             }
 
     class FakeGraph:
@@ -95,14 +91,14 @@ async def test_run_once_clears_stale_completed_workflow_when_resolver_has_no_joi
     initial = captured["initial"]
     state = TaskState.model_validate(initial["task_state"])
     assert state.workflow_runs == {}
-    assert initial["persona"] == "implement"
+    assert initial["persona"] == "coordinate"
 
 
 @pytest.mark.asyncio
 async def test_run_once_preadvances_workflow_from_resolver_workflow_start(tmp_path):
     graph = VoidXGraph(Config(workspace=str(tmp_path)), api_key=None)
     graph._task_state = TaskState(
-        current_goal=GoalSpec(type=GoalType.DESIGN, desc="agent_name 语义清理"),
+        current_goal=GoalSpec(desc="agent_name 语义清理"),
         workflow_runs={
             "brainstorm": WorkflowRunState(
                 name="brainstorm",
@@ -116,16 +112,18 @@ async def test_run_once_preadvances_workflow_from_resolver_workflow_start(tmp_pa
 
     class StructuredGoalModel:
         def with_structured_output(self, schema):
-            assert schema is GoalResolution
+            assert schema is ResolverGoal
             return self
 
         async def ainvoke(self, messages):
             assert "GoalResolution JSON schema" not in messages[0].content
-            assert messages[-1].content == "可以，先写一个 spec"
+            assert "## ResolverGoal Schema" in messages[-1].content
+            assert "可以，先写一个 spec" in messages[-1].content
             return {
-                "intent": {"type": "coding", "desc": "user requested spec"},
-                "goal": {"type": "doc", "desc": "agent_name 语义清理"},
-                "plan": {"join": "design", "leave": "design"},
+                "intent": "coding",
+                "goal": "agent_name 语义清理",
+                "workflow": "design",
+                "kind_hint": "doc",
             }
 
     class FakeGraph:
@@ -147,9 +145,7 @@ async def test_run_once_preadvances_workflow_from_resolver_workflow_start(tmp_pa
 
     initial = captured["initial"]
     state = TaskState.model_validate(initial["task_state"])
-    assert "brainstorm" not in state.workflow_runs
+    assert state.workflow_runs["brainstorm"].status == WorkflowRunStatus.SATISFIED
     assert state.workflow_runs["design"].status == WorkflowRunStatus.ACTIVE
-    assert state.workflow_runs["design"].reason == "resolver plan.join"
+    assert state.workflow_runs["design"].reason == "transition from brainstorm via approved"
     assert initial["persona"] == "plan"
-
-

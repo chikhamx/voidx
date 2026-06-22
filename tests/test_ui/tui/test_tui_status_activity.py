@@ -151,7 +151,7 @@ def test_status_summary_renders_model_policy_usage_and_goal(tmp_path):
     assert "↓" not in summary
     assert " in " not in summary
     assert " out " not in summary
-    assert "goal feature ship pure tui" in summary
+    assert "ship pure tui" in summary
 
 
 def test_status_summary_text_applies_semantic_styles(tmp_path):
@@ -184,7 +184,7 @@ def test_status_summary_text_applies_semantic_styles(tmp_path):
     assert "#57AB5A" in _styles_covering(text, "default w-write on-fail")
     assert "#D77757" in _styles_covering(text, "auto")
     assert "#56D4DD" in _styles_covering(text, "ctx 12.3k/128k")
-    assert "#C698F0" in _styles_covering(text, "goal feature ship")
+    assert "#C698F0" in _styles_covering(text, "ship")
     assert "#4B5563" in _styles_covering(text, "|")
 
 
@@ -411,4 +411,63 @@ def test_busy_activity_line_renders_below_temporary_agent_not_status(tmp_path, m
     assert "busy" not in status.plain
     assert "auto" in status.plain
 
+
+
+def test_status_summary_goal_does_not_displace_usage(tmp_path):
+    """usage and goal are equally important; goal must not push usage out."""
+    stats = UsageStats(
+        context_tokens=12_300,
+        context_limit=128_000,
+        total_input_tokens=30_000,
+        total_output_tokens=15_600,
+    )
+    status = SimpleNamespace(
+        provider="openai",
+        model="gpt-5-codex",
+        workspace=str(tmp_path),
+        interaction_mode=lambda: "auto",
+        goal_label=lambda: "fix status bar",
+        goal_type=lambda: "bugfix",
+        goal_awaiting_approval=lambda: False,
+        permission_label=lambda: "default",
+        sandbox_label=lambda: "w-write",
+        approval_label=lambda: "on-fail",
+        approval_reviewer_label=lambda: "user",
+        usage_stats=stats,
+        reasoning_effort="xhigh",
+    )
+    tui = PureTui(status, COMMANDS)
+
+    summary = tui._status_summary(120)
+
+    assert "ctx 12.3k/128k" in summary
+    assert "fix status bar" in summary
+
+
+def test_status_summary_goal_shows_only_desc(tmp_path):
+    """goal segment should display only goal_label (desc), not goal_type or awaiting-approval."""
+    stats = UsageStats()
+    stats.update_context(1_000, limit=128_000)
+    status = SimpleNamespace(
+        provider="mimo",
+        model="mimo-v2.5",
+        workspace=str(tmp_path),
+        interaction_mode=lambda: "auto",
+        goal_label=lambda: "ship pure tui",
+        goal_type=lambda: "feature",
+        goal_awaiting_approval=lambda: True,
+        reasoning_effort="xhigh",
+        permission_label=lambda: "default",
+        sandbox_label=lambda: "w-write",
+        approval_label=lambda: "on-fail",
+        approval_reviewer_label=lambda: "user",
+        usage_stats=stats,
+    )
+    tui = PureTui(status, COMMANDS)
+
+    summary = tui._status_summary(200)
+
+    assert "ship pure tui" in summary
+    assert "feature" not in summary
+    assert "awaiting-approval" not in summary
 

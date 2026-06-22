@@ -20,7 +20,6 @@ from voidx.agent.runtime_context import InteractionMode, TaskIntent
 from voidx.agent.task_state import (
     GoalResolution,
     GoalSpec,
-    GoalType,
     IntentResolution,
     PlanResolution,
     TaskState,
@@ -56,7 +55,7 @@ async def test_run_once_uses_user_text_for_first_session_title_without_resolver_
 
         async def ainvoke(self, _messages):
             return GoalResolution(
-                intent=IntentResolution(type=TaskIntent.CODING, desc="review request"),
+                intent=IntentResolution(type=TaskIntent.CODING),
                 goal=None,
                 plan=None,
             )

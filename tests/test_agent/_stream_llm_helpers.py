@@ -100,6 +100,35 @@ class FakeMalformedDsmlStreamingModel:
         ))
 
 
+class FakeLegacyXmlToolCallStreamingModel:
+    def bind_tools(self, tool_defs):
+        return self
+
+    async def astream(self, messages):
+        yield AIMessageChunk(content=(
+            "<tool_call>"
+            "<tool_name>Read</tool_name>"
+            "<arg_key>file_path</arg_key><arg_value>src/voidx/permission/engine.py</arg_value>"
+            "<arg_key>offset</arg_key><arg_value>110</arg_value>"
+            "<arg_key>limit</arg_key><arg_value>50</arg_value>"
+            "</tool_call>"
+        ))
+
+
+class FakeLegacyXmlArgPairToolCallStreamingModel:
+    def bind_tools(self, tool_defs):
+        return self
+
+    async def astream(self, messages):
+        yield AIMessageChunk(content=(
+            "<tool_call>"
+            "<arg_key>tool_name</arg_key><arg_value>read</arg_value>"
+            "<arg_key>file_path</arg_key><arg_value>src/voidx/permission/engine.py</arg_value>"
+            "<arg_key>offset</arg_key><arg_value>110</arg_value>"
+            "</tool_call>"
+        ))
+
+
 class TrackingStreamingModel(FakeStreamingModel):
     def __init__(self) -> None:
         super().__init__()
@@ -145,4 +174,3 @@ class FakeRenderer:
 
     def done(self) -> None:
         self.done_called = True
-

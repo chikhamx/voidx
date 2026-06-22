@@ -7,13 +7,12 @@ sys.path.insert(0, str(Path(__file__).parent.parent.parent / "src"))
 import pytest
 from langchain_core.messages import AIMessage, HumanMessage, SystemMessage, ToolMessage
 
-from voidx.agent.goal_resolver import resolve_goal_for_turn
+from voidx.agent.goal_resolver import ResolverGoal, resolve_goal_for_turn
 from voidx.agent.graph import VoidXGraph
 from voidx.agent.graph.turn_runner import _turn_exchange_from_final_messages
 from voidx.agent.task_state import (
     GoalResolution,
     GoalSpec,
-    GoalType,
     IntentResolution,
     PlanResolution,
     TaskState,
@@ -32,7 +31,7 @@ class StructuredModel:
         self.messages = None
 
     def with_structured_output(self, schema):
-        assert schema is GoalResolution
+        assert schema is ResolverGoal
         return self
 
     async def ainvoke(self, messages):
@@ -48,10 +47,11 @@ async def test_goal_resolver_uses_structured_llm_result():
         ],
     )
     model = StructuredModel(
-        GoalResolution(
-            intent=IntentResolution(type=TaskIntent.CODING, desc="review requested"),
-            goal=GoalSpec(type=GoalType.REVIEW, desc="src/voidx/runtime/task_state.py"),
-            plan=PlanResolution(join="review", leave=None),
+        ResolverGoal(
+            intent="coding",
+            goal="src/voidx/runtime/task_state.py",
+            workflow="review",
+            kind_hint="review",
         )
     )
 
@@ -63,28 +63,31 @@ async def test_goal_resolver_uses_structured_llm_result():
     )
 
     assert result.intent.type == TaskIntent.CODING
-    assert result.intent.desc == "review requested"
     assert result.goal is not None
-    assert result.goal.type == GoalType.REVIEW
     assert result.goal.desc == "src/voidx/runtime/task_state.py"
     assert result.plan == PlanResolution(join="review", leave=None)
     assert model.messages is not None
     assert [type(message) for message in model.messages] == [
         SystemMessage,
         HumanMessage,
-        AIMessage,
-        HumanMessage,
     ]
-    assert "GoalResolution schema:" in model.messages[0].content
-    assert "goal: null or {type:" in model.messages[0].content
-    assert "plan: null or {join:" in model.messages[0].content
-    assert "Available join values" in model.messages[0].content
+    assert "Resolve this turn into intent, goal, workflow, and kind_hint." in model.messages[0].content
+    request = model.messages[1].content
+    assert "## Recent Conversation Content" in request
+    assert "之前说继续" in request
+    assert "我已经完成了 review 检查。" in request
+    assert "## Current User Content" in request
+    assert "review 这个文件" in request
+    assert "## Return Fields" in request
+    assert request.rstrip().endswith(
+        "- kind_hint: null or string (non-authoritative semantic hint; not used for routing)"
+    )
+    assert "goal: null or {type:" not in request
+    assert "plan: null or {join:" not in request
+    assert "- workflow: null or one of" in request
     assert "workflow_start" not in model.messages[0].content
     assert "next_workflow" not in model.messages[0].content
     assert "Do not choose brainstorm" not in model.messages[0].content
-    assert model.messages[1].content == "之前说继续"
-    assert model.messages[2].content == "我已经完成了 review 检查。"
-    assert model.messages[3].content == "review 这个文件"
     assert "title_requested" not in model.messages[0].content
     assert all("title_requested" not in message.content for message in model.messages[1:])
 
@@ -98,6 +101,25 @@ def test_goal_resolution_schema_excludes_removed_fields():
     assert "workflow_start" not in properties
     assert "workflow_end" not in properties
     assert "next_workflow" not in properties
+
+
+def test_goal_spec_schema_excludes_type():
+    properties = GoalSpec.model_json_schema()["properties"]
+
+    assert set(properties) == {"desc"}
+
+
+def test_resolver_goal_binds_goal_and_workflow():
+    with pytest.raises(ValueError):
+        ResolverGoal(intent="coding", goal="review code", workflow=None)
+
+    with pytest.raises(ValueError):
+        ResolverGoal(intent="coding", goal=None, workflow="review")
+
+
+def test_resolver_goal_rejects_unknown_workflow():
+    with pytest.raises(ValueError):
+        ResolverGoal(intent="coding", goal="do work", workflow="nonexistent")
 
 
 def test_turn_exchange_records_only_terminal_ai_reply():
@@ -136,9 +158,41 @@ async def test_goal_resolver_propagates_review_only_route():
         task_state=TaskState(),
     )
 
-    assert result.plan == PlanResolution(join="review", leave="review")
+    assert result.plan == PlanResolution(join="review", leave=None)
     assert result.goal is not None
     assert result.goal.desc == "current diff"
+
+
+@pytest.mark.asyncio
+async def test_goal_resolver_legacy_shape_sets_kind_hint_only_in_logs(tmp_path, monkeypatch):
+    from voidx.logging import request_log
+
+    monkeypatch.setattr(request_log, "_DEFAULT_LOG_DIR", tmp_path)
+    model = StructuredModel(
+        {
+            "intent": {"type": "coding", "desc": "review only"},
+            "goal": {"type": "review", "desc": "current diff"},
+            "plan": {"join": "review", "leave": "review"},
+        }
+    )
+
+    result = await resolve_goal_for_turn(
+        model=model,
+        user_text="review 一下这个",
+        interaction_mode="auto",
+        task_state=TaskState(),
+    )
+
+    assert result.goal == GoalSpec(desc="current diff")
+    assert not hasattr(result.goal, "type")
+    assert result.plan == PlanResolution(join="review", leave=None)
+
+    entries = [
+        json.loads(line)
+        for line in (tmp_path / "llm_requests.jsonl").read_text(encoding="utf-8").splitlines()
+    ]
+    decision = next(entry for entry in entries if entry.get("event") == "goal_resolver_decision")
+    assert decision["resolver_kind_hint"] == "review"
 
 
 @pytest.mark.asyncio
@@ -198,9 +252,9 @@ async def test_goal_resolver_propagates_valid_plan_join():
         task_state=TaskState(),
     )
 
-    assert result.plan == PlanResolution(join="design", leave="design")
+    assert result.plan == PlanResolution(join="design", leave=None)
     assert result.goal is not None
-    assert result.goal.type == GoalType.DOC
+    assert result.goal.desc == "write workflow approval spec"
 
 
 @pytest.mark.asyncio
@@ -225,7 +279,7 @@ async def test_goal_resolver_drops_unknown_plan_route():
 
 
 @pytest.mark.asyncio
-async def test_goal_resolver_drops_non_entry_plan_join():
+async def test_goal_resolver_accepts_verify_workflow_from_legacy_shape():
     model = StructuredModel(
         {
             "intent": {"type": "coding", "desc": "bad workflow entry"},
@@ -241,8 +295,30 @@ async def test_goal_resolver_drops_non_entry_plan_join():
         task_state=TaskState(),
     )
 
-    assert result.plan is None
-    assert result.goal is None
+    assert result.plan == PlanResolution(join="verify", leave=None)
+    assert result.goal == GoalSpec(desc="continue")
+
+
+@pytest.mark.asyncio
+async def test_goal_resolver_allows_verify_workflow():
+    model = StructuredModel(
+        ResolverGoal(
+            intent="coding",
+            goal="verify current changes",
+            workflow="verify",
+            kind_hint="feature",
+        )
+    )
+
+    result = await resolve_goal_for_turn(
+        model=model,
+        user_text="verify it",
+        interaction_mode="auto",
+        task_state=TaskState(),
+    )
+
+    assert result.goal == GoalSpec(desc="verify current changes")
+    assert result.plan == PlanResolution(join="verify", leave=None)
 
 
 @pytest.mark.asyncio
@@ -263,13 +339,13 @@ async def test_goal_resolver_plan_mode_forces_design_goal():
     )
 
     assert result.intent.type == TaskIntent.CODING
-    assert result.goal == GoalSpec(type=GoalType.FEATURE, desc="implement login")
-    assert result.plan == PlanResolution(join="tdd", leave="verify")
+    assert result.goal == GoalSpec(desc="implement login")
+    assert result.plan == PlanResolution(join="tdd", leave=None)
 
 
 @pytest.mark.asyncio
 async def test_goal_resolver_goal_mode_keeps_current_goal():
-    current_goal = GoalSpec(type=GoalType.CHORE, desc="clean up runtime state")
+    current_goal = GoalSpec(desc="clean up runtime state")
     model = StructuredModel(
         {
             "intent": {"type": "general", "desc": "model was unsure"},
@@ -347,9 +423,10 @@ async def test_goal_resolver_logs_native_request_and_response(tmp_path, monkeypa
 
         async def ainvoke(self, _messages):
             return {
-                "intent": {"type": "coding", "desc": "bug fix"},
-                "goal": {"type": "bugfix", "desc": "帮我修一个 bug"},
-                "plan": {"join": "debug", "leave": "verify"},
+                "intent": "coding",
+                "goal": "帮我修一个 bug",
+                "workflow": "debug",
+                "kind_hint": "bugfix",
             }
 
     await resolve_goal_for_turn(
@@ -365,9 +442,9 @@ async def test_goal_resolver_logs_native_request_and_response(tmp_path, monkeypa
     ]
     exchange = next(entry for entry in entries if entry.get("event") == "goal_resolver_exchange")
     assert exchange["request"]["messages"][0]["role"] == "system"
-    assert "GoalResolution schema:" in exchange["request"]["messages"][0]["content"]
-    assert exchange["request"]["messages"][-1] == {"role": "human", "content": "帮我修一个 bug"}
-    assert exchange["response"]["raw"]["goal"]["type"] == "bugfix"
-    assert exchange["response"]["raw"]["plan"]["join"] == "debug"
-
-
+    assert "intent, goal, workflow, and kind_hint" in exchange["request"]["messages"][0]["content"]
+    assert exchange["request"]["messages"][-1]["role"] == "human"
+    assert "## ResolverGoal Schema" in exchange["request"]["messages"][-1]["content"]
+    assert "帮我修一个 bug" in exchange["request"]["messages"][-1]["content"]
+    assert exchange["response"]["raw"]["kind_hint"] == "bugfix"
+    assert exchange["response"]["raw"]["workflow"] == "debug"

@@ -41,7 +41,7 @@ from voidx.memory.session import (
 )
 from voidx.memory.transcript import load_transcript
 from voidx.permission.service import PermissionService
-from voidx.runtime import GoalResolution, GoalSpec, GoalType, IntentResolution, PlanResolution, TaskIntent
+from voidx.runtime import GoalResolution, GoalSpec, IntentResolution, PlanResolution, TaskIntent
 from voidx.skills.context import SKILL_TOOL_CONTEXT_MARKER
 from voidx.workflow.context import WORKFLOW_CONTEXT_MARKER
 from voidx.workflow.runtime import WorkflowRunState, WorkflowRunStatus
@@ -74,15 +74,15 @@ def _result_task_state(result: dict) -> TaskState:
 
 
 def _child_goal_resolution(
-    goal_type: GoalType = GoalType.FEATURE,
+    goal_type: str = "feature",
     *,
     desc: str = "Implement the feature",
     join: str = "tdd",
     leave: str = "verify",
 ) -> GoalResolution:
     return GoalResolution(
-        intent=IntentResolution(type=TaskIntent.CODING, desc="delegated child task"),
-        goal=GoalSpec(type=goal_type, desc=desc),
+        intent=IntentResolution(type=TaskIntent.CODING),
+        goal=GoalSpec(desc=desc),
         plan=PlanResolution(join=join, leave=leave),
     )
 
@@ -101,7 +101,7 @@ def _child_result_contract(schema_name: str = "implementation_result") -> AgentR
 
 def _subagent_contract_kwargs(
     *,
-    goal_type: GoalType = GoalType.INSPECT,
+    goal_type: str = "inspect",
     desc: str = "Inspect the workspace",
     join: str = "review",
     leave: str = "review",
@@ -189,7 +189,7 @@ async def test_prepare_injects_workflow_nodes_from_task_state(tmp_path):
         "task_intent": "coding",
         "task_state": TaskState(
             current_intent=TaskIntent.CODING,
-            current_goal=GoalSpec(type=GoalType.BUGFIX, desc="修复 runtime bug"),
+            current_goal=GoalSpec(desc="修复 runtime bug"),
             workflow_route=WorkflowRoute(join="debug", leave="verify"),
         ).model_dump(mode="json"),
         "tool_results": {},
@@ -243,7 +243,7 @@ async def test_prepare_syncs_triggered_workflow_to_status_state(tmp_path):
         "interaction_mode": "auto",
         "task_state": TaskState(
             current_intent=TaskIntent.CODING,
-            current_goal=GoalSpec(type=GoalType.BUGFIX, desc="debug this flaky test"),
+            current_goal=GoalSpec(desc="debug this flaky test"),
             workflow_route=WorkflowRoute(join="debug", leave="verify"),
         ).model_dump(mode="json"),
         "tool_results": {},
@@ -296,7 +296,7 @@ async def test_implement_subagent_injects_workflow_nodes(tmp_path, monkeypatch):
         ),
         runtime_persona="implement",
         **_subagent_contract_kwargs(
-            goal_type=GoalType.FEATURE,
+            goal_type="feature",
             desc="Implement the feature",
             join="tdd",
             leave="verify",

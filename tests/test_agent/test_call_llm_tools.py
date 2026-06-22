@@ -233,9 +233,11 @@ async def test_call_llm_keeps_bound_tools_fixed_across_active_workflow_node(tmp_
     assert "clarify" in tool_names
     assert "workflow" in tool_names
     assert "bash" in tool_names
-    assert "write" in tool_names
-    assert "insert" in tool_names
+    assert "file" in tool_names
+    assert "line" in tool_names
     assert "replace" in tool_names
+    assert "write" not in tool_names
+    assert "insert" not in tool_names
     assert "edit" not in tool_names
 
 

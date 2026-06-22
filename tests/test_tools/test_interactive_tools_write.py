@@ -15,16 +15,11 @@ from langchain_core.messages import ToolMessage
 
 from voidx.agent.tool_messages import DEFAULT_TOOL_MESSAGE_MAX_CHARS
 from voidx.tools.base import ToolContext, ToolResult, BaseTool, UserInteraction, UserResponse
-from voidx.tools.file_ops import (
-    FileReadInput,
-    FileWriteInput,
-    FileEditInput,
-    EditEntry,
-    FileReadTool,
-    FileWriteTool,
-    FileEditTool,
-    _find_paragraph,
-)
+from voidx.tools.file_ops import FileReadInput, FileReadTool
+from voidx.tools.file_ops.write import FileWriteInput, FileWriteTool
+from voidx.tools.file_ops.edit_execute import FileEditInput, FileEditTool
+from voidx.tools.file_ops.types import EditEntry
+from voidx.tools.file_ops.edit_resolve import _find_paragraph
 from voidx.tools.file_state import save_file_version
 import voidx.tools.file_state as file_state
 from voidx.tools.search import GlobInput, GrepInput
@@ -38,7 +33,7 @@ from voidx.tools.clarify import ClarifyTool, ClarifyInput, _infer_state_patch
 from voidx.tools.load_skills import LoadSkillsTool
 from voidx.tools.load_doc_template import LoadDocTemplateTool, LoadDocTemplateInput
 from voidx.tools.plan_checkpoint import PlanCheckpointTool
-from voidx.agent.task_state import GoalSpec, GoalResolution, GoalType, IntentResolution, PlanResolution, ToolStatePatch
+from voidx.agent.task_state import GoalSpec, GoalResolution, IntentResolution, PlanResolution, ToolStatePatch
 from voidx.agent.runtime_context import TaskIntent
 from voidx.skills.context import SKILL_TOOL_CONTEXT_MARKER
 from voidx.workflow.runtime import WorkflowRunState, WorkflowRunStatus
@@ -305,12 +300,12 @@ class TestInteractiveTools:
         )
 
         assert result.output == "child result"
-        assert result.metadata["goal"] == {"type": "review", "desc": "review: src/voidx/tools/agent.py"}
+        assert result.metadata["goal"] == {"desc": "review: src/voidx/tools/agent.py"}
         assert result.metadata["workflow_route"] == {"join": "review", "leave": "review"}
         assert result.metadata["result_schema"] == "review_result"
         assert "Target: src/voidx/tools/agent.py" in captured["description"]
         assert "Result contract:" not in captured["description"]
-        assert captured["goal_resolution"].goal.type == GoalType.REVIEW
+        assert captured["goal_resolution"].goal.desc == "review: src/voidx/tools/agent.py"
         assert captured["result"].schema_name == "review_result"
         assert "PASS|FAIL|NEEDS_CHANGE" in captured["result"].format
 
@@ -342,7 +337,7 @@ class TestInteractiveTools:
 
         assert result.output == "child result"
         goal_resolution = captured["goal_resolution"]
-        assert goal_resolution.goal.type == GoalType.INSPECT
+        assert goal_resolution.goal.desc == "inspect: src/voidx/runtime"
         assert goal_resolution.plan.join == "review"
         assert goal_resolution.plan.leave == "review"
         assert captured["result"].schema_name == "inspection_result"
@@ -376,7 +371,7 @@ class TestInteractiveTools:
 
         assert result.output == "child result"
         goal_resolution = captured["goal_resolution"]
-        assert goal_resolution.goal.type == GoalType.REVIEW
+        assert goal_resolution.goal.desc == "feedback: review comment about agent routing"
         assert goal_resolution.plan.join == "feedback"
         assert goal_resolution.plan.leave == "verify"
         assert captured["result"].schema_name == "feedback_result"
@@ -410,7 +405,7 @@ class TestInteractiveTools:
 
         assert result.output == "child result"
         goal_resolution = captured["goal_resolution"]
-        assert goal_resolution.goal.type == GoalType.FEATURE
+        assert goal_resolution.goal.desc == "implement: src/voidx/tools/agent.py"
         assert goal_resolution.plan.join == "tdd"
         assert goal_resolution.plan.leave == "verify"
         assert captured["result"].schema_name == "implementation_result"
@@ -451,4 +446,3 @@ class TestInteractiveTools:
             assert result.metadata["result_schema"] == schema_name
 
         assert captured == list(expected.values())
-

@@ -32,6 +32,8 @@ from tests.test_agent._stream_llm_helpers import (
     FakeDuplicatedReasoningStreamingModel,
     FakeDsmlStreamingModel,
     FakeMalformedDsmlStreamingModel,
+    FakeLegacyXmlToolCallStreamingModel,
+    FakeLegacyXmlArgPairToolCallStreamingModel,
     TrackingStreamingModel,
     FailsOnceStreamingModel,
     FakeRenderer,
@@ -330,6 +332,44 @@ async def test_stream_llm_ignores_malformed_dsml_pipe_runs():
 
     assert msg.tool_calls == []
     assert "<|||DSML||tool_calls>" in msg.content
+
+
+@pytest.mark.asyncio
+async def test_stream_llm_parses_legacy_xml_text_tool_calls():
+    renderer = FakeRenderer()
+
+    msg = await _stream_llm(FakeLegacyXmlToolCallStreamingModel(), [], renderer, "anthropic")
+
+    assert msg.content == ""
+    assert msg.tool_calls == [
+        {
+            "name": "read",
+            "args": {
+                "file_path": "src/voidx/permission/engine.py",
+                "offset": 110,
+                "limit": 50,
+            },
+            "id": msg.tool_calls[0]["id"],
+            "type": "tool_call",
+        }
+    ]
+    assert msg.tool_calls[0]["id"].startswith("call_xml_")
+    assert renderer.text == []
+
+
+@pytest.mark.asyncio
+async def test_stream_llm_parses_legacy_xml_arg_pair_tool_name():
+    renderer = FakeRenderer()
+
+    msg = await _stream_llm(FakeLegacyXmlArgPairToolCallStreamingModel(), [], renderer, "anthropic")
+
+    assert msg.content == ""
+    assert msg.tool_calls[0]["name"] == "read"
+    assert msg.tool_calls[0]["args"] == {
+        "file_path": "src/voidx/permission/engine.py",
+        "offset": 110,
+    }
+    assert renderer.text == []
 
 
 @pytest.mark.asyncio

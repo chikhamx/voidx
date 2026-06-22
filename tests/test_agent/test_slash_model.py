@@ -9,7 +9,7 @@ sys.path.insert(0, str(Path(__file__).parent.parent.parent / "src"))
 
 from voidx.agent.slash import SlashHandler
 from voidx.agent.slash.runtime import _select_from_list
-from voidx.agent.task_state import GoalSpec, GoalType, TaskState
+from voidx.agent.task_state import GoalSpec, TaskState
 from voidx.config import (
     CodeIde,
     ApprovalPolicy,

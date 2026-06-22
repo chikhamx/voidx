@@ -41,7 +41,7 @@ from voidx.memory.session import (
 )
 from voidx.memory.transcript import load_transcript
 from voidx.permission.service import PermissionService
-from voidx.runtime import GoalResolution, GoalSpec, GoalType, IntentResolution, PlanResolution, TaskIntent
+from voidx.runtime import GoalResolution, GoalSpec, IntentResolution, PlanResolution, TaskIntent
 from voidx.skills.context import SKILL_TOOL_CONTEXT_MARKER
 from voidx.workflow.context import WORKFLOW_CONTEXT_MARKER
 from voidx.workflow.runtime import WorkflowRunState, WorkflowRunStatus
@@ -74,15 +74,15 @@ def _result_task_state(result: dict) -> TaskState:
 
 
 def _child_goal_resolution(
-    goal_type: GoalType = GoalType.FEATURE,
+    goal_type: str = "feature",
     *,
     desc: str = "Implement the feature",
     join: str = "tdd",
     leave: str = "verify",
 ) -> GoalResolution:
     return GoalResolution(
-        intent=IntentResolution(type=TaskIntent.CODING, desc="delegated child task"),
-        goal=GoalSpec(type=goal_type, desc=desc),
+        intent=IntentResolution(type=TaskIntent.CODING),
+        goal=GoalSpec(desc=desc),
         plan=PlanResolution(join=join, leave=leave),
     )
 
@@ -101,7 +101,7 @@ def _child_result_contract(schema_name: str = "implementation_result") -> AgentR
 
 def _subagent_contract_kwargs(
     *,
-    goal_type: GoalType = GoalType.INSPECT,
+    goal_type: str = "inspect",
     desc: str = "Inspect the workspace",
     join: str = "review",
     leave: str = "review",
@@ -206,7 +206,7 @@ async def test_subagent_runner_persists_lifecycle_jsonl(tmp_path, monkeypatch):
 
     graph = _graph(tmp_path)
     graph._session = await create_session(workspace=str(tmp_path))
-    goal_resolution = _child_goal_resolution(GoalType.INSPECT, desc="Inspect storage design", join="review", leave="review")
+    goal_resolution = _child_goal_resolution("inspect", desc="Inspect storage design", join="review", leave="review")
     result_contract = _child_result_contract("inspection_result")
 
     async def fake_workflow_context_for(*_args, **_kwargs):
@@ -251,7 +251,7 @@ async def test_subagent_runner_persists_lifecycle_jsonl(tmp_path, monkeypatch):
         assert rows[0]["agent_run_id"] == "agent_0"
         assert rows[0]["persona"] == "review"
         assert rows[0]["description"] == "Inspect storage design"
-        assert rows[0]["goal_resolution"]["goal"]["type"] == "inspect"
+        assert rows[0]["goal_resolution"]["goal"]["desc"] == "Inspect storage design"
         assert rows[0]["result_schema"] == "inspection_result"
         assert rows[1]["ok"] is True
         assert rows[1]["finish_reason"] == "final_answer"
@@ -265,7 +265,7 @@ async def test_subagent_runner_authorizes_with_child_interaction_mode(tmp_path, 
 
     graph = _graph(tmp_path)
     authorize_calls: list[dict] = []
-    goal_resolution = _child_goal_resolution(GoalType.DESIGN, desc="Plan the feature", join="plan", leave="plan")
+    goal_resolution = _child_goal_resolution("design", desc="Plan the feature", join="plan", leave="plan")
     result_contract = _child_result_contract("design_result")
 
     async def fake_workflow_context_for(*_args, **_kwargs):
@@ -322,7 +322,7 @@ async def test_graph_authorization_does_not_treat_goal_as_read_only_mode(tmp_pat
         interaction_mode="goal",
     )
 
-    assert [tc["name"] for tc in approved] == ["edit"]
+    assert [tc["name"] for tc in approved] == ["replace"]
     assert denied == []
 
 
@@ -360,9 +360,9 @@ async def test_graph_authorization_prompts_for_edit(tmp_path):
         interaction_mode="auto",
     )
 
-    assert [tc["name"] for tc in approved] == ["edit"]
+    assert [tc["name"] for tc in approved] == ["replace"]
     assert denied == []
-    assert [[tc["name"] for tc in batch] for batch in asked] == [["edit"]]
+    assert [[tc["name"] for tc in batch] for batch in asked] == [["replace"]]
 
 
 @pytest.mark.asyncio
@@ -382,7 +382,7 @@ async def test_graph_authorization_respects_session_allow_for_edit(tmp_path):
         interaction_mode="auto",
     )
 
-    assert [tc["name"] for tc in approved] == ["edit"]
+    assert [tc["name"] for tc in approved] == ["replace"]
     assert denied == []
 
 
@@ -407,5 +407,4 @@ async def test_graph_authorization_prompts_for_unsafe_bash(tmp_path):
     assert [tc["name"] for tc in approved] == ["bash"]
     assert denied == []
     assert [[tc["name"] for tc in batch] for batch in asked] == [["bash"]]
-
 
