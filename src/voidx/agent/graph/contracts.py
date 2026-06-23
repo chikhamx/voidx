@@ -20,7 +20,11 @@ from voidx.runtime.ui_port import AgentUiPort
 from voidx.tools.service import ToolRegistry, TaskTracker
 
 if TYPE_CHECKING:
-    from voidx.agent.graph.compaction_coordinator import CompactionResult, GraphCompactionCoordinator
+    from voidx.agent.graph.compaction_coordinator import (
+        CompactionResult,
+        GraphCompactionCoordinator,
+        PreflightCompactionResult,
+    )
     from voidx.agent.graph.runtime_guards import RuntimeGuardState
     from voidx.agent.graph.session_runtime import GraphSessionRuntime
     from voidx.agent.graph.tool_executor import GraphToolExecutor
@@ -39,7 +43,6 @@ class GraphCompactionHost(Protocol):
     _usage_stats: UsageStats
     _compaction: CompactionService
     _compaction_coordinator: GraphCompactionCoordinator
-    _in_turn_compaction_count: int
     _pending_summary: str | None
     _compaction_summary: str
     _session_msg_cache: list[Any] | None
@@ -53,11 +56,17 @@ class GraphCompactionHost(Protocol):
         *,
         force: bool = False,
         ask: bool = True,
+        preflight: bool = False,
     ) -> tuple[list[BaseMessage] | None, str | None]: ...
-    async def _in_turn_compact(
+    async def _preflight_compact_if_needed(
         self,
         messages: list[BaseMessage],
-    ) -> CompactionResult | None: ...
+        session_msgs: list[Any] | None = None,
+        *,
+        force: bool = False,
+        reason: str = "threshold",
+        ask: bool = False,
+    ) -> tuple[CompactionResult | None, PreflightCompactionResult]: ...
     async def _ask_compact(self, total_tokens: int) -> bool: ...
     async def _persist_compaction(self, head_messages: list[BaseMessage]) -> None: ...
     async def _compact_session_history(self, *, force: bool = True) -> bool: ...

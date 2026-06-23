@@ -17,6 +17,7 @@ from voidx.agent.runtime_context import TaskIntent
 from voidx.agent.graph.runtime_guards import RuntimeGuardState
 from voidx.agent.state import AgentState
 from voidx.agent.task_state import TaskState, TurnExchange, goal_label, goal_type_from_join
+from voidx.llm.message_status import message_status
 from voidx.memory.service import (
     MessageRow,
     MessageRuntimeSnapshot,
@@ -256,12 +257,17 @@ class GraphTurnRunner:
             }
 
             # ── compaction: check overflow before running ──────────────────
-            await host._maybe_compact(
+            preflight_result, _preflight_metadata = await host._preflight_compact_if_needed(
                 msgs,
                 session_msgs,
                 force=force_resume_compaction,
                 ask=not force_resume_compaction,
+                reason="resume" if force_resume_compaction else "soft_threshold",
             )
+            if preflight_result is not None:
+                msgs.clear()
+                msgs.extend(preflight_result.live_messages)
+                initial["messages"] = msgs
             if host._ui.via_events():
                 await host._ui.events.emit(StatusFinished(status_id="turn:analyzing"))
 
@@ -333,11 +339,13 @@ class GraphTurnRunner:
                                 created_at=memory_now(),
                             ))
                     elif isinstance(msg, ToolMessage):
+                        status = message_status(getattr(msg, "status", None))
                         row_id = await save_message(MessageRow(
                             session_id=host._session.id,
                             role="tool",
                             content=str(msg.content),
                             tool_call_id=getattr(msg, "tool_call_id", None),
+                            status=status,
                             created_at=memory_now(),
                         ))
                         if host._session_msg_cache is not None:
@@ -347,6 +355,7 @@ class GraphTurnRunner:
                                 role="tool",
                                 content=str(msg.content),
                                 tool_call_id=getattr(msg, "tool_call_id", None),
+                                status=status,
                                 created_at=memory_now(),
                             ))
                 await touch_session(host._session.id)
@@ -405,7 +414,6 @@ class GraphTurnRunner:
                     }
             raise
         finally:
-            host._in_turn_compaction_count = 0
             host._usage_stats.end_turn()
             pending_guidance = getattr(host, "_pending_guidance", None)
             if pending_guidance is not None:

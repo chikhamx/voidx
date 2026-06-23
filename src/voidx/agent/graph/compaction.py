@@ -4,7 +4,11 @@ from __future__ import annotations
 
 from typing import TYPE_CHECKING
 
-from voidx.agent.graph.compaction_coordinator import CompactionResult, GraphCompactionCoordinator
+from voidx.agent.graph.compaction_coordinator import (
+    CompactionResult,
+    GraphCompactionCoordinator,
+    PreflightCompactionResult,
+)
 
 if TYPE_CHECKING:
     from voidx.agent.graph.contracts import GraphCompactionHost
@@ -30,36 +34,40 @@ class GraphCompactionMixin:
         *,
         force: bool = False,
         ask: bool = True,
+        preflight: bool = False,
     ) -> tuple[list | None, str | None]:
         return await _compaction_component_for(self).maybe_compact(
             messages,
             session_msgs,
             force=force,
             ask=ask,
+            preflight=preflight,
             run_compaction_agent=self._run_compaction_agent,
             persist_compaction=self._persist_compaction,
         )
 
-    async def _in_turn_compact(
+    async def _preflight_compact_if_needed(
         self: GraphCompactionHost,
         messages: list,
-    ) -> CompactionResult | None:
-        count = getattr(self, "_in_turn_compaction_count", 0) + 1
-        self._in_turn_compaction_count = count
-        if count > 2:
-            return None
-        result = await _compaction_component_for(self).compact_for_live_state(
+        session_msgs: list | None = None,
+        *,
+        force: bool = False,
+        reason: str = "threshold",
+        ask: bool = False,
+    ) -> tuple[CompactionResult | None, PreflightCompactionResult]:
+        result, preflight_result = await _compaction_component_for(self).preflight_compact_if_needed(
             messages,
-            force=True,
-            ask=False,
-            include_summary_message=True,
+            session_msgs,
+            force=force,
+            reason=reason,
+            ask=ask,
             run_compaction_agent=self._run_compaction_agent,
             persist_compaction=self._persist_compaction,
         )
         if result is not None:
             self._file_read_coverage.clear()
             self._file_mtimes.clear()
-        return result
+        return result, preflight_result
 
     async def _ask_compact(self: GraphCompactionHost, total_tokens: int) -> bool:
         return await _compaction_component_for(self).ask_compact(total_tokens)

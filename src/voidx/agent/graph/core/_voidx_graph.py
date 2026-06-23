@@ -114,7 +114,6 @@ class VoidXGraph(
         self._current_messages: list[BaseMessage] | None = None
         self._pending_summary: str | None = None
         self._compaction_summary: str = ""
-        self._in_turn_compaction_count: int = 0
         self._session_date: str = session_date(session)
         self._session_msg_cache: list | None = None
         self._context_cache = ContextCompilerCache()

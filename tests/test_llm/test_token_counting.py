@@ -8,6 +8,8 @@ from langchain_core.messages import AIMessage, HumanMessage, SystemMessage, Tool
 
 sys.path.insert(0, str(Path(__file__).parent.parent / "src"))
 
+from voidx.agent.graph.wiring import build_compaction_service
+from voidx.config import Config
 from voidx.llm.compaction import (
     COMPACTION_MAX_RETRIES,
     COMPACTION_THRESHOLD,
@@ -22,8 +24,102 @@ from voidx.llm.usage import estimate_context_tokens
 
 from tests.test_llm.conftest import _make_messages_with_tool_calls
 
+
+def _sized_human(content: str, message_id: str, tokens: int) -> HumanMessage:
+    return HumanMessage(content=content, id=message_id, additional_kwargs={"token_size": tokens})
+
+
+def _sized_ai(content: str, tokens: int) -> AIMessage:
+    return AIMessage(content=content, additional_kwargs={"token_size": tokens})
+
+
+def _sized_token_count(messages: list, _model: str = "") -> int:
+    return sum(int(getattr(message, "additional_kwargs", {}).get("token_size", 0)) for message in messages)
+
+
 class TestSelectTokenCounting:
     """select() should use the same token counting as estimate_context_tokens."""
+
+    def test_compaction_soft_threshold_defaults_to_context_ratio_capped_by_usable_window(self):
+        svc = CompactionService(context_limit=128_000, output_token_max=8_192)
+
+        assert svc.soft_threshold() == 96_000
+
+    def test_compaction_soft_threshold_caps_at_usable_window(self):
+        svc = CompactionService(context_limit=128_000, output_token_max=64_000)
+
+        assert svc.soft_threshold() == svc.usable_window()
+
+    def test_post_compaction_target_defaults_to_ten_percent_context(self):
+        svc = CompactionService(context_limit=128_000, output_token_max=8_192)
+
+        assert svc.post_compaction_target() == 12_800
+
+    def test_build_compaction_service_uses_configured_ratios(self):
+        _usage, svc = build_compaction_service(
+            Config(
+                compaction_soft_ratio=0.65,
+                compaction_post_target_ratio=0.12,
+            )
+        )
+
+        assert svc.soft_ratio == 0.65
+        assert svc.post_target_ratio == 0.12
+
+    def test_select_preflight_details_keeps_minimum_two_turn_tail_even_over_target(self, monkeypatch):
+        import voidx.llm.compaction as compaction_module
+
+        monkeypatch.setattr(compaction_module, "estimate_context_tokens", _sized_token_count)
+        svc = CompactionService(context_limit=1_000, output_token_max=100)
+        messages = [
+            _sized_human("old", "u1", 10),
+            _sized_ai("old answer", 10),
+            _sized_human("previous", "u2", 80),
+            _sized_ai("previous answer", 80),
+            _sized_human("current", "u3", 80),
+        ]
+
+        selection = svc.select_preflight_details(messages)
+
+        assert selection.mode == "normal"
+        assert selection.keep_from == 2
+        assert [message.content for message in messages[selection.keep_from:]] == [
+            "previous",
+            "previous answer",
+            "current",
+        ]
+
+    def test_select_preflight_details_expands_recent_tail_until_target(self, monkeypatch):
+        import voidx.llm.compaction as compaction_module
+
+        monkeypatch.setattr(compaction_module, "estimate_context_tokens", _sized_token_count)
+        svc = CompactionService(context_limit=1_000, output_token_max=100)
+        messages = [
+            _sized_human("old 1", "u1", 60),
+            _sized_ai("old answer 1", 60),
+            _sized_human("old 2", "u2", 20),
+            _sized_ai("old answer 2", 20),
+            _sized_human("previous", "u3", 20),
+            _sized_ai("previous answer", 20),
+            _sized_human("current", "u4", 10),
+        ]
+
+        selection = svc.select_preflight_details(messages)
+
+        # Minimum two-turn tail (previous + current) locked at index 2,
+        # then expanded backward to include "old 2" turn (20+20 ≤ target 100).
+        assert selection.mode == "normal"
+        assert selection.keep_from == 2
+        # Head = the two messages before keep_from (old 1 turn)
+        assert selection.head == messages[:2]
+        assert [message.content for message in selection.head] == ["old 1", "old answer 1"]
+        assert [message.content for message in messages[selection.keep_from:]] == [
+            "old 2",
+            "old answer 2",
+            "previous",
+            "previous answer",
+            "current",
+        ]
 
     def test_select_uses_full_message_format_for_token_count(self):
         """The token count for each turn in select() must include tool_calls,

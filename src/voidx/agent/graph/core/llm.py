@@ -17,8 +17,13 @@ from voidx.agent.runtime_context import (
 from voidx.agent.state import AgentState
 from voidx.agent.task_state import GoalResolution, TaskState, goal_label, goal_type_from_join
 from voidx.agent.todo_state import sanitize_todo_replay_messages
+from voidx.agent.tool_exchange_sanitizer import sanitize_failed_tool_exchanges
 from voidx.agent.tool_filters import filter_unavailable_lsp_tools
-from voidx.agent.graph.streaming import extract_text, stream_llm as _stream_llm
+from voidx.agent.graph.streaming import (
+    extract_text,
+    is_malformed_tool_call_response,
+    stream_llm as _stream_llm,
+)
 from voidx.agent.graph.topology import latest_ai_message, latest_user_text, prepare_state
 from voidx.agent.graph.workflow_utils import active_workflow_names
 from voidx.llm.message_markers import GUIDANCE_MARKER
@@ -46,7 +51,13 @@ from .helpers import (
 )
 
 if TYPE_CHECKING:
-    pass
+    from voidx.agent.graph.compaction_coordinator import CompactionResult
+
+
+MALFORMED_TOOL_CALL_REPAIR_INSTRUCTION = (
+    "Your previous response looked like an incomplete tool call. Re-emit a valid "
+    "tool call using the bound tool schema, or answer normally without tool-call markup."
+)
 
 
 class GraphLlmMixin:
@@ -121,6 +132,8 @@ class GraphLlmMixin:
         return await self._instruction.workflow_context_for(*args, **kwargs)
 
     def _inline_compaction_guide_for(self, messages: list[BaseMessage]) -> HumanMessage | None:
+        if not getattr(self.config, "inline_compaction_enabled", False):
+            return None
         total_tokens = estimate_context_tokens(messages, self.config.model.model)
         tokens = {"total": total_tokens, "input": total_tokens, "output": 0, "reasoning": 0}
         if self._compaction.is_overflow(tokens):
@@ -168,6 +181,10 @@ class GraphLlmMixin:
             list(state["messages"]),
             preserve_latest_tool_exchange=True,
         )
+        state_messages = sanitize_failed_tool_exchanges(
+            state_messages,
+            preserve_latest=True,
+        )
         compaction_happened = False
         raw_todo_state = (
             state["todo_state"]
@@ -179,11 +196,14 @@ class GraphLlmMixin:
 
         def rebuild_llm_messages(
             messages: list[BaseMessage],
+            *,
+            allow_inline_compaction: bool,
         ) -> tuple[list[BaseMessage], list[HumanMessage], bool]:
             base_messages = [*messages, *guidance_messages]
-            inline_compaction_guide = self._inline_compaction_guide_for(base_messages)
-            if inline_compaction_guide is not None:
-                base_messages.append(inline_compaction_guide)
+            if allow_inline_compaction and not compaction_happened:
+                inline_compaction_guide = self._inline_compaction_guide_for(base_messages)
+                if inline_compaction_guide is not None:
+                    base_messages.append(inline_compaction_guide)
             return base_messages, [], False
 
         async def save_context_frame(
@@ -220,7 +240,33 @@ class GraphLlmMixin:
                 assistant_msg,
             ]
 
-        llm_messages, convergence_messages, convergence_forced = rebuild_llm_messages(state_messages)
+        async def apply_compaction_result(result: CompactionResult) -> tuple[list[BaseMessage], list[HumanMessage], bool, int]:
+            nonlocal compaction_happened, state_messages, runtime_task_state
+            compaction_happened = True
+            state_messages = list(result.live_messages)
+            if result.summary:
+                reprepare_state = {
+                    **state,
+                    "messages": state_messages,
+                    "task_state": runtime_task_state.model_dump(mode="json"),
+                }
+                prepared = await self._prepare_with_stream(reprepare_state)
+                runtime_task_state = _task_state_for_context(
+                    prepared.get("task_state"),
+                    runtime_task_state,
+                )
+            rebuilt, conv_messages, conv_forced = rebuild_llm_messages(
+                state_messages,
+                allow_inline_compaction=False,
+            )
+            rebuilt_tokens = estimate_context_tokens(rebuilt, self.config.model.model)
+            self._usage_stats.update_context(rebuilt_tokens)
+            return rebuilt, conv_messages, conv_forced, rebuilt_tokens
+
+        llm_messages, convergence_messages, convergence_forced = rebuild_llm_messages(
+            state_messages,
+            allow_inline_compaction=getattr(self.config, "inline_compaction_enabled", False),
+        )
 
         persona = state.get("persona", "coordinate")
         if self._debug:
@@ -230,17 +276,22 @@ class GraphLlmMixin:
         context_tokens = estimate_context_tokens(llm_messages, self.config.model.model)
         self._usage_stats.update_context(context_tokens)
         if self._compaction.is_overflow({"total": context_tokens}):
-            result = await self._in_turn_compact(state_messages)
+            result, _preflight_result = await self._preflight_compact_if_needed(
+                state_messages,
+                force=True,
+                reason="hard_threshold",
+                ask=False,
+            )
             if result is not None:
-                compaction_happened = True
-                state_messages = list(result.live_messages)
-                llm_messages, convergence_messages, convergence_forced = rebuild_llm_messages(state_messages)
-                context_tokens = estimate_context_tokens(llm_messages, self.config.model.model)
-                self._usage_stats.update_context(context_tokens)
+                llm_messages, convergence_messages, convergence_forced, context_tokens = (
+                    await apply_compaction_result(result)
+                )
 
         await save_context_frame(llm_messages, context_tokens, convergence_messages, convergence_forced)
         max_retries = 2
         failed_attempts = 0
+        overflow_compaction_attempts = 0
+        malformed_tool_call_attempts = 0
         retry_status_active = False
         while True:
             try:
@@ -264,6 +315,55 @@ class GraphLlmMixin:
                     model=self.config.model.model,
                     cache_key=f"{self.config.model.provider}/{self.config.model.model}",
                 )
+                if is_malformed_tool_call_response(assistant_msg):
+                    if malformed_tool_call_attempts < 1:
+                        malformed_tool_call_attempts += 1
+                        llm_messages = [
+                            *llm_messages,
+                            HumanMessage(
+                                content=MALFORMED_TOOL_CALL_REPAIR_INSTRUCTION,
+                                additional_kwargs={GUIDANCE_MARKER: True},
+                            ),
+                        ]
+                        context_tokens = estimate_context_tokens(llm_messages, self.config.model.model)
+                        self._usage_stats.update_context(context_tokens)
+                        continue
+                    if malformed_tool_call_attempts < 2 and compaction_happened:
+                        result, _preflight_result = await self._preflight_compact_if_needed(
+                            state_messages,
+                            force=True,
+                            reason="malformed_tool_call",
+                            ask=False,
+                        )
+                        malformed_tool_call_attempts += 1
+                        if result is not None:
+                            llm_messages, convergence_messages, convergence_forced, context_tokens = (
+                                await apply_compaction_result(result)
+                            )
+                            llm_messages = [
+                                *llm_messages,
+                                HumanMessage(
+                                    content=MALFORMED_TOOL_CALL_REPAIR_INSTRUCTION,
+                                    additional_kwargs={GUIDANCE_MARKER: True},
+                                ),
+                            ]
+                            context_tokens = estimate_context_tokens(llm_messages, self.config.model.model)
+                            self._usage_stats.update_context(context_tokens)
+                            await save_context_frame(
+                                llm_messages,
+                                context_tokens,
+                                convergence_messages,
+                                convergence_forced,
+                            )
+                            continue
+                    failure_msg = AIMessage(
+                        content="LLM call failed: model returned an invalid or incomplete tool call."
+                    )
+                    return {
+                        "messages": replacement_messages(failure_msg),
+                        "step_count": step,
+                        "should_continue": False,
+                    }
                 if self._debug or not assistant_msg.tool_calls:
                     self._ui.ui.print()
                 if retry_status_active and self._ui.via_events():
@@ -272,14 +372,18 @@ class GraphLlmMixin:
             except Exception as e:
                 from .helpers import _is_context_overflow_error
 
-                if _is_context_overflow_error(e):
-                    result = await self._in_turn_compact(state_messages)
+                if _is_context_overflow_error(e) and overflow_compaction_attempts < 1:
+                    overflow_compaction_attempts += 1
+                    result, _preflight_result = await self._preflight_compact_if_needed(
+                        state_messages,
+                        force=True,
+                        reason="provider_overflow",
+                        ask=False,
+                    )
                     if result is not None:
-                        compaction_happened = True
-                        state_messages = list(result.live_messages)
-                        llm_messages, convergence_messages, convergence_forced = rebuild_llm_messages(state_messages)
-                        context_tokens = estimate_context_tokens(llm_messages, self.config.model.model)
-                        self._usage_stats.update_context(context_tokens)
+                        llm_messages, convergence_messages, convergence_forced, context_tokens = (
+                            await apply_compaction_result(result)
+                        )
                         await save_context_frame(
                             llm_messages,
                             context_tokens,
