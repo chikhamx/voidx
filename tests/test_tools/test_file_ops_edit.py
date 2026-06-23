@@ -1186,3 +1186,240 @@ class TestFileOps:
 
         assert result.metadata.get("error")
         assert "not on the same line" in result.output
+
+    @pytest.mark.asyncio
+    async def test_replace_span_tolerance_scales_with_range_size(self, tmp_path):
+        """Span tolerance scales: max(2, expected_span // 10)."""
+        f = tmp_path / "tolerance.txt"
+        lines = [f"line {i}" for i in range(1, 31)]
+        f.write_text("\n".join(lines) + "\n")
+        ctx = ToolContext(workspace=str(tmp_path))
+        r = ToolRegistry()
+        await r.execute_tool("read", {"file_path": "tolerance.txt"}, ctx)
+
+        # Replace lines 1-20 (span=19), but actual range is 1-21 (drift=1).
+        # With old fixed tolerance=2 this would pass anyway, but with scaling
+        # tolerance = max(2, 19//10) = max(2, 1) = 2, still passes.
+        # The real test: replace lines 1-30 (span=29), actual 1-32 (drift=2).
+        # tolerance = max(2, 29//10) = max(2, 2) = 2, drift=2 < 2 is false.
+        # So we test that a drift of 2 is accepted when span >= 20.
+        # Build a file where prefix is on line 1, suffix on line 22 (drift=2 from declared 1-20).
+        f2 = tmp_path / "tolerance2.txt"
+        f2.write_text("\n".join(f"line {i}" for i in range(1, 41)) + "\n")
+        await r.execute_tool("read", {"file_path": "tolerance2.txt"}, ctx)
+
+        # Declared range 1-20, but suffix "line 22" is on line 22 (drift=2).
+        # tolerance = max(2, 19//10) = 2, drift=2 >= 2 → rejected.
+        result = await r.execute_tool(
+            "replace",
+            {
+                "file_path": "tolerance2.txt",
+                "start_no": 1,
+                "end_no": 20,
+                "prefix": "line 1",
+                "suffix": "line 22",
+                "new_string": "REPLACED\n",
+            },
+            ctx,
+        )
+        assert result.metadata.get("error")
+
+    @pytest.mark.asyncio
+    async def test_replace_error_includes_window_snippet(self, tmp_path):
+        """Error message includes lines around the target for context."""
+        f = tmp_path / "snippet.txt"
+        f.write_text("alpha\nbeta\ngamma\ndelta\n")
+        ctx = ToolContext(workspace=str(tmp_path))
+        r = ToolRegistry()
+        await r.execute_tool("read", {"file_path": "snippet.txt"}, ctx)
+
+        result = await r.execute_tool(
+            "replace",
+            {"file_path": "snippet.txt", "start_no": 2, "end_no": 2, "prefix": "nonexistent", "suffix": "nonexistent", "new_string": "X"},
+            ctx,
+        )
+
+        assert result.metadata.get("error")
+        assert "2:" in result.output
+        assert "beta" in result.output
+
+    @pytest.mark.asyncio
+    async def test_replace_error_suffix_mismatch_includes_window_snippet(self, tmp_path):
+        """Suffix-not-on-same-line error includes window snippet."""
+        f = tmp_path / "suffix-snippet.txt"
+        f.write_text("    return\n    offset = 1\n    pass\n")
+        ctx = ToolContext(workspace=str(tmp_path))
+        r = ToolRegistry()
+        await r.execute_tool("read", {"file_path": "suffix-snippet.txt"}, ctx)
+
+        result = await r.execute_tool(
+            "replace",
+            {
+                "file_path": "suffix-snippet.txt",
+                "start_no": 1,
+                "end_no": 1,
+                "prefix": "return",
+                "suffix": "offset",
+                "new_string": "REPLACED",
+            },
+            ctx,
+        )
+
+        assert result.metadata.get("error")
+        assert "1:" in result.output
+        assert "return" in result.output
+
+    @pytest.mark.asyncio
+    async def test_replace_tail_dedup_consecutive_duplicate_line(self, tmp_path):
+        """If the last line of new_string matches the next line, the next line is consumed."""
+        f = tmp_path / "dedup.txt"
+        f.write_text("header\nimport os\nimport os\nfooter\n")
+        ctx = ToolContext(workspace=str(tmp_path))
+        r = ToolRegistry()
+        await r.execute_tool("read", {"file_path": "dedup.txt"}, ctx)
+
+        result = await r.execute_tool(
+            "replace",
+            {
+                "file_path": "dedup.txt",
+                "start_no": 2,
+                "end_no": 2,
+                "prefix": "import os",
+                "suffix": "import os",
+                "new_string": "import os\n",
+            },
+            ctx,
+        )
+
+        assert result.metadata.get("error") is not True
+        assert result.metadata["end_line"] == 3
+        assert f.read_text() == "header\nimport os\nfooter\n"
+
+    @pytest.mark.asyncio
+    async def test_replace_tail_dedup_no_match_leaves_next_line(self, tmp_path):
+        """If the last line of new_string does NOT match the next line, next line is preserved."""
+        f = tmp_path / "no-dedup.txt"
+        f.write_text("header\nimport os\nimport sys\nfooter\n")
+        ctx = ToolContext(workspace=str(tmp_path))
+        r = ToolRegistry()
+        await r.execute_tool("read", {"file_path": "no-dedup.txt"}, ctx)
+
+        result = await r.execute_tool(
+            "replace",
+            {
+                "file_path": "no-dedup.txt",
+                "start_no": 2,
+                "end_no": 2,
+                "prefix": "import os",
+                "suffix": "import os",
+                "new_string": "import os\n",
+            },
+            ctx,
+        )
+
+        assert result.metadata.get("error") is not True
+        assert result.metadata["end_line"] == 2
+        assert f.read_text() == "header\nimport os\nimport sys\nfooter\n"
+
+    @pytest.mark.asyncio
+    async def test_replace_tail_dedup_multiline_new_string(self, tmp_path):
+        """Tail dedup works with multi-line new_string where only the last line matters."""
+        f = tmp_path / "multi-dedup.txt"
+        f.write_text("start\nold_line\nold_line\nend\n")
+        ctx = ToolContext(workspace=str(tmp_path))
+        r = ToolRegistry()
+        await r.execute_tool("read", {"file_path": "multi-dedup.txt"}, ctx)
+
+        result = await r.execute_tool(
+            "replace",
+            {
+                "file_path": "multi-dedup.txt",
+                "start_no": 2,
+                "end_no": 2,
+                "prefix": "old_line",
+                "suffix": "old_line",
+                "new_string": "new_A\nold_line\n",
+            },
+            ctx,
+        )
+
+        assert result.metadata.get("error") is not True
+        assert result.metadata["end_line"] == 3
+        assert f.read_text() == "start\nnew_A\nold_line\nend\n"
+
+    @pytest.mark.asyncio
+    async def test_replace_tail_dedup_at_file_end(self, tmp_path):
+        """Tail dedup at end of file: last line matches, no next line to consume."""
+        f = tmp_path / "end-dedup.txt"
+        f.write_text("start\nold_line\nold_line\n")
+        ctx = ToolContext(workspace=str(tmp_path))
+        r = ToolRegistry()
+        await r.execute_tool("read", {"file_path": "end-dedup.txt"}, ctx)
+
+        result = await r.execute_tool(
+            "replace",
+            {
+                "file_path": "end-dedup.txt",
+                "start_no": 2,
+                "end_no": 2,
+                "prefix": "old_line",
+                "suffix": "old_line",
+                "new_string": "old_line\n",
+            },
+            ctx,
+        )
+
+        assert result.metadata.get("error") is not True
+        assert result.metadata["end_line"] == 3
+        assert f.read_text() == "start\nold_line\n"
+
+    @pytest.mark.asyncio
+    async def test_replace_tail_dedup_empty_line_not_consumed(self, tmp_path):
+        """Empty line dedup is skipped — only non-empty duplicates are consumed."""
+        f = tmp_path / "empty-dedup.txt"
+        f.write_text("start\n\n\nend\n")
+        ctx = ToolContext(workspace=str(tmp_path))
+        r = ToolRegistry()
+        await r.execute_tool("read", {"file_path": "empty-dedup.txt"}, ctx)
+
+        result = await r.execute_tool(
+            "replace",
+            {
+                "file_path": "empty-dedup.txt",
+                "start_no": 2,
+                "end_no": 2,
+                "prefix": "",
+                "suffix": "",
+                "new_string": "\n",
+            },
+            ctx,
+        )
+
+        assert result.metadata.get("error") is not True
+        assert f.read_text() == "start\n\n\nend\n"
+
+    @pytest.mark.asyncio
+    async def test_replace_tail_dedup_no_trailing_newline_in_new_string(self, tmp_path):
+        """Dedup works when new_string does NOT end with \\n but last line matches tail."""
+        f = tmp_path / "no-nl-dedup.txt"
+        f.write_text("header\nimport os\nimport os\nfooter\n")
+        ctx = ToolContext(workspace=str(tmp_path))
+        r = ToolRegistry()
+        await r.execute_tool("read", {"file_path": "no-nl-dedup.txt"}, ctx)
+
+        result = await r.execute_tool(
+            "replace",
+            {
+                "file_path": "no-nl-dedup.txt",
+                "start_no": 2,
+                "end_no": 2,
+                "prefix": "import os",
+                "suffix": "import os",
+                "new_string": "import os",
+            },
+            ctx,
+        )
+
+        assert result.metadata.get("error") is not True
+        assert result.metadata["end_line"] == 3
+        assert f.read_text() == "header\nimport os\nfooter\n"

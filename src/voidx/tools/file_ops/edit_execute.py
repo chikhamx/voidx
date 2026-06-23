@@ -357,6 +357,27 @@ async def _execute_text_replace(
     tail = original[end_offset:]
     if (new_string == "" or new_string.endswith("\n")) and tail.startswith("\n"):
         tail = tail[1:]
+
+    # Tail-line dedup: if the last line of new_string exactly matches the
+    # first line of the remaining tail, consume that tail line too.
+    actual_end_line = end_line
+    if new_string and tail:
+        new_lines = _split_edit_lines(new_string)
+        if new_lines:
+            last_new = new_lines[-1]
+            dedup_tail = tail
+            if not new_string.endswith("\n") and dedup_tail.startswith("\n"):
+                dedup_tail = dedup_tail[1:]
+            tail_first_nl = dedup_tail.find("\n")
+            tail_first_line = dedup_tail[:tail_first_nl] if tail_first_nl != -1 else dedup_tail
+            if last_new == tail_first_line and tail_first_line != "":
+                remainder = dedup_tail[tail_first_nl + 1:] if tail_first_nl != -1 else ""
+                if new_string.endswith("\n"):
+                    tail = remainder
+                else:
+                    tail = f"\n{remainder}" if remainder else ""
+                actual_end_line = end_line + 1
+
     content = f"{original[:start_offset]}{new_string}{tail}"
     await save_file_version(ctx, path, display_path=file_path, tool_name=tool_name)
     path.write_text(content, encoding="utf-8")
@@ -376,7 +397,7 @@ async def _execute_text_replace(
             "file": file_path,
             "operations": 1,
             "start_line": start_line,
-            "end_line": end_line,
+            "end_line": actual_end_line,
         },
         diff=diff,
     )
