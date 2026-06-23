@@ -51,7 +51,7 @@ class TestFileOps:
         await r.execute_tool("read", {"file_path": "paragraph.py"}, ctx)
 
         shifted = await r.execute_tool(
-            "line",
+            "write",
             {"file_path": "paragraph.py", "op": "insert", "lineno": 2, "new_string": "    extra = 0\n"},
             ctx,
         )
@@ -136,7 +136,7 @@ class TestFileOps:
         await r.execute_tool("read", {"file_path": "insert-paragraph-correct.py"}, ctx)
 
         result = await r.execute_tool(
-            "line",
+            "write",
             {"file_path": "insert-paragraph-correct.py", "op": "insert", "lineno": 3, "new_string": "after target\n"},
             ctx,
         )
@@ -197,7 +197,7 @@ class TestFileOps:
         await r.execute_tool("read", {"file_path": "shift.txt"}, ctx)
 
         inserted = await r.execute_tool(
-            "line",
+            "write",
             {"file_path": "shift.txt", "op": "insert", "lineno": 0, "new_string": "zero\n"},
             ctx,
         )
@@ -239,7 +239,7 @@ class TestFileOps:
         await r.execute_tool("read", {"file_path": "multi-shift.txt"}, ctx)
 
         inserted = await r.execute_tool(
-            "line",
+            "write",
             {"file_path": "multi-shift.txt", "op": "insert", "lineno": 1, "new_string": "one-a\n"},
             ctx,
         )

@@ -1,3 +1,4 @@
+> **Status: Done**
 # line 工具改造：append 操作 + insert 0-based + file create hint 更新
 
 ## Context
@@ -56,15 +57,28 @@ class LineInput(BaseModel):
     new_string: str = Field(
         default="",
         description=(
-            "For insert/append: content to add. A trailing newline does not add "
-            "an extra blank line."
+            "For insert and append: content to add. Ignored for delete. "
+            "A trailing newline does not add an extra blank line."
         )
     )
+
+    @model_validator(mode="after")
+    def _validate_line_input(self) -> "LineInput":
+        if self.op == "append" and self.lineno is not None:
+            raise ValueError("lineno must not be provided when op=append")
+        if self.op == "insert" and self.lineno is None:
+            raise ValueError("lineno is required when op=insert")
+        if self.op == "delete":
+            if self.lineno is None or self.lineno < 1:
+                raise ValueError("lineno must be at least 1 when op=delete")
+            if self.end_no is not None and self.end_no < self.lineno:
+                raise ValueError("end_no must be greater than or equal to lineno")
+        return self
 ```
 
 **append 行为：**
 
-- 不需要 `lineno` 参数（传入则忽略）
+- 不需要 `lineno` 参数（传入则 validator 报错，避免 LLM 误以为 lineno 有作用）
 - 追加到文件末尾，等价于旧版 `op="insert", lineno=-1`
 - 空文件也可 append（无需 read coverage，因为不涉及已有行）
 - 非空文件 append 不需要 read coverage（不修改任何已有行）
@@ -141,7 +155,8 @@ async def _execute_line_insert(ctx: ToolContext, inp: LineInput) -> ToolResult:
         )
 
     # Read coverage check: inserting before line (lineno+1), need coverage for that line
-    if total_lines > 0 and inp.lineno <= total_lines:
+    # lineno=total_lines is append position (no existing line affected), skip coverage
+    if total_lines > 0 and inp.lineno < total_lines:
         coverage_error = check_read_coverage(ctx, path, inp.lineno + 1, inp.lineno + 1)
         if coverage_error:
             return ToolResult(output=coverage_error, metadata={"error": True})
@@ -175,16 +190,48 @@ hint = (
 )
 ```
 
+### 4. FileInsertTool（edit_execute.py）— 无需改动
+
+经确认，`FileInsertTool`（id="insert"）和 `FileInsertInput` 未被任何模块导入或注册，属于死代码。`__init__.py` 仅导出 `FileReplaceTool`，不导出 `FileInsertTool`。因此无需改动此文件。
+
+> **注意：** 如果未来启用 `FileInsertTool`，需同步将其 lineno 语义改为 0-based insert-before，与 `LineTool` 保持一致。
+
+### 5. compaction.py prune 逻辑适配
+
+当前 prune 逻辑（第 153 行）仅匹配 `op="insert"`：
+
+```python
+elif name == "line" and args.get("op") == "insert" and "new_string" in args:
+```
+
+新增 append 后，append 的 `new_string` 同样需要 prune。改为：
+
+```python
+elif name == "line" and args.get("op") in ("insert", "append") and "new_string" in args:
+```
+
+### 6. repair_tool_name 增加 append 映射
+
+当前 `repair_tool_name`（rules.py 第 105 行）有 `"insert": "line"` 和 `"delete": "line"`。如果 LLM 误把 `append` 当作独立工具名调用，需要映射修复：
+
+```python
+# 旧版
+"write": "file", "edit": "replace", "insert": "line", "delete": "line",
+
+# 新版
+"write": "file", "edit": "replace", "insert": "line", "append": "line", "delete": "line",
+```
+
 ## 受影响文件
 
 | 文件 | 改动 |
 |------|------|
 | `src/voidx/tools/file_ops/line.py` | LineInput 模型、LineTool.execute、_execute_line_insert、新增 _execute_line_append |
+| `src/voidx/tools/file_ops/edit_execute.py` | 无需改动（FileInsertTool 是死代码，未注册） |
 | `src/voidx/tools/file_ops/file.py` | _create_file 的 next_step_hint |
-| `src/voidx/tools/file_ops/edit_execute.py` | FileInsertTool 的 lineno==-1 逻辑 |
-| `src/voidx/tools/bash_router.py` | 4 处 llm_hint 从 `op="insert", lineno=-1` 改为 `op="append"`；2 处 `lineno=0` 改为 `op="append"` |
+| `src/voidx/tools/bash_router.py` | 2 处 `is_append` hint 从 `op="insert", lineno=-1` 改为 `op="append"`；2 处 `file create` hint 从 `lineno=0` 改为 `op="append"`（空文件上 append 与 lineno=0 效果一致，且引导 LLM 连续 append 更自然） |
 | `src/voidx/llm/compaction.py` | compaction prune 逻辑增加 `op="append"` 分支 |
-| `src/voidx/permission/rules.py` | repair_tool_name 中 `"insert": "line"` 无需改动（insert 仍是 line 工具的操作） |
+| `src/voidx/permission/rules.py` | repair_tool_name 增加 `"append": "line"` 映射 |
 | `tests/test_tools/test_file_ops_line_file.py` | 更新 lineno=-1 相关测试，新增 append 测试 |
 | `tests/test_tools/test_file_ops_edit.py` | 更新 insert lineno 测试 |
 | `tests/test_tools/test_file_ops_coverage_fingerprint.py` | 更新 insert lineno 测试 |
@@ -197,9 +244,10 @@ hint = (
 | `op="append"` + 空文件 | 正常追加，无需 read coverage |
 | `op="append"` + 非空文件 | 追加到末尾，无需 read coverage |
 | `op="append"` + `new_string=""` | 返回 "No changes" |
-| `op="append"` + 传入 `lineno` | 忽略 lineno |
+| `op="append"` + 传入 `lineno` | validator 报错（lineno must not be provided when op=append） |
 | `op="insert"` + `lineno=0` | 在文件开头插入（与旧版行为一致） |
 | `op="insert"` + `lineno` 超出文件行数 | 报错 |
+| `op="insert"` + `lineno=total_lines` | 在末尾插入，无需 read coverage（等价于 append 位置） |
 | `op="delete"` + `lineno` | 保持 1-based，不变 |
 | `file create` overwrite | 不返回 append hint（与旧版一致） |
 
@@ -208,6 +256,17 @@ hint = (
 | 决策 | 备选方案 | 选择理由 |
 |------|---------|---------|
 | append 不需要 read coverage | append 也要求 read coverage | append 不修改任何已有行，强制 read 是不必要的摩擦 |
+| append 传入 lineno 报错 | append 忽略 lineno | 报错更明确，避免 LLM 误以为 lineno 对 append 有作用 |
 | insert 改为 0-based insert-before | 保持 1-based insert-after | 0-based 与 read 输出行号对齐（read 输出 1-based，0-based lineno=N 表示在第 N+1 行前插入），描述更简洁 |
-| append 忽略 lineno | append 传入 lineno 报错 | 忽略更宽容，减少 LLM 出错概率 |
 | delete 保持 1-based | delete 也改为 0-based | delete 的 lineno 语义是"删除这行"，1-based 更自然，且改动范围最小化 |
+
+## 迁移策略
+
+insert lineno 从 1-based insert-after 改为 0-based insert-before 是**破坏性变更**。影响范围：
+
+1. **prompt 缓存** — 工具 schema 变更会导致缓存失效，这是预期行为
+2. **会话历史** — 已有会话中的 `lineno=1`（旧版=第1行之后，新版=第1行之前）语义不同。但会话历史中的 tool call 不会被重新执行，所以不影响已有结果
+3. **compaction prune** — prune 逻辑仅匹配 `op` 和 `new_string`，不依赖 lineno 值，无需迁移
+4. **LLM 行为** — 新 session 中 LLM 会使用新的 schema 描述，不会产生旧版调用。旧 session 继续使用旧 schema 直到 compaction 触发
+
+**结论：** 无需版本化工具 schema 或兼容层。变更在 session 边界处生效，不会影响进行中的会话。

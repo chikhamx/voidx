@@ -125,6 +125,7 @@ def isolated_memory_store(tmp_path):
     store._conn = None
 
 
+
 def _tree_nodes(root):
     nodes = [root]
     for child in root.children:
@@ -138,13 +139,13 @@ async def test_graph_on_request_auto_approves_need_ask_tools(tmp_path):
     graph._permission.approval_policy = "on-request"
 
     approved, denied = await graph._authorize_tool_calls(
-        [{"name": "write", "args": {"file_path": "app.py", "content": "x"}, "id": "call_1"}],
+        [{"name": "write", "args": {"file_path": "app.py", "op": "append", "new_string": "x"}, "id": "call_1"}],
         runtime_persona="implement",
         plan_mode=False,
         session_id="test",
     )
 
-    assert [tc["name"] for tc in approved] == ["file"]
+    assert [tc["name"] for tc in approved] == ["write"]
     assert denied == []
 
 

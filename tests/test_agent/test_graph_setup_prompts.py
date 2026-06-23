@@ -297,10 +297,10 @@ def test_orchestrator_has_direct_edit_tools():
     agent = get_agent("voidx")
     registry = ToolRegistry()
     tool_ids = set(registry.ids())
+    assert {"file", "write", "replace"}.issubset(tool_ids)
+    assert "line" not in tool_ids
 
     assert agent is not None
-    assert {"file", "line", "replace"}.issubset(tool_ids)
-    assert "write" not in tool_ids
     assert "insert" not in tool_ids
     assert "edit" not in tool_ids
     assert "delete" not in tool_ids

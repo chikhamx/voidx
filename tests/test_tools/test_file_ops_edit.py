@@ -43,18 +43,18 @@ class TestFileOps:
         f.write_text("one\ntwo\n")
         ctx = ToolContext(workspace=str(tmp_path))
         r = ToolRegistry()
-        await r.execute_tool("read", {"file_path": "insert-tool.txt", "offset": 1, "limit": 1}, ctx)
+        await r.execute_tool("read", {"file_path": "insert-tool.txt", "offset": 1, "limit": 2}, ctx)
 
         result = await r.execute_tool(
-            "line",
+            "write",
             {"file_path": "insert-tool.txt", "op": "insert", "lineno": 1, "new_string": "middle\n"},
             ctx,
         )
 
         assert result.metadata.get("error") is not True
+        # 0-based insert-before: lineno=1 means insert before line 2 (1-based)
         assert (tmp_path / "insert-tool.txt").read_text() == "one\nmiddle\ntwo\n"
 
-    @pytest.mark.asyncio
     @pytest.mark.asyncio
     async def test_line_insert_requires_read_coverage_for_target_line(self, tmp_path):
         f = tmp_path / "insert-unread.txt"
@@ -63,7 +63,7 @@ class TestFileOps:
         r = ToolRegistry()
 
         result = await r.execute_tool(
-            "line",
+            "write",
             {"file_path": "insert-unread.txt", "op": "insert", "lineno": 1, "new_string": "middle\n"},
             ctx,
         )
@@ -73,7 +73,6 @@ class TestFileOps:
         assert f.read_text() == "one\ntwo\n"
 
     @pytest.mark.asyncio
-    @pytest.mark.asyncio
     async def test_line_insert_at_beginning_of_file(self, tmp_path):
         f = tmp_path / "insert-bof.txt"
         f.write_text("one\ntwo\n")
@@ -82,7 +81,7 @@ class TestFileOps:
         await r.execute_tool("read", {"file_path": "insert-bof.txt"}, ctx)
 
         result = await r.execute_tool(
-            "line",
+            "write",
             {"file_path": "insert-bof.txt", "op": "insert", "lineno": 0, "new_string": "zero\n"},
             ctx,
         )
@@ -408,7 +407,7 @@ class TestFileOps:
         r = ToolRegistry()
 
         result = await r.execute_tool(
-            "line",
+            "write",
             {"file_path": "short.txt", "op": "insert", "lineno": 5, "new_string": "oops\n"},
             ctx,
         )
@@ -424,7 +423,7 @@ class TestFileOps:
         r = ToolRegistry()
 
         result = await r.execute_tool(
-            "line",
+            "write",
             {"file_path": "empty.txt", "op": "insert", "lineno": 0, "new_string": "first\n"},
             ctx,
         )
@@ -441,7 +440,7 @@ class TestFileOps:
         await r.execute_tool("read", {"file_path": "end.txt"}, ctx)
 
         result = await r.execute_tool(
-            "line",
+            "write",
             {"file_path": "end.txt", "op": "insert", "lineno": 2, "new_string": "three\n"},
             ctx,
         )
@@ -450,16 +449,16 @@ class TestFileOps:
         assert f.read_text() == "one\ntwo\nthree\n"
 
     @pytest.mark.asyncio
-    async def test_line_insert_at_end_of_file_with_lineno_minus_one(self, tmp_path):
+    @pytest.mark.asyncio
+    async def test_line_append_at_end_of_file(self, tmp_path):
         f = tmp_path / "end.txt"
         f.write_text("one\ntwo\n")
         ctx = ToolContext(workspace=str(tmp_path))
         r = ToolRegistry()
-        await r.execute_tool("read", {"file_path": "end.txt"}, ctx)
 
         result = await r.execute_tool(
-            "line",
-            {"file_path": "end.txt", "op": "insert", "lineno": -1, "new_string": "three\n"},
+            "write",
+            {"file_path": "end.txt", "op": "append", "new_string": "three\n"},
             ctx,
         )
 
@@ -467,15 +466,16 @@ class TestFileOps:
         assert f.read_text() == "one\ntwo\nthree\n"
 
     @pytest.mark.asyncio
-    async def test_line_insert_into_empty_file_with_lineno_minus_one(self, tmp_path):
+    @pytest.mark.asyncio
+    async def test_line_append_into_empty_file(self, tmp_path):
         f = tmp_path / "empty.txt"
         f.write_text("")
         ctx = ToolContext(workspace=str(tmp_path))
         r = ToolRegistry()
 
         result = await r.execute_tool(
-            "line",
-            {"file_path": "empty.txt", "op": "insert", "lineno": -1, "new_string": "first\n"},
+            "write",
+            {"file_path": "empty.txt", "op": "append", "new_string": "first\n"},
             ctx,
         )
 
@@ -491,7 +491,7 @@ class TestFileOps:
         await r.execute_tool("read", {"file_path": "remap.txt"}, ctx)
 
         result = await r.execute_tool(
-            "line",
+            "write",
             {"file_path": "remap.txt", "op": "insert", "lineno": 3, "new_string": "inserted\n"},
             ctx,
         )

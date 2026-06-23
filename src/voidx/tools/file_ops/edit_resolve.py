@@ -1,13 +1,8 @@
 from __future__ import annotations
 
-from bisect import bisect_right
-from typing import Literal
-
 from .types import (
     TEXT_REPLACE_LINE_RADIUS,
     TEXT_REPLACE_SPAN_TOLERANCE,
-    EditEntry,
-    ParagraphResolution,
     ResolvedEdit,
 )
 
@@ -197,103 +192,12 @@ def _rank_line_range_pairs(
             ranked.append((score, prefix_line, suffix_line))
     return sorted(ranked)
 
-
-def _resolve_paragraph_edits(lines: list[str], edits: list[EditEntry]) -> ParagraphResolution | str:
-    resolved: list[ResolvedEdit] = []
-    for i, edit in enumerate(edits):
-        found = _find_paragraph(lines, edit.operation, edit.lineno, edit.prefix, edit.suffix)
-        if isinstance(found, str):
-            return f"Edit {i}: {found}"
-        start_line, end_line = found
-        resolved.append(ResolvedEdit(edit.operation, start_line, end_line, edit.new_string))
-    return ParagraphResolution(resolved, [])
-
-
-def _find_paragraph(
-    lines: list[str],
-    operation: Literal["replace", "insert"],
-    lineno: int,
-    prefix: str,
-    suffix: str,
-) -> tuple[int, int] | str:
-    del operation
-    if lineno == 0 and prefix == "" and suffix == "":
-        return (0, 0)
-    if prefix == "" or suffix == "":
-        return "prefix and suffix must not be empty (except beginning-of-file insertion/prepend with lineno=0)."
-
-    total_lines = len(lines)
-    if lineno == 0:
-        window_start, window_end = 1, min(total_lines, 100)
-    else:
-        window_start = max(1, lineno - 100)
-        window_end = min(total_lines, lineno + 100)
-    if window_start > window_end:
-        return f"prefix {prefix!r} not found within ±100 lines of line {lineno}. Read the file to get current content."
-
-    text, line_starts = _window_text(lines, window_start, window_end)
-    matches = _find_snippet_matches(text, line_starts, window_start, prefix)
-    if not matches:
-        return f"prefix {prefix!r} not found within ±100 lines of line {lineno}. Read the file to get current content."
-
-    target_line = 0 if lineno == 0 else lineno
-    distances = [abs(match_line - target_line) for _, match_line in matches]
-    min_distance = min(distances)
-    nearest = [
-        match
-        for match, distance in zip(matches, distances)
-        if distance == min_distance
-    ]
-    nearest_lines = sorted({line for _, line in nearest})
-    if len(nearest_lines) > 1:
-        return f"prefix {prefix!r} is ambiguous at lines {_format_lines(nearest_lines)}. Provide a more specific prefix or adjust lineno."
-
-    prefix_offset, start_line = nearest[0]
-    suffix_offset = text.find(suffix, prefix_offset + len(prefix))
-    if suffix_offset != -1:
-        suffix_end_offset = suffix_offset + len(suffix) - 1
-        end_line = _line_for_offset(line_starts, window_start, suffix_end_offset)
-        if end_line != start_line and prefix == suffix:
-            suffix_offset = text.find(suffix, prefix_offset)
-    if suffix_offset == -1:
-        suffix_offset = text.find(suffix, prefix_offset)
-    if suffix_offset == -1:
-        return f"suffix {suffix!r} not found after prefix at line {start_line}. Read the file to get current content."
-    suffix_end_offset = suffix_offset + len(suffix) - 1
-    end_line = _line_for_offset(line_starts, window_start, suffix_end_offset)
-    return (start_line, end_line)
-
-
-def _window_text(lines: list[str], start_line: int, end_line: int) -> tuple[str, list[int]]:
-    selected = lines[start_line - 1:end_line]
-    starts: list[int] = []
-    offset = 0
-    for i, line in enumerate(selected):
-        starts.append(offset)
-        offset += len(line)
-        if i < len(selected) - 1:
-            offset += 1
-    return "\n".join(selected), starts
-
-
-def _find_snippet_matches(text: str, line_starts: list[int], window_start: int, snippet: str) -> list[tuple[int, int]]:
-    matches: list[tuple[int, int]] = []
-    offset = text.find(snippet)
-    while offset != -1:
-        matches.append((offset, _line_for_offset(line_starts, window_start, offset)))
-        offset = text.find(snippet, offset + 1)
-    return matches
-
-
 def _global_offset_for_line(lines: list[str], line_number: int) -> int:
     if line_number <= 1:
         return 0
     return len("\n".join(lines[:line_number - 1])) + 1
 
 
-def _line_for_offset(line_starts: list[int], window_start: int, offset: int) -> int:
-    index = bisect_right(line_starts, offset) - 1
-    return window_start + max(index, 0)
 
 
 def _format_lines(lines: list[int]) -> str:

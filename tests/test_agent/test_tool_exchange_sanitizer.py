@@ -138,12 +138,12 @@ def test_streaming_sanitize_applies_failed_exchange_cleanup():
 
     sanitized = _sanitize_messages_for_replay(messages)
 
-    # Old failed exchange removed; latest preserved (preserve_latest=True)
+    # Both rounds preserved (preserve_rounds=2)
     tool_call_ids = []
     for msg in sanitized:
         if isinstance(msg, AIMessage):
             tool_call_ids.extend(call["id"] for call in (msg.tool_calls or []))
-    assert "old_fail" not in tool_call_ids
+    assert "old_fail" in tool_call_ids
     assert "cur_fail" in tool_call_ids
 
 

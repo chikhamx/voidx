@@ -150,7 +150,7 @@ def _prune_ai_tool_call_args(
                 saved_chars += len(args["new_string"]) - len(placeholder)
                 args["new_string"] = placeholder
                 changed = True
-        elif name == "line" and args.get("op") == "insert" and "new_string" in args:
+        elif name == "write" and args.get("op") in ("insert", "append") and "new_string" in args:
             placeholder = PRUNE_ARGS_PLACEHOLDER_DIFF
             if len(args["new_string"]) > len(placeholder) and _tool_result_has_diff(messages, ai_msg_index, tc_id):
                 saved_chars += len(args["new_string"]) - len(placeholder)
@@ -267,8 +267,6 @@ class CompactionService:
             # Count turns by user messages
             if isinstance(msg, HumanMessage):
                 turns_seen += 1
-                if turns_seen > 2:
-                    continue
 
             if isinstance(msg, AIMessage) and hasattr(msg, "summary") and msg.summary:
                 break  # stop at compaction boundary
@@ -299,6 +297,10 @@ class CompactionService:
 
             accumulated += token_est
             if accumulated <= PRUNE_PROTECT:
+                continue
+
+            # Protect most recent 2 turns from ToolMessage truncation
+            if turns_seen < 2:
                 continue
 
             if len(content) > TOOL_OUTPUT_MAX_CHARS:

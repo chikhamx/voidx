@@ -144,7 +144,7 @@ def test_workflow_state_summary_includes_transition_hint():
 
 
 def test_workflow_denied_tools_aggregates_all_active_gates():
-    assert workflow_denied_tools(["debug", "tdd"]) >= {"file", "line", "replace"}
+    assert workflow_denied_tools(["debug", "tdd"]) >= {"file", "write", "replace"}
 
 
 def test_feedback_workflow_exposes_design_and_plan_exits():

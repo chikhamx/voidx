@@ -184,6 +184,7 @@ class GraphLlmMixin:
         state_messages = sanitize_failed_tool_exchanges(
             state_messages,
             preserve_latest=True,
+            preserve_rounds=2,
         )
         compaction_happened = False
         raw_todo_state = (

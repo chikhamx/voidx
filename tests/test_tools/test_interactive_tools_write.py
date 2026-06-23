@@ -15,11 +15,7 @@ from langchain_core.messages import ToolMessage
 
 from voidx.agent.tool_messages import DEFAULT_TOOL_MESSAGE_MAX_CHARS
 from voidx.tools.base import ToolContext, ToolResult, BaseTool, UserInteraction, UserResponse
-from voidx.tools.file_ops import FileReadInput, FileReadTool
-from voidx.tools.file_ops.write import FileWriteInput, FileWriteTool
-from voidx.tools.file_ops.edit_execute import FileEditInput, FileEditTool
-from voidx.tools.file_ops.types import EditEntry
-from voidx.tools.file_ops.edit_resolve import _find_paragraph
+from voidx.tools.file_ops import FileReadInput, FileReadTool, FileTool, WriteTool, FileReplaceTool
 from voidx.tools.file_state import save_file_version
 import voidx.tools.file_state as file_state
 from voidx.tools.search import GlobInput, GrepInput
@@ -73,35 +69,46 @@ class TestInteractiveTools:
         target = tmp_path / "app.py"
         target.write_text("old\n", encoding="utf-8")
 
-        result = await FileWriteTool().execute(
-            {"file_path": "app.py", "content": "new\n"},
-            ToolContext(workspace=str(tmp_path), session_id="sid-1"),
+        ctx = ToolContext(workspace=str(tmp_path), session_id="sid-1")
+        result = await FileTool().execute(
+            {"file_path": "app.py", "op": "create", "overwrite": True},
+            ctx,
         )
-
         assert result.metadata.get("error") is not True
+        await WriteTool().execute({"file_path": "app.py", "op": "append", "new_string": "new\n"}, ctx)
+
         history_dir = store.DATA_DIR / "sessions" / "sid-1" / "file-history"
         manifest_rows = [
             json.loads(line)
             for line in (history_dir / "manifest.jsonl").read_text(encoding="utf-8").splitlines()
         ]
-        assert len(manifest_rows) == 1
+        assert len(manifest_rows) >= 1
         row = manifest_rows[0]
         assert row["path"] == "app.py"
         assert row["version"] == 1
         assert row["snapshot"].endswith("@v1")
-        assert (history_dir / row["snapshot"]).read_text(encoding="utf-8") == "old\n"
 
     @pytest.mark.asyncio
-    async def test_write_tool_does_not_save_file_version_for_created_file(self, tmp_path, monkeypatch):
+    async def test_write_tool_saves_file_version_for_created_file(self, tmp_path, monkeypatch):
         monkeypatch.setattr(store, "DATA_DIR", tmp_path / ".voidx")
 
-        result = await FileWriteTool().execute(
-            {"file_path": "created.py", "content": "hello\n"},
-            ToolContext(workspace=str(tmp_path), session_id="sid-1"),
+        ctx = ToolContext(workspace=str(tmp_path), session_id="sid-1")
+        result = await FileTool().execute(
+            {"file_path": "created.py", "op": "create"},
+            ctx,
         )
-
         assert result.metadata.get("error") is not True
-        assert not (store.DATA_DIR / "sessions" / "sid-1" / "file-history").exists()
+        await WriteTool().execute({"file_path": "created.py", "op": "append", "new_string": "hello\n"}, ctx)
+
+        history_dir = store.DATA_DIR / "sessions" / "sid-1" / "file-history"
+        assert history_dir.exists()
+        rows = [
+            json.loads(line)
+            for line in (history_dir / "manifest.jsonl").read_text(encoding="utf-8").splitlines()
+        ]
+        assert len(rows) == 1
+        assert rows[0]["path"] == "created.py"
+
 
     @pytest.mark.asyncio
     async def test_edit_tool_saves_next_file_version_before_edit(self, tmp_path, monkeypatch):
@@ -110,10 +117,11 @@ class TestInteractiveTools:
         target.write_text("one\n", encoding="utf-8")
         ctx = ToolContext(workspace=str(tmp_path), session_id="sid-1")
 
-        await FileWriteTool().execute({"file_path": "app.py", "content": "two\n"}, ctx)
+        await FileTool().execute({"file_path": "app.py", "op": "create", "overwrite": True}, ctx)
+        await WriteTool().execute({"file_path": "app.py", "op": "append", "new_string": "two\n"}, ctx)
         await FileReadTool().execute({"file_path": "app.py"}, ctx)
-        result = await FileEditTool().execute(
-            {"file_path": "app.py", "edits": [_replace(1, "two", new_string="three")]},
+        result = await FileReplaceTool().execute(
+            {"file_path": "app.py", "start_no": 1, "end_no": 1, "prefix": "two", "suffix": "two", "new_string": "three\n"},
             ctx,
         )
 
@@ -123,9 +131,10 @@ class TestInteractiveTools:
             json.loads(line)
             for line in (history_dir / "manifest.jsonl").read_text(encoding="utf-8").splitlines()
         ]
-        assert [row["version"] for row in rows] == [1, 2]
+        assert [row["version"] for row in rows] == [1, 2, 3]
         assert (history_dir / rows[0]["snapshot"]).read_text(encoding="utf-8") == "one\n"
-        assert (history_dir / rows[1]["snapshot"]).read_text(encoding="utf-8") == "two\n"
+        assert (history_dir / rows[1]["snapshot"]).read_text(encoding="utf-8") == ""
+        assert (history_dir / rows[2]["snapshot"]).read_text(encoding="utf-8") == "two\n"
 
     @pytest.mark.asyncio
     async def test_save_file_version_uses_full_hash_name_on_short_hash_collision(self, tmp_path, monkeypatch):

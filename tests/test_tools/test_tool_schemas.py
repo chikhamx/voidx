@@ -15,11 +15,7 @@ from langchain_core.messages import ToolMessage
 
 from voidx.agent.tool_messages import DEFAULT_TOOL_MESSAGE_MAX_CHARS
 from voidx.tools.base import ToolContext, ToolResult, BaseTool, UserInteraction, UserResponse
-from voidx.tools.file_ops import FileReadInput, FileReplaceInput, FileInput, LineInput, FileReadTool, FileTool, LineTool, FileReplaceTool
-from voidx.tools.file_ops.write import FileWriteInput, FileWriteTool
-from voidx.tools.file_ops.edit_execute import FileEditInput, FileEditTool
-from voidx.tools.file_ops.types import EditEntry
-from voidx.tools.file_ops.edit_resolve import _find_paragraph
+from voidx.tools.file_ops import FileReadInput, FileReplaceInput, FileInput, WriteInput, FileReadTool, FileTool, WriteTool, FileReplaceTool
 from voidx.tools.file_state import save_file_version
 import voidx.tools.file_state as file_state
 from voidx.tools.search import GlobInput, GrepInput
@@ -121,24 +117,26 @@ class TestToolSchemas:
         assert "create" in schema["properties"]["op"]["description"]
         assert "move" in schema["properties"]["dest_path"]["description"]
 
-    def test_line_input_supports_insert_and_delete(self):
-        insert = LineInput(file_path="x.py", op="insert", lineno=3, new_string="added\n")
-        delete = LineInput(file_path="x.py", op="delete", lineno=3, end_no=5)
+    def test_write_input_supports_insert_and_append(self):
+        insert = WriteInput(file_path="x.py", op="insert", lineno=3, new_string="added\n")
+        append = WriteInput(file_path="x.py", op="append", new_string="appended\n")
         assert insert.lineno == 3
-        assert delete.end_no == 5
+        assert append.op == "append"
 
-    def test_line_delete_rejects_invalid_line_range(self):
+    def test_write_insert_requires_lineno(self):
         with pytest.raises(ValueError):
-            LineInput(file_path="x.py", op="delete", lineno=0)
+            WriteInput(file_path="x.py", op="insert", new_string="nope\n")
+
+    def test_write_append_rejects_lineno(self):
         with pytest.raises(ValueError):
-            LineInput(file_path="x.py", op="delete", lineno=5, end_no=3)
+            WriteInput(file_path="x.py", op="append", lineno=3, new_string="nope\n")
 
-    def test_line_schema_has_combined_insert_delete_fields(self):
-        schema = LineTool().parameters_schema()
+    def test_write_schema_has_insert_append_fields(self):
+        schema = WriteTool().parameters_schema()
 
-        assert set(schema["properties"]) == {"file_path", "op", "lineno", "end_no", "new_string"}
+        assert set(schema["properties"]) == {"file_path", "op", "lineno", "new_string"}
         assert "insert" in schema["properties"]["op"]["description"]
-        assert "delete" in schema["properties"]["op"]["description"]
+        assert "append" in schema["properties"]["op"]["description"]
 
     def test_replace_input_uses_start_end_line_range_without_operation(self):
         inp = FileReplaceInput(file_path="x.py", start_no=3, end_no=5, prefix="old", suffix="tail", new_string="new")

@@ -18,7 +18,7 @@ from voidx.tools.base import ToolContext, ToolResult, BaseTool, UserInteraction,
 from voidx.tools.file_ops import (
     FileReadInput,
     FileInput,
-    LineInput,
+    WriteInput,
     FileReadTool,
 )
 from voidx.tools.file_state import save_file_version
@@ -75,9 +75,9 @@ class TestToolRegistry:
         ids = r.ids()
         assert "read" in ids
         assert "file" in ids
-        assert "line" in ids
+        assert "write" in ids
         assert "replace" in ids
-        assert "write" not in ids
+        assert "line" not in ids
         assert "edit" not in ids
         assert "insert" not in ids
         assert "delete" not in ids
@@ -101,9 +101,9 @@ class TestToolRegistry:
         assert len(tools) >= 10
         names = [t["function"]["name"] for t in tools]
         assert "file" in names
-        assert "line" in names
+        assert "write" in names
         assert "replace" in names
-        assert "write" not in names
+        assert "line" not in names
         assert "edit" not in names
         for t in tools:
             assert t["type"] == "function"

@@ -90,8 +90,8 @@ async def _create_file(ctx: ToolContext, inp: FileInput) -> ToolResult:
     hint = ""
     if not overwritten:
         hint = (
-            f"Use the line tool to append content to {inp.file_path} in batches of up to 30 lines. "
-            f"Start with line(file_path=\"{inp.file_path}\", op=\"insert\", lineno=-1, new_string=\"...\")."
+            f"Use the write tool to append content to {inp.file_path} in batches of up to 30 lines. "
+            f"Start with write(file_path=\"{inp.file_path}\", op=\"append\", new_string=\"...\")."
         )
     return ToolResult(
         title=title,

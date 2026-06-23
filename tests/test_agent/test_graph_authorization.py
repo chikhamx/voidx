@@ -400,7 +400,6 @@ async def test_graph_authorization_asks_for_persona_blocked_write(tmp_path):
     assert denied == []
     assert len(asked) == 1
 
-
 @pytest.mark.asyncio
 async def test_permission_result_uses_transient_output(tmp_path):
     graph = _graph(tmp_path)
@@ -423,13 +422,13 @@ async def test_permission_result_uses_transient_output(tmp_path):
     graph._app = app
     try:
         approved, denied = await graph._authorize_tool_calls(
-            [{"name": "write", "args": {"file_path": "app.py", "content": "x"}, "id": "call_1"}],
+            [{"name": "write", "args": {"file_path": "app.py", "op": "append", "new_string": "x"}, "id": "call_1"}],
             runtime_persona="implement",
             plan_mode=False,
             session_id="test",
         )
 
-        assert [tc["name"] for tc in approved] == ["file"]
+        assert [tc["name"] for tc in approved] == ["write"]
         assert denied == []
         assert app.notices == []
         rendered = "\n".join(test_dock.tree.render(100))
@@ -437,4 +436,6 @@ async def test_permission_result_uses_transient_output(tmp_path):
     finally:
         test_dock.deactivate()
         set_dock(None)
+
+
 

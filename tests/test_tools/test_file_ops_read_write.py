@@ -22,14 +22,14 @@ class TestFileOps:
 
     def test_file_tool_guidance_is_exposed_to_model(self):
         from voidx.tools.file_ops.file import FileTool
-        from voidx.tools.file_ops.line import LineTool
+        from voidx.tools.file_ops.write import WriteTool
         file_desc = FileTool.description.lower()
-        line_desc = LineTool.description.lower()
+        line_desc = WriteTool.description.lower()
         assert "create" in file_desc
         assert "delete" in file_desc
         assert "move" in file_desc
         assert "insert" in line_desc
-        assert "delete" in line_desc
+        assert "append" in line_desc
 
     @pytest.mark.asyncio
     async def test_read(self, tmp_path):
@@ -184,7 +184,7 @@ class TestFileOps:
         r = ToolRegistry()
         await r.execute_tool("file", {"file_path": "out.txt", "op": "create"}, ctx)
         result = await r.execute_tool(
-            "line",
+            "write",
             {"file_path": "out.txt", "op": "insert", "lineno": 0, "new_string": "hello"},
             ctx,
         )
@@ -199,7 +199,7 @@ class TestFileOps:
         await r.execute_tool("read", {"file_path": "out.txt"}, ctx)
         await r.execute_tool("file", {"file_path": "out.txt", "op": "create", "overwrite": True}, ctx)
         result = await r.execute_tool(
-            "line",
+            "write",
             {"file_path": "out.txt", "op": "insert", "lineno": 0, "new_string": "new"},
             ctx,
         )
@@ -213,7 +213,7 @@ class TestFileOps:
         exactly_200_with_final_newline = "\n".join(f"line {i}" for i in range(200)) + "\n"
         await r.execute_tool("file", {"file_path": "exactly-200.txt", "op": "create"}, ctx)
         await r.execute_tool(
-            "line",
+            "write",
             {"file_path": "exactly-200.txt", "op": "insert", "lineno": 0, "new_string": exactly_200_with_final_newline},
             ctx,
         )
@@ -295,16 +295,16 @@ class TestFileOps:
         await r.execute_tool("read", {"file_path": "insert.txt"}, ctx)
 
         await r.execute_tool(
-            "line",
+            "write",
             {"file_path": "insert.txt", "op": "insert", "lineno": 0, "new_string": "top\n"},
             ctx,
         )
-        await r.execute_tool("read", {"file_path": "insert.txt"}, ctx)
         result = await r.execute_tool(
-            "line",
-            {"file_path": "insert.txt", "op": "insert", "lineno": -1, "new_string": "bottom\n"},
+            "write",
+            {"file_path": "insert.txt", "op": "append", "new_string": "bottom\n"},
             ctx,
         )
+        await r.execute_tool("read", {"file_path": "insert.txt"}, ctx)
 
         assert result.metadata.get("error") is not True
         assert (tmp_path / "insert.txt").read_text() == "top\nmiddle\nend\nbottom\n"

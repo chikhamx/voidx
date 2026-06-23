@@ -74,7 +74,7 @@ def _fmt_args(args: dict[str, object]) -> str:
 
 
 def _fmt_args_short(tool_name: str, args: dict[str, object]) -> str:
-    if tool_name in {"read", "file", "line", "replace"}:
+    if tool_name in {"read", "file", "write", "replace"}:
         value = args.get("file_path")
         return _escape_rich(str(value)) if value else ""
     if tool_name == "glob":

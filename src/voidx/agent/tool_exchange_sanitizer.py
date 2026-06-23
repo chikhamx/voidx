@@ -14,10 +14,11 @@ def sanitize_failed_tool_exchanges(
     messages: list[BaseMessage],
     *,
     preserve_latest: bool = False,
+    preserve_rounds: int = 1,
 ) -> list[BaseMessage]:
     failed_ids = _failed_tool_call_ids(messages)
     if preserve_latest:
-        failed_ids.difference_update(_latest_failed_tool_exchange_ids(messages))
+        failed_ids.difference_update(_latest_failed_tool_exchange_ids(messages, rounds=preserve_rounds))
     if not failed_ids:
         return messages
 
@@ -52,21 +53,30 @@ def _failed_tool_call_ids(messages: list[BaseMessage]) -> set[str]:
     return failed
 
 
-def _latest_failed_tool_exchange_ids(messages: list[BaseMessage]) -> set[str]:
-    trailing_failed_ids: set[str] = set()
+def _latest_failed_tool_exchange_ids(messages: list[BaseMessage], *, rounds: int = 1) -> set[str]:
+    preserved: set[str] = set()
     index = len(messages) - 1
-    while index >= 0 and isinstance(messages[index], ToolMessage):
-        message = messages[index]
-        tool_call_id = str(getattr(message, "tool_call_id", "") or "")
-        if tool_call_id and message_status(getattr(message, "status", None)) == "error":
-            trailing_failed_ids.add(tool_call_id)
+    rounds_found = 0
+
+    while index >= 0 and rounds_found < rounds:
+        # Collect trailing ToolMessages at current position
+        round_failed: set[str] = set()
+        while index >= 0 and isinstance(messages[index], ToolMessage):
+            message = messages[index]
+            tool_call_id = str(getattr(message, "tool_call_id", "") or "")
+            if tool_call_id and message_status(getattr(message, "status", None)) == "error":
+                round_failed.add(tool_call_id)
+            index -= 1
+
+        if not round_failed or index < 0 or not isinstance(messages[index], AIMessage):
+            break
+
+        ai_ids = set(ai_tool_call_ids(messages[index]))
+        preserved.update(round_failed.intersection(ai_ids))
+        rounds_found += 1
         index -= 1
 
-    if not trailing_failed_ids or index < 0 or not isinstance(messages[index], AIMessage):
-        return set()
-
-    ai_ids = set(ai_tool_call_ids(messages[index]))
-    return trailing_failed_ids.intersection(ai_ids)
+    return preserved
 
 
 def _sanitize_ai_failed_calls(message: AIMessage, failed_ids: set[str]) -> AIMessage | None:

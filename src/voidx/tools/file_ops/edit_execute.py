@@ -16,40 +16,12 @@ from voidx.tools.file_state import (
 
 from .edit_resolve import (
     _find_text_segment,
-    _global_offset_for_line,
-    _resolve_paragraph_edits,
     _result_trailing_newline,
     _validate_resolved_edits,
 )
 from .read import _join_display_lines, _split_display_lines, _split_edit_lines
-from .types import DisplayLines, EditEntry, ParagraphResolution, ResolvedEdit
+from .types import DisplayLines, ResolvedEdit
 
-
-class FileEditInput(BaseModel):
-    file_path: str = Field(description="Path to edit")
-    edits: list[EditEntry] = Field(
-        description=(
-            "Prefix/suffix paragraph edits to apply atomically. Read the target lines first; lineno "
-            "is a search hint and prefix/suffix are the locators."
-        )
-    )
-
-
-class FileInsertInput(BaseModel):
-    file_path: str = Field(description="Path to insert")
-    lineno: int = Field(
-        ge=-1,
-        description=(
-            "Insert after this line (1-based). "
-            "0 → beginning of file, -1 → end of file."
-        ),
-    )
-    new_string: str = Field(
-        description=(
-            "Content to insert. A trailing newline does not add an extra blank line; "
-            "start with a newline only when an intentional blank first line is desired."
-        )
-    )
 
 
 class FileReplaceInput(BaseModel):
@@ -87,7 +59,7 @@ class FileReplaceInput(BaseModel):
             "Replacement content. May contain any number of lines. "
             "A trailing newline does not add an extra blank line; "
             "start with a newline only when an intentional blank first line is desired."
-        )
+        ),
     )
 
     @model_validator(mode="after")
@@ -95,124 +67,6 @@ class FileReplaceInput(BaseModel):
         if self.end_no < self.start_no:
             raise ValueError("end_no must be greater than or equal to start_no")
         return self
-
-
-
-class FileDeleteInput(BaseModel):
-    file_path: str = Field(description="Path to the file")
-    lineno: int = Field(
-        ge=1,
-        description=(
-            "Line number to delete (1-based). "
-            "Use the line number from the latest read output."
-        ),
-    )
-    anchor: str = Field(
-        default="",
-        description=(
-            "Substring expected anywhere on the target line. "
-            "Aim for a distinctive snippet. "
-            "Empty string skips anchor verification."
-        ),
-    )
-
-
-class FileDeleteTool(BaseTool):
-    id = "delete"
-    description = (
-        "Delete a single line from a file. "
-        "Provide the line number from the latest read output and an anchor snippet "
-        "to verify the target line. For deleting multiple consecutive lines, use replace instead. "
-        "Read the target line first."
-    )
-
-    def parameters_schema(self) -> dict:
-        return model_to_json_schema(FileDeleteInput)
-
-    async def execute(self, args: dict, ctx: ToolContext) -> ToolResult:
-        inp = FileDeleteInput.model_validate(args)
-        if inp.anchor:
-            return await _execute_text_replace(
-                ctx,
-                file_path=inp.file_path,
-                start_no=inp.lineno,
-                end_no=inp.lineno,
-                prefix=inp.anchor,
-                suffix=inp.anchor,
-                new_string="",
-                tool_name=self.id,
-            )
-        return await _execute_line_delete(
-            ctx,
-            file_path=inp.file_path,
-            lineno=inp.lineno,
-            tool_name=self.id,
-        )
-
-class FileEditTool(BaseTool):
-    id = "edit"
-    description = (
-        "Edit a single file by matching prefix/suffix text snippets near a required lineno hint. "
-        "Use replace to replace the matched paragraph, or insert to add content after it. "
-        "Use lineno=0 with empty prefix/suffix for beginning-of-file prepend. "
-        "Multiple edits apply atomically from bottom to top."
-    )
-
-    def parameters_schema(self) -> dict:
-        return model_to_json_schema(FileEditInput)
-
-    async def execute(self, args: dict, ctx: ToolContext) -> ToolResult:
-        inp = FileEditInput.model_validate(args)
-        if not inp.edits:
-            return ToolResult(
-                output="No edits provided. The 'edits' array must contain at least one entry.",
-                metadata={"error": True},
-            )
-        return await _execute_paragraph_edits(
-            ctx,
-            file_path=inp.file_path,
-            edit_entries=inp.edits,
-            tool_name=self.id,
-        )
-
-
-class FileInsertTool(BaseTool):
-    id = "insert"
-    description = (
-        "Insert content into a file. Read the target line first."
-    )
-
-    def parameters_schema(self) -> dict:
-        return model_to_json_schema(FileInsertInput)
-
-    async def execute(self, args: dict, ctx: ToolContext) -> ToolResult:
-        inp = FileInsertInput.model_validate(args)
-        if inp.new_string == "":
-            return ToolResult(
-                title="No changes",
-                output="Insertion content is empty; no changes applied.",
-                summary="No changes",
-                metadata={"file": inp.file_path, "operations": 0},
-            )
-        path = resolve_safe(ctx.workspace, inp.file_path, ctx.sandbox_extra_paths)
-        if path is None:
-            return ToolResult(output=f"Path traversal blocked: {inp.file_path}", metadata={"error": True})
-        resolved_lineno = inp.lineno
-        if path.exists():
-            total_lines = len(_split_display_lines(path.read_text(encoding="utf-8", errors="replace")).lines)
-            if inp.lineno == -1:
-                resolved_lineno = total_lines
-            elif inp.lineno > total_lines:
-                return ToolResult(
-                    output=f"Cannot insert after line {inp.lineno}: file has {total_lines} lines.",
-                    metadata={"error": True},
-                )
-        return await _execute_direct_edits(
-            ctx,
-            file_path=inp.file_path,
-            edits=[ResolvedEdit("insert", resolved_lineno, resolved_lineno, inp.new_string)],
-            tool_name=self.id,
-        )
 
 
 class FileReplaceTool(BaseTool):
@@ -252,71 +106,6 @@ def _resolve_edit_target(ctx: ToolContext, file_path: str):
         return None, ToolResult(output=stale, metadata={"error": True})
     return path, None
 
-
-async def _execute_paragraph_edits(
-    ctx: ToolContext,
-    *,
-    file_path: str,
-    edit_entries: list[EditEntry],
-    tool_name: str,
-) -> ToolResult:
-    path, error = _resolve_edit_target(ctx, file_path)
-    if error is not None:
-        return error
-    assert path is not None
-
-    original = path.read_text(encoding="utf-8", errors="replace")
-    display = _split_display_lines(original)
-    lines = list(display.lines)
-
-    for i, edit in enumerate(edit_entries):
-        if edit.operation == "insert" and edit.new_string == "":
-            return ToolResult(
-                title="No changes",
-                output=f"Edit {i}: insertion content is empty; no changes applied.",
-                summary="No changes",
-                metadata={"file": file_path, "operations": 0},
-            )
-
-    resolution = _resolve_paragraph_edits(lines, edit_entries)
-    if isinstance(resolution, str):
-        return ToolResult(output=resolution, metadata={"error": True})
-    return await _apply_resolved_edits(
-        ctx,
-        path=path,
-        file_path=file_path,
-        edits=resolution.edits,
-        original=original,
-        display=display,
-        tool_name=tool_name,
-        hints=resolution.hints,
-    )
-
-
-async def _execute_direct_edits(
-    ctx: ToolContext,
-    *,
-    file_path: str,
-    edits: list[ResolvedEdit],
-    tool_name: str,
-) -> ToolResult:
-    path, error = _resolve_edit_target(ctx, file_path)
-    if error is not None:
-        return error
-    assert path is not None
-
-    original = path.read_text(encoding="utf-8", errors="replace")
-    display = _split_display_lines(original)
-    return await _apply_resolved_edits(
-        ctx,
-        path=path,
-        file_path=file_path,
-        edits=edits,
-        original=original,
-        display=display,
-        tool_name=tool_name,
-        hints=[],
-    )
 
 
 async def _execute_text_replace(
@@ -404,71 +193,6 @@ async def _execute_text_replace(
 
 
 
-async def _execute_line_delete(
-    ctx: ToolContext,
-    *,
-    file_path: str,
-    lineno: int,
-    tool_name: str,
-) -> ToolResult:
-    path, error = _resolve_edit_target(ctx, file_path)
-    if error is not None:
-        return error
-    assert path is not None
-
-    original = path.read_text(encoding="utf-8", errors="replace")
-    display = _split_display_lines(original)
-    lines = list(display.lines)
-
-    if lineno < 1 or lineno > len(lines):
-        return ToolResult(
-            output=f"Line {lineno} out of range (file has {len(lines)} lines).",
-            metadata={"error": True},
-        )
-
-    coverage_error = check_read_coverage(ctx, path, lineno, lineno)
-    if coverage_error:
-        return ToolResult(output=f"{coverage_error}", metadata={"error": True})
-
-    key = str(path.resolve())
-    existing_coverage = ctx.file_read_coverage.get(key, {})
-    current_fingerprint = asdict(file_fingerprint(path))
-    old_ranges = [
-        item.copy()
-        for item in existing_coverage.get("ranges", [])
-    ] if existing_coverage.get("fingerprint") == current_fingerprint else []
-
-    start_offset = _global_offset_for_line(lines, lineno)
-    end_offset = _global_offset_for_line(lines, lineno) + len(lines[lineno - 1])
-
-    tail = original[end_offset:]
-    if tail.startswith("\n"):
-        tail = tail[1:]
-    content = f"{original[:start_offset]}{tail}"
-
-    await save_file_version(ctx, path, display_path=file_path, tool_name=tool_name)
-    path.write_text(content, encoding="utf-8")
-    diff = make_file_diff(file_path, original, content)
-    parsed = parse_unified_diff(diff)
-    file_diff = parsed.files[0] if parsed.files else FileDiff(path=file_path)
-    remap_read_coverage_from_file_diff(ctx, path, file_diff, old_ranges=old_ranges)
-
-    output = f"File edited: {file_path} (1 operations)"
-    if diff:
-        output = f"{output}\n{diff}"
-    return ToolResult(
-        title="Edited (1 edits)",
-        output=output,
-        summary="Edited (1 operations)",
-        metadata={
-            "file": file_path,
-            "operations": 1,
-            "start_line": lineno,
-            "end_line": lineno,
-        },
-        diff=diff,
-    )
-
 async def _apply_resolved_edits(
     ctx: ToolContext,
     *,
@@ -489,7 +213,11 @@ async def _apply_resolved_edits(
     for i, edit in enumerate(edits):
         # (0, 0) is the convention for beginning-of-file insert/prepend —
         # no prior read is required since there are no existing lines to verify.
+        # Similarly, insert at (total_lines, total_lines) is an append —
+        # no existing lines are modified.
         if (edit.start_line, edit.end_line) == (0, 0):
+            continue
+        if edit.operation == "insert" and edit.start_line == total_lines and edit.end_line == total_lines:
             continue
         coverage_error = check_read_coverage(ctx, path, edit.start_line, edit.end_line)
         if coverage_error:

@@ -138,7 +138,7 @@ def _sanitize_messages_for_replay(messages: list, *, protocol: str = "") -> list
         sanitized,
         preserve_latest_tool_exchange=True,
     )
-    sanitized = sanitize_failed_tool_exchanges(sanitized, preserve_latest=True)
+    sanitized = sanitize_failed_tool_exchanges(sanitized, preserve_latest=True, preserve_rounds=2)
     return _repair_tool_result_adjacency(sanitized)
 
 

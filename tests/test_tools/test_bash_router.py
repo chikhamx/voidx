@@ -142,7 +142,7 @@ class TestHeredocOrderings:
     def test_heredoc_append_uses_line(self):
         h = try_hint("cat >> out.txt << 'EOF'\nhello\nEOF")
         assert h is not None
-        assert h.tool_id == "line"
+        assert h.tool_id == "write"
 
     def test_heredoc_content_with_dquote_no_hint(self):
         assert try_hint("cat > out.txt << 'EOF'\nshe said \"hi\"\nEOF") is None
@@ -180,7 +180,7 @@ class TestRouteHintToolIdLiteral:
     """RouteHint.tool_id must be one of the Literal values."""
 
     def test_all_tool_ids_are_valid(self):
-        valid = {"read", "git", "file", "line", "replace", "glob", "grep"}
+        valid = {"read", "git", "file", "write", "replace", "glob", "grep"}
         for cmd, expected_id in [
             ("cat file.py", "read"),
             ("git status", "git"),
