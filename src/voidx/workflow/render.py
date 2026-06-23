@@ -58,19 +58,6 @@ def render_node_markdown(node: WorkflowNode, dag: WorkflowDAG | None = None) -> 
     ]
     if node.goal:
         lines.extend(["", "### Goal", node.goal])
-    if node.persona:
-        lines.extend(["", "### Persona", node.persona])
-    if node.io.input:
-        lines.extend(["", "### Input"])
-        lines.extend(f"- `{name}`: {description}" for name, description in node.io.input.items())
-    if node.io.output:
-        lines.extend(["", "### Output"])
-        lines.extend(f"- `{name}`: {description}" for name, description in node.io.output.items())
-    lines.extend(["", "### Tools"])
-    if node.tools:
-        lines.extend(f"- `{tool}`" for tool in node.tools)
-    else:
-        lines.append("- none")
     if node.gate.description or node.gate.required_before_transition:
         lines.extend(["", "### Gate"])
         if node.gate.required_before_transition:
@@ -95,16 +82,6 @@ def render_node_markdown(node: WorkflowNode, dag: WorkflowDAG | None = None) -> 
             suffix = f": {step.description}" if step.description else ""
             lines.append(f"{step.order}. {step.action}{suffix}")
         lines.append(f"Exit condition: {sub.exit_condition}")
-    if dag:
-        edges = dag.edges_from(node.name)
-        if edges:
-            lines.extend(["", "### Available Exits"])
-            for edge in edges:
-                label = f" ({edge.label})" if edge.label else ""
-                description = f": {edge.description}" if edge.description else ""
-                lines.append(f"- `{edge.condition}` -> `{edge.target}`{label}{description}")
-            terminal = dag.terminal_exit
-            lines.append(f"- `{terminal.condition}` -> {terminal.description}")
     if node.rules:
         lines.extend(["", "### Rules"])
         lines.extend(f"- {item}" for item in node.rules)

@@ -144,7 +144,7 @@ class TestPruneLineArgs:
 
 class TestPruneRecentTurnsProtected:
     def test_recent_tool_call_not_pruned(self):
-        """Tool calls in the most recent 2 turns should NOT be pruned."""
+        """Tool calls in the current turn should NOT be pruned."""
         svc = CompactionService()
         content = "\n".join(f"line {i}" for i in range(50))
         # Only 1 turn — should be protected
@@ -161,6 +161,29 @@ class TestPruneRecentTurnsProtected:
         svc.prune(messages)
 
         assert messages[1].tool_calls[0]["args"]["content"] == content
+
+    def test_previous_turn_args_pruned(self):
+        """Tool calls in the previous turn (1 turn ago) should be pruned."""
+        svc = CompactionService()
+        content = "\n".join(f"line {i}" for i in range(50))
+        long_tool_output = f"File edited: foo.py\n--- a/foo.py\n+++ b/foo.py\n" + "x" * 5000
+        # 2 turns: previous turn has the edit, current turn is recent
+        messages = [
+            HumanMessage(content="turn 1"),
+            AIMessage(
+                content="",
+                tool_calls=[{"name": "write", "args": {"file_path": "foo.py", "content": content}, "id": "tc1", "type": "tool_call"}],
+                id="ai1",
+            ),
+            ToolMessage(content=long_tool_output, tool_call_id="tc1", name="write"),
+            HumanMessage(content="turn 2 (recent)"),
+            AIMessage(content="assistant turn 2", id="ai2"),
+        ]
+
+        svc.prune(messages)
+
+        assert "[omitted:" in messages[1].tool_calls[0]["args"]["content"]
+
 
 
 class TestPruneOtherToolsNotAffected:

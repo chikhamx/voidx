@@ -14,6 +14,7 @@ sys.path.insert(0, str(Path(__file__).parent.parent.parent / "src"))
 
 from voidx.agent.slash import SlashHandler
 from voidx.agent.graph import VoidXGraph
+from voidx.agent.graph.compaction_coordinator import PreflightCompactionResult
 from voidx.agent.graph.run_loop import GraphRunLoopMixin
 from voidx.agent.graph.title_mixin import _sanitize_generated_title
 from voidx.agent.runtime_context import InteractionMode, TaskIntent
@@ -372,6 +373,9 @@ async def test_run_once_cancel_deletes_pending_user_message(tmp_path):
     async def fake_maybe_compact(self, messages, session_messages, **_kwargs):
         return messages, None
 
+    async def fake_preflight_compact(self, messages, session_msgs=None, **_kwargs):
+        return None, PreflightCompactionResult(compacted=False)
+
     started = asyncio.Event()
 
     async def fake_ainvoke(initial, _config):
@@ -382,6 +386,7 @@ async def test_run_once_cancel_deletes_pending_user_message(tmp_path):
             raise
 
     graph._maybe_compact = MethodType(fake_maybe_compact, graph)
+    graph._preflight_compact_if_needed = MethodType(fake_preflight_compact, graph)
     graph.graph = SimpleNamespace(ainvoke=fake_ainvoke)
     graph._compaction = SimpleNamespace(prune=lambda _messages: None)
 

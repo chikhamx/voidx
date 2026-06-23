@@ -57,7 +57,8 @@ def _find_text_segment(
         prefix_target = "empty line" if prefix == "" else f"prefix {prefix!r}"
         return (
             f"{prefix_target} not found within ±{TEXT_REPLACE_LINE_RADIUS} "
-            f"lines of start_no {start_no}. Read the file to get current content."
+            f"lines of start_no {start_no}.\n"
+            f"Lines around {start_no}:\n{_window_snippet(lines, start_no)}"
         )
 
     suffix_lines = _find_line_candidates(lines, end_no, suffix)
@@ -65,15 +66,17 @@ def _find_text_segment(
         suffix_target = "empty line" if suffix == "" else f"suffix {suffix!r}"
         return (
             f"{suffix_target} not found within ±{TEXT_REPLACE_LINE_RADIUS} "
-            f"lines of end_no {end_no}. Read the file to get current content."
+            f"lines of end_no {end_no}.\n"
+            f"Lines around {end_no}:\n{_window_snippet(lines, end_no)}"
         )
 
     ranked = _rank_line_range_pairs(prefix_lines, suffix_lines, start_no, end_no)
     if not ranked:
+        tolerance = _span_tolerance(end_no - start_no)
         return (
             "no valid replace range found: candidate ranges did not match "
             f"expected span {end_no - start_no} with less than "
-            f"{TEXT_REPLACE_SPAN_TOLERANCE} lines of drift. "
+            f"{tolerance} lines of drift. "
             f"prefix candidates: {_format_lines(prefix_lines)}; "
             f"suffix candidates: {_format_lines(suffix_lines)}."
         )
@@ -109,7 +112,8 @@ def _find_single_line_segment(
         prefix_target = "empty line" if prefix == "" else f"prefix {prefix!r}"
         return (
             f"{prefix_target} not found within ±{TEXT_REPLACE_LINE_RADIUS} "
-            f"lines of line {target_line}. Read the file to get current content."
+            f"lines of line {target_line}.\n"
+            f"Lines around {target_line}:\n{_window_snippet(lines, target_line)}"
         )
 
     if suffix != "" and suffix != prefix:
@@ -121,8 +125,8 @@ def _find_single_line_segment(
         if not prefix_lines:
             return (
                 f"prefix {prefix!r} found but suffix {suffix!r} not on the same line "
-                f"within ±{TEXT_REPLACE_LINE_RADIUS} lines of line {target_line}. "
-                "Read the file to get current content."
+                f"within ±{TEXT_REPLACE_LINE_RADIUS} lines of line {target_line}.\n"
+                f"Lines around {target_line}:\n{_window_snippet(lines, target_line)}"
             )
 
     prefix_lines.sort(key=lambda l: abs(l - target_line))
@@ -165,6 +169,10 @@ def _line_matches_replace_anchor(line: str, snippet: str) -> bool:
     return snippet in line
 
 
+def _span_tolerance(expected_span: int) -> int:
+    return max(TEXT_REPLACE_SPAN_TOLERANCE, expected_span // 10)
+
+
 def _rank_line_range_pairs(
     prefix_lines: list[int],
     suffix_lines: list[int],
@@ -172,12 +180,13 @@ def _rank_line_range_pairs(
     end_no: int,
 ) -> list[tuple[tuple[int, int, int, int], int, int]]:
     expected_span = end_no - start_no
+    tolerance = _span_tolerance(expected_span)
     ranked: list[tuple[tuple[int, int, int, int], int, int]] = []
     for prefix_line in prefix_lines:
         for suffix_line in suffix_lines:
             actual_span = suffix_line - prefix_line
             span_delta = abs(actual_span - expected_span)
-            if actual_span < 0 or span_delta >= TEXT_REPLACE_SPAN_TOLERANCE:
+            if actual_span < 0 or span_delta >= tolerance:
                 continue
             score = (
                 abs(prefix_line - start_no) + abs(suffix_line - end_no),
@@ -289,6 +298,18 @@ def _line_for_offset(line_starts: list[int], window_start: int, offset: int) -> 
 
 def _format_lines(lines: list[int]) -> str:
     return ", ".join(str(line) for line in lines)
+
+
+def _window_snippet(lines: list[str], center: int, radius: int = TEXT_REPLACE_LINE_RADIUS) -> str:
+    start = max(1, center - radius)
+    end = min(len(lines), center + radius)
+    parts: list[str] = []
+    for i in range(start, end + 1):
+        content = lines[i - 1]
+        if len(content) > 80:
+            content = content[:77] + "..."
+        parts.append(f"{i}: {content}")
+    return "\n".join(parts)
 
 
 def _result_trailing_newline(edits: list[ResolvedEdit], total_lines: int, original_trailing_newline: bool) -> bool:

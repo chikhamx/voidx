@@ -1,10 +1,12 @@
+> **Status: Done** — 变更已在工作目录中实施，所有测试通过。
+
 # Workflow Node Prompt 精简方案 — 技术设计文档
 
 ## Context
 
-Workflow node 定义在 `VOIDX_WORKFLOW_CONTEXT` 段中被渲染为 markdown，作为稳定 prompt 缓存注入每次 LLM 调用。当前 8 个 node 总计约 14,400 字符（~3,600 tokens），其中包含大量对 LLM 行为无实际约束力的描述性元数据。这些字段占用 prompt 空间但不影响输出质量，应予精简。
+Workflow node 定义在 `VOIDX_WORKFLOW_CONTEXT` 段中被渲染为 markdown，作为稳定 prompt 缓存注入每次 LLM 调用。实施前 8 个 node 总计约 14,400 字符（~3,600 tokens），其中包含大量对 LLM 行为无实际约束力的描述性元数据。这些字段占用 prompt 空间但不影响输出质量，已予精简。
 
-### 当前渲染结构（每个 node）
+### 精简前渲染结构（每个 node）
 
 ```
 ## Workflow Node: {name}
@@ -34,7 +36,7 @@ Description: ...
 
 - 不修改 `WorkflowNode` schema（`io`、`persona`、`tools` 字段保留，runtime 代码仍在使用）
 - 不修改 DAG edge 定义或 node 语义
-- 不改变 `render_node_summary`（当前未被调用，不在本次范围）
+- 不改变 `render_node_summary`（当前无调用方，不在本次范围）。注意：`render_node_summary` 中仍有 `dag.edges_from` 调用渲染 Exits 信息，与精简后的 `render_node_markdown` 不一致；若未来启用该函数，需同步精简
 
 ## 精简方案
 
@@ -42,10 +44,10 @@ Description: ...
 
 | 段落 | 移除理由 | 受影响代码 |
 |------|---------|-----------|
-| `### Persona` | persona 已在 `Current Task State` 段实时呈现（`- Current persona: {name}`），workflow context 是稳定缓存，此处重复且可能过时 | `render.py:61-62` |
-| `### Input` / `### Output` | IO 定义是描述性文字，runtime 从不按 schema 校验这些字段；信息与 Gate/Rules 高度重叠；LLM 不会返回结构化对象 | `render.py:63-68` |
-| `### Tools` | 工具可用性由 permission engine 动态控制，静态列表可能过时；与 Gate 的 `denied_tools` 语义重叠 | `render.py:69-73` |
-| `### Available Exits` | 边信息已在 DAG overview（`render_dag_overview`）中以 `source --condition--> target` 格式呈现，node 内重复列出 | `render.py:98-107` |
+| `### Persona` | persona 已在 `Current Task State` 段实时呈现（`runtime_context.py:253` 的 `- Current persona: {name}`），workflow context 是稳定缓存，此处重复且可能过时 | `render_node_markdown` 中 `if node.persona` 分支 |
+| `### Input` / `### Output` | IO 定义是描述性文字，runtime 从不按 schema 校验这些字段；信息与 Gate/Rules 高度重叠；LLM 不会返回结构化对象 | `render_node_markdown` 中 `if node.io.input/output` 分支 |
+| `### Tools` | 工具可用性由 permission engine 动态控制（`workflow_tools()` + `workflow_denied_tools()`），静态列表可能过时；关键约束已由 Gate 的 `denied_tools` 覆盖 | `render_node_markdown` 中 `### Tools` 段落 |
+| `### Available Exits` | 边信息已在 DAG overview（`render_dag_overview`）中以 `source --condition--> target` 格式呈现；active node 的退出路径还在 Current Task State 中实时渲染（`runtime_context.py:267-269`），node 内重复列出 | `render_node_markdown` 中 `if dag` + `edges` 分支 |
 
 ### 保留的段落
 
@@ -73,9 +75,22 @@ Description: ...
 ### Exceptions (仅 tdd)
 ```
 
+## 对 LLM 行为的影响分析
+
+移除的四个段落均为"稳定缓存中的静态信息"，而 LLM 实际决策依赖的是"每次 turn 动态渲染的 Current Task State"。静态信息与动态信息重叠时，LLM 以动态信息为准。移除静态冗余不会导致行为退化，反而减少了 prompt 中的信息冲突风险（如 persona 在两处不一致时 LLM 该信哪个）。
+
+| 移除段落 | 对 LLM 行为的影响 | 替代信号来源 |
+|---------|-------------------|------------|
+| `### Persona` | 无 | Current Task State 中 `- Current persona: {name}` 每次 turn 实时渲染，比静态文本更准确 |
+| `### Input` / `### Output` | 无 | runtime 不校验 LLM 输出的结构化字段；关键语义（如 exit 条件、路由规则）已被 Gate/Rules 覆盖 |
+| `### Tools` | 极小 | runtime 通过 permission engine 强制控制工具可用性，LLM 看不到的工具不会被绑定；工具 schema 在 system prompt 中自描述 |
+| `### Available Exits` | 极小 | active node 的退出路径由 Current Task State 中 `Workflow exits [{name}]` 实时渲染；非 active node 的退出路径对当前决策无意义 |
+
+**唯一值得关注的风险**：如果未来某个 node 的 Input/Output 中引入了 runtime 会解析的结构化字段（当前没有），那时需要重新评估。但当前架构下，LLM 通过 `workflow` 工具的 condition 参数传递退出意图，不通过结构化输出，所以这个风险是理论性的。
+
 ## 预估收益
 
-当前 8 个 node 总计 ~14,400 字符（~3,600 tokens）。精简后预估：
+实施前 8 个 node 总计 ~14,400 字符（~3,600 tokens）。精简后预估（实施前测量值）：
 
 | Node | 当前 chars | 精简后 chars | 节省 |
 |------|-----------|-------------|------|
@@ -109,17 +124,17 @@ Description: ...
 |------|------|
 | `src/voidx/workflow/schema.py` | schema 字段保留，仅渲染层精简 |
 | `src/voidx/workflow/nodes.py` | node 定义不变 |
-| `src/voidx/workflow/context.py` | 调用 `render_node_markdown`，接口不变 |
+| `src/voidx/workflow/context.py` | 调用 `render_node_markdown`，接口不变；传入 `dag` 参数导致 Available Exits 当前被渲染，移除后该参数不再触发 Exits 渲染。`dag` 参数在 `render_node_markdown` 中已成为死参数，可后续清理 |
 | `src/voidx/workflow/policy.py` | `workflow_tools`、`workflow_personas` 仍供 runtime 使用 |
 | `src/voidx/workflow/service.py` | `WorkflowMatch.body` 仍调用 `render_workflow_instruction` |
 | `src/voidx/workflow/dag.py` | DAG 定义不变 |
+| `tests/test_agent/test_runtime_context_builder.py` | 断言 `## Workflow Node: not in system`，精简后仍成立，无需修改 |
 
 ## 实现步骤
 
 1. **修改 `render_node_markdown`**：移除 Persona、Input/Output、Tools、Available Exits 四个段落的渲染代码
-2. **运行现有测试**：确认哪些测试因渲染结构变化而失败
-3. **更新测试断言**：按精简后的渲染结构更新所有失败测试
-4. **全量测试**：`python -m pytest tests/ -v` 确认绿色
+2. **更新测试断言**：按精简后的渲染结构更新所有受影响的测试文件（见"必须修改"清单）
+3. **全量测试**：`python -m pytest tests/ -v` 确认绿色
 
 ## Decisions Log
 
@@ -131,4 +146,4 @@ Description: ...
 
 ## Open Questions
 
-- [ ] Description 是否应压缩为更短的触发条件一句话？（当前保留原文，可后续优化）
+- [x] Description 是否应压缩为更短的触发条件一句话？→ 本次不做，保留原文。Description 与 Goal 语义不同，可后续单独优化

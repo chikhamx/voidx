@@ -94,10 +94,12 @@ def test_workflow_render_expands_execution_contract():
     rendered = service.render_instruction(service.get("tdd"))
 
     assert "### Goal" in rendered
-    assert "### Persona" in rendered
-    assert "### Input" in rendered
-    assert "### Output" in rendered
-    assert "### Tools" in rendered
+    assert "### Persona" not in rendered
+    assert "### Input" not in rendered
+    assert "### Output" not in rendered
+    assert "### Tools" not in rendered
+    assert "### Available Exits" not in rendered
+    assert "### Gate" in rendered
     assert "### Internal Subworkflow: TDD Cycle" in rendered
     assert "Exit condition: all plan tasks implemented and broader test set green" in rendered
     assert "### Core Rule" not in rendered

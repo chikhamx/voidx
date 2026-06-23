@@ -252,7 +252,7 @@ class CompactionService:
         - Already compacted parts stop further pruning
         - Cumulative tool output > PRUNE_PROTECT → truncate to TOOL_OUTPUT_MAX_CHARS
         - Only prune if total pruned > PRUNE_MINIMUM
-        - For old AIMessage tool_calls, omit large content/new_string args
+        - For previous-turn AIMessage tool_calls, omit large content/new_string args
           when the corresponding tool result contains a diff
         """
         turns_seen = 0
@@ -273,10 +273,10 @@ class CompactionService:
             if isinstance(msg, AIMessage) and hasattr(msg, "summary") and msg.summary:
                 break  # stop at compaction boundary
 
-            # Prune AIMessage tool_calls args for old turns
+            # Prune AIMessage tool_calls args for previous turns
             if (
                 isinstance(msg, AIMessage)
-                and turns_seen >= 2
+                and turns_seen >= 1
                 and hasattr(msg, "tool_calls")
                 and msg.tool_calls
             ):

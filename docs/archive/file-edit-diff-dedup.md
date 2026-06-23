@@ -26,7 +26,7 @@ LLM 调用文件编辑工具时，`new_string`/`content` 作为入参发送；�
 - 只精简超过阈值的大字段，短内容保留原值
 
 ### Non-Goals
-- 不修改当轮（最近 2 turns）的 tool_call 参数
+- 不修改当轮的 tool_call 参数
 - 不修改工具入参 schema
 - 不修改 `result.output` 或 `result.diff` 的内容
 - 不修改 compaction（Layer 3）逻辑
@@ -68,7 +68,7 @@ LLM 调用文件编辑工具时，`new_string`/`content` 作为入参发送；�
 # prune() 遍历循环中新增
 if (
     isinstance(msg, AIMessage)
-    and turns_seen >= 2  # 不在最近 2 turns 内
+    and turns_seen >= 1  # 不在当前 turn 内
     and hasattr(msg, "tool_calls")
     and msg.tool_calls
 ):
@@ -191,7 +191,7 @@ LLM 从 diff 中仍能看到完整的新旧内容，tool_call 中的 `new_string
 |---------|---------|
 | tool_calls 为空或格式异常 | 跳过，不处理 |
 | args 中无 `new_string`/`content` 字段 | 跳过，不处理 |
-| prune 触发条件不满足（< 2 turns） | 不执行任何精简 |
+| prune 触发条件不满足（当前 turn） | 不执行任何精简 |
 | 内容长度未超过阈值 | 保留原值，不精简 |
 | 编辑失败（ToolMessage 无 diff） | 保留原值，不精简 args（因为没有 diff 替代） |
 
@@ -206,7 +206,7 @@ LLM 从 diff 中仍能看到完整的新旧内容，tool_call 中的 `new_string
 | 用 `[omitted: ...]` 占位 | 直接删掉字段 | 删字段可能导致 schema 校验失败，占位更安全 |
 | 加精简阈值（内容长度 > 占位符长度） | 无条件精简 | 短内容精简后反而增加推理负担，占位符本身也占 token |
 | 只在 ToolMessage 有 diff 时精简 | 无条件精简 | 编辑失败时没有 diff 替代，精简 args 会丢失信息 |
-| `turns_seen >= 2` 而非 `> 2` | `turns_seen > 2` | 反向遍历中，过了 2 个 HumanMessage 边界后的消息属于旧 turn；`> 2` 会漏掉第 3 个 turn 的 AIMessage |
+| `turns_seen >= 1` 而非 `>= 2` | `turns_seen >= 2` | args 精简不丢失信息（diff 替代），上一 turn 结束即可精简，无需等 2 turn |
 | 用 `model_copy` 重建 AIMessage | `AIMessage(...)` 构造器 | 构造器会丢失 `response_metadata`/`usage_metadata`/`id` 等属性；`model_copy` 保留所有原始属性 |
 | `_tool_result_has_diff` 搜索到下一个 HumanMessage | 硬编码偏移量 `+5` | 硬编码偏移量可能跨 turn 误匹配，或漏掉间隔较远的 ToolMessage；以 HumanMessage 为边界更准确 |
 | `pruned_chars` 计入 args 节省量 | 只计入 ToolMessage 截断量 | args 精简同样减少上下文 token，应纳入 prune 总量以准确反映节省效果 |
