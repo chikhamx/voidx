@@ -104,6 +104,9 @@ class Config(BaseModel):
     approval_policy: ApprovalPolicy = ApprovalPolicy.UNTRUSTED
     approval_reviewer: ApprovalReviewer = ApprovalReviewer.USER
     ask_compact: bool = False
+    compaction_soft_ratio: float = Field(default=0.75, ge=0.1, le=0.95)
+    compaction_post_target_ratio: float = Field(default=0.10, ge=0.05, le=0.80)
+    inline_compaction_enabled: bool = False
     user_profile: UserProfile = Field(default_factory=UserProfile)
     log_llm_exchange: bool = Field(
         default=False,

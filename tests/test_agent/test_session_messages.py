@@ -14,7 +14,7 @@ from langchain_core.messages import AIMessage, HumanMessage, SystemMessage, Tool
 import voidx.memory.store as store
 import voidx.memory.jsonl_store as jsonl_store
 
-from voidx.agent.message_rows import messages_from_rows, messages_from_rows_incremental
+from voidx.agent.message_rows import message_from_row, messages_from_rows, messages_from_rows_incremental, row_fingerprint
 from voidx.agent.runtime_context import InteractionMode, TaskIntent
 from voidx.agent.task_state import (
     GoalSpec,
@@ -95,6 +95,59 @@ async def test_save_message_dual_writes_jsonl_and_message_count_index():
         }]
     finally:
         await delete_session(session.id)
+
+
+@pytest.mark.asyncio
+async def test_tool_message_status_round_trips_through_jsonl():
+    session = await create_session()
+    try:
+        error_id = await save_message(MessageRow(
+            session_id=session.id,
+            role="tool",
+            content="tool failed",
+            tool_call_id="call_error",
+            status="error",
+        ))
+        success_id = await save_message(MessageRow(
+            session_id=session.id,
+            role="tool",
+            content="tool ok",
+            tool_call_id="call_success",
+            status="success",
+        ))
+
+        rows = _read_jsonl(_session_dir(session.id) / "messages.jsonl")
+        error_record = next(row for row in rows if row["id"] == error_id)
+        success_record = next(row for row in rows if row["id"] == success_id)
+        assert error_record["status"] == "error"
+        assert "status" not in success_record
+
+        loaded = await load_messages(session.id)
+        assert loaded[0].status == "error"
+        assert loaded[1].status is None
+
+        error_message = message_from_row(loaded[0])
+        success_message = message_from_row(loaded[1])
+        assert isinstance(error_message, ToolMessage)
+        assert isinstance(success_message, ToolMessage)
+        assert error_message.status == "error"
+        assert success_message.status == "success"
+    finally:
+        await delete_session(session.id)
+
+
+def test_row_fingerprint_includes_tool_status():
+    base = MessageRow(
+        id=1,
+        session_id="s1",
+        role="tool",
+        content="same",
+        tool_call_id="call_1",
+        status="success",
+    )
+    changed = base.model_copy(update={"status": "error"})
+
+    assert row_fingerprint(base) != row_fingerprint(changed)
 
 
 @pytest.mark.asyncio

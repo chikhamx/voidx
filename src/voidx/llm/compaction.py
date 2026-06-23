@@ -185,9 +185,18 @@ class CompactionSelection:
 class CompactionService:
     """Manages context window across the agent lifecycle."""
 
-    def __init__(self, context_limit: int = 128_000, output_token_max: int = 8_192) -> None:
+    def __init__(
+        self,
+        context_limit: int = 128_000,
+        output_token_max: int = 8_192,
+        *,
+        soft_ratio: float = 0.75,
+        post_target_ratio: float = 0.10,
+    ) -> None:
         self.context_limit = context_limit
         self.output_token_max = output_token_max
+        self.soft_ratio = soft_ratio
+        self.post_target_ratio = post_target_ratio
         self.compaction_count: int = 0
 
     # ── token budget helpers ────────────────────────────────────────────
@@ -202,6 +211,23 @@ class CompactionService:
         usable = self.usable_window()
         return min(MAX_PRESERVE_RECENT, max(MIN_PRESERVE_RECENT, int(usable * 0.25)))
 
+    def soft_threshold(self) -> int:
+        """Token level where preflight compaction should run."""
+        if self.context_limit <= 0:
+            return 0
+        return int(min(self.context_limit * self.soft_ratio, self.usable_window()))
+
+    def post_compaction_target(self) -> int:
+        """Target token level after aggressive preflight compaction."""
+        if self.context_limit <= 0:
+            return 0
+        return int(self.context_limit * self.post_target_ratio)
+
+    def is_soft_overflow(self, tokens: dict) -> bool:
+        total = _token_total(tokens)
+        threshold = self.soft_threshold()
+        return threshold > 0 and total >= threshold
+
     def is_overflow(self, tokens: dict) -> bool:
         """Check if token usage exceeds the compaction threshold.
 
@@ -211,11 +237,7 @@ class CompactionService:
         """
         if self.context_limit <= 0:
             return False
-        total = tokens.get("total", 0) or (
-            tokens.get("input", 0) +
-            tokens.get("output", 0) +
-            tokens.get("reasoning", 0)
-        )
+        total = _token_total(tokens)
         return total >= int(self.context_limit * COMPACTION_THRESHOLD)
 
     # ── Layer 1: prune tool outputs ─────────────────────────────────────
@@ -358,6 +380,31 @@ class CompactionService:
         if keep_start == 0:
             return CompactionSelection(messages, None, 0, "none")
 
+        return CompactionSelection(messages[:keep_start], keep_id, keep_start, "normal")
+
+    def select_preflight_details(self, messages: list, *, model: str = "") -> CompactionSelection:
+        """Select a deeply compacted head while preserving current and previous turns."""
+        turns = self._turns(messages)
+        if not turns:
+            return CompactionSelection(messages, None, 0, "none")
+
+        minimum_keep_index = max(0, len(turns) - 2)
+        keep_start = turns[minimum_keep_index].start
+        keep_id = turns[minimum_keep_index].id
+        if keep_start == 0:
+            return CompactionSelection(messages, None, 0, "none")
+
+        target = self.post_compaction_target()
+        for turn in reversed(turns[:minimum_keep_index]):
+            candidate_start = turn.start
+            candidate_tail = messages[candidate_start:]
+            if estimate_context_tokens(candidate_tail, model) > target:
+                break
+            keep_start = candidate_start
+            keep_id = turn.id
+
+        if keep_start == 0:
+            return CompactionSelection(messages, None, 0, "none")
         return CompactionSelection(messages[:keep_start], keep_id, keep_start, "normal")
 
     def select(self, messages: list, tail_turns: int = DEFAULT_TAIL_TURNS) -> tuple[list, str | None]:
@@ -520,6 +567,14 @@ def _minimum_tail_turn(turns: list[Turn]) -> Turn:
     if last.end == last.start + 1 and len(turns) >= 2:
         return turns[-2]
     return last
+
+
+def _token_total(tokens: dict) -> int:
+    return tokens.get("total", 0) or (
+        tokens.get("input", 0) +
+        tokens.get("output", 0) +
+        tokens.get("reasoning", 0)
+    )
 
 
 def _message_text(msg: object) -> str:

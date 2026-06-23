@@ -54,7 +54,7 @@ def _runtime_guard_blocked_tool(tool_call: dict) -> _ExecutedTool:
         },
     )
     return _ExecutedTool(
-        message=ToolMessage(content=message, tool_call_id=tool_call.get("id", "")),
+        message=ToolMessage(content=message, tool_call_id=tool_call.get("id", ""), status="error"),
         result=result,
         tool_call=tool_call,
     )
@@ -85,7 +85,7 @@ def _runtime_guard_tool_messages(
     metadata: dict | None = None,
 ) -> list[ToolMessage]:
     return [
-        ToolMessage(content=message, tool_call_id=call.get("id", ""))
+        ToolMessage(content=message, tool_call_id=call.get("id", ""), status="error")
         for call in tool_calls
     ]
 

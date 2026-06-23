@@ -100,6 +100,65 @@ class FakeMalformedDsmlStreamingModel:
         ))
 
 
+class FakeMalformedLegacyXmlStreamingModel:
+    def bind_tools(self, tool_defs):
+        return self
+
+    async def astream(self, messages):
+        yield AIMessageChunk(content=(
+            "<tool_call>"
+            "<tool_name>read</tool_name>"
+            "<arg_key>file_path</arg_key><arg_value>src/voidx/permission/engine.py</arg_value>"
+        ))
+
+
+class RepairsMalformedToolCallStreamingModel:
+    def __init__(self) -> None:
+        self.calls = 0
+        self.messages_by_call = []
+
+    def bind_tools(self, tool_defs):
+        return self
+
+    async def astream(self, messages):
+        self.calls += 1
+        self.messages_by_call.append(messages)
+        if self.calls == 1:
+            yield AIMessageChunk(content=(
+                "<tool_call>"
+                "<tool_name>read</tool_name>"
+                "<arg_key>file_path</arg_key><arg_value>src/voidx/permission/engine.py</arg_value>"
+            ))
+            return
+        yield AIMessageChunk(content="repaired answer")
+
+
+class AlwaysMalformedToolCallStreamingModel:
+    def __init__(self) -> None:
+        self.calls = 0
+
+    def bind_tools(self, tool_defs):
+        return self
+
+    async def astream(self, messages):
+        self.calls += 1
+        yield AIMessageChunk(content=(
+            "<tool_call>"
+            "<tool_name>read</tool_name>"
+            "<arg_key>file_path</arg_key><arg_value>src/voidx/permission/engine.py</arg_value>"
+        ))
+
+
+class FakeMalformedProviderJsonToolCallStreamingModel:
+    def bind_tools(self, tool_defs):
+        return self
+
+    async def astream(self, messages):
+        yield AIMessageChunk(content=(
+            '{"tool_calls":[{"function":{"name":"read","arguments":"{\\"file_path\\":'
+        ))
+
+
 class FakeLegacyXmlToolCallStreamingModel:
     def bind_tools(self, tool_defs):
         return self

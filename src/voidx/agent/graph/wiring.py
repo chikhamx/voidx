@@ -74,6 +74,8 @@ def build_compaction_service(config: Config) -> tuple[UsageStats, CompactionServ
         CompactionService(
             context_limit=context_limit,
             output_token_max=config.model.max_tokens,
+            soft_ratio=config.compaction_soft_ratio,
+            post_target_ratio=config.compaction_post_target_ratio,
         ),
     )
 

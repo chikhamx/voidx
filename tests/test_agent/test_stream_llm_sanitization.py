@@ -32,6 +32,8 @@ from tests.test_agent._stream_llm_helpers import (
     FakeDuplicatedReasoningStreamingModel,
     FakeDsmlStreamingModel,
     FakeMalformedDsmlStreamingModel,
+    FakeMalformedLegacyXmlStreamingModel,
+    FakeMalformedProviderJsonToolCallStreamingModel,
     FakeLegacyXmlToolCallStreamingModel,
     FakeLegacyXmlArgPairToolCallStreamingModel,
     TrackingStreamingModel,
@@ -134,7 +136,90 @@ async def test_stream_llm_repairs_missing_tool_results_before_replay():
 
     assert isinstance(model.messages[2], ToolMessage)
     assert model.messages[2].tool_call_id == "call_missing"
+    assert model.messages[2].status == "error"
     assert model.messages[3].content == "next"
+
+
+@pytest.mark.asyncio
+async def test_stream_llm_repairs_missing_tool_results_from_additional_kwargs():
+    renderer = FakeRenderer()
+    model = FakeStreamingModel()
+
+    await _stream_llm(
+        model,
+        [
+            HumanMessage(content="hi"),
+            AIMessage(
+                content="",
+                additional_kwargs={
+                    "tool_calls": [
+                        {"id": "call_raw", "function": {"name": "read", "arguments": "{}"}},
+                    ],
+                },
+            ),
+            HumanMessage(content="next"),
+        ],
+        renderer,
+        "openai",
+    )
+
+    assert isinstance(model.messages[2], ToolMessage)
+    assert model.messages[2].tool_call_id == "call_raw"
+    assert model.messages[2].status == "error"
+    assert model.messages[3].content == "next"
+
+
+@pytest.mark.asyncio
+async def test_stream_llm_sanitizes_replayed_failed_tool_exchanges():
+    renderer = FakeRenderer()
+    model = FakeStreamingModel()
+
+    await _stream_llm(
+        model,
+        [
+            HumanMessage(content="hi"),
+            AIMessage(
+                content=[
+                    {"type": "tool_use", "id": "call_error", "name": "read", "input": {}},
+                    {"type": "tool_use", "id": "call_ok", "name": "grep", "input": {}},
+                ],
+                tool_calls=[
+                    {"name": "read", "args": {}, "id": "call_error", "type": "tool_call"},
+                    {"name": "grep", "args": {}, "id": "call_ok", "type": "tool_call"},
+                ],
+                additional_kwargs={
+                    "tool_calls": [
+                        {"id": "call_error", "function": {"name": "read", "arguments": "{}"}},
+                        {"id": "call_ok", "function": {"name": "grep", "arguments": "{}"}},
+                    ]
+                },
+            ),
+            ToolMessage(content="failed", tool_call_id="call_error", status="error"),
+            ToolMessage(content="ok", tool_call_id="call_ok"),
+            AIMessage(content="I will recover from the failed read."),
+            HumanMessage(content="next"),
+        ],
+        renderer,
+        "anthropic",
+    )
+
+    replay_ai = model.messages[1]
+    assert isinstance(replay_ai, AIMessage)
+    assert [call["id"] for call in replay_ai.tool_calls] == ["call_ok"]
+    assert replay_ai.content == [
+        {"type": "tool_use", "id": "call_ok", "name": "grep", "input": {}},
+    ]
+    assert replay_ai.additional_kwargs["tool_calls"] == [
+        {"id": "call_ok", "function": {"name": "grep", "arguments": "{}"}},
+    ]
+    assert isinstance(model.messages[2], ToolMessage)
+    assert model.messages[2].tool_call_id == "call_ok"
+    assert model.messages[3].content == "I will recover from the failed read."
+    assert model.messages[4].content == "next"
+    assert not any(
+        isinstance(message, ToolMessage) and message.tool_call_id == "call_error"
+        for message in model.messages
+    )
 
 
 @pytest.mark.asyncio
@@ -331,7 +416,36 @@ async def test_stream_llm_ignores_malformed_dsml_pipe_runs():
     msg = await _stream_llm(FakeMalformedDsmlStreamingModel(), [], renderer, "anthropic")
 
     assert msg.tool_calls == []
-    assert "<|||DSML||tool_calls>" in msg.content
+    assert msg.content == ""
+    assert msg.response_metadata["malformed_tool_call"] is True
+    assert msg.response_metadata["malformed_tool_call_format"] == "dsml"
+    assert renderer.text == []
+
+
+@pytest.mark.asyncio
+async def test_stream_llm_marks_malformed_legacy_xml_tool_call():
+    renderer = FakeRenderer()
+
+    msg = await _stream_llm(FakeMalformedLegacyXmlStreamingModel(), [], renderer, "anthropic")
+
+    assert msg.tool_calls == []
+    assert msg.content == ""
+    assert msg.response_metadata["malformed_tool_call"] is True
+    assert msg.response_metadata["malformed_tool_call_format"] == "legacy_xml"
+    assert renderer.text == []
+
+
+@pytest.mark.asyncio
+async def test_stream_llm_marks_malformed_provider_json_tool_call():
+    renderer = FakeRenderer()
+
+    msg = await _stream_llm(FakeMalformedProviderJsonToolCallStreamingModel(), [], renderer, "openai")
+
+    assert msg.tool_calls == []
+    assert msg.content == ""
+    assert msg.response_metadata["malformed_tool_call"] is True
+    assert msg.response_metadata["malformed_tool_call_format"] == "provider_json"
+    assert renderer.text == []
 
 
 @pytest.mark.asyncio

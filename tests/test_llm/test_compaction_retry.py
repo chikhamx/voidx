@@ -46,10 +46,11 @@ class TestCompactionRetry:
                 *,
                 force,
                 ask,
+                preflight=False,
                 run_compaction_agent,
                 persist_compaction,
             ):
-                calls.append((messages, session_msgs, force, ask))
+                calls.append((messages, session_msgs, force, ask, preflight))
                 assert await run_compaction_agent(["head"], "previous") == "summary"
                 await persist_compaction(["head"])
                 return ["head"], "tail"
@@ -77,7 +78,7 @@ class TestCompactionRetry:
         )
 
         assert result == (["head"], "tail")
-        assert calls == [(["message"], ["row"], True, False)]
+        assert calls == [(["message"], ["row"], True, False, False)]
         assert persisted == ["head"]
 
     @pytest.mark.asyncio

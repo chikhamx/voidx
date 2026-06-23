@@ -144,6 +144,7 @@ def _blocked_after_barrier_messages(
                 workspace=workspace,
             ),
             tool_call_id=tc.get("id", ""),
+            status="error",
         )
         for tc in tool_calls
     ]

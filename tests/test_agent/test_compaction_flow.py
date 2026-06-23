@@ -181,6 +181,46 @@ async def test_compaction_trims_head_and_injects_summary_into_system_prompt(tmp_
     assert "You are voidx" in messages[0].content
 
 
+
+
+@pytest.mark.asyncio
+async def test_preflight_compaction_returns_structured_metadata(tmp_path):
+    graph = _graph(tmp_path)
+    graph._compaction.is_overflow = lambda _tokens: False
+    graph._compaction.is_soft_overflow = lambda _tokens: True
+    graph._compaction.select_preflight_details = lambda messages, *, model="": CompactionSelection(
+        head=messages[:2],
+        tail_id=getattr(messages[2], "id", None),
+        keep_from=2,
+        mode="normal",
+    )
+
+    async def summarize(_head_messages, _previous_summary):
+        return "summary text"
+
+    graph._run_compaction_agent = summarize
+    messages = [
+        HumanMessage(content="older question", id="older_user"),
+        AIMessage(content="older answer"),
+        HumanMessage(content="previous question", id="previous_user"),
+        AIMessage(content="previous answer"),
+        HumanMessage(content="current question", id="current_user"),
+    ]
+
+    result, preflight = await graph._preflight_compact_if_needed(
+        messages,
+        [],
+        reason="soft_threshold",
+    )
+
+    assert result is not None
+    assert preflight.compacted is True
+    assert preflight.summary == "summary text"
+    assert preflight.removed_message_count == 2
+    assert preflight.tail_anchor_id == "previous_user"
+    assert preflight.reason == "soft_threshold"
+    assert preflight.post_target_tokens == graph._compaction.post_compaction_target()
+    assert result.live_messages[-1].content == "current question"
 @pytest.mark.asyncio
 async def test_compaction_asks_only_when_configured_and_can_skip(tmp_path):
     graph = VoidXGraph(Config(workspace=str(tmp_path), ask_compact=True), api_key=None)
@@ -278,6 +318,104 @@ async def test_compaction_fallback_returns_removed_messages(tmp_path):
 
 
 @pytest.mark.asyncio
+async def test_preflight_compaction_uses_soft_threshold_and_target_tail(tmp_path):
+    graph = VoidXGraph(Config(workspace=str(tmp_path)), api_key=None)
+    graph._compaction.is_overflow = lambda _tokens: False
+    graph._compaction.is_soft_overflow = lambda _tokens: True
+    graph._compaction.soft_threshold = lambda: 90
+    graph._compaction.post_compaction_target = lambda: 20
+    used_preflight_selection: list[bool] = []
+
+    def select_preflight(messages, *, model=""):
+        used_preflight_selection.append(True)
+        return CompactionSelection(
+            head=messages[:2],
+            tail_id=getattr(messages[2], "id", None),
+            keep_from=2,
+            mode="normal",
+        )
+
+    graph._compaction.select_preflight_details = select_preflight
+
+    async def summarize(_head_messages, _previous_summary):
+        return "preflight summary"
+
+    async def persist(_head_messages):
+        return None
+
+    messages = [
+        HumanMessage(content="old question", id="old_user"),
+        AIMessage(content="old answer", id="old_assistant"),
+        HumanMessage(content="previous question", id="previous_user"),
+        AIMessage(content="previous answer", id="previous_assistant"),
+        HumanMessage(content="current question", id="current_user"),
+    ]
+
+    result = await graph._compaction_component().compact_for_live_state(
+        messages,
+        preflight=True,
+        ask=False,
+        run_compaction_agent=summarize,
+        persist_compaction=persist,
+    )
+
+    assert used_preflight_selection == [True]
+    assert result is not None
+    assert [message.content for message in result.removed_messages] == [
+        "old question",
+        "old answer",
+    ]
+    assert [message.content for message in result.live_messages] == [
+        "previous question",
+        "previous answer",
+        "current question",
+    ]
+    assert result.tail_id == "previous_user"
+    assert result.metadata["compaction_reason"] == "soft_threshold"
+    assert result.metadata["soft_threshold"] == 90
+    assert result.metadata["post_compaction_target"] == 20
+    assert result.metadata["removed_message_count"] == 2
+    assert result.metadata["retained_turn_count"] == 2
+    assert result.metadata["current_user_preserved"] is True
+    assert result.metadata["inline_compaction_enabled"] is False
+
+
+@pytest.mark.asyncio
+async def test_maybe_compact_preflight_preserves_current_user_message(tmp_path):
+    graph = VoidXGraph(Config(workspace=str(tmp_path)), api_key=None)
+    graph._compaction.is_overflow = lambda _tokens: False
+    graph._compaction.is_soft_overflow = lambda _tokens: True
+    graph._compaction.select_preflight_details = lambda messages, *, model="": CompactionSelection(
+        head=messages[:2],
+        tail_id=getattr(messages[2], "id", None),
+        keep_from=2,
+        mode="normal",
+    )
+
+    async def summarize(_head_messages, _previous_summary):
+        return "preflight summary"
+
+    graph._run_compaction_agent = summarize
+    messages = [
+        HumanMessage(content="old question", id="old_user"),
+        AIMessage(content="old answer", id="old_assistant"),
+        HumanMessage(content="previous question", id="previous_user"),
+        AIMessage(content="previous answer", id="previous_assistant"),
+        HumanMessage(content="current question", id="current_user"),
+    ]
+
+    removed, tail_id = await graph._maybe_compact(messages, [], ask=False, preflight=True)
+
+    assert [message.content for message in removed or []] == ["old question", "old answer"]
+    assert tail_id == "previous_user"
+    assert [message.content for message in messages] == [
+        "previous question",
+        "previous answer",
+        "current question",
+    ]
+
+
+@pytest.mark.asyncio
 async def test_compaction_uses_previous_summary_and_prunes_persisted_head(tmp_path):
     session = await create_session(workspace=str(tmp_path))
     try:
@@ -285,7 +423,7 @@ async def test_compaction_uses_previous_summary_and_prunes_persisted_head(tmp_pa
         await save_message(MessageRow(session_id=session.id, role="assistant", content="old answer"))
         await save_message(MessageRow(session_id=session.id, role="user", content="tail question"))
 
-        graph = VoidXGraph(Config(workspace=str(tmp_path)), api_key=None, session=session)
+        graph = VoidXGraph(Config(workspace=str(tmp_path)), api_key="test", session=session)
         graph._compaction_summary = "previous summary"
         graph._compaction.is_overflow = lambda _tokens: True
         graph._compaction.select_details = lambda messages: CompactionSelection(
@@ -294,7 +432,7 @@ async def test_compaction_uses_previous_summary_and_prunes_persisted_head(tmp_pa
             keep_from=2,
             mode="normal",
         )
-        captured: dict[str, str | None] = {}
+        captured: dict[str, object] = {}
 
         async def summarize(_head_messages, previous_summary):
             captured["previous"] = previous_summary
@@ -302,6 +440,10 @@ async def test_compaction_uses_previous_summary_and_prunes_persisted_head(tmp_pa
 
         class FakeGraph:
             async def ainvoke(self, initial, _config):
+                captured["initial_contents"] = [
+                    str(getattr(message, "content", ""))
+                    for message in initial["messages"]
+                ]
                 return {"messages": list(initial["messages"]) + [AIMessage(content="new answer")]}
 
         graph._run_compaction_agent = summarize
@@ -319,17 +461,74 @@ async def test_compaction_uses_previous_summary_and_prunes_persisted_head(tmp_pa
 
         rows = await load_messages(session.id)
         contents = [row.content for row in rows]
+        initial_contents = captured["initial_contents"]
         assert captured["previous"] == "previous summary"
         assert "old question" not in contents
         assert "old answer" not in contents
         assert "tail question" in contents
         assert "current question" in contents
+        assert "old question" not in initial_contents
+        assert "old answer" not in initial_contents
+        assert "tail question" in initial_contents
+        assert "current question" in initial_contents
         assert graph._compaction_summary == "updated summary"
 
-        resumed = VoidXGraph(Config(workspace=str(tmp_path)), api_key=None, session=session)
+        resumed = VoidXGraph(Config(workspace=str(tmp_path)), api_key="test", session=session)
         await resumed._restore_runtime_state()
 
         assert resumed._compaction_summary == "updated summary"
+    finally:
+        await delete_session(session.id)
+
+
+@pytest.mark.asyncio
+async def test_run_once_passes_compacted_messages_to_graph(tmp_path):
+    session = await create_session(workspace=str(tmp_path))
+    try:
+        await save_message(MessageRow(session_id=session.id, role="user", content="old question"))
+        await save_message(MessageRow(session_id=session.id, role="assistant", content="old answer"))
+        await save_message(MessageRow(session_id=session.id, role="user", content="tail question"))
+
+        graph = VoidXGraph(Config(workspace=str(tmp_path)), api_key="test", session=session)
+        graph._compaction.is_overflow = lambda _tokens: False
+        graph._compaction.is_soft_overflow = lambda _tokens: True
+        graph._compaction.select_preflight_details = lambda messages, *, model="": CompactionSelection(
+            head=messages[:2],
+            tail_id=getattr(messages[2], "id", None),
+            keep_from=2,
+            mode="normal",
+        )
+
+        async def summarize(_head_messages, _previous_summary):
+            return "summary text"
+
+        captured: dict[str, list[str]] = {}
+
+        class FakeGraph:
+            async def ainvoke(self, initial, _config):
+                captured["messages"] = [
+                    str(getattr(message, "content", ""))
+                    for message in initial["messages"]
+                ]
+                return {"messages": list(initial["messages"]) + [AIMessage(content="new answer")]}
+
+        graph._run_compaction_agent = summarize
+        graph.graph = FakeGraph()
+
+        test_dock = BottomInputDock()
+        set_dock(test_dock)
+        test_dock.begin_capture()
+        try:
+            await graph._run_once("current question")
+        finally:
+            test_dock.deactivate()
+            test_dock.reset()
+            set_dock(None)
+
+        assert "old question" not in captured["messages"]
+        assert "old answer" not in captured["messages"]
+        assert "tail question" in captured["messages"]
+        assert "current question" in captured["messages"]
     finally:
         await delete_session(session.id)
 
@@ -390,5 +589,3 @@ async def test_slash_compact_runs_manual_session_compaction(tmp_path):
         assert graph._compaction_summary == "manual summary"
     finally:
         await delete_session(session.id)
-
-

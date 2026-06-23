@@ -358,6 +358,7 @@ async def test_execute_tools_deduplicates_repeated_read_calls_in_same_segment(tm
     assert "Skipped duplicate read" in tool_messages[1].content
     assert "call_read_1" in tool_messages[1].content
     assert "Skipped duplicate read" in tool_messages[2].content
+    assert [msg.status for msg in tool_messages] == ["success", "success", "success"]
     assert "call_read_1" in tool_messages[2].content
 
 
@@ -417,5 +418,4 @@ async def test_parallel_subagents_respects_max_concurrent(tmp_path):
     })
 
     assert max_active == 2
-
 

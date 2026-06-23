@@ -219,6 +219,44 @@ async def test_execute_tools_includes_next_step_hint_in_llm_message(tmp_path):
 
 
 @pytest.mark.asyncio
+async def test_execute_tools_marks_failed_tool_result_as_error_status(tmp_path):
+    graph = _graph(tmp_path)
+
+    class FakeTools:
+        async def execute_tool(self, tid, _targs, _ctx):
+            assert tid == "read"
+            return ToolResult(output="File not found: missing.py", metadata={"error": True})
+
+    async def allow_all(tool_calls, **_kwargs):
+        return tool_calls, []
+
+    graph.tools = FakeTools()
+    graph._authorize_tool_calls = allow_all
+
+    parent = AIMessage(
+        content="",
+        tool_calls=[{
+            "name": "read",
+            "args": {"file_path": "missing.py"},
+            "id": "call_read",
+            "type": "tool_call",
+        }],
+    )
+
+    result = await graph._execute_tools({
+        "messages": [parent],
+        "workspace": str(tmp_path),
+        "persona": "voidx",
+        "plan_mode": False,
+    })
+
+    tool_message = result["messages"][0]
+    assert isinstance(tool_message, ToolMessage)
+    assert tool_message.tool_call_id == "call_read"
+    assert tool_message.status == "error"
+
+
+@pytest.mark.asyncio
 async def test_execute_tools_escalates_and_blocks_repeated_tool_failure(tmp_path):
     graph = _graph(tmp_path)
     calls: list[dict] = []
@@ -270,6 +308,7 @@ async def test_execute_tools_escalates_and_blocks_repeated_tool_failure(tmp_path
         {"name": "read", "args": {"file_path": "missing.py"}},
     ]
     assert result["messages"][0].tool_call_id == "call_4"
+    assert result["messages"][0].status == "error"
     assert "Runtime guard blocked repeated failed tool call" in result["messages"][0].content
 
 
@@ -345,4 +384,3 @@ async def test_prepare_renders_plan_mode_constraint_without_mode_prompt(tmp_path
     assert "## PLAN MODE ACTIVE" not in messages[0].content
     assert "## Current Task State" in messages[-1].content
     assert "plan mode blocks write/insert/replace/edit" in messages[-1].content
-

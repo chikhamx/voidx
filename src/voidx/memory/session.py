@@ -12,6 +12,7 @@ import uuid
 
 from pydantic import BaseModel, Field
 
+from voidx.llm.message_status import message_status
 from voidx.memory.jsonl_store import append_session_record, drop_session_lock, read_session_records, session_dir
 from voidx.memory.store import _execute_commit, _fetch_all, _fetch_one, _now, _write_transaction
 from voidx.memory.transcript import append_transcript_reset
@@ -42,6 +43,7 @@ class MessageRow(BaseModel):
     content_format: str = "text"  # "text" | "structured" (e.g. DeepSeek thinking blocks)
     tool_calls: list[dict] | None = None
     tool_call_id: str | None = None
+    status: str | None = None
     created_at: str = Field(default_factory=_now)
 
 
@@ -199,6 +201,8 @@ async def save_message(msg: MessageRow) -> int:
         record["tool_calls"] = msg.tool_calls
     if msg.tool_call_id:
         record["tool_call_id"] = msg.tool_call_id
+    if msg.role == "tool" and message_status(msg.status) == "error":
+        record["status"] = "error"
     await append_session_record(msg.session_id, "messages.jsonl", record)
     return row_id
 
@@ -264,6 +268,7 @@ async def _load_messages_jsonl(session_id: str) -> list[MessageRow] | None:
             content_format=str(record.get("content_format", "text") or "text"),
             tool_calls=record.get("tool_calls") if isinstance(record.get("tool_calls"), list) else None,
             tool_call_id=record.get("tool_call_id") if isinstance(record.get("tool_call_id"), str) else None,
+            status=record.get("status") if isinstance(record.get("status"), str) else None,
             created_at=str(record.get("created_at", "")) or _now(),
         )
     return [messages[key] for key in sorted(messages)]

@@ -327,6 +327,7 @@ async def test_execute_tools_keeps_hidden_tool_failures_out_of_ui(tmp_path, tool
 
         assert visible_nodes == []
         assert [message.tool_call_id for message in result["messages"]] == [f"call_{tool_name}"]
+        assert result["messages"][0].status == "error"
         assert result["messages"][0].content == f"{tool_name} failed internally"
     finally:
         await ui_events.stop()
@@ -440,5 +441,4 @@ async def test_execute_tools_no_progress_guidance_and_termination(tmp_path):
         isinstance(message, AIMessage) and "No meaningful progress" in str(message.content)
         for message in result["messages"]
     )
-
 

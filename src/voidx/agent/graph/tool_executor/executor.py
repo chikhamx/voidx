@@ -222,6 +222,7 @@ class GraphToolExecutor:
             message = ToolMessage(
                 content=llm_content,
                 tool_call_id=cid,
+                status="success" if ok else "error",
             )
             return _ExecutedTool(message=message, result=result, tool_call=tc, todo_state=todo_state)
 
@@ -319,6 +320,7 @@ class GraphToolExecutor:
             ToolMessage(
                 content=sanitize_tool_message_content(reason, workspace=ctx.workspace),
                 tool_call_id=tc.get("id", ""),
+                status="error",
             )
             for tc, reason in denied
         ]

@@ -3,8 +3,9 @@ from pathlib import Path
 
 sys.path.insert(0, str(Path(__file__).parent.parent / "src"))
 
+from langchain_anthropic.chat_models import _format_messages
 from langchain_anthropic import ChatAnthropic
-from langchain_core.messages import AIMessageChunk
+from langchain_core.messages import AIMessage, AIMessageChunk, HumanMessage, ToolMessage
 from langchain_openai import ChatOpenAI
 
 from voidx.config import ModelConfig
@@ -59,6 +60,24 @@ def test_create_chat_model_uses_all_provider_default_base_urls():
             assert model.anthropic_api_url == expected_base_url
         else:
             assert str(model.openai_api_base).rstrip("/") == expected_base_url
+
+
+def test_anthropic_adapter_receives_is_error_for_error_tool_message():
+    _, formatted = _format_messages([
+        HumanMessage(content="read file"),
+        AIMessage(
+            content="",
+            tool_calls=[{"name": "read", "args": {}, "id": "call_error", "type": "tool_call"}],
+        ),
+        ToolMessage(content="File not found", tool_call_id="call_error", status="error"),
+    ])
+
+    assert formatted[2]["content"] == [{
+        "type": "tool_result",
+        "content": "File not found",
+        "tool_use_id": "call_error",
+        "is_error": True,
+    }]
 
 
 def test_reasoning_kwargs_are_provider_specific():
@@ -324,5 +343,4 @@ def test_zhipu_reasoning_uses_thinking_format():
     )
     assert isinstance(zhipu_plain, DeepSeekChatOpenAI)
     assert zhipu_plain.extra_body is None
-
 

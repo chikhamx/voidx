@@ -4,8 +4,10 @@ from __future__ import annotations
 
 import logging
 from collections.abc import Awaitable, Callable
-from dataclasses import dataclass
+from dataclasses import dataclass, field
 from typing import TYPE_CHECKING
+
+from pydantic import BaseModel
 
 from langchain_core.messages import BaseMessage, HumanMessage, SystemMessage
 
@@ -47,6 +49,38 @@ class CompactionResult:
     live_messages: list[BaseMessage]
     tail_id: str | None
     fallback: bool = False
+    metadata: dict[str, object] = field(default_factory=dict)
+
+
+class PreflightCompactionResult(BaseModel):
+    compacted: bool
+    summary: str = ""
+    removed_message_count: int = 0
+    retained_turn_count: int = 0
+    pre_tokens: int = 0
+    post_tokens: int = 0
+    post_target_tokens: int = 0
+    tail_anchor_id: str = ""
+    fallback: bool = False
+    reason: str = ""
+
+    @classmethod
+    def from_compaction_result(cls, result: CompactionResult | None) -> "PreflightCompactionResult":
+        if result is None:
+            return cls(compacted=False)
+        metadata = result.metadata or {}
+        return cls(
+            compacted=True,
+            summary=result.summary,
+            removed_message_count=int(metadata.get("removed_message_count") or len(result.removed_messages)),
+            retained_turn_count=int(metadata.get("retained_turn_count") or 0),
+            pre_tokens=int(metadata.get("pre_tokens") or 0),
+            post_tokens=int(metadata.get("post_tokens") or 0),
+            post_target_tokens=int(metadata.get("post_compaction_target") or 0),
+            tail_anchor_id=str(metadata.get("tail_anchor_id") or result.tail_id or ""),
+            fallback=bool(metadata.get("fallback") or result.fallback),
+            reason=str(metadata.get("compaction_reason") or ""),
+        )
 
 
 class GraphCompactionCoordinator:
@@ -62,6 +96,7 @@ class GraphCompactionCoordinator:
         *,
         force: bool = False,
         ask: bool = True,
+        preflight: bool = False,
         run_compaction_agent: RunCompactionAgent | None = None,
         persist_compaction: PersistCompaction | None = None,
     ) -> tuple[list | None, str | None]:
@@ -75,6 +110,7 @@ class GraphCompactionCoordinator:
             session_msgs,
             force=force,
             ask=ask,
+            preflight=preflight,
             run_compaction_agent=run_compaction_agent,
             persist_compaction=persist_compaction,
         )
@@ -85,6 +121,34 @@ class GraphCompactionCoordinator:
         messages.extend(result.live_messages)
         return result.removed_messages, result.tail_id
 
+    async def preflight_compact_if_needed(
+        self,
+        messages: list[BaseMessage],
+        session_msgs: list | None = None,
+        *,
+        force: bool = False,
+        reason: str = "threshold",
+        ask: bool = False,
+        run_compaction_agent: RunCompactionAgent | None = None,
+        persist_compaction: PersistCompaction | None = None,
+    ) -> tuple[CompactionResult | None, PreflightCompactionResult]:
+        result = await self.compact_for_live_state(
+            messages,
+            session_msgs,
+            force=force,
+            ask=ask,
+            preflight=True,
+            include_summary_message=False,
+            run_compaction_agent=run_compaction_agent,
+            persist_compaction=persist_compaction,
+        )
+        preflight_result = PreflightCompactionResult.from_compaction_result(result)
+        if preflight_result.compacted and reason and preflight_result.reason in {"", "threshold", "force"}:
+            preflight_result.reason = reason
+            if result is not None:
+                result.metadata["compaction_reason"] = reason
+        return result, preflight_result
+
     async def compact_for_live_state(
         self,
         messages: list[BaseMessage],
@@ -92,6 +156,7 @@ class GraphCompactionCoordinator:
         *,
         force: bool = False,
         ask: bool = True,
+        preflight: bool = False,
         include_summary_message: bool = False,
         run_compaction_agent: RunCompactionAgent | None = None,
         persist_compaction: PersistCompaction | None = None,
@@ -103,7 +168,9 @@ class GraphCompactionCoordinator:
         total_tokens = estimate_context_tokens(messages, host.config.model.model)
         tokens = {"total": total_tokens, "input": total_tokens, "output": 0, "reasoning": 0}
 
-        if not force and not host._compaction.is_overflow(tokens):
+        over_hard = host._compaction.is_overflow(tokens)
+        over_soft = preflight and host._compaction.is_soft_overflow(tokens)
+        if not force and not over_hard and not over_soft:
             return None
 
         if not force and ask and getattr(host.config, "ask_compact", False):
@@ -123,11 +190,7 @@ class GraphCompactionCoordinator:
             await host._ui.events.emit(StatusUpdated(
                 status_id="compaction",
                 label="Compacting context",
-                detail=(
-                    f"{total_tokens} tokens exceed the active context budget"
-                    if not force
-                    else f"manual compaction of {len(messages)} messages"
-                ),
+                detail=_compaction_status_detail(total_tokens, force=force, preflight=preflight),
                 stage="compacting",
             ))
         else:
@@ -142,7 +205,15 @@ class GraphCompactionCoordinator:
             raw_semantic_messages(messages),
             preserve_trailing_ai_tool_calls=True,
         )
-        selection = host._compaction.select_details(semantic_messages)
+        if preflight:
+            selection = host._compaction.select_preflight_details(
+                semantic_messages,
+                model=host.config.model.model,
+            )
+            if not selection.should_compact and (force or over_hard):
+                selection = host._compaction.select_details(semantic_messages)
+        else:
+            selection = host._compaction.select_details(semantic_messages)
         head_msgs, tail_id = selection.head, selection.tail_id
         semantic_tail = semantic_messages[selection.keep_from:]
 
@@ -155,6 +226,18 @@ class GraphCompactionCoordinator:
                 ))
             return None
 
+        base_metadata = _compaction_metadata(
+            host,
+            semantic_messages=semantic_messages,
+            semantic_tail=semantic_tail,
+            total_tokens=total_tokens,
+            force=force,
+            preflight=preflight,
+            over_soft=over_soft,
+            over_hard=over_hard,
+            removed_message_count=len(head_msgs),
+            tail_id=tail_id,
+        )
         summary = None
         previous_summary = getattr(host, "_compaction_summary", "") or None
         last_error: Exception | None = None
@@ -213,6 +296,18 @@ class GraphCompactionCoordinator:
             host._compaction_summary = fallback
             host._compaction.compaction_count += 1
             await persist(head_msgs)
+            live_messages = _live_messages(
+                runtime_prefix,
+                semantic_tail,
+                fallback,
+                include_summary_message=include_summary_message,
+            )
+            metadata = _finish_compaction_metadata(
+                base_metadata,
+                live_messages=live_messages,
+                model=host.config.model.model,
+                fallback=True,
+            )
             if host._ui.via_events():
                 await host._ui.events.emit(StatusFinished(
                     status_id="compaction",
@@ -224,14 +319,10 @@ class GraphCompactionCoordinator:
             return CompactionResult(
                 summary=fallback,
                 removed_messages=list(head_msgs),
-                live_messages=_live_messages(
-                    runtime_prefix,
-                    semantic_tail,
-                    fallback,
-                    include_summary_message=include_summary_message,
-                ),
+                live_messages=live_messages,
                 tail_id=tail_id,
                 fallback=True,
+                metadata=metadata,
             )
 
         if summary:
@@ -258,17 +349,25 @@ class GraphCompactionCoordinator:
         else:
             return None
 
+        live_messages = _live_messages(
+            runtime_prefix,
+            semantic_tail,
+            summary,
+            include_summary_message=include_summary_message,
+        )
+        metadata = _finish_compaction_metadata(
+            base_metadata,
+            live_messages=live_messages,
+            model=host.config.model.model,
+            fallback=False,
+        )
         return CompactionResult(
             summary=summary,
             removed_messages=list(head_msgs),
-            live_messages=_live_messages(
-                runtime_prefix,
-                semantic_tail,
-                summary,
-                include_summary_message=include_summary_message,
-            ),
+            live_messages=live_messages,
             tail_id=tail_id,
             fallback=False,
+            metadata=metadata,
         )
 
     async def ask_compact(self, total_tokens: int) -> bool:
@@ -448,6 +547,81 @@ def _content_type_summary(content: object) -> str:
     if isinstance(content, list):
         return ",".join(type(item).__name__ for item in content) or "list(empty)"
     return type(content).__name__
+
+
+def _compaction_status_detail(total_tokens: int, *, force: bool, preflight: bool) -> str:
+    if force:
+        return "manual compaction"
+    if preflight:
+        return f"{total_tokens} tokens reached the preflight compaction threshold"
+    return f"{total_tokens} tokens exceed the active context budget"
+
+
+def _compaction_metadata(
+    host: GraphCompactionHost,
+    *,
+    semantic_messages: list[BaseMessage],
+    semantic_tail: list[BaseMessage],
+    total_tokens: int,
+    force: bool,
+    preflight: bool,
+    over_soft: bool,
+    over_hard: bool,
+    removed_message_count: int,
+    tail_id: str | None,
+) -> dict[str, object]:
+    return {
+        "compaction_reason": _compaction_reason(
+            force=force,
+            preflight=preflight,
+            over_soft=over_soft,
+            over_hard=over_hard,
+        ),
+        "pre_tokens": total_tokens,
+        "soft_threshold": host._compaction.soft_threshold(),
+        "hard_threshold": int(host._compaction.context_limit * 0.90),
+        "post_compaction_target": host._compaction.post_compaction_target(),
+        "removed_message_count": removed_message_count,
+        "retained_turn_count": len(host._compaction._turns(semantic_tail)),
+        "current_user_preserved": _latest_user_preserved(semantic_messages, semantic_tail),
+        "tail_anchor_id": tail_id or "",
+        "inline_compaction_enabled": bool(getattr(host.config, "inline_compaction_enabled", False)),
+    }
+
+
+def _finish_compaction_metadata(
+    metadata: dict[str, object],
+    *,
+    live_messages: list[BaseMessage],
+    model: str,
+    fallback: bool,
+) -> dict[str, object]:
+    return {
+        **metadata,
+        "post_tokens": estimate_context_tokens(live_messages, model),
+        "fallback": fallback,
+    }
+
+
+def _compaction_reason(*, force: bool, preflight: bool, over_soft: bool, over_hard: bool) -> str:
+    if force:
+        return "force"
+    if over_hard:
+        return "hard_threshold"
+    if preflight and over_soft:
+        return "soft_threshold"
+    return "threshold"
+
+
+def _latest_user_preserved(
+    semantic_messages: list[BaseMessage],
+    semantic_tail: list[BaseMessage],
+) -> bool:
+    latest_user = next(
+        (message for message in reversed(semantic_messages) if isinstance(message, HumanMessage)),
+        None,
+    )
+    return latest_user is None or any(message is latest_user for message in semantic_tail)
 
 
 def _compaction_request_text(previous_summary: str | None) -> str:

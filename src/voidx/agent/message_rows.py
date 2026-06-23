@@ -11,6 +11,7 @@ from typing import Any
 from langchain_core.messages import AIMessage, BaseMessage, HumanMessage, SystemMessage, ToolMessage
 
 from voidx.agent.attachments import parse_structured_content
+from voidx.llm.message_status import message_status
 from voidx.memory.service import MessageRow
 
 
@@ -60,6 +61,7 @@ def row_fingerprint(row: MessageRow) -> str:
         "content_format": row.content_format,
         "tool_calls": row.tool_calls or [],
         "tool_call_id": row.tool_call_id or "",
+        "status": message_status(row.status) if row.role == "tool" else "success",
     }
     return _stable_hash(payload)
 
@@ -83,6 +85,7 @@ def message_from_row(row: MessageRow) -> BaseMessage | None:
         return ToolMessage(
             content=row.content,
             tool_call_id=row.tool_call_id or "",
+            status=message_status(row.status),
             id=msg_id,
         )
     return None

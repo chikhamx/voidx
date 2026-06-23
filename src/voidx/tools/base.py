@@ -153,23 +153,60 @@ SKIP_SUFFIXES = frozenset({
 
 
 def model_to_json_schema(model: type[BaseModel]) -> dict[str, Any]:
-    """Convert a Pydantic model to JSON Schema dict."""
+    """Convert a Pydantic model to JSON Schema dict.
+
+    All properties are marked required so the schema complies with OpenAI
+    strict mode and strict third-party proxies that validate ``required``
+    must list every key in ``properties``.  Optional fields use ``default``
+    or ``defaultFactory`` in their definition so the LLM can omit them.
+    """
     schema = model.model_json_schema()
+    defs = schema.get("$defs", {})
+    properties = schema.get("properties", {})
     result = {
         "type": "object",
-        "properties": schema.get("properties", {}),
-        "required": schema.get("required", []),
+        "properties": properties,
+        "required": list(properties.keys()),
         "additionalProperties": False,
     }
-    if "$defs" in schema:
-        result["$defs"] = schema["$defs"]
+    if defs:
+        _inline_refs(result, defs)
     _disallow_extra_properties(result)
     return result
+
+
+
+def _inline_refs(schema: dict[str, Any], defs: dict[str, Any]) -> None:
+    """Replace all $ref nodes with inlined copies from $defs, preserving sibling keys like description."""
+    for key, value in list(schema.items()):
+        if isinstance(value, dict):
+            if "$ref" in value:
+                ref_name = value.pop("$ref").rsplit("/", 1)[-1]
+                inlined = dict(defs[ref_name])
+                inlined.update({k: v for k, v in value.items() if k != "$ref"})
+                schema[key] = inlined
+                _inline_refs(inlined, defs)
+            else:
+                _inline_refs(value, defs)
+        elif isinstance(value, list):
+            for i, item in enumerate(value):
+                if isinstance(item, dict):
+                    if "$ref" in item:
+                        ref_name = item.pop("$ref").rsplit("/", 1)[-1]
+                        inlined = dict(defs[ref_name])
+                        inlined.update({k: v for k, v in item.items() if k != "$ref"})
+                        value[i] = inlined
+                        _inline_refs(inlined, defs)
+                    else:
+                        _inline_refs(item, defs)
 
 
 def _disallow_extra_properties(schema: dict[str, Any]) -> None:
     if schema.get("type") == "object":
         schema.setdefault("additionalProperties", False)
+        props = schema.get("properties")
+        if props:
+            schema["required"] = list(props.keys())
     for value in schema.values():
         if isinstance(value, dict):
             _disallow_extra_properties(value)

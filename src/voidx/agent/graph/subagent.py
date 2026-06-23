@@ -232,6 +232,7 @@ async def run_subagent(
                     ToolMessage(
                         content=sanitize_tool_message_content(repetitive_decision.message, workspace=ctx.workspace),
                         tool_call_id=tc.get("id", ""),
+                        status="error",
                     )
                     for tc in assistant_msg.tool_calls
                 ]
@@ -250,6 +251,17 @@ async def run_subagent(
             else:
                 approved = list(assistant_msg.tool_calls)
                 denied = []
+
+            def result_ok(result) -> bool:
+                metadata = getattr(result, "metadata", {}) or {}
+                if metadata.get("error") or metadata.get("blocked") or metadata.get("timeout"):
+                    return False
+                if "exit_code" in metadata:
+                    try:
+                        return int(metadata.get("exit_code") or 0) == 0
+                    except (TypeError, ValueError):
+                        return False
+                return True
 
             async def run_one(tc):
                 tid = tc.get("name", "")
@@ -283,6 +295,7 @@ async def run_subagent(
                     "tool_message": ToolMessage(
                         content=sanitize_tool_message_content(result.output, workspace=ctx.workspace),
                         tool_call_id=cid,
+                        status="success" if result_ok(result) else "error",
                     ),
                     "result": result,
                     "tool_call": tc,
@@ -295,23 +308,13 @@ async def run_subagent(
                 ToolMessage(
                     content=sanitize_tool_message_content(reason, workspace=ctx.workspace),
                     tool_call_id=tc.get("id", ""),
+                    status="error",
                 )
                 for tc, reason in denied
             ]
             tool_msgs = [item["tool_message"] for item in executed]
             messages.extend(tool_msgs + denied_msgs)
             sub_messages.extend(tool_msgs + denied_msgs)
-
-            def result_ok(result) -> bool:
-                metadata = getattr(result, "metadata", {}) or {}
-                if metadata.get("error") or metadata.get("blocked") or metadata.get("timeout"):
-                    return False
-                if "exit_code" in metadata:
-                    try:
-                        return int(metadata.get("exit_code") or 0) == 0
-                    except (TypeError, ValueError):
-                        return False
-                return True
 
             for item in executed:
                 metadata = getattr(item["result"], "metadata", {}) or {}

@@ -11,6 +11,8 @@ from typing import Any
 from langchain_core.messages import AIMessage, AIMessageChunk, ToolMessage
 
 from voidx.agent.todo_state import _DSML_MARKER_RE, sanitize_todo_replay_messages
+from voidx.agent.tool_call_ids import ai_tool_call_ids
+from voidx.agent.tool_exchange_sanitizer import sanitize_failed_tool_exchanges
 from voidx.runtime.ui_port import AgentUiPort, runtime_ui_port
 
 _PROTOCOL_DEEPSEEK = "deepseek"
@@ -47,6 +49,7 @@ _LEGACY_XML_ARG_PAIR_RE = re.compile(
     re.DOTALL | re.IGNORECASE,
 )
 _LEGACY_XML_NAME_ATTR_RE = re.compile(r'\bname="([^"]+)"', re.IGNORECASE)
+MALFORMED_TOOL_CALL_METADATA_KEY = "malformed_tool_call"
 
 
 async def stream_llm(
@@ -90,18 +93,28 @@ async def stream_llm(
 
     content_without_dsml, dsml_tool_calls = _extract_dsml_tool_calls(merged.content)
     _, legacy_xml_tool_calls = _extract_legacy_xml_tool_calls(content_without_dsml)
-    content = _sanitize_ai_content_for_replay(merged.content)
     tool_calls = merged.tool_calls or [*dsml_tool_calls, *legacy_xml_tool_calls]
+    malformed_tool_call_format = "" if tool_calls else _malformed_tool_call_format(merged.content)
+    content = "" if malformed_tool_call_format else _sanitize_ai_content_for_replay(merged.content)
+    response_metadata = dict(merged.response_metadata or {})
+    if malformed_tool_call_format:
+        response_metadata[MALFORMED_TOOL_CALL_METADATA_KEY] = True
+        response_metadata["malformed_tool_call_format"] = malformed_tool_call_format
     kwargs = {
         "content": content,
         "tool_calls": tool_calls,
-        "response_metadata": merged.response_metadata,
+        "response_metadata": response_metadata,
         "additional_kwargs": merged.additional_kwargs,
     }
     usage_metadata = getattr(merged, "usage_metadata", None)
     if usage_metadata:
         kwargs["usage_metadata"] = usage_metadata
     return AIMessage(**kwargs)
+
+
+def is_malformed_tool_call_response(message: object) -> bool:
+    metadata = getattr(message, "response_metadata", None)
+    return bool(isinstance(metadata, dict) and metadata.get(MALFORMED_TOOL_CALL_METADATA_KEY))
 
 
 def _sanitize_messages_for_replay(messages: list, *, protocol: str = "") -> list:
@@ -125,6 +138,7 @@ def _sanitize_messages_for_replay(messages: list, *, protocol: str = "") -> list
         sanitized,
         preserve_latest_tool_exchange=True,
     )
+    sanitized = sanitize_failed_tool_exchanges(sanitized, preserve_latest=True)
     return _repair_tool_result_adjacency(sanitized)
 
 
@@ -143,7 +157,7 @@ def _repair_tool_result_adjacency(messages: list) -> list:
             i += 1
             continue
 
-        tool_call_ids = _ai_tool_call_ids(message)
+        tool_call_ids = ai_tool_call_ids(message)
         if not tool_call_ids:
             i += 1
             continue
@@ -163,34 +177,12 @@ def _repair_tool_result_adjacency(messages: list) -> list:
                 repaired.append(ToolMessage(
                     content="Tool result unavailable: previous tool call was not executed.",
                     tool_call_id=tool_call_id,
+                    status="error",
                 ))
 
         i = j
 
     return repaired
-
-
-def _ai_tool_call_ids(message: AIMessage) -> list[str]:
-    ids: list[str] = []
-
-    for call in getattr(message, "tool_calls", None) or []:
-        if isinstance(call, dict) and call.get("id"):
-            ids.append(str(call["id"]))
-
-    content = message.content
-    if isinstance(content, list):
-        for item in content:
-            if isinstance(item, dict) and item.get("type") == "tool_use" and item.get("id"):
-                ids.append(str(item["id"]))
-
-    result: list[str] = []
-    seen: set[str] = set()
-    for tool_call_id in ids:
-        if tool_call_id not in seen:
-            result.append(tool_call_id)
-            seen.add(tool_call_id)
-    return result
-
 
 def _sanitize_ai_content_for_replay(content: object, *, protocol: str = "") -> object:
     if isinstance(content, str):
@@ -320,6 +312,8 @@ def _should_render_text_chunk(text: str) -> bool:
     if "DSML" in normalized and "<|" in normalized:
         return False
     if _looks_like_legacy_xml_tool_call(normalized):
+        return False
+    if _looks_like_provider_tool_call_fragment(normalized):
         return False
     return not _DSML_BOILERPLATE_RE.search(normalized)
 
@@ -518,6 +512,51 @@ def _looks_like_legacy_xml_tool_call(text: str) -> bool:
         "<tool_call" in lowered
         or "</tool_call>" in lowered
         or ("<arg_key" in lowered and "<arg_value" in lowered)
+    )
+
+
+def _malformed_tool_call_format(content: object) -> str:
+    for text in _content_text_fragments(content):
+        normalized = _normalize_dsml(text)
+        if _looks_like_malformed_dsml_tool_call(normalized):
+            return "dsml"
+        if _looks_like_legacy_xml_tool_call(text):
+            return "legacy_xml"
+        if _looks_like_provider_tool_call_fragment(text):
+            return "provider_json"
+    return ""
+
+
+def _content_text_fragments(content: object) -> list[str]:
+    if isinstance(content, str):
+        return [content]
+    if not isinstance(content, list):
+        return []
+    fragments: list[str] = []
+    for item in content:
+        if isinstance(item, str):
+            fragments.append(item)
+        elif isinstance(item, dict):
+            text = item.get("text")
+            if isinstance(text, str):
+                fragments.append(text)
+    return fragments
+
+
+def _looks_like_malformed_dsml_tool_call(text: str) -> bool:
+    return (
+        "DSML" in text
+        and "<" in text
+        and any(marker in text for marker in ("tool_calls", "invoke", "parameter"))
+    )
+
+
+def _looks_like_provider_tool_call_fragment(text: str) -> bool:
+    lowered = text.lower()
+    return (
+        "tool_calls" in lowered
+        and any(marker in lowered for marker in ("function", "arguments", "name"))
+        and any(char in text for char in ("{", "[", '"'))
     )
 
 
