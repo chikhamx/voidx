@@ -147,11 +147,21 @@ async def _execute_text_replace(
     new_lines = _split_edit_lines(new_string)
     lines[start_line - 1:end_line] = new_lines
 
+    # Head-line dedup: if the first line of new_string exactly matches the
+    # line immediately before the replaced range, consume that line too.
+    actual_start_line = start_line
+    if new_lines and new_lines[0] != "":
+        prev_idx = start_line - 2
+        if prev_idx >= 0 and lines[prev_idx] == new_lines[0]:
+            del lines[prev_idx]
+            actual_start_line = start_line - 1
+
     # Tail-line dedup: if the last line of new_string exactly matches the
     # first line after the replaced range, consume that line too.
     actual_end_line = end_line
     if new_lines and new_lines[-1] != "":
-        next_idx = start_line - 1 + len(new_lines)
+        head_shift = 1 if actual_start_line < start_line else 0
+        next_idx = start_line - 1 + len(new_lines) - head_shift
         if next_idx < len(lines) and lines[next_idx] == new_lines[-1]:
             del lines[next_idx]
             actual_end_line = end_line + 1
@@ -179,7 +189,7 @@ async def _execute_text_replace(
         metadata={
             "file": file_path,
             "operations": 1,
-            "start_line": start_line,
+            "start_line": actual_start_line,
             "end_line": actual_end_line,
         },
         diff=diff,
