@@ -360,6 +360,18 @@ def test_sandbox_bash_tracks_cd_before_relative_write(tmp_path):
     assert "outside the allowed workspace" in reason
 
 
+def test_sandbox_bash_tracks_cd_with_quoted_path_before_relative_write(tmp_path):
+    workspace = str(tmp_path / "workspace")
+    outside = tmp_path / "outside"
+    Path(workspace).mkdir()
+    outside.mkdir()
+
+    reason = check_sandbox_bash(f'cd "{outside}" && touch generated.txt', workspace, [])
+
+    assert reason is not None
+    assert "outside the allowed workspace" in reason
+
+
 def test_sandbox_bash_blocks_git_push_even_with_extra_paths(tmp_path):
     workspace = str(tmp_path / "workspace")
     Path(workspace).mkdir()

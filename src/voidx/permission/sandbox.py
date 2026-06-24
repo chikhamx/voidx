@@ -157,7 +157,7 @@ def check_sandbox_bash(
 
 def _shell_words(command: str) -> list[str]:
     try:
-        lexer = shlex.shlex(command, posix=True, punctuation_chars=True)
+        lexer = shlex.shlex(command, posix=False, punctuation_chars=True)
         lexer.whitespace_split = True
         return list(lexer)
     except ValueError:
@@ -174,7 +174,7 @@ def _extract_segment_targets(words: list[str], workspace: str) -> list[str]:
             if segment and _program(segment).lower() == "cd":
                 next_dir = _first_non_flag_arg(segment[1:])
                 if next_dir:
-                    raw = Path(next_dir).expanduser()
+                    raw = Path(next_dir.strip('"').strip("'")).expanduser()
                     current_dir = (raw if raw.is_absolute() else current_dir / raw).resolve()
             segment = []
             continue
