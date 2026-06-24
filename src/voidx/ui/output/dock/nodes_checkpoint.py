@@ -2,11 +2,15 @@
 
 from __future__ import annotations
 
+import logging
 from typing import Any
 
 from rich.markup import escape
 
 from voidx.ui.output.tree import OutputNode
+
+
+logger = logging.getLogger(__name__)
 
 
 class DockCheckpointNodeMixin:
@@ -48,9 +52,10 @@ class DockCheckpointNodeMixin:
     ) -> None:
         node = self._checkpoint_nodes.get(checkpoint_id)
         if node is None:
+            logger.debug("Checkpoint decision received for unknown checkpoint_id=%s", checkpoint_id)
             return
         display_response = response or label or decision
-        color = "red" if decision == "rejected" else "dim"
+        color = _decision_color(decision)
         node.header = f"[{color}]●[/{color}] [{color}]voidx plan {escape(decision)}[/{color}]"
         node.status = "done"
         node.payload["decision"] = decision
@@ -109,3 +114,13 @@ def _string_list(value: object) -> list[str]:
     if not isinstance(value, list):
         return []
     return [str(item) for item in value if str(item).strip()]
+
+
+def _decision_color(decision: str) -> str:
+    if decision == "rejected":
+        return "red"
+    if decision == "needs_doc":
+        return "yellow"
+    if decision == "modified":
+        return "cyan"
+    return "dim"

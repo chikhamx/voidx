@@ -162,6 +162,142 @@
       "title": "CaptureStopped",
       "type": "object"
     },
+    "CheckpointChoicePayload": {
+      "properties": {
+        "description": {
+          "default": "",
+          "title": "Description",
+          "type": "string"
+        },
+        "label": {
+          "title": "Label",
+          "type": "string"
+        },
+        "value": {
+          "title": "Value",
+          "type": "string"
+        }
+      },
+      "required": [
+        "label",
+        "value"
+      ],
+      "title": "CheckpointChoicePayload",
+      "type": "object"
+    },
+    "CheckpointDecisionSubmitted": {
+      "properties": {
+        "agent_id": {
+          "default": -1,
+          "title": "Agent Id",
+          "type": "integer"
+        },
+        "checkpoint_id": {
+          "title": "Checkpoint Id",
+          "type": "string"
+        },
+        "decision": {
+          "title": "Decision",
+          "type": "string"
+        },
+        "kind": {
+          "const": "checkpoint_decision.submitted",
+          "default": "checkpoint_decision.submitted",
+          "title": "Kind",
+          "type": "string"
+        },
+        "label": {
+          "default": "",
+          "title": "Label",
+          "type": "string"
+        },
+        "response": {
+          "default": "",
+          "title": "Response",
+          "type": "string"
+        },
+        "was_custom_input": {
+          "default": false,
+          "title": "Was Custom Input",
+          "type": "boolean"
+        }
+      },
+      "required": [
+        "checkpoint_id",
+        "decision"
+      ],
+      "title": "CheckpointDecisionSubmitted",
+      "type": "object"
+    },
+    "CheckpointPlanPayload": {
+      "properties": {
+        "affected_files": {
+          "items": {
+            "type": "string"
+          },
+          "title": "Affected Files",
+          "type": "array"
+        },
+        "plan_summary": {
+          "title": "Plan Summary",
+          "type": "string"
+        },
+        "risks": {
+          "items": {
+            "type": "string"
+          },
+          "title": "Risks",
+          "type": "array"
+        },
+        "steps": {
+          "items": {
+            "type": "string"
+          },
+          "title": "Steps",
+          "type": "array"
+        }
+      },
+      "required": [
+        "plan_summary"
+      ],
+      "title": "CheckpointPlanPayload",
+      "type": "object"
+    },
+    "CheckpointPromptShown": {
+      "properties": {
+        "agent_id": {
+          "default": -1,
+          "title": "Agent Id",
+          "type": "integer"
+        },
+        "checkpoint_id": {
+          "title": "Checkpoint Id",
+          "type": "string"
+        },
+        "choices": {
+          "items": {
+            "$ref": "#/$defs/CheckpointChoicePayload"
+          },
+          "title": "Choices",
+          "type": "array"
+        },
+        "kind": {
+          "const": "checkpoint_prompt.shown",
+          "default": "checkpoint_prompt.shown",
+          "title": "Kind",
+          "type": "string"
+        },
+        "plan": {
+          "$ref": "#/$defs/CheckpointPlanPayload"
+        }
+      },
+      "required": [
+        "checkpoint_id",
+        "plan"
+      ],
+      "title": "CheckpointPromptShown",
+      "type": "object"
+    },
     "DiffAppended": {
       "properties": {
         "agent_id": {
@@ -1220,6 +1356,7 @@
             "thought",
             "status",
             "permission",
+            "checkpoint",
             "error",
             "warn",
             "diff"
@@ -1545,6 +1682,12 @@
             },
             {
               "$ref": "#/$defs/PermissionPromptCleared"
+            },
+            {
+              "$ref": "#/$defs/CheckpointPromptShown"
+            },
+            {
+              "$ref": "#/$defs/CheckpointDecisionSubmitted"
             },
             {
               "$ref": "#/$defs/InputSet"

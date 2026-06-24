@@ -1,4 +1,5 @@
 import asyncio
+import logging
 import re
 import sys
 from pathlib import Path
@@ -431,6 +432,56 @@ async def test_checkpoint_prompt_event_renders_voidx_plan_and_decision(isolated_
         assert "User: Implement directly" in rendered
         assert checkpoint.payload["decision"] == "approved"
         assert checkpoint.payload["response"] == "Implement directly"
+    finally:
+        await bus.stop()
+
+
+@pytest.mark.asyncio
+async def test_checkpoint_needs_doc_uses_distinct_header_style(isolated_dock):
+    isolated_dock.begin_capture()
+    bus = UiEventBus()
+    bus.start(DockEventConsumer(isolated_dock))
+    try:
+        await bus.request(TurnStarted(text="demo"))
+        await bus.emit(CheckpointPromptShown(
+            checkpoint_id="cp_doc",
+            plan=CheckpointPlanPayload(plan_summary="Add checkpoint node"),
+        ))
+        await bus.emit(CheckpointDecisionSubmitted(
+            checkpoint_id="cp_doc",
+            decision="needs_doc",
+            label="Document first",
+            response="Document first",
+        ))
+        await bus.drain()
+
+        checkpoint = next(
+            node for node in _tree_nodes(isolated_dock.tree.root)
+            if node.node_type == "checkpoint"
+        )
+
+        assert "[yellow]voidx plan needs_doc[/yellow]" in checkpoint.header
+    finally:
+        await bus.stop()
+
+
+@pytest.mark.asyncio
+async def test_checkpoint_decision_for_unknown_id_logs_debug(isolated_dock, caplog):
+    isolated_dock.begin_capture()
+    bus = UiEventBus()
+    bus.start(DockEventConsumer(isolated_dock))
+    try:
+        caplog.set_level(logging.DEBUG, logger="voidx.ui.output.dock.nodes_checkpoint")
+        await bus.emit(CheckpointDecisionSubmitted(
+            checkpoint_id="missing_cp",
+            decision="approved",
+            label="Implement directly",
+            response="Implement directly",
+        ))
+        await bus.drain()
+
+        assert "unknown checkpoint_id" in caplog.text
+        assert "missing_cp" in caplog.text
     finally:
         await bus.stop()
 
