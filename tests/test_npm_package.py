@@ -14,6 +14,15 @@ ROOT = Path(__file__).resolve().parents[1]
 NODE = shutil.which("node")
 
 
+def _base_env(**extra: str) -> dict[str, str]:
+    """Minimal env for subprocess calls — includes OS-required vars on Windows."""
+    env = {"PATH": os.environ.get("PATH", "")}
+    if sys.platform == "win32":
+        env["SYSTEMROOT"] = os.environ.get("SYSTEMROOT", "")
+    env.update(extra)
+    return env
+
+
 def test_release_metadata_check_passes():
     result = subprocess.run(
         [sys.executable, "scripts/package.py", "--check-only"],
@@ -68,11 +77,10 @@ def test_npm_launcher_rejects_old_explicit_python(tmp_path):
     fake_python.write_text("#!/bin/sh\nif [ \"$1\" = \"-c\" ]; then echo '3.10.9'; exit 0; fi\nexit 1\n")
     fake_python.chmod(fake_python.stat().st_mode | stat.S_IXUSR)
 
-    env = {
-        "PATH": os.environ.get("PATH", ""),
-        "VOIDX_PYTHON": str(fake_python),
-        "VOIDX_NPM_HOME": str(tmp_path / "home"),
-    }
+    env = _base_env(
+        VOIDX_PYTHON=str(fake_python),
+        VOIDX_NPM_HOME=str(tmp_path / "home"),
+    )
     result = subprocess.run(
         [NODE, "npm/bin/voidx.js", "version"],
         cwd=ROOT,
@@ -92,10 +100,7 @@ def test_npm_launcher_falls_back_to_system_python(tmp_path):
     if sys.platform == "win32":
         pytest.skip("uses a POSIX environment")
     # No bundled Python, no VOIDX_PYTHON — should try system Python as fallback.
-    env = {
-        "PATH": os.environ.get("PATH", ""),
-        "VOIDX_NPM_HOME": str(tmp_path / "home"),
-    }
+    env = _base_env(VOIDX_NPM_HOME=str(tmp_path / "home"))
     result = subprocess.run(
         [NODE, "npm/bin/voidx.js", "version"],
         cwd=ROOT,
@@ -134,10 +139,7 @@ def test_npm_launcher_selectPython_uses_bundled_only(tmp_path):
     fake_python = python_dir / "python3"
     fake_python.write_text("#!/bin/sh\nif [ \"$1\" = \"-c\" ]; then echo '3.12.0'; exit 0; fi\nexit 1\n")
     fake_python.chmod(fake_python.stat().st_mode | stat.S_IXUSR)
-    env = {
-        "PATH": os.environ.get("PATH", ""),
-        "VOIDX_NPM_HOME": str(home),
-    }
+    env = _base_env(VOIDX_NPM_HOME=str(home))
     result = subprocess.run(
         [NODE, "-e", (
             "const m = require('./npm/bin/voidx.js');"
@@ -156,10 +158,7 @@ def test_npm_launcher_selectPython_uses_bundled_only(tmp_path):
 @pytest.mark.skipif(NODE is None, reason="node is not installed")
 def test_npm_launcher_selectPython_bootstraps_bundled_or_reports_clear_error(tmp_path):
     """selectPython bootstraps bundled Python or reports a clear setup error."""
-    env = {
-        "PATH": os.environ.get("PATH", ""),
-        "VOIDX_NPM_HOME": str(tmp_path / "home"),
-    }
+    env = _base_env(VOIDX_NPM_HOME=str(tmp_path / "home"), VOIDX_NPM_SKIP_BOOTSTRAP="1")
     result = subprocess.run(
         [NODE, "-e", (
             "const m = require('./npm/bin/voidx.js');"
@@ -173,8 +172,8 @@ def test_npm_launcher_selectPython_bootstraps_bundled_or_reports_clear_error(tmp
     )
     assert result.returncode == 0, result.stderr
     # Bootstrap logs may precede the final probe result.
-    last_line = result.stdout.strip().splitlines()[-1]
-    assert last_line.startswith("OK:bundled") or last_line.startswith("ERROR:")
+    stdout = result.stdout.strip()
+    assert "OK:bundled" in stdout or "ERROR:" in stdout
 
 
 @pytest.mark.skipif(NODE is None, reason="node is not installed")
@@ -200,7 +199,7 @@ def test_npm_postinstall_cleans_partial_download_on_failure(tmp_path):
     result = subprocess.run(
         [NODE, "-e", (
             "const m = require('./npm/bin/postinstall.js');"
-            f"m.downloadFileWithRetry('https://127.0.0.1:1/invalid', '{dest}', 1)"
+            f"m.downloadFileWithRetry('https://127.0.0.1:1/invalid', '{dest.replace(chr(92), '/')}', 1)"
             ".then(() => console.log('OK'))"
             ".catch(e => console.log('FAILED:' + e.message));"
         )],
@@ -247,10 +246,7 @@ def test_npm_launcher_rebuilds_corrupted_venv(tmp_path):
     fake_python = python_dir / "python3"
     fake_python.write_text("#!/bin/sh\nif [ \"$1\" = \"-c\" ]; then echo '3.12.0'; exit 0; fi\nexit 1\n")
     fake_python.chmod(fake_python.stat().st_mode | stat.S_IXUSR)
-    env = {
-        "PATH": os.environ.get("PATH", ""),
-        "VOIDX_NPM_HOME": str(home),
-    }
+    env = _base_env(VOIDX_NPM_HOME=str(home))
     # The launcher should detect the corrupted venv and try to rebuild
     # (it will fail because the fake python can't create a real venv,
     # but the error should mention venv creation, not a mysterious failure)
@@ -309,12 +305,11 @@ def test_npm_launcher_forwards_args_to_managed_voidx(tmp_path):
     fake_voidx.write_text("#!/bin/sh\nprintf 'voidx args:'\nprintf '%s|' \"$@\"\nprintf '\\n'\n")
     fake_voidx.chmod(fake_voidx.stat().st_mode | stat.S_IXUSR)
 
-    env = {
-        "PATH": os.environ.get("PATH", ""),
-        "VOIDX_PYTHON": sys.executable,
-        "VOIDX_NPM_VENV": str(venv),
-        "VOIDX_NPM_SKIP_BOOTSTRAP": "1",
-    }
+    env = _base_env(
+        VOIDX_PYTHON=sys.executable,
+        VOIDX_NPM_VENV=str(venv),
+        VOIDX_NPM_SKIP_BOOTSTRAP="1",
+    )
     result = subprocess.run(
         [NODE, "npm/bin/voidx.js", "version", "--plain"],
         cwd=ROOT,

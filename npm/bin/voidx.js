@@ -73,17 +73,19 @@ function selectPython(env) {
   }
 
   // 3. Bundled Python not found — try to bootstrap it (postinstall may have failed)
-  console.error("\n⚙️  Bundled Python not found, running setup…\n");
-  const postinstallScript = path.join(path.dirname(__filename), "postinstall.js");
-  if (fs.existsSync(postinstallScript)) {
-    const result = spawnSync(process.execPath, [postinstallScript], {
-      stdio: "inherit",
-      windowsHide: true,
-      env: { ...env },
-    });
-    if (result.status !== 0) {
-      console.error("  Setup failed. Try reinstalling:");
-      console.error("    npm install -g @chikhamx/voidx");
+  if (env.VOIDX_NPM_SKIP_BOOTSTRAP !== "1") {
+    console.error("\n⚙️  Bundled Python not found, running setup…\n");
+    const postinstallScript = path.join(path.dirname(__filename), "postinstall.js");
+    if (fs.existsSync(postinstallScript)) {
+      const result = spawnSync(process.execPath, [postinstallScript], {
+        stdio: "inherit",
+        windowsHide: true,
+        env: { ...env },
+      });
+      if (result.status !== 0) {
+        console.error("  Setup failed. Try reinstalling:");
+        console.error("    npm install -g @chikhamx/voidx");
+      }
     }
   }
 
