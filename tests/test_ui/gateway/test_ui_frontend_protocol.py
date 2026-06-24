@@ -4,7 +4,13 @@ from pathlib import Path
 sys.path.insert(0, str(Path(__file__).parent.parent / "src"))
 
 from voidx.ui.frontend import UiController, UiFrontend
-from voidx.ui.output.events.schema import AssistantStreamUpdated
+from voidx.ui.output.events.schema import (
+    AssistantStreamUpdated,
+    CheckpointDecisionSubmitted,
+    CheckpointChoicePayload,
+    CheckpointPlanPayload,
+    CheckpointPromptShown,
+)
 from voidx.ui.protocol import (
     ProtocolEnvelope,
     TranscriptSnapshot,
@@ -118,6 +124,58 @@ def test_tree_to_snapshot_preserves_hierarchy_and_semantic_metadata():
     assert restored.nodes[2].body_lines == ["line 2"]
 
 
+def test_tree_to_snapshot_accepts_checkpoint_nodes():
+    tree = OutputTree()
+    turn = tree.new_node(tree.root, node_type="turn", header="❯ hello")
+    checkpoint = tree.new_node(
+        turn,
+        node_type="checkpoint",
+        header="● voidx plan",
+        body_lines=["Plan: Add checkpoint node"],
+        collapsed=False,
+        status="running",
+        payload={"interaction": "checkpoint", "checkpoint_id": "cp_1"},
+    )
+
+    snapshot = tree_to_snapshot(tree, session_id="session_1", revision=3)
+    restored = TranscriptSnapshot.model_validate(snapshot.model_dump())
+
+    assert restored.nodes[1].id == checkpoint.id
+    assert restored.nodes[1].node_type == "checkpoint"
+    assert restored.nodes[1].payload["checkpoint_id"] == "cp_1"
+
+
+def test_checkpoint_events_round_trip_through_protocol_envelope():
+    shown = CheckpointPromptShown(
+        checkpoint_id="cp_1",
+        plan=CheckpointPlanPayload(
+            plan_summary="Add checkpoint node",
+            steps=["Add event", "Render node"],
+            affected_files=["src/voidx/tools/plan_checkpoint.py"],
+            risks=["Avoid duplicate JSON"],
+        ),
+        choices=[
+            CheckpointChoicePayload(
+                label="Implement directly",
+                value="approved",
+                description="Start implementing",
+            )
+        ],
+    )
+    submitted = CheckpointDecisionSubmitted(
+        checkpoint_id="cp_1",
+        decision="approved",
+        label="Implement directly",
+        response="Implement directly",
+    )
+
+    shown_envelope = UiEventEnvelope(seq=11, payload=shown)
+    submitted_envelope = UiEventEnvelope(seq=12, payload=submitted)
+
+    assert parse_protocol_envelope(shown_envelope.model_dump()) == shown_envelope
+    assert parse_protocol_envelope(submitted_envelope.model_dump()) == submitted_envelope
+
+
 def test_protocol_envelopes_parse_by_type_and_round_trip_payloads():
     event = UiEventEnvelope(
         seq=7,
@@ -146,5 +204,7 @@ def test_protocol_schema_exports_contract_definitions():
     assert schema["title"] == "VoidxUiProtocol"
     assert "ProtocolEnvelope" in schema["$defs"]
     assert "TranscriptSnapshot" in schema["$defs"]
+    assert "CheckpointPromptShown" in schema["$defs"]
+    assert "CheckpointDecisionSubmitted" in schema["$defs"]
     assert "UiChoiceRequest" in schema["$defs"]
     assert "UiSubmitCommand" in schema["$defs"]

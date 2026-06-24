@@ -21,9 +21,15 @@ from voidx.ui.output.tree import OutputNode
 from voidx.ui.output.dock.nodes_startup import DockStartupNodeMixin
 from voidx.ui.output.dock.nodes_status import DockStatusNodeMixin
 from voidx.ui.output.dock.nodes_permission import DockPermissionNodeMixin
+from voidx.ui.output.dock.nodes_checkpoint import DockCheckpointNodeMixin
 
 
-class DockNodeMixin(DockStartupNodeMixin, DockStatusNodeMixin, DockPermissionNodeMixin):
+class DockNodeMixin(
+    DockStartupNodeMixin,
+    DockStatusNodeMixin,
+    DockPermissionNodeMixin,
+    DockCheckpointNodeMixin,
+):
     def _new_settled_node(
         self,
         target: OutputNode,

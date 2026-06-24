@@ -30,6 +30,11 @@ from voidx.tools.clarify import ClarifyTool, ClarifyInput, _infer_state_patch
 from voidx.tools.load_skills import LoadSkillsTool
 from voidx.tools.load_doc_template import LoadDocTemplateTool, LoadDocTemplateInput
 from voidx.tools.plan_checkpoint import PlanCheckpointInput, PlanCheckpointTool, _build_prompt
+from voidx.ui.output.events import (
+    CheckpointDecisionSubmitted,
+    CheckpointPromptShown,
+    ui_events,
+)
 from voidx.agent.task_state import GoalSpec, GoalResolution, IntentResolution, PlanResolution, ToolStatePatch
 from voidx.agent.runtime_context import TaskIntent
 from voidx.skills.context import SKILL_TOOL_CONTEXT_MARKER
@@ -104,6 +109,45 @@ class TestInteractiveTools:
         assert patch["workflow_runs"][0]["name"] == "tdd"
         assert patch["workflow_runs"][0]["status"] == "active"
         assert result.next_step_hint == ""
+
+    @pytest.mark.asyncio
+    async def test_plan_checkpoint_emits_voidx_plan_events(self, tmp_path):
+        events = []
+
+        class RecordingConsumer:
+            def handle(self, event):
+                events.append(event)
+
+        if ui_events.is_running:
+            await ui_events.stop()
+        ui_events.start(RecordingConsumer())
+        try:
+            async def interact(request):
+                return UserResponse(value="approved")
+
+            result = await PlanCheckpointTool().execute(
+                {
+                    "plan_summary": "Add checkpoint node",
+                    "steps": ["Add event schema"],
+                    "affected_files": ["src/voidx/tools/plan_checkpoint.py"],
+                    "risks": ["Avoid duplicate JSON"],
+                },
+                ToolContext(workspace=str(tmp_path), interact=interact),
+            )
+        finally:
+            await ui_events.stop()
+
+        shown = next(event for event in events if isinstance(event, CheckpointPromptShown))
+        submitted = next(event for event in events if isinstance(event, CheckpointDecisionSubmitted))
+
+        assert result.metadata["plan_decision"] == "approved"
+        assert shown.checkpoint_id == submitted.checkpoint_id
+        assert shown.plan.plan_summary == "Add checkpoint node"
+        assert shown.plan.steps == ["Add event schema"]
+        assert submitted.decision == "approved"
+        assert submitted.label == "Implement directly"
+        assert submitted.response == "Implement directly"
+        assert submitted.was_custom_input is False
 
     def test_plan_checkpoint_prompt_renders_flat_steps_and_scope_details(self):
         prompt = _build_prompt(PlanCheckpointInput(

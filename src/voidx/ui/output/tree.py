@@ -36,6 +36,7 @@ class OutputNode:
         "thought",
         "status",
         "permission",
+        "checkpoint",
         "error",
         "warn",
         "diff",

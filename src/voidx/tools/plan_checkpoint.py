@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import json
+from uuid import uuid4
 
 from pydantic import BaseModel, Field
 
@@ -77,6 +78,8 @@ class PlanCheckpointTool(BaseTool):
                 metadata={"plan_decision": "interaction_unavailable", "blocked": True},
             )
 
+        checkpoint_id = uuid4().hex
+        _emit_checkpoint_shown(checkpoint_id, inp)
         response = await ctx.interact(UserInteraction(
             prompt=_build_prompt(inp),
             options=_CHECKPOINT_OPTIONS,
@@ -84,8 +87,29 @@ class PlanCheckpointTool(BaseTool):
         ))
         decision = _DECISION_MAP.get(response.value, "modified")
         if response.cancelled or decision == "rejected":
+            if response.cancelled:
+                _emit_checkpoint_decision(
+                    checkpoint_id,
+                    decision="rejected",
+                    label="",
+                    response="no response; treated as rejected",
+                )
+            else:
+                _emit_checkpoint_decision(
+                    checkpoint_id,
+                    decision="rejected",
+                    label=_choice_label("rejected"),
+                    response=_choice_label("rejected"),
+                )
             return _decision_result(inp, decision="rejected")
         if response.free_text:
+            _emit_checkpoint_decision(
+                checkpoint_id,
+                decision="modified",
+                label="Other...",
+                response=response.value.strip(),
+                was_custom_input=True,
+            )
             return _decision_result(inp, decision="modified", modified_scope=response.value.strip())
         if decision == "modified":
             scope_response = await ctx.interact(UserInteraction(
@@ -93,8 +117,21 @@ class PlanCheckpointTool(BaseTool):
                 timeout=120.0,
             ))
             modified_scope = "" if scope_response.cancelled else scope_response.value.strip()
+            _emit_checkpoint_decision(
+                checkpoint_id,
+                decision="modified",
+                label=_choice_label("modified"),
+                response=modified_scope,
+                was_custom_input=not scope_response.cancelled,
+            )
             return _decision_result(inp, decision="modified", modified_scope=modified_scope)
         if decision == "approved":
+            _emit_checkpoint_decision(
+                checkpoint_id,
+                decision="approved",
+                label=_choice_label("approved"),
+                response=_choice_label("approved"),
+            )
             return _decision_result(
                 inp,
                 decision="approved",
@@ -102,12 +139,25 @@ class PlanCheckpointTool(BaseTool):
                 turn_count=ctx.turn_count,
             )
         if decision == "needs_doc":
+            _emit_checkpoint_decision(
+                checkpoint_id,
+                decision="needs_doc",
+                label=_choice_label("needs_doc"),
+                response=_choice_label("needs_doc"),
+            )
             return _decision_result(
                 inp,
                 decision="needs_doc",
                 workflow_runs=ctx.workflow_runs,
                 turn_count=ctx.turn_count,
             )
+        _emit_checkpoint_decision(
+            checkpoint_id,
+            decision="modified",
+            label=_choice_label("modified"),
+            response=response.value.strip(),
+            was_custom_input=bool(response.free_text),
+        )
         return _decision_result(inp, decision="modified", modified_scope=response.value.strip())
 
 
@@ -194,6 +244,64 @@ def _build_prompt(inp: PlanCheckpointInput) -> str:
         parts.append("\nRisks:")
         parts.extend(f"- {risk}" for risk in inp.risks)
     return "\n".join(parts)
+
+
+def _choice_label(value: str) -> str:
+    for label, option_value, _description in _CHECKPOINT_OPTIONS:
+        if option_value == value:
+            return label
+    return value
+
+
+def _emit_checkpoint_shown(checkpoint_id: str, inp: PlanCheckpointInput) -> None:
+    try:
+        from voidx.ui.output.events import ui_events
+        from voidx.ui.output.events.schema import (
+            CheckpointChoicePayload,
+            CheckpointPlanPayload,
+            CheckpointPromptShown,
+        )
+    except ImportError:
+        return
+    if not ui_events.is_running:
+        return
+    ui_events.emit_direct(CheckpointPromptShown(
+        checkpoint_id=checkpoint_id,
+        plan=CheckpointPlanPayload(
+            plan_summary=inp.plan_summary,
+            steps=inp.steps,
+            affected_files=inp.affected_files,
+            risks=inp.risks,
+        ),
+        choices=[
+            CheckpointChoicePayload(label=label, value=value, description=description)
+            for label, value, description in _CHECKPOINT_OPTIONS
+        ],
+    ))
+
+
+def _emit_checkpoint_decision(
+    checkpoint_id: str,
+    *,
+    decision: str,
+    label: str,
+    response: str,
+    was_custom_input: bool = False,
+) -> None:
+    try:
+        from voidx.ui.output.events import ui_events
+        from voidx.ui.output.events.schema import CheckpointDecisionSubmitted
+    except ImportError:
+        return
+    if not ui_events.is_running:
+        return
+    ui_events.emit_direct(CheckpointDecisionSubmitted(
+        checkpoint_id=checkpoint_id,
+        decision=decision,
+        label=label,
+        response=response,
+        was_custom_input=was_custom_input,
+    ))
 
 
 def _checkpoint_workflow_runs(

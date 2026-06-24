@@ -21,6 +21,7 @@ NodeType = Literal[
     "thought",
     "status",
     "permission",
+    "checkpoint",
     "error",
     "warn",
     "diff",

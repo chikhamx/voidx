@@ -244,6 +244,35 @@
       "title": "FileChangeAppended",
       "type": "object"
     },
+    "GuidanceSubmitted": {
+      "properties": {
+        "agent_id": {
+          "default": -1,
+          "title": "Agent Id",
+          "type": "integer"
+        },
+        "kind": {
+          "const": "guidance.submitted",
+          "default": "guidance.submitted",
+          "title": "Kind",
+          "type": "string"
+        },
+        "text": {
+          "title": "Text",
+          "type": "string"
+        },
+        "truncated": {
+          "default": false,
+          "title": "Truncated",
+          "type": "boolean"
+        }
+      },
+      "required": [
+        "text"
+      ],
+      "title": "GuidanceSubmitted",
+      "type": "object"
+    },
     "InputSet": {
       "properties": {
         "agent_id": {
@@ -641,6 +670,15 @@
           "title": "Detail",
           "type": "string"
         },
+        "display": {
+          "default": "tree_node",
+          "enum": [
+            "record_only",
+            "tree_node"
+          ],
+          "title": "Display",
+          "type": "string"
+        },
         "kind": {
           "const": "status.updated",
           "default": "status.updated",
@@ -665,15 +703,6 @@
             "working"
           ],
           "title": "Stage",
-          "type": "string"
-        },
-        "display": {
-          "default": "tree_node",
-          "enum": [
-            "record_only",
-            "tree_node"
-          ],
-          "title": "Display",
           "type": "string"
         },
         "status_id": {
@@ -705,6 +734,11 @@
           ],
           "default": null,
           "title": "Elapsed"
+        },
+        "finish_reason": {
+          "default": "",
+          "title": "Finish Reason",
+          "type": "string"
         },
         "kind": {
           "const": "subagent.finished",
@@ -785,17 +819,9 @@
           "title": "Kind",
           "type": "string"
         },
-        "max_steps": {
-          "title": "Max Steps",
-          "type": "integer"
-        },
         "name": {
           "title": "Name",
           "type": "string"
-        },
-        "step": {
-          "title": "Step",
-          "type": "integer"
         },
         "subagent_id": {
           "title": "Subagent Id",
@@ -805,9 +831,7 @@
       "required": [
         "agent_id",
         "subagent_id",
-        "name",
-        "step",
-        "max_steps"
+        "name"
       ],
       "title": "SubagentStepStarted",
       "type": "object"
@@ -847,6 +871,105 @@
       ],
       "title": "ThoughtAppended",
       "type": "object"
+    },
+    "TodoCleared": {
+      "properties": {
+        "agent_id": {
+          "default": -1,
+          "title": "Agent Id",
+          "type": "integer"
+        },
+        "kind": {
+          "const": "todo.cleared",
+          "default": "todo.cleared",
+          "title": "Kind",
+          "type": "string"
+        }
+      },
+      "title": "TodoCleared",
+      "type": "object"
+    },
+    "TodoCommitted": {
+      "properties": {
+        "agent_id": {
+          "default": -1,
+          "title": "Agent Id",
+          "type": "integer"
+        },
+        "kind": {
+          "const": "todo.committed",
+          "default": "todo.committed",
+          "title": "Kind",
+          "type": "string"
+        }
+      },
+      "title": "TodoCommitted",
+      "type": "object"
+    },
+    "TodoItemPayload": {
+      "properties": {
+        "content": {
+          "title": "Content",
+          "type": "string"
+        },
+        "status": {
+          "enum": [
+            "pending",
+            "in_progress",
+            "completed",
+            "cancelled"
+          ],
+          "title": "Status",
+          "type": "string"
+        }
+      },
+      "required": [
+        "content",
+        "status"
+      ],
+      "title": "TodoItemPayload",
+      "type": "object"
+    },
+    "TodoUpdated": {
+      "properties": {
+        "agent_id": {
+          "default": -1,
+          "title": "Agent Id",
+          "type": "integer"
+        },
+        "items": {
+          "items": {
+            "$ref": "#/$defs/TodoItemPayload"
+          },
+          "title": "Items",
+          "type": "array"
+        },
+        "kind": {
+          "const": "todo.updated",
+          "default": "todo.updated",
+          "title": "Kind",
+          "type": "string"
+        },
+        "summary": {
+          "title": "Summary",
+          "type": "string"
+        }
+      },
+      "required": [
+        "items",
+        "summary"
+      ],
+      "title": "TodoUpdated",
+      "type": "object"
+    },
+    "ToolDisplayMode": {
+      "enum": [
+        "show",
+        "summary",
+        "hidden"
+      ],
+      "title": "ToolDisplayMode",
+      "type": "string"
     },
     "ToolFinished": {
       "properties": {
@@ -904,11 +1027,20 @@
           "title": "Collapsed",
           "type": "boolean"
         },
+        "display_mode": {
+          "$ref": "#/$defs/ToolDisplayMode",
+          "default": "show"
+        },
         "kind": {
           "const": "tool_result.appended",
           "default": "tool_result.appended",
           "title": "Kind",
           "type": "string"
+        },
+        "summary_max_lines": {
+          "default": 3,
+          "title": "Summary Max Lines",
+          "type": "integer"
         },
         "text": {
           "title": "Text",
@@ -938,6 +1070,10 @@
           "title": "Args",
           "type": "string"
         },
+        "display_mode": {
+          "$ref": "#/$defs/ToolDisplayMode",
+          "default": "show"
+        },
         "kind": {
           "const": "tool.started",
           "default": "tool.started",
@@ -952,6 +1088,11 @@
           "additionalProperties": true,
           "title": "Raw Args",
           "type": "object"
+        },
+        "summary_max_lines": {
+          "default": 3,
+          "title": "Summary Max Lines",
+          "type": "integer"
         },
         "tool_call_id": {
           "title": "Tool Call Id",
@@ -1072,6 +1213,7 @@
             "turn",
             "tool_call",
             "tool_result",
+            "todo",
             "subagent",
             "message",
             "assistant",
@@ -1342,6 +1484,9 @@
               "$ref": "#/$defs/WarningAppended"
             },
             {
+              "$ref": "#/$defs/GuidanceSubmitted"
+            },
+            {
               "$ref": "#/$defs/ErrorAppended"
             },
             {
@@ -1373,6 +1518,15 @@
             },
             {
               "$ref": "#/$defs/ToolResultAppended"
+            },
+            {
+              "$ref": "#/$defs/TodoUpdated"
+            },
+            {
+              "$ref": "#/$defs/TodoCommitted"
+            },
+            {
+              "$ref": "#/$defs/TodoCleared"
             },
             {
               "$ref": "#/$defs/FileChangeAppended"

@@ -237,6 +237,39 @@ class PermissionPromptCleared(UiEventBase):
     kind: Literal["permission_prompt.cleared"] = "permission_prompt.cleared"
 
 
+class CheckpointChoicePayload(BaseModel):
+    model_config = ConfigDict(frozen=True)
+
+    label: str
+    value: str
+    description: str = ""
+
+
+class CheckpointPlanPayload(BaseModel):
+    model_config = ConfigDict(frozen=True)
+
+    plan_summary: str
+    steps: list[str] = Field(default_factory=list)
+    affected_files: list[str] = Field(default_factory=list)
+    risks: list[str] = Field(default_factory=list)
+
+
+class CheckpointPromptShown(UiEventBase):
+    kind: Literal["checkpoint_prompt.shown"] = "checkpoint_prompt.shown"
+    checkpoint_id: str
+    plan: CheckpointPlanPayload
+    choices: list[CheckpointChoicePayload] = Field(default_factory=list)
+
+
+class CheckpointDecisionSubmitted(UiEventBase):
+    kind: Literal["checkpoint_decision.submitted"] = "checkpoint_decision.submitted"
+    checkpoint_id: str
+    decision: str
+    label: str = ""
+    response: str = ""
+    was_custom_input: bool = False
+
+
 class InputSet(UiEventBase):
     kind: Literal["input.set"] = "input.set"
     text: str
@@ -282,6 +315,8 @@ UiEvent: TypeAlias = (
     | SubagentFinished
     | PermissionPromptShown
     | PermissionPromptCleared
+    | CheckpointPromptShown
+    | CheckpointDecisionSubmitted
     | InputSet
     | NoticeSet
 )

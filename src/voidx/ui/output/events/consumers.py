@@ -21,6 +21,8 @@ from voidx.ui.output.events.schema import (
     AssistantStreamUpdated,
     CaptureStarted,
     CaptureStopped,
+    CheckpointDecisionSubmitted,
+    CheckpointPromptShown,
     DiffAppended,
     ErrorAppended,
     FileChangeAppended,
@@ -331,6 +333,22 @@ class DockEventConsumer:
                 )
             case PermissionPromptCleared():
                 return self._dock.clear_permission()
+            case CheckpointPromptShown() as e:
+                choices = [choice.model_dump(mode="json") for choice in e.choices]
+                return self._dock.show_checkpoint(
+                    e.checkpoint_id,
+                    e.plan.model_dump(mode="json"),
+                    choices,
+                    parent=self._agent_parent(e.agent_id),
+                )
+            case CheckpointDecisionSubmitted() as e:
+                return self._dock.resolve_checkpoint(
+                    e.checkpoint_id,
+                    e.decision,
+                    e.label,
+                    e.response,
+                    was_custom_input=e.was_custom_input,
+                )
             case NoticeSet():
                 return None
             case _:

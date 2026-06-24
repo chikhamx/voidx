@@ -16,6 +16,10 @@ from voidx.ui.output.display_policy import ToolDisplayMode
 from voidx.ui.output.events import (
     AssistantStreamCommitted,
     AssistantStreamUpdated,
+    CheckpointChoicePayload,
+    CheckpointDecisionSubmitted,
+    CheckpointPlanPayload,
+    CheckpointPromptShown,
     DockEventConsumer,
     ErrorAppended,
     FileChangeAppended,
@@ -371,6 +375,62 @@ async def test_permission_prompt_event_renders_and_clears(isolated_dock):
 
         rendered = "\n".join(_plain(line) for line in isolated_dock.tree.render(100))
         assert "Permission required" not in rendered
+    finally:
+        await bus.stop()
+
+
+@pytest.mark.asyncio
+async def test_checkpoint_prompt_event_renders_voidx_plan_and_decision(isolated_dock):
+    isolated_dock.begin_capture()
+    bus = UiEventBus()
+    bus.start(DockEventConsumer(isolated_dock))
+    try:
+        await bus.request(TurnStarted(text="demo"))
+        await bus.emit(CheckpointPromptShown(
+            checkpoint_id="cp_1",
+            plan=CheckpointPlanPayload(
+                plan_summary="Add checkpoint node",
+                steps=["Add event schema", "Render TUI node"],
+                affected_files=["src/voidx/tools/plan_checkpoint.py"],
+                risks=["Do not duplicate hidden JSON result"],
+            ),
+            choices=[
+                CheckpointChoicePayload(
+                    label="Implement directly",
+                    value="approved",
+                    description="Start implementing the plan",
+                )
+            ],
+        ))
+        await bus.drain()
+
+        rendered = "\n".join(_plain(line) for line in isolated_dock.tree.render(120))
+        nodes = _tree_nodes(isolated_dock.tree.root)
+        checkpoint = next(node for node in nodes if node.node_type == "checkpoint")
+
+        assert "voidx plan" in rendered
+        assert "Plan: Add checkpoint node" in rendered
+        assert "1. Add event schema" in rendered
+        assert "src/voidx/tools/plan_checkpoint.py" in rendered
+        assert "Do not duplicate hidden JSON result" in rendered
+        assert checkpoint.status == "running"
+        assert checkpoint.payload["checkpoint_id"] == "cp_1"
+
+        await bus.emit(CheckpointDecisionSubmitted(
+            checkpoint_id="cp_1",
+            decision="approved",
+            label="Implement directly",
+            response="Implement directly",
+        ))
+        await bus.drain()
+
+        rendered = "\n".join(_plain(line) for line in isolated_dock.tree.render(120))
+
+        assert checkpoint.status == "done"
+        assert "voidx plan approved" in rendered
+        assert "User: Implement directly" in rendered
+        assert checkpoint.payload["decision"] == "approved"
+        assert checkpoint.payload["response"] == "Implement directly"
     finally:
         await bus.stop()
 
