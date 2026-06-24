@@ -99,13 +99,11 @@ class StatusUpdated(UiEventBase):
     detail: str = ""
     stage: Literal[
         "analyzing",
-        "thinking",
-        "streaming",
         "agent_step",
         "compacting",
-        "waiting_permission",
         "working",
     ] = "working"
+    display: Literal["record_only", "tree_node"] = "tree_node"
     parent_tool_call_id: str = ""
 
 

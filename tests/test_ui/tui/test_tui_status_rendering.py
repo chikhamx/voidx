@@ -178,7 +178,7 @@ def test_busy_activity_label_includes_step_and_turn_tokens(tmp_path, monkeypatch
     tui._busy_activity_verb = "Pondering"
     dock.record_status("agent:-1:progress", "Agent step 1/100", stage="agent step")
 
-    assert tui._busy_activity_label() == "◐ Pondering (1m 3s step 1/100 ↑116.1k ↓43)"
+    assert tui._busy_activity_label() == "◐ step 1/100 (1m 3s ↑116.1k ↓43)"
 
 
 def test_busy_activity_label_includes_active_analyzing_status(tmp_path, monkeypatch):
@@ -194,11 +194,31 @@ def test_busy_activity_label_includes_active_analyzing_status(tmp_path, monkeypa
         stage="analyzing",
     )
 
-    assert tui._busy_activity_label() == "◐ Pondering (3s Analyzing)"
+    assert tui._busy_activity_label() == "◐ Analyzing (3s)"
 
     dock.clear_status_record("turn:analyzing")
 
     assert tui._busy_activity_label() == "◐ Pondering (3s)"
+
+
+def test_busy_activity_label_includes_active_compacting_status(tmp_path, monkeypatch):
+    monkeypatch.setattr("voidx.ui.tui.render_activity.time.monotonic", lambda: 124.0)
+    tui = _tui(tmp_path)
+    tui._busy = True
+    tui._busy_started_at = 120.0
+    tui._busy_activity_verb = "Pondering"
+    dock.record_status(
+        "compaction",
+        "Compacting context",
+        "summarizing old messages",
+        stage="compacting",
+    )
+
+    assert tui._busy_activity_label() == "◐ Compacting context (4s)"
+
+    dock.clear_status_record("compaction")
+
+    assert tui._busy_activity_label() == "◐ Pondering (4s)"
 
 
 def test_busy_activity_label_omits_elapsed_without_start_time(tmp_path):

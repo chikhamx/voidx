@@ -186,7 +186,7 @@ class TestRouteHintToolIdLiteral:
             ("git status", "git"),
             ("echo 'x' > f", "file"),
             ("sed -i '3s/a/b/' f", "replace"),
-            ("echo 'x' >> f", "line"),
+            ("echo 'x' >> f", "write"),
             ("find . -name '*.py'", "glob"),
             ("grep pattern file.py", "grep"),
         ]:
@@ -578,7 +578,7 @@ class TestBasicPositive:
     def test_echo_append(self):
         h = try_hint("echo 'hello' >> file.txt")
         assert h is not None
-        assert h.tool_id == "line"
+        assert h.tool_id == "write"
 
     def test_unknown_command_no_hint(self):
         assert try_hint("python3 script.py") is None
@@ -603,7 +603,7 @@ class TestEchoRedirectInContent:
     def test_echo_content_with_double_gt_append(self):
         h = try_hint("echo 'a >> b' >> file.txt")
         assert h is not None
-        assert h.tool_id == "line"
+        assert h.tool_id == "write"
         assert 'file_path="file.txt"' in h.llm_hint
 
     def test_printf_content_with_gt(self):
@@ -621,7 +621,7 @@ class TestEchoRedirectInContent:
     def test_echo_append_without_spaces(self):
         h = try_hint("echo 'hello'>>file.txt")
         assert h is not None
-        assert h.tool_id == "line"
+        assert h.tool_id == "write"
         assert 'file_path="file.txt"' in h.llm_hint
 
 
@@ -727,12 +727,12 @@ class TestSedSingleLineDelete:
     def test_single_line_delete_macos(self):
         h = try_hint("sed -i '' '73d' file.py")
         assert h is not None
-        assert h.tool_id == "line"
+        assert h.tool_id == "replace"
 
     def test_single_line_delete_linux(self):
         h = try_hint("sed -i '73d' file.py")
         assert h is not None
-        assert h.tool_id == "line"
+        assert h.tool_id == "replace"
 
     def test_single_line_delete_mentions_read_first(self):
         h = try_hint("sed -i '' '73d' file.py")

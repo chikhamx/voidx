@@ -160,18 +160,7 @@ class DockEventConsumer:
 
                 return self._dock.capture(lambda console: render_diff(console, e.diff_text, e.title))
             case StatusUpdated() as e:
-                if e.status_id == "turn:analyzing" and e.stage == "analyzing":
-                    return self._dock.record_status(
-                        e.status_id,
-                        e.label,
-                        e.detail,
-                        stage=e.stage,
-                    )
-                if (
-                    e.stage == "agent_step"
-                    and e.agent_id < 0
-                    and not e.parent_tool_call_id
-                ):
+                if e.display == "record_only":
                     return self._dock.record_status(
                         e.status_id,
                         e.label,
@@ -333,7 +322,16 @@ class DockEventConsumer:
                 return node
             case InputSet() as e:
                 return self._dock.set_input(e.text, e.hints, e.cursor_pos)
-            case PermissionPromptShown() | PermissionPromptCleared() | NoticeSet():
+            case PermissionPromptShown() as e:
+                tools = [t.model_dump() for t in e.tools]
+                return self._dock.show_permission(
+                    e.prompt,
+                    tools,
+                    parent=self._agent_parent(e.agent_id),
+                )
+            case PermissionPromptCleared():
+                return self._dock.clear_permission()
+            case NoticeSet():
                 return None
             case _:
                 raise TypeError(f"Unsupported UI event: {event!r}")

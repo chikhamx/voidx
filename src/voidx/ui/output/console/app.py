@@ -251,6 +251,7 @@ class VoidConsole:
                 status_id="agent:-1:progress",
                 label=label,
                 stage="agent_step",
+                display="record_only",
             ))
             return
         if not self._debug:

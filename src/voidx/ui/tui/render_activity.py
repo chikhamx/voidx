@@ -7,7 +7,11 @@ import time
 from rich.text import Text
 
 from voidx.llm.usage import format_token_count
-from voidx.ui.output.dock import active_agent_step_text, active_turn_analyzing_text
+from voidx.ui.output.dock import (
+    active_agent_step_text,
+    active_compaction_text,
+    active_turn_analyzing_text,
+)
 from voidx.ui.tui.activity import (
     BUSY_ACTIVITY_DEFAULT_VERB,
     BUSY_ACTIVITY_GLYPHS,
@@ -46,16 +50,20 @@ class _ActivityRendererMixin:
         glyph = BUSY_ACTIVITY_GLYPHS[
             self._busy_activity_tick % len(BUSY_ACTIVITY_GLYPHS)
         ]
-        verb = self._busy_activity_verb or BUSY_ACTIVITY_DEFAULT_VERB
+        analyzing = active_turn_analyzing_text()
+        compacting = active_compaction_text()
+        step = active_agent_step_text()
+        status_label = analyzing or compacting or step or ""
+        verb = status_label or self._busy_activity_verb or BUSY_ACTIVITY_DEFAULT_VERB
         if started_at is None:
             return f"{glyph} {verb}"
         elapsed = max(0, int(time.monotonic() - started_at))
         details = [self._format_elapsed(elapsed)]
-        analyzing = active_turn_analyzing_text()
-        if analyzing:
+        if analyzing and status_label != analyzing:
             details.append(analyzing)
-        step = active_agent_step_text()
-        if step:
+        if compacting and status_label != compacting:
+            details.append(compacting)
+        if step and status_label != step:
             details.append(step)
         token_text = self._turn_token_text()
         if token_text:

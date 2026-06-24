@@ -270,6 +270,7 @@ async def test_turn_analyzing_status_records_without_transcript_node(isolated_do
             label="Analyzing",
             detail="loading context",
             stage="analyzing",
+            display="record_only",
         ))
         await bus.drain()
 
@@ -287,6 +288,34 @@ async def test_turn_analyzing_status_records_without_transcript_node(isolated_do
 
 
 @pytest.mark.asyncio
+async def test_compacting_status_records_without_transcript_node(isolated_dock):
+    isolated_dock.begin_capture()
+    bus = UiEventBus()
+    bus.start(DockEventConsumer(isolated_dock))
+    try:
+        await bus.emit(StatusUpdated(
+            status_id="compaction",
+            label="Compacting context",
+            detail="summarizing old messages",
+            stage="compacting",
+            display="record_only",
+        ))
+        await bus.drain()
+
+        rendered = "\n".join(_plain(line) for line in isolated_dock.tree.render(100))
+        assert "Compacting context" not in rendered
+        assert "summarizing old messages" not in rendered
+        assert isolated_dock.status_record("compaction").label == "Compacting context"
+
+        await bus.emit(StatusFinished(status_id="compaction"))
+        await bus.drain()
+
+        assert isolated_dock.status_record("compaction") is None
+    finally:
+        await bus.stop()
+
+
+@pytest.mark.asyncio
 async def test_agent_step_status_updates_panel_without_transcript_node(isolated_dock):
     isolated_dock.begin_capture()
     bus = UiEventBus()
@@ -296,6 +325,7 @@ async def test_agent_step_status_updates_panel_without_transcript_node(isolated_
             status_id="agent:-1:progress",
             label="Agent step 1/50",
             stage="agent_step",
+            display="record_only",
         ))
         await bus.drain()
 
@@ -312,7 +342,7 @@ async def test_agent_step_status_updates_panel_without_transcript_node(isolated_
 
 
 @pytest.mark.asyncio
-async def test_permission_prompt_event_does_not_pollute_transcript(isolated_dock):
+async def test_permission_prompt_event_renders_and_clears(isolated_dock):
     isolated_dock.begin_capture()
     bus = UiEventBus()
     bus.start(DockEventConsumer(isolated_dock))
@@ -332,12 +362,15 @@ async def test_permission_prompt_event_does_not_pollute_transcript(isolated_dock
         await bus.drain()
 
         rendered = "\n".join(_plain(line) for line in isolated_dock.tree.render(100))
-        assert "Permission required" not in rendered
-        assert "Allow tools: bash?" not in rendered
-        assert "npm test" not in rendered
+        assert "Permission required" in rendered
+        assert "Allow tools: bash?" in rendered
+        assert "npm test" in rendered
 
         await bus.emit(PermissionPromptCleared())
         await bus.drain()
+
+        rendered = "\n".join(_plain(line) for line in isolated_dock.tree.render(100))
+        assert "Permission required" not in rendered
     finally:
         await bus.stop()
 

@@ -15,7 +15,7 @@ from voidx.permission.service import (
 from voidx.permission.rules import PermissionCapability
 from voidx.workflow.service import workflow_gate, workflow_sort_key
 from voidx.workflow.types import WorkflowRunState, WorkflowRunStatus
-from voidx.runtime.ui import PermissionToolDetail
+from voidx.runtime.ui import PermissionPromptCleared, PermissionPromptShown, PermissionToolDetail
 
 if TYPE_CHECKING:
     from voidx.agent.graph.contracts import GraphPermissionHost
@@ -83,6 +83,9 @@ class GraphPermissionMixin:
         if choice is None:
             choice = "n"
 
+        if self._ui.via_events():
+            await self._ui.events.emit(PermissionPromptCleared())
+
         if choice == "a":
             for tc in need_ask:
                 self._permission.allow_silent(tc["name"])
@@ -102,6 +105,13 @@ class GraphPermissionMixin:
             ("No", "n", "Deny these tools"),
         ]
         details = [item.model_dump() for item in self._permission_tool_details(tool_calls)]
+
+        if self._ui.via_events():
+            await self._ui.events.emit(PermissionPromptShown(
+                prompt=f"Allow tools: {tool_list}?",
+                choices=choices,
+                tools=self._permission_tool_details(tool_calls),
+            ))
 
         if not self._app:
             self._ui.ui.print("")

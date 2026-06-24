@@ -30,6 +30,7 @@ from voidx.ui.output.dock.status import (
     DockStatusMixin,
     DockStatusRecord,
     active_agent_step_text,
+    active_compaction_text,
     active_turn_analyzing_text,
 )
 from voidx.ui.output.tree import OutputNode, OutputTree, is_transparent_container

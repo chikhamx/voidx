@@ -127,6 +127,7 @@ class GraphTurnRunner:
                     label="Analyzing",
                     detail="loading session and preparing context",
                     stage="analyzing",
+                    display="record_only",
                 ))
             else:
                 host._turn_node = host._ui.dock.start_turn(turn_display_text)
@@ -149,6 +150,7 @@ class GraphTurnRunner:
                                 label="Resuming long session",
                                 detail=f"{message_count} persisted messages; preparing compaction",
                                 stage="analyzing",
+                                display="record_only",
                             ))
                         else:
                             host._ui.ui.warn(

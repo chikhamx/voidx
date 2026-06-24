@@ -192,6 +192,7 @@ class GraphCompactionCoordinator:
                 label="Compacting context",
                 detail=_compaction_status_detail(total_tokens, force=force, preflight=preflight),
                 stage="compacting",
+                display="record_only",
             ))
         else:
             host._ui.ui.print(

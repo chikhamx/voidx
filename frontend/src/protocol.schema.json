@@ -660,14 +660,20 @@
           "default": "working",
           "enum": [
             "analyzing",
-            "thinking",
-            "streaming",
             "agent_step",
             "compacting",
-            "waiting_permission",
             "working"
           ],
           "title": "Stage",
+          "type": "string"
+        },
+        "display": {
+          "default": "tree_node",
+          "enum": [
+            "record_only",
+            "tree_node"
+          ],
+          "title": "Display",
           "type": "string"
         },
         "status_id": {
