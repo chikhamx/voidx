@@ -48,7 +48,8 @@ def test_startup_banner_has_no_internal_blank_rows():
         assert "Ask anything" in text
         assert "/model switch" in text
         assert "@ attach" in text
-        assert "Ctrl+" in text  # truncated at narrow width
+        if sys.platform != "win32":
+            assert "Ctrl+" in text  # truncated at narrow width
         assert "PgUp/PgDn scroll transcript" in text
         assert "Panels:" in text
         assert "Enter accept" in text

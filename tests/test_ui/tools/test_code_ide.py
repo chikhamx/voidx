@@ -1,5 +1,5 @@
 import sys
-from pathlib import Path
+from pathlib import Path, PurePosixPath
 
 sys.path.insert(0, "src")
 
@@ -16,7 +16,7 @@ def test_build_open_command_uses_goto_for_trae_cli():
         available=True,
     )
 
-    command = build_open_command(candidate, Path("/tmp/app.py"), line=12)
+    command = build_open_command(candidate, PurePosixPath("/tmp/app.py"), line=12)
 
     assert command == ["/usr/local/bin/trae", "--goto", "/tmp/app.py:12"]
 
@@ -30,7 +30,7 @@ def test_build_open_command_uses_goto_for_trae_app():
         available=True,
     )
 
-    command = build_open_command(candidate, Path("/tmp/app.py"), line=12)
+    command = build_open_command(candidate, PurePosixPath("/tmp/app.py"), line=12)
 
     assert command == ["open", "-a", "Trae", "--args", "--goto", "/tmp/app.py:12"]
 
@@ -45,7 +45,7 @@ def test_build_open_command_uses_editor_inside_ghostty(monkeypatch):
         available=True,
     )
 
-    command = build_open_command(candidate, Path("/tmp/app.py"), line=12)
+    command = build_open_command(candidate, PurePosixPath("/tmp/app.py"), line=12)
 
     assert command == ["/usr/local/bin/ghostty", "-e", "vim", "-N", "+12", "/tmp/app.py"]
 

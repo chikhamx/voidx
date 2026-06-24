@@ -109,7 +109,7 @@ class TestFileOps:
 
     def test_record_mtime_uses_ns_and_size_fingerprint(self, tmp_path):
         f = tmp_path / "fingerprint.txt"
-        f.write_text("one\n")
+        f.write_text("one\n", newline="\n")
         ctx = ToolContext(workspace=str(tmp_path))
 
         file_state.record_mtime(ctx, f)

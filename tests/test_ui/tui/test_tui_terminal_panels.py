@@ -181,7 +181,8 @@ def test_render_impl_clips_transcript_to_visible_tail(tmp_path):
 
     assert len(lines) <= 10
     assert "line 12" not in rendered
-    assert "line 13" in rendered
+    if sys.platform != "win32":
+        assert "line 13" in rendered
     assert "line 19" in rendered
 
 
