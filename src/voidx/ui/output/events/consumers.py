@@ -160,6 +160,13 @@ class DockEventConsumer:
 
                 return self._dock.capture(lambda console: render_diff(console, e.diff_text, e.title))
             case StatusUpdated() as e:
+                if e.status_id == "turn:analyzing" and e.stage == "analyzing":
+                    return self._dock.record_status(
+                        e.status_id,
+                        e.label,
+                        e.detail,
+                        stage=e.stage,
+                    )
                 if (
                     e.stage == "agent_step"
                     and e.agent_id < 0

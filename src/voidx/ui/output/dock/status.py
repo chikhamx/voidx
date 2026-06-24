@@ -28,6 +28,17 @@ def active_agent_step_text() -> str:
     return _agent_step_text(record.label)
 
 
+def active_turn_analyzing_text() -> str:
+    current = get_dock()
+    status_record = getattr(current, "status_record", None)
+    if not callable(status_record):
+        return ""
+    record = status_record("turn:analyzing")
+    if record is None:
+        return ""
+    return _clean(record.label).strip()
+
+
 def _agent_step_text(label: str) -> str:
     text = _clean(label).strip()
     prefix = "Agent step "
@@ -63,4 +74,3 @@ class DockStatusMixin:
 
     def status_record(self, status_id: str) -> DockStatusRecord | None:
         return self._status_records.get(status_id)
-

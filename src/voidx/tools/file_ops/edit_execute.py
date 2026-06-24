@@ -4,7 +4,7 @@ from dataclasses import asdict
 
 from pydantic import BaseModel, Field, model_validator
 
-from voidx.diffing import FileDiff, make_file_diff, parse_unified_diff
+from voidx.diffing import make_file_diff, make_structured_diff
 from voidx.tools.base import BaseTool, ToolContext, ToolResult, model_to_json_schema, resolve_safe
 from voidx.tools.file_state import (
     check_read_coverage,
@@ -130,7 +130,7 @@ async def _execute_text_replace(
     if isinstance(match, str):
         return ToolResult(output=match, metadata={"error": True})
 
-    start_offset, end_offset, start_line, end_line = match
+    _, _, start_line, end_line = match
     coverage_error = check_read_coverage(ctx, path, start_line, end_line)
     if coverage_error:
         return ToolResult(output=f"Edit 0: {coverage_error}", metadata={"error": True})
@@ -143,36 +143,30 @@ async def _execute_text_replace(
         for item in existing_coverage.get("ranges", [])
     ] if existing_coverage.get("fingerprint") == current_fingerprint else []
 
-    tail = original[end_offset:]
-    if (new_string == "" or new_string.endswith("\n")) and tail.startswith("\n"):
-        tail = tail[1:]
+    lines = list(display.lines)
+    new_lines = _split_edit_lines(new_string)
+    lines[start_line - 1:end_line] = new_lines
 
     # Tail-line dedup: if the last line of new_string exactly matches the
-    # first line of the remaining tail, consume that tail line too.
+    # first line after the replaced range, consume that line too.
     actual_end_line = end_line
-    if new_string and tail:
-        new_lines = _split_edit_lines(new_string)
-        if new_lines:
-            last_new = new_lines[-1]
-            dedup_tail = tail
-            if not new_string.endswith("\n") and dedup_tail.startswith("\n"):
-                dedup_tail = dedup_tail[1:]
-            tail_first_nl = dedup_tail.find("\n")
-            tail_first_line = dedup_tail[:tail_first_nl] if tail_first_nl != -1 else dedup_tail
-            if last_new == tail_first_line and tail_first_line != "":
-                remainder = dedup_tail[tail_first_nl + 1:] if tail_first_nl != -1 else ""
-                if new_string.endswith("\n"):
-                    tail = remainder
-                else:
-                    tail = f"\n{remainder}" if remainder else ""
-                actual_end_line = end_line + 1
+    if new_lines and new_lines[-1] != "":
+        next_idx = start_line - 1 + len(new_lines)
+        if next_idx < len(lines) and lines[next_idx] == new_lines[-1]:
+            del lines[next_idx]
+            actual_end_line = end_line + 1
 
-    content = f"{original[:start_offset]}{new_string}{tail}"
+    # Trailing newline: preserve the original file's trailing newline.
+    # _split_edit_lines already strips a trailing \n from new_string, so
+    # both "foo" and "foo\n" produce the same line list.  The original
+    # trailing newline is kept unless the file becomes empty.
+    trailing_newline = display.trailing_newline if lines else False
+    content = _join_display_lines(lines, trailing_newline=trailing_newline)
+
     await save_file_version(ctx, path, display_path=file_path, tool_name=tool_name)
     path.write_text(content, encoding="utf-8")
     diff = make_file_diff(file_path, original, content)
-    parsed = parse_unified_diff(diff)
-    file_diff = parsed.files[0] if parsed.files else FileDiff(path=file_path)
+    file_diff = make_structured_diff(file_path, original, content)
     remap_read_coverage_from_file_diff(ctx, path, file_diff, old_ranges=old_ranges)
 
     output = f"File edited: {file_path} (1 operations)"
@@ -190,7 +184,6 @@ async def _execute_text_replace(
         },
         diff=diff,
     )
-
 
 
 async def _apply_resolved_edits(
@@ -247,8 +240,7 @@ async def _apply_resolved_edits(
     await save_file_version(ctx, path, display_path=file_path, tool_name=tool_name)
     path.write_text(content, encoding="utf-8")
     diff = make_file_diff(file_path, original, content)
-    parsed = parse_unified_diff(diff)
-    file_diff = parsed.files[0] if parsed.files else FileDiff(path=file_path)
+    file_diff = make_structured_diff(file_path, original, content)
     remap_read_coverage_from_file_diff(ctx, path, file_diff, old_ranges=old_ranges)
 
     details = "\n".join([*hints, *_line_shift_hints(edits), diff])

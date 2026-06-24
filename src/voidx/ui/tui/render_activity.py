@@ -7,7 +7,7 @@ import time
 from rich.text import Text
 
 from voidx.llm.usage import format_token_count
-from voidx.ui.output.dock import active_agent_step_text
+from voidx.ui.output.dock import active_agent_step_text, active_turn_analyzing_text
 from voidx.ui.tui.activity import (
     BUSY_ACTIVITY_DEFAULT_VERB,
     BUSY_ACTIVITY_GLYPHS,
@@ -51,6 +51,9 @@ class _ActivityRendererMixin:
             return f"{glyph} {verb}"
         elapsed = max(0, int(time.monotonic() - started_at))
         details = [self._format_elapsed(elapsed)]
+        analyzing = active_turn_analyzing_text()
+        if analyzing:
+            details.append(analyzing)
         step = active_agent_step_text()
         if step:
             details.append(step)

@@ -51,10 +51,11 @@ class DockStatusNodeMixin:
         ok: bool = True,
         remove: bool = True,
     ) -> None:
+        had_record = status_id in self._status_records
         self.clear_status_record(status_id)
         node = self._status_nodes.pop(status_id, None)
         if node is None:
-            if status_id:
+            if status_id and not had_record:
                 import logging
                 logging.getLogger("voidx.ui").debug("finish_status: unknown status_id=%s", status_id)
             return
@@ -76,4 +77,3 @@ class DockStatusNodeMixin:
         self._tree.mark_dirty()
         self._mark_subtree_settled(node)
         self.refresh()
-

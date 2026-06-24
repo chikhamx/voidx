@@ -239,6 +239,33 @@ async def test_status_events_render_and_clear(isolated_dock):
     bus.start(DockEventConsumer(isolated_dock))
     try:
         await bus.emit(StatusUpdated(
+            status_id="generic:status",
+            label="Working",
+            detail="loading context",
+            stage="working",
+        ))
+        await bus.drain()
+
+        rendered = "\n".join(_plain(line) for line in isolated_dock.tree.render(100))
+        assert "Working" in rendered
+        assert "loading context" in rendered
+
+        await bus.emit(StatusFinished(status_id="generic:status"))
+        await bus.drain()
+
+        rendered = "\n".join(_plain(line) for line in isolated_dock.tree.render(100))
+        assert "Working" not in rendered
+    finally:
+        await bus.stop()
+
+
+@pytest.mark.asyncio
+async def test_turn_analyzing_status_records_without_transcript_node(isolated_dock):
+    isolated_dock.begin_capture()
+    bus = UiEventBus()
+    bus.start(DockEventConsumer(isolated_dock))
+    try:
+        await bus.emit(StatusUpdated(
             status_id="turn:analyzing",
             label="Analyzing",
             detail="loading context",
@@ -247,14 +274,14 @@ async def test_status_events_render_and_clear(isolated_dock):
         await bus.drain()
 
         rendered = "\n".join(_plain(line) for line in isolated_dock.tree.render(100))
-        assert "Analyzing" in rendered
-        assert "loading context" in rendered
+        assert "Analyzing" not in rendered
+        assert "loading context" not in rendered
+        assert isolated_dock.status_record("turn:analyzing").label == "Analyzing"
 
         await bus.emit(StatusFinished(status_id="turn:analyzing"))
         await bus.drain()
 
-        rendered = "\n".join(_plain(line) for line in isolated_dock.tree.render(100))
-        assert "Analyzing" not in rendered
+        assert isolated_dock.status_record("turn:analyzing") is None
     finally:
         await bus.stop()
 

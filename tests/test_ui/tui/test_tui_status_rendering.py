@@ -181,6 +181,26 @@ def test_busy_activity_label_includes_step_and_turn_tokens(tmp_path, monkeypatch
     assert tui._busy_activity_label() == "◐ Pondering (1m 3s step 1/100 ↑116.1k ↓43)"
 
 
+def test_busy_activity_label_includes_active_analyzing_status(tmp_path, monkeypatch):
+    monkeypatch.setattr("voidx.ui.tui.render_activity.time.monotonic", lambda: 123.0)
+    tui = _tui(tmp_path)
+    tui._busy = True
+    tui._busy_started_at = 120.0
+    tui._busy_activity_verb = "Pondering"
+    dock.record_status(
+        "turn:analyzing",
+        "Analyzing",
+        "loading session and preparing context",
+        stage="analyzing",
+    )
+
+    assert tui._busy_activity_label() == "◐ Pondering (3s Analyzing)"
+
+    dock.clear_status_record("turn:analyzing")
+
+    assert tui._busy_activity_label() == "◐ Pondering (3s)"
+
+
 def test_busy_activity_label_omits_elapsed_without_start_time(tmp_path):
     tui = _tui(tmp_path)
     tui._busy = True

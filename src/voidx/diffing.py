@@ -159,6 +159,102 @@ def make_file_diff(
     return "".join(diff)
 
 
+def make_structured_diff(
+    filepath: str,
+    old_content: str,
+    new_content: str,
+) -> FileDiff:
+    """Generate a structured FileDiff directly, without a text round-trip.
+
+    Uses SequenceMatcher.get_grouped_opcodes(n=3) to match unified_diff's
+    hunk-grouping behavior.  Handles the old_start=0 / new_start=0 convention
+    for pure-insert / pure-delete hunks.
+    """
+    old = old_content.splitlines(keepends=True)
+    new = new_content.splitlines(keepends=True)
+    sm = difflib.SequenceMatcher(a=old, b=new, autojunk=False)
+
+    file_diff = FileDiff(
+        old_path=f"a/{filepath}",
+        new_path=f"b/{filepath}",
+        path=filepath,
+        operation="Update",
+    )
+    if not old and not new:
+        return file_diff
+    if not old:
+        file_diff.operation = "Create"
+    elif not new:
+        file_diff.operation = "Delete"
+
+    for group in sm.get_grouped_opcodes(n=3):
+        first_tag, first_i1, first_i2, first_j1, first_j2 = group[0]
+        last_tag, last_i1, last_i2, last_j1, last_j2 = group[-1]
+
+        old_count = last_i2 - first_i1
+        new_count = last_j2 - first_j1
+        old_start = 0 if old_count == 0 else first_i1 + 1
+        new_start = 0 if new_count == 0 else first_j1 + 1
+
+        hunk = DiffHunk(
+            old_start=old_start,
+            old_count=old_count,
+            new_start=new_start,
+            new_count=new_count,
+        )
+
+        old_lineno = old_start
+        new_lineno = new_start
+        for tag, i1, i2, j1, j2 in group:
+            if tag == "equal":
+                for k in range(i2 - i1):
+                    hunk.lines.append(DiffLine(
+                        kind="context",
+                        old_lineno=old_lineno,
+                        new_lineno=new_lineno,
+                        text=old[i1 + k].rstrip("\n"),
+                    ))
+                    old_lineno += 1
+                    new_lineno += 1
+            elif tag == "replace":
+                for k in range(i2 - i1):
+                    hunk.lines.append(DiffLine(
+                        kind="remove",
+                        old_lineno=old_lineno,
+                        text=old[i1 + k].rstrip("\n"),
+                    ))
+                    old_lineno += 1
+                for k in range(j2 - j1):
+                    hunk.lines.append(DiffLine(
+                        kind="add",
+                        new_lineno=new_lineno,
+                        text=new[j1 + k].rstrip("\n"),
+                    ))
+                    new_lineno += 1
+            elif tag == "delete":
+                for k in range(i2 - i1):
+                    hunk.lines.append(DiffLine(
+                        kind="remove",
+                        old_lineno=old_lineno,
+                        text=old[i1 + k].rstrip("\n"),
+                    ))
+                    old_lineno += 1
+            elif tag == "insert":
+                for k in range(j2 - j1):
+                    hunk.lines.append(DiffLine(
+                        kind="add",
+                        new_lineno=new_lineno,
+                        text=new[j1 + k].rstrip("\n"),
+                    ))
+                    new_lineno += 1
+
+        file_diff.hunks.append(hunk)
+        file_diff.added += sum(1 for line in hunk.lines if line.kind == "add")
+        file_diff.removed += sum(1 for line in hunk.lines if line.kind == "remove")
+
+    return file_diff
+
+
 def diff_stat(diff_text: str) -> tuple[int, int]:
     """Return (added, removed) line counts from a unified diff."""
     added = 0
