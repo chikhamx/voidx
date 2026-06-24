@@ -85,7 +85,6 @@ class TestToolRegistry:
         assert "grep" in ids
         assert "git" in ids
         assert "bash" in ids
-        assert "repo_map" in ids
         assert "clarify" in ids
         assert "checkpoint" in ids
         assert "workflow" in ids

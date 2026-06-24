@@ -356,7 +356,6 @@ def _tool_display_name(tool_name: str, label: str) -> str:
         "bash": "Bash",
         "webfetch": "Fetch",
         "websearch": "Search",
-        "repo_map": "Map",
         "todo": "Todo",
         "task_status": "Status",
         "checkpoint": "Checkpoint",

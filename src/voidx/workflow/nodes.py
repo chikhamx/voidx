@@ -24,7 +24,6 @@ BRAINSTORMING = WorkflowNode(
         "read",
         "glob",
         "grep",
-        "repo_map",
         "clarify",
         "checkpoint",
         "webfetch",
@@ -79,7 +78,6 @@ WRITING_DESIGN_DOCS = WorkflowNode(
         "write",
         "replace",
         "document",
-        "repo_map",
         "webfetch",
         "websearch",
     ],
@@ -124,7 +122,6 @@ WRITING_PLANS = WorkflowNode(
         "read",
         "glob",
         "grep",
-        "repo_map",
         "webfetch",
         "websearch",
         "file",
@@ -178,7 +175,6 @@ TEST_DRIVEN_DEVELOPMENT = WorkflowNode(
         "bash",
         "glob",
         "grep",
-        "repo_map",
         "lsp",
     ],
     gate=NodeGate(
@@ -235,7 +231,6 @@ VERIFICATION_BEFORE_COMPLETION = WorkflowNode(
         "read",
         "glob",
         "grep",
-        "repo_map",
         "lsp",
     ],
     gate=NodeGate(
@@ -327,7 +322,6 @@ RECEIVING_CODE_REVIEW = WorkflowNode(
         "bash",
         "glob",
         "grep",
-        "repo_map",
     ],
     gate=NodeGate(
         description="Do not implement any feedback item before verifying it against the codebase.",
@@ -374,7 +368,6 @@ SYSTEMATIC_DEBUGGING = WorkflowNode(
         "glob",
         "grep",
         "bash",
-        "repo_map",
         "lsp",
     ],
     gate=NodeGate(

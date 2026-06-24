@@ -43,7 +43,7 @@ class VoidConsole:
         "read": "reading", "file": "managing", "write": "editing", "replace": "replacing",
         "glob": "finding", "grep": "searching", "bash": "running",
         "agent": "delegating", "webfetch": "fetching", "websearch": "searching",
-        "todo": "updating", "task_status": "checking", "repo_map": "mapping",
+        "todo": "updating", "task_status": "checking",
         "lsp": "using",
         "checkpoint": "checking",
     }

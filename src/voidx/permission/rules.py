@@ -37,7 +37,6 @@ BASIC_RULES: Ruleset = [
     Rule(permission="compact", pattern="*", action="allow"),
     Rule(permission="task_status", pattern="*", action="allow"),
     Rule(permission="skill", pattern="*", action="allow"),
-    Rule(permission="repo_map", pattern="*", action="allow"),
     Rule(permission="lsp", pattern="*", action="allow"),
     Rule(permission="agent", pattern="voidx", action="allow"),
     Rule(permission="edit", pattern="*", action="ask"),
@@ -98,7 +97,6 @@ def repair_tool_name(tool: str) -> str:
         "edit_file": "replace", "shell": "bash",
         "readfile": "read", "writefile": "file",
         "search": "grep", "find": "glob",
-        "RepoMap": "repo_map", "repomap": "repo_map", "Repo_map": "repo_map",
         "LspDiagnostics": "lsp", "LspSymbols": "lsp",
         "LspDefinition": "lsp", "LspReferences": "lsp",
         "CompactContext": "compact",
@@ -354,7 +352,7 @@ def capability_for_tool(tool: str, args: dict) -> PermissionCapability:
     if tool in {
         "read", "glob", "grep", "webfetch", "websearch", "todo", "task_status",
         "skill", "workflow", "compact",
-        "repo_map", "lsp",
+        "lsp",
     }:
         return PermissionCapability.READ_TOOLS
     if tool in {"file", "write", "replace"}:

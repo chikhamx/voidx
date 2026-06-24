@@ -153,29 +153,6 @@ class TestSearch:
         assert "Failed to read file during grep" in caplog.text
         assert "bad.py" in caplog.text
 
-    def test_repomap_logs_python_symbol_extraction_failure(self, tmp_path, monkeypatch, caplog):
-        from voidx.tools import repomap as repomap_module
-
-        target = tmp_path / "broken.py"
-        target.write_text("def ok():\n    pass\n")
-        original_read_text = Path.read_text
-
-        def fake_read_text(self, *args, **kwargs):
-            if self == target:
-                raise OSError("cannot read")
-            return original_read_text(self, *args, **kwargs)
-
-        monkeypatch.setattr(Path, "read_text", fake_read_text)
-
-        with caplog.at_level(logging.DEBUG, logger="voidx.tools.repomap"):
-            symbols = repomap_module._extract_python_symbols(target)
-
-        assert symbols == []
-        assert "Failed to extract Python symbols" in caplog.text
-        assert "broken.py" in caplog.text
-
-
-
 
 class TestGrepImprovements:
     """P0 grep improvements: ignore_case, whole_word, context_lines, exclude."""

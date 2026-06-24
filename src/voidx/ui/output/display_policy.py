@@ -121,7 +121,6 @@ DEFAULT_DISPLAY_RULES: dict[str, ToolDisplayRule] = {
     # ── Summary：搜索/查询类 ──
     "grep": ToolDisplayRule(tool_name="grep", mode=ToolDisplayMode.SUMMARY, summary_max_lines=5),
     "glob": ToolDisplayRule(tool_name="glob", mode=ToolDisplayMode.SUMMARY, summary_max_lines=5),
-    "repo_map": ToolDisplayRule(tool_name="repo_map", mode=ToolDisplayMode.SUMMARY, summary_max_lines=5),
     "websearch": ToolDisplayRule(tool_name="websearch", mode=ToolDisplayMode.SUMMARY, summary_max_lines=5),
     "lsp": ToolDisplayRule(tool_name="lsp", mode=ToolDisplayMode.SUMMARY, summary_max_lines=5),
     # ── Show + 自适应 ──

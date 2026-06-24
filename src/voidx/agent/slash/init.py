@@ -12,7 +12,7 @@ Generate an AGENTS.md file for this project. Write it to the workspace root.
 
 ## What to do
 
-1. Scan the project structure using repo_map, glob, grep, and read tools.
+1. Scan the project structure using glob, grep, and read tools.
 2. Detect the language, framework, test runner, linter, and build system.
 3. Read key config files such as pyproject.toml, package.json, Cargo.toml,
    go.mod, Makefile, justfile, and README files to extract exact commands.

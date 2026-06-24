@@ -153,7 +153,7 @@ class TestDefaultDisplayRules:
         assert DEFAULT_DISPLAY_RULES["compact"].replay_sanitize is False
 
     def test_summary_tools(self):
-        summary_tools = ["grep", "glob", "repo_map", "websearch", "lsp"]
+        summary_tools = ["grep", "glob", "websearch", "lsp"]
         for name in summary_tools:
             assert DEFAULT_DISPLAY_RULES[name].mode == ToolDisplayMode.SUMMARY, f"{name} should be summary"
 
