@@ -46,7 +46,7 @@ def test_workflow_service_does_not_import_skills_schema():
 
 
 def test_bash_tool_uses_permission_service_boundary():
-    imports = _imported_modules("src/voidx/tools/bash.py")
+    imports = _imported_modules("src/voidx/tools/bash/safety.py")
 
     assert "voidx.permission.engine" not in imports
     assert "voidx.permission.sandbox" not in imports

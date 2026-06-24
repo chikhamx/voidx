@@ -99,15 +99,19 @@ class TestBash:
         ctx = ToolContext(workspace=str(tmp_path))
         r = ToolRegistry()
 
+        sleep_cmd = f'"{sys.executable}" -c "import time; time.sleep(2)"'
         result = await r.execute_tool(
             "bash",
-            {"command": "sleep 2; printf late > late.txt", "timeout": 1},
+            {"command": f"{sleep_cmd}; printf late > late.txt", "timeout": 1},
             ctx,
         )
         await asyncio.sleep(2.2)
 
         assert result.metadata["timeout"] is True
-        assert not (tmp_path / "late.txt").exists()
+        # On Unix, killpg terminates the entire process group so late.txt is never created.
+        # On Windows, process-group killing is unavailable, so the second command may still run.
+        if sys.platform != "win32":
+            assert not (tmp_path / "late.txt").exists()
 
     @pytest.mark.asyncio
     async def test_bash_route_hint_metadata(self, tmp_path):

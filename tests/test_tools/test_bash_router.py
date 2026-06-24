@@ -4,7 +4,7 @@ from __future__ import annotations
 
 import pytest
 
-from voidx.tools.bash_router import RouteHint, try_hint
+from voidx.tools.bash import RouteHint, try_hint
 
 
 # ---------------------------------------------------------------------------
