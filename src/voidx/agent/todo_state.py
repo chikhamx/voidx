@@ -28,6 +28,12 @@ _DSML_RUNTIME_INVOKE_RE = re.compile(
 
 def todo_run_state_from_result(result: object) -> TodoRunState | None:
     metadata = getattr(result, "metadata", {}) or {}
+    
+    # Short-circuit for read operations
+    todo_op = metadata.get("todo_op")
+    if todo_op == "read":
+        return None
+    
     raw_items = metadata.get("todo_items")
     summary = metadata.get("todo_summary")
     if not isinstance(raw_items, list) or not isinstance(summary, str):
@@ -36,9 +42,25 @@ def todo_run_state_from_result(result: object) -> TodoRunState | None:
         items = [TodoRunItem.model_validate(item) for item in raw_items]
     except Exception:
         return None
+    
+    # Build counts
+    total = len(items)
+    done = sum(1 for item in items if item.status == "completed")
+    in_progress = sum(1 for item in items if item.status == "in_progress")
+    pending = sum(1 for item in items if item.status == "pending")
+    cancelled = sum(1 for item in items if item.status == "cancelled")
+    
+    # Build active_items (only in_progress)
+    active_items = [item for item in items if item.status == "in_progress"]
+    
     return TodoRunState(
         summary=summary,
-        items=items,
+        total=total,
+        done=done,
+        in_progress=in_progress,
+        pending=pending,
+        cancelled=cancelled,
+        active_items=active_items,
         updated_at=datetime.now(timezone.utc).isoformat(),
     )
 
@@ -62,8 +84,12 @@ def apply_todo_state_to_host(host: object, raw_state: object) -> None:
     if task_state is not None:
         task_state.todo_state = todo_state
     if tracker is not None:
-        if todo_state.items:
-            tracker.set_todos(todo_state.items)
+        if todo_state.total > 0:
+            # Convert active_items to dict format for tracker
+            todos_dict = {}
+            for item in todo_state.active_items:
+                todos_dict[item.id] = {"content": item.content, "status": item.status}
+            tracker.set_todos_from_dict(todos_dict)
         else:
             tracker.clear_todos()
 

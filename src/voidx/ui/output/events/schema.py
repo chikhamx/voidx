@@ -170,6 +170,7 @@ class ToolResultAppended(UiEventBase):
 class TodoItemPayload(BaseModel):
     model_config = ConfigDict(frozen=True)
 
+    id: str
     content: str
     status: TodoStatus
 
@@ -178,6 +179,7 @@ class TodoUpdated(UiEventBase):
     kind: Literal["todo.updated"] = "todo.updated"
     items: list[TodoItemPayload]
     summary: str
+    todo_op: str = "write"  # write, update, read
 
 
 class TodoCommitted(UiEventBase):

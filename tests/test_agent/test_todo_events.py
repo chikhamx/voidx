@@ -23,8 +23,8 @@ class TestTodoUpdatedEvent:
             output="done",
             metadata={
                 "todo_items": [
-                    {"content": "implement", "status": "in_progress"},
-                    {"content": "test", "status": "pending"},
+                    {"id": "impl", "content": "implement", "status": "in_progress"},
+                    {"id": "test", "content": "test", "status": "pending"},
                 ],
                 "todo_summary": "0/2 done · 1 active · 1 pending",
             },
@@ -32,7 +32,8 @@ class TestTodoUpdatedEvent:
         event = todo_updated_event(result)
         assert event is not None
         assert isinstance(event, TodoUpdated)
-        assert len(event.items) == 2
+        assert len(event.items) == 1  # Only in_progress items
+        assert event.items[0].id == "impl"
         assert event.items[0].content == "implement"
         assert event.items[0].status == "in_progress"
         assert event.summary == "0/2 done · 1 active · 1 pending"
@@ -41,7 +42,7 @@ class TestTodoUpdatedEvent:
         result = ToolResult(
             output="done",
             metadata={
-                "todo_items": [{"content": "task", "status": "pending"}],
+                "todo_items": [{"id": "task1", "content": "task", "status": "pending"}],
                 "todo_summary": "0/1 done · 0 active · 1 pending",
             },
         )
@@ -60,7 +61,7 @@ class TestTodoUpdatedEvent:
     def test_returns_none_when_missing_summary(self):
         result = ToolResult(
             output="done",
-            metadata={"todo_items": [{"content": "x", "status": "pending"}]},
+            metadata={"todo_items": [{"id": "task1", "content": "x", "status": "pending"}]},
         )
         assert todo_updated_event(result) is None
 
@@ -78,7 +79,7 @@ class TestTodoUpdatedEvent:
         result = ToolResult(
             output="done",
             metadata={
-                "todo_items": [{"content": "x", "status": "pending"}],
+                "todo_items": [{"id": "task1", "content": "x", "status": "pending"}],
                 "todo_summary": "0/1 done",
             },
         )
@@ -99,13 +100,13 @@ class TestToolExecutionTodoEmit:
         mock_result = ToolResult(
             output="done",
             metadata={
-                "todo_items": [{"content": "task a", "status": "pending"}],
+                "todo_items": [{"id": "task_a", "content": "task a", "status": "pending"}],
                 "todo_summary": "0/1 done · 0 active · 1 pending",
             },
         )
 
         fake_event = TodoUpdated(
-            items=[TodoItemPayload(content="task a", status="pending")],
+            items=[TodoItemPayload(id="task_a", content="task a", status="pending")],
             summary="0/1 done · 0 active · 1 pending",
         )
 
@@ -177,14 +178,14 @@ class TestSubagentTodoEmit:
         mock_result = ToolResult(
             output="done",
             metadata={
-                "todo_items": [{"content": "explore codebase", "status": "in_progress"}],
+                "todo_items": [{"id": "explore", "content": "explore codebase", "status": "in_progress"}],
                 "todo_summary": "0/1 done · 1 active · 0 pending",
             },
         )
 
         fake_event = TodoUpdated(
             agent_id=agent_id,
-            items=[TodoItemPayload(content="explore codebase", status="in_progress")],
+            items=[TodoItemPayload(id="explore", content="explore codebase", status="in_progress")],
             summary="0/1 done · 1 active · 0 pending",
         )
 

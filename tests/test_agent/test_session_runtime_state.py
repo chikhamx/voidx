@@ -80,9 +80,13 @@ async def test_runtime_state_round_trips_structured_goal_state():
             },
             todo_state=TodoRunState.model_validate({
                 "summary": "0/2 done · 1 active · 1 pending",
-                "items": [
-                    {"content": "inspect current behavior", "status": "in_progress"},
-                    {"content": "write focused test", "status": "pending"},
+                "total": 2,
+                "done": 0,
+                "in_progress": 1,
+                "pending": 1,
+                "cancelled": 0,
+                "active_items": [
+                    {"id": "inspect", "content": "inspect current behavior", "status": "in_progress"},
                 ],
                 "updated_at": "2026-06-11T00:00:00+00:00",
             }),
@@ -112,7 +116,7 @@ async def test_runtime_state_round_trips_structured_goal_state():
         assert loaded.task_state.recent_exchanges == []
         assert loaded.task_state.todo_state is not None
         assert loaded.task_state.todo_state.summary == "0/2 done · 1 active · 1 pending"
-        assert loaded.task_state.todo_state.items[0].content == "inspect current behavior"
+        assert loaded.task_state.todo_state.active_items[0].content == "inspect current behavior"
         assert loaded.task_state.workflow_runs["brainstorm"].status == WorkflowRunStatus.ACTIVE
         assert loaded.task_state.workflow_runs["brainstorm"].goal_type == "design"
     finally:

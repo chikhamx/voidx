@@ -189,7 +189,9 @@ class GraphToolExecutor:
                 host._clear_failure_check(cid)
 
             todo_state = todo_run_state_from_result(result) if tid == "todo" and ok else None
-            if host._ui.via_events() and tid == "todo":
+            todo_meta = getattr(result, "metadata", {}) or {} if tid == "todo" and ok else {}
+            is_todo_read = todo_meta.get("todo_op") == "read"
+            if host._ui.via_events() and tid == "todo" and not is_todo_read:
                 todo_event = todo_updated_event(result)
                 if todo_event is not None:
                     await host._ui.events.emit(todo_event)
@@ -197,7 +199,7 @@ class GraphToolExecutor:
                     await host._ui.events.emit(WarningAppended(
                         message="Todo update ignored: tool returned malformed metadata.",
                     ))
-            elif tid == "todo" and ok and todo_state is None:
+            elif tid == "todo" and ok and todo_state is None and not is_todo_read:
                 host._ui.ui.warn("Todo update ignored: tool returned malformed metadata.")
 
             notify_tool_failure(host, tc, result, display_policy.rule_for(tid).mode, tool_event_id)

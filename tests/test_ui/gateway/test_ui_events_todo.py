@@ -60,14 +60,14 @@ async def test_todo_updated_sets_pinned_state_until_committed(isolated_dock):
         ))
         await bus.emit(TodoUpdated(
             items=[
-                TodoItemPayload(content="implement event", status="in_progress"),
-                TodoItemPayload(content="write tests", status="pending"),
+                TodoItemPayload(id="impl", content="implement event", status="in_progress"),
+                TodoItemPayload(id="test", content="write tests", status="pending"),
             ],
             summary="0/2 done · 1 active · 1 pending",
         ))
         await bus.emit(TodoUpdated(
             items=[
-                TodoItemPayload(content=f"task {idx}", status="pending")
+                TodoItemPayload(id=f"task_{idx}", content=f"task {idx}", status="pending")
                 for idx in range(10)
             ],
             summary="0/10 done · 0 active · 10 pending",
@@ -125,8 +125,8 @@ async def test_todo_updated_sets_pinned_todo_state(isolated_dock):
     try:
         await bus.emit(TodoUpdated(
             items=[
-                TodoItemPayload(content="implement pinned display", status="in_progress"),
-                TodoItemPayload(content="write tests", status="pending"),
+                TodoItemPayload(id="impl", content="implement pinned display", status="in_progress"),
+                TodoItemPayload(id="test", content="write tests", status="pending"),
             ],
             summary="0/2 done · 1 active · 1 pending",
         ))
@@ -153,7 +153,7 @@ async def test_todo_cleared_removes_pinned_todo_without_transcript_node(isolated
     bus.start(DockEventConsumer(isolated_dock))
     try:
         await bus.emit(TodoUpdated(
-            items=[TodoItemPayload(content="temporary task", status="in_progress")],
+            items=[TodoItemPayload(id="temp", content="temporary task", status="in_progress")],
             summary="0/1 done · 1 active · 0 pending",
         ))
         await bus.emit(TodoCleared())
@@ -219,13 +219,13 @@ async def test_todo_committed_appends_each_turn_todo_and_clears_pinned(isolated_
     try:
         await bus.request(TurnStarted(text="first"))
         await bus.emit(TodoUpdated(
-            items=[TodoItemPayload(content="first task", status="pending")],
+            items=[TodoItemPayload(id="first", content="first task", status="pending")],
             summary="0/1 done · 0 active · 1 pending",
         ))
         await bus.emit(TodoCommitted())
         await bus.request(TurnStarted(text="second"))
         await bus.emit(TodoUpdated(
-            items=[TodoItemPayload(content="second task", status="in_progress")],
+            items=[TodoItemPayload(id="second", content="second task", status="in_progress")],
             summary="0/1 done · 1 active · 0 pending",
         ))
         await bus.emit(TodoCommitted())
@@ -237,12 +237,12 @@ async def test_todo_committed_appends_each_turn_todo_and_clears_pinned(isolated_
         assert len(todo_nodes) == 2
         assert todo_nodes[0].payload["summary"] == "0/1 done · 0 active · 1 pending"
         assert todo_nodes[0].payload["items"] == [
-            {"content": "first task", "status": "pending"}
+            {"id": "first", "content": "first task", "status": "pending"}
         ]
         assert isolated_dock.tree.root.children[-1] is todo_nodes[1]
         assert todo_nodes[1].payload["summary"] == "0/1 done · 1 active · 0 pending"
         assert todo_nodes[1].payload["items"] == [
-            {"content": "second task", "status": "in_progress"}
+            {"id": "second", "content": "second task", "status": "in_progress"}
         ]
     finally:
         await bus.stop()
@@ -272,7 +272,7 @@ async def test_todo_updated_preserves_existing_root_order_until_commit(isolated_
     bus.start(DockEventConsumer(isolated_dock))
     try:
         await bus.emit(TodoUpdated(
-            items=[TodoItemPayload(content="front task", status="pending")],
+            items=[TodoItemPayload(id="front", content="front task", status="pending")],
             summary="0/1 done · 0 active · 1 pending",
         ))
         await bus.drain()
@@ -315,7 +315,7 @@ async def test_todo_updated_with_agent_id_updates_global_root_todo(isolated_dock
         ))
         await bus.emit(TodoUpdated(
             agent_id=0,
-            items=[TodoItemPayload(content="inspect auth", status="in_progress")],
+            items=[TodoItemPayload(id="auth", content="inspect auth", status="in_progress")],
             summary="0/1 done · 1 active · 0 pending",
         ))
         await bus.drain()
@@ -331,7 +331,7 @@ async def test_todo_updated_with_agent_id_updates_global_root_todo(isolated_dock
         todo = next(node for node in isolated_dock.tree.root.children if node.node_type == "todo")
 
         assert isolated_dock.tree.root.children[-1] is todo
-        assert todo.payload["items"] == [{"content": "inspect auth", "status": "in_progress"}]
+        assert todo.payload["items"] == [{"id": "auth", "content": "inspect auth", "status": "in_progress"}]
         assert not any(node.node_type == "todo" for node in assistant.children)
         assert not any(node.node_type == "todo" for node in task_tool.children)
         assert not any(node.node_type == "todo" for node in subagent.children)

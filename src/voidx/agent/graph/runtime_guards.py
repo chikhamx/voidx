@@ -349,27 +349,30 @@ def stable_json(value: Any) -> str:
     return json.dumps(value, sort_keys=True, separators=(",", ":"), default=str)
 
 
-def todo_status_signature(todo_state: Any) -> tuple[tuple[str, int], ...]:
+def todo_status_signature(todo_state: Any) -> tuple[int, int, int, int]:
+    """(done, in_progress, pending, cancelled) count signature."""
     if todo_state is None:
-        return ()
+        return (0, 0, 0, 0)
+    
+    # Try to get counts from TodoRunState
+    if hasattr(todo_state, "done"):
+        return (
+            getattr(todo_state, "done", 0),
+            getattr(todo_state, "in_progress", 0),
+            getattr(todo_state, "pending", 0),
+            getattr(todo_state, "cancelled", 0),
+        )
+    
+    # Fallback for dict representation
     if isinstance(todo_state, dict):
-        items = todo_state.get("items") or []
-        if not items and "todos" in todo_state:
-            items = todo_state.get("todos") or []
-    elif hasattr(todo_state, "items"):
-        items = getattr(todo_state, "items") or []
-    else:
-        return ()
-
-    statuses: list[str] = []
-    for item in items:
-        if isinstance(item, dict):
-            status = item.get("status")
-        else:
-            status = getattr(item, "status", None)
-        if status:
-            statuses.append(str(status))
-    return tuple(sorted(Counter(statuses).items()))
+        return (
+            todo_state.get("done", 0),
+            todo_state.get("in_progress", 0),
+            todo_state.get("pending", 0),
+            todo_state.get("cancelled", 0),
+        )
+    
+    return (0, 0, 0, 0)
 
 
 def cycle_summary_from_tools(

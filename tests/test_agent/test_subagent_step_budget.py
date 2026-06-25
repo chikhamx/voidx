@@ -289,7 +289,7 @@ async def test_subagent_todo_updates_sink_with_current_tool_message(tmp_path, mo
                 content="",
                 tool_calls=[{
                     "name": "todo",
-                    "args": {"todos": [{"content": "inspect child path", "status": "in_progress"}]},
+                    "args": {"todos": [{"id": "inspect", "content": "inspect child path", "status": "in_progress"}]},
                     "id": "call_todo",
                     "type": "tool_call",
                 }],
@@ -319,7 +319,7 @@ async def test_subagent_todo_updates_sink_with_current_tool_message(tmp_path, mo
 
     assert output == "done"
     assert len(todo_states) == 1
-    assert todo_states[0].items[0].content == "inspect child path"
+    assert todo_states[0].active_items[0].content == "inspect child path"
     second_call_messages = stream_calls[1]
     assert any(
         isinstance(message, ToolMessage) and message.tool_call_id == "call_todo"

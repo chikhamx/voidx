@@ -37,7 +37,7 @@ def _state_update_from_executed_tools(
     workflow_runs_changed = False
     for item in executed:
         if item.tool_call.get("name") == "todo" and item.todo_state is not None:
-            if item.todo_state.items:
+            if item.todo_state.total > 0:
                 update["todo_state"] = item.todo_state.model_dump(mode="json")
             else:
                 update["todo_state"] = None

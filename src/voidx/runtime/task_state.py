@@ -45,13 +45,19 @@ class WorkflowRoute(BaseModel):
 
 
 class TodoRunItem(BaseModel):
+    id: str = Field(..., max_length=20, description="Semantic id for the todo item")
     content: str
     status: Literal["pending", "in_progress", "completed", "cancelled"]
 
 
 class TodoRunState(BaseModel):
     summary: str = ""
-    items: list[TodoRunItem] = Field(default_factory=list)
+    total: int = 0
+    done: int = 0
+    in_progress: int = 0
+    pending: int = 0
+    cancelled: int = 0
+    active_items: list[TodoRunItem] = Field(default_factory=list)
     updated_at: str = ""
 
 

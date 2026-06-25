@@ -201,7 +201,7 @@ async def test_run_once_commits_event_todo_at_turn_end(tmp_path):
                 from voidx.ui.output.events import TodoItemPayload, TodoUpdated, ui_events
 
                 await ui_events.emit(TodoUpdated(
-                    items=[TodoItemPayload(content="finish review", status="completed")],
+                    items=[TodoItemPayload(id="review", content="finish review", status="completed")],
                     summary="1/1 done · 0 active · 0 pending",
                 ))
                 return {"messages": list(initial["messages"]) + [AIMessage(content="done")]}

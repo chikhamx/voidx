@@ -23,6 +23,7 @@ TODO_MUTED_STYLE = "#8F9BA8"
 
 @dataclass(frozen=True)
 class DockTodoItem:
+    id: str
     content: str
     status: str
 
@@ -55,7 +56,7 @@ def todo_state_payload(state: DockTodoState) -> dict[str, Any]:
     return {
         "summary": state.summary,
         "items": [
-            {"content": item.content, "status": item.status}
+            {"id": item.id, "content": item.content, "status": item.status}
             for item in state.items
         ],
     }
@@ -83,7 +84,10 @@ def render_todo_state_lines(state: DockTodoState) -> list[str]:
     ]
     visible_items = ordered_items[:TODO_MAX_VISIBLE_ITEMS]
     for item in visible_items:
-        lines.append(f"  {TODO_ICONS[item.status]} {escape(item.content)}")
+        if item.id:
+            lines.append(f"  {TODO_ICONS[item.status]} {escape(item.id)}: {escape(item.content)}")
+        else:
+            lines.append(f"  {TODO_ICONS[item.status]} {escape(item.content)}")
     omitted = len(ordered_items) - len(visible_items)
     if omitted > 0:
         lines.append(f"  [dim]… {omitted} more todos[/dim]")
@@ -94,13 +98,15 @@ def _todo_item_from_value(value: Any) -> DockTodoItem:
     if isinstance(value, DockTodoItem):
         return value
     if isinstance(value, dict):
+        item_id = value.get("id", "")
         content = value.get("content")
         status = value.get("status")
     elif hasattr(value, "content") and hasattr(value, "status"):
+        item_id = getattr(value, "id", "")
         content = getattr(value, "content")
         status = getattr(value, "status")
     else:
         raise TypeError("TODO item must be a dict or object with content/status")
     if content is None or status is None:
         raise ValueError("TODO item requires content and status")
-    return DockTodoItem(content=str(content), status=str(status))
+    return DockTodoItem(id=str(item_id), content=str(content), status=str(status))

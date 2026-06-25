@@ -6,6 +6,7 @@ import logging
 import shlex
 import sys
 from pathlib import Path
+from types import SimpleNamespace
 
 sys.path.insert(0, str(Path(__file__).parent.parent.parent / "src"))
 
@@ -102,12 +103,12 @@ class TestTaskTracker:
 
     def test_todo_state_is_managed_through_public_api(self):
         tracker = TaskTracker()
-        todos = [{"content": "ship fix", "status": "pending"}]
+        todos = [{"id": "fix", "content": "ship fix", "status": "pending"}]
 
-        tracker.set_todos(todos)
+        tracker.set_todos([SimpleNamespace(id="fix", content="ship fix", status="pending")])
         todos.clear()
 
-        assert tracker.list_todos() == [{"content": "ship fix", "status": "pending"}]
+        assert tracker.list_todos() == [{"id": "fix", "content": "ship fix", "status": "pending"}]
         tracker.clear_todos()
         assert tracker.list_todos() == []
 
@@ -119,24 +120,24 @@ class TestTaskTracker:
 
         result = await tool.execute({
             "todos": [
-                {"content": "implement event", "status": "in_progress"},
-                {"content": "write tests", "status": "pending"},
-                {"content": "update docs", "status": "completed"},
+                {"id": "impl", "content": "implement event", "status": "in_progress"},
+                {"id": "test", "content": "write tests", "status": "pending"},
+                {"id": "docs", "content": "update docs", "status": "completed"},
             ],
         }, ctx)
 
         assert result.metadata["todo_summary"] == "1/3 done · 1 active · 1 pending"
         assert result.metadata["todo_items"] == [
-            {"content": "implement event", "status": "in_progress"},
-            {"content": "write tests", "status": "pending"},
-            {"content": "update docs", "status": "completed"},
+            {"id": "impl", "content": "implement event", "status": "in_progress"},
+            {"id": "test", "content": "write tests", "status": "pending"},
+            {"id": "docs", "content": "update docs", "status": "completed"},
         ]
-        assert tracker.list_todos()[0].content == "implement event"
+        assert tracker.list_todos()[0]["content"] == "implement event"
 
     def test_todo_input_rejects_unknown_status(self):
         with pytest.raises(ValueError):
             TodoInput.model_validate({
-                "todos": [{"content": "bad status", "status": "blocked"}],
+                "todos": [{"id": "bad", "content": "bad status", "status": "blocked"}],
             })
 
     @pytest.mark.asyncio

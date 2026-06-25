@@ -166,7 +166,7 @@ def _dump_workflow_route(route: WorkflowRoute | None) -> str:
 
 
 def _dump_todo_state(todo_state: TodoRunState | None) -> str:
-    if todo_state is None or not todo_state.items:
+    if todo_state is None or todo_state.total == 0:
         return ""
     return json.dumps(todo_state.model_dump(mode="json"), ensure_ascii=False)
 
@@ -228,7 +228,7 @@ def _load_todo_state(raw: str) -> TodoRunState | None:
         state = TodoRunState.model_validate(data)
     except ValueError:
         return None
-    return state if state.items else None
+    return state if state.total > 0 else None
 
 
 async def save_message_runtime_snapshot(snapshot: MessageRuntimeSnapshot) -> None:

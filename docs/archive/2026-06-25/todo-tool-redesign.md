@@ -1,3 +1,5 @@
+> **Status: Done**
+
 # Todo Tool Redesign — 技术设计文档
 
 ## Context

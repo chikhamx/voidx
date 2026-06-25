@@ -149,7 +149,8 @@ async def test_execute_tools_keeps_non_todo_result_in_mixed_batch(tmp_path):
                 output="todo output",
                 metadata={
                     "todo_summary": "0/1 done · 1 active · 0 pending",
-                    "todo_items": [{"content": "track mixed batch", "status": "in_progress"}],
+                    "todo_items": [{"id": "mixed", "content": "track mixed batch", "status": "in_progress"}],
+                    "total": 1, "done": 0, "in_progress": 1, "pending": 0, "cancelled": 0,
                 },
             )
 
@@ -192,8 +193,8 @@ async def test_execute_tools_keeps_non_todo_result_in_mixed_batch(tmp_path):
 
     assert [message.tool_call_id for message in result["messages"]] == ["call_todo", "call_read"]
     assert [message.content for message in result["messages"]] == ["todo output", "read output"]
-    assert result["todo_state"]["items"] == [
-        {"content": "track mixed batch", "status": "in_progress"}
+    assert result["todo_state"]["active_items"] == [
+        {"id": "mixed", "content": "track mixed batch", "status": "in_progress"}
     ]
 
 
@@ -241,6 +242,113 @@ async def test_execute_tools_warns_on_malformed_todo_metadata_without_events(tmp
     assert "todo_state" not in result
     assert warnings == ["Todo update ignored: tool returned malformed metadata."]
 
+
+
+@pytest.mark.asyncio
+async def test_execute_tools_read_todo_no_warning_without_events(tmp_path, monkeypatch):
+    """op=read should not trigger 'malformed metadata' warning (non-events path)."""
+    graph = _graph(tmp_path)
+    warnings: list[str] = []
+
+    class FakeTodoTool:
+        id = "todo"
+        description = "fake todo"
+
+        def parameters_schema(self):
+            return {"type": "object", "properties": {}}
+
+        async def execute(self, args: dict, ctx: ToolContext) -> ToolResult:
+            return ToolResult(
+                output="Todo list is empty.",
+                metadata={"todo_op": "read"},
+            )
+
+    graph.tools.register("todo", FakeTodoTool(), "fake todo", {"type": "object", "properties": {}})
+    monkeypatch.setattr(graph._ui.ui, "warn", warnings.append)
+
+    async def allow_all(
+        tool_calls,
+        plan_mode: bool,
+        session_id: str,
+        interaction_mode=None,
+    ):
+        return tool_calls, []
+
+    graph._authorize_tool_calls = allow_all
+    parent = AIMessage(
+        content="",
+        tool_calls=[{"name": "todo", "args": {"op": "read"}, "id": "call_todo", "type": "tool_call"}],
+    )
+
+    result = await graph._execute_tools({
+        "messages": [parent],
+        "workspace": str(tmp_path),
+        "persona": "voidx",
+        "plan_mode": False,
+    })
+
+    assert [message.tool_call_id for message in result["messages"]] == ["call_todo"]
+    assert result["messages"][0].content == "Todo list is empty."
+    assert "todo_state" not in result
+    assert warnings == []
+
+
+@pytest.mark.asyncio
+async def test_execute_tools_read_todo_no_warning_with_events(tmp_path, monkeypatch):
+    """op=read should not emit WarningAppended in events mode."""
+    graph = _graph(tmp_path)
+    emitted: list = []
+
+    class FakeTodoTool:
+        id = "todo"
+        description = "fake todo"
+
+        def parameters_schema(self):
+            return {"type": "object", "properties": {}}
+
+        async def execute(self, args: dict, ctx: ToolContext) -> ToolResult:
+            return ToolResult(
+                output="Todo list is empty.",
+                metadata={"todo_op": "read"},
+            )
+
+    graph.tools.register("todo", FakeTodoTool(), "fake todo", {"type": "object", "properties": {}})
+    monkeypatch.setattr(graph._ui, "via_events", lambda: True)
+
+    async def fake_emit(event):
+        emitted.append(event)
+
+    async def fake_request(event):
+        return None
+
+    monkeypatch.setattr(graph._ui.events, "emit", fake_emit)
+    monkeypatch.setattr(graph._ui.events, "request", fake_request)
+
+    async def allow_all(
+        tool_calls,
+        plan_mode: bool,
+        session_id: str,
+        interaction_mode=None,
+    ):
+        return tool_calls, []
+
+    graph._authorize_tool_calls = allow_all
+    parent = AIMessage(
+        content="",
+        tool_calls=[{"name": "todo", "args": {"op": "read"}, "id": "call_todo", "type": "tool_call"}],
+    )
+
+    result = await graph._execute_tools({
+        "messages": [parent],
+        "workspace": str(tmp_path),
+        "persona": "voidx",
+        "plan_mode": False,
+    })
+
+    assert [message.tool_call_id for message in result["messages"]] == ["call_todo"]
+    assert "todo_state" not in result
+    from voidx.runtime.ui import WarningAppended
+    assert not any(isinstance(e, WarningAppended) for e in emitted)
 
 @pytest.mark.asyncio
 async def test_subagent_full_output_reaches_orchestrator(tmp_path, monkeypatch):

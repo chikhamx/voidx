@@ -271,7 +271,7 @@ async def run_subagent(
                     capture.tool_call(tid, targs, tool_call_id=cid)
                 result = await agent_tools.execute_tool(tid, targs, ctx)
                 todo_state = todo_run_state_from_result(result) if tid == "todo" else None
-                if todo_state_sink is not None and todo_state is not None and todo_state.items:
+                if todo_state_sink is not None and todo_state is not None and todo_state.total > 0:
                     todo_state_sink(todo_state)
                 if ui_port.via_events() and tid == "todo":
                     todo_event = todo_updated_event(result, agent_id=agent_id)

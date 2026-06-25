@@ -100,22 +100,25 @@ def test_failure_loop_new_key_clears_old_blocks():
 
 def test_todo_status_signature_ignores_text_rewrites_and_tracks_status_progress():
     first = {
-        "items": [
-            {"content": "write tests", "status": "pending"},
-            {"content": "implement", "status": "pending"},
-        ]
+        "total": 2,
+        "done": 0,
+        "in_progress": 0,
+        "pending": 2,
+        "cancelled": 0,
     }
     rewritten = {
-        "items": [
-            {"content": "write better tests", "status": "pending"},
-            {"content": "implement neatly", "status": "pending"},
-        ]
+        "total": 2,
+        "done": 0,
+        "in_progress": 0,
+        "pending": 2,
+        "cancelled": 0,
     }
     progressed = {
-        "items": [
-            {"content": "write better tests", "status": "completed"},
-            {"content": "implement neatly", "status": "in_progress"},
-        ]
+        "total": 2,
+        "done": 1,
+        "in_progress": 1,
+        "pending": 0,
+        "cancelled": 0,
     }
 
     assert todo_status_signature(first) == todo_status_signature(rewritten)

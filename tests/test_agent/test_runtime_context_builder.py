@@ -113,10 +113,14 @@ def test_runtime_context_applies_task_context_before_current_user(tmp_path):
     ]
     task_state = TaskState(
         todo_state=TodoRunState.model_validate({
-            "summary": "1/2 done",
-            "items": [
-                {"content": "write tests", "status": "completed"},
-                {"content": "update runtime context", "status": "in_progress"},
+            "summary": "1/2 done · 1 active · 0 pending",
+            "total": 2,
+            "done": 1,
+            "in_progress": 1,
+            "pending": 0,
+            "cancelled": 0,
+            "active_items": [
+                {"id": "ctx", "content": "update runtime context", "status": "in_progress"},
             ],
         })
     )
@@ -142,9 +146,8 @@ def test_runtime_context_applies_task_context_before_current_user(tmp_path):
     assert "Current DateTime" not in messages[-1].content
     assert "## Runtime State" not in messages[-1].content
     assert "Current Task State" in messages[-1].content
-    assert "Active todo: 2 items" in messages[-1].content
-    assert "- completed: write tests" in messages[-1].content
-    assert "- in_progress: update runtime context" in messages[-1].content
+    assert "Active todo: 1/2 done · 1 active · 0 pending" in messages[-1].content
+    assert "- [ctx] in_progress: update runtime context" in messages[-1].content
     assert "## Task Context" in messages[-1].content
     assert messages[-1].content.endswith("tool result")
 

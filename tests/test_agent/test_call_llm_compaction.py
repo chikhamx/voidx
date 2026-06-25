@@ -81,9 +81,13 @@ async def test_call_llm_injects_current_todo_runtime_context(tmp_path, monkeypat
     graph.model = FakeStreamingModel()
     graph._task_state.todo_state = TodoRunState.model_validate({
         "summary": "0/2 done · 1 active · 1 pending",
-        "items": [
-            {"content": "inspect todo replay", "status": "in_progress"},
-            {"content": "write test", "status": "pending"},
+        "total": 2,
+        "done": 0,
+        "in_progress": 1,
+        "pending": 1,
+        "cancelled": 0,
+        "active_items": [
+            {"id": "todo_replay", "content": "inspect todo replay", "status": "in_progress"},
         ],
     })
 
@@ -110,8 +114,8 @@ async def test_call_llm_injects_current_todo_runtime_context(tmp_path, monkeypat
     ]
     assert len(todo_messages) == 1
     assert "## Current Todo" not in todo_messages[0]
-    assert "Active todo: 2 items" in todo_messages[0]
-    assert "- in_progress: inspect todo replay" in todo_messages[0]
+    assert "Active todo: 0/2 done · 1 active · 1 pending" in todo_messages[0]
+    assert "- [todo_replay] in_progress: inspect todo replay" in todo_messages[0]
 
 
 @pytest.mark.asyncio
