@@ -1,3 +1,5 @@
+> **Status: Done**
+
 # Git 工具裸传重构 — 技术设计文档
 
 ## Context

@@ -1,6 +1,6 @@
-# Spec: 沙箱 DATA_DIR 可访问性与外部路径申请权限
+> **Status: Done**
 
-> **Status: Draft** — 等待实现
+# Spec: 沙箱 DATA_DIR 可访问性与外部路径申请权限
 
 ## 背景与问题
 
