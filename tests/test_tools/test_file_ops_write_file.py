@@ -244,19 +244,20 @@ class TestWriteAppendOp:
         assert target.read_text(encoding="utf-8") == "keep\n"
 
     @pytest.mark.asyncio
-    async def test_append_with_lineno_rejected(self, tmp_path):
-        target = tmp_path / "reject.txt"
+    async def test_append_with_lineno_ignored(self, tmp_path):
+        target = tmp_path / "ignore.txt"
         target.write_text("data\n", encoding="utf-8")
         ctx = ToolContext(workspace=str(tmp_path))
         r = ToolRegistry()
 
         result = await r.execute_tool(
             "write",
-            {"file_path": "reject.txt", "op": "append", "lineno": 3, "new_string": "oops\n"},
+            {"file_path": "ignore.txt", "op": "append", "lineno": 3, "new_string": "added\n"},
             ctx,
         )
 
-        assert result.metadata.get("error") is True
+        assert result.metadata.get("error") is not True
+        assert target.read_text(encoding="utf-8") == "data\nadded\n"
 
     @pytest.mark.asyncio
     async def test_append_file_not_found(self, tmp_path):

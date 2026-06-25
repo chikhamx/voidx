@@ -28,8 +28,6 @@ class WriteInput(BaseModel):
 
     @model_validator(mode="after")
     def _validate_write_input(self) -> "WriteInput":
-        if self.op == "append" and self.lineno is not None:
-            raise ValueError("lineno must not be provided when op=append")
         if self.op == "insert" and self.lineno is None:
             raise ValueError("lineno is required when op=insert")
         return self
