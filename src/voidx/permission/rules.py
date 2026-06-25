@@ -161,11 +161,18 @@ def is_safe_bash(command: str) -> bool:
 
 def _shell_words(command: str) -> list[str] | None:
     try:
-        lexer = shlex.shlex(command, posix=True, punctuation_chars=True)
+        lexer = shlex.shlex(command, posix=False, punctuation_chars=True)
         lexer.whitespace_split = True
-        return list(lexer)
+        return [_strip_quotes(w) for w in lexer]
     except ValueError:
         return None
+
+
+def _strip_quotes(word: str) -> str:
+    """Strip one layer of surrounding single or double quotes (posix=False compat)."""
+    if len(word) >= 2 and word[0] == word[-1] and word[0] in ("'", '"'):
+        return word[1:-1]
+    return word
 
 
 def _has_write_redirection(words: list[str]) -> bool:

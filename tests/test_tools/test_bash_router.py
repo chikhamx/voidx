@@ -738,3 +738,27 @@ class TestSedSingleLineDelete:
         h = try_hint("sed -i '' '73d' file.py")
         assert h is not None
         assert "first read" in h.llm_hint
+
+
+# ---------------------------------------------------------------------------
+# Windows backslash path handling — posix=True eats backslashes
+# ---------------------------------------------------------------------------
+
+class TestWindowsBackslashPaths:
+    """Route hint detection must preserve backslash paths (Windows).
+
+    shlex posix=True treats backslash as escape char, eating C:\\Users\\foo
+    into C:Usersfoo. Must use posix=False to match sandbox.py behavior.
+    """
+
+    def test_cat_with_windows_backslash_path_preserves_path(self):
+        h = try_hint('cat C:\\Users\\foo\\app.py')
+        assert h is not None
+        assert h.tool_id == "read"
+        assert "C:\\Users\\foo\\app.py" in h.llm_hint
+
+    def test_head_with_windows_backslash_path_preserves_path(self):
+        h = try_hint('head C:\\Users\\foo\\app.py')
+        assert h is not None
+        assert h.tool_id == "read"
+        assert "C:\\Users\\foo\\app.py" in h.llm_hint

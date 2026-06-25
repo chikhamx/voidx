@@ -385,3 +385,20 @@ def test_sandbox_bash_blocks_git_push_even_with_extra_paths(tmp_path):
 
         assert reason is not None
         assert "git push writes outside" in reason
+
+
+def test_is_safe_bash_preserves_windows_backslash_path():
+    """is_safe_bash must not eat backslash paths on Windows.
+
+    shlex posix=True treats backslash as escape, turning C:\\Users\\foo
+    into C:Usersfoo. Must use posix=False to match sandbox.py behavior.
+    """
+    from voidx.permission.rules import is_safe_bash, _shell_words
+
+    # A read-only command with a Windows path should be safe
+    assert is_safe_bash("cat C:\\Users\\foo\\app.py") is True
+
+    # The path must be preserved in the parsed words
+    words = _shell_words("cat C:\\Users\\foo\\app.py")
+    assert words is not None
+    assert "C:\\Users\\foo\\app.py" in words
