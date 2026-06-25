@@ -1,4 +1,4 @@
-"""Structured Git tool with path-scoped writes."""
+"""Structured Git tool with raw args string and whitelist routing."""
 
 from __future__ import annotations
 
@@ -7,10 +7,11 @@ from datetime import datetime, timedelta, timezone
 import json
 import os
 import re
+import shlex
 from pathlib import Path
-from typing import Any, Literal
+from typing import Any
 
-from pydantic import BaseModel, Field, model_validator
+from pydantic import BaseModel, Field
 
 from voidx.tools.base import BaseTool, ToolContext, ToolResult, model_to_json_schema, resolve_safe
 
@@ -26,243 +27,43 @@ _BRANCH_NAME_DENY = re.compile(r"\.\.|[@~^:\\\s]|\.lock$")
 _SAFE_REMOTE_RE = re.compile(r"^[a-zA-Z0-9][a-zA-Z0-9._/-]*$")
 _SAFE_REF_RE = re.compile(r"^[a-zA-Z0-9][a-zA-Z0-9._/@+-]*$")
 
-GIT_READ_COMMANDS = {
-    "status",
-    "diff",
-    "log",
-    "blame",
-    "branch_list",
-    "remote_list",
-    "show",
-    "tag_list",
+# Subcommands that get structured JSON output via dedicated parsers.
+_STRUCTURED_SUBCOMMANDS = frozenset({
+    "status", "diff", "log", "blame", "show", "branch", "remote", "tag", "stash",
+})
+
+# Subcommands that are always denied (destructive / irreversible).
+_DENIED_SUBCOMMANDS = frozenset({
+    "filter-branch", "gc", "prune", "fsck",
+})
+
+# Subcommand + flag combinations that are denied (destructive / irreversible).
+# Maps subcommand to a set of flags; if any flag is present, the command is denied.
+_DENIED_SUBCOMMAND_FLAGS: dict[str, set[str]] = {
+    "reset": {"--hard"},
+    "clean": {"-x", "--force"},
+    "reflog": {"expire", "--expire", "--all", "--rewrite"},
 }
-GIT_WRITE_COMMANDS = {
-    "add",
-    "commit",
-    "restore",
-    "switch",
-    "branch_create",
-    "branch_delete",
-    "tag_create",
-    "tag_delete",
-    "stash_push",
-    "stash_pop",
-    "push",
-    "pull",
-    "fetch",
-    "merge",
-    "rebase",
+# Subcommands where any denied short flag (even standalone) triggers denial.
+# For clean: -x removes ignored files, -d removes untracked directories.
+_DENIED_SHORT_FLAGS: dict[str, set[str]] = {
+    "clean": {"x", "d"},
 }
 
+# Subcommands that are always read-only (no approval needed).
+_READ_ONLY_SUBCOMMANDS = frozenset({
+    "status", "log", "diff", "show", "blame", "rev-parse", "rev-list",
+    "ls-files", "ls-tree", "describe", "shortlog", "cherry",
+    "whatchanged", "notes", "grep", "cat-file", "name-rev", "for-each-ref",
+})
 
-class GitStatusArgs(BaseModel):
-    pathspec: list[str] = Field(default_factory=list)
-
-
-class GitDiffArgs(BaseModel):
-    cached: bool = False
-    pathspec: list[str] = Field(default_factory=list)
-    ref: str = ""
-    base: str = ""
-
-
-class GitLogArgs(BaseModel):
-    limit: int = Field(default=10, ge=1, le=LOG_LIMIT_MAX)
-    path: str = ""
-    author: str = ""
-    since: str = ""
-    until: str = ""
-
-
-class GitBlameArgs(BaseModel):
-    path: str = Field(min_length=1)
-    start: int | None = Field(default=None, ge=1)
-    end: int | None = Field(default=None, ge=1)
-
-
-class GitBranchListArgs(BaseModel):
-    all: bool = False
-
-
-class GitAddArgs(BaseModel):
-    paths: list[str] = Field(min_length=1)
-
-
-class GitCommitArgs(BaseModel):
-    message: str = Field(min_length=1)
-    paths: list[str] = Field(default_factory=list)
-
-
-class GitRestoreArgs(BaseModel):
-    paths: list[str] = Field(min_length=1)
-    staged: bool = False
-    worktree: bool = True
-
-
-
-class GitSwitchArgs(BaseModel):
-    branch: str = Field(min_length=1)
-    create: bool = False
-    start_point: str = ""
-
-
-class GitShowArgs(BaseModel):
-    ref: str = "HEAD"
-    stat: bool = False
-    pathspec: list[str] = Field(default_factory=list)
-
-
-class GitBranchCreateArgs(BaseModel):
-    name: str = Field(min_length=1)
-    start_point: str = ""
-
-
-class GitBranchDeleteArgs(BaseModel):
-    name: str = Field(min_length=1)
-    force: bool = False
-
-
-class GitTagListArgs(BaseModel):
-    pattern: str = ""
-    sort: str = ""
-
-
-class GitTagCreateArgs(BaseModel):
-    name: str = Field(min_length=1)
-    ref: str = ""
-    message: str = ""
-    force: bool = False
-
-
-class GitTagDeleteArgs(BaseModel):
-    name: str = Field(min_length=1)
-
-
-class GitStashPushArgs(BaseModel):
-    message: str = ""
-    pathspec: list[str] = Field(default_factory=list)
-
-
-class GitStashPopArgs(BaseModel):
-    index: int = Field(default=0, ge=0)
-    keep: bool = False
-
-
-
-class GitPushArgs(BaseModel):
-    remote: str = "origin"
-    branch: str = ""
-    force: bool = False
-    all_branches: bool = False
-
-    @model_validator(mode="after")
-    def _validate_push_args(self):
-        if self.all_branches and self.branch:
-            raise ValueError("all_branches and branch are mutually exclusive")
-        return self
-
-
-class GitPullArgs(BaseModel):
-    remote: str = "origin"
-    branch: str = ""
-
-
-class GitFetchArgs(BaseModel):
-    remote: str = "origin"
-    branch: str = ""
-    all: bool = False
-    prune: bool = False
-
-    @model_validator(mode="after")
-    def _validate_fetch_args(self):
-        if self.all and self.branch:
-            raise ValueError("all and branch are mutually exclusive")
-        return self
-
-
-class GitMergeArgs(BaseModel):
-    branch: str = Field(min_length=1)
-    message: str = ""
-    no_ff: bool = False
-
-
-class GitRebaseArgs(BaseModel):
-    branch: str = ""
-    onto: str = ""
-    continue_rebase: bool = False
-    abort: bool = False
-
-    @model_validator(mode="after")
-    def _validate_rebase_args(self):
-        if self.continue_rebase and self.abort:
-            raise ValueError("continue_rebase and abort are mutually exclusive")
-        if not self.continue_rebase and not self.abort and not self.branch:
-            raise ValueError("branch is required when not continuing or aborting a rebase")
-        return self
-
-class GitArgs(BaseModel):
-    pathspec: list[str] = Field(default_factory=list)
-    cached: bool = False
-    ref: str = ""
-    limit: int = 10
-    path: str = ""
-    author: str = ""
-    since: str = ""
-    until: str = ""
-    start: int | None = None
-    end: int | None = None
-    all: bool = False
-    paths: list[str] = Field(default_factory=list)
-    message: str = ""
-    staged: bool = False
-    worktree: bool = True
-    branch: str = ""
-    create: bool = False
-    start_point: str = ""
-    stat: bool = False
-    base: str = ""
-    name: str = ""
-    force: bool = False
-    pattern: str = ""
-    sort: str = ""
-    index: int = 0
-    keep: bool = False
-    remote: str = "origin"
-    all_branches: bool = False
-    prune: bool = False
-    no_ff: bool = False
-    onto: str = ""
-    continue_rebase: bool = False
-    abort: bool = False
+# Write flags for branch/tag subcommands.
+_REF_WRITE_FLAGS = {"-d", "-D", "-m", "-M", "--delete", "--move", "--force"}
 
 
 class GitInput(BaseModel):
-    command: Literal[
-        "status",
-        "diff",
-        "log",
-        "blame",
-        "branch_list",
-        "remote_list",
-        "add",
-        "commit",
-        "restore",
-        "show",
-        "switch",
-        "branch_create",
-        "branch_delete",
-        "tag_list",
-        "tag_create",
-        "tag_delete",
-        "stash_push",
-        "stash_pop",
-        "push",
-        "pull",
-        "fetch",
-        "merge",
-        "rebase",
-    ] = Field(description="Git operation to run.")
-    args: GitArgs = Field(default_factory=GitArgs, description="Command-specific arguments.")
+    path: str = Field(default="", description="Optional execution path relative to workspace. Empty uses workspace root.")
+    args: str = Field(min_length=1, description='Git subcommand and arguments as a raw string, e.g. "status --porcelain" or "log --oneline -5".')
 
 
 class GitRepo(BaseModel):
@@ -274,90 +75,218 @@ class GitTool(BaseTool):
     id = "git"
     description = (
         "Inspect and perform explicit path-scoped Git operations with structured JSON output. "
-        "Read commands are status, diff, log, blame, branch_list, remote_list, show, tag_list. "
-        "Write commands are add, commit, restore, switch, branch_create, branch_delete, "
-        "tag_create, tag_delete, stash_push, stash_pop, push, pull, fetch, merge, rebase "
-        "and require approval."
+        "Pass a raw git args string (e.g. args='status --porcelain'). "
+        "Core read commands (status, diff, log, blame, show, branch list, remote, tag list, stash list) "
+        "return structured JSON. All other commands return raw stdout. "
+        "Write commands require approval."
     )
 
     def parameters_schema(self) -> dict:
         return model_to_json_schema(GitInput)
 
     async def execute(self, args: dict, ctx: ToolContext) -> ToolResult:
-        inp = GitInput.model_validate(args)
-        repo = await _discover_repo(ctx)
+        try:
+            inp = GitInput.model_validate(args)
+        except Exception as exc:
+            return _result("unknown", ctx, ok=False, error=f"invalid_args: {exc}")
+        effective_ctx = _resolve_path_context(inp.path, ctx)
+        if effective_ctx is None:
+            return _result("unknown", ctx, ok=False, error="unsafe_path: path escapes workspace")
+        repo = await _discover_repo(effective_ctx)
         if repo is None:
-            return _result(inp.command, ctx, ok=False, error="not_a_git_repository")
+            return _result("unknown", ctx, ok=False, error="not_a_git_repository")
 
         try:
-            if inp.command == "status":
-                return await _git_status(_args_dict(inp.args), ctx, repo)
-            if inp.command == "diff":
-                return await _git_diff(_args_dict(inp.args), ctx, repo)
-            if inp.command == "log":
-                return await _git_log(_args_dict(inp.args), ctx, repo)
-            if inp.command == "blame":
-                return await _git_blame(_args_dict(inp.args), ctx, repo)
-            if inp.command == "branch_list":
-                return await _git_branch_list(_args_dict(inp.args), ctx, repo)
-            if inp.command == "remote_list":
-                return await _git_remote_list(ctx, repo)
-            if inp.command == "add":
-                return await _git_add(_args_dict(inp.args), ctx, repo)
-            if inp.command == "commit":
-                return await _git_commit(_args_dict(inp.args), ctx, repo)
-            if inp.command == "restore":
-                return await _git_restore(_args_dict(inp.args), ctx, repo)
-            if inp.command == "show":
-                return await _git_show(_args_dict(inp.args), ctx, repo)
-            if inp.command == "switch":
-                return await _git_switch(_args_dict(inp.args), ctx, repo)
-            if inp.command == "branch_create":
-                return await _git_branch_create(_args_dict(inp.args), ctx, repo)
-            if inp.command == "branch_delete":
-                return await _git_branch_delete(_args_dict(inp.args), ctx, repo)
-            if inp.command == "tag_list":
-                return await _git_tag_list(_args_dict(inp.args), ctx, repo)
-            if inp.command == "tag_create":
-                return await _git_tag_create(_args_dict(inp.args), ctx, repo)
-            if inp.command == "tag_delete":
-                return await _git_tag_delete(_args_dict(inp.args), ctx, repo)
-            if inp.command == "stash_push":
-                return await _git_stash_push(_args_dict(inp.args), ctx, repo)
-            if inp.command == "stash_pop":
-                return await _git_stash_pop(_args_dict(inp.args), ctx, repo)
-            if inp.command == "push":
-                return await _git_push(_args_dict(inp.args), ctx, repo)
-            if inp.command == "pull":
-                return await _git_pull(_args_dict(inp.args), ctx, repo)
-            if inp.command == "fetch":
-                return await _git_fetch(_args_dict(inp.args), ctx, repo)
-            if inp.command == "merge":
-                return await _git_merge(_args_dict(inp.args), ctx, repo)
-            if inp.command == "rebase":
-                return await _git_rebase(_args_dict(inp.args), ctx, repo)
+            tokens = shlex.split(inp.args)
+        except ValueError as exc:
+            return _result("unknown", ctx, repo=repo, ok=False, error=f"invalid_args: {exc}")
+        if not tokens:
+            return _result("unknown", ctx, repo=repo, ok=False, error="invalid_args: empty command")
+
+        subcommand = tokens[0]
+        rest = tokens[1:]
+
+        if subcommand in _DENIED_SUBCOMMANDS:
+            return _result(subcommand, ctx, repo=repo, ok=False, error="command_denied")
+
+        denied_flags = _DENIED_SUBCOMMAND_FLAGS.get(subcommand)
+        if denied_flags and _has_denied_flag(subcommand, rest, denied_flags):
+            return _result(subcommand, ctx, repo=repo, ok=False, error="command_denied")
+
+        try:
+            handler = _STRUCTURED_HANDLERS.get(subcommand)
+            if handler is not None and _is_structured_route(subcommand, rest):
+                return await handler(rest, effective_ctx, repo)
+            return await _git_raw(subcommand, rest, effective_ctx, repo)
         except ValueError as exc:
             from pydantic import ValidationError as _VE
             if isinstance(exc, _VE):
-                fields = [". ".join(str(p) for p in e.get("loc", ())) for e in exc.errors() if e.get("loc")]
-                if fields:
-                    return _result(inp.command, ctx, repo=repo, ok=False,
-                                   error=f"Invalid argument: {', '.join(fields)}. Check the parameter schema and retry.")
                 detail = "; ".join(e.get("msg", str(e)) for e in exc.errors())
-                return _result(inp.command, ctx, repo=repo, ok=False,
-                               error=f"Invalid argument: {detail}. Check the parameter schema and retry.")
-            return _result(inp.command, ctx, repo=repo, ok=False, error=str(exc))
-
-        return _result(inp.command, ctx, repo=repo, ok=False, error="unsupported_command")
-
-
-def _args_dict(args: GitArgs) -> dict[str, Any]:
-    return args.model_dump(mode="json")
+                return _result(subcommand, ctx, repo=repo, ok=False, error=f"Invalid argument: {detail}")
+            return _result(subcommand, ctx, repo=repo, ok=False, error=str(exc))
+        except Exception as exc:
+            return _result(subcommand, ctx, repo=repo, ok=False, error=str(exc))
 
 
-async def _git_status(args: dict[str, Any], ctx: ToolContext, repo: GitRepo) -> ToolResult:
-    inp = GitStatusArgs.model_validate(args)
-    pathspec = _pathspecs(inp.pathspec, ctx, repo, allow_empty=True)
+def _is_structured_route(subcommand: str, rest: list[str]) -> bool:
+    """Check if a subcommand+args combination should use structured output."""
+    if subcommand == "branch":
+        # branch with no args or list flags → structured; -d/-D/-m/-M → raw
+        if not rest or all(a in ("-a", "--all", "-v", "--verbose", "-l", "--list") or a.startswith("--format") for a in rest):
+            return True
+        return not any(a in _REF_WRITE_FLAGS for a in rest)
+    if subcommand == "tag":
+        # tag with no args or -l/--list → structured; -d → raw
+        if not rest:
+            return True
+        return not any(a in ("-d", "--delete") for a in rest)
+    if subcommand == "stash":
+        # stash list → structured; stash push/pop/drop → raw
+        if not rest:
+            return False
+        return rest[0] == "list"
+    if subcommand == "remote":
+        # remote -v / remote (no args) → structured; remote add/remove → raw
+        if not rest:
+            return True
+        return all(a in ("-v", "--verbose") for a in rest)
+    return True
+
+
+def _has_denied_flag(subcommand: str, rest: list[str], denied_flags: set[str]) -> bool:
+    """Check if a subcommand's args contain a denied destructive flag.
+
+    Handles combined short flags (e.g. ``-fdx`` split into ``-f``, ``-d``,
+    ``-x``) by expanding rest tokens into single-char flags and checking
+    against ``_DENIED_SHORT_FLAGS``.
+    """
+    for flag in rest:
+        if flag in denied_flags:
+            return True
+    denied_short = _DENIED_SHORT_FLAGS.get(subcommand)
+    if denied_short:
+        for flag in rest:
+            if flag.startswith("-") and not flag.startswith("--"):
+                for ch in flag[1:]:
+                    if ch in denied_short:
+                        return True
+    if subcommand == "reflog" and rest and rest[0] == "expire":
+        return True
+    return False
+
+
+# Write subcommands whose pathspec arguments must be validated against workspace.
+_PATHSPEC_WRITE_SUBCOMMANDS = frozenset({
+    "add", "restore", "checkout", "rm", "mv", "reset",
+})
+
+
+async def _git_raw(subcommand: str, rest: list[str], ctx: ToolContext, repo: GitRepo) -> ToolResult:
+    """Execute a git command and return raw stdout/stderr/returncode."""
+    is_read = _is_read_only_subcommand(subcommand, rest)
+    timeout = GIT_TIMEOUT_SECONDS
+    if subcommand in ("push", "pull", "fetch"):
+        timeout = GIT_REMOTE_TIMEOUT_SECONDS
+
+    if not is_read and subcommand in _PATHSPEC_WRITE_SUBCOMMANDS:
+        try:
+            rest = _sanitize_raw_pathspecs(rest, ctx, repo)
+        except ValueError as exc:
+            return _result(subcommand, ctx, repo=repo, ok=False, error=str(exc))
+
+    proc = await _run_git(repo, [subcommand, *rest], read_only=is_read, timeout=timeout)
+    ok = proc["returncode"] == 0
+    return _result(subcommand, ctx, repo=repo, ok=ok, data={
+        "stdout": proc["stdout"],
+        "stderr": proc["stderr"],
+        "returncode": proc["returncode"],
+    }, error="" if ok else (proc["stderr"] or proc["stdout"]))
+
+
+def _sanitize_raw_pathspecs(rest: list[str], ctx: ToolContext, repo: GitRepo) -> list[str]:
+    """Validate pathspec tokens after -- in raw write commands.
+
+    For commands like ``add -- path1 path2``, the paths after ``--`` are
+    resolved and checked against the workspace boundary. Non-pathspec tokens
+    (flags, refs) are passed through unchanged.
+    """
+    if "--" not in rest:
+        return rest
+    idx = rest.index("--")
+    before = rest[:idx]
+    path_tokens = rest[idx + 1:]
+    if not path_tokens:
+        return rest
+    validated = _pathspecs(path_tokens, ctx, repo, allow_empty=False)
+    return [*before, "--", *validated]
+
+
+def _is_read_only_subcommand(subcommand: str, rest: list[str]) -> bool:
+    """Classify a git subcommand+args as read-only or write."""
+    if subcommand in _READ_ONLY_SUBCOMMANDS:
+        return True
+    if subcommand == "config":
+        read_flags = {"--get", "--get-all", "--get-regexp", "--get-urlmatch", "--list", "-l", "--show-origin", "--show-scope"}
+        if any(a in read_flags for a in rest):
+            return True
+        scope_flags = {"--global", "--system", "--local", "--file", "--blob"}
+        value_tokens = [a for a in rest if not a.startswith("-") and a not in scope_flags]
+        return len(value_tokens) <= 1
+    if subcommand == "stash":
+        return bool(rest) and rest[0] in ("list", "show")
+    if subcommand == "reflog":
+        return bool(rest) and rest[0] in ("show", "list")
+    if subcommand in ("branch", "tag"):
+        return not any(a in _REF_WRITE_FLAGS for a in rest)
+    if subcommand == "remote":
+        return not rest or all(a in ("-v", "--verbose") for a in rest)
+    if subcommand == "worktree":
+        return bool(rest) and rest[0] == "list"
+    if subcommand == "bisect":
+        return bool(rest) and rest[0] in ("log", "view", "visualize")
+    return False
+
+
+def is_git_read_only(args: dict) -> bool:
+    """Classify a git tool call (raw args dict) as read-only or write.
+
+    Single source of truth for git read/write classification.
+    Used by both git.py internals and permission/rules.py.
+    """
+    raw_args = str(args.get("args", ""))
+    try:
+        tokens = shlex.split(raw_args)
+    except ValueError:
+        return False
+    if not tokens:
+        return False
+    return _is_read_only_subcommand(tokens[0], tokens[1:])
+
+
+def _extract_pathspec(rest: list[str]) -> list[str]:
+    """Extract pathspec after -- from shlex tokens."""
+    if "--" in rest:
+        idx = rest.index("--")
+        return rest[idx + 1:]
+    return []
+
+
+def _extract_flag_value(rest: list[str], flag: str) -> str | None:
+    """Extract --flag=value or --flag value from tokens."""
+    for i, token in enumerate(rest):
+        if token == flag and i + 1 < len(rest):
+            return rest[i + 1]
+        if token.startswith(f"{flag}="):
+            return token.split("=", 1)[1]
+    return None
+
+
+def _has_flag(rest: list[str], *flags: str) -> bool:
+    return any(f in rest for f in flags)
+
+
+async def _git_status(rest: list[str], ctx: ToolContext, repo: GitRepo) -> ToolResult:
+    pathspec = _pathspecs(_extract_pathspec(rest), ctx, repo, allow_empty=True)
     proc = await _run_git(repo, ["status", "--porcelain=v1", "-z", "--", *pathspec], read_only=True)
     if proc["returncode"] != 0:
         return _result("status", ctx, repo=repo, ok=False, error=proc["stderr"] or proc["stdout"])
@@ -367,16 +296,21 @@ async def _git_status(args: dict[str, Any], ctx: ToolContext, repo: GitRepo) -> 
     return _result("status", ctx, repo=repo, data={"entries": entries, "branch": branch})
 
 
-async def _git_diff(args: dict[str, Any], ctx: ToolContext, repo: GitRepo) -> ToolResult:
-    inp = GitDiffArgs.model_validate(args)
-    pathspec = _pathspecs(inp.pathspec, ctx, repo, allow_empty=True)
+async def _git_diff(rest: list[str], ctx: ToolContext, repo: GitRepo) -> ToolResult:
+    cached = _has_flag(rest, "--cached", "--staged")
+    pathspec = _pathspecs(_extract_pathspec(rest), ctx, repo, allow_empty=True)
+    pre_dash = rest[:rest.index("--")] if "--" in rest else rest
+    refs = [t for t in pre_dash if not t.startswith("-") and t not in ("--cached", "--staged")]
+    base = refs[0] if len(refs) >= 2 else ""
+    ref = refs[-1] if refs else ""
+
     base_argv = ["diff"]
-    if inp.cached:
+    if cached:
         base_argv.append("--cached")
-    if inp.base and inp.ref:
-        base_argv.extend([inp.base, inp.ref])
-    elif inp.ref:
-        base_argv.append(inp.ref)
+    if base and ref:
+        base_argv.extend([base, ref])
+    elif ref:
+        base_argv.append(ref)
     proc = await _run_git(repo, [*base_argv, "--numstat", "--", *pathspec], read_only=True)
     if proc["returncode"] != 0:
         return _result("diff", ctx, repo=repo, ok=False, error=proc["stderr"] or proc["stdout"])
@@ -404,40 +338,93 @@ async def _git_diff(args: dict[str, Any], ctx: ToolContext, repo: GitRepo) -> To
     return _result("diff", ctx, repo=repo, data={"entries": entries})
 
 
-async def _git_log(args: dict[str, Any], ctx: ToolContext, repo: GitRepo) -> ToolResult:
-    inp = GitLogArgs.model_validate(args)
+async def _git_log(rest: list[str], ctx: ToolContext, repo: GitRepo) -> ToolResult:
+    limit = 10
+    author = _extract_flag_value(rest, "--author") or ""
+    since = _extract_flag_value(rest, "--since") or ""
+    until = _extract_flag_value(rest, "--until") or ""
+    path = ""
+
+    skip_next = False
+    for i, token in enumerate(rest):
+        if skip_next:
+            skip_next = False
+            continue
+        if token == "-n" and i + 1 < len(rest):
+            try:
+                limit = min(int(rest[i + 1]), LOG_LIMIT_MAX)
+            except ValueError:
+                pass
+            skip_next = True
+        elif token.startswith("-n"):
+            try:
+                limit = min(int(token[2:]), LOG_LIMIT_MAX)
+            except ValueError:
+                pass
+        elif token.startswith("-") and len(token) > 1 and token[1:].isdigit():
+            try:
+                limit = min(int(token[1:]), LOG_LIMIT_MAX)
+            except ValueError:
+                pass
+        elif token == "--" and i + 1 < len(rest):
+            path = rest[i + 1]
+            break
+        elif not token.startswith("-") and not path:
+            path = token
+
     argv = [
-        "log",
-        f"-n{inp.limit}",
-        "--name-only",
+        "log", f"-n{limit}", "--name-only",
         "--pretty=format:%H%x1f%an%x1f%ad%x1f%s",
         "--date=iso-strict",
     ]
-    if inp.author:
-        argv.append(f"--author={inp.author}")
-    if inp.since:
-        argv.append(f"--since={inp.since}")
-    if inp.until:
-        argv.append(f"--until={inp.until}")
-    if inp.path:
-        argv.extend(["--", *_pathspecs([inp.path], ctx, repo, allow_empty=False)])
+    if author:
+        argv.append(f"--author={author}")
+    if since:
+        argv.append(f"--since={since}")
+    if until:
+        argv.append(f"--until={until}")
+    if path:
+        argv.extend(["--", *_pathspecs([path], ctx, repo, allow_empty=False)])
     proc = await _run_git(repo, argv, read_only=True)
     if proc["returncode"] != 0:
         return _result("log", ctx, repo=repo, ok=False, error=proc["stderr"] or proc["stdout"])
     return _result("log", ctx, repo=repo, data={"entries": _parse_log(proc["stdout"], repo, ctx.workspace)})
 
 
-async def _git_blame(args: dict[str, Any], ctx: ToolContext, repo: GitRepo) -> ToolResult:
-    inp = GitBlameArgs.model_validate(args)
-    if inp.end is not None and inp.start is not None and inp.end < inp.start:
-        raise ValueError("blame end must be greater than or equal to start")
-    if inp.start is not None and inp.end is not None and inp.end - inp.start + 1 > BLAME_RANGE_MAX:
-        raise ValueError(f"blame range must be at most {BLAME_RANGE_MAX} lines")
-    repo_path = _pathspecs([inp.path], ctx, repo, allow_empty=False)[0]
+async def _git_blame(rest: list[str], ctx: ToolContext, repo: GitRepo) -> ToolResult:
+    path = None
+    start = None
+    end = None
+    i = 0
+    while i < len(rest):
+        token = rest[i]
+        if token == "-L" and i + 1 < len(rest):
+            parts = rest[i + 1].split(",", 1)
+            if len(parts) == 2:
+                try:
+                    start = int(parts[0])
+                    end = int(parts[1])
+                except ValueError:
+                    pass
+            i += 2
+        elif token.startswith("-"):
+            i += 1
+        elif path is None:
+            path = token
+            i += 1
+        else:
+            i += 1
+    if path is None:
+        return _result("blame", ctx, repo=repo, ok=False, error="path is required")
+    if end is not None and start is not None and end < start:
+        return _result("blame", ctx, repo=repo, ok=False, error="blame end must be >= start")
+    if start is not None and end is not None and end - start + 1 > BLAME_RANGE_MAX:
+        return _result("blame", ctx, repo=repo, ok=False, error=f"blame range must be at most {BLAME_RANGE_MAX} lines")
+    repo_path = _pathspecs([path], ctx, repo, allow_empty=False)[0]
     argv = ["blame", "--line-porcelain"]
-    if inp.start is not None:
-        end = inp.end or inp.start
-        argv.extend([f"-L{inp.start},{end}"])
+    if start is not None:
+        end_val = end or start
+        argv.extend([f"-L{start},{end_val}"])
     argv.extend(["--", repo_path])
     proc = await _run_git(repo, argv, read_only=True)
     if proc["returncode"] != 0:
@@ -445,15 +432,14 @@ async def _git_blame(args: dict[str, Any], ctx: ToolContext, repo: GitRepo) -> T
     return _result("blame", ctx, repo=repo, data={"entries": _parse_blame(proc["stdout"])})
 
 
-async def _git_branch_list(args: dict[str, Any], ctx: ToolContext, repo: GitRepo) -> ToolResult:
-    inp = GitBranchListArgs.model_validate(args)
+async def _git_branch_list(rest: list[str], ctx: ToolContext, repo: GitRepo) -> ToolResult:
     argv = ["branch"]
-    if inp.all:
+    if _has_flag(rest, "-a", "--all"):
         argv.append("--all")
     argv.extend(["--format=%(refname:short)\t%(HEAD)\t%(upstream:short)\t%(upstream:track)"])
     proc = await _run_git(repo, argv, read_only=True)
     if proc["returncode"] != 0:
-        return _result("branch_list", ctx, repo=repo, ok=False, error=proc["stderr"] or proc["stdout"])
+        return _result("branch", ctx, repo=repo, ok=False, error=proc["stderr"] or proc["stdout"])
     entries = []
     for line in proc["stdout"].splitlines():
         if not line:
@@ -467,13 +453,13 @@ async def _git_branch_list(args: dict[str, Any], ctx: ToolContext, repo: GitRepo
             "ahead": ahead,
             "behind": behind,
         })
-    return _result("branch_list", ctx, repo=repo, data={"entries": entries})
+    return _result("branch", ctx, repo=repo, data={"entries": entries})
 
 
-async def _git_remote_list(ctx: ToolContext, repo: GitRepo) -> ToolResult:
+async def _git_remote_list(rest: list[str], ctx: ToolContext, repo: GitRepo) -> ToolResult:
     proc = await _run_git(repo, ["remote", "-v"], read_only=True)
     if proc["returncode"] != 0:
-        return _result("remote_list", ctx, repo=repo, ok=False, error=proc["stderr"] or proc["stdout"])
+        return _result("remote", ctx, repo=repo, ok=False, error=proc["stderr"] or proc["stdout"])
     entries = []
     seen: set[tuple[str, str, str]] = set()
     for line in proc["stdout"].splitlines():
@@ -486,94 +472,17 @@ async def _git_remote_list(ctx: ToolContext, repo: GitRepo) -> ToolResult:
             continue
         seen.add(item)
         entries.append({"name": parts[0], "url": parts[1], "type": kind})
-    return _result("remote_list", ctx, repo=repo, data={"entries": entries})
+    return _result("remote", ctx, repo=repo, data={"entries": entries})
 
 
-async def _git_add(args: dict[str, Any], ctx: ToolContext, repo: GitRepo) -> ToolResult:
-    inp = GitAddArgs.model_validate(args)
-    pathspec = _pathspecs(inp.paths, ctx, repo, allow_empty=False)
-    proc = await _run_git(repo, ["add", "--", *pathspec])
-    if proc["returncode"] != 0:
-        return _result("add", ctx, repo=repo, ok=False, error=proc["stderr"] or proc["stdout"])
-    return _result("add", ctx, repo=repo, data={"staged": [_display_path(path, repo, ctx.workspace) for path in pathspec]})
+async def _git_show(rest: list[str], ctx: ToolContext, repo: GitRepo) -> ToolResult:
+    pathspec = _pathspecs(_extract_pathspec(rest), ctx, repo, allow_empty=True)
+    stat = _has_flag(rest, "--stat")
+    pre_dash = rest[:rest.index("--")] if "--" in rest else rest
+    refs = [t for t in pre_dash if not t.startswith("-")]
+    ref = refs[0] if refs else "HEAD"
 
-
-async def _git_commit(args: dict[str, Any], ctx: ToolContext, repo: GitRepo) -> ToolResult:
-    inp = GitCommitArgs.model_validate(args)
-    message = inp.message.strip()
-    if not message:
-        raise ValueError("commit message must not be empty")
-    if inp.paths:
-        pathspec = _pathspecs(inp.paths, ctx, repo, allow_empty=False)
-        add_proc = await _run_git(repo, ["add", "--", *pathspec])
-        if add_proc["returncode"] != 0:
-            return _result("commit", ctx, repo=repo, ok=False, error=add_proc["stderr"] or add_proc["stdout"])
-        proc = await _run_git(repo, ["commit", "-m", message, "--only", "--", *pathspec])
-        if proc["returncode"] != 0:
-            return _result("commit", ctx, repo=repo, ok=False, error=proc["stderr"] or proc["stdout"], data={
-                "requested_paths": [_display_path(path, repo, ctx.workspace) for path in pathspec],
-                "unstaged_uncommitted": await _unstaged_files(ctx, repo),
-            })
-    if not inp.paths:
-        staged = await _staged_files(ctx, repo)
-        if not staged:
-            return _result("commit", ctx, repo=repo, ok=False, error="nothing_staged")
-        proc = await _run_git(repo, ["commit", "-m", message])
-        if proc["returncode"] != 0:
-            return _result("commit", ctx, repo=repo, ok=False, error=proc["stderr"] or proc["stdout"], data={
-                "staged": staged,
-                "unstaged_uncommitted": await _unstaged_files(ctx, repo),
-            })
-    rev = await _run_git(repo, ["rev-parse", "HEAD"], read_only=True)
-    commit_hash = rev["stdout"].strip() if rev["returncode"] == 0 else ""
-    files_changed = await _commit_files(ctx, repo, "HEAD")
-    hook_output = ""
-    if proc.get("stderr") or proc.get("stdout"):
-        parts = []
-        if proc.get("stdout"):
-            parts.append(proc["stdout"].strip())
-        if proc.get("stderr"):
-            parts.append(proc["stderr"].strip())
-        hook_output = "\n---\n".join(parts)
-        if len(hook_output) > HOOK_OUTPUT_MAX_CHARS:
-            hook_output = hook_output[:HOOK_OUTPUT_MAX_CHARS] + "[truncated]"
-    return _result("commit", ctx, repo=repo, data={
-        "hash": commit_hash,
-        "message": message,
-        "files_changed": files_changed,
-        "unstaged_uncommitted": await _unstaged_files(ctx, repo),
-        "hook_output": hook_output,
-    })
-
-
-async def _git_restore(args: dict[str, Any], ctx: ToolContext, repo: GitRepo) -> ToolResult:
-    inp = GitRestoreArgs.model_validate(args)
-    if not inp.staged and not inp.worktree:
-        raise ValueError("restore must target staged and/or worktree")
-    pathspec = _pathspecs(inp.paths, ctx, repo, allow_empty=False)
-    argv = ["restore"]
-    if inp.staged:
-        argv.append("--staged")
-    if inp.worktree:
-        argv.append("--worktree")
-    argv.extend(["--", *pathspec])
-    proc = await _run_git(repo, argv)
-    if proc["returncode"] != 0:
-        return _result("restore", ctx, repo=repo, ok=False, error=proc["stderr"] or proc["stdout"])
-    return _result("restore", ctx, repo=repo, data={
-        "restored": [_display_path(path, repo, ctx.workspace) for path in pathspec],
-        "warning": "restore may overwrite worktree files; use /rollback for current-turn agent edits",
-    })
-
-
-
-async def _git_show(args: dict[str, Any], ctx: ToolContext, repo: GitRepo) -> ToolResult:
-    inp = GitShowArgs.model_validate(args)
-    pathspec = _pathspecs(inp.pathspec, ctx, repo, allow_empty=True)
-    ref = inp.ref or "HEAD"
-    meta_argv = [
-        "show", f"--format=%H%x1f%an%x1f%ad%x1f%s%x1f%P", "--no-patch", ref,
-    ]
+    meta_argv = ["show", f"--format=%H%x1f%an%x1f%ad%x1f%s%x1f%P", "--no-patch", ref]
     meta_proc = await _run_git(repo, meta_argv, read_only=True)
     if meta_proc["returncode"] != 0:
         return _result("show", ctx, repo=repo, ok=False, error="ref_not_found")
@@ -584,7 +493,7 @@ async def _git_show(args: dict[str, Any], ctx: ToolContext, repo: GitRepo) -> To
     commit_hash, author, date, message = parts[0], parts[1], parts[2], parts[3]
     parents = parts[4].split() if len(parts) > 4 and parts[4] else []
     is_merge = len(parents) > 1
-    if inp.stat:
+    if stat:
         numstat_argv = ["show", "--format=", "--numstat", ref, "--", *pathspec]
         numstat_proc = await _run_git(repo, numstat_argv, read_only=True)
         if numstat_proc["returncode"] != 0:
@@ -639,97 +548,21 @@ async def _git_show(args: dict[str, Any], ctx: ToolContext, repo: GitRepo) -> To
     })
 
 
-async def _git_switch(args: dict[str, Any], ctx: ToolContext, repo: GitRepo) -> ToolResult:
-    inp = GitSwitchArgs.model_validate(args)
-    if not _BRANCH_NAME_RE.match(inp.branch) or _BRANCH_NAME_DENY.search(inp.branch):
-        raise ValueError(f"invalid branch name: {inp.branch}")
-    prev_proc = await _run_git(repo, ["symbolic-ref", "--short", "HEAD"], read_only=True)
-    previous_branch = prev_proc["stdout"].strip() if prev_proc["returncode"] == 0 else ""
-    if inp.create:
-        argv = ["switch", "-c", inp.branch]
-        if inp.start_point:
-            argv.append(inp.start_point)
-    else:
-        status_proc = await _run_git(repo, ["status", "--porcelain"], read_only=True)
-        if status_proc["returncode"] == 0 and status_proc["stdout"].strip():
-            dirty_files = [
-                _display_path(line[3:].strip(), repo, ctx.workspace)
-                for line in status_proc["stdout"].splitlines()
-                if line.strip()
-            ]
-            proc = await _run_git(repo, ["switch", inp.branch])
-            if proc["returncode"] != 0:
-                return _result("switch", ctx, repo=repo, ok=False, error="dirty_conflict",
-                               data={"dirty_files": dirty_files,
-                                     "suggestion": "stash_push before switching branches"})
-        else:
-            proc = await _run_git(repo, ["switch", inp.branch])
-            if proc["returncode"] != 0:
-                stderr = proc["stderr"] or proc["stdout"]
-                if "did not match" in stderr or "not found" in stderr.lower() or "invalid reference" in stderr.lower():
-                    return _result("switch", ctx, repo=repo, ok=False, error="branch_not_found")
-                return _result("switch", ctx, repo=repo, ok=False, error=stderr)
-        return _result("switch", ctx, repo=repo, data={
-            "branch": inp.branch, "created": False, "previous_branch": previous_branch,
-        })
-    proc = await _run_git(repo, argv)
-    if proc["returncode"] != 0:
-        return _result("switch", ctx, repo=repo, ok=False, error=proc["stderr"] or proc["stdout"])
-    return _result("switch", ctx, repo=repo, data={
-        "branch": inp.branch, "created": True, "previous_branch": previous_branch,
-    })
-
-
-async def _git_branch_create(args: dict[str, Any], ctx: ToolContext, repo: GitRepo) -> ToolResult:
-    inp = GitBranchCreateArgs.model_validate(args)
-    if not _BRANCH_NAME_RE.match(inp.name) or _BRANCH_NAME_DENY.search(inp.name):
-        raise ValueError(f"invalid branch name: {inp.name}")
-    argv = ["branch", inp.name]
-    if inp.start_point:
-        argv.append(inp.start_point)
-    proc = await _run_git(repo, argv)
-    if proc["returncode"] != 0:
-        return _result("branch_create", ctx, repo=repo, ok=False, error=proc["stderr"] or proc["stdout"])
-    rev_proc = await _run_git(repo, ["rev-parse", "--short", inp.name], read_only=True)
-    branch_hash = rev_proc["stdout"].strip() if rev_proc["returncode"] == 0 else ""
-    return _result("branch_create", ctx, repo=repo, data={
-        "name": inp.name, "start_point": inp.start_point or "HEAD", "hash": branch_hash,
-    })
-
-
-async def _git_branch_delete(args: dict[str, Any], ctx: ToolContext, repo: GitRepo) -> ToolResult:
-    inp = GitBranchDeleteArgs.model_validate(args)
-    if not _BRANCH_NAME_RE.match(inp.name) or _BRANCH_NAME_DENY.search(inp.name):
-        raise ValueError(f"invalid branch name: {inp.name}")
-    argv = ["branch"]
-    if inp.force:
-        argv.append("-D")
-    else:
-        argv.append("-d")
-    argv.append(inp.name)
-    proc = await _run_git(repo, argv)
-    if proc["returncode"] != 0:
-        stderr = proc["stderr"] or proc["stdout"]
-        if "not found" in stderr.lower() or "did not match" in stderr:
-            return _result("branch_delete", ctx, repo=repo, ok=False, error="branch_not_found")
-        if "cannot delete" in stderr.lower():
-            return _result("branch_delete", ctx, repo=repo, ok=False, error="cannot_delete_current_branch")
-        if "not fully merged" in stderr.lower() or "unmerged" in stderr.lower():
-            return _result("branch_delete", ctx, repo=repo, ok=False, error="branch_not_merged")
-        return _result("branch_delete", ctx, repo=repo, ok=False, error=stderr)
-    return _result("branch_delete", ctx, repo=repo, data={"name": inp.name, "force": inp.force})
-
-
-async def _git_tag_list(args: dict[str, Any], ctx: ToolContext, repo: GitRepo) -> ToolResult:
-    inp = GitTagListArgs.model_validate(args)
+async def _git_tag_list(rest: list[str], ctx: ToolContext, repo: GitRepo) -> ToolResult:
     argv = ["tag", "-l", "--format=%(refname:short) %(objectname:short)"]
-    if inp.pattern:
-        argv.append(inp.pattern)
-    if inp.sort:
-        argv.append(f"--sort={inp.sort}")
+    pattern = ""
+    sort = _extract_flag_value(rest, "--sort") or ""
+    for token in rest:
+        if not token.startswith("-") and token not in ("-l", "--list"):
+            pattern = token
+            break
+    if pattern:
+        argv.append(pattern)
+    if sort:
+        argv.append(f"--sort={sort}")
     proc = await _run_git(repo, argv, read_only=True)
     if proc["returncode"] != 0:
-        return _result("tag_list", ctx, repo=repo, ok=False, error=proc["stderr"] or proc["stdout"])
+        return _result("tag", ctx, repo=repo, ok=False, error=proc["stderr"] or proc["stdout"])
     entries = []
     for line in proc["stdout"].splitlines():
         line = line.strip()
@@ -739,276 +572,36 @@ async def _git_tag_list(args: dict[str, Any], ctx: ToolContext, repo: GitRepo) -
         tag_name = parts[0]
         tag_hash = parts[1] if len(parts) > 1 else ""
         entries.append({"name": tag_name, "hash": tag_hash})
-    return _result("tag_list", ctx, repo=repo, data={"entries": entries})
+    return _result("tag", ctx, repo=repo, data={"entries": entries})
 
 
-async def _git_tag_create(args: dict[str, Any], ctx: ToolContext, repo: GitRepo) -> ToolResult:
-    inp = GitTagCreateArgs.model_validate(args)
-    argv = ["tag"]
-    if inp.message:
-        argv.extend(["-a", "-m", inp.message])
-    if inp.force:
-        argv.append("-f")
-    argv.append(inp.name)
-    if inp.ref:
-        argv.append(inp.ref)
-    proc = await _run_git(repo, argv)
+async def _git_stash_list(rest: list[str], ctx: ToolContext, repo: GitRepo) -> ToolResult:
+    proc = await _run_git(repo, ["stash", "list", "--format=%gd%x1f%s%x1f%cr"], read_only=True)
     if proc["returncode"] != 0:
-        stderr = proc["stderr"] or proc["stdout"]
-        if "already exists" in stderr:
-            return _result("tag_create", ctx, repo=repo, ok=False, error="tag_already_exists")
-        return _result("tag_create", ctx, repo=repo, ok=False, error=stderr)
-    rev_proc = await _run_git(repo, ["rev-list", "-1", inp.name], read_only=True)
-    tag_hash = rev_proc["stdout"].strip()[:7] if rev_proc["returncode"] == 0 else ""
-    return _result("tag_create", ctx, repo=repo, data={
-        "name": inp.name, "ref": inp.ref or "HEAD", "hash": tag_hash,
-        "annotated": bool(inp.message),
-    })
+        return _result("stash", ctx, repo=repo, ok=False, error=proc["stderr"] or proc["stdout"])
+    entries = []
+    for line in proc["stdout"].splitlines():
+        if not line:
+            continue
+        parts = line.split("\x1f")
+        if len(parts) >= 3:
+            entries.append({"ref": parts[0], "message": parts[1], "date": parts[2]})
+        elif len(parts) >= 2:
+            entries.append({"ref": parts[0], "message": parts[1], "date": ""})
+    return _result("stash", ctx, repo=repo, data={"entries": entries})
 
 
-async def _git_tag_delete(args: dict[str, Any], ctx: ToolContext, repo: GitRepo) -> ToolResult:
-    inp = GitTagDeleteArgs.model_validate(args)
-    proc = await _run_git(repo, ["tag", "-d", inp.name])
-    if proc["returncode"] != 0:
-        return _result("tag_delete", ctx, repo=repo, ok=False, error=proc["stderr"] or proc["stdout"])
-    return _result("tag_delete", ctx, repo=repo, data={"name": inp.name})
-
-
-async def _git_stash_push(args: dict[str, Any], ctx: ToolContext, repo: GitRepo) -> ToolResult:
-    inp = GitStashPushArgs.model_validate(args)
-    argv = ["stash", "push"]
-    if inp.message:
-        argv.extend(["-m", inp.message])
-    if inp.pathspec:
-        pathspec = _pathspecs(inp.pathspec, ctx, repo, allow_empty=False)
-        argv.append("--")
-        argv.extend(pathspec)
-    proc = await _run_git(repo, argv)
-    if proc["returncode"] != 0:
-        return _result("stash_push", ctx, repo=repo, ok=False, error=proc["stderr"] or proc["stdout"])
-    stash_msg = proc["stdout"].strip()
-    files_stashed = []
-    show_proc = await _run_git(repo, ["stash", "show", "--name-only", "stash@{0}"], read_only=True)
-    if show_proc["returncode"] == 0:
-        files_stashed = [_display_path(l, repo, ctx.workspace) for l in show_proc["stdout"].splitlines() if l.strip()]
-    return _result("stash_push", ctx, repo=repo, data={
-        "index": 0, "message": stash_msg, "files_stashed": files_stashed,
-    })
-
-
-async def _git_stash_pop(args: dict[str, Any], ctx: ToolContext, repo: GitRepo) -> ToolResult:
-    inp = GitStashPopArgs.model_validate(args)
-    subcmd = "apply" if inp.keep else "pop"
-    stash_ref = f"stash@{{{inp.index}}}"
-    show_proc = await _run_git(repo, ["stash", "show", "--name-only", stash_ref], read_only=True)
-    stash_files = []
-    if show_proc["returncode"] == 0:
-        stash_files = [_display_path(l, repo, ctx.workspace) for l in show_proc["stdout"].splitlines() if l.strip()]
-    argv = ["stash", subcmd, stash_ref]
-    proc = await _run_git(repo, argv)
-    if proc["returncode"] != 0:
-        stderr = proc["stderr"] or proc["stdout"]
-        conflicts = []
-        if "CONFLICT" in proc["stdout"] or "CONFLICT" in stderr:
-            for line in (proc["stdout"] + stderr).splitlines():
-                if line.startswith("CONFLICT"):
-                    parts = line.split()
-                    if len(parts) >= 3:
-                        conflicts.append(parts[-1])
-        return _result("stash_pop", ctx, repo=repo, ok=False, error=stderr,
-                       data={"index": inp.index, "applied": False, "kept": inp.keep,
-                             "conflicts": conflicts, "files_restored": stash_files})
-    return _result("stash_pop", ctx, repo=repo, data={
-        "index": inp.index, "applied": True, "kept": inp.keep,
-        "conflicts": [], "files_restored": stash_files,
-    })
-
-
-
-async def _git_push(args: dict[str, Any], ctx: ToolContext, repo: GitRepo) -> ToolResult:
-    inp = GitPushArgs.model_validate(args)
-    if not _SAFE_REMOTE_RE.match(inp.remote):
-        raise ValueError(f"invalid remote name: {inp.remote}")
-    remote_check = await _run_git(repo, ["remote", "get-url", inp.remote], read_only=True)
-    if remote_check["returncode"] != 0:
-        return _result("push", ctx, repo=repo, ok=False, error="remote_not_found")
-
-    _PROTECTED_BRANCHES = {"main", "master"}
-
-    if inp.force:
-        if inp.all_branches:
-            return _result("push", ctx, repo=repo, ok=False,
-                           error="force push with --all is blocked: would force-push protected branches",
-                           data={"remote": inp.remote, "force": True, "all_branches": True})
-        target_branch = inp.branch
-        if not target_branch:
-            head_proc = await _run_git(repo, ["symbolic-ref", "--short", "HEAD"], read_only=True)
-            if head_proc["returncode"] == 0:
-                target_branch = head_proc["stdout"].strip()
-        if target_branch and target_branch in _PROTECTED_BRANCHES:
-            return _result("push", ctx, repo=repo, ok=False,
-                           error=f"force push to protected branch '{target_branch}' is blocked",
-                           data={"remote": inp.remote, "branch": target_branch, "force": True})
-
-    argv = ["push"]
-    if inp.force:
-        argv.append("--force")
-    if inp.all_branches:
-        argv.append("--all")
-    argv.append(inp.remote)
-    if inp.branch:
-        if not _BRANCH_NAME_RE.match(inp.branch) or _BRANCH_NAME_DENY.search(inp.branch):
-            raise ValueError(f"invalid branch name: {inp.branch}")
-        argv.append(inp.branch)
-    proc = await _run_git(repo, argv, timeout=GIT_REMOTE_TIMEOUT_SECONDS)
-    if proc["returncode"] != 0:
-        stderr = proc["stderr"] or proc["stdout"]
-        if "[rejected]" in stderr or "non-fast-forward" in stderr.lower() or "fetch first" in stderr.lower():
-            return _result("push", ctx, repo=repo, ok=False, error="push_rejected",
-                           data={"remote": inp.remote, "branch": inp.branch, "force": inp.force,
-                                 "suggestion": "use force=True to overwrite remote history"})
-        return _result("push", ctx, repo=repo, ok=False, error=stderr)
-    summary = proc["stdout"].strip() or proc["stderr"].strip() or "pushed"
-    return _result("push", ctx, repo=repo, data={
-        "remote": inp.remote, "branch": inp.branch, "force": inp.force,
-        "summary": summary.split("\n")[-1] if "\n" in summary else summary,
-    })
-
-
-async def _git_pull(args: dict[str, Any], ctx: ToolContext, repo: GitRepo) -> ToolResult:
-    inp = GitPullArgs.model_validate(args)
-    if not _SAFE_REMOTE_RE.match(inp.remote):
-        raise ValueError(f"invalid remote name: {inp.remote}")
-    remote_check = await _run_git(repo, ["remote", "get-url", inp.remote], read_only=True)
-    if remote_check["returncode"] != 0:
-        return _result("pull", ctx, repo=repo, ok=False, error="remote_not_found")
-    argv = ["pull"]
-    argv.append(inp.remote)
-    if inp.branch:
-        if not _BRANCH_NAME_RE.match(inp.branch) or _BRANCH_NAME_DENY.search(inp.branch):
-            raise ValueError(f"invalid branch name: {inp.branch}")
-        argv.append(inp.branch)
-    proc = await _run_git(repo, argv, timeout=GIT_REMOTE_TIMEOUT_SECONDS)
-    if proc["returncode"] != 0:
-        stderr = proc["stderr"] or proc["stdout"]
-        combined = proc["stdout"] + stderr
-        if "CONFLICT" in combined:
-            conflicts = _parse_conflicts(combined)
-            return _result("pull", ctx, repo=repo, ok=False, error="merge_conflict",
-                           data={"remote": inp.remote, "branch": inp.branch, "conflicts": conflicts})
-        return _result("pull", ctx, repo=repo, ok=False, error=stderr)
-    fast_forward = "Fast-forward" in proc["stdout"]
-    summary = proc["stdout"].strip() or "Already up to date."
-    return _result("pull", ctx, repo=repo, data={
-        "remote": inp.remote, "branch": inp.branch,
-        "fast_forward": fast_forward, "summary": summary.split("\n")[-1] if "\n" in summary else summary,
-    })
-
-
-async def _git_fetch(args: dict[str, Any], ctx: ToolContext, repo: GitRepo) -> ToolResult:
-    inp = GitFetchArgs.model_validate(args)
-    if not _SAFE_REMOTE_RE.match(inp.remote):
-        raise ValueError(f"invalid remote name: {inp.remote}")
-    if not inp.all:
-        remote_check = await _run_git(repo, ["remote", "get-url", inp.remote], read_only=True)
-        if remote_check["returncode"] != 0:
-            return _result("fetch", ctx, repo=repo, ok=False, error="remote_not_found")
-    argv = ["fetch"]
-    if inp.prune:
-        argv.append("--prune")
-    if inp.all:
-        argv.append("--all")
-        proc = await _run_git(repo, argv, timeout=GIT_REMOTE_TIMEOUT_SECONDS)
-    else:
-        argv.append(inp.remote)
-        if inp.branch:
-            if not _BRANCH_NAME_RE.match(inp.branch) or _BRANCH_NAME_DENY.search(inp.branch):
-                raise ValueError(f"invalid branch name: {inp.branch}")
-            argv.append(inp.branch)
-        proc = await _run_git(repo, argv, timeout=GIT_REMOTE_TIMEOUT_SECONDS)
-    if proc["returncode"] != 0:
-        stderr = proc["stderr"] or proc["stdout"]
-        if "not found" in stderr.lower() or "does not appear" in stderr.lower() or "no such remote" in stderr.lower():
-            return _result("fetch", ctx, repo=repo, ok=False, error="remote_not_found")
-        return _result("fetch", ctx, repo=repo, ok=False, error=stderr)
-    summary = proc["stdout"].strip() or proc["stderr"].strip() or "Already up to date."
-    return _result("fetch", ctx, repo=repo, data={
-        "remote": inp.remote, "summary": summary.split("\n")[-1] if "\n" in summary else summary,
-    })
-
-
-async def _git_merge(args: dict[str, Any], ctx: ToolContext, repo: GitRepo) -> ToolResult:
-    inp = GitMergeArgs.model_validate(args)
-    if not _SAFE_REF_RE.match(inp.branch):
-        raise ValueError(f"invalid ref: {inp.branch}")
-    argv = ["merge"]
-    if inp.no_ff:
-        argv.append("--no-ff")
-    if inp.message:
-        argv.extend(["-m", inp.message])
-    argv.append(inp.branch)
-    proc = await _run_git(repo, argv, timeout=GIT_REMOTE_TIMEOUT_SECONDS)
-    if proc["returncode"] != 0:
-        stderr = proc["stderr"] or proc["stdout"]
-        combined = proc["stdout"] + stderr
-        if "CONFLICT" in combined:
-            conflicts = _parse_conflicts(combined)
-            return _result("merge", ctx, repo=repo, ok=False, error="merge_conflict",
-                           data={"branch": inp.branch, "conflicts": conflicts})
-        if "not found" in stderr.lower() or "not something we can merge" in stderr.lower():
-            return _result("merge", ctx, repo=repo, ok=False, error="branch_not_found")
-        return _result("merge", ctx, repo=repo, ok=False, error=stderr)
-    fast_forward = "Fast-forward" in proc["stdout"]
-    rev = await _run_git(repo, ["rev-parse", "--short", "HEAD"], read_only=True)
-    commit_hash = rev["stdout"].strip() if rev["returncode"] == 0 else ""
-    return _result("merge", ctx, repo=repo, data={
-        "branch": inp.branch, "fast_forward": fast_forward, "hash": commit_hash, "conflicts": [],
-    })
-
-
-async def _git_rebase(args: dict[str, Any], ctx: ToolContext, repo: GitRepo) -> ToolResult:
-    inp = GitRebaseArgs.model_validate(args)
-    argv = ["rebase"]
-    if inp.abort:
-        argv.append("--abort")
-        proc = await _run_git(repo, argv)
-        if proc["returncode"] != 0:
-            return _result("rebase", ctx, repo=repo, ok=False, error=proc["stderr"] or proc["stdout"])
-        return _result("rebase", ctx, repo=repo, data={"aborted": True})
-    if inp.continue_rebase:
-        argv.append("--continue")
-        proc = await _run_git(repo, argv)
-        if proc["returncode"] != 0:
-            combined = proc["stdout"] + (proc["stderr"] or "")
-            if "CONFLICT" in combined:
-                conflicts = _parse_conflicts(combined)
-                return _result("rebase", ctx, repo=repo, ok=False, error="rebase_conflict",
-                               data={"branch": inp.branch, "conflicts": conflicts})
-            return _result("rebase", ctx, repo=repo, ok=False, error=proc["stderr"] or proc["stdout"])
-        return _result("rebase", ctx, repo=repo, data={"branch": inp.branch, "summary": "Rebase continued successfully"})
-    if inp.onto:
-        if not _SAFE_REF_RE.match(inp.onto):
-            raise ValueError(f"invalid ref: {inp.onto}")
-        argv.extend(["--onto", inp.onto])
-    if inp.branch:
-        if not _BRANCH_NAME_RE.match(inp.branch) or _BRANCH_NAME_DENY.search(inp.branch):
-            raise ValueError(f"invalid branch name: {inp.branch}")
-        argv.append(inp.branch)
-    proc = await _run_git(repo, argv)
-    if proc["returncode"] != 0:
-        combined = proc["stdout"] + (proc["stderr"] or "")
-        if "CONFLICT" in combined:
-            conflicts = _parse_conflicts(combined)
-            return _result("rebase", ctx, repo=repo, ok=False, error="rebase_conflict",
-                           data={"branch": inp.branch, "conflicts": conflicts,
-                                 "suggestion": "use abort=True to cancel or continue_rebase=True after resolving"})
-        stderr = proc["stderr"] or proc["stdout"]
-        if "not found" in stderr.lower() or "invalid reference" in stderr.lower():
-            return _result("rebase", ctx, repo=repo, ok=False, error="branch_not_found")
-        return _result("rebase", ctx, repo=repo, ok=False, error=stderr)
-    return _result("rebase", ctx, repo=repo, data={
-        "branch": inp.branch, "onto": inp.onto, "summary": "Rebased successfully",
-    })
+_STRUCTURED_HANDLERS: dict[str, Any] = {
+    "status": _git_status,
+    "diff": _git_diff,
+    "log": _git_log,
+    "blame": _git_blame,
+    "show": _git_show,
+    "branch": _git_branch_list,
+    "remote": _git_remote_list,
+    "tag": _git_tag_list,
+    "stash": _git_stash_list,
+}
 
 
 def _parse_conflicts(output: str) -> list[str]:
@@ -1020,6 +613,19 @@ def _parse_conflicts(output: str) -> list[str]:
             if len(parts) >= 3:
                 conflicts.append(parts[-1])
     return conflicts
+
+def _resolve_path_context(path: str, ctx: ToolContext) -> ToolContext | None:
+    """Return a ToolContext with workspace adjusted to inp.path.
+
+    Empty path returns the original ctx. Non-empty path is resolved against
+    the current workspace and must stay inside it.
+    """
+    if not path or path == ".":
+        return ctx
+    resolved = resolve_safe(ctx.workspace, path, ctx.sandbox_extra_paths)
+    if resolved is None:
+        return None
+    return ctx.model_copy(update={"workspace": str(resolved)})
 
 
 async def _discover_repo(ctx: ToolContext) -> GitRepo | None:

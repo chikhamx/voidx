@@ -93,7 +93,7 @@ class TestEchoDoubleQuoteSafety:
 # ---------------------------------------------------------------------------
 
 class TestGitCommitCompactForm:
-    """git commit -m"msg" (compact double-quote) → no hint; --message=msg must be handled."""
+    """git commit with double-quote in args → no hint (avoids quote conflicts in args string)."""
 
     def test_compact_m_flag_double_quoted_no_hint(self):
         assert try_hint('git commit -m"fix bug"') is None
@@ -207,47 +207,46 @@ class TestRouteHintToolIdLiteral:
 # ---------------------------------------------------------------------------
 
 class TestGitBranchFlags:
-    """git branch -a and git branch --all must hint branch_list with all=true."""
+    """git branch -a/--all and bare branch should hint git tool."""
 
     def test_branch_a(self):
         h = try_hint("git branch -a")
         assert h is not None
-        assert "branch_list" in h.llm_hint
-        assert '"all": true' in h.llm_hint
+        assert "branch" in h.llm_hint
+        assert "-a" in h.llm_hint
 
     def test_branch_all(self):
         h = try_hint("git branch --all")
         assert h is not None
-        assert "branch_list" in h.llm_hint
-        assert '"all": true' in h.llm_hint
+        assert "branch" in h.llm_hint
+        assert "--all" in h.llm_hint
 
     def test_branch_bare(self):
         h = try_hint("git branch")
         assert h is not None
-        assert "branch_list" in h.llm_hint
-        assert "all" not in h.llm_hint
+        assert "branch" in h.llm_hint
 
 
 class TestGitBranchMutations:
-    """git branch create/delete forms should route to structured git operations."""
+    """git branch create/delete forms should hint git tool."""
 
     def test_branch_create(self):
         h = try_hint("git branch feature-x")
         assert h is not None
-        assert "branch_create" in h.llm_hint
-        assert '"name": "feature-x"' in h.llm_hint
+        assert "branch" in h.llm_hint
+        assert "feature-x" in h.llm_hint
 
     def test_branch_delete(self):
         h = try_hint("git branch -d feature-x")
         assert h is not None
-        assert "branch_delete" in h.llm_hint
-        assert '"name": "feature-x"' in h.llm_hint
+        assert "branch" in h.llm_hint
+        assert "feature-x" in h.llm_hint
 
     def test_branch_force_delete(self):
         h = try_hint("git branch -D feature-x")
         assert h is not None
-        assert "branch_delete" in h.llm_hint
-        assert '"force": true' in h.llm_hint
+        assert "branch" in h.llm_hint
+        assert "-D" in h.llm_hint
 
 
 class TestGitDiffSeparator:
@@ -267,7 +266,7 @@ class TestGitDiffSeparator:
     def test_diff_staged_alias(self):
         h = try_hint("git diff --staged")
         assert h is not None
-        assert '"cached": true' in h.llm_hint
+        assert "--staged" in h.llm_hint
 
 
 # ---------------------------------------------------------------------------
@@ -315,34 +314,34 @@ class TestGitGlobalOptions:
     def test_git_config_log(self):
         h = try_hint("git -c core.quotepath=false log -5")
         assert h is not None
-        assert '"limit": 5' in h.llm_hint
+        assert "log" in h.llm_hint
 
 
 class TestGitTagHints:
-    """git tag forms should route to structured tag operations."""
+    """git tag forms should hint git tool."""
 
     def test_tag_list(self):
         h = try_hint("git tag")
         assert h is not None
-        assert "tag_list" in h.llm_hint
+        assert "tag" in h.llm_hint
 
     def test_tag_list_pattern(self):
         h = try_hint("git tag -l 'v*'")
         assert h is not None
-        assert "tag_list" in h.llm_hint
-        assert '"pattern": "v*"' in h.llm_hint
+        assert "tag" in h.llm_hint
+        assert "v*" in h.llm_hint
 
     def test_tag_delete(self):
         h = try_hint("git tag -d v1.0.0")
         assert h is not None
-        assert "tag_delete" in h.llm_hint
+        assert "tag" in h.llm_hint
+        assert "-d" in h.llm_hint
 
     def test_tag_create_with_ref(self):
         h = try_hint("git tag v1.0.0 HEAD")
         assert h is not None
-        assert "tag_create" in h.llm_hint
-        assert '"name": "v1.0.0"' in h.llm_hint
-        assert '"ref": "HEAD"' in h.llm_hint
+        assert "tag" in h.llm_hint
+        assert "v1.0.0" in h.llm_hint
 
 
 # ---------------------------------------------------------------------------
@@ -517,7 +516,7 @@ class TestBasicPositive:
     def test_git_remote_v(self):
         h = try_hint("git remote -v")
         assert h is not None
-        assert "remote_list" in h.llm_hint
+        assert "remote" in h.llm_hint
 
     def test_git_add(self):
         h = try_hint("git add file.py")
@@ -636,13 +635,14 @@ class TestGitLogShortLimit:
         h = try_hint("git log -5")
         assert h is not None
         assert h.tool_id == "git"
-        assert '"limit": 5' in h.llm_hint
+        assert "log" in h.llm_hint
+        assert "-5" in h.llm_hint
 
     def test_git_log_dash_n_with_author(self):
         h = try_hint("git log -10 --author=x")
         assert h is not None
-        assert '"limit": 10' in h.llm_hint
-        assert '"author": "x"' in h.llm_hint
+        assert "log" in h.llm_hint
+        assert "--author=x" in h.llm_hint
 
 
 # ---------------------------------------------------------------------------
