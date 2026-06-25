@@ -260,8 +260,8 @@ def test_permission_engine_classifies_basic_capabilities():
     assert classify_tool_call({"name": "bash", "args": {"command": "grep foo a.txt | xargs rm"}}).capability == PermissionCapability.BASH_WRITE
     assert classify_tool_call({"name": "bash", "args": {"command": "find . -delete"}}).capability == PermissionCapability.BASH_WRITE
     assert classify_tool_call({"name": "bash", "args": {"command": "git branch new-feature"}}).capability == PermissionCapability.BASH_WRITE
-    assert classify_tool_call({"name": "git", "args": {"command": "status"}}).capability == PermissionCapability.GIT_READ
-    assert classify_tool_call({"name": "git", "args": {"command": "commit"}}).capability == PermissionCapability.GIT_WRITE
+    assert classify_tool_call({"name": "git", "args": {"args": "status"}}).capability == PermissionCapability.GIT_READ
+    assert classify_tool_call({"name": "git", "args": {"args": "commit"}}).capability == PermissionCapability.GIT_WRITE
     readonly_agent = classify_tool_call({"name": "agent", "args": {"agent": "explore"}})
     assert readonly_agent.capability == PermissionCapability.AGENT_READONLY
     assert readonly_agent.pattern == "voidx"
@@ -281,8 +281,8 @@ def test_permission_engine_default_strategy_and_plan_overlay(tmp_path):
 
     assert authorize_tool_call({"name": "read", "args": {"file_path": "x.py"}}, context).action == "allow"
     assert authorize_tool_call({"name": "bash", "args": {"command": "ls"}}, context).action == "allow"
-    assert authorize_tool_call({"name": "git", "args": {"command": "status"}}, context).action == "allow"
-    assert authorize_tool_call({"name": "git", "args": {"command": "commit"}}, context).action == "ask"
+    assert authorize_tool_call({"name": "git", "args": {"args": "status"}}, context).action == "allow"
+    assert authorize_tool_call({"name": "git", "args": {"args": "commit"}}, context).action == "ask"
     assert authorize_tool_call({"name": "file", "args": {"file_path": "x.py"}}, context).action == "ask"
     assert authorize_tool_call({"name": "agent", "args": {"agent": "implement"}}, context).action == "ask"
     assert authorize_tool_call({"name": "agent", "args": {"agent": "voidx", "mode": "implement"}}, context).action == "ask"
@@ -290,8 +290,8 @@ def test_permission_engine_default_strategy_and_plan_overlay(tmp_path):
     plan = PermissionContext(workspace=str(tmp_path), interaction_mode="plan")
     safe_bash = authorize_tool_call({"name": "bash", "args": {"command": "ls"}}, plan)
     unsafe_bash = authorize_tool_call({"name": "bash", "args": {"command": "python -m pytest"}}, plan)
-    git_read = authorize_tool_call({"name": "git", "args": {"command": "diff"}}, plan)
-    git_write = authorize_tool_call({"name": "git", "args": {"command": "restore"}}, plan)
+    git_read = authorize_tool_call({"name": "git", "args": {"args": "diff"}}, plan)
+    git_write = authorize_tool_call({"name": "git", "args": {"args": "restore"}}, plan)
     edit = authorize_tool_call({"name": "write", "args": {"file_path": "x.py"}}, plan)
     replace = authorize_tool_call({"name": "replace", "args": {"file_path": "x.py"}}, plan)
     implement = authorize_tool_call({"name": "agent", "args": {"agent": "implement"}}, plan)
@@ -340,8 +340,8 @@ def test_permission_engine_read_only_sandbox_allows_read_bash_but_blocks_writes(
     context = PermissionContext(workspace=str(tmp_path), sandbox_mode="read-only")
 
     assert authorize_tool_call({"name": "bash", "args": {"command": "ls"}}, context).action == "allow"
-    assert authorize_tool_call({"name": "git", "args": {"command": "status"}}, context).action == "allow"
-    assert authorize_tool_call({"name": "git", "args": {"command": "commit"}}, context).action == "deny"
+    assert authorize_tool_call({"name": "git", "args": {"args": "status"}}, context).action == "allow"
+    assert authorize_tool_call({"name": "git", "args": {"args": "commit"}}, context).action == "deny"
     assert authorize_tool_call({"name": "bash", "args": {"command": "python -m pytest"}}, context).action == "deny"
     assert authorize_tool_call({"name": "file", "args": {"file_path": "x.py"}}, context).action == "deny"
     assert authorize_tool_call({"name": "write", "args": {"file_path": "x.py"}}, context).action == "deny"
@@ -402,3 +402,52 @@ def test_is_safe_bash_preserves_windows_backslash_path():
     words = _shell_words("cat C:\\Users\\foo\\app.py")
     assert words is not None
     assert "C:\\Users\\foo\\app.py" in words
+
+
+class TestDataDirInjection:
+    """DATA_DIR should be auto-injected into sandbox_workspace_write."""
+
+    def test_build_permission_service_includes_data_dir(self, tmp_path, monkeypatch):
+        monkeypatch.setenv("HOME", str(tmp_path))
+        monkeypatch.setenv("USERPROFILE", str(tmp_path))
+        from voidx.config import Config, ModelConfig
+        from voidx.agent.graph.wiring import build_permission_service
+        from voidx.memory.store import DATA_DIR
+
+        config = Config(
+            model=ModelConfig(provider="mimo", model="mimo-v2.5"),
+            workspace=str(tmp_path),
+        )
+        service = build_permission_service(config, notifier=lambda _msg: None)
+        expected = str(DATA_DIR.resolve())
+        assert expected in service.sandbox_workspace_write
+
+    def test_build_permission_service_preserves_user_extra_paths(self, tmp_path, monkeypatch):
+        monkeypatch.setenv("HOME", str(tmp_path))
+        monkeypatch.setenv("USERPROFILE", str(tmp_path))
+        from voidx.config import Config, ModelConfig
+        from voidx.agent.graph.wiring import build_permission_service
+
+        user_extra = str(tmp_path / "custom")
+        config = Config(
+            model=ModelConfig(provider="mimo", model="mimo-v2.5"),
+            workspace=str(tmp_path),
+            sandbox_workspace_write=[user_extra],
+        )
+        service = build_permission_service(config, notifier=lambda _msg: None)
+        assert user_extra in service.sandbox_workspace_write
+
+    def test_execution_policy_from_config_includes_data_dir(self, tmp_path, monkeypatch):
+        monkeypatch.setenv("HOME", str(tmp_path))
+        monkeypatch.setenv("USERPROFILE", str(tmp_path))
+        from voidx.config import Config, ModelConfig
+        from voidx.agent.runtime_context import ExecutionPolicy
+        from voidx.memory.store import DATA_DIR
+
+        config = Config(
+            model=ModelConfig(provider="mimo", model="mimo-v2.5"),
+            workspace=str(tmp_path),
+        )
+        policy = ExecutionPolicy.from_config(config)
+        expected = str(DATA_DIR.resolve())
+        assert expected in policy.extra_write_paths

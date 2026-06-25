@@ -52,10 +52,16 @@ class ExecutionPolicy(BaseModel):
 
     @classmethod
     def from_config(cls, config: Config) -> "ExecutionPolicy":
+        from voidx.memory.store import DATA_DIR
+
+        extra = list(config.sandbox_workspace_write)
+        data_dir = str(DATA_DIR.resolve())
+        if data_dir not in extra:
+            extra.append(data_dir)
         return cls(
             sandbox_mode=config.sandbox_mode.value,
             approval_policy=config.approval_policy.value,
-            extra_write_paths=list(config.sandbox_workspace_write),
+            extra_write_paths=extra,
         )
 
 

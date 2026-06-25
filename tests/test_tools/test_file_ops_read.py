@@ -306,3 +306,96 @@ class TestFileOps:
 
         assert result.metadata.get("error") is not True
         assert (tmp_path / "insert.txt").read_text() == "top\nmiddle\nend\nbottom\n"
+
+
+class TestReadExternalPath:
+    """read tool should ask for permission when reading outside workspace."""
+
+    @pytest.mark.asyncio
+    async def test_external_path_allowed_by_user(self, tmp_path):
+        from voidx.tools.base import UserInteraction, UserResponse
+
+        external = tmp_path / "external"
+        external.mkdir()
+        target = external / "file.txt"
+        target.write_text("hello\n")
+
+        workspace = tmp_path / "workspace"
+        workspace.mkdir()
+
+        added_paths: list[str] = []
+
+        async def fake_interact(req: UserInteraction) -> UserResponse:
+            return UserResponse(value="allow")
+
+        ctx = ToolContext(
+            workspace=str(workspace),
+            interact=fake_interact,
+            add_extra_path=added_paths.append,
+        )
+        r = ToolRegistry()
+        result = await r.execute_tool("read", {"file_path": str(target)}, ctx)
+
+        assert result.metadata.get("error") is not True
+        assert "hello" in result.output
+        assert str(external.resolve()) in added_paths
+
+    @pytest.mark.asyncio
+    async def test_external_path_denied_by_user(self, tmp_path):
+        from voidx.tools.base import UserInteraction, UserResponse
+
+        external = tmp_path / "external"
+        external.mkdir()
+        target = external / "file.txt"
+        target.write_text("secret\n")
+
+        workspace = tmp_path / "workspace"
+        workspace.mkdir()
+
+        async def fake_interact(req: UserInteraction) -> UserResponse:
+            return UserResponse(value="deny")
+
+        ctx = ToolContext(
+            workspace=str(workspace),
+            interact=fake_interact,
+            add_extra_path=lambda _p: None,
+        )
+        r = ToolRegistry()
+        result = await r.execute_tool("read", {"file_path": str(target)}, ctx)
+
+        assert result.metadata.get("error") is True
+        assert "denied" in result.output.lower()
+
+    @pytest.mark.asyncio
+    async def test_external_path_no_interact_fallback_blocked(self, tmp_path):
+        external = tmp_path / "external"
+        external.mkdir()
+        target = external / "file.txt"
+        target.write_text("secret\n")
+
+        workspace = tmp_path / "workspace"
+        workspace.mkdir()
+
+        ctx = ToolContext(workspace=str(workspace))
+        r = ToolRegistry()
+        result = await r.execute_tool("read", {"file_path": str(target)}, ctx)
+
+        assert result.metadata.get("error") is True
+        assert "blocked" in result.output.lower()
+
+    @pytest.mark.asyncio
+    async def test_external_nonexistent_path_still_blocked(self, tmp_path):
+        workspace = tmp_path / "workspace"
+        workspace.mkdir()
+
+        async def fake_interact(req):
+            return UserResponse(value="allow")
+
+        ctx = ToolContext(workspace=str(workspace), interact=fake_interact)
+        r = ToolRegistry()
+        result = await r.execute_tool(
+            "read", {"file_path": str(tmp_path / "nonexistent" / "file.txt")}, ctx
+        )
+
+        assert result.metadata.get("error") is True
+        assert "blocked" in result.output.lower()

@@ -2,7 +2,17 @@ from __future__ import annotations
 
 from pydantic import BaseModel, Field
 
-from voidx.tools.base import BaseTool, ToolContext, ToolResult, model_to_json_schema, resolve_safe
+from pathlib import Path
+
+from voidx.tools.base import (
+    BaseTool,
+    ToolContext,
+    ToolResult,
+    UserInteraction,
+    UserResponse,
+    model_to_json_schema,
+    resolve_safe,
+)
 from voidx.tools.file_state import (
     covered_read_range,
     record_mtime,
@@ -133,6 +143,28 @@ def _bounded_numbered_read_output(
     )
 
 
+
+
+def _try_resolve_external(file_path: str) -> Path | None:
+    """Resolve a path that may be outside workspace, expanding ~ and absolutizing.
+
+    Returns the resolved Path if it points to a real file, or None otherwise.
+    Does NOT perform sandbox checks — only used to determine if an external
+    path is worth asking the user about.
+    """
+    try:
+        raw = Path(file_path)
+        if file_path.startswith("~") or raw.is_absolute():
+            resolved = raw.expanduser().resolve()
+        else:
+            return None
+        if resolved.is_file():
+            return resolved
+        return None
+    except (OSError, ValueError):
+        return None
+
+
 class FileReadInput(BaseModel):
     file_path: str = Field(description="Absolute or relative path to the file")
     offset: int | None = Field(default=None, ge=1, description="Line number to start reading from (1-based)")
@@ -150,7 +182,25 @@ class FileReadTool(BaseTool):
         inp = FileReadInput.model_validate(args)
         path = resolve_safe(ctx.workspace, inp.file_path, ctx.sandbox_extra_paths)
         if path is None:
-            return ToolResult(output=f"Path traversal blocked: {inp.file_path}", metadata={"error": True})
+            external = _try_resolve_external(inp.file_path)
+            if external and ctx.interact:
+                response = await ctx.interact(UserInteraction(
+                    prompt=f"读取 workspace 外的文件: {inp.file_path}",
+                    options=[("允许", "allow", "本次允许读取该文件"), ("拒绝", "deny", "不读取该文件")],
+                ))
+                if response.cancelled or response.value == "deny":
+                    return ToolResult(
+                        output=f"Read denied by user: {inp.file_path}",
+                        metadata={"error": True},
+                    )
+                if ctx.add_extra_path:
+                    ctx.add_extra_path(str(external.parent))
+                path = external
+            else:
+                return ToolResult(
+                    output=f"Path traversal blocked: {inp.file_path}",
+                    metadata={"error": True},
+                )
         if not path.exists():
             return ToolResult(output=f"File not found: {inp.file_path}", metadata={"error": True})
         if path.is_dir():

@@ -57,10 +57,16 @@ def register_agent_tool(
 
 
 def build_permission_service(config: Config, *, notifier: Callable[[str], object]) -> PermissionService:
+    from voidx.memory.store import DATA_DIR
+
+    extra_paths = list(config.sandbox_workspace_write)
+    data_dir = str(DATA_DIR.resolve())
+    if data_dir not in extra_paths:
+        extra_paths.append(data_dir)
     return PermissionService(
         permission_mode=config.permission_mode.value,
         sandbox_mode=config.sandbox_mode.value,
-        sandbox_workspace_write=config.sandbox_workspace_write,
+        sandbox_workspace_write=extra_paths,
         approval_policy=config.approval_policy.value,
         approval_reviewer=config.approval_reviewer.value,
         notifier=notifier,

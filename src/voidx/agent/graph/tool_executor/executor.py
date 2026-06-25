@@ -93,6 +93,10 @@ class GraphToolExecutor:
         runtime_task_state_ref = [runtime_task_state, runtime_goal, runtime_workflow_runs]
 
         def make_context() -> ToolContext:
+            def _add_extra_path(path: str) -> None:
+                if path not in host._permission.sandbox_workspace_write:
+                    host._permission.sandbox_workspace_write.append(path)
+
             return ToolContext(
                 workspace=workspace,
                 session_id=session_id,
@@ -118,6 +122,7 @@ class GraphToolExecutor:
                 sandbox_mode=host._permission.sandbox_mode,
                 sandbox_extra_paths=host._permission.sandbox_workspace_write,
                 interact=_make_interact_callback(getattr(host, "_app", None)),
+                add_extra_path=_add_extra_path,
             )
 
         ctx = make_context()

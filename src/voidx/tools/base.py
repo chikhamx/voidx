@@ -18,7 +18,11 @@ def resolve_safe(workspace: str, file_path: str, extra_paths: list[str] | None =
     Returns the resolved path if safe, or None if blocked.
     """
     ws = Path(workspace).resolve()
-    resolved = (ws / file_path).resolve()
+    raw = Path(file_path)
+    if file_path.startswith("~") or raw.is_absolute():
+        resolved = raw.expanduser().resolve()
+    else:
+        resolved = (ws / raw).resolve()
 
     allowed = [ws]
     if extra_paths:
@@ -67,6 +71,7 @@ class UserResponse(BaseModel):
 
 
 UserInteractionCallback = Callable[[UserInteraction], Awaitable[UserResponse]]
+AddExtraPathCallback = Callable[[str], None]
 
 
 class ToolContext(BaseModel):
@@ -88,6 +93,7 @@ class ToolContext(BaseModel):
     sandbox_mode: str = "workspace-write"
     sandbox_extra_paths: list[str] = Field(default_factory=list)
     interact: UserInteractionCallback | None = Field(default=None, exclude=True)
+    add_extra_path: AddExtraPathCallback | None = Field(default=None, exclude=True)
 
     model_config = {"arbitrary_types_allowed": True}
 
