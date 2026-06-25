@@ -438,4 +438,42 @@ async def test_permission_result_uses_transient_output(tmp_path):
         set_dock(None)
 
 
+@pytest.mark.asyncio
+async def test_permission_prompt_uses_dock_details_when_events_are_active(tmp_path):
+    graph = _graph(tmp_path)
+    test_dock = BottomInputDock()
+    set_dock(test_dock)
+    test_dock.begin_capture()
+    received_details: list | None = None
+
+    class FakeApp:
+        async def ask_choice(self, _prompt, _choices, details=None):
+            nonlocal received_details
+            received_details = details
+            return "y"
+
+    graph._app = FakeApp()
+    try:
+        graph._ui.events.start(DockEventConsumer(test_dock))
+        await graph._ui.events.request(TurnStarted(text="demo"))
+
+        choice = await graph._ask_tool_permission([
+            {
+                "name": "bash",
+                "args": {"command": "npm test"},
+                "id": "call_1",
+            }
+        ])
+        await graph._ui.events.drain()
+
+        assert choice == "y"
+        assert received_details is None
+        rendered = "\n".join(test_dock.tree.render(100))
+        assert "Permission required" in rendered
+        assert "bash" in rendered
+        assert "npm test" in rendered
+    finally:
+        await graph._ui.events.stop()
+        test_dock.deactivate()
+        set_dock(None)
 

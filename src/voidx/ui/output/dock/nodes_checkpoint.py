@@ -22,7 +22,7 @@ class DockCheckpointNodeMixin:
         *,
         parent: OutputNode | None = None,
     ) -> OutputNode:
-        body = _checkpoint_body(plan, choices)
+        body = _checkpoint_body(plan)
         node = self._tree.new_node(
             parent=parent or self.ensure_agent(),
             node_type="checkpoint",
@@ -37,7 +37,7 @@ class DockCheckpointNodeMixin:
             },
         )
         self._checkpoint_nodes[checkpoint_id] = node
-        self._mark_unsettled(node)
+        self._mark_subtree_settled(node)
         self.refresh()
         return node
 
@@ -73,7 +73,7 @@ class DockCheckpointNodeMixin:
         self.refresh()
 
 
-def _checkpoint_body(plan: dict[str, Any], choices: list[dict[str, Any]]) -> list[str]:
+def _checkpoint_body(plan: dict[str, Any]) -> list[str]:
     body: list[str] = []
     summary = str(plan.get("plan_summary") or "").strip()
     if summary:
@@ -96,17 +96,6 @@ def _checkpoint_body(plan: dict[str, Any], choices: list[dict[str, Any]]) -> lis
             body.append("")
         body.append("[bold]Risks:[/bold]")
         body.extend(escape(f"- {risk}") for risk in risks)
-    if choices:
-        if body:
-            body.append("")
-        body.append("[bold]Choices:[/bold]")
-        for choice in choices:
-            label = str(choice.get("label") or choice.get("value") or "").strip()
-            description = str(choice.get("description") or "").strip()
-            if description:
-                body.append(escape(f"- {label}: {description}"))
-            elif label:
-                body.append(escape(f"- {label}"))
     return body
 
 

@@ -414,8 +414,11 @@ async def test_checkpoint_prompt_event_renders_voidx_plan_and_decision(isolated_
         assert "1. Add event schema" in rendered
         assert "src/voidx/tools/plan_checkpoint.py" in rendered
         assert "Do not duplicate hidden JSON result" in rendered
+        assert "Choices:" not in rendered
+        assert "Implement directly: Start implementing the plan" not in rendered
         assert checkpoint.status == "running"
         assert checkpoint.payload["checkpoint_id"] == "cp_1"
+        assert isolated_dock.safe_flush_line_count(120, 0) == len(isolated_dock.tree.render(120))
 
         await bus.emit(CheckpointDecisionSubmitted(
             checkpoint_id="cp_1",

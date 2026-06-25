@@ -79,9 +79,9 @@ class PlanCheckpointTool(BaseTool):
             )
 
         checkpoint_id = uuid4().hex
-        _emit_checkpoint_shown(checkpoint_id, inp)
+        event_ui_active = _emit_checkpoint_shown(checkpoint_id, inp)
         response = await ctx.interact(UserInteraction(
-            prompt=_build_prompt(inp),
+            prompt="Plan:" if event_ui_active else _build_prompt(inp),
             options=_CHECKPOINT_OPTIONS,
             timeout=120.0,
         ))
@@ -253,7 +253,7 @@ def _choice_label(value: str) -> str:
     return value
 
 
-def _emit_checkpoint_shown(checkpoint_id: str, inp: PlanCheckpointInput) -> None:
+def _emit_checkpoint_shown(checkpoint_id: str, inp: PlanCheckpointInput) -> bool:
     try:
         from voidx.ui.output.events import ui_events
         from voidx.ui.output.events.schema import (
@@ -262,9 +262,9 @@ def _emit_checkpoint_shown(checkpoint_id: str, inp: PlanCheckpointInput) -> None
             CheckpointPromptShown,
         )
     except ImportError:
-        return
+        return False
     if not ui_events.is_running:
-        return
+        return False
     ui_events.emit_direct(CheckpointPromptShown(
         checkpoint_id=checkpoint_id,
         plan=CheckpointPlanPayload(
@@ -278,6 +278,7 @@ def _emit_checkpoint_shown(checkpoint_id: str, inp: PlanCheckpointInput) -> None
             for label, value, description in _CHECKPOINT_OPTIONS
         ],
     ))
+    return True
 
 
 def _emit_checkpoint_decision(

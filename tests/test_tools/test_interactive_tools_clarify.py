@@ -149,6 +149,40 @@ class TestInteractiveTools:
         assert submitted.response == "Implement directly"
         assert submitted.was_custom_input is False
 
+    @pytest.mark.asyncio
+    async def test_plan_checkpoint_uses_short_choice_prompt_when_event_ui_is_active(self, tmp_path):
+        events = []
+        requests = []
+
+        class RecordingConsumer:
+            def handle(self, event):
+                events.append(event)
+
+        if ui_events.is_running:
+            await ui_events.stop()
+        ui_events.start(RecordingConsumer())
+        try:
+            async def interact(request):
+                requests.append(request)
+                return UserResponse(value="approved")
+
+            await PlanCheckpointTool().execute(
+                {
+                    "plan_summary": "Add checkpoint node",
+                    "steps": ["Add event schema"],
+                    "affected_files": ["src/voidx/tools/plan_checkpoint.py"],
+                    "risks": ["Avoid duplicate JSON"],
+                },
+                ToolContext(workspace=str(tmp_path), interact=interact),
+            )
+        finally:
+            await ui_events.stop()
+
+        shown = next(event for event in events if isinstance(event, CheckpointPromptShown))
+
+        assert shown.plan.plan_summary == "Add checkpoint node"
+        assert requests[0].prompt == "Plan:"
+
     def test_plan_checkpoint_prompt_renders_flat_steps_and_scope_details(self):
         prompt = _build_prompt(PlanCheckpointInput(
             plan_summary="Simplify checkpoint input",

@@ -112,6 +112,7 @@ class GraphPermissionMixin:
                 choices=choices,
                 tools=self._permission_tool_details(tool_calls),
             ))
+            details = None
 
         if not self._app:
             self._ui.ui.print("")
