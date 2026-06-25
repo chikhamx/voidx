@@ -17,6 +17,7 @@ dependencies = [
     "httpx>=0.28.0",
     "websockets>=14",
     "pathspec>=0.12",
+    "Pillow>=10.0.0; platform_system == 'Windows'",
 ]
 
 [project.scripts]
@@ -54,4 +55,5 @@ where = ["src"]
 
 [tool.pytest.ini_options]
 asyncio_mode = "auto"
+pythonpath = ["src"]
 testpaths = ["tests"]

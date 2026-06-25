@@ -119,8 +119,15 @@ def paste_clipboard_image(
 
 
 def _capture_clipboard_png(output_path: Path) -> str:
-    if platform.system() != "Darwin":
-        return "unsupported"
+    system = platform.system()
+    if system == "Darwin":
+        return _capture_clipboard_png_macos(output_path)
+    if system == "Windows":
+        return _capture_clipboard_png_windows(output_path)
+    return "unsupported"
+
+
+def _capture_clipboard_png_macos(output_path: Path) -> str:
     try:
         result = subprocess.run(
             ["osascript", "-e", _CAPTURE_SCRIPT],
@@ -141,10 +148,82 @@ def _capture_clipboard_png(output_path: Path) -> str:
     return (result.stdout or "").strip() or "error: clipboard read failed"
 
 
-def _compress_image_to_jpeg(source: Path, destination: Path) -> bool:
-    if platform.system() != "Darwin":
-        return False
+def _capture_clipboard_png_windows(output_path: Path) -> str:
+    try:
+        return _win32_capture_clipboard_png(output_path)
+    except OSError as exc:
+        return f"error: {exc}"
+    except ImportError:
+        return "error: Pillow is required for image paste on Windows"
 
+
+def _win32_capture_clipboard_png(output_path: Path) -> str:
+    """Capture clipboard image as PNG on Windows via Win32 API + Pillow.
+
+    Returns ``"ok"`` on success, ``"no_image"`` when the clipboard has no
+    bitmap, or raises ``OSError`` on Win32 API failures.
+    """
+    import ctypes
+    from ctypes import wintypes
+
+    CF_DIB = 8
+    user32 = ctypes.windll.user32
+    kernel32 = ctypes.windll.kernel32
+
+    user32.OpenClipboard.argtypes = [wintypes.HWND]
+    user32.OpenClipboard.restype = wintypes.BOOL
+    user32.GetClipboardData.argtypes = [wintypes.UINT]
+    user32.GetClipboardData.restype = wintypes.HANDLE
+    user32.CloseClipboard.argtypes = []
+    user32.CloseClipboard.restype = wintypes.BOOL
+    kernel32.GlobalLock.argtypes = [wintypes.HGLOBAL]
+    kernel32.GlobalLock.restype = wintypes.LPVOID
+    kernel32.GlobalUnlock.argtypes = [wintypes.HGLOBAL]
+    kernel32.GlobalUnlock.restype = wintypes.BOOL
+    kernel32.GlobalSize.argtypes = [wintypes.HGLOBAL]
+    kernel32.GlobalSize.restype = ctypes.c_size_t
+
+    if not user32.OpenClipboard(None):
+        raise OSError("failed to open clipboard")
+    try:
+        handle = user32.GetClipboardData(CF_DIB)
+        if not handle:
+            return "no_image"
+        ptr = kernel32.GlobalLock(handle)
+        if not ptr:
+            raise OSError("failed to lock clipboard data")
+        try:
+            size = kernel32.GlobalSize(handle)
+            raw = ctypes.string_at(ptr, size)
+        finally:
+            kernel32.GlobalUnlock(handle)
+    finally:
+        user32.CloseClipboard()
+
+    return _dib_bytes_to_png(raw, output_path)
+
+
+def _dib_bytes_to_png(dib_bytes: bytes, output_path: Path) -> str:
+    """Convert raw DIB (BITMAPINFO + pixel data) bytes to a PNG file via Pillow."""
+    from io import BytesIO
+
+    from PIL import Image
+
+    img = Image.open(BytesIO(dib_bytes))
+    img.save(output_path, format="PNG")
+    return "ok"
+
+
+def _compress_image_to_jpeg(source: Path, destination: Path) -> bool:
+    system = platform.system()
+    if system == "Darwin":
+        return _compress_image_to_jpeg_macos(source, destination)
+    if system == "Windows":
+        return _compress_image_to_jpeg_windows(source, destination)
+    return False
+
+
+def _compress_image_to_jpeg_macos(source: Path, destination: Path) -> bool:
     wrote_file = False
     for quality in JPEG_QUALITIES:
         try:
@@ -171,6 +250,33 @@ def _compress_image_to_jpeg(source: Path, destination: Path) -> bool:
         except (FileNotFoundError, subprocess.TimeoutExpired):
             return wrote_file
         if result.returncode != 0 or not destination.exists():
+            continue
+        wrote_file = True
+        if destination.stat().st_size <= TARGET_IMAGE_BYTES:
+            return True
+    return wrote_file
+
+
+def _compress_image_to_jpeg_windows(source: Path, destination: Path) -> bool:
+    try:
+        from PIL import Image
+    except ImportError:
+        return False
+
+    try:
+        img = Image.open(source)
+        if img.mode != "RGB":
+            img = img.convert("RGB")
+        if max(img.size) > MAX_IMAGE_EDGE:
+            img.thumbnail((MAX_IMAGE_EDGE, MAX_IMAGE_EDGE))
+    except (OSError, ValueError):
+        return False
+
+    wrote_file = False
+    for quality in JPEG_QUALITIES:
+        try:
+            img.save(destination, format="JPEG", quality=quality)
+        except (OSError, ValueError):
             continue
         wrote_file = True
         if destination.stat().st_size <= TARGET_IMAGE_BYTES:
@@ -208,7 +314,7 @@ def _capture_message(status: str) -> str:
     if status == "no_image":
         return "Clipboard does not contain an image."
     if status == "unsupported":
-        return "Clipboard image paste is only supported on macOS right now."
+        return "Clipboard image paste is only supported on macOS and Windows."
     if status == "write_failed":
         return "Clipboard image could not be written."
     if status.startswith("error:"):
