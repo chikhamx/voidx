@@ -149,8 +149,8 @@ async def test_execute_tools_keeps_non_todo_result_in_mixed_batch(tmp_path):
                 output="todo output",
                 metadata={
                     "todo_summary": "0/1 done · 1 active · 0 pending",
-                    "todo_items": [{"id": "mixed", "content": "track mixed batch", "status": "in_progress"}],
-                    "total": 1, "done": 0, "in_progress": 1, "pending": 0, "cancelled": 0,
+                    "todo_items": [{"id": "mixed", "content": "track mixed batch", "status": "active"}],
+                    "total": 1, "done": 0, "active": 1, "pending": 0,
                 },
             )
 
@@ -194,7 +194,7 @@ async def test_execute_tools_keeps_non_todo_result_in_mixed_batch(tmp_path):
     assert [message.tool_call_id for message in result["messages"]] == ["call_todo", "call_read"]
     assert [message.content for message in result["messages"]] == ["todo output", "read output"]
     assert result["todo_state"]["active_items"] == [
-        {"id": "mixed", "content": "track mixed batch", "status": "in_progress"}
+        {"id": "mixed", "content": "track mixed batch", "status": "active"}
     ]
 
 

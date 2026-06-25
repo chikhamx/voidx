@@ -181,7 +181,6 @@ async def test_subagent_runner_passes_main_workflow_runtime_context(tmp_path, mo
     result = await graph._subagent_runner(
         get_agent("voidx"),
         "Implement the feature",
-        None,
         goal_resolution,
         result_contract,
     )
@@ -238,7 +237,6 @@ async def test_subagent_runner_persists_lifecycle_jsonl(tmp_path, monkeypatch):
         result = await graph._subagent_runner(
             get_agent("voidx"),
             "Inspect storage design",
-            None,
             goal_resolution,
             result_contract,
         )
@@ -299,7 +297,6 @@ async def test_subagent_runner_authorizes_with_child_interaction_mode(tmp_path, 
     result = await graph._subagent_runner(
         get_agent("voidx"),
         "Plan the feature",
-        None,
         goal_resolution,
         result_contract,
     )

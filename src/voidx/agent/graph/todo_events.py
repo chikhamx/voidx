@@ -17,7 +17,7 @@ def todo_updated_event(result, *, agent_id: int = -1):
     
     return TodoUpdated(
         agent_id=agent_id,
-        items=[TodoItemPayload(id=item.id, content=item.content, status=item.status) for item in state.active_items],
+        items=[TodoItemPayload(id=item.id, content=item.content, status=item.status) for item in state.items],
         summary=state.summary,
         todo_op=todo_op,
     )

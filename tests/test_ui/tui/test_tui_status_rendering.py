@@ -34,7 +34,7 @@ def test_todo_busy_and_choice_panel_render_once_in_full_frame(tmp_path, monkeypa
     dock.set_todo_state(
         "0/2 done · 1 active · 1 pending",
         [
-            {"content": "inspect behavior", "status": "in_progress"},
+            {"content": "inspect behavior", "status": "active"},
             {"content": "write regression", "status": "pending"},
         ],
     )
@@ -65,7 +65,7 @@ def test_choice_selection_only_render_skips_todo_and_busy_lines(tmp_path, monkey
     tui._choice_selected = 0
     dock.set_todo_state(
         "0/1 done · 1 active · 0 pending",
-        [{"content": "active task", "status": "in_progress"}],
+        [{"content": "active task", "status": "active"}],
     )
     ansi = tui._capture_renderable(tui._render_bottom_impl(), tui._frame_width())
     tui._last_bottom_rows = _rendered_row_count(ansi)
@@ -93,7 +93,7 @@ def test_todo_busy_and_text_prompt_render_once_in_full_frame(tmp_path, monkeypat
     dock.ensure_agent()
     dock.set_todo_state(
         "0/1 done · 1 active · 0 pending",
-        [{"content": "active task", "status": "in_progress"}],
+        [{"content": "active task", "status": "active"}],
     )
 
     rendered = "\n".join(_rich_plain(line) for line in _render_lines(tui, width=80))
@@ -376,7 +376,7 @@ def test_busy_activity_tick_repaints_bottom_line_with_pinned_todo(tmp_path, monk
     dock.ensure_agent()
     dock.set_todo_state(
         "0/1 done · 1 active · 0 pending",
-        [{"content": "active task", "status": "in_progress"}],
+        [{"content": "active task", "status": "active"}],
     )
 
     tui._render_frame()

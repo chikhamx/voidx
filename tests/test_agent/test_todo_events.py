@@ -23,7 +23,7 @@ class TestTodoUpdatedEvent:
             output="done",
             metadata={
                 "todo_items": [
-                    {"id": "impl", "content": "implement", "status": "in_progress"},
+                    {"id": "impl", "content": "implement", "status": "active"},
                     {"id": "test", "content": "test", "status": "pending"},
                 ],
                 "todo_summary": "0/2 done · 1 active · 1 pending",
@@ -32,11 +32,31 @@ class TestTodoUpdatedEvent:
         event = todo_updated_event(result)
         assert event is not None
         assert isinstance(event, TodoUpdated)
-        assert len(event.items) == 1  # Only in_progress items
+        assert len(event.items) == 2  # All items, not just active
         assert event.items[0].id == "impl"
         assert event.items[0].content == "implement"
-        assert event.items[0].status == "in_progress"
+        assert event.items[0].status == "active"
+        assert event.items[1].id == "test"
+        assert event.items[1].status == "pending"
         assert event.summary == "0/2 done · 1 active · 1 pending"
+
+    def test_event_includes_all_statuses(self):
+        result = ToolResult(
+            output="done",
+            metadata={
+                "todo_items": [
+                    {"id": "a", "content": "active", "status": "active"},
+                    {"id": "p", "content": "pending", "status": "pending"},
+                    {"id": "d", "content": "done", "status": "done"},
+                ],
+                "todo_summary": "1/3 done · 1 active · 1 pending",
+            },
+        )
+        event = todo_updated_event(result)
+        assert event is not None
+        assert len(event.items) == 3
+        statuses = {item.status for item in event.items}
+        assert statuses == {"active", "pending", "done"}
 
     def test_passes_agent_id(self):
         result = ToolResult(
@@ -85,6 +105,37 @@ class TestTodoUpdatedEvent:
         )
         event = todo_updated_event(result)
         assert event.agent_id == -1
+
+
+# ── apply_todo_state_to_host: tracker restoration ──────────────────
+
+
+class TestApplyTodoStateToHost:
+    def test_tracker_restored_with_all_statuses(self):
+        from voidx.agent.todo_state import apply_todo_state_to_host
+        from voidx.runtime.task_state import TodoRunItem, TodoRunState
+        from voidx.tools.task_tracker import TaskTracker
+
+        state = TodoRunState(
+            summary="1/3 done · 1 active · 1 pending",
+            total=3,
+            done=1,
+            active=1,
+            pending=1,
+            active_items=[TodoRunItem(id="b", content="active", status="active")],
+            items=[
+                TodoRunItem(id="a", content="done", status="done"),
+                TodoRunItem(id="b", content="active", status="active"),
+                TodoRunItem(id="c", content="pending", status="pending"),
+            ],
+        )
+        host = SimpleNamespace(_task_state=None, _tracker=TaskTracker())
+        apply_todo_state_to_host(host, state)
+        todos = host._tracker.get_todos()
+        assert set(todos.keys()) == {"a", "b", "c"}
+        assert todos["a"]["status"] == "done"
+        assert todos["b"]["status"] == "active"
+        assert todos["c"]["status"] == "pending"
 
 
 # ── tool_executor.py integration: top-level todo emits TodoUpdated ──
@@ -178,14 +229,14 @@ class TestSubagentTodoEmit:
         mock_result = ToolResult(
             output="done",
             metadata={
-                "todo_items": [{"id": "explore", "content": "explore codebase", "status": "in_progress"}],
+                "todo_items": [{"id": "explore", "content": "explore codebase", "status": "active"}],
                 "todo_summary": "0/1 done · 1 active · 0 pending",
             },
         )
 
         fake_event = TodoUpdated(
             agent_id=agent_id,
-            items=[TodoItemPayload(id="explore", content="explore codebase", status="in_progress")],
+            items=[TodoItemPayload(id="explore", content="explore codebase", status="active")],
             summary="0/1 done · 1 active · 0 pending",
         )
 

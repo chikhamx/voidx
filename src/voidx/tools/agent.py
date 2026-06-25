@@ -60,7 +60,6 @@ class AgentInput(BaseModel):
         default="auto",
         description="Short enum selecting the internal structured child result contract.",
     )
-    model: str | None = Field(default=None, description="Optional model override for this child agent.")
 
 
 @dataclass(frozen=True)
@@ -68,7 +67,6 @@ class NormalizedAgentDelegation:
     description: str
     goal_resolution: GoalResolution
     result_contract: AgentResultContract
-    model: str | None
 
 
 _MODE_ROUTES: dict[str, tuple[str, str, str]] = {
@@ -217,7 +215,6 @@ class AgentTool(BaseTool):
             output = await self._run_child_agent(
                 agent_def,
                 normalized.description,
-                normalized.model,
                 normalized.goal_resolution,
                 normalized.result_contract,
             )
@@ -233,7 +230,6 @@ class AgentTool(BaseTool):
                     "goal": goal.model_dump(mode="json") if goal is not None else None,
                     "workflow_route": plan.model_dump(mode="json") if plan is not None else None,
                     "result_schema": normalized.result_contract.schema_name,
-                    "model": normalized.model or getattr(agent_def, "model", None) or "default",
                 },
             )
         except Exception as exc:
@@ -257,7 +253,6 @@ def normalize_agent_input(inp: AgentInput) -> NormalizedAgentDelegation:
         description=description,
         goal_resolution=goal_resolution,
         result_contract=result_contract,
-        model=inp.model,
     )
 
 

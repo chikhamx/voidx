@@ -4,6 +4,6 @@ from __future__ import annotations
 
 from typing import Literal, TypeAlias
 
-TodoStatus: TypeAlias = Literal["pending", "in_progress", "completed", "cancelled"]
+TodoStatus: TypeAlias = Literal["pending", "active", "done"]
 
 __all__ = ["TodoStatus"]

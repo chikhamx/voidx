@@ -120,17 +120,17 @@ class TestTaskTracker:
 
         result = await tool.execute({
             "todos": [
-                {"id": "impl", "content": "implement event", "status": "in_progress"},
+                {"id": "impl", "content": "implement event", "status": "active"},
                 {"id": "test", "content": "write tests", "status": "pending"},
-                {"id": "docs", "content": "update docs", "status": "completed"},
+                {"id": "docs", "content": "update docs", "status": "done"},
             ],
         }, ctx)
 
         assert result.metadata["todo_summary"] == "1/3 done · 1 active · 1 pending"
         assert result.metadata["todo_items"] == [
-            {"id": "impl", "content": "implement event", "status": "in_progress"},
+            {"id": "impl", "content": "implement event", "status": "active"},
             {"id": "test", "content": "write tests", "status": "pending"},
-            {"id": "docs", "content": "update docs", "status": "completed"},
+            {"id": "docs", "content": "update docs", "status": "done"},
         ]
         assert tracker.list_todos()[0]["content"] == "implement event"
 

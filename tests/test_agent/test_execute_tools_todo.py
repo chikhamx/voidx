@@ -205,8 +205,8 @@ async def test_execute_tools_emits_todo_updated_node(tmp_path):
                 output="todo output",
                 metadata={
                     "todo_summary": "0/1 done · 1 active · 0 pending",
-                    "todo_items": [{"id": "wire", "content": "wire event", "status": "in_progress"}],
-                    "total": 1, "done": 0, "in_progress": 1, "pending": 0, "cancelled": 0,
+                    "todo_items": [{"id": "wire", "content": "wire event", "status": "active"}],
+                    "total": 1, "done": 0, "active": 1, "pending": 0,
                 },
             )
 
@@ -253,14 +253,14 @@ async def test_execute_tools_emits_todo_updated_node(tmp_path):
         ]
 
         assert todo_state is not None
-        assert [(item.id, item.content, item.status) for item in todo_state.items] == [("wire", "wire event", "in_progress")]
+        assert [(item.id, item.content, item.status) for item in todo_state.items] == [("wire", "wire event", "active")]
         assert todo_state.summary == "0/1 done · 1 active · 0 pending"
         assert not any(node.node_type == "todo" for node in test_dock.tree.root.children)
         assert tool_nodes == []
         assert [message.tool_call_id for message in result["messages"]] == ["call_todo"]
         assert result["messages"][0].content == "todo output"
         assert result["todo_state"]["summary"] == "0/1 done · 1 active · 0 pending"
-        assert result["todo_state"]["active_items"] == [{"id": "wire", "content": "wire event", "status": "in_progress"}]
+        assert result["todo_state"]["active_items"] == [{"id": "wire", "content": "wire event", "status": "active"}]
         assert graph._task_state.todo_state is not None
         assert graph._task_state.todo_state.active_items[0].content == "wire event"
     finally:
@@ -357,7 +357,7 @@ async def test_execute_tools_warns_then_skips_repeated_todo_without_progress(tmp
                 metadata={
                     "todo_summary": "0/1 done · 0 active · 1 pending",
                     "todo_items": [{"id": "task", "content": "same task", "status": "pending"}],
-                    "total": 1, "done": 0, "in_progress": 0, "pending": 1, "cancelled": 0,
+                    "total": 1, "done": 0, "active": 0, "pending": 1,
                 },
             )
 

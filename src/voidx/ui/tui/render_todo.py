@@ -9,18 +9,16 @@ from voidx.ui.tui.helpers import _clip_cells
 
 
 _TODO_PINNED_MAX_ITEMS = 4
-_TODO_PINNED_ORDER = ("in_progress", "pending", "completed", "cancelled")
+_TODO_PINNED_ORDER = ("active", "pending", "done")
 _TODO_PINNED_ICONS = {
     "pending": "○",
-    "in_progress": "◐",
-    "completed": "●",
-    "cancelled": "✕",
+    "active": "◐",
+    "done": "●",
 }
 _TODO_PINNED_STYLES = {
     "pending": "#8F9BA8",
-    "in_progress": "#7AA2F7",
-    "completed": "#A3BE8C",
-    "cancelled": "#BF616A",
+    "active": "#7AA2F7",
+    "done": "#A3BE8C",
 }
 
 

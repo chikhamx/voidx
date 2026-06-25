@@ -47,8 +47,7 @@ _SAFETY_STEP_LIMIT = 50
 async def run_subagent(
     agent_def: AgentDef,
     task_description: str,
-    model_override: str | None,
-    api_key: str,
+    api_key: str | None,
     config: Config,
     tracker: TaskTracker | None = None,
     runtime_persona: str | None = None,
@@ -74,9 +73,7 @@ async def run_subagent(
     agent_def = child_run_agent_def(agent_def)
     persona = (runtime_persona or "explore").strip() or "explore"
     model_cfg = config.model.model_copy()
-    if model_override:
-        model_cfg.model = model_override
-    elif agent_def.model:
+    if agent_def.model:
         model_cfg.model = agent_def.model
 
     # Child agents inherit the full parent tool registry.

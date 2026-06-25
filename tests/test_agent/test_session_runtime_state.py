@@ -82,11 +82,10 @@ async def test_runtime_state_round_trips_structured_goal_state():
                 "summary": "0/2 done · 1 active · 1 pending",
                 "total": 2,
                 "done": 0,
-                "in_progress": 1,
+                "active": 1,
                 "pending": 1,
-                "cancelled": 0,
                 "active_items": [
-                    {"id": "inspect", "content": "inspect current behavior", "status": "in_progress"},
+                    {"id": "inspect", "content": "inspect current behavior", "status": "active"},
                 ],
                 "updated_at": "2026-06-11T00:00:00+00:00",
             }),

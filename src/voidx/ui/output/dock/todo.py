@@ -10,12 +10,11 @@ from rich.markup import escape
 
 # These TODO_* names refer to the todo tool/render feature, not pending code work.
 TODO_MAX_VISIBLE_ITEMS = 8
-TODO_STATUS_ORDER = ("in_progress", "pending", "completed", "cancelled")
+TODO_STATUS_ORDER = ("active", "pending", "done")
 TODO_ICONS = {
     "pending": "[dim]○[/dim]",
-    "in_progress": "[#7AA2F7]◐[/#7AA2F7]",
-    "completed": "[#A3BE8C]●[/#A3BE8C]",
-    "cancelled": "[#BF616A]✕[/#BF616A]",
+    "active": "[#7AA2F7]◐[/#7AA2F7]",
+    "done": "[#A3BE8C]●[/#A3BE8C]",
 }
 TODO_HEADER_STYLE = "#A3BE8C"
 TODO_MUTED_STYLE = "#8F9BA8"

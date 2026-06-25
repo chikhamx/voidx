@@ -368,7 +368,7 @@ def test_committed_todo_state_omits_progress_bar():
         test_dock.set_todo_state(
             "1/2 done · 0 active · 1 pending",
             [
-                {"content": "finished task", "status": "completed"},
+                {"content": "finished task", "status": "done"},
                 {"content": "next task", "status": "pending"},
             ],
         )

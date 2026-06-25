@@ -45,22 +45,21 @@ def todo_run_state_from_result(result: object) -> TodoRunState | None:
     
     # Build counts
     total = len(items)
-    done = sum(1 for item in items if item.status == "completed")
-    in_progress = sum(1 for item in items if item.status == "in_progress")
+    done = sum(1 for item in items if item.status == "done")
+    active = sum(1 for item in items if item.status == "active")
     pending = sum(1 for item in items if item.status == "pending")
-    cancelled = sum(1 for item in items if item.status == "cancelled")
     
-    # Build active_items (only in_progress)
-    active_items = [item for item in items if item.status == "in_progress"]
+    # Build active_items (only active)
+    active_items = [item for item in items if item.status == "active"]
     
     return TodoRunState(
         summary=summary,
         total=total,
         done=done,
-        in_progress=in_progress,
+        active=active,
         pending=pending,
-        cancelled=cancelled,
         active_items=active_items,
+        items=items,
         updated_at=datetime.now(timezone.utc).isoformat(),
     )
 
@@ -85,9 +84,9 @@ def apply_todo_state_to_host(host: object, raw_state: object) -> None:
         task_state.todo_state = todo_state
     if tracker is not None:
         if todo_state.total > 0:
-            # Convert active_items to dict format for tracker
+            # Restore full todo list (all statuses) into tracker
             todos_dict = {}
-            for item in todo_state.active_items:
+            for item in todo_state.items:
                 todos_dict[item.id] = {"content": item.content, "status": item.status}
             tracker.set_todos_from_dict(todos_dict)
         else:

@@ -83,11 +83,14 @@ async def test_call_llm_injects_current_todo_runtime_context(tmp_path, monkeypat
         "summary": "0/2 done · 1 active · 1 pending",
         "total": 2,
         "done": 0,
-        "in_progress": 1,
+        "active": 1,
         "pending": 1,
-        "cancelled": 0,
         "active_items": [
-            {"id": "todo_replay", "content": "inspect todo replay", "status": "in_progress"},
+            {"id": "todo_replay", "content": "inspect todo replay", "status": "active"},
+        ],
+        "items": [
+            {"id": "todo_replay", "content": "inspect todo replay", "status": "active"},
+            {"id": "pending_item", "content": "pending work", "status": "pending"},
         ],
     })
 
@@ -110,12 +113,12 @@ async def test_call_llm_injects_current_todo_runtime_context(tmp_path, monkeypat
     todo_messages = [
         message.content
         for message in graph.model.messages
-        if isinstance(message, HumanMessage) and "Active todo" in str(message.content)
+        if isinstance(message, HumanMessage) and "Todo:" in str(message.content)
     ]
     assert len(todo_messages) == 1
     assert "## Current Todo" not in todo_messages[0]
-    assert "Active todo: 0/2 done · 1 active · 1 pending" in todo_messages[0]
-    assert "- [todo_replay] in_progress: inspect todo replay" in todo_messages[0]
+    assert "Todo: 0/2 done · 1 active · 1 pending" in todo_messages[0]
+    assert "Active/Pending: todo_replay" in todo_messages[0]
 
 
 @pytest.mark.asyncio

@@ -331,7 +331,7 @@ async def test_graph_authorization_does_not_block_tools_outside_active_workflow_
     approved, denied = await graph._authorize_tool_calls(
         [{
             "name": "todo",
-            "args": {"todos": [{"content": "track work", "status": "in_progress"}]},
+            "args": {"todos": [{"content": "track work", "status": "active"}]},
             "id": "call_todo",
         }],
         runtime_persona="implement",

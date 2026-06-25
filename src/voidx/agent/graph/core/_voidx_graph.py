@@ -340,7 +340,6 @@ class VoidXGraph(
         self,
         agent_def: AgentDef,
         description: str,
-        model_override: str | None,
         goal_resolution: GoalResolution,
         result_contract: Any,
     ) -> str:
@@ -422,7 +421,6 @@ class VoidXGraph(
             result = await _run_subagent(
                 agent_def,
                 description,
-                model_override,
                 self.api_key,
                 self.config,
                 self._tracker,

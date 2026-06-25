@@ -102,23 +102,20 @@ def test_todo_status_signature_ignores_text_rewrites_and_tracks_status_progress(
     first = {
         "total": 2,
         "done": 0,
-        "in_progress": 0,
+        "active": 0,
         "pending": 2,
-        "cancelled": 0,
     }
     rewritten = {
         "total": 2,
         "done": 0,
-        "in_progress": 0,
+        "active": 0,
         "pending": 2,
-        "cancelled": 0,
     }
     progressed = {
         "total": 2,
         "done": 1,
-        "in_progress": 1,
+        "active": 1,
         "pending": 0,
-        "cancelled": 0,
     }
 
     assert todo_status_signature(first) == todo_status_signature(rewritten)

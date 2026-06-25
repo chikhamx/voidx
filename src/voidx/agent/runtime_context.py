@@ -274,10 +274,13 @@ class RuntimeContextBuilder:
             if exits:
                 lines.append(f"- Workflow exits [{workflow_name}]: {'; '.join(exits)}")
         todo_state = _coerce_todo_run_state(self.todo_state)
-        if todo_state is not None and todo_state.active_items:
-            lines.append(f"- Active todo: {todo_state.summary}")
-            for item in todo_state.active_items:
-                lines.append(f"  - [{item.id}] {item.status}: {item.content}")
+        if todo_state is not None and todo_state.items:
+            visible = [i for i in todo_state.items if i.status in ("active", "pending")]
+            if visible:
+                ids = ", ".join(i.id for i in visible)
+                lines.append(f"- Todo: {todo_state.summary}")
+                lines.append(f"  Active/Pending: {ids}")
+                lines.append("  Call todo with op=read for details.")
         if self.interaction_mode == InteractionMode.PLAN:
             lines.append("- Constraint: plan mode blocks write/insert/replace/edit, write-capable bash, and implement delegation.")
         elif self.interaction_mode == InteractionMode.GOAL:

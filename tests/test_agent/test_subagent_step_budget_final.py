@@ -169,7 +169,6 @@ async def test_subagent_starts_from_isolated_task_context(tmp_path, monkeypatch)
     output = await subagent_module.run_subagent(
         get_agent("voidx"),
         "Inspect the workspace",
-        None,
         "test-key",
         Config(workspace=str(tmp_path)),
         runtime_persona="explore",
@@ -223,7 +222,6 @@ async def test_subagent_injects_result_contract_into_task_payload(tmp_path, monk
     output = await subagent_module.run_subagent(
         get_agent("voidx"),
         "Inspect the workspace",
-        None,
         "test-key",
         Config(workspace=str(tmp_path)),
         runtime_persona="review",
@@ -276,7 +274,6 @@ async def test_subagent_adds_last_tool_step_hint_to_payload_only(tmp_path, monke
             can_delegate=False,
         ),
         "Inspect the workspace",
-        None,
         "test-key",
         Config(workspace=str(tmp_path)),
         **_subagent_contract_kwargs(),
@@ -347,7 +344,6 @@ async def test_subagent_final_step_fallback_does_not_leak_hint_to_sub_messages(t
             can_delegate=False,
         ),
         "Inspect the workspace",
-        None,
         "test-key",
         Config(workspace=str(tmp_path)),
         **_subagent_contract_kwargs(),

@@ -235,7 +235,7 @@ def test_pinned_todo_renders_above_input_and_status(tmp_path):
     dock.set_todo_state(
         "0/2 done · 1 active · 1 pending",
         [
-            {"content": "implement pinned display", "status": "in_progress"},
+            {"content": "implement pinned display", "status": "active"},
             {"content": "write tests", "status": "pending"},
         ],
     )
@@ -265,7 +265,7 @@ def test_pinned_todo_reduces_transcript_body_limit(tmp_path):
     dock.set_todo_state(
         "0/2 done · 1 active · 1 pending",
         [
-            {"content": "active task", "status": "in_progress"},
+            {"content": "active task", "status": "active"},
             {"content": "pending task", "status": "pending"},
         ],
     )
@@ -286,7 +286,7 @@ def test_pinned_todo_shows_four_items_when_row_budget_allows(tmp_path):
     dock.set_todo_state(
         "0/4 done · 1 active · 3 pending",
         [
-            {"content": "active task", "status": "in_progress"},
+            {"content": "active task", "status": "active"},
             {"content": "pending task 1", "status": "pending"},
             {"content": "pending task 2", "status": "pending"},
             {"content": "pending task 3", "status": "pending"},
@@ -308,7 +308,7 @@ def test_pinned_todo_not_in_bottom_impl(tmp_path):
     tui._console = Console(file=None, force_terminal=True, width=80, height=24, _environ={})
     dock.set_todo_state(
         "0/1 done · 1 active · 0 pending",
-        [{"content": "active task", "status": "in_progress"}],
+        [{"content": "active task", "status": "active"}],
     )
 
     ansi = tui._capture_renderable(tui._render_bottom_impl(), tui._frame_width())
@@ -347,7 +347,7 @@ def test_input_region_render_still_uses_bottom_only_with_pinned_todo(tmp_path, m
     )
     dock.set_todo_state(
         "0/1 done · 1 active · 0 pending",
-        [{"content": "active task", "status": "in_progress"}],
+        [{"content": "active task", "status": "active"}],
     )
 
     tui._render_frame()
@@ -377,7 +377,7 @@ def test_choice_selection_only_render_still_works_with_pinned_todo(tmp_path, mon
     tui._choice_selected = 0
     dock.set_todo_state(
         "0/1 done · 1 active · 0 pending",
-        [{"content": "active task", "status": "in_progress"}],
+        [{"content": "active task", "status": "active"}],
     )
     ansi = tui._capture_renderable(tui._render_bottom_impl(), tui._frame_width())
     tui._last_bottom_rows = _rendered_row_count(ansi)
@@ -395,7 +395,7 @@ def test_pinned_todo_summary_only_on_tiny_height_or_width(tmp_path):
     dock.set_todo_state(
         "0/3 done · 1 active · 2 pending",
         [
-            {"content": "implement pinned display", "status": "in_progress"},
+            {"content": "implement pinned display", "status": "active"},
             {"content": "write tests", "status": "pending"},
             {"content": "verify flicker", "status": "pending"},
         ],

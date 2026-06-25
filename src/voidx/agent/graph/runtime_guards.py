@@ -349,30 +349,28 @@ def stable_json(value: Any) -> str:
     return json.dumps(value, sort_keys=True, separators=(",", ":"), default=str)
 
 
-def todo_status_signature(todo_state: Any) -> tuple[int, int, int, int]:
-    """(done, in_progress, pending, cancelled) count signature."""
+def todo_status_signature(todo_state: Any) -> tuple[int, int, int]:
+    """(done, active, pending) count signature."""
     if todo_state is None:
-        return (0, 0, 0, 0)
+        return (0, 0, 0)
     
     # Try to get counts from TodoRunState
     if hasattr(todo_state, "done"):
         return (
             getattr(todo_state, "done", 0),
-            getattr(todo_state, "in_progress", 0),
+            getattr(todo_state, "active", 0),
             getattr(todo_state, "pending", 0),
-            getattr(todo_state, "cancelled", 0),
         )
     
     # Fallback for dict representation
     if isinstance(todo_state, dict):
         return (
             todo_state.get("done", 0),
-            todo_state.get("in_progress", 0),
+            todo_state.get("active", 0),
             todo_state.get("pending", 0),
-            todo_state.get("cancelled", 0),
         )
     
-    return (0, 0, 0, 0)
+    return (0, 0, 0)
 
 
 def cycle_summary_from_tools(

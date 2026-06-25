@@ -288,7 +288,6 @@ async def test_implement_subagent_injects_workflow_nodes(tmp_path, monkeypatch):
     output = await subagent_module.run_subagent(
         get_agent("voidx"),
         "Implement the feature",
-        None,
         "test-key",
         Config(
             workspace=str(tmp_path),

@@ -391,7 +391,7 @@ def test_busy_activity_line_renders_below_temporary_agent_not_status(tmp_path, m
     )
     dock.set_todo_state(
         "0/1 done · 1 active · 0 pending",
-        [{"content": "active task", "status": "in_progress"}],
+        [{"content": "active task", "status": "active"}],
     )
 
     lines = _render_lines(tui, width=80)

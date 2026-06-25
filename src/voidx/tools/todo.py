@@ -21,7 +21,7 @@ class TodoItem(BaseModel):
     content: str = Field(description="Task description, one sentence.")
     status: TodoStatus = Field(
         default="pending",
-        description="pending | in_progress | completed | cancelled"
+        description="pending | active | done"
     )
 
 
@@ -31,7 +31,7 @@ class TodoUpdateOp(BaseModel):
     content: str | None = Field(default=None, description="Optional: update description too.")
 
 
-TodoReadFilter = Literal["all", "pending", "in_progress", "completed", "done"]
+TodoReadFilter = Literal["all", "pending", "active", "done"]
 
 
 class TodoInput(BaseModel):
@@ -49,7 +49,7 @@ class TodoInput(BaseModel):
     )
     filter: TodoReadFilter = Field(
         default="all",
-        description="Filter for 'read' operation: all, pending, in_progress, completed, done."
+        description="Filter for 'read' operation: all, pending, active, done."
     )
 
 
@@ -59,9 +59,9 @@ class TodoWriteTool(BaseTool):
         "Create and manage a task list. Supports three operations:\n"
         "- 'write' (default): Full list replacement — pass the full updated list with [{id, status, content}].\n"
         "- 'update': Incremental update by id — pass [{id, status, content?}] to update specific items.\n"
-        "- 'read': Read-only query with optional filter (all/pending/in_progress/completed/done).\n"
+        "- 'read': Read-only query with optional filter (all/pending/active/done).\n"
         "Use semantic string ids (e.g., 'schema', 'api') for easy reference. "
-        "Status: pending → in_progress → completed."
+        "Status: pending → active → done."
     )
 
     def __init__(self, tracker=None):
@@ -106,15 +106,14 @@ class TodoWriteTool(BaseTool):
         
         # Build summary
         total = len(current_todos)
-        done = sum(1 for t in current_todos.values() if t["status"] == "completed")
-        in_progress = sum(1 for t in current_todos.values() if t["status"] == "in_progress")
+        done = sum(1 for t in current_todos.values() if t["status"] == "done")
+        active = sum(1 for t in current_todos.values() if t["status"] == "active")
         pending = sum(1 for t in current_todos.values() if t["status"] == "pending")
-        cancelled = sum(1 for t in current_todos.values() if t["status"] == "cancelled")
         
-        summary = f"{done}/{total} done · {in_progress} active · {pending} pending"
+        summary = f"{done}/{total} done · {active} active · {pending} pending"
         
         # Format output
-        ICONS = {"pending": "○", "in_progress": "◐", "completed": "●", "cancelled": "✕"}
+        ICONS = {"pending": "○", "active": "◐", "done": "●"}
         lines = []
         
         if filtered_items:
@@ -129,8 +128,8 @@ class TodoWriteTool(BaseTool):
             output="\n".join(lines),
             summary=summary,
             metadata={
-                "total": total, "done": done, "in_progress": in_progress,
-                "pending": pending, "cancelled": cancelled,
+                "total": total, "done": done, "active": active,
+                "pending": pending,
                 "todo_summary": summary,
                 "todo_op": "read",
             },
@@ -166,7 +165,7 @@ class TodoWriteTool(BaseTool):
         # Apply updates
         warnings = []
         updated_count = 0
-        
+
         for update in inp.updates:
             if update.id in current_todos:
                 current_todos[update.id]["status"] = update.status
@@ -175,21 +174,20 @@ class TodoWriteTool(BaseTool):
                 updated_count += 1
             else:
                 warnings.append(f"Skipped unknown ids: {update.id}")
-        
+
         # Update tracker
         self._tracker.set_todos_from_dict(current_todos)
         
         # Build response
         total = len(current_todos)
-        done = sum(1 for t in current_todos.values() if t["status"] == "completed")
-        in_progress = sum(1 for t in current_todos.values() if t["status"] == "in_progress")
+        done = sum(1 for t in current_todos.values() if t["status"] == "done")
+        active = sum(1 for t in current_todos.values() if t["status"] == "active")
         pending = sum(1 for t in current_todos.values() if t["status"] == "pending")
-        cancelled = sum(1 for t in current_todos.values() if t["status"] == "cancelled")
         
-        summary = f"{done}/{total} done · {in_progress} active · {pending} pending"
+        summary = f"{done}/{total} done · {active} active · {pending} pending"
         
         # Format output
-        ICONS = {"pending": "○", "in_progress": "◐", "completed": "●", "cancelled": "✕"}
+        ICONS = {"pending": "○", "active": "◐", "done": "●"}
         lines = []
         
         if warnings:
@@ -201,8 +199,8 @@ class TodoWriteTool(BaseTool):
             lines.append(f"  {ICONS[item_data['status']]} {item_id}: {item_data['content']}")
         
         metadata = {
-            "total": total, "done": done, "in_progress": in_progress,
-            "pending": pending, "cancelled": cancelled,
+            "total": total, "done": done, "active": active,
+            "pending": pending,
             "todo_items": [{"id": k, **v} for k, v in current_todos.items()],
             "todo_summary": summary,
         }
@@ -211,7 +209,7 @@ class TodoWriteTool(BaseTool):
             metadata["warnings"] = warnings
         
         return ToolResult(
-            title=f"Todo: {done}/{total} done · {in_progress} active · {pending} pending",
+            title=f"Todo: {done}/{total} done · {active} active · {pending} pending",
             output="\n".join(lines),
             summary=summary,
             metadata=metadata,
@@ -257,15 +255,14 @@ class TodoWriteTool(BaseTool):
         
         # Build response
         total = len(inp.todos)
-        done = sum(1 for t in inp.todos if t.status == "completed")
-        in_progress = sum(1 for t in inp.todos if t.status == "in_progress")
+        done = sum(1 for t in inp.todos if t.status == "done")
+        active = sum(1 for t in inp.todos if t.status == "active")
         pending = sum(1 for t in inp.todos if t.status == "pending")
-        cancelled = sum(1 for t in inp.todos if t.status == "cancelled")
         
-        summary = f"{done}/{total} done · {in_progress} active · {pending} pending"
+        summary = f"{done}/{total} done · {active} active · {pending} pending"
         
         # Format output
-        ICONS = {"pending": "○", "in_progress": "◐", "completed": "●", "cancelled": "✕"}
+        ICONS = {"pending": "○", "active": "◐", "done": "●"}
         lines = []
         lines.append(f"Written {total} items.")
         
@@ -275,12 +272,12 @@ class TodoWriteTool(BaseTool):
         lines.append(f"Summary: {summary}")
         
         return ToolResult(
-            title=f"Todo: {done}/{total} done · {in_progress} active · {pending} pending",
+            title=f"Todo: {done}/{total} done · {active} active · {pending} pending",
             output="\n".join(lines),
             summary=summary,
             metadata={
-                "total": total, "done": done, "in_progress": in_progress,
-                "pending": pending, "cancelled": cancelled,
+                "total": total, "done": done, "active": active,
+                "pending": pending,
                 "todo_items": [{"id": item.id, "content": item.content, "status": item.status} for item in inp.todos],
                 "todo_summary": summary,
             },
@@ -290,8 +287,4 @@ class TodoWriteTool(BaseTool):
         """Filter todo items by status."""
         if filter_type == "all":
             return todos
-        
-        if filter_type == "done":
-            return {k: v for k, v in todos.items() if v["status"] in ("completed", "cancelled")}
-        
         return {k: v for k, v in todos.items() if v["status"] == filter_type}

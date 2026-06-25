@@ -287,11 +287,10 @@ class TestInteractiveTools:
     async def test_agent_tool_normalizes_review_mode_to_goal_resolution_and_result_contract(self, tmp_path):
         captured: dict[str, object] = {}
 
-        async def runner(agent_def, description, model, goal_resolution, result):
+        async def runner(agent_def, description, goal_resolution, result):
             captured.update({
                 "agent": agent_def.name,
                 "description": description,
-                "model": model,
                 "goal_resolution": goal_resolution,
                 "result": result,
             })
@@ -322,7 +321,7 @@ class TestInteractiveTools:
     async def test_agent_tool_normalizes_inspect_without_goal_map(self, tmp_path):
         captured: dict[str, object] = {}
 
-        async def runner(agent_def, description, model, goal_resolution, result):
+        async def runner(agent_def, description, goal_resolution, result):
             captured.update({
                 "goal_resolution": goal_resolution,
                 "result": result,
@@ -355,7 +354,7 @@ class TestInteractiveTools:
     async def test_agent_tool_normalizes_feedback_review_goal_without_review_join_rejection(self, tmp_path):
         captured: dict[str, object] = {}
 
-        async def runner(agent_def, description, model, goal_resolution, result):
+        async def runner(agent_def, description, goal_resolution, result):
             captured.update({
                 "goal_resolution": goal_resolution,
                 "result": result,
@@ -389,7 +388,7 @@ class TestInteractiveTools:
     async def test_agent_tool_normalizes_implement_mode_to_tdd_verify_route(self, tmp_path):
         captured: dict[str, object] = {}
 
-        async def runner(agent_def, description, model, goal_resolution, result):
+        async def runner(agent_def, description, goal_resolution, result):
             captured.update({
                 "goal_resolution": goal_resolution,
                 "result": result,
@@ -431,7 +430,7 @@ class TestInteractiveTools:
         }
         captured: list[str] = []
 
-        async def runner(agent_def, description, model, goal_resolution, result):
+        async def runner(agent_def, description, goal_resolution, result):
             captured.append(result.schema_name)
             return "child result"
 

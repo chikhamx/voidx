@@ -201,7 +201,7 @@ async def test_run_once_commits_event_todo_at_turn_end(tmp_path):
                 from voidx.ui.output.events import TodoItemPayload, TodoUpdated, ui_events
 
                 await ui_events.emit(TodoUpdated(
-                    items=[TodoItemPayload(id="review", content="finish review", status="completed")],
+                    items=[TodoItemPayload(id="review", content="finish review", status="done")],
                     summary="1/1 done · 0 active · 0 pending",
                 ))
                 return {"messages": list(initial["messages"]) + [AIMessage(content="done")]}
@@ -247,7 +247,7 @@ async def test_run_once_persists_sanitized_todo_replay_rows(tmp_path):
                             content="",
                             tool_calls=[{
                                 "name": "todo",
-                                "args": {"todos": [{"content": "track work", "status": "in_progress"}]},
+                                "args": {"todos": [{"content": "track work", "status": "active"}]},
                                 "id": "call_todo",
                                 "type": "tool_call",
                             }],
