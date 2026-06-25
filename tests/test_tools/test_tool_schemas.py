@@ -127,9 +127,10 @@ class TestToolSchemas:
         with pytest.raises(ValueError):
             WriteInput(file_path="x.py", op="insert", new_string="nope\n")
 
-    def test_write_append_rejects_lineno(self):
-        with pytest.raises(ValueError):
-            WriteInput(file_path="x.py", op="append", lineno=3, new_string="nope\n")
+    def test_write_append_ignores_lineno(self):
+        inp = WriteInput(file_path="x.py", op="append", lineno=3, new_string="nope\n")
+        assert inp.op == "append"
+        assert inp.lineno == 3
 
     def test_write_schema_has_insert_append_fields(self):
         schema = WriteTool().parameters_schema()
