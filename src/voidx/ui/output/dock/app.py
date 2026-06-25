@@ -50,6 +50,10 @@ class BottomInputDock(DockStreamMixin, DockStatusMixin, DockNodeMixin):
         self._current_tool: OutputNode | None = None
         self._stream_node: OutputNode | None = None
         self._stream_text = ""
+        self._last_committed_stream_text = ""
+        self._last_committed_stream_parent_id: str | None = None
+        self._last_committed_stream_node_id: str | None = None
+        self._ignored_duplicate_stream_commit = False
         self._status_nodes: dict[str, OutputNode] = {}
         self._status_ticks: dict[str, int] = {}
         self._status_records: dict[str, DockStatusRecord] = {}
@@ -157,6 +161,10 @@ class BottomInputDock(DockStreamMixin, DockStatusMixin, DockNodeMixin):
             return
         self._stream_node = None
         self._stream_text = ""
+        self._last_committed_stream_text = ""
+        self._last_committed_stream_parent_id = None
+        self._last_committed_stream_node_id = None
+        self._ignored_duplicate_stream_commit = False
         if self._live:
             self._stopping = True
             self._live.stop()
@@ -376,6 +384,32 @@ class BottomInputDock(DockStreamMixin, DockStatusMixin, DockNodeMixin):
                 break
             index += 1
         return index
+
+    def has_active_thinking_stream(self) -> bool:
+        node = self._stream_node
+        return (
+            node is not None
+            and node.node_type == "assistant"
+            and node.payload.get("phase") == "thinking"
+        )
+
+    def active_thinking_stream_line_ids(self, width: int) -> set[int]:
+        node = self._stream_node
+        if not self.has_active_thinking_stream() or node is None:
+            return set()
+        _lines, line_map = self._tree.render_with_line_map(width)
+        return {index for index, node_id in line_map.items() if node_id == node.id}
+
+    def active_thinking_stream_lines(self, width: int) -> list[str]:
+        node = self._stream_node
+        if not self.has_active_thinking_stream() or node is None:
+            return []
+        lines, line_map = self._tree.render_with_line_map(width)
+        return [
+            line
+            for index, line in enumerate(lines)
+            if line_map.get(index) == node.id
+        ]
 
     def mark_node_settled(self, node: OutputNode | None) -> None:
         self._mark_subtree_settled(node)

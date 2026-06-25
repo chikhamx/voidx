@@ -466,6 +466,8 @@ class OutputTree:
                 line = node.collapse_summary
                 if node.node_type == "turn":
                     line = _full_width_row(line, self._render_width)
+                elif node.node_type == "permission":
+                    line = _permission_row(line, self._render_width)
                 lines.append(line)
                 if line_map is not None:
                     line_map[len(lines) - 1] = node.id
@@ -478,6 +480,8 @@ class OutputTree:
             line = node.header if node.header else ""
             if node.node_type == "turn":
                 line = _full_width_row(line, self._render_width)
+            elif node.node_type == "permission":
+                line = _permission_row(line, self._render_width)
             lines.append(line)
             if line_map is not None:
                 line_map[len(lines) - 1] = node.id
@@ -489,6 +493,8 @@ class OutputTree:
                 body_line = f"{body_prefix}{bl}"
                 if node.node_type == "turn":
                     body_line = _full_width_row(body_line, self._render_width)
+                elif node.node_type == "permission":
+                    body_line = _permission_row(body_line, self._render_width)
                 lines.append(body_line)
                 if line_map is not None:
                     line_map[len(lines) - 1] = node.id
@@ -555,18 +561,23 @@ class OutputTree:
             self._node_prefixes[node.id] = list(prefix_parts)
             return
 
+        body_only_thinking = _is_thinking_stream(node) and not node.header
+
         # Header line
         current_prefix = indent if inline_tool_result else (
             tool_prefix if tool_call_row else (
                 "" if transparent_assistant_child else aligned_prefix
             )
         )
-        line = f"{current_prefix}{node.header}" if node.header else current_prefix
-        lines.append(line)
-        if line_map is not None:
-            line_map[len(lines) - 1] = node.id
-        if click_map is not None and _is_clickable(node):
-            click_map[len(lines) - 1] = node.id
+        if not body_only_thinking:
+            line = f"{current_prefix}{node.header}" if node.header else current_prefix
+            if node.node_type == "permission":
+                line = _permission_row(line, self._render_width)
+            lines.append(line)
+            if line_map is not None:
+                line_map[len(lines) - 1] = node.id
+            if click_map is not None and _is_clickable(node):
+                click_map[len(lines) - 1] = node.id
 
         # Continuation for body lines and children
         cont_suffix = self.BOX_SPACE if suppress_connector or effectively_last else self.BOX_VERT
@@ -579,6 +590,8 @@ class OutputTree:
             body_line = f"{tool_prefix}{_tool_meta_line(bl)}" if tool_metadata_body else f"{cont}{bl}"
             if node.payload.get("diff_text"):
                 body_line = _pad_diff_background_row(body_line, self._render_width)
+            if node.node_type == "permission":
+                body_line = _permission_row(body_line, self._render_width)
             lines.append(body_line)
             if line_map is not None:
                 line_map[len(lines) - 1] = node.id
@@ -601,6 +614,12 @@ def _full_width_row(line: str, width: int) -> str:
     visible = cell_len(Text.from_markup(line).plain)
     padding = " " * max(0, width - visible)
     return f"[{USER_ROW_STYLE}]{line}{padding}[/]"
+
+
+def _permission_row(line: str, width: int) -> str:
+    visible = cell_len(Text.from_markup(line).plain)
+    padding = " " * max(0, width - visible)
+    return f"[white on #3a3937]{line}{padding}[/]"
 
 
 def _tool_meta_line(line: str) -> str:
@@ -655,6 +674,8 @@ def _needs_gap_between_agent_blocks(
         return False
     if _is_empty_message_spacer(prev) or _is_empty_message_spacer(child):
         return False
+    if _is_thinking_stream(child):
+        return False
     prev_text = _is_visible_agent_text(prev)
     child_text = _is_visible_agent_text(child)
     return child_text and (prev_text or prev.node_type == "tool_call")
@@ -664,6 +685,13 @@ def _is_visible_agent_text(node: OutputNode) -> bool:
     if node.node_type not in {"assistant", "message"}:
         return False
     return bool(node.header or node.body_lines)
+
+
+def _is_thinking_stream(node: OutputNode) -> bool:
+    return (
+        node.node_type == "assistant"
+        and (node.payload.get("phase") == "thinking" or "Thinking" in node.header)
+    )
 
 
 def _is_empty_message_spacer(node: OutputNode) -> bool:

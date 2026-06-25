@@ -86,8 +86,13 @@ class _FrameRendererMixin:
             self._last_bottom_start_row = start_row + frame_rows - bottom_rows
             self._last_busy_activity_rows = busy_activity_rows
             if busy_activity_rows > 0:
+                thinking_stream_rows = len(self._active_thinking_stream_elements(width))
                 self._last_busy_activity_start_row = (
-                    start_row + frame_rows - bottom_rows - busy_activity_rows
+                    start_row
+                    + frame_rows
+                    - bottom_rows
+                    - thinking_stream_rows
+                    - busy_activity_rows
                 )
             else:
                 self._last_busy_activity_start_row = 0
@@ -356,12 +361,17 @@ class _FrameRendererMixin:
         status_lines = self._render_hint_lines()
         panel_lines = self._render_panel_lines(width)
         busy_activity_elements = self._render_busy_activity_elements(width)
+        thinking_stream_elements = self._active_thinking_stream_elements(width)
 
         base_bottom_rows = self._base_bottom_row_count(width, status_lines)
         panel_rows, panel_ansi = self._panel_row_count_and_ansi(panel_lines, width)
         if panel_lines:
             panel_row_limit = max(
-                render_height - base_bottom_rows - len(busy_activity_elements) - 1,
+                render_height
+                - base_bottom_rows
+                - len(busy_activity_elements)
+                - len(thinking_stream_elements)
+                - 1,
                 0,
             )
             self._panel_row_limit = panel_row_limit
@@ -374,13 +384,18 @@ class _FrameRendererMixin:
             + (1 if panel_rows else 0)
         )
         todo_budget = max(
-            render_height - bottom_fixed_lines - len(busy_activity_elements),
+            render_height
+            - bottom_fixed_lines
+            - len(busy_activity_elements)
+            - len(thinking_stream_elements),
             0,
         )
         todo_max_rows = min(
             self._pinned_todo_max_rows(
                 render_height,
-                bottom_fixed_lines + len(busy_activity_elements),
+                bottom_fixed_lines
+                + len(busy_activity_elements)
+                + len(thinking_stream_elements),
             ),
             todo_budget,
         )
@@ -389,6 +404,7 @@ class _FrameRendererMixin:
             bottom_fixed_lines
             + len(pinned_todo_elements)
             + len(busy_activity_elements)
+            + len(thinking_stream_elements)
         )
         body_limit = max(render_height - fixed_lines, 0)
 
@@ -396,7 +412,12 @@ class _FrameRendererMixin:
         # Committed lines have already been flushed to terminal scrollback.
         tree_lines = dock.tree.render(width)
         committed = self._committed_line_count
-        active_lines = tree_lines[committed:]
+        thinking_line_ids = dock.active_thinking_stream_line_ids(width)
+        active_lines = [
+            line
+            for index, line in enumerate(tree_lines[committed:], start=committed)
+            if index not in thinking_line_ids
+        ]
 
         elements: list = self._transcript_elements_for_rows(
             active_lines,
@@ -406,6 +427,7 @@ class _FrameRendererMixin:
 
         elements.extend(pinned_todo_elements)
         elements.extend(busy_activity_elements)
+        elements.extend(thinking_stream_elements)
         elements.extend(
             self._render_bottom_elements(
                 width,
@@ -416,6 +438,12 @@ class _FrameRendererMixin:
         )
 
         return Group(*elements)
+
+    def _active_thinking_stream_elements(self, width: int) -> list[Text]:
+        lines = dock.active_thinking_stream_lines(width)
+        if not lines:
+            return []
+        return self._transcript_elements_for_rows(lines, width, len(lines))
 
     def _transcript_elements_for_rows(
         self,

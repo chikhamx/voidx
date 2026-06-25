@@ -72,6 +72,61 @@ def test_stream_reply_and_following_tool_share_same_ai_message_block():
         test_dock.reset()
 
 
+def test_thinking_stream_does_not_store_blank_placeholder_rows():
+    test_dock = dock
+    test_dock.begin_capture()
+    try:
+        test_dock.start_turn("看看现在的文件write工具")
+
+        test_dock.set_stream("先看 write 工具", phase="thinking")
+        first_lines = test_dock.tree.render(100)
+        first_count = len(first_lines)
+        stream_node = test_dock._stream_node
+        assert stream_node is not None
+        assert stream_node.header == ""
+        assert stream_node.payload["phase"] == "thinking"
+        assert len(stream_node.body_lines) == 1
+        assert test_dock.safe_flush_line_count(100, 0) < first_count
+
+        test_dock.set_stream(
+            "先看 write 工具\n"
+            "再看测试\n"
+            "确认 append 行为",
+            phase="thinking",
+        )
+        second_lines = test_dock.tree.render(100)
+
+        assert len(second_lines) >= first_count
+        assert test_dock.safe_flush_line_count(100, 0) < len(second_lines)
+    finally:
+        test_dock.deactivate()
+        test_dock.reset()
+
+
+def test_thinking_stream_wraps_long_content_to_visual_lines():
+    test_dock = dock
+    test_dock.begin_capture()
+    try:
+        test_dock.start_turn("trace thinking wrap")
+        long_text = (
+            "When thinking ends and text begins, the streaming node should render "
+            "content by terminal visual rows instead of one long logical line."
+        )
+
+        test_dock.set_stream(long_text, phase="thinking")
+
+        stream_node = test_dock._stream_node
+        assert stream_node is not None
+        assert len(stream_node.body_lines) > 1
+        assert len(stream_node.body_lines) <= 5
+        for line in stream_node.body_lines:
+            text = Text.from_ansi(line.removeprefix("\x00voidx-ansi\x00"))
+            assert cell_len(text.plain) <= test_dock._markdown_width() + 2
+    finally:
+        test_dock.deactivate()
+        test_dock.reset()
+
+
 def test_turn_render_uses_full_width_user_background(tmp_path):
     test_dock = dock
     test_dock.begin_capture()
@@ -166,6 +221,65 @@ def test_agent_text_blocks_are_spaced_after_tool_calls():
     assert second_text == second_tool + 2
     assert plain_lines[second_text + 1] == ""
     assert third_text == second_text + 2
+
+
+def test_thinking_stream_starts_immediately_after_last_tool_call_without_header():
+    from voidx.ui.output.tree import OutputTree
+
+    tree = OutputTree()
+    assistant = tree.new_node(tree.root, node_type="assistant", header="")
+    tree.new_node(
+        assistant,
+        node_type="tool_call",
+        header='[#A3BE8C]●[/#A3BE8C] [bold]Read[/bold]("src/a.py")',
+    )
+    tree.new_node(
+        assistant,
+        node_type="tool_call",
+        header='[#A3BE8C]●[/#A3BE8C] [bold]Bash[/bold]("git diff")',
+    )
+    tree.new_node(
+        assistant,
+        node_type="assistant",
+        header="",
+        body_lines=["\x00voidx-ansi\x00  Let me check the diff."],
+        payload={"phase": "thinking"},
+    )
+
+    plain_lines = [_rich_plain(line) for line in tree.render(100)]
+    bash_index = next(index for index, line in enumerate(plain_lines) if "Bash" in line)
+    thinking_index = next(index for index, line in enumerate(plain_lines) if "Let me check" in line)
+
+    assert thinking_index == bash_index + 1
+    assert all("Thinking" not in line for line in plain_lines)
+
+
+def test_text_stream_after_thinking_restores_gap_after_tool_call():
+    test_dock = dock
+    test_dock.begin_capture()
+    try:
+        test_dock.start_turn("demo")
+        test_dock.start_tool(
+            "Bash",
+            'command="pytest"',
+            tool_name="bash",
+            raw_args={"command": "pytest"},
+        )
+        test_dock.finish_tool("Bash", 0.1, True)
+        test_dock.set_stream("checking result", phase="thinking")
+        test_dock.tree.render(100)
+
+        test_dock.set_stream("final answer", phase="text")
+
+        plain_lines = [_rich_plain(line) for line in test_dock.tree.render(100)]
+        bash_index = next(index for index, line in enumerate(plain_lines) if "Bash" in line)
+        answer_index = next(index for index, line in enumerate(plain_lines) if "final answer" in line)
+
+        assert plain_lines[bash_index + 1] == ""
+        assert answer_index == bash_index + 2
+    finally:
+        test_dock.deactivate()
+        test_dock.reset()
 
 
 def test_file_change_body_lines_do_not_render_as_tool_metadata():

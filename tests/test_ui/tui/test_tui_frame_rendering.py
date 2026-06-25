@@ -278,3 +278,152 @@ def test_flush_committed_counts_blank_separator_flushed_by_itself(tmp_path, monk
     assert tui._visible_committed_rows == 5
 
 
+def test_render_after_final_flush_does_not_redraw_flushed_final_answer(tmp_path, monkeypatch):
+    fake_stdout = _FakeStdout()
+    monkeypatch.setattr(sys, "stdout", fake_stdout)
+    monkeypatch.setattr(
+        shutil,
+        "get_terminal_size",
+        lambda fallback=None: os.terminal_size((80, 30)),
+    )
+
+    tui = _tui(tmp_path)
+    tui._tty = True
+    tui._busy = False
+    tui._was_busy = True
+    tui._console = Console(file=fake_stdout, force_terminal=True, width=80, height=30, _environ={})
+    dock.begin_capture()
+    dock.start_turn("1和2的建议简单改吗")
+    dock.append_message("改好了，17 个测试全过。segment -> wrapped_line，一行的事。")
+    dock.append_message("[dim]✻  37s[/dim]  [dim]·[/dim]  [cyan]3[/cyan] [dim]calls[/dim]", markup=True)
+
+    tui._flush_committed()
+    flushed_output = fake_stdout.text
+    fake_stdout.text = ""
+
+    tui._render_frame()
+
+    assert "改好了，17 个测试全过" in flushed_output
+    assert "改好了，17 个测试全过" not in fake_stdout.text
+
+
+def test_final_flush_clears_existing_frame_before_printing_answer(tmp_path, monkeypatch):
+    fake_stdout = _FakeStdout()
+    monkeypatch.setattr(sys, "stdout", fake_stdout)
+    monkeypatch.setattr(
+        shutil,
+        "get_terminal_size",
+        lambda fallback=None: os.terminal_size((80, 30)),
+    )
+
+    tui = _tui(tmp_path)
+    tui._tty = True
+    tui._busy = True
+    tui._was_busy = True
+    tui._console = Console(file=fake_stdout, force_terminal=True, width=80, height=30, _environ={})
+    dock.begin_capture()
+    dock.start_turn("1和2的建议简单改吗")
+    dock.append_message("改好了，17 个测试全过。segment -> wrapped_line，一行的事。")
+
+    tui._render_frame()
+    fake_stdout.text = ""
+    tui._busy = False
+
+    tui._flush_committed()
+
+    clear_index = fake_stdout.text.find("\x1b[J")
+    answer_index = fake_stdout.text.find("改好了")
+    assert clear_index != -1
+    assert answer_index != -1
+    assert clear_index < answer_index
+
+
+def test_final_flush_invalidates_previous_frame_cache(tmp_path, monkeypatch):
+    fake_stdout = _FakeStdout()
+    monkeypatch.setattr(sys, "stdout", fake_stdout)
+    monkeypatch.setattr(
+        shutil,
+        "get_terminal_size",
+        lambda fallback=None: os.terminal_size((80, 30)),
+    )
+
+    tui = _tui(tmp_path)
+    tui._tty = True
+    tui._busy = True
+    tui._was_busy = True
+    tui._console = Console(file=fake_stdout, force_terminal=True, width=80, height=30, _environ={})
+    dock.begin_capture()
+    dock.start_turn("demo")
+    dock.set_stream("当前文档已在仓库里了。", phase="thinking")
+
+    tui._render_frame()
+    assert tui._prev_frame_lines is not None
+
+    dock.set_stream("当前文档已在仓库里了。", phase="text")
+    dock.commit_stream(refresh=False)
+    tui._busy = False
+
+    tui._flush_committed()
+
+    assert tui._prev_frame_lines is None
+
+
+def test_flush_does_not_replay_committed_lines_after_transient_status_removed(tmp_path, monkeypatch):
+    fake_stdout = _FakeStdout()
+    monkeypatch.setattr(sys, "stdout", fake_stdout)
+    monkeypatch.setattr(
+        shutil,
+        "get_terminal_size",
+        lambda fallback=None: os.terminal_size((80, 30)),
+    )
+
+    tui = _tui(tmp_path)
+    tui._tty = True
+    tui._console = Console(file=fake_stdout, force_terminal=True, width=80, height=30, _environ={})
+    dock.begin_capture()
+    dock.start_turn("hello")
+    dock.append_message("final answer")
+    dock.set_status("turn:analyzing", "Analyzing")
+
+    tui._flush_committed(force=True)
+    assert "final answer" in fake_stdout.text
+    fake_stdout.text = ""
+
+    dock.finish_status("turn:analyzing")
+    tui._flush_committed()
+
+    assert "final answer" not in fake_stdout.text
+    assert tui._committed_line_count == len(dock.tree.render(tui._frame_width()))
+
+
+def test_flushed_root_message_is_not_replayed_when_later_tools_are_added(tmp_path, monkeypatch):
+    fake_stdout = _FakeStdout()
+    monkeypatch.setattr(sys, "stdout", fake_stdout)
+
+    tui = _tui(tmp_path)
+    tui._tty = False
+    dock.begin_capture()
+    dock.start_turn("再看看工作区新增的改动")
+    tool = dock.start_tool(
+        "Giting",
+        "status",
+        tool_name="git",
+        raw_args={"command": "git status"},
+    )
+    dock.finish_tool_node(tool, "Giting", 0.1, True)
+    tui._flush_committed()
+
+    dock.append_message("相比上次 review，新增了几个文件的改动。让我看完所有变更。")
+    tui._flush_committed()
+
+    tool = dock.start_tool(
+        "Giting",
+        "diff",
+        tool_name="git",
+        raw_args={"command": "git diff"},
+    )
+    dock.finish_tool_node(tool, "Giting", 0.1, True)
+    tui._flush_committed()
+
+    assert fake_stdout.text.count("相比上次 review") == 1
+    assert "让我看完所有变更。\n\n   ● Giting(\"git diff\")" in fake_stdout.text

@@ -162,6 +162,47 @@ def test_busy_activity_label_rotates_centered_glyphs(tmp_path, monkeypatch):
     assert tui._busy_activity_label().startswith("◐ Pondering (4s)")
 
 
+def test_busy_activity_label_replaces_verb_during_thinking_stream(tmp_path, monkeypatch):
+    monkeypatch.setattr("voidx.ui.tui.render_activity.time.monotonic", lambda: 105.0)
+    tui = _tui(tmp_path)
+    tui._busy = True
+    tui._busy_started_at = 100.0
+    tui._busy_activity_verb = "Pondering"
+    dock.begin_capture()
+    try:
+        dock.start_turn("trace thinking")
+        dock.set_stream("checking transient status removal", phase="thinking")
+
+        assert tui._busy_activity_label() == "◐ Thinking (5s)"
+
+        dock.commit_stream(refresh=False)
+        assert tui._busy_activity_label() == "◐ Pondering (5s)"
+    finally:
+        dock.deactivate()
+        dock.reset()
+
+
+def test_busy_activity_renders_thinking_content_below_verb(tmp_path, monkeypatch):
+    monkeypatch.setattr("voidx.ui.tui.render_activity.time.monotonic", lambda: 105.0)
+    tui = _tui(tmp_path)
+    tui._console = Console(file=None, force_terminal=True, width=100, height=24, _environ={})
+    tui._busy = True
+    tui._busy_started_at = 100.0
+    dock.begin_capture()
+    try:
+        dock.start_turn("trace thinking")
+        dock.set_stream("checking transient status removal", phase="thinking")
+
+        lines = [_rich_plain(line) for line in _render_lines(tui, width=100)]
+        thinking_index = next(i for i, line in enumerate(lines) if "Thinking (5s)" in line)
+        content_index = next(i for i, line in enumerate(lines) if "checking transient" in line)
+
+        assert thinking_index < content_index
+    finally:
+        dock.deactivate()
+        dock.reset()
+
+
 def test_busy_activity_label_includes_step_and_turn_tokens(tmp_path, monkeypatch):
     now = {"value": 100.0}
     monkeypatch.setattr("voidx.ui.tui.render_activity.time.monotonic", lambda: now["value"])
@@ -362,6 +403,49 @@ def test_busy_activity_tick_repaints_bottom_line_with_pinned_todo(tmp_path, monk
     assert "voidx" not in tick_output
     assert "\x1b[J" not in fake_stdout.text
     assert "\x1b[K" in fake_stdout.text
+
+
+def test_busy_activity_tick_repaints_only_busy_line_above_thinking_content(tmp_path, monkeypatch):
+    now = {"value": 1.0}
+    monkeypatch.setattr("voidx.ui.tui.render_activity.time.monotonic", lambda: now["value"])
+    fake_stdout = _FakeStdout()
+    monkeypatch.setattr(sys, "stdout", fake_stdout)
+    monkeypatch.setattr(
+        shutil,
+        "get_terminal_size",
+        lambda fallback=None: os.terminal_size((100, 12)),
+    )
+    tui = _tui(tmp_path)
+    tui._running = True
+    tui._tty = True
+    tui._busy = True
+    tui._busy_started_at = 0.0
+    tui._console = Console(file=None, force_terminal=True, width=100, height=12, _environ={})
+    dock.begin_capture()
+    try:
+        dock.start_turn("trace thinking")
+        dock.set_stream("checking transient status removal", phase="thinking")
+
+        tui._render_frame()
+
+        assert tui._last_busy_activity_start_row < tui._last_bottom_start_row - 1
+
+        fake_stdout.text = ""
+        now["value"] = 2.0
+        monkeypatch.setattr(
+            tui,
+            "_render_frame",
+            lambda: (_ for _ in ()).throw(AssertionError("timer must not full-render")),
+        )
+
+        assert tui._render_busy_activity_tick() is True
+        tick_output = _rich_plain(fake_stdout.text)
+        assert "Thinking (2s)" in tick_output
+        assert "checking transient" not in tick_output
+        assert "─" not in tick_output
+    finally:
+        dock.deactivate()
+        dock.reset()
 
 
 @pytest.mark.asyncio

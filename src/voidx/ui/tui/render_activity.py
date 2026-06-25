@@ -11,6 +11,7 @@ from voidx.ui.output.dock import (
     active_agent_step_text,
     active_compaction_text,
     active_turn_analyzing_text,
+    dock,
 )
 from voidx.ui.tui.activity import (
     BUSY_ACTIVITY_DEFAULT_VERB,
@@ -54,9 +55,11 @@ class _ActivityRendererMixin:
         compacting = active_compaction_text()
         step = active_agent_step_text()
         status_label = analyzing or compacting or step or ""
-        verb = status_label or self._busy_activity_verb or BUSY_ACTIVITY_DEFAULT_VERB
+        thinking = dock.has_active_thinking_stream()
+        verb = "Thinking" if thinking else status_label or self._busy_activity_verb or BUSY_ACTIVITY_DEFAULT_VERB
+        prefix = f"{glyph} {verb}"
         if started_at is None:
-            return f"{glyph} {verb}"
+            return prefix
         elapsed = max(0, int(time.monotonic() - started_at))
         details = [self._format_elapsed(elapsed)]
         if analyzing and status_label != analyzing:
@@ -71,7 +74,7 @@ class _ActivityRendererMixin:
         latest = self._latest_action_text()
         if latest:
             details.append(latest)
-        return f"{glyph} {verb} ({' '.join(details)})"
+        return f"{prefix} ({' '.join(details)})"
 
     def _turn_token_text(self) -> str:
         stats = getattr(self.status, "usage_stats", None)

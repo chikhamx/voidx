@@ -71,8 +71,8 @@ async def test_streaming_renderer_updates_thinking_and_streaming_status(isolated
         await ui_events.drain()
 
         rendered = "\n".join(_plain(line) for line in isolated_dock.tree.render(100))
-        assert "Thinking" in rendered
         assert "inspect auth" in rendered
+        assert "Thinking" not in rendered
 
         renderer.feed_text("hello")
         await ui_events.drain()
@@ -106,10 +106,10 @@ async def test_streaming_renderer_collapses_thinking_content_after_text_starts(i
         await ui_events.drain()
 
         rendered = "\n".join(_plain(line) for line in isolated_dock.tree.render(100))
-        assert "Thinking" in rendered
         assert "two" in rendered
         assert "six" in rendered
         assert "one" not in rendered
+        assert "Thinking" not in rendered
 
         renderer.feed_text("answer")
         await ui_events.drain()
@@ -142,8 +142,8 @@ async def test_streaming_renderer_discards_thinking_only_stream(isolated_dock):
         await ui_events.drain()
 
         rendered = "\n".join(_plain(line) for line in isolated_dock.tree.render(100))
-        assert "Thinking" in rendered
         assert "temporary thought" in rendered
+        assert "Thinking" not in rendered
 
         renderer.done()
         await ui_events.drain()
@@ -179,6 +179,92 @@ async def test_streaming_renderer_headless_suppresses_ui_output(isolated_dock):
     renderer.feed_thinking("quiet thought\n")
     renderer.feed_text("quiet answer")
     assert renderer.done() == "quiet answer"
+
+
+def test_streaming_renderer_done_is_idempotent_for_dock_stream(isolated_dock):
+    isolated_dock.begin_capture()
+    renderer = StreamingRenderer(Console(), debug=False)
+    renderer.feed_text("final answer")
+
+    assert renderer.done() == "final answer"
+    assert renderer.done() == ""
+
+    rendered = "\n".join(_plain(line) for line in isolated_dock.tree.render(100))
+    assert rendered.count("final answer") == 1
+
+
+@pytest.mark.asyncio
+async def test_duplicate_stream_commit_after_permission_clear_is_ignored(isolated_dock):
+    isolated_dock.begin_capture()
+    bus = UiEventBus()
+    bus.start(DockEventConsumer(isolated_dock))
+    try:
+        text = "● 现在我对变更有了清晰的了解。让我先运行测试确认这些修改没有破坏什么。"
+        await bus.emit(TurnStarted(text="demo"))
+        await bus.emit(AssistantStreamUpdated(text=text))
+        await bus.emit(AssistantStreamCommitted())
+        await bus.emit(PermissionPromptShown(
+            prompt="Allow tools: bash?",
+            choices=[],
+            tools=[
+                PermissionToolDetail(
+                    name="bash",
+                    pattern="pytest",
+                    args={"command": "pytest"},
+                )
+            ],
+        ))
+        await bus.emit(PermissionPromptCleared())
+        await bus.emit(AssistantStreamUpdated(text=text))
+        await bus.emit(AssistantStreamCommitted())
+        await bus.emit(ToolStarted(
+            tool_call_id="pytest",
+            tool_name="bash",
+            label="Bash",
+            args='command="pytest"',
+            raw_args={"command": "pytest"},
+        ))
+        await bus.drain()
+
+        rendered = "\n".join(_plain(line) for line in isolated_dock.tree.render(100))
+        assert rendered.count("现在我对变更") == 1
+        assert "Bash" in rendered
+    finally:
+        await bus.stop()
+
+
+@pytest.mark.asyncio
+async def test_duplicate_text_stream_after_intervening_thinking_is_ignored(isolated_dock):
+    isolated_dock.begin_capture()
+    bus = UiEventBus()
+    bus.start(DockEventConsumer(isolated_dock))
+    try:
+        text = "● Now let me run the tests to verify they pass."
+        await bus.emit(TurnStarted(text="demo"))
+        await bus.emit(AssistantStreamUpdated(text=text))
+        await bus.emit(AssistantStreamCommitted())
+        await bus.emit(ToolStarted(
+            tool_call_id="pytest",
+            tool_name="bash",
+            label="Bash",
+            args='command="pytest"',
+            raw_args={"command": "pytest"},
+        ))
+        await bus.emit(ToolFinished(tool_call_id="pytest", label="Bash", elapsed=0.1, ok=True))
+        await bus.emit(AssistantStreamUpdated(
+            text="No timeout plugin, let me just run without it.",
+            phase="thinking",
+        ))
+        await bus.emit(AssistantStreamUpdated(text=text))
+        await bus.emit(AssistantStreamCommitted())
+        await bus.drain()
+
+        rendered = "\n".join(_plain(line) for line in isolated_dock.tree.render(100))
+        assert rendered.count("Now let me run the tests") == 1
+        assert "No timeout plugin" in rendered
+        assert "Thinking" not in rendered
+    finally:
+        await bus.stop()
 
 
 @pytest.mark.asyncio

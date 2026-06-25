@@ -297,9 +297,10 @@ class PureTui(
         total = len(tree_lines)
 
         # After a dock.reset() the tree shrinks below the old committed
-        # count.  Reset so the new (smaller) content flushes correctly.
+        # count.  If a transient node was removed, keep already-flushed
+        # history committed instead of replaying it from the top.
         if self._committed_line_count > total:
-            self._committed_line_count = 0
+            self._committed_line_count = total
 
         if force:
             flush_limit = total

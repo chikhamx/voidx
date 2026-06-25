@@ -5,6 +5,7 @@ import sys
 from pathlib import Path
 
 import pytest
+from rich.cells import cell_len
 from rich.console import Console
 from rich.text import Text
 
@@ -370,6 +371,18 @@ async def test_permission_prompt_event_renders_and_clears(isolated_dock):
         assert "Permission required" in rendered
         assert "Allow tools: bash?" in rendered
         assert "npm test" in rendered
+
+        permission_lines = [
+            line for line in isolated_dock.tree.render(100)
+            if "Permission required" in _rich_plain(line)
+            or "bash" in _rich_plain(line)
+            or "npm test" in _rich_plain(line)
+        ]
+        assert permission_lines
+        for line in permission_lines:
+            text = Text.from_markup(_plain(line))
+            assert cell_len(text.plain) == 100
+            assert any("on #3a3937" in str(span.style) for span in text.spans)
 
         await bus.emit(PermissionPromptCleared())
         await bus.drain()

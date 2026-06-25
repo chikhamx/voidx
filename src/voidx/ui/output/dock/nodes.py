@@ -65,6 +65,9 @@ class DockNodeMixin(
             body_lines=body_lines,
             collapsed=False,
         )
+        if parent is None and self._stream_node is None:
+            self._current_agent = None
+            self._current_tool = None
         self.refresh()
         return node
 
