@@ -12,7 +12,7 @@
 
 - 引入 `op` 参数，支持 `write`（全量写入）、`update`（按 id 增量更新）、`read`（按 filter 只读查询）
 - 使用字符串语义化 id（如 `"schema"`, `"api"`），compaction 后 LLM 零成本回忆
-- `TaskState.todo_state` 简化为摘要元数据（计数 + 仅 in_progress 的 active_items，上限 3 条）
+- `TaskState.todo_state` 简化为摘要元数据（计数 + 仅 in_progress 的 `active_items`）
 - `read` 操作不产生副作用（不更新 TaskState、不触发 UI 事件、不 replay sanitize）
 - `id` 在 `TodoItem`/`TodoRunItem`/`TodoItemPayload`/`DockTodoItem` 各层贯通，UI 可展示语义化 id
 
@@ -52,7 +52,7 @@ LLM 调用 todo(op=write|update|read)
         |
         v
   runtime_context 注入 system prompt
-  (单行摘要 + active_items，最多 3 条)
+  (单行摘要 + active_items)
 ```
 
 ### 关键模块边界
@@ -63,7 +63,7 @@ LLM 调用 todo(op=write|update|read)
 | `tools/task_tracker.py` | 内存存储：dict[str, dict]，O(1) 查找/更新 |
 | `runtime/task_state.py` | `TodoRunState`/`TodoRunItem` 模型定义（摘要层）。注：`agent/task_state.py` 仅为 re-export 兼容层，实际定义在此 |
 | `agent/todo_state.py` | result -> TodoRunState 转换；replay sanitize 逻辑 |
-| `agent/runtime_context.py` | TodoRunState -> system prompt 注入（遍历 `active_items` 而非 `items`，上限 3 条截断） |
+| `agent/runtime_context.py` | TodoRunState -> system prompt 注入（遍历 `active_items` 而非 `items`） |
 | `agent/graph/subagent.py` | 子 agent 工具执行后 todo_state_sink 调度（判断条件从 `items` 改为 `active_items` 或计数） |
 | `agent/graph/runtime_guards.py` | 循环检测签名（改用计数字段，见 [Impact Analysis](#impact-analysis)） |
 | `agent/graph/tool_executor/workflow.py` | state patch：判断 `todo_state` 是否非空写入 update（条件从 `items` 改为计数 > 0） |
@@ -109,7 +109,7 @@ TodoRunState (改造后)
 +-- in_progress: int = 0
 +-- pending: int = 0
 +-- cancelled: int = 0
-+-- active_items: list[TodoRunItem] = []  (仅 in_progress 项，上限 3 条)
++-- active_items: list[TodoRunItem] = []  (仅 in_progress 项)
 +-- updated_at: str = ""
 
 TodoRunState (改造前，对比)
@@ -164,21 +164,31 @@ TaskTracker
 
 #### op=update
 
+- **语义**：非原子逐项更新。id 不存在的项静默跳过，其余项正常生效。
 - **Request**:
   ```json
   {"op": "update", "updates": [
       {"id": "schema", "status": "completed"},
-      {"id": "api",    "status": "in_progress"}
+      {"id": "api",    "status": "in_progress"},
+      {"id": "ghost",  "status": "completed"}
   ]}
   ```
-- **Response**: 返回更新后的完整列表
+- **Response**：返回更新后的完整列表，缺失 id 在响应中提示
   ```
-  Updated 2 items.
+  Updated 2 items. Skipped unknown ids: ghost
     [completed] schema: 设计数据库 schema
     [in_progress] api: 实现 API 接口
   Summary: 1/2 done . 1 active . 0 pending
   ```
-- **Metadata**: 同 write
+- **Metadata**: 同 write，额外含 `warnings` 字段列出跳过的 id
+  ```json
+  {
+    "total": 2, "done": 1, "in_progress": 1, "pending": 0, "cancelled": 0,
+    "todo_items": [...],
+    "todo_summary": "1/2 done . 1 active . 0 pending",
+    "warnings": ["Skipped unknown ids: ghost"]
+  }
+  ```
 
 #### op=read
 
@@ -213,12 +223,13 @@ TaskTracker
 - 所有消费 `todo` tool result 的位置，优先读取 `metadata.todo_op`，当 `todo_op == "read"` 时直接跳过 `TodoUpdated`、`todo_state_sink`、`runtime_context` 更新和 replay sanitize。
 - `todo_run_state_from_result(result)` 增加对 `todo_op` 的短路逻辑：当 `todo_op == "read"` 时直接返回 `None`，不再依赖是否缺少 `todo_items`。
 
-### update 操作原子性（补充）
+### update 操作语义（补充）
 
-当前 Error Handling 表中“update 时 id 不存在”只写了“返回错误 + 列出有效 id”，但没有明确整批语义。建议补充为：
+`update` 采用非原子逐项更新：
 
-- `update` 操作采用原子语义：若 `updates` 中任一目标 id 不存在，则整批不生效。
-- 返回结果中应列出“已知有效 id 列表”和“未命中 id 列表”，避免 LLM 在部分成功场景下误判状态。
+- id 存在的项正常更新，id 不存在的项静默跳过。
+- 响应文本中追加 `Skipped unknown ids: {ids}` 提示，metadata 中含 `warnings` 列表。
+- LLM 可根据 warnings 决定是否重新 write 补充缺失项，无需因一个无效 id 重试整批。
 
 ### UI payload 一致性（补充）
 
@@ -234,7 +245,7 @@ TaskTracker
 | 失败场景 | 处理策略 |
 |---------|---------|
 | write 时 id 重复 | 返回错误 + 列出重复 id，不修改存储 |
-| update 时 id 不存在 | 返回错误 + 列出有效 id，不修改存储 |
+| update 时 id 不存在 | 静默跳过该项，响应文本 + metadata.warnings 提示缺失 id |
 | update 的 updates 为空 | 返回当前摘要（等同于 read all） |
 | id 超过 20 字符 | 返回错误，提示缩短 id |
 | read 无匹配 filter 的项 | 返回 "No items match filter: {filter}" + Summary |
@@ -251,7 +262,10 @@ TaskTracker
 | write 替代 create | create, replace, set | write 语义最准确：全量写入，符合文件操作隐喻 |
 | read 带 filter 参数 | 独立 op（read_pending, read_done） | 一个 op + filter 参数更灵活，LLM 少记一组 op 名称 |
 | done = completed + cancelled | 仅 completed | 终态合集更实用，LLM 关心"已结束"的项 |
-| active_items 上限 3 条 | 无上限 | system prompt 空间有限，in_progress 通常不超过 3 项 |
+| active_items 不设上限 | 上限 3 条 | 实际场景中 in_progress 项数量有限，截断反而丢失信息；system prompt 膨胀风险由 LLM 自行控制（不会同时开太多任务） |
+| update 非原子逐项更新 | 原子整批失败 | LLM 无需因一个无效 id 重试整批；warnings 提示缺失 id，LLM 可自行决定是否补救 |
+| read 操作通过 `todo_op` 短路 | 仅靠 metadata 缺字段静默 | 显式标记比隐式缺失更可靠，避免下游误报 "malformed metadata" 告警 |
+| UI payload 贯通 id 字段 | 仅工具层有 id | 事件总线和 dock 渲染都需要 id 来关联展示，分裂会导致 UI 无法展示语义化 id |
 | TaskTracker 用 dict 存储 | 保持 list + 线性查找 | dict O(1) 查找/更新，id 天然做 key |
 
 ## Impact Analysis
@@ -268,11 +282,11 @@ if todo_state is not None and todo_state.items:
         lines.append(f"  - {item.status}: {item.content}")
 ```
 
-**改造**：遍历 `active_items`（仅 in_progress，上限 3 条），并展示 id：
+**改造**：遍历 `active_items`（仅 in_progress），并展示 id：
 ```python
 if todo_state is not None and todo_state.active_items:
     lines.append(f"- Active todo: {todo_state.summary}")
-    for item in todo_state.active_items[:3]:
+    for item in todo_state.active_items:
         lines.append(f"  - [{item.id}] {item.status}: {item.content}")
 ```
 
@@ -359,9 +373,9 @@ def _dump_todo_state(todo_state: TodoRunState | None) -> str:
 
 新增测试覆盖：
 - `op=write` 带 id 的全量写入 + id 重复检测
-- `op=update` 按 id 增量更新 + id 不存在检测
+- `op=update` 按 id 增量更新 + id 不存在时静默跳过 + warnings 提示
 - `op=read` 各 filter（含 `done` 聚合语义）+ 无副作用验证（TaskState 不变、无 UI 事件）
-- `TodoRunState.active_items` 上限 3 条截断
+- `todo_op == "read"` 时 `todo_run_state_from_result` 返回 None（短路验证）
 - `todo_status_signature` 用计数字段的循环检测
 - `runtime_context` 注入只含 `active_items` + summary
 
