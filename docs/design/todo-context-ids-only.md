@@ -22,7 +22,7 @@ if todo_state is not None and todo_state.active_items:
 **After:**
 ```python
 if todo_state is not None and todo_state.items:
-    visible = [i for i in todo_state.items if i.status in ("in_progress", "pending")]
+    visible = [i for i in todo_state.items if i.status in ("active", "pending")]
     if visible:
         ids = ", ".join(i.id for i in visible)
         lines.append(f"- Todo: {todo_state.summary}")

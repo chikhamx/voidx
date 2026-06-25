@@ -1,5 +1,9 @@
 # Todo 状态术语对齐梳理
 
+> **注意：本文档为重构前的历史分析，保留用于追溯决策过程。**
+> **状态词表已统一为 `Literal["pending", "active", "done"]`，详见 `docs/archive/todo-status-unification.md`。**
+> **下文描述的 4 值词表（`in_progress`/`completed`/`cancelled`）已不再使用。**
+
 ## 问题
 
 代码中同时存在 `in_progress` / `active`、`completed` / `done` 等不同命名，容易混淆。
@@ -8,13 +12,13 @@
 ## 权威状态值（唯一真相源）
 
 ```
-TodoStatus = Literal["pending", "in_progress", "completed", "cancelled"]
+TodoStatus = Literal["pending", "active", "done"]
 ```
 
 定义位置：`src/voidx/runtime/todo.py:7`
 被引用：`TodoRunItem.status`（`task_state.py:50`）、`TodoItem.status`（`tools/todo.py:22`）
 
-**这 4 个值是 todo item 的唯一合法状态，不存在 "active" 或 "done" 作为状态值。**
+**这 3 个值是 todo item 的唯一合法状态。**
 
 ## 术语映射表
 
