@@ -72,7 +72,7 @@ def _summary_line(file_diff: FileDiff) -> str:
 
 
 def _render_diff_line(line: DiffLine, language: str = "") -> str:
-    lineno = line.new_lineno if line.kind == "add" else line.old_lineno
+    lineno = line.old_lineno if line.kind == "remove" else line.new_lineno
     number = "" if lineno is None else str(lineno)
     prefix = f"{number:>5} "
     text = _highlight_code(line.text, language)

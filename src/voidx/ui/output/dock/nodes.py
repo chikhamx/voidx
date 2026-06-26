@@ -11,8 +11,8 @@ from voidx.ui.output.dock.formatting import (
     _ansi_line,
     _clean,
     _markdown_lines,
-    _short_path,
-    _short_value,
+    short_path,
+    short_value,
     _strip_ansi_trailing_space,
     _tail_lines,
 )
@@ -344,7 +344,7 @@ def _tool_header(
 
 
 def _operation_header(operation: str, path: str) -> str:
-    return f'[bold]{escape(operation)}[/bold]("[cyan]{escape(_short_path(path))}[/cyan]")'
+    return f'[bold]{escape(operation)}[/bold]("[cyan]{escape(short_path(path))}[/cyan]")'
 
 
 def _tool_display_name(tool_name: str, label: str) -> str:

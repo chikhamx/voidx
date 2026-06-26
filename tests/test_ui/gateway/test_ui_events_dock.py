@@ -5,9 +5,7 @@ import sys
 from pathlib import Path
 
 import pytest
-from rich.cells import cell_len
 from rich.console import Console
-from rich.text import Text
 
 sys.path.insert(0, str(Path(__file__).parent.parent / "src"))
 
@@ -367,31 +365,19 @@ async def test_permission_prompt_event_renders_and_clears(isolated_dock):
         ))
         await bus.drain()
 
-        rendered = "\n".join(_plain(line) for line in isolated_dock.tree.render(100))
-        assert "Permission required" in rendered
-        assert "Allow tools: bash?" in rendered
-        assert "npm test" in rendered
-
-        permission_lines = [
-            line for line in isolated_dock.tree.render(100)
-            if "Permission required" in _rich_plain(line)
-            or "bash" in _rich_plain(line)
-            or "npm test" in _rich_plain(line)
-        ]
-        assert permission_lines
-        for line in permission_lines:
-            text = Text.from_markup(_plain(line))
-            assert cell_len(text.plain) == 100
-            assert any("on #3a3937" in str(span.style) for span in text.spans)
+        record = isolated_dock.status_record("permission:request")
+        assert record is not None
+        assert record.label == "Requesting"
+        assert "1. bash" in record.detail
+        assert "target: npm test" in record.detail
+        assert "command: npm test" in record.detail
 
         await bus.emit(PermissionPromptCleared())
         await bus.drain()
 
-        rendered = "\n".join(_plain(line) for line in isolated_dock.tree.render(100))
-        assert "Permission required" not in rendered
+        assert isolated_dock.status_record("permission:request") is None
     finally:
         await bus.stop()
-
 
 @pytest.mark.asyncio
 async def test_checkpoint_prompt_event_renders_voidx_plan_and_decision(isolated_dock):

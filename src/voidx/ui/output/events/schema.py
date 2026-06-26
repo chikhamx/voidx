@@ -220,6 +220,7 @@ class SubagentFinished(UiEventBase):
     ok: bool = True
     elapsed: float | None = None
     finish_reason: str = ""
+    summary: str = ""
 
 
 class PermissionToolDetail(BaseModel):

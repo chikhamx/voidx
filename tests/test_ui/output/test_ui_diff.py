@@ -49,6 +49,27 @@ def test_render_file_change_lines_uses_summary_and_line_numbers():
     assert "keep" in rendered
 
 
+def test_render_file_change_lines_shows_shifted_context_with_new_line_numbers():
+    parsed = parse_unified_diff("""--- a/test.py
++++ b/test.py
+@@ -291,5 +291,6 @@
+ old_a
+ old_b
++inserted
+ 
+ @pytest.mark.asyncio
+ async def test_next_case(self):
+""")
+
+    lines, omitted = render_file_change_lines(parsed.files[0], max_lines=10)
+    rendered = "\n".join(lines)
+
+    assert omitted is False
+    assert "[dim]  294 [/dim]   " in rendered
+    assert "[dim]  295 [/dim]   @pytest.mark.asyncio" in rendered
+    assert "[dim]  296 [/dim]   [#ff5caa]async[/#ff5caa]" in rendered
+
+
 def test_render_file_change_lines_syntax_highlights_code_tokens():
     parsed = parse_unified_diff("""--- a/test.cpp
 +++ b/test.cpp

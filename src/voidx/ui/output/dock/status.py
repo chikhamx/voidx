@@ -17,48 +17,57 @@ class DockStatusRecord:
     stage: str = "working"
 
 
-def active_agent_step_text() -> str:
-    current = get_dock()
-    status_record = getattr(current, "status_record", None)
-    if not callable(status_record):
+PERMISSION_REQUEST_STATUS_ID = "permission:request"
+
+
+def active_permission_request_text() -> str:
+    record = _status_record(PERMISSION_REQUEST_STATUS_ID)
+    if record is None:
         return ""
-    record = status_record("agent:-1:progress")
+    return _clean(record.label).strip()
+
+
+def active_permission_request_detail_text() -> str:
+    record = _status_record(PERMISSION_REQUEST_STATUS_ID)
+    if record is None:
+        return ""
+    return _clean(record.detail).strip()
+
+
+def active_agent_step_text() -> str:
+    record = _status_record("agent:-1:progress")
     if record is None:
         return ""
     return _agent_step_text(record.label)
 
 
 def active_turn_analyzing_text() -> str:
-    current = get_dock()
-    status_record = getattr(current, "status_record", None)
-    if not callable(status_record):
-        return ""
-    record = status_record("turn:analyzing")
+    record = _status_record("turn:analyzing")
     if record is None:
         return ""
     return _clean(record.label).strip()
 
 
 def active_compaction_text() -> str:
-    current = get_dock()
-    status_record = getattr(current, "status_record", None)
-    if not callable(status_record):
-        return ""
-    record = status_record("compaction")
+    record = _status_record("compaction")
     if record is None:
         return ""
     return _clean(record.label).strip()
 
 
 def active_compaction_detail_text() -> str:
-    current = get_dock()
-    status_record = getattr(current, "status_record", None)
-    if not callable(status_record):
-        return ""
-    record = status_record("compaction")
+    record = _status_record("compaction")
     if record is None:
         return ""
     return _clean(record.detail).strip()
+
+
+def _status_record(status_id: str) -> DockStatusRecord | None:
+    current = get_dock()
+    status_record = getattr(current, "status_record", None)
+    if not callable(status_record):
+        return None
+    return status_record(status_id)
 
 
 def _agent_step_text(label: str) -> str:
@@ -67,7 +76,6 @@ def _agent_step_text(label: str) -> str:
     if text.startswith(prefix):
         return "step " + text[len(prefix):]
     return text
-
 
 
 class DockStatusMixin:

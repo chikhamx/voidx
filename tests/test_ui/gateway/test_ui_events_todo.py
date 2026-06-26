@@ -321,8 +321,7 @@ async def test_todo_updated_with_agent_id_updates_global_root_todo(isolated_dock
         await bus.drain()
 
         assistant = next(node for node in isolated_dock.tree.root.children if node.node_type == "assistant")
-        task_tool = next(node for node in assistant.children if node.node_type == "tool_call")
-        subagent = next(node for node in task_tool.children if node.node_type == "subagent")
+        subagent = next(node for node in assistant.children if node.node_type == "subagent")
 
         assert not any(node.node_type == "todo" for node in isolated_dock.tree.root.children)
         await bus.emit(TodoCommitted())
@@ -333,7 +332,6 @@ async def test_todo_updated_with_agent_id_updates_global_root_todo(isolated_dock
         assert isolated_dock.tree.root.children[-1] is todo
         assert todo.payload["items"] == [{"id": "auth", "content": "inspect auth", "status": "active"}]
         assert not any(node.node_type == "todo" for node in assistant.children)
-        assert not any(node.node_type == "todo" for node in task_tool.children)
         assert not any(node.node_type == "todo" for node in subagent.children)
     finally:
         await bus.stop()

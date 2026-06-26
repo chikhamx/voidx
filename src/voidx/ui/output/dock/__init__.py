@@ -1,6 +1,8 @@
 from voidx.ui.output.dock.app import (
     BottomInputDock,
     DockStatusRecord,
+    active_permission_request_detail_text,
+    active_permission_request_text,
     active_agent_step_text,
     active_compaction_detail_text,
     active_compaction_text,
@@ -16,6 +18,8 @@ __all__ = [
     "DockStatusRecord",
     "DockTodoItem",
     "DockTodoState",
+    "active_permission_request_detail_text",
+    "active_permission_request_text",
     "active_agent_step_text",
     "active_compaction_detail_text",
     "active_compaction_text",

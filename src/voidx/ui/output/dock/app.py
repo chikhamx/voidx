@@ -29,6 +29,8 @@ from voidx.ui.output.dock.todo import (
 from voidx.ui.output.dock.status import (
     DockStatusMixin,
     DockStatusRecord,
+    active_permission_request_detail_text,
+    active_permission_request_text,
     active_agent_step_text,
     active_compaction_detail_text,
     active_compaction_text,

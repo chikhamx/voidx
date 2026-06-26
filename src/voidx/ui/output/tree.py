@@ -678,7 +678,7 @@ def _needs_gap_between_agent_blocks(
         return False
     prev_text = _is_visible_agent_text(prev)
     child_text = _is_visible_agent_text(child)
-    return child_text and (prev_text or prev.node_type == "tool_call")
+    return child_text and (prev_text or prev.node_type in {"tool_call", "subagent"})
 
 
 def _is_visible_agent_text(node: OutputNode) -> bool:

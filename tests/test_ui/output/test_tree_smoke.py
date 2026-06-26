@@ -195,6 +195,30 @@ def test_transparent_subagent_spaces_ai_message_after_tools():
     assert search_index == message_index + 1
 
 
+def test_regular_subagent_spaces_following_assistant_message():
+    tree = OutputTree()
+    assistant = tree.new_node(tree.root, node_type="assistant", header="")
+    tree.new_node(
+        assistant,
+        node_type="subagent",
+        header="● Reviewer(review changes) completed",
+        agent_name="review",
+        status="done",
+    )
+    tree.new_node(
+        assistant,
+        node_type="assistant",
+        header="● 子代理返回异常，让我重新派发。",
+    )
+
+    lines = [_plain(line) for line in tree.render(120)]
+    subagent_index = next(index for index, line in enumerate(lines) if "Reviewer(review changes)" in line)
+    message_index = next(index for index, line in enumerate(lines) if "子代理返回异常" in line)
+
+    assert lines[subagent_index + 1] == ""
+    assert message_index == subagent_index + 2
+
+
 @pytest.mark.parametrize(
     ("agent", "display"),
     [

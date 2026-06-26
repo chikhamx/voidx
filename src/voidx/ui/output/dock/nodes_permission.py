@@ -6,7 +6,7 @@ from typing import Any
 
 from rich.markup import escape
 
-from voidx.ui.output.dock.formatting import _short_value
+from voidx.ui.output.dock.formatting import short_value
 from voidx.ui.output.tree import OutputNode
 
 
@@ -29,7 +29,7 @@ class DockPermissionNodeMixin:
             args = tool.get("args")
             if isinstance(args, dict):
                 for key, value in args.items():
-                    body.append(escape(f"   {key}: {_short_value(value)}"))
+                    body.append(escape(f"   {key}: {short_value(value)}"))
         self._permission_node = self._tree.new_node(
             parent=parent or self._tree.root,
             node_type="permission",
@@ -47,4 +47,3 @@ class DockPermissionNodeMixin:
         self._remove_node(self._permission_node)
         self._permission_node = None
         self.refresh()
-

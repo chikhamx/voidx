@@ -13,6 +13,8 @@ from rich.markup import escape
 
 from voidx.ui.output.agent_display import agent_display_name
 from voidx.ui.output.dock import BottomInputDock
+from voidx.ui.output.dock.status import PERMISSION_REQUEST_STATUS_ID
+from voidx.ui.output.dock.formatting import short_path, short_value
 from voidx.ui.output.events.schema import (
     AnsiAppended,
     AssistantStreamCommitted,
@@ -115,6 +117,7 @@ class DockEventConsumer:
         self._tool_nodes: dict[str, OutputNode] = {}
         self._hidden_tool_ids: set[str] = set()
         self._agent_nodes: dict[int, OutputNode] = {}
+        self._agents_with_specific_status: set[int] = set()
 
     def handle(self, event: UiEvent) -> Any:
         match event:
@@ -126,13 +129,17 @@ class DockEventConsumer:
                 return self._dock.refresh()
             case ResetRequested():
                 self._tool_nodes.clear()
+                self._dock.clear_status_record(PERMISSION_REQUEST_STATUS_ID)
                 self._hidden_tool_ids.clear()
                 self._agent_nodes.clear()
+                self._agents_with_specific_status.clear()
                 return self._dock.reset()
             case TurnStarted(text=text):
                 self._tool_nodes.clear()
+                self._dock.clear_status_record(PERMISSION_REQUEST_STATUS_ID)
                 self._hidden_tool_ids.clear()
                 self._agent_nodes.clear()
+                self._agents_with_specific_status.clear()
                 return self._dock.start_turn(text)
             case StartupShown() as e:
                 return self._dock.append_startup(
@@ -185,8 +192,18 @@ class DockEventConsumer:
                     remove=e.remove,
                 )
             case AssistantStreamStarted() as e:
+                if e.agent_id >= 0:
+                    return None
                 return self._dock.set_stream("", parent=self._stream_parent(e.agent_id))
             case AssistantStreamUpdated() as e:
+                if e.agent_id >= 0:
+                    self._agents_with_specific_status.add(e.agent_id)
+                    return self._dock.set_status(
+                        f"agent:{e.agent_id}:progress",
+                        "Thinking" if e.phase == "thinking" else "Responding",
+                        parent=self._agent_parent(e.agent_id),
+                        stage="agent step",
+                    )
                 return self._dock.set_stream(
                     e.text,
                     parent=self._stream_parent(e.agent_id),
@@ -200,6 +217,15 @@ class DockEventConsumer:
                 if e.display_mode == ToolDisplayMode.HIDDEN:
                     self._hidden_tool_ids.add(e.tool_call_id)
                     return None
+                if e.agent_id >= 0:
+                    self._hidden_tool_ids.add(e.tool_call_id)
+                    self._agents_with_specific_status.add(e.agent_id)
+                    return self._dock.set_status(
+                        f"agent:{e.agent_id}:progress",
+                        _subagent_tool_status(e.tool_name, e.label, e.raw_args, e.args),
+                        parent=self._agent_parent(e.agent_id),
+                        stage="agent step",
+                    )
                 parent = self._agent_parent(e.agent_id)
                 node = self._dock.start_tool(
                     e.label,
@@ -256,6 +282,8 @@ class DockEventConsumer:
                     tool_call_id=e.tool_call_id or None,
                 )
             case SubagentStepStarted() as e:
+                if e.agent_id in self._agents_with_specific_status:
+                    return None
                 parent = self._agent_parent(e.agent_id)
                 return self._dock.set_status(
                     f"agent:{e.agent_id}:progress",
@@ -265,23 +293,51 @@ class DockEventConsumer:
                 )
             case SubagentStarted() as e:
                 parent = self._tool_nodes.get(e.parent_tool_call_id)
-                if parent is not None:
+                role_name = agent_display_name(e.name)
+                title = _subagent_title(role_name, e.description)
+                self._agents_with_specific_status.discard(e.agent_id)
+                if parent is not None and parent.payload.get("tool_name") == "agent":
+                    fallback = self._agent_nodes.get(e.agent_id)
+                    if fallback is not None and fallback is not parent:
+                        self._dock._remove_node(fallback)
+                    self._reparent_status(f"agent:{e.agent_id}:progress", parent)
+                    self._tool_nodes.pop(e.parent_tool_call_id, None)
+                    self._hidden_tool_ids.add(e.parent_tool_call_id)
+                    parent.node_type = "subagent"
+                    parent.header = f"[#B48EAD]●[/#B48EAD] [bold]{escape(title)}[/bold]"
+                    parent.body_lines = []
                     parent.collapsed = False
+                    parent.agent_name = role_name
+                    parent.agent_run_id = e.subagent_id
+                    parent.meta = None
+                    parent.payload = {
+                        "role_name": role_name,
+                        "title": title,
+                        "agent_name": e.name,
+                        "description": e.description,
+                        "agent_id": e.agent_id,
+                        "parent_tool_call_id": e.parent_tool_call_id,
+                    }
+                    self._agent_nodes[e.agent_id] = parent
+                    self._dock.mark_node_unsettled(parent)
+                    self._dock.tree.mark_dirty()
+                    self._dock.refresh()
+                    return parent
                 if parent is None and e.parent_agent_id >= 0:
                     parent = self._agent_parent(e.parent_agent_id)
                 if parent is None:
                     parent = self._dock.ensure_agent()
-                role_name = agent_display_name(e.name)
                 node = self._dock.tree.new_node(
                     parent=parent,
                     node_type="subagent",
-                    header=f"[#B48EAD]●[/#B48EAD] [bold]{escape(role_name)}[/bold]",
+                    header=f"[#B48EAD]●[/#B48EAD] [bold]{escape(title)}[/bold]",
                     body_lines=[],
                     collapsed=False,
                     agent_name=role_name,
                     agent_run_id=e.subagent_id,
                     payload={
                         "role_name": role_name,
+                        "title": title,
                         "agent_name": e.name,
                         "description": e.description,
                         "agent_id": e.agent_id,
@@ -300,21 +356,20 @@ class DockEventConsumer:
                 if e.elapsed is not None:
                     details.append(f"{e.elapsed:.1f}s")
                 suffix = f" ({', '.join(details)})" if details else ""
-                self._dock.finish_status(f"agent:{e.agent_id}:progress")
+                self._dock.finish_status(
+                    f"agent:{e.agent_id}:progress",
+                    label=_subagent_finish_summary(e.summary, ok=e.ok, finish_reason=e.finish_reason),
+                    ok=e.ok,
+                    remove=False,
+                )
+                self._agents_with_specific_status.discard(e.agent_id)
                 if node is None:
                     return None
                 color = "dim" if e.ok else "red"
                 icon = "●" if e.ok else "✗"
-                role_name = str(node.payload.get("role_name") or node.agent_name or e.subagent_id)
-                header = f"[{color}]{icon}[/{color}] [{color}]{escape(role_name)} {label}{suffix}[/{color}]"
+                title = str(node.payload.get("title") or node.payload.get("role_name") or node.agent_name or e.subagent_id)
+                header = f"[{color}]{icon}[/{color}] [{color}]{escape(title)} {label}{suffix}[/{color}]"
                 node.header = header
-                if (
-                    node.parent is not None
-                    and node.parent.node_type == "tool_call"
-                    and node.parent.payload.get("tool_name") == "agent"
-                ):
-                    node.parent.header = header
-                    node.parent.status = "done" if e.ok else "error"
                 node.status = "done" if e.ok else "error"
                 node.elapsed = e.elapsed
                 node.collapsed = False
@@ -326,13 +381,14 @@ class DockEventConsumer:
                 return self._dock.set_input(e.text, e.hints, e.cursor_pos)
             case PermissionPromptShown() as e:
                 tools = [t.model_dump() for t in e.tools]
-                return self._dock.show_permission(
-                    e.prompt,
-                    tools,
-                    parent=self._agent_parent(e.agent_id),
+                return self._dock.record_status(
+                    PERMISSION_REQUEST_STATUS_ID,
+                    "Requesting",
+                    _permission_detail_text(tools),
+                    stage="permission",
                 )
             case PermissionPromptCleared():
-                return self._dock.clear_permission()
+                return self._dock.clear_status_record(PERMISSION_REQUEST_STATUS_ID)
             case CheckpointPromptShown() as e:
                 choices = [choice.model_dump(mode="json") for choice in e.choices]
                 return self._dock.show_checkpoint(
@@ -384,3 +440,148 @@ class DockEventConsumer:
         self._agent_nodes[agent_id] = node
         self._dock.refresh()
         return node
+
+    def _reparent_status(self, status_id: str, parent: OutputNode) -> None:
+        node = self._dock._status_nodes.get(status_id)
+        if node is None or node.parent is parent:
+            return
+        old_parent = node.parent
+        if old_parent is not None and node in old_parent.children:
+            old_parent.children.remove(node)
+            for index, child in enumerate(old_parent.children):
+                child._is_last_sibling = index == len(old_parent.children) - 1
+        node.parent = parent
+        node.depth = parent.depth + 1
+        parent.children.append(node)
+        for index, child in enumerate(parent.children):
+            child._is_last_sibling = index == len(parent.children) - 1
+        self._recompute_depths(node)
+        self._dock.tree.mark_dirty()
+
+    def _recompute_depths(self, node: OutputNode) -> None:
+        stack = [node]
+        while stack:
+            current = stack.pop()
+            for child in current.children:
+                child.depth = current.depth + 1
+                stack.append(child)
+
+
+def _subagent_tool_status(
+    tool_name: str,
+    label: str,
+    raw_args: dict[str, Any],
+    args: str = "",
+) -> str:
+    action = _subagent_tool_action(tool_name, label)
+    detail = _subagent_tool_detail(tool_name, raw_args, args)
+    return f"{action} {detail}" if detail else action
+
+
+def _subagent_finish_summary(summary: str, *, ok: bool, finish_reason: str = "") -> str:
+    if ok:
+        clean = " ".join(summary.split())
+        if clean:
+            return clean[:69] + "…" if len(clean) > 72 else clean
+        return "Completed"
+    reason = " ".join(finish_reason.replace("_", " ").split())
+    if reason:
+        text = f"Failed: {reason}"
+        return text[:69] + "…" if len(text) > 72 else text
+    return "Failed"
+
+
+def _permission_detail_text(tools: list[dict[str, Any]]) -> str:
+    lines: list[str] = []
+    for index, tool in enumerate(tools, 1):
+        name = str(tool.get("name") or "tool")
+        lines.append(f"{index}. {name}")
+        pattern = str(tool.get("pattern") or "")
+        if pattern and pattern != "*":
+            lines.append(f"   target: {pattern}")
+        args = tool.get("args")
+        if isinstance(args, dict):
+            for key, value in args.items():
+                lines.append(f"   {key}: {short_value(value)}")
+    return "\n".join(lines)
+
+
+def _subagent_title(role_name: str, description: str) -> str:
+    summary = _subagent_description_summary(description)
+    return f"{role_name}({short_path(summary, limit=56)})" if summary else role_name
+
+
+def _subagent_description_summary(description: str) -> str:
+    lines = [line.strip() for line in description.splitlines() if line.strip()]
+    if not lines:
+        return ""
+    for prefix in ("Task:", "Target:", "Success criteria:"):
+        for line in lines:
+            if line.startswith(prefix):
+                return " ".join(line[len(prefix):].strip().split())
+    first = next(
+        (line for line in lines if not line.startswith(("Mode:", "Result schema:"))),
+        lines[0],
+    )
+    if ":" in first:
+        first = first.split(":", 1)[1].strip()
+    return " ".join(first.split())
+
+
+def _subagent_tool_action(tool_name: str, label: str) -> str:
+    mapping = {
+        "read": "Reading",
+        "file": "Reading",
+        "write": "Editing",
+        "replace": "Editing",
+        "edit": "Editing",
+        "bash": "Running",
+        "git": "Git",
+        "grep": "Searching",
+        "glob": "Searching",
+        "lsp": "Inspecting",
+        "webfetch": "Fetching",
+        "websearch": "Searching",
+        "todo": "Updating tasks",
+        "task_status": "Updating status",
+        "checkpoint": "Checking plan",
+        "clarify": "Waiting for input",
+    }
+    if tool_name in mapping:
+        return mapping[tool_name]
+    return label or (tool_name.replace("_", " ").title() if tool_name else "Working")
+
+
+def _subagent_tool_detail(tool_name: str, raw_args: dict[str, Any], args: str) -> str:
+    value: object = ""
+    if tool_name in {"read", "file", "write", "replace", "edit", "lsp"}:
+        value = raw_args.get("file_path") or raw_args.get("path")
+    elif tool_name == "bash":
+        value = str(raw_args.get("command") or "").replace("\n", "; ")
+    elif tool_name == "git":
+        value = raw_args.get("args")
+    elif tool_name in {"grep", "glob"}:
+        value = raw_args.get("pattern") or raw_args.get("query")
+    elif tool_name in {"webfetch", "websearch"}:
+        value = raw_args.get("url") or raw_args.get("query")
+    elif raw_args:
+        for key in ("file_path", "path", "pattern", "query", "url", "command", "name"):
+            if raw_args.get(key):
+                value = raw_args[key]
+                break
+    if not value:
+        value = _subagent_args_value(args)
+    if not value:
+        return ""
+    return short_path(" ".join(str(value).split()), limit=72)
+
+
+def _subagent_args_value(args: str) -> str:
+    text = args.strip()
+    if not text:
+        return ""
+    for key in ("file_path", "path", "pattern", "query", "url", "command", "name"):
+        prefix = f"{key}="
+        if text.startswith(prefix):
+            return text[len(prefix):].strip().strip("\"'")
+    return text.strip("\"'")

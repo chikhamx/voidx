@@ -92,12 +92,12 @@ def _strip_ansi_trailing_space(line: str) -> str:
     return buffer.getvalue()
 
 
-def _short_value(value: object) -> str:
+def short_value(value: object) -> str:
     text = str(value).replace("\n", "\\n")
     return text[:157] + "..." if len(text) > 160 else text
 
 
-def _short_path(path: str, limit: int = 96) -> str:
+def short_path(path: str, limit: int = 96) -> str:
     if len(path) <= limit:
         return path
     keep = max((limit - 1) // 2, 1)
