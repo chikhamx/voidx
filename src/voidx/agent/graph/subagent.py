@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import asyncio
+import re
 import time
 
 from langchain_core.messages import AIMessage, HumanMessage, ToolMessage
@@ -43,6 +44,7 @@ from voidx.runtime.ui_port import AgentUiPort, runtime_ui_port
 
 
 _SAFETY_STEP_LIMIT = 50
+_RESULT_CONTRACT_RETRY_LIMIT = 2
 
 async def run_subagent(
     agent_def: AgentDef,
@@ -105,6 +107,8 @@ async def run_subagent(
     )
     guard_state = RuntimeGuardState(wall_clock=WallClockGuardState.for_subagent())
     pending_guard_guidance: list[str] = []
+    contract_retry_count = 0
+    has_successful_tool_work = False
 
     context, context_cache = RuntimeContextBuilder(
         config=context_config,
@@ -212,6 +216,18 @@ async def run_subagent(
 
             if not assistant_msg.tool_calls:
                 text = extract_text(assistant_msg)
+                if has_successful_tool_work and not _satisfies_result_contract(text, result_contract):
+                    if contract_retry_count < _RESULT_CONTRACT_RETRY_LIMIT:
+                        contract_retry_count += 1
+                        step -= 1
+                        guidance = _result_contract_retry_message(result_contract)
+                        messages.append(HumanMessage(content=guidance))
+                        continue
+                    if tracker:
+                        tracker.update(task_id, last_output=text[:200])
+                        tracker.finish(task_id, "completed")
+                    mark_finished("contract_unsatisfied")
+                    return text
                 if tracker:
                     tracker.update(task_id, last_output=text[:200])
                     tracker.finish(task_id, "completed")
@@ -318,6 +334,7 @@ async def run_subagent(
                 if metadata.get("runtime_guard"):
                     continue
                 if result_ok(item["result"]):
+                    has_successful_tool_work = True
                     guard_state.tool_failures.record_success(item["tool_call"])
                     continue
                 key = build_failure_key(item["tool_call"], item["result"])
@@ -391,3 +408,46 @@ def _task_payload(task_description: str, result_contract) -> str:
             "Return the final answer using this contract."
         )
     return "\n\n".join(parts)
+
+
+def _result_contract_fields(result_contract) -> list[str]:
+    result_format = str(getattr(result_contract, "format", "") or "")
+    fields: list[str] = []
+    for raw_part in result_format.split(","):
+        part = raw_part.strip()
+        if not part:
+            continue
+        match = re.match(r"([A-Za-z_][A-Za-z0-9_]*)", part)
+        if match:
+            fields.append(match.group(1))
+    return fields
+
+
+def _satisfies_result_contract(text: str, result_contract) -> bool:
+    fields = _result_contract_fields(result_contract)
+    if not fields:
+        return True
+    if not text.strip():
+        return False
+
+    matched = [
+        field
+        for field in fields
+        if re.search(rf"(?im)^\s*(?:[-*]\s*)?{re.escape(field)}\s*[:=]", text)
+    ]
+    required = 1 if len(fields) == 1 else 2
+    if fields[0] not in matched:
+        return False
+    return len(matched) >= required
+
+
+def _result_contract_retry_message(result_contract) -> str:
+    schema_name = str(getattr(result_contract, "schema_name", "") or "agent_result")
+    result_format = str(getattr(result_contract, "format", "") or "").strip()
+    return (
+        "Your previous response did not satisfy the child-agent result contract. "
+        "Do not return raw tool output or code snippets as the final answer.\n"
+        "Summarize the completed delegated task using the required contract:\n"
+        f"- schema_name: {schema_name}\n"
+        f"- format: {result_format}"
+    )

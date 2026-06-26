@@ -146,6 +146,7 @@ def test_run_subagent_uses_workflow_contract_instead_of_model_budget():
 @pytest.mark.asyncio
 async def test_subagent_runner_passes_main_workflow_runtime_context(tmp_path, monkeypatch):
     import voidx.agent.graph.core._voidx_graph as core_module
+    from voidx.runtime.ui_port import RuntimeUiPort
 
     graph = _graph(tmp_path)
     goal_resolution = _child_goal_resolution()
@@ -166,6 +167,11 @@ async def test_subagent_runner_passes_main_workflow_runtime_context(tmp_path, mo
     )
     calls: list[dict] = []
     captured: dict[str, object] = {}
+    emitted: list[object] = []
+
+    class RecordingEvents:
+        async def emit(self, event):
+            emitted.append(event)
 
     async def fake_workflow_context_for(*args, **kwargs):
         calls.append({"args": args, "kwargs": kwargs})
@@ -176,6 +182,9 @@ async def test_subagent_runner_passes_main_workflow_runtime_context(tmp_path, mo
         return "child result"
 
     graph._instruction.workflow_context_for = fake_workflow_context_for
+    graph._ui.__dict__.pop("via_events", None)
+    monkeypatch.setattr(RuntimeUiPort, "events", property(lambda _self: RecordingEvents()))
+    monkeypatch.setattr(RuntimeUiPort, "via_events", lambda _self: True)
     monkeypatch.setattr(core_module, "_run_subagent", fake_run_subagent)
 
     result = await graph._subagent_runner(
@@ -192,6 +201,8 @@ async def test_subagent_runner_passes_main_workflow_runtime_context(tmp_path, mo
     assert captured["workflow_runtime_context"] is expected_context
     assert "skill_selection" not in captured
     assert ("parent" + "_messages") not in captured
+    assert emitted[-1].kind == "subagent.finished"
+    assert emitted[-1].summary == "child result"
     assert calls[0]["kwargs"]["agent"] == ""
     assert calls[0]["kwargs"]["task_intent"] == "coding"
     assert calls[0]["kwargs"]["goal_type"] == "feature"
@@ -404,4 +415,3 @@ async def test_graph_authorization_prompts_for_unsafe_bash(tmp_path):
     assert [tc["name"] for tc in approved] == ["bash"]
     assert denied == []
     assert [[tc["name"] for tc in batch] for batch in asked] == [["bash"]]
-

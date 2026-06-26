@@ -354,3 +354,163 @@ async def test_subagent_final_step_fallback_does_not_leak_hint_to_sub_messages(t
 
     assert output == ""
     assert not any(is_step_hint_message(message) for message in sub_messages)
+
+
+@pytest.mark.asyncio
+async def test_subagent_requires_structured_contract_after_tool_work(tmp_path, monkeypatch):
+    import voidx.agent.graph.subagent as subagent_module
+
+    captured_calls: list[list] = []
+
+    class FakeModel:
+        def bind_tools(self, _tool_defs):
+            return self
+
+    class FakeToolRegistry:
+        def filtered_copy(self, _allowed_ids):
+            return self
+
+        def ids(self):
+            return ["grep"]
+
+        def tools_for_llm(self):
+            return [{
+                "type": "function",
+                "function": {
+                    "name": "grep",
+                    "description": "fake grep",
+                    "parameters": {"type": "object", "properties": {}},
+                    "strict": True,
+                },
+            }]
+
+        async def execute_tool(self, _tool_id, _args, _ctx):
+            return ToolResult(output="src/voidx/tools/websearch.py: def _parse_duckduckgo_html(html): ...")
+
+    async def fake_stream_llm(_model, messages, _renderer, _protocol):
+        captured_calls.append(messages)
+        if len(captured_calls) == 1:
+            return AIMessage(
+                content="",
+                tool_calls=[{
+                    "name": "grep",
+                    "args": {"pattern": "TaskTracker"},
+                    "id": "tc1",
+                    "type": "tool_call",
+                }],
+            )
+        if len(captured_calls) == 2:
+            return AIMessage(content="src/voidx/tools/websearch.py: def _parse_duckduckgo_html(html): ...")
+        return AIMessage(content="summary: searched code\nevidence: websearch.py snippet\nfindings: no issue\nopen_questions: none")
+
+    monkeypatch.setattr(subagent_module, "ToolRegistry", FakeToolRegistry)
+    monkeypatch.setattr(subagent_module, "create_chat_model", lambda *_args, **_kwargs: FakeModel())
+    monkeypatch.setattr(subagent_module, "stream_llm", fake_stream_llm)
+
+    output = await subagent_module.run_subagent(
+        AgentDef(
+            name="review",
+            description="test",
+            when_to_use="test",
+            can_write=False,
+            can_delegate=False,
+        ),
+        "Review subagent behavior",
+        "test-key",
+        Config(workspace=str(tmp_path)),
+        runtime_persona="review",
+        **_subagent_contract_kwargs(
+            goal_type="review",
+            desc="Review subagent behavior",
+            join="review",
+            leave="review",
+            schema_name="inspection_result",
+        ),
+        debug=False,
+    )
+
+    assert output.startswith("summary:")
+    contract_retry = captured_calls[2][-1]
+    assert isinstance(contract_retry, HumanMessage)
+    assert "Your previous response did not satisfy the child-agent result contract" in contract_retry.content
+    assert "schema_name: inspection_result" in contract_retry.content
+
+
+@pytest.mark.asyncio
+async def test_subagent_contract_retry_exhausted_returns_contract_unsatisfied(tmp_path, monkeypatch):
+    """When contract retries are exhausted, finish_reason must be contract_unsatisfied, not safety_limit."""
+    import voidx.agent.graph.subagent as subagent_module
+
+    captured_calls: list[list] = []
+
+    class FakeModel:
+        def bind_tools(self, _tool_defs):
+            return self
+
+    class FakeToolRegistry:
+        def filtered_copy(self, _allowed_ids):
+            return self
+
+        def ids(self):
+            return ["grep"]
+
+        def tools_for_llm(self):
+            return [{
+                "type": "function",
+                "function": {
+                    "name": "grep",
+                    "description": "fake grep",
+                    "parameters": {"type": "object", "properties": {}},
+                    "strict": True,
+                },
+            }]
+
+        async def execute_tool(self, _tool_id, _args, _ctx):
+            return ToolResult(output="src/voidx/tools/websearch.py: def _parse_duckduckgo_html(html): ...")
+
+    async def fake_stream_llm(_model, messages, _renderer, _protocol):
+        captured_calls.append(messages)
+        if len(captured_calls) == 1:
+            return AIMessage(
+                content="",
+                tool_calls=[{
+                    "name": "grep",
+                    "args": {"pattern": "TaskTracker"},
+                    "id": "tc1",
+                    "type": "tool_call",
+                }],
+            )
+        return AIMessage(content="raw tool output without contract fields")
+
+    monkeypatch.setattr(subagent_module, "ToolRegistry", FakeToolRegistry)
+    monkeypatch.setattr(subagent_module, "create_chat_model", lambda *_args, **_kwargs: FakeModel())
+    monkeypatch.setattr(subagent_module, "stream_llm", fake_stream_llm)
+
+    run_metadata: dict[str, object] = {}
+    output = await subagent_module.run_subagent(
+        AgentDef(
+            name="review",
+            description="test",
+            when_to_use="test",
+            can_write=False,
+            can_delegate=False,
+        ),
+        "Review subagent behavior",
+        "test-key",
+        Config(workspace=str(tmp_path)),
+        runtime_persona="review",
+        run_metadata=run_metadata,
+        **_subagent_contract_kwargs(
+            goal_type="review",
+            desc="Review subagent behavior",
+            join="review",
+            leave="review",
+            schema_name="inspection_result",
+        ),
+        debug=False,
+    )
+
+    assert run_metadata.get("finish_reason") == "contract_unsatisfied"
+    assert "raw tool output" in output
+    # 1 tool-call step + 1 initial summary + N retries, each producing a summary attempt
+    assert len(captured_calls) == 2 + subagent_module._RESULT_CONTRACT_RETRY_LIMIT

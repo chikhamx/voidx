@@ -399,6 +399,7 @@ class VoidXGraph(
 
         ok = False
         run_metadata: dict[str, object] = {}
+        result = ""
         try:
             kwargs = {
                 "sub_messages": sub_buffer,
@@ -439,6 +440,7 @@ class VoidXGraph(
                     ok=ok,
                     elapsed=time.monotonic() - started_at,
                     finish_reason=str(run_metadata.get("finish_reason") or ("final_answer" if ok else "error")),
+                    summary=result if ok else "",
                 ))
             if self._session:
                 await append_subagent_event(session_id, agent_run_id, {
