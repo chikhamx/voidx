@@ -38,6 +38,7 @@ BASIC_RULES: Ruleset = [
     Rule(permission="compact", pattern="*", action="allow"),
     Rule(permission="task_status", pattern="*", action="allow"),
     Rule(permission="skill", pattern="*", action="allow"),
+    Rule(permission="skill", pattern="create", action="ask"),
     Rule(permission="lsp", pattern="*", action="allow"),
     Rule(permission="agent", pattern="voidx", action="allow"),
     Rule(permission="edit", pattern="*", action="ask"),
@@ -118,6 +119,8 @@ def build_pattern(tool: str, args: dict) -> str:
         return "voidx"
     if tool == "git":
         return "read" if _is_read_only_git_tool_command(args) else "write"
+    if tool == "skill":
+        return "create" if args.get("op") == "create" else "*"
     return "*"
 
 
@@ -359,9 +362,13 @@ def _is_read_only_git_ref_command(subcommand: str, args: list[str]) -> bool:
 def capability_for_tool(tool: str, args: dict) -> PermissionCapability:
     if tool in {
         "read", "glob", "grep", "webfetch", "websearch", "todo", "task_status",
-        "skill", "workflow", "compact",
+        "workflow", "compact",
         "lsp",
     }:
+        return PermissionCapability.READ_TOOLS
+    if tool == "skill":
+        if args.get("op") == "create":
+            return PermissionCapability.FILE_WRITE
         return PermissionCapability.READ_TOOLS
     if tool in {"file", "write", "replace"}:
         return PermissionCapability.FILE_WRITE

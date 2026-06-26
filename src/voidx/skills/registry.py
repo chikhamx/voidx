@@ -2,14 +2,16 @@
 
 from __future__ import annotations
 
+import re
 from dataclasses import dataclass
 from pathlib import Path
-from typing import Any
+from typing import Any, Literal
 
 from voidx.skills.schema import SkillDefinition, SkillMeta, SkillScope
 
 SKILL_FILENAME = "SKILL.md"
 DEFAULT_BUNDLED_DIR = Path(__file__).resolve().parent / "bundled"
+SKILL_NAME_RE = re.compile(r"^(?=.{1,64}$)[a-z0-9]([a-z0-9-]*[a-z0-9])?$")
 
 
 @dataclass
@@ -71,6 +73,44 @@ class SkillRegistry:
     def invalidate(self) -> None:
         self._cache = None
         self._cache_signature = None
+
+    def create_skill(
+        self,
+        name: str,
+        description: str,
+        body: str,
+        *,
+        scope: Literal["project", "global"] = "project",
+    ) -> Path | None:
+        """Create a SKILL.md file. Returns the path, or None if it already exists.
+
+        Security: name is validated against SKILL_NAME_RE on the first line.
+        This is the sole path-escape defense since sandbox skips the check
+        (skill create has no file_path arg). Must not rely on tool-layer validation.
+        """
+        if not SKILL_NAME_RE.match(name):
+            raise ValueError(
+                f"Invalid skill name '{name}': must be 1-64 chars, lowercase "
+                f"alphanumeric with hyphens, not starting/ending with a hyphen."
+            )
+
+        root = self.project_dir if scope == "project" else self.global_dir
+        path = root / name / SKILL_FILENAME
+        if path.exists():
+            return None
+
+        path.parent.mkdir(parents=True, exist_ok=True)
+        frontmatter = (
+            "---\n"
+            f"name: {name}\n"
+            f"description: {description}\n"
+            "enabled: true\n"
+            "---\n\n"
+        )
+        path.write_text(frontmatter + body, encoding="utf-8")
+        self.invalidate()
+        return path
+
 
     def get(self, name: str) -> SkillDefinition | None:
         target = normalize_skill_name(name)

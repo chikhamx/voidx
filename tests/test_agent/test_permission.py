@@ -164,18 +164,46 @@ def test_on_intent_is_not_a_runtime_allow_tool(tmp_path):
     assert decision.action == "ask"
 
 
-def test_skill_is_allowed_read_tool(tmp_path):
+def test_skill_load_is_allowed_read_tool(tmp_path):
     context = PermissionContext(workspace=str(tmp_path))
     decision = authorize_tool_call(
-        {"name": "skill", "args": {"names": ["docs"]}},
+        {"name": "skill", "args": {"op": "load", "name": "docs"}},
         context,
     )
 
     assert decision.action == "allow"
     assert classify_tool_call({
         "name": "skill",
-        "args": {"names": ["docs"]},
+        "args": {"op": "load", "name": "docs"},
     }).capability == PermissionCapability.READ_TOOLS
+
+
+def test_skill_list_is_allowed_read_tool(tmp_path):
+    context = PermissionContext(workspace=str(tmp_path))
+    decision = authorize_tool_call(
+        {"name": "skill", "args": {"op": "list"}},
+        context,
+    )
+
+    assert decision.action == "allow"
+    assert classify_tool_call({
+        "name": "skill",
+        "args": {"op": "list"},
+    }).capability == PermissionCapability.READ_TOOLS
+
+
+def test_skill_create_is_file_write_and_asks(tmp_path):
+    context = PermissionContext(workspace=str(tmp_path))
+    decision = authorize_tool_call(
+        {"name": "skill", "args": {"op": "create", "name": "docs", "description": "d", "body": "b"}},
+        context,
+    )
+
+    assert decision.action == "ask"
+    assert classify_tool_call({
+        "name": "skill",
+        "args": {"op": "create", "name": "docs"},
+    }).capability == PermissionCapability.FILE_WRITE
 
 
 @pytest.mark.parametrize("tool_name", ["clarify", "checkpoint", "workflow", "compact"])

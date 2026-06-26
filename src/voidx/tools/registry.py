@@ -12,7 +12,7 @@ from voidx.tools.search import GlobTool, GrepTool
 from voidx.tools.bash import BashTool
 from voidx.tools.task_status import TaskStatusTool
 from voidx.tools.todo import TodoWriteTool
-from voidx.tools.load_skills import LoadSkillsTool
+from voidx.tools.skills import SkillsTool
 from voidx.tools.webfetch import WebFetchTool
 from voidx.tools.websearch import WebSearchTool
 from voidx.tools.clarify import ClarifyTool
@@ -56,8 +56,8 @@ class ToolRegistry:
         self.register(todo_tool.id, todo_tool, todo_tool.description, todo_tool.parameters_schema())
         task_status_tool = TaskStatusTool(tracker=self._tracker)
         self.register(task_status_tool.id, task_status_tool, task_status_tool.description, task_status_tool.parameters_schema())
-        load_skills_tool = LoadSkillsTool(settings=self._settings)
-        self.register(load_skills_tool.id, load_skills_tool, load_skills_tool.description, load_skills_tool.parameters_schema())
+        skills_tool = SkillsTool(settings=self._settings)
+        self.register(skills_tool.id, skills_tool, skills_tool.description, skills_tool.parameters_schema())
         wf = WebFetchTool(settings=self._settings)
         self.register(wf.id, wf, wf.description, wf.parameters_schema())
         ws = WebSearchTool(settings=self._settings)
