@@ -81,11 +81,6 @@ def _strip_cd_prefix(command: str) -> str:
     return remainder
 
 
-_UNHINTABLE_GIT_SUBCOMMANDS = frozenset({
-    "push", "pull", "merge", "rebase", "cherry-pick",
-    "reset", "checkout", "fetch", "clone", "init",
-    "submodule", "filter-branch", "bisect",
-})
 
 _GIT_GLOBAL_OPTIONS_WITH_VALUE = frozenset({
     "-C", "-c", "--git-dir", "--work-tree", "--namespace", "--exec-path",

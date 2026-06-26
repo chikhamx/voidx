@@ -62,11 +62,15 @@ def _fmt_args(args: dict[str, object]) -> str:
     """Format tool args Claude Code style: key="value" inside parentheses."""
     parts = []
     for k, v in args.items():
+        if v is None or v == "":
+            continue
         s = str(v)
         if len(s) > 60:
             s = s[:57] + "..."
         escaped = _escape_rich(s)
-        if isinstance(v, str):
+        if k == "args":
+            parts.append(f'"[cyan]{escaped}[/cyan]"')
+        elif isinstance(v, str):
             parts.append(f'{k}="[cyan]{escaped}[/cyan]"')
         else:
             parts.append(f"{k}=[cyan]{escaped}[/cyan]")

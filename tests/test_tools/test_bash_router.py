@@ -93,18 +93,22 @@ class TestEchoDoubleQuoteSafety:
 # ---------------------------------------------------------------------------
 
 class TestGitCommitCompactForm:
-    """git commit with double-quote in args → no hint (avoids quote conflicts in args string)."""
+    """git commit with double-quote in args → still hints (git tool accepts any args)."""
 
-    def test_compact_m_flag_double_quoted_no_hint(self):
-        assert try_hint('git commit -m"fix bug"') is None
+    def test_compact_m_flag_double_quoted_hint(self):
+        h = try_hint('git commit -m"fix bug"')
+        assert h is not None
+        assert h.tool_id == "git"
 
     def test_message_equals_flag(self):
         h = try_hint("git commit --message=fix")
         assert h is not None
         assert "fix" in h.llm_hint
 
-    def test_commit_message_with_dquote_no_hint(self):
-        assert try_hint('git commit -m "she said \\"hi\\""') is None
+    def test_commit_message_with_dquote_hint(self):
+        h = try_hint('git commit -m "she said \\"hi\\""')
+        assert h is not None
+        assert h.tool_id == "git"
 
 
 # ---------------------------------------------------------------------------
@@ -372,8 +376,8 @@ class TestQuickExclude:
 # Comprehensive: git unhintable subcommands
 # ---------------------------------------------------------------------------
 
-class TestGitUnhintable:
-    """git push, pull, merge, etc. → no hint."""
+class TestGitAllSubcommandsHintable:
+    """All git subcommands now trigger hint — git tool accepts any args."""
 
     @pytest.mark.parametrize("cmd", [
         "git push",
@@ -387,8 +391,10 @@ class TestGitUnhintable:
         "git clone https://example.com/repo",
         "git init",
     ])
-    def test_unhintable_git(self, cmd):
-        assert try_hint(cmd) is None
+    def test_subcommand_triggers_hint(self, cmd):
+        h = try_hint(cmd)
+        assert h is not None
+        assert h.tool_id == "git"
 
 
 # ---------------------------------------------------------------------------

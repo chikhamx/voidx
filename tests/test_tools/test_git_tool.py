@@ -638,10 +638,11 @@ def test_bash_hint_git_status():
     assert "status" in hint.llm_hint
 
 
-def test_bash_hint_git_unhintable():
+def test_bash_hint_git_push_now_hintable():
     from voidx.tools.bash.hint.git import _hint_git
     hint = _hint_git("git push", ["git", "push"])
-    assert hint is None
+    assert hint is not None
+    assert hint.tool_id == "git"
 
 
 # --- Denied destructive commands ---
