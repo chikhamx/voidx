@@ -250,16 +250,33 @@ def test_busy_activity_label_includes_active_compacting_status(tmp_path, monkeyp
     tui._busy_activity_verb = "Pondering"
     dock.record_status(
         "compaction",
-        "Compacting context",
+        "Compacting",
         "summarizing old messages",
         stage="compacting",
     )
 
-    assert tui._busy_activity_label() == "◐ Compacting context (4s)"
+    assert tui._busy_activity_label() == "◐ Compacting (4s summarizing old messages)"
 
     dock.clear_status_record("compaction")
 
     assert tui._busy_activity_label() == "◐ Pondering (4s)"
+
+
+def test_busy_activity_label_places_compacting_detail_last(tmp_path, monkeypatch):
+    monkeypatch.setattr("voidx.ui.tui.render_activity.time.monotonic", lambda: 124.0)
+    tui = _tui(tmp_path)
+    tui.status.latest_action = lambda: "reading"
+    tui._busy = True
+    tui._busy_started_at = 120.0
+    tui._busy_activity_verb = "Pondering"
+    dock.record_status(
+        "compaction",
+        "Compacting",
+        "summarizing 118 old messages",
+        stage="compacting",
+    )
+
+    assert tui._busy_activity_label() == "◐ Compacting (4s →reading summarizing 118 old messages)"
 
 
 def test_busy_activity_label_omits_elapsed_without_start_time(tmp_path):

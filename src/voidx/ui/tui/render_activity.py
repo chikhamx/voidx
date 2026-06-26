@@ -9,6 +9,7 @@ from rich.text import Text
 from voidx.llm.usage import format_token_count
 from voidx.ui.output.dock import (
     active_agent_step_text,
+    active_compaction_detail_text,
     active_compaction_text,
     active_turn_analyzing_text,
     dock,
@@ -53,6 +54,7 @@ class _ActivityRendererMixin:
         ]
         analyzing = active_turn_analyzing_text()
         compacting = active_compaction_text()
+        compaction_detail = active_compaction_detail_text()
         step = active_agent_step_text()
         status_label = analyzing or compacting or step or ""
         thinking = dock.has_active_thinking_stream()
@@ -74,6 +76,8 @@ class _ActivityRendererMixin:
         latest = self._latest_action_text()
         if latest:
             details.append(latest)
+        if compacting and compaction_detail:
+            details.append(compaction_detail)
         return f"{prefix} ({' '.join(details)})"
 
     def _turn_token_text(self) -> str:

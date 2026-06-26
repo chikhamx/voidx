@@ -30,6 +30,7 @@ from voidx.ui.output.dock.status import (
     DockStatusMixin,
     DockStatusRecord,
     active_agent_step_text,
+    active_compaction_detail_text,
     active_compaction_text,
     active_turn_analyzing_text,
 )

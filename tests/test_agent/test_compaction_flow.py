@@ -50,7 +50,7 @@ from voidx.tools.base import ToolContext, ToolResult
 from voidx.tools.agent import AgentResultContract, AgentTool
 from voidx.tools.registry import ToolRegistry
 from voidx.ui.output.dock import BottomInputDock, set_dock
-from voidx.ui.output.events import DockEventConsumer, TurnStarted, ui_events
+from voidx.ui.output.events import DockEventConsumer, StatusUpdated, TurnStarted, ui_events
 
 
 def _graph(tmp_path):
@@ -179,6 +179,54 @@ async def test_compaction_trims_head_and_injects_summary_into_system_prompt(tmp_
     assert "Long Summary" in messages[0].content
     assert "summary text" in messages[0].content
     assert "You are voidx" in messages[0].content
+
+
+@pytest.mark.asyncio
+async def test_compaction_progress_status_updates_are_record_only(tmp_path):
+    graph = _graph(tmp_path)
+    events = []
+
+    class Recorder:
+        def via_events(self):
+            return True
+
+        class Events:
+            async def emit(self_inner, event):
+                events.append(event)
+
+        events = Events()
+
+    graph._ui = Recorder()
+    graph._compaction.is_overflow = lambda _tokens: True
+    graph._compaction.select_details = lambda messages: CompactionSelection(
+        head=messages[:2],
+        tail_id=getattr(messages[2], "id", None),
+        keep_from=2,
+        mode="full",
+    )
+
+    async def summarize(_head_messages, _previous_summary):
+        return "summary text"
+
+    async def persist(_head_messages):
+        return None
+
+    await graph._compaction_component().compact_for_live_state(
+        [
+            HumanMessage(content="older question", id="older_user"),
+            AIMessage(content="older answer"),
+            HumanMessage(content="current question", id="current_user"),
+        ],
+        run_compaction_agent=summarize,
+        persist_compaction=persist,
+    )
+
+    compaction_updates = [
+        event for event in events
+        if isinstance(event, StatusUpdated) and event.status_id == "compaction"
+    ]
+    assert compaction_updates
+    assert all(event.display == "record_only" for event in compaction_updates)
 
 
 

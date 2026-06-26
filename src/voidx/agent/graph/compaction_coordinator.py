@@ -189,7 +189,7 @@ class GraphCompactionCoordinator:
         if host._ui.via_events():
             await host._ui.events.emit(StatusUpdated(
                 status_id="compaction",
-                label="Compacting context",
+                label="Compacting",
                 detail=_compaction_status_detail(total_tokens, force=force, preflight=preflight),
                 stage="compacting",
                 display="record_only",
@@ -198,7 +198,7 @@ class GraphCompactionCoordinator:
             host._ui.ui.print(
                 "[yellow]Context overflow — compacting...[/yellow]"
                 if not force
-                else "[yellow]Compacting context...[/yellow]"
+                else "[yellow]Compacting...[/yellow]"
             )
 
         runtime_prefix = _runtime_prefix(messages)
@@ -251,9 +251,10 @@ class GraphCompactionCoordinator:
                     retry_label = f" (attempt {attempt})" if attempt > 1 else ""
                     await host._ui.events.emit(StatusUpdated(
                         status_id="compaction",
-                        label="Compacting context",
+                        label="Compacting",
                         detail=f"summarizing {len(head_msgs)} old messages{retry_label}",
                         stage="compacting",
+                        display="record_only",
                     ))
                 summary = await run_agent(head_msgs, previous_summary)
                 if summary:
@@ -270,6 +271,7 @@ class GraphCompactionCoordinator:
                             label="Compaction agent failed",
                             detail=f"{e}; retrying ({attempt}/{COMPACTION_MAX_RETRIES})",
                             stage="compacting",
+                            display="record_only",
                         ))
                     else:
                         host._ui.ui.print(f"[dim]Compaction agent failed ({e}) — retrying ({attempt}/{COMPACTION_MAX_RETRIES})[/dim]")
@@ -288,6 +290,7 @@ class GraphCompactionCoordinator:
                     label="Compaction agent failed",
                     detail=f"{failure_detail}; using extracted summary",
                     stage="compacting",
+                    display="record_only",
                 ))
             else:
                 err_msg = f" ({failure_detail})"

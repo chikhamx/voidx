@@ -301,7 +301,7 @@ async def test_compacting_status_records_without_transcript_node(isolated_dock):
     try:
         await bus.emit(StatusUpdated(
             status_id="compaction",
-            label="Compacting context",
+            label="Compacting",
             detail="summarizing old messages",
             stage="compacting",
             display="record_only",
@@ -309,9 +309,9 @@ async def test_compacting_status_records_without_transcript_node(isolated_dock):
         await bus.drain()
 
         rendered = "\n".join(_plain(line) for line in isolated_dock.tree.render(100))
-        assert "Compacting context" not in rendered
+        assert "Compacting" not in rendered
         assert "summarizing old messages" not in rendered
-        assert isolated_dock.status_record("compaction").label == "Compacting context"
+        assert isolated_dock.status_record("compaction").label == "Compacting"
 
         await bus.emit(StatusFinished(status_id="compaction"))
         await bus.drain()
