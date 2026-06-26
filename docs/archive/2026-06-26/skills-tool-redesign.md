@@ -1,3 +1,5 @@
+> **Status: Done**
+
 # SkillsTool 重设计 — 技术设计文档
 
 ## Context
