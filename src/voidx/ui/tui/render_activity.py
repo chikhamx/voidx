@@ -4,6 +4,7 @@ from __future__ import annotations
 
 import time
 
+from rich.cells import cell_len
 from rich.text import Text
 
 from voidx.llm.usage import format_token_count
@@ -11,6 +12,8 @@ from voidx.ui.output.dock import (
     active_agent_step_text,
     active_compaction_detail_text,
     active_compaction_text,
+    active_permission_request_detail_text,
+    active_permission_request_text,
     active_turn_analyzing_text,
     dock,
 )
@@ -23,6 +26,9 @@ from voidx.ui.tui.activity import (
 from voidx.ui.tui.helpers import _clip_cells
 
 
+BUSY_ACTIVITY_DETAIL_STYLE = f"{BUSY_ACTIVITY_STYLE} on #3a3937"
+
+
 class _ActivityRendererMixin:
     def _busy_activity_row_count(self, width: int) -> int:
         return len(self._render_busy_activity_elements(width))
@@ -30,7 +36,14 @@ class _ActivityRendererMixin:
     def _render_busy_activity_elements(self, width: int) -> list[Text]:
         if not self._busy:
             return []
-        return [self._busy_activity_text(width)]
+        elements = [self._busy_activity_text(width)]
+        permission_detail = active_permission_request_detail_text()
+        if permission_detail:
+            for line in permission_detail.splitlines():
+                elements.append(
+                    Text(_full_width_detail_line(line, width), style=BUSY_ACTIVITY_DETAIL_STYLE)
+                )
+        return elements
 
     def _busy_activity_text(self, width: int) -> Text:
         label = _clip_cells(self._busy_activity_label(), width)
@@ -55,8 +68,9 @@ class _ActivityRendererMixin:
         analyzing = active_turn_analyzing_text()
         compacting = active_compaction_text()
         compaction_detail = active_compaction_detail_text()
+        permission = active_permission_request_text()
         step = active_agent_step_text()
-        status_label = analyzing or compacting or step or ""
+        status_label = permission or analyzing or compacting or step or ""
         thinking = dock.has_active_thinking_stream()
         verb = "Thinking" if thinking else status_label or self._busy_activity_verb or BUSY_ACTIVITY_DEFAULT_VERB
         prefix = f"{glyph} {verb}"
@@ -64,6 +78,8 @@ class _ActivityRendererMixin:
             return prefix
         elapsed = max(0, int(time.monotonic() - started_at))
         details = [self._format_elapsed(elapsed)]
+        if permission and status_label != permission:
+            details.append(permission)
         if analyzing and status_label != analyzing:
             details.append(analyzing)
         if compacting and status_label != compacting:
@@ -105,3 +121,9 @@ class _ActivityRendererMixin:
             return f"{seconds}s"
         minutes, remainder = divmod(seconds, 60)
         return f"{minutes}m {remainder}s"
+
+
+def _full_width_detail_line(line: str, width: int) -> str:
+    clipped = _clip_cells(line, width)
+    padding = max(0, width - cell_len(clipped))
+    return clipped + (" " * padding)

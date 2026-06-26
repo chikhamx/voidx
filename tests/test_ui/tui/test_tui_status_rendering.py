@@ -203,6 +203,50 @@ def test_busy_activity_renders_thinking_content_below_verb(tmp_path, monkeypatch
         dock.reset()
 
 
+def test_busy_activity_renders_permission_details_below_requesting_verb(tmp_path, monkeypatch):
+    monkeypatch.setattr("voidx.ui.tui.render_activity.time.monotonic", lambda: 105.0)
+    tui = _tui(tmp_path)
+    tui._console = Console(file=None, force_terminal=True, width=100, height=24, _environ={})
+    tui._busy = True
+    tui._busy_started_at = 100.0
+    tui._busy_activity_verb = "Canoodling"
+    dock.begin_capture()
+    try:
+        long_command = ".venv/bin/python -m pytest tests/test_tools/test_agent.py --very-long-option that-keeps-going"
+        dock.record_status(
+            "permission:request",
+            "Requesting",
+            f"1. git\n   target: {long_command}\n   args: commit -m docs",
+            stage="permission",
+        )
+
+        rendered = _render_lines(tui, width=100)
+        lines = [_rich_plain(line) for line in rendered]
+        requesting_index = next(i for i, line in enumerate(lines) if "Requesting (5s)" in line)
+        detail_index = next(i for i, line in enumerate(lines) if "args: commit -m docs" in line)
+        target_index = next(i for i, line in enumerate(lines) if "target:" in line)
+
+        assert requesting_index < detail_index
+        assert not any("Canoodling" in line for line in lines)
+        assert lines[target_index].endswith("…")
+        detail_elements = tui._render_busy_activity_elements(100)[1:]
+        target_detail = next(text for text in detail_elements if "target:" in text.plain)
+        args_detail = next(text for text in detail_elements if "args: commit -m docs" in text.plain)
+        for text in (target_detail, args_detail):
+            assert cell_len(text.plain) == 100
+            styles = [str(text.style), *(str(span.style) for span in text.spans)]
+            assert any("on #3a3937" in style for style in styles)
+
+        dock.clear_status_record("permission:request")
+
+        lines = [_rich_plain(line) for line in _render_lines(tui, width=100)]
+        assert any("Canoodling (5s)" in line for line in lines)
+        assert not any("args: commit -m docs" in line for line in lines)
+    finally:
+        dock.deactivate()
+        dock.reset()
+
+
 def test_busy_activity_label_includes_step_and_turn_tokens(tmp_path, monkeypatch):
     now = {"value": 100.0}
     monkeypatch.setattr("voidx.ui.tui.render_activity.time.monotonic", lambda: now["value"])

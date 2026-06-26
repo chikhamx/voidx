@@ -408,7 +408,7 @@ def test_flushed_root_message_is_not_replayed_when_later_tools_are_added(tmp_pat
         "Giting",
         "status",
         tool_name="git",
-        raw_args={"command": "git status"},
+        raw_args={"args": "git status"},
     )
     dock.finish_tool_node(tool, "Giting", 0.1, True)
     tui._flush_committed()
@@ -420,7 +420,7 @@ def test_flushed_root_message_is_not_replayed_when_later_tools_are_added(tmp_pat
         "Giting",
         "diff",
         tool_name="git",
-        raw_args={"command": "git diff"},
+        raw_args={"args": "git diff"},
     )
     dock.finish_tool_node(tool, "Giting", 0.1, True)
     tui._flush_committed()
