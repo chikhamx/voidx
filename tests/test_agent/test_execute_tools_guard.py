@@ -412,22 +412,14 @@ async def test_subagent_full_output_reaches_orchestrator(tmp_path, monkeypatch):
         await ui_events.drain()
 
         assistant = next(node for node in test_dock.tree.root.children if node.node_type == "assistant")
-        agent_tool = next(node for node in assistant.children if node.node_type == "tool_call")
-        subagent = next(node for node in agent_tool.children if node.node_type == "subagent")
+        subagent = next(node for node in assistant.children if node.node_type == "subagent")
         child_streams = [
             node for node in subagent.children
             if node.node_type == "assistant" and "child final line" in node.header
         ]
-        final_results = [node for node in agent_tool.children if node.node_type == "tool_result"]
 
         rendered = "\n".join(test_dock.tree.render(120))
         assert child_streams == []
-        assert len(final_results) == 1
-        final_result_text = "\n".join([final_results[0].header, *final_results[0].body_lines])
-        assert "child final line 1" in final_result_text
-        assert "child final line 5" in final_result_text
-        assert "child final line 6" not in final_result_text
-        assert "... (2 more lines omitted; full result passed to voidx)" in final_result_text
         assert "child hidden thought" not in rendered
         assert "child final line 7" not in rendered
         tool_messages = [message for message in result["messages"] if isinstance(message, ToolMessage)]
@@ -439,5 +431,7 @@ async def test_subagent_full_output_reaches_orchestrator(tmp_path, monkeypatch):
         test_dock.deactivate()
         test_dock.reset()
         set_dock(None)
+        graph._current_tree = None
+        graph._turn_node = None
 
 

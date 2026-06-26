@@ -468,12 +468,12 @@ async def test_permission_prompt_uses_dock_details_when_events_are_active(tmp_pa
 
         assert choice == "y"
         assert received_details is None
-        rendered = "\n".join(test_dock.tree.render(100))
-        assert "Permission required" in rendered
-        assert "bash" in rendered
-        assert "npm test" in rendered
+        record = test_dock.status_record("permission:request")
+        assert record is not None
+        assert record.label == "Requesting"
+        assert "bash" in record.detail
+        assert "npm test" in record.detail
     finally:
         await graph._ui.events.stop()
         test_dock.deactivate()
         set_dock(None)
-

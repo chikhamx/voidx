@@ -140,3 +140,50 @@ class TestBash:
         r = ToolRegistry()
         result = await r.execute_tool("bash", {"command": "ls -la"}, ctx)
         assert "route_hint" not in result.metadata
+
+
+    @pytest.mark.asyncio
+    async def test_bash_blocked_sets_error_metadata(self, tmp_path):
+        """E1: blocked paths must set metadata['error'] = True for consistency."""
+        workspace = tmp_path / "workspace"
+        workspace.mkdir()
+        outside = tmp_path / "outside.txt"
+        ctx = ToolContext(workspace=str(workspace))
+        r = ToolRegistry()
+
+        result = await r.execute_tool(
+            "bash",
+            {"command": f"printf nope > {shlex.quote(str(outside))}"},
+            ctx,
+        )
+        assert result.metadata["blocked"] is True
+        assert result.metadata["error"] is True
+
+    @pytest.mark.asyncio
+    async def test_bash_timeout_sets_error_metadata(self, tmp_path):
+        """E1: timeout must set metadata['error'] = True for consistency."""
+        ctx = ToolContext(workspace=str(tmp_path))
+        r = ToolRegistry()
+
+        sleep_cmd = f'"{sys.executable}" -c "import time; time.sleep(1.5)"'
+        result = await r.execute_tool(
+            "bash",
+            {"command": sleep_cmd, "timeout": 1},
+            ctx,
+        )
+        assert result.metadata["timeout"] is True
+        assert result.metadata["error"] is True
+
+    @pytest.mark.asyncio
+    async def test_bash_nonzero_exit_sets_error_metadata(self, tmp_path):
+        """E1: non-zero exit code must set metadata['error'] = True for consistency."""
+        ctx = ToolContext(workspace=str(tmp_path))
+        r = ToolRegistry()
+
+        result = await r.execute_tool(
+            "bash",
+            {"command": "exit 1"},
+            ctx,
+        )
+        assert result.metadata["exit_code"] == 1
+        assert result.metadata["error"] is True

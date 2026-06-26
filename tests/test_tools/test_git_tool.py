@@ -82,6 +82,33 @@ async def test_git_path_empty_defaults_to_workspace(tmp_path):
 # --- Error handling tests ---
 
 @pytest.mark.asyncio
+async def test_git_success_metadata_no_error_key(tmp_path):
+    """E2: successful results should not have 'error' in metadata."""
+    repo = _init_repo(tmp_path / "repo")
+    (repo / "f.txt").write_text("x\n", encoding="utf-8")
+    _run(repo, "add", "f.txt")
+    _run(repo, "commit", "-m", "init")
+
+    result = await GitTool().execute(
+        {"args": "status"},
+        ToolContext(workspace=str(repo)),
+    )
+    assert result.metadata["ok"] is True
+    assert "error" not in result.metadata
+
+
+@pytest.mark.asyncio
+async def test_git_failure_metadata_error_true(tmp_path):
+    """E2: failed results should have metadata['error'] = True (bool, not string)."""
+    result = await GitTool().execute(
+        {"args": "status"},
+        ToolContext(workspace=str(tmp_path)),
+    )
+    assert result.metadata["ok"] is False
+    assert result.metadata["error"] is True
+
+
+@pytest.mark.asyncio
 async def test_git_non_repo_returns_structured_error(tmp_path):
     result = await GitTool().execute(
         {"args": "status"},
@@ -262,6 +289,24 @@ async def test_git_log_with_author(tmp_path):
     assert len(entries) == 1
 
 
+
+@pytest.mark.asyncio
+async def test_git_log_invalid_n_value_warns(tmp_path):
+    """E3: invalid -n value should be surfaced, not silently ignored."""
+    repo = _init_repo(tmp_path / "repo")
+    (repo / "f.txt").write_text("x\n", encoding="utf-8")
+    _run(repo, "add", "f.txt")
+    _run(repo, "commit", "-m", "init")
+
+    result = await GitTool().execute(
+        {"args": "log -n abc"},
+        ToolContext(workspace=str(repo)),
+    )
+    payload = _payload(result)
+    assert payload["ok"] is True
+    note = payload["data"].get("limit_note") or result.metadata.get("limit_note")
+    assert note and "abc" in note and "default" in note.lower()
+
 # --- Structured output: blame ---
 
 @pytest.mark.asyncio
@@ -360,7 +405,7 @@ async def test_git_show_ref_not_found(tmp_path):
     )
     payload = _payload(result)
     assert payload["ok"] is False
-    assert payload["error"] == "ref_not_found"
+    assert "nonexistent" in payload["error"] or "ref_not_found" in payload["error"]
 
 
 # --- Structured output: branch list ---

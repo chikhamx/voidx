@@ -140,6 +140,40 @@ class TestTaskTracker:
                 "todos": [{"id": "bad", "content": "bad status", "status": "blocked"}],
             })
 
+
+    @pytest.mark.asyncio
+    async def test_todo_read_no_tracker_sets_error(self, tmp_path):
+        """E5: no tracker should be an error, not disguised as empty list."""
+        tool = TodoWriteTool(tracker=None)
+        ctx = ToolContext(workspace=str(tmp_path))
+        result = await tool.execute({"op": "read"}, ctx)
+        assert result.metadata.get("error") is True
+        assert result.metadata.get("reason") == "no_tracker"
+        assert "not available" in result.output.lower()
+
+    @pytest.mark.asyncio
+    async def test_todo_read_empty_tracker_no_error(self, tmp_path):
+        """E5: empty list with tracker present is a normal success, not an error."""
+        tracker = TaskTracker()
+        tool = TodoWriteTool(tracker=tracker)
+        ctx = ToolContext(workspace=str(tmp_path))
+        result = await tool.execute({"op": "read"}, ctx)
+        assert "error" not in result.metadata
+        assert "empty" in result.output.lower()
+
+    @pytest.mark.asyncio
+    async def test_todo_update_no_tracker_sets_error(self, tmp_path):
+        """E5: update with no tracker should be an error, not 'list is empty'."""
+        tool = TodoWriteTool(tracker=None)
+        ctx = ToolContext(workspace=str(tmp_path))
+        result = await tool.execute(
+            {"op": "update", "updates": [{"id": "x", "status": "done"}]},
+            ctx,
+        )
+        assert result.metadata.get("error") is True
+        assert result.metadata.get("reason") == "no_tracker"
+        assert "not available" in result.output.lower()
+
     @pytest.mark.asyncio
     async def test_task_status_tool(self, tmp_path):
         tracker = TaskTracker()
