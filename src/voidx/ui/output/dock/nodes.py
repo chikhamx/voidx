@@ -391,6 +391,8 @@ def _tool_display_value(tool_name: str, args: str, raw_args: dict[str, Any]) -> 
         value = raw_args.get("pattern")
     elif tool_name == "bash":
         value = str(raw_args.get("command") or "").replace("\n", "; ")
+    elif tool_name == "git":
+        value = raw_args.get("args")
     elif tool_name == "agent":
         value = raw_args.get("agent") or raw_args.get("description")
     elif tool_name == "checkpoint":

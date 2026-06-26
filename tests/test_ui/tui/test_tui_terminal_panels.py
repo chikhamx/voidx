@@ -370,6 +370,50 @@ def test_dock_tool_summary_does_not_replace_tool_header(tmp_path):
         dock.reset()
 
 
+def test_dock_git_tool_header_shows_args_not_path(tmp_path):
+    """git tool header should display the args value, not the path field."""
+    dock.deactivate()
+    dock.reset()
+    dock.begin_capture()
+    try:
+        tool = dock.start_tool(
+            "Git",
+            "",
+            tool_name="git",
+            raw_args={"path": ".", "args": "log --oneline -5"},
+        )
+        dock.finish_tool_node(tool, "git", 0.1, True)
+
+        rendered = "\n".join(_rich_plain(line) for line in dock.tree.render(120))
+        assert 'Git("log --oneline -5")' in rendered
+        assert 'Git(".")' not in rendered
+    finally:
+        dock.deactivate()
+        dock.reset()
+
+
+def test_dock_git_tool_finish_detail_no_command_prefix(tmp_path):
+    """git finish detail should not duplicate the command name from header."""
+    dock.deactivate()
+    dock.reset()
+    dock.begin_capture()
+    try:
+        tool = dock.start_tool(
+            "Git",
+            "",
+            tool_name="git",
+            raw_args={"path": "", "args": "status --porcelain"},
+        )
+        dock.finish_tool_node(tool, "git", 0.1, True, "ok")
+
+        rendered = "\n".join(_rich_plain(line) for line in dock.tree.render(120))
+        assert 'Git("status --porcelain")' in rendered
+        assert "git status" not in rendered
+    finally:
+        dock.deactivate()
+        dock.reset()
+
+
 def test_input_cursor_position_counts_wide_chinese_cells(tmp_path, monkeypatch):
     class FakeStdout:
         def __init__(self) -> None:

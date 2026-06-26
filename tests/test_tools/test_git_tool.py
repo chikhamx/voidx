@@ -882,3 +882,24 @@ async def test_git_clean_fd_combined_denied(tmp_path):
     payload = _payload(result)
     assert payload["ok"] is False
     assert payload["error"] == "command_denied"
+
+
+
+# --- Summary format (UI display) ---
+
+
+def test_git_summary_ok_no_command_prefix():
+    """Summary should not duplicate the command name shown in the tool header."""
+    from voidx.tools.git import _result
+
+    ctx = ToolContext(workspace=".")
+    r = _result("log", ctx, ok=True)
+    assert r.summary == "ok"
+
+
+def test_git_summary_failed_no_command_prefix():
+    from voidx.tools.git import _result
+
+    ctx = ToolContext(workspace=".")
+    r = _result("push", ctx, ok=False, error="command_denied")
+    assert r.summary == "failed"
