@@ -30,15 +30,28 @@ class TaskStatusTool(BaseTool):
         return model_to_json_schema(TaskStatusInput)
 
     async def execute(self, args: dict, ctx: ToolContext) -> ToolResult:
-        inp = TaskStatusInput.model_validate(args)
+        try:
+            inp = TaskStatusInput.model_validate(args)
+        except Exception as exc:
+            return ToolResult(output=f"Invalid arguments: {exc}", metadata={"error": True})
 
         if not self._tracker:
-            return ToolResult(output="Task tracker not available.")
+            return ToolResult(
+                title="Task: Error",
+                output="Task tracker not available.",
+                summary="error: tracker unavailable",
+                metadata={"error": True, "reason": "no_tracker"},
+            )
 
         if inp.task_id:
             task = self._tracker.get(inp.task_id)
             if not task:
-                return ToolResult(output=f"Task not found: {inp.task_id}")
+                return ToolResult(
+                    title="Task: Error",
+                    output=f"Task not found: {inp.task_id}",
+                    summary=f"error: task not found: {inp.task_id}",
+                    metadata={"error": True, "reason": "not_found", "task_id": inp.task_id},
+                )
             return ToolResult(
                 title=f"Task {inp.task_id}: {task.status}",
                 output=self._tracker.format_status(),
@@ -55,5 +68,5 @@ class TaskStatusTool(BaseTool):
             title=f"Tasks: {len(running)} running, {len(self._tracker.list_all())} total",
             output=output,
             summary=f"{len(running)} running, {len(self._tracker.list_all())} total",
-            metadata={"running": len(running), "total": len(self._tracker._tasks)},
+            metadata={"running": len(running), "total": len(self._tracker.list_all())},
         )

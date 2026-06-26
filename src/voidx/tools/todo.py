@@ -72,8 +72,11 @@ class TodoWriteTool(BaseTool):
         return model_to_json_schema(TodoInput)
 
     async def execute(self, args: dict, ctx: ToolContext) -> ToolResult:
-        inp = TodoInput.model_validate(args)
-        
+        try:
+            inp = TodoInput.model_validate(args)
+        except Exception as exc:
+            return ToolResult(output=f"Invalid arguments: {exc}", metadata={"error": True})
+
         if inp.op == "read":
             return self._execute_read(inp)
         elif inp.op == "update":
@@ -86,9 +89,9 @@ class TodoWriteTool(BaseTool):
         if self._tracker is None:
             return ToolResult(
                 title="Todo: No tracker available",
-                output="Todo list is empty.",
-                summary="Todo list is empty.",
-                metadata={"todo_op": "read"},
+                output="Todo tracker is not available in this runtime.",
+                summary="error: no tracker",
+                metadata={"error": True, "reason": "no_tracker", "todo_op": "read"},
             )
         
         # Get current todos from tracker
@@ -142,15 +145,15 @@ class TodoWriteTool(BaseTool):
                 title="Todo: Error",
                 output="Error: 'updates' is required for update operation.",
                 summary="Error: 'updates' is required.",
-                metadata={"error": "updates_required"},
+                metadata={"error": True, "reason": "updates_required"},
             )
         
         if self._tracker is None:
             return ToolResult(
                 title="Todo: No tracker available",
-                output="Todo list is empty.",
-                summary="Todo list is empty.",
-                metadata={"todo_op": "update"},
+                output="Todo tracker is not available in this runtime.",
+                summary="error: no tracker",
+                metadata={"error": True, "reason": "no_tracker", "todo_op": "update"},
             )
         
         current_todos = self._tracker.get_todos()
@@ -222,7 +225,7 @@ class TodoWriteTool(BaseTool):
                 title="Todo: Error",
                 output="Error: 'todos' is required for write operation.",
                 summary="Error: 'todos' is required.",
-                metadata={"error": "todos_required"},
+                metadata={"error": True, "reason": "todos_required"},
             )
         
         # Check for duplicate ids
@@ -238,7 +241,7 @@ class TodoWriteTool(BaseTool):
                 title="Todo: Error",
                 output=f"Error: Duplicate ids found: {', '.join(duplicate_ids)}",
                 summary=f"Error: Duplicate ids: {', '.join(duplicate_ids)}",
-                metadata={"error": "duplicate_ids", "duplicate_ids": duplicate_ids},
+                metadata={"error": True, "reason": "duplicate_ids", "duplicate_ids": duplicate_ids},
             )
         
         # Convert to dict for storage

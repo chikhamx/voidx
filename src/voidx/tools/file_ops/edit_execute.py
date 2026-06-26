@@ -82,7 +82,10 @@ class FileReplaceTool(BaseTool):
         return model_to_json_schema(FileReplaceInput)
 
     async def execute(self, args: dict, ctx: ToolContext) -> ToolResult:
-        inp = FileReplaceInput.model_validate(args)
+        try:
+            inp = FileReplaceInput.model_validate(args)
+        except Exception as exc:
+            return ToolResult(output=f"Invalid arguments: {exc}", metadata={"error": True})
         return await _execute_text_replace(
             ctx,
             file_path=inp.file_path,

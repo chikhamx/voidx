@@ -27,7 +27,10 @@ class BashTool(BaseTool):
         return model_to_json_schema(BashInput)
 
     async def execute(self, args: dict, ctx: ToolContext) -> ToolResult:
-        inp = BashInput.model_validate(args)
+        try:
+            inp = BashInput.model_validate(args)
+        except Exception as exc:
+            return ToolResult(output=f"Invalid arguments: {exc}", metadata={"error": True})
 
         blocked = _check_command(inp.command)
         if blocked:
@@ -35,7 +38,7 @@ class BashTool(BaseTool):
             return ToolResult(
                 output=json.dumps(payload, ensure_ascii=False),
                 display=blocked,
-                metadata={"command": inp.command, "blocked": True},
+                metadata={"command": inp.command, "blocked": True, "error": True},
             )
 
         blocked = _sandbox_denial(inp.command, ctx)
@@ -44,7 +47,7 @@ class BashTool(BaseTool):
             return ToolResult(
                 output=json.dumps(payload, ensure_ascii=False),
                 display=blocked,
-                metadata={"command": inp.command, "blocked": True},
+                metadata={"command": inp.command, "blocked": True, "error": True},
             )
 
         hint = try_hint(inp.command)
@@ -83,7 +86,7 @@ class BashTool(BaseTool):
             return ToolResult(
                 output=json.dumps(payload, ensure_ascii=False),
                 display=display,
-                metadata={"command": inp.command, "exit_code": -1, "timeout": True},
+                metadata={"command": inp.command, "exit_code": -1, "timeout": True, "error": True},
             )
 
         stdout_text = stdout.decode("utf-8", errors="replace") if stdout else ""
@@ -117,6 +120,7 @@ class BashTool(BaseTool):
                 "command": inp.command,
                 "exit_code": exit_code,
                 "ok": exit_code == 0,
+                **({"error": True} if exit_code != 0 else {}),
             },
         )
 

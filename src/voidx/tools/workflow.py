@@ -85,7 +85,10 @@ class WorkflowTool(BaseTool):
                 suggested_call='workflow(action="enter", workflow="debug")',
             )
         raw_args["action"] = canonical_action
-        inp = WorkflowInput.model_validate(raw_args)
+        try:
+            inp = WorkflowInput.model_validate(raw_args)
+        except Exception as exc:
+            return ToolResult(output=f"Invalid arguments: {exc}", metadata={"error": True})
         runs = _current_runs(ctx)
         active = _active_runs(runs)
 

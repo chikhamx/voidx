@@ -179,7 +179,10 @@ class FileReadTool(BaseTool):
         return model_to_json_schema(FileReadInput)
 
     async def execute(self, args: dict, ctx: ToolContext) -> ToolResult:
-        inp = FileReadInput.model_validate(args)
+        try:
+            inp = FileReadInput.model_validate(args)
+        except Exception as exc:
+            return ToolResult(output=f"Invalid arguments: {exc}", metadata={"error": True})
         path = resolve_safe(ctx.workspace, inp.file_path, ctx.sandbox_extra_paths)
         if path is None:
             external = _try_resolve_external(inp.file_path)
@@ -223,7 +226,7 @@ class FileReadTool(BaseTool):
             return ToolResult(
                 title=f"Read 0 lines",
                 output=f"Offset {inp.offset} is beyond end of file (file has {len(lines)} lines).",
-                metadata={"file": inp.file_path, "lines": 0, "total_lines": len(lines)},
+                metadata={"file": inp.file_path, "lines": 0, "total_lines": len(lines), "error": True, "reason": "offset_beyond_eof"},
             )
         end = start + (inp.limit or len(lines))
         sliced = lines[start:end]

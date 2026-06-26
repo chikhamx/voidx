@@ -14,6 +14,7 @@ from typing import Any
 from pydantic import BaseModel, Field
 
 from voidx.tools.base import BaseTool, ToolContext, ToolResult, model_to_json_schema, resolve_safe
+from voidx.logging.tool_log import log_tool_event
 
 
 GIT_TIMEOUT_SECONDS = 15
@@ -340,6 +341,7 @@ async def _git_diff(rest: list[str], ctx: ToolContext, repo: GitRepo) -> ToolRes
 
 async def _git_log(rest: list[str], ctx: ToolContext, repo: GitRepo) -> ToolResult:
     limit = 10
+    limit_note = ""
     author = _extract_flag_value(rest, "--author") or ""
     since = _extract_flag_value(rest, "--since") or ""
     until = _extract_flag_value(rest, "--until") or ""
@@ -354,18 +356,18 @@ async def _git_log(rest: list[str], ctx: ToolContext, repo: GitRepo) -> ToolResu
             try:
                 limit = min(int(rest[i + 1]), LOG_LIMIT_MAX)
             except ValueError:
-                pass
+                limit_note = f"invalid -n value '{rest[i + 1]}', defaulted to {limit}"
             skip_next = True
         elif token.startswith("-n"):
             try:
                 limit = min(int(token[2:]), LOG_LIMIT_MAX)
             except ValueError:
-                pass
+                limit_note = f"invalid -n value '{token[2:]}', defaulted to {limit}"
         elif token.startswith("-") and len(token) > 1 and token[1:].isdigit():
             try:
                 limit = min(int(token[1:]), LOG_LIMIT_MAX)
             except ValueError:
-                pass
+                limit_note = f"invalid -n value '{token[1:]}', defaulted to {limit}"
         elif token == "--" and i + 1 < len(rest):
             path = rest[i + 1]
             break
@@ -388,7 +390,10 @@ async def _git_log(rest: list[str], ctx: ToolContext, repo: GitRepo) -> ToolResu
     proc = await _run_git(repo, argv, read_only=True)
     if proc["returncode"] != 0:
         return _result("log", ctx, repo=repo, ok=False, error=proc["stderr"] or proc["stdout"])
-    return _result("log", ctx, repo=repo, data={"entries": _parse_log(proc["stdout"], repo, ctx.workspace)})
+    data = {"entries": _parse_log(proc["stdout"], repo, ctx.workspace)}
+    if limit_note:
+        data["limit_note"] = limit_note
+    return _result("log", ctx, repo=repo, data=data)
 
 
 async def _git_blame(rest: list[str], ctx: ToolContext, repo: GitRepo) -> ToolResult:
@@ -485,7 +490,7 @@ async def _git_show(rest: list[str], ctx: ToolContext, repo: GitRepo) -> ToolRes
     meta_argv = ["show", f"--format=%H%x1f%an%x1f%ad%x1f%s%x1f%P", "--no-patch", ref]
     meta_proc = await _run_git(repo, meta_argv, read_only=True)
     if meta_proc["returncode"] != 0:
-        return _result("show", ctx, repo=repo, ok=False, error="ref_not_found")
+        return _result("show", ctx, repo=repo, ok=False, error=meta_proc["stderr"].strip() or meta_proc["stdout"].strip() or "ref_not_found")
     meta_line = meta_proc["stdout"].strip()
     parts = meta_line.split("\x1f")
     if len(parts) < 4:
@@ -870,6 +875,7 @@ def _parse_git_timezone(raw: str) -> timezone:
 async def _staged_files(ctx: ToolContext, repo: GitRepo) -> list[str]:
     proc = await _run_git(repo, ["diff", "--cached", "--name-only"], read_only=True)
     if proc["returncode"] != 0:
+        log_tool_event("git_staged_files_failed", tool_name="git", message=f"git diff --cached failed: {proc['stderr'].strip() or proc['stdout'].strip()}")
         return []
     return [_display_path(line, repo, ctx.workspace) for line in proc["stdout"].splitlines() if line.strip()]
 
@@ -877,6 +883,7 @@ async def _staged_files(ctx: ToolContext, repo: GitRepo) -> list[str]:
 async def _unstaged_files(ctx: ToolContext, repo: GitRepo) -> list[str]:
     proc = await _run_git(repo, ["diff", "--name-only"], read_only=True)
     if proc["returncode"] != 0:
+        log_tool_event("git_unstaged_files_failed", tool_name="git", message=f"git diff failed: {proc['stderr'].strip() or proc['stdout'].strip()}")
         return []
     return [_display_path(line, repo, ctx.workspace) for line in proc["stdout"].splitlines() if line.strip()]
 
@@ -884,6 +891,7 @@ async def _unstaged_files(ctx: ToolContext, repo: GitRepo) -> list[str]:
 async def _commit_files(ctx: ToolContext, repo: GitRepo, ref: str) -> list[str]:
     proc = await _run_git(repo, ["diff-tree", "--no-commit-id", "--name-only", "-r", ref], read_only=True)
     if proc["returncode"] != 0:
+        log_tool_event("git_commit_files_failed", tool_name="git", message=f"git diff-tree {ref} failed: {proc['stderr'].strip() or proc['stdout'].strip()}")
         return []
     return [_display_path(line, repo, ctx.workspace) for line in proc["stdout"].splitlines() if line.strip()]
 
@@ -928,14 +936,16 @@ def _result(
         "data": data or {},
         "error": error.strip(),
     }
+    metadata = {
+        "command": command,
+        "ok": ok,
+    }
+    if not ok:
+        metadata["error"] = True
+        metadata["error_message"] = error.strip()
     return ToolResult(
         title=f"git: {command}",
         output=json.dumps(payload, ensure_ascii=False, indent=2),
         summary="ok" if ok else "failed",
-        metadata={
-            "command": command,
-            "ok": ok,
-            "error": not ok,
-            "error_message": error.strip(),
-        },
+        metadata=metadata,
     )

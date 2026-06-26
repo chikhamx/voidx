@@ -45,7 +45,10 @@ class ClarifyTool(BaseTool):
         return model_to_json_schema(ClarifyInput)
 
     async def execute(self, args: dict, ctx: ToolContext) -> ToolResult:
-        inp = ClarifyInput.model_validate(args)
+        try:
+            inp = ClarifyInput.model_validate(args)
+        except Exception as exc:
+            return ToolResult(output=f"Invalid arguments: {exc}", metadata={"error": True})
         if ctx.interact is None:
             return ToolResult(
                 title="clarify: unavailable",

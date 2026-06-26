@@ -179,7 +179,10 @@ class WebSearchTool(BaseTool):
         return model_to_json_schema(WebSearchInput)
 
     async def execute(self, args: dict, ctx: ToolContext) -> ToolResult:
-        inp = WebSearchInput.model_validate(args)
+        try:
+            inp = WebSearchInput.model_validate(args)
+        except Exception as exc:
+            return ToolResult(output=f"Invalid arguments: {exc}", metadata={"error": True})
         mcp_result = await call_mcp_web_tool(
             kind="search",
             settings=self._settings,

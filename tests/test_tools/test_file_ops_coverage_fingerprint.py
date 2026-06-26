@@ -270,5 +270,7 @@ class TestFileOps:
         result = await r.execute_tool("read", {"file_path": "short.txt", "offset": 100}, ctx)
         assert result.metadata["lines"] == 0
         assert "beyond" in result.output.lower() or "offset" in result.output.lower()
+        assert result.metadata["error"] is True
+        assert result.metadata["reason"] == "offset_beyond_eof"
 
 

@@ -49,7 +49,10 @@ class FileTool(BaseTool):
         return model_to_json_schema(FileInput)
 
     async def execute(self, args: dict, ctx: ToolContext) -> ToolResult:
-        inp = FileInput.model_validate(args)
+        try:
+            inp = FileInput.model_validate(args)
+        except Exception as exc:
+            return ToolResult(output=f"Invalid arguments: {exc}", metadata={"error": True})
         if inp.op == "create":
             return await _create_file(ctx, inp)
         if inp.op == "delete":

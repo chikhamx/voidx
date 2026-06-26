@@ -32,7 +32,10 @@ class GlobTool(BaseTool):
         return model_to_json_schema(GlobInput)
 
     async def execute(self, args: dict, ctx: ToolContext) -> ToolResult:
-        inp = GlobInput.model_validate(args)
+        try:
+            inp = GlobInput.model_validate(args)
+        except Exception as exc:
+            return ToolResult(output=f"Invalid arguments: {exc}", metadata={"error": True})
         base = Path(ctx.workspace)
 
         def _visible_path(p: Path) -> bool:
@@ -136,18 +139,21 @@ class GrepTool(BaseTool):
         return model_to_json_schema(GrepInput)
 
     async def execute(self, args: dict, ctx: ToolContext) -> ToolResult:
-        inp = GrepInput.model_validate(args)
+        try:
+            inp = GrepInput.model_validate(args)
+        except Exception as exc:
+            return ToolResult(output=f"Invalid arguments: {exc}", metadata={"error": True})
         base = Path(ctx.workspace)
         search_dir = resolve_safe(ctx.workspace, inp.path, ctx.sandbox_extra_paths) if inp.path else base
         if search_dir is None:
-            return ToolResult(output=f"Path traversal blocked: {inp.path}")
+            return ToolResult(output=f"Path traversal blocked: {inp.path}", metadata={"error": True})
 
         pattern = rf"\b{inp.pattern}\b" if inp.whole_word else inp.pattern
         flags = re.IGNORECASE if inp.ignore_case else 0
         try:
             regex = re.compile(pattern, flags)
         except re.error as e:
-            return ToolResult(output=f"Invalid regex: {e}")
+            return ToolResult(output=f"Invalid regex: {e}", metadata={"error": True})
 
         gitignore_spec = _load_gitignore(base)
 
@@ -205,15 +211,15 @@ class GrepTool(BaseTool):
                             continue
                         scanned += 1
                         yield entry
-            except PermissionError:
-                pass
+            except PermissionError as exc:
+                log_tool_event("grep_dir_denied", tool_name="search", message=f"Permission denied accessing directory: {dir_path}: {exc}")
 
         if search_dir.is_file():
             files = [search_dir]
         elif search_dir.is_dir():
             files = iter_files(search_dir)
         else:
-            return ToolResult(output=f"Path not found: {inp.path}")
+            return ToolResult(output=f"Path not found: {inp.path}", metadata={"error": True})
 
         _MAX_OUTPUT_LINES = 500
         truncated = False

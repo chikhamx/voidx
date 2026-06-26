@@ -139,7 +139,10 @@ class WebFetchTool(BaseTool):
         return model_to_json_schema(WebFetchInput)
 
     async def execute(self, args: dict, ctx: ToolContext) -> ToolResult:
-        inp = WebFetchInput.model_validate(args)
+        try:
+            inp = WebFetchInput.model_validate(args)
+        except Exception as exc:
+            return ToolResult(output=f"Invalid arguments: {exc}", metadata={"error": True})
         mcp_arguments = inp.model_dump(exclude_none=True)
         if "max_chars" not in args:
             mcp_arguments.pop("max_chars", None)

@@ -69,7 +69,10 @@ class SkillsTool(BaseTool):
         return model_to_json_schema(SkillsInput)
 
     async def execute(self, args: dict, ctx: ToolContext) -> ToolResult:
-        inp = SkillsInput.model_validate(args)
+        try:
+            inp = SkillsInput.model_validate(args)
+        except Exception as exc:
+            return ToolResult(output=f"Invalid arguments: {exc}", metadata={"error": True})
         if inp.op == "load":
             return self._execute_load(inp, ctx)
         if inp.op == "create":

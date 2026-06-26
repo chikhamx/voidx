@@ -67,7 +67,10 @@ class PlanCheckpointTool(BaseTool):
         return model_to_json_schema(PlanCheckpointInput)
 
     async def execute(self, args: dict, ctx: ToolContext) -> ToolResult:
-        inp = PlanCheckpointInput.model_validate(args)
+        try:
+            inp = PlanCheckpointInput.model_validate(args)
+        except Exception as exc:
+            return ToolResult(output=f"Invalid arguments: {exc}", metadata={"error": True})
         if ctx.interact is None:
             return ToolResult(
                 title="plan: approval unavailable",

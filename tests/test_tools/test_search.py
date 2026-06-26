@@ -288,8 +288,9 @@ class TestGrepImprovements:
         (tmp_path / "code.py").write_text("TODO\n")
         ctx = ToolContext(workspace=str(tmp_path))
         r = ToolRegistry()
-        with pytest.raises(Exception):
-            await r.execute_tool("grep", {"pattern": "TODO", "context_lines": -1}, ctx)
+        result = await r.execute_tool("grep", {"pattern": "TODO", "context_lines": -1}, ctx)
+        assert result.metadata.get("error") is True
+        assert "Invalid arguments" in result.output
 
     @pytest.mark.asyncio
     async def test_exclude_multiple_globs(self, tmp_path):

@@ -196,19 +196,21 @@ class AgentTool(BaseTool):
 
         if self._agent_resolver is None:
             return ToolResult(
-                output=f"Child agent execution not available. Task: {normalized.description[:200]}"
+                output=f"Child agent execution not available. Task: {normalized.description[:200]}",
+                metadata={"error": True, "reason": "no_resolver"},
             )
 
         agent_def = self._agent_resolver(requested_agent) if self._agent_resolver else None
         if not agent_def:
             available = self._available_agents
-            return ToolResult(output=f"Unknown child agent: {inp.agent}. Available: {available}")
+            return ToolResult(output=f"Unknown child agent: {inp.agent}. Available: {available}", metadata={"error": True, "reason": "unknown_agent"})
 
         agent_def_name = str(getattr(agent_def, "name", inp.agent))
 
         if not self._run_child_agent:
             return ToolResult(
-                output=f"Child agent execution not available. Task: {normalized.description[:200]}"
+                output=f"Child agent execution not available. Task: {normalized.description[:200]}",
+                metadata={"error": True, "reason": "no_runner"},
             )
 
         try:
@@ -235,7 +237,7 @@ class AgentTool(BaseTool):
         except Exception as exc:
             return ToolResult(
                 output=f"Child agent '{agent_def_name}' failed: {exc}",
-                metadata={"agent": agent_def_name, "error": str(exc)},
+                metadata={"agent": agent_def_name, "error": True, "reason": "exception", "detail": str(exc)[:200]},
             )
 
 

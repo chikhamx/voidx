@@ -53,7 +53,10 @@ class LspTool(BaseTool):
         return model_to_json_schema(LspInput)
 
     async def execute(self, args: dict, ctx: ToolContext) -> ToolResult:
-        inp = LspInput.model_validate(args)
+        try:
+            inp = LspInput.model_validate(args)
+        except Exception as exc:
+            return ToolResult(output=f"Invalid arguments: {exc}", metadata={"error": True})
         service = _service(ctx)
         if service is None:
             return ToolResult(output="LSP manager not available.", metadata={"error": True})
@@ -99,7 +102,10 @@ class LspFormatTool(BaseTool):
         return model_to_json_schema(LspFormatInput)
 
     async def execute(self, args: dict, ctx: ToolContext) -> ToolResult:
-        inp = LspFormatInput.model_validate(args)
+        try:
+            inp = LspFormatInput.model_validate(args)
+        except Exception as exc:
+            return ToolResult(output=f"Invalid arguments: {exc}", metadata={"error": True})
         service = _service(ctx)
         if service is None:
             return ToolResult(output="LSP manager not available.", metadata={"error": True})

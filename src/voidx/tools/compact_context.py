@@ -37,7 +37,10 @@ class CompactContextTool(BaseTool):
         return model_to_json_schema(CompactContextInput)
 
     async def execute(self, args: dict, ctx: ToolContext) -> ToolResult:
-        inp = CompactContextInput.model_validate(args)
+        try:
+            inp = CompactContextInput.model_validate(args)
+        except Exception as exc:
+            return ToolResult(output=f"Invalid arguments: {exc}", metadata={"error": True})
         summary = inp.summary.strip()
         tail_anchor_id = inp.tail_anchor_id.strip()
         return ToolResult(
