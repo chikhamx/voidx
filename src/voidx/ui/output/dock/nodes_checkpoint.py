@@ -66,6 +66,7 @@ class DockCheckpointNodeMixin:
             node_type="message",
             header=f"[white on #3a3937]User: {escape(display_response)}[/]",
             collapsed=False,
+            payload={"full_width_user_row": True},
         )
         self._mark_subtree_settled(child)
         self._mark_subtree_settled(node)

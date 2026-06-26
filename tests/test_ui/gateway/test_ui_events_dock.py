@@ -6,6 +6,7 @@ from pathlib import Path
 
 import pytest
 from rich.console import Console
+from rich.text import Text
 
 sys.path.insert(0, str(Path(__file__).parent.parent / "src"))
 
@@ -434,6 +435,45 @@ async def test_checkpoint_prompt_event_renders_voidx_plan_and_decision(isolated_
         assert "User: Implement directly" in rendered
         assert checkpoint.payload["decision"] == "approved"
         assert checkpoint.payload["response"] == "Implement directly"
+    finally:
+        await bus.stop()
+
+
+@pytest.mark.asyncio
+async def test_checkpoint_decision_renders_as_full_width_user_row_with_following_gap(isolated_dock):
+    isolated_dock.begin_capture()
+    bus = UiEventBus()
+    bus.start(DockEventConsumer(isolated_dock))
+    try:
+        await bus.request(TurnStarted(text="demo"))
+        await bus.emit(CheckpointPromptShown(
+            checkpoint_id="cp_1",
+            plan=CheckpointPlanPayload(plan_summary="Add checkpoint node"),
+            choices=[
+                CheckpointChoicePayload(
+                    label="Implement directly",
+                    value="approved",
+                    description="Start implementing the plan",
+                )
+            ],
+        ))
+        await bus.emit(CheckpointDecisionSubmitted(
+            checkpoint_id="cp_1",
+            decision="approved",
+            label="Implement directly",
+            response="Implement directly",
+        ))
+        await bus.emit(AssistantStreamUpdated(text="先删除临时文件，然后开始分步 commit。"))
+        await bus.drain()
+
+        lines = isolated_dock.tree.render(80)
+        plain_lines = [_rich_plain(line) for line in lines]
+        user_index = plain_lines.index("User: Implement directly" + (" " * 56))
+
+        assert Text.from_markup(lines[user_index]).cell_len == 80
+        assert any("on #3a3937" in str(span.style) for span in Text.from_markup(lines[user_index]).spans)
+        assert plain_lines[user_index + 1] == ""
+        assert plain_lines[user_index + 2].startswith("● 先删除临时文件")
     finally:
         await bus.stop()
 

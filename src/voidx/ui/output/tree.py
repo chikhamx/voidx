@@ -480,7 +480,7 @@ class OutputTree:
             line = node.header if node.header else ""
             if node.node_type == "turn":
                 line = _full_width_row(line, self._render_width)
-            elif node.node_type == "permission":
+            elif node.node_type == "permission" or _is_full_width_user_row(node):
                 line = _permission_row(line, self._render_width)
             lines.append(line)
             if line_map is not None:
@@ -493,7 +493,7 @@ class OutputTree:
                 body_line = f"{body_prefix}{bl}"
                 if node.node_type == "turn":
                     body_line = _full_width_row(body_line, self._render_width)
-                elif node.node_type == "permission":
+                elif node.node_type == "permission" or _is_full_width_user_row(node):
                     body_line = _permission_row(body_line, self._render_width)
                 lines.append(body_line)
                 if line_map is not None:
@@ -571,7 +571,10 @@ class OutputTree:
         )
         if not body_only_thinking:
             line = f"{current_prefix}{node.header}" if node.header else current_prefix
-            if node.node_type == "permission":
+            if _is_full_width_user_row(node):
+                line = node.header if node.header else ""
+                line = _permission_row(line, self._render_width)
+            elif node.node_type == "permission":
                 line = _permission_row(line, self._render_width)
             lines.append(line)
             if line_map is not None:
@@ -590,7 +593,10 @@ class OutputTree:
             body_line = f"{tool_prefix}{_tool_meta_line(bl)}" if tool_metadata_body else f"{cont}{bl}"
             if node.payload.get("diff_text"):
                 body_line = _pad_diff_background_row(body_line, self._render_width)
-            if node.node_type == "permission":
+            if _is_full_width_user_row(node):
+                body_line = bl
+                body_line = _permission_row(body_line, self._render_width)
+            elif node.node_type == "permission":
                 body_line = _permission_row(body_line, self._render_width)
             lines.append(body_line)
             if line_map is not None:
@@ -620,6 +626,10 @@ def _permission_row(line: str, width: int) -> str:
     visible = cell_len(Text.from_markup(line).plain)
     padding = " " * max(0, width - visible)
     return f"[white on #3a3937]{line}{padding}[/]"
+
+
+def _is_full_width_user_row(node: OutputNode) -> bool:
+    return bool(node.payload.get("full_width_user_row"))
 
 
 def _tool_meta_line(line: str) -> str:
@@ -682,7 +692,7 @@ def _needs_gap_between_agent_blocks(
 
 
 def _is_visible_agent_text(node: OutputNode) -> bool:
-    if node.node_type not in {"assistant", "message"}:
+    if node.node_type not in {"assistant", "message", "checkpoint"}:
         return False
     return bool(node.header or node.body_lines)
 
