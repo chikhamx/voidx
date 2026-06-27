@@ -160,3 +160,34 @@ class TestInstallShNpmPreferBehavior:
         # and not gated behind npm
         assert "BUNDLED_PYTHON" in src, "Fallback must set up BUNDLED_PYTHON"
         assert "VENV_DIR" in src, "Fallback must set up VENV_DIR"
+
+
+class TestInstallShPipIsolation:
+    """Tests verifying pip install runs isolated from source repo."""
+
+    def test_pip_install_not_run_in_source_dir(self):
+        """pip install must not run in a directory with pyproject.toml.
+
+        When install.sh is run from inside the voidx source repo, pip would
+        discover the local pyproject.toml and install from ./src instead of
+        downloading the published wheel from PyPI. The script must cd to a
+        neutral directory (e.g. VENV_DIR) before running pip install.
+        """
+        src = _read_install_sh()
+        lines = src.splitlines()
+
+        # Find the line that adds voidx==VERSION to PIP_ARGS
+        pip_line_idx = None
+        for i, line in enumerate(lines):
+            if "voidx==" in line and "PIP_ARGS" in line:
+                pip_line_idx = i
+                break
+
+        assert pip_line_idx is not None, "Script must have PIP_ARGS with voidx==VERSION"
+
+        # Look backwards from the pip install line for a cd command
+        # that moves to VENV_DIR or another non-source directory
+        preceding = "\n".join(lines[:pip_line_idx])
+        assert 'cd "' in preceding or "cd '" in preceding or "cd ${" in preceding, \
+            "Script must cd to a neutral directory before pip install to avoid " \
+            "installing from local source instead of PyPI"

@@ -451,6 +451,10 @@ ok "Virtual environment ready"
 # ── Step 3: Install voidx ──────────────────────────────────────────────────
 step "3/3" "Installing voidx ${VERSION}"
 
+# cd to VENV_DIR so pip doesn't discover a local pyproject.toml in the
+# current directory and install from source instead of PyPI.
+cd "${VENV_DIR}"
+
 PIP_ARGS=("-m" "pip" "install" "--upgrade" "--no-cache-dir" "--progress-bar" "on")
 
 if [ -n "${VOIDX_PIP_INDEX:-}" ]; then
