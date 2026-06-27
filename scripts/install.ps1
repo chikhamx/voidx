@@ -52,6 +52,19 @@ $VoidxBin = Join-Path $VenvDir "Scripts\voidx.exe"
 $MarkerPath = Join-Path $VenvDir ".voidx-install-version"
 $Marker = "$Version`n$PbsTag`n$PbsCpython`n$PbsTarget`n"
 
+# ── Check if voidx is running ───────────────────────────────────────────────
+# If voidx.exe is running, its process holds a lock on the binary and the
+# installer will fail partway through (venv rebuild or pip install) with a
+# file-in-use error. Check upfront so the user doesn't waste time downloading
+# Python and creating a venv only to fail at the end.
+$RunningVoidx = Get-Process -Name "voidx" -ErrorAction SilentlyContinue
+if ($RunningVoidx) {
+    Write-Host "  ❌ voidx is currently running." -ForegroundColor Red
+    Write-Host "     Please close all voidx windows and re-run the installer." -ForegroundColor Red
+    Write-Host "     The installer cannot update files while voidx is in use." -ForegroundColor DarkGray
+    exit 1
+}
+
 # ── Legacy cleanup ──────────────────────────────────────────────────────────
 # Remove voidx installed via system Python (pip/pipx) from v1.x era.
 # NOTE: try/catch wrappers are required for PowerShell 5.1 compatibility.

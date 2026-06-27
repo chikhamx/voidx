@@ -290,3 +290,48 @@ class TestInstallPs1PathCleanup:
             assert 'Join-Path $VoidxHome "venv\\Scripts"' not in cleanup_block, \
                 "Legacy PATH cleanup must not target the current venv\\Scripts path — " \
                 "this causes a warning every run since Ensure-PathAndVerify re-adds it"
+
+
+class TestInstallPs1RunningCheck:
+    """Tests verifying install.ps1 checks if voidx is running before doing anything."""
+
+    def test_ps1_checks_voidx_running_before_file_ops(self):
+        """install.ps1 must check if voidx.exe is running before any file operation.
+
+        If voidx is running, its process holds a lock on venv\\Scripts\\voidx.exe.
+        The script will fail partway through (venv rebuild or pip install) with
+        a file-in-use error. Checking upfront and exiting with a clear message
+        saves the user from waiting through Python download + venv creation
+        only to fail at the end.
+        """
+        src = _read_install_ps1()
+        lines = src.splitlines()
+
+        # Find the first actual file operation (not comments).
+        # Match Remove-Item, Set-Content, or venv creation commands.
+        first_file_op = None
+        for i, line in enumerate(lines):
+            stripped = line.strip()
+            if stripped.startswith("#"):
+                continue
+            if "Remove-Item" in line or "Set-Content" in line or "-m venv" in line:
+                first_file_op = i
+                break
+
+        assert first_file_op is not None, "Script must have file operations"
+
+        # Everything before the first file op must contain a running-process check
+        prefix = "\n".join(lines[:first_file_op])
+        assert "Get-Process" in prefix or "Get-CimInstance" in prefix, \
+            "Script must check if voidx is running (Get-Process) before any file operation"
+        assert "voidx" in prefix.lower(), \
+            "Running-process check must look for voidx"
+
+    def test_ps1_running_check_exits_with_message(self):
+        """When voidx is running, the script must exit with a clear error message."""
+        src = _read_install_ps1()
+        # Must have a check that exits when voidx is running
+        assert "Get-Process" in src or "Get-CimInstance" in src, \
+            "Script must check for running voidx process"
+        # The check must lead to an exit, not just a warning
+        assert "exit" in src, "Script must exit when voidx is running"
