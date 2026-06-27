@@ -455,6 +455,15 @@ step "3/3" "Installing voidx ${VERSION}"
 # current directory and install from source instead of PyPI.
 cd "${VENV_DIR}"
 
+# Clean pip leftover directories (~-prefixed) from interrupted installs.
+# pip's AdjacentTempDirectory leaves folders like ~oidx.dist-info if an
+# install is interrupted. On the next run pip prints
+# "Ignoring invalid distribution" warnings for each leftover.
+SITE_PACKAGES="${VENV_DIR}/lib/python${PBS_PYTHON_MAJOR}/site-packages"
+if [ -d "${SITE_PACKAGES}" ]; then
+    find "${SITE_PACKAGES}" -maxdepth 1 -name '~*' -exec rm -rf {} + 2>/dev/null || true
+fi
+
 PIP_ARGS=("-m" "pip" "install" "--upgrade" "--no-cache-dir" "--progress-bar" "on")
 
 if [ -n "${VOIDX_PIP_INDEX:-}" ]; then

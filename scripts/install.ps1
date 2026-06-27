@@ -312,6 +312,17 @@ Write-Host "  ✅ Virtual environment ready" -ForegroundColor Green
 # ── Step 3: Install voidx ──────────────────────────────────────────────────
 Write-Host "  [3/3] Installing voidx $Version" -ForegroundColor Yellow
 
+# Clean pip leftover directories (~-prefixed) from interrupted installs.
+# pip's AdjacentTempDirectory leaves folders like ~oidx.dist-info if an
+# install is interrupted. On the next run pip prints
+# "Ignoring invalid distribution" warnings for each leftover.
+$SitePackages = Join-Path $VenvDir "Lib\site-packages"
+if (Test-Path $SitePackages) {
+    Get-ChildItem -Path $SitePackages -Directory -Filter "~*" -ErrorAction SilentlyContinue | ForEach-Object {
+        Remove-Item $_.FullName -Recurse -Force -ErrorAction SilentlyContinue
+    }
+}
+
 $PipArgs = @("-m", "pip", "install", "--upgrade", "--no-cache-dir", "--progress-bar", "on")
 
 if ($env:VOIDX_PIP_INDEX) {

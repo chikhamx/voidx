@@ -335,3 +335,31 @@ class TestInstallPs1RunningCheck:
             "Script must check for running voidx process"
         # The check must lead to an exit, not just a warning
         assert "exit" in src, "Script must exit when voidx is running"
+
+
+class TestInstallScriptsCleanPipLeftovers:
+    """Tests verifying scripts clean ~-prefixed pip leftover directories."""
+
+    def test_sh_cleans_pip_leftover_dirs(self):
+        """install.sh must clean ~-prefixed dirs in site-packages before pip install.
+
+        pip's AdjacentTempDirectory leaves folders like ~oidx.dist-info if an
+        install is interrupted. On the next run pip prints
+        'Ignoring invalid distribution' warnings. The script should remove
+        these leftovers before running pip install.
+        """
+        src = _read_install_sh()
+        assert "site-packages" in src or "dist-info" in src, \
+            "Script must target site-packages or dist-info dirs"
+        # Must have a find/rm command targeting ~-prefixed dirs
+        assert "name '~*'" in src or 'name "~*"' in src, \
+            "Script must use find with ~* pattern to clean leftover dirs"
+
+    def test_ps1_cleans_pip_leftover_dirs(self):
+        """install.ps1 must clean ~-prefixed dirs in site-packages before pip install."""
+        src = _read_install_ps1()
+        assert "site-packages" in src or "dist-info" in src, \
+            "Script must target site-packages or dist-info dirs"
+        # Must have a Get-ChildItem with ~* filter to clean leftover dirs
+        assert '"~*"' in src or "'~*'" in src or 'Filter "~*"' in src, \
+            "Script must use Get-ChildItem with ~* filter to clean leftover dirs"
