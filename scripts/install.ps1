@@ -14,6 +14,28 @@
 
 $ErrorActionPreference = "Stop"
 
+# Detect irm | iex pipe mode. When the script is piped into iex (the documented
+# one-liner install), $MyInvocation.InvocationName is empty and ExpectingInput
+# is true. In this mode a bare `exit` kills the whole PowerShell host process
+# instantly, so the user sees the window close with no message. We route every
+# error exit through Abort-Install, which throws in pipe mode (so the trap below
+# catches it and pauses) and uses `exit` in file mode.
+$IsPipeMode = [string]::IsNullOrEmpty($MyInvocation.InvocationName) -and $MyInvocation.ExpectingInput
+
+function Abort-Install {
+    param([string]$Message)
+    if ($IsPipeMode) {
+        throw $Message
+    } else {
+        Write-Host ""
+        Write-Host "  ❌ $Message" -ForegroundColor Red
+        Write-Host "     Please report this at https://github.com/chikhamx/voidx/issues" -ForegroundColor DarkGray
+        Write-Host ""
+        Write-Host "  Press Enter to close…" -ForegroundColor Yellow
+        try { Read-Host } catch {}
+        exit 1
+    }
+}
 # Global error trap — under irm | iex, an uncaught terminating error kills
 # the PowerShell process instantly and the user sees the window close with
 # no message. This trap catches any otherwise-unhandled terminating error,
@@ -46,10 +68,7 @@ $ProcArch = $env:PROCESSOR_ARCHITECTURE
 if ($ProcArch -eq "AMD64") { $PbsTarget = "x86_64-pc-windows-msvc" }
 elseif ($ProcArch -eq "ARM64") { $PbsTarget = "aarch64-pc-windows-msvc" }
 else {
-    Write-Host "  ❌ Unsupported architecture: $ProcArch" -ForegroundColor Red
-    Write-Host "     voidx supports: Windows x64/arm64" -ForegroundColor Red
-    Write-Host "     PROCESSOR_ARCHITECTURE=$ProcArch" -ForegroundColor DarkGray
-    exit 1
+    Abort-Install "Unsupported architecture: $ProcArch (voidx supports Windows x64/arm64)"
 }
 
 $PbsFilename = "cpython-$PbsCpython+$PbsTag-$PbsTarget-install_only_stripped.tar.gz"
@@ -74,10 +93,7 @@ $Marker = "$Version`n$PbsTag`n$PbsCpython`n$PbsTarget`n"
 $RunningVoidx = $null
 try { $RunningVoidx = Get-Process -Name "voidx" -ErrorAction SilentlyContinue } catch {}
 if ($RunningVoidx) {
-    Write-Host "  ❌ voidx is currently running." -ForegroundColor Red
-    Write-Host "     Please close all voidx windows and re-run the installer." -ForegroundColor Red
-    Write-Host "     The installer cannot update files while voidx is in use." -ForegroundColor DarkGray
-    exit 1
+    Abort-Install "voidx is currently running. Please close all voidx windows and re-run the installer."
 }
 
 # ── Legacy cleanup ──────────────────────────────────────────────────────────
@@ -218,7 +234,7 @@ if ((Test-Path $VoidxBin) -and (Test-Path $MarkerPath)) {
     if ($Existing -eq $Marker) {
         Write-Host "  ✅ voidx $Version already installed at $VenvDir" -ForegroundColor Green
         Ensure-PathAndVerify
-        exit 0
+        return
     }
 }
 
@@ -265,14 +281,7 @@ if (Test-Path $BundledPython) {
         }
 
         if (-not $Downloaded) {
-            Write-Host ""
-            Write-Host "  ❌ Failed to download Python runtime after $Retries attempts" -ForegroundColor Red
-            Write-Host ""
-            Write-Host "  This is usually a network issue. Try:" -ForegroundColor Red
-            Write-Host "    1. Use a mirror: `$env:VOIDX_PYTHON_MIRROR='https://npmmirror.com/mirrors/python-standalone'"
-            Write-Host "    2. Retry: powershell -File install.ps1"
-            Write-Host "    3. If you're in China, also set: `$env:VOIDX_PIP_INDEX='https://pypi.tuna.tsinghua.edu.cn/simple'"
-            exit 1
+            Abort-Install "Failed to download Python runtime after $Retries attempts. This is usually a network issue. Try: 1) `$env:VOIDX_PYTHON_MIRROR='https://npmmirror.com/mirrors/python-standalone'  2) Retry: powershell -File install.ps1  3) If in China: `$env:VOIDX_PIP_INDEX='https://pypi.tuna.tsinghua.edu.cn/simple'"
         }
     }
 
@@ -288,10 +297,7 @@ if (Test-Path $BundledPython) {
         # so the next run re-downloads instead of reusing broken files.
         Remove-Item -Path $ArchivePath -Force -ErrorAction SilentlyContinue
         Remove-Item -Path $PythonDir -Recurse -Force -ErrorAction SilentlyContinue
-        Write-Host "  ❌ Failed to extract Python runtime (tar exit code $TarExit)" -ForegroundColor Red
-        Write-Host "     $TarResult" -ForegroundColor DarkGray
-        Write-Host "     The downloaded archive may be incomplete. Re-run the installer to retry." -ForegroundColor DarkGray
-        exit 1
+        Abort-Install "Failed to extract Python runtime (tar exit code $TarExit). $TarResult. The downloaded archive may be incomplete. Re-run the installer to retry."
     }
     Remove-Item -Path $ArchivePath -Force -ErrorAction SilentlyContinue
     Write-Host "  ✅ Python runtime ready" -ForegroundColor Green
@@ -311,8 +317,7 @@ if (-not (Test-Path $VenvPython)) {
     $env:PYTHONPATH = ""
     & $BundledPython -m venv $VenvDir
     if ($LASTEXITCODE -ne 0) {
-        Write-Host "  ❌ Failed to create virtual environment" -ForegroundColor Red
-        exit 1
+        Abort-Install "Failed to create virtual environment"
     }
 }
 
@@ -361,13 +366,7 @@ try {
     $PipInstallOk = $false
 }
 if (-not $PipInstallOk -or ($LASTEXITCODE -ne 0)) {
-    Write-Host ""
-    Write-Host "  ❌ pip install failed" -ForegroundColor Red
-    Write-Host ""
-    Write-Host "  This is usually a network issue. Try:" -ForegroundColor Red
-    Write-Host "    1. Use a PyPI mirror: `$env:VOIDX_PIP_INDEX='https://pypi.tuna.tsinghua.edu.cn/simple'"
-    Write-Host "    2. Retry: powershell -File install.ps1"
-    exit 1
+    Abort-Install "pip install failed. This is usually a network issue. Try: 1) `$env:VOIDX_PIP_INDEX='https://pypi.tuna.tsinghua.edu.cn/simple'  2) Retry: powershell -File install.ps1"
 }
 
 # ── Write marker ────────────────────────────────────────────────────────────
