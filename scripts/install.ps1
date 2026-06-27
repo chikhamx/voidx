@@ -93,16 +93,16 @@ if (Test-Path $OldNpmVenv) {
     Write-Host "  ✅ Removed old npm-venv directory" -ForegroundColor Green
 }
 
-# Old voidx venv from previous installer runs — remove stale Scripts from PATH
-$OldVenvScripts = Join-Path $VoidxHome "venv\Scripts"
-if (Test-Path $OldVenvScripts) {
+# Old npm-venv Scripts from v2.x early releases — remove stale entry from PATH
+$OldNpmVenvScripts = Join-Path $VoidxHome "npm-venv\Scripts"
+if (Test-Path $OldNpmVenvScripts) {
     $UserPath = [Environment]::GetEnvironmentVariable("Path", "User")
-    if ($UserPath -like "*$OldVenvScripts*") {
-        Write-Host "  ⚠️  Found old venv Scripts in user PATH, removing…" -ForegroundColor Yellow
-        $Cleaned = ($UserPath -split ";" | Where-Object { $_ -ne $OldVenvScripts }) -join ";"
+    if ($UserPath -like "*$OldNpmVenvScripts*") {
+        Write-Host "  ⚠️  Found old npm-venv Scripts in user PATH, removing…" -ForegroundColor Yellow
+        $Cleaned = ($UserPath -split ";" | Where-Object { $_ -ne $OldNpmVenvScripts }) -join ";"
         [Environment]::SetEnvironmentVariable("Path", $Cleaned, "User")
-        $env:Path = ($env:Path -split ";" | Where-Object { $_ -ne $OldVenvScripts }) -join ";"
-        Write-Host "  ✅ Removed old venv Scripts from user PATH" -ForegroundColor Green
+        $env:Path = ($env:Path -split ";" | Where-Object { $_ -ne $OldNpmVenvScripts }) -join ";"
+        Write-Host "  ✅ Removed old npm-venv Scripts from user PATH" -ForegroundColor Green
     }
 }
 

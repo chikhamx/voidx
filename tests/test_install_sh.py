@@ -244,3 +244,49 @@ def _cleanup_uses_version_check(src: str) -> bool:
         return True
     nearby = cleanup_body[max(0, venv_pattern_pos - 200):venv_pattern_pos + 200]
     return 'VERSION' in nearby or 'MARKER' in nearby
+
+
+# ══════════════════════════════════════════════════════════════════════════════
+# install.ps1 tests
+# ══════════════════════════════════════════════════════════════════════════════
+
+INSTALL_PS1 = ROOT / "scripts" / "install.ps1"
+
+
+def _read_install_ps1() -> str:
+    """Read the install.ps1 script."""
+    return INSTALL_PS1.read_text(encoding="utf-8")
+
+
+class TestInstallPs1PathCleanup:
+    """Tests verifying PowerShell cleanup doesn't remove the script's own PATH entry."""
+
+    def test_path_cleanup_does_not_warn_on_current_venv_scripts(self):
+        """Legacy PATH cleanup must not warn about the current venv\\Scripts dir.
+
+        Ensure-PathAndVerify adds $VoidxHome\\venv\\Scripts to user PATH at the
+        end of every run. The legacy cleanup block (lines ~97-107) checks if
+        $VoidxHome\\venv\\Scripts is in PATH and removes it with a warning —
+        even though it's the current install's own PATH entry, not a legacy one.
+
+        This causes a warning every run since Ensure-PathAndVerify re-adds the
+        same path. The cleanup must not target the current venv\\Scripts path.
+        """
+        src = _read_install_ps1()
+        lines = src.splitlines()
+
+        # Find the legacy PATH cleanup block (now targets npm-venv, not venv)
+        cleanup_start = None
+        for i, line in enumerate(lines):
+            if "OldNpmVenvScripts" in line and "Join-Path" in line:
+                cleanup_start = i
+                break
+
+        # The cleanup block should NOT use the current venv\Scripts path.
+        # Ensure-PathAndVerify uses $VenvDir\Scripts (= $VoidxHome\venv\Scripts).
+        # The cleanup must target a different path (e.g. npm-venv\Scripts).
+        if cleanup_start is not None:
+            cleanup_block = "\n".join(lines[cleanup_start:cleanup_start + 15])
+            assert 'Join-Path $VoidxHome "venv\\Scripts"' not in cleanup_block, \
+                "Legacy PATH cleanup must not target the current venv\\Scripts path — " \
+                "this causes a warning every run since Ensure-PathAndVerify re-adds it"
