@@ -9,6 +9,7 @@ from types import SimpleNamespace
 import pytest
 from rich.cells import cell_len
 from rich.console import Console
+from rich.style import Style
 
 from voidx.llm.usage import UsageStats
 from voidx.ui.commands import COMMANDS
@@ -230,12 +231,15 @@ def test_busy_activity_renders_permission_details_below_requesting_verb(tmp_path
         assert not any("Canoodling" in line for line in lines)
         assert lines[target_index].endswith("…")
         detail_elements = tui._render_busy_activity_elements(100)[1:]
+        verb_element = tui._render_busy_activity_elements(100)[0]
         target_detail = next(text for text in detail_elements if "target:" in text.plain)
         args_detail = next(text for text in detail_elements if "args: commit -m docs" in text.plain)
+        verb_style = Style.parse(_styles_covering(verb_element, "Requesting")[0])
         for text in (target_detail, args_detail):
             assert cell_len(text.plain) == 100
-            styles = [str(text.style), *(str(span.style) for span in text.spans)]
-            assert any("on #3a3937" in style for style in styles)
+            style = _base_style(text)
+            assert style.color != verb_style.color
+            assert style.bgcolor == Style.parse("on #3a3937").bgcolor
 
         dock.clear_status_record("permission:request")
 
@@ -579,3 +583,10 @@ async def test_invalidate_coalesces_render_until_throttle_window(tmp_path, monke
 
     assert calls == {"flush": 1, "render": 1}
     assert tui._render_scheduled is False
+
+
+def _base_style(text: "Text") -> Style:
+    style = text.style
+    if isinstance(style, Style):
+        return style
+    return Style.parse(str(style))

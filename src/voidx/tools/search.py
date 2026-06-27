@@ -112,7 +112,7 @@ class GrepInput(BaseModel):
     path: str | None = Field(default=None, description="File or directory to search. Defaults to workspace root.")
     include: str | None = Field(default=None, description="Glob pattern to filter files, e.g. '*.py'")
     ignore_case: bool = Field(default=False, description="Case-insensitive search when true")
-    whole_word: bool = Field(default=False, description="Match whole words only (adds \\b boundaries). Do not add \\b to pattern when using this.")
+    whole_word: bool = Field(default=False, description="Match whole words only by adding word boundaries.")
     context_lines: int = Field(default=0, ge=0, description="Number of context lines before and after each match (0 = none)")
     exclude: list[str] | None = Field(default=None, description="Glob patterns to exclude files, e.g. ['*.min.js', '*.map']")
     max_matches: int = Field(default=100, ge=1, description="Maximum number of matches to return")

@@ -52,11 +52,8 @@ class SkillsInput(BaseModel):
 class SkillsTool(BaseTool):
     id = "skill"
     description = (
-        "Load enabled skill instructions by normalized skill name, create a new "
-        "SKILL.md, or list discovered skills. Use this when a project/global skill "
-        "listed in Available Skills or explicitly named by the user is relevant and "
-        "you need its full instructions. This is read-only for load/list; create "
-        "writes a SKILL.md file and does not accept file paths."
+        "Load skill instructions, create a new SKILL.md, or list discovered skills. "
+        "Load/list are read-only; create writes a SKILL.md file."
     )
 
     def __init__(self, settings=None) -> None:
@@ -156,8 +153,8 @@ class SkillsTool(BaseTool):
             title=f"Created skill: {name}",
             output=(
                 f"Created skill '{name}' at {path}. "
-                f"使用时在对话中输入 #{name} 引用该 skill，"
-                f"或手动编辑该文件添加 triggers 字段以启用自动触发。"
+                f"Reference it with #{name} in conversation, "
+                f"or edit the file to add a triggers field for auto-activation."
             ),
             summary=f"created skill {name}",
             metadata={"path": str(path), "name": name, "scope": inp.scope},

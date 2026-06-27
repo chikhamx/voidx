@@ -26,7 +26,7 @@ from voidx.ui.tui.activity import (
 from voidx.ui.tui.helpers import _clip_cells
 
 
-BUSY_ACTIVITY_DETAIL_STYLE = f"{BUSY_ACTIVITY_STYLE} on #3a3937"
+BUSY_ACTIVITY_DETAIL_STYLE = "#C9D1D9 on #3a3937"
 
 
 class _ActivityRendererMixin:

@@ -140,7 +140,7 @@ async def test_git_denied_subcommand(tmp_path):
     )
     payload = _payload(result)
     assert payload["ok"] is False
-    assert payload["error"] == "command_denied"
+    assert payload["error"].startswith("command_denied")
 
 
 # --- Structured output: status ---
@@ -706,7 +706,7 @@ async def test_git_reset_hard_denied(tmp_path):
     )
     payload = _payload(result)
     assert payload["ok"] is False
-    assert payload["error"] == "command_denied"
+    assert payload["error"].startswith("command_denied")
 
 
 @pytest.mark.asyncio
@@ -740,7 +740,7 @@ async def test_git_clean_force_denied(tmp_path):
     )
     payload = _payload(result)
     assert payload["ok"] is False
-    assert payload["error"] == "command_denied"
+    assert payload["error"].startswith("command_denied")
 
 
 @pytest.mark.asyncio
@@ -756,7 +756,7 @@ async def test_git_reflog_expire_denied(tmp_path):
     )
     payload = _payload(result)
     assert payload["ok"] is False
-    assert payload["error"] == "command_denied"
+    assert payload["error"].startswith("command_denied")
 
 
 @pytest.mark.asyncio
@@ -908,7 +908,7 @@ async def test_git_clean_fd_separate_flags_denied(tmp_path):
     )
     payload = _payload(result)
     assert payload["ok"] is False
-    assert payload["error"] == "command_denied"
+    assert payload["error"].startswith("command_denied")
 
 
 @pytest.mark.asyncio
@@ -926,7 +926,7 @@ async def test_git_clean_fd_combined_denied(tmp_path):
     )
     payload = _payload(result)
     assert payload["ok"] is False
-    assert payload["error"] == "command_denied"
+    assert payload["error"].startswith("command_denied")
 
 
 

@@ -127,15 +127,8 @@ _RESULT_PRESETS: dict[str, AgentResultContract] = {
 class AgentTool(BaseTool):
     id = "agent"
     description = (
-        "Start an isolated child agent for a delegated task. Use ONLY when "
-        "you need to run multiple independent tasks in parallel, or the user "
-        "explicitly asks for a child agent. Do not use for single-file reads, "
-        "simple searches, or straightforward tasks you can do directly. Each "
-        "call must include mode, task, and one concrete target. Use "
-        "success_criteria for implement and feedback modes, and result_preset "
-        "when the child output shape should be explicit. "
-        "The child agent receives your task description and runtime context, "
-        "but not caller conversation history."
+        "Start an isolated child agent for a delegated task. The child receives "
+        "the task brief and runtime context, but not caller conversation history."
     )
 
     def __init__(

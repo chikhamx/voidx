@@ -233,16 +233,16 @@ def _hint_sed(words: list[str]) -> RouteHint | None:
                 line_no = int(line_prefix)
                 return RouteHint(
                     tool_id="replace", ui_label="→ replace",
-                    llm_hint=f'Prefer replace(file_path="{path}", start_no={line_no}, end_no={line_no}, prefix="{old_text}", suffix="{old_text}", new_string="{new_text}") — prefix/suffix are line content anchors for locating the edit, new_string is the replacement. Enables staleness checking and diff output.',
+                    llm_hint=f'Prefer replace(file_path="{path}", start_no={line_no}, end_no={line_no}, prefix="{old_text}", suffix="{old_text}", new_string="{new_text}").',
                 )
             if is_global:
                 return RouteHint(
                     tool_id="replace", ui_label="→ replace",
-                    llm_hint=f'For global substitution: first read {path} to locate lines, then use replace(file_path, start_no, end_no, prefix="{old_text}", suffix="{old_text}", new_string="{new_text}") — prefix/suffix are line content anchors for locating the edit.',
+                    llm_hint=f'For global substitution: first read {path} to locate lines, then use replace(file_path, start_no, end_no, prefix="{old_text}", suffix="{old_text}", new_string="{new_text}").',
                 )
             return RouteHint(
                 tool_id="replace", ui_label="→ replace",
-                llm_hint=f'Prefer replace(file_path="{path}", start_no, end_no, prefix="{old_text}", suffix="{old_text}", new_string="{new_text}") — prefix/suffix are line content anchors for locating the edit, new_string is the replacement. Enables staleness checking and diff output.',
+                llm_hint=f'Prefer replace(file_path="{path}", start_no, end_no, prefix="{old_text}", suffix="{old_text}", new_string="{new_text}").',
             )
 
     m = _SED_RANGE_DELETE.match(script)
@@ -265,7 +265,7 @@ def _hint_sed(words: list[str]) -> RouteHint | None:
         pat = m.group(1)
         return RouteHint(
             tool_id="replace", ui_label="→ replace",
-            llm_hint=f'For pattern-based deletion: first grep "{pat}" {path} to locate lines, then use replace(..., new_string="").',
+            llm_hint=f'For pattern-based deletion: first grep "{pat}" {path} to locate matching lines, then use replace(file_path="{path}", start_no, end_no, prefix, suffix, new_string="") with the matched line numbers and content.',
         )
 
     return None

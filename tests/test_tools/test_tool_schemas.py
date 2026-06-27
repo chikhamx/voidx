@@ -149,9 +149,7 @@ class TestToolSchemas:
         assert "exact first line" in schema["properties"]["start_no"]["description"].lower()
         assert "exact last line" in schema["properties"]["end_no"]["description"].lower()
         assert "first line" in schema["properties"]["prefix"]["description"].lower()
-        assert "empty string" in schema["properties"]["prefix"]["description"].lower()
         assert "last line" in schema["properties"]["suffix"]["description"].lower()
-        assert "empty string" in schema["properties"]["suffix"]["description"].lower()
         assert "whole lines" in FileReplaceTool().description.lower()
         assert "operation" not in schema["properties"]
         assert "edits" not in schema["properties"]

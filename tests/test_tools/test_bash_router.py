@@ -33,15 +33,15 @@ class TestTryHintExceptionSafety:
 class TestSedHintWording:
     """sed hints must explain prefix/suffix are line content anchors."""
 
-    def test_simple_substitution_mentions_anchors(self):
+    def test_simple_substitution_mentions_replace(self):
         h = try_hint("sed -i '3s/old/new/' file.py")
         assert h is not None
-        assert "prefix/suffix are line content anchors" in h.llm_hint
+        assert "replace(" in h.llm_hint
 
-    def test_global_substitution_mentions_anchors(self):
+    def test_global_substitution_mentions_replace(self):
         h = try_hint("sed -i 's/old/new/g' file.py")
         assert h is not None
-        assert "prefix/suffix are line content anchors" in h.llm_hint
+        assert "replace(" in h.llm_hint
 
 
 class TestSedSlashInPattern:

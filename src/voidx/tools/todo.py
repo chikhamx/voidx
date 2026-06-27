@@ -56,12 +56,8 @@ class TodoInput(BaseModel):
 class TodoWriteTool(BaseTool):
     id = "todo"
     description = (
-        "Create and manage a task list. Supports three operations:\n"
-        "- 'write' (default): Full list replacement — pass the full updated list with [{id, status, content}].\n"
-        "- 'update': Incremental update by id — pass [{id, status, content?}] to update specific items.\n"
-        "- 'read': Read-only query with optional filter (all/pending/active/done).\n"
-        "Use semantic string ids (e.g., 'schema', 'api') for easy reference. "
-        "Status: pending → active → done."
+        "Create and manage a task list. Supports write (full replace), "
+        "update (incremental by id), and read (query with filter)."
     )
 
     def __init__(self, tracker=None):
@@ -143,8 +139,8 @@ class TodoWriteTool(BaseTool):
         if inp.updates is None:
             return ToolResult(
                 title="Todo: Error",
-                output="Error: 'updates' is required for update operation.",
-                summary="Error: 'updates' is required.",
+                output="'updates' is required for update operation.",
+                summary="'updates' is required.",
                 metadata={"error": True, "reason": "updates_required"},
             )
         
@@ -223,8 +219,8 @@ class TodoWriteTool(BaseTool):
         if inp.todos is None:
             return ToolResult(
                 title="Todo: Error",
-                output="Error: 'todos' is required for write operation.",
-                summary="Error: 'todos' is required.",
+                output="'todos' is required for write operation.",
+                summary="'todos' is required.",
                 metadata={"error": True, "reason": "todos_required"},
             )
         
@@ -239,8 +235,8 @@ class TodoWriteTool(BaseTool):
         if duplicate_ids:
             return ToolResult(
                 title="Todo: Error",
-                output=f"Error: Duplicate ids found: {', '.join(duplicate_ids)}",
-                summary=f"Error: Duplicate ids: {', '.join(duplicate_ids)}",
+                output=f"Duplicate ids found: {', '.join(duplicate_ids)}",
+                summary=f"Duplicate ids: {', '.join(duplicate_ids)}",
                 metadata={"error": True, "reason": "duplicate_ids", "duplicate_ids": duplicate_ids},
             )
         

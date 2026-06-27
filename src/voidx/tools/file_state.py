@@ -215,20 +215,28 @@ def _line_numbers_to_ranges(line_numbers: list[int]) -> list[tuple[int, int]]:
     return ranges
 
 
-def check_read_coverage(ctx: ToolContext, resolved: Path, start_line: int, end_line: int) -> str | None:
+def check_read_coverage(
+    ctx: ToolContext,
+    resolved: Path,
+    start_line: int,
+    end_line: int,
+    *,
+    display_path: str | None = None,
+) -> str | None:
     """Return None when the range is covered, otherwise return an edit-blocking message."""
+    shown = display_path or str(resolved)
     if covered_read_range(ctx, resolved, start_line, end_line) is not None:
         return None
     key = str(resolved.resolve())
     coverage = ctx.file_read_coverage.get(key)
     if coverage is None:
-        return f"Lines {start_line}-{end_line} in {resolved} must be read before editing."
+        return f"Lines {start_line}-{end_line} in {shown} must be read before editing."
     if coverage.get("fingerprint") != asdict(file_fingerprint(resolved)):
         return (
-            f"File was modified since last read: {resolved}. "
+            f"File was modified since last read: {shown}. "
             "Please re-read the file before editing."
         )
-    return f"Lines {start_line}-{end_line} in {resolved} must be read before editing."
+    return f"Lines {start_line}-{end_line} in {shown} must be read before editing."
 
 
 def covered_read_range(ctx: ToolContext, resolved: Path, start_line: int, end_line: int) -> ReadLineRange | None:

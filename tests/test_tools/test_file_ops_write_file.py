@@ -48,7 +48,6 @@ class TestFileTool:
         assert result.metadata.get("error") is not True
         assert "write tool" in result.next_step_hint
         assert "hint.txt" in result.next_step_hint
-        assert "30 lines" in result.next_step_hint
         assert 'op="append"' in result.next_step_hint
 
     @pytest.mark.asyncio

@@ -18,7 +18,7 @@ from voidx.tools.file_state import (
 
 
 class FileInput(BaseModel):
-    file_path: str = Field(description="Path to the file")
+    file_path: str = Field(description="Absolute or relative path to the file")
     op: Literal["create", "delete", "move"] = Field(
         description=(
             "File operation: create (create empty file + parent dirs), "
@@ -27,7 +27,7 @@ class FileInput(BaseModel):
     )
     dest_path: str | None = Field(
         default=None,
-        description="Destination path for move operation. Required when op=move.",
+        description="Destination path for move operation. Required when op=move; ignored for create and delete.",
     )
     overwrite: bool = Field(
         default=False,
@@ -93,7 +93,7 @@ async def _create_file(ctx: ToolContext, inp: FileInput) -> ToolResult:
     hint = ""
     if not overwritten:
         hint = (
-            f"Use the write tool to append content to {inp.file_path} in batches of up to 30 lines. "
+            f"Use the write tool to append content to {inp.file_path}. "
             f"Start with write(file_path=\"{inp.file_path}\", op=\"append\", new_string=\"...\")."
         )
     return ToolResult(

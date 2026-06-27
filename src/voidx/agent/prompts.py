@@ -116,6 +116,13 @@ BASE_SYSTEM = BaseSystemPrompt(
         PromptRule(detail="Assess before acting — evaluate what's already known and what's still needed."),
         PromptRule(detail="Stay aligned with the user's actual goal."),
         PromptRule(detail="Pick the smallest next action that makes progress toward the goal."),
+        PromptRule(
+            detail=(
+                "Delegate to child agents only for parallel independent tasks or when the user "
+                "explicitly asks. Do not delegate single-file reads, simple searches, or "
+                "straightforward tasks you can do directly."
+            ),
+        ),
         PromptRule(detail="skill can return project/global skill bodies for the current turn."),
         PromptRule(
             detail=(

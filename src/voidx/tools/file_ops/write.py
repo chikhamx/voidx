@@ -13,17 +13,17 @@ from .types import ResolvedEdit
 
 
 class WriteInput(BaseModel):
-    file_path: str = Field(description="Path to the file")
+    file_path: str = Field(description="Absolute or relative path to the file")
     op: Literal["insert", "append"] = Field(
         description="Line operation: insert content before a line, or append content to end of file."
     )
     lineno: int | None = Field(
         default=None,
-        description="For insert: 0-based line number to insert before.",
+        description="For insert: 0-based line number to insert before. Ignored for append.",
     )
     new_string: str = Field(
         default="",
-        description="For insert and append: content to add. A trailing newline does not add an extra blank line.",
+        description="For insert and append: content to add.",
     )
 
     @model_validator(mode="after")
@@ -82,7 +82,7 @@ async def _execute_write_insert(ctx: ToolContext, inp: WriteInput) -> ToolResult
 
     # lineno=total_lines is append position (no existing line affected), skip coverage
     if total_lines > 0 and inp.lineno < total_lines:
-        coverage_error = check_read_coverage(ctx, path, inp.lineno + 1, inp.lineno + 1)
+        coverage_error = check_read_coverage(ctx, path, inp.lineno + 1, inp.lineno + 1, display_path=inp.file_path)
         if coverage_error:
             return ToolResult(output=coverage_error, metadata={"error": True})
 

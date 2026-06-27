@@ -132,7 +132,7 @@ def _hint_write_echo(stripped: str, words: list[str]) -> RouteHint | None:
         )
     return RouteHint(
         tool_id="file", ui_label="→ file",
-        llm_hint=f'Prefer file(file_path="{path}", op="create") then line(file_path="{path}", op="append", new_string="{content}") for file tracking and diff output.',
+        llm_hint=f'Prefer file(file_path="{path}", op="create") then write(file_path="{path}", op="append", new_string="{content}") for file tracking and diff output.',
     )
 
 
@@ -180,7 +180,7 @@ def _hint_write_heredoc(stripped: str) -> RouteHint | None:
         )
     return RouteHint(
         tool_id="file", ui_label="→ file",
-        llm_hint=f'Prefer file(file_path="{path}", op="create") then line(file_path="{path}", op="append", new_string="{content}") for file tracking and diff output.',
+        llm_hint=f'Prefer file(file_path="{path}", op="create") then write(file_path="{path}", op="append", new_string="{content}") for file tracking and diff output.',
     )
 
 

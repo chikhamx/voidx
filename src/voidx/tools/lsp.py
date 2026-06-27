@@ -30,13 +30,13 @@ class LspInput(BaseModel):
     line: int = Field(
         default=1,
         ge=1,
-        description="1-based line number. Required for definition, references.",
+        description="1-based line number. Must be set for definition and references.",
     )
 
     character: int = Field(
         default=0,
         ge=0,
-        description="0-based character offset. Required for definition, references.",
+        description="0-based character offset. Must be set for definition and references.",
     )
 
     include_declaration: bool = Field(

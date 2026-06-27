@@ -188,9 +188,10 @@ def test_agent_tool_description_owns_delegation_gate():
     tool_description = AgentTool(runner=None).description
     schema = AgentTool(runner=None).parameters_schema()
 
-    assert "Do not delegate single-file reads" not in prompt
-    assert "simple searches" in tool_description
-    assert "straightforward tasks you can do directly" in tool_description
+    # Delegation gate lives in the system prompt, not the tool description.
+    assert "Do not delegate single-file reads" in prompt
+    assert "simple searches" not in tool_description
+    assert "straightforward tasks you can do directly" not in tool_description
     assert {
         "mode",
         "task",
@@ -203,10 +204,13 @@ def test_agent_tool_description_owns_delegation_gate():
 def test_orchestrator_prompt_matches_agent_workflow_schema():
     child_descriptions = child_agent_descriptions_for_llm()
     tool_description = AgentTool(runner=None).description
+    schema = AgentTool(runner=None).parameters_schema()
 
-    assert "mode, task, and one concrete target" in tool_description
-    assert "success_criteria for implement and feedback" in tool_description
-    assert "result_preset" in tool_description
+    # Tool description is concise; parameter requirements are in the schema.
+    assert "isolated child agent" in tool_description
+    assert {"mode", "task", "target"}.issubset(set(schema["required"]))
+    assert "success_criteria" in schema["properties"]
+    assert "result_preset" in schema["properties"]
     assert "persona" not in child_descriptions
     assert "requested runtime persona" not in child_descriptions
 

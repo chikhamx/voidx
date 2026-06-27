@@ -25,7 +25,7 @@ from .types import DisplayLines, ResolvedEdit
 
 
 class FileReplaceInput(BaseModel):
-    file_path: str = Field(description="Path to edit")
+    file_path: str = Field(description="Absolute or relative path to the file")
     start_no: int = Field(
         ge=1,
         description=(
@@ -41,25 +41,13 @@ class FileReplaceInput(BaseModel):
         ),
     )
     prefix: str = Field(
-        description=(
-            "Substring expected anywhere on the first line to replace. "
-            "Use an empty string only when the first line is empty. "
-            "Aim for a distinctive snippet."
-        ),
+        description="Substring expected anywhere on the first line to replace.",
     )
     suffix: str = Field(
-        description=(
-            "Substring expected anywhere on the last line to replace. "
-            "Use an empty string only when the last line is empty. "
-            "Aim for a distinctive snippet."
-        ),
+        description="Substring expected anywhere on the last line to replace.",
     )
     new_string: str = Field(
-        description=(
-            "Replacement content. May contain any number of lines. "
-            "A trailing newline does not add an extra blank line; "
-            "start with a newline only when an intentional blank first line is desired."
-        ),
+        description="Replacement content. May contain any number of lines.",
     )
 
     @model_validator(mode="after")
@@ -134,7 +122,7 @@ async def _execute_text_replace(
         return ToolResult(output=match, metadata={"error": True})
 
     _, _, start_line, end_line = match
-    coverage_error = check_read_coverage(ctx, path, start_line, end_line)
+    coverage_error = check_read_coverage(ctx, path, start_line, end_line, display_path=file_path)
     if coverage_error:
         return ToolResult(output=f"Edit 0: {coverage_error}", metadata={"error": True})
 
@@ -225,7 +213,7 @@ async def _apply_resolved_edits(
             continue
         if edit.operation == "insert" and edit.start_line == total_lines and edit.end_line == total_lines:
             continue
-        coverage_error = check_read_coverage(ctx, path, edit.start_line, edit.end_line)
+        coverage_error = check_read_coverage(ctx, path, edit.start_line, edit.end_line, display_path=file_path)
         if coverage_error:
             return ToolResult(output=f"Edit {i}: {coverage_error}", metadata={"error": True})
 

@@ -63,7 +63,7 @@ _REF_WRITE_FLAGS = {"-d", "-D", "-m", "-M", "--delete", "--move", "--force"}
 
 
 class GitInput(BaseModel):
-    path: str = Field(default="", description="Optional execution path relative to workspace. Empty uses workspace root.")
+    path: str = Field(default="", description="Optional path relative to workspace (or absolute). Empty uses workspace root.")
     args: str = Field(min_length=1, description='Git subcommand and arguments as a raw string, e.g. "status --porcelain" or "log --oneline -5".')
 
 
@@ -108,11 +108,11 @@ class GitTool(BaseTool):
         rest = tokens[1:]
 
         if subcommand in _DENIED_SUBCOMMANDS:
-            return _result(subcommand, ctx, repo=repo, ok=False, error="command_denied")
+            return _result(subcommand, ctx, repo=repo, ok=False, error=f"command_denied: subcommand '{subcommand}' is destructive and not allowed")
 
         denied_flags = _DENIED_SUBCOMMAND_FLAGS.get(subcommand)
         if denied_flags and _has_denied_flag(subcommand, rest, denied_flags):
-            return _result(subcommand, ctx, repo=repo, ok=False, error="command_denied")
+            return _result(subcommand, ctx, repo=repo, ok=False, error=f"command_denied: destructive flag in '{subcommand}'")
 
         try:
             handler = _STRUCTURED_HANDLERS.get(subcommand)
