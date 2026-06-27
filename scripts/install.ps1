@@ -57,7 +57,8 @@ $Marker = "$Version`n$PbsTag`n$PbsCpython`n$PbsTarget`n"
 # installer will fail partway through (venv rebuild or pip install) with a
 # file-in-use error. Check upfront so the user doesn't waste time downloading
 # Python and creating a venv only to fail at the end.
-$RunningVoidx = Get-Process -Name "voidx" -ErrorAction SilentlyContinue
+$RunningVoidx = $null
+try { $RunningVoidx = Get-Process -Name "voidx" -ErrorAction SilentlyContinue } catch {}
 if ($RunningVoidx) {
     Write-Host "  ❌ voidx is currently running." -ForegroundColor Red
     Write-Host "     Please close all voidx windows and re-run the installer." -ForegroundColor Red
@@ -339,8 +340,13 @@ $env:PIP_NO_INPUT = "1"
 $env:PIP_DISABLE_PIP_VERSION_CHECK = "1"
 $env:PYTHON_KEYRING_BACKEND = "keyring.backends.null.Keyring"
 
-& $VenvPython $PipArgs
-if ($LASTEXITCODE -ne 0) {
+$PipInstallOk = $true
+try {
+    & $VenvPython $PipArgs 2>&1 | ForEach-Object { Write-Host $_ }
+} catch {
+    $PipInstallOk = $false
+}
+if (-not $PipInstallOk -or ($LASTEXITCODE -ne 0)) {
     Write-Host ""
     Write-Host "  ❌ pip install failed" -ForegroundColor Red
     Write-Host ""

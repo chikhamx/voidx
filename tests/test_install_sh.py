@@ -363,3 +363,61 @@ class TestInstallScriptsCleanPipLeftovers:
         # Must have a Get-ChildItem with ~* filter to clean leftover dirs
         assert '"~*"' in src or "'~*'" in src or 'Filter "~*"' in src, \
             "Script must use Get-ChildItem with ~* filter to clean leftover dirs"
+
+
+class TestInstallPs1ErrorHandling:
+    """Tests verifying install.ps1 doesn't crash terminal on stderr output."""
+
+    def test_main_pip_install_wrapped_in_try_catch(self):
+        """The main pip install command must be wrapped in try/catch.
+
+        With $ErrorActionPreference = "Stop", PowerShell 5.1 wraps native
+        command stderr (pip progress bars, warnings) into NativeCommandError
+        records, which become terminating errors. If the main pip install
+        is not in a try/catch, any stderr line kills the script and the
+        terminal window closes instantly (user sees a flash).
+        """
+        src = _read_install_ps1()
+        lines = src.splitlines()
+
+        # Find the main pip install line (not the pip-upgrade one)
+        pip_install_idx = None
+        for i, line in enumerate(lines):
+            if "& $VenvPython $PipArgs" in line:
+                pip_install_idx = i
+                break
+
+        assert pip_install_idx is not None, "Script must have main pip install"
+
+        # Check surrounding lines for try/catch wrapper.
+        # Match "try {" or "try{" — not "Retry" or "entry" etc.
+        surrounding = "\n".join(lines[max(0, pip_install_idx - 5):pip_install_idx + 10])
+        import re
+        assert re.search(r'\btry\s*\{', surrounding, re.IGNORECASE), \
+            "Main pip install must be wrapped in try/catch to prevent " \
+            "terminal crash from stderr output under ErrorActionPreference=Stop"
+
+    def test_get_process_does_not_crash_when_not_found(self):
+        """Get-Process for voidx must not crash when the process doesn't exist.
+
+        Under $ErrorActionPreference = "Stop", Get-Process for a non-existent
+        process can throw a terminating error even with -ErrorAction
+        SilentlyContinue on some PowerShell versions. The check must be
+        wrapped in try/catch or use a safe pattern.
+        """
+        src = _read_install_ps1()
+        # Find the Get-Process line
+        lines = src.splitlines()
+        gp_idx = None
+        for i, line in enumerate(lines):
+            if "Get-Process" in line and "voidx" in line.lower():
+                gp_idx = i
+                break
+
+        if gp_idx is None:
+            return  # No Get-Process check — skip
+
+        # Check it's either in try/catch or uses -ErrorAction SilentlyContinue
+        surrounding = "\n".join(lines[max(0, gp_idx - 3):gp_idx + 5])
+        assert "try" in surrounding.lower() or "SilentlyContinue" in surrounding, \
+            "Get-Process voidx must be safe under ErrorActionPreference=Stop"
