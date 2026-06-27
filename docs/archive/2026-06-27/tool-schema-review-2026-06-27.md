@@ -1,6 +1,6 @@
 # Tool Schema & Prompt Description Review
 
-> **Status: In Progress**
+> **Status: Done**
 > **Date: 2026-06-27**
 > **Scope: 全量审查工具 schema、字段描述、系统提示词、route hint、工具出错提示**
 
