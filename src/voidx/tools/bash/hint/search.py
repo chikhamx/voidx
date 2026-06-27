@@ -233,16 +233,16 @@ def _hint_sed(words: list[str]) -> RouteHint | None:
                 line_no = int(line_prefix)
                 return RouteHint(
                     tool_id="replace", ui_label="→ replace",
-                    llm_hint=f'Prefer replace(file_path="{path}", start_no={line_no}, end_no={line_no}, prefix="{old_text}", suffix="{old_text}", new_string="{new_text}").',
+                    llm_hint=f'Prefer replace(file_path="{path}", start_no={line_no}, end_no={line_no}, start_anchor="{old_text}", end_anchor="{old_text}", new_string="{new_text}").',
                 )
             if is_global:
                 return RouteHint(
                     tool_id="replace", ui_label="→ replace",
-                    llm_hint=f'For global substitution: first read {path} to locate lines, then use replace(file_path, start_no, end_no, prefix="{old_text}", suffix="{old_text}", new_string="{new_text}").',
+                    llm_hint=f'For global substitution: first read {path} to locate lines, then use replace(file_path, start_no, end_no, start_anchor="{old_text}", end_anchor="{old_text}", new_string="{new_text}").',
                 )
             return RouteHint(
                 tool_id="replace", ui_label="→ replace",
-                llm_hint=f'Prefer replace(file_path="{path}", start_no, end_no, prefix="{old_text}", suffix="{old_text}", new_string="{new_text}").',
+                llm_hint=f'Prefer replace(file_path="{path}", start_no, end_no, start_anchor="{old_text}", end_anchor="{old_text}", new_string="{new_text}").',
             )
 
     m = _SED_RANGE_DELETE.match(script)
@@ -250,7 +250,7 @@ def _hint_sed(words: list[str]) -> RouteHint | None:
         start, end = int(m.group(1)), int(m.group(2))
         return RouteHint(
             tool_id="replace", ui_label="→ replace",
-            llm_hint=f'For line range deletion: first read {path} to see lines {start}-{end}, then use replace(file_path="{path}", start_no={start}, end_no={end}, prefix="...", suffix="...", new_string="").',
+            llm_hint=f'For line range deletion: first read {path} to see lines {start}-{end}, then use replace(file_path="{path}", start_no={start}, end_no={end}, start_anchor="...", end_anchor="...", new_string="").',
         )
 
     m = _SED_LINE_DELETE.match(script)
@@ -258,14 +258,14 @@ def _hint_sed(words: list[str]) -> RouteHint | None:
         line_no = int(m.group(1))
         return RouteHint(
             tool_id="replace", ui_label="→ replace",
-            llm_hint=f'For single line deletion: first read {path} to see line {line_no}, then use replace(file_path="{path}", start_no={line_no}, end_no={line_no}, prefix="...", suffix="...", new_string="").',
+            llm_hint=f'For single line deletion: first read {path} to see line {line_no}, then use replace(file_path="{path}", start_no={line_no}, end_no={line_no}, start_anchor="...", end_anchor="...", new_string="").',
         )
     m = _SED_PATTERN_DELETE.match(script)
     if m:
         pat = m.group(1)
         return RouteHint(
             tool_id="replace", ui_label="→ replace",
-            llm_hint=f'For pattern-based deletion: first grep "{pat}" {path} to locate matching lines, then use replace(file_path="{path}", start_no, end_no, prefix, suffix, new_string="") with the matched line numbers and content.',
+            llm_hint=f'For pattern-based deletion: first grep "{pat}" {path} to locate matching lines, then use replace(file_path="{path}", start_no, end_no, start_anchor, end_anchor, new_string="") with the matched line numbers and content.',
         )
 
     return None

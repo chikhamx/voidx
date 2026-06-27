@@ -1,3 +1,5 @@
+> **Status: Done**
+
 # replace 工具 prefix/suffix 参数改名 — 技术设计文档
 
 ## Context
@@ -6,7 +8,7 @@
 
 内部代码已使用准确的术语：`_line_matches_replace_anchor`（`edit_resolve.py:161`）、`anchor`（`edit_resolve.py:118`）。但对外暴露的参数名 `prefix`/`suffix` 与实际语义不符，在字符串处理语境下容易误导 LLM 和开发者理解为"行首/行尾子串"。
 
-同时，前序审查文档（`tool-schema-review-2026-06-27.md`）中 P14 指出 sed route hint 中 `prefix/suffix are line content anchors` 的说明过长且包含实现细节。改名后该说明可自然简化。
+前序审查文档（`tool-schema-review-2026-06-27.md`）P14 曾指出 sed route hint 中 `prefix/suffix are line content anchors` 的说明过长。核查当前代码（`search.py:236`）发现该长说明**已被移除**，route hint 已是简短版本，仅参数名仍为 `prefix`/`suffix`。因此本次改名只需重命名参数，无需再处理 hint 文案。
 
 ## Goals and Non-Goals
 
@@ -14,7 +16,7 @@
 
 - 将 `FileReplaceInput` 的 `prefix`→`start_anchor`、`suffix`→`end_anchor`，与内部 `anchor` 术语统一
 - 同步更新所有源码、route hint、测试中的参数名引用
-- 借此机会修复审查文档中 P14（sed hint 过长）的相关问题
+- ~~借此机会修复审查文档中 P14（sed hint 过长）~~ P14 已在历史改动中解决（当前 hint 已是简短版本），本次无需处理
 - 保持所有测试绿色
 
 ### Non-Goals
@@ -41,7 +43,7 @@ Layer 1: 公开 API 契约（必须改）
 Layer 2: Route Hint（必须改）
 └── bash/hint/search.py:236,241,245,253,261
     └── llm_hint 字符串中的 prefix=/suffix= → start_anchor=/end_anchor=
-    └── 移除 "prefix/suffix are line content anchors" 说明（改名后自解释）
+    （当前 hint 已是简短版本，无需移除任何说明文案）
 
 Layer 3: 内部实现（不改，见 Non-Goals）
 ├── edit_resolve.py: _find_text_segment 参数名 — 保持 prefix/suffix
@@ -54,8 +56,15 @@ Layer 3: 内部实现（不改，见 Non-Goals）
 Layer 4: 测试（必须改）
 ├── 直接构造 FileReplaceInput 的测试
 ├── 用 dict 构造 replace 工具调用的测试
+│   └── test_file_ops_edit.py: 20+ 处 "prefix"/"suffix" dict 字面量（行 26,31,101,135,
+│       171,176,194,200,218,238,259,277,296,301,319...），改动最密集的文件
+├── test_llm/test_prune_args.py:83,98: 用 dict 构造 replace tool_call args
+│   （需确认是否实际触发 schema 校验；若仅裁剪参数不执行工具可能不受影响）
 ├── 断言 schema properties 的测试
 └── 断言 route hint 文本的测试
+    └── test_bash_router.py:34 的 TestSedHintWording class docstring 引用
+        "prefix/suffix are line content anchors"，需同步更新措辞
+        （39/44 行断言的是 "replace(" in h.llm_hint，不断言该短语）
 ```
 
 ### 不受影响的部分
@@ -160,9 +169,9 @@ description = (
 
 ### Route Hint 输出
 
-改前（`search.py:236`）：
+改前（`search.py:236`，当前代码已是简短版本）：
 ```python
-llm_hint=f'Prefer replace(file_path="{path}", start_no={line_no}, end_no={line_no}, prefix="{old_text}", suffix="{old_text}", new_string="{new_text}") — prefix/suffix are line content anchors for locating the edit, new_string is the replacement. Enables staleness checking and diff output.'
+llm_hint=f'Prefer replace(file_path="{path}", start_no={line_no}, end_no={line_no}, prefix="{old_text}", suffix="{old_text}", new_string="{new_text}").'
 ```
 
 改后：
@@ -170,7 +179,7 @@ llm_hint=f'Prefer replace(file_path="{path}", start_no={line_no}, end_no={line_n
 llm_hint=f'Prefer replace(file_path="{path}", start_no={line_no}, end_no={line_no}, start_anchor="{old_text}", end_anchor="{old_text}", new_string="{new_text}").'
 ```
 
-> 改名后 `start_anchor`/`end_anchor` 语义自解释，移除 "are line content anchors" 的冗余说明和 "Enables staleness checking and diff output" 的实现细节。这同时修复了审查文档 P14。
+> 当前 hint 已是简短版本（P14 指出的长说明已在历史改动中移除），本次仅重命名参数。`search.py:241,245,253,261` 同理。
 
 ## Error Handling
 
@@ -207,9 +216,9 @@ f"prefix {prefix!r} found but suffix {suffix!r} not on the same line ..."
 | 参数名用 `start_anchor`/`end_anchor` | `first_anchor`/`last_anchor` | `start`/`end` 与 `start_no`/`end_no` 形成对称，LLM 更容易关联 |
 | 不做向后兼容 | 同时接受 `prefix` 和 `start_anchor` | voidx 快速迭代期，兼容层增加复杂度且无长期价值 |
 | 内部函数参数名不改 | 同步改内部参数名 | 私有实现不影响 API 契约；内外不一致是小代价，但避免过度扩散改动面。错误消息需改因为面向 LLM。 |
-| 移除 route hint 中的 "are line content anchors" 说明 | 保留说明 | 改名后 `start_anchor`/`end_anchor` 已自解释，说明变冗余 |
+| ~~移除 route hint 中的 "are line content anchors" 说明~~ | 保留说明 | 该说明已在历史改动中移除，当前 hint 已是简短版本，本决策无对象 |
 
 ## Open Questions
 
 - [ ] `edit_resolve.py` 错误消息中 `prefix`/`suffix` 措辞改为 `start_anchor`/`end_anchor` 后，消息会变长（如 `start_anchor {val!r}` vs `prefix {val!r}`）。是否可接受？倾向接受——准确性优先于简洁。
-- [ ] `test_bash_router.py:39,44` 断言 `"prefix/suffix are line content anchors" in h.llm_hint`。改名后 hint 文本不再包含此短语，需同步更新断言。确认无其他测试断言旧 hint 文本。
+- [x] `test_bash_router.py:34` 的 `TestSedHintWording` class docstring 引用 "prefix/suffix are line content anchors"，改名后措辞不准确，需同步更新。39/44 行断言的是 `"replace(" in h.llm_hint`，**不**断言该短语，无需改动。已确认无其他测试断言旧 hint 文本。

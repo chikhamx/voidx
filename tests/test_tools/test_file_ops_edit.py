@@ -23,12 +23,12 @@ class TestFileOps:
 
         r1 = await r.execute_tool(
             "replace",
-            {"file_path": "batch.txt", "start_no": 1, "end_no": 1, "prefix": "one", "suffix": "one", "new_string": "ONE"},
+            {"file_path": "batch.txt", "start_no": 1, "end_no": 1, "start_anchor": "one", "end_anchor": "one", "new_string": "ONE"},
             ctx,
         )
         r2 = await r.execute_tool(
             "replace",
-            {"file_path": "batch.txt", "start_no": 3, "end_no": 4, "prefix": "three", "suffix": "four", "new_string": "THREE\nFOUR\n"},
+            {"file_path": "batch.txt", "start_no": 3, "end_no": 4, "start_anchor": "three", "end_anchor": "four", "new_string": "THREE\nFOUR\n"},
             ctx,
         )
 
@@ -103,8 +103,8 @@ class TestFileOps:
                 "file_path": "replace-tool.txt",
                 "start_no": 2,
                 "end_no": 2,
-                "prefix": "two",
-                "suffix": "two",
+                "start_anchor": "two",
+                "end_anchor": "two",
                 "new_string": "TWO",
             },
             ctx,
@@ -137,8 +137,8 @@ class TestFileOps:
                 "file_path": "pair-score.txt",
                 "start_no": 6,
                 "end_no": 8,
-                "prefix": "target start",
-                "suffix": "target end",
+                "start_anchor": "target start",
+                "end_anchor": "target end",
                 "new_string": "replacement\nblock\n",
             },
             ctx,
@@ -169,12 +169,12 @@ class TestFileOps:
 
         r1 = await r.execute_tool(
             "replace",
-            {"file_path": "overlap.txt", "start_no": 1, "end_no": 1, "prefix": "one", "suffix": "one", "new_string": "x"},
+            {"file_path": "overlap.txt", "start_no": 1, "end_no": 1, "start_anchor": "one", "end_anchor": "one", "new_string": "x"},
             ctx,
         )
         r2 = await r.execute_tool(
             "replace",
-            {"file_path": "overlap.txt", "start_no": 2, "end_no": 2, "prefix": "two", "suffix": "two", "new_string": "y"},
+            {"file_path": "overlap.txt", "start_no": 2, "end_no": 2, "start_anchor": "two", "end_anchor": "two", "new_string": "y"},
             ctx,
         )
 
@@ -192,13 +192,13 @@ class TestFileOps:
         await r.execute_tool("read", {"file_path": "coverage.txt"}, ctx)
         first = await r.execute_tool(
             "replace",
-            {"file_path": "coverage.txt", "start_no": 1, "end_no": 1, "prefix": "one", "suffix": "one", "new_string": "ONE"},
+            {"file_path": "coverage.txt", "start_no": 1, "end_no": 1, "start_anchor": "one", "end_anchor": "one", "new_string": "ONE"},
             ctx,
         )
 
         second = await r.execute_tool(
             "replace",
-            {"file_path": "coverage.txt", "start_no": 2, "end_no": 2, "prefix": "two", "suffix": "two", "new_string": "TWO"},
+            {"file_path": "coverage.txt", "start_no": 2, "end_no": 2, "start_anchor": "two", "end_anchor": "two", "new_string": "TWO"},
             ctx,
         )
 
@@ -216,7 +216,7 @@ class TestFileOps:
 
         edit = await r.execute_tool(
             "replace",
-            {"file_path": "partial-coverage.txt", "start_no": 2, "end_no": 2, "prefix": "line 2", "suffix": "line 2", "new_string": "LINE 2"},
+            {"file_path": "partial-coverage.txt", "start_no": 2, "end_no": 2, "start_anchor": "line 2", "end_anchor": "line 2", "new_string": "LINE 2"},
             ctx,
         )
         reread = await r.execute_tool("read", {"file_path": "partial-coverage.txt", "offset": 10, "limit": 1}, ctx)
@@ -236,7 +236,7 @@ class TestFileOps:
 
         result = await r.execute_tool(
             "replace",
-            {"file_path": "expand-coverage.txt", "start_no": 5, "end_no": 5, "prefix": "line 5", "suffix": "line 5", "new_string": "line 5a\nline 5b"},
+            {"file_path": "expand-coverage.txt", "start_no": 5, "end_no": 5, "start_anchor": "line 5", "end_anchor": "line 5", "new_string": "line 5a\nline 5b"},
             ctx,
         )
         reread = await r.execute_tool("read", {"file_path": "expand-coverage.txt", "offset": 32, "limit": 1}, ctx)
@@ -257,7 +257,7 @@ class TestFileOps:
 
         result = await r.execute_tool(
             "replace",
-            {"file_path": "delete-coverage.txt", "start_no": 50, "end_no": 50, "prefix": "line 50", "suffix": "line 50", "new_string": ""},
+            {"file_path": "delete-coverage.txt", "start_no": 50, "end_no": 50, "start_anchor": "line 50", "end_anchor": "line 50", "new_string": ""},
             ctx,
         )
 
@@ -275,7 +275,7 @@ class TestFileOps:
 
         edit = await r.execute_tool(
             "replace",
-            {"file_path": "same-line.txt", "start_no": 2, "end_no": 2, "prefix": "two", "suffix": "two", "new_string": "TWO"},
+            {"file_path": "same-line.txt", "start_no": 2, "end_no": 2, "start_anchor": "two", "end_anchor": "two", "new_string": "TWO"},
             ctx,
         )
         reread = await r.execute_tool("read", {"file_path": "same-line.txt", "offset": 2, "limit": 1}, ctx)
@@ -294,12 +294,12 @@ class TestFileOps:
 
         r1 = await r.execute_tool(
             "replace",
-            {"file_path": "multi-hunk-coverage.txt", "start_no": 10, "end_no": 10, "prefix": "line 10", "suffix": "line 10", "new_string": "line 10a\nline 10b"},
+            {"file_path": "multi-hunk-coverage.txt", "start_no": 10, "end_no": 10, "start_anchor": "line 10", "end_anchor": "line 10", "new_string": "line 10a\nline 10b"},
             ctx,
         )
         r2 = await r.execute_tool(
             "replace",
-            {"file_path": "multi-hunk-coverage.txt", "start_no": 51, "end_no": 51, "prefix": "line 50", "suffix": "line 50", "new_string": ""},
+            {"file_path": "multi-hunk-coverage.txt", "start_no": 51, "end_no": 51, "start_anchor": "line 50", "end_anchor": "line 50", "new_string": ""},
             ctx,
         )
 
@@ -317,7 +317,7 @@ class TestFileOps:
 
         result = await r.execute_tool(
             "replace",
-            {"file_path": "noop-coverage.txt", "start_no": 1, "end_no": 1, "prefix": "one", "suffix": "one", "new_string": "one"},
+            {"file_path": "noop-coverage.txt", "start_no": 1, "end_no": 1, "start_anchor": "one", "end_anchor": "one", "new_string": "one"},
             ctx,
         )
 
@@ -335,12 +335,12 @@ class TestFileOps:
 
         first = await r.execute_tool(
             "replace",
-            {"file_path": "partial-edit.txt", "start_no": 2, "end_no": 2, "prefix": "line 2", "suffix": "line 2", "new_string": "LINE 2"},
+            {"file_path": "partial-edit.txt", "start_no": 2, "end_no": 2, "start_anchor": "line 2", "end_anchor": "line 2", "new_string": "LINE 2"},
             ctx,
         )
         second = await r.execute_tool(
             "replace",
-            {"file_path": "partial-edit.txt", "start_no": 10, "end_no": 10, "prefix": "line 10", "suffix": "line 10", "new_string": "LINE 10"},
+            {"file_path": "partial-edit.txt", "start_no": 10, "end_no": 10, "start_anchor": "line 10", "end_anchor": "line 10", "new_string": "LINE 10"},
             ctx,
         )
 
@@ -360,7 +360,7 @@ class TestFileOps:
 
         result = await r.execute_tool(
             "replace",
-            {"file_path": "merge.txt", "start_no": 1, "end_no": 1, "prefix": "1", "suffix": "1", "new_string": "CHANGED"},
+            {"file_path": "merge.txt", "start_no": 1, "end_no": 1, "start_anchor": "1", "end_anchor": "1", "new_string": "CHANGED"},
             ctx,
         )
         assert result.metadata.get("error") is not True
@@ -376,7 +376,7 @@ class TestFileOps:
 
         result = await r.execute_tool(
             "replace",
-            {"file_path": "adjacent.txt", "start_no": 50, "end_no": 51, "prefix": "50", "suffix": "51", "new_string": "MERGED"},
+            {"file_path": "adjacent.txt", "start_no": 50, "end_no": 51, "start_anchor": "50", "end_anchor": "51", "new_string": "MERGED"},
             ctx,
         )
         assert result.metadata.get("error") is not True
@@ -392,7 +392,7 @@ class TestFileOps:
 
         result = await r.execute_tool(
             "replace",
-            {"file_path": "gap.txt", "start_no": 15, "end_no": 15, "prefix": "15", "suffix": "15", "new_string": "GAP"},
+            {"file_path": "gap.txt", "start_no": 15, "end_no": 15, "start_anchor": "15", "end_anchor": "15", "new_string": "GAP"},
             ctx,
         )
         assert "read" in result.output.lower()
@@ -510,7 +510,7 @@ class TestFileOps:
 
         result = await r.execute_tool(
             "replace",
-            {"file_path": "delete.txt", "start_no": 2, "end_no": 2, "prefix": "two", "suffix": "two", "new_string": ""},
+            {"file_path": "delete.txt", "start_no": 2, "end_no": 2, "start_anchor": "two", "end_anchor": "two", "new_string": ""},
             ctx,
         )
 
@@ -527,7 +527,7 @@ class TestFileOps:
 
         result = await r.execute_tool(
             "replace",
-            {"file_path": "multi.txt", "start_no": 1, "end_no": 2, "prefix": "def foo():", "suffix": "pass", "new_string": "def foo():\n    return 42"},
+            {"file_path": "multi.txt", "start_no": 1, "end_no": 2, "start_anchor": "def foo():", "end_anchor": "pass", "new_string": "def foo():\n    return 42"},
             ctx,
         )
 
@@ -544,7 +544,7 @@ class TestFileOps:
 
         result = await r.execute_tool(
             "replace",
-            {"file_path": "window.txt", "start_no": 1, "end_no": 1, "prefix": "line 40", "suffix": "line 40", "new_string": "LINE 40"},
+            {"file_path": "window.txt", "start_no": 1, "end_no": 1, "start_anchor": "line 40", "end_anchor": "line 40", "new_string": "LINE 40"},
             ctx,
         )
 
@@ -562,7 +562,7 @@ class TestFileOps:
 
         result = await r.execute_tool(
             "replace",
-            {"file_path": "nope.txt", "start_no": 1, "end_no": 1, "prefix": "nonexistent", "suffix": "nonexistent", "new_string": "X"},
+            {"file_path": "nope.txt", "start_no": 1, "end_no": 1, "start_anchor": "nonexistent", "end_anchor": "nonexistent", "new_string": "X"},
             ctx,
         )
 
@@ -579,7 +579,7 @@ class TestFileOps:
 
         result = await r.execute_tool(
             "replace",
-            {"file_path": "ambiguous.txt", "start_no": 2, "end_no": 2, "prefix": "target", "suffix": "target", "new_string": "TARGET"},
+            {"file_path": "ambiguous.txt", "start_no": 2, "end_no": 2, "start_anchor": "target", "end_anchor": "target", "new_string": "TARGET"},
             ctx,
         )
 
@@ -601,8 +601,8 @@ class TestFileOps:
                 "file_path": "wrong-end.txt",
                 "start_no": 1,
                 "end_no": 3,
-                "prefix": "hello",
-                "suffix": "world",
+                "start_anchor": "hello",
+                "end_anchor": "world",
                 "new_string": "replacement\n",
             },
             ctx,
@@ -626,8 +626,8 @@ class TestFileOps:
                 "file_path": "empty-start.txt",
                 "start_no": 2,
                 "end_no": 3,
-                "prefix": "",
-                "suffix": "body",
+                "start_anchor": "",
+                "end_anchor": "body",
                 "new_string": "replacement\n",
             },
             ctx,
@@ -652,8 +652,8 @@ class TestFileOps:
                 "file_path": "empty-end.txt",
                 "start_no": 2,
                 "end_no": 3,
-                "prefix": "body",
-                "suffix": "",
+                "start_anchor": "body",
+                "end_anchor": "",
                 "new_string": "replacement\n",
             },
             ctx,
@@ -678,8 +678,8 @@ class TestFileOps:
                 "file_path": "empty-anchor-missing.txt",
                 "start_no": 2,
                 "end_no": 2,
-                "prefix": "",
-                "suffix": "body",
+                "start_anchor": "",
+                "end_anchor": "body",
                 "new_string": "replacement\n",
             },
             ctx,
@@ -700,7 +700,7 @@ class TestFileOps:
 
         result = await r.execute_tool(
             "replace",
-            {"file_path": "trailing.txt", "start_no": 2, "end_no": 2, "prefix": "line2", "suffix": "line2", "new_string": "NEW2\n"},
+            {"file_path": "trailing.txt", "start_no": 2, "end_no": 2, "start_anchor": "line2", "end_anchor": "line2", "new_string": "NEW2\n"},
             ctx,
         )
 
@@ -718,7 +718,7 @@ class TestFileOps:
 
         result = await r.execute_tool(
             "replace",
-            {"file_path": "multi-trailing.txt", "start_no": 2, "end_no": 3, "prefix": "line2", "suffix": "line3", "new_string": "NEW_A\nNEW_B\n"},
+            {"file_path": "multi-trailing.txt", "start_no": 2, "end_no": 3, "start_anchor": "line2", "end_anchor": "line3", "new_string": "NEW_A\nNEW_B\n"},
             ctx,
         )
 
@@ -736,7 +736,7 @@ class TestFileOps:
 
         result = await r.execute_tool(
             "replace",
-            {"file_path": "last-line.txt", "start_no": 3, "end_no": 3, "prefix": "line3", "suffix": "line3", "new_string": "NEW3\n"},
+            {"file_path": "last-line.txt", "start_no": 3, "end_no": 3, "start_anchor": "line3", "end_anchor": "line3", "new_string": "NEW3\n"},
             ctx,
         )
 
@@ -754,7 +754,7 @@ class TestFileOps:
 
         result = await r.execute_tool(
             "replace",
-            {"file_path": "no-trailing.txt", "start_no": 2, "end_no": 2, "prefix": "line2", "suffix": "line2", "new_string": "NEW2\n"},
+            {"file_path": "no-trailing.txt", "start_no": 2, "end_no": 2, "start_anchor": "line2", "end_anchor": "line2", "new_string": "NEW2\n"},
             ctx,
         )
 
@@ -772,7 +772,7 @@ class TestFileOps:
 
         result = await r.execute_tool(
             "replace",
-            {"file_path": "baseline.txt", "start_no": 2, "end_no": 2, "prefix": "line2", "suffix": "line2", "new_string": "NEW2"},
+            {"file_path": "baseline.txt", "start_no": 2, "end_no": 2, "start_anchor": "line2", "end_anchor": "line2", "new_string": "NEW2"},
             ctx,
         )
 
@@ -790,7 +790,7 @@ class TestFileOps:
 
         result = await r.execute_tool(
             "replace",
-            {"file_path": "double-newline.txt", "start_no": 2, "end_no": 2, "prefix": "line2", "suffix": "line2", "new_string": "NEW2\n\n"},
+            {"file_path": "double-newline.txt", "start_no": 2, "end_no": 2, "start_anchor": "line2", "end_anchor": "line2", "new_string": "NEW2\n\n"},
             ctx,
         )
 
@@ -808,7 +808,7 @@ class TestFileOps:
 
         result = await r.execute_tool(
             "replace",
-            {"file_path": "code.py", "start_no": 1, "end_no": 2, "prefix": "def foo():", "suffix": "return 1", "new_string": "def foo():\n    return 42\n"},
+            {"file_path": "code.py", "start_no": 1, "end_no": 2, "start_anchor": "def foo():", "end_anchor": "return 1", "new_string": "def foo():\n    return 42\n"},
             ctx,
         )
 
@@ -826,7 +826,7 @@ class TestFileOps:
 
         result = await r.execute_tool(
             "replace",
-            {"file_path": "multi-to-single.txt", "start_no": 2, "end_no": 4, "prefix": "line2", "suffix": "line4", "new_string": "REPLACED\n"},
+            {"file_path": "multi-to-single.txt", "start_no": 2, "end_no": 4, "start_anchor": "line2", "end_anchor": "line4", "new_string": "REPLACED\n"},
             ctx,
         )
 
@@ -844,7 +844,7 @@ class TestFileOps:
 
         result = await r.execute_tool(
             "replace",
-            {"file_path": "single.txt", "start_no": 1, "end_no": 1, "prefix": "only_line", "suffix": "only_line", "new_string": "REPLACED\n"},
+            {"file_path": "single.txt", "start_no": 1, "end_no": 1, "start_anchor": "only_line", "end_anchor": "only_line", "new_string": "REPLACED\n"},
             ctx,
         )
 
@@ -862,7 +862,7 @@ class TestFileOps:
 
         result = await r.execute_tool(
             "replace",
-            {"file_path": "two.txt", "start_no": 1, "end_no": 1, "prefix": "line1", "suffix": "line1", "new_string": "NEW1\n"},
+            {"file_path": "two.txt", "start_no": 1, "end_no": 1, "start_anchor": "line1", "end_anchor": "line1", "new_string": "NEW1\n"},
             ctx,
         )
 
@@ -880,7 +880,7 @@ class TestFileOps:
 
         r1 = await r.execute_tool(
             "replace",
-            {"file_path": "sequential.txt", "start_no": 2, "end_no": 2, "prefix": "line2", "suffix": "line2", "new_string": "NEW2\n"},
+            {"file_path": "sequential.txt", "start_no": 2, "end_no": 2, "start_anchor": "line2", "end_anchor": "line2", "new_string": "NEW2\n"},
             ctx,
         )
         assert r1.metadata.get("error") is not True
@@ -890,7 +890,7 @@ class TestFileOps:
 
         r2 = await r.execute_tool(
             "replace",
-            {"file_path": "sequential.txt", "start_no": 3, "end_no": 3, "prefix": "line3", "suffix": "line3", "new_string": "NEW3\n"},
+            {"file_path": "sequential.txt", "start_no": 3, "end_no": 3, "start_anchor": "line3", "end_anchor": "line3", "new_string": "NEW3\n"},
             ctx,
         )
         assert r2.metadata.get("error") is not True
@@ -908,7 +908,7 @@ class TestFileOps:
 
         result = await r.execute_tool(
             "replace",
-            {"file_path": "lead-trail.txt", "start_no": 2, "end_no": 2, "prefix": "line2", "suffix": "line2", "new_string": "\nNEW2\n"},
+            {"file_path": "lead-trail.txt", "start_no": 2, "end_no": 2, "start_anchor": "line2", "end_anchor": "line2", "new_string": "\nNEW2\n"},
             ctx,
         )
 
@@ -926,7 +926,7 @@ class TestFileOps:
 
         result = await r.execute_tool(
             "replace",
-            {"file_path": "delete.txt", "start_no": 2, "end_no": 2, "prefix": "line2", "suffix": "line2", "new_string": ""},
+            {"file_path": "delete.txt", "start_no": 2, "end_no": 2, "start_anchor": "line2", "end_anchor": "line2", "new_string": ""},
             ctx,
         )
 
@@ -948,8 +948,8 @@ class TestFileOps:
                 "file_path": "partial-suffix.txt",
                 "start_no": 1,
                 "end_no": 1,
-                "prefix": "remap_read_coverage_from_file_diff",
-                "suffix": "remap_read_coverage_from_file_diff",
+                "start_anchor": "remap_read_coverage_from_file_diff",
+                "end_anchor": "remap_read_coverage_from_file_diff",
                 "new_string": "replacement()",
             },
             ctx,
@@ -972,8 +972,8 @@ class TestFileOps:
                 "file_path": "full-suffix.txt",
                 "start_no": 1,
                 "end_no": 1,
-                "prefix": "remap_read_coverage_from_file_diff",
-                "suffix": "old_ranges=old_ranges)",
+                "start_anchor": "remap_read_coverage_from_file_diff",
+                "end_anchor": "old_ranges=old_ranges)",
                 "new_string": "replacement()\n",
             },
             ctx,
@@ -996,8 +996,8 @@ class TestFileOps:
                 "file_path": "midline-suffix.py",
                 "start_no": 1,
                 "end_no": 1,
-                "prefix": "if new_string.endswith",
-                "suffix": "tail.startswith",
+                "start_anchor": "if new_string.endswith",
+                "end_anchor": "tail.startswith",
                 "new_string": '    if (new_string == "" or new_string.endswith("\\n")) and tail.startswith("\\n"):',
             },
             ctx,
@@ -1022,8 +1022,8 @@ class TestFileOps:
                 "file_path": "crossline.txt",
                 "start_no": 1,
                 "end_no": 1,
-                "prefix": "return",
-                "suffix": "offset",
+                "start_anchor": "return",
+                "end_anchor": "offset",
                 "new_string": "REPLACED",
             },
             ctx,
@@ -1047,8 +1047,8 @@ class TestFileOps:
                 "file_path": "same-line.txt",
                 "start_no": 1,
                 "end_no": 1,
-                "prefix": "return",
-                "suffix": "offset",
+                "start_anchor": "return",
+                "end_anchor": "offset",
                 "new_string": "    return value + 1",
             },
             ctx,
@@ -1072,8 +1072,8 @@ class TestFileOps:
                 "file_path": "dup.txt",
                 "start_no": 2,
                 "end_no": 2,
-                "prefix": "pass",
-                "suffix": "pass",
+                "start_anchor": "pass",
+                "end_anchor": "pass",
                 "new_string": "DONE",
             },
             ctx,
@@ -1099,8 +1099,8 @@ class TestFileOps:
                 "file_path": "equidistant.txt",
                 "start_no": 2,
                 "end_no": 2,
-                "prefix": "pass",
-                "suffix": "pass",
+                "start_anchor": "pass",
+                "end_anchor": "pass",
                 "new_string": "DONE",
             },
             ctx,
@@ -1125,8 +1125,8 @@ class TestFileOps:
                 "file_path": "suffix-wrong-line.txt",
                 "start_no": 1,
                 "end_no": 1,
-                "prefix": "return",
-                "suffix": "offset",
+                "start_anchor": "return",
+                "end_anchor": "offset",
                 "new_string": "REPLACED",
             },
             ctx,
@@ -1150,8 +1150,8 @@ class TestFileOps:
                 "file_path": "empty-line.txt",
                 "start_no": 2,
                 "end_no": 2,
-                "prefix": "",
-                "suffix": "",
+                "start_anchor": "",
+                "end_anchor": "",
                 "new_string": "INSERTED",
             },
             ctx,
@@ -1177,8 +1177,8 @@ class TestFileOps:
                 "file_path": "crossline-msg.txt",
                 "start_no": 1,
                 "end_no": 1,
-                "prefix": "return",
-                "suffix": "offset",
+                "start_anchor": "return",
+                "end_anchor": "offset",
                 "new_string": "REPLACED",
             },
             ctx,
@@ -1216,8 +1216,8 @@ class TestFileOps:
                 "file_path": "tolerance2.txt",
                 "start_no": 1,
                 "end_no": 20,
-                "prefix": "line 1",
-                "suffix": "line 22",
+                "start_anchor": "line 1",
+                "end_anchor": "line 22",
                 "new_string": "REPLACED\n",
             },
             ctx,
@@ -1235,7 +1235,7 @@ class TestFileOps:
 
         result = await r.execute_tool(
             "replace",
-            {"file_path": "snippet.txt", "start_no": 2, "end_no": 2, "prefix": "nonexistent", "suffix": "nonexistent", "new_string": "X"},
+            {"file_path": "snippet.txt", "start_no": 2, "end_no": 2, "start_anchor": "nonexistent", "end_anchor": "nonexistent", "new_string": "X"},
             ctx,
         )
 
@@ -1258,8 +1258,8 @@ class TestFileOps:
                 "file_path": "suffix-snippet.txt",
                 "start_no": 1,
                 "end_no": 1,
-                "prefix": "return",
-                "suffix": "offset",
+                "start_anchor": "return",
+                "end_anchor": "offset",
                 "new_string": "REPLACED",
             },
             ctx,
@@ -1284,8 +1284,8 @@ class TestFileOps:
                 "file_path": "dedup.txt",
                 "start_no": 2,
                 "end_no": 2,
-                "prefix": "import os",
-                "suffix": "import os",
+                "start_anchor": "import os",
+                "end_anchor": "import os",
                 "new_string": "import os\n",
             },
             ctx,
@@ -1310,8 +1310,8 @@ class TestFileOps:
                 "file_path": "no-dedup.txt",
                 "start_no": 2,
                 "end_no": 2,
-                "prefix": "import os",
-                "suffix": "import os",
+                "start_anchor": "import os",
+                "end_anchor": "import os",
                 "new_string": "import os\n",
             },
             ctx,
@@ -1336,8 +1336,8 @@ class TestFileOps:
                 "file_path": "multi-dedup.txt",
                 "start_no": 2,
                 "end_no": 2,
-                "prefix": "old_line",
-                "suffix": "old_line",
+                "start_anchor": "old_line",
+                "end_anchor": "old_line",
                 "new_string": "new_A\nold_line\n",
             },
             ctx,
@@ -1362,8 +1362,8 @@ class TestFileOps:
                 "file_path": "end-dedup.txt",
                 "start_no": 2,
                 "end_no": 2,
-                "prefix": "old_line",
-                "suffix": "old_line",
+                "start_anchor": "old_line",
+                "end_anchor": "old_line",
                 "new_string": "old_line\n",
             },
             ctx,
@@ -1388,8 +1388,8 @@ class TestFileOps:
                 "file_path": "empty-dedup.txt",
                 "start_no": 2,
                 "end_no": 2,
-                "prefix": "",
-                "suffix": "",
+                "start_anchor": "",
+                "end_anchor": "",
                 "new_string": "\n",
             },
             ctx,
@@ -1413,8 +1413,8 @@ class TestFileOps:
                 "file_path": "no-nl-dedup.txt",
                 "start_no": 2,
                 "end_no": 2,
-                "prefix": "import os",
-                "suffix": "import os",
+                "start_anchor": "import os",
+                "end_anchor": "import os",
                 "new_string": "import os",
             },
             ctx,
@@ -1441,8 +1441,8 @@ class TestFileOps:
                 "file_path": "head-dedup.txt",
                 "start_no": 3,
                 "end_no": 3,
-                "prefix": "import os",
-                "suffix": "import os",
+                "start_anchor": "import os",
+                "end_anchor": "import os",
                 "new_string": "import os\n",
             },
             ctx,
@@ -1470,8 +1470,8 @@ class TestFileOps:
                 "file_path": "head-no-dedup.txt",
                 "start_no": 3,
                 "end_no": 3,
-                "prefix": "import os",
-                "suffix": "import os",
+                "start_anchor": "import os",
+                "end_anchor": "import os",
                 "new_string": "import os\n",
             },
             ctx,
@@ -1496,8 +1496,8 @@ class TestFileOps:
                 "file_path": "head-multi-dedup.txt",
                 "start_no": 3,
                 "end_no": 3,
-                "prefix": "old_line",
-                "suffix": "old_line",
+                "start_anchor": "old_line",
+                "end_anchor": "old_line",
                 "new_string": "old_line\nnew_B\n",
             },
             ctx,
@@ -1522,8 +1522,8 @@ class TestFileOps:
                 "file_path": "head-start-dedup.txt",
                 "start_no": 1,
                 "end_no": 1,
-                "prefix": "old_line",
-                "suffix": "old_line",
+                "start_anchor": "old_line",
+                "end_anchor": "old_line",
                 "new_string": "old_line\n",
             },
             ctx,
@@ -1548,8 +1548,8 @@ class TestFileOps:
                 "file_path": "head-empty-dedup.txt",
                 "start_no": 3,
                 "end_no": 3,
-                "prefix": "",
-                "suffix": "",
+                "start_anchor": "",
+                "end_anchor": "",
                 "new_string": "\n",
             },
             ctx,
@@ -1573,8 +1573,8 @@ class TestFileOps:
                 "file_path": "both-dedup.txt",
                 "start_no": 2,
                 "end_no": 2,
-                "prefix": "old",
-                "suffix": "old",
+                "start_anchor": "old",
+                "end_anchor": "old",
                 "new_string": "dup_a\nnew\ndup_b\n",
             },
             ctx,

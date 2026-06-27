@@ -37,31 +37,6 @@ from voidx.workflow.types import WorkflowStateEventKind
 import voidx.memory.store as store
 
 
-def _replace(lineno: int, prefix: str, suffix: str | None = None, new_string: str = "") -> dict:
-    return {
-        "operation": "replace",
-        "lineno": lineno,
-        "prefix": prefix,
-        "suffix": prefix if suffix is None else suffix,
-        "new_string": new_string,
-    }
-
-
-def _insert(lineno: int, prefix: str, suffix: str | None = None, new_string: str = "") -> dict:
-    return {
-        "operation": "insert",
-        "lineno": lineno,
-        "prefix": prefix,
-        "suffix": prefix if suffix is None else suffix,
-        "new_string": new_string,
-    }
-
-
-def _insert_bof(new_string: str) -> dict:
-    return {"operation": "insert", "lineno": 0, "prefix": "", "suffix": "", "new_string": new_string}
-
-
-
 class TestInteractiveTools:
     @pytest.mark.asyncio
     async def test_write_tool_saves_existing_file_version_before_overwrite(self, tmp_path, monkeypatch):
@@ -121,7 +96,7 @@ class TestInteractiveTools:
         await WriteTool().execute({"file_path": "app.py", "op": "append", "new_string": "two\n"}, ctx)
         await FileReadTool().execute({"file_path": "app.py"}, ctx)
         result = await FileReplaceTool().execute(
-            {"file_path": "app.py", "start_no": 1, "end_no": 1, "prefix": "two", "suffix": "two", "new_string": "three\n"},
+            {"file_path": "app.py", "start_no": 1, "end_no": 1, "start_anchor": "two", "end_anchor": "two", "new_string": "three\n"},
             ctx,
         )
 

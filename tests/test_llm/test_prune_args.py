@@ -80,7 +80,7 @@ class TestPruneReplaceArgs:
         new_string = "def hello():\n    print('hi')\n    return True\n" * 5  # ~150 chars
         msgs = _make_messages_with_tool_call("replace", {
             "file_path": "foo.py", "start_no": 1, "end_no": 3,
-            "prefix": "def", "suffix": "return", "new_string": new_string,
+            "start_anchor": "def", "end_anchor": "return", "new_string": new_string,
         })
         original = msgs[1].tool_calls[0]["args"]["new_string"]
 
@@ -95,7 +95,7 @@ class TestPruneReplaceArgs:
         new_string = "pass"  # 4 chars < placeholder 36 chars
         msgs = _make_messages_with_tool_call("replace", {
             "file_path": "foo.py", "start_no": 1, "end_no": 1,
-            "prefix": "old", "suffix": "old", "new_string": new_string,
+            "start_anchor": "old", "end_anchor": "old", "new_string": new_string,
         })
 
         svc.prune(msgs)

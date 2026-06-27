@@ -37,31 +37,6 @@ from voidx.workflow.types import WorkflowStateEventKind
 import voidx.memory.store as store
 
 
-def _replace(lineno: int, prefix: str, suffix: str | None = None, new_string: str = "") -> dict:
-    return {
-        "operation": "replace",
-        "lineno": lineno,
-        "prefix": prefix,
-        "suffix": prefix if suffix is None else suffix,
-        "new_string": new_string,
-    }
-
-
-def _insert(lineno: int, prefix: str, suffix: str | None = None, new_string: str = "") -> dict:
-    return {
-        "operation": "insert",
-        "lineno": lineno,
-        "prefix": prefix,
-        "suffix": prefix if suffix is None else suffix,
-        "new_string": new_string,
-    }
-
-
-def _insert_bof(new_string: str) -> dict:
-    return {"operation": "insert", "lineno": 0, "prefix": "", "suffix": "", "new_string": new_string}
-
-
-
 class TestToolSchemas:
     """Every tool has typed, validatable input."""
 
@@ -140,16 +115,16 @@ class TestToolSchemas:
         assert "append" in schema["properties"]["op"]["description"]
 
     def test_replace_input_uses_start_end_line_range_without_operation(self):
-        inp = FileReplaceInput(file_path="x.py", start_no=3, end_no=5, prefix="old", suffix="tail", new_string="new")
+        inp = FileReplaceInput(file_path="x.py", start_no=3, end_no=5, start_anchor="old", end_anchor="tail", new_string="new")
         schema = FileReplaceTool().parameters_schema()
 
-        assert inp.prefix == "old"
+        assert inp.start_anchor == "old"
         assert inp.end_no == 5
-        assert set(schema["properties"]) == {"file_path", "start_no", "end_no", "prefix", "suffix", "new_string"}
+        assert set(schema["properties"]) == {"file_path", "start_no", "end_no", "start_anchor", "end_anchor", "new_string"}
         assert "exact first line" in schema["properties"]["start_no"]["description"].lower()
         assert "exact last line" in schema["properties"]["end_no"]["description"].lower()
-        assert "first line" in schema["properties"]["prefix"]["description"].lower()
-        assert "last line" in schema["properties"]["suffix"]["description"].lower()
+        assert "first line" in schema["properties"]["start_anchor"]["description"].lower()
+        assert "last line" in schema["properties"]["end_anchor"]["description"].lower()
         assert "whole lines" in FileReplaceTool().description.lower()
         assert "operation" not in schema["properties"]
         assert "edits" not in schema["properties"]

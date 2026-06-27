@@ -27,11 +27,11 @@ class TestTryHintExceptionSafety:
 
 
 # ---------------------------------------------------------------------------
-# #2: sed prefix/suffix hint wording
+# #2: sed start_anchor/end_anchor hint wording
 # ---------------------------------------------------------------------------
 
 class TestSedHintWording:
-    """sed hints must explain prefix/suffix are line content anchors."""
+    """sed hints must reference replace with start_anchor/end_anchor."""
 
     def test_simple_substitution_mentions_replace(self):
         h = try_hint("sed -i '3s/old/new/' file.py")
@@ -656,7 +656,7 @@ class TestGitLogShortLimit:
 # ---------------------------------------------------------------------------
 
 class TestSedRangeDeleteHint:
-    """sed range delete must not use <lineN> as prefix/suffix placeholder."""
+    """sed range delete must not use <lineN> as start_anchor/end_anchor placeholder."""
 
     def test_range_delete_no_placeholder(self):
         h = try_hint("sed -i '10,20d' file.py")

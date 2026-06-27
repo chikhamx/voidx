@@ -37,31 +37,6 @@ from voidx.workflow.types import WorkflowStateEventKind
 import voidx.memory.store as store
 
 
-def _replace(lineno: int, prefix: str, suffix: str | None = None, new_string: str = "") -> dict:
-    return {
-        "operation": "replace",
-        "lineno": lineno,
-        "prefix": prefix,
-        "suffix": prefix if suffix is None else suffix,
-        "new_string": new_string,
-    }
-
-
-def _insert(lineno: int, prefix: str, suffix: str | None = None, new_string: str = "") -> dict:
-    return {
-        "operation": "insert",
-        "lineno": lineno,
-        "prefix": prefix,
-        "suffix": prefix if suffix is None else suffix,
-        "new_string": new_string,
-    }
-
-
-def _insert_bof(new_string: str) -> dict:
-    return {"operation": "insert", "lineno": 0, "prefix": "", "suffix": "", "new_string": new_string}
-
-
-
 class TestUserInteractionModels:
     def test_user_interaction_defaults(self):
         ui = UserInteraction(prompt="What?")

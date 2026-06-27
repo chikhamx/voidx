@@ -40,11 +40,19 @@ class FileReplaceInput(BaseModel):
             "Use the line number from the latest read output."
         ),
     )
-    prefix: str = Field(
-        description="Substring expected anywhere on the first line to replace.",
+    start_anchor: str = Field(
+        description=(
+            "Content anchor on the first line to replace — a substring "
+            "expected anywhere on that line. Use an empty string only "
+            "when the first line is empty. Aim for a distinctive snippet."
+        ),
     )
-    suffix: str = Field(
-        description="Substring expected anywhere on the last line to replace.",
+    end_anchor: str = Field(
+        description=(
+            "Content anchor on the last line to replace — a substring "
+            "expected anywhere on that line. Use an empty string only "
+            "when the last line is empty. Aim for a distinctive snippet."
+        ),
     )
     new_string: str = Field(
         description="Replacement content. May contain any number of lines.",
@@ -62,7 +70,7 @@ class FileReplaceTool(BaseTool):
     description = (
         "Replace whole lines in a file. "
         "Provide the exact start_no/end_no from the latest read output, "
-        "plus prefix/suffix substrings from the first and last lines. "
+        "plus start_anchor/end_anchor substrings from the first and last lines. "
         "Read the target lines first."
     )
 
@@ -79,8 +87,8 @@ class FileReplaceTool(BaseTool):
             file_path=inp.file_path,
             start_no=inp.start_no,
             end_no=inp.end_no,
-            prefix=inp.prefix,
-            suffix=inp.suffix,
+            start_anchor=inp.start_anchor,
+            end_anchor=inp.end_anchor,
             new_string=inp.new_string,
             tool_name=self.id,
         )
@@ -105,8 +113,8 @@ async def _execute_text_replace(
     file_path: str,
     start_no: int,
     end_no: int,
-    prefix: str,
-    suffix: str,
+    start_anchor: str,
+    end_anchor: str,
     new_string: str,
     tool_name: str,
 ) -> ToolResult:
@@ -117,7 +125,7 @@ async def _execute_text_replace(
 
     original = path.read_text(encoding="utf-8", errors="replace")
     display = _split_display_lines(original)
-    match = _find_text_segment(display.lines, start_no, end_no, prefix, suffix)
+    match = _find_text_segment(display.lines, start_no, end_no, start_anchor, end_anchor)
     if isinstance(match, str):
         return ToolResult(output=match, metadata={"error": True})
 

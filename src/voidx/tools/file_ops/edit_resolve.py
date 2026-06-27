@@ -49,7 +49,7 @@ def _find_text_segment(
 
     prefix_lines = _find_line_candidates(lines, start_no, prefix)
     if not prefix_lines:
-        prefix_target = "empty line" if prefix == "" else f"prefix {prefix!r}"
+        prefix_target = "empty line" if prefix == "" else f"start_anchor {prefix!r}"
         return (
             f"{prefix_target} not found within ±{TEXT_REPLACE_LINE_RADIUS} "
             f"lines of start_no {start_no}.\n"
@@ -58,7 +58,7 @@ def _find_text_segment(
 
     suffix_lines = _find_line_candidates(lines, end_no, suffix)
     if not suffix_lines:
-        suffix_target = "empty line" if suffix == "" else f"suffix {suffix!r}"
+        suffix_target = "empty line" if suffix == "" else f"end_anchor {suffix!r}"
         return (
             f"{suffix_target} not found within ±{TEXT_REPLACE_LINE_RADIUS} "
             f"lines of end_no {end_no}.\n"
@@ -72,8 +72,8 @@ def _find_text_segment(
             "no valid replace range found: candidate ranges did not match "
             f"expected span {end_no - start_no} with less than "
             f"{tolerance} lines of drift. "
-            f"prefix candidates: {_format_lines(prefix_lines)}; "
-            f"suffix candidates: {_format_lines(suffix_lines)}."
+            f"start_anchor candidates: {_format_lines(prefix_lines)}; "
+            f"end_anchor candidates: {_format_lines(suffix_lines)}."
         )
 
     best_score = ranked[0][0]
@@ -82,7 +82,7 @@ def _find_text_segment(
         ranges = ", ".join(f"{start}-{end}" for _, start, end in best)
         return (
             f"replace range is ambiguous: candidate ranges {ranges} have the same score. "
-            "Provide more specific prefix/suffix or adjust start_no/end_no."
+            "Provide more specific start_anchor/end_anchor or adjust start_no/end_no."
         )
 
     _, start_line, end_line = ranked[0]
@@ -104,7 +104,7 @@ def _find_single_line_segment(
 ) -> tuple[int, int, int, int] | str:
     prefix_lines = _find_line_candidates(lines, target_line, prefix)
     if not prefix_lines:
-        prefix_target = "empty line" if prefix == "" else f"prefix {prefix!r}"
+        prefix_target = "empty line" if prefix == "" else f"start_anchor {prefix!r}"
         return (
             f"{prefix_target} not found within ±{TEXT_REPLACE_LINE_RADIUS} "
             f"lines of line {target_line}.\n"
@@ -119,7 +119,7 @@ def _find_single_line_segment(
         ]
         if not prefix_lines:
             return (
-                f"prefix {prefix!r} found but suffix {suffix!r} not on the same line "
+                f"start_anchor {prefix!r} found but end_anchor {suffix!r} not on the same line "
                 f"within ±{TEXT_REPLACE_LINE_RADIUS} lines of line {target_line}.\n"
                 f"Lines around {target_line}:\n{_window_snippet(lines, target_line)}"
             )
@@ -132,7 +132,7 @@ def _find_single_line_segment(
         return (
             f"single-line match ambiguous: lines {_format_lines(best)} all match "
             f"anchors at the same distance from line {target_line}. "
-            "Provide a more specific prefix/suffix."
+            "Provide a more specific start_anchor/end_anchor."
         )
 
     matched_line = best[0]
