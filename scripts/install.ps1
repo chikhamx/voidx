@@ -14,6 +14,20 @@
 
 $ErrorActionPreference = "Stop"
 
+# Global error trap — under irm | iex, an uncaught terminating error kills
+# the PowerShell process instantly and the user sees the window close with
+# no message. This trap catches any otherwise-unhandled terminating error,
+# prints it, and pauses so the user can read it before the window closes.
+trap {
+    Write-Host ""
+    Write-Host "  ❌ Installer error: $_" -ForegroundColor Red
+    Write-Host "     Please report this at https://github.com/chikhamx/voidx/issues" -ForegroundColor DarkGray
+    Write-Host ""
+    Write-Host "  Press Enter to close…" -ForegroundColor Yellow
+    try { Read-Host } catch {}
+    exit 1
+}
+
 # Suppress progress bars for faster downloads; restore at script exit.
 $ProgressPreference = 'SilentlyContinue'
 

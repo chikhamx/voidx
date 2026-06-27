@@ -8,6 +8,7 @@ These tests validate the install.sh script's behavior:
 """
 
 import os
+import re
 import stat
 import subprocess
 import textwrap
@@ -421,3 +422,55 @@ class TestInstallPs1ErrorHandling:
         surrounding = "\n".join(lines[max(0, gp_idx - 3):gp_idx + 5])
         assert "try" in surrounding.lower() or "SilentlyContinue" in surrounding, \
             "Get-Process voidx must be safe under ErrorActionPreference=Stop"
+
+    def test_script_has_global_error_trap(self):
+        """Script must have a global error handler to prevent silent terminal exit.
+
+        Under irm | iex, an uncaught terminating error kills the PowerShell
+        process instantly — the user sees the window close with no error
+        message. A global error handler (trap or top-level try/catch) ensures
+        any unexpected error is printed before exit.
+
+        We check for a 'trap' statement or a top-level try/catch that writes
+        the error message — these are the PowerShell patterns for catching
+        otherwise-fatal terminating errors at the script level.
+        """
+        src = _read_install_ps1()
+        # Check for a trap statement (PowerShell's global error handler)
+        # or a top-level try/catch that writes $_
+        has_trap = bool(re.search(r'^\s*trap\s*\{', src, re.MULTILINE | re.IGNORECASE))
+        has_global_catch = bool(re.search(
+            r'^try\s*\{.*^catch\s*\{.*Write-Host.*\$_',
+            src,
+            re.MULTILINE | re.DOTALL | re.IGNORECASE
+        ))
+        assert has_trap or has_global_catch, \
+            "Script must have a trap{} or top-level try/catch that writes the " \
+            "error ($_) to prevent silent terminal exit under irm | iex"
+
+    def test_exit_points_have_pause_or_message(self):
+        """Exit points must not silently kill the terminal under irm | iex.
+
+        When running via irm | iex, 'exit' terminates the PowerShell process.
+        If the script exits too quickly, the user sees the window close
+        without understanding what happened. Error exits should print a
+        clear message before exiting.
+        """
+        src = _read_install_ps1()
+        lines = src.splitlines()
+        # Find all exit statements
+        exit_lines = []
+        for i, line in enumerate(lines):
+            stripped = line.strip()
+            if stripped.startswith("exit ") or stripped == "exit":
+                exit_lines.append(i)
+
+        assert len(exit_lines) > 0, "Script must have exit points"
+
+        # Each exit should be preceded by a Write-Host (error message or status)
+        for idx in exit_lines:
+            # Look at the 5 lines before the exit
+            before = "\n".join(lines[max(0, idx - 5):idx])
+            assert "Write-Host" in before, \
+                f"exit at line {idx+1} must be preceded by a Write-Host message " \
+                "so the user sees output before the terminal closes"
