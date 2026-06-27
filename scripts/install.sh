@@ -100,7 +100,7 @@ _cleanup_legacy() {
                     rm -f "$link_path"
                     ok "已删除旧版符号链接: ${link_path}"
                     ;;
-                */share/voidx/venv/bin/voidx|*/share/voidx/npm-venv/bin/voidx)
+                */share/voidx/npm-venv/bin/voidx)
                     warn "发现旧版安装脚本创建的符号链接: ${link_path} → ${target}，正在删除…"
                     rm -f "$link_path"
                     ok "已删除旧版符号链接: ${link_path}"

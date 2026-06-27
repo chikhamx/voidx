@@ -191,3 +191,56 @@ class TestInstallShPipIsolation:
         assert 'cd "' in preceding or "cd '" in preceding or "cd ${" in preceding, \
             "Script must cd to a neutral directory before pip install to avoid " \
             "installing from local source instead of PyPI"
+
+
+class TestInstallShSymlinkCleanup:
+    """Tests verifying cleanup logic doesn't remove the script's own symlink."""
+
+    def test_cleanup_does_not_warn_on_current_venv_symlink(self):
+        """_cleanup_legacy must not warn about a symlink pointing to the
+        current VENV_DIR.
+
+        The fallback path creates ~/.local/bin/voidx → .../share/voidx/venv/bin/voidx
+        at the end of every run. On the next run, _cleanup_legacy sees this
+        symlink, matches it against the */share/voidx/venv/bin/voidx pattern,
+        and warns "发现旧版安装脚本创建的符号链接" — even though it's the
+        current install's own symlink, not a legacy one.
+
+        The cleanup pattern for */share/voidx/venv/bin/voidx must be removed
+        or narrowed so it only matches truly legacy locations, not the
+        current VENV_DIR layout.
+        """
+        src = _read_install_sh()
+        # The cleanup function should NOT treat the current venv symlink
+        # as legacy. The pattern */share/voidx/venv/bin/voidx matches the
+        # current install's own symlink, causing a false-positive warning
+        # every run.
+        #
+        # Verify the script does NOT have a blanket cleanup of the current
+        # venv path. The ln -sf at the end already overwrites stale links,
+        # so explicit cleanup of the same path is redundant and causes
+        # the recurring warning.
+        assert '*/share/voidx/venv/bin/voidx' not in src or \
+               _cleanup_uses_version_check(src), \
+            "Cleanup must not blindly remove symlinks pointing to the " \
+            "current VENV_DIR — this causes a warning every run since " \
+            "the fallback path recreates the same symlink"
+
+
+def _cleanup_uses_version_check(src: str) -> bool:
+    """Check if cleanup of venv symlinks is guarded by a version check."""
+    # Extract just the _cleanup_legacy function body (up to the next top-level
+    # call or function definition), not the entire script.
+    start = src.find('_cleanup_legacy()')
+    if start < 0:
+        start = src.find('_cleanup_legacy')
+    # Function body ends at the closing brace line
+    end = src.find('\n}', start)
+    if end < 0:
+        end = len(src)
+    cleanup_body = src[start:end]
+    venv_pattern_pos = cleanup_body.find('*/share/voidx/venv/bin/voidx')
+    if venv_pattern_pos < 0:
+        return True
+    nearby = cleanup_body[max(0, venv_pattern_pos - 200):venv_pattern_pos + 200]
+    return 'VERSION' in nearby or 'MARKER' in nearby
