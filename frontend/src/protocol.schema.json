@@ -298,6 +298,81 @@
       "title": "CheckpointPromptShown",
       "type": "object"
     },
+    "ClarifyAnswerSubmitted": {
+      "properties": {
+        "agent_id": {
+          "default": -1,
+          "title": "Agent Id",
+          "type": "integer"
+        },
+        "answer": {
+          "title": "Answer",
+          "type": "string"
+        },
+        "cancelled": {
+          "default": false,
+          "title": "Cancelled",
+          "type": "boolean"
+        },
+        "clarify_id": {
+          "title": "Clarify Id",
+          "type": "string"
+        },
+        "kind": {
+          "const": "clarify_answer.submitted",
+          "default": "clarify_answer.submitted",
+          "title": "Kind",
+          "type": "string"
+        },
+        "was_custom_input": {
+          "default": true,
+          "title": "Was Custom Input",
+          "type": "boolean"
+        }
+      },
+      "required": [
+        "clarify_id",
+        "answer"
+      ],
+      "title": "ClarifyAnswerSubmitted",
+      "type": "object"
+    },
+    "ClarifyPromptShown": {
+      "properties": {
+        "agent_id": {
+          "default": -1,
+          "title": "Agent Id",
+          "type": "integer"
+        },
+        "clarify_id": {
+          "title": "Clarify Id",
+          "type": "string"
+        },
+        "kind": {
+          "const": "clarify_prompt.shown",
+          "default": "clarify_prompt.shown",
+          "title": "Kind",
+          "type": "string"
+        },
+        "options": {
+          "items": {
+            "type": "string"
+          },
+          "title": "Options",
+          "type": "array"
+        },
+        "question": {
+          "title": "Question",
+          "type": "string"
+        }
+      },
+      "required": [
+        "clarify_id",
+        "question"
+      ],
+      "title": "ClarifyPromptShown",
+      "type": "object"
+    },
     "DiffAppended": {
       "properties": {
         "agent_id": {
@@ -890,6 +965,11 @@
         "subagent_id": {
           "title": "Subagent Id",
           "type": "string"
+        },
+        "summary": {
+          "default": "",
+          "title": "Summary",
+          "type": "string"
         }
       },
       "required": [
@@ -1048,18 +1128,22 @@
           "title": "Content",
           "type": "string"
         },
+        "id": {
+          "title": "Id",
+          "type": "string"
+        },
         "status": {
           "enum": [
             "pending",
-            "in_progress",
-            "completed",
-            "cancelled"
+            "active",
+            "done"
           ],
           "title": "Status",
           "type": "string"
         }
       },
       "required": [
+        "id",
         "content",
         "status"
       ],
@@ -1088,6 +1172,11 @@
         },
         "summary": {
           "title": "Summary",
+          "type": "string"
+        },
+        "todo_op": {
+          "default": "write",
+          "title": "Todo Op",
           "type": "string"
         }
       },
@@ -1688,6 +1777,12 @@
             },
             {
               "$ref": "#/$defs/CheckpointDecisionSubmitted"
+            },
+            {
+              "$ref": "#/$defs/ClarifyPromptShown"
+            },
+            {
+              "$ref": "#/$defs/ClarifyAnswerSubmitted"
             },
             {
               "$ref": "#/$defs/InputSet"

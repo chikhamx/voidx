@@ -149,6 +149,7 @@ class GraphRunLoopMixin(GraphTurnMixin, GraphSessionMixin, GraphTranscriptMixin)
             if web:
                 gateway_session = GatewaySession(
                     lambda: active_dock.tree,
+                    thread_id=self._session.id if self._session else "",
                     session_id=self._session.id if self._session else "",
                 )
                 self._ui.events.start(CompositeEventConsumer(
@@ -218,8 +219,12 @@ class GraphRunLoopMixin(GraphTurnMixin, GraphSessionMixin, GraphTranscriptMixin)
         app.set_external_command_handler(partial(self._handle_web_command, app))
         update_check_task = asyncio.create_task(self._show_update_check_if_needed())
 
+        self._gateway_session = gateway_session
         if gateway_session is not None:
             gateway_session.set_command_handler(partial(self._handle_web_command, app))
+            gateway_session.set_thread_id_provider(
+                lambda: self._session.id if self._session else ""
+            )
             app.set_external_request_handler(gateway_session.request)
             gateway_server = GatewayServer(
                 gateway_session,
@@ -334,9 +339,24 @@ class GraphRunLoopMixin(GraphTurnMixin, GraphSessionMixin, GraphTranscriptMixin)
             if text.strip().startswith("/guide "):
                 self.submit_guidance(text.strip().removeprefix("/guide").strip())
             else:
+                self._ensure_gateway_thread()
                 app.submit_external_input(text)
         elif kind == "cancel":
             app.cancel_external_input()
+
+    def _ensure_gateway_thread(self: GraphRunLoopHost) -> None:
+        """Register the active session as a gateway thread if not yet registered.
+
+        self._session is None when GatewaySession is constructed (session is
+        created lazily on first turn). This ensures the thread/adapter exist
+        before events start flowing.
+        """
+        gs = getattr(self, "_gateway_session", None)
+        if gs is None or self._session is None:
+            return
+        tid = self._session.id
+        if tid and tid not in gs._threads:
+            asyncio.ensure_future(gs.register_thread(tid, title=self._session.title or ""))
 
     async def _handle_user_input(self: GraphRunLoopHost, app, user_input: str) -> tuple[bool, str | None]:
         user_input = user_input.strip()

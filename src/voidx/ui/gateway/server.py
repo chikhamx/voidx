@@ -1,4 +1,4 @@
-"""WebSocket server wrapper for the UI protocol gateway."""
+"""WebSocket server wrapper for the v2 JSON-RPC gateway."""
 
 from __future__ import annotations
 
@@ -7,7 +7,7 @@ from urllib.parse import parse_qs, urlparse
 from websockets.asyncio.server import Server, ServerConnection, serve
 
 from voidx.ui.gateway.session import GatewaySession
-from voidx.ui.protocol import parse_protocol_envelope
+from voidx.ui.protocol.v2.envelope import ParseError, parse_jsonrpc_message
 
 
 class _WebSocketClient:
@@ -63,13 +63,35 @@ class GatewayServer:
         await self._session.connect(client)
         try:
             async for message in websocket:
-                envelope = parse_protocol_envelope_json(str(message))
-                if envelope.type == "command":
-                    await self._session.handle_command(envelope.payload)
-                elif envelope.type == "response":
-                    await self._session.handle_response(envelope.payload)
+                await self._handle_message(websocket, str(message))
         finally:
             self._session.disconnect(client)
+
+    async def _handle_message(self, websocket: ServerConnection, raw: str) -> None:
+        import json
+
+        from voidx.ui.protocol.v2.envelope import JsonRpcRequest, JsonRpcResult
+        from voidx.ui.protocol.requests import UiResponse
+
+        try:
+            msg = parse_jsonrpc_message_str(raw)
+        except ParseError as exc:
+            await websocket.send(json.dumps({
+                "jsonrpc": "2.0",
+                "id": None,
+                "error": {"code": exc.code, "message": exc.message},
+            }))
+            return
+
+        if isinstance(msg, JsonRpcRequest):
+            result = await self._session.dispatch_request(msg)
+            await websocket.send(result.model_dump_json())
+        elif isinstance(msg, JsonRpcResult):
+            response = UiResponse(
+                request_id=str(msg.id),
+                value=msg.result.get("value") if isinstance(msg.result, dict) else None,
+            )
+            await self._session.handle_response(response)
 
     def _authorized(self, websocket: ServerConnection) -> bool:
         if not self._token:
@@ -80,7 +102,13 @@ class GatewayServer:
         return query.get("token") == [self._token]
 
 
-def parse_protocol_envelope_json(message: str):
+def parse_jsonrpc_message_str(message: str):
+    """Parse a raw JSON string into a v2 JSON-RPC message."""
     import json
 
-    return parse_protocol_envelope(json.loads(message))
+    try:
+        raw = json.loads(message)
+    except json.JSONDecodeError:
+        from voidx.ui.protocol.v2.envelope import ERR_PARSE_ERROR
+        raise ParseError(ERR_PARSE_ERROR, "parse error: invalid JSON")
+    return parse_jsonrpc_message(raw)

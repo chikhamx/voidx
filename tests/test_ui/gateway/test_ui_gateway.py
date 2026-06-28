@@ -1,4 +1,4 @@
-import asyncio
+﻿import asyncio
 import json
 import logging
 import sys
@@ -14,15 +14,7 @@ from voidx.ui.output.events.schema import AssistantStreamUpdated, RefreshRequest
 from voidx.ui.output.events import CompositeEventConsumer, DockEventConsumer
 from voidx.ui.gateway.session import GatewayEventConsumer, GatewaySession
 from voidx.ui.gateway.server import GatewayServer
-from voidx.ui.protocol import (
-    UiChoiceRequest,
-    UiCommandEnvelope,
-    UiResponse,
-    UiResponseEnvelope,
-    UiSubmitCommand,
-    UiTextRequest,
-    parse_protocol_envelope,
-)
+from voidx.ui.protocol.requests import UiChoiceRequest, UiResponse, UiTextRequest
 
 
 class FakeClient:
@@ -36,11 +28,16 @@ class FakeClient:
         self.messages.append(text)
 
 
-def _payloads(client: FakeClient) -> list[object]:
-    return [
-        parse_protocol_envelope(json.loads(message)).payload
-        for message in client.messages
-    ]
+def _payloads(client: FakeClient) -> list[dict]:
+    return [json.loads(message) for message in client.messages]
+
+
+def _method(msg: dict) -> str:
+    return msg["method"]
+
+
+def _params(msg: dict) -> dict:
+    return msg["params"]
 
 
 async def _wait_for_log_record(caplog, message: str):
@@ -57,34 +54,33 @@ async def test_gateway_connect_sends_snapshot_from_current_tree():
     dock = BottomInputDock()
     dock.begin_capture()
     dock.start_turn("hello")
-    session = GatewaySession(lambda: dock.tree, session_id="session_1")
+    session = GatewaySession(lambda: dock.tree, thread_id="session_1")
     client = FakeClient()
 
     await session.connect(client)
 
-    envelope = parse_protocol_envelope(json.loads(client.messages[0]))
+    msg = json.loads(client.messages[0])
 
-    assert envelope.type == "snapshot"
-    assert envelope.payload.session_id == "session_1"
-    assert envelope.payload.nodes[0].header.endswith("hello")
+    assert msg["method"] == "workspace.snapshot"
+    assert msg["params"]["active_thread_id"] == "session_1"
+    assert msg["params"]["active_snapshot"]["nodes"][0]["header"].endswith("hello")
 
 
 @pytest.mark.asyncio
 async def test_gateway_broadcasts_events_with_incrementing_sequences():
     dock = BottomInputDock()
-    session = GatewaySession(lambda: dock.tree)
+    session = GatewaySession(lambda: dock.tree, thread_id="t1")
     client = FakeClient()
     await session.connect(client)
 
     await session.broadcast_event(AssistantStreamUpdated(text="hello"))
 
-    snapshot = parse_protocol_envelope(json.loads(client.messages[0]))
-    event = parse_protocol_envelope(json.loads(client.messages[1]))
+    snapshot = json.loads(client.messages[0])
+    event = json.loads(client.messages[1])
 
-    assert snapshot.seq == 1
-    assert event.seq == 2
-    assert event.type == "event"
-    assert event.payload.text == "hello"
+    assert snapshot["method"] == "workspace.snapshot"
+    assert event["method"] in ("item.started", "item.delta")
+    assert event["params"]["kind"] == "assistant_stream"
 
 
 @pytest.mark.asyncio
@@ -92,33 +88,32 @@ async def test_gateway_consumer_rebroadcasts_snapshot_on_refresh():
     dock = BottomInputDock()
     dock.begin_capture()
     dock.start_turn("hello")
-    session = GatewaySession(lambda: dock.tree)
+    session = GatewaySession(lambda: dock.tree, thread_id="t1")
     client = FakeClient()
     await session.connect(client)
     consumer = GatewayEventConsumer(session)
 
     await consumer.handle(RefreshRequested())
 
-    envelopes = [parse_protocol_envelope(json.loads(message)) for message in client.messages]
-    assert envelopes[-1].type == "snapshot"
-    assert envelopes[-2].type == "event"
-    assert envelopes[-2].payload.kind == "refresh.requested"
+    messages = [json.loads(message) for message in client.messages]
+    assert messages[-1]["method"] == "workspace.snapshot"
+    assert messages[-2]["method"] == "refresh.requested"
 
 
 @pytest.mark.asyncio
 async def test_gateway_broadcast_snapshot_updates_clients():
     dock = BottomInputDock()
     dock.begin_capture()
-    session = GatewaySession(lambda: dock.tree)
+    session = GatewaySession(lambda: dock.tree, thread_id="t1")
     client = FakeClient()
     await session.connect(client)
     dock.start_turn("after snapshot")
 
     await session.broadcast_snapshot()
 
-    snapshot = parse_protocol_envelope(json.loads(client.messages[-1]))
-    assert snapshot.type == "snapshot"
-    assert snapshot.payload.nodes[-1].header.endswith("after snapshot")
+    snapshot = json.loads(client.messages[-1])
+    assert snapshot["method"] == "workspace.snapshot"
+    assert snapshot["params"]["active_snapshot"]["nodes"][-1]["header"].endswith("after snapshot")
 
 
 def test_emit_web_gateway_bootstrap_writes_marker(capsys):
@@ -139,7 +134,7 @@ def test_emit_web_gateway_bootstrap_writes_marker(capsys):
 @pytest.mark.asyncio
 async def test_gateway_removes_clients_that_fail_during_broadcast():
     dock = BottomInputDock()
-    session = GatewaySession(lambda: dock.tree)
+    session = GatewaySession(lambda: dock.tree, thread_id="t1")
     failing = FakeClient(fail_after=1)
     healthy = FakeClient()
     await session.connect(failing)
@@ -149,17 +144,18 @@ async def test_gateway_removes_clients_that_fail_during_broadcast():
     await session.broadcast_event(AssistantStreamUpdated(text="second"))
 
     assert failing not in session.clients
-    assert [payload.text for payload in _payloads(healthy) if hasattr(payload, "text")] == [
-        "first",
-        "second",
+    item_methods = [
+        msg["method"] for msg in _payloads(healthy)
+        if msg.get("method") in ("item.started", "item.delta")
     ]
+    assert len(item_methods) == 2
 
 
 @pytest.mark.asyncio
 async def test_composite_event_consumer_keeps_dock_primary_and_mirrors_events():
     dock = BottomInputDock()
     dock.begin_capture()
-    session = GatewaySession(lambda: dock.tree)
+    session = GatewaySession(lambda: dock.tree, thread_id="t1")
     client = FakeClient()
     await session.connect(client)
     consumer = CompositeEventConsumer(
@@ -174,8 +170,8 @@ async def test_composite_event_consumer_keeps_dock_primary_and_mirrors_events():
 
     assert result is dock.current_turn
     assert dock.current_turn is not None
-    payloads = _payloads(client)
-    assert any(isinstance(payload, TurnStarted) and payload.text == "demo" for payload in payloads)
+    messages = _payloads(client)
+    assert any(msg.get("method") == "turn.started" and msg["params"].get("text") == "demo" for msg in messages)
 
 
 @pytest.mark.asyncio
@@ -231,19 +227,19 @@ async def test_websocket_gateway_sends_snapshot_and_broadcast_event():
     dock = BottomInputDock()
     dock.begin_capture()
     dock.start_turn("hello")
-    session = GatewaySession(lambda: dock.tree)
-    server = GatewayServer(session, host="127.0.0.1", port=0, token="secret")
+    session = GatewaySession(lambda: dock.tree, thread_id="t1")
+    server = GatewayServer(session, host="127.0.0.1", port=0, token="abc")
     await server.start()
     try:
         async with websockets.connect(server.url) as websocket:
-            snapshot = parse_protocol_envelope(json.loads(await websocket.recv()))
-            assert snapshot.type == "snapshot"
+            snapshot = json.loads(await websocket.recv())
+            assert snapshot["method"] == "workspace.snapshot"
 
             await session.broadcast_event(AssistantStreamUpdated(text="hi web"))
-            event = parse_protocol_envelope(json.loads(await websocket.recv()))
+            event = json.loads(await websocket.recv())
 
-            assert event.type == "event"
-            assert event.payload.text == "hi web"
+            assert event["method"] in ("item.started", "item.delta")
+            assert event["params"]["kind"] == "assistant_stream"
     finally:
         await server.stop()
 
@@ -253,22 +249,25 @@ async def test_websocket_gateway_dispatches_submit_commands():
     dock = BottomInputDock()
     received: list[str] = []
 
-    async def handle_command(command):
-        received.append(command.text)
+    async def handle_submit(params):
+        received.append(params["text"])
+        return {"ok": True}
 
-    session = GatewaySession(lambda: dock.tree, command_handler=handle_command)
-    server = GatewayServer(session, host="127.0.0.1", port=0, token="")
+    session = GatewaySession(lambda: dock.tree, thread_id="t1")
+    session.methods.register("session.submit", handle_submit)
+    server = GatewayServer(session, host="127.0.0.1", port=0, token="abc")
     await server.start()
     try:
         async with websockets.connect(server.url) as websocket:
-            await websocket.recv()
-            await websocket.send(
-                UiCommandEnvelope(payload=UiSubmitCommand(text="from web")).model_dump_json()
-            )
-            for _ in range(20):
-                if received:
-                    break
-                await asyncio.sleep(0.01)
+            await websocket.recv()  # snapshot
+            await websocket.send(json.dumps({
+                "jsonrpc": "2.0",
+                "id": 1,
+                "method": "session.submit",
+                "params": {"text": "from web"},
+            }))
+            response = json.loads(await websocket.recv())
+            assert response["result"] == {"ok": True}
 
         assert received == ["from web"]
     finally:
@@ -278,7 +277,7 @@ async def test_websocket_gateway_dispatches_submit_commands():
 @pytest.mark.asyncio
 async def test_gateway_request_sends_request_and_resolves_response():
     dock = BottomInputDock()
-    session = GatewaySession(lambda: dock.tree)
+    session = GatewaySession(lambda: dock.tree, thread_id="t1")
     client = FakeClient()
     await session.connect(client)
 
@@ -291,10 +290,10 @@ async def test_gateway_request_sends_request_and_resolves_response():
         if len(client.messages) > 1:
             break
         await asyncio.sleep(0.01)
-    request = parse_protocol_envelope(json.loads(client.messages[-1]))
+    request = json.loads(client.messages[-1])
 
-    assert request.type == "request"
-    assert request.payload.request_id == "req_1"
+    assert request["method"] == "ui.request"
+    assert request["params"]["request_id"] == "req_1"
 
     await session.handle_response(UiResponse(request_id="req_1", value="auto"))
 
@@ -304,7 +303,7 @@ async def test_gateway_request_sends_request_and_resolves_response():
 @pytest.mark.asyncio
 async def test_gateway_handles_consecutive_choice_then_text_requests():
     dock = BottomInputDock()
-    session = GatewaySession(lambda: dock.tree)
+    session = GatewaySession(lambda: dock.tree, thread_id="t1")
     client = FakeClient()
     await session.connect(client)
 
@@ -317,9 +316,9 @@ async def test_gateway_handles_consecutive_choice_then_text_requests():
         if len(client.messages) > 1:
             break
         await asyncio.sleep(0.01)
-    choice_request = parse_protocol_envelope(json.loads(client.messages[-1]))
-    assert choice_request.type == "request"
-    assert choice_request.payload.kind == "choice"
+    choice_request = json.loads(client.messages[-1])
+    assert choice_request["method"] == "ui.request"
+    assert choice_request["params"]["kind"] == "choice"
     await session.handle_response(UiResponse(request_id="choice_1", value="other"))
     assert await choice_task == UiResponse(request_id="choice_1", value="other")
 
@@ -331,9 +330,9 @@ async def test_gateway_handles_consecutive_choice_then_text_requests():
         if len(client.messages) > 2:
             break
         await asyncio.sleep(0.01)
-    text_request = parse_protocol_envelope(json.loads(client.messages[-1]))
-    assert text_request.type == "request"
-    assert text_request.payload.kind == "text"
+    text_request = json.loads(client.messages[-1])
+    assert text_request["method"] == "ui.request"
+    assert text_request["params"]["kind"] == "text"
     await session.handle_response(UiResponse(request_id="text_1", value="custom answer"))
     assert await text_task == UiResponse(request_id="text_1", value="custom answer")
 
@@ -341,22 +340,24 @@ async def test_gateway_handles_consecutive_choice_then_text_requests():
 @pytest.mark.asyncio
 async def test_websocket_gateway_dispatches_responses_to_pending_request():
     dock = BottomInputDock()
-    session = GatewaySession(lambda: dock.tree)
-    server = GatewayServer(session, host="127.0.0.1", port=0, token="")
+    session = GatewaySession(lambda: dock.tree, thread_id="t1")
+    server = GatewayServer(session, host="127.0.0.1", port=0, token="abc")
     await server.start()
     try:
         async with websockets.connect(server.url) as websocket:
-            await websocket.recv()
+            await websocket.recv()  # snapshot
             task = asyncio.create_task(session.request(UiChoiceRequest(
                 request_id="req_ws",
                 prompt="Mode",
                 choices=[("Auto", "auto", "")],
             )))
-            request = parse_protocol_envelope(json.loads(await websocket.recv()))
-            assert request.type == "request"
-            await websocket.send(UiResponseEnvelope(
-                payload=UiResponse(request_id="req_ws", value="auto")
-            ).model_dump_json())
+            request = json.loads(await websocket.recv())
+            assert request["method"] == "ui.request"
+            await websocket.send(json.dumps({
+                "jsonrpc": "2.0",
+                "id": "req_ws",
+                "result": {"value": "auto"},
+            }))
 
             assert await asyncio.wait_for(task, timeout=1) == UiResponse(
                 request_id="req_ws",

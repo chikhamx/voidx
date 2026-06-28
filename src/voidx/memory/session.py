@@ -53,16 +53,18 @@ async def create_session(
     workspace: str = ".",
     provider: str = "anthropic",
     model: str = "claude-sonnet-4-6",
+    *,
+    title: str = "New session",
 ) -> SessionInfo:
     sid = _uid()
     now = _now()
     await _execute_commit(
         """INSERT INTO sessions (id, title, workspace, model_provider, model_name, created_at, updated_at)
            VALUES (?, ?, ?, ?, ?, ?, ?)""",
-        (sid, "New session", workspace, provider, model, now, now),
+        (sid, title, workspace, provider, model, now, now),
     )
     return SessionInfo(
-        id=sid, workspace=workspace, model_provider=provider,
+        id=sid, title=title, workspace=workspace, model_provider=provider,
         model_name=model, created_at=now, updated_at=now,
     )
 
@@ -163,6 +165,35 @@ async def touch_session(session_id: str) -> None:
     await _execute_commit(
         "UPDATE sessions SET updated_at = ? WHERE id = ?",
         (_now(), session_id),
+    )
+
+
+async def fork_session(
+    session_id: str,
+    *,
+    title: str | None = None,
+) -> SessionInfo | None:
+    """Create a new session by forking an existing one.
+
+    Copies workspace/provider/model from the source session. The new session
+    starts with zero messages (transcript records are not copied).
+    """
+    source = await get_session(session_id)
+    if source is None:
+        return None
+    sid = _uid()
+    now = _now()
+    fork_title = title if title is not None else f"Fork of {source.title}"
+    await _execute_commit(
+        """INSERT INTO sessions (id, title, workspace, model_provider, model_name, created_at, updated_at)
+           VALUES (?, ?, ?, ?, ?, ?, ?)""",
+        (sid, fork_title, source.workspace, source.model_provider,
+         source.model_name, now, now),
+    )
+    return SessionInfo(
+        id=sid, title=fork_title, workspace=source.workspace,
+        model_provider=source.model_provider, model_name=source.model_name,
+        created_at=now, updated_at=now,
     )
 
 
