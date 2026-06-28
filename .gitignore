@@ -29,6 +29,8 @@ _fix.py
 # Node
 node_modules/
 package-lock.json
+# desktop 子项目是独立应用，锁文件入库
+!desktop/package-lock.json
 
 # uv
 uv.lock
@@ -37,4 +39,5 @@ research/
 # Rust / Tauri build artifacts
 desktop/src-tauri/target/
 desktop/src-tauri/gen/
-desktop/src-tauri/Cargo.lock
+# Cargo.lock 对二进制应用应入库
+!desktop/src-tauri/Cargo.lock
