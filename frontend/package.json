@@ -6,7 +6,9 @@
     "dev": "vite --host 127.0.0.1",
     "build": "vite build",
     "preview": "vite preview --host 127.0.0.1",
-    "schema": "python ../scripts/export_ui_protocol_schema.py && json2ts src/protocol.schema.json -o src/protocol.d.ts --bannerComment \"/* generated from protocol.schema.json */\""
+    "schema": "python ../scripts/export_ui_protocol_schema.py && json2ts src/protocol.schema.json -o src/protocol.d.ts --bannerComment \"/* generated from protocol.schema.json */\"",
+    "test": "vitest run",
+    "test:watch": "vitest"
   },
   "dependencies": {
     "@tauri-apps/api": "^2",
@@ -16,7 +18,9 @@
   },
   "devDependencies": {
     "@vitejs/plugin-basic-ssl": "latest",
+    "jsdom": "^29.1.1",
     "json-schema-to-typescript": "latest",
-    "vite": "latest"
+    "vite": "latest",
+    "vitest": "^4.1.9"
   }
 }
