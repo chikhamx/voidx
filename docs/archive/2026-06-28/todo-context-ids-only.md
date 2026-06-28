@@ -1,5 +1,11 @@
 # Todo Context — IDs Only in Current Task State
 
+> **Status: Done (with deviation)** — 已在 `runtime_context.py:278-287` 实现，
+> 但实现偏离原设计：原设计要求只输出 active+pending 项的 id 列表，实际实现
+> 输出 `summary` + active 项 content（截断至 60 字符）。测试见
+> `tests/test_agent/test_runtime_context_builder.py`。该偏离是后续演进的
+> 结果，保留本文档用于追溯原始设计意图。
+
 ## Context
 
 Current Task State 的 todo 段落当前只显示 `active_items`（in_progress 项）的完整信息（id + status + content）。

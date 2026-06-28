@@ -1,5 +1,9 @@
 # 沙箱、权限与工具 — 架构梳理
 
+> **Status: Done** — 三层防线架构已实现。`src/voidx/permission/` 已含
+> `PermissionCapability`（含 `READ_TOOLS`、`GIT_READ` 等）、沙箱边界检查、
+> 权限规则引擎。测试覆盖见 `tests/test_agent/test_permission.py`。
+
 ## 整体架构
 
 voidx 的工具调用安全由三层防线依次拦截：
