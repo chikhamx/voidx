@@ -1769,3 +1769,103 @@ class TestDriftFallbackE2E:
         assert "drift fallback" in result.output.lower()
         assert "epoch #1" in result.output
         assert f.read_text() == "l1\nX\nY\nl8\nl9\nL10\n"
+
+    @pytest.mark.asyncio
+    async def test_replace_anchor_leading_newline(self, tmp_path):
+        """start_anchor with leading \\n should be normalized to its first non-empty line."""
+        f = tmp_path / "lead-nl.txt"
+        f.write_text("line1\ndef foo():\n    return 1\nline4\n")
+        ctx = ToolContext(workspace=str(tmp_path))
+        r = ToolRegistry()
+        await r.execute_tool("read", {"file_path": "lead-nl.txt"}, ctx)
+
+        result = await r.execute_tool(
+            "replace",
+            {
+                "file_path": "lead-nl.txt",
+                "start_no": 2,
+                "end_no": 2,
+                "start_anchor": "\ndef foo():",
+                "end_anchor": "\ndef foo():",
+                "new_string": "def bar():",
+            },
+            ctx,
+        )
+
+        assert result.metadata.get("error") is not True
+        assert f.read_text() == "line1\ndef bar():\n    return 1\nline4\n"
+
+    @pytest.mark.asyncio
+    async def test_replace_anchor_trailing_newline(self, tmp_path):
+        """start_anchor with trailing \\n should be normalized to its first non-empty line."""
+        f = tmp_path / "trail-nl.txt"
+        f.write_text("line1\ndef foo():\n    return 1\nline4\n")
+        ctx = ToolContext(workspace=str(tmp_path))
+        r = ToolRegistry()
+        await r.execute_tool("read", {"file_path": "trail-nl.txt"}, ctx)
+
+        result = await r.execute_tool(
+            "replace",
+            {
+                "file_path": "trail-nl.txt",
+                "start_no": 2,
+                "end_no": 2,
+                "start_anchor": "def foo():\n",
+                "end_anchor": "def foo():\n",
+                "new_string": "def bar():",
+            },
+            ctx,
+        )
+
+        assert result.metadata.get("error") is not True
+        assert f.read_text() == "line1\ndef bar():\n    return 1\nline4\n"
+
+    @pytest.mark.asyncio
+    async def test_replace_anchor_middle_newline(self, tmp_path):
+        """start_anchor with \\n in the middle should be normalized to its first non-empty line."""
+        f = tmp_path / "mid-nl.txt"
+        f.write_text("line1\ndef foo():\n    return 1\nline4\n")
+        ctx = ToolContext(workspace=str(tmp_path))
+        r = ToolRegistry()
+        await r.execute_tool("read", {"file_path": "mid-nl.txt"}, ctx)
+
+        result = await r.execute_tool(
+            "replace",
+            {
+                "file_path": "mid-nl.txt",
+                "start_no": 2,
+                "end_no": 3,
+                "start_anchor": "def foo():\n    return 1",
+                "end_anchor": "    return 1\ndef foo():",
+                "new_string": "def bar():\n    return 2",
+            },
+            ctx,
+        )
+
+        assert result.metadata.get("error") is not True
+        assert f.read_text() == "line1\ndef bar():\n    return 2\nline4\n"
+
+    @pytest.mark.asyncio
+    async def test_replace_anchor_pure_newline_matches_empty_line(self, tmp_path):
+        """anchor of pure \\n should be normalized to empty string and match an empty line."""
+        f = tmp_path / "pure-nl.txt"
+        f.write_text("line1\n\nline3\n")
+        ctx = ToolContext(workspace=str(tmp_path))
+        r = ToolRegistry()
+        await r.execute_tool("read", {"file_path": "pure-nl.txt"}, ctx)
+
+        result = await r.execute_tool(
+            "replace",
+            {
+                "file_path": "pure-nl.txt",
+                "start_no": 2,
+                "end_no": 2,
+                "start_anchor": "\n",
+                "end_anchor": "\n",
+                "new_string": "INSERTED",
+            },
+            ctx,
+        )
+
+        assert result.metadata.get("error") is not True
+        assert f.read_text() == "line1\nINSERTED\nline3\n"

@@ -315,3 +315,70 @@ def test_cycle_summary_uses_truncated_evidence_for_large_outputs():
     }]
 
     assert cycle_summary_from_tools(first).evidence_keys == cycle_summary_from_tools(second).evidence_keys
+
+
+def test_replace_same_file_different_lines_not_blocked():
+    """同文件不同行范围的 replace 失败不应互相拉黑。
+
+    归并键应包含 start_no/end_no，而非仅 file_path。
+    """
+    guards = RuntimeGuardState()
+    result = ToolResult(output="anchor mismatch", metadata={"error": True, "error_kind": "unknown_error"})
+
+    failing = {"name": "replace", "args": {"file_path": "a.py", "start_no": 1, "end_no": 1, "start_anchor": "x", "end_anchor": "x", "new_string": "y"}}
+    key = build_failure_key(failing, result)
+    guards.tool_failures.record_failure(key, "anchor mismatch")
+    guards.tool_failures.record_failure(key, "anchor mismatch")
+    guards.tool_failures.record_failure(key, "anchor mismatch")
+
+    assert guards.tool_failures.should_block(failing) is True
+
+    different_lines = {"name": "replace", "args": {"file_path": "a.py", "start_no": 10, "end_no": 10, "start_anchor": "x", "end_anchor": "x", "new_string": "y"}}
+    assert guards.tool_failures.should_block(different_lines) is False
+
+
+def test_replace_same_lines_repeated_failure_blocked():
+    """同文件同行范围的 replace 反复失败仍应被拉黑（保留防死循环）。"""
+    guards = RuntimeGuardState()
+    result = ToolResult(output="anchor mismatch", metadata={"error": True, "error_kind": "unknown_error"})
+
+    call = {"name": "replace", "args": {"file_path": "a.py", "start_no": 1, "end_no": 1, "start_anchor": "x", "end_anchor": "x", "new_string": "y"}}
+    key = build_failure_key(call, result)
+    guards.tool_failures.record_failure(key, "anchor mismatch")
+    guards.tool_failures.record_failure(key, "anchor mismatch")
+    guards.tool_failures.record_failure(key, "anchor mismatch")
+
+    assert guards.tool_failures.should_block(call) is True
+
+
+def test_replace_same_lines_different_anchor_same_key():
+    """同行范围不同 anchor 的 replace 失败应归并为同一 key。
+
+    anchor 是内容校验项，非定位项；同位置不同 anchor 的失败应合并计数。
+    """
+    result = ToolResult(output="anchor mismatch", metadata={"error": True, "error_kind": "unknown_error"})
+
+    call_x = {"name": "replace", "args": {"file_path": "a.py", "start_no": 1, "end_no": 1, "start_anchor": "x", "end_anchor": "x", "new_string": "y"}}
+    call_y = {"name": "replace", "args": {"file_path": "a.py", "start_no": 1, "end_no": 1, "start_anchor": "z", "end_anchor": "z", "new_string": "w"}}
+
+    key_x = build_failure_key(call_x, result)
+    key_y = build_failure_key(call_y, result)
+
+    assert key_x.stable_key == key_y.stable_key
+
+
+def test_replace_success_clears_blocks():
+    """成功调用应解除同 tool_name 的黑名单（按 tool_name 前缀清理）。"""
+    guards = RuntimeGuardState()
+    result = ToolResult(output="anchor mismatch", metadata={"error": True, "error_kind": "unknown_error"})
+
+    failing = {"name": "replace", "args": {"file_path": "a.py", "start_no": 1, "end_no": 1, "start_anchor": "x", "end_anchor": "x", "new_string": "y"}}
+    key = build_failure_key(failing, result)
+    guards.tool_failures.record_failure(key, "anchor mismatch")
+    guards.tool_failures.record_failure(key, "anchor mismatch")
+    guards.tool_failures.record_failure(key, "anchor mismatch")
+    assert guards.tool_failures.should_block(failing) is True
+
+    recovered = {"name": "replace", "args": {"file_path": "a.py", "start_no": 5, "end_no": 5, "start_anchor": "x", "end_anchor": "x", "new_string": "y"}}
+    guards.tool_failures.record_success(recovered)
+    assert guards.tool_failures.should_block(failing) is False

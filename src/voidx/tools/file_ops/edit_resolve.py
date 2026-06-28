@@ -164,9 +164,10 @@ def _find_line_candidates(
 
 
 def _line_matches_replace_anchor(line: str, snippet: str) -> bool:
-    if snippet == "":
+    normalized = next((s for s in snippet.split("\n") if s != ""), "")
+    if normalized == "":
         return line == ""
-    return snippet in line
+    return normalized in line
 
 
 def _span_tolerance(expected_span: int) -> int:
