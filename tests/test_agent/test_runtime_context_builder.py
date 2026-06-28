@@ -471,3 +471,28 @@ def test_runtime_context_migrates_task_overlay_from_tool_message_to_latest_messa
     assert isinstance(latest_ai.content, str)
     assert latest_ai.content.startswith("VOIDX_RUNTIME_CONTEXT")
     assert latest_ai.content.endswith("latest assistant reply")
+
+
+
+def test_apply_to_messages_does_not_trim_state(tmp_path):
+    """apply_to_messages must not trim superseded reads from state (P1).
+    Trimming happens only in the LLM request frame, not in state mutation."""
+    context = RuntimeContextBuilder(
+        config=Config(workspace=str(tmp_path)),
+        workspace=str(tmp_path),
+        base_system_prompt="You are voidx.",
+        persona="voidx",
+        interaction_mode=InteractionMode.AUTO,
+    ).build()
+
+    numbered = lambda s, e: "\n".join(f"{i}\tline {i}" for i in range(s, e + 1))
+    messages = [
+        AIMessage(content="", tool_calls=[{"id": "old", "name": "read", "args": {"file_path": "f.py"}, "type": "tool_call"}]),
+        ToolMessage(content=numbered(1, 100), tool_call_id="old", status="success"),
+        AIMessage(content="", tool_calls=[{"id": "new", "name": "read", "args": {"file_path": "f.py"}, "type": "tool_call"}]),
+        ToolMessage(content=numbered(1, 100), tool_call_id="new", status="success"),
+    ]
+    context.apply_to_messages(messages)
+    tool_ids = {m.tool_call_id for m in messages if isinstance(m, ToolMessage)}
+    assert "old" in tool_ids
+    assert "new" in tool_ids

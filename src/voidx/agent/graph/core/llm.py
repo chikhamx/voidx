@@ -17,6 +17,7 @@ from voidx.agent.runtime_context import (
 from voidx.agent.state import AgentState
 from voidx.agent.task_state import GoalResolution, TaskState, goal_label, goal_type_from_join
 from voidx.agent.todo_state import sanitize_todo_replay_messages
+from voidx.agent.message_trimming import trim_superseded_file_tools
 from voidx.agent.tool_exchange_sanitizer import sanitize_failed_tool_exchanges
 from voidx.agent.tool_filters import filter_unavailable_lsp_tools
 from voidx.agent.graph.streaming import (
@@ -200,7 +201,7 @@ class GraphLlmMixin:
             *,
             allow_inline_compaction: bool,
         ) -> tuple[list[BaseMessage], list[HumanMessage], bool]:
-            base_messages = [*messages, *guidance_messages]
+            base_messages = trim_superseded_file_tools([*messages, *guidance_messages])
             if allow_inline_compaction and not compaction_happened:
                 inline_compaction_guide = self._inline_compaction_guide_for(base_messages)
                 if inline_compaction_guide is not None:

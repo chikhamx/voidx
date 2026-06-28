@@ -146,12 +146,12 @@ class TestFileOps:
         second = await r.execute_tool("read", {"file_path": "covered.txt", "offset": 50, "limit": 51}, ctx)
 
         assert "1\tline 1" in first.output
-        assert "already read" in second.output.lower()
-        assert "50-100" in second.output
-        assert "50\tline 50" in second.output
         assert second.metadata["already_read"] is True
         assert second.metadata["lines"] == 51
         assert second.metadata["covered_lines"] == 51
+        assert "50\tline 50" in second.output
+        assert "[Lines " not in second.output
+        assert "were already read" not in second.output
 
     @pytest.mark.asyncio
     async def test_already_read_repeated_output_stays_within_llm_message_budget(self, tmp_path):

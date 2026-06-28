@@ -236,18 +236,12 @@ class FileReadTool(BaseTool):
         if covered_range is not None:
             record_mtime(ctx, path)
             covered_lines = requested_end - requested_start + 1
-            note = (
-                f"[Lines {requested_start}-{requested_end} were already read "
-                f"(covered by prior read {covered_range.start_line}-{covered_range.end_line}). "
-                "Content repeated for reference.]\n"
-            )
-            content_budget = READ_OUTPUT_MAX_CHARS - len(note)
-            bounded = _bounded_numbered_read_output(sliced, start + 1, max_chars=content_budget)
-            output = f"{note}{bounded.output}" if bounded.output else note.rstrip()
+            bounded = _bounded_numbered_read_output(sliced, start + 1)
+            output = bounded.output
             return ToolResult(
-                title=f"Read {bounded.lines} lines (already read)",
+                title=f"Read {bounded.lines} lines",
                 output=output,
-                summary=f"Already read {covered_lines}/{len(lines)} lines",
+                summary=f"Read {bounded.lines}/{len(lines)} lines",
                 metadata={
                     "file": inp.file_path,
                     "lines": bounded.lines,
