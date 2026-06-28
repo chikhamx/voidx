@@ -1,6 +1,7 @@
 import { renderTranscript, renderTodoPanel } from "./render.js";
 import { matchSlashCommands, renderSlashMenu } from "./slash.js";
 import { setTranscriptElement, appendStreamText, commitStream, discardStream } from "./stream.js";
+import { renderMarkdown } from "./markdown.js";
 
 const statusDotEl = document.querySelector("#status-dot");
 const statusModelEl = document.querySelector("#status-model");
@@ -34,9 +35,11 @@ const MAX_RECONNECT = 10;
 
 setTranscriptElement(transcriptEl);
 
-bootstrap().catch((error) => {
-  setConnectionStatus("error", error instanceof Error ? error.message : String(error));
-});
+if (!import.meta.env.TEST) {
+  bootstrap().catch((error) => {
+    setConnectionStatus("error", error instanceof Error ? error.message : String(error));
+  });
+}
 
 async function bootstrap() {
   const wsUrl = await resolveWsUrl();
@@ -93,76 +96,190 @@ function connect(url) {
     setConnectionStatus("disconnected", "Connection error");
   });
   socket.addEventListener("message", (event) => {
-    let envelope;
+    let msg;
     try {
-      envelope = JSON.parse(event.data);
+      msg = JSON.parse(event.data);
     } catch {
       console.warn("voidx: ignoring non-JSON websocket message");
       return;
     }
-    if (envelope.type === "snapshot") {
-      uiState.sessionId = envelope.payload?.session_id || "";
+    const method = msg.method;
+    const params = msg.params || {};
+
+    if (method === "workspace.snapshot") {
+      const snapshot = params.active_snapshot || { nodes: [] };
+      uiState.sessionId = params.active_thread_id || "";
       updateStatusBar();
-      renderTranscript(transcriptEl, envelope.payload);
+      renderTranscript(transcriptEl, snapshot);
       scrollToBottom();
       return;
     }
-    if (envelope.type === "event") {
-      handleEvent(envelope.payload);
+    if (method === "ui.request") {
+      showRequest(params);
       return;
     }
-    if (envelope.type === "request") {
-      showRequest(envelope.payload);
+    if (method === "startup.shown") {
+      uiState.model = params.model || "";
+      uiState.workspace = params.workspace || "";
+      updateStatusBar();
+      return;
+    }
+    if (method === "turn.started") {
+      setRunning(true);
+      return;
+    }
+    if (method === "capture.started" || method === "capture.stopped") {
+      return;
+    }
+    if (method === "refresh.requested" || method === "reset.requested") {
+      return;
+    }
+    if (method === "notice.set") {
+      return;
+    }
+    if (method === "input.set") {
+      if (params.text) {
+        inputEl.value = params.text;
+      }
+      return;
+    }
+    if (method === "item.started" || method === "item.delta" || method === "item.completed") {
+      handleItem(method, params);
+      return;
     }
   });
 }
 
-function handleEvent(event) {
-  switch (event.kind) {
-    case "startup.shown":
-      uiState.model = event.model || "";
-      uiState.workspace = event.workspace || "";
-      updateStatusBar();
-      break;
-    case "turn.started":
-      setRunning(true);
-      break;
-    case "assistant_stream.started":
-      appendStreamText(event.stream_id, "", "text");
-      break;
-    case "assistant_stream.updated":
-      appendStreamText(event.stream_id, event.text, event.phase || "text");
-      break;
-    case "assistant_stream.committed":
-      commitStream(event.stream_id);
-      break;
-    case "assistant_stream.discarded":
-      discardStream(event.stream_id);
-      break;
-    case "tool.started":
-      setRunning(true);
-      break;
-    case "tool.finished":
-      break;
-    case "todo.updated":
-      renderTodoPanel(todoPanelEl, event.items, event.summary);
-      break;
-    case "todo.cleared":
-      renderTodoPanel(todoPanelEl, [], "");
-      break;
-    case "subagent.started":
-      break;
-    case "subagent.finished":
-      break;
-    case "permission_prompt.cleared":
+export function handleItem(method, params) {
+  const kind = params.kind;
+  const itemId = params.item_id;
+  const data = params.data || {};
+
+  if (kind === "assistant_stream") {
+    if (method === "item.started") {
+      appendStreamText(itemId, "", data.phase || "text");
+    } else if (method === "item.delta") {
+      appendStreamText(itemId, data.text || "", data.phase || "text");
+    } else if (method === "item.completed") {
+      commitStream(itemId);
+    }
+    return;
+  }
+  if (kind === "tool") {
+    handleToolItem(method, itemId, data);
+    return;
+  }
+  if (kind === "todo") {
+    if (method === "item.started") {
+      renderTodoPanel(todoPanelEl, data.items || [], data.summary || "");
+    } else if (method === "item.completed") {
+      if (data.cleared) {
+        renderTodoPanel(todoPanelEl, [], "");
+      }
+    }
+    return;
+  }
+  if (kind === "prompt") {
+    if (method === "item.completed" && data.cleared) {
       requestDialogEl.close();
-      break;
-    case "status.updated":
-      break;
-    case "status.finished":
-      break;
-    default:
-      break;
+    }
+    return;
+  }
+  if (kind === "status") {
+    return;
+  }
+  if (kind === "subagent") {
+    return;
+  }
+  if (kind === "message") {
+    if (method === "item.started") {
+      appendMessageItem(itemId, data);
+    }
+    return;
+  }
+}
+
+export function appendMessageItem(itemId, data) {
+  const el = document.createElement("div");
+  el.className = `message-item message-${data.style || "text"}`;
+  el.dataset.itemId = itemId;
+  const text = data.text || "";
+  if (data.style === "markdown" || data.style === "guidance") {
+    el.append(renderMarkdown(text));
+  } else {
+    const pre = document.createElement("pre");
+    pre.textContent = text;
+    el.append(pre);
+  }
+  if (transcriptEl) {
+    transcriptEl.append(el);
+    transcriptEl.scrollTop = transcriptEl.scrollHeight;
+  }
+}
+
+
+export function handleToolItem(method, itemId, data) {
+  let el = document.querySelector(`[data-tool-id="${data.tool_call_id}"]`);
+  if (method === "item.started") {
+    setRunning(true);
+    el = document.createElement("div");
+    el.className = "tool-item";
+    el.dataset.toolId = data.tool_call_id;
+    el.dataset.itemId = itemId;
+
+    const header = document.createElement("div");
+    header.className = "tool-header";
+    const name = document.createElement("span");
+    name.className = "tool-name";
+    name.textContent = data.tool_name || data.label || "tool";
+    const spinner = document.createElement("span");
+    spinner.className = "tool-spinner";
+    spinner.textContent = "running";
+    header.append(name, spinner);
+    el.append(header);
+
+    if (data.args) {
+      const args = document.createElement("pre");
+      args.className = "tool-args";
+      args.textContent = typeof data.args === "string"
+        ? data.args
+        : JSON.stringify(data.args, null, 2);
+      el.append(args);
+    }
+
+    if (transcriptEl) {
+      transcriptEl.append(el);
+      transcriptEl.scrollTop = transcriptEl.scrollHeight;
+    }
+  } else if (el) {
+    if (method === "item.delta") {
+      if (data.diff_text) {
+        const diff = document.createElement("pre");
+        diff.className = "tool-diff";
+        diff.textContent = data.diff_text;
+        el.append(diff);
+      } else if (data.detail) {
+        const detail = document.createElement("pre");
+        detail.className = "tool-detail";
+        detail.textContent = data.detail;
+        el.append(detail);
+      }
+    } else if (method === "item.completed") {
+      const spinner = el.querySelector(".tool-spinner");
+      if (spinner) {
+        spinner.textContent = data.ok ? "done" : "failed";
+        spinner.className = `tool-spinner ${data.ok ? "ok" : "err"}`;
+      }
+      if (data.detail) {
+        const detail = document.createElement("pre");
+        detail.className = "tool-detail";
+        detail.textContent = data.detail;
+        el.append(detail);
+      }
+    }
+    if (transcriptEl) {
+      transcriptEl.scrollTop = transcriptEl.scrollHeight;
+    }
   }
 }
 
@@ -206,9 +323,12 @@ composerEl.addEventListener("submit", (event) => {
     return;
   }
   socket.send(JSON.stringify({
-    type: "command",
-    payload: { kind: "submit", text },
+    jsonrpc: "2.0",
+    id: Date.now(),
+    method: "session.submit",
+    params: { text },
   }));
+  appendMessageItem(`user-${Date.now()}`, { style: "text", text });
   inputEl.value = "";
   hideSlashMenu();
 });
@@ -218,8 +338,10 @@ btnCancelEl.addEventListener("click", () => {
     return;
   }
   socket.send(JSON.stringify({
-    type: "command",
-    payload: { kind: "cancel" },
+    jsonrpc: "2.0",
+    id: Date.now(),
+    method: "session.cancel",
+    params: {},
   }));
   setRunning(false);
 });
@@ -358,8 +480,9 @@ function sendResponse(requestId, value) {
     return;
   }
   socket.send(JSON.stringify({
-    type: "response",
-    payload: { request_id: requestId, value },
+    jsonrpc: "2.0",
+    id: requestId,
+    result: { value },
   }));
   requestDialogEl.close();
 }

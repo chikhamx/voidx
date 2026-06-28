@@ -46,7 +46,7 @@ export function appendStreamText(streamId, text, phase) {
     stream.thinking += text;
     scheduleRender(stream, "thinking");
   } else {
-    stream.text += text;
+    stream.text = text;
     scheduleRender(stream);
   }
   if (transcriptEl) {
@@ -112,4 +112,10 @@ function renderStreamText(stream) {
 
 function renderStreamThinking(stream) {
   stream.thinkingEl.textContent = stream.thinking;
+}
+
+export function _resetForTest() {
+  streams.clear();
+  committedEls.length = 0;
+  transcriptEl = null;
 }

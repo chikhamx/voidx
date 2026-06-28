@@ -108,7 +108,7 @@ function renderDiffBlock(diffText) {
   return block;
 }
 
-function diffLineClass(line) {
+export function diffLineClass(line) {
   if (line.startsWith("+++") || line.startsWith("---")) {
     return "diff-meta";
   }
@@ -149,13 +149,13 @@ function renderSubagentCard(node) {
   return card;
 }
 
-function formatToolMeta(payload) {
+export function formatToolMeta(payload) {
   const name = payload.tool_name || "tool";
   const args = payload.args ? ` ${payload.args}` : "";
   return `${name}${args}`.trim();
 }
 
-function formatElapsed(seconds) {
+export function formatElapsed(seconds) {
   if (seconds == null || Number.isNaN(seconds)) {
     return "";
   }
