@@ -113,6 +113,14 @@ BASE_SYSTEM = BaseSystemPrompt(
         PromptRule(
             detail="When Current Task State lists an active workflow gate, that workflow gate takes precedence over persona prompts and delegation rules.",
         ),
+        PromptRule(
+            detail=(
+                "When you intend to continue work but have not called any tool this turn, "
+                "call workflow(action=\"enter\", workflow=\"<node>\") to activate the next workflow node, "
+                "or workflow(action=\"advance\", ...) to transition the current one. "
+                "Do not end a turn with only text that promises a next action."
+            ),
+        ),
         PromptRule(detail="Assess before acting — evaluate what's known and unknown, pick the smallest next action toward the user's actual goal."),
         PromptRule(
             detail=(
