@@ -405,7 +405,7 @@ async def test_checkpoint_prompt_event_renders_voidx_plan_and_decision(isolated_
         ))
         await bus.drain()
 
-        rendered = "\n".join(_plain(line) for line in isolated_dock.tree.render(120))
+        rendered = "\n".join(_rich_plain(line) for line in isolated_dock.tree.render(120))
         nodes = _tree_nodes(isolated_dock.tree.root)
         checkpoint = next(node for node in nodes if node.node_type == "checkpoint")
 
@@ -416,6 +416,10 @@ async def test_checkpoint_prompt_event_renders_voidx_plan_and_decision(isolated_
         assert "Do not duplicate hidden JSON result" in rendered
         assert "Choices:" not in rendered
         assert "Implement directly: Start implementing the plan" not in rendered
+        assert any("Plan:" in line and "#EBCB8B" in line for line in checkpoint.body_lines)
+        assert any("1." in line and "#61AFEF" in line for line in checkpoint.body_lines)
+        assert any("src/voidx/tools/plan_checkpoint.py" in line and "#56D4DD" in line for line in checkpoint.body_lines)
+        assert any("Do not duplicate hidden JSON result" in line and "#E06C75" in line for line in checkpoint.body_lines)
         assert checkpoint.status == "running"
         assert checkpoint.payload["checkpoint_id"] == "cp_1"
         assert isolated_dock.safe_flush_line_count(120, 0) == len(isolated_dock.tree.render(120))

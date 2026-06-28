@@ -50,7 +50,7 @@ from voidx.tools.base import ToolContext, ToolResult
 from voidx.tools.agent import AgentResultContract, AgentTool
 from voidx.tools.registry import ToolRegistry
 from voidx.ui.output.dock import BottomInputDock, set_dock
-from voidx.ui.output.events import DockEventConsumer, StatusUpdated, TurnStarted, ui_events
+from voidx.ui.output.events import DockEventConsumer, StatusFinished, StatusUpdated, TurnStarted, ui_events
 
 
 def _graph(tmp_path):
@@ -577,6 +577,69 @@ async def test_run_once_passes_compacted_messages_to_graph(tmp_path):
         assert "old answer" not in captured["messages"]
         assert "tail question" in captured["messages"]
         assert "current question" in captured["messages"]
+    finally:
+        await delete_session(session.id)
+
+
+@pytest.mark.asyncio
+async def test_run_once_finishes_analyzing_before_preflight_compaction_status(tmp_path):
+    session = await create_session(workspace=str(tmp_path))
+    try:
+        await save_message(MessageRow(session_id=session.id, role="user", content="old question"))
+        await save_message(MessageRow(session_id=session.id, role="assistant", content="old answer"))
+        await save_message(MessageRow(session_id=session.id, role="user", content="tail question"))
+
+        graph = VoidXGraph(Config(workspace=str(tmp_path)), api_key="test", session=session)
+        graph._compaction.is_overflow = lambda _tokens: False
+        graph._compaction.is_soft_overflow = lambda _tokens: True
+        graph._compaction.select_preflight_details = lambda messages, *, model="": CompactionSelection(
+            head=messages[:2],
+            tail_id=getattr(messages[2], "id", None),
+            keep_from=2,
+            mode="normal",
+        )
+
+        async def summarize(_head_messages, _previous_summary):
+            return "summary text"
+
+        class FakeGraph:
+            async def ainvoke(self, initial, _config):
+                return {"messages": list(initial["messages"]) + [AIMessage(content="new answer")]}
+
+        graph._run_compaction_agent = summarize
+        graph.graph = FakeGraph()
+
+        events = []
+
+        class Recorder:
+            def handle(self, event):
+                events.append(event)
+                return None
+
+        test_dock = BottomInputDock()
+        set_dock(test_dock)
+        test_dock.begin_capture()
+        ui_events.start(Recorder())
+        try:
+            await graph._run_once("current question")
+            await ui_events.drain()
+        finally:
+            await ui_events.stop()
+            test_dock.deactivate()
+            test_dock.reset()
+            set_dock(None)
+
+        analyzing_finish_index = next(
+            index
+            for index, event in enumerate(events)
+            if isinstance(event, StatusFinished) and event.status_id == "turn:analyzing"
+        )
+        compaction_update_index = next(
+            index
+            for index, event in enumerate(events)
+            if isinstance(event, StatusUpdated) and event.status_id == "compaction"
+        )
+        assert analyzing_finish_index < compaction_update_index
     finally:
         await delete_session(session.id)
 

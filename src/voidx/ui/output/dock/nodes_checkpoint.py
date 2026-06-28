@@ -74,29 +74,39 @@ class DockCheckpointNodeMixin:
         self.refresh()
 
 
+_PLAN_LABEL = "[#EBCB8B]Plan:[/#EBCB8B]"
+_SECTION_TITLE = "[bold #D8DEE9]{}:[/bold #D8DEE9]"
+_BODY = "[#D8DEE9]{}[/#D8DEE9]"
+_STEP_NUM = "[#61AFEF]{}.[/#61AFEF]"
+_PATH = "[#56D4DD]{}[/#56D4DD]"
+_RISK_PREFIX = "[#E06C75]-[/#E06C75]"
+_RISK_BODY = "[#E06C75]{}[/#E06C75]"
+
+
 def _checkpoint_body(plan: dict[str, Any]) -> list[str]:
     body: list[str] = []
     summary = str(plan.get("plan_summary") or "").strip()
     if summary:
-        body.append(escape(f"Plan: {summary}"))
+        body.append(f"{_PLAN_LABEL} {_BODY.format(escape(summary))}")
     steps = _string_list(plan.get("steps"))
     if steps:
         if body:
             body.append("")
-        body.append("[bold]Steps:[/bold]")
-        body.extend(escape(f"{index}. {step}") for index, step in enumerate(steps, 1))
+        body.append(_SECTION_TITLE.format("Steps"))
+        for index, step in enumerate(steps, 1):
+            body.append(f"{_STEP_NUM.format(index)} {_BODY.format(escape(step))}")
     affected_files = _string_list(plan.get("affected_files"))
     if affected_files:
         if body:
             body.append("")
-        body.append("[bold]Affected files:[/bold]")
-        body.extend(escape(path) for path in affected_files)
+        body.append(_SECTION_TITLE.format("Affected files"))
+        body.extend(_PATH.format(escape(path)) for path in affected_files)
     risks = _string_list(plan.get("risks"))
     if risks:
         if body:
             body.append("")
-        body.append("[bold]Risks:[/bold]")
-        body.extend(escape(f"- {risk}") for risk in risks)
+        body.append(_SECTION_TITLE.format("Risks"))
+        body.extend(f"{_RISK_PREFIX} {_RISK_BODY.format(escape(risk))}" for risk in risks)
     return body
 
 

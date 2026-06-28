@@ -259,6 +259,8 @@ class GraphTurnRunner:
             }
 
             # ── compaction: check overflow before running ──────────────────
+            if host._ui.via_events():
+                await host._ui.events.emit(StatusFinished(status_id="turn:analyzing"))
             preflight_result, _preflight_metadata = await host._preflight_compact_if_needed(
                 msgs,
                 session_msgs,
@@ -270,8 +272,6 @@ class GraphTurnRunner:
                 msgs.clear()
                 msgs.extend(preflight_result.live_messages)
                 initial["messages"] = msgs
-            if host._ui.via_events():
-                await host._ui.events.emit(StatusFinished(status_id="turn:analyzing"))
 
             recursion_limit = _resolve_recursion_limit()
             final = await host.graph.ainvoke(initial, {"recursion_limit": recursion_limit})
