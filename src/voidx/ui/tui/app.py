@@ -175,8 +175,8 @@ class PureTui(
             await self._stop_busy_activity_timer()
 
     async def run_headless(self, on_submit: SubmitHandler) -> None:
-        """Run without TUI — wait forever, input comes from gateway."""
-        await asyncio.Event().wait()
+        """Run without TUI — consume gateway input via the submit queue."""
+        await self._consume(on_submit)
 
     def submit_external_input(self, text: str) -> None:
         """Submit text from web gateway."""
