@@ -2,7 +2,7 @@
 
 Date: 2026-06-28
 
-> **Status: Design** — 将版本号源头收敛到 `src/voidx/__init__.py` 一处,其余文件动态引用或由 bump 脚本同步。
+> **Status: Done** — 版本号源头已收敛到 `src/voidx/__init__.py` 一处,其余文件动态引用或由 bump 脚本同步。实现见 commit `920f97c`。
 
 ## Context
 
