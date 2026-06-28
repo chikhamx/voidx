@@ -1,7 +1,9 @@
 # Releasing voidx
 
 This document describes the manual release flow for publishing voidx to PyPI
-and npm.
+and npm. The script `voidx_publish.sh` automates the build, validation, and
+publish steps below; this document additionally covers version bumps, git tags,
+and failure handling that the script does not perform.
 
 ## Package Names
 
@@ -14,16 +16,22 @@ launcher that installs and runs the matching Python package version.
 
 ## Version Files
 
-Bump the version in **all 5 files** before building. Missing any one causes
-breakage (see Common Pitfalls below).
+The canonical version source is `src/voidx/__init__.py` (`__version__`).
+`pyproject.toml` reads it dynamically at build time; the remaining files hold
+static copies that must stay in sync. Run the bump script to update all of them
+from the single source:
 
-| # | File | Field / Location | Notes |
-|---|------|------------------|-------|
-| 1 | `pyproject.toml` | `version = "X.Y.Z"` | Python package metadata, build entry point |
-| 2 | `src/voidx/__init__.py` | `__version__ = "X.Y.Z"` | Runtime version, read by `voidx --version` |
-| 3 | `npm/package.json` | `"version": "X.Y.Z"` | npm package metadata |
-| 4 | `scripts/install.sh` | `VERSION="${VOIDX_VERSION:-X.Y.Z}"` | Bash installer default version |
-| 5 | `scripts/install.ps1` | `$Version = ... else { "X.Y.Z" }` | PowerShell installer default version |
+```bash
+./python.sh scripts/bump_version.py <version>
+```
+
+| # | File | Field / Location | How it stays in sync |
+|---|------|------------------|----------------------|
+| 1 | `src/voidx/__init__.py` | `__version__ = "X.Y.Z"` | **Canonical source** — edit this (or let the bump script do it) |
+| 2 | `pyproject.toml` | `dynamic = ["version"]` | Dynamic via `[tool.setuptools.dynamic] version = {attr = "voidx.__version__"}` |
+| 3 | `npm/package.json` | `"version": "X.Y.Z"` | Bump script |
+| 4 | `scripts/install.sh` | `VERSION="${VOIDX_VERSION:-X.Y.Z}"` | Bump script |
+| 5 | `scripts/install.ps1` | `$Version = ... else { "X.Y.Z" }` | Bump script |
 
 ## Version Policy
 
@@ -44,9 +52,9 @@ breakage (see Common Pitfalls below).
 Run the full verification suite before publishing:
 
 ```bash
-.venv/bin/python scripts/package.py --check-only
-.venv/bin/python -m compileall -q src scripts tests
-.venv/bin/python -m pytest -q
+./python.sh scripts/package.py --check-only
+./python.sh -m compileall -q src scripts tests
+./python.sh -m pytest -q
 npm --prefix npm run check
 npm pack ./npm --dry-run
 ```
@@ -55,7 +63,7 @@ If `uv` needs a writable cache outside the home directory, run package builds
 with:
 
 ```bash
-UV_CACHE_DIR=/private/tmp/voidx-uv-cache .venv/bin/python scripts/package.py --format all --clean
+UV_CACHE_DIR=/private/tmp/voidx-uv-cache ./python.sh scripts/package.py --format all --clean
 ```
 
 The build should produce:
@@ -70,13 +78,13 @@ dist/voidx-<version>-py3-none-any.whl
 Build fresh artifacts:
 
 ```bash
-UV_CACHE_DIR=/private/tmp/voidx-uv-cache .venv/bin/python scripts/package.py --format all --clean
+UV_CACHE_DIR=/private/tmp/voidx-uv-cache ./python.sh scripts/package.py --format all --clean
 ```
 
 Upload with `twine` or an equivalent PyPI publishing tool:
 
 ```bash
-.venv/bin/python -m twine upload dist/voidx-<version>.tar.gz dist/voidx-<version>-py3-none-any.whl
+./python.sh -m twine upload dist/voidx-<version>.tar.gz dist/voidx-<version>-py3-none-any.whl
 ```
 
 Verify a clean install:
@@ -157,7 +165,7 @@ voidx --help
 
 | Mistake | Consequence |
 |---------|-------------|
-| Only bump `pyproject.toml`, not `__init__.py` | `voidx --version` shows old version |
+| Edit `__init__.py` but forget to run `bump_version.py` | `npm/package.json` and install scripts keep the old version |
 | Only bump Python files, not `npm/package.json` | `scripts/package.py` build fails (version mismatch check) |
 | Only bump package files, not install scripts | New users get the old version via `curl \| bash` |
 

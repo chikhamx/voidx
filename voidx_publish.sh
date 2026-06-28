@@ -1,14 +1,17 @@
 #!/usr/bin/env bash
+# voidx release automation — builds, validates, and publishes to PyPI and npm.
+# Does NOT bump version files or create git tags; see docs/releasing.md for the
+# full release flow including version bumps, git tags, and failure handling.
 set -euo pipefail
 
 ROOT="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 cd "$ROOT"
 
-PYTHON="${PYTHON:-.venv/bin/python}"
+PYTHON="${ROOT}/python.sh"
 VERSION="$("$PYTHON" - <<'PY'
-import tomllib
-with open("pyproject.toml", "rb") as handle:
-    print(tomllib.load(handle)["project"]["version"])
+import re
+text = open("src/voidx/__init__.py").read()
+print(re.search(r'__version__\s*=\s*"([^"]+)"', text).group(1))
 PY
 )"
 NPM_PACKAGE="$("$PYTHON" - <<'PY'

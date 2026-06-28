@@ -5,10 +5,10 @@ from __future__ import annotations
 
 import argparse
 import json
+import re
 import shutil
 import subprocess
 import sys
-import tomllib
 from pathlib import Path
 
 
@@ -59,8 +59,11 @@ def main() -> int:
 
 
 def _get_pyproject_version() -> str:
-    pyproject = tomllib.loads((ROOT / "pyproject.toml").read_text())
-    return pyproject["project"]["version"]
+    init_text = (ROOT / "src" / "voidx" / "__init__.py").read_text()
+    match = re.search(r'__version__\s*=\s*"([^"]+)"', init_text)
+    if not match:
+        raise RuntimeError("src/voidx/__init__.py is missing __version__.")
+    return match.group(1)
 
 
 def _sync_npm_version(version: str) -> None:

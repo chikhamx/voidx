@@ -7,7 +7,7 @@
 #   bash install.sh
 #
 # Environment variables:
-#   VOIDX_VERSION         — version to install (default: 2.3.0)
+#   VOIDX_VERSION         — version to install (default: see VERSION below)
 #   VOIDX_HOME            — install directory (default: ~/.local/share/voidx)
 #   VOIDX_PYTHON_MIRROR   — mirror for python-build-standalone downloads (fallback only)
 #   VOIDX_PIP_INDEX       — custom PyPI index URL (fallback only)

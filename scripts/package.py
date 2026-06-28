@@ -9,7 +9,6 @@ import re
 import shutil
 import subprocess
 import sys
-import tomllib
 from pathlib import Path
 
 
@@ -87,17 +86,12 @@ def _has_module(name: str) -> bool:
 
 def _check_release_metadata() -> int:
     errors: list[str] = []
-    pyproject = tomllib.loads((ROOT / "pyproject.toml").read_text())
-    project_version = pyproject["project"]["version"]
 
     init_text = (ROOT / "src" / "voidx" / "__init__.py").read_text()
     init_match = re.search(r'__version__\s*=\s*"([^"]+)"', init_text)
-    init_version = init_match.group(1) if init_match else ""
-    if init_version != project_version:
-        errors.append(
-            f"src/voidx/__init__.py version {init_version or '<missing>'} "
-            f"does not match pyproject.toml {project_version}."
-        )
+    project_version = init_match.group(1) if init_match else ""
+    if not project_version:
+        errors.append("src/voidx/__init__.py is missing __version__.")
 
     npm_package = ROOT / "npm" / "package.json"
     npm_bin = ROOT / "npm" / "bin" / "voidx.js"
@@ -107,7 +101,7 @@ def _check_release_metadata() -> int:
         if npm_version != project_version:
             errors.append(
                 f"npm/package.json version {npm_version or '<missing>'} "
-                f"does not match pyproject.toml {project_version}."
+                f"does not match __init__.py {project_version or '<missing>'}."
             )
         if npm_data.get("bin", {}).get("voidx") != "bin/voidx.js":
             errors.append("npm/package.json must expose bin.voidx as bin/voidx.js.")
