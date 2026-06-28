@@ -1,2 +1,2 @@
 #!/bin/bash
-PYTHONPATH=src .venv/bin/python -m voidx.main "$@"
+PYTHONPATH=src ./python.sh -m voidx.main "$@"
