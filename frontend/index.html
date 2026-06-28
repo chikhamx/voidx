@@ -3,23 +3,32 @@
   <head>
     <meta charset="utf-8" />
     <meta name="viewport" content="width=device-width, initial-scale=1" />
-    <title>voidx Web</title>
+    <title>voidx</title>
     <link rel="stylesheet" href="./styles.css" />
   </head>
   <body>
     <main class="shell">
-      <header class="topbar">
-        <div>
-          <h1>voidx</h1>
-          <p id="status">Disconnected</p>
+      <header class="status-bar">
+        <div class="status-item">
+          <span class="status-dot disconnected" id="status-dot"></span>
+          <span class="status-brand">voidx</span>
         </div>
+        <div class="status-item status-model" id="status-model"></div>
+        <div class="status-item status-workspace" id="status-workspace"></div>
+        <div class="status-item status-session" id="status-session"></div>
       </header>
+
+      <section class="todo-panel" id="todo-panel" aria-label="Task progress"></section>
+
       <section class="transcript" id="transcript" aria-live="polite"></section>
+
       <form class="composer" id="composer">
-        <textarea id="input" rows="3" placeholder="Ask voidx..."></textarea>
-        <button type="submit">Send</button>
+        <div class="slash-menu" id="slash-menu"></div>
+        <textarea id="input" rows="3" placeholder="Ask voidx... (use / for commands)"></textarea>
+        <button type="submit" class="btn-send" id="btn-send">Send</button>
+        <button type="button" class="btn-cancel" id="btn-cancel" disabled>Cancel</button>
       </form>
-      <section class="events" id="events" aria-label="Live UI events"></section>
+
       <dialog id="request-dialog" class="request-dialog">
         <form id="request-form" method="dialog">
           <h2 id="request-title"></h2>

@@ -9,7 +9,10 @@
     "schema": "python ../scripts/export_ui_protocol_schema.py && json2ts src/protocol.schema.json -o src/protocol.d.ts --bannerComment \"/* generated from protocol.schema.json */\""
   },
   "dependencies": {
-    "@tauri-apps/api": "^2"
+    "@tauri-apps/api": "^2",
+    "dompurify": "^3.4.11",
+    "highlight.js": "^11.11.1",
+    "marked": "^18.0.5"
   },
   "devDependencies": {
     "@vitejs/plugin-basic-ssl": "latest",
