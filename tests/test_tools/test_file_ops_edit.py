@@ -1588,3 +1588,184 @@ class TestFileOps:
         assert "@@ -1,3 +1,3 @@" in result.diff
         assert "-old" in result.diff
         assert "+new" in result.diff
+
+class TestDriftFallback:
+    def _make_lines(self):
+        # 10 行,edit 后 l2-l6 被替换成 X,文件变成 6 行
+        return ["l1", "X", "l7", "l8", "l9", "l10"]
+
+    def _make_map(self, epoch=1):
+        from voidx.tools.file_state import LineDriftMap, ReadLineRange, DiffSpan
+        # read epoch 记录的是原始 1-10;edit 20-30 -> 5行 的等价:这里用 2-6 -> 1行 (偏移 -4)
+        return LineDriftMap(
+            epoch=epoch,
+            source_ranges=[ReadLineRange(1, 10)],
+            span_steps=[[DiffSpan(2, 6, -4)]],
+        )
+
+    def test_first_match_succeeds_no_fallback(self):
+        from voidx.tools.file_ops.edit_execute import _find_text_segment_with_drift_fallback
+
+        lines = self._make_lines()
+        # 用当前文件行号直接匹配成功
+        result = _find_text_segment_with_drift_fallback(
+            lines, 2, 2, "X", "X", [self._make_map()]
+        )
+        assert result.match is not None
+        assert result.matched_map is None
+        assert result.remapped_range is None
+
+    def test_fallback_remaps_and_matches(self):
+        from voidx.tools.file_ops.edit_execute import _find_text_segment_with_drift_fallback
+
+        lines = self._make_lines()
+        # LLM 用老行号 7-7 (实际在当前文件第 3 行),anchor "l7"
+        # 首次在 ±3 搜索 7-7:lines[6..9] 不存在或不是 l7 -> 失败
+        # 回退:remap 7 -> 3,重试匹配 l7 -> 成功
+        result = _find_text_segment_with_drift_fallback(
+            lines, 7, 7, "l7", "l7", [self._make_map()]
+        )
+        assert result.match is not None
+        assert result.matched_map is not None
+        assert result.remapped_range == (3, 3)
+
+    def test_fallback_remap_to_wrong_content_fails(self):
+        from voidx.tools.file_ops.edit_execute import _find_text_segment_with_drift_fallback
+        from voidx.tools.file_state import LineDriftMap, ReadLineRange, DiffSpan
+
+        # 文件 10 行,edit 把 2-6 删成 1 行,LLM 用老行号 9 找 "target"
+        # remap 9 -> 4,但第 4 行是 "l8" 不是 "target",±3 内也没有
+        lines = ["l1", "X", "l7", "l8", "l9", "l10"]
+        bad_map = LineDriftMap(
+            epoch=1,
+            source_ranges=[ReadLineRange(1, 10)],
+            span_steps=[[DiffSpan(2, 6, -5)]],
+        )
+        result = _find_text_segment_with_drift_fallback(
+            lines, 9, 9, "target", "target", [bad_map]
+        )
+        assert result.match is None
+        assert result.error is not None
+
+    def test_multiple_candidates_same_range_equivalent(self):
+        from voidx.tools.file_ops.edit_execute import _find_text_segment_with_drift_fallback
+
+        lines = self._make_lines()
+        # 两个 map 都 remap 到 (3,3),都匹配 l7 -> 等价命中
+        maps = [self._make_map(epoch=1), self._make_map(epoch=2)]
+        result = _find_text_segment_with_drift_fallback(
+            lines, 7, 7, "l7", "l7", maps
+        )
+        assert result.match is not None
+
+    def test_multiple_candidates_different_range_ambiguity(self):
+        from voidx.tools.file_ops.edit_execute import _find_text_segment_with_drift_fallback
+        from voidx.tools.file_state import LineDriftMap, ReadLineRange, DiffSpan
+
+        # 20 行文件,第 9 行和第 17 行都是 "dup",相隔 8 行 (> 2*radius)
+        lines = [f"l{i}" for i in range(1, 21)]
+        lines[8] = "dup"   # 第 9 行
+        lines[16] = "dup"  # 第 17 行
+        # LLM 用老行号 5,首次在 5±3 (2-8) 搜索 -> 无 dup -> 失败
+        # map1: DiffSpan(1,1,0) 无偏移,remap 5 -> 5,但 5±3 (2-8) 无 dup -> 跳过
+        # 改用:map1 remap 5 -> 9 (offset +4),map2 remap 5 -> 17 (offset +12)
+        # 但 5 必须在 span 之后。用 DiffSpan(1,2,-1): remap 5 -> 4? 不行。
+        # 直接用 span 不覆盖 5: DiffSpan(1,1,4) -> remap 5 -> 9
+        # DiffSpan(1,1,12) -> remap 5 -> 17
+        map1 = LineDriftMap(
+            epoch=1, source_ranges=[ReadLineRange(1, 20)],
+            span_steps=[[DiffSpan(1, 1, 4)]],
+        )
+        map2 = LineDriftMap(
+            epoch=2, source_ranges=[ReadLineRange(1, 20)],
+            span_steps=[[DiffSpan(1, 1, 12)]],
+        )
+        result = _find_text_segment_with_drift_fallback(
+            lines, 5, 5, "dup", "dup", [map1, map2]
+        )
+        assert result.match is None
+        assert "ambig" in result.error.lower()
+
+    def test_no_maps_returns_first_error(self):
+        from voidx.tools.file_ops.edit_execute import _find_text_segment_with_drift_fallback
+
+        lines = self._make_lines()
+        result = _find_text_segment_with_drift_fallback(
+            lines, 7, 7, "l7", "l7", []
+        )
+        assert result.match is None
+        assert result.error is not None
+
+
+class TestDriftFallbackE2E:
+    @pytest.mark.asyncio
+    async def test_drift_fallback_e2e(self, tmp_path):
+        f = tmp_path / "drift.txt"
+        f.write_text("l1\nl2\nl3\nl4\nl5\nl6\nl7\nl8\nl9\nl10\n")
+        ctx = ToolContext(workspace=str(tmp_path))
+        r = ToolRegistry()
+        await r.execute_tool("read", {"file_path": "drift.txt"}, ctx)
+
+        # edit: l2-l6 (5行) -> X (1行),偏移 -4,l7 从第 7 行变成第 3 行
+        await r.execute_tool(
+            "replace",
+            {"file_path": "drift.txt", "start_no": 2, "end_no": 6,
+             "start_anchor": "l2", "end_anchor": "l6", "new_string": "X"},
+            ctx,
+        )
+
+        # LLM 用老行号 7-7 找 "l7",首次在 7±3 搜索失败,回退 remap 7->3 匹配成功
+        result = await r.execute_tool(
+            "replace",
+            {"file_path": "drift.txt", "start_no": 7, "end_no": 7,
+             "start_anchor": "l7", "end_anchor": "l7", "new_string": "L7"},
+            ctx,
+        )
+        assert result.metadata.get("error") is not True
+        assert "drift fallback" in result.output.lower()
+        assert f.read_text() == "l1\nX\nL7\nl8\nl9\nl10\n"
+
+    @pytest.mark.asyncio
+    async def test_drift_fallback_accumulates_multiple_edits(self, tmp_path):
+        """两次 edit 后用最初 read 的老行号走 fallback,验证 step 序列累积正确。
+
+        read 1-10
+        edit1: l2-l4 -> X (3行->1行,偏移 -2),l10 从第 10 行 -> 第 8 行
+        edit2: l5-l7 -> Y (3行->1行,偏移 -2),l10 从第 8 行 -> 第 6 行
+        LLM 用老行号 10-10 找 "l10":首次 10±3=7-13 搜索,第 6 行不在范围 -> 失败
+        回退: remap 10 -> 8 (edit1) -> 6 (edit2),重试匹配 l10 -> 成功
+        """
+        f = tmp_path / "drift_multi.txt"
+        f.write_text("l1\nl2\nl3\nl4\nl5\nl6\nl7\nl8\nl9\nl10\n")
+        ctx = ToolContext(workspace=str(tmp_path))
+        r = ToolRegistry()
+        await r.execute_tool("read", {"file_path": "drift_multi.txt"}, ctx)
+
+        # edit1: l2-l4 -> X (偏移 -2)
+        await r.execute_tool(
+            "replace",
+            {"file_path": "drift_multi.txt", "start_no": 2, "end_no": 4,
+             "start_anchor": "l2", "end_anchor": "l4", "new_string": "X"},
+            ctx,
+        )
+        # edit2: l5-l7 -> Y (edit1 后 l5/l6/l7 仍在第 5-7 行,偏移 -2)
+        await r.execute_tool(
+            "replace",
+            {"file_path": "drift_multi.txt", "start_no": 5, "end_no": 7,
+             "start_anchor": "l5", "end_anchor": "l7", "new_string": "Y"},
+            ctx,
+        )
+
+        # 当前文件: l1\nX\nY\nl8\nl9\nl10  -> l10 在第 6 行
+        # LLM 用老行号 10-10 找 "l10",首次 10±3=7-13 搜索失败(文件只有 6 行)
+        # 回退: remap 10 -> 8 (edit1) -> 6 (edit2),重试匹配 l10 -> 成功
+        result = await r.execute_tool(
+            "replace",
+            {"file_path": "drift_multi.txt", "start_no": 10, "end_no": 10,
+             "start_anchor": "l10", "end_anchor": "l10", "new_string": "L10"},
+            ctx,
+        )
+        assert result.metadata.get("error") is not True
+        assert "drift fallback" in result.output.lower()
+        assert "epoch #1" in result.output
+        assert f.read_text() == "l1\nX\nY\nl8\nl9\nL10\n"

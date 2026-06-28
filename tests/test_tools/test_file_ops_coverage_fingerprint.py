@@ -274,3 +274,307 @@ class TestFileOps:
         assert result.metadata["reason"] == "offset_beyond_eof"
 
 
+
+
+class TestLineDriftMapModel:
+    def test_line_drift_map_round_trip_serialization(self):
+        from voidx.tools.file_state import (
+            LineDriftMap,
+            ReadLineRange,
+            DiffSpan,
+            _line_drift_maps_from_raw,
+            _line_drift_maps_to_raw,
+        )
+
+        maps = [
+            LineDriftMap(
+                epoch=1,
+                source_ranges=[ReadLineRange(1, 100)],
+                span_steps=[
+                    [DiffSpan(old_start=20, old_end=30, offset=-6)],
+                    [DiffSpan(old_start=34, old_end=44, offset=-8)],
+                ],
+            ),
+            LineDriftMap(
+                epoch=2,
+                source_ranges=[ReadLineRange(20, 30)],
+                span_steps=[],
+            ),
+        ]
+        raw = _line_drift_maps_to_raw(maps)
+        restored = _line_drift_maps_from_raw(raw)
+
+        assert len(restored) == 2
+        assert restored[0].epoch == 1
+        assert restored[0].source_ranges == [ReadLineRange(1, 100)]
+        assert len(restored[0].span_steps) == 2
+        assert restored[0].span_steps[0] == [DiffSpan(20, 30, -6)]
+        assert restored[0].span_steps[1] == [DiffSpan(34, 44, -8)]
+        assert restored[1].epoch == 2
+        assert restored[1].source_ranges == [ReadLineRange(20, 30)]
+        assert restored[1].span_steps == []
+
+    def test_line_drift_maps_from_raw_empty(self):
+        from voidx.tools.file_state import _line_drift_maps_from_raw
+
+        assert _line_drift_maps_from_raw([]) == []
+        assert _line_drift_maps_from_raw(None) == []
+
+
+class TestRecordReadRangePreservesDriftMaps:
+    def test_first_read_creates_epoch_1_empty_steps(self, tmp_path):
+        import voidx.tools.file_state as fs
+
+        f = tmp_path / "a.txt"
+        f.write_text("line1\nline2\n")
+        ctx = ToolContext(workspace=str(tmp_path))
+        fs.record_read_range(ctx, f, 1, 2)
+
+        key = str(f.resolve())
+        coverage = ctx.file_read_coverage[key]
+        maps = fs._line_drift_maps_from_raw(coverage.get("line_drift_maps"))
+        assert len(maps) == 1
+        assert maps[0].epoch == 1
+        assert maps[0].source_ranges == [fs.ReadLineRange(1, 2)]
+        assert maps[0].span_steps == []
+
+    def test_second_read_appends_epoch_2_preserves_epoch_1(self, tmp_path):
+        import voidx.tools.file_state as fs
+
+        f = tmp_path / "a.txt"
+        f.write_text("line1\nline2\nline3\n")
+        ctx = ToolContext(workspace=str(tmp_path))
+        fs.record_read_range(ctx, f, 1, 3)
+        fs.record_read_range(ctx, f, 2, 3)
+
+        key = str(f.resolve())
+        maps = fs._line_drift_maps_from_raw(ctx.file_read_coverage[key].get("line_drift_maps"))
+        assert len(maps) == 2
+        assert maps[0].epoch == 1
+        assert maps[0].source_ranges == [fs.ReadLineRange(1, 3)]
+        assert maps[1].epoch == 2
+        assert maps[1].source_ranges == [fs.ReadLineRange(2, 3)]
+
+    def test_fingerprint_mismatch_clears_old_maps(self, tmp_path):
+        import voidx.tools.file_state as fs
+
+        f = tmp_path / "a.txt"
+        f.write_text("line1\nline2\n")
+        ctx = ToolContext(workspace=str(tmp_path))
+        fs.record_read_range(ctx, f, 1, 2)
+
+        # 模拟文件被外部修改:改内容后 mtime 变化
+        import time
+        time.sleep(0.01)
+        f.write_text("completely different\n")
+        fs.record_read_range(ctx, f, 1, 1)
+
+        key = str(f.resolve())
+        maps = fs._line_drift_maps_from_raw(ctx.file_read_coverage[key].get("line_drift_maps"))
+        assert len(maps) == 1
+        assert maps[0].epoch == 1  # 重新从 1 开始
+
+    def test_fifo_eviction_when_exceeding_max(self, tmp_path):
+        import voidx.tools.file_state as fs
+
+        f = tmp_path / "a.txt"
+        f.write_text("line1\n")
+        ctx = ToolContext(workspace=str(tmp_path))
+        # 写入 MAX+1 次 read
+        for i in range(fs.MAX_LINE_DRIFT_MAPS_PER_FILE + 1):
+            fs.record_read_range(ctx, f, 1, 1)
+
+        key = str(f.resolve())
+        maps = fs._line_drift_maps_from_raw(ctx.file_read_coverage[key].get("line_drift_maps"))
+        assert len(maps) == fs.MAX_LINE_DRIFT_MAPS_PER_FILE
+        # epoch 最小的被淘汰,保留 2..MAX+1
+        assert maps[0].epoch == 2
+        assert maps[-1].epoch == fs.MAX_LINE_DRIFT_MAPS_PER_FILE + 1
+
+
+class TestRemapAppendsStep:
+    def test_edit_appends_step_to_each_map(self, tmp_path):
+        import voidx.tools.file_state as fs
+        from voidx.diffing import make_structured_diff
+
+        f = tmp_path / "a.txt"
+        f.write_text("l1\nl2\nl3\nl4\nl5\nl6\nl7\nl8\nl9\nl10\n")
+        ctx = ToolContext(workspace=str(tmp_path))
+        fs.record_read_range(ctx, f, 1, 10)
+        fs.record_read_range(ctx, f, 5, 8)
+
+        key = str(f.resolve())
+        old_ranges = ctx.file_read_coverage[key]["ranges"]
+        # edit: 把 l2..l6 (5行) 替换成 X (1行),偏移 -4
+        old_content = f.read_text()
+        new_content = "l1\nX\nl7\nl8\nl9\nl10\n"
+        f.write_text(new_content)
+        file_diff = make_structured_diff("a.txt", old_content, new_content)
+        fs.remap_read_coverage_from_file_diff(ctx, f, file_diff, old_ranges=old_ranges)
+
+        maps = fs._line_drift_maps_from_raw(ctx.file_read_coverage[key].get("line_drift_maps"))
+        assert len(maps) == 2
+        for m in maps:
+            assert len(m.span_steps) == 1
+            step = m.span_steps[0]
+            assert len(step) == 1
+            assert step[0].offset == -4
+
+    def test_multiple_edits_without_read_accumulate_steps(self, tmp_path):
+        import voidx.tools.file_state as fs
+        from voidx.diffing import make_structured_diff
+
+        f = tmp_path / "a.txt"
+        f.write_text("l1\nl2\nl3\nl4\nl5\nl6\nl7\nl8\nl9\nl10\n")
+        ctx = ToolContext(workspace=str(tmp_path))
+        fs.record_read_range(ctx, f, 1, 10)
+
+        key = str(f.resolve())
+        # edit 1: l2..l3 -> X (偏移 -1)
+        old1 = f.read_text()
+        f.write_text("l1\nX\nl4\nl5\nl6\nl7\nl8\nl9\nl10\n")
+        fd1 = make_structured_diff("a.txt", old1, f.read_text())
+        old_ranges1 = ctx.file_read_coverage[key]["ranges"]
+        fs.remap_read_coverage_from_file_diff(ctx, f, fd1, old_ranges=old_ranges1)
+
+        # edit 2: l5..l6 -> Y (偏移 -1),在 edit1 后的坐标系
+        old2 = f.read_text()
+        f.write_text("l1\nX\nl4\nY\nl7\nl8\nl9\nl10\n")
+        fd2 = make_structured_diff("a.txt", old2, f.read_text())
+        old_ranges2 = ctx.file_read_coverage[key]["ranges"]
+        fs.remap_read_coverage_from_file_diff(ctx, f, fd2, old_ranges=old_ranges2)
+
+        maps = fs._line_drift_maps_from_raw(ctx.file_read_coverage[key].get("line_drift_maps"))
+        assert len(maps) == 1
+        assert len(maps[0].span_steps) == 2
+
+    def test_ranges_empty_clears_key_and_maps(self, tmp_path):
+        import voidx.tools.file_state as fs
+        from voidx.diffing import make_structured_diff
+
+        f = tmp_path / "a.txt"
+        f.write_text("l1\nl2\nl3\n")
+        ctx = ToolContext(workspace=str(tmp_path))
+        fs.record_read_range(ctx, f, 1, 3)
+
+        key = str(f.resolve())
+        # 删除全部内容,使 ranges 为空
+        old_content = f.read_text()
+        f.write_text("")
+        file_diff = make_structured_diff("a.txt", old_content, "")
+        fs.remap_read_coverage_from_file_diff(ctx, f, file_diff, old_ranges=[])
+
+        assert key not in ctx.file_read_coverage
+
+
+class TestGetLineDriftMaps:
+    def test_untracked_file_returns_empty(self, tmp_path):
+        import voidx.tools.file_state as fs
+
+        f = tmp_path / "nope.txt"
+        ctx = ToolContext(workspace=str(tmp_path))
+        assert fs.get_line_drift_maps(ctx, f) == []
+
+    def test_returns_maps_after_read(self, tmp_path):
+        import voidx.tools.file_state as fs
+
+        f = tmp_path / "a.txt"
+        f.write_text("l1\nl2\n")
+        ctx = ToolContext(workspace=str(tmp_path))
+        fs.record_read_range(ctx, f, 1, 2)
+
+        maps = fs.get_line_drift_maps(ctx, f)
+        assert len(maps) == 1
+        assert maps[0].epoch == 1
+        assert maps[0].source_ranges == [fs.ReadLineRange(1, 2)]
+        assert maps[0].span_steps == []
+
+    def test_returns_empty_after_clear(self, tmp_path):
+        import voidx.tools.file_state as fs
+
+        f = tmp_path / "a.txt"
+        f.write_text("l1\n")
+        ctx = ToolContext(workspace=str(tmp_path))
+        fs.record_read_range(ctx, f, 1, 1)
+        fs.clear_read_coverage(ctx, f)
+
+        assert fs.get_line_drift_maps(ctx, f) == []
+
+
+
+class TestRemapLineRange:
+    def test_no_steps_returns_original(self):
+        from voidx.tools.file_ops.edit_resolve import remap_line_range
+
+        assert remap_line_range(10, 20, []) == (10, 20)
+
+    def test_single_edit_offset(self):
+        from voidx.tools.file_ops.edit_resolve import remap_line_range
+        from voidx.tools.file_state import DiffSpan
+
+        # edit 20-30 -> 5行,偏移 -6;行号 40 在 edit 之后,应偏移 -6
+        steps = [[DiffSpan(20, 30, -6)]]
+        assert remap_line_range(40, 50, steps) == (34, 44)
+
+    def test_multiple_edits_accumulate(self):
+        from voidx.tools.file_ops.edit_resolve import remap_line_range
+        from voidx.tools.file_state import DiffSpan
+
+        # edit1: 20-30 -> 5行 (-6); edit2: 34-44 -> 3行 (-8)
+        # 老行号 60: 60 -> 54 (edit1) -> 46 (edit2)
+        steps = [
+            [DiffSpan(20, 30, -6)],
+            [DiffSpan(34, 44, -8)],
+        ]
+        assert remap_line_range(60, 60, steps) == (46, 46)
+
+    def test_range_fully_deleted_returns_none(self):
+        from voidx.tools.file_ops.edit_resolve import remap_line_range
+        from voidx.tools.file_state import DiffSpan
+
+        # edit 删除 20-30,老行号 22-28 完全落入删除区
+        steps = [[DiffSpan(20, 30, -11)]]  # 11行 -> 0行
+        assert remap_line_range(22, 28, steps) is None
+
+    def test_range_split_returns_none(self):
+        from voidx.tools.file_ops.edit_resolve import remap_line_range
+        from voidx.tools.file_state import DiffSpan
+
+        # edit 删除 25-26,老行号 20-30 被拆成 [20-24] 和 [27-30] 两段
+        steps = [[DiffSpan(25, 26, -2)]]
+        assert remap_line_range(20, 30, steps) is None
+
+    def test_equivalence_invariant_with_coverage_remap(self, tmp_path):
+        """remap_line_range 对单行的投影必须与 coverage ranges 一致"""
+        import voidx.tools.file_state as fs
+        from voidx.tools.file_ops.edit_resolve import remap_line_range
+        from voidx.diffing import make_structured_diff
+
+        f = tmp_path / "a.txt"
+        f.write_text("l1\nl2\nl3\nl4\nl5\nl6\nl7\nl8\nl9\nl10\n")
+        ctx = ToolContext(workspace=str(tmp_path))
+        fs.record_read_range(ctx, f, 1, 10)
+
+        key = str(f.resolve())
+        # edit1: l2-l3 -> X (偏移 -1)
+        old1 = f.read_text()
+        f.write_text("l1\nX\nl4\nl5\nl6\nl7\nl8\nl9\nl10\n")
+        fd1 = make_structured_diff("a.txt", old1, f.read_text())
+        old_ranges1 = ctx.file_read_coverage[key]["ranges"]
+        fs.remap_read_coverage_from_file_diff(ctx, f, fd1, old_ranges=old_ranges1)
+
+        # edit2: l5-l6 -> Y (偏移 -1)
+        old2 = f.read_text()
+        f.write_text("l1\nX\nl4\nY\nl7\nl8\nl9\nl10\n")
+        fd2 = make_structured_diff("a.txt", old2, f.read_text())
+        old_ranges2 = ctx.file_read_coverage[key]["ranges"]
+        fs.remap_read_coverage_from_file_diff(ctx, f, fd2, old_ranges=old_ranges2)
+
+        # l7 原在第 7 行,edit1 后 -> 6,edit2 后 -> 5
+        maps = fs.get_line_drift_maps(ctx, f)
+        assert len(maps) == 1
+        remapped = remap_line_range(7, 7, maps[0].span_steps)
+        assert remapped is not None
+        assert remapped == (5, 5)
+        # coverage 应覆盖 remapped 后的行
+        assert fs.covered_read_range(ctx, f, 5, 5) is not None

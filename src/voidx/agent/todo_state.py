@@ -103,7 +103,7 @@ def sanitize_todo_replay_messages(
     sanitized: list[BaseMessage] = []
     removed_tool_call_ids: set[str] = set()
     preserved_tool_call_ids = (
-        _latest_runtime_tool_exchange_ids(messages)
+        _latest_todo_tool_call_ids(messages)
         if preserve_latest_tool_exchange
         else set()
     )
@@ -240,26 +240,23 @@ def _sanitize_runtime_tool_additional_kwargs(
     return update, True
 
 
-def _latest_runtime_tool_exchange_ids(messages: list[BaseMessage]) -> set[str]:
-    trailing_tool_ids: set[str] = set()
+def _latest_todo_tool_call_ids(messages: list[BaseMessage]) -> set[str]:
     index = len(messages) - 1
-    while index >= 0 and isinstance(messages[index], ToolMessage):
-        tool_call_id = str(getattr(messages[index], "tool_call_id", "") or "")
-        if tool_call_id:
-            trailing_tool_ids.add(tool_call_id)
+    while index >= 0:
+        message = messages[index]
+        if isinstance(message, AIMessage):
+            preserved: set[str] = set()
+            for call in getattr(message, "tool_calls", None) or []:
+                if not isinstance(call, dict):
+                    continue
+                if call.get("name") == "todo":
+                    call_id = str(call.get("id") or "")
+                    if call_id:
+                        preserved.add(call_id)
+            if preserved:
+                return preserved
         index -= 1
-
-    if not trailing_tool_ids or index < 0 or not isinstance(messages[index], AIMessage):
-        return set()
-
-    preserved: set[str] = set()
-    for call in getattr(messages[index], "tool_calls", None) or []:
-        if not isinstance(call, dict):
-            continue
-        call_id = str(call.get("id") or "")
-        if call_id in trailing_tool_ids and call.get("name") in _REPLAY_SANITIZED_TOOL_NAMES:
-            preserved.add(call_id)
-    return preserved
+    return set()
 
 
 def _trailing_ai_runtime_tool_call_ids(messages: list[BaseMessage]) -> set[str]:

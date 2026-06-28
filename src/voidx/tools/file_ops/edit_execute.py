@@ -1,15 +1,18 @@
 from __future__ import annotations
 
 from dataclasses import asdict
+from typing import NamedTuple
 
 from pydantic import BaseModel, Field, model_validator
 
 from voidx.diffing import make_file_diff, make_structured_diff
 from voidx.tools.base import BaseTool, ToolContext, ToolResult, model_to_json_schema, resolve_safe
 from voidx.tools.file_state import (
+    LineDriftMap,
     check_read_coverage,
     check_staleness,
     file_fingerprint,
+    get_line_drift_maps,
     remap_read_coverage_from_file_diff,
     save_file_version,
 )
@@ -18,6 +21,7 @@ from .edit_resolve import (
     _find_text_segment,
     _result_trailing_newline,
     _validate_resolved_edits,
+    remap_line_range,
 )
 from .read import _join_display_lines, _split_display_lines, _split_edit_lines
 from .types import DisplayLines, ResolvedEdit
@@ -125,11 +129,21 @@ async def _execute_text_replace(
 
     original = path.read_text(encoding="utf-8", errors="replace")
     display = _split_display_lines(original)
-    match = _find_text_segment(display.lines, start_no, end_no, start_anchor, end_anchor)
-    if isinstance(match, str):
-        return ToolResult(output=match, metadata={"error": True})
+    drift_maps = get_line_drift_maps(ctx, path)
+    fallback = _find_text_segment_with_drift_fallback(
+        display.lines, start_no, end_no, start_anchor, end_anchor, drift_maps
+    )
+    if fallback.match is None:
+        return ToolResult(output=fallback.error, metadata={"error": True})
 
-    _, _, start_line, end_line = match
+    _, _, start_line, end_line = fallback.match
+    drift_hint = ""
+    if fallback.matched_map is not None and fallback.remapped_range is not None:
+        drift_hint = (
+            f"[Line drift fallback: {file_path} epoch #{fallback.matched_map.epoch} "
+            f"start_no {start_no}→{fallback.remapped_range[0]}, "
+            f"end_no {end_no}→{fallback.remapped_range[1]} matched via drift map.]\n"
+        )
     coverage_error = check_read_coverage(ctx, path, start_line, end_line, display_path=file_path)
     if coverage_error:
         return ToolResult(output=f"Edit 0: {coverage_error}", metadata={"error": True})
@@ -179,6 +193,8 @@ async def _execute_text_replace(
     remap_read_coverage_from_file_diff(ctx, path, file_diff, old_ranges=old_ranges)
 
     output = f"File edited: {file_path} (1 operations)"
+    if drift_hint:
+        output = f"{drift_hint}{output}"
     if diff:
         output = f"{output}\n{diff}"
     return ToolResult(
@@ -286,3 +302,56 @@ def _line_shift_hints(edits: list[ResolvedEdit]) -> list[str]:
             else:
                 hints.append(f"Line shift: lines after {edit.start_line} shifted by {new_count:+d}")
     return hints
+
+
+class DriftFallbackResult(NamedTuple):
+    match: tuple[int, int, int, int] | None
+    error: str | None
+    matched_map: LineDriftMap | None
+    remapped_range: tuple[int, int] | None
+
+
+def _find_text_segment_with_drift_fallback(
+    lines: list[str],
+    start_no: int,
+    end_no: int,
+    prefix: str,
+    suffix: str,
+    maps: list[LineDriftMap],
+) -> DriftFallbackResult:
+    first = _find_text_segment(lines, start_no, end_no, prefix, suffix)
+    if not isinstance(first, str):
+        return DriftFallbackResult(match=first, error=None, matched_map=None, remapped_range=None)
+
+    if not maps:
+        return DriftFallbackResult(match=None, error=first, matched_map=None, remapped_range=None)
+
+    candidates: list[tuple[tuple[int, int, int, int], LineDriftMap, tuple[int, int]]] = []
+    for m in sorted(maps, key=lambda x: x.epoch, reverse=True):
+        remapped = remap_line_range(start_no, end_no, m.span_steps)
+        if remapped is None or remapped == (start_no, end_no):
+            continue
+        result = _find_text_segment(lines, remapped[0], remapped[1], prefix, suffix)
+        if not isinstance(result, str):
+            candidates.append((result, m, remapped))
+
+    if not candidates:
+        return DriftFallbackResult(match=None, error=first, matched_map=None, remapped_range=None)
+
+    if len(candidates) == 1:
+        match, m, remapped = candidates[0]
+        return DriftFallbackResult(match=match, error=None, matched_map=m, remapped_range=remapped)
+
+    # 多候选:检查 resolved range 是否相同
+    first_range = (candidates[0][0][2], candidates[0][0][3])
+    if all((c[0][2], c[0][3]) == first_range for c in candidates):
+        match, m, remapped = candidates[0]
+        return DriftFallbackResult(match=match, error=None, matched_map=m, remapped_range=remapped)
+
+    ranges_str = ", ".join(f"{c[0][2]}-{c[0][3]}" for c in candidates)
+    return DriftFallbackResult(
+        match=None,
+        error=f"replace range is ambiguous after drift fallback: candidate ranges {ranges_str}. Please re-read the file.",
+        matched_map=None,
+        remapped_range=None,
+    )

@@ -63,6 +63,7 @@ class BottomInputDock(DockStreamMixin, DockStatusMixin, DockNodeMixin):
         self._todo_state: DockTodoState | None = None
         self._permission_node: OutputNode | None = None
         self._checkpoint_nodes: dict[str, OutputNode] = {}
+        self._clarify_nodes: dict[str, OutputNode] = {}
         self._settled_node_ids: set[str] = set()
         self._input_text = ""
         self._cursor_pos = 0
@@ -209,6 +210,7 @@ class BottomInputDock(DockStreamMixin, DockStatusMixin, DockNodeMixin):
         self._status_records = {}
         self._permission_node = None
         self._checkpoint_nodes = {}
+        self._clarify_nodes = {}
 
     def start_turn(self, text: str) -> OutputNode:
         self.commit_stream()

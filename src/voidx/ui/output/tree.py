@@ -692,7 +692,7 @@ def _needs_gap_between_agent_blocks(
 
 
 def _is_visible_agent_text(node: OutputNode) -> bool:
-    if node.node_type not in {"assistant", "message", "checkpoint"}:
+    if node.node_type not in {"assistant", "message", "checkpoint", "clarify"}:
         return False
     return bool(node.header or node.body_lines)
 

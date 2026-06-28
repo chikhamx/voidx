@@ -1,3 +1,5 @@
+> **Status: Done**
+
 # 行号漂移回退匹配 — 技术设计文档
 
 ## Context
@@ -140,7 +142,7 @@ LineDriftMap
 └── span_steps: list[list[DiffSpan]]
 ```
 
-`epoch` 只用于调试、提示和候选排序，不要求 LLM 在工具参数里传入。fallback 无法直接知道调用方使用的是哪个 read 输出，所以必须尝试多个候选 map，并通过 anchor 匹配判定。
+`epoch` 为 **per-file 单调递增整数**，生成规则：`record_read_range` 追加新 map 时取 `max(现有 epochs, default=0) + 1`。FIFO 淘汰后旧 epoch 不复用，保证 epoch 与 read 输出的对应关系在 maps 生命周期内稳定。`epoch` 只用于调试、提示和候选排序，不要求 LLM 在工具参数里传入。
 
 ## API Contract
 
@@ -179,7 +181,8 @@ LineDriftMap
       maps: list[LineDriftMap],
   ) -> DriftFallbackResult
   ```
-  其中 `DriftFallbackResult` 为 NamedTuple，避免三层嵌套 tuple 在调用方解包时出错：
+  **调用点**：替换 `edit_execute.py:128`（`_execute_text_replace` 中）对 `_find_text_segment` 的直接调用。原调用 `match = _find_text_segment(display.lines, start_no, end_no, start_anchor, end_anchor)` 改为先通过 `get_line_drift_maps(ctx, path)` 取候选 maps，再调用本函数。返回 `DriftFallbackResult` 后，调用方根据 `match`/`error` 分支处理，与原 `isinstance(match, str)` 判断等价。
+  其中 `DriftFallbackResult` 为 NamedTuple
   ```python
   class DriftFallbackResult(NamedTuple):
       match: tuple[int, int, int, int] | None   # _find_text_segment 的成功结果
@@ -202,7 +205,7 @@ LineDriftMap
   6. 若多个候选成功但 resolved `(start_line, end_line)` 相同，返回该结果（等价命中）
   7. 若多个候选成功且 resolved range 不同，返回 ambiguity 错误，要求重新 read
 - **失败分类（不显式区分，但语义上）**：第一次失败可能源于 (a) 行号漂移——anchor 内容在文件中存在，只是位置偏移；(b) anchor 内容错误——anchor 在文件中根本不存在。回退对 (a) 有效；对 (b) 换算行号后仍找不到 anchor，必然失败并返回原错误。回退路径不区分这两种情况（区分需要全文搜索 anchor，成本高且可能误匹配），而是统一"换算→重试"，让 (b) 自然失败。这是可接受的：回退的额外开销仅一次 `_find_text_segment` 调用（O(radius)），不会显著拖慢错误路径。
-- **回退成功后的 coverage 检查衔接**：回退命中后，`_execute_text_replace` 后续的 `check_read_coverage` 与 `old_ranges` 提取均使用回退换算后的行号（当前文件坐标系），无需二次换算。`old_ranges` 来自 `existing_coverage["ranges"]`，这些 ranges 已被 `remap_read_coverage` 重映射为当前文件行号，与回退后的行号坐标系一致。
+- **回退成功后的 coverage 检查衔接**：回退命中后，`_execute_text_replace` 后续的 `check_read_coverage`（edit_execute.py:133）与切片（:147 `lines[start_line-1:end_line]`）使用回退换算后的行号（当前文件坐标系），无需二次换算。`old_ranges` 提取逻辑（:140-143）不变——它从 `existing_coverage["ranges"]` 整体拷贝用于后续 `remap_read_coverage`，与本次编辑范围无关；这些 ranges 已被 `remap_read_coverage` 重映射为当前文件行号，与回退后的行号坐标系一致。
 
 ## Error Handling
 

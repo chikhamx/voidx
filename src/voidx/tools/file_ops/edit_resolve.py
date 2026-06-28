@@ -1,10 +1,15 @@
 from __future__ import annotations
 
+from typing import TYPE_CHECKING
+
 from .types import (
     TEXT_REPLACE_LINE_RADIUS,
     TEXT_REPLACE_SPAN_TOLERANCE,
     ResolvedEdit,
 )
+
+if TYPE_CHECKING:
+    from voidx.tools.file_state import DiffSpan
 
 
 def _validate_resolved_edits(edits: list[ResolvedEdit], total_lines: int) -> str | None:
@@ -227,3 +232,31 @@ def _result_trailing_newline(edits: list[ResolvedEdit], total_lines: int, origin
         if touches_final:
             trailing_newline = edit.new_string.endswith("\n")
     return trailing_newline
+
+
+def remap_line_range(
+    start: int,
+    end: int,
+    span_steps: "list[list[DiffSpan]]",
+) -> tuple[int, int] | None:
+    """Project a read-epoch line range through a sequence of edit steps.
+
+    Each step is a list of DiffSpan in the coordinate system of the file
+    after the previous step.  Returns the (start, end) in the current file
+    coordinate system, or None if the range was fully deleted/replaced or
+    split into multiple discontinuous segments.
+    """
+    from voidx.tools.file_state import _remap_old_range
+
+    pending: list[tuple[int, int]] = [(start, end)]
+    for step in span_steps:
+        next_pending: list[tuple[int, int]] = []
+        for s, e in pending:
+            for item in _remap_old_range(s, e, step):
+                next_pending.append((int(item["start_line"]), int(item["end_line"])))
+        pending = next_pending
+        if not pending:
+            return None
+    if len(pending) != 1:
+        return None
+    return pending[0]

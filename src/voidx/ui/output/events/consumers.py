@@ -25,6 +25,8 @@ from voidx.ui.output.events.schema import (
     CaptureStopped,
     CheckpointDecisionSubmitted,
     CheckpointPromptShown,
+    ClarifyAnswerSubmitted,
+    ClarifyPromptShown,
     DiffAppended,
     ErrorAppended,
     FileChangeAppended,
@@ -403,6 +405,20 @@ class DockEventConsumer:
                     e.decision,
                     e.label,
                     e.response,
+                    was_custom_input=e.was_custom_input,
+                )
+            case ClarifyPromptShown() as e:
+                return self._dock.show_clarify(
+                    e.clarify_id,
+                    e.question,
+                    e.options,
+                    parent=self._agent_parent(e.agent_id),
+                )
+            case ClarifyAnswerSubmitted() as e:
+                return self._dock.resolve_clarify(
+                    e.clarify_id,
+                    e.answer,
+                    cancelled=e.cancelled,
                     was_custom_input=e.was_custom_input,
                 )
             case NoticeSet():

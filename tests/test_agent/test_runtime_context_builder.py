@@ -150,9 +150,67 @@ def test_runtime_context_applies_task_context_before_current_user(tmp_path):
     assert "## Runtime State" not in messages[-1].content
     assert "Current Task State" in messages[-1].content
     assert "Todo: 1/2 done · 1 active · 0 pending" in messages[-1].content
-    assert "Active/Pending: ctx" in messages[-1].content
+    assert "active: update runtime context" in messages[-1].content
+    assert "Active/Pending" not in messages[-1].content
+    assert "Call todo with op=read" not in messages[-1].content
     assert "## Task Context" in messages[-1].content
     assert messages[-1].content.endswith("tool result")
+
+
+def test_current_task_state_todo_omits_active_when_all_pending(tmp_path):
+    task_state = TaskState(
+        todo_state=TodoRunState.model_validate({
+            "summary": "0/2 done · 0 active · 2 pending",
+            "total": 2,
+            "done": 0,
+            "active": 0,
+            "pending": 2,
+            "active_items": [],
+            "items": [
+                {"id": "p1", "content": "first task", "status": "pending"},
+                {"id": "p2", "content": "second task", "status": "pending"},
+            ],
+        })
+    )
+    messages = [HumanMessage(content="go")]
+    context = RuntimeContextBuilder(
+        config=Config(workspace=str(tmp_path)),
+        workspace=str(tmp_path),
+        base_system_prompt="You are voidx.",
+        persona="voidx",
+        interaction_mode=InteractionMode.AUTO,
+        task_state=task_state,
+    ).build()
+    context.apply_to_messages(messages)
+    assert "Todo: 0/2 done · 0 active · 2 pending" in messages[-1].content
+    assert "active:" not in messages[-1].content
+
+
+def test_current_task_state_todo_truncates_long_active_content(tmp_path):
+    long_content = "x" * 100
+    task_state = TaskState(
+        todo_state=TodoRunState.model_validate({
+            "summary": "0/1 done · 1 active · 0 pending",
+            "total": 1,
+            "done": 0,
+            "active": 1,
+            "pending": 0,
+            "active_items": [{"id": "a1", "content": long_content, "status": "active"}],
+            "items": [{"id": "a1", "content": long_content, "status": "active"}],
+        })
+    )
+    messages = [HumanMessage(content="go")]
+    context = RuntimeContextBuilder(
+        config=Config(workspace=str(tmp_path)),
+        workspace=str(tmp_path),
+        base_system_prompt="You are voidx.",
+        persona="voidx",
+        interaction_mode=InteractionMode.AUTO,
+        task_state=task_state,
+    ).build()
+    context.apply_to_messages(messages)
+    assert "active: " + "x" * 60 + "…" in messages[-1].content
+    assert "x" * 100 not in messages[-1].content
 
 
 def test_runtime_context_omits_goal_resolution_guide(tmp_path):

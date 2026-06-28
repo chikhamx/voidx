@@ -1,3 +1,5 @@
+> **Status: Done**
+
 # Read 滑动窗口惰性裁剪 — 技术设计文档
 
 ## Context

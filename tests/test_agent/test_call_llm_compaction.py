@@ -118,7 +118,8 @@ async def test_call_llm_injects_current_todo_runtime_context(tmp_path, monkeypat
     assert len(todo_messages) == 1
     assert "## Current Todo" not in todo_messages[0]
     assert "Todo: 0/2 done · 1 active · 1 pending" in todo_messages[0]
-    assert "Active/Pending: todo_replay" in todo_messages[0]
+    assert "active: inspect todo replay" in todo_messages[0]
+    assert "Active/Pending" not in todo_messages[0]
 
 
 @pytest.mark.asyncio

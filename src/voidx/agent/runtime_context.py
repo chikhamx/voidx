@@ -277,10 +277,14 @@ class RuntimeContextBuilder:
         if todo_state is not None and todo_state.items:
             visible = [i for i in todo_state.items if i.status in ("active", "pending")]
             if visible:
-                ids = ", ".join(i.id for i in visible)
-                lines.append(f"- Todo: {todo_state.summary}")
-                lines.append(f"  Active/Pending: {ids}")
-                lines.append("  Call todo with op=read for details.")
+                line = f"- Todo: {todo_state.summary}"
+                active_item = next((i for i in todo_state.items if i.status == "active"), None)
+                if active_item and active_item.content:
+                    content = active_item.content
+                    if len(content) > 60:
+                        content = content[:60] + "…"
+                    line += f" · active: {content}"
+                lines.append(line)
         if self.interaction_mode == InteractionMode.PLAN:
             lines.append("- Constraint: plan mode blocks write/insert/replace/edit, write-capable bash, and implement delegation.")
         elif self.interaction_mode == InteractionMode.GOAL:

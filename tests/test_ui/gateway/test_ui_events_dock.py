@@ -21,6 +21,8 @@ from voidx.ui.output.events import (
     CheckpointDecisionSubmitted,
     CheckpointPlanPayload,
     CheckpointPromptShown,
+    ClarifyAnswerSubmitted,
+    ClarifyPromptShown,
     DockEventConsumer,
     ErrorAppended,
     FileChangeAppended,
@@ -531,6 +533,164 @@ async def test_checkpoint_decision_for_unknown_id_logs_debug(isolated_dock, capl
     finally:
         await bus.stop()
 
+
+@pytest.mark.asyncio
+async def test_clarify_prompt_event_renders_voidx_clarify_and_answer(isolated_dock):
+    isolated_dock.begin_capture()
+    bus = UiEventBus()
+    bus.start(DockEventConsumer(isolated_dock))
+    try:
+        await bus.request(TurnStarted(text="demo"))
+        await bus.emit(ClarifyPromptShown(
+            clarify_id="cl_1",
+            question="Which approach should I take?",
+            options=["implement directly", "document first"],
+        ))
+        await bus.drain()
+
+        rendered = "\n".join(_rich_plain(line) for line in isolated_dock.tree.render(120))
+        nodes = _tree_nodes(isolated_dock.tree.root)
+        clarify = next(node for node in nodes if node.node_type == "clarify")
+
+        assert "voidx clarify" in rendered
+        assert "Question: Which approach should I take?" in rendered
+        assert "Suggestions" in rendered
+        assert "implement directly" in rendered
+        assert "document first" in rendered
+        assert any("Question:" in line and "#EBCB8B" in line for line in clarify.body_lines)
+        assert any("-" in line and "#61AFEF" in line for line in clarify.body_lines)
+        assert clarify.status == "running"
+        assert clarify.payload["clarify_id"] == "cl_1"
+        assert clarify.payload["question"] == "Which approach should I take?"
+        assert clarify.payload["options"] == ["implement directly", "document first"]
+        assert isolated_dock.safe_flush_line_count(120, 0) == len(isolated_dock.tree.render(120))
+
+        await bus.emit(ClarifyAnswerSubmitted(
+            clarify_id="cl_1",
+            answer="implement directly",
+        ))
+        await bus.drain()
+
+        rendered = "\n".join(_plain(line) for line in isolated_dock.tree.render(120))
+
+        assert clarify.status == "done"
+        assert "voidx clarify answered" in rendered
+        assert "User: implement directly" in rendered
+        assert clarify.payload["answer"] == "implement directly"
+        assert clarify.payload["cancelled"] is False
+        assert clarify.payload["was_custom_input"] is True
+    finally:
+        await bus.stop()
+
+
+@pytest.mark.asyncio
+async def test_clarify_answer_renders_as_full_width_user_row_with_following_gap(isolated_dock):
+    isolated_dock.begin_capture()
+    bus = UiEventBus()
+    bus.start(DockEventConsumer(isolated_dock))
+    try:
+        await bus.request(TurnStarted(text="demo"))
+        await bus.emit(ClarifyPromptShown(
+            clarify_id="cl_1",
+            question="Which approach?",
+            options=["implement", "document"],
+        ))
+        await bus.emit(ClarifyAnswerSubmitted(
+            clarify_id="cl_1",
+            answer="implement",
+        ))
+        await bus.emit(AssistantStreamUpdated(text="开始实现方案。"))
+        await bus.drain()
+
+        lines = isolated_dock.tree.render(80)
+        plain_lines = [_rich_plain(line) for line in lines]
+        user_index = plain_lines.index("User: implement" + (" " * 65))
+
+        assert Text.from_markup(lines[user_index]).cell_len == 80
+        assert any("on #3a3937" in str(span.style) for span in Text.from_markup(lines[user_index]).spans)
+        assert plain_lines[user_index + 1] == ""
+        assert plain_lines[user_index + 2].startswith("● 开始实现方案")
+    finally:
+        await bus.stop()
+
+
+@pytest.mark.asyncio
+async def test_clarify_cancelled_renders_skipped_header(isolated_dock):
+    isolated_dock.begin_capture()
+    bus = UiEventBus()
+    bus.start(DockEventConsumer(isolated_dock))
+    try:
+        await bus.request(TurnStarted(text="demo"))
+        await bus.emit(ClarifyPromptShown(
+            clarify_id="cl_skip",
+            question="Which approach?",
+            options=["implement"],
+        ))
+        await bus.emit(ClarifyAnswerSubmitted(
+            clarify_id="cl_skip",
+            answer="",
+            cancelled=True,
+        ))
+        await bus.drain()
+
+        clarify = next(
+            node for node in _tree_nodes(isolated_dock.tree.root)
+            if node.node_type == "clarify"
+        )
+
+        assert "[red]voidx clarify skipped[/red]" in clarify.header
+        assert clarify.status == "done"
+        assert clarify.payload["cancelled"] is True
+        rendered = "\n".join(_plain(line) for line in isolated_dock.tree.render(120))
+        assert "User: skipped" in rendered
+    finally:
+        await bus.stop()
+
+
+@pytest.mark.asyncio
+async def test_clarify_answer_for_unknown_id_logs_debug(isolated_dock, caplog):
+    isolated_dock.begin_capture()
+    bus = UiEventBus()
+    bus.start(DockEventConsumer(isolated_dock))
+    try:
+        caplog.set_level(logging.DEBUG, logger="voidx.ui.output.dock.nodes_clarify")
+        await bus.emit(ClarifyAnswerSubmitted(
+            clarify_id="missing_cl",
+            answer="implement",
+        ))
+        await bus.drain()
+
+        assert "unknown clarify_id" in caplog.text
+        assert "missing_cl" in caplog.text
+    finally:
+        await bus.stop()
+
+
+@pytest.mark.asyncio
+async def test_clarify_prompt_without_options_renders_question_only(isolated_dock):
+    isolated_dock.begin_capture()
+    bus = UiEventBus()
+    bus.start(DockEventConsumer(isolated_dock))
+    try:
+        await bus.request(TurnStarted(text="demo"))
+        await bus.emit(ClarifyPromptShown(
+            clarify_id="cl_open",
+            question="What is the target framework?",
+            options=[],
+        ))
+        await bus.drain()
+
+        rendered = "\n".join(_rich_plain(line) for line in isolated_dock.tree.render(120))
+        clarify = next(
+            node for node in _tree_nodes(isolated_dock.tree.root)
+            if node.node_type == "clarify"
+        )
+
+        assert "Question: What is the target framework?" in rendered
+        assert "Suggestions" not in rendered
+        assert clarify.payload["options"] == []
+    finally:
+        await bus.stop()
 
 @pytest.mark.asyncio
 async def test_guidance_submitted_event_does_not_render_message(isolated_dock):

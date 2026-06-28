@@ -27,6 +27,10 @@ from voidx.tools.task_status import TaskStatusTool
 from voidx.tools.todo import TodoInput, TodoWriteTool
 from voidx.tools.registry import ToolRegistry
 from voidx.tools.clarify import ClarifyTool, ClarifyInput, _infer_state_patch
+from voidx.ui.output.events import (
+    ClarifyAnswerSubmitted,
+    ClarifyPromptShown,
+)
 from voidx.tools.load_skills import LoadSkillsTool
 from voidx.tools.load_doc_template import LoadDocTemplateTool, LoadDocTemplateInput
 from voidx.tools.plan_checkpoint import PlanCheckpointInput, PlanCheckpointTool, _build_prompt
@@ -66,6 +70,122 @@ class TestInteractiveTools:
         assert result.metadata["state_patch"]["intent"]["type"] == "coding"
         assert result.metadata["state_patch"]["goal"]["desc"] == "implement"
 
+
+    @pytest.mark.asyncio
+    async def test_clarify_emits_prompt_and_answer_events(self, tmp_path):
+        events = []
+
+        class RecordingConsumer:
+            def handle(self, event):
+                events.append(event)
+
+        if ui_events.is_running:
+            await ui_events.stop()
+        ui_events.start(RecordingConsumer())
+        try:
+            async def interact(request):
+                return UserResponse(value="implement")
+
+            result = await ClarifyTool().execute(
+                {
+                    "question": "What should I do?",
+                    "options": ["implement", "inspect"],
+                },
+                ToolContext(workspace=str(tmp_path), interact=interact),
+            )
+        finally:
+            await ui_events.stop()
+
+        shown = next(event for event in events if isinstance(event, ClarifyPromptShown))
+        submitted = next(event for event in events if isinstance(event, ClarifyAnswerSubmitted))
+
+        assert result.metadata["clarify_answer"] == "implement"
+        assert shown.clarify_id == submitted.clarify_id
+        assert shown.question == "What should I do?"
+        assert shown.options == ["implement", "inspect"]
+        assert submitted.answer == "implement"
+        assert submitted.cancelled is False
+        assert submitted.was_custom_input is True
+
+    @pytest.mark.asyncio
+    async def test_clarify_passes_empty_options_when_event_ui_is_active(self, tmp_path):
+        events = []
+        requests = []
+
+        class RecordingConsumer:
+            def handle(self, event):
+                events.append(event)
+
+        if ui_events.is_running:
+            await ui_events.stop()
+        ui_events.start(RecordingConsumer())
+        try:
+            async def interact(request):
+                requests.append(request)
+                return UserResponse(value="implement")
+
+            await ClarifyTool().execute(
+                {
+                    "question": "What should I do?",
+                    "options": ["implement", "inspect"],
+                },
+                ToolContext(workspace=str(tmp_path), interact=interact),
+            )
+        finally:
+            await ui_events.stop()
+
+        shown = next(event for event in events if isinstance(event, ClarifyPromptShown))
+        assert shown.options == ["implement", "inspect"]
+        assert requests[0].prompt == "Question:"
+        assert requests[0].options == []
+
+    @pytest.mark.asyncio
+    async def test_clarify_passes_full_options_when_event_ui_inactive(self, tmp_path):
+        requests = []
+
+        if ui_events.is_running:
+            await ui_events.stop()
+
+        async def interact(request):
+            requests.append(request)
+            return UserResponse(value="implement")
+
+        await ClarifyTool().execute(
+            {
+                "question": "What should I do?",
+                "options": ["implement", "inspect"],
+            },
+            ToolContext(workspace=str(tmp_path), interact=interact),
+        )
+
+        assert requests[0].prompt == "What should I do?"
+        assert requests[0].options == ["implement", "inspect"]
+
+    @pytest.mark.asyncio
+    async def test_clarify_emits_cancelled_answer_event_on_skip(self, tmp_path):
+        events = []
+
+        class RecordingConsumer:
+            def handle(self, event):
+                events.append(event)
+
+        if ui_events.is_running:
+            await ui_events.stop()
+        ui_events.start(RecordingConsumer())
+        try:
+            async def interact(request):
+                return UserResponse(value="", cancelled=True)
+
+            result = await ClarifyTool().execute(
+                {"question": "What should I do?", "options": []},
+                ToolContext(workspace=str(tmp_path), interact=interact),
+            )
+        finally:
+            await ui_events.stop()
+
+        submitted = next(event for event in events if isinstance(event, ClarifyAnswerSubmitted))
+        assert submitted.cancelled is True
+        assert result.metadata["clarify_cancelled"] is True
     @pytest.mark.asyncio
     async def test_plan_checkpoint_approval_sets_implementation_goal(self, tmp_path):
         async def interact(request):

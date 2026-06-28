@@ -273,6 +273,21 @@ class CheckpointDecisionSubmitted(UiEventBase):
     was_custom_input: bool = False
 
 
+
+class ClarifyPromptShown(UiEventBase):
+    kind: Literal["clarify_prompt.shown"] = "clarify_prompt.shown"
+    clarify_id: str
+    question: str
+    options: list[str] = Field(default_factory=list)
+
+
+class ClarifyAnswerSubmitted(UiEventBase):
+    kind: Literal["clarify_answer.submitted"] = "clarify_answer.submitted"
+    clarify_id: str
+    answer: str
+    cancelled: bool = False
+    was_custom_input: bool = True
+
 class InputSet(UiEventBase):
     kind: Literal["input.set"] = "input.set"
     text: str
@@ -320,6 +335,8 @@ UiEvent: TypeAlias = (
     | PermissionPromptCleared
     | CheckpointPromptShown
     | CheckpointDecisionSubmitted
+    | ClarifyPromptShown
+    | ClarifyAnswerSubmitted
     | InputSet
     | NoticeSet
 )

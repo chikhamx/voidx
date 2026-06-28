@@ -34,6 +34,56 @@ class DiffSpan:
     offset: int
 
 
+MAX_LINE_DRIFT_MAPS_PER_FILE = 16
+
+
+@dataclass(frozen=True)
+class LineDriftMap:
+    epoch: int
+    source_ranges: list[ReadLineRange]
+    span_steps: list[list[DiffSpan]]
+
+
+def _line_drift_maps_from_raw(raw: list[dict] | None) -> list[LineDriftMap]:
+    if not raw:
+        return []
+    maps: list[LineDriftMap] = []
+    for item in raw:
+        source_ranges = [
+            ReadLineRange(int(r["start_line"]), int(r["end_line"]))
+            for r in item.get("source_ranges", [])
+        ]
+        span_steps = [
+            [DiffSpan(int(s["old_start"]), int(s["old_end"]), int(s["offset"])) for s in step]
+            for step in item.get("span_steps", [])
+        ]
+        maps.append(LineDriftMap(
+            epoch=int(item["epoch"]),
+            source_ranges=source_ranges,
+            span_steps=span_steps,
+        ))
+    return maps
+
+
+def _line_drift_maps_to_raw(maps: list[LineDriftMap]) -> list[dict]:
+    raw: list[dict] = []
+    for m in maps:
+        raw.append({
+            "epoch": m.epoch,
+            "source_ranges": [asdict(r) for r in m.source_ranges],
+            "span_steps": [[asdict(s) for s in step] for step in m.span_steps],
+        })
+    return raw
+
+
+def get_line_drift_maps(ctx: ToolContext, resolved: Path) -> list[LineDriftMap]:
+    key = str(resolved.resolve())
+    coverage = ctx.file_read_coverage.get(key)
+    if coverage is None:
+        return []
+    return _line_drift_maps_from_raw(coverage.get("line_drift_maps"))
+
+
 def check_staleness(ctx: ToolContext, resolved: Path) -> str | None:
     key = str(resolved.resolve())
     if key not in ctx.file_mtimes:
@@ -96,12 +146,65 @@ def record_read_range(ctx: ToolContext, resolved: Path, start_line: int, end_lin
     key = str(resolved.resolve())
     fingerprint = asdict(file_fingerprint(resolved))
     existing = ctx.file_read_coverage.get(key, {})
-    ranges = existing.get("ranges", []) if existing.get("fingerprint") == fingerprint else []
+    fp_match = existing.get("fingerprint") == fingerprint
+    ranges = existing.get("ranges", []) if fp_match else []
+    existing_maps = _line_drift_maps_from_raw(existing.get("line_drift_maps")) if fp_match else []
+    next_epoch = (max((m.epoch for m in existing_maps), default=0) + 1) if fp_match else 1
+    new_map = LineDriftMap(
+        epoch=next_epoch,
+        source_ranges=[ReadLineRange(start_line, end_line)],
+        span_steps=[],
+    )
+    updated_maps = [*existing_maps, new_map]
+    if len(updated_maps) > MAX_LINE_DRIFT_MAPS_PER_FILE:
+        updated_maps = sorted(updated_maps, key=lambda m: m.epoch)[-MAX_LINE_DRIFT_MAPS_PER_FILE:]
     ctx.file_read_coverage[key] = {
         "fingerprint": fingerprint,
         "ranges": _merge_ranges([*ranges, asdict(ReadLineRange(start_line, end_line))]),
+        "line_drift_maps": _line_drift_maps_to_raw(updated_maps),
     }
     record_mtime(ctx, resolved)
+
+
+def _diff_spans_from_file_diff(file_diff: FileDiff) -> list[DiffSpan]:
+    """Extract precise DiffSpans covering only removed/replaced lines.
+
+    Unlike using hunk.old_start + hunk.old_count (which includes context
+    lines), this walks each hunk's lines and groups consecutive 'remove'
+    lines into spans.  The offset for each span is (new_count - old_count)
+    computed from the add/remove lines within that span's neighborhood.
+    """
+    spans: list[DiffSpan] = []
+    for hunk in sorted(file_diff.hunks, key=lambda item: item.old_start):
+        # Group consecutive remove lines into segments
+        segments: list[tuple[int, int]] = []
+        seg_start: int | None = None
+        seg_end: int | None = None
+        for line in hunk.lines:
+            if line.kind == "remove" and line.old_lineno is not None:
+                if seg_start is None:
+                    seg_start = line.old_lineno
+                seg_end = line.old_lineno
+            else:
+                if seg_start is not None:
+                    segments.append((seg_start, seg_end))
+                    seg_start = seg_end = None
+        if seg_start is not None:
+            segments.append((seg_start, seg_end))
+
+        hunk_offset = hunk.new_count - hunk.old_count
+        if segments:
+            for seg_s, seg_e in segments:
+                spans.append(DiffSpan(old_start=seg_s, old_end=seg_e, offset=hunk_offset))
+        elif hunk_offset != 0:
+            # Pure insert (no removed lines): use a zero-width span at the
+            # insertion point so _remap_old_range shifts subsequent lines.
+            spans.append(DiffSpan(
+                old_start=hunk.old_start,
+                old_end=hunk.old_start - 1,
+                offset=hunk_offset,
+            ))
+    return spans
 
 
 def remap_read_coverage_from_file_diff(
@@ -116,14 +219,7 @@ def remap_read_coverage_from_file_diff(
         return
 
     remapped: list[dict] = []
-    spans = [
-        DiffSpan(
-            old_start=hunk.old_start,
-            old_end=hunk.old_start + hunk.old_count - 1,
-            offset=hunk.new_count - hunk.old_count,
-        )
-        for hunk in sorted(file_diff.hunks, key=lambda item: item.old_start)
-    ]
+    spans = _diff_spans_from_file_diff(file_diff)
     for item in old_ranges:
         start = int(item.get("start_line", 0))
         end = int(item.get("end_line", 0))
@@ -143,10 +239,20 @@ def remap_read_coverage_from_file_diff(
 
     ranges = _merge_ranges([*remapped, *visible_ranges])
     key = str(resolved.resolve())
+    existing_maps = _line_drift_maps_from_raw(ctx.file_read_coverage.get(key, {}).get("line_drift_maps"))
+    updated_maps = [
+        LineDriftMap(
+            epoch=m.epoch,
+            source_ranges=m.source_ranges,
+            span_steps=[*m.span_steps, spans],
+        )
+        for m in existing_maps
+    ]
     if ranges:
         ctx.file_read_coverage[key] = {
             "fingerprint": asdict(file_fingerprint(resolved)),
             "ranges": ranges,
+            "line_drift_maps": _line_drift_maps_to_raw(updated_maps),
         }
     else:
         clear_read_coverage(ctx, resolved)

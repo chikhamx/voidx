@@ -1,3 +1,5 @@
+> **Status: Done**
+
 # clarify 富 UI 卡片渲染 — 技术设计文档
 
 ## Context

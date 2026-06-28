@@ -223,7 +223,7 @@ async def test_stream_llm_sanitizes_replayed_failed_tool_exchanges():
 
 
 @pytest.mark.asyncio
-async def test_stream_llm_strips_todo_tool_call_before_repair():
+async def test_stream_llm_preserves_todo_tool_call_not_in_trailing_segment():
     renderer = FakeRenderer()
     model = FakeStreamingModel()
 
@@ -241,8 +241,10 @@ async def test_stream_llm_strips_todo_tool_call_before_repair():
         "anthropic",
     )
 
-    assert [type(message) for message in model.messages] == [HumanMessage, HumanMessage]
-    assert [message.content for message in model.messages] == ["hi", "next"]
+    assert [type(message) for message in model.messages] == [HumanMessage, AIMessage, ToolMessage, HumanMessage]
+    assert model.messages[1].tool_calls[0]["id"] == "call_todo"
+    assert model.messages[2].tool_call_id == "call_todo"
+    assert model.messages[3].content == "next"
 
 
 @pytest.mark.asyncio
@@ -377,14 +379,15 @@ async def test_stream_llm_preserves_non_todo_call_in_mixed_batch():
 
     replay_ai = model.messages[1]
     assert isinstance(replay_ai, AIMessage)
-    assert [call["id"] for call in replay_ai.tool_calls] == ["call_read"]
-    assert replay_ai.content == [{"type": "tool_use", "id": "call_read", "name": "read", "input": {}}]
-    assert isinstance(model.messages[2], ToolMessage)
-    assert model.messages[2].tool_call_id == "call_read"
-    assert not any(
-        isinstance(message, ToolMessage) and message.tool_call_id == "call_todo"
-        for message in model.messages
-    )
+    assert [call["id"] for call in replay_ai.tool_calls] == ["call_todo", "call_read"]
+    assert replay_ai.content == [
+        {"type": "tool_use", "id": "call_todo", "name": "todo", "input": {}},
+        {"type": "tool_use", "id": "call_read", "name": "read", "input": {}},
+    ]
+    tool_message_ids = {
+        m.tool_call_id for m in model.messages if isinstance(m, ToolMessage)
+    }
+    assert tool_message_ids == {"call_todo", "call_read"}
 
 
 @pytest.mark.asyncio

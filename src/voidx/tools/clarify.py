@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import json
+from uuid import uuid4
 
 from pydantic import BaseModel, Field
 
@@ -59,11 +60,14 @@ class ClarifyTool(BaseTool):
                 metadata={"clarify_cancelled": True, "blocked": True},
             )
 
+        clarify_id = uuid4().hex
+        event_ui_active = _emit_clarify_shown(clarify_id, inp)
         response = await ctx.interact(UserInteraction(
-            prompt=inp.question,
-            options=inp.options,
+            prompt="Question:" if event_ui_active else inp.question,
+            options=[] if event_ui_active else inp.options,
             timeout=120.0,
         ))
+        _emit_clarify_answer(clarify_id, response)
         if response.cancelled:
             return ToolResult(
                 title="clarify: skipped",
@@ -114,3 +118,35 @@ def _infer_state_patch(response: UserResponse) -> ToolStatePatch | None:
         )
 
     return None
+
+
+def _emit_clarify_shown(clarify_id: str, inp: ClarifyInput) -> bool:
+    try:
+        from voidx.ui.output.events import ui_events
+        from voidx.ui.output.events.schema import ClarifyPromptShown
+    except ImportError:
+        return False
+    if not ui_events.is_running:
+        return False
+    ui_events.emit_direct(ClarifyPromptShown(
+        clarify_id=clarify_id,
+        question=inp.question,
+        options=list(inp.options),
+    ))
+    return True
+
+
+def _emit_clarify_answer(clarify_id: str, response: UserResponse) -> None:
+    try:
+        from voidx.ui.output.events import ui_events
+        from voidx.ui.output.events.schema import ClarifyAnswerSubmitted
+    except ImportError:
+        return
+    if not ui_events.is_running:
+        return
+    ui_events.emit_direct(ClarifyAnswerSubmitted(
+        clarify_id=clarify_id,
+        answer=response.value,
+        cancelled=response.cancelled,
+        was_custom_input=True,
+    ))
