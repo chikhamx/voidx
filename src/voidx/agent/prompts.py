@@ -113,6 +113,7 @@ BASE_SYSTEM = BaseSystemPrompt(
         PromptRule(
             detail="When Current Task State lists an active workflow gate, that workflow gate takes precedence over persona prompts and delegation rules.",
         ),
+        PromptRule(detail="Stay aware of the workflow state in Current Task State — advance the current node or enter a new one when the work calls for it."),
         PromptRule(detail="Assess before acting — evaluate what's known and unknown, pick the smallest next action toward the user's actual goal."),
         PromptRule(
             detail=(
