@@ -35,10 +35,11 @@ def test_release_metadata_check_passes():
 
 
 def test_npm_package_matches_python_version():
-    pyproject = tomllib.loads((ROOT / "pyproject.toml").read_text())
     npm_package = json.loads((ROOT / "npm" / "package.json").read_text())
 
-    assert npm_package["version"] == pyproject["project"]["version"]
+    from voidx import __version__ as python_version
+
+    assert npm_package["version"] == python_version
     assert npm_package["bin"]["voidx"] == "bin/voidx.js"
     assert (ROOT / "npm" / "bin" / "voidx.js").is_file()
 
