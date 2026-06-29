@@ -3,12 +3,12 @@
 from __future__ import annotations
 
 from voidx.tools.bash.core import (
-    RouteHint,
     _has_shell_expansion,
     _RE_AMP,
     _shell_words,
     _strip_cd_prefix,
 )
+from voidx.tools.shell.common import RouteHint
 from voidx.tools.bash.hint.file import (
     _hint_find,
     _hint_read,

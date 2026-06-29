@@ -3,7 +3,6 @@
 from __future__ import annotations
 
 import asyncio
-import json
 import os
 import subprocess
 
@@ -11,7 +10,14 @@ from pydantic import BaseModel, Field
 
 from voidx.tools.base import BaseTool, ToolContext, ToolResult, model_to_json_schema
 from voidx.tools.bash.router import try_hint
-from voidx.tools.bash.safety import _check_command, _sandbox_denial, _terminate_process
+from voidx.tools.bash.safety import _check_command, _sandbox_denial
+from voidx.tools.shell.common import (
+    build_blocked_result,
+    build_hint_result,
+    build_success_result,
+    build_timeout_result,
+    terminate_process,
+)
 
 
 class BashInput(BaseModel):
@@ -34,38 +40,15 @@ class BashTool(BaseTool):
 
         blocked = _check_command(inp.command)
         if blocked:
-            payload = {"ok": False, "exit_code": -1, "stdout": "", "stderr": blocked, "blocked": True}
-            return ToolResult(
-                output=json.dumps(payload, ensure_ascii=False),
-                display=blocked,
-                metadata={"command": inp.command, "blocked": True, "error": True},
-            )
+            return build_blocked_result(inp.command, blocked)
 
         blocked = _sandbox_denial(inp.command, ctx)
         if blocked:
-            payload = {"ok": False, "exit_code": -1, "stdout": "", "stderr": blocked, "blocked": True}
-            return ToolResult(
-                output=json.dumps(payload, ensure_ascii=False),
-                display=blocked,
-                metadata={"command": inp.command, "blocked": True, "error": True},
-            )
+            return build_blocked_result(inp.command, blocked)
 
         hint = try_hint(inp.command)
         if hint is not None:
-            return ToolResult(
-                title=f"Bash route hint: {inp.command}",
-                output=(
-                    f"[{hint.ui_label}]\n"
-                    "Command not executed because a specialized tool is available."
-                ),
-                summary="route hint",
-                metadata={
-                    "command": inp.command,
-                    "skipped": True,
-                    "route_hint": {"tool_id": hint.tool_id, "command": inp.command},
-                },
-                next_step_hint=hint.llm_hint,
-            )
+            return build_hint_result(inp.command, hint, "Bash")
 
         try:
             proc = await asyncio.create_subprocess_shell(
@@ -80,48 +63,13 @@ class BashTool(BaseTool):
                 proc.communicate(), timeout=inp.timeout
             )
         except asyncio.TimeoutError:
-            await _terminate_process(proc)
-            payload = {"ok": False, "exit_code": -1, "stdout": "", "stderr": "", "timeout": True}
-            display = f"Command timed out after {inp.timeout}s: {inp.command}"
-            return ToolResult(
-                output=json.dumps(payload, ensure_ascii=False),
-                display=display,
-                metadata={"command": inp.command, "exit_code": -1, "timeout": True, "error": True},
-            )
+            await terminate_process(proc)
+            return build_timeout_result(inp.command, inp.timeout)
 
         stdout_text = stdout.decode("utf-8", errors="replace") if stdout else ""
         stderr_text = stderr.decode("utf-8", errors="replace") if stderr else ""
         exit_code = proc.returncode or 0
 
-        display_parts = []
-        if stdout_text:
-            display_parts.append(stdout_text)
-        if stderr_text:
-            display_parts.append(f"[stderr]\n{stderr_text}")
-        if exit_code != 0 and not stdout_text and not stderr_text:
-            display_parts.append(
-                "Interactive commands that read from stdin are not supported. "
-                "Use non-interactive flags or pipe input via echo/heredoc."
-            )
-
-        payload = {
-            "ok": exit_code == 0,
-            "exit_code": exit_code,
-            "stdout": stdout_text,
-            "stderr": stderr_text,
-        }
-
-        result = ToolResult(
-            title=f"Bash: {inp.command}",
-            output=json.dumps(payload, ensure_ascii=False),
-            display="\n".join(display_parts) or "(no output)",
-            summary=f"exit {exit_code}",
-            metadata={
-                "command": inp.command,
-                "exit_code": exit_code,
-                "ok": exit_code == 0,
-                **({"error": True} if exit_code != 0 else {}),
-            },
+        return build_success_result(
+            inp.command, stdout_text, stderr_text, exit_code, "Bash"
         )
-
-        return result

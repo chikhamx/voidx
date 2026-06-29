@@ -4,19 +4,11 @@ from __future__ import annotations
 
 import re
 import shlex
-from dataclasses import dataclass
-from typing import Literal
 
-_HintableTool = Literal["read", "git", "file", "write", "replace", "glob", "grep"]
+from voidx.tools.shell.common import RouteHint
+from voidx.tools.shell.hint.git import _GIT_GLOBAL_OPTIONS_WITH_VALUE, _git_subcommand
 
 _HEREDOC_MAX_CONTENT = 200
-
-
-@dataclass
-class RouteHint:
-    tool_id: _HintableTool
-    ui_label: str
-    llm_hint: str
 
 
 def _shell_words(command: str) -> list[str]:
@@ -79,29 +71,3 @@ def _strip_cd_prefix(command: str) -> str:
     if _RE_AMP.search(remainder):
         return command
     return remainder
-
-
-
-_GIT_GLOBAL_OPTIONS_WITH_VALUE = frozenset({
-    "-C", "-c", "--git-dir", "--work-tree", "--namespace", "--exec-path",
-})
-
-
-def _git_subcommand(words: list[str]) -> tuple[str, list[str]]:
-    index = 1
-    while index < len(words):
-        word = words[index]
-        if word in _GIT_GLOBAL_OPTIONS_WITH_VALUE:
-            index += 2
-            continue
-        if any(word.startswith(f"{option}=") for option in _GIT_GLOBAL_OPTIONS_WITH_VALUE if option.startswith("--")):
-            index += 1
-            continue
-        if word == "--":
-            index += 1
-            continue
-        if word.startswith("-"):
-            index += 1
-            continue
-        return word, words[index + 1:]
-    return "", []

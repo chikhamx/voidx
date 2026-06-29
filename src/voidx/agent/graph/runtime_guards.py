@@ -12,7 +12,7 @@ from pydantic import BaseModel, Field
 
 
 LOW_VALUE_REPETITIVE_TOOLS = frozenset({"todo", "workflow", "checkpoint"})
-REPETITIVE_TOOL_EXEMPTIONS = frozenset({"bash", "read", "grep"})
+REPETITIVE_TOOL_EXEMPTIONS = frozenset({"bash", "powershell", "read", "grep"})
 EVIDENCE_TEXT_LIMIT = 500
 
 
@@ -305,7 +305,7 @@ def normalize_tool_args(tool_name: str, args: dict[str, Any]) -> str:
             "path": args.get("path"),
             "include": args.get("include"),
         })
-    if tool_name == "bash":
+    if tool_name in ("bash", "powershell"):
         return " ".join(str(args.get("command") or "").split())
     if tool_name == "agent":
         goal_resolution = args.get("goal_resolution")

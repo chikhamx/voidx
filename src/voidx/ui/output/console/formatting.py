@@ -89,7 +89,7 @@ def _fmt_args_short(tool_name: str, args: dict[str, object]) -> str:
         include = args.get("include")
         suffix = f" in {_escape_rich(str(include))}" if include else ""
         return f"{_escape_rich(str(value))}{suffix}" if value else ""
-    if tool_name == "bash":
+    if tool_name in ("bash", "powershell"):
         value = str(args.get("command", ""))
         shortened = value[:77] + "..." if len(value) > 80 else value
         return _escape_rich(shortened)

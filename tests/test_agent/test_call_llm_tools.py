@@ -1,5 +1,6 @@
 """Tests for call_llm tools and convergence."""
 
+import os
 import sys
 from pathlib import Path
 from types import SimpleNamespace
@@ -232,7 +233,7 @@ async def test_call_llm_keeps_bound_tools_fixed_across_active_workflow_node(tmp_
     assert "grep" in tool_names
     assert "clarify" in tool_names
     assert "workflow" in tool_names
-    assert "bash" in tool_names
+    assert ("bash" if os.name != "nt" else "powershell") in tool_names
     assert "file" in tool_names
     assert "write" in tool_names
     assert "replace" in tool_names

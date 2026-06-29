@@ -552,6 +552,7 @@ def _subagent_tool_action(tool_name: str, label: str) -> str:
         "replace": "Editing",
         "edit": "Editing",
         "bash": "Running",
+        "powershell": "Running",
         "git": "Git",
         "grep": "Searching",
         "glob": "Searching",
@@ -572,7 +573,7 @@ def _subagent_tool_detail(tool_name: str, raw_args: dict[str, Any], args: str) -
     value: object = ""
     if tool_name in {"read", "file", "write", "replace", "edit", "lsp"}:
         value = raw_args.get("file_path") or raw_args.get("path")
-    elif tool_name == "bash":
+    elif tool_name in ("bash", "powershell"):
         value = str(raw_args.get("command") or "").replace("\n", "; ")
     elif tool_name == "git":
         value = raw_args.get("args")

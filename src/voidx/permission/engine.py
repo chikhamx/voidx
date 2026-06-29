@@ -17,6 +17,7 @@ from voidx.permission.rules import (
     tool_call_from_pattern,
 )
 from voidx.permission.sandbox import check_sandbox_bash, check_sandbox_filepath
+from voidx.tools.powershell.sandbox import check_sandbox_powershell
 from voidx.permission.schema import Action
 from voidx.permission.wildcard import match as wildcard_match
 
@@ -81,6 +82,14 @@ def sandbox_denial_reason(classified: ClassifiedToolCall, context: PermissionCon
             command = classified.args.get("command", "")
             if command:
                 return check_sandbox_bash(
+                    command,
+                    context.workspace,
+                    list(context.sandbox_workspace_write),
+                )
+        if classified.name == "powershell":
+            command = classified.args.get("command", "")
+            if command:
+                return check_sandbox_powershell(
                     command,
                     context.workspace,
                     list(context.sandbox_workspace_write),

@@ -73,7 +73,7 @@ class CaptureConsole:
         if tool_name == "agent":
             detail = ""
             gerund = agent_display_name(args.get("agent"))
-        elif tool_name == "bash":
+        elif tool_name in ("bash", "powershell"):
             command = str(args.get("command") or "")
             detail = ""
             body_lines = _bash_markdown_lines(command, self._dummy.width)

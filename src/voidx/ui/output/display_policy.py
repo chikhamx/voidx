@@ -125,6 +125,7 @@ DEFAULT_DISPLAY_RULES: dict[str, ToolDisplayRule] = {
     "lsp": ToolDisplayRule(tool_name="lsp", mode=ToolDisplayMode.SUMMARY, summary_max_lines=5),
     # ── Show + 自适应 ──
     "bash": ToolDisplayRule(tool_name="bash", mode=ToolDisplayMode.SHOW, auto_summary_lines=50, auto_summary_chars=10000),
+    "powershell": ToolDisplayRule(tool_name="powershell", mode=ToolDisplayMode.SHOW, auto_summary_lines=50, auto_summary_chars=10000),
     "read": ToolDisplayRule(tool_name="read", mode=ToolDisplayMode.SHOW, auto_summary_lines=100),
     "webfetch": ToolDisplayRule(tool_name="webfetch", mode=ToolDisplayMode.SHOW, auto_summary_lines=50, auto_summary_chars=10000),
     # ── Show ──

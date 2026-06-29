@@ -44,6 +44,7 @@ BASIC_RULES: Ruleset = [
     Rule(permission="edit", pattern="*", action="ask"),
     Rule(permission="git", pattern="write", action="ask"),
     Rule(permission="bash", pattern="*", action="ask"),
+    Rule(permission="powershell", pattern="*", action="ask"),
     Rule(permission="agent", pattern="implement", action="ask"),
     Rule(permission="mcp__*", pattern="*", action="ask"),
     Rule(permission="mcp/*", pattern="*", action="ask"),
@@ -79,6 +80,8 @@ def tool_call_from_pattern(tool: str, pattern: str = "*") -> dict:
     name = repair_tool_name(tool)
     if name == "bash":
         args = {"command": pattern}
+    elif name == "powershell":
+        args = {"command": pattern}
     elif name == "agent":
         args = {"agent": pattern}
     elif name in _FILE_PATTERN_TOOLS:
@@ -92,7 +95,7 @@ def repair_tool_name(tool: str) -> str:
     tool_map = {
         "Read": "read", "Write": "file", "Edit": "replace", "Delete": "replace",
         "MultiEdit": "replace", "multiEdit": "replace", "multi_edit": "replace",
-        "Glob": "glob", "Grep": "grep", "Bash": "bash",
+        "Glob": "glob", "Grep": "grep", "Bash": "bash", "PowerShell": "powershell",
         "Agent": "agent", "TodoWrite": "todo", "Todo": "todo",
         "WebFetch": "webfetch", "WebSearch": "websearch",
         "read_file": "read", "write_file": "file",
@@ -108,7 +111,7 @@ def repair_tool_name(tool: str) -> str:
 
 
 def build_pattern(tool: str, args: dict) -> str:
-    if tool == "bash":
+    if tool == "bash" or tool == "powershell":
         return str(args.get("command", "*"))
     if tool in _FILE_PATTERN_TOOLS:
         return str(args.get("file_path", "*"))
@@ -374,6 +377,9 @@ def capability_for_tool(tool: str, args: dict) -> PermissionCapability:
         return PermissionCapability.FILE_WRITE
     if tool == "bash":
         return PermissionCapability.BASH_READ if is_safe_bash(str(args.get("command", ""))) else PermissionCapability.BASH_WRITE
+    if tool == "powershell":
+        from voidx.tools.powershell.sandbox import is_safe_powershell_command
+        return PermissionCapability.BASH_READ if is_safe_powershell_command(str(args.get("command", ""))) else PermissionCapability.BASH_WRITE
     if tool == "git":
         return PermissionCapability.GIT_READ if _is_read_only_git_tool_command(args) else PermissionCapability.GIT_WRITE
     if tool == "agent":

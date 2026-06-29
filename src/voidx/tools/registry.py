@@ -45,12 +45,21 @@ class ToolRegistry:
         for cls in [
             FileReadTool, FileTool, WriteTool, FileReplaceTool,
             GitTool,
-            GlobTool, GrepTool, BashTool,
+            GlobTool, GrepTool,
             LspTool,
             ClarifyTool, PlanCheckpointTool, WorkflowTool, CompactContextTool, LoadDocTemplateTool,
         ]:
             instance = cls()
             self.register(instance.id, instance, instance.description, instance.parameters_schema())
+        # Shell tool — platform-exclusive registration
+        import os as _os
+        if _os.name == "nt":
+            from voidx.tools.powershell import PowerShellTool
+            shell_cls = PowerShellTool
+        else:
+            shell_cls = BashTool
+        shell_instance = shell_cls()
+        self.register(shell_instance.id, shell_instance, shell_instance.description, shell_instance.parameters_schema())
         # Tools with optional dependency injection
         todo_tool = TodoWriteTool(tracker=self._tracker)
         self.register(todo_tool.id, todo_tool, todo_tool.description, todo_tool.parameters_schema())

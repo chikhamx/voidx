@@ -77,8 +77,8 @@ def auto_advance_events(
             event = _check_review_result(output, metadata, active_names)
             if event:
                 events.append(event)
-        elif tool_name == "bash":
-            events.extend(_check_bash_result(metadata, active_names))
+        elif tool_name in ("bash", "powershell"):
+            events.extend(_check_shell_result(metadata, active_names))
 
     return events
 
@@ -116,11 +116,11 @@ def _check_review_result(
     )
 
 
-def _check_bash_result(
+def _check_shell_result(
     metadata: dict,
     active_names: set[str],
 ) -> list[WorkflowStateEvent]:
-    """Detect failed_implementation from bash test failures.
+    """Detect failed_implementation from shell (bash/powershell) test failures.
 
     A non-zero exit code from a test/verification command while
     verify is active is treated as a failed_implementation

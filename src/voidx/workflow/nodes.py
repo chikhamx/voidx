@@ -173,6 +173,7 @@ TEST_DRIVEN_DEVELOPMENT = WorkflowNode(
         "write",
         "replace",
         "bash",
+        "powershell",
         "glob",
         "grep",
         "lsp",
@@ -228,6 +229,7 @@ VERIFICATION_BEFORE_COMPLETION = WorkflowNode(
     ),
     tools=[
         "bash",
+        "powershell",
         "read",
         "glob",
         "grep",
@@ -320,6 +322,7 @@ RECEIVING_CODE_REVIEW = WorkflowNode(
         "write",
         "replace",
         "bash",
+        "powershell",
         "glob",
         "grep",
     ],
@@ -368,6 +371,7 @@ SYSTEMATIC_DEBUGGING = WorkflowNode(
         "glob",
         "grep",
         "bash",
+        "powershell",
         "lsp",
     ],
     gate=NodeGate(

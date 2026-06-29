@@ -4,6 +4,7 @@ import asyncio
 import json
 import logging
 import shlex
+import os
 import sys
 from pathlib import Path
 
@@ -59,7 +60,7 @@ class TestToolRegistry:
         assert "glob" in ids
         assert "grep" in ids
         assert "git" in ids
-        assert "bash" in ids
+        assert ("bash" if os.name != "nt" else "powershell") in ids
         assert "clarify" in ids
         assert "checkpoint" in ids
         assert "workflow" in ids

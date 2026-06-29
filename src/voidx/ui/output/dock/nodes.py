@@ -150,7 +150,7 @@ class DockNodeMixin(
             self._settle_stream_for_tool()
         raw_args = raw_args or {}
         body_lines: list[str] = []
-        if tool_name == "bash":
+        if tool_name in ("bash", "powershell"):
             command = str(raw_args.get("command") or "")
             if command:
                 body_lines = _bash_markdown_lines(command, self._markdown_width())
@@ -359,6 +359,7 @@ def _tool_display_name(tool_name: str, label: str) -> str:
         "replace": "Update",
         "lsp": "Lsp",
         "bash": "Bash",
+        "powershell": "PowerShell",
         "webfetch": "Fetch",
         "websearch": "Search",
         "todo": "Todo",
@@ -391,7 +392,7 @@ def _tool_display_value(tool_name: str, args: str, raw_args: dict[str, Any]) -> 
         value = f"{pattern} in {include}" if pattern and include else pattern
     elif tool_name == "glob":
         value = raw_args.get("pattern")
-    elif tool_name == "bash":
+    elif tool_name in ("bash", "powershell"):
         value = str(raw_args.get("command") or "").replace("\n", "; ")
     elif tool_name == "git":
         value = raw_args.get("args")

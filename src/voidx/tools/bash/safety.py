@@ -2,14 +2,11 @@
 
 from __future__ import annotations
 
-import asyncio
-import os
 import re
-import signal
-from contextlib import suppress
 
 from voidx.permission.service import bash_sandbox_denial, is_safe_bash_command
 from voidx.tools.base import ToolContext
+from voidx.tools.shell.common import terminate_process as _terminate_process
 
 # Patterns that are always blocked regardless of permission
 _BLOCKED = [
@@ -60,29 +57,3 @@ def _sandbox_denial(command: str, ctx: ToolContext) -> str | None:
             return None
         return f"SANDBOX READ-ONLY: 'bash' is not allowed.\n  command: {command.strip()[:120]}"
     return bash_sandbox_denial(command, ctx.workspace, ctx.sandbox_extra_paths)
-
-
-async def _terminate_process(proc: asyncio.subprocess.Process) -> None:
-    if proc.returncode is not None:
-        return
-    try:
-        if hasattr(os, "killpg"):
-            os.killpg(proc.pid, signal.SIGTERM)
-        else:
-            proc.terminate()
-    except ProcessLookupError:
-        return
-
-    try:
-        await asyncio.wait_for(proc.wait(), timeout=2)
-        return
-    except asyncio.TimeoutError:
-        pass
-
-    with suppress(ProcessLookupError):
-        if hasattr(os, "killpg"):
-            os.killpg(proc.pid, signal.SIGKILL)
-        else:
-            proc.kill()
-    with suppress(asyncio.TimeoutError):
-        await asyncio.wait_for(proc.wait(), timeout=2)

@@ -3,6 +3,7 @@
 import asyncio
 import json
 import logging
+import os
 import shlex
 import sys
 from pathlib import Path
@@ -37,6 +38,7 @@ from voidx.workflow.types import WorkflowStateEventKind
 import voidx.memory.store as store
 
 
+@pytest.mark.skipif(os.name == "nt", reason="bash tool is not registered on Windows")
 class TestBash:
     """Bash commands execute and capture output."""
 

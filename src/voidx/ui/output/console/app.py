@@ -41,7 +41,7 @@ class VoidConsole:
 
     _TOOL_GERUND: dict[str, str] = {
         "read": "reading", "file": "managing", "write": "editing", "replace": "replacing",
-        "glob": "finding", "grep": "searching", "bash": "running",
+        "glob": "finding", "grep": "searching", "bash": "running", "powershell": "running",
         "agent": "delegating", "webfetch": "fetching", "websearch": "searching",
         "todo": "updating", "task_status": "checking",
         "lsp": "using",
