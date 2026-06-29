@@ -246,6 +246,12 @@ def test_attachment_panel_quotes_paths_with_spaces(tmp_path):
 def test_attachment_panel_arrow_selection_accepts_selected_file(tmp_path):
     (tmp_path / "file0.txt").write_text("0", encoding="utf-8")
     (tmp_path / "file1.txt").write_text("1", encoding="utf-8")
+    # Ensure deterministic mtime ordering: file0 newer than file1,
+    # so file0.txt is index 0 and file1.txt is index 1 after mtime sort.
+    file0_mtime = (tmp_path / "file0.txt").stat().st_mtime
+    (tmp_path / "file1.txt").touch()
+    os.utime(tmp_path / "file1.txt", (file0_mtime - 2, file0_mtime - 2))
+
     tui = _tui(tmp_path)
     tui._input_lines = ["@file"]
     tui._cursor_col = len("@file")
@@ -254,7 +260,8 @@ def test_attachment_panel_arrow_selection_accepts_selected_file(tmp_path):
     tui._process_input(b"\x1b[B")
     tui._process_input(b"\r")
 
-    assert tui._get_input_text() == "@file0.txt "
+    # Down arrow moves selection from index 0 (file0.txt) to index 1 (file1.txt).
+    assert tui._get_input_text() == "@file1.txt "
     assert tui._queue.empty()
 
 

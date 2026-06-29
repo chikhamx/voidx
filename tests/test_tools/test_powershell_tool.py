@@ -59,6 +59,41 @@ class TestPowerShellExecution:
         assert result.metadata["timeout"] is True
 
 
+    @pytest.mark.asyncio
+    async def test_powershell_timeout_kills_child_process_tree(self, tmp_path):
+        """Timeout must kill the entire process tree, not just powershell.exe.
+
+        Mirrors the bash test: a child process writes a file after a delay.
+        If the process tree is killed, the file is never created.
+        """
+        ctx = ToolContext(workspace=str(tmp_path))
+        r = ToolRegistry()
+        marker = tmp_path / "late.txt"
+        # Write a child script to a temp file to avoid quote-nesting hell.
+        child_script = tmp_path / "child.py"
+        child_script.write_text(
+            f"import time\n"
+            f"time.sleep(3)\n"
+            f"open(r'{marker}', 'w').write('late')\n"
+        )
+        # Use single quotes around the python path (PowerShell-safe),
+        # and let the script file handle the rest.
+        child_cmd = f"& '{sys.executable}' '{child_script}'"
+        result = await r.execute_tool(
+            "powershell",
+            {"command": child_cmd, "timeout": 1},
+            ctx,
+        )
+        # Wait long enough for the child's sleep to finish if it survived.
+        await asyncio.sleep(3.5)
+
+        assert result.metadata["timeout"] is True
+        # If the process tree was killed, the child never writes the marker.
+        assert not marker.exists(), (
+            "Child process survived parent termination — process tree not killed"
+        )
+
+
 @skip_if_not_windows
 class TestPowerShellBlockedCommands:
     """Dangerous PowerShell commands are blocked before execution."""

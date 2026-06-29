@@ -9,6 +9,8 @@ import asyncio
 import json
 import os
 import signal
+import subprocess
+import sys
 from contextlib import suppress
 from dataclasses import dataclass
 from typing import Literal
@@ -119,13 +121,15 @@ async def terminate_process(proc: asyncio.subprocess.Process) -> None:
     """Terminate a subprocess, escalating from SIGTERM/terminate to SIGKILL/kill.
 
     On Unix, kills the entire process group (os.killpg).
-    On Windows, falls back to proc.terminate() / proc.kill().
+    On Windows, uses taskkill /T /F to kill the entire process tree.
     """
     if proc.returncode is not None:
         return
     try:
         if hasattr(os, "killpg"):
             os.killpg(proc.pid, signal.SIGTERM)
+        elif sys.platform == "win32":
+            await _win32_kill_tree(proc.pid)
         else:
             proc.terminate()
     except ProcessLookupError:
@@ -140,7 +144,22 @@ async def terminate_process(proc: asyncio.subprocess.Process) -> None:
     with suppress(ProcessLookupError):
         if hasattr(os, "killpg"):
             os.killpg(proc.pid, signal.SIGKILL)
+        elif sys.platform == "win32":
+            await _win32_kill_tree(proc.pid)
         else:
             proc.kill()
     with suppress(asyncio.TimeoutError):
         await asyncio.wait_for(proc.wait(), timeout=2)
+
+
+async def _win32_kill_tree(pid: int) -> None:
+    """Kill a process tree on Windows using taskkill /T /F."""
+    args = ["taskkill", "/T", "/F", "/PID", str(pid)]
+    with suppress(ProcessLookupError, OSError):
+        proc = await asyncio.create_subprocess_exec(
+            *args,
+            stdout=subprocess.DEVNULL,
+            stderr=subprocess.DEVNULL,
+        )
+        with suppress(asyncio.TimeoutError):
+            await asyncio.wait_for(proc.wait(), timeout=5)

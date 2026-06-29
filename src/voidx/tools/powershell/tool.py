@@ -63,6 +63,7 @@ class PowerShellTool(BaseTool):
                 stdout=subprocess.PIPE,
                 stderr=subprocess.PIPE,
                 cwd=ctx.workspace,
+                creationflags=subprocess.CREATE_NEW_PROCESS_GROUP,
             )
             stdout, stderr = await asyncio.wait_for(
                 proc.communicate(), timeout=inp.timeout
