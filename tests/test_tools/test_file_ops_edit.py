@@ -1102,6 +1102,44 @@ class TestFileOps:
         assert f.read_text() == "line1\nline3\n"
 
     @pytest.mark.asyncio
+    @pytest.mark.parametrize("blank", ["\n", " "])
+    async def test_replace_single_line_delete_normalizes_blank_new_string(self, tmp_path, blank):
+        """Single-line delete with blank new_string (\\n or space) should remove the line, not leave an empty line."""
+        f = tmp_path / "delete-blank.txt"
+        f.write_text("line1\nline2\nline3\n")
+        ctx = ToolContext(workspace=str(tmp_path))
+        r = ToolRegistry()
+        await r.execute_tool("read", {"file_path": "delete-blank.txt"}, ctx)
+
+        result = await r.execute_tool(
+            "replace",
+            {"file_path": "delete-blank.txt", "start_no": 2, "end_no": 2, "start_anchor": "line2", "end_anchor": "line2", "new_string": blank},
+            ctx,
+        )
+
+        assert result.metadata.get("error") is not True
+        assert f.read_text() == "line1\nline3\n"
+
+    @pytest.mark.asyncio
+    @pytest.mark.parametrize("blank", ["\n", " "])
+    async def test_replace_single_line_delete_normalizes_blank_new_string_empty_anchor(self, tmp_path, blank):
+        """Single-line delete with blank new_string and empty anchors should also remove the line."""
+        f = tmp_path / "delete-blank-empty-anchor.txt"
+        f.write_text("line1\nline2\nline3\n")
+        ctx = ToolContext(workspace=str(tmp_path))
+        r = ToolRegistry()
+        await r.execute_tool("read", {"file_path": "delete-blank-empty-anchor.txt"}, ctx)
+
+        result = await r.execute_tool(
+            "replace",
+            {"file_path": "delete-blank-empty-anchor.txt", "start_no": 2, "end_no": 2, "start_anchor": "", "end_anchor": "", "new_string": blank},
+            ctx,
+        )
+
+        assert result.metadata.get("error") is not True
+        assert f.read_text() == "line1\nline3\n"
+
+    @pytest.mark.asyncio
     async def test_replace_suffix_partial_match_replaces_whole_line(self, tmp_path):
         """A suffix substring in the middle of the line still replaces the whole line."""
         f = tmp_path / "partial-suffix.txt"

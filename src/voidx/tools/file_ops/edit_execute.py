@@ -158,6 +158,12 @@ async def _execute_text_replace(
 
     lines = list(display.lines)
     new_lines = _split_edit_lines(new_string)
+    if (
+        start_line == end_line
+        and new_string in ("", "\n", " ")
+        and lines[start_line - 1] != ""
+    ):
+        new_lines = []
     lines[start_line - 1:end_line] = new_lines
 
     # Head-line dedup: if the first line of new_string exactly matches the
