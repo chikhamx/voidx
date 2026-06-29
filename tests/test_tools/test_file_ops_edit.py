@@ -665,7 +665,9 @@ class TestFileOps:
         assert f.read_text() == "top\nreplacement\nend\n"
 
     @pytest.mark.asyncio
-    async def test_replace_empty_anchor_does_not_match_non_empty_line(self, tmp_path):
+    async def test_replace_multi_line_empty_start_anchor_still_requires_empty_line(self, tmp_path):
+        """Multi-line replace with empty start_anchor should still require an
+        empty line — the relaxation only applies to single-line replace."""
         f = tmp_path / "empty-anchor-missing.txt"
         f.write_text("top\nbody\nend\n")
         ctx = ToolContext(workspace=str(tmp_path))
@@ -677,9 +679,9 @@ class TestFileOps:
             {
                 "file_path": "empty-anchor-missing.txt",
                 "start_no": 2,
-                "end_no": 2,
+                "end_no": 3,
                 "start_anchor": "",
-                "end_anchor": "body",
+                "end_anchor": "end",
                 "new_string": "replacement\n",
             },
             ctx,
@@ -688,6 +690,172 @@ class TestFileOps:
         assert result.metadata.get("error")
         assert "empty line" in result.output
         assert f.read_text() == "top\nbody\nend\n"
+
+
+    @pytest.mark.asyncio
+    async def test_replace_single_line_empty_start_anchor_trusts_line_no(self, tmp_path):
+        """Single-line replace (start_no==end_no) with empty start_anchor should
+        trust the line number instead of requiring an empty line."""
+        f = tmp_path / "empty-start-single.txt"
+        f.write_text("top\nbody\nend\n")
+        ctx = ToolContext(workspace=str(tmp_path))
+        r = ToolRegistry()
+        await r.execute_tool("read", {"file_path": "empty-start-single.txt"}, ctx)
+
+        result = await r.execute_tool(
+            "replace",
+            {
+                "file_path": "empty-start-single.txt",
+                "start_no": 2,
+                "end_no": 2,
+                "start_anchor": "",
+                "end_anchor": "body",
+                "new_string": "replacement",
+            },
+            ctx,
+        )
+
+        assert result.metadata.get("error") is not True
+        assert result.metadata["start_line"] == 2
+        assert result.metadata["end_line"] == 2
+        assert f.read_text() == "top\nreplacement\nend\n"
+
+    @pytest.mark.asyncio
+    async def test_replace_single_line_empty_end_anchor_trusts_line_no(self, tmp_path):
+        """Single-line replace (start_no==end_no) with empty end_anchor should
+        trust the line number instead of requiring an empty line."""
+        f = tmp_path / "empty-end-single.txt"
+        f.write_text("top\nbody\nend\n")
+        ctx = ToolContext(workspace=str(tmp_path))
+        r = ToolRegistry()
+        await r.execute_tool("read", {"file_path": "empty-end-single.txt"}, ctx)
+
+        result = await r.execute_tool(
+            "replace",
+            {
+                "file_path": "empty-end-single.txt",
+                "start_no": 2,
+                "end_no": 2,
+                "start_anchor": "body",
+                "end_anchor": "",
+                "new_string": "replacement",
+            },
+            ctx,
+        )
+
+        assert result.metadata.get("error") is not True
+        assert result.metadata["start_line"] == 2
+        assert result.metadata["end_line"] == 2
+        assert f.read_text() == "top\nreplacement\nend\n"
+
+    @pytest.mark.asyncio
+    async def test_replace_single_line_both_anchors_empty_trusts_line_no(self, tmp_path):
+        """Single-line replace (start_no==end_no) with both anchors empty should
+        trust the line number instead of requiring an empty line."""
+        f = tmp_path / "both-empty-single.txt"
+        f.write_text("top\nbody\nend\n")
+        ctx = ToolContext(workspace=str(tmp_path))
+        r = ToolRegistry()
+        await r.execute_tool("read", {"file_path": "both-empty-single.txt"}, ctx)
+
+        result = await r.execute_tool(
+            "replace",
+            {
+                "file_path": "both-empty-single.txt",
+                "start_no": 2,
+                "end_no": 2,
+                "start_anchor": "",
+                "end_anchor": "",
+                "new_string": "replacement",
+            },
+            ctx,
+        )
+
+        assert result.metadata.get("error") is not True
+        assert result.metadata["start_line"] == 2
+        assert result.metadata["end_line"] == 2
+        assert f.read_text() == "top\nreplacement\nend\n"
+
+    @pytest.mark.asyncio
+    async def test_replace_single_line_both_anchors_empty_pure_insert(self, tmp_path):
+        """Single-line replace with both anchors empty can be used as a pure
+        insert: replace the target line with itself plus new content."""
+        f = tmp_path / "pure-insert.txt"
+        f.write_text("one\ntwo\nthree\n")
+        ctx = ToolContext(workspace=str(tmp_path))
+        r = ToolRegistry()
+        await r.execute_tool("read", {"file_path": "pure-insert.txt"}, ctx)
+
+        result = await r.execute_tool(
+            "replace",
+            {
+                "file_path": "pure-insert.txt",
+                "start_no": 2,
+                "end_no": 2,
+                "start_anchor": "",
+                "end_anchor": "",
+                "new_string": "two\ninserted",
+            },
+            ctx,
+        )
+
+        assert result.metadata.get("error") is not True
+        assert f.read_text() == "one\ntwo\ninserted\nthree\n"
+
+    @pytest.mark.asyncio
+    async def test_replace_multi_line_empty_anchor_still_errors(self, tmp_path):
+        """Multi-line replace (start_no != end_no) with empty anchor should
+        still require matching an empty line — the relaxation only applies
+        to single-line replace."""
+        f = tmp_path / "multi-empty.txt"
+        f.write_text("alpha\nbeta\n")
+        ctx = ToolContext(workspace=str(tmp_path))
+        r = ToolRegistry()
+        await r.execute_tool("read", {"file_path": "multi-empty.txt"}, ctx)
+
+        result = await r.execute_tool(
+            "replace",
+            {
+                "file_path": "multi-empty.txt",
+                "start_no": 1,
+                "end_no": 2,
+                "start_anchor": "",
+                "end_anchor": "beta",
+                "new_string": "x",
+            },
+            ctx,
+        )
+
+        assert result.metadata.get("error") is True
+        assert "empty line" in result.output
+
+    @pytest.mark.asyncio
+    async def test_replace_single_line_empty_anchor_ignores_nearby_empty_line(self, tmp_path):
+        """Regression: empty start_anchor must trust the target line number,
+        not match a nearby empty line within the search radius."""
+        f = tmp_path / "nearby-empty.txt"
+        f.write_text("a\nb\n\nd\ntarget\nf\n")
+        ctx = ToolContext(workspace=str(tmp_path))
+        r = ToolRegistry()
+        await r.execute_tool("read", {"file_path": "nearby-empty.txt"}, ctx)
+
+        result = await r.execute_tool(
+            "replace",
+            {
+                "file_path": "nearby-empty.txt",
+                "start_no": 5,
+                "end_no": 5,
+                "start_anchor": "",
+                "end_anchor": "",
+                "new_string": "REPLACED",
+            },
+            ctx,
+        )
+
+        assert result.metadata.get("error") is not True
+        assert result.metadata["start_line"] == 5
+        assert result.metadata["end_line"] == 5
+        assert f.read_text() == "a\nb\n\nd\nREPLACED\nf\n"
 
     @pytest.mark.asyncio
     async def test_replace_trailing_newline_does_not_corrupt_next_line(self, tmp_path):

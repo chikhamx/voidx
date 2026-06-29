@@ -107,14 +107,24 @@ def _find_single_line_segment(
     prefix: str,
     suffix: str,
 ) -> tuple[int, int, int, int] | str:
-    prefix_lines = _find_line_candidates(lines, target_line, prefix)
-    if not prefix_lines:
-        prefix_target = "empty line" if prefix == "" else f"start_anchor {prefix!r}"
-        return (
-            f"{prefix_target} not found within ±{TEXT_REPLACE_LINE_RADIUS} "
-            f"lines of line {target_line}.\n"
-            f"Lines around {target_line}:\n{_window_snippet(lines, target_line)}"
-        )
+    # Single-line replace with empty start_anchor: trust the line number
+    # instead of searching for an empty line. Do NOT call _find_line_candidates
+    # with "" — that would match nearby empty lines and could edit the wrong
+    # line when the target line is non-empty.
+    if prefix == "":
+        if target_line < 1 or target_line > len(lines):
+            return (
+                f"line {target_line} out of range for file with {len(lines)} lines."
+            )
+        prefix_lines = [target_line]
+    else:
+        prefix_lines = _find_line_candidates(lines, target_line, prefix)
+        if not prefix_lines:
+            return (
+                f"start_anchor {prefix!r} not found within ±{TEXT_REPLACE_LINE_RADIUS} "
+                f"lines of line {target_line}.\n"
+                f"Lines around {target_line}:\n{_window_snippet(lines, target_line)}"
+            )
 
     if suffix != "" and suffix != prefix:
         prefix_lines = [
