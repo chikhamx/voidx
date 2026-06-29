@@ -1,3 +1,5 @@
+> **Status: Done** — 实现已完成并落地（`src/voidx/tools/powershell/`、`src/voidx/tools/shell/`、权限层、工作流、UI 适配点均已就位，测试覆盖于 `tests/test_tools/test_powershell_tool.py`）。
+
 ﻿# PowerShell 工具 — 技术设计文档
 
 ## Context

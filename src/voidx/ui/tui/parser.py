@@ -56,30 +56,72 @@ class _InputParserMixin:
         """Read raw key input on Windows via msvcrt."""
         import msvcrt
 
+        _WIN_KEY_MAP = {
+            "H": "\x1b[A",   # Up
+            "P": "\x1b[B",   # Down
+            "K": "\x1b[D",   # Left
+            "M": "\x1b[C",   # Right
+            "G": "\x1b[H",   # Home
+            "O": "\x1b[F",   # End
+            "I": "\x1b[2~",  # Insert
+            "S": "\x1b[3~",  # Delete
+            "R": "\x1b[2;2~",  # Shift+Insert
+        }
+
         def _read() -> bytes:
             ch = msvcrt.getwch()
             if ch == "\x00" or ch == "\xe0":
                 # Function / arrow key: read the second byte
                 ch2 = msvcrt.getwch()
-                # Map Windows arrow keys to ANSI escape sequences
-                _WIN_KEY_MAP = {
-                    "H": "\x1b[A",   # Up
-                    "P": "\x1b[B",   # Down
-                    "K": "\x1b[D",   # Left
-                    "M": "\x1b[C",   # Right
-                    "G": "\x1b[H",   # Home
-                    "O": "\x1b[F",   # End
-                    "I": "\x1b[2~",  # Insert
-                    "S": "\x1b[3~",  # Delete
-                    "R": "\x1b[2;2~",  # Shift+Insert
-                }
                 mapped = _WIN_KEY_MAP.get(ch2)
                 if mapped:
                     return mapped.encode("utf-8")
                 return ("\x00" + ch2).encode("utf-8")
+            # Newline first char: try to drain a paste
+            if ch in ("\r", "\n"):
+                pasted = self._try_drain_win32_paste(ch)
+                if pasted is not None:
+                    return pasted
+                return ch.encode("utf-8")
             return ch.encode("utf-8")
 
         return await asyncio.to_thread(_read)
+
+    def _try_drain_win32_paste(self, first_char: str, timeout_ms: int = 20) -> bytes | None:
+        """Drain remaining console input after a newline to detect a paste.
+
+        Windows Terminal injects pasted content character-by-character into the
+        console input buffer. When the first character is ``\\r`` or ``\\n``,
+        this method reads any quickly-following characters and, if they look
+        like a paste (multiple newlines or a long run), wraps them in a
+        bracketed-paste sequence so ``_process_paste`` handles them as a unit.
+        Returns the bracketed-paste bytes, or ``None`` if this is not a paste.
+        """
+        import msvcrt
+        import time
+
+        if first_char not in ("\r", "\n"):
+            return None
+
+        buffer = first_char
+        deadline = time.monotonic() + (timeout_ms / 1000.0)
+        while time.monotonic() < deadline:
+            if not msvcrt.kbhit():
+                time.sleep(0.001)
+                continue
+            ch = msvcrt.getwch()
+            # Function key prefix: not part of paste content. Must consume the
+            # second byte, otherwise it lingers in the buffer and becomes a
+            # ghost keypress on the next read.
+            if ch == "\x00" or ch == "\xe0":
+                msvcrt.getwch()
+                break
+            buffer += ch
+
+        newline_count = buffer.count("\r") + buffer.count("\n")
+        if newline_count >= 2 or len(buffer) > 8:
+            return b"\x1b[200~" + buffer.encode("utf-8", errors="replace") + b"\x1b[201~"
+        return None
 
     async def _read_input_line(self) -> bytes:
         """Fallback: read a line from stdin (not a tty)."""

@@ -1,3 +1,5 @@
+> **Status: Done** — 实施计划已全部执行完毕，代码与测试均已落地。
+
 # PowerShell 工具 — 实施计划
 
 > 基于 `docs/specs/powershell-tool.md`（已 review 修正）。本文档是可执行的逐步实施计划。
