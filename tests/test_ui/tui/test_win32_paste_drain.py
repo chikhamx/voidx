@@ -82,24 +82,34 @@ def test_drain_long_single_line_returns_bracketed_sequence(tmp_path, monkeypatch
     assert content == "\rabcdefghij".encode("utf-8")
 
 
-def test_drain_short_followup_after_enter_returns_none(tmp_path, monkeypatch):
-    """Enter followed by 1-2 chars (not enough) → None (not a paste)."""
+def test_drain_short_followup_after_enter_returns_raw(tmp_path, monkeypatch):
+    """Enter followed by 1-2 chars (not enough) → raw bytes, not a paste.
+
+    Plan B: non-paste drained content is returned as raw bytes (all chars
+    in arrival order) instead of None + _pending_bytes stashing.
+    """
     _install_fake_msvcrt(monkeypatch, ["x"])
     tui = _tui(tmp_path)
 
     result = tui._try_drain_win32_paste("\r", timeout_ms=50)
 
-    assert result is None
+    # Not a paste (1 newline, 2 chars) → raw bytes of all drained chars
+    assert result == b"\rx"
 
 
-def test_drain_non_newline_first_char_returns_none(tmp_path, monkeypatch):
-    """First char not \\r/\\n → immediately None, no drain."""
+def test_drain_non_newline_first_char_returns_raw(tmp_path, monkeypatch):
+    """First char not \\r/\\n with follow-up → raw bytes (not paste).
+
+    Plan B: non-paste drained content is returned as raw bytes instead
+    of None + _pending_bytes stashing.
+    """
     _install_fake_msvcrt(monkeypatch, ["x", "y", "z"])
     tui = _tui(tmp_path)
 
     result = tui._try_drain_win32_paste("a", timeout_ms=50)
 
-    assert result is None
+    # 'a' + 'xyz' = 4 chars, 0 newlines → not paste → raw bytes
+    assert result == b"axyz"
 
 
 def test_drain_function_key_prefix_consumes_second_byte(tmp_path, monkeypatch):
@@ -262,9 +272,9 @@ def test_r3_function_key_prefix_in_paste_stream(tmp_path, monkeypatch):
     result = tui._try_drain_win32_paste("\r", timeout_ms=50)
 
     # \x00 causes break, so buffer = "\r" only (1 char, 1 newline)
-    # newline_count=1 < 2, len=1 <= 8 → not a paste → None
+    # newline_count=1 < 2, len=1 <= 8 → not a paste → raw bytes
     # But the function key bytes are consumed, no ghost keypress
-    assert result is None  # Not enough content after break to be a paste
+    assert result == b"\r"  # Not enough content after break to be a paste
 
 
 def test_r3_function_key_prefix_with_enough_content(tmp_path, monkeypatch):
@@ -391,10 +401,12 @@ def test_r1_split_batch_first_batch_too_short(tmp_path, monkeypatch):
 
     result = tui._try_drain_win32_paste("\r", timeout_ms=20)
 
-    # buffer = "\r" + "ab" = 1 newline, 3 chars → not paste
-    assert result is None
-    # This means \r is treated as submit, and "ab" + later "\nx" are lost
-    # This is the R1 risk: split-batch with insufficient first batch
+    # buffer = "\r" + "ab" = 1 newline, 3 chars → not paste → raw bytes
+    assert result == b"\rab"
+    # Plan B: raw bytes returned (not None + _pending_bytes).
+    # The \r will be processed as submit by _process_input, and "ab" is
+    # preserved in the same byte stream. The later "\nx" arrives in a
+    # subsequent read.
 
 
 # ── R4: 快速连按 Enter 时序模拟 ───────────────────────────────────────
@@ -487,8 +499,8 @@ async def test_r5_regular_char_short_followup_not_paste(tmp_path, monkeypatch):
     """R5: a regular char followed by only 1-2 chars is normal typing, not paste.
 
     The drain heuristic (>=2 newlines or >8 chars) must still apply when
-    the first char is not a newline. Extra chars consumed during drain are
-    preserved in _pending_bytes for the next _process_input call.
+    the first char is not a newline. Plan B: all drained chars are
+    returned together as raw bytes (no _pending_bytes stashing).
     """
     # 'a' + 'b' = 2 chars, 0 newlines → not a paste
     _install_fake_msvcrt(monkeypatch, ["a", "b"])
@@ -496,9 +508,9 @@ async def test_r5_regular_char_short_followup_not_paste(tmp_path, monkeypatch):
 
     raw = await tui._read_input_raw_win32()
 
-    # Should return just 'a' (first char); 'b' preserved for next read
-    assert raw == b"a"
-    assert tui._pending_bytes == b"b"
+    # Plan B: both chars returned together, in order
+    assert raw == b"ab"
+    assert tui._pending_bytes == b""
 
 
 @pytest.mark.asyncio
@@ -597,3 +609,123 @@ async def test_r6_separate_pastes_create_separate_tokens(tmp_path, monkeypatch):
     assert "[Pasted text #1" in text
     assert "[Pasted text #2" in text
     assert len(tui._paste_entries) == 2
+    # Two separate tokens
+    text = tui._get_input_text()
+    assert "[Pasted text #1" in text
+    assert "[Pasted text #2" in text
+    assert len(tui._paste_entries) == 2
+
+
+# ── R7: IME 快速输入字符乱序 ──────────────────────────────────────────
+
+
+@pytest.mark.asyncio
+async def test_r7_fast_typing_preserves_char_order(tmp_path, monkeypatch):
+    """R7: fast IME/keyboard input must NOT be reordered by the drain heuristic.
+
+    When a user types quickly (e.g. IME commit of "hello"), multiple
+    characters arrive in the console input buffer near-simultaneously.
+    The old drain logic reads them all, decides they're "not a paste"
+    (<2 newlines, <=8 chars), and stashes the extra chars into
+    _pending_bytes. On the next read, _process_input prepends
+    _pending_bytes to the new data — but the new data may be a char
+    that arrived *before* the stashed chars were consumed, producing
+    reordered output.
+
+    Fix (Plan B): _read_input_raw_win32 should return ALL drained chars
+    in arrival order when they don't qualify as a paste, instead of
+    splitting them across _pending_bytes.
+    """
+    # Simulate "hello" arriving near-instantly (all in buffer at once)
+    _install_fake_msvcrt(monkeypatch, list("hello"))
+    tui = _tui(tmp_path)
+    tui._tty = True
+    tui._input_lines = [""]
+    tui._cursor_col = 0
+
+    raw = await tui._read_input_raw_win32()
+
+    # All 5 chars should be returned together, in order — NOT split
+    # into b"h" + _pending_bytes=b"ello"
+    assert raw == b"hello", f"expected b'hello', got {raw!r}"
+    assert tui._pending_bytes == b"", f"pending_bytes should be empty, got {tui._pending_bytes!r}"
+
+
+@pytest.mark.asyncio
+async def test_r7_fast_typing_e2e_no_reorder(tmp_path, monkeypatch):
+    """R7 E2E: typing "hello" fast then "w" must produce "hellow", not "hellow" reordered.
+
+    This reproduces the user-reported bug: IME characters appear out of
+    order in the input box. The old code returned b"h" from the first
+    read (with "ello" stashed in _pending_bytes), then on the next read
+    returned b"w" — but _process_input prepended _pending_bytes,
+    producing b"ellow". The user saw "h" then "ellow" = "hellow" which
+    *looks* correct, but if the timing differs (e.g. drain only captures
+    "el" before timeout, "lo" arrives later), the order breaks.
+
+    With Plan B, the first read returns all available chars at once,
+    so there's no _pending_bytes reordering.
+    """
+    tui = _tui(tmp_path)
+    tui._tty = True
+    tui._input_lines = [""]
+    tui._cursor_col = 0
+
+    # First read: "hello" all in buffer
+    _install_fake_msvcrt(monkeypatch, list("hello"))
+    raw1 = await tui._read_input_raw_win32()
+    tui._process_input(raw1)
+
+    # Second read: "w" (user continues typing)
+    _install_fake_msvcrt(monkeypatch, ["w"])
+    raw2 = await tui._read_input_raw_win32()
+    tui._process_input(raw2)
+
+    assert tui._get_input_text() == "hellow", f"got: {tui._get_input_text()!r}"
+
+
+@pytest.mark.asyncio
+async def test_r7_short_followup_returns_all_chars_no_pending(tmp_path, monkeypatch):
+    """R7: 2-3 chars arriving together must all be returned, not stashed.
+
+    The old code returned only the first char and stashed the rest in
+    _pending_bytes. Plan B returns them all together so _process_input
+    sees them in the correct order.
+    """
+    # 'a' + 'b' + 'c' = 3 chars, 0 newlines → not a paste, but all 3
+    # should be returned together
+    _install_fake_msvcrt(monkeypatch, ["a", "b", "c"])
+    tui = _tui(tmp_path)
+
+    raw = await tui._read_input_raw_win32()
+
+    assert raw == b"abc", f"expected b'abc', got {raw!r}"
+    assert tui._pending_bytes == b""
+
+
+@pytest.mark.asyncio
+async def test_r7_mixed_fast_input_and_paste_detection(tmp_path, monkeypatch):
+    """R7: fast typing (short, no newlines) returns raw; real paste (long/multiline) still wrapped.
+
+    Ensures Plan B doesn't break paste detection: short fast input is
+    returned as-is, but a genuine paste (>=2 newlines or >8 chars) is
+    still wrapped in bracketed-paste markers.
+    """
+    tui = _tui(tmp_path)
+
+    # Case 1: 5 chars, no newlines → raw bytes, not paste
+    _install_fake_msvcrt(monkeypatch, list("hello"))
+    raw1 = await tui._read_input_raw_win32()
+    assert not raw1.startswith(b"\x1b[200~"), "short input should not be paste"
+    assert raw1 == b"hello"
+
+    # Case 2: 10 chars, no newlines → paste (>8 chars)
+    _install_fake_msvcrt(monkeypatch, list("abcdefghij"))
+    raw2 = await tui._read_input_raw_win32()
+    assert raw2.startswith(b"\x1b[200~"), "long input should be paste"
+    assert raw2.endswith(b"\x1b[201~")
+
+    # Case 3: 2+ newlines → paste
+    _install_fake_msvcrt(monkeypatch, list("\r\nx\r\ny"))
+    raw3 = await tui._read_input_raw_win32()
+    assert raw3.startswith(b"\x1b[200~"), "multiline input should be paste"

@@ -101,9 +101,13 @@ class _InputParserMixin:
         (multiple newlines or a long run), wraps them in a bracketed-paste
         sequence so ``_process_paste`` handles them as a unit.
 
-        Works with ANY first character, not just newlines — pasted text
-        often starts with a regular character (e.g. "line1\\r\\nline2").
-        Returns the bracketed-paste bytes, or ``None`` if this is not a paste.
+        Returns the bracketed-paste bytes when the drained content looks
+        like a paste. Returns the raw bytes of ALL drained characters
+        (including ``first_char``) when they don't look like a paste —
+        this lets the caller process them in arrival order without
+        stashing extras into ``_pending_bytes``, which previously caused
+        IME/keyboard characters to be reordered across reads. Returns
+        ``None`` when nothing follows ``first_char`` (a single keypress).
         """
         import msvcrt
         import time
@@ -132,12 +136,11 @@ class _InputParserMixin:
         newline_count = buffer.count("\r") + buffer.count("\n")
         if newline_count >= 2 or len(buffer) > 8:
             return b"\x1b[200~" + buffer.encode("utf-8", errors="replace") + b"\x1b[201~"
-        # Not a paste: preserve any extra chars we consumed so they are
-        # processed on the next _process_input call instead of being lost.
-        extra = buffer[1:]
-        if extra:
-            self._pending_bytes = extra.encode("utf-8", errors="replace")
-        return None
+        # Not a paste: return all drained chars as raw bytes so the caller
+        # processes them in arrival order. Previously, only first_char was
+        # returned and the rest was stashed in _pending_bytes, which caused
+        # fast IME/keyboard input to be reordered across reads.
+        return buffer.encode("utf-8", errors="replace")
 
     async def _read_input_line(self) -> bytes:
         """Fallback: read a line from stdin (not a tty)."""

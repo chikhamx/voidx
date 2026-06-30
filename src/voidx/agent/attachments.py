@@ -152,9 +152,23 @@ def is_image_path(path: Path | str) -> bool:
     return Path(path).suffix.lower() in IMAGE_EXTENSIONS
 
 
+_PASTED_RE = re.compile(r"<pasted>\n.*?\n</pasted>", re.DOTALL)
+
+
+def _pasted_spans(text: str) -> list[tuple[int, int]]:
+    """Return (start, end) spans of all <pasted>...</pasted> blocks."""
+    return [(m.start(), m.end()) for m in _PASTED_RE.finditer(text)]
+
+
 def _attachment_tokens(text: str) -> list[tuple[int, int, str]]:
     tokens: list[tuple[int, int, str]] = []
+    excluded = _pasted_spans(text)
     for match in _ATTACHMENT_RE.finditer(text):
+        # Skip @-references and [image-] tokens inside <pasted> blocks —
+        # pasted content is quoted material (e.g. code with decorators),
+        # not user-authored attachment references.
+        if any(start <= match.start() < end for start, end in excluded):
+            continue
         image_stem = match.group(3)
         if image_stem:
             raw_path = f":image:{image_stem}"
