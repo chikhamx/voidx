@@ -138,6 +138,29 @@ def test_ask_text_ignores_stale_queue_values_after_timeout(tmp_path):
     assert asyncio.run(run_prompt()) is None
 
 
+
+def test_text_prompt_expands_paste_tokens(tmp_path):
+    """Pasted content in the clarify/text-prompt input must be expanded to
+    actual text, not submitted as a literal [Pasted text #N ...] token."""
+    tui = _tui(tmp_path)
+    tui._active_text_prompt = "Question?"
+    display = tui._register_text_paste("hello world")
+    tui._input_lines = [display]
+    tui._cursor_col = len(display)
+
+    tui._submit_text_prompt()
+
+    result = tui._text_queue.get_nowait()
+    # Paste tokens should be expanded to actual content, not left as
+    # literal [Pasted text #N ...] tokens.
+    assert "[Pasted text" not in result
+    assert "hello world" in result
+    # <pasted> wrapper tags must be stripped — clarify answers are plain text.
+    assert "<pasted>" not in result
+    assert "</pasted>" not in result
+    # Paste entries should be cleaned up after submit.
+    assert tui._paste_entries == []
+
 def test_command_panel_enter_accepts_selected_command_without_queueing(tmp_path):
     tui = _tui(
         tmp_path,

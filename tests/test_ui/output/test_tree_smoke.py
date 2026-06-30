@@ -292,3 +292,37 @@ def test_transcript_snapshot_round_trips_turn_tree():
 
 if __name__ == "__main__":
     test_basic_tree()
+
+
+def test_turn_with_ansi_prefix_closing_tag_does_not_crash():
+    """Pasted segments wrapped with ANSI_LINE_PREFIX may contain rich markup
+    closing tags like [/] in the markdown-rendered content.  _full_width_row
+    must not raise MarkupError when computing visible length."""
+    from voidx.ui.output.dock.formatting import ANSI_LINE_PREFIX, _text_from_line
+
+    tree = OutputTree()
+    # Simulate a pasted-segment body line: ANSI prefix + markdown line containing [/]
+    body_line = ANSI_LINE_PREFIX + "code with [/] closing tag"
+    tree.new_node(
+        tree.root,
+        node_type="turn",
+        header=f"[bold white]❯[/] {ANSI_LINE_PREFIX}some [/] text",
+        body_lines=[body_line],
+    )
+
+    # This used to raise MarkupError inside _full_width_row
+    lines = tree.render(80)
+    assert len(lines) > 0
+
+    # The style wrapper's closing [/] must not leak into visible text.
+    # User content [/] (inside the ANSI segment) is expected to remain as
+    # literal text — only the wrapper tag should be consumed by markup parsing.
+    for line in lines:
+        plain = _text_from_line(line).plain
+        # The wrapper's [/] appears right before ANSI_LINE_PREFIX in the raw
+        # line.  After _text_from_line, it should be consumed as markup, so
+        # the plain text should not contain a trailing [/] from the wrapper.
+        # User-content [/] is inside the ANSI segment and stays as literal.
+        assert not plain.rstrip().endswith("[/]"), (
+            f"Wrapper closing tag leaked: {plain!r}"
+        )

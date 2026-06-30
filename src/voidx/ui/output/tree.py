@@ -14,6 +14,27 @@ from rich.text import Text
 USER_ROW_STYLE = "white on #3a3937"
 TOOL_META_BRANCH = "[dim]└[/dim] "
 
+# Must match voidx.ui.output.dock.formatting.ANSI_LINE_PREFIX.
+# Duplicated here to avoid circular imports (formatting imports from dock,
+# dock imports from tree).
+_ANSI_LINE_PREFIX = "\x00voidx-ansi\x00"
+
+
+def _visible_len(line: str) -> int:
+    """Compute visible cell length of a render line safely.
+
+    Lines may contain an ANSI_LINE_PREFIX marker separating rich-markup text
+    from ANSI-styled text (pasted segments).  The ANSI portion can contain
+    arbitrary characters including ``[/]`` that would crash Text.from_markup,
+    so it is parsed with Text.from_ansi instead.
+    """
+    marker = line.find(_ANSI_LINE_PREFIX)
+    if marker == -1:
+        return cell_len(Text.from_markup(line).plain)
+    text = Text.from_markup(line[:marker])
+    text.append_text(Text.from_ansi(line[marker + len(_ANSI_LINE_PREFIX):]))
+    return cell_len(text.plain)
+
 
 @dataclass
 class OutputNode:
@@ -617,15 +638,29 @@ class OutputTree:
 
 
 def _full_width_row(line: str, width: int) -> str:
-    visible = cell_len(Text.from_markup(line).plain)
+    visible = _visible_len(line)
     padding = " " * max(0, width - visible)
-    return f"[{USER_ROW_STYLE}]{line}{padding}[/]"
+    return _wrap_full_width(line, padding, USER_ROW_STYLE)
 
 
 def _permission_row(line: str, width: int) -> str:
-    visible = cell_len(Text.from_markup(line).plain)
+    visible = _visible_len(line)
     padding = " " * max(0, width - visible)
-    return f"[white on #3a3937]{line}{padding}[/]"
+    return _wrap_full_width(line, padding, "white on #3a3937")
+
+
+def _wrap_full_width(line: str, padding: str, style: str) -> str:
+    """Wrap a line with a background style and padding to full width.
+
+    When the line contains an ANSI_LINE_PREFIX marker, the closing tag and
+    padding must go *before* the marker so that _text_from_line parses them
+    with Text.from_markup (which understands tags) rather than leaving them
+    as literal text in the Text.from_ansi portion.
+    """
+    marker = line.find(_ANSI_LINE_PREFIX)
+    if marker == -1:
+        return f"[{style}]{line}{padding}[/]"
+    return f"[{style}]{line[:marker]}{padding}[/]{line[marker:]}"
 
 
 def _is_full_width_user_row(node: OutputNode) -> bool:
@@ -644,7 +679,7 @@ def _pad_diff_background_row(line: str, width: int) -> str:
         marker = "[/on #4a0000]"
     if not marker:
         return line
-    visible = cell_len(Text.from_markup(line).plain)
+    visible = _visible_len(line)
     padding = " " * max(0, width - visible)
     return line.replace(marker, f"{padding}{marker}", 1)
 

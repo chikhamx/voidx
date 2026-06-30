@@ -7,6 +7,7 @@ from typing import Any
 
 from voidx.config import Settings
 from voidx.skills.service import SkillRegistry, SkillService
+from voidx.ui.output.dock.formatting import _PASTED_RE
 from voidx.ui.tools.attachment_tokens import attachment_token_text
 from voidx.ui.tools.file_picker import (
     AttachmentToken,
@@ -37,7 +38,12 @@ class _PanelManagerMixin:
     # ── submit ───────────────────────────────────────────────────────────
 
     def _submit_text_prompt(self) -> None:
-        value = self._get_input_text()
+        value = self._expand_registered_tokens(self._get_input_text())
+        # Clarify answers are plain text — strip <pasted> wrapper tags that
+        # _expand_registered_tokens adds (those tags are only consumed by the
+        # main input path's split_pasted_segments in start_turn rendering).
+        value = _PASTED_RE.sub(r"\1", value)
+        self._paste_entries.clear()
         self._text_queue.put_nowait(value)
 
     def _cancel_text_prompt(self) -> None:
