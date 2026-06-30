@@ -326,6 +326,12 @@ def test_parallel_command_is_in_palette():
     assert ("/parallel status", "Show parallel subagent config") in COMMANDS
 
 
+
+def test_model_ctx_command_is_in_palette():
+    from voidx.ui.commands import COMMANDS
+
+    assert ("/model ctx", "Set context window size") in COMMANDS
+
 @pytest.mark.asyncio
 async def test_permission_mode_without_args_uses_prompt_app_choice(tmp_path):
     settings = Settings(str(tmp_path))

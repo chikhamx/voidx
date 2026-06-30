@@ -7,12 +7,24 @@ const SLASH_COMMANDS = [
   { command: "/init", description: "Initialize project config" },
 ];
 
+const MODEL_SUBCOMMANDS = [
+  { command: "/model ctx", description: "Set context window size" },
+  { command: "/model del", description: "Remove a profile" },
+  { command: "/model list", description: "Show configured model details" },
+  { command: "/model new", description: "Create or update a model profile" },
+  { command: "/model reasoning", description: "Set reasoning effort level" },
+  { command: "/model switch", description: "Switch to a configured provider" },
+  { command: "/model test", description: "Test a provider's connectivity" },
+];
+
 export function matchSlashCommands(input) {
   if (!input || !input.startsWith("/")) {
     return [];
   }
   const query = input.toLowerCase();
-  const matched = SLASH_COMMANDS.filter((cmd) =>
+  const hasSubcommand = query.includes(" ");
+  const pool = hasSubcommand ? MODEL_SUBCOMMANDS : SLASH_COMMANDS;
+  const matched = pool.filter((cmd) =>
     cmd.command.toLowerCase().startsWith(query),
   );
   return matched.length > 0 ? matched : [];

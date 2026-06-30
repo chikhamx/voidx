@@ -45,6 +45,44 @@ describe("matchSlashCommands", () => {
   });
 });
 
+describe("matchSlashCommands subcommands", () => {
+  it("lists /model subcommands when input is '/model '", () => {
+    const result = matchSlashCommands("/model ");
+    const cmds = result.map((c) => c.command);
+    expect(cmds).toContain("/model ctx");
+    expect(cmds).toContain("/model reasoning");
+    expect(cmds).toContain("/model new");
+  });
+
+  it("filters /model subcommands by prefix", () => {
+    const result = matchSlashCommands("/model c");
+    expect(result).toHaveLength(1);
+    expect(result[0].command).toBe("/model ctx");
+  });
+
+  it("filters /model subcommands case-insensitively", () => {
+    const result = matchSlashCommands("/model CTX");
+    expect(result).toHaveLength(1);
+    expect(result[0].command).toBe("/model ctx");
+  });
+
+  it("matches /model r to reasoning", () => {
+    const result = matchSlashCommands("/model r");
+    expect(result).toHaveLength(1);
+    expect(result[0].command).toBe("/model reasoning");
+  });
+
+  it("returns empty when subcommand prefix matches nothing", () => {
+    expect(matchSlashCommands("/model zzz")).toEqual([]);
+  });
+
+  it("still matches top-level /model without trailing space", () => {
+    const result = matchSlashCommands("/model");
+    expect(result).toHaveLength(1);
+    expect(result[0].command).toBe("/model");
+  });
+});
+
 describe("renderSlashMenu", () => {
   it("returns empty menu for empty commands", () => {
     const menu = renderSlashMenu([], 0);

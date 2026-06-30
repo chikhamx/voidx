@@ -49,6 +49,7 @@ COMMANDS: list[tuple[str, str]] = [
     ("/mode goal", "Keep multi-step work scoped"),
     ("/mode plan", "Read-only plan mode"),
     ("/model", "Switch configured model"),
+    ("/model ctx", "Set context window size"),
     ("/model del", "Remove a profile"),
     ("/model list", "Show configured model details"),
     ("/model new", "Create or update a model profile"),
