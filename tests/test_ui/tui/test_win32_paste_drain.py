@@ -205,8 +205,9 @@ async def test_e2e_multiline_paste_preserves_all_lines(tmp_path, monkeypatch):
     # Process it through _process_input
     tui._process_input(raw)
 
-    # All lines should be preserved (with \n normalization)
-    assert tui._get_input_text() == "\nline1\nline2"
+    # All lines should be collapsed into a paste token
+    assert tui._get_input_text() == "[Pasted text #1 +2 lines]"
+    assert tui._paste_entries[0]["expanded"] == "\nline1\nline2"
     assert tui._queue.empty()
 
 

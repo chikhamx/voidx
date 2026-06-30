@@ -82,11 +82,12 @@ def test_ctrl_v_falls_back_to_clipboard_text_when_no_image(tmp_path, monkeypatch
 
     tui._process_input(b"\x16")
 
-    assert tui._get_input_text() == "hello\nworld"
+    assert tui._get_input_text() == "[Pasted text #1 +1 lines]"
+    assert tui._paste_entries[0]["expanded"] == "hello\nworld"
     assert tui._queue.empty()
 
 
-def test_bracketed_paste_multiline_text_inserts_as_whole(tmp_path):
+def test_bracketed_paste_multiline_text_collapses_to_token(tmp_path):
     tui = _tui(tmp_path)
     tui._tty = True
     tui._input_lines = [""]
@@ -95,7 +96,8 @@ def test_bracketed_paste_multiline_text_inserts_as_whole(tmp_path):
     paste_data = b"\x1b[200~line1\r\nline2\r\nline3\x1b[201~"
     tui._process_input(paste_data)
 
-    assert tui._get_input_text() == "line1\nline2\nline3"
+    assert tui._get_input_text() == "[Pasted text #1 +2 lines]"
+    assert tui._paste_entries[0]["expanded"] == "line1\nline2\nline3"
     assert tui._queue.empty()
 
 
@@ -141,7 +143,7 @@ def test_collapsed_paste_submit_expands_to_full_text(tmp_path):
     tui._process_input(b"\x1b[200~" + pasted.encode() + b"\x1b[201~")
     tui._process_input(b"\r")
 
-    assert tui._queue.get_nowait() == pasted
+    assert tui._queue.get_nowait() == f"<pasted>\n{pasted}\n</pasted>"
     assert tui._input_history == [token]
     assert tui._get_input_text() == ""
 
@@ -157,8 +159,9 @@ def test_collapsed_paste_history_restores_registry(tmp_path):
     tui._process_input(b"\x1b[A")
     tui._process_input(b"\r")
 
-    assert tui._queue.get_nowait() == pasted
-    assert tui._queue.get_nowait() == pasted
+    expected = f"<pasted>\n{pasted}\n</pasted>"
+    assert tui._queue.get_nowait() == expected
+    assert tui._queue.get_nowait() == expected
     assert tui._input_history == [token]
 
 
@@ -171,7 +174,7 @@ async def test_interrupted_submit_restores_collapsed_paste_token(tmp_path):
     cancelled = asyncio.Event()
 
     async def on_submit(text: str) -> bool:
-        assert text == pasted
+        assert text == f"<pasted>\n{pasted}\n</pasted>"
         started.set()
         try:
             await asyncio.Event().wait()
@@ -230,7 +233,8 @@ def test_bracketed_paste_single_line_does_not_submit(tmp_path):
     paste_data = b"\x1b[200~hello world\x1b[201~"
     tui._process_input(paste_data)
 
-    assert tui._get_input_text() == "hello world"
+    assert tui._get_input_text() == "[Pasted text #1 11 chars]"
+    assert tui._paste_entries[0]["expanded"] == "hello world"
     assert tui._queue.empty()
 
 
@@ -244,7 +248,8 @@ def test_bracketed_paste_with_trailing_key(tmp_path):
     paste_data = b"\x1b[200~text\x1b[201~x"
     tui._process_input(paste_data)
 
-    assert tui._get_input_text() == "textx"
+    assert tui._get_input_text() == "[Pasted text #1 4 chars]x"
+    assert tui._paste_entries[0]["expanded"] == "text"
     assert tui._queue.empty()
 
 
@@ -262,7 +267,8 @@ def test_bracketed_paste_split_across_reads(tmp_path):
     # Second read: rest of content + paste end
     tui._process_input(b"line2\x1b[201~")
     assert tui._paste_buffer is None
-    assert tui._get_input_text() == "line1\nline2"
+    assert tui._get_input_text() == "[Pasted text #1 +1 lines]"
+    assert tui._paste_entries[0]["expanded"] == "line1\nline2"
     assert tui._queue.empty()
 
 
@@ -276,5 +282,6 @@ def test_bracketed_paste_cr_only_normalised_to_newline(tmp_path):
     paste_data = b"\x1b[200~line1\rline2\x1b[201~"
     tui._process_input(paste_data)
 
-    assert tui._get_input_text() == "line1\nline2"
+    assert tui._get_input_text() == "[Pasted text #1 +1 lines]"
+    assert tui._paste_entries[0]["expanded"] == "line1\nline2"
     assert tui._queue.empty()

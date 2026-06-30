@@ -231,16 +231,10 @@ class _InputParserMixin:
             return
         # Normalise line endings: \r\n → \n, \r → \n
         text = text.replace("\r\n", "\n").replace("\r", "\n")
-        if len(text.split("\n")) > 3 or len(text) > 200:
-            self._insert_text_token(self._register_text_paste(text))
-            return
-        # Split into lines and insert each, creating editor newlines
-        lines = text.split("\n")
-        for i, line in enumerate(lines):
-            if i > 0:
-                self._insert_newline()
-            if line:
-                self._insert_text(line)
+        # All pasted text collapses to a [Pasted text #N ...] token, regardless
+        # of length. This keeps the input box compact and clearly marks pasted
+        # content as a distinct unit.
+        self._insert_text_token(self._register_text_paste(text))
 
     def _dispatch_key(self, data: bytes, offset: int) -> tuple[int, str | None]:
         """Parse a key sequence starting at offset. Returns (bytes_consumed, action)."""

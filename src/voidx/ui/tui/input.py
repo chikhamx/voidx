@@ -80,6 +80,8 @@ class _InputEditorMixin:
             display = str(entry.get("display", ""))
             expanded = str(entry.get("expanded", ""))
             if display:
+                if entry.get("kind") == "text":
+                    expanded = f"<pasted>\n{expanded}\n</pasted>"
                 result = result.replace(display, expanded)
         return result
 
