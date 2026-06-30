@@ -1,3 +1,5 @@
+> **Status: Done** — 实现已完成并提交（commit 6351817），245 个测试通过。
+
 # ModelConfig.context_window — 技术设计文档
 
 ## Context
