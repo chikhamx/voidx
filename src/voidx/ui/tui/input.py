@@ -52,12 +52,15 @@ class _InputEditorMixin:
 
     def _register_text_paste(self, text: str) -> str:
         paste_id = self._paste_next_id
+        display = self._compute_text_paste_display(paste_id, text)
+        return self._register_paste_entry(kind="text", display=display, expanded=text)
+
+    @staticmethod
+    def _compute_text_paste_display(paste_id: int, text: str) -> str:
         line_count = len(text.split("\n"))
         if line_count > 1:
-            display = f"[Pasted text #{paste_id} +{line_count - 1} lines]"
-        else:
-            display = f"[Pasted text #{paste_id} {len(text)} chars]"
-        return self._register_paste_entry(kind="text", display=display, expanded=text)
+            return f"[Pasted text #{paste_id} +{line_count - 1} lines]"
+        return f"[Pasted text #{paste_id} {len(text)} chars]"
 
     def _register_image_paste(self, stem: str, size: int) -> str:
         from voidx.ui.tools.attachment_tokens import image_attachment_token_text
@@ -343,5 +346,25 @@ class _InputEditorMixin:
         col = min(self._cursor_col, len(line))
         self._set_current_line(line[:col] + token + line[col:])
         self._cursor_col = col + len(token)
+        self._clear_attachment_suppression_on_edit()
+        self._update_input_panels()
+
+    def _replace_token_in_editor(self, old_token: str, new_token: str) -> None:
+        """Replace a token string in the input with an updated version.
+
+        Used when merging split-batch pastes: the old token (e.g.
+        "[Pasted text #1 +3 lines]") is replaced in-place by the new
+        token (e.g. "[Pasted text #1 +4 lines]") with updated line count.
+        """
+        self._reset_ctrl_c()
+        line = self._current_line()
+        idx = line.rfind(old_token)
+        if idx == -1:
+            # Token not found on current line — fall back to inserting new
+            self._insert_text_token(new_token)
+            return
+        new_line = line[:idx] + new_token + line[idx + len(old_token):]
+        self._set_current_line(new_line)
+        self._cursor_col = idx + len(new_token)
         self._clear_attachment_suppression_on_edit()
         self._update_input_panels()

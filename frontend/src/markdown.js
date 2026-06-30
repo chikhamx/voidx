@@ -55,6 +55,25 @@ export function renderMarkdown(text) {
   return container;
 }
 
+const PASTED_RE = /<pasted>\n([\s\S]*?)\n<\/pasted>/g;
+
+export function stripPastedTags(text) {
+  if (!text || !text.includes("<pasted>")) {
+    return text;
+  }
+  return text.replace(PASTED_RE, (_match, content) => {
+    const quoted = content
+      .split("\n")
+      .map((line) => `> ${line}`)
+      .join("\n");
+    return `\n${quoted}\n`;
+  });
+}
+
+export function renderUserMessage(text) {
+  return renderMarkdown(stripPastedTags(text));
+}
+
 export function highlightCode(code, lang) {
   try {
     if (lang && hljs.getLanguage(lang)) {

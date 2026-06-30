@@ -77,30 +77,41 @@ class _InputParserMixin:
                 if mapped:
                     return mapped.encode("utf-8")
                 return ("\x00" + ch2).encode("utf-8")
-            # Newline first char: try to drain a paste
-            if ch in ("\r", "\n"):
-                pasted = self._try_drain_win32_paste(ch)
-                if pasted is not None:
-                    return pasted
-                return ch.encode("utf-8")
+            # Any character could be the start of a paste. Probe for
+            # quickly-following chars; if they look like a paste (multiple
+            # newlines or a long run), wrap the whole thing as bracketed
+            # paste. This fixes the case where pasted text starts with a
+            # regular char (e.g. "line1\r\nline2") — previously only
+            # newline-first pastes triggered the drain, so the leading
+            # "line1" was inserted char-by-char while the rest became a
+            # partial [Pasted text] token.
+            pasted = self._try_drain_win32_paste(ch)
+            if pasted is not None:
+                return pasted
             return ch.encode("utf-8")
 
         return await asyncio.to_thread(_read)
 
     def _try_drain_win32_paste(self, first_char: str, timeout_ms: int = 20) -> bytes | None:
-        """Drain remaining console input after a newline to detect a paste.
+        """Drain remaining console input to detect a paste.
 
-        Windows Terminal injects pasted content character-by-character into the
-        console input buffer. When the first character is ``\\r`` or ``\\n``,
-        this method reads any quickly-following characters and, if they look
-        like a paste (multiple newlines or a long run), wraps them in a
-        bracketed-paste sequence so ``_process_paste`` handles them as a unit.
+        Windows Terminal injects pasted content character-by-character into
+        the console input buffer. This method reads any quickly-following
+        characters after ``first_char`` and, if they look like a paste
+        (multiple newlines or a long run), wraps them in a bracketed-paste
+        sequence so ``_process_paste`` handles them as a unit.
+
+        Works with ANY first character, not just newlines — pasted text
+        often starts with a regular character (e.g. "line1\\r\\nline2").
         Returns the bracketed-paste bytes, or ``None`` if this is not a paste.
         """
         import msvcrt
         import time
 
-        if first_char not in ("\r", "\n"):
+        # Quick exit: if nothing follows immediately, this is a single
+        # keypress (normal typing), not a paste. Avoids entering the poll
+        # loop for every ordinary character.
+        if not msvcrt.kbhit():
             return None
 
         buffer = first_char
@@ -121,6 +132,11 @@ class _InputParserMixin:
         newline_count = buffer.count("\r") + buffer.count("\n")
         if newline_count >= 2 or len(buffer) > 8:
             return b"\x1b[200~" + buffer.encode("utf-8", errors="replace") + b"\x1b[201~"
+        # Not a paste: preserve any extra chars we consumed so they are
+        # processed on the next _process_input call instead of being lost.
+        extra = buffer[1:]
+        if extra:
+            self._pending_bytes = extra.encode("utf-8", errors="replace")
         return None
 
     async def _read_input_line(self) -> bytes:
@@ -234,7 +250,35 @@ class _InputParserMixin:
         # All pasted text collapses to a [Pasted text #N ...] token, regardless
         # of length. This keeps the input box compact and clearly marks pasted
         # content as a distinct unit.
-        self._insert_text_token(self._register_text_paste(text))
+        #
+        # Merge with the previous paste if it happened within a short window.
+        # Windows Terminal may split a large paste across multiple drain
+        # batches (20ms timeout fires between batches), producing two
+        # bracketed-paste sequences. Without merging, the user sees two
+        # adjacent tokens for what was a single paste action.
+        import time
+
+        now = time.monotonic()
+        last = getattr(self, "_last_paste_time", None)
+        self._last_paste_time = now
+
+        if (
+            last is not None
+            and (now - last) < 0.2
+            and self._paste_entries
+            and self._paste_entries[-1].get("kind") == "text"
+        ):
+            # Append to the previous paste entry
+            entry = self._paste_entries[-1]
+            combined = str(entry["expanded"]) + text
+            old_display = str(entry["display"])
+            new_display = self._compute_text_paste_display(int(entry["id"]), combined)
+            entry["expanded"] = combined
+            entry["display"] = new_display
+            # Replace the old token in the editor with the updated one
+            self._replace_token_in_editor(old_display, new_display)
+        else:
+            self._insert_text_token(self._register_text_paste(text))
 
     def _dispatch_key(self, data: bytes, offset: int) -> tuple[int, str | None]:
         """Parse a key sequence starting at offset. Returns (bytes_consumed, action)."""

@@ -401,9 +401,15 @@ def test_r1_split_batch_first_batch_too_short(tmp_path, monkeypatch):
 
 
 def test_r4_double_enter_within_20ms_detected_as_paste(tmp_path, monkeypatch):
-    """R4: two \\r within 20ms → second \\r drained, first submit swallowed."""
-    # First \r is first_char, second \r arrives at 10ms
-    schedule = [("\r", 10)]
+    """R4: two \\r arriving near-simultaneously → second \\r drained, first submit swallowed.
+
+    Note: with the kbhit() fast-exit, the second char must already be in the
+    buffer when kbhit() is first checked. Real pastes inject chars
+    near-instantaneously, so delay=0 models that. A human double-tap (10ms+
+    gap) will correctly NOT be detected as paste.
+    """
+    # First \r is first_char, second \r already in buffer (delay=0)
+    schedule = [("\r", 0)]
     _install_timed_msvcrt(monkeypatch, schedule)
     tui = _tui(tmp_path)
 
@@ -426,3 +432,168 @@ def test_r4_double_enter_beyond_20ms_not_detected(tmp_path, monkeypatch):
 
     # Second \r arrives after timeout → not drained → None
     assert result is None
+
+
+# ── R5: 普通字符开头的多行粘贴 ───────────────────────────────────────
+
+
+@pytest.mark.asyncio
+async def test_r5_regular_char_start_multiline_paste(tmp_path, monkeypatch):
+    """R5: paste starting with a regular char (not \\r/\\n) must be detected.
+
+    Windows Terminal injects pasted content character-by-character. When the
+    pasted text starts with a regular character (e.g. "line1\\r\\nline2"),
+    the first char 'l' is not a newline, so the old code never triggered
+    drain. The leading "line1" was inserted char-by-char, and only the
+    \\r in the middle triggered drain — producing a partial [Pasted text]
+    token for "line2" while "line1" showed as raw text.
+
+    Fix: _read_input_raw_win32 should probe for quickly-following chars
+    after ANY first character, not just newlines.
+    """
+    # Simulate: "line1\r\nline2\r\nline3" injected char-by-char
+    chars = list("line1\r\nline2\r\nline3")
+    _install_fake_msvcrt(monkeypatch, chars)
+    tui = _tui(tmp_path)
+
+    raw = await tui._read_input_raw_win32()
+
+    # The entire paste should be wrapped as a bracketed-paste sequence
+    assert raw.startswith(b"\x1b[200~")
+    assert raw.endswith(b"\x1b[201~")
+    content = raw[len(b"\x1b[200~"):-len(b"\x1b[201~")]
+    assert content == "line1\r\nline2\r\nline3".encode("utf-8")
+
+
+@pytest.mark.asyncio
+async def test_r5_regular_char_start_single_line_not_paste(tmp_path, monkeypatch):
+    """R5: a single regular char with no follow-up must NOT be treated as paste.
+
+    Guards against false positives: typing one character should return it
+    as-is, not wrap it in bracketed-paste markers.
+    """
+    # First char 'a', no follow-up → kbhit() False → not paste
+    _install_fake_msvcrt(monkeypatch, ["a"])
+    tui = _tui(tmp_path)
+
+    raw = await tui._read_input_raw_win32()
+
+    assert raw == b"a"
+    assert tui._pending_bytes == b""
+
+
+@pytest.mark.asyncio
+async def test_r5_regular_char_short_followup_not_paste(tmp_path, monkeypatch):
+    """R5: a regular char followed by only 1-2 chars is normal typing, not paste.
+
+    The drain heuristic (>=2 newlines or >8 chars) must still apply when
+    the first char is not a newline. Extra chars consumed during drain are
+    preserved in _pending_bytes for the next _process_input call.
+    """
+    # 'a' + 'b' = 2 chars, 0 newlines → not a paste
+    _install_fake_msvcrt(monkeypatch, ["a", "b"])
+    tui = _tui(tmp_path)
+
+    raw = await tui._read_input_raw_win32()
+
+    # Should return just 'a' (first char); 'b' preserved for next read
+    assert raw == b"a"
+    assert tui._pending_bytes == b"b"
+
+
+@pytest.mark.asyncio
+async def test_r5_e2e_regular_char_paste_collapses_to_token(tmp_path, monkeypatch):
+    """R5 E2E: regular-char-start paste → single [Pasted text] token, no partial.
+
+    This is the user-reported bug: "line1" showed as raw text while
+    "line2\\nline3" showed as [Pasted text #N]. After the fix, the entire
+    paste should collapse to one token.
+    """
+    chars = list("line1\r\nline2\r\nline3")
+    _install_fake_msvcrt(monkeypatch, chars)
+    tui = _tui(tmp_path)
+    tui._tty = True
+    tui._input_lines = [""]
+    tui._cursor_col = 0
+
+    raw = await tui._read_input_raw_win32()
+    assert raw.startswith(b"\x1b[200~")
+
+    tui._process_input(raw)
+
+    # Entire paste → single token, no partial raw text
+    text = tui._get_input_text()
+    assert text == "[Pasted text #1 +2 lines]"
+    assert tui._paste_entries[0]["expanded"] == "line1\nline2\nline3"
+    assert tui._queue.empty()
+
+
+# ── R6: 分批粘贴合并为单个 token ──────────────────────────────────────
+
+
+@pytest.mark.asyncio
+async def test_r6_split_batch_paste_merges_to_single_token(tmp_path, monkeypatch):
+    """R6: a paste split across two drain batches must produce ONE token.
+
+    Windows Terminal may inject a large paste in batches. The 20ms drain
+    timeout can fire between batches, producing two bracketed-paste
+    sequences. Without merging, the user sees two adjacent tokens:
+    [Pasted text #1 +4 lines][Pasted text #2 29 chars]
+
+    Fix: when _insert_pasted_text is called and the previous paste was
+    near-instantaneous, append to the existing entry instead of creating
+    a new one.
+    """
+    tui = _tui(tmp_path)
+    tui._tty = True
+    tui._input_lines = [""]
+    tui._cursor_col = 0
+
+    # Batch 1: "line1\r\nline2\r\nline3\r\n"
+    batch1 = b"\x1b[200~line1\r\nline2\r\nline3\r\n\x1b[201~"
+    # Batch 2: "line4\r\nline5"  (arrives immediately after)
+    batch2 = b"\x1b[200~line4\r\nline5\x1b[201~"
+
+    tui._process_input(batch1)
+    tui._process_input(batch2)
+
+    # Should be a SINGLE token, not two
+    text = tui._get_input_text()
+    assert text == "[Pasted text #1 +4 lines]", f"got: {text!r}"
+    # Expanded content should be the full 5-line paste
+    assert tui._paste_entries[0]["expanded"] == "line1\nline2\nline3\nline4\nline5"
+    assert len(tui._paste_entries) == 1
+    assert tui._queue.empty()
+
+
+@pytest.mark.asyncio
+async def test_r6_separate_pastes_create_separate_tokens(tmp_path, monkeypatch):
+    """R6: two genuinely separate pastes (with a time gap) must NOT merge.
+
+    Guards against over-merging: if the user pastes, types something, then
+    pastes again, those should be separate tokens.
+    """
+    import time
+
+    tui = _tui(tmp_path)
+    tui._tty = True
+    tui._input_lines = [""]
+    tui._cursor_col = 0
+
+    # First paste
+    batch1 = b"\x1b[200~hello\x1b[201~"
+    tui._process_input(batch1)
+
+    # Simulate time gap (user types something between pastes)
+    # Force the last-paste timestamp to be old
+    tui._last_paste_time = 0.0  # type: ignore[attr-defined]
+
+    # Second paste
+    batch2 = b"\x1b[200~world\x1b[201~"
+    tui._process_input(batch2)
+
+    # Two separate tokens
+    text = tui._get_input_text()
+    assert "[Pasted text #1" in text
+    assert "[Pasted text #2" in text
+    assert len(tui._paste_entries) == 2

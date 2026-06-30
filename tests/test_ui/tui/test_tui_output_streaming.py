@@ -495,3 +495,89 @@ def test_dump_transcript_log_writes_plain_text(tmp_path):
     assert "hello world" in content
     assert "this is a test message" in content
     assert "some output here" in content
+
+
+def test_start_turn_renders_pasted_block_without_tag_text():
+    """Pasted blocks should be Markdown-rendered, <pasted> tags must not appear."""
+    test_dock = dock
+    test_dock.begin_capture()
+    try:
+        text = "fix this bug\n<pasted>\ndef foo():\n    pass\n</pasted>\nplease help"
+        test_dock.start_turn(text)
+
+        plain_lines = [_rich_plain(line) for line in test_dock.tree.render(100)]
+        joined = "\n".join(plain_lines)
+
+        assert "<pasted>" not in joined
+        assert "</pasted>" not in joined
+        assert "def foo():" in joined
+        assert "fix this bug" in joined
+        assert "please help" in joined
+    finally:
+        test_dock.deactivate()
+        test_dock.reset()
+
+
+def test_start_turn_pasted_segment_has_ansi_prefix():
+    """Pasted segment body_lines must carry ANSI_LINE_PREFIX for dock rendering."""
+    test_dock = dock
+    test_dock.begin_capture()
+    try:
+        text = (
+            "<pasted>\n"
+            "Here is some code:\n\n"
+            "```python\n"
+            "def foo():\n"
+            "    pass\n"
+            "```\n"
+            "</pasted>"
+        )
+        test_dock.start_turn(text)
+
+        turn_node = test_dock._current_turn
+        assert turn_node is not None
+        all_lines = [turn_node.header, *turn_node.body_lines]
+        has_ansi = any(
+            line.startswith("\x00voidx-ansi\x00")
+            for line in all_lines
+        )
+        assert has_ansi
+    finally:
+        test_dock.deactivate()
+        test_dock.reset()
+
+
+def test_start_turn_plain_text_unchanged_without_pasted_tags():
+    """Messages without <pasted> tags should behave exactly as before."""
+    test_dock = dock
+    test_dock.begin_capture()
+    try:
+        test_dock.start_turn("hello world")
+
+        turn_node = test_dock._current_turn
+        assert turn_node is not None
+        assert "hello world" in _rich_plain(turn_node.header)
+        assert turn_node.body_lines == []
+    finally:
+        test_dock.deactivate()
+        test_dock.reset()
+
+
+def test_start_turn_empty_pasted_block_at_start_has_nonempty_header():
+    """Empty pasted block at start should not leave header as trailing space."""
+    test_dock = dock
+    test_dock.begin_capture()
+    try:
+        text = "<pasted>\n\n</pasted>\nreal content here"
+        test_dock.start_turn(text)
+
+        turn_node = test_dock._current_turn
+        assert turn_node is not None
+        header_plain = _rich_plain(turn_node.header)
+        assert header_plain.strip() != ""
+        assert "real content here" in header_plain or any(
+            "real content here" in _rich_plain(line) for line in turn_node.body_lines
+        )
+    finally:
+        test_dock.deactivate()
+        test_dock.reset()

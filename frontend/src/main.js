@@ -1,7 +1,7 @@
 import { renderTranscript, renderTodoPanel } from "./render.js";
 import { matchSlashCommands, renderSlashMenu } from "./slash.js";
 import { setTranscriptElement, appendStreamText, commitStream, discardStream } from "./stream.js";
-import { renderMarkdown } from "./markdown.js";
+import { renderMarkdown, renderUserMessage } from "./markdown.js";
 
 const statusDotEl = document.querySelector("#status-dot");
 const statusModelEl = document.querySelector("#status-model");
@@ -206,6 +206,8 @@ export function appendMessageItem(itemId, data) {
   const text = data.text || "";
   if (data.style === "markdown" || data.style === "guidance") {
     el.append(renderMarkdown(text));
+  } else if (data.style === "text") {
+    el.append(renderUserMessage(text));
   } else {
     const pre = document.createElement("pre");
     pre.textContent = text;

@@ -92,6 +92,25 @@ def _strip_ansi_trailing_space(line: str) -> str:
     return buffer.getvalue()
 
 
+_PASTED_RE = re.compile(r"<pasted>\n(.*?)\n</pasted>", re.DOTALL)
+
+
+def split_pasted_segments(text: str) -> list[tuple[bool, str]]:
+    """Split text into (is_pasted, content) segments by <pasted> blocks."""
+    segments: list[tuple[bool, str]] = []
+    pos = 0
+    for match in _PASTED_RE.finditer(text):
+        if match.start() > pos:
+            segments.append((False, text[pos:match.start()]))
+        segments.append((True, match.group(1)))
+        pos = match.end()
+    if pos < len(text):
+        segments.append((False, text[pos:]))
+    if not segments:
+        segments.append((False, text))
+    return segments
+
+
 def short_value(value: object) -> str:
     text = str(value).replace("\n", "\\n")
     return text[:157] + "..." if len(text) > 160 else text

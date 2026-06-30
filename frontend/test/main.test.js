@@ -12,14 +12,15 @@ beforeEach(() => {
 });
 
 describe("appendMessageItem", () => {
-  it("renders text style message with pre element", () => {
+  it("renders text style message with markdown-body", () => {
     appendMessageItem("msg-1", { style: "text", text: "hello world" });
     const transcript = document.querySelector("#transcript");
     const item = transcript.querySelector(".message-item");
     expect(item).not.toBeNull();
     expect(item.className).toBe("message-item message-text");
     expect(item.dataset.itemId).toBe("msg-1");
-    expect(item.querySelector("pre").textContent).toBe("hello world");
+    expect(item.querySelector(".markdown-body")).not.toBeNull();
+    expect(item.textContent).toContain("hello world");
   });
 
   it("renders markdown style with markdown-body", () => {
@@ -50,7 +51,7 @@ describe("appendMessageItem", () => {
     const transcript = document.querySelector("#transcript");
     const item = transcript.querySelector(".message-item");
     expect(item).not.toBeNull();
-    expect(item.querySelector("pre").textContent).toBe("");
+    expect(item.querySelector(".markdown-body")).not.toBeNull();
   });
 });
 

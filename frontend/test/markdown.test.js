@@ -1,5 +1,5 @@
 import { describe, it, expect } from "vitest";
-import { renderMarkdown, highlightCode } from "../src/markdown.js";
+import { renderMarkdown, highlightCode, stripPastedTags, renderUserMessage } from "../src/markdown.js";
 
 describe("renderMarkdown", () => {
   it("renders bold text", () => {
@@ -72,5 +72,75 @@ describe("highlightCode", () => {
     const html = highlightCode("<script>alert(1)</script>", "javascript");
     expect(html).not.toContain("<script>");
     expect(html).toContain("&lt;script&gt;");
+  });
+});
+
+
+describe("stripPastedTags", () => {
+  it("returns original text when no tags present", () => {
+    const text = "hello world";
+    expect(stripPastedTags(text)).toBe(text);
+  });
+
+  it("converts single block to blockquote", () => {
+    const text = "fix\n<pasted>\ncode line\n</pasted>\npls";
+    const result = stripPastedTags(text);
+    expect(result).not.toContain("<pasted>");
+    expect(result).not.toContain("</pasted>");
+    expect(result).toContain("> code line");
+    expect(result).toContain("fix");
+    expect(result).toContain("pls");
+  });
+
+  it("converts multiple blocks independently", () => {
+    const text = "a\n<pasted>\nb\n</pasted>\nc\n<pasted>\nd\n</pasted>\ne";
+    const result = stripPastedTags(text);
+    expect(result).not.toContain("<pasted>");
+    expect(result).toContain("> b");
+    expect(result).toContain("> d");
+    expect(result).toContain("a");
+    expect(result).toContain("c");
+    expect(result).toContain("e");
+  });
+
+  it("handles empty pasted content", () => {
+    const text = "<pasted>\n\n</pasted>";
+    const result = stripPastedTags(text);
+    expect(result).not.toContain("<pasted>");
+    expect(result).toContain("> ");
+  });
+
+  it("returns original text for unclosed tag", () => {
+    const text = "fix\n<pasted>\ncode\npls";
+    expect(stripPastedTags(text)).toBe(text);
+  });
+
+  it("handles lines starting with > (nested blockquote)", () => {
+    const text = "<pasted>\n> existing quote\n</pasted>";
+    const result = stripPastedTags(text);
+    expect(result).not.toContain("<pasted>");
+    expect(result).toContain("> > existing quote");
+  });
+});
+
+
+describe("renderUserMessage", () => {
+  it("returns a markdown-body element", () => {
+    const el = renderUserMessage("hello");
+    expect(el.className).toBe("markdown-body");
+  });
+
+  it("renders pasted block as blockquote", () => {
+    const text = "fix\n<pasted>\ncode line\n</pasted>\npls";
+    const el = renderUserMessage(text);
+    expect(el.querySelector("blockquote")).not.toBeNull();
+    expect(el.textContent).not.toContain("<pasted>");
+    expect(el.textContent).toContain("code line");
+  });
+
+  it("renders plain text without pasted tags as normal markdown", () => {
+    const el = renderUserMessage("just plain text");
+    expect(el.querySelector("blockquote")).toBeNull();
+    expect(el.textContent).toContain("just plain text");
   });
 });
