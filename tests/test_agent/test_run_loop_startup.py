@@ -25,7 +25,7 @@ from voidx.agent.task_state import (
     PlanResolution,
     TaskState,
 )
-from voidx.config import Config
+from voidx.config import Config, ModelConfig
 from voidx.llm.usage import UsageStats
 from voidx.memory.runtime_state import RuntimeStateSnapshot, save_runtime_state
 from voidx.memory.session import MessageRow, create_session, get_session, load_messages, save_message, update_title
@@ -116,7 +116,7 @@ async def test_quiet_slash_command_dispatches_without_turn(monkeypatch):
     graph.model = object()
     graph.config = SimpleNamespace(
         workspace=graph._workspace,
-        model=SimpleNamespace(provider="mimo", model="mimo-v2.5", reasoning_effort="high"),
+        model=ModelConfig(provider="mimo", model="mimo-v2.5", reasoning_effort="high"),
     )
     graph._settings = SimpleNamespace(list_mcp_servers=lambda: [], path="/tmp/workspace/.voidx/settings.json")
     graph._permission = SimpleNamespace(status_label=lambda: "default")
@@ -364,7 +364,7 @@ async def test_run_once_cancel_deletes_pending_user_message(tmp_path):
     graph = _graph(session=session, workspace=str(tmp_path))
     graph.config = SimpleNamespace(
         workspace=str(tmp_path),
-        model=SimpleNamespace(provider="mimo", model="mimo-v2.5", reasoning_effort="high"),
+        model=ModelConfig(provider="mimo", model="mimo-v2.5", reasoning_effort="high"),
         agent=SimpleNamespace(recursion_limit=5),
     )
     graph._interaction_mode = InteractionMode.AUTO

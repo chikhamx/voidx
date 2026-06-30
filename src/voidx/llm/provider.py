@@ -584,8 +584,10 @@ def extract_thinking(chunk: AIMessageChunk, protocol: str) -> str:
 
 # ── context limits ────────────────────────────────────────────────────────
 
-def get_context_limit(provider: str, protocol: str = "") -> int:
+def get_context_limit(provider: str, protocol: str = "", context_window: int | None = None) -> int:
     """Return context-window limit for *provider*.  Falls back to *protocol* for unknown providers."""
+    if context_window is not None and context_window > 0:
+        return context_window
     limits: dict[str, int] = {
         PROTOCOL_DEEPSEEK: 1_000_000,
         "anthropic": 200_000,

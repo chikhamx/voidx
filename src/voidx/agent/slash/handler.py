@@ -146,6 +146,9 @@ class SlashHandler(
         elif args == "reasoning" or args.startswith("reasoning "):
             target = args.removeprefix("reasoning").strip()
             await self._model_reasoning(target)
+        elif args == "ctx" or args.startswith("ctx "):
+            target = args.removeprefix("ctx").strip()
+            await self._model_ctx(target)
         elif args:
             await self._switch_model(args)
         else:

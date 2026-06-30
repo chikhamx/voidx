@@ -32,6 +32,11 @@ class ModelConfig(BaseModel):
         default="xhigh",
         description="Reasoning intensity: off, low, medium, high, xhigh, or None (provider default)",
     )
+    context_window: int | None = Field(
+        default=None,
+        ge=1,
+        description="Override context window size in tokens. None = auto-detect by provider.",
+    )
 
 
 class AgentConfig(BaseModel):

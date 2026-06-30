@@ -21,8 +21,8 @@ def extract_thinking(chunk: AIMessageChunk, protocol: str) -> str:
     return provider.extract_thinking(chunk, protocol)
 
 
-def get_context_limit(provider_name: str, protocol: str = "") -> int:
-    return provider.get_context_limit(provider_name, protocol)
+def get_context_limit(provider_name: str, protocol: str = "", context_window: int | None = None) -> int:
+    return provider.get_context_limit(provider_name, protocol, context_window)
 
 __all__ = [
     "create_chat_model",

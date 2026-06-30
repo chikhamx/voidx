@@ -190,7 +190,7 @@ class SlashModelMixin:
             else:
                 ui.print("[dim](none)[/dim]")
         ui.print()
-        ui.print("[dim]Usage: /model list|new|reasoning|test|del|switch|<name>[/dim]")
+        ui.print("[dim]Usage: /model list|new|reasoning|ctx|test|del|switch|<name>[/dim]")
 
     async def _model_list(self) -> None:
         cfg = self.host.config
@@ -341,6 +341,45 @@ class SlashModelMixin:
 
         ui.print(f"Reasoning effort: [cyan]{new_effort}[/cyan] [green]✓[/green]")
 
+    async def _model_ctx(self, target: str) -> None:
+        choices_map: dict[str, int | None] = {
+            "128k": 128_000,
+            "256k": 256_000,
+            "384k": 384_000,
+            "512k": 512_000,
+            "1M": 1_000_000,
+            "Auto": None,
+        }
+
+        if target:
+            key = target.lower()
+            normalized = {c.lower(): (c, v) for c, v in choices_map.items()}
+            if key not in normalized:
+                ui.error(f"Invalid context window: '{target}'. Use: {', '.join(choices_map)}")
+                return
+            new_label, new_value = normalized[key]
+        else:
+            choices = list(choices_map)
+            idx = await _select_from_list(self.host.app, "Context window", choices)
+            if idx is None:
+                ui.print("[dim]Cancelled.[/dim]")
+                return
+            new_value = choices_map[choices[idx]]
+            new_label = choices[idx]
+
+        self.host.config.model.context_window = new_value
+        self._sync_context_limit()
+
+        settings = self.host.settings
+        if settings is not None:
+            if new_value is None:
+                settings._pop_setting("context_window")
+            else:
+                settings._set_setting("context_window", new_value)
+
+        display = "Auto (provider default)" if new_value is None else f"{new_label}"
+        ui.print(f"Context window: [cyan]{display}[/cyan] [green]✓[/green]")
+
     async def _switch_model(self, model_spec: str) -> None:
         from voidx.llm.service import create_chat_model
         from voidx.memory.service import update_session_model
@@ -412,7 +451,7 @@ class SlashModelMixin:
     def _sync_context_limit(self) -> None:
         from voidx.llm.service import get_context_limit
 
-        limit = get_context_limit(self.host.config.model.provider)
+        limit = get_context_limit(self.host.config.model.provider, self.host.config.model.protocol or "", self.host.config.model.context_window)
         stats = self.host.usage_stats
         if stats is not None:
             stats.context_limit = limit

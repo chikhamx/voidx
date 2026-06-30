@@ -135,6 +135,20 @@ async def test_build_config_defaults_and_reads_ask_compact(tmp_path):
     assert (await (await Settings.create(str(tmp_path))).build_config()).ask_compact is True
 
 
+async def test_build_config_reads_context_window(tmp_path):
+    """build_config 从配置文件读 context_window 键注入 ModelConfig。"""
+    cfg = await (await Settings.create(str(tmp_path))).build_config()
+    assert cfg.model.context_window is None
+
+    (tmp_path / "voidx.json").write_text(
+        json.dumps({"context_window": 256000}),
+        encoding="utf-8",
+    )
+
+    cfg = await (await Settings.create(str(tmp_path))).build_config()
+    assert cfg.model.context_window == 256000
+
+
 async def test_parallel_subagents_settings_round_trip(tmp_path):
     settings = Settings(str(tmp_path))
 

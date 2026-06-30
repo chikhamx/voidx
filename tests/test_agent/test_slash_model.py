@@ -350,6 +350,27 @@ def test_model_status_sync_updates_prompt_footer_state():
     assert status.context_limit == 1_000_000
 
 
+def test_model_status_sync_uses_context_window_override():
+    """context_window 设置后，_sync_context_limit 用 override 值而非 provider 查表。"""
+    status = SimpleNamespace(
+        provider="mimo",
+        model="mimo-v2.5",
+        reasoning_effort="high",
+        context_limit=0,
+    )
+    graph = SimpleNamespace(
+        config=SimpleNamespace(
+            model=ModelConfig(provider="mimo", model="mimo-v2.5", reasoning_effort="high", context_window=256_000)
+        ),
+        _usage_stats=UsageStats(),
+        _app=SimpleNamespace(status=status),
+    )
+
+    SlashHandler(graph)._sync_context_limit()
+
+    assert status.context_limit == 256_000
+
+
 @pytest.mark.asyncio
 async def test_model_dispatch_without_args_opens_switch_picker():
     graph = SimpleNamespace()
@@ -385,6 +406,102 @@ async def test_model_new_and_del_dispatch_to_matching_methods():
     assert await handler.dispatch("/model del mimo/mimo-v2.5") is True
 
     assert calls == [("new", ""), ("del", "mimo/mimo-v2.5")]
+
+
+@pytest.mark.asyncio
+async def test_model_ctx_direct_value_sets_and_persists(tmp_path):
+    """/model ctx 256k 设置 context_window 并持久化到配置文件。"""
+    settings = await Settings.create(str(tmp_path))
+    status = SimpleNamespace(context_limit=0, provider="mimo", model="mimo-v2.5", reasoning_effort="high")
+    graph = SimpleNamespace(
+        config=await settings.build_config(),
+        _settings=settings,
+        _app=SimpleNamespace(status=status),
+        _usage_stats=UsageStats(),
+    )
+
+    assert await SlashHandler(graph).dispatch("/model ctx 256k") is True
+
+    assert graph.config.model.context_window == 256_000
+    assert status.context_limit == 256_000
+    reloaded = await Settings.create(str(tmp_path))
+    assert reloaded._effective_data().get("context_window") == 256_000
+
+
+@pytest.mark.asyncio
+async def test_model_ctx_auto_removes_persisted_key(tmp_path):
+    """/model ctx auto 移除持久化键，context_window 回到 None。"""
+    settings = await Settings.create(str(tmp_path))
+    settings._set_setting("context_window", 256000)
+    status = SimpleNamespace(context_limit=0, provider="mimo", model="mimo-v2.5", reasoning_effort="high")
+    graph = SimpleNamespace(
+        config=await settings.build_config(),
+        _settings=settings,
+        _app=SimpleNamespace(status=status),
+        _usage_stats=UsageStats(),
+    )
+
+    assert await SlashHandler(graph).dispatch("/model ctx auto") is True
+
+    assert graph.config.model.context_window is None
+    reloaded = await Settings.create(str(tmp_path))
+    assert "context_window" not in reloaded._effective_data()
+
+
+@pytest.mark.asyncio
+async def test_model_ctx_invalid_value_errors(tmp_path):
+    """/model ctx 999x 无效值时报错，不修改 context_window。"""
+    settings = await Settings.create(str(tmp_path))
+    graph = SimpleNamespace(
+        config=await settings.build_config(),
+        _settings=settings,
+        _app=None,
+        _usage_stats=UsageStats(),
+    )
+    original = graph.config.model.context_window
+
+    assert await SlashHandler(graph).dispatch("/model ctx 999x") is True
+
+    assert graph.config.model.context_window == original
+
+
+@pytest.mark.asyncio
+async def test_model_ctx_picker_selects_value(tmp_path):
+    """/model ctx 无参数时弹出选项框，选择后设置并持久化。"""
+    settings = await Settings.create(str(tmp_path))
+    app = FakeChoiceApp(result="1")  # 选择第 1 项 = 256k
+    status = SimpleNamespace(context_limit=0, provider="mimo", model="mimo-v2.5", reasoning_effort="high")
+    app.status = status
+    graph = SimpleNamespace(
+        config=await settings.build_config(),
+        _settings=settings,
+        _app=app,
+        _usage_stats=UsageStats(),
+    )
+
+    assert await SlashHandler(graph).dispatch("/model ctx") is True
+
+    assert graph.config.model.context_window == 256_000
+    assert status.context_limit == 256_000
+    assert app.prompt == "Context window"
+
+
+@pytest.mark.asyncio
+async def test_model_ctx_picker_cancel_does_nothing(tmp_path):
+    """/model ctx 选项框取消时不修改 context_window。"""
+    settings = await Settings.create(str(tmp_path))
+    app = FakeChoiceApp(result=None)  # 取消
+    graph = SimpleNamespace(
+        config=await settings.build_config(),
+        _settings=settings,
+        _app=app,
+        _usage_stats=UsageStats(),
+    )
+    original = graph.config.model.context_window
+
+    assert await SlashHandler(graph).dispatch("/model ctx") is True
+
+    assert graph.config.model.context_window == original
 
 
 @pytest.mark.asyncio

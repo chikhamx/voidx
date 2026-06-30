@@ -11,7 +11,7 @@ sys.path.insert(0, str(Path(__file__).parent.parent.parent / "src"))
 from voidx.agent.graph import VoidXGraph
 from voidx.agent.graph.run_loop import GraphRunLoopMixin
 from voidx.agent.graph.title_mixin import _sanitize_generated_title
-from voidx.config import Config
+from voidx.config import Config, ModelConfig
 from voidx.llm.usage import UsageStats
 from voidx.tools.task_tracker import TaskTracker
 from voidx.ui.output.dock import BottomInputDock, set_dock
@@ -87,7 +87,7 @@ def _graph(session=None, workspace: str = "/tmp/workspace") -> GraphRunLoopMixin
     graph.model = object()
     graph.config = SimpleNamespace(
         workspace=workspace,
-        model=SimpleNamespace(provider="mimo", model="mimo-v2.5", reasoning_effort="high"),
+        model=ModelConfig(provider="mimo", model="mimo-v2.5", reasoning_effort="high"),
     )
     graph._settings = SimpleNamespace(list_mcp_servers=lambda: [], path=f"{workspace}/.voidx/settings.json")
     graph._permission = SimpleNamespace(

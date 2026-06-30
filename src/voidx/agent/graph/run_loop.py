@@ -169,7 +169,7 @@ class GraphRunLoopMixin(GraphTurnMixin, GraphSessionMixin, GraphTranscriptMixin)
                 model=self.config.model.model,
                 workspace=self._workspace,
                 session_title=title,
-                context_limit=get_context_limit(self.config.model.provider),
+                context_limit=get_context_limit(self.config.model.provider, self.config.model.protocol or "", self.config.model.context_window),
                 reasoning_effort=self.config.model.reasoning_effort or "xhigh",
                 permission_label=self._permission.status_label,
                 sandbox_label=lambda: self._permission._sandbox_label(),

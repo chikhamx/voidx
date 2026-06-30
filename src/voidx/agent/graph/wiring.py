@@ -74,7 +74,7 @@ def build_permission_service(config: Config, *, notifier: Callable[[str], object
 
 
 def build_compaction_service(config: Config) -> tuple[UsageStats, CompactionService]:
-    context_limit = get_context_limit(config.model.provider)
+    context_limit = get_context_limit(config.model.provider, config.model.protocol or "", config.model.context_window)
     return (
         UsageStats(context_limit=context_limit),
         CompactionService(

@@ -312,7 +312,7 @@ class Settings(
             base_url = None
             protocol = None
 
-        cfg = ModelConfig(provider=provider, model=model, base_url=base_url)
+        cfg = ModelConfig(provider=provider, model=model, base_url=base_url, context_window=self._effective_data().get("context_window"))
         if protocol:
             cfg.protocol = protocol
         permission_mode = self.get_permission_mode()

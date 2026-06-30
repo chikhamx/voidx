@@ -176,6 +176,24 @@ def test_get_context_limit_gemini():
     assert get_context_limit("gemini") == 1_000_000
 
 
+def test_get_context_limit_with_override():
+    """context_window 参数有效时直接返回，覆盖 provider 查表。"""
+    assert get_context_limit("gemini", context_window=128_000) == 128_000
+    assert get_context_limit("openai", context_window=512_000) == 512_000
+
+
+def test_get_context_limit_override_none_falls_back():
+    """context_window 为 None 时走原 provider 查表（向后兼容）。"""
+    assert get_context_limit("gemini", context_window=None) == 1_000_000
+    assert get_context_limit("anthropic", context_window=None) == 200_000
+
+
+def test_get_context_limit_override_zero_falls_back():
+    """context_window 为 0 时视为无效，走回退。"""
+    assert get_context_limit("gemini", context_window=0) == 1_000_000
+    assert get_context_limit("gemini") == 1_000_000
+
+
 # ── model factory ────────────────────────────────────────────────────────
 
 
