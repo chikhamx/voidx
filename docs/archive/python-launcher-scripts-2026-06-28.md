@@ -2,7 +2,7 @@
 
 Date: 2026-06-28
 
-> **Status: Design** — 在项目根创建 `python.sh` 与 `python.ps1`,作为运行 voidx venv Python 的统一入口。
+> **Status: Done** — 在项目根创建 `python.sh` 与 `python.ps1`,作为运行 voidx venv Python 的统一入口。
 
 ## Context
 
