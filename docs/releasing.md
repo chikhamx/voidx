@@ -33,6 +33,19 @@ from the single source:
 | 4 | `scripts/install.sh` | `VERSION="${VOIDX_VERSION:-X.Y.Z}"` | Bump script |
 | 5 | `scripts/install.ps1` | `$Version = ... else { "X.Y.Z" }` | Bump script |
 
+### License
+
+Both packages declare MIT license. The `LICENSE` file at repo root is
+included in the PyPI sdist automatically; npm includes it via the default
+file list.
+
+| File | Field |
+|------|-------|
+| `LICENSE` | MIT full text (copyright chikhamx) |
+| `npm/LICENSE` | Copy of root LICENSE — npm `files` field is relative to `npm/`, so a copy is needed |
+| `pyproject.toml` | `license = {text = "MIT"}` |
+| `npm/package.json` | `"license": "MIT"` |
+
 ## Version Policy
 
 - **Patch** (`X.Y.Z+1`): bug fixes, minor improvements
