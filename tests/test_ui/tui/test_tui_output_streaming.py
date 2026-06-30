@@ -7,6 +7,7 @@ from rich.console import Console
 from rich.text import Text
 
 from voidx.ui.output.dock import dock
+from voidx.ui.output.dock.formatting import _text_from_line
 
 
 def test_stream_reply_aligns_with_user_turn_start():
@@ -134,7 +135,7 @@ def test_turn_render_uses_full_width_user_background(tmp_path):
         test_dock.start_turn("m_virtual_comment_views需要封装")
 
         lines = test_dock.tree.render(48)
-        text = Text.from_markup(lines[0])
+        text = _text_from_line(lines[0])
 
         assert text.plain.startswith("❯ m_virtual_comment_views需要封装")
         assert cell_len(text.plain) == 48
@@ -518,8 +519,11 @@ def test_start_turn_renders_pasted_block_without_tag_text():
         test_dock.reset()
 
 
-def test_start_turn_pasted_segment_has_ansi_prefix():
-    """Pasted segment body_lines must carry ANSI_LINE_PREFIX for dock rendering."""
+def test_start_turn_pasted_content_stripped_of_tags():
+    """Pasted content is rendered as plain text without <pasted> wrapper tags.
+
+    No ANSI_LINE_PREFIX markers — content is escape()'d plain text.
+    """
     test_dock = dock
     test_dock.begin_capture()
     try:
@@ -537,11 +541,17 @@ def test_start_turn_pasted_segment_has_ansi_prefix():
         turn_node = test_dock._current_turn
         assert turn_node is not None
         all_lines = [turn_node.header, *turn_node.body_lines]
-        has_ansi = any(
+        joined = "\n".join(all_lines)
+
+        assert "<pasted>" not in joined
+        assert "</pasted>" not in joined
+        assert "def foo():" in joined
+        assert "pass" in joined
+        # No ANSI markers — plain text rendering
+        assert not any(
             line.startswith("\x00voidx-ansi\x00")
             for line in all_lines
         )
-        assert has_ansi
     finally:
         test_dock.deactivate()
         test_dock.reset()
@@ -578,6 +588,32 @@ def test_start_turn_empty_pasted_block_at_start_has_nonempty_header():
         assert "real content here" in header_plain or any(
             "real content here" in _rich_plain(line) for line in turn_node.body_lines
         )
+    finally:
+        test_dock.deactivate()
+        test_dock.reset()
+
+
+def test_start_turn_pasted_content_rendered_as_part_of_user_message():
+    """Pasted content is rendered as part of the user message as plain text,
+    without <pasted> wrapper tags or separate segment handling."""
+    test_dock = dock
+    test_dock.begin_capture()
+    try:
+        text = "fix this bug\n<pasted>\ndef foo():\n    pass\n</pasted>\nplease help"
+        test_dock.start_turn(text)
+
+        turn_node = test_dock._current_turn
+        assert turn_node is not None
+        all_lines = [turn_node.header, *turn_node.body_lines]
+        joined_raw = "\n".join(all_lines)
+
+        # <pasted> tags must not appear
+        assert "<pasted>" not in joined_raw
+        assert "</pasted>" not in joined_raw
+        # Content from both pasted and non-pasted portions is present
+        assert "fix this bug" in joined_raw
+        assert "def foo():" in joined_raw
+        assert "please help" in joined_raw
     finally:
         test_dock.deactivate()
         test_dock.reset()

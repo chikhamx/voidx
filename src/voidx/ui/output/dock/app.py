@@ -7,17 +7,15 @@ from typing import Any, Callable, Sequence
 
 from rich.console import Console, Group
 from rich.live import Live
-from rich.markup import escape
 from rich.text import Text
+
+from rich.markup import escape
 
 from voidx.ui.output.dock.formatting import (
     ANSI_LINE_PREFIX,
-    _ansi_line,
     _clean,
-    _markdown_lines,
-    _strip_ansi_trailing_space,
+    _PASTED_RE,
     _text_from_line,
-    split_pasted_segments,
 )
 from voidx.ui.output.dock.nodes import DockNodeMixin
 from voidx.ui.output.dock.stream import DockStreamMixin
@@ -222,12 +220,13 @@ class BottomInputDock(DockStreamMixin, DockStatusMixin, DockNodeMixin):
         if self._tree.root.children:
             self._append_root_spacer()
         preview = _clean(text)
-        segments = split_pasted_segments(preview)
-        header, body_lines = self._render_turn_segments(segments)
+        preview = _PASTED_RE.sub(r"\1", preview)
+        header, body_lines = self._render_turn_text(preview)
+        header = f"[bold white]❯[/] {header}" if header else "[bold white]❯[/]"
         self._current_turn = self._tree.new_node(
             parent=self._tree.root,
             node_type="turn",
-            header=f"[bold white]❯[/] {header}",
+            header=header,
             body_lines=body_lines,
             collapsed=False,
         )
@@ -235,40 +234,17 @@ class BottomInputDock(DockStreamMixin, DockStatusMixin, DockNodeMixin):
         self.refresh()
         return self._current_turn
 
-    def _render_turn_segments(
-        self, segments: list[tuple[bool, str]]
-    ) -> tuple[str, list[str]]:
-        """Render (is_pasted, content) segments into (header, body_lines).
+    def _render_turn_text(self, text: str) -> tuple[str, list[str]]:
+        """Render user turn text into (header, body_lines) as plain text.
 
-        Non-pasted segments use escape() plain text (existing behavior).
-        Pasted segments use _markdown_lines() with _ansi_line() wrapping.
+        <pasted> wrapper tags are stripped (content kept), then the entire
+        text is rendered as escaped plain text — no markdown formatting.
         """
-        header = ""
-        body_lines: list[str] = []
-        width = self._markdown_width()
-        for index, (is_pasted, content) in enumerate(segments):
-            if is_pasted:
-                md_lines = [
-                    _ansi_line(line)
-                    for line in _markdown_lines(content, width)
-                ]
-                if index == 0 and md_lines:
-                    header = md_lines[0]
-                    body_lines.extend(md_lines[1:])
-                else:
-                    body_lines.extend(md_lines)
-            else:
-                lines = [
-                    _strip_ansi_trailing_space(line)
-                    for line in ((content.splitlines() or [content]) if content else [])
-                ]
-                if index == 0 and lines:
-                    header = escape(lines[0])
-                    body_lines.extend(escape(line) for line in lines[1:])
-                else:
-                    body_lines.extend(escape(line) for line in lines)
-        if not header and body_lines:
-            header = body_lines.pop(0)
+        lines = text.splitlines() or [text] if text else []
+        if not lines:
+            return "", []
+        header = escape(lines[0])
+        body_lines = [escape(line) for line in lines[1:]]
         return header, body_lines
 
     def ensure_agent(self) -> OutputNode:
