@@ -593,7 +593,7 @@ async def test_r6_separate_pastes_create_separate_tokens(tmp_path, monkeypatch):
     tui._cursor_col = 0
 
     # First paste
-    batch1 = b"\x1b[200~hello\x1b[201~"
+    batch1 = b"\x1b[200~hello\nworld\x1b[201~"
     tui._process_input(batch1)
 
     # Simulate time gap (user types something between pastes)
@@ -601,15 +601,10 @@ async def test_r6_separate_pastes_create_separate_tokens(tmp_path, monkeypatch):
     tui._last_paste_time = 0.0  # type: ignore[attr-defined]
 
     # Second paste
-    batch2 = b"\x1b[200~world\x1b[201~"
+    batch2 = b"\x1b[200~foo\nbar\x1b[201~"
     tui._process_input(batch2)
 
-    # Two separate tokens
-    text = tui._get_input_text()
-    assert "[Pasted text #1" in text
-    assert "[Pasted text #2" in text
-    assert len(tui._paste_entries) == 2
-    # Two separate tokens
+    # Two separate tokens (multiline pastes become tokens)
     text = tui._get_input_text()
     assert "[Pasted text #1" in text
     assert "[Pasted text #2" in text

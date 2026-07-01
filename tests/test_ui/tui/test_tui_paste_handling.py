@@ -233,8 +233,9 @@ def test_bracketed_paste_single_line_does_not_submit(tmp_path):
     paste_data = b"\x1b[200~hello world\x1b[201~"
     tui._process_input(paste_data)
 
-    assert tui._get_input_text() == "[Pasted text #1 11 chars]"
-    assert tui._paste_entries[0]["expanded"] == "hello world"
+    # Single-line paste is inserted as plain text, not a token
+    assert tui._get_input_text() == "hello world"
+    assert tui._paste_entries == []
     assert tui._queue.empty()
 
 
@@ -248,8 +249,9 @@ def test_bracketed_paste_with_trailing_key(tmp_path):
     paste_data = b"\x1b[200~text\x1b[201~x"
     tui._process_input(paste_data)
 
-    assert tui._get_input_text() == "[Pasted text #1 4 chars]x"
-    assert tui._paste_entries[0]["expanded"] == "text"
+    # Single-line paste is inserted as plain text, followed by the key
+    assert tui._get_input_text() == "textx"
+    assert tui._paste_entries == []
     assert tui._queue.empty()
 
 
@@ -285,3 +287,78 @@ def test_bracketed_paste_cr_only_normalised_to_newline(tmp_path):
     assert tui._get_input_text() == "[Pasted text #1 +1 lines]"
     assert tui._paste_entries[0]["expanded"] == "line1\nline2"
     assert tui._queue.empty()
+
+
+def test_bracketed_paste_single_line_short_inserts_as_plain_text(tmp_path):
+    """Short single-line paste (e.g. IME confirmation) is inserted as plain
+    text, not collapsed into a [Pasted text] token."""
+    tui = _tui(tmp_path)
+    tui._tty = True
+    tui._input_lines = [""]
+    tui._cursor_col = 0
+
+    paste_data = b"\x1b[200~hello\x1b[201~"
+    tui._process_input(paste_data)
+
+    assert tui._get_input_text() == "hello"
+    assert tui._paste_entries == []
+    assert tui._queue.empty()
+
+
+def test_bracketed_paste_single_line_long_inserts_as_plain_text(tmp_path):
+    """Even a longer single-line paste is inserted as plain text — only
+    multiline content becomes a paste token."""
+    tui = _tui(tmp_path)
+    tui._tty = True
+    tui._input_lines = [""]
+    tui._cursor_col = 0
+
+    pasted = "a" * 200
+    paste_data = b"\x1b[200~" + pasted.encode() + b"\x1b[201~"
+    tui._process_input(paste_data)
+
+    assert tui._get_input_text() == pasted
+    assert tui._paste_entries == []
+    assert tui._queue.empty()
+
+
+def test_bracketed_paste_multiline_still_becomes_token(tmp_path):
+    """Multiline paste content is still collapsed into a paste token."""
+    tui = _tui(tmp_path)
+    tui._tty = True
+    tui._input_lines = [""]
+    tui._cursor_col = 0
+
+    paste_data = b"\x1b[200~line1\nline2\x1b[201~"
+    tui._process_input(paste_data)
+
+    assert tui._get_input_text() == "[Pasted text #1 +1 lines]"
+    assert tui._paste_entries[0]["expanded"] == "line1\nline2"
+    assert tui._queue.empty()
+
+
+def test_bracketed_paste_short_then_submit_no_pasted_tag(tmp_path):
+    """Short paste submitted immediately should not be wrapped in <pasted> tags."""
+    tui = _tui(tmp_path)
+    tui._tty = True
+    tui._input_lines = [""]
+    tui._cursor_col = 0
+
+    tui._process_input(b"\x1b[200~hello\x1b[201~")
+    tui._process_input(b"\r")
+
+    assert tui._queue.get_nowait() == "hello"
+    assert tui._get_input_text() == ""
+
+
+def test_bracketed_paste_short_with_existing_text(tmp_path):
+    """Short paste appended to existing text stays as plain text."""
+    tui = _tui(tmp_path)
+    tui._tty = True
+    tui._input_lines = ["say "]
+    tui._cursor_col = 4
+
+    tui._process_input(b"\x1b[200~hi\x1b[201~")
+
+    assert tui._get_input_text() == "say hi"
+    assert tui._paste_entries == []

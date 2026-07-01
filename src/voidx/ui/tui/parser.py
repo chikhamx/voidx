@@ -250,6 +250,14 @@ class _InputParserMixin:
             return
         # Normalise line endings: \r\n → \n, \r → \n
         text = text.replace("\r\n", "\n").replace("\r", "\n")
+        # Single-line paste (no newlines after normalisation): insert as plain
+        # text. This covers IME composition confirmations on macOS, where the
+        # terminal wraps the confirmed text in bracketed-paste sequences. Only
+        # multiline content is collapsed into a [Pasted text] token.
+        if "\n" not in text:
+            self._insert_text(text)
+            return
+
         # All pasted text collapses to a [Pasted text #N ...] token, regardless
         # of length. This keeps the input box compact and clearly marks pasted
         # content as a distinct unit.
