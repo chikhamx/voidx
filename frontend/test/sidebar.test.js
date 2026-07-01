@@ -5,6 +5,9 @@ import {
   filterSessions,
   onThreadSelect,
   onNewThread,
+  onThreadFork,
+  onThreadDelete,
+  onThreadRename,
   _resetForTest,
 } from "../src/sidebar.js";
 
@@ -144,5 +147,55 @@ describe("onNewThread", () => {
     btn.click();
 
     expect(cb).toHaveBeenCalled();
+  });
+});
+
+describe("session item actions", () => {
+  it("renders action menu button for each session", () => {
+    renderSidebar([{ thread_id: "t1", title: "S1", status: "idle" }], "t1");
+    const item = document.querySelector(".vx-session-item");
+    const menuBtn = item.querySelector(".vx-session-menu-btn");
+    expect(menuBtn).not.toBeNull();
+  });
+
+  it("shows fork/rename/delete actions when menu button clicked", () => {
+    renderSidebar([{ thread_id: "t1", title: "S1", status: "idle" }], "t1");
+    const item = document.querySelector(".vx-session-item");
+    const menuBtn = item.querySelector(".vx-session-menu-btn");
+    menuBtn.click();
+
+    expect(item.querySelector('[data-action="fork"]')).not.toBeNull();
+    expect(item.querySelector('[data-action="rename"]')).not.toBeNull();
+    expect(item.querySelector('[data-action="delete"]')).not.toBeNull();
+  });
+
+  it("calls onThreadFork when fork action clicked", () => {
+    const cb = vi.fn();
+    onThreadFork(cb);
+    renderSidebar([{ thread_id: "t1", title: "S1", status: "idle" }], "t1");
+    const item = document.querySelector(".vx-session-item");
+    item.querySelector(".vx-session-menu-btn").click();
+    item.querySelector('[data-action="fork"]').click();
+    expect(cb).toHaveBeenCalledWith("t1");
+  });
+
+  it("calls onThreadDelete when delete action clicked", () => {
+    const cb = vi.fn();
+    onThreadDelete(cb);
+    renderSidebar([{ thread_id: "t1", title: "S1", status: "idle" }], "t1");
+    const item = document.querySelector(".vx-session-item");
+    item.querySelector(".vx-session-menu-btn").click();
+    item.querySelector('[data-action="delete"]').click();
+    expect(cb).toHaveBeenCalledWith("t1");
+  });
+
+  it("calls onThreadRename when rename action clicked", () => {
+    const cb = vi.fn();
+    onThreadRename(cb);
+    renderSidebar([{ thread_id: "t1", title: "S1", status: "idle" }], "t1");
+    const item = document.querySelector(".vx-session-item");
+    item.querySelector(".vx-session-menu-btn").click();
+    item.querySelector('[data-action="rename"]').click();
+    expect(cb).toHaveBeenCalledWith("t1");
   });
 });

@@ -151,6 +151,7 @@ class GraphRunLoopMixin(GraphTurnMixin, GraphSessionMixin, GraphTranscriptMixin)
                     lambda: active_dock.tree,
                     thread_id=self._session.id if self._session else "",
                     session_id=self._session.id if self._session else "",
+                    workspace=self._workspace,
                 )
                 self._ui.events.start(CompositeEventConsumer(
                     primary=consumer,

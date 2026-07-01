@@ -55,10 +55,12 @@ class GatewaySession:
         thread_id: str = "",
         session_id: str = "",
         command_handler: Callable[[UiCommand], Awaitable[None] | None] | None = None,
+        workspace: str = "",
     ) -> None:
         self._tree_provider = tree_provider
         self._session_id = session_id or thread_id
         self._command_handler = command_handler
+        self._workspace = workspace
         self._clients: set[ProtocolClient] = set()
         self._pending_requests: dict[str, asyncio.Future[UiResponse]] = {}
         self._seq = 0
@@ -264,6 +266,7 @@ class GatewaySession:
         m.register("diff.review", self._method_diff_review_start)
         m.register("diff.decide", self._method_diff_review_decide)
         m.register("diff.apply", self._method_diff_review_apply)
+        m.register("diff.generate", self._method_diff_generate)
 
         # Session CRUD
         m.register("session.create", self._method_session_create)
@@ -359,6 +362,22 @@ class GatewaySession:
             raise MethodParamsError(f"review not found: {review_id}")
         changed = review.apply()
         return {"files_changed": changed}
+
+    def _method_diff_generate(self, params: dict) -> dict:
+        import subprocess
+
+        cwd = self._workspace or None
+        try:
+            result = subprocess.run(
+                ["git", "diff", "--unified=3"],
+                capture_output=True,
+                text=True,
+                cwd=cwd,
+                timeout=10,
+            )
+            return {"diff": result.stdout.strip()}
+        except Exception:
+            return {"diff": ""}
 
     # ── session CRUD methods ──────────────────────────────────────────────
 

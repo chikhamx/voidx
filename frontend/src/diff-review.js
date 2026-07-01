@@ -1,5 +1,6 @@
 let hunkDecisionCb = null;
 let applyDiffCb = null;
+let generateDiffCb = null;
 let currentReviewId = null;
 
 export function renderDiffReview(reviewId, snapshot) {
@@ -69,7 +70,8 @@ function renderHunk(reviewId, filePath, hunk) {
 
   for (const line of hunk.lines || []) {
     const lineEl = document.createElement("div");
-    lineEl.className = `diff-line diff-line-${line.type}`;
+    const cssKind = line.kind === "remove" ? "del" : line.kind;
+    lineEl.className = `diff-line diff-line-${cssKind}`;
     lineEl.textContent = line.text;
     hunkEl.append(lineEl);
   }
@@ -143,8 +145,28 @@ export function onApplyDiff(callback) {
   applyDiffCb = callback;
 }
 
+export function onGenerateDiff(callback) {
+  generateDiffCb = callback;
+}
+
+export function showDiffEmpty() {
+  const pane = document.querySelector("#diff-pane");
+  if (!pane) return;
+
+  pane.replaceChildren();
+
+  const btn = document.createElement("button");
+  btn.className = "vx-diff-generate";
+  btn.textContent = "Generate Diff";
+  btn.addEventListener("click", () => {
+    if (generateDiffCb) generateDiffCb();
+  });
+  pane.append(btn);
+}
+
 export function _resetForTest() {
   hunkDecisionCb = null;
   applyDiffCb = null;
+  generateDiffCb = null;
   currentReviewId = null;
 }

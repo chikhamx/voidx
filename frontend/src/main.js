@@ -2,11 +2,11 @@ import { renderTranscript, renderTodoPanel } from "./render.js";
 import { matchSlashCommands, renderSlashMenu } from "./slash.js";
 import { setTranscriptElement, appendStreamText, commitStream, discardStream } from "./stream.js";
 import { renderMarkdown, renderUserMessage } from "./markdown.js";
-import { rpcCall, rpcNotify, onNotification, onRequest, _setSocket } from "./rpc.js";
-import { renderSidebar, updateThreadStatus, filterSessions, onThreadSelect, onNewThread } from "./sidebar.js";
+import { rpcCall, _setSocket } from "./rpc.js";
+import { renderSidebar, addThread, updateThreadStatus, filterSessions, onThreadSelect, onNewThread, onThreadFork, onThreadDelete, onThreadRename } from "./sidebar.js";
 import { initDock, renderTodoInDock } from "./dock.js";
 import { initTerminal, appendTerminalOutput, showTerminalClosed, onTerminalInput, onTerminalStart, setActiveTerminal } from "./terminal.js";
-import { renderDiffReview, setHunkDecision, onHunkDecision, onApplyDiff } from "./diff-review.js";
+import { renderDiffReview, setHunkDecision, onHunkDecision, onApplyDiff, onGenerateDiff, showDiffEmpty } from "./diff-review.js";
 
 const statusDotEl = document.querySelector("#status-dot");
 const statusModelEl = document.querySelector("#status-model");
@@ -76,6 +76,26 @@ onApplyDiff((reviewId) => {
     });
 });
 
+onGenerateDiff(() => {
+  rpcCall("diff.generate", {})
+    .then((genResult) => {
+      const diffText = genResult.diff || "";
+      if (!diffText) {
+        showDiffEmpty();
+        return;
+      }
+      return rpcCall("diff.review", { diff: diffText }).then((reviewResult) => {
+        renderDiffReview(reviewResult.review_id, reviewResult.snapshot);
+      });
+    })
+    .catch((err) => {
+      console.warn("voidx: diff generate failed", err.message);
+      showDiffEmpty();
+    });
+});
+
+showDiffEmpty();
+
 onThreadSelect((threadId) => {
   rpcCall("session.switch", { thread_id: threadId })
     .then((result) => {
@@ -91,10 +111,47 @@ onNewThread(() => {
   rpcCall("session.create", {})
     .then((result) => {
       uiState.sessionId = result.thread_id;
+      addThread({ thread_id: result.thread_id, title: result.title, status: result.status }, result.thread_id);
       updateStatusBar();
     })
     .catch((err) => {
       console.warn("voidx: session create failed", err.message);
+    });
+});
+
+onThreadFork((threadId) => {
+  rpcCall("session.fork", { thread_id: threadId })
+    .then((result) => {
+      addThread({ thread_id: result.thread_id, title: result.title, status: result.status }, null);
+    })
+    .catch((err) => {
+      console.warn("voidx: session fork failed", err.message);
+    });
+});
+
+onThreadDelete((threadId) => {
+  rpcCall("session.delete", { thread_id: threadId })
+    .then(() => {
+      const item = document.querySelector(`.vx-session-item[data-thread-id="${threadId}"]`);
+      if (item) item.remove();
+    })
+    .catch((err) => {
+      console.warn("voidx: session delete failed", err.message);
+    });
+});
+
+onThreadRename((threadId) => {
+  const item = document.querySelector(`.vx-session-item[data-thread-id="${threadId}"]`);
+  const titleEl = item?.querySelector(".vx-session-title");
+  const oldTitle = titleEl?.textContent || "";
+  const newTitle = window.prompt("Rename session:", oldTitle);
+  if (!newTitle || newTitle === oldTitle) return;
+  rpcCall("session.rename", { thread_id: threadId, title: newTitle })
+    .then(() => {
+      if (titleEl) titleEl.textContent = newTitle;
+    })
+    .catch((err) => {
+      console.warn("voidx: session rename failed", err.message);
     });
 });
 
@@ -174,6 +231,8 @@ function connect(url) {
       console.warn("voidx: ignoring non-JSON websocket message");
       return;
     }
+    if (msg.id != null && !msg.method) return;
+
     const method = msg.method;
     const params = msg.params || {};
 
@@ -238,6 +297,7 @@ export function handleItem(method, params) {
       appendStreamText(itemId, data.text || "", data.phase || "text");
     } else if (method === "item.completed") {
       commitStream(itemId);
+      setRunning(false);
     }
     return;
   }

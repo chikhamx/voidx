@@ -2,44 +2,53 @@
 
 Date: 2026-06-29
 
-> **Status: Design** — 合并自 `frontend-ui-redesign` 与 `desktop-codex-parity-2026-06-28` 两份文档。
-> 后端能力（多会话、终端、diff review、协议 v2）已实现；前端侧完全未实现，本文档规划前端实现路径。
+> **Status: Done** — 合并自 `frontend-ui-redesign` 与 `desktop-codex-parity-2026-06-28` 两份文档。
+> 后端能力（多会话、终端、diff review、协议 v2）已实现；前端侧已全部实现并接入。
 >
 > **重要**：本文档 API Contract 已于 2026-06-29 对照后端源码（`src/voidx/ui/gateway/session.py`、
 > `adapter.py`、`diff_review.py`、`terminal.py`）逐项核对修正。后端部分 notification 尚未实现，
 > 见 [Backend Gaps](#backend-gaps) 章节。
+> 2026-07-01 更新：`diff.generate` method 已新增，前端 diff 触发链已接入，
+> sidebar fork/delete/rename UI 已补齐，diff-review 字段名 bug 已修复。
 
 ## Context
 
-voidx 桌面端（Tauri 2 壳 + 原生 JS 前端）的前端当前是单栏布局，缺少三栏 shell、设计 token 体系、
+voidx 桌面端（Tauri 2 壳 + 原生 JS 前端）的前端已实现三栏 shell、设计 token 体系、
 多会话管理 UI、集成终端面板和 hunk 级 diff review。后端的四项核心能力已实现：
 
 | 后端能力 | 实现位置 | 测试 |
 |---------|---------|------|
-| 协议 v2（JSON-RPC 2.0 + Thread/Turn/Item） | `src/voidx/ui/protocol/v2/`、`src/voidx/ui/gateway/server.py`、`session.py`、`adapter.py` | 声称 114 测试¹ |
+| 协议 v2（JSON-RPC 2.0 + Thread/Turn/Item） | `src/voidx/ui/protocol/v2/`、`src/voidx/ui/gateway/server.py`、`session.py`、`adapter.py` | 166 测试¹ |
 | 多会话（create/switch/fork/delete） | `src/voidx/memory/session.py`（含 `fork_session`）、`src/voidx/ui/gateway/session.py` | 含在 v2 测试中¹ |
-| 集成终端（PTY 管理） | `src/voidx/ui/gateway/terminal.py` | 声称 14 测试¹ |
-| Diff review（hunk 级 accept/reject） | `src/voidx/ui/gateway/diff_review.py` | 声称 30 测试¹ |
+| 集成终端（PTY 管理） | `src/voidx/ui/gateway/terminal.py` | 含在 v2 测试中¹ |
+| Diff review（hunk 级 accept/reject） | `src/voidx/ui/gateway/diff_review.py` | 含在 v2 测试中¹ |
+| Diff 生成（`diff.generate`） | `src/voidx/ui/gateway/session.py:_method_diff_generate` | 3 测试 |
 
-> ¹ 后端测试数量引自先前文档，本次评审因 venv 未安装 pytest 未重新验证。
-> 前端测试（5 文件 / 101 测试）已于 2026-06-29 重新运行确认通过。
+> ¹ 后端 gateway 测试 166 个已于 2026-07-01 重新运行确认通过。
+> 前端测试（10 文件 / 176 测试）已于 2026-07-01 重新运行确认通过。
 
-但前端 `main.js` 没有调用任何 `session.*`、`terminal.*`、`diff.*` method，三个前端模块
-（`sessions.js`、`terminal.js`、`diff-review.js`）均不存在。本文档规划前端实现，将后端能力
-暴露给用户，同时引入三栏布局和设计 token 体系。
+前端 `main.js` 已接入 `session.switch/create/cancel/fork/delete/rename`、`terminal.start/input`、
+`diff.generate/review/decide/apply` 的 RPC 调用。全部前端模块
+（`rpc.js`、`sidebar.js`、`dock.js`、`terminal.js`、`diff-review.js`）均已实现。
 
 ### 当前前端状态
 
 ```
-index.html (单栏: status-bar → todo-panel → transcript → composer)
-styles.css (旧变量 --bg-primary 等，无 --vx-* 命名空间)
+index.html (三栏: titlebar → sidebar + main + dock → statusbar)
+tokens.css (--vx-* 设计 token 体系)
+styles.css (@import tokens.css，全部变量已迁移)
 src/
-├── main.js      (WebSocket + item 生命周期路由，已接入 item.* / turn.started / workspace.snapshot；未接入 session.*/terminal.*/diff.*)
+├── main.js      (WebSocket + item 生命周期路由，已接入 session.*/terminal.*/diff.* + workspace.snapshot)
+├── rpc.js       (JSON-RPC client 封装)
+├── sidebar.js   (会话列表 + 搜索 + fork/delete/rename 菜单)
+├── dock.js      (右侧 dock 面板，tab 切换)
+├── terminal.js  (集成终端，<pre> 纯文本)
+├── diff-review.js (hunk 级 diff review UI + generate 入口)
 ├── render.js    (快照渲染)
-├── stream.js    (流式缓冲)
+├── stream.js    (流式缓冲 + 流式光标)
 ├── markdown.js  (Markdown + 代码高亮)
 └── slash.js     (斜杠命令补全)
-test/            (5 文件 / 101 测试，vitest + jsdom)
+test/            (10 文件 / 176 测试，vitest + jsdom)
 ```
 
 ## Goals and Non-Goals
@@ -327,14 +336,18 @@ Python backend (gateway WebSocket, JSON-RPC 2.0)
 | `terminal.stop` | `{terminal_id}` | `{closed: true}` | 关闭终端 |
 
 > **注意**：`terminal.start` 的 `command` 是必填参数（如 `["bash"]`），不是 `{thread_id, cwd?}`。
+> `terminal.input` 的 `data` 是原始字节写入 PTY。前端 `main.js` 在单行 input 框场景下会拼接 `"\n"`
+> 以触发 shell 命令执行；多行输入或原始 PTY 交互场景不应拼接。
 
 #### diff review
 
 > Hunk 重建仅处理文本文件，二进制文件跳过 hunk 级 review。
-> `diff.review` 需要前端传入完整的 unified diff 文本（后端不自动生成 diff）。
+> `diff.review` 需要前端传入完整的 unified diff 文本。
+> `diff.generate` 从工作区 git diff 生成 unified diff 文本，供 `diff.review` 使用。
 
 | Method | Params | Result | 说明 |
 |--------|--------|--------|------|
+| `diff.generate` | `{}` | `{diff}` | 从工作区 git diff 生成 unified diff 文本（非 git 仓库返回空字符串） |
 | `diff.review` | `{diff}` | `{review_id, snapshot}` | 解析 unified diff，生成 review（`diff` 为字符串，必填） |
 | `diff.decide` | `{review_id, file_path, hunk_index, decision}` | `{summary}` | 设置单个 hunk 决策（`decision`: `"approved"`/`"rejected"`/`"pending"`） |
 | `diff.apply` | `{review_id}` | `{files_changed: [str]}` | 应用已 approved 的 hunk |
@@ -752,5 +765,5 @@ if (!stream.committed) {
 - [ ] 会话搜索：HTML 骨架已预留搜索框（`#session-search`），Phase 4 先做列表渲染，搜索逻辑作为后续增量
 - [ ] 终端 tab 是否用 xterm.js？初期用 `<pre>` 纯文本，后续可引入 xterm.js
 - [ ] 亮色主题是否在本方案范围内？token 体系已预留，但实现留到后续
-- [ ] `diff.review` 的 diff 文本来源：前端调用 `git diff` 生成？还是新增后端 method（如 `diff.generate`）从 agent 的文件变更记录生成？
+- [x] ~~`diff.review` 的 diff 文本来源~~ **已解决**：后端新增 `diff.generate` method，从工作区 `git diff` 生成 unified diff 文本，前端 Diff tab 的 "Generate Diff" 按钮触发调用链 `diff.generate` → `diff.review` → `renderDiffReview`。
 - [ ] 多会话并发约束：本期是否限制同时只有一个 running session？后端 `session.switch` 有 `ERR_TURN_IN_PROGRESS` 检查，但 `session.create` 不限制并发运行

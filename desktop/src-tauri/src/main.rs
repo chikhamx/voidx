@@ -134,9 +134,12 @@ fn resolve_python() -> Option<PathBuf> {
     // arbitrary code here. Mitigation: prefer VOIDX_PYTHON or a bundled venv
     // in production deployments.
     if cfg!(windows) {
+        use std::os::windows::process::CommandExt;
+        const CREATE_NO_WINDOW: u32 = 0x08000000;
         if let Ok(output) = Command::new("py")
             .arg("-c")
             .arg("import sys; print(sys.executable)")
+            .creation_flags(CREATE_NO_WINDOW)
             .output()
         {
             if output.status.success() {
@@ -151,11 +154,15 @@ fn resolve_python() -> Option<PathBuf> {
 
     // 6. python on PATH
     let cmd = if cfg!(windows) { "python" } else { "python3" };
-    if let Ok(output) = Command::new(cmd)
-        .arg("-c")
-        .arg("import sys; print(sys.executable)")
-        .output()
+    let mut probe = Command::new(cmd);
+    probe.arg("-c").arg("import sys; print(sys.executable)");
+    #[cfg(windows)]
     {
+        use std::os::windows::process::CommandExt;
+        const CREATE_NO_WINDOW: u32 = 0x08000000;
+        probe.creation_flags(CREATE_NO_WINDOW);
+    }
+    if let Ok(output) = probe.output() {
         if output.status.success() {
             let resolved = String::from_utf8_lossy(&output.stdout);
             let trimmed = resolved.trim();
@@ -239,6 +246,14 @@ fn spawn_backend(
         {
             use std::os::unix::process::CommandExt;
             command.process_group(0);
+        }
+        // Windows: suppress the console window that spawn() allocates for the
+        // child process, so only the Tauri window is visible to the user.
+        #[cfg(windows)]
+        {
+            use std::os::windows::process::CommandExt;
+            const CREATE_NO_WINDOW: u32 = 0x08000000;
+            command.creation_flags(CREATE_NO_WINDOW);
         }
         let child = command.spawn();
 
@@ -336,10 +351,13 @@ fn kill_backend(child_handle: &Arc<Mutex<Option<Child>>>) {
             // the direct child.
             if cfg!(windows) {
                 // taskkill /T /F walks and terminates the process tree.
+                use std::os::windows::process::CommandExt;
+                const CREATE_NO_WINDOW: u32 = 0x08000000;
                 let _ = Command::new("taskkill")
                     .args(["/PID", &pid.to_string(), "/T", "/F"])
                     .stdout(Stdio::null())
                     .stderr(Stdio::null())
+                    .creation_flags(CREATE_NO_WINDOW)
                     .status();
             }
             #[cfg(unix)]

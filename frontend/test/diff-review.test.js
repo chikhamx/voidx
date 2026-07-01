@@ -4,6 +4,8 @@ import {
   setHunkDecision,
   onHunkDecision,
   onApplyDiff,
+  onGenerateDiff,
+  showDiffEmpty,
   _resetForTest,
 } from "../src/diff-review.js";
 
@@ -31,9 +33,9 @@ const sampleSnapshot = {
           new_count: 3,
           section: "",
           lines: [
-            { type: "context", text: "line 1" },
-            { type: "add", text: "new line" },
-            { type: "del", text: "old line" },
+            { kind: "context", text: "line 1" },
+            { kind: "add", text: "new line" },
+            { kind: "remove", text: "old line" },
           ],
           decision: "pending",
         },
@@ -149,5 +151,28 @@ describe("onApplyDiff", () => {
     applyBtn.click();
 
     expect(cb).toHaveBeenCalledWith("r1");
+  });
+});
+
+describe("showDiffEmpty", () => {
+  it("renders generate button when diff pane is empty", () => {
+    showDiffEmpty();
+
+    const pane = document.querySelector("#diff-pane");
+    const btn = pane.querySelector(".vx-diff-generate");
+    expect(btn).not.toBeNull();
+    expect(btn.textContent).toContain("Generate");
+  });
+
+  it("calls onGenerateDiff callback when generate button clicked", () => {
+    const cb = vi.fn();
+    onGenerateDiff(cb);
+    showDiffEmpty();
+
+    const pane = document.querySelector("#diff-pane");
+    const btn = pane.querySelector(".vx-diff-generate");
+    btn.click();
+
+    expect(cb).toHaveBeenCalled();
   });
 });

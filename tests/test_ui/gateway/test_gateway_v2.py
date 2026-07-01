@@ -691,3 +691,66 @@ async def test_v2_diff_apply_skips_rejected_hunks(tmp_path):
     assert apply_result.result["files_changed"] == []
     # File unchanged
     assert target.read_text(encoding="utf-8") == "alpha\nbeta\ngamma\n"
+
+
+# ── diff.generate ─────────────────────────────────────────────────────
+
+
+@pytest.mark.asyncio
+async def test_v2_diff_generate_returns_unified_diff(tmp_path):
+    """diff.generate runs git diff in the workspace and returns unified diff text."""
+    import subprocess
+
+    subprocess.run(["git", "init"], cwd=tmp_path, capture_output=True)
+    subprocess.run(["git", "config", "user.email", "test@test.com"], cwd=tmp_path, capture_output=True)
+    subprocess.run(["git", "config", "user.name", "Test"], cwd=tmp_path, capture_output=True)
+    (tmp_path / "tracked.txt").write_text("line1\nline2\n", encoding="utf-8")
+    subprocess.run(["git", "add", "."], cwd=tmp_path, capture_output=True)
+    subprocess.run(["git", "commit", "-m", "init"], cwd=tmp_path, capture_output=True)
+    (tmp_path / "tracked.txt").write_text("line1\nline2\nline3\n", encoding="utf-8")
+
+    dock = BottomInputDock()
+    session = GatewaySession(lambda: dock.tree, thread_id="t1", workspace=str(tmp_path))
+
+    request = JsonRpcRequest(id=40, method="diff.generate", params={})
+    result = await session.dispatch_request(request)
+
+    assert isinstance(result, JsonRpcResult)
+    diff_text = result.result["diff"]
+    assert "+line3" in diff_text
+    assert "tracked.txt" in diff_text
+
+
+@pytest.mark.asyncio
+async def test_v2_diff_generate_empty_repo_returns_empty_diff(tmp_path):
+    """diff.generate on a clean repo returns empty diff string."""
+    import subprocess
+
+    subprocess.run(["git", "init"], cwd=tmp_path, capture_output=True)
+    subprocess.run(["git", "config", "user.email", "test@test.com"], cwd=tmp_path, capture_output=True)
+    subprocess.run(["git", "config", "user.name", "Test"], cwd=tmp_path, capture_output=True)
+    (tmp_path / "clean.txt").write_text("hello\n", encoding="utf-8")
+    subprocess.run(["git", "add", "."], cwd=tmp_path, capture_output=True)
+    subprocess.run(["git", "commit", "-m", "init"], cwd=tmp_path, capture_output=True)
+
+    dock = BottomInputDock()
+    session = GatewaySession(lambda: dock.tree, thread_id="t1", workspace=str(tmp_path))
+
+    request = JsonRpcRequest(id=41, method="diff.generate", params={})
+    result = await session.dispatch_request(request)
+
+    assert isinstance(result, JsonRpcResult)
+    assert result.result["diff"] == ""
+
+
+@pytest.mark.asyncio
+async def test_v2_diff_generate_non_git_repo_returns_empty(tmp_path):
+    """diff.generate in a non-git directory returns empty diff without error."""
+    dock = BottomInputDock()
+    session = GatewaySession(lambda: dock.tree, thread_id="t1", workspace=str(tmp_path))
+
+    request = JsonRpcRequest(id=42, method="diff.generate", params={})
+    result = await session.dispatch_request(request)
+
+    assert isinstance(result, JsonRpcResult)
+    assert result.result["diff"] == ""
