@@ -189,6 +189,58 @@ describe("handleToolItem", () => {
     expect(details).toHaveLength(1);
     expect(details[0].textContent).toBe("finished output");
   });
+
+  it("toggles collapsed class on header click", () => {
+    handleToolItem("item.started", "t11", {
+      tool_call_id: "c11",
+      tool_name: "bash",
+    });
+    const transcript = document.querySelector("#transcript");
+    const item = transcript.querySelector(".tool-item");
+    expect(item.classList.contains("collapsed")).toBe(false);
+    item.querySelector(".tool-header").click();
+    expect(item.classList.contains("collapsed")).toBe(true);
+    item.querySelector(".tool-header").click();
+    expect(item.classList.contains("collapsed")).toBe(false);
+  });
+
+  it("shows elapsed on item.completed", () => {
+    handleToolItem("item.started", "t12", {
+      tool_call_id: "c12",
+      tool_name: "bash",
+    });
+    handleToolItem("item.completed", "t12", {
+      tool_call_id: "c12",
+      ok: true,
+      elapsed: 3500,
+    });
+    const transcript = document.querySelector("#transcript");
+    const elapsed = transcript.querySelector(".tool-elapsed");
+    expect(elapsed).not.toBeNull();
+    expect(elapsed.textContent).toBe("3.5s");
+  });
+
+  it("renders diff lines with add/del/context classes", () => {
+    handleToolItem("item.started", "t13", {
+      tool_call_id: "c13",
+      tool_name: "edit",
+    });
+    handleToolItem("item.delta", "t13", {
+      tool_call_id: "c13",
+      diff_text: "--- a\n+++ b\n@@ -1,2 +1,2 @@\n-old\n+new\n ctx",
+    });
+    const transcript = document.querySelector("#transcript");
+    const diff = transcript.querySelector(".tool-diff");
+    expect(diff).not.toBeNull();
+    const lines = diff.querySelectorAll(".diff-line");
+    expect(lines).toHaveLength(6);
+    expect(lines[0].className).toContain("diff-line-context");
+    expect(lines[1].className).toContain("diff-line-context");
+    expect(lines[2].className).toContain("diff-hunk");
+    expect(lines[3].className).toContain("diff-line-del");
+    expect(lines[4].className).toContain("diff-line-add");
+    expect(lines[5].className).toContain("diff-line-context");
+  });
 });
 
 describe("handleItem routing", () => {

@@ -63,6 +63,7 @@ export function commitStream(streamId) {
     clearTimeout(stream.debounceTimer);
     stream.debounceTimer = null;
   }
+  stream.committed = true;
   renderStreamText(stream);
   renderStreamThinking(stream);
   const result = {
@@ -108,6 +109,11 @@ function scheduleRender(stream, target) {
 
 function renderStreamText(stream) {
   stream.textEl.replaceChildren(renderMarkdown(stream.text));
+  if (!stream.committed) {
+    const cursor = document.createElement("span");
+    cursor.className = "stream-cursor";
+    stream.textEl.append(cursor);
+  }
 }
 
 function renderStreamThinking(stream) {

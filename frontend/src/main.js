@@ -2,6 +2,11 @@ import { renderTranscript, renderTodoPanel } from "./render.js";
 import { matchSlashCommands, renderSlashMenu } from "./slash.js";
 import { setTranscriptElement, appendStreamText, commitStream, discardStream } from "./stream.js";
 import { renderMarkdown, renderUserMessage } from "./markdown.js";
+import { rpcCall, rpcNotify, onNotification, onRequest, _setSocket } from "./rpc.js";
+import { renderSidebar, updateThreadStatus, filterSessions, onThreadSelect, onNewThread } from "./sidebar.js";
+import { initDock, renderTodoInDock } from "./dock.js";
+import { initTerminal, appendTerminalOutput, showTerminalClosed, onTerminalInput, onTerminalStart, setActiveTerminal } from "./terminal.js";
+import { renderDiffReview, setHunkDecision, onHunkDecision, onApplyDiff } from "./diff-review.js";
 
 const statusDotEl = document.querySelector("#status-dot");
 const statusModelEl = document.querySelector("#status-model");
@@ -34,6 +39,71 @@ let reconnectAttempts = 0;
 const MAX_RECONNECT = 10;
 
 setTranscriptElement(transcriptEl);
+initDock();
+initTerminal();
+
+onTerminalStart(() => {
+  rpcCall("terminal.start", { command: ["bash"] })
+    .then((result) => {
+      setActiveTerminal(result.terminal_id);
+    })
+    .catch((err) => {
+      console.warn("voidx: terminal start failed", err.message);
+    });
+});
+
+onTerminalInput((terminalId, data) => {
+  rpcCall("terminal.input", { terminal_id: terminalId, data: data + "\n" }).catch(() => {});
+});
+
+onHunkDecision((reviewId, filePath, hunkIndex, decision) => {
+  rpcCall("diff.decide", { review_id: reviewId, file_path: filePath, hunk_index: hunkIndex, decision })
+    .then((result) => {
+      setHunkDecision(filePath, hunkIndex, decision, result.summary);
+    })
+    .catch((err) => {
+      console.warn("voidx: diff decide failed", err.message);
+    });
+});
+
+onApplyDiff((reviewId) => {
+  rpcCall("diff.apply", { review_id: reviewId })
+    .then((result) => {
+      console.log("voidx: diff applied", result.files_changed);
+    })
+    .catch((err) => {
+      console.warn("voidx: diff apply failed", err.message);
+    });
+});
+
+onThreadSelect((threadId) => {
+  rpcCall("session.switch", { thread_id: threadId })
+    .then((result) => {
+      uiState.sessionId = result.active_thread_id || threadId;
+      updateStatusBar();
+    })
+    .catch((err) => {
+      console.warn("voidx: session switch failed", err.message);
+    });
+});
+
+onNewThread(() => {
+  rpcCall("session.create", {})
+    .then((result) => {
+      uiState.sessionId = result.thread_id;
+      updateStatusBar();
+    })
+    .catch((err) => {
+      console.warn("voidx: session create failed", err.message);
+    });
+});
+
+const searchEl = document.querySelector("#session-search");
+if (searchEl) {
+  searchEl.addEventListener("input", () => {
+    filterSessions(searchEl.value);
+  });
+}
 
 if (!import.meta.env.TEST) {
   bootstrap().catch((error) => {
@@ -88,6 +158,7 @@ function connect(url) {
     reconnectAttempts = 0;
     setConnectionStatus("connected");
   });
+  _setSocket(socket);
   socket.addEventListener("close", () => {
     setConnectionStatus("disconnected");
     scheduleReconnect();
@@ -110,6 +181,7 @@ function connect(url) {
       const snapshot = params.active_snapshot || { nodes: [] };
       uiState.sessionId = params.active_thread_id || "";
       updateStatusBar();
+      renderSidebar(params.threads || [], params.active_thread_id || "");
       renderTranscript(transcriptEl, snapshot);
       scrollToBottom();
       return;
@@ -126,6 +198,10 @@ function connect(url) {
     }
     if (method === "turn.started") {
       setRunning(true);
+      return;
+    }
+    if (method === "terminal.output") {
+      appendTerminalOutput(params.terminal_id, params.data);
       return;
     }
     if (method === "capture.started" || method === "capture.stopped") {
@@ -171,10 +247,10 @@ export function handleItem(method, params) {
   }
   if (kind === "todo") {
     if (method === "item.started") {
-      renderTodoPanel(todoPanelEl, data.items || [], data.summary || "");
+      renderTodoInDock(data.items || [], data.summary || "");
     } else if (method === "item.completed") {
       if (data.cleared) {
-        renderTodoPanel(todoPanelEl, [], "");
+        renderTodoInDock([], "");
       }
     }
     return;
@@ -237,8 +313,16 @@ export function handleToolItem(method, itemId, data) {
     const spinner = document.createElement("span");
     spinner.className = "tool-spinner";
     spinner.textContent = "running";
+    header.addEventListener("click", () => {
+      el.classList.toggle("collapsed");
+    });
+
     header.append(name, spinner);
     el.append(header);
+
+    const body = document.createElement("div");
+    body.className = "tool-body";
+    el.append(body);
 
     if (data.args) {
       const args = document.createElement("pre");
@@ -246,7 +330,7 @@ export function handleToolItem(method, itemId, data) {
       args.textContent = typeof data.args === "string"
         ? data.args
         : JSON.stringify(data.args, null, 2);
-      el.append(args);
+      body.append(args);
     }
 
     if (transcriptEl) {
@@ -254,17 +338,16 @@ export function handleToolItem(method, itemId, data) {
       transcriptEl.scrollTop = transcriptEl.scrollHeight;
     }
   } else if (el) {
+    const body = el.querySelector(".tool-body");
     if (method === "item.delta") {
       if (data.diff_text) {
-        const diff = document.createElement("pre");
-        diff.className = "tool-diff";
-        diff.textContent = data.diff_text;
-        el.append(diff);
+        const diff = renderDiffBlock(data.diff_text);
+        body.append(diff);
       } else if (data.detail) {
         const detail = document.createElement("pre");
         detail.className = "tool-detail";
         detail.textContent = data.detail;
-        el.append(detail);
+        body.append(detail);
       }
     } else if (method === "item.completed") {
       const spinner = el.querySelector(".tool-spinner");
@@ -272,17 +355,49 @@ export function handleToolItem(method, itemId, data) {
         spinner.textContent = data.ok ? "done" : "failed";
         spinner.className = `tool-spinner ${data.ok ? "ok" : "err"}`;
       }
+      if (data.elapsed) {
+        const elapsed = document.createElement("span");
+        elapsed.className = "tool-elapsed";
+        elapsed.textContent = formatElapsed(data.elapsed);
+        el.querySelector(".tool-header")?.append(elapsed);
+      }
       if (data.detail) {
         const detail = document.createElement("pre");
         detail.className = "tool-detail";
         detail.textContent = data.detail;
-        el.append(detail);
+        body.append(detail);
       }
     }
     if (transcriptEl) {
       transcriptEl.scrollTop = transcriptEl.scrollHeight;
     }
   }
+}
+
+function renderDiffBlock(diffText) {
+  const container = document.createElement("div");
+  container.className = "tool-diff";
+  for (const line of diffText.split("\n")) {
+    const lineEl = document.createElement("div");
+    if (line.startsWith("+") && !line.startsWith("+++")) {
+      lineEl.className = "diff-line diff-line-add";
+    } else if (line.startsWith("-") && !line.startsWith("---")) {
+      lineEl.className = "diff-line diff-line-del";
+    } else if (line.startsWith("@@")) {
+      lineEl.className = "diff-line diff-hunk";
+    } else {
+      lineEl.className = "diff-line diff-line-context";
+    }
+    lineEl.textContent = line;
+    container.append(lineEl);
+  }
+  return container;
+}
+
+function formatElapsed(ms) {
+  if (ms < 1000) return `${ms}ms`;
+  if (ms < 60000) return `${(ms / 1000).toFixed(1)}s`;
+  return `${Math.floor(ms / 60000)}m${Math.floor((ms % 60000) / 1000)}s`;
 }
 
 function setRunning(running) {
@@ -324,12 +439,7 @@ composerEl.addEventListener("submit", (event) => {
   if (!text || !socket || socket.readyState !== WebSocket.OPEN) {
     return;
   }
-  socket.send(JSON.stringify({
-    jsonrpc: "2.0",
-    id: Date.now(),
-    method: "session.submit",
-    params: { text },
-  }));
+  rpcCall("session.submit", { text }).catch(() => {});
   appendMessageItem(`user-${Date.now()}`, { style: "text", text });
   inputEl.value = "";
   hideSlashMenu();
@@ -339,13 +449,7 @@ btnCancelEl.addEventListener("click", () => {
   if (!socket || socket.readyState !== WebSocket.OPEN) {
     return;
   }
-  socket.send(JSON.stringify({
-    jsonrpc: "2.0",
-    id: Date.now(),
-    method: "session.cancel",
-    params: {},
-  }));
-  setRunning(false);
+  rpcCall("session.cancel", {}).then(() => setRunning(false)).catch(() => setRunning(false));
 });
 
 inputEl.addEventListener("keydown", (event) => {

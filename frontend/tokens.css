@@ -1,0 +1,62 @@
+:root {
+  color-scheme: dark;
+
+  /* ── 色彩 ── */
+  --vx-bg-base:        #0b0f14;
+  --vx-bg-surface:     #0f1620;
+  --vx-bg-elevated:    #111a26;
+  --vx-bg-hover:       #1a2433;
+
+  --vx-border:         #263241;
+  --vx-border-strong:  #304155;
+
+  --vx-text-primary:   #e7edf5;
+  --vx-text-secondary: #b7c4d6;
+  --vx-text-muted:     #8fa3bb;
+  --vx-text-dim:       #9aa9bb;
+
+  --vx-accent:         #7aa2f7;
+  --vx-success:        #9ece6a;
+  --vx-warning:        #e0af68;
+  --vx-error:          #f7768e;
+
+  --vx-diff-add:       #9ece6a;
+  --vx-diff-del:       #f7768e;
+  --vx-diff-hunk:      #7aa2f7;
+
+  /* ── 间距（4px 基准） ── */
+  --vx-space-1:  4px;
+  --vx-space-2:  8px;
+  --vx-space-3:  12px;
+  --vx-space-4:  16px;
+  --vx-space-5:  20px;
+  --vx-space-6:  24px;
+  --vx-space-8:  32px;
+
+  /* ── 圆角 ── */
+  --vx-radius-sm: 6px;
+  --vx-radius-md: 10px;
+  --vx-radius-lg: 16px;
+
+  /* ── 字体 ── */
+  --vx-font-sans: Inter, ui-sans-serif, system-ui, -apple-system, BlinkMacSystemFont, "Segoe UI", sans-serif;
+  --vx-font-mono: ui-monospace, SFMono-Regular, Menlo, Consolas, "Cascadia Code", monospace;
+
+  /* ── 字号 ── */
+  --vx-text-xs:   11px;
+  --vx-text-sm:   13px;
+  --vx-text-base: 14px;
+  --vx-text-lg:   16px;
+  --vx-text-xl:   18px;
+
+  /* ── 侧栏宽度 ── */
+  --vx-sidebar-width: 240px;
+  --vx-sidebar-collapsed: 48px;
+  --vx-dock-width: 360px;
+  --vx-dock-collapsed: 0px;
+
+  /* ── 动效 ── */
+  --vx-transition: 0.15s ease;
+  --vx-shadow-sm: 0 1px 2px rgb(0 0 0 / 0.2);
+  --vx-shadow-md: 0 4px 12px rgb(0 0 0 / 0.3);
+}

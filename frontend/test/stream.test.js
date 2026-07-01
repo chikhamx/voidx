@@ -135,3 +135,20 @@ describe("discardStream", () => {
     expect(transcript.querySelector(".stream-buffer")).toBeNull();
   });
 });
+
+describe("stream cursor", () => {
+  it("shows cursor while streaming (not committed)", async () => {
+    appendStreamText("s1", "hello", "text");
+    await new Promise((r) => setTimeout(r, 150));
+    const cursor = document.querySelector(".stream-cursor");
+    expect(cursor).not.toBeNull();
+  });
+
+  it("removes cursor after commit", async () => {
+    appendStreamText("s1", "hello", "text");
+    await new Promise((r) => setTimeout(r, 150));
+    commitStream("s1");
+    const cursor = document.querySelector(".stream-cursor");
+    expect(cursor).toBeNull();
+  });
+});
