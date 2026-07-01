@@ -176,6 +176,35 @@ class DeepSeekChatOpenAI(ChatOpenAI):
 
         return generation_chunk
 
+    # ── multi-turn reasoning_content injection ──────────────────────────────
+
+    def _get_request_payload(self, input_, *, stop=None, **kwargs):
+        """Inject reasoning_content into assistant message dicts.
+
+        DeepSeek's thinking mode requires ``reasoning_content`` to be passed
+        back as a top-level field on assistant messages in multi-turn
+        conversations.  LangChain's ``_convert_message_to_dict`` silently
+        drops ``additional_kwargs.reasoning_content``, so we re-inject it
+        after the parent builds the payload.
+        """
+        payload = super()._get_request_payload(input_, stop=stop, **kwargs)
+        messages = payload.get("messages")
+        if not isinstance(messages, list):
+            return payload
+
+        original_messages = self._convert_input(input_).to_messages()
+        for i, msg_dict in enumerate(messages):
+            if not isinstance(msg_dict, dict) or msg_dict.get("role") != "assistant":
+                continue
+            if i >= len(original_messages):
+                break
+            orig = original_messages[i]
+            rc = getattr(orig, "additional_kwargs", {}).get("reasoning_content")
+            if isinstance(rc, str) and rc:
+                msg_dict["reasoning_content"] = rc
+
+        return payload
+
     # ── provider-specific reasoning effort mapping ────────────────────────
 
     @staticmethod

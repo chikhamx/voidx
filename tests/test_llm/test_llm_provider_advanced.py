@@ -330,3 +330,51 @@ def test_deepseek_chat_accumulates_reasoning_details_across_chunks():
     assert isinstance(rd2, list)
     assert len(rd2) == 1
     assert rd2[0]["text"] == "Part2"
+
+
+def test_deepseek_chat_injects_reasoning_content_into_request_payload():
+    """DeepSeek thinking mode requires reasoning_content to be passed back in multi-turn.
+
+    When an AIMessage carries reasoning_content in additional_kwargs (as injected
+    by _convert_chunk_to_generation_chunk during streaming), the request payload
+    sent to the DeepSeek API must include it as a top-level field on the assistant
+    message dict.  LangChain's _convert_message_to_dict silently drops it.
+    """
+    from langchain_core.messages import AIMessage, HumanMessage
+
+    model = DeepSeekChatOpenAI(api_key="test-key", model="deepseek-reasoner")
+
+    messages = [
+        HumanMessage(content="hello"),
+        AIMessage(
+            content="Hi there",
+            additional_kwargs={"reasoning_content": "Let me think about this..."},
+        ),
+        HumanMessage(content="thanks"),
+    ]
+
+    payload = model._get_request_payload(messages)
+
+    assert "messages" in payload
+    msgs = payload["messages"]
+    assert len(msgs) == 3
+    assistant_dict = msgs[1]
+    assert assistant_dict["role"] == "assistant"
+    assert assistant_dict.get("reasoning_content") == "Let me think about this..."
+
+
+def test_deepseek_chat_omits_reasoning_content_when_absent():
+    """No reasoning_content in additional_kwargs → no reasoning_content key in payload."""
+    from langchain_core.messages import AIMessage, HumanMessage
+
+    model = DeepSeekChatOpenAI(api_key="test-key", model="deepseek-reasoner")
+
+    messages = [
+        HumanMessage(content="hello"),
+        AIMessage(content="Hi there"),
+    ]
+
+    payload = model._get_request_payload(messages)
+    msgs = payload["messages"]
+    assistant_dict = msgs[1]
+    assert "reasoning_content" not in assistant_dict

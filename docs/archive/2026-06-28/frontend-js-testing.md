@@ -1,5 +1,7 @@
 # 前端 JS 单元测试体系 — 技术设计文档
 
+> **Status: Done** — vitest + jsdom 测试体系已落地,5 个测试文件 / 101 个用例全部通过(`npm test`)。源码侧改动(`_resetForTest`、`import.meta.env.TEST` 守卫、私有函数 export)均已实现。
+
 ## Context
 
 desktop 前端有 5 个 JS 模块（共 941 行），但从未建立测试体系：`package.json` 无测试运行器依赖、无 `test` 脚本，目录下无任何 `*.test.js` 文件。近期连续修复了两个渲染 bug（消息不显示、工具调用信息不显示），这些 bug 本应被单元测试拦住。本设计为前端引入 vitest + jsdom 测试框架，覆盖纯函数和 DOM 渲染逻辑。
