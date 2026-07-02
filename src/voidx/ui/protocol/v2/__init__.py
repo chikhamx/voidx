@@ -1,5 +1,46 @@
-"""Protocol v2 — JSON-RPC 2.0 wire format with Thread/Turn/Item primitives.
+"""Protocol v2 JSON-RPC DTOs and helpers."""
 
-Replaces v1's custom envelope (type+payload+seq+ts) with standard JSON-RPC
-messages. Not backward compatible: the desktop frontend is unreleased.
-"""
+from voidx.ui.protocol.v2.envelope import (
+    ERR_INTERNAL_ERROR,
+    ERR_INVALID_PARAMS,
+    ERR_INVALID_REQUEST,
+    ERR_METHOD_NOT_FOUND,
+    ERR_PARSE_ERROR,
+    ERR_TERMINAL_NOT_FOUND,
+    ERR_THREAD_NOT_FOUND,
+    ERR_TURN_IN_PROGRESS,
+    ErrorPayload,
+    JsonRpcError,
+    JsonRpcNotification,
+    JsonRpcRequest,
+    JsonRpcResult,
+    PROTOCOL_VERSION,
+    ParseError,
+    parse_jsonrpc_message,
+)
+from voidx.ui.protocol.v2.snapshot import ThreadSnapshot, WorkspaceSnapshot
+from voidx.ui.protocol.v2.threads import Item, ThreadInfo, TurnInfo
+
+__all__ = [
+    "ERR_INTERNAL_ERROR",
+    "ERR_INVALID_PARAMS",
+    "ERR_INVALID_REQUEST",
+    "ERR_METHOD_NOT_FOUND",
+    "ERR_PARSE_ERROR",
+    "ERR_TERMINAL_NOT_FOUND",
+    "ERR_THREAD_NOT_FOUND",
+    "ERR_TURN_IN_PROGRESS",
+    "ErrorPayload",
+    "Item",
+    "JsonRpcError",
+    "JsonRpcNotification",
+    "JsonRpcRequest",
+    "JsonRpcResult",
+    "PROTOCOL_VERSION",
+    "ParseError",
+    "ThreadInfo",
+    "ThreadSnapshot",
+    "TurnInfo",
+    "WorkspaceSnapshot",
+    "parse_jsonrpc_message",
+]

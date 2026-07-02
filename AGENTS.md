@@ -17,7 +17,7 @@
 - `src/voidx/logging/`: Request and tool logging.
 - `src/voidx/ui/tui/`: Pure terminal TUI — input parser, editor, panels, renderer, state.
 - `src/voidx/ui/output/`: Output rendering — dock tree, streaming, capture, events, diff.
-- `src/voidx/ui/protocol/`: UI protocol layer — envelope, schema, transcript, commands, requests.
+- `src/voidx/ui/protocol/`: UI protocol layer — v2 JSON-RPC models, schema, transcript, commands, requests.
 - `src/voidx/ui/tools/`: UI-side tools — clipboard, file picker, skill picker, IDE integration.
 - `src/voidx/ui/gateway/`: WebSocket gateway for web/desktop frontend.
 - `tests/`: pytest coverage — per-module test directories (agent, config, llm, lsp, mcp, memory, permission, runtime, skills, tools, ui, workflow, etc.) plus top-level install/npm packaging tests.

@@ -1,36 +1,20 @@
-import sys
-from pathlib import Path
+from __future__ import annotations
 
-sys.path.insert(0, str(Path(__file__).parent.parent / "src"))
+import pytest
 
-from voidx.ui.frontend import UiController, UiFrontend
-from voidx.ui.output.events.schema import (
-    AssistantStreamUpdated,
-    CheckpointDecisionSubmitted,
-    CheckpointChoicePayload,
-    CheckpointPlanPayload,
-    CheckpointPromptShown,
-)
+from voidx.ui.output.tree import OutputTree
 from voidx.ui.protocol import (
-    ProtocolEnvelope,
     TranscriptSnapshot,
-    UiCommandEnvelope,
-    UiEventEnvelope,
     UiChoiceRequest,
-    UiHello,
-    UiHelloEnvelope,
     UiPermissionRequest,
-    UiRequestEnvelope,
     UiResponse,
     UiSubmitCommand,
-    export_protocol_schema,
-    parse_protocol_envelope,
-    parse_ui_command,
     UiTextRequest,
-    tree_to_snapshot,
+    export_protocol_schema,
+    parse_ui_command,
     parse_ui_request,
+    tree_to_snapshot,
 )
-from voidx.ui.output.tree import OutputTree
 
 
 def test_ui_choice_request_serializes_with_stable_kind():
@@ -84,16 +68,6 @@ def test_ui_submit_command_serializes_with_stable_kind():
     assert parse_ui_command(data) == command
 
 
-def test_frontend_protocol_surface_is_tui_independent():
-    assert getattr(UiFrontend, "_is_protocol", False)
-    assert getattr(UiController, "_is_protocol", False)
-    assert hasattr(UiFrontend, "emit")
-    assert hasattr(UiFrontend, "request")
-    assert hasattr(UiFrontend, "run")
-    assert hasattr(UiController, "submit_text")
-    assert hasattr(UiController, "cancel")
-
-
 def test_tree_to_snapshot_preserves_hierarchy_and_semantic_metadata():
     tree = OutputTree()
     turn = tree.new_node(tree.root, node_type="turn", header="❯ hello")
@@ -145,66 +119,33 @@ def test_tree_to_snapshot_accepts_checkpoint_nodes():
     assert restored.nodes[1].payload["checkpoint_id"] == "cp_1"
 
 
-def test_checkpoint_events_round_trip_through_protocol_envelope():
-    shown = CheckpointPromptShown(
-        checkpoint_id="cp_1",
-        plan=CheckpointPlanPayload(
-            plan_summary="Add checkpoint node",
-            steps=["Add event", "Render node"],
-            affected_files=["src/voidx/tools/plan_checkpoint.py"],
-            risks=["Avoid duplicate JSON"],
-        ),
-        choices=[
-            CheckpointChoicePayload(
-                label="Implement directly",
-                value="approved",
-                description="Start implementing",
-            )
-        ],
-    )
-    submitted = CheckpointDecisionSubmitted(
-        checkpoint_id="cp_1",
-        decision="approved",
-        label="Implement directly",
-        response="Implement directly",
-    )
+def test_v1_envelope_symbols_are_not_public_protocol_exports():
+    import voidx.ui.protocol as protocol
 
-    shown_envelope = UiEventEnvelope(seq=11, payload=shown)
-    submitted_envelope = UiEventEnvelope(seq=12, payload=submitted)
+    assert not hasattr(protocol, "ProtocolEnvelope")
+    assert not hasattr(protocol, "parse_protocol_envelope")
 
-    assert parse_protocol_envelope(shown_envelope.model_dump()) == shown_envelope
-    assert parse_protocol_envelope(submitted_envelope.model_dump()) == submitted_envelope
+    with pytest.raises(ImportError):
+        exec("from voidx.ui.protocol import ProtocolEnvelope")
+    with pytest.raises(ImportError):
+        exec("from voidx.ui.protocol import parse_protocol_envelope")
 
 
-def test_protocol_envelopes_parse_by_type_and_round_trip_payloads():
-    event = UiEventEnvelope(
-        seq=7,
-        payload=AssistantStreamUpdated(text="hello"),
-    )
-    request = UiRequestEnvelope(
-        seq=8,
-        payload=UiChoiceRequest(
-            request_id="req_1",
-            prompt="Mode",
-            choices=[("Auto", "auto", "")],
-        ),
-    )
-    hello = UiHelloEnvelope(seq=0, payload=UiHello(client="web", last_seq=6))
-    command = UiCommandEnvelope(seq=9, payload=UiSubmitCommand(text="hello"))
-
-    assert parse_protocol_envelope(event.model_dump()) == event
-    assert parse_protocol_envelope(request.model_dump()) == request
-    assert parse_protocol_envelope(hello.model_dump()) == hello
-    assert parse_protocol_envelope(command.model_dump()) == command
-
-
-def test_protocol_schema_exports_contract_definitions():
+def test_protocol_schema_exports_v2_and_common_dto_definitions():
     schema = export_protocol_schema()
 
     assert schema["title"] == "VoidxUiProtocol"
-    assert "ProtocolEnvelope" in schema["$defs"]
+    assert "ProtocolEnvelope" not in schema["$defs"]
+    assert "JsonRpcRequest" in schema["$defs"]
+    assert "JsonRpcNotification" in schema["$defs"]
+    assert "JsonRpcResult" in schema["$defs"]
+    assert "JsonRpcError" in schema["$defs"]
+    assert "ErrorPayload" in schema["$defs"]
+    assert "WorkspaceSnapshot" in schema["$defs"]
+    assert "ThreadSnapshot" in schema["$defs"]
+    assert "ThreadInfo" in schema["$defs"]
+    assert "TurnInfo" in schema["$defs"]
+    assert "Item" in schema["$defs"]
     assert "TranscriptSnapshot" in schema["$defs"]
-    assert "CheckpointPromptShown" in schema["$defs"]
-    assert "CheckpointDecisionSubmitted" in schema["$defs"]
     assert "UiChoiceRequest" in schema["$defs"]
     assert "UiSubmitCommand" in schema["$defs"]

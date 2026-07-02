@@ -117,6 +117,7 @@ def export_protocol_schema() -> dict[str, Any]:
 **当前行为**：导出 v1 `ProtocolEnvelope` 的 JSON Schema（包含 6 种 Envelope 的 union）
 
 **变更后行为**：导出 v2 相关 schema，包含：
+- `JsonRpcRequest` / `JsonRpcNotification` / `JsonRpcResult` / `JsonRpcError` / `ErrorPayload`（v2 JSON-RPC wire envelope）
 - `WorkspaceSnapshot`（连接时推送的完整状态）
 - `ThreadSnapshot`（单 thread 的 transcript）
 - `ThreadInfo` / `TurnInfo` / `Item`（v2 原语）
@@ -129,13 +130,32 @@ def export_protocol_schema() -> dict[str, Any]:
 from voidx.ui.protocol.commands import UiCommand
 from voidx.ui.protocol.requests import UiRequest
 from voidx.ui.protocol.transcript import TranscriptSnapshot
+from voidx.ui.protocol.v2.envelope import (
+    ErrorPayload,
+    JsonRpcError,
+    JsonRpcNotification,
+    JsonRpcRequest,
+    JsonRpcResult,
+)
 from voidx.ui.protocol.v2.snapshot import WorkspaceSnapshot, ThreadSnapshot
 from voidx.ui.protocol.v2.threads import ThreadInfo, TurnInfo, Item
 
+
 def export_protocol_schema() -> dict[str, Any]:
     schema = TypeAdapter(
-        WorkspaceSnapshot | ThreadSnapshot | ThreadInfo | TurnInfo | Item
-        | TranscriptSnapshot | UiRequest | UiCommand
+        JsonRpcRequest
+        | JsonRpcNotification
+        | JsonRpcResult
+        | JsonRpcError
+        | ErrorPayload
+        | WorkspaceSnapshot
+        | ThreadSnapshot
+        | ThreadInfo
+        | TurnInfo
+        | Item
+        | TranscriptSnapshot
+        | UiRequest
+        | UiCommand
     ).json_schema(ref_template="#/$defs/{model}")
     defs = dict(schema.pop("$defs", {}))
     return {
@@ -172,6 +192,25 @@ def export_protocol_schema() -> dict[str, Any]:
 | `export_protocol_schema()` 输出变化导致前端 `protocol.schema.json` 变化 | 重新运行 `npm run schema` 生成新的 `protocol.d.ts`；前端 JS 已全部走 v2，不受影响 |
 | 测试文件删除后丢失 DTO round-trip 覆盖 | 将 DTO 测试迁移到新文件 `tests/test_ui/protocol/test_dto.py` |
 
+## Implementation Plan
+
+1. 迁移 DTO round-trip 覆盖：新增 `tests/test_ui/protocol/test_dto.py`，保留 `UiSubmitCommand`、`UiChoiceRequest`、`UiPermissionRequest`、`UiResponse`、`TranscriptSnapshot`、`tree_to_snapshot` 等公共 DTO 的序列化 / 反序列化测试；同时新增负向 import 测试，确认 `ProtocolEnvelope` / `parse_protocol_envelope` 不再能从 `voidx.ui.protocol` 导入。
+2. 更新 schema 导出：修改 `src/voidx/ui/protocol/schema.py`，移除 v1 `ProtocolEnvelope` 依赖，并导出 v2 JSON-RPC envelope、snapshot、thread/item、公共 DTO schema。
+3. 清理顶层导出：修改 `src/voidx/ui/protocol/__init__.py`，删除 v1 Envelope 类型和 `parse_protocol_envelope` 的重导出，只保留公共 DTO 与 `export_protocol_schema()`。
+4. 新增 v2 包导出：创建 `src/voidx/ui/protocol/v2/__init__.py`，显式导出 v2 JSON-RPC、snapshot、thread/item 类型，方便调用方从版本化命名空间引用 v2 wire model。
+5. 删除 v1 文件与测试：删除 `src/voidx/ui/protocol/envelope.py`，删除或拆分 `tests/test_ui/gateway/test_ui_frontend_protocol.py`，只迁移仍有价值的 DTO 测试。
+6. 重新生成前端协议产物：运行 `cd frontend && npm run schema`，并随 PR 提交更新后的 `frontend/src/protocol.schema.json` 和 `frontend/src/protocol.d.ts`。
+7. 同步文档索引：更新 `AGENTS.md` 中 `src/voidx/ui/protocol/` 的目录说明，移除 `envelope` 表述，避免新文档继续暗示 v1 存在。
+
+## Verification Plan
+
+- `.\python.ps1 scripts/export_ui_protocol_schema.py`：确认后端 schema 导出不再依赖 v1 `ProtocolEnvelope`。
+- `cd frontend && npm run schema`：确认 `protocol.schema.json` 和 `protocol.d.ts` 可从新 schema 重新生成。
+- `.\python.ps1 -m pytest tests/test_ui/protocol tests/test_ui/gateway -v`：确认协议 DTO、v2 gateway/session 相关测试通过。
+- `.\python.ps1 -m pytest tests/test_ui -v`：确认 UI 层整体测试通过。
+- `cd frontend && npm test`：确认前端行为未因 schema 产物变化回归。
+- `.\python.ps1 -m pytest tests/ -v`：作为合并前完整回归，可在 focused tests 通过后运行。
+
 ## Decisions Log
 
 | 决策 | 备选方案 | 选择理由 |
@@ -184,4 +223,4 @@ def export_protocol_schema() -> dict[str, Any]:
 ## Open Questions
 
 - [x] `frontend/src/protocol.schema.json` 和 `frontend/src/protocol.d.ts` 是否有前端代码实际引用？→ **已确认：前端 JS 代码没有 import 这两个文件**。它们是 `npm run schema` 自动生成的，但无实际消费方。`export_protocol_schema()` 的输出变更不会影响前端行为。
-- [ ] 是否有外部工具或脚本（CI/CD、文档生成）引用了 v1 `ProtocolEnvelope`？→ 需在实施前全局搜索 `ProtocolEnvelope` 确认。
+- [x] 是否有外部工具或脚本（CI/CD、文档生成）引用了 v1 `ProtocolEnvelope`？→ **已确认：仓库内搜索 `ProtocolEnvelope` / `parse_protocol_envelope` / v1 Envelope 类型后，除待删除的 `envelope.py`、待更新的 `schema.py` / `__init__.py` 和相关测试外，未发现运行时、脚本或前端引用。**

@@ -7,24 +7,36 @@ from typing import Any
 from pydantic import TypeAdapter
 
 from voidx.ui.protocol.commands import UiCommand
-from voidx.ui.protocol.envelope import ProtocolEnvelope
 from voidx.ui.protocol.requests import UiRequest
 from voidx.ui.protocol.transcript import TranscriptSnapshot
+from voidx.ui.protocol.v2.envelope import (
+    ErrorPayload,
+    JsonRpcError,
+    JsonRpcNotification,
+    JsonRpcRequest,
+    JsonRpcResult,
+)
+from voidx.ui.protocol.v2.snapshot import ThreadSnapshot, WorkspaceSnapshot
+from voidx.ui.protocol.v2.threads import Item, ThreadInfo, TurnInfo
 
 
 def export_protocol_schema() -> dict[str, Any]:
-    envelope_schema = TypeAdapter(ProtocolEnvelope).json_schema(
-        ref_template="#/$defs/{model}"
-    )
-    defs = dict(envelope_schema.pop("$defs", {}))
-    defs["ProtocolEnvelope"] = envelope_schema
-    defs.update(
-        TypeAdapter(TranscriptSnapshot | UiRequest | UiCommand).json_schema(
-            ref_template="#/$defs/{model}"
-        ).get("$defs", {})
-    )
+    schema = TypeAdapter(
+        JsonRpcRequest
+        | JsonRpcNotification
+        | JsonRpcResult
+        | JsonRpcError
+        | ErrorPayload
+        | WorkspaceSnapshot
+        | ThreadSnapshot
+        | ThreadInfo
+        | TurnInfo
+        | Item
+        | TranscriptSnapshot
+        | UiRequest
+        | UiCommand
+    ).json_schema(ref_template="#/$defs/{model}")
     return {
         "title": "VoidxUiProtocol",
-        "type": "object",
-        "$defs": defs,
+        **schema,
     }

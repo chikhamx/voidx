@@ -1,419 +1,23 @@
 {
   "$defs": {
-    "AnsiAppended": {
+    "ErrorPayload": {
       "properties": {
-        "agent_id": {
-          "default": -1,
-          "title": "Agent Id",
+        "code": {
+          "title": "Code",
           "type": "integer"
         },
-        "kind": {
-          "const": "ansi.appended",
-          "default": "ansi.appended",
-          "title": "Kind",
-          "type": "string"
-        },
-        "text": {
-          "title": "Text",
-          "type": "string"
-        }
-      },
-      "required": [
-        "text"
-      ],
-      "title": "AnsiAppended",
-      "type": "object"
-    },
-    "AssistantStreamCommitted": {
-      "properties": {
-        "agent_id": {
-          "default": -1,
-          "title": "Agent Id",
-          "type": "integer"
-        },
-        "kind": {
-          "const": "assistant_stream.committed",
-          "default": "assistant_stream.committed",
-          "title": "Kind",
-          "type": "string"
-        },
-        "stream_id": {
-          "default": "default",
-          "title": "Stream Id",
-          "type": "string"
-        }
-      },
-      "title": "AssistantStreamCommitted",
-      "type": "object"
-    },
-    "AssistantStreamDiscarded": {
-      "properties": {
-        "agent_id": {
-          "default": -1,
-          "title": "Agent Id",
-          "type": "integer"
-        },
-        "kind": {
-          "const": "assistant_stream.discarded",
-          "default": "assistant_stream.discarded",
-          "title": "Kind",
-          "type": "string"
-        },
-        "stream_id": {
-          "default": "default",
-          "title": "Stream Id",
-          "type": "string"
-        }
-      },
-      "title": "AssistantStreamDiscarded",
-      "type": "object"
-    },
-    "AssistantStreamStarted": {
-      "properties": {
-        "agent_id": {
-          "default": -1,
-          "title": "Agent Id",
-          "type": "integer"
-        },
-        "kind": {
-          "const": "assistant_stream.started",
-          "default": "assistant_stream.started",
-          "title": "Kind",
-          "type": "string"
-        },
-        "stream_id": {
-          "default": "default",
-          "title": "Stream Id",
-          "type": "string"
-        }
-      },
-      "title": "AssistantStreamStarted",
-      "type": "object"
-    },
-    "AssistantStreamUpdated": {
-      "properties": {
-        "agent_id": {
-          "default": -1,
-          "title": "Agent Id",
-          "type": "integer"
-        },
-        "kind": {
-          "const": "assistant_stream.updated",
-          "default": "assistant_stream.updated",
-          "title": "Kind",
-          "type": "string"
-        },
-        "phase": {
-          "default": "text",
-          "enum": [
-            "thinking",
-            "text"
+        "data": {
+          "anyOf": [
+            {
+              "additionalProperties": true,
+              "type": "object"
+            },
+            {
+              "type": "null"
+            }
           ],
-          "title": "Phase",
-          "type": "string"
-        },
-        "stream_id": {
-          "default": "default",
-          "title": "Stream Id",
-          "type": "string"
-        },
-        "text": {
-          "title": "Text",
-          "type": "string"
-        }
-      },
-      "required": [
-        "text"
-      ],
-      "title": "AssistantStreamUpdated",
-      "type": "object"
-    },
-    "CaptureStarted": {
-      "properties": {
-        "agent_id": {
-          "default": -1,
-          "title": "Agent Id",
-          "type": "integer"
-        },
-        "kind": {
-          "const": "capture.started",
-          "default": "capture.started",
-          "title": "Kind",
-          "type": "string"
-        }
-      },
-      "title": "CaptureStarted",
-      "type": "object"
-    },
-    "CaptureStopped": {
-      "properties": {
-        "agent_id": {
-          "default": -1,
-          "title": "Agent Id",
-          "type": "integer"
-        },
-        "kind": {
-          "const": "capture.stopped",
-          "default": "capture.stopped",
-          "title": "Kind",
-          "type": "string"
-        }
-      },
-      "title": "CaptureStopped",
-      "type": "object"
-    },
-    "CheckpointChoicePayload": {
-      "properties": {
-        "description": {
-          "default": "",
-          "title": "Description",
-          "type": "string"
-        },
-        "label": {
-          "title": "Label",
-          "type": "string"
-        },
-        "value": {
-          "title": "Value",
-          "type": "string"
-        }
-      },
-      "required": [
-        "label",
-        "value"
-      ],
-      "title": "CheckpointChoicePayload",
-      "type": "object"
-    },
-    "CheckpointDecisionSubmitted": {
-      "properties": {
-        "agent_id": {
-          "default": -1,
-          "title": "Agent Id",
-          "type": "integer"
-        },
-        "checkpoint_id": {
-          "title": "Checkpoint Id",
-          "type": "string"
-        },
-        "decision": {
-          "title": "Decision",
-          "type": "string"
-        },
-        "kind": {
-          "const": "checkpoint_decision.submitted",
-          "default": "checkpoint_decision.submitted",
-          "title": "Kind",
-          "type": "string"
-        },
-        "label": {
-          "default": "",
-          "title": "Label",
-          "type": "string"
-        },
-        "response": {
-          "default": "",
-          "title": "Response",
-          "type": "string"
-        },
-        "was_custom_input": {
-          "default": false,
-          "title": "Was Custom Input",
-          "type": "boolean"
-        }
-      },
-      "required": [
-        "checkpoint_id",
-        "decision"
-      ],
-      "title": "CheckpointDecisionSubmitted",
-      "type": "object"
-    },
-    "CheckpointPlanPayload": {
-      "properties": {
-        "affected_files": {
-          "items": {
-            "type": "string"
-          },
-          "title": "Affected Files",
-          "type": "array"
-        },
-        "plan_summary": {
-          "title": "Plan Summary",
-          "type": "string"
-        },
-        "risks": {
-          "items": {
-            "type": "string"
-          },
-          "title": "Risks",
-          "type": "array"
-        },
-        "steps": {
-          "items": {
-            "type": "string"
-          },
-          "title": "Steps",
-          "type": "array"
-        }
-      },
-      "required": [
-        "plan_summary"
-      ],
-      "title": "CheckpointPlanPayload",
-      "type": "object"
-    },
-    "CheckpointPromptShown": {
-      "properties": {
-        "agent_id": {
-          "default": -1,
-          "title": "Agent Id",
-          "type": "integer"
-        },
-        "checkpoint_id": {
-          "title": "Checkpoint Id",
-          "type": "string"
-        },
-        "choices": {
-          "items": {
-            "$ref": "#/$defs/CheckpointChoicePayload"
-          },
-          "title": "Choices",
-          "type": "array"
-        },
-        "kind": {
-          "const": "checkpoint_prompt.shown",
-          "default": "checkpoint_prompt.shown",
-          "title": "Kind",
-          "type": "string"
-        },
-        "plan": {
-          "$ref": "#/$defs/CheckpointPlanPayload"
-        }
-      },
-      "required": [
-        "checkpoint_id",
-        "plan"
-      ],
-      "title": "CheckpointPromptShown",
-      "type": "object"
-    },
-    "ClarifyAnswerSubmitted": {
-      "properties": {
-        "agent_id": {
-          "default": -1,
-          "title": "Agent Id",
-          "type": "integer"
-        },
-        "answer": {
-          "title": "Answer",
-          "type": "string"
-        },
-        "cancelled": {
-          "default": false,
-          "title": "Cancelled",
-          "type": "boolean"
-        },
-        "clarify_id": {
-          "title": "Clarify Id",
-          "type": "string"
-        },
-        "kind": {
-          "const": "clarify_answer.submitted",
-          "default": "clarify_answer.submitted",
-          "title": "Kind",
-          "type": "string"
-        },
-        "was_custom_input": {
-          "default": true,
-          "title": "Was Custom Input",
-          "type": "boolean"
-        }
-      },
-      "required": [
-        "clarify_id",
-        "answer"
-      ],
-      "title": "ClarifyAnswerSubmitted",
-      "type": "object"
-    },
-    "ClarifyPromptShown": {
-      "properties": {
-        "agent_id": {
-          "default": -1,
-          "title": "Agent Id",
-          "type": "integer"
-        },
-        "clarify_id": {
-          "title": "Clarify Id",
-          "type": "string"
-        },
-        "kind": {
-          "const": "clarify_prompt.shown",
-          "default": "clarify_prompt.shown",
-          "title": "Kind",
-          "type": "string"
-        },
-        "options": {
-          "items": {
-            "type": "string"
-          },
-          "title": "Options",
-          "type": "array"
-        },
-        "question": {
-          "title": "Question",
-          "type": "string"
-        }
-      },
-      "required": [
-        "clarify_id",
-        "question"
-      ],
-      "title": "ClarifyPromptShown",
-      "type": "object"
-    },
-    "DiffAppended": {
-      "properties": {
-        "agent_id": {
-          "default": -1,
-          "title": "Agent Id",
-          "type": "integer"
-        },
-        "diff_text": {
-          "title": "Diff Text",
-          "type": "string"
-        },
-        "kind": {
-          "const": "diff.appended",
-          "default": "diff.appended",
-          "title": "Kind",
-          "type": "string"
-        },
-        "title": {
-          "default": "",
-          "title": "Title",
-          "type": "string"
-        }
-      },
-      "required": [
-        "diff_text"
-      ],
-      "title": "DiffAppended",
-      "type": "object"
-    },
-    "ErrorAppended": {
-      "properties": {
-        "agent_id": {
-          "default": -1,
-          "title": "Agent Id",
-          "type": "integer"
-        },
-        "kind": {
-          "const": "error.appended",
-          "default": "error.appended",
-          "title": "Kind",
-          "type": "string"
+          "default": null,
+          "title": "Data"
         },
         "message": {
           "title": "Message",
@@ -421,269 +25,181 @@
         }
       },
       "required": [
+        "code",
         "message"
       ],
-      "title": "ErrorAppended",
+      "title": "ErrorPayload",
       "type": "object"
     },
-    "FileChangeAppended": {
+    "Item": {
       "properties": {
-        "agent_id": {
-          "default": -1,
-          "title": "Agent Id",
-          "type": "integer"
+        "data": {
+          "additionalProperties": true,
+          "title": "Data",
+          "type": "object"
         },
-        "diff_text": {
-          "title": "Diff Text",
+        "item_id": {
+          "title": "Item Id",
           "type": "string"
         },
         "kind": {
-          "const": "file_change.appended",
-          "default": "file_change.appended",
+          "enum": [
+            "message",
+            "assistant_stream",
+            "tool",
+            "todo",
+            "subagent",
+            "status",
+            "prompt"
+          ],
           "title": "Kind",
           "type": "string"
         },
-        "tool_call_id": {
-          "default": "",
-          "title": "Tool Call Id",
+        "lifecycle": {
+          "default": "started",
+          "enum": [
+            "started",
+            "delta",
+            "completed"
+          ],
+          "title": "Lifecycle",
+          "type": "string"
+        },
+        "thread_id": {
+          "title": "Thread Id",
+          "type": "string"
+        },
+        "turn_id": {
+          "title": "Turn Id",
           "type": "string"
         }
       },
       "required": [
-        "diff_text"
+        "item_id",
+        "turn_id",
+        "thread_id",
+        "kind"
       ],
-      "title": "FileChangeAppended",
+      "title": "Item",
       "type": "object"
     },
-    "GuidanceSubmitted": {
+    "JsonRpcError": {
       "properties": {
-        "agent_id": {
-          "default": -1,
-          "title": "Agent Id",
-          "type": "integer"
+        "error": {
+          "$ref": "#/$defs/ErrorPayload"
         },
-        "kind": {
-          "const": "guidance.submitted",
-          "default": "guidance.submitted",
-          "title": "Kind",
-          "type": "string"
-        },
-        "text": {
-          "title": "Text",
-          "type": "string"
-        },
-        "truncated": {
-          "default": false,
-          "title": "Truncated",
-          "type": "boolean"
-        }
-      },
-      "required": [
-        "text"
-      ],
-      "title": "GuidanceSubmitted",
-      "type": "object"
-    },
-    "InputSet": {
-      "properties": {
-        "agent_id": {
-          "default": -1,
-          "title": "Agent Id",
-          "type": "integer"
-        },
-        "cursor_pos": {
+        "id": {
           "anyOf": [
             {
               "type": "integer"
             },
             {
+              "type": "string"
+            },
+            {
               "type": "null"
             }
           ],
-          "default": null,
-          "title": "Cursor Pos"
+          "title": "Id"
         },
-        "hints": {
-          "items": {
-            "maxItems": 3,
-            "minItems": 3,
-            "prefixItems": [
-              {
-                "type": "string"
-              },
-              {
-                "type": "string"
-              },
-              {
-                "type": "boolean"
-              }
-            ],
-            "type": "array"
-          },
-          "title": "Hints",
-          "type": "array"
-        },
-        "kind": {
-          "const": "input.set",
-          "default": "input.set",
-          "title": "Kind",
-          "type": "string"
-        },
-        "text": {
-          "title": "Text",
+        "jsonrpc": {
+          "default": "2.0",
+          "title": "Jsonrpc",
           "type": "string"
         }
       },
       "required": [
-        "text"
+        "id",
+        "error"
       ],
-      "title": "InputSet",
+      "title": "JsonRpcError",
       "type": "object"
     },
-    "MarkdownAppended": {
+    "JsonRpcNotification": {
       "properties": {
-        "agent_id": {
-          "default": -1,
-          "title": "Agent Id",
-          "type": "integer"
-        },
-        "content": {
-          "title": "Content",
+        "jsonrpc": {
+          "default": "2.0",
+          "title": "Jsonrpc",
           "type": "string"
         },
-        "kind": {
-          "const": "markdown.appended",
-          "default": "markdown.appended",
-          "title": "Kind",
+        "method": {
+          "title": "Method",
           "type": "string"
+        },
+        "params": {
+          "additionalProperties": true,
+          "title": "Params",
+          "type": "object"
         }
       },
       "required": [
-        "content"
+        "method"
       ],
-      "title": "MarkdownAppended",
+      "title": "JsonRpcNotification",
       "type": "object"
     },
-    "MessageAppended": {
+    "JsonRpcRequest": {
       "properties": {
-        "agent_id": {
-          "default": -1,
-          "title": "Agent Id",
-          "type": "integer"
+        "id": {
+          "anyOf": [
+            {
+              "type": "integer"
+            },
+            {
+              "type": "string"
+            }
+          ],
+          "title": "Id"
         },
-        "kind": {
-          "const": "message.appended",
-          "default": "message.appended",
-          "title": "Kind",
+        "jsonrpc": {
+          "default": "2.0",
+          "title": "Jsonrpc",
           "type": "string"
         },
-        "style": {
-          "default": "",
-          "title": "Style",
+        "method": {
+          "title": "Method",
           "type": "string"
         },
-        "text": {
-          "title": "Text",
-          "type": "string"
+        "params": {
+          "additionalProperties": true,
+          "title": "Params",
+          "type": "object"
         }
       },
       "required": [
-        "text"
+        "id",
+        "method"
       ],
-      "title": "MessageAppended",
+      "title": "JsonRpcRequest",
       "type": "object"
     },
-    "NoticeSet": {
+    "JsonRpcResult": {
       "properties": {
-        "agent_id": {
-          "default": -1,
-          "title": "Agent Id",
-          "type": "integer"
+        "id": {
+          "anyOf": [
+            {
+              "type": "integer"
+            },
+            {
+              "type": "string"
+            }
+          ],
+          "title": "Id"
         },
-        "kind": {
-          "const": "notice.set",
-          "default": "notice.set",
-          "title": "Kind",
+        "jsonrpc": {
+          "default": "2.0",
+          "title": "Jsonrpc",
           "type": "string"
         },
-        "text": {
-          "title": "Text",
-          "type": "string"
+        "result": {
+          "title": "Result"
         }
       },
       "required": [
-        "text"
+        "id",
+        "result"
       ],
-      "title": "NoticeSet",
-      "type": "object"
-    },
-    "PermissionPromptCleared": {
-      "properties": {
-        "agent_id": {
-          "default": -1,
-          "title": "Agent Id",
-          "type": "integer"
-        },
-        "kind": {
-          "const": "permission_prompt.cleared",
-          "default": "permission_prompt.cleared",
-          "title": "Kind",
-          "type": "string"
-        }
-      },
-      "title": "PermissionPromptCleared",
-      "type": "object"
-    },
-    "PermissionPromptShown": {
-      "properties": {
-        "agent_id": {
-          "default": -1,
-          "title": "Agent Id",
-          "type": "integer"
-        },
-        "choices": {
-          "items": {
-            "maxItems": 3,
-            "minItems": 3,
-            "prefixItems": [
-              {
-                "type": "string"
-              },
-              {
-                "type": "string"
-              },
-              {
-                "type": "string"
-              }
-            ],
-            "type": "array"
-          },
-          "title": "Choices",
-          "type": "array"
-        },
-        "kind": {
-          "const": "permission_prompt.shown",
-          "default": "permission_prompt.shown",
-          "title": "Kind",
-          "type": "string"
-        },
-        "prompt": {
-          "title": "Prompt",
-          "type": "string"
-        },
-        "tools": {
-          "items": {
-            "$ref": "#/$defs/PermissionToolDetail"
-          },
-          "title": "Tools",
-          "type": "array"
-        }
-      },
-      "required": [
-        "prompt",
-        "choices"
-      ],
-      "title": "PermissionPromptShown",
+      "title": "JsonRpcResult",
       "type": "object"
     },
     "PermissionToolDetail": {
@@ -709,631 +225,87 @@
       "title": "PermissionToolDetail",
       "type": "object"
     },
-    "ProtocolEnvelope": {
-      "discriminator": {
-        "mapping": {
-          "command": "#/$defs/UiCommandEnvelope",
-          "event": "#/$defs/UiEventEnvelope",
-          "hello": "#/$defs/UiHelloEnvelope",
-          "request": "#/$defs/UiRequestEnvelope",
-          "response": "#/$defs/UiResponseEnvelope",
-          "snapshot": "#/$defs/UiSnapshotEnvelope"
-        },
-        "propertyName": "type"
-      },
-      "oneOf": [
-        {
-          "$ref": "#/$defs/UiHelloEnvelope"
-        },
-        {
-          "$ref": "#/$defs/UiSnapshotEnvelope"
-        },
-        {
-          "$ref": "#/$defs/UiEventEnvelope"
-        },
-        {
-          "$ref": "#/$defs/UiRequestEnvelope"
-        },
-        {
-          "$ref": "#/$defs/UiResponseEnvelope"
-        },
-        {
-          "$ref": "#/$defs/UiCommandEnvelope"
-        }
-      ]
-    },
-    "RefreshRequested": {
+    "ThreadInfo": {
       "properties": {
-        "agent_id": {
-          "default": -1,
-          "title": "Agent Id",
+        "created_at": {
+          "default": "",
+          "title": "Created At",
+          "type": "string"
+        },
+        "message_count": {
+          "default": 0,
+          "title": "Message Count",
           "type": "integer"
         },
-        "kind": {
-          "const": "refresh.requested",
-          "default": "refresh.requested",
-          "title": "Kind",
-          "type": "string"
-        }
-      },
-      "title": "RefreshRequested",
-      "type": "object"
-    },
-    "ResetRequested": {
-      "properties": {
-        "agent_id": {
-          "default": -1,
-          "title": "Agent Id",
-          "type": "integer"
-        },
-        "kind": {
-          "const": "reset.requested",
-          "default": "reset.requested",
-          "title": "Kind",
-          "type": "string"
-        }
-      },
-      "title": "ResetRequested",
-      "type": "object"
-    },
-    "StartupShown": {
-      "properties": {
-        "agent_id": {
-          "default": -1,
-          "title": "Agent Id",
-          "type": "integer"
-        },
-        "is_new": {
-          "title": "Is New",
-          "type": "boolean"
-        },
-        "kind": {
-          "const": "startup.shown",
-          "default": "startup.shown",
-          "title": "Kind",
+        "model_name": {
+          "default": "",
+          "title": "Model Name",
           "type": "string"
         },
-        "model": {
-          "title": "Model",
+        "model_provider": {
+          "default": "",
+          "title": "Model Provider",
           "type": "string"
         },
-        "profile_configured": {
-          "default": true,
-          "title": "Profile Configured",
-          "type": "boolean"
-        },
-        "provider": {
-          "title": "Provider",
+        "status": {
+          "default": "idle",
+          "enum": [
+            "idle",
+            "running"
+          ],
+          "title": "Status",
           "type": "string"
         },
-        "session_title": {
-          "title": "Session Title",
+        "thread_id": {
+          "title": "Thread Id",
+          "type": "string"
+        },
+        "title": {
+          "default": "",
+          "title": "Title",
+          "type": "string"
+        },
+        "updated_at": {
+          "default": "",
+          "title": "Updated At",
           "type": "string"
         },
         "workspace": {
+          "default": ".",
           "title": "Workspace",
           "type": "string"
         }
       },
       "required": [
-        "model",
-        "provider",
-        "workspace",
-        "session_title",
-        "is_new"
+        "thread_id"
       ],
-      "title": "StartupShown",
+      "title": "ThreadInfo",
       "type": "object"
     },
-    "StatusFinished": {
+    "ThreadSnapshot": {
+      "description": "Transcript snapshot for a single thread.",
       "properties": {
-        "agent_id": {
-          "default": -1,
-          "title": "Agent Id",
-          "type": "integer"
-        },
-        "detail": {
-          "default": "",
-          "title": "Detail",
-          "type": "string"
-        },
-        "kind": {
-          "const": "status.finished",
-          "default": "status.finished",
-          "title": "Kind",
-          "type": "string"
-        },
-        "label": {
-          "default": "",
-          "title": "Label",
-          "type": "string"
-        },
-        "ok": {
-          "default": true,
-          "title": "Ok",
-          "type": "boolean"
-        },
-        "remove": {
-          "default": true,
-          "title": "Remove",
-          "type": "boolean"
-        },
-        "status_id": {
-          "title": "Status Id",
-          "type": "string"
-        }
-      },
-      "required": [
-        "status_id"
-      ],
-      "title": "StatusFinished",
-      "type": "object"
-    },
-    "StatusUpdated": {
-      "properties": {
-        "agent_id": {
-          "default": -1,
-          "title": "Agent Id",
-          "type": "integer"
-        },
-        "detail": {
-          "default": "",
-          "title": "Detail",
-          "type": "string"
-        },
-        "display": {
-          "default": "tree_node",
-          "enum": [
-            "record_only",
-            "tree_node"
-          ],
-          "title": "Display",
-          "type": "string"
-        },
-        "kind": {
-          "const": "status.updated",
-          "default": "status.updated",
-          "title": "Kind",
-          "type": "string"
-        },
-        "label": {
-          "title": "Label",
-          "type": "string"
-        },
-        "parent_tool_call_id": {
-          "default": "",
-          "title": "Parent Tool Call Id",
-          "type": "string"
-        },
-        "stage": {
-          "default": "working",
-          "enum": [
-            "analyzing",
-            "agent_step",
-            "compacting",
-            "working"
-          ],
-          "title": "Stage",
-          "type": "string"
-        },
-        "status_id": {
-          "title": "Status Id",
-          "type": "string"
-        }
-      },
-      "required": [
-        "status_id",
-        "label"
-      ],
-      "title": "StatusUpdated",
-      "type": "object"
-    },
-    "SubagentFinished": {
-      "properties": {
-        "agent_id": {
-          "title": "Agent Id",
-          "type": "integer"
-        },
-        "elapsed": {
-          "anyOf": [
-            {
-              "type": "number"
-            },
-            {
-              "type": "null"
-            }
-          ],
-          "default": null,
-          "title": "Elapsed"
-        },
-        "finish_reason": {
-          "default": "",
-          "title": "Finish Reason",
-          "type": "string"
-        },
-        "kind": {
-          "const": "subagent.finished",
-          "default": "subagent.finished",
-          "title": "Kind",
-          "type": "string"
-        },
-        "ok": {
-          "default": true,
-          "title": "Ok",
-          "type": "boolean"
-        },
-        "subagent_id": {
-          "title": "Subagent Id",
-          "type": "string"
-        },
-        "summary": {
-          "default": "",
-          "title": "Summary",
-          "type": "string"
-        }
-      },
-      "required": [
-        "agent_id",
-        "subagent_id"
-      ],
-      "title": "SubagentFinished",
-      "type": "object"
-    },
-    "SubagentStarted": {
-      "properties": {
-        "agent_id": {
-          "title": "Agent Id",
-          "type": "integer"
-        },
-        "description": {
-          "default": "",
-          "title": "Description",
-          "type": "string"
-        },
-        "kind": {
-          "const": "subagent.started",
-          "default": "subagent.started",
-          "title": "Kind",
-          "type": "string"
-        },
-        "name": {
-          "title": "Name",
-          "type": "string"
-        },
-        "parent_agent_id": {
-          "default": -1,
-          "title": "Parent Agent Id",
-          "type": "integer"
-        },
-        "parent_tool_call_id": {
-          "default": "",
-          "title": "Parent Tool Call Id",
-          "type": "string"
-        },
-        "subagent_id": {
-          "title": "Subagent Id",
-          "type": "string"
-        }
-      },
-      "required": [
-        "agent_id",
-        "subagent_id",
-        "name"
-      ],
-      "title": "SubagentStarted",
-      "type": "object"
-    },
-    "SubagentStepStarted": {
-      "properties": {
-        "agent_id": {
-          "title": "Agent Id",
-          "type": "integer"
-        },
-        "kind": {
-          "const": "subagent_step.started",
-          "default": "subagent_step.started",
-          "title": "Kind",
-          "type": "string"
-        },
-        "name": {
-          "title": "Name",
-          "type": "string"
-        },
-        "subagent_id": {
-          "title": "Subagent Id",
-          "type": "string"
-        }
-      },
-      "required": [
-        "agent_id",
-        "subagent_id",
-        "name"
-      ],
-      "title": "SubagentStepStarted",
-      "type": "object"
-    },
-    "ThoughtAppended": {
-      "properties": {
-        "agent_id": {
-          "default": -1,
-          "title": "Agent Id",
-          "type": "integer"
-        },
-        "elapsed": {
-          "anyOf": [
-            {
-              "type": "number"
-            },
-            {
-              "type": "null"
-            }
-          ],
-          "default": null,
-          "title": "Elapsed"
-        },
-        "kind": {
-          "const": "thought.appended",
-          "default": "thought.appended",
-          "title": "Kind",
-          "type": "string"
-        },
-        "text": {
-          "title": "Text",
-          "type": "string"
-        }
-      },
-      "required": [
-        "text"
-      ],
-      "title": "ThoughtAppended",
-      "type": "object"
-    },
-    "TodoCleared": {
-      "properties": {
-        "agent_id": {
-          "default": -1,
-          "title": "Agent Id",
-          "type": "integer"
-        },
-        "kind": {
-          "const": "todo.cleared",
-          "default": "todo.cleared",
-          "title": "Kind",
-          "type": "string"
-        }
-      },
-      "title": "TodoCleared",
-      "type": "object"
-    },
-    "TodoCommitted": {
-      "properties": {
-        "agent_id": {
-          "default": -1,
-          "title": "Agent Id",
-          "type": "integer"
-        },
-        "kind": {
-          "const": "todo.committed",
-          "default": "todo.committed",
-          "title": "Kind",
-          "type": "string"
-        }
-      },
-      "title": "TodoCommitted",
-      "type": "object"
-    },
-    "TodoItemPayload": {
-      "properties": {
-        "content": {
-          "title": "Content",
-          "type": "string"
-        },
-        "id": {
-          "title": "Id",
-          "type": "string"
-        },
-        "status": {
-          "enum": [
-            "pending",
-            "active",
-            "done"
-          ],
-          "title": "Status",
-          "type": "string"
-        }
-      },
-      "required": [
-        "id",
-        "content",
-        "status"
-      ],
-      "title": "TodoItemPayload",
-      "type": "object"
-    },
-    "TodoUpdated": {
-      "properties": {
-        "agent_id": {
-          "default": -1,
-          "title": "Agent Id",
-          "type": "integer"
-        },
-        "items": {
+        "nodes": {
           "items": {
-            "$ref": "#/$defs/TodoItemPayload"
+            "$ref": "#/$defs/TranscriptNode"
           },
-          "title": "Items",
+          "title": "Nodes",
           "type": "array"
         },
-        "kind": {
-          "const": "todo.updated",
-          "default": "todo.updated",
-          "title": "Kind",
-          "type": "string"
+        "revision": {
+          "default": 0,
+          "title": "Revision",
+          "type": "integer"
         },
-        "summary": {
-          "title": "Summary",
-          "type": "string"
-        },
-        "todo_op": {
-          "default": "write",
-          "title": "Todo Op",
+        "thread_id": {
+          "title": "Thread Id",
           "type": "string"
         }
       },
       "required": [
-        "items",
-        "summary"
+        "thread_id"
       ],
-      "title": "TodoUpdated",
-      "type": "object"
-    },
-    "ToolDisplayMode": {
-      "enum": [
-        "show",
-        "summary",
-        "hidden"
-      ],
-      "title": "ToolDisplayMode",
-      "type": "string"
-    },
-    "ToolFinished": {
-      "properties": {
-        "agent_id": {
-          "default": -1,
-          "title": "Agent Id",
-          "type": "integer"
-        },
-        "detail": {
-          "default": "",
-          "title": "Detail",
-          "type": "string"
-        },
-        "elapsed": {
-          "title": "Elapsed",
-          "type": "number"
-        },
-        "kind": {
-          "const": "tool.finished",
-          "default": "tool.finished",
-          "title": "Kind",
-          "type": "string"
-        },
-        "label": {
-          "title": "Label",
-          "type": "string"
-        },
-        "ok": {
-          "default": true,
-          "title": "Ok",
-          "type": "boolean"
-        },
-        "tool_call_id": {
-          "title": "Tool Call Id",
-          "type": "string"
-        }
-      },
-      "required": [
-        "tool_call_id",
-        "label",
-        "elapsed"
-      ],
-      "title": "ToolFinished",
-      "type": "object"
-    },
-    "ToolResultAppended": {
-      "properties": {
-        "agent_id": {
-          "default": -1,
-          "title": "Agent Id",
-          "type": "integer"
-        },
-        "collapsed": {
-          "default": false,
-          "title": "Collapsed",
-          "type": "boolean"
-        },
-        "display_mode": {
-          "$ref": "#/$defs/ToolDisplayMode",
-          "default": "show"
-        },
-        "kind": {
-          "const": "tool_result.appended",
-          "default": "tool_result.appended",
-          "title": "Kind",
-          "type": "string"
-        },
-        "summary_max_lines": {
-          "default": 3,
-          "title": "Summary Max Lines",
-          "type": "integer"
-        },
-        "text": {
-          "title": "Text",
-          "type": "string"
-        },
-        "tool_call_id": {
-          "default": "",
-          "title": "Tool Call Id",
-          "type": "string"
-        }
-      },
-      "required": [
-        "text"
-      ],
-      "title": "ToolResultAppended",
-      "type": "object"
-    },
-    "ToolStarted": {
-      "properties": {
-        "agent_id": {
-          "default": -1,
-          "title": "Agent Id",
-          "type": "integer"
-        },
-        "args": {
-          "default": "",
-          "title": "Args",
-          "type": "string"
-        },
-        "display_mode": {
-          "$ref": "#/$defs/ToolDisplayMode",
-          "default": "show"
-        },
-        "kind": {
-          "const": "tool.started",
-          "default": "tool.started",
-          "title": "Kind",
-          "type": "string"
-        },
-        "label": {
-          "title": "Label",
-          "type": "string"
-        },
-        "raw_args": {
-          "additionalProperties": true,
-          "title": "Raw Args",
-          "type": "object"
-        },
-        "summary_max_lines": {
-          "default": 3,
-          "title": "Summary Max Lines",
-          "type": "integer"
-        },
-        "tool_call_id": {
-          "title": "Tool Call Id",
-          "type": "string"
-        },
-        "tool_name": {
-          "default": "",
-          "title": "Tool Name",
-          "type": "string"
-        }
-      },
-      "required": [
-        "tool_call_id",
-        "label"
-      ],
-      "title": "ToolStarted",
+      "title": "ThreadSnapshot",
       "type": "object"
     },
     "TranscriptNode": {
@@ -1545,28 +517,49 @@
       "title": "TranscriptSnapshot",
       "type": "object"
     },
-    "TurnStarted": {
+    "TurnInfo": {
       "properties": {
-        "agent_id": {
-          "default": -1,
-          "title": "Agent Id",
-          "type": "integer"
+        "elapsed": {
+          "anyOf": [
+            {
+              "type": "number"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null,
+          "title": "Elapsed"
         },
-        "kind": {
-          "const": "turn.started",
-          "default": "turn.started",
-          "title": "Kind",
+        "started_at": {
+          "default": 0,
+          "title": "Started At",
+          "type": "number"
+        },
+        "status": {
+          "default": "running",
+          "enum": [
+            "running",
+            "completed",
+            "cancelled"
+          ],
+          "title": "Status",
           "type": "string"
         },
-        "text": {
-          "title": "Text",
+        "thread_id": {
+          "title": "Thread Id",
+          "type": "string"
+        },
+        "turn_id": {
+          "title": "Turn Id",
           "type": "string"
         }
       },
       "required": [
-        "text"
+        "turn_id",
+        "thread_id"
       ],
-      "title": "TurnStarted",
+      "title": "TurnInfo",
       "type": "object"
     },
     "UiCancelCommand": {
@@ -1625,258 +618,6 @@
       "title": "UiChoiceRequest",
       "type": "object"
     },
-    "UiCommandEnvelope": {
-      "properties": {
-        "payload": {
-          "discriminator": {
-            "mapping": {
-              "cancel": "#/$defs/UiCancelCommand",
-              "submit": "#/$defs/UiSubmitCommand"
-            },
-            "propertyName": "kind"
-          },
-          "oneOf": [
-            {
-              "$ref": "#/$defs/UiSubmitCommand"
-            },
-            {
-              "$ref": "#/$defs/UiCancelCommand"
-            }
-          ],
-          "title": "Payload"
-        },
-        "seq": {
-          "default": 0,
-          "title": "Seq",
-          "type": "integer"
-        },
-        "ts": {
-          "title": "Ts",
-          "type": "number"
-        },
-        "type": {
-          "const": "command",
-          "default": "command",
-          "title": "Type",
-          "type": "string"
-        },
-        "v": {
-          "default": 1,
-          "title": "V",
-          "type": "integer"
-        }
-      },
-      "required": [
-        "payload"
-      ],
-      "title": "UiCommandEnvelope",
-      "type": "object"
-    },
-    "UiEventEnvelope": {
-      "properties": {
-        "payload": {
-          "anyOf": [
-            {
-              "$ref": "#/$defs/CaptureStarted"
-            },
-            {
-              "$ref": "#/$defs/CaptureStopped"
-            },
-            {
-              "$ref": "#/$defs/RefreshRequested"
-            },
-            {
-              "$ref": "#/$defs/ResetRequested"
-            },
-            {
-              "$ref": "#/$defs/TurnStarted"
-            },
-            {
-              "$ref": "#/$defs/StartupShown"
-            },
-            {
-              "$ref": "#/$defs/MessageAppended"
-            },
-            {
-              "$ref": "#/$defs/AnsiAppended"
-            },
-            {
-              "$ref": "#/$defs/MarkdownAppended"
-            },
-            {
-              "$ref": "#/$defs/ThoughtAppended"
-            },
-            {
-              "$ref": "#/$defs/WarningAppended"
-            },
-            {
-              "$ref": "#/$defs/GuidanceSubmitted"
-            },
-            {
-              "$ref": "#/$defs/ErrorAppended"
-            },
-            {
-              "$ref": "#/$defs/DiffAppended"
-            },
-            {
-              "$ref": "#/$defs/StatusUpdated"
-            },
-            {
-              "$ref": "#/$defs/StatusFinished"
-            },
-            {
-              "$ref": "#/$defs/AssistantStreamStarted"
-            },
-            {
-              "$ref": "#/$defs/AssistantStreamUpdated"
-            },
-            {
-              "$ref": "#/$defs/AssistantStreamCommitted"
-            },
-            {
-              "$ref": "#/$defs/AssistantStreamDiscarded"
-            },
-            {
-              "$ref": "#/$defs/ToolStarted"
-            },
-            {
-              "$ref": "#/$defs/ToolFinished"
-            },
-            {
-              "$ref": "#/$defs/ToolResultAppended"
-            },
-            {
-              "$ref": "#/$defs/TodoUpdated"
-            },
-            {
-              "$ref": "#/$defs/TodoCommitted"
-            },
-            {
-              "$ref": "#/$defs/TodoCleared"
-            },
-            {
-              "$ref": "#/$defs/FileChangeAppended"
-            },
-            {
-              "$ref": "#/$defs/SubagentStarted"
-            },
-            {
-              "$ref": "#/$defs/SubagentStepStarted"
-            },
-            {
-              "$ref": "#/$defs/SubagentFinished"
-            },
-            {
-              "$ref": "#/$defs/PermissionPromptShown"
-            },
-            {
-              "$ref": "#/$defs/PermissionPromptCleared"
-            },
-            {
-              "$ref": "#/$defs/CheckpointPromptShown"
-            },
-            {
-              "$ref": "#/$defs/CheckpointDecisionSubmitted"
-            },
-            {
-              "$ref": "#/$defs/ClarifyPromptShown"
-            },
-            {
-              "$ref": "#/$defs/ClarifyAnswerSubmitted"
-            },
-            {
-              "$ref": "#/$defs/InputSet"
-            },
-            {
-              "$ref": "#/$defs/NoticeSet"
-            }
-          ],
-          "title": "Payload"
-        },
-        "seq": {
-          "default": 0,
-          "title": "Seq",
-          "type": "integer"
-        },
-        "ts": {
-          "title": "Ts",
-          "type": "number"
-        },
-        "type": {
-          "const": "event",
-          "default": "event",
-          "title": "Type",
-          "type": "string"
-        },
-        "v": {
-          "default": 1,
-          "title": "V",
-          "type": "integer"
-        }
-      },
-      "required": [
-        "payload"
-      ],
-      "title": "UiEventEnvelope",
-      "type": "object"
-    },
-    "UiHello": {
-      "properties": {
-        "client": {
-          "title": "Client",
-          "type": "string"
-        },
-        "last_seq": {
-          "anyOf": [
-            {
-              "type": "integer"
-            },
-            {
-              "type": "null"
-            }
-          ],
-          "default": null,
-          "title": "Last Seq"
-        }
-      },
-      "required": [
-        "client"
-      ],
-      "title": "UiHello",
-      "type": "object"
-    },
-    "UiHelloEnvelope": {
-      "properties": {
-        "payload": {
-          "$ref": "#/$defs/UiHello"
-        },
-        "seq": {
-          "default": 0,
-          "title": "Seq",
-          "type": "integer"
-        },
-        "ts": {
-          "title": "Ts",
-          "type": "number"
-        },
-        "type": {
-          "const": "hello",
-          "default": "hello",
-          "title": "Type",
-          "type": "string"
-        },
-        "v": {
-          "default": 1,
-          "title": "V",
-          "type": "integer"
-        }
-      },
-      "required": [
-        "payload"
-      ],
-      "title": "UiHelloEnvelope",
-      "type": "object"
-    },
     "UiPermissionRequest": {
       "properties": {
         "choices": {
@@ -1926,146 +667,6 @@
         "prompt"
       ],
       "title": "UiPermissionRequest",
-      "type": "object"
-    },
-    "UiRequestEnvelope": {
-      "properties": {
-        "payload": {
-          "discriminator": {
-            "mapping": {
-              "choice": "#/$defs/UiChoiceRequest",
-              "permission": "#/$defs/UiPermissionRequest",
-              "text": "#/$defs/UiTextRequest"
-            },
-            "propertyName": "kind"
-          },
-          "oneOf": [
-            {
-              "$ref": "#/$defs/UiChoiceRequest"
-            },
-            {
-              "$ref": "#/$defs/UiTextRequest"
-            },
-            {
-              "$ref": "#/$defs/UiPermissionRequest"
-            }
-          ],
-          "title": "Payload"
-        },
-        "seq": {
-          "default": 0,
-          "title": "Seq",
-          "type": "integer"
-        },
-        "ts": {
-          "title": "Ts",
-          "type": "number"
-        },
-        "type": {
-          "const": "request",
-          "default": "request",
-          "title": "Type",
-          "type": "string"
-        },
-        "v": {
-          "default": 1,
-          "title": "V",
-          "type": "integer"
-        }
-      },
-      "required": [
-        "payload"
-      ],
-      "title": "UiRequestEnvelope",
-      "type": "object"
-    },
-    "UiResponse": {
-      "properties": {
-        "request_id": {
-          "title": "Request Id",
-          "type": "string"
-        },
-        "value": {
-          "anyOf": [
-            {
-              "type": "string"
-            },
-            {
-              "type": "null"
-            }
-          ],
-          "default": null,
-          "title": "Value"
-        }
-      },
-      "required": [
-        "request_id"
-      ],
-      "title": "UiResponse",
-      "type": "object"
-    },
-    "UiResponseEnvelope": {
-      "properties": {
-        "payload": {
-          "$ref": "#/$defs/UiResponse"
-        },
-        "seq": {
-          "default": 0,
-          "title": "Seq",
-          "type": "integer"
-        },
-        "ts": {
-          "title": "Ts",
-          "type": "number"
-        },
-        "type": {
-          "const": "response",
-          "default": "response",
-          "title": "Type",
-          "type": "string"
-        },
-        "v": {
-          "default": 1,
-          "title": "V",
-          "type": "integer"
-        }
-      },
-      "required": [
-        "payload"
-      ],
-      "title": "UiResponseEnvelope",
-      "type": "object"
-    },
-    "UiSnapshotEnvelope": {
-      "properties": {
-        "payload": {
-          "$ref": "#/$defs/TranscriptSnapshot"
-        },
-        "seq": {
-          "default": 0,
-          "title": "Seq",
-          "type": "integer"
-        },
-        "ts": {
-          "title": "Ts",
-          "type": "number"
-        },
-        "type": {
-          "const": "snapshot",
-          "default": "snapshot",
-          "title": "Type",
-          "type": "string"
-        },
-        "v": {
-          "default": 1,
-          "title": "V",
-          "type": "integer"
-        }
-      },
-      "required": [
-        "payload"
-      ],
-      "title": "UiSnapshotEnvelope",
       "type": "object"
     },
     "UiSubmitCommand": {
@@ -2121,31 +722,109 @@
       "title": "UiTextRequest",
       "type": "object"
     },
-    "WarningAppended": {
+    "WorkspaceSnapshot": {
+      "description": "Full workspace state pushed on connect / refresh.\n\nOnly the active thread carries a complete transcript snapshot; other\nthreads are listed as ThreadInfo metadata only.",
       "properties": {
-        "agent_id": {
-          "default": -1,
-          "title": "Agent Id",
-          "type": "integer"
+        "active_snapshot": {
+          "anyOf": [
+            {
+              "$ref": "#/$defs/ThreadSnapshot"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null
         },
-        "kind": {
-          "const": "warning.appended",
-          "default": "warning.appended",
-          "title": "Kind",
+        "active_thread_id": {
+          "default": "",
+          "title": "Active Thread Id",
           "type": "string"
         },
-        "message": {
-          "title": "Message",
-          "type": "string"
+        "threads": {
+          "items": {
+            "$ref": "#/$defs/ThreadInfo"
+          },
+          "title": "Threads",
+          "type": "array"
         }
       },
-      "required": [
-        "message"
-      ],
-      "title": "WarningAppended",
+      "title": "WorkspaceSnapshot",
       "type": "object"
     }
   },
-  "title": "VoidxUiProtocol",
-  "type": "object"
+  "anyOf": [
+    {
+      "$ref": "#/$defs/JsonRpcRequest"
+    },
+    {
+      "$ref": "#/$defs/JsonRpcNotification"
+    },
+    {
+      "$ref": "#/$defs/JsonRpcResult"
+    },
+    {
+      "$ref": "#/$defs/JsonRpcError"
+    },
+    {
+      "$ref": "#/$defs/ErrorPayload"
+    },
+    {
+      "$ref": "#/$defs/WorkspaceSnapshot"
+    },
+    {
+      "$ref": "#/$defs/ThreadSnapshot"
+    },
+    {
+      "$ref": "#/$defs/ThreadInfo"
+    },
+    {
+      "$ref": "#/$defs/TurnInfo"
+    },
+    {
+      "$ref": "#/$defs/Item"
+    },
+    {
+      "$ref": "#/$defs/TranscriptSnapshot"
+    },
+    {
+      "discriminator": {
+        "mapping": {
+          "choice": "#/$defs/UiChoiceRequest",
+          "permission": "#/$defs/UiPermissionRequest",
+          "text": "#/$defs/UiTextRequest"
+        },
+        "propertyName": "kind"
+      },
+      "oneOf": [
+        {
+          "$ref": "#/$defs/UiChoiceRequest"
+        },
+        {
+          "$ref": "#/$defs/UiTextRequest"
+        },
+        {
+          "$ref": "#/$defs/UiPermissionRequest"
+        }
+      ]
+    },
+    {
+      "discriminator": {
+        "mapping": {
+          "cancel": "#/$defs/UiCancelCommand",
+          "submit": "#/$defs/UiSubmitCommand"
+        },
+        "propertyName": "kind"
+      },
+      "oneOf": [
+        {
+          "$ref": "#/$defs/UiSubmitCommand"
+        },
+        {
+          "$ref": "#/$defs/UiCancelCommand"
+        }
+      ]
+    }
+  ],
+  "title": "VoidxUiProtocol"
 }

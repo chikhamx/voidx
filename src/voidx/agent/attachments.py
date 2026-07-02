@@ -1,4 +1,4 @@
-﻿"""Parse and materialize user file attachments."""
+"""Parse and materialize user file attachments."""
 
 from __future__ import annotations
 
