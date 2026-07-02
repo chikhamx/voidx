@@ -1,4 +1,4 @@
-"""Parse and materialize user file attachments."""
+﻿"""Parse and materialize user file attachments."""
 
 from __future__ import annotations
 
@@ -29,6 +29,13 @@ class Attachment:
     size: int
 
 
+@dataclass(frozen=True)
+class PathReference:
+    raw_path: str
+    display_path: str
+    token_span: tuple[int, int]
+
+
 @dataclass
 class UserMessagePayload:
     raw_text: str
@@ -38,6 +45,7 @@ class UserMessagePayload:
     content: str | list[dict[str, Any]]
     content_format: str
     attachments: list[Attachment] = field(default_factory=list)
+    path_references: list[PathReference] = field(default_factory=list)
     warnings: list[str] = field(default_factory=list)
 
 
@@ -68,20 +76,28 @@ def build_user_message_payload(
     tokens = _attachment_tokens(user_text)
     removed_spans: list[tuple[int, int]] = []
     attachments: list[Attachment] = []
+    path_references: list[PathReference] = []
     warnings: list[str] = []
     text_sections: list[str] = []
     image_parts: list[dict[str, Any]] = []
 
     for start, end, raw_path in tokens:
-        if raw_path.startswith(":image:"):
-            stem = raw_path[len(":image:"):]
-            resolved = _resolve_image_stem(workspace_path, stem)
-            display_label = f"[image-{stem}]"
-        else:
-            resolved = _resolve_workspace_path(workspace_path, raw_path)
-            display_label = raw_path
+        if not raw_path.startswith(":image:"):
+            removed_spans.append((start, end))
+            path_references.append(
+                PathReference(
+                    raw_path=raw_path,
+                    display_path=_display_reference_path(workspace_path, raw_path),
+                    token_span=(start, end),
+                )
+            )
+            continue
+
+        stem = raw_path[len(":image:"):]
+        resolved = _resolve_image_stem(workspace_path, stem)
+        display_label = f"[image-{stem}]"
         if resolved is None:
-            warnings.append(f"Attachment skipped outside workspace: {display_label}")
+            warnings.append(f"Image attachment not found: {display_label}")
             continue
         if not resolved.exists():
             warnings.append(f"Attachment not found: {display_label}")
@@ -123,7 +139,7 @@ def build_user_message_payload(
     if extra_removed_spans:
         removed_spans.extend(extra_removed_spans)
     clean_text = _normalize_text(_remove_spans(user_text, removed_spans))
-    text_content = _build_text_content(clean_text, attachments, text_sections)
+    text_content = _build_text_content(clean_text, attachments, text_sections, path_references)
     if text_prefix.strip():
         text_content = _prefix_text_content(text_prefix.strip(), text_content)
     content: str | list[dict[str, Any]]
@@ -134,8 +150,12 @@ def build_user_message_payload(
     else:
         content = text_content
 
-    display_text = _display_text(display_clean_text, attachments)
-    title_text = clean_text or (f"Attached {attachments[0].rel_path}" if attachments else user_text)
+    display_text = _display_text(display_clean_text, attachments, path_references)
+    title_text = clean_text or (
+        f"Referenced {path_references[0].display_path}"
+        if path_references
+        else (f"Attached {attachments[0].rel_path}" if attachments else user_text)
+    )
     return UserMessagePayload(
         raw_text=user_text,
         clean_text=clean_text,
@@ -144,6 +164,7 @@ def build_user_message_payload(
         content=content,
         content_format=content_format,
         attachments=attachments,
+        path_references=path_references,
         warnings=warnings,
     )
 
@@ -194,6 +215,15 @@ def _remove_spans(text: str, spans: list[tuple[int, int]]) -> str:
     return "".join(result)
 
 
+def _display_reference_path(workspace: Path, raw_path: str) -> str:
+    candidate = Path(raw_path).expanduser()
+    try:
+        resolved = candidate.resolve() if candidate.is_absolute() else (workspace / candidate).resolve()
+    except (OSError, ValueError):
+        return raw_path
+    return _relative_path(workspace, resolved)
+
+
 def _prefix_text_content(prefix: str, text: str) -> str:
     text = text.strip()
     if not text:
@@ -201,14 +231,6 @@ def _prefix_text_content(prefix: str, text: str) -> str:
     return f"{prefix}\n\n{text}"
 
 
-def _resolve_workspace_path(workspace: Path, raw_path: str) -> Path | None:
-    candidate = Path(raw_path).expanduser()
-    resolved = candidate.resolve() if candidate.is_absolute() else (workspace / candidate).resolve()
-    try:
-        resolved.relative_to(workspace)
-    except ValueError:
-        return None
-    return resolved
 
 
 def _resolve_image_stem(workspace: Path, stem: str) -> Path | None:
@@ -317,21 +339,39 @@ def _language_from_path(path: str) -> str:
     return mapping.get(suffix, suffix)
 
 
-def _build_text_content(clean_text: str, attachments: list[Attachment], text_sections: list[str]) -> str:
+def _build_text_content(
+    clean_text: str,
+    attachments: list[Attachment],
+    text_sections: list[str],
+    path_references: list[PathReference],
+) -> str:
     parts: list[str] = []
     if clean_text:
         parts.append(clean_text)
+    if path_references:
+        reference_lines = [f"- {item.display_path}" for item in path_references]
+        parts.append("Referenced paths:\n" + "\n".join(reference_lines))
     if attachments:
-        image_lines = [f"- {item.rel_path} ({item.mime_type}, {item.size} bytes)" for item in attachments if item.kind == "image"]
+        image_lines = [
+            f"- {item.rel_path} ({item.mime_type}, {item.size} bytes)"
+            for item in attachments
+            if item.kind == "image"
+        ]
         if image_lines:
             parts.append("Attached images:\n" + "\n".join(image_lines))
     parts.extend(text_sections)
     if parts:
         return "\n\n".join(parts)
-    return "Please review the attached file."
+    return "Please review the referenced path."
 
 
-def _display_text(clean_text: str, attachments: list[Attachment]) -> str:
+def _display_text(clean_text: str, attachments: list[Attachment], path_references: list[PathReference]) -> str:
+    if path_references:
+        names = ", ".join(item.display_path for item in path_references[:3])
+        if len(path_references) > 3:
+            names += f", +{len(path_references) - 3} more"
+        base = clean_text or "Referenced paths"
+        return f"{base}\n[references: {names}]"
     if not attachments:
         return clean_text
     names = ", ".join(item.rel_path for item in attachments[:3])
@@ -340,6 +380,6 @@ def _display_text(clean_text: str, attachments: list[Attachment]) -> str:
     base = clean_text or "Attached files"
     return f"{base}\n[attachments: {names}]"
 
-
 def _normalize_text(text: str) -> str:
     return re.sub(r"[ \t]+", " ", text).strip()
+

@@ -297,12 +297,14 @@ async def test_run_once_wraps_explicit_skill_refs_in_user_message(tmp_path):
 
 
 @pytest.mark.asyncio
-async def test_run_once_persists_image_attachment_as_structured_user_message(tmp_path):
-    image = tmp_path / "shot.png"
+async def test_run_once_persists_clipboard_image_attachment_as_structured_user_message(tmp_path):
+    image_dir = tmp_path / ".voidx" / "attachments"
+    image_dir.mkdir(parents=True)
+    image = image_dir / "shot.png"
     image.write_bytes(b"\x89PNG\r\n\x1a\n")
     session = await create_session(workspace=str(tmp_path))
     try:
-        graph = VoidXGraph(Config(workspace=str(tmp_path)), api_key=None, session=session)
+        graph = VoidXGraph(Config(workspace=str(tmp_path)), api_key="test-key", session=session)
 
         class FakeGraph:
             async def ainvoke(self, initial, _config):
@@ -317,7 +319,7 @@ async def test_run_once_persists_image_attachment_as_structured_user_message(tmp
         set_dock(test_dock)
         test_dock.begin_capture()
         try:
-            await graph._run_once("describe @shot.png")
+            await graph._run_once("describe [image-shot]")
         finally:
             test_dock.deactivate()
             test_dock.reset()
