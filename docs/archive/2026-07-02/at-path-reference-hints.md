@@ -1,4 +1,6 @@
-# @ 路径引用提示机制 — 技术设计文档
+﻿# @ 路径引用提示机制 — 技术设计文档
+
+> **Status: Done**
 
 > **Status: Approved** — 设计完整，可直接进入实施阶段。实施完成后，按文档生命周期规则将文档移至 `docs/archive/` 并标记 `> **Status: Done**`。
 
@@ -259,3 +261,4 @@ Referenced paths (read with `read` tool if needed):
 | `[image-screenshot.png]` 图片附件 | `payload.attachments` 包含 1 项 image，`content_format="structured"` |
 | workspace 外 `read` 被用户拒绝 | `ToolResult.metadata.error=True`，`output` 包含 "Read denied by user" |
 | workspace 外 `read` 被用户允许 | 返回文件内容，`metadata.already_read=False` |
+

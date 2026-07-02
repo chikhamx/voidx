@@ -1,4 +1,8 @@
-# v1 协议清除 — 技术设计文档
+﻿# v1 协议清除 — 技术设计文档
+
+> **Status: Done**
+
+> **Status: Done**
 
 ## Context
 
@@ -224,3 +228,5 @@ def export_protocol_schema() -> dict[str, Any]:
 
 - [x] `frontend/src/protocol.schema.json` 和 `frontend/src/protocol.d.ts` 是否有前端代码实际引用？→ **已确认：前端 JS 代码没有 import 这两个文件**。它们是 `npm run schema` 自动生成的，但无实际消费方。`export_protocol_schema()` 的输出变更不会影响前端行为。
 - [x] 是否有外部工具或脚本（CI/CD、文档生成）引用了 v1 `ProtocolEnvelope`？→ **已确认：仓库内搜索 `ProtocolEnvelope` / `parse_protocol_envelope` / v1 Envelope 类型后，除待删除的 `envelope.py`、待更新的 `schema.py` / `__init__.py` 和相关测试外，未发现运行时、脚本或前端引用。**
+
+
