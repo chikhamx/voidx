@@ -128,6 +128,26 @@ class TestSearch:
         assert "Failed to read file during grep" in caplog.text
         assert "bad.py" in caplog.text
 
+    @pytest.mark.asyncio
+    async def test_grep_sandbox_extra_path_returns_absolute_file(self, tmp_path):
+        workspace = tmp_path / "workspace"
+        workspace.mkdir()
+        external = tmp_path / "external"
+        external.mkdir()
+        target = external / "outside.txt"
+        target.write_text("OUTSIDE_MARKER\n", encoding="utf-8")
+
+        ctx = ToolContext(workspace=str(workspace), sandbox_extra_paths=[str(external)])
+        r = ToolRegistry()
+        result = await r.execute_tool("grep", {"pattern": "OUTSIDE_MARKER", "path": str(external)}, ctx)
+        data = json.loads(result.output)
+
+        assert data["matches"] == 1
+        assert data["results"][0]["file"] == str(target)
+        assert data["results"][0]["line"] == 1
+        assert data["results"][0]["content"] == "OUTSIDE_MARKER"
+        assert str(target) in result.display
+
 
 class TestGrepImprovements:
     """P0 grep improvements: ignore_case, whole_word, context_lines, exclude."""

@@ -192,6 +192,12 @@ class GrepTool(BaseTool):
             except ValueError:
                 return False
 
+        def result_path(f: Path) -> str:
+            try:
+                return str(f.resolve().relative_to(base)).replace("\\", "/")
+            except ValueError:
+                return str(f.resolve())
+
         def iter_files(dir_path: Path):
             nonlocal scanned
             try:
@@ -236,7 +242,7 @@ class GrepTool(BaseTool):
                 for i, line in enumerate(lines, 1):
                     m = regex.search(line)
                     if m:
-                        rel = str(f.relative_to(base)).replace("\\", "/")
+                        rel = result_path(f)
                         hits.append((rel, i, line.strip()[:200], m.start()))
                         count += 1
                         if count >= inp.max_matches:
