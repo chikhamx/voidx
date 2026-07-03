@@ -444,6 +444,7 @@ class UiEventItemAdapter:
                 "workspace": event.workspace,
                 "session_title": event.session_title,
                 "is_new": event.is_new,
+                "profile_configured": event.profile_configured,
             },
         )
 
