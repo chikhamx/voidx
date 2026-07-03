@@ -1,10 +1,12 @@
-let inputCb = null;
-let startCb = null;
-let activeTerminalId = null;
-let initialized = false;
+type OnInput = (terminalId: string, text: string) => void;
+type OnStart = () => void;
 
-export function initTerminal() {
-  const pane = document.querySelector("#terminal-pane");
+let inputCb: OnInput | null = null;
+let startCb: OnStart | null = null;
+let activeTerminalId: string | null = null;
+
+export function initTerminal(): void {
+  const pane = document.querySelector<HTMLElement>("#terminal-pane");
   if (!pane) return;
 
   if (activeTerminalId) {
@@ -14,7 +16,7 @@ export function initTerminal() {
   }
 }
 
-function renderStartButton(pane) {
+function renderStartButton(pane: HTMLElement): void {
   pane.replaceChildren();
   const btn = document.createElement("button");
   btn.className = "vx-terminal-start";
@@ -25,7 +27,7 @@ function renderStartButton(pane) {
   pane.append(btn);
 }
 
-function ensureTerminalElements(pane, terminalId) {
+function ensureTerminalElements(pane: HTMLElement, terminalId: string): void {
   if (pane.querySelector(".vx-terminal-output")) return;
 
   pane.replaceChildren();
@@ -39,7 +41,7 @@ function ensureTerminalElements(pane, terminalId) {
   input.className = "vx-terminal-input";
   input.type = "text";
   input.placeholder = "Type and press Enter to send...";
-  input.addEventListener("keydown", (e) => {
+  input.addEventListener("keydown", (e: KeyboardEvent) => {
     if (e.key === "Enter") {
       e.preventDefault();
       if (inputCb) {
@@ -52,8 +54,8 @@ function ensureTerminalElements(pane, terminalId) {
   input.focus();
 }
 
-export function appendTerminalOutput(terminalId, data) {
-  const pane = document.querySelector("#terminal-pane");
+export function appendTerminalOutput(terminalId: string, data: string): void {
+  const pane = document.querySelector<HTMLElement>("#terminal-pane");
   if (!pane) return;
 
   if (!activeTerminalId) {
@@ -61,22 +63,23 @@ export function appendTerminalOutput(terminalId, data) {
     ensureTerminalElements(pane, terminalId);
   }
 
-  let output = pane.querySelector(".vx-terminal-output");
+  let output = pane.querySelector<HTMLElement>(".vx-terminal-output");
   if (!output || output.dataset.terminalId !== terminalId) {
     activeTerminalId = terminalId;
     ensureTerminalElements(pane, terminalId);
-    output = pane.querySelector(".vx-terminal-output");
+    output = pane.querySelector<HTMLElement>(".vx-terminal-output");
   }
-
-  output.textContent += data;
-  output.scrollTop = output.scrollHeight;
+  if (output) {
+    output.textContent = (output.textContent ?? "") + data;
+    output.scrollTop = output.scrollHeight;
+  }
 }
 
-export function showTerminalClosed(terminalId) {
-  const pane = document.querySelector("#terminal-pane");
+export function showTerminalClosed(terminalId: string): void {
+  const pane = document.querySelector<HTMLElement>("#terminal-pane");
   if (!pane) return;
 
-  const output = pane.querySelector(".vx-terminal-output");
+  const output = pane.querySelector<HTMLElement>(".vx-terminal-output");
   if (output) {
     const closed = document.createElement("div");
     closed.className = "vx-terminal-closed";
@@ -84,27 +87,26 @@ export function showTerminalClosed(terminalId) {
     output.append(closed);
   }
 
-  const input = pane.querySelector(".vx-terminal-input");
+  const input = pane.querySelector<HTMLInputElement>(".vx-terminal-input");
   if (input) {
     input.disabled = true;
   }
 }
 
-export function onTerminalInput(callback) {
+export function onTerminalInput(callback: OnInput): void {
   inputCb = callback;
 }
 
-export function onTerminalStart(callback) {
+export function onTerminalStart(callback: OnStart): void {
   startCb = callback;
 }
 
-export function setActiveTerminal(terminalId) {
+export function setActiveTerminal(terminalId: string): void {
   activeTerminalId = terminalId;
 }
 
-export function _resetForTest() {
+export function _resetForTest(): void {
   inputCb = null;
   startCb = null;
   activeTerminalId = null;
-  initialized = false;
 }

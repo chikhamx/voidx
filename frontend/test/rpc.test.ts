@@ -1,5 +1,6 @@
+// @ts-nocheck
 import { beforeEach, describe, it, expect, vi } from "vitest";
-import { rpcCall, rpcNotify, onNotification, onRequest, _setSocket, _resetForTest } from "../src/rpc.js";
+import { rpcCall, rpcNotify, onNotification, onRequest, _setSocket, _resetForTest } from "../src/rpc";
 
 describe("rpc", () => {
   let sentMessages;

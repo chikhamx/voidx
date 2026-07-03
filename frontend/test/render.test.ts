@@ -1,4 +1,5 @@
-import { describe, it, expect } from "vitest";
+// @ts-nocheck
+import { describe, it, expect, vi } from "vitest";
 import {
   stripRichMarkup,
   nodeClassName,
@@ -7,7 +8,8 @@ import {
   formatElapsed,
   renderNodeElement,
   renderTodoPanel,
-} from "../src/render.js";
+  appendNoticeItem,
+} from "../src/render";
 
 describe("stripRichMarkup", () => {
   it("strips [bold] tags", () => {
@@ -183,7 +185,7 @@ describe("renderNodeElement", () => {
       payload: { diff_text: "+added\n-removed" },
     };
     const el = renderNodeElement(node, new Map([["d1", node]]));
-    const diffBlock = el.querySelector(".node-diff");
+    const diffBlock = el.querySelector(".diff-content");
     expect(diffBlock).not.toBeNull();
     expect(diffBlock.children).toHaveLength(2);
     expect(diffBlock.children[0].className).toBe("diff-add");
@@ -231,6 +233,30 @@ describe("renderNodeElement", () => {
     ]);
     const el = renderNodeElement(child, byId);
     expect(el.style.marginLeft).toBe("18px");
+  });
+});
+
+describe("appendNoticeItem", () => {
+  it("renders notices as auto-dismissing toast popups", () => {
+    vi.useFakeTimers();
+    appendNoticeItem("notice-1", { style: "warning", text: "[yellow]clangd ready[/yellow]" });
+
+    const toastRegion = document.querySelector(".notice-toast-region");
+    const item = toastRegion.querySelector(".notice-item.notice-warning");
+
+    expect(toastRegion).not.toBeNull();
+    expect(item).not.toBeNull();
+    expect(item.dataset.itemId).toBe("notice-1");
+    expect(item.textContent).toContain("clangd ready");
+    expect(item.classList.contains("notice-toast-exiting")).toBe(false);
+
+    vi.advanceTimersByTime(4000);
+    expect(item.classList.contains("notice-toast-exiting")).toBe(true);
+
+    vi.advanceTimersByTime(250);
+    expect(document.querySelector(".notice-item.notice-warning")).toBeNull();
+    expect(document.querySelector(".notice-toast-region")).toBeNull();
+    vi.useRealTimers();
   });
 });
 

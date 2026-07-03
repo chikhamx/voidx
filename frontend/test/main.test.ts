@@ -1,5 +1,7 @@
+// @ts-nocheck
 import { describe, it, expect, beforeEach, vi } from "vitest";
-import { handleItem, appendMessageItem, handleToolItem } from "../src/main.js";
+import { handleItem } from "../src/main";
+import { appendMessageItem, handleToolItem } from "../src/render";
 
 beforeEach(() => {
   const transcript = document.querySelector("#transcript");
@@ -137,9 +139,9 @@ describe("handleToolItem", () => {
       diff_text: "+added line",
     });
     const transcript = document.querySelector("#transcript");
-    const diff = transcript.querySelector(".tool-diff");
+    const diff = transcript.querySelector(".diff-content");
     expect(diff).not.toBeNull();
-    expect(diff.textContent).toBe("+added line");
+    expect(diff.children[0].className).toBe("diff-add");
   });
 
   it("updates spinner to done on item.completed with ok=true", () => {
@@ -153,9 +155,9 @@ describe("handleToolItem", () => {
       detail: "success",
     });
     const transcript = document.querySelector("#transcript");
-    const spinner = transcript.querySelector(".tool-spinner");
-    expect(spinner.textContent).toBe("done");
-    expect(spinner.className).toContain("ok");
+    const status = transcript.querySelector(".tool-status");
+    expect(status.textContent).toBe("done");
+    expect(status.className).toContain("ok");
   });
 
   it("updates spinner to failed on item.completed with ok=false", () => {
@@ -169,9 +171,9 @@ describe("handleToolItem", () => {
       detail: "error occurred",
     });
     const transcript = document.querySelector("#transcript");
-    const spinner = transcript.querySelector(".tool-spinner");
-    expect(spinner.textContent).toBe("failed");
-    expect(spinner.className).toContain("err");
+    const status = transcript.querySelector(".tool-status");
+    expect(status.textContent).toBe("failed");
+    expect(status.className).toContain("err");
   });
 
   it("appends detail on item.completed", () => {
@@ -190,18 +192,21 @@ describe("handleToolItem", () => {
     expect(details[0].textContent).toBe("finished output");
   });
 
-  it("toggles collapsed class on header click", () => {
+  it("toggles hidden attribute on header click", () => {
     handleToolItem("item.started", "t11", {
       tool_call_id: "c11",
       tool_name: "bash",
     });
     const transcript = document.querySelector("#transcript");
     const item = transcript.querySelector(".tool-item");
-    expect(item.classList.contains("collapsed")).toBe(false);
+    const body = item.querySelector(".tool-body");
+    expect(body.hidden).toBe(true);
     item.querySelector(".tool-header").click();
-    expect(item.classList.contains("collapsed")).toBe(true);
+    expect(body.hidden).toBe(false);
+    const chevron = item.querySelector(".tool-chevron");
+    expect(chevron.classList.contains("open")).toBe(true);
     item.querySelector(".tool-header").click();
-    expect(item.classList.contains("collapsed")).toBe(false);
+    expect(body.hidden).toBe(true);
   });
 
   it("shows elapsed on item.completed", () => {
@@ -212,7 +217,7 @@ describe("handleToolItem", () => {
     handleToolItem("item.completed", "t12", {
       tool_call_id: "c12",
       ok: true,
-      elapsed: 3500,
+      elapsed: 3.5,
     });
     const transcript = document.querySelector("#transcript");
     const elapsed = transcript.querySelector(".tool-elapsed");
@@ -230,16 +235,14 @@ describe("handleToolItem", () => {
       diff_text: "--- a\n+++ b\n@@ -1,2 +1,2 @@\n-old\n+new\n ctx",
     });
     const transcript = document.querySelector("#transcript");
-    const diff = transcript.querySelector(".tool-diff");
+    const diff = transcript.querySelector(".diff-content");
     expect(diff).not.toBeNull();
-    const lines = diff.querySelectorAll(".diff-line");
-    expect(lines).toHaveLength(6);
-    expect(lines[0].className).toContain("diff-line-context");
-    expect(lines[1].className).toContain("diff-line-context");
-    expect(lines[2].className).toContain("diff-hunk");
-    expect(lines[3].className).toContain("diff-line-del");
-    expect(lines[4].className).toContain("diff-line-add");
-    expect(lines[5].className).toContain("diff-line-context");
+    expect(diff.children[0].className).toBe("diff-meta");
+    expect(diff.children[1].className).toBe("diff-meta");
+    expect(diff.children[2].className).toBe("diff-hunk");
+    expect(diff.children[3].className).toBe("diff-del");
+    expect(diff.children[4].className).toBe("diff-add");
+    expect(diff.children[5].className).toBe("diff-context");
   });
 });
 

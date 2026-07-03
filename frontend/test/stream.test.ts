@@ -1,3 +1,4 @@
+// @ts-nocheck
 import { describe, it, expect, beforeEach } from "vitest";
 import {
   setTranscriptElement,
@@ -7,7 +8,7 @@ import {
   discardStream,
   takeCommittedStreams,
   _resetForTest,
-} from "../src/stream.js";
+} from "../src/stream";
 
 beforeEach(() => {
   _resetForTest();
@@ -53,11 +54,20 @@ describe("appendStreamText", () => {
     expect(stream.thinking).toBe("analyzing");
   });
 
-  it("accumulates thinking text across calls", () => {
-    appendStreamText("s1", "part1 ", "thinking");
-    appendStreamText("s1", "part2", "thinking");
+  it("replaces thinking phase content from full stream snapshots", () => {
+    appendStreamText("s1", "part1", "thinking");
+    appendStreamText("s1", "part1 part2", "thinking");
     const stream = getOrCreateStream("s1", "thinking");
     expect(stream.thinking).toBe("part1 part2");
+  });
+
+  it("keeps thinking output collapsed by default", () => {
+    appendStreamText("s1", "long internal thought", "thinking");
+    const stream = getOrCreateStream("s1", "thinking");
+
+    expect(stream.thinkingEl.tagName).toBe("DETAILS");
+    expect(stream.thinkingEl.open).toBe(false);
+    expect(stream.thinkingEl.querySelector("summary").textContent).toContain("Thinking");
   });
 
   it("replaces text phase content (not accumulate)", () => {

@@ -1,5 +1,6 @@
+// @ts-nocheck
 import { describe, it, expect } from "vitest";
-import { matchSlashCommands, renderSlashMenu } from "../src/slash.js";
+import { matchSlashCommands, renderSlashMenu } from "../src/slash";
 
 describe("matchSlashCommands", () => {
   it("returns empty for empty input", () => {
@@ -28,10 +29,9 @@ describe("matchSlashCommands", () => {
     expect(result[0].command).toBe("/mcp");
   });
 
-  it("matches /s prefix to /session and /skills", () => {
+  it("matches /s prefix to session, sandbox, and skills commands", () => {
     const result = matchSlashCommands("/s");
-    expect(result).toHaveLength(2);
-    expect(result.map((c) => c.command)).toEqual(["/session", "/skills"]);
+    expect(result.map((c) => c.command)).toEqual(["/sandbox", "/session", "/skills"]);
   });
 
   it("returns empty for unknown command", () => {
@@ -44,6 +44,22 @@ describe("matchSlashCommands", () => {
     expect(result[0].command).toBe("/mcp");
   });
 });
+
+
+  it("matches commands by description text", () => {
+    const result = matchSlashCommands("/approval");
+    expect(result.map((c) => c.command)).toContain("/approval");
+    expect(result[0].category).toBe("permission");
+  });
+
+  it("includes metadata for open-ui and dangerous commands", () => {
+    const modelNew = matchSlashCommands("/model new")[0];
+    expect(modelNew.execution).toBe("open-ui");
+    expect(modelNew.uiTarget).toBe("settings:model");
+    const rollback = matchSlashCommands("/rollback")[0];
+    expect(rollback.dangerous).toBe(true);
+    expect(rollback.category).toBe("maintenance");
+  });
 
 describe("matchSlashCommands subcommands", () => {
   it("lists /model subcommands when input is '/model '", () => {

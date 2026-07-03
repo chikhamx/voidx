@@ -1,5 +1,6 @@
+// @ts-nocheck
 import { describe, it, expect } from "vitest";
-import { renderMarkdown, highlightCode, stripPastedTags, renderUserMessage } from "../src/markdown.js";
+import { renderMarkdown, highlightCode, stripPastedTags, renderUserMessage } from "../src/markdown";
 
 describe("renderMarkdown", () => {
   it("renders bold text", () => {

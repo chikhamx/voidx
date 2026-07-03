@@ -27,28 +27,34 @@ marked.setOptions({
   gfm: true,
 });
 
-export function renderMarkdown(text) {
+export function renderMarkdown(text: string): HTMLElement {
   const container = document.createElement("div");
   container.className = "markdown-body";
   try {
-    const html = marked.parse(text || "", { async: false });
+    const html = marked.parse(text || "", { async: false }) as string;
     if (typeof html === "string") {
-      container.innerHTML = DOMPurify.sanitize(html);
+      container.innerHTML = DOMPurify.sanitize(html) as unknown as string;
     } else {
       container.textContent = text || "";
     }
-    container.querySelectorAll("pre code").forEach((block) => {
-      try {
-        const lang = detectLang(block);
-        if (lang && hljs.getLanguage(lang)) {
-          block.innerHTML = hljs.highlight(block.textContent, { language: lang }).value;
-        } else {
-          block.innerHTML = hljs.highlightAuto(block.textContent).value;
+    container
+      .querySelectorAll<HTMLElement>("pre code")
+      .forEach((block) => {
+        try {
+          const lang = detectLang(block);
+          if (lang && hljs.getLanguage(lang)) {
+            block.innerHTML = hljs.highlight(block.textContent ?? "", {
+              language: lang,
+            }).value;
+          } else {
+            block.innerHTML = hljs.highlightAuto(
+              block.textContent ?? "",
+            ).value;
+          }
+        } catch {
+          // leave block as-is on highlight failure
         }
-      } catch {
-        // leave block as-is on highlight failure
-      }
-    });
+      });
   } catch {
     container.textContent = text || "";
   }
@@ -57,11 +63,11 @@ export function renderMarkdown(text) {
 
 const PASTED_RE = /<pasted>\n([\s\S]*?)\n<\/pasted>/g;
 
-export function stripPastedTags(text) {
+export function stripPastedTags(text: string): string {
   if (!text || !text.includes("<pasted>")) {
     return text;
   }
-  return text.replace(PASTED_RE, (_match, content) => {
+  return text.replace(PASTED_RE, (_match: string, content: string) => {
     const quoted = content
       .split("\n")
       .map((line) => `> ${line}`)
@@ -70,11 +76,11 @@ export function stripPastedTags(text) {
   });
 }
 
-export function renderUserMessage(text) {
+export function renderUserMessage(text: string): HTMLElement {
   return renderMarkdown(stripPastedTags(text));
 }
 
-export function highlightCode(code, lang) {
+export function highlightCode(code: string, lang: string): string {
   try {
     if (lang && hljs.getLanguage(lang)) {
       return hljs.highlight(code, { language: lang }).value;
@@ -85,13 +91,13 @@ export function highlightCode(code, lang) {
   }
 }
 
-function detectLang(block) {
+function detectLang(block: HTMLElement): string | null {
   const classes = block.className || "";
   const match = classes.match(/language-([\w-]+)/);
   return match ? match[1] : null;
 }
 
-function escapeHtml(text) {
+function escapeHtml(text: string): string {
   const div = document.createElement("div");
   div.textContent = text;
   return div.innerHTML;

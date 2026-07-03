@@ -1,3 +1,4 @@
+// @ts-nocheck
 import { beforeEach, describe, it, expect, vi } from "vitest";
 import {
   renderDiffReview,
@@ -7,7 +8,7 @@ import {
   onGenerateDiff,
   showDiffEmpty,
   _resetForTest,
-} from "../src/diff-review.js";
+} from "../src/diff-review";
 
 beforeEach(() => {
   _resetForTest();

@@ -1,3 +1,4 @@
+// @ts-nocheck
 import { beforeEach, describe, it, expect, vi } from "vitest";
 import {
   renderSidebar,
@@ -9,7 +10,7 @@ import {
   onThreadDelete,
   onThreadRename,
   _resetForTest,
-} from "../src/sidebar.js";
+} from "../src/sidebar";
 
 beforeEach(() => {
   _resetForTest();

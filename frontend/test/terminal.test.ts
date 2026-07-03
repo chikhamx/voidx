@@ -1,3 +1,4 @@
+// @ts-nocheck
 import { beforeEach, describe, it, expect, vi } from "vitest";
 import {
   initTerminal,
@@ -6,7 +7,7 @@ import {
   onTerminalInput,
   onTerminalStart,
   _resetForTest,
-} from "../src/terminal.js";
+} from "../src/terminal";
 
 beforeEach(() => {
   _resetForTest();

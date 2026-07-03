@@ -1,3 +1,4 @@
+// @ts-nocheck
 import { beforeEach, describe, it, expect, vi } from "vitest";
 import {
   initDock,
@@ -6,7 +7,7 @@ import {
   toggleDock,
   getActiveTab,
   _resetForTest,
-} from "../src/dock.js";
+} from "../src/dock";
 
 beforeEach(() => {
   _resetForTest();

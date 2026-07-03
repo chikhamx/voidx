@@ -1,11 +1,53 @@
-let hunkDecisionCb = null;
-let applyDiffCb = null;
-let generateDiffCb = null;
-let currentReviewId = null;
+interface DiffLine {
+  kind: string;
+  text: string;
+}
 
-export function renderDiffReview(reviewId, snapshot) {
+interface DiffHunk {
+  index: number;
+  old_start: number;
+  old_count: number;
+  new_start: number;
+  new_count: number;
+  lines?: DiffLine[];
+  decision?: string;
+}
+
+interface DiffFile {
+  path: string;
+  added: number;
+  removed: number;
+  hunks?: DiffHunk[];
+}
+
+interface DiffSnapshot {
+  files?: DiffFile[];
+}
+
+interface DiffSummary {
+  total_hunks: number;
+  approved: number;
+  rejected: number;
+  pending: number;
+}
+
+type HunkDecisionCb = (
+  reviewId: string,
+  filePath: string,
+  hunkIndex: number,
+  decision: string,
+) => void;
+type ApplyDiffCb = (reviewId: string) => void;
+type GenerateDiffCb = () => void;
+
+let hunkDecisionCb: HunkDecisionCb | null = null;
+let applyDiffCb: ApplyDiffCb | null = null;
+let generateDiffCb: GenerateDiffCb | null = null;
+let currentReviewId: string | null = null;
+
+export function renderDiffReview(reviewId: string, snapshot: DiffSnapshot): void {
   currentReviewId = reviewId;
-  const pane = document.querySelector("#diff-pane");
+  const pane = document.querySelector<HTMLElement>("#diff-pane");
   if (!pane) return;
 
   pane.replaceChildren();
@@ -53,10 +95,19 @@ export function renderDiffReview(reviewId, snapshot) {
   });
   pane.append(applyBtn);
 
-  updateSummary(pane, { total_hunks: countHunks(snapshot), approved: 0, rejected: 0, pending: countHunks(snapshot) });
+  updateSummary(pane, {
+    total_hunks: countHunks(snapshot),
+    approved: 0,
+    rejected: 0,
+    pending: countHunks(snapshot),
+  });
 }
 
-function renderHunk(reviewId, filePath, hunk) {
+function renderHunk(
+  reviewId: string,
+  filePath: string,
+  hunk: DiffHunk,
+): HTMLElement {
   const hunkEl = document.createElement("div");
   hunkEl.className = "vx-diff-hunk";
   hunkEl.dataset.hunkIndex = String(hunk.index);
@@ -84,7 +135,8 @@ function renderHunk(reviewId, filePath, hunk) {
   approveBtn.dataset.decision = "approved";
   approveBtn.textContent = "Approve";
   approveBtn.addEventListener("click", () => {
-    if (hunkDecisionCb) hunkDecisionCb(reviewId, filePath, hunk.index, "approved");
+    if (hunkDecisionCb)
+      hunkDecisionCb(reviewId, filePath, hunk.index, "approved");
   });
 
   const rejectBtn = document.createElement("button");
@@ -92,7 +144,8 @@ function renderHunk(reviewId, filePath, hunk) {
   rejectBtn.dataset.decision = "rejected";
   rejectBtn.textContent = "Reject";
   rejectBtn.addEventListener("click", () => {
-    if (hunkDecisionCb) hunkDecisionCb(reviewId, filePath, hunk.index, "rejected");
+    if (hunkDecisionCb)
+      hunkDecisionCb(reviewId, filePath, hunk.index, "rejected");
   });
 
   actions.append(approveBtn, rejectBtn);
@@ -101,13 +154,24 @@ function renderHunk(reviewId, filePath, hunk) {
   return hunkEl;
 }
 
-export function setHunkDecision(filePath, hunkIndex, decision, summary) {
-  const pane = document.querySelector("#diff-pane");
+export function setHunkDecision(
+  filePath: string,
+  hunkIndex: number,
+  decision: string,
+  summary?: DiffSummary,
+): void {
+  const pane = document.querySelector<HTMLElement>("#diff-pane");
   if (!pane) return;
 
-  const hunk = pane.querySelector(`.vx-diff-hunk[data-file-path="${filePath}"][data-hunk-index="${hunkIndex}"]`);
+  const hunk = pane.querySelector<HTMLElement>(
+    `.vx-diff-hunk[data-file-path="${filePath}"][data-hunk-index="${hunkIndex}"]`,
+  );
   if (hunk) {
-    hunk.classList.remove("decision-pending", "decision-approved", "decision-rejected");
+    hunk.classList.remove(
+      "decision-pending",
+      "decision-approved",
+      "decision-rejected",
+    );
     hunk.classList.add(`decision-${decision}`);
   }
 
@@ -116,20 +180,24 @@ export function setHunkDecision(filePath, hunkIndex, decision, summary) {
   }
 }
 
-function updateSummary(pane, summary) {
-  const summaryEl = pane.querySelector(".vx-diff-summary");
+function updateSummary(pane: HTMLElement, summary: DiffSummary): void {
+  const summaryEl = pane.querySelector<HTMLElement>(".vx-diff-summary");
   if (!summaryEl) return;
 
-  const parts = [];
-  if (summary.approved > 0) parts.push(`${summary.approved}/${summary.total_hunks} approved`);
-  if (summary.rejected > 0) parts.push(`${summary.rejected}/${summary.total_hunks} rejected`);
-  if (summary.pending > 0) parts.push(`${summary.pending}/${summary.total_hunks} pending`);
-  if (parts.length === 0) parts.push(`${summary.total_hunks}/${summary.total_hunks} approved`);
+  const parts: string[] = [];
+  if (summary.approved > 0)
+    parts.push(`${summary.approved}/${summary.total_hunks} approved`);
+  if (summary.rejected > 0)
+    parts.push(`${summary.rejected}/${summary.total_hunks} rejected`);
+  if (summary.pending > 0)
+    parts.push(`${summary.pending}/${summary.total_hunks} pending`);
+  if (parts.length === 0)
+    parts.push(`${summary.total_hunks}/${summary.total_hunks} approved`);
 
   summaryEl.textContent = parts.join(" · ");
 }
 
-function countHunks(snapshot) {
+function countHunks(snapshot: DiffSnapshot): number {
   let count = 0;
   for (const file of snapshot.files || []) {
     count += (file.hunks || []).length;
@@ -137,20 +205,20 @@ function countHunks(snapshot) {
   return count;
 }
 
-export function onHunkDecision(callback) {
+export function onHunkDecision(callback: HunkDecisionCb): void {
   hunkDecisionCb = callback;
 }
 
-export function onApplyDiff(callback) {
+export function onApplyDiff(callback: ApplyDiffCb): void {
   applyDiffCb = callback;
 }
 
-export function onGenerateDiff(callback) {
+export function onGenerateDiff(callback: GenerateDiffCb): void {
   generateDiffCb = callback;
 }
 
-export function showDiffEmpty() {
-  const pane = document.querySelector("#diff-pane");
+export function showDiffEmpty(): void {
+  const pane = document.querySelector<HTMLElement>("#diff-pane");
   if (!pane) return;
 
   pane.replaceChildren();
@@ -164,7 +232,7 @@ export function showDiffEmpty() {
   pane.append(btn);
 }
 
-export function _resetForTest() {
+export function _resetForTest(): void {
   hunkDecisionCb = null;
   applyDiffCb = null;
   generateDiffCb = null;

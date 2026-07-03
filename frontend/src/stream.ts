@@ -1,16 +1,21 @@
-import { renderMarkdown } from "./markdown.js";
+import { renderMarkdown } from "./markdown";
+import type { StreamState } from "./types";
 
 const DEBOUNCE_MS = 100;
 
-const streams = new Map();
-const committedEls = [];
-let transcriptEl = null;
+const streams = new Map<string, StreamState>();
+const committedEls: HTMLElement[] = [];
+let transcriptEl: HTMLElement | null = null;
 
-export function setTranscriptElement(el) {
+export function setTranscriptElement(el: HTMLElement): void {
   transcriptEl = el;
 }
 
-export function getOrCreateStream(streamId, phase) {
+export function getTranscriptElement(): HTMLElement | null {
+  return transcriptEl;
+}
+
+export function getOrCreateStream(streamId: string, phase: string): StreamState {
   let stream = streams.get(streamId);
   if (stream) {
     return stream;
@@ -18,8 +23,15 @@ export function getOrCreateStream(streamId, phase) {
   const el = document.createElement("div");
   el.className = "stream-buffer";
   el.dataset.streamId = streamId;
-  const thinkingEl = document.createElement("div");
+  const thinkingEl = document.createElement("details");
   thinkingEl.className = "stream-thinking";
+  thinkingEl.hidden = true;
+  const thinkingSummary = document.createElement("summary");
+  thinkingSummary.className = "stream-thinking-summary";
+  thinkingSummary.textContent = "Thinking";
+  const thinkingBody = document.createElement("div");
+  thinkingBody.className = "stream-thinking-body";
+  thinkingEl.append(thinkingSummary, thinkingBody);
   const textEl = document.createElement("div");
   textEl.className = "markdown-body";
   el.append(thinkingEl, textEl);
@@ -33,6 +45,8 @@ export function getOrCreateStream(streamId, phase) {
     phase,
     el,
     thinkingEl,
+    thinkingSummary,
+    thinkingBody,
     textEl,
     debounceTimer: null,
   };
@@ -40,10 +54,14 @@ export function getOrCreateStream(streamId, phase) {
   return stream;
 }
 
-export function appendStreamText(streamId, text, phase) {
+export function appendStreamText(
+  streamId: string,
+  text: string,
+  phase: string,
+): void {
   const stream = getOrCreateStream(streamId, phase);
   if (phase === "thinking") {
-    stream.thinking += text;
+    stream.thinking = text;
     scheduleRender(stream, "thinking");
   } else {
     stream.text = text;
@@ -54,7 +72,11 @@ export function appendStreamText(streamId, text, phase) {
   }
 }
 
-export function commitStream(streamId) {
+export function commitStream(streamId: string): {
+  text: string;
+  thinking: string;
+  el: HTMLElement;
+} | null {
   const stream = streams.get(streamId);
   if (!stream) {
     return null;
@@ -76,12 +98,22 @@ export function commitStream(streamId) {
   return result;
 }
 
-export function takeCommittedStreams() {
+export function takeCommittedStreams(): HTMLElement[] {
   const els = committedEls.splice(0);
   return els;
 }
 
-export function discardStream(streamId) {
+export function clearActiveStreams(): void {
+  for (const [, stream] of streams) {
+    if (stream.debounceTimer) {
+      clearTimeout(stream.debounceTimer);
+    }
+    stream.el.remove();
+  }
+  streams.clear();
+}
+
+export function discardStream(streamId: string): void {
   const stream = streams.get(streamId);
   if (!stream) {
     return;
@@ -93,7 +125,7 @@ export function discardStream(streamId) {
   streams.delete(streamId);
 }
 
-function scheduleRender(stream, target) {
+function scheduleRender(stream: StreamState, target?: string): void {
   if (stream.debounceTimer) {
     clearTimeout(stream.debounceTimer);
   }
@@ -107,7 +139,7 @@ function scheduleRender(stream, target) {
   }, DEBOUNCE_MS);
 }
 
-function renderStreamText(stream) {
+function renderStreamText(stream: StreamState): void {
   stream.textEl.replaceChildren(renderMarkdown(stream.text));
   if (!stream.committed) {
     const cursor = document.createElement("span");
@@ -116,11 +148,14 @@ function renderStreamText(stream) {
   }
 }
 
-function renderStreamThinking(stream) {
-  stream.thinkingEl.textContent = stream.thinking;
+function renderStreamThinking(stream: StreamState): void {
+  const hasThinking = Boolean(stream.thinking);
+  stream.thinkingEl.hidden = !hasThinking;
+  stream.thinkingSummary.textContent = hasThinking ? "Thinking" : "";
+  stream.thinkingBody.textContent = stream.thinking;
 }
 
-export function _resetForTest() {
+export function _resetForTest(): void {
   streams.clear();
   committedEls.length = 0;
   transcriptEl = null;
