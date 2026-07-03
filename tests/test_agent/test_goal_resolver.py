@@ -485,3 +485,74 @@ async def test_goal_resolver_uses_function_calling_for_deepseek_protocol():
     assert result.goal is not None
     assert result.goal.desc == "fix a bug"
     assert result.plan == PlanResolution(join="debug", leave=None)
+
+
+@pytest.mark.asyncio
+async def test_goal_resolver_uses_json_mode_for_deepseek_with_reasoning():
+    """DeepSeek protocol with active reasoning → json_mode (avoids tool_choice conflict)."""
+    from voidx.llm.service import DeepSeekChatOpenAI
+
+    class FakeDeepSeekReasoningModel(DeepSeekChatOpenAI):
+        _structured_method: str | None = None
+        _messages: list | None = None
+
+        def with_structured_output(self, schema, method=None, **kwargs):
+            FakeDeepSeekReasoningModel._structured_method = method
+            return self
+
+        async def ainvoke(self, messages):
+            FakeDeepSeekReasoningModel._messages = messages
+            return ResolverGoal(
+                intent="coding",
+                goal="review the diff",
+                workflow="review",
+                kind_hint="review",
+            )
+
+    model = object.__new__(FakeDeepSeekReasoningModel)
+    # Simulate Kimi / Doubao / etc. with thinking type=enabled.
+    # Use object.__setattr__ to bypass Pydantic's __setattr__ on a
+    # partially-initialized instance.
+    object.__setattr__(model, "extra_body", {"thinking": {"type": "enabled"}})
+    assert model.has_active_reasoning is True
+
+    result = await resolve_goal_for_turn(
+        model=model,
+        user_text="review 一下改动",
+        interaction_mode="auto",
+        task_state=TaskState(),
+    )
+
+    assert FakeDeepSeekReasoningModel._structured_method == "json_mode"
+    assert result.intent.type == TaskIntent.CODING
+    assert result.goal is not None
+    assert result.goal.desc == "review the diff"
+
+
+@pytest.mark.asyncio
+async def test_goal_resolver_uses_json_mode_for_deepseek_with_qwen_reasoning():
+    """Qwen's enable_thinking: True also triggers json_mode."""
+    from voidx.llm.service import DeepSeekChatOpenAI
+
+    class FakeQwenModel(DeepSeekChatOpenAI):
+        _structured_method: str | None = None
+
+        def with_structured_output(self, schema, method=None, **kwargs):
+            FakeQwenModel._structured_method = method
+            return self
+
+        async def ainvoke(self, messages):
+            return ResolverGoal(intent="general", goal=None, workflow=None, kind_hint=None)
+
+    model = object.__new__(FakeQwenModel)
+    object.__setattr__(model, "extra_body", {"enable_thinking": True})
+    assert model.has_active_reasoning is True
+
+    await resolve_goal_for_turn(
+        model=model,
+        user_text="hello",
+        interaction_mode="auto",
+        task_state=TaskState(),
+    )
+
+    assert FakeQwenModel._structured_method == "json_mode"

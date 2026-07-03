@@ -122,3 +122,27 @@ goal_resolver 的 mock 测试（`StructuredModel`）不经过 `with_structured_o
 2. **Anthropic 并非 fallback**：实测 `ChatAnthropic.with_structured_output` 存在且默认 `method="function_calling"`，Anthropic 的 goal resolver 一直正常工作。本文档 API Contract 表格的 Anthropic 行已在上述修正。
 3. **Gemini 未验证**：`langchain-google-genai` 为可选依赖（`voidx[gemini]`），未实测。若新版支持 `with_structured_output`，行为与 Anthropic 类似（默认 function_calling）。
 4. **Test Impact**：设计文档预测需移除 3 处 `"## Output Schema"` 断言，实际测试代码早已对齐，无需修改。
+
+## 后续修复：Thinking Mode + tool_choice 冲突
+
+`function_calling` 方案上线后发现新问题：Kimi 等 provider 在 thinking mode（`extra_body.thinking.type=enabled`）下拒绝 `tool_choice` 参数，返回 `400: "Thinking mode does not support this tool_choice"`。
+
+**根因**：`with_structured_output(method="function_calling")` 会强制 `tool_choice` 锁定到 `ResolverGoal` 函数。部分 provider 的 thinking/reasoning 模式与该参数不兼容。
+
+**修复**（commit `[TBD]`）：
+
+1. `DeepSeekChatOpenAI` 新增 `has_active_reasoning` property（`provider.py`）：
+   - 检测 `reasoning_effort`、`extra_body.enable_thinking`、`extra_body.thinking.type in (enabled, auto)`
+2. `resolve_goal_for_turn` 在 `has_active_reasoning` 为 True 时切换为 `method="json_mode"`：
+   - `json_mode` 使用 `response_format: {type: "json_object"}`，不涉及 `tool_choice`
+   - LangChain 的 json_mode 会自动在 prompt 中注入 JSON 格式指令
+3. 新增 2 个测试：验证 thinking mode 下走 `json_mode`（Kimi 和 Qwen 两种 detection pattern）
+
+最终 method 选择逻辑：
+
+| 条件 | method |
+|------|--------|
+| `ChatOpenAI` (openai/openrouter) | `json_schema` (默认) |
+| `DeepSeekChatOpenAI` + 无 reasoning | `function_calling` |
+| `DeepSeekChatOpenAI` + `has_active_reasoning` | `json_mode` |
+| `ChatAnthropic` | `function_calling` (默认) |

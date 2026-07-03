@@ -105,7 +105,14 @@ async def resolve_goal_for_turn(
 
     resolver_goal: ResolverGoal | None
     try:
-        method = "function_calling" if isinstance(model, DeepSeekChatOpenAI) else None
+        if isinstance(model, DeepSeekChatOpenAI):
+            # function_calling sends tool_choice which several providers
+            # reject while thinking mode is active.  Fall back to
+            # json_mode (response_format {type: json_object}) which
+            # does not involve tool_choice.
+            method = "json_mode" if model.has_active_reasoning else "function_calling"
+        else:
+            method = None
         runnable = structured(ResolverGoal) if method is None else structured(ResolverGoal, method=method)
         resolver_messages = _resolver_messages_from_exchanges(user_text, task_state)
         raw = await asyncio.wait_for(
