@@ -114,7 +114,7 @@ async def resolve_goal_for_turn(
         else:
             method = None
         runnable = structured(ResolverGoal) if method is None else structured(ResolverGoal, method=method)
-        resolver_messages = _resolver_messages_from_exchanges(user_text, task_state)
+        resolver_messages = _resolver_messages_from_exchanges(user_text, task_state, json_mode=(method == "json_mode"))
         raw = await asyncio.wait_for(
             runnable.ainvoke(resolver_messages),
             timeout=GOAL_RESOLVER_TIMEOUT_SECONDS,
@@ -155,9 +155,9 @@ async def resolve_goal_for_turn(
     return normalized
 
 
-def _resolver_messages_from_exchanges(user_text: str, task_state: TaskState) -> list[BaseMessage]:
+def _resolver_messages_from_exchanges(user_text: str, task_state: TaskState, *, json_mode: bool = False) -> list[BaseMessage]:
     return [
-        SystemMessage(content=_resolver_system_prompt()),
+        SystemMessage(content=_resolver_system_prompt(json_mode=json_mode)),
         HumanMessage(content=_resolver_request_markdown(user_text, task_state)),
     ]
 
@@ -237,8 +237,8 @@ def _truncate_error_text(value: str, limit: int = 2000) -> str:
     return text[:limit].rstrip() + "..."
 
 
-def _resolver_system_prompt() -> str:
-    return (
+def _resolver_system_prompt(*, json_mode: bool = False) -> str:
+    prompt = (
         "You are a goal resolver. Classify the user's current turn into intent, goal, workflow, and kind_hint.\n"
         "\n"
         "## Field Rules\n"
@@ -259,6 +259,9 @@ def _resolver_system_prompt() -> str:
         "- tdd: Complete implementation via TDD cycle, all tests green\n"
         "- verify: Prove changes reach expected state with reproducible evidence\n"
     )
+    if json_mode:
+        prompt += "\nRespond in JSON."
+    return prompt
 
 
 def _resolver_request_markdown(user_text: str, task_state: TaskState) -> str:
