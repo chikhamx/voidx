@@ -37,6 +37,8 @@ from voidx.llm.usage import (
 )
 from voidx.memory.service import save_context_frame_from_messages
 from voidx.runtime.ui import (
+    AssistantStreamCommitted,
+    AssistantStreamUpdated,
     StatusFinished,
     StatusUpdated,
     StreamingRenderer,
@@ -290,7 +292,7 @@ class GraphLlmMixin:
                 )
 
         await save_context_frame(llm_messages, context_tokens, convergence_messages, convergence_forced)
-        max_retries = 2
+        max_retries = 5
         failed_attempts = 0
         overflow_compaction_attempts = 0
         malformed_tool_call_attempts = 0
@@ -396,23 +398,28 @@ class GraphLlmMixin:
                 if failed_attempts < max_retries:
                     failed_attempts += 1
                     delay = failed_attempts * 2
+                    retry_detail = f"retrying in {delay}s: {e}"
                     if self._ui.via_events():
                         retry_status_active = True
                         await self._ui.events.emit(StatusUpdated(
                             status_id="llm:retry",
-                            label=f"LLM error, retrying in {delay}s",
-                            detail=str(e),
+                            label="Retrying",
+                            detail=retry_detail,
                         ))
                     else:
-                        self._ui.ui.print(f"[dim]LLM error, retrying in {delay}s: {e}[/dim]")
+                        self._ui.ui.print(f"[dim]Retrying ({retry_detail})[/dim]")
                     await asyncio.sleep(delay)
                 else:
+                    failure_text = f"LLM call failed after {max_retries + 1} attempts: {e}"
                     if retry_status_active and self._ui.via_events():
                         await self._ui.events.emit(StatusFinished(status_id="llm:retry"))
-                    self._ui.ui.error(f"LLM call failed after {max_retries + 1} attempts: {e}")
-                    failure_msg = AIMessage(content=f"LLM call failed: {e}")
+                    if self._ui.via_events():
+                        await self._ui.events.emit(AssistantStreamUpdated(text=failure_text))
+                        await self._ui.events.emit(AssistantStreamCommitted())
+                    else:
+                        self._ui.ui.error(failure_text)
                     return {
-                        "messages": replacement_messages(failure_msg),
+                        "messages": [],
                         "step_count": step,
                         "should_continue": False,
                     }

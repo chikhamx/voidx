@@ -6,6 +6,8 @@ from voidx.ui.output.dock.app import (
     active_agent_step_text,
     active_compaction_detail_text,
     active_compaction_text,
+    active_llm_retry_detail_text,
+    active_llm_retry_text,
     active_turn_analyzing_text,
 )
 from voidx.ui.output.dock.formatting import ANSI_LINE_PREFIX
@@ -23,6 +25,8 @@ __all__ = [
     "active_agent_step_text",
     "active_compaction_detail_text",
     "active_compaction_text",
+    "active_llm_retry_detail_text",
+    "active_llm_retry_text",
     "active_turn_analyzing_text",
     "dock",
     "get_dock",

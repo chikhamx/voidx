@@ -12,6 +12,8 @@ from voidx.ui.output.dock import (
     active_agent_step_text,
     active_compaction_detail_text,
     active_compaction_text,
+    active_llm_retry_detail_text,
+    active_llm_retry_text,
     active_permission_request_detail_text,
     active_permission_request_text,
     active_turn_analyzing_text,
@@ -68,9 +70,11 @@ class _ActivityRendererMixin:
         analyzing = active_turn_analyzing_text()
         compacting = active_compaction_text()
         compaction_detail = active_compaction_detail_text()
+        llm_retry = active_llm_retry_text()
+        llm_retry_detail = active_llm_retry_detail_text()
         permission = active_permission_request_text()
         step = active_agent_step_text()
-        status_label = permission or analyzing or compacting or step or ""
+        status_label = permission or llm_retry or analyzing or compacting or step or ""
         thinking = dock.has_active_thinking_stream()
         verb = "Thinking" if thinking else status_label or self._busy_activity_verb or BUSY_ACTIVITY_DEFAULT_VERB
         prefix = f"{glyph} {verb}"
@@ -94,6 +98,8 @@ class _ActivityRendererMixin:
             details.append(latest)
         if compacting and compaction_detail:
             details.append(compaction_detail)
+        if llm_retry and llm_retry_detail:
+            details.append(llm_retry_detail)
         return f"{prefix} ({' '.join(details)})"
 
     def _turn_token_text(self) -> str:

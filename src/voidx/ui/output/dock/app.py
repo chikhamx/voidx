@@ -35,6 +35,8 @@ from voidx.ui.output.dock.status import (
     active_agent_step_text,
     active_compaction_detail_text,
     active_compaction_text,
+    active_llm_retry_detail_text,
+    active_llm_retry_text,
     active_turn_analyzing_text,
 )
 from voidx.ui.output.tree import OutputNode, OutputTree, is_transparent_container

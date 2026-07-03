@@ -183,6 +183,29 @@ def test_busy_activity_label_replaces_verb_during_thinking_stream(tmp_path, monk
         dock.reset()
 
 
+
+
+def test_busy_activity_label_uses_retrying_verb_and_places_error_detail_last(tmp_path, monkeypatch):
+    monkeypatch.setattr("voidx.ui.tui.render_activity.time.monotonic", lambda: 105.0)
+    tui = _tui(tmp_path)
+    tui._busy = True
+    tui._busy_started_at = 100.0
+    tui._busy_activity_verb = "Pondering"
+    dock.begin_capture()
+    try:
+        dock.record_status(
+            "llm:retry",
+            "Retrying",
+            "retrying in 2s: Connection error.",
+            stage="working",
+        )
+
+        assert tui._busy_activity_label() == "◐ Retrying (5s retrying in 2s: Connection error.)"
+    finally:
+        dock.deactivate()
+        dock.reset()
+
+
 def test_busy_activity_renders_thinking_content_below_verb(tmp_path, monkeypatch):
     monkeypatch.setattr("voidx.ui.tui.render_activity.time.monotonic", lambda: 105.0)
     tui = _tui(tmp_path)

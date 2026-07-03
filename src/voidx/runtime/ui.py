@@ -162,6 +162,8 @@ def reset_ui_sink() -> None:
 
 
 COMMANDS = _LazyAttr("voidx.ui.commands", "COMMANDS")
+AssistantStreamCommitted = _LazyAttr("voidx.ui.output.events", "AssistantStreamCommitted")
+AssistantStreamUpdated = _LazyAttr("voidx.ui.output.events", "AssistantStreamUpdated")
 CaptureConsole = _LazyAttr("voidx.ui.output.capture", "CaptureConsole")
 CompositeEventConsumer = _LazyAttr("voidx.ui.output.events", "CompositeEventConsumer")
 DockEventConsumer = _LazyAttr("voidx.ui.output.events", "DockEventConsumer")

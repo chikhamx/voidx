@@ -62,6 +62,20 @@ def active_compaction_detail_text() -> str:
     return _clean(record.detail).strip()
 
 
+def active_llm_retry_text() -> str:
+    record = _status_record("llm:retry")
+    if record is None:
+        return ""
+    return _clean(record.label).strip()
+
+
+def active_llm_retry_detail_text() -> str:
+    record = _status_record("llm:retry")
+    if record is None:
+        return ""
+    return _clean(record.detail).strip()
+
+
 def _status_record(status_id: str) -> DockStatusRecord | None:
     current = get_dock()
     status_record = getattr(current, "status_record", None)

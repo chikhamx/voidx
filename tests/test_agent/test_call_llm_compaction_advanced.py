@@ -23,7 +23,15 @@ from voidx.memory.context_frames import load_context_frames
 from voidx.memory.session import MessageRow, create_session, delete_session, save_message
 from voidx.ui.output.console import StreamingRenderer
 from voidx.ui.output.dock import ANSI_LINE_PREFIX, BottomInputDock, set_dock
-from voidx.ui.output.events import AnsiAppended, DockEventConsumer, StatusFinished, StatusUpdated, ui_events
+from voidx.ui.output.events import (
+    AnsiAppended,
+    AssistantStreamCommitted,
+    AssistantStreamUpdated,
+    DockEventConsumer,
+    StatusFinished,
+    StatusUpdated,
+    ui_events,
+)
 from voidx.workflow.runtime import WorkflowRunState, WorkflowRunStatus
 from tests.test_agent._stream_llm_helpers import (
     _plain,
@@ -147,8 +155,8 @@ async def test_call_llm_retry_uses_transient_status_event(tmp_path, monkeypatch)
     assert any(
         isinstance(event, StatusUpdated)
         and event.status_id == "llm:retry"
-        and event.label == "LLM error, retrying in 2s"
-        and event.detail == "Connection error."
+        and event.label == "Retrying"
+        and event.detail == "retrying in 2s: Connection error."
         for event in events
     )
     assert any(
@@ -159,3 +167,82 @@ async def test_call_llm_retry_uses_transient_status_event(tmp_path, monkeypatch)
     )
 
 
+
+
+class AlwaysFailsStreamingModel:
+    def __init__(self) -> None:
+        self.calls = 0
+
+    def bind_tools(self, tool_defs):
+        return self
+
+    async def astream(self, messages):
+        self.calls += 1
+        raise ConnectionError(f"Connection error {self.calls}.")
+        yield AIMessageChunk(content="")
+
+
+@pytest.mark.asyncio
+async def test_call_llm_retries_five_times_then_renders_assistant_error_without_state_message(tmp_path, monkeypatch):
+    import voidx.agent.graph.core.llm as graph_module
+
+    async def no_sleep(_delay: float) -> None:
+        return None
+
+    monkeypatch.setattr(graph_module, "StreamingRenderer", FakeRenderer)
+    monkeypatch.setattr(graph_module.asyncio, "sleep", no_sleep)
+
+    events: list[object] = []
+
+    class RecordingConsumer:
+        def handle(self, event):
+            events.append(event)
+            return None
+
+    test_dock = BottomInputDock()
+    set_dock(test_dock)
+    test_dock.begin_capture()
+    ui_events.start(RecordingConsumer())
+    try:
+        graph = VoidXGraph(
+            Config(
+                model=ModelConfig(provider="mimo", model="mimo-v2.5"),
+                workspace=str(tmp_path),
+            ),
+            api_key="test-key",
+        )
+        graph.model = AlwaysFailsStreamingModel()
+
+        result = await graph._call_llm({
+            "messages": [HumanMessage(content="hi")],
+            "step_count": 0,
+            "persona": "voidx",
+        })
+        await ui_events.drain()
+    finally:
+        await ui_events.stop()
+        test_dock.deactivate()
+        test_dock.reset()
+        set_dock(None)
+
+    assert graph.model.calls == 6
+    assert result["should_continue"] is False
+    assert result.get("messages", []) == []
+    retry_events = [
+        event for event in events
+        if isinstance(event, StatusUpdated) and event.status_id == "llm:retry"
+    ]
+    assert [event.label for event in retry_events] == ["Retrying"] * 5
+    assert [event.detail for event in retry_events] == [
+        "retrying in 2s: Connection error 1.",
+        "retrying in 4s: Connection error 2.",
+        "retrying in 6s: Connection error 3.",
+        "retrying in 8s: Connection error 4.",
+        "retrying in 10s: Connection error 5.",
+    ]
+    assert any(
+        isinstance(event, AssistantStreamUpdated)
+        and "LLM call failed after 6 attempts: Connection error 6." in event.text
+        for event in events
+    )
+    assert any(isinstance(event, AssistantStreamCommitted) for event in events)
