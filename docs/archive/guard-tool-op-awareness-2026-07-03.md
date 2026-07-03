@@ -1,3 +1,4 @@
+> **Status: Done**
 # Runtime Guard 工具意图感知 — 技术设计文档
 
 Date: 2026-07-03
