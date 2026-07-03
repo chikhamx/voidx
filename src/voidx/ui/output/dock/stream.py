@@ -110,6 +110,7 @@ class DockStreamMixin:
         self._stream_node.header = _ansi_line(f"{bullet} {lines[0]}")
         self._stream_node.body_lines = [_ansi_line(f"  {line}") for line in lines[1:]]
         self._stream_node.payload.pop("phase", None)
+        self._stream_node.payload["raw_text"] = clean  # 原始 markdown，供 snapshot 恢复用
         # Content-only update on existing node: mark only that subtree dirty.
         # New node (structural change): mark the whole tree dirty.
         if stream_existed and self._stream_node is not None and not was_thinking_stream:

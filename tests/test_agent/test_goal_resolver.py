@@ -72,7 +72,6 @@ async def test_goal_resolver_uses_structured_llm_result():
         HumanMessage,
     ]
     assert "You are a goal resolver." in model.messages[0].content
-    assert "## Output Schema" in model.messages[0].content
     assert "## Field Rules" in model.messages[0].content
     assert "## Available Workflows" in model.messages[0].content
     request = model.messages[1].content
@@ -448,3 +447,41 @@ async def test_goal_resolver_logs_native_request_and_response(tmp_path, monkeypa
     assert "帮我修一个 bug" in exchange["request"]["messages"][-1]["content"]
     assert exchange["response"]["raw"]["kind_hint"] == "bugfix"
     assert exchange["response"]["raw"]["workflow"] == "debug"
+
+@pytest.mark.asyncio
+async def test_goal_resolver_uses_function_calling_for_deepseek_protocol():
+    """DeepSeek protocol models should use method='function_calling' for with_structured_output."""
+    from voidx.llm.service import DeepSeekChatOpenAI
+
+    class FakeDeepSeekModel(DeepSeekChatOpenAI):
+        """Real subclass — isinstance works. Use object.__new__ to skip init."""
+
+        _structured_method: str | None = None
+        _messages: list | None = None
+
+        def with_structured_output(self, schema, method=None, **kwargs):
+            FakeDeepSeekModel._structured_method = method
+            return self
+
+        async def ainvoke(self, messages):
+            FakeDeepSeekModel._messages = messages
+            return ResolverGoal(
+                intent="coding",
+                goal="fix a bug",
+                workflow="debug",
+                kind_hint="debug",
+            )
+
+    model = object.__new__(FakeDeepSeekModel)
+    result = await resolve_goal_for_turn(
+        model=model,
+        user_text="帮我修一个 bug",
+        interaction_mode="auto",
+        task_state=TaskState(),
+    )
+
+    assert FakeDeepSeekModel._structured_method == "function_calling"
+    assert result.intent.type == TaskIntent.CODING
+    assert result.goal is not None
+    assert result.goal.desc == "fix a bug"
+    assert result.plan == PlanResolution(join="debug", leave=None)

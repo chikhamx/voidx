@@ -31,6 +31,7 @@ from voidx.ui.output.events.schema import (
     MarkdownAppended,
     MessageAppended,
     PermissionPromptShown,
+    StartupShown,
     StatusFinished,
     StatusUpdated,
     SubagentFinished,
@@ -59,6 +60,29 @@ def _method(msg) -> str:
 
 def _item_params(msg) -> dict:
     return msg.params
+
+
+# ── direct notifications ────────────────────────────────────────────────
+
+
+@pytest.mark.asyncio
+async def test_startup_shown_forwards_profile_configured():
+    adapter = _adapter()
+    msg = await adapter.handle(
+        StartupShown(
+            model="gpt-5.5",
+            provider="openai",
+            workspace="/tmp/voidx",
+            session_title="New session",
+            is_new=True,
+            profile_configured=False,
+        )
+    )
+
+    assert _method(msg) == "startup.shown"
+    assert msg.params["model"] == "gpt-5.5"
+    assert msg.params["provider"] == "openai"
+    assert msg.params["profile_configured"] is False
 
 
 # ── tool items ──────────────────────────────────────────────────────────

@@ -8,7 +8,6 @@ import logging
 from collections.abc import Awaitable
 from typing import Any
 
-from rich.markdown import Markdown
 from rich.markup import escape
 
 from voidx.ui.output.agent_display import agent_display_name
@@ -157,19 +156,17 @@ class DockEventConsumer:
             case AnsiAppended(text=text):
                 return self._dock.append_ansi(text)
             case MarkdownAppended(content=content):
-                return self._dock.capture(lambda console: console.print(Markdown(content)))
+                return self._dock.append_message(content, style="markdown")
             case ThoughtAppended(text=text, elapsed=elapsed):
                 return self._dock.append_thought(text, elapsed)
             case WarningAppended(message=message):
-                return self._dock.append_message(f"! {message}", style="yellow")
+                return self._dock.append_message(message, style="warning")
             case GuidanceSubmitted():
                 return None
             case ErrorAppended() as e:
                 return self._dock.append_error(e.message, parent=self._agent_parent(e.agent_id))
             case DiffAppended() as e:
-                from voidx.ui.output.diff import render_diff
-
-                return self._dock.capture(lambda console: render_diff(console, e.diff_text, e.title))
+                return self._dock.append_message(e.diff_text, style="diff", title=e.title)
             case StatusUpdated() as e:
                 if e.display == "record_only":
                     return self._dock.record_status(

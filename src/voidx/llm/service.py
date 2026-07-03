@@ -7,6 +7,7 @@ from langchain_core.messages import AIMessageChunk
 
 from voidx.config import ModelConfig
 from voidx.llm import provider
+from voidx.llm.provider import DeepSeekChatOpenAI
 
 
 def resolve_protocol(config: ModelConfig) -> str:
@@ -26,6 +27,7 @@ def get_context_limit(provider_name: str, protocol: str = "", context_window: in
 
 __all__ = [
     "create_chat_model",
+    "DeepSeekChatOpenAI",
     "extract_thinking",
     "get_context_limit",
     "resolve_protocol",

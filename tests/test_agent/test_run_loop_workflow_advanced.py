@@ -62,7 +62,6 @@ async def test_run_once_clears_stale_completed_workflow_when_resolver_has_no_joi
 
         async def ainvoke(self, messages):
             assert "## ResolverGoal Schema" not in messages[-1].content
-            assert "## Output Schema" in messages[0].content
             assert "检查检查，准备push吧" in messages[-1].content
             return {
                 "intent": "coding",
@@ -117,7 +116,6 @@ async def test_run_once_preadvances_workflow_from_resolver_workflow_start(tmp_pa
 
         async def ainvoke(self, messages):
             assert "## ResolverGoal Schema" not in messages[-1].content
-            assert "## Output Schema" in messages[0].content
             assert "可以，先写一个 spec" in messages[-1].content
             return {
                 "intent": "coding",

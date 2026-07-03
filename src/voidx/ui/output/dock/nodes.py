@@ -47,7 +47,15 @@ class DockNodeMixin(
         self._mark_settled(node)
         return node
 
-    def append_message(self, text: str, *, style: str = "", parent: OutputNode | None = None, markup: bool = False) -> OutputNode | None:
+    def append_message(
+        self,
+        text: str,
+        *,
+        style: str = "",
+        parent: OutputNode | None = None,
+        markup: bool = False,
+        title: str = "",
+    ) -> OutputNode | None:
         clean = _clean(text)
         if not clean.strip():
             return None
@@ -59,6 +67,12 @@ class DockNodeMixin(
         body_lines = lines[1:] if markup else [escape(line) for line in lines[1:]]
         if style:
             body_lines = [f"[{style}]{line}[/]" for line in body_lines]
+        payload: dict[str, str] = {}
+        if style:
+            payload["style"] = style
+        if title:
+            payload["title"] = title
+        payload["raw_text"] = clean
         node = self._new_settled_node(
             target,
             before_active_stream=parent is None,
@@ -66,6 +80,7 @@ class DockNodeMixin(
             header=header,
             body_lines=body_lines,
             collapsed=False,
+            payload=payload,
         )
         if parent is None and self._stream_node is None:
             self._current_agent = None
@@ -86,6 +101,7 @@ class DockNodeMixin(
             body_lines=[f"[red]  {escape(line)}[/red]" for line in lines[1:]],
             collapsed=False,
             status="error",
+            payload={"raw_text": clean},
         )
         self.refresh()
         return node
@@ -131,6 +147,7 @@ class DockNodeMixin(
             body_lines=body,
             collapsed=False,
             meta=summary,
+            payload={"raw_text": clean},
         )
         self._mark_settled(node)
         self.refresh()
@@ -225,6 +242,7 @@ class DockNodeMixin(
             body_lines=[escape(line) for line in lines[1:]],
             collapsed=collapsed,
             tool_call_id=tool_call_id,
+            payload={"raw_text": clean},
         )
         self._mark_subtree_settled(node)
         if target.node_type == "tool_call":
