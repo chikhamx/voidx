@@ -20,6 +20,7 @@ from voidx.runtime.task_state import (
     goal_type_from_join,
 )
 from voidx.workflow.dag import DEFAULT_WORKFLOW_DAG
+from voidx.llm.service import DeepSeekChatOpenAI
 
 
 GOAL_RESOLVER_TIMEOUT_SECONDS = 20
@@ -104,7 +105,8 @@ async def resolve_goal_for_turn(
 
     resolver_goal: ResolverGoal | None
     try:
-        runnable = structured(ResolverGoal)
+        method = "function_calling" if isinstance(model, DeepSeekChatOpenAI) else None
+        runnable = structured(ResolverGoal) if method is None else structured(ResolverGoal, method=method)
         resolver_messages = _resolver_messages_from_exchanges(user_text, task_state)
         raw = await asyncio.wait_for(
             runnable.ainvoke(resolver_messages),
@@ -231,17 +233,6 @@ def _truncate_error_text(value: str, limit: int = 2000) -> str:
 def _resolver_system_prompt() -> str:
     return (
         "You are a goal resolver. Classify the user's current turn into intent, goal, workflow, and kind_hint.\n"
-        "\n"
-        "## Output Schema\n"
-        "\n"
-        "Return a JSON object matching this template:\n"
-        "\n"
-        "{\n"
-        '  "intent": "coding" or "general",\n'
-        '  "goal": null or "<short summary of the user\'s request in their language, 1-2 sentences>",\n'
-        '  "workflow": null or "<one of the workflows listed below>",\n'
-        '  "kind_hint": null or "<semantic hint: review | debug | feature | inspect | refactor | test | docs>"\n'
-        "}\n"
         "\n"
         "## Field Rules\n"
         "\n"
