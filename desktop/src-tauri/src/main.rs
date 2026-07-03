@@ -4,6 +4,22 @@ use std::process::{Child, Command, Stdio};
 use std::sync::{Arc, Mutex};
 
 use serde_json::json;
+
+#[cfg(windows)]
+use std::os::windows::process::CommandExt;
+
+#[cfg(not(windows))]
+mod command_ext {
+    use std::process::Command;
+    pub trait CommandExt {
+        fn creation_flags(&mut self, _flags: u32) -> &mut Self;
+    }
+    impl CommandExt for Command {
+        fn creation_flags(&mut self, _flags: u32) -> &mut Self { self }
+    }
+}
+#[cfg(not(windows))]
+use command_ext::CommandExt;
 use tauri::{Emitter, State, WindowEvent};
 
 struct AppState {
@@ -134,7 +150,6 @@ fn resolve_python() -> Option<PathBuf> {
     // arbitrary code here. Mitigation: prefer VOIDX_PYTHON or a bundled venv
     // in production deployments.
     if cfg!(windows) {
-        use std::os::windows::process::CommandExt;
         const CREATE_NO_WINDOW: u32 = 0x08000000;
         if let Ok(output) = Command::new("py")
             .arg("-c")
@@ -158,7 +173,6 @@ fn resolve_python() -> Option<PathBuf> {
     probe.arg("-c").arg("import sys; print(sys.executable)");
     #[cfg(windows)]
     {
-        use std::os::windows::process::CommandExt;
         const CREATE_NO_WINDOW: u32 = 0x08000000;
         probe.creation_flags(CREATE_NO_WINDOW);
     }
@@ -251,7 +265,6 @@ fn spawn_backend(
         // child process, so only the Tauri window is visible to the user.
         #[cfg(windows)]
         {
-            use std::os::windows::process::CommandExt;
             const CREATE_NO_WINDOW: u32 = 0x08000000;
             command.creation_flags(CREATE_NO_WINDOW);
         }
@@ -351,7 +364,6 @@ fn kill_backend(child_handle: &Arc<Mutex<Option<Child>>>) {
             // the direct child.
             if cfg!(windows) {
                 // taskkill /T /F walks and terminates the process tree.
-                use std::os::windows::process::CommandExt;
                 const CREATE_NO_WINDOW: u32 = 0x08000000;
                 let _ = Command::new("taskkill")
                     .args(["/PID", &pid.to_string(), "/T", "/F"])
