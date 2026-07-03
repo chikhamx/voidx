@@ -1,3 +1,4 @@
+> **Status: Done**
 # Per-File Read-Write Lock for Tool Execution — 技术设计文档
 
 ## Context
