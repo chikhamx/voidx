@@ -21,7 +21,7 @@
 - `src/voidx/ui/tools/`: UI-side tools — clipboard, file picker, skill picker, IDE integration.
 - `src/voidx/ui/gateway/`: WebSocket gateway for web/desktop frontend.
 - `tests/`: pytest coverage — per-module test directories (agent, config, llm, lsp, mcp, memory, permission, runtime, skills, tools, ui, workflow, etc.) plus top-level install/npm packaging tests.
-- `frontend/test/`: vitest coverage for frontend JS modules — `slash`, `render`, `markdown`, `stream`, `main`; `setup.js` injects the DOM skeleton.
+frontend TypeScript modules — `slash`, `render`, `markdown`, `stream`, `main`, etc.; `setup.ts` injects the DOM skeleton.
 
 ## Runtime Environment
 - Use `./python.sh` (Unix) or `.\python.ps1` (Windows) as the Python entry point — these locate the voidx venv under `VOIDX_HOME` and forward all arguments. See `docs/dev-guide.md` for details. Commands below use the Unix form; Windows users substitute `.\python.ps1`.
@@ -36,7 +36,7 @@
 - Frontend dev server: `cd frontend && npm run dev`
 - Desktop dev shell: `cd desktop && npm run dev` (spawns Python sidecar via Tauri)
 - Frontend tests (all): `cd frontend && npm test`
-- Frontend tests (focused): `cd frontend && npx vitest run test/render.test.js`
+Frontend tests (focused): `cd frontend && npx vitest run test/render.test.ts`
 
 ## Code Rules
 - Keep modules small and named by responsibility.
@@ -57,12 +57,12 @@
 - Release flow and version file checklist: `docs/releasing.md` (single source of truth — do not duplicate).
 
 ## Frontend Testing
-- Framework: vitest + jsdom (configured in `frontend/vite.config.js` under `test`).
-- `frontend/test/setup.js` runs at module top level to inject the DOM skeleton (`#transcript`, `#todo-panel`, `#composer`, etc.) before any source module imports; `beforeEach` resets dynamic content between tests.
-- Test files live in `frontend/test/`, named `<module>.test.js`, mirroring `frontend/src/<module>.js`.
+- Framework: vitest + jsdom (configured in `frontend/vite.config.ts` under `test`).
+`frontend/test/setup.ts` runs at module top level
+Test files live in `frontend/test/`, named `<module>.test.ts`, mirroring `frontend/src/<module>.ts`.
 - Globals are enabled (`globals: true`) — `describe`/`it`/`expect` are available without import.
 - Stateful modules expose a `_resetForTest()` export to clear module-level state in `beforeEach`.
-- When adding a new frontend module: create `frontend/test/<module>.test.js`, export any private functions the tests need, and guard top-level side effects with `import.meta.env.TEST`.
+create `frontend/test/<module>.test.ts`
 
 ## Safety
 - Do not commit `.voidx/`, `.env*`, or local credentials.
