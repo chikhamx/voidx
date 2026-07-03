@@ -1,7 +1,9 @@
 from __future__ import annotations
 
+import asyncio
 import json
 import inspect
+import os
 
 from langchain_core.messages import ToolMessage
 
@@ -28,6 +30,65 @@ def _invalidate_tui(host: object) -> None:
 
 
 _OTHER_VALUE_PREFIX = "__voidx_choice_prompt_other__"
+
+
+
+class _FileRWLock:
+    """Async per-file read-write lock.
+
+    Multiple readers may hold the lock concurrently.
+    Writers wait for all readers to finish and get exclusive access.
+    Built on asyncio.Condition for correct cross-task coordination.
+    """
+
+    def __init__(self) -> None:
+        self._condition = asyncio.Condition()
+        self._readers = 0
+        self._writer_active = False
+
+    async def acquire_read(self) -> None:
+        async with self._condition:
+            while self._writer_active:
+                await self._condition.wait()
+            self._readers += 1
+
+    async def release_read(self) -> None:
+        async with self._condition:
+            self._readers -= 1
+            if self._readers == 0:
+                self._condition.notify_all()
+
+    async def acquire_write(self) -> None:
+        async with self._condition:
+            while self._writer_active or self._readers > 0:
+                await self._condition.wait()
+            self._writer_active = True
+
+    async def release_write(self) -> None:
+        async with self._condition:
+            self._writer_active = False
+            self._condition.notify_all()
+
+
+def _extract_file_paths(tool_call: dict) -> list[str]:
+    """Extract file paths from a tool call for per-file locking."""
+    name = tool_call.get("name", "")
+    args = tool_call.get("args") or {}
+    paths: list[str] = []
+
+    if name in {"read", "write", "replace"}:
+        fp = args.get("file_path")
+        if isinstance(fp, str) and fp:
+            paths.append(fp)
+    elif name == "file":
+        fp = args.get("file_path")
+        if isinstance(fp, str) and fp:
+            paths.append(fp)
+        dp = args.get("dest_path")
+        if isinstance(dp, str) and dp:
+            paths.append(dp)
+
+    return [os.path.normpath(p) for p in paths]
 
 
 def _dedupe_repeated_read_calls(tool_calls: list[dict]) -> tuple[list[dict], dict[str, str]]:
@@ -318,11 +379,52 @@ async def _execute_approved_batch(
     aggregate_status_id = ""
     show_parallel_status = agent_limit > 1 and parallel_agent_count > 1
 
-    async def execute_one_limited(tc):
+    # --- file read-write lock manager (per-batch) ---
+    file_lock_manager: dict[str, _FileRWLock] = {}
+
+    def _get_rwlock(path: str) -> _FileRWLock:
+        if path not in file_lock_manager:
+            file_lock_manager[path] = _FileRWLock()
+        return file_lock_manager[path]
+
+    async def execute_one_file_locked(tc):
+        paths = sorted(set(_extract_file_paths(tc)))
+        is_write = tc.get("name") in ("write", "replace", "file")
+        rw_locks: list[_FileRWLock] = []
+        # Acquire locks in sorted order to avoid deadlock across tools
+        try:
+            for p in paths:
+                lk = _get_rwlock(p)
+                rw_locks.append(lk)
+                if is_write:
+                    await lk.acquire_write()
+                else:
+                    await lk.acquire_read()
+
+            return await execute_one_fn(tc)
+        finally:
+            for lk, p in zip(rw_locks, paths):
+                if is_write:
+                    await lk.release_write()
+                else:
+                    await lk.release_read()
+
+    async def execute_one_no_file_lock(tc):
         if tc.get("name") == "agent":
             async with agent_semaphore:
                 return await execute_one_fn(tc)
         return await execute_one_fn(tc)
+
+    # Split into file ops (rwlock) and non-file ops (bash, etc.).
+    # Non-file ops must wait for all file ops to complete, so that
+    # a compile/test bash never runs before pending file writes.
+    file_calls: list[dict] = []
+    other_calls: list[dict] = []
+    for tc in unique_calls:
+        if _extract_file_paths(tc):
+            file_calls.append(tc)
+        else:
+            other_calls.append(tc)
 
     from voidx.runtime.ui import StatusFinished, StatusUpdated
     if show_parallel_status and host._ui.via_events():
@@ -334,9 +436,25 @@ async def _execute_approved_batch(
             stage="working",
         ))
 
+    # Run file ops first (rwlock), then non-file ops (bash, etc.).
+    # Results are collected back into original unique_calls order.
+    call_index = {tc.get("id", id(tc)): i for i, tc in enumerate(unique_calls)}
+    results: list = [None] * len(unique_calls)
+
+    async def _run_and_place(file_group, executor_fn):
+        if not file_group:
+            return
+        group_results = await __import__("asyncio").gather(
+            *[executor_fn(tc) for tc in file_group]
+        )
+        for tc, result in zip(file_group, group_results):
+            results[call_index[tc.get("id", id(tc))]] = result
+
     executed = []
     try:
-        executed = await __import__("asyncio").gather(*[execute_one_limited(tc) for tc in unique_calls])
+        await _run_and_place(file_calls, execute_one_file_locked)
+        await _run_and_place(other_calls, execute_one_no_file_lock)
+        executed = [r for r in results if r is not None]
     finally:
         if aggregate_status_id:
             await host._ui.events.emit(StatusFinished(
