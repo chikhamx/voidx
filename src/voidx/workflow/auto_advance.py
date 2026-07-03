@@ -6,6 +6,7 @@ need to call workflow for well-defined conditions:
 
 - review_has_issues: review agent returns FAIL or NEEDS_CHANGE
 - failed_implementation: bash/test execution fails while verify is active
+- passed_substantial: bash/test execution passes while verify is active
 
 failed_bug is NOT auto-detected: distinguishing "original bug still present"
 from "implementation broke something" requires semantic analysis that only
@@ -79,6 +80,9 @@ def auto_advance_events(
                 events.append(event)
         elif tool_name in ("bash", "powershell"):
             events.extend(_check_shell_result(metadata, active_names))
+            verify_event = _check_verify_passed(metadata, active_names)
+            if verify_event:
+                events.append(verify_event)
 
     return events
 
@@ -160,3 +164,39 @@ def _check_shell_result(
         reason="auto-detected from non-zero test command exit code",
         condition="failed_implementation",
     )]
+
+
+def _check_verify_passed(
+    metadata: dict,
+    active_names: set[str],
+) -> WorkflowStateEvent | None:
+    """Detect passed_substantial when a test command exits 0 while verify is active."""
+    exit_code = metadata.get("exit_code")
+    if exit_code is None:
+        return None
+    try:
+        if int(exit_code) != 0:
+            return None
+    except (TypeError, ValueError):
+        return None
+
+    command = metadata.get("command", "")
+    if not _TEST_COMMAND_RE.search(command):
+        return None
+
+    if "verify" not in active_names:
+        return None
+
+    edges = DEFAULT_WORKFLOW_DAG.edges_from("verify")
+    if not any(e.condition == "passed_substantial" for e in edges):
+        return None
+
+    return WorkflowStateEvent(
+        workflow="verify",
+        kind=WorkflowStateEventKind.SATISFIED,
+        ref="auto:passed_substantial",
+        ok=True,
+        summary="Verification passed — changes ready for review.",
+        reason="auto-detected from zero test command exit code",
+        condition="passed_substantial",
+    )

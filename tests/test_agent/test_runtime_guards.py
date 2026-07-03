@@ -126,7 +126,7 @@ def test_repetitive_todo_cycle_warns_then_skips_then_terminates():
     guards = RuntimeGuardState()
     summary = ToolCycleSummary(
         tool_names=["todo"],
-        only_tool="todo",
+        only_tool="todo:read",
         call_count=1,
         has_progress=False,
     )
@@ -135,16 +135,16 @@ def test_repetitive_todo_cycle_warns_then_skips_then_terminates():
     warning = guards.repetitive_tools.record_cycle(summary)
     assert warning is not None
     assert warning.level == "light"
-    assert "only called todo" in warning.message
+    assert "only called todo:read" in warning.message
 
     decision = guards.repetitive_tools.decision_for_pending([
-        {"name": "todo", "args": {"todos": []}, "id": "call_todo"},
+        {"name": "todo", "args": {"op": "read"}, "id": "call_todo"},
     ])
     assert decision.action == "skip"
     assert "Avoid repeating state updates" in decision.message
 
     second_decision = guards.repetitive_tools.decision_for_pending([
-        {"name": "todo", "args": {"todos": []}, "id": "call_todo_again"},
+        {"name": "todo", "args": {"op": "read"}, "id": "call_todo_again"},
     ])
     assert second_decision.action == "terminate"
     assert "stopped this turn" in second_decision.message
@@ -171,7 +171,7 @@ def test_repetitive_tool_cycle_resets_after_progress():
     guards = RuntimeGuardState()
     summary = ToolCycleSummary(
         tool_names=["todo"],
-        only_tool="todo",
+        only_tool="todo:read",
         call_count=1,
         has_progress=False,
     )
@@ -185,7 +185,7 @@ def test_repetitive_tool_cycle_resets_after_progress():
     guards.repetitive_tools.record_cycle(summary)
     warning = guards.repetitive_tools.record_cycle(summary)
     assert warning is not None
-    assert guards.repetitive_tools.warned_tool == "todo"
+    assert guards.repetitive_tools.warned_tool == "todo:read"
 
     guards.repetitive_tools.record_cycle(progress)
     assert guards.repetitive_tools.warned_tool == ""
@@ -194,7 +194,7 @@ def test_repetitive_tool_cycle_resets_after_progress():
     assert guards.repetitive_tools.record_cycle(summary) is None
     warning_again = guards.repetitive_tools.record_cycle(summary)
     assert warning_again is not None
-    assert guards.repetitive_tools.warned_tool == "todo"
+    assert guards.repetitive_tools.warned_tool == "todo:read"
 
 
 def test_no_progress_guard_warns_then_terminates_and_resets_on_progress():

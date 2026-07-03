@@ -11,9 +11,29 @@ from typing import Any, Literal
 from pydantic import BaseModel, Field
 
 
-LOW_VALUE_REPETITIVE_TOOLS = frozenset({"todo", "workflow", "checkpoint"})
+LOW_VALUE_REPETITIVE_TOOL_KEYS = frozenset({"todo:read", "checkpoint"})
 REPETITIVE_TOOL_EXEMPTIONS = frozenset({"bash", "powershell", "read", "grep"})
 EVIDENCE_TEXT_LIMIT = 500
+
+
+def tool_op_key(tool_call: dict[str, Any]) -> str:
+    """Return a tool+op key like 'todo:write' that distinguishes intent.
+
+    For todo, the op (write/update/read) determines whether the call
+    changes state.  For workflow, the action (enter/advance/done) is
+    the discriminator.  Other tools return the bare tool name.
+    """
+    tool_name = str(tool_call.get("name") or "")
+    args = tool_call.get("args") or {}
+    if tool_name == "todo":
+        op = str(args.get("op") or "read")
+        return f"todo:{op}"
+    if tool_name == "workflow":
+        action = str(args.get("action") or "")
+        if action:
+            return f"workflow:{action}"
+        return "workflow"
+    return tool_name
 
 
 class GuardGuidance(BaseModel):
@@ -109,7 +129,7 @@ class ToolFailureLoopState(BaseModel):
 
 class ToolCycleSummary(BaseModel):
     tool_names: list[str] = Field(default_factory=list)
-    only_tool: str = ""
+    only_tool: str = ""  # stores tool_op_key (e.g. "todo:write"), not bare tool name
     call_count: int = 0
     has_progress: bool = False
     evidence_keys: list[str] = Field(default_factory=list)
@@ -138,8 +158,7 @@ class RepetitiveToolCycleState(BaseModel):
             level="light",
             message=(
                 f"You have only called {tool_name} for the last {count} tool cycles.\n"
-                "Avoid repeating state updates. Take one concrete work action next,\n"
-                "or briefly explain what is blocking you."
+                "Avoid repeating state updates. Take one concrete work action next."
             ),
             metadata={"tool_name": tool_name, "count": count},
         )
@@ -152,13 +171,13 @@ class RepetitiveToolCycleState(BaseModel):
         if not tool or tool in REPETITIVE_TOOL_EXEMPTIONS:
             return False, "", 0
         if all(item.only_tool == tool for item in window):
-            if tool in LOW_VALUE_REPETITIVE_TOOLS and not any(item.has_progress for item in window):
+            if tool in LOW_VALUE_REPETITIVE_TOOL_KEYS and not any(item.has_progress for item in window):
                 return True, tool, len(window)
         return False, "", 0
 
     def decision_for_pending(self, tool_calls: list[dict[str, Any]]) -> GuardDecision:
-        only_tool = only_tool_name(tool_calls)
-        if not only_tool or only_tool != self.warned_tool or only_tool not in LOW_VALUE_REPETITIVE_TOOLS:
+        only_tool = only_tool_key(tool_calls)
+        if not only_tool or only_tool != self.warned_tool or only_tool not in LOW_VALUE_REPETITIVE_TOOL_KEYS:
             return GuardDecision()
         if self.skipped_tool == only_tool:
             return GuardDecision(
@@ -176,7 +195,7 @@ class RepetitiveToolCycleState(BaseModel):
             tool_name=only_tool,
             message=(
                 f"Runtime guard skipped repeated {only_tool} call. Avoid repeating state updates. "
-                "Take one concrete work action next, or explain what is blocking you."
+                "Take one concrete work action next."
             ),
             metadata={"tool_name": only_tool, "guard": "repetitive_tool_cycle"},
         )
@@ -390,7 +409,7 @@ def cycle_summary_from_tools(
     calls = [_item_tool_call(item) for item in executed]
     calls = [call for call in calls if call]
     tool_names = [str(call.get("name") or "") for call in calls]
-    only = only_tool_name(calls)
+    only = only_tool_key(calls)
     ok = result_ok or (lambda result: not (getattr(result, "metadata", {}) or {}).get("error"))
     has_progress = False
     evidence_keys: list[str] = []
@@ -407,7 +426,12 @@ def cycle_summary_from_tools(
         if getattr(result, "diff", None) and ok(result):
             has_progress = True
             break
-        if tool_name and tool_name not in LOW_VALUE_REPETITIVE_TOOLS and ok(result):
+        # Non-read-only todo/workflow calls always count as progress.
+        key = tool_op_key(tool_call)
+        if key in ("todo:write", "todo:update") or key.startswith("workflow:"):
+            has_progress = True
+        # Evidence: only skip low-value keys (todo:read, checkpoint).
+        if key and key not in LOW_VALUE_REPETITIVE_TOOL_KEYS and ok(result):
             evidence_key = _tool_evidence_key(tool_call, result)
             if evidence_key:
                 evidence_keys.append(evidence_key)
@@ -434,11 +458,10 @@ def _item_result(item: Any) -> Any:
     return getattr(item, "result", None)
 
 
-def only_tool_name(tool_calls: list[dict[str, Any]]) -> str:
-    names = [str(call.get("name") or "") for call in tool_calls if call.get("name")]
-    unique = set(names)
-    if len(unique) == 1:
-        return names[0]
+def only_tool_key(tool_calls: list[dict[str, Any]]) -> str:
+    keys = {tool_op_key(call) for call in tool_calls if call.get("name")}
+    if len(keys) == 1:
+        return keys.pop()
     return ""
 
 

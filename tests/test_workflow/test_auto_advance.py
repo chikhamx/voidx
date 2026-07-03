@@ -215,7 +215,8 @@ class TestAutoAdvanceFailedImplementation:
         assert len(events) == 1
         assert events[0].condition == "failed_implementation"
 
-    def test_bash_zero_exit_does_not_trigger(self):
+    def test_bash_zero_exit_triggers_passed_substantial(self):
+        """bash exit_code=0 + test runner + verify active → passed_substantial."""
         runs = [
             WorkflowRunState(
                 name="verify",
@@ -230,7 +231,9 @@ class TestAutoAdvanceFailedImplementation:
             [{"name": "bash", "result": result}],
             workflow_runs=runs,
         )
-        assert len(events) == 0
+        assert len(events) == 1
+        assert events[0].workflow == "verify"
+        assert events[0].condition == "passed_substantial"
 
     def test_no_active_verification_does_not_trigger(self):
         runs = [

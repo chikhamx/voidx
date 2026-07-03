@@ -328,12 +328,12 @@ async def test_run_subagent_terminates_after_no_progress_cycles(tmp_path, monkey
             return self
 
         def ids(self):
-            return ["checkpoint", "workflow"]
+            return ["checkpoint", "todo"]
 
         def tools_for_llm(self):
             return [
                 {"name": "checkpoint", "description": "checkpoint", "input_schema": {}},
-                {"name": "workflow", "description": "advance", "input_schema": {}},
+                {"name": "todo", "description": "manage tasks", "input_schema": {"properties": {"op": {"type": "string"}}}},
             ]
 
         async def execute_tool(self, tid, _targs, _ctx):
@@ -345,12 +345,13 @@ async def test_run_subagent_terminates_after_no_progress_cycles(tmp_path, monkey
         if len(stream_calls) == 4:
             assert any("No meaningful progress" in str(message.content) for message in messages)
         if len(stream_calls) <= 5:
-            tool_name = "checkpoint" if len(stream_calls) % 2 else "workflow"
+            tool_name = "checkpoint" if len(stream_calls) % 2 else "todo"
+            tool_args = {} if tool_name == "checkpoint" else {"op": "read"}
             return AIMessage(
                 content="",
                 tool_calls=[{
                     "name": tool_name,
-                    "args": {},
+                    "args": tool_args,
                     "id": f"call_{len(stream_calls)}",
                     "type": "tool_call",
                 }],
@@ -380,9 +381,9 @@ async def test_run_subagent_terminates_after_no_progress_cycles(tmp_path, monkey
     assert "No meaningful progress" in output
     assert executed_tools == [
         "checkpoint",
-        "workflow",
+        "todo",
         "checkpoint",
-        "workflow",
+        "todo",
         "checkpoint",
     ]
 
