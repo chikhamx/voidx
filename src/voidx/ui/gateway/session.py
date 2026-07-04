@@ -883,9 +883,8 @@ class GatewaySession:
         return Settings(workspace)
 
     def _skill_service(self, settings):
-        from voidx.skills.registry import SkillRegistry
         from voidx.skills.service import SkillService
-        return SkillService(SkillRegistry(self._workspace or "."), selection=settings.get_skill_selection())
+        return SkillService.for_workspace(self._workspace or ".", selection=settings.get_skill_selection())
 
     def _skill_summaries(self, settings) -> list[dict]:
         service = self._skill_service(settings)

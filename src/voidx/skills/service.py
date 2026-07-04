@@ -26,6 +26,10 @@ def skill_reference_message(*args, **kwargs):
 
 
 class SkillService:
+    @classmethod
+    def for_workspace(cls, workspace: str, *, selection: SkillSelectionConfig | None = None) -> "SkillService":
+        return cls(SkillRegistry(workspace), selection=selection)
+
     def __init__(
         self,
         registry: SkillRegistry,
