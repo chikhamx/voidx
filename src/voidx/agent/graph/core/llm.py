@@ -19,7 +19,7 @@ from voidx.agent.task_state import GoalResolution, TaskState, goal_label, goal_t
 from voidx.agent.todo_state import sanitize_todo_replay_messages
 from voidx.agent.message_trimming import trim_superseded_file_tools
 from voidx.agent.tool_exchange_sanitizer import sanitize_failed_tool_exchanges
-from voidx.agent.tool_filters import filter_unavailable_lsp_tools
+from voidx.agent.tool_filters import filter_unavailable_lsp_tools, strip_gemini_unsupported_schema_keys
 from voidx.agent.graph.streaming import (
     extract_text,
     is_malformed_tool_call_response,
@@ -178,6 +178,7 @@ class GraphLlmMixin:
             getattr(self, "_task_state", None),
         )
         tool_defs = filter_unavailable_lsp_tools(tool_defs, getattr(self, "_lsp_manager", None))
+        tool_defs = strip_gemini_unsupported_schema_keys(tool_defs, resolve_protocol(self.config.model))
 
         guidance_messages = self._drain_pending_guidance()
         state_messages = sanitize_todo_replay_messages(

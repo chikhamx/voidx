@@ -26,7 +26,7 @@ from voidx.agent.runtime_context import (
 )
 from voidx.runtime.task_state import GoalResolution, TaskState, WorkflowRoute
 from voidx.agent.tool_messages import sanitize_tool_message_content
-from voidx.agent.tool_filters import filter_unavailable_lsp_tools
+from voidx.agent.tool_filters import filter_unavailable_lsp_tools, strip_gemini_unsupported_schema_keys
 from voidx.config import Config
 from voidx.llm.service import create_chat_model, resolve_protocol
 from voidx.llm.instruction import WorkflowRuntimeContext
@@ -87,6 +87,7 @@ async def run_subagent(
     model = create_chat_model(api_key, model_cfg)
     tool_defs = agent_tools.tools_for_llm()
     tool_defs = filter_unavailable_lsp_tools(tool_defs, lsp_manager)
+    tool_defs = strip_gemini_unsupported_schema_keys(tool_defs, resolve_protocol(config.model))
 
     if sub_messages is None:
         sub_messages = []
