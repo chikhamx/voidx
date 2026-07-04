@@ -13,12 +13,8 @@ from voidx.agent.task_state import TodoRunItem, TodoRunState
 
 _DSML_MARKER_RE = r"\|\|DSML\|\|"
 # Tools whose ToolMessage should be sanitized on replay.
-# This is the source of truth — display_policy.DEFAULT_DISPLAY_RULES references this set
-# via REPLAY_SANITIZED_TOOL_NAMES to keep replay_sanitize flags in sync.
-_REPLAY_SANITIZED_TOOL_NAMES = frozenset({
-    "todo",
-    "workflow",
-})
+# Empty by default: todo/workflow exchanges stay visible to the LLM.
+_REPLAY_SANITIZED_TOOL_NAMES = frozenset()
 _REPLAY_SANITIZED_TOOL_PATTERN = "|".join(sorted(map(re.escape, _REPLAY_SANITIZED_TOOL_NAMES)))
 _DSML_RUNTIME_INVOKE_RE = re.compile(
     rf"<{_DSML_MARKER_RE}invoke\b(?=[^>]*\bname=\"(?:{_REPLAY_SANITIZED_TOOL_PATTERN})\")[^>]*>.*?</{_DSML_MARKER_RE}invoke>",

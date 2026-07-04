@@ -234,6 +234,24 @@ def test_no_progress_guard_warns_then_terminates_and_resets_on_progress():
     assert guards.no_progress.decision().action == "allow"
 
 
+
+
+def test_no_progress_guard_terminates_repeated_workflow_guidance():
+    guards = RuntimeGuardState()
+    summary = cycle_summary_from_tools([{
+        "tool_call": {"name": "workflow", "args": {"action": "advance", "workflow": "debug"}},
+        "result": ToolResult(
+            output="Workflow node 'debug' is not currently active.",
+            metadata={"workflow_guidance": {"applied": False, "reason": "invalid_active_workflow"}},
+        ),
+    }])
+
+    assert summary.has_progress is False
+    assert summary.evidence_keys == []
+    for _ in range(5):
+        guards.no_progress.record_cycle(summary)
+
+    assert guards.no_progress.decision().action == "terminate"
 def test_no_progress_guard_counts_repeated_same_evidence_as_stalled():
     guards = RuntimeGuardState()
     stalled = ToolCycleSummary(

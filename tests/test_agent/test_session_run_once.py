@@ -233,7 +233,7 @@ async def test_run_once_commits_event_todo_at_turn_end(tmp_path):
 
 
 @pytest.mark.asyncio
-async def test_run_once_persists_sanitized_todo_replay_rows(tmp_path):
+async def test_run_once_persists_todo_replay_rows(tmp_path):
     session = await create_session(workspace=str(tmp_path))
     try:
         graph = VoidXGraph(Config(workspace=str(tmp_path)), api_key=None, session=session)
@@ -269,13 +269,13 @@ async def test_run_once_persists_sanitized_todo_replay_rows(tmp_path):
 
         rows = await load_messages(session.id)
 
-        assert [row.role for row in rows] == ["user", "assistant"]
-        assert rows[1].content == "done"
-        assert all(
-            not any(call.get("name") == "todo" for call in (row.tool_calls or []))
+        assert [row.role for row in rows] == ["user", "assistant", "assistant"]
+        assert rows[1].content == ""
+        assert rows[2].content == "done"
+        assert any(
+            any(call.get("name") == "todo" for call in (row.tool_calls or []))
             for row in rows
         )
-        assert all(row.tool_call_id != "call_todo" for row in rows)
     finally:
         await delete_session(session.id)
 

@@ -11,7 +11,7 @@ from typing import Any, Literal
 from pydantic import BaseModel, Field
 
 
-LOW_VALUE_REPETITIVE_TOOL_KEYS = frozenset({"todo:read", "checkpoint"})
+LOW_VALUE_REPETITIVE_TOOL_KEYS = frozenset({"todo:read", "checkpoint", "workflow:advance", "workflow:enter", "workflow:done"})
 REPETITIVE_TOOL_EXEMPTIONS = frozenset({"bash", "powershell", "read", "grep"})
 EVIDENCE_TEXT_LIMIT = 500
 
@@ -426,11 +426,15 @@ def cycle_summary_from_tools(
         if getattr(result, "diff", None) and ok(result):
             has_progress = True
             break
-        # Non-read-only todo/workflow calls always count as progress.
+        # Non-read-only todo/workflow calls usually count as progress; workflow guidance does not.
         key = tool_op_key(tool_call)
-        if key in ("todo:write", "todo:update") or key.startswith("workflow:"):
+        metadata = getattr(result, "metadata", {}) or {}
+        is_workflow_guidance = "workflow_guidance" in metadata
+        if key in ("todo:write", "todo:update") or (key.startswith("workflow:") and not is_workflow_guidance):
             has_progress = True
-        # Evidence: only skip low-value keys (todo:read, checkpoint).
+        if is_workflow_guidance:
+            continue
+        # Evidence: only skip low-value keys (todo:read, checkpoint, workflow guidance actions).
         if key and key not in LOW_VALUE_REPETITIVE_TOOL_KEYS and ok(result):
             evidence_key = _tool_evidence_key(tool_call, result)
             if evidence_key:

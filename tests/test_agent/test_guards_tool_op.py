@@ -93,8 +93,8 @@ def test_low_value_keys_excludes_todo_write():
     assert "todo:write" not in LOW_VALUE_REPETITIVE_TOOL_KEYS
 
 
-def test_low_value_keys_excludes_workflow_advance():
-    assert "workflow:advance" not in LOW_VALUE_REPETITIVE_TOOL_KEYS
+def test_low_value_keys_contains_workflow_advance():
+    assert "workflow:advance" in LOW_VALUE_REPETITIVE_TOOL_KEYS
 
 
 # ── is_stuck with tool_op_key awareness ───────────────────────
@@ -127,6 +127,21 @@ def test_stuck_does_trigger_for_todo_read():
 
 
 # ── decision_for_pending with tool_op_key awareness ───────────
+
+
+def test_stuck_does_trigger_for_workflow_guidance_advance():
+    guards = RuntimeGuardState()
+    summary = ToolCycleSummary(
+        tool_names=["workflow"],
+        only_tool="workflow:advance",
+        call_count=1,
+        has_progress=False,
+    )
+    guards.repetitive_tools.record_cycle(summary)
+    warning = guards.repetitive_tools.record_cycle(summary)
+    assert warning is not None
+    assert warning.level == "light"
+    assert "workflow:advance" in warning.message
 
 def test_decision_allows_todo_write():
     guards = RuntimeGuardState()
@@ -218,6 +233,31 @@ def test_cycle_summary_todo_read_no_progress():
 def test_cycle_summary_workflow_advance_has_progress():
     summary = cycle_summary_from_tools(
         [_executed("workflow", {"action": "advance"})],
+        result_ok=_result_ok,
+    )
+    assert summary.has_progress is True
+
+
+def test_cycle_summary_workflow_guidance_no_progress_or_evidence():
+    summary = cycle_summary_from_tools(
+        [_executed(
+            "workflow",
+            {"action": "advance", "workflow": "debug"},
+            metadata={"workflow_guidance": {"applied": False, "reason": "invalid_active_workflow"}},
+        )],
+        result_ok=_result_ok,
+    )
+    assert summary.has_progress is False
+    assert summary.evidence_keys == []
+
+
+def test_cycle_summary_workflow_success_progress():
+    summary = cycle_summary_from_tools(
+        [_executed(
+            "workflow",
+            {"action": "advance"},
+            metadata={"workflow_transition": {"from": "debug", "to": "tdd"}},
+        )],
         result_ok=_result_ok,
     )
     assert summary.has_progress is True

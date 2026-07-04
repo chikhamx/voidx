@@ -107,15 +107,13 @@ class ToolDisplayPolicy(BaseModel):
 
 DEFAULT_DISPLAY_RULES: dict[str, ToolDisplayRule] = {
     # ── Hidden：runtime-only / barrier / 状态工具 ──
-    # Of these, only todo/workflow
-    # also suppress ToolMessage on replay — see voidx.agent.todo_state._REPLAY_SANITIZED_TOOL_NAMES
-    # The rest (task_status, document, skill) keep ToolMessage for the LLM.
-    "todo": ToolDisplayRule(tool_name="todo", mode=ToolDisplayMode.HIDDEN, replay_sanitize=True),
+    # These tools are hidden in UI output, but their ToolMessage stays in replay context.
+    "todo": ToolDisplayRule(tool_name="todo", mode=ToolDisplayMode.HIDDEN),
     "task_status": ToolDisplayRule(tool_name="task_status", mode=ToolDisplayMode.HIDDEN),
     "document": ToolDisplayRule(tool_name="document", mode=ToolDisplayMode.HIDDEN),
     "checkpoint": ToolDisplayRule(tool_name="checkpoint", mode=ToolDisplayMode.HIDDEN),
     "compact": ToolDisplayRule(tool_name="compact", mode=ToolDisplayMode.HIDDEN),
-    "workflow": ToolDisplayRule(tool_name="workflow", mode=ToolDisplayMode.HIDDEN, replay_sanitize=True),
+    "workflow": ToolDisplayRule(tool_name="workflow", mode=ToolDisplayMode.HIDDEN),
     "skill": ToolDisplayRule(tool_name="skill", mode=ToolDisplayMode.HIDDEN),
     "clarify": ToolDisplayRule(tool_name="clarify", mode=ToolDisplayMode.HIDDEN),
     # ── Summary：搜索/查询类 ──

@@ -292,8 +292,8 @@ async def test_stream_llm_sanitizes_replayed_workflow_tool_calls():
         "anthropic",
     )
 
-    assert [type(message) for message in model.messages] == [HumanMessage, HumanMessage]
-    assert [message.content for message in model.messages] == ["hi", "next"]
+    assert [type(message) for message in model.messages] == [HumanMessage, AIMessage, ToolMessage, HumanMessage]
+    assert [message.content for message in model.messages] == ["hi", "", "workflow output", "next"]
 
 
 @pytest.mark.parametrize("tool_name", ["checkpoint", "clarify"])

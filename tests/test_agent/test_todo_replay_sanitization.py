@@ -5,70 +5,57 @@ sys.path.insert(0, str(Path(__file__).parent.parent.parent / "src"))
 
 from langchain_core.messages import AIMessage, HumanMessage, ToolMessage
 
-from voidx.agent.todo_state import _latest_todo_tool_call_ids
+from voidx.agent.todo_state import sanitize_todo_replay_messages
 
 
 def _ai_with_calls(*calls: dict) -> AIMessage:
     return AIMessage(content="", tool_calls=list(calls))
 
 
-def _tool(tool_call_id: str) -> ToolMessage:
-    return ToolMessage(content="result", tool_call_id=tool_call_id)
+def _tool(tool_call_id: str, content: str = "result") -> ToolMessage:
+    return ToolMessage(content=content, tool_call_id=tool_call_id)
 
 
-def test_no_todo_call_returns_empty_set():
+def test_runtime_tool_messages_preserved_across_multiple_todo_and_workflow_rounds():
     messages = [
-        _ai_with_calls({"id": "bash_1", "name": "bash", "args": {}}),
-        _tool("bash_1"),
+        HumanMessage(content="start"),
+        _ai_with_calls({"id": "todo_1", "name": "todo", "args": {"op": "write"}}),
+        _tool("todo_1", "todo write result"),
+        _ai_with_calls({"id": "wf_1", "name": "workflow", "args": {"action": "advance"}}),
+        _tool("wf_1", "workflow advance result"),
+        _ai_with_calls({"id": "todo_2", "name": "todo", "args": {"op": "update"}}),
+        _tool("todo_2", "todo update result"),
+        _ai_with_calls({"id": "wf_2", "name": "workflow", "args": {"action": "advance"}}),
+        _tool("wf_2", "workflow guidance result"),
     ]
-    assert _latest_todo_tool_call_ids(messages) == set()
 
+    sanitized = sanitize_todo_replay_messages(messages, preserve_latest_tool_exchange=True)
 
-def test_todo_at_trailing_segment_is_preserved():
-    messages = [
-        _ai_with_calls({"id": "todo_1", "name": "todo", "args": {}}),
-        _tool("todo_1"),
+    assert sanitized == messages
+    assert [message.tool_call_id for message in sanitized if isinstance(message, ToolMessage)] == [
+        "todo_1",
+        "wf_1",
+        "todo_2",
+        "wf_2",
     ]
-    assert _latest_todo_tool_call_ids(messages) == {"todo_1"}
 
 
-def test_todo_in_middle_followed_by_other_tools_is_preserved():
+def test_runtime_tool_content_blocks_are_not_sanitized_for_todo_or_workflow():
     messages = [
-        _ai_with_calls({"id": "todo_1", "name": "todo", "args": {}}),
-        _tool("todo_1"),
-        _ai_with_calls({"id": "bash_1", "name": "bash", "args": {}}),
-        _tool("bash_1"),
-    ]
-    assert _latest_todo_tool_call_ids(messages) == {"todo_1"}
-
-
-def test_todo_mixed_with_non_todo_in_same_ai_only_keeps_todo():
-    messages = [
-        _ai_with_calls(
-            {"id": "todo_1", "name": "todo", "args": {}},
-            {"id": "bash_1", "name": "bash", "args": {}},
+        AIMessage(
+            content=[
+                {"type": "tool_use", "id": "todo_1", "name": "todo", "input": {"op": "write"}},
+                {"type": "tool_use", "id": "wf_1", "name": "workflow", "input": {"action": "advance"}},
+            ],
+            tool_calls=[
+                {"id": "todo_1", "name": "todo", "args": {"op": "write"}},
+                {"id": "wf_1", "name": "workflow", "args": {"action": "advance"}},
+            ],
         ),
         _tool("todo_1"),
-        _tool("bash_1"),
-    ]
-    assert _latest_todo_tool_call_ids(messages) == {"todo_1"}
-
-
-def test_multiple_ai_with_todo_keeps_only_latest():
-    messages = [
-        _ai_with_calls({"id": "todo_A", "name": "todo", "args": {}}),
-        _tool("todo_A"),
-        _ai_with_calls({"id": "todo_B", "name": "todo", "args": {}}),
-        _tool("todo_B"),
-    ]
-    assert _latest_todo_tool_call_ids(messages) == {"todo_B"}
-
-
-def test_trailing_workflow_only_does_not_block_todo_preservation():
-    messages = [
-        _ai_with_calls({"id": "todo_1", "name": "todo", "args": {}}),
-        _tool("todo_1"),
-        _ai_with_calls({"id": "wf_1", "name": "workflow", "args": {}}),
         _tool("wf_1"),
     ]
-    assert _latest_todo_tool_call_ids(messages) == {"todo_1"}
+
+    sanitized = sanitize_todo_replay_messages(messages)
+
+    assert sanitized == messages
