@@ -9,7 +9,7 @@ from langchain_core.messages import AIMessage, AIMessageChunk, HumanMessage, Too
 from langchain_openai import ChatOpenAI
 
 from voidx.config import ModelConfig
-from voidx.llm.provider import DeepSeekChatOpenAI, create_chat_model, extract_thinking, resolve_protocol
+from voidx.llm.provider import DeepSeekChatOpenAI, create_chat_model, extract_thinking, get_context_limit, resolve_protocol
 
 
 PROVIDER_DEFAULTS = {
@@ -24,6 +24,7 @@ PROVIDER_DEFAULTS = {
     "kimi": ("deepseek", DeepSeekChatOpenAI, "https://api.moonshot.cn/v1"),
     "doubao": ("deepseek", DeepSeekChatOpenAI, "https://ark.cn-beijing.volces.com/api/v3"),
     "minimax": ("deepseek", DeepSeekChatOpenAI, "https://api.minimax.io/v1"),
+    "xunfei-coding-plan": ("openai", ChatOpenAI, "https://maas-coding-api.cn-huabei-1.xf-yun.com/v2"),
 }
 
 
@@ -344,3 +345,44 @@ def test_zhipu_reasoning_uses_thinking_format():
     assert isinstance(zhipu_plain, DeepSeekChatOpenAI)
     assert zhipu_plain.extra_body is None
 
+
+
+def test_get_context_limit_xunfei_coding_plan():
+    assert get_context_limit("xunfei-coding-plan") == 92_160
+
+
+def test_xunfei_coding_plan_strips_stainless_headers():
+    """Third-party relays with openai protocol get x-stainless-* headers cleared."""
+    model = create_chat_model(
+        "test-key",
+        ModelConfig(provider="xunfei-coding-plan", model="astron-code-latest"),
+    )
+    assert model.default_headers is not None
+    assert model.default_headers.get("x-stainless-lang") == ""
+    assert model.default_headers.get("User-Agent") == "voidx/1.0"
+
+def test_xunfei_coding_plan_passes_through_reasoning_effort():
+    """xunfei-coding-plan is an OpenAI protocol proxy — transparently passes reasoning effort."""
+    # high effort
+    model = create_chat_model(
+        "test-key",
+        ModelConfig(provider="xunfei-coding-plan", model="astron-code-latest", reasoning_effort="high"),
+    )
+    assert model.reasoning_effort is None
+    assert model.extra_body == {"reasoning": {"effort": "high"}}
+
+    # no effort → no params
+    plain = create_chat_model(
+        "test-key",
+        ModelConfig(provider="xunfei-coding-plan", model="astron-code-latest", reasoning_effort=None),
+    )
+    assert plain.reasoning_effort is None
+    assert plain.extra_body is None
+
+    # off → none (passed through, no coercion)
+    off = create_chat_model(
+        "test-key",
+        ModelConfig(provider="xunfei-coding-plan", model="astron-code-latest", reasoning_effort="off"),
+    )
+    assert off.reasoning_effort is None
+    assert off.extra_body == {"reasoning": {"effort": "none"}}

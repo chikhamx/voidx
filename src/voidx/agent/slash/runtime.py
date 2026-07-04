@@ -17,6 +17,7 @@ _STATIC_PROVIDERS = [
     "kimi",
     "doubao",
     "typex",
+    "xunfei-coding-plan",
 ]
 
 

@@ -65,6 +65,8 @@ _PROVIDER_PROTOCOLS: dict[str, str] = {
     "doubao": PROTOCOL_DEEPSEEK,
     "typex": PROTOCOL_DEEPSEEK,
     "minimax": PROTOCOL_DEEPSEEK,
+    # Xunfei Astron Coding Plan — OpenAI-compatible proxy
+    "xunfei-coding-plan": "openai",
     "gemini": "gemini",
 }
 
@@ -81,6 +83,7 @@ _DEFAULT_BASE_URLS: dict[tuple[str, str], str] = {
     ("doubao", PROTOCOL_DEEPSEEK): "https://ark.cn-beijing.volces.com/api/v3",
     ("typex", PROTOCOL_DEEPSEEK): "https://newapi.typex-test.cn/v1",
     ("minimax", PROTOCOL_DEEPSEEK): "https://api.minimax.io/v1",
+    ("xunfei-coding-plan", "openai"): "https://maas-coding-api.cn-huabei-1.xf-yun.com/v2",
 }
 
 
@@ -449,7 +452,7 @@ def _openai_reasoning_kwargs(config: ModelConfig) -> dict:
             effort = "low"
         return {"extra_body": {"reasoning": {"effort": effort}}}
 
-    if config.provider == "openrouter":
+    if config.provider in ("openrouter", "xunfei-coding-plan"):
         if effort is None:
             return {}
         return {"extra_body": {"reasoning": {"effort": effort}}}
@@ -650,6 +653,7 @@ def get_context_limit(provider: str, protocol: str = "", context_window: int | N
         "doubao": 256_000,
         "typex": 128_000,
         "minimax": 1_000_000,
+        "xunfei-coding-plan": 92_160,
         "gemini": 1_000_000,
     }
     if provider in limits:

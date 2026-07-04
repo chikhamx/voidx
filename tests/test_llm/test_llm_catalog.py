@@ -44,3 +44,7 @@ async def test_list_models_logs_unexpected_fetcher_failure_and_falls_back(monkey
 
     assert models == ["static-model"]
     assert f"Unexpected error fetching models for {provider}" in caplog.text
+
+
+def test_xunfei_coding_plan_static_models():
+    assert "astron-code-latest" in catalog.STATIC_MODELS.get("xunfei-coding-plan", [])

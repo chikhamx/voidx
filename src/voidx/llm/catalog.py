@@ -78,6 +78,9 @@ STATIC_MODELS: dict[str, list[str]] = {
     "typex": [
         "zai-org/GLM-5-FP8",
     ],
+    "xunfei-coding-plan": [
+        "astron-code-latest",
+    ],
 }
 
 # ── fetcher registry ───────────────────────────────────────────────────────
