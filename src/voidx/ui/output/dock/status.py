@@ -76,6 +76,20 @@ def active_llm_retry_detail_text() -> str:
     return _clean(record.detail).strip()
 
 
+def active_error_text() -> str:
+    record = _status_record("error:current")
+    if record is None:
+        return ""
+    return _clean(record.label).strip()
+
+
+def active_error_detail_text() -> str:
+    record = _status_record("error:current")
+    if record is None:
+        return ""
+    return _clean(record.detail).strip()
+
+
 def _status_record(status_id: str) -> DockStatusRecord | None:
     current = get_dock()
     status_record = getattr(current, "status_record", None)

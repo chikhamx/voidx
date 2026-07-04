@@ -131,6 +131,8 @@ class DockEventConsumer:
             case ResetRequested():
                 self._tool_nodes.clear()
                 self._dock.clear_status_record(PERMISSION_REQUEST_STATUS_ID)
+                self._dock.clear_status_record("error:current")
+                self._dock.clear_status_record("llm:retry")
                 self._hidden_tool_ids.clear()
                 self._agent_nodes.clear()
                 self._agents_with_specific_status.clear()
@@ -138,6 +140,8 @@ class DockEventConsumer:
             case TurnStarted(text=text):
                 self._tool_nodes.clear()
                 self._dock.clear_status_record(PERMISSION_REQUEST_STATUS_ID)
+                self._dock.clear_status_record("error:current")
+                self._dock.clear_status_record("llm:retry")
                 self._hidden_tool_ids.clear()
                 self._agent_nodes.clear()
                 self._agents_with_specific_status.clear()
@@ -164,11 +168,18 @@ class DockEventConsumer:
             case GuidanceSubmitted():
                 return None
             case ErrorAppended() as e:
+                self._dock.clear_status_record("llm:retry")
+                self._dock.record_status(
+                    "error:current",
+                    "Error",
+                    e.message,
+                    stage="error",
+                )
                 return self._dock.append_error(e.message, parent=self._agent_parent(e.agent_id))
             case DiffAppended() as e:
                 return self._dock.append_message(e.diff_text, style="diff", title=e.title)
             case StatusUpdated() as e:
-                if e.display == "record_only":
+                if e.display == "record_only" or e.status_id == "llm:retry":
                     return self._dock.record_status(
                         e.status_id,
                         e.label,

@@ -185,7 +185,7 @@ def test_busy_activity_label_replaces_verb_during_thinking_stream(tmp_path, monk
 
 
 
-def test_busy_activity_label_uses_retrying_verb_and_places_error_detail_last(tmp_path, monkeypatch):
+def test_busy_activity_label_moves_retry_delay_into_verb_and_trims_detail(tmp_path, monkeypatch):
     monkeypatch.setattr("voidx.ui.tui.render_activity.time.monotonic", lambda: 105.0)
     tui = _tui(tmp_path)
     tui._busy = True
@@ -200,7 +200,84 @@ def test_busy_activity_label_uses_retrying_verb_and_places_error_detail_last(tmp
             stage="working",
         )
 
-        assert tui._busy_activity_label() == "◐ Retrying (5s retrying in 2s: Connection error.)"
+        assert tui._busy_activity_label() == "◐ Retrying in 2s (5s Connection error.)"
+    finally:
+        dock.deactivate()
+        dock.reset()
+
+
+def test_busy_activity_label_truncates_long_retry_error_detail(tmp_path, monkeypatch):
+    monkeypatch.setattr("voidx.ui.tui.render_activity.time.monotonic", lambda: 105.0)
+    tui = _tui(tmp_path)
+    tui._busy = True
+    tui._busy_started_at = 100.0
+    dock.begin_capture()
+    try:
+        long_error = (
+            "Error code: 503 - {'error': {'message': 'Provider failed to respond within "
+            "30000ms (cch_session_id=abc123)', 'code': 'service_unavailable_error'}}"
+        )
+        dock.record_status(
+            "llm:retry",
+            "Retrying",
+            f"retrying in 2s: {long_error}",
+            stage="working",
+        )
+
+        label = tui._busy_activity_label()
+        assert label.startswith("◐ Retrying in 2s (5s Error code: 503")
+        assert "retrying in 2s:" not in label
+        assert "cch_session_id" not in label
+        assert label.endswith("…)")
+    finally:
+        dock.deactivate()
+        dock.reset()
+
+
+def test_busy_activity_label_prefers_error_over_retry_status(tmp_path, monkeypatch):
+    monkeypatch.setattr("voidx.ui.tui.render_activity.time.monotonic", lambda: 105.0)
+    tui = _tui(tmp_path)
+    tui._busy = True
+    tui._busy_started_at = 100.0
+    tui._busy_activity_verb = "Pondering"
+    dock.begin_capture()
+    try:
+        dock.record_status(
+            "llm:retry",
+            "Retrying",
+            "retrying in 4s: provider timeout",
+            stage="working",
+        )
+        dock.record_status(
+            "error:current",
+            "Error",
+            "provider timeout",
+            stage="error",
+        )
+
+        assert tui._busy_activity_label() == "◐ Error (5s provider timeout)"
+    finally:
+        dock.deactivate()
+        dock.reset()
+
+
+def test_busy_activity_label_prefers_progress_over_retry_status(tmp_path, monkeypatch):
+    monkeypatch.setattr("voidx.ui.tui.render_activity.time.monotonic", lambda: 105.0)
+    tui = _tui(tmp_path)
+    tui._busy = True
+    tui._busy_started_at = 100.0
+    tui._busy_activity_verb = "Pondering"
+    dock.begin_capture()
+    try:
+        dock.record_status(
+            "llm:retry",
+            "Retrying",
+            "retrying in 4s: provider timeout",
+            stage="working",
+        )
+        dock.record_status("agent:-1:progress", "Agent step 3/10", stage="agent step")
+
+        assert tui._busy_activity_label() == "◐ step 3/10 (5s)"
     finally:
         dock.deactivate()
         dock.reset()

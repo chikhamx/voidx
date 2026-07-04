@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+import re
 import time
 
 from rich.cells import cell_len
@@ -12,6 +13,8 @@ from voidx.ui.output.dock import (
     active_agent_step_text,
     active_compaction_detail_text,
     active_compaction_text,
+    active_error_detail_text,
+    active_error_text,
     active_llm_retry_detail_text,
     active_llm_retry_text,
     active_permission_request_detail_text,
@@ -29,6 +32,8 @@ from voidx.ui.tui.helpers import _clip_cells
 
 
 BUSY_ACTIVITY_DETAIL_STYLE = "#C9D1D9 on #3a3937"
+RETRY_DETAIL_MAX_CELLS = 96
+_RETRY_DETAIL_RE = re.compile(r"^retrying in (?P<delay>\d+s):\s*(?P<error>.*)$", re.IGNORECASE)
 
 
 class _ActivityRendererMixin:
@@ -72,9 +77,12 @@ class _ActivityRendererMixin:
         compaction_detail = active_compaction_detail_text()
         llm_retry = active_llm_retry_text()
         llm_retry_detail = active_llm_retry_detail_text()
+        llm_retry_label, llm_retry_error = _format_llm_retry_status(llm_retry, llm_retry_detail)
+        error = active_error_text()
+        error_detail = active_error_detail_text()
         permission = active_permission_request_text()
         step = active_agent_step_text()
-        status_label = permission or llm_retry or analyzing or compacting or step or ""
+        status_label = permission or error or analyzing or compacting or step or llm_retry_label or ""
         thinking = dock.has_active_thinking_stream()
         verb = "Thinking" if thinking else status_label or self._busy_activity_verb or BUSY_ACTIVITY_DEFAULT_VERB
         prefix = f"{glyph} {verb}"
@@ -98,8 +106,10 @@ class _ActivityRendererMixin:
             details.append(latest)
         if compacting and compaction_detail:
             details.append(compaction_detail)
-        if llm_retry and llm_retry_detail:
-            details.append(llm_retry_detail)
+        if error and error_detail:
+            details.append(error_detail)
+        if llm_retry_label and status_label == llm_retry_label and llm_retry_error:
+            details.append(llm_retry_error)
         return f"{prefix} ({' '.join(details)})"
 
     def _turn_token_text(self) -> str:
@@ -133,3 +143,21 @@ def _full_width_detail_line(line: str, width: int) -> str:
     clipped = _clip_cells(line, width)
     padding = max(0, width - cell_len(clipped))
     return clipped + (" " * padding)
+
+
+def _format_llm_retry_status(label: str, detail: str) -> tuple[str, str]:
+    if not label:
+        return "", ""
+    clean_detail = detail.strip()
+    match = _RETRY_DETAIL_RE.match(clean_detail)
+    if not match:
+        return label, _clip_retry_error(clean_detail)
+    delay = match.group("delay")
+    error = match.group("error").strip()
+    return f"{label} in {delay}", _clip_retry_error(error)
+
+
+def _clip_retry_error(error: str) -> str:
+    if not error:
+        return ""
+    return _clip_cells(error, RETRY_DETAIL_MAX_CELLS)

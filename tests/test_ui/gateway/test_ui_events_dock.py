@@ -349,6 +349,97 @@ async def test_agent_step_status_updates_panel_without_transcript_node(isolated_
 
 
 @pytest.mark.asyncio
+async def test_llm_retry_status_records_without_transcript_node(isolated_dock):
+    isolated_dock.begin_capture()
+    bus = UiEventBus()
+    bus.start(DockEventConsumer(isolated_dock))
+    try:
+        await bus.emit(StatusUpdated(
+            status_id="llm:retry",
+            label="Retrying",
+            detail="retrying in 4s: provider timeout",
+            stage="working",
+        ))
+        await bus.drain()
+
+        rendered = "\n".join(_plain(line) for line in isolated_dock.tree.render(100))
+        assert "Retrying" not in rendered
+        assert "provider timeout" not in rendered
+        assert isolated_dock.status_record("llm:retry").label == "Retrying"
+
+        await bus.emit(StatusFinished(status_id="llm:retry"))
+        await bus.drain()
+
+        assert isolated_dock.status_record("llm:retry") is None
+    finally:
+        await bus.stop()
+
+
+@pytest.mark.asyncio
+async def test_error_event_clears_active_llm_retry_status(isolated_dock):
+    isolated_dock.begin_capture()
+    bus = UiEventBus()
+    bus.start(DockEventConsumer(isolated_dock))
+    try:
+        await bus.emit(StatusUpdated(
+            status_id="llm:retry",
+            label="Retrying",
+            detail="retrying in 4s: provider timeout",
+            stage="working",
+        ))
+        await bus.drain()
+        assert isolated_dock.status_record("llm:retry") is not None
+
+        await bus.emit(ErrorAppended(message="provider failed"))
+        await bus.drain()
+
+        rendered = "\n".join(_plain(line) for line in isolated_dock.tree.render(100))
+        assert isolated_dock.status_record("llm:retry") is None
+        assert "provider failed" in rendered
+        assert "Retrying" not in rendered
+        assert "retrying in 4s" not in rendered
+    finally:
+        await bus.stop()
+
+
+@pytest.mark.asyncio
+async def test_error_event_records_error_current_status(isolated_dock):
+    """ErrorAppended must record error:current so active_error_text() is non-empty."""
+    from voidx.ui.output.dock import active_error_text, active_error_detail_text
+
+    isolated_dock.begin_capture()
+    bus = UiEventBus()
+    bus.start(DockEventConsumer(isolated_dock))
+    try:
+        await bus.emit(ErrorAppended(message="provider failed"))
+        await bus.drain()
+
+        assert isolated_dock.status_record("error:current") is not None
+        assert active_error_text() == "Error"
+        assert active_error_detail_text() == "provider failed"
+    finally:
+        await bus.stop()
+
+
+@pytest.mark.asyncio
+async def test_turn_started_clears_error_current_status(isolated_dock):
+    """A new turn must clear the error:current record so it doesn't linger."""
+    isolated_dock.begin_capture()
+    bus = UiEventBus()
+    bus.start(DockEventConsumer(isolated_dock))
+    try:
+        await bus.emit(ErrorAppended(message="provider failed"))
+        await bus.drain()
+        assert isolated_dock.status_record("error:current") is not None
+
+        await bus.emit(TurnStarted(text="next turn"))
+        await bus.drain()
+        assert isolated_dock.status_record("error:current") is None
+    finally:
+        await bus.stop()
+
+
+@pytest.mark.asyncio
 async def test_permission_prompt_event_renders_and_clears(isolated_dock):
     isolated_dock.begin_capture()
     bus = UiEventBus()
