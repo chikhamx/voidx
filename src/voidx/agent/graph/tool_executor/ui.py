@@ -103,10 +103,10 @@ async def notify_tool_diff(host, result, tool_event_id, tool_node) -> None:
         host._ui.ui.diff(result.diff)
 
 
-def notify_tool_failure(host, tc, result, display_mode, tool_event_id) -> None:
+def notify_tool_failure(host, tc, result, display_mode, tool_event_id, ok: bool = False) -> None:
     """Log hidden-tool failures (non-async, just logging)."""
-    tid = tc.get("name", "tool")
-    if display_mode == ToolDisplayMode.HIDDEN:
+    if not ok and display_mode == ToolDisplayMode.HIDDEN:
+        tid = tc.get("name", "tool")
         log_tool_event(
             "hidden_tool_failure",
             tool_name=tid,

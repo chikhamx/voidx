@@ -58,6 +58,10 @@ class GraphSessionRuntime:
             host._file_mtimes = {}
         else:
             host._file_mtimes.clear()
+        if not hasattr(host, "_workflow_repeat_tracker"):
+            host._workflow_repeat_tracker = {}
+        else:
+            host._workflow_repeat_tracker.clear()
 
     async def restore_runtime_state(self) -> None:
         host = self.host

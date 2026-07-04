@@ -117,6 +117,7 @@ class GraphToolExecutor:
                 else None,
                 file_mtimes=host._file_mtimes,
                 file_read_coverage=host._file_read_coverage,
+                workflow_repeat_tracker=host._workflow_repeat_tracker,
                 mcp_manager=getattr(host, "_mcp_manager", None),
                 lsp_manager=getattr(host, "_lsp_manager", None),
                 sandbox_mode=host._permission.sandbox_mode,
@@ -207,7 +208,7 @@ class GraphToolExecutor:
             elif tid == "todo" and ok and todo_state is None and not is_todo_read:
                 host._ui.ui.warn("Todo update ignored: tool returned malformed metadata.")
 
-            notify_tool_failure(host, tc, result, display_policy.rule_for(tid).mode, tool_event_id)
+            notify_tool_failure(host, tc, result, display_policy.rule_for(tid).mode, tool_event_id, ok)
 
             await notify_tool_result(host, tc, result, ok, elapsed, display_policy, tool_node)
 

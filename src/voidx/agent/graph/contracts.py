@@ -89,6 +89,7 @@ class GraphToolExecutionHost(Protocol):
     _debug: bool
     _file_mtimes: dict[str, dict[str, int]]
     _file_read_coverage: dict[str, dict]
+    _workflow_repeat_tracker: dict[str, dict[str, int]]
     _turn_node: Any | None
     _current_messages: list[BaseMessage] | None
     _permission: PermissionService

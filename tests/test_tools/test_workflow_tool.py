@@ -226,6 +226,32 @@ class TestWorkflowTool:
         assert "state_patch" not in result.metadata
 
     @pytest.mark.asyncio
+    async def test_workflow_advance_invalid_active_workflow_reports_current_node(self, tmp_path):
+        ctx = ToolContext(
+            workspace=str(tmp_path),
+            workflow_runs=[
+                WorkflowRunState(
+                    name="tdd",
+                    status=WorkflowRunStatus.ACTIVE,
+                )
+            ],
+        )
+        result = await ToolRegistry().execute_tool(
+            "workflow",
+            {"action": "advance", "workflow": "debug", "condition": "implemented"},
+            ctx,
+        )
+
+        payload = json.loads(result.output)
+        assert result.metadata.get("error") is not True
+        assert result.metadata["workflow_guidance"]["reason"] == "invalid_active_workflow"
+        assert payload["applied"] is False
+        assert payload["current_node"] == "tdd"
+        assert "Current node: tdd" in payload["guidance"]
+        assert "active_nodes" not in payload
+        assert "state_patch" not in result.metadata
+
+    @pytest.mark.asyncio
     async def test_workflow_advance_missing_condition_returns_guidance_not_error(self, tmp_path):
         ctx = ToolContext(
             workspace=str(tmp_path),
@@ -438,3 +464,117 @@ class TestWorkflowTool:
         assert result.output.startswith("Unknown tool: advance_workflow.")
 
 
+
+    @pytest.mark.asyncio
+    async def test_repeated_enter_returns_warning_then_error(self, tmp_path):
+        ctx = ToolContext(
+            workspace=str(tmp_path),
+            workflow_runs=[
+                WorkflowRunState(name="feedback", status=WorkflowRunStatus.ACTIVE),
+            ],
+        )
+        reg = ToolRegistry()
+
+        r1 = await reg.execute_tool("workflow", {"action": "enter", "workflow": "feedback"}, ctx)
+        p1 = json.loads(r1.output)
+        assert p1["already_active"] is True
+        assert "repeat_warning" not in p1
+        assert r1.metadata.get("error") is not True
+
+        r2 = await reg.execute_tool("workflow", {"action": "enter", "workflow": "feedback"}, ctx)
+        p2 = json.loads(r2.output)
+        assert p2["already_active"] is True
+        assert "repeat_warning" in p2
+        assert r2.metadata.get("error") is not True
+
+        r3 = await reg.execute_tool("workflow", {"action": "enter", "workflow": "feedback"}, ctx)
+        p3 = json.loads(r3.output)
+        assert p3["already_active"] is True
+        assert "repeat_warning" in p3
+        assert r3.metadata.get("error") is True
+        assert r3.metadata["reason"] == "repeated_workflow_enter"
+
+    @pytest.mark.asyncio
+    async def test_repeated_advance_returns_warning_then_error(self, tmp_path):
+        ctx = ToolContext(
+            workspace=str(tmp_path),
+            workflow_runs=[
+                WorkflowRunState(name="tdd", status=WorkflowRunStatus.ACTIVE, transition_to=["verify"]),
+            ],
+        )
+        reg = ToolRegistry()
+
+        r1 = await reg.execute_tool(
+            "workflow", {"action": "advance", "condition": "implemented", "evidence": "pass"}, ctx
+        )
+        p1 = json.loads(r1.output)
+        assert p1["from"] == "tdd"
+        assert "repeat_warning" not in p1
+
+        # Re-activate tdd to simulate the LLM advancing the same node again
+        ctx2 = ToolContext(
+            workspace=str(tmp_path),
+            workflow_repeat_tracker=ctx._workflow_repeat_tracker,
+            workflow_runs=[
+                WorkflowRunState(name="tdd", status=WorkflowRunStatus.ACTIVE, transition_to=["verify"]),
+            ],
+        )
+        r2 = await reg.execute_tool(
+            "workflow", {"action": "advance", "condition": "implemented", "evidence": "pass"}, ctx2
+        )
+        p2 = json.loads(r2.output)
+        assert "repeat_warning" in p2
+        assert r2.metadata.get("error") is not True
+
+        ctx3 = ToolContext(
+            workspace=str(tmp_path),
+            workflow_repeat_tracker=ctx._workflow_repeat_tracker,
+            workflow_runs=[
+                WorkflowRunState(name="tdd", status=WorkflowRunStatus.ACTIVE, transition_to=["verify"]),
+            ],
+        )
+        r3 = await reg.execute_tool(
+            "workflow", {"action": "advance", "condition": "implemented", "evidence": "pass"}, ctx3
+        )
+        p3 = json.loads(r3.output)
+        assert "repeat_warning" in p3
+        assert r3.metadata.get("error") is True
+        assert r3.metadata["reason"] == "repeated_workflow_advance"
+
+    @pytest.mark.asyncio
+    async def test_repeated_advance_after_satisfied_triggers_warning_via_guidance(self, tmp_path):
+        """In real usage, advance succeeds → node satisfied → 2nd advance hits guidance path.
+        The guidance path must also detect repeats."""
+        ctx = ToolContext(
+            workspace=str(tmp_path),
+            workflow_runs=[
+                WorkflowRunState(name="tdd", status=WorkflowRunStatus.ACTIVE, transition_to=["verify"]),
+            ],
+        )
+        reg = ToolRegistry()
+
+        # 1st advance: succeeds, tdd → satisfied, verify activated
+        r1 = await reg.execute_tool(
+            "workflow", {"action": "advance", "condition": "implemented", "evidence": "pass"}, ctx
+        )
+        p1 = json.loads(r1.output)
+        assert p1["from"] == "tdd"
+        assert "repeat_warning" not in p1
+
+        # 2nd advance same condition: tdd is now satisfied, no active node matches
+        # → guidance path (no_active_nodes or invalid_exit), should get repeat_warning
+        r2 = await reg.execute_tool(
+            "workflow", {"action": "advance", "condition": "implemented", "evidence": "pass"}, ctx
+        )
+        p2 = json.loads(r2.output)
+        assert "repeat_warning" in p2
+        assert r2.metadata.get("error") is not True
+
+        # 3rd: should return error
+        r3 = await reg.execute_tool(
+            "workflow", {"action": "advance", "condition": "implemented", "evidence": "pass"}, ctx
+        )
+        p3 = json.loads(r3.output)
+        assert "repeat_warning" in p3
+        assert r3.metadata.get("error") is True
+        assert r3.metadata["reason"] == "repeated_workflow_advance"

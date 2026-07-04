@@ -107,9 +107,13 @@ class ToolContext(BaseModel):
         frc = data.pop("file_read_coverage", None)
         if frc is None:
             frc = {}
+        wrt = data.pop("workflow_repeat_tracker", None)
+        if wrt is None:
+            wrt = {}
         super().__init__(**data)
         self._file_mtimes = fm
         self._file_read_coverage = frc
+        self._workflow_repeat_tracker = wrt
 
     @property
     def file_mtimes(self) -> dict[str, dict[str, int]]:
@@ -118,6 +122,10 @@ class ToolContext(BaseModel):
     @property
     def file_read_coverage(self) -> dict[str, dict[str, Any]]:
         return self._file_read_coverage
+
+    @property
+    def workflow_repeat_tracker(self) -> dict[str, dict[str, int]]:
+        return self._workflow_repeat_tracker
 
 
 class BaseTool(ABC):

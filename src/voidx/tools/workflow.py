@@ -93,13 +93,13 @@ class WorkflowTool(BaseTool):
         active = _active_runs(runs)
 
         if inp.action == "enter":
-            return _enter(inp, runs, active)
+            return _enter(inp, runs, active, ctx)
         if inp.action == "advance":
-            return _advance(inp, runs, active)
+            return _advance(inp, runs, active, ctx)
         return _done(inp, runs, active)
 
 
-def _enter(inp: WorkflowInput, runs: list[WorkflowRunState], active: list[WorkflowRunState]) -> ToolResult:
+def _enter(inp: WorkflowInput, runs: list[WorkflowRunState], active: list[WorkflowRunState], ctx: ToolContext) -> ToolResult:
     requested = inp.workflow.strip()
     if not requested:
         return _guidance(
@@ -122,6 +122,7 @@ def _enter(inp: WorkflowInput, runs: list[WorkflowRunState], active: list[Workfl
 
     already_active = any(run.name == node_name and run.status == WorkflowRunStatus.ACTIVE for run in runs)
     if already_active and all(run.name == node_name for run in active):
+        count = _track_repeat(ctx, _repeat_key("enter", node_name))
         updated = [run.model_copy(deep=True) for run in runs]
         patch = ToolStatePatch(workflow_runs=updated, persona=_active_persona(updated))
         payload = {
@@ -132,6 +133,17 @@ def _enter(inp: WorkflowInput, runs: list[WorkflowRunState], active: list[Workfl
             "next_hints": _next_hints([node_name]),
             "evidence": inp.evidence.strip(),
         }
+        if count >= 2:
+            guidance = _repeat_guidance(count, "enter", node_name)
+            payload["repeat_warning"] = guidance
+            if count >= _REPEAT_MAX:
+                return ToolResult(
+                    title=f"workflow: enter {node_name} (repeated {count}x)",
+                    output=json.dumps(payload, ensure_ascii=False, indent=2),
+                    summary=f"workflow enter {node_name} (repeated {count}x)",
+                    metadata={"error": True, "reason": "repeated_workflow_enter", "guidance": guidance},
+                    next_step_hint=guidance,
+                )
         return _success(
             title=f"workflow: enter {node_name}",
             summary=f"workflow enter {node_name}",
@@ -167,16 +179,16 @@ def _enter(inp: WorkflowInput, runs: list[WorkflowRunState], active: list[Workfl
     )
 
 
-def _advance(inp: WorkflowInput, runs: list[WorkflowRunState], active: list[WorkflowRunState]) -> ToolResult:
+def _advance(inp: WorkflowInput, runs: list[WorkflowRunState], active: list[WorkflowRunState], ctx: ToolContext) -> ToolResult:
     condition = inp.condition.strip()
     if not active:
-        return _guidance(
+        return _wrap_advance_guidance(ctx, _guidance(
             action="advance",
             reason="no_active_nodes",
             guidance="There is no active workflow node to advance.",
             available_exits=[],
             suggested_call='workflow(action="enter", workflow="debug")',
-        )
+        ), inp.workflow.strip() or condition)
     if not condition:
         return _guidance(
             action="advance",
@@ -188,10 +200,11 @@ def _advance(inp: WorkflowInput, runs: list[WorkflowRunState], active: list[Work
 
     selected, matched_condition, guidance = _select_advance_run(active, condition, workflow=inp.workflow)
     if guidance is not None:
-        return guidance
+        return _wrap_advance_guidance(ctx, guidance, inp.workflow.strip() or condition)
     assert selected is not None
     assert matched_condition is not None
 
+    count = _track_repeat(ctx, _repeat_key("advance", selected.name, matched_condition))
     evidence = inp.evidence.strip()
     event = WorkflowStateEvent(
         workflow=selected.name,
@@ -220,6 +233,17 @@ def _advance(inp: WorkflowInput, runs: list[WorkflowRunState], active: list[Work
         "next_hints": _next_hints(activated),
         "evidence": evidence,
     }
+    if count >= 2:
+        guidance = _repeat_guidance(count, "advance", selected.name)
+        payload["repeat_warning"] = guidance
+        if count >= _REPEAT_MAX:
+            return ToolResult(
+                title=f"workflow: {selected.name} -> {matched_condition} (repeated {count}x)",
+                output=json.dumps(payload, ensure_ascii=False, indent=2),
+                summary=f"{selected.name} -> {matched_condition} (repeated {count}x)",
+                metadata={"error": True, "reason": "repeated_workflow_advance", "guidance": guidance},
+                next_step_hint=guidance,
+            )
     return _success(
         title=f"workflow: {selected.name} -> {matched_condition}",
         summary=f"{selected.name} -> {matched_condition}",
@@ -268,6 +292,55 @@ def _done(inp: WorkflowInput, runs: list[WorkflowRunState], active: list[Workflo
         payload=payload,
         runs=patch.workflow_runs,
         transition=payload,
+    )
+
+
+_REPEAT_MAX = 3
+
+
+def _repeat_key(action: str, node: str, condition: str = "") -> str:
+    return f"{action}\x1f{node}\x1f{condition}"
+
+
+def _track_repeat(ctx: ToolContext, key: str) -> int:
+    tracker = ctx.workflow_repeat_tracker
+    entry = tracker.get(key, {"count": 0})
+    entry["count"] += 1
+    tracker[key] = entry
+    return entry["count"]
+
+
+def _wrap_advance_guidance(ctx: ToolContext, result: ToolResult, key_node: str) -> ToolResult:
+    """Wrap an advance guidance result with repeat detection."""
+    count = _track_repeat(ctx, _repeat_key("advance", key_node))
+    if count < 2:
+        return result
+    guidance = _repeat_guidance(count, "advance", key_node)
+    payload = json.loads(result.output)
+    payload["repeat_warning"] = guidance
+    if count >= _REPEAT_MAX:
+        return ToolResult(
+            title=result.title,
+            output=json.dumps(payload, ensure_ascii=False, indent=2),
+            summary=result.summary,
+            metadata={"error": True, "reason": "repeated_workflow_advance", "guidance": guidance},
+            next_step_hint=guidance,
+        )
+    result.output = json.dumps(payload, ensure_ascii=False, indent=2)
+    result.next_step_hint = guidance
+    return result
+
+
+def _repeat_guidance(count: int, action: str, node: str) -> str:
+    if count == 2:
+        return (
+            f"Node {node!r} is already active. You just called {action} {node} again. "
+            "Do not repeat this call — proceed with the node's workflow steps instead."
+        )
+    return (
+        f"Node {node!r} is already active and you have called {action} {node} {count} times. "
+        "Stop retrying. Either advance the current node with a valid exit condition, "
+        "or summarize the blocker and ask the user for input."
     )
 
 
@@ -342,11 +415,16 @@ def _select_advance_run(
     if requested:
         selected = _match_active_run(active, requested)
         if selected is None:
+            current_node = active[0].name if active else ""
             return None, None, _guidance(
                 action="advance",
                 reason="invalid_active_workflow",
-                guidance=f"Workflow node {requested!r} is not currently active.",
-                active_nodes=[run.name for run in active],
+                guidance=(
+                    f"Workflow node {requested!r} is not currently active. "
+                    f"Current node: {current_node}. "
+                    "Omit the workflow parameter to use the current node."
+                ),
+                current_node=current_node,
                 suggested_call=_suggested_advance_call(active),
             )
         matched = _match_condition(condition, selected.name)
