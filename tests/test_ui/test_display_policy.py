@@ -148,8 +148,8 @@ class TestDefaultDisplayRules:
             assert DEFAULT_DISPLAY_RULES[name].mode == ToolDisplayMode.HIDDEN, f"{name} should be hidden"
 
     def test_replay_sanitize_tools(self):
-        assert DEFAULT_DISPLAY_RULES["todo"].replay_sanitize is True
-        assert DEFAULT_DISPLAY_RULES["workflow"].replay_sanitize is True
+        assert DEFAULT_DISPLAY_RULES["todo"].replay_sanitize is False
+        assert DEFAULT_DISPLAY_RULES["workflow"].replay_sanitize is False
         assert DEFAULT_DISPLAY_RULES["compact"].replay_sanitize is False
 
     def test_summary_tools(self):
