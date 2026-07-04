@@ -6,6 +6,7 @@ from typing import NamedTuple
 from pydantic import BaseModel, Field, model_validator
 
 from voidx.diffing import make_file_diff, make_structured_diff
+from voidx.logging.tool_log import log_tool_event
 from voidx.tools.base import BaseTool, ToolContext, ToolResult, model_to_json_schema, resolve_safe
 from voidx.tools.file_state import (
     LineDriftMap,
@@ -28,71 +29,209 @@ from .types import DisplayLines, ResolvedEdit
 
 
 
+class ReplaceBound(BaseModel):
+    line_no: int = Field(
+        ge=1,
+        description="Line number (1-based) from the latest read output.",
+    )
+    anchor: str = Field(
+        description=(
+            "Substring expected on this boundary line. For single-line replace, "
+            "empty anchor skips anchor validation and uses line_no directly. "
+            "For multi-line replace, anchor must be non-empty. Does not span lines — "
+            "a multi-line anchor uses only its first non-empty line."
+        ),
+    )
+
+
 class FileReplaceInput(BaseModel):
     file_path: str = Field(description="Absolute or relative path to the file")
-    start_no: int = Field(
-        ge=1,
+    bounds: list[ReplaceBound] = Field(
+        min_length=1,
+        max_length=2,
         description=(
-            "Exact first line (1-based) to replace. "
-            "Use the line number from the latest read output."
-        ),
-    )
-    end_no: int = Field(
-        ge=1,
-        description=(
-            "Exact last line (1-based) to replace. "
-            "Use the line number from the latest read output."
-        ),
-    )
-    start_anchor: str = Field(
-        description=(
-            "Content anchor on the first line to replace — a substring "
-            "expected anywhere on that line. Use an empty string only "
-            "when the first line is empty. Aim for a distinctive snippet."
-        ),
-    )
-    end_anchor: str = Field(
-        description=(
-            "Content anchor on the last line to replace — a substring "
-            "expected anywhere on that line. Use an empty string only "
-            "when the last line is empty. Aim for a distinctive snippet."
+            "Replacement boundary lines. Provide one bound for single-line replace, "
+            "or two unordered bounds for multi-line replace. In multi-line replace, "
+            "both anchors must be non-empty; the smaller line_no is used as the start "
+            "boundary and the larger line_no is used as the end boundary."
         ),
     )
     new_string: str = Field(
-        description="Replacement content. May contain any number of lines.",
+        description=(
+            "Content that replaces the selected whole line or line range. Empty string "
+            "deletes the selected lines. The replacement string's trailing newline is "
+            "ignored for line splitting; the original file's trailing-newline state is "
+            "preserved unless the file becomes empty. If the first or last line of "
+            "new_string exactly matches the line immediately before or after the replaced "
+            "range, that adjacent line is also consumed."
+        ),
     )
 
     @model_validator(mode="after")
-    def _validate_line_order(self) -> "FileReplaceInput":
-        if self.end_no < self.start_no:
-            raise ValueError("end_no must be greater than or equal to start_no")
+    def _validate_bounds(self) -> "FileReplaceInput":
+        if len(self.bounds) == 2:
+            if self.bounds[0].line_no == self.bounds[1].line_no:
+                raise ValueError("two-bound replace requires different line_no values; use one bound for single-line replace")
+            if self.bounds[0].anchor == "" or self.bounds[1].anchor == "":
+                raise ValueError("multi-line replace requires non-empty anchors for both boundary lines")
         return self
+
+    def _ordered_bounds(self) -> tuple[ReplaceBound, ReplaceBound]:
+        if len(self.bounds) == 1:
+            return self.bounds[0], self.bounds[0]
+        first, second = sorted(self.bounds, key=lambda bound: bound.line_no)
+        return first, second
+
+    @property
+    def resolved_start_no(self) -> int:
+        return self._ordered_bounds()[0].line_no
+
+    @property
+    def resolved_end_no(self) -> int:
+        return self._ordered_bounds()[1].line_no
+
+    @property
+    def resolved_start_anchor(self) -> str:
+        return self._ordered_bounds()[0].anchor
+
+    @property
+    def resolved_end_anchor(self) -> str:
+        return self._ordered_bounds()[1].anchor
+
+
+_REQUIRED_REPLACE_FIELDS = "file_path, bounds, new_string"
+
+
+def _extract_field_from_message(message: str) -> str | None:
+    candidates = [name for name in _REQUIRED_REPLACE_FIELDS.split(", ") if name in message]
+    if not candidates:
+        return None
+    return min(candidates, key=lambda name: message.index(name))
+
+
+def _clean_message(message: str) -> str:
+    prefix = "Value error, "
+    if message.startswith(prefix):
+        return message[len(prefix):]
+    return message
+
+
+def _format_replace_validation_error(exc: Exception) -> str:
+    errors = getattr(exc, "errors", lambda: [])()
+    if errors:
+        first = next((error for error in errors if error.get("type") == "missing"), errors[0])
+        loc = first.get("loc") or []
+        field = str(loc[0]) if loc else None
+        error_type = first.get("type", "")
+        if error_type == "missing":
+            return (
+                f"Invalid arguments: field '{field}' is required. "
+                f"Required fields: {_REQUIRED_REPLACE_FIELDS}."
+            )
+        message = _clean_message(first.get("msg", "is invalid"))
+        if field is None:
+            ctx_error = str(first.get("ctx", {}).get("error", "") or "")
+            field = _extract_field_from_message(ctx_error or message)
+        if field is not None:
+            return (
+                f"Invalid arguments: field '{field}' {message}. "
+                f"Required fields: {_REQUIRED_REPLACE_FIELDS}."
+            )
+        return (
+            f"Invalid arguments: {message}. "
+            f"Required fields: {_REQUIRED_REPLACE_FIELDS}."
+        )
+    return f"Invalid arguments. Required fields: {_REQUIRED_REPLACE_FIELDS}."
+
+
+_TRUNCATE = 200
+
+
+def _truncate(text: str, limit: int = _TRUNCATE) -> str:
+    text = text.replace("\n", "\\n")
+    return text if len(text) <= limit else text[:limit] + "…"
+
+
+def _log_replace_failure(
+    *,
+    tool_name: str,
+    file_path: str,
+    reason: str,
+    ctx: ToolContext | None = None,
+    start_no: int | None = None,
+    end_no: int | None = None,
+    start_anchor: str | None = None,
+    end_anchor: str | None = None,
+    new_string: str | None = None,
+    lines: list[str] | None = None,
+) -> None:
+    parts: list[str] = [f"file_path={file_path}", f"reason={reason}"]
+    if start_no is not None:
+        parts.append(f"start_no={start_no}")
+    if end_no is not None:
+        parts.append(f"end_no={end_no}")
+    if start_anchor is not None:
+        parts.append(f"start_anchor={_truncate(start_anchor)!r}")
+    if end_anchor is not None:
+        parts.append(f"end_anchor={_truncate(end_anchor)!r}")
+    if new_string is not None:
+        parts.append(f"new_string={_truncate(new_string)!r}")
+    if lines is not None:
+        idx_start = (start_no or 1) - 1
+        idx_end = (end_no or start_no or 1) - 1
+        if 0 <= idx_start < len(lines):
+            parts.append(f"actual_start_line={_truncate(lines[idx_start])!r}")
+        if idx_end != idx_start and 0 <= idx_end < len(lines):
+            parts.append(f"actual_end_line={_truncate(lines[idx_end])!r}")
+        total = len(lines)
+        parts.append(f"total_lines={total}")
+    log_tool_event(
+        "replace_failed",
+        tool_name=tool_name,
+        message=", ".join(parts),
+        session_id=ctx.session_id if ctx is not None else None,
+    )
 
 
 class FileReplaceTool(BaseTool):
     id = "replace"
     description = (
         "Replace whole lines in a file. "
-        "Provide the exact start_no/end_no from the latest read output, "
-        "plus start_anchor/end_anchor substrings from the first and last lines. "
-        "Read the target lines first."
+        "Provide one bound for single-line replace or two unordered bounds for multi-line replace. "
+        "Read the target lines first. "
+        "Single-line replace may use an empty anchor to trust line_no directly. "
+        "Multi-line replace requires non-empty anchors on both boundary lines; "
+        "the smaller line_no is used as the start boundary and the larger line_no is used as the end boundary. "
+        "Anchors are searched near the given line numbers in case the file changed since the last read."
     )
 
     def parameters_schema(self) -> dict:
-        return model_to_json_schema(FileReplaceInput)
+        schema = model_to_json_schema(FileReplaceInput)
+        properties = schema.get("properties", {})
+        visible_fields = ("file_path", "bounds", "new_string")
+        schema["properties"] = {name: properties[name] for name in visible_fields if name in properties}
+        schema["required"] = list(visible_fields)
+        return schema
 
     async def execute(self, args: dict, ctx: ToolContext) -> ToolResult:
         try:
             inp = FileReplaceInput.model_validate(args)
         except Exception as exc:
-            return ToolResult(output=f"Invalid arguments: {exc}", metadata={"error": True})
+            output = _format_replace_validation_error(exc)
+            _log_replace_failure(
+                tool_name=self.id,
+                file_path=str(args.get("file_path", "?")),
+                reason=output,
+                ctx=ctx,
+            )
+            return ToolResult(output=output, metadata={"error": True})
         return await _execute_text_replace(
             ctx,
             file_path=inp.file_path,
-            start_no=inp.start_no,
-            end_no=inp.end_no,
-            start_anchor=inp.start_anchor,
-            end_anchor=inp.end_anchor,
+            start_no=inp.resolved_start_no,
+            end_no=inp.resolved_end_no,
+            start_anchor=inp.resolved_start_anchor,
+            end_anchor=inp.resolved_end_anchor,
             new_string=inp.new_string,
             tool_name=self.id,
         )
@@ -124,6 +263,17 @@ async def _execute_text_replace(
 ) -> ToolResult:
     path, error = _resolve_edit_target(ctx, file_path)
     if error is not None:
+        _log_replace_failure(
+            tool_name=tool_name,
+            file_path=file_path,
+            reason=error.output,
+            ctx=ctx,
+            start_no=start_no,
+            end_no=end_no,
+            start_anchor=start_anchor,
+            end_anchor=end_anchor,
+            new_string=new_string,
+        )
         return error
     assert path is not None
 
@@ -134,6 +284,18 @@ async def _execute_text_replace(
         display.lines, start_no, end_no, start_anchor, end_anchor, drift_maps
     )
     if fallback.match is None:
+        _log_replace_failure(
+            tool_name=tool_name,
+            file_path=file_path,
+            reason=fallback.error or "text segment not found",
+            ctx=ctx,
+            start_no=start_no,
+            end_no=end_no,
+            start_anchor=start_anchor,
+            end_anchor=end_anchor,
+            new_string=new_string,
+            lines=display.lines,
+        )
         return ToolResult(output=fallback.error, metadata={"error": True})
 
     _, _, start_line, end_line = fallback.match
@@ -146,7 +308,24 @@ async def _execute_text_replace(
         )
     coverage_error = check_read_coverage(ctx, path, start_line, end_line, display_path=file_path)
     if coverage_error:
-        return ToolResult(output=f"Edit 0: {coverage_error}", metadata={"error": True})
+        output = (
+            f"{coverage_error}\n"
+            f"Hint: Read lines {start_line}-{end_line}, then retry replace with the refreshed "
+            "line numbers and anchors."
+        )
+        _log_replace_failure(
+            tool_name=tool_name,
+            file_path=file_path,
+            reason=output,
+            ctx=ctx,
+            start_no=start_line,
+            end_no=end_line,
+            start_anchor=start_anchor,
+            end_anchor=end_anchor,
+            new_string=new_string,
+            lines=display.lines,
+        )
+        return ToolResult(output=output, metadata={"error": True})
 
     key = str(path.resolve())
     existing_coverage = ctx.file_read_coverage.get(key, {})
@@ -232,6 +411,13 @@ async def _apply_resolved_edits(
     total_lines = len(lines)
     validation_error = _validate_resolved_edits(edits, total_lines)
     if validation_error:
+        _log_replace_failure(
+            tool_name=tool_name,
+            file_path=file_path,
+            reason=validation_error,
+            ctx=ctx,
+            lines=display.lines,
+        )
         return ToolResult(output=validation_error, metadata={"error": True})
 
     for i, edit in enumerate(edits):
@@ -245,7 +431,21 @@ async def _apply_resolved_edits(
             continue
         coverage_error = check_read_coverage(ctx, path, edit.start_line, edit.end_line, display_path=file_path)
         if coverage_error:
-            return ToolResult(output=f"Edit {i}: {coverage_error}", metadata={"error": True})
+            output = (
+                f"Edit {i}: {coverage_error}\n"
+                f"Hint: Read lines {edit.start_line}-{edit.end_line}, then retry with the refreshed "
+                "line numbers and anchors."
+            )
+            _log_replace_failure(
+                tool_name=tool_name,
+                file_path=file_path,
+                reason=output,
+                ctx=ctx,
+                start_no=edit.start_line,
+                end_no=edit.end_line,
+                lines=display.lines,
+            )
+            return ToolResult(output=output, metadata={"error": True})
 
     key = str(path.resolve())
     existing_coverage = ctx.file_read_coverage.get(key, {})

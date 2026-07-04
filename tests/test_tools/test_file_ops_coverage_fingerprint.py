@@ -29,7 +29,7 @@ class TestFileOps:
 
         result = await r.execute_tool(
             "replace",
-            {"file_path": "fp.txt", "start_no": 1, "end_no": 1, "start_anchor": "hello", "end_anchor": "hello", "new_string": "HELLO"},
+            {"file_path": "fp.txt", "bounds": [{"line_no": 1, "anchor": "hello"}], "new_string": "HELLO"},
             ctx,
         )
         assert result.metadata.get("error") is not True
@@ -57,7 +57,7 @@ class TestFileOps:
         )
         corrected = await r.execute_tool(
             "replace",
-            {"file_path": "paragraph.py", "start_no": 5, "end_no": 5, "start_anchor": "def bar():", "end_anchor": "def bar():", "new_string": "def baz():"},
+            {"file_path": "paragraph.py", "bounds": [{"line_no": 5, "anchor": "def bar():"}], "new_string": "def baz():"},
             ctx,
         )
 
@@ -76,12 +76,12 @@ class TestFileOps:
 
         ambiguous = await r.execute_tool(
             "replace",
-            {"file_path": "paragraph-errors.py", "start_no": 2, "end_no": 2, "start_anchor": "target", "end_anchor": "target", "new_string": "changed"},
+            {"file_path": "paragraph-errors.py", "bounds": [{"line_no": 2, "anchor": "target"}], "new_string": "changed"},
             ctx,
         )
         missing = await r.execute_tool(
             "replace",
-            {"file_path": "paragraph-errors.py", "start_no": 2, "end_no": 2, "start_anchor": "missing", "end_anchor": "missing", "new_string": "changed"},
+            {"file_path": "paragraph-errors.py", "bounds": [{"line_no": 2, "anchor": "missing"}], "new_string": "changed"},
             ctx,
         )
 
@@ -102,7 +102,7 @@ class TestFileOps:
 
         result = await r.execute_tool(
             "replace",
-            {"file_path": "nearest.py", "start_no": 4, "end_no": 5, "start_anchor": "def item():", "end_anchor": "a = 2", "new_string": "def item():\n    a = 3"},
+            {"file_path": "nearest.py", "bounds": [{"line_no": 4, "anchor": "def item():"}, {"line_no": 5, "anchor": "a = 2"}], "new_string": "def item():\n    a = 3"},
             ctx,
         )
 
@@ -119,7 +119,7 @@ class TestFileOps:
 
         result = await r.execute_tool(
             "replace",
-            {"file_path": "multi-line-prefix.py", "start_no": 2, "end_no": 4, "start_anchor": "inserted", "end_anchor": "middle", "new_string": "START\nMIDDLE"},
+            {"file_path": "multi-line-prefix.py", "bounds": [{"line_no": 2, "anchor": "inserted"}, {"line_no": 4, "anchor": "middle"}], "new_string": "START\nMIDDLE"},
             ctx,
         )
 
@@ -155,7 +155,7 @@ class TestFileOps:
 
         result = await r.execute_tool(
             "replace",
-            {"file_path": "paragraph-coverage.py", "start_no": 1, "end_no": 1, "start_anchor": "target", "end_anchor": "target", "new_string": "TARGET"},
+            {"file_path": "paragraph-coverage.py", "bounds": [{"line_no": 1, "anchor": "target"}], "new_string": "TARGET"},
             ctx,
         )
 
@@ -174,12 +174,12 @@ class TestFileOps:
 
         r1 = await r.execute_tool(
             "replace",
-            {"file_path": "paragraph-conflict.py", "start_no": 2, "end_no": 2, "start_anchor": "target", "end_anchor": "target", "new_string": "TARGET"},
+            {"file_path": "paragraph-conflict.py", "bounds": [{"line_no": 2, "anchor": "target"}], "new_string": "TARGET"},
             ctx,
         )
         r2 = await r.execute_tool(
             "replace",
-            {"file_path": "paragraph-conflict.py", "start_no": 1, "end_no": 1, "start_anchor": "top", "end_anchor": "top", "new_string": "TOP"},
+            {"file_path": "paragraph-conflict.py", "bounds": [{"line_no": 1, "anchor": "top"}], "new_string": "TOP"},
             ctx,
         )
 
@@ -203,7 +203,7 @@ class TestFileOps:
         )
         deleted = await r.execute_tool(
             "replace",
-            {"file_path": "shift.txt", "start_no": 3, "end_no": 3, "start_anchor": "two", "end_anchor": "two", "new_string": ""},
+            {"file_path": "shift.txt", "bounds": [{"line_no": 3, "anchor": "two"}], "new_string": ""},
             ctx,
         )
 
@@ -222,7 +222,7 @@ class TestFileOps:
 
         result = await r.execute_tool(
             "replace",
-            {"file_path": "same-lines.txt", "start_no": 2, "end_no": 2, "start_anchor": "two", "end_anchor": "two", "new_string": "TWO"},
+            {"file_path": "same-lines.txt", "bounds": [{"line_no": 2, "anchor": "two"}], "new_string": "TWO"},
             ctx,
         )
 
@@ -245,7 +245,7 @@ class TestFileOps:
         )
         deleted = await r.execute_tool(
             "replace",
-            {"file_path": "multi-shift.txt", "start_no": 6, "end_no": 6, "start_anchor": "five", "end_anchor": "five", "new_string": ""},
+            {"file_path": "multi-shift.txt", "bounds": [{"line_no": 6, "anchor": "five"}], "new_string": ""},
             ctx,
         )
 

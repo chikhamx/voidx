@@ -79,9 +79,10 @@ class TestPruneReplaceArgs:
         svc = CompactionService()
         new_string = "def hello():\n    print('hi')\n    return True\n" * 5  # ~150 chars
         msgs = _make_messages_with_tool_call("replace", {
-            "file_path": "foo.py", "start_no": 1, "end_no": 3,
-            "start_anchor": "def", "end_anchor": "return", "new_string": new_string,
-        })
+                                                            "file_path": "foo.py",
+                                                            "bounds": [{"line_no": 1, "anchor": "def"}, {"line_no": 3, "anchor": "return"}],
+                                                            "new_string": new_string,
+                                                        })
         original = msgs[1].tool_calls[0]["args"]["new_string"]
 
         svc.prune(msgs)
@@ -94,9 +95,10 @@ class TestPruneReplaceArgs:
         svc = CompactionService()
         new_string = "pass"  # 4 chars < placeholder 36 chars
         msgs = _make_messages_with_tool_call("replace", {
-            "file_path": "foo.py", "start_no": 1, "end_no": 1,
-            "start_anchor": "old", "end_anchor": "old", "new_string": new_string,
-        })
+                                                            "file_path": "foo.py",
+                                                            "bounds": [{"line_no": 1, "anchor": "old"}],
+                                                            "new_string": new_string,
+                                                        })
 
         svc.prune(msgs)
 

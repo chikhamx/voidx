@@ -114,25 +114,24 @@ class TestToolSchemas:
         assert "insert" in schema["properties"]["op"]["description"]
         assert "append" in schema["properties"]["op"]["description"]
 
-    def test_replace_input_uses_start_end_line_range_without_operation(self):
-        inp = FileReplaceInput(file_path="x.py", start_no=3, end_no=5, start_anchor="old", end_anchor="tail", new_string="new")
+    def test_replace_input_uses_bounds_without_operation(self):
+        inp = FileReplaceInput(file_path="x.py", bounds=[{"line_no": 3, "anchor": "old"}, {"line_no": 5, "anchor": "tail"}], new_string="new")
         schema = FileReplaceTool().parameters_schema()
 
-        assert inp.start_anchor == "old"
-        assert inp.end_no == 5
-        assert set(schema["properties"]) == {"file_path", "start_no", "end_no", "start_anchor", "end_anchor", "new_string"}
-        assert "exact first line" in schema["properties"]["start_no"]["description"].lower()
-        assert "exact last line" in schema["properties"]["end_no"]["description"].lower()
-        assert "first line" in schema["properties"]["start_anchor"]["description"].lower()
-        assert "last line" in schema["properties"]["end_anchor"]["description"].lower()
+        assert inp.resolved_start_anchor == "old"
+        assert inp.resolved_end_no == 5
+        assert set(schema["properties"]) == {"file_path", "bounds", "new_string"}
+        assert "Replacement boundary lines" in schema["properties"]["bounds"]["description"]
         assert "whole lines" in FileReplaceTool().description.lower()
         assert "operation" not in schema["properties"]
         assert "edits" not in schema["properties"]
         assert "old_text" not in schema["properties"]
 
-    def test_replace_input_rejects_reversed_line_range(self):
+    def test_replace_input_rejects_duplicate_two_bound_line_numbers(self):
         with pytest.raises(ValueError):
-            FileReplaceInput(file_path="x.py", start_no=5, end_no=3, prefix="old", suffix="tail", new_string="new")
+            FileReplaceInput(file_path="x.py", bounds=[{"line_no": 5, "anchor": "old"}, {"line_no": 5, "anchor": "tail"}], new_string="new")
+        with pytest.raises(ValueError):
+            FileReplaceInput(file_path="x.py", bounds=[{"line_no": 5, "anchor": ""}, {"line_no": 3, "anchor": "tail"}], new_string="new")
 
     def test_glob_input(self):
         inp = GlobInput(pattern="**/*.py")

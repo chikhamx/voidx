@@ -228,7 +228,7 @@ class TestFileOps:
         await r.execute_tool("read", {"file_path": "edit.txt"}, ctx)
         result = await r.execute_tool(
             "replace",
-            {"file_path": "edit.txt", "start_no": 1, "end_no": 1, "start_anchor": "hello world", "end_anchor": "hello world", "new_string": "hi world"},
+            {"file_path": "edit.txt", "bounds": [{"line_no": 1, "anchor": "hello world"}], "new_string": "hi world"},
             ctx,
         )
         assert "File edited" in result.output
@@ -243,7 +243,7 @@ class TestFileOps:
         await r.execute_tool("read", {"file_path": "edit.txt"}, ctx)
         result = await r.execute_tool(
             "replace",
-            {"file_path": "edit.txt", "start_no": 1, "end_no": 1, "start_anchor": "hello world", "end_anchor": "hello world", "new_string": "hi world"},
+            {"file_path": "edit.txt", "bounds": [{"line_no": 1, "anchor": "hello world"}], "new_string": "hi world"},
             ctx,
         )
         assert "File edited" in result.output
@@ -260,7 +260,7 @@ class TestFileOps:
         await r.execute_tool("read", {"file_path": "short.txt"}, ctx)
         result = await r.execute_tool(
             "replace",
-            {"file_path": "short.txt", "start_no": 2, "end_no": 2, "start_anchor": "two", "end_anchor": "two", "new_string": "two"},
+            {"file_path": "short.txt", "bounds": [{"line_no": 2, "anchor": "two"}], "new_string": "two"},
             ctx,
         )
         assert "not found" in result.output
@@ -276,7 +276,7 @@ class TestFileOps:
 
         result = await r.execute_tool(
             "replace",
-            {"file_path": "unread.txt", "start_no": 1, "end_no": 1, "start_anchor": "one", "end_anchor": "one", "new_string": "two"},
+            {"file_path": "unread.txt", "bounds": [{"line_no": 1, "anchor": "one"}], "new_string": "two"},
             ctx,
         )
 

@@ -8,11 +8,169 @@ sys.path.insert(0, str(Path(__file__).parent.parent.parent / "src"))
 import pytest
 
 from voidx.tools.base import ToolContext
+from voidx.tools.file_ops.edit_execute import FileReplaceTool
+from voidx.tools.file_ops.edit_resolve import _find_text_segment
 from voidx.tools.registry import ToolRegistry
 import voidx.tools.file_state as file_state
 
-class TestFileOps:
+
+class TestReplaceLLMVisibleMessages:
+    def test_tool_description_explains_anchor_search_without_runtime_terms(self):
+        description = FileReplaceTool.description
+
+        assert "Anchors are searched near the given line numbers" in description
+        assert "file changed since the last read" in description
+        assert "single-line replace" in description.lower()
+        assert "exact start_no/end_no" not in description
+        assert "drift" not in description.lower()
+
+    def test_parameter_descriptions_explain_current_line_numbers_without_drift(self):
+        schema = FileReplaceTool().parameters_schema()
+        properties = schema["properties"]
+        bounds_schema = properties["bounds"]
+        bound_properties = bounds_schema["items"]["properties"]
+
+        assert set(properties) == {"file_path", "bounds", "new_string"}
+        assert "Replacement boundary lines" in bounds_schema["description"]
+        assert "two unordered bounds" in bounds_schema["description"]
+        assert "both anchors must be non-empty" in bounds_schema["description"]
+        assert "Line number (1-based) from the latest read output" in bound_properties["line_no"]["description"]
+        assert "empty anchor skips anchor validation" in bound_properties["anchor"]["description"]
+        assert "trailing newline" in properties["new_string"]["description"]
+        visible = "\n".join(prop.get("description", "") for prop in properties.values())
+        assert "Exact" not in visible
+        assert "drift" not in visible.lower()
+
+    def test_ambiguous_single_line_lists_candidates_without_runtime_terms(self):
+        result = _find_text_segment(["target = 1", "other = 0", "target = 2"], 2, 2, "target", "target")
+
+        assert isinstance(result, str)
+        assert "single-line match ambiguous" in result
+        assert "line 1: target = 1" in result
+        assert "line 3: target = 2" in result
+        assert "Hint: Provide a longer start_anchor" in result
+        assert "drift" not in result.lower()
+        assert "read(" not in result
+
+    def test_missing_anchor_points_to_unique_line_without_call_syntax(self):
+        lines = ["old = 1", "current = 0", "near = 1", "near = 2", "near = 3", "target = 2"]
+        result = _find_text_segment(lines, 2, 2, "target", "target")
+
+        assert isinstance(result, str)
+        assert "start_anchor 'target' not found near line 2" in result
+        assert "appears on line 6" in result
+        assert "Read lines 6-6" in result
+        assert "read(" not in result
+        assert "ToolResult" not in result
+        assert "metadata" not in result
+
+    def test_span_mismatch_avoids_drift_and_internal_terms(self):
+        result = _find_text_segment(["start", "body", "body", "body", "end"], 1, 2, "start", "end")
+
+        assert isinstance(result, str)
+        assert "No valid replace range found" in result
+        assert "You specified lines 1-2" in result
+        assert "Read the target block again" in result
+        assert "drift" not in result.lower()
+        assert "expected span" not in result
+
+    def test_span_mismatch_message_not_redundant(self):
+        result = _find_text_segment(["start", "body", "body", "body", "end"], 1, 2, "start", "end")
+
+        assert isinstance(result, str)
+        assert "No valid replace range found; no valid replace range" not in result
+
+
+
+class TestReplaceBoundsInput:
+    def test_parameter_descriptions_explain_bounds_shape_without_drift(self):
+        schema = FileReplaceTool().parameters_schema()
+        properties = schema["properties"]
+
+        assert "bounds" in properties
+        assert "start_no" not in properties
+        assert "end_no" not in properties
+        assert "Replacement boundary lines" in properties["bounds"]["description"]
+        assert "two unordered bounds" in properties["bounds"]["description"]
+        assert "both anchors must be non-empty" in properties["bounds"]["description"]
+        assert "trailing newline" in properties["new_string"]["description"]
+        visible = "\n".join(prop.get("description", "") for prop in properties.values())
+        assert "drift" not in visible.lower()
+
     @pytest.mark.asyncio
+    async def test_replace_accepts_reversed_two_bounds(self, tmp_path):
+        f = tmp_path / "reverse-bounds.txt"
+        f.write_text("top\nbody\nend\n")
+        ctx = ToolContext(workspace=str(tmp_path))
+        r = ToolRegistry()
+        await r.execute_tool("read", {"file_path": "reverse-bounds.txt"}, ctx)
+
+        result = await r.execute_tool(
+            "replace",
+            {
+                "file_path": "reverse-bounds.txt",
+                "bounds": [
+                    {"line_no": 3, "anchor": "end"},
+                    {"line_no": 2, "anchor": "body"},
+                ],
+                "new_string": "replacement",
+            },
+            ctx,
+        )
+
+        assert result.metadata.get("error") is not True
+        assert result.metadata["start_line"] == 2
+        assert result.metadata["end_line"] == 3
+        assert f.read_text() == "top\nreplacement\n"
+
+    @pytest.mark.asyncio
+    async def test_replace_rejects_multi_line_empty_anchor_before_resolver(self, tmp_path):
+        f = tmp_path / "empty-bound.txt"
+        f.write_text("top\nbody\nend\n")
+        ctx = ToolContext(workspace=str(tmp_path))
+        r = ToolRegistry()
+        await r.execute_tool("read", {"file_path": "empty-bound.txt"}, ctx)
+
+        result = await r.execute_tool(
+            "replace",
+            {
+                "file_path": "empty-bound.txt",
+                "bounds": [
+                    {"line_no": 2, "anchor": ""},
+                    {"line_no": 3, "anchor": "end"},
+                ],
+                "new_string": "replacement",
+            },
+            ctx,
+        )
+
+        assert result.metadata.get("error") is True
+        assert "multi-line replace requires non-empty anchors" in result.output
+        assert "empty line" not in result.output
+        assert f.read_text() == "top\nbody\nend\n"
+
+    @pytest.mark.asyncio
+    async def test_replace_rejects_duplicate_two_bound_line_numbers(self, tmp_path):
+        f = tmp_path / "duplicate-bound.txt"
+        f.write_text("top\nbody\nend\n")
+        ctx = ToolContext(workspace=str(tmp_path))
+        r = ToolRegistry()
+        await r.execute_tool("read", {"file_path": "duplicate-bound.txt"}, ctx)
+
+        result = await r.execute_tool(
+            "replace",
+            {
+                "file_path": "duplicate-bound.txt",
+                "bounds": [{"line_no": 2, "anchor": "body"}, {"line_no": 2, "anchor": "body"}],
+                "new_string": "replacement",
+            },
+            ctx,
+        )
+
+        assert result.metadata.get("error") is True
+        assert "two-bound replace requires different line_no values" in result.output
+
+class TestFileOps:
     @pytest.mark.asyncio
     async def test_sequential_replace_with_multiple_covered_ranges(self, tmp_path):
         f = tmp_path / "batch.txt"
@@ -23,12 +181,12 @@ class TestFileOps:
 
         r1 = await r.execute_tool(
             "replace",
-            {"file_path": "batch.txt", "start_no": 1, "end_no": 1, "start_anchor": "one", "end_anchor": "one", "new_string": "ONE"},
+            {"file_path": "batch.txt", "bounds": [{"line_no": 1, "anchor": "one"}], "new_string": "ONE"},
             ctx,
         )
         r2 = await r.execute_tool(
             "replace",
-            {"file_path": "batch.txt", "start_no": 3, "end_no": 4, "start_anchor": "three", "end_anchor": "four", "new_string": "THREE\nFOUR\n"},
+            {"file_path": "batch.txt", "bounds": [{"line_no": 3, "anchor": "three"}, {"line_no": 4, "anchor": "four"}], "new_string": "THREE\nFOUR\n"},
             ctx,
         )
 
@@ -36,7 +194,6 @@ class TestFileOps:
         assert r2.metadata.get("error") is not True
         assert (tmp_path / "batch.txt").read_text() == "ONE\ntwo\nTHREE\nFOUR\n"
 
-    @pytest.mark.asyncio
     @pytest.mark.asyncio
     async def test_line_insert_uses_line_number_and_content_only(self, tmp_path):
         f = tmp_path / "insert-tool.txt"
@@ -101,10 +258,7 @@ class TestFileOps:
             "replace",
             {
                 "file_path": "replace-tool.txt",
-                "start_no": 2,
-                "end_no": 2,
-                "start_anchor": "two",
-                "end_anchor": "two",
+                "bounds": [{"line_no": 2, "anchor": "two"}],
                 "new_string": "TWO",
             },
             ctx,
@@ -135,10 +289,7 @@ class TestFileOps:
             "replace",
             {
                 "file_path": "pair-score.txt",
-                "start_no": 6,
-                "end_no": 8,
-                "start_anchor": "target start",
-                "end_anchor": "target end",
+                "bounds": [{"line_no": 6, "anchor": "target start"}, {"line_no": 8, "anchor": "target end"}],
                 "new_string": "replacement\nblock\n",
             },
             ctx,
@@ -169,12 +320,12 @@ class TestFileOps:
 
         r1 = await r.execute_tool(
             "replace",
-            {"file_path": "overlap.txt", "start_no": 1, "end_no": 1, "start_anchor": "one", "end_anchor": "one", "new_string": "x"},
+            {"file_path": "overlap.txt", "bounds": [{"line_no": 1, "anchor": "one"}], "new_string": "x"},
             ctx,
         )
         r2 = await r.execute_tool(
             "replace",
-            {"file_path": "overlap.txt", "start_no": 2, "end_no": 2, "start_anchor": "two", "end_anchor": "two", "new_string": "y"},
+            {"file_path": "overlap.txt", "bounds": [{"line_no": 2, "anchor": "two"}], "new_string": "y"},
             ctx,
         )
 
@@ -192,13 +343,13 @@ class TestFileOps:
         await r.execute_tool("read", {"file_path": "coverage.txt"}, ctx)
         first = await r.execute_tool(
             "replace",
-            {"file_path": "coverage.txt", "start_no": 1, "end_no": 1, "start_anchor": "one", "end_anchor": "one", "new_string": "ONE"},
+            {"file_path": "coverage.txt", "bounds": [{"line_no": 1, "anchor": "one"}], "new_string": "ONE"},
             ctx,
         )
 
         second = await r.execute_tool(
             "replace",
-            {"file_path": "coverage.txt", "start_no": 2, "end_no": 2, "start_anchor": "two", "end_anchor": "two", "new_string": "TWO"},
+            {"file_path": "coverage.txt", "bounds": [{"line_no": 2, "anchor": "two"}], "new_string": "TWO"},
             ctx,
         )
 
@@ -216,7 +367,7 @@ class TestFileOps:
 
         edit = await r.execute_tool(
             "replace",
-            {"file_path": "partial-coverage.txt", "start_no": 2, "end_no": 2, "start_anchor": "line 2", "end_anchor": "line 2", "new_string": "LINE 2"},
+            {"file_path": "partial-coverage.txt", "bounds": [{"line_no": 2, "anchor": "line 2"}], "new_string": "LINE 2"},
             ctx,
         )
         reread = await r.execute_tool("read", {"file_path": "partial-coverage.txt", "offset": 10, "limit": 1}, ctx)
@@ -236,7 +387,7 @@ class TestFileOps:
 
         result = await r.execute_tool(
             "replace",
-            {"file_path": "expand-coverage.txt", "start_no": 5, "end_no": 5, "start_anchor": "line 5", "end_anchor": "line 5", "new_string": "line 5a\nline 5b"},
+            {"file_path": "expand-coverage.txt", "bounds": [{"line_no": 5, "anchor": "line 5"}], "new_string": "line 5a\nline 5b"},
             ctx,
         )
         reread = await r.execute_tool("read", {"file_path": "expand-coverage.txt", "offset": 32, "limit": 1}, ctx)
@@ -257,7 +408,7 @@ class TestFileOps:
 
         result = await r.execute_tool(
             "replace",
-            {"file_path": "delete-coverage.txt", "start_no": 50, "end_no": 50, "start_anchor": "line 50", "end_anchor": "line 50", "new_string": ""},
+            {"file_path": "delete-coverage.txt", "bounds": [{"line_no": 50, "anchor": "line 50"}], "new_string": ""},
             ctx,
         )
 
@@ -275,7 +426,7 @@ class TestFileOps:
 
         edit = await r.execute_tool(
             "replace",
-            {"file_path": "same-line.txt", "start_no": 2, "end_no": 2, "start_anchor": "two", "end_anchor": "two", "new_string": "TWO"},
+            {"file_path": "same-line.txt", "bounds": [{"line_no": 2, "anchor": "two"}], "new_string": "TWO"},
             ctx,
         )
         reread = await r.execute_tool("read", {"file_path": "same-line.txt", "offset": 2, "limit": 1}, ctx)
@@ -294,12 +445,12 @@ class TestFileOps:
 
         r1 = await r.execute_tool(
             "replace",
-            {"file_path": "multi-hunk-coverage.txt", "start_no": 10, "end_no": 10, "start_anchor": "line 10", "end_anchor": "line 10", "new_string": "line 10a\nline 10b"},
+            {"file_path": "multi-hunk-coverage.txt", "bounds": [{"line_no": 10, "anchor": "line 10"}], "new_string": "line 10a\nline 10b"},
             ctx,
         )
         r2 = await r.execute_tool(
             "replace",
-            {"file_path": "multi-hunk-coverage.txt", "start_no": 51, "end_no": 51, "start_anchor": "line 50", "end_anchor": "line 50", "new_string": ""},
+            {"file_path": "multi-hunk-coverage.txt", "bounds": [{"line_no": 51, "anchor": "line 50"}], "new_string": ""},
             ctx,
         )
 
@@ -317,7 +468,7 @@ class TestFileOps:
 
         result = await r.execute_tool(
             "replace",
-            {"file_path": "noop-coverage.txt", "start_no": 1, "end_no": 1, "start_anchor": "one", "end_anchor": "one", "new_string": "one"},
+            {"file_path": "noop-coverage.txt", "bounds": [{"line_no": 1, "anchor": "one"}], "new_string": "one"},
             ctx,
         )
 
@@ -335,12 +486,12 @@ class TestFileOps:
 
         first = await r.execute_tool(
             "replace",
-            {"file_path": "partial-edit.txt", "start_no": 2, "end_no": 2, "start_anchor": "line 2", "end_anchor": "line 2", "new_string": "LINE 2"},
+            {"file_path": "partial-edit.txt", "bounds": [{"line_no": 2, "anchor": "line 2"}], "new_string": "LINE 2"},
             ctx,
         )
         second = await r.execute_tool(
             "replace",
-            {"file_path": "partial-edit.txt", "start_no": 10, "end_no": 10, "start_anchor": "line 10", "end_anchor": "line 10", "new_string": "LINE 10"},
+            {"file_path": "partial-edit.txt", "bounds": [{"line_no": 10, "anchor": "line 10"}], "new_string": "LINE 10"},
             ctx,
         )
 
@@ -360,7 +511,7 @@ class TestFileOps:
 
         result = await r.execute_tool(
             "replace",
-            {"file_path": "merge.txt", "start_no": 1, "end_no": 1, "start_anchor": "1", "end_anchor": "1", "new_string": "CHANGED"},
+            {"file_path": "merge.txt", "bounds": [{"line_no": 1, "anchor": "1"}], "new_string": "CHANGED"},
             ctx,
         )
         assert result.metadata.get("error") is not True
@@ -376,7 +527,7 @@ class TestFileOps:
 
         result = await r.execute_tool(
             "replace",
-            {"file_path": "adjacent.txt", "start_no": 50, "end_no": 51, "start_anchor": "50", "end_anchor": "51", "new_string": "MERGED"},
+            {"file_path": "adjacent.txt", "bounds": [{"line_no": 50, "anchor": "50"}, {"line_no": 51, "anchor": "51"}], "new_string": "MERGED"},
             ctx,
         )
         assert result.metadata.get("error") is not True
@@ -392,7 +543,7 @@ class TestFileOps:
 
         result = await r.execute_tool(
             "replace",
-            {"file_path": "gap.txt", "start_no": 15, "end_no": 15, "start_anchor": "15", "end_anchor": "15", "new_string": "GAP"},
+            {"file_path": "gap.txt", "bounds": [{"line_no": 15, "anchor": "15"}], "new_string": "GAP"},
             ctx,
         )
         assert "read" in result.output.lower()
@@ -510,7 +661,7 @@ class TestFileOps:
 
         result = await r.execute_tool(
             "replace",
-            {"file_path": "delete.txt", "start_no": 2, "end_no": 2, "start_anchor": "two", "end_anchor": "two", "new_string": ""},
+            {"file_path": "delete.txt", "bounds": [{"line_no": 2, "anchor": "two"}], "new_string": ""},
             ctx,
         )
 
@@ -527,7 +678,7 @@ class TestFileOps:
 
         result = await r.execute_tool(
             "replace",
-            {"file_path": "multi.txt", "start_no": 1, "end_no": 2, "start_anchor": "def foo():", "end_anchor": "pass", "new_string": "def foo():\n    return 42"},
+            {"file_path": "multi.txt", "bounds": [{"line_no": 1, "anchor": "def foo():"}, {"line_no": 2, "anchor": "pass"}], "new_string": "def foo():\n    return 42"},
             ctx,
         )
 
@@ -544,7 +695,7 @@ class TestFileOps:
 
         result = await r.execute_tool(
             "replace",
-            {"file_path": "window.txt", "start_no": 1, "end_no": 1, "start_anchor": "line 40", "end_anchor": "line 40", "new_string": "LINE 40"},
+            {"file_path": "window.txt", "bounds": [{"line_no": 1, "anchor": "line 40"}], "new_string": "LINE 40"},
             ctx,
         )
 
@@ -562,7 +713,7 @@ class TestFileOps:
 
         result = await r.execute_tool(
             "replace",
-            {"file_path": "nope.txt", "start_no": 1, "end_no": 1, "start_anchor": "nonexistent", "end_anchor": "nonexistent", "new_string": "X"},
+            {"file_path": "nope.txt", "bounds": [{"line_no": 1, "anchor": "nonexistent"}], "new_string": "X"},
             ctx,
         )
 
@@ -579,7 +730,7 @@ class TestFileOps:
 
         result = await r.execute_tool(
             "replace",
-            {"file_path": "ambiguous.txt", "start_no": 2, "end_no": 2, "start_anchor": "target", "end_anchor": "target", "new_string": "TARGET"},
+            {"file_path": "ambiguous.txt", "bounds": [{"line_no": 2, "anchor": "target"}], "new_string": "TARGET"},
             ctx,
         )
 
@@ -599,21 +750,18 @@ class TestFileOps:
             "replace",
             {
                 "file_path": "wrong-end.txt",
-                "start_no": 1,
-                "end_no": 3,
-                "start_anchor": "hello",
-                "end_anchor": "world",
+                "bounds": [{"line_no": 1, "anchor": "hello"}, {"line_no": 3, "anchor": "world"}],
                 "new_string": "replacement\n",
             },
             ctx,
         )
 
         assert result.metadata.get("error")
-        assert "no valid replace range" in result.output
+        assert "No valid replace range found" in result.output
         assert f.read_text() == "hello world\nfoo bar\nbaz\n"
 
     @pytest.mark.asyncio
-    async def test_replace_allows_empty_prefix_for_empty_start_line(self, tmp_path):
+    async def test_replace_rejects_empty_prefix_for_empty_start_line(self, tmp_path):
         f = tmp_path / "empty-start.txt"
         f.write_text("top\n\nbody\nend\n")
         ctx = ToolContext(workspace=str(tmp_path))
@@ -624,22 +772,18 @@ class TestFileOps:
             "replace",
             {
                 "file_path": "empty-start.txt",
-                "start_no": 2,
-                "end_no": 3,
-                "start_anchor": "",
-                "end_anchor": "body",
+                "bounds": [{"line_no": 2, "anchor": ""}, {"line_no": 3, "anchor": "body"}],
                 "new_string": "replacement\n",
             },
             ctx,
         )
 
-        assert result.metadata.get("error") is not True
-        assert result.metadata["start_line"] == 2
-        assert result.metadata["end_line"] == 3
-        assert f.read_text() == "top\nreplacement\nend\n"
+        assert result.metadata.get("error") is True
+        assert "multi-line replace requires non-empty anchors" in result.output
+        assert f.read_text() == "top\n\nbody\nend\n"
 
     @pytest.mark.asyncio
-    async def test_replace_allows_empty_suffix_for_empty_end_line(self, tmp_path):
+    async def test_replace_rejects_empty_suffix_for_empty_end_line(self, tmp_path):
         f = tmp_path / "empty-end.txt"
         f.write_text("top\nbody\n\nend\n")
         ctx = ToolContext(workspace=str(tmp_path))
@@ -650,19 +794,15 @@ class TestFileOps:
             "replace",
             {
                 "file_path": "empty-end.txt",
-                "start_no": 2,
-                "end_no": 3,
-                "start_anchor": "body",
-                "end_anchor": "",
+                "bounds": [{"line_no": 2, "anchor": "body"}, {"line_no": 3, "anchor": ""}],
                 "new_string": "replacement\n",
             },
             ctx,
         )
 
-        assert result.metadata.get("error") is not True
-        assert result.metadata["start_line"] == 2
-        assert result.metadata["end_line"] == 3
-        assert f.read_text() == "top\nreplacement\nend\n"
+        assert result.metadata.get("error") is True
+        assert "multi-line replace requires non-empty anchors" in result.output
+        assert f.read_text() == "top\nbody\n\nend\n"
 
     @pytest.mark.asyncio
     async def test_replace_multi_line_empty_start_anchor_still_requires_empty_line(self, tmp_path):
@@ -678,17 +818,14 @@ class TestFileOps:
             "replace",
             {
                 "file_path": "empty-anchor-missing.txt",
-                "start_no": 2,
-                "end_no": 3,
-                "start_anchor": "",
-                "end_anchor": "end",
+                "bounds": [{"line_no": 2, "anchor": ""}, {"line_no": 3, "anchor": "end"}],
                 "new_string": "replacement\n",
             },
             ctx,
         )
 
         assert result.metadata.get("error")
-        assert "empty line" in result.output
+        assert "multi-line replace requires non-empty anchors" in result.output
         assert f.read_text() == "top\nbody\nend\n"
 
 
@@ -706,10 +843,7 @@ class TestFileOps:
             "replace",
             {
                 "file_path": "empty-start-single.txt",
-                "start_no": 2,
-                "end_no": 2,
-                "start_anchor": "",
-                "end_anchor": "body",
+                "bounds": [{"line_no": 2, "anchor": ""}],
                 "new_string": "replacement",
             },
             ctx,
@@ -734,10 +868,7 @@ class TestFileOps:
             "replace",
             {
                 "file_path": "empty-end-single.txt",
-                "start_no": 2,
-                "end_no": 2,
-                "start_anchor": "body",
-                "end_anchor": "",
+                "bounds": [{"line_no": 2, "anchor": "body"}],
                 "new_string": "replacement",
             },
             ctx,
@@ -762,10 +893,7 @@ class TestFileOps:
             "replace",
             {
                 "file_path": "both-empty-single.txt",
-                "start_no": 2,
-                "end_no": 2,
-                "start_anchor": "",
-                "end_anchor": "",
+                "bounds": [{"line_no": 2, "anchor": ""}],
                 "new_string": "replacement",
             },
             ctx,
@@ -790,10 +918,7 @@ class TestFileOps:
             "replace",
             {
                 "file_path": "pure-insert.txt",
-                "start_no": 2,
-                "end_no": 2,
-                "start_anchor": "",
-                "end_anchor": "",
+                "bounds": [{"line_no": 2, "anchor": ""}],
                 "new_string": "two\ninserted",
             },
             ctx,
@@ -817,17 +942,14 @@ class TestFileOps:
             "replace",
             {
                 "file_path": "multi-empty.txt",
-                "start_no": 1,
-                "end_no": 2,
-                "start_anchor": "",
-                "end_anchor": "beta",
+                "bounds": [{"line_no": 1, "anchor": ""}, {"line_no": 2, "anchor": "beta"}],
                 "new_string": "x",
             },
             ctx,
         )
 
         assert result.metadata.get("error") is True
-        assert "empty line" in result.output
+        assert "multi-line replace requires non-empty anchors" in result.output
 
     @pytest.mark.asyncio
     async def test_replace_single_line_empty_anchor_ignores_nearby_empty_line(self, tmp_path):
@@ -843,10 +965,7 @@ class TestFileOps:
             "replace",
             {
                 "file_path": "nearby-empty.txt",
-                "start_no": 5,
-                "end_no": 5,
-                "start_anchor": "",
-                "end_anchor": "",
+                "bounds": [{"line_no": 5, "anchor": ""}],
                 "new_string": "REPLACED",
             },
             ctx,
@@ -868,7 +987,7 @@ class TestFileOps:
 
         result = await r.execute_tool(
             "replace",
-            {"file_path": "trailing.txt", "start_no": 2, "end_no": 2, "start_anchor": "line2", "end_anchor": "line2", "new_string": "NEW2\n"},
+            {"file_path": "trailing.txt", "bounds": [{"line_no": 2, "anchor": "line2"}], "new_string": "NEW2\n"},
             ctx,
         )
 
@@ -886,7 +1005,7 @@ class TestFileOps:
 
         result = await r.execute_tool(
             "replace",
-            {"file_path": "multi-trailing.txt", "start_no": 2, "end_no": 3, "start_anchor": "line2", "end_anchor": "line3", "new_string": "NEW_A\nNEW_B\n"},
+            {"file_path": "multi-trailing.txt", "bounds": [{"line_no": 2, "anchor": "line2"}, {"line_no": 3, "anchor": "line3"}], "new_string": "NEW_A\nNEW_B\n"},
             ctx,
         )
 
@@ -904,7 +1023,7 @@ class TestFileOps:
 
         result = await r.execute_tool(
             "replace",
-            {"file_path": "last-line.txt", "start_no": 3, "end_no": 3, "start_anchor": "line3", "end_anchor": "line3", "new_string": "NEW3\n"},
+            {"file_path": "last-line.txt", "bounds": [{"line_no": 3, "anchor": "line3"}], "new_string": "NEW3\n"},
             ctx,
         )
 
@@ -922,7 +1041,7 @@ class TestFileOps:
 
         result = await r.execute_tool(
             "replace",
-            {"file_path": "no-trailing.txt", "start_no": 2, "end_no": 2, "start_anchor": "line2", "end_anchor": "line2", "new_string": "NEW2\n"},
+            {"file_path": "no-trailing.txt", "bounds": [{"line_no": 2, "anchor": "line2"}], "new_string": "NEW2\n"},
             ctx,
         )
 
@@ -940,7 +1059,7 @@ class TestFileOps:
 
         result = await r.execute_tool(
             "replace",
-            {"file_path": "baseline.txt", "start_no": 2, "end_no": 2, "start_anchor": "line2", "end_anchor": "line2", "new_string": "NEW2"},
+            {"file_path": "baseline.txt", "bounds": [{"line_no": 2, "anchor": "line2"}], "new_string": "NEW2"},
             ctx,
         )
 
@@ -958,7 +1077,7 @@ class TestFileOps:
 
         result = await r.execute_tool(
             "replace",
-            {"file_path": "double-newline.txt", "start_no": 2, "end_no": 2, "start_anchor": "line2", "end_anchor": "line2", "new_string": "NEW2\n\n"},
+            {"file_path": "double-newline.txt", "bounds": [{"line_no": 2, "anchor": "line2"}], "new_string": "NEW2\n\n"},
             ctx,
         )
 
@@ -976,7 +1095,7 @@ class TestFileOps:
 
         result = await r.execute_tool(
             "replace",
-            {"file_path": "code.py", "start_no": 1, "end_no": 2, "start_anchor": "def foo():", "end_anchor": "return 1", "new_string": "def foo():\n    return 42\n"},
+            {"file_path": "code.py", "bounds": [{"line_no": 1, "anchor": "def foo():"}, {"line_no": 2, "anchor": "return 1"}], "new_string": "def foo():\n    return 42\n"},
             ctx,
         )
 
@@ -994,7 +1113,7 @@ class TestFileOps:
 
         result = await r.execute_tool(
             "replace",
-            {"file_path": "multi-to-single.txt", "start_no": 2, "end_no": 4, "start_anchor": "line2", "end_anchor": "line4", "new_string": "REPLACED\n"},
+            {"file_path": "multi-to-single.txt", "bounds": [{"line_no": 2, "anchor": "line2"}, {"line_no": 4, "anchor": "line4"}], "new_string": "REPLACED\n"},
             ctx,
         )
 
@@ -1012,7 +1131,7 @@ class TestFileOps:
 
         result = await r.execute_tool(
             "replace",
-            {"file_path": "single.txt", "start_no": 1, "end_no": 1, "start_anchor": "only_line", "end_anchor": "only_line", "new_string": "REPLACED\n"},
+            {"file_path": "single.txt", "bounds": [{"line_no": 1, "anchor": "only_line"}], "new_string": "REPLACED\n"},
             ctx,
         )
 
@@ -1030,7 +1149,7 @@ class TestFileOps:
 
         result = await r.execute_tool(
             "replace",
-            {"file_path": "two.txt", "start_no": 1, "end_no": 1, "start_anchor": "line1", "end_anchor": "line1", "new_string": "NEW1\n"},
+            {"file_path": "two.txt", "bounds": [{"line_no": 1, "anchor": "line1"}], "new_string": "NEW1\n"},
             ctx,
         )
 
@@ -1048,7 +1167,7 @@ class TestFileOps:
 
         r1 = await r.execute_tool(
             "replace",
-            {"file_path": "sequential.txt", "start_no": 2, "end_no": 2, "start_anchor": "line2", "end_anchor": "line2", "new_string": "NEW2\n"},
+            {"file_path": "sequential.txt", "bounds": [{"line_no": 2, "anchor": "line2"}], "new_string": "NEW2\n"},
             ctx,
         )
         assert r1.metadata.get("error") is not True
@@ -1058,7 +1177,7 @@ class TestFileOps:
 
         r2 = await r.execute_tool(
             "replace",
-            {"file_path": "sequential.txt", "start_no": 3, "end_no": 3, "start_anchor": "line3", "end_anchor": "line3", "new_string": "NEW3\n"},
+            {"file_path": "sequential.txt", "bounds": [{"line_no": 3, "anchor": "line3"}], "new_string": "NEW3\n"},
             ctx,
         )
         assert r2.metadata.get("error") is not True
@@ -1076,7 +1195,7 @@ class TestFileOps:
 
         result = await r.execute_tool(
             "replace",
-            {"file_path": "lead-trail.txt", "start_no": 2, "end_no": 2, "start_anchor": "line2", "end_anchor": "line2", "new_string": "\nNEW2\n"},
+            {"file_path": "lead-trail.txt", "bounds": [{"line_no": 2, "anchor": "line2"}], "new_string": "\nNEW2\n"},
             ctx,
         )
 
@@ -1094,7 +1213,7 @@ class TestFileOps:
 
         result = await r.execute_tool(
             "replace",
-            {"file_path": "delete.txt", "start_no": 2, "end_no": 2, "start_anchor": "line2", "end_anchor": "line2", "new_string": ""},
+            {"file_path": "delete.txt", "bounds": [{"line_no": 2, "anchor": "line2"}], "new_string": ""},
             ctx,
         )
 
@@ -1113,7 +1232,7 @@ class TestFileOps:
 
         result = await r.execute_tool(
             "replace",
-            {"file_path": "delete-blank.txt", "start_no": 2, "end_no": 2, "start_anchor": "line2", "end_anchor": "line2", "new_string": blank},
+            {"file_path": "delete-blank.txt", "bounds": [{"line_no": 2, "anchor": "line2"}], "new_string": blank},
             ctx,
         )
 
@@ -1132,7 +1251,7 @@ class TestFileOps:
 
         result = await r.execute_tool(
             "replace",
-            {"file_path": "delete-blank-empty-anchor.txt", "start_no": 2, "end_no": 2, "start_anchor": "", "end_anchor": "", "new_string": blank},
+            {"file_path": "delete-blank-empty-anchor.txt", "bounds": [{"line_no": 2, "anchor": ""}], "new_string": blank},
             ctx,
         )
 
@@ -1152,10 +1271,7 @@ class TestFileOps:
             "replace",
             {
                 "file_path": "partial-suffix.txt",
-                "start_no": 1,
-                "end_no": 1,
-                "start_anchor": "remap_read_coverage_from_file_diff",
-                "end_anchor": "remap_read_coverage_from_file_diff",
+                "bounds": [{"line_no": 1, "anchor": "remap_read_coverage_from_file_diff"}],
                 "new_string": "replacement()",
             },
             ctx,
@@ -1176,10 +1292,7 @@ class TestFileOps:
             "replace",
             {
                 "file_path": "full-suffix.txt",
-                "start_no": 1,
-                "end_no": 1,
-                "start_anchor": "remap_read_coverage_from_file_diff",
-                "end_anchor": "old_ranges=old_ranges)",
+                "bounds": [{"line_no": 1, "anchor": "remap_read_coverage_from_file_diff"}],
                 "new_string": "replacement()\n",
             },
             ctx,
@@ -1200,10 +1313,7 @@ class TestFileOps:
             "replace",
             {
                 "file_path": "midline-suffix.py",
-                "start_no": 1,
-                "end_no": 1,
-                "start_anchor": "if new_string.endswith",
-                "end_anchor": "tail.startswith",
+                "bounds": [{"line_no": 1, "anchor": "if new_string.endswith"}],
                 "new_string": '    if (new_string == "" or new_string.endswith("\\n")) and tail.startswith("\\n"):',
             },
             ctx,
@@ -1226,10 +1336,7 @@ class TestFileOps:
             "replace",
             {
                 "file_path": "crossline.txt",
-                "start_no": 1,
-                "end_no": 1,
-                "start_anchor": "return",
-                "end_anchor": "offset",
+                "bounds": [{"line_no": 1, "anchor": "return"}, {"line_no": 1, "anchor": "offset"}],
                 "new_string": "REPLACED",
             },
             ctx,
@@ -1251,10 +1358,7 @@ class TestFileOps:
             "replace",
             {
                 "file_path": "same-line.txt",
-                "start_no": 1,
-                "end_no": 1,
-                "start_anchor": "return",
-                "end_anchor": "offset",
+                "bounds": [{"line_no": 1, "anchor": "return"}],
                 "new_string": "    return value + 1",
             },
             ctx,
@@ -1276,10 +1380,7 @@ class TestFileOps:
             "replace",
             {
                 "file_path": "dup.txt",
-                "start_no": 2,
-                "end_no": 2,
-                "start_anchor": "pass",
-                "end_anchor": "pass",
+                "bounds": [{"line_no": 2, "anchor": "pass"}],
                 "new_string": "DONE",
             },
             ctx,
@@ -1303,10 +1404,7 @@ class TestFileOps:
             "replace",
             {
                 "file_path": "equidistant.txt",
-                "start_no": 2,
-                "end_no": 2,
-                "start_anchor": "pass",
-                "end_anchor": "pass",
+                "bounds": [{"line_no": 2, "anchor": "pass"}],
                 "new_string": "DONE",
             },
             ctx,
@@ -1329,10 +1427,7 @@ class TestFileOps:
             "replace",
             {
                 "file_path": "suffix-wrong-line.txt",
-                "start_no": 1,
-                "end_no": 1,
-                "start_anchor": "return",
-                "end_anchor": "offset",
+                "bounds": [{"line_no": 1, "anchor": "return"}, {"line_no": 1, "anchor": "offset"}],
                 "new_string": "REPLACED",
             },
             ctx,
@@ -1354,10 +1449,7 @@ class TestFileOps:
             "replace",
             {
                 "file_path": "empty-line.txt",
-                "start_no": 2,
-                "end_no": 2,
-                "start_anchor": "",
-                "end_anchor": "",
+                "bounds": [{"line_no": 2, "anchor": ""}],
                 "new_string": "INSERTED",
             },
             ctx,
@@ -1381,17 +1473,60 @@ class TestFileOps:
             "replace",
             {
                 "file_path": "crossline-msg.txt",
-                "start_no": 1,
-                "end_no": 1,
-                "start_anchor": "return",
-                "end_anchor": "offset",
+                "bounds": [{"line_no": 1, "anchor": "return"}, {"line_no": 1, "anchor": "offset"}],
                 "new_string": "REPLACED",
             },
             ctx,
         )
 
         assert result.metadata.get("error")
-        assert "not on the same line" in result.output
+        assert "two-bound replace requires different line_no values" in result.output
+
+    @pytest.mark.asyncio
+    async def test_replace_coverage_error_has_no_edit_index_prefix(self, tmp_path):
+        """Coverage error should not be prefixed with 'Edit 0:' — it's a single replace op."""
+        f = tmp_path / "coverage-prefix.txt"
+        f.write_text("one\ntwo\nthree\n")
+        ctx = ToolContext(workspace=str(tmp_path))
+        r = ToolRegistry()
+        # Read only line 1, then try to replace line 3 (uncovered)
+        await r.execute_tool("read", {"file_path": "coverage-prefix.txt", "offset": 1, "limit": 1}, ctx)
+
+        result = await r.execute_tool(
+            "replace",
+            {
+                "file_path": "coverage-prefix.txt",
+                "bounds": [{"line_no": 3, "anchor": "three"}],
+                "new_string": "THREE",
+            },
+            ctx,
+        )
+
+        assert result.metadata.get("error")
+        assert "must be read before editing" in result.output
+        assert "Hint: Read lines 3-3" in result.output
+        assert "Edit 0:" not in result.output
+
+    @pytest.mark.asyncio
+    async def test_replace_validation_error_for_end_no_lt_start_no_names_field(self, tmp_path):
+        """model_validator error should name the actual field, not 'arguments'."""
+        ctx = ToolContext(workspace=str(tmp_path))
+        r = ToolRegistry()
+
+        result = await r.execute_tool(
+            "replace",
+            {
+                "file_path": "dummy.txt",
+                "bounds": [{"line_no": 5, "anchor": ""}, {"line_no": 1, "anchor": ""}],
+                "new_string": "",
+            },
+            ctx,
+        )
+
+        assert result.metadata.get("error")
+        assert "multi-line replace requires non-empty anchors" in result.output
+        assert "field 'arguments'" not in result.output
+        assert "Value error" not in result.output
 
     @pytest.mark.asyncio
     async def test_replace_span_tolerance_scales_with_range_size(self, tmp_path):
@@ -1420,10 +1555,7 @@ class TestFileOps:
             "replace",
             {
                 "file_path": "tolerance2.txt",
-                "start_no": 1,
-                "end_no": 20,
-                "start_anchor": "line 1",
-                "end_anchor": "line 22",
+                "bounds": [{"line_no": 1, "anchor": "line 1"}, {"line_no": 20, "anchor": "line 22"}],
                 "new_string": "REPLACED\n",
             },
             ctx,
@@ -1441,7 +1573,7 @@ class TestFileOps:
 
         result = await r.execute_tool(
             "replace",
-            {"file_path": "snippet.txt", "start_no": 2, "end_no": 2, "start_anchor": "nonexistent", "end_anchor": "nonexistent", "new_string": "X"},
+            {"file_path": "snippet.txt", "bounds": [{"line_no": 2, "anchor": "nonexistent"}], "new_string": "X"},
             ctx,
         )
 
@@ -1451,7 +1583,7 @@ class TestFileOps:
 
     @pytest.mark.asyncio
     async def test_replace_error_suffix_mismatch_includes_window_snippet(self, tmp_path):
-        """Suffix-not-on-same-line error includes window snippet."""
+        """Anchor-not-found error includes window snippet."""
         f = tmp_path / "suffix-snippet.txt"
         f.write_text("    return\n    offset = 1\n    pass\n")
         ctx = ToolContext(workspace=str(tmp_path))
@@ -1462,10 +1594,7 @@ class TestFileOps:
             "replace",
             {
                 "file_path": "suffix-snippet.txt",
-                "start_no": 1,
-                "end_no": 1,
-                "start_anchor": "return",
-                "end_anchor": "offset",
+                "bounds": [{"line_no": 1, "anchor": "missing"}],
                 "new_string": "REPLACED",
             },
             ctx,
@@ -1488,10 +1617,7 @@ class TestFileOps:
             "replace",
             {
                 "file_path": "dedup.txt",
-                "start_no": 2,
-                "end_no": 2,
-                "start_anchor": "import os",
-                "end_anchor": "import os",
+                "bounds": [{"line_no": 2, "anchor": "import os"}],
                 "new_string": "import os\n",
             },
             ctx,
@@ -1514,10 +1640,7 @@ class TestFileOps:
             "replace",
             {
                 "file_path": "no-dedup.txt",
-                "start_no": 2,
-                "end_no": 2,
-                "start_anchor": "import os",
-                "end_anchor": "import os",
+                "bounds": [{"line_no": 2, "anchor": "import os"}],
                 "new_string": "import os\n",
             },
             ctx,
@@ -1540,10 +1663,7 @@ class TestFileOps:
             "replace",
             {
                 "file_path": "multi-dedup.txt",
-                "start_no": 2,
-                "end_no": 2,
-                "start_anchor": "old_line",
-                "end_anchor": "old_line",
+                "bounds": [{"line_no": 2, "anchor": "old_line"}],
                 "new_string": "new_A\nold_line\n",
             },
             ctx,
@@ -1566,10 +1686,7 @@ class TestFileOps:
             "replace",
             {
                 "file_path": "end-dedup.txt",
-                "start_no": 2,
-                "end_no": 2,
-                "start_anchor": "old_line",
-                "end_anchor": "old_line",
+                "bounds": [{"line_no": 2, "anchor": "old_line"}],
                 "new_string": "old_line\n",
             },
             ctx,
@@ -1592,10 +1709,7 @@ class TestFileOps:
             "replace",
             {
                 "file_path": "empty-dedup.txt",
-                "start_no": 2,
-                "end_no": 2,
-                "start_anchor": "",
-                "end_anchor": "",
+                "bounds": [{"line_no": 2, "anchor": ""}],
                 "new_string": "\n",
             },
             ctx,
@@ -1617,10 +1731,7 @@ class TestFileOps:
             "replace",
             {
                 "file_path": "no-nl-dedup.txt",
-                "start_no": 2,
-                "end_no": 2,
-                "start_anchor": "import os",
-                "end_anchor": "import os",
+                "bounds": [{"line_no": 2, "anchor": "import os"}],
                 "new_string": "import os",
             },
             ctx,
@@ -1645,10 +1756,7 @@ class TestFileOps:
             "replace",
             {
                 "file_path": "head-dedup.txt",
-                "start_no": 3,
-                "end_no": 3,
-                "start_anchor": "import os",
-                "end_anchor": "import os",
+                "bounds": [{"line_no": 3, "anchor": "import os"}],
                 "new_string": "import os\n",
             },
             ctx,
@@ -1674,10 +1782,7 @@ class TestFileOps:
             "replace",
             {
                 "file_path": "head-no-dedup.txt",
-                "start_no": 3,
-                "end_no": 3,
-                "start_anchor": "import os",
-                "end_anchor": "import os",
+                "bounds": [{"line_no": 3, "anchor": "import os"}],
                 "new_string": "import os\n",
             },
             ctx,
@@ -1700,10 +1805,7 @@ class TestFileOps:
             "replace",
             {
                 "file_path": "head-multi-dedup.txt",
-                "start_no": 3,
-                "end_no": 3,
-                "start_anchor": "old_line",
-                "end_anchor": "old_line",
+                "bounds": [{"line_no": 3, "anchor": "old_line"}],
                 "new_string": "old_line\nnew_B\n",
             },
             ctx,
@@ -1726,10 +1828,7 @@ class TestFileOps:
             "replace",
             {
                 "file_path": "head-start-dedup.txt",
-                "start_no": 1,
-                "end_no": 1,
-                "start_anchor": "old_line",
-                "end_anchor": "old_line",
+                "bounds": [{"line_no": 1, "anchor": "old_line"}],
                 "new_string": "old_line\n",
             },
             ctx,
@@ -1752,10 +1851,7 @@ class TestFileOps:
             "replace",
             {
                 "file_path": "head-empty-dedup.txt",
-                "start_no": 3,
-                "end_no": 3,
-                "start_anchor": "",
-                "end_anchor": "",
+                "bounds": [{"line_no": 3, "anchor": ""}],
                 "new_string": "\n",
             },
             ctx,
@@ -1777,10 +1873,7 @@ class TestFileOps:
             "replace",
             {
                 "file_path": "both-dedup.txt",
-                "start_no": 2,
-                "end_no": 2,
-                "start_anchor": "old",
-                "end_anchor": "old",
+                "bounds": [{"line_no": 2, "anchor": "old"}],
                 "new_string": "dup_a\nnew\ndup_b\n",
             },
             ctx,
@@ -1915,16 +2008,22 @@ class TestDriftFallbackE2E:
         # edit: l2-l6 (5行) -> X (1行),偏移 -4,l7 从第 7 行变成第 3 行
         await r.execute_tool(
             "replace",
-            {"file_path": "drift.txt", "start_no": 2, "end_no": 6,
-             "start_anchor": "l2", "end_anchor": "l6", "new_string": "X"},
+            {
+                "file_path": "drift.txt",
+                "bounds": [{"line_no": 2, "anchor": "l2"}, {"line_no": 6, "anchor": "l6"}],
+                "new_string": "X",
+            },
             ctx,
         )
 
         # LLM 用老行号 7-7 找 "l7",首次在 7±3 搜索失败,回退 remap 7->3 匹配成功
         result = await r.execute_tool(
             "replace",
-            {"file_path": "drift.txt", "start_no": 7, "end_no": 7,
-             "start_anchor": "l7", "end_anchor": "l7", "new_string": "L7"},
+            {
+                "file_path": "drift.txt",
+                "bounds": [{"line_no": 7, "anchor": "l7"}],
+                "new_string": "L7",
+            },
             ctx,
         )
         assert result.metadata.get("error") is not True
@@ -1950,15 +2049,21 @@ class TestDriftFallbackE2E:
         # edit1: l2-l4 -> X (偏移 -2)
         await r.execute_tool(
             "replace",
-            {"file_path": "drift_multi.txt", "start_no": 2, "end_no": 4,
-             "start_anchor": "l2", "end_anchor": "l4", "new_string": "X"},
+            {
+                "file_path": "drift_multi.txt",
+                "bounds": [{"line_no": 2, "anchor": "l2"}, {"line_no": 4, "anchor": "l4"}],
+                "new_string": "X",
+            },
             ctx,
         )
         # edit2: l5-l7 -> Y (edit1 后 l5/l6/l7 仍在第 5-7 行,偏移 -2)
         await r.execute_tool(
             "replace",
-            {"file_path": "drift_multi.txt", "start_no": 5, "end_no": 7,
-             "start_anchor": "l5", "end_anchor": "l7", "new_string": "Y"},
+            {
+                "file_path": "drift_multi.txt",
+                "bounds": [{"line_no": 5, "anchor": "l5"}, {"line_no": 7, "anchor": "l7"}],
+                "new_string": "Y",
+            },
             ctx,
         )
 
@@ -1967,8 +2072,11 @@ class TestDriftFallbackE2E:
         # 回退: remap 10 -> 8 (edit1) -> 6 (edit2),重试匹配 l10 -> 成功
         result = await r.execute_tool(
             "replace",
-            {"file_path": "drift_multi.txt", "start_no": 10, "end_no": 10,
-             "start_anchor": "l10", "end_anchor": "l10", "new_string": "L10"},
+            {
+                "file_path": "drift_multi.txt",
+                "bounds": [{"line_no": 10, "anchor": "l10"}],
+                "new_string": "L10",
+            },
             ctx,
         )
         assert result.metadata.get("error") is not True
@@ -1989,10 +2097,7 @@ class TestDriftFallbackE2E:
             "replace",
             {
                 "file_path": "lead-nl.txt",
-                "start_no": 2,
-                "end_no": 2,
-                "start_anchor": "\ndef foo():",
-                "end_anchor": "\ndef foo():",
+                "bounds": [{"line_no": 2, "anchor": "\ndef foo():"}],
                 "new_string": "def bar():",
             },
             ctx,
@@ -2014,10 +2119,7 @@ class TestDriftFallbackE2E:
             "replace",
             {
                 "file_path": "trail-nl.txt",
-                "start_no": 2,
-                "end_no": 2,
-                "start_anchor": "def foo():\n",
-                "end_anchor": "def foo():\n",
+                "bounds": [{"line_no": 2, "anchor": "def foo():\n"}],
                 "new_string": "def bar():",
             },
             ctx,
@@ -2039,10 +2141,7 @@ class TestDriftFallbackE2E:
             "replace",
             {
                 "file_path": "mid-nl.txt",
-                "start_no": 2,
-                "end_no": 3,
-                "start_anchor": "def foo():\n    return 1",
-                "end_anchor": "    return 1\ndef foo():",
+                "bounds": [{"line_no": 2, "anchor": "def foo():\n    return 1"}, {"line_no": 3, "anchor": "    return 1\ndef foo():"}],
                 "new_string": "def bar():\n    return 2",
             },
             ctx,
@@ -2064,10 +2163,7 @@ class TestDriftFallbackE2E:
             "replace",
             {
                 "file_path": "pure-nl.txt",
-                "start_no": 2,
-                "end_no": 2,
-                "start_anchor": "\n",
-                "end_anchor": "\n",
+                "bounds": [{"line_no": 2, "anchor": "\n"}],
                 "new_string": "INSERTED",
             },
             ctx,

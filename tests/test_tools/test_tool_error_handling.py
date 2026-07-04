@@ -57,6 +57,17 @@ async def test_file_replace_invalid_args_returns_error():
     assert result.metadata.get("error") is True
 
 
+
+
+@pytest.mark.asyncio
+async def test_file_replace_invalid_args_uses_llm_visible_message():
+    result = await FileReplaceTool().execute({"file_path": 123}, _CTX)
+
+    assert result.metadata.get("error") is True
+    assert "Invalid arguments: field 'bounds' is required" in result.output
+    assert "Required fields: file_path, bounds, new_string" in result.output
+    assert "FileReplaceInput" not in result.output
+    assert "validation errors" not in result.output
 @pytest.mark.asyncio
 async def test_glob_invalid_args_returns_error():
     result = await GlobTool().execute({"pattern": 123}, _CTX)

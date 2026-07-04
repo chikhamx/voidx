@@ -96,7 +96,7 @@ class TestInteractiveTools:
         await WriteTool().execute({"file_path": "app.py", "op": "append", "new_string": "two\n"}, ctx)
         await FileReadTool().execute({"file_path": "app.py"}, ctx)
         result = await FileReplaceTool().execute(
-            {"file_path": "app.py", "start_no": 1, "end_no": 1, "start_anchor": "two", "end_anchor": "two", "new_string": "three\n"},
+            {"file_path": "app.py", "bounds": [{"line_no": 1, "anchor": "two"}], "new_string": "three\n"},
             ctx,
         )
 
