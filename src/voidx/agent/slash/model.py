@@ -29,7 +29,7 @@ class SlashModelMixin:
                 ui.error("Provider name is required.")
                 return
             new_provider = new_provider.strip()
-            protocol_choices = ["openai", "anthropic", "deepseek"]
+            protocol_choices = ["openai", "anthropic", "gemini", "deepseek"]
             proto_idx = await _select_from_list(self.host.app, "Protocol", protocol_choices)
             if proto_idx is None:
                 ui.print("[dim]Cancelled.[/dim]")
@@ -141,6 +141,7 @@ class SlashModelMixin:
 
         ui.print(f"  [cyan]{profile_key}[/cyan] [green]✓ configured[/green]")
         ui.print(f"[dim]Saved to {env_path}[/dim]")
+        await self._show_startup(prefer_direct=True)
 
     @staticmethod
     async def _test_connection(model, timeout: float = 30.0) -> tuple[bool, str]:
@@ -312,6 +313,7 @@ class SlashModelMixin:
             self.host.model = create_chat_model(profile.api_key, self.host.config.model)
             await settings.save_profile(profile)
             ui.print(f"[cyan]{profile.name}[/cyan] ({profile.provider}/{profile.model}) [green]✓ switched[/green]")
+            await self._show_startup(prefer_direct=True)
 
         await self._pick_or_act("Switch", target, _do_switch)
 

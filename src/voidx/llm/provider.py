@@ -14,6 +14,9 @@ silently drops it) and handles provider-specific reasoning-effort mapping.
 
 from __future__ import annotations
 
+import subprocess
+import sys
+
 from langchain_anthropic import ChatAnthropic
 from langchain_openai import ChatOpenAI
 from langchain_core.language_models import BaseChatModel
@@ -472,6 +475,50 @@ def _openai_reasoning_kwargs(config: ModelConfig) -> dict:
 # ── model factory ────────────────────────────────────────────────────────
 
 
+def _ensure_gemini_dep() -> None:
+    """Ensure langchain-google-genai is importable; auto-install if missing.
+
+    Tries to import the package. On ImportError, silently runs
+    ``pip install langchain-google-genai`` up to 3 times, retrying the import
+    after each install. Raises ImportError with a manual install hint only
+    after all retries are exhausted.
+    """
+    try:
+        import langchain_google_genai  # noqa: F401
+        return
+    except ImportError:
+        pass
+
+    last_err = ""
+    for _ in range(3):
+        try:
+            result = subprocess.run(
+                [sys.executable, "-m", "pip", "install", "langchain-google-genai>=4.0.0"],
+                capture_output=True,
+                text=True,
+                timeout=120,
+            )
+        except subprocess.TimeoutExpired as e:
+            last_err = f"pip install timed out after 120s: {e}"
+            continue
+        if result.returncode != 0:
+            last_err = (result.stderr or result.stdout or "").strip()[-200:]
+            continue
+        try:
+            import langchain_google_genai  # noqa: F401
+            return
+        except ImportError as e:
+            last_err = str(e)
+            continue
+
+    raise ImportError(
+        "langchain-google-genai is required for Gemini protocol. "
+        "Auto-install failed"
+        + (f": {last_err}" if last_err else "")
+        + ". Install manually with: pip install voidx[gemini]"
+    )
+
+
 def _reasoning_kwargs(config: ModelConfig, protocol: str) -> dict:
     if protocol == "anthropic":
         if config.provider == "anthropic":
@@ -531,13 +578,8 @@ def create_chat_model(api_key: str, config: ModelConfig) -> BaseChatModel:
         return ChatOpenAI(**kwargs)
 
     if protocol == "gemini":
-        try:
-            from langchain_google_genai import ChatGoogleGenerativeAI
-        except ImportError:
-            raise ImportError(
-                "langchain-google-genai is required for Gemini protocol. "
-                "Install with: pip install voidx[gemini]"
-            )
+        _ensure_gemini_dep()
+        from langchain_google_genai import ChatGoogleGenerativeAI
         kwargs = dict(
             model=config.model,
             temperature=config.temperature,

@@ -238,11 +238,15 @@ def test_create_chat_model_gemini_with_reasoning():
 
 
 def test_create_chat_model_gemini_import_error():
-    """Missing langchain-google-genai should raise ImportError with install hint."""
+    """When _ensure_gemini_dep fails (auto-install exhausted), create_chat_model
+    should raise ImportError with install hint."""
     from voidx.llm.provider import create_chat_model
 
     with patch("voidx.llm.provider.resolve_protocol", return_value="gemini"):
-        with patch.dict("sys.modules", {"langchain_google_genai": None}):
+        with patch("voidx.llm.provider._ensure_gemini_dep", side_effect=ImportError(
+            "langchain-google-genai is required for Gemini protocol. "
+            "Install with: pip install voidx[gemini]"
+        )):
             try:
                 create_chat_model(
                     "test-key",
@@ -252,3 +256,92 @@ def test_create_chat_model_gemini_import_error():
             except ImportError as e:
                 assert "langchain-google-genai" in str(e)
                 assert "voidx[gemini]" in str(e)
+
+
+# ── _ensure_gemini_dep auto-install ─────────────────────────────────────
+
+
+def test_ensure_gemini_dep_already_installed():
+    """When langchain_google_genai is already importable, no subprocess call."""
+    from voidx.llm.provider import _ensure_gemini_dep
+
+    mock_cls = MagicMock()
+    with patch.dict("sys.modules", {"langchain_google_genai": MagicMock(ChatGoogleGenerativeAI=mock_cls)}):
+        with patch("subprocess.run") as mock_run:
+            _ensure_gemini_dep()
+            mock_run.assert_not_called()
+
+
+def test_ensure_gemini_dep_auto_install_success():
+    """When import fails initially, pip install runs and import succeeds on retry."""
+    from voidx.llm.provider import _ensure_gemini_dep
+
+    mock_cls = MagicMock()
+    original_import = __builtins__.__import__ if hasattr(__builtins__, "__import__") else __import__
+
+    call_count = {"import": 0}
+
+    def fake_import(name, *args, **kwargs):
+        if name == "langchain_google_genai":
+            call_count["import"] += 1
+            if call_count["import"] == 1:
+                raise ImportError("not installed")
+            return MagicMock(ChatGoogleGenerativeAI=mock_cls)
+        return original_import(name, *args, **kwargs)
+
+    mock_result = MagicMock()
+    mock_result.returncode = 0
+
+    with patch("builtins.__import__", side_effect=fake_import):
+        with patch("subprocess.run", return_value=mock_result) as mock_run:
+            _ensure_gemini_dep()
+            assert mock_run.call_count == 1
+
+
+def test_ensure_gemini_dep_retry_then_fail():
+    """When pip install fails 3 times, ImportError is raised with install hint."""
+    from voidx.llm.provider import _ensure_gemini_dep
+
+    original_import = __builtins__.__import__ if hasattr(__builtins__, "__import__") else __import__
+
+    def fake_import(name, *args, **kwargs):
+        if name == "langchain_google_genai":
+            raise ImportError("not installed")
+        return original_import(name, *args, **kwargs)
+
+    mock_result = MagicMock()
+    mock_result.returncode = 1
+    mock_result.stderr = "network error"
+
+    with patch("builtins.__import__", side_effect=fake_import):
+        with patch("subprocess.run", return_value=mock_result) as mock_run:
+            try:
+                _ensure_gemini_dep()
+                assert False, "Should have raised ImportError"
+            except ImportError as e:
+                assert "langchain-google-genai" in str(e)
+                assert "voidx[gemini]" in str(e)
+                assert mock_run.call_count == 3
+
+
+def test_ensure_gemini_dep_timeout_retries_then_fail():
+    """When pip install times out 3 times, ImportError is raised with timeout hint."""
+    from voidx.llm.provider import _ensure_gemini_dep
+    import subprocess
+
+    original_import = __builtins__.__import__ if hasattr(__builtins__, "__import__") else __import__
+
+    def fake_import(name, *args, **kwargs):
+        if name == "langchain_google_genai":
+            raise ImportError("not installed")
+        return original_import(name, *args, **kwargs)
+
+    with patch("builtins.__import__", side_effect=fake_import):
+        with patch("subprocess.run", side_effect=subprocess.TimeoutExpired(cmd="pip", timeout=120)) as mock_run:
+            try:
+                _ensure_gemini_dep()
+                assert False, "Should have raised ImportError"
+            except ImportError as e:
+                assert "timed out" in str(e)
+                assert "voidx[gemini]" in str(e)
+                assert mock_run.call_count == 3
