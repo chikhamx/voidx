@@ -1,6 +1,6 @@
 # Workflow 工具循环守卫修复 — 技术设计文档
 
-> **Status: Pending**
+> **Status: Done**
 
 Date: 2026-07-04
 

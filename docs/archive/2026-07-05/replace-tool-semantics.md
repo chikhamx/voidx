@@ -1,5 +1,7 @@
 # replace 工具语义重整 — 技术设计文档
 
+> **Status: Done**
+
 ## Context
 
 `replace` 工具目前使用 `start_no` / `end_no` / `start_anchor` / `end_anchor` 四个字段描述替换边界。这个模型能表达能力，但对调用方不够直观，尤其是空 anchor 的语义容易被误解：
