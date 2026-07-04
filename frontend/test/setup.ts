@@ -47,17 +47,14 @@ document.body.innerHTML = `
           <textarea id="input" rows="3"></textarea>
           <div class="vx-composer-actions">
             <button type="button" class="vx-attach-btn" id="btn-attach" aria-label="Add context">+</button>
-            <span class="vx-permission-pill" id="permission-pill">完全访问</span>
+            <span class="vx-permission-pill" id="permission-pill">等待状态</span>
             <label class="vx-select-label" for="provider-select">
-              <span>Provider</span>
               <select id="provider-select" aria-label="Provider"></select>
             </label>
             <label class="vx-select-label" for="model-select">
-              <span>Model</span>
               <select id="model-select" aria-label="Model"></select>
             </label>
             <button type="submit" class="btn-send" id="btn-send" aria-label="Send">↑</button>
-            <button type="button" class="btn-cancel" id="btn-cancel" aria-label="Cancel" disabled hidden>■</button>
           </div>
         </form>
         <div class="context-menu" id="context-menu" hidden>
@@ -67,7 +64,7 @@ document.body.innerHTML = `
         </div>
         <div class="vx-context-row" id="context-row">
           <span id="context-workspace">voidx</span>
-          <span id="context-permission">完全访问</span>
+          <span id="context-permission">等待状态</span>
           <span id="context-provider-model"></span>
         </div>
         </div>
@@ -84,7 +81,7 @@ document.body.innerHTML = `
       <div class="vx-dock-strip" id="dock-strip">
         <span class="status-session" id="status-session"></span>
         <span id="strip-workspace">voidx</span>
-        <span id="strip-permission">完全访问</span>
+        <span id="strip-permission">等待状态</span>
         <span id="strip-provider-model"></span>
       </div>
       <div class="vx-dock-content" id="dock-content">
@@ -103,7 +100,7 @@ document.body.innerHTML = `
             <div><dt>Session</dt><dd id="status-session-detail"></dd></div>
             <div><dt>Workspace</dt><dd id="status-workspace-detail">voidx</dd></div>
             <div><dt>Model</dt><dd id="status-provider-model"></dd></div>
-            <div><dt>Permission</dt><dd id="status-permission">完全访问</dd></div>
+            <div><dt>Permission</dt><dd id="status-permission">等待状态</dd></div>
             <div><dt>Running</dt><dd id="status-running">idle</dd></div>
           </dl>
         </div>

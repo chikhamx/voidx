@@ -757,6 +757,7 @@ body {
   --vx-diff-add: #1a7f37;
   --vx-diff-del: #cf222e;
   --vx-diff-hunk: #8250df;
+  --vx-sidebar-row-padding: 7px 9px;
   background: #ffffff;
   color: var(--vx-text-primary);
 }
@@ -804,6 +805,7 @@ body {
 
 .vx-sidebar-nav,
 .vx-project-list,
+.vx-session-list,
 .vx-sidebar-footer {
   display: grid;
   gap: 4px;
@@ -840,7 +842,7 @@ body {
   font: inherit;
   gap: 8px;
   min-height: 34px;
-  padding: 7px 9px;
+  padding: var(--vx-sidebar-row-padding);
   text-align: left;
   width: 100%;
 }
@@ -882,6 +884,55 @@ body {
   box-shadow: 0 1px 2px rgb(0 0 0 / 0.06);
   color: var(--vx-text-primary);
   font-weight: 650;
+}
+
+.vx-workbench-shell .vx-session-list {
+  padding: 0;
+}
+
+.vx-workbench-shell .vx-directory-group {
+  margin-bottom: 0;
+}
+
+.vx-workbench-shell .vx-directory-row {
+  min-height: 26px;
+  padding: 0 9px;
+}
+
+.vx-workbench-shell .vx-directory-new-chat {
+  border-radius: 6px;
+  min-height: 26px;
+  min-width: 26px;
+  padding: 0;
+}
+
+.vx-workbench-shell .vx-session-children {
+  padding-left: 0;
+}
+
+.vx-workbench-shell .vx-session-item {
+  border-radius: 8px;
+  gap: 8px;
+  min-height: 34px;
+  padding: var(--vx-sidebar-row-padding);
+}
+
+.vx-workbench-shell .vx-session-menu-btn {
+  background: #ffffff;
+  border: 1px solid #deded7;
+  border-radius: 6px;
+  color: var(--vx-text-secondary);
+  cursor: pointer;
+  font: inherit;
+  line-height: 1;
+  margin-left: auto;
+  min-width: 32px;
+  padding: 3px 8px 5px;
+}
+
+.vx-workbench-shell .vx-session-menu-btn:hover {
+  border-color: #c9c9c0;
+  color: var(--vx-text-primary);
 }
 
 .vx-sidebar-footer {
@@ -1000,8 +1051,7 @@ body {
   border: 1px solid #dfdfd8;
   color: var(--vx-text-muted);
   font-size: 12px;
-  gap: 6px;
-  padding: 0 8px 0 10px;
+  padding: 0 12px;
 }
 
 .vx-select-label select {
@@ -1021,10 +1071,9 @@ body {
   margin-left: auto;
 }
 
-.vx-workbench-shell .btn-cancel {
+.vx-workbench-shell .btn-send.running {
   background: var(--vx-error);
-  color: #ffffff;
-  margin-left: auto;
+  font-size: 14px;
 }
 
 .vx-context-row {
@@ -1111,10 +1160,6 @@ body {
 @media (max-width: 1199px) {
   .vx-workbench-shell .vx-sidebar {
     width: 220px;
-  }
-
-  .vx-select-label span {
-    display: none;
   }
 }
 

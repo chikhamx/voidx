@@ -1,4 +1,6 @@
 // @ts-nocheck
+import { readFileSync } from "node:fs";
+import { join } from "node:path";
 import { beforeEach, describe, expect, it, vi } from "vitest";
 import { handleNotification, initModelControls, _resetWorkbenchForTest } from "../src/main";
 import { _resetForTest as resetDock, initDock, switchTab, toggleDock, getActiveTab } from "../src/dock";
@@ -81,9 +83,33 @@ describe("workbench shell", () => {
     expect(activeProject).not.toBeNull();
     expect(activeProject.textContent).toContain("voidx");
   });
+
+  it("keeps sidebar rows aligned in the workbench layout", () => {
+    const styles = readFileSync(join(process.cwd(), "styles.css"), "utf8");
+
+    expect(styles).toContain("--vx-sidebar-row-padding: 7px 9px;");
+    expect(styles).toContain(".vx-sidebar-nav,\n.vx-project-list,\n.vx-session-list,\n.vx-sidebar-footer");
+    expect(styles).toContain(".vx-workbench-shell .vx-session-children {\n  padding-left: 0;\n}");
+    expect(styles).toMatch(/\.vx-workbench-shell \.vx-directory-row \{[^}]*padding: 0 9px;[^}]*\}/);
+    expect(styles).toMatch(/\.vx-workbench-shell \.vx-session-item \{[^}]*padding: var\(--vx-sidebar-row-padding\);[^}]*\}/);
+  });
 });
 
 describe("provider and model controls", () => {
+  it("does not show fake provider model or permission before startup state arrives", () => {
+    const providerSelect = document.querySelector("#provider-select");
+    const modelSelect = document.querySelector("#model-select");
+
+    expect(providerSelect.value).toBe("");
+    expect(modelSelect.value).toBe("");
+    expect([...providerSelect.options].map((option) => option.value)).toContain("");
+    expect([...modelSelect.options].map((option) => option.value)).toEqual([""]);
+    expect(document.querySelector("#permission-pill").textContent).toBe("等待状态");
+    expect(document.querySelector("#context-permission").textContent).toBe("等待状态");
+    expect(document.querySelector("#status-permission").textContent).toBe("等待状态");
+    expect(document.querySelector("#status-provider-model").textContent).toBe("等待模型状态");
+  });
+
   it("renders provider and model selects with catalog options", () => {
     const providerSelect = document.querySelector("#provider-select");
     const modelSelect = document.querySelector("#model-select");
@@ -91,7 +117,7 @@ describe("provider and model controls", () => {
     expect(providerSelect).not.toBeNull();
     expect(modelSelect).not.toBeNull();
     expect([...providerSelect.options].map((option) => option.value)).toContain("openai");
-    expect([...modelSelect.options].map((option) => option.value)).toContain("gpt-5.5");
+    expect([...modelSelect.options].map((option) => option.value)).toEqual([""]);
   });
 
   it("changing provider refreshes model options without submitting", () => {

@@ -73,12 +73,12 @@ const titlebarProjectEl = document.querySelector("#titlebar-project");
 const contextWorkspaceEl = document.querySelector("#context-workspace")!;
 const contextPermissionEl = document.querySelector("#context-permission")!;
 const contextProviderModelEl = document.querySelector("#context-provider-model")!;
+const permissionPillEl = document.querySelector("#permission-pill")!;
 const emptyStateEl = document.querySelector<HTMLElement>("#empty-state")!;
 const transcriptEl = document.querySelector<HTMLElement>("#transcript")!;
 const composerEl = document.querySelector<HTMLFormElement>("#composer")!;
 const inputEl = document.querySelector<HTMLTextAreaElement>("#input")!;
 const btnSendEl = document.querySelector<HTMLButtonElement>("#btn-send")!;
-const btnCancelEl = document.querySelector<HTMLButtonElement>("#btn-cancel")!;
 const providerSelectEl = document.querySelector<HTMLSelectElement>("#provider-select")!;
 const modelSelectEl = document.querySelector<HTMLSelectElement>("#model-select")!;
 const slashMenuEl = document.querySelector<HTMLElement>("#slash-menu")!;
@@ -102,7 +102,7 @@ interface UiState {
 
 const uiState: UiState = {
   connection: "disconnected",
-  provider: "openai",
+  provider: "",
   model: "",
   workspace: "",
   sessionId: "",
@@ -122,6 +122,8 @@ const MODEL_CATALOG: Record<string, string[]> = {
 };
 
 const DEFAULT_WORKSPACE = "voidx";
+const PENDING_PERMISSION_LABEL = "等待状态";
+const PENDING_MODEL_LABEL = "等待模型状态";
 
 let socket: WebSocket | null = null;
 let reconnectAttempts = 0;
@@ -552,10 +554,9 @@ export function handleItem(
 
 function setRunning(running: boolean): void {
   uiState.isRunning = running;
-  btnCancelEl.disabled = !running;
-  btnCancelEl.hidden = !running;
-  btnSendEl.disabled = running;
-  btnSendEl.hidden = running;
+  btnSendEl.classList.toggle("running", running);
+  btnSendEl.textContent = running ? "■" : "↑";
+  btnSendEl.setAttribute("aria-label", running ? "Cancel" : "Send");
   inputEl.disabled = running || uiState.isSwitchingModel;
   updateStatusBar();
 }
@@ -592,6 +593,7 @@ function updateStatusBar(): void {
     statusSessionDetailEl.textContent = sessionLabel;
   }
   contextPermissionEl.textContent = permissionLabel;
+  permissionPillEl.textContent = permissionLabel;
   stripPermissionEl.textContent = permissionLabel;
   statusPermissionEl.textContent = permissionLabel;
   contextProviderModelEl.textContent = modelLabel;
@@ -659,6 +661,10 @@ export function initModelControls(): void {
     rpcCall("session.submit", {
       text: `/model switch ${provider}/${model}`,
     })
+      .then(() => {
+        uiState.provider = provider;
+        uiState.model = model;
+      })
       .finally(() => {
         setTimeout(() => {
           uiState.isSwitchingModel = false;
@@ -676,13 +682,21 @@ export function initModelControls(): void {
 function populateModelControls(): void {
   if (!providerSelectEl || !modelSelectEl) return;
   providerSelectEl.replaceChildren();
-  for (const provider of Object.keys(MODEL_CATALOG)) {
+  const providers = new Set<string>(Object.keys(MODEL_CATALOG));
+  if (uiState.provider && !providers.has(uiState.provider)) {
+    providers.add(uiState.provider);
+  }
+  const pendingOption = document.createElement("option");
+  pendingOption.value = "";
+  pendingOption.textContent = PENDING_MODEL_LABEL;
+  providerSelectEl.append(pendingOption);
+  for (const provider of providers) {
     const option = document.createElement("option");
     option.value = provider;
     option.textContent = provider;
     providerSelectEl.append(option);
   }
-  providerSelectEl.value = uiState.provider || "openai";
+  providerSelectEl.value = uiState.provider || "";
   populateModelOptions(providerSelectEl.value, uiState.model);
 }
 
@@ -699,6 +713,14 @@ function populateModelOptions(
     models.push(uiState.model);
   }
   modelSelectEl.replaceChildren();
+  if (!provider || models.length === 0) {
+    const option = document.createElement("option");
+    option.value = "";
+    option.textContent = PENDING_MODEL_LABEL;
+    modelSelectEl.append(option);
+    modelSelectEl.value = "";
+    return;
+  }
   for (const model of models) {
     const option = document.createElement("option");
     option.value = model;
@@ -744,14 +766,14 @@ function parseProviderModel(
 }
 
 function providerModelLabel(): string {
-  if (!uiState.model) return "";
+  if (!uiState.provider || !uiState.model) return PENDING_MODEL_LABEL;
   return `${uiState.provider || "custom"}/${uiState.model}`;
 }
 
 function profileConfiguredLabel(): string {
   if (uiState.profileConfigured === true) return "已配置";
   if (uiState.profileConfigured === false) return "未配置";
-  return "完全访问";
+  return PENDING_PERMISSION_LABEL;
 }
 
 function workspaceBasename(workspace: string): string {
@@ -790,7 +812,7 @@ function syncEmptyState(): void {
 
 export function _resetWorkbenchForTest(): void {
   uiState.connection = "disconnected";
-  uiState.provider = "openai";
+  uiState.provider = "";
   uiState.model = "";
   uiState.workspace = "";
   uiState.sessionId = "";
@@ -805,13 +827,16 @@ export function _resetWorkbenchForTest(): void {
   syncEmptyState();
 }
 
-btnCancelEl.addEventListener("click", () => {
-  if (!socket || socket.readyState !== WebSocket.OPEN) {
-    return;
+btnSendEl.addEventListener("click", (e: MouseEvent) => {
+  if (uiState.isRunning) {
+    e.preventDefault();
+    if (!socket || socket.readyState !== WebSocket.OPEN) {
+      return;
+    }
+    rpcCall("session.cancel", {})
+      .then(() => setRunning(false))
+      .catch(() => setRunning(false));
   }
-  rpcCall("session.cancel", {})
-    .then(() => setRunning(false))
-    .catch(() => setRunning(false));
 });
 
 document
