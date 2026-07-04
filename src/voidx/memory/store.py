@@ -81,6 +81,7 @@ def _init_schema(conn: sqlite3.Connection) -> None:
             id TEXT PRIMARY KEY,
             title TEXT NOT NULL DEFAULT 'New session',
             workspace TEXT NOT NULL DEFAULT '.',
+            directory TEXT NOT NULL DEFAULT '',
             model_provider TEXT NOT NULL DEFAULT 'anthropic',
             model_name TEXT NOT NULL DEFAULT 'claude-sonnet-4-6',
             created_at TEXT NOT NULL,
@@ -145,6 +146,12 @@ def _init_schema(conn: sqlite3.Connection) -> None:
     try:
         conn.execute(
             "ALTER TABLE sessions ADD COLUMN message_count INTEGER NOT NULL DEFAULT 0"
+        )
+    except sqlite3.OperationalError:
+        pass
+    try:
+        conn.execute(
+            "ALTER TABLE sessions ADD COLUMN directory TEXT NOT NULL DEFAULT ''"
         )
     except sqlite3.OperationalError:
         pass

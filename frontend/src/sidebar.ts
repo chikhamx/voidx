@@ -2,27 +2,83 @@ export interface ThreadInfo {
   thread_id: string;
   title?: string;
   status?: string;
+  directory?: string;
+}
+
+interface DirectoryGroup {
+  directory: string;
+  label: string;
+  sessions: ThreadInfo[];
 }
 
 type ThreadCallback = (threadId: string) => void;
+type NewThreadCallback = (directory: string) => void;
 
 let threadSelectCb: ThreadCallback | null = null;
-let newThreadCb: (() => void) | null = null;
+let newThreadCb: NewThreadCallback | null = null;
 let threadForkCb: ThreadCallback | null = null;
 let threadDeleteCb: ThreadCallback | null = null;
 let threadRenameCb: ThreadCallback | null = null;
 let currentThreads: ThreadInfo[] = [];
+let currentProjectName = "Project";
 let newChatBtnBound = false;
 
-export function renderSidebar(threads: ThreadInfo[], activeThreadId: string | null): void {
+function _normalizeDirectory(dir: string | undefined): string {
+  if (!dir || dir === ".") return "";
+  return dir;
+}
+
+function _findDirectoryGroup(list: HTMLElement, dir: string): HTMLElement | null {
+  for (const el of list.querySelectorAll<HTMLElement>(".vx-directory-group")) {
+    if (el.dataset.directory === dir) return el;
+  }
+  return null;
+}
+
+function groupByDirectory(threads: ThreadInfo[]): DirectoryGroup[] {
+  const map = new Map<string, ThreadInfo[]>();
+  for (const thread of threads) {
+    const dir = _normalizeDirectory(thread.directory);
+    let arr = map.get(dir);
+    if (!arr) {
+      arr = [];
+      map.set(dir, arr);
+    }
+    arr.push(thread);
+  }
+
+  const groups: DirectoryGroup[] = [];
+  for (const [dir, sessions] of map) {
+    groups.push({
+      directory: dir,
+      label: dir === "" ? "Root" : dir,
+      sessions,
+    });
+  }
+
+  groups.sort((a, b) => {
+    if (a.directory === "") return -1;
+    if (b.directory === "") return 1;
+    return a.label.localeCompare(b.label);
+  });
+
+  return groups;
+}
+
+export function renderSidebar(threads: ThreadInfo[], activeThreadId: string | null, projectName: string): void {
   currentThreads = threads;
+  currentProjectName = projectName || "Project";
   const list = document.querySelector<HTMLElement>("#session-list");
   if (!list) return;
 
   list.replaceChildren();
 
-  for (const thread of threads) {
-    list.append(_createSessionItem(thread, activeThreadId));
+  const header = document.querySelector<HTMLElement>(".vx-project-name");
+  if (header) header.textContent = currentProjectName;
+
+  const groups = groupByDirectory(threads);
+  for (const group of groups) {
+    list.append(_createDirectoryGroup(group, activeThreadId));
   }
 }
 
@@ -37,7 +93,69 @@ export function addThread(thread: ThreadInfo, activeThreadId: string | null): vo
     }
   }
 
-  list.append(_createSessionItem(thread, activeThreadId));
+  const dir = _normalizeDirectory(thread.directory);
+  let groupEl = _findDirectoryGroup(list, dir);
+  if (!groupEl) {
+    const group: DirectoryGroup = {
+      directory: dir,
+      label: dir === "" ? "Root" : dir,
+      sessions: [thread],
+    };
+    groupEl = _createDirectoryGroup(group, activeThreadId);
+    const groups = groupByDirectory(currentThreads);
+    const idx = groups.findIndex((g) => g.directory === dir);
+    if (idx <= 0) {
+      list.prepend(groupEl);
+    } else {
+      const prevDir = groups[idx - 1].directory;
+      const prevEl = _findDirectoryGroup(list, prevDir);
+      if (prevEl && prevEl.nextSibling) {
+        list.insertBefore(groupEl, prevEl.nextSibling);
+      } else {
+        list.append(groupEl);
+      }
+    }
+  } else {
+    const children = groupEl.querySelector<HTMLElement>(".vx-session-children");
+    if (children) {
+      children.append(_createSessionItem(thread, activeThreadId));
+    }
+  }
+}
+
+function _createDirectoryGroup(group: DirectoryGroup, activeThreadId: string | null): HTMLElement {
+  const groupEl = document.createElement("div");
+  groupEl.className = "vx-directory-group";
+  groupEl.dataset.directory = group.directory;
+
+  const row = document.createElement("div");
+  row.className = "vx-directory-row";
+
+  const name = document.createElement("span");
+  name.className = "vx-directory-name";
+  name.textContent = group.label;
+  row.append(name);
+
+  const newChatBtn = document.createElement("button");
+  newChatBtn.className = "vx-directory-new-chat";
+  newChatBtn.textContent = "+";
+  newChatBtn.title = "New session";
+  newChatBtn.addEventListener("click", (e: MouseEvent) => {
+    e.stopPropagation();
+    if (newThreadCb) newThreadCb(group.directory);
+  });
+  row.append(newChatBtn);
+
+  groupEl.append(row);
+
+  const children = document.createElement("div");
+  children.className = "vx-session-children";
+  for (const thread of group.sessions) {
+    children.append(_createSessionItem(thread, activeThreadId));
+  }
+  groupEl.append(children);
+
+  return groupEl;
 }
 
 function _createSessionItem(thread: ThreadInfo, activeThreadId: string | null): HTMLElement {
@@ -147,11 +265,18 @@ export function filterSessions(query: string): void {
   if (!list) return;
 
   const q = (query || "").toLowerCase();
-  const items = list.querySelectorAll<HTMLElement>(".vx-session-item");
-  for (const item of items) {
-    const title = item.querySelector<HTMLElement>(".vx-session-title");
-    const text = (title?.textContent || "").toLowerCase();
-    item.hidden = q !== "" && !text.includes(q);
+  const groups = list.querySelectorAll<HTMLElement>(".vx-directory-group");
+  for (const group of groups) {
+    const items = group.querySelectorAll<HTMLElement>(".vx-session-item");
+    let anyVisible = false;
+    for (const item of items) {
+      const title = item.querySelector<HTMLElement>(".vx-session-title");
+      const text = (title?.textContent || "").toLowerCase();
+      const visible = q === "" || text.includes(q);
+      item.hidden = !visible;
+      if (visible) anyVisible = true;
+    }
+    group.hidden = !anyVisible;
   }
 }
 
@@ -159,13 +284,13 @@ export function onThreadSelect(callback: ThreadCallback): void {
   threadSelectCb = callback;
 }
 
-export function onNewThread(callback: () => void): void {
+export function onNewThread(callback: NewThreadCallback): void {
   newThreadCb = callback;
   if (!newChatBtnBound) {
     const btn = document.querySelector<HTMLElement>("#btn-new-chat");
     if (btn) {
       btn.addEventListener("click", () => {
-        if (newThreadCb) newThreadCb();
+        if (newThreadCb) newThreadCb("");
       });
     }
     newChatBtnBound = true;
@@ -191,5 +316,6 @@ export function _resetForTest(): void {
   threadDeleteCb = null;
   threadRenameCb = null;
   currentThreads = [];
+  currentProjectName = "Project";
   newChatBtnBound = false;
 }

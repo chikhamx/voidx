@@ -9,6 +9,9 @@ document.body.innerHTML = `
     </header>
     <div class="vx-body">
       <aside class="vx-sidebar" id="sidebar">
+        <div class="vx-sidebar-header">
+          <span class="vx-project-name">Project</span>
+        </div>
         <nav class="vx-sidebar-nav" aria-label="Workspace navigation">
           <button type="button" class="vx-nav-item vx-new-chat" id="btn-new-chat">新对话</button>
           <label class="vx-nav-item vx-search-item">

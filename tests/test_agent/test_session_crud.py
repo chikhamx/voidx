@@ -373,3 +373,49 @@ async def test_delete_session_removes_file_history_directory():
     await delete_session(session.id)
 
     assert not _session_dir(session.id).exists()
+
+
+@pytest.mark.asyncio
+async def test_create_session_persists_directory():
+    info = await create_session(directory="Frameworks")
+    fetched = await get_session(info.id)
+    assert fetched is not None
+    assert fetched.directory == "Frameworks"
+
+
+@pytest.mark.asyncio
+async def test_create_session_defaults_directory_to_empty():
+    info = await create_session()
+    fetched = await get_session(info.id)
+    assert fetched is not None
+    assert fetched.directory == ""
+
+
+@pytest.mark.asyncio
+async def test_list_sessions_returns_directory():
+    await create_session(directory="opt")
+    await create_session(directory="")
+    sessions = await list_sessions()
+    dirs = {s.directory for s in sessions}
+    assert "opt" in dirs
+    assert "" in dirs
+
+
+@pytest.mark.asyncio
+async def test_fork_session_copies_directory():
+    from voidx.memory.session import fork_session
+    original = await create_session(directory="Downloads")
+    forked = await fork_session(original.id)
+    assert forked is not None
+    assert forked.directory == "Downloads"
+    fetched = await get_session(forked.id)
+    assert fetched is not None
+    assert fetched.directory == "Downloads"
+
+
+@pytest.mark.asyncio
+async def test_latest_session_for_workspace_returns_directory():
+    await create_session(directory=".claude")
+    latest = await latest_session_for_workspace(".")
+    assert latest is not None
+    assert latest.directory == ".claude"

@@ -241,8 +241,8 @@ onThreadSelect((threadId: string) => {
     });
 });
 
-onNewThread(() => {
-  rpcCall("session.create", {})
+onNewThread((directory: string) => {
+  rpcCall("session.create", { directory })
     .then((result: unknown) => {
       const r = result as Record<string, string>;
       uiState.sessionId = r.thread_id;
@@ -251,6 +251,7 @@ onNewThread(() => {
           thread_id: r.thread_id,
           title: r.title,
           status: r.status,
+          directory: r.directory,
         },
         r.thread_id,
       );
@@ -411,6 +412,7 @@ export function handleNotification(
     renderSidebar(
       (params.threads as unknown as ThreadInfo[]) || [],
       (params.active_thread_id as string) || "",
+      workspaceBasename(uiState.workspace),
     );
     renderTranscript(transcriptEl, snapshot as TranscriptSnapshot);
     syncEmptyState();

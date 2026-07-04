@@ -673,6 +673,51 @@ async def test_v2_session_create_method_registers_thread(tmp_path):
     store._conn = None
 
 
+
+@pytest.mark.asyncio
+async def test_v2_session_create_with_directory(tmp_path):
+    """session.create with directory param persists and returns directory."""
+    import voidx.memory.store as store
+    store._conn = None
+    store.DATA_DIR = tmp_path / ".voidx"
+
+    dock = BottomInputDock()
+    session = GatewaySession(lambda: dock.tree, thread_id="t1")
+
+    request = JsonRpcRequest(
+        id=11, method="session.create",
+        params={"title": "Dir thread", "directory": "Frameworks"},
+    )
+    result = await session.dispatch_request(request)
+
+    assert isinstance(result, JsonRpcResult)
+    info = result.result
+    assert info["directory"] == "Frameworks"
+    threads = session.list_threads()
+    matched = [t for t in threads if t.thread_id == info["thread_id"]]
+    assert matched and matched[0].directory == "Frameworks"
+    store._conn = None
+
+
+@pytest.mark.asyncio
+async def test_v2_session_create_defaults_empty_directory(tmp_path):
+    """session.create without directory defaults to empty string."""
+    import voidx.memory.store as store
+    store._conn = None
+    store.DATA_DIR = tmp_path / ".voidx"
+
+    dock = BottomInputDock()
+    session = GatewaySession(lambda: dock.tree, thread_id="t1")
+
+    request = JsonRpcRequest(
+        id=12, method="session.create", params={"title": "Root thread"},
+    )
+    result = await session.dispatch_request(request)
+
+    assert isinstance(result, JsonRpcResult)
+    assert result.result["directory"] == ""
+    store._conn = None
+
 @pytest.mark.asyncio
 async def test_v2_session_rename_method_updates_title(tmp_path):
     import voidx.memory.store as store

@@ -609,6 +609,40 @@ body {
   white-space: nowrap;
 }
 
+.vx-directory-group {
+  margin-bottom: var(--vx-space-1);
+}
+.vx-directory-row {
+  align-items: center;
+  color: var(--vx-text-tertiary);
+  display: flex;
+  font-size: 0.75rem;
+  font-weight: 600;
+  gap: var(--vx-space-1);
+  padding: var(--vx-space-1) var(--vx-space-3);
+  text-transform: uppercase;
+  letter-spacing: 0.04em;
+}
+.vx-directory-name {
+  flex: 1;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+.vx-directory-new-chat {
+  background: none;
+  border: none;
+  color: var(--vx-text-tertiary);
+  cursor: pointer;
+  font-size: 1rem;
+  line-height: 1;
+  padding: 0 var(--vx-space-1);
+}
+.vx-directory-new-chat:hover { color: var(--vx-text-primary); }
+.vx-session-children {
+  padding-left: var(--vx-space-2);
+}
+
 /* === Terminal === */
 .vx-terminal-start {
   background: var(--vx-bg-elevated);

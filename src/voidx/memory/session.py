@@ -28,6 +28,7 @@ class SessionInfo(BaseModel):
     id: str
     title: str = "New session"
     workspace: str = "."
+    directory: str = ""
     model_provider: str = "anthropic"
     model_name: str = "claude-sonnet-4-6"
     created_at: str = Field(default_factory=_now)
@@ -55,17 +56,18 @@ async def create_session(
     model: str = "claude-sonnet-4-6",
     *,
     title: str = "New session",
+    directory: str = "",
 ) -> SessionInfo:
     sid = _uid()
     now = _now()
     await _execute_commit(
-        """INSERT INTO sessions (id, title, workspace, model_provider, model_name, created_at, updated_at)
-           VALUES (?, ?, ?, ?, ?, ?, ?)""",
-        (sid, title, workspace, provider, model, now, now),
+        """INSERT INTO sessions (id, title, workspace, directory, model_provider, model_name, created_at, updated_at)
+           VALUES (?, ?, ?, ?, ?, ?, ?, ?)""",
+        (sid, title, workspace, directory, provider, model, now, now),
     )
     return SessionInfo(
-        id=sid, title=title, workspace=workspace, model_provider=provider,
-        model_name=model, created_at=now, updated_at=now,
+        id=sid, title=title, workspace=workspace, directory=directory,
+        model_provider=provider, model_name=model, created_at=now, updated_at=now,
     )
 
 
@@ -77,6 +79,7 @@ async def get_session(session_id: str) -> SessionInfo | None:
         return None
     return SessionInfo(
         id=row["id"], title=row["title"], workspace=row["workspace"],
+        directory=row["directory"],
         model_provider=row["model_provider"], model_name=row["model_name"],
         created_at=row["created_at"], updated_at=row["updated_at"],
         message_count=row["message_count"],
@@ -94,6 +97,7 @@ async def list_sessions(limit: int = 50) -> list[SessionInfo]:
     return [
         SessionInfo(
             id=row["id"], title=row["title"], workspace=row["workspace"],
+            directory=row["directory"],
             model_provider=row["model_provider"], model_name=row["model_name"],
             created_at=row["created_at"], updated_at=row["updated_at"],
             message_count=row["message_count"],
@@ -115,6 +119,7 @@ async def latest_session_for_workspace(workspace: str) -> SessionInfo | None:
         return None
     return SessionInfo(
         id=row["id"], title=row["title"], workspace=row["workspace"],
+        directory=row["directory"],
         model_provider=row["model_provider"], model_name=row["model_name"],
         created_at=row["created_at"], updated_at=row["updated_at"],
         message_count=row["message_count"],
@@ -185,13 +190,14 @@ async def fork_session(
     now = _now()
     fork_title = title if title is not None else f"Fork of {source.title}"
     await _execute_commit(
-        """INSERT INTO sessions (id, title, workspace, model_provider, model_name, created_at, updated_at)
-           VALUES (?, ?, ?, ?, ?, ?, ?)""",
-        (sid, fork_title, source.workspace, source.model_provider,
-         source.model_name, now, now),
+        """INSERT INTO sessions (id, title, workspace, directory, model_provider, model_name, created_at, updated_at)
+           VALUES (?, ?, ?, ?, ?, ?, ?, ?)""",
+        (sid, fork_title, source.workspace, source.directory,
+         source.model_provider, source.model_name, now, now),
     )
     return SessionInfo(
         id=sid, title=fork_title, workspace=source.workspace,
+        directory=source.directory,
         model_provider=source.model_provider, model_name=source.model_name,
         created_at=now, updated_at=now,
     )

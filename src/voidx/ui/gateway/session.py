@@ -183,8 +183,8 @@ class GatewaySession:
 
     # ── multi-thread management ───────────────────────────────────────────
 
-    async def register_thread(self, thread_id: str, *, title: str = "") -> None:
-        self._threads[thread_id] = ThreadInfo(thread_id=thread_id, title=title)
+    async def register_thread(self, thread_id: str, *, title: str = "", directory: str = "") -> None:
+        self._threads[thread_id] = ThreadInfo(thread_id=thread_id, title=title, directory=directory)
         self._adapters[thread_id] = UiEventItemAdapter(
             thread_id=thread_id, turn_id="",
         )
@@ -404,11 +404,13 @@ class GatewaySession:
     async def _method_session_create(self, params: dict) -> dict:
         from voidx.memory.session import create_session
         title = params.get("title", "New session")
-        info = await create_session(title=title)
-        await self.register_thread(info.id, title=info.title)
+        directory = params.get("directory", "")
+        info = await create_session(title=title, directory=directory)
+        await self.register_thread(info.id, title=info.title, directory=info.directory)
         return {
             "thread_id": info.id,
             "title": info.title,
+            "directory": info.directory,
             "status": "idle",
         }
 
@@ -419,10 +421,11 @@ class GatewaySession:
         info = await fork_session(thread_id, title=title)
         if info is None:
             raise MethodParamsError(f"thread not found: {thread_id}")
-        await self.register_thread(info.id, title=info.title)
+        await self.register_thread(info.id, title=info.title, directory=info.directory)
         return {
             "thread_id": info.id,
             "title": info.title,
+            "directory": info.directory,
             "status": "idle",
         }
 

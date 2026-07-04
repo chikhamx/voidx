@@ -18,6 +18,7 @@ class ThreadInfo(BaseModel):
     thread_id: str
     title: str = ""
     workspace: str = "."
+    directory: str = ""
     model_provider: str = ""
     model_name: str = ""
     status: Literal["idle", "running"] = "idle"

@@ -357,7 +357,7 @@ class GraphRunLoopMixin(GraphTurnMixin, GraphSessionMixin, GraphTranscriptMixin)
             return
         tid = self._session.id
         if tid and tid not in gs._threads:
-            asyncio.ensure_future(gs.register_thread(tid, title=self._session.title or ""))
+            asyncio.ensure_future(gs.register_thread(tid, title=self._session.title or "", directory=getattr(self._session, "directory", "") or ""))
 
     async def _handle_user_input(self: GraphRunLoopHost, app, user_input: str) -> tuple[bool, str | None]:
         user_input = user_input.strip()
