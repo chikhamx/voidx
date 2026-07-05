@@ -9,6 +9,7 @@ import os
 from collections.abc import Callable
 from typing import Any
 
+from voidx.logging import log_internal_error
 from voidx.lsp.errors import LspConnectionError, LspRequestError
 from voidx.lsp.schema import LspServerConfig, parse_diagnostics
 
@@ -125,12 +126,12 @@ class LspClient:
         if self.connected:
             try:
                 await self.request("shutdown", None, timeout=2.0)
-            except Exception:
-                pass
+            except Exception as exc:
+                log_internal_error(exc, context="lsp_shutdown_request")
             try:
                 await self.notify("exit", {})
-            except Exception:
-                pass
+            except Exception as exc:
+                log_internal_error(exc, context="lsp_exit_notify")
         try:
             await asyncio.wait_for(self._process.wait(), timeout=2.0)
         except asyncio.TimeoutError:
@@ -235,8 +236,8 @@ class LspClient:
                     self._error_message = line.decode("utf-8", errors="replace").strip()
         except asyncio.CancelledError:
             raise
-        except Exception:
-            pass
+        except Exception as exc:
+            log_internal_error(exc, context="lsp_stderr_reader")
 
     def _cancel_tasks(self) -> None:
         for task in (self._reader_task, self._stderr_task):

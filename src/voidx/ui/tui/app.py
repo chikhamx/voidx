@@ -18,6 +18,8 @@ from typing import Any, Awaitable, Callable
 from rich.console import Console, Group
 from rich.text import Text
 
+from voidx.logging import log_internal_error
+from voidx.paths import voidx_workspace_dir
 from voidx.ui.output.dock import dock
 from voidx.ui.output.dock.formatting import _text_from_line
 from voidx.ui.output.tree import OutputTree
@@ -159,7 +161,7 @@ class PureTui(
                 try:
                     _dump_transcript_log(Path(self.status.workspace), dock.tree)
                 except Exception as exc:
-                    print(f"Transcript log write failed: {exc}", file=sys.stderr)
+                    log_internal_error(exc, context="transcript_log_write")
             self._restore_terminal()
             if self._tty:
                 sys.stdout.write(self._move_to_frame_end_sequence())
@@ -601,7 +603,7 @@ class PureTui(
 def _dump_transcript_log(workspace: Path, tree: OutputTree, *, width: int = 120) -> None:
     """Write tree contents as plain text to .voidx/transcript.log."""
     try:
-        log_dir = workspace / ".voidx"
+        log_dir = voidx_workspace_dir(workspace)
         log_dir.mkdir(parents=True, exist_ok=True)
         log_path = log_dir / "transcript.log"
 
@@ -613,4 +615,4 @@ def _dump_transcript_log(workspace: Path, tree: OutputTree, *, width: int = 120)
                 if stripped and not all(c in ('─', ' ') for c in stripped):
                     f.write(stripped + "\n")
     except Exception as exc:
-        print(f"Transcript log write failed: {exc}", file=sys.stderr)
+        log_internal_error(exc, context="transcript_log_write")

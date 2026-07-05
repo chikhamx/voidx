@@ -12,6 +12,7 @@ import uuid
 
 from pydantic import BaseModel, Field
 
+from voidx.config.defaults import DEFAULT_MODEL
 from voidx.llm.message_status import message_status
 from voidx.memory.jsonl_store import append_session_record, drop_session_lock, read_session_records, session_dir
 from voidx.memory.store import _execute_commit, _fetch_all, _fetch_one, _now, _write_transaction
@@ -30,7 +31,7 @@ class SessionInfo(BaseModel):
     workspace: str = "."
     directory: str = ""
     model_provider: str = "anthropic"
-    model_name: str = "claude-sonnet-4-6"
+    model_name: str = DEFAULT_MODEL
     created_at: str = Field(default_factory=_now)
     updated_at: str = Field(default_factory=_now)
     message_count: int = 0
@@ -53,7 +54,7 @@ class MessageRow(BaseModel):
 async def create_session(
     workspace: str = ".",
     provider: str = "anthropic",
-    model: str = "claude-sonnet-4-6",
+    model: str = DEFAULT_MODEL,
     *,
     title: str = "New session",
     directory: str = "",

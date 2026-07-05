@@ -5,6 +5,7 @@ from __future__ import annotations
 import asyncio
 from typing import TYPE_CHECKING, Any, Protocol
 
+from langchain_core.language_models import BaseChatModel
 from langchain_core.messages import BaseMessage
 
 from voidx.agent.runtime_context import ContextCompilerCache, InteractionMode
@@ -35,7 +36,7 @@ class GraphCompactionHost(Protocol):
     """Host surface required by compaction coordinator and proxy mixin."""
 
     config: Config
-    model: Any | None
+    model: BaseChatModel | None
     _ui: AgentUiPort
     _session: SessionInfo | None
     _app: Any | None
@@ -45,14 +46,14 @@ class GraphCompactionHost(Protocol):
     _compaction_coordinator: GraphCompactionCoordinator
     _pending_summary: str | None
     _compaction_summary: str
-    _session_msg_cache: list[Any] | None
+    _session_msg_cache: list[BaseMessage] | None
     _instruction: InstructionService
 
     async def _persist_runtime_state(self) -> None: ...
     async def _maybe_compact(
         self,
         messages: list[BaseMessage],
-        session_msgs: list[Any] | None = None,
+        session_msgs: list[BaseMessage] | None = None,
         *,
         force: bool = False,
         ask: bool = True,
@@ -61,7 +62,7 @@ class GraphCompactionHost(Protocol):
     async def _preflight_compact_if_needed(
         self,
         messages: list[BaseMessage],
-        session_msgs: list[Any] | None = None,
+        session_msgs: list[BaseMessage] | None = None,
         *,
         force: bool = False,
         reason: str = "threshold",
@@ -154,7 +155,7 @@ class GraphRunLoopHost(Protocol):
     """Host surface required by run loop, turn, session, transcript, and title components."""
 
     config: Config
-    model: Any | None
+    model: BaseChatModel | None
     graph: Any
     _ui: AgentUiPort
     _session: SessionInfo | None
@@ -167,7 +168,7 @@ class GraphRunLoopHost(Protocol):
     _current_tree: Any | None
     _pending_summary: str | None
     _compaction_summary: str
-    _session_msg_cache: list[Any] | None
+    _session_msg_cache: list[BaseMessage] | None
     _context_cache: ContextCompilerCache
     _app: Any | None
     _usage_stats: UsageStats
@@ -221,7 +222,7 @@ class GraphRunLoopHost(Protocol):
     async def _maybe_compact(
         self,
         messages: list[BaseMessage],
-        session_msgs: list[Any] | None = None,
+        session_msgs: list[BaseMessage] | None = None,
         *,
         force: bool = False,
         ask: bool = True,

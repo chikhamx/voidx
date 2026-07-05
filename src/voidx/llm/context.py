@@ -4,6 +4,8 @@ from __future__ import annotations
 
 import tiktoken
 
+from voidx.config.defaults import DEFAULT_MODEL
+
 
 _ENCODING = None
 
@@ -21,13 +23,13 @@ def _get_encoding():
     raise RuntimeError("No tiktoken encoding available")
 
 
-def count_tokens(text: str, model: str = "claude-sonnet-4-6") -> int:
+def count_tokens(text: str, model: str = DEFAULT_MODEL) -> int:
     """Count tokens in text using tiktoken. Deterministic, not estimated."""
     enc = _get_encoding()
     return len(enc.encode(text))
 
 
-def count_messages_tokens(messages: list[dict], model: str = "claude-sonnet-4-6") -> int:
+def count_messages_tokens(messages: list[dict], model: str = DEFAULT_MODEL) -> int:
     """Total token count across all messages."""
     total = 0
     for msg in messages:

@@ -14,10 +14,7 @@ from rich.text import Text
 USER_ROW_STYLE = "white on #3a3937"
 TOOL_META_BRANCH = "[dim]└[/dim] "
 
-# Must match voidx.ui.output.dock.formatting.ANSI_LINE_PREFIX.
-# Duplicated here to avoid circular imports (formatting imports from dock,
-# dock imports from tree).
-_ANSI_LINE_PREFIX = "\x00voidx-ansi\x00"
+from voidx.ui.output.ansi_marker import ANSI_LINE_PREFIX as _ANSI_LINE_PREFIX
 
 
 def _visible_len(line: str) -> int:

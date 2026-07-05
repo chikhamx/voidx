@@ -13,6 +13,7 @@ from urllib.parse import quote
 import httpx
 
 from voidx import __version__
+from voidx.logging import log_internal_error
 from voidx.logging.tool_log import log_tool_event
 
 logger = logging.getLogger(__name__)
@@ -157,8 +158,8 @@ async def perform_upgrade(version: str | None = None, timeout: float = 120.0) ->
             if process is not None:
                 process.kill()
                 await process.communicate()
-        except Exception:
-            pass
+        except Exception as exc:
+            log_internal_error(exc, context="selfupdate_kill_timeout")
         return UpgradeResult(ok=False, version=target, message=f"Upgrade timed out after {int(timeout)}s.")
     except Exception as exc:
         return UpgradeResult(ok=False, version=target, message=f"Upgrade failed: {exc}")

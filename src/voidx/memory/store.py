@@ -10,7 +10,9 @@ from datetime import datetime, timezone
 from pathlib import Path
 from typing import Callable, TypeVar
 
-DATA_DIR = Path.home() / ".voidx"
+from voidx.paths import voidx_home
+
+DATA_DIR = voidx_home()
 _SQLITE_TIMEOUT_SECONDS = 30.0
 _SQLITE_BUSY_TIMEOUT_MS = 30000
 _SQLITE_LOCK_MAX_ATTEMPTS = 4
@@ -73,6 +75,40 @@ def _run_with_locked_retry(operation: Callable[[], T]) -> T:
             time.sleep(delay)
             delay = min(delay * 2, _SQLITE_LOCK_RETRY_MAX_DELAY_SECONDS)
     raise RuntimeError("unreachable sqlite retry state")
+
+
+_SCHEMA_VERSION = 1
+
+
+def _column_exists(conn: sqlite3.Connection, table: str, column: str) -> bool:
+    row = conn.execute(f"PRAGMA table_info({table})").fetchall()
+    return any(r[1] == column for r in row)
+
+
+def _add_column_if_missing(
+    conn: sqlite3.Connection, table: str, column: str, definition: str
+) -> None:
+    if not _column_exists(conn, table, column):
+        conn.execute(f"ALTER TABLE {table} ADD COLUMN {column} {definition}")
+
+
+def _drop_column_if_exists(conn: sqlite3.Connection, table: str, column: str) -> None:
+    if _column_exists(conn, table, column):
+        conn.execute(f"ALTER TABLE {table} DROP COLUMN {column}")
+
+
+def _migrate_to_v1(conn: sqlite3.Connection) -> None:
+    """v0 → v1: add message_count/directory/workflow_route_json, drop legacy columns."""
+    _add_column_if_missing(conn, "sessions", "message_count", "INTEGER NOT NULL DEFAULT 0")
+    _add_column_if_missing(conn, "sessions", "directory", "TEXT NOT NULL DEFAULT ''")
+    _add_column_if_missing(
+        conn, "session_runtime_state", "workflow_route_json", "TEXT NOT NULL DEFAULT ''"
+    )
+    _drop_column_if_exists(conn, "session_runtime_state", "pending_approval_json")
+    _drop_column_if_exists(conn, "session_runtime_state", "recent_user_texts_json")
+
+
+_MIGRATIONS = [_migrate_to_v1]
 
 
 def _init_schema(conn: sqlite3.Connection) -> None:
@@ -143,36 +179,11 @@ def _init_schema(conn: sqlite3.Connection) -> None:
         CREATE INDEX IF NOT EXISTS idx_model_profiles_provider
             ON model_profiles(provider);
     """)
-    try:
-        conn.execute(
-            "ALTER TABLE sessions ADD COLUMN message_count INTEGER NOT NULL DEFAULT 0"
-        )
-    except sqlite3.OperationalError:
-        pass
-    try:
-        conn.execute(
-            "ALTER TABLE sessions ADD COLUMN directory TEXT NOT NULL DEFAULT ''"
-        )
-    except sqlite3.OperationalError:
-        pass
-    try:
-        conn.execute(
-            "ALTER TABLE session_runtime_state ADD COLUMN workflow_route_json TEXT NOT NULL DEFAULT ''"
-        )
-    except sqlite3.OperationalError:
-        pass
-    try:
-        conn.execute(
-            "ALTER TABLE session_runtime_state DROP COLUMN pending_approval_json"
-        )
-    except sqlite3.OperationalError:
-        pass
-    try:
-        conn.execute(
-            "ALTER TABLE session_runtime_state DROP COLUMN recent_user_texts_json"
-        )
-    except sqlite3.OperationalError:
-        pass
+    current_version = conn.execute("PRAGMA user_version").fetchone()[0]
+    for version in range(current_version, _SCHEMA_VERSION):
+        _MIGRATIONS[version](conn)
+    if current_version < _SCHEMA_VERSION:
+        conn.execute(f"PRAGMA user_version = {_SCHEMA_VERSION}")
     _cleanup_legacy_payload_schema(conn)
     conn.commit()
 

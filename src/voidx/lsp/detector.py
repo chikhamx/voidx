@@ -20,6 +20,7 @@ import sys
 from pathlib import Path
 from typing import Any
 
+from voidx.logging import log_internal_error
 from voidx.lsp.detector_data import (
     LANGUAGE_DEFAULTS,
     _EXTENSION_MAP,
@@ -210,8 +211,8 @@ def _detect_npm_global() -> dict[str, LspServerConfig]:
             out = subprocess.check_output([cmd, "root", "-g"], text=True, timeout=5).strip()
             if out and Path(out).is_dir():
                 npm_prefixes.append(out)
-        except Exception:
-            pass
+        except Exception as exc:
+            log_internal_error(exc, context="lsp_npm_prefix_detect")
 
     # nvm
     nvm_dir = os.environ.get("NVM_DIR") or os.path.expanduser("~/.nvm")

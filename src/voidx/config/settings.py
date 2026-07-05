@@ -5,7 +5,9 @@ from __future__ import annotations
 import json
 from copy import deepcopy
 from pathlib import Path
+from typing import Literal
 
+from voidx.config.defaults import DEFAULT_MODEL, DEFAULT_PROVIDER
 from voidx.config.enums import PermissionMode
 from voidx.config.models import Config, ModelConfig, Profile, UserProfile
 from voidx.config.permissions import permission_mode_defaults, permission_mode_reviewer_default
@@ -18,13 +20,11 @@ from voidx.config.settings_permissions import SettingsPermissionMixin
 from voidx.config.settings_skills import SettingsSkillsMixin
 from voidx.config.settings_update import SettingsUpdateMixin
 from voidx.config.settings_web import SettingsWebMixin
-
-SETTINGS_FILE = ".voidx/settings.json"
-SKILLS_STATE_FILE = ".voidx/skills.json"
+from voidx.paths import SETTINGS_FILE, SKILLS_STATE_FILE
 _LEGACY_SETTINGS_FILE = "voidx.json"
 _PROFILE_UNSET = object()
+ModelProfileScope = Literal["local", "global"]
 GLOBAL_KEYS = frozenset({
-    "current_profile",
     "mcpServers",
     "tavily_api_key",
     "codeIde",
@@ -84,6 +84,7 @@ class Settings(
         settings._effective_cache = None
         await settings._migrate_legacy_profiles()
         await settings._migrate_to_global()
+        settings.ensure_workspace_current_profile()
         return settings
 
     def _migrate_legacy_file(self) -> None:
@@ -179,6 +180,48 @@ class Settings(
         self._save()
         return self._path
 
+    def _current_profile_name(self) -> str:
+        local = self._data.get("current_profile")
+        if isinstance(local, str) and local:
+            return local
+        global_current = self._global_data.get("current_profile")
+        return global_current if isinstance(global_current, str) else ""
+
+    def ensure_workspace_current_profile(self) -> Path | None:
+        if self._global_path == self._path:
+            return None
+        current = self._data.get("current_profile")
+        if isinstance(current, str) and current:
+            return None
+        global_current = self._global_data.get("current_profile")
+        if not isinstance(global_current, str) or not global_current:
+            return None
+        self._data["current_profile"] = global_current
+        self._save()
+        return self._path
+
+    def set_current_profile(self, name: str, *, scope: ModelProfileScope = "local") -> Path:
+        if scope not in {"local", "global"}:
+            raise ValueError(f"invalid profile scope: {scope}")
+        if scope == "global":
+            if self._global_path == self._path:
+                self._data["current_profile"] = name
+                self._save()
+                return self._path
+            self._global_data["current_profile"] = name
+            self._save_global()
+            self._data["current_profile"] = name
+            self._save()
+            return self._path
+        self._data["current_profile"] = name
+        self._save()
+        return self._path
+
+    def clear_current_profile(self) -> Path:
+        self._data.pop("current_profile", None)
+        self._save()
+        return self._path
+
     @property
     def path(self) -> Path:
         return self._path
@@ -204,7 +247,7 @@ class Settings(
 
     async def resolve_profile(self, name: str = "") -> Profile | None:
         if not name:
-            name = self._effective_data().get("current_profile", "")
+            name = self._current_profile_name()
         if name:
             profile = await self._get_profile(name)
             if profile is not None:
@@ -212,7 +255,7 @@ class Settings(
         profiles = await self.list_profiles()
         return profiles[0] if profiles else None
 
-    async def save_profile(self, profile: Profile) -> Path:
+    async def save_profile(self, profile: Profile, *, scope: ModelProfileScope = "local") -> Path:
         from voidx.memory.service import ModelProfileRow, save_model_profile_async
 
         await save_model_profile_async(ModelProfileRow(
@@ -223,19 +266,18 @@ class Settings(
             base_url=profile.base_url,
             protocol=profile.protocol,
         ))
-        return self._set_setting("current_profile", profile.name)
+        return self.set_current_profile(profile.name, scope=scope)
 
     async def delete_profile(self, name: str) -> Path:
         from voidx.memory.service import delete_model_profile_async
 
         await delete_model_profile_async(name)
-        if self._effective_data().get("current_profile") == name:
+        if self._current_profile_name() == name:
             profiles = await self.list_profiles()
             next_profile = profiles[0] if profiles else None
             if next_profile is not None:
-                return self._set_setting("current_profile", next_profile.name)
-            else:
-                return self._pop_setting("current_profile")
+                return self.set_current_profile(next_profile.name, scope="local")
+            return self.clear_current_profile()
         return self._path
 
     # ── cross-profile lookups ────────────────────────────────────────────
@@ -307,8 +349,8 @@ class Settings(
             base_url = profile.base_url
             protocol = profile.protocol
         else:
-            provider = "anthropic"
-            model = "claude-sonnet-4-6"
+            provider = DEFAULT_PROVIDER
+            model = DEFAULT_MODEL
             base_url = None
             protocol = None
 

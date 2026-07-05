@@ -20,6 +20,7 @@ from pathlib import Path
 
 import httpx
 
+from voidx.paths import voidx_home
 from voidx.skills.registry import SkillRegistry
 from voidx.skills.schema import SkillSelectionConfig
 from voidx.skills.service import SkillService
@@ -52,7 +53,7 @@ class InstructionService:
     def __init__(self, workspace: str, settings=None) -> None:
         self._workspace = Path(workspace).resolve()
         self._settings = settings
-        self._global_dir = Path.home() / ".voidx"
+        self._global_dir = voidx_home()
         self._claude_dir = Path.home() / ".claude"
 
         # Per-message claims: track which instruction files have been

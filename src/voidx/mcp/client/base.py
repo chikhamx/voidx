@@ -13,6 +13,7 @@ import httpx
 
 from voidx.config import McpServerConfig
 from voidx.mcp.client.errors import McpConnectionError, McpProtocolError, McpTimeoutError
+from voidx.logging import log_internal_error
 from voidx.logging.tool_log import log_tool_event
 from voidx.mcp.client.http_transport import StreamableHttpTransportMixin
 from voidx.mcp.client.sse_transport import SseTransportMixin
@@ -336,8 +337,8 @@ class McpClient(StreamableHttpTransportMixin, SseTransportMixin, StdioTransportM
         if http_client is not None:
             try:
                 await http_client.aclose()
-            except Exception:
-                pass
+            except Exception as exc:
+                log_internal_error(exc, context="mcp_http_client_close")
 
         # Terminate subprocess
         proc = self._proc

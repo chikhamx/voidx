@@ -1,26 +1,27 @@
-"""Agent event logger for hidden tool failures and UI warnings/errors.
+"""Internal error logger — captures suppressed exceptions to JSONL.
 
-Writes structured JSONL entries to ``~/.voidx/logs/agent_events.jsonl``
-so that errors suppressed from the conversation can still be inspected later.
+Writes structured JSONL entries to ``~/.voidx/logs/internal_error.jsonl``
+so that errors swallowed by ``except Exception: pass`` handlers and
+stderr ``print()`` calls can still be inspected later.
 
 Rotates when the log file exceeds 5 MB, keeping up to 3 rotated copies
-(``agent_events.1.jsonl``, ``agent_events.2.jsonl``).
+(``internal_error.1.jsonl``, ``internal_error.2.jsonl``).
 """
 
 from __future__ import annotations
 
 import json
 import logging
+import traceback
 from datetime import datetime, timezone
 from pathlib import Path
-from typing import Any
 
 logger = logging.getLogger(__name__)
 
 from voidx.paths import voidx_logs_dir
 
 _DEFAULT_LOG_DIR = voidx_logs_dir()
-_LOG_FILE_NAME = "agent_events.jsonl"
+_LOG_FILE_NAME = "internal_error.jsonl"
 _MAX_LOG_BYTES = 5 * 1024 * 1024  # 5 MB
 _MAX_LOG_FILES = 3
 
@@ -45,11 +46,10 @@ def _rotate_if_needed(path: Path) -> None:
         pass
 
 
-def log_tool_event(
-    event: str,
+def log_internal_error(
+    exc: BaseException,
     *,
-    tool_name: str = "",
-    message: str = "",
+    context: str,
     session_id: str | None = None,
     log_dir: Path = _DEFAULT_LOG_DIR,
     log_path: Path | None = None,
@@ -59,14 +59,14 @@ def log_tool_event(
         target.parent.mkdir(parents=True, exist_ok=True)
         _rotate_if_needed(target)
 
-        entry: dict[str, Any] = {
+        entry: dict[str, object] = {
             "ts": datetime.now(timezone.utc).isoformat(),
-            "event": event,
+            "event": "internal_error",
+            "context": context,
+            "error_type": type(exc).__name__,
+            "error_message": str(exc),
+            "traceback": "".join(traceback.format_exception(exc)),
         }
-        if tool_name:
-            entry["tool_name"] = tool_name
-        if message:
-            entry["message"] = message
         if session_id is not None:
             entry["session_id"] = session_id
 
@@ -74,4 +74,4 @@ def log_tool_event(
         with target.open("a", encoding="utf-8") as f:
             f.write(line + "\n")
     except Exception:
-        logger.warning("Failed to write agent event log", exc_info=True)
+        logger.warning("Failed to write internal error log", exc_info=True)

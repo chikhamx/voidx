@@ -4,6 +4,7 @@ from __future__ import annotations
 
 from pydantic import BaseModel, Field
 
+from voidx.config.defaults import DEFAULT_MODEL, DEFAULT_PROVIDER
 from voidx.config.enums import ApprovalPolicy, ApprovalReviewer, PermissionMode, SandboxMode
 
 class Profile(BaseModel):
@@ -22,8 +23,8 @@ class Profile(BaseModel):
 
 
 class ModelConfig(BaseModel):
-    provider: str = "anthropic"
-    model: str = "claude-sonnet-4-6"
+    provider: str = DEFAULT_PROVIDER
+    model: str = DEFAULT_MODEL
     base_url: str | None = None
     protocol: str | None = None  # "openai" | "anthropic" | "gemini" | None (auto-detect)
     temperature: float = Field(default=0.3, ge=0.0, le=2.0)

@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+from voidx.config.defaults import DEFAULT_MODEL
 from voidx.ui.protocol.v2.methods import MethodParamsError
 
 
@@ -91,7 +92,7 @@ class SettingsMethods:
             if not isinstance(model_patch, dict):
                 raise MethodParamsError("invalid model")
             provider = model_patch.get("provider") or "anthropic"
-            model_name = model_patch.get("model") or "claude-sonnet-4-6"
+            model_name = model_patch.get("model") or DEFAULT_MODEL
             profile_name = f"{provider}/{model_name}"
             try:
                 existing_profiles = await settings.list_profiles()
@@ -183,7 +184,7 @@ class SettingsMethods:
         profiles = await settings.list_profiles()
         model = {
             "provider": profile.provider if profile else "anthropic",
-            "model": profile.model if profile else "claude-sonnet-4-6",
+            "model": profile.model if profile else DEFAULT_MODEL,
             "base_url": profile.base_url if profile else None,
             "protocol": profile.protocol if profile else None,
             "reasoning_effort": settings._effective_data().get("reasoning_effort") or "xhigh",

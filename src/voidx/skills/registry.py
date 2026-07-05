@@ -7,6 +7,7 @@ from dataclasses import dataclass
 from pathlib import Path
 from typing import Any, Literal
 
+from voidx.paths import voidx_global_skills_dir, voidx_workspace_skills_dir
 from voidx.skills.schema import SkillDefinition, SkillMeta, SkillScope
 
 SKILL_FILENAME = "SKILL.md"
@@ -49,8 +50,8 @@ class SkillRegistry:
     ) -> None:
         self.workspace = Path(workspace).resolve()
         self.bundled_dir = bundled_dir or DEFAULT_BUNDLED_DIR
-        self.global_dir = global_dir or (Path.home() / ".voidx" / "skills")
-        self.project_dir = project_dir or (self.workspace / ".voidx" / "skills")
+        self.global_dir = global_dir or voidx_global_skills_dir()
+        self.project_dir = project_dir or voidx_workspace_skills_dir(self.workspace)
         self._cache: list[SkillDefinition] | None = None
         self._cache_signature: tuple[tuple[str, str, int, int], ...] | None = None
 

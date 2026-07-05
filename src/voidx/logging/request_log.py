@@ -16,7 +16,9 @@ from langchain_core.messages import AIMessage, BaseMessage, HumanMessage, System
 
 logger = logging.getLogger(__name__)
 
-_DEFAULT_LOG_DIR = Path.home() / ".voidx" / "logs"
+from voidx.paths import voidx_logs_dir
+
+_DEFAULT_LOG_DIR = voidx_logs_dir()
 _LOG_FILE_NAME = "llm_requests.jsonl"
 
 

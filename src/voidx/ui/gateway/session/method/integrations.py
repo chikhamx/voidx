@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+from voidx.logging import log_internal_error
 from voidx.ui.protocol.v2.methods import MethodParamsError
 
 
@@ -177,8 +178,8 @@ class IntegrationMethods:
         manager = LspManager(self._workspace or ".")
         try:
             await manager.initialize()
-        except Exception:
-            pass
+        except Exception as exc:
+            log_internal_error(exc, context="gateway_lsp_manager_init")
         return manager
 
     async def _lsp_status_list(self) -> list[dict]:

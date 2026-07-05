@@ -6,6 +6,7 @@ from pathlib import Path
 from typing import Any
 
 from voidx.config import Settings
+from voidx.paths import voidx_workspace_dir
 from voidx.skills.service import SkillRegistry, SkillService
 from voidx.ui.output.dock.formatting import _PASTED_RE
 from voidx.ui.tools.attachment_tokens import attachment_token_text
@@ -331,7 +332,7 @@ class _PanelManagerMixin:
 def _skill_settings_signature(
     workspace: str,
 ) -> tuple[tuple[int, int] | None, tuple[int, int] | None]:
-    root = Path(workspace).resolve() / ".voidx"
+    root = voidx_workspace_dir(workspace)
     return (
         _file_signature(root / "skills.json"),
         _file_signature(root / "settings.json"),

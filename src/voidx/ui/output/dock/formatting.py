@@ -11,7 +11,7 @@ from rich.text import Text
 
 _ANSI_RE = re.compile(r'\x1b\[[0-9;]*[a-zA-Z]')
 _ANSI_SGR_RE = re.compile(r"\x1b\[([0-9;]*)m")
-ANSI_LINE_PREFIX = "\x00voidx-ansi\x00"
+from voidx.ui.output.ansi_marker import ANSI_LINE_PREFIX
 _FORMAT_CONSOLES: dict[int, tuple[StringIO, Console]] = {}
 
 

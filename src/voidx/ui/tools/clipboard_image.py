@@ -11,10 +11,9 @@ from datetime import datetime
 from pathlib import Path
 from typing import Callable
 
+from voidx.paths import CLIPBOARD_ATTACHMENT_DIR
 from voidx.runtime.attachments import MAX_IMAGE_ATTACHMENT_BYTES
 from voidx.ui.tools.file_picker import format_size as _format_size
-
-CLIPBOARD_ATTACHMENT_DIR = ".voidx/attachments"
 KEEP_ORIGINAL_BYTES = 3_000_000
 TARGET_IMAGE_BYTES = 4_000_000
 MAX_IMAGE_EDGE = 2048

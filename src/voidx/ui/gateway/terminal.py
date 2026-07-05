@@ -17,6 +17,8 @@ import uuid
 from collections.abc import AsyncIterator
 from dataclasses import dataclass, field
 
+from voidx.logging import log_internal_error
+
 _IS_WINDOWS = sys.platform == "win32"
 
 
@@ -119,8 +121,8 @@ class TerminalSession:
         if _IS_WINDOWS:
             try:
                 self._pty.cancel_io()
-            except Exception:
-                pass
+            except Exception as exc:
+                log_internal_error(exc, context="gateway_pty_cancel_io_windows")
             self._pty = None
         else:
             try:

@@ -6,8 +6,7 @@ import json
 from pathlib import Path
 
 from voidx.lsp.schema import LspServerConfig
-
-LSP_CONFIG_FILE = ".voidx/lsp.json"
+from voidx.paths import LSP_CONFIG_FILE
 
 DEFAULT_SERVERS: dict[str, LspServerConfig] = {
     "python": LspServerConfig(
