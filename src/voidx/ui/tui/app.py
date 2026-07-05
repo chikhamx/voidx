@@ -13,7 +13,7 @@ import shutil
 import sys
 import time
 from pathlib import Path
-from typing import Any, Awaitable, Callable
+from typing import Any
 
 from rich.console import Console, Group
 from rich.text import Text
@@ -23,6 +23,7 @@ from voidx.paths import voidx_workspace_dir
 from voidx.ui.output.dock import dock
 from voidx.ui.output.dock.formatting import _text_from_line
 from voidx.ui.output.tree import OutputTree
+from voidx.ui.output.types import SubmitHandler, ThreadExecutionContext
 from voidx.ui.tools.clipboard_image import paste_clipboard_image as paste_clipboard_image_from_system
 from voidx.ui.tools.clipboard_text import read_clipboard_text as paste_clipboard_text_from_system
 from voidx.ui.tui.helpers import (
@@ -54,9 +55,6 @@ from voidx.ui.tui.state import (
 from voidx.ui.tui.terminal_mixin import _TerminalLifecycleMixin
 from voidx.ui.tui.text_prompt_mixin import _TextPromptMixin
 
-SubmitHandler = Callable[[str], Awaitable[bool]]
-
-
 class _SubmitQueueItem(str):
     def __new__(
         cls,
@@ -64,10 +62,15 @@ class _SubmitQueueItem(str):
         *,
         restore_text: str,
         paste_entries: list[dict[str, Any]],
+        thread_id: str = "",
+        context: ThreadExecutionContext | None = None,
     ):
+        context = context or ThreadExecutionContext(thread_id=thread_id, session_id=thread_id)
         obj = str.__new__(cls, submit_text)
         obj.restore_text = restore_text
         obj.paste_entries = [dict(entry) for entry in paste_entries]
+        obj.context = context
+        obj.thread_id = context.thread_id
         return obj
 
 
@@ -180,9 +183,21 @@ class PureTui(
         """Run without TUI — consume gateway input via the submit queue."""
         await self._consume(on_submit)
 
-    def submit_external_input(self, text: str) -> None:
+    def submit_external_input(
+        self,
+        text: str,
+        *,
+        thread_id: str = "",
+        context: ThreadExecutionContext | None = None,
+    ) -> None:
         """Submit text from web gateway."""
-        self._queue.put_nowait(text)
+        context = context or ThreadExecutionContext(thread_id=thread_id, session_id=thread_id)
+        self._queue.put_nowait(_SubmitQueueItem(
+            text,
+            restore_text=text,
+            paste_entries=[],
+            context=context,
+        ))
 
     def invalidate_skill_service_cache(self) -> None:
         self._skill_matches_cache_key = None
@@ -190,7 +205,12 @@ class PureTui(
         self._skill_service_cache_key = None
         self._skill_service_cache = None
 
-    def cancel_external_input(self) -> None:
+    def cancel_external_input(
+        self,
+        *,
+        thread_id: str = "",
+        context: ThreadExecutionContext | None = None,
+    ) -> None:
         """Cancel current submission."""
         self._submit_cancel_requested = True
         if self._current_submit_task is not None:
@@ -555,6 +575,10 @@ class PureTui(
             submit_text = str(item)
             restore_text = getattr(item, "restore_text", submit_text)
             paste_entries = getattr(item, "paste_entries", [])
+            context = getattr(item, "context", None)
+            if context is None:
+                thread_id = getattr(item, "thread_id", "")
+                context = ThreadExecutionContext(thread_id=thread_id, session_id=thread_id)
 
             self._busy = True
             self._busy_started_at = time.monotonic()
@@ -564,7 +588,14 @@ class PureTui(
             self._submit_cancel_requested = False
             self._current_submitted_text = restore_text
             self._current_submitted_paste_entries = [dict(entry) for entry in paste_entries]
-            self._current_submit_task = asyncio.create_task(on_submit(submit_text))
+            try:
+                submit_result = on_submit(submit_text, context=context)
+            except TypeError:
+                try:
+                    submit_result = on_submit(submit_text, thread_id=context.thread_id)
+                except TypeError:
+                    submit_result = on_submit(submit_text)
+            self._current_submit_task = asyncio.create_task(submit_result)
             self._start_busy_activity_timer()
             self.invalidate()
             try:

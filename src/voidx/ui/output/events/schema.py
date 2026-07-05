@@ -15,6 +15,7 @@ from voidx.ui.output.display_policy import ToolDisplayMode
 class UiEventBase(BaseModel):
     model_config = ConfigDict(frozen=True)
     agent_id: int = -1
+    thread_id: str = ""
 
 
 class CaptureStarted(UiEventBase):
@@ -36,6 +37,19 @@ class ResetRequested(UiEventBase):
 class TurnStarted(UiEventBase):
     kind: Literal["turn.started"] = "turn.started"
     text: str
+
+
+class TurnCompleted(UiEventBase):
+    kind: Literal["turn.completed"] = "turn.completed"
+
+
+class TurnFailed(UiEventBase):
+    kind: Literal["turn.failed"] = "turn.failed"
+    message: str = ""
+
+
+class TurnCancelled(UiEventBase):
+    kind: Literal["turn.cancelled"] = "turn.cancelled"
 
 
 class StartupShown(UiEventBase):
@@ -306,6 +320,9 @@ UiEvent: TypeAlias = (
     | RefreshRequested
     | ResetRequested
     | TurnStarted
+    | TurnCompleted
+    | TurnFailed
+    | TurnCancelled
     | StartupShown
     | MessageAppended
     | AnsiAppended

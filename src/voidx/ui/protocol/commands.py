@@ -4,7 +4,7 @@ from __future__ import annotations
 
 from typing import Annotated, Literal, TypeAlias
 
-from pydantic import BaseModel, ConfigDict, Field, TypeAdapter
+from pydantic import BaseModel, ConfigDict, Field, TypeAdapter, model_serializer
 
 
 class UiSubmitCommand(BaseModel):
@@ -12,12 +12,28 @@ class UiSubmitCommand(BaseModel):
 
     kind: Literal["submit"] = "submit"
     text: str
+    thread_id: str = ""
+
+    @model_serializer(mode="wrap")
+    def _serialize(self, handler):
+        data = handler(self)
+        if not self.thread_id:
+            data.pop("thread_id", None)
+        return data
 
 
 class UiCancelCommand(BaseModel):
     model_config = ConfigDict(frozen=True)
 
     kind: Literal["cancel"] = "cancel"
+    thread_id: str = ""
+
+    @model_serializer(mode="wrap")
+    def _serialize(self, handler):
+        data = handler(self)
+        if not self.thread_id:
+            data.pop("thread_id", None)
+        return data
 
 
 UiCommand: TypeAlias = Annotated[

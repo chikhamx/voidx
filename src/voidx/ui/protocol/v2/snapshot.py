@@ -35,3 +35,9 @@ class WorkspaceSnapshot(BaseModel):
     threads: list[ThreadInfo] = Field(default_factory=list)
     active_thread_id: str = ""
     active_snapshot: ThreadSnapshot | None = None
+    provider: str = ""
+    model: str = ""
+    workspace: str = ""
+    profile_configured: bool | None = None
+    runtime: dict[str, object] = Field(default_factory=dict)
+    workspace_write_lock: dict[str, object] = Field(default_factory=dict)

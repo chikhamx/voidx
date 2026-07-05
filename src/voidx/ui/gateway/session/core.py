@@ -9,6 +9,7 @@ from typing import Protocol
 
 from voidx.ui.gateway.adapter import UiEventItemAdapter
 from voidx.ui.gateway.diff_review import DiffReviewSession
+from voidx.ui.gateway.run_manager import ThreadRunManager
 from voidx.ui.gateway.terminal import TerminalManager
 from voidx.ui.output.events.schema import UiEvent
 from voidx.ui.output.tree import OutputTree
@@ -67,10 +68,13 @@ class GatewaySession(
         self._tree_provider = tree_providers
         self._session_id = session_id or thread_id
         self._command_handler = command_handler
+        self._run_manager = ThreadRunManager(
+            command_handler=self._dispatch_command,
+            max_concurrent_sessions=2,
+        )
         self._workspace = workspace
         self._runtime_state_provider = runtime_state_provider
         self._clients: set[ProtocolClient] = set()
-        self._pending_requests: dict[str, asyncio.Future[UiResponse]] = {}
         self._seq = 0
         self._thread_id_provider: Callable[[], str] | None = None
 
@@ -126,21 +130,43 @@ class GatewaySession(
         self._thread_id_provider = provider
 
     async def handle_command(self, command: UiCommand) -> None:
+        thread_id = getattr(command, "thread_id", "") or self._active_thread_id or ""
+        if command.kind == "submit":
+            await self._run_manager.submit(thread_id, command.text)
+            self._sync_thread_status(thread_id)
+            return
+        if command.kind == "cancel":
+            await self._run_manager.cancel(thread_id)
+            self._sync_thread_status(thread_id)
+            return
+        await self._dispatch_command(command)
+
+    async def _dispatch_command(self, command: UiCommand) -> None:
         if self._command_handler is None:
             return
         result = self._command_handler(command)
         if inspect.isawaitable(result):
             await result
 
+    def _sync_thread_status(self, thread_id: str) -> None:
+        info = self._threads.get(thread_id)
+        if info is not None:
+            self._threads[thread_id] = info.model_copy(
+                update={"status": self._run_manager.status(thread_id)},
+            )
+
     async def request(self, request: UiRequest) -> UiResponse | None:
         if not self._clients:
             return None
         loop = asyncio.get_running_loop()
         future: asyncio.Future[UiResponse] = loop.create_future()
-        self._pending_requests[request.request_id] = future
+        thread_id = getattr(request, "thread_id", "") or self._active_thread_id or ""
+        self._run_manager.register_pending_request(thread_id, request.request_id, future)
+        params = request.model_dump()
+        params["thread_id"] = thread_id
         notification = JsonRpcNotification(
             method="ui.request",
-            params=request.model_dump(),
+            params=params,
         )
         try:
             await self._broadcast(notification.model_dump_json())
@@ -148,22 +174,22 @@ class GatewaySession(
                 return None
             return await future
         finally:
-            self._pending_requests.pop(request.request_id, None)
+            self._run_manager.remove_pending_request(thread_id, request.request_id)
 
-    async def handle_response(self, response: UiResponse) -> None:
-        future = self._pending_requests.pop(response.request_id, None)
-        if future is not None and not future.done():
-            future.set_result(response)
+    async def handle_response(self, response: UiResponse, *, thread_id: str = "") -> None:
+        tid = thread_id or getattr(response, "thread_id", "") or self._active_thread_id or ""
+        self._run_manager.resolve_pending_request(tid, response)
 
     # ── v2 event broadcasting ─────────────────────────────────────────────
 
     async def broadcast_event(self, event: UiEvent, *, thread_id: str = "") -> None:
-        if not self._clients:
-            return
-        tid = thread_id or self._active_thread_id
+        tid = thread_id or getattr(event, "thread_id", "") or self._active_thread_id
         if not tid and self._thread_id_provider is not None:
             tid = self._thread_id_provider() or ""
         if not tid:
+            return
+        self._apply_turn_terminal_event(event, tid)
+        if not self._clients:
             return
         adapter = self._adapters.get(tid)
         if adapter is None:
@@ -176,6 +202,16 @@ class GatewaySession(
         if notification is None:
             return
         await self._broadcast(notification.model_dump_json())
+
+    def _apply_turn_terminal_event(self, event: UiEvent, thread_id: str) -> None:
+        kind = getattr(event, "kind", "")
+        if kind in {"turn.completed", "turn.cancelled"}:
+            self._run_manager.complete_turn(thread_id)
+            self._sync_thread_status(thread_id)
+            return
+        if kind == "turn.failed":
+            self._run_manager.fail_turn(thread_id, getattr(event, "message", ""))
+            self._sync_thread_status(thread_id)
 
     async def broadcast_snapshot(self) -> None:
         if not self._clients:
@@ -241,12 +277,6 @@ class GatewaySession(
                 f"thread not found: {thread_id}",
                 code=-32000,
             )
-        info = self._threads[thread_id]
-        if info.status == "running":
-            raise MethodParamsError(
-                f"thread is running: {thread_id}",
-                code=ERR_TURN_IN_PROGRESS,
-            )
         self._active_thread_id = thread_id
         await self.broadcast_snapshot()
 
@@ -270,6 +300,10 @@ class GatewaySession(
             nodes=transcript.nodes,
         )
         runtime_state = self._runtime_state_provider() if self._runtime_state_provider else {}
+        for thread_id in self._run_manager.active_thread_ids():
+            if thread_id not in self._threads:
+                self._threads[thread_id] = ThreadInfo(thread_id=thread_id)
+            self._sync_thread_status(thread_id)
         return WorkspaceSnapshot(
             threads=list(self._threads.values()),
             active_thread_id=self._active_thread_id,
@@ -282,6 +316,8 @@ class GatewaySession(
                 if isinstance(runtime_state.get("profile_configured"), bool)
                 else None
             ),
+            runtime=self._run_manager.runtime_snapshot(),
+            workspace_write_lock=self._run_manager.workspace_write_lock_snapshot(),
         )
 
     async def _active_thread_snapshot(self) -> TranscriptSnapshot:
@@ -340,6 +376,7 @@ class GatewaySession(
         # Command forwarding (submit / cancel)
         m.register("session.submit", self._method_session_submit)
         m.register("session.cancel", self._method_session_cancel)
+        m.register("session.respond", self._method_session_respond)
         m.register("commands.list", self._method_commands_list)
         m.register("commands.run", self._method_commands_run)
         m.register("settings.get", self._method_settings_get)

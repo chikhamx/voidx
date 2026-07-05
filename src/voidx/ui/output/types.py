@@ -7,7 +7,13 @@ from typing import Any, Awaitable, Callable
 
 from voidx.llm.usage import UsageStats
 
-SubmitHandler = Callable[[str], Awaitable[bool]]
+SubmitHandler = Callable[..., Awaitable[bool]]
+
+
+@dataclass(frozen=True)
+class ThreadExecutionContext:
+    thread_id: str = ""
+    session_id: str = ""
 
 
 @dataclass

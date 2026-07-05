@@ -21,7 +21,7 @@ class ThreadInfo(BaseModel):
     directory: str = ""
     model_provider: str = ""
     model_name: str = ""
-    status: Literal["idle", "running"] = "idle"
+    status: Literal["idle", "running", "waiting_for_user", "waiting_for_write_lock", "cancelling", "failed"] = "idle"
     created_at: str = ""
     updated_at: str = ""
     message_count: int = 0
@@ -32,7 +32,7 @@ class TurnInfo(BaseModel):
 
     turn_id: str
     thread_id: str
-    status: Literal["running", "completed", "cancelled"] = "running"
+    status: Literal["running", "completed", "cancelled", "failed"] = "running"
     started_at: float = 0
     elapsed: float | None = None
 

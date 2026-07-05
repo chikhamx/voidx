@@ -50,6 +50,9 @@ from voidx.ui.output.events.schema import (
     ToolFinished,
     ToolResultAppended,
     ToolStarted,
+    TurnCancelled,
+    TurnCompleted,
+    TurnFailed,
     TurnStarted,
     UiEvent,
     WarningAppended,
@@ -417,9 +420,37 @@ class UiEventItemAdapter:
         return self._notification(
             "turn.started",
             {
-                "thread_id": self._thread_id,
+                "thread_id": event.thread_id or self._thread_id,
                 "turn_id": self._turn_id,
                 "text": event.text,
+            },
+        )
+
+    def _on_turn_completed(self, event: TurnCompleted) -> JsonRpcNotification:
+        return self._notification(
+            "turn.completed",
+            {
+                "thread_id": event.thread_id or self._thread_id,
+                "turn_id": self._turn_id,
+            },
+        )
+
+    def _on_turn_failed(self, event: TurnFailed) -> JsonRpcNotification:
+        return self._notification(
+            "turn.failed",
+            {
+                "thread_id": event.thread_id or self._thread_id,
+                "turn_id": self._turn_id,
+                "message": event.message,
+            },
+        )
+
+    def _on_turn_cancelled(self, event: TurnCancelled) -> JsonRpcNotification:
+        return self._notification(
+            "turn.cancelled",
+            {
+                "thread_id": event.thread_id or self._thread_id,
+                "turn_id": self._turn_id,
             },
         )
 
@@ -503,6 +534,9 @@ _HANDLERS: dict[type, Callable[[UiEventItemAdapter, UiEvent], JsonRpcNotificatio
     ClarifyAnswerSubmitted: UiEventItemAdapter._on_clarify_answer,
     # non-Item notifications
     TurnStarted: UiEventItemAdapter._on_turn_started,
+    TurnCompleted: UiEventItemAdapter._on_turn_completed,
+    TurnFailed: UiEventItemAdapter._on_turn_failed,
+    TurnCancelled: UiEventItemAdapter._on_turn_cancelled,
     CaptureStarted: UiEventItemAdapter._on_capture_started,
     CaptureStopped: UiEventItemAdapter._on_capture_stopped,
     RefreshRequested: UiEventItemAdapter._on_refresh_requested,

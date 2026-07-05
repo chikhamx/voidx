@@ -73,12 +73,31 @@ class SessionMethods:
         text = params.get("text", "")
         if not text:
             raise MethodParamsError("text is required")
-        await self.handle_command(UiSubmitCommand(text=text))
+        thread_id = str(params.get("thread_id") or self._active_thread_id or "")
+        await self.handle_command(UiSubmitCommand(text=text, thread_id=thread_id))
         return {"ok": True}
 
     async def _method_session_cancel(self, params: dict) -> dict:
         from voidx.ui.protocol import UiCancelCommand
-        await self.handle_command(UiCancelCommand())
+        thread_id = str(params.get("thread_id") or self._active_thread_id or "")
+        await self.handle_command(UiCancelCommand(thread_id=thread_id))
+        return {"ok": True}
+
+    async def _method_session_respond(self, params: dict) -> dict:
+        from voidx.ui.protocol import UiResponse
+
+        request_id = str(params.get("request_id", ""))
+        if not request_id:
+            raise MethodParamsError("request_id is required")
+        value = params.get("value")
+        thread_id = str(params.get("thread_id") or self._active_thread_id or "")
+        await self.handle_response(
+            UiResponse(
+                request_id=request_id,
+                value=None if value is None else str(value),
+            ),
+            thread_id=thread_id,
+        )
         return {"ok": True}
 
     def _method_commands_list(self, params: dict) -> dict:
@@ -118,5 +137,6 @@ class SessionMethods:
         if (item.requiresArgs or item.execution == "fill") and not has_args:
             raise MethodParamsError("command requires arguments")
 
-        await self.handle_command(UiSubmitCommand(text=value))
+        thread_id = str(params.get("thread_id") or self._active_thread_id or "")
+        await self.handle_command(UiSubmitCommand(text=value, thread_id=thread_id))
         return {"ok": True, "status": "submitted"}

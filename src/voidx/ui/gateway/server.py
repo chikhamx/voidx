@@ -87,11 +87,12 @@ class GatewayServer:
             result = await self._session.dispatch_request(msg)
             await websocket.send(result.model_dump_json())
         elif isinstance(msg, JsonRpcResult):
+            result = msg.result if isinstance(msg.result, dict) else {}
             response = UiResponse(
                 request_id=str(msg.id),
-                value=msg.result.get("value") if isinstance(msg.result, dict) else None,
+                value=result.get("value"),
             )
-            await self._session.handle_response(response)
+            await self._session.handle_response(response, thread_id=str(result.get("thread_id") or ""))
 
     def _authorized(self, websocket: ServerConnection) -> bool:
         if not self._token:
