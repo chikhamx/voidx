@@ -26,6 +26,7 @@ struct AppState {
     gateway_url: Arc<Mutex<Option<String>>>,
     backend_status: Arc<Mutex<BackendStatus>>,
     child_handle: Arc<Mutex<Option<Child>>>,
+    workspace: Arc<Mutex<PathBuf>>,
 }
 
 enum BackendStatus {
@@ -65,23 +66,35 @@ fn get_backend_status(state: State<'_, AppState>) -> serde_json::Value {
 }
 
 #[tauri::command]
-fn restart_backend(app: tauri::AppHandle, state: State<'_, AppState>) -> serde_json::Value {
-    // Kill any existing backend before starting a fresh one.
+fn restart_backend(
+    app: tauri::AppHandle,
+    state: State<'_, AppState>,
+    workspace: Option<String>,
+) -> serde_json::Value {
     kill_backend(&state.child_handle);
 
-    // Reset status to Starting so the frontend can show a loading state.
     if let Ok(mut slot) = state.backend_status.lock() {
         *slot = BackendStatus::Starting;
     }
     if let Ok(mut slot) = state.gateway_url.lock() {
         *slot = None;
     }
+    if let Some(path) = workspace {
+        if !path.trim().is_empty() {
+            let workspace_path = PathBuf::from(path);
+            persist_workspace(&workspace_path);
+            if let Ok(mut slot) = state.workspace.lock() {
+                *slot = workspace_path;
+            }
+        }
+    }
 
     let gateway_url = Arc::clone(&state.gateway_url);
     let backend_status = Arc::clone(&state.backend_status);
     let child_handle = Arc::clone(&state.child_handle);
+    let workspace = Arc::clone(&state.workspace);
 
-    spawn_backend(app, gateway_url, backend_status, child_handle);
+    spawn_backend(app, gateway_url, backend_status, child_handle, workspace);
 
     json!({"status": "restarting"})
 }
@@ -191,22 +204,74 @@ fn resolve_python() -> Option<PathBuf> {
 
 fn resolve_workspace() -> PathBuf {
     if let Ok(path) = std::env::var("VOIDX_WORKSPACE") {
-        return PathBuf::from(path);
+        let path = PathBuf::from(path);
+        if is_usable_workspace(&path) {
+            return path;
+        }
+    }
+    if let Some(path) = load_persisted_workspace() {
+        return path;
     }
     // Walk up from exe directory to find project root (contains AGENTS.md or pyproject.toml)
     if let Ok(exe) = std::env::current_exe() {
         let mut dir = exe.parent();
         for _ in 0..8 {
             if let Some(d) = dir {
-                if d.join("AGENTS.md").exists() || d.join("pyproject.toml").exists() {
+                if is_project_root(d) {
                     return d.to_path_buf();
                 }
                 dir = d.parent();
             }
         }
     }
-    // Fallback: CWD
-    std::env::current_dir().unwrap_or_else(|_| PathBuf::from("."))
+    if let Ok(cwd) = std::env::current_dir() {
+        if is_usable_workspace(&cwd) {
+            return cwd;
+        }
+    }
+    if let Ok(home) = std::env::var("HOME") {
+        let home_path = PathBuf::from(&home);
+        for candidate in [
+            home_path.join("workspace/voidx"),
+            home_path.join("workspace"),
+            home_path.clone(),
+        ] {
+            if is_usable_workspace(&candidate) {
+                return candidate;
+            }
+        }
+    }
+    PathBuf::from(".")
+}
+
+fn is_project_root(path: &std::path::Path) -> bool {
+    path.join("AGENTS.md").exists() || path.join("pyproject.toml").exists()
+}
+
+fn is_usable_workspace(path: &std::path::Path) -> bool {
+    path.exists() && path.is_dir() && path.parent().is_some()
+}
+
+fn workspace_state_path() -> Option<PathBuf> {
+    let home = std::env::var("HOME").ok()?;
+    Some(PathBuf::from(home).join(".voidx/desktop-workspace"))
+}
+
+fn load_persisted_workspace() -> Option<PathBuf> {
+    let path = workspace_state_path()?;
+    let text = std::fs::read_to_string(path).ok()?;
+    let workspace = PathBuf::from(text.trim());
+    is_usable_workspace(&workspace).then_some(workspace)
+}
+
+fn persist_workspace(workspace: &std::path::Path) {
+    let Some(path) = workspace_state_path() else {
+        return;
+    };
+    if let Some(parent) = path.parent() {
+        let _ = std::fs::create_dir_all(parent);
+    }
+    let _ = std::fs::write(path, workspace.to_string_lossy().as_bytes());
 }
 
 fn spawn_backend(
@@ -214,6 +279,7 @@ fn spawn_backend(
     gateway_url: Arc<Mutex<Option<String>>>,
     backend_status: Arc<Mutex<BackendStatus>>,
     child_handle: Arc<Mutex<Option<Child>>>,
+    workspace: Arc<Mutex<PathBuf>>,
 ) {
     std::thread::spawn(move || {
         let python = match resolve_python() {
@@ -236,12 +302,18 @@ fn spawn_backend(
                 let _ = writeln!(f, "LOCALAPPDATA: {:?}", std::env::var("LOCALAPPDATA"));
                 let _ = writeln!(f, "VOIDX_PYTHON: {:?}", std::env::var("VOIDX_PYTHON"));
                 let _ = writeln!(f, "resolved python: {:?}", python);
-                let workspace = resolve_workspace();
-                let _ = writeln!(f, "resolved workspace: {:?}", workspace);
+                let resolved_workspace = workspace
+                    .lock()
+                    .map(|slot| slot.clone())
+                    .unwrap_or_else(|_| resolve_workspace());
+                let _ = writeln!(f, "resolved workspace: {:?}", resolved_workspace);
             }
         }
 
-        let workspace = resolve_workspace();
+        let workspace = workspace
+            .lock()
+            .map(|slot| slot.clone())
+            .unwrap_or_else(|_| resolve_workspace());
         let mut command = Command::new(&python);
         command
             .args([
@@ -392,16 +464,20 @@ fn main() {
     let backend_status: Arc<Mutex<BackendStatus>> =
         Arc::new(Mutex::new(BackendStatus::Starting));
     let child_handle: Arc<Mutex<Option<Child>>> = Arc::new(Mutex::new(None));
+    let workspace: Arc<Mutex<PathBuf>> = Arc::new(Mutex::new(resolve_workspace()));
 
     let app_gateway_url = Arc::clone(&gateway_url);
     let app_backend_status = Arc::clone(&backend_status);
     let app_child_handle = Arc::clone(&child_handle);
+    let app_workspace = Arc::clone(&workspace);
 
     tauri::Builder::default()
+        .plugin(tauri_plugin_dialog::init())
         .manage(AppState {
             gateway_url,
             backend_status,
             child_handle,
+            workspace,
         })
         .on_window_event({
             let child_handle = Arc::clone(&app_child_handle);
@@ -418,6 +494,7 @@ fn main() {
                 app_gateway_url,
                 app_backend_status,
                 Arc::clone(&app_child_handle),
+                app_workspace,
             );
             Ok(())
         })
