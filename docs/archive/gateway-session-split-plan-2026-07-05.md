@@ -1,3 +1,4 @@
+> **Status: Done**
 # gateway/session.py 拆分实施计划
 
 ## Goal

@@ -1,3 +1,4 @@
+> **Status: Done**
 # gateway/session.py 拆分为 session/ 包 + method/ 子模块 — 技术设计文档
 
 ## Context
