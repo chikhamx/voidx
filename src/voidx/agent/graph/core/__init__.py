@@ -2,7 +2,7 @@
 
 import asyncio
 
-from voidx.agent.graph.core._voidx_graph import VoidXGraph
+from voidx.agent.graph.core.voidx_graph import VoidXGraph
 from voidx.runtime.ui import StreamingRenderer
 from voidx.agent.graph.subagent import run_subagent as _run_subagent
 

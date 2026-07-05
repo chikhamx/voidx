@@ -1,0 +1,365 @@
+"""Regression tests for core graph behavior."""
+
+import asyncio
+import json
+import sys
+from pathlib import Path
+from types import SimpleNamespace
+
+sys.path.insert(0, str(Path(__file__).parent.parent.parent.parent / "src"))
+
+import pytest
+from langchain_core.messages import AIMessage, AIMessageChunk, HumanMessage, RemoveMessage, SystemMessage, ToolMessage
+from langgraph.graph.message import REMOVE_ALL_MESSAGES
+
+import voidx.memory.store as store
+
+from voidx.agent.agents import (
+    AgentDef,
+    child_agent_descriptions_for_llm,
+    get_agent,
+    get_visible_agents,
+)
+from voidx.agent.prompts import BASE_SYSTEM, PERSONA_MODEL, persona_prompt
+from voidx.agent.graph.convergence import is_step_hint_message
+from voidx.agent.graph.runtime import current_parent_tool_call_id
+from voidx.agent.graph.runtime_guards import RuntimeGuardState, WallClockGuardState
+from voidx.agent.graph import VoidXGraph
+from voidx.agent.graph.tool_execution import AGENT_RESULT_PREVIEW_CHARS, _agent_result_preview
+from voidx.agent.message_rows import RowMessageCacheEntry
+from voidx.agent.runtime_context import InteractionMode, RuntimeContextBuilder
+from voidx.config import Config, ParallelSubagentsConfig, Settings, UserProfile
+from voidx.llm.compaction import CompactionSelection
+from voidx.llm.instruction import InstructionService, WorkflowRuntimeContext
+from voidx.memory.session import (
+    MessageRow,
+    SessionInfo,
+    create_session,
+    delete_session,
+    load_messages,
+    save_message,
+)
+from voidx.memory.transcript import load_transcript
+from voidx.permission.service import PermissionService
+from voidx.runtime import GoalResolution, GoalSpec, IntentResolution, PlanResolution, TaskIntent
+from voidx.skills.context import SKILL_TOOL_CONTEXT_MARKER
+from voidx.workflow.context import WORKFLOW_CONTEXT_MARKER
+from voidx.workflow.runtime import WorkflowRunState, WorkflowRunStatus
+from voidx.agent.task_state import TaskState, ToolStatePatch, WorkflowRoute
+from voidx.tools.base import ToolContext, ToolResult
+from voidx.tools.agent import AgentResultContract, AgentTool
+from voidx.tools.registry import ToolRegistry
+from voidx.ui.output.dock import BottomInputDock, set_dock
+from voidx.ui.output.events import DockEventConsumer, TurnStarted, ui_events
+
+
+def _graph(tmp_path):
+    cfg = Config(workspace=str(tmp_path))
+    return VoidXGraph(cfg, api_key=None)
+
+
+def _task_state_json(**kwargs):
+    return TaskState(**kwargs).model_dump(mode="json")
+
+
+def _edit_args(file_path: str) -> dict:
+    return {
+        "file_path": file_path,
+        "edits": [{"operation": "replace", "lineno": 1, "prefix": "old", "suffix": "old", "new_string": "new"}],
+    }
+
+
+def _result_task_state(result: dict) -> TaskState:
+    return TaskState.model_validate(result["task_state"])
+
+
+def _child_goal_resolution(
+    goal_type: str = "feature",
+    *,
+    desc: str = "Implement the feature",
+    join: str = "tdd",
+    leave: str = "verify",
+) -> GoalResolution:
+    return GoalResolution(
+        intent=IntentResolution(type=TaskIntent.CODING),
+        goal=GoalSpec(desc=desc),
+        plan=PlanResolution(join=join, leave=leave),
+    )
+
+
+def _child_result_contract(schema_name: str = "implementation_result") -> AgentResultContract:
+    result_format = (
+        "verdict=PASS|FAIL|NEEDS_CHANGE, findings, risks, verification_notes, next_actions"
+        if schema_name == "review_result"
+        else "status, files_changed, tests_run, risks, followups"
+    )
+    return AgentResultContract(
+        schema_name=schema_name,
+        format=result_format,
+    )
+
+
+def _subagent_contract_kwargs(
+    *,
+    goal_type: str = "inspect",
+    desc: str = "Inspect the workspace",
+    join: str = "review",
+    leave: str = "review",
+    schema_name: str = "inspection_result",
+) -> dict:
+    return {
+        "goal_resolution": _child_goal_resolution(goal_type, desc=desc, join=join, leave=leave),
+        "result_contract": _child_result_contract(schema_name),
+    }
+
+
+@pytest.fixture(autouse=True)
+def isolated_memory_store(tmp_path):
+    if store._conn is not None:
+        store._conn.close()
+    store._conn = None
+    store.DATA_DIR = tmp_path / ".voidx"
+    yield
+    if store._conn is not None:
+        store._conn.close()
+    store._conn = None
+
+
+def _tree_nodes(root):
+    nodes = [root]
+    for child in root.children:
+        nodes.extend(_tree_nodes(child))
+    return nodes
+
+
+@pytest.mark.asyncio
+async def test_subagent_skill_context_matches_orchestrator(tmp_path, monkeypatch):
+    from voidx.agent.agents import get_agent
+    import voidx.agent.graph.subagent as subagent_module
+
+    captured: dict[str, list] = {}
+
+    class FakeModel:
+        def bind_tools(self, _tool_defs):
+            return self
+
+    async def fake_stream_llm(_model, messages, _renderer, _protocol):
+        captured["messages"] = messages
+        return AIMessage(content="done")
+
+    monkeypatch.setattr(subagent_module, "create_chat_model", lambda *_args, **_kwargs: FakeModel())
+    monkeypatch.setattr(subagent_module, "stream_llm", fake_stream_llm)
+    workflow_context = await InstructionService(str(tmp_path)).workflow_context_for(
+        "Implement the feature",
+        agent="implement",
+        task_intent="coding",
+        goal_type="feature",
+        interaction_mode=InteractionMode.AUTO.value,
+        scope="Implement the feature",
+        workflow_start="tdd",
+    )
+
+    output = await subagent_module.run_subagent(
+        get_agent("voidx"),
+        "Implement the feature",
+        "test-key",
+        Config(workspace=str(tmp_path)),
+        runtime_persona="implement",
+        **_subagent_contract_kwargs(
+            goal_type="feature",
+            desc="Implement the feature",
+            join="tdd",
+            leave="verify",
+            schema_name="implementation_result",
+            
+        ),
+        workflow_runtime_context=workflow_context,
+        debug=False,
+    )
+
+    assert output == "done"
+    system_prompt = next(
+        message.content
+        for message in captured["messages"]
+        if isinstance(message, SystemMessage)
+    )
+    task_messages = [
+        message for message in captured["messages"]
+        if isinstance(message, HumanMessage)
+        and str(message.content).startswith("VOIDX_RUNTIME_CONTEXT")
+        and "## Current Task State" in str(message.content)
+    ]
+    assert all(
+        not (
+            isinstance(message, HumanMessage)
+            and str(message.content).startswith(WORKFLOW_CONTEXT_MARKER)
+        )
+        for message in captured["messages"]
+    )
+    assert len(task_messages) == 1
+    assert "Workflow Node: tdd" in system_prompt
+    assert "Workflow Node: tdd" not in task_messages[0].content
+    assert "Active workflow nodes: tdd" in task_messages[0].content
+
+
+@pytest.mark.asyncio
+async def test_subagent_inherits_parent_mcp_tools(tmp_path, monkeypatch):
+    import voidx.agent.graph.subagent as subagent_module
+
+    captured: dict[str, list] = {}
+
+    class FakeModel:
+        def bind_tools(self, tool_defs):
+            captured["tool_defs"] = tool_defs
+            return self
+
+    async def fake_stream_llm(_model, _messages, _renderer, _protocol):
+        return AIMessage(content="done")
+
+    parent_tools = ToolRegistry()
+    parent_tools.register(
+        "mcp__demo__send_message_12345678",
+        object(),
+        "MCP demo",
+        {"type": "object", "properties": {}},
+    )
+
+    monkeypatch.setattr(subagent_module, "create_chat_model", lambda *_args, **_kwargs: FakeModel())
+    monkeypatch.setattr(subagent_module, "stream_llm", fake_stream_llm)
+
+    output = await subagent_module.run_subagent(
+        AgentDef(
+            name="explore",
+            description="test",
+            when_to_use="test",
+            can_write=False,
+            can_delegate=False,
+        ),
+        "Inspect the workspace",
+        "test-key",
+        Config(workspace=str(tmp_path)),
+        **_subagent_contract_kwargs(),
+        parent_tools=parent_tools,
+        debug=False,
+    )
+
+    assert output == "done"
+    tool_names = [tool["function"]["name"] for tool in captured["tool_defs"]]
+    assert "mcp__demo__send_message_12345678" in tool_names
+
+@pytest.mark.asyncio
+async def test_subagent_with_mcp_tools_copies_parent_mcp_tools(tmp_path, monkeypatch):
+    import voidx.agent.graph.subagent as subagent_module
+
+    captured: dict[str, list] = {}
+    calls: list[dict] = []
+
+    class FakeModel:
+        def bind_tools(self, tool_defs):
+            captured["tool_defs"] = tool_defs
+            return self
+
+    class FakeMcpTool:
+        async def execute(self, args, _ctx):
+            calls.append(args)
+            return ToolResult(output="mcp result")
+
+    stream_count = 0
+
+    async def fake_stream_llm(_model, _messages, _renderer, _protocol):
+        nonlocal stream_count
+        stream_count += 1
+        if stream_count == 1:
+            return AIMessage(
+                content="",
+                tool_calls=[{
+                    "name": "mcp__demo__send_message_12345678",
+                    "args": {"text": "hello"},
+                    "id": "mcp1",
+                    "type": "tool_call",
+                }],
+            )
+        return AIMessage(content="done")
+
+    parent_tools = ToolRegistry()
+    parent_tools.register(
+        "mcp__demo__send_message_12345678",
+        FakeMcpTool(),
+        "MCP demo",
+        {"type": "object", "properties": {"text": {"type": "string"}}},
+    )
+
+    monkeypatch.setattr(subagent_module, "create_chat_model", lambda *_args, **_kwargs: FakeModel())
+    monkeypatch.setattr(subagent_module, "stream_llm", fake_stream_llm)
+
+    output = await subagent_module.run_subagent(
+        AgentDef(
+            name="explore",
+            description="test",
+            when_to_use="test",
+            can_write=False,
+            can_delegate=False,
+        ),
+        "Send the message",
+        "test-key",
+        Config(workspace=str(tmp_path)),
+        **_subagent_contract_kwargs(desc="Send the message"),
+        parent_tools=parent_tools,
+        debug=False,
+    )
+
+    assert output == "done"
+    tool_names = [tool["function"]["name"] for tool in captured["tool_defs"]]
+    assert "mcp__demo__send_message_12345678" in tool_names
+    assert calls == [{"text": "hello"}]
+
+
+@pytest.mark.asyncio
+async def test_subagent_tool_filter_always_blocks_nested_agent_tool(tmp_path, monkeypatch):
+    import voidx.agent.graph.subagent as subagent_module
+
+    captured: list[list[str]] = []
+
+    class FakeModel:
+        def bind_tools(self, tool_defs):
+            captured.append([tool["function"]["name"] for tool in tool_defs])
+            return self
+
+    async def fake_stream_llm(_model, _messages, _renderer, _protocol):
+        return AIMessage(content="done")
+
+    parent_tools = ToolRegistry()
+    parent_tools.register(
+        "agent",
+        object(),
+        "Agent demo",
+        {"type": "object", "properties": {}},
+    )
+
+    monkeypatch.setattr(subagent_module, "create_chat_model", lambda *_args, **_kwargs: FakeModel())
+    monkeypatch.setattr(subagent_module, "stream_llm", fake_stream_llm)
+
+    for can_delegate in (False, True):
+        output = await subagent_module.run_subagent(
+            AgentDef(
+                name="explore",
+                description="test",
+                when_to_use="test",
+                can_write=False,
+                can_delegate=can_delegate,
+            ),
+            "Inspect the workspace",
+            "test-key",
+            Config(workspace=str(tmp_path)),
+            **_subagent_contract_kwargs(),
+            parent_tools=parent_tools,
+            debug=False,
+        )
+        assert output == "done"
+
+    assert "agent" not in captured[0]
+    assert "task_status" in captured[0]
+    assert "agent" not in captured[1]
+    assert "task_status" in captured[1]
+
+
