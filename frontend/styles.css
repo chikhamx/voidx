@@ -602,6 +602,18 @@ body {
   height: 6px;
   width: 6px;
 }
+
+.vx-session-lock-badge {
+  background: rgba(245, 158, 11, 0.14);
+  border: 1px solid rgba(245, 158, 11, 0.35);
+  border-radius: 999px;
+  color: #92400e;
+  flex-shrink: 0;
+  font-size: 11px;
+  line-height: 1;
+  padding: 2px 6px;
+  white-space: nowrap;
+}
 .vx-session-title {
   flex: 1;
   overflow: hidden;
@@ -757,6 +769,7 @@ body {
   --vx-diff-add: #1a7f37;
   --vx-diff-del: #cf222e;
   --vx-diff-hunk: #8250df;
+  --vx-sidebar-width: 260px;
   --vx-sidebar-row-padding: 7px 9px;
   background: #ffffff;
   color: var(--vx-text-primary);
@@ -766,6 +779,37 @@ body {
   background: #f7f7f4;
   min-height: 34px;
   padding: 0 18px;
+}
+
+.vx-workbench-shell .vx-titlebar-left {
+  align-items: center;
+  display: flex;
+  gap: 10px;
+}
+
+.vx-titlebar-tool {
+  align-items: center;
+  background: transparent;
+  border: 0;
+  border-radius: 8px;
+  color: var(--vx-text-muted);
+  cursor: pointer;
+  display: inline-flex;
+  font: inherit;
+  font-size: 18px;
+  height: 28px;
+  justify-content: center;
+  width: 34px;
+}
+
+.vx-titlebar-tool:hover:not(:disabled) {
+  background: #ecece8;
+  color: var(--vx-text-primary);
+}
+
+.vx-titlebar-tool:disabled {
+  color: #b5b7ba;
+  cursor: default;
 }
 
 .vx-titlebar-center {
@@ -798,26 +842,46 @@ body {
 .vx-workbench-shell .vx-sidebar {
   background: #f4f4f1;
   border-right: 1px solid #e2e2dc;
-  gap: 18px;
-  padding: 12px;
-  width: 260px;
+  flex: 0 0 var(--vx-sidebar-width);
+  gap: 10px;
+  padding: 10px 8px;
+  width: var(--vx-sidebar-width);
+}
+
+.vx-workbench-shell .vx-sidebar-resizer {
+  background: transparent;
+  cursor: col-resize;
+  flex: 0 0 6px;
+  margin-left: -3px;
+  margin-right: -3px;
+  position: relative;
+  z-index: 4;
+}
+
+.vx-workbench-shell .vx-sidebar-resizer::after {
+  background: transparent;
+  content: "";
+  inset: 0 2px;
+  position: absolute;
+}
+
+.vx-workbench-shell .vx-sidebar-resizer:hover::after,
+.vx-workbench-shell .vx-sidebar-resizer.dragging::after {
+  background: #c8c8c0;
 }
 
 .vx-sidebar-nav,
-.vx-project-list,
 .vx-session-list,
 .vx-sidebar-footer {
   display: grid;
   gap: 4px;
 }
 
-.vx-sidebar-section {
+.vx-workbench-shell .vx-sidebar-section {
   display: grid;
-  gap: 7px;
-}
-
-.vx-sidebar-history {
   flex: 1;
+  gap: 6px;
+  grid-template-rows: auto minmax(0, 1fr);
   min-height: 0;
 }
 
@@ -826,12 +890,69 @@ body {
   font-size: 11px;
   font-weight: 700;
   letter-spacing: 0.04em;
-  padding: 0 8px;
+  padding: 0 10px;
   text-transform: uppercase;
 }
 
+.vx-workbench-shell .vx-project-heading {
+  align-items: center;
+  display: flex;
+  gap: 8px;
+  justify-content: flex-start;
+}
+
+.vx-workbench-shell .vx-project-heading {
+  color: var(--vx-text-secondary);
+  font-size: 14px;
+  font-weight: 650;
+  letter-spacing: 0;
+  min-height: 30px;
+  padding: var(--vx-sidebar-row-padding);
+  text-transform: none;
+}
+
+.vx-workbench-shell .vx-project-heading .vx-sidebar-row-icon {
+  color: var(--vx-text-secondary);
+}
+
+.vx-project-heading-label {
+  flex: 1 1 auto;
+}
+
+.vx-project-add {
+  align-items: center;
+  background: transparent;
+  border: 0;
+  border-radius: 6px;
+  color: var(--vx-text-secondary);
+  cursor: pointer;
+  display: inline-flex;
+  font: inherit;
+  font-size: 15px;
+  height: 24px;
+  justify-content: center;
+  line-height: 1;
+  margin-right: -3px;
+  opacity: 0;
+  padding: 0;
+  pointer-events: auto;
+  transition: opacity 0.12s ease, background-color 0.12s ease, color 0.12s ease;
+  width: 24px;
+}
+
+.vx-project-heading:hover .vx-project-add,
+.vx-project-add:focus-visible {
+  opacity: 1;
+}
+
+.vx-project-add:hover {
+  background: #e9e9e4;
+  color: var(--vx-text-primary);
+}
+
 .vx-nav-item,
-.vx-project-item {
+.vx-workbench-shell .vx-directory-row,
+.vx-workbench-shell .vx-session-item {
   align-items: center;
   background: transparent;
   border: 0;
@@ -840,53 +961,61 @@ body {
   cursor: pointer;
   display: flex;
   font: inherit;
+  font-size: 14px;
   gap: 8px;
-  min-height: 34px;
+  min-height: 30px;
   padding: var(--vx-sidebar-row-padding);
   text-align: left;
   width: 100%;
 }
 
+.vx-hidden-action {
+  display: none;
+}
+
 .vx-nav-item:hover,
-.vx-project-item:hover,
 .vx-session-item:hover {
   background: #e9e9e4;
 }
 
 .vx-new-chat {
-  background: #1f2328;
-  border: 0;
-  color: #ffffff;
+  color: var(--vx-text-primary);
   font-weight: 650;
-  justify-content: center;
 }
 
 .vx-new-chat:hover {
-  background: #30343a;
-  border-color: transparent;
+  background: #e9e9e4;
 }
 
 .vx-search-item {
-  align-items: stretch;
-  display: grid;
-  gap: 6px;
-  height: auto;
+  align-items: center;
+  display: flex;
+  height: 34px;
+  position: relative;
 }
 
 .vx-search-item .vx-search {
   background: #ffffff;
+  border: 1px solid var(--vx-border);
+  border-radius: 8px;
   color: var(--vx-text-primary);
   height: 30px;
+  inset: calc(100% + 6px) 0 auto 0;
+  position: absolute;
+  width: 100%;
+  z-index: 2;
 }
 
-.vx-project-item.active {
-  background: #ffffff;
-  box-shadow: 0 1px 2px rgb(0 0 0 / 0.06);
-  color: var(--vx-text-primary);
-  font-weight: 650;
+.vx-search-item:not(:focus-within) .vx-search {
+  display: none;
 }
 
 .vx-workbench-shell .vx-session-list {
+  display: grid;
+  align-content: start;
+  gap: 4px;
+  min-height: 0;
+  overflow-y: auto;
   padding: 0;
 }
 
@@ -895,26 +1024,162 @@ body {
 }
 
 .vx-workbench-shell .vx-directory-row {
-  min-height: 26px;
-  padding: 0 9px;
+  color: var(--vx-text-primary);
+  font-size: 14px;
+  font-weight: 650;
+  min-height: 30px;
+  padding: var(--vx-sidebar-row-padding);
+  text-transform: none;
+  letter-spacing: 0;
+}
+
+.vx-workspace-collapse-toggle {
+  align-items: center;
+  background: transparent;
+  border: 0;
+  border-radius: 6px;
+  color: var(--vx-text-secondary);
+  cursor: pointer;
+  display: inline-flex;
+  flex: 0 0 20px;
+  height: 24px;
+  justify-content: center;
+  margin: 0 -3px 0 -5px;
+  padding: 0;
+  width: 20px;
+}
+
+.vx-workspace-collapse-toggle:hover {
+  background: #e9e9e4;
+  color: var(--vx-text-primary);
+}
+
+.vx-workspace-collapse-toggle .vx-sidebar-row-icon {
+  flex-basis: 16px;
+  height: 16px;
+  width: 16px;
+}
+
+.vx-workspace-collapse-toggle .vx-sidebar-row-icon svg {
+  height: 16px;
+  width: 16px;
+}
+
+.vx-workbench-shell .vx-workspace-session-group.active .vx-directory-row {
+  color: var(--vx-text-primary);
 }
 
 .vx-workbench-shell .vx-directory-new-chat {
+  align-items: center;
+  background: transparent;
+  border: 0;
   border-radius: 6px;
+  color: var(--vx-text-secondary);
+  cursor: pointer;
+  display: inline-flex;
+  justify-content: center;
+  margin-left: auto;
   min-height: 26px;
   min-width: 26px;
+  opacity: 0;
   padding: 0;
+  pointer-events: auto;
+  transition: opacity 0.12s ease, background-color 0.12s ease, color 0.12s ease;
+}
+
+.vx-workbench-shell .vx-directory-row:hover .vx-directory-new-chat,
+.vx-workbench-shell .vx-directory-new-chat:focus-visible {
+  opacity: 1;
+}
+
+.vx-workbench-shell .vx-directory-new-chat:hover {
+  background: #e9e9e4;
+  color: var(--vx-text-primary);
 }
 
 .vx-workbench-shell .vx-session-children {
-  padding-left: 0;
+  display: grid;
+  gap: 2px;
+  padding-left: 28px;
 }
 
 .vx-workbench-shell .vx-session-item {
   border-radius: 8px;
+  display: grid;
+  font-size: 14px;
   gap: 8px;
-  min-height: 34px;
+  grid-template-columns: 16px minmax(0, 1fr) max-content;
+  min-height: 30px;
   padding: var(--vx-sidebar-row-padding);
+  position: relative;
+}
+
+.vx-workbench-shell .vx-session-item.active {
+  background: #e9e9e4;
+  color: var(--vx-text-primary);
+}
+
+.vx-workbench-shell .vx-session-title {
+  flex: 1 1 auto;
+  min-width: 0;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.vx-session-time {
+  color: var(--vx-text-dim);
+  font-size: 13px;
+  justify-self: end;
+  white-space: nowrap;
+}
+
+.vx-sidebar-row-icon {
+  align-items: center;
+  color: var(--vx-text-secondary);
+  display: inline-flex;
+  flex: 0 0 16px;
+  height: 16px;
+  justify-content: center;
+  width: 16px;
+}
+
+.vx-sidebar-row-icon svg {
+  fill: none;
+  height: 16px;
+  stroke: currentColor;
+  stroke-linecap: round;
+  stroke-linejoin: round;
+  stroke-width: 1.6;
+  width: 16px;
+}
+
+.vx-workspace-expand {
+  align-items: center;
+  background: transparent;
+  border: 0;
+  border-radius: 4px;
+  color: var(--vx-text-dim);
+  cursor: pointer;
+  display: flex;
+  font: inherit;
+  font-size: 13px;
+  min-height: 22px;
+  padding: 2px 0;
+  text-align: left;
+  width: auto;
+}
+
+.vx-workspace-expand-controls {
+  align-items: center;
+  display: flex;
+  gap: 14px;
+  padding-left: 37px;
+}
+
+.vx-workspace-expand:hover {
+  background: transparent;
+  color: var(--vx-text-secondary);
 }
 
 .vx-workbench-shell .vx-session-menu-btn {
@@ -925,9 +1190,21 @@ body {
   cursor: pointer;
   font: inherit;
   line-height: 1;
-  margin-left: auto;
+  margin-left: 0;
   min-width: 32px;
+  opacity: 0;
   padding: 3px 8px 5px;
+  pointer-events: none;
+  position: absolute;
+  right: 6px;
+  top: 50%;
+  transform: translateY(-50%);
+}
+
+.vx-workbench-shell .vx-session-item:hover .vx-session-menu-btn,
+.vx-workbench-shell .vx-session-menu-btn:focus-visible {
+  opacity: 1;
+  pointer-events: auto;
 }
 
 .vx-workbench-shell .vx-session-menu-btn:hover {
@@ -952,12 +1229,26 @@ body {
   min-height: 0;
 }
 
+.vx-main-canvas.empty {
+  justify-content: center;
+  padding-bottom: clamp(64px, 10vh, 132px);
+}
+
+.vx-main-canvas.empty .transcript {
+  display: none;
+}
+
 .vx-empty-state {
   margin: auto auto 18px;
   max-width: 960px;
   padding: 48px 24px 0;
   text-align: center;
   width: min(960px, calc(100% - 48px));
+}
+
+.vx-main-canvas.empty .vx-empty-state {
+  margin: 0 auto 32px;
+  padding: 0 24px;
 }
 
 .vx-empty-state[hidden] {
@@ -990,6 +1281,10 @@ body {
   max-width: 960px;
   padding: 0;
   width: min(960px, calc(100% - 48px));
+}
+
+.vx-main-canvas.empty .composer {
+  margin-bottom: 0;
 }
 
 .vx-workbench-shell .composer textarea {
@@ -1088,17 +1383,86 @@ body {
   width: min(960px, calc(100% - 48px));
 }
 
+.vx-context-row[hidden] {
+  display: none;
+}
+
+.context-menu {
+  background: #ffffff;
+  border: 1px solid #dfdfd8;
+  border-radius: 14px;
+  box-shadow: 0 18px 50px rgba(31, 35, 40, 0.16);
+  color: var(--vx-text-primary);
+  min-width: 360px;
+  overflow: hidden;
+  padding: 8px;
+  position: fixed;
+  z-index: 30;
+}
+
+.context-menu[hidden] {
+  display: none;
+}
+
+.context-menu-title {
+  color: var(--vx-text-muted);
+  font-size: 12px;
+  font-weight: 600;
+  padding: 8px 12px 6px;
+}
+
+.context-menu-item {
+  align-items: center;
+  background: transparent;
+  border: 0;
+  border-radius: 10px;
+  color: var(--vx-text-primary);
+  cursor: pointer;
+  display: grid;
+  font: inherit;
+  font-size: 14px;
+  gap: 8px;
+  grid-template-columns: 28px max-content 1fr;
+  min-height: 38px;
+  padding: 6px 10px;
+  text-align: left;
+  width: 100%;
+}
+
+.context-menu-item:hover {
+  background: #f2f2ee;
+}
+
+.context-menu-icon {
+  align-items: center;
+  background: #eef0f2;
+  border-radius: 7px;
+  color: var(--vx-text-secondary);
+  display: inline-flex;
+  height: 24px;
+  justify-content: center;
+  width: 24px;
+}
+
+.context-menu-detail {
+  color: var(--vx-text-muted);
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
 .vx-workbench-shell .vx-dock {
   background: #f8f8f5;
   border-left: 0;
   border-top: 1px solid #dfdfd8;
   flex: 0 0 280px;
-  width: 100%;
+  margin-left: var(--vx-sidebar-width);
+  width: calc(100% - var(--vx-sidebar-width));
 }
 
 .vx-workbench-shell .vx-dock.collapsed {
   flex-basis: 34px;
-  width: 100%;
+  width: calc(100% - var(--vx-sidebar-width));
 }
 
 .vx-workbench-shell .vx-dock.collapsed .vx-dock-tabs {
@@ -1159,13 +1523,24 @@ body {
 
 @media (max-width: 1199px) {
   .vx-workbench-shell .vx-sidebar {
-    width: 220px;
+    flex-basis: var(--vx-sidebar-width);
+    width: var(--vx-sidebar-width);
   }
 }
 
 @media (max-width: 899px) {
   .vx-workbench-shell .vx-sidebar {
     display: none;
+  }
+
+  .vx-workbench-shell .vx-sidebar-resizer {
+    display: none;
+  }
+
+  .vx-workbench-shell .vx-dock,
+  .vx-workbench-shell .vx-dock.collapsed {
+    margin-left: 0;
+    width: 100%;
   }
 
   .vx-empty-state h1 {

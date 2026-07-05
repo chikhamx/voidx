@@ -206,3 +206,97 @@ async def test_v2_removes_clients_that_fail_during_broadcast():
     assert healthy_methods.count("item.delta") == 2
 
 
+
+
+@pytest.mark.asyncio
+async def test_v2_broadcast_turn_terminal_events():
+    from voidx.ui.output.events.schema import TurnCancelled, TurnCompleted, TurnFailed
+
+    dock = BottomInputDock()
+    session = GatewaySession(lambda: dock.tree, thread_id="t1")
+    client = FakeClient()
+    await session.connect(client)
+
+    await session.broadcast_event(TurnCompleted())
+    await session.broadcast_event(TurnFailed(message="boom"))
+    await session.broadcast_event(TurnCancelled())
+
+    methods = [_method(message) for message in client.messages[-3:]]
+    assert methods == ["turn.completed", "turn.failed", "turn.cancelled"]
+    params = [_params(message) for message in client.messages[-3:]]
+    assert [param["thread_id"] for param in params] == ["t1", "t1", "t1"]
+    assert params[1]["message"] == "boom"
+
+
+@pytest.mark.asyncio
+async def test_v2_snapshot_preserves_background_failed_thread_status():
+    from voidx.ui.output.events.schema import TurnFailed
+
+    dock = BottomInputDock()
+    session = GatewaySession(lambda: dock.tree, thread_id="t1")
+    await session.register_thread("t2", title="Background")
+    client = FakeClient()
+    await session.connect(client)
+
+    await session.broadcast_event(TurnFailed(thread_id="t2", message="boom"))
+    await session.broadcast_snapshot()
+
+    params = _params(client.messages[-1])
+    threads = {thread["thread_id"]: thread for thread in params["threads"]}
+    assert threads["t2"]["status"] == "failed"
+
+
+@pytest.mark.asyncio
+async def test_v2_snapshot_preserves_background_waiting_and_cancelling_statuses():
+    dock = BottomInputDock()
+    session = GatewaySession(lambda: dock.tree, thread_id="t1")
+    await session.register_thread("waiting", title="Waiting")
+    await session.register_thread("cancelling", title="Cancelling")
+    client = FakeClient()
+    await session.connect(client)
+
+    loop = asyncio.get_running_loop()
+    waiting_future = loop.create_future()
+    session._run_manager.mark_running("waiting")
+    session._run_manager.register_pending_request("waiting", "req-waiting", waiting_future)
+    session._run_manager.mark_running("cancelling")
+    await session._run_manager.cancel("cancelling")
+
+    await session.broadcast_snapshot()
+
+    params = _params(client.messages[-1])
+    threads = {thread["thread_id"]: thread for thread in params["threads"]}
+    assert threads["waiting"]["status"] == "waiting_for_user"
+    assert threads["cancelling"]["status"] == "cancelling"
+
+    session._run_manager.remove_pending_request("waiting", "req-waiting")
+    waiting_future.cancel()
+
+
+@pytest.mark.asyncio
+async def test_v2_snapshot_refreshes_background_thread_persisted_metadata(tmp_path: Path):
+    import voidx.memory.store as store
+    from voidx.memory.session import MessageRow, create_session, save_message
+
+    store._conn = None
+    store.DATA_DIR = tmp_path / ".voidx"
+    saved = await create_session(
+        workspace=str(tmp_path),
+        title="Background",
+        directory=str(tmp_path),
+    )
+
+    dock = BottomInputDock()
+    session = GatewaySession(lambda: dock.tree, thread_id="active", workspace=str(tmp_path))
+    await session.register_thread(saved.id, title="Stale title", directory=str(tmp_path))
+    client = FakeClient()
+    await session.connect(client)
+
+    await save_message(MessageRow(session_id=saved.id, role="user", content="background complete"))
+    await session.broadcast_snapshot()
+
+    params = _params(client.messages[-1])
+    threads = {thread["thread_id"]: thread for thread in params["threads"]}
+    assert threads[saved.id]["message_count"] == 1
+    assert threads[saved.id]["title"] == "Background"
+    store._conn = None

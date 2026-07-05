@@ -173,7 +173,190 @@ async def test_session_persistence_saves_only_new_ai_and_tool_messages(tmp_path)
         await delete_session(session.id)
 
 
+
+
 @pytest.mark.asyncio
+async def test_run_once_uses_execution_context_session_id_for_persistence(tmp_path):
+    from voidx.ui.output.types import ThreadExecutionContext
+
+    active = await create_session(workspace=str(tmp_path), title="Active")
+    target = await create_session(workspace=str(tmp_path), title="Target")
+    try:
+        graph = VoidXGraph(Config(workspace=str(tmp_path)), api_key=None, session=active)
+
+        class FakeGraph:
+            async def ainvoke(self, initial, _config):
+                return {"messages": list(initial["messages"]) + [AIMessage(content="target answer")]}
+
+        graph.graph = FakeGraph()
+
+        test_dock = BottomInputDock()
+        set_dock(test_dock)
+        test_dock.begin_capture()
+        try:
+            await graph._run_once(
+                "target question",
+                context=ThreadExecutionContext(thread_id=target.id, session_id=target.id),
+            )
+        finally:
+            test_dock.deactivate()
+            test_dock.reset()
+            set_dock(None)
+
+        active_rows = await load_messages(active.id)
+        target_rows = await load_messages(target.id)
+        assert [row.content for row in active_rows] == []
+        assert [row.content for row in target_rows if row.role == "user"] == ["target question"]
+        assert [row.content for row in target_rows if row.role == "assistant"] == ["target answer"]
+    finally:
+        await delete_session(active.id)
+        await delete_session(target.id)
+
+
+@pytest.mark.asyncio
+async def test_run_once_loads_execution_context_runtime_state(tmp_path):
+    from voidx.agent.runtime_context import InteractionMode
+    from voidx.memory.runtime_state import RuntimeStateSnapshot, save_runtime_state
+    from voidx.ui.output.types import ThreadExecutionContext
+
+    active = await create_session(workspace=str(tmp_path), title="Active")
+    target = await create_session(workspace=str(tmp_path), title="Target")
+    try:
+        active_state = TaskState(current_goal=GoalSpec(desc="active goal"))
+        target_state = TaskState(current_goal=GoalSpec(desc="target goal"))
+        await save_runtime_state(active.id, RuntimeStateSnapshot(interaction_mode=InteractionMode.GOAL, task_state=active_state))
+        await save_runtime_state(target.id, RuntimeStateSnapshot(interaction_mode=InteractionMode.PLAN, task_state=target_state))
+
+        graph = VoidXGraph(Config(workspace=str(tmp_path)), api_key=None, session=active)
+        await graph._restore_runtime_state()
+        captured: dict[str, str] = {}
+
+        class FakeGraph:
+            async def ainvoke(self, initial, _config):
+                state = TaskState.model_validate(initial["task_state"])
+                captured["goal"] = state.current_goal.desc if state.current_goal else ""
+                captured["interaction_mode"] = initial["interaction_mode"]
+                return {"messages": list(initial["messages"]) + [AIMessage(content="target answer")], "task_state": initial["task_state"]}
+
+        graph.graph = FakeGraph()
+
+        test_dock = BottomInputDock()
+        set_dock(test_dock)
+        test_dock.begin_capture()
+        try:
+            await graph._run_once(
+                "target question",
+                context=ThreadExecutionContext(thread_id=target.id, session_id=target.id),
+            )
+        finally:
+            test_dock.deactivate()
+            test_dock.reset()
+            set_dock(None)
+
+        assert captured == {"goal": "target goal", "interaction_mode": "plan"}
+        assert graph._session.id == active.id
+        assert graph._task_state.current_goal is not None
+        assert graph._task_state.current_goal.desc == "active goal"
+        assert graph._interaction_mode == InteractionMode.GOAL
+    finally:
+        await delete_session(active.id)
+        await delete_session(target.id)
+
+@pytest.mark.asyncio
+async def test_run_once_isolates_concurrent_execution_context_state(tmp_path):
+    from voidx.agent.runtime_context import InteractionMode
+    from voidx.memory.runtime_state import RuntimeStateSnapshot, save_runtime_state
+    from voidx.ui.output.types import ThreadExecutionContext
+
+    session_a = await create_session(workspace=str(tmp_path), title="Session A")
+    session_b = await create_session(workspace=str(tmp_path), title="Session B")
+    try:
+        await save_runtime_state(
+            session_a.id,
+            RuntimeStateSnapshot(
+                interaction_mode=InteractionMode.PLAN,
+                task_state=TaskState(current_goal=GoalSpec(desc="goal a")),
+            ),
+        )
+        await save_runtime_state(
+            session_b.id,
+            RuntimeStateSnapshot(
+                interaction_mode=InteractionMode.PLAN,
+                task_state=TaskState(current_goal=GoalSpec(desc="goal b")),
+            ),
+        )
+
+        graph = VoidXGraph(Config(workspace=str(tmp_path)), api_key=None, session=session_a)
+        entered: dict[str, asyncio.Event] = {
+            session_a.id: asyncio.Event(),
+            session_b.id: asyncio.Event(),
+        }
+        release = asyncio.Event()
+        captured: dict[str, dict[str, object]] = {}
+
+        class FakeGraph:
+            async def ainvoke(self, initial, _config):
+                user_text = next(
+                    message.content
+                    for message in initial["messages"]
+                    if isinstance(message, HumanMessage)
+                    and str(message.content).startswith("question ")
+                )
+                session_id = session_a.id if user_text == "question a" else session_b.id
+                state = TaskState.model_validate(initial["task_state"])
+                captured[session_id] = {
+                    "goal": state.current_goal.desc if state.current_goal else "",
+                    "cache_id": id(graph._context_cache),
+                    "session_id": graph._session.id if graph._session else "",
+                }
+                entered[session_id].set()
+                await asyncio.wait_for(asyncio.gather(*(event.wait() for event in entered.values())), timeout=1)
+                await release.wait()
+                return {
+                    "messages": list(initial["messages"]) + [AIMessage(content=f"answer {session_id}")],
+                    "task_state": initial["task_state"],
+                }
+
+        graph.graph = FakeGraph()
+        test_dock = BottomInputDock()
+        set_dock(test_dock)
+        test_dock.begin_capture()
+        try:
+            task_a = asyncio.create_task(
+                graph._run_once(
+                    "question a",
+                    context=ThreadExecutionContext(thread_id=session_a.id, session_id=session_a.id),
+                )
+            )
+            task_b = asyncio.create_task(
+                graph._run_once(
+                    "question b",
+                    context=ThreadExecutionContext(thread_id=session_b.id, session_id=session_b.id),
+                )
+            )
+            await asyncio.wait_for(asyncio.gather(*(event.wait() for event in entered.values())), timeout=1)
+            release.set()
+            await asyncio.gather(task_a, task_b)
+        finally:
+            test_dock.deactivate()
+            test_dock.reset()
+            set_dock(None)
+
+        assert captured[session_a.id]["goal"] == "goal a"
+        assert captured[session_b.id]["goal"] == "goal b"
+        assert captured[session_a.id]["session_id"] == session_a.id
+        assert captured[session_b.id]["session_id"] == session_b.id
+        assert captured[session_a.id]["cache_id"] != captured[session_b.id]["cache_id"]
+        rows_a = await load_messages(session_a.id)
+        rows_b = await load_messages(session_b.id)
+        assert [row.content for row in rows_a if row.role == "user"] == ["question a"]
+        assert [row.content for row in rows_b if row.role == "user"] == ["question b"]
+        assert [row.content for row in rows_a if row.role == "assistant"] == [f"answer {session_a.id}"]
+        assert [row.content for row in rows_b if row.role == "assistant"] == [f"answer {session_b.id}"]
+    finally:
+        await delete_session(session_a.id)
+        await delete_session(session_b.id)
+
 async def test_runtime_context_overlay_not_persisted_to_user_history(tmp_path):
     session = await create_session(workspace=str(tmp_path))
     try:

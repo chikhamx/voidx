@@ -32,6 +32,7 @@ from voidx.agent.graph.session_runtime import GraphSessionRuntime
 from voidx.agent.graph.streaming import stream_llm as _stream_llm
 from voidx.agent.graph.subagent import run_subagent as _run_subagent
 from voidx.agent.graph.title_mixin import GraphTitleMixin
+from voidx.agent.graph.thread_context import current_thread_execution_state
 from voidx.agent.graph.tool_executor import GraphToolExecutor
 from voidx.agent.graph.tool_execution import GraphToolExecutionMixin
 from voidx.agent.graph.topology import build_graph, session_date
@@ -82,6 +83,135 @@ class VoidXGraph(
     GraphLlmMixin,
 ):
     """The voidx agent as a LangGraph state machine."""
+
+    @property
+    def _session(self) -> SessionInfo | None:
+        state = current_thread_execution_state()
+        return state.session if state is not None else getattr(self, "_default_session", None)
+
+    @_session.setter
+    def _session(self, value: SessionInfo | None) -> None:
+        state = current_thread_execution_state()
+        if state is not None:
+            state.session = value
+        else:
+            self._default_session = value
+
+    @property
+    def _session_msg_cache(self) -> list | None:
+        state = current_thread_execution_state()
+        return state.session_msg_cache if state is not None else getattr(self, "_default_session_msg_cache", None)
+
+    @_session_msg_cache.setter
+    def _session_msg_cache(self, value: list | None) -> None:
+        state = current_thread_execution_state()
+        if state is not None:
+            state.session_msg_cache = value
+        else:
+            self._default_session_msg_cache = value
+
+    @property
+    def _context_cache(self) -> ContextCompilerCache:
+        state = current_thread_execution_state()
+        if state is not None:
+            return state.context_cache
+        if not hasattr(self, "_default_context_cache"):
+            self._default_context_cache = ContextCompilerCache()
+        return self._default_context_cache
+
+    @_context_cache.setter
+    def _context_cache(self, value: ContextCompilerCache) -> None:
+        state = current_thread_execution_state()
+        if state is not None:
+            state.context_cache = value
+        else:
+            self._default_context_cache = value
+
+    @property
+    def _interaction_mode(self) -> InteractionMode:
+        state = current_thread_execution_state()
+        return state.interaction_mode if state is not None else getattr(self, "_default_interaction_mode", InteractionMode.AUTO)
+
+    @_interaction_mode.setter
+    def _interaction_mode(self, value: InteractionMode) -> None:
+        state = current_thread_execution_state()
+        if state is not None:
+            state.interaction_mode = value
+        else:
+            self._default_interaction_mode = value
+
+    @property
+    def _task_state(self) -> TaskState:
+        state = current_thread_execution_state()
+        if state is not None:
+            return state.task_state
+        if not hasattr(self, "_default_task_state"):
+            self._default_task_state = TaskState()
+        return self._default_task_state
+
+    @_task_state.setter
+    def _task_state(self, value: TaskState) -> None:
+        state = current_thread_execution_state()
+        if state is not None:
+            state.task_state = value
+        else:
+            self._default_task_state = value
+
+    @property
+    def _compaction_summary(self) -> str:
+        state = current_thread_execution_state()
+        return state.compaction_summary if state is not None else getattr(self, "_default_compaction_summary", "")
+
+    @_compaction_summary.setter
+    def _compaction_summary(self, value: str) -> None:
+        state = current_thread_execution_state()
+        if state is not None:
+            state.compaction_summary = value
+        else:
+            self._default_compaction_summary = value
+
+    @property
+    def _pending_summary(self) -> str | None:
+        state = current_thread_execution_state()
+        return state.pending_summary if state is not None else getattr(self, "_default_pending_summary", None)
+
+    @_pending_summary.setter
+    def _pending_summary(self, value: str | None) -> None:
+        state = current_thread_execution_state()
+        if state is not None:
+            state.pending_summary = value
+        else:
+            self._default_pending_summary = value
+
+    @property
+    def _session_date(self) -> str:
+        state = current_thread_execution_state()
+        return state.session_date if state is not None else getattr(self, "_default_session_date", "")
+
+    @_session_date.setter
+    def _session_date(self, value: str) -> None:
+        state = current_thread_execution_state()
+        if state is not None:
+            state.session_date = value
+        else:
+            self._default_session_date = value
+
+    @property
+    def _runtime_guards(self) -> RuntimeGuardState:
+        state = current_thread_execution_state()
+        if state is not None:
+            return state.runtime_guards
+        if not hasattr(self, "_default_runtime_guards"):
+            self._default_runtime_guards = RuntimeGuardState()
+        return self._default_runtime_guards
+
+    @_runtime_guards.setter
+    def _runtime_guards(self, value: RuntimeGuardState) -> None:
+        state = current_thread_execution_state()
+        if state is not None:
+            state.runtime_guards = value
+        else:
+            self._default_runtime_guards = value
 
     def __init__(self, config: Config, api_key: str | None, session: SessionInfo | None = None, settings: Settings | None = None):
         self.config = config
