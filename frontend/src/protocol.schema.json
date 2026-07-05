@@ -232,6 +232,11 @@
           "title": "Created At",
           "type": "string"
         },
+        "directory": {
+          "default": "",
+          "title": "Directory",
+          "type": "string"
+        },
         "message_count": {
           "default": 0,
           "title": "Message Count",
@@ -741,12 +746,39 @@
           "title": "Active Thread Id",
           "type": "string"
         },
+        "model": {
+          "default": "",
+          "title": "Model",
+          "type": "string"
+        },
+        "profile_configured": {
+          "anyOf": [
+            {
+              "type": "boolean"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null,
+          "title": "Profile Configured"
+        },
+        "provider": {
+          "default": "",
+          "title": "Provider",
+          "type": "string"
+        },
         "threads": {
           "items": {
             "$ref": "#/$defs/ThreadInfo"
           },
           "title": "Threads",
           "type": "array"
+        },
+        "workspace": {
+          "default": "",
+          "title": "Workspace",
+          "type": "string"
         }
       },
       "title": "WorkspaceSnapshot",

@@ -86,10 +86,9 @@ export function toggleDock(): void {
 }
 
 function updateDockStrip(): void {
-  const dock = document.querySelector<HTMLElement>("#dock");
   const strip = document.querySelector<HTMLElement>("#dock-strip");
-  if (!dock || !strip) return;
-  strip.hidden = !dock.classList.contains("collapsed");
+  if (!strip) return;
+  strip.hidden = true;
 }
 
 export function getActiveTab(): DockTab {

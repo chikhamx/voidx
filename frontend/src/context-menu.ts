@@ -64,10 +64,15 @@ function handleAction(action: string | undefined): void {
     case "paste":
       pasteFromClipboard();
       break;
-    case "web":
-      openWebContext();
+    case "model":
+      openModelSettings();
+      break;
+    case "skills":
+    case "integrations":
+      openIntegrations();
       break;
     case "file":
+      void openFilePicker();
       break;
   }
 }
@@ -99,9 +104,64 @@ async function pasteFromClipboard(): Promise<void> {
   }
 }
 
-function openWebContext(): void {
+function openIntegrations(): void {
   const btn = document.querySelector<HTMLButtonElement>("#btn-integrations");
   btn?.click();
+}
+
+function openModelSettings(): void {
+  const btn = document.querySelector<HTMLButtonElement>("#btn-settings");
+  btn?.click();
+}
+
+function addFileCommand(): void {
+  if (!state.input) return;
+  state.input.value = `${state.input.value}${state.input.value ? "\n" : ""}/file `;
+  state.input.focus();
+}
+
+async function openFilePicker(): Promise<void> {
+  if (!state.input) return;
+  if (!isTauriDesktop()) {
+    addFileCommand();
+    return;
+  }
+  try {
+    const { open } = await import("@tauri-apps/plugin-dialog");
+    const selected = await open({
+      multiple: true,
+      directory: true,
+      title: "选择文件或文件夹",
+    });
+    const paths = normalizeSelectedPaths(selected);
+    if (paths.length === 0) return;
+    insertAttachmentPaths(paths);
+  } catch (err) {
+    console.warn(
+      "voidx: native file picker failed",
+      err instanceof Error ? err.message : String(err),
+    );
+    addFileCommand();
+  }
+}
+
+function isTauriDesktop(): boolean {
+  const win = window as unknown as Record<string, unknown>;
+  return Boolean(win.__TAURI_INTERNALS__ || win.__TAURI__);
+}
+
+function normalizeSelectedPaths(selected: unknown): string[] {
+  if (typeof selected === "string") return [selected];
+  if (!Array.isArray(selected)) return [];
+  return selected.filter((item): item is string => typeof item === "string" && item.length > 0);
+}
+
+function insertAttachmentPaths(paths: string[]): void {
+  if (!state.input) return;
+  const prefix = state.input.value && !/\s$/.test(state.input.value) ? " " : "";
+  const attachments = paths.map((path) => `@${path}`).join(" ");
+  state.input.value = `${state.input.value}${prefix}${attachments}`;
+  state.input.focus();
 }
 
 export function _resetContextMenuForTest(): void {

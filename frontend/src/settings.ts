@@ -1,7 +1,9 @@
-interface ProfileSummary {
+export interface ProfileSummary {
   name: string;
   provider: string;
   model: string;
+  base_url?: string | null;
+  protocol?: string | null;
   configured?: boolean;
 }
 
@@ -123,10 +125,12 @@ export function closeSettingsModal() {
 
 export function collectSettingsPatch(): Record<string, unknown> {
   const value = (name: string): string =>
-    (state.content?.querySelector<HTMLInputElement>(`[name="${name}"]`)?.value) || "";
+    (state.content?.querySelector<HTMLInputElement | HTMLSelectElement>(`[name="${name}"]`)?.value) || "";
   const checked = (name: string): boolean =>
     Boolean(state.content?.querySelector<HTMLInputElement>(`[name="${name}"]`)?.checked);
   switch (state.activeTab) {
+    case "model":
+      return collectModelPatch(value);
     case "permissions":
       return {
         permissions: {
@@ -153,6 +157,34 @@ export function collectSettingsPatch(): Record<string, unknown> {
     default:
       return {};
   }
+}
+
+function collectModelPatch(value: (name: string) => string): Record<string, unknown> {
+  const provider = value("new_provider").trim();
+  const model = value("new_model").trim();
+  if (!provider || !model) return {};
+
+  const baseUrl = value("new_base_url").trim();
+  const protocol = value("new_protocol").trim();
+  const apiKey = value("new_api_key").trim();
+  const profileName = `${provider}/${model}`;
+  const patch: Record<string, unknown> = {
+    model: {
+      provider,
+      model,
+      ...(baseUrl ? { base_url: baseUrl } : {}),
+      ...(protocol ? { protocol } : {}),
+    },
+  };
+  if (apiKey) {
+    patch.provider_secrets = {
+      provider,
+      profile_name: profileName,
+      action: "set",
+      api_key: apiKey,
+    };
+  }
+  return patch;
 }
 
 export function _resetSettingsForTest() {
@@ -200,6 +232,13 @@ function renderModelTab(snapshot: SettingsSnapshot = {}): DocumentFragment {
             return row;
           })
         : [readonlyRow("", "暂无已保存的 model profile")]),
+    ]),
+    section("新增模型 / 供应商", [
+      inputRow("Provider", "new_provider", ""),
+      inputRow("Model", "new_model", ""),
+      inputRow("Base URL", "new_base_url", ""),
+      selectRow("Protocol", "new_protocol", "", ["", "openai", "anthropic", "deepseek", "gemini"]),
+      secretRow("API key", "new_api_key", ""),
     ]),
     section("存储位置", [
       readonlyRow("Workspace", paths.workspace_settings || ""),
@@ -301,6 +340,17 @@ function inputRow(label: string, name: string, value: string): HTMLLabelElement 
   const input = document.createElement("input");
   input.name = name;
   input.value = value;
+  row.append(input);
+  return row;
+}
+
+function secretRow(label: string, name: string, value: string): HTMLLabelElement {
+  const row = rowBase(label);
+  const input = document.createElement("input");
+  input.type = "password";
+  input.name = name;
+  input.value = value;
+  input.autocomplete = "off";
   row.append(input);
   return row;
 }

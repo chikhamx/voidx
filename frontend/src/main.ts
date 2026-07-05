@@ -15,10 +15,11 @@ import {
   commitStream,
   discardStream,
 } from "./stream";
-import { rpcCall, _setSocket } from "./rpc";
+import { rpcCall, rpcRespond, onNotification, _setSocket, isRpcConnected } from "./rpc";
 import {
   renderSidebar,
   addThread,
+  findReusableEmptyThread,
   updateThreadStatus,
   filterSessions,
   onThreadSelect,
@@ -46,7 +47,7 @@ import {
   showDiffEmpty,
 } from "./diff-review";
 import { initSettingsModal, openSettingsModal, _resetSettingsForTest } from "./settings";
-import type { SettingsSnapshot } from "./settings";
+import type { ProfileSummary, SettingsSnapshot } from "./settings";
 import {
   initIntegrationsPanel,
   openIntegrationsPanel,
@@ -64,18 +65,18 @@ const statusConnectionEl = document.querySelector("#status-connection")!;
 const statusSessionDetailEl = document.querySelector("#status-session-detail")!;
 const statusWorkspaceDetailEl = document.querySelector("#status-workspace-detail")!;
 const statusProviderModelEl = document.querySelector("#status-provider-model")!;
-const statusPermissionEl = document.querySelector("#status-permission")!;
+const statusPermissionEl = document.querySelector("#status-permission");
 const statusRunningEl = document.querySelector("#status-running")!;
 const stripWorkspaceEl = document.querySelector("#strip-workspace")!;
-const stripPermissionEl = document.querySelector("#strip-permission")!;
+const stripPermissionEl = document.querySelector("#strip-permission");
 const stripProviderModelEl = document.querySelector("#strip-provider-model")!;
 const titlebarProjectEl = document.querySelector("#titlebar-project");
 const contextWorkspaceEl = document.querySelector("#context-workspace")!;
-const contextPermissionEl = document.querySelector("#context-permission")!;
+const contextPermissionEl = document.querySelector("#context-permission");
 const contextProviderModelEl = document.querySelector("#context-provider-model")!;
-const permissionPillEl = document.querySelector("#permission-pill")!;
 const emptyStateEl = document.querySelector<HTMLElement>("#empty-state")!;
 const transcriptEl = document.querySelector<HTMLElement>("#transcript")!;
+const mainCanvasEl = document.querySelector<HTMLElement>(".vx-main-canvas")!;
 const composerEl = document.querySelector<HTMLFormElement>("#composer")!;
 const inputEl = document.querySelector<HTMLTextAreaElement>("#input")!;
 const btnSendEl = document.querySelector<HTMLButtonElement>("#btn-send")!;
@@ -95,6 +96,7 @@ interface UiState {
   sessionId: string;
   isRunning: boolean;
   profileConfigured: boolean | null;
+  configuredProfiles: ProfileSummary[];
   isSwitchingModel: boolean;
   slashCommands: SlashCommand[];
   slashSelectedIndex: number;
@@ -108,26 +110,23 @@ const uiState: UiState = {
   sessionId: "",
   isRunning: false,
   profileConfigured: null,
+  configuredProfiles: [],
   isSwitchingModel: false,
   slashCommands: [],
   slashSelectedIndex: 0,
 };
 
-const MODEL_CATALOG: Record<string, string[]> = {
-  openai: ["gpt-5.5", "gpt-5.4", "gpt-5.4-mini"],
-  anthropic: ["claude-sonnet-4-6", "claude-opus-4-1"],
-  deepseek: ["deepseek-chat", "deepseek-reasoner"],
-  gemini: ["gemini-3-pro", "gemini-2.5-pro"],
-  custom: [],
-};
-
 const DEFAULT_WORKSPACE = "voidx";
-const PENDING_PERMISSION_LABEL = "等待状态";
 const PENDING_MODEL_LABEL = "等待模型状态";
+const DEFAULT_SIDEBAR_WIDTH = 260;
+const MIN_SIDEBAR_WIDTH = 210;
+const MAX_SIDEBAR_WIDTH = 420;
 
 let socket: WebSocket | null = null;
 let reconnectAttempts = 0;
 const MAX_RECONNECT = 10;
+let startupSettingsRequested = false;
+let connectionGeneration = 0;
 
 setTranscriptElement(transcriptEl);
 initDock();
@@ -135,11 +134,20 @@ initTerminal();
 initModelControls();
 initIntegrationsPanel();
 initSettingsModal({
-  onSave: (patch: Record<string, unknown>) =>
-    rpcCall("settings.update", { patch }),
+  onSave: async (patch: Record<string, unknown>) => {
+    const result = await rpcCall("settings.update", { patch });
+    const settings = (result as { settings?: SettingsSnapshot } | undefined)?.settings;
+    if (settings) {
+      applySettingsRuntimeState(settings);
+    }
+    return result;
+  },
 });
 initContextMenu();
+registerNotificationHandlers();
 syncEmptyState();
+initWorkspaceControls();
+initSidebarResizer();
 
 onTerminalStart(() => {
   rpcCall("terminal.start", { command: ["bash"] })
@@ -230,6 +238,90 @@ function openIntegrations(): void {
   );
 }
 
+function initWorkspaceControls(): void {
+  document
+    .querySelector("#btn-open-workspace")
+    ?.addEventListener("click", () => {
+      void openWorkspacePicker();
+    });
+}
+
+function setSidebarWidth(width: number): void {
+  const clamped = Math.max(MIN_SIDEBAR_WIDTH, Math.min(MAX_SIDEBAR_WIDTH, Math.round(width)));
+  const shell = document.querySelector<HTMLElement>(".vx-workbench-shell");
+  (shell || document.documentElement).style.setProperty("--vx-sidebar-width", `${clamped}px`);
+}
+
+function initSidebarResizer(): void {
+  const resizer = document.querySelector<HTMLElement>("#sidebar-resizer");
+  if (!resizer || resizer.dataset.initialized === "true") return;
+  resizer.dataset.initialized = "true";
+
+  resizer.addEventListener("pointerdown", (event: PointerEvent) => {
+    event.preventDefault();
+    setSidebarWidth(event.clientX);
+    resizer.classList.add("dragging");
+    resizer.setPointerCapture?.(event.pointerId);
+
+    const onPointerMove = (moveEvent: PointerEvent) => {
+      setSidebarWidth(moveEvent.clientX);
+    };
+    const onPointerUp = (upEvent: PointerEvent) => {
+      resizer.classList.remove("dragging");
+      resizer.releasePointerCapture?.(upEvent.pointerId);
+      window.removeEventListener("pointermove", onPointerMove);
+      window.removeEventListener("pointerup", onPointerUp);
+    };
+
+    window.addEventListener("pointermove", onPointerMove);
+    window.addEventListener("pointerup", onPointerUp);
+  });
+}
+
+function isDesktopRuntime(): boolean {
+  const win = window as unknown as Record<string, unknown>;
+  return Boolean(win.__TAURI_INTERNALS__ || win.__TAURI__);
+}
+
+async function openWorkspacePicker(): Promise<void> {
+  if (!isDesktopRuntime()) {
+    return;
+  }
+  const { open } = await import("@tauri-apps/plugin-dialog");
+  const selected = await open({
+    directory: true,
+    multiple: false,
+    title: "选择项目文件夹",
+  });
+  if (typeof selected !== "string" || !selected) {
+    return;
+  }
+  await switchWorkspace(selected);
+}
+
+async function switchWorkspace(workspace: string): Promise<void> {
+  connectionGeneration += 1;
+  uiState.workspace = workspace;
+  uiState.sessionId = "";
+  uiState.isRunning = false;
+  transcriptEl.replaceChildren();
+  syncEmptyState();
+  setConnectionStatus("connecting");
+  updateStatusBar();
+
+  if (socket) {
+    socket.close();
+    _setSocket(null);
+  }
+
+  const { invoke } = await import("@tauri-apps/api/core");
+  await invoke("restart_backend", { workspace });
+  const url = await resolveWsUrl();
+  if (url) {
+    connect(url);
+  }
+}
+
 onThreadSelect((threadId: string) => {
   rpcCall("session.switch", { thread_id: threadId })
     .then((result: unknown) => {
@@ -244,6 +336,22 @@ onThreadSelect((threadId: string) => {
 });
 
 onNewThread((directory: string) => {
+  const existing = findReusableEmptyThread(directory || uiState.workspace);
+  if (existing) {
+    rpcCall("session.switch", { thread_id: existing.thread_id })
+      .then((result: unknown) => {
+        uiState.sessionId =
+          ((result as Record<string, string>).active_thread_id as string) ||
+          existing.thread_id;
+        addThread(existing, uiState.sessionId);
+        updateStatusBar();
+      })
+      .catch((err: Error) => {
+        console.warn("voidx: session switch failed", err.message);
+      });
+    return;
+  }
+
   rpcCall("session.create", { directory })
     .then((result: unknown) => {
       const r = result as Record<string, string>;
@@ -253,6 +361,7 @@ onNewThread((directory: string) => {
           thread_id: r.thread_id,
           title: r.title,
           status: r.status,
+          workspace: r.workspace || r.directory || directory || uiState.workspace,
           directory: r.directory,
         },
         r.thread_id,
@@ -340,13 +449,13 @@ async function bootstrap(): Promise<void> {
   connect(wsUrl);
 }
 
-async function resolveWsUrl(): Promise<string | null> {
+export async function resolveWsUrl(): Promise<string | null> {
   const params = new URLSearchParams(window.location.search);
   const direct = params.get("ws");
   if (direct) {
     return direct;
   }
-  if ((window as unknown as Record<string, unknown>).__TAURI_INTERNALS__ || (window as unknown as Record<string, unknown>).__TAURI__) {
+  try {
     const { invoke } = await import("@tauri-apps/api/core");
     for (let attempt = 0; attempt < 60; attempt += 1) {
       const url: unknown = await invoke("get_gateway_url");
@@ -355,15 +464,21 @@ async function resolveWsUrl(): Promise<string | null> {
       }
       await new Promise((resolve) => setTimeout(resolve, 500));
     }
+  } catch {
+    return null;
   }
   return null;
 }
 
 function connect(url: string): void {
+  const generation = connectionGeneration;
   setConnectionStatus("connecting");
   socket = new WebSocket(url);
   let reconnecting = false;
   const scheduleReconnect = () => {
+    if (generation !== connectionGeneration) {
+      return;
+    }
     if (reconnecting) {
       return;
     }
@@ -380,27 +495,42 @@ function connect(url: string): void {
   });
   _setSocket(socket);
   socket.addEventListener("close", () => {
+    if (generation !== connectionGeneration) {
+      return;
+    }
     setConnectionStatus("disconnected");
     scheduleReconnect();
   });
   socket.addEventListener("error", () => {
-    setConnectionStatus("disconnected", "Connection error");
-  });
-  socket.addEventListener("message", (event: MessageEvent) => {
-    let msg: Record<string, unknown>;
-    try {
-      msg = JSON.parse(event.data as string);
-    } catch {
-      console.warn("voidx: ignoring non-JSON websocket message");
+    if (generation !== connectionGeneration) {
       return;
     }
-    if (msg.id != null && !msg.method) return;
-
-    const method = msg.method as string;
-    const params = (msg.params as Record<string, unknown>) || {};
-
-    handleNotification(method, params);
+    setConnectionStatus("disconnected", "Connection error");
   });
+}
+
+function registerNotificationHandlers(): void {
+  for (const method of [
+    "workspace.snapshot",
+    "ui.request",
+    "startup.shown",
+    "turn.started",
+    "turn.completed",
+    "turn.failed",
+    "turn.cancelled",
+    "terminal.output",
+    "capture.started",
+    "capture.stopped",
+    "refresh.requested",
+    "reset.requested",
+    "notice.set",
+    "input.set",
+    "item.started",
+    "item.delta",
+    "item.completed",
+  ]) {
+    onNotification(method, (params) => handleNotification(method, params));
+  }
 }
 
 export function handleNotification(
@@ -410,6 +540,8 @@ export function handleNotification(
   if (method === "workspace.snapshot") {
     const snapshot = params.active_snapshot || { nodes: [] };
     uiState.sessionId = (params.active_thread_id as string) || "";
+    applyRuntimeState(params);
+    requestStartupSettingsIfNeeded();
     updateStatusBar();
     renderSidebar(
       (params.threads as unknown as ThreadInfo[]) || [],
@@ -431,6 +563,14 @@ export function handleNotification(
   }
   if (method === "turn.started") {
     setRunning(true);
+    return;
+  }
+  if (
+    method === "turn.completed" ||
+    method === "turn.failed" ||
+    method === "turn.cancelled"
+  ) {
+    setRunning(false);
     return;
   }
   if (method === "terminal.output") {
@@ -516,7 +656,9 @@ export function handleItem(
     return;
   }
   if (kind === "prompt") {
-    if (method === "item.completed" && data.cleared) {
+    if (method === "item.started") {
+      showPromptItemRequest(data);
+    } else if (method === "item.completed" && data.cleared) {
       requestDialogEl.close();
     }
     return;
@@ -575,8 +717,6 @@ function setConnectionStatus(status: string, message?: string): void {
 function updateStatusBar(): void {
   const workspaceName = workspaceBasename(uiState.workspace);
   const modelLabel = providerModelLabel();
-  const permissionLabel = profileConfiguredLabel();
-
   if (statusModelEl && uiState.model) {
     statusModelEl.textContent = modelLabel;
   }
@@ -592,10 +732,9 @@ function updateStatusBar(): void {
     statusSessionEl.textContent = sessionLabel;
     statusSessionDetailEl.textContent = sessionLabel;
   }
-  contextPermissionEl.textContent = permissionLabel;
-  permissionPillEl.textContent = permissionLabel;
-  stripPermissionEl.textContent = permissionLabel;
-  statusPermissionEl.textContent = permissionLabel;
+  if (contextPermissionEl) contextPermissionEl.textContent = "";
+  if (stripPermissionEl) stripPermissionEl.textContent = "";
+  if (statusPermissionEl) statusPermissionEl.textContent = "";
   contextProviderModelEl.textContent = modelLabel;
   stripProviderModelEl.textContent = modelLabel;
   statusProviderModelEl.textContent = modelLabel;
@@ -605,7 +744,6 @@ function updateStatusBar(): void {
     : uiState.isSwitchingModel
       ? "switching"
       : "idle";
-  renderProjectList(workspaceName);
 }
 
 function scrollToBottom(): void {
@@ -619,12 +757,12 @@ composerEl.addEventListener("submit", (event: SubmitEvent) => {
     !text ||
     uiState.isSwitchingModel ||
     uiState.isRunning ||
-    !socket ||
-    socket.readyState !== WebSocket.OPEN
+    !isRpcConnected()
   ) {
     return;
   }
-  rpcCall("session.submit", { text }).catch(() => {});
+  setRunning(true);
+  rpcCall("session.submit", { text }).catch(() => setRunning(false));
   appendMessageItem(`user-${Date.now()}`, { style: "text", text });
   syncEmptyState();
   inputEl.value = "";
@@ -643,12 +781,12 @@ export function initModelControls(): void {
   providerSelectEl.dataset.initialized = "true";
   populateModelControls();
   providerSelectEl.addEventListener("change", () => {
-    uiState.provider = providerSelectEl.value || "custom";
+    uiState.provider = providerSelectEl.value;
     populateModelOptions(uiState.provider, "");
     updateStatusBar();
   });
   modelSelectEl.addEventListener("change", () => {
-    const provider = providerSelectEl.value || uiState.provider || "custom";
+    const provider = providerSelectEl.value || uiState.provider;
     const model = modelSelectEl.value;
     if (!model || uiState.isSwitchingModel) {
       populateModelOptions(uiState.provider, uiState.model);
@@ -659,7 +797,7 @@ export function initModelControls(): void {
     btnSendEl.disabled = true;
     updateStatusBar();
     rpcCall("session.submit", {
-      text: `/model switch ${provider}/${model}`,
+      text: `/model switch ${provider}/${model} --local`,
     })
       .then(() => {
         uiState.provider = provider;
@@ -682,14 +820,20 @@ export function initModelControls(): void {
 function populateModelControls(): void {
   if (!providerSelectEl || !modelSelectEl) return;
   providerSelectEl.replaceChildren();
-  const providers = new Set<string>(Object.keys(MODEL_CATALOG));
+  const providers = new Set<string>(
+    uiState.configuredProfiles
+      .filter((profile) => profile.provider)
+      .map((profile) => profile.provider),
+  );
   if (uiState.provider && !providers.has(uiState.provider)) {
     providers.add(uiState.provider);
   }
-  const pendingOption = document.createElement("option");
-  pendingOption.value = "";
-  pendingOption.textContent = PENDING_MODEL_LABEL;
-  providerSelectEl.append(pendingOption);
+  if (providers.size === 0) {
+    const pendingOption = document.createElement("option");
+    pendingOption.value = "";
+    pendingOption.textContent = PENDING_MODEL_LABEL;
+    providerSelectEl.append(pendingOption);
+  }
   for (const provider of providers) {
     const option = document.createElement("option");
     option.value = provider;
@@ -705,11 +849,13 @@ function populateModelOptions(
   selectedModel: string,
 ): void {
   if (!modelSelectEl) return;
-  const models = [...(MODEL_CATALOG[provider] || [])];
+  const models = uiState.configuredProfiles
+    .filter((profile) => profile.provider === provider && profile.model)
+    .map((profile) => profile.model);
   if (selectedModel && !models.includes(selectedModel)) {
     models.push(selectedModel);
   }
-  if (models.length === 0 && uiState.model) {
+  if (provider === uiState.provider && models.length === 0 && uiState.model) {
     models.push(uiState.model);
   }
   modelSelectEl.replaceChildren();
@@ -733,18 +879,81 @@ function populateModelOptions(
 }
 
 function applyStartupState(params: Record<string, unknown>): void {
-  const parsed = parseProviderModel(
-    params.provider as string,
-    params.model as string,
+  applyRuntimeState(params);
+}
+
+function requestStartupSettingsIfNeeded(): void {
+  if (startupSettingsRequested || uiState.configuredProfiles.length > 0) {
+    return;
+  }
+  startupSettingsRequested = true;
+  rpcCall("settings.get", {})
+    .then((snapshot) => {
+      applySettingsRuntimeState(snapshot as SettingsSnapshot);
+    })
+    .catch((error: Error) => {
+      console.warn("voidx: startup settings fallback failed", error.message);
+    });
+}
+
+function applySettingsRuntimeState(snapshot: SettingsSnapshot): void {
+  uiState.configuredProfiles = configuredProfilesFromSnapshot(snapshot);
+  const model = (snapshot.model || {}) as Record<string, unknown>;
+  const provider = typeof model.provider === "string" ? model.provider : "";
+  const modelName = typeof model.model === "string" ? model.model : "";
+  if (!provider && !modelName) {
+    return;
+  }
+
+  applyRuntimeState({
+    provider,
+    model: modelName,
+    profile_configured: resolveProfileConfigured(snapshot, provider, modelName),
+  });
+}
+
+function configuredProfilesFromSnapshot(snapshot: SettingsSnapshot): ProfileSummary[] {
+  return (snapshot.profiles || []).filter(
+    (profile) => profile.configured === true && profile.provider && profile.model,
   );
-  uiState.provider = parsed.provider;
-  uiState.model = parsed.model;
-  uiState.workspace = (params.workspace as string) || "";
-  uiState.profileConfigured =
-    typeof params.profile_configured === "boolean"
-      ? params.profile_configured
-      : uiState.profileConfigured;
-  populateModelControls();
+}
+
+function resolveProfileConfigured(
+  snapshot: SettingsSnapshot,
+  provider: string,
+  model: string,
+): boolean | undefined {
+  const profiles = snapshot.profiles || [];
+  const matchingProfile = profiles.find(
+    (profile) => profile.provider === provider && profile.model === model,
+  );
+  if (matchingProfile) {
+    return Boolean(matchingProfile.configured);
+  }
+  if (profiles.length > 0) {
+    return profiles.some((profile) => Boolean(profile.configured));
+  }
+  return undefined;
+}
+
+function applyRuntimeState(params: Record<string, unknown>): void {
+  const provider = typeof params.provider === "string" ? params.provider : "";
+  const model = typeof params.model === "string" ? params.model : "";
+  const hasProviderModel = Boolean(provider || model);
+  if (hasProviderModel) {
+    const parsed = parseProviderModel(provider, model);
+    uiState.provider = parsed.provider;
+    uiState.model = parsed.model;
+  }
+  if (typeof params.workspace === "string" && params.workspace) {
+    uiState.workspace = params.workspace;
+  }
+  if (typeof params.profile_configured === "boolean") {
+    uiState.profileConfigured = params.profile_configured;
+  }
+  if (hasProviderModel) {
+    populateModelControls();
+  }
   updateStatusBar();
 }
 
@@ -770,44 +979,17 @@ function providerModelLabel(): string {
   return `${uiState.provider || "custom"}/${uiState.model}`;
 }
 
-function profileConfiguredLabel(): string {
-  if (uiState.profileConfigured === true) return "已配置";
-  if (uiState.profileConfigured === false) return "未配置";
-  return PENDING_PERMISSION_LABEL;
-}
-
 function workspaceBasename(workspace: string): string {
   return workspace
     ? workspace.replace(/^.*[\\/]/, "")
     : DEFAULT_WORKSPACE;
 }
 
-function renderProjectList(activeName: string): void {
-  const list = document.querySelector("#project-list");
-  if (!list) return;
-  const name = activeName || DEFAULT_WORKSPACE;
-  let item = [
-    ...list.querySelectorAll<HTMLElement>(".vx-project-item"),
-  ].find((project) => project.dataset.projectName === name);
-  if (!item) {
-    item = document.createElement("button");
-    (item as HTMLButtonElement).type = "button";
-    item.className = "vx-project-item";
-    item.dataset.projectName = name;
-    item.textContent = name;
-    list.append(item);
-  }
-  for (const project of list.querySelectorAll<HTMLElement>(".vx-project-item")) {
-    project.classList.toggle(
-      "active",
-      project.dataset.projectName === name,
-    );
-  }
-}
-
 function syncEmptyState(): void {
   if (!emptyStateEl || !transcriptEl) return;
-  emptyStateEl.hidden = transcriptEl.children.length > 0;
+  const isEmpty = transcriptEl.children.length === 0;
+  emptyStateEl.hidden = !isEmpty;
+  mainCanvasEl?.classList.toggle("empty", isEmpty);
 }
 
 export function _resetWorkbenchForTest(): void {
@@ -818,10 +1000,24 @@ export function _resetWorkbenchForTest(): void {
   uiState.sessionId = "";
   uiState.isRunning = false;
   uiState.profileConfigured = null;
+  uiState.configuredProfiles = [];
   uiState.isSwitchingModel = false;
+  startupSettingsRequested = false;
   uiState.slashCommands = [];
   uiState.slashSelectedIndex = 0;
+  const shell = document.querySelector<HTMLElement>(".vx-workbench-shell");
+  if (shell) {
+    shell.style.setProperty("--vx-sidebar-width", `${DEFAULT_SIDEBAR_WIDTH}px`);
+  } else {
+    document.documentElement.style.setProperty("--vx-sidebar-width", `${DEFAULT_SIDEBAR_WIDTH}px`);
+  }
   if (providerSelectEl) providerSelectEl.dataset.initialized = "";
+  const resizer = document.querySelector<HTMLElement>("#sidebar-resizer");
+  if (resizer) {
+    resizer.classList.remove("dragging");
+    resizer.dataset.initialized = "";
+  }
+  initSidebarResizer();
   populateModelControls();
   updateStatusBar();
   syncEmptyState();
@@ -830,7 +1026,7 @@ export function _resetWorkbenchForTest(): void {
 btnSendEl.addEventListener("click", (e: MouseEvent) => {
   if (uiState.isRunning) {
     e.preventDefault();
-    if (!socket || socket.readyState !== WebSocket.OPEN) {
+    if (!isRpcConnected()) {
       return;
     }
     rpcCall("session.cancel", {})
@@ -970,10 +1166,12 @@ interface UiRequest {
   choices?: [string, string, string][];
   default?: string;
   secret?: boolean;
+  response_method?: string;
 }
 
 function showRequest(request: Record<string, unknown>): void {
   const req = request as unknown as UiRequest;
+  requestDialogEl.dataset.responseMethod = req.response_method || "";
   requestTitleEl.textContent = req.prompt;
   requestDetailsEl.replaceChildren();
   requestControlsEl.replaceChildren();
@@ -990,6 +1188,51 @@ function showRequest(request: Record<string, unknown>): void {
   }
 
   requestDialogEl.showModal();
+}
+
+function showPromptItemRequest(data: Record<string, unknown>): void {
+  const promptType = data.prompt_type as string;
+  if (promptType === "permission") {
+    showRequest({
+      kind: "permission",
+      request_id: (data.request_id as string) || "permission",
+      prompt: (data.prompt as string) || "Allow action?",
+      choices: data.choices || [],
+      tools: data.tools || [],
+      response_method: "session.respond",
+    });
+    return;
+  }
+  if (promptType === "clarify") {
+    const options = ((data.options as string[]) || []).map((option) => [
+      option,
+      option,
+      option,
+    ]);
+    showRequest({
+      kind: "choice",
+      request_id: (data.clarify_id as string) || (data.request_id as string) || "clarify",
+      prompt: (data.question as string) || "Clarify",
+      choices: options,
+      response_method: "session.respond",
+    });
+    return;
+  }
+  if (promptType === "checkpoint") {
+    const plan = (data.plan as Record<string, unknown>) || {};
+    const choices = ((data.choices as Array<Record<string, unknown>>) || []).map((choice) => [
+      (choice.label as string) || (choice.value as string) || "",
+      (choice.value as string) || (choice.label as string) || "",
+      (choice.description as string) || (choice.label as string) || (choice.value as string) || "",
+    ]);
+    showRequest({
+      kind: "choice",
+      request_id: (data.checkpoint_id as string) || (data.request_id as string) || "checkpoint",
+      prompt: (plan.plan_summary as string) || "Review plan",
+      choices,
+      response_method: "session.respond",
+    });
+  }
 }
 
 function renderPermissionDetails(request: UiRequest): void {
@@ -1047,15 +1290,16 @@ function renderTextRequest(request: UiRequest): void {
 }
 
 function sendResponse(requestId: string, value: unknown): void {
-  if (!socket || socket.readyState !== WebSocket.OPEN) {
+  if (!isRpcConnected()) {
     return;
   }
-  socket.send(
-    JSON.stringify({
-      jsonrpc: "2.0",
-      id: requestId,
-      result: { value },
-    }),
-  );
+  const responseMethod = requestDialogEl.dataset.responseMethod || "";
+  if (responseMethod) {
+    rpcCall(responseMethod, { request_id: requestId, value }).catch(() => {});
+    requestDialogEl.dataset.responseMethod = "";
+    requestDialogEl.close();
+    return;
+  }
+  rpcRespond(requestId, value);
   requestDialogEl.close();
 }

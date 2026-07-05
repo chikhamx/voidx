@@ -24,6 +24,10 @@ export function _setSocket(ws: WebSocket | null): void {
   }
 }
 
+export function isRpcConnected(): boolean {
+  return socket?.readyState === WebSocket.OPEN;
+}
+
 export function _resetForTest(): void {
   socket = null;
   nextId = 1;
@@ -49,6 +53,19 @@ export function rpcNotify(method: string, params: Record<string, unknown> = {}):
     return;
   }
   socket.send(JSON.stringify({ jsonrpc: "2.0", method, params }));
+}
+
+export function rpcRespond(requestId: string, value: unknown): void {
+  if (!socket || socket.readyState !== WebSocket.OPEN) {
+    return;
+  }
+  socket.send(
+    JSON.stringify({
+      jsonrpc: "2.0",
+      id: requestId,
+      result: { value },
+    }),
+  );
 }
 
 export function onNotification(method: string, handler: NotificationHandler): void {
