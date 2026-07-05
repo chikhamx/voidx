@@ -2,7 +2,7 @@
 
 from __future__ import annotations
 
-from typing import TYPE_CHECKING
+from typing import TYPE_CHECKING, Any
 
 from voidx.agent.graph.turn_runner import (
     RESUME_FORCE_COMPACT_MESSAGE_COUNT,
@@ -32,5 +32,6 @@ class GraphTurnMixin:
         user_text: str,
         *,
         display_text: str | None = None,
+        context: Any | None = None,
     ) -> None:
-        await _turn_runner_for(self).run_once(user_text, display_text=display_text)
+        await _turn_runner_for(self).run_once(user_text, display_text=display_text, context=context)

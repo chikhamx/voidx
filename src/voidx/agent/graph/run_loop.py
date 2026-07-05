@@ -27,6 +27,7 @@ from voidx.runtime.ui import (
 )
 from voidx.agent.task_state import goal_label, goal_type_from_join
 from voidx.logging.tool_log import log_tool_event
+from voidx.ui.output.types import ThreadExecutionContext
 
 if TYPE_CHECKING:
     from voidx.agent.graph.contracts import GraphRunLoopHost
@@ -152,6 +153,12 @@ class GraphRunLoopMixin(GraphTurnMixin, GraphSessionMixin, GraphTranscriptMixin)
                     thread_id=self._session.id if self._session else "",
                     session_id=self._session.id if self._session else "",
                     workspace=self._workspace,
+                    runtime_state_provider=lambda: {
+                        "provider": self.config.model.provider,
+                        "model": self.config.model.model,
+                        "workspace": self._workspace,
+                        "profile_configured": self.model is not None,
+                    },
                 )
                 self._ui.events.start(CompositeEventConsumer(
                     primary=consumer,
@@ -293,9 +300,19 @@ class GraphRunLoopMixin(GraphTurnMixin, GraphSessionMixin, GraphTranscriptMixin)
                 self._ui.dock.append_message(f"[dim]MCP connecting: {names}…[/dim]", markup=True)
             await self._mcp_manager.start_all()
 
-        async def handle_user_input(user_input: str) -> bool:
+        async def handle_user_input(
+            user_input: str,
+            *,
+            context: ThreadExecutionContext | None = None,
+            thread_id: str = "",
+        ) -> bool:
             nonlocal exit_message
-            keep_running, next_exit_message = await self._handle_user_input(app, user_input)
+            context = context or ThreadExecutionContext(thread_id=thread_id, session_id=thread_id)
+            keep_running, next_exit_message = await self._handle_user_input(
+                app,
+                user_input,
+                context=context,
+            )
             if next_exit_message is not None:
                 exit_message = next_exit_message
             return keep_running
@@ -341,9 +358,13 @@ class GraphRunLoopMixin(GraphTurnMixin, GraphSessionMixin, GraphTranscriptMixin)
                 self.submit_guidance(text.strip().removeprefix("/guide").strip())
             else:
                 self._ensure_gateway_thread()
-                app.submit_external_input(text)
+                thread_id = str(getattr(command, "thread_id", "") or "")
+                context = ThreadExecutionContext(thread_id=thread_id, session_id=thread_id)
+                app.submit_external_input(text, context=context)
         elif kind == "cancel":
-            app.cancel_external_input()
+            thread_id = str(getattr(command, "thread_id", "") or "")
+            context = ThreadExecutionContext(thread_id=thread_id, session_id=thread_id)
+            app.cancel_external_input(context=context)
 
     def _ensure_gateway_thread(self: GraphRunLoopHost) -> None:
         """Register the active session as a gateway thread if not yet registered.
@@ -359,7 +380,14 @@ class GraphRunLoopMixin(GraphTurnMixin, GraphSessionMixin, GraphTranscriptMixin)
         if tid and tid not in gs._threads:
             asyncio.ensure_future(gs.register_thread(tid, title=self._session.title or "", directory=getattr(self._session, "directory", "") or ""))
 
-    async def _handle_user_input(self: GraphRunLoopHost, app, user_input: str) -> tuple[bool, str | None]:
+    async def _handle_user_input(
+        self: GraphRunLoopHost,
+        app,
+        user_input: str,
+        *,
+        context: ThreadExecutionContext | None = None,
+        thread_id: str = "",
+    ) -> tuple[bool, str | None]:
         user_input = user_input.strip()
         if not user_input:
             return True, None
@@ -381,7 +409,7 @@ class GraphRunLoopMixin(GraphTurnMixin, GraphSessionMixin, GraphTranscriptMixin)
             return True, None
 
         try:
-            await self._run_once(user_input)
+            await self._run_once(user_input, context=context)
         except (KeyboardInterrupt, asyncio.CancelledError):
             self._ui.ui.print(f"\n[dim]Interrupted.[/dim]")
         return True, None

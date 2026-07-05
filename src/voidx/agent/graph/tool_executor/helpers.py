@@ -182,6 +182,33 @@ def _agent_result_preview(text: object) -> str:
     return preview
 
 
+
+
+_WORKSPACE_WRITE_LOCK_TOOLS = {"file", "write", "replace", "checkpoint"}
+_WORKSPACE_WRITE_LOCK_CAPABILITIES = {"file_write", "bash_write", "git_write", "agent_implement"}
+
+
+def _workspace_write_lock_manager(host: object):
+    gateway_session = getattr(host, "_gateway_session", None)
+    if gateway_session is None:
+        return None
+    return getattr(gateway_session, "_run_manager", None)
+
+
+def _requires_workspace_write_lock(tool_call: dict) -> bool:
+    name = str(tool_call.get("name") or "")
+    args = tool_call.get("args") or {}
+    if not isinstance(args, dict):
+        args = {}
+    if name in _WORKSPACE_WRITE_LOCK_TOOLS:
+        return True
+    try:
+        from voidx.permission.rules import classify_tool_call
+
+        classified = classify_tool_call({**tool_call, "name": name, "args": args})
+    except Exception:
+        return name in {"bash", "powershell", "git", "agent"}
+    return str(classified.capability.value) in _WORKSPACE_WRITE_LOCK_CAPABILITIES
 def _is_barrier_tool(tool_call: dict) -> bool:
     return tool_call.get("name") in {"clarify", "checkpoint", "workflow", "compact"}
 

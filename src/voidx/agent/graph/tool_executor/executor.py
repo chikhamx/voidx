@@ -38,6 +38,8 @@ from .helpers import (
     _blocked_after_barrier_messages,
     _agent_result_preview,
     _make_interact_callback,
+    _requires_workspace_write_lock,
+    _workspace_write_lock_manager,
 )
 from .ui import (
     notify_tool_started,
@@ -170,9 +172,23 @@ class GraphToolExecutor:
             try:
                 host._ui.session_tracker.capture_tool_call(tid, targs, ctx.workspace, ctx.sandbox_extra_paths)
                 parent_tool_token = current_parent_tool_call_id.set(tool_event_id)
+                lock_manager = _workspace_write_lock_manager(host) if _requires_workspace_write_lock(tc) else None
+                lock_acquired = False
                 try:
-                    result = await host.tools.execute_tool(tid, targs, ctx)
+                    if lock_manager is not None:
+                        lock_acquired = await lock_manager.acquire_workspace_write_lock(session_id)
+                        if not lock_acquired:
+                            result = ToolResult(
+                                output="Workspace write lock acquisition cancelled before tool start.",
+                                metadata={"blocked": True, "error": True},
+                            )
+                        else:
+                            result = await host.tools.execute_tool(tid, targs, ctx)
+                    else:
+                        result = await host.tools.execute_tool(tid, targs, ctx)
                 finally:
+                    if lock_acquired and lock_manager is not None:
+                        lock_manager.release_workspace_write_lock(session_id)
                     current_parent_tool_call_id.reset(parent_tool_token)
                 ok = result_ok(result)
             except Exception as e:

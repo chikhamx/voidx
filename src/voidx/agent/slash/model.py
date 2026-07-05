@@ -294,6 +294,8 @@ class SlashModelMixin:
         await self._pick_or_act("Delete", target, _do_delete)
 
     async def _model_switch(self, target: str) -> None:
+        target, scope = self._model_switch_scope(target)
+
         async def _do_switch(profile_name: str) -> None:
             from voidx.llm.service import create_chat_model
             settings = self.host.settings
@@ -311,8 +313,9 @@ class SlashModelMixin:
             self._sync_context_limit()
             self.host.api_key = profile.api_key
             self.host.model = create_chat_model(profile.api_key, self.host.config.model)
-            await settings.save_profile(profile)
-            ui.print(f"[cyan]{profile.name}[/cyan] ({profile.provider}/{profile.model}) [green]✓ switched[/green]")
+            await settings.save_profile(profile, scope=scope)
+            scope_label = "global + local" if scope == "global" else "local"
+            ui.print(f"[cyan]{profile.name}[/cyan] ({profile.provider}/{profile.model}) [green]✓ switched ({scope_label})[/green]")
             await self._show_startup(prefer_direct=True)
 
         await self._pick_or_act("Switch", target, _do_switch)
@@ -390,7 +393,10 @@ class SlashModelMixin:
             await self._list_models()
             return
 
-        spec = model_spec.strip()
+        spec, scope = self._model_switch_scope(model_spec)
+        if not spec:
+            await self._list_models()
+            return
 
         if " " in spec:
             parts = spec.split(None, 1)
@@ -442,13 +448,27 @@ class SlashModelMixin:
             base_url=self.host.config.model.base_url,
             protocol=self.host.config.model.protocol,
         )
-        await self.host.settings.save_profile(new_profile)
+        await self.host.settings.save_profile(new_profile, scope=scope)
 
         if self.host.session:
             await update_session_model(self.host.session.id, new_provider, new_model)
 
         ui.print(f"[dim]  {old}[/dim]")
-        ui.print(f"  [cyan]→ {new_provider}/{new_model}[/cyan] [green]✓[/green]")
+        scope_label = "global + local" if scope == "global" else "local"
+        ui.print(f"  [cyan]→ {new_provider}/{new_model}[/cyan] [green]✓ ({scope_label})[/green]")
+
+    @staticmethod
+    def _model_switch_scope(raw: str) -> tuple[str, str]:
+        scope = "local"
+        filtered: list[str] = []
+        for token in raw.strip().split():
+            if token == "--local":
+                scope = "local"
+            elif token == "--global":
+                scope = "global"
+            else:
+                filtered.append(token)
+        return " ".join(filtered), scope
 
     def _sync_context_limit(self) -> None:
         from voidx.llm.service import get_context_limit
