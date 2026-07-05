@@ -383,6 +383,110 @@ async def test_save_profile_persists_model_in_db_and_only_current_profile_in_jso
         await delete_model_profile_async(profile_name)
 
 
+async def test_current_profile_is_copied_from_global_for_new_workspace(tmp_path):
+    global_profile = Profile(name=f"deepseek/{tmp_path.name}-global", api_key="sk-global")
+    global_settings = Settings(str(tmp_path))
+    workspace = tmp_path / "workspace"
+    workspace.mkdir()
+
+    try:
+        await global_settings.save_profile(global_profile, scope="global")
+
+        settings = await Settings.create(str(workspace))
+
+        workspace_saved = json.loads((workspace / ".voidx" / "settings.json").read_text(encoding="utf-8"))
+        global_saved = json.loads((tmp_path / ".voidx" / "settings.json").read_text(encoding="utf-8"))
+        assert workspace_saved["current_profile"] == global_profile.name
+        assert global_saved["current_profile"] == global_profile.name
+        assert (await settings.resolve_profile()).name == global_profile.name
+    finally:
+        await delete_model_profile_async(global_profile.name)
+
+
+async def test_plain_settings_constructor_does_not_write_current_profile_copy(tmp_path):
+    global_profile = Profile(name=f"deepseek/{tmp_path.name}-global", api_key="sk-global")
+    global_settings = Settings(str(tmp_path))
+    workspace = tmp_path / "workspace"
+    workspace.mkdir()
+
+    try:
+        await global_settings.save_profile(global_profile, scope="global")
+
+        Settings(str(workspace))
+
+        assert not (workspace / ".voidx" / "settings.json").exists()
+    finally:
+        await delete_model_profile_async(global_profile.name)
+
+
+async def test_local_model_switch_does_not_update_global_current_profile(tmp_path):
+    global_profile = Profile(name=f"deepseek/{tmp_path.name}-global", api_key="sk-global")
+    local_profile = Profile(name=f"mimo/{tmp_path.name}-local", api_key="sk-local")
+    workspace = tmp_path / "workspace"
+    workspace.mkdir()
+    global_settings = Settings(str(tmp_path))
+
+    try:
+        await global_settings.save_profile(global_profile, scope="global")
+        settings = await Settings.create(str(workspace))
+        await settings.save_profile(local_profile)
+
+        workspace_saved = json.loads((workspace / ".voidx" / "settings.json").read_text(encoding="utf-8"))
+        global_saved = json.loads((tmp_path / ".voidx" / "settings.json").read_text(encoding="utf-8"))
+        assert workspace_saved["current_profile"] == local_profile.name
+        assert global_saved["current_profile"] == global_profile.name
+    finally:
+        await delete_model_profile_async(global_profile.name)
+        await delete_model_profile_async(local_profile.name)
+
+
+async def test_global_model_switch_updates_global_and_current_workspace(tmp_path):
+    old_profile = Profile(name=f"deepseek/{tmp_path.name}-old", api_key="sk-old")
+    new_profile = Profile(name=f"mimo/{tmp_path.name}-new", api_key="sk-new")
+    workspace = tmp_path / "workspace"
+    workspace.mkdir()
+    global_settings = Settings(str(tmp_path))
+
+    try:
+        await global_settings.save_profile(old_profile, scope="global")
+        settings = await Settings.create(str(workspace))
+        await settings.save_profile(new_profile, scope="global")
+
+        workspace_saved = json.loads((workspace / ".voidx" / "settings.json").read_text(encoding="utf-8"))
+        global_saved = json.loads((tmp_path / ".voidx" / "settings.json").read_text(encoding="utf-8"))
+        assert workspace_saved["current_profile"] == new_profile.name
+        assert global_saved["current_profile"] == new_profile.name
+    finally:
+        await delete_model_profile_async(old_profile.name)
+        await delete_model_profile_async(new_profile.name)
+
+
+async def test_delete_profile_fallback_writes_local_only(tmp_path):
+    global_profile = Profile(name=f"deepseek/{tmp_path.name}-global", api_key="sk-global")
+    local_profile = Profile(name=f"mimo/{tmp_path.name}-local", api_key="sk-local")
+    fallback_profile = Profile(name=f"openai/{tmp_path.name}-fallback", api_key="sk-fallback")
+    workspace = tmp_path / "workspace"
+    workspace.mkdir()
+    global_settings = Settings(str(tmp_path))
+
+    try:
+        await global_settings.save_profile(global_profile, scope="global")
+        settings = await Settings.create(str(workspace))
+        await settings.save_profile(fallback_profile)
+        await settings.save_profile(local_profile)
+
+        await settings.delete_profile(local_profile.name)
+
+        workspace_saved = json.loads((workspace / ".voidx" / "settings.json").read_text(encoding="utf-8"))
+        global_saved = json.loads((tmp_path / ".voidx" / "settings.json").read_text(encoding="utf-8"))
+        assert workspace_saved["current_profile"] == fallback_profile.name
+        assert global_saved["current_profile"] == global_profile.name
+    finally:
+        await delete_model_profile_async(global_profile.name)
+        await delete_model_profile_async(local_profile.name)
+        await delete_model_profile_async(fallback_profile.name)
+
+
 @pytest.mark.asyncio
 async def test_settings_ignores_legacy_agent_max_steps(tmp_path):
     settings = Settings(str(tmp_path))

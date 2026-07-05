@@ -435,3 +435,176 @@ async def test_subagent_full_output_reaches_orchestrator(tmp_path, monkeypatch):
         graph._turn_node = None
 
 
+
+
+@pytest.mark.asyncio
+async def test_execute_tools_wraps_write_risk_tool_with_workspace_write_lock(tmp_path):
+    graph = _graph(tmp_path)
+    graph._session = SimpleNamespace(id="thread-write")
+    events: list[tuple[str, str]] = []
+
+    class FakeRunManager:
+        async def acquire_workspace_write_lock(self, thread_id: str) -> bool:
+            events.append(("acquire", thread_id))
+            return True
+
+        def release_workspace_write_lock(self, thread_id: str) -> None:
+            events.append(("release", thread_id))
+
+    graph._gateway_session = SimpleNamespace(_run_manager=FakeRunManager())
+
+    class FakeWriteTool:
+        id = "write"
+        description = "fake write"
+
+        def parameters_schema(self):
+            return {"type": "object", "properties": {}}
+
+        async def execute(self, args: dict, ctx: ToolContext) -> ToolResult:
+            events.append(("execute", ctx.session_id))
+            return ToolResult(output="write output")
+
+    graph.tools.register("write", FakeWriteTool(), "fake write", {"type": "object", "properties": {}})
+
+    async def allow_all(
+        tool_calls,
+        plan_mode: bool,
+        session_id: str,
+        interaction_mode=None,
+    ):
+        return tool_calls, []
+
+    graph._authorize_tool_calls = allow_all
+    parent = AIMessage(
+        content="",
+        tool_calls=[{"name": "write", "args": {}, "id": "call_write", "type": "tool_call"}],
+    )
+
+    result = await graph._execute_tools({
+        "messages": [parent],
+        "workspace": str(tmp_path),
+        "persona": "voidx",
+        "plan_mode": False,
+    })
+
+    assert [message.tool_call_id for message in result["messages"]] == ["call_write"]
+    assert result["messages"][0].content == "write output"
+    assert events == [
+        ("acquire", "thread-write"),
+        ("execute", "thread-write"),
+        ("release", "thread-write"),
+    ]
+
+
+@pytest.mark.asyncio
+async def test_execute_tools_releases_workspace_write_lock_on_tool_exception(tmp_path):
+    graph = _graph(tmp_path)
+    graph._session = SimpleNamespace(id="thread-write")
+    events: list[tuple[str, str]] = []
+
+    class FakeRunManager:
+        async def acquire_workspace_write_lock(self, thread_id: str) -> bool:
+            events.append(("acquire", thread_id))
+            return True
+
+        def release_workspace_write_lock(self, thread_id: str) -> None:
+            events.append(("release", thread_id))
+
+    graph._gateway_session = SimpleNamespace(_run_manager=FakeRunManager())
+
+    class FailingWriteTool:
+        id = "write"
+        description = "failing write"
+
+        def parameters_schema(self):
+            return {"type": "object", "properties": {}}
+
+        async def execute(self, args: dict, ctx: ToolContext) -> ToolResult:
+            events.append(("execute", ctx.session_id))
+            raise RuntimeError("boom")
+
+    graph.tools.register("write", FailingWriteTool(), "failing write", {"type": "object", "properties": {}})
+
+    async def allow_all(
+        tool_calls,
+        plan_mode: bool,
+        session_id: str,
+        interaction_mode=None,
+    ):
+        return tool_calls, []
+
+    graph._authorize_tool_calls = allow_all
+    parent = AIMessage(
+        content="",
+        tool_calls=[{"name": "write", "args": {}, "id": "call_write", "type": "tool_call"}],
+    )
+
+    result = await graph._execute_tools({
+        "messages": [parent],
+        "workspace": str(tmp_path),
+        "persona": "voidx",
+        "plan_mode": False,
+    })
+
+    assert result["messages"][0].tool_call_id == "call_write"
+    assert result["messages"][0].status == "error"
+    assert events == [
+        ("acquire", "thread-write"),
+        ("execute", "thread-write"),
+        ("release", "thread-write"),
+    ]
+
+
+@pytest.mark.asyncio
+async def test_execute_tools_does_not_lock_read_only_tool(tmp_path):
+    graph = _graph(tmp_path)
+    graph._session = SimpleNamespace(id="thread-read")
+    events: list[tuple[str, str]] = []
+
+    class FakeRunManager:
+        async def acquire_workspace_write_lock(self, thread_id: str) -> bool:
+            events.append(("acquire", thread_id))
+            return True
+
+        def release_workspace_write_lock(self, thread_id: str) -> None:
+            events.append(("release", thread_id))
+
+    graph._gateway_session = SimpleNamespace(_run_manager=FakeRunManager())
+
+    class FakeReadTool:
+        id = "read"
+        description = "fake read"
+
+        def parameters_schema(self):
+            return {"type": "object", "properties": {}}
+
+        async def execute(self, args: dict, ctx: ToolContext) -> ToolResult:
+            events.append(("execute", ctx.session_id))
+            return ToolResult(output="read output")
+
+    graph.tools.register("read", FakeReadTool(), "fake read", {"type": "object", "properties": {}})
+
+    async def allow_all(
+        tool_calls,
+        plan_mode: bool,
+        session_id: str,
+        interaction_mode=None,
+    ):
+        return tool_calls, []
+
+    graph._authorize_tool_calls = allow_all
+    parent = AIMessage(
+        content="",
+        tool_calls=[{"name": "read", "args": {}, "id": "call_read", "type": "tool_call"}],
+    )
+
+    result = await graph._execute_tools({
+        "messages": [parent],
+        "workspace": str(tmp_path),
+        "persona": "voidx",
+        "plan_mode": False,
+    })
+
+    assert [message.tool_call_id for message in result["messages"]] == ["call_read"]
+    assert result["messages"][0].content == "read output"
+    assert events == [("execute", "thread-read")]

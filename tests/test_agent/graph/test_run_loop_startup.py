@@ -34,7 +34,8 @@ from voidx.workflow.runtime import WorkflowActivationSource, WorkflowRunState, W
 from voidx.tools.task_tracker import TaskTracker
 from voidx.ui.output.dock import BottomInputDock, set_dock
 from voidx.ui.output.events import DockEventConsumer, ui_events
-from voidx.ui.protocol import UiSubmitCommand
+from voidx.ui.output.types import ThreadExecutionContext
+from voidx.ui.protocol import UiCancelCommand, UiSubmitCommand
 from voidx.runtime.ui_port import runtime_ui_port
 from tests.test_agent.graph.run_loop_helpers import (
     FakeTui,
@@ -406,3 +407,64 @@ async def test_run_once_cancel_deletes_pending_user_message(tmp_path):
         test_dock.deactivate()
         test_dock.reset()
         set_dock(None)
+
+
+@pytest.mark.asyncio
+async def test_web_submit_preserves_thread_id_for_execution_context():
+    graph = _graph()
+    submitted: list[tuple[str, str]] = []
+
+    class ContextAwareApp:
+        def submit_external_input(self, text: str, *, context=None, thread_id: str = "") -> None:
+            submitted.append((text, context.thread_id if context is not None else thread_id))
+
+        def cancel_external_input(self, *, context=None, thread_id: str = "") -> None:
+            pass
+
+    await graph._handle_web_command(
+        ContextAwareApp(),
+        UiSubmitCommand(text="run in t2", thread_id="t2"),
+    )
+
+    assert submitted == [("run in t2", "t2")]
+
+
+@pytest.mark.asyncio
+async def test_web_cancel_preserves_thread_id_for_execution_context():
+    graph = _graph()
+    cancelled: list[str] = []
+
+    class ContextAwareApp:
+        def submit_external_input(self, text: str, *, context=None, thread_id: str = "") -> None:
+            pass
+
+        def cancel_external_input(self, *, context=None, thread_id: str = "") -> None:
+            cancelled.append(context.thread_id if context is not None else thread_id)
+
+    await graph._handle_web_command(
+        ContextAwareApp(),
+        UiCancelCommand(thread_id="t2"),
+    )
+
+    assert cancelled == ["t2"]
+
+
+@pytest.mark.asyncio
+async def test_handle_user_input_passes_execution_context_to_run_once():
+    graph = _graph()
+    captured: list[tuple[str, str]] = []
+
+    async def fake_run_once(self, user_text: str, *, display_text=None, context=None):
+        captured.append((user_text, context.thread_id if context is not None else ""))
+
+    graph._run_once = MethodType(fake_run_once, graph)
+
+    keep_running, exit_message = await graph._handle_user_input(
+        SimpleNamespace(),
+        "hello from t2",
+        context=ThreadExecutionContext(thread_id="t2", session_id="t2"),
+    )
+
+    assert keep_running is True
+    assert exit_message is None
+    assert captured == [("hello from t2", "t2")]
