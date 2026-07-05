@@ -4,6 +4,7 @@ import asyncio
 
 import pytest
 
+from voidx.ui.output.types import ThreadExecutionContext
 from tests.test_ui.tui.tui_helpers import _tui
 
 
@@ -48,3 +49,23 @@ async def test_run_headless_processes_multiple_inputs(tmp_path):
     await asyncio.wait_for(headless_task, timeout=1)
 
     assert received == ["first", "second"]
+
+
+@pytest.mark.asyncio
+async def test_run_headless_preserves_thread_id_context(tmp_path):
+    tui = _tui(tmp_path)
+    received: list[tuple[str, str]] = []
+
+    async def on_submit(text: str, *, context: ThreadExecutionContext) -> bool:
+        received.append((text, context.thread_id))
+        return True
+
+    headless_task = asyncio.create_task(tui.run_headless(on_submit))
+
+    tui.submit_external_input("thread scoped", thread_id="t2")
+    await asyncio.wait_for(asyncio.sleep(0.1), timeout=1)
+
+    tui._queue.put_nowait(None)
+    await asyncio.wait_for(headless_task, timeout=1)
+
+    assert received == [("thread scoped", "t2")]
