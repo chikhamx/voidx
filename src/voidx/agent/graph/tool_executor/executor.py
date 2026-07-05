@@ -18,6 +18,7 @@ from voidx.runtime.ui import (
     WarningAppended,
 )
 from voidx.tools.service import ToolContext, ToolResult
+from voidx.ui.output.events.bus import UiEventTimeout
 
 from .types import ToolResultOk, _ExecutedTool, _task_state_for_state, _tool_result_ok
 from .guards import (
@@ -165,7 +166,26 @@ class GraphToolExecutor:
             cid = tc.get("id", "")
             tool_event_id = cid or f"{tid}:{id(tc)}"
 
-            tool_node = await notify_tool_started(host, tc, display_policy)
+            try:
+                tool_node = await notify_tool_started(host, tc, display_policy)
+            except UiEventTimeout:
+                return _ExecutedTool(
+                    message=ToolMessage(
+                        content=sanitize_tool_message_content(
+                            f"Tool notification timed out: UI event bus stalled for {tid}. "
+                            "Turn terminated to prevent hang.",
+                            workspace=ctx.workspace,
+                        ),
+                        tool_call_id=cid,
+                        status="error",
+                    ),
+                    result=ToolResult(
+                        output="UI event bus timeout",
+                        metadata={"error": True, "timeout": True},
+                    ),
+                    tool_call=tc,
+                    todo_state=None,
+                )
 
             t0 = time.monotonic()
             ok = True
@@ -367,6 +387,18 @@ class GraphToolExecutor:
                 result_ok=result_ok,
             )
         ):
+            state_update["should_continue"] = False
+        has_timeout = any(
+            getattr(item.result, "metadata", {}).get("timeout")
+            for item in executed
+            if item.result is not None
+        )
+        if has_timeout:
+            tool_messages.append(AIMessage(content=(
+                "Turn terminated: UI event bus timed out while notifying tool start. "
+                "This usually indicates the frontend is unresponsive. "
+                "The session is still alive — you can continue interacting."
+            )))
             state_update["should_continue"] = False
         if no_progress_decision.action == "terminate":
             tool_messages.append(AIMessage(content=no_progress_decision.message))

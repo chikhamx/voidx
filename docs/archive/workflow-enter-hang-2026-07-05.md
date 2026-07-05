@@ -1,6 +1,6 @@
 # Workflow Enter 卡死问题分析
 
-> **Status: Analysis** — 问题分析阶段，尚未实现修复
+> **Status: Done** — 分析已完成，修复实现见 `docs/archive/workflow-enter-hang-fix-design-2026-07-05.md`
 
 Date: 2026-07-05
 

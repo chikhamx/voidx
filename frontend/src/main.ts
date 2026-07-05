@@ -15,7 +15,7 @@ import {
   commitStream,
   discardStream,
 } from "./stream";
-import { rpcCall, rpcRespond, onNotification, _setSocket, isRpcConnected } from "./rpc";
+import { rpcCall, rpcRespond, onNotification, _setSocket, createWorkerSocket, isRpcConnected } from "./rpc";
 import {
   renderSidebar,
   addThread,
@@ -122,7 +122,7 @@ const DEFAULT_SIDEBAR_WIDTH = 260;
 const MIN_SIDEBAR_WIDTH = 210;
 const MAX_SIDEBAR_WIDTH = 420;
 
-let socket: WebSocket | null = null;
+let socket: ReturnType<typeof createWorkerSocket> | null = null;
 let reconnectAttempts = 0;
 const MAX_RECONNECT = 10;
 let startupSettingsRequested = false;
@@ -473,7 +473,7 @@ export async function resolveWsUrl(): Promise<string | null> {
 function connect(url: string): void {
   const generation = connectionGeneration;
   setConnectionStatus("connecting");
-  socket = new WebSocket(url);
+  socket = createWorkerSocket(url);
   let reconnecting = false;
   const scheduleReconnect = () => {
     if (generation !== connectionGeneration) {

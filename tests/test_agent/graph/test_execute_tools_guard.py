@@ -608,3 +608,65 @@ async def test_execute_tools_does_not_lock_read_only_tool(tmp_path):
     assert [message.tool_call_id for message in result["messages"]] == ["call_read"]
     assert result["messages"][0].content == "read output"
     assert events == [("execute", "thread-read")]
+
+
+@pytest.mark.asyncio
+async def test_execute_tools_terminates_turn_when_tool_started_notification_times_out(tmp_path, monkeypatch):
+    from voidx.agent.graph.tool_executor import executor as executor_module
+    from voidx.ui.output.events.bus import UiEventTimeout
+
+    graph = _graph(tmp_path)
+
+    class FakeReadTool:
+        id = "read"
+        description = "fake read"
+
+        def parameters_schema(self):
+            return {"type": "object", "properties": {}}
+
+        async def execute(self, args: dict, ctx: ToolContext) -> ToolResult:
+            return ToolResult(output="should not execute")
+
+    graph.tools.register("read", FakeReadTool(), "fake read", {"type": "object", "properties": {}})
+
+    async def allow_all(
+        tool_calls,
+        plan_mode: bool,
+        session_id: str,
+        interaction_mode=None,
+        workflow_runs=None,
+        runtime_persona=None,
+    ):
+        return tool_calls, []
+
+    async def timeout_tool_started(*_args, **_kwargs):
+        raise UiEventTimeout("stalled")
+
+    graph._authorize_tool_calls = allow_all
+    monkeypatch.setattr(executor_module, "notify_tool_started", timeout_tool_started)
+
+    parent = AIMessage(
+        content="",
+        tool_calls=[{"name": "read", "args": {}, "id": "call_read", "type": "tool_call"}],
+    )
+
+    result = await graph._execute_tools({
+        "messages": [parent],
+        "workspace": str(tmp_path),
+        "persona": "voidx",
+        "plan_mode": False,
+    })
+
+    assert result["should_continue"] is False
+    assert any(
+        isinstance(message, ToolMessage)
+        and message.tool_call_id == "call_read"
+        and message.status == "error"
+        and "Tool notification timed out" in message.content
+        for message in result["messages"]
+    )
+    assert any(
+        isinstance(message, AIMessage)
+        and "UI event bus timed out" in str(message.content)
+        for message in result["messages"]
+    )

@@ -1,6 +1,6 @@
 // @ts-nocheck
 import { beforeEach, describe, it, expect, vi } from "vitest";
-import { rpcCall, rpcNotify, onNotification, onRequest, _setSocket, _resetForTest } from "../src/rpc";
+import { rpcCall, rpcNotify, onNotification, onRequest, _setSocket, _resetForTest, createWorkerSocket, isRpcConnected } from "../src/rpc";
 
 describe("rpc", () => {
   let sentMessages;
@@ -165,6 +165,55 @@ describe("rpc", () => {
       expect(() => {
         mockSocket.onmessage({ data: "not json" });
       }).not.toThrow();
+    });
+  });
+});
+
+
+describe("rpc worker transport", () => {
+  it("uses a worker-owned websocket while routing messages on the main thread", () => {
+    class FakeWorker {
+      sent = [];
+      listeners = new Map();
+      terminate = vi.fn();
+
+      postMessage(message) {
+        this.sent.push(message);
+      }
+
+      addEventListener(type, handler) {
+        this.listeners.set(type, handler);
+      }
+
+      emit(message) {
+        this.listeners.get("message")({ data: message });
+      }
+    }
+
+    const worker = new FakeWorker();
+    const transport = createWorkerSocket("ws://localhost:1234", () => worker);
+    _setSocket(transport);
+
+    expect(worker.sent[0]).toEqual({ type: "connect", url: "ws://localhost:1234" });
+    expect(isRpcConnected()).toBe(false);
+
+    worker.emit({ type: "open" });
+    expect(isRpcConnected()).toBe(true);
+
+    const handler = vi.fn();
+    onNotification("workspace.snapshot", handler);
+    worker.emit({
+      type: "message",
+      data: JSON.stringify({ jsonrpc: "2.0", method: "workspace.snapshot", params: { ok: true } }),
+    });
+    expect(handler).toHaveBeenCalledWith({ ok: true });
+
+    rpcNotify("refresh.requested", { reason: "test" });
+    const outbound = worker.sent.find((message) => message.type === "send");
+    expect(JSON.parse(outbound.data)).toEqual({
+      jsonrpc: "2.0",
+      method: "refresh.requested",
+      params: { reason: "test" },
     });
   });
 });

@@ -4,10 +4,19 @@ from __future__ import annotations
 
 import asyncio
 import inspect
+import logging
 from dataclasses import dataclass
 from typing import Any
 
+from voidx.logging.tool_log import log_tool_event
 from voidx.ui.output.events.schema import UiEvent
+
+
+logger = logging.getLogger(__name__)
+
+
+class UiEventTimeout(TimeoutError):
+    """Raised when a UI event request is not handled in time."""
 
 
 @dataclass
@@ -70,12 +79,38 @@ class UiEventBus:
                 asyncio.create_task(result)
         return True
 
-    async def request(self, event: UiEvent) -> Any:
+    async def request(self, event: UiEvent, *, timeout: float = 5.0, max_retries: int = 10) -> Any:
         if not self.is_running or self._queue is None:
             raise RuntimeError("UI event bus is not running")
         future: asyncio.Future[Any] = asyncio.get_running_loop().create_future()
         await self._queue.put(_QueuedEvent(event, future))
-        return await future
+        for attempt in range(max_retries):
+            try:
+                return await asyncio.wait_for(asyncio.shield(future), timeout=timeout)
+            except asyncio.TimeoutError:
+                if future.done():
+                    return future.result()
+                message = (
+                    "UiEventBus.request stall: "
+                    f"event={type(event).__name__} attempt={attempt + 1}/{max_retries} "
+                    f"elapsed={(attempt + 1) * timeout:.1f}s"
+                )
+                logger.warning(message)
+                log_tool_event(
+                    "ui_event_bus_request_stall",
+                    tool_name="ui_event_bus",
+                    message=message,
+                )
+        future.cancel()
+        message = f"UiEventBus.request timed out after {max_retries * timeout}s: {type(event).__name__}"
+        log_tool_event(
+            "ui_event_bus_request_timeout",
+            tool_name="ui_event_bus",
+            message=message,
+        )
+        raise UiEventTimeout(
+            f"UiEventBus.request timed out after {max_retries * timeout}s: {type(event).__name__}"
+        )
 
     async def drain(self) -> None:
         if self._queue is not None:

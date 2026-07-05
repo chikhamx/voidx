@@ -5,18 +5,77 @@ type RpcPending = {
 
 type NotificationHandler = (params: Record<string, unknown>) => void;
 type RequestHandler = (params: Record<string, unknown>) => unknown;
+type RpcSocket = {
+  readyState: number;
+  send: (data: string) => void;
+  close?: () => void;
+  addEventListener?: (type: string, handler: (event: MessageEvent | Event) => void) => void;
+  onmessage?: ((ev: MessageEvent) => void) | null;
+};
+type WorkerLike = {
+  postMessage: (message: unknown) => void;
+  addEventListener: (type: "message", handler: (event: MessageEvent) => void) => void;
+  terminate?: () => void;
+};
 
-let socket: WebSocket | null = null;
+let socket: RpcSocket | null = null;
 let nextId = 1;
 const pending = new Map<number, RpcPending>();
 const notificationHandlers = new Map<string, NotificationHandler>();
 const requestHandlers = new Map<string, RequestHandler>();
 
-export function _setSocket(ws: WebSocket | null): void {
+export function createWorkerSocket(
+  url: string,
+  workerFactory: () => WorkerLike = () => new Worker(new URL("./rpc-worker.ts", import.meta.url), { type: "module" }),
+): RpcSocket {
+  const worker = workerFactory();
+  const listeners = new Map<string, Array<(event: MessageEvent | Event) => void>>();
+  const transport: RpcSocket = {
+    readyState: WebSocket.CONNECTING,
+    send(data: string): void {
+      worker.postMessage({ type: "send", data });
+    },
+    close(): void {
+      worker.terminate?.();
+      transport.readyState = WebSocket.CLOSED;
+    },
+    addEventListener(type: string, handler: (event: MessageEvent | Event) => void): void {
+      const existing = listeners.get(type) || [];
+      existing.push(handler);
+      listeners.set(type, existing);
+    },
+  };
+
+  const emit = (type: string, event: MessageEvent | Event): void => {
+    for (const handler of listeners.get(type) || []) {
+      handler(event);
+    }
+  };
+
+  worker.addEventListener("message", (event: MessageEvent) => {
+    const message = (event.data || {}) as { type?: string; data?: string };
+    if (message.type === "open") {
+      transport.readyState = WebSocket.OPEN;
+      emit("open", new Event("open"));
+    } else if (message.type === "close") {
+      transport.readyState = WebSocket.CLOSED;
+      emit("close", new Event("close"));
+    } else if (message.type === "error") {
+      emit("error", new Event("error"));
+    } else if (message.type === "message") {
+      handleMessage({ data: message.data || "" } as MessageEvent);
+    }
+  });
+
+  worker.postMessage({ type: "connect", url });
+  return transport;
+}
+
+export function _setSocket(ws: RpcSocket | null): void {
   socket = ws;
   if (ws) {
     if (typeof ws.addEventListener === "function") {
-      ws.addEventListener("message", handleMessage);
+      ws.addEventListener("message", handleMessage as (event: MessageEvent | Event) => void);
     } else {
       (ws as unknown as { onmessage: ((ev: MessageEvent) => void) | null }).onmessage =
         handleMessage;

@@ -2,20 +2,144 @@
 
 from __future__ import annotations
 
+import asyncio
+import contextlib
+import json
+import logging
 from urllib.parse import parse_qs, urlparse
 
 from websockets.asyncio.server import Server, ServerConnection, serve
+
+from voidx.logging.tool_log import log_tool_event
 
 from voidx.ui.gateway.session import GatewaySession
 from voidx.ui.protocol.v2.envelope import ParseError, parse_jsonrpc_message
 
 
-class _WebSocketClient:
-    def __init__(self, websocket: ServerConnection) -> None:
-        self._websocket = websocket
+SEND_QUEUE_MAXSIZE = 256
+WEBSOCKET_SEND_TIMEOUT_SECONDS = 30.0
 
-    async def send_text(self, text: str) -> None:
-        await self._websocket.send(text)
+logger = logging.getLogger(__name__)
+
+
+class _WebSocketClient:
+    def __init__(
+        self,
+        websocket: ServerConnection,
+        *,
+        queue_maxsize: int = SEND_QUEUE_MAXSIZE,
+        send_timeout: float = WEBSOCKET_SEND_TIMEOUT_SECONDS,
+    ) -> None:
+        self._websocket = websocket
+        self._send_queue: asyncio.Queue[str | None] = asyncio.Queue(maxsize=queue_maxsize)
+        self._send_task: asyncio.Task[None] | None = None
+        self._closed = False
+        self._dropped_messages = 0
+        self._send_timeout = send_timeout
+
+    async def start(self) -> None:
+        if self._send_task is None:
+            self._send_task = asyncio.create_task(self._send_loop(), name="voidx-gateway-ws-send-loop")
+
+    async def send_text(self, text: str, *, priority: bool = False) -> None:
+        if self._closed:
+            return
+        try:
+            self._send_queue.put_nowait(text)
+            return
+        except asyncio.QueueFull:
+            if priority:
+                self._drop_one_queued_message()
+                self._send_queue.put_nowait(text)
+                return
+            self._dropped_messages += 1
+            queue_size = self._send_queue.qsize()
+            message = (
+                "Gateway send queue full; dropping message "
+                f"count={self._dropped_messages} queue_size={queue_size}"
+            )
+            logger.warning(message)
+            log_tool_event("gateway_send_queue_full", tool_name="gateway", message=message)
+
+    # Methods whose messages are state snapshots or refresh triggers;
+    # older instances are safe to discard in favor of newer ones.
+    _DROPPABLE_METHODS = frozenset({"workspace.snapshot", "refresh.requested"})
+
+    def _drop_one_queued_message(self) -> None:
+        """Drop the oldest droppable message; fall back to the queue head."""
+        drained: list[str] = []
+        dropped = False
+        while True:
+            try:
+                text = self._send_queue.get_nowait()
+            except asyncio.QueueEmpty:
+                break
+            if not dropped and self._is_droppable(text):
+                self._send_queue.task_done()
+                dropped = True
+                continue
+            drained.append(text)
+        for text in drained:
+            self._send_queue.put_nowait(text)
+        if not dropped:
+            with contextlib.suppress(asyncio.QueueEmpty):
+                self._send_queue.get_nowait()
+                self._send_queue.task_done()
+
+    @staticmethod
+    def _is_droppable(text: str) -> bool:
+        try:
+            envelope = json.loads(text)
+        except (json.JSONDecodeError, TypeError):
+            return False
+        method = envelope.get("method") if isinstance(envelope, dict) else None
+        return method in _WebSocketClient._DROPPABLE_METHODS
+
+    async def _send_loop(self) -> None:
+        try:
+            while True:
+                text = await self._send_queue.get()
+                try:
+                    if text is None:
+                        return
+                    await asyncio.wait_for(self._websocket.send(text), timeout=self._send_timeout)
+                except asyncio.TimeoutError:
+                    queue_size = self._send_queue.qsize()
+                    message = (
+                        "Gateway websocket send timed out "
+                        f"after {self._send_timeout:.1f}s queue_size={queue_size}"
+                    )
+                    logger.warning(message)
+                    log_tool_event("gateway_websocket_send_timeout", tool_name="gateway", message=message)
+                    self._closed = True
+                    return
+                except Exception as exc:
+                    queue_size = self._send_queue.qsize()
+                    message = f"Gateway websocket send failed queue_size={queue_size}: {exc}"
+                    logger.exception("Gateway websocket send failed queue_size=%d", queue_size)
+                    log_tool_event("gateway_websocket_send_failed", tool_name="gateway", message=message)
+                    self._closed = True
+                    return
+                finally:
+                    self._send_queue.task_done()
+        finally:
+            self._closed = True
+
+    async def close(self) -> None:
+        if self._closed and self._send_task is None:
+            return
+        self._closed = True
+        if self._send_task is not None:
+            with contextlib.suppress(asyncio.QueueFull):
+                self._send_queue.put_nowait(None)
+            try:
+                await asyncio.wait_for(self._send_task, timeout=5.0)
+            except asyncio.TimeoutError:
+                self._send_task.cancel()
+                with contextlib.suppress(asyncio.CancelledError):
+                    await self._send_task
+        with contextlib.suppress(Exception):
+            await self._websocket.close()
 
 
 class GatewayServer:
@@ -60,32 +184,35 @@ class GatewayServer:
             await websocket.close(code=1008, reason="unauthorized")
             return
         client = _WebSocketClient(websocket)
+        await client.start()
         await self._session.connect(client)
         try:
             async for message in websocket:
-                await self._handle_message(websocket, str(message))
+                await self._handle_message(client, str(message))
         finally:
             self._session.disconnect(client)
+            await client.close()
 
-    async def _handle_message(self, websocket: ServerConnection, raw: str) -> None:
-        import json
+    async def _send_json(self, client: _WebSocketClient, payload: dict[str, object]) -> None:
+        await client.send_text(json.dumps(payload), priority=True)
 
+    async def _handle_message(self, client: _WebSocketClient, raw: str) -> None:
         from voidx.ui.protocol.v2.envelope import JsonRpcRequest, JsonRpcResult
         from voidx.ui.protocol.requests import UiResponse
 
         try:
             msg = parse_jsonrpc_message_str(raw)
         except ParseError as exc:
-            await websocket.send(json.dumps({
+            await self._send_json(client, {
                 "jsonrpc": "2.0",
                 "id": None,
                 "error": {"code": exc.code, "message": exc.message},
-            }))
+            })
             return
 
         if isinstance(msg, JsonRpcRequest):
             result = await self._session.dispatch_request(msg)
-            await websocket.send(result.model_dump_json())
+            await client.send_text(result.model_dump_json(), priority=True)
         elif isinstance(msg, JsonRpcResult):
             result = msg.result if isinstance(msg.result, dict) else {}
             response = UiResponse(

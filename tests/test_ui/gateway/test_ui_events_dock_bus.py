@@ -135,3 +135,73 @@ async def test_ui_event_bus_serializes_tool_updates_by_call_id(isolated_dock):
         await bus.stop()
 
 
+
+
+@pytest.mark.asyncio
+async def test_ui_event_bus_request_times_out_without_cancelling_consumer_future():
+    from voidx.ui.output.events.bus import UiEventTimeout
+
+    class SlowConsumer:
+        async def handle(self, event):
+            await asyncio.sleep(0.2)
+            return "eventually-done"
+
+    bus = UiEventBus()
+    bus.start(SlowConsumer())
+    try:
+        with pytest.raises(UiEventTimeout, match="timed out"):
+            await bus.request(TurnStarted(text="slow"), timeout=0.01, max_retries=2)
+
+        await asyncio.sleep(0.25)
+        assert bus.last_error is None
+    finally:
+        await bus.stop()
+
+
+@pytest.mark.asyncio
+async def test_ui_event_bus_request_returns_before_timeout_when_consumer_finishes():
+    class FastConsumer:
+        async def handle(self, event):
+            await asyncio.sleep(0)
+            return "ok"
+
+    bus = UiEventBus()
+    bus.start(FastConsumer())
+    try:
+        assert await bus.request(TurnStarted(text="fast"), timeout=0.05, max_retries=2) == "ok"
+    finally:
+        await bus.stop()
+
+
+@pytest.mark.asyncio
+async def test_ui_event_bus_request_timeout_writes_tool_log(monkeypatch):
+    from voidx.ui.output.events import bus as bus_module
+    from voidx.ui.output.events.bus import UiEventTimeout
+
+    events: list[tuple[str, dict]] = []
+    monkeypatch.setattr(
+        bus_module,
+        "log_tool_event",
+        lambda event, **kwargs: events.append((event, kwargs)),
+    )
+
+    class SlowConsumer:
+        async def handle(self, event):
+            await asyncio.sleep(0.2)
+            return "eventually-done"
+
+    bus = UiEventBus()
+    bus.start(SlowConsumer())
+    try:
+        with pytest.raises(UiEventTimeout):
+            await bus.request(TurnStarted(text="slow"), timeout=0.01, max_retries=2)
+        await asyncio.sleep(0.25)
+    finally:
+        await bus.stop()
+
+    event_names = [event for event, _kwargs in events]
+    assert "ui_event_bus_request_stall" in event_names
+    assert "ui_event_bus_request_timeout" in event_names
+    timeout = next(kwargs for event, kwargs in events if event == "ui_event_bus_request_timeout")
+    assert timeout["tool_name"] == "ui_event_bus"
+    assert "timed out" in timeout["message"]

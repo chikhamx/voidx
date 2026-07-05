@@ -3,7 +3,7 @@
 from __future__ import annotations
 
 from voidx.ui.output.dock import dock
-from voidx.ui.output.events.bus import UiEventBus
+from voidx.ui.output.events.bus import UiEventBus, UiEventTimeout
 from voidx.ui.output.events.consumers import CompositeEventConsumer, DockEventConsumer
 from voidx.ui.output.events.schema import (
     AnsiAppended,
@@ -114,6 +114,7 @@ __all__ = [
     "UiEvent",
     "UiEventBase",
     "UiEventBus",
+    "UiEventTimeout",
     "WarningAppended",
     "ui_events",
     "via_events",

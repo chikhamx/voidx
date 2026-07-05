@@ -238,3 +238,291 @@ async def test_v2_jsonrpc_result_routes_ui_response_by_thread_id_payload():
         request_id="choice_t2",
         value="ok",
     )
+
+
+@pytest.mark.asyncio
+async def test_websocket_client_send_text_does_not_wait_for_blocked_send():
+    from voidx.ui.gateway.server import _WebSocketClient
+
+    class BlockingWebSocket:
+        def __init__(self) -> None:
+            self.send_started = asyncio.Event()
+            self.release_send = asyncio.Event()
+            self.closed = False
+
+        async def send(self, text: str) -> None:
+            self.send_started.set()
+            await self.release_send.wait()
+
+        async def close(self) -> None:
+            self.closed = True
+            self.release_send.set()
+
+    websocket = BlockingWebSocket()
+    client = _WebSocketClient(websocket, queue_maxsize=4)
+    await client.start()
+    try:
+        await client.send_text("first")
+        await asyncio.wait_for(websocket.send_started.wait(), timeout=0.2)
+        await asyncio.wait_for(client.send_text("second"), timeout=0.05)
+    finally:
+        await client.close()
+    assert websocket.closed is True
+
+
+@pytest.mark.asyncio
+async def test_websocket_client_priority_message_survives_full_queue():
+    from voidx.ui.gateway.server import _WebSocketClient
+
+    class PausedWebSocket:
+        def __init__(self) -> None:
+            self.sent: list[str] = []
+            self.release_send = asyncio.Event()
+
+        async def send(self, text: str) -> None:
+            self.sent.append(text)
+            await self.release_send.wait()
+
+        async def close(self) -> None:
+            self.release_send.set()
+
+    websocket = PausedWebSocket()
+    client = _WebSocketClient(websocket, queue_maxsize=2)
+    await client.start()
+    try:
+        await client.send_text("blocking-low")
+        await asyncio.sleep(0)
+        await client.send_text("queued-low")
+        await client.send_text("priority", priority=True)
+        queued = list(getattr(client, "_send_queue")._queue)
+        assert "priority" in queued
+    finally:
+        await client.close()
+
+
+@pytest.mark.asyncio
+async def test_handle_message_uses_client_queue_for_jsonrpc_result():
+    from voidx.ui.gateway.server import GatewayServer
+
+    dock = BottomInputDock()
+    session = GatewaySession(lambda: dock.tree, thread_id="t1")
+    session.methods.register("ping", lambda params: {"pong": True})
+    server = GatewayServer(session, host="127.0.0.1", port=0, token="")
+
+    class ClientStub:
+        def __init__(self) -> None:
+            self.sent: list[tuple[str, bool]] = []
+
+        async def send_text(self, text: str, *, priority: bool = False) -> None:
+            self.sent.append((text, priority))
+
+    client = ClientStub()
+    await server._handle_message(client, json.dumps({
+        "jsonrpc": "2.0",
+        "id": 7,
+        "method": "ping",
+        "params": {},
+    }))
+
+    assert len(client.sent) == 1
+    raw, priority = client.sent[0]
+    assert priority is True
+    msg = json.loads(raw)
+    assert msg["id"] == 7
+    assert msg["result"] == {"pong": True}
+
+
+@pytest.mark.asyncio
+async def test_websocket_client_send_loop_times_out_blocked_send(caplog):
+    from voidx.ui.gateway.server import _WebSocketClient
+
+    class NeverSendingWebSocket:
+        def __init__(self) -> None:
+            self.send_started = asyncio.Event()
+            self.closed = False
+
+        async def send(self, text: str) -> None:
+            self.send_started.set()
+            await asyncio.Event().wait()
+
+        async def close(self) -> None:
+            self.closed = True
+
+    websocket = NeverSendingWebSocket()
+    client = _WebSocketClient(websocket, queue_maxsize=4, send_timeout=0.01)
+    await client.start()
+
+    with caplog.at_level("WARNING"):
+        await client.send_text("will-timeout")
+        await asyncio.wait_for(websocket.send_started.wait(), timeout=0.2)
+        await asyncio.sleep(0.05)
+
+    assert getattr(client, "_closed") is True
+    assert "Gateway websocket send timed out" in caplog.text
+    await client.close()
+
+
+@pytest.mark.asyncio
+async def test_websocket_client_logs_dropped_messages_when_queue_full(caplog):
+    from voidx.ui.gateway.server import _WebSocketClient
+
+    class PausedWebSocket:
+        def __init__(self) -> None:
+            self.release_send = asyncio.Event()
+
+        async def send(self, text: str) -> None:
+            await self.release_send.wait()
+
+        async def close(self) -> None:
+            self.release_send.set()
+
+    websocket = PausedWebSocket()
+    client = _WebSocketClient(websocket, queue_maxsize=1)
+    await client.start()
+    try:
+        await client.send_text("blocking")
+        await asyncio.sleep(0)
+        await client.send_text("queued")
+        with caplog.at_level("WARNING"):
+            await client.send_text("dropped")
+        assert "Gateway send queue full; dropping message" in caplog.text
+    finally:
+        await client.close()
+
+
+@pytest.mark.asyncio
+async def test_websocket_client_writes_tool_log_for_queue_full(monkeypatch):
+    from voidx.ui.gateway import server as server_module
+
+    events: list[tuple[str, dict]] = []
+    monkeypatch.setattr(
+        server_module,
+        "log_tool_event",
+        lambda event, **kwargs: events.append((event, kwargs)),
+    )
+
+    class PausedWebSocket:
+        def __init__(self) -> None:
+            self.release_send = asyncio.Event()
+
+        async def send(self, text: str) -> None:
+            await self.release_send.wait()
+
+        async def close(self) -> None:
+            self.release_send.set()
+
+    websocket = PausedWebSocket()
+    client = server_module._WebSocketClient(websocket, queue_maxsize=1)
+    await client.start()
+    try:
+        await client.send_text("blocking")
+        await asyncio.sleep(0)
+        await client.send_text("queued")
+        await client.send_text("dropped")
+    finally:
+        await client.close()
+
+    assert events
+    assert events[0][0] == "gateway_send_queue_full"
+    assert events[0][1]["tool_name"] == "gateway"
+    assert "dropping message" in events[0][1]["message"]
+
+
+@pytest.mark.asyncio
+async def test_websocket_client_writes_tool_log_for_send_timeout(monkeypatch):
+    from voidx.ui.gateway import server as server_module
+
+    events: list[tuple[str, dict]] = []
+    monkeypatch.setattr(
+        server_module,
+        "log_tool_event",
+        lambda event, **kwargs: events.append((event, kwargs)),
+    )
+
+    class NeverSendingWebSocket:
+        def __init__(self) -> None:
+            self.send_started = asyncio.Event()
+
+        async def send(self, text: str) -> None:
+            self.send_started.set()
+            await asyncio.Event().wait()
+
+        async def close(self) -> None:
+            pass
+
+    websocket = NeverSendingWebSocket()
+    client = server_module._WebSocketClient(websocket, queue_maxsize=4, send_timeout=0.01)
+    await client.start()
+    await client.send_text("will-timeout")
+    await asyncio.wait_for(websocket.send_started.wait(), timeout=0.2)
+    await asyncio.sleep(0.05)
+    await client.close()
+
+    assert events
+    assert events[0][0] == "gateway_websocket_send_timeout"
+    assert events[0][1]["tool_name"] == "gateway"
+    assert "timed out" in events[0][1]["message"]
+
+
+
+@pytest.mark.asyncio
+async def test_websocket_client_priority_send_drops_snapshot_over_response():
+    from voidx.ui.gateway.server import _WebSocketClient
+
+    class PausedWebSocket:
+        def __init__(self) -> None:
+            self.release_send = asyncio.Event()
+
+        async def send(self, text: str) -> None:
+            await self.release_send.wait()
+
+        async def close(self) -> None:
+            self.release_send.set()
+
+    websocket = PausedWebSocket()
+    client = _WebSocketClient(websocket, queue_maxsize=2)
+    await client.start()
+    try:
+        snapshot = json.dumps({"jsonrpc": "2.0", "method": "workspace.snapshot", "params": {}})
+        response = json.dumps({"jsonrpc": "2.0", "id": 1, "result": {"value": "ok"}})
+        await client.send_text(snapshot)
+        await client.send_text(response)
+        await asyncio.sleep(0)
+        await client.send_text(json.dumps({"jsonrpc": "2.0", "id": 2, "result": {"value": "priority"}}), priority=True)
+        queued = list(client._send_queue._queue)
+        assert json.loads(queued[0])["id"] == 1
+        assert json.loads(queued[1])["id"] == 2
+    finally:
+        await client.close()
+
+
+@pytest.mark.asyncio
+async def test_websocket_client_priority_send_falls_back_to_head_when_no_droppable():
+    from voidx.ui.gateway.server import _WebSocketClient
+
+    class PausedWebSocket:
+        def __init__(self) -> None:
+            self.release_send = asyncio.Event()
+
+        async def send(self, text: str) -> None:
+            await self.release_send.wait()
+
+        async def close(self) -> None:
+            self.release_send.set()
+
+    websocket = PausedWebSocket()
+    client = _WebSocketClient(websocket, queue_maxsize=2)
+    await client.start()
+    try:
+        resp1 = json.dumps({"jsonrpc": "2.0", "id": 1, "result": {"value": "a"}})
+        resp2 = json.dumps({"jsonrpc": "2.0", "id": 2, "result": {"value": "b"}})
+        await client.send_text(resp1)
+        await client.send_text(resp2)
+        await asyncio.sleep(0)
+        await client.send_text(json.dumps({"jsonrpc": "2.0", "id": 3, "result": {"value": "c"}}), priority=True)
+        queued = list(client._send_queue._queue)
+        assert len(queued) == 2
+        assert json.loads(queued[0])["id"] == 2
+        assert json.loads(queued[1])["id"] == 3
+    finally:
+        await client.close()

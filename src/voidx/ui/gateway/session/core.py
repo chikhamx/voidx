@@ -42,7 +42,7 @@ RuntimeStateProvider = Callable[[], dict[str, object]]
 
 
 class ProtocolClient(Protocol):
-    async def send_text(self, text: str) -> None:
+    async def send_text(self, text: str, *, priority: bool = False) -> None:
         """Send an encoded protocol envelope to the connected client."""
 
 
