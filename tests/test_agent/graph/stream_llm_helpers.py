@@ -233,3 +233,21 @@ class FakeRenderer:
 
     def done(self) -> None:
         self.done_called = True
+
+    def error(self, text: str) -> None:
+        pass
+
+
+class FailsNonRetryableStreamingModel(FakeStreamingModel):
+    """Raises an exception with status_code=404 on first call."""
+    def __init__(self) -> None:
+        super().__init__()
+        self.calls = 0
+
+    async def astream(self, messages):
+        self.calls += 1
+        # Must yield first to remain an async generator
+        yield AIMessageChunk(content="")
+        exc = RuntimeError("404 model_not_found")
+        exc.status_code = 404  # type: ignore
+        raise exc

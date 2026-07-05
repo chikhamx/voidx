@@ -2,7 +2,6 @@
 
 from __future__ import annotations
 
-import logging
 from collections.abc import Awaitable, Callable
 from dataclasses import dataclass, field
 from typing import TYPE_CHECKING
@@ -31,8 +30,6 @@ from voidx.workflow.service import is_workflow_context_content
 if TYPE_CHECKING:
     from voidx.agent.graph.contracts import GraphCompactionHost
 
-
-logger = logging.getLogger(__name__)
 
 RunCompactionAgent = Callable[[list, str | None], Awaitable[str | None]]
 PersistCompaction = Callable[[list], Awaitable[None]]
@@ -535,11 +532,6 @@ class GraphCompactionCoordinator:
         text = extract_text(assistant_msg)
         if text:
             return text
-        logger.warning(
-            "Compaction agent returned empty text: message_type=%s content_type=%s",
-            type(assistant_msg).__name__,
-            _content_type_summary(getattr(assistant_msg, "content", None)),
-        )
         log_tool_event(
             "compaction_empty_result",
             message=f"Compaction agent returned empty text: message_type={type(assistant_msg).__name__} content_type={_content_type_summary(getattr(assistant_msg, 'content', None))}",

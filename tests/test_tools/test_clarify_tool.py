@@ -241,3 +241,46 @@ class TestClarifyTool:
 
         payload = json.loads(result.output)
         assert payload["answer"] == "Audit the auth flow first"
+
+    @pytest.mark.asyncio
+    async def test_clarify_interaction_unavailable_has_summary(self, tmp_path):
+        """interaction_unavailable path should have a non-empty summary."""
+        result = await ClarifyTool().execute(
+            {"question": "What should I do?"},
+            ToolContext(workspace=str(tmp_path)),
+        )
+
+        assert result.metadata.get("clarify_cancelled") is True
+        assert result.metadata.get("blocked") is True
+        assert result.summary is not None
+        assert len(result.summary) > 0
+        assert "unavailable" in result.summary
+
+    @pytest.mark.asyncio
+    async def test_clarify_invalid_arguments_has_summary(self, tmp_path):
+        """Invalid arguments path should have a non-empty summary."""
+        result = await ClarifyTool().execute(
+            {},  # missing required 'question' field
+            ToolContext(workspace=str(tmp_path)),
+        )
+
+        assert result.metadata.get("error") is True
+        assert result.summary is not None
+        assert len(result.summary) > 0
+        assert "invalid" in result.summary
+
+    @pytest.mark.asyncio
+    async def test_clarify_skipped_has_summary(self, tmp_path):
+        """User skipped path should have a non-empty summary."""
+        async def interact(request):
+            return UserResponse(value="", cancelled=True)
+
+        result = await ClarifyTool().execute(
+            {"question": "What should I do?"},
+            ToolContext(workspace=str(tmp_path), interact=interact),
+        )
+
+        assert result.metadata.get("clarify_cancelled") is True
+        assert result.summary is not None
+        assert len(result.summary) > 0
+        assert "skipped" in result.summary

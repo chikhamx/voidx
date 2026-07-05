@@ -440,3 +440,62 @@ class TestCompactionRetry:
         assert finished.status_id == "compaction"
         assert finished.ok is False
         assert finished.detail == "RuntimeError: LLM always fails; using extracted summary"
+
+    @pytest.mark.asyncio
+    async def test_empty_compaction_result_uses_structured_log_without_warning(self, monkeypatch, caplog):
+        """An empty compaction response must not leak a warning into the TUI."""
+        import logging
+        from types import SimpleNamespace
+        from unittest.mock import MagicMock
+
+        import voidx.agent.graph.compaction_coordinator as compaction_module
+        from voidx.agent.graph.compaction_coordinator import GraphCompactionCoordinator
+
+        async def fake_stream_llm(_model, _messages, _renderer, _protocol):
+            return AIMessage(content="")
+
+        events = []
+
+        def fake_log_tool_event(event, **kwargs):
+            events.append((event, kwargs))
+
+        monkeypatch.setattr(compaction_module, "stream_llm", fake_stream_llm)
+        monkeypatch.setattr(compaction_module, "estimate_context_tokens", lambda *_args, **_kwargs: 10)
+        monkeypatch.setattr(compaction_module, "estimate_message_tokens", lambda *_args, **_kwargs: 0)
+        monkeypatch.setattr(compaction_module, "extract_token_usage", lambda *_args, **_kwargs: {})
+        monkeypatch.setattr(compaction_module, "log_tool_event", fake_log_tool_event)
+
+        host = MagicMock()
+        host.model = object()
+        host._debug = False
+        host._session = None
+        host._ui = _FakeUiPort(via_events=False)
+        host._compaction = CompactionService(context_limit=128_000, output_token_max=8_192)
+        host._usage_stats = SimpleNamespace(
+            update_context=lambda *_args, **_kwargs: None,
+            record_call=lambda *_args, **_kwargs: None,
+        )
+        host.config = MagicMock()
+        host.config.model.provider = "test-provider"
+        host.config.model.model = "test-model"
+
+        caplog.set_level(logging.WARNING, logger="voidx.agent.graph.compaction_coordinator")
+
+        result = await GraphCompactionCoordinator(host).run_compaction_agent(
+            [HumanMessage(content="old context")],
+            None,
+        )
+
+        assert result is None
+        assert events == [
+            (
+                "compaction_empty_result",
+                {
+                    "message": (
+                        "Compaction agent returned empty text: "
+                        "message_type=AIMessage content_type=str"
+                    ),
+                },
+            )
+        ]
+        assert "Compaction agent returned empty text" not in caplog.text

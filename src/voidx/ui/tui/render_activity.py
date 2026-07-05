@@ -33,6 +33,8 @@ from voidx.ui.tui.helpers import _clip_cells
 
 BUSY_ACTIVITY_DETAIL_STYLE = "#C9D1D9 on #3a3937"
 RETRY_DETAIL_MAX_CELLS = 96
+PERMISSION_DETAIL_MAX_LINES = 5
+PERMISSION_DETAIL_VERBOSE_KEYS = ("bounds:", "new_string:", "file_path:")
 _RETRY_DETAIL_RE = re.compile(r"^retrying in (?P<delay>\d+s):\s*(?P<error>.*)$", re.IGNORECASE)
 
 
@@ -46,7 +48,7 @@ class _ActivityRendererMixin:
         elements = [self._busy_activity_text(width)]
         permission_detail = active_permission_request_detail_text()
         if permission_detail:
-            for line in permission_detail.splitlines():
+            for line in _compact_permission_detail_lines(permission_detail):
                 elements.append(
                     Text(_full_width_detail_line(line, width), style=BUSY_ACTIVITY_DETAIL_STYLE)
                 )
@@ -143,6 +145,58 @@ def _full_width_detail_line(line: str, width: int) -> str:
     clipped = _clip_cells(line, width)
     padding = max(0, width - cell_len(clipped))
     return clipped + (" " * padding)
+
+
+def _compact_permission_detail_lines(detail: str) -> list[str]:
+    lines = [line for line in detail.splitlines() if line.strip()]
+    if len(lines) <= PERMISSION_DETAIL_MAX_LINES:
+        return lines
+
+    compacted = _permission_tool_summary_lines(lines)
+    if not compacted:
+        compacted = [
+            line for line in lines
+            if not _is_verbose_permission_detail_line(line)
+        ]
+    visible = compacted[:PERMISSION_DETAIL_MAX_LINES]
+    remaining = len(compacted) - len(visible)
+    if remaining > 0:
+        visible[-1] = f"   ... {remaining} more tool{'s' if remaining != 1 else ''}"
+    return visible
+
+
+def _permission_tool_summary_lines(lines: list[str]) -> list[str]:
+    result: list[str] = []
+    current_name = ""
+    current_target = ""
+    for line in lines:
+        if _is_permission_tool_header(line):
+            if current_name:
+                result.append(_permission_tool_summary_line(current_name, current_target))
+            current_name = line.strip()
+            current_target = ""
+            continue
+        stripped = line.strip()
+        if current_name and stripped.startswith("target:") and not current_target:
+            current_target = stripped.split(":", 1)[1].strip()
+    if current_name:
+        result.append(_permission_tool_summary_line(current_name, current_target))
+    return result
+
+
+def _permission_tool_summary_line(name: str, target: str) -> str:
+    return f"{name} -> {target}" if target else name
+
+
+def _is_permission_tool_header(line: str) -> bool:
+    stripped = line.strip()
+    head, separator, tail = stripped.partition(". ")
+    return bool(separator and head.isdigit() and tail)
+
+
+def _is_verbose_permission_detail_line(line: str) -> bool:
+    stripped = line.strip()
+    return any(stripped.startswith(key) for key in PERMISSION_DETAIL_VERBOSE_KEYS)
 
 
 def _format_llm_retry_status(label: str, detail: str) -> tuple[str, str]:

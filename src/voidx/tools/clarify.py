@@ -49,7 +49,7 @@ class ClarifyTool(BaseTool):
         try:
             inp = ClarifyInput.model_validate(args)
         except Exception as exc:
-            return ToolResult(output=f"Invalid arguments: {exc}", metadata={"error": True})
+            return ToolResult(output=f"Invalid arguments: {exc}", summary="clarify: invalid arguments", metadata={"error": True})
         if ctx.interact is None:
             return ToolResult(
                 title="clarify: unavailable",
@@ -57,6 +57,7 @@ class ClarifyTool(BaseTool):
                     "Clarification is not available in this runtime. "
                     "Proceed only with safe assumptions and note the ambiguity."
                 ),
+                summary="clarify: unavailable",
                 metadata={"clarify_cancelled": True, "blocked": True},
             )
 
@@ -72,6 +73,7 @@ class ClarifyTool(BaseTool):
             return ToolResult(
                 title="clarify: skipped",
                 output=f"User skipped clarification: {inp.question}",
+                summary="clarify: skipped",
                 metadata={"clarify_cancelled": True},
             )
 

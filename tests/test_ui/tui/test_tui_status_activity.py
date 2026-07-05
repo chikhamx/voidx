@@ -226,6 +226,51 @@ def test_busy_activity_renders_permission_details_below_requesting_verb(tmp_path
         dock.reset()
 
 
+def test_busy_activity_compacts_many_permission_details(tmp_path, monkeypatch):
+    monkeypatch.setattr("voidx.ui.tui.render_activity.time.monotonic", lambda: 105.0)
+    tui = _tui(tmp_path)
+    tui._console = Console(file=None, force_terminal=True, width=100, height=24, _environ={})
+    tui._busy = True
+    tui._busy_started_at = 100.0
+    dock.begin_capture()
+    try:
+        detail = "\n".join(
+            [
+                "1. replace",
+                "   target: docs/specs/llm-error-optimization-2026-07-05.md",
+                "   file_path: docs/specs/llm-error-optimization-2026-07-05.md",
+                "   bounds: [{'line_no': 234, 'anchor': '| `clarify.py:72` | user skipped'}]",
+                "   new_string: | `clarify.py:72` | user skipped | `summary=clarify: skipped` |",
+                "2. replace",
+                "   target: docs/specs/llm-error-optimization-2026-07-05.md",
+                "   file_path: docs/specs/llm-error-optimization-2026-07-05.md",
+                "   bounds: [{'line_no': 291, 'anchor': '| `tests/test_tools/test_plan_checkpoint.py` |'}]",
+                "   new_string: | `tests/test_tools/test_plan_checkpoint.py` | 新增 summary 测试 |",
+                "3. replace",
+                "   target: docs/specs/llm-error-optimization-2026-07-05.md",
+                "   file_path: docs/specs/llm-error-optimization-2026-07-05.md",
+                "   bounds: [{'line_no': 334, 'anchor': './python.sh -m pytest tests/test_tools/test_plan_checkpoint.py'}]",
+                "   new_string: ./python.sh -m pytest tests/test_tools/test_plan_checkpoint.py tests/test_tools/test_basic.py",
+            ]
+        )
+        dock.record_status("permission:request", "Requesting", detail, stage="permission")
+
+        detail_elements = tui._render_busy_activity_elements(100)[1:]
+        detail_lines = [text.plain.rstrip() for text in detail_elements]
+
+        assert len(detail_lines) <= 5
+        assert detail_lines == [
+            "1. replace -> docs/specs/llm-error-optimization-2026-07-05.md",
+            "2. replace -> docs/specs/llm-error-optimization-2026-07-05.md",
+            "3. replace -> docs/specs/llm-error-optimization-2026-07-05.md",
+        ]
+        assert not any("bounds:" in line for line in detail_lines)
+        assert not any("new_string:" in line for line in detail_lines)
+    finally:
+        dock.deactivate()
+        dock.reset()
+
+
 def test_busy_activity_label_includes_step_and_turn_tokens(tmp_path, monkeypatch):
     now = {"value": 100.0}
     monkeypatch.setattr("voidx.ui.tui.render_activity.time.monotonic", lambda: now["value"])
@@ -534,6 +579,34 @@ async def test_busy_activity_timer_starts_ticks_and_stops(tmp_path, monkeypatch)
     finally:
         tui._queue.put_nowait(None)
         await asyncio.wait_for(consumer, timeout=1)
+
+
+@pytest.mark.asyncio
+async def test_busy_activity_timer_full_renders_when_tick_region_changes(tmp_path, monkeypatch):
+    monkeypatch.setattr("voidx.ui.tui.activity.BUSY_ACTIVITY_TICK_SECONDS", 0.01)
+    tui = _tui(tmp_path)
+    tui._tty = True
+    tui._running = True
+    tui._busy = True
+    rendered = asyncio.Event()
+    calls = {"tick": 0, "render": 0}
+
+    def tick() -> bool:
+        calls["tick"] += 1
+        tui._busy = False
+        return False
+
+    def render_frame() -> None:
+        calls["render"] += 1
+        rendered.set()
+
+    monkeypatch.setattr(tui, "_render_busy_activity_tick", tick)
+    monkeypatch.setattr(tui, "_render_frame", render_frame)
+
+    await tui._busy_activity_timer()
+
+    assert calls == {"tick": 1, "render": 1}
+    assert rendered.is_set()
 
 
 @pytest.mark.asyncio

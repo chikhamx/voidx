@@ -1,4 +1,6 @@
 from __future__ import annotations
+import asyncio
+from enum import Enum
 
 from voidx.agent.agents import AgentDef
 from voidx.agent.runtime_context import COMPACTION_GUIDE_MARKER, InteractionMode
@@ -22,6 +24,54 @@ def _is_context_overflow_error(exc: Exception) -> bool:
             "context window",
         )
     )
+
+
+class LLMErrorKind(str, Enum):
+    NETWORK = "network"
+    TIMEOUT = "timeout"
+    RATE_LIMIT = "rate_limit"
+    SERVER_ERROR = "server_error"
+    CONTEXT_OVERFLOW = "context_overflow"
+    NON_RETRYABLE = "non_retryable"
+    UNKNOWN = "unknown"
+
+
+def _is_schema_error(exc: Exception) -> bool:
+    msg = str(exc).lower()
+    return any(k in msg for k in ("invalid schema", "schema for function", "required is required"))
+
+
+def _classify_llm_error(exc: Exception) -> LLMErrorKind:
+    # 1. Priority: check status_code attribute (OpenAI/Anthropic SDKs set it)
+    status_code = getattr(exc, "status_code", None)
+    if status_code is not None:
+        if status_code == 429:
+            return LLMErrorKind.RATE_LIMIT
+        if status_code == 400:
+            if _is_context_overflow_error(exc):
+                return LLMErrorKind.CONTEXT_OVERFLOW
+            return LLMErrorKind.NON_RETRYABLE
+        if status_code in (401, 403):
+            return LLMErrorKind.NON_RETRYABLE
+        if status_code == 404:
+            return LLMErrorKind.NON_RETRYABLE
+        if status_code in (500, 502, 503):
+            if _is_schema_error(exc):
+                return LLMErrorKind.NON_RETRYABLE
+            return LLMErrorKind.SERVER_ERROR
+        return LLMErrorKind.UNKNOWN
+
+    # 2. No status_code — check exception type
+    if isinstance(exc, asyncio.TimeoutError):
+        return LLMErrorKind.TIMEOUT
+    if isinstance(exc, ConnectionError) or "connection" in type(exc).__name__.lower():
+        return LLMErrorKind.NETWORK
+
+    # 3. String fallback for context overflow
+    if _is_context_overflow_error(exc):
+        return LLMErrorKind.CONTEXT_OVERFLOW
+
+    return LLMErrorKind.UNKNOWN
 
 
 def _render_inline_compaction_guide(*, tail_anchor_id: str, head_count: int, previous_summary: str) -> str:

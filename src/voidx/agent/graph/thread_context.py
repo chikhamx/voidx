@@ -163,3 +163,9 @@ async def bind_thread_execution_context(
         yield state
     finally:
         _CURRENT_THREAD_EXECUTION_STATE.reset(token)
+        # Only sync state back to the host when the turn belongs to the host's
+        # own session. A borrowed turn for a different session must not mutate
+        # the host's session, task_state, compaction_summary, etc.
+        orig_session = getattr(host, "_session", None)
+        if orig_session is None or (state.session is not None and orig_session.id == state.session.id):
+            _apply_state(host, state)

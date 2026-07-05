@@ -232,6 +232,7 @@ def _enter_repeat_guidance(count: int, node: str) -> str:
 | `plan_checkpoint.py:75` | interaction_unavailable | `summary="plan: approval unavailable"` |
 | `clarify.py:54` | interaction_unavailable | `summary="clarify: unavailable"` |
 | `clarify.py:72` | user skipped | `summary="clarify: skipped"` |
+| `clarify.py:52` | Invalid arguments | `summary="clarify: invalid arguments"` |
 | `todo.py:74` | Invalid arguments | `summary="todo: invalid arguments"` |
 | `plan_checkpoint.py:73` | Invalid arguments | `summary="plan: invalid arguments"` |
 
@@ -290,6 +291,7 @@ class LLMErrorKind(str, Enum):
 | `tests/test_tools/test_workflow_tool.py` | 新增 advance repeat guidance 语义测试 |
 | `tests/test_tools/test_plan_checkpoint.py` | 新增 summary 测试 |
 | `tests/test_tools/test_clarify_tool.py` | 新增 summary 测试 |
+| `tests/test_tools/test_todo_tool.py` | 新增 todo summary 测试 |
 
 ## Tasks
 
@@ -331,7 +333,7 @@ class LLMErrorKind(str, Enum):
 
 **测试命令**:
 ```bash
-./python.sh -m pytest tests/test_tools/test_plan_checkpoint.py tests/test_tools/test_clarify_tool.py -v -k "summary or unavailable or invalid"
+./python.sh -m pytest tests/test_tools/test_plan_checkpoint.py tests/test_tools/test_clarify_tool.py tests/test_tools/test_todo_tool.py -v -k "summary or unavailable or invalid"
 ```
 
 ## Risks

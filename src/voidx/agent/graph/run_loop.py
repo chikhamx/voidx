@@ -27,7 +27,7 @@ from voidx.runtime.ui import (
 )
 from voidx.agent.task_state import goal_label, goal_type_from_join
 from voidx.logging.tool_log import log_tool_event
-from voidx.ui.output.types import ThreadExecutionContext
+from voidx.runtime.ui import ThreadExecutionContext
 
 if TYPE_CHECKING:
     from voidx.agent.graph.contracts import GraphRunLoopHost

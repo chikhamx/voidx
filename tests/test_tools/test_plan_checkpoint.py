@@ -417,3 +417,30 @@ class TestPlanCheckpoint:
             "design document" in PlanCheckpointTool.description
             or "Document first" in PlanCheckpointTool.description
         )
+        
+    @pytest.mark.asyncio
+    async def test_plan_checkpoint_interaction_unavailable_has_summary(self, tmp_path):
+        """interaction_unavailable path should have a non-empty summary."""
+        result = await PlanCheckpointTool().execute(
+            {"plan_summary": "Edit files"},
+            ToolContext(workspace=str(tmp_path)),
+        )
+
+        assert result.metadata["plan_decision"] == "interaction_unavailable"
+        assert result.summary is not None
+        assert len(result.summary) > 0
+        assert "unavailable" in result.summary
+
+    @pytest.mark.asyncio
+    async def test_plan_checkpoint_invalid_arguments_has_summary(self, tmp_path):
+        """Invalid arguments path should have a non-empty summary."""
+        result = await PlanCheckpointTool().execute(
+            {"plan_summary": 123},  # invalid type
+            ToolContext(workspace=str(tmp_path)),
+        )
+
+        assert result.metadata.get("error") is True
+        assert result.summary is not None
+        assert len(result.summary) > 0
+        assert "invalid" in result.summary
+

@@ -37,6 +37,7 @@ from tests.test_agent.graph.stream_llm_helpers import (
     RepairsMalformedToolCallStreamingModel,
     TrackingStreamingModel,
     FailsOnceStreamingModel,
+    FailsNonRetryableStreamingModel,
     FakeRenderer,
 )
 
@@ -491,3 +492,139 @@ async def test_call_llm_returns_explicit_error_after_malformed_compaction_retry_
         "<tool_call>" in str(getattr(message, "content", ""))
         for message in result["messages"]
     )
+
+@pytest.mark.asyncio
+async def test_classify_llm_error_404_fail_fast(tmp_path, monkeypatch):
+    """404 model_not_found → NON_RETRYABLE, should not retry."""
+    import voidx.agent.graph.core.llm as graph_module
+    from voidx.agent.graph.core.helpers import _classify_llm_error, LLMErrorKind
+
+    monkeypatch.setattr(graph_module, "StreamingRenderer", FakeRenderer)
+
+    exc = RuntimeError("404 model_not_found")
+    exc.status_code = 404  # type: ignore
+
+    kind = _classify_llm_error(exc)
+    assert kind == LLMErrorKind.NON_RETRYABLE
+
+
+@pytest.mark.asyncio
+async def test_classify_llm_error_429_rate_limit(tmp_path, monkeypatch):
+    """429 rate limit → RATE_LIMIT, should retry."""
+    import voidx.agent.graph.core.helpers as helpers
+
+    exc = RuntimeError("rate limit")
+    exc.status_code = 429  # type: ignore
+
+    kind = helpers._classify_llm_error(exc)
+    assert kind == helpers.LLMErrorKind.RATE_LIMIT
+
+
+@pytest.mark.asyncio
+async def test_classify_llm_error_400_context_overflow(tmp_path, monkeypatch):
+    """400 with context overflow → CONTEXT_OVERFLOW, should compact."""
+    import voidx.agent.graph.core.helpers as helpers
+
+    exc = RuntimeError("context_length_exceeded")
+    exc.status_code = 400  # type: ignore
+
+    kind = helpers._classify_llm_error(exc)
+    assert kind == helpers.LLMErrorKind.CONTEXT_OVERFLOW
+
+
+@pytest.mark.asyncio
+async def test_classify_llm_error_400_non_overflow(tmp_path, monkeypatch):
+    """400 without overflow → NON_RETRYABLE."""
+    import voidx.agent.graph.core.helpers as helpers
+
+    exc = RuntimeError("bad request: invalid model")
+    exc.status_code = 400  # type: ignore
+
+    kind = helpers._classify_llm_error(exc)
+    assert kind == helpers.LLMErrorKind.NON_RETRYABLE
+
+
+@pytest.mark.asyncio
+async def test_classify_llm_error_503_schema(tmp_path, monkeypatch):
+    """503 with schema error → NON_RETRYABLE."""
+    import voidx.agent.graph.core.helpers as helpers
+
+    exc = RuntimeError("invalid schema for function 'weather'")
+    exc.status_code = 503  # type: ignore
+
+    kind = helpers._classify_llm_error(exc)
+    assert kind == helpers.LLMErrorKind.NON_RETRYABLE
+
+
+@pytest.mark.asyncio
+async def test_classify_llm_error_503_server_error(tmp_path, monkeypatch):
+    """503 without schema error → SERVER_ERROR, should retry."""
+    import voidx.agent.graph.core.helpers as helpers
+
+    exc = RuntimeError("service temporarily unavailable")
+    exc.status_code = 503  # type: ignore
+
+    kind = helpers._classify_llm_error(exc)
+    assert kind == helpers.LLMErrorKind.SERVER_ERROR
+
+
+@pytest.mark.asyncio
+async def test_classify_llm_error_connection_error(tmp_path, monkeypatch):
+    """ConnectionError → NETWORK, should retry."""
+    import voidx.agent.graph.core.helpers as helpers
+
+    exc = ConnectionError("Connection refused")
+
+    kind = helpers._classify_llm_error(exc)
+    assert kind == helpers.LLMErrorKind.NETWORK
+
+
+@pytest.mark.asyncio
+async def test_classify_llm_error_timeout(tmp_path, monkeypatch):
+    """TimeoutError → TIMEOUT, should retry."""
+    import voidx.agent.graph.core.helpers as helpers
+
+    import asyncio
+    exc = asyncio.TimeoutError("timed out")
+
+    kind = helpers._classify_llm_error(exc)
+    assert kind == helpers.LLMErrorKind.TIMEOUT
+
+
+@pytest.mark.asyncio
+async def test_classify_llm_error_unknown(tmp_path, monkeypatch):
+    """Unknown error → UNKNOWN, should retry (conservative)."""
+    import voidx.agent.graph.core.helpers as helpers
+
+    exc = RuntimeError("something weird happened")
+
+    kind = helpers._classify_llm_error(exc)
+    assert kind == helpers.LLMErrorKind.UNKNOWN
+
+@pytest.mark.asyncio
+async def test_call_llm_non_retryable_404_fail_fast(tmp_path, monkeypatch):
+    """A 404 error should fail-fast without retrying."""
+    import voidx.agent.graph.core.llm as graph_module
+
+    monkeypatch.setattr(graph_module, "StreamingRenderer", FakeRenderer)
+
+    graph = VoidXGraph(
+        Config(
+            model=ModelConfig(provider="openai", model="gpt-4o"),
+            workspace=str(tmp_path),
+        ),
+        api_key=None,
+    )
+    graph.model = FailsNonRetryableStreamingModel()
+
+    result = await graph._call_llm({
+        "messages": [HumanMessage(content="hi")],
+        "step_count": 0,
+        "persona": "voidx",
+    })
+
+    # Should fail fast — one attempt, no retries
+    assert graph.model.calls == 1
+    assert result["should_continue"] is False
+    assert result["step_count"] == 0
+    assert result["messages"] == []

@@ -332,13 +332,33 @@ def _wrap_advance_guidance(ctx: ToolContext, result: ToolResult, key_node: str) 
 
 
 def _repeat_guidance(count: int, action: str, node: str) -> str:
+    if action == "advance":
+        return _advance_repeat_guidance(count, node)
+    return _enter_repeat_guidance(count, node)
+
+
+def _advance_repeat_guidance(count: int, node: str) -> str:
     if count == 2:
         return (
-            f"Node {node!r} is already active. You just called {action} {node} again. "
+            f"You already advanced {node!r} with this condition. "
+            "The transition succeeded — do not call advance again. "
+            "Proceed with the next node's workflow steps."
+        )
+    return (
+        f"You have called advance {node!r} {count} times with the same condition. "
+        "The transition already succeeded. Stop retrying — "
+        "either proceed with the next node's workflow, or summarize the blocker and ask the user."
+    )
+
+
+def _enter_repeat_guidance(count: int, node: str) -> str:
+    if count == 2:
+        return (
+            f"Node {node!r} is already active. You just called enter {node} again. "
             "Do not repeat this call — proceed with the node's workflow steps instead."
         )
     return (
-        f"Node {node!r} is already active and you have called {action} {node} {count} times. "
+        f"Node {node!r} is already active and you have called enter {node} {count} times. "
         "Stop retrying. Either advance the current node with a valid exit condition, "
         "or summarize the blocker and ask the user for input."
     )

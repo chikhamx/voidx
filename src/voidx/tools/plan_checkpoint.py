@@ -70,7 +70,7 @@ class PlanCheckpointTool(BaseTool):
         try:
             inp = PlanCheckpointInput.model_validate(args)
         except Exception as exc:
-            return ToolResult(output=f"Invalid arguments: {exc}", metadata={"error": True})
+            return ToolResult(output=f"Invalid arguments: {exc}", summary="plan: invalid arguments", metadata={"error": True})
         if ctx.interact is None:
             return ToolResult(
                 title="plan: approval unavailable",
@@ -78,6 +78,7 @@ class PlanCheckpointTool(BaseTool):
                     "Plan approval is not available in this runtime. "
                     f"Do not implement without explicit user approval: {inp.plan_summary}"
                 ),
+                summary="plan: approval unavailable",
                 metadata={"plan_decision": "interaction_unavailable", "blocked": True},
             )
 

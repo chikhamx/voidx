@@ -578,3 +578,58 @@ class TestWorkflowTool:
         assert "repeat_warning" in p3
         assert r3.metadata.get("error") is True
         assert r3.metadata["reason"] == "repeated_workflow_advance"
+
+    @pytest.mark.asyncio
+    async def test_repeated_advance_guidance_text_contains_transition_succeeded(self, tmp_path):
+        """Advance repeat guidance should say transition succeeded, not 'already active'."""
+        ctx = ToolContext(
+            workspace=str(tmp_path),
+            workflow_runs=[
+                WorkflowRunState(name="tdd", status=WorkflowRunStatus.ACTIVE, transition_to=["verify"]),
+            ],
+        )
+        reg = ToolRegistry()
+
+        r1 = await reg.execute_tool(
+            "workflow", {"action": "advance", "condition": "implemented", "evidence": "pass"}, ctx
+        )
+
+        # Re-activate tdd to simulate 2nd advance call
+        ctx2 = ToolContext(
+            workspace=str(tmp_path),
+            workflow_repeat_tracker=ctx._workflow_repeat_tracker,
+            workflow_runs=[
+                WorkflowRunState(name="tdd", status=WorkflowRunStatus.ACTIVE, transition_to=["verify"]),
+            ],
+        )
+        r2 = await reg.execute_tool(
+            "workflow", {"action": "advance", "condition": "implemented", "evidence": "pass"}, ctx2
+        )
+        p2 = json.loads(r2.output)
+        guidance = p2["repeat_warning"]
+        assert "already advanced" in guidance or "transition succeeded" in guidance, (
+            f"Advance guidance should mention transition completion, got: {guidance}"
+        )
+        assert "already active" not in guidance, (
+            f"Advance guidance should NOT say 'already active', got: {guidance}"
+        )
+
+    @pytest.mark.asyncio
+    async def test_repeated_enter_guidance_text_contains_already_active(self, tmp_path):
+        """Enter repeat guidance should say 'already active'."""
+        ctx = ToolContext(
+            workspace=str(tmp_path),
+            workflow_runs=[
+                WorkflowRunState(name="feedback", status=WorkflowRunStatus.ACTIVE),
+            ],
+        )
+        reg = ToolRegistry()
+
+        r1 = await reg.execute_tool("workflow", {"action": "enter", "workflow": "feedback"}, ctx)
+
+        r2 = await reg.execute_tool("workflow", {"action": "enter", "workflow": "feedback"}, ctx)
+        p2 = json.loads(r2.output)
+        guidance = p2["repeat_warning"]
+        assert "already active" in guidance, (
+            f"Enter guidance should say 'already active', got: {guidance}"
+        )

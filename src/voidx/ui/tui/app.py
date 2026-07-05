@@ -298,7 +298,8 @@ class PureTui(
                 if not self._running or not self._busy:
                     return
                 self._busy_activity_tick += 1
-                self._render_busy_activity_tick()
+                if not self._render_busy_activity_tick():
+                    self._render_frame()
         except asyncio.CancelledError:
             raise
 

@@ -375,9 +375,11 @@ class GraphLlmMixin:
                     await self._ui.events.emit(StatusFinished(status_id="llm:retry"))
                 break
             except Exception as e:
-                from .helpers import _is_context_overflow_error
+                from .helpers import _classify_llm_error, LLMErrorKind
 
-                if _is_context_overflow_error(e) and overflow_compaction_attempts < 1:
+                kind = _classify_llm_error(e)
+
+                if kind == LLMErrorKind.CONTEXT_OVERFLOW and overflow_compaction_attempts < 1:
                     overflow_compaction_attempts += 1
                     result, _preflight_result = await self._preflight_compact_if_needed(
                         state_messages,
@@ -396,6 +398,25 @@ class GraphLlmMixin:
                             convergence_forced,
                         )
                         continue
+
+                if kind == LLMErrorKind.NON_RETRYABLE:
+                    failure_text = f"LLM call failed (non-retryable): {e}"
+                    if self._ui.via_events():
+                        await self._ui.events.emit(StatusUpdated(
+                            status_id="llm:retry",
+                            label="Failed",
+                            detail=failure_text,
+                        ))
+                        await self._ui.events.emit(StatusFinished(status_id="llm:retry"))
+                        await self._ui.events.emit(AssistantStreamUpdated(text=failure_text))
+                        await self._ui.events.emit(AssistantStreamCommitted())
+                    else:
+                        self._ui.ui.error(failure_text)
+                    return {
+                        "messages": [],
+                        "step_count": step,
+                        "should_continue": False,
+                    }
                 if failed_attempts < max_retries:
                     failed_attempts += 1
                     delay = failed_attempts * 2

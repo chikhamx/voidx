@@ -71,7 +71,7 @@ class TodoWriteTool(BaseTool):
         try:
             inp = TodoInput.model_validate(args)
         except Exception as exc:
-            return ToolResult(output=f"Invalid arguments: {exc}", metadata={"error": True})
+            return ToolResult(output=f"Invalid arguments: {exc}", summary="todo: invalid arguments", metadata={"error": True})
 
         if inp.op == "read":
             return self._execute_read(inp)
