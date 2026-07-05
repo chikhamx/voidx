@@ -161,7 +161,7 @@ async def test_v2_session_delete_method_removes_thread(tmp_path):
 
 
 @pytest.mark.asyncio
-async def test_v2_session_switch_rejects_running_thread():
+async def test_v2_session_switch_allows_running_thread():
     dock = BottomInputDock()
     session = GatewaySession(lambda: dock.tree, thread_id="t1")
     await session.register_thread("t2", title="Second")
@@ -176,8 +176,9 @@ async def test_v2_session_switch_rejects_running_thread():
     )
     result = await session.dispatch_request(request)
 
-    assert hasattr(result, "error")
-    assert result.error.code == -32001  # ERR_TURN_IN_PROGRESS
+    assert isinstance(result, JsonRpcResult)
+    assert result.result["active_thread_id"] == "t2"
+    assert session.active_thread_id == "t2"
 
 
 # ── diff.review.apply writes files ────────────────────────────────────

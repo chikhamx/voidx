@@ -34,6 +34,7 @@ from voidx.ui.protocol.v2.envelope import (
     parse_jsonrpc_message,
 )
 from voidx.ui.protocol.v2.threads import ThreadInfo
+from voidx.ui.protocol.requests import UiChoiceRequest, UiResponse
 
 
 from tests.test_ui.gateway.helpers import FakeClient, _parse, _method, _params
@@ -62,6 +63,40 @@ async def test_v2_dispatches_session_submit_method():
     assert result.id == 1
     assert result.result == {"ok": True}
     assert received == ["hello web"]
+
+
+@pytest.mark.asyncio
+async def test_session_respond_resolves_pending_ui_request():
+    dock = BottomInputDock()
+    session = GatewaySession(lambda: dock.tree, thread_id="t1")
+    client = FakeClient()
+    await session.connect(client)
+
+    pending = asyncio.create_task(
+        session.request(
+            UiChoiceRequest(
+                request_id="choice_1",
+                prompt="Pick one",
+                choices=[("First", "first", "First option")],
+            ),
+        ),
+    )
+    await asyncio.sleep(0)
+
+    result = await session.dispatch_request(
+        JsonRpcRequest(
+            id=2,
+            method="session.respond",
+            params={"request_id": "choice_1", "value": "first"},
+        )
+    )
+
+    assert isinstance(result, JsonRpcResult)
+    assert result.result == {"ok": True}
+    assert await asyncio.wait_for(pending, timeout=1) == UiResponse(
+        request_id="choice_1",
+        value="first",
+    )
 
 
 
@@ -269,5 +304,4 @@ async def test_v2_dispatch_returns_method_not_found_for_unknown_method():
     # It should be an error (method not found)
     assert hasattr(result, "error")
     assert result.error.code == -32601
-
 

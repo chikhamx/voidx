@@ -20,9 +20,10 @@ def test_thread_info_defaults():
     assert info.message_count == 0
 
 
-def test_thread_info_status_must_be_idle_or_running():
-    info = ThreadInfo(thread_id="t1", status="running")
-    assert info.status == "running"
+def test_thread_info_status_values():
+    for status in ("idle", "running", "waiting_for_user", "waiting_for_write_lock", "cancelling", "failed"):
+        info = ThreadInfo(thread_id="t1", status=status)  # type: ignore[arg-type]
+        assert info.status == status
     with pytest.raises(ValidationError):
         ThreadInfo(thread_id="t1", status="active")  # type: ignore[arg-type]
 
@@ -39,7 +40,7 @@ def test_turn_info_defaults():
 
 
 def test_turn_info_status_values():
-    for status in ("running", "completed", "cancelled"):
+    for status in ("running", "completed", "cancelled", "failed"):
         turn = TurnInfo(turn_id="turn1", thread_id="t1", status=status)  # type: ignore[arg-type]
         assert turn.status == status
 

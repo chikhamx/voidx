@@ -34,6 +34,10 @@ def test_workspace_snapshot_defaults():
     assert snap.threads == []
     assert snap.active_thread_id == ""
     assert snap.active_snapshot is None
+    assert snap.provider == ""
+    assert snap.model == ""
+    assert snap.workspace == ""
+    assert snap.profile_configured is None
 
 
 def test_workspace_snapshot_with_threads():
@@ -50,6 +54,20 @@ def test_workspace_snapshot_with_threads():
     assert snap.active_snapshot is not None
     assert snap.active_snapshot.thread_id == "t1"
     assert len(snap.active_snapshot.nodes) == 1
+
+
+def test_workspace_snapshot_can_carry_runtime_status():
+    snap = WorkspaceSnapshot(
+        provider="openai",
+        model="gpt-5.5",
+        workspace="/Users/chikham/workspace/voidx",
+        profile_configured=True,
+    )
+
+    assert snap.provider == "openai"
+    assert snap.model == "gpt-5.5"
+    assert snap.workspace.endswith("/voidx")
+    assert snap.profile_configured is True
 
 
 def test_workspace_snapshot_non_active_threads_have_no_snapshot():

@@ -67,6 +67,35 @@ async def test_gateway_connect_sends_snapshot_from_current_tree():
 
 
 @pytest.mark.asyncio
+async def test_gateway_snapshot_includes_runtime_and_write_lock_status():
+    dock = BottomInputDock()
+    session = GatewaySession(lambda: dock.tree, thread_id="t1")
+    await session.register_thread("t2")
+    session._run_manager.mark_running("t1")
+    await session._run_manager.acquire_workspace_write_lock("t1")
+    waiting = asyncio.create_task(session._run_manager.acquire_workspace_write_lock("t2"))
+    await asyncio.sleep(0)
+    client = FakeClient()
+
+    try:
+        await session.connect(client)
+
+        msg = json.loads(client.messages[0])
+        runtime = msg["params"]["runtime"]
+        write_lock = msg["params"]["workspace_write_lock"]
+        threads = {thread["thread_id"]: thread for thread in msg["params"]["threads"]}
+
+        assert runtime["active_thread_ids"] == ["t1", "t2"]
+        assert runtime["max_concurrent_sessions"] == 2
+        assert write_lock == {"holder_thread_id": "t1", "waiting_thread_ids": ["t2"]}
+        assert threads["t1"]["status"] == "running"
+        assert threads["t2"]["status"] == "waiting_for_write_lock"
+    finally:
+        waiting.cancel()
+        await asyncio.gather(waiting, return_exceptions=True)
+
+
+@pytest.mark.asyncio
 async def test_gateway_broadcasts_events_with_incrementing_sequences():
     dock = BottomInputDock()
     session = GatewaySession(lambda: dock.tree, thread_id="t1")
@@ -294,6 +323,7 @@ async def test_gateway_request_sends_request_and_resolves_response():
 
     assert request["method"] == "ui.request"
     assert request["params"]["request_id"] == "req_1"
+    assert request["params"]["thread_id"] == "t1"
 
     await session.handle_response(UiResponse(request_id="req_1", value="auto"))
 

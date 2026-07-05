@@ -195,3 +195,46 @@ async def test_v2_websocket_returns_error_for_unknown_method():
         await server.stop()
 
 
+
+
+@pytest.mark.asyncio
+async def test_v2_jsonrpc_result_routes_ui_response_by_thread_id_payload():
+    from voidx.ui.gateway.server import GatewayServer
+    from voidx.ui.protocol.requests import UiChoiceRequest, UiResponse
+
+    class WebSocketStub:
+        def __init__(self) -> None:
+            self.sent: list[str] = []
+
+        async def send(self, text: str) -> None:
+            self.sent.append(text)
+
+    dock = BottomInputDock()
+    session = GatewaySession(lambda: dock.tree, thread_id="t1")
+    await session.register_thread("t2", title="Second thread")
+    server = GatewayServer(session)
+    client = FakeClient()
+    await session.connect(client)
+    await session.switch_thread("t2")
+
+    pending = asyncio.create_task(
+        session.request(
+            UiChoiceRequest(
+                request_id="choice_t2",
+                prompt="Pick one",
+                choices=[("Ok", "ok", "Ok option")],
+            ),
+        ),
+    )
+    await asyncio.sleep(0)
+    await session.switch_thread("t1")
+
+    await server._handle_message(
+        WebSocketStub(),
+        '{"jsonrpc":"2.0","id":"choice_t2","result":{"thread_id":"t2","value":"ok"}}',
+    )
+
+    assert await asyncio.wait_for(pending, timeout=1) == UiResponse(
+        request_id="choice_t2",
+        value="ok",
+    )
