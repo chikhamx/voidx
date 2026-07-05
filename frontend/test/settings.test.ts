@@ -36,6 +36,17 @@ describe("renderSettingsModal", () => {
     expect(text).toContain("key ✓");
   });
 
+  it("renders controls for adding a configured model profile", () => {
+    initSettingsModal();
+    renderSettingsModal({ model: { provider: "deepseek", model: "deepseek-v4-flash" } });
+
+    const content = document.querySelector("#settings-content");
+    expect(content.textContent).toContain("新增模型 / 供应商");
+    expect(document.querySelector('[name="new_provider"]')).not.toBeNull();
+    expect(document.querySelector('[name="new_model"]')).not.toBeNull();
+    expect(document.querySelector('[name="new_api_key"]')).not.toBeNull();
+  });
+
   it("renders permissions tab when switched", () => {
     initSettingsModal();
     renderSettingsModal({ permissions: { permission_mode: "accept-edits", sandbox_mode: "read-only", approval_policy: "on-failure" } });
@@ -96,6 +107,33 @@ describe("collectSettingsPatch", () => {
 
     const patch = collectSettingsPatch();
     expect(patch.code_ide).toBe("cursor");
+  });
+
+  it("collects new model profile and provider secret from model tab", () => {
+    initSettingsModal();
+    renderSettingsModal({});
+    document.querySelector('[name="new_provider"]').value = "xunfei-coding-plan";
+    document.querySelector('[name="new_model"]').value = "astron-code-latest";
+    document.querySelector('[name="new_base_url"]').value = "https://spark-api-open.xf-yun.com/v1";
+    document.querySelector('[name="new_protocol"]').value = "openai";
+    document.querySelector('[name="new_api_key"]').value = "sk-test";
+
+    const patch = collectSettingsPatch();
+
+    expect(patch).toEqual({
+      model: {
+        provider: "xunfei-coding-plan",
+        model: "astron-code-latest",
+        base_url: "https://spark-api-open.xf-yun.com/v1",
+        protocol: "openai",
+      },
+      provider_secrets: {
+        provider: "xunfei-coding-plan",
+        profile_name: "xunfei-coding-plan/astron-code-latest",
+        action: "set",
+        api_key: "sk-test",
+      },
+    });
   });
 });
 

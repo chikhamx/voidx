@@ -1,10 +1,22 @@
 import { beforeEach } from "vitest";
 
+if (typeof HTMLDialogElement !== "undefined") {
+  HTMLDialogElement.prototype.showModal = function showModal() {
+    this.setAttribute("open", "");
+  };
+  HTMLDialogElement.prototype.close = function close() {
+    this.removeAttribute("open");
+  };
+}
+
 document.body.innerHTML = `
   <main class="vx-shell vx-workbench-shell">
     <header class="vx-titlebar">
       <div class="vx-titlebar-left">
         <span class="status-dot disconnected" id="status-dot" aria-label="Connection status"></span>
+        <button type="button" class="vx-titlebar-tool" id="titlebar-sidebar-toggle" aria-label="Toggle sidebar">▯</button>
+        <button type="button" class="vx-titlebar-tool" aria-label="Back" disabled>←</button>
+        <button type="button" class="vx-titlebar-tool" aria-label="Forward" disabled>→</button>
       </div>
     </header>
     <div class="vx-body">
@@ -13,22 +25,23 @@ document.body.innerHTML = `
           <span class="vx-project-name">Project</span>
         </div>
         <nav class="vx-sidebar-nav" aria-label="Workspace navigation">
-          <button type="button" class="vx-nav-item vx-new-chat" id="btn-new-chat">新对话</button>
+          <button type="button" class="vx-nav-item vx-new-chat" id="btn-new-chat">
+            <span class="vx-sidebar-row-icon"><svg viewBox="0 0 20 20" aria-hidden="true" focusable="false"><path d="M10 4.5v11"/><path d="M4.5 10h11"/></svg></span>
+            <span>新对话</span>
+          </button>
           <label class="vx-nav-item vx-search-item">
+            <span class="vx-sidebar-row-icon"><svg viewBox="0 0 20 20" aria-hidden="true" focusable="false"><circle cx="9" cy="9" r="5"/><path d="m12.8 12.8 3.2 3.2"/></svg></span>
             <span>搜索</span>
             <input type="text" class="vx-search" id="session-search" placeholder="搜索会话..." />
           </label>
-          <button type="button" class="vx-nav-item">已安排</button>
-          <button type="button" class="vx-nav-item" id="btn-integrations">插件</button>
+          <button type="button" class="vx-nav-item vx-hidden-action" id="btn-integrations" hidden>插件</button>
         </nav>
         <div class="vx-sidebar-section">
-          <div class="vx-sidebar-heading">项目</div>
-          <div class="vx-project-list" id="project-list">
-            <button type="button" class="vx-project-item active" data-project-name="voidx">voidx</button>
+          <div class="vx-sidebar-heading vx-project-heading">
+            <span class="vx-sidebar-row-icon"><svg viewBox="0 0 20 20" aria-hidden="true" focusable="false"><path d="M3.5 6.5h5l1.4 1.7h6.6v7.3a2 2 0 0 1-2 2h-11a2 2 0 0 1-2-2v-7a2 2 0 0 1 2-2Z"/><path d="M3.5 6.5V5a2 2 0 0 1 2-2h3.2l1.4 1.7h4.4a2 2 0 0 1 2 2v1.7"/></svg></span>
+            <span class="vx-project-heading-label">项目</span>
+            <button type="button" class="vx-project-add" id="btn-open-workspace" title="打开项目" aria-label="打开项目">+</button>
           </div>
-        </div>
-        <div class="vx-sidebar-section vx-sidebar-history">
-          <div class="vx-sidebar-heading">历史会话</div>
           <div class="vx-session-list" id="session-list"></div>
         </div>
         <div class="vx-sidebar-footer">
@@ -36,6 +49,7 @@ document.body.innerHTML = `
           <button type="button" class="vx-nav-item" id="btn-account">账户</button>
         </div>
       </aside>
+      <div class="vx-sidebar-resizer" id="sidebar-resizer" role="separator" aria-orientation="vertical" aria-label="调整侧栏宽度"></div>
       <section class="vx-main">
         <div class="vx-main-canvas">
         <section class="vx-empty-state" id="empty-state" aria-live="polite">
@@ -47,7 +61,6 @@ document.body.innerHTML = `
           <textarea id="input" rows="3"></textarea>
           <div class="vx-composer-actions">
             <button type="button" class="vx-attach-btn" id="btn-attach" aria-label="Add context">+</button>
-            <span class="vx-permission-pill" id="permission-pill">等待状态</span>
             <label class="vx-select-label" for="provider-select">
               <select id="provider-select" aria-label="Provider"></select>
             </label>
@@ -58,13 +71,36 @@ document.body.innerHTML = `
           </div>
         </form>
         <div class="context-menu" id="context-menu" hidden>
-          <div class="context-menu-item" data-action="paste">📋 Paste image from clipboard</div>
-          <div class="context-menu-item disabled" data-action="file">📁 Add file/folder context</div>
-          <div class="context-menu-item" data-action="web">🌐 Add web context</div>
+          <div class="context-menu-title">添加</div>
+          <button type="button" class="context-menu-item" data-action="file">
+            <span class="context-menu-icon">⌘</span>
+            <span>文件和文件夹</span>
+            <span class="context-menu-detail">添加路径到上下文</span>
+          </button>
+          <button type="button" class="context-menu-item" data-action="model">
+            <span class="context-menu-icon">◇</span>
+            <span>供应商 / 模型</span>
+            <span class="context-menu-detail">新增或配置模型</span>
+          </button>
+          <button type="button" class="context-menu-item" data-action="paste">
+            <span class="context-menu-icon">▣</span>
+            <span>剪贴板图片</span>
+            <span class="context-menu-detail">粘贴图片上下文</span>
+          </button>
+          <div class="context-menu-title">插件</div>
+          <button type="button" class="context-menu-item" data-action="skills">
+            <span class="context-menu-icon">◆</span>
+            <span>技能</span>
+            <span class="context-menu-detail">管理 Skills</span>
+          </button>
+          <button type="button" class="context-menu-item" data-action="integrations">
+            <span class="context-menu-icon">◎</span>
+            <span>插件</span>
+            <span class="context-menu-detail">MCP / Web / LSP</span>
+          </button>
         </div>
-        <div class="vx-context-row" id="context-row">
+        <div class="vx-context-row" id="context-row" hidden>
           <span id="context-workspace">voidx</span>
-          <span id="context-permission">等待状态</span>
           <span id="context-provider-model"></span>
         </div>
         </div>
@@ -78,10 +114,9 @@ document.body.innerHTML = `
         <button class="vx-dock-tab" data-tab="status" aria-selected="false">Status</button>
         <button class="vx-dock-toggle" id="dock-toggle" aria-label="Toggle bottom panel">▾</button>
       </div>
-      <div class="vx-dock-strip" id="dock-strip">
+      <div class="vx-dock-strip" id="dock-strip" hidden>
         <span class="status-session" id="status-session"></span>
         <span id="strip-workspace">voidx</span>
-        <span id="strip-permission">等待状态</span>
         <span id="strip-provider-model"></span>
       </div>
       <div class="vx-dock-content" id="dock-content">
@@ -100,7 +135,6 @@ document.body.innerHTML = `
             <div><dt>Session</dt><dd id="status-session-detail"></dd></div>
             <div><dt>Workspace</dt><dd id="status-workspace-detail">voidx</dd></div>
             <div><dt>Model</dt><dd id="status-provider-model"></dd></div>
-            <div><dt>Permission</dt><dd id="status-permission">等待状态</dd></div>
             <div><dt>Running</dt><dd id="status-running">idle</dd></div>
           </dl>
         </div>
@@ -166,5 +200,7 @@ beforeEach(() => {
   const dock = document.querySelector("#dock");
   if (dock) dock.className = "vx-dock collapsed";
   const strip = document.querySelector<HTMLElement>("#dock-strip");
-  if (strip) strip.hidden = false;
+  if (strip) strip.hidden = true;
+  const contextRow = document.querySelector<HTMLElement>("#context-row");
+  if (contextRow) contextRow.hidden = true;
 });

@@ -5,8 +5,17 @@ import {
   _resetContextMenuForTest,
 } from "../src/context-menu";
 
+const openDialogMock = vi.fn();
+
+vi.mock("@tauri-apps/plugin-dialog", () => ({
+  open: openDialogMock,
+}));
+
 beforeEach(() => {
   _resetContextMenuForTest();
+  openDialogMock.mockReset();
+  delete window.__TAURI_INTERNALS__;
+  delete window.__TAURI__;
   const menu = document.querySelector("#context-menu");
   if (menu) menu.hidden = true;
 });
@@ -70,7 +79,20 @@ describe("initContextMenu", () => {
     // in jsdom — the important thing is the handler was wired without throwing
   });
 
-  it("clicks integrations button when web action is triggered", () => {
+  it("renders grouped add menu actions", () => {
+    initContextMenu();
+    const btn = document.querySelector("#btn-attach");
+    btn.click();
+
+    const menu = document.querySelector("#context-menu");
+    expect(menu.textContent).toContain("添加");
+    expect(menu.textContent).toContain("文件和文件夹");
+    expect(menu.textContent).toContain("供应商 / 模型");
+    expect(menu.textContent).toContain("技能");
+    expect(menu.textContent).toContain("插件");
+  });
+
+  it("clicks integrations button when integrations action is triggered", () => {
     initContextMenu();
     const integrationsBtn = document.querySelector("#btn-integrations");
     const clickSpy = vi.fn();
@@ -81,20 +103,63 @@ describe("initContextMenu", () => {
     const btn = document.querySelector("#btn-attach");
     btn.click();
 
-    const webItem = document.querySelector(".context-menu-item[data-action='web']");
-    webItem.click();
+    const integrationsItem = document.querySelector(".context-menu-item[data-action='integrations']");
+    integrationsItem.click();
 
     expect(clickSpy).toHaveBeenCalled();
   });
 
-  it("does nothing for file action click", () => {
+  it("opens settings when model provider action is triggered", () => {
     initContextMenu();
+    const settingsBtn = document.querySelector("#btn-settings");
+    const clickSpy = vi.fn();
+    if (settingsBtn) {
+      settingsBtn.addEventListener("click", clickSpy);
+    }
+
     const btn = document.querySelector("#btn-attach");
     btn.click();
 
-    const fileItem = document.querySelector(".context-menu-item.disabled[data-action='file']");
-    // disabled items have no click handler — just verify no crash
-    expect(fileItem).not.toBeNull();
+    const modelItem = document.querySelector(".context-menu-item[data-action='model']");
+    modelItem.click();
+
+    expect(clickSpy).toHaveBeenCalled();
+  });
+
+  it("opens native picker and inserts selected file attachments", async () => {
+    window.__TAURI_INTERNALS__ = {};
+    openDialogMock.mockResolvedValue(["/tmp/file one.txt", "/tmp/folder"]);
+
+    initContextMenu();
+    const input = document.querySelector("#input");
+    const btn = document.querySelector("#btn-attach");
+    btn.click();
+
+    const fileItem = document.querySelector(".context-menu-item[data-action='file']");
+    fileItem.click();
+
+    await vi.waitFor(() => {
+      expect(openDialogMock).toHaveBeenCalledWith({
+        multiple: true,
+        directory: true,
+        title: "选择文件或文件夹",
+      });
+    });
+    expect(input.value).toBe('@/tmp/file one.txt @/tmp/folder');
+  });
+
+  it("falls back to slash command text when native picker is unavailable", async () => {
+    initContextMenu();
+    const input = document.querySelector("#input");
+    const btn = document.querySelector("#btn-attach");
+    btn.click();
+
+    const fileItem = document.querySelector(".context-menu-item[data-action='file']");
+    fileItem.click();
+
+    await vi.waitFor(() => {
+      expect(input.value).toContain("/file ");
+    });
   });
 
   it("positions context menu relative to attach button", () => {
