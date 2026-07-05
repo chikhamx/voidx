@@ -756,7 +756,7 @@ if (!stream.committed) {
 3. Tauri 桌面端启动验证：`cargo build --release` + 运行
 4. 手动测试：会话切换、todo dock、终端面板、diff review、工具卡片折叠、流式光标
 
-**验证命令**：`cd frontend && npm test && npm run build && cd ../desktop/src-tauri && cargo build --release`
+**验证命令**：`cd frontend && npm test && npm run build && cd ../desktop/tauri && cargo build --release`
 
 ## Open Questions
 

@@ -21,7 +21,8 @@
 - `src/voidx/ui/tools/`: UI-side tools — clipboard, file picker, skill picker, IDE integration.
 - `src/voidx/ui/gateway/`: WebSocket gateway for web/desktop frontend.
 - `tests/`: pytest coverage — per-module test directories (agent, config, llm, lsp, mcp, memory, permission, runtime, skills, tools, ui, workflow, etc.) plus top-level install/npm packaging tests.
-frontend TypeScript modules — `slash`, `render`, `markdown`, `stream`, `main`, etc.; `setup.ts` injects the DOM skeleton.
+- `frontend/`: Web/desktop UI (TypeScript SPA) — see `frontend/AGENTS.md`.
+- `desktop/`: Native desktop shell (Tauri 2) — see `desktop/AGENTS.md`.
 
 ## Runtime Environment
 - Use `./python.sh` (Unix) or `.\python.ps1` (Windows) as the Python entry point — these locate the voidx venv under `VOIDX_HOME` and forward all arguments. See `docs/dev-guide.md` for details. Commands below use the Unix form; Windows users substitute `.\python.ps1`.
@@ -33,10 +34,6 @@ frontend TypeScript modules — `slash`, `render`, `markdown`, `stream`, `main`,
 - Web UI gateway: `./python.sh -m voidx.main --web` (open frontend with `?ws=<gateway-url>`)
 - Headless web backend: `./python.sh -m voidx.main --web --web-headless`
 - Export UI protocol schema: `./python.sh scripts/export_ui_protocol_schema.py`
-- Frontend dev server: `cd frontend && npm run dev`
-- Desktop dev shell: `cd desktop && npm run dev` (spawns Python sidecar via Tauri)
-- Frontend tests (all): `cd frontend && npm test`
-Frontend tests (focused): `cd frontend && npx vitest run test/render.test.ts`
 
 ## Code Rules
 - Keep modules small and named by responsibility.
@@ -45,7 +42,6 @@ Frontend tests (focused): `cd frontend && npx vitest run test/render.test.ts`
 - Prefer structured metadata over parsing rendered text.
 - Keep prompts rules-first, concise, and specific to the agent role.
 - Do not add comments unless they explain non-obvious intent or constraints.
-- Frontend modules: export private functions that tests need to reach; guard module-top-level side effects (e.g. `bootstrap()`) with `import.meta.env.TEST` so importing under vitest stays pure.
 
 ## Document Lifecycle
 - Design docs live in `docs/specs/` while in progress.
@@ -56,13 +52,6 @@ Frontend tests (focused): `cd frontend && npx vitest run test/render.test.ts`
 ## Releasing
 - Release flow and version file checklist: `docs/releasing.md` (single source of truth — do not duplicate).
 
-## Frontend Testing
-- Framework: vitest + jsdom (configured in `frontend/vite.config.ts` under `test`).
-`frontend/test/setup.ts` runs at module top level
-Test files live in `frontend/test/`, named `<module>.test.ts`, mirroring `frontend/src/<module>.ts`.
-- Globals are enabled (`globals: true`) — `describe`/`it`/`expect` are available without import.
-- Stateful modules expose a `_resetForTest()` export to clear module-level state in `beforeEach`.
-create `frontend/test/<module>.test.ts`
 
 ## Safety
 - Do not commit `.voidx/`, `.env*`, or local credentials.

@@ -12,7 +12,7 @@ voidx 桌面端目前是一个 Tauri 2 壳 + 原生 HTML/JS 前端的最小实�
 
 ### 跨平台考量
 
-- **Windows**：Tauri 2 壳已验证可用（`desktop/src-tauri/src/main.rs`），Python 路径解析已处理 `.venv/Scripts/python.exe` + `py` launcher 回退
+- **Windows**：Tauri 2 壳已验证可用（`desktop/tauri/src/main.rs`），Python 路径解析已处理 `.venv/Scripts/python.exe` + `py` launcher 回退
 - **macOS**：Tauri 2 原生支持，Python 路径 `.venv/bin/python`，需验证 `beforeDevCommand` 的 `npm run dev --prefix` 在 macOS 上工作（bash 兼容）
 - **前端**：纯 Web 技术（HTML/CSS/JS），Tauri WebView 在 Windows 用 WebView2、macOS 用 WKWebView，两者均支持 ES modules、CSS Grid/Flexbox、WebSocket、`<dialog>` 元素
 - **字体**：Windows 用 Segoe UI / Cascadia Code，macOS 用 -apple-system / SF Mono，CSS font-stack 已覆盖
@@ -49,7 +49,7 @@ voidx 桌面端目前是一个 Tauri 2 壳 + 原生 HTML/JS 前端的最小实�
 
 ```
 ┌──────────────────────────────────────────────────────────┐
-│  Tauri 2 壳 (desktop/src-tauri/)                          │
+│  Tauri 2 壳 (desktop/tauri/)                          │
 │  - 拉起 Python 后端 (voidx.main --web --web-headless)     │
 │  - 暴露 get_gateway_url / get_backend_status 命令          │
 │  - emit backend_ready / backend_failed 事件               │
@@ -246,7 +246,7 @@ const status = await invoke("get_backend_status");
 // → { status: "starting" } | { status: "ready", url: "ws://..." } | { status: "failed", error: "..." }
 ```
 
-> **迁移注意**：现有 `frontend/src/main.js:36` 使用旧命令名 `invoke("gateway_url")`，实现时需同步更新为 `get_gateway_url`，与 `desktop/src-tauri/src/main.rs:32` 的 Rust 函数名一致。
+> **迁移注意**：现有 `frontend/src/main.js:36` 使用旧命令名 `invoke("gateway_url")`，实现时需同步更新为 `get_gateway_url`，与 `desktop/tauri/src/main.rs:32` 的 Rust 函数名一致。
 
 ### Tauri 事件（已有，前端可选监听）
 

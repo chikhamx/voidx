@@ -20,7 +20,7 @@ desktop 前端有 5 个 JS 模块（共 941 行），但从未建立测试体系
 - 不做 E2E 测试（需要真实浏览器 + WebSocket 后端，成本高）
 - 不做视觉回归测试 / 快照测试（前端是纯渲染层，DOM 结构断言已足够）
 - 不追求 100% 覆盖率，聚焦渲染逻辑和纯函数
-- 不改 Rust 侧（desktop/src-tauri）测试
+- 不改 Rust 侧（desktop/tauri）测试
 
 ## Architecture
 

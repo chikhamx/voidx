@@ -1,6 +1,6 @@
 # 桌面端壳侧完善 — 技术设计文档
 
-> **Status: Done** — 壳侧已实现。`desktop/src-tauri/src/main.rs` 已含
+> **Status: Done** — 壳侧已实现。`desktop/tauri/src/main.rs` 已含
 > `BackendStatus` enum、`backend_status` 命令、`resolve_python` 路径解析
 > （支持 `.venv/Scripts/python.exe` 回退）。
 

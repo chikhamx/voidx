@@ -10,7 +10,7 @@
 #   ./build.sh --help     # show this help
 #
 # The Python backend is NOT bundled. At runtime the Tauri app resolves the
-# voidx Python interpreter via resolve_python() in src-tauri/src/main.rs
+# voidx Python interpreter via resolve_python() in tauri/src/main.rs
 # (.venv, ~/.local/share/voidx/venv, PATH, etc.). This script keeps that
 # contract: it only builds the native shell + frontend assets.
 
@@ -21,7 +21,7 @@ SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 DESKTOP_DIR="$SCRIPT_DIR"
 ROOT_DIR="$(cd "$DESKTOP_DIR/.." && pwd)"
 FRONTEND_DIR="$ROOT_DIR/frontend"
-TAURI_DIR="$DESKTOP_DIR/src-tauri"
+TAURI_DIR="$DESKTOP_DIR/tauri"
 BUNDLE_DIR="$TAURI_DIR/target/release/bundle"
 
 # --- Args ------------------------------------------------------------------

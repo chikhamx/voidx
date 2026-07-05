@@ -37,7 +37,7 @@ uv.lock
 research/
 
 # Rust / Tauri build artifacts
-desktop/src-tauri/target/
-desktop/src-tauri/gen/
+desktop/tauri/target/
+desktop/tauri/gen/
 # Cargo.lock 对二进制应用应入库
-!desktop/src-tauri/Cargo.lock
+!desktop/tauri/Cargo.lock
