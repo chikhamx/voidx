@@ -90,7 +90,9 @@ async def test_perform_upgrade_runs_pip_for_newer_stable_version(monkeypatch) ->
     result = await selfupdate.perform_upgrade("9.0.0")
 
     assert result.ok is True
-    assert created
+    assert len(created) == 2, "perform_upgrade must call pip install twice (voidx + voidx-cli)"
+
+    # First call: voidx core
     command = created[0][0]
     assert command[:5] == (
         sys.executable,
@@ -100,4 +102,49 @@ async def test_perform_upgrade_runs_pip_for_newer_stable_version(monkeypatch) ->
         "--upgrade",
     )
     assert "voidx==9.0.0" in command
+    assert "voidx-cli" not in command
     assert created[0][1]["env"]["PIP_NO_INPUT"] == "1"
+
+    # Second call: voidx-cli
+    cli_command = created[1][0]
+    assert cli_command[:5] == (
+        sys.executable,
+        "-m",
+        "pip",
+        "install",
+        "--upgrade",
+    )
+    assert "voidx-cli==9.0.0" in cli_command
+    assert created[1][1]["env"]["PIP_NO_INPUT"] == "1"
+
+
+@pytest.mark.asyncio
+async def test_perform_upgrade_succeeds_even_if_voidx_cli_fails(monkeypatch) -> None:
+    """voidx-cli install failure must not void the overall upgrade."""
+    monkeypatch.delenv("VOIDX_LAUNCHED_BY_NPM", raising=False)
+    monkeypatch.setattr(selfupdate, "_in_virtualenv", lambda: True)
+    call_count = 0
+
+    class FakeProcessOk:
+        returncode = 0
+
+        async def communicate(self):
+            return b"", b""
+
+    class FakeProcessFail:
+        returncode = 1
+
+        async def communicate(self):
+            return b"", b"voidx-cli not found"
+
+    async def fake_create_subprocess_exec(*command: str, **kwargs):
+        nonlocal call_count
+        call_count += 1
+        return FakeProcessOk() if call_count == 1 else FakeProcessFail()
+
+    monkeypatch.setattr(selfupdate.asyncio, "create_subprocess_exec", fake_create_subprocess_exec)
+
+    result = await selfupdate.perform_upgrade("9.0.0")
+
+    assert result.ok is True
+    assert "voidx" in result.message.lower()

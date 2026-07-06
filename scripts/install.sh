@@ -490,6 +490,18 @@ else
     exit 1
 fi
 
+# ── Install voidx-cli (TUI frontend, non-fatal) ─────────────────────────────
+CLI_PIP_ARGS=("-m" "pip" "install" "--upgrade" "--no-cache-dir" "--progress-bar" "on")
+if [ -n "${VOIDX_PIP_INDEX:-}" ]; then
+    CLI_PIP_ARGS+=("-i" "${VOIDX_PIP_INDEX}" "--trusted-host" "${PIP_HOST}")
+fi
+CLI_PIP_ARGS+=("voidx-cli==${VERSION}")
+if "${VENV_PYTHON}" "${CLI_PIP_ARGS[@]}" >/dev/null 2>&1; then
+    ok "voidx-cli ${VERSION} installed"
+else
+    warn "voidx-cli ${VERSION} 安装失败，终端 TUI 模式不可用（--web 模式不受影响）"
+fi
+
 # ── Create symlink ─────────────────────────────────────────────────────────
 mkdir -p "${BIN_DIR}"
 ln -sf "${VOIDX_BIN}" "${VOIDX_LINK}"

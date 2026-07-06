@@ -369,6 +369,28 @@ if (-not $PipInstallOk -or ($LASTEXITCODE -ne 0)) {
     Abort-Install "pip install failed. This is usually a network issue. Try: 1) `$env:VOIDX_PIP_INDEX='https://pypi.tuna.tsinghua.edu.cn/simple'  2) Retry: powershell -File install.ps1"
 }
 
+# ── Install voidx-cli (TUI frontend, non-fatal) ─────────────────────────────
+$CliPipArgs = @("-m", "pip", "install", "--upgrade", "--no-cache-dir")
+if ($env:VOIDX_PIP_INDEX) {
+    $CliPipArgs += @("-i", $env:VOIDX_PIP_INDEX)
+    try {
+        $IndexUri = [System.Uri]::new($env:VOIDX_PIP_INDEX)
+        $CliPipArgs += @("--trusted-host", $IndexUri.Host)
+    } catch {}
+}
+$CliPipArgs += @("voidx-cli==$Version")
+$CliInstallOk = $true
+try {
+    & $VenvPython $CliPipArgs 2>&1 | ForEach-Object { Write-Host $_ }
+} catch {
+    $CliInstallOk = $false
+}
+if (-not $CliInstallOk -or ($LASTEXITCODE -ne 0)) {
+    Write-Host "  ⚠️  voidx-cli $Version install failed — terminal TUI mode unavailable (--web mode still works)" -ForegroundColor Yellow
+} else {
+    Write-Host "  ✅ voidx-cli $Version installed" -ForegroundColor Green
+}
+
 # ── Write marker ────────────────────────────────────────────────────────────
 Set-Content -Path $MarkerPath -Value $Marker -NoNewline
 

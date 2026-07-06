@@ -129,6 +129,42 @@ async def perform_upgrade(version: str | None = None, timeout: float = 120.0) ->
     if not is_newer(target, __version__):
         return UpgradeResult(ok=True, version=target, message=f"voidx is already up to date ({__version__}).")
 
+    env = {
+        **os.environ,
+        "PIP_NO_INPUT": "1",
+        "PIP_DISABLE_PIP_VERSION_CHECK": "1",
+        "PYTHON_KEYRING_BACKEND": "keyring.backends.null.Keyring",
+    }
+
+    # Step 1: upgrade voidx core (failure is fatal)
+    core_result = await _pip_install(f"voidx=={target}", env, timeout)
+    if not core_result.ok:
+        return UpgradeResult(ok=False, version=target, message=core_result.message)
+
+    # Step 2: upgrade voidx-cli (failure is non-fatal — TUI may be unavailable)
+    cli_result = await _pip_install(f"voidx-cli=={target}", env, timeout)
+    if not cli_result.ok:
+        log_tool_event(
+            "upgrade_voidx_cli_failed",
+            tool_name="selfupdate",
+            message=f"voidx-cli upgrade failed: {cli_result.message}",
+        )
+
+    return UpgradeResult(
+        ok=True,
+        version=target,
+        message=f"Upgraded voidx to {target}. Restart voidx to use the new version.",
+    )
+
+
+@dataclass(frozen=True)
+class _PipResult:
+    ok: bool
+    message: str
+
+
+async def _pip_install(spec: str, env: dict[str, str], timeout: float) -> _PipResult:
+    """Run pip install --upgrade for a single package spec."""
     command = [
         sys.executable,
         "-m",
@@ -136,14 +172,8 @@ async def perform_upgrade(version: str | None = None, timeout: float = 120.0) ->
         "install",
         "--upgrade",
         "--no-cache-dir",
-        f"voidx=={target}",
+        spec,
     ]
-    env = {
-        **os.environ,
-        "PIP_NO_INPUT": "1",
-        "PIP_DISABLE_PIP_VERSION_CHECK": "1",
-        "PYTHON_KEYRING_BACKEND": "keyring.backends.null.Keyring",
-    }
     process = None
     try:
         process = await asyncio.create_subprocess_exec(
@@ -160,19 +190,15 @@ async def perform_upgrade(version: str | None = None, timeout: float = 120.0) ->
                 await process.communicate()
         except Exception as exc:
             log_internal_error(exc, context="selfupdate_kill_timeout")
-        return UpgradeResult(ok=False, version=target, message=f"Upgrade timed out after {int(timeout)}s.")
+        return _PipResult(ok=False, message=f"Upgrade timed out after {int(timeout)}s.")
     except Exception as exc:
-        return UpgradeResult(ok=False, version=target, message=f"Upgrade failed: {exc}")
+        return _PipResult(ok=False, message=f"Upgrade failed: {exc}")
 
     if process.returncode == 0:
-        return UpgradeResult(
-            ok=True,
-            version=target,
-            message=f"Upgraded voidx to {target}. Restart voidx to use the new version.",
-        )
+        return _PipResult(ok=True, message=f"Installed {spec}.")
 
     detail = _decode_output(stderr) or _decode_output(stdout) or f"pip exited with {process.returncode}"
-    return UpgradeResult(ok=False, version=target, message=f"Upgrade failed: {detail}")
+    return _PipResult(ok=False, message=f"Upgrade failed: {detail}")
 
 
 def upgrade_hint() -> str:

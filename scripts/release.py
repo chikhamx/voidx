@@ -96,8 +96,12 @@ def _release_pypi(dry_run: bool) -> int:
         return 0
 
     print("📤 Uploading to PyPI...")
+    artifacts = sorted(DIST.glob("*.whl")) + sorted(DIST.glob("*.tar.gz"))
+    if not artifacts:
+        print("❌ No artifacts found in dist/.", file=sys.stderr)
+        return 1
     result = _run(
-        [sys.executable, "-m", "twine", "upload", str(DIST / "*")],
+        [sys.executable, "-m", "twine", "upload", *[str(a) for a in artifacts]],
     )
     if result != 0:
         print("❌ PyPI upload failed.")

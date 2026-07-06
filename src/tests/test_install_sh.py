@@ -162,6 +162,11 @@ class TestInstallShNpmPreferBehavior:
         assert "BUNDLED_PYTHON" in src, "Fallback must set up BUNDLED_PYTHON"
         assert "VENV_DIR" in src, "Fallback must set up VENV_DIR"
 
+    def test_fallback_installs_voidx_cli(self):
+        """PBS fallback must also install voidx-cli for terminal UI mode."""
+        src = _read_install_sh()
+        assert "voidx-cli" in src, "Fallback must install voidx-cli alongside voidx"
+
 
 class TestInstallShPipIsolation:
     """Tests verifying pip install runs isolated from source repo."""
