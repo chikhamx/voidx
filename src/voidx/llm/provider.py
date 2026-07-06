@@ -695,7 +695,7 @@ def get_context_limit(provider: str, protocol: str = "", context_window: int | N
         "doubao": 256_000,
         "typex": 128_000,
         "minimax": 1_000_000,
-        "xunfei-coding-plan": 92_160,
+        "xunfei-coding-plan": 200_000,
         "gemini": 1_000_000,
     }
     if provider in limits:
