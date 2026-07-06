@@ -163,7 +163,13 @@ def reset_ui_sink() -> None:
 
 
 def _default_tui_frontend_factory(status: Any, commands: list[tuple[str, str]]) -> Any:
-    cls = getattr(import_module("voidx_tui"), "PureTui")
+    try:
+        cls = getattr(import_module("voidx_cli"), "PureTui")
+    except ModuleNotFoundError:
+        raise RuntimeError(
+            "voidx_cli is required for terminal UI mode. "
+            "Install it with: pip install voidx-cli"
+        ) from None
     return cls(status, commands)
 
 

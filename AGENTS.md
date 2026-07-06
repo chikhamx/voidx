@@ -15,22 +15,23 @@
 - `src/voidx/lsp/`: Language Server Protocol client — manager, service, detector, schema.
 - `src/voidx/workflow/`: Structured workflow runtime — DAG, nodes, policy, routing, reconciliation, schema.
 - `src/voidx/logging/`: Request and tool logging.
-- `src/voidx/ui/tui/`: Pure terminal TUI — input parser, editor, panels, renderer, state.
 - `src/voidx/ui/output/`: Output rendering — dock tree, streaming, capture, events, diff.
 - `src/voidx/ui/protocol/`: UI protocol layer — v2 JSON-RPC models, schema, transcript, commands, requests.
 - `src/voidx/ui/tools/`: UI-side tools — clipboard, file picker, skill picker, IDE integration.
 - `src/voidx/ui/gateway/`: WebSocket gateway for web/desktop frontend.
-- `tests/`: pytest coverage — per-module test directories (agent, config, llm, lsp, mcp, memory, permission, runtime, skills, tools, ui, workflow, etc.) plus top-level install/npm packaging tests.
+- `src/tests/`: pytest coverage — per-module test directories (agent, config, llm, lsp, mcp, memory, permission, runtime, skills, tools, ui, workflow, etc.) plus top-level install/npm packaging tests.
 - `frontend/`: Web/desktop UI (TypeScript SPA) — see `frontend/AGENTS.md`.
 - `desktop/`: Native desktop shell (Tauri 2) — see `desktop/AGENTS.md`.
+- `tui/`: Pure terminal TUI (Python) — see `tui/AGENTS.md`.
 
 ## Runtime Environment
 - Use `./python.sh` (Unix) or `.\python.ps1` (Windows) as the Python entry point — these locate the voidx venv under `VOIDX_HOME` and forward all arguments. See `docs/dev-guide.md` for details. Commands below use the Unix form; Windows users substitute `.\python.ps1`.
 
 ## Commands
-- Full tests: `./python.sh -m pytest tests/ -v`
-- Focused tests: `./python.sh -m pytest tests/test_tools/test_basic.py -v`
+- Full tests: `./python.sh -m pytest src/tests/ -v`
+- Focused tests: `./python.sh -m pytest src/tests/test_tools/test_basic.py -v`
 - Build wheel: `./python.sh scripts/package.py`
+- Build + verify wheels (release): `./python.sh scripts/package.py --format all --clean --verify`
 - Web UI gateway: `./python.sh -m voidx.main --web` (open frontend with `?ws=<gateway-url>`)
 - Headless web backend: `./python.sh -m voidx.main --web --web-headless`
 - Export UI protocol schema: `./python.sh scripts/export_ui_protocol_schema.py`
@@ -51,7 +52,6 @@
 
 ## Releasing
 - Release flow and version file checklist: `docs/releasing.md` (single source of truth — do not duplicate).
-
 
 ## Safety
 - Do not commit `.voidx/`, `.env*`, or local credentials.

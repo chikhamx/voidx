@@ -8,7 +8,8 @@
   },
   "files": [
     "bin/",
-    "LICENSE"
+    "LICENSE",
+    "*.whl"
   ],
   "engines": {
     "node": ">=16"

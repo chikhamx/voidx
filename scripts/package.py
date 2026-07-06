@@ -24,6 +24,7 @@ def main() -> int:
     parser.add_argument("--clean", action="store_true", help="Remove output directory before building.")
     parser.add_argument("--check-only", action="store_true", help="Validate release metadata and exit.")
     parser.add_argument("--skip-checks", action="store_true", help="Skip release metadata checks.")
+    parser.add_argument("--verify", action="store_true", help="Build wheels then verify they install correctly in a temp venv.")
     args = parser.parse_args()
 
     if not args.skip_checks:
@@ -45,6 +46,11 @@ def main() -> int:
 
     for package_root in package_roots:
         result = _build_package(package_root, out_dir, args.format)
+        if result != 0:
+            return result
+
+    if args.verify:
+        result = _verify_wheels(out_dir)
         if result != 0:
             return result
     return 0
@@ -105,22 +111,19 @@ def _check_release_metadata() -> int:
     if not project_version:
         errors.append("src/voidx/__init__.py is missing __version__.")
 
-    pyproject_text = (ROOT / "pyproject.toml").read_text()
-    if project_version and f'voidx_tui=={project_version}' not in pyproject_text:
-        errors.append(f"pyproject.toml must depend on voidx_tui=={project_version}.")
 
-    tui_init = ROOT / "tui" / "src" / "voidx_tui" / "__init__.py"
+    tui_init = ROOT / "tui" / "voidx_cli" / "__init__.py"
     tui_pyproject = ROOT / "tui" / "pyproject.toml"
     if tui_init.exists() or tui_pyproject.exists():
         if not tui_init.exists():
-            errors.append("tui/src/voidx_tui/__init__.py is missing.")
+            errors.append("tui/voidx_cli/__init__.py is missing.")
         else:
             tui_text = tui_init.read_text()
             tui_match = re.search(r'__version__\s*=\s*"([^"]+)"', tui_text)
             tui_version = tui_match.group(1) if tui_match else ""
             if tui_version != project_version:
                 errors.append(
-                    f"tui/src/voidx_tui/__init__.py version {tui_version or '<missing>'} "
+                    f"tui/voidx_cli/__init__.py version {tui_version or '<missing>'} "
                     f"does not match {project_version or '<missing>'}."
                 )
         if not tui_pyproject.exists():
@@ -151,6 +154,74 @@ def _check_release_metadata() -> int:
         for error in errors:
             print(f"release metadata error: {error}", file=sys.stderr)
         return 1
+    return 0
+
+
+def _verify_wheels(out_dir: Path) -> int:
+    """Install built wheels into a temp venv and verify imports succeed."""
+    import tempfile
+
+    wheels = sorted(out_dir.glob("*.whl"))
+    if not wheels:
+        print("No wheels found in output directory.", file=sys.stderr)
+        return 1
+
+    voidx_wheel = next((w for w in wheels if w.name.startswith("voidx-") and not w.name.startswith("voidx_cli-")), None)
+    cli_wheel = next((w for w in wheels if w.name.startswith("voidx_cli-")), None)
+
+    if not voidx_wheel:
+        print("Missing voidx wheel.", file=sys.stderr)
+        return 1
+
+    print(f"\n🔍 Verifying wheel installation in temp venv…")
+    print(f"   voidx:     {voidx_wheel.name}")
+    print(f"   voidx_cli: {cli_wheel.name if cli_wheel else '(not built — skipping)'}")
+
+    with tempfile.TemporaryDirectory(prefix="voidx-verify-") as tmp:
+        venv_dir = Path(tmp) / "venv"
+        result = _run([sys.executable, "-m", "venv", str(venv_dir)])
+        if result != 0:
+            print("Failed to create temp venv.", file=sys.stderr)
+            return 1
+
+        pip = str(venv_dir / "bin" / "pip")
+        python = str(venv_dir / "bin" / "python")
+        if sys.platform == "win32":
+            pip = str(venv_dir / "Scripts" / "pip.exe")
+            python = str(venv_dir / "Scripts" / "python.exe")
+
+        # Upgrade pip
+        _run([pip, "install", "--upgrade", "pip", "--quiet"])
+
+        # Install voidx wheel
+        result = _run([pip, "install", str(voidx_wheel), "--quiet"])
+        if result != 0:
+            print("pip install voidx failed.", file=sys.stderr)
+            return 1
+
+        # Install voidx_cli wheel (optional)
+        if cli_wheel:
+            result = _run([pip, "install", str(cli_wheel), "--quiet"])
+            if result != 0:
+                print("pip install voidx_cli failed.", file=sys.stderr)
+                return 1
+
+        # Verify imports
+        probe = (
+            "import voidx; print(f'voidx {voidx.__version__}')"
+            + ("; import voidx_cli; print(f'voidx_cli {voidx_cli.__version__}')" if cli_wheel else "")
+        )
+        result = subprocess.run(
+            [python, "-c", probe],
+            capture_output=True, text=True,
+        )
+        if result.returncode != 0:
+            print(f"Import verification failed:\n{result.stderr}", file=sys.stderr)
+            return 1
+
+        print(f"   ✅ {result.stdout.strip()}")
+
+    print("   ✅ Wheel install verification passed.\n")
     return 0
 
 

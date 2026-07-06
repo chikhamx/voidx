@@ -353,7 +353,7 @@ if ($env:VOIDX_PIP_INDEX) {
     } catch {}
 }
 
-$PipArgs += @("voidx==$Version")
+$PipArgs += @("voidx-cli==$Version")
 
 $env:PIP_NO_INPUT = "1"
 $env:PIP_DISABLE_PIP_VERSION_CHECK = "1"

@@ -1,17 +1,18 @@
 # Releasing voidx
 
 This document describes the manual release flow for publishing voidx to PyPI
-and npm. The script `voidx_publish.sh` automates the build, validation, and
-publish steps below; this document additionally covers version bumps, git tags,
-and failure handling that the script does not perform.
+and npm.
 
 ## Package Names
 
-- PyPI packages: `voidx` and `voidx_tui`
+- PyPI packages: `voidx` and `voidx-cli`
 - npm package: `@chikhamx/voidx`
 - Installed CLI command: `voidx`
 
-The Python packages are the canonical implementation: `voidx` contains the core runtime and CLI, while `voidx_tui` contains the terminal frontend. The npm package is a thin launcher that installs and runs the matching Python package version.
+The Python packages are the canonical implementation: `voidx` contains the core
+runtime, while `voidx-cli` is an optional frontend for terminal-interactive mode.
+The npm package is a thin launcher that installs and runs the matching Python
+package version.
 
 ## Version Files
 
@@ -27,12 +28,11 @@ from the single source:
 | # | File | Field / Location | How it stays in sync |
 |---|------|------------------|----------------------|
 | 1 | `src/voidx/__init__.py` | `__version__ = "X.Y.Z"` | **Canonical source** — edit this (or let the bump script do it) |
-| 2 | `tui/src/voidx_tui/__init__.py` | `__version__ = "X.Y.Z"` | Bump script, must match `voidx` |
-| 3 | `pyproject.toml` | `voidx_tui==X.Y.Z` dependency pin | Bump script |
-| 4 | `tui/pyproject.toml` | `voidx==X.Y.Z` dependency pin | Bump script |
-| 5 | `npm/package.json` | `"version": "X.Y.Z"` | Bump script |
-| 6 | `scripts/install.sh` | `VERSION="${VOIDX_VERSION:-X.Y.Z}"` | Bump script |
-| 7 | `scripts/install.ps1` | `$Version = ... else { "X.Y.Z" }` | Bump script |
+| 2 | `tui/voidx_cli/__init__.py` | `__version__ = "X.Y.Z"` | Bump script, must match `voidx` |
+| 3 | `tui/pyproject.toml` | `voidx==X.Y.Z` dependency pin | Bump script |
+| 4 | `npm/package.json` | `"version": "X.Y.Z"` | Bump script |
+| 5 | `scripts/install.sh` | `VERSION="${VOIDX_VERSION:-X.Y.Z}"` | Bump script |
+| 6 | `scripts/install.ps1` | `$Version = ... else { "X.Y.Z" }` | Bump script |
 
 ### License
 
@@ -67,7 +67,7 @@ Run the full verification suite before publishing:
 
 ```bash
 ./python.sh scripts/package.py --check-only
-./python.sh -m compileall -q src scripts tests
+./python.sh -m compileall -q src scripts tui
 ./python.sh -m pytest -q
 npm --prefix npm run check
 npm pack ./npm --dry-run
@@ -77,34 +77,38 @@ If `uv` needs a writable cache outside the home directory, run package builds
 with:
 
 ```bash
-UV_CACHE_DIR=/private/tmp/voidx-uv-cache ./python.sh scripts/package.py --format all --clean
+UV_CACHE_DIR=/private/tmp/voidx-uv-cache ./python.sh scripts/package.py --format all --clean --verify
 ```
 
-The build should produce both Python packages:
+The build produces both wheels:
 
 ```text
 dist/voidx-<version>.tar.gz
 dist/voidx-<version>-py3-none-any.whl
-dist/voidx_tui-<version>.tar.gz
-dist/voidx_tui-<version>-py3-none-any.whl
+dist/voidx_cli-<version>.tar.gz
+dist/voidx_cli-<version>-py3-none-any.whl
 ```
 
 ## Publish to PyPI
 
-Build fresh artifacts:
+Build fresh artifacts and verify they install correctly:
 
 ```bash
-UV_CACHE_DIR=/private/tmp/voidx-uv-cache ./python.sh scripts/package.py --format all --clean
+UV_CACHE_DIR=/private/tmp/voidx-uv-cache ./python.sh scripts/package.py --format all --clean --verify
 ```
 
-Upload both PyPI packages with `twine` or an equivalent publishing tool. Publish/upload the same version for `voidx` and `voidx_tui` together:
+The `--verify` flag creates a temporary venv, pip-installs both wheels, and
+runs import verification. This proves the wheels are structurally sound before
+upload.
+
+Upload both wheels with `twine` or an equivalent publishing tool:
 
 ```bash
 ./python.sh -m twine upload \
   dist/voidx-<version>.tar.gz \
   dist/voidx-<version>-py3-none-any.whl \
-  dist/voidx_tui-<version>.tar.gz \
-  dist/voidx_tui-<version>-py3-none-any.whl
+  dist/voidx_cli-<version>.tar.gz \
+  dist/voidx_cli-<version>-py3-none-any.whl
 ```
 
 Verify a clean install:
@@ -113,16 +117,15 @@ Verify a clean install:
 python3.11 -m venv /tmp/voidx-pypi-smoke
 /tmp/voidx-pypi-smoke/bin/python -m pip install --upgrade pip
 /tmp/voidx-pypi-smoke/bin/python -m pip install voidx==<version>
-/tmp/voidx-pypi-smoke/bin/python - <<'PY'
-import voidx, voidx_tui
-assert voidx.__version__ == voidx_tui.__version__
-PY
+/tmp/voidx-pypi-smoke/bin/python -m pip install voidx-cli==<version>
 /tmp/voidx-pypi-smoke/bin/voidx version
 ```
 
 ## Publish to npm
 
-The npm package must be published after the matching Python packages are available on PyPI, because the npm launcher installs `voidx==<version>` on first run and `voidx` depends on the matching `voidx_tui==<version>` package.
+The npm package must be published after the matching Python packages are
+available on PyPI, because the npm launcher installs `voidx-cli==<version>`
+on first run.
 
 Pack and inspect the npm package:
 
@@ -187,8 +190,8 @@ voidx --help
 
 | Mistake | Consequence |
 |---------|-------------|
-| Edit `__init__.py` but forget to run `bump_version.py` | `voidx_tui`, dependency pins, `npm/package.json`, and install scripts keep the old version |
-| Only publish `voidx`, not `voidx_tui` | Fresh installs fail because `voidx` depends on `voidx_tui==<version>` |
+| Edit `__init__.py` but forget to run `bump_version.py` | `voidx_cli`, `npm/package.json`, and install scripts keep the old version |
+| Forget to publish `voidx-cli` | Terminal UI (`voidx --web`) users fail with \"No frontend registered\" |
 | Only bump package files, not install scripts | New users get the old version via `curl \| bash` |
 
 ## Notes

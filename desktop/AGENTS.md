@@ -14,12 +14,12 @@
   `node_modules/@tauri-apps/cli` — invoke with `./node_modules/.bin/tauri`.
 
 ## Commands
-- Dev shell: `npm run dev` (spawns Tauri dev with frontend hot-reload)
-- Build bundle: `./build.sh` (frontend + native bundle)
-- Build (no frontend): `./build.sh --no-frontend`
-- Rust tests: `cd tauri && cargo test`
-- Rust check: `cd tauri && cargo check`
-- Tauri info: `./node_modules/.bin/tauri info`
+- Dev shell: `cd desktop && npm run dev` (spawns Tauri dev with frontend hot-reload)
+- Build bundle: `cd desktop && ./build.sh` (frontend + native bundle)
+- Build (no frontend): `cd desktop && ./build.sh --no-frontend`
+- Rust tests: `cd desktop/tauri && cargo test`
+- Rust check: `cd desktop/tauri && cargo check`
+- Tauri info: `cd desktop && ./node_modules/.bin/tauri info`
 
 ## Code Rules
 - Keep `lib.rs` free of Tauri dependencies — it holds pure logic that tests

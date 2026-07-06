@@ -403,9 +403,20 @@ async function main() {
     }
   }
 
-  // Step 3: pip install
-  console.error("  [3/3] Installing voidx and dependencies…");
+  // Step 3: pip install voidx (core runtime)
+  console.error("  [3/4] Installing voidx core…");
   pipInstall(venvPython, packageSpec, env);
+
+  // Step 4: pip install bundled voidx_cli wheel (terminal frontend)
+  console.error("  [4/4] Installing voidx_cli frontend…");
+  const npmDir = path.resolve(__dirname, "..");
+  const wheelPattern = `voidx_cli-${pkg.version}-py3-none-any.whl`;
+  const wheelPath = path.join(npmDir, wheelPattern);
+  if (existsSync(wheelPath)) {
+    pipInstall(venvPython, wheelPath, env);
+  } else {
+    console.error(`  ⚠️  Bundled ${wheelPattern} not found — TUI frontend unavailable`);
+  }
 
   // Done
   writeMarker(markerPath, marker);

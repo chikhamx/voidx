@@ -33,9 +33,9 @@ Never hand-edit `protocol.d.ts` — it will be overwritten.
 - `main.ts` detects Tauri vs browser context and adapts accordingly.
 
 ## Build & Dev
-- Dev server: `npm run dev` (Vite, binds 127.0.0.1)
-- Build: `npm run build` (outputs to `dist/`)
-- Preview built dist: `npm run preview`
+- Dev server: `cd frontend && npm run dev` (Vite, binds 127.0.0.1)
+- Build: `cd frontend && npm run build` (outputs to `dist/`)
+- Preview built dist: `cd frontend && npm run preview`
 
 ## TypeScript
 - `tsconfig.json`: strict mode, ES2020 target, bundler module resolution.
@@ -53,4 +53,4 @@ Never hand-edit `protocol.d.ts` — it will be overwritten.
   available without import.
 - Stateful modules expose a `_resetForTest()` export to clear module-level
   state in `beforeEach`.
-- Run all: `npm test` · Run focused: `npx vitest run test/<module>.test.ts`
+- Run all: `cd frontend && npm test` · Run focused: `cd frontend && npx vitest run test/<module>.test.ts`

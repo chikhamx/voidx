@@ -108,6 +108,16 @@ def _release_pypi(dry_run: bool) -> int:
 
 
 def _release_npm(dry_run: bool) -> int:
+    # Copy bundled voidx_cli wheel from dist/ to npm/
+    tui_wheel = list(DIST.glob("voidx_cli-*.whl"))
+    if not tui_wheel:
+        print("❌ No voidx_cli wheel found in dist/. Build PyPI first.")
+        return 1
+    wheel_src = tui_wheel[0]
+    wheel_dst = NPM_DIR / wheel_src.name
+    shutil.copy2(wheel_src, wheel_dst)
+    print(f"   ✅ Bundled {wheel_src.name} → npm/")
+
     print("\n📦 Preparing npm package...")
 
     # Syntax check

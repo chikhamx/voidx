@@ -3,7 +3,7 @@
 
 The canonical source is ``src/voidx/__init__.py`` (``__version__``). This script
 writes that file plus every static version/dependency pin that must stay in sync:
-``tui/src/voidx_tui/__init__.py``, ``pyproject.toml``, ``tui/pyproject.toml``,
+``tui/voidx_cli/__init__.py``, ``tui/pyproject.toml``,
 ``npm/package.json``, ``scripts/install.sh``, and ``scripts/install.ps1``.
 
 Usage:
@@ -22,15 +22,13 @@ INIT_PY = ROOT / "src" / "voidx" / "__init__.py"
 NPM_PACKAGE = ROOT / "npm" / "package.json"
 INSTALL_SH = ROOT / "scripts" / "install.sh"
 INSTALL_PS1 = ROOT / "scripts" / "install.ps1"
-TUI_INIT_PY = ROOT / "tui" / "src" / "voidx_tui" / "__init__.py"
-PYPROJECT = ROOT / "pyproject.toml"
+TUI_INIT_PY = ROOT / "tui" / "voidx_cli" / "__init__.py"
 TUI_PYPROJECT = ROOT / "tui" / "pyproject.toml"
 
 SEMVER_RE = re.compile(r"^\d+\.\d+\.\d+$")
 INIT_VERSION_RE = re.compile(r'(__version__\s*=\s*")[^"]+(")')
 INSTALL_SH_RE = re.compile(r'(VERSION="\$\{VOIDX_VERSION:-)\d+\.\d+\.\d+(\}")')
 INSTALL_PS1_RE = re.compile(r'(\$Version = if \(\$env:VOIDX_VERSION\) \{ \$env:VOIDX_VERSION \} else \{ ")\d+\.\d+\.\d+(" \})')
-PYPROJECT_TUI_DEP_RE = re.compile(r'("voidx_tui==)\d+\.\d+\.\d+("[,\]])')
 TUI_PYPROJECT_CORE_DEP_RE = re.compile(r'("voidx==)\d+\.\d+\.\d+("[,\]])')
 
 
@@ -58,11 +56,9 @@ def bump_init(version: str) -> str:
 
 
 def bump_tui_init(version: str) -> str:
-    return _replace_once(TUI_INIT_PY, INIT_VERSION_RE, version, "voidx_tui __version__")
+    return _replace_once(TUI_INIT_PY, INIT_VERSION_RE, version, "voidx_cli __version__")
 
 
-def bump_pyproject(version: str) -> str:
-    return _replace_once(PYPROJECT, PYPROJECT_TUI_DEP_RE, version, "voidx_tui dependency")
 
 
 def bump_tui_pyproject(version: str) -> str:
@@ -94,9 +90,6 @@ def verify(version: str, contents: dict[Path, str]) -> None:
     if tui_init_version != version:
         die(f"{TUI_INIT_PY} has __version__={tui_init_version!r}, expected {version!r}.")
 
-    root_dep = f"voidx_tui=={version}"
-    if root_dep not in contents[PYPROJECT]:
-        die(f"{PYPROJECT} does not contain dependency {root_dep}.")
 
     tui_dep = f"voidx=={version}"
     if tui_dep not in contents[TUI_PYPROJECT]:
@@ -133,7 +126,6 @@ def main() -> None:
     contents = {
         INIT_PY: bump_init(version),
         TUI_INIT_PY: bump_tui_init(version),
-        PYPROJECT: bump_pyproject(version),
         TUI_PYPROJECT: bump_tui_pyproject(version),
         NPM_PACKAGE: bump_npm(version),
         INSTALL_SH: bump_install_sh(version),
