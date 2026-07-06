@@ -18,7 +18,6 @@ from voidx.runtime.ui import (
     WarningAppended,
 )
 from voidx.tools.service import ToolContext, ToolResult
-from voidx.ui.output.events.bus import UiEventTimeout
 
 from .types import ToolResultOk, _ExecutedTool, _task_state_for_state, _tool_result_ok
 from .guards import (
@@ -168,7 +167,7 @@ class GraphToolExecutor:
 
             try:
                 tool_node = await notify_tool_started(host, tc, display_policy)
-            except UiEventTimeout:
+            except TimeoutError:
                 return _ExecutedTool(
                     message=ToolMessage(
                         content=sanitize_tool_message_content(

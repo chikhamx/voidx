@@ -63,7 +63,7 @@ from voidx.runtime.ui import (
     SubagentFinished,
     SubagentStarted,
 )
-from voidx.ui.output.types import InteractionFrontend
+from voidx.runtime.ui import InteractionFrontend
 from voidx.runtime.ui_port import runtime_ui_port
 from voidx.skills.service import SkillRegistry, SkillService
 

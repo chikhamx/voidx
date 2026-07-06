@@ -232,6 +232,8 @@ DEFAULT_DISPLAY_RULES = _LazyAttr("voidx.ui.output.display_policy", "DEFAULT_DIS
 dock = _LazyAttr("voidx.ui.output.dock", "dock")
 session_tracker = _LazyAttr("voidx.ui.session", "session_tracker")
 ui_events = _LazyAttr("voidx.ui.output.events", "ui_events")
+InteractionFrontend = _LazyAttr("voidx.ui.output.types", "InteractionFrontend")
+paste_clipboard_image = _LazyAttr("voidx.ui.tools.clipboard_image", "paste_clipboard_image")
 
 
 def _attr(module_name: str, attr_name: str) -> Any:

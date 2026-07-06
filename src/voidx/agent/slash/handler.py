@@ -19,8 +19,7 @@ from voidx.agent.slash.session import SlashSessionMixin
 from voidx.agent.slash.skills import SlashSkillsMixin
 from voidx.agent.slash.upgrade import SlashUpgradeMixin
 from voidx.agent.slash.runtime import PROVIDERS, _select_from_list, _w, prompt_text
-from voidx.runtime.ui import COMMANDS, ui
-from voidx.ui.tools.clipboard_image import paste_clipboard_image
+from voidx.runtime.ui import COMMANDS, paste_clipboard_image, ui
 
 
 class SlashHandler(

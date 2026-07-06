@@ -18,7 +18,7 @@ from voidx.llm.usage import UsageStats
 from voidx.memory.service import SessionInfo
 from voidx.permission.service import PermissionService
 from voidx.runtime.ui_port import AgentUiPort
-from voidx.ui.output.types import InteractionFrontend
+from voidx.runtime.ui import InteractionFrontend
 from voidx.tools.service import ToolRegistry, TaskTracker
 
 if TYPE_CHECKING:
