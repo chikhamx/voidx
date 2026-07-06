@@ -1,8 +1,7 @@
 # LLM 报错驱动的工具调用与提示词优化
 
 ## Status
-
-Spec awaiting implementation.
+> **Status: Done**
 
 ## Summary
 

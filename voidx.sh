@@ -1,2 +1,2 @@
 #!/bin/bash
-PYTHONPATH=src ./python.sh -m voidx.main "$@"
+PYTHONPATH=src:tui/src ./python.sh -m voidx.main "$@"

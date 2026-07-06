@@ -478,7 +478,7 @@ class SlashModelMixin:
         if stats is not None:
             stats.context_limit = limit
         app = self.host.app
-        if app is not None and hasattr(app, "status"):
+        if app is not None:
             app.status.context_limit = limit
             app.status.provider = self.host.config.model.provider
             app.status.model = self.host.config.model.model

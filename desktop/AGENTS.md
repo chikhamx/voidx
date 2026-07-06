@@ -1,10 +1,5 @@
 # voidx Desktop Agent Instructions
 
-This subproject is the native desktop shell for voidx — a Tauri 2 application
-that spawns the Python backend as a sidecar and hosts the web frontend in a
-native window. It does **not** bundle Python; at runtime it resolves the
-interpreter and launches `voidx.main --web --web-headless`.
-
 ## Project Shape
 - `tauri/src/lib.rs`: Pure, testable logic — Python interpreter resolution, workspace resolution, persistence, backend status serialization.
 - `tauri/src/main.rs`: Tauri application entry — app state, tauri commands, backend spawn/kill lifecycle, window events. Depends on `lib.rs`.
@@ -31,18 +26,12 @@ interpreter and launches `voidx.main --web --web-headless`.
   can exercise without a runtime. Tauri-coupled code stays in `main.rs`.
 - Functions in `lib.rs` are `pub` so integration tests under `tauri/tests/`
   can import them.
-- `resolve_python` and `resolve_workspace` read env vars and the filesystem;
-  tests must isolate via temp dirs and env-var guards (see `HOME_LOCK` in
-  `tests/persist_workspace.rs`).
+- Tests that mutate env vars must serialize via a `Mutex` guard (see `tests/`).
 - Do not add comments unless they explain non-obvious intent or constraints.
 
 ## Testing
-- Framework: Rust built-in (`#[test]`), run via `cargo test`.
-- Integration tests live in `tauri/tests/`, one file per concern, mirroring
-  the `lib.rs` public API surface.
-- Tests that mutate `HOME` must serialize via a `Mutex` guard — `cargo test`
-  runs threads in parallel and `std::env::set_var` is process-global.
-- `tempfile` crate is in `[dev-dependencies]` for isolated filesystem tests.
+- Integration tests in `tauri/tests/`, one file per concern, mirroring `lib.rs`.
+- `cargo test` runs threads in parallel; env-mutating tests need a `Mutex` guard.
 
 ## Safety
 - Do not commit `tauri/target/` or `tauri/gen/` (build artifacts).
