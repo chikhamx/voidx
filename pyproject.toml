@@ -61,4 +61,4 @@ where = ["src"]
 [tool.pytest.ini_options]
 asyncio_mode = "auto"
 pythonpath = ["src", "tui"]
-testpaths = ["src/tests"]
+testpaths = ["src/tests", "tui/tests"]
