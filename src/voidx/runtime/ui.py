@@ -168,7 +168,7 @@ def _default_tui_frontend_factory(status: Any, commands: list[tuple[str, str]]) 
     except ModuleNotFoundError:
         raise RuntimeError(
             "voidx_cli is required for terminal UI mode. "
-            "Install it with: pip install voidx-cli"
+            "Install it with: pip install voidx-cli, or reinstall via npm (npm install -g @chikhamx/voidx)"
         ) from None
     return cls(status, commands)
 

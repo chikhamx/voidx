@@ -473,7 +473,7 @@ if [ -n "${VOIDX_PIP_INDEX:-}" ]; then
     PIP_ARGS+=("--trusted-host" "${PIP_HOST}")
 fi
 
-PIP_ARGS+=("voidx-cli==${VERSION}")
+PIP_ARGS+=("voidx==${VERSION}")
 
 export PIP_NO_INPUT=1
 export PIP_DISABLE_PIP_VERSION_CHECK=1

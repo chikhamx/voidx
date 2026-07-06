@@ -177,14 +177,14 @@ class TestInstallShPipIsolation:
         src = _read_install_sh()
         lines = src.splitlines()
 
-        # Find the line that adds voidx-cli==VERSION to PIP_ARGS
+        # Find the line that adds voidx==VERSION to PIP_ARGS
         pip_line_idx = None
         for i, line in enumerate(lines):
-            if "voidx-cli==" in line and "PIP_ARGS" in line:
+            if "voidx==" in line and "PIP_ARGS" in line and "voidx-cli" not in line:
                 pip_line_idx = i
                 break
 
-        assert pip_line_idx is not None, "Script must have PIP_ARGS with voidx-cli==VERSION"
+        assert pip_line_idx is not None, "Script must have PIP_ARGS with voidx==VERSION"
 
         # Look backwards from the pip install line for a cd command
         # that moves to VENV_DIR or another non-source directory
