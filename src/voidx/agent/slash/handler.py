@@ -20,6 +20,7 @@ from voidx.agent.slash.skills import SlashSkillsMixin
 from voidx.agent.slash.upgrade import SlashUpgradeMixin
 from voidx.agent.slash.runtime import PROVIDERS, _select_from_list, _w, prompt_text
 from voidx.runtime.ui import COMMANDS, ui
+from voidx.ui.tools.clipboard_image import paste_clipboard_image
 
 
 class SlashHandler(
@@ -441,11 +442,7 @@ class SlashHandler(
         )
 
     def _paste_clipboard_image(self) -> None:
-        app = self.host.app
-        if app is None or not hasattr(app, "paste_clipboard_image"):
-            ui.error("/paste requires the interactive UI.")
-            return
-        result = app.paste_clipboard_image()
+        result = paste_clipboard_image(self.host.workspace)
         if result.ok:
             ui.print(f"[dim]{result.message}[/dim]")
             return

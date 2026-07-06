@@ -60,10 +60,10 @@ from voidx.runtime.ui import (
     GuidanceSubmitted,
     OutputNode,
     OutputTree,
-    PureTui,
     SubagentFinished,
     SubagentStarted,
 )
+from voidx.ui.output.types import InteractionFrontend
 from voidx.runtime.ui_port import runtime_ui_port
 from voidx.skills.service import SkillRegistry, SkillService
 
@@ -248,7 +248,7 @@ class VoidXGraph(
         self._session_date: str = session_date(session)
         self._session_msg_cache: list | None = None
         self._context_cache = ContextCompilerCache()
-        self._app: PureTui | None = None
+        self._app: InteractionFrontend | None = None
         self._next_agent_id: int = 0
         self._task_state = TaskState()
         self._needs_failure_check: dict[str, dict] = {}
@@ -282,7 +282,7 @@ class VoidXGraph(
             _host_contract: GraphComponentHost = self
 
     @property
-    def app(self) -> PureTui | None:
+    def app(self) -> InteractionFrontend | None:
         """The interactive TUI app, if one is running."""
         return self._app
 

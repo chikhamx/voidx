@@ -5,7 +5,7 @@ from __future__ import annotations
 from rich.text import Text
 
 from voidx.ui.output.dock import dock
-from voidx.ui.tui.helpers import _clip_cells
+from voidx_tui.helpers import _clip_cells
 
 
 _TODO_PINNED_MAX_ITEMS = 4

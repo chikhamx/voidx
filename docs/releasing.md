@@ -7,12 +7,11 @@ and failure handling that the script does not perform.
 
 ## Package Names
 
-- PyPI package: `voidx`
+- PyPI packages: `voidx` and `voidx_tui`
 - npm package: `@chikhamx/voidx`
 - Installed CLI command: `voidx`
 
-The Python package is the canonical implementation. The npm package is a thin
-launcher that installs and runs the matching Python package version.
+The Python packages are the canonical implementation: `voidx` contains the core runtime and CLI, while `voidx_tui` contains the terminal frontend. The npm package is a thin launcher that installs and runs the matching Python package version.
 
 ## Version Files
 
@@ -28,10 +27,12 @@ from the single source:
 | # | File | Field / Location | How it stays in sync |
 |---|------|------------------|----------------------|
 | 1 | `src/voidx/__init__.py` | `__version__ = "X.Y.Z"` | **Canonical source** — edit this (or let the bump script do it) |
-| 2 | `pyproject.toml` | `dynamic = ["version"]` | Dynamic via `[tool.setuptools.dynamic] version = {attr = "voidx.__version__"}` |
-| 3 | `npm/package.json` | `"version": "X.Y.Z"` | Bump script |
-| 4 | `scripts/install.sh` | `VERSION="${VOIDX_VERSION:-X.Y.Z}"` | Bump script |
-| 5 | `scripts/install.ps1` | `$Version = ... else { "X.Y.Z" }` | Bump script |
+| 2 | `tui/src/voidx_tui/__init__.py` | `__version__ = "X.Y.Z"` | Bump script, must match `voidx` |
+| 3 | `pyproject.toml` | `voidx_tui==X.Y.Z` dependency pin | Bump script |
+| 4 | `tui/pyproject.toml` | `voidx==X.Y.Z` dependency pin | Bump script |
+| 5 | `npm/package.json` | `"version": "X.Y.Z"` | Bump script |
+| 6 | `scripts/install.sh` | `VERSION="${VOIDX_VERSION:-X.Y.Z}"` | Bump script |
+| 7 | `scripts/install.ps1` | `$Version = ... else { "X.Y.Z" }` | Bump script |
 
 ### License
 
@@ -79,11 +80,13 @@ with:
 UV_CACHE_DIR=/private/tmp/voidx-uv-cache ./python.sh scripts/package.py --format all --clean
 ```
 
-The build should produce:
+The build should produce both Python packages:
 
 ```text
 dist/voidx-<version>.tar.gz
 dist/voidx-<version>-py3-none-any.whl
+dist/voidx_tui-<version>.tar.gz
+dist/voidx_tui-<version>-py3-none-any.whl
 ```
 
 ## Publish to PyPI
@@ -94,10 +97,14 @@ Build fresh artifacts:
 UV_CACHE_DIR=/private/tmp/voidx-uv-cache ./python.sh scripts/package.py --format all --clean
 ```
 
-Upload with `twine` or an equivalent PyPI publishing tool:
+Upload both PyPI packages with `twine` or an equivalent publishing tool. Publish/upload the same version for `voidx` and `voidx_tui` together:
 
 ```bash
-./python.sh -m twine upload dist/voidx-<version>.tar.gz dist/voidx-<version>-py3-none-any.whl
+./python.sh -m twine upload \
+  dist/voidx-<version>.tar.gz \
+  dist/voidx-<version>-py3-none-any.whl \
+  dist/voidx_tui-<version>.tar.gz \
+  dist/voidx_tui-<version>-py3-none-any.whl
 ```
 
 Verify a clean install:
@@ -106,14 +113,16 @@ Verify a clean install:
 python3.11 -m venv /tmp/voidx-pypi-smoke
 /tmp/voidx-pypi-smoke/bin/python -m pip install --upgrade pip
 /tmp/voidx-pypi-smoke/bin/python -m pip install voidx==<version>
+/tmp/voidx-pypi-smoke/bin/python - <<'PY'
+import voidx, voidx_tui
+assert voidx.__version__ == voidx_tui.__version__
+PY
 /tmp/voidx-pypi-smoke/bin/voidx version
 ```
 
 ## Publish to npm
 
-The npm package must be published after the matching Python package is
-available on PyPI, because the npm launcher installs `voidx==<version>` on
-first run.
+The npm package must be published after the matching Python packages are available on PyPI, because the npm launcher installs `voidx==<version>` on first run and `voidx` depends on the matching `voidx_tui==<version>` package.
 
 Pack and inspect the npm package:
 
@@ -178,8 +187,8 @@ voidx --help
 
 | Mistake | Consequence |
 |---------|-------------|
-| Edit `__init__.py` but forget to run `bump_version.py` | `npm/package.json` and install scripts keep the old version |
-| Only bump Python files, not `npm/package.json` | `scripts/package.py` build fails (version mismatch check) |
+| Edit `__init__.py` but forget to run `bump_version.py` | `voidx_tui`, dependency pins, `npm/package.json`, and install scripts keep the old version |
+| Only publish `voidx`, not `voidx_tui` | Fresh installs fail because `voidx` depends on `voidx_tui==<version>` |
 | Only bump package files, not install scripts | New users get the old version via `curl \| bash` |
 
 ## Notes

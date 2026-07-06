@@ -20,9 +20,9 @@ from voidx.runtime.ui import (
     GatewayServer,
     GatewaySession,
     McpServerStatus,
-    PureTui,
     StartupShown,
     UiStatus,
+    create_frontend,
     emit_web_gateway_bootstrap,
 )
 from voidx.agent.task_state import goal_label, goal_type_from_join
@@ -171,7 +171,7 @@ class GraphRunLoopMixin(GraphTurnMixin, GraphSessionMixin, GraphTranscriptMixin)
 
         exit_message: str | None = None
 
-        app = PureTui(
+        app = create_frontend(
             UiStatus(
                 provider=self.config.model.provider,
                 model=self.config.model.model,

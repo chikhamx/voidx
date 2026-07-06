@@ -14,12 +14,12 @@ from rich.style import Style
 from voidx.llm.usage import UsageStats
 from voidx.ui.commands import COMMANDS
 from voidx.ui.output.dock import dock
-from voidx.ui.tui import PureTui, _rendered_row_count
-from voidx.ui.tui.state import InputState, RenderState
+from voidx_tui import PureTui, _rendered_row_count
+from voidx_tui.state import InputState, RenderState
 
 
 def test_todo_busy_and_choice_panel_render_once_in_full_frame(tmp_path, monkeypatch):
-    monkeypatch.setattr("voidx.ui.tui.render_activity.time.monotonic", lambda: 105.0)
+    monkeypatch.setattr("voidx_tui.render_activity.time.monotonic", lambda: 105.0)
     tui = _tui(tmp_path)
     tui._console = Console(file=None, force_terminal=True, width=80, height=24, _environ={})
     tui._busy = True
@@ -49,7 +49,7 @@ def test_todo_busy_and_choice_panel_render_once_in_full_frame(tmp_path, monkeypa
 
 
 def test_choice_selection_only_render_skips_todo_and_busy_lines(tmp_path, monkeypatch):
-    monkeypatch.setattr("voidx.ui.tui.render_activity.time.monotonic", lambda: 105.0)
+    monkeypatch.setattr("voidx_tui.render_activity.time.monotonic", lambda: 105.0)
     fake_stdout = _FakeStdout()
     monkeypatch.setattr(sys, "stdout", fake_stdout)
     tui = _tui(tmp_path)
@@ -81,7 +81,7 @@ def test_choice_selection_only_render_skips_todo_and_busy_lines(tmp_path, monkey
 
 
 def test_todo_busy_and_text_prompt_render_once_in_full_frame(tmp_path, monkeypatch):
-    monkeypatch.setattr("voidx.ui.tui.render_activity.time.monotonic", lambda: 105.0)
+    monkeypatch.setattr("voidx_tui.render_activity.time.monotonic", lambda: 105.0)
     tui = _tui(tmp_path)
     tui._console = Console(file=None, force_terminal=True, width=80, height=24, _environ={})
     tui._busy = True
@@ -132,7 +132,7 @@ def test_agent_placeholder_replaces_legacy_working_header(tmp_path):
 
 
 def test_busy_activity_tick_noops_without_rendered_frame(tmp_path, monkeypatch):
-    monkeypatch.setattr("voidx.ui.tui.render_activity.time.monotonic", lambda: 70.0)
+    monkeypatch.setattr("voidx_tui.render_activity.time.monotonic", lambda: 70.0)
     tui = _tui(tmp_path)
     tui._busy = True
     tui._busy_started_at = 0.0

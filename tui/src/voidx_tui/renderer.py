@@ -2,12 +2,12 @@
 
 from __future__ import annotations
 
-from voidx.ui.tui.overlays import _OverlayRendererMixin
-from voidx.ui.tui.render_activity import _ActivityRendererMixin
-from voidx.ui.tui.render_frame import _FrameRendererMixin
-from voidx.ui.tui.render_input import _InputRendererMixin
-from voidx.ui.tui.render_status import StatusSegment, _StatusRendererMixin
-from voidx.ui.tui.render_todo import _TodoRendererMixin
+from voidx_tui.overlays import _OverlayRendererMixin
+from voidx_tui.render_activity import _ActivityRendererMixin
+from voidx_tui.render_frame import _FrameRendererMixin
+from voidx_tui.render_input import _InputRendererMixin
+from voidx_tui.render_status import StatusSegment, _StatusRendererMixin
+from voidx_tui.render_todo import _TodoRendererMixin
 
 
 class _TerminalRendererMixin(

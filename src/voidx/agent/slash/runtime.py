@@ -55,7 +55,7 @@ async def _select_from_list(app, prompt: str, items: list[str]) -> int | None:
 
 
 async def prompt_text(app, text: str, default: str = "", secret: bool = False) -> str | None:
-    if app is not None and hasattr(app, "ask_text"):
+    if app is not None:
         return await app.ask_text(text, default=default, secret=secret)
 
     loop = asyncio.get_event_loop()

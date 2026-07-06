@@ -11,8 +11,8 @@ from rich.console import Console
 
 from voidx.ui.commands import COMMANDS
 from voidx.ui.output.dock import dock
-import voidx.ui.tui.terminal_mixin as terminal_mixin
-from voidx.ui.tui import (
+import voidx_tui.terminal_mixin as terminal_mixin
+from voidx_tui import (
     PureTui,
     _ENTER_TERMINAL_SEQUENCE,
     _EXIT_TERMINAL_SEQUENCE,

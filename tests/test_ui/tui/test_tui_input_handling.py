@@ -11,7 +11,7 @@ from rich.console import Console
 
 from voidx.config import Settings
 from voidx.ui.commands import COMMANDS
-from voidx.ui.tui import PureTui
+from voidx_tui import PureTui
 
 
 def _write_skill(workspace, name: str, description: str) -> None:
@@ -228,7 +228,7 @@ def test_attachment_matches_are_cached_per_token(tmp_path, monkeypatch):
         return [FileCandidate("src/main.py", "file", 1)]
 
     monkeypatch.setattr(
-        "voidx.ui.tui.panels.list_file_candidates",
+        "voidx_tui.panels.list_file_candidates",
         fake_list_file_candidates,
     )
     tui = _tui(tmp_path)

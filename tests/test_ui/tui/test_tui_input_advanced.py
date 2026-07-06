@@ -11,7 +11,7 @@ from rich.console import Console
 
 from voidx.config import Settings
 from voidx.ui.commands import COMMANDS
-from voidx.ui.tui import PureTui
+from voidx_tui import PureTui
 
 
 def _write_skill(workspace, name: str, description: str) -> None:
@@ -265,7 +265,7 @@ def test_ctrl_c_requires_second_empty_press(tmp_path):
 
 def test_ctrl_c_deadline_requires_fresh_second_press(tmp_path, monkeypatch):
     now = 100.0
-    monkeypatch.setattr("voidx.ui.tui.app.time.monotonic", lambda: now)
+    monkeypatch.setattr("voidx_tui.app.time.monotonic", lambda: now)
     tui = _tui(tmp_path)
 
     tui._handle_interrupt()

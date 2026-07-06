@@ -79,21 +79,21 @@ class SlashSessionMixin:
 
     async def _confirm_session_delete(self) -> bool:
         app = self.host.app
-        if app is not None and hasattr(app, "ask_choice"):
-            choice = await app.ask_choice(
-                "Delete these sessions?",
-                [
-                    ("Cancel", "no", "Keep saved sessions"),
-                    ("Delete", "yes", "Permanently remove listed sessions"),
-                ],
-            )
-            return choice == "yes"
-        answer = await self._prompt("Delete these sessions? Type y to confirm", default="")
-        return (answer or "").strip().lower() in {"y", "yes"}
+        if app is None:
+            answer = await self._prompt("Delete these sessions? Type y to confirm", default="")
+            return (answer or "").strip().lower() in {"y", "yes"}
+        choice = await app.ask_choice(
+            "Delete these sessions?",
+            [
+                ("Cancel", "no", "Keep saved sessions"),
+                ("Delete", "yes", "Permanently remove listed sessions"),
+            ],
+        )
+        return choice == "yes"
 
     async def _select_session_delete_scope(self) -> str | None:
         app = self.host.app
-        if app is None or not hasattr(app, "ask_choice"):
+        if app is None:
             return "30d"
         choice = await app.ask_choice(
             "Delete sessions older than:",
@@ -141,17 +141,17 @@ class SlashSessionMixin:
 
     async def _confirm_rollback(self) -> bool:
         app = self.host.app
-        if app is not None and hasattr(app, "ask_choice"):
-            choice = await app.ask_choice(
-                "Rollback these changes?",
-                [
-                    ("Cancel", "no", "Keep current files"),
-                    ("Rollback", "yes", "Restore captured snapshots"),
-                ],
-            )
-            return choice == "yes"
-        answer = await self._prompt("Rollback these changes? Type y to confirm", default="")
-        return (answer or "").strip().lower() in {"y", "yes"}
+        if app is None:
+            answer = await self._prompt("Rollback these changes? Type y to confirm", default="")
+            return (answer or "").strip().lower() in {"y", "yes"}
+        choice = await app.ask_choice(
+            "Rollback these changes?",
+            [
+                ("Cancel", "no", "Keep current files"),
+                ("Rollback", "yes", "Restore captured snapshots"),
+            ],
+        )
+        return choice == "yes"
 
     async def _clear(self) -> None:
         await self.host.clear_current_session()

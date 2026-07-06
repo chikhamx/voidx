@@ -108,7 +108,7 @@ async def test_startup_update_check_skips_when_ttl_not_due(tmp_path, monkeypatch
 @pytest.mark.asyncio
 async def test_quiet_slash_command_dispatches_without_turn(monkeypatch):
     FakeTui.instances = []
-    monkeypatch.setattr("voidx.agent.graph.run_loop.PureTui", FakeTui)
+    monkeypatch.setattr("voidx.agent.graph.run_loop.create_frontend", FakeTui)
     monkeypatch.setattr(runtime_ui_port, "show_startup", lambda **_: None)
 
     graph = GraphRunLoopMixin()

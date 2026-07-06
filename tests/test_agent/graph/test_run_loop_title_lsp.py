@@ -116,7 +116,7 @@ async def test_delete_empty_current_session_only_deletes_sessions_without_messag
 
 @pytest.mark.asyncio
 async def test_exit_cleanup_deletes_empty_current_session(tmp_path, monkeypatch):
-    monkeypatch.setattr("voidx.agent.graph.run_loop.PureTui", ExitTui)
+    monkeypatch.setattr("voidx.agent.graph.run_loop.create_frontend", ExitTui)
     session = await create_session(workspace=str(tmp_path), provider="mimo", model="mimo-v2.5")
     graph = VoidXGraph(Config(workspace=str(tmp_path)), api_key=None, session=session)
     _disable_external_managers(graph)
@@ -134,7 +134,7 @@ async def test_exit_cleanup_deletes_empty_current_session(tmp_path, monkeypatch)
 
 @pytest.mark.asyncio
 async def test_exit_cleanup_keeps_session_with_messages_even_new_session_title(tmp_path, monkeypatch):
-    monkeypatch.setattr("voidx.agent.graph.run_loop.PureTui", ExitTui)
+    monkeypatch.setattr("voidx.agent.graph.run_loop.create_frontend", ExitTui)
     session = await create_session(workspace=str(tmp_path), provider="mimo", model="mimo-v2.5")
     await save_message(MessageRow(session_id=session.id, role="user", content="hello"))
     await update_title(session.id, "New session")

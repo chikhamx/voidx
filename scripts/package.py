@@ -38,38 +38,16 @@ def main() -> int:
         shutil.rmtree(BUILD)
     out_dir.mkdir(parents=True, exist_ok=True)
 
-    if _has_module("build.__main__"):
-        build_args = ["--wheel"] if args.format == "wheel" else ["--sdist"]
-        if args.format == "all":
-            build_args = ["--sdist", "--wheel"]
-        return _run([sys.executable, "-m", "build", *build_args, "--outdir", str(out_dir), str(ROOT)])
+    package_roots = [ROOT]
+    tui_root = ROOT / "tui"
+    if (tui_root / "pyproject.toml").exists():
+        package_roots.append(tui_root)
 
-    if args.format == "wheel" and _has_module("pip"):
-        return _run([
-            sys.executable,
-            "-m",
-            "pip",
-            "wheel",
-            "--no-deps",
-            "--no-build-isolation",
-            "--wheel-dir",
-            str(out_dir),
-            str(ROOT),
-        ])
-
-    uv = shutil.which("uv")
-    if uv:
-        uv_args = ["--wheel"] if args.format == "wheel" else ["--sdist"]
-        if args.format == "all":
-            uv_args = ["--sdist", "--wheel"]
-        return _run([uv, "build", *uv_args, "--out-dir", str(out_dir), str(ROOT)])
-
-    print(
-        "No packaging backend found. Install 'build', ensure pip is available for wheels, "
-        "or install uv.",
-        file=sys.stderr,
-    )
-    return 1
+    for package_root in package_roots:
+        result = _build_package(package_root, out_dir, args.format)
+        if result != 0:
+            return result
+    return 0
 
 
 def _has_module(name: str) -> bool:
@@ -84,6 +62,40 @@ def _has_module(name: str) -> bool:
     return subprocess.run([sys.executable, "-c", probe], cwd=ROOT).returncode == 0
 
 
+def _build_package(package_root: Path, out_dir: Path, fmt: str) -> int:
+    if _has_module("build.__main__"):
+        build_args = ["--wheel"] if fmt == "wheel" else ["--sdist"]
+        if fmt == "all":
+            build_args = ["--sdist", "--wheel"]
+        return _run([sys.executable, "-m", "build", *build_args, "--outdir", str(out_dir), str(package_root)])
+
+    uv = shutil.which("uv")
+    if uv:
+        uv_args = ["--wheel"] if fmt == "wheel" else ["--sdist"]
+        if fmt == "all":
+            uv_args = ["--sdist", "--wheel"]
+        return _run([uv, "build", *uv_args, "--out-dir", str(out_dir), str(package_root)])
+
+    if fmt == "wheel" and _has_module("pip") and _has_module("setuptools.build_meta"):
+        return _run([
+            sys.executable,
+            "-m",
+            "pip",
+            "wheel",
+            "--no-deps",
+            "--no-build-isolation",
+            "--wheel-dir",
+            str(out_dir),
+            str(package_root),
+        ])
+
+    print(
+        "No packaging backend found. Install 'build', install uv, or ensure pip and setuptools are available for wheels.",
+        file=sys.stderr,
+    )
+    return 1
+
+
 def _check_release_metadata() -> int:
     errors: list[str] = []
 
@@ -92,6 +104,31 @@ def _check_release_metadata() -> int:
     project_version = init_match.group(1) if init_match else ""
     if not project_version:
         errors.append("src/voidx/__init__.py is missing __version__.")
+
+    pyproject_text = (ROOT / "pyproject.toml").read_text()
+    if project_version and f'voidx_tui=={project_version}' not in pyproject_text:
+        errors.append(f"pyproject.toml must depend on voidx_tui=={project_version}.")
+
+    tui_init = ROOT / "tui" / "src" / "voidx_tui" / "__init__.py"
+    tui_pyproject = ROOT / "tui" / "pyproject.toml"
+    if tui_init.exists() or tui_pyproject.exists():
+        if not tui_init.exists():
+            errors.append("tui/src/voidx_tui/__init__.py is missing.")
+        else:
+            tui_text = tui_init.read_text()
+            tui_match = re.search(r'__version__\s*=\s*"([^"]+)"', tui_text)
+            tui_version = tui_match.group(1) if tui_match else ""
+            if tui_version != project_version:
+                errors.append(
+                    f"tui/src/voidx_tui/__init__.py version {tui_version or '<missing>'} "
+                    f"does not match {project_version or '<missing>'}."
+                )
+        if not tui_pyproject.exists():
+            errors.append("tui/pyproject.toml is missing.")
+        else:
+            tui_pyproject_text = tui_pyproject.read_text()
+            if project_version and f'voidx=={project_version}' not in tui_pyproject_text:
+                errors.append(f"tui/pyproject.toml must depend on voidx=={project_version}.")
 
     npm_package = ROOT / "npm" / "package.json"
     npm_bin = ROOT / "npm" / "bin" / "voidx.js"

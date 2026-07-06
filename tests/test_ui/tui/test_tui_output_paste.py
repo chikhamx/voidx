@@ -107,7 +107,7 @@ def test_dump_transcript_log_writes_plain_text(tmp_path):
         collapsed=False,
     )
 
-    from voidx.ui.tui import _dump_transcript_log
+    from voidx_tui import _dump_transcript_log
 
     log_path = tmp_path / ".voidx" / "transcript.log"
     assert not log_path.exists()

@@ -2,8 +2,9 @@
 """Bump the voidx version across all files that carry a static version string.
 
 The canonical source is ``src/voidx/__init__.py`` (``__version__``). This script
-writes that file plus the three files that must hold a static copy:
-``npm/package.json``, ``scripts/install.sh``, ``scripts/install.ps1``.
+writes that file plus every static version/dependency pin that must stay in sync:
+``tui/src/voidx_tui/__init__.py``, ``pyproject.toml``, ``tui/pyproject.toml``,
+``npm/package.json``, ``scripts/install.sh``, and ``scripts/install.ps1``.
 
 Usage:
     ./python.sh scripts/bump_version.py 3.4.0
@@ -21,16 +22,29 @@ INIT_PY = ROOT / "src" / "voidx" / "__init__.py"
 NPM_PACKAGE = ROOT / "npm" / "package.json"
 INSTALL_SH = ROOT / "scripts" / "install.sh"
 INSTALL_PS1 = ROOT / "scripts" / "install.ps1"
+TUI_INIT_PY = ROOT / "tui" / "src" / "voidx_tui" / "__init__.py"
+PYPROJECT = ROOT / "pyproject.toml"
+TUI_PYPROJECT = ROOT / "tui" / "pyproject.toml"
 
 SEMVER_RE = re.compile(r"^\d+\.\d+\.\d+$")
 INIT_VERSION_RE = re.compile(r'(__version__\s*=\s*")[^"]+(")')
 INSTALL_SH_RE = re.compile(r'(VERSION="\$\{VOIDX_VERSION:-)\d+\.\d+\.\d+(\}")')
 INSTALL_PS1_RE = re.compile(r'(\$Version = if \(\$env:VOIDX_VERSION\) \{ \$env:VOIDX_VERSION \} else \{ ")\d+\.\d+\.\d+(" \})')
+PYPROJECT_TUI_DEP_RE = re.compile(r'("voidx_tui==)\d+\.\d+\.\d+("[,\]])')
+TUI_PYPROJECT_CORE_DEP_RE = re.compile(r'("voidx==)\d+\.\d+\.\d+("[,\]])')
 
 
 def die(msg: str) -> None:
     print(f"❌ {msg}", file=sys.stderr)
     sys.exit(1)
+
+
+def _replace_once(path: Path, pattern: re.Pattern[str], version: str, label: str) -> str:
+    text = path.read_text()
+    new, n = pattern.subn(rf'\g<1>{version}\g<2>', text)
+    if n != 1:
+        die(f"Expected 1 {label} match in {path}, found {n}.")
+    return new
 
 
 def read_init_version() -> str:
@@ -40,11 +54,19 @@ def read_init_version() -> str:
 
 
 def bump_init(version: str) -> str:
-    text = INIT_PY.read_text()
-    new, n = INIT_VERSION_RE.subn(rf'\g<1>{version}\g<2>', text)
-    if n != 1:
-        die(f"Expected 1 __version__ match in {INIT_PY}, found {n}.")
-    return new
+    return _replace_once(INIT_PY, INIT_VERSION_RE, version, "__version__")
+
+
+def bump_tui_init(version: str) -> str:
+    return _replace_once(TUI_INIT_PY, INIT_VERSION_RE, version, "voidx_tui __version__")
+
+
+def bump_pyproject(version: str) -> str:
+    return _replace_once(PYPROJECT, PYPROJECT_TUI_DEP_RE, version, "voidx_tui dependency")
+
+
+def bump_tui_pyproject(version: str) -> str:
+    return _replace_once(TUI_PYPROJECT, TUI_PYPROJECT_CORE_DEP_RE, version, "voidx dependency")
 
 
 def bump_npm(version: str) -> str:
@@ -54,19 +76,11 @@ def bump_npm(version: str) -> str:
 
 
 def bump_install_sh(version: str) -> str:
-    text = INSTALL_SH.read_text()
-    new, n = INSTALL_SH_RE.subn(rf'\g<1>{version}\g<2>', text)
-    if n != 1:
-        die(f"Expected 1 VERSION match in {INSTALL_SH}, found {n}.")
-    return new
+    return _replace_once(INSTALL_SH, INSTALL_SH_RE, version, "VERSION")
 
 
 def bump_install_ps1(version: str) -> str:
-    text = INSTALL_PS1.read_text()
-    new, n = INSTALL_PS1_RE.subn(rf'\g<1>{version}\g<2>', text)
-    if n != 1:
-        die(f"Expected 1 $Version match in {INSTALL_PS1}, found {n}.")
-    return new
+    return _replace_once(INSTALL_PS1, INSTALL_PS1_RE, version, "$Version")
 
 
 def verify(version: str, contents: dict[Path, str]) -> None:
@@ -74,6 +88,19 @@ def verify(version: str, contents: dict[Path, str]) -> None:
     init_version = init_match.group(1) if init_match else ""
     if init_version != version:
         die(f"{INIT_PY} has __version__={init_version!r}, expected {version!r}.")
+
+    tui_init_match = re.search(r'__version__\s*=\s*"([^"]+)"', contents[TUI_INIT_PY])
+    tui_init_version = tui_init_match.group(1) if tui_init_match else ""
+    if tui_init_version != version:
+        die(f"{TUI_INIT_PY} has __version__={tui_init_version!r}, expected {version!r}.")
+
+    root_dep = f"voidx_tui=={version}"
+    if root_dep not in contents[PYPROJECT]:
+        die(f"{PYPROJECT} does not contain dependency {root_dep}.")
+
+    tui_dep = f"voidx=={version}"
+    if tui_dep not in contents[TUI_PYPROJECT]:
+        die(f"{TUI_PYPROJECT} does not contain dependency {tui_dep}.")
 
     npm_version = json.loads(contents[NPM_PACKAGE]).get("version", "")
     if npm_version != version:
@@ -105,6 +132,9 @@ def main() -> None:
 
     contents = {
         INIT_PY: bump_init(version),
+        TUI_INIT_PY: bump_tui_init(version),
+        PYPROJECT: bump_pyproject(version),
+        TUI_PYPROJECT: bump_tui_pyproject(version),
         NPM_PACKAGE: bump_npm(version),
         INSTALL_SH: bump_install_sh(version),
         INSTALL_PS1: bump_install_ps1(version),

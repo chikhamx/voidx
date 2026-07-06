@@ -68,7 +68,7 @@ class _ClipboardMixin:
 
 
 def _paste_clipboard_image(workspace: str) -> ClipboardImageResult:
-    app_module = sys.modules.get("voidx.ui.tui.app")
+    app_module = sys.modules.get("voidx_tui.app")
     paste = getattr(app_module, "paste_clipboard_image_from_system", None)
     if callable(paste):
         return paste(workspace)
@@ -76,7 +76,7 @@ def _paste_clipboard_image(workspace: str) -> ClipboardImageResult:
 
 
 def _read_clipboard_text() -> ClipboardTextResult:
-    app_module = sys.modules.get("voidx.ui.tui.app")
+    app_module = sys.modules.get("voidx_tui.app")
     paste = getattr(app_module, "paste_clipboard_text_from_system", None)
     if callable(paste):
         return paste()

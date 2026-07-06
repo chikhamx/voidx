@@ -8,15 +8,15 @@ from rich.cells import cell_len
 from rich.text import Text
 
 from voidx.llm.usage import format_cache_hit_rate, format_token_count
-from voidx.ui.tui.activity import BUSY_ACTIVITY_STYLE
-from voidx.ui.tui.helpers import (
+from voidx_tui.activity import BUSY_ACTIVITY_STYLE
+from voidx_tui.helpers import (
     _call_bool,
     _call_int,
     _call_status,
     _clip_cells,
     _safe_status_value,
 )
-from voidx.ui.tui.state import StatusSummaryCache
+from voidx_tui.state import StatusSummaryCache
 
 
 @dataclass(frozen=True)

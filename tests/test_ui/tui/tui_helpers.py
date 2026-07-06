@@ -10,7 +10,7 @@ sys.path.insert(0, str(Path(__file__).parent.parent / "src"))
 
 from voidx.ui.commands import COMMANDS
 from voidx.ui.output.dock import BottomInputDock, set_dock
-from voidx.ui.tui import PureTui
+from voidx_tui import PureTui
 
 
 def _rich_plain(line: str) -> str:

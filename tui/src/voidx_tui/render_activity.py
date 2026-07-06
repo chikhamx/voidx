@@ -22,13 +22,13 @@ from voidx.ui.output.dock import (
     active_turn_analyzing_text,
     dock,
 )
-from voidx.ui.tui.activity import (
+from voidx_tui.activity import (
     BUSY_ACTIVITY_DEFAULT_VERB,
     BUSY_ACTIVITY_GLYPHS,
     BUSY_ACTIVITY_GLYPH_STYLES,
     BUSY_ACTIVITY_STYLE,
 )
-from voidx.ui.tui.helpers import _clip_cells
+from voidx_tui.helpers import _clip_cells
 
 
 BUSY_ACTIVITY_DETAIL_STYLE = "#C9D1D9 on #3a3937"

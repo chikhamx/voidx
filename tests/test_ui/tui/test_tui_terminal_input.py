@@ -11,8 +11,8 @@ from rich.console import Console
 
 from voidx.ui.commands import COMMANDS
 from voidx.ui.output.dock import dock
-import voidx.ui.tui.terminal_mixin as terminal_mixin
-from voidx.ui.tui import (
+import voidx_tui.terminal_mixin as terminal_mixin
+from voidx_tui import (
     PureTui,
     _ENTER_TERMINAL_SEQUENCE,
     _EXIT_TERMINAL_SEQUENCE,
@@ -101,7 +101,7 @@ def test_input_cursor_position_accounts_for_wrapped_long_line(tmp_path, monkeypa
 
 
 def test_skill_panel_reuses_candidate_service_between_queries(tmp_path, monkeypatch):
-    import voidx.ui.tui.panels as panels
+    import voidx_tui.panels as panels
 
     services = []
 

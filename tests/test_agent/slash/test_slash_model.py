@@ -442,24 +442,25 @@ async def test_model_ctx_picker_cancel_does_nothing(tmp_path):
 
 
 @pytest.mark.asyncio
-async def test_paste_dispatch_uses_prompt_app():
-    class FakeApp:
-        def __init__(self) -> None:
-            self.called = False
+async def test_paste_dispatch_uses_core_clipboard_tool(tmp_path, monkeypatch):
+    calls: list[str] = []
 
-        def paste_clipboard_image(self):
-            self.called = True
-            return ClipboardImageResult(
-                status="ok",
-                message="Pasted image",
-                rel_path=".voidx/attachments/clip.png",
-            )
+    def fake_paste_clipboard_image(workspace: str):
+        calls.append(workspace)
+        return ClipboardImageResult(
+            status="ok",
+            message="Pasted image",
+            rel_path=".voidx/attachments/clip.png",
+        )
 
-    app = FakeApp()
-    graph = SimpleNamespace(_app=app)
+    monkeypatch.setattr(
+        "voidx.agent.slash.handler.paste_clipboard_image",
+        fake_paste_clipboard_image,
+    )
+    graph = SimpleNamespace(_workspace=str(tmp_path), _app=object())
 
     assert await SlashHandler(graph).dispatch("/paste") is True
-    assert app.called is True
+    assert calls == [str(tmp_path)]
 
 
 @pytest.mark.asyncio

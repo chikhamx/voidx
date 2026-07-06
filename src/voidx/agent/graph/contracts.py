@@ -18,6 +18,7 @@ from voidx.llm.usage import UsageStats
 from voidx.memory.service import SessionInfo
 from voidx.permission.service import PermissionService
 from voidx.runtime.ui_port import AgentUiPort
+from voidx.ui.output.types import InteractionFrontend
 from voidx.tools.service import ToolRegistry, TaskTracker
 
 if TYPE_CHECKING:
@@ -39,7 +40,7 @@ class GraphCompactionHost(Protocol):
     model: BaseChatModel | None
     _ui: AgentUiPort
     _session: SessionInfo | None
-    _app: Any | None
+    _app: InteractionFrontend | None
     _debug: bool
     _usage_stats: UsageStats
     _compaction: CompactionService
@@ -86,7 +87,7 @@ class GraphToolExecutionHost(Protocol):
     _ui: AgentUiPort
     _session: SessionInfo | None
     _workspace: str
-    _app: Any | None
+    _app: InteractionFrontend | None
     _debug: bool
     _file_mtimes: dict[str, dict[str, int]]
     _file_read_coverage: dict[str, dict]
@@ -124,7 +125,7 @@ class GraphPermissionHost(Protocol):
 
     _ui: AgentUiPort
     _workspace: str
-    _app: Any | None
+    _app: InteractionFrontend | None
     _permission: PermissionService
     _needs_failure_check: dict[str, dict]
 
@@ -171,7 +172,7 @@ class GraphRunLoopHost(Protocol):
     _compaction_summary: str
     _session_msg_cache: list[BaseMessage] | None
     _context_cache: ContextCompilerCache
-    _app: Any | None
+    _app: InteractionFrontend | None
     _usage_stats: UsageStats
     _compaction: CompactionService
     _session_runtime: GraphSessionRuntime

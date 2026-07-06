@@ -26,20 +26,20 @@ from voidx.ui.output.tree import OutputTree
 from voidx.ui.output.types import SubmitHandler, ThreadExecutionContext
 from voidx.ui.tools.clipboard_image import paste_clipboard_image as paste_clipboard_image_from_system
 from voidx.ui.tools.clipboard_text import read_clipboard_text as paste_clipboard_text_from_system
-from voidx.ui.tui.helpers import (
+from voidx_tui.helpers import (
     _ENTER_TERMINAL_SEQUENCE,
     _EXIT_TERMINAL_SEQUENCE,
     _plain_line,
     _rendered_row_count,
 )
-from voidx.ui.tui import activity as tui_activity
-from voidx.ui.tui.choice_mixin import _ChoicePromptMixin
-from voidx.ui.tui.clipboard_mixin import _ClipboardMixin
-from voidx.ui.tui.input import _InputEditorMixin
-from voidx.ui.tui.parser import _InputParserMixin
-from voidx.ui.tui.panels import _PanelManagerMixin
-from voidx.ui.tui.renderer import _TerminalRendererMixin
-from voidx.ui.tui.state import (
+from voidx_tui import activity as tui_activity
+from voidx_tui.choice_mixin import _ChoicePromptMixin
+from voidx_tui.clipboard_mixin import _ClipboardMixin
+from voidx_tui.input import _InputEditorMixin
+from voidx_tui.parser import _InputParserMixin
+from voidx_tui.panels import _PanelManagerMixin
+from voidx_tui.renderer import _TerminalRendererMixin
+from voidx_tui.state import (
     CaptureState,
     ChoiceState,
     ExternalState,
@@ -52,8 +52,8 @@ from voidx.ui.tui.state import (
     TerminalState,
     TextPromptState,
 )
-from voidx.ui.tui.terminal_mixin import _TerminalLifecycleMixin
-from voidx.ui.tui.text_prompt_mixin import _TextPromptMixin
+from voidx_tui.terminal_mixin import _TerminalLifecycleMixin
+from voidx_tui.text_prompt_mixin import _TextPromptMixin
 
 class _SubmitQueueItem(str):
     def __new__(

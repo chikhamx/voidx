@@ -161,6 +161,30 @@ def reset_ui_sink() -> None:
     _ui_proxy.set_target(None)
 
 
+
+def _default_tui_frontend_factory(status: Any, commands: list[tuple[str, str]]) -> Any:
+    cls = getattr(import_module("voidx_tui"), "PureTui")
+    return cls(status, commands)
+
+
+FrontendFactory = Any
+_default_frontend_factory: FrontendFactory | None = _default_tui_frontend_factory
+
+
+def register_default_frontend(factory: FrontendFactory) -> None:
+    global _default_frontend_factory
+    _default_frontend_factory = factory
+
+
+def reset_default_frontend() -> None:
+    global _default_frontend_factory
+    _default_frontend_factory = None
+
+
+def create_frontend(status: Any, commands: list[tuple[str, str]]) -> Any:
+    if _default_frontend_factory is None:
+        raise RuntimeError("No frontend registered. Install or register an interaction frontend.")
+    return _default_frontend_factory(status, commands)
 COMMANDS = _LazyAttr("voidx.ui.commands", "COMMANDS")
 AssistantStreamCommitted = _LazyAttr("voidx.ui.output.events", "AssistantStreamCommitted")
 AssistantStreamUpdated = _LazyAttr("voidx.ui.output.events", "AssistantStreamUpdated")
@@ -180,7 +204,6 @@ OutputTree = _LazyAttr("voidx.ui.output.tree", "OutputTree")
 PermissionToolDetail = _LazyAttr("voidx.ui.output.events", "PermissionToolDetail")
 PermissionPromptShown = _LazyAttr("voidx.ui.output.events", "PermissionPromptShown")
 PermissionPromptCleared = _LazyAttr("voidx.ui.output.events", "PermissionPromptCleared")
-PureTui = _LazyAttr("voidx.ui.tui", "PureTui")
 StartupShown = _LazyAttr("voidx.ui.output.events", "StartupShown")
 StatusFinished = _LazyAttr("voidx.ui.output.events", "StatusFinished")
 StatusUpdated = _LazyAttr("voidx.ui.output.events", "StatusUpdated")

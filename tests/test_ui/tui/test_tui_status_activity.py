@@ -14,13 +14,13 @@ from rich.style import Style
 from voidx.llm.usage import UsageStats
 from voidx.ui.commands import COMMANDS
 from voidx.ui.output.dock import dock
-from voidx.ui.tui import PureTui, _rendered_row_count
-from voidx.ui.tui.state import InputState, RenderState
+from voidx_tui import PureTui, _rendered_row_count
+from voidx_tui.state import InputState, RenderState
 
 
 def test_busy_activity_label_rotates_centered_glyphs(tmp_path, monkeypatch):
     now = {"value": 100.0}
-    monkeypatch.setattr("voidx.ui.tui.render_activity.time.monotonic", lambda: now["value"])
+    monkeypatch.setattr("voidx_tui.render_activity.time.monotonic", lambda: now["value"])
     tui = _tui(tmp_path)
     tui._busy = True
     tui._busy_started_at = 100.0
@@ -39,7 +39,7 @@ def test_busy_activity_label_rotates_centered_glyphs(tmp_path, monkeypatch):
 
 
 def test_busy_activity_label_replaces_verb_during_thinking_stream(tmp_path, monkeypatch):
-    monkeypatch.setattr("voidx.ui.tui.render_activity.time.monotonic", lambda: 105.0)
+    monkeypatch.setattr("voidx_tui.render_activity.time.monotonic", lambda: 105.0)
     tui = _tui(tmp_path)
     tui._busy = True
     tui._busy_started_at = 100.0
@@ -61,7 +61,7 @@ def test_busy_activity_label_replaces_verb_during_thinking_stream(tmp_path, monk
 
 
 def test_busy_activity_label_moves_retry_delay_into_verb_and_trims_detail(tmp_path, monkeypatch):
-    monkeypatch.setattr("voidx.ui.tui.render_activity.time.monotonic", lambda: 105.0)
+    monkeypatch.setattr("voidx_tui.render_activity.time.monotonic", lambda: 105.0)
     tui = _tui(tmp_path)
     tui._busy = True
     tui._busy_started_at = 100.0
@@ -82,7 +82,7 @@ def test_busy_activity_label_moves_retry_delay_into_verb_and_trims_detail(tmp_pa
 
 
 def test_busy_activity_label_truncates_long_retry_error_detail(tmp_path, monkeypatch):
-    monkeypatch.setattr("voidx.ui.tui.render_activity.time.monotonic", lambda: 105.0)
+    monkeypatch.setattr("voidx_tui.render_activity.time.monotonic", lambda: 105.0)
     tui = _tui(tmp_path)
     tui._busy = True
     tui._busy_started_at = 100.0
@@ -110,7 +110,7 @@ def test_busy_activity_label_truncates_long_retry_error_detail(tmp_path, monkeyp
 
 
 def test_busy_activity_label_prefers_error_over_retry_status(tmp_path, monkeypatch):
-    monkeypatch.setattr("voidx.ui.tui.render_activity.time.monotonic", lambda: 105.0)
+    monkeypatch.setattr("voidx_tui.render_activity.time.monotonic", lambda: 105.0)
     tui = _tui(tmp_path)
     tui._busy = True
     tui._busy_started_at = 100.0
@@ -137,7 +137,7 @@ def test_busy_activity_label_prefers_error_over_retry_status(tmp_path, monkeypat
 
 
 def test_busy_activity_label_prefers_progress_over_retry_status(tmp_path, monkeypatch):
-    monkeypatch.setattr("voidx.ui.tui.render_activity.time.monotonic", lambda: 105.0)
+    monkeypatch.setattr("voidx_tui.render_activity.time.monotonic", lambda: 105.0)
     tui = _tui(tmp_path)
     tui._busy = True
     tui._busy_started_at = 100.0
@@ -159,7 +159,7 @@ def test_busy_activity_label_prefers_progress_over_retry_status(tmp_path, monkey
 
 
 def test_busy_activity_renders_thinking_content_below_verb(tmp_path, monkeypatch):
-    monkeypatch.setattr("voidx.ui.tui.render_activity.time.monotonic", lambda: 105.0)
+    monkeypatch.setattr("voidx_tui.render_activity.time.monotonic", lambda: 105.0)
     tui = _tui(tmp_path)
     tui._console = Console(file=None, force_terminal=True, width=100, height=24, _environ={})
     tui._busy = True
@@ -180,7 +180,7 @@ def test_busy_activity_renders_thinking_content_below_verb(tmp_path, monkeypatch
 
 
 def test_busy_activity_renders_permission_details_below_requesting_verb(tmp_path, monkeypatch):
-    monkeypatch.setattr("voidx.ui.tui.render_activity.time.monotonic", lambda: 105.0)
+    monkeypatch.setattr("voidx_tui.render_activity.time.monotonic", lambda: 105.0)
     tui = _tui(tmp_path)
     tui._console = Console(file=None, force_terminal=True, width=100, height=24, _environ={})
     tui._busy = True
@@ -227,7 +227,7 @@ def test_busy_activity_renders_permission_details_below_requesting_verb(tmp_path
 
 
 def test_busy_activity_compacts_many_permission_details(tmp_path, monkeypatch):
-    monkeypatch.setattr("voidx.ui.tui.render_activity.time.monotonic", lambda: 105.0)
+    monkeypatch.setattr("voidx_tui.render_activity.time.monotonic", lambda: 105.0)
     tui = _tui(tmp_path)
     tui._console = Console(file=None, force_terminal=True, width=100, height=24, _environ={})
     tui._busy = True
@@ -273,7 +273,7 @@ def test_busy_activity_compacts_many_permission_details(tmp_path, monkeypatch):
 
 def test_busy_activity_label_includes_step_and_turn_tokens(tmp_path, monkeypatch):
     now = {"value": 100.0}
-    monkeypatch.setattr("voidx.ui.tui.render_activity.time.monotonic", lambda: now["value"])
+    monkeypatch.setattr("voidx_tui.render_activity.time.monotonic", lambda: now["value"])
     stats = UsageStats()
     stats.total_input_tokens = 10_000
     stats.total_output_tokens = 1_000
@@ -291,7 +291,7 @@ def test_busy_activity_label_includes_step_and_turn_tokens(tmp_path, monkeypatch
 
 
 def test_busy_activity_label_includes_active_analyzing_status(tmp_path, monkeypatch):
-    monkeypatch.setattr("voidx.ui.tui.render_activity.time.monotonic", lambda: 123.0)
+    monkeypatch.setattr("voidx_tui.render_activity.time.monotonic", lambda: 123.0)
     tui = _tui(tmp_path)
     tui._busy = True
     tui._busy_started_at = 120.0
@@ -311,7 +311,7 @@ def test_busy_activity_label_includes_active_analyzing_status(tmp_path, monkeypa
 
 
 def test_busy_activity_label_includes_active_compacting_status(tmp_path, monkeypatch):
-    monkeypatch.setattr("voidx.ui.tui.render_activity.time.monotonic", lambda: 124.0)
+    monkeypatch.setattr("voidx_tui.render_activity.time.monotonic", lambda: 124.0)
     tui = _tui(tmp_path)
     tui._busy = True
     tui._busy_started_at = 120.0
@@ -331,7 +331,7 @@ def test_busy_activity_label_includes_active_compacting_status(tmp_path, monkeyp
 
 
 def test_busy_activity_label_places_compacting_detail_last(tmp_path, monkeypatch):
-    monkeypatch.setattr("voidx.ui.tui.render_activity.time.monotonic", lambda: 124.0)
+    monkeypatch.setattr("voidx_tui.render_activity.time.monotonic", lambda: 124.0)
     tui = _tui(tmp_path)
     tui.status.latest_action = lambda: "reading"
     tui._busy = True
@@ -382,8 +382,8 @@ def test_busy_activity_glyph_cycles_rainbow_styles(tmp_path):
 @pytest.mark.asyncio
 async def test_busy_activity_verb_randomized_once_per_turn(tmp_path, monkeypatch):
     now = 20.0
-    monkeypatch.setattr("voidx.ui.tui.app.time.monotonic", lambda: now)
-    monkeypatch.setattr("voidx.ui.tui.app.random.choice", lambda _choices: "Ruminating")
+    monkeypatch.setattr("voidx_tui.app.time.monotonic", lambda: now)
+    monkeypatch.setattr("voidx_tui.app.random.choice", lambda _choices: "Ruminating")
     tui = _tui(tmp_path)
     started = asyncio.Event()
     release = asyncio.Event()
@@ -413,7 +413,7 @@ async def test_busy_activity_verb_randomized_once_per_turn(tmp_path, monkeypatch
 @pytest.mark.asyncio
 async def test_busy_started_at_set_and_cleared_by_consume_loop(tmp_path, monkeypatch):
     now = 10.0
-    monkeypatch.setattr("voidx.ui.tui.app.time.monotonic", lambda: now)
+    monkeypatch.setattr("voidx_tui.app.time.monotonic", lambda: now)
     tui = _tui(tmp_path)
     started = asyncio.Event()
     release = asyncio.Event()
@@ -442,7 +442,7 @@ async def test_busy_started_at_set_and_cleared_by_consume_loop(tmp_path, monkeyp
 
 def test_busy_activity_tick_repaints_bottom_line_with_pinned_todo(tmp_path, monkeypatch):
     now = {"value": 1.0}
-    monkeypatch.setattr("voidx.ui.tui.render_activity.time.monotonic", lambda: now["value"])
+    monkeypatch.setattr("voidx_tui.render_activity.time.monotonic", lambda: now["value"])
     fake_stdout = _FakeStdout()
     monkeypatch.setattr(sys, "stdout", fake_stdout)
     monkeypatch.setattr(
@@ -492,7 +492,7 @@ def test_busy_activity_tick_repaints_bottom_line_with_pinned_todo(tmp_path, monk
 
 def test_busy_activity_tick_repaints_only_busy_line_above_thinking_content(tmp_path, monkeypatch):
     now = {"value": 1.0}
-    monkeypatch.setattr("voidx.ui.tui.render_activity.time.monotonic", lambda: now["value"])
+    monkeypatch.setattr("voidx_tui.render_activity.time.monotonic", lambda: now["value"])
     fake_stdout = _FakeStdout()
     monkeypatch.setattr(sys, "stdout", fake_stdout)
     monkeypatch.setattr(
@@ -535,7 +535,7 @@ def test_busy_activity_tick_repaints_only_busy_line_above_thinking_content(tmp_p
 
 @pytest.mark.asyncio
 async def test_busy_activity_timer_starts_ticks_and_stops(tmp_path, monkeypatch):
-    monkeypatch.setattr("voidx.ui.tui.activity.BUSY_ACTIVITY_TICK_SECONDS", 0.01)
+    monkeypatch.setattr("voidx_tui.activity.BUSY_ACTIVITY_TICK_SECONDS", 0.01)
     tui = _tui(tmp_path)
     tui._tty = True
     tui._running = True
@@ -583,7 +583,7 @@ async def test_busy_activity_timer_starts_ticks_and_stops(tmp_path, monkeypatch)
 
 @pytest.mark.asyncio
 async def test_busy_activity_timer_full_renders_when_tick_region_changes(tmp_path, monkeypatch):
-    monkeypatch.setattr("voidx.ui.tui.activity.BUSY_ACTIVITY_TICK_SECONDS", 0.01)
+    monkeypatch.setattr("voidx_tui.activity.BUSY_ACTIVITY_TICK_SECONDS", 0.01)
     tui = _tui(tmp_path)
     tui._tty = True
     tui._running = True

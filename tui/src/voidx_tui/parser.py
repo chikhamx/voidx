@@ -7,7 +7,7 @@ import io
 import os
 import sys
 
-from voidx.ui.tui.helpers import _is_printable, _utf8_len, _parse_csi_modifier, _csi_modifier_has_shift
+from voidx_tui.helpers import _is_printable, _utf8_len, _parse_csi_modifier, _csi_modifier_has_shift
 
 
 class _InputParserMixin:

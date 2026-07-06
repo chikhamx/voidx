@@ -44,6 +44,26 @@ def test_npm_package_matches_python_version():
     assert (ROOT / "npm" / "bin" / "voidx.js").is_file()
 
 
+
+def test_tui_package_versions_and_dependency_pins_match_python_version():
+    from voidx import __version__ as python_version
+    from voidx_tui import __version__ as tui_version
+
+    root_pyproject = tomllib.loads((ROOT / "pyproject.toml").read_text())
+    tui_pyproject = tomllib.loads((ROOT / "tui" / "pyproject.toml").read_text())
+
+    assert tui_version == python_version
+    assert f"voidx_tui=={python_version}" in root_pyproject["project"]["dependencies"]
+    assert f"voidx=={python_version}" in tui_pyproject["project"]["dependencies"]
+
+
+def test_release_docs_cover_tui_package_artifacts():
+    release_doc = (ROOT / "docs" / "releasing.md").read_text()
+
+    assert "voidx_tui" in release_doc
+    assert "dist/voidx_tui-<version>-py3-none-any.whl" in release_doc
+    assert "dist/voidx_tui-<version>.tar.gz" in release_doc
+
 def test_npm_launcher_marks_python_environment():
     source = (ROOT / "npm" / "bin" / "voidx.js").read_text(encoding="utf-8")
 

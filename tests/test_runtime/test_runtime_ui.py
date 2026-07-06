@@ -69,3 +69,44 @@ def test_console_proxy_supports_rich_live_context_manager():
         live.stop()
     finally:
         reset_ui_sink()
+
+
+def test_frontend_factory_registers_and_creates_frontend():
+    from voidx.runtime import ui as runtime_ui
+
+    created = []
+
+    class FakeFrontend:
+        def __init__(self, status, commands):
+            self.status = status
+            self.commands = commands
+
+    original_factory = runtime_ui._default_frontend_factory
+    runtime_ui.reset_default_frontend()
+    try:
+        runtime_ui.register_default_frontend(lambda status, commands: FakeFrontend(status, commands))
+
+        frontend = runtime_ui.create_frontend("status", [("/help", "Help")])
+
+        assert isinstance(frontend, FakeFrontend)
+        assert frontend.status == "status"
+        assert frontend.commands == [("/help", "Help")]
+        assert created == []
+    finally:
+        runtime_ui.register_default_frontend(original_factory)
+
+
+def test_frontend_factory_errors_without_registered_frontend():
+    from voidx.runtime import ui as runtime_ui
+
+    original_factory = runtime_ui._default_frontend_factory
+    runtime_ui.reset_default_frontend()
+    try:
+        try:
+            runtime_ui.create_frontend("status", [])
+        except RuntimeError as exc:
+            assert "No frontend registered" in str(exc)
+        else:
+            raise AssertionError("create_frontend should fail without a registered frontend")
+    finally:
+        runtime_ui.register_default_frontend(original_factory)

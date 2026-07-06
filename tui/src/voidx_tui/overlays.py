@@ -2,7 +2,7 @@
 
 from __future__ import annotations
 
-from voidx.ui.tui.helpers import _candidate_meta, _escape_markup
+from voidx_tui.helpers import _candidate_meta, _escape_markup
 
 
 class _OverlayRendererMixin:

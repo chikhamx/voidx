@@ -1,0 +1,21 @@
+[project]
+name = "voidx_tui"
+dynamic = ["version"]
+description = "Terminal UI for voidx."
+license = {text = "MIT"}
+authors = [{name = "chikhamx"}]
+requires-python = ">=3.11"
+dependencies = [
+    "voidx==3.4.4",
+    "rich>=13.9.0",
+]
+
+[build-system]
+requires = ["setuptools>=68", "wheel"]
+build-backend = "setuptools.build_meta"
+
+[tool.setuptools.dynamic]
+version = {attr = "voidx_tui.__version__"}
+
+[tool.setuptools.packages.find]
+where = ["src"]

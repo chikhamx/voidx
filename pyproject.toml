@@ -20,6 +20,7 @@ dependencies = [
     "websockets>=14",
     "pathspec>=0.12",
     "Pillow>=10.0.0; platform_system == 'Windows'",
+    "voidx_tui==3.4.4",
 ]
 
 [project.scripts]
@@ -60,5 +61,5 @@ where = ["src"]
 
 [tool.pytest.ini_options]
 asyncio_mode = "auto"
-pythonpath = ["src"]
+pythonpath = ["src", "tui/src"]
 testpaths = ["tests"]

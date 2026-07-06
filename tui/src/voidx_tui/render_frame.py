@@ -13,8 +13,8 @@ from rich.text import Text
 
 from voidx.ui.output.dock import dock
 from voidx.ui.output.dock.formatting import _text_from_line
-from voidx.ui.tui.helpers import _rendered_row_count
-from voidx.ui.tui.state import RenderStats
+from voidx_tui.helpers import _rendered_row_count
+from voidx_tui.state import RenderStats
 
 
 class _FrameRendererMixin:
