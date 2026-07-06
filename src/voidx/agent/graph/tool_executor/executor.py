@@ -1,10 +1,12 @@
 from __future__ import annotations
 
+import asyncio
 import time
 from typing import TYPE_CHECKING
 
 from langchain_core.messages import AIMessage, ToolMessage
 
+from voidx.logging.tool_log import log_tool_event
 from voidx.agent.graph.runtime import current_parent_tool_call_id
 from voidx.agent.graph.workflow_utils import active_workflow_names
 from voidx.agent.todo_state import todo_run_state_from_result
@@ -14,6 +16,8 @@ from voidx.agent.tool_result_storage import maybe_persist_tool_result
 from voidx.agent.graph.todo_events import todo_updated_event
 from voidx.runtime.ui import (
     DEFAULT_DISPLAY_RULES,
+    StatusFinished,
+    StatusUpdated,
     ToolDisplayPolicy,
     WarningAppended,
 )
@@ -51,6 +55,10 @@ from .ui import (
 
 if TYPE_CHECKING:
     from voidx.agent.graph.contracts import GraphToolExecutionHost
+
+
+TOOL_HEARTBEAT_INITIAL_SECONDS = 15.0
+TOOL_HEARTBEAT_INTERVAL_SECONDS = 15.0
 
 
 class GraphToolExecutor:
@@ -188,6 +196,17 @@ class GraphToolExecutor:
 
             t0 = time.monotonic()
             ok = True
+            heartbeat_task: asyncio.Task[None] | None = None
+            if host._ui.via_events():
+                heartbeat_task = asyncio.create_task(
+                    _emit_tool_heartbeat(
+                        host,
+                        tid=tid,
+                        tool_event_id=tool_event_id,
+                        started_at=t0,
+                    ),
+                    name=f"voidx-tool-heartbeat:{tid}",
+                )
             try:
                 host._ui.session_tracker.capture_tool_call(tid, targs, ctx.workspace, ctx.sandbox_extra_paths)
                 parent_tool_token = current_parent_tool_call_id.set(tool_event_id)
@@ -220,6 +239,17 @@ class GraphToolExecutor:
                     metadata={"error": sanitize_tool_message_content(str(e), workspace=ctx.workspace)},
                 )
                 ok = False
+            finally:
+                if heartbeat_task is not None:
+                    heartbeat_task.cancel()
+                    try:
+                        await heartbeat_task
+                    except asyncio.CancelledError:
+                        pass
+                    await host._ui.events.emit(StatusFinished(
+                        status_id=f"tool-heartbeat:{tool_event_id}",
+                        remove=True,
+                    ))
             elapsed = time.monotonic() - t0
 
             if not ok:
@@ -357,7 +387,17 @@ class GraphToolExecutor:
         )
 
         if host._ui.via_events():
-            await host._ui.events.drain()
+            try:
+                await host._ui.events.drain()
+            except Exception as exc:
+                if hasattr(host._ui.events, "clear_error"):
+                    host._ui.events.clear_error()
+                log_tool_event(
+                    "ui_event_drain_failed",
+                    tool_name="ui_event_bus",
+                    message=f"{type(exc).__name__}: {exc}",
+                    session_id=host._session.id if host._session else None,
+                )
 
         denied_msgs = [
             ToolMessage(
@@ -408,3 +448,24 @@ class GraphToolExecutor:
         }
 
     tool_result_ok = staticmethod(_tool_result_ok)
+
+
+async def _emit_tool_heartbeat(
+    host: GraphToolExecutionHost,
+    *,
+    tid: str,
+    tool_event_id: str,
+    started_at: float,
+) -> None:
+    await asyncio.sleep(TOOL_HEARTBEAT_INITIAL_SECONDS)
+    while True:
+        elapsed = time.monotonic() - started_at
+        await host._ui.events.emit(StatusUpdated(
+            status_id=f"tool-heartbeat:{tool_event_id}",
+            label="Tool running",
+            detail=f"{tid} still running ({elapsed:.0f}s elapsed)",
+            stage="working",
+            display="record_only",
+            parent_tool_call_id=tool_event_id,
+        ))
+        await asyncio.sleep(TOOL_HEARTBEAT_INTERVAL_SECONDS)

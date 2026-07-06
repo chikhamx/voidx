@@ -70,41 +70,54 @@ class CompositeEventConsumer:
         result = self._primary.handle(event)
         if inspect.isawaitable(result):
             result = await result
-        mirror_tasks = []
         for mirror in self._mirrors:
-            mirror_result = mirror.handle(event)
+            try:
+                mirror_result = mirror.handle(event)
+            except Exception:
+                logging.getLogger(__name__).warning(
+                    "UI event mirror consumer failed",
+                    exc_info=True,
+                )
+                continue
             if inspect.isawaitable(mirror_result):
-                mirror_tasks.append(mirror_result)
-        if mirror_tasks:
-            await asyncio.gather(*mirror_tasks)
+                self._schedule_task(mirror_result, target="mirror")
         return result
 
     def handle_direct(self, event: UiEvent) -> Any:
         """Synchronous variant: apply to primary immediately, schedule mirrors async."""
         result = self._primary.handle(event)
         if inspect.isawaitable(result):
-            self._schedule_direct_task(result, target="primary")
+            self._schedule_task(result, target="primary", direct=True)
         for mirror in self._mirrors:
-            mirror_result = mirror.handle(event)
+            try:
+                mirror_result = mirror.handle(event)
+            except Exception:
+                logging.getLogger(__name__).warning(
+                    "UI event direct mirror consumer failed",
+                    exc_info=True,
+                )
+                continue
             if inspect.isawaitable(mirror_result):
-                self._schedule_direct_task(mirror_result, target="mirror")
+                self._schedule_task(mirror_result, target="mirror", direct=True)
         return result
 
-    def _schedule_direct_task(self, result: Awaitable[Any], *, target: str) -> None:
+    def _schedule_task(self, result: Awaitable[Any], *, target: str, direct: bool = False) -> None:
         task = asyncio.create_task(result)
         task.add_done_callback(
-            lambda done: self._log_direct_task_error(done, target)
+            lambda done: self._log_task_error(done, target, direct=direct)
         )
 
     @staticmethod
-    def _log_direct_task_error(task: asyncio.Task[Any], target: str) -> None:
+    def _log_task_error(task: asyncio.Task[Any], target: str, *, direct: bool) -> None:
         if task.cancelled():
             return
         exc = task.exception()
         if exc is None:
             return
+        mode = "direct " if direct else ""
         logging.getLogger(__name__).warning(
-            "UI event direct %s consumer failed",
+            "UI event %s%s consumer failed",
+            mode,
             target,
             exc_info=(type(exc), exc, exc.__traceback__),
         )

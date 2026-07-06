@@ -42,6 +42,11 @@ class UiEventBus:
     def last_error(self) -> BaseException | None:
         return self._last_error
 
+    def clear_error(self) -> BaseException | None:
+        error = self._last_error
+        self._last_error = None
+        return error
+
     def start(self, consumer: Any) -> None:
         if self.is_running:
             self._consumer = consumer
@@ -151,4 +156,3 @@ class UiEventBus:
                         item.future.set_result(result)
             finally:
                 self._queue.task_done()
-

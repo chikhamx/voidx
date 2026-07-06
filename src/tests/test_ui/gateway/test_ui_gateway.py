@@ -194,12 +194,45 @@ async def test_composite_event_consumer_keeps_dock_primary_and_mirrors_events():
     result = consumer.handle(TurnStarted(text="demo"))
     if asyncio.iscoroutine(result):
         result = await result
-    await asyncio.sleep(0)
 
     assert result is dock.current_turn
     assert dock.current_turn is not None
-    messages = _payloads(client)
+    messages = []
+    for _ in range(10):
+        messages = _payloads(client)
+        if any(msg.get("method") == "turn.started" and msg["params"].get("text") == "demo" for msg in messages):
+            break
+        await asyncio.sleep(0)
     assert any(msg.get("method") == "turn.started" and msg["params"].get("text") == "demo" for msg in messages)
+
+
+@pytest.mark.asyncio
+async def test_composite_event_consumer_handle_does_not_wait_for_slow_mirror():
+    mirror_started = asyncio.Event()
+    mirror_release = asyncio.Event()
+
+    class SlowMirror:
+        async def handle(self, _event):
+            mirror_started.set()
+            await mirror_release.wait()
+
+    dock = BottomInputDock()
+    dock.begin_capture()
+    consumer = CompositeEventConsumer(
+        primary=DockEventConsumer(dock),
+        mirrors=[SlowMirror()],
+    )
+
+    result = await asyncio.wait_for(
+        consumer.handle(TurnStarted(text="demo")),
+        timeout=0.05,
+    )
+
+    assert result is dock.current_turn
+    assert dock.current_turn is not None
+    await asyncio.wait_for(mirror_started.wait(), timeout=0.05)
+    mirror_release.set()
+    await asyncio.sleep(0)
 
 
 @pytest.mark.asyncio

@@ -49,7 +49,7 @@ from voidx.tools.base import ToolContext, ToolResult
 from voidx.tools.agent import AgentResultContract, AgentTool
 from voidx.tools.registry import ToolRegistry
 from voidx.ui.output.dock import BottomInputDock, set_dock
-from voidx.ui.output.events import DockEventConsumer, TurnStarted, ui_events
+from voidx.ui.output.events import DockEventConsumer, StatusUpdated, ToolResultAppended, TurnStarted, ui_events
 
 
 def _graph(tmp_path):
@@ -669,3 +669,130 @@ async def test_execute_tools_terminates_turn_when_tool_started_notification_time
         and "UI event bus timed out" in str(message.content)
         for message in result["messages"]
     )
+
+
+@pytest.mark.asyncio
+async def test_execute_tools_returns_tool_error_when_result_rendering_fails(tmp_path, monkeypatch):
+    graph = _graph(tmp_path)
+
+    class FakeReadTool:
+        id = "read"
+        description = "fake read"
+
+        def parameters_schema(self):
+            return {"type": "object", "properties": {}}
+
+        async def execute(self, args: dict, ctx: ToolContext) -> ToolResult:
+            return ToolResult(output="File not found: missing.py", metadata={"error": True})
+
+    class FailingResultConsumer:
+        def handle(self, event):
+            if isinstance(event, ToolResultAppended):
+                raise RuntimeError("render exploded")
+            return None
+
+    graph.tools.register("read", FakeReadTool(), "fake read", {"type": "object", "properties": {}})
+
+    async def allow_all(
+        tool_calls,
+        plan_mode: bool,
+        session_id: str,
+        interaction_mode=None,
+        workflow_runs=None,
+        runtime_persona=None,
+    ):
+        return tool_calls, []
+
+    graph._authorize_tool_calls = allow_all
+    monkeypatch.setattr(graph._ui, "via_events", lambda: True)
+    graph._ui.events.start(FailingResultConsumer())
+
+    parent = AIMessage(
+        content="",
+        tool_calls=[{"name": "read", "args": {"file_path": "missing.py"}, "id": "call_read", "type": "tool_call"}],
+    )
+
+    try:
+        result = await graph._execute_tools({
+            "messages": [parent],
+            "workspace": str(tmp_path),
+            "persona": "voidx",
+            "plan_mode": False,
+        })
+    finally:
+        await graph._ui.events.stop()
+
+    assert result["messages"][0].tool_call_id == "call_read"
+    assert result["messages"][0].status == "error"
+    assert result["messages"][0].content == "File not found: missing.py"
+
+
+@pytest.mark.asyncio
+async def test_execute_tools_emits_heartbeat_while_tool_is_still_running(tmp_path, monkeypatch):
+    from voidx.agent.graph.tool_executor import executor as executor_module
+
+    graph = _graph(tmp_path)
+    emitted: list = []
+
+    class SlowReadTool:
+        id = "read"
+        description = "slow read"
+
+        def parameters_schema(self):
+            return {"type": "object", "properties": {}}
+
+        async def execute(self, args: dict, ctx: ToolContext) -> ToolResult:
+            await asyncio.sleep(0.03)
+            return ToolResult(output="read output")
+
+    graph.tools.register("read", SlowReadTool(), "slow read", {"type": "object", "properties": {}})
+
+    async def allow_all(
+        tool_calls,
+        plan_mode: bool,
+        session_id: str,
+        interaction_mode=None,
+        workflow_runs=None,
+        runtime_persona=None,
+    ):
+        return tool_calls, []
+
+    async def fake_request(event):
+        emitted.append(event)
+        return None
+
+    async def fake_emit(event):
+        emitted.append(event)
+        return True
+
+    async def fake_drain():
+        return None
+
+    graph._authorize_tool_calls = allow_all
+    monkeypatch.setattr(graph._ui, "via_events", lambda: True)
+    monkeypatch.setattr(graph._ui.events, "request", fake_request)
+    monkeypatch.setattr(graph._ui.events, "emit", fake_emit)
+    monkeypatch.setattr(graph._ui.events, "drain", fake_drain)
+    monkeypatch.setattr(executor_module, "TOOL_HEARTBEAT_INITIAL_SECONDS", 0.01)
+    monkeypatch.setattr(executor_module, "TOOL_HEARTBEAT_INTERVAL_SECONDS", 0.01)
+
+    parent = AIMessage(
+        content="",
+        tool_calls=[{"name": "read", "args": {}, "id": "call_read", "type": "tool_call"}],
+    )
+
+    result = await graph._execute_tools({
+        "messages": [parent],
+        "workspace": str(tmp_path),
+        "persona": "voidx",
+        "plan_mode": False,
+    })
+
+    heartbeats = [
+        event for event in emitted
+        if isinstance(event, StatusUpdated)
+        and event.status_id == "tool-heartbeat:call_read"
+    ]
+    assert heartbeats
+    assert "read still running" in heartbeats[0].detail
+    assert result["messages"][0].content == "read output"
