@@ -62,6 +62,16 @@ def test_create_chat_model_uses_all_provider_default_base_urls():
             assert str(model.openai_api_base).rstrip("/") == expected_base_url
 
 
+def test_create_chat_model_keeps_provider_base_url_when_protocol_is_overridden():
+    model = create_chat_model(
+        "test-key",
+        ModelConfig(provider="deepseek", model="deepseek-chat", protocol="openai"),
+    )
+
+    assert isinstance(model, ChatOpenAI)
+    assert str(model.openai_api_base).rstrip("/") == "https://api.deepseek.com/v1"
+
+
 def test_anthropic_adapter_receives_is_error_for_error_tool_message():
     _, formatted = _format_messages([
         HumanMessage(content="read file"),

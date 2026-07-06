@@ -2,7 +2,7 @@
 
 ## Status
 
-Approved — 方案 A（顶层独立包）已选定，待实施。
+> **Status: Done** — 方案 A（顶层独立包）已实施。TUI 迁移为顶层 `tui/` 目录，独立包名 `voidx-cli`（模块 `voidx_cli`）。
 
 ## Context
 

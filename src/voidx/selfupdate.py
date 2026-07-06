@@ -129,6 +129,8 @@ async def perform_upgrade(version: str | None = None, timeout: float = 120.0) ->
     if not is_newer(target, __version__):
         return UpgradeResult(ok=True, version=target, message=f"voidx is already up to date ({__version__}).")
 
+    old_version = _installed_version("voidx") or __version__
+
     env = {
         **os.environ,
         "PIP_NO_INPUT": "1",
@@ -141,13 +143,36 @@ async def perform_upgrade(version: str | None = None, timeout: float = 120.0) ->
     if not core_result.ok:
         return UpgradeResult(ok=False, version=target, message=core_result.message)
 
-    # Step 2: upgrade voidx-cli (failure is non-fatal — TUI may be unavailable)
+    # Step 2: upgrade voidx-cli (failure triggers rollback)
     cli_result = await _pip_install(f"voidx-cli=={target}", env, timeout)
     if not cli_result.ok:
         log_tool_event(
             "upgrade_voidx_cli_failed",
             tool_name="selfupdate",
             message=f"voidx-cli upgrade failed: {cli_result.message}",
+        )
+
+    # Step 3: verify voidx-cli is importable
+    if not _can_import_voidx_cli():
+        rollback_msg = await _rollback_to(old_version, env, timeout)
+        if rollback_msg is not None:
+            return UpgradeResult(
+                ok=False,
+                version=target,
+                message=(
+                    f"Upgrade to {target} failed: voidx-cli is not available. "
+                    f"Rolled back to {old_version}, but rollback encountered an error: {rollback_msg}. "
+                    f"Fix manually: pip install voidx-cli=={target}"
+                ),
+            )
+        return UpgradeResult(
+            ok=False,
+            version=target,
+            message=(
+                f"Upgrade to {target} failed: voidx-cli is not available. "
+                f"Rolled back to {old_version}. Please retry later or install voidx-cli manually: "
+                f"pip install voidx-cli=={target}"
+            ),
         )
 
     return UpgradeResult(
@@ -227,6 +252,49 @@ def _in_virtualenv() -> bool:
 
 def _launched_by_npm() -> bool:
     return os.environ.get("VOIDX_LAUNCHED_BY_NPM") == "1"
+
+
+def _installed_version(package: str) -> str | None:
+    """Return the currently installed version of a package, or None."""
+    try:
+        from importlib.metadata import PackageNotFoundError, version
+        try:
+            return version(package)
+        except PackageNotFoundError:
+            return None
+    except Exception:
+        return None
+
+
+def _can_import_voidx_cli() -> bool:
+    """Check whether voidx-cli is installed in the current environment.
+
+    Uses importlib.metadata (not find_spec) because pip install runs in a
+    subprocess — the current process's sys.path_importer_cache won't reflect
+    the newly installed package, but importlib.metadata re-reads .dist-info
+    from site-packages on every call.
+    """
+    try:
+        from importlib.metadata import PackageNotFoundError, version
+        try:
+            return version("voidx-cli") is not None
+        except PackageNotFoundError:
+            return False
+    except Exception:
+        return False
+
+
+async def _rollback_to(old_version: str, env: dict[str, str], timeout: float) -> str | None:
+    """Roll back voidx and voidx-cli to old_version.
+
+    Returns None on success, or an error message if rollback failed.
+    """
+    core_result = await _pip_install(f"voidx=={old_version}", env, timeout)
+    if not core_result.ok:
+        return core_result.message
+    # Best-effort: try to restore voidx-cli too (may not exist for old versions)
+    await _pip_install(f"voidx-cli=={old_version}", env, timeout)
+    return None
 
 
 def _decode_output(value: bytes | None) -> str:

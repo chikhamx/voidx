@@ -96,6 +96,17 @@ def resolve_protocol(config: ModelConfig) -> str:
     return _PROVIDER_PROTOCOLS.get(config.provider, "openai")
 
 
+def _resolve_base_url(config: ModelConfig, protocol: str) -> str:
+    if config.base_url:
+        return config.base_url
+    provider_protocol = _PROVIDER_PROTOCOLS.get(config.provider)
+    if provider_protocol:
+        default = _DEFAULT_BASE_URLS.get((config.provider, provider_protocol))
+        if default:
+            return default
+    return _DEFAULT_BASE_URLS.get((config.provider, protocol), "")
+
+
 # ── shared reasoning constants ────────────────────────────────────────────
 
 _ANTHROPIC_BUDGETS = {
@@ -535,9 +546,7 @@ def _reasoning_kwargs(config: ModelConfig, protocol: str) -> dict:
 
 def create_chat_model(api_key: str, config: ModelConfig) -> BaseChatModel:
     protocol = resolve_protocol(config)
-    base_url = config.base_url or _DEFAULT_BASE_URLS.get(
-        (config.provider, protocol), ""
-    )
+    base_url = _resolve_base_url(config, protocol)
 
     if protocol == "anthropic":
         kwargs = dict(
@@ -695,7 +704,7 @@ def get_context_limit(provider: str, protocol: str = "", context_window: int | N
         "doubao": 256_000,
         "typex": 128_000,
         "minimax": 1_000_000,
-        "xunfei-coding-plan": 200_000,
+        "xunfei-coding-plan": 92_160,
         "gemini": 1_000_000,
     }
     if provider in limits:

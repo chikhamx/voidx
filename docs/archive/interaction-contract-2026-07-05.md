@@ -1,3 +1,5 @@
+> **Status: Done**
+
 # 交互契约抽象层 — 技术设计文档
 
 ## Context
