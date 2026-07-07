@@ -35,15 +35,19 @@ _STATUS_STYLES = {
     "separator": "#4B5563",
 }
 _STATUS_VARIANTS = (
-    ("model", "policy", "state", "workflow", "usage", "goal"),
-    ("model", "policy", "state", "workflow", "usage"),
+    ("model", "policy", "state", "workflow", "goal", "usage"),
     ("model", "policy", "state", "workflow", "goal"),
-    ("model", "policy", "state", "usage", "goal"),
-    ("model", "policy", "workflow", "usage", "goal"),
+    ("model", "policy", "workflow", "goal", "usage"),
+    ("model", "policy", "workflow", "goal"),
+    ("model", "policy", "state", "workflow", "usage"),
     ("model", "policy", "state", "workflow"),
-    ("model", "policy", "usage", "goal"),
-    ("model", "policy", "usage"),
+    ("model", "policy", "state", "goal", "usage"),
+    ("model", "policy", "state", "goal"),
+    ("model", "policy", "workflow", "usage"),
+    ("model", "policy", "goal", "usage"),
+    ("model", "policy", "workflow"),
     ("model", "policy", "goal"),
+    ("model", "policy", "usage"),
     ("model", "policy"),
     ("model",),
 )
@@ -89,58 +93,47 @@ class _StatusRendererMixin:
         return self._status_text_from_segments(summary, selected)
 
     def _status_segments(self, *, include_busy: bool) -> tuple[tuple, tuple[StatusSegment, ...]]:
-        provider = _safe_status_value(getattr(self.status, "provider", ""), "")
         model = _safe_status_value(getattr(self.status, "model", ""), "")
         effort = _safe_status_value(getattr(self.status, "reasoning_effort", ""), "")
-        permission = _call_status(getattr(self.status, "permission_label", None), "")
         sandbox = _call_status(getattr(self.status, "sandbox_label", None), "")
         approval = _call_status(getattr(self.status, "approval_label", None), "")
         reviewer = _call_status(getattr(self.status, "approval_reviewer_label", None), "")
         mode = _call_status(getattr(self.status, "interaction_mode", None), "")
-        plan = _call_bool(getattr(self.status, "plan_mode", None))
         debug = _call_bool(getattr(self.status, "debug", None))
         goal_label = _call_status(getattr(self.status, "goal_label", None), "")
-        goal_type = _call_status(getattr(self.status, "goal_type", None), "")
-        goal_awaiting = _call_bool(getattr(self.status, "goal_awaiting_approval", None))
         active_workflows = _call_workflows(getattr(self.status, "active_workflows", None))
         stats = getattr(self.status, "usage_stats", None)
         context_limit = getattr(stats, "context_limit", None) or getattr(self.status, "context_limit", 0)
         stats_snapshot = (
             context_limit,
             getattr(stats, "context_tokens", 0) if stats is not None else 0,
-            getattr(stats, "total_tokens", 0) if stats is not None else 0,
             getattr(stats, "cache_hit_rate", None) if stats is not None else None,
         )
         snapshot = (
-            provider,
             model,
             effort,
-            permission,
             sandbox,
             approval,
             reviewer,
             mode,
-            plan,
             debug,
             goal_label,
             tuple(active_workflows),
             self._busy,
             stats_snapshot,
         )
-        model_text = "/".join(part for part in (provider, model) if part)
+        model_text = model
         if effort:
             model_text = f"{model_text} {effort}"
 
-        policy_parts = [part for part in (permission, sandbox, approval) if part]
+        policy_parts = [part for part in (sandbox, approval) if part]
         if reviewer and reviewer != "user":
             policy_parts.append(reviewer)
         policy_text = " ".join(policy_parts)
 
         state_parts = []
-        if mode:
+        if mode and mode != "auto":
             state_parts.append(mode)
-        if plan:
-            state_parts.append("plan")
         if debug:
             state_parts.append("debug")
         state_text = " ".join(state_parts)
@@ -148,10 +141,9 @@ class _StatusRendererMixin:
         usage_text = ""
         if stats is not None:
             usage_text = (
-                f"ctx {format_token_count(getattr(stats, 'context_tokens', 0))}/"
+                f"{format_token_count(getattr(stats, 'context_tokens', 0))}/"
                 f"{format_token_count(context_limit)}"
-                f" cache {format_cache_hit_rate(stats)}"
-                f" total {format_token_count(getattr(stats, 'total_tokens', 0))}"
+                f" {format_cache_hit_rate(stats)}"
             )
 
         goal_text = ""

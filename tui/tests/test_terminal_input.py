@@ -64,7 +64,7 @@ def test_input_cursor_position_accounts_for_status_line(tmp_path, monkeypatch):
 
     fake_stdout = FakeStdout()
     monkeypatch.setattr(sys, "stdout", fake_stdout)
-    status = SimpleNamespace(provider="openai", model="gpt", workspace=str(tmp_path))
+    status = SimpleNamespace(model="gpt", workspace=str(tmp_path))
     tui = PureTui(status, COMMANDS)
     tui._input_lines = ["现在"]
     tui._cursor_row = 0
@@ -191,16 +191,13 @@ def test_command_panel_renders_below_input_with_bottom_rule(tmp_path):
 
 def test_command_panel_keeps_dynamic_status_below_panel(tmp_path):
     status = SimpleNamespace(
-        provider="mimo-token-plan",
         model="mimo-v2.5-pro",
         workspace=str(tmp_path),
         reasoning_effort="xhigh",
-        permission_label=lambda: "accept edits",
         sandbox_label=lambda: "w-write",
         approval_label=lambda: "ask",
         interaction_mode=lambda: "auto",
         debug=lambda: True,
-        plan_mode=lambda: False,
     )
     tui = PureTui(status, [("/model", "Switch model"), ("/model new", "Create profile")])
     tui._input_lines = ["/model"]
@@ -209,7 +206,7 @@ def test_command_panel_keeps_dynamic_status_below_panel(tmp_path):
 
     lines = _render_lines(tui)
     panel_index = next(i for i, line in enumerate(lines) if "/model new" in line)
-    status_index = next(i for i, line in enumerate(lines) if "mimo-token-plan/mimo-v2.5-pro" in line)
+    status_index = next(i for i, line in enumerate(lines) if "mimo-v2.5-pro" in line)
 
     assert panel_index < status_index
     assert "↑↓ select" not in lines[status_index]
@@ -219,7 +216,6 @@ def test_command_panel_keeps_dynamic_status_below_panel(tmp_path):
 
 def test_pinned_todo_renders_above_input_and_status(tmp_path):
     status = SimpleNamespace(
-        provider="mimo",
         model="mimo-v2.5",
         workspace=str(tmp_path),
     )
@@ -247,7 +243,7 @@ def test_pinned_todo_renders_above_input_and_status(tmp_path):
     transcript_index = next(i for i, line in enumerate(lines) if "transcript line" in line)
     todo_index = next(i for i, line in enumerate(lines) if "Todo: 0/2 done" in line)
     input_index = next(i for i, line in enumerate(lines) if line.strip() == "❯ hello")
-    status_index = next(i for i, line in enumerate(lines) if "mimo/mimo-v2.5" in line)
+    status_index = next(i for i, line in enumerate(lines) if "mimo-v2.5" in line)
     assert transcript_index < todo_index < input_index < status_index
 
 
