@@ -139,6 +139,113 @@ async def test_quiet_slash_command_dispatches_without_turn(monkeypatch):
 
 
 @pytest.mark.asyncio
+async def test_web_headless_uses_gateway_frontend_without_default_tui_factory(monkeypatch, tmp_path):
+    graph = _graph(workspace=str(tmp_path))
+    _disable_external_managers(graph)
+    monkeypatch.setattr(runtime_ui_port, "show_startup", lambda **_: None)
+
+    def fail_create_frontend(*_args, **_kwargs):
+        raise AssertionError("web_headless must not create the default TUI frontend")
+
+    class ExitHeadlessFrontend:
+        instances = []
+
+        def __init__(self, status, commands):
+            self.status = status
+            self.commands = commands
+            self.request_handler = None
+            ExitHeadlessFrontend.instances.append(self)
+
+        async def run_headless(self, on_submit):
+            return
+
+        def set_external_command_handler(self, handler):
+            self.command_handler = handler
+
+        def set_external_request_handler(self, handler):
+            self.request_handler = handler
+
+    monkeypatch.setattr("voidx.agent.graph.run_loop.create_frontend", fail_create_frontend)
+    monkeypatch.setattr("voidx.agent.graph.run_loop.GatewayHeadlessFrontend", ExitHeadlessFrontend)
+    monkeypatch.setattr("voidx.agent.graph.run_loop.emit_web_gateway_bootstrap", lambda _url: None)
+
+    test_dock = BottomInputDock()
+    set_dock(test_dock)
+    test_dock.begin_capture()
+    try:
+        await graph.run(web=True, web_headless=True)
+    finally:
+        test_dock.deactivate()
+        test_dock.reset()
+        set_dock(None)
+
+    assert len(ExitHeadlessFrontend.instances) == 1
+    assert ExitHeadlessFrontend.instances[0].request_handler is not None
+
+
+@pytest.mark.asyncio
+async def test_apply_settings_update_refreshes_live_model(monkeypatch, tmp_path):
+    from voidx.config import Profile, Settings
+
+    created_models: list[tuple[str | None, str, str, str | None]] = []
+
+    def fake_create_chat_model(api_key, model_config):
+        marker = SimpleNamespace(
+            api_key=api_key,
+            provider=model_config.provider,
+            model=model_config.model,
+            base_url=model_config.base_url,
+        )
+        created_models.append((api_key, model_config.provider, model_config.model, model_config.base_url))
+        return marker
+
+    monkeypatch.setattr("voidx.agent.graph.core.voidx_graph.create_chat_model", fake_create_chat_model)
+
+    settings = await Settings.create(str(tmp_path))
+    await settings.save_profile(
+        Profile(
+            name="deepseek/deepseek-v4-pro",
+            api_key="sk-deepseek",
+            base_url="https://api.deepseek.com",
+            protocol="openai",
+        )
+    )
+    graph = VoidXGraph(
+        Config(workspace=str(tmp_path), model=ModelConfig(provider="openai", model="gpt-4.1")),
+        api_key="sk-openai",
+        settings=settings,
+    )
+
+    graph._app = SimpleNamespace(
+        status=SimpleNamespace(
+            provider="openai",
+            model="gpt-4.1",
+            context_limit=0,
+            reasoning_effort="xhigh",
+            permission_label=lambda: "default",
+        )
+    )
+
+    await graph._apply_settings_update(settings)
+
+    assert graph.config.workspace == str(tmp_path)
+    assert graph.config.model.provider == "deepseek"
+    assert graph.config.model.model == "deepseek-v4-pro"
+    assert graph.config.model.base_url == "https://api.deepseek.com"
+    assert graph.api_key == "sk-deepseek"
+    assert graph.model.provider == "deepseek"
+    assert graph.model.model == "deepseek-v4-pro"
+    assert created_models[-1] == (
+        "sk-deepseek",
+        "deepseek",
+        "deepseek-v4-pro",
+        "https://api.deepseek.com",
+    )
+    assert graph._app.status.provider == "deepseek"
+    assert graph._app.status.model == "deepseek-v4-pro"
+
+
+@pytest.mark.asyncio
 async def test_web_guide_submit_records_guidance_without_starting_turn():
     graph = _graph()
     guidance: list[str] = []

@@ -17,6 +17,7 @@ from voidx.runtime.ui import (
     CompositeEventConsumer,
     DockEventConsumer,
     GatewayEventConsumer,
+    GatewayHeadlessFrontend,
     GatewayServer,
     GatewaySession,
     McpServerStatus,
@@ -159,6 +160,7 @@ class GraphRunLoopMixin(GraphTurnMixin, GraphSessionMixin, GraphTranscriptMixin)
                         "workspace": self._workspace,
                         "profile_configured": self.model is not None,
                     },
+                    settings_update_handler=getattr(self, "_apply_settings_update", None),
                 )
                 self._ui.events.start(CompositeEventConsumer(
                     primary=consumer,
@@ -171,58 +173,56 @@ class GraphRunLoopMixin(GraphTurnMixin, GraphSessionMixin, GraphTranscriptMixin)
 
         exit_message: str | None = None
 
-        app = create_frontend(
-            UiStatus(
-                provider=self.config.model.provider,
-                model=self.config.model.model,
-                workspace=self._workspace,
-                session_title=title,
-                context_limit=get_context_limit(self.config.model.provider, self.config.model.protocol or "", self.config.model.context_window),
-                reasoning_effort=self.config.model.reasoning_effort or "xhigh",
-                permission_label=self._permission.status_label,
-                sandbox_label=lambda: self._permission._sandbox_label(),
-                approval_label=lambda: self._permission._approval_label(),
-                approval_reviewer_label=lambda: self._permission._reviewer_label(),
-                usage_stats=self._usage_stats,
-                debug=lambda: self._debug,
-                plan_mode=lambda: self._plan_mode,
-                interaction_mode=lambda: getattr(
-                    getattr(self, "_interaction_mode", None),
-                    "value",
-                    "plan" if getattr(self, "_plan_mode", False) else "auto",
-                ),
-                goal_label=lambda: goal_label(getattr(getattr(self, "_task_state", None), "current_goal", None)),
-                goal_type=lambda: goal_type_from_join(
-                    getattr(getattr(getattr(self, "_task_state", None), "workflow_route", None), "join", None)
-                ),
-                goal_awaiting_approval=lambda: False,
-                active_workflows=lambda: active_workflow_names(getattr(self, "_task_state", None)),
-                mcp_servers=lambda: [
-                    McpServerStatus(
-                        name=s.name,
-                        status=s.status,
-                        tool_count=s.tool_count,
-                    )
-                    for s in (
-                        self._mcp_manager.statuses()
-                        if hasattr(self, '_mcp_manager')
-                        else []
-                    )
-                ] if self._settings is not None else [],
-                mcp_config_path=str(self._settings.path) if self._settings is not None else "",
-                code_ide=lambda: (
-                    self._settings.get_code_ide().value
-                    if self._settings is not None
-                    else "trae"
-                ),
-                latest_action=lambda: getattr(
-                    getattr(getattr(self, "_runtime_guards", None), "wall_clock", None),
-                    "latest_action",
-                    "",
-                ),
+        status = UiStatus(
+            provider=self.config.model.provider,
+            model=self.config.model.model,
+            workspace=self._workspace,
+            session_title=title,
+            context_limit=get_context_limit(self.config.model.provider, self.config.model.protocol or "", self.config.model.context_window),
+            reasoning_effort=self.config.model.reasoning_effort or "xhigh",
+            permission_label=self._permission.status_label,
+            sandbox_label=lambda: self._permission._sandbox_label(),
+            approval_label=lambda: self._permission._approval_label(),
+            approval_reviewer_label=lambda: self._permission._reviewer_label(),
+            usage_stats=self._usage_stats,
+            debug=lambda: self._debug,
+            plan_mode=lambda: self._plan_mode,
+            interaction_mode=lambda: getattr(
+                getattr(self, "_interaction_mode", None),
+                "value",
+                "plan" if getattr(self, "_plan_mode", False) else "auto",
             ),
-            COMMANDS,
+            goal_label=lambda: goal_label(getattr(getattr(self, "_task_state", None), "current_goal", None)),
+            goal_type=lambda: goal_type_from_join(
+                getattr(getattr(getattr(self, "_task_state", None), "workflow_route", None), "join", None)
+            ),
+            goal_awaiting_approval=lambda: False,
+            active_workflows=lambda: active_workflow_names(getattr(self, "_task_state", None)),
+            mcp_servers=lambda: [
+                McpServerStatus(
+                    name=s.name,
+                    status=s.status,
+                    tool_count=s.tool_count,
+                )
+                for s in (
+                    self._mcp_manager.statuses()
+                    if hasattr(self, '_mcp_manager')
+                    else []
+                )
+            ] if self._settings is not None else [],
+            mcp_config_path=str(self._settings.path) if self._settings is not None else "",
+            code_ide=lambda: (
+                self._settings.get_code_ide().value
+                if self._settings is not None
+                else "trae"
+            ),
+            latest_action=lambda: getattr(
+                getattr(getattr(self, "_runtime_guards", None), "wall_clock", None),
+                "latest_action",
+                "",
+            ),
         )
+        app = GatewayHeadlessFrontend(status, COMMANDS) if web_headless else create_frontend(status, COMMANDS)
         self._app = app
         app.set_external_command_handler(partial(self._handle_web_command, app))
         update_check_task = asyncio.create_task(self._show_update_check_if_needed())

@@ -466,7 +466,11 @@ async def test_permission_prompt_uses_dock_details_when_events_are_active(tmp_pa
         await graph._ui.events.drain()
 
         assert choice == "y"
-        assert received_details is None
+        assert received_details == [{
+            "name": "bash",
+            "pattern": "npm test",
+            "args": {"command": "npm test"},
+        }]
         record = test_dock.status_record("permission:request")
         assert record is not None
         assert record.label == "Requesting"

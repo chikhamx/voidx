@@ -49,7 +49,13 @@ from voidx.tools.base import ToolContext, ToolResult
 from voidx.tools.agent import AgentResultContract, AgentTool
 from voidx.tools.registry import ToolRegistry
 from voidx.ui.output.dock import BottomInputDock, set_dock
-from voidx.ui.output.events import DockEventConsumer, TurnStarted, ui_events
+from voidx.ui.output.events import (
+    DockEventConsumer,
+    TurnCompleted,
+    TurnFailed,
+    TurnStarted,
+    ui_events,
+)
 
 
 def _graph(tmp_path):
@@ -185,6 +191,89 @@ async def test_run_once_persists_and_restores_transcript_snapshot(tmp_path):
         finally:
             second_dock.reset()
             set_dock(None)
+    finally:
+        await delete_session(session.id)
+
+
+@pytest.mark.asyncio
+async def test_run_once_emits_turn_completed_event(tmp_path):
+    session = await create_session(workspace=str(tmp_path))
+    events: list[object] = []
+
+    class RecordingConsumer:
+        def handle(self, event):
+            events.append(event)
+            if isinstance(event, TurnStarted):
+                return object()
+            return None
+
+    try:
+        graph = VoidXGraph(Config(workspace=str(tmp_path)), api_key=None, session=session)
+
+        class FakeGraph:
+            async def ainvoke(self, initial, _config):
+                return {"messages": list(initial["messages"]) + [AIMessage(content="done")]}
+
+        graph.graph = FakeGraph()
+
+        test_dock = BottomInputDock()
+        set_dock(test_dock)
+        test_dock.begin_capture()
+        ui_events.start(RecordingConsumer())
+        try:
+            await graph._run_once("hello")
+            await ui_events.drain()
+        finally:
+            await ui_events.stop()
+            test_dock.deactivate()
+            test_dock.reset()
+            set_dock(None)
+
+        assert any(isinstance(event, TurnCompleted) for event in events)
+        assert not any(isinstance(event, TurnFailed) for event in events)
+    finally:
+        await delete_session(session.id)
+
+
+@pytest.mark.asyncio
+async def test_run_once_emits_turn_failed_event_on_exception(tmp_path):
+    session = await create_session(workspace=str(tmp_path))
+    events: list[object] = []
+
+    class RecordingConsumer:
+        def handle(self, event):
+            events.append(event)
+            if isinstance(event, TurnStarted):
+                return object()
+            return None
+
+    try:
+        graph = VoidXGraph(Config(workspace=str(tmp_path)), api_key=None, session=session)
+
+        class FakeGraph:
+            async def ainvoke(self, initial, _config):
+                raise RuntimeError("provider failed")
+
+        graph.graph = FakeGraph()
+
+        test_dock = BottomInputDock()
+        set_dock(test_dock)
+        test_dock.begin_capture()
+        ui_events.start(RecordingConsumer())
+        try:
+            with pytest.raises(RuntimeError, match="provider failed"):
+                await graph._run_once("hello")
+            await ui_events.drain()
+        finally:
+            await ui_events.stop()
+            test_dock.deactivate()
+            test_dock.reset()
+            set_dock(None)
+
+        failures = [event for event in events if isinstance(event, TurnFailed)]
+        assert len(failures) == 1
+        assert failures[0].message == "provider failed"
+        assert not any(isinstance(event, TurnCompleted) for event in events)
     finally:
         await delete_session(session.id)
 
@@ -337,5 +426,4 @@ async def test_run_once_persists_user_decision_tool_replay_rows(tmp_path):
         assert [row.content for row in tool_rows] == ['{"answer": "frontend"}', '{"decision": "approved"}']
     finally:
         await delete_session(session.id)
-
 

@@ -89,6 +89,11 @@ _DEFAULT_BASE_URLS: dict[tuple[str, str], str] = {
     ("xunfei-coding-plan", "openai"): "https://maas-coding-api.cn-huabei-1.xf-yun.com/v2",
 }
 
+_OFFICIAL_OPENAI_BASE_URLS = {
+    "https://api.openai.com",
+    "https://api.openai.com/v1",
+}
+
 
 def resolve_protocol(config: ModelConfig) -> str:
     if config.protocol:
@@ -96,10 +101,19 @@ def resolve_protocol(config: ModelConfig) -> str:
     return _PROVIDER_PROTOCOLS.get(config.provider, "openai")
 
 
+def _normalize_base_url(url: str) -> str:
+    return url.strip().rstrip("/")
+
+
 def _resolve_base_url(config: ModelConfig, protocol: str) -> str:
-    if config.base_url:
-        return config.base_url
     provider_protocol = _PROVIDER_PROTOCOLS.get(config.provider)
+    stale_openai_base_url = (
+        provider_protocol is not None
+        and provider_protocol != "openai"
+        and _normalize_base_url(config.base_url or "") in _OFFICIAL_OPENAI_BASE_URLS
+    )
+    if config.base_url and not stale_openai_base_url:
+        return config.base_url
     if provider_protocol:
         default = _DEFAULT_BASE_URLS.get((config.provider, provider_protocol))
         if default:
@@ -191,25 +205,7 @@ class DeepSeekChatOpenAI(ChatOpenAI):
         choices = chunk.get("choices") or []
         if choices:
             delta = choices[0].get("delta") or {}
-            rc = delta.get("reasoning_content")
-            if isinstance(rc, str) and rc:
-                # Each _convert_chunk_to_generation_chunk call processes a
-                # single streaming chunk; the message is freshly created by
-                # the parent class, so additional_kwargs is always empty here.
-                msg.additional_kwargs["reasoning_content"] = rc
-            # MiniMax uses reasoning_details (list of {type, text}).
-            # Unlike reasoning_content (concatenated string), we preserve
-            # the original item structure for downstream extraction.
-            # Same as reasoning_content: single-chunk scope, no cross-chunk
-            # accumulation (that happens via LangChain's chunk merging).
-            rd = delta.get("reasoning_details")
-            if isinstance(rd, list) and rd:
-                items = [
-                    item for item in rd
-                    if isinstance(item, dict) and isinstance(item.get("text"), str) and item["text"]
-                ]
-                if items:
-                    msg.additional_kwargs["reasoning_details"] = items
+            _preserve_reasoning_delta(msg, delta)
 
         return generation_chunk
 
@@ -330,6 +326,56 @@ class DeepSeekChatOpenAI(ChatOpenAI):
             return {"extra_body": {"thinking": {"type": "disabled"}}}
         ds_effort = "max" if effort in ("xhigh", "max") else "high"
         return {"reasoning_effort": ds_effort, "extra_body": {"thinking": {"type": "enabled"}}}
+
+
+class ReasoningPreservingChatOpenAI(ChatOpenAI):
+    """OpenAI-compatible chat model that preserves streaming reasoning deltas."""
+
+    def _convert_chunk_to_generation_chunk(  # type: ignore[override]
+        self,
+        chunk: dict,
+        default_chunk_class: type,
+        base_generation_info: dict | None,
+    ) -> ChatGenerationChunk | None:
+        generation_chunk = super()._convert_chunk_to_generation_chunk(
+            chunk, default_chunk_class, base_generation_info
+        )
+        if generation_chunk is None:
+            return None
+
+        msg = generation_chunk.message
+        if not isinstance(msg, AIMessageChunk):
+            return generation_chunk
+
+        choices = chunk.get("choices") or []
+        if choices:
+            delta = choices[0].get("delta") or {}
+            _preserve_reasoning_delta(msg, delta)
+
+        return generation_chunk
+
+
+def _preserve_reasoning_delta(msg: AIMessageChunk, delta: dict) -> None:
+    rc = delta.get("reasoning_content")
+    if isinstance(rc, str) and rc:
+        msg.additional_kwargs["reasoning_content"] = rc
+
+    reasoning = delta.get("reasoning")
+    if reasoning:
+        msg.additional_kwargs["reasoning"] = reasoning
+
+    thinking = delta.get("thinking")
+    if thinking:
+        msg.additional_kwargs["thinking"] = thinking
+
+    rd = delta.get("reasoning_details")
+    if isinstance(rd, list) and rd:
+        items = [
+            item for item in rd
+            if isinstance(item, dict) and isinstance(item.get("text"), str) and item["text"]
+        ]
+        if items:
+            msg.additional_kwargs["reasoning_details"] = items
 
 
 # ── effort helpers (shared) ──────────────────────────────────────────────
@@ -584,7 +630,7 @@ def create_chat_model(api_key: str, config: ModelConfig) -> BaseChatModel:
         if config.provider not in _OFFICIAL_OPENAI_PROVIDERS:
             kwargs["default_headers"] = _strip_stainless_headers()
         kwargs.update(_reasoning_kwargs(config, protocol))
-        return ChatOpenAI(**kwargs)
+        return ReasoningPreservingChatOpenAI(**kwargs)
 
     if protocol == "gemini":
         _ensure_gemini_dep()
@@ -668,7 +714,7 @@ def _extract_thinking_openai(chunk: AIMessageChunk) -> str:
 
     extra = chunk.additional_kwargs
     if isinstance(extra, dict):
-        for key in ("reasoning_content", "reasoning", "reasoning_details"):
+        for key in ("reasoning_content", "reasoning", "thinking", "reasoning_details"):
             text = _extract_reasoning_text(extra.get(key))
             if text:
                 parts.append(text)
@@ -704,7 +750,7 @@ def get_context_limit(provider: str, protocol: str = "", context_window: int | N
         "doubao": 256_000,
         "typex": 128_000,
         "minimax": 1_000_000,
-        "xunfei-coding-plan": 92_160,
+        "xunfei-coding-plan": 200_000,
         "gemini": 1_000_000,
     }
     if provider in limits:

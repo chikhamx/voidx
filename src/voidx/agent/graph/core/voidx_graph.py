@@ -322,6 +322,44 @@ class VoidXGraph(
     def usage_stats(self):
         return self._usage_stats
 
+    async def _apply_settings_update(self, settings: Settings) -> None:
+        profile = await settings.resolve_profile()
+        new_config = await settings.build_config(profile=profile)
+        new_config.workspace = self._workspace
+
+        self._settings = settings
+        self.config = new_config
+        self.api_key = profile.api_key if profile is not None else None
+        self.model = create_chat_model(self.api_key, self.config.model) if self.api_key else None
+
+        bind_settings_to_catalog(settings)
+        self._tracker, self.tools = build_tool_registry(
+            settings=settings,
+            config=self.config,
+            subagent_runner=self._subagent_runner,
+        )
+        self._permission = build_permission_service(self.config, notifier=self._ui.ui.print)
+        self._tool_executor = GraphToolExecutor(self)
+
+        context_limit = self._compaction.context_limit
+        updated_usage_stats, updated_compaction = build_compaction_service(self.config)
+        context_limit = updated_usage_stats.context_limit or context_limit
+        self._usage_stats.context_limit = context_limit
+        self._compaction.context_limit = updated_compaction.context_limit
+        self._compaction.output_token_max = updated_compaction.output_token_max
+        self._compaction.soft_ratio = updated_compaction.soft_ratio
+        self._compaction.post_target_ratio = updated_compaction.post_target_ratio
+
+        app = getattr(self, "_app", None)
+        status = getattr(app, "status", None)
+        if status is not None:
+            status.provider = self.config.model.provider
+            status.model = self.config.model.model
+            status.context_limit = context_limit
+            status.reasoning_effort = self.config.model.reasoning_effort or "xhigh"
+            if hasattr(status, "permission_label"):
+                status.permission_label = self._permission.status_label
+
     @property
     def workspace(self) -> str:
         return self._workspace

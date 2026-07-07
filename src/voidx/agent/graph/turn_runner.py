@@ -38,6 +38,9 @@ from voidx.runtime.ui import (
     StatusUpdated,
     TodoCleared,
     TodoCommitted,
+    TurnCancelled,
+    TurnCompleted,
+    TurnFailed,
     TurnStarted,
     WarningAppended,
 )
@@ -396,6 +399,7 @@ class GraphTurnRunner:
                     )
                 if host._ui.via_events():
                     await host._ui.events.emit(TodoCommitted())
+                    await host._ui.events.emit(TurnCompleted())
                     await host._ui.events.drain()
                 else:
                     host._ui.dock.commit_todo_state()
@@ -416,6 +420,14 @@ class GraphTurnRunner:
                             for row_id, entry in context_cache.row_messages.items()
                             if row_id < user_message_id
                         }
+                if host._ui.via_events():
+                    await host._ui.events.emit(TurnCancelled())
+                    await host._ui.events.drain()
+                raise
+            except Exception as exc:
+                if host._ui.via_events():
+                    await host._ui.events.emit(TurnFailed(message=str(exc)))
+                    await host._ui.events.drain()
                 raise
             finally:
                 host._usage_stats.end_turn()

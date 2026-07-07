@@ -72,6 +72,20 @@ def test_create_chat_model_keeps_provider_base_url_when_protocol_is_overridden()
     assert str(model.openai_api_base).rstrip("/") == "https://api.deepseek.com/v1"
 
 
+def test_create_chat_model_ignores_stale_openai_base_url_for_known_non_openai_provider():
+    model = create_chat_model(
+        "test-key",
+        ModelConfig(
+            provider="deepseek",
+            model="deepseek-chat",
+            base_url="https://api.openai.com/v1",
+        ),
+    )
+
+    assert isinstance(model, DeepSeekChatOpenAI)
+    assert str(model.openai_api_base).rstrip("/") == "https://api.deepseek.com/v1"
+
+
 def test_anthropic_adapter_receives_is_error_for_error_tool_message():
     _, formatted = _format_messages([
         HumanMessage(content="read file"),
@@ -280,6 +294,55 @@ def test_custom_provider_strips_stainless_headers():
     assert anthropic_custom.default_headers is None
 
 
+def test_openai_compatible_provider_preserves_streaming_reasoning_content():
+    model = create_chat_model(
+        "test-key",
+        ModelConfig(
+            provider="xunfei-coding-plan",
+            model="astron-code-latest",
+            reasoning_effort="high",
+        ),
+    )
+
+    raw_chunk = {
+        "id": "chatcmpl-test",
+        "object": "chat.completion.chunk",
+        "choices": [{
+            "index": 0,
+            "delta": {
+                "role": "assistant",
+                "content": "",
+                "reasoning_content": "checking the workspace",
+            },
+            "finish_reason": None,
+        }],
+    }
+
+    generation = model._convert_chunk_to_generation_chunk(raw_chunk, AIMessageChunk, None)
+
+    assert generation is not None
+    assert generation.message.additional_kwargs.get("reasoning_content") == "checking the workspace"
+    assert extract_thinking(generation.message, "openai") == "checking the workspace"
+
+
+def test_openai_compatible_provider_does_not_replay_reasoning_content():
+    model = create_chat_model(
+        "test-key",
+        ModelConfig(provider="xunfei-coding-plan", model="astron-code-latest"),
+    )
+    messages = [
+        HumanMessage(content="hello"),
+        AIMessage(
+            content="hi",
+            additional_kwargs={"reasoning_content": "hidden reasoning"},
+        ),
+    ]
+
+    payload = model._get_request_payload(messages)
+
+    assert "reasoning_content" not in payload["messages"][1]
+
+
 def test_typex_reasoning_uses_zhipu_thinking_format():
     """typex hosts Zhipu GLM models which use thinking: {type: ...} format."""
     typex = create_chat_model(
@@ -357,7 +420,7 @@ def test_zhipu_reasoning_uses_thinking_format():
 
 
 def test_get_context_limit_xunfei_coding_plan():
-    assert get_context_limit("xunfei-coding-plan") == 92_160
+    assert get_context_limit("xunfei-coding-plan") == 200_000
 
 
 def test_xunfei_coding_plan_strips_stainless_headers():
