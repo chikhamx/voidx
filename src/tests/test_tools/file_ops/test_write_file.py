@@ -208,6 +208,24 @@ class TestWriteAppendOp:
         assert result.metadata.get("error") is not True
         assert target.read_text(encoding="utf-8") == "one\ntwo\nthree\n"
 
+
+    @pytest.mark.asyncio
+    async def test_append_output_uses_numbered_diff_but_diff_stays_standard(self, tmp_path):
+        target = tmp_path / "numbered-append.txt"
+        target.write_text("one\ntwo\n", encoding="utf-8")
+        ctx = ToolContext(workspace=str(tmp_path))
+        r = ToolRegistry()
+
+        result = await r.execute_tool(
+            "write",
+            {"file_path": "numbered-append.txt", "op": "append", "new_string": "three\n"},
+            ctx,
+        )
+
+        assert result.metadata.get("error") is not True
+        assert "+3\tthree" in result.output
+        assert "+three" in result.diff
+        assert "+3\tthree" not in result.diff
     @pytest.mark.asyncio
     async def test_append_no_read_coverage_needed(self, tmp_path):
         target = tmp_path / "noverify.txt"

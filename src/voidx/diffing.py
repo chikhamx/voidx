@@ -115,6 +115,30 @@ def parse_unified_diff(diff_text: str) -> StructuredDiff:
     return StructuredDiff(files=files)
 
 
+def render_numbered_diff(file_diff: FileDiff) -> str:
+    """Render a FileDiff as unified-diff-like text with per-line numbers."""
+    if not file_diff.hunks:
+        return ""
+
+    lines = [f"--- {file_diff.old_path}", f"+++ {file_diff.new_path}"]
+    for hunk in file_diff.hunks:
+        section = f" {hunk.section}" if hunk.section else ""
+        lines.append(f"@@ -{hunk.old_start},{hunk.old_count} +{hunk.new_start},{hunk.new_count} @@{section}")
+        for line in hunk.lines:
+            if line.kind == "remove":
+                marker = "-"
+                lineno = line.old_lineno
+            elif line.kind == "add":
+                marker = "+"
+                lineno = line.new_lineno
+            else:
+                marker = " "
+                lineno = line.new_lineno
+            if lineno is not None:
+                lines.append(f"{marker}{lineno}\t{line.text}")
+    return "\n".join(lines) + "\n"
+
+
 def language_from_path(path: str) -> str:
     suffix = path.rsplit(".", 1)[-1].lower() if "." in path else ""
     mapping = {

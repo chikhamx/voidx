@@ -57,6 +57,31 @@ class TestFileOpsReplace:
         assert result.metadata.get("error") is not True
         assert f.read_text() == "one\nTWO\nthree\n"
 
+
+    @pytest.mark.asyncio
+    async def test_replace_output_uses_numbered_diff_but_diff_stays_standard(self, tmp_path):
+        f = tmp_path / "numbered-replace.txt"
+        f.write_text("one\ntwo = 2\nthree\n", encoding="utf-8")
+        ctx = ToolContext(workspace=str(tmp_path))
+        r = ToolRegistry()
+        await r.execute_tool("read", {"file_path": "numbered-replace.txt"}, ctx)
+
+        result = await r.execute_tool(
+            "replace",
+            {
+                "file_path": "numbered-replace.txt",
+                "bounds": [{"line_no": 2, "anchor": "two"}],
+                "new_string": "TWO",
+            },
+            ctx,
+        )
+
+        assert result.metadata.get("error") is not True
+        assert "-2\ttwo = 2" in result.output
+        assert "+2\tTWO" in result.output
+        assert "-two = 2" in result.diff
+        assert "+TWO" in result.diff
+        assert "-2\ttwo = 2" not in result.diff
     @pytest.mark.asyncio
     async def test_replace_selects_best_valid_line_range_pair(self, tmp_path):
         f = tmp_path / "pair-score.txt"

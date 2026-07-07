@@ -5,7 +5,7 @@ from typing import NamedTuple
 
 from pydantic import BaseModel, Field, model_validator
 
-from voidx.diffing import make_file_diff, make_structured_diff
+from voidx.diffing import make_file_diff, make_structured_diff, render_numbered_diff
 from voidx.logging.tool_log import log_tool_event
 from voidx.tools.base import BaseTool, ToolContext, ToolResult, model_to_json_schema, resolve_safe
 from voidx.tools.file_state import (
@@ -250,6 +250,8 @@ def _resolve_edit_target(ctx: ToolContext, file_path: str):
 
 
 
+
+
 async def _execute_text_replace(
     ctx: ToolContext,
     *,
@@ -377,11 +379,12 @@ async def _execute_text_replace(
     file_diff = make_structured_diff(file_path, original, content)
     remap_read_coverage_from_file_diff(ctx, path, file_diff, old_ranges=old_ranges)
 
+    numbered_diff = render_numbered_diff(file_diff)
     output = f"File edited: {file_path} (1 operations)"
     if drift_hint:
         output = f"{drift_hint}{output}"
-    if diff:
-        output = f"{output}\n{diff}"
+    if numbered_diff:
+        output = f"{output}\n{numbered_diff}"
     return ToolResult(
         title="Edited (1 edits)",
         output=output,
@@ -474,7 +477,8 @@ async def _apply_resolved_edits(
     file_diff = make_structured_diff(file_path, original, content)
     remap_read_coverage_from_file_diff(ctx, path, file_diff, old_ranges=old_ranges)
 
-    details = "\n".join([*hints, *_line_shift_hints(edits), diff])
+    numbered_diff = render_numbered_diff(file_diff)
+    details = "\n".join([*hints, *_line_shift_hints(edits), numbered_diff])
     output = f"File edited: {file_path} ({len(edits)} operations)"
     if details:
         output = f"{output}\n{details}"

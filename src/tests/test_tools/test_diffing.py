@@ -4,7 +4,13 @@ import sys
 from pathlib import Path
 
 
-from voidx.diffing import FileDiff, make_file_diff, make_structured_diff, parse_unified_diff
+from voidx.diffing import (
+    FileDiff,
+    make_file_diff,
+    make_structured_diff,
+    parse_unified_diff,
+    render_numbered_diff,
+)
 
 
 def _round_trip(filepath: str, old: str, new: str) -> FileDiff:
@@ -126,3 +132,23 @@ def test_added_removed_counts():
 def test_both_empty():
     structured = make_structured_diff("f.txt", "", "")
     assert len(structured.hunks) == 0
+
+
+def test_render_numbered_diff_uses_diff_markers_and_line_numbers():
+    old = "one\ntwo\nthree\n"
+    new = "one\nTWO\nthree\nfour\n"
+    structured = make_structured_diff("f.txt", old, new)
+
+    rendered = render_numbered_diff(structured)
+
+    assert rendered.startswith("--- a/f.txt\n+++ b/f.txt\n@@ -1,3 +1,4 @@\n")
+    assert " 1\tone" in rendered
+    assert "-2\ttwo" in rendered
+    assert "+2\tTWO" in rendered
+    assert "+4\tfour" in rendered
+
+
+def test_render_numbered_diff_returns_empty_for_no_hunks():
+    structured = make_structured_diff("f.txt", "same\n", "same\n")
+
+    assert render_numbered_diff(structured) == ""
