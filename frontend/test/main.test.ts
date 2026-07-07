@@ -1,7 +1,7 @@
 // @ts-nocheck
 import { describe, it, expect, beforeEach, vi } from "vitest";
 import { handleItem } from "../src/main";
-import { appendMessageItem, handleToolItem } from "../src/render";
+import { appendMessageItem, handleStatusItem, handleToolItem } from "../src/render";
 
 beforeEach(() => {
   const transcript = document.querySelector("#transcript");
@@ -244,6 +244,71 @@ describe("handleToolItem", () => {
     expect(diff.children[4].className).toBe("diff-add");
     expect(diff.children[5].className).toBe("diff-context");
   });
+
+  it("groups consecutive tool calls and shows the latest tool summary", () => {
+    handleToolItem("item.started", "t14-1", {
+      tool_call_id: "c14-1",
+      tool_name: "bash",
+      raw_args: { command: "ls" },
+    });
+    handleToolItem("item.started", "t14-2", {
+      tool_call_id: "c14-2",
+      tool_name: "read",
+      args: { path: "/tmp/file.txt" },
+    });
+
+    const transcript = document.querySelector("#transcript");
+    const group = transcript.querySelector(".tool-group");
+    expect(transcript.children).toHaveLength(1);
+    expect(group).not.toBeNull();
+    expect(group.querySelectorAll(".tool-item")).toHaveLength(2);
+    expect(group.querySelector(".tool-group-name").textContent).toBe("read");
+    expect(group.querySelector(".tool-group-args").textContent).toContain("/tmp/file.txt");
+    expect(group.querySelector(".tool-group-body").hidden).toBe(true);
+  });
+
+  it("starts a new tool group after a non-tool transcript item", () => {
+    handleToolItem("item.started", "t15-1", {
+      tool_call_id: "c15-1",
+      tool_name: "bash",
+    });
+    appendMessageItem("m15", { text: "between tools" });
+    handleToolItem("item.started", "t15-2", {
+      tool_call_id: "c15-2",
+      tool_name: "read",
+    });
+
+    const transcript = document.querySelector("#transcript");
+    expect(transcript.querySelectorAll(".tool-group")).toHaveLength(2);
+    expect(transcript.children[1].classList.contains("message-item")).toBe(true);
+  });
+
+  it("expands grouped tool calls three at a time", () => {
+    for (let i = 1; i <= 7; i += 1) {
+      handleToolItem("item.started", `t16-${i}`, {
+        tool_call_id: `c16-${i}`,
+        tool_name: `tool-${i}`,
+      });
+    }
+
+    const transcript = document.querySelector("#transcript");
+    const group = transcript.querySelector(".tool-group");
+    const body = group.querySelector(".tool-group-body");
+    const items = [...group.querySelectorAll(".tool-item")];
+
+    group.querySelector(".tool-group-header").click();
+
+    expect(body.hidden).toBe(false);
+    expect(items.filter((item) => !item.hidden)).toHaveLength(3);
+    expect(group.querySelector(".tool-group-expand-more")).not.toBeNull();
+
+    group.querySelector(".tool-group-expand-more").click();
+    expect(items.filter((item) => !item.hidden)).toHaveLength(6);
+
+    group.querySelector(".tool-group-expand-more").click();
+    expect(items.filter((item) => !item.hidden)).toHaveLength(7);
+    expect(group.querySelector(".tool-group-expand-more")).toBeNull();
+  });
 });
 
 describe("handleItem routing", () => {
@@ -290,14 +355,64 @@ describe("handleItem routing", () => {
     expect(todo.querySelector(".todo-item")).not.toBeNull();
   });
 
-  it("status kind produces no transcript children", () => {
-    const transcript = document.querySelector("#transcript");
-    const before = transcript.children.length;
+  it("marks todo items done when todo item completes", () => {
+    handleItem("item.started", {
+      kind: "todo",
+      item_id: "td1",
+      data: {
+        items: [{ id: "x", content: "task", status: "active" }],
+        summary: "running",
+      },
+    });
+    handleItem("item.completed", {
+      kind: "todo",
+      item_id: "td1",
+      data: {},
+    });
+
+    const todo = document.querySelector("#todo-panel");
+    const item = todo.querySelector(".todo-item");
+    expect(item.classList.contains("active")).toBe(false);
+    expect(item.classList.contains("done")).toBe(true);
+    expect(item.textContent).toContain("task");
+  });
+
+  it("routes status kind through started and completed lifecycle", () => {
     handleItem("item.started", {
       kind: "status",
       item_id: "st1",
-      data: {},
+      data: { status_id: "workflow:tdd", label: "Workflow", detail: "running" },
     });
-    expect(transcript.children.length).toBe(before);
+    const transcript = document.querySelector("#transcript");
+    const item = transcript.querySelector(".status-item");
+    expect(item).not.toBeNull();
+    expect(item.classList.contains("running")).toBe(true);
+    expect(item.textContent).toContain("Workflow");
+
+    handleItem("item.completed", {
+      kind: "status",
+      item_id: "st1",
+      data: { status_id: "workflow:tdd", label: "Workflow", ok: true },
+    });
+
+    expect(item.classList.contains("running")).toBe(false);
+    expect(item.classList.contains("completed")).toBe(true);
+  });
+});
+
+describe("handleStatusItem", () => {
+  it("updates an existing status item by item id", () => {
+    handleStatusItem("item.started", "status-1", {
+      status_id: "workflow:debug",
+      label: "Debug workflow",
+      detail: "checking",
+    });
+    handleStatusItem("item.completed", "status-1", {
+      status_id: "workflow:debug",
+      ok: true,
+    });
+    const item = document.querySelector(".status-item");
+    expect(item.classList.contains("running")).toBe(false);
+    expect(item.classList.contains("completed")).toBe(true);
   });
 });

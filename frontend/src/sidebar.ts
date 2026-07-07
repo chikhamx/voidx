@@ -22,14 +22,14 @@ const SESSION_PREVIEW_LIMIT = 5;
 
 let threadSelectCb: ThreadCallback | null = null;
 let newThreadCb: NewThreadCallback | null = null;
-let threadForkCb: ThreadCallback | null = null;
 let threadDeleteCb: ThreadCallback | null = null;
 let threadRenameCb: ThreadCallback | null = null;
 let currentThreads: ThreadInfo[] = [];
 let currentProjectName = "Project";
+let currentWorkspacePath = "";
 let newChatBtnBound = false;
 const workspaceVisibleCounts = new Map<string, number>();
-const collapsedWorkspaces = new Set<string>();
+const expandedWorkspaces = new Set<string>();
 
 function _workspaceBasename(workspace: string): string {
   if (!workspace || workspace === ".") return currentProjectName || "Project";
@@ -67,7 +67,14 @@ function _isReusableEmptyThread(thread: ThreadInfo): boolean {
 }
 
 function _isCurrentWorkspace(group: WorkspaceGroup): boolean {
-  return group.label === currentProjectName || group.workspace === currentProjectName;
+  return (
+    group.label === currentProjectName ||
+    group.workspace === currentProjectName ||
+    (
+      currentWorkspacePath !== "" &&
+      _workspaceGroupKey(group.workspace) === _workspaceGroupKey(currentWorkspacePath)
+    )
+  );
 }
 
 function _visibleCountForWorkspace(workspace: string, total: number): number {
@@ -112,6 +119,16 @@ function groupByWorkspace(threads: ThreadInfo[]): WorkspaceGroup[] {
   }
 
   const groups = [...map.values()];
+  if (currentWorkspacePath) {
+    const key = _workspaceGroupKey(currentWorkspacePath);
+    if (!map.has(key)) {
+      groups.push({
+        workspace: currentWorkspacePath,
+        label: _workspaceBasename(currentWorkspacePath),
+        sessions: [],
+      });
+    }
+  }
   groups.sort((a, b) => {
     const aCurrent = _isCurrentWorkspace(a);
     const bCurrent = _isCurrentWorkspace(b);
@@ -123,14 +140,15 @@ function groupByWorkspace(threads: ThreadInfo[]): WorkspaceGroup[] {
   return groups;
 }
 
-function _svgIcon(name: "folder" | "message" | "plus" | "more" | "chevron-down" | "chevron-right"): HTMLElement {
+function _svgIcon(name: "folder" | "message" | "plus" | "pencil" | "trash" | "chevron-down" | "chevron-right"): HTMLElement {
   const icon = document.createElement("span");
   icon.className = "vx-sidebar-row-icon";
   const paths: Record<typeof name, string> = {
     folder: '<path d="M3.5 6.5h5l1.4 1.7h6.6v7.3a2 2 0 0 1-2 2h-11a2 2 0 0 1-2-2v-7a2 2 0 0 1 2-2Z"/><path d="M3.5 6.5V5a2 2 0 0 1 2-2h3.2l1.4 1.7h4.4a2 2 0 0 1 2 2v1.7"/>',
     message: '<path d="M5 5.5h10a2 2 0 0 1 2 2v5.8a2 2 0 0 1-2 2H8.4L5 18v-2.7a2 2 0 0 1-2-2V7.5a2 2 0 0 1 2-2Z"/>',
     plus: '<path d="M10 4.5v11"/><path d="M4.5 10h11"/>',
-    more: '<circle cx="5.5" cy="10" r="1"/><circle cx="10" cy="10" r="1"/><circle cx="14.5" cy="10" r="1"/>',
+    pencil: '<path d="M4 14.5V17h2.5L15.2 8.3l-2.5-2.5L4 14.5Z"/><path d="m11.7 6.8 2.5 2.5"/>',
+    trash: '<path d="M5 6h10"/><path d="M8 6V4.5h4V6"/><path d="M6.5 8.5 7 16h6l.5-7.5"/><path d="M9 9.5v4.5"/><path d="M11 9.5v4.5"/>',
     "chevron-down": '<path d="m5.5 8 4.5 4.5L14.5 8"/>',
     "chevron-right": '<path d="m8 5.5 4.5 4.5L8 14.5"/>',
   };
@@ -138,9 +156,15 @@ function _svgIcon(name: "folder" | "message" | "plus" | "more" | "chevron-down" 
   return icon;
 }
 
-export function renderSidebar(threads: ThreadInfo[], activeThreadId: string | null, projectName: string): void {
+export function renderSidebar(
+  threads: ThreadInfo[],
+  activeThreadId: string | null,
+  projectName: string,
+  workspacePath = "",
+): void {
   currentThreads = threads;
   currentProjectName = projectName || "Project";
+  currentWorkspacePath = _normalizeWorkspacePath(workspacePath || currentWorkspacePath);
   const list = document.querySelector<HTMLElement>("#session-list");
   if (!list) return;
 
@@ -169,7 +193,7 @@ export function addThread(thread: ThreadInfo, activeThreadId: string | null): vo
     }
   }
 
-  renderSidebar(currentThreads, activeThreadId, currentProjectName);
+  renderSidebar(currentThreads, activeThreadId, currentProjectName, currentWorkspacePath);
 }
 
 export function findReusableEmptyThread(directory: string): ThreadInfo | null {
@@ -185,7 +209,7 @@ export function findReusableEmptyThread(directory: string): ThreadInfo | null {
 function _createWorkspaceGroup(group: WorkspaceGroup, activeThreadId: string | null): HTMLElement {
   const groupEl = document.createElement("div");
   groupEl.className = "vx-workspace-session-group vx-directory-group";
-  const collapsed = collapsedWorkspaces.has(group.workspace);
+  const collapsed = !expandedWorkspaces.has(group.workspace);
   if (collapsed) {
     groupEl.classList.add("collapsed");
   }
@@ -199,7 +223,7 @@ function _createWorkspaceGroup(group: WorkspaceGroup, activeThreadId: string | n
   row.className = "vx-workspace-session-row vx-directory-row";
   const renderVisibleSessions = (): void => {
     children.replaceChildren();
-    if (collapsedWorkspaces.has(group.workspace)) return;
+    if (!expandedWorkspaces.has(group.workspace)) return;
     const count = _visibleCountForWorkspace(group.workspace, group.sessions.length);
     for (const thread of group.sessions.slice(0, count)) {
       children.append(_createSessionItem(thread, activeThreadId));
@@ -208,7 +232,7 @@ function _createWorkspaceGroup(group: WorkspaceGroup, activeThreadId: string | n
   const renderExpandControls = (): void => {
     controlsEl?.remove();
     controlsEl = null;
-    if (collapsedWorkspaces.has(group.workspace) || group.sessions.length <= SESSION_PREVIEW_LIMIT) {
+    if (!expandedWorkspaces.has(group.workspace) || group.sessions.length <= SESSION_PREVIEW_LIMIT) {
       return;
     }
     const visibleCount = _visibleCountForWorkspace(group.workspace, group.sessions.length);
@@ -221,7 +245,7 @@ function _createWorkspaceGroup(group: WorkspaceGroup, activeThreadId: string | n
       const expand = document.createElement("button");
       expand.type = "button";
       expand.className = "vx-workspace-expand vx-workspace-expand-more";
-      expand.textContent = `展开显示 ${Math.min(SESSION_PREVIEW_LIMIT, remaining)} 个`;
+      expand.textContent = "展开显示";
       expand.addEventListener("click", () => {
         workspaceVisibleCounts.set(
           group.workspace,
@@ -258,11 +282,11 @@ function _createWorkspaceGroup(group: WorkspaceGroup, activeThreadId: string | n
   collapseToggle.append(_svgIcon(collapsed ? "chevron-right" : "chevron-down"));
   collapseToggle.addEventListener("click", (e: MouseEvent) => {
     e.stopPropagation();
-    const nextCollapsed = !collapsedWorkspaces.has(group.workspace);
-    if (!nextCollapsed) {
-      collapsedWorkspaces.delete(group.workspace);
+    const nextCollapsed = expandedWorkspaces.has(group.workspace);
+    if (nextCollapsed) {
+      expandedWorkspaces.delete(group.workspace);
     } else {
-      collapsedWorkspaces.add(group.workspace);
+      expandedWorkspaces.add(group.workspace);
     }
     groupEl.classList.toggle("collapsed", nextCollapsed);
     children.hidden = nextCollapsed;
@@ -319,7 +343,7 @@ function _syncSessionStatusPresentation(item: HTMLElement, status: string | unde
   if (running && !dot) {
     dot = document.createElement("span");
     dot.className = "vx-session-dot";
-    item.insertBefore(dot, item.querySelector(".vx-session-menu-btn"));
+    item.insertBefore(dot, item.querySelector(".vx-session-actions"));
   }
   if (!running) {
     dot?.remove();
@@ -333,7 +357,7 @@ function _syncSessionStatusPresentation(item: HTMLElement, status: string | unde
     badge.className = "vx-session-lock-badge";
     badge.textContent = "等待写锁";
     badge.title = "Waiting for workspace write lock";
-    item.insertBefore(badge, item.querySelector(".vx-session-menu-btn"));
+    item.insertBefore(badge, item.querySelector(".vx-session-actions"));
   }
   if (!waitingForWriteLock) {
     badge?.remove();
@@ -364,18 +388,13 @@ function _createSessionItem(thread: ThreadInfo, activeThreadId: string | null): 
 
   _syncSessionStatusPresentation(item, thread.status);
 
-  const menuBtn = document.createElement("button");
-  menuBtn.className = "vx-session-menu-btn";
-  menuBtn.title = "Session actions";
-  menuBtn.setAttribute("aria-label", "Session actions");
-  menuBtn.append(_svgIcon("more"));
-  menuBtn.addEventListener("click", (e: MouseEvent) => {
-    e.stopPropagation();
-    _toggleActionMenu(item);
-  });
-  item.append(menuBtn);
+  item.append(_createSessionActions(thread.thread_id));
 
   item.addEventListener("click", () => {
+    document.querySelectorAll<HTMLElement>(".vx-session-item.active").forEach((activeItem) => {
+      activeItem.classList.remove("active");
+    });
+    item.classList.add("active");
     if (threadSelectCb) {
       threadSelectCb(thread.thread_id);
     }
@@ -384,60 +403,46 @@ function _createSessionItem(thread: ThreadInfo, activeThreadId: string | null): 
   return item;
 }
 
-function _toggleActionMenu(item: HTMLElement): void {
-  const existing = item.querySelector<HTMLElement>(".vx-session-actions");
-  if (existing) {
-    existing.remove();
-    return;
-  }
-
+function _createSessionActions(threadId: string): HTMLElement {
   const actions = document.createElement("div");
   actions.className = "vx-session-actions";
 
-  const forkBtn = document.createElement("button");
-  forkBtn.className = "vx-session-action";
-  forkBtn.dataset.action = "fork";
-  forkBtn.textContent = "Fork";
-  forkBtn.addEventListener("click", (e: MouseEvent) => {
-    e.stopPropagation();
-    actions.remove();
-    if (threadForkCb) threadForkCb(item.dataset.threadId!);
-  });
-
   const renameBtn = document.createElement("button");
-  renameBtn.className = "vx-session-action";
+  renameBtn.className = "vx-session-action-icon";
   renameBtn.dataset.action = "rename";
-  renameBtn.textContent = "Rename";
+  renameBtn.title = "Rename";
+  renameBtn.setAttribute("aria-label", "Rename session");
+  renameBtn.append(_svgIcon("pencil"));
   renameBtn.addEventListener("click", (e: MouseEvent) => {
     e.stopPropagation();
-    actions.remove();
-    if (threadRenameCb) threadRenameCb(item.dataset.threadId!);
+    if (threadRenameCb) threadRenameCb(threadId);
   });
 
   const deleteBtn = document.createElement("button");
-  deleteBtn.className = "vx-session-action";
+  deleteBtn.className = "vx-session-action-icon";
   deleteBtn.dataset.action = "delete";
-  deleteBtn.textContent = "Delete";
+  deleteBtn.title = "Delete";
+  deleteBtn.setAttribute("aria-label", "Delete session");
+  deleteBtn.append(_svgIcon("trash"));
   deleteBtn.addEventListener("click", (e: MouseEvent) => {
     e.stopPropagation();
-    actions.remove();
-    if (threadDeleteCb) threadDeleteCb(item.dataset.threadId!);
+    if (threadDeleteCb) threadDeleteCb(threadId);
   });
 
-  actions.append(forkBtn, renameBtn, deleteBtn);
-  item.append(actions);
+  actions.append(renameBtn, deleteBtn);
+  return actions;
 }
 
 export function updateThreadStatus(threadId: string, status: string): void {
-  const item = document.querySelector<HTMLElement>(
-    `.vx-session-item[data-thread-id="${threadId}"]`,
-  );
-  if (!item) return;
-
   const thread = currentThreads.find((t) => t.thread_id === threadId);
   if (thread) {
     thread.status = status;
   }
+
+  const item = document.querySelector<HTMLElement>(
+    `.vx-session-item[data-thread-id="${threadId}"]`,
+  );
+  if (!item) return;
 
   _syncSessionStatusPresentation(item, status);
 }
@@ -449,6 +454,16 @@ export function filterSessions(query: string): void {
   const q = (query || "").toLowerCase();
   const groups = list.querySelectorAll<HTMLElement>(".vx-workspace-session-group");
   for (const group of groups) {
+    const workspace = group.dataset.workspace || "";
+    const matchingThreads = currentThreads.filter((thread) => (
+      _workspaceGroupKey(_threadWorkspace(thread)) === _workspaceGroupKey(workspace) &&
+      ((thread.title || thread.thread_id).toLowerCase()).includes(q)
+    ));
+    if (q !== "" && !expandedWorkspaces.has(workspace) && matchingThreads.length > 0) {
+      const activeThreadId = document.querySelector<HTMLElement>(".vx-session-item.active")?.dataset.threadId || null;
+      const children = group.querySelector<HTMLElement>(".vx-session-children");
+      children?.replaceChildren(...matchingThreads.map((thread) => _createSessionItem(thread, activeThreadId)));
+    }
     const items = group.querySelectorAll<HTMLElement>(".vx-session-item");
     let anyVisible = false;
     for (const item of items) {
@@ -458,7 +473,15 @@ export function filterSessions(query: string): void {
       item.hidden = !visible;
       if (visible) anyVisible = true;
     }
-    group.hidden = !anyVisible;
+    const children = group.querySelector<HTMLElement>(".vx-session-children");
+    if (children) {
+      const collapsed = !expandedWorkspaces.has(workspace);
+      if (q === "" && collapsed) {
+        children.replaceChildren();
+      }
+      children.hidden = q === "" && collapsed;
+    }
+    group.hidden = q !== "" && !anyVisible;
   }
 }
 
@@ -479,10 +502,6 @@ export function onNewThread(callback: NewThreadCallback): void {
   }
 }
 
-export function onThreadFork(callback: ThreadCallback): void {
-  threadForkCb = callback;
-}
-
 export function onThreadDelete(callback: ThreadCallback): void {
   threadDeleteCb = callback;
 }
@@ -494,12 +513,12 @@ export function onThreadRename(callback: ThreadCallback): void {
 export function _resetForTest(): void {
   threadSelectCb = null;
   newThreadCb = null;
-  threadForkCb = null;
   threadDeleteCb = null;
   threadRenameCb = null;
   currentThreads = [];
   currentProjectName = "Project";
+  currentWorkspacePath = "";
   newChatBtnBound = false;
   workspaceVisibleCounts.clear();
-  collapsedWorkspaces.clear();
+  expandedWorkspaces.clear();
 }

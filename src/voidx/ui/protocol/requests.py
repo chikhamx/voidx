@@ -14,6 +14,7 @@ class UiRequestBase(BaseModel):
 
     request_id: str
     prompt: str
+    thread_id: str = ""
 
 
 class UiChoiceRequest(UiRequestBase):

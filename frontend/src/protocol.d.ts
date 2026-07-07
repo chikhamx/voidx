@@ -65,19 +65,24 @@ export type Nodes = TranscriptNode[];
 export type Revision = number;
 export type ThreadId = string;
 export type ActiveThreadId = string;
+export type Model = string;
+export type ProfileConfigured = boolean | null;
+export type Provider = string;
 export type CreatedAt = string;
+export type Directory = string;
 export type MessageCount = number;
 export type ModelName = string;
 export type ModelProvider = string;
-export type Status1 = "idle" | "running";
+export type Status1 = "idle" | "running" | "waiting_for_user" | "waiting_for_write_lock" | "cancelling" | "failed";
 export type ThreadId1 = string;
 export type Title1 = string;
 export type UpdatedAt = string;
 export type Workspace = string;
 export type Threads = ThreadInfo[];
+export type Workspace1 = string;
 export type Elapsed1 = number | null;
 export type StartedAt = number;
-export type Status2 = "running" | "completed" | "cancelled";
+export type Status2 = "running" | "completed" | "cancelled" | "failed";
 export type ThreadId2 = string;
 export type TurnId = string;
 export type ItemId = string;
@@ -93,21 +98,26 @@ export type Choices = [unknown, unknown, unknown][];
 export type Kind1 = "choice";
 export type Prompt = string;
 export type RequestId = string;
+export type ThreadId4 = string;
 export type Default = string;
 export type Kind2 = "text";
 export type Prompt1 = string;
 export type RequestId1 = string;
 export type Secret = boolean;
+export type ThreadId5 = string;
 export type Choices1 = [unknown, unknown, unknown][];
 export type Kind3 = "permission";
 export type Prompt2 = string;
 export type RequestId2 = string;
+export type ThreadId6 = string;
 export type Name = string;
 export type Pattern = string;
 export type Tools = PermissionToolDetail[];
 export type Kind4 = "submit";
 export type Text = string;
+export type ThreadId7 = string;
 export type Kind5 = "cancel";
+export type ThreadId8 = string;
 
 export interface JsonRpcRequest {
   id: Id;
@@ -158,7 +168,13 @@ export interface ErrorPayload {
 export interface WorkspaceSnapshot {
   active_snapshot?: ThreadSnapshot | null;
   active_thread_id?: ActiveThreadId;
+  model?: Model;
+  profile_configured?: ProfileConfigured;
+  provider?: Provider;
+  runtime?: Runtime;
   threads?: Threads;
+  workspace?: Workspace1;
+  workspace_write_lock?: WorkspaceWriteLock;
   [k: string]: unknown;
 }
 /**
@@ -194,8 +210,12 @@ export interface TranscriptNode {
 export interface Payload {
   [k: string]: unknown;
 }
+export interface Runtime {
+  [k: string]: unknown;
+}
 export interface ThreadInfo {
   created_at?: CreatedAt;
+  directory?: Directory;
   message_count?: MessageCount;
   model_name?: ModelName;
   model_provider?: ModelProvider;
@@ -204,6 +224,9 @@ export interface ThreadInfo {
   title?: Title1;
   updated_at?: UpdatedAt;
   workspace?: Workspace;
+  [k: string]: unknown;
+}
+export interface WorkspaceWriteLock {
   [k: string]: unknown;
 }
 export interface TurnInfo {
@@ -238,6 +261,7 @@ export interface UiChoiceRequest {
   kind?: Kind1;
   prompt: Prompt;
   request_id: RequestId;
+  thread_id?: ThreadId4;
   [k: string]: unknown;
 }
 export interface UiTextRequest {
@@ -246,6 +270,7 @@ export interface UiTextRequest {
   prompt: Prompt1;
   request_id: RequestId1;
   secret?: Secret;
+  thread_id?: ThreadId5;
   [k: string]: unknown;
 }
 export interface UiPermissionRequest {
@@ -253,6 +278,7 @@ export interface UiPermissionRequest {
   kind?: Kind3;
   prompt: Prompt2;
   request_id: RequestId2;
+  thread_id?: ThreadId6;
   tools?: Tools;
   [k: string]: unknown;
 }
@@ -268,9 +294,11 @@ export interface Args {
 export interface UiSubmitCommand {
   kind?: Kind4;
   text: Text;
+  thread_id?: ThreadId7;
   [k: string]: unknown;
 }
 export interface UiCancelCommand {
   kind?: Kind5;
+  thread_id?: ThreadId8;
   [k: string]: unknown;
 }

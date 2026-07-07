@@ -61,13 +61,40 @@ describe("appendStreamText", () => {
     expect(stream.thinking).toBe("part1 part2");
   });
 
-  it("keeps thinking output collapsed by default", () => {
+  it("shows thinking as a transient widget while streaming", async () => {
     appendStreamText("s1", "long internal thought", "thinking");
     const stream = getOrCreateStream("s1", "thinking");
 
-    expect(stream.thinkingEl.tagName).toBe("DETAILS");
-    expect(stream.thinkingEl.open).toBe(false);
-    expect(stream.thinkingEl.querySelector("summary").textContent).toContain("Thinking");
+    await new Promise((r) => setTimeout(r, 150));
+    expect(stream.thinkingEl.tagName).toBe("DIV");
+    expect(stream.thinkingEl.hidden).toBe(false);
+    expect(stream.thinkingEl.textContent).toContain("Thinking");
+    expect(stream.thinkingEl.textContent).toContain("long internal thought");
+  });
+
+  it("shows only the last five thinking lines", async () => {
+    appendStreamText("s1", "one\ntwo\nthree\nfour\nfive\nsix", "thinking");
+    const stream = getOrCreateStream("s1", "thinking");
+
+    await new Promise((r) => setTimeout(r, 150));
+    expect(stream.thinkingBody.textContent).toBe("two\nthree\nfour\nfive\nsix");
+  });
+
+  it("hides thinking when answer text starts", async () => {
+    appendStreamText("s1", "thinking line", "thinking");
+    await new Promise((r) => setTimeout(r, 150));
+    appendStreamText("s1", "final answer", "text");
+    const stream = getOrCreateStream("s1", "text");
+
+    expect(stream.thinkingEl.hidden).toBe(true);
+    expect(stream.thinkingBody.textContent).toBe("");
+  });
+
+  it("strips terminal assistant prefix bullet from text stream", () => {
+    appendStreamText("s1", "● final answer", "text");
+    const stream = getOrCreateStream("s1", "text");
+
+    expect(stream.text).toBe("final answer");
   });
 
   it("replaces text phase content (not accumulate)", () => {
@@ -87,6 +114,7 @@ describe("commitStream", () => {
     expect(result.text).toBe("final text");
     expect(result.thinking).toBe("thoughts");
     expect(result.el).toBeDefined();
+    expect(result.el.querySelector(".stream-thinking").hidden).toBe(true);
   });
 
   it("removes stream from active streams", () => {

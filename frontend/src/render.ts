@@ -50,6 +50,13 @@ interface DiffItemData {
   title?: string;
 }
 
+interface StatusItemData {
+  status_id?: string;
+  label?: string;
+  detail?: string;
+  ok?: boolean;
+}
+
 interface TodoItem {
   status: string;
   content: string;
@@ -62,6 +69,7 @@ export interface TranscriptSnapshot {
 type ByIdMap = Map<string, TranscriptNode>;
 
 const RICH_TAG = /\[(\/)?(?:bold|dim|italic|underline|strike|red|green|yellow|blue|magenta|cyan|white|black|#[0-9A-Fa-f]{6})\]/g;
+const TOOL_GROUP_PREVIEW_LIMIT = 3;
 
 export function stripRichMarkup(text: unknown): string {
   return String(text || "").replace(RICH_TAG, "");
@@ -252,6 +260,103 @@ export function appendMessageItem(itemId: string, data: MessageItemData): void {
   }
 }
 
+function createToolGroup(): HTMLElement {
+  const group = document.createElement("div");
+  group.className = "tool-group";
+  group.dataset.visibleCount = String(TOOL_GROUP_PREVIEW_LIMIT);
+
+  const header = document.createElement("div");
+  header.className = "tool-group-header";
+
+  const chevron = document.createElement("span");
+  chevron.className = "tool-group-chevron";
+  chevron.textContent = "\u25B8";
+
+  const name = document.createElement("span");
+  name.className = "tool-group-name";
+  name.textContent = "tool";
+
+  const args = document.createElement("span");
+  args.className = "tool-group-args";
+
+  const count = document.createElement("span");
+  count.className = "tool-group-count";
+
+  header.addEventListener("click", () => {
+    const body = group.querySelector<HTMLElement>(".tool-group-body");
+    if (!body) return;
+    body.hidden = !body.hidden;
+    chevron.classList.toggle("open", !body.hidden);
+    renderToolGroupVisibility(group);
+  });
+
+  header.append(chevron, name, args, count);
+  group.append(header);
+
+  const body = document.createElement("div");
+  body.className = "tool-group-body";
+  body.hidden = true;
+  group.append(body);
+
+  return group;
+}
+
+function latestToolGroup(transcriptEl: HTMLElement): HTMLElement {
+  const last = transcriptEl.lastElementChild as HTMLElement | null;
+  if (last?.classList.contains("tool-group")) {
+    return last;
+  }
+  const group = createToolGroup();
+  transcriptEl.append(group);
+  return group;
+}
+
+function updateToolGroupSummary(group: HTMLElement, data: ToolItemData): void {
+  const name = group.querySelector<HTMLElement>(".tool-group-name");
+  const args = group.querySelector<HTMLElement>(".tool-group-args");
+  const count = group.querySelector<HTMLElement>(".tool-group-count");
+  const items = group.querySelectorAll(".tool-item").length;
+
+  if (name) name.textContent = data.tool_name || data.label || "tool";
+  if (args) args.textContent = summarizeArgs(data);
+  if (count) count.textContent = items > 1 ? `${items} tools` : "";
+}
+
+function renderToolGroupVisibility(group: HTMLElement): void {
+  const body = group.querySelector<HTMLElement>(".tool-group-body");
+  if (!body) return;
+  const items = [...body.querySelectorAll<HTMLElement>(".tool-item")];
+  const visibleCount = Math.min(
+    Number(group.dataset.visibleCount || TOOL_GROUP_PREVIEW_LIMIT),
+    items.length,
+  );
+
+  for (const [index, item] of items.entries()) {
+    item.hidden = index >= visibleCount;
+  }
+
+  group.querySelector(".tool-group-expand-controls")?.remove();
+  if (body.hidden || visibleCount >= items.length) return;
+
+  const controls = document.createElement("div");
+  controls.className = "tool-group-expand-controls";
+
+  const expand = document.createElement("button");
+  expand.type = "button";
+  expand.className = "tool-group-expand tool-group-expand-more";
+  expand.textContent = "展开显示";
+  expand.addEventListener("click", (event) => {
+    event.stopPropagation();
+    group.dataset.visibleCount = String(
+      Math.min(visibleCount + TOOL_GROUP_PREVIEW_LIMIT, items.length),
+    );
+    renderToolGroupVisibility(group);
+  });
+
+  controls.append(expand);
+  body.append(controls);
+}
+
 export function handleToolItem(method: string, itemId: string, data: ToolItemData): void {
   let el: HTMLElement | null = document.querySelector<HTMLElement>(`[data-tool-id="${data.tool_call_id}"]`);
   const transcriptEl = getTranscriptElement();
@@ -307,7 +412,10 @@ export function handleToolItem(method: string, itemId: string, data: ToolItemDat
     }
 
     if (transcriptEl) {
-      transcriptEl.append(el);
+      const group = latestToolGroup(transcriptEl);
+      group.querySelector(".tool-group-body")?.append(el);
+      updateToolGroupSummary(group, data);
+      renderToolGroupVisibility(group);
       transcriptEl.scrollTop = transcriptEl.scrollHeight;
     }
   } else if (el) {
@@ -477,6 +585,47 @@ export function appendDiffItem(itemId: string, data: DiffItemData): void {
   }
 }
 
+export function handleStatusItem(method: string, itemId: string, data: StatusItemData): void {
+  const transcriptEl = getTranscriptElement();
+  let el = document.querySelector<HTMLElement>(`[data-status-item-id="${itemId}"]`);
+  if (method === "item.started") {
+    if (!el) {
+      el = document.createElement("div");
+      el.className = "status-item running";
+      el.dataset.statusItemId = itemId;
+      el.dataset.statusId = data.status_id || itemId;
+      const label = document.createElement("span");
+      label.className = "status-label";
+      el.append(label);
+      const detail = document.createElement("div");
+      detail.className = "status-detail";
+      el.append(detail);
+      transcriptEl?.append(el);
+    }
+    const label = el.querySelector<HTMLElement>(".status-label");
+    const detail = el.querySelector<HTMLElement>(".status-detail");
+    if (label) label.textContent = data.label || "Working";
+    if (detail) {
+      detail.textContent = data.detail || "";
+      detail.hidden = !data.detail;
+    }
+    return;
+  }
+  if (method === "item.completed") {
+    if (!el) return;
+    el.classList.remove("running");
+    el.classList.add(data.ok === false ? "failed" : "completed");
+    const label = el.querySelector<HTMLElement>(".status-label");
+    const detail = el.querySelector<HTMLElement>(".status-detail");
+    if (label && data.label) label.textContent = data.label;
+    if (detail && data.detail) {
+      detail.textContent = data.detail;
+      detail.hidden = false;
+    }
+    return;
+  }
+}
+
 function summarizeArgs(data: ToolItemData): string {
   if (data.tool_name === "bash") {
     const cmd = typeof data.raw_args?.command === "string"
@@ -524,7 +673,15 @@ export function renderTranscript(root: HTMLElement, snapshot: TranscriptSnapshot
       case "assistant": {
         const rawText = String(payload?.raw_text
           ?? stripRichMarkup((node.body_lines ?? []).join("\n")));
-        appendStreamText(node.id, rawText, "text");
+        const thinkingText = String(payload?.thinking_text || "");
+        if (thinkingText) {
+          appendStreamText(node.id, thinkingText, "thinking");
+        }
+        appendStreamText(
+          node.id,
+          rawText,
+          payload?.phase === "thinking" ? "thinking" : "text",
+        );
         commitStream(node.id);
         break;
       }

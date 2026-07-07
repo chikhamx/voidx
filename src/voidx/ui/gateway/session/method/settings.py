@@ -177,6 +177,15 @@ class SettingsMethods:
                     profile_name = match.name
                 await settings.delete_profile(profile_name)
 
+        handler = getattr(self, "_settings_update_handler", None)
+        if callable(handler):
+            import inspect
+
+            result = handler(settings)
+            if inspect.isawaitable(result):
+                await result
+            await self.broadcast_snapshot()
+
         return {"ok": True, "settings": await self._desktop_settings_snapshot(settings)}
 
     async def _desktop_settings_snapshot(self, settings) -> dict:

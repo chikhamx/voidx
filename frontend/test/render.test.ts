@@ -7,9 +7,11 @@ import {
   formatToolMeta,
   formatElapsed,
   renderNodeElement,
+  renderTranscript,
   renderTodoPanel,
   appendNoticeItem,
 } from "../src/render";
+import { setTranscriptElement, _resetForTest as resetStreams } from "../src/stream";
 
 describe("stripRichMarkup", () => {
   it("strips [bold] tags", () => {
@@ -233,6 +235,34 @@ describe("renderNodeElement", () => {
     ]);
     const el = renderNodeElement(child, byId);
     expect(el.style.marginLeft).toBe("18px");
+  });
+});
+
+describe("renderTranscript", () => {
+  it("does not persist assistant thinking from transcript snapshot payload", () => {
+    resetStreams();
+    const root = document.createElement("div");
+    setTranscriptElement(root);
+
+    renderTranscript(root, {
+      nodes: [
+        {
+          node_type: "assistant",
+          id: "a-thinking",
+          payload: {
+            raw_text: "final answer",
+            thinking_text: "checking context",
+          },
+          body_lines: ["final answer"],
+        },
+      ],
+    });
+
+    const thinking = root.querySelector(".stream-thinking");
+    expect(thinking).not.toBeNull();
+    expect(thinking.hidden).toBe(true);
+    expect(thinking.textContent).not.toContain("checking context");
+    expect(root.querySelector(".markdown-body").textContent).toContain("final answer");
   });
 });
 

@@ -3,6 +3,7 @@ import {
   renderTranscript,
   appendMessageItem,
   handleToolItem,
+  handleStatusItem,
   appendThoughtItem,
   appendNoticeItem,
   appendDiffItem,
@@ -24,7 +25,6 @@ import {
   filterSessions,
   onThreadSelect,
   onNewThread,
-  onThreadFork,
   onThreadDelete,
   onThreadRename,
 } from "./sidebar";
@@ -373,24 +373,6 @@ onNewThread((directory: string) => {
     });
 });
 
-onThreadFork((threadId: string) => {
-  rpcCall("session.fork", { thread_id: threadId })
-    .then((result: unknown) => {
-      const r = result as Record<string, string>;
-      addThread(
-        {
-          thread_id: r.thread_id,
-          title: r.title,
-          status: r.status,
-        },
-        null,
-      );
-    })
-    .catch((err: Error) => {
-      console.warn("voidx: session fork failed", err.message);
-    });
-});
-
 onThreadDelete((threadId: string) => {
   rpcCall("session.delete", { thread_id: threadId })
     .then(() => {
@@ -547,6 +529,7 @@ export function handleNotification(
       (params.threads as unknown as ThreadInfo[]) || [],
       (params.active_thread_id as string) || "",
       workspaceBasename(uiState.workspace),
+      uiState.workspace,
     );
     renderTranscript(transcriptEl, snapshot as TranscriptSnapshot);
     syncEmptyState();
@@ -571,6 +554,17 @@ export function handleNotification(
     method === "turn.cancelled"
   ) {
     setRunning(false);
+    if (method === "turn.failed") {
+      const message = typeof params.message === "string" ? params.message : "";
+      if (message) {
+        appendMessageItem(`turn-error-${Date.now()}`, {
+          style: "error",
+          text: message,
+        });
+        syncEmptyState();
+        scrollToBottom();
+      }
+    }
     return;
   }
   if (method === "terminal.output") {
@@ -651,6 +645,18 @@ export function handleItem(
     } else if (method === "item.completed") {
       if (data.cleared) {
         renderTodoInDock([], "");
+      } else {
+        const todoPanel = document.querySelector<HTMLElement>("#todo-panel");
+        const items = Array.from(
+          todoPanel?.querySelectorAll<HTMLElement>(".todo-item") || [],
+        ).map((item) => ({
+          content: item.querySelector("span:last-child")?.textContent || "",
+          status: item.classList.contains("done") ? "done" : "done",
+        }));
+        renderTodoInDock(
+          items,
+          typeof data.summary === "string" ? data.summary : "",
+        );
       }
     }
     return;
@@ -663,7 +669,11 @@ export function handleItem(
     }
     return;
   }
-  if (kind === "status" || kind === "subagent") {
+  if (kind === "status") {
+    handleStatusItem(method, itemId, data);
+    return;
+  }
+  if (kind === "subagent") {
     return;
   }
   if (kind === "message") {
@@ -699,7 +709,7 @@ function setRunning(running: boolean): void {
   btnSendEl.classList.toggle("running", running);
   btnSendEl.textContent = running ? "■" : "↑";
   btnSendEl.setAttribute("aria-label", running ? "Cancel" : "Send");
-  inputEl.disabled = running || uiState.isSwitchingModel;
+  inputEl.disabled = uiState.isSwitchingModel;
   updateStatusBar();
 }
 
@@ -756,13 +766,27 @@ composerEl.addEventListener("submit", (event: SubmitEvent) => {
   if (
     !text ||
     uiState.isSwitchingModel ||
-    uiState.isRunning ||
     !isRpcConnected()
   ) {
     return;
   }
+  if (uiState.isRunning) {
+    btnSendEl.classList.add("guidance-pending");
+    btnSendEl.textContent = "◌";
+    rpcCall("session.submit", { text, thread_id: uiState.sessionId })
+      .then(() => {
+        inputEl.value = "";
+        hideSlashMenu();
+      })
+      .catch(() => {})
+      .finally(() => {
+        btnSendEl.classList.remove("guidance-pending");
+        btnSendEl.textContent = "■";
+      });
+    return;
+  }
   setRunning(true);
-  rpcCall("session.submit", { text }).catch(() => setRunning(false));
+  rpcCall("session.submit", { text, thread_id: uiState.sessionId }).catch(() => setRunning(false));
   appendMessageItem(`user-${Date.now()}`, { style: "text", text });
   syncEmptyState();
   inputEl.value = "";
@@ -798,6 +822,7 @@ export function initModelControls(): void {
     updateStatusBar();
     rpcCall("session.submit", {
       text: `/model switch ${provider}/${model} --local`,
+      thread_id: uiState.sessionId,
     })
       .then(() => {
         uiState.provider = provider;
@@ -806,7 +831,7 @@ export function initModelControls(): void {
       .finally(() => {
         setTimeout(() => {
           uiState.isSwitchingModel = false;
-          inputEl.disabled = uiState.isRunning;
+          inputEl.disabled = false;
           btnSendEl.disabled = uiState.isRunning;
           updateStatusBar();
         }, 500);
@@ -1029,7 +1054,7 @@ btnSendEl.addEventListener("click", (e: MouseEvent) => {
     if (!isRpcConnected()) {
       return;
     }
-    rpcCall("session.cancel", {})
+    rpcCall("session.cancel", { thread_id: uiState.sessionId })
       .then(() => setRunning(false))
       .catch(() => setRunning(false));
   }
@@ -1162,6 +1187,7 @@ interface UiRequest {
   prompt: string;
   kind: string;
   request_id: string;
+  thread_id?: string;
   tools?: { name: string; pattern?: string; args?: Record<string, unknown> }[];
   choices?: [string, string, string][];
   default?: string;
@@ -1172,6 +1198,7 @@ interface UiRequest {
 function showRequest(request: Record<string, unknown>): void {
   const req = request as unknown as UiRequest;
   requestDialogEl.dataset.responseMethod = req.response_method || "";
+  requestDialogEl.dataset.responseThreadId = req.thread_id || "";
   requestTitleEl.textContent = req.prompt;
   requestDetailsEl.replaceChildren();
   requestControlsEl.replaceChildren();
@@ -1193,9 +1220,13 @@ function showRequest(request: Record<string, unknown>): void {
 function showPromptItemRequest(data: Record<string, unknown>): void {
   const promptType = data.prompt_type as string;
   if (promptType === "permission") {
+    if (!data.request_id || data.interactive === false) {
+      return;
+    }
     showRequest({
       kind: "permission",
       request_id: (data.request_id as string) || "permission",
+      thread_id: (data.thread_id as string) || "",
       prompt: (data.prompt as string) || "Allow action?",
       choices: data.choices || [],
       tools: data.tools || [],
@@ -1212,6 +1243,7 @@ function showPromptItemRequest(data: Record<string, unknown>): void {
     showRequest({
       kind: "choice",
       request_id: (data.clarify_id as string) || (data.request_id as string) || "clarify",
+      thread_id: (data.thread_id as string) || "",
       prompt: (data.question as string) || "Clarify",
       choices: options,
       response_method: "session.respond",
@@ -1228,6 +1260,7 @@ function showPromptItemRequest(data: Record<string, unknown>): void {
     showRequest({
       kind: "choice",
       request_id: (data.checkpoint_id as string) || (data.request_id as string) || "checkpoint",
+      thread_id: (data.thread_id as string) || "",
       prompt: (plan.plan_summary as string) || "Review plan",
       choices,
       response_method: "session.respond",
@@ -1295,8 +1328,14 @@ function sendResponse(requestId: string, value: unknown): void {
   }
   const responseMethod = requestDialogEl.dataset.responseMethod || "";
   if (responseMethod) {
-    rpcCall(responseMethod, { request_id: requestId, value }).catch(() => {});
+    const threadId = requestDialogEl.dataset.responseThreadId || "";
+    const params: Record<string, unknown> = { request_id: requestId, value };
+    if (threadId) {
+      params.thread_id = threadId;
+    }
+    rpcCall(responseMethod, params).catch(() => {});
     requestDialogEl.dataset.responseMethod = "";
+    requestDialogEl.dataset.responseThreadId = "";
     requestDialogEl.close();
     return;
   }

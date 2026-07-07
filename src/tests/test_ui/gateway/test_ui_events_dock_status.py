@@ -67,6 +67,56 @@ async def test_ui_event_bus_commits_stream_text(isolated_dock):
 
 
 @pytest.mark.asyncio
+async def test_ui_event_bus_commits_thinking_only_stream(isolated_dock):
+    isolated_dock.begin_capture()
+    bus = UiEventBus()
+    bus.start(DockEventConsumer(isolated_dock))
+    try:
+        await bus.emit(AssistantStreamUpdated(text="checking permissions", phase="thinking"))
+        await bus.emit(AssistantStreamCommitted())
+        await bus.drain()
+
+        rendered = "\n".join(_plain(line) for line in isolated_dock.tree.render(100))
+        nodes = _tree_nodes(isolated_dock.tree.root)
+        thinking_nodes = [
+            node
+            for node in nodes
+            if node.node_type == "assistant"
+            and node.payload.get("phase") == "thinking"
+        ]
+
+        assert "checking permissions" not in rendered
+        assert thinking_nodes == []
+    finally:
+        await bus.stop()
+
+
+@pytest.mark.asyncio
+async def test_ui_event_bus_preserves_thinking_when_text_stream_commits(isolated_dock):
+    isolated_dock.begin_capture()
+    bus = UiEventBus()
+    bus.start(DockEventConsumer(isolated_dock))
+    try:
+        await bus.emit(AssistantStreamUpdated(text="checking context", phase="thinking"))
+        await bus.emit(AssistantStreamUpdated(text="● final answer", phase="text"))
+        await bus.emit(AssistantStreamCommitted())
+        await bus.drain()
+
+        nodes = _tree_nodes(isolated_dock.tree.root)
+        assistant = next(
+            node
+            for node in nodes
+            if node.node_type == "assistant"
+            and node.payload.get("raw_text") == "final answer"
+        )
+
+        assert assistant.payload["thinking_text"] == "checking context"
+        assert assistant.payload["raw_text"] == "final answer"
+    finally:
+        await bus.stop()
+
+
+@pytest.mark.asyncio
 async def test_startup_event_renders_structured_startup_node(isolated_dock):
     isolated_dock.begin_capture()
     bus = UiEventBus()
@@ -351,5 +401,3 @@ async def test_turn_started_clears_error_current_status(isolated_dock):
         assert isolated_dock.status_record("error:current") is None
     finally:
         await bus.stop()
-
-

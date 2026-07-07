@@ -7,8 +7,8 @@ export interface StreamState {
   thinking: string;
   phase: string;
   el: HTMLElement;
-  thinkingEl: HTMLDetailsElement;
-  thinkingSummary: HTMLElement;
+  thinkingEl: HTMLElement;
+  thinkingLabel: HTMLElement;
   thinkingBody: HTMLElement;
   textEl: HTMLElement;
   debounceTimer: ReturnType<typeof setTimeout> | null;
@@ -34,7 +34,6 @@ export interface SlashCommand {
 export type SidebarCallbacks = {
   onThreadSelect: ((threadId: string) => void) | null;
   onNewThread: (() => void) | null;
-  onThreadFork: ((threadId: string) => void) | null;
   onThreadDelete: ((threadId: string) => void) | null;
   onThreadRename: ((threadId: string, title: string) => void) | null;
 };

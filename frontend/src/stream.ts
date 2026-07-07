@@ -2,6 +2,7 @@ import { renderMarkdown } from "./markdown";
 import type { StreamState } from "./types";
 
 const DEBOUNCE_MS = 100;
+const THINKING_MAX_LINES = 5;
 
 const streams = new Map<string, StreamState>();
 const committedEls: HTMLElement[] = [];
@@ -23,15 +24,17 @@ export function getOrCreateStream(streamId: string, phase: string): StreamState 
   const el = document.createElement("div");
   el.className = "stream-buffer";
   el.dataset.streamId = streamId;
-  const thinkingEl = document.createElement("details");
+  const thinkingEl = document.createElement("div");
   thinkingEl.className = "stream-thinking";
   thinkingEl.hidden = true;
-  const thinkingSummary = document.createElement("summary");
-  thinkingSummary.className = "stream-thinking-summary";
-  thinkingSummary.textContent = "Thinking";
+  thinkingEl.setAttribute("role", "status");
+  thinkingEl.setAttribute("aria-live", "polite");
+  const thinkingLabel = document.createElement("div");
+  thinkingLabel.className = "stream-thinking-label";
+  thinkingLabel.textContent = "Thinking";
   const thinkingBody = document.createElement("div");
   thinkingBody.className = "stream-thinking-body";
-  thinkingEl.append(thinkingSummary, thinkingBody);
+  thinkingEl.append(thinkingLabel, thinkingBody);
   const textEl = document.createElement("div");
   textEl.className = "markdown-body";
   el.append(thinkingEl, textEl);
@@ -45,7 +48,7 @@ export function getOrCreateStream(streamId: string, phase: string): StreamState 
     phase,
     el,
     thinkingEl,
-    thinkingSummary,
+    thinkingLabel,
     thinkingBody,
     textEl,
     debounceTimer: null,
@@ -64,7 +67,8 @@ export function appendStreamText(
     stream.thinking = text;
     scheduleRender(stream, "thinking");
   } else {
-    stream.text = text;
+    hideThinking(stream);
+    stream.text = stripAssistantPrefixBullet(text);
     scheduleRender(stream);
   }
   if (transcriptEl) {
@@ -87,7 +91,7 @@ export function commitStream(streamId: string): {
   }
   stream.committed = true;
   renderStreamText(stream);
-  renderStreamThinking(stream);
+  hideThinking(stream);
   const result = {
     text: stream.text,
     thinking: stream.thinking,
@@ -151,8 +155,23 @@ function renderStreamText(stream: StreamState): void {
 function renderStreamThinking(stream: StreamState): void {
   const hasThinking = Boolean(stream.thinking);
   stream.thinkingEl.hidden = !hasThinking;
-  stream.thinkingSummary.textContent = hasThinking ? "Thinking" : "";
-  stream.thinkingBody.textContent = stream.thinking;
+  stream.thinkingBody.textContent = visibleThinkingLines(stream.thinking);
+}
+
+function hideThinking(stream: StreamState): void {
+  stream.thinkingEl.hidden = true;
+  stream.thinkingBody.textContent = "";
+}
+
+function visibleThinkingLines(text: string): string {
+  const lines = String(text || "")
+    .split(/\r?\n/)
+    .filter((line) => line.trim().length > 0);
+  return lines.slice(-THINKING_MAX_LINES).join("\n");
+}
+
+function stripAssistantPrefixBullet(text: string): string {
+  return String(text || "").replace(/^\s*●\s+/, "");
 }
 
 export function _resetForTest(): void {

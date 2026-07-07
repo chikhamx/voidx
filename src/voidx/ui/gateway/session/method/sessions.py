@@ -11,17 +11,27 @@ class SessionMethods:
     async def _method_session_create(self, params: dict) -> dict:
         from voidx.memory.session import create_session
         title = params.get("title", "New session")
-        directory = params.get("directory", "")
+        directory = str(params.get("directory", "") or "")
+        workspace = directory or self._workspace or "."
         info = await create_session(
-            workspace=self._workspace or ".",
+            workspace=workspace,
             title=title,
             directory=directory,
         )
-        await self.register_thread(info.id, title=info.title, directory=info.directory)
+        await self.register_thread(
+            info.id,
+            title=info.title,
+            directory=info.directory,
+            workspace=info.workspace,
+        )
+        self._active_thread_id = info.id
+        await self.broadcast_snapshot()
         return {
             "thread_id": info.id,
+            "active_thread_id": info.id,
             "title": info.title,
             "directory": info.directory,
+            "workspace": info.workspace,
             "status": "idle",
         }
 
@@ -32,11 +42,17 @@ class SessionMethods:
         info = await fork_session(thread_id, title=title)
         if info is None:
             raise MethodParamsError(f"thread not found: {thread_id}")
-        await self.register_thread(info.id, title=info.title, directory=info.directory)
+        await self.register_thread(
+            info.id,
+            title=info.title,
+            directory=info.directory,
+            workspace=info.workspace,
+        )
         return {
             "thread_id": info.id,
             "title": info.title,
             "directory": info.directory,
+            "workspace": info.workspace,
             "status": "idle",
         }
 
@@ -74,6 +90,8 @@ class SessionMethods:
         if not text:
             raise MethodParamsError("text is required")
         thread_id = str(params.get("thread_id") or self._active_thread_id or "")
+        if not thread_id:
+            thread_id = await self.ensure_active_thread()
         await self.handle_command(UiSubmitCommand(text=text, thread_id=thread_id))
         return {"ok": True}
 

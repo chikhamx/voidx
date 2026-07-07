@@ -351,6 +351,7 @@ class UiEventItemAdapter:
             "started",
             {
                 "prompt_type": "permission",
+                "interactive": False,
                 "prompt": event.prompt,
                 "choices": event.choices,
                 "tools": [t.model_dump() for t in event.tools],

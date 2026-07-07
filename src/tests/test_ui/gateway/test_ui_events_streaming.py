@@ -131,7 +131,7 @@ async def test_streaming_renderer_collapses_thinking_content_after_text_starts(i
 
 
 @pytest.mark.asyncio
-async def test_streaming_renderer_discards_thinking_only_stream(isolated_dock):
+async def test_streaming_renderer_commits_thinking_only_stream(isolated_dock):
     isolated_dock.begin_capture()
     ui_events.start(DockEventConsumer(isolated_dock))
     try:

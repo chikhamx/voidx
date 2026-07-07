@@ -98,6 +98,66 @@ async def test_v2_connect_snapshot_includes_runtime_status(tmp_path: Path):
     assert params["profile_configured"] is True
 
 
+@pytest.mark.asyncio
+async def test_v2_session_create_uses_requested_workspace(tmp_path: Path):
+    import voidx.memory.store as store
+
+    store._conn = None
+    store.DATA_DIR = tmp_path / ".voidx"
+    current_workspace = tmp_path / "voidx"
+    other_workspace = tmp_path / "imcore-sdk"
+    dock = BottomInputDock()
+    session = GatewaySession(
+        lambda: dock.tree,
+        thread_id="active",
+        workspace=str(current_workspace),
+    )
+
+    result = await session.dispatch_request(
+        JsonRpcRequest(
+            id=8,
+            method="session.create",
+            params={"directory": str(other_workspace)},
+        )
+    )
+
+    assert isinstance(result, JsonRpcResult)
+    assert result.result["workspace"] == str(other_workspace)
+    assert result.result["directory"] == str(other_workspace)
+    assert result.result["active_thread_id"] == result.result["thread_id"]
+    assert session.active_thread_id == result.result["thread_id"]
+    thread = session._threads[result.result["thread_id"]]
+    assert thread.workspace == str(other_workspace)
+    assert thread.directory == str(other_workspace)
+    store._conn = None
+
+
+@pytest.mark.asyncio
+async def test_v2_connect_sends_workspace_shell_before_persisted_sessions(tmp_path: Path, monkeypatch):
+    dock = BottomInputDock()
+    client = FakeClient()
+    sync_started = asyncio.Event()
+    release_sync = asyncio.Event()
+
+    async def slow_list_sessions(limit: int = 200):
+        sync_started.set()
+        await release_sync.wait()
+        return []
+
+    monkeypatch.setattr("voidx.memory.session.list_sessions", slow_list_sessions)
+    session = GatewaySession(lambda: dock.tree, thread_id="", workspace=str(tmp_path))
+
+    await asyncio.wait_for(session.connect(client), timeout=0.2)
+
+    params = _params(client.messages[0])
+    assert params["workspace"] == str(tmp_path)
+    assert params["threads"] == []
+
+    await asyncio.wait_for(sync_started.wait(), timeout=1)
+    release_sync.set()
+    await asyncio.sleep(0)
+
+
 # ── event broadcasting via adapter ─────────────────────────────────────
 
 

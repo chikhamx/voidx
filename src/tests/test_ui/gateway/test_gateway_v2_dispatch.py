@@ -33,7 +33,7 @@ from voidx.ui.protocol.v2.envelope import (
     parse_jsonrpc_message,
 )
 from voidx.ui.protocol.v2.threads import ThreadInfo
-from voidx.ui.protocol.requests import UiChoiceRequest, UiResponse
+from voidx.ui.protocol.requests import UiChoiceRequest, UiPermissionRequest, UiResponse
 
 
 from tests.test_ui.gateway.helpers import FakeClient, _parse, _method, _params
@@ -62,6 +62,32 @@ async def test_v2_dispatches_session_submit_method():
     assert result.id == 1
     assert result.result == {"ok": True}
     assert received == ["hello web"]
+
+
+@pytest.mark.asyncio
+async def test_session_submit_without_active_thread_creates_default_session(tmp_path):
+    dock = BottomInputDock()
+    received: list[tuple[str, str]] = []
+
+    async def handle_command(command):
+        received.append((command.kind, command.thread_id))
+
+    session = GatewaySession(
+        lambda: dock.tree,
+        thread_id="",
+        workspace=str(tmp_path),
+        command_handler=handle_command,
+    )
+
+    result = await session.dispatch_request(
+        JsonRpcRequest(id=101, method="session.submit", params={"text": "你好"})
+    )
+
+    assert isinstance(result, JsonRpcResult)
+    assert result.result == {"ok": True}
+    assert received == [("submit", session.active_thread_id)]
+    assert session.active_thread_id
+    assert session.list_threads()[0].workspace == str(tmp_path)
 
 
 @pytest.mark.asyncio
@@ -96,6 +122,59 @@ async def test_session_respond_resolves_pending_ui_request():
         request_id="choice_1",
         value="first",
     )
+
+
+@pytest.mark.asyncio
+async def test_permission_request_response_restores_thread_running_status():
+    dock = BottomInputDock()
+    session = GatewaySession(lambda: dock.tree, thread_id="t1")
+    client = FakeClient()
+    await session.connect(client)
+    session._run_manager.mark_running("t1")
+
+    pending = asyncio.create_task(
+        session.request(
+            UiPermissionRequest(
+                request_id="permission_1",
+                thread_id="t1",
+                prompt="Allow tool use?",
+                choices=[("Yes", "y", "Allow once"), ("No", "n", "Deny")],
+                tools=[{"name": "bash", "pattern": "npm test"}],
+            ),
+        ),
+    )
+
+    request = None
+    for _ in range(20):
+        for raw in client.messages:
+            message = json.loads(raw)
+            if message.get("method") == "ui.request":
+                request = message
+                break
+        if request is not None:
+            break
+        await asyncio.sleep(0.01)
+
+    assert request is not None
+    assert session._run_manager.status("t1") == "waiting_for_user"
+    assert request["method"] == "ui.request"
+    assert request["params"]["kind"] == "permission"
+    assert request["params"]["thread_id"] == "t1"
+
+    result = await session.dispatch_request(
+        JsonRpcRequest(
+            id=3,
+            method="session.respond",
+            params={"thread_id": "t1", "request_id": "permission_1", "value": "y"},
+        )
+    )
+
+    assert isinstance(result, JsonRpcResult)
+    assert await asyncio.wait_for(pending, timeout=1) == UiResponse(
+        request_id="permission_1",
+        value="y",
+    )
+    assert session._run_manager.status("t1") == "running"
 
 
 
@@ -235,6 +314,43 @@ async def test_settings_update_adds_configured_model_and_preserves_profile_field
     assert profile["protocol"] == "openai"
 
 
+@pytest.mark.asyncio
+async def test_settings_update_notifies_runtime_model_switch(tmp_path):
+    dock = BottomInputDock()
+    applied: list[tuple[str, str]] = []
+
+    async def apply_settings(settings):
+        cfg = await settings.build_config()
+        applied.append((cfg.model.provider, cfg.model.model))
+
+    session = GatewaySession(
+        lambda: dock.tree,
+        thread_id="t1",
+        workspace=str(tmp_path),
+        settings_update_handler=apply_settings,
+    )
+
+    result = await session.dispatch_request(JsonRpcRequest(id=181, method="settings.update", params={
+        "patch": {
+            "model": {
+                "provider": "deepseek",
+                "model": "deepseek-v4-pro",
+            },
+            "provider_secrets": {
+                "provider": "deepseek",
+                "profile_name": "deepseek/deepseek-v4-pro",
+                "action": "set",
+                "api_key": "sk-test",
+            },
+        }
+    }))
+
+    assert isinstance(result, JsonRpcResult)
+    assert result.result["settings"]["model"]["provider"] == "deepseek"
+    assert result.result["settings"]["model"]["model"] == "deepseek-v4-pro"
+    assert applied == [("deepseek", "deepseek-v4-pro")]
+
+
 
 @pytest.mark.asyncio
 async def test_integrations_get_returns_snapshot_sections(tmp_path, monkeypatch):
@@ -303,4 +419,3 @@ async def test_v2_dispatch_returns_method_not_found_for_unknown_method():
     # It should be an error (method not found)
     assert hasattr(result, "error")
     assert result.error.code == -32601
-

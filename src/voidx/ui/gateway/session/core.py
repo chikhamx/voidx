@@ -5,7 +5,7 @@ from __future__ import annotations
 import asyncio
 import inspect
 from collections.abc import Awaitable, Callable
-from typing import Protocol
+from typing import Any, Protocol
 
 from voidx.ui.gateway.adapter import UiEventItemAdapter
 from voidx.ui.gateway.diff_review import DiffReviewSession
@@ -39,6 +39,7 @@ from voidx.ui.gateway.session.method.terminal import TerminalMethods
 
 
 RuntimeStateProvider = Callable[[], dict[str, object]]
+SettingsUpdateHandler = Callable[[object], Awaitable[None] | None]
 
 
 class ProtocolClient(Protocol):
@@ -64,6 +65,7 @@ class GatewaySession(
         command_handler: Callable[[UiCommand], Awaitable[None] | None] | None = None,
         workspace: str = "",
         runtime_state_provider: RuntimeStateProvider | None = None,
+        settings_update_handler: SettingsUpdateHandler | None = None,
     ) -> None:
         self._tree_provider = tree_providers
         self._session_id = session_id or thread_id
@@ -74,9 +76,11 @@ class GatewaySession(
         )
         self._workspace = workspace
         self._runtime_state_provider = runtime_state_provider
+        self._settings_update_handler = settings_update_handler
         self._clients: set[ProtocolClient] = set()
         self._seq = 0
         self._thread_id_provider: Callable[[], str] | None = None
+        self._persisted_sync_task: asyncio.Task[None] | None = None
 
         # Multi-thread state
         self._threads: dict[str, ThreadInfo] = {}
@@ -84,7 +88,10 @@ class GatewaySession(
         self._active_thread_id = thread_id or ""
 
         if thread_id:
-            self._threads[thread_id] = ThreadInfo(thread_id=thread_id)
+            self._threads[thread_id] = ThreadInfo(
+                thread_id=thread_id,
+                workspace=workspace or ".",
+            )
             self._adapters[thread_id] = UiEventItemAdapter(
                 thread_id=thread_id, turn_id="",
             )
@@ -110,7 +117,8 @@ class GatewaySession(
     async def connect(self, client: ProtocolClient) -> None:
         self._clients.add(client)
         try:
-            await client.send_text(await self._encode_snapshot())
+            await client.send_text(await self._encode_snapshot(sync_persisted=False))
+            self._start_persisted_thread_sync()
         except Exception:
             self._clients.discard(client)
             raise
@@ -132,7 +140,16 @@ class GatewaySession(
     async def handle_command(self, command: UiCommand) -> None:
         thread_id = getattr(command, "thread_id", "") or self._active_thread_id or ""
         if command.kind == "submit":
-            await self._run_manager.submit(thread_id, command.text)
+            try:
+                await self._run_manager.submit(thread_id, command.text)
+            except MethodParamsError as exc:
+                if exc.code != ERR_TURN_IN_PROGRESS:
+                    raise
+                if command.text.lstrip().startswith("/"):
+                    await self._dispatch_command(command)
+                else:
+                    await self._dispatch_command({"kind": "guide", "text": command.text, "thread_id": thread_id})
+                return
             self._sync_thread_status(thread_id)
             return
         if command.kind == "cancel":
@@ -141,7 +158,7 @@ class GatewaySession(
             return
         await self._dispatch_command(command)
 
-    async def _dispatch_command(self, command: UiCommand) -> None:
+    async def _dispatch_command(self, command: UiCommand | dict[str, Any]) -> None:
         if self._command_handler is None:
             return
         result = self._command_handler(command)
@@ -178,7 +195,9 @@ class GatewaySession(
 
     async def handle_response(self, response: UiResponse, *, thread_id: str = "") -> None:
         tid = thread_id or getattr(response, "thread_id", "") or self._active_thread_id or ""
-        self._run_manager.resolve_pending_request(tid, response)
+        if tid and self._run_manager.resolve_pending_request(tid, response):
+            return
+        self._run_manager.resolve_unique_pending_request(response)
 
     # ── v2 event broadcasting ─────────────────────────────────────────────
 
@@ -227,11 +246,25 @@ class GatewaySession(
 
     # ── multi-thread management ───────────────────────────────────────────
 
-    async def register_thread(self, thread_id: str, *, title: str = "", directory: str = "") -> None:
-        self._threads[thread_id] = ThreadInfo(thread_id=thread_id, title=title, directory=directory)
+    async def register_thread(
+        self,
+        thread_id: str,
+        *,
+        title: str = "",
+        directory: str = "",
+        workspace: str = "",
+    ) -> None:
+        self._threads[thread_id] = ThreadInfo(
+            thread_id=thread_id,
+            title=title,
+            workspace=workspace or self._workspace or ".",
+            directory=directory,
+        )
         self._adapters[thread_id] = UiEventItemAdapter(
             thread_id=thread_id, turn_id="",
         )
+        if not self._active_thread_id:
+            self._active_thread_id = thread_id
 
     async def unregister_thread(self, thread_id: str) -> None:
         self._threads.pop(thread_id, None)
@@ -242,7 +275,26 @@ class GatewaySession(
     def list_threads(self) -> list[ThreadInfo]:
         return list(self._threads.values())
 
-    async def sync_persisted_threads(self) -> None:
+    async def ensure_active_thread(self) -> str:
+        if self._active_thread_id:
+            return self._active_thread_id
+        from voidx.memory.session import create_session
+
+        runtime_state = self._runtime_state_provider() if self._runtime_state_provider else {}
+        info = await create_session(
+            workspace=self._workspace or ".",
+            provider=str(runtime_state.get("provider") or "anthropic"),
+            model=str(runtime_state.get("model") or ""),
+        )
+        await self.register_thread(
+            info.id,
+            title=info.title,
+            directory=info.directory,
+            workspace=info.workspace,
+        )
+        return info.id
+
+    async def sync_persisted_threads(self) -> bool:
         from pathlib import Path
 
         from voidx.memory.session import SessionInfo, list_sessions
@@ -261,15 +313,33 @@ class GatewaySession(
                 message_count=info.message_count,
             )
 
+        changed = False
         for info in await list_sessions(limit=200):
             if info.id in self._threads:
                 existing = self._threads[info.id]
-                self._threads[info.id] = from_session(info).model_copy(
+                updated = from_session(info).model_copy(
                     update={"status": existing.status},
                 )
+                if updated != existing:
+                    changed = True
+                    self._threads[info.id] = updated
                 continue
             self._threads[info.id] = from_session(info)
             self._adapters[info.id] = UiEventItemAdapter(thread_id=info.id, turn_id="")
+            changed = True
+        return changed
+
+    def _start_persisted_thread_sync(self) -> None:
+        if self._persisted_sync_task is not None and not self._persisted_sync_task.done():
+            return
+        self._persisted_sync_task = asyncio.create_task(
+            self._sync_persisted_threads_and_broadcast(),
+        )
+
+    async def _sync_persisted_threads_and_broadcast(self) -> None:
+        changed = await self.sync_persisted_threads()
+        if changed and self._clients:
+            await self._broadcast(await self._encode_snapshot(sync_persisted=False))
 
     async def switch_thread(self, thread_id: str) -> None:
         if thread_id not in self._threads:
@@ -282,17 +352,18 @@ class GatewaySession(
 
     # ── snapshot encoding ─────────────────────────────────────────────────
 
-    async def _encode_snapshot(self) -> str:
+    async def _encode_snapshot(self, *, sync_persisted: bool = True) -> str:
         self._next_seq()
-        snapshot = await self._build_workspace_snapshot()
+        snapshot = await self._build_workspace_snapshot(sync_persisted=sync_persisted)
         envelope = JsonRpcNotification(
             method="workspace.snapshot",
             params=snapshot.model_dump(),
         )
         return envelope.model_dump_json()
 
-    async def _build_workspace_snapshot(self) -> WorkspaceSnapshot:
-        await self.sync_persisted_threads()
+    async def _build_workspace_snapshot(self, *, sync_persisted: bool = True) -> WorkspaceSnapshot:
+        if sync_persisted:
+            await self.sync_persisted_threads()
         transcript = await self._active_thread_snapshot()
         active_snapshot = ThreadSnapshot(
             thread_id=self._active_thread_id,

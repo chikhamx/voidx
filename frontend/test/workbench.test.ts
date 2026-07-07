@@ -269,6 +269,10 @@ describe("workbench shell", () => {
     });
 
     await vi.waitFor(() => {
+      expect(document.querySelector("#status-session-detail").textContent).toContain("empty-1");
+    });
+    document.querySelector(".vx-workspace-collapse-toggle")?.click();
+    await vi.waitFor(() => {
       expect(document.querySelector(".vx-session-item.active").dataset.threadId).toBe("empty-1");
     });
   });
@@ -278,17 +282,153 @@ describe("workbench shell", () => {
     const input = document.querySelector("#input");
     const send = document.querySelector("#btn-send");
 
+    handleNotification("workspace.snapshot", {
+      active_thread_id: "t1",
+      active_snapshot: { thread_id: "t1", nodes: [] },
+      threads: [{ thread_id: "t1", title: "Default", workspace: "/Users/chikham/workspace/voidx" }],
+      workspace: "/Users/chikham/workspace/voidx",
+      provider: "deepseek",
+      model: "deepseek-chat",
+      profile_configured: true,
+    });
+    sentMessages.length = 0;
+
     input.value = "你好";
     document.querySelector("#composer").dispatchEvent(new SubmitEvent("submit", { bubbles: true, cancelable: true }));
 
     expect(send.classList.contains("running")).toBe(true);
     expect(send.textContent).toBe("■");
-    expect(input.disabled).toBe(true);
-    expect(sentPayloads(sentMessages).some((payload) => payload.method === "session.submit")).toBe(true);
+    expect(input.disabled).toBe(false);
+    expect(sentPayloads(sentMessages).find((payload) => payload.method === "session.submit")).toMatchObject({
+      method: "session.submit",
+      params: { text: "你好", thread_id: "t1" },
+    });
 
     send.click();
 
     expect(sentPayloads(sentMessages).some((payload) => payload.method === "session.cancel")).toBe(true);
+  });
+
+  it("keeps input enabled while a turn is running", () => {
+    const input = document.querySelector("#input");
+    handleNotification("turn.started", {});
+    expect(input.disabled).toBe(false);
+  });
+
+  it("shows guidance pending state when submitting during a running turn", async () => {
+    const sentMessages = setupOpenSocket();
+    const input = document.querySelector("#input");
+    const send = document.querySelector("#btn-send");
+
+    handleNotification("workspace.snapshot", {
+      active_thread_id: "t1",
+      active_snapshot: { thread_id: "t1", nodes: [] },
+      threads: [{ thread_id: "t1", title: "Default", workspace: "<workspace>" }],
+      workspace: "<workspace>",
+      provider: "deepseek",
+      model: "deepseek-chat",
+      profile_configured: true,
+    });
+    handleNotification("turn.started", {});
+    sentMessages.length = 0;
+
+    input.value = "keep going";
+    document.querySelector("#composer").dispatchEvent(new SubmitEvent("submit", { bubbles: true, cancelable: true }));
+
+    expect(send.classList.contains("guidance-pending")).toBe(true);
+    expect(sentPayloads(sentMessages).find((p) => p.method === "session.submit")).toMatchObject({
+      method: "session.submit",
+      params: { text: "keep going", thread_id: "t1" },
+    });
+  });
+
+  it("clears guidance pending state after RPC resolves", async () => {
+    const { sentMessages, socket } = setupOpenSocketWithHandle();
+    const input = document.querySelector("#input");
+    const send = document.querySelector("#btn-send");
+
+    handleNotification("workspace.snapshot", {
+      active_thread_id: "t1",
+      active_snapshot: { thread_id: "t1", nodes: [] },
+      threads: [{ thread_id: "t1", title: "Default", workspace: "<workspace>" }],
+      workspace: "<workspace>",
+      provider: "deepseek",
+      model: "deepseek-chat",
+      profile_configured: true,
+    });
+    handleNotification("turn.started", {});
+    sentMessages.length = 0;
+
+    input.value = "keep going";
+    document.querySelector("#composer").dispatchEvent(new SubmitEvent("submit", { bubbles: true, cancelable: true }));
+
+    expect(send.classList.contains("guidance-pending")).toBe(true);
+
+    const submitMsg = sentPayloads(sentMessages).find((p) => p.method === "session.submit");
+    expect(submitMsg).toBeDefined();
+    socket.onmessage({ data: JSON.stringify({ jsonrpc: "2.0", id: submitMsg.id, result: { ok: true } }) } as MessageEvent);
+
+    await vi.waitFor(() => {
+      expect(send.classList.contains("guidance-pending")).toBe(false);
+    });
+  });
+
+  it("preserves input text when guidance submission fails", async () => {
+    const { sentMessages, socket } = setupOpenSocketWithHandle();
+    const input = document.querySelector("#input");
+    const send = document.querySelector("#btn-send");
+
+    handleNotification("workspace.snapshot", {
+      active_thread_id: "t1",
+      active_snapshot: { thread_id: "t1", nodes: [] },
+      threads: [{ thread_id: "t1", title: "Default", workspace: "<workspace>" }],
+      workspace: "<workspace>",
+      provider: "deepseek",
+      model: "deepseek-chat",
+      profile_configured: true,
+    });
+    handleNotification("turn.started", {});
+    sentMessages.length = 0;
+
+    input.value = "keep going";
+    document.querySelector("#composer").dispatchEvent(new SubmitEvent("submit", { bubbles: true, cancelable: true }));
+
+    const submitMsg = sentPayloads(sentMessages).find((p) => p.method === "session.submit");
+    socket.onmessage({ data: JSON.stringify({ jsonrpc: "2.0", id: submitMsg.id, error: { code: -32603, message: "fail" } }) } as MessageEvent);
+
+    await vi.waitFor(() => {
+      expect(send.classList.contains("guidance-pending")).toBe(false);
+    });
+    expect(input.value).toBe("keep going");
+  });
+
+  it("clears input text when guidance submission succeeds", async () => {
+    const { sentMessages, socket } = setupOpenSocketWithHandle();
+    const input = document.querySelector("#input");
+    const send = document.querySelector("#btn-send");
+
+    handleNotification("workspace.snapshot", {
+      active_thread_id: "t1",
+      active_snapshot: { thread_id: "t1", nodes: [] },
+      threads: [{ thread_id: "t1", title: "Default", workspace: "<workspace>" }],
+      workspace: "<workspace>",
+      provider: "deepseek",
+      model: "deepseek-chat",
+      profile_configured: true,
+    });
+    handleNotification("turn.started", {});
+    sentMessages.length = 0;
+
+    input.value = "keep going";
+    document.querySelector("#composer").dispatchEvent(new SubmitEvent("submit", { bubbles: true, cancelable: true }));
+
+    const submitMsg = sentPayloads(sentMessages).find((p) => p.method === "session.submit");
+    socket.onmessage({ data: JSON.stringify({ jsonrpc: "2.0", id: submitMsg.id, result: { ok: true } }) } as MessageEvent);
+
+    await vi.waitFor(() => {
+      expect(input.value).toBe("");
+    });
+    expect(send.classList.contains("guidance-pending")).toBe(false);
   });
 
   it("clears running state when a turn end notification arrives", () => {
@@ -303,7 +443,19 @@ describe("workbench shell", () => {
     expect(send.textContent).toBe("↑");
   });
 
-  it("opens request dialog for prompt item notifications", () => {
+  it("renders a visible error when a turn fails", () => {
+    const send = document.querySelector("#btn-send");
+    handleNotification("turn.started", {});
+
+    handleNotification("turn.failed", { message: "LLM call failed: invalid API key" });
+
+    expect(send.classList.contains("running")).toBe(false);
+    expect(send.textContent).toBe("↑");
+    expect(document.querySelector("#transcript").textContent).toContain("LLM call failed: invalid API key");
+    expect(document.querySelector(".message-error")).not.toBeNull();
+  });
+
+  it("does not open request dialog for status-only permission prompt notifications", () => {
     const dialog = document.querySelector("#request-dialog");
     const showModal = vi.spyOn(dialog, "showModal").mockImplementation(() => {});
 
@@ -312,10 +464,28 @@ describe("workbench shell", () => {
       item_id: "prompt-1",
       data: {
         prompt_type: "permission",
+        interactive: false,
         prompt: "允许写文件？",
         choices: [["Yes", "allow", "允许一次"]],
         tools: [{ name: "write", pattern: "/tmp/a.txt", args: { path: "/tmp/a.txt" } }],
       },
+    });
+
+    expect(showModal).not.toHaveBeenCalled();
+    expect(document.querySelector("#request-controls").textContent).toBe("");
+  });
+
+  it("opens request dialog for real permission ui requests", () => {
+    const dialog = document.querySelector("#request-dialog");
+    const showModal = vi.spyOn(dialog, "showModal").mockImplementation(() => {});
+
+    handleNotification("ui.request", {
+      kind: "permission",
+      request_id: "perm_1",
+      thread_id: "t2",
+      prompt: "允许写文件？",
+      choices: [["Yes", "y", "允许一次"]],
+      tools: [{ name: "write", pattern: "/tmp/a.txt", args: { path: "/tmp/a.txt" } }],
     });
 
     expect(showModal).toHaveBeenCalled();
@@ -335,6 +505,7 @@ describe("workbench shell", () => {
       data: {
         prompt_type: "clarify",
         clarify_id: "cl_1",
+        thread_id: "t2",
         question: "选哪个方案？",
         options: ["直接实现", "先写文档"],
       },
@@ -343,7 +514,7 @@ describe("workbench shell", () => {
 
     expect(sentPayloads(sentMessages).find((payload) => payload.method === "session.respond")).toMatchObject({
       method: "session.respond",
-      params: { request_id: "cl_1", value: "直接实现" },
+      params: { request_id: "cl_1", value: "直接实现", thread_id: "t2" },
     });
   });
 });
@@ -477,7 +648,7 @@ describe("provider and model controls", () => {
     });
     expect(sentPayloads(sentMessages).find((payload) => payload.method === "session.submit")).toMatchObject({
       method: "session.submit",
-      params: { text: "/model switch anthropic/claude-opus-4-1 --local" },
+      params: { text: "/model switch anthropic/claude-opus-4-1 --local", thread_id: "t1" },
     });
   });
 

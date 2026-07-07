@@ -256,7 +256,11 @@
           "default": "idle",
           "enum": [
             "idle",
-            "running"
+            "running",
+            "waiting_for_user",
+            "waiting_for_write_lock",
+            "cancelling",
+            "failed"
           ],
           "title": "Status",
           "type": "string"
@@ -546,7 +550,8 @@
           "enum": [
             "running",
             "completed",
-            "cancelled"
+            "cancelled",
+            "failed"
           ],
           "title": "Status",
           "type": "string"
@@ -573,6 +578,11 @@
           "const": "cancel",
           "default": "cancel",
           "title": "Kind",
+          "type": "string"
+        },
+        "thread_id": {
+          "default": "",
+          "title": "Thread Id",
           "type": "string"
         }
       },
@@ -613,6 +623,11 @@
         },
         "request_id": {
           "title": "Request Id",
+          "type": "string"
+        },
+        "thread_id": {
+          "default": "",
+          "title": "Thread Id",
           "type": "string"
         }
       },
@@ -659,6 +674,11 @@
           "title": "Request Id",
           "type": "string"
         },
+        "thread_id": {
+          "default": "",
+          "title": "Thread Id",
+          "type": "string"
+        },
         "tools": {
           "items": {
             "$ref": "#/$defs/PermissionToolDetail"
@@ -684,6 +704,11 @@
         },
         "text": {
           "title": "Text",
+          "type": "string"
+        },
+        "thread_id": {
+          "default": "",
+          "title": "Thread Id",
           "type": "string"
         }
       },
@@ -718,6 +743,11 @@
           "default": false,
           "title": "Secret",
           "type": "boolean"
+        },
+        "thread_id": {
+          "default": "",
+          "title": "Thread Id",
+          "type": "string"
         }
       },
       "required": [
@@ -768,6 +798,11 @@
           "title": "Provider",
           "type": "string"
         },
+        "runtime": {
+          "additionalProperties": true,
+          "title": "Runtime",
+          "type": "object"
+        },
         "threads": {
           "items": {
             "$ref": "#/$defs/ThreadInfo"
@@ -779,6 +814,11 @@
           "default": "",
           "title": "Workspace",
           "type": "string"
+        },
+        "workspace_write_lock": {
+          "additionalProperties": true,
+          "title": "Workspace Write Lock",
+          "type": "object"
         }
       },
       "title": "WorkspaceSnapshot",

@@ -85,6 +85,8 @@ async def test_v2_multi_session_switch_broadcasts_new_snapshot():
 async def test_v2_multi_session_switch_uses_target_thread_transcript(tmp_path):
     import voidx.memory.store as store
 
+    if store._conn is not None:
+        store._conn.close()
     store._conn = None
     store.DATA_DIR = tmp_path / ".voidx"
 
@@ -124,6 +126,8 @@ async def test_v2_multi_session_switch_uses_target_thread_transcript(tmp_path):
     assert params["active_snapshot"]["nodes"][0]["header"] == "Target thread content"
     assert params["active_snapshot"]["nodes"][0]["payload"]["raw_text"] == "from t2 transcript"
     assert all("current tree should not leak" not in node["header"] for node in params["active_snapshot"]["nodes"])
+    if store._conn is not None:
+        store._conn.close()
     store._conn = None
 
 
@@ -131,6 +135,8 @@ async def test_v2_multi_session_switch_uses_target_thread_transcript(tmp_path):
 async def test_v2_multi_session_switch_to_empty_thread_does_not_leak_current_tree(tmp_path):
     import voidx.memory.store as store
 
+    if store._conn is not None:
+        store._conn.close()
     store._conn = None
     store.DATA_DIR = tmp_path / ".voidx-empty"
 
@@ -149,6 +155,8 @@ async def test_v2_multi_session_switch_to_empty_thread_does_not_leak_current_tre
     assert params["active_thread_id"] == "t2"
     assert params["active_snapshot"]["thread_id"] == "t2"
     assert params["active_snapshot"]["nodes"] == []
+    if store._conn is not None:
+        store._conn.close()
     store._conn = None
 
 
@@ -275,7 +283,7 @@ async def test_v2_session_list_includes_persisted_sessions_from_other_workspaces
 
 
 @pytest.mark.asyncio
-async def test_v2_initial_snapshot_includes_persisted_sessions(tmp_path):
+async def test_v2_async_snapshot_includes_persisted_sessions(tmp_path):
     import json
     import voidx.memory.store as store
     from voidx.memory.session import create_session
@@ -304,7 +312,12 @@ async def test_v2_initial_snapshot_includes_persisted_sessions(tmp_path):
 
     await session.connect(client)
 
-    snapshot = json.loads(client.messages[0])
+    for _ in range(20):
+        if len(client.messages) > 1:
+            break
+        await asyncio.sleep(0.01)
+
+    snapshot = json.loads(client.messages[-1])
     threads = snapshot["params"]["threads"]
     assert any(t["thread_id"] == saved.id and t["title"] == "Saved thread" for t in threads)
     store._conn = None
@@ -379,7 +392,7 @@ async def test_v2_session_cancel_routes_to_explicit_thread_id():
 
 
 @pytest.mark.asyncio
-async def test_v2_session_submit_rejects_same_thread_double_submit_via_run_manager():
+async def test_v2_session_submit_during_running_turn_routes_as_guidance():
     dock = BottomInputDock()
     captured = []
 
@@ -400,9 +413,13 @@ async def test_v2_session_submit_rejects_same_thread_double_submit_via_run_manag
     )
 
     assert isinstance(first, JsonRpcResult)
-    assert not isinstance(second, JsonRpcResult)
-    assert second.error.code == -32001
-    assert [cmd.text for cmd in captured] == ["first"]
+    assert isinstance(second, JsonRpcResult)
+    assert second.result == {"ok": True}
+    assert captured[0].kind == "submit"
+    assert captured[0].text == "first"
+    assert isinstance(captured[1], dict)
+    assert captured[1]["kind"] == "guide"
+    assert captured[1]["text"] == "second"
 
 
 @pytest.mark.asyncio
@@ -478,3 +495,26 @@ async def test_v2_session_response_routes_by_thread_id_with_duplicate_request_id
     assert not t1_future.done()
     assert t2_future.done()
     assert t2_future.result().value == "target"
+
+
+@pytest.mark.asyncio
+async def test_v2_session_response_without_thread_id_falls_back_to_unique_request_id():
+    dock = BottomInputDock()
+    session = GatewaySession(lambda: dock.tree, thread_id="t1")
+    await session.register_thread("t2", title="Second thread")
+
+    loop = asyncio.get_running_loop()
+    future = loop.create_future()
+    session._run_manager.register_pending_request("t2", "permission-1", future)
+
+    result = await session.dispatch_request(
+        JsonRpcRequest(
+            id=37,
+            method="session.respond",
+            params={"request_id": "permission-1", "value": "allow"},
+        )
+    )
+
+    assert isinstance(result, JsonRpcResult)
+    assert future.done()
+    assert future.result().value == "allow"

@@ -239,6 +239,16 @@ class ThreadRunManager:
     def resolve_pending_request(self, thread_id: str, response: UiResponse) -> bool:
         return self.actor(thread_id).resolve_pending_request(response)
 
+    def resolve_unique_pending_request(self, response: UiResponse) -> bool:
+        matches = [
+            actor
+            for actor in self._actors.values()
+            if response.request_id in actor.state.pending_requests
+        ]
+        if len(matches) != 1:
+            return False
+        return matches[0].resolve_pending_request(response)
+
     def remove_pending_request(self, thread_id: str, request_id: str) -> None:
         actor = self._actors.get(thread_id)
         if actor is not None:
