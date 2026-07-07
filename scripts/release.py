@@ -112,6 +112,9 @@ def _release_pypi(dry_run: bool) -> int:
 
 
 def _release_npm(dry_run: bool) -> int:
+    # Remove stale wheels so npm pack only bundles the current version
+    for stale_wheel in NPM_DIR.glob("voidx_cli-*.whl"):
+        stale_wheel.unlink()
     # Copy bundled voidx_cli wheel from dist/ to npm/
     tui_wheel = list(DIST.glob("voidx_cli-*.whl"))
     if not tui_wheel:

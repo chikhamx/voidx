@@ -1,48 +1,29 @@
 # voidx Agent Instructions
 
 ## Project Shape
-- `src/voidx/agent/graph/`: LangGraph orchestration — turn loop, compaction, subagents, tool execution, permissions.
-- `src/voidx/agent/slash/`: Slash command handlers — runtime config, session, model, MCP/LSP, skills, profile, host, and IDE integration commands.
-- `src/voidx/config/`: Settings & profiles — Pydantic models, MCP server config, API keys, permissions.
-- `src/voidx/llm/`: Provider setup, prompt context, compaction, token usage.
-- `src/voidx/mcp/`: MCP client manager, tool wrapper, schema.
-- `src/voidx/mcp_servers/`: Built-in MCP server implementations (e.g. voidx-web).
-- `src/voidx/memory/`: SQLite-backed sessions, transcript, runtime snapshots, context frames.
-- `src/voidx/permission/`: Permission engine — rules, sandbox, approval policy, wildcard matching.
-- `src/voidx/runtime/`: Shared runtime — UI sink, task state, intent resolution.
-- `src/voidx/skills/`: Skill system — registry, policy, bundled skills.
-- `src/voidx/tools/`: Typed tool implementations and MCP/LSP adapters — `bash/` (shell execution, safety, routing) and `file_ops/` (read, write, edit, file listing).
-- `src/voidx/lsp/`: Language Server Protocol client — manager, service, detector, schema.
-- `src/voidx/workflow/`: Structured workflow runtime — DAG, nodes, policy, routing, reconciliation, schema.
-- `src/voidx/logging/`: Request and tool logging.
-- `src/voidx/ui/output/`: Output rendering — dock tree, streaming, capture, events, diff.
-- `src/voidx/ui/protocol/`: UI protocol layer — v2 JSON-RPC models, schema, transcript, commands, requests.
-- `src/voidx/ui/tools/`: UI-side tools — clipboard, file picker, skill picker, IDE integration.
-- `src/voidx/ui/gateway/`: WebSocket gateway for web/desktop frontend.
-- `src/tests/`: pytest coverage — per-module test directories (agent, config, llm, lsp, mcp, memory, permission, runtime, skills, tools, ui, workflow, etc.) plus top-level install/npm packaging tests.
+- `src/`: Python backend core — see `src/AGENTS.md`.
 - `frontend/`: Web/desktop UI (TypeScript SPA) — see `frontend/AGENTS.md`.
 - `desktop/`: Native desktop shell (Tauri 2) — see `desktop/AGENTS.md`.
 - `tui/`: Pure terminal TUI (Python) — see `tui/AGENTS.md`.
+
+## Subdirectory AGENTS.md
+Each subdirectory has its own `AGENTS.md` for directory-specific details only; global rules live here and are not duplicated. Read both when editing a subdirectory.
 
 ## Runtime Environment
 - Use `./python.sh` (Unix) or `.\python.ps1` (Windows) as the Python entry point — these locate the voidx venv under `VOIDX_HOME` and forward all arguments. See `docs/dev-guide.md` for details. Commands below use the Unix form; Windows users substitute `.\python.ps1`.
 
 ## Commands
-- Full tests: `./python.sh -m pytest src/tests/ -v`
-- Focused tests: `./python.sh -m pytest src/tests/test_tools/test_basic.py -v`
 - Build wheel: `./python.sh scripts/package.py`
 - Build + verify wheels (release): `./python.sh scripts/package.py --format all --clean --verify`
 - Web UI gateway: `./python.sh -m voidx.main --web` (open frontend with `?ws=<gateway-url>`)
 - Headless web backend: `./python.sh -m voidx.main --web --web-headless`
 - Export UI protocol schema: `./python.sh scripts/export_ui_protocol_schema.py`
+- Run all tests: `./test.py` (backend + frontend + desktop; use `--backend`/`--frontend`/`--desktop` to select, `--` to pass args to the suite)
 
 ## Code Rules
 - Keep modules small and named by responsibility.
-- Use Pydantic models for config, tool inputs, and persisted structured data.
-- Tool ids stay snake_case with precise, action-oriented descriptions.
-- Prefer structured metadata over parsing rendered text.
-- Keep prompts rules-first, concise, and specific to the agent role.
 - Do not add comments unless they explain non-obvious intent or constraints.
+- Don't repeat yourself — single source of truth, no duplicated rules across files.
 
 ## Document Lifecycle
 - Design docs live in `docs/specs/` while in progress.

@@ -17,7 +17,7 @@
 - Dev shell: `cd desktop && npm run dev` (spawns Tauri dev with frontend hot-reload)
 - Build bundle: `cd desktop && ./build.sh` (frontend + native bundle)
 - Build (no frontend): `cd desktop && ./build.sh --no-frontend`
-- Rust tests: `cd desktop/tauri && cargo test`
+- Rust tests: `./test.py --desktop`
 - Rust check: `cd desktop/tauri && cargo check`
 - Tauri info: `cd desktop && ./node_modules/.bin/tauri info`
 
@@ -27,7 +27,6 @@
 - Functions in `lib.rs` are `pub` so integration tests under `tauri/tests/`
   can import them.
 - Tests that mutate env vars must serialize via a `Mutex` guard (see `tests/`).
-- Do not add comments unless they explain non-obvious intent or constraints.
 
 ## Testing
 - Integration tests in `tauri/tests/`, one file per concern, mirroring `lib.rs`.
@@ -36,4 +35,3 @@
 ## Safety
 - Do not commit `tauri/target/` or `tauri/gen/` (build artifacts).
 - `tauri/Cargo.lock` **should** be committed (binary application).
-- Preserve user work in a dirty tree; never revert unrelated changes.

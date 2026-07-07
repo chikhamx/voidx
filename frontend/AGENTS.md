@@ -53,4 +53,4 @@ Never hand-edit `protocol.d.ts` — it will be overwritten.
   available without import.
 - Stateful modules expose a `_resetForTest()` export to clear module-level
   state in `beforeEach`.
-- Run all: `cd frontend && npm test` · Run focused: `cd frontend && npx vitest run test/<module>.test.ts`
+- Run all: `./test.py --frontend` · Run focused: `./test.py --frontend -- test/<module>.test.ts`

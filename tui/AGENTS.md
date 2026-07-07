@@ -17,12 +17,11 @@
 - `tests/`: pytest coverage — one file per concern, mirroring `voidx_cli/` modules.
 
 ## Runtime Environment
-- Python entry point: `./python.sh` (Unix) or `.\python.ps1` (Windows) from the repo root.
 - The TUI depends on the main `voidx` package — tests use `pythonpath = [".", "../src"]` to resolve both.
 
 ## Commands
-- Full tests: `./python.sh -m pytest tui/tests/ -v`
-- Focused tests: `./python.sh -m pytest tui/tests/test_frame_rendering.py -v`
+- Full tests: `./test.py --backend` (tui tests are included in the backend suite)
+- Focused tests: `./test.py --backend -- tui/tests/test_frame_rendering.py -v`
 - Build wheel: `cd tui && ../python.sh -m build --wheel`
 
 ## Code Rules
@@ -30,7 +29,6 @@
 - Renderers receive `RenderState` and write to a `Console`; they do not mutate state.
 - Input parsing is pure where possible — side effects (clipboard, submit) stay in `app.py`.
 - Use `voidx.ui.output.dock` for dock-aware output; never write to stdout directly.
-- Do not add comments unless they explain non-obvious intent or constraints.
 
 ## Testing
 - Tests in `tests/`, one file per concern, mirroring `voidx_cli/` modules.
@@ -40,4 +38,3 @@
 
 ## Safety
 - Do not commit `dist/`, `build/`, or `*.egg-info/` (build artifacts).
-- Preserve user work in a dirty tree; never revert unrelated changes.
