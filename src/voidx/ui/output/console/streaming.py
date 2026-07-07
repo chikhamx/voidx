@@ -160,8 +160,15 @@ class StreamingRenderer:
                     if not ui_events.emit_nowait(AssistantStreamCommitted(agent_id=self._agent_id)):
                         dock.commit_stream()
                 elif self._thinking_full:
-                    if not ui_events.emit_nowait(AssistantStreamDiscarded(agent_id=self._agent_id)):
-                        dock.discard_stream()
+                    thinking_text = self.get_thinking_text()
+                    if not ui_events.emit_nowait(AssistantStreamUpdated(
+                        agent_id=self._agent_id,
+                        text=thinking_text,
+                        phase="thinking",
+                    )):
+                        dock.set_stream(thinking_text, phase="thinking", refresh=False)
+                    if not ui_events.emit_nowait(AssistantStreamCommitted(agent_id=self._agent_id)):
+                        dock.commit_stream()
                 elif self._stream_started:
                     if not ui_events.emit_nowait(AssistantStreamDiscarded(agent_id=self._agent_id)):
                         dock.discard_stream()

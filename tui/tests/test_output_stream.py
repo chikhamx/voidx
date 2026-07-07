@@ -8,6 +8,7 @@ from rich.text import Text
 
 from voidx.ui.output.dock import dock
 from voidx.ui.output.dock.formatting import _text_from_line
+from voidx.ui.output.console import StreamingRenderer
 
 
 def test_stream_reply_aligns_with_user_turn_start():
@@ -128,3 +129,42 @@ def test_thinking_stream_wraps_long_content_to_visual_lines():
         test_dock.reset()
 
 
+def test_streaming_renderer_commits_thinking_only_output():
+    test_dock = dock
+    test_dock.begin_capture()
+    try:
+        renderer = StreamingRenderer(Console(), stream_to_dock=True)
+        renderer.feed_thinking("checking tool permissions")
+        renderer.done()
+
+        rendered = "\n".join(_rich_plain(line) for line in test_dock.tree.render(100))
+        assert "checking tool permissions" not in rendered
+        thinking_nodes = [
+            node
+            for parent in test_dock.tree.root.children
+            for node in [parent, *parent.children]
+            if node.node_type == "assistant" and node.payload.get("phase") == "thinking"
+        ]
+        assert thinking_nodes == []
+    finally:
+        test_dock.deactivate()
+        test_dock.reset()
+
+
+def test_thinking_only_stream_not_flushed_to_scrollback():
+    test_dock = dock
+    test_dock.begin_capture()
+    try:
+        test_dock.start_turn("问题")
+        long_thinking = "\n".join(f"thinking line {i}" for i in range(10))
+        test_dock.set_stream(long_thinking, phase="thinking")
+        test_dock.commit_stream()
+
+        flush_limit = test_dock.safe_flush_line_count(100, 0)
+        lines = test_dock.tree.render(100)
+        flushable = "\n".join(_rich_plain(line) for line in lines[:flush_limit])
+
+        assert "thinking line" not in flushable
+    finally:
+        test_dock.deactivate()
+        test_dock.reset()

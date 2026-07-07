@@ -51,6 +51,9 @@ from voidx.ui.output.events.schema import (
     TodoCleared,
     TodoCommitted,
     TodoUpdated,
+    TurnCancelled,
+    TurnCompleted,
+    TurnFailed,
     TurnStarted,
     UiEvent,
     WarningAppended,
@@ -159,6 +162,20 @@ class DockEventConsumer:
                 self._agent_nodes.clear()
                 self._agents_with_specific_status.clear()
                 return self._dock.start_turn(text)
+            case TurnCompleted():
+                return None
+            case TurnCancelled():
+                return None
+            case TurnFailed() as e:
+                if not e.message:
+                    return None
+                self._dock.record_status(
+                    "error:current",
+                    "Error",
+                    e.message,
+                    stage="error",
+                )
+                return self._dock.append_error(e.message)
             case StartupShown() as e:
                 return self._dock.append_startup(
                     model=e.model,

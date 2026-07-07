@@ -22,7 +22,10 @@ class DockStreamMixin:
     ) -> bool:
         if not self._active:
             return False
-        self._stream_text = text
+        if phase == "thinking":
+            self._stream_thinking_text = text
+        else:
+            self._stream_text = text
         self._update_stream_node(parent=parent, phase=phase)
         self._mark_unsettled(self._stream_node)
         if refresh:
@@ -35,17 +38,22 @@ class DockStreamMixin:
         if self._ignored_duplicate_stream_commit:
             self._ignored_duplicate_stream_commit = False
             self._stream_text = ""
+            self._stream_thinking_text = ""
             if refresh:
                 self.refresh()
             return True
         stream_node = self._stream_node
         if stream_node is not None and stream_node is not self._current_agent:
-            self._mark_settled(stream_node)
-            self._last_committed_stream_text = _stream_signature(self._stream_text)
-            self._last_committed_stream_parent_id = stream_node.parent.id if stream_node.parent else None
-            self._last_committed_stream_node_id = stream_node.id
+            if stream_node.payload.get("phase") == "thinking":
+                self._remove_node(stream_node)
+            else:
+                self._mark_settled(stream_node)
+                self._last_committed_stream_text = _stream_signature(self._stream_text)
+                self._last_committed_stream_parent_id = stream_node.parent.id if stream_node.parent else None
+                self._last_committed_stream_node_id = stream_node.id
         self._stream_node = None
         self._stream_text = ""
+        self._stream_thinking_text = ""
         if refresh:
             self.refresh()
         return True
@@ -59,6 +67,7 @@ class DockStreamMixin:
                 self._current_agent = None
         self._stream_node = None
         self._stream_text = ""
+        self._stream_thinking_text = ""
         self._last_committed_stream_text = ""
         self._last_committed_stream_parent_id = None
         self._last_committed_stream_node_id = None
@@ -72,7 +81,8 @@ class DockStreamMixin:
         parent: OutputNode | None = None,
         phase: str = "text",
     ) -> None:
-        clean = _clean(self._stream_text).strip("\n")
+        source_text = self._stream_thinking_text if phase == "thinking" else self._stream_text
+        clean = _clean(source_text).strip("\n")
         if not clean:
             return
         target = parent or self.ensure_agent()
@@ -92,6 +102,7 @@ class DockStreamMixin:
                 _ansi_line(f"  {escape(line)}") for line in visible
             ]
             self._stream_node.payload["phase"] = "thinking"
+            self._stream_node.payload["raw_text"] = clean
             if stream_existed and self._stream_node is not None:
                 self._tree.mark_dirty(self._stream_node.id)
             else:
@@ -111,6 +122,10 @@ class DockStreamMixin:
         self._stream_node.body_lines = [_ansi_line(f"  {line}") for line in lines[1:]]
         self._stream_node.payload.pop("phase", None)
         self._stream_node.payload["raw_text"] = clean  # 原始 markdown，供 snapshot 恢复用
+        if self._stream_thinking_text.strip():
+            self._stream_node.payload["thinking_text"] = _clean(
+                self._stream_thinking_text
+            ).strip("\n")
         # Content-only update on existing node: mark only that subtree dirty.
         # New node (structural change): mark the whole tree dirty.
         if stream_existed and self._stream_node is not None and not was_thinking_stream:
