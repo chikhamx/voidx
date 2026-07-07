@@ -519,3 +519,77 @@ async def test_parallel_toggle_on_persists_without_live_config_update(tmp_path, 
         "[dim]Saved parallel subagents on (max_concurrent=4). Run /clear or restart to apply.[/dim]"
     ]
 
+
+
+@pytest.mark.asyncio
+async def test_model_switch_profile_updates_session_db(tmp_path, monkeypatch):
+    """/model switch <profile> 应同步更新 sessiondb 的 model_provider/model_name。"""
+    profile_name = f"deepseek/{tmp_path.name}-switch-sync"
+    settings = await Settings.create(str(tmp_path))
+    await save_model_profile_async(ModelProfileRow(
+        name=profile_name,
+        provider="deepseek",
+        model=f"{tmp_path.name}-switch-sync",
+        api_key="sk-test",
+    ))
+    session = SimpleNamespace(id="sess-123")
+    graph = SimpleNamespace(
+        config=Config(model=ModelConfig(provider="deepseek", model="old")),
+        api_key="sk-old",
+        model=object(),
+        _settings=settings,
+        _session=session,
+        _app=None,
+        _usage_stats=None,
+    )
+    monkeypatch.setattr("voidx.llm.provider.create_chat_model", lambda *_a, **_k: object())
+
+    captured: list[tuple[str, str, str]] = []
+
+    async def fake_update_session_model(session_id, provider, model):
+        captured.append((session_id, provider, model))
+
+    monkeypatch.setattr("voidx.memory.service.update_session_model", fake_update_session_model)
+
+    try:
+        await SlashHandler(graph).dispatch(f"/model switch {profile_name}")
+        assert captured == [("sess-123", "deepseek", f"{tmp_path.name}-switch-sync")]
+    finally:
+        await delete_model_profile_async(profile_name)
+
+
+@pytest.mark.asyncio
+async def test_switch_model_spec_calls_show_startup(tmp_path, monkeypatch):
+    """/model <provider/model> 切换后应调用 _show_startup 展示新模型信息。"""
+    settings = await Settings.create(str(tmp_path))
+    await save_model_profile_async(ModelProfileRow(
+        name="deepseek/deepseek-v4-pro",
+        provider="deepseek",
+        model="deepseek-v4-pro",
+        api_key="sk-test",
+    ))
+    graph = SimpleNamespace(
+        config=Config(model=ModelConfig(provider="anthropic", model="old")),
+        api_key="sk-old",
+        model=object(),
+        _settings=settings,
+        _session=None,
+        _app=None,
+        _usage_stats=None,
+    )
+    monkeypatch.setattr("voidx.llm.provider.create_chat_model", lambda *_a, **_k: object())
+
+    startup_calls: list[dict] = []
+
+    async def fake_show_startup(**kwargs):
+        startup_calls.append(kwargs)
+
+    handler = SlashHandler(graph)
+    handler._show_startup = fake_show_startup
+
+    try:
+        await handler.dispatch("/model deepseek/deepseek-v4-pro")
+        assert len(startup_calls) == 1
+        assert startup_calls[0].get("prefer_direct") is True
+    finally:
+        await delete_model_profile_async("deepseek/deepseek-v4-pro")

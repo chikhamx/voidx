@@ -150,7 +150,7 @@ class SlashHandler(
             target = args.removeprefix("ctx").strip()
             await self._model_ctx(target)
         elif args:
-            await self._switch_model(args)
+            await self._model_switch(args)
         else:
             await self._model_switch("")
 

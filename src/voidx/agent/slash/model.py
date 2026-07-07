@@ -294,18 +294,39 @@ class SlashModelMixin:
         await self._pick_or_act("Delete", target, _do_delete)
 
     async def _model_switch(self, target: str) -> None:
+        from voidx.config import Profile
+        from voidx.llm.service import create_chat_model
+        from voidx.memory.service import update_session_model
+
         target, scope = self._model_switch_scope(target)
 
         async def _do_switch(profile_name: str) -> None:
-            from voidx.llm.service import create_chat_model
             settings = self.host.settings
             if settings is None:
                 ui.error("No Settings reference.")
                 return
             profile = await settings.resolve_profile(profile_name)
-            if not profile:
-                ui.error(f"Profile not found: {profile_name}")
-                return
+            if profile is None:
+                if "/" in profile_name:
+                    new_provider, new_model = profile_name.split("/", 1)
+                    new_provider = new_provider.lower()
+                elif " " in profile_name:
+                    parts = profile_name.split(None, 1)
+                    new_provider = parts[0].lower()
+                    new_model = parts[1]
+                else:
+                    new_provider = self.host.config.model.provider
+                    new_model = profile_name
+                new_key = await settings.resolve_api_key(new_provider)
+                if not new_key:
+                    ui.error(f"No API key found for '{new_provider}'. Use /model new.")
+                    return
+                profile = Profile(
+                    name=f"{new_provider}/{new_model}",
+                    api_key=new_key,
+                    base_url=await settings.resolve_base_url(new_provider),
+                    protocol=await settings.resolve_protocol(new_provider),
+                )
             self.host.config.model.provider = profile.provider
             self.host.config.model.model = profile.model
             self.host.config.model.base_url = profile.base_url or await settings.resolve_base_url(profile.provider)
@@ -314,6 +335,8 @@ class SlashModelMixin:
             self.host.api_key = profile.api_key
             self.host.model = create_chat_model(profile.api_key, self.host.config.model)
             await settings.save_profile(profile, scope=scope)
+            if self.host.session:
+                await update_session_model(self.host.session.id, profile.provider, profile.model)
             scope_label = "global + local" if scope == "global" else "local"
             ui.print(f"[cyan]{profile.name}[/cyan] ({profile.provider}/{profile.model}) [green]✓ switched ({scope_label})[/green]")
             await self._show_startup(prefer_direct=True)
@@ -385,77 +408,6 @@ class SlashModelMixin:
         display = "Auto (provider default)" if new_value is None else f"{new_label}"
         ui.print(f"Context window: [cyan]{display}[/cyan] [green]✓[/green]")
 
-    async def _switch_model(self, model_spec: str) -> None:
-        from voidx.llm.service import create_chat_model
-        from voidx.memory.service import update_session_model
-
-        if not model_spec:
-            await self._list_models()
-            return
-
-        spec, scope = self._model_switch_scope(model_spec)
-        if not spec:
-            await self._list_models()
-            return
-
-        if " " in spec:
-            parts = spec.split(None, 1)
-            new_provider = parts[0].lower()
-            new_model = parts[1]
-        elif "/" in spec:
-            new_provider, new_model = spec.split("/", 1)
-            new_provider = new_provider.lower()
-        else:
-            new_provider = self.host.config.model.provider
-            new_model = spec
-
-        # Resolve API key for the target provider
-        if self.host.settings is None:
-            ui.error("No Settings reference available.")
-            return
-        new_key = await self.host.settings.resolve_api_key(new_provider)
-        if not new_key:
-            ui.error(
-                f"No API key found for '{new_provider}'. Use /model new."
-            )
-            return
-
-        self.host.api_key = new_key
-
-        old = f"{self.host.config.model.provider}/{self.host.config.model.model}"
-        self.host.config.model.provider = new_provider
-        self.host.config.model.model = new_model
-        self.host.config.model.base_url = (
-            (await self.host.settings.resolve_base_url(new_provider)) if self.host.settings else None
-        )
-        self.host.config.model.protocol = (
-            (await self.host.settings.resolve_protocol(new_provider)) if self.host.settings else None
-        )
-
-        from voidx.config import Profile
-        existing = await self.host.settings.resolve_profile(f"{new_provider}/{new_model}")
-        if existing:
-            self.host.config.model.base_url = existing.base_url or self.host.config.model.base_url
-            self.host.config.model.protocol = existing.protocol or self.host.config.model.protocol
-
-        self._sync_context_limit()
-
-        self.host.model = create_chat_model(self.host.api_key, self.host.config.model)
-
-        new_profile = Profile(
-            name=f"{new_provider}/{new_model}",
-            api_key=new_key,
-            base_url=self.host.config.model.base_url,
-            protocol=self.host.config.model.protocol,
-        )
-        await self.host.settings.save_profile(new_profile, scope=scope)
-
-        if self.host.session:
-            await update_session_model(self.host.session.id, new_provider, new_model)
-
-        ui.print(f"[dim]  {old}[/dim]")
-        scope_label = "global + local" if scope == "global" else "local"
-        ui.print(f"  [cyan]→ {new_provider}/{new_model}[/cyan] [green]✓ ({scope_label})[/green]")
 
     @staticmethod
     def _model_switch_scope(raw: str) -> tuple[str, str]:
