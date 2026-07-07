@@ -22,7 +22,7 @@ static copies that must stay in sync. Run the bump script to update all of them
 from the single source:
 
 ```bash
-./python.sh scripts/bump_version.py <version>
+./python.py scripts/bump_version.py <version>
 ```
 
 | # | File | Field / Location | How it stays in sync |
@@ -66,9 +66,9 @@ file list.
 Run the full verification suite before publishing:
 
 ```bash
-./python.sh scripts/package.py --check-only
-./python.sh -m compileall -q src scripts tui
-./python.sh -m pytest -q
+./python.py scripts/package.py --check-only
+./python.py -m compileall -q src scripts tui
+./python.py -m pytest -q
 npm --prefix npm run check
 npm pack ./npm --dry-run
 ```
@@ -77,7 +77,7 @@ If `uv` needs a writable cache outside the home directory, run package builds
 with:
 
 ```bash
-UV_CACHE_DIR=/private/tmp/voidx-uv-cache ./python.sh scripts/package.py --format all --clean --verify
+UV_CACHE_DIR=/private/tmp/voidx-uv-cache ./python.py scripts/package.py --format all --clean --verify
 ```
 
 The build produces both wheels:
@@ -94,7 +94,7 @@ dist/voidx_cli-<version>-py3-none-any.whl
 Build fresh artifacts and verify they install correctly:
 
 ```bash
-UV_CACHE_DIR=/private/tmp/voidx-uv-cache ./python.sh scripts/package.py --format all --clean --verify
+UV_CACHE_DIR=/private/tmp/voidx-uv-cache ./python.py scripts/package.py --format all --clean --verify
 ```
 
 The `--verify` flag creates a temporary venv, pip-installs both wheels, and
@@ -104,7 +104,7 @@ upload.
 Upload both wheels with `twine` or an equivalent publishing tool:
 
 ```bash
-./python.sh -m twine upload \
+./python.py -m twine upload \
   dist/voidx-<version>.tar.gz \
   dist/voidx-<version>-py3-none-any.whl \
   dist/voidx_cli-<version>.tar.gz \

@@ -6,7 +6,7 @@ voidx 当前有三套独立测试，分散在不同目录、用不同工具链�
 
 | 套件 | 工具 | 命令 | 目录 |
 |------|------|------|------|
-| 后端 Python | pytest | `./python.sh -m pytest src/tests tui/tests` | `src/tests/`, `tui/tests/` |
+| 后端 Python | pytest | `./python.py -m pytest src/tests tui/tests` | `src/tests/`, `tui/tests/` |
 | 前端 TS | vitest | `cd frontend && npm test` | `frontend/test/` |
 | Desktop Rust | cargo test | `cd desktop/tauri && cargo test` | `desktop/tauri/tests/` |
 
@@ -37,7 +37,7 @@ scripts/test.py
 ├── _run_desktop(extra_args, verbose)   # [cargo, test, *extra]    cwd=ROOT/"desktop/tauri"
 └── _summarize(results)                 # 打印汇总表，返回聚合退出码
 
-注意：脚本由 ./python.sh 执行，但内部不再调 python.sh——
+注意：脚本由 ./python.py 执行，但内部不再调 python.py——
 直接用 sys.executable（当前 venv 的 Python）运行 pytest，避免套娃。
 各 _run_* 内部用 subprocess.run(cwd=...) 切到对应目录，调用方无需关心。
 ```
@@ -64,7 +64,7 @@ main()
 ### CLI 接口
 
 ```
-./python.sh scripts/test.py [OPTIONS] [-- EXTRA_ARGS...]
+./python.py scripts/test.py [OPTIONS] [-- EXTRA_ARGS...]
 
 Options:
   --backend       只跑后端 pytest
@@ -105,7 +105,7 @@ Options:
 | 默认遇错即停 | 默认全跑完再汇总 | 快速定位失败，`--keep-going` 保留全跑选项 |
 | 工具链缺失跳过而非报错 | 报错退出 | 开发者可能只装了部分工具链（如无 Rust）|
 | 后端显式指定路径 | 依赖 pyproject testpaths | 避免歧义，确保 src/tests + tui/tests 都跑到 |
-| 内部用 sys.executable 而非调 python.sh | 套娃调 python.sh | 脚本已在 venv Python 下运行，直接用 sys.executable，与 package.py 一致 |
+| 内部用 sys.executable 而非调 python.py | 套娃调 python.py | 脚本已在 venv Python 下运行，直接用 sys.executable，与 package.py 一致 |
 | cwd 由 _run_* 内部管理 | 调用方传 cwd 参数 | 调用方只需选套件，目录切换是实现细节 |
 | `--` 透传各套件独立参数 | 统一参数翻译 | 各工具链参数差异大，透传最灵活、无信息损失 |
 

@@ -22,7 +22,7 @@
 ## Commands
 - Full tests: `./test.py --backend` (tui tests are included in the backend suite)
 - Focused tests: `./test.py --backend -- tui/tests/test_frame_rendering.py -v`
-- Build wheel: `cd tui && ../python.sh -m build --wheel`
+- Build wheel: `cd tui && ../python.py -m build --wheel`
 
 ## Code Rules
 - `PureTui` composes behavior via mixins — keep new behavior in a mixin or dedicated module, not in `app.py`.

@@ -10,14 +10,14 @@
 Each subdirectory has its own `AGENTS.md` for directory-specific details only; global rules live here and are not duplicated. Read both when editing a subdirectory.
 
 ## Runtime Environment
-- Use `./python.sh` (Unix) or `.\python.ps1` (Windows) as the Python entry point — these locate the voidx venv under `VOIDX_HOME` and forward all arguments. See `docs/dev-guide.md` for details. Commands below use the Unix form; Windows users substitute `.\python.ps1`.
+- Use `./python.py` as the Python entry point on Linux/macOS/Windows — it locates the voidx venv under `VOIDX_HOME` and forwards all arguments. See `docs/dev-guide.md` for details.
 
 ## Commands
-- Build wheel: `./python.sh scripts/package.py`
-- Build + verify wheels (release): `./python.sh scripts/package.py --format all --clean --verify`
-- Web UI gateway: `./python.sh -m voidx.main --web` (open frontend with `?ws=<gateway-url>`)
-- Headless web backend: `./python.sh -m voidx.main --web --web-headless`
-- Export UI protocol schema: `./python.sh scripts/export_ui_protocol_schema.py`
+- Build wheel: `./python.py scripts/package.py`
+- Build + verify wheels (release): `./python.py scripts/package.py --format all --clean --verify`
+- Web UI gateway: `./python.py -m voidx.main --web` (open frontend with `?ws=<gateway-url>`)
+- Headless web backend: `./python.py -m voidx.main --web --web-headless`
+- Export UI protocol schema: `./python.py scripts/export_ui_protocol_schema.py`
 - Run all tests: `./test.py` (backend + frontend + desktop; use `--backend`/`--frontend`/`--desktop` to select, `--` to pass args to the suite)
 
 ## Code Rules

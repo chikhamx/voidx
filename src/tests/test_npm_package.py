@@ -342,7 +342,7 @@ def test_npm_launcher_forwards_args_to_managed_voidx(tmp_path):
     assert result.stdout == "voidx args:version|--plain|\n"
 
 
-@pytest.mark.skip(reason="Run manually: ./python.sh -m pytest -k wheel_install_verify")
+@pytest.mark.skip(reason="Run manually: ./python.py -m pytest -k wheel_install_verify")
 def test_wheel_install_verify():
     """Build both wheels and verify they install correctly in a temp venv."""
     result = subprocess.run(

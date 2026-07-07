@@ -47,7 +47,7 @@ impl BackendStatus {
 
 /// Resolve the default voidx install directory's venv python path.
 /// Windows: %LOCALAPPDATA%/voidx/venv; Unix: ${XDG_DATA_HOME:-$HOME/.local/share}/voidx/venv.
-/// Matches the logic in python.sh / python.ps1. Returns the expected path
+/// Matches the logic in python.py. Returns the expected path
 /// (does not check existence — caller verifies).
 pub fn default_install_dir(venv_scripts: &str) -> Option<PathBuf> {
     if cfg!(windows) {
@@ -74,7 +74,7 @@ pub fn resolve_python() -> Option<PathBuf> {
         "bin/python"
     };
 
-    // 2. VOIDX_HOME — same install directory as python.sh/python.ps1
+    // 2. VOIDX_HOME — same install directory as python.py
     if let Ok(home) = std::env::var("VOIDX_HOME") {
         let p = PathBuf::from(home).join("venv").join(venv_scripts);
         if p.exists() {

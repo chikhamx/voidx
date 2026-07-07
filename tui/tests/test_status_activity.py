@@ -249,8 +249,8 @@ def test_busy_activity_compacts_many_permission_details(tmp_path, monkeypatch):
                 "3. replace",
                 "   target: docs/specs/llm-error-optimization-2026-07-05.md",
                 "   file_path: docs/specs/llm-error-optimization-2026-07-05.md",
-                "   bounds: [{'line_no': 334, 'anchor': './python.sh -m pytest tests/test_tools/test_plan_checkpoint.py'}]",
-                "   new_string: ./python.sh -m pytest tests/test_tools/test_plan_checkpoint.py tests/test_tools/test_basic.py",
+                "   bounds: [{'line_no': 334, 'anchor': './python.py -m pytest tests/test_tools/test_plan_checkpoint.py'}]",
+                "   new_string: ./python.py -m pytest tests/test_tools/test_plan_checkpoint.py tests/test_tools/test_basic.py",
             ]
         )
         dock.record_status("permission:request", "Requesting", detail, stage="permission")

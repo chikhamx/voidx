@@ -7,7 +7,7 @@ writes that file plus every static version/dependency pin that must stay in sync
 ``npm/package.json``, ``scripts/install.sh``, and ``scripts/install.ps1``.
 
 Usage:
-    ./python.sh scripts/bump_version.py 3.4.0
+    ./python.py scripts/bump_version.py 3.4.0
 """
 from __future__ import annotations
 
