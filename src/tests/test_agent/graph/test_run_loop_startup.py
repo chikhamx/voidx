@@ -184,6 +184,56 @@ async def test_web_headless_uses_gateway_frontend_without_default_tui_factory(mo
 
 
 @pytest.mark.asyncio
+async def test_web_non_headless_falls_back_to_gateway_frontend_when_tui_unavailable(monkeypatch, tmp_path):
+    """--web without --web-headless should fall back to GatewayHeadlessFrontend
+    when voidx_cli is not installed, instead of crashing."""
+    graph = _graph(workspace=str(tmp_path))
+    _disable_external_managers(graph)
+    monkeypatch.setattr(runtime_ui_port, "show_startup", lambda **_: None)
+
+    class ExitHeadlessFrontend:
+        instances = []
+
+        def __init__(self, status, commands):
+            self.status = status
+            self.commands = commands
+            self.request_handler = None
+            ExitHeadlessFrontend.instances.append(self)
+
+        async def run(self, on_submit):
+            return
+
+        async def run_headless(self, on_submit):
+            return
+
+        def set_external_command_handler(self, handler):
+            self.command_handler = handler
+
+        def set_external_request_handler(self, handler):
+            self.request_handler = handler
+
+    def fail_create_frontend(*_args, **_kwargs):
+        raise RuntimeError("voidx_cli is required for terminal UI mode.")
+
+    monkeypatch.setattr("voidx.agent.graph.run_loop.create_frontend", fail_create_frontend)
+    monkeypatch.setattr("voidx.agent.graph.run_loop.GatewayHeadlessFrontend", ExitHeadlessFrontend)
+    monkeypatch.setattr("voidx.agent.graph.run_loop.emit_web_gateway_bootstrap", lambda _url: None)
+
+    test_dock = BottomInputDock()
+    set_dock(test_dock)
+    test_dock.begin_capture()
+    try:
+        await graph.run(web=True, web_headless=False)
+    finally:
+        test_dock.deactivate()
+        test_dock.reset()
+        set_dock(None)
+
+    assert len(ExitHeadlessFrontend.instances) == 1
+    assert ExitHeadlessFrontend.instances[0].request_handler is not None
+
+
+@pytest.mark.asyncio
 async def test_apply_settings_update_refreshes_live_model(monkeypatch, tmp_path):
     from voidx.config import Profile, Settings
 

@@ -37,6 +37,9 @@ def main() -> int:
         shutil.rmtree(out_dir)
     if args.clean and BUILD.exists():
         shutil.rmtree(BUILD)
+    tui_build = ROOT / "tui" / "build"
+    if args.clean and tui_build.exists():
+        shutil.rmtree(tui_build)
     out_dir.mkdir(parents=True, exist_ok=True)
 
     package_roots = [ROOT]

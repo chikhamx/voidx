@@ -19,3 +19,5 @@ version = {attr = "voidx_cli.__version__"}
 
 [tool.setuptools.packages.find]
 where = ["."]
+include = ["voidx_cli*"]
+exclude = ["build*", "tests*", "dist*"]

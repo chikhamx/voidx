@@ -222,7 +222,18 @@ class GraphRunLoopMixin(GraphTurnMixin, GraphSessionMixin, GraphTranscriptMixin)
                 "",
             ),
         )
-        app = GatewayHeadlessFrontend(status, COMMANDS) if web_headless else create_frontend(status, COMMANDS)
+        if web_headless:
+            app = GatewayHeadlessFrontend(status, COMMANDS)
+        else:
+            try:
+                app = create_frontend(status, COMMANDS)
+            except RuntimeError:
+                self._ui.dock.append_message(
+                    "[dim]voidx_cli not installed — starting Web UI in headless mode. "
+                    "Install voidx-cli for terminal UI: pip install voidx-cli[/dim]",
+                    markup=True,
+                )
+                app = GatewayHeadlessFrontend(status, COMMANDS)
         self._app = app
         app.set_external_command_handler(partial(self._handle_web_command, app))
         update_check_task = asyncio.create_task(self._show_update_check_if_needed())
