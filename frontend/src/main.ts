@@ -651,7 +651,7 @@ export function handleItem(
           todoPanel?.querySelectorAll<HTMLElement>(".todo-item") || [],
         ).map((item) => ({
           content: item.querySelector("span:last-child")?.textContent || "",
-          status: item.classList.contains("done") ? "done" : "done",
+          status: "done",
         }));
         renderTodoInDock(
           items,
