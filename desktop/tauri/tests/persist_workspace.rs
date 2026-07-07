@@ -13,6 +13,8 @@ static HOME_LOCK: Mutex<()> = Mutex::new(());
 /// never touches the real `~/.voidx/desktop-workspace`.
 struct TempHome {
     original_home: Option<String>,
+    // Kept alive so the temp dir is only cleaned up when TempHome drops.
+    #[allow(dead_code)]
     dir: tempfile::TempDir,
 }
 

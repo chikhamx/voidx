@@ -93,8 +93,9 @@ fn spawn_backend(
             }
         };
 
-        // DIAGNOSTIC: log resolve results to temp file for debugging msi startup
-        {
+        // Diagnostic log: only when VOIDX_DEBUG is set. Helps debug backend
+        // spawn failures (e.g. msi install startup) without polluting prod.
+        if std::env::var("VOIDX_DEBUG").is_ok() {
             let log_path = std::env::temp_dir().join("voidx_spawn_diag.log");
             if let Ok(mut f) = std::fs::File::create(&log_path) {
                 use std::io::Write;

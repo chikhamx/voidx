@@ -3,6 +3,16 @@ use std::process::Command;
 
 use serde_json::json;
 
+/// Max parent dirs to walk up from the exe when searching for a `.venv`.
+/// Covers typical bundle layouts, e.g. macOS:
+///   voidx.app/Contents/MacOS/voidx-desktop -> ../../../../.venv
+const EXE_VENV_SEARCH_DEPTH: usize = 6;
+
+/// Max parent dirs to walk up from the exe when searching for a project root
+/// (dir containing AGENTS.md or pyproject.toml). Slightly deeper than the
+/// venv search to handle nested bundle + dev layouts.
+const EXE_PROJECT_ROOT_SEARCH_DEPTH: usize = 8;
+
 #[cfg(windows)]
 use std::os::windows::process::CommandExt;
 
@@ -84,7 +94,7 @@ pub fn resolve_python() -> Option<PathBuf> {
     if let Ok(exe) = std::env::current_exe() {
         if let Some(exe_dir) = exe.parent() {
             let mut dir = Some(exe_dir);
-            for _ in 0..6 {
+            for _ in 0..EXE_VENV_SEARCH_DEPTH {
                 if let Some(d) = dir {
                     let p = d.join(".venv").join(venv_scripts);
                     if p.exists() {
@@ -161,7 +171,7 @@ pub fn resolve_workspace() -> PathBuf {
     // Walk up from exe directory to find project root (contains AGENTS.md or pyproject.toml)
     if let Ok(exe) = std::env::current_exe() {
         let mut dir = exe.parent();
-        for _ in 0..8 {
+        for _ in 0..EXE_PROJECT_ROOT_SEARCH_DEPTH {
             if let Some(d) = dir {
                 if is_project_root(d) {
                     return d.to_path_buf();
@@ -175,7 +185,9 @@ pub fn resolve_workspace() -> PathBuf {
             return cwd;
         }
     }
-    if let Ok(home) = std::env::var("HOME") {
+    // Fallback to user home dir. Windows uses USERPROFILE; Unix uses HOME.
+    let home_env = if cfg!(windows) { "USERPROFILE" } else { "HOME" };
+    if let Ok(home) = std::env::var(home_env) {
         let home_path = PathBuf::from(&home);
         for candidate in [
             home_path.join("workspace/voidx"),
