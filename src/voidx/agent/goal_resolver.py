@@ -20,7 +20,9 @@ from voidx.runtime.task_state import (
     goal_type_from_join,
 )
 from voidx.workflow.dag import DEFAULT_WORKFLOW_DAG
+from voidx.config import RetryConfig
 from voidx.llm.service import DeepSeekChatOpenAI
+from voidx.tools.retry import retry_async
 
 
 GOAL_RESOLVER_TIMEOUT_SECONDS = 20
@@ -80,6 +82,7 @@ async def resolve_goal_for_turn(
     interaction_mode: str | InteractionMode | None,
     task_state: TaskState,
     log_diagnostic: bool = True,
+    retry_config: RetryConfig | None = None,
 ) -> GoalResolution:
     del interaction_mode
     fallback = GoalResolution(
@@ -115,9 +118,22 @@ async def resolve_goal_for_turn(
             method = None
         runnable = structured(ResolverGoal) if method is None else structured(ResolverGoal, method=method)
         resolver_messages = _resolver_messages_from_exchanges(user_text, task_state, json_mode=(method == "json_mode"))
-        raw = await asyncio.wait_for(
-            runnable.ainvoke(resolver_messages),
-            timeout=GOAL_RESOLVER_TIMEOUT_SECONDS,
+        rc = retry_config or RetryConfig()
+
+        async def _invoke_once():
+            return await asyncio.wait_for(
+                runnable.ainvoke(resolver_messages),
+                timeout=GOAL_RESOLVER_TIMEOUT_SECONDS,
+            )
+
+        raw = await retry_async(
+            _invoke_once,
+            max_attempts=rc.max_attempts,
+            base_delay=rc.base_delay,
+            max_delay=rc.max_delay,
+            jitter=rc.jitter,
+            label="goal_resolver",
+            retry_on=(asyncio.TimeoutError, TimeoutError, ConnectionError, OSError),
         )
         _log_goal_resolver_exchange(resolver_messages, raw=raw, enabled=log_diagnostic)
         resolver_goal = _coerce_resolution(raw)

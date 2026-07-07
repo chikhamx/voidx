@@ -357,8 +357,6 @@ class VoidXGraph(
             status.model = self.config.model.model
             status.context_limit = context_limit
             status.reasoning_effort = self.config.model.reasoning_effort or "xhigh"
-            if hasattr(status, "permission_label"):
-                status.permission_label = self._permission.status_label
 
     @property
     def workspace(self) -> str:

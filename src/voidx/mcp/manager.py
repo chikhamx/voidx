@@ -249,7 +249,8 @@ class McpManager:
         async def try_start(sc: McpServerConfig) -> tuple[str, McpClient] | None:
             if sc.name in self._clients:
                 return sc.name, self._clients[sc.name]
-            client = McpClient(sc)
+            retry_config = self._settings.get_retry_config() if self._settings else None
+            client = McpClient(sc, retry_config=retry_config)
             try:
                 await client.start()
                 self._clients[sc.name] = client

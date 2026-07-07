@@ -206,6 +206,7 @@ class GraphTurnRunner:
                         interaction_mode=interaction_mode,
                         task_state=base_task_state,
                         log_diagnostic=bool(getattr(host.config, "log_llm_diagnostic", False)),
+                        retry_config=getattr(host._settings, "get_retry_config", lambda: None)() if host._settings else None,
                     )
                 turn_task_state = base_task_state.model_copy(deep=True)
                 turn_task_state.update_after_turn(

@@ -12,8 +12,10 @@ from voidx.tools.file_state import (
     LineDriftMap,
     check_read_coverage,
     check_staleness,
+    clear_read_coverage,
     file_fingerprint,
     get_line_drift_maps,
+    record_mtime,
     remap_read_coverage_from_file_diff,
     save_file_version,
 )
@@ -202,7 +204,8 @@ class FileReplaceTool(BaseTool):
         "Single-line replace may use an empty anchor to trust line_no directly. "
         "Multi-line replace requires non-empty anchors on both boundary lines; "
         "the smaller line_no is used as the start boundary and the larger line_no is used as the end boundary. "
-        "Anchors are searched near the given line numbers in case the file changed since the last read."
+        "Anchors are searched near the given line numbers in case the file changed since the last read. "
+        "If the file does not exist, it is created with new_string as its content."
     )
 
     def parameters_schema(self) -> dict:
@@ -249,7 +252,42 @@ def _resolve_edit_target(ctx: ToolContext, file_path: str):
     return path, None
 
 
-
+def _auto_create_file(
+    ctx: ToolContext,
+    *,
+    file_path: str,
+    new_string: str,
+) -> ToolResult:
+    path = resolve_safe(ctx.workspace, file_path, ctx.sandbox_extra_paths)
+    if path is None:
+        return ToolResult(output=f"Path traversal blocked: {file_path}", metadata={"error": True})
+    try:
+        path.parent.mkdir(parents=True, exist_ok=True)
+        path.write_text(new_string, encoding="utf-8")
+    except OSError as exc:
+        return ToolResult(
+            output=f"Failed to create file: {file_path}\n{exc}",
+            metadata={"error": True},
+        )
+    record_mtime(ctx, path)
+    clear_read_coverage(ctx, path)
+    diff = make_file_diff(file_path, "", new_string)
+    file_diff = make_structured_diff(file_path, "", new_string)
+    numbered_diff = render_numbered_diff(file_diff)
+    output = f"File created: {file_path}"
+    if numbered_diff:
+        output = f"{output}\n{numbered_diff}"
+    return ToolResult(
+        title="File created",
+        output=output,
+        summary="File created",
+        metadata={
+            "file": file_path,
+            "operations": 1,
+            "auto_created": True,
+        },
+        diff=diff,
+    )
 
 
 async def _execute_text_replace(
@@ -265,6 +303,8 @@ async def _execute_text_replace(
 ) -> ToolResult:
     path, error = _resolve_edit_target(ctx, file_path)
     if error is not None:
+        if error.output.startswith("File not found:"):
+            return _auto_create_file(ctx, file_path=file_path, new_string=new_string)
         _log_replace_failure(
             tool_name=tool_name,
             file_path=file_path,

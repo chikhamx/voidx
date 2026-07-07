@@ -17,6 +17,7 @@ from voidx.config.settings_code_ide import SettingsCodeIdeMixin
 from voidx.config.settings_custom import SettingsCustomProviderMixin
 from voidx.config.settings_mcp import SettingsMcpMixin
 from voidx.config.settings_permissions import SettingsPermissionMixin
+from voidx.config.settings_retry import SettingsRetryMixin
 from voidx.config.settings_skills import SettingsSkillsMixin
 from voidx.config.settings_update import SettingsUpdateMixin
 from voidx.config.settings_web import SettingsWebMixin
@@ -32,6 +33,7 @@ GLOBAL_KEYS = frozenset({
     "web",
     "update_check",
     "parallel_subagents",
+    "retry",
 })
 WORKSPACE_ONLY_KEYS = frozenset({
     "permission_mode",
@@ -56,6 +58,7 @@ class Settings(
     SettingsSkillsMixin,
     SettingsUpdateMixin,
     SettingsPermissionMixin,
+    SettingsRetryMixin,
     SettingsCodeIdeMixin,
     SettingsCustomProviderMixin,
 ):

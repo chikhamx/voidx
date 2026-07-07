@@ -67,7 +67,8 @@ class ToolRegistry:
         self.register(task_status_tool.id, task_status_tool, task_status_tool.description, task_status_tool.parameters_schema())
         skills_tool = SkillsTool(settings=self._settings)
         self.register(skills_tool.id, skills_tool, skills_tool.description, skills_tool.parameters_schema())
-        wf = WebFetchTool(settings=self._settings)
+        retry_config = self._settings.get_retry_config() if self._settings else None
+        wf = WebFetchTool(settings=self._settings, retry_config=retry_config)
         self.register(wf.id, wf, wf.description, wf.parameters_schema())
         ws = WebSearchTool(settings=self._settings)
         self.register(ws.id, ws, ws.description, ws.parameters_schema())

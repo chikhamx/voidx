@@ -1,3 +1,5 @@
+> **Status: Done**
+
 # 统一测试入口 (scripts/test.py) — 技术设计文档
 
 ## Context

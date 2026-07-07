@@ -21,6 +21,8 @@ from voidx.tools.web_content import (
     fetch_cache_key,
 )
 from voidx.tools.web_mcp import call_mcp_web_tool
+from voidx.tools.retry import retry_async
+from voidx.config import RetryConfig
 
 _PRIVATE_RANGES = (
     ipaddress.IPv4Network("127.0.0.0/8"),      # loopback
@@ -131,9 +133,10 @@ class WebFetchTool(BaseTool):
     id = "webfetch"
     description = "Fetch content from a URL and convert to readable text."
 
-    def __init__(self, settings=None):
+    def __init__(self, settings=None, retry_config: RetryConfig | None = None):
         super().__init__()
         self._settings = settings
+        self._retry_config = retry_config
 
     def parameters_schema(self) -> dict:
         return model_to_json_schema(WebFetchInput)
@@ -174,7 +177,13 @@ class WebFetchTool(BaseTool):
             return cached_tool_result(cached)
 
         try:
-            resp = await _fetch_url(inp.url)
+            rc = self._retry_config or RetryConfig()
+            resp = await _fetch_url_with_retry(inp.url, rc)
+            if resp.status_code >= 400:
+                return ToolResult(
+                    output=f"HTTP {resp.status_code}: {resp.url}",
+                    metadata={"url": inp.url, "final_url": resp.url, "status": resp.status_code},
+                )
             final_host = urlparse(resp.url).hostname
             if final_host and _is_private_host(final_host):
                 return ToolResult(
@@ -247,10 +256,25 @@ async def _fetch_url(url: str) -> _FetchResponse:
                     redirect_host = urlparse(current_url).hostname
                     if redirect_host and _is_private_host(redirect_host):
                         raise PrivateHostBlocked(f"redirect target {redirect_host} resolves to a private/internal address")
-                resp.raise_for_status()
+                if resp.status_code >= 500:
+                    resp.raise_for_status()
                 return _FetchResponse(
                     url=current_url,
                     status_code=resp.status_code,
                     text=resp.text,
                     content_type=resp.headers.get("content-type", ""),
                 )
+
+_RETRYABLE_WEBFETCH = (httpx.TimeoutException, httpx.NetworkError, httpx.HTTPStatusError)
+
+
+async def _fetch_url_with_retry(url: str, rc: RetryConfig) -> _FetchResponse:
+    return await retry_async(
+        lambda: _fetch_url(url),
+        max_attempts=rc.max_attempts,
+        base_delay=rc.base_delay,
+        max_delay=rc.max_delay,
+        jitter=rc.jitter,
+        label=f"webfetch:{url}",
+        retry_on=_RETRYABLE_WEBFETCH,
+    )

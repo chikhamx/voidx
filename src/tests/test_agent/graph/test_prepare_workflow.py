@@ -352,3 +352,49 @@ async def test_implement_subagent_injects_workflow_nodes(tmp_path, monkeypatch):
         not (isinstance(message, HumanMessage) and "## Runtime State" in str(message.content))
         for message in captured["messages"]
     )
+
+
+
+@pytest.mark.asyncio
+async def test_prepare_does_not_reactivate_satisfied_workflow_via_stale_route(tmp_path):
+    """When a workflow tool advanced feedback->tdd, task_state.workflow_runs
+    has feedback=SATISFIED and tdd=ACTIVE. But workflow_route.join still
+    points at the old node (feedback) because workflow enter/advance does
+    not update the route. The LLM prepare step must not use the stale
+    route to reactivate feedback and overwrite its SATISFIED status."""
+    graph = VoidXGraph(
+        Config(workspace=str(tmp_path)),
+        api_key=None,
+        settings=Settings(str(tmp_path)),
+    )
+    result = await graph._prepare_with_stream({
+        "messages": [HumanMessage(content="继续实现")],
+        "workspace": str(tmp_path),
+        "persona": "implement",
+        "plan_mode": False,
+        "interaction_mode": "auto",
+        "task_state": TaskState(
+            current_intent=TaskIntent.CODING,
+            current_goal=GoalSpec(desc="实现 feature X"),
+            workflow_route=WorkflowRoute(join="feedback", leave=None),
+            workflow_runs={
+                "feedback": WorkflowRunState(
+                    name="feedback",
+                    status=WorkflowRunStatus.SATISFIED,
+                    reason="transition from feedback via nontrivial_fix",
+                ),
+                "tdd": WorkflowRunState(
+                    name="tdd",
+                    status=WorkflowRunStatus.ACTIVE,
+                    reason="transition from feedback via nontrivial_fix",
+                ),
+            },
+        ).model_dump(mode="json"),
+        "tool_results": {},
+        "step_count": 0,
+        "should_continue": True,
+    })
+
+    result_task_state = TaskState.model_validate(result["task_state"])
+    assert result_task_state.workflow_runs["tdd"].status == WorkflowRunStatus.ACTIVE
+    assert result_task_state.workflow_runs["feedback"].status == WorkflowRunStatus.SATISFIED

@@ -122,3 +122,11 @@ class Config(BaseModel):
         default=True,
         description="Log goal-resolver diagnostic events to llm_requests.jsonl.",
     )
+
+class RetryConfig(BaseModel):
+    """Retry configuration for network/LLM calls."""
+
+    max_attempts: int = Field(default=3, ge=1, le=10)
+    base_delay: float = Field(default=1.0, ge=0.0, le=60.0)
+    max_delay: float = Field(default=10.0, ge=0.0, le=120.0)
+    jitter: bool = Field(default=True)

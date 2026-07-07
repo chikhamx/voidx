@@ -414,3 +414,63 @@ class TestFileOpsReplace:
         assert result.metadata.get("error") is not True
         content = f.read_text()
         assert content == '    if (new_string == "" or new_string.endswith("\\n")) and tail.startswith("\\n"):\n    content = "hello"\n'
+
+
+    @pytest.mark.asyncio
+    async def test_replace_auto_creates_missing_file(self, tmp_path):
+        ctx = ToolContext(workspace=str(tmp_path))
+        r = ToolRegistry()
+
+        result = await r.execute_tool(
+            "replace",
+            {
+                "file_path": "new-auto.py",
+                "bounds": [{"line_no": 1, "anchor": ""}],
+                "new_string": "print('hello')\n",
+            },
+            ctx,
+        )
+
+        assert result.metadata.get("error") is not True
+        assert result.title == "File created"
+        assert "File created: new-auto.py" in result.output
+        assert result.metadata.get("auto_created") is True
+        assert (tmp_path / "new-auto.py").read_text() == "print('hello')\n"
+
+    @pytest.mark.asyncio
+    async def test_replace_auto_creates_missing_file_in_nested_dir(self, tmp_path):
+        ctx = ToolContext(workspace=str(tmp_path))
+        r = ToolRegistry()
+
+        result = await r.execute_tool(
+            "replace",
+            {
+                "file_path": "sub/dir/new.py",
+                "bounds": [{"line_no": 1, "anchor": ""}],
+                "new_string": "x = 1\n",
+            },
+            ctx,
+        )
+
+        assert result.metadata.get("error") is not True
+        assert (tmp_path / "sub" / "dir" / "new.py").read_text() == "x = 1\n"
+
+    @pytest.mark.asyncio
+    async def test_replace_auto_create_shows_diff(self, tmp_path):
+        ctx = ToolContext(workspace=str(tmp_path))
+        r = ToolRegistry()
+
+        result = await r.execute_tool(
+            "replace",
+            {
+                "file_path": "diff-new.txt",
+                "bounds": [{"line_no": 1, "anchor": ""}],
+                "new_string": "line a\nline b\n",
+            },
+            ctx,
+        )
+
+        assert result.metadata.get("error") is not True
+        assert "+1\tline a" in result.output
+        assert "+2\tline b" in result.output
+        assert result.diff is not None

@@ -374,3 +374,97 @@ async def test_builtin_web_mcp_server_lists_tools():
         await client.stop()
 
     assert [tool.name for tool in tools] == ["web_search", "web_fetch"]
+
+
+class TestMcpRequestRetry:
+    """Tests for _request retry behavior — _send_payload failures retried, reconnect failures not."""
+
+    def _make_client(self, monkeypatch):
+        from voidx.config import RetryConfig
+        config = McpServerConfig(name="test", command="echo")
+        client = McpClient(config, retry_config=RetryConfig(max_attempts=3, base_delay=0.01, max_delay=0.1, jitter=False))
+        client._healthy = True
+        client._initialized = True
+        return client
+
+    @pytest.mark.asyncio
+    async def test_send_payload_failure_retried(self, monkeypatch):
+        client = self._make_client(monkeypatch)
+        call_count = 0
+
+        async def fake_send_payload(payload):
+            nonlocal call_count
+            call_count += 1
+            if call_count < 3:
+                raise ConnectionError("send failed")
+
+        async def fake_wait_for(future, timeout):
+            return {"result": "ok"}
+
+        monkeypatch.setattr(client, "_send_payload", fake_send_payload)
+        monkeypatch.setattr("voidx.mcp.client.base.asyncio.wait_for", fake_wait_for)
+
+        result = await client._request("tools/call", {"name": "test"})
+        assert call_count == 3
+
+    @pytest.mark.asyncio
+    async def test_timeout_retried(self, monkeypatch):
+        import asyncio
+        client = self._make_client(monkeypatch)
+        call_count = 0
+
+        async def fake_send_payload(payload):
+            nonlocal call_count
+            call_count += 1
+
+        async def fake_wait_for(future, timeout):
+            nonlocal call_count
+            if call_count < 3:
+                raise asyncio.TimeoutError()
+            return {"result": "ok"}
+
+        monkeypatch.setattr(client, "_send_payload", fake_send_payload)
+        monkeypatch.setattr("voidx.mcp.client.base.asyncio.wait_for", fake_wait_for)
+
+        result = await client._request("tools/call", {"name": "test"})
+        assert call_count == 3
+
+    @pytest.mark.asyncio
+    async def test_reconnect_failure_not_retried(self, monkeypatch):
+        from voidx.mcp.client.errors import McpConnectionError
+        client = self._make_client(monkeypatch)
+        client._healthy = False
+        client._reconnect_attempt = 99
+
+        call_count = 0
+
+        async def fake_send_payload(payload):
+            nonlocal call_count
+            call_count += 1
+
+        monkeypatch.setattr(client, "_send_payload", fake_send_payload)
+
+        with pytest.raises(McpConnectionError):
+            await client._request("tools/call", {"name": "test"})
+        assert call_count == 0
+
+    @pytest.mark.asyncio
+    async def test_protocol_error_not_retried(self, monkeypatch):
+        from voidx.mcp.client.errors import McpProtocolError
+        client = self._make_client(monkeypatch)
+        call_count = 0
+
+        async def fake_send_payload(payload):
+            nonlocal call_count
+            call_count += 1
+
+        async def fake_wait_for(future, timeout):
+            future.set_exception(McpProtocolError("bad protocol"))
+            return await future
+
+        monkeypatch.setattr(client, "_send_payload", fake_send_payload)
+        monkeypatch.setattr("voidx.mcp.client.base.asyncio.wait_for", fake_wait_for)
+
+        with pytest.raises(McpProtocolError):
+            await client._request("tools/call", {"name": "test"})
+        assert call_count == 1

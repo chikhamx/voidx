@@ -15,6 +15,8 @@ from voidx.config import McpServerConfig
 from voidx.mcp.client.errors import McpConnectionError, McpProtocolError, McpTimeoutError
 from voidx.logging import log_internal_error
 from voidx.logging.tool_log import log_tool_event
+from voidx.config import RetryConfig
+from voidx.tools.retry import retry_async
 from voidx.mcp.client.http_transport import StreamableHttpTransportMixin
 from voidx.mcp.client.sse_transport import SseTransportMixin
 from voidx.mcp.client.stdio_transport import StdioTransportMixin
@@ -50,7 +52,7 @@ class McpClient(StreamableHttpTransportMixin, SseTransportMixin, StdioTransportM
     TOOL_CALL_TIMEOUT = 120.0
     LIST_TOOLS_TIMEOUT = 30.0
 
-    def __init__(self, config: McpServerConfig) -> None:
+    def __init__(self, config: McpServerConfig, retry_config: RetryConfig | None = None) -> None:
         self._config = config
         self._transport = config.effective_transport
         self._proc: asyncio.subprocess.Process | None = None
@@ -76,6 +78,7 @@ class McpClient(StreamableHttpTransportMixin, SseTransportMixin, StdioTransportM
         self._reconnect_attempt = 0
         self._closed = False
         self._server_name = config.name
+        self._retry_config = retry_config
 
         # Synchronisation: only one call at a time per client
         self._lock = asyncio.Lock()
@@ -230,34 +233,47 @@ class McpClient(StreamableHttpTransportMixin, SseTransportMixin, StdioTransportM
     async def _request(self, method: str, params: dict[str, Any] | None = None, timeout: float = 30.0) -> JsonRpcResponse:
         """Send a JSON-RPC request and wait for the matching response."""
         async with self._lock:
-            if method != "initialize" and not self._healthy:
-                if self._reconnect_attempt < self.MAX_RECONNECT_ATTEMPTS:
-                    if not await self.reconnect():
-                        raise McpConnectionError(self._error_message or "Not connected")
-                else:
-                    raise McpConnectionError(self._error_message or "Not connected")
+            await self._ensure_connected(method)
 
             req_id = self._next_id()
-            future: asyncio.Future[JsonRpcResponse] = asyncio.Future()
+            rc = self._retry_config or RetryConfig()
 
-            self._pending[req_id] = _PendingRequest(future=future, method=method)
+            async def _send_and_wait() -> JsonRpcResponse:
+                future: asyncio.Future[JsonRpcResponse] = asyncio.Future()
+                self._pending[req_id] = _PendingRequest(future=future, method=method)
+                request = JsonRpcRequest(id=req_id, method=method, params=params or {})
+                payload = request.to_dict()
+                try:
+                    await self._send_payload(payload)
+                except Exception as e:
+                    self._pending.pop(req_id, None)
+                    raise McpConnectionError(f"Failed to send request to '{self._server_name}': {e}") from e
+                try:
+                    return await asyncio.wait_for(future, timeout=timeout)
+                except asyncio.TimeoutError:
+                    self._pending.pop(req_id, None)
+                    raise McpTimeoutError(
+                        f"Request '{method}' to MCP server '{self._server_name}' timed out after {timeout}s"
+                    )
 
-            request = JsonRpcRequest(id=req_id, method=method, params=params or {})
-            payload = request.to_dict()
+            return await retry_async(
+                _send_and_wait,
+                max_attempts=rc.max_attempts,
+                base_delay=rc.base_delay,
+                max_delay=rc.max_delay,
+                jitter=rc.jitter,
+                label=f"mcp:{self._server_name}:{method}",
+                retry_on=(McpConnectionError, McpTimeoutError),
+            )
 
-            try:
-                await self._send_payload(payload)
-            except Exception as e:
-                self._pending.pop(req_id, None)
-                raise McpConnectionError(f"Failed to send request to '{self._server_name}': {e}") from e
-
-            try:
-                return await asyncio.wait_for(future, timeout=timeout)
-            except asyncio.TimeoutError:
-                self._pending.pop(req_id, None)
-                raise McpTimeoutError(
-                    f"Request '{method}' to MCP server '{self._server_name}' timed out after {timeout}s"
-                )
+    async def _ensure_connected(self, method: str) -> None:
+        """Check connection health and attempt reconnect if needed. Not retried."""
+        if method != "initialize" and not self._healthy:
+            if self._reconnect_attempt < self.MAX_RECONNECT_ATTEMPTS:
+                if not await self.reconnect():
+                    raise McpConnectionError(self._error_message or "Not connected")
+            else:
+                raise McpConnectionError(self._error_message or "Not connected")
 
     async def _send_notification(self, notif: JsonRpcNotification) -> None:
         """Send a JSON-RPC notification (no response expected)."""

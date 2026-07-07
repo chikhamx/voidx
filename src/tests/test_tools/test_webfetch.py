@@ -2,8 +2,9 @@ import ipaddress
 import sys
 from pathlib import Path
 from urllib.parse import urlparse
-from unittest.mock import patch
+from unittest.mock import MagicMock, patch
 
+import httpx
 import pytest
 
 
@@ -155,3 +156,131 @@ async def test_fetch_url_rejects_too_many_redirects(monkeypatch):
 
     with pytest.raises(ValueError, match="too many redirects"):
         await _fetch_url("https://example.com")
+
+
+class TestWebFetchRetry:
+    """Tests for _fetch_url retry + 4xx/5xx classification."""
+
+    def _make_response(self, status_code, text="body", content_type="text/html"):
+        resp = MagicMock()
+        resp.status_code = status_code
+        resp.text = text
+        resp.headers = {"content-type": content_type}
+        resp.url = "https://example.com"
+        if status_code >= 400:
+            resp.raise_for_status = MagicMock(
+                side_effect=httpx.HTTPStatusError(
+                    f"HTTP {status_code}", request=MagicMock(), response=resp
+                )
+            )
+        else:
+            resp.raise_for_status = MagicMock()
+        return resp
+
+    @pytest.mark.asyncio
+    async def test_4xx_returns_response_not_raises(self, monkeypatch):
+        resp404 = self._make_response(404, "Not Found")
+
+        class FakeClient:
+            def __init__(self, *a, **kw):
+                pass
+
+            async def __aenter__(self):
+                return self
+
+            async def __aexit__(self, *a):
+                return False
+
+            async def get(self, url, headers=None):
+                return resp404
+
+        monkeypatch.setattr(webfetch_module.httpx, "AsyncClient", FakeClient)
+        monkeypatch.setattr(webfetch_module, "_is_private_host", lambda host: False)
+
+        result = await _fetch_url("https://example.com")
+        assert result.status_code == 404
+
+    @pytest.mark.asyncio
+    async def test_5xx_raises_http_status_error(self, monkeypatch):
+        resp500 = self._make_response(500, "Internal Server Error")
+
+        class FakeClient:
+            def __init__(self, *a, **kw):
+                pass
+
+            async def __aenter__(self):
+                return self
+
+            async def __aexit__(self, *a):
+                return False
+
+            async def get(self, url, headers=None):
+                return resp500
+
+        monkeypatch.setattr(webfetch_module.httpx, "AsyncClient", FakeClient)
+        monkeypatch.setattr(webfetch_module, "_is_private_host", lambda host: False)
+
+        with pytest.raises(httpx.HTTPStatusError):
+            await _fetch_url("https://example.com")
+
+    @pytest.mark.asyncio
+    async def test_network_error_retried(self, monkeypatch):
+        call_count = 0
+
+        class FakeClient:
+            def __init__(self, *a, **kw):
+                pass
+
+            async def __aenter__(self):
+                return self
+
+            async def __aexit__(self, *a):
+                return False
+
+            async def get(self, url, headers=None):
+                nonlocal call_count
+                call_count += 1
+                if call_count < 3:
+                    raise httpx.ConnectError("connection refused")
+                return self._make_response(200, "ok")
+
+        fake = FakeClient()
+        fake._make_response = self._make_response
+        monkeypatch.setattr(webfetch_module.httpx, "AsyncClient", lambda *a, **kw: fake)
+        monkeypatch.setattr(webfetch_module, "_is_private_host", lambda host: False)
+
+        from voidx.config import RetryConfig
+        rc = RetryConfig(max_attempts=3, base_delay=0.01, max_delay=0.1, jitter=False)
+        result = await webfetch_module._fetch_url_with_retry("https://example.com", rc)
+        assert result.status_code == 200
+        assert call_count == 3
+
+    @pytest.mark.asyncio
+    async def test_4xx_not_retried(self, monkeypatch):
+        call_count = 0
+
+        class FakeClient:
+            def __init__(self, *a, **kw):
+                pass
+
+            async def __aenter__(self):
+                return self
+
+            async def __aexit__(self, *a):
+                return False
+
+            async def get(self, url, headers=None):
+                nonlocal call_count
+                call_count += 1
+                return self._make_response(404, "Not Found")
+
+        fake = FakeClient()
+        fake._make_response = self._make_response
+        monkeypatch.setattr(webfetch_module.httpx, "AsyncClient", lambda *a, **kw: fake)
+        monkeypatch.setattr(webfetch_module, "_is_private_host", lambda host: False)
+
+        from voidx.config import RetryConfig
+        rc = RetryConfig(max_attempts=3, base_delay=0.01, max_delay=0.1, jitter=False)
+        result = await webfetch_module._fetch_url_with_retry("https://example.com", rc)
+        assert result.status_code == 404
+        assert call_count == 1

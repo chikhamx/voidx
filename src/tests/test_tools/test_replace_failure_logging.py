@@ -53,10 +53,10 @@ async def test_anchor_not_found_logs_detailed_diagnostics(tmp_path):
     assert kw.get("session_id") == "sid-test"
 
 
-# ── file not found ──────────────────────────────────────────────────────────
+# ── file not found → auto-create (no failure log) ───────────────────────────
 
 @pytest.mark.asyncio
-async def test_file_not_found_logs_failure(tmp_path):
+async def test_file_not_found_auto_creates_without_logging(tmp_path):
     ctx = _ctx(tmp_path)
     with patch.object(edit_execute, "log_tool_event") as mock_log:
         result = await FileReplaceTool().execute(
@@ -67,12 +67,10 @@ async def test_file_not_found_logs_failure(tmp_path):
             },
             ctx,
         )
-    assert result.metadata.get("error") is True
-    assert mock_log.called
-    kw = _calls(mock_log)[0]
-    assert kw["tool_name"] == "replace"
-    assert "nope.py" in kw["message"]
-    assert "File not found" in kw["message"]
+    assert result.metadata.get("error") is not True
+    assert result.metadata.get("auto_created") is True
+    assert not mock_log.called, "auto-create is a success, not a failure to log"
+    assert (tmp_path / "nope.py").read_text() == "y\n"
 
 
 # ── coverage error: editing without reading first ──────────────────────────

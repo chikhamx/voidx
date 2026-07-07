@@ -14,6 +14,7 @@ from voidx.config.models import (
     ModelConfig,
     ParallelSubagentsConfig,
     Profile,
+    RetryConfig,
     UserProfile,
     WebToolRoute,
 )
@@ -36,6 +37,7 @@ __all__ = [
     "ParallelSubagentsConfig",
     "PermissionMode",
     "Profile",
+    "RetryConfig",
     "SandboxMode",
     "Settings",
     "UserProfile",

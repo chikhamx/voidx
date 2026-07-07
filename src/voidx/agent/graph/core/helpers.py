@@ -102,6 +102,9 @@ def _merge_workflow_runs(*groups: list[WorkflowRunState | dict]) -> list[Workflo
                 run = item if isinstance(item, WorkflowRunState) else WorkflowRunState.model_validate(item)
             except ValueError:
                 continue
+            existing = merged.get(run.name)
+            if existing is not None and existing.status != WorkflowRunStatus.ACTIVE:
+                continue
             merged[run.name] = run
     return list(merged.values())
 

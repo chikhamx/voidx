@@ -1,3 +1,5 @@
+> **Status: Done**
+
 # Replace 自动创建文件 — 技术设计文档
 
 ## Context

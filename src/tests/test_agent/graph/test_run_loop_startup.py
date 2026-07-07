@@ -272,7 +272,6 @@ async def test_apply_settings_update_refreshes_live_model(monkeypatch, tmp_path)
             model="gpt-4.1",
             context_limit=0,
             reasoning_effort="xhigh",
-            permission_label=lambda: "default",
         )
     )
 

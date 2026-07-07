@@ -26,7 +26,7 @@ from voidx.runtime.ui import (
     create_frontend,
     emit_web_gateway_bootstrap,
 )
-from voidx.agent.task_state import goal_label, goal_type_from_join
+from voidx.agent.task_state import goal_label
 from voidx.logging.tool_log import log_tool_event
 from voidx.runtime.ui import ThreadExecutionContext
 
@@ -180,7 +180,6 @@ class GraphRunLoopMixin(GraphTurnMixin, GraphSessionMixin, GraphTranscriptMixin)
             session_title=title,
             context_limit=get_context_limit(self.config.model.provider, self.config.model.protocol or "", self.config.model.context_window),
             reasoning_effort=self.config.model.reasoning_effort or "xhigh",
-            permission_label=self._permission.status_label,
             sandbox_label=lambda: self._permission._sandbox_label(),
             approval_label=lambda: self._permission._approval_label(),
             approval_reviewer_label=lambda: self._permission._reviewer_label(),
@@ -193,10 +192,6 @@ class GraphRunLoopMixin(GraphTurnMixin, GraphSessionMixin, GraphTranscriptMixin)
                 "plan" if getattr(self, "_plan_mode", False) else "auto",
             ),
             goal_label=lambda: goal_label(getattr(getattr(self, "_task_state", None), "current_goal", None)),
-            goal_type=lambda: goal_type_from_join(
-                getattr(getattr(getattr(self, "_task_state", None), "workflow_route", None), "join", None)
-            ),
-            goal_awaiting_approval=lambda: False,
             active_workflows=lambda: active_workflow_names(getattr(self, "_task_state", None)),
             mcp_servers=lambda: [
                 McpServerStatus(
