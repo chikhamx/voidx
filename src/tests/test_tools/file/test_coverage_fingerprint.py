@@ -8,12 +8,12 @@ import pytest
 
 from voidx.tools.base import ToolContext
 from voidx.tools.registry import ToolRegistry
-import voidx.tools.file_state as file_state
+import voidx.tools.file.state as file_state
 
 class TestFileOps:
     @pytest.mark.asyncio
     async def test_read_coverage_uses_mtime_ns_and_size_fingerprint(self, tmp_path):
-        import voidx.tools.file_state as fs
+        import voidx.tools.file.state as fs
 
         f = tmp_path / "fp.txt"
         f.write_text("hello\n")
@@ -277,7 +277,7 @@ class TestFileOps:
 
 class TestLineDriftMapModel:
     def test_line_drift_map_round_trip_serialization(self):
-        from voidx.tools.file_state import (
+        from voidx.tools.file.state import (
             LineDriftMap,
             ReadLineRange,
             DiffSpan,
@@ -314,7 +314,7 @@ class TestLineDriftMapModel:
         assert restored[1].span_steps == []
 
     def test_line_drift_maps_from_raw_empty(self):
-        from voidx.tools.file_state import _line_drift_maps_from_raw
+        from voidx.tools.file.state import _line_drift_maps_from_raw
 
         assert _line_drift_maps_from_raw([]) == []
         assert _line_drift_maps_from_raw(None) == []
@@ -322,7 +322,7 @@ class TestLineDriftMapModel:
 
 class TestRecordReadRangePreservesDriftMaps:
     def test_first_read_creates_epoch_1_empty_steps(self, tmp_path):
-        import voidx.tools.file_state as fs
+        import voidx.tools.file.state as fs
 
         f = tmp_path / "a.txt"
         f.write_text("line1\nline2\n")
@@ -338,7 +338,7 @@ class TestRecordReadRangePreservesDriftMaps:
         assert maps[0].span_steps == []
 
     def test_second_read_appends_epoch_2_preserves_epoch_1(self, tmp_path):
-        import voidx.tools.file_state as fs
+        import voidx.tools.file.state as fs
 
         f = tmp_path / "a.txt"
         f.write_text("line1\nline2\nline3\n")
@@ -355,7 +355,7 @@ class TestRecordReadRangePreservesDriftMaps:
         assert maps[1].source_ranges == [fs.ReadLineRange(2, 3)]
 
     def test_fingerprint_mismatch_clears_old_maps(self, tmp_path):
-        import voidx.tools.file_state as fs
+        import voidx.tools.file.state as fs
 
         f = tmp_path / "a.txt"
         f.write_text("line1\nline2\n")
@@ -374,7 +374,7 @@ class TestRecordReadRangePreservesDriftMaps:
         assert maps[0].epoch == 1  # 重新从 1 开始
 
     def test_fifo_eviction_when_exceeding_max(self, tmp_path):
-        import voidx.tools.file_state as fs
+        import voidx.tools.file.state as fs
 
         f = tmp_path / "a.txt"
         f.write_text("line1\n")
@@ -393,7 +393,7 @@ class TestRecordReadRangePreservesDriftMaps:
 
 class TestRemapAppendsStep:
     def test_edit_appends_step_to_each_map(self, tmp_path):
-        import voidx.tools.file_state as fs
+        import voidx.tools.file.state as fs
         from voidx.diffing import make_structured_diff
 
         f = tmp_path / "a.txt"
@@ -420,7 +420,7 @@ class TestRemapAppendsStep:
             assert step[0].offset == -4
 
     def test_multiple_edits_without_read_accumulate_steps(self, tmp_path):
-        import voidx.tools.file_state as fs
+        import voidx.tools.file.state as fs
         from voidx.diffing import make_structured_diff
 
         f = tmp_path / "a.txt"
@@ -448,7 +448,7 @@ class TestRemapAppendsStep:
         assert len(maps[0].span_steps) == 2
 
     def test_ranges_empty_clears_key_and_maps(self, tmp_path):
-        import voidx.tools.file_state as fs
+        import voidx.tools.file.state as fs
         from voidx.diffing import make_structured_diff
 
         f = tmp_path / "a.txt"
@@ -468,14 +468,14 @@ class TestRemapAppendsStep:
 
 class TestGetLineDriftMaps:
     def test_untracked_file_returns_empty(self, tmp_path):
-        import voidx.tools.file_state as fs
+        import voidx.tools.file.state as fs
 
         f = tmp_path / "nope.txt"
         ctx = ToolContext(workspace=str(tmp_path))
         assert fs.get_line_drift_maps(ctx, f) == []
 
     def test_returns_maps_after_read(self, tmp_path):
-        import voidx.tools.file_state as fs
+        import voidx.tools.file.state as fs
 
         f = tmp_path / "a.txt"
         f.write_text("l1\nl2\n")
@@ -489,7 +489,7 @@ class TestGetLineDriftMaps:
         assert maps[0].span_steps == []
 
     def test_returns_empty_after_clear(self, tmp_path):
-        import voidx.tools.file_state as fs
+        import voidx.tools.file.state as fs
 
         f = tmp_path / "a.txt"
         f.write_text("l1\n")
@@ -503,21 +503,21 @@ class TestGetLineDriftMaps:
 
 class TestRemapLineRange:
     def test_no_steps_returns_original(self):
-        from voidx.tools.file_ops.edit_resolve import remap_line_range
+        from voidx.tools.file.replace_resolve import remap_line_range
 
         assert remap_line_range(10, 20, []) == (10, 20)
 
     def test_single_edit_offset(self):
-        from voidx.tools.file_ops.edit_resolve import remap_line_range
-        from voidx.tools.file_state import DiffSpan
+        from voidx.tools.file.replace_resolve import remap_line_range
+        from voidx.tools.file.state import DiffSpan
 
         # edit 20-30 -> 5行,偏移 -6;行号 40 在 edit 之后,应偏移 -6
         steps = [[DiffSpan(20, 30, -6)]]
         assert remap_line_range(40, 50, steps) == (34, 44)
 
     def test_multiple_edits_accumulate(self):
-        from voidx.tools.file_ops.edit_resolve import remap_line_range
-        from voidx.tools.file_state import DiffSpan
+        from voidx.tools.file.replace_resolve import remap_line_range
+        from voidx.tools.file.state import DiffSpan
 
         # edit1: 20-30 -> 5行 (-6); edit2: 34-44 -> 3行 (-8)
         # 老行号 60: 60 -> 54 (edit1) -> 46 (edit2)
@@ -528,16 +528,16 @@ class TestRemapLineRange:
         assert remap_line_range(60, 60, steps) == (46, 46)
 
     def test_range_fully_deleted_returns_none(self):
-        from voidx.tools.file_ops.edit_resolve import remap_line_range
-        from voidx.tools.file_state import DiffSpan
+        from voidx.tools.file.replace_resolve import remap_line_range
+        from voidx.tools.file.state import DiffSpan
 
         # edit 删除 20-30,老行号 22-28 完全落入删除区
         steps = [[DiffSpan(20, 30, -11)]]  # 11行 -> 0行
         assert remap_line_range(22, 28, steps) is None
 
     def test_range_split_returns_none(self):
-        from voidx.tools.file_ops.edit_resolve import remap_line_range
-        from voidx.tools.file_state import DiffSpan
+        from voidx.tools.file.replace_resolve import remap_line_range
+        from voidx.tools.file.state import DiffSpan
 
         # edit 删除 25-26,老行号 20-30 被拆成 [20-24] 和 [27-30] 两段
         steps = [[DiffSpan(25, 26, -2)]]
@@ -545,8 +545,8 @@ class TestRemapLineRange:
 
     def test_equivalence_invariant_with_coverage_remap(self, tmp_path):
         """remap_line_range 对单行的投影必须与 coverage ranges 一致"""
-        import voidx.tools.file_state as fs
-        from voidx.tools.file_ops.edit_resolve import remap_line_range
+        import voidx.tools.file.state as fs
+        from voidx.tools.file.replace_resolve import remap_line_range
         from voidx.diffing import make_structured_diff
 
         f = tmp_path / "a.txt"

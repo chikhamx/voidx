@@ -15,9 +15,9 @@ from pydantic import ValidationError
 
 from voidx.agent.tool_messages import DEFAULT_TOOL_MESSAGE_MAX_CHARS
 from voidx.tools.base import ToolContext, ToolResult, BaseTool, UserInteraction, UserResponse
-from voidx.tools.file_ops import FileReadInput, FileReadTool
-from voidx.tools.file_state import save_file_version
-import voidx.tools.file_state as file_state
+from voidx.tools.file import FileReadInput, FileReadTool
+from voidx.tools.file.state import save_file_version
+import voidx.tools.file.state as file_state
 from voidx.tools.search import GlobInput, GrepInput
 from voidx.tools.bash import BashInput
 from voidx.tools.agent import AgentInput, AgentTool

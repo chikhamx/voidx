@@ -7,7 +7,7 @@ from pydantic import BaseModel, Field, model_validator
 
 from voidx.diffing import make_file_diff
 from voidx.tools.base import BaseTool, ToolContext, ToolResult, model_to_json_schema, resolve_safe
-from voidx.tools.file_state import (
+from .state import (
     check_staleness,
     clear_file_tracking,
     clear_read_coverage,

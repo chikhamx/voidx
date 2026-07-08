@@ -11,7 +11,7 @@ from dataclasses import dataclass
 
 from langchain_core.messages import AIMessage, BaseMessage, ToolMessage
 
-from voidx.tools.file_state import DiffSpan, _remap_old_range
+from voidx.tools.file.state import DiffSpan, _remap_old_range
 
 COVERAGE_THRESHOLD = 0.6
 

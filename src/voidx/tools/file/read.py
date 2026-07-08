@@ -13,7 +13,7 @@ from voidx.tools.base import (
     model_to_json_schema,
     resolve_safe,
 )
-from voidx.tools.file_state import (
+from .state import (
     covered_read_range,
     record_mtime,
     record_read_range,

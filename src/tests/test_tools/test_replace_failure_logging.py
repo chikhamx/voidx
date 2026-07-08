@@ -10,8 +10,8 @@ from unittest.mock import patch, MagicMock
 import pytest
 
 from voidx.tools.base import ToolContext
-from voidx.tools.file_ops import FileReadTool, FileReplaceTool
-import voidx.tools.file_ops.edit_execute as edit_execute
+from voidx.tools.file import FileReadTool, FileReplaceTool
+import voidx.tools.file.replace as edit_execute
 
 
 def _ctx(tmp_path) -> ToolContext:

@@ -7,9 +7,9 @@ from pathlib import Path
 import pytest
 
 from voidx.tools.base import ToolContext, ToolResult
-from voidx.tools.file_ops.read import FileReadTool
-from voidx.tools.file_ops.file import FileTool
-from voidx.tools.file_ops.edit_execute import FileReplaceTool
+from voidx.tools.file.read import FileReadTool
+from voidx.tools.file.manage import FileTool
+from voidx.tools.file.replace import FileReplaceTool
 from voidx.tools.search import GlobTool, GrepTool
 from voidx.tools.lsp import LspTool, LspFormatTool
 from voidx.tools.bash import BashInput

@@ -10,7 +10,7 @@ from voidx.diffing import make_file_diff
 from voidx.lsp.errors import LspError
 from voidx.lsp.service import LspService
 from voidx.tools.base import BaseTool, ToolContext, ToolResult, model_to_json_schema, resolve_safe
-from voidx.tools.file_state import clear_read_coverage, record_mtime, save_file_version
+from voidx.tools.file.state import clear_read_coverage, record_mtime, save_file_version
 
 
 class LspInput(BaseModel):

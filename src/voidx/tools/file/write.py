@@ -5,9 +5,9 @@ from typing import Literal
 from pydantic import BaseModel, Field, model_validator
 
 from voidx.tools.base import BaseTool, ToolContext, ToolResult, model_to_json_schema, resolve_safe
-from voidx.tools.file_state import check_read_coverage
+from .state import check_read_coverage
 
-from .edit_execute import _apply_resolved_edits, _resolve_edit_target
+from .replace import _apply_resolved_edits, _resolve_edit_target
 from .read import _split_display_lines
 from .types import ResolvedEdit
 

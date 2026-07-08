@@ -9,7 +9,7 @@ from .types import (
 )
 
 if TYPE_CHECKING:
-    from voidx.tools.file_state import DiffSpan
+    from .state import DiffSpan
 
 
 def _validate_resolved_edits(edits: list[ResolvedEdit], total_lines: int) -> str | None:
@@ -309,7 +309,7 @@ def remap_line_range(
     coordinate system, or None if the range was fully deleted/replaced or
     split into multiple discontinuous segments.
     """
-    from voidx.tools.file_state import _remap_old_range
+    from .state import _remap_old_range
 
     pending: list[tuple[int, int]] = [(start, end)]
     for step in span_steps:

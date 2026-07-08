@@ -7,10 +7,10 @@ from pathlib import Path
 import pytest
 
 from voidx.tools.base import ToolContext
-from voidx.tools.file_ops.edit_execute import FileReplaceTool
-from voidx.tools.file_ops.edit_resolve import _find_text_segment
+from voidx.tools.file.replace import FileReplaceTool
+from voidx.tools.file.replace_resolve import _find_text_segment
 from voidx.tools.registry import ToolRegistry
-import voidx.tools.file_state as file_state
+import voidx.tools.file.state as file_state
 
 
 class TestDriftFallback:
@@ -19,7 +19,7 @@ class TestDriftFallback:
         return ["l1", "X", "l7", "l8", "l9", "l10"]
 
     def _make_map(self, epoch=1):
-        from voidx.tools.file_state import LineDriftMap, ReadLineRange, DiffSpan
+        from voidx.tools.file.state import LineDriftMap, ReadLineRange, DiffSpan
         # read epoch 记录的是原始 1-10;edit 20-30 -> 5行 的等价:这里用 2-6 -> 1行 (偏移 -4)
         return LineDriftMap(
             epoch=epoch,
@@ -28,7 +28,7 @@ class TestDriftFallback:
         )
 
     def test_first_match_succeeds_no_fallback(self):
-        from voidx.tools.file_ops.edit_execute import _find_text_segment_with_drift_fallback
+        from voidx.tools.file.replace import _find_text_segment_with_drift_fallback
 
         lines = self._make_lines()
         # 用当前文件行号直接匹配成功
@@ -40,7 +40,7 @@ class TestDriftFallback:
         assert result.remapped_range is None
 
     def test_fallback_remaps_and_matches(self):
-        from voidx.tools.file_ops.edit_execute import _find_text_segment_with_drift_fallback
+        from voidx.tools.file.replace import _find_text_segment_with_drift_fallback
 
         lines = self._make_lines()
         # LLM 用老行号 7-7 (实际在当前文件第 3 行),anchor "l7"
@@ -54,8 +54,8 @@ class TestDriftFallback:
         assert result.remapped_range == (3, 3)
 
     def test_fallback_remap_to_wrong_content_fails(self):
-        from voidx.tools.file_ops.edit_execute import _find_text_segment_with_drift_fallback
-        from voidx.tools.file_state import LineDriftMap, ReadLineRange, DiffSpan
+        from voidx.tools.file.replace import _find_text_segment_with_drift_fallback
+        from voidx.tools.file.state import LineDriftMap, ReadLineRange, DiffSpan
 
         # 文件 10 行,edit 把 2-6 删成 1 行,LLM 用老行号 9 找 "target"
         # remap 9 -> 4,但第 4 行是 "l8" 不是 "target",±3 内也没有
@@ -72,7 +72,7 @@ class TestDriftFallback:
         assert result.error is not None
 
     def test_multiple_candidates_same_range_equivalent(self):
-        from voidx.tools.file_ops.edit_execute import _find_text_segment_with_drift_fallback
+        from voidx.tools.file.replace import _find_text_segment_with_drift_fallback
 
         lines = self._make_lines()
         # 两个 map 都 remap 到 (3,3),都匹配 l7 -> 等价命中
@@ -83,8 +83,8 @@ class TestDriftFallback:
         assert result.match is not None
 
     def test_multiple_candidates_different_range_ambiguity(self):
-        from voidx.tools.file_ops.edit_execute import _find_text_segment_with_drift_fallback
-        from voidx.tools.file_state import LineDriftMap, ReadLineRange, DiffSpan
+        from voidx.tools.file.replace import _find_text_segment_with_drift_fallback
+        from voidx.tools.file.state import LineDriftMap, ReadLineRange, DiffSpan
 
         # 20 行文件,第 9 行和第 17 行都是 "dup",相隔 8 行 (> 2*radius)
         lines = [f"l{i}" for i in range(1, 21)]
@@ -111,7 +111,7 @@ class TestDriftFallback:
         assert "ambig" in result.error.lower()
 
     def test_no_maps_returns_first_error(self):
-        from voidx.tools.file_ops.edit_execute import _find_text_segment_with_drift_fallback
+        from voidx.tools.file.replace import _find_text_segment_with_drift_fallback
 
         lines = self._make_lines()
         result = _find_text_segment_with_drift_fallback(

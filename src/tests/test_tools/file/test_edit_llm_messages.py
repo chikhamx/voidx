@@ -7,10 +7,10 @@ from pathlib import Path
 import pytest
 
 from voidx.tools.base import ToolContext
-from voidx.tools.file_ops.edit_execute import FileReplaceTool
-from voidx.tools.file_ops.edit_resolve import _find_text_segment
+from voidx.tools.file.replace import FileReplaceTool
+from voidx.tools.file.replace_resolve import _find_text_segment
 from voidx.tools.registry import ToolRegistry
-import voidx.tools.file_state as file_state
+import voidx.tools.file.state as file_state
 
 
 class TestReplaceLLMVisibleMessages:

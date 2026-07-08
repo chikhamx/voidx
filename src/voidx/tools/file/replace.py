@@ -8,7 +8,7 @@ from pydantic import BaseModel, Field, model_validator
 from voidx.diffing import make_file_diff, make_structured_diff, render_numbered_diff
 from voidx.logging.tool_log import log_tool_event
 from voidx.tools.base import BaseTool, ToolContext, ToolResult, model_to_json_schema, resolve_safe
-from voidx.tools.file_state import (
+from .state import (
     LineDriftMap,
     check_read_coverage,
     check_staleness,
@@ -20,7 +20,7 @@ from voidx.tools.file_state import (
     save_file_version,
 )
 
-from .edit_resolve import (
+from .replace_resolve import (
     _find_text_segment,
     _result_trailing_newline,
     _validate_resolved_edits,

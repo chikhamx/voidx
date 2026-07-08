@@ -5,7 +5,7 @@ from __future__ import annotations
 from pydantic import BaseModel, ConfigDict
 
 from voidx.tools.base import ToolContext, ToolResult  # noqa: F401 — re-export
-from voidx.tools.file_ops import FileReadTool, FileTool, WriteTool, FileReplaceTool
+from voidx.tools.file import FileReadTool, FileTool, WriteTool, FileReplaceTool
 from voidx.tools.git import GitTool
 from voidx.tools.lsp import LspTool
 from voidx.tools.search import GlobTool, GrepTool

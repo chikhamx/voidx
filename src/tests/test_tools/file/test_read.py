@@ -8,20 +8,18 @@ import pytest
 
 from voidx.agent.tool_messages import DEFAULT_TOOL_MESSAGE_MAX_CHARS, sanitize_tool_message_content
 from voidx.tools.base import ToolContext, ToolResult
-from voidx.tools.file_ops import FileReadInput, FileReadTool
-from voidx.tools.file_state import save_file_version
-import voidx.tools.file_state as file_state
+from voidx.tools.file import FileReadInput, FileReadTool
+from voidx.tools.file.state import save_file_version
+import voidx.tools.file.state as file_state
 from voidx.tools.registry import ToolRegistry
 import voidx.memory.store as store
-
-
 
 class TestFileOps:
     """File operations work on real files."""
 
     def test_file_tool_guidance_is_exposed_to_model(self):
-        from voidx.tools.file_ops.file import FileTool
-        from voidx.tools.file_ops.write import WriteTool
+        from voidx.tools.file.manage import FileTool
+        from voidx.tools.file.write import WriteTool
         file_desc = FileTool.description.lower()
         line_desc = WriteTool.description.lower()
         assert "create" in file_desc
@@ -151,6 +149,8 @@ class TestFileOps:
         assert "50\tline 50" in second.output
         assert "[Lines " not in second.output
         assert "were already read" not in second.output
+        assert second.title == "Read 51 lines"
+        assert second.summary == "Read 51/120 lines"
 
     @pytest.mark.asyncio
     async def test_already_read_repeated_output_stays_within_llm_message_budget(self, tmp_path):
@@ -216,10 +216,8 @@ class TestFileOps:
             {"file_path": "exactly-200.txt", "op": "insert", "lineno": 0, "new_string": exactly_200_with_final_newline},
             ctx,
         )
-
         assert (tmp_path / "exactly-200.txt").read_text() == exactly_200_with_final_newline
 
-    @pytest.mark.asyncio
     @pytest.mark.asyncio
     async def test_replace(self, tmp_path):
         f = tmp_path / "edit.txt"
@@ -298,12 +296,107 @@ class TestFileOps:
             {"file_path": "insert.txt", "op": "insert", "lineno": 0, "new_string": "top\n"},
             ctx,
         )
+        await r.execute_tool("read", {"file_path": "insert.txt"}, ctx)
         result = await r.execute_tool(
             "write",
             {"file_path": "insert.txt", "op": "append", "new_string": "bottom\n"},
             ctx,
         )
+
         await r.execute_tool("read", {"file_path": "insert.txt"}, ctx)
 
         assert result.metadata.get("error") is not True
         assert (tmp_path / "insert.txt").read_text() == "top\nmiddle\nend\nbottom\n"
+
+
+class TestReadExternalPath:
+    """read tool should ask for permission when reading outside workspace."""
+
+    @pytest.mark.asyncio
+    async def test_external_path_allowed_by_user(self, tmp_path):
+        from voidx.tools.base import UserInteraction, UserResponse
+
+        external = tmp_path / "external"
+        external.mkdir()
+        target = external / "file.txt"
+        target.write_text("hello\n")
+
+        workspace = tmp_path / "workspace"
+        workspace.mkdir()
+
+        added_paths: list[str] = []
+
+        async def fake_interact(req: UserInteraction) -> UserResponse:
+            return UserResponse(value="allow")
+
+        ctx = ToolContext(
+            workspace=str(workspace),
+            interact=fake_interact,
+            add_extra_path=added_paths.append,
+        )
+        r = ToolRegistry()
+        result = await r.execute_tool("read", {"file_path": str(target)}, ctx)
+
+        assert result.metadata.get("error") is not True
+        assert "hello" in result.output
+        assert str(external.resolve()) in added_paths
+
+    @pytest.mark.asyncio
+    async def test_external_path_denied_by_user(self, tmp_path):
+        from voidx.tools.base import UserInteraction, UserResponse
+
+        external = tmp_path / "external"
+        external.mkdir()
+        target = external / "file.txt"
+        target.write_text("secret\n")
+
+        workspace = tmp_path / "workspace"
+        workspace.mkdir()
+
+        async def fake_interact(req: UserInteraction) -> UserResponse:
+            return UserResponse(value="deny")
+
+        ctx = ToolContext(
+            workspace=str(workspace),
+            interact=fake_interact,
+            add_extra_path=lambda _p: None,
+        )
+        r = ToolRegistry()
+        result = await r.execute_tool("read", {"file_path": str(target)}, ctx)
+
+        assert result.metadata.get("error") is True
+        assert "denied" in result.output.lower()
+
+    @pytest.mark.asyncio
+    async def test_external_path_no_interact_fallback_blocked(self, tmp_path):
+        external = tmp_path / "external"
+        external.mkdir()
+        target = external / "file.txt"
+        target.write_text("secret\n")
+
+        workspace = tmp_path / "workspace"
+        workspace.mkdir()
+
+        ctx = ToolContext(workspace=str(workspace))
+        r = ToolRegistry()
+        result = await r.execute_tool("read", {"file_path": str(target)}, ctx)
+
+        assert result.metadata.get("error") is True
+        assert "blocked" in result.output.lower()
+
+    @pytest.mark.asyncio
+    async def test_external_nonexistent_path_still_blocked(self, tmp_path):
+        workspace = tmp_path / "workspace"
+        workspace.mkdir()
+
+        async def fake_interact(req):
+            return UserResponse(value="allow")
+
+        ctx = ToolContext(workspace=str(workspace), interact=fake_interact)
+        r = ToolRegistry()
+        result = await r.execute_tool(
+            "read", {"file_path": str(tmp_path / "nonexistent" / "file.txt")}, ctx
+        )
+
+        assert result.metadata.get("error") is True
+        assert "blocked" in result.output.lower()
