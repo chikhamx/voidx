@@ -91,7 +91,8 @@ class TaskState(BaseModel):
         self.current_intent = resolution.intent.type
         if resolution.intent.type == TaskIntent.GENERAL:
             if not self._has_active_workflow():
-                self.current_goal = None
+                if resolution.goal is not None:
+                    self.current_goal = resolution.goal
                 self._reset_workflow_context()
             return
         if resolution.goal is not None:

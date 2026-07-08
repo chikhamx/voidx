@@ -62,7 +62,7 @@ def test_general_turn_preserves_active_workflow():
     assert "tdd" in state.workflow_runs
 
 
-def test_general_turn_clears_when_no_active_workflow():
+def test_general_turn_keeps_goal_when_no_active_workflow():
     state = TaskState(
         current_goal=GoalSpec(desc="build feature"),
         workflow_route=WorkflowRoute(join="tdd", leave="verify"),
@@ -74,7 +74,7 @@ def test_general_turn_clears_when_no_active_workflow():
     state.update_after_turn(_resolution(intent=TaskIntent.GENERAL), "thanks")
 
     assert state.current_intent == TaskIntent.GENERAL
-    assert state.current_goal is None
+    assert state.current_goal is not None
     assert state.workflow_route is None
     assert state.workflow_runs == {}
 

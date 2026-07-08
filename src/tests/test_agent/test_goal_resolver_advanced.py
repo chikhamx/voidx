@@ -65,7 +65,7 @@ async def test_goal_resolver_validation_error_falls_back_to_general(tmp_path, mo
     )
 
     assert result.intent.type == TaskIntent.GENERAL
-    assert result.goal is None
+    assert result.goal is not None
     assert result.plan is None
 
     entries = [
@@ -162,7 +162,7 @@ async def test_goal_resolver_normal_request_returns_no_workflow_route():
     )
 
     assert result.plan is None
-    assert result.goal is None
+    assert result.goal is not None
 
 
 @pytest.mark.asyncio
@@ -200,7 +200,7 @@ async def test_general_intent_with_active_workflow_preserves_coding():
 
 @pytest.mark.asyncio
 async def test_general_intent_without_active_workflow_falls_back():
-    """GENERAL intent + no active workflow → stays GENERAL, goal=null."""
+    """GENERAL intent + no active workflow → stays GENERAL, goal from user_text."""
     model = StructuredModel(
         GoalResolution(
             intent=IntentResolution(type=TaskIntent.GENERAL),
@@ -217,7 +217,7 @@ async def test_general_intent_without_active_workflow_falls_back():
     )
 
     assert result.intent.type == TaskIntent.GENERAL
-    assert result.goal is None
+    assert result.goal is not None
     assert result.plan is None
 
 
@@ -246,7 +246,7 @@ async def test_general_intent_with_workflow_route_but_no_goal_falls_back():
     )
 
     assert result.intent.type == TaskIntent.GENERAL
-    assert result.goal is None
+    assert result.goal is not None
     assert result.plan is None
 
 

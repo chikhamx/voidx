@@ -28,7 +28,7 @@ class TestGoalResolverRetry:
     @pytest.mark.asyncio
     async def test_retries_on_timeout_then_succeeds(self):
         task_state = _make_task_state()
-        good_result = ResolverGoal(intent="coding", goal=None)
+        good_result = ResolverGoal(intent="coding", goal="fix bug")
         model = _make_model([
             asyncio.TimeoutError(),
             good_result,
@@ -66,7 +66,7 @@ class TestGoalResolverRetry:
     @pytest.mark.asyncio
     async def test_no_retry_config_uses_default(self):
         task_state = _make_task_state()
-        good_result = ResolverGoal(intent="coding", goal=None)
+        good_result = ResolverGoal(intent="coding", goal="fix bug")
         model = _make_model([
             asyncio.TimeoutError(),
             good_result,

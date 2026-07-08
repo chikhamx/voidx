@@ -31,19 +31,16 @@ WorkflowName = Literal["brainstorm", "debug", "design", "feedback", "plan", "rev
 
 class ResolverGoal(BaseModel):
     intent: Literal["coding", "general"] = "general"
-    goal: str | None = None
+    goal: str
     workflow: WorkflowName | None = None
     kind_hint: str | None = None
 
     @model_validator(mode="after")
-    def _goal_and_workflow_are_bound(self) -> "ResolverGoal":
-        has_goal = bool(self.goal and self.goal.strip())
-        has_workflow = self.workflow is not None
-        if has_goal != has_workflow:
-            raise ValueError("goal and workflow must be set together")
-        if not has_goal:
-            self.goal = None
-            self.workflow = None
+    def _goal_required_and_workflow_needs_goal(self) -> "ResolverGoal":
+        if not self.goal or not self.goal.strip():
+            raise ValueError("goal must be a non-empty string")
+        if self.workflow is None:
+            return self
         return self
 
 
@@ -87,7 +84,7 @@ async def resolve_goal_for_turn(
     del interaction_mode
     fallback = GoalResolution(
         intent=IntentResolution(type=TaskIntent.GENERAL),
-        goal=None,
+        goal=GoalSpec(desc=user_text),
         plan=None,
     )
     fallback_reason = ""
@@ -259,10 +256,10 @@ def _resolver_system_prompt(*, json_mode: bool = False) -> str:
         "\n"
         "## Field Rules\n"
         "\n"
-        '- **intent**: "coding" for codebase/workspace work; "general" for non-code conversation.\n'
-        "- **goal**: Short user-language summary when a workflow should start; null otherwise. Must be set exactly when workflow is set, and null exactly when workflow is null.\n"
-        "- **workflow**: The workflow to start, or null. Must be set exactly when goal is set.\n"
-        "- **kind_hint**: Optional semantic hint. Advisory only; never overrides workflow selection.\n"
+'- **intent**: "coding" for codebase/workspace work; "general" for non-code conversation.\n'
+"- **goal**: Always provide a short user-language summary of what the user wants this turn. Never null or empty.\n"
+"- **workflow**: The workflow to start, or null when no workflow is needed. Only set when a workflow should start; goal is always required regardless.\n"
+"- **kind_hint**: Optional semantic hint. Advisory only; never overrides workflow selection.\n"
         "\n"
         "## Available Workflows\n"
         "\n"
@@ -332,21 +329,24 @@ def _coerce_resolution(value: object) -> ResolverGoal | None:
 def _to_goal_resolution(resolver: ResolverGoal, task_state: TaskState) -> GoalResolution:
     del task_state
     intent_type = TaskIntent(resolver.intent)
-    if resolver.goal is None or resolver.workflow is None:
-        return GoalResolution(intent=IntentResolution(type=intent_type), goal=None, plan=None)
+    goal = GoalSpec(desc=resolver.goal)
+    if resolver.workflow is None:
+        return GoalResolution(intent=IntentResolution(type=intent_type), goal=goal, plan=None)
     return GoalResolution(
         intent=IntentResolution(type=intent_type),
-        goal=GoalSpec(desc=resolver.goal),
+        goal=goal,
         plan=PlanResolution(join=resolver.workflow, leave=None),
     )
 
 
 def _resolver_goal_from_goal_resolution(resolution: GoalResolution) -> ResolverGoal | None:
     goal = resolution.goal
+    if goal is None:
+        return None
     plan = resolution.plan
     return ResolverGoal(
         intent=resolution.intent.type.value,
-        goal=goal.desc if goal is not None else None,
+        goal=goal.desc,
         workflow=plan.join if plan is not None else None,
         kind_hint=None,
     )
@@ -392,14 +392,15 @@ def _normalize_resolution(
                 goal=task_state.current_goal,
                 plan=PlanResolution(join=current_join, leave=None),
             )
+        goal = resolution.goal or GoalSpec(desc=user_text)
         return GoalResolution(
             intent=resolution.intent,
-            goal=None,
+            goal=goal,
             plan=None,
         )
 
-    goal = resolution.goal
-    if goal is not None and (plan is None or not plan.join):
+    goal = resolution.goal or GoalSpec(desc=user_text)
+    if plan is None or not plan.join:
         current_join = _current_active_join(task_state)
         if current_join and task_state.current_goal is not None and _is_short_continuation(user_text):
             return GoalResolution(
@@ -407,7 +408,6 @@ def _normalize_resolution(
                 goal=task_state.current_goal,
                 plan=PlanResolution(join=current_join, leave=None),
             )
-        goal = None
         plan = None
 
     return GoalResolution(

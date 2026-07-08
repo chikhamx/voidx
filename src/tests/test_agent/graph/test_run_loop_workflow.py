@@ -117,7 +117,7 @@ async def test_run_once_uses_general_fallback_when_structured_resolver_fails(tmp
 
     initial = captured["initial"]
     assert initial["task_state"]["current_intent"] == "general"
-    assert initial["task_state"]["current_goal"] is None
+    assert initial["task_state"]["current_goal"] is not None
     assert initial["task_state"]["recent_exchanges"] == []
     rows = await load_messages(graph._session.id)
     assert [row.role for row in rows] == ["user", "assistant"]

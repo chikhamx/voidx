@@ -107,10 +107,30 @@ def test_goal_spec_schema_excludes_type():
     assert set(properties) == {"desc"}
 
 
-def test_resolver_goal_binds_goal_and_workflow():
+def test_resolver_goal_requires_goal():
     with pytest.raises(ValueError):
-        ResolverGoal(intent="coding", goal="review code", workflow=None)
+        ResolverGoal(intent="general", goal=None)
 
+    with pytest.raises(ValueError):
+        ResolverGoal(intent="general", goal="")
+
+    with pytest.raises(ValueError):
+        ResolverGoal(intent="general", goal="   ")
+
+
+def test_resolver_goal_allows_goal_without_workflow():
+    goal_only = ResolverGoal(intent="general", goal="chat about weather")
+    assert goal_only.goal == "chat about weather"
+    assert goal_only.workflow is None
+
+
+def test_resolver_goal_allows_goal_with_workflow():
+    paired = ResolverGoal(intent="coding", goal="fix bug", workflow="debug")
+    assert paired.goal == "fix bug"
+    assert paired.workflow == "debug"
+
+
+def test_resolver_goal_rejects_workflow_without_goal():
     with pytest.raises(ValueError):
         ResolverGoal(intent="coding", goal=None, workflow="review")
 
@@ -273,7 +293,7 @@ async def test_goal_resolver_drops_unknown_plan_route():
     )
 
     assert result.plan is None
-    assert result.goal is None
+    assert result.goal is not None
 
 
 @pytest.mark.asyncio
@@ -360,7 +380,7 @@ async def test_goal_resolver_goal_mode_keeps_current_goal():
     )
 
     assert result.intent.type == TaskIntent.GENERAL
-    assert result.goal is None
+    assert result.goal is not None
     assert result.plan is None
 
 
@@ -378,7 +398,7 @@ async def test_goal_resolver_falls_back_to_general_when_structured_output_fails(
     )
 
     assert result.intent.type == TaskIntent.GENERAL
-    assert result.goal is None
+    assert result.goal is not None
     assert result.plan is None
 
 
@@ -541,7 +561,7 @@ async def test_goal_resolver_uses_json_mode_for_deepseek_with_qwen_reasoning():
             return self
 
         async def ainvoke(self, messages):
-            return ResolverGoal(intent="general", goal=None, workflow=None, kind_hint=None)
+            return ResolverGoal(intent="general", goal="hello chat", workflow=None, kind_hint=None)
 
     model = object.__new__(FakeQwenModel)
     object.__setattr__(model, "extra_body", {"enable_thinking": True})
