@@ -4,6 +4,7 @@ from tui_helpers import *  # noqa: F403
 
 from types import SimpleNamespace
 
+from rich.cells import cell_len
 from rich.console import Console
 
 from voidx.llm.usage import UsageStats
@@ -35,6 +36,20 @@ def _make_status(tmp_path, **overrides):
 def _status_plain(tui, width=100):
     text = tui._status_summary_text(width)
     return text.plain
+
+
+def _usage_stats() -> UsageStats:
+    stats = UsageStats()
+    stats.context_limit = 200_000
+    stats.total_input_tokens = 10_000
+    stats.total_output_tokens = 1_000
+    stats.begin_turn()
+    stats.update_context(46_300)
+    stats.total_input_tokens = 1_899_000
+    stats.total_output_tokens = 1_000
+    stats.total_cache_read_tokens = 399_000
+    stats.total_cache_metric_calls = 1
+    return stats
 
 
 # ── model segment: no provider prefix ──────────────────────────────
@@ -91,7 +106,7 @@ def test_state_segment_shows_debug(tmp_path):
     assert "debug" in plain
 
 
-# ── usage segment: compact format, no total ────────────────────────
+# ── usage segment: compact format with total ───────────────────────
 
 def test_usage_segment_compact_format(tmp_path):
     stats = UsageStats()
@@ -106,10 +121,10 @@ def test_usage_segment_compact_format(tmp_path):
     tui = PureTui(status, COMMANDS)
     plain = _status_plain(tui)
     assert "10k/200k" in plain
+    assert plain.endswith("10k/200k -- 127.1k")
     # No verbose labels
     assert "ctx " not in plain
     assert "cache " not in plain
-    assert "total " not in plain
 
 
 # ── goal_type / goal_awaiting: dead fields removed ─────────────────
@@ -151,3 +166,57 @@ def test_workflow_shown_at_narrow_width_with_long_model(tmp_path):
     tui = PureTui(status, COMMANDS)
     plain = _status_plain(tui, width=80)
     assert "verify" in plain
+
+
+def test_usage_is_right_aligned_and_preserved_with_long_goal(tmp_path):
+    status = _make_status(
+        tmp_path,
+        active_workflows=lambda: ["重命名"],
+        goal_label=lambda: "将某个文件/模块重命名并移动到 file 目录下，需确认具体对象并同步更新 import 路径",
+        usage_stats=_usage_stats(),
+    )
+    tui = PureTui(status, COMMANDS)
+    width = 120
+
+    plain = _status_plain(tui, width=width)
+
+    assert plain.endswith("46.3k/200k 21% 1.9m")
+    assert "\n" not in plain
+    assert cell_len(plain) == width
+    assert "重命名" in plain
+    assert "…" in plain
+    assert "import 路径" not in plain
+
+
+def test_usage_survives_when_left_and_middle_are_too_wide(tmp_path):
+    status = _make_status(
+        tmp_path,
+        model="astron-code-latest",
+        reasoning_effort="xhigh",
+        active_workflows=lambda: ["workflow-with-a-very-long-name"],
+        goal_label=lambda: "x" * 200,
+        usage_stats=_usage_stats(),
+    )
+    tui = PureTui(status, COMMANDS)
+    width = 72
+
+    plain = _status_plain(tui, width=width)
+
+    assert plain.endswith("46.3k/200k 21% 1.9m")
+    assert "\n" not in plain
+    assert cell_len(plain) == width
+
+
+def test_pinned_usage_status_keeps_segment_styles(tmp_path):
+    status = _make_status(
+        tmp_path,
+        active_workflows=lambda: ["重命名"],
+        goal_label=lambda: "将某个文件/模块重命名并移动到 file 目录下，需确认具体对象并同步更新 import 路径",
+        usage_stats=_usage_stats(),
+    )
+    tui = PureTui(status, COMMANDS)
+
+    text = tui._status_summary_text(120)
+
+    assert "#56D4DD" in _styles_covering(text, "46.3k/200k 21% 1.9m")
+    assert "#C698F0" in _styles_covering(text, "…")

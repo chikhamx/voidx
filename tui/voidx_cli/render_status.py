@@ -34,22 +34,11 @@ _STATUS_STYLES = {
     "goal": "#C698F0",
     "separator": "#4B5563",
 }
-_STATUS_VARIANTS = (
-    ("model", "policy", "state", "workflow", "goal", "usage"),
-    ("model", "policy", "state", "workflow", "goal"),
-    ("model", "policy", "workflow", "goal", "usage"),
-    ("model", "policy", "workflow", "goal"),
-    ("model", "policy", "state", "workflow", "usage"),
-    ("model", "policy", "state", "workflow"),
-    ("model", "policy", "state", "goal", "usage"),
-    ("model", "policy", "state", "goal"),
-    ("model", "policy", "workflow", "usage"),
-    ("model", "policy", "goal", "usage"),
-    ("model", "policy", "workflow"),
-    ("model", "policy", "goal"),
-    ("model", "policy", "usage"),
+_LEFT_VARIANTS = (
+    ("model", "policy", "state"),
     ("model", "policy"),
     ("model",),
+    (),
 )
 
 _WORKFLOW_RAINBOW = ("#FF6B6B", "#FFD93D", "#6BCB77", "#4D96FF", "#B983FF")
@@ -107,6 +96,7 @@ class _StatusRendererMixin:
         stats_snapshot = (
             context_limit,
             getattr(stats, "context_tokens", 0) if stats is not None else 0,
+            getattr(stats, "total_tokens", 0) if stats is not None else 0,
             getattr(stats, "cache_hit_rate", None) if stats is not None else None,
         )
         snapshot = (
@@ -144,6 +134,7 @@ class _StatusRendererMixin:
                 f"{format_token_count(getattr(stats, 'context_tokens', 0))}/"
                 f"{format_token_count(context_limit)}"
                 f" {format_cache_hit_rate(stats)}"
+                f" {format_token_count(getattr(stats, 'total_tokens', 0))}"
             )
 
         goal_text = ""
@@ -177,8 +168,17 @@ class _StatusRendererMixin:
     ) -> tuple[str, tuple[StatusSegment, ...]]:
         by_kind = {segment.kind: segment for segment in segments}
         prefix_segments = (prefix,) if prefix is not None and prefix.text else ()
+        usage = by_kind.get("usage")
+        if usage is not None and prefix is None:
+            return self._select_pinned_usage_status_variant(width, by_kind, usage)
 
-        for variant in _STATUS_VARIANTS:
+        for variant in _LEFT_VARIANTS + (
+            ("model", "policy", "state", "workflow", "goal"),
+            ("model", "policy", "workflow", "goal"),
+            ("model", "policy", "state", "workflow"),
+            ("model", "policy", "workflow"),
+            ("model", "policy", "goal"),
+        ):
             selected = tuple(
                 by_kind[kind]
                 for kind in variant
@@ -199,9 +199,65 @@ class _StatusRendererMixin:
         summary = _clip_cells(self._status_summary_from_segments(fallback), width)
         return summary, ()
 
+    def _select_pinned_usage_status_variant(
+        self,
+        width: int,
+        by_kind: dict[str, StatusSegment],
+        usage: StatusSegment,
+    ) -> tuple[str, tuple[StatusSegment, ...]]:
+        usage_text = usage.text
+        usage_width = cell_len(usage_text)
+        if width <= 0:
+            return "", ()
+        if usage_width >= width:
+            return _clip_cells(usage_text, width), ()
+
+        for left_variant in _LEFT_VARIANTS:
+            left = tuple(
+                by_kind[kind]
+                for kind in left_variant
+                if kind in by_kind
+            )
+            middle = tuple(
+                by_kind[kind]
+                for kind in ("workflow", "goal")
+                if kind in by_kind
+            )
+            summary = self._pinned_usage_summary(width, left, middle, usage_text)
+            if summary:
+                selected = left + middle + (usage,)
+                return summary, selected
+
+        return usage_text.rjust(width), (usage,)
+
     @staticmethod
     def _status_summary_from_segments(segments: tuple[StatusSegment, ...]) -> str:
         return "  " + " | ".join(segment.text for segment in segments if segment.text)
+
+    def _pinned_usage_summary(
+        self,
+        width: int,
+        left: tuple[StatusSegment, ...],
+        middle: tuple[StatusSegment, ...],
+        usage_text: str,
+    ) -> str:
+        left_text = self._status_summary_from_segments(left) if left else ""
+        middle_text = " | ".join(segment.text for segment in middle if segment.text)
+        usage_width = cell_len(usage_text)
+        gap = 2
+        if left_text and cell_len(left_text) + gap + usage_width > width:
+            return ""
+        middle_separator = " | " if left_text and middle_text else ""
+        base_width = cell_len(left_text) + cell_len(middle_separator) + gap + usage_width
+        available_middle_width = max(0, width - base_width)
+        clipped_middle = _clip_cells(middle_text, available_middle_width) if middle_text else ""
+        left_and_middle = left_text
+        if clipped_middle:
+            left_and_middle = f"{left_and_middle}{middle_separator}{clipped_middle}" if left_and_middle else f"  {clipped_middle}"
+        padding = width - cell_len(left_and_middle) - usage_width
+        if padding < gap:
+            return ""
+        return left_and_middle + (" " * padding) + usage_text
 
     def _status_text_from_segments(
         self,
@@ -213,7 +269,8 @@ class _StatusRendererMixin:
         if not segments:
             return Text(summary, style="#8F9BA8")
         if summary != self._status_summary_from_segments(segments):
-            return Text(summary, style="#8F9BA8")
+            pinned = self._pinned_usage_text_from_segments(summary, segments)
+            return pinned if pinned is not None else Text(summary, style="#8F9BA8")
         text = Text("  ")
         appended = False
         for segment in segments:
@@ -226,6 +283,44 @@ class _StatusRendererMixin:
             else:
                 text.append(segment.text, style=_STATUS_STYLES.get(segment.kind, "#8F9BA8"))
             appended = True
+        return text
+
+    def _pinned_usage_text_from_segments(
+        self,
+        summary: str,
+        segments: tuple[StatusSegment, ...],
+    ) -> Text | None:
+        usage = next((segment for segment in segments if segment.kind == "usage"), None)
+        if usage is None or not summary.endswith(usage.text):
+            return None
+
+        text = Text()
+        cursor = 0
+        for segment in segments:
+            if segment.kind == "usage":
+                continue
+            start = summary.find(segment.text, cursor)
+            if start < 0:
+                continue
+            if start > cursor:
+                text.append(summary[cursor:start], style=_STATUS_STYLES["separator"])
+            if segment.kind == "workflow":
+                _append_rainbow(text, segment.text)
+            else:
+                text.append(segment.text, style=_STATUS_STYLES.get(segment.kind, "#8F9BA8"))
+            cursor = start + len(segment.text)
+
+        usage_start = len(summary) - len(usage.text)
+        if usage_start > cursor:
+            middle = summary[cursor:usage_start]
+            goal = next((segment for segment in segments if segment.kind == "goal"), None)
+            if goal is not None and "…" in middle:
+                ellipsis_index = middle.index("…")
+                text.append(middle[:ellipsis_index], style=_STATUS_STYLES["separator"])
+                text.append(middle[ellipsis_index:], style=_STATUS_STYLES["goal"])
+            else:
+                text.append(middle, style=_STATUS_STYLES["separator"])
+        text.append(usage.text, style=_STATUS_STYLES["usage"])
         return text
 
 

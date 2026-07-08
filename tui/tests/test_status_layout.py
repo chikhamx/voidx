@@ -48,6 +48,35 @@ def test_todo_busy_and_choice_panel_render_once_in_full_frame(tmp_path, monkeypa
     assert rendered.index("Todo:") < rendered.index("Working") < rendered.index("Intent?")
 
 
+def test_permission_choice_overlay_does_not_repeat_tool_details(tmp_path, monkeypatch):
+    monkeypatch.setattr("voidx_cli.render_activity.time.monotonic", lambda: 105.0)
+    tui = _tui(tmp_path)
+    tui._console = Console(file=None, force_terminal=True, width=100, height=24, _environ={})
+    tui._busy = True
+    tui._busy_started_at = 100.0
+    tui._active_choice = [
+        ("Yes, always", "a", "Allow these tools for this session"),
+        ("Yes", "y", "Allow this tool use once"),
+        ("No", "n", "Deny these tools"),
+    ]
+    tui._choice_prompt = "Allow tool use?"
+    tui._choice_selected = 0
+    tui._choice_details = [{"name": "bash", "pattern": "npm install lodash"}]
+    dock.begin_capture()
+    dock.record_status(
+        "permission:request",
+        "Requesting",
+        "1. bash\n   command: npm install lodash",
+        stage="permission",
+    )
+
+    rendered = "\n".join(_rich_plain(line) for line in _render_lines(tui, width=100))
+
+    assert rendered.count("npm install lodash") == 1
+    assert "bash: npm install lodash" not in rendered
+    assert "Yes, always" in rendered
+
+
 def test_choice_selection_only_render_skips_todo_and_busy_lines(tmp_path, monkeypatch):
     monkeypatch.setattr("voidx_cli.render_activity.time.monotonic", lambda: 105.0)
     fake_stdout = _FakeStdout()
@@ -141,5 +170,4 @@ def test_busy_activity_tick_noops_without_rendered_frame(tmp_path, monkeypatch):
 
     assert tui._render_busy_activity_tick() is False
     assert "Cogitating" not in status.plain
-
 

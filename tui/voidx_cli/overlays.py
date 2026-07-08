@@ -2,6 +2,8 @@
 
 from __future__ import annotations
 
+from voidx.ui.output.dock import active_permission_request_detail_text
+
 from .helpers import _candidate_meta, _escape_markup
 
 
@@ -40,13 +42,14 @@ class _OverlayRendererMixin:
         remaining = total - start - len(visible)
         if remaining > 0:
             result.append(f"  [dim]... {remaining} below[/dim]")
-        for detail in self._choice_details[:8]:
-            name = _escape_markup(str(detail.get("name", "")))
-            pattern = _escape_markup(str(detail.get("pattern", "")))
-            if pattern:
-                result.append(f"    [dim]{name}: {pattern}[/dim]")
-            elif name:
-                result.append(f"    [dim]{name}[/dim]")
+        if not active_permission_request_detail_text():
+            for detail in self._choice_details[:8]:
+                name = _escape_markup(str(detail.get("name", "")))
+                pattern = _escape_markup(str(detail.get("pattern", "")))
+                if pattern:
+                    result.append(f"    [dim]{name}: {pattern}[/dim]")
+                elif name:
+                    result.append(f"    [dim]{name}[/dim]")
         return result
 
     def _render_panel_lines(self, width: int) -> list[str]:
