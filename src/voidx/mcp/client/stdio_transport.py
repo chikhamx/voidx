@@ -32,6 +32,7 @@ class StdioTransportMixin:
                 stdout=asyncio.subprocess.PIPE,
                 stderr=asyncio.subprocess.PIPE,
                 env=env,
+                cwd=self._config.cwd,
             )
         except FileNotFoundError as e:
             raise McpConnectionError(

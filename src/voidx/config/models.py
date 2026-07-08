@@ -52,6 +52,10 @@ class McpServerConfig(BaseModel):
     command: str = ""
     args: list[str] = Field(default_factory=list)
     env: dict[str, str] = Field(default_factory=dict)
+    cwd: str | None = Field(
+        default=None,
+        description="Working directory for the subprocess. Inherited from parent if not set.",
+    )
     headers: dict[str, str] = Field(default_factory=dict)
     url: str = ""
     disabled: bool = False
