@@ -142,7 +142,6 @@ async def test_workflow_done_stops_before_followup_llm_when_workflow_complete(tm
                 "args": {
                     "action": "done",
                     "workflow": "verify",
-                    "evidence": "focused verification passed",
                     "summary": "verification complete",
                 },
                 "id": "call_adv",
@@ -182,7 +181,7 @@ async def test_workflow_route_end_satisfies_without_successor(tmp_path):
                     "action": "advance",
                     "workflow": "review",
                     "condition": "review_has_issues",
-                    "evidence": "review verdict failed with actionable issues",
+                    "goal": "处理 review 反馈",
                     "summary": "review completed",
                 },
                 "id": "call_adv",
@@ -225,7 +224,7 @@ async def test_workflow_route_end_satisfies_non_review_without_successor(tmp_pat
                     "action": "advance",
                     "workflow": "tdd",
                     "condition": "implemented",
-                    "evidence": "implementation complete with focused test coverage",
+                    "goal": "完成实现验证",
                     "summary": "implementation complete",
                 },
                 "id": "call_adv",
@@ -267,7 +266,6 @@ async def test_multiple_workflow_done_calls_finish_batch_before_stopping(tmp_pat
                 "args": {
                     "action": "done",
                     "workflow": "design",
-                    "evidence": "design doc archived",
                     "summary": "design doc complete",
                 },
                 "id": "call_design_done",
@@ -278,7 +276,6 @@ async def test_multiple_workflow_done_calls_finish_batch_before_stopping(tmp_pat
                 "args": {
                     "action": "done",
                     "workflow": "verify",
-                    "evidence": "archive file exists and source file is removed",
                     "summary": "archive verification complete",
                 },
                 "id": "call_verify_done",

@@ -130,6 +130,7 @@ def _activate_transition_targets(
                 else f"transition from {run.name}"
             ),
             goal_type=run.goal_type,
+            goal=run.goal,
             scope=run.scope,
             personas=list(_workflow_personas(key)),
             activated_turn=turn_count,

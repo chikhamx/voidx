@@ -311,7 +311,7 @@ async def test_workflow_transaction_reauthorizes_following_write(tmp_path):
                     "action": "advance",
                     "workflow": "brainstorm",
                     "condition": "small_change",
-                    "evidence": "stale design gate cleared",
+                    "goal": "执行小改动",
                     "summary": "design gate cleared",
                 },
                 "id": "call_adv",

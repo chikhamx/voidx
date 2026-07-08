@@ -214,3 +214,12 @@ def test_clear_goal_resets_goal_state():
     assert state.current_goal is None
     assert state.workflow_route is None
     assert state.workflow_runs == {}
+
+
+def test_goal_spec_normalizes_and_truncates():
+    value = "  修复   workflow\n\n goal   参数改造  " + "x" * 160
+
+    goal = GoalSpec(desc=value)
+
+    assert goal.desc == ("修复 workflow goal 参数改造 " + "x" * 160)[:120]
+    assert len(goal.desc) == 120

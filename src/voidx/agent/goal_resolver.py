@@ -257,7 +257,7 @@ def _resolver_system_prompt(*, json_mode: bool = False) -> str:
         "## Field Rules\n"
         "\n"
 '- **intent**: "coding" for codebase/workspace work; "general" for non-code conversation.\n'
-"- **goal**: Always provide a short user-language summary of what the user wants this turn. Never null or empty.\n"
+"- **goal**: One-sentence goal of what the user wants this turn. Verb-first (e.g. 'Fix...', 'Implement...', 'Refactor...'). Max 120 characters. Do not copy user text verbatim. No file paths or code. Never null or empty.\n"
 "- **workflow**: The workflow to start, or null when no workflow is needed. Only set when a workflow should start; goal is always required regardless.\n"
 "- **kind_hint**: Optional semantic hint. Advisory only; never overrides workflow selection.\n"
         "\n"

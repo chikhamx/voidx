@@ -410,3 +410,30 @@ class TestAutoAdvanceIntegration:
         # review agent prompt constrains format, making false positives unlikely.
         # If needed, a structured verdict in metadata would eliminate this.
         assert len(events) <= 1
+
+
+class TestWorkflowGoalInheritance:
+    def test_transition_targets_inherit_run_goal(self):
+        runs = [
+            WorkflowRunState(
+                name="tdd",
+                status=WorkflowRunStatus.ACTIVE,
+                goal="实现 workflow goal 参数改造",
+                transition_to=["verify"],
+            )
+        ]
+        events = [
+            WorkflowStateEvent(
+                workflow="tdd",
+                kind=WorkflowStateEventKind.SATISFIED,
+                ref="test",
+                ok=True,
+                summary="implemented",
+                condition="implemented",
+            )
+        ]
+
+        updated = advance_workflow_states(runs, events)
+        by_name = {run.name: run for run in updated}
+
+        assert by_name["verify"].goal == "实现 workflow goal 参数改造"

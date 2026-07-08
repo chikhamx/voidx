@@ -143,7 +143,7 @@ async def test_workflow_non_terminal_transition_keeps_followup_llm_enabled(tmp_p
                     "action": "advance",
                     "workflow": "tdd",
                     "condition": "implemented",
-                    "evidence": "red-green cycle completed",
+                    "goal": "验证 TDD 实现",
                     "summary": "implementation complete",
                 },
                 "id": "call_adv",

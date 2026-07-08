@@ -23,6 +23,11 @@ class GoalSpec(BaseModel):
     model_config = {"extra": "ignore"}
     desc: str = ""
 
+    @model_validator(mode="after")
+    def _normalize_desc(self) -> "GoalSpec":
+        self.desc = " ".join(self.desc.split())[:120]
+        return self
+
     @property
     def label(self) -> str:
         return self.desc.strip() or ""

@@ -56,6 +56,7 @@ class WorkflowRunState(BaseModel):
     source: WorkflowActivationSource = WorkflowActivationSource.WORKFLOW
     reason: str = ""
     goal_type: str = ""
+    goal: str = ""
     scope: str = ""
     personas: list[str] = Field(default_factory=list)
     activated_turn: int = 0
@@ -71,6 +72,8 @@ class WorkflowRunState(BaseModel):
         ]
         if self.goal_type:
             parts.append(f"goal_type={self.goal_type}")
+        if self.goal:
+            parts.append(f"goal={self.goal}")
         parts.append(f"source={self.source.value}")
         if self.reason:
             parts.append(f"reason={self.reason}")
