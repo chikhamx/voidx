@@ -18,18 +18,26 @@ Each subdirectory has its own `AGENTS.md` for directory-specific details only; g
 - Web UI gateway: `./python.py -m voidx.main --web` (open frontend with `?ws=<gateway-url>`)
 - Headless web backend: `./python.py -m voidx.main --web --web-headless`
 - Export UI protocol schema: `./python.py scripts/export_ui_protocol_schema.py`
-- Run all tests: `./test.py` (backend + frontend + desktop; use `--backend`/`--frontend`/`--desktop` to select, `--` to pass args to the suite)
+
+## Testing
+`./test.py` auto-switches to the voidx venv and runs three suites: **backend** (pytest), **frontend** (vitest), **desktop** (cargo test).
+
+- Verbose output: `./test.py -v`
+- Keep going after failures: `./test.py --keep-going`
+- Pass args to the underlying runner with `--`:
+  - Backend (pytest): `./test.py --backend -- src/tests/test_foo.py -k "test_bar"`
+  - Frontend (vitest): `./test.py --frontend -- --reporter=verbose`
+  - Desktop (cargo test): `./test.py --desktop -- --nocapture`
 
 ## Code Rules
 - Keep modules small and named by responsibility.
 - Do not add comments unless they explain non-obvious intent or constraints.
 - Don't repeat yourself — single source of truth, no duplicated rules across files.
 
-## Document Lifecycle
-- Design docs live in `docs/specs/` while in progress.
-- When implementation is **fully complete** (code + tests exist, not just stubs or string references), move the doc to `docs/archive/` and add a `> **Status: Done**` header.
-- Do **not** archive based on keyword search alone — verify the actual implementation files exist and are functional.
-- `docs/design/` is for exploratory/RFC-stage docs; `docs/specs/` is for approved designs awaiting or in implementation.
+## Document Rules
+- `docs/design/` — exploratory/RFC-stage docs.
+- `docs/specs/` — approved designs awaiting or in implementation.
+- `docs/archive/` — completed docs. Archive **only after** the final verify step has passed: verify the actual implementation files exist and are functional, then run `./scripts/archive.py docs/specs/<file>.md`.
 
 ## Releasing
 - Release flow and version file checklist: `docs/releasing.md` (single source of truth — do not duplicate).
