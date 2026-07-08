@@ -1,4 +1,6 @@
 # 子 Agent LLM 调用重试机制 — 技术设计文档
+> **Status: Done**
+
 
 ## Context
 
