@@ -398,3 +398,63 @@ async def test_intent_window_size_4_includes_more_context():
     assert "运行测试" in content
     assert "改" in content
     assert "## ResolverGoal Schema" not in content
+
+
+@pytest.mark.asyncio
+async def test_resolver_success_with_new_goal_preserves_new_goal_over_old():
+    """Resolver 成功返回新 goal + 活跃 workflow → 信任新 goal，不用老 goal 覆盖。"""
+    from voidx.workflow.types import WorkflowRunState
+
+    task_state = TaskState(
+        current_intent=TaskIntent.CODING,
+        current_goal=GoalSpec(desc="implement edit tool"),
+        workflow_route=WorkflowRoute(join="tdd"),
+        workflow_runs={"tdd": WorkflowRunState(name="tdd", status="active")},
+    )
+    model = StructuredModel(
+        GoalResolution(
+            intent=IntentResolution(type=TaskIntent.GENERAL),
+            goal=GoalSpec(desc="fix memory leak in resolver"),
+            plan=None,
+        )
+    )
+
+    result = await resolve_goal_for_turn(
+        model=model,
+        user_text="先修复内存泄漏",
+        interaction_mode="auto",
+        task_state=task_state,
+    )
+
+    assert result.goal is not None
+    assert result.goal.desc == "fix memory leak in resolver"
+
+
+@pytest.mark.asyncio
+async def test_resolver_success_coding_with_new_goal_short_continuation_preserves_new_goal():
+    """Resolver 成功返回 CODING + 新 goal + 短续接 + 活跃 workflow → 信任新 goal。"""
+    from voidx.workflow.types import WorkflowRunState
+
+    task_state = TaskState(
+        current_intent=TaskIntent.CODING,
+        current_goal=GoalSpec(desc="implement edit tool"),
+        workflow_route=WorkflowRoute(join="tdd"),
+        workflow_runs={"tdd": WorkflowRunState(name="tdd", status="active")},
+    )
+    model = StructuredModel(
+        GoalResolution(
+            intent=IntentResolution(type=TaskIntent.CODING),
+            goal=GoalSpec(desc="fix memory leak"),
+            plan=None,
+        )
+    )
+
+    result = await resolve_goal_for_turn(
+        model=model,
+        user_text="继续",
+        interaction_mode="auto",
+        task_state=task_state,
+    )
+
+    assert result.goal is not None
+    assert result.goal.desc == "fix memory leak"

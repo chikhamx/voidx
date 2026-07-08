@@ -94,6 +94,8 @@ class TaskState(BaseModel):
                 if resolution.goal is not None:
                     self.current_goal = resolution.goal
                 self._reset_workflow_context()
+            elif resolution.goal is not None:
+                self.current_goal = resolution.goal
             return
         if resolution.goal is not None:
             goal_changed = not _same_goal(previous_goal, resolution.goal)

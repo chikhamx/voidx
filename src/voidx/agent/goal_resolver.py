@@ -92,14 +92,14 @@ async def resolve_goal_for_turn(
     fallback_error = ""
     if model is None:
         fallback_reason = "model_unavailable"
-        normalized = _normalize_resolution(fallback, user_text, task_state)
+        normalized = _normalize_resolution(fallback, user_text, task_state, is_fallback=True)
         _log_goal_resolver_decision(normalized, user_text, task_state, fallback_reason, fallback_error_type, fallback_error, enabled=log_diagnostic)
         return normalized
 
     structured = getattr(model, "with_structured_output", None)
     if not callable(structured):
         fallback_reason = "structured_output_unsupported"
-        normalized = _normalize_resolution(fallback, user_text, task_state)
+        normalized = _normalize_resolution(fallback, user_text, task_state, is_fallback=True)
         _log_goal_resolver_decision(normalized, user_text, task_state, fallback_reason, fallback_error_type, fallback_error, enabled=log_diagnostic)
         return normalized
 
@@ -149,7 +149,7 @@ async def resolve_goal_for_turn(
 
     if resolver_goal is None:
         fallback_reason = fallback_reason or "invalid_structured_output"
-        normalized = _normalize_resolution(fallback, user_text, task_state)
+        normalized = _normalize_resolution(fallback, user_text, task_state, is_fallback=True)
         resolver_kind_hint = ""
     else:
         resolution = _to_goal_resolution(resolver_goal, task_state)
@@ -376,6 +376,8 @@ def _normalize_resolution(
     resolution: GoalResolution,
     user_text: str,
     task_state: TaskState,
+    *,
+    is_fallback: bool = False,
 ) -> GoalResolution:
     plan = resolution.plan
     if plan is not None:
@@ -386,7 +388,7 @@ def _normalize_resolution(
 
     if resolution.intent.type == TaskIntent.GENERAL:
         current_join = _current_active_join(task_state)
-        if current_join and task_state.current_goal is not None:
+        if current_join and task_state.current_goal is not None and is_fallback:
             return GoalResolution(
                 intent=IntentResolution(type=TaskIntent.CODING),
                 goal=task_state.current_goal,
@@ -402,7 +404,7 @@ def _normalize_resolution(
     goal = resolution.goal or GoalSpec(desc=user_text)
     if plan is None or not plan.join:
         current_join = _current_active_join(task_state)
-        if current_join and task_state.current_goal is not None and _is_short_continuation(user_text):
+        if current_join and task_state.current_goal is not None and is_fallback and _is_short_continuation(user_text):
             return GoalResolution(
                 intent=resolution.intent,
                 goal=task_state.current_goal,
