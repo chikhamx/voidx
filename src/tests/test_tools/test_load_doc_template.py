@@ -1,68 +1,164 @@
-"""Smoke tests for tool system — types, execution, error handling."""
+"""Tests for the built-in document knowledge-base tool."""
 
-import asyncio
-import json
-import logging
-import shlex
-import sys
+from __future__ import annotations
+
+import importlib.resources
 from pathlib import Path
-
 
 import pytest
 
-from langchain_core.messages import ToolMessage
-
-from voidx.agent.tool_messages import DEFAULT_TOOL_MESSAGE_MAX_CHARS
-from voidx.tools.base import ToolContext, ToolResult, BaseTool, UserInteraction, UserResponse
-from voidx.tools.file import FileReadInput, FileReadTool
-from voidx.tools.file.state import save_file_version
-import voidx.tools.file.state as file_state
-from voidx.tools.search import GlobInput, GrepInput
-from voidx.tools.bash import BashInput
-from voidx.tools.agent import AgentInput, AgentTool
-from voidx.tools.task_tracker import TaskTracker
-from voidx.tools.task_status import TaskStatusTool
-from voidx.tools.todo import TodoInput, TodoWriteTool
-from voidx.tools.registry import ToolRegistry
-from voidx.tools.clarify import ClarifyTool, ClarifyInput, _infer_state_patch
-from voidx.tools.skills import SkillsTool
-from voidx.tools.document import LoadDocTemplateTool, LoadDocTemplateInput
-from voidx.tools.checkpoint import PlanCheckpointTool
-from voidx.agent.task_state import GoalSpec, GoalResolution, IntentResolution, PlanResolution, ToolStatePatch
-from voidx.agent.runtime_context import TaskIntent
-from voidx.skills.context import SKILL_TOOL_CONTEXT_MARKER
-from voidx.workflow.runtime import WorkflowRunState, WorkflowRunStatus
-from voidx.workflow.types import WorkflowStateEventKind
-import voidx.memory.store as store
+from voidx.tools.base import ToolContext
+from voidx.tools.document import DocumentInput, DocumentTool
 
 
-class TestLoadDocTemplate:
-    @pytest.mark.asyncio
-    async def test_load_valid_template(self, tmp_path):
-        tool = LoadDocTemplateTool()
-        ctx = ToolContext(workspace=str(tmp_path))
-        for doc_type in ("prd", "tech-design", "rfc", "api-doc", "readme"):
-            result = await tool.execute({"doc_type": doc_type}, ctx)
-            assert result.title == f"Template: {doc_type}"
-            assert len(result.output) > 50
-            assert result.metadata["doc_type"] == doc_type
+class TestDocumentTool:
+    @pytest.fixture
+    def ctx(self, tmp_path: Path) -> ToolContext:
+        return ToolContext(workspace=str(tmp_path))
 
     @pytest.mark.asyncio
-    async def test_invalid_doc_type(self, tmp_path):
-        tool = LoadDocTemplateTool()
-        ctx = ToolContext(workspace=str(tmp_path))
-        result = await tool.execute({"doc_type": "nonexistent"}, ctx)
-        assert "Unknown doc_type" in result.output
-        assert "nonexistent" in result.output
+    async def test_list_root(self, ctx: ToolContext):
+        result = await DocumentTool().execute({"action": "list"}, ctx)
+
+        assert result.title == "Document index: /"
+        assert "templates/" in result.output
+        assert "voidx-guide/" in result.output
+        assert result.metadata == {
+            "action": "list",
+            "path": "",
+            "kind": "index",
+            "directory": "",
+        }
 
     @pytest.mark.asyncio
-    async def test_case_insensitive(self, tmp_path):
-        tool = LoadDocTemplateTool()
-        ctx = ToolContext(workspace=str(tmp_path))
-        result = await tool.execute({"doc_type": "PRD"}, ctx)
-        assert result.title == "Template: prd"
+    async def test_list_directory(self, ctx: ToolContext):
+        result = await DocumentTool().execute(
+            {"action": "list", "path": "voidx-guide"}, ctx
+        )
+
+        assert result.title == "Document index: voidx-guide"
+        assert "voidx-guide/quickstart.md" in result.output
+        assert "path | use_when | keywords" in result.output
+        assert result.metadata["directory"] == "voidx-guide"
 
     @pytest.mark.asyncio
-    async def test_input_schema(self):
-        schema = LoadDocTemplateInput.model_json_schema()
-        assert "doc_type" in schema["properties"]
+    async def test_list_rejects_file_path(self, ctx: ToolContext):
+        result = await DocumentTool().execute(
+            {"action": "list", "path": "voidx-guide/quickstart.md"}, ctx
+        )
+
+        assert result.metadata.get("error") is True
+        assert "list requires a directory path" in result.output
+
+    @pytest.mark.asyncio
+    async def test_read_template(self, ctx: ToolContext):
+        result = await DocumentTool().execute(
+            {"action": "read", "path": "templates/prd.md"}, ctx
+        )
+
+        assert result.title == "Document: templates/prd.md"
+        assert len(result.output) > 50
+        assert result.metadata == {
+            "action": "read",
+            "path": "templates/prd.md",
+            "kind": "document",
+            "directory": "templates",
+        }
+
+    @pytest.mark.asyncio
+    async def test_read_guide_section(self, ctx: ToolContext):
+        result = await DocumentTool().execute(
+            {"action": "read", "path": "voidx-guide/quickstart.md"}, ctx
+        )
+
+        assert result.title == "Document: voidx-guide/quickstart.md"
+        assert "快速上手" in result.output
+        assert "voidx -w /path/to/project" in result.output
+
+    @pytest.mark.asyncio
+    async def test_read_requires_path(self, ctx: ToolContext):
+        result = await DocumentTool().execute({"action": "read"}, ctx)
+
+        assert result.metadata.get("error") is True
+        assert "read requires path" in result.output
+
+    @pytest.mark.asyncio
+    async def test_read_requires_markdown_file(self, ctx: ToolContext):
+        result = await DocumentTool().execute(
+            {"action": "read", "path": "voidx-guide"}, ctx
+        )
+
+        assert result.metadata.get("error") is True
+        assert "read requires a .md file path" in result.output
+
+    @pytest.mark.asyncio
+    @pytest.mark.parametrize(
+        "path",
+        ["/tmp/a.md", "../secret.md", "a/../b.md", "a//b.md", "a/./b.md", "./a.md"],
+    )
+    async def test_rejects_unsafe_paths(self, ctx: ToolContext, path: str):
+        result = await DocumentTool().execute({"action": "read", "path": path}, ctx)
+
+        assert result.metadata.get("error") is True
+        assert "invalid path" in result.output
+
+    @pytest.mark.asyncio
+    async def test_reject_backslash(self, ctx: ToolContext):
+        result = await DocumentTool().execute(
+            {"action": "read", "path": r"voidx-guide\\quickstart.md"}, ctx
+        )
+
+        assert result.metadata.get("error") is True
+        assert "invalid path" in result.output
+
+    @pytest.mark.asyncio
+    async def test_missing_file_points_to_list(self, ctx: ToolContext):
+        result = await DocumentTool().execute(
+            {"action": "read", "path": "voidx-guide/missing.md"}, ctx
+        )
+
+        assert result.metadata.get("error") is True
+        assert "document(action=\"list\")" in result.output
+
+    def test_schema_no_doc_type(self):
+        schema = DocumentInput.model_json_schema()
+
+        assert "action" in schema["properties"]
+        assert "path" in schema["properties"]
+        assert "doc_type" not in schema["properties"]
+
+    @pytest.mark.asyncio
+    async def test_schema_forbids_extra_fields(self, ctx: ToolContext):
+        result = await DocumentTool().execute(
+            {"action": "read", "path": "templates/prd.md", "doc_type": "prd"}, ctx
+        )
+
+        assert result.metadata.get("error") is True
+        assert "Invalid arguments" in result.output
+
+    @pytest.mark.asyncio
+    async def test_old_doc_type_not_supported(self, ctx: ToolContext):
+        result = await DocumentTool().execute({"doc_type": "prd"}, ctx)
+
+        assert result.metadata.get("error") is True
+        assert "Invalid arguments" in result.output
+
+    def test_package_data_contains_documents(self):
+        root = importlib.resources.files("voidx.data").joinpath("documents")
+
+        assert root.joinpath("README.md").read_text(encoding="utf-8")
+        assert root.joinpath("templates/prd.md").read_text(encoding="utf-8")
+        assert root.joinpath("voidx-guide/quickstart.md").read_text(encoding="utf-8")
+
+    def test_all_docs_referenced_in_readme(self):
+        root = importlib.resources.files("voidx.data").joinpath("documents")
+        directories = [root.joinpath("templates"), root.joinpath("voidx-guide")]
+
+        for directory in directories:
+            readme = directory.joinpath("README.md").read_text(encoding="utf-8")
+            directory_name = directory.name
+            for ref in directory.iterdir():
+                if ref.name == "README.md" or ref.name.startswith("__"):
+                    continue
+                if ref.name.endswith(".md"):
+                    assert f"{directory_name}/{ref.name}" in readme

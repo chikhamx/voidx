@@ -23,7 +23,7 @@ from voidx.tools.compact import CompactContextTool
 from voidx.tools.web.fetch import WebFetchTool
 from voidx.tools.web.search import WebSearchTool
 from voidx.tools.skills import SkillsTool
-from voidx.tools.document import LoadDocTemplateTool
+from voidx.tools.document import DocumentTool
 from voidx.tools.agent import AgentTool
 from voidx.tools.git import GitTool
 
@@ -166,8 +166,8 @@ async def test_skills_invalid_args_returns_error():
 
 
 @pytest.mark.asyncio
-async def test_load_doc_template_invalid_args_returns_error():
-    result = await LoadDocTemplateTool().execute({"doc_type": 123}, _CTX)
+async def test_document_invalid_args_returns_error():
+    result = await DocumentTool().execute({"action": 123}, _CTX)
     assert isinstance(result, ToolResult)
     assert result.metadata.get("error") is True
 

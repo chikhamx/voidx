@@ -31,7 +31,7 @@ from voidx.ui.output.events import (
     ClarifyPromptShown,
 )
 from voidx.tools.skills import SkillsTool
-from voidx.tools.document import LoadDocTemplateTool, LoadDocTemplateInput
+from voidx.tools.document import DocumentTool, DocumentInput
 from voidx.tools.checkpoint import PlanCheckpointInput, PlanCheckpointTool, _build_prompt
 from voidx.ui.output.events import (
     CheckpointDecisionSubmitted,

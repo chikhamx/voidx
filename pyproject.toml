@@ -55,7 +55,7 @@ where = ["src"]
     "bundled/*/SKILL.md",
 ]
 "voidx.data" = [
-    "templates/*.md",
+    "documents/**/*.md",
 ]
 
 [tool.pytest.ini_options]

@@ -63,11 +63,11 @@ WRITING_DESIGN_DOCS = WorkflowNode(
     io=NodeIO(
         input={
             "design": "Approved design",
-            "doc_type": "Document type (prd/tech-design/rfc/api-doc/readme)",
+            "action": "Document tool action (list/read)",
         },
         output={
             "doc_path": "Document save path",
-            "doc_type": "Actual document type",
+            "action": "Actual document tool action",
         },
     ),
     tools=[

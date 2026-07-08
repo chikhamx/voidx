@@ -1,67 +1,135 @@
-"""Load a document template by type — used when writing structured docs."""
+"""Read voidx built-in documents."""
 
 from __future__ import annotations
 
 import importlib.resources
+from pathlib import PurePosixPath
+from typing import Literal
 
-from pydantic import BaseModel, Field
+from pydantic import BaseModel, ConfigDict, Field
 
 from voidx.tools.base import BaseTool, ToolContext, ToolResult, model_to_json_schema
 
-_VALID_DOC_TYPES = ("prd", "tech-design", "rfc", "api-doc", "readme")
-_PACKAGE = "voidx.data"
-_SUBDIR = "templates"
+_DOCUMENTS_PACKAGE = "voidx.data"
+_DOCUMENTS_ROOT = "documents"
 
 
-class LoadDocTemplateInput(BaseModel):
-    doc_type: str = Field(
-        description=(
-            "Document type to load a template for. "
-            f"One of: {', '.join(_VALID_DOC_TYPES)}."
-        ),
+class DocumentInput(BaseModel):
+    model_config = ConfigDict(extra="forbid")
+
+    action: Literal["list", "read"] = Field(
+        description="Action to perform: list a document directory index or read a Markdown document."
+    )
+    path: str | None = Field(
+        default=None,
+        description="POSIX-style relative path under the built-in documents root.",
     )
 
 
-class LoadDocTemplateTool(BaseTool):
+class DocumentTool(BaseTool):
     id = "document"
     description = (
-        "Load a document template by type. Use when you need to "
-        "write a structured document — design docs, RFCs, PRDs, "
-        "API docs, READMEs, or any post-implementation documentation. "
-        "Returns the template content with placeholders."
+        'Read voidx built-in documents only. Use action="list" to read a '
+        'directory README index. Use action="read" with a Markdown path to '
+        'load a specific document. This tool does not read user files, generate '
+        'documents, or search external sources. Start with document(action="list") '
+        'when unsure what is available.'
     )
 
     def parameters_schema(self) -> dict:
-        return model_to_json_schema(LoadDocTemplateInput)
+        return model_to_json_schema(DocumentInput)
 
     async def execute(self, args: dict, ctx: ToolContext) -> ToolResult:
         try:
-            inp = LoadDocTemplateInput.model_validate(args)
+            inp = DocumentInput.model_validate(args)
         except Exception as exc:
-            return ToolResult(output=f"Invalid arguments: {exc}", metadata={"error": True})
-        doc_type = inp.doc_type.strip().lower()
-        if doc_type not in _VALID_DOC_TYPES:
-            return ToolResult(
-                title="Invalid doc_type",
-                output=(
-                    f"Unknown doc_type '{inp.doc_type}'. "
-                    f"Valid types: {', '.join(_VALID_DOC_TYPES)}"
-                ),
-            )
-        filename = f"{doc_type}.md"
+            return _error(f"Invalid arguments: {exc}")
+
+        if inp.action == "list":
+            return self._list(inp.path)
+        return self._read(inp.path)
+
+    def _list(self, path: str | None) -> ToolResult:
+        if path and path.endswith(".md"):
+            return _error("list requires a directory path")
         try:
-            ref = importlib.resources.files(_PACKAGE).joinpath(
-                f"{_SUBDIR}/{filename}"
-            )
-            content = ref.read_text(encoding="utf-8")
-        except (FileNotFoundError, TypeError) as exc:
-            return ToolResult(
-                title="Template not found",
-                output=f"Template '{doc_type}' is not available: {exc}",
-            )
+            directory = _clean_relative_path(path) if path else ""
+        except ValueError:
+            return _error("invalid path")
+
+        readme_path = f"{directory}/README.md" if directory else "README.md"
+        try:
+            content = _read_document_resource(readme_path)
+        except FileNotFoundError:
+            hint = 'Try document(action="list") to see available directories.'
+            return _error(f"Document index not found: {directory or '/'} . {hint}")
+        except (IsADirectoryError, TypeError, ValueError) as exc:
+            return _error(f"Document index not available: {exc}")
+
+        title_path = directory or "/"
         return ToolResult(
-            title=f"Template: {doc_type}",
+            title=f"Document index: {title_path}",
             output=content,
-            summary=f"template: {doc_type}",
-            metadata={"doc_type": doc_type},
+            summary=f"document index: {title_path}",
+            metadata={
+                "action": "list",
+                "path": directory,
+                "kind": "index",
+                "directory": directory,
+            },
         )
+
+    def _read(self, path: str | None) -> ToolResult:
+        if not path:
+            return _error("read requires path")
+        if not path.endswith(".md"):
+            return _error("read requires a .md file path")
+        try:
+            safe_path = _clean_relative_path(path)
+        except ValueError:
+            return _error("invalid path")
+
+        try:
+            content = _read_document_resource(safe_path)
+        except FileNotFoundError:
+            return _error(
+                'Document not found. Try document(action="list") or '
+                'document(action="list", path="<dir>") first.'
+            )
+        except (IsADirectoryError, TypeError, ValueError) as exc:
+            return _error(f"Document not available: {exc}")
+
+        directory = str(PurePosixPath(safe_path).parent)
+        if directory == ".":
+            directory = ""
+        return ToolResult(
+            title=f"Document: {safe_path}",
+            output=content,
+            summary=f"document: {safe_path}",
+            metadata={
+                "action": "read",
+                "path": safe_path,
+                "kind": "document",
+                "directory": directory,
+            },
+        )
+
+
+def _clean_relative_path(path: str) -> str:
+    if not path or path.startswith("/") or "\\" in path:
+        raise ValueError("invalid path")
+    if any(part in ("", ".", "..") for part in path.split("/")):
+        raise ValueError("invalid path")
+    rel = PurePosixPath(path)
+    if rel.is_absolute():
+        raise ValueError("invalid path")
+    return rel.as_posix()
+
+
+def _read_document_resource(path: str) -> str:
+    ref = importlib.resources.files(_DOCUMENTS_PACKAGE).joinpath(_DOCUMENTS_ROOT, path)
+    return ref.read_text(encoding="utf-8")
+
+
+def _error(output: str) -> ToolResult:
+    return ToolResult(output=output, metadata={"error": True})

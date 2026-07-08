@@ -32,7 +32,7 @@ from voidx.tools.todo import TodoInput, TodoWriteTool
 from voidx.tools.registry import ToolRegistry
 from voidx.tools.clarify import ClarifyTool, ClarifyInput, _infer_state_patch
 from voidx.tools.skills import SkillsTool
-from voidx.tools.document import LoadDocTemplateTool, LoadDocTemplateInput
+from voidx.tools.document import DocumentTool, DocumentInput
 from voidx.tools.checkpoint import PlanCheckpointTool
 from voidx.agent.task_state import GoalSpec, GoalResolution, IntentResolution, PlanResolution, ToolStatePatch
 from voidx.agent.runtime_context import TaskIntent
