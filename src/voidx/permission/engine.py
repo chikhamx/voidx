@@ -12,6 +12,7 @@ from voidx.permission.rules import (
     build_pattern,
     classify_tool_call,
     delegated_agent,
+    file_paths_for_tool,
     is_safe_bash,
     repair_tool_name,
     tool_call_from_pattern,
@@ -71,13 +72,14 @@ def sandbox_denial_reason(classified: ClassifiedToolCall, context: PermissionCon
 
     if context.sandbox_mode == "workspace-write":
         if classified.capability in {PermissionCapability.FILE_WRITE, PermissionCapability.FILE_FORMAT}:
-            file_path = classified.args.get("file_path", "")
-            if file_path:
-                return check_sandbox_filepath(
+            for file_path in file_paths_for_tool(classified.name, classified.args):
+                reason = check_sandbox_filepath(
                     file_path,
                     context.workspace,
                     list(context.sandbox_workspace_write),
                 )
+                if reason:
+                    return reason
         if classified.name == "bash":
             command = classified.args.get("command", "")
             if command:
@@ -128,7 +130,7 @@ def strategy_action_for_tool(classified: ClassifiedToolCall, context: Permission
         return "allow"
     if classified.capability in {PermissionCapability.BASH_READ, PermissionCapability.GIT_READ}:
         return "allow"
-    permission = "edit" if classified.name in {"file", "write", "replace"} else classified.name
+    permission = "edit" if classified.name in {"file", "manage", "write", "replace"} else classified.name
     return evaluate(permission, classified.pattern, BASIC_RULES).action
 
 
@@ -157,7 +159,7 @@ def resolve_approval(classified: ClassifiedToolCall, context: PermissionContext)
 
 
 def _session_rule_matches(tool: str, rule: str) -> bool:
-    if rule == "edit" and tool in {"file", "write", "replace"}:
+    if rule == "edit" and tool in {"file", "manage", "write", "replace"}:
         return True
     if wildcard_match(tool, rule):
         return True

@@ -29,7 +29,7 @@ class TestFileTool:
         created = await r.execute_tool("file", {"file_path": "new.txt", "op": "create"}, ctx)
         inserted = await r.execute_tool(
             "write",
-            {"file_path": "new.txt", "op": "insert", "lineno": 0, "new_string": "hello\n"},
+            {"file_path": "new.txt", "op": "insert", "lineno": 1, "new_string": "hello\n"},
             ctx,
         )
 
@@ -56,6 +56,7 @@ class TestFileTool:
         ctx = ToolContext(workspace=str(tmp_path), session_id="sid-1")
         r = ToolRegistry()
 
+        await r.execute_tool("read", {"file_path": "existing.txt"}, ctx)
         result = await r.execute_tool(
             "file", {"file_path": "existing.txt", "op": "create", "overwrite": True}, ctx
         )
@@ -141,13 +142,13 @@ class TestWriteTool:
 
         blocked = await r.execute_tool(
             "write",
-            {"file_path": "target.txt", "op": "insert", "lineno": 0, "new_string": "zero\n"},
+            {"file_path": "target.txt", "op": "insert", "lineno": 1, "new_string": "zero\n"},
             ctx,
         )
         await r.execute_tool("read", {"file_path": "target.txt", "offset": 1, "limit": 1}, ctx)
         inserted = await r.execute_tool(
             "write",
-            {"file_path": "target.txt", "op": "insert", "lineno": 0, "new_string": "zero\n"},
+            {"file_path": "target.txt", "op": "insert", "lineno": 1, "new_string": "zero\n"},
             ctx,
         )
 
@@ -289,11 +290,11 @@ class TestWriteAppendOp:
         assert result.metadata.get("error") is True
 
 
-class TestWriteInsert0Based:
-    """Tests for insert lineno 0-based (insert-before) semantics."""
+class TestWriteInsert1Based:
+    """Tests for insert lineno 1-based insert-before semantics."""
 
     @pytest.mark.asyncio
-    async def test_insert_lineno0_at_bof(self, tmp_path):
+    async def test_insert_lineno1_at_bof(self, tmp_path):
         target = tmp_path / "bof.txt"
         target.write_text("one\ntwo\n", encoding="utf-8")
         ctx = ToolContext(workspace=str(tmp_path))
@@ -302,7 +303,7 @@ class TestWriteInsert0Based:
 
         result = await r.execute_tool(
             "write",
-            {"file_path": "bof.txt", "op": "insert", "lineno": 0, "new_string": "zero\n"},
+            {"file_path": "bof.txt", "op": "insert", "lineno": 1, "new_string": "zero\n"},
             ctx,
         )
 
@@ -310,8 +311,8 @@ class TestWriteInsert0Based:
         assert target.read_text(encoding="utf-8") == "zero\none\ntwo\n"
 
     @pytest.mark.asyncio
-    async def test_insert_lineno1_before_first_line(self, tmp_path):
-        """lineno=1 means insert before line 1 (0-based), i.e. between line 1 and line 2 in 1-based."""
+    async def test_insert_lineno2_before_second_line(self, tmp_path):
+        """lineno=2 means insert before line 2, between the first and second lines."""
         target = tmp_path / "mid.txt"
         target.write_text("aaa\nbbb\n", encoding="utf-8")
         ctx = ToolContext(workspace=str(tmp_path))
@@ -320,7 +321,7 @@ class TestWriteInsert0Based:
 
         result = await r.execute_tool(
             "write",
-            {"file_path": "mid.txt", "op": "insert", "lineno": 1, "new_string": "inserted\n"},
+            {"file_path": "mid.txt", "op": "insert", "lineno": 2, "new_string": "inserted\n"},
             ctx,
         )
 
@@ -328,8 +329,8 @@ class TestWriteInsert0Based:
         assert target.read_text(encoding="utf-8") == "aaa\ninserted\nbbb\n"
 
     @pytest.mark.asyncio
-    async def test_insert_lineno_total_lines_no_coverage_needed(self, tmp_path):
-        """lineno=total_lines is append position, no read coverage required."""
+    async def test_insert_lineno_total_lines_plus_one_no_coverage_needed(self, tmp_path):
+        """lineno=total_lines+1 is append position, no read coverage required."""
         target = tmp_path / "end.txt"
         target.write_text("one\ntwo\n", encoding="utf-8")
         ctx = ToolContext(workspace=str(tmp_path))
@@ -338,7 +339,7 @@ class TestWriteInsert0Based:
 
         result = await r.execute_tool(
             "write",
-            {"file_path": "end.txt", "op": "insert", "lineno": 2, "new_string": "three\n"},
+            {"file_path": "end.txt", "op": "insert", "lineno": 3, "new_string": "three\n"},
             ctx,
         )
 

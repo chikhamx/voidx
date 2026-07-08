@@ -136,7 +136,7 @@ class TestFileOps:
 
         result = await r.execute_tool(
             "write",
-            {"file_path": "insert-paragraph-correct.py", "op": "insert", "lineno": 3, "new_string": "after target\n"},
+            {"file_path": "insert-paragraph-correct.py", "op": "insert", "lineno": 4, "new_string": "after target\n"},
             ctx,
         )
 
@@ -197,7 +197,7 @@ class TestFileOps:
 
         inserted = await r.execute_tool(
             "write",
-            {"file_path": "shift.txt", "op": "insert", "lineno": 0, "new_string": "zero\n"},
+            {"file_path": "shift.txt", "op": "insert", "lineno": 1, "new_string": "zero\n"},
             ctx,
         )
         deleted = await r.execute_tool(

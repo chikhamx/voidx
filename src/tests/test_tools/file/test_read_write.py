@@ -184,7 +184,7 @@ class TestFileOps:
         await r.execute_tool("file", {"file_path": "out.txt", "op": "create"}, ctx)
         result = await r.execute_tool(
             "write",
-            {"file_path": "out.txt", "op": "insert", "lineno": 0, "new_string": "hello"},
+            {"file_path": "out.txt", "op": "insert", "lineno": 1, "new_string": "hello"},
             ctx,
         )
         assert result.metadata.get("error") is not True
@@ -199,7 +199,7 @@ class TestFileOps:
         await r.execute_tool("file", {"file_path": "out.txt", "op": "create", "overwrite": True}, ctx)
         result = await r.execute_tool(
             "write",
-            {"file_path": "out.txt", "op": "insert", "lineno": 0, "new_string": "new"},
+            {"file_path": "out.txt", "op": "insert", "lineno": 1, "new_string": "new"},
             ctx,
         )
         assert result.metadata.get("error") is not True
@@ -213,7 +213,7 @@ class TestFileOps:
         await r.execute_tool("file", {"file_path": "exactly-200.txt", "op": "create"}, ctx)
         await r.execute_tool(
             "write",
-            {"file_path": "exactly-200.txt", "op": "insert", "lineno": 0, "new_string": exactly_200_with_final_newline},
+            {"file_path": "exactly-200.txt", "op": "insert", "lineno": 1, "new_string": exactly_200_with_final_newline},
             ctx,
         )
 
@@ -295,7 +295,7 @@ class TestFileOps:
 
         await r.execute_tool(
             "write",
-            {"file_path": "insert.txt", "op": "insert", "lineno": 0, "new_string": "top\n"},
+            {"file_path": "insert.txt", "op": "insert", "lineno": 1, "new_string": "top\n"},
             ctx,
         )
         result = await r.execute_tool(

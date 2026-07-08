@@ -37,6 +37,7 @@ BASIC_RULES: Ruleset = [
     Rule(permission="workflow", pattern="*", action="allow"),
     Rule(permission="compact", pattern="*", action="allow"),
     Rule(permission="task_status", pattern="*", action="allow"),
+    Rule(permission="document", pattern="*", action="allow"),
     Rule(permission="skill", pattern="*", action="allow"),
     Rule(permission="skill", pattern="create", action="ask"),
     Rule(permission="lsp", pattern="*", action="allow"),
@@ -84,6 +85,8 @@ def tool_call_from_pattern(tool: str, pattern: str = "*") -> dict:
         args = {"command": pattern}
     elif name == "agent":
         args = {"agent": pattern}
+    elif name == "manage":
+        args = {"op": "create", "paths": pattern}
     elif name in _FILE_PATTERN_TOOLS:
         args = {"file_path": pattern}
     else:
@@ -113,8 +116,9 @@ def repair_tool_name(tool: str) -> str:
 def build_pattern(tool: str, args: dict) -> str:
     if tool == "bash" or tool == "powershell":
         return str(args.get("command", "*"))
-    if tool in _FILE_PATTERN_TOOLS:
-        return str(args.get("file_path", "*"))
+    paths = file_paths_for_tool(tool, args)
+    if paths:
+        return paths[0] if len(paths) == 1 else " | ".join(paths)
     if tool == "agent":
         persona = delegated_persona(args)
         if persona == "implement" or (not persona and delegated_agent(args) == "implement"):
@@ -278,11 +282,21 @@ def _is_safe_bash_segment(words: list[str]) -> bool:
     if prog in ("pip", "pip3") and args:
         return args[0] in ("list", "show", "freeze", "config", "cache")
     if prog in ("npm", "npx") and args:
-        return args[0] in ("list", "ls", "view", "info", "outdated")
+        return args[0] in ("list", "ls", "view", "info", "outdated", "test", "run", "run-script", "exec")
     if prog == "cargo" and args:
-        return args[0] in ("search", "doc", "readme")
+        return args[0] in ("search", "doc", "readme", "test", "build", "check", "clippy", "fmt")
     if prog == "go" and args:
-        return args[0] in ("list", "doc", "version", "env")
+        return args[0] in ("list", "doc", "version", "env", "test", "build", "vet")
+    if prog in ("python", "python3") and len(args) >= 2 and args[0] == "-m":
+        safe_modules = {
+            "pytest", "unittest", "mypy", "ruff", "flake8", "pyright",
+            "pylint", "black", "isort", "coverage",
+        }
+        return args[1] in safe_modules
+    if prog == "make":
+        return True
+    if prog in {"ruff", "mypy", "flake8", "pylint", "pyright", "eslint", "tsc", "prettier"}:
+        return True
 
     return False
 
@@ -365,6 +379,7 @@ def _is_read_only_git_ref_command(subcommand: str, args: list[str]) -> bool:
 def capability_for_tool(tool: str, args: dict) -> PermissionCapability:
     if tool in {
         "read", "glob", "grep", "webfetch", "websearch", "todo", "task_status",
+        "document",
         "workflow", "compact",
         "lsp",
     }:
@@ -373,7 +388,7 @@ def capability_for_tool(tool: str, args: dict) -> PermissionCapability:
         if args.get("op") == "create":
             return PermissionCapability.FILE_WRITE
         return PermissionCapability.READ_TOOLS
-    if tool in {"file", "write", "replace"}:
+    if tool in {"file", "manage", "write", "replace"}:
         return PermissionCapability.FILE_WRITE
     if tool == "bash":
         return PermissionCapability.BASH_READ if is_safe_bash(str(args.get("command", ""))) else PermissionCapability.BASH_WRITE
@@ -388,6 +403,34 @@ def capability_for_tool(tool: str, args: dict) -> PermissionCapability:
     if tool.startswith("mcp__") or tool.startswith("mcp/"):
         return PermissionCapability.MCP_TOOLS
     return PermissionCapability.OTHER
+
+
+def file_paths_for_tool(tool: str, args: dict) -> list[str]:
+    if tool in _FILE_PATTERN_TOOLS:
+        file_path = args.get("file_path")
+        return [str(file_path)] if file_path else []
+    if tool != "manage":
+        return []
+
+    op = str(args.get("op") or "")
+    if op in {"create", "delete"}:
+        paths = args.get("paths")
+        if isinstance(paths, list):
+            return [str(path) for path in paths if path]
+        return [str(paths)] if paths else []
+    if op == "move":
+        paths: list[str] = []
+        moves = args.get("moves")
+        if isinstance(moves, list):
+            for move in moves:
+                if not isinstance(move, dict):
+                    continue
+                for key in ("src", "dest"):
+                    value = move.get(key)
+                    if value:
+                        paths.append(str(value))
+        return paths
+    return []
 
 
 _FILE_PATTERN_TOOLS = {

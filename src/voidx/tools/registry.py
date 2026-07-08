@@ -5,7 +5,7 @@ from __future__ import annotations
 from pydantic import BaseModel, ConfigDict
 
 from voidx.tools.base import ToolContext, ToolResult  # noqa: F401 — re-export
-from voidx.tools.file import FileReadTool, FileTool, WriteTool, FileReplaceTool
+from voidx.tools.file import FileReadTool, FileTool, ManageTool, WriteTool, FileReplaceTool
 from voidx.tools.git import GitTool
 from voidx.tools.lsp import LspTool
 from voidx.tools.search import GlobTool, GrepTool
@@ -18,7 +18,7 @@ from voidx.tools.clarify import ClarifyTool
 from voidx.tools.checkpoint import PlanCheckpointTool
 from voidx.tools.workflow import WorkflowTool
 from voidx.tools.compact import CompactContextTool
-from voidx.tools.document import LoadDocTemplateTool
+from voidx.tools.document import DocumentTool
 
 
 class ToolDef(BaseModel):
@@ -42,11 +42,11 @@ class ToolRegistry:
 
     def _register_builtins(self) -> None:
         for cls in [
-            FileReadTool, FileTool, WriteTool, FileReplaceTool,
+            FileReadTool, ManageTool, FileTool, WriteTool, FileReplaceTool,
             GitTool,
             GlobTool, GrepTool,
             LspTool,
-            ClarifyTool, PlanCheckpointTool, WorkflowTool, CompactContextTool, LoadDocTemplateTool,
+            ClarifyTool, PlanCheckpointTool, WorkflowTool, CompactContextTool, DocumentTool,
         ]:
             instance = cls()
             self.register(instance.id, instance, instance.description, instance.parameters_schema())

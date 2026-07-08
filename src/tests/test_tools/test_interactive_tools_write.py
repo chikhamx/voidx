@@ -26,7 +26,7 @@ from voidx.tools.todo import TodoInput, TodoWriteTool
 from voidx.tools.registry import ToolRegistry
 from voidx.tools.clarify import ClarifyTool, ClarifyInput, _infer_state_patch
 from voidx.tools.skills import SkillsTool
-from voidx.tools.document import LoadDocTemplateTool, LoadDocTemplateInput
+from voidx.tools.document import DocumentTool, DocumentInput
 from voidx.tools.checkpoint import PlanCheckpointTool
 from voidx.agent.task_state import GoalSpec, GoalResolution, IntentResolution, PlanResolution, ToolStatePatch
 from voidx.agent.runtime_context import TaskIntent
@@ -44,6 +44,7 @@ class TestInteractiveTools:
         target.write_text("old\n", encoding="utf-8")
 
         ctx = ToolContext(workspace=str(tmp_path), session_id="sid-1")
+        await FileReadTool().execute({"file_path": "app.py"}, ctx)
         result = await FileTool().execute(
             {"file_path": "app.py", "op": "create", "overwrite": True},
             ctx,

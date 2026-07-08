@@ -266,7 +266,7 @@ def test_permission_service_mode_presets_update_sandbox_and_approval():
     assert service.decide("file", "src/app.py") == "allow"
     assert service.decide("write", "src/app.py") == "allow"
     assert service.decide("replace", "src/app.py") == "allow"
-    assert service.decide("bash", "python -m pytest") == "ask"
+    assert service.decide("bash", "pip install requests") == "ask"
 
     service.set_permission_mode("full-access")
     assert service.sandbox_mode == "danger-full-access"
@@ -278,11 +278,12 @@ def test_permission_service_mode_presets_update_sandbox_and_approval():
 def test_permission_engine_classifies_basic_capabilities():
     assert classify_tool_call({"name": "read", "args": {"file_path": "x.py"}}).capability == PermissionCapability.READ_TOOLS
     assert classify_tool_call({"name": "file", "args": {"file_path": "x.py"}}).capability == PermissionCapability.FILE_WRITE
+    assert classify_tool_call({"name": "manage", "args": {"op": "create", "paths": "x.py"}}).capability == PermissionCapability.FILE_WRITE
     assert classify_tool_call({"name": "write", "args": {"file_path": "x.py"}}).capability == PermissionCapability.FILE_WRITE
     assert classify_tool_call({"name": "replace", "args": {"file_path": "x.py"}}).capability == PermissionCapability.FILE_WRITE
     assert classify_tool_call({"name": "bash", "args": {"command": "ls"}}).capability == PermissionCapability.BASH_READ
     assert classify_tool_call({"name": "bash", "args": {"command": "ls | sort | head"}}).capability == PermissionCapability.BASH_READ
-    assert classify_tool_call({"name": "bash", "args": {"command": "python -m pytest"}}).capability == PermissionCapability.BASH_WRITE
+    assert classify_tool_call({"name": "bash", "args": {"command": "pip install requests"}}).capability == PermissionCapability.BASH_WRITE
     assert classify_tool_call({"name": "bash", "args": {"command": "echo hi>out.txt"}}).capability == PermissionCapability.BASH_WRITE
     assert classify_tool_call({"name": "bash", "args": {"command": "grep foo a.txt | xargs rm"}}).capability == PermissionCapability.BASH_WRITE
     assert classify_tool_call({"name": "bash", "args": {"command": "find . -delete"}}).capability == PermissionCapability.BASH_WRITE
@@ -316,7 +317,7 @@ def test_permission_engine_default_strategy_and_plan_overlay(tmp_path):
 
     plan = PermissionContext(workspace=str(tmp_path), interaction_mode="plan")
     safe_bash = authorize_tool_call({"name": "bash", "args": {"command": "ls"}}, plan)
-    unsafe_bash = authorize_tool_call({"name": "bash", "args": {"command": "python -m pytest"}}, plan)
+    unsafe_bash = authorize_tool_call({"name": "bash", "args": {"command": "pip install requests"}}, plan)
     git_read = authorize_tool_call({"name": "git", "args": {"args": "diff"}}, plan)
     git_write = authorize_tool_call({"name": "git", "args": {"args": "restore"}}, plan)
     edit = authorize_tool_call({"name": "write", "args": {"file_path": "x.py"}}, plan)
@@ -352,11 +353,11 @@ def test_permission_engine_policy_presets(tmp_path):
     assert authorize_tool_call({"name": "file", "args": {"file_path": "x.py"}}, accept_edits).action == "allow"
     assert authorize_tool_call({"name": "write", "args": {"file_path": "x.py"}}, accept_edits).action == "allow"
     assert authorize_tool_call({"name": "replace", "args": {"file_path": "x.py"}}, accept_edits).action == "allow"
-    assert authorize_tool_call({"name": "bash", "args": {"command": "python -m pytest"}}, accept_edits).action == "ask"
+    assert authorize_tool_call({"name": "bash", "args": {"command": "pip install requests"}}, accept_edits).action == "ask"
     assert authorize_tool_call({"name": "bash", "args": {"command": "python -m pytest"}}, full_access).action == "allow"
 
     edit = authorize_tool_call({"name": "file", "args": {"file_path": "x.py"}}, on_failure)
-    bash = authorize_tool_call({"name": "bash", "args": {"command": "python -m pytest"}}, on_failure)
+    bash = authorize_tool_call({"name": "bash", "args": {"command": "pip install requests"}}, on_failure)
 
     assert edit.action == "allow"
     assert edit.failure_check is True
@@ -369,10 +370,54 @@ def test_permission_engine_read_only_sandbox_allows_read_bash_but_blocks_writes(
     assert authorize_tool_call({"name": "bash", "args": {"command": "ls"}}, context).action == "allow"
     assert authorize_tool_call({"name": "git", "args": {"args": "status"}}, context).action == "allow"
     assert authorize_tool_call({"name": "git", "args": {"args": "commit"}}, context).action == "deny"
-    assert authorize_tool_call({"name": "bash", "args": {"command": "python -m pytest"}}, context).action == "deny"
+    assert authorize_tool_call({"name": "bash", "args": {"command": "pip install requests"}}, context).action == "deny"
     assert authorize_tool_call({"name": "file", "args": {"file_path": "x.py"}}, context).action == "deny"
     assert authorize_tool_call({"name": "write", "args": {"file_path": "x.py"}}, context).action == "deny"
     assert authorize_tool_call({"name": "replace", "args": {"file_path": "x.py"}}, context).action == "deny"
+
+
+def test_permission_engine_blocks_manage_in_read_only_sandbox(tmp_path):
+    context = PermissionContext(workspace=str(tmp_path), sandbox_mode="read-only")
+
+    assert authorize_tool_call({"name": "manage", "args": {"op": "create", "paths": "x.py"}}, context).action == "deny"
+    assert authorize_tool_call({"name": "manage", "args": {"op": "delete", "paths": ["x.py"]}}, context).action == "deny"
+    assert authorize_tool_call(
+        {"name": "manage", "args": {"op": "move", "moves": [{"src": "x.py", "dest": "y.py"}]}},
+        context,
+    ).action == "deny"
+
+
+def test_permission_engine_workspace_write_checks_manage_paths(tmp_path):
+    workspace = tmp_path / "workspace"
+    outside = tmp_path / "outside"
+    workspace.mkdir()
+    outside.mkdir()
+    context = PermissionContext(workspace=str(workspace), sandbox_mode="workspace-write")
+
+    inside = authorize_tool_call({"name": "manage", "args": {"op": "create", "paths": "safe.py"}}, context)
+    create_outside = authorize_tool_call({"name": "manage", "args": {"op": "create", "paths": str(outside / "x.py")}}, context)
+    create_batch_outside = authorize_tool_call(
+        {"name": "manage", "args": {"op": "create", "paths": ["safe.py", str(outside / "batch.py")]}},
+        context,
+    )
+    move_src_outside = authorize_tool_call(
+        {"name": "manage", "args": {"op": "move", "moves": [{"src": str(outside / "x.py"), "dest": "safe.py"}]}},
+        context,
+    )
+    move_dest_outside = authorize_tool_call(
+        {"name": "manage", "args": {"op": "move", "moves": [{"src": "safe.py", "dest": str(outside / "x.py")}]}},
+        context,
+    )
+
+    assert inside.action != "deny"
+    assert create_outside.action == "deny"
+    assert "outside the allowed workspace" in create_outside.reason
+    assert create_batch_outside.action == "deny"
+    assert "outside the allowed workspace" in create_batch_outside.reason
+    assert move_src_outside.action == "deny"
+    assert "outside the allowed workspace" in move_src_outside.reason
+    assert move_dest_outside.action == "deny"
+    assert "outside the allowed workspace" in move_dest_outside.reason
 
 
 def test_sandbox_bash_tracks_cd_before_relative_write(tmp_path):

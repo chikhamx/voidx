@@ -23,12 +23,12 @@ class TestFileOpsLineInsert:
 
         result = await r.execute_tool(
             "write",
-            {"file_path": "insert-tool.txt", "op": "insert", "lineno": 1, "new_string": "middle\n"},
+            {"file_path": "insert-tool.txt", "op": "insert", "lineno": 2, "new_string": "middle\n"},
             ctx,
         )
 
         assert result.metadata.get("error") is not True
-        # 0-based insert-before: lineno=1 means insert before line 2 (1-based)
+        # 1-based insert-before: lineno=2 means insert before line 2.
         assert (tmp_path / "insert-tool.txt").read_text() == "one\nmiddle\ntwo\n"
 
     @pytest.mark.asyncio
@@ -40,7 +40,7 @@ class TestFileOpsLineInsert:
 
         result = await r.execute_tool(
             "write",
-            {"file_path": "insert-unread.txt", "op": "insert", "lineno": 1, "new_string": "middle\n"},
+            {"file_path": "insert-unread.txt", "op": "insert", "lineno": 2, "new_string": "middle\n"},
             ctx,
         )
 
@@ -58,7 +58,7 @@ class TestFileOpsLineInsert:
 
         result = await r.execute_tool(
             "write",
-            {"file_path": "insert-bof.txt", "op": "insert", "lineno": 0, "new_string": "zero\n"},
+            {"file_path": "insert-bof.txt", "op": "insert", "lineno": 1, "new_string": "zero\n"},
             ctx,
         )
 
@@ -132,7 +132,7 @@ class TestFileOpsLineInsert:
         assert "insert" in result.output.lower() or "line" in result.output.lower()
 
     @pytest.mark.asyncio
-    async def test_line_insert_into_empty_file_at_lineno_0(self, tmp_path):
+    async def test_line_insert_into_empty_file_at_lineno_1(self, tmp_path):
         f = tmp_path / "empty.txt"
         f.write_text("")
         ctx = ToolContext(workspace=str(tmp_path))
@@ -140,7 +140,7 @@ class TestFileOpsLineInsert:
 
         result = await r.execute_tool(
             "write",
-            {"file_path": "empty.txt", "op": "insert", "lineno": 0, "new_string": "first\n"},
+            {"file_path": "empty.txt", "op": "insert", "lineno": 1, "new_string": "first\n"},
             ctx,
         )
 
@@ -157,7 +157,7 @@ class TestFileOpsLineInsert:
 
         result = await r.execute_tool(
             "write",
-            {"file_path": "end.txt", "op": "insert", "lineno": 2, "new_string": "three\n"},
+            {"file_path": "end.txt", "op": "insert", "lineno": 3, "new_string": "three\n"},
             ctx,
         )
 

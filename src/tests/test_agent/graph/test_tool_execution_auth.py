@@ -158,7 +158,7 @@ async def test_graph_on_failure_still_asks_for_unsafe_bash(tmp_path):
 
     graph._ask_tool_permission = deny
     approved, denied = await graph._authorize_tool_calls(
-        [{"name": "bash", "args": {"command": "python -m pytest"}, "id": "call_1"}],
+        [{"name": "bash", "args": {"command": "pip install requests"}, "id": "call_1"}],
         plan_mode=False,
         session_id="test",
     )
