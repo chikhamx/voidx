@@ -90,6 +90,34 @@ async def test_goal_resolver_uses_structured_llm_result():
     assert all("title_requested" not in message.content for message in model.messages[1:])
 
 
+
+def test_goal_resolver_prompt_has_strict_workflow_selection_rules():
+    model = StructuredModel(ResolverGoal(intent="coding", goal="review code", workflow="review"))
+
+    # Build messages through the public resolver path so the test covers the actual prompt.
+    import asyncio
+
+    result = asyncio.run(
+        resolve_goal_for_turn(
+            model=model,
+            user_text="review一下代码实现",
+            interaction_mode="auto",
+            task_state=TaskState(),
+            log_diagnostic=False,
+        )
+    )
+
+    assert result.intent.type == TaskIntent.CODING
+    prompt = model.messages[0].content
+    assert "## Workflow Selection Rules" in prompt
+    assert "workflow is null by default" in prompt
+    assert "Only set workflow when this turn must enter a workflow gate" in prompt
+    assert "Do not set workflow for read-only inspection" in prompt
+    assert "If an active workflow already covers the request" in prompt
+    assert "debug: Set only for actual bugs, crashes, failing tests, tracebacks, or unexpected behavior requiring root-cause investigation." in prompt
+    assert "review: Set only when the user asks to review code, design, implementation, or changes." in prompt
+    assert "verify: Set only when the user asks to prove something is passing, fixed, complete, or safe." in prompt
+
 def test_goal_resolution_schema_excludes_removed_fields():
     properties = GoalResolution.model_json_schema()["properties"]
 
