@@ -2,7 +2,7 @@
 
 Date: 2026-07-08
 
-> **Status: Spec** — 等待实现。
+> **Status: Done** — 等待实现。
 
 ## 背景
 
