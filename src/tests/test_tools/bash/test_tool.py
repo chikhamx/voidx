@@ -15,9 +15,9 @@ from langchain_core.messages import ToolMessage
 
 from voidx.agent.tool_messages import DEFAULT_TOOL_MESSAGE_MAX_CHARS
 from voidx.tools.base import ToolContext, ToolResult, BaseTool, UserInteraction, UserResponse
-from voidx.tools.file_ops import FileReadInput, FileReadTool
-from voidx.tools.file_state import save_file_version
-import voidx.tools.file_state as file_state
+from voidx.tools.file import FileReadInput, FileReadTool
+from voidx.tools.file.state import save_file_version
+import voidx.tools.file.state as file_state
 from voidx.tools.search import GlobInput, GrepInput
 from voidx.tools.bash import BashInput
 from voidx.tools.agent import AgentInput, AgentTool
@@ -26,9 +26,9 @@ from voidx.tools.task_status import TaskStatusTool
 from voidx.tools.todo import TodoInput, TodoWriteTool
 from voidx.tools.registry import ToolRegistry
 from voidx.tools.clarify import ClarifyTool, ClarifyInput, _infer_state_patch
-from voidx.tools.load_skills import LoadSkillsTool
-from voidx.tools.load_doc_template import LoadDocTemplateTool, LoadDocTemplateInput
-from voidx.tools.plan_checkpoint import PlanCheckpointTool
+from voidx.tools.skills import SkillsTool
+from voidx.tools.document import LoadDocTemplateTool, LoadDocTemplateInput
+from voidx.tools.checkpoint import PlanCheckpointTool
 from voidx.agent.task_state import GoalSpec, GoalResolution, IntentResolution, PlanResolution, ToolStatePatch
 from voidx.agent.runtime_context import TaskIntent
 from voidx.skills.context import SKILL_TOOL_CONTEXT_MARKER

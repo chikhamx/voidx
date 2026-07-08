@@ -16,10 +16,10 @@ from voidx.tools.skills import SkillsTool
 from voidx.tools.webfetch import WebFetchTool
 from voidx.tools.websearch import WebSearchTool
 from voidx.tools.clarify import ClarifyTool
-from voidx.tools.plan_checkpoint import PlanCheckpointTool
+from voidx.tools.checkpoint import PlanCheckpointTool
 from voidx.tools.workflow import WorkflowTool
-from voidx.tools.compact_context import CompactContextTool
-from voidx.tools.load_doc_template import LoadDocTemplateTool
+from voidx.tools.compact import CompactContextTool
+from voidx.tools.document import LoadDocTemplateTool
 
 
 class ToolDef(BaseModel):
