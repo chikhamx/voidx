@@ -154,6 +154,13 @@ class VoidXGraph(
         state = current_thread_execution_state()
         if state is not None:
             state.task_state = value
+            default_session = getattr(self, "_default_session", None)
+            if (
+                state.session is None
+                or default_session is None
+                or state.session.id == default_session.id
+            ):
+                self._default_task_state = value
         else:
             self._default_task_state = value
 

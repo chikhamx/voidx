@@ -261,6 +261,104 @@ async def test_run_once_loads_execution_context_runtime_state(tmp_path):
         await delete_session(active.id)
         await delete_session(target.id)
 
+
+@pytest.mark.asyncio
+async def test_run_once_model_enabled_first_turn_syncs_default_task_state(tmp_path):
+    from voidx.agent.runtime_context import InteractionMode
+
+    graph = VoidXGraph(Config(workspace=str(tmp_path)), api_key="test", session=None)
+    graph._interaction_mode = InteractionMode.GOAL
+    ready = asyncio.Event()
+    proceed = asyncio.Event()
+    seen: list[str | None] = []
+
+    class FakeGraph:
+        async def ainvoke(self, initial, _config):
+            ready.set()
+            await asyncio.wait_for(proceed.wait(), timeout=1)
+            return {"messages": list(initial["messages"]) + [AIMessage(content="first answer")], "task_state": initial["task_state"]}
+
+    async def external_reader():
+        await asyncio.wait_for(ready.wait(), timeout=1)
+        seen.append(graph._task_state.current_goal.desc if graph._task_state.current_goal else None)
+        proceed.set()
+
+    graph.graph = FakeGraph()
+    reader_task = asyncio.create_task(external_reader())
+
+    test_dock = BottomInputDock()
+    set_dock(test_dock)
+    test_dock.begin_capture()
+    try:
+        await graph._run_once("first question")
+    finally:
+        test_dock.deactivate()
+        test_dock.reset()
+        set_dock(None)
+
+    await reader_task
+    assert seen == ["first question"]
+
+
+@pytest.mark.asyncio
+async def test_run_once_model_enabled_borrowed_context_does_not_leak_task_state(tmp_path):
+    from voidx.agent.runtime_context import InteractionMode
+    from voidx.memory.runtime_state import RuntimeStateSnapshot, load_runtime_state, save_runtime_state
+    from voidx.ui.output.types import ThreadExecutionContext
+
+    active = await create_session(workspace=str(tmp_path), title="Active")
+    target = await create_session(workspace=str(tmp_path), title="Target")
+    try:
+        active_state = TaskState(current_goal=GoalSpec(desc="active goal"))
+        target_state = TaskState(current_goal=GoalSpec(desc="target goal"))
+        await save_runtime_state(active.id, RuntimeStateSnapshot(interaction_mode=InteractionMode.GOAL, task_state=active_state))
+        await save_runtime_state(target.id, RuntimeStateSnapshot(interaction_mode=InteractionMode.PLAN, task_state=target_state))
+
+        graph = VoidXGraph(Config(workspace=str(tmp_path)), api_key="test", session=active)
+        await graph._restore_runtime_state()
+        captured: dict[str, str] = {}
+
+        class FakeGraph:
+            async def ainvoke(self, initial, _config):
+                state = TaskState.model_validate(initial["task_state"])
+                captured["goal"] = state.current_goal.desc if state.current_goal else ""
+                captured["interaction_mode"] = initial["interaction_mode"]
+                updated_state = state.model_copy(update={"current_goal": GoalSpec(desc="target mutated goal")})
+                return {
+                    "messages": list(initial["messages"]) + [AIMessage(content="target answer")],
+                    "task_state": updated_state.model_dump(mode="json"),
+                }
+
+        graph.graph = FakeGraph()
+
+        test_dock = BottomInputDock()
+        set_dock(test_dock)
+        test_dock.begin_capture()
+        try:
+            await graph._run_once(
+                "target question",
+                context=ThreadExecutionContext(thread_id=target.id, session_id=target.id),
+            )
+        finally:
+            test_dock.deactivate()
+            test_dock.reset()
+            set_dock(None)
+
+        assert captured == {"goal": "target goal", "interaction_mode": "plan"}
+        assert graph._session.id == active.id
+        assert graph._task_state.current_goal is not None
+        assert graph._task_state.current_goal.desc == "active goal"
+        assert graph._interaction_mode == InteractionMode.GOAL
+
+        active_snapshot = await load_runtime_state(active.id)
+        target_snapshot = await load_runtime_state(target.id)
+        assert active_snapshot.task_state.current_goal is not None
+        assert active_snapshot.task_state.current_goal.desc == "active goal"
+        assert target_snapshot.task_state.current_goal is not None
+        assert target_snapshot.task_state.current_goal.desc == "target mutated goal"
+    finally:
+        await delete_session(active.id)
+        await delete_session(target.id)
 @pytest.mark.asyncio
 async def test_run_once_isolates_concurrent_execution_context_state(tmp_path):
     from voidx.agent.runtime_context import InteractionMode
