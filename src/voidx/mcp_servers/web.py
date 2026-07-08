@@ -9,8 +9,7 @@ from typing import Any
 
 from voidx.mcp.schema import MCP_PROTOCOL_VERSION
 from voidx.tools.base import BaseTool, ToolContext
-from voidx.tools.webfetch import WebFetchTool
-from voidx.tools.websearch import WebSearchTool
+from voidx.tools.web import WebFetchTool, WebSearchTool
 
 
 def _tools() -> dict[str, BaseTool]:

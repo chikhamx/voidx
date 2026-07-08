@@ -13,14 +13,14 @@ import httpx
 from pydantic import BaseModel, Field
 
 from voidx.tools.base import BaseTool, model_to_json_schema, ToolContext, ToolResult
-from voidx.tools.web_content import (
+from .content import (
     WEB_TOOL_CACHE,
     cached_tool_result,
     canonicalize_url,
     extract_readable_content,
     fetch_cache_key,
 )
-from voidx.tools.web_mcp import call_mcp_web_tool
+from .mcp import call_mcp_web_tool
 from voidx.tools.retry import retry_async
 from voidx.config import RetryConfig
 

@@ -8,10 +8,10 @@ import httpx
 import pytest
 
 
-from voidx.tools import webfetch as webfetch_module
+from voidx.tools.web import fetch as webfetch_module
 from voidx.tools.base import ToolContext
-from voidx.tools.web_content import WEB_TOOL_CACHE
-from voidx.tools.webfetch import (
+from voidx.tools.web.content import WEB_TOOL_CACHE
+from voidx.tools.web.fetch import (
     PrivateHostBlocked,
     WebFetchTool,
     _contains_private_host_block,
@@ -26,7 +26,7 @@ def test_is_private_host_checks_all_dns_records():
     public = ipaddress.ip_address("93.184.216.34")
     private = ipaddress.ip_address("10.0.0.1")
 
-    with patch("voidx.tools.webfetch.socket.getaddrinfo") as mock_gai:
+    with patch("voidx.tools.web.fetch.socket.getaddrinfo") as mock_gai:
         mock_gai.return_value = [
             (2, 1, 6, "", ("93.184.216.34", 80)),
             (2, 1, 6, "", ("10.0.0.1", 80)),
@@ -34,7 +34,7 @@ def test_is_private_host_checks_all_dns_records():
         assert _is_private_host("evil.example.com") is True
 
     # All public — should be allowed
-    with patch("voidx.tools.webfetch.socket.getaddrinfo") as mock_gai:
+    with patch("voidx.tools.web.fetch.socket.getaddrinfo") as mock_gai:
         mock_gai.return_value = [
             (2, 1, 6, "", ("93.184.216.34", 80)),
             (2, 1, 6, "", ("1.1.1.1", 80)),
@@ -44,13 +44,13 @@ def test_is_private_host_checks_all_dns_records():
 
 def test_is_private_host_checks_ipv6_records():
     """_is_private_host must reject hosts with IPv6 private addresses."""
-    with patch("voidx.tools.webfetch.socket.getaddrinfo") as mock_gai:
+    with patch("voidx.tools.web.fetch.socket.getaddrinfo") as mock_gai:
         mock_gai.return_value = [
             (10, 1, 6, "", ("::1", 80, 0, 0)),  # IPv6 loopback
         ]
         assert _is_private_host("ipv6loop.example.com") is True
 
-    with patch("voidx.tools.webfetch.socket.getaddrinfo") as mock_gai:
+    with patch("voidx.tools.web.fetch.socket.getaddrinfo") as mock_gai:
         mock_gai.return_value = [
             (10, 1, 6, "", ("2606:4700:4700::1111", 80, 0, 0)),  # Cloudflare public
         ]

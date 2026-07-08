@@ -10,14 +10,14 @@ from pydantic import BaseModel, Field
 
 from voidx.logging.tool_log import log_tool_event
 from voidx.tools.base import BaseTool, model_to_json_schema, ToolContext, ToolResult
-from voidx.tools.web_content import (
+from .content import (
     WEB_TOOL_CACHE,
     cached_tool_result,
     matches_domain,
     normalize_search_results,
     search_cache_key,
 )
-from voidx.tools.web_mcp import call_mcp_web_tool
+from .mcp import call_mcp_web_tool
 
 _logger = logging.getLogger(__name__)
 

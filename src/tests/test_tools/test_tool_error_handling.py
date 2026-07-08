@@ -20,8 +20,8 @@ from voidx.tools.clarify import ClarifyTool
 from voidx.tools.workflow import WorkflowTool
 from voidx.tools.checkpoint import PlanCheckpointTool
 from voidx.tools.compact import CompactContextTool
-from voidx.tools.webfetch import WebFetchTool
-from voidx.tools.websearch import WebSearchTool
+from voidx.tools.web.fetch import WebFetchTool
+from voidx.tools.web.search import WebSearchTool
 from voidx.tools.skills import SkillsTool
 from voidx.tools.document import LoadDocTemplateTool
 from voidx.tools.agent import AgentTool

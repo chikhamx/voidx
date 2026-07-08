@@ -9,11 +9,11 @@ import pytest
 from voidx.config import Settings, WebToolRoute
 from voidx.mcp.schema import McpCallResult
 from voidx.tools.base import ToolContext
-from voidx.tools.web_content import WEB_TOOL_CACHE
-from voidx.tools.webfetch import WebFetchTool, _FetchResponse
-from voidx.tools.websearch import WebSearchTool
-from voidx.tools import webfetch as webfetch_module
-from voidx.tools import websearch as websearch_module
+from voidx.tools.web.content import WEB_TOOL_CACHE
+from voidx.tools.web.fetch import WebFetchTool, _FetchResponse
+from voidx.tools.web.search import WebSearchTool
+from voidx.tools.web import fetch as webfetch_module
+from voidx.tools.web import search as websearch_module
 
 
 class FakeMcpManager:

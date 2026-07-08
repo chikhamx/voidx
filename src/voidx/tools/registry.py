@@ -13,8 +13,7 @@ from voidx.tools.bash import BashTool
 from voidx.tools.task_status import TaskStatusTool
 from voidx.tools.todo import TodoWriteTool
 from voidx.tools.skills import SkillsTool
-from voidx.tools.webfetch import WebFetchTool
-from voidx.tools.websearch import WebSearchTool
+from voidx.tools.web import WebFetchTool, WebSearchTool
 from voidx.tools.clarify import ClarifyTool
 from voidx.tools.checkpoint import PlanCheckpointTool
 from voidx.tools.workflow import WorkflowTool
