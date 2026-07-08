@@ -17,6 +17,7 @@ from voidx.agent.graph.runtime_guards import (
     cycle_summary_from_tools,
 )
 from voidx.agent.graph.streaming import extract_text, stream_llm
+from voidx.agent.graph.core.helpers import LLMErrorKind, _classify_llm_error
 from voidx.agent.graph.todo_events import todo_updated_event
 from voidx.agent.todo_state import todo_run_state_from_result
 from voidx.agent.runtime_context import (
@@ -38,13 +39,20 @@ from voidx.llm.usage import (
 )
 from voidx.memory.service import save_context_frame_from_messages
 from voidx.memory.subagents import append_subagent_event
-from voidx.runtime.ui import CaptureConsole, OutputTree, StreamingRenderer
+from voidx.runtime.ui import (
+    CaptureConsole,
+    OutputTree,
+    StatusFinished,
+    StatusUpdated,
+    StreamingRenderer,
+)
 from voidx.tools.service import ToolContext, ToolRegistry, TaskTracker
 from voidx.runtime.ui_port import AgentUiPort, runtime_ui_port
 
 
 _SAFETY_STEP_LIMIT = 50
 _RESULT_CONTRACT_RETRY_LIMIT = 2
+_LLM_MAX_RETRIES = 5
 
 async def run_subagent(
     agent_def: AgentDef,
@@ -184,12 +192,43 @@ async def run_subagent(
                         "agent_id": agent_id,
                     },
                 )
-            assistant_msg = await stream_llm(
-                model_with_tools,
-                llm_messages,
-                renderer,
-                resolve_protocol(config.model),
-            )
+            llm_failed_attempts = 0
+            retry_status_active = False
+            while True:
+                try:
+                    assistant_msg = await stream_llm(
+                        model_with_tools,
+                        llm_messages,
+                        renderer,
+                        resolve_protocol(config.model),
+                    )
+                    if retry_status_active and ui_port.via_events():
+                        await ui_port.events.emit(StatusFinished(status_id="llm:retry"))
+                    break
+                except Exception as e:
+                    kind = _classify_llm_error(e)
+                    if kind in {LLMErrorKind.NON_RETRYABLE, LLMErrorKind.CONTEXT_OVERFLOW}:
+                        if retry_status_active and ui_port.via_events():
+                            await ui_port.events.emit(StatusFinished(status_id="llm:retry"))
+                        raise
+                    if llm_failed_attempts < _LLM_MAX_RETRIES:
+                        llm_failed_attempts += 1
+                        delay = llm_failed_attempts * 2
+                        retry_detail = f"retrying in {delay}s: {e}"
+                        if ui_port.via_events():
+                            retry_status_active = True
+                            await ui_port.events.emit(StatusUpdated(
+                                status_id="llm:retry",
+                                label="Retrying",
+                                detail=retry_detail,
+                            ))
+                        else:
+                            ui_port.ui.print(f"[dim]Retrying ({retry_detail})[/dim]")
+                        await asyncio.sleep(delay)
+                        continue
+                    if retry_status_active and ui_port.via_events():
+                        await ui_port.events.emit(StatusFinished(status_id="llm:retry"))
+                    raise
             if usage_stats is not None:
                 usage_stats.record_call(
                     extract_token_usage(assistant_msg),
