@@ -48,7 +48,7 @@ async def test_goal_resolver_uses_structured_llm_result():
     model = StructuredModel(
         ResolverGoal(
             intent="coding",
-            goal="src/voidx/runtime/task_state.py",
+            goal="Review the runtime task state file",
             workflow="review",
             kind_hint="review",
         )
@@ -63,7 +63,7 @@ async def test_goal_resolver_uses_structured_llm_result():
 
     assert result.intent.type == TaskIntent.CODING
     assert result.goal is not None
-    assert result.goal.desc == "src/voidx/runtime/task_state.py"
+    assert result.goal.desc == "Review the runtime task state file"
     assert result.plan == PlanResolution(join="review", leave=None)
     assert model.messages is not None
     assert [type(message) for message in model.messages] == [

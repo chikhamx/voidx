@@ -36,14 +36,16 @@ def test_noop_ui_sink_does_not_load_ui_modules():
         """
     )
 
+    src_dir = str(Path(__file__).parents[2])
     result = subprocess.run(
         [sys.executable, "-c", code],
         check=False,
         capture_output=True,
         env={
             **os.environ,
-            "PYTHONPATH": str(Path(__file__).parent.parent / "src"),
+            "PYTHONPATH": src_dir,
         },
+        cwd=src_dir,
         text=True,
     )
 

@@ -359,11 +359,12 @@ async def test_mcp_tool_wrapper_preserves_non_text_content(tmp_path):
 
 @pytest.mark.asyncio
 async def test_builtin_web_mcp_server_lists_tools():
-    src_path = str(Path(__file__).parent.parent / "src")
+    src_path = str(Path(__file__).parents[2])
     client = McpClient(McpServerConfig(
         name="voidx-web",
         command=sys.executable,
         args=["-m", "voidx.mcp_servers.web"],
+        cwd=src_path,
         env={"PYTHONPATH": src_path},
     ))
 

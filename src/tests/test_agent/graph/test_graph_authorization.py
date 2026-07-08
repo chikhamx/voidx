@@ -459,7 +459,7 @@ async def test_permission_prompt_uses_dock_details_when_events_are_active(tmp_pa
         choice = await graph._ask_tool_permission([
             {
                 "name": "bash",
-                "args": {"command": "npm test"},
+                "args": {"command": "npm install lodash"},
                 "id": "call_1",
             }
         ])
@@ -468,14 +468,14 @@ async def test_permission_prompt_uses_dock_details_when_events_are_active(tmp_pa
         assert choice == "y"
         assert received_details == [{
             "name": "bash",
-            "pattern": "npm test",
-            "args": {"command": "npm test"},
+            "pattern": "npm install lodash",
+            "args": {"command": "npm install lodash"},
         }]
         record = test_dock.status_record("permission:request")
         assert record is not None
         assert record.label == "Requesting"
         assert "bash" in record.detail
-        assert "npm test" in record.detail
+        assert "npm install lodash" in record.detail
     finally:
         await graph._ui.events.stop()
         test_dock.deactivate()
