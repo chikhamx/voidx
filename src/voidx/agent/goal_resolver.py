@@ -256,10 +256,10 @@ def _resolver_system_prompt(*, json_mode: bool = False) -> str:
         "\n"
         "## Field Rules\n"
         "\n"
-'- **intent**: "coding" for codebase/workspace work; "general" for non-code conversation.\n'
-"- **goal**: One-sentence goal of what the user wants this turn. Verb-first (e.g. 'Fix...', 'Implement...', 'Refactor...'). Max 120 characters. Do not copy user text verbatim. No file paths or code. Never null or empty.\n"
-"- **workflow**: The workflow to enter, or null. Goal is always required regardless.\n"
-"- **kind_hint**: Optional semantic hint. Advisory only; never overrides workflow selection.\n"
+        '- **intent**: "coding" for codebase/workspace work; "general" for non-code conversation.\n'
+        "- **goal**: Stable overall objective for the current task. Keep it short, sharp, and clear. Verb-first is preferred. Summarize the user's intent without explicit details. Never null or empty.\n"
+        "- **workflow**: The workflow to enter, or null. Goal is always required regardless.\n"
+        "- **kind_hint**: Optional semantic hint. Advisory only; never overrides workflow selection.\n"
         "\n"
         "## Workflow Selection Rules\n"
         "\n"
