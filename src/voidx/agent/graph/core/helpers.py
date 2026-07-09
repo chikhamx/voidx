@@ -4,6 +4,7 @@ from enum import Enum
 
 from voidx.agent.agents import AgentDef
 from voidx.agent.runtime_context import COMPACTION_GUIDE_MARKER, InteractionMode
+from voidx.llm.compaction import SUMMARY_TEMPLATE
 from voidx.agent.task_state import GoalResolution, TaskState
 from voidx.workflow import workflow_personas
 from voidx.workflow.types import WorkflowRunState, WorkflowRunStatus
@@ -90,6 +91,7 @@ def _llm_retry_delay(attempt: int) -> float:
 
 
 def _render_inline_compaction_guide(*, tail_anchor_id: str, head_count: int, previous_summary: str) -> str:
+
     previous = previous_summary.strip() or "(none)"
     return (
         f"{COMPACTION_GUIDE_MARKER}\n"
@@ -105,7 +107,8 @@ def _render_inline_compaction_guide(*, tail_anchor_id: str, head_count: int, pre
         "Current compaction request:\n"
         f"- tail_anchor_id: {tail_anchor_id}\n"
         f"- older_messages_to_summarize: {head_count}\n"
-        f"- previous_summary:\n{previous}"
+        f"- previous_summary:\n{previous}\n\n"
+        f"{SUMMARY_TEMPLATE}"
     )
 
 

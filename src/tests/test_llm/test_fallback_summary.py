@@ -14,6 +14,7 @@ from voidx.llm.compaction import (
     CompactionService,
     DEFAULT_TAIL_TURNS,
     STEP_HINT_MARKER,
+    SUMMARY_TEMPLATE,
 )
 from voidx.llm.message_markers import GUIDANCE_MARKER
 from voidx.llm.usage import estimate_context_tokens
@@ -108,3 +109,68 @@ class TestFallbackSummary:
         assert "request 0" in prompt
         assert "request 24" in prompt
         assert "## Conversation History" in prompt
+
+    def test_summary_template_is_shared_by_prompt_contract(self):
+        svc = CompactionService()
+
+        prompt = svc.build_prompt([HumanMessage(content="Fix auth", id="u1")])
+
+        assert SUMMARY_TEMPLATE in prompt
+        assert "## Goal" in prompt
+        assert "## Constraints & Preferences" in prompt
+        assert "## Relevant Files" in prompt
+
+    def test_fallback_summary_extracts_constraints_and_open_work(self):
+        messages = [
+            HumanMessage(
+                content=(
+                    "Fix src/voidx/llm/compaction.py, keep the patch small, "
+                    "do not change the public API, and run targeted tests."
+                ),
+                id="u1",
+            ),
+            AIMessage(content="I updated the summary contract and still need to run pytest."),
+        ]
+
+        summary = CompactionService.fallback_summary(messages)
+
+        constraints = summary.split("## Constraints & Preferences", 1)[1].split("## Progress", 1)[0]
+        next_steps = summary.split("## Next Steps", 1)[1].split("## Critical Context", 1)[0]
+
+        assert "keep the patch small" in constraints
+        assert "do not change the public API" in constraints
+        assert "run targeted tests" in next_steps
+
+    def test_fallback_summary_does_not_match_test_substring_in_contesting(self):
+        messages = [
+            HumanMessage(content="I am contesting the result", id="u1"),
+        ]
+
+        summary = CompactionService.fallback_summary(messages)
+
+        next_steps = summary.split("## Next Steps", 1)[1].split("## Critical Context", 1)[0]
+        assert "- (none)" in next_steps
+
+    def test_fallback_summary_no_markers_yields_empty_sections(self):
+        messages = [
+            HumanMessage(content="Hello world", id="u1"),
+            AIMessage(content="Hi there"),
+        ]
+
+        summary = CompactionService.fallback_summary(messages)
+
+        constraints = summary.split("## Constraints & Preferences", 1)[1].split("## Progress", 1)[0]
+        next_steps = summary.split("## Next Steps", 1)[1].split("## Critical Context", 1)[0]
+        assert "- (none)" in constraints
+        assert "- (none)" in next_steps
+
+    def test_fallback_summary_splits_clauses_without_space_after_period(self):
+        messages = [
+            HumanMessage(content="keep it small.Do not break API", id="u1"),
+        ]
+
+        summary = CompactionService.fallback_summary(messages)
+
+        constraints = summary.split("## Constraints & Preferences", 1)[1].split("## Progress", 1)[0]
+        assert "keep it small" in constraints
+        assert "Do not break API" in constraints

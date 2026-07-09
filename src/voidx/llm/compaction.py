@@ -18,6 +18,7 @@ from __future__ import annotations
 
 PRUNE_ARGS_PLACEHOLDER_DIFF = "[omitted: see diff in tool result]"
 
+import re
 from dataclasses import dataclass
 from typing import Literal
 
@@ -443,6 +444,8 @@ class CompactionService:
         assistant_parts: list[str] = []
         tool_parts: list[str] = []
         file_parts: list[str] = []
+        constraint_parts: list[str] = []
+        next_step_parts: list[str] = []
         for msg in messages:
             if is_step_hint_message(msg):
                 continue
@@ -451,10 +454,14 @@ class CompactionService:
                 if content:
                     prefix = "Guidance: " if is_guidance_message(msg) else ""
                     user_parts.append(prefix + _truncate_line(content, FALLBACK_SUMMARY_MAX_PER_MSG))
+                    constraint_parts.extend(_extract_constraint_mentions(content))
+                    next_step_parts.extend(_extract_next_step_mentions(content))
                     file_parts.extend(_extract_path_mentions(content))
             elif isinstance(msg, AIMessage):
                 if content:
                     assistant_parts.append(_truncate_line(content, FALLBACK_SUMMARY_MAX_PER_MSG))
+                    constraint_parts.extend(_extract_constraint_mentions(content))
+                    next_step_parts.extend(_extract_next_step_mentions(content))
                     file_parts.extend(_extract_path_mentions(content))
                 for tc in getattr(msg, "tool_calls", []) or []:
                     name = tc.get("name", "?")
@@ -469,6 +476,8 @@ class CompactionService:
         user_parts = _dedupe(user_parts)[:FALLBACK_SUMMARY_MAX_ITEMS]
         assistant_parts = _dedupe(assistant_parts)[:FALLBACK_SUMMARY_MAX_ITEMS]
         tool_parts = _dedupe(tool_parts)[:FALLBACK_SUMMARY_MAX_ITEMS]
+        constraint_parts = _dedupe(constraint_parts)[:FALLBACK_SUMMARY_MAX_ITEMS]
+        next_step_parts = _dedupe(next_step_parts)[:FALLBACK_SUMMARY_MAX_ITEMS]
         file_parts = _dedupe(file_parts)[:FALLBACK_SUMMARY_MAX_ITEMS]
 
         lines = [
@@ -476,11 +485,13 @@ class CompactionService:
             f"- {user_parts[-1] if user_parts else '[auto-extracted from compacted context]'}",
             "",
             "## Constraints & Preferences",
-            "- (none)",
+        ]
+        lines.extend(_bullets(constraint_parts, empty="(none)"))
+        lines.extend([
             "",
             "## Progress",
             "### Done",
-        ]
+        ])
         lines.extend(_bullets(assistant_parts, empty="(none)"))
         lines.extend([
             "",
@@ -496,7 +507,9 @@ class CompactionService:
         lines.extend([
             "",
             "## Next Steps",
-            "- (none)",
+        ])
+        lines.extend(_bullets(next_step_parts, empty="(none)"))
+        lines.extend([
             "",
             "## Critical Context",
         ])
@@ -618,6 +631,47 @@ def _bullets(items: list[str], *, empty: str) -> list[str]:
         return [f"- {empty}"]
     return [f"- {item}" for item in items]
 
+
+
+def _extract_constraint_mentions(text: str) -> list[str]:
+    compact = _truncate_line(text, FALLBACK_SUMMARY_MAX_PER_MSG)
+    lower = compact.lower()
+    markers = (
+        "keep ",
+        "do not ",
+        "don't ",
+        "must ",
+        "avoid ",
+        "prefer ",
+        "constraint",
+        "requirement",
+    )
+    if not any(marker in lower for marker in markers):
+        return []
+    parts = _split_clause_mentions(compact)
+    return [part for part in parts if any(marker in part.lower() for marker in markers)] or [compact]
+
+
+def _extract_next_step_mentions(text: str) -> list[str]:
+    compact = _truncate_line(text, FALLBACK_SUMMARY_MAX_PER_MSG)
+    lower = compact.lower()
+    markers = (
+        r"\brun\b",
+        r"\btests?\b",
+        r"\bverify",
+        r"\bstill need",
+        r"\bnext\b",
+        r"\btodo\b",
+        r"\bfollow up",
+    )
+    if not any(re.search(marker, lower) for marker in markers):
+        return []
+    parts = _split_clause_mentions(compact)
+    return [part for part in parts if any(re.search(marker, part.lower()) for marker in markers)] or [compact]
+
+
+def _split_clause_mentions(text: str) -> list[str]:
+    return [part.strip(" ,.;") for part in re.split(r"[;,.]\s*", text) if part.strip(" ,.;")]
 
 def _extract_path_mentions(text: str) -> list[str]:
     paths: list[str] = []

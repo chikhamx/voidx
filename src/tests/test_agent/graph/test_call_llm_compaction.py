@@ -17,7 +17,7 @@ from voidx.agent.runtime_context import RuntimeContextBuilder
 from voidx.agent.task_state import TaskState, TodoRunState
 from voidx.config import Config, ModelConfig
 from voidx.agent.graph.compaction_coordinator import CompactionResult, PreflightCompactionResult
-from voidx.llm.compaction import CompactionSelection
+from voidx.llm.compaction import CompactionSelection, SUMMARY_TEMPLATE
 from voidx.llm.message_markers import is_guidance_message
 from voidx.memory.context_frames import load_context_frames
 from voidx.memory.session import MessageRow, create_session, delete_session, save_message
@@ -223,6 +223,35 @@ def test_inline_compaction_guide_disabled_by_default(tmp_path):
 
     assert guide is None
 
+
+
+def test_inline_compaction_guide_uses_shared_summary_template(tmp_path):
+    graph = VoidXGraph(
+        Config(
+            model=ModelConfig(provider="mimo", model="mimo-v2.5"),
+            workspace=str(tmp_path),
+        ),
+        api_key=None,
+    )
+    graph.config.inline_compaction_enabled = True
+    graph._compaction.usable_window = lambda: 1
+    graph._compaction.is_overflow = lambda _tokens: False
+    graph._compaction.select_details = lambda _messages: CompactionSelection(
+        head=[HumanMessage(content="old", id="old")],
+        tail_id="current",
+        keep_from=1,
+        mode="normal",
+    )
+
+    guide = graph._inline_compaction_guide_for([
+        HumanMessage(content="old", id="old"),
+        AIMessage(content="old answer"),
+        HumanMessage(content="current", id="current"),
+    ])
+
+    assert guide is not None
+    assert SUMMARY_TEMPLATE in str(guide.content)
+    assert "tail_anchor_id: current" in str(guide.content)
 
 @pytest.mark.asyncio
 async def test_call_llm_overflow_compaction_does_not_send_temporary_summary_message(tmp_path, monkeypatch):
