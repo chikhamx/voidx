@@ -57,6 +57,41 @@ class TestExtractFilePaths:
         paths = _extract_file_paths({"name": "write", "args": {"file_path": ""}})
         assert paths == []
 
+    def test_manage_create_single_path_string(self):
+        paths = _extract_file_paths({"name": "manage", "args": {"op": "create", "paths": "new.txt"}})
+        assert paths == ["new.txt"]
+
+    def test_manage_create_multiple_paths(self):
+        paths = _extract_file_paths(
+            {"name": "manage", "args": {"op": "create", "paths": ["a.py", "b.py"]}}
+        )
+        assert paths == ["a.py", "b.py"]
+
+    def test_manage_delete_paths(self):
+        paths = _extract_file_paths(
+            {"name": "manage", "args": {"op": "delete", "paths": ["x.py", "y.py"]}}
+        )
+        assert paths == ["x.py", "y.py"]
+
+    def test_manage_move_both_src_and_dest(self):
+        paths = _extract_file_paths(
+            {"name": "manage", "args": {"op": "move", "moves": [{"src": "a.py", "dest": "b.py"}]}}
+        )
+        assert sorted(paths) == ["a.py", "b.py"]
+
+    def test_manage_move_multiple_items(self):
+        paths = _extract_file_paths(
+            {"name": "manage", "args": {"op": "move", "moves": [
+                {"src": "a.py", "dest": "c.py"},
+                {"src": "b.py", "dest": "d.py"},
+            ]}}
+        )
+        assert sorted(paths) == ["a.py", "b.py", "c.py", "d.py"]
+
+    def test_manage_no_op_returns_empty(self):
+        paths = _extract_file_paths({"name": "manage", "args": {"op": "create"}})
+        assert paths == []
+
 
 # ---------------------------------------------------------------------------
 # _FileRWLock — basic semantics
@@ -251,7 +286,7 @@ class TestBatchOrdering:
 
         async def execute_one_file_locked(tc):
             paths = sorted(set(_extract_file_paths(tc)))
-            is_write = tc.get("name") in ("write", "replace", "file")
+            is_write = tc.get("name") in ("write", "replace", "file", "manage")
             rw_locks = []
             try:
                 for p in paths:

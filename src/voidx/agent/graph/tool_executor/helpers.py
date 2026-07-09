@@ -87,6 +87,24 @@ def _extract_file_paths(tool_call: dict) -> list[str]:
         dp = args.get("dest_path")
         if isinstance(dp, str) and dp:
             paths.append(dp)
+    elif name == "manage":
+        op = args.get("op", "")
+        if op in {"create", "delete"}:
+            raw = args.get("paths")
+            if isinstance(raw, str):
+                paths.append(raw)
+            elif isinstance(raw, list):
+                paths.extend(p for p in raw if isinstance(p, str) and p)
+        elif op == "move":
+            for move in args.get("moves") or []:
+                if not isinstance(move, dict):
+                    continue
+                src = move.get("src")
+                dest = move.get("dest")
+                if isinstance(src, str) and src:
+                    paths.append(src)
+                if isinstance(dest, str) and dest:
+                    paths.append(dest)
 
     return [os.path.normpath(p) for p in paths]
 
