@@ -14,11 +14,14 @@ from langchain_core.messages import ToolMessage
 
 from voidx.agent.tool_messages import DEFAULT_TOOL_MESSAGE_MAX_CHARS
 from voidx.tools.base import ToolContext, ToolResult, BaseTool, UserInteraction, UserResponse
-from voidx.tools.file import FileReadInput, FileReplaceInput, WriteInput, FileReadTool, WriteTool, FileReplaceTool
+from voidx.tools.file import FileReadInput, FileReplaceInput, WriteInput, FileReadTool, WriteTool, FileReplaceTool, ManageTool
 from voidx.tools.file.state import save_file_version
 import voidx.tools.file.state as file_state
-from voidx.tools.search import GlobInput, GrepInput
-from voidx.tools.bash import BashInput
+from voidx.tools.search import GlobInput, GrepInput, GlobTool, GrepTool
+from voidx.tools.bash import BashInput, BashTool
+from voidx.tools.powershell import PowerShellTool
+from voidx.tools.git import GitTool
+from voidx.tools.lsp import LspTool, LspFormatTool
 from voidx.tools.agent import AgentInput, AgentTool
 from voidx.tools.task_tracker import TaskTracker
 from voidx.tools.task_status import TaskStatusTool
@@ -100,6 +103,21 @@ class TestToolSchemas:
         assert set(schema["properties"]) == {"file_path", "op", "lineno", "new_string"}
         assert "insert" in schema["properties"]["op"]["description"]
         assert "append" in schema["properties"]["op"]["description"]
+        assert "op=write" in schema["properties"]["new_string"]["description"]
+        assert "creates or fully overwrites" in WriteTool.description
+
+    def test_file_tool_descriptions_are_precise_for_llms(self):
+        read_schema = FileReadTool().parameters_schema()
+        write_schema = WriteTool().parameters_schema()
+        manage_schema = ManageTool().parameters_schema()
+
+        assert "numbered lines" in FileReadTool.description
+        assert "1-based" in read_schema["properties"]["offset"]["description"]
+        assert "maximum number of lines" in read_schema["properties"]["limit"]["description"].lower()
+        assert "complete file content" in write_schema["properties"]["new_string"]["description"]
+        assert "No file content is written" in ManageTool.description
+        assert "paths is required" in manage_schema["properties"]["paths"]["description"]
+        assert "per-move" in manage_schema["properties"]["moves"]["description"]
 
     def test_replace_input_uses_bounds_without_operation(self):
         inp = FileReplaceInput(file_path="x.py", bounds=[{"line_no": 3, "anchor": "old"}, {"line_no": 5, "anchor": "tail"}], new_string="new")
@@ -108,8 +126,8 @@ class TestToolSchemas:
         assert inp.resolved_start_anchor == "old"
         assert inp.resolved_end_no == 5
         assert set(schema["properties"]) == {"file_path", "bounds", "new_string"}
-        assert "Replacement boundary lines" in schema["properties"]["bounds"]["description"]
-        assert "whole lines" in FileReplaceTool().description.lower()
+        assert "One or two boundary locators" in schema["properties"]["bounds"]["description"]
+        assert "complete lines" in FileReplaceTool().description.lower()
         assert "operation" not in schema["properties"]
         assert "edits" not in schema["properties"]
         assert "old_text" not in schema["properties"]
@@ -132,6 +150,35 @@ class TestToolSchemas:
         inp = BashInput(command="ls")
         assert inp.command == "ls"
         assert inp.timeout == 120
+
+    def test_execution_and_discovery_tool_descriptions_are_precise_for_llms(self):
+        git_schema = GitTool().parameters_schema()
+        bash_schema = BashTool().parameters_schema()
+        powershell_schema = PowerShellTool().parameters_schema()
+        glob_schema = GlobTool().parameters_schema()
+        grep_schema = GrepTool().parameters_schema()
+        lsp_schema = LspTool().parameters_schema()
+        lsp_format_schema = LspFormatTool().parameters_schema()
+        skill_schema = SkillsTool().parameters_schema()
+
+        assert "do not include the git executable" in git_schema["properties"]["args"]["description"]
+        assert "read-only commands return structured JSON" in GitTool.description
+        assert "working directory is the workspace root" in BashTool.description
+        assert "non-interactive" in bash_schema["properties"]["command"]["description"]
+        assert "terminated" in bash_schema["properties"]["timeout"]["description"]
+        assert "Windows only" in PowerShellTool.description
+        assert "PowerShell command string" in powershell_schema["properties"]["command"]["description"]
+        assert "workspace-relative" in glob_schema["properties"]["pattern"]["description"]
+        assert "sorted workspace-relative" in GlobTool.description
+        assert "Python regular expression" in grep_schema["properties"]["pattern"]["description"]
+        assert "file or directory scope" in grep_schema["properties"]["path"]["description"]
+        assert "max_scanned" in GrepTool.description
+        assert "definition and references" in lsp_schema["properties"]["line"]["description"]
+        assert "0-based" in lsp_schema["properties"]["character"]["description"]
+        assert "Writes formatted content back to the same file" in LspFormatTool.description
+        assert "Format writes to disk" in lsp_format_schema["properties"]["file_path"]["description"]
+        assert "Load/list are read-only" in SkillsTool.description
+        assert "Required for op=load and op=create" in skill_schema["properties"]["name"]["description"]
 
     def test_agent_input_uses_child_agent_schema(self):
         inp = AgentInput.model_validate({
@@ -160,6 +207,25 @@ class TestToolSchemas:
         assert "expected_output" not in schema["required"]
         assert "parent_evidence" not in schema["required"]
         assert "subagent_type" not in schema["properties"]
+
+    def test_interaction_tool_descriptions_are_precise_for_llms(self):
+        agent_schema = AgentTool(runner=None).parameters_schema()
+        document_schema = DocumentTool().parameters_schema()
+        clarify_schema = ClarifyTool().parameters_schema()
+        checkpoint_schema = PlanCheckpointTool().parameters_schema()
+
+        assert "independent delegated task" in AgentTool(runner=None).description
+        assert "self-contained" in agent_schema["properties"]["task"]["description"]
+        assert "Use empty string if not needed" in agent_schema["properties"]["success_criteria"]["description"]
+        assert "built-in document" in DocumentTool.description
+        assert "does not read workspace files" in DocumentTool.description
+        assert "list reads a directory README index" in document_schema["properties"]["action"]["description"]
+        assert "one question" in ClarifyTool.description
+        assert "Do not use for progress updates" in ClarifyTool.description
+        assert "mutually exclusive" in clarify_schema["properties"]["options"]["description"]
+        assert "approval gate" in PlanCheckpointTool.description
+        assert "no code changes" in PlanCheckpointTool.description
+        assert "one small action" in checkpoint_schema["properties"]["steps"]["description"]
 
     def test_agent_input_requires_mode_task_and_target(self):
         with pytest.raises(ValueError):

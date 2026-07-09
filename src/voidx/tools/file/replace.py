@@ -34,38 +34,33 @@ from .types import DisplayLines, ResolvedEdit
 class ReplaceBound(BaseModel):
     line_no: int = Field(
         ge=1,
-        description="Line number (1-based) from the latest read output.",
+        description="1-based line number hint from the latest read.",
     )
     anchor: str = Field(
         description=(
-            "Substring expected on this boundary line. For single-line replace, "
-            "empty anchor skips anchor validation and uses line_no directly. "
-            "For multi-line replace, anchor must be non-empty. Does not span lines — "
-            "a multi-line anchor uses only its first non-empty line."
+            "Literal, case-sensitive substring expected on the boundary line. "
+            "Required for range replacements; empty only for intentional exact-line "
+            "single-line replacement."
         ),
     )
 
 
 class FileReplaceInput(BaseModel):
-    file_path: str = Field(description="Absolute or relative path to the file")
+    file_path: str = Field(description="Path to the existing target text file.")
     bounds: list[ReplaceBound] = Field(
         min_length=1,
         max_length=2,
         description=(
-            "Replacement boundary lines. Provide one bound for single-line replace, "
-            "or two unordered bounds for multi-line replace. In multi-line replace, "
-            "both anchors must be non-empty; the smaller line_no is used as the start "
-            "boundary and the larger line_no is used as the end boundary."
+            "One or two boundary locators. One locator replaces that resolved line; "
+            "two locators replace the inclusive range between resolved boundaries. "
+            "Length must be 1 or 2."
         ),
     )
     new_string: str = Field(
         description=(
-            "Content that replaces the selected whole line or line range. Empty string "
-            "deletes the selected lines. The replacement string's trailing newline is "
-            "ignored for line splitting; the original file's trailing-newline state is "
-            "preserved unless the file becomes empty. If the first or last line of "
-            "new_string exactly matches the line immediately before or after the replaced "
-            "range, that adjacent line is also consumed."
+            "Complete replacement text for the resolved line(s). May contain multiple "
+            "lines; do not include unchanged surrounding lines. Empty string deletes "
+            "the resolved line(s)."
         ),
     )
 
@@ -198,14 +193,14 @@ def _log_replace_failure(
 class FileReplaceTool(BaseTool):
     id = "replace"
     description = (
-        "Replace whole lines in a file. "
-        "Provide one bound for single-line replace or two unordered bounds for multi-line replace. "
+        "Replace complete lines in an existing text file. "
         "Read the target lines first. "
-        "Single-line replace may use an empty anchor to trust line_no directly. "
-        "Multi-line replace requires non-empty anchors on both boundary lines; "
-        "the smaller line_no is used as the start boundary and the larger line_no is used as the end boundary. "
-        "Anchors are searched near the given line numbers in case the file changed since the last read. "
-        "If the file does not exist, it is created with new_string as its content."
+        "bounds must contain 1 locator for a single line or 2 locators for an inclusive line range; "
+        "locator order is ignored. "
+        "Each locator uses a 1-based line_no hint and an anchor literal, case-sensitive substring from that boundary line. "
+        "The tool may relocate anchors near the hinted lines; if any boundary is missing or ambiguous, "
+        "it fails without modifying the file. "
+        "new_string replaces only the resolved line(s) and may contain multiple lines."
     )
 
     def parameters_schema(self) -> dict:

@@ -166,14 +166,22 @@ def _try_resolve_external(file_path: str) -> Path | None:
 
 
 class FileReadInput(BaseModel):
-    file_path: str = Field(description="Absolute or relative path to the file")
-    offset: int | None = Field(default=None, ge=1, description="Line number to start reading from (1-based)")
-    limit: int | None = Field(default=None, ge=1, description="Maximum number of lines to read")
+    file_path: str = Field(description="Path to the text file to read.")
+    offset: int | None = Field(
+        default=None,
+        ge=1,
+        description="1-based line number to start reading from; omit to start at line 1.",
+    )
+    limit: int | None = Field(
+        default=None,
+        ge=1,
+        description="Maximum number of lines to read; omit to read until the output budget is reached.",
+    )
 
 
 class FileReadTool(BaseTool):
     id = "read"
-    description = "Read a file. Returns content with line numbers. Use offset/limit for large files."
+    description = "Read a text file and return visible content as numbered lines. Use offset/limit for large files or to continue a capped read."
 
     def parameters_schema(self) -> dict:
         return model_to_json_schema(FileReadInput)

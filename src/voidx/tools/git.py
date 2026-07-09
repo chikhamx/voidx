@@ -63,8 +63,14 @@ _REF_WRITE_FLAGS = {"-d", "-D", "-m", "-M", "--delete", "--move", "--force"}
 
 
 class GitInput(BaseModel):
-    path: str = Field(default="", description="Optional path relative to workspace (or absolute). Empty uses workspace root.")
-    args: str = Field(min_length=1, description='Git subcommand and arguments as a raw string, e.g. "status --porcelain" or "log --oneline -5".')
+    path: str = Field(
+        default="",
+        description="Repository path to run git in; relative paths are resolved from the workspace, empty uses the workspace root.",
+    )
+    args: str = Field(
+        min_length=1,
+        description='Git subcommand and arguments only; do not include the git executable, e.g. "status --porcelain" or "log --oneline -5".',
+    )
 
 
 class GitRepo(BaseModel):
@@ -75,11 +81,9 @@ class GitRepo(BaseModel):
 class GitTool(BaseTool):
     id = "git"
     description = (
-        "Inspect and perform explicit path-scoped Git operations with structured JSON output. "
-        "Pass a raw git args string (e.g. args='status --porcelain'). "
-        "Core read commands (status, diff, log, blame, show, branch list, remote, tag list, stash list) "
-        "return structured JSON. All other commands return raw stdout. "
-        "Write commands require approval."
+        "Run explicit path-scoped git operations. Pass args as a raw git subcommand string. "
+        "Core read-only commands return structured JSON; other allowed commands return raw stdout. "
+        "Write commands require approval; destructive commands are denied."
     )
 
     def parameters_schema(self) -> dict:

@@ -22,13 +22,13 @@ from voidx.tools.shell.common import (
 
 
 class PowerShellInput(BaseModel):
-    command: str = Field(description="PowerShell command to execute")
-    timeout: int = Field(default=120, description="Timeout in seconds")
+    command: str = Field(description="PowerShell command string to execute non-interactively.")
+    timeout: int = Field(default=120, description="Timeout in seconds; the process is terminated if exceeded.")
 
 
 class PowerShellTool(BaseTool):
     id = "powershell"
-    description = "Execute a PowerShell command in the workspace directory on Windows. Returns stdout, stderr, and exit code."
+    description = "Execute a PowerShell command on Windows only; working directory is the workspace root. Returns stdout, stderr, and exit code."
 
     def parameters_schema(self) -> dict:
         return model_to_json_schema(PowerShellInput)

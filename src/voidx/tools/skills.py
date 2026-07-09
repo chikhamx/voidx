@@ -28,23 +28,23 @@ class SkillsInput(BaseModel):
     name: str | None = Field(
         default=None,
         description=(
-            "Skill name. Required for 'load' and 'create'. Lowercase, "
+            "Skill name. Required for op=load and op=create. Lowercase, "
             "hyphen-separated (e.g. 'react-patterns')."
         ),
     )
     description: str | None = Field(
         default=None,
-        description="One-line summary. Required for 'create'.",
+        description="One-line summary. Required for op=create.",
     )
     body: str | None = Field(
         default=None,
-        description="Markdown instruction body. Required for 'create'.",
+        description="Markdown instruction body. Required for op=create.",
     )
     scope: Literal["project", "global"] = Field(
         default="project",
         description=(
-            "Write scope for 'create': 'project' → .voidx/skills/<name>/SKILL.md, "
-            "'global' → ~/.voidx/skills/<name>/SKILL.md."
+            "Write scope for op=create: project writes .voidx/skills/<name>/SKILL.md; "
+            "global writes ~/.voidx/skills/<name>/SKILL.md."
         ),
     )
 

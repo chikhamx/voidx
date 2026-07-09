@@ -21,13 +21,13 @@ from voidx.tools.shell.common import (
 
 
 class BashInput(BaseModel):
-    command: str = Field(description="Shell command to execute")
-    timeout: int = Field(default=120, description="Timeout in seconds")
+    command: str = Field(description="non-interactive Bash command string to execute.")
+    timeout: int = Field(default=120, description="Timeout in seconds; the process is terminated if exceeded.")
 
 
 class BashTool(BaseTool):
     id = "bash"
-    description = "Execute a shell command in the workspace directory. Returns stdout, stderr, and exit code."
+    description = "Execute a Bash command; working directory is the workspace root. Returns stdout, stderr, and exit code."
 
     def parameters_schema(self) -> dict:
         return model_to_json_schema(BashInput)

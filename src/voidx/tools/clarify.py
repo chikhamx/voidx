@@ -19,10 +19,10 @@ from voidx.tools.base import (
 
 
 class ClarifyInput(BaseModel):
-    question: str = Field(description="The specific question to ask the user.")
+    question: str = Field(description="One specific clarifying question to ask the user.")
     options: list[str] = Field(
         default_factory=list,
-        description="Suggested answers. Leave empty for open-ended questions.",
+        description="Suggested mutually exclusive answers; leave empty for an open-ended question.",
     )
 
 
@@ -36,10 +36,9 @@ class ClarifyResult(BaseModel):
 class ClarifyTool(BaseTool):
     id = "clarify"
     description = (
-        "Ask the user one structured clarifying question with optional choices. "
-        "Use when intent, scope, or requirements are ambiguous and explicit input "
-        "is needed before proceeding. Later tool calls in the same response "
-        "are deferred until the answer updates runtime state."
+        "Ask the user one question when intent, scope, or requirements are ambiguous "
+        "and explicit input is needed before proceeding. Do not use for progress updates. "
+        "Later tool calls in the same response are deferred until the answer updates runtime state."
     )
 
     def parameters_schema(self) -> dict:

@@ -46,7 +46,7 @@ class AgentInput(BaseModel):
     )
     success_criteria: str = Field(
         default="",
-        description="What counts as done. Required for implement and feedback modes.",
+        description="What counts as done. Use empty string if not needed. Required for implement and feedback modes.",
     )
     result_preset: Literal[
         "auto",
@@ -58,7 +58,7 @@ class AgentInput(BaseModel):
         "feedback",
     ] = Field(
         default="auto",
-        description="Short enum selecting the internal structured child result contract.",
+        description="Structured child-result format; use auto unless a specific contract is needed.",
     )
 
 
@@ -127,8 +127,8 @@ _RESULT_PRESETS: dict[str, AgentResultContract] = {
 class AgentTool(BaseTool):
     id = "agent"
     description = (
-        "Start an isolated child agent for a delegated task. The child receives "
-        "the task brief and runtime context, but not caller conversation history."
+        "Start an isolated child agent for one independent delegated task. "
+        "The child receives the task brief and runtime context, but not caller conversation history."
     )
 
     def __init__(

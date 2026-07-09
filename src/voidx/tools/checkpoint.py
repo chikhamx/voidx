@@ -21,13 +21,13 @@ from voidx.workflow.types import (
 
 
 class PlanCheckpointInput(BaseModel):
-    plan_summary: str = Field(description="Concise implementation plan summary.")
-    steps: list[str] = Field(default_factory=list, description="Ordered implementation steps.")
+    plan_summary: str = Field(description="Concise summary of the proposed implementation plan.")
+    steps: list[str] = Field(default_factory=list, description="Ordered implementation steps; each step should be one small action.")
     affected_files: list[str] = Field(
         default_factory=list,
-        description="All files that may be created or modified across all steps.",
+        description="Files that may be created, modified, moved, or deleted by the plan.",
     )
-    risks: list[str] = Field(default_factory=list, description="Risks, edge cases, or trade-offs to consider.")
+    risks: list[str] = Field(default_factory=list, description="Risks, edge cases, or trade-offs the user should approve.")
 
 
 class PlanCheckpointResult(BaseModel):
@@ -56,11 +56,10 @@ _DECISION_MAP: dict[str, str] = {
 class PlanCheckpointTool(BaseTool):
     id = "checkpoint"
     description = (
-        "Present a concrete implementation plan for user approval before changing "
-        "files, running write-capable commands, or delegating implementation. The "
-        "user can approve, request a design document first, modify scope, or "
-        "reject. Later tool calls in the same response are deferred until the "
-        "decision updates runtime state."
+        "Present a concrete implementation plan as an approval gate before file edits, "
+        "write-capable commands, or delegated implementation. no code changes occur in this tool. "
+        "The user can approve, request a design document first, modify scope, or reject. "
+        "Later tool calls in the same response are deferred until the decision updates runtime state."
     )
 
     def parameters_schema(self) -> dict:

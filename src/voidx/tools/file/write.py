@@ -14,17 +14,20 @@ from .types import ResolvedEdit
 
 
 class WriteInput(BaseModel):
-    file_path: str = Field(description="Absolute or relative path to the file")
+    file_path: str = Field(description="Path to the target text file.")
     op: Literal["insert", "append", "write"] = Field(
-        description="Write mode: insert before a 1-based line number, append to end of file, or write full file content."
+        description=(
+            "Write mode: insert before a 1-based line number, append to an existing file, "
+            "or write complete file content."
+        )
     )
     lineno: int | None = Field(
         default=None,
-        description="For insert: 1-based line number to insert before. Ignored for append and write.",
+        description="For op=insert, 1-based line number to insert before. Ignored for op=append and op=write.",
     )
     new_string: str = Field(
         default="",
-        description="Content to add or full replacement content for op=write.",
+        description="Text to insert or append; for op=write, complete file content.",
     )
 
     @model_validator(mode="after")
@@ -39,7 +42,7 @@ class WriteInput(BaseModel):
 
 class WriteTool(BaseTool):
     id = "write"
-    description = "Insert, append, or fully overwrite file content. Insert line numbers are 1-based."
+    description = "Insert, append, or write file content. insert uses a 1-based line number; append adds to an existing file; write creates or fully overwrites the file."
 
     def parameters_schema(self) -> dict:
         return model_to_json_schema(WriteInput)

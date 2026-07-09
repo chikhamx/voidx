@@ -17,9 +17,9 @@ class TestReplaceLLMVisibleMessages:
     def test_tool_description_explains_anchor_search_without_runtime_terms(self):
         description = FileReplaceTool.description
 
-        assert "Anchors are searched near the given line numbers" in description
-        assert "file changed since the last read" in description
-        assert "single-line replace" in description.lower()
+        assert "Read the target lines first" in description
+        assert "inclusive line range" in description
+        assert "missing or ambiguous" in description
         assert "exact start_no/end_no" not in description
         assert "drift" not in description.lower()
 
@@ -30,12 +30,12 @@ class TestReplaceLLMVisibleMessages:
         bound_properties = bounds_schema["items"]["properties"]
 
         assert set(properties) == {"file_path", "bounds", "new_string"}
-        assert "Replacement boundary lines" in bounds_schema["description"]
-        assert "two unordered bounds" in bounds_schema["description"]
-        assert "both anchors must be non-empty" in bounds_schema["description"]
-        assert "Line number (1-based) from the latest read output" in bound_properties["line_no"]["description"]
-        assert "empty anchor skips anchor validation" in bound_properties["anchor"]["description"]
-        assert "trailing newline" in properties["new_string"]["description"]
+        assert "One or two boundary locators" in bounds_schema["description"]
+        assert "inclusive range" in bounds_schema["description"]
+        assert "Length must be 1 or 2" in bounds_schema["description"]
+        assert "1-based line number hint" in bound_properties["line_no"]["description"]
+        assert "Literal, case-sensitive substring" in bound_properties["anchor"]["description"]
+        assert "unchanged surrounding lines" in properties["new_string"]["description"]
         visible = "\n".join(prop.get("description", "") for prop in properties.values())
         assert "Exact" not in visible
         assert "drift" not in visible.lower()

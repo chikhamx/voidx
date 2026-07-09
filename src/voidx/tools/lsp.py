@@ -30,24 +30,24 @@ class LspInput(BaseModel):
     line: int = Field(
         default=1,
         ge=1,
-        description="1-based line number. Must be set for definition and references.",
+        description="1-based line number. Required for definition and references operations.",
     )
 
     character: int = Field(
         default=0,
         ge=0,
-        description="0-based character offset. Must be set for definition and references.",
+        description="0-based character offset. Required for definition and references operations.",
     )
 
     include_declaration: bool = Field(
         default=True,
-        description="Include the symbol declaration in results. Only for references operation.",
+        description="For references only: include the symbol declaration in results.",
     )
 
 
 class LspTool(BaseTool):
     id = "lsp"
-    description = "Language server operations: diagnostics, definitions, references, and document symbols."
+    description = "Run language-server operations: diagnostics, definition lookup, references, and document symbols."
 
     def parameters_schema(self) -> dict:
         return model_to_json_schema(LspInput)
@@ -91,12 +91,12 @@ class LspTool(BaseTool):
 # ── LspFormatTool kept but not registered ───────────────────────────────────
 
 class LspFormatInput(BaseModel):
-    file_path: str = Field(description="File to format with the configured language server.")
+    file_path: str = Field(description="File to format with the configured language server. Format writes to disk.")
 
 
 class LspFormatTool(BaseTool):
     id = "lsp_format"
-    description = "Format a file with its configured language server. Writes the formatted content back to disk."
+    description = "Format a file with its configured language server. Writes formatted content back to the same file."
 
     def parameters_schema(self) -> dict:
         return model_to_json_schema(LspFormatInput)

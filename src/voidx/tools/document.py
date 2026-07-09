@@ -18,22 +18,20 @@ class DocumentInput(BaseModel):
     model_config = ConfigDict(extra="forbid")
 
     action: Literal["list", "read"] = Field(
-        description="Action to perform: list a document directory index or read a Markdown document."
+        description="Document action: list reads a directory README index; read loads a Markdown document."
     )
     path: str | None = Field(
         default=None,
-        description="POSIX-style relative path under the built-in documents root.",
+        description="POSIX-style relative path under the built-in document root; omit for the root index.",
     )
 
 
 class DocumentTool(BaseTool):
     id = "document"
     description = (
-        'Read voidx built-in documents only. Use action="list" to read a '
-        'directory README index. Use action="read" with a Markdown path to '
-        'load a specific document. This tool does not read user files, generate '
-        'documents, or search external sources. Start with document(action="list") '
-        'when unsure what is available.'
+        'Read built-in documents only. action="list" reads a directory README index; '
+        'action="read" loads a specific Markdown document. This tool does not read workspace files, '
+        'generate documents, or search external sources. Start with action="list" when unsure what exists.'
     )
 
     def parameters_schema(self) -> dict:

@@ -16,15 +16,15 @@ _logger = logging.getLogger(__name__)
 
 
 class GlobInput(BaseModel):
-    pattern: str = Field(description="Glob pattern to match files, e.g. '**/*.py' or 'src/**/*.ts'")
-    ignore_case: bool = Field(default=False, description="Case-insensitive glob matching when true")
-    max_depth: int | None = Field(default=None, ge=0, description="Maximum path depth from workspace root when set")
+    pattern: str = Field(description="workspace-relative glob pattern to match files, e.g. '**/*.py' or 'src/**/*.ts'.")
+    ignore_case: bool = Field(default=False, description="Case-insensitive glob matching when true.")
+    max_depth: int | None = Field(default=None, ge=0, description="Maximum path depth from workspace root when set.")
 
 
 class GlobTool(BaseTool):
     id = "glob"
     description = (
-        "Find files by glob pattern (e.g. '**/*.py'). Returns sorted relative paths. "
+        "Find files by workspace-relative glob pattern. Returns sorted workspace-relative paths. "
         "Skips .git, node_modules, .venv, __pycache__, and other build/dot directories."
     )
 
@@ -108,15 +108,15 @@ class GlobTool(BaseTool):
 
 
 class GrepInput(BaseModel):
-    pattern: str = Field(description="Regular expression to search for")
-    path: str | None = Field(default=None, description="File or directory to search. Defaults to workspace root.")
-    include: str | None = Field(default=None, description="Glob pattern to filter files, e.g. '*.py'")
-    ignore_case: bool = Field(default=False, description="Case-insensitive search when true")
+    pattern: str = Field(description="Python regular expression to search for.")
+    path: str | None = Field(default=None, description="file or directory scope to search; defaults to workspace root.")
+    include: str | None = Field(default=None, description="Glob pattern to include files, e.g. '*.py'.")
+    ignore_case: bool = Field(default=False, description="Case-insensitive search when true.")
     whole_word: bool = Field(default=False, description="Match whole words only by adding word boundaries.")
-    context_lines: int = Field(default=0, ge=0, description="Number of context lines before and after each match (0 = none)")
-    exclude: list[str] | None = Field(default=None, description="Glob patterns to exclude files, e.g. ['*.min.js', '*.map']")
-    max_matches: int = Field(default=100, ge=1, description="Maximum number of matches to return")
-    max_scanned: int = Field(default=5000, ge=1, description="Maximum number of files to scan")
+    context_lines: int = Field(default=0, ge=0, description="Number of context lines before and after each match; 0 returns only matching lines.")
+    exclude: list[str] | None = Field(default=None, description="Glob patterns to exclude files, e.g. ['*.min.js', '*.map'].")
+    max_matches: int = Field(default=100, ge=1, description="Maximum number of matches to return.")
+    max_scanned: int = Field(default=5000, ge=1, description="Maximum number of files to scan before stopping.")
 
     @field_validator("exclude", mode="before")
     @classmethod
@@ -129,10 +129,10 @@ class GrepInput(BaseModel):
 class GrepTool(BaseTool):
     id = "grep"
     description = (
-        "Search file contents with regex. Returns file:line:content matches. "
+        "Search file contents with a Python regex. Returns file:line:content matches. "
         "Skips .git, node_modules, binary files, and build/dot directories. "
-        "Supports case-insensitive search (ignore_case), whole-word matching (whole_word), "
-        "context lines around matches (context_lines), and file exclusion (exclude)."
+        "Use include/exclude to filter files, context_lines for surrounding lines, "
+        "and max_matches/max_scanned to bound output and scan cost."
     )
 
     def parameters_schema(self) -> dict:

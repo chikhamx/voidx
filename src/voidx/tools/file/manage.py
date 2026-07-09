@@ -17,41 +17,29 @@ from .state import (
 
 
 class MoveSpec(BaseModel):
-    src: str = Field(description="Source file path")
-    dest: str = Field(description="Destination file path")
+    src: str = Field(description="Source file path for a move operation.")
+    dest: str = Field(description="Destination file path for a move operation.")
     overwrite: bool = Field(
         default=False,
-        description="Whether to overwrite destination when it already exists.",
+        description="Whether this move may replace an existing destination file.",
     )
 
 
 class ManageInput(BaseModel):
     op: Literal["create", "delete", "move"] = Field(
-        description=(
-            "File lifecycle operation: create (create empty file + parent dirs), "
-            "delete (delete files), move (move/rename files)"
-        )
+        description="File lifecycle operation: create empty files, delete files, or move/rename files."
     )
     paths: str | list[str] | None = Field(
         default=None,
-        description=(
-            "File path or file paths. Required for op=create/delete. "
-            "Use a string for one file, or an array for multiple files. Ignored for op=move."
-        ),
+        description="File path or paths; paths is required for op=create and op=delete. Ignored for op=move.",
     )
     moves: list[MoveSpec] | None = Field(
         default=None,
-        description=(
-            "Move mappings for op=move. Each item contains src, dest, and optional overwrite. "
-            "Ignored for op=create/delete."
-        ),
+        description="Move mappings required for op=move; each item has src, dest, and per-move overwrite. Ignored for op=create/op=delete.",
     )
     overwrite: bool = Field(
         default=False,
-        description=(
-            "For create: overwrite existing files. For delete: ignored. "
-            "For move: ignored; use per-item moves[].overwrite."
-        ),
+        description="For op=create only: replace an existing file after safety checks. Ignored for op=delete and op=move.",
     )
 
     @model_validator(mode="after")
@@ -71,7 +59,7 @@ class ManageInput(BaseModel):
 
 class ManageTool(BaseTool):
     id = "manage"
-    description = "Create, delete, or move one or more files."
+    description = "Create empty files, delete files, or move/rename files. No file content is written; use write for content."
 
     def parameters_schema(self) -> dict:
         return model_to_json_schema(ManageInput)
