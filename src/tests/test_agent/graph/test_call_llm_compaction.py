@@ -627,3 +627,33 @@ async def test_call_llm_non_retryable_404_fail_fast(tmp_path, monkeypatch):
     assert result["should_continue"] is False
     assert result["step_count"] == 0
     assert result["messages"] == []
+
+
+def test_llm_retry_delay_schedule():
+    """Verify the two-phase delay schedule for all 10 retry attempts."""
+    from voidx.agent.graph.core.helpers import _llm_retry_delay
+
+    delays = [_llm_retry_delay(i) for i in range(1, 11)]
+    assert delays == [2.0, 2.0, 2.0, 4.0, 8.0, 16.0, 32.0, 60.0, 60.0, 60.0]
+
+
+def test_llm_retry_delay_fixed_phase():
+    """First two retries use fixed delay regardless of attempt number."""
+    from voidx.agent.graph.core.helpers import _llm_retry_delay
+
+    assert _llm_retry_delay(1) == 2.0
+    assert _llm_retry_delay(2) == 2.0
+
+
+def test_llm_retry_delay_exponential_cap():
+    """Exponential phase doubles until capped at 60s."""
+    from voidx.agent.graph.core.helpers import _llm_retry_delay
+
+    assert _llm_retry_delay(3) == 2.0
+    assert _llm_retry_delay(4) == 4.0
+    assert _llm_retry_delay(5) == 8.0
+    assert _llm_retry_delay(6) == 16.0
+    assert _llm_retry_delay(7) == 32.0
+    assert _llm_retry_delay(8) == 60.0
+    assert _llm_retry_delay(9) == 60.0
+    assert _llm_retry_delay(10) == 60.0

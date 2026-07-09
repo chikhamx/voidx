@@ -182,7 +182,7 @@ class AlwaysFailsStreamingModel:
 
 
 @pytest.mark.asyncio
-async def test_call_llm_retries_five_times_then_renders_assistant_error_without_state_message(tmp_path, monkeypatch):
+async def test_call_llm_exhausts_retries_then_renders_assistant_error(tmp_path, monkeypatch):
     import voidx.agent.graph.core.llm as graph_module
 
     async def no_sleep(_delay: float) -> None:
@@ -224,24 +224,29 @@ async def test_call_llm_retries_five_times_then_renders_assistant_error_without_
         test_dock.reset()
         set_dock(None)
 
-    assert graph.model.calls == 6
+    assert graph.model.calls == 11
     assert result["should_continue"] is False
     assert result.get("messages", []) == []
     retry_events = [
         event for event in events
         if isinstance(event, StatusUpdated) and event.status_id == "llm:retry"
     ]
-    assert [event.label for event in retry_events] == ["Retrying"] * 5
+    assert [event.label for event in retry_events] == ["Retrying"] * 10
     assert [event.detail for event in retry_events] == [
         "retrying in 2s: Connection error 1.",
-        "retrying in 4s: Connection error 2.",
-        "retrying in 6s: Connection error 3.",
-        "retrying in 8s: Connection error 4.",
-        "retrying in 10s: Connection error 5.",
+        "retrying in 2s: Connection error 2.",
+        "retrying in 2s: Connection error 3.",
+        "retrying in 4s: Connection error 4.",
+        "retrying in 8s: Connection error 5.",
+        "retrying in 16s: Connection error 6.",
+        "retrying in 32s: Connection error 7.",
+        "retrying in 60s: Connection error 8.",
+        "retrying in 60s: Connection error 9.",
+        "retrying in 60s: Connection error 10.",
     ]
     assert any(
         isinstance(event, AssistantStreamUpdated)
-        and "LLM call failed after 6 attempts: Connection error 6." in event.text
+        and "LLM call failed after 11 attempts: Connection error 11." in event.text
         for event in events
     )
     assert any(isinstance(event, AssistantStreamCommitted) for event in events)

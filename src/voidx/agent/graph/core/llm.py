@@ -422,7 +422,8 @@ class GraphLlmMixin:
                 if failed_attempts < max_retries:
                     failed_attempts += 1
                     delay = _llm_retry_delay(failed_attempts)
-                    retry_detail = f"retrying in {delay}s: {e}"
+                    delay_str = str(int(delay)) if delay == int(delay) else str(delay)
+                    retry_detail = f"retrying in {delay_str}s: {e}"
                     if self._ui.via_events():
                         retry_status_active = True
                         await self._ui.events.emit(StatusUpdated(

@@ -74,6 +74,21 @@ def _classify_llm_error(exc: Exception) -> LLMErrorKind:
     return LLMErrorKind.UNKNOWN
 
 
+_LLM_MAX_RETRIES = 10
+_LLM_RETRY_FIXED_PHASE = 2
+_LLM_RETRY_FIXED_DELAY = 2.0
+_LLM_RETRY_BASE_DELAY = 2.0
+_LLM_RETRY_MAX_DELAY = 60.0
+
+
+def _llm_retry_delay(attempt: int) -> float:
+    """Return delay in seconds for the given 1-based retry attempt number."""
+    if attempt <= _LLM_RETRY_FIXED_PHASE:
+        return _LLM_RETRY_FIXED_DELAY
+    exp = attempt - _LLM_RETRY_FIXED_PHASE - 1
+    return min(_LLM_RETRY_BASE_DELAY * (2 ** exp), _LLM_RETRY_MAX_DELAY)
+
+
 def _render_inline_compaction_guide(*, tail_anchor_id: str, head_count: int, previous_summary: str) -> str:
     previous = previous_summary.strip() or "(none)"
     return (

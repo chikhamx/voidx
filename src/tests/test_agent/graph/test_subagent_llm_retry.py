@@ -116,7 +116,7 @@ async def test_run_subagent_retries_transient_llm_errors_and_cleans_retry_status
 
     assert output == "child answer"
     assert attempts == 3
-    assert sleep_delays == [2, 4]
+    assert sleep_delays == [2, 2]
     assert [type(event).__name__ for event in retry_events] == [
         "StatusUpdated",
         "StatusUpdated",
@@ -246,10 +246,15 @@ async def test_run_subagent_exhausts_retryable_llm_errors(tmp_path, monkeypatch)
 
     retry_events = [event for event in ui_port.events.emitted if getattr(event, "status_id", None) == "llm:retry"]
 
-    assert attempts == 6
-    assert sleep_delays == [2, 4, 6, 8, 10]
+    assert attempts == 11
+    assert sleep_delays == [2, 2, 2, 4, 8, 16, 32, 60, 60, 60]
     assert run_metadata["finish_reason"] == "error"
     assert [type(event).__name__ for event in retry_events] == [
+        "StatusUpdated",
+        "StatusUpdated",
+        "StatusUpdated",
+        "StatusUpdated",
+        "StatusUpdated",
         "StatusUpdated",
         "StatusUpdated",
         "StatusUpdated",
