@@ -131,8 +131,8 @@ def _hint_write_echo(stripped: str, words: list[str]) -> RouteHint | None:
             llm_hint=f'Prefer write(file_path="{path}", op="append", new_string="{content}") for file tracking and diff output.',
         )
     return RouteHint(
-        tool_id="file", ui_label="→ file",
-        llm_hint=f'Prefer file(file_path="{path}", op="create") then write(file_path="{path}", op="append", new_string="{content}") for file tracking and diff output.',
+        tool_id="manage", ui_label="→ manage",
+        llm_hint=f'Prefer manage(op="create", paths="{path}") then write(file_path="{path}", op="append", new_string="{content}") for file tracking and diff output.',
     )
 
 
@@ -179,8 +179,8 @@ def _hint_write_heredoc(stripped: str) -> RouteHint | None:
             llm_hint=f'Prefer write(file_path="{path}", op="append", new_string="{content}") for file tracking and diff output.',
         )
     return RouteHint(
-        tool_id="file", ui_label="→ file",
-        llm_hint=f'Prefer file(file_path="{path}", op="create") then write(file_path="{path}", op="append", new_string="{content}") for file tracking and diff output.',
+        tool_id="manage", ui_label="→ manage",
+        llm_hint=f'Prefer manage(op="create", paths="{path}") then write(file_path="{path}", op="append", new_string="{content}") for file tracking and diff output.',
     )
 
 

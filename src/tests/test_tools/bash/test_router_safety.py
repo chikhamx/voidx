@@ -82,7 +82,7 @@ class TestEchoDoubleQuoteSafety:
     def test_single_quoted_simple_content_hint(self):
         h = try_hint("echo 'hello world' > file.txt")
         assert h is not None
-        assert h.tool_id == "file"
+        assert h.tool_id == "manage"
 
     def test_unquoted_content_no_hint(self):
         assert try_hint("echo hello > file.txt") is None

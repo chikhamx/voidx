@@ -34,7 +34,6 @@ class TestFileOps:
         assert result.metadata.get("error") is not True
 
     @pytest.mark.asyncio
-    @pytest.mark.asyncio
     async def test_line_insert_then_replace_handles_shifted_lines(self, tmp_path):
         f = tmp_path / "paragraph.py"
         f.write_text(
@@ -65,7 +64,6 @@ class TestFileOps:
         assert "def baz():\n    value = 2" in (tmp_path / "paragraph.py").read_text()
 
     @pytest.mark.asyncio
-    @pytest.mark.asyncio
     async def test_replace_reports_ambiguous_and_missing_matches(self, tmp_path):
         f = tmp_path / "paragraph-errors.py"
         f.write_text("target = 1\nother = 0\ntarget = 2\n")
@@ -90,7 +88,6 @@ class TestFileOps:
         assert missing.metadata.get("error")
         assert (tmp_path / "paragraph-errors.py").read_text() == "target = 1\nother = 0\ntarget = 2\n"
 
-    @pytest.mark.asyncio
     @pytest.mark.asyncio
     async def test_replace_lineno_hint_disambiguates_nearest_prefix(self, tmp_path):
         f = tmp_path / "nearest.py"
@@ -126,7 +123,6 @@ class TestFileOps:
         assert (tmp_path / "multi-line-prefix.py").read_text() == "top\nSTART\nMIDDLE\nend\n"
 
     @pytest.mark.asyncio
-    @pytest.mark.asyncio
     async def test_line_insert_after_shifted_line(self, tmp_path):
         f = tmp_path / "insert-paragraph-correct.py"
         f.write_text("top\ninserted\ntarget\nbottom\n")
@@ -143,7 +139,6 @@ class TestFileOps:
         assert result.metadata.get("error") is not True
         assert (tmp_path / "insert-paragraph-correct.py").read_text() == "top\ninserted\ntarget\nafter target\nbottom\n"
 
-    @pytest.mark.asyncio
     @pytest.mark.asyncio
     async def test_replace_still_requires_read_coverage(self, tmp_path):
         f = tmp_path / "paragraph-coverage.py"
@@ -162,7 +157,6 @@ class TestFileOps:
         assert result.metadata.get("error")
         assert (tmp_path / "paragraph-coverage.py").read_text() == "top\nmiddle\ntarget\n"
 
-    @pytest.mark.asyncio
     @pytest.mark.asyncio
     async def test_sequential_replace_on_same_file(self, tmp_path):
         f = tmp_path / "paragraph-conflict.py"
@@ -186,7 +180,6 @@ class TestFileOps:
         assert r2.metadata.get("error") is not True
         assert (tmp_path / "paragraph-conflict.py").read_text() == "TOP\nTARGET\nbottom\n"
 
-    @pytest.mark.asyncio
     @pytest.mark.asyncio
     async def test_line_insert_and_replace_delete_report_line_shift(self, tmp_path):
         f = tmp_path / "shift.txt"
@@ -228,7 +221,6 @@ class TestFileOps:
         assert result.metadata.get("error") is not True
         assert "line shift" not in result.output.lower()
 
-    @pytest.mark.asyncio
     @pytest.mark.asyncio
     async def test_sequential_insert_and_delete_report_line_shifts(self, tmp_path):
         f = tmp_path / "multi-shift.txt"

@@ -184,7 +184,7 @@ class TestBasicPositive:
     def test_echo_write(self):
         h = try_hint("echo 'hello' > file.txt")
         assert h is not None
-        assert h.tool_id == "file"
+        assert h.tool_id == "manage"
 
     def test_echo_append(self):
         h = try_hint("echo 'hello' >> file.txt")
@@ -208,8 +208,8 @@ class TestEchoRedirectInContent:
     def test_echo_content_with_gt(self):
         h = try_hint("echo 'x > y' > file.txt")
         assert h is not None
-        assert h.tool_id == "file"
-        assert 'file_path="file.txt"' in h.llm_hint
+        assert h.tool_id == "manage"
+        assert 'paths="file.txt"' in h.llm_hint
 
     def test_echo_content_with_double_gt_append(self):
         h = try_hint("echo 'a >> b' >> file.txt")
@@ -220,14 +220,14 @@ class TestEchoRedirectInContent:
     def test_printf_content_with_gt(self):
         h = try_hint("printf 'x > y' > file.txt")
         assert h is not None
-        assert h.tool_id == "file"
-        assert 'file_path="file.txt"' in h.llm_hint
+        assert h.tool_id == "manage"
+        assert 'paths="file.txt"' in h.llm_hint
 
     def test_echo_redirect_without_spaces(self):
         h = try_hint("echo 'hello'>file.txt")
         assert h is not None
-        assert h.tool_id == "file"
-        assert 'file_path="file.txt"' in h.llm_hint
+        assert h.tool_id == "manage"
+        assert 'paths="file.txt"' in h.llm_hint
 
     def test_echo_append_without_spaces(self):
         h = try_hint("echo 'hello'>>file.txt")

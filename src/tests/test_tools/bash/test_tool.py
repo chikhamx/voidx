@@ -107,7 +107,7 @@ class TestBash:
 
         assert not (tmp_path / "out.txt").exists()
         assert result.metadata["skipped"] is True
-        assert result.metadata["route_hint"]["tool_id"] == "file"
+        assert result.metadata["route_hint"]["tool_id"] == "manage"
         assert result.next_step_hint
 
     @pytest.mark.asyncio

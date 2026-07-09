@@ -55,7 +55,7 @@ class TestHeredocOrderings:
     def test_heredoc_write(self):
         h = try_hint("cat > out.txt << 'EOF'\nhello\nEOF")
         assert h is not None
-        assert h.tool_id == "file"
+        assert h.tool_id == "manage"
         assert "hello" in h.llm_hint
 
     def test_heredoc_append_uses_line(self):
@@ -99,11 +99,11 @@ class TestRouteHintToolIdLiteral:
     """RouteHint.tool_id must be one of the Literal values."""
 
     def test_all_tool_ids_are_valid(self):
-        valid = {"read", "git", "file", "write", "replace", "glob", "grep"}
+        valid = {"read", "git", "manage", "write", "replace", "glob", "grep"}
         for cmd, expected_id in [
             ("cat file.py", "read"),
             ("git status", "git"),
-            ("echo 'x' > f", "file"),
+            ("echo 'x' > f", "manage"),
             ("sed -i '3s/a/b/' f", "replace"),
             ("echo 'x' >> f", "write"),
             ("find . -name '*.py'", "glob"),

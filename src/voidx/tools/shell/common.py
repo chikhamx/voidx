@@ -17,7 +17,7 @@ from typing import Literal
 
 from voidx.tools.base import ToolResult
 
-_HintableTool = Literal["read", "git", "file", "write", "replace", "glob", "grep"]
+_HintableTool = Literal["read", "git", "manage", "write", "replace", "glob", "grep"]
 
 
 @dataclass
