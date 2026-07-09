@@ -585,7 +585,7 @@ def _subagent_description_summary(description: str) -> str:
 def _subagent_tool_action(tool_name: str, label: str) -> str:
     mapping = {
         "read": "Reading",
-        "file": "Reading",
+        "manage": "Managing",
         "write": "Editing",
         "replace": "Editing",
         "edit": "Editing",
@@ -609,8 +609,26 @@ def _subagent_tool_action(tool_name: str, label: str) -> str:
 
 def _subagent_tool_detail(tool_name: str, raw_args: dict[str, Any], args: str) -> str:
     value: object = ""
-    if tool_name in {"read", "file", "write", "replace", "edit", "lsp"}:
+    if tool_name in {"read", "write", "replace", "edit", "lsp"}:
         value = raw_args.get("file_path") or raw_args.get("path")
+    elif tool_name == "manage":
+        op = raw_args.get("op", "")
+        if op == "move":
+            moves = raw_args.get("moves") or []
+            if moves and isinstance(moves[0], dict):
+                src = moves[0].get("src", "")
+                dest = moves[0].get("dest", "")
+                value = f"{op} {src} → {dest}" if src and dest else op
+            else:
+                value = op
+        else:
+            paths = raw_args.get("paths")
+            if isinstance(paths, str) and paths:
+                value = f"{op} {paths}"
+            elif isinstance(paths, list) and paths:
+                value = f"{op} {paths[0]}"
+            else:
+                value = op
     elif tool_name in ("bash", "powershell"):
         value = str(raw_args.get("command") or "").replace("\n", "; ")
     elif tool_name == "git":

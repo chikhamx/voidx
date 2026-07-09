@@ -78,9 +78,24 @@ def _fmt_args(args: dict[str, object]) -> str:
 
 
 def _fmt_args_short(tool_name: str, args: dict[str, object]) -> str:
-    if tool_name in {"read", "file", "write", "replace"}:
+    if tool_name in {"read", "write", "replace"}:
         value = args.get("file_path")
         return _escape_rich(str(value)) if value else ""
+    if tool_name == "manage":
+        op = args.get("op", "")
+        if op == "move":
+            moves = args.get("moves") or []
+            if moves and isinstance(moves[0], dict):
+                src = moves[0].get("src", "")
+                dest = moves[0].get("dest", "")
+                return f"{op} {_escape_rich(str(src))} → {_escape_rich(str(dest))}" if src and dest else str(op)
+            return str(op)
+        paths = args.get("paths")
+        if isinstance(paths, str) and paths:
+            return f"{op} {_escape_rich(paths)}"
+        if isinstance(paths, list) and paths:
+            return f"{op} {_escape_rich(str(paths[0]))}"
+        return str(op)
     if tool_name == "glob":
         value = args.get("pattern")
         return _escape_rich(str(value)) if value else ""

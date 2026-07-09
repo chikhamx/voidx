@@ -26,7 +26,7 @@ class TestFileTool:
         ctx = ToolContext(workspace=str(tmp_path))
         r = ToolRegistry()
 
-        created = await r.execute_tool("file", {"file_path": "new.txt", "op": "create"}, ctx)
+        created = await r.execute_tool("manage", {"op": "create", "paths": "new.txt"}, ctx)
         inserted = await r.execute_tool(
             "write",
             {"file_path": "new.txt", "op": "insert", "lineno": 1, "new_string": "hello\n"},
@@ -42,7 +42,7 @@ class TestFileTool:
         ctx = ToolContext(workspace=str(tmp_path))
         r = ToolRegistry()
 
-        result = await r.execute_tool("file", {"file_path": "hint.txt", "op": "create"}, ctx)
+        result = await r.execute_tool("manage", {"op": "create", "paths": "hint.txt"}, ctx)
 
         assert result.metadata.get("error") is not True
         assert "write tool" in result.next_step_hint
@@ -58,7 +58,7 @@ class TestFileTool:
 
         await r.execute_tool("read", {"file_path": "existing.txt"}, ctx)
         result = await r.execute_tool(
-            "file", {"file_path": "existing.txt", "op": "create", "overwrite": True}, ctx
+            "manage", {"op": "create", "paths": "existing.txt", "overwrite": True}, ctx
         )
 
         assert result.metadata.get("error") is not True
@@ -76,8 +76,8 @@ class TestFileTool:
         assert key in ctx.file_read_coverage
 
         result = await r.execute_tool(
-            "file",
-            {"file_path": "existing.txt", "op": "create", "overwrite": True},
+            "manage",
+            {"op": "create", "paths": "existing.txt", "overwrite": True},
             ctx,
         )
 
@@ -98,7 +98,7 @@ class TestFileTool:
         await r.execute_tool("read", {"file_path": "delete.txt"}, ctx)
         key = str(target.resolve())
 
-        result = await r.execute_tool("file", {"file_path": "delete.txt", "op": "delete"}, ctx)
+        result = await r.execute_tool("manage", {"op": "delete", "paths": "delete.txt"}, ctx)
 
         assert result.metadata.get("error") is not True
         assert not target.exists()
@@ -117,8 +117,8 @@ class TestFileTool:
         source_key = str(source.resolve())
 
         result = await r.execute_tool(
-            "file",
-            {"file_path": "source.txt", "op": "move", "dest_path": "nested/dest.txt"},
+            "manage",
+            {"op": "move", "moves": [{"src": "source.txt", "dest": "nested/dest.txt"}]},
             ctx,
         )
 

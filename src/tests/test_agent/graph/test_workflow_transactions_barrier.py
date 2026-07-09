@@ -318,8 +318,8 @@ async def test_workflow_transaction_reauthorizes_following_write(tmp_path):
                 "type": "tool_call",
             },
             {
-                "name": "file",
-                "args": {"file_path": "tmp-repro.txt", "op": "create"},
+                "name": "manage",
+                "args": {"op": "create", "paths": "tmp-repro.txt"},
                 "id": "call_write",
                 "type": "tool_call",
             },

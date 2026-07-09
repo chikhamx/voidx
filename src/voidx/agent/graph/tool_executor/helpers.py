@@ -80,13 +80,6 @@ def _extract_file_paths(tool_call: dict) -> list[str]:
         fp = args.get("file_path")
         if isinstance(fp, str) and fp:
             paths.append(fp)
-    elif name == "file":
-        fp = args.get("file_path")
-        if isinstance(fp, str) and fp:
-            paths.append(fp)
-        dp = args.get("dest_path")
-        if isinstance(dp, str) and dp:
-            paths.append(dp)
     elif name == "manage":
         op = args.get("op", "")
         if op in {"create", "delete"}:
@@ -202,7 +195,7 @@ def _agent_result_preview(text: object) -> str:
 
 
 
-_WORKSPACE_WRITE_LOCK_TOOLS = {"file", "write", "replace", "checkpoint"}
+_WORKSPACE_WRITE_LOCK_TOOLS = {"manage", "write", "replace", "checkpoint"}
 _WORKSPACE_WRITE_LOCK_CAPABILITIES = {"file_write", "bash_write", "git_write", "agent_implement"}
 
 
@@ -434,7 +427,7 @@ async def _execute_approved_batch(
 
     async def execute_one_file_locked(tc):
         paths = sorted(set(_extract_file_paths(tc)))
-        is_write = tc.get("name") in ("write", "replace", "file")
+        is_write = tc.get("name") in ("write", "replace", "manage")
         rw_locks: list[_FileRWLock] = []
         # Acquire locks in sorted order to avoid deadlock across tools
         try:

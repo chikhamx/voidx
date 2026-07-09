@@ -8,7 +8,7 @@ import pytest
 
 from voidx.tools.base import ToolContext, ToolResult
 from voidx.tools.file.read import FileReadTool
-from voidx.tools.file.manage import FileTool
+from voidx.tools.file.manage import ManageTool
 from voidx.tools.file.replace import FileReplaceTool
 from voidx.tools.search import GlobTool, GrepTool
 from voidx.tools.lsp import LspTool, LspFormatTool
@@ -43,8 +43,8 @@ async def test_file_read_invalid_args_returns_error():
 
 
 @pytest.mark.asyncio
-async def test_file_tool_invalid_args_returns_error():
-    result = await FileTool().execute({"file_path": 123}, _CTX)
+async def test_manage_tool_invalid_args_returns_error():
+    result = await ManageTool().execute({"op": "create", "paths": 123}, _CTX)
     assert isinstance(result, ToolResult)
     assert result.metadata.get("error") is True
 

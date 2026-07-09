@@ -309,7 +309,7 @@ def normalize_tool_args(tool_name: str, args: dict[str, Any]) -> str:
             "start_no": args.get("start_no"),
             "end_no": args.get("end_no"),
         })
-    if tool_name in {"read", "file", "write", "lsp_format"}:
+    if tool_name in {"read", "manage", "write", "lsp_format"}:
         return str(args.get("file_path") or "")
     if tool_name == "lsp":
         return stable_json({

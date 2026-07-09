@@ -60,20 +60,20 @@ class TestToolDisplayPolicy:
 
     def test_resolve_display_mode_show_stays_show(self):
         policy = ToolDisplayPolicy(default_mode=ToolDisplayMode.SHOW)
-        mode, max_lines = policy.resolve_display_mode("file", "short output", result_ok=True)
+        mode, max_lines = policy.resolve_display_mode("manage", "short output", result_ok=True)
         assert mode == ToolDisplayMode.SHOW
         assert max_lines == 3
 
     def test_resolve_display_mode_show_auto_upgrades_to_summary_by_lines(self):
         policy = ToolDisplayPolicy()
         long_output = "\n".join(f"line {i}" for i in range(60))
-        mode, _ = policy.resolve_display_mode("file", long_output, result_ok=True)
+        mode, _ = policy.resolve_display_mode("manage", long_output, result_ok=True)
         assert mode == ToolDisplayMode.SUMMARY
 
     def test_resolve_display_mode_show_auto_upgrades_to_summary_by_chars(self):
         policy = ToolDisplayPolicy()
         long_output = "x" * 6000
-        mode, _ = policy.resolve_display_mode("file", long_output, result_ok=True)
+        mode, _ = policy.resolve_display_mode("manage", long_output, result_ok=True)
         assert mode == ToolDisplayMode.SUMMARY
 
     def test_resolve_display_mode_visible_failure_stays_show(self):
@@ -158,7 +158,7 @@ class TestDefaultDisplayRules:
             assert DEFAULT_DISPLAY_RULES[name].mode == ToolDisplayMode.SUMMARY, f"{name} should be summary"
 
     def test_show_tools(self):
-        show_tools = ["bash", "read", "file", "write", "replace", "agent", "webfetch", "git"]
+        show_tools = ["bash", "read", "manage", "write", "replace", "agent", "webfetch", "git"]
         for name in show_tools:
             assert DEFAULT_DISPLAY_RULES[name].mode == ToolDisplayMode.SHOW, f"{name} should be show"
 

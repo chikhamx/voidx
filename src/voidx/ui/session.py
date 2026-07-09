@@ -225,12 +225,38 @@ class SessionChangeTracker:
         workspace: str,
         extra_paths: list[str] | None = None,
     ) -> None:
-        if tool_name not in {"file", "write", "replace"}:
+        if tool_name not in {"manage", "write", "replace"}:
+            return
+        if tool_name == "manage":
+            paths = self._extract_manage_paths(args)
+            for fp in paths:
+                self.capture_file(fp, workspace, extra_paths)
             return
         file_path = args.get("file_path")
         if not isinstance(file_path, str) or not file_path:
             return
         self.capture_file(file_path, workspace, extra_paths)
+
+    @staticmethod
+    def _extract_manage_paths(args: dict) -> list[str]:
+        op = args.get("op", "")
+        if op == "move":
+            paths = []
+            for move in args.get("moves") or []:
+                if isinstance(move, dict):
+                    src = move.get("src")
+                    dest = move.get("dest")
+                    if isinstance(src, str) and src:
+                        paths.append(src)
+                    if isinstance(dest, str) and dest:
+                        paths.append(dest)
+            return paths
+        raw = args.get("paths")
+        if isinstance(raw, str) and raw:
+            return [raw]
+        if isinstance(raw, list):
+            return [p for p in raw if isinstance(p, str) and p]
+        return []
 
     def _capture_patch_files(
         self,

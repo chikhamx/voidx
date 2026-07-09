@@ -372,7 +372,7 @@ def _tool_display_name(tool_name: str, label: str) -> str:
         "read": "Read",
         "grep": "Search",
         "glob": "Search",
-        "file": "File",
+        "manage": "Manage",
         "write": "Update",
         "replace": "Update",
         "lsp": "Lsp",
@@ -402,8 +402,26 @@ def _tool_display_name(tool_name: str, label: str) -> str:
 
 def _tool_display_value(tool_name: str, args: str, raw_args: dict[str, Any]) -> str:
     value: object = ""
-    if tool_name in {"read", "file", "write", "replace", "lsp"}:
+    if tool_name in {"read", "write", "replace", "lsp"}:
         value = raw_args.get("file_path") or raw_args.get("path")
+    elif tool_name == "manage":
+        op = raw_args.get("op", "")
+        if op == "move":
+            moves = raw_args.get("moves") or []
+            if moves and isinstance(moves[0], dict):
+                src = moves[0].get("src", "")
+                dest = moves[0].get("dest", "")
+                value = f"{op} {src} → {dest}" if src and dest else op
+            else:
+                value = op
+        else:
+            paths = raw_args.get("paths")
+            if isinstance(paths, str) and paths:
+                value = f"{op} {paths}"
+            elif isinstance(paths, list) and paths:
+                value = f"{op} {paths[0]}"
+            else:
+                value = op
     elif tool_name == "grep":
         pattern = raw_args.get("pattern") or raw_args.get("query")
         include = raw_args.get("include")

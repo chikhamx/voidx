@@ -14,7 +14,7 @@ from langchain_core.messages import ToolMessage
 
 from voidx.agent.tool_messages import DEFAULT_TOOL_MESSAGE_MAX_CHARS
 from voidx.tools.base import ToolContext, ToolResult, BaseTool, UserInteraction, UserResponse
-from voidx.tools.file import FileReadInput, FileReplaceInput, FileInput, WriteInput, FileReadTool, FileTool, WriteTool, FileReplaceTool
+from voidx.tools.file import FileReadInput, FileReplaceInput, WriteInput, FileReadTool, WriteTool, FileReplaceTool
 from voidx.tools.file.state import save_file_version
 import voidx.tools.file.state as file_state
 from voidx.tools.search import GlobInput, GrepInput
@@ -78,18 +78,6 @@ class TestToolSchemas:
         with pytest.raises(ValueError):
             FileReadInput(file_path="foo.py", limit=-2)
 
-    def test_file_input_requires_dest_path_for_move(self):
-        inp = FileInput(file_path="x.py", op="create")
-        assert inp.file_path == "x.py"
-        assert inp.op == "create"
-        with pytest.raises(ValueError):
-            FileInput(file_path="x.py", op="move")
-
-    def test_file_schema_describes_file_operations(self):
-        schema = FileTool().parameters_schema()
-        assert set(schema["properties"]) == {"file_path", "op", "dest_path", "overwrite"}
-        assert "create" in schema["properties"]["op"]["description"]
-        assert "move" in schema["properties"]["dest_path"]["description"]
 
     def test_write_input_supports_insert_and_append(self):
         insert = WriteInput(file_path="x.py", op="insert", lineno=3, new_string="added\n")

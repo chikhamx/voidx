@@ -26,20 +26,6 @@ class TestExtractFilePaths:
         paths = _extract_file_paths({"name": "replace", "args": {"file_path": "lib/util.py", "start_no": 1}})
         assert paths == ["lib/util.py"]
 
-    def test_file_create(self):
-        paths = _extract_file_paths({"name": "file", "args": {"op": "create", "file_path": "new.txt"}})
-        assert paths == ["new.txt"]
-
-    def test_file_delete(self):
-        paths = _extract_file_paths({"name": "file", "args": {"op": "delete", "file_path": "old.txt"}})
-        assert paths == ["old.txt"]
-
-    def test_file_move_both_paths(self):
-        paths = _extract_file_paths(
-            {"name": "file", "args": {"op": "move", "file_path": "a.py", "dest_path": "b.py"}}
-        )
-        # Both source and dest should be locked (sorting enforced in caller)
-        assert sorted(paths) == ["a.py", "b.py"]
 
     def test_bash_no_path(self):
         paths = _extract_file_paths({"name": "bash", "args": {"command": "ls"}})
@@ -286,7 +272,7 @@ class TestBatchOrdering:
 
         async def execute_one_file_locked(tc):
             paths = sorted(set(_extract_file_paths(tc)))
-            is_write = tc.get("name") in ("write", "replace", "file", "manage")
+            is_write = tc.get("name") in ("write", "replace", "manage")
             rw_locks = []
             try:
                 for p in paths:

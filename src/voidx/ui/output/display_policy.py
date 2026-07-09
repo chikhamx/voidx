@@ -127,7 +127,7 @@ DEFAULT_DISPLAY_RULES: dict[str, ToolDisplayRule] = {
     "read": ToolDisplayRule(tool_name="read", mode=ToolDisplayMode.SHOW, auto_summary_lines=100),
     "webfetch": ToolDisplayRule(tool_name="webfetch", mode=ToolDisplayMode.SHOW, auto_summary_lines=50, auto_summary_chars=10000),
     # ── Show ──
-    "file": ToolDisplayRule(tool_name="file", mode=ToolDisplayMode.SHOW),
+    "manage": ToolDisplayRule(tool_name="manage", mode=ToolDisplayMode.SHOW),
     "write": ToolDisplayRule(tool_name="write", mode=ToolDisplayMode.SHOW),
     "replace": ToolDisplayRule(tool_name="replace", mode=ToolDisplayMode.SHOW),
     "agent": ToolDisplayRule(tool_name="agent", mode=ToolDisplayMode.SHOW),

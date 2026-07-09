@@ -40,7 +40,7 @@ class VoidConsole:
     """Thin wrapper with voidx-specific rendering primitives."""
 
     _TOOL_GERUND: dict[str, str] = {
-        "read": "reading", "file": "managing", "write": "editing", "replace": "replacing",
+        "read": "reading", "manage": "manage", "write": "editing", "replace": "replacing",
         "glob": "finding", "grep": "searching", "bash": "running", "powershell": "running",
         "agent": "delegating", "webfetch": "fetching", "websearch": "searching",
         "todo": "updating", "task_status": "checking",

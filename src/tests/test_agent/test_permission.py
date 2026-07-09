@@ -263,7 +263,7 @@ def test_permission_service_mode_presets_update_sandbox_and_approval():
 
     service.set_permission_mode("accept-edits")
     assert service.sandbox_mode == "workspace-write"
-    assert service.decide("file", "src/app.py") == "allow"
+    assert service.decide("manage", "src/app.py") == "allow"
     assert service.decide("write", "src/app.py") == "allow"
     assert service.decide("replace", "src/app.py") == "allow"
     assert service.decide("bash", "pip install requests") == "ask"
@@ -277,7 +277,6 @@ def test_permission_service_mode_presets_update_sandbox_and_approval():
 
 def test_permission_engine_classifies_basic_capabilities():
     assert classify_tool_call({"name": "read", "args": {"file_path": "x.py"}}).capability == PermissionCapability.READ_TOOLS
-    assert classify_tool_call({"name": "file", "args": {"file_path": "x.py"}}).capability == PermissionCapability.FILE_WRITE
     assert classify_tool_call({"name": "manage", "args": {"op": "create", "paths": "x.py"}}).capability == PermissionCapability.FILE_WRITE
     assert classify_tool_call({"name": "write", "args": {"file_path": "x.py"}}).capability == PermissionCapability.FILE_WRITE
     assert classify_tool_call({"name": "replace", "args": {"file_path": "x.py"}}).capability == PermissionCapability.FILE_WRITE
@@ -311,7 +310,7 @@ def test_permission_engine_default_strategy_and_plan_overlay(tmp_path):
     assert authorize_tool_call({"name": "bash", "args": {"command": "ls"}}, context).action == "allow"
     assert authorize_tool_call({"name": "git", "args": {"args": "status"}}, context).action == "allow"
     assert authorize_tool_call({"name": "git", "args": {"args": "commit"}}, context).action == "ask"
-    assert authorize_tool_call({"name": "file", "args": {"file_path": "x.py"}}, context).action == "ask"
+    assert authorize_tool_call({"name": "manage", "args": {"op": "create", "paths": "x.py"}}, context).action == "ask"
     assert authorize_tool_call({"name": "agent", "args": {"agent": "implement"}}, context).action == "ask"
     assert authorize_tool_call({"name": "agent", "args": {"agent": "voidx", "mode": "implement"}}, context).action == "ask"
 
@@ -350,13 +349,13 @@ def test_permission_engine_policy_presets(tmp_path):
         approval_policy="on-failure",
     )
 
-    assert authorize_tool_call({"name": "file", "args": {"file_path": "x.py"}}, accept_edits).action == "allow"
+    assert authorize_tool_call({"name": "manage", "args": {"op": "create", "paths": "x.py"}}, accept_edits).action == "allow"
     assert authorize_tool_call({"name": "write", "args": {"file_path": "x.py"}}, accept_edits).action == "allow"
     assert authorize_tool_call({"name": "replace", "args": {"file_path": "x.py"}}, accept_edits).action == "allow"
     assert authorize_tool_call({"name": "bash", "args": {"command": "pip install requests"}}, accept_edits).action == "ask"
     assert authorize_tool_call({"name": "bash", "args": {"command": "python -m pytest"}}, full_access).action == "allow"
 
-    edit = authorize_tool_call({"name": "file", "args": {"file_path": "x.py"}}, on_failure)
+    edit = authorize_tool_call({"name": "manage", "args": {"op": "create", "paths": "x.py"}}, on_failure)
     bash = authorize_tool_call({"name": "bash", "args": {"command": "pip install requests"}}, on_failure)
 
     assert edit.action == "allow"
@@ -371,7 +370,7 @@ def test_permission_engine_read_only_sandbox_allows_read_bash_but_blocks_writes(
     assert authorize_tool_call({"name": "git", "args": {"args": "status"}}, context).action == "allow"
     assert authorize_tool_call({"name": "git", "args": {"args": "commit"}}, context).action == "deny"
     assert authorize_tool_call({"name": "bash", "args": {"command": "pip install requests"}}, context).action == "deny"
-    assert authorize_tool_call({"name": "file", "args": {"file_path": "x.py"}}, context).action == "deny"
+    assert authorize_tool_call({"name": "manage", "args": {"op": "create", "paths": "x.py"}}, context).action == "deny"
     assert authorize_tool_call({"name": "write", "args": {"file_path": "x.py"}}, context).action == "deny"
     assert authorize_tool_call({"name": "replace", "args": {"file_path": "x.py"}}, context).action == "deny"
 

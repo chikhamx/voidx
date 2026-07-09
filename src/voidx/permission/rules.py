@@ -96,14 +96,14 @@ def tool_call_from_pattern(tool: str, pattern: str = "*") -> dict:
 
 def repair_tool_name(tool: str) -> str:
     tool_map = {
-        "Read": "read", "Write": "file", "Edit": "replace", "Delete": "replace",
+        "Read": "read", "Write": "manage", "Edit": "replace", "Delete": "replace",
         "MultiEdit": "replace", "multiEdit": "replace", "multi_edit": "replace",
         "Glob": "glob", "Grep": "grep", "Bash": "bash", "PowerShell": "powershell",
         "Agent": "agent", "TodoWrite": "todo", "Todo": "todo",
         "WebFetch": "webfetch", "WebSearch": "websearch",
-        "read_file": "read", "write_file": "file",
+        "read_file": "read", "write_file": "manage",
         "edit_file": "replace", "shell": "bash",
-        "readfile": "read", "writefile": "file",
+        "readfile": "read", "writefile": "manage",
         "search": "grep", "find": "glob",
         "LspDiagnostics": "lsp", "LspSymbols": "lsp",
         "LspDefinition": "lsp", "LspReferences": "lsp",
@@ -388,7 +388,7 @@ def capability_for_tool(tool: str, args: dict) -> PermissionCapability:
         if args.get("op") == "create":
             return PermissionCapability.FILE_WRITE
         return PermissionCapability.READ_TOOLS
-    if tool in {"file", "manage", "write", "replace"}:
+    if tool in {"manage", "write", "replace"}:
         return PermissionCapability.FILE_WRITE
     if tool == "bash":
         return PermissionCapability.BASH_READ if is_safe_bash(str(args.get("command", ""))) else PermissionCapability.BASH_WRITE
@@ -434,7 +434,7 @@ def file_paths_for_tool(tool: str, args: dict) -> list[str]:
 
 
 _FILE_PATTERN_TOOLS = {
-    "read", "file", "write", "replace",
+    "read", "write", "replace",
     "lsp",
 }
 

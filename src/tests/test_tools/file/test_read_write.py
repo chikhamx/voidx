@@ -20,9 +20,9 @@ class TestFileOps:
     """File operations work on real files."""
 
     def test_file_tool_guidance_is_exposed_to_model(self):
-        from voidx.tools.file.manage import FileTool
+        from voidx.tools.file.manage import ManageTool
         from voidx.tools.file.write import WriteTool
-        file_desc = FileTool.description.lower()
+        file_desc = ManageTool.description.lower()
         line_desc = WriteTool.description.lower()
         assert "create" in file_desc
         assert "delete" in file_desc
@@ -181,7 +181,7 @@ class TestFileOps:
     async def test_file_create_and_line_insert(self, tmp_path):
         ctx = ToolContext(workspace=str(tmp_path))
         r = ToolRegistry()
-        await r.execute_tool("file", {"file_path": "out.txt", "op": "create"}, ctx)
+        await r.execute_tool("manage", {"op": "create", "paths": "out.txt"}, ctx)
         result = await r.execute_tool(
             "write",
             {"file_path": "out.txt", "op": "insert", "lineno": 1, "new_string": "hello"},
@@ -196,7 +196,7 @@ class TestFileOps:
         r = ToolRegistry()
         (tmp_path / "out.txt").write_text("old")
         await r.execute_tool("read", {"file_path": "out.txt"}, ctx)
-        await r.execute_tool("file", {"file_path": "out.txt", "op": "create", "overwrite": True}, ctx)
+        await r.execute_tool("manage", {"op": "create", "paths": "out.txt", "overwrite": True}, ctx)
         result = await r.execute_tool(
             "write",
             {"file_path": "out.txt", "op": "insert", "lineno": 1, "new_string": "new"},
@@ -210,7 +210,7 @@ class TestFileOps:
         ctx = ToolContext(workspace=str(tmp_path))
         r = ToolRegistry()
         exactly_200_with_final_newline = "\n".join(f"line {i}" for i in range(200)) + "\n"
-        await r.execute_tool("file", {"file_path": "exactly-200.txt", "op": "create"}, ctx)
+        await r.execute_tool("manage", {"op": "create", "paths": "exactly-200.txt"}, ctx)
         await r.execute_tool(
             "write",
             {"file_path": "exactly-200.txt", "op": "insert", "lineno": 1, "new_string": exactly_200_with_final_newline},

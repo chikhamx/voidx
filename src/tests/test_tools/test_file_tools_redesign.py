@@ -1,7 +1,7 @@
 import pytest
 
 from voidx.tools.base import ToolContext
-from voidx.tools.file import FileReadTool, FileTool, ManageTool, WriteTool
+from voidx.tools.file import FileReadTool, ManageTool, WriteTool
 from voidx.tools.registry import ToolRegistry
 
 
@@ -10,13 +10,12 @@ def _ctx(tmp_path) -> ToolContext:
 
 
 class TestManageToolRegistryAndSchema:
-    def test_registry_exposes_manage_and_keeps_legacy_file_alias(self):
+    def test_registry_exposes_manage(self):
         registry = ToolRegistry()
 
         assert "manage" in registry.ids()
-        assert "file" in registry.ids()
         assert registry.get("manage") is not None
-        assert registry.get("file") is not None
+        assert "file" not in registry.ids()
 
     def test_manage_schema_uses_paths_and_moves(self):
         schema = ManageTool().parameters_schema()
@@ -105,17 +104,6 @@ class TestManageToolExecution:
         assert not (tmp_path / "old.py").exists()
         assert (tmp_path / "dest.py").read_text(encoding="utf-8") == "old\n"
 
-    @pytest.mark.asyncio
-    async def test_legacy_file_wrapper_maps_old_schema_to_manage(self, tmp_path):
-        result = await ToolRegistry().get("file").execute(
-            {"op": "move", "file_path": "old.py", "dest_path": "new.py"},
-            _ctx(tmp_path),
-        )
-
-        assert result.metadata["operation"] == "move"
-        assert result.metadata["results"][0]["status"] == "skipped"
-        assert result.metadata["deprecated_tool"] == "file"
-        assert result.metadata["replacement_tool"] == "manage"
 
 
 class TestWriteToolRedesign:

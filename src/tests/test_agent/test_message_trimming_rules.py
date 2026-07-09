@@ -447,12 +447,12 @@ class TestRule2EditDiffSummarization:
                 return
         assert False, "edit ToolMessage not found"
 
-    def test_file_tool_not_summarized(self):
-        """file create/delete/move diff not summarized (rule 2 excludes file tool)."""
+    def test_manage_tool_not_summarized(self):
+        """manage create/delete/move diff not summarized (rule 2 excludes manage tool)."""
         from langchain_core.messages import AIMessage
         ai = AIMessage(
             content="",
-            tool_calls=[{"id": "f1", "name": "file", "args": {"file_path": "f.py", "op": "create"}, "type": "tool_call"}],
+            tool_calls=[{"id": "f1", "name": "manage", "args": {"op": "create", "paths": "f.py"}, "type": "tool_call"}],
         )
         tool = ToolMessage(
             content="File created: f.py\n@@ -0,0 +1,5 @@\n+line 1\n+line 2\n+line 3\n+line 4\n+line 5\n",

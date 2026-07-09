@@ -69,30 +69,6 @@ class ManageInput(BaseModel):
         return self
 
 
-class FileInput(BaseModel):
-    file_path: str = Field(description="Absolute or relative path to the file")
-    op: Literal["create", "delete", "move"] = Field(
-        description=(
-            "Deprecated file operation: create (create empty file + parent dirs), "
-            "delete (delete file), move (move/rename file). Use manage instead."
-        )
-    )
-    dest_path: str | None = Field(
-        default=None,
-        description="Destination path for move operation. Required when op=move; ignored for create and delete.",
-    )
-    overwrite: bool = Field(
-        default=False,
-        description="For create: overwrite if file exists. For move: overwrite destination.",
-    )
-
-    @model_validator(mode="after")
-    def _validate_dest_path(self) -> "FileInput":
-        if self.op == "move" and not self.dest_path:
-            raise ValueError("dest_path is required when op=move")
-        return self
-
-
 class ManageTool(BaseTool):
     id = "manage"
     description = "Create, delete, or move one or more files."
@@ -106,45 +82,20 @@ class ManageTool(BaseTool):
         except Exception as exc:
             return ToolResult(output=f"Invalid arguments: {exc}", metadata={"error": True})
         if inp.op == "create":
-            return await _create_files(ctx, inp)
+            result = await _create_files(ctx, inp)
+            if result.metadata.get("succeeded") == 1 and not inp.overwrite:
+                paths = _paths_list(inp.paths)
+                if paths:
+                    result.next_step_hint = (
+                        f"Use the write tool to append content to {paths[0]}. "
+                        f"Start with write(file_path=\"{paths[0]}\", op=\"append\", new_string=\"...\")."
+                    )
+            return result
         if inp.op == "delete":
             return await _delete_files(ctx, inp)
         if inp.op == "move":
             return await _move_files(ctx, inp)
         return ToolResult(output=f"Unknown manage operation: {inp.op}", metadata={"error": True})
-
-
-class FileTool(BaseTool):
-    id = "file"
-    description = "Deprecated create/delete/move file lifecycle wrapper. Use manage for file lifecycle operations."
-
-    def parameters_schema(self) -> dict:
-        return model_to_json_schema(FileInput)
-
-    async def execute(self, args: dict, ctx: ToolContext) -> ToolResult:
-        try:
-            inp = FileInput.model_validate(args)
-        except Exception as exc:
-            return ToolResult(output=f"Invalid arguments: {exc}", metadata={"error": True})
-        if inp.op == "move":
-            new_args = {
-                "op": "move",
-                "moves": [{"src": inp.file_path, "dest": inp.dest_path, "overwrite": inp.overwrite}],
-            }
-        else:
-            new_args = {"op": inp.op, "paths": inp.file_path, "overwrite": inp.overwrite}
-        result = await ManageTool().execute(new_args, ctx)
-        result.metadata.update({
-            "deprecated_tool": "file",
-            "replacement_tool": "manage",
-            "remove_after": "one minor release or 30 days",
-        })
-        if inp.op == "create" and result.metadata.get("succeeded") == 1 and not inp.overwrite:
-            result.next_step_hint = (
-                f"Use the write tool to append content to {inp.file_path}. "
-                f"Start with write(file_path=\"{inp.file_path}\", op=\"append\", new_string=\"...\")."
-            )
-        return result
 
 
 def _paths_list(paths: str | list[str] | None) -> list[str]:

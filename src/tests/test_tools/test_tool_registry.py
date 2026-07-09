@@ -17,7 +17,6 @@ from voidx.agent.tool_messages import DEFAULT_TOOL_MESSAGE_MAX_CHARS
 from voidx.tools.base import ToolContext, ToolResult, BaseTool, UserInteraction, UserResponse
 from voidx.tools.file import (
     FileReadInput,
-    FileInput,
     WriteInput,
     FileReadTool,
 )
@@ -49,7 +48,8 @@ class TestToolRegistry:
         r = ToolRegistry()
         ids = r.ids()
         assert "read" in ids
-        assert "file" in ids
+        assert "manage" in ids
+        assert "file" not in ids
         assert "write" in ids
         assert "replace" in ids
         assert "line" not in ids
@@ -74,7 +74,8 @@ class TestToolRegistry:
         assert len(tools) == len(r.ids())
         assert len(tools) >= 10
         names = [t["function"]["name"] for t in tools]
-        assert "file" in names
+        assert "manage" in names
+        assert "file" not in names
         assert "write" in names
         assert "replace" in names
         assert "line" not in names

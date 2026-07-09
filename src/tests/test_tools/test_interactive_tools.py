@@ -14,7 +14,7 @@ from langchain_core.messages import ToolMessage
 
 from voidx.agent.tool_messages import DEFAULT_TOOL_MESSAGE_MAX_CHARS
 from voidx.tools.base import ToolContext, ToolResult, BaseTool, UserInteraction, UserResponse
-from voidx.tools.file import FileReadInput, FileReadTool, FileTool, WriteTool, FileReplaceTool
+from voidx.tools.file import FileReadInput, FileReadTool, ManageTool, WriteTool, FileReplaceTool
 from voidx.tools.file.state import save_file_version
 import voidx.tools.file.state as file_state
 from voidx.tools.search import GlobInput, GrepInput
@@ -45,8 +45,8 @@ class TestInteractiveTools:
 
         ctx = ToolContext(workspace=str(tmp_path), session_id="sid-1")
         await FileReadTool().execute({"file_path": "app.py"}, ctx)
-        result = await FileTool().execute(
-            {"file_path": "app.py", "op": "create", "overwrite": True},
+        result = await ManageTool().execute(
+            {"op": "create", "paths": "app.py", "overwrite": True},
             ctx,
         )
         assert result.metadata.get("error") is not True
@@ -69,8 +69,8 @@ class TestInteractiveTools:
         monkeypatch.setattr(store, "DATA_DIR", tmp_path / ".voidx")
 
         ctx = ToolContext(workspace=str(tmp_path), session_id="sid-1")
-        result = await FileTool().execute(
-            {"file_path": "created.py", "op": "create"},
+        result = await ManageTool().execute(
+            {"op": "create", "paths": "created.py"},
             ctx,
         )
         assert result.metadata.get("error") is not True
@@ -93,7 +93,7 @@ class TestInteractiveTools:
         ctx = ToolContext(workspace=str(tmp_path), session_id="sid-1")
 
         await FileReadTool().execute({"file_path": "app.py"}, ctx)
-        await FileTool().execute({"file_path": "app.py", "op": "create", "overwrite": True}, ctx)
+        await ManageTool().execute({"op": "create", "paths": "app.py", "overwrite": True}, ctx)
         await WriteTool().execute({"file_path": "app.py", "op": "append", "new_string": "two\n"}, ctx)
         await FileReadTool().execute({"file_path": "app.py"}, ctx)
         result = await FileReplaceTool().execute(

@@ -83,7 +83,7 @@ def merge(*rulesets: Ruleset) -> Ruleset:
 
 def disabled_tools(all_tools: list[str], ruleset: Ruleset) -> set[str]:
     """Find which tools are completely disabled (denied with pattern="*")."""
-    EDIT_TOOLS = {"file", "write", "replace"}
+    EDIT_TOOLS = {"manage", "write", "replace"}
     disabled: set[str] = set()
     for tool in all_tools:
         permission = "edit" if tool in EDIT_TOOLS else tool
