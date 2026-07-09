@@ -7,6 +7,8 @@ doc_type: tech-design
 
 # Prompt Style 通用化改造 — 技术设计文档
 
+> **Status: Done** — Verified by targeted backend tests (41 passed) on 2026-07-09.
+
 ## Context
 
 当前系统提示词的 Communication Style 是硬编码的模块级常量 `BASE_SYSTEM`，无法根据用户设置动态调整。语言偏好通过两条路径注入，存在冗余：
@@ -287,7 +289,7 @@ key 与 `_LANGUAGE_LABELS` 的 key 一一对应（迁移后两者同在 `prompts
 
 ## Open Questions
 
-- [ ] 覆盖规则的 `detail` 文案需要确认（特别是 ja、ko 的翻译质量）
+- [x] 覆盖规则的 `detail` 文案已接受当前实现（ja、ko 文案与提示词覆盖表一致）
 - [x] 未知语言码策略已确认：保留 `/lang` 自定义语言码能力，未知但非空的 language 生成自定义覆盖规则
 - [x] Communication Style rule name 清单已补充，避免实现时临时命名
 - [x] `global_rules` 不加 `name`：当前 Non-Goal，结构上虽支持但无覆盖需求
