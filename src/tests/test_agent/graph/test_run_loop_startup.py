@@ -280,7 +280,7 @@ async def test_non_web_create_frontend_failure_exits_with_error(monkeypatch, tmp
             original_append(text, markup=markup)
 
         test_dock.append_message = capture_append  # type: ignore[method-assign]
-        with pytest.raises(RunLoopStartupError):
+        with pytest.raises(RunLoopStartupError) as exc_info:
             await graph.run(web=False)
 
         assert not test_dock.active, "run loop must deactivate dock on startup failure"
@@ -290,8 +290,8 @@ async def test_non_web_create_frontend_failure_exits_with_error(monkeypatch, tmp
         set_dock(None)
 
     assert headless_instances == [], "must not create GatewayHeadlessFrontend in non-web mode"
-    assert any("voidx_cli" in m or "voidx-cli" in m for m in messages), \
-        f"must print error mentioning voidx-cli, got: {messages}"
+    assert str(exc_info.value) == "Cannot start terminal UI: voidx_cli is required for terminal UI mode."
+    assert messages == [], f"run loop must not also print startup error; got: {messages}"
 
 
 @pytest.mark.asyncio

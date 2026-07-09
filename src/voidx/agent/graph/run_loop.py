@@ -249,11 +249,6 @@ class GraphRunLoopMixin(GraphTurnMixin, GraphSessionMixin, GraphTranscriptMixin)
                 app = create_frontend(status, COMMANDS)
             except RuntimeError as exc:
                 if not web:
-                    message = (
-                        f"[red]Cannot start terminal UI:[/red] {exc}\n"
-                        "[dim]Reinstall voidx via install.sh or: pip install voidx-cli[/dim]"
-                    )
-                    self._ui.dock.append_message(message, markup=True)
                     await cleanup_run_loop()
                     raise RunLoopStartupError(f"Cannot start terminal UI: {exc}") from exc
                 self._ui.dock.append_message(
