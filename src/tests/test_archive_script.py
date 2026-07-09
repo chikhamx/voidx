@@ -2,6 +2,8 @@
 
 from __future__ import annotations
 
+import datetime as dt
+import os
 import subprocess
 import sys
 from pathlib import Path
@@ -28,6 +30,39 @@ def _make_specs_tree(tmp_path: Path) -> Path:
     return tmp_path
 
 
+def test_archives_design_document(tmp_path: Path) -> None:
+    root = _make_specs_tree(tmp_path)
+    design_dir = root / "docs" / "design"
+    design_dir.mkdir(parents=True)
+    design = design_dir / "design.md"
+    design.write_text("# Design\n\nBody.\n")
+
+    result = _run([str(design)], cwd=root)
+    assert result.returncode == 0, result.stderr
+
+    archived = root / "docs" / "archive" / "design.md"
+    assert archived.exists()
+    assert not design.exists()
+    assert "> **Status: Done**" in archived.read_text()
+
+    assert "source: docs/design/design.md" in result.stdout
+    assert "target: docs/archive/design.md" in result.stdout
+    assert "status: Done" in result.stdout
+    assert "dry_run: false" in result.stdout
+
+def test_archive_defaults_status_note_to_archive_date(tmp_path: Path) -> None:
+    root = _make_specs_tree(tmp_path)
+    spec = root / "docs" / "specs" / "dated.md"
+    spec.write_text("# Dated\n\nBody.\n")
+
+    result = _run([str(spec), "--today", "2026-07-09"], cwd=root)
+    assert result.returncode == 0, result.stderr
+
+    archived = root / "docs" / "archive" / "dated.md"
+    assert "> **Status: Done** — Archived on 2026-07-09." in archived.read_text()
+
+
+
 # ── Status header injection ──────────────────────────────────────────
 
 
@@ -36,7 +71,7 @@ def test_no_status_adds_after_title(tmp_path: Path) -> None:
     spec = root / "docs" / "specs" / "foo.md"
     spec.write_text("# Foo Design\n\nBody text.\n")
 
-    result = _run([str(spec)], cwd=root)
+    result = _run([str(spec), "--today", "2026-07-09"], cwd=root)
     assert result.returncode == 0, result.stderr
 
     archived = root / "docs" / "archive" / "foo.md"
@@ -45,7 +80,7 @@ def test_no_status_adds_after_title(tmp_path: Path) -> None:
     lines = archived.read_text().splitlines()
     assert lines[0] == "# Foo Design"
     assert lines[1] == ""
-    assert lines[2] == "> **Status: Done**"
+    assert lines[2] == "> **Status: Done** — Archived on 2026-07-09."
 
 
 def test_no_status_no_title_prepends(tmp_path: Path) -> None:
@@ -53,12 +88,12 @@ def test_no_status_no_title_prepends(tmp_path: Path) -> None:
     spec = root / "docs" / "specs" / "bar.md"
     spec.write_text("Some intro without heading.\n\nMore.\n")
 
-    result = _run([str(spec)], cwd=root)
+    result = _run([str(spec), "--today", "2026-07-09"], cwd=root)
     assert result.returncode == 0, result.stderr
 
     archived = root / "docs" / "archive" / "bar.md"
     lines = archived.read_text().splitlines()
-    assert lines[0] == "> **Status: Done**"
+    assert lines[0] == "> **Status: Done** — Archived on 2026-07-09."
 
 
 def test_status_spec_replaced_with_done(tmp_path: Path) -> None:
@@ -75,17 +110,18 @@ def test_status_spec_replaced_with_done(tmp_path: Path) -> None:
     assert "Spec" not in text
 
 
-def test_status_done_unchanged(tmp_path: Path) -> None:
+def test_status_done_gets_default_archive_date(tmp_path: Path) -> None:
     root = _make_specs_tree(tmp_path)
     spec = root / "docs" / "specs" / "qux.md"
-    original = "# Qux\n\n> **Status: Done** — all good.\n\nBody.\n"
-    spec.write_text(original)
+    spec.write_text("# Qux\n\n> **Status: Done** — all good.\n\nBody.\n")
 
-    result = _run([str(spec)], cwd=root)
+    result = _run([str(spec), "--today", "2026-07-09"], cwd=root)
     assert result.returncode == 0, result.stderr
 
     archived = root / "docs" / "archive" / "qux.md"
-    assert archived.read_text() == original
+    text = archived.read_text()
+    assert "> **Status: Done** — Archived on 2026-07-09." in text
+    assert "all good" not in text
 
 
 def test_status_note_replaces_supplement(tmp_path: Path) -> None:
@@ -178,3 +214,173 @@ def test_batch_archive(tmp_path: Path) -> None:
     assert result.returncode == 0, result.stderr
     for i in range(3):
         assert (root / "docs" / "archive" / f"batch{i}.md").exists()
+
+
+# ── Organize archive ──────────────────────────────────────────────────
+
+
+def test_organize_archive_keeps_recent_loose_files(tmp_path: Path) -> None:
+    root = _make_specs_tree(tmp_path)
+    archive_dir = root / "docs" / "archive"
+    recent = archive_dir / "recent.md"
+    recent.write_text("# Recent\n\n> **Status: Done** — Verified on 2026-07-05.\n")
+    stale = archive_dir / "stale.md"
+    stale.write_text("# Stale\n\n> **Status: Done** — Verified on 2026-07-01.\n")
+
+    result = _run(["docs/archive", "--today", "2026-07-09"], cwd=root)
+    assert result.returncode == 0, result.stderr
+
+    assert recent.exists()
+    assert not stale.exists()
+    assert (archive_dir / "2026-07-01" / "stale.md").exists()
+    assert "organized: docs/archive/stale.md → docs/archive/2026-07-01/stale.md" in result.stdout
+    assert "skipped_count: 1" in result.stdout
+
+
+
+def test_organize_archive_uses_file_mtime_when_body_has_no_date(tmp_path: Path) -> None:
+    root = _make_specs_tree(tmp_path)
+    archive_dir = root / "docs" / "archive"
+    stale = archive_dir / "undated.md"
+    stale.write_text("# Undated\n\n> **Status: Done**\n")
+    timestamp = dt.datetime(2026, 6, 28, 12, tzinfo=dt.UTC).timestamp()
+    os.utime(stale, (timestamp, timestamp))
+
+    result = _run(["docs/archive", "--today", "2026-07-09"], cwd=root)
+    assert result.returncode == 0, result.stderr
+
+    assert not stale.exists()
+    assert (archive_dir / "2026-06-28" / stale.name).exists()
+    assert "organized: docs/archive/undated.md → docs/archive/2026-06-28/undated.md" in result.stdout
+
+
+def test_organize_archive_ignores_filename_date_when_file_mtime_is_recent(tmp_path: Path) -> None:
+    root = _make_specs_tree(tmp_path)
+    archive_dir = root / "docs" / "archive"
+    recent = archive_dir / "filename-only-2026-06-28.md"
+    recent.write_text("# Filename Only\n\n> **Status: Done**\n")
+    timestamp = dt.datetime(2026, 7, 5, 12, tzinfo=dt.UTC).timestamp()
+    os.utime(recent, (timestamp, timestamp))
+
+    result = _run(["docs/archive", "--today", "2026-07-09"], cwd=root)
+    assert result.returncode == 0, result.stderr
+
+    assert recent.exists()
+    assert not (archive_dir / "2026-06-28" / recent.name).exists()
+    assert "skipped_count: 1" in result.stdout
+
+def test_organize_archive_keeps_recent_day_dirs_and_moves_older_day_dirs(tmp_path: Path) -> None:
+    root = _make_specs_tree(tmp_path)
+    archive_dir = root / "docs" / "archive"
+    recent_day = archive_dir / "2026-06-28"
+    old_day = archive_dir / "2026-06-24"
+    recent_day.mkdir()
+    old_day.mkdir()
+    (recent_day / "recent.md").write_text("# Recent\n")
+    (old_day / "old.md").write_text("# Old\n")
+
+    result = _run(["docs/archive", "--today", "2026-07-09"], cwd=root)
+    assert result.returncode == 0, result.stderr
+
+    assert (recent_day / "recent.md").exists()
+    assert not old_day.exists()
+    assert (archive_dir / "2026-06" / "2026-06-24" / "old.md").exists()
+    assert "organized: docs/archive/2026-06-24/old.md → docs/archive/2026-06/2026-06-24/old.md" in result.stdout
+
+
+def test_organize_archive_keeps_recent_month_dirs_and_moves_older_month_dirs_to_year(tmp_path: Path) -> None:
+    root = _make_specs_tree(tmp_path)
+    archive_dir = root / "docs" / "archive"
+    recent_month = archive_dir / "2026-05" / "2026-05-10"
+    old_month = archive_dir / "2026-03" / "2026-03-10"
+    recent_month.mkdir(parents=True)
+    old_month.mkdir(parents=True)
+    (recent_month / "recent.md").write_text("# Recent\n")
+    (old_month / "old.md").write_text("# Old\n")
+
+    result = _run(["docs/archive", "--today", "2026-07-09"], cwd=root)
+    assert result.returncode == 0, result.stderr
+
+    assert (recent_month / "recent.md").exists()
+    assert not (archive_dir / "2026-03").exists()
+    assert (archive_dir / "2026" / "2026-03" / "2026-03-10" / "old.md").exists()
+    assert "organized: docs/archive/2026-03/2026-03-10/old.md → docs/archive/2026/2026-03/2026-03-10/old.md" in result.stdout
+
+
+def test_organize_archive_does_not_merge_year_dirs(tmp_path: Path) -> None:
+    root = _make_specs_tree(tmp_path)
+    archive_dir = root / "docs" / "archive"
+    year_day = archive_dir / "2025" / "2025-01" / "2025-01-01"
+    year_day.mkdir(parents=True)
+    (year_day / "done.md").write_text("# Done\n")
+
+    result = _run(["docs/archive", "--today", "2026-07-09"], cwd=root)
+    assert result.returncode == 0, result.stderr
+
+    assert (year_day / "done.md").exists()
+    assert "organized_count: 0" in result.stdout
+
+
+def test_organize_archive_dry_run_leaves_files_in_place(tmp_path: Path) -> None:
+    root = _make_specs_tree(tmp_path)
+    archive_dir = root / "docs" / "archive"
+    old_file = archive_dir / "old.md"
+    old_file.write_text("# Old\n\n> **Status: Done** — Verified on 2026-07-01.\n")
+
+    result = _run(["docs/archive", "--today", "2026-07-09", "--dry-run"], cwd=root)
+    assert result.returncode == 0, result.stderr
+
+    assert old_file.exists()
+    assert not (archive_dir / "2026-07-01" / "old.md").exists()
+    assert "would organize: docs/archive/old.md → docs/archive/2026-07-01/old.md" in result.stdout
+    assert "organized_count: 1" in result.stdout
+    assert "dry_run: true" in result.stdout
+
+
+def test_organize_archive_dry_run_reports_conflicts_and_continues(tmp_path: Path) -> None:
+    root = _make_specs_tree(tmp_path)
+    archive_dir = root / "docs" / "archive"
+    conflict = archive_dir / "conflict.md"
+    conflict.write_text("# Conflict\n\n> **Status: Done** — Verified on 2026-07-01.\n")
+    movable = archive_dir / "movable.md"
+    movable.write_text("# Movable\n\n> **Status: Done** — Verified on 2026-07-01.\n")
+    target_dir = archive_dir / "2026-07-01"
+    target_dir.mkdir()
+    (target_dir / "conflict.md").write_text("# Existing\n")
+
+    result = _run(["docs/archive", "--today", "2026-07-09", "--dry-run"], cwd=root)
+    assert result.returncode == 0, result.stderr
+
+    assert conflict.exists()
+    assert movable.exists()
+    assert "conflict: docs/archive/conflict.md → docs/archive/2026-07-01/conflict.md" in result.stdout
+    assert "would organize: docs/archive/movable.md → docs/archive/2026-07-01/movable.md" in result.stdout
+    assert "organized_count: 1" in result.stdout
+    assert "conflict_count: 1" in result.stdout
+    assert "dry_run: true" in result.stdout
+
+
+def test_organize_archive_reports_conflicts_and_continues_when_executing(tmp_path: Path) -> None:
+    root = _make_specs_tree(tmp_path)
+    archive_dir = root / "docs" / "archive"
+    conflict = archive_dir / "conflict.md"
+    conflict.write_text("# Conflict\n\n> **Status: Done** — Verified on 2026-07-01.\n")
+    movable = archive_dir / "movable.md"
+    movable.write_text("# Movable\n\n> **Status: Done** — Verified on 2026-07-01.\n")
+    target_dir = archive_dir / "2026-07-01"
+    target_dir.mkdir()
+    existing = target_dir / "conflict.md"
+    existing.write_text("# Existing\n")
+
+    result = _run(["docs/archive", "--today", "2026-07-09"], cwd=root)
+    assert result.returncode == 0, result.stderr
+
+    assert conflict.exists()
+    assert existing.read_text() == "# Existing\n"
+    assert not movable.exists()
+    assert (target_dir / "movable.md").exists()
+    assert "conflict: docs/archive/conflict.md → docs/archive/2026-07-01/conflict.md" in result.stdout
+    assert "organized: docs/archive/movable.md → docs/archive/2026-07-01/movable.md" in result.stdout
+    assert "organized_count: 1" in result.stdout
+    assert "conflict_count: 1" in result.stdout
+    assert "dry_run: false" in result.stdout
