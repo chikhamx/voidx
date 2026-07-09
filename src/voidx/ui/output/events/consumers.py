@@ -14,6 +14,7 @@ from voidx.ui.output.agent_display import agent_display_name
 from voidx.ui.output.dock import BottomInputDock
 from voidx.ui.output.dock.status import PERMISSION_REQUEST_STATUS_ID
 from voidx.ui.output.dock.formatting import short_path, short_value
+from voidx.ui.output.manage_display import manage_display
 from voidx.ui.output.events.schema import (
     AnsiAppended,
     AssistantStreamCommitted,
@@ -527,6 +528,9 @@ def _subagent_tool_status(
     raw_args: dict[str, Any],
     args: str = "",
 ) -> str:
+    if tool_name == "manage":
+        action, detail = manage_display(raw_args, limit=72)
+        return f"{action} {detail}" if detail else action
     action = _subagent_tool_action(tool_name, label)
     detail = _subagent_tool_detail(tool_name, raw_args, args)
     return f"{action} {detail}" if detail else action
@@ -612,23 +616,7 @@ def _subagent_tool_detail(tool_name: str, raw_args: dict[str, Any], args: str) -
     if tool_name in {"read", "write", "replace", "edit", "lsp"}:
         value = raw_args.get("file_path") or raw_args.get("path")
     elif tool_name == "manage":
-        op = raw_args.get("op", "")
-        if op == "move":
-            moves = raw_args.get("moves") or []
-            if moves and isinstance(moves[0], dict):
-                src = moves[0].get("src", "")
-                dest = moves[0].get("dest", "")
-                value = f"{op} {src} → {dest}" if src and dest else op
-            else:
-                value = op
-        else:
-            paths = raw_args.get("paths")
-            if isinstance(paths, str) and paths:
-                value = f"{op} {paths}"
-            elif isinstance(paths, list) and paths:
-                value = f"{op} {paths[0]}"
-            else:
-                value = op
+        _action, value = manage_display(raw_args)
     elif tool_name in ("bash", "powershell"):
         value = str(raw_args.get("command") or "").replace("\n", "; ")
     elif tool_name == "git":

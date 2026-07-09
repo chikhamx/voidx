@@ -39,6 +39,32 @@ class TestManageToolExecution:
         assert (tmp_path / "pkg" / "app.py").read_text(encoding="utf-8") == ""
 
     @pytest.mark.asyncio
+    async def test_manage_create_accepts_legacy_file_path_arg(self, tmp_path):
+        result = await ManageTool().execute({"op": "create", "file_path": "legacy.py"}, _ctx(tmp_path))
+
+        assert result.metadata["operation"] == "create"
+        assert result.metadata["succeeded"] == 1
+        assert (tmp_path / "legacy.py").read_text(encoding="utf-8") == ""
+
+    @pytest.mark.asyncio
+    async def test_manage_create_accepts_legacy_path_arg(self, tmp_path):
+        result = await ManageTool().execute({"op": "create", "path": "legacy-path.py"}, _ctx(tmp_path))
+
+        assert result.metadata["operation"] == "create"
+        assert result.metadata["succeeded"] == 1
+        assert (tmp_path / "legacy-path.py").read_text(encoding="utf-8") == ""
+
+    @pytest.mark.asyncio
+    async def test_manage_delete_accepts_legacy_file_path_arg(self, tmp_path):
+        (tmp_path / "delete-me.py").write_text("x\n", encoding="utf-8")
+
+        result = await ManageTool().execute({"op": "delete", "file_path": "delete-me.py"}, _ctx(tmp_path))
+
+        assert result.metadata["operation"] == "delete"
+        assert result.metadata["succeeded"] == 1
+        assert not (tmp_path / "delete-me.py").exists()
+
+    @pytest.mark.asyncio
     async def test_manage_create_batch_reports_partial_success(self, tmp_path):
         (tmp_path / "exists.py").write_text("keep\n", encoding="utf-8")
         ctx = _ctx(tmp_path)
@@ -103,6 +129,22 @@ class TestManageToolExecution:
         assert result.metadata["results"][1]["status"] == "skipped"
         assert not (tmp_path / "old.py").exists()
         assert (tmp_path / "dest.py").read_text(encoding="utf-8") == "old\n"
+
+    @pytest.mark.asyncio
+    async def test_manage_move_accepts_legacy_file_path_and_dest_path_args(self, tmp_path):
+        (tmp_path / "old-legacy.py").write_text("old\n", encoding="utf-8")
+        ctx = _ctx(tmp_path)
+        await FileReadTool().execute({"file_path": "old-legacy.py"}, ctx)
+
+        result = await ManageTool().execute(
+            {"op": "move", "file_path": "old-legacy.py", "dest_path": "new-legacy.py"},
+            ctx,
+        )
+
+        assert result.metadata["operation"] == "move"
+        assert result.metadata["succeeded"] == 1
+        assert not (tmp_path / "old-legacy.py").exists()
+        assert (tmp_path / "new-legacy.py").read_text(encoding="utf-8") == "old\n"
 
 
 

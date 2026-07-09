@@ -2,7 +2,7 @@
 
 Date: 2026-07-09
 
-> **Status: Proposed** — awaiting approval before implementation.
+> **Status: Done** — awaiting approval before implementation.
 
 ## Goal
 

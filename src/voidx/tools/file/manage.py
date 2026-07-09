@@ -77,6 +77,7 @@ class ManageTool(BaseTool):
         return model_to_json_schema(ManageInput)
 
     async def execute(self, args: dict, ctx: ToolContext) -> ToolResult:
+        args = _normalize_legacy_manage_args(args)
         try:
             inp = ManageInput.model_validate(args)
         except Exception as exc:
@@ -96,6 +97,24 @@ class ManageTool(BaseTool):
         if inp.op == "move":
             return await _move_files(ctx, inp)
         return ToolResult(output=f"Unknown manage operation: {inp.op}", metadata={"error": True})
+
+
+def _normalize_legacy_manage_args(args: dict) -> dict:
+    if not isinstance(args, dict):
+        return args
+    normalized = dict(args)
+    op = normalized.get("op")
+    file_path = normalized.get("file_path") or normalized.get("path")
+    if op in {"create", "delete"} and file_path and not normalized.get("paths"):
+        normalized["paths"] = file_path
+    if op == "move" and file_path and normalized.get("dest_path") and not normalized.get("moves"):
+        normalized["moves"] = [{
+            "src": file_path,
+            "dest": normalized["dest_path"],
+            "overwrite": bool(normalized.get("overwrite", False)),
+        }]
+        normalized.pop("paths", None)
+    return normalized
 
 
 def _paths_list(paths: str | list[str] | None) -> list[str]:
@@ -224,5 +243,3 @@ async def _move_one(ctx: ToolContext, src: str, dest_path: str, overwrite: bool,
     shutil.move(str(source), str(dest))
     move_file_tracking(ctx, source, dest)
     return {"file": src, "dest": dest_path, "status": "moved"}
-
-

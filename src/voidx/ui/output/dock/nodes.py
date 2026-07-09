@@ -17,6 +17,7 @@ from voidx.ui.output.dock.formatting import (
     _tail_lines,
 )
 from voidx.ui.output.agent_display import agent_display_name
+from voidx.ui.output.manage_display import manage_display
 from voidx.ui.output.tree import OutputNode
 from voidx.ui.output.dock.nodes_startup import DockStartupNodeMixin
 from voidx.ui.output.dock.nodes_status import DockStatusNodeMixin
@@ -356,6 +357,11 @@ def _tool_header(
     if tool_name == "agent":
         agent_name = raw_args.get("agent") or _tool_display_value(tool_name, args, raw_args)
         return f"[bold]{escape(agent_display_name(agent_name))}[/bold]"
+    if tool_name == "manage":
+        name, value = manage_display(raw_args, limit=56)
+        if value:
+            return f'[bold]{escape(name)}[/bold]("[cyan]{escape(value)}[/cyan]")'
+        return f"[bold]{escape(name)}[/bold]()"
     name = _tool_display_name(tool_name, label)
     value = _tool_display_value(tool_name, args, raw_args)
     if value:
@@ -405,23 +411,7 @@ def _tool_display_value(tool_name: str, args: str, raw_args: dict[str, Any]) -> 
     if tool_name in {"read", "write", "replace", "lsp"}:
         value = raw_args.get("file_path") or raw_args.get("path")
     elif tool_name == "manage":
-        op = raw_args.get("op", "")
-        if op == "move":
-            moves = raw_args.get("moves") or []
-            if moves and isinstance(moves[0], dict):
-                src = moves[0].get("src", "")
-                dest = moves[0].get("dest", "")
-                value = f"{op} {src} → {dest}" if src and dest else op
-            else:
-                value = op
-        else:
-            paths = raw_args.get("paths")
-            if isinstance(paths, str) and paths:
-                value = f"{op} {paths}"
-            elif isinstance(paths, list) and paths:
-                value = f"{op} {paths[0]}"
-            else:
-                value = op
+        _action, value = manage_display(raw_args)
     elif tool_name == "grep":
         pattern = raw_args.get("pattern") or raw_args.get("query")
         include = raw_args.get("include")

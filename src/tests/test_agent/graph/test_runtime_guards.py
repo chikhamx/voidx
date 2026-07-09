@@ -55,6 +55,36 @@ def test_failure_loop_does_not_block_materially_different_args():
     assert guards.tool_failures.should_block(changed) is False
 
 
+def test_failure_loop_does_not_block_different_manage_paths():
+    guards = RuntimeGuardState()
+    original = {"name": "manage", "args": {"op": "delete", "paths": "stale.py"}}
+    changed = {"name": "manage", "args": {"op": "delete", "paths": "other.py"}}
+    result = ToolResult(output="delete failed", metadata={"error": True, "error_kind": "unknown_error"})
+    key = build_failure_key(original, result)
+
+    guards.tool_failures.record_failure(key, "delete failed")
+    guards.tool_failures.record_failure(key, "delete failed")
+    guards.tool_failures.record_failure(key, "delete failed")
+
+    assert guards.tool_failures.should_block(original) is True
+    assert guards.tool_failures.should_block(changed) is False
+
+
+def test_failure_loop_does_not_block_different_manage_moves():
+    guards = RuntimeGuardState()
+    original = {"name": "manage", "args": {"op": "move", "moves": [{"src": "old.py", "dest": "new.py"}]}}
+    changed = {"name": "manage", "args": {"op": "move", "moves": [{"src": "other.py", "dest": "new.py"}]}}
+    result = ToolResult(output="move failed", metadata={"error": True, "error_kind": "unknown_error"})
+    key = build_failure_key(original, result)
+
+    guards.tool_failures.record_failure(key, "move failed")
+    guards.tool_failures.record_failure(key, "move failed")
+    guards.tool_failures.record_failure(key, "move failed")
+
+    assert guards.tool_failures.should_block(original) is True
+    assert guards.tool_failures.should_block(changed) is False
+
+
 def test_failure_loop_success_clears_tool_blocks():
     guards = RuntimeGuardState()
     failing = {"name": "read", "args": {"file_path": "missing.py"}}

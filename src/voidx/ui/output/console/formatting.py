@@ -9,6 +9,7 @@ from io import StringIO
 from rich.console import Console
 
 from voidx.ui.output.agent_display import agent_display_name
+from voidx.ui.output.manage_display import manage_display
 
 _SPIN_FRAMES = ["⠋", "⠙", "⠹", "⠸", "⠼", "⠴", "⠦", "⠧", "⠇", "⠏"]
 _spin_idx: ContextVar[int] = ContextVar("spin_idx", default=0)
@@ -82,20 +83,8 @@ def _fmt_args_short(tool_name: str, args: dict[str, object]) -> str:
         value = args.get("file_path")
         return _escape_rich(str(value)) if value else ""
     if tool_name == "manage":
-        op = args.get("op", "")
-        if op == "move":
-            moves = args.get("moves") or []
-            if moves and isinstance(moves[0], dict):
-                src = moves[0].get("src", "")
-                dest = moves[0].get("dest", "")
-                return f"{op} {_escape_rich(str(src))} → {_escape_rich(str(dest))}" if src and dest else str(op)
-            return str(op)
-        paths = args.get("paths")
-        if isinstance(paths, str) and paths:
-            return f"{op} {_escape_rich(paths)}"
-        if isinstance(paths, list) and paths:
-            return f"{op} {_escape_rich(str(paths[0]))}"
-        return str(op)
+        _action, value = manage_display(args, limit=72)
+        return _escape_rich(value)
     if tool_name == "glob":
         value = args.get("pattern")
         return _escape_rich(str(value)) if value else ""

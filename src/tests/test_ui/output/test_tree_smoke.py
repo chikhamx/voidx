@@ -1,6 +1,7 @@
 """Smoke test for OutputNode / OutputTree rendering."""
 import sys
 import pytest
+from rich.cells import cell_len
 from rich.text import Text
 from voidx.ui.output.dock.app import BottomInputDock
 from voidx.ui.output.tree import OutputNode, OutputTree
@@ -242,6 +243,61 @@ def test_agent_tool_header_uses_role_display_name(agent, display):
 
     assert display in header
     assert f'Agent("{agent}")' not in header
+
+
+@pytest.mark.parametrize(
+    ("raw_args", "expected"),
+    [
+        ({"op": "create", "paths": "src/new.py"}, 'Create("src/new.py")'),
+        ({"op": "delete", "paths": "src/old.py"}, 'Remove("src/old.py")'),
+        (
+            {"op": "move", "moves": [{"src": "src/old.py", "dest": "src/new.py"}]},
+            'Rename("old.py → new.py")',
+        ),
+        (
+            {"op": "move", "moves": [{"src": "src/old.py", "dest": "lib/new.py"}]},
+            'Move("src/old.py → lib/new.py")',
+        ),
+    ],
+)
+def test_manage_tool_header_uses_action_display(raw_args, expected):
+    dock = BottomInputDock()
+    assistant = dock.tree.new_node(dock.tree.root, node_type="assistant", header="● voidx")
+    node = dock.start_tool(
+        "Managing",
+        'op="manage"',
+        parent=assistant,
+        tool_name="manage",
+        raw_args=raw_args,
+    )
+
+    header = _plain(node.header)
+
+    assert expected in header
+    assert 'Manage("' not in header
+
+
+def test_manage_tool_header_long_path_fits_one_visual_row():
+    width = 72
+    dock = BottomInputDock()
+    assistant = dock.tree.new_node(dock.tree.root, node_type="assistant", header="● voidx")
+    node = dock.start_tool(
+        "Managing",
+        'op="create"',
+        parent=assistant,
+        tool_name="manage",
+        raw_args={"op": "create", "paths": "src/" + "很长的目录名/" * 12 + "created.py"},
+    )
+
+    lines = dock.tree.render(width)
+    row = next(row for row, node_id in dock.tree._line_map.items() if node_id == node.id)
+    line = lines[row]
+    plain = Text.from_markup(line).plain
+
+    assert "\n" not in plain
+    assert cell_len(plain) <= width
+    assert "Create(" in plain
+    assert "…" in plain
 
 
 def test_transcript_snapshot_round_trips_turn_tree():

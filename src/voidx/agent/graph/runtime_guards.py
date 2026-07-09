@@ -309,7 +309,28 @@ def normalize_tool_args(tool_name: str, args: dict[str, Any]) -> str:
             "start_no": args.get("start_no"),
             "end_no": args.get("end_no"),
         })
-    if tool_name in {"read", "manage", "write", "lsp_format"}:
+    if tool_name == "manage":
+        op = str(args.get("op") or "")
+        if op in {"create", "delete"}:
+            paths = args.get("paths")
+            if isinstance(paths, list):
+                normalized_paths = [str(path) for path in paths if path]
+            else:
+                normalized_paths = [str(paths)] if paths else []
+            return stable_json({"op": op, "paths": normalized_paths})
+        if op == "move":
+            moves: list[dict[str, Any]] = []
+            raw_moves = args.get("moves")
+            if isinstance(raw_moves, list):
+                for move in raw_moves:
+                    if isinstance(move, dict):
+                        moves.append({
+                            "src": move.get("src"),
+                            "dest": move.get("dest"),
+                        })
+            return stable_json({"op": op, "moves": moves})
+        return stable_json({"op": op})
+    if tool_name in {"read", "write", "lsp_format"}:
         return str(args.get("file_path") or "")
     if tool_name == "lsp":
         return stable_json({

@@ -347,3 +347,48 @@ async def test_subagent_streaming_is_headless(isolated_dock):
         await bus.stop()
 
 
+@pytest.mark.asyncio
+async def test_subagent_manage_status_uses_action_display(isolated_dock):
+    isolated_dock.begin_capture()
+    bus = UiEventBus()
+    bus.start(DockEventConsumer(isolated_dock))
+    try:
+        await bus.request(TurnStarted(text="demo"))
+        await bus.request(ToolStarted(
+            agent_id=-1,
+            tool_call_id="task_call",
+            tool_name="agent",
+            label="Running",
+            args='agent="implement"',
+        ))
+        await bus.emit(SubagentStarted(
+            agent_id=0,
+            subagent_id="agent_0",
+            name="implement",
+            description="Task: 更新 manage 显示",
+            parent_agent_id=-1,
+            parent_tool_call_id="task_call",
+        ))
+        await bus.emit(ToolStarted(
+            agent_id=0,
+            tool_call_id="sub_manage",
+            tool_name="manage",
+            label="Managing",
+            args='op="move"',
+            raw_args={
+                "op": "move",
+                "moves": [{"src": "src/old.py", "dest": "src/new.py"}],
+            },
+        ))
+        await bus.drain()
+
+        assistant = next(node for node in isolated_dock.tree.root.children if node.node_type == "assistant")
+        subagent = next(node for node in assistant.children if node.node_type == "subagent")
+        status = isolated_dock.status_record("agent:0:progress")
+
+        assert status is not None
+        assert status.label == "Rename old.py → new.py"
+        assert "Managing" not in _rich_plain(subagent.header)
+    finally:
+        await bus.stop()
+
