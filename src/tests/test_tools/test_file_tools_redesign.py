@@ -60,7 +60,7 @@ class TestManageToolExecution:
         assert (tmp_path / "exists.py").read_text(encoding="utf-8") == "keep\n"
 
     @pytest.mark.asyncio
-    async def test_manage_create_overwrite_on_unread_file_succeeds(self, tmp_path):
+    async def test_manage_create_overwrite_on_unread_file_returns_error(self, tmp_path):
         (tmp_path / "existing.py").write_text("important\n", encoding="utf-8")
 
         result = await ManageTool().execute(
@@ -69,10 +69,11 @@ class TestManageToolExecution:
         )
 
         assert result.metadata["operation"] == "create"
-        assert result.metadata["succeeded"] == 1
-        assert result.metadata["failed"] == 0
-        assert result.metadata["results"][0]["status"] == "created"
-        assert (tmp_path / "existing.py").read_text(encoding="utf-8") == ""
+        assert result.metadata["succeeded"] == 0
+        assert result.metadata["failed"] == 1
+        assert result.metadata["results"][0]["status"] == "error"
+        assert "read" in result.metadata["results"][0]["reason"].lower()
+        assert (tmp_path / "existing.py").read_text(encoding="utf-8") == "important\n"
 
     @pytest.mark.asyncio
     async def test_manage_move_uses_per_item_overwrite_and_keeps_order(self, tmp_path):
@@ -372,6 +373,7 @@ class TestManageAndWriteGaps:
 
         assert result.metadata.get("error") is not True
         assert (tmp_path / "app.py").read_text(encoding="utf-8") == "one\ntwo\nthree\n"
+        assert "append" in result.next_step_hint
 
     @pytest.mark.asyncio
     async def test_write_insert_beyond_total_plus_one_rejected(self, tmp_path):

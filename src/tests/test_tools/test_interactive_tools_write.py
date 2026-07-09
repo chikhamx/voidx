@@ -92,6 +92,7 @@ class TestInteractiveTools:
         target.write_text("one\n", encoding="utf-8")
         ctx = ToolContext(workspace=str(tmp_path), session_id="sid-1")
 
+        await FileReadTool().execute({"file_path": "app.py"}, ctx)
         await FileTool().execute({"file_path": "app.py", "op": "create", "overwrite": True}, ctx)
         await WriteTool().execute({"file_path": "app.py", "op": "append", "new_string": "two\n"}, ctx)
         await FileReadTool().execute({"file_path": "app.py"}, ctx)

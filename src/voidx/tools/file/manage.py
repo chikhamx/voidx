@@ -213,6 +213,8 @@ async def _create_one(ctx: ToolContext, file_path: str, overwrite: bool, *, tool
     if path.exists() and not overwrite:
         return {"file": file_path, "status": "skipped", "reason": "already exists, set overwrite=True to replace"}
     if path.exists():
+        if str(path.resolve()) not in ctx.file_mtimes:
+            return {"file": file_path, "status": "error", "reason": f"File must be read before overwrite: {file_path}. Please read the file first."}
         stale = check_staleness(ctx, path)
         if stale:
             return {"file": file_path, "status": "error", "reason": stale}
