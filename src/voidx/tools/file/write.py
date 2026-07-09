@@ -81,11 +81,17 @@ async def _execute_write_insert(ctx: ToolContext, inp: WriteInput) -> ToolResult
         coverage_error = check_read_coverage(ctx, path, inp.lineno, inp.lineno, display_path=inp.file_path)
         if coverage_error:
             return ToolResult(output=coverage_error, metadata={"error": True})
-    return await _apply_single_write_edit(
+    result = await _apply_single_write_edit(
         ctx,
         inp.file_path,
         ResolvedEdit("insert", resolved_lineno, resolved_lineno, inp.new_string),
     )
+    if inp.lineno == total_lines + 1 and total_lines > 0:
+        result.next_step_hint = (
+            f"Inserting at line {inp.lineno} is equivalent to appending. "
+            f"Consider using write(file_path=\"{inp.file_path}\", op=\"append\", new_string=\"...\") instead."
+        )
+    return result
 
 
 async def _execute_write_append(ctx: ToolContext, inp: WriteInput) -> ToolResult:
