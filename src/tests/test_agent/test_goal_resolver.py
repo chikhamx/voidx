@@ -118,6 +118,29 @@ def test_goal_resolver_prompt_has_strict_workflow_selection_rules():
     assert "review: Set only when the user asks to review code, design, implementation, or changes." in prompt
     assert "verify: Set only when the user asks to prove something is passing, fixed, complete, or safe." in prompt
 
+
+def test_goal_resolver_prompt_keeps_goal_as_stable_task_objective():
+    model = StructuredModel(ResolverGoal(intent="coding", goal="fix runtime bugs", workflow="debug"))
+
+    import asyncio
+
+    asyncio.run(
+        resolve_goal_for_turn(
+            model=model,
+            user_text="Fix three identified bugs: stale upgrade marker, incomplete voidx-cli import check, and silent headless fallback",
+            interaction_mode="auto",
+            task_state=TaskState(),
+            log_diagnostic=False,
+        )
+    )
+
+    prompt = model.messages[0].content
+    assert "Stable overall objective for the current task" in prompt
+    assert "Summarize the user's intent" in prompt
+    assert "do not enumerate individual bugs, files, functions, or implementation steps" in prompt
+    assert "status bar" not in prompt
+
+
 def test_goal_resolution_schema_excludes_removed_fields():
     properties = GoalResolution.model_json_schema()["properties"]
 

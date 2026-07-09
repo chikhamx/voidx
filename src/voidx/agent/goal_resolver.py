@@ -276,7 +276,7 @@ def _resolver_system_prompt(*, json_mode: bool = False) -> str:
         "- feedback: Set only when the user provides review feedback or requested optimizations to verify and implement.\n"
         "- plan: Set only when the user asks for an executable implementation plan before coding.\n"
         "- review: Set only when the user asks to review code, design, implementation, or changes.\n"
-        "- tdd: Set only when implementation is approved and work should proceed test-first.\n"
+        "- tdd: Set only when the user asks to implement coding.\n"
         "- verify: Set only when the user asks to prove something is passing, fixed, complete, or safe.\n"
     )
     if json_mode:

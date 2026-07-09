@@ -165,7 +165,7 @@ def test_current_task_state_records_user_profile_preferences(tmp_path):
 
     context.apply_to_messages(messages)
 
-    assert "Language instruction: Prefer responding in Chinese (Simplified)" in messages[0].content
+    assert "Language instruction:" not in messages[0].content
     assert "Tone instruction: Be direct and practical. Lead with the answer or action." in messages[0].content
     assert "User language" not in messages[-1].content
     assert "User tone" not in messages[-1].content

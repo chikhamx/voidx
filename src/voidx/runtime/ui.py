@@ -170,7 +170,18 @@ def _default_tui_frontend_factory(status: Any, commands: list[tuple[str, str]]) 
             "voidx_cli is required for terminal UI mode. "
             "Install it with: pip install voidx-cli, or reinstall via npm (npm install -g @chikhamx/voidx)"
         ) from None
-    return cls(status, commands)
+    except Exception as exc:
+        raise RuntimeError(
+            f"Failed to load voidx_cli: {exc}. "
+            "Reinstall with: pip install voidx-cli, or reinstall via npm (npm install -g @chikhamx/voidx)"
+        ) from exc
+    try:
+        return cls(status, commands)
+    except Exception as exc:
+        raise RuntimeError(
+            f"Failed to initialize terminal UI: {exc}. "
+            "Reinstall with: pip install voidx-cli, or reinstall via npm (npm install -g @chikhamx/voidx)"
+        ) from exc
 
 
 FrontendFactory = Any

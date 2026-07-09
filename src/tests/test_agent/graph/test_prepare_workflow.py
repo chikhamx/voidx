@@ -346,7 +346,9 @@ async def test_implement_subagent_injects_workflow_nodes(tmp_path, monkeypatch):
     )
     assert "Workflow Node: tdd" in system_prompt
     assert "Active workflow nodes: tdd" in rendered_user
-    assert "Language instruction: Prefer responding in Chinese (Simplified)" in runtime_state
+    assert "**使用中文回复。**" in runtime_state
+    assert "Prefer responding in Chinese (Simplified) unless the user explicitly asks otherwise." in runtime_state
+    assert "Language instruction:" not in runtime_state
     assert "Tone instruction: Be direct and practical. Lead with the answer or action." in runtime_state
     assert all(
         not (isinstance(message, HumanMessage) and "## Runtime State" in str(message.content))

@@ -129,7 +129,13 @@ def main(
         raise typer.Exit()
     if web_headless and not web:
         raise typer.BadParameter("--web-headless requires --web")
-    asyncio.run(_run_chat(workspace, model, provider, resume, new, web, web_headless, web_host, web_port))
+    from voidx.agent.graph.run_loop import RunLoopStartupError
+
+    try:
+        asyncio.run(_run_chat(workspace, model, provider, resume, new, web, web_headless, web_host, web_port))
+    except RunLoopStartupError as exc:
+        _vconsole().error(str(exc))
+        raise typer.Exit(code=1) from None
 
 
 # ── subcommands ────────────────────────────────────────────────────────

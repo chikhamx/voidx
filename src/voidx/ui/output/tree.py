@@ -499,6 +499,8 @@ class OutputTree:
             if node.node_type == "turn":
                 line = _full_width_row(line, self._render_width)
             elif node.node_type == "permission" or _is_full_width_user_row(node):
+                if _align_full_width_user_row(node):
+                    line = f" {line}"
                 line = _permission_row(line, self._render_width)
             lines.append(line)
             if line_map is not None:
@@ -590,7 +592,12 @@ class OutputTree:
         if not body_only_thinking:
             line = f"{current_prefix}{node.header}" if node.header else current_prefix
             if _is_full_width_user_row(node):
-                line = node.header if node.header else ""
+                if _align_full_width_user_row(node):
+                    line = f"{indent}{node.header}"
+                elif node.header:
+                    line = node.header
+                else:
+                    line = ""
                 line = _permission_row(line, self._render_width)
             elif node.node_type == "permission":
                 line = _permission_row(line, self._render_width)
@@ -662,6 +669,10 @@ def _wrap_full_width(line: str, padding: str, style: str) -> str:
 
 def _is_full_width_user_row(node: OutputNode) -> bool:
     return bool(node.payload.get("full_width_user_row"))
+
+
+def _align_full_width_user_row(node: OutputNode) -> bool:
+    return bool(node.payload.get("align_full_width_user_row"))
 
 
 def _tool_meta_line(line: str) -> str:

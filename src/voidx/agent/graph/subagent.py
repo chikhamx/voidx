@@ -9,7 +9,7 @@ import time
 from langchain_core.messages import AIMessage, HumanMessage, ToolMessage
 
 from voidx.agent.agents import AgentDef, child_run_agent_def
-from voidx.agent.prompts import BASE_SYSTEM, WORKFLOW_RUNTIME, persona_prompt
+from voidx.agent.prompts import WORKFLOW_RUNTIME, build_base_system, persona_prompt
 from voidx.agent.graph.runtime_guards import (
     RuntimeGuardState,
     WallClockGuardState,
@@ -122,7 +122,7 @@ async def run_subagent(
     context, context_cache = RuntimeContextBuilder(
         config=context_config,
         workspace=config.workspace,
-        base_system_prompt=BASE_SYSTEM,
+        base_system_prompt=build_base_system(context_config.user_profile.language),
         workflow_runtime=WORKFLOW_RUNTIME,
         persona_prompt=persona_prompt(),
         persona=persona,

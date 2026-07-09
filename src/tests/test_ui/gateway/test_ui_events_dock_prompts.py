@@ -139,7 +139,8 @@ async def test_checkpoint_prompt_event_renders_voidx_plan_and_decision(isolated_
 
         assert checkpoint.status == "done"
         assert "voidx plan approved" in rendered
-        assert "User: Implement directly" in rendered
+        assert "Decision: Implement directly" in rendered
+        assert "User: Implement directly" not in rendered
         assert checkpoint.payload["decision"] == "approved"
         assert checkpoint.payload["response"] == "Implement directly"
     finally:
@@ -175,10 +176,14 @@ async def test_checkpoint_decision_renders_as_full_width_user_row_with_following
 
         lines = isolated_dock.tree.render(80)
         plain_lines = [_rich_plain(line) for line in lines]
-        user_index = plain_lines.index("User: Implement directly" + (" " * 56))
+        decision_text = "   Decision: Implement directly"
+        user_index = plain_lines.index(decision_text + (" " * (80 - len(decision_text))))
+        plan_line = next(line for line in plain_lines if "Plan:" in line)
+        decision_line = plain_lines[user_index]
 
         assert Text.from_markup(lines[user_index]).cell_len == 80
         assert any("on #3a3937" in str(span.style) for span in Text.from_markup(lines[user_index]).spans)
+        assert plan_line.index("Plan:") == decision_line.index("Decision:")
         assert plain_lines[user_index + 1] == ""
         assert plain_lines[user_index + 2].startswith("● 先删除临时文件")
     finally:
@@ -276,7 +281,8 @@ async def test_clarify_prompt_event_renders_voidx_clarify_and_answer(isolated_do
 
         assert clarify.status == "done"
         assert "voidx clarify answered" in rendered
-        assert "User: implement directly" in rendered
+        assert "Answer: implement directly" in rendered
+        assert "User: implement directly" not in rendered
         assert clarify.payload["answer"] == "implement directly"
         assert clarify.payload["cancelled"] is False
         assert clarify.payload["was_custom_input"] is True
@@ -305,10 +311,14 @@ async def test_clarify_answer_renders_as_full_width_user_row_with_following_gap(
 
         lines = isolated_dock.tree.render(80)
         plain_lines = [_rich_plain(line) for line in lines]
-        user_index = plain_lines.index("User: implement" + (" " * 65))
+        answer_text = "   Answer: implement"
+        user_index = plain_lines.index(answer_text + (" " * (80 - len(answer_text))))
+        question_line = next(line for line in plain_lines if "Question:" in line)
+        answer_line = plain_lines[user_index]
 
         assert Text.from_markup(lines[user_index]).cell_len == 80
         assert any("on #3a3937" in str(span.style) for span in Text.from_markup(lines[user_index]).spans)
+        assert question_line.index("Question:") == answer_line.index("Answer:")
         assert plain_lines[user_index + 1] == ""
         assert plain_lines[user_index + 2].startswith("● 开始实现方案")
     finally:
@@ -343,7 +353,8 @@ async def test_clarify_cancelled_renders_skipped_header(isolated_dock):
         assert clarify.status == "done"
         assert clarify.payload["cancelled"] is True
         rendered = "\n".join(_plain(line) for line in isolated_dock.tree.render(120))
-        assert "User: skipped" in rendered
+        assert "Answer: skipped" in rendered
+        assert "User: skipped" not in rendered
     finally:
         await bus.stop()
 

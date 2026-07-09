@@ -8,6 +8,7 @@ import os
 import re
 import sys
 from dataclasses import dataclass
+from pathlib import Path
 from urllib.parse import quote
 
 import httpx
@@ -175,6 +176,8 @@ async def perform_upgrade(version: str | None = None, timeout: float = 120.0) ->
             ),
         )
 
+    _update_install_marker(target)
+
     return UpgradeResult(
         ok=True,
         version=target,
@@ -266,20 +269,57 @@ def _installed_version(package: str) -> str | None:
         return None
 
 
-def _can_import_voidx_cli() -> bool:
-    """Check whether voidx-cli is installed in the current environment.
+def _install_marker_path() -> Path | None:
+    """Return the .voidx-install-version marker path, or None if not in a venv."""
+    prefix = getattr(sys, "prefix", None)
+    if not prefix:
+        return None
+    return Path(prefix) / ".voidx-install-version"
 
-    Uses importlib.metadata (not find_spec) because pip install runs in a
-    subprocess — the current process's sys.path_importer_cache won't reflect
-    the newly installed package, but importlib.metadata re-reads .dist-info
-    from site-packages on every call.
+
+def _update_install_marker(new_version: str) -> None:
+    """Update the .voidx-install-version marker after a successful upgrade.
+
+    Preserves PBS_TAG and PBS_CPYTHON lines (Python runtime unchanged),
+    only replaces the version line. If the marker doesn't exist (non
+    install.sh/npm setup), does nothing.
+    """
+    marker_path = _install_marker_path()
+    if marker_path is None or not marker_path.exists():
+        return
+    try:
+        lines = marker_path.read_text(encoding="utf-8").splitlines()
+        # Marker format: line 0 = version, line 1 = PBS_TAG, line 2 = PBS_CPYTHON.
+        # Only update when all three lines exist to avoid corrupting partial files.
+        if len(lines) >= 3:
+            lines[0] = new_version
+            marker_path.write_text("\n".join(lines) + "\n", encoding="utf-8")
+    except Exception as exc:
+        logger.debug("failed to update install marker at %s: %s", marker_path, exc)
+
+
+def _can_import_voidx_cli() -> bool:
+    """Check whether voidx-cli is installed and importable.
+
+    Uses importlib.metadata to detect the package (re-reads .dist-info
+    from site-packages on every call, so it reflects subprocess pip
+    installs), then confirms the module is actually importable.
+    Metadata-only checks miss interrupted installs where .dist-info
+    exists but .py files are missing.
     """
     try:
+        from importlib import import_module
         from importlib.metadata import PackageNotFoundError, version
         try:
-            return version("voidx-cli") is not None
+            if version("voidx-cli") is None:
+                return False
         except PackageNotFoundError:
             return False
+        try:
+            import_module("voidx_cli")
+        except ImportError:
+            return False
+        return True
     except Exception:
         return False
 

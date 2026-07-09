@@ -23,7 +23,7 @@ class SlashProfileMixin:
         self._apply_tone(value)
 
     async def _lang_interactive(self) -> None:
-        from voidx.agent.runtime_context import _LANGUAGE_LABELS
+        from voidx.agent.prompts import _LANGUAGE_LABELS
 
         items: list[str] = []
         values: list[str] = []

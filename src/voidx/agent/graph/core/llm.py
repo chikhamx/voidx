@@ -7,7 +7,7 @@ from langchain_core.messages import AIMessage, BaseMessage, HumanMessage, Remove
 from langgraph.graph.message import REMOVE_ALL_MESSAGES
 
 from voidx.agent.agents import get_agent
-from voidx.agent.prompts import BASE_SYSTEM, WORKFLOW_RUNTIME, persona_prompt
+from voidx.agent.prompts import WORKFLOW_RUNTIME, build_base_system, persona_prompt
 from voidx.agent.runtime_context import (
     ContextCompilerCache,
     InteractionMode,
@@ -51,6 +51,8 @@ from .helpers import (
     _render_inline_compaction_guide,
     _task_state_for_context,
     _workflow_names,
+    _LLM_MAX_RETRIES,
+    _llm_retry_delay,
 )
 
 if TYPE_CHECKING:
@@ -108,7 +110,7 @@ class GraphLlmMixin:
         context, self._context_cache = RuntimeContextBuilder(
             config=self.config,
             workspace=state.get("workspace", "."),
-            base_system_prompt=BASE_SYSTEM,
+            base_system_prompt=build_base_system(self.config.user_profile.language),
             workflow_runtime=WORKFLOW_RUNTIME,
             persona_prompt=rendered_persona_prompt,
             persona=runtime_persona,
@@ -293,7 +295,7 @@ class GraphLlmMixin:
                 )
 
         await save_context_frame(llm_messages, context_tokens, convergence_messages, convergence_forced)
-        max_retries = 5
+        max_retries = _LLM_MAX_RETRIES
         failed_attempts = 0
         overflow_compaction_attempts = 0
         malformed_tool_call_attempts = 0
@@ -419,7 +421,7 @@ class GraphLlmMixin:
                     }
                 if failed_attempts < max_retries:
                     failed_attempts += 1
-                    delay = failed_attempts * 2
+                    delay = _llm_retry_delay(failed_attempts)
                     retry_detail = f"retrying in {delay}s: {e}"
                     if self._ui.via_events():
                         retry_status_active = True

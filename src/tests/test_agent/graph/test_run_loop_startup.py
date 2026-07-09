@@ -234,6 +234,67 @@ async def test_web_non_headless_falls_back_to_gateway_frontend_when_tui_unavaila
 
 
 @pytest.mark.asyncio
+async def test_non_web_create_frontend_failure_exits_with_error(monkeypatch, tmp_path):
+    """Non --web mode: create_frontend failure must print error and exit,
+    not silently fall back to GatewayHeadlessFrontend (which would hang
+    forever without a gateway server)."""
+    from voidx.agent.graph.run_loop import RunLoopStartupError
+
+    graph = _graph(workspace=str(tmp_path))
+    _disable_external_managers(graph)
+    monkeypatch.setattr(runtime_ui_port, "show_startup", lambda **_: None)
+
+    headless_instances = []
+
+    class HeadlessFrontend:
+        def __init__(self, status, commands):
+            headless_instances.append(self)
+
+        async def run(self, on_submit):
+            raise AssertionError("GatewayHeadlessFrontend.run must not be called in non-web mode")
+
+        async def run_headless(self, on_submit):
+            raise AssertionError("GatewayHeadlessFrontend.run_headless must not be called in non-web mode")
+
+        def set_external_command_handler(self, handler):
+            pass
+
+        def set_external_request_handler(self, handler):
+            pass
+
+    def fail_create_frontend(*_args, **_kwargs):
+        raise RuntimeError("voidx_cli is required for terminal UI mode.")
+
+    monkeypatch.setattr("voidx.agent.graph.run_loop.create_frontend", fail_create_frontend)
+    monkeypatch.setattr("voidx.agent.graph.run_loop.GatewayHeadlessFrontend", HeadlessFrontend)
+
+    messages: list[str] = []
+
+    test_dock = BottomInputDock()
+    set_dock(test_dock)
+    try:
+        original_append = test_dock.append_message
+
+        def capture_append(text, *, markup=False):
+            messages.append(text)
+            original_append(text, markup=markup)
+
+        test_dock.append_message = capture_append  # type: ignore[method-assign]
+        with pytest.raises(RunLoopStartupError):
+            await graph.run(web=False)
+
+        assert not test_dock.active, "run loop must deactivate dock on startup failure"
+    finally:
+        test_dock.deactivate()
+        test_dock.reset()
+        set_dock(None)
+
+    assert headless_instances == [], "must not create GatewayHeadlessFrontend in non-web mode"
+    assert any("voidx_cli" in m or "voidx-cli" in m for m in messages), \
+        f"must print error mentioning voidx-cli, got: {messages}"
+
+
+@pytest.mark.asyncio
 async def test_apply_settings_update_refreshes_live_model(monkeypatch, tmp_path):
     from voidx.config import Profile, Settings
 

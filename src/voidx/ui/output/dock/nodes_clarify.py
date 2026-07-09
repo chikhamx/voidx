@@ -63,9 +63,9 @@ class DockClarifyNodeMixin:
         child = self._tree.new_node(
             parent=node,
             node_type="message",
-            header=f"[white on #3a3937]User: {escape(display_response)}[/]",
+            header=f"Answer: {escape(display_response)}",
             collapsed=False,
-            payload={"full_width_user_row": True},
+            payload={"full_width_user_row": True, "align_full_width_user_row": True},
         )
         self._mark_subtree_settled(child)
         self._mark_subtree_settled(node)

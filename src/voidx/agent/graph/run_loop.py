@@ -36,6 +36,10 @@ if TYPE_CHECKING:
 logger = logging.getLogger(__name__)
 
 
+class RunLoopStartupError(RuntimeError):
+    """Raised when the run loop cannot start the selected frontend."""
+
+
 def _ui_command_kind(command: Any) -> str:
     return str(getattr(command, "kind", "") or "")
 
@@ -173,6 +177,27 @@ class GraphRunLoopMixin(GraphTurnMixin, GraphSessionMixin, GraphTranscriptMixin)
 
         exit_message: str | None = None
 
+        async def cleanup_run_loop() -> None:
+            empty_session_cleanup = getattr(self, "_delete_empty_current_session", None)
+            if callable(empty_session_cleanup):
+                await empty_session_cleanup()
+            if gateway_server is not None:
+                await gateway_server.stop()
+            if update_check_task is not None:
+                update_check_task.cancel()
+                await asyncio.gather(update_check_task, return_exceptions=True)
+            if hasattr(self, '_mcp_manager'):
+                await self._mcp_manager.stop_all()
+            for task in lsp_startup_tasks:
+                task.cancel()
+            if lsp_startup_tasks:
+                await asyncio.gather(*lsp_startup_tasks, return_exceptions=True)
+            if hasattr(self, '_lsp_manager'):
+                await self._lsp_manager.stop_all()
+            if self._ui.events.is_running:
+                await self._ui.events.stop()
+            self._ui.dock.deactivate()
+
         status = UiStatus(
             provider=self.config.model.provider,
             model=self.config.model.model,
@@ -222,7 +247,15 @@ class GraphRunLoopMixin(GraphTurnMixin, GraphSessionMixin, GraphTranscriptMixin)
         else:
             try:
                 app = create_frontend(status, COMMANDS)
-            except RuntimeError:
+            except RuntimeError as exc:
+                if not web:
+                    message = (
+                        f"[red]Cannot start terminal UI:[/red] {exc}\n"
+                        "[dim]Reinstall voidx via install.sh or: pip install voidx-cli[/dim]"
+                    )
+                    self._ui.dock.append_message(message, markup=True)
+                    await cleanup_run_loop()
+                    raise RunLoopStartupError(f"Cannot start terminal UI: {exc}") from exc
                 self._ui.dock.append_message(
                     "[dim]voidx_cli not installed — starting Web UI in headless mode. "
                     "Install voidx-cli for terminal UI: pip install voidx-cli[/dim]",
@@ -331,25 +364,7 @@ class GraphRunLoopMixin(GraphTurnMixin, GraphSessionMixin, GraphTranscriptMixin)
             if exit_message is None:
                 exit_message = "\n[dim]bye.[/dim]"
         finally:
-            empty_session_cleanup = getattr(self, "_delete_empty_current_session", None)
-            if callable(empty_session_cleanup):
-                await empty_session_cleanup()
-            if gateway_server is not None:
-                await gateway_server.stop()
-            if update_check_task is not None:
-                update_check_task.cancel()
-                await asyncio.gather(update_check_task, return_exceptions=True)
-            if hasattr(self, '_mcp_manager'):
-                await self._mcp_manager.stop_all()
-            for task in lsp_startup_tasks:
-                task.cancel()
-            if lsp_startup_tasks:
-                await asyncio.gather(*lsp_startup_tasks, return_exceptions=True)
-            if hasattr(self, '_lsp_manager'):
-                await self._lsp_manager.stop_all()
-            if self._ui.events.is_running:
-                await self._ui.events.stop()
-            self._ui.dock.deactivate()
+            await cleanup_run_loop()
             if exit_message:
                 self._ui.ui.print(exit_message)
 

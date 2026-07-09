@@ -178,6 +178,67 @@ async def test_perform_upgrade_succeeds_when_voidx_cli_importable(monkeypatch) -
 
 
 @pytest.mark.asyncio
+async def test_perform_upgrade_updates_install_marker(monkeypatch, tmp_path) -> None:
+    """Upgrade success updates .voidx-install-version marker so install.sh/voidx.js
+    don't re-install on next launch."""
+    monkeypatch.delenv("VOIDX_LAUNCHED_BY_NPM", raising=False)
+    monkeypatch.setattr(selfupdate, "_in_virtualenv", lambda: True)
+    monkeypatch.setattr(selfupdate, "_installed_version", lambda pkg: "3.5.1")
+    monkeypatch.setattr(selfupdate, "_can_import_voidx_cli", lambda: True)
+
+    marker_path = tmp_path / ".voidx-install-version"
+    marker_path.write_text("3.5.1\n20260602\n3.12.13\n")
+    monkeypatch.setattr(selfupdate, "_install_marker_path", lambda: marker_path)
+
+    class FakeProcess:
+        returncode = 0
+
+        async def communicate(self):
+            return b"", b""
+
+    async def fake_create_subprocess_exec(*command: str, **kwargs):
+        return FakeProcess()
+
+    monkeypatch.setattr(selfupdate.asyncio, "create_subprocess_exec", fake_create_subprocess_exec)
+
+    result = await selfupdate.perform_upgrade("9.0.0")
+
+    assert result.ok is True
+    marker_content = marker_path.read_text()
+    assert marker_content.startswith("9.0.0\n")
+    assert "20260602" in marker_content
+    assert "3.12.13" in marker_content
+
+
+@pytest.mark.asyncio
+async def test_perform_upgrade_skips_marker_when_absent(monkeypatch, tmp_path) -> None:
+    """Upgrade succeeds even when marker file doesn't exist (non-install.sh setup)."""
+    monkeypatch.delenv("VOIDX_LAUNCHED_BY_NPM", raising=False)
+    monkeypatch.setattr(selfupdate, "_in_virtualenv", lambda: True)
+    monkeypatch.setattr(selfupdate, "_installed_version", lambda pkg: "3.5.1")
+    monkeypatch.setattr(selfupdate, "_can_import_voidx_cli", lambda: True)
+
+    marker_path = tmp_path / ".voidx-install-version"
+    monkeypatch.setattr(selfupdate, "_install_marker_path", lambda: marker_path)
+
+    class FakeProcess:
+        returncode = 0
+
+        async def communicate(self):
+            return b"", b""
+
+    async def fake_create_subprocess_exec(*command: str, **kwargs):
+        return FakeProcess()
+
+    monkeypatch.setattr(selfupdate.asyncio, "create_subprocess_exec", fake_create_subprocess_exec)
+
+    result = await selfupdate.perform_upgrade("9.0.0")
+
+    assert result.ok is True
+    assert not marker_path.exists()
+
+
+@pytest.mark.asyncio
 async def test_perform_upgrade_rollback_failure_reports_manual_fix(monkeypatch) -> None:
     """If rollback itself fails, message tells user to fix manually."""
     monkeypatch.delenv("VOIDX_LAUNCHED_BY_NPM", raising=False)
@@ -213,33 +274,61 @@ async def test_perform_upgrade_rollback_failure_reports_manual_fix(monkeypatch) 
     assert "voidx" in result.message.lower()
 
 
-def test_can_import_voidx_cli_uses_metadata_not_find_spec(monkeypatch) -> None:
-    """Regression: _can_import_voidx_cli must use importlib.metadata, not find_spec.
-
-    pip install runs in a subprocess, so the current process's
-    sys.path_importer_cache won't reflect newly installed packages.
-    importlib.metadata re-reads .dist-info from site-packages on every call.
-    """
-    import importlib
-
-    # find_spec must NOT be called (it uses stale import cache)
-    find_spec_calls = []
-    original_find_spec = importlib.util.find_spec if hasattr(importlib, "util") else None
-    if original_find_spec is not None:
-        monkeypatch.setattr(
-            "importlib.util.find_spec",
-            lambda name: find_spec_calls.append(name) or None,
-        )
-
-    # importlib.metadata.version should be the source of truth
+def test_can_import_voidx_cli_true_when_importable(monkeypatch) -> None:
+    """_can_import_voidx_cli returns True when voidx_cli is actually importable."""
     from importlib.metadata import PackageNotFoundError
 
     def fake_version(name):
         if name == "voidx-cli":
-            return "3.5.2"
+            return "3.6.0"
         raise PackageNotFoundError(name)
 
     monkeypatch.setattr("importlib.metadata.version", fake_version)
 
+    import importlib
+    original_import = importlib.import_module
+
+    def fake_import(name, *args, **kwargs):
+        if name == "voidx_cli":
+            return original_import("voidx_cli")
+        return original_import(name, *args, **kwargs)
+
+    monkeypatch.setattr("importlib.import_module", fake_import)
+
     assert selfupdate._can_import_voidx_cli() is True
-    assert find_spec_calls == []  # find_spec must not be used
+
+
+def test_can_import_voidx_cli_false_when_metadata_exists_but_import_fails(monkeypatch) -> None:
+    """_can_import_voidx_cli returns False when .dist-info exists but module is not importable.
+
+    This happens when pip install is interrupted — the .dist-info directory is
+    written before all .py files are extracted, leaving metadata without code.
+    """
+    from importlib.metadata import PackageNotFoundError
+
+    def fake_version(name):
+        if name == "voidx-cli":
+            return "3.6.0"
+        raise PackageNotFoundError(name)
+
+    monkeypatch.setattr("importlib.metadata.version", fake_version)
+
+    def fake_import(name, *args, **kwargs):
+        if name == "voidx_cli":
+            raise ModuleNotFoundError(f"No module named '{name}'")
+        return __import__(name, *args, **kwargs)
+
+    monkeypatch.setattr("importlib.import_module", fake_import)
+
+    assert selfupdate._can_import_voidx_cli() is False
+
+
+def test_can_import_voidx_cli_false_when_not_installed(monkeypatch) -> None:
+    """_can_import_voidx_cli returns False when voidx-cli is not installed at all."""
+    from importlib.metadata import PackageNotFoundError
+
+    def fake_version(name):
+        raise PackageNotFoundError(name)
+
+    monkeypatch.setattr("importlib.metadata.version", fake_version)
+

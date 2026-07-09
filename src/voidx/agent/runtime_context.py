@@ -467,10 +467,6 @@ def _render_envelope(envelope: RuntimeEnvelope) -> str:
     ]
     if policy.extra_write_paths:
         lines.append(f"- Extra write paths: {', '.join(policy.extra_write_paths)}")
-    language = envelope.user_profile.language.strip()
-    if language:
-        target = _language_target(language)
-        lines.append(f"- Language instruction: Prefer responding in {target} unless the user explicitly asks otherwise.")
     tone = envelope.user_profile.tone.strip()
     if tone:
         lines.append(f"- Tone instruction: {_tone_instruction(tone)}")
@@ -502,16 +498,6 @@ def _coerce_goal(value: GoalSpec | dict | None) -> GoalSpec | None:
             return None
     return None
 
-
-_LANGUAGE_LABELS = {
-    "zh-cn": ("Chinese (Simplified)", "zh-CN"),
-    "zh": ("Chinese", "zh"),
-    "zh-tw": ("Chinese (Traditional)", "zh-TW"),
-    "en": ("English", "en"),
-    "en-us": ("English", "en-US"),
-    "ja": ("Japanese", "ja"),
-    "ko": ("Korean", "ko"),
-}
 
 
 _TONE_LABELS: dict[str, tuple[str, str, str]] = {
@@ -547,22 +533,6 @@ _TONE_LABELS: dict[str, tuple[str, str, str]] = {
     ),
 }
 
-
-def _language_display(value: str) -> str:
-    text = value.strip()
-    label = _LANGUAGE_LABELS.get(text.lower())
-    if label is None:
-        return text
-    name, tag = label
-    return f"{name} [{tag}]"
-
-
-def _language_target(value: str) -> str:
-    text = value.strip()
-    label = _LANGUAGE_LABELS.get(text.lower())
-    if label is None:
-        return text
-    return label[0]
 
 
 def _tone_instruction(value: str) -> str:

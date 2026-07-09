@@ -27,7 +27,7 @@ doc_type: tech-design
 - 非 auto 时用对应语言的规则替换 `name="language"` 那条
 - 支持自定义语言码（如 `fr`、`de`、`pt-BR`）：未知但非空的 language 不回退 no-op，而是生成通用语言覆盖规则
 - 移除 `runtime_context.py` 中 `_render_envelope` 的 Language instruction 注入
-- 将 `_LANGUAGE_LABELS` 映射表从 `runtime_context.py` 迁移到 `prompts.py`，消除循环导入；`runtime_context` 改为从 `prompts` 导入
+- 将 `_LANGUAGE_LABELS` 映射表从 `runtime_context.py` 迁移到 `prompts.py`，消除循环导入；`slash/profile.py` 改为从 `prompts.py` 导入
 
 ### Non-Goals
 
@@ -41,27 +41,31 @@ doc_type: tech-design
 用户设置 lang
     │
     ▼
-RuntimeContextBuilder.__init__(config)
+GraphLlmMixin._prepare_with_stream / run_subagent
     │
     │  config.user_profile.language
     ▼
 build_base_system(language)  ← 工厂函数（prompts.py）
     │
-│  auto/空 → 返回 BASE_SYSTEM（默认）
-│  已知语言 → 用 _LANGUAGE_STYLE_OVERRIDES[lang] 替换 name="language" 的规则
-│  未知语言 → 生成自定义 PromptRule(name="language", label="Respond in <code>.", ...)
-│           返回新的 BaseSystemPrompt 实例
+    │  auto/空 → 返回 BASE_SYSTEM（默认）
+    │  已知语言 → 用 _LANGUAGE_STYLE_OVERRIDES[lang] 替换 name="language" 的规则
+    │  未知语言 → 生成自定义 PromptRule(name="language", label="Respond in <code>.", ...)
+    │           返回新的 BaseSystemPrompt 实例
     ▼
-base_system_prompt (str)  ← _render_prompt_input() 调用 .render()
+base_system_prompt: BaseSystemPrompt
     │
     ▼
-ContextSection(name="Base System", content=base_system_prompt)
+RuntimeContextBuilder(..., base_system_prompt=base_system_prompt)
+    │
+    │  _render_prompt_input() 调用 .render()
+    ▼
+ContextSection(name="Base System", content=base_system_prompt.render())
     │
     ▼
 系统提示词（Communication Style 中已包含语言偏好）
 ```
 
-runtime_context 的 `_render_envelope` 不再注入 Language instruction，语言偏好由系统提示词承载。
+runtime_context 的 `_render_envelope` 不再注入 Language instruction，语言偏好由系统提示词承载。`RuntimeContextBuilder` 只负责渲染上下文，不负责根据 `config` 定制系统提示词；语言覆盖在调用方完成。
 
 ## Tone 改造可行性分析
 
@@ -188,18 +192,18 @@ key 与 `_LANGUAGE_LABELS` 的 key 一一对应（迁移后两者同在 `prompts
 
 ## API Contract
 
-### build_base_system(language: str = "") -> BaseSystemPrompt
+### build_base_system(language: str = "", *, base_system: BaseSystemPrompt | None = None) -> BaseSystemPrompt
 
-- **Path/Signature**: `voidx.agent.prompts.build_base_system(language: str = "") -> BaseSystemPrompt`
-- **Request**: `language` — 用户语言设置，来自 `config.user_profile.language`
+- **Path/Signature**: `voidx.agent.prompts.build_base_system(language: str = "", *, base_system: BaseSystemPrompt | None = None) -> BaseSystemPrompt`
+- **Request**: `language` — 用户语言设置，来自 `config.user_profile.language`；`base_system` — 可选的自定义基础 prompt，默认 `BASE_SYSTEM`，用于测试中传入缺少 `name="language"` 锚点的 prompt 验证 `ValueError`
 - **Response**: `BaseSystemPrompt` 实例
 - **Behavior**:
   - `language` 经 `.strip()` 后用 `.lower()` 查询映射表（与现有 `_language_target` 保持一致：`text = value.strip()` → `_LANGUAGE_LABELS.get(text.lower())`，支持 `"zh-CN"` 大写输入）
-  - 归一化后为空 → 返回 `BASE_SYSTEM` 引用本身（默认，不创建新实例）
+  - 归一化后为空 → 返回 `base_system`（默认 `BASE_SYSTEM`）引用本身（不创建新实例）
   - 在 `_LANGUAGE_STYLE_OVERRIDES` 中 → 返回新的 `BaseSystemPrompt` 实例，`name="language"` 的规则被替换为已知语言文案
   - 不在 `_LANGUAGE_STYLE_OVERRIDES` 中但非空 → 返回新的 `BaseSystemPrompt` 实例，`name="language"` 的规则被替换为自定义语言文案，保留 `/lang` 支持 `fr`、`de`、`pt-BR` 等任意语言码的现有能力
   - 自定义语言文案示例：`PromptRule(name="language", label=f"Respond in {language}.", detail=f"Prefer responding in {language} unless the user explicitly asks otherwise.")`
-- **Errors**: 无异常，未知语言使用自定义语言覆盖规则
+- **Errors**: 未知语言不报错，使用自定义语言覆盖规则；若 `base_system.communication_style` 缺少 `name="language"` 锚点，抛出 `ValueError`，避免语言覆盖静默 no-op
 
 ### _render_envelope（修改）
 
@@ -218,12 +222,18 @@ key 与 `_LANGUAGE_LABELS` 的 key 一一对应（迁移后两者同在 `prompts
 
 ### 调用点改造
 
-两处 `base_system_prompt=BASE_SYSTEM` 改为 `base_system_prompt=build_base_system(config.user_profile.language)`：
+运行时构建系统提示词的入口必须从固定 `BASE_SYSTEM` 改为 `build_base_system(config.user_profile.language)`：
 
 - `src/voidx/agent/graph/core/llm.py:111` — 主 agent 上下文构建
 - `src/voidx/agent/graph/subagent.py:125` — 子 agent 上下文构建
 
 两处都能拿到 `config` 对象，`config.user_profile.language` 已可用。
+
+其他 `BASE_SYSTEM` 直接引用保持默认语义，不参与动态覆盖：
+
+- `src/tests/test_agent/test_prompts.py` 和 `src/tests/test_agent/graph/test_graph_setup_prompts.py` 可继续断言默认 `BASE_SYSTEM.render()` 内容
+- graph 测试中的 `BASE_SYSTEM` import 仅用于测试默认 prompt 组成，不代表生产运行时入口
+- 若未来新增生产路径并直接传 `BASE_SYSTEM` 给 `RuntimeContextBuilder`，测试必须失败并要求改为 `build_base_system(...)`
 
 > **备选方案**：`RuntimeContextBuilder.__init__` 已接收 `config` 参数，也可让调用方继续传 `BASE_SYSTEM`，由 `RuntimeContextBuilder` 内部根据 `config.user_profile.language` 调 `build_base_system`。好处是调用方无需关心语言覆盖逻辑，未来扩展 tone 维度时也只改一处。当前选择在调用方处理是为了保持 `RuntimeContextBuilder` 的职责单一（渲染上下文，不负责提示词定制），且 `base_system_prompt` 参数已支持传入 `BaseSystemPrompt` 实例。
 
@@ -233,16 +243,16 @@ key 与 `_LANGUAGE_LABELS` 的 key 一一对应（迁移后两者同在 `prompts
 
 - `src/voidx/agent/slash/profile.py:26` — `from voidx.agent.runtime_context import _LANGUAGE_LABELS` 改为 `from voidx.agent.prompts import _LANGUAGE_LABELS`
 
-`slash/profile.py` 用 `_LANGUAGE_LABELS` 渲染 `/lang` 交互选择列表（`profile.py:30`），迁移后行为不变，仅导入路径改变。
+`slash/profile.py` 用 `_LANGUAGE_LABELS` 渲染 `/lang` 交互选择列表（`profile.py:30`），迁移后行为不变，仅导入路径改变。`_current_language_label()` 当前只返回 `profile.language or "auto"`，不依赖 `_language_display()`，因此 `_language_display()` 可随 `runtime_context.py` 的语言注入逻辑一并删除。
 
 ## 测试影响
 
 | 测试文件 | 断言内容 | 改动 |
 |---------|---------|------|
-| `test_task_state_rendering.py:168` | `"Language instruction: Prefer responding in Chinese (Simplified)"` in messages | 移除断言，改为检查系统提示词中包含对应语言规则 |
+| `test_task_state_rendering.py:168` | `"Language instruction: Prefer responding in Chinese (Simplified)"` in messages | 移除 runtime envelope 断言，改为检查系统提示词中包含对应语言规则，且 Runtime State 不再包含 Language instruction |
 | `test_prepare_workflow.py:349` | 同上 | 同上 |
-| `test_prompts.py` | `BASE_SYSTEM.render()` 包含 Communication Style | 不受影响，`BASE_SYSTEM` 保持不变 |
-| `test_graph_setup_prompts.py` | `BASE_SYSTEM.render()` 断言 | 不受影响 |
+| `test_prompts.py` | `BASE_SYSTEM.render()` 包含 Communication Style | 保持默认 `BASE_SYSTEM` 断言，并新增 `build_base_system` 单元测试 |
+| `test_graph_setup_prompts.py` | `BASE_SYSTEM.render()` 断言 | 保持默认 prompt 断言；如覆盖主 agent 构建路径，则断言 `_prepare_with_stream` 传入的 SystemMessage 使用 `build_base_system` 后的内容 |
 | `slash/profile.py` 相关 | `/lang` 交互命令用 `_LANGUAGE_LABELS` 渲染选择列表 | 当前无直接测试；迁移导入路径后行为不变，手动验证 `/lang` 命令即可 |
 
 新增测试：
@@ -250,6 +260,9 @@ key 与 `_LANGUAGE_LABELS` 的 key 一一对应（迁移后两者同在 `prompts
 - `build_base_system("zh-CN")` 返回的实例中 `name="language"` 规则被替换为中文版本
 - `build_base_system("unknown")` 返回新实例，`name="language"` 规则被替换为自定义语言版本，不回退 no-op
 - `build_base_system("pt-BR")` 保留 `/lang` 自定义语言码现有行为，系统提示词包含 `pt-BR` 偏好
+- `build_base_system(...)` 在缺少 `name="language"` 锚点时抛出 `ValueError`，防止静默失效
+- 主 agent 构建出的 SystemMessage 包含语言覆盖规则，且 Runtime State 中不再包含 `Language instruction:`
+- 子 agent 构建出的 SystemMessage 同样包含语言覆盖规则，覆盖 `run_subagent` 的独立入口
 
 ## Error Handling
 
@@ -257,7 +270,7 @@ key 与 `_LANGUAGE_LABELS` 的 key 一一对应（迁移后两者同在 `prompts
 |---------|---------|
 | 未知语言代码 | 生成自定义语言覆盖规则，保留现有 `/lang` 任意语言码能力 |
 | `language` 为空字符串 | 回退默认 `BASE_SYSTEM` |
-| `BASE_SYSTEM.communication_style` 中没有 `name="language"` 的规则 | 工厂函数不替换任何规则，返回 `BASE_SYSTEM` 原样 |
+| `BASE_SYSTEM.communication_style` 中没有 `name="language"` 的规则 | 抛出 `ValueError`，防止实现漏加锚点时静默 no-op |
 
 ## Decisions Log
 
@@ -269,10 +282,12 @@ key 与 `_LANGUAGE_LABELS` 的 key 一一对应（迁移后两者同在 `prompts
 | 移除 runtime_context Language instruction | 保留作为运行时状态显示 | 用户明确指出冗余，语言偏好由系统提示词承载即可 |
 | `name` 不影响 `render()` | `name` 参与渲染 | `name` 是内部标识，不应出现在提示词文本中 |
 | 在调用方调 `build_base_system` | 在 `RuntimeContextBuilder` 内部调 | `RuntimeContextBuilder` 职责是渲染上下文，不应承担提示词定制；调用方已持有 `config`，且 `base_system_prompt` 参数已支持传入 `BaseSystemPrompt` 实例。未来若扩展 tone，可重新评估 |
+| 缺少 `name="language"` 锚点时失败 | 返回默认 `BASE_SYSTEM` 或跳过替换 | 语言覆盖是本次核心行为，静默 no-op 会掩盖实现错误；用异常和测试保护结构完整性 |
+| 不给 `global_rules` 加 `name` | 所有 `PromptRule` 都加 `name` | 本次只覆盖 Communication Style；`global_rules` 不参与 lang 覆盖，保持静态规则可减少无意义迁移 |
 
 ## Open Questions
 
 - [ ] 覆盖规则的 `detail` 文案需要确认（特别是 ja、ko 的翻译质量）
 - [x] 未知语言码策略已确认：保留 `/lang` 自定义语言码能力，未知但非空的 language 生成自定义覆盖规则
 - [x] Communication Style rule name 清单已补充，避免实现时临时命名
-- [ ] 是否需要为 `global_rules` 也加 `name`？（当前 Non-Goal，但结构上已支持）
+- [x] `global_rules` 不加 `name`：当前 Non-Goal，结构上虽支持但无覆盖需求
