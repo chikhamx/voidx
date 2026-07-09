@@ -30,5 +30,12 @@
 | 命令 | 作用 |
 |------|------|
 | `/skills` | 管理本地技能 |
+| `/skills list` | 列出已安装技能 |
+| `/skills show <name>` | 查看技能内容 |
+| `/skills enable <name>` | 启用技能 |
+| `/skills disable <name>` | 禁用技能 |
+| `/skills auto <name>` | 设为自动触发 |
+| `/skills manual <name>` | 设为手动触发 |
+| `/skills paths` | 显示技能目录路径 |
 
 ---

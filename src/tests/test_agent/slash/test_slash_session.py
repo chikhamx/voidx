@@ -451,3 +451,7 @@ async def test_title_auto_without_user_message_prints_notice(monkeypatch):
 
 def test_title_auto_command_is_in_palette():
     assert ("/title auto", "Regenerate session title") in COMMANDS
+
+
+def test_quit_command_is_in_palette():
+    assert ("/quit", "Exit voidx") in COMMANDS

@@ -82,3 +82,17 @@ async def test_skills_paths_prints_bundled_source(tmp_path, monkeypatch):
 
     rendered = "\n".join(output)
     assert "bundled" in rendered
+
+
+from voidx.ui.commands import COMMANDS
+
+
+def test_skills_subcommands_are_in_palette():
+    assert ("/skills", "Manage local skills") in COMMANDS
+    assert ("/skills list", "List local skills") in COMMANDS
+    assert ("/skills show", "Show a skill's content") in COMMANDS
+    assert ("/skills enable", "Enable a skill") in COMMANDS
+    assert ("/skills disable", "Disable a skill") in COMMANDS
+    assert ("/skills auto", "Set a skill to auto-trigger") in COMMANDS
+    assert ("/skills manual", "Set a skill to manual trigger") in COMMANDS
+    assert ("/skills paths", "Show skill directory paths") in COMMANDS

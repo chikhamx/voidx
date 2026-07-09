@@ -19,6 +19,8 @@
 |------|------|
 | `/guide` | 向运行中的 agent 注入指导 |
 | `/parallel` | 切换并行子 agent 执行 |
+| `/parallel on` | 启用并行子 agent |
+| `/parallel off` | 禁用并行子 agent |
 | `/parallel status` | 查看并行配置 |
 
 ---
