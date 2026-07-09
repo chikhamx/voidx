@@ -1,23 +1,36 @@
 ---
 name: api-doc
 display_name: API Documentation
-description: API 文档，适用于实现完成后供他人集成
+description: 面向人类集成方的 API 文档，适用于说明接口能力、请求响应、错误码和调用示例
 doc_type: api-doc
+audience: human
 ---
 
 # {api_name} API Documentation
 
+## TL;DR
+
+<!-- 3-5 句话说明这个 API 解决什么问题、谁会调用、核心能力和主要限制。 -->
+
 ## Overview
 
-<!-- 一段话说清楚这个 API 做什么 -->
+<!-- 一段话说清楚这个 API 做什么、什么时候使用、什么时候不该使用。 -->
 
 ## Authentication
 
-<!-- 如何认证，附可运行的示例 -->
+<!-- 如何认证，附可运行的最小示例。 -->
 
-```
+```bash
 # Example
 ```
+
+## Common Rules
+
+- **Base URL**: `{base_url}`
+- **Content Type**: `application/json`
+- **Idempotency**: `{idempotency_rule}`
+- **Rate Limits**: `{rate_limit_rule}`
+- **Pagination**: `{pagination_rule}`
 
 ## Endpoints
 
@@ -41,21 +54,13 @@ doc_type: api-doc
 
 **Error Codes**:
 
-| Code | Meaning | When |
-|------|---------|------|
-| | | |
+| Code | Meaning | When | Suggested Action |
+|------|---------|------|------------------|
+| | | | |
 
 ---
 
-<!-- 每个端点重复以上结构 -->
-
-## Pagination
-
-<!-- 如果适用，描述分页参数和响应格式 -->
-
-## Rate Limits
-
-<!-- 如果适用，描述限流规则 -->
+<!-- 每个端点重复以上结构。保持示例短小、真实、可复制。 -->
 
 ## Changelog
 

@@ -64,6 +64,24 @@ def test_builtin_workflow_nodes_declare_execution_contracts():
         assert not hasattr(node, "extra_sections")
 
 
+
+
+def test_design_workflow_is_audience_aware():
+    service = WorkflowService()
+    design = service.get("design")
+
+    assert design is not None
+    assert "audience-specific quality gate" in design.goal
+    assert design.gate.required_before_transition == "doc passes audience-appropriate quality gate"
+    assert "audience" in design.gate.description
+
+    rendered = service.render_instruction(design)
+    assert "Identify the audience" in rendered
+    assert "Load the audience-aware template index" in rendered
+    assert "Draft for the audience" in rendered
+    assert "Execution readiness test" in rendered
+
+
 def test_workflow_internal_subworkflows_are_structured_and_local():
     service = WorkflowService()
 

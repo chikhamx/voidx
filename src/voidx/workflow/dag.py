@@ -13,7 +13,7 @@ DEFAULT_WORKFLOW_DAG = WorkflowDAG(
         Edge(source="brainstorm", target="design", condition="approved", label="design approved", description="Use after explicit user approval when a design document is needed."),
         Edge(source="brainstorm", target="plan", condition="skip_to_plan", label="user says to skip design or provides a detailed spec", description="Use when the request is already a detailed spec or the user explicitly asks to skip the design document."),
         Edge(source="brainstorm", target="tdd", condition="small_change", label="small scoped change", description="Use for local or mechanical changes that do not need a plan."),
-        Edge(source="design", target="plan", condition="completed", label="doc passes reader test", description="Use after the document passes reader test and accuracy verification."),
+        Edge(source="design", target="plan", condition="completed", label="doc passes audience quality gate", description="Use after the document passes its audience-specific quality gate and accuracy verification."),
         Edge(source="plan", target="tdd", condition="approved", label="plan approved", description="Use after the implementation plan is executable and user-approved."),
         Edge(source="tdd", target="verify", condition="implemented", label="implementation complete", description="Use after implementation and relevant tests are green."),
         Edge(source="verify", target="tdd", condition="failed_implementation", label="verification failed due to implementation issue", description="Use when verification points to implementation work."),

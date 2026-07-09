@@ -54,19 +54,22 @@ BRAINSTORMING = WorkflowNode(
 
 WRITING_DESIGN_DOCS = WorkflowNode(
     name="design",
-    goal="Produce a structured document that passes the reader test",
+    goal="Produce a document that passes its audience-specific quality gate",
     description=(
         "Use when writing technical design docs, PRDs, RFCs, API docs, READMEs, "
-        "or changelogs. Covers both design-phase and post-implementation documentation."
+        "implementation specs, implementation task lists, capability specs, or changelogs. Covers "
+        "human-facing, LLM-facing, and mixed-audience documentation."
     ),
     persona="plan",
     io=NodeIO(
         input={
-            "design": "Approved design",
+            "design": "Approved design or documentation request",
+            "audience": "Target document audience: human, llm, or human+llm",
             "action": "Document tool action (list/read)",
         },
         output={
             "doc_path": "Document save path",
+            "audience": "Resolved target audience",
             "action": "Actual document tool action",
         },
     ),
@@ -82,22 +85,30 @@ WRITING_DESIGN_DOCS = WorkflowNode(
         "websearch",
     ],
     gate=NodeGate(
-        description="Do not skip the reader test. Every document must pass a fresh-read check before being considered complete.",
-        required_before_transition="doc passes reader test",
+        description=(
+            "Do not skip the audience-specific quality gate. Human-facing docs must "
+            "pass a fresh-reader clarity check; LLM-facing specs must pass an "
+            "execution-readiness check; mixed docs must pass both."
+        ),
+        required_before_transition="doc passes audience-appropriate quality gate",
     ),
     workflow=[
-        WorkflowStep(order=1, action="Identify the scenario", description="Design-phase document or post-implementation documentation."),
-        WorkflowStep(order=2, action="Identify the document type", description="Pick the structure that fits the reader's needs."),
-        WorkflowStep(order=3, action="Gather context", description="Read relevant code, specs, and existing docs. Do not write from memory alone."),
-        WorkflowStep(order=4, action="Load the template", description="Use document to load the template for the document type."),
-        WorkflowStep(order=5, action="Write the first draft", description="Use real paths, commands, and field names. Use [TBD] only when information is missing."),
-        WorkflowStep(order=6, action="Reader test", description="Re-read as a fresh reader and fill any gaps."),
-        WorkflowStep(order=7, action="Verify accuracy", description="Check examples, paths, and API shapes against the actual implementation."),
+        WorkflowStep(order=1, action="Identify the scenario", description="Design-phase document, post-implementation documentation, capability spec, or execution spec."),
+        WorkflowStep(order=2, action="Identify the audience", description="Classify the target reader as human, llm, or human+llm before choosing structure or detail level."),
+        WorkflowStep(order=3, action="Load the audience-aware template index", description="Read templates/readme.md first when the document type or audience is unclear, then load the selected template."),
+        WorkflowStep(order=4, action="Gather context", description="Read relevant code, specs, commands, APIs, and existing docs. Do not write from memory alone."),
+        WorkflowStep(order=5, action="Draft for the audience", description="Human docs optimize for clear decisions; LLM specs optimize for paths, invariants, forbidden changes, test commands, and acceptance criteria."),
+        WorkflowStep(order=6, action="Fresh reader test", description="For human-facing sections, re-read as a zero-context reader and remove ambiguity, excess detail, and missing conclusions."),
+        WorkflowStep(order=7, action="Execution readiness test", description="For LLM-facing sections, verify source paths, current behavior, target behavior, constraints, forbidden changes, and test commands are explicit."),
+        WorkflowStep(order=8, action="Verify accuracy", description="Check examples, paths, commands, field names, API shapes, and test instructions against the actual implementation."),
     ],
     rules=[
-        "Write for the reader who has zero context.",
-        "Start with the most useful information.",
-        "Link instead of duplicating existing source material.",
+        "Choose the document template by audience before drafting content.",
+        "Human-facing docs should optimize for purpose, clarity, readability, and brevity.",
+        "LLM-facing specs may be more explicit and repetitive when that improves implementation quality.",
+        "Do not put implementation task detail into human docs unless the selected template explicitly asks for it.",
+        "Do not leave LLM-facing specs without source paths, invariants, forbidden changes, and verification commands.",
+        "Start with the most useful information and link instead of duplicating existing source material.",
     ],
 )
 

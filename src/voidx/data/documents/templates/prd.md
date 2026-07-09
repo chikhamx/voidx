@@ -1,117 +1,118 @@
 ---
 name: prd
 display_name: Product Requirements Doc
-description: 产品需求文档，适用于功能/产品从零规划或评估改进
+description: 面向人类阅读的产品需求文档，适用于功能规划、范围对齐和验收定义
 doc_type: prd
+audience: human
 ---
 
 # {product_name} — 产品需求文档
 
-## 定位
+## TL;DR
 
-> 这是一个给{target_user}用的{product_type}，帮他们{core_problem}。
+<!-- 3-5 句话说明：为谁解决什么问题、做什么、不做什么、如何判断成功。 -->
+
+## Why
+
+> 这是一个给 {target_user} 用的 {product_type}，帮他们 {core_problem}。
 > 核心差异：{differentiator}。
 
-## 目标用户
+## Goals / Success Metrics
+
+| Goal | Metric | Target |
+|------|--------|--------|
+| | | |
+
+## Target Users
 
 - 核心用户画像：{user_profile}
 - 核心痛点：{pain_point}
 - 选择理由：{why_choose_this}
 
-## 用户动线
+## Scope / Non-Goals
 
-<!-- 用流程图或结构化文字描述主路径 + 异常分支 -->
-<!-- 主路径：用户从进入到完成目标的关键步骤 -->
-<!-- 异常分支：失败、无权限、空数据等场景的处理 -->
+### In Scope
 
-## 功能清单
+- 
 
-<!-- 树状结构，标注优先级 -->
-<!-- 🔴 核心（MVP 必须有） / 🟡 重要（后续迭代） / ⚪ 未来规划 -->
+### Non-Goals
 
-```
+- 
+
+## User Journey
+
+<!-- 用流程图或结构化文字描述主路径 + 异常分支。 -->
+
+1. 
+2. 
+3. 
+
+## Feature List
+
+<!-- 树状结构，标注优先级：🔴 MVP / 🟡 Later / ⚪ Future。 -->
+
+```text
 {product_name}
-├── 🔴 模块A（核心）
+├── 🔴 模块A（MVP）
 │   ├── 功能1
 │   └── 功能2
-├── 🟡 模块B（重要）
+├── 🟡 模块B（Later）
 │   └── 功能3
-└── ⚪ 模块C（未来规划）
+└── ⚪ 模块C（Future）
     └── 功能4
 ```
 
-## 功能详细描述
-
-<!-- 每个核心功能一节，不能合并省略 -->
+## Feature Details
 
 ### {feature_name}
 
-**功能描述**：{what_it_does}
+**User Value**: {why_user_needs_it}
 
-**触发条件**：{when_user_enters}
+**Trigger**: {when_user_enters}
 
-**交互细节**：
+**Expected Behavior**:
 
-| 场景 | 处理方式 |
-|------|---------|
-| 操作反馈 | {loading_toast_skeleton} |
-| 危险操作确认 | {delete_confirm_dialog} |
-| 空状态引导 | {empty_state_guidance} |
-| 操作失败引导 | {failure_recovery} |
+- 
 
-**状态清单**：
+**States**:
 
-| 状态 | 触发条件 | UI 表现 | 用户可执行操作 |
-|------|---------|---------|--------------|
-| 默认 | 页面加载完成 | | |
-| 加载中 | 用户触发操作后 | | 不可重复触发 |
-| 成功 | 操作完成 | | |
-| 失败 | 接口报错或操作失败 | | 重试/修改后重试 |
-| 禁用 | 无权限或条件不满足 | | 仅查看 |
-| 空状态 | 无数据时 | | 引导去做第一步 |
+| State | Trigger | UI / Copy | User Action |
+|-------|---------|-----------|-------------|
+| Default | | | |
+| Loading | | | |
+| Success | | | |
+| Failure | | | |
+| Empty | | | |
+| No Permission | | | |
 
-**边界条件**：
+**Acceptance Criteria**:
 
-- 内容为空时：
-- 内容超长时：
-- 网络异常时：
-- 无权限时：
-- 并发操作时：
+- [ ] 
 
-**数据规范**：
+## Data / Content Requirements
 
-| 字段名 | 类型 | 长度限制 | 必填 | 默认值 | 校验规则 |
-|--------|------|---------|------|--------|---------|
-| | | | | | |
+| Field | Type | Required | Validation | Notes |
+|-------|------|----------|------------|-------|
+| | | | | |
 
-## 文案规范
+## User-Facing Copy
 
-### 文案风格
+| Scenario | Copy | Notes |
+|----------|------|-------|
+| Page title | | |
+| Empty state | | |
+| Success message | | |
+| Error message | | 说明原因 + 下一步 |
+| Dangerous action confirm | | 说明后果 |
 
-<!-- 从以下选择或自定义：专业严谨 / 亲切友好 / 简洁直接 / 轻松有趣 -->
-- 风格基调：{tone}
+## Non-Functional Requirements
 
-### 面向用户的文案
+- **Performance**: 
+- **Permissions**: 
+- **Compatibility**: 
+- **Security / Privacy**: 
+- **Data Retention**: 
 
-| 场景 | 文案内容 | 风格备注 |
-|------|---------|---------|
-| 页面标题 | | |
-| 空状态标题 + 说明 + 按钮 | | 引导性 |
-| 按钮文字 | | 动词开头 |
-| 成功提示 | | 正向反馈 |
-| 错误提示 | | 说明原因 + 下一步 |
-| 加载中提示 | | |
-| 危险操作确认弹窗 | | 说明后果 |
+## Open Questions
 
-## 非功能性需求
-
-- **性能**：首屏加载时间、核心接口响应时间
-- **权限控制**：哪些功能需要登录，是否有角色区分
-- **兼容性**：支持的设备、浏览器、操作系统
-- **数据安全**：敏感数据处理方式
-- **数据存储**：保留时长、容量限制
-
-## 待确认问题
-
-<!-- 标 [TBD]，不编造 -->
-- [ ]
+- [ ] 

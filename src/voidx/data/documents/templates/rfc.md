@@ -1,38 +1,56 @@
 ---
 name: rfc
 display_name: RFC / Decision Doc
-description: RFC/决策文档，适用于需要团队对齐的重大技术决策
+description: 面向人类评审的 RFC/决策文档，适用于需要团队对齐的重大技术或产品决策
 doc_type: rfc
+audience: human
 ---
 
 # RFC: {proposal_title}
 
-## Proposal
+## TL;DR
 
-<!-- 一句话总结 -->
+<!-- 3-5 句话说明结论：建议做什么、为什么、影响是什么、需要谁决策。 -->
 
-## Motivation
+## Why
 
-<!-- 为什么需要这个变更 -->
+<!-- 背景、问题、触发原因。只写影响决策的信息，不展开实现细节。 -->
 
-## Approach
+## What Changes
 
-<!-- 具体做法，足够详细以供评估 -->
-
-## Alternatives
-
-| 方案 | 描述 | 优劣 | 不选的理由 |
-|------|------|------|----------|
-| | | | |
+<!-- 用户、系统或团队会看到什么变化。优先写行为变化，而不是代码修改。 -->
 
 ## Impact
 
-<!-- 影响范围：哪些模块、哪些用户、哪些流程 -->
+| Area | Impact | Owner / Notes |
+|------|--------|---------------|
+| Product / User | | |
+| Engineering | | |
+| API / Compatibility | | |
+| Data / Migration | | |
+| Ops / Support | | |
 
-## Migration
+## Options Considered
 
-<!-- 如果涉及迁移，迁移策略是什么 -->
+| Option | Summary | Pros | Cons | Decision |
+|--------|---------|------|------|----------|
+| Recommended | | | | |
+| Alternative | | | | |
+
+## Decision
+
+<!-- 明确最终选择、决策人、决策日期；未决时写 Pending。 -->
+
+## Non-Goals
+
+<!-- 明确不解决什么，避免评审发散。 -->
+
+- 
+
+## Rollout / Migration
+
+<!-- 发布顺序、灰度策略、回滚方式；不涉及则写 N/A。 -->
 
 ## Open Questions
 
-- [ ]
+- [ ] 
