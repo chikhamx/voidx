@@ -87,6 +87,7 @@ const requestDialogEl = document.querySelector<HTMLDialogElement>("#request-dial
 const requestTitleEl = document.querySelector<HTMLElement>("#request-title")!;
 const requestDetailsEl = document.querySelector<HTMLElement>("#request-details")!;
 const requestControlsEl = document.querySelector<HTMLElement>("#request-controls")!;
+const pendingUiRequests: UiRequest[] = [];
 
 interface UiState {
   connection: string;
@@ -1030,6 +1031,10 @@ export function _resetWorkbenchForTest(): void {
   startupSettingsRequested = false;
   uiState.slashCommands = [];
   uiState.slashSelectedIndex = 0;
+  pendingUiRequests.length = 0;
+  requestDialogEl.dataset.responseMethod = "";
+  requestDialogEl.dataset.responseThreadId = "";
+  requestDialogEl.close();
   const shell = document.querySelector<HTMLElement>(".vx-workbench-shell");
   if (shell) {
     shell.style.setProperty("--vx-sidebar-width", `${DEFAULT_SIDEBAR_WIDTH}px`);
@@ -1197,6 +1202,14 @@ interface UiRequest {
 
 function showRequest(request: Record<string, unknown>): void {
   const req = request as unknown as UiRequest;
+  if (requestDialogEl.open) {
+    pendingUiRequests.push(req);
+    return;
+  }
+  renderRequest(req);
+}
+
+function renderRequest(req: UiRequest): void {
   requestDialogEl.dataset.responseMethod = req.response_method || "";
   requestDialogEl.dataset.responseThreadId = req.thread_id || "";
   requestTitleEl.textContent = req.prompt;
@@ -1215,6 +1228,14 @@ function showRequest(request: Record<string, unknown>): void {
   }
 
   requestDialogEl.showModal();
+}
+
+function showNextQueuedRequest(): void {
+  const next = pendingUiRequests.shift();
+  if (!next) {
+    return;
+  }
+  renderRequest(next);
 }
 
 function showPromptItemRequest(data: Record<string, unknown>): void {
@@ -1337,8 +1358,10 @@ function sendResponse(requestId: string, value: unknown): void {
     requestDialogEl.dataset.responseMethod = "";
     requestDialogEl.dataset.responseThreadId = "";
     requestDialogEl.close();
+    showNextQueuedRequest();
     return;
   }
   rpcRespond(requestId, value);
   requestDialogEl.close();
+  showNextQueuedRequest();
 }

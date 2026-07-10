@@ -493,6 +493,47 @@ describe("workbench shell", () => {
     expect(document.querySelector("#request-controls").textContent).toContain("允许一次");
   });
 
+  it("queues overlapping ui requests instead of replacing the active dialog", () => {
+    const sentMessages = setupOpenSocket();
+    const dialog = document.querySelector("#request-dialog");
+    vi.spyOn(dialog, "showModal").mockImplementation(() => {
+      dialog.setAttribute("open", "");
+    });
+    vi.spyOn(dialog, "close").mockImplementation(() => {
+      dialog.removeAttribute("open");
+    });
+
+    handleNotification("ui.request", {
+      kind: "choice",
+      request_id: "read_1",
+      thread_id: "t2",
+      prompt: "Read file outside workspace? /tmp/a.txt",
+      choices: [["Yes", "allow", "Allow this read once"]],
+    });
+    handleNotification("ui.request", {
+      kind: "choice",
+      request_id: "read_2",
+      thread_id: "t2",
+      prompt: "Read file outside workspace? /tmp/b.txt",
+      choices: [["Yes", "allow", "Allow this read once"]],
+    });
+
+    expect(document.querySelector("#request-title").textContent).toContain("/tmp/a.txt");
+    document.querySelector("#request-controls button").click();
+
+    expect(sentPayloads(sentMessages).find((payload) => payload.id === "read_1")).toMatchObject({
+      id: "read_1",
+      result: { value: "allow" },
+    });
+    expect(document.querySelector("#request-title").textContent).toContain("/tmp/b.txt");
+    document.querySelector("#request-controls button").click();
+
+    expect(sentPayloads(sentMessages).find((payload) => payload.id === "read_2")).toMatchObject({
+      id: "read_2",
+      result: { value: "allow" },
+    });
+  });
+
   it("sends prompt item responses through session.respond", () => {
     const sentMessages = setupOpenSocket();
     const dialog = document.querySelector("#request-dialog");
@@ -931,4 +972,46 @@ describe("bottom panel", () => {
     expect(getActiveTab()).toBe("status");
     expect(document.querySelector('.vx-dock-pane[data-pane="status"]').hidden).toBe(false);
   });
+});
+
+
+it("renders running-turn guidance exactly once from the backend message event", async () => {
+  const { sentMessages, socket } = setupOpenSocketWithHandle();
+  const input = document.querySelector("#input");
+
+  handleNotification("workspace.snapshot", {
+    active_thread_id: "t1",
+    active_snapshot: { thread_id: "t1", nodes: [] },
+    threads: [{ thread_id: "t1", title: "Default", workspace: "<workspace>" }],
+    workspace: "<workspace>",
+    provider: "deepseek",
+    model: "deepseek-chat",
+    profile_configured: true,
+  });
+  handleNotification("turn.started", {});
+  sentMessages.length = 0;
+
+  input.value = "keep going";
+  document.querySelector("#composer").dispatchEvent(
+    new SubmitEvent("submit", { bubbles: true, cancelable: true }),
+  );
+
+  expect(document.querySelectorAll(".message-guidance")).toHaveLength(0);
+
+  const submitMsg = sentPayloads(sentMessages).find((p) => p.method === "session.submit");
+  socket.onmessage({
+    data: JSON.stringify({ jsonrpc: "2.0", id: submitMsg.id, result: { ok: true } }),
+  } as MessageEvent);
+  await vi.waitFor(() => expect(input.value).toBe(""));
+  expect(document.querySelectorAll(".message-guidance")).toHaveLength(0);
+
+  handleNotification("item.started", {
+    kind: "message",
+    item_id: "guidance-1",
+    data: { style: "guidance", text: "keep going" },
+  });
+
+  const messages = document.querySelectorAll(".message-guidance");
+  expect(messages).toHaveLength(1);
+  expect(messages[0].textContent).toContain("keep going");
 });
