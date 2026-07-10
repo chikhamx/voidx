@@ -42,6 +42,16 @@ def _venv_python(voidx_home: Path) -> Path:
 
 
 HERE = Path(__file__).resolve().parent
+SOURCE_PATHS = [str(HERE / "src"), str(HERE / "tui")]
+
+# Ensure the re-executed interpreter also sees the working tree before any
+# installed copy of voidx.
+existing_pythonpath = [
+    entry
+    for entry in os.environ.get("PYTHONPATH", "").split(os.pathsep)
+    if entry and entry not in SOURCE_PATHS
+]
+os.environ["PYTHONPATH"] = os.pathsep.join([*SOURCE_PATHS, *existing_pythonpath])
 
 # ── Re-exec into the voidx venv Python if not already running it ──────────
 voidx_home = Path(os.environ.get("VOIDX_HOME") or _default_voidx_home())
@@ -71,18 +81,12 @@ for entry in (script_dir, ""):
     while entry in sys.path:
         sys.path.remove(entry)
 
-# Ensure src/ and tui/ are on sys.path so voidx package is importable
-for subdir in ("src", "tui"):
-    path = str(HERE / subdir)
-    if path not in sys.path:
-        sys.path.insert(0, path)
-
-# Also set PYTHONPATH env var for any child processes voidx spawns
-pythonpath_parts = [str(HERE / "src"), str(HERE / "tui")]
-existing = os.environ.get("PYTHONPATH")
-if existing:
-    pythonpath_parts.append(existing)
-os.environ["PYTHONPATH"] = os.pathsep.join(pythonpath_parts)
+# Existing .pth or PYTHONPATH entries may place these directories after
+# site-packages, so remove duplicates and force the working tree to the front.
+for path in SOURCE_PATHS:
+    while path in sys.path:
+        sys.path.remove(path)
+sys.path[:0] = SOURCE_PATHS
 
 # Run the CLI entry point directly in this process
 from voidx.main import cli  # noqa: E402
