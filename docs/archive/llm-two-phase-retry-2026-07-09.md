@@ -2,7 +2,7 @@
 
 Date: 2026-07-09
 
-> **Status: Spec** — awaiting implementation.
+> **Status: Done** — Archived on 2026-07-10.
 
 ## Goal
 

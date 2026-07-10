@@ -1,3 +1,5 @@
+> **Status: Done** — Archived on 2026-07-10.
+
 ---
 name: manage-dir-operations
 display_name: Manage 工具目录操作支持
