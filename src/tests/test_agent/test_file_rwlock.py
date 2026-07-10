@@ -323,3 +323,179 @@ class TestBatchOrdering:
 
         assert len(results) == 4
         assert all(r is not None for r in results)
+
+
+
+# ---------------------------------------------------------------------------
+# Same-file write ordering: line number descending
+# ---------------------------------------------------------------------------
+class TestSameFileWriteOrdering:
+    """Multiple writes to the same file must execute by line number descending
+    so that earlier edits don't shift line numbers for later edits."""
+
+    @pytest.mark.asyncio
+    async def test_insert_order_descending(self):
+        """Two inserts on the same file: higher lineno executes first."""
+        from voidx.agent.graph.tool_executor.helpers import _sort_file_calls_by_line_descending
+
+        calls = [
+            {"name": "write", "args": {"file_path": "a.py", "op": "insert", "lineno": 5, "new_string": "x"}, "id": "w1"},
+            {"name": "write", "args": {"file_path": "a.py", "op": "insert", "lineno": 10, "new_string": "y"}, "id": "w2"},
+        ]
+        sorted_calls = _sort_file_calls_by_line_descending(calls)
+        assert sorted_calls[0]["id"] == "w2"  # lineno 10 first
+        assert sorted_calls[1]["id"] == "w1"  # lineno 5 second
+
+    @pytest.mark.asyncio
+    async def test_replace_order_descending(self):
+        """Two replaces on the same file: higher start line_no executes first."""
+        from voidx.agent.graph.tool_executor.helpers import _sort_file_calls_by_line_descending
+
+        calls = [
+            {"name": "replace", "args": {"file_path": "a.py", "bounds": [{"line_no": 3, "anchor": "x"}], "new_string": "X"}, "id": "r1"},
+            {"name": "replace", "args": {"file_path": "a.py", "bounds": [{"line_no": 8, "anchor": "y"}], "new_string": "Y"}, "id": "r2"},
+        ]
+        sorted_calls = _sort_file_calls_by_line_descending(calls)
+        assert sorted_calls[0]["id"] == "r2"  # line_no 8 first
+        assert sorted_calls[1]["id"] == "r1"  # line_no 3 second
+
+    @pytest.mark.asyncio
+    async def test_mixed_insert_replace_descending(self):
+        """Mixed write+replace on same file: sorted by line number descending."""
+        from voidx.agent.graph.tool_executor.helpers import _sort_file_calls_by_line_descending
+
+        calls = [
+            {"name": "write", "args": {"file_path": "a.py", "op": "insert", "lineno": 2, "new_string": "x"}, "id": "w1"},
+            {"name": "replace", "args": {"file_path": "a.py", "bounds": [{"line_no": 7, "anchor": "y"}], "new_string": "Y"}, "id": "r1"},
+            {"name": "write", "args": {"file_path": "a.py", "op": "insert", "lineno": 12, "new_string": "z"}, "id": "w2"},
+        ]
+        sorted_calls = _sort_file_calls_by_line_descending(calls)
+        assert [tc["id"] for tc in sorted_calls] == ["w2", "r1", "w1"]
+
+    @pytest.mark.asyncio
+    async def test_different_files_keep_original_order(self):
+        """Writes to different files should not be reordered."""
+        from voidx.agent.graph.tool_executor.helpers import _sort_file_calls_by_line_descending
+
+        calls = [
+            {"name": "write", "args": {"file_path": "a.py", "op": "insert", "lineno": 5, "new_string": "x"}, "id": "w1"},
+            {"name": "write", "args": {"file_path": "b.py", "op": "insert", "lineno": 1, "new_string": "y"}, "id": "w2"},
+        ]
+        sorted_calls = _sort_file_calls_by_line_descending(calls)
+        assert [tc["id"] for tc in sorted_calls] == ["w1", "w2"]
+
+    @pytest.mark.asyncio
+    async def test_append_treated_as_lowest_priority(self):
+        """op=append has no line number; should execute last (lowest priority)."""
+        from voidx.agent.graph.tool_executor.helpers import _sort_file_calls_by_line_descending
+
+        calls = [
+            {"name": "write", "args": {"file_path": "a.py", "op": "append", "new_string": "tail"}, "id": "w1"},
+            {"name": "write", "args": {"file_path": "a.py", "op": "insert", "lineno": 3, "new_string": "x"}, "id": "w2"},
+        ]
+        sorted_calls = _sort_file_calls_by_line_descending(calls)
+        assert sorted_calls[-1]["id"] == "w1"  # append goes last
+        assert sorted_calls[0]["id"] == "w2"
+
+    @pytest.mark.asyncio
+    async def test_write_full_overwrite_treated_as_lowest(self):
+        """op=write (full overwrite) has no line number; executes last."""
+        from voidx.agent.graph.tool_executor.helpers import _sort_file_calls_by_line_descending
+
+        calls = [
+            {"name": "write", "args": {"file_path": "a.py", "op": "write", "new_string": "full"}, "id": "w1"},
+            {"name": "replace", "args": {"file_path": "a.py", "bounds": [{"line_no": 5, "anchor": "x"}], "new_string": "X"}, "id": "r1"},
+        ]
+        sorted_calls = _sort_file_calls_by_line_descending(calls)
+        assert sorted_calls[-1]["id"] == "w1"  # full overwrite goes last
+        assert sorted_calls[0]["id"] == "r1"
+
+    @pytest.mark.asyncio
+    async def test_replace_two_bounds_uses_min_line_no(self):
+        """Two-bound replace uses the smaller line_no for sorting."""
+        from voidx.agent.graph.tool_executor.helpers import _sort_file_calls_by_line_descending
+
+        calls = [
+            {"name": "replace", "args": {"file_path": "a.py", "bounds": [{"line_no": 3, "anchor": "x"}, {"line_no": 6, "anchor": "y"}], "new_string": "Z"}, "id": "r1"},
+            {"name": "replace", "args": {"file_path": "a.py", "bounds": [{"line_no": 8, "anchor": "a"}], "new_string": "A"}, "id": "r2"},
+        ]
+        sorted_calls = _sort_file_calls_by_line_descending(calls)
+        assert sorted_calls[0]["id"] == "r2"  # line_no 8 first
+        assert sorted_calls[1]["id"] == "r1"  # min(3,6)=3 second
+
+    @pytest.mark.asyncio
+    async def test_reads_not_reordered(self):
+        """Reads should not be reordered — they use shared read lock."""
+        from voidx.agent.graph.tool_executor.helpers import _sort_file_calls_by_line_descending
+
+        calls = [
+            {"name": "read", "args": {"file_path": "a.py", "offset": 10, "limit": 5}, "id": "r1"},
+            {"name": "read", "args": {"file_path": "a.py", "offset": 1, "limit": 5}, "id": "r2"},
+        ]
+        sorted_calls = _sort_file_calls_by_line_descending(calls)
+        assert [tc["id"] for tc in sorted_calls] == ["r1", "r2"]
+
+    @pytest.mark.asyncio
+    async def test_execution_order_descending_integration(self):
+        """Integration: same-file writes actually execute in descending line order."""
+        calls = [
+            {"name": "write", "args": {"file_path": "a.py", "op": "insert", "lineno": 5, "new_string": "x"}, "id": "w1"},
+            {"name": "write", "args": {"file_path": "a.py", "op": "insert", "lineno": 10, "new_string": "y"}, "id": "w2"},
+            {"name": "write", "args": {"file_path": "a.py", "op": "insert", "lineno": 2, "new_string": "z"}, "id": "w3"},
+        ]
+
+        execution_order: list[str] = []
+
+        async def fake_execute(tc):
+            execution_order.append(tc["id"])
+            await asyncio.sleep(0.001)
+            return tc["id"]
+
+        file_lock_manager: dict[str, _FileRWLock] = {}
+
+        def _get_rwlock(path):
+            if path not in file_lock_manager:
+                file_lock_manager[path] = _FileRWLock()
+            return file_lock_manager[path]
+
+        async def execute_one_file_locked(tc):
+            paths = sorted(set(_extract_file_paths(tc)))
+            is_write = tc.get("name") in ("write", "replace", "manage")
+            rw_locks = []
+            try:
+                for p in paths:
+                    lk = _get_rwlock(p)
+                    rw_locks.append(lk)
+                    if is_write:
+                        await lk.acquire_write()
+                    else:
+                        await lk.acquire_read()
+                return await fake_execute(tc)
+            finally:
+                for lk, p in zip(rw_locks, paths):
+                    if is_write:
+                        await lk.release_write()
+                    else:
+                        await lk.release_read()
+
+        from voidx.agent.graph.tool_executor.helpers import _sort_file_calls_by_line_descending
+        file_calls = [tc for tc in calls if _extract_file_paths(tc)]
+        sorted_file_calls = _sort_file_calls_by_line_descending(file_calls)
+
+        call_index = {tc["id"]: i for i, tc in enumerate(calls)}
+        results: list = [None] * len(calls)
+
+        async def _run_and_place(file_group, executor_fn):
+            if not file_group:
+                return
+            group_results = await asyncio.gather(
+                *[executor_fn(tc) for tc in file_group]
+            )
+            for tc, result in zip(file_group, group_results):
+                results[call_index[tc["id"]]] = result
+
+        await _run_and_place(sorted_file_calls, execute_one_file_locked)
+
+        # Execution order must be descending by line number: w2(10), w1(5), w3(2)
+        assert execution_order == ["w2", "w1", "w3"], f"Expected descending line order, got {execution_order}"
+        assert all(r is not None for r in results)

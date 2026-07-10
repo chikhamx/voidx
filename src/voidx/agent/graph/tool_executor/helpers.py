@@ -102,6 +102,70 @@ def _extract_file_paths(tool_call: dict) -> list[str]:
     return [os.path.normpath(p) for p in paths]
 
 
+_LINE_NO_FALLBACK = 0.0
+
+
+def _line_no_for_sorting(tc: dict) -> float:
+    """Extract a representative line number for descending-order sorting.
+
+    write op=insert -> lineno
+    write op=append/write -> inf (no line anchor; executes last)
+    replace -> min(bounds[*].line_no)
+    other tools -> inf (not reordered)
+    """
+    name = tc.get("name", "")
+    args = tc.get("args") or {}
+
+    if name == "write":
+        if args.get("op") == "insert":
+            ln = args.get("lineno")
+            if isinstance(ln, (int, float)) and ln > 0:
+                return float(ln)
+        return _LINE_NO_FALLBACK
+
+    if name == "replace":
+        bounds = args.get("bounds") or []
+        line_nos = [
+            b.get("line_no") for b in bounds
+            if isinstance(b, dict) and isinstance(b.get("line_no"), (int, float))
+        ]
+        if line_nos:
+            return float(min(line_nos))
+        return _LINE_NO_FALLBACK
+
+    return _LINE_NO_FALLBACK
+
+
+def _sort_file_calls_by_line_descending(file_calls: list[dict]) -> list[dict]:
+    """Reorder same-file write calls by line number descending.
+
+    Writes to different files are kept in original relative order (stable sort
+    keyed by file path groups). Only calls sharing a file path are reordered
+    among themselves, so that higher line numbers execute first — preventing
+    earlier edits from shifting line numbers for later edits.
+    """
+    groups: dict[str, list[int]] = {}
+    for idx, tc in enumerate(file_calls):
+        paths = _extract_file_paths(tc)
+        key = paths[0] if paths else ""
+        groups.setdefault(key, []).append(idx)
+
+    result = list(file_calls)
+    for key, indices in groups.items():
+        if len(indices) <= 1:
+            continue
+        sorted_indices = sorted(
+            indices,
+            key=lambda i: _line_no_for_sorting(file_calls[i]),
+            reverse=True,
+        )
+        sorted_calls = [file_calls[i] for i in sorted_indices]
+        for pos, orig_idx in enumerate(indices):
+            result[orig_idx] = sorted_calls[pos]
+
+    return result
+
+
 def _dedupe_repeated_read_calls(tool_calls: list[dict]) -> tuple[list[dict], dict[str, str]]:
     unique: list[dict] = []
     duplicate_sources: dict[str, str] = {}
@@ -463,6 +527,10 @@ async def _execute_approved_batch(
             file_calls.append(tc)
         else:
             other_calls.append(tc)
+
+    # Reorder same-file writes by line number descending so that earlier edits
+    # don't shift line numbers for later edits on the same file.
+    file_calls = _sort_file_calls_by_line_descending(file_calls)
 
     from voidx.runtime.ui import StatusFinished, StatusUpdated
     if show_parallel_status and host._ui.via_events():
