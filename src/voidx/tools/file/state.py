@@ -114,6 +114,14 @@ def clear_file_tracking(ctx: ToolContext, resolved: Path) -> None:
     ctx.file_mtimes.pop(key, None)
 
 
+def clear_tree_tracking(ctx: ToolContext, root: Path) -> None:
+    resolved_root = root.resolve()
+    for mapping in (ctx.file_mtimes, ctx.file_read_coverage):
+        for key in list(mapping):
+            if Path(key).is_relative_to(resolved_root):
+                mapping.pop(key, None)
+
+
 def move_file_tracking(ctx: ToolContext, source: Path, dest: Path) -> None:
     source_key = str(source.resolve())
     dest_key = str(dest.resolve())
