@@ -156,6 +156,10 @@ def _classify_pytest_status(code: int, output: str) -> str:
         re.MULTILINE,
     ):
         return "FAIL"
+    if re.search(r"^ERROR: file or directory not found:", clean, re.MULTILINE):
+        return "FAIL"
+    if re.search(r"^no tests ran in ", clean, re.MULTILINE):
+        return "FAIL"
     return "ERROR"
 
 

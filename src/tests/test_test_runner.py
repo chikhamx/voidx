@@ -413,3 +413,39 @@ def test_vitest_filter_preserves_isolated_test_diagnostic() -> None:
 
     assert "> test" in filtered
     assert "actual diagnostic context" in filtered
+
+
+def test_pytest_file_not_found_is_not_runner_error() -> None:
+    runner = _load_runner()
+
+    output = "ERROR: file or directory not found: /nonexistent/path\n\nno tests ran in 0.00s"
+    assert runner._classify_pytest_status(4, output) == "FAIL"
+
+
+def test_pytest_file_not_found_does_not_return_exit_2() -> None:
+    result = _run_runner("--backend", "--", "/nonexistent/path")
+
+    assert result.returncode == 0
+    assert "❌ backend" not in result.stdout
+
+
+def test_pytest_no_tests_ran_is_not_runner_error() -> None:
+    runner = _load_runner()
+
+    output = (
+        "ERROR: not found: /repo/src/tests/test_foo.py::test_nonexistent\n"
+        "(no match in any of [<Module test_foo.py>])\n\n\n"
+        "no tests ran in 0.54s"
+    )
+    assert runner._classify_pytest_status(4, output) == "FAIL"
+
+
+def test_pytest_no_tests_ran_does_not_return_exit_2() -> None:
+    result = _run_runner(
+        "--backend",
+        "--",
+        "src/tests/test_agent/graph/test_execute_tools_guard.py::test_nonexistent",
+    )
+
+    assert result.returncode == 0
+    assert "❌ backend" not in result.stdout
