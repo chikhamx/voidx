@@ -1,6 +1,9 @@
 from __future__ import annotations
 
+import json
+import os
 import sys
+from types import SimpleNamespace
 
 import pytest
 
@@ -69,137 +72,149 @@ async def test_perform_upgrade_refuses_non_virtualenv(monkeypatch) -> None:
     assert "package manager" in result.message
 
 
-@pytest.mark.asyncio
-async def test_perform_upgrade_runs_pip_for_newer_stable_version(monkeypatch) -> None:
+def _verification(
+    ok: bool,
+    *,
+    version: str | None = None,
+    core_version: str | None = None,
+    cli_version: str | None = None,
+    message: str = "verification failed",
+) -> SimpleNamespace:
+    resolved_core = core_version if core_version is not None else version
+    resolved_cli = cli_version if cli_version is not None else version
+    return SimpleNamespace(
+        ok=ok,
+        core_version=resolved_core,
+        cli_version=resolved_cli,
+        message=message if not ok else "ok",
+    )
+
+
+def _setup_upgrade(monkeypatch) -> None:
     monkeypatch.delenv("VOIDX_LAUNCHED_BY_NPM", raising=False)
     monkeypatch.setattr(selfupdate, "_in_virtualenv", lambda: True)
-    monkeypatch.setattr(selfupdate, "_installed_version", lambda pkg: "3.5.1")
-    monkeypatch.setattr(selfupdate, "_can_import_voidx_cli", lambda: True)
-    created: list[tuple[tuple[str, ...], dict]] = []
 
-    class FakeProcess:
-        returncode = 0
 
-        async def communicate(self):
-            return b"", b""
+@pytest.mark.asyncio
+async def test_perform_upgrade_installs_exact_pair_in_one_pip_command(monkeypatch) -> None:
+    _setup_upgrade(monkeypatch)
+    verification_results = iter([
+        _verification(True, version="3.5.1"),
+        _verification(True, version="9.0.0"),
+    ])
+    verify_calls: list[str | None] = []
+    pip_calls: list[tuple[tuple[str, ...], bool]] = []
 
-    async def fake_create_subprocess_exec(*command: str, **kwargs):
-        created.append((command, kwargs))
-        return FakeProcess()
+    async def fake_verify(expected_version, env, timeout):
+        verify_calls.append(expected_version)
+        return next(verification_results)
 
-    monkeypatch.setattr(selfupdate.asyncio, "create_subprocess_exec", fake_create_subprocess_exec)
+    async def fake_pip_install(specs, env, timeout, *, force_reinstall=False):
+        pip_calls.append((specs, force_reinstall))
+        return selfupdate._PipResult(ok=True, message="ok")
+
+    monkeypatch.setattr(selfupdate, "_verify_installation", fake_verify, raising=False)
+    monkeypatch.setattr(selfupdate, "_pip_install", fake_pip_install)
 
     result = await selfupdate.perform_upgrade("9.0.0")
 
     assert result.ok is True
-    assert len(created) == 2, "perform_upgrade must call pip install twice (voidx + voidx-cli)"
-
-    # First call: voidx core
-    command = created[0][0]
-    assert command[:5] == (
-        sys.executable,
-        "-m",
-        "pip",
-        "install",
-        "--upgrade",
-    )
-    assert "voidx==9.0.0" in command
-    assert "voidx-cli" not in command
-    assert created[0][1]["env"]["PIP_NO_INPUT"] == "1"
-
-    # Second call: voidx-cli
-    cli_command = created[1][0]
-    assert cli_command[:5] == (
-        sys.executable,
-        "-m",
-        "pip",
-        "install",
-        "--upgrade",
-    )
-    assert "voidx-cli==9.0.0" in cli_command
-    assert created[1][1]["env"]["PIP_NO_INPUT"] == "1"
+    assert verify_calls == [None, "9.0.0"]
+    assert pip_calls == [
+        (("voidx==9.0.0", "voidx-cli==9.0.0"), False),
+    ]
 
 
 @pytest.mark.asyncio
-async def test_perform_upgrade_rolls_back_when_voidx_cli_fails(monkeypatch) -> None:
-    """voidx-cli install failure triggers automatic rollback to previous version."""
-    monkeypatch.delenv("VOIDX_LAUNCHED_BY_NPM", raising=False)
-    monkeypatch.setattr(selfupdate, "_in_virtualenv", lambda: True)
-    monkeypatch.setattr(selfupdate, "_installed_version", lambda pkg: "3.5.1")
-    monkeypatch.setattr(selfupdate, "_can_import_voidx_cli", lambda: False)
-    call_count = 0
+async def test_perform_upgrade_force_repairs_pair_once_before_rollback(monkeypatch) -> None:
+    _setup_upgrade(monkeypatch)
+    verification_results = iter([
+        _verification(True, version="3.5.1"),
+        _verification(False, core_version="9.0.0", cli_version="3.5.1"),
+        _verification(False, core_version="9.0.0", cli_version="3.5.1"),
+        _verification(True, version="3.5.1"),
+    ])
+    pip_calls: list[tuple[tuple[str, ...], bool]] = []
 
-    class FakeProcessOk:
-        returncode = 0
+    async def fake_verify(expected_version, env, timeout):
+        return next(verification_results)
 
-        async def communicate(self):
-            return b"", b""
+    async def fake_pip_install(specs, env, timeout, *, force_reinstall=False):
+        pip_calls.append((specs, force_reinstall))
+        return selfupdate._PipResult(ok=True, message="ok")
 
-    async def fake_create_subprocess_exec(*command: str, **kwargs):
-        nonlocal call_count
-        call_count += 1
-        return FakeProcessOk()
-
-    monkeypatch.setattr(selfupdate.asyncio, "create_subprocess_exec", fake_create_subprocess_exec)
+    monkeypatch.setattr(selfupdate, "_verify_installation", fake_verify, raising=False)
+    monkeypatch.setattr(selfupdate, "_pip_install", fake_pip_install)
 
     result = await selfupdate.perform_upgrade("9.0.0")
 
     assert result.ok is False
-    assert "rolled back" in result.message.lower() or "reverted" in result.message.lower()
-    # Should have called pip install at least 3 times: voidx, voidx-cli, rollback voidx
-    assert call_count >= 3
+    assert "rolled back" in result.message.lower()
+    assert pip_calls == [
+        (("voidx==9.0.0", "voidx-cli==9.0.0"), False),
+        (("voidx==9.0.0", "voidx-cli==9.0.0"), True),
+        (("voidx==3.5.1", "voidx-cli==3.5.1"), False),
+    ]
 
 
 @pytest.mark.asyncio
-async def test_perform_upgrade_succeeds_when_voidx_cli_importable(monkeypatch) -> None:
-    """Upgrade succeeds when voidx-cli is importable after install."""
-    monkeypatch.delenv("VOIDX_LAUNCHED_BY_NPM", raising=False)
-    monkeypatch.setattr(selfupdate, "_in_virtualenv", lambda: True)
-    monkeypatch.setattr(selfupdate, "_installed_version", lambda pkg: "3.5.1")
-    monkeypatch.setattr(selfupdate, "_can_import_voidx_cli", lambda: True)
-    created: list[tuple[tuple[str, ...], dict]] = []
+async def test_perform_upgrade_does_not_claim_rollback_from_invalid_pre_state(
+    monkeypatch,
+    tmp_path,
+) -> None:
+    _setup_upgrade(monkeypatch)
+    marker_path = tmp_path / ".voidx-install-version"
+    marker_path.write_text("3.5.1\n20260602\n3.12.13\n")
+    verification_results = iter([
+        _verification(False, core_version="3.5.1", cli_version=None),
+        _verification(False, core_version="9.0.0", cli_version="3.5.1"),
+        _verification(False, core_version="9.0.0", cli_version="3.5.1"),
+    ])
+    pip_calls: list[tuple[tuple[str, ...], bool]] = []
 
-    class FakeProcess:
-        returncode = 0
+    async def fake_verify(expected_version, env, timeout):
+        return next(verification_results)
 
-        async def communicate(self):
-            return b"", b""
+    async def fake_pip_install(specs, env, timeout, *, force_reinstall=False):
+        pip_calls.append((specs, force_reinstall))
+        return selfupdate._PipResult(ok=True, message="ok")
 
-    async def fake_create_subprocess_exec(*command: str, **kwargs):
-        created.append((command, kwargs))
-        return FakeProcess()
-
-    monkeypatch.setattr(selfupdate.asyncio, "create_subprocess_exec", fake_create_subprocess_exec)
+    monkeypatch.setattr(selfupdate, "_verify_installation", fake_verify, raising=False)
+    monkeypatch.setattr(selfupdate, "_pip_install", fake_pip_install)
+    monkeypatch.setattr(selfupdate, "_install_marker_path", lambda: marker_path)
 
     result = await selfupdate.perform_upgrade("9.0.0")
 
-    assert result.ok is True
-    assert len(created) == 2  # voidx + voidx-cli, no rollback
+    assert result.ok is False
+    assert "rolled back" not in result.message.lower()
+    assert "voidx==9.0.0" in result.message
+    assert "voidx-cli==9.0.0" in result.message
+    assert pip_calls == [
+        (("voidx==9.0.0", "voidx-cli==9.0.0"), False),
+        (("voidx==9.0.0", "voidx-cli==9.0.0"), True),
+    ]
+    assert not marker_path.exists()
 
 
 @pytest.mark.asyncio
 async def test_perform_upgrade_updates_install_marker(monkeypatch, tmp_path) -> None:
-    """Upgrade success updates .voidx-install-version marker so install.sh/voidx.js
-    don't re-install on next launch."""
-    monkeypatch.delenv("VOIDX_LAUNCHED_BY_NPM", raising=False)
-    monkeypatch.setattr(selfupdate, "_in_virtualenv", lambda: True)
-    monkeypatch.setattr(selfupdate, "_installed_version", lambda pkg: "3.5.1")
-    monkeypatch.setattr(selfupdate, "_can_import_voidx_cli", lambda: True)
-
+    _setup_upgrade(monkeypatch)
     marker_path = tmp_path / ".voidx-install-version"
     marker_path.write_text("3.5.1\n20260602\n3.12.13\n")
     monkeypatch.setattr(selfupdate, "_install_marker_path", lambda: marker_path)
+    verification_results = iter([
+        _verification(True, version="3.5.1"),
+        _verification(True, version="9.0.0"),
+    ])
 
-    class FakeProcess:
-        returncode = 0
+    async def fake_verify(expected_version, env, timeout):
+        return next(verification_results)
 
-        async def communicate(self):
-            return b"", b""
+    async def fake_pip_install(specs, env, timeout, *, force_reinstall=False):
+        return selfupdate._PipResult(ok=True, message="ok")
 
-    async def fake_create_subprocess_exec(*command: str, **kwargs):
-        return FakeProcess()
-
-    monkeypatch.setattr(selfupdate.asyncio, "create_subprocess_exec", fake_create_subprocess_exec)
+    monkeypatch.setattr(selfupdate, "_verify_installation", fake_verify, raising=False)
+    monkeypatch.setattr(selfupdate, "_pip_install", fake_pip_install)
 
     result = await selfupdate.perform_upgrade("9.0.0")
 
@@ -212,25 +227,22 @@ async def test_perform_upgrade_updates_install_marker(monkeypatch, tmp_path) -> 
 
 @pytest.mark.asyncio
 async def test_perform_upgrade_skips_marker_when_absent(monkeypatch, tmp_path) -> None:
-    """Upgrade succeeds even when marker file doesn't exist (non-install.sh setup)."""
-    monkeypatch.delenv("VOIDX_LAUNCHED_BY_NPM", raising=False)
-    monkeypatch.setattr(selfupdate, "_in_virtualenv", lambda: True)
-    monkeypatch.setattr(selfupdate, "_installed_version", lambda pkg: "3.5.1")
-    monkeypatch.setattr(selfupdate, "_can_import_voidx_cli", lambda: True)
-
+    _setup_upgrade(monkeypatch)
     marker_path = tmp_path / ".voidx-install-version"
     monkeypatch.setattr(selfupdate, "_install_marker_path", lambda: marker_path)
+    verification_results = iter([
+        _verification(True, version="3.5.1"),
+        _verification(True, version="9.0.0"),
+    ])
 
-    class FakeProcess:
-        returncode = 0
+    async def fake_verify(expected_version, env, timeout):
+        return next(verification_results)
 
-        async def communicate(self):
-            return b"", b""
+    async def fake_pip_install(specs, env, timeout, *, force_reinstall=False):
+        return selfupdate._PipResult(ok=True, message="ok")
 
-    async def fake_create_subprocess_exec(*command: str, **kwargs):
-        return FakeProcess()
-
-    monkeypatch.setattr(selfupdate.asyncio, "create_subprocess_exec", fake_create_subprocess_exec)
+    monkeypatch.setattr(selfupdate, "_verify_installation", fake_verify, raising=False)
+    monkeypatch.setattr(selfupdate, "_pip_install", fake_pip_install)
 
     result = await selfupdate.perform_upgrade("9.0.0")
 
@@ -240,32 +252,26 @@ async def test_perform_upgrade_skips_marker_when_absent(monkeypatch, tmp_path) -
 
 @pytest.mark.asyncio
 async def test_perform_upgrade_rollback_failure_reports_manual_fix(monkeypatch) -> None:
-    """If rollback itself fails, message tells user to fix manually."""
-    monkeypatch.delenv("VOIDX_LAUNCHED_BY_NPM", raising=False)
-    monkeypatch.setattr(selfupdate, "_in_virtualenv", lambda: True)
-    monkeypatch.setattr(selfupdate, "_installed_version", lambda pkg: "3.5.1")
-    monkeypatch.setattr(selfupdate, "_can_import_voidx_cli", lambda: False)
-    call_count = 0
+    _setup_upgrade(monkeypatch)
+    verification_results = iter([
+        _verification(True, version="3.5.1"),
+        _verification(False, core_version="9.0.0", cli_version="3.5.1"),
+        _verification(False, core_version="9.0.0", cli_version="3.5.1"),
+    ])
+    pip_results = iter([
+        selfupdate._PipResult(ok=True, message="ok"),
+        selfupdate._PipResult(ok=True, message="ok"),
+        selfupdate._PipResult(ok=False, message="rollback failed"),
+    ])
 
-    class FakeProcessOk:
-        returncode = 0
+    async def fake_verify(expected_version, env, timeout):
+        return next(verification_results)
 
-        async def communicate(self):
-            return b"", b""
+    async def fake_pip_install(specs, env, timeout, *, force_reinstall=False):
+        return next(pip_results)
 
-    class FakeProcessFail:
-        returncode = 1
-
-        async def communicate(self):
-            return b"", b"rollback failed"
-
-    async def fake_create_subprocess_exec(*command: str, **kwargs):
-        nonlocal call_count
-        call_count += 1
-        # voidx install ok, voidx-cli install ok, rollback fails
-        return FakeProcessOk() if call_count <= 2 else FakeProcessFail()
-
-    monkeypatch.setattr(selfupdate.asyncio, "create_subprocess_exec", fake_create_subprocess_exec)
+    monkeypatch.setattr(selfupdate, "_verify_installation", fake_verify, raising=False)
+    monkeypatch.setattr(selfupdate, "_pip_install", fake_pip_install)
 
     result = await selfupdate.perform_upgrade("9.0.0")
 
@@ -274,61 +280,256 @@ async def test_perform_upgrade_rollback_failure_reports_manual_fix(monkeypatch) 
     assert "voidx" in result.message.lower()
 
 
-def test_can_import_voidx_cli_true_when_importable(monkeypatch) -> None:
-    """_can_import_voidx_cli returns True when voidx_cli is actually importable."""
-    from importlib.metadata import PackageNotFoundError
+@pytest.mark.asyncio
+@pytest.mark.parametrize(
+    "payload",
+    [
+        {"core_version": None, "cli_version": "9.0.0"},
+        {"core_version": "9.0.0", "cli_version": None},
+        {"core_version": "9.0.0", "cli_version": "3.5.1"},
+        {"core_version": "3.5.1", "cli_version": "9.0.0"},
+        {"core_version": "9.0.0", "cli_version": "9.0.0", "core_import": False},
+        {"core_version": "9.0.0", "cli_version": "9.0.0", "cli_import": False},
+        {"core_version": "9.0.0", "cli_version": "9.0.0", "entrypoint_ok": False},
+        {
+            "core_version": "9.0.0",
+            "cli_version": "9.0.0",
+            "entrypoint_version": "3.5.1",
+        },
+    ],
+)
+async def test_verify_installation_rejects_incomplete_or_mismatched_pair(monkeypatch, payload) -> None:
+    complete_payload = {
+        "core_version": "9.0.0",
+        "cli_version": "9.0.0",
+        "core_import": True,
+        "cli_import": True,
+        "entrypoint_ok": True,
+        "entrypoint_version": "9.0.0",
+        **payload,
+    }
 
-    def fake_version(name):
-        if name == "voidx-cli":
-            return "3.6.0"
-        raise PackageNotFoundError(name)
+    class FakeProcess:
+        returncode = 0
 
-    monkeypatch.setattr("importlib.metadata.version", fake_version)
+        async def communicate(self):
+            return json.dumps(complete_payload).encode(), b""
 
-    import importlib
-    original_import = importlib.import_module
+    async def fake_create_subprocess_exec(*command: str, **kwargs):
+        return FakeProcess()
 
-    def fake_import(name, *args, **kwargs):
-        if name == "voidx_cli":
-            return original_import("voidx_cli")
-        return original_import(name, *args, **kwargs)
+    monkeypatch.setattr(selfupdate.asyncio, "create_subprocess_exec", fake_create_subprocess_exec)
 
-    monkeypatch.setattr("importlib.import_module", fake_import)
+    result = await selfupdate._verify_installation("9.0.0", {}, 1.0)
 
-    assert selfupdate._can_import_voidx_cli() is True
-
-
-def test_can_import_voidx_cli_false_when_metadata_exists_but_import_fails(monkeypatch) -> None:
-    """_can_import_voidx_cli returns False when .dist-info exists but module is not importable.
-
-    This happens when pip install is interrupted — the .dist-info directory is
-    written before all .py files are extracted, leaving metadata without code.
-    """
-    from importlib.metadata import PackageNotFoundError
-
-    def fake_version(name):
-        if name == "voidx-cli":
-            return "3.6.0"
-        raise PackageNotFoundError(name)
-
-    monkeypatch.setattr("importlib.metadata.version", fake_version)
-
-    def fake_import(name, *args, **kwargs):
-        if name == "voidx_cli":
-            raise ModuleNotFoundError(f"No module named '{name}'")
-        return __import__(name, *args, **kwargs)
-
-    monkeypatch.setattr("importlib.import_module", fake_import)
-
-    assert selfupdate._can_import_voidx_cli() is False
+    assert result.ok is False
 
 
-def test_can_import_voidx_cli_false_when_not_installed(monkeypatch) -> None:
-    """_can_import_voidx_cli returns False when voidx-cli is not installed at all."""
-    from importlib.metadata import PackageNotFoundError
+def test_verification_probe_excludes_current_directory_from_imports() -> None:
+    assert "os.getcwd()" in selfupdate._VERIFICATION_PROBE
+    assert "sys.path =" in selfupdate._VERIFICATION_PROBE
 
-    def fake_version(name):
-        raise PackageNotFoundError(name)
 
-    monkeypatch.setattr("importlib.metadata.version", fake_version)
+@pytest.mark.asyncio
+async def test_verify_installation_accepts_coherent_existing_pair(monkeypatch) -> None:
+    payload = {
+        "core_version": "3.5.1",
+        "cli_version": "3.5.1",
+        "core_import": True,
+        "cli_import": True,
+        "entrypoint_ok": True,
+        "entrypoint_version": "3.5.1",
+    }
 
+    class FakeProcess:
+        returncode = 0
+
+        async def communicate(self):
+            return json.dumps(payload).encode(), b""
+
+    async def fake_create_subprocess_exec(*command: str, **kwargs):
+        return FakeProcess()
+
+    monkeypatch.setattr(selfupdate.asyncio, "create_subprocess_exec", fake_create_subprocess_exec)
+
+    result = await selfupdate._verify_installation(None, {}, 1.0)
+
+    assert result.ok is True
+    assert result.core_version == "3.5.1"
+    assert result.cli_version == "3.5.1"
+
+
+def test_update_install_marker_replaces_file_atomically(monkeypatch, tmp_path) -> None:
+    marker_path = tmp_path / ".voidx-install-version"
+    marker_path.write_text("3.5.1\n20260602\n3.12.13\n")
+    replace_calls: list[tuple[object, object]] = []
+    original_replace = os.replace
+
+    def recording_replace(source, destination):
+        replace_calls.append((source, destination))
+        original_replace(source, destination)
+
+    monkeypatch.setattr(selfupdate, "_install_marker_path", lambda: marker_path)
+    monkeypatch.setattr(selfupdate.os, "replace", recording_replace)
+
+    selfupdate._update_install_marker("9.0.0")
+
+    assert len(replace_calls) == 1
+    assert replace_calls[0][1] == marker_path
+    assert marker_path.read_text().startswith("9.0.0\n")
+
+
+def test_windows_locked_file_failure_includes_installer_guidance(monkeypatch) -> None:
+    monkeypatch.setattr(selfupdate.sys, "platform", "win32")
+
+    message = selfupdate._format_upgrade_failure(
+        "Upgrade failed: [WinError 32] The process cannot access the file",
+        "9.0.0",
+    )
+
+    assert "exit voidx" in message.lower()
+    assert "install.ps1" in message
+
+
+def test_update_install_marker_preserves_4_line_windows_format(monkeypatch, tmp_path) -> None:
+    """Windows markers include a 4th platform-target line; _update_install_marker
+    must preserve all lines and only replace the version line."""
+    marker_path = tmp_path / ".voidx-install-version"
+    marker_path.write_text("3.5.1\n20260602\n3.12.13\nx86_64-pc-windows-msvc\n")
+    monkeypatch.setattr(selfupdate, "_install_marker_path", lambda: marker_path)
+
+    selfupdate._update_install_marker("9.0.0")
+
+    lines = marker_path.read_text(encoding="utf-8").splitlines()
+    assert len(lines) == 4
+    assert lines[0] == "9.0.0"
+    assert lines[1] == "20260602"
+    assert lines[2] == "3.12.13"
+    assert lines[3] == "x86_64-pc-windows-msvc"
+
+
+def test_update_install_marker_skips_malformed_marker_with_fewer_than_3_lines(
+    monkeypatch, tmp_path
+) -> None:
+    """A marker with < 3 lines is malformed; _update_install_marker must leave it
+    untouched rather than writing a partial file."""
+    marker_path = tmp_path / ".voidx-install-version"
+    marker_path.write_text("3.5.1\n")
+    monkeypatch.setattr(selfupdate, "_install_marker_path", lambda: marker_path)
+
+    selfupdate._update_install_marker("9.0.0")
+
+    assert marker_path.read_text() == "3.5.1\n"
+
+
+def test_clear_install_marker_removes_file(monkeypatch, tmp_path) -> None:
+    """_clear_install_marker must delete the marker file when it exists."""
+    marker_path = tmp_path / ".voidx-install-version"
+    marker_path.write_text("3.5.1\n20260602\n3.12.13\n")
+    monkeypatch.setattr(selfupdate, "_install_marker_path", lambda: marker_path)
+
+    selfupdate._clear_install_marker()
+
+    assert not marker_path.exists()
+
+
+def test_clear_install_marker_is_noop_when_marker_absent(monkeypatch, tmp_path) -> None:
+    """_clear_install_marker must not raise when the marker file is already absent."""
+    marker_path = tmp_path / ".voidx-install-version"
+    monkeypatch.setattr(selfupdate, "_install_marker_path", lambda: marker_path)
+
+    selfupdate._clear_install_marker()
+
+    assert not marker_path.exists()
+
+
+def test_format_upgrade_failure_on_non_windows_does_not_add_installer_guidance(
+    monkeypatch,
+) -> None:
+    """On non-Windows, _format_upgrade_failure must return the original message
+    without appending Windows-specific installer guidance."""
+    monkeypatch.setattr(selfupdate.sys, "platform", "linux")
+
+    original = "Upgrade failed: some pip error"
+    message = selfupdate._format_upgrade_failure(original, "9.0.0")
+
+    assert message == original
+
+
+@pytest.mark.asyncio
+async def test_rollback_to_verifies_restored_pair_independently(monkeypatch) -> None:
+    """_rollback_to must verify the restored pair after pip install, not just
+    trust that pip succeeded."""
+    verify_calls: list[str | None] = []
+    pip_calls: list[tuple[str, ...]] = []
+
+    async def fake_pip_install(specs, env, timeout, *, force_reinstall=False):
+        pip_calls.append(specs)
+        return selfupdate._PipResult(ok=True, message="ok")
+
+    async def fake_verify(expected_version, env, timeout):
+        verify_calls.append(expected_version)
+        return selfupdate._VerificationResult(
+            ok=True,
+            core_version=expected_version,
+            cli_version=expected_version,
+            message="ok",
+        )
+
+    monkeypatch.setattr(selfupdate, "_pip_install", fake_pip_install)
+    monkeypatch.setattr(selfupdate, "_verify_installation", fake_verify, raising=False)
+
+    result = await selfupdate._rollback_to("3.5.1", {}, 1.0)
+
+    assert result is None
+    assert pip_calls == [("voidx==3.5.1", "voidx-cli==3.5.1")]
+    assert verify_calls == ["3.5.1"]
+
+
+@pytest.mark.asyncio
+async def test_rollback_to_returns_error_when_verification_fails(monkeypatch) -> None:
+    """_rollback_to must return the verification failure message when the restored
+    pair does not verify, rather than claiming success."""
+    async def fake_pip_install(specs, env, timeout, *, force_reinstall=False):
+        return selfupdate._PipResult(ok=True, message="ok")
+
+    async def fake_verify(expected_version, env, timeout):
+        return selfupdate._VerificationResult(
+            ok=False,
+            core_version="3.5.1",
+            cli_version=None,
+            message="voidx-cli is not installed",
+        )
+
+    monkeypatch.setattr(selfupdate, "_pip_install", fake_pip_install)
+    monkeypatch.setattr(selfupdate, "_verify_installation", fake_verify, raising=False)
+
+    result = await selfupdate._rollback_to("3.5.1", {}, 1.0)
+
+    assert result is not None
+    assert "voidx-cli is not installed" in result
+
+
+@pytest.mark.asyncio
+async def test_rollback_to_returns_error_when_pip_fails(monkeypatch) -> None:
+    """_rollback_to must return the pip failure message without attempting
+    verification when the rollback pip install itself fails."""
+    verify_calls: list[str | None] = []
+
+    async def fake_pip_install(specs, env, timeout, *, force_reinstall=False):
+        return selfupdate._PipResult(ok=False, message="pip network error")
+
+    async def fake_verify(expected_version, env, timeout):
+        verify_calls.append(expected_version)
+        return selfupdate._VerificationResult(
+            ok=True, core_version="3.5.1", cli_version="3.5.1", message="ok"
+        )
+
+    monkeypatch.setattr(selfupdate, "_pip_install", fake_pip_install)
+    monkeypatch.setattr(selfupdate, "_verify_installation", fake_verify, raising=False)
+
+    result = await selfupdate._rollback_to("3.5.1", {}, 1.0)
+
+    assert result is not None
+    assert "pip network error" in result
+    assert verify_calls == []

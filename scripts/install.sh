@@ -345,20 +345,78 @@ VENV_PYTHON="${VENV_DIR}/bin/python"
 VOIDX_BIN="${VENV_DIR}/bin/voidx"
 VOIDX_LINK="${BIN_DIR}/voidx"
 
+_verify_managed_install() {
+    if ! "${VENV_PYTHON}" - "${VERSION}" <<'PY'
+import importlib
+import os
+import sys
+from importlib.metadata import PackageNotFoundError, version
+
+current_directory = os.path.normcase(os.path.realpath(os.getcwd()))
+sys.path = [
+    entry
+    for entry in sys.path
+    if entry and os.path.normcase(os.path.realpath(entry)) != current_directory
+]
+
+expected = sys.argv[1]
+failures = []
+for distribution, module in (("voidx", "voidx"), ("voidx-cli", "voidx_cli")):
+    try:
+        installed = version(distribution)
+    except PackageNotFoundError:
+        installed = None
+    except Exception as exc:
+        installed = None
+        failures.append(f"{distribution} metadata failed: {exc}")
+    if installed != expected:
+        failures.append(
+            f"{distribution} version is {installed or 'missing'}, expected {expected}"
+        )
+    try:
+        importlib.import_module(module)
+    except Exception as exc:
+        failures.append(f"{module} import failed: {exc}")
+
+if failures:
+    print("; ".join(failures), file=sys.stderr)
+    raise SystemExit(1)
+PY
+    then
+        return 1
+    fi
+
+    local version_output
+    local actual_version
+    if ! version_output=$("${VOIDX_BIN}" --version 2>&1); then
+        warn "voidx entry point failed: ${version_output}"
+        return 1
+    fi
+    actual_version=$(printf '%s\n' "${version_output}" | grep -oE '[0-9]+\.[0-9]+\.[0-9]+([A-Za-z0-9.+-]*)?' | head -1 || true)
+    if [ "${actual_version}" != "${VERSION}" ]; then
+        warn "voidx entry point reports ${actual_version:-missing}, expected ${VERSION}"
+        return 1
+    fi
+    return 0
+}
+
 # ── Check if already installed ──────────────────────────────────────────────
 if [ -f "${VOIDX_BIN}" ] && [ -f "${MARKER_PATH}" ]; then
     EXISTING=$(cat "${MARKER_PATH}" 2>/dev/null || echo "")
     if [ "${EXISTING}" = "$(printf '%b' "${MARKER}")" ]; then
-        ok "voidx ${VERSION} already installed at ${VENV_DIR}"
-        # Ensure the symlink points to the right place
-        if [ ! -L "${VOIDX_LINK}" ] || [ "$(readlink "${VOIDX_LINK}")" != "${VOIDX_BIN}" ]; then
-            mkdir -p "${BIN_DIR}"
-            ln -sf "${VOIDX_BIN}" "${VOIDX_LINK}"
-            info "Updated symlink: ${VOIDX_LINK} → ${VOIDX_BIN}"
+        if _verify_managed_install; then
+            ok "voidx ${VERSION} already installed at ${VENV_DIR}"
+            # Ensure the symlink points to the right place
+            if [ ! -L "${VOIDX_LINK}" ] || [ "$(readlink "${VOIDX_LINK}")" != "${VOIDX_BIN}" ]; then
+                mkdir -p "${BIN_DIR}"
+                ln -sf "${VOIDX_BIN}" "${VOIDX_LINK}"
+                info "Updated symlink: ${VOIDX_LINK} → ${VOIDX_BIN}"
+            fi
+            # Even on reinstall, ensure PATH and no conflicting versions
+            _ensure_path_and_cleanup
+            exit 0
         fi
-        # Even on reinstall, ensure PATH and no conflicting versions
-        _ensure_path_and_cleanup
-        exit 0
+        warn "Cached voidx environment is invalid; repairing the exact package pair"
     fi
 fi
 
@@ -473,41 +531,57 @@ if [ -n "${VOIDX_PIP_INDEX:-}" ]; then
     PIP_ARGS+=("--trusted-host" "${PIP_HOST}")
 fi
 
-PIP_ARGS+=("voidx==${VERSION}")
+PIP_ARGS+=("voidx==${VERSION}" "voidx-cli==${VERSION}")
 
 export PIP_NO_INPUT=1
 export PIP_DISABLE_PIP_VERSION_CHECK=1
 export PYTHON_KEYRING_BACKEND=keyring.backends.null.Keyring
 
-if "${VENV_PYTHON}" "${PIP_ARGS[@]}"; then
-    ok "voidx ${VERSION} installed"
-else
-    err "pip install failed"
-    err ""
-    err "This is usually a network issue. Try:"
-    err "  1. Use a PyPI mirror: VOIDX_PIP_INDEX=https://pypi.tuna.tsinghua.edu.cn/simple bash install.sh"
-    err "  2. Retry: bash install.sh"
-    exit 1
+_install_managed_pair() {
+    local mode="${1:-normal}"
+    local -a install_args=("${PIP_ARGS[@]}")
+    if [ "${mode}" = "force" ]; then
+        install_args=("${install_args[@]:0:3}" "--force-reinstall" "${install_args[@]:3}")
+    fi
+    "${VENV_PYTHON}" "${install_args[@]}"
+}
+
+if ! _install_managed_pair normal; then
+    warn "Initial pair installation failed; verifying before repair"
 fi
 
-# ── Install voidx-cli (TUI frontend, non-fatal) ─────────────────────────────
-CLI_PIP_ARGS=("-m" "pip" "install" "--upgrade" "--no-cache-dir" "--progress-bar" "on")
-if [ -n "${VOIDX_PIP_INDEX:-}" ]; then
-    CLI_PIP_ARGS+=("-i" "${VOIDX_PIP_INDEX}" "--trusted-host" "${PIP_HOST}")
+if ! _verify_managed_install; then
+    warn "Installation verification failed; force-reinstalling the exact package pair once"
+    if ! _install_managed_pair force; then
+        warn "Forced pair installation failed; checking the resulting environment"
+    fi
+    if ! _verify_managed_install; then
+        err "Installation verification failed after one forced repair"
+        err ""
+        err "Repair manually:"
+        err "  ${VENV_PYTHON} -m pip install --upgrade --force-reinstall voidx==${VERSION} voidx-cli==${VERSION}"
+        exit 1
+    fi
 fi
-CLI_PIP_ARGS+=("voidx-cli==${VERSION}")
-if "${VENV_PYTHON}" "${CLI_PIP_ARGS[@]}" >/dev/null 2>&1; then
-    ok "voidx-cli ${VERSION} installed"
-else
-    warn "voidx-cli ${VERSION} 安装失败，终端 TUI 模式不可用（--web 模式不受影响）"
-fi
+ok "voidx and voidx-cli ${VERSION} installed and verified"
 
 # ── Create symlink ─────────────────────────────────────────────────────────
 mkdir -p "${BIN_DIR}"
 ln -sf "${VOIDX_BIN}" "${VOIDX_LINK}"
 
 # ── Write marker ────────────────────────────────────────────────────────────
-printf '%b' "${MARKER}" > "${MARKER_PATH}"
+MARKER_TMP="${MARKER_PATH}.tmp.$$"
+if ! printf '%b' "${MARKER}" > "${MARKER_TMP}"; then
+    rm -f "${MARKER_TMP}"
+    err "Failed to write install marker"
+    exit 1
+fi
+if ! mv -f "${MARKER_TMP}" "${MARKER_PATH}"; then
+    rm -f "${MARKER_TMP}"
+    err "Failed to replace install marker"
+    exit 1
+fi
+rm -f "${MARKER_TMP}"
 
 # ── Done ────────────────────────────────────────────────────────────────────
 printf "\n${GREEN}${BOLD}✅ voidx ${VERSION} installed!${NC}\n\n"

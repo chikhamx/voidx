@@ -4,14 +4,19 @@
 // Post-install: download a standalone Python, create venv, pip install voidx.
 // Uses only the bundled Python — never falls back to the system Python.
 
-const { createWriteStream, existsSync, mkdirSync, readFileSync, writeFileSync, unlinkSync, rmSync } = require("fs");
+const { createWriteStream, existsSync, mkdirSync, readFileSync, unlinkSync, rmSync } = require("fs");
 const { spawnSync } = require("child_process");
-const { join, dirname } = require("path");
+const { join } = require("path");
 const os = require("os");
-const fs = require("fs");
 const path = require("path");
 
 const pkg = require("../package.json");
+const {
+  installVerifyAndRepair,
+  resolveBundledCliWheel,
+  verifyPair,
+  writeMarkerAtomic,
+} = require("./runtime-install");
 
 // ── Python build metadata ──────────────────────────────────────────────────
 // Pin to a specific python-build-standalone release tag and CPython version.
@@ -248,13 +253,8 @@ function readMarker(markerPath) {
   try { return readFileSync(markerPath, "utf8"); } catch { return ""; }
 }
 
-function writeMarker(markerPath, content) {
-  mkdirSync(dirname(markerPath), { recursive: true });
-  writeFileSync(markerPath, content);
-}
-
-// ── pip install ────────────────────────────────────────────────────────────
-function pipInstall(venvPython, packageSpec, env) {
+// ── pip setup ──────────────────────────────────────────────────────────────
+function upgradePip(venvPython, env) {
   // Upgrade pip first to avoid resolver bugs in old versions
   const pipUpgradeEnv = Object.assign({}, env, {
     PIP_NO_INPUT: "1",
@@ -268,39 +268,6 @@ function pipInstall(venvPython, packageSpec, env) {
   );
   if (pipUpgradeResult.error || pipUpgradeResult.status !== 0) {
     console.error("  ⚠️  Failed to upgrade pip, continuing with current version…");
-  }
-
-  const pipEnv = Object.assign({}, env, {
-    PIP_NO_INPUT: "1",
-    PIP_DISABLE_PIP_VERSION_CHECK: "1",
-    PYTHON_KEYRING_BACKEND: "keyring.backends.null.Keyring",
-  });
-
-  const pipArgs = ["-m", "pip", "install", "--upgrade", "--no-cache-dir", "--progress-bar", "on"];
-
-  // Support custom PyPI index for users behind firewalls or in regions with slow PyPI access
-  const pipIndex = env.VOIDX_NPM_PIP_INDEX;
-  if (pipIndex) {
-    pipArgs.push("-i", pipIndex);
-    // Extract host for --trusted-host when using a custom index
-    try {
-      const indexUrl = new URL(pipIndex);
-      pipArgs.push("--trusted-host", indexUrl.hostname);
-    } catch {}
-  }
-
-  pipArgs.push(packageSpec);
-
-  const result = spawnSync(
-    venvPython,
-    pipArgs,
-    { encoding: "utf8", stdio: "inherit", windowsHide: true, env: pipEnv }
-  );
-  if (result.error) {
-    throw new Error(`pip install failed: ${result.error.message}`);
-  }
-  if (result.status !== 0) {
-    throw new Error("pip install failed. See errors above.");
   }
 }
 
@@ -322,8 +289,17 @@ async function main() {
 
   // Already set up and up-to-date?
   if (existsSync(executable) && readMarker(markerPath) === marker) {
-    console.error(`\n✅ voidx ${pkg.version} ready (cached)\n`);
-    return;
+    const verification = verifyPair({
+      venvPython,
+      executable,
+      expectedVersion: pkg.version,
+      env,
+    });
+    if (verification.ok) {
+      console.error(`\n✅ voidx ${pkg.version} ready (cached)\n`);
+      return;
+    }
+    console.error(`  ⚠️  Cached environment is invalid: ${verification.message}`);
   }
 
   // Step 1: Download bundled Python (required — no system Python fallback)
@@ -359,7 +335,7 @@ async function main() {
       console.error("    Extraction complete.");
 
       // Clean up archive to save disk
-      try { fs.unlinkSync(archivePath); } catch {}
+      try { unlinkSync(archivePath); } catch {}
     } catch (err) {
       // Clean up partial archive on failure
       try { unlinkSync(archivePath); } catch {}
@@ -403,23 +379,22 @@ async function main() {
     }
   }
 
-  // Step 3: pip install voidx (core runtime)
-  console.error("  [3/4] Installing voidx core…");
-  pipInstall(venvPython, packageSpec, env);
-
-  // Step 4: pip install bundled voidx_cli wheel (terminal frontend)
-  console.error("  [4/4] Installing voidx_cli frontend…");
+  // Step 3: install and verify the exact core/CLI pair
+  console.error("  [3/3] Installing and verifying voidx…");
+  upgradePip(venvPython, env);
   const npmDir = path.resolve(__dirname, "..");
-  const wheelPattern = `voidx_cli-${pkg.version}-py3-none-any.whl`;
-  const wheelPath = path.join(npmDir, wheelPattern);
-  if (existsSync(wheelPath)) {
-    pipInstall(venvPython, wheelPath, env);
-  } else {
-    console.error(`  ⚠️  Bundled ${wheelPattern} not found — TUI frontend unavailable`);
-  }
+  const wheelPath = resolveBundledCliWheel(npmDir, pkg.version);
+  installVerifyAndRepair({
+    venvPython,
+    executable,
+    coreSpec: packageSpec,
+    cliSpec: wheelPath,
+    expectedVersion: pkg.version,
+    env,
+  });
 
   // Done
-  writeMarker(markerPath, marker);
+  writeMarkerAtomic(markerPath, marker);
   console.error(`\n✅ voidx ${pkg.version} installed! Run: voidx\n`);
 }
 

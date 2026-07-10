@@ -7,6 +7,12 @@ const os = require("os");
 const path = require("path");
 
 const pkg = require("../package.json");
+const {
+  installVerifyAndRepair,
+  resolveBundledCliWheel,
+  verifyPair,
+  writeMarkerAtomic,
+} = require("./runtime-install");
 
 // ── Configuration ──────────────────────────────────────────────────────────
 
@@ -190,6 +196,7 @@ function resolveVoidxExecutable(venvDir) {
 
 function ensureVenv(python, venvDir, env) {
   const executable = resolveVoidxExecutable(venvDir);
+  const venvPython = resolveVenvPython(venvDir);
   if (env.VOIDX_NPM_SKIP_BOOTSTRAP === "1") {
     if (!fs.existsSync(executable)) {
       throw new Error(`voidx executable not found in ${venvDir}.`);
@@ -199,16 +206,26 @@ function ensureVenv(python, venvDir, env) {
 
   const markerPath = path.join(venvDir, ".voidx-install-version");
   const marker = `${pkg.version}\n${PBS_TAG}\n${PBS_CPYTHON}\n`;
-  if (fs.existsSync(executable) && readFile(markerPath) === marker) {
-    debug(env, `Using cached environment at ${venvDir}`);
-    return;
+  let needsInstall = !fs.existsSync(executable) || readMarker(markerPath) !== marker;
+  if (fs.existsSync(executable) && readMarker(markerPath) === marker) {
+    const verification = verifyPair({
+      venvPython,
+      executable,
+      expectedVersion: pkg.version,
+      env,
+    });
+    if (verification.ok) {
+      debug(env, `Using cached environment at ${venvDir}`);
+      return;
+    }
+    console.error(`  Cached environment is invalid: ${verification.message}`);
+    needsInstall = true;
   }
 
   // v2 → v3 migration: clean up legacy data before first v3 run
   runV2CleanupIfNeeded(venvDir, env);
 
   fs.mkdirSync(path.dirname(venvDir), { recursive: true });
-  const venvPython = resolveVenvPython(venvDir);
 
   // If venv exists but is corrupted (python binary missing), nuke and rebuild
   if (fs.existsSync(venvDir) && !fs.existsSync(venvPython)) {
@@ -242,7 +259,7 @@ function ensureVenv(python, venvDir, env) {
     }
   }
 
-  if (!fs.existsSync(executable) || readFile(markerPath) !== marker) {
+  if (needsInstall) {
     const packageSpec = env.VOIDX_NPM_PACKAGE_SPEC || `voidx==${pkg.version}`;
     console.error(
       `\n📦 Downloading ${packageSpec} and dependencies… ` +
@@ -264,49 +281,26 @@ function ensureVenv(python, venvDir, env) {
       console.error("  ⚠️  Failed to upgrade pip, continuing with current version…");
     }
 
-    const pipEnv = Object.assign({}, env, {
-      PIP_NO_INPUT: "1",
-      PIP_DISABLE_PIP_VERSION_CHECK: "1",
-      PYTHON_KEYRING_BACKEND: "keyring.backends.null.Keyring",
-    });
-
-    const pipArgs = ["-m", "pip", "install", "--upgrade", "--no-cache-dir", "--progress-bar", "on"];
-
-    // Support custom PyPI index
-    const pipIndex = env.VOIDX_NPM_PIP_INDEX;
-    if (pipIndex) {
-      pipArgs.push("-i", pipIndex);
-      try {
-        const indexUrl = new URL(pipIndex);
-        pipArgs.push("--trusted-host", indexUrl.hostname);
-      } catch {}
-    }
-
-    pipArgs.push(packageSpec);
-
-    const result = spawnSync(
+    const npmDir = path.resolve(__dirname, "..");
+    const wheelPath = resolveBundledCliWheel(npmDir, pkg.version);
+    installVerifyAndRepair({
       venvPython,
-      pipArgs,
-      { encoding: "utf8", stdio: "inherit", windowsHide: true, env: pipEnv }
-    );
-    if (result.error) {
-      throw new Error(
-        `Failed to install ${packageSpec}: ${result.error.message}`
-      );
-    }
-    if (result.status !== 0) {
-      throw new Error(`Failed to install ${packageSpec}. See errors above.`);
-    }
+      executable,
+      coreSpec: packageSpec,
+      cliSpec: wheelPath,
+      expectedVersion: pkg.version,
+      env,
+    });
   }
 
-  fs.writeFileSync(markerPath, marker);
+  writeMarkerAtomic(markerPath, marker);
 }
 
 // ── v2 → v3 migration ─────────────────────────────────────────────────────
 
 function runV2CleanupIfNeeded(venvDir, env) {
   const markerPath = path.join(venvDir, ".voidx-install-version");
-  const oldMarker = readFile(markerPath).trim();
+  const oldMarker = readMarker(markerPath).trim();
   if (!oldMarker) return; // fresh install, nothing to migrate
 
   const oldVersion = parseVersion(oldMarker.split("\n")[0]);
@@ -360,7 +354,7 @@ function runV2CleanupIfNeeded(venvDir, env) {
 
 // ── Helpers ────────────────────────────────────────────────────────────────
 
-function readFile(filePath) {
+function readMarker(filePath) {
   try {
     return fs.readFileSync(filePath, "utf8");
   } catch {

@@ -228,13 +228,91 @@ function Ensure-PathAndVerify {
     }
 }
 
+$VerificationProbe = @'
+import importlib
+import os
+import sys
+from importlib.metadata import PackageNotFoundError, version
+
+current_directory = os.path.normcase(os.path.realpath(os.getcwd()))
+sys.path = [
+    entry
+    for entry in sys.path
+    if entry and os.path.normcase(os.path.realpath(entry)) != current_directory
+]
+
+expected = sys.argv[1]
+failures = []
+for distribution, module in (("voidx", "voidx"), ("voidx-cli", "voidx_cli")):
+    try:
+        installed = version(distribution)
+    except PackageNotFoundError:
+        installed = None
+    except Exception as exc:
+        installed = None
+        failures.append(f"{distribution} metadata failed: {exc}")
+    if installed != expected:
+        failures.append(
+            f"{distribution} version is {installed or 'missing'}, expected {expected}"
+        )
+    try:
+        importlib.import_module(module)
+    except Exception as exc:
+        failures.append(f"{module} import failed: {exc}")
+
+if failures:
+    print("; ".join(failures), file=sys.stderr)
+    raise SystemExit(1)
+'@
+
+function Verify-ManagedInstall {
+    $ProbeOk = $true
+    $ProbeExit = 1
+    $ProbeOutput = $null
+    try {
+        $ProbeOutput = & $VenvPython -c $VerificationProbe $Version 2>&1
+        $ProbeExit = $LASTEXITCODE
+    } catch {
+        $ProbeOk = $false
+        $ProbeOutput = $_.Exception.Message
+    }
+    if (-not $ProbeOk -or ($ProbeExit -ne 0)) {
+        Write-Host "  ⚠️  Package verification failed: $ProbeOutput" -ForegroundColor Yellow
+        return $false
+    }
+
+    $EntryPointOk = $true
+    $EntryPointExit = 1
+    $VersionOutput = $null
+    try {
+        $VersionOutput = & $VoidxBin --version 2>&1
+        $EntryPointExit = $LASTEXITCODE
+    } catch {
+        $EntryPointOk = $false
+        $VersionOutput = $_.Exception.Message
+    }
+    $VersionText = ($VersionOutput | Out-String).Trim()
+    $ActualVersion = $null
+    if ($VersionText -match '(\d+\.\d+\.\d+(?:[A-Za-z0-9.+-]*))') {
+        $ActualVersion = $Matches[1]
+    }
+    if (-not $EntryPointOk -or ($EntryPointExit -ne 0) -or ($ActualVersion -ne $Version)) {
+        Write-Host "  ⚠️  voidx entry point verification failed: $VersionText" -ForegroundColor Yellow
+        return $false
+    }
+    return $true
+}
+
 # ── Check if already installed ──────────────────────────────────────────────
 if ((Test-Path $VoidxBin) -and (Test-Path $MarkerPath)) {
     $Existing = Get-Content $MarkerPath -Raw -ErrorAction SilentlyContinue
     if ($Existing -eq $Marker) {
-        Write-Host "  ✅ voidx $Version already installed at $VenvDir" -ForegroundColor Green
-        Ensure-PathAndVerify
-        return
+        if (Verify-ManagedInstall) {
+            Write-Host "  ✅ voidx $Version already installed at $VenvDir" -ForegroundColor Green
+            Ensure-PathAndVerify
+            return
+        }
+        Write-Host "  ⚠️  Cached voidx environment is invalid; repairing the exact package pair" -ForegroundColor Yellow
     }
 }
 
@@ -353,46 +431,58 @@ if ($env:VOIDX_PIP_INDEX) {
     } catch {}
 }
 
-$PipArgs += @("voidx==$Version")
+$PipArgs += @("voidx==$Version", "voidx-cli==$Version")
 
 $env:PIP_NO_INPUT = "1"
 $env:PIP_DISABLE_PIP_VERSION_CHECK = "1"
 $env:PYTHON_KEYRING_BACKEND = "keyring.backends.null.Keyring"
 
-$PipInstallOk = $true
-try {
-    & $VenvPython $PipArgs 2>&1 | ForEach-Object { Write-Host $_ }
-} catch {
-    $PipInstallOk = $false
-}
-if (-not $PipInstallOk -or ($LASTEXITCODE -ne 0)) {
-    Abort-Install "pip install failed. This is usually a network issue. Try: 1) `$env:VOIDX_PIP_INDEX='https://pypi.tuna.tsinghua.edu.cn/simple'  2) Retry: powershell -File install.ps1"
+function Invoke-ManagedPairInstall {
+    param([switch]$ForceReinstall)
+
+    $InstallArgs = @($PipArgs)
+    if ($ForceReinstall) {
+        $InstallArgs = @($InstallArgs[0..2]) +
+            @("--force-reinstall") +
+            @($InstallArgs[3..($InstallArgs.Count - 1)])
+    }
+
+    $InstallOk = $true
+    $InstallExit = 1
+    try {
+        & $VenvPython $InstallArgs 2>&1 | ForEach-Object { Write-Host $_ }
+        $InstallExit = $LASTEXITCODE
+    } catch {
+        $InstallOk = $false
+        Write-Host "  ⚠️  pip install error: $_" -ForegroundColor Yellow
+    }
+    return ($InstallOk -and ($InstallExit -eq 0))
 }
 
-# ── Install voidx-cli (TUI frontend, non-fatal) ─────────────────────────────
-$CliPipArgs = @("-m", "pip", "install", "--upgrade", "--no-cache-dir")
-if ($env:VOIDX_PIP_INDEX) {
-    $CliPipArgs += @("-i", $env:VOIDX_PIP_INDEX)
-    try {
-        $IndexUri = [System.Uri]::new($env:VOIDX_PIP_INDEX)
-        $CliPipArgs += @("--trusted-host", $IndexUri.Host)
-    } catch {}
+if (-not (Invoke-ManagedPairInstall)) {
+    Write-Host "  ⚠️  Initial pair installation failed; verifying before repair" -ForegroundColor Yellow
 }
-$CliPipArgs += @("voidx-cli==$Version")
-$CliInstallOk = $true
-try {
-    & $VenvPython $CliPipArgs 2>&1 | ForEach-Object { Write-Host $_ }
-} catch {
-    $CliInstallOk = $false
+
+if (-not (Verify-ManagedInstall)) {
+    Write-Host "  ⚠️  Installation verification failed; force-reinstalling the exact package pair once" -ForegroundColor Yellow
+    if (-not (Invoke-ManagedPairInstall -ForceReinstall)) {
+        Write-Host "  ⚠️  Forced pair installation failed; checking the resulting environment" -ForegroundColor Yellow
+    }
+    if (-not (Verify-ManagedInstall)) {
+        Abort-Install "Installation verification failed after one forced repair. Repair manually: $VenvPython -m pip install --upgrade --force-reinstall voidx==$Version voidx-cli==$Version"
+    }
 }
-if (-not $CliInstallOk -or ($LASTEXITCODE -ne 0)) {
-    Write-Host "  ⚠️  voidx-cli $Version install failed — terminal TUI mode unavailable (--web mode still works)" -ForegroundColor Yellow
-} else {
-    Write-Host "  ✅ voidx-cli $Version installed" -ForegroundColor Green
-}
+Write-Host "  ✅ voidx and voidx-cli $Version installed and verified" -ForegroundColor Green
 
 # ── Write marker ────────────────────────────────────────────────────────────
-Set-Content -Path $MarkerPath -Value $Marker -NoNewline
+$MarkerTempPath = "$MarkerPath.tmp.$PID"
+try {
+    $Utf8NoBom = New-Object System.Text.UTF8Encoding
+    [System.IO.File]::WriteAllText($MarkerTempPath, $Marker, $Utf8NoBom)
+    Move-Item -Path $MarkerTempPath -Destination $MarkerPath -Force
+} finally {
+    Remove-Item -Path $MarkerTempPath -Force -ErrorAction SilentlyContinue
+}
 
 Ensure-PathAndVerify
 

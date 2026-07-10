@@ -31,6 +31,6 @@
   ],
   "scripts": {
     "postinstall": "node bin/postinstall.js",
-    "check": "node --check bin/voidx.js && node --check bin/postinstall.js"
+    "check": "node --check bin/voidx.js && node --check bin/postinstall.js && node --check bin/runtime-install.js"
   }
 }
