@@ -115,23 +115,26 @@ def test_npm_launcher_rejects_old_explicit_python(tmp_path):
 
 
 @pytest.mark.skipif(NODE is None, reason="node is not installed")
-def test_npm_launcher_falls_back_to_system_python(tmp_path):
-    """voidx.js falls back to system Python when bundled Python is missing (v1.x upgrade path)."""
+def test_npm_launcher_reports_missing_bundled_python_without_bootstrap(tmp_path):
+    """voidx.js fails quickly with reinstall guidance when bundled Python is missing."""
     if sys.platform == "win32":
         pytest.skip("uses a POSIX environment")
-    # No bundled Python, no VOIDX_PYTHON — should try system Python as fallback.
-    env = _base_env(VOIDX_NPM_HOME=str(tmp_path / "home"))
+    env = _base_env(
+        VOIDX_NPM_HOME=str(tmp_path / "home"),
+        VOIDX_NPM_SKIP_BOOTSTRAP="1",
+    )
     result = subprocess.run(
         [NODE, "npm/bin/voidx.js", "version"],
         cwd=ROOT,
         env=env,
         text=True,
         capture_output=True,
+        timeout=10,
     )
-    # With system Python available, fallback should work (exit 0 or 1 from voidx itself)
-    # Without system Python, should fail with a clear message
-    if result.returncode == 1:
-        assert "npm install" in result.stderr.lower() or "python 3.11" in result.stderr.lower()
+
+    assert result.returncode == 1
+    assert "bundled python not found" in result.stderr.lower()
+    assert "npm install -g @chikhamx/voidx" in result.stderr
 
 
 @pytest.mark.skipif(NODE is None, reason="node is not installed")
@@ -302,16 +305,20 @@ def test_npm_postinstall_upgrades_pip_before_install():
 def test_npm_postinstall_supports_pip_index_env():
     """postinstall.js must pass VOIDX_NPM_PIP_INDEX as -i to pip."""
     source = (ROOT / "npm" / "bin" / "postinstall.js").read_text()
-    assert "VOIDX_NPM_PIP_INDEX" in source
-    assert '"-i"' in source or "'-i'" in source
+    runtime_source = (ROOT / "npm" / "bin" / "runtime-install.js").read_text()
+    assert 'require("./runtime-install")' in source
+    assert "VOIDX_NPM_PIP_INDEX" in runtime_source
+    assert '"-i"' in runtime_source or "'-i'" in runtime_source
 
 
 @pytest.mark.skipif(NODE is None, reason="node is not installed")
 def test_npm_launcher_supports_pip_index_env():
     """voidx.js must pass VOIDX_NPM_PIP_INDEX as -i to pip."""
     source = (ROOT / "npm" / "bin" / "voidx.js").read_text()
-    assert "VOIDX_NPM_PIP_INDEX" in source
-    assert '"-i"' in source or "'-i'" in source
+    runtime_source = (ROOT / "npm" / "bin" / "runtime-install.js").read_text()
+    assert 'require("./runtime-install")' in source
+    assert "VOIDX_NPM_PIP_INDEX" in runtime_source
+    assert '"-i"' in runtime_source or "'-i'" in runtime_source
 
 
 @pytest.mark.skipif(NODE is None, reason="node is not installed")
@@ -340,6 +347,246 @@ def test_npm_launcher_forwards_args_to_managed_voidx(tmp_path):
 
     assert result.returncode == 0, result.stderr
     assert result.stdout == "voidx args:version|--plain|\n"
+
+
+def _run_node_json(script: str) -> object:
+    result = subprocess.run(
+        [NODE, "-e", script],
+        cwd=ROOT,
+        text=True,
+        capture_output=True,
+    )
+    assert result.returncode == 0, result.stderr
+    return json.loads(result.stdout)
+
+
+@pytest.mark.skipif(NODE is None, reason="node is not installed")
+def test_runtime_installer_builds_one_pair_pip_command():
+    payload = _run_node_json(
+        """
+        const runtime = require('./npm/bin/runtime-install.js');
+        const calls = [];
+        runtime.installPair({
+          venvPython: '/managed/python',
+          coreSpec: 'voidx==9.0.0',
+          cliSpec: '/package/voidx_cli-9.0.0-py3-none-any.whl',
+          env: {},
+          runner: (command, args) => {
+            calls.push({ command, args });
+            return { status: 0 };
+          },
+        });
+        console.log(JSON.stringify(calls));
+        """
+    )
+
+    assert len(payload) == 1
+    assert payload[0]["command"] == "/managed/python"
+    assert "voidx==9.0.0" in payload[0]["args"]
+    assert "/package/voidx_cli-9.0.0-py3-none-any.whl" in payload[0]["args"]
+
+
+@pytest.mark.skipif(NODE is None, reason="node is not installed")
+def test_runtime_installer_requires_exact_bundled_cli_wheel(tmp_path):
+    npm_dir = str(tmp_path).replace("\\", "/")
+    payload = _run_node_json(
+        f"""
+        const runtime = require('./npm/bin/runtime-install.js');
+        try {{
+          runtime.resolveBundledCliWheel('{npm_dir}', '9.0.0');
+          console.log(JSON.stringify({{ ok: true }}));
+        }} catch (error) {{
+          console.log(JSON.stringify({{ ok: false, message: error.message }}));
+        }}
+        """
+    )
+
+    assert payload["ok"] is False
+    assert "voidx_cli-9.0.0-py3-none-any.whl" in payload["message"]
+
+
+@pytest.mark.skipif(NODE is None, reason="node is not installed")
+def test_runtime_installer_verifies_both_metadata_versions():
+    payload = _run_node_json(
+        """
+        const runtime = require('./npm/bin/runtime-install.js');
+        const result = runtime.verifyPair({
+          venvPython: '/managed/python',
+          executable: '/managed/voidx',
+          expectedVersion: '9.0.0',
+          env: {},
+          runner: () => ({
+            status: 0,
+            stdout: JSON.stringify({
+              core_version: '9.0.0',
+              cli_version: '3.5.1',
+              core_import: true,
+              cli_import: true,
+              entrypoint_ok: true,
+              entrypoint_version: '9.0.0',
+            }),
+            stderr: '',
+          }),
+        });
+        console.log(JSON.stringify(result));
+        """
+    )
+
+    assert payload["ok"] is False
+    assert payload["coreVersion"] == "9.0.0"
+    assert payload["cliVersion"] == "3.5.1"
+
+
+def test_runtime_installer_probe_excludes_current_directory_from_imports():
+    source = (ROOT / "npm" / "bin" / "runtime-install.js").read_text()
+
+    assert "os.getcwd()" in source
+    assert "sys.path =" in source
+
+
+@pytest.mark.skipif(NODE is None, reason="node is not installed")
+def test_runtime_installer_force_repairs_pair_only_once():
+    payload = _run_node_json(
+        """
+        const runtime = require('./npm/bin/runtime-install.js');
+        const installs = [];
+        const verifications = [
+          { ok: false, message: 'mismatch' },
+          { ok: false, message: 'still mismatched' },
+        ];
+        try {
+          runtime.installVerifyAndRepair({
+            venvPython: '/managed/python',
+            executable: '/managed/voidx',
+            coreSpec: 'voidx==9.0.0',
+            cliSpec: '/package/voidx_cli-9.0.0-py3-none-any.whl',
+            expectedVersion: '9.0.0',
+            env: {},
+            installFn: (options) => installs.push(options.forceReinstall === true),
+            verifyFn: () => verifications.shift(),
+          });
+        } catch (error) {
+          console.log(JSON.stringify({ installs, message: error.message }));
+        }
+        """
+    )
+
+    assert payload["installs"] == [False, True]
+    assert "still mismatched" in payload["message"]
+
+
+@pytest.mark.skipif(NODE is None, reason="node is not installed")
+def test_runtime_installer_verifies_and_repairs_after_initial_pip_failure():
+    payload = _run_node_json(
+        """
+        const runtime = require('./npm/bin/runtime-install.js');
+        const installs = [];
+        let verificationCount = 0;
+        const result = runtime.installVerifyAndRepair({
+          venvPython: '/managed/python',
+          executable: '/managed/voidx',
+          coreSpec: 'voidx==9.0.0',
+          cliSpec: '/package/voidx_cli-9.0.0-py3-none-any.whl',
+          expectedVersion: '9.0.0',
+          env: {},
+          installFn: (options) => {
+            installs.push(options.forceReinstall === true);
+            if (!options.forceReinstall) {
+              throw new Error('initial pip failed');
+            }
+          },
+          verifyFn: () => {
+            verificationCount += 1;
+            return verificationCount === 1
+              ? { ok: false, message: 'partial install' }
+              : { ok: true, message: 'repaired' };
+          },
+        });
+        console.log(JSON.stringify({ installs, verificationCount, result }));
+        """
+    )
+
+    assert payload["installs"] == [False, True]
+    assert payload["verificationCount"] == 2
+    assert payload["result"]["ok"] is True
+
+
+@pytest.mark.skipif(NODE is None, reason="node is not installed")
+def test_runtime_installer_writes_marker_atomically(tmp_path):
+    marker_path = tmp_path / ".voidx-install-version"
+    marker_js = str(marker_path).replace("\\", "/")
+    parent_js = str(tmp_path).replace("\\", "/")
+    payload = _run_node_json(
+        f"""
+        const fs = require('fs');
+        const runtime = require('./npm/bin/runtime-install.js');
+        runtime.writeMarkerAtomic('{marker_js}', '9.0.0\\n20260602\\n3.12.13\\n');
+        const leftovers = fs.readdirSync('{parent_js}')
+          .filter((name) => name.includes('.tmp'));
+        console.log(JSON.stringify({{
+          content: fs.readFileSync('{marker_js}', 'utf8'),
+          leftovers,
+        }}));
+        """
+    )
+
+    assert payload["content"].startswith("9.0.0\n")
+    assert payload["leftovers"] == []
+
+
+def test_npm_postinstall_uses_shared_pair_installer():
+    source = (ROOT / "npm" / "bin" / "postinstall.js").read_text()
+
+    assert 'require("./runtime-install")' in source
+    assert "resolveBundledCliWheel" in source
+    assert "installVerifyAndRepair" in source
+    assert "writeMarkerAtomic" in source
+    assert "Bundled ${wheelPattern} not found" not in source
+
+
+def test_npm_launcher_recovery_uses_shared_pair_installer():
+    source = (ROOT / "npm" / "bin" / "voidx.js").read_text()
+
+    assert 'require("./runtime-install")' in source
+    assert "resolveBundledCliWheel" in source
+    assert "installVerifyAndRepair" in source
+    assert "writeMarkerAtomic" in source
+
+
+def test_npm_cached_marker_is_verified_before_returning():
+    for relative in ("npm/bin/postinstall.js", "npm/bin/voidx.js"):
+        source = (ROOT / relative).read_text()
+        marker_check = source.index("readMarker(markerPath) === marker")
+        verify_call = source.index("verifyPair", marker_check)
+        cached_return = source.index("return;", marker_check)
+
+        assert marker_check < verify_call < cached_return
+
+
+def test_npm_launcher_repairs_marker_matching_invalid_cache():
+    source = (ROOT / "npm" / "bin" / "voidx.js").read_text()
+    invalid_cache = source.index("Cached environment is invalid")
+    mark_for_install = source.index("needsInstall = true", invalid_cache)
+    install_branch = source.index("if (needsInstall)", mark_for_install)
+
+    assert invalid_cache < mark_for_install < install_branch
+
+
+def test_npm_check_includes_runtime_installer():
+    package = json.loads((ROOT / "npm" / "package.json").read_text())
+
+    assert "node --check bin/runtime-install.js" in package["scripts"]["check"]
+
+
+def test_upgrade_docs_keep_core_and_cli_on_the_same_install_path():
+    readme = (ROOT / "README.md").read_text()
+    usage_guide = (ROOT / "docs" / "usage-guide.md").read_text()
+
+    assert "python -m pip install --upgrade voidx voidx-cli" in readme
+    assert "npm update -g @chikhamx/voidx" in readme
+    assert "npm update -g @chikhamx/voidx" in usage_guide
+    assert "npm 安装" in usage_guide
+    assert "不能使用 `/upgrade now`" in usage_guide
 
 
 @pytest.mark.skip(reason="Run manually: ./python.py -m pytest -k wheel_install_verify")

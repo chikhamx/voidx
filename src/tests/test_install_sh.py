@@ -182,14 +182,14 @@ class TestInstallShPipIsolation:
         src = _read_install_sh()
         lines = src.splitlines()
 
-        # Find the line that adds voidx==VERSION to PIP_ARGS
+        # Find the line that adds the exact pair to PIP_ARGS
         pip_line_idx = None
         for i, line in enumerate(lines):
-            if "voidx==" in line and "PIP_ARGS" in line and "voidx-cli" not in line:
+            if "voidx==${VERSION}" in line and "PIP_ARGS" in line:
                 pip_line_idx = i
                 break
 
-        assert pip_line_idx is not None, "Script must have PIP_ARGS with voidx==VERSION"
+        assert pip_line_idx is not None, "Script must have PIP_ARGS with the exact package pair"
 
         # Look backwards from the pip install line for a cd command
         # that moves to VENV_DIR or another non-source directory
@@ -252,6 +252,61 @@ def _cleanup_uses_version_check(src: str) -> bool:
     return 'VERSION' in nearby or 'MARKER' in nearby
 
 
+class TestInstallShPairTransaction:
+    """Tests for coherent voidx/voidx-cli installation in the Bash fallback."""
+
+    def test_installs_exact_pair_in_one_pip_command(self):
+        src = _read_install_sh()
+
+        assert 'PIP_ARGS+=("voidx==${VERSION}" "voidx-cli==${VERSION}")' in src
+        assert "CLI_PIP_ARGS" not in src
+
+    def test_verifier_checks_metadata_imports_and_entrypoint(self):
+        src = _read_install_sh()
+
+        assert "_verify_managed_install()" in src
+        assert "from importlib.metadata import PackageNotFoundError, version" in src
+        assert '(("voidx", "voidx"), ("voidx-cli", "voidx_cli"))' in src
+        assert "importlib.import_module(module)" in src
+        assert "os.getcwd()" in src
+        assert "sys.path =" in src
+        assert '"${VOIDX_BIN}" --version' in src
+
+    def test_cached_marker_is_verified_before_returning(self):
+        src = _read_install_sh()
+        cache_start = src.index("# ── Check if already installed")
+        install_start = src.index('printf "\\n${BOLD}', cache_start)
+        cache_block = src[cache_start:install_start]
+
+        verify_pos = cache_block.index("_verify_managed_install")
+        return_pos = cache_block.index("exit 0")
+        assert verify_pos < return_pos
+
+    def test_verification_failure_force_repairs_pair_once(self):
+        src = _read_install_sh()
+        install_start = src.index("# ── Step 3: Install voidx")
+        install_block = src[install_start:]
+
+        assert install_block.count('"--force-reinstall"') == 1
+        assert install_block.count("_verify_managed_install") >= 2
+        assert "Installation verification failed" in install_block
+
+    def test_marker_is_replaced_atomically_after_verification(self):
+        src = _read_install_sh()
+        install_start = src.index("# ── Step 3: Install voidx")
+        install_block = src[install_start:]
+
+        final_verify = install_block.rindex("_verify_managed_install")
+        temporary_marker = install_block.index('MARKER_TMP="${MARKER_PATH}.tmp.$$', final_verify)
+        marker_write = install_block.index('> "${MARKER_TMP}"', temporary_marker)
+        marker_replace = install_block.index(
+            'mv -f "${MARKER_TMP}" "${MARKER_PATH}"',
+            marker_write,
+        )
+        assert final_verify < temporary_marker < marker_write < marker_replace
+        assert 'rm -f "${MARKER_TMP}"' in install_block
+
+
 # ══════════════════════════════════════════════════════════════════════════════
 # install.ps1 tests
 # ══════════════════════════════════════════════════════════════════════════════
@@ -262,6 +317,63 @@ INSTALL_PS1 = ROOT / "scripts" / "install.ps1"
 def _read_install_ps1() -> str:
     """Read the install.ps1 script."""
     return INSTALL_PS1.read_text(encoding="utf-8")
+
+
+class TestInstallPs1PairTransaction:
+    """Tests for coherent voidx/voidx-cli installation on Windows."""
+
+    def test_installs_exact_pair_in_one_pip_command(self):
+        src = _read_install_ps1()
+
+        assert '$PipArgs += @("voidx==$Version", "voidx-cli==$Version")' in src
+        assert "$CliPipArgs" not in src
+
+    def test_verifier_checks_metadata_imports_and_entrypoint(self):
+        src = _read_install_ps1()
+
+        assert "function Verify-ManagedInstall" in src
+        assert "from importlib.metadata import PackageNotFoundError, version" in src
+        assert '(("voidx", "voidx"), ("voidx-cli", "voidx_cli"))' in src
+        assert "importlib.import_module(module)" in src
+        assert "os.getcwd()" in src
+        assert "sys.path =" in src
+        assert "& $VoidxBin --version" in src
+
+    def test_cached_marker_is_verified_before_returning(self):
+        src = _read_install_ps1()
+        cache_start = src.index("# ── Check if already installed")
+        install_start = src.index('Write-Host "  🐍 Installing', cache_start)
+        cache_block = src[cache_start:install_start]
+
+        verify_pos = cache_block.index("Verify-ManagedInstall")
+        return_pos = cache_block.index("return")
+        assert verify_pos < return_pos
+
+    def test_verification_failure_force_repairs_pair_once(self):
+        src = _read_install_ps1()
+        install_start = src.index("# ── Step 3: Install voidx")
+        install_block = src[install_start:]
+
+        assert install_block.count('"--force-reinstall"') == 1
+        assert install_block.count("Verify-ManagedInstall") >= 2
+        assert 'Abort-Install "Installation verification failed' in install_block
+
+    def test_marker_is_replaced_atomically_after_verification(self):
+        src = _read_install_ps1()
+        install_start = src.index("# ── Step 3: Install voidx")
+        install_block = src[install_start:]
+
+        final_verify = install_block.rindex("Verify-ManagedInstall")
+        temporary_marker = install_block.index(
+            '$MarkerTempPath = "$MarkerPath.tmp.$PID"',
+            final_verify,
+        )
+        marker_write = install_block.index("WriteAllText", temporary_marker)
+        marker_replace = install_block.index(
+            "Move-Item -Path $MarkerTempPath -Destination $MarkerPath -Force",
+            marker_write,
+        )
+        assert final_verify < temporary_marker < marker_write < marker_replace
 
 
 class TestInstallPs1PathCleanup:
@@ -389,7 +501,7 @@ class TestInstallPs1ErrorHandling:
         # Find the main pip install line (not the pip-upgrade one)
         pip_install_idx = None
         for i, line in enumerate(lines):
-            if "& $VenvPython $PipArgs" in line:
+            if re.search(r"& \$VenvPython \$(?:PipArgs|InstallArgs)", line):
                 pip_install_idx = i
                 break
 
@@ -398,7 +510,6 @@ class TestInstallPs1ErrorHandling:
         # Check surrounding lines for try/catch wrapper.
         # Match "try {" or "try{" — not "Retry" or "entry" etc.
         surrounding = "\n".join(lines[max(0, pip_install_idx - 5):pip_install_idx + 10])
-        import re
         assert re.search(r'\btry\s*\{', surrounding, re.IGNORECASE), \
             "Main pip install must be wrapped in try/catch to prevent " \
             "terminal crash from stderr output under ErrorActionPreference=Stop"

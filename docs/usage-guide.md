@@ -247,9 +247,23 @@ voidx sessions
 | 命令 | 作用 |
 |------|------|
 | `/upgrade check` | 检查 PyPI 新版本 |
-| `/upgrade now` | 当前环境升级 |
+| `/upgrade now` | 同时升级并验证 `voidx` 与 `voidx-cli`，成功后重启 voidx |
 | `/upgrade on` / `/upgrade off` | 启动时检查开关 |
 | `/upgrade status` | 查看检查状态 |
+
+通过 pip 安装时，手动升级也必须同时更新两个包：
+
+```bash
+python -m pip install --upgrade voidx voidx-cli
+```
+
+通过 npm 安装或由 npm 启动的 voidx 不能使用 `/upgrade now`，请退出当前进程后执行：
+
+```bash
+npm update -g @chikhamx/voidx
+```
+
+使用 `install.sh` 或 `install.ps1` 安装的用户可以重新运行原安装脚本；安装器会验证两个包的元数据版本、模块导入和 `voidx --version`，验证失败时只进行一次完整强制修复。
 
 ---
 
