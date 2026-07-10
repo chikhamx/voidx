@@ -1,5 +1,7 @@
 # Upgrade Consistency Design
 
+> **Status: Done** — Archived on 2026-07-11.
+
 ## Goal
 
 Prevent supported upgrade paths from reporting success or caching an installed
