@@ -3,7 +3,7 @@
 from __future__ import annotations
 
 import asyncio
-from typing import TYPE_CHECKING, Any, Protocol
+from typing import TYPE_CHECKING, Any, Literal, Protocol
 
 from langchain_core.language_models import BaseChatModel
 from langchain_core.messages import BaseMessage
@@ -185,7 +185,7 @@ class GraphRunLoopHost(Protocol):
     _lsp_manager: Any
     _slash: Any
     _any_messages_sent: bool
-    _pending_guidance: list[str]
+    _pending_guidance: list[tuple[str, bool] | tuple[str, bool, Literal["user", "guard"]]]
     _runtime_guards: RuntimeGuardState
 
     @property

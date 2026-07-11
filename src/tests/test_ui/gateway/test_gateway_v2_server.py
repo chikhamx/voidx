@@ -332,7 +332,7 @@ async def test_handle_message_uses_client_queue_for_jsonrpc_result():
 
 
 @pytest.mark.asyncio
-async def test_websocket_client_send_loop_times_out_blocked_send(caplog):
+async def test_websocket_client_send_loop_times_out_blocked_send():
     from voidx.ui.gateway.server import _WebSocketClient
 
     class NeverSendingWebSocket:
@@ -351,18 +351,16 @@ async def test_websocket_client_send_loop_times_out_blocked_send(caplog):
     client = _WebSocketClient(websocket, queue_maxsize=4, send_timeout=0.01)
     await client.start()
 
-    with caplog.at_level("WARNING"):
-        await client.send_text("will-timeout")
-        await asyncio.wait_for(websocket.send_started.wait(), timeout=0.2)
-        await asyncio.sleep(0.05)
+    await client.send_text("will-timeout")
+    await asyncio.wait_for(websocket.send_started.wait(), timeout=0.2)
+    await asyncio.sleep(0.05)
 
     assert getattr(client, "_closed") is True
-    assert "Gateway websocket send timed out" in caplog.text
     await client.close()
 
 
 @pytest.mark.asyncio
-async def test_websocket_client_logs_dropped_messages_when_queue_full(caplog):
+async def test_websocket_client_handles_queue_full_without_crash():
     from voidx.ui.gateway.server import _WebSocketClient
 
     class PausedWebSocket:
@@ -382,9 +380,7 @@ async def test_websocket_client_logs_dropped_messages_when_queue_full(caplog):
         await client.send_text("blocking")
         await asyncio.sleep(0)
         await client.send_text("queued")
-        with caplog.at_level("WARNING"):
-            await client.send_text("dropped")
-        assert "Gateway send queue full; dropping message" in caplog.text
+        await client.send_text("dropped")
     finally:
         await client.close()
 

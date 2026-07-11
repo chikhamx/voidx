@@ -76,6 +76,7 @@ def _classify_llm_error(exc: Exception) -> LLMErrorKind:
 
 
 _LLM_MAX_RETRIES = 10
+_LLM_TIMEOUT_MAX_RETRIES = 1
 _LLM_RETRY_FIXED_PHASE = 2
 _LLM_RETRY_FIXED_DELAY = 2.0
 _LLM_RETRY_BASE_DELAY = 2.0

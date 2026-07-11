@@ -314,10 +314,12 @@ def test_dock_tool_header_uses_raw_args_without_rich_markup(tmp_path):
             tool_name="read",
             raw_args={"file_path": "src/voidx/ui/dock.py"},
         )
-        dock.finish_tool_node(tool, "read", 0.0, True)
+        dock.finish_tool_node(tool, "read", 0.0, True, "15/151 lines")
 
         rendered = "\n".join(_rich_plain(line) for line in dock.tree.render(120))
         assert 'Read("src/voidx/ui/dock.py")' in rendered
+        assert "15/151 lines" in rendered
+        assert "Read 15/151 lines" not in rendered
         assert "[cyan]" not in rendered
         assert "(0.0s)" not in rendered
         assert "Reading file_path" not in rendered
@@ -357,14 +359,58 @@ def test_dock_tool_summary_does_not_replace_tool_header(tmp_path):
             tool_name="bash",
             raw_args={"command": "git status --short"},
         )
-        dock.finish_tool_node(tool, "bash", 0.1, True, "exit 0")
+        dock.finish_tool_node(tool, "bash", 0.1, False, "exit 1")
 
         rendered_lines = [_rich_plain(line).strip() for line in dock.tree.render(120)]
         rendered = "\n".join(rendered_lines)
 
         assert 'Bash("git status --short")' in rendered
-        assert "exit 0" in rendered
-        assert "exit 0" not in rendered_lines
+        assert "exit 1" in rendered
+        assert "exit 1" not in rendered_lines
+    finally:
+        dock.deactivate()
+        dock.reset()
+
+
+def test_dock_successful_shell_tool_does_not_show_exit_zero(tmp_path):
+    dock.deactivate()
+    dock.reset()
+    dock.begin_capture()
+    try:
+        tool = dock.start_tool(
+            "Running",
+            "",
+            tool_name="bash",
+            raw_args={"command": "git status --short"},
+        )
+        dock.finish_tool_node(tool, "bash", 0.1, True, "")
+
+        rendered = "\n".join(_rich_plain(line) for line in dock.tree.render(120))
+
+        assert 'Bash("git status --short")' in rendered
+        assert "exit 0" not in rendered
+    finally:
+        dock.deactivate()
+        dock.reset()
+
+
+def test_dock_failed_shell_tool_still_shows_nonzero_exit_code(tmp_path):
+    dock.deactivate()
+    dock.reset()
+    dock.begin_capture()
+    try:
+        tool = dock.start_tool(
+            "Running",
+            "",
+            tool_name="bash",
+            raw_args={"command": "false"},
+        )
+        dock.finish_tool_node(tool, "bash", 0.1, False, "exit 1")
+
+        rendered = "\n".join(_rich_plain(line) for line in dock.tree.render(120))
+
+        assert 'Bash("false")' in rendered
+        assert "exit 1" in rendered
     finally:
         dock.deactivate()
         dock.reset()
@@ -435,5 +481,3 @@ def test_input_cursor_position_counts_wide_chinese_cells(tmp_path, monkeypatch):
 
     assert fake_stdout.text.startswith("\x1b[1A")
     assert "\x1b[7G" in fake_stdout.text
-
-

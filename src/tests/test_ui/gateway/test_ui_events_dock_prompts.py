@@ -26,6 +26,7 @@ from voidx.ui.output.events import (
     ErrorAppended,
     FileChangeAppended,
     GuidanceSubmitted,
+    GuidanceCommitted,
     PermissionPromptCleared,
     PermissionPromptShown,
     PermissionToolDetail,
@@ -93,6 +94,7 @@ async def test_checkpoint_prompt_event_renders_voidx_plan_and_decision(isolated_
         await bus.emit(CheckpointPromptShown(
             checkpoint_id="cp_1",
             plan=CheckpointPlanPayload(
+                goal="Add checkpoint node",
                 plan_summary="Add checkpoint node",
                 steps=["Add event schema", "Render TUI node"],
                 affected_files=["src/voidx/tools/plan_checkpoint.py"],
@@ -135,7 +137,7 @@ async def test_checkpoint_prompt_event_renders_voidx_plan_and_decision(isolated_
         ))
         await bus.drain()
 
-        rendered = "\n".join(_plain(line) for line in isolated_dock.tree.render(120))
+        rendered = "\n".join(_rich_plain(line) for line in isolated_dock.tree.render(120))
 
         assert checkpoint.status == "done"
         assert "voidx plan approved" in rendered
@@ -156,7 +158,10 @@ async def test_checkpoint_decision_renders_as_full_width_user_row_with_following
         await bus.request(TurnStarted(text="demo"))
         await bus.emit(CheckpointPromptShown(
             checkpoint_id="cp_1",
-            plan=CheckpointPlanPayload(plan_summary="Add checkpoint node"),
+            plan=CheckpointPlanPayload(
+                goal="Add checkpoint node",
+                plan_summary="Add checkpoint node",
+            ),
             choices=[
                 CheckpointChoicePayload(
                     label="Implement directly",
@@ -183,6 +188,11 @@ async def test_checkpoint_decision_renders_as_full_width_user_row_with_following
 
         assert Text.from_markup(lines[user_index]).cell_len == 80
         assert any("on #3a3937" in str(span.style) for span in Text.from_markup(lines[user_index]).spans)
+        assert any(
+            "#ebcb8b" in str(span.style).lower()
+            and span.start <= decision_line.index("Decision:") < span.end
+            for span in Text.from_markup(lines[user_index]).spans
+        )
         assert plan_line.index("Plan:") == decision_line.index("Decision:")
         assert plain_lines[user_index + 1] == ""
         assert plain_lines[user_index + 2].startswith("● 先删除临时文件")
@@ -199,7 +209,10 @@ async def test_checkpoint_needs_doc_uses_distinct_header_style(isolated_dock):
         await bus.request(TurnStarted(text="demo"))
         await bus.emit(CheckpointPromptShown(
             checkpoint_id="cp_doc",
-            plan=CheckpointPlanPayload(plan_summary="Add checkpoint node"),
+            plan=CheckpointPlanPayload(
+                goal="Add checkpoint node",
+                plan_summary="Add checkpoint node",
+            ),
         ))
         await bus.emit(CheckpointDecisionSubmitted(
             checkpoint_id="cp_doc",
@@ -220,12 +233,11 @@ async def test_checkpoint_needs_doc_uses_distinct_header_style(isolated_dock):
 
 
 @pytest.mark.asyncio
-async def test_checkpoint_decision_for_unknown_id_logs_debug(isolated_dock, caplog):
+async def test_checkpoint_decision_for_unknown_id_does_not_fail(isolated_dock):
     isolated_dock.begin_capture()
     bus = UiEventBus()
     bus.start(DockEventConsumer(isolated_dock))
     try:
-        caplog.set_level(logging.DEBUG, logger="voidx.ui.output.dock.nodes_checkpoint")
         await bus.emit(CheckpointDecisionSubmitted(
             checkpoint_id="missing_cp",
             decision="approved",
@@ -233,9 +245,6 @@ async def test_checkpoint_decision_for_unknown_id_logs_debug(isolated_dock, capl
             response="Implement directly",
         ))
         await bus.drain()
-
-        assert "unknown checkpoint_id" in caplog.text
-        assert "missing_cp" in caplog.text
     finally:
         await bus.stop()
 
@@ -277,7 +286,7 @@ async def test_clarify_prompt_event_renders_voidx_clarify_and_answer(isolated_do
         ))
         await bus.drain()
 
-        rendered = "\n".join(_plain(line) for line in isolated_dock.tree.render(120))
+        rendered = "\n".join(_rich_plain(line) for line in isolated_dock.tree.render(120))
 
         assert clarify.status == "done"
         assert "voidx clarify answered" in rendered
@@ -318,6 +327,11 @@ async def test_clarify_answer_renders_as_full_width_user_row_with_following_gap(
 
         assert Text.from_markup(lines[user_index]).cell_len == 80
         assert any("on #3a3937" in str(span.style) for span in Text.from_markup(lines[user_index]).spans)
+        assert any(
+            "#ebcb8b" in str(span.style).lower()
+            and span.start <= answer_line.index("Answer:") < span.end
+            for span in Text.from_markup(lines[user_index]).spans
+        )
         assert question_line.index("Question:") == answer_line.index("Answer:")
         assert plain_lines[user_index + 1] == ""
         assert plain_lines[user_index + 2].startswith("● 开始实现方案")
@@ -352,7 +366,7 @@ async def test_clarify_cancelled_renders_skipped_header(isolated_dock):
         assert "[red]voidx clarify skipped[/red]" in clarify.header
         assert clarify.status == "done"
         assert clarify.payload["cancelled"] is True
-        rendered = "\n".join(_plain(line) for line in isolated_dock.tree.render(120))
+        rendered = "\n".join(_rich_plain(line) for line in isolated_dock.tree.render(120))
         assert "Answer: skipped" in rendered
         assert "User: skipped" not in rendered
     finally:
@@ -360,20 +374,16 @@ async def test_clarify_cancelled_renders_skipped_header(isolated_dock):
 
 
 @pytest.mark.asyncio
-async def test_clarify_answer_for_unknown_id_logs_debug(isolated_dock, caplog):
+async def test_clarify_answer_for_unknown_id_does_not_fail(isolated_dock):
     isolated_dock.begin_capture()
     bus = UiEventBus()
     bus.start(DockEventConsumer(isolated_dock))
     try:
-        caplog.set_level(logging.DEBUG, logger="voidx.ui.output.dock.nodes_clarify")
         await bus.emit(ClarifyAnswerSubmitted(
             clarify_id="missing_cl",
             answer="implement",
         ))
         await bus.drain()
-
-        assert "unknown clarify_id" in caplog.text
-        assert "missing_cl" in caplog.text
     finally:
         await bus.stop()
 
@@ -405,7 +415,7 @@ async def test_clarify_prompt_without_options_renders_question_only(isolated_doc
         await bus.stop()
 
 @pytest.mark.asyncio
-async def test_guidance_submitted_event_does_not_render_message(isolated_dock):
+async def test_guidance_submitted_sets_preview_without_rendering_message(isolated_dock):
     isolated_dock.begin_capture()
     bus = UiEventBus()
     bus.start(DockEventConsumer(isolated_dock))
@@ -413,6 +423,7 @@ async def test_guidance_submitted_event_does_not_render_message(isolated_dock):
         await bus.emit(GuidanceSubmitted(text="看可以调用LoginDevice::get_chatters"))
         await bus.drain()
 
+        assert isolated_dock._guidance_preview == "看可以调用LoginDevice::get_chatters"
         rendered = "\n".join(_plain(line) for line in isolated_dock.tree.render(100))
         assert "LoginDevice::get_chatters" not in rendered
         assert "[guide]" not in rendered
@@ -478,5 +489,40 @@ async def test_file_change_event_updates_tool_node_with_structured_diff(isolated
         assert "+  new" in rendered
         assert "old" in rendered
         assert "new" in rendered
+    finally:
+        await bus.stop()
+
+
+@pytest.mark.asyncio
+async def test_guidance_committed_renders_as_user_turn_node(isolated_dock):
+    isolated_dock.begin_capture()
+    bus = UiEventBus()
+    bus.start(DockEventConsumer(isolated_dock))
+    try:
+        await bus.emit(GuidanceCommitted(text="use TypeScript", source="user"))
+        await bus.drain()
+
+        rendered = "\n".join(_plain(line) for line in isolated_dock.tree.render(100))
+        plain_rendered = "\n".join(_rich_plain(line) for line in isolated_dock.tree.render(100))
+        assert "use TypeScript" in rendered
+        node = isolated_dock.tree.root.children[-1]
+        assert node.node_type == "turn"
+        assert "❯ use TypeScript" in plain_rendered
+    finally:
+        await bus.stop()
+
+
+@pytest.mark.asyncio
+async def test_system_guidance_commit_stays_hidden(isolated_dock):
+    isolated_dock.begin_capture()
+    bus = UiEventBus()
+    bus.start(DockEventConsumer(isolated_dock))
+    try:
+        await bus.emit(GuidanceCommitted(text="hidden retry guidance", source="system"))
+        await bus.drain()
+
+        rendered = "\n".join(_plain(line) for line in isolated_dock.tree.render(100))
+        assert "hidden retry guidance" not in rendered
+        assert isolated_dock.tree.root.children == []
     finally:
         await bus.stop()

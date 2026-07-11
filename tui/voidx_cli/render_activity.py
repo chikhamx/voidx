@@ -15,6 +15,7 @@ from voidx.ui.output.dock import (
     active_compaction_text,
     active_error_detail_text,
     active_error_text,
+    active_guidance_preview_text,
     active_llm_retry_detail_text,
     active_llm_retry_text,
     active_permission_request_detail_text,
@@ -112,6 +113,9 @@ class _ActivityRendererMixin:
             details.append(error_detail)
         if llm_retry_label and status_label == llm_retry_label and llm_retry_error:
             details.append(llm_retry_error)
+        preview = active_guidance_preview_text()
+        if preview:
+            details.append(f"⚡{_clip_cells(preview, 40)}")
         return f"{prefix} ({' '.join(details)})"
 
     def _turn_token_text(self) -> str:

@@ -156,6 +156,8 @@ class _FrameRendererMixin:
         self._prev_frame_start_row = 1
         self._prev_frame_width = 0
         self._prev_frame_term_height = None
+        self._last_busy_activity_rows = 0
+        self._last_busy_activity_start_row = 0
 
     def _make_room_for_frame(self, frame_rows: int, term_height: int) -> bool:
         visible = max(0, min(self._visible_committed_rows, term_height))
@@ -245,6 +247,7 @@ class _FrameRendererMixin:
             not self._tty
             or not self._busy
             or not self._has_rendered_frame
+            or self._render_scheduled
             or self._last_busy_activity_rows <= 0
             or self._last_busy_activity_start_row <= 0
         ):

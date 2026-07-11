@@ -236,7 +236,13 @@ async def test_composite_event_consumer_handle_does_not_wait_for_slow_mirror():
 
 
 @pytest.mark.asyncio
-async def test_composite_event_consumer_handle_direct_logs_async_mirror_error(caplog):
+async def test_composite_event_consumer_handle_direct_logs_async_mirror_error(monkeypatch):
+    errors: list[tuple[BaseException, str]] = []
+    monkeypatch.setattr(
+        "voidx.ui.output.events.consumers.log_internal_error",
+        lambda e, **kw: errors.append((e, kw.get("context", ""))),
+    )
+
     class FailingMirror:
         async def handle(self, _event):
             await asyncio.sleep(0)
@@ -248,39 +254,44 @@ async def test_composite_event_consumer_handle_direct_logs_async_mirror_error(ca
         primary=DockEventConsumer(dock),
         mirrors=[FailingMirror()],
     )
-    caplog.set_level(logging.WARNING, logger="voidx.ui.output.events")
 
     result = consumer.handle_direct(TurnStarted(text="demo"))
-    record = await _wait_for_log_record(
-        caplog,
-        "UI event direct mirror consumer failed",
-    )
+    for _ in range(10):
+        if errors:
+            break
+        await asyncio.sleep(0)
 
     assert result is dock.current_turn
-    assert record is not None
-    assert isinstance(record.exc_info[1], RuntimeError)
-    assert str(record.exc_info[1]) == "mirror failed"
+    assert len(errors) == 1
+    exc, context = errors[0]
+    assert isinstance(exc, RuntimeError)
+    assert str(exc) == "mirror failed"
+    assert "mirror" in context
 
 
 @pytest.mark.asyncio
-async def test_composite_event_consumer_handle_direct_logs_async_primary_error(caplog):
+async def test_composite_event_consumer_handle_direct_logs_async_primary_error(monkeypatch):
+    errors: list[tuple[BaseException, str]] = []
+    monkeypatch.setattr(
+        "voidx.ui.output.events.consumers.log_internal_error",
+        lambda e, **kw: errors.append((e, kw.get("context", ""))),
+    )
+
     class FailingPrimary:
         async def handle(self, _event):
             await asyncio.sleep(0)
             raise RuntimeError("primary failed")
 
     consumer = CompositeEventConsumer(primary=FailingPrimary())
-    caplog.set_level(logging.WARNING, logger="voidx.ui.output.events")
 
     consumer.handle_direct(TurnStarted(text="demo"))
-    record = await _wait_for_log_record(
-        caplog,
-        "UI event direct primary consumer failed",
-    )
+    await asyncio.sleep(0.02)
 
-    assert record is not None
-    assert isinstance(record.exc_info[1], RuntimeError)
-    assert str(record.exc_info[1]) == "primary failed"
+    assert len(errors) >= 1
+    exc, context = errors[0]
+    assert isinstance(exc, RuntimeError)
+    assert str(exc) == "primary failed"
+    assert "primary" in context
 
 
 @pytest.mark.asyncio

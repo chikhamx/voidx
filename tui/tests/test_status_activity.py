@@ -533,6 +533,82 @@ def test_busy_activity_tick_repaints_only_busy_line_above_thinking_content(tmp_p
         dock.reset()
 
 
+def test_busy_activity_tick_refuses_invalidated_frame_cache(tmp_path, monkeypatch):
+    now = {"value": 1.0}
+    monkeypatch.setattr("voidx_cli.render_activity.time.monotonic", lambda: now["value"])
+    fake_stdout = _FakeStdout()
+    monkeypatch.setattr(sys, "stdout", fake_stdout)
+    monkeypatch.setattr(
+        shutil,
+        "get_terminal_size",
+        lambda fallback=None: os.terminal_size((100, 12)),
+    )
+    tui = _tui(tmp_path)
+    tui._running = True
+    tui._tty = True
+    tui._busy = True
+    tui._busy_started_at = 0.0
+    tui._busy_activity_verb = "Cooking"
+    tui._console = Console(file=None, force_terminal=True, width=100, height=12, _environ={})
+    dock.begin_capture()
+    try:
+        dock.set_guidance_preview("加油")
+        tui._render_frame()
+        assert tui._last_busy_activity_start_row > 0
+
+        fake_stdout.text = ""
+        now["value"] = 2.0
+        tui._invalidate_frame_cache()
+
+        assert tui._render_busy_activity_tick() is False
+        assert "加油" not in _rich_plain(fake_stdout.text)
+    finally:
+        dock.deactivate()
+        dock.reset()
+
+
+@pytest.mark.asyncio
+async def test_busy_activity_tick_refuses_stale_frame_after_guidance_commit(tmp_path, monkeypatch):
+    now = {"value": 1.0}
+    monkeypatch.setattr("voidx_cli.render_activity.time.monotonic", lambda: now["value"])
+    fake_stdout = _FakeStdout()
+    monkeypatch.setattr(sys, "stdout", fake_stdout)
+    monkeypatch.setattr(
+        shutil,
+        "get_terminal_size",
+        lambda fallback=None: os.terminal_size((100, 12)),
+    )
+    tui = _tui(tmp_path)
+    tui._running = True
+    tui._tty = True
+    tui._busy = True
+    tui._busy_started_at = 0.0
+    tui._busy_activity_verb = "Cooking"
+    tui._console = Console(file=None, force_terminal=True, width=100, height=12, _environ={})
+    dock.set_refresh_callback(tui.invalidate)
+    dock.begin_capture()
+    try:
+        dock.set_guidance_preview("主要是frontend")
+        tui._run_scheduled_render()
+        fake_stdout.text = ""
+        tui._render_frame()
+
+        assert tui._render_busy_activity_tick() is True
+
+        dock.append_guidance_turn("主要是frontend")
+        dock.clear_guidance_preview()
+        fake_stdout.text = ""
+        now["value"] = 2.0
+
+        assert tui._render_scheduled is True
+        assert tui._render_busy_activity_tick() is False
+        assert "Cooking (2s)" not in _rich_plain(fake_stdout.text)
+    finally:
+        dock.set_refresh_callback(None)
+        dock.deactivate()
+        dock.reset()
+
+
 @pytest.mark.asyncio
 async def test_busy_activity_timer_starts_ticks_and_stops(tmp_path, monkeypatch):
     monkeypatch.setattr("voidx_cli.activity.BUSY_ACTIVITY_TICK_SECONDS", 0.01)
@@ -638,3 +714,58 @@ def _base_style(text: "Text") -> Style:
     if isinstance(style, Style):
         return style
     return Style.parse(str(style))
+
+
+def test_busy_activity_label_includes_guidance_preview(tmp_path, monkeypatch):
+    monkeypatch.setattr("voidx_cli.render_activity.time.monotonic", lambda: 105.0)
+    tui = _tui(tmp_path)
+    tui._busy = True
+    tui._busy_started_at = 100.0
+    tui._busy_activity_verb = "Pondering"
+    dock.begin_capture()
+    try:
+        dock.set_guidance_preview("use TypeScript")
+
+        label = tui._busy_activity_label()
+        assert "⚡use TypeScript" in label
+    finally:
+        dock.deactivate()
+        dock.reset()
+
+
+def test_busy_activity_label_truncates_long_guidance_preview(tmp_path, monkeypatch):
+    monkeypatch.setattr("voidx_cli.render_activity.time.monotonic", lambda: 105.0)
+    tui = _tui(tmp_path)
+    tui._busy = True
+    tui._busy_started_at = 100.0
+    tui._busy_activity_verb = "Pondering"
+    dock.begin_capture()
+    try:
+        long_preview = "x" * 100
+        dock.set_guidance_preview(long_preview)
+
+        label = tui._busy_activity_label()
+        assert "⚡" in label
+        assert "…" in label
+        assert long_preview not in label
+    finally:
+        dock.deactivate()
+        dock.reset()
+
+
+def test_busy_activity_label_clears_guidance_preview_after_commit(tmp_path, monkeypatch):
+    monkeypatch.setattr("voidx_cli.render_activity.time.monotonic", lambda: 105.0)
+    tui = _tui(tmp_path)
+    tui._busy = True
+    tui._busy_started_at = 100.0
+    tui._busy_activity_verb = "Pondering"
+    dock.begin_capture()
+    try:
+        dock.set_guidance_preview("use TypeScript")
+        assert "⚡use TypeScript" in tui._busy_activity_label()
+
+        dock.clear_guidance_preview()
+        assert "⚡" not in tui._busy_activity_label()
+    finally:
+        dock.deactivate()
+        dock.reset()

@@ -16,9 +16,11 @@ from pathlib import Path
 from typing import Any
 
 from rich.console import Console, Group
+from rich.markup import escape
 from rich.text import Text
 
 from voidx.logging import log_internal_error
+from voidx.logging.external import install_external_log_bridge
 from voidx.paths import voidx_workspace_dir
 from voidx.ui.output.dock import dock
 from voidx.ui.output.dock.formatting import _text_from_line
@@ -54,6 +56,21 @@ from .state import (
 )
 from .terminal_mixin import _TerminalLifecycleMixin
 from .text_prompt_mixin import _TextPromptMixin
+
+
+def _guidance_echo_lines(echoes: list[str]) -> list[str]:
+    lines: list[str] = []
+    for echo in echoes:
+        text = echo.strip("\n")
+        if not text.strip():
+            continue
+        echo_lines = text.splitlines()
+        first = echo_lines[0] if echo_lines else ""
+        header = f"[bold white]⚡[/] {escape(first)}" if first else "[bold white]⚡[/]"
+        lines.append(header)
+        lines.extend(escape(line) for line in echo_lines[1:])
+    return lines
+
 
 class _SubmitQueueItem(str):
     def __new__(
@@ -142,6 +159,11 @@ class PureTui(
             sys.stdout.flush()
 
         consumer = asyncio.create_task(self._consume(on_submit))
+        restore_external_logging = (
+            install_external_log_bridge("langchain_openai")
+            if self._tty
+            else None
+        )
 
         try:
             self._running = True
@@ -178,6 +200,8 @@ class PureTui(
             except asyncio.CancelledError:
                 pass
             await self._stop_busy_activity_timer()
+            if restore_external_logging is not None:
+                restore_external_logging()
 
     async def run_headless(self, on_submit: SubmitHandler) -> None:
         """Run without TUI — consume gateway input via the submit queue."""
@@ -316,6 +340,7 @@ class PureTui(
         if dock.consume_force_flush_request():
             force = True
         width = self._frame_width()
+        echo_lines = _guidance_echo_lines(dock.consume_guidance_echoes())
         tree_lines = dock.tree.render(width)
         total = len(tree_lines)
 
@@ -339,16 +364,18 @@ class PureTui(
                     total,
                 )
 
-        if flush_limit <= self._committed_line_count:
+        if flush_limit <= self._committed_line_count and not echo_lines:
             return
 
         flush_lines = tree_lines[self._committed_line_count:flush_limit]
         self._committed_line_count = flush_limit
 
-        if not flush_lines:
+        if not flush_lines and not echo_lines:
             return
 
         if not self._tty:
+            for line in echo_lines:
+                sys.stdout.write(_plain_line(line).rstrip() + "\n")
             for line in flush_lines:
                 sys.stdout.write(_plain_line(line).rstrip() + "\n")
             sys.stdout.flush()
@@ -362,7 +389,7 @@ class PureTui(
             sys.stdout.flush()
 
         rendered_lines: list[Text] = []
-        for line in flush_lines:
+        for line in [*echo_lines, *flush_lines]:
             try:
                 rendered_lines.append(_text_from_line(line))
             except Exception:
@@ -370,7 +397,7 @@ class PureTui(
 
         flush_rows = max(
             _rendered_row_count(self._capture_renderable(Group(*rendered_lines), width)),
-            len(flush_lines),
+            len(echo_lines) + len(flush_lines),
         )
 
         for rendered in rendered_lines:

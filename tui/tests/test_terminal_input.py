@@ -421,6 +421,32 @@ def test_transient_output_appends_to_dock(tmp_path):
     assert "/opt/homebrew/bin/" in rendered
 
 
+def test_guidance_echo_flushes_once_without_persisting_to_dock(tmp_path, monkeypatch):
+    class FakeStdout:
+        def __init__(self) -> None:
+            self.text = ""
+
+        def write(self, value: str) -> int:
+            self.text += value
+            return len(value)
+
+        def flush(self) -> None:
+            pass
+
+    fake_stdout = FakeStdout()
+    monkeypatch.setattr(sys, "stdout", fake_stdout)
+    tui = _tui(tmp_path)
+    tui._tty = False
+
+    dock.queue_guidance_echo("主要是frontend")
+    tui._flush_committed()
+    tui._flush_committed()
+
+    assert fake_stdout.text.count("主要是frontend") == 1
+    assert "⚡" in fake_stdout.text
+    assert "主要是frontend" not in "\n".join(dock.tree.render(80))
+
+
 def test_secret_input_masks_by_display_width(tmp_path):
     tui = _tui(tmp_path)
     tui._active_text_secret = True

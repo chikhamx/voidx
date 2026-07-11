@@ -401,3 +401,61 @@ async def test_turn_started_clears_error_current_status(isolated_dock):
         assert isolated_dock.status_record("error:current") is None
     finally:
         await bus.stop()
+
+
+
+@pytest.mark.asyncio
+async def test_status_finished_without_prior_update_does_not_log_orphan(isolated_dock, monkeypatch):
+    """Defensive StatusFinished for a status that was never created must not log ui_status_orphan."""
+    orphan_calls: list[dict] = []
+
+    def fake_log_tool_event(event, *, tool_name="", message="", **kwargs):
+        orphan_calls.append({"event": event, "tool_name": tool_name, "message": message})
+
+    monkeypatch.setattr("voidx.logging.tool_log.log_tool_event", fake_log_tool_event)
+
+    isolated_dock.begin_capture()
+    bus = UiEventBus()
+    bus.start(DockEventConsumer(isolated_dock))
+    try:
+        await bus.emit(StatusFinished(status_id="tool-heartbeat:call_never_existed"))
+        await bus.drain()
+    finally:
+        await bus.stop()
+
+    orphan_logs = [c for c in orphan_calls if c["event"] == "ui_status_orphan"]
+    assert not orphan_logs, f"Expected no orphan log, got: {orphan_logs}"
+
+
+@pytest.mark.asyncio
+async def test_status_finished_for_existing_record_only_status_no_orphan(isolated_dock, monkeypatch):
+    """StatusFinished for a record_only status that exists must clear it without orphan log."""
+    orphan_calls: list[dict] = []
+
+    def fake_log_tool_event(event, *, tool_name="", message="", **kwargs):
+        orphan_calls.append({"event": event, "tool_name": tool_name, "message": message})
+
+    monkeypatch.setattr("voidx.logging.tool_log.log_tool_event", fake_log_tool_event)
+
+    isolated_dock.begin_capture()
+    bus = UiEventBus()
+    bus.start(DockEventConsumer(isolated_dock))
+    try:
+        await bus.emit(StatusUpdated(
+            status_id="tool-heartbeat:call_abc",
+            label="Tool running",
+            detail="read still running (1s elapsed)",
+            stage="working",
+            display="record_only",
+        ))
+        await bus.drain()
+        assert isolated_dock.status_record("tool-heartbeat:call_abc") is not None
+
+        await bus.emit(StatusFinished(status_id="tool-heartbeat:call_abc"))
+        await bus.drain()
+        assert isolated_dock.status_record("tool-heartbeat:call_abc") is None
+    finally:
+        await bus.stop()
+
+    orphan_logs = [c for c in orphan_calls if c["event"] == "ui_status_orphan"]
+    assert not orphan_logs, f"Expected no orphan log, got: {orphan_logs}"

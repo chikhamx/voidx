@@ -94,7 +94,7 @@ async def resolve_goal_for_turn(
     del interaction_mode
     fallback = GoalResolution(
         intent=IntentResolution(type=TaskIntent.GENERAL),
-        goal=GoalSpec(desc=user_text),
+        goal=task_state.current_goal,
         plan=None,
     )
     fallback_reason = ""
@@ -484,14 +484,14 @@ def _normalize_resolution(
                 goal=task_state.current_goal,
                 plan=PlanResolution(join=current_join, leave=None),
             )
-        goal = resolution.goal or GoalSpec(desc=user_text)
+        goal = resolution.goal or task_state.current_goal
         return GoalResolution(
             intent=resolution.intent,
             goal=goal,
             plan=None,
         )
 
-    goal = resolution.goal or GoalSpec(desc=user_text)
+    goal = resolution.goal or task_state.current_goal
     if plan is None or not plan.join:
         current_join = _current_active_join(task_state)
         if current_join and task_state.current_goal is not None and is_fallback and _is_short_continuation(user_text):
