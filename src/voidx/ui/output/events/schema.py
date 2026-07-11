@@ -95,6 +95,10 @@ class GuidanceSubmitted(UiEventBase):
     truncated: bool = False
 
 
+class GuidanceCommitted(UiEventBase):
+    kind: Literal["guidance.committed"] = "guidance.committed"
+
+
 class ErrorAppended(UiEventBase):
     kind: Literal["error.appended"] = "error.appended"
     message: str
@@ -265,7 +269,7 @@ class CheckpointChoicePayload(BaseModel):
 class CheckpointPlanPayload(BaseModel):
     model_config = ConfigDict(frozen=True)
 
-    plan_summary: str
+    goal: str
     steps: list[str] = Field(default_factory=list)
     affected_files: list[str] = Field(default_factory=list)
     risks: list[str] = Field(default_factory=list)
@@ -330,6 +334,7 @@ UiEvent: TypeAlias = (
     | ThoughtAppended
     | WarningAppended
     | GuidanceSubmitted
+    | GuidanceCommitted
     | ErrorAppended
     | DiffAppended
     | StatusUpdated

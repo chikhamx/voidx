@@ -3,11 +3,12 @@
 from __future__ import annotations
 
 import asyncio
+import inspect
 import json
 from typing import Any, Literal
 
 from langchain_core.messages import AIMessage, BaseMessage, HumanMessage, SystemMessage
-from pydantic import BaseModel, model_validator
+from pydantic import BaseModel, Field, model_validator
 
 from voidx.logging.request_log import log_llm_diagnostic, serialize_llm_message
 from voidx.runtime.intent import InteractionMode, TaskIntent, _contains_any
@@ -20,8 +21,15 @@ from voidx.runtime.task_state import (
     goal_type_from_join,
 )
 from voidx.workflow.dag import DEFAULT_WORKFLOW_DAG
-from voidx.config import RetryConfig
-from voidx.llm.service import DeepSeekChatOpenAI
+from voidx.config import ModelConfig, RetryConfig
+from voidx.llm.service import DeepSeekChatOpenAI, create_resolver_model
+from voidx.llm.usage import (
+    TokenUsage,
+    UsageStats,
+    estimate_context_tokens,
+    estimate_message_tokens,
+    extract_token_usage,
+)
 from voidx.tools.retry import retry_async
 
 
@@ -31,7 +39,7 @@ WorkflowName = Literal["brainstorm", "debug", "design", "feedback", "plan", "rev
 
 class ResolverGoal(BaseModel):
     intent: Literal["coding", "general"] = "general"
-    goal: str
+    goal: str = Field(description="Stable overall objective for the current task. Keep it short, sharp, and clear.")
     workflow: WorkflowName | None = None
     kind_hint: str | None = None
 
@@ -80,6 +88,8 @@ async def resolve_goal_for_turn(
     task_state: TaskState,
     log_diagnostic: bool = True,
     retry_config: RetryConfig | None = None,
+    usage_stats: UsageStats | None = None,
+    model_config: ModelConfig | None = None,
 ) -> GoalResolution:
     del interaction_mode
     fallback = GoalResolution(
@@ -96,7 +106,12 @@ async def resolve_goal_for_turn(
         _log_goal_resolver_decision(normalized, user_text, task_state, fallback_reason, fallback_error_type, fallback_error, enabled=log_diagnostic)
         return normalized
 
-    structured = getattr(model, "with_structured_output", None)
+    resolver_model = (
+        create_resolver_model(model, model_config)
+        if model_config is not None
+        else model
+    )
+    structured = getattr(resolver_model, "with_structured_output", None)
     if not callable(structured):
         fallback_reason = "structured_output_unsupported"
         normalized = _normalize_resolution(fallback, user_text, task_state, is_fallback=True)
@@ -105,15 +120,20 @@ async def resolve_goal_for_turn(
 
     resolver_goal: ResolverGoal | None
     try:
-        if isinstance(model, DeepSeekChatOpenAI):
+        if isinstance(resolver_model, DeepSeekChatOpenAI):
             # function_calling sends tool_choice which several providers
             # reject while thinking mode is active.  Fall back to
             # json_mode (response_format {type: json_object}) which
             # does not involve tool_choice.
-            method = "json_mode" if model.has_active_reasoning else "function_calling"
+            method = "json_mode" if resolver_model.has_active_reasoning else "function_calling"
         else:
             method = None
-        runnable = structured(ResolverGoal) if method is None else structured(ResolverGoal, method=method)
+        structured_kwargs: dict[str, Any] = {}
+        if method is not None:
+            structured_kwargs["method"] = method
+        if _accepts_keyword(structured, "include_raw"):
+            structured_kwargs["include_raw"] = True
+        runnable = structured(ResolverGoal, **structured_kwargs)
         resolver_messages = _resolver_messages_from_exchanges(user_text, task_state, json_mode=(method == "json_mode"))
         rc = retry_config or RetryConfig()
 
@@ -132,6 +152,13 @@ async def resolve_goal_for_turn(
             label="goal_resolver",
             retry_on=(asyncio.TimeoutError, TimeoutError, ConnectionError, OSError),
         )
+        if usage_stats is not None:
+            _record_resolver_usage(
+                usage_stats,
+                model=resolver_model,
+                messages=resolver_messages,
+                response=raw,
+            )
         _log_goal_resolver_exchange(resolver_messages, raw=raw, enabled=log_diagnostic)
         resolver_goal = _coerce_resolution(raw)
     except Exception as exc:
@@ -173,6 +200,57 @@ def _resolver_messages_from_exchanges(user_text: str, task_state: TaskState, *, 
         SystemMessage(content=_resolver_system_prompt(json_mode=json_mode)),
         HumanMessage(content=_resolver_request_markdown(user_text, task_state)),
     ]
+
+
+def _accepts_keyword(callable_obj: Any, keyword: str) -> bool:
+    try:
+        parameters = inspect.signature(callable_obj).parameters.values()
+    except (TypeError, ValueError):
+        return True
+    return any(
+        parameter.name == keyword or parameter.kind == inspect.Parameter.VAR_KEYWORD
+        for parameter in parameters
+    )
+
+
+def _record_resolver_usage(
+    usage_stats: UsageStats,
+    *,
+    model: Any,
+    messages: list[BaseMessage],
+    response: object,
+) -> None:
+    raw_message = _resolver_raw_message(response)
+    model_name = _resolver_model_name(model)
+    usage_stats.record_call(
+        extract_token_usage(raw_message) if raw_message is not None else TokenUsage(),
+        fallback_input_tokens=estimate_context_tokens(messages, model_name),
+        fallback_output_tokens=estimate_message_tokens(
+            raw_message if raw_message is not None else response,
+            model_name,
+        ),
+        messages=messages,
+        model=model_name,
+        cache_key=f"goal_resolver:{model_name or type(model).__name__}",
+    )
+
+
+def _resolver_raw_message(response: object) -> AIMessage | None:
+    if isinstance(response, AIMessage):
+        return response
+    if isinstance(response, dict):
+        raw = response.get("raw")
+        if isinstance(raw, AIMessage):
+            return raw
+    return None
+
+
+def _resolver_model_name(model: Any) -> str:
+    for attribute in ("model_name", "model"):
+        value = getattr(model, attribute, None)
+        if isinstance(value, str) and value:
+            return value
+    return ""
 
 
 def _log_goal_resolver_decision(
@@ -238,8 +316,13 @@ def _raw_response_for_log(value: object) -> object:
         }
     if isinstance(value, (str, int, float, bool)) or value is None:
         return value
-    if isinstance(value, (dict, list, tuple)):
-        return value
+    if isinstance(value, dict):
+        return {
+            str(key): _raw_response_for_log(item)
+            for key, item in value.items()
+        }
+    if isinstance(value, (list, tuple)):
+        return [_raw_response_for_log(item) for item in value]
     return repr(value)
 
 
@@ -276,7 +359,7 @@ def _resolver_system_prompt(*, json_mode: bool = False) -> str:
         "- feedback: Set only when the user provides review feedback or requested optimizations to verify and implement.\n"
         "- plan: Set only when the user asks for an executable implementation plan before coding.\n"
         "- review: Set only when the user asks to review code, design, implementation, or changes.\n"
-        "- tdd: Set only when the user asks to implement coding.\n"
+        "- tdd: Set only when the user asks to implement a clear coding change.\n"
         "- verify: Set only when the user asks to prove something is passing, fixed, complete, or safe.\n"
     )
     if json_mode:

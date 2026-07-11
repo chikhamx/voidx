@@ -2,15 +2,12 @@
 
 from __future__ import annotations
 
-import logging
 from typing import Any
 
 from rich.markup import escape
 
+from voidx.logging.tool_log import log_tool_event
 from voidx.ui.output.tree import OutputNode
-
-
-logger = logging.getLogger(__name__)
 
 
 class DockCheckpointNodeMixin:
@@ -52,7 +49,7 @@ class DockCheckpointNodeMixin:
     ) -> None:
         node = self._checkpoint_nodes.get(checkpoint_id)
         if node is None:
-            logger.debug("Checkpoint decision received for unknown checkpoint_id=%s", checkpoint_id)
+            log_tool_event("ui_checkpoint_orphan", tool_name="dock", message=f"Checkpoint decision received for unknown checkpoint_id={checkpoint_id}")
             return
         display_response = response or label or decision
         color = _decision_color(decision)
@@ -64,7 +61,7 @@ class DockCheckpointNodeMixin:
         child = self._tree.new_node(
             parent=node,
             node_type="message",
-            header=f"Decision: {escape(display_response)}",
+            header=f"{_DECISION_LABEL} {escape(display_response)}",
             collapsed=False,
             payload={"full_width_user_row": True, "align_full_width_user_row": True},
         )
@@ -75,6 +72,7 @@ class DockCheckpointNodeMixin:
 
 
 _PLAN_LABEL = "[#EBCB8B]Plan:[/#EBCB8B]"
+_DECISION_LABEL = "[#EBCB8B]Decision:[/#EBCB8B]"
 _SECTION_TITLE = "[bold #D8DEE9]{}:[/bold #D8DEE9]"
 _BODY = "[#D8DEE9]{}[/#D8DEE9]"
 _STEP_NUM = "[#61AFEF]{}.[/#61AFEF]"
@@ -85,7 +83,7 @@ _RISK_BODY = "[#E06C75]{}[/#E06C75]"
 
 def _checkpoint_body(plan: dict[str, Any]) -> list[str]:
     body: list[str] = []
-    summary = str(plan.get("plan_summary") or "").strip()
+    summary = str(plan.get("goal") or "").strip()
     if summary:
         body.append(f"{_PLAN_LABEL} {_BODY.format(escape(summary))}")
     steps = _string_list(plan.get("steps"))

@@ -270,7 +270,7 @@ async def test_plan_checkpoint_transaction_executes_following_tools_with_updated
         tool_calls=[
             {
                 "name": "checkpoint",
-                "args": {"plan_summary": "Update runtime state handling"},
+                "args": {"goal": "Update runtime state handling"},
                 "id": "call_plan",
                 "type": "tool_call",
             },

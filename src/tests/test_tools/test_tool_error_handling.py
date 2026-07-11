@@ -132,7 +132,7 @@ async def test_workflow_invalid_args_returns_error():
 
 @pytest.mark.asyncio
 async def test_plan_checkpoint_invalid_args_returns_error():
-    result = await PlanCheckpointTool().execute({"plan_summary": 123}, _CTX)
+    result = await PlanCheckpointTool().execute({"goal": 123}, _CTX)
     assert isinstance(result, ToolResult)
     assert result.metadata.get("error") is True
 
@@ -218,3 +218,24 @@ async def test_todo_update_missing_updates_has_error_true():
     result = await TodoWriteTool().execute({"op": "update"}, _CTX)
     assert result.metadata.get("error") is True
     assert "reason" in result.metadata
+
+
+def test_tool_timeout_metadata_enforces_shared_contract():
+    from voidx.tools.base import tool_timeout_metadata
+
+    metadata = tool_timeout_metadata(
+        "shell",
+        error=False,
+        timeout=False,
+        error_kind="forged",
+        timeout_source="forged",
+        command="sleep 2",
+    )
+
+    assert metadata == {
+        "command": "sleep 2",
+        "error": True,
+        "timeout": True,
+        "error_kind": "tool_timeout",
+        "timeout_source": "shell",
+    }

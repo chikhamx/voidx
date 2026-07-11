@@ -425,7 +425,7 @@ def _tool_display_value(tool_name: str, args: str, raw_args: dict[str, Any]) -> 
     elif tool_name == "agent":
         value = raw_args.get("agent") or raw_args.get("description")
     elif tool_name == "checkpoint":
-        value = raw_args.get("plan_summary")
+        value = raw_args.get("goal")
     elif tool_name in {"webfetch", "websearch"}:
         value = raw_args.get("url") or raw_args.get("query")
     elif raw_args:

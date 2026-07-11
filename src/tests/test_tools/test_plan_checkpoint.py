@@ -53,7 +53,7 @@ class TestPlanCheckpoint:
             return UserResponse(value="approved")
 
         result = await PlanCheckpointTool().execute(
-            {"plan_summary": "Update runtime state handling"},
+            {"goal": "Update runtime state handling"},
             ToolContext(workspace=str(tmp_path), interact=interact),
         )
 
@@ -83,7 +83,7 @@ class TestPlanCheckpoint:
 
             result = await PlanCheckpointTool().execute(
                 {
-                    "plan_summary": "Add checkpoint node",
+                    "goal": "Add checkpoint node",
                     "steps": ["Add event schema"],
                     "affected_files": ["src/voidx/tools/plan_checkpoint.py"],
                     "risks": ["Avoid duplicate JSON"],
@@ -98,7 +98,7 @@ class TestPlanCheckpoint:
 
         assert result.metadata["plan_decision"] == "approved"
         assert shown.checkpoint_id == submitted.checkpoint_id
-        assert shown.plan.plan_summary == "Add checkpoint node"
+        assert shown.plan.goal == "Add checkpoint node"
         assert shown.plan.steps == ["Add event schema"]
         assert submitted.decision == "approved"
         assert submitted.label == "Implement directly"
@@ -124,7 +124,7 @@ class TestPlanCheckpoint:
 
             await PlanCheckpointTool().execute(
                 {
-                    "plan_summary": "Add checkpoint node",
+                    "goal": "Add checkpoint node",
                     "steps": ["Add event schema"],
                     "affected_files": ["src/voidx/tools/plan_checkpoint.py"],
                     "risks": ["Avoid duplicate JSON"],
@@ -136,12 +136,12 @@ class TestPlanCheckpoint:
 
         shown = next(event for event in events if isinstance(event, CheckpointPromptShown))
 
-        assert shown.plan.plan_summary == "Add checkpoint node"
+        assert shown.plan.goal == "Add checkpoint node"
         assert requests[0].prompt == "Plan:"
 
     def test_plan_checkpoint_prompt_renders_flat_steps_and_scope_details(self):
         prompt = _build_prompt(PlanCheckpointInput(
-            plan_summary="Simplify checkpoint input",
+            goal="Simplify checkpoint input",
             steps=[
                 "Replace nested step objects with strings",
                 "Update schema tests",
@@ -155,7 +155,7 @@ class TestPlanCheckpoint:
             ],
         ))
 
-        assert "Plan: Simplify checkpoint input" in prompt
+        assert "Goal: Simplify checkpoint input" in prompt
         assert "1. Replace nested step objects with strings" in prompt
         assert "2. Update schema tests" in prompt
         assert (
@@ -169,7 +169,7 @@ class TestPlanCheckpoint:
     def test_plan_checkpoint_rejects_legacy_object_steps(self):
         with pytest.raises(ValidationError):
             PlanCheckpointInput.model_validate({
-                "plan_summary": "Simplify checkpoint input",
+                "goal": "Simplify checkpoint input",
                 "steps": [
                     {
                         "description": "Update the model",
@@ -185,7 +185,7 @@ class TestPlanCheckpoint:
             return UserResponse(value="approved")
 
         result = await PlanCheckpointTool().execute(
-            {"plan_summary": "Fix runtime state handling"},
+            {"goal": "Fix runtime state handling"},
             ToolContext(
                 workspace=str(tmp_path),
                 interact=interact,
@@ -215,7 +215,7 @@ class TestPlanCheckpoint:
             return UserResponse(value="approved")
 
         checkpoint = await PlanCheckpointTool().execute(
-            {"plan_summary": "Fix runtime state handling"},
+            {"goal": "Fix runtime state handling"},
             ToolContext(
                 workspace=str(tmp_path),
                 interact=interact,
@@ -245,7 +245,7 @@ class TestPlanCheckpoint:
     @pytest.mark.asyncio
     async def test_plan_checkpoint_blocks_without_interaction(self, tmp_path):
         result = await PlanCheckpointTool().execute(
-            {"plan_summary": "Edit files"},
+            {"goal": "Edit files"},
             ToolContext(workspace=str(tmp_path)),
         )
 
@@ -254,19 +254,19 @@ class TestPlanCheckpoint:
 
     @pytest.mark.asyncio
 
-    async def test_plan_checkpoint_rejected_keeps_feature_goal_without_hint(self, tmp_path):
+    async def test_plan_checkpoint_rejected_does_not_update_goal(self, tmp_path):
         async def interact(request):
             return UserResponse(value="rejected")
 
         result = await PlanCheckpointTool().execute(
-            {"plan_summary": "Refactor auth module"},
+            {"goal": "Refactor auth module"},
             ToolContext(workspace=str(tmp_path), interact=interact),
         )
 
         assert result.metadata["plan_decision"] == "rejected"
         patch = result.metadata["state_patch"]
         assert patch["intent"]["type"] == "coding"
-        assert patch["goal"]["desc"] == "Refactor auth module"
+        assert "goal" not in patch
         assert result.next_step_hint == ""
 
     @pytest.mark.asyncio
@@ -278,7 +278,7 @@ class TestPlanCheckpoint:
             return UserResponse(value="needs_doc")
 
         result = await PlanCheckpointTool().execute(
-            {"plan_summary": "Add checkpoint document option"},
+            {"goal": "Add checkpoint document option"},
             ToolContext(workspace=str(tmp_path), interact=interact),
         )
 
@@ -296,7 +296,7 @@ class TestPlanCheckpoint:
             return UserResponse(value="needs_doc")
 
         result = await PlanCheckpointTool().execute(
-            {"plan_summary": "Document runtime state handling"},
+            {"goal": "Document runtime state handling"},
             ToolContext(
                 workspace=str(tmp_path),
                 interact=interact,
@@ -323,7 +323,7 @@ class TestPlanCheckpoint:
             return UserResponse(value="Only refactor the login function")
 
         result = await PlanCheckpointTool().execute(
-            {"plan_summary": "Refactor auth module"},
+            {"goal": "Refactor auth module"},
             ToolContext(workspace=str(tmp_path), interact=interact),
         )
 
@@ -341,7 +341,7 @@ class TestPlanCheckpoint:
             return UserResponse(value="Only update the login form", free_text=True)
 
         result = await PlanCheckpointTool().execute(
-            {"plan_summary": "Refactor auth module"},
+            {"goal": "Refactor auth module"},
             ToolContext(workspace=str(tmp_path), interact=interact),
         )
 
@@ -361,7 +361,7 @@ class TestPlanCheckpoint:
             return UserResponse(value="", cancelled=True)
 
         result = await PlanCheckpointTool().execute(
-            {"plan_summary": "Refactor auth module"},
+            {"goal": "Refactor auth module"},
             ToolContext(workspace=str(tmp_path), interact=interact),
         )
 
@@ -375,7 +375,7 @@ class TestPlanCheckpoint:
             return UserResponse(value="", cancelled=True)
 
         result = await PlanCheckpointTool().execute(
-            {"plan_summary": "Refactor auth module"},
+            {"goal": "Refactor auth module"},
             ToolContext(workspace=str(tmp_path), interact=interact),
         )
 
@@ -405,7 +405,7 @@ class TestPlanCheckpoint:
             return UserResponse(value="approved")
 
         result = await PlanCheckpointTool().execute(
-            {"plan_summary": "Refactor auth"},
+            {"goal": "Refactor auth"},
             ToolContext(workspace=str(tmp_path), interact=interact),
         )
 
@@ -421,7 +421,7 @@ class TestPlanCheckpoint:
     async def test_plan_checkpoint_interaction_unavailable_has_summary(self, tmp_path):
         """interaction_unavailable path should have a non-empty summary."""
         result = await PlanCheckpointTool().execute(
-            {"plan_summary": "Edit files"},
+            {"goal": "Edit files"},
             ToolContext(workspace=str(tmp_path)),
         )
 
@@ -434,7 +434,7 @@ class TestPlanCheckpoint:
     async def test_plan_checkpoint_invalid_arguments_has_summary(self, tmp_path):
         """Invalid arguments path should have a non-empty summary."""
         result = await PlanCheckpointTool().execute(
-            {"plan_summary": 123},  # invalid type
+            {"goal": 123},  # invalid type
             ToolContext(workspace=str(tmp_path)),
         )
 

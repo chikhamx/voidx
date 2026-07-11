@@ -21,7 +21,7 @@ from voidx.workflow.types import (
 
 
 class PlanCheckpointInput(BaseModel):
-    plan_summary: str = Field(description="Concise summary of the proposed implementation plan.")
+    goal: str = Field(description="Stable overall objective for the current task. Keep it short, sharp, and clear.")
     steps: list[str] = Field(default_factory=list, description="Ordered implementation steps; each step should be one small action.")
     affected_files: list[str] = Field(
         default_factory=list,
@@ -31,7 +31,7 @@ class PlanCheckpointInput(BaseModel):
 
 
 class PlanCheckpointResult(BaseModel):
-    plan_summary: str
+    goal: str
     decision: str
     user_feedback: str = ""
     modified_scope: str = ""
@@ -75,7 +75,7 @@ class PlanCheckpointTool(BaseTool):
                 title="plan: approval unavailable",
                 output=(
                     "Plan approval is not available in this runtime. "
-                    f"Do not implement without explicit user approval: {inp.plan_summary}"
+                    f"Do not implement without explicit user approval: {inp.goal}"
                 ),
                 summary="plan: approval unavailable",
                 metadata={"plan_decision": "interaction_unavailable", "blocked": True},
@@ -173,7 +173,7 @@ def _decision_result(
     turn_count: int = 0,
 ) -> ToolResult:
     if decision == "approved":
-        scope = inp.plan_summary.strip()
+        scope = inp.goal.strip()
         patch = ToolStatePatch(
             intent=IntentResolution(type=TaskIntent.CODING),
             goal=GoalSpec(desc=scope),
@@ -188,7 +188,7 @@ def _decision_result(
         )
         next_step_hint = ""
     elif decision == "needs_doc":
-        scope = inp.plan_summary.strip()
+        scope = inp.goal.strip()
         patch = ToolStatePatch(
             intent=IntentResolution(type=TaskIntent.CODING),
             goal=GoalSpec(desc=scope),
@@ -203,7 +203,7 @@ def _decision_result(
         )
         next_step_hint = ""
     elif decision == "modified":
-        scope = modified_scope or inp.plan_summary.strip()
+        scope = modified_scope or inp.goal.strip()
         patch = ToolStatePatch(
             intent=IntentResolution(type=TaskIntent.CODING),
             goal=GoalSpec(desc=scope),
@@ -212,12 +212,11 @@ def _decision_result(
     else:
         patch = ToolStatePatch(
             intent=IntentResolution(type=TaskIntent.CODING),
-            goal=GoalSpec(desc=inp.plan_summary),
         )
         next_step_hint = ""
 
     result = PlanCheckpointResult(
-        plan_summary=inp.plan_summary,
+        goal=inp.goal,
         decision=decision,
         user_feedback=modified_scope,
         modified_scope=modified_scope,
@@ -236,7 +235,7 @@ def _decision_result(
 
 
 def _build_prompt(inp: PlanCheckpointInput) -> str:
-    parts = [f"Plan: {inp.plan_summary}"]
+    parts = [f"Goal: {inp.goal}"]
     if inp.steps:
         parts.append("\nSteps:")
         for index, step in enumerate(inp.steps, 1):
@@ -271,7 +270,7 @@ def _emit_checkpoint_shown(checkpoint_id: str, inp: PlanCheckpointInput) -> bool
     ui_events.emit_direct(CheckpointPromptShown(
         checkpoint_id=checkpoint_id,
         plan=CheckpointPlanPayload(
-            plan_summary=inp.plan_summary,
+            goal=inp.goal,
             steps=inp.steps,
             affected_files=inp.affected_files,
             risks=inp.risks,

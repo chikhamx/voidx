@@ -199,7 +199,7 @@ async def test_execute_tools_includes_next_step_hint_in_llm_message(tmp_path):
         content="",
         tool_calls=[{
             "name": "checkpoint",
-            "args": {"plan_summary": "Add docs"},
+            "args": {"goal": "Add docs"},
             "id": "call_checkpoint",
             "type": "tool_call",
         }],
@@ -296,10 +296,10 @@ async def test_execute_tools_escalates_and_blocks_repeated_tool_failure(tmp_path
     assert graph._pending_guidance == []
 
     await run_read("call_2")
-    assert any("failed twice" in item for item in graph._pending_guidance)
+    assert any("failed twice" in item[0] for item in graph._pending_guidance)
 
     await run_read("call_3")
-    assert any("failed 3 times" in item and "Stop retrying it now" in item for item in graph._pending_guidance)
+    assert any("failed 3 times" in item[0] and "Stop retrying it now" in item[0] for item in graph._pending_guidance)
 
     result = await run_read("call_4")
     assert calls == [
