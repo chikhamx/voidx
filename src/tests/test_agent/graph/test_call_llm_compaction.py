@@ -151,7 +151,7 @@ async def test_call_llm_updates_usage_stats_across_turn_control_calls(tmp_path, 
                     tool_calls=[
                         {
                             "name": "turn",
-                            "args": {},
+                            "args": {"decision": "stop"},
                             "id": "turn-usage",
                             "type": "tool_call",
                         }
@@ -430,6 +430,10 @@ class MalformedThenRepairsAfterCompactionStreamingModel:
             ))
             return
         yield AIMessageChunk(content="repaired after compaction")
+        yield AIMessageChunk(
+            content="",
+            tool_calls=[{"name": "turn", "args": {"decision": "stop"}, "id": "turn-1", "type": "tool_call"}],
+        )
 
 
 @pytest.mark.asyncio

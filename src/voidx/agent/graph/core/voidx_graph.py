@@ -55,7 +55,7 @@ from voidx.agent.todo_state import apply_todo_state_to_host
 from voidx.config import Config, Settings
 from voidx.llm.instruction import InstructionService
 from voidx.llm.message_markers import GUIDANCE_MARKER
-from voidx.llm.service import create_chat_model, resolve_protocol
+from voidx.llm.service import create_chat_model
 from voidx.memory.service import SessionInfo, append_subagent_event
 from voidx.runtime.ui import (
     GuidanceSubmitted,
@@ -399,8 +399,7 @@ class VoidXGraph(
         return self._debug
 
     def _turn_control_enabled(self) -> bool:
-        protocol = resolve_protocol(self.config.model)
-        return protocol in ("openai", "anthropic")
+        return True
 
     def set_task_state(self, task_state: TaskState) -> None:
         self._task_state = task_state

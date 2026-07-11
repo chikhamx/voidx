@@ -19,15 +19,21 @@ TURN_TOOL_DEFINITION: dict[str, Any] = {
     "function": {
         "name": TURN_TOOL_NAME,
         "description": (
-            "Commit the latest assistant response and end the current user turn. "
-            "After you have completed your response to the user's request, call this "
-            "as the only tool to end the turn. Do not call with any other tool."
+            "Commit the pending assistant response and end the current user turn. "
+            "Call with decision='stop' only when the pending response is complete. "
+            "If more work is needed, call another available tool instead. Do not output text with this call."
         ),
         "strict": True,
         "parameters": {
             "type": "object",
-            "properties": {},
-            "required": [],
+            "properties": {
+                "decision": {
+                    "type": "string",
+                    "enum": ["stop"],
+                    "description": "Choose stop to commit the pending answer.",
+                }
+            },
+            "required": ["decision"],
             "additionalProperties": False,
         },
     },
@@ -41,22 +47,19 @@ class TurnClassification(str, Enum):
     PLAIN_TEXT = "plain_text"
 
 
-FIRST_MISS_PROMPT = (
-    "Decide whether your response to the user's request is complete. "
-    "If yes, call turn() now as the only tool to end this turn. "
-    "If no, continue working on the user's request using the necessary tools."
+TURN_PROMPT = (
+    "Decide whether the latest assistant response fully completes the user's request. "
+    "Do not output text. If complete, call turn with decision='stop' to commit "
+    "the pending response and end this turn. If more work is needed, call the appropriate regular tool now."
 )
 
-SECOND_MISS_PROMPT = (
-    "Final completion check: do not return another standalone assistant response. "
-    "Either call a regular tool to continue required work, or call turn() as the "
-    "only tool to commit the latest response and finish this turn."
-)
+FIRST_MISS_PROMPT = TURN_PROMPT
+
+SECOND_MISS_PROMPT = TURN_PROMPT
 
 INVALID_TURN_PROMPT = (
-    "The turn control call was invalid. Call regular tools first in a separate "
-    "assistant step. When all work is complete, call turn as the only tool and "
-    "provide the complete response."
+    "The turn control response was invalid. Do not output text. Call turn with "
+    "decision='stop' to commit the pending response, or call a regular tool to continue working."
 )
 
 
@@ -81,8 +84,10 @@ def classify_turn_call(msg: AIMessage) -> TurnClassification:
 
     if turn_count == 1 and regular_count == 0:
         args = calls[0].get("args")
-        if isinstance(args, dict) and not args:
-            return TurnClassification.VALID_TURN
+        if isinstance(args, dict) and set(args) == {"decision"}:
+            decision = args.get("decision")
+            if decision == "stop":
+                return TurnClassification.VALID_TURN
 
     return TurnClassification.INVALID_TURN
 

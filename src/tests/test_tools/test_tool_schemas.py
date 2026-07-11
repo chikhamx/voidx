@@ -71,9 +71,11 @@ class TestToolSchemas:
         assert inp.offset == 10
         assert inp.limit == 5
 
-    def test_read_input_rejects_zero_and_negative_values(self):
-        with pytest.raises(ValueError):
-            FileReadInput(file_path="foo.py", offset=0)
+    def test_read_input_normalizes_zero_offset_to_first_line(self):
+        inp = FileReadInput(file_path="foo.py", offset=0)
+        assert inp.offset == 1
+
+    def test_read_input_rejects_negative_values_and_zero_limit(self):
         with pytest.raises(ValueError):
             FileReadInput(file_path="foo.py", limit=0)
         with pytest.raises(ValueError):

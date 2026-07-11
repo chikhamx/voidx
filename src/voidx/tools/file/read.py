@@ -1,6 +1,6 @@
 from __future__ import annotations
 
-from pydantic import BaseModel, Field
+from pydantic import BaseModel, Field, field_validator
 
 from pathlib import Path
 
@@ -177,6 +177,13 @@ class FileReadInput(BaseModel):
         ge=1,
         description="Maximum number of lines to read; omit to read until the output budget is reached.",
     )
+
+    @field_validator("offset", mode="before")
+    @classmethod
+    def _normalize_zero_offset(cls, value):
+        if value == 0 or value == "0":
+            return 1
+        return value
 
 
 class FileReadTool(BaseTool):

@@ -1,5 +1,7 @@
 # Session Title Follows Goal and Remove User Text Fallback
 
+> **Status: Done** — Archived on 2026-07-11.
+
 **Date:** 2026-07-11  
 **Status:** Implemented
 

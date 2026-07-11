@@ -205,14 +205,20 @@ This means:
 This read-before-sleep-consume pattern ensures the agent's requested delay is used exactly
 once, then falls back to the default — matching Claude Code's `ScheduleWakeup` semantics.
 
-**Idle coordination**: The manager uses an `asyncio.Event` (`_idle_event`) that is set
-when the agent is not executing a turn and cleared when a turn starts. The graph host
-sets/clears this event in `GraphTurnRunner.run_once` (src/voidx/agent/graph/turn_runner.py:98):
+**Idle coordination (new mechanism)**: The manager uses a new `asyncio.Event`
+(`_idle_event`) that is set when the agent is not executing a turn and cleared when a turn
+starts. This event does not exist yet — it must be added to `GraphTurnRunner`
+(src/voidx/agent/graph/turn_runner.py:95) as an instance field, and the set/clear calls
+must be inserted into `run_once` (src/voidx/agent/graph/turn_runner.py:98) at the
+following target locations:
 
-- **Clear** (`_idle_event.clear()`) at line 109, immediately after `host._usage_stats.begin_turn()`
-  and before the `try` block — marks the agent as busy.
-- **Set** (`_idle_event.set()`) in the `finally` block at line 436, after
-  `host._usage_stats.end_turn()` — marks the agent as idle again.
+- **Clear** (`_idle_event.clear()`) — insert after `host._usage_stats.begin_turn()` at
+  line 109, before the `try` block at line 111 — marks the agent as busy.
+- **Set** (`_idle_event.set()`) — insert in the `finally` block (line 431), after
+  `host._usage_stats.end_turn()` at line 432 — marks the agent as idle again.
+
+The event is created in `GraphTurnRunner.__init__` (line 95) as `self._idle_event =
+asyncio.Event()`, initially set (agent starts idle).
 
 This covers both user-initiated turns and loop-injected `run_synthetic_turn` calls, since
 both go through `run_once`. When the loop fires, it calls `run_synthetic_turn`, which
@@ -300,8 +306,11 @@ Parsing logic:
 **File**: `src/voidx/tools/registry.py`
 
 - Import `ScheduleWakeupTool`.
-- Register in `_register_builtins` with host-injected `loop_manager` (same pattern as
-  `TodoWriteTool` with `tracker`).
+- Add `loop_manager=None` parameter to `ToolRegistry.__init__` (src/voidx/tools/registry.py:36),
+  stored as `self._loop_manager` (same pattern as `tracker`).
+- Register in `_register_builtins` with `ScheduleWakeupTool(loop_manager=self._loop_manager)`
+  (same injection pattern as `TodoWriteTool(tracker=self._tracker)` at registry.py:63).
+- Update all `ToolRegistry(...)` call sites to pass `loop_manager=host.loop_manager`.
 
 #### 3. Graph host
 
@@ -397,13 +406,14 @@ Script execution details:
 2. `src/voidx/agent/loop/manager.py` — depends on `PromptSource` and host protocol.
 3. `src/voidx/tools/schedule_wakeup.py` — depends on `ToolContext` change.
 4. `src/voidx/tools/base.py` — add `loop_manager` field to `ToolContext`.
-5. `src/voidx/tools/registry.py` — register `ScheduleWakeupTool`.
+5. `src/voidx/tools/registry.py` — add `loop_manager` param to `__init__`, register `ScheduleWakeupTool`, update call sites.
 6. `src/voidx/agent/loop/slash.py` — depends on `LoopManager` and `PromptSource`.
 7. `src/voidx/agent/slash/handler.py` — wire `SlashLoopMixin`.
 8. `src/voidx/agent/graph/contracts.py` — add `loop_manager` to protocol.
-9. `src/voidx/agent/graph/core/voidx_graph.py` — initialize, idle event, cleanup.
-10. `src/voidx/agent/graph/tool_executor/executor.py` — pass `loop_manager` to context.
-11. `src/voidx/ui/commands.py` — add command entries.
+9. `src/voidx/agent/graph/turn_runner.py` — add `_idle_event` field to `GraphTurnRunner`, insert clear/set calls in `run_once`.
+10. `src/voidx/agent/graph/core/voidx_graph.py` — initialize `LoopManager`, wire `_idle_event` to `LoopManager`, cleanup on session clear.
+11. `src/voidx/agent/graph/tool_executor/executor.py` — pass `loop_manager` to context.
+12. `src/voidx/ui/commands.py` — add command entries.
 
 ## Verification
 

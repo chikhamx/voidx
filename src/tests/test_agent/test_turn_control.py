@@ -14,10 +14,15 @@ from voidx.agent.graph.turn_control import (
 )
 
 
-def _ai_with_turn_call() -> AIMessage:
+def _ai_with_turn_call(decision: str = "stop") -> AIMessage:
     return AIMessage(
         content="Here is the answer.",
-        tool_calls=[{"name": "turn", "args": {}, "id": "call_1", "type": "tool_call"}],
+        tool_calls=[{
+            "name": "turn",
+            "args": {"decision": decision},
+            "id": "call_1",
+            "type": "tool_call",
+        }],
     )
 
 
@@ -33,7 +38,7 @@ def _ai_with_mixed_calls() -> AIMessage:
         content="Done after reading.",
         tool_calls=[
             {"name": "read", "args": {"file_path": "x.py"}, "id": "call_3", "type": "tool_call"},
-            {"name": "turn", "args": {}, "id": "call_4", "type": "tool_call"},
+            {"name": "turn", "args": {"decision": "stop"}, "id": "call_4", "type": "tool_call"},
         ],
     )
 
@@ -51,17 +56,23 @@ def test_turn_tool_definition_has_correct_name():
 
 def test_turn_tool_definition_description_requires_turn():
     description = TURN_TOOL_DEFINITION["function"]["description"]
-    assert "completed your response to the user's request" in description
-    assert "call this" in description
-    assert "only tool" in description
-    assert "end the turn" in description
+    assert "decision='stop'" in description
+    assert "available tool" in description
+    assert "Do not output text" in description
+    assert "end the current user turn" in description
 
 
-def test_turn_tool_definition_has_empty_parameters():
+def test_turn_tool_definition_requires_stop_decision_enum():
     params = TURN_TOOL_DEFINITION["function"]["parameters"]
     assert params["type"] == "object"
-    assert params["properties"] == {}
-    assert params["required"] == []
+    assert params["properties"] == {
+        "decision": {
+            "type": "string",
+            "enum": ["stop"],
+            "description": "Choose stop to commit the pending answer.",
+        }
+    }
+    assert params["required"] == ["decision"]
     assert params["additionalProperties"] is False
 
 
@@ -76,6 +87,19 @@ def test_classify_valid_turn_call():
     msg = _ai_with_turn_call()
     assert classify_turn_call(msg) == TurnClassification.VALID_TURN
 
+
+
+def test_classify_continue_turn_call_invalid():
+    msg = _ai_with_turn_call("continue")
+    assert classify_turn_call(msg) == TurnClassification.INVALID_TURN
+
+
+def test_classify_legacy_empty_turn_call_invalid():
+    msg = AIMessage(
+        content="",
+        tool_calls=[{"name": "turn", "args": {}, "id": "call_legacy", "type": "tool_call"}],
+    )
+    assert classify_turn_call(msg) == TurnClassification.INVALID_TURN
 
 def test_classify_regular_tool_call():
     msg = _ai_with_regular_tool_call()
@@ -157,15 +181,20 @@ def test_repair_prompts_are_non_empty():
 
 
 def test_first_miss_prompt_mentions_turn():
-    assert "turn" in FIRST_MISS_PROMPT.lower()
-    assert "if yes" in FIRST_MISS_PROMPT.lower()
-    assert "if no" in FIRST_MISS_PROMPT.lower()
-    assert "user's request" in FIRST_MISS_PROMPT.lower()
+    prompt = FIRST_MISS_PROMPT.lower()
+    assert "turn" in prompt
+    assert "decision='stop'" in prompt
+    assert "regular tool" in prompt
+    assert "do not output text" in prompt
+    assert "user's request" in prompt
 
 
 def test_second_miss_prompt_mentions_turn():
     assert "turn" in SECOND_MISS_PROMPT.lower()
 
 
-def test_invalid_turn_prompt_mentions_separate_step():
-    assert "separate" in INVALID_TURN_PROMPT.lower() or "first" in INVALID_TURN_PROMPT.lower()
+def test_invalid_turn_prompt_mentions_decision_or_regular_tool():
+    prompt = INVALID_TURN_PROMPT.lower()
+    assert "do not output text" in prompt
+    assert "decision='stop'" in prompt
+    assert "regular tool" in prompt

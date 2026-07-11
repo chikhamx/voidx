@@ -31,10 +31,10 @@ class ScriptedStreamingModel:
             yield chunk
 
 
-def _turn_chunk() -> AIMessageChunk:
+def _turn_chunk(decision: str = "stop") -> AIMessageChunk:
     return AIMessageChunk(
         content="",
-        tool_calls=[{"name": "turn", "args": {}, "id": "tc1", "type": "tool_call"}],
+        tool_calls=[{"name": "turn", "args": {"decision": decision}, "id": "tc1", "type": "tool_call"}],
     )
 
 
@@ -54,7 +54,7 @@ def _mixed_chunk() -> AIMessageChunk:
         content="",
         tool_calls=[
             {"name": "read", "args": {"file_path": "x.py"}, "id": "tc3", "type": "tool_call"},
-            {"name": "turn", "args": {}, "id": "tc4", "type": "tool_call"},
+            {"name": "turn", "args": {"decision": "stop"}, "id": "tc4", "type": "tool_call"},
         ],
     )
 
@@ -205,10 +205,10 @@ async def test_successful_barrier_emits_one_committed_stream(tmp_path, monkeypat
 
 
 @pytest.mark.asyncio
-async def test_second_miss_fallback_emits_one_committed_stream(tmp_path, monkeypatch):
+async def test_regular_tool_continues_after_turn_prompt(tmp_path, monkeypatch):
     model = ScriptedStreamingModel([
         [_text_chunk("First.")],
-        [_text_chunk("Second — the committed one.")],
+        [_regular_tool_chunk()],
     ])
     graph = _make_graph(tmp_path, model, monkeypatch)
 
@@ -218,11 +218,8 @@ async def test_second_miss_fallback_emits_one_committed_stream(tmp_path, monkeyp
         "persona": "coordinate",
     })
 
-    msgs = result["messages"]
-    assert len(msgs) == 1
-    assert isinstance(msgs[0], AIMessage)
-    assert msgs[0].content == "Second — the committed one."
-    assert not msgs[0].tool_calls
+    assert result["messages"][0].tool_calls
+    assert result["messages"][0].tool_calls[0]["name"] == "read"
 
 
 # ── Test 13: subagent tool definitions do not contain turn ───────────────────

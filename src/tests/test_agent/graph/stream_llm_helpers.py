@@ -39,6 +39,10 @@ class FakeStreamingModel:
         self.messages = messages
         yield AIMessageChunk(content=[{"type": "thinking", "text": "think"}])
         yield AIMessageChunk(content="answer")
+        yield AIMessageChunk(
+            content="",
+            tool_calls=[{"name": "turn", "args": {"decision": "stop"}, "id": "turn-1", "type": "tool_call"}],
+        )
 
 
 class FakeUsageStreamingModel:
@@ -54,6 +58,10 @@ class FakeUsageStreamingModel:
                 "total_tokens": 10,
             },
         )
+        yield AIMessageChunk(
+            content="",
+            tool_calls=[{"name": "turn", "args": {"decision": "stop"}, "id": "turn-1", "type": "tool_call"}],
+        )
 
 
 class FakeDuplicatedReasoningStreamingModel:
@@ -63,6 +71,10 @@ class FakeDuplicatedReasoningStreamingModel:
             additional_kwargs={"reasoning_content": "622"},
         )
         yield AIMessageChunk(content="final answer")
+        yield AIMessageChunk(
+            content="",
+            tool_calls=[{"name": "turn", "args": {"decision": "stop"}, "id": "turn-1", "type": "tool_call"}],
+        )
 
 
 class FakeDsmlStreamingModel:
@@ -130,6 +142,10 @@ class RepairsMalformedToolCallStreamingModel:
             ))
             return
         yield AIMessageChunk(content="repaired answer")
+        yield AIMessageChunk(
+            content="",
+            tool_calls=[{"name": "turn", "args": {"decision": "stop"}, "id": "turn-1", "type": "tool_call"}],
+        )
 
 
 class AlwaysMalformedToolCallStreamingModel:
@@ -208,6 +224,10 @@ class FailsOnceStreamingModel(FakeStreamingModel):
             raise ConnectionError("Connection error.")
         self.messages = messages
         yield AIMessageChunk(content="answer")
+        yield AIMessageChunk(
+            content="",
+            tool_calls=[{"name": "turn", "args": {"decision": "stop"}, "id": "turn-1", "type": "tool_call"}],
+        )
 
 
 class FakeRenderer:

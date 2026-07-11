@@ -46,9 +46,8 @@ from voidx.runtime.ui import (
 )
 
 from voidx.agent.graph.turn_control import (
-    FIRST_MISS_PROMPT,
+    TURN_PROMPT,
     INVALID_TURN_PROMPT,
-    SECOND_MISS_PROMPT,
     TURN_TOOL_DEFINITION,
     TurnClassification,
     classify_turn_call,
@@ -337,10 +336,15 @@ class GraphLlmMixin:
         pending_provisional: AIMessage | None = None
         missing_turn_count = 0
         invalid_turn_repaired = False
+        turn_prompt_active = False
         terminal_msg: AIMessage | None = None
         while True:
             try:
-                renderer = StreamingRenderer(self._ui.console, debug=self._debug)
+                renderer = StreamingRenderer(
+                    self._ui.console,
+                    debug=self._debug,
+                    headless=turn_prompt_active,
+                )
                 model_with_tools = self.model.bind_tools(tool_defs) if tool_defs else self.model
                 assistant_msg = await _stream_llm(
                     model_with_tools,
@@ -421,12 +425,17 @@ class GraphLlmMixin:
 
                 if turn_control_active:
                     classification = classify_turn_call(assistant_msg)
+                    has_text = bool(extract_text(assistant_msg).strip())
+                    if turn_prompt_active and (
+                        has_text or classification == TurnClassification.PLAIN_TEXT
+                    ):
+                        classification = TurnClassification.INVALID_TURN
 
                     if classification == TurnClassification.VALID_TURN:
                         turn_terminal = (
-                            assistant_msg
-                            if extract_text(assistant_msg).strip()
-                            else pending_provisional
+                            pending_provisional
+                            if turn_prompt_active
+                            else (assistant_msg if has_text else pending_provisional)
                         )
                         if validate_turn_call(assistant_msg, turn_terminal):
                             self._turn_metrics.increment("turn_control_called")
@@ -435,6 +444,7 @@ class GraphLlmMixin:
                         self._turn_metrics.increment("turn_control_invalid")
                         if not invalid_turn_repaired:
                             invalid_turn_repaired = True
+                            turn_prompt_active = True
                             llm_messages = [
                                 *llm_messages,
                                 HumanMessage(
@@ -460,11 +470,18 @@ class GraphLlmMixin:
                             "should_continue": False,
                         }
 
+                    if classification == TurnClassification.REGULAR_TOOLS:
+                        if turn_prompt_active:
+                            self._turn_metrics.increment("turn_control_prompt_succeeded")
+                        terminal_msg = assistant_msg
+                        break
+
                     if classification == TurnClassification.INVALID_TURN:
                         if not invalid_turn_repaired:
                             self._turn_metrics.increment("turn_control_mixed_tools")
                             self._turn_metrics.increment("turn_control_invalid")
                             invalid_turn_repaired = True
+                            turn_prompt_active = True
                             llm_messages = [
                                 *llm_messages,
                                 HumanMessage(
@@ -475,9 +492,6 @@ class GraphLlmMixin:
                             context_tokens = estimate_context_tokens(llm_messages, self.config.model.model)
                             self._usage_stats.update_context(context_tokens)
                             continue
-                        if pending_provisional is not None:
-                            terminal_msg = normalize_terminal_message(pending_provisional)
-                            break
                         failure_msg = AIMessage(
                             content=(
                                 "LLM call failed: model repeatedly returned an invalid "
@@ -496,10 +510,12 @@ class GraphLlmMixin:
                         self._turn_metrics.increment("turn_control_missing")
                         if missing_turn_count == 1:
                             self._turn_metrics.increment("turn_control_first_prompt")
+                            turn_prompt_active = True
                             llm_messages = [
                                 *llm_messages,
+                                assistant_msg,
                                 HumanMessage(
-                                    content=FIRST_MISS_PROMPT,
+                                    content=TURN_PROMPT,
                                     additional_kwargs={GUIDANCE_MARKER: True},
                                 ),
                             ]
