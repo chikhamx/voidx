@@ -92,8 +92,8 @@ class SessionMethods:
         thread_id = str(params.get("thread_id") or self._active_thread_id or "")
         if not thread_id:
             thread_id = await self.ensure_active_thread()
-        await self.handle_command(UiSubmitCommand(text=text, thread_id=thread_id))
-        return {"ok": True}
+        ok = await self.handle_command(UiSubmitCommand(text=text, thread_id=thread_id))
+        return {"ok": bool(ok)}
 
     async def _method_session_cancel(self, params: dict) -> dict:
         from voidx.ui.protocol import UiCancelCommand

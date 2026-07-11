@@ -5,11 +5,11 @@ from __future__ import annotations
 import asyncio
 import contextlib
 import json
-import logging
 from urllib.parse import parse_qs, urlparse
 
 from websockets.asyncio.server import Server, ServerConnection, serve
 
+from voidx.logging import log_internal_error
 from voidx.logging.tool_log import log_tool_event
 
 from voidx.ui.gateway.session import GatewaySession
@@ -19,7 +19,6 @@ from voidx.ui.protocol.v2.envelope import ParseError, parse_jsonrpc_message
 SEND_QUEUE_MAXSIZE = 256
 WEBSOCKET_SEND_TIMEOUT_SECONDS = 30.0
 
-logger = logging.getLogger(__name__)
 
 
 class _WebSocketClient:
@@ -58,7 +57,6 @@ class _WebSocketClient:
                 "Gateway send queue full; dropping message "
                 f"count={self._dropped_messages} queue_size={queue_size}"
             )
-            logger.warning(message)
             log_tool_event("gateway_send_queue_full", tool_name="gateway", message=message)
 
     # Methods whose messages are state snapshots or refresh triggers;
@@ -109,14 +107,13 @@ class _WebSocketClient:
                         "Gateway websocket send timed out "
                         f"after {self._send_timeout:.1f}s queue_size={queue_size}"
                     )
-                    logger.warning(message)
                     log_tool_event("gateway_websocket_send_timeout", tool_name="gateway", message=message)
                     self._closed = True
                     return
                 except Exception as exc:
                     queue_size = self._send_queue.qsize()
                     message = f"Gateway websocket send failed queue_size={queue_size}: {exc}"
-                    logger.exception("Gateway websocket send failed queue_size=%d", queue_size)
+                    log_internal_error(exc, context="gateway_websocket_send")
                     log_tool_event("gateway_websocket_send_failed", tool_name="gateway", message=message)
                     self._closed = True
                     return

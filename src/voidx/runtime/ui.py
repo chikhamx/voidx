@@ -6,6 +6,10 @@ from importlib import import_module
 from typing import Any, Protocol
 
 
+
+class UiEventTimeout(TimeoutError):
+    """Raised when a UI event request is not handled in time."""
+
 class AgentUiSink(Protocol):
     width: int
     console: Any
@@ -213,7 +217,9 @@ GatewayEventConsumer = _LazyAttr("voidx.ui.gateway", "GatewayEventConsumer")
 GatewayHeadlessFrontend = _LazyAttr("voidx.ui.gateway", "GatewayHeadlessFrontend")
 GatewayServer = _LazyAttr("voidx.ui.gateway", "GatewayServer")
 GatewaySession = _LazyAttr("voidx.ui.gateway", "GatewaySession")
+GuidanceCommitted = _LazyAttr("voidx.ui.output.events", "GuidanceCommitted")
 GuidanceSubmitted = _LazyAttr("voidx.ui.output.events", "GuidanceSubmitted")
+MessageAppended = _LazyAttr("voidx.ui.output.events", "MessageAppended")
 InputSet = _LazyAttr("voidx.ui.output.events", "InputSet")
 McpServerStatus = _LazyAttr("voidx.ui.output.types", "McpServerStatus")
 ThreadExecutionContext = _LazyAttr("voidx.ui.output.types", "ThreadExecutionContext")

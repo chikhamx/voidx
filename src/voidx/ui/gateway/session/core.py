@@ -137,7 +137,7 @@ class GatewaySession(
     def set_thread_id_provider(self, provider: Callable[[], str]) -> None:
         self._thread_id_provider = provider
 
-    async def handle_command(self, command: UiCommand) -> None:
+    async def handle_command(self, command: UiCommand) -> bool:
         thread_id = getattr(command, "thread_id", "") or self._active_thread_id or ""
         if command.kind == "submit":
             try:
@@ -146,24 +146,23 @@ class GatewaySession(
                 if exc.code != ERR_TURN_IN_PROGRESS:
                     raise
                 if command.text.lstrip().startswith("/"):
-                    await self._dispatch_command(command)
-                else:
-                    await self._dispatch_command({"kind": "guide", "text": command.text, "thread_id": thread_id})
-                return
+                    return await self._dispatch_command(command)
+                return await self._dispatch_command({"kind": "guide", "text": command.text, "thread_id": thread_id})
             self._sync_thread_status(thread_id)
-            return
+            return True
         if command.kind == "cancel":
             await self._run_manager.cancel(thread_id)
             self._sync_thread_status(thread_id)
-            return
-        await self._dispatch_command(command)
+            return True
+        return await self._dispatch_command(command)
 
-    async def _dispatch_command(self, command: UiCommand | dict[str, Any]) -> None:
+    async def _dispatch_command(self, command: UiCommand | dict[str, Any]) -> bool:
         if self._command_handler is None:
-            return
+            return True
         result = self._command_handler(command)
         if inspect.isawaitable(result):
-            await result
+            result = await result
+        return True if result is None else bool(result)
 
     def _sync_thread_status(self, thread_id: str) -> None:
         info = self._threads.get(thread_id)

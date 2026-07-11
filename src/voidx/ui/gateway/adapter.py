@@ -28,6 +28,7 @@ from voidx.ui.output.events.schema import (
     DiffAppended,
     ErrorAppended,
     FileChangeAppended,
+    GuidanceCommitted,
     GuidanceSubmitted,
     InputSet,
     MarkdownAppended,
@@ -87,9 +88,12 @@ class UiEventItemAdapter:
     async def handle(self, event: UiEvent) -> JsonRpcNotification | None:
         """Convert a UiEvent to a v2 notification. Returns None if unmapped.
 
-        All 38 UiEvent subtypes are mapped; None is retained as a defensive
-        return for any future event types added to UiEvent without updating
-        this adapter. Callers should filter None before broadcasting.
+        Most UiEvent subtypes are mapped. GuidanceSubmitted maps to a
+        guidance_preview item (started); GuidanceCommitted maps to
+        guidance_preview (completed).
+        None is retained as a defensive return for any future event types
+        added to UiEvent without updating this adapter. Callers should filter
+        None before broadcasting.
         """
         handler = _HANDLERS.get(type(event))
         if handler is None:
@@ -240,16 +244,23 @@ class UiEventItemAdapter:
             _uid(), "message", "started", {"text": event.message, "style": "error"}
         )
 
-    def _on_guidance(self, event: GuidanceSubmitted) -> JsonRpcNotification:
-        return self._item_notification(
-            _uid(), "message", "started",
-            {"text": event.text, "style": "guidance", "truncated": event.truncated},
-        )
-
     def _on_diff_appended(self, event: DiffAppended) -> JsonRpcNotification:
         return self._item_notification(
             _uid(), "message", "started",
             {"text": event.diff_text, "style": "diff", "title": event.title},
+        )
+
+    # ── guidance ─────────────────────────────────────────────────────────
+
+    def _on_guidance_submitted(self, event: GuidanceSubmitted) -> JsonRpcNotification:
+        return self._item_notification(
+            _uid(), "guidance_preview", "started",
+            {"text": event.text, "truncated": event.truncated},
+        )
+
+    def _on_guidance_committed(self, event: GuidanceCommitted) -> JsonRpcNotification:
+        return self._item_notification(
+            _uid(), "guidance_preview", "completed", {},
         )
 
     # ── todo ─────────────────────────────────────────────────────────────
@@ -513,8 +524,10 @@ _HANDLERS: dict[type, Callable[[UiEventItemAdapter, UiEvent], JsonRpcNotificatio
     ThoughtAppended: UiEventItemAdapter._on_thought,
     WarningAppended: UiEventItemAdapter._on_warning,
     ErrorAppended: UiEventItemAdapter._on_error,
-    GuidanceSubmitted: UiEventItemAdapter._on_guidance,
     DiffAppended: UiEventItemAdapter._on_diff_appended,
+    # guidance
+    GuidanceSubmitted: UiEventItemAdapter._on_guidance_submitted,
+    GuidanceCommitted: UiEventItemAdapter._on_guidance_committed,
     # todo
     TodoUpdated: UiEventItemAdapter._on_todo_updated,
     TodoCommitted: UiEventItemAdapter._on_todo_committed,

@@ -4,7 +4,6 @@ from __future__ import annotations
 
 import json
 import asyncio
-import logging
 from typing import Any
 
 from pydantic import BaseModel, Field
@@ -337,10 +336,7 @@ async def _rebuild_transcript_index(session_id: str) -> None:
     path = session_dir(session_id) / "transcript.jsonl"
     if not path.exists():
         return
-    log = logging.getLogger(__name__)
-    log.debug("rebuilding transcript index for session %s", session_id)
     index = await asyncio.to_thread(_scan_transcript_index, path)
-    log.debug("transcript index rebuilt: %d turns, %d summaries", len(index.get("turn_offsets", {})), len(index.get("summary_offsets", {})))
     await write_session_json(session_id, "transcript.idx.json", index)
 
 
