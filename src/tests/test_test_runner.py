@@ -17,6 +17,7 @@ def _load_runner():
     spec = importlib.util.spec_from_file_location("voidx_test_runner", RUNNER_PATH)
     assert spec is not None and spec.loader is not None
     module = importlib.util.module_from_spec(spec)
+    sys.modules[spec.name] = module
     spec.loader.exec_module(module)
     return module
 
@@ -38,6 +39,212 @@ def _temporary_test(source: str) -> Path:
     return path
 
 
+def test_suite_status_is_string_compatible_enum() -> None:
+    runner = _load_runner()
+
+    assert runner.SuiteStatus.PASS == "PASS"
+    assert runner.SuiteStatus.FAIL == "FAIL"
+    assert runner._classify_pytest_status(0, "") is runner.SuiteStatus.PASS
+    assert runner._classify_pytest_status(5, "") is runner.SuiteStatus.SKIP
+    assert runner._classify_vitest_status(1, "Tests  1 failed (1)") is runner.SuiteStatus.FAIL
+    assert runner._classify_cargo_status(101, "error[E0308]: mismatched types") is runner.SuiteStatus.FAIL
+
+
+def test_suite_result_serializes_to_plain_json_ready_dict() -> None:
+    runner = _load_runner()
+    result = runner.SuiteResult(
+        name="backend",
+        status=runner.SuiteStatus.FAIL,
+        passed=2,
+        failed=1,
+        skipped=1,
+        errors=[
+            runner.TestFailure(
+                test_id="src/tests/test_sample.py::test_broken",
+                file_path="src/tests/test_sample.py",
+                test_name="test_broken",
+                message="AssertionError: expected truthy value",
+            )
+        ],
+        skipped_details=[runner.SkipRecord(reason="npm not found")],
+        command=["python", "-m", "pytest"],
+        exit_code=1,
+        duration_seconds=0.25,
+    )
+
+    assert runner.to_dict(result) == {
+        "status": "FAIL",
+        "passed": 2,
+        "failed": 1,
+        "skipped": 1,
+        "exit_code": 1,
+        "duration": "250 ms",
+        "output": "",
+        "errors": [
+            {
+                "test_id": "src/tests/test_sample.py::test_broken",
+                "file_path": "src/tests/test_sample.py",
+                "test_name": "test_broken",
+                "message": "AssertionError: expected truthy value",
+            }
+        ],
+        "skipped_details": [{"reason": "npm not found"}],
+    }
+
+    passed_result = runner.to_dict(
+        runner.SuiteResult(
+            name="backend",
+            status=runner.SuiteStatus.PASS,
+            duration_seconds=1.25,
+        )
+    )
+    assert passed_result == {
+        "status": "PASS",
+        "passed": 0,
+        "failed": 0,
+        "skipped": 0,
+        "exit_code": 0,
+        "duration": "1.25 s",
+        "output": "",
+    }
+    assert "name" not in passed_result
+    assert "errors" not in passed_result
+    assert "skipped_details" not in passed_result
+
+
+def test_summarize_consumes_suite_results_without_output_change(capsys) -> None:
+    runner = _load_runner()
+
+    runner._summarize([runner.SuiteResult(name="backend", status=runner.SuiteStatus.PASS)])
+    runner._summarize([
+        runner.SuiteResult(name="backend", status=runner.SuiteStatus.PASS),
+        runner.SuiteResult(name="frontend", status=runner.SuiteStatus.FAIL),
+    ])
+
+    assert capsys.readouterr().out.splitlines() == [
+        "✅ backend — passed",
+        "✅ backend=PASS | ❌ frontend=FAIL",
+    ]
+
+
+def test_build_suite_result_extracts_counts_and_failure_details() -> None:
+    runner = _load_runner()
+    pytest_output = "\n".join(
+        [
+            "FAILED src/tests/test_sample.py::test_broken - AssertionError: expected truthy value",
+            "2 failed, 3 passed, 1 skipped in 0.10s",
+        ]
+    )
+    vitest_output = "\n".join(
+        [
+            " FAIL  frontend/src/sample.test.ts > sample > renders",
+            "AssertionError: expected true to be false",
+            " Test Files  1 failed (1)",
+            "      Tests  2 failed | 4 passed | 1 skipped (7)",
+        ]
+    )
+    cargo_output = "\n".join(
+        [
+            "test tests::it_fails ... FAILED",
+            "test result: FAILED. 5 passed; 1 failed; 2 ignored; 0 measured",
+        ]
+    )
+
+    pytest_result = runner._build_suite_result(
+        "backend",
+        runner.SuiteStatus.FAIL,
+        ["python", "-m", "pytest"],
+        1,
+        0.1,
+        pytest_output,
+    )
+    vitest_result = runner._build_suite_result(
+        "frontend",
+        runner.SuiteStatus.FAIL,
+        ["npm", "test"],
+        1,
+        0.2,
+        vitest_output,
+    )
+    cargo_result = runner._build_suite_result(
+        "desktop",
+        runner.SuiteStatus.FAIL,
+        ["cargo", "test"],
+        101,
+        0.3,
+        cargo_output,
+    )
+
+    assert (pytest_result.passed, pytest_result.failed, pytest_result.skipped) == (3, 2, 1)
+    assert pytest_result.errors == [
+        runner.TestFailure(
+            test_id="src/tests/test_sample.py::test_broken",
+            file_path="src/tests/test_sample.py",
+            test_name="test_broken",
+            message="AssertionError: expected truthy value",
+        )
+    ]
+    assert (vitest_result.passed, vitest_result.failed, vitest_result.skipped) == (4, 2, 1)
+    assert vitest_result.errors[0].test_id == "frontend/src/sample.test.ts > sample > renders"
+    assert vitest_result.errors[0].file_path == "frontend/src/sample.test.ts"
+    assert vitest_result.errors[0].test_name == "renders"
+    assert "AssertionError" in vitest_result.errors[0].message
+    assert (cargo_result.passed, cargo_result.failed, cargo_result.skipped) == (5, 1, 2)
+    assert cargo_result.errors[0].test_id == "tests::it_fails"
+    assert cargo_result.errors[0].test_name == "it_fails"
+
+
+
+def test_main_prints_structured_json_to_stdout(monkeypatch, capsys) -> None:
+    runner = _load_runner()
+
+    def fake_backend(extra: list[str], verbose: bool):
+        return runner.SuiteResult(
+            name="backend",
+            status=runner.SuiteStatus.FAIL,
+            passed=1,
+            failed=1,
+            command=["python", "-m", "pytest"],
+            exit_code=1,
+            duration_seconds=0.1,
+            errors=[
+                runner.TestFailure(
+                    test_id="src/tests/test_sample.py::test_broken",
+                    file_path="src/tests/test_sample.py",
+                    test_name="test_broken",
+                    message="AssertionError",
+                )
+            ],
+        )
+
+    monkeypatch.setattr(runner, "_run_backend", fake_backend)
+    monkeypatch.setattr(sys, "argv", ["test.py", "--backend"])
+
+    assert runner.main() == 0
+    payload = __import__("json").loads(capsys.readouterr().out)
+    assert payload == {
+        "results": [
+            {
+                "status": "FAIL",
+                "passed": 1,
+                "failed": 1,
+                "skipped": 0,
+                "exit_code": 1,
+                "duration": "100 ms",
+                "output": "",
+                "errors": [
+                    {
+                        "test_id": "src/tests/test_sample.py::test_broken",
+                        "file_path": "src/tests/test_sample.py",
+                        "test_name": "test_broken",
+                        "message": "AssertionError",
+                    }
+                ],
+            }
+        ],
+        "exit_code": 0,
+    }
+
 def test_main_returns_nonzero_for_runner_infrastructure_error(monkeypatch, capsys) -> None:
     runner = _load_runner()
 
@@ -48,7 +255,11 @@ def test_main_returns_nonzero_for_runner_infrastructure_error(monkeypatch, capsy
     monkeypatch.setattr(sys, "argv", ["test.py", "--backend"])
 
     assert runner.main() == 2
-    assert "runner error" in capsys.readouterr().out.lower()
+    payload = __import__("json").loads(capsys.readouterr().out)
+    assert payload["exit_code"] == 2
+    assert payload["results"][0]["status"] == "ERROR"
+    assert payload["results"][0]["output"] == "missing runner cwd"
+    assert payload["results"][0]["errors"][0]["message"] == "missing runner cwd"
 
 
 def test_vitest_filter_preserves_real_stderr_and_strips_only_noise() -> None:
@@ -138,9 +349,11 @@ def test_tui_only_run_uses_compact_pytest_output() -> None:
     result = _run_runner("--backend", "--", "tui/tests/test_headless.py")
 
     assert result.returncode == 0
+    payload = __import__("json").loads(result.stdout)
+    output = payload["results"][0]["output"]
     assert "[100%]" not in result.stdout
-    assert "test_headless.py" not in result.stdout
-    assert "passed" in result.stdout
+    assert "test_headless.py" not in output
+    assert "passed" in output
 
 
 @pytest.mark.parametrize(
@@ -161,8 +374,9 @@ def test_pytest_phase_errors_are_not_reported_as_success(source: str, expected: 
         shutil.rmtree(test_path.parent, ignore_errors=True)
 
     assert result.returncode == 0
-    assert expected in result.stdout
-    assert not result.stdout.startswith("✅")
+    payload = __import__("json").loads(result.stdout)
+    assert expected in payload["results"][0]["output"]
+    assert payload["results"][0]["status"] == "FAIL"
 
 
 def test_pytest_summary_preserves_skip_and_xfail_categories() -> None:
@@ -175,16 +389,20 @@ def test_pytest_summary_preserves_skip_and_xfail_categories() -> None:
         shutil.rmtree(test_path.parent, ignore_errors=True)
 
     assert result.returncode == 0
-    assert "1 passed" in result.stdout
-    assert "1 skipped" in result.stdout
-    assert "1 xfailed" in result.stdout
+    payload = __import__("json").loads(result.stdout)
+    output = payload["results"][0]["output"]
+    assert "1 passed" in output
+    assert "1 skipped" in output
+    assert "1 xfailed" in output
 
 
 def test_pytest_usage_error_returns_nonzero() -> None:
     result = _run_runner("--backend", "--", "--definitely-invalid-option")
 
     assert result.returncode == 2
-    assert "unrecognized arguments" in result.stdout
+    payload = __import__("json").loads(result.stdout)
+    assert payload["exit_code"] == 2
+    assert "unrecognized arguments" in payload["results"][0]["output"]
 
 
 def test_pytest_filter_preserves_warning_and_deselected_summary() -> None:
@@ -250,7 +468,12 @@ def test_cargo_cli_parses_cargo_args_separately(monkeypatch) -> None:
         captured["extra"] = extra
         captured["verbose"] = verbose
         captured["cargo_args"] = cargo_args
-        return "PASS", 0
+        return runner.SuiteResult(
+            name="desktop",
+            status=runner.SuiteStatus.PASS,
+            command=["cargo", "test"],
+            exit_code=0,
+        )
 
     monkeypatch.setattr(runner, "_has_cmd_for", lambda suite: True)
     monkeypatch.setattr(runner, "_run_desktop", fake_desktop)
@@ -283,11 +506,11 @@ def test_runner_status_classification_distinguishes_failures_from_errors() -> No
     assert runner._classify_vitest_status(
         1, "Test Files  1 failed (1)\nTests  1 failed (1)"
     ) == "FAIL"
-    assert runner._classify_vitest_status(1, "CACError: Unknown option") == "ERROR"
+    assert runner._classify_vitest_status(1, "CACError: Unknown option") == "FAIL"
     assert runner._classify_cargo_status(
         101, "test result: FAILED. 0 passed; 1 failed"
     ) == "FAIL"
-    assert runner._classify_cargo_status(101, "error[E0308]: mismatched types") == "ERROR"
+    assert runner._classify_cargo_status(101, "error[E0308]: mismatched types") == "FAIL"
 
 
 def test_pytest_status_treats_plugin_startup_failure_as_runner_error() -> None:
@@ -297,7 +520,7 @@ def test_pytest_status_treats_plugin_startup_failure_as_runner_error() -> None:
     assert runner._classify_pytest_status(1, output) == "ERROR"
 
 
-def test_vitest_status_treats_transform_failure_as_runner_error() -> None:
+def test_vitest_status_treats_transform_failure_as_user_error() -> None:
     runner = _load_runner()
 
     output = "\n".join(
@@ -307,7 +530,7 @@ def test_vitest_status_treats_transform_failure_as_runner_error() -> None:
             "Tests  no tests",
         ]
     )
-    assert runner._classify_vitest_status(1, output) == "ERROR"
+    assert runner._classify_vitest_status(1, output) == "FAIL"
 
 
 def test_pytest_compact_handles_empty_xfail_reason() -> None:
@@ -353,9 +576,10 @@ def test_runner_error_markers_override_failure_summaries() -> None:
         "test result: FAILED. 0 passed; 1 failed"
     )
 
-    assert runner._classify_pytest_status(1, pytest_output) == "ERROR"
-    assert runner._classify_vitest_status(1, vitest_output) == "ERROR"
-    assert runner._classify_cargo_status(101, cargo_output) == "ERROR"
+    # User code errors (INTERNALERROR, Transform failed, compile errors) are FAIL.
+    assert runner._classify_pytest_status(1, pytest_output) == "FAIL"
+    assert runner._classify_vitest_status(1, vitest_output) == "FAIL"
+    assert runner._classify_cargo_status(101, cargo_output) == "FAIL"
 
 
 def test_vitest_filter_uses_exact_reporter_metadata_shapes() -> None:
@@ -426,7 +650,8 @@ def test_pytest_file_not_found_does_not_return_exit_2() -> None:
     result = _run_runner("--backend", "--", "/nonexistent/path")
 
     assert result.returncode == 0
-    assert "❌ backend" not in result.stdout
+    payload = __import__("json").loads(result.stdout)
+    assert payload["results"][0]["status"] == "FAIL"
 
 
 def test_pytest_no_tests_ran_is_not_runner_error() -> None:
@@ -448,4 +673,5 @@ def test_pytest_no_tests_ran_does_not_return_exit_2() -> None:
     )
 
     assert result.returncode == 0
-    assert "❌ backend" not in result.stdout
+    payload = __import__("json").loads(result.stdout)
+    assert payload["results"][0]["status"] == "FAIL"

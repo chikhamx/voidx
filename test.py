@@ -4,11 +4,15 @@
 from __future__ import annotations
 
 import argparse
+import json
 import os
 import re
 import shutil
 import subprocess
 import sys
+import time
+from dataclasses import dataclass, field
+from enum import Enum
 from pathlib import Path
 
 
@@ -24,6 +28,52 @@ if _VENV_PY.is_file() and str(_VENV_PY) != sys.executable:
 
 SUITES = ("backend", "frontend", "desktop")
 _ANSI_RE = re.compile(r"\x1b\[[0-?]*[ -/]*[@-~]")
+
+
+class SuiteStatus(str, Enum):
+    """Suite execution terminal state."""
+
+    PASS = "PASS"
+    FAIL = "FAIL"
+    SKIP = "SKIP"
+    ERROR = "ERROR"
+
+
+@dataclass
+class TestFailure:
+    """Single test failure record."""
+
+    test_id: str
+    file_path: str
+    test_name: str
+    message: str
+
+
+@dataclass
+class SkipRecord:
+    """Single skip record."""
+
+    reason: str
+
+
+@dataclass
+class SuiteResult:
+    """Complete result for a single suite."""
+
+    name: str
+    status: SuiteStatus
+    passed: int = 0
+    failed: int = 0
+    skipped: int = 0
+    errors: list[TestFailure] = field(default_factory=list)
+    skipped_details: list[SkipRecord] = field(default_factory=list)
+    command: list[str] = field(default_factory=list)
+    output: str = ""
+    exit_code: int = 0
+    duration_seconds: float = 0.0
+
+
+_RUNNER_ERROR_STATES = {SuiteStatus.ERROR}
 
 
 def main() -> int:
@@ -44,32 +94,49 @@ def main() -> int:
         extra = extra[1:]
 
     selected = [suite for suite in SUITES if getattr(args, suite)] or list(SUITES)
-    results: list[tuple[str, str, int]] = []
-    runner_error = False
+    results: list[SuiteResult] = []
 
     for suite in selected:
         if not _has_cmd_for(suite):
-            print(f"⏭ {suite}: skipped ({_missing_reason(suite)})")
-            results.append((suite, "SKIP", 0))
+            reason = _missing_reason(suite)
+            results.append(
+                SuiteResult(
+                    name=suite,
+                    status=SuiteStatus.SKIP,
+                    skipped=1,
+                    skipped_details=[SkipRecord(reason=reason)],
+                )
+            )
             continue
 
         try:
             if suite == "backend":
-                status, code = _run_backend(extra, args.verbose)
+                result = _run_backend(extra, args.verbose)
             elif suite == "frontend":
-                status, code = _run_frontend(extra, args.verbose)
+                result = _run_frontend(extra, args.verbose)
             else:
-                status, code = _run_desktop(extra, args.verbose, args.cargo_arg)
+                result = _run_desktop(extra, args.verbose, args.cargo_arg)
         except OSError as exc:
-            runner_error = True
-            status, code = "ERROR", 2
-            print(f"❌ {suite}: runner error: {exc}")
-        if status == "ERROR":
-            runner_error = True
-        results.append((suite, status, code))
+            result = SuiteResult(
+                name=suite,
+                status=SuiteStatus.ERROR,
+                errors=[
+                    TestFailure(
+                        test_id=suite,
+                        file_path="",
+                        test_name=suite,
+                        message=str(exc),
+                    )
+                ],
+                exit_code=2,
+                output=str(exc),
+            )
+        results.append(result)
 
-    _summarize(results)
-    return 2 if runner_error else 0
+    runner_error = any(result.status in _RUNNER_ERROR_STATES for result in results)
+    exit_code = 2 if runner_error else 0
+    _print_json_results(results, exit_code)
+    return exit_code
 
 
 def _resolve_cmd(name: str) -> str | None:
@@ -126,41 +193,55 @@ def _build_backend_command(extra: list[str], *, verbose: bool) -> list[str]:
     return command
 
 
-def _run_backend(extra: list[str], verbose: bool) -> tuple[str, int]:
+def _run_backend(extra: list[str], verbose: bool) -> SuiteResult:
     command = _build_backend_command(extra, verbose=verbose)
+    started = time.monotonic()
     code, output = _run_capture(command, cwd=ROOT)
-    if verbose:
-        _print_raw(output)
-    else:
-        _print_filtered(_filter_pytest_output(output))
-    return _classify_pytest_status(code, output), code
+    duration = time.monotonic() - started
+    return _build_suite_result(
+        "backend",
+        _classify_pytest_status(code, output),
+        command,
+        code,
+        duration,
+        output,
+        output if verbose else _filter_pytest_output(output),
+    )
 
 
-def _classify_pytest_status(code: int, output: str) -> str:
+def _classify_pytest_status(code: int, output: str) -> SuiteStatus:
     if code == 0:
-        return "PASS"
+        return SuiteStatus.PASS
     if code == 5:
-        return "SKIP"
+        return SuiteStatus.SKIP
     clean = _strip_ansi(output)
+    # Only test.py's own failures (plugin/config bugs) should be ERROR.
+    # User code errors (conftest.py, test file imports, syntax) are FAIL.
     runner_error = re.search(
-        r"^(?:INTERNALERROR|ERROR: usage:|pytest: error:)|"
+        r"^(?:ERROR: usage:|pytest: error:)|"
         r"Error importing plugin|No module named ['\"]scripts\.pytest_compact",
         clean,
         re.MULTILINE,
     )
     if runner_error:
-        return "ERROR"
+        return SuiteStatus.ERROR
     if re.search(
         r"^\d+ [A-Za-z]+(?:, \d+ [A-Za-z]+)*(?: in .+)?$",
         clean,
         re.MULTILINE,
     ):
-        return "FAIL"
+        return SuiteStatus.FAIL
     if re.search(r"^ERROR: file or directory not found:", clean, re.MULTILINE):
-        return "FAIL"
+        return SuiteStatus.FAIL
     if re.search(r"^no tests ran in ", clean, re.MULTILINE):
-        return "FAIL"
-    return "ERROR"
+        return SuiteStatus.FAIL
+    if re.search(
+        r"^(?:INTERNALERROR|ImportError while importing test module)",
+        clean,
+        re.MULTILINE,
+    ):
+        return SuiteStatus.FAIL
+    return SuiteStatus.FAIL
 
 
 def _filter_pytest_output(text: str) -> str:
@@ -205,31 +286,30 @@ def _build_frontend_command(extra: list[str], *, verbose: bool) -> list[str]:
     return command
 
 
-def _run_frontend(extra: list[str], verbose: bool) -> tuple[str, int]:
+def _run_frontend(extra: list[str], verbose: bool) -> SuiteResult:
     command = _build_frontend_command(extra, verbose=verbose)
+    started = time.monotonic()
     code, output = _run_capture(command, cwd=ROOT / "frontend")
-    if verbose:
-        _print_raw(output)
-    else:
-        _print_filtered(_filter_vitest_output(output))
-    return _classify_vitest_status(code, output), code
-
-
-def _classify_vitest_status(code: int, output: str) -> str:
-    if code == 0:
-        return "PASS"
-    clean = _strip_ansi(output)
-    runner_error = re.search(
-        r"Transform failed|CACError:|Failed to load config|"
-        r"Error: Build failed|Unhandled Error|Startup Error",
-        clean,
-        re.IGNORECASE,
+    duration = time.monotonic() - started
+    return _build_suite_result(
+        "frontend",
+        _classify_vitest_status(code, output),
+        command,
+        code,
+        duration,
+        output,
+        output if verbose else _filter_vitest_output(output),
     )
-    if runner_error:
-        return "ERROR"
+
+
+def _classify_vitest_status(code: int, output: str) -> SuiteStatus:
+    if code == 0:
+        return SuiteStatus.PASS
+    clean = _strip_ansi(output)
+    # User code/build errors are FAIL; only test.py's own bugs are ERROR.
     if re.search(r"Tests\s+\d+ failed", clean):
-        return "FAIL"
-    return "ERROR"
+        return SuiteStatus.FAIL
+    return SuiteStatus.FAIL
 
 
 def _filter_vitest_output(text: str) -> str:
@@ -291,32 +371,194 @@ def _build_desktop_command(
 
 def _run_desktop(
     extra: list[str], verbose: bool, cargo_args: list[str] | None = None
-) -> tuple[str, int]:
+) -> SuiteResult:
     command = _build_desktop_command(extra, verbose=verbose, cargo_args=cargo_args or [])
+    started = time.monotonic()
     code, output = _run_capture(command, cwd=ROOT / "desktop" / "tauri")
-    if verbose:
-        _print_raw(output)
-    else:
-        _print_filtered(_filter_cargo_output(output))
-    return _classify_cargo_status(code, output), code
+    duration = time.monotonic() - started
+    return _build_suite_result(
+        "desktop",
+        _classify_cargo_status(code, output),
+        command,
+        code,
+        duration,
+        output,
+        output if verbose else _filter_cargo_output(output),
+    )
 
 
-def _classify_cargo_status(code: int, output: str) -> str:
+def _classify_cargo_status(code: int, output: str) -> SuiteStatus:
     if code == 0:
-        return "PASS"
+        return SuiteStatus.PASS
     clean = _strip_ansi(output)
+    # Only test.py's own failures (bad args/commands) should be ERROR.
+    # User code errors (compile, manifest, build) are FAIL.
     runner_error = re.search(
-        r"^(?:error\[[A-Z]\d+\]:|error: could not compile|"
-        r"error: failed to (?:parse manifest|load source|run custom build command)|"
-        r"error: (?:unexpected argument|no such command|no test target))",
+        r"^error: (?:unexpected argument|no such command|no test target)",
         clean,
         re.MULTILINE,
     )
     if runner_error:
-        return "ERROR"
+        return SuiteStatus.ERROR
     if re.search(r"test result: FAILED\. \d+ passed; [1-9]\d* failed", clean):
-        return "FAIL"
-    return "ERROR"
+        return SuiteStatus.FAIL
+    return SuiteStatus.FAIL
+
+
+def _build_suite_result(
+    name: str,
+    status: SuiteStatus,
+    command: list[str],
+    exit_code: int,
+    duration_seconds: float,
+    raw_output: str,
+    output: str | None = None,
+) -> SuiteResult:
+    output = raw_output if output is None else output
+    passed, failed, skipped = _extract_counts(name, raw_output)
+    errors = _extract_failures(name, raw_output) if status in {SuiteStatus.FAIL, SuiteStatus.ERROR} else []
+    return SuiteResult(
+        name=name,
+        status=status,
+        passed=passed,
+        failed=failed,
+        skipped=skipped,
+        errors=errors,
+        command=command,
+        exit_code=exit_code,
+        duration_seconds=duration_seconds,
+        output=output,
+    )
+
+
+def _extract_counts(suite: str, output: str) -> tuple[int, int, int]:
+    clean = _strip_ansi(output)
+    if suite == "frontend":
+        return _extract_vitest_counts(clean)
+    if suite == "desktop":
+        return _extract_cargo_counts(clean)
+    return _extract_pytest_counts(clean)
+
+
+def _extract_pytest_counts(output: str) -> tuple[int, int, int]:
+    passed = failed = skipped = 0
+    summary_match = None
+    for line in output.splitlines():
+        if re.search(r"\b(?:passed|failed|error|errors|skipped|xfailed|xpassed)\b", line):
+            summary_match = line.strip()
+    if not summary_match:
+        return passed, failed, skipped
+    for number, label in re.findall(r"(\d+)\s+([A-Za-z]+)", summary_match):
+        value = int(number)
+        label = label.lower()
+        if label == "passed":
+            passed += value
+        elif label in {"failed", "error", "errors"}:
+            failed += value
+        elif label == "skipped":
+            skipped += value
+    return passed, failed, skipped
+
+
+def _extract_vitest_counts(output: str) -> tuple[int, int, int]:
+    passed = failed = skipped = 0
+    for line in output.splitlines():
+        stripped = line.strip()
+        if not stripped.startswith("Tests"):
+            continue
+        for number, label in re.findall(r"(\d+)\s+(failed|passed|skipped)", stripped):
+            value = int(number)
+            if label == "passed":
+                passed += value
+            elif label == "failed":
+                failed += value
+            elif label == "skipped":
+                skipped += value
+    return passed, failed, skipped
+
+
+def _extract_cargo_counts(output: str) -> tuple[int, int, int]:
+    passed = failed = skipped = 0
+    pattern = re.compile(r"test result: (?:ok|FAILED)\. (\d+) passed; (\d+) failed; (\d+) ignored")
+    for match in pattern.finditer(output):
+        passed += int(match.group(1))
+        failed += int(match.group(2))
+        skipped += int(match.group(3))
+    return passed, failed, skipped
+
+
+def _extract_failures(suite: str, output: str) -> list[TestFailure]:
+    clean = _strip_ansi(output)
+    if suite == "frontend":
+        return _extract_vitest_failures(clean)
+    if suite == "desktop":
+        return _extract_cargo_failures(clean)
+    return _extract_pytest_failures(clean)
+
+
+def _extract_pytest_failures(output: str) -> list[TestFailure]:
+    failures: list[TestFailure] = []
+    for line in output.splitlines():
+        match = re.match(r"FAILED\s+([^\s]+)::([^\s]+)\s+-\s+(.+)", line.strip())
+        if not match:
+            continue
+        file_path = match.group(1)
+        test_name = match.group(2)
+        failures.append(
+            TestFailure(
+                test_id=f"{file_path}::{test_name}",
+                file_path=file_path,
+                test_name=test_name,
+                message=match.group(3),
+            )
+        )
+    return failures
+
+
+def _extract_vitest_failures(output: str) -> list[TestFailure]:
+    failures: list[TestFailure] = []
+    lines = output.splitlines()
+    for index, line in enumerate(lines):
+        match = re.match(r"\s*FAIL\s+(.+)", line)
+        if not match:
+            continue
+        test_id = match.group(1).strip()
+        parts = [part.strip() for part in test_id.split(" > ") if part.strip()]
+        file_path = parts[0] if parts else test_id
+        test_name = parts[-1] if parts else test_id
+        message = ""
+        for next_line in lines[index + 1 :]:
+            stripped = next_line.strip()
+            if stripped:
+                message = stripped
+                break
+        failures.append(
+            TestFailure(
+                test_id=test_id,
+                file_path=file_path,
+                test_name=test_name,
+                message=message,
+            )
+        )
+    return failures
+
+
+def _extract_cargo_failures(output: str) -> list[TestFailure]:
+    failures: list[TestFailure] = []
+    for line in output.splitlines():
+        match = re.match(r"test\s+(.+?)\s+\.\.\.\s+FAILED", line.strip())
+        if not match:
+            continue
+        test_id = match.group(1)
+        failures.append(
+            TestFailure(
+                test_id=test_id,
+                file_path="",
+                test_name=test_id.split("::")[-1],
+                message="test failed",
+            )
+        )
+    return failures
 
 
 def _filter_cargo_output(text: str) -> str:
@@ -397,19 +639,64 @@ def _run(command: list[str], cwd: Path, env: dict[str, str] | None = None) -> in
     return int(result.returncode)
 
 
-def _summarize(results: list[tuple[str, str, int]]) -> None:
+def to_dict(result: SuiteResult) -> dict:
+    payload = {
+        "status": result.status.value,
+        "passed": result.passed,
+        "failed": result.failed,
+        "skipped": result.skipped,
+        "exit_code": result.exit_code,
+        "duration": _format_duration(result.duration_seconds),
+        "output": result.output,
+    }
+    if result.errors:
+        payload["errors"] = [
+            {
+                "test_id": error.test_id,
+                "file_path": error.file_path,
+                "test_name": error.test_name,
+                "message": error.message,
+            }
+            for error in result.errors
+        ]
+    if result.skipped_details:
+        payload["skipped_details"] = [
+            {"reason": skip.reason} for skip in result.skipped_details
+        ]
+    return payload
+
+
+def _format_duration(seconds: float) -> str:
+    if seconds < 1:
+        return f"{seconds * 1000:.0f} ms"
+    value = f"{seconds:.2f}".rstrip("0").rstrip(".")
+    return f"{value} s"
+
+
+def _print_json_results(results: list[SuiteResult], exit_code: int) -> None:
+    print(json.dumps({"results": [to_dict(result) for result in results], "exit_code": exit_code}))
+
+
+def _summarize(results: list[SuiteResult]) -> None:
     if len(results) == 1:
-        name, status, _ = results[0]
-        if status == "PASS":
-            print(f"✅ {name} — passed")
-        elif status == "SKIP":
-            print(f"⏭ {name} — skipped")
-        elif status == "ERROR":
-            print(f"❌ {name} — runner error")
+        result = results[0]
+        if result.status is SuiteStatus.PASS:
+            print(f"✅ {result.name} — passed")
+        elif result.status is SuiteStatus.SKIP:
+            print(f"⏭ {result.name} — skipped")
+        elif result.status is SuiteStatus.ERROR:
+            print(f"❌ {result.name} — runner error")
         return
 
-    icons = {"PASS": "✅", "FAIL": "❌", "SKIP": "⏭", "ERROR": "❌"}
-    summary = " | ".join(f"{icons[status]} {name}={status}" for name, status, _ in results)
+    icons = {
+        SuiteStatus.PASS: "✅",
+        SuiteStatus.FAIL: "❌",
+        SuiteStatus.SKIP: "⏭",
+        SuiteStatus.ERROR: "❌",
+    }
+    summary = " | ".join(
+        f"{icons[result.status]} {result.name}={result.status.value}" for result in results
+    )
     print(summary)
 
 
