@@ -18,6 +18,7 @@ from voidx.ui.output.dock.formatting import (
 )
 from voidx.ui.output.agent_display import agent_display_name
 from voidx.ui.output.manage_display import manage_display
+from voidx.ui.output.tool_display import extract_tool_display_value
 from voidx.ui.output.tree import OutputNode
 from voidx.ui.output.dock.nodes_startup import DockStartupNodeMixin
 from voidx.ui.output.dock.nodes_status import DockStatusNodeMixin
@@ -355,7 +356,7 @@ def _tool_header(
     raw_args: dict[str, Any],
 ) -> str:
     if tool_name == "agent":
-        agent_name = raw_args.get("agent") or _tool_display_value(tool_name, args, raw_args)
+        agent_name = raw_args.get("agent") or extract_tool_display_value(tool_name, raw_args, args)
         return f"[bold]{escape(agent_display_name(agent_name))}[/bold]"
     if tool_name == "manage":
         name, value = manage_display(raw_args, limit=56)
@@ -363,7 +364,7 @@ def _tool_header(
             return f'[bold]{escape(name)}[/bold]("[cyan]{escape(value)}[/cyan]")'
         return f"[bold]{escape(name)}[/bold]()"
     name = _tool_display_name(tool_name, label)
-    value = _tool_display_value(tool_name, args, raw_args)
+    value = extract_tool_display_value(tool_name, raw_args, args)
     if value:
         return f'[bold]{escape(name)}[/bold]("[cyan]{escape(_shorten(value))}[/cyan]")'
     return f"[bold]{escape(name)}[/bold]()"
@@ -406,46 +407,6 @@ def _tool_display_name(tool_name: str, label: str) -> str:
     return label or (tool_name or "Tool").title()
 
 
-def _tool_display_value(tool_name: str, args: str, raw_args: dict[str, Any]) -> str:
-    value: object = ""
-    if tool_name in {"read", "write", "replace", "lsp"}:
-        value = raw_args.get("file_path") or raw_args.get("path")
-    elif tool_name == "manage":
-        _action, value = manage_display(raw_args)
-    elif tool_name == "grep":
-        pattern = raw_args.get("pattern") or raw_args.get("query")
-        include = raw_args.get("include")
-        value = f"{pattern} in {include}" if pattern and include else pattern
-    elif tool_name == "glob":
-        value = raw_args.get("pattern")
-    elif tool_name in ("bash", "powershell"):
-        value = str(raw_args.get("command") or "").replace("\n", "; ")
-    elif tool_name == "git":
-        value = raw_args.get("args")
-    elif tool_name == "agent":
-        value = raw_args.get("agent") or raw_args.get("description")
-    elif tool_name == "checkpoint":
-        value = raw_args.get("goal")
-    elif tool_name in {"webfetch", "websearch"}:
-        value = raw_args.get("url") or raw_args.get("query")
-    elif raw_args:
-        for key in ("file_path", "path", "pattern", "query", "url", "command", "name"):
-            if raw_args.get(key):
-                value = raw_args[key]
-                break
-    if value:
-        return str(value)
-    return _strip_rich_markup(args)
-
-
-def _strip_rich_markup(text: str) -> str:
-    if not text:
-        return ""
-    text = re.sub(r"\[/?[A-Za-z0-9_#= .:-]+\]", "", text)
-    text = text.strip()
-    if "=" in text:
-        text = text.split("=", 1)[1].strip()
-    return text.strip("\"'")
 
 
 def _shorten(text: str, limit: int = 80) -> str:

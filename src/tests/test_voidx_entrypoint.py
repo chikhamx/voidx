@@ -45,3 +45,27 @@ def test_voidx_script_prioritizes_workspace_source_over_installed_package(
     assert result.returncode == 0, result.stderr
     assert "loaded fake installed voidx" not in result.stdout
     assert result.stdout.startswith("voidx v")
+
+
+def test_print_version_uses_void_console(monkeypatch) -> None:
+    from voidx import main as voidx_main
+
+    printed = []
+
+    class FakeConsole:
+        def print(self, value):
+            printed.append(value)
+
+    monkeypatch.setattr(voidx_main, "_vconsole", lambda: FakeConsole())
+
+    voidx_main._print_version()
+
+    assert len(printed) == 1
+    assert printed[0].startswith("voidx v")
+
+
+def test_select_start_session_signature_only_keeps_resume_and_console() -> None:
+    import inspect
+    from voidx import main as voidx_main
+
+    assert list(inspect.signature(voidx_main._select_start_session).parameters) == ["resume", "vconsole"]

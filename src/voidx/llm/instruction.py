@@ -20,6 +20,7 @@ from pathlib import Path
 import httpx
 
 from voidx.logging.request_log import log_llm_diagnostic
+from voidx.logging.tool_log import log_tool_event
 from voidx.paths import voidx_home
 from voidx.skills.registry import SkillRegistry
 from voidx.skills.schema import SkillSelectionConfig
@@ -249,7 +250,8 @@ class InstructionService:
                 content=content,
             )
             return content
-        except Exception:
+        except Exception as exc:
+            log_tool_event("instruction_read_file", tool_name="instruction", message=str(exc))
             self._file_cache.pop(resolved, None)
             return ""
 

@@ -505,8 +505,8 @@ def _update_install_marker(new_version: str) -> None:
                 os.replace(temp_path, marker_path)
             finally:
                 temp_path.unlink(missing_ok=True)
-    except Exception:
-        pass
+    except Exception as exc:
+        log_internal_error(exc, context="selfupdate_marker_write")
 
 
 def _clear_install_marker() -> None:
@@ -515,8 +515,8 @@ def _clear_install_marker() -> None:
         return
     try:
         marker_path.unlink(missing_ok=True)
-    except Exception:
-        pass
+    except Exception as exc:
+        log_internal_error(exc, context="selfupdate_marker_clear")
 
 
 async def _rollback_to(old_version: str, env: dict[str, str], timeout: float) -> str | None:

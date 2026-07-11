@@ -10,6 +10,7 @@ from dataclasses import dataclass, field
 from pathlib import Path
 from typing import Any
 
+from voidx.diffing import language_from_path
 from voidx.paths import CLIPBOARD_ATTACHMENT_DIR
 from voidx.runtime.attachments import MAX_IMAGE_ATTACHMENT_BYTES
 
@@ -277,7 +278,7 @@ def _text_file_section(attachment: Attachment) -> tuple[str, str]:
         omitted = attachment.size - MAX_TEXT_ATTACHMENT_BYTES
         suffix = f"\n\n[Attachment truncated: omitted {omitted} bytes]"
         warning = f"Attachment truncated: {attachment.rel_path}"
-    lang = _language_from_path(attachment.rel_path)
+    lang = language_from_path(attachment.rel_path)
     return f"Attached file: {attachment.rel_path}\n```{lang}\n{text}{suffix}\n```", warning
 
 
@@ -321,23 +322,6 @@ def _walk_dir_tree(root: Path, prefix: str, listing: list[str], depth: int, max_
             _walk_dir_tree(entry, prefix + ext_prefix, listing, depth + 1, max_depth)
 
 
-def _language_from_path(path: str) -> str:
-    suffix = Path(path).suffix.lower().lstrip(".")
-    mapping = {
-        "py": "python",
-        "js": "javascript",
-        "ts": "typescript",
-        "tsx": "tsx",
-        "jsx": "jsx",
-        "json": "json",
-        "md": "markdown",
-        "sh": "bash",
-        "yml": "yaml",
-        "yaml": "yaml",
-        "html": "html",
-        "css": "css",
-    }
-    return mapping.get(suffix, suffix)
 
 
 def _build_text_content(

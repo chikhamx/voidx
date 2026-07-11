@@ -11,8 +11,6 @@ from rich.syntax import Syntax
 from voidx.diffing import (
     DiffLine,
     FileDiff,
-    StructuredDiff,
-    diff_stat,
     git_diff,
     git_diff_stat,
     language_from_path,

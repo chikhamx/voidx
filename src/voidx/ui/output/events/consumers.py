@@ -15,6 +15,7 @@ from voidx.ui.output.dock import BottomInputDock
 from voidx.ui.output.dock.status import PERMISSION_REQUEST_STATUS_ID
 from voidx.ui.output.dock.formatting import short_path, short_value
 from voidx.ui.output.manage_display import manage_display
+from voidx.ui.output.tool_display import extract_tool_display_value
 from voidx.ui.output.events.schema import (
     AnsiAppended,
     AssistantStreamCommitted,
@@ -127,6 +128,15 @@ class DockEventConsumer:
         self._agent_nodes: dict[int, OutputNode] = {}
         self._agents_with_specific_status: set[int] = set()
 
+    def _reset_turn_state(self) -> None:
+        self._tool_nodes.clear()
+        self._dock.clear_status_record(PERMISSION_REQUEST_STATUS_ID)
+        self._dock.clear_status_record("error:current")
+        self._dock.clear_status_record("llm:retry")
+        self._hidden_tool_ids.clear()
+        self._agent_nodes.clear()
+        self._agents_with_specific_status.clear()
+
     def handle(self, event: UiEvent) -> Any:
         match event:
             case CaptureStarted():
@@ -136,22 +146,10 @@ class DockEventConsumer:
             case RefreshRequested():
                 return self._dock.refresh()
             case ResetRequested():
-                self._tool_nodes.clear()
-                self._dock.clear_status_record(PERMISSION_REQUEST_STATUS_ID)
-                self._dock.clear_status_record("error:current")
-                self._dock.clear_status_record("llm:retry")
-                self._hidden_tool_ids.clear()
-                self._agent_nodes.clear()
-                self._agents_with_specific_status.clear()
+                self._reset_turn_state()
                 return self._dock.reset()
             case TurnStarted(text=text):
-                self._tool_nodes.clear()
-                self._dock.clear_status_record(PERMISSION_REQUEST_STATUS_ID)
-                self._dock.clear_status_record("error:current")
-                self._dock.clear_status_record("llm:retry")
-                self._hidden_tool_ids.clear()
-                self._agent_nodes.clear()
-                self._agents_with_specific_status.clear()
+                self._reset_turn_state()
                 return self._dock.start_turn(text)
             case TurnCompleted():
                 return None
@@ -527,7 +525,7 @@ def _subagent_tool_status(
         action, detail = manage_display(raw_args, limit=72)
         return f"{action} {detail}" if detail else action
     action = _subagent_tool_action(tool_name, label)
-    detail = _subagent_tool_detail(tool_name, raw_args, args)
+    detail = extract_tool_display_value(tool_name, raw_args, args, short_path_limit=72)
     return f"{action} {detail}" if detail else action
 
 
@@ -606,38 +604,3 @@ def _subagent_tool_action(tool_name: str, label: str) -> str:
     return label or (tool_name.replace("_", " ").title() if tool_name else "Working")
 
 
-def _subagent_tool_detail(tool_name: str, raw_args: dict[str, Any], args: str) -> str:
-    value: object = ""
-    if tool_name in {"read", "write", "replace", "edit", "lsp"}:
-        value = raw_args.get("file_path") or raw_args.get("path")
-    elif tool_name == "manage":
-        _action, value = manage_display(raw_args)
-    elif tool_name in ("bash", "powershell"):
-        value = str(raw_args.get("command") or "").replace("\n", "; ")
-    elif tool_name == "git":
-        value = raw_args.get("args")
-    elif tool_name in {"grep", "glob"}:
-        value = raw_args.get("pattern") or raw_args.get("query")
-    elif tool_name in {"webfetch", "websearch"}:
-        value = raw_args.get("url") or raw_args.get("query")
-    elif raw_args:
-        for key in ("file_path", "path", "pattern", "query", "url", "command", "name"):
-            if raw_args.get(key):
-                value = raw_args[key]
-                break
-    if not value:
-        value = _subagent_args_value(args)
-    if not value:
-        return ""
-    return short_path(" ".join(str(value).split()), limit=72)
-
-
-def _subagent_args_value(args: str) -> str:
-    text = args.strip()
-    if not text:
-        return ""
-    for key in ("file_path", "path", "pattern", "query", "url", "command", "name"):
-        prefix = f"{key}="
-        if text.startswith(prefix):
-            return text[len(prefix):].strip().strip("\"'")
-    return text.strip("\"'")

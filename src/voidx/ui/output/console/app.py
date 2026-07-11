@@ -59,7 +59,7 @@ class VoidConsole:
 
     def __init__(self) -> None:
         self._console = Console()
-        self._debug = True
+        self._debug = False
         self._pending_tools: dict[str, list[dict[str, object]]] = {}
         self._event_tool_ids: dict[str, list[str]] = {}
         self._display_policy: ToolDisplayPolicy | None = None

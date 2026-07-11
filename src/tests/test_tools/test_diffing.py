@@ -6,6 +6,7 @@ from pathlib import Path
 
 from voidx.diffing import (
     FileDiff,
+    language_from_path,
     make_file_diff,
     make_structured_diff,
     parse_unified_diff,
@@ -152,3 +153,48 @@ def test_render_numbered_diff_returns_empty_for_no_hunks():
     structured = make_structured_diff("f.txt", "same\n", "same\n")
 
     assert render_numbered_diff(structured) == ""
+
+
+
+def test_language_from_path_combines_diff_and_attachment_suffixes():
+    assert language_from_path("script.sh") == "bash"
+    assert language_from_path("component.tsx") == "tsx"
+    assert language_from_path("component.jsx") == "jsx"
+    assert language_from_path("main.cpp") == "cpp"
+    assert language_from_path("notes.unknown") == ""
+
+
+def test_git_diff_logs_exception_and_returns_empty(monkeypatch):
+    import voidx.diffing as diffing
+
+    events = []
+
+    def failing_run(*args, **kwargs):
+        raise RuntimeError("git missing")
+
+    def fake_log_tool_event(event, *, tool_name="", message="", **kwargs):
+        events.append((event, tool_name, message))
+
+    monkeypatch.setattr(diffing.subprocess, "run", failing_run)
+    monkeypatch.setattr(diffing, "log_tool_event", fake_log_tool_event)
+
+    assert diffing.git_diff(str(monkeypatch.context)) == ""
+    assert events == [("diffing_git_diff", "git", "git missing")]
+
+
+def test_git_diff_stat_logs_exception_and_returns_empty(monkeypatch):
+    import voidx.diffing as diffing
+
+    events = []
+
+    def failing_run(*args, **kwargs):
+        raise RuntimeError("git missing")
+
+    def fake_log_tool_event(event, *, tool_name="", message="", **kwargs):
+        events.append((event, tool_name, message))
+
+    monkeypatch.setattr(diffing.subprocess, "run", failing_run)
+    monkeypatch.setattr(diffing, "log_tool_event", fake_log_tool_event)
+
+    assert diffing.git_diff_stat(str(monkeypatch.context)) == ""
+    assert events == [("diffing_git_diff_stat", "git", "git missing")]

@@ -23,14 +23,9 @@ class FakeConsole:
 @pytest.mark.asyncio
 async def test_start_session_default_returns_none():
     """Without --resume, session creation is deferred to first user input."""
-    workspace = str(tmp_path) if (tmp_path := Path("/tmp/test_defer")) else "."
     console = FakeConsole()
     selected = await _select_start_session(
-        workspace=workspace,
-        provider="anthropic",
-        model="claude",
         resume=None,
-        new_session=False,
         vconsole=console,
     )
 
@@ -40,14 +35,9 @@ async def test_start_session_default_returns_none():
 @pytest.mark.asyncio
 async def test_start_session_new_flag_returns_none():
     """--new also defers session creation; no empty session is created."""
-    workspace = str(tmp_path) if (tmp_path := Path("/tmp/test_new_defer")) else "."
     console = FakeConsole()
     selected = await _select_start_session(
-        workspace=workspace,
-        provider="anthropic",
-        model="claude",
         resume=None,
-        new_session=True,
         vconsole=console,
     )
 
@@ -62,11 +52,7 @@ async def test_start_session_explicit_resume_overrides_workspace(tmp_path):
     console = FakeConsole()
     try:
         selected = await _select_start_session(
-            workspace=workspace,
-            provider="anthropic",
-            model="claude",
             resume=session.id,
-            new_session=False,
             vconsole=console,
         )
 

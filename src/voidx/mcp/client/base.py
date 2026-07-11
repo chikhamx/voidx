@@ -149,7 +149,6 @@ class McpClient(StreamableHttpTransportMixin, SseTransportMixin, StdioTransportM
                 await asyncio.wait_for(self._writer.drain(), timeout=5.0)
             except Exception as exc:
                 log_tool_event("mcp_shutdown_notification_failed", tool_name=self._server_name, message=str(exc))
-                pass
         await self._cleanup()
         log_tool_event("mcp_stopped", tool_name=self._server_name, message=f"MCP client '{self._server_name}' stopped")
 

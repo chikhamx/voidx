@@ -533,3 +533,43 @@ async def test_rollback_to_returns_error_when_pip_fails(monkeypatch) -> None:
     assert result is not None
     assert "pip network error" in result
     assert verify_calls == []
+
+
+def test_update_install_marker_logs_failure(monkeypatch, tmp_path) -> None:
+    marker_path = tmp_path / ".voidx-install-version"
+    marker_path.write_text("3.5.1\n20260602\n3.12.13\n")
+    errors = []
+
+    def failing_replace(source, destination):
+        raise OSError("replace failed")
+
+    def fake_log_internal_error(exc, *, context, **kwargs):
+        errors.append((context, str(exc)))
+
+    monkeypatch.setattr(selfupdate, "_install_marker_path", lambda: marker_path)
+    monkeypatch.setattr(selfupdate.os, "replace", failing_replace)
+    monkeypatch.setattr(selfupdate, "log_internal_error", fake_log_internal_error)
+
+    selfupdate._update_install_marker("9.0.0")
+
+    assert errors == [("selfupdate_marker_write", "replace failed")]
+
+
+def test_clear_install_marker_logs_failure(monkeypatch, tmp_path) -> None:
+    marker_path = tmp_path / ".voidx-install-version"
+    marker_path.write_text("3.5.1\n20260602\n3.12.13\n")
+    errors = []
+
+    def failing_unlink(*args, **kwargs):
+        raise OSError("unlink failed")
+
+    def fake_log_internal_error(exc, *, context, **kwargs):
+        errors.append((context, str(exc)))
+
+    monkeypatch.setattr(selfupdate, "_install_marker_path", lambda: marker_path)
+    monkeypatch.setattr(type(marker_path), "unlink", failing_unlink)
+    monkeypatch.setattr(selfupdate, "log_internal_error", fake_log_internal_error)
+
+    selfupdate._clear_install_marker()
+
+    assert errors == [("selfupdate_marker_clear", "unlink failed")]

@@ -13,7 +13,14 @@ from voidx.logging import log_internal_error
 from voidx.logging.tool_log import log_tool_event
 
 from voidx.ui.gateway.session import GatewaySession
-from voidx.ui.protocol.v2.envelope import ParseError, parse_jsonrpc_message
+from voidx.ui.protocol.v2.envelope import (
+    JsonRpcError,
+    JsonRpcNotification,
+    JsonRpcRequest,
+    JsonRpcResult,
+    ParseError,
+    parse_jsonrpc_message,
+)
 
 
 SEND_QUEUE_MAXSIZE = 256
@@ -227,9 +234,8 @@ class GatewayServer:
         return query.get("token") == [self._token]
 
 
-def parse_jsonrpc_message_str(message: str):
+def parse_jsonrpc_message_str(message: str) -> JsonRpcRequest | JsonRpcNotification | JsonRpcResult | JsonRpcError:
     """Parse a raw JSON string into a v2 JSON-RPC message."""
-    import json
 
     try:
         raw = json.loads(message)

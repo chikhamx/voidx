@@ -9,6 +9,8 @@ from typing import Literal
 
 from pydantic import BaseModel, Field
 
+from voidx.logging.tool_log import log_tool_event
+
 
 class DiffLine(BaseModel):
     kind: Literal["context", "add", "remove"]
@@ -144,9 +146,9 @@ def language_from_path(path: str) -> str:
     mapping = {
         "py": "python",
         "js": "javascript",
-        "jsx": "javascript",
+        "jsx": "jsx",
         "ts": "typescript",
-        "tsx": "typescript",
+        "tsx": "tsx",
         "cpp": "cpp",
         "cc": "cpp",
         "cxx": "cpp",
@@ -163,6 +165,7 @@ def language_from_path(path: str) -> str:
         "md": "markdown",
         "css": "css",
         "html": "html",
+        "sh": "bash",
     }
     return mapping.get(suffix, "")
 
@@ -305,7 +308,8 @@ def git_diff(workspace: str, staged: bool = False) -> str:
             timeout=10,
         )
         return result.stdout
-    except Exception:
+    except Exception as exc:
+        log_tool_event("diffing_git_diff", tool_name="git", message=str(exc))
         return ""
 
 
@@ -320,7 +324,8 @@ def git_diff_stat(workspace: str) -> str:
             timeout=10,
         )
         return result.stdout.strip()
-    except Exception:
+    except Exception as exc:
+        log_tool_event("diffing_git_diff_stat", tool_name="git", message=str(exc))
         return ""
 
 

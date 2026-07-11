@@ -200,8 +200,8 @@ async def _resolve_base_url(provider: str) -> str:
             url = await _settings.resolve_base_url(provider)
             if url:
                 return url.rstrip("/")
-        except Exception:
-            pass
+        except Exception as exc:
+            log_tool_event("llm_resolve_base_url", tool_name="catalog", message=str(exc))
     protocol = _PROVIDER_PROTOCOLS.get(provider, "openai")
     default = _DEFAULT_BASE_URLS.get((provider, protocol), "")
     return default.rstrip("/")
@@ -213,7 +213,8 @@ async def _resolve_api_key(provider: str) -> str | None:
         return None
     try:
         return await _settings.resolve_api_key(provider)
-    except Exception:
+    except Exception as exc:
+        log_tool_event("llm_resolve_api_key", tool_name="catalog", message=str(exc))
         return None
 
 

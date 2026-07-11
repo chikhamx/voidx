@@ -21,12 +21,13 @@ def _vconsole():
     return VoidConsole()
 
 
+def _print_version() -> None:
+    from voidx import __version__
+    _vconsole().print(f"voidx v{__version__}")
+
+
 async def _select_start_session(
-    workspace: str,
-    provider: str,
-    model: str,
     resume: str | None,
-    new_session: bool,
     vconsole,
 ):
     from voidx.memory.session import (
@@ -85,11 +86,7 @@ async def _run_chat(
         api_key = await settings.resolve_api_key(cfg.model.provider)
 
     session = await _select_start_session(
-        workspace=cfg.workspace,
-        provider=cfg.model.provider,
-        model=cfg.model.model,
         resume=resume,
-        new_session=new_session,
         vconsole=vconsole,
     )
 
@@ -124,8 +121,7 @@ def main(
 ) -> None:
     """Start an interactive coding session."""
     if version:
-        from voidx import __version__
-        print(f"voidx v{__version__}")
+        _print_version()
         raise typer.Exit()
     if web_headless and not web:
         raise typer.BadParameter("--web-headless requires --web")
@@ -164,9 +160,7 @@ def sessions() -> None:
 @cli.command()
 def version() -> None:
     """Show version info."""
-    from voidx import __version__
-    vconsole = _vconsole()
-    vconsole.print(f"voidx v{__version__}")
+    _print_version()
 
 
 if __name__ == "__main__":

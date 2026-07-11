@@ -217,3 +217,39 @@ def test_gemini_has_static_fallback():
     """Gemini must have a STATIC_MODELS entry for fallback."""
     assert "gemini" in catalog.STATIC_MODELS
     assert len(catalog.STATIC_MODELS["gemini"]) > 0
+
+
+@pytest.mark.asyncio
+async def test_resolve_base_url_logs_settings_failure(monkeypatch):
+    class FailingSettings:
+        async def resolve_base_url(self, provider: str) -> str | None:
+            raise RuntimeError("settings failed")
+
+    events = []
+
+    def fake_log_tool_event(event, *, tool_name="", message="", **kwargs):
+        events.append((event, tool_name, message))
+
+    monkeypatch.setattr(catalog, "_settings", FailingSettings())
+    monkeypatch.setattr(catalog, "log_tool_event", fake_log_tool_event)
+
+    assert await catalog._resolve_base_url("deepseek") == "https://api.deepseek.com/v1"
+    assert events == [("llm_resolve_base_url", "catalog", "settings failed")]
+
+
+@pytest.mark.asyncio
+async def test_resolve_api_key_logs_settings_failure(monkeypatch):
+    class FailingSettings:
+        async def resolve_api_key(self, provider: str) -> str | None:
+            raise RuntimeError("settings failed")
+
+    events = []
+
+    def fake_log_tool_event(event, *, tool_name="", message="", **kwargs):
+        events.append((event, tool_name, message))
+
+    monkeypatch.setattr(catalog, "_settings", FailingSettings())
+    monkeypatch.setattr(catalog, "log_tool_event", fake_log_tool_event)
+
+    assert await catalog._resolve_api_key("deepseek") is None
+    assert events == [("llm_resolve_api_key", "catalog", "settings failed")]

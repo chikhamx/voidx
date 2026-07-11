@@ -113,4 +113,3 @@ class StdioTransportMixin:
                     log_tool_event("mcp_stderr", tool_name=self._server_name, message=text)
         except Exception as exc:
             log_tool_event("mcp_stderr_reader_failed", tool_name=self._server_name, message=str(exc))
-            pass

@@ -21,17 +21,11 @@ PERMISSION_REQUEST_STATUS_ID = "permission:request"
 
 
 def active_permission_request_text() -> str:
-    record = _status_record(PERMISSION_REQUEST_STATUS_ID)
-    if record is None:
-        return ""
-    return _clean(record.label).strip()
+    return _active_text(PERMISSION_REQUEST_STATUS_ID, "label")
 
 
 def active_permission_request_detail_text() -> str:
-    record = _status_record(PERMISSION_REQUEST_STATUS_ID)
-    if record is None:
-        return ""
-    return _clean(record.detail).strip()
+    return _active_text(PERMISSION_REQUEST_STATUS_ID, "detail")
 
 
 def active_agent_step_text() -> str:
@@ -49,52 +43,38 @@ def active_guidance_preview_text() -> str:
 
 
 def active_turn_analyzing_text() -> str:
-    record = _status_record("turn:analyzing")
-    if record is None:
-        return ""
-    return _clean(record.label).strip()
+    return _active_text("turn:analyzing", "label")
 
 
 def active_compaction_text() -> str:
-    record = _status_record("compaction")
-    if record is None:
-        return ""
-    return _clean(record.label).strip()
+    return _active_text("compaction", "label")
 
 
 def active_compaction_detail_text() -> str:
-    record = _status_record("compaction")
-    if record is None:
-        return ""
-    return _clean(record.detail).strip()
+    return _active_text("compaction", "detail")
 
 
 def active_llm_retry_text() -> str:
-    record = _status_record("llm:retry")
-    if record is None:
-        return ""
-    return _clean(record.label).strip()
+    return _active_text("llm:retry", "label")
 
 
 def active_llm_retry_detail_text() -> str:
-    record = _status_record("llm:retry")
-    if record is None:
-        return ""
-    return _clean(record.detail).strip()
+    return _active_text("llm:retry", "detail")
 
 
 def active_error_text() -> str:
-    record = _status_record("error:current")
-    if record is None:
-        return ""
-    return _clean(record.label).strip()
+    return _active_text("error:current", "label")
 
 
 def active_error_detail_text() -> str:
-    record = _status_record("error:current")
+    return _active_text("error:current", "detail")
+
+
+def _active_text(status_id: str, field: str) -> str:
+    record = _status_record(status_id)
     if record is None:
         return ""
-    return _clean(record.detail).strip()
+    return _clean(getattr(record, field)).strip()
 
 
 def _status_record(status_id: str) -> DockStatusRecord | None:
