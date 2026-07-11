@@ -41,6 +41,13 @@ def active_agent_step_text() -> str:
     return _agent_step_text(record.label)
 
 
+def active_guidance_preview_text() -> str:
+    current = get_dock()
+    if current is None:
+        return ""
+    return getattr(current, "_guidance_preview", "") or ""
+
+
 def active_turn_analyzing_text() -> str:
     record = _status_record("turn:analyzing")
     if record is None:

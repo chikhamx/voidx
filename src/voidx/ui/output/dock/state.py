@@ -29,6 +29,7 @@ class _DockProxy:
                 return False
             if name in (
                 "append_message",
+                "append_guidance_turn",
                 "append_ansi",
                 "begin_capture",
                 "deactivate",
@@ -36,6 +37,9 @@ class _DockProxy:
                 "capture",
                 "start_turn",
                 "set_stream",
+                "set_guidance_preview",
+                "clear_guidance_preview",
+                "queue_guidance_echo",
                 "start_tool",
                 "tool_output",
                 "append_tool_result",
@@ -43,6 +47,8 @@ class _DockProxy:
                 "set_mode",
             ):
                 return lambda *args, **kwargs: None
+            if name in ("consume_guidance_echoes",):
+                return lambda *args, **kwargs: []
             raise RuntimeError(f"No active dock in this context. Cannot access '{name}'.")
         return getattr(d, name)
 

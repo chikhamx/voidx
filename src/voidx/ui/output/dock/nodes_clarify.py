@@ -2,14 +2,10 @@
 
 from __future__ import annotations
 
-import logging
-
 from rich.markup import escape
 
+from voidx.logging.tool_log import log_tool_event
 from voidx.ui.output.tree import OutputNode
-
-
-logger = logging.getLogger(__name__)
 
 
 class DockClarifyNodeMixin:
@@ -50,7 +46,7 @@ class DockClarifyNodeMixin:
     ) -> None:
         node = self._clarify_nodes.get(clarify_id)
         if node is None:
-            logger.debug("Clarify answer received for unknown clarify_id=%s", clarify_id)
+            log_tool_event("ui_clarify_orphan", tool_name="dock", message=f"Clarify answer received for unknown clarify_id={clarify_id}")
             return
         display_response = answer or ("skipped" if cancelled else "")
         color = "red" if cancelled else "cyan"
@@ -63,7 +59,7 @@ class DockClarifyNodeMixin:
         child = self._tree.new_node(
             parent=node,
             node_type="message",
-            header=f"Answer: {escape(display_response)}",
+            header=f"{_ANSWER_LABEL} {escape(display_response)}",
             collapsed=False,
             payload={"full_width_user_row": True, "align_full_width_user_row": True},
         )
@@ -74,6 +70,7 @@ class DockClarifyNodeMixin:
 
 
 _QUESTION_LABEL = "[#EBCB8B]Question:[/#EBCB8B]"
+_ANSWER_LABEL = "[#EBCB8B]Answer:[/#EBCB8B]"
 _SECTION_TITLE = "[bold #D8DEE9]{}:[/bold #D8DEE9]"
 _BODY = "[#D8DEE9]{}[/#D8DEE9]"
 _SUGGESTION_PREFIX = "[#61AFEF]-[/#61AFEF]"

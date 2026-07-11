@@ -55,9 +55,6 @@ class DockStatusNodeMixin:
         self.clear_status_record(status_id)
         node = self._status_nodes.pop(status_id, None)
         if node is None:
-            if status_id and not had_record:
-                import logging
-                logging.getLogger("voidx.ui").debug("finish_status: unknown status_id=%s", status_id)
             return
         self._status_ticks.pop(status_id, None)
         if remove:

@@ -4,10 +4,10 @@ from __future__ import annotations
 
 import asyncio
 import inspect
-import logging
 from collections.abc import Awaitable
 from typing import Any
 
+from voidx.logging import log_internal_error
 from rich.markup import escape
 
 from voidx.ui.output.agent_display import agent_display_name
@@ -30,6 +30,7 @@ from voidx.ui.output.events.schema import (
     DiffAppended,
     ErrorAppended,
     FileChangeAppended,
+    GuidanceCommitted,
     GuidanceSubmitted,
     InputSet,
     MarkdownAppended,
@@ -77,11 +78,8 @@ class CompositeEventConsumer:
         for mirror in self._mirrors:
             try:
                 mirror_result = mirror.handle(event)
-            except Exception:
-                logging.getLogger(__name__).warning(
-                    "UI event mirror consumer failed",
-                    exc_info=True,
-                )
+            except Exception as e:
+                log_internal_error(e, context="ui_event_mirror_consumer")
                 continue
             if inspect.isawaitable(mirror_result):
                 self._schedule_task(mirror_result, target="mirror")
@@ -95,11 +93,8 @@ class CompositeEventConsumer:
         for mirror in self._mirrors:
             try:
                 mirror_result = mirror.handle(event)
-            except Exception:
-                logging.getLogger(__name__).warning(
-                    "UI event direct mirror consumer failed",
-                    exc_info=True,
-                )
+            except Exception as e:
+                log_internal_error(e, context="ui_event_direct_mirror_consumer")
                 continue
             if inspect.isawaitable(mirror_result):
                 self._schedule_task(mirror_result, target="mirror", direct=True)
@@ -118,13 +113,8 @@ class CompositeEventConsumer:
         exc = task.exception()
         if exc is None:
             return
-        mode = "direct " if direct else ""
-        logging.getLogger(__name__).warning(
-            "UI event %s%s consumer failed",
-            mode,
-            target,
-            exc_info=(type(exc), exc, exc.__traceback__),
-        )
+        direct_label = "direct_" if direct else ""
+        log_internal_error(exc, context=f"ui_event_{direct_label}consumer_{target}")
 
 
 class DockEventConsumer:
@@ -196,7 +186,12 @@ class DockEventConsumer:
                 return self._dock.append_thought(text, elapsed)
             case WarningAppended(message=message):
                 return self._dock.append_message(message, style="warning")
-            case GuidanceSubmitted():
+            case GuidanceSubmitted(text=text):
+                return self._dock.set_guidance_preview(text)
+            case GuidanceCommitted(text=text, source=source):
+                self._dock.clear_guidance_preview()
+                if source == "user" and text:
+                    return self._dock.append_guidance_turn(text)
                 return None
             case ErrorAppended() as e:
                 self._dock.clear_status_record("llm:retry")

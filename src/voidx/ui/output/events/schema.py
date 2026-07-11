@@ -97,6 +97,9 @@ class GuidanceSubmitted(UiEventBase):
 
 class GuidanceCommitted(UiEventBase):
     kind: Literal["guidance.committed"] = "guidance.committed"
+    text: str = ""
+    truncated: bool = False
+    source: Literal["user", "guard", "system"] = "user"
 
 
 class ErrorAppended(UiEventBase):

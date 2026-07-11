@@ -2,12 +2,10 @@
 
 from __future__ import annotations
 
-import logging
 import sys
 from rich.console import Console
 from voidx.ui.output.tree import OutputTree
 
-_logger = logging.getLogger(__name__)
 
 
 def browse(tree: OutputTree, console: Console) -> None:
@@ -59,7 +57,6 @@ def _mouse_row_from_sequence(raw: str | bytes) -> int | None:
     try:
         text = raw.decode() if isinstance(raw, bytes) else raw
     except UnicodeDecodeError:
-        _logger.debug("Invalid browse mouse sequence: %r", raw, exc_info=True)
         return None
     parts = text.split(';')
     if len(parts) < 3 or parts[0] != '0':
@@ -67,7 +64,6 @@ def _mouse_row_from_sequence(raw: str | bytes) -> int | None:
     try:
         return int(parts[2])
     except ValueError:
-        _logger.debug("Invalid browse mouse row: %r", raw, exc_info=True)
         return None
 
 

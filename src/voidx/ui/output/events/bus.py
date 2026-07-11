@@ -4,19 +4,16 @@ from __future__ import annotations
 
 import asyncio
 import inspect
-import logging
 from dataclasses import dataclass
 from typing import Any
 
 from voidx.logging.tool_log import log_tool_event
+from voidx.runtime.ui import UiEventTimeout
 from voidx.ui.output.events.schema import UiEvent
 
 
-logger = logging.getLogger(__name__)
 
 
-class UiEventTimeout(TimeoutError):
-    """Raised when a UI event request is not handled in time."""
 
 
 @dataclass
@@ -100,7 +97,6 @@ class UiEventBus:
                     f"event={type(event).__name__} attempt={attempt + 1}/{max_retries} "
                     f"elapsed={(attempt + 1) * timeout:.1f}s"
                 )
-                logger.warning(message)
                 log_tool_event(
                     "ui_event_bus_request_stall",
                     tool_name="ui_event_bus",

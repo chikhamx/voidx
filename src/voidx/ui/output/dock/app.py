@@ -37,6 +37,7 @@ from voidx.ui.output.dock.status import (
     active_compaction_text,
     active_error_detail_text,
     active_error_text,
+    active_guidance_preview_text,
     active_llm_retry_detail_text,
     active_llm_retry_text,
     active_turn_analyzing_text,
@@ -70,6 +71,8 @@ class BottomInputDock(DockStreamMixin, DockStatusMixin, DockNodeMixin):
         self._permission_node: OutputNode | None = None
         self._checkpoint_nodes: dict[str, OutputNode] = {}
         self._clarify_nodes: dict[str, OutputNode] = {}
+        self._guidance_preview: str = ""
+        self._guidance_echoes: list[str] = []
         self._settled_node_ids: set[str] = set()
         self._input_text = ""
         self._cursor_pos = 0
@@ -188,6 +191,7 @@ class BottomInputDock(DockStreamMixin, DockStatusMixin, DockNodeMixin):
     def reset(self) -> None:
         self._tree = OutputTree()
         self._settled_node_ids.clear()
+        self._guidance_echoes.clear()
         self._todo_state = None
         self._reset_runtime_nodes()
         self._input_text = ""
@@ -255,6 +259,44 @@ class BottomInputDock(DockStreamMixin, DockStatusMixin, DockNodeMixin):
         header = escape(lines[0])
         body_lines = [escape(line) for line in lines[1:]]
         return header, body_lines
+
+    def set_guidance_preview(self, text: str) -> None:
+        self._guidance_preview = text
+        self.refresh()
+
+    def clear_guidance_preview(self) -> None:
+        self._guidance_preview = ""
+        self.refresh()
+
+    def queue_guidance_echo(self, text: str) -> None:
+        clean = _clean(text)
+        if not clean.strip():
+            return
+        self._guidance_echoes.append(clean)
+        self.refresh()
+
+    def consume_guidance_echoes(self) -> list[str]:
+        echoes = self._guidance_echoes
+        self._guidance_echoes = []
+        return echoes
+
+    def append_guidance_turn(self, text: str) -> OutputNode | None:
+        clean = _clean(text)
+        if not clean.strip():
+            return None
+        preview = _PASTED_RE.sub(r"\1", clean)
+        header, body_lines = self._render_turn_text(preview)
+        header = f"[bold white]❯[/] {header}" if header else "[bold white]❯[/]"
+        node = self._new_settled_node(
+            self._tree.root,
+            before_active_stream=True,
+            node_type="turn",
+            header=header,
+            body_lines=body_lines,
+            collapsed=False,
+        )
+        self.refresh()
+        return node
 
     def ensure_agent(self) -> OutputNode:
         if self._current_agent is None:
