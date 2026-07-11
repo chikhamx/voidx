@@ -4,7 +4,6 @@ from __future__ import annotations
 
 import asyncio
 import json
-import logging
 import signal
 from dataclasses import dataclass
 from typing import Any
@@ -20,6 +19,7 @@ from voidx.tools.retry import retry_async
 from voidx.mcp.client.http_transport import StreamableHttpTransportMixin
 from voidx.mcp.client.sse_transport import SseTransportMixin
 from voidx.mcp.client.stdio_transport import StdioTransportMixin
+from voidx.runtime.processes import finalize_process_tree
 from voidx.mcp.schema import (
     JsonRpcNotification,
     JsonRpcRequest,
@@ -30,7 +30,6 @@ from voidx.mcp.schema import (
     MCP_PROTOCOL_VERSION,
 )
 
-log = logging.getLogger(__name__)
 
 
 @dataclass
@@ -127,7 +126,10 @@ class McpClient(StreamableHttpTransportMixin, SseTransportMixin, StdioTransportM
             self._healthy = True
             self._reconnect_attempt = 0
             self._error_message = ""
-            log.info("MCP client '%s' connected (%s)", self._server_name, self._transport)
+            log_tool_event("mcp_connected", tool_name=self._server_name, message=f"MCP client '{self._server_name}' connected ({self._transport})")
+        except asyncio.CancelledError:
+            await self._cleanup()
+            raise
         except Exception as e:
             await self._cleanup()
             self._error_message = str(e)
@@ -149,7 +151,7 @@ class McpClient(StreamableHttpTransportMixin, SseTransportMixin, StdioTransportM
                 log_tool_event("mcp_shutdown_notification_failed", tool_name=self._server_name, message=str(exc))
                 pass
         await self._cleanup()
-        log.info("MCP client '%s' stopped", self._server_name)
+        log_tool_event("mcp_stopped", tool_name=self._server_name, message=f"MCP client '{self._server_name}' stopped")
 
     async def reconnect(self) -> bool:
         """Attempt to reconnect a failed server."""
@@ -221,10 +223,8 @@ class McpClient(StreamableHttpTransportMixin, SseTransportMixin, StdioTransportM
             )
         server_version = result.get("protocolVersion", "unknown")
         if server_version != MCP_PROTOCOL_VERSION:
-            log.warning(
-                "MCP server '%s' protocol v%s, expected v%s",
-                self._server_name, server_version, MCP_PROTOCOL_VERSION,
-            )
+            log_tool_event("mcp_protocol_mismatch", tool_name=self._server_name,
+                           message=f"MCP server '{self._server_name}' protocol v{server_version}, expected v{MCP_PROTOCOL_VERSION}")
 
         # Send initialized notification (no response expected)
         notif = JsonRpcNotification(method="notifications/initialized")
@@ -281,7 +281,7 @@ class McpClient(StreamableHttpTransportMixin, SseTransportMixin, StdioTransportM
         try:
             await self._send_payload(payload)
         except Exception as e:
-            log.warning("Failed to send notification to '%s': %s", self._server_name, e)
+            log_tool_event("mcp_notification_failed", tool_name=self._server_name, message=f"Failed to send notification to '{self._server_name}': {e}")
 
     async def _send_payload(self, payload: dict[str, Any]) -> None:
         """Send a JSON-RPC payload via the active transport."""
@@ -319,35 +319,46 @@ class McpClient(StreamableHttpTransportMixin, SseTransportMixin, StdioTransportM
         # JSON-RPC notifications / requests from server (no id or method-based)
         method = msg.get("method", "")
         if method:
-            log.debug("MCP notification from '%s': %s", self._server_name, method)
+            pass
 
     def _next_id(self) -> int:
         self._request_id += 1
         return self._request_id
 
     async def _cleanup(self) -> None:
-        """Clean up subprocess/tasks and HTTP client."""
-        # Cancel background tasks
+        """Clean up subprocess/tasks and HTTP client without leaking on cancellation."""
+        cleanup_task = asyncio.create_task(self._cleanup_impl())
+        cancellation: asyncio.CancelledError | None = None
+        while not cleanup_task.done():
+            try:
+                await asyncio.shield(cleanup_task)
+            except asyncio.CancelledError as exc:
+                if cancellation is None:
+                    cancellation = exc
+        await cleanup_task
+        if cancellation is not None:
+            raise cancellation
+
+    async def _cleanup_impl(self) -> None:
+        tasks = []
         for task_name in ("_read_task", "_stderr_task", "_sse_task"):
             task = getattr(self, task_name, None)
-            if task and not task.done():
-                task.cancel()
-                try:
-                    await task
-                except (asyncio.CancelledError, Exception):
-                    pass
             setattr(self, task_name, None)
+            if task is not None:
+                tasks.append(task)
+                if not task.done():
+                    task.cancel()
+        if tasks:
+            await asyncio.gather(*tasks, return_exceptions=True)
 
         self._reader = None
         self._writer = None
 
-        # Reject all pending requests
         for req in self._pending.values():
             if not req.future.done():
                 req.future.set_exception(McpConnectionError("Connection closed"))
         self._pending.clear()
 
-        # Close SSE HTTP client
         http_client = self._http_client
         self._http_client = None
         if http_client is not None:
@@ -356,16 +367,10 @@ class McpClient(StreamableHttpTransportMixin, SseTransportMixin, StdioTransportM
             except Exception as exc:
                 log_internal_error(exc, context="mcp_http_client_close")
 
-        # Terminate subprocess
-        proc = self._proc
+        process = self._proc
         self._proc = None
-        if proc and proc.returncode is None:
-            try:
-                proc.terminate()  # cross-platform: SIGTERM on Unix, TerminateProcess on Windows
-                try:
-                    await asyncio.wait_for(proc.wait(), timeout=5.0)
-                except asyncio.TimeoutError:
-                    proc.kill()
-                    await proc.wait()
-            except ProcessLookupError:
-                pass
+        if process is not None:
+            await finalize_process_tree(process)
+
+        self._initialized = False
+        self._healthy = False

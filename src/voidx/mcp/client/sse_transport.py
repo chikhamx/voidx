@@ -4,14 +4,13 @@ from __future__ import annotations
 
 import asyncio
 import json
-import logging
 from urllib.parse import urlparse, urlunparse
 
 import httpx
 
+from voidx.logging.tool_log import log_tool_event
 from voidx.mcp.client.errors import McpConnectionError
 
-log = logging.getLogger(__name__)
 
 
 class SseTransportMixin:
@@ -35,11 +34,8 @@ class SseTransportMixin:
         if self._config.env:
             for key, value in self._config.env.items():
                 if key.lower() == "authorization" and "Authorization" not in headers:
-                    log.warning(
-                        "MCP server '%s': reading Authorization from env is deprecated, "
-                        "use the 'headers' field instead",
-                        self._server_name,
-                    )
+                    log_tool_event("mcp_auth_deprecated", tool_name=self._server_name,
+                                   message=f"MCP server '{self._server_name}': reading Authorization from env is deprecated, use the 'headers' field instead")
                     headers["Authorization"] = value
 
         # Parse the SSE URL to derive the base for POST requests.
@@ -121,10 +117,7 @@ class SseTransportMixin:
                         # endpoint event: server tells us where to POST
                         if current_event == "endpoint":
                             self._sse_endpoint = data
-                            log.info(
-                                "MCP SSE '%s': endpoint = %s",
-                                self._server_name, self._sse_endpoint,
-                            )
+                            log_tool_event("mcp_sse_endpoint", tool_name=self._server_name, message=self._sse_endpoint)
                             evt = getattr(self, "_sse_endpoint_event", None)
                             if evt is not None:
                                 evt.set()
@@ -134,14 +127,14 @@ class SseTransportMixin:
                             try:
                                 msg = json.loads(data)
                             except json.JSONDecodeError:
-                                log.warning("Invalid SSE JSON from '%s': %s", self._server_name, data[:200])
+                                log_tool_event("mcp_invalid_json", tool_name=self._server_name, message=f"Invalid SSE JSON from '{self._server_name}': {data[:200]}")
                                 continue
                             self._dispatch_response(msg)
                             continue
         except asyncio.CancelledError:
             pass
         except Exception as e:
-            log.debug("SSE reader for '%s' exited: %s", self._server_name, e)
+            log_tool_event("mcp_sse_exited", tool_name=self._server_name, message=f"SSE reader for '{self._server_name}' exited: {e}")
             if self._healthy:
                 self._healthy = False
                 self._error_message = f"SSE connection lost: {e}"

@@ -15,7 +15,8 @@ in the background. UI can poll statuses() to show progress.
 from __future__ import annotations
 
 import asyncio
-import logging
+from voidx.logging import log_internal_error
+from voidx.logging.tool_log import log_tool_event
 
 from voidx.config import McpServerConfig, Settings
 from voidx.mcp.client import McpClient, McpConnectionError
@@ -24,7 +25,6 @@ from voidx.mcp.tool import McpToolWrapper, mcp_tool_id
 from voidx.permission.service import PermissionService
 from voidx.tools.registry import ToolRegistry
 
-log = logging.getLogger(__name__)
 
 
 class McpManager:
@@ -72,7 +72,7 @@ class McpManager:
         if not enabled:
             return
 
-        log.info("Starting %d MCP server(s) in background...", len(enabled))
+        log_tool_event("mcp_start_all", tool_name="mcp_manager", message=f"Starting {len(enabled)} MCP server(s) in background...")
 
         # Mark all as connecting
         for s in enabled:
@@ -88,7 +88,7 @@ class McpManager:
         try:
             await asyncio.wait_for(asyncio.shield(self._init_task), timeout=timeout)
         except asyncio.TimeoutError:
-            log.warning("MCP server init did not complete within %.0fs", timeout)
+            log_tool_event("mcp_init_timeout", tool_name="mcp_manager", message=f"MCP server init did not complete within {timeout:.0f}s")
 
     async def _init_servers(self, servers: list[McpServerConfig]) -> None:
         """Connect to servers and register tools (runs in background)."""
@@ -100,7 +100,7 @@ class McpManager:
                 try:
                     tool_defs = await client.list_tools()
                 except Exception as e:
-                    log.warning("Could not list tools from MCP server '%s': %s", server_name, e)
+                    log_tool_event("mcp_list_tools_failed", tool_name=server_name, message=f"Could not list tools from MCP server '{server_name}': {e}")
                     self._errors[server_name] = f"Could not list tools: {e}"
                     self._tool_counts[server_name] = 0
                     continue
@@ -133,10 +133,7 @@ class McpManager:
                         tool_id = mcp_tool_id(server_name, tool_name)
                         self._permission.deny_silent(tool_id)
 
-                log.info(
-                    "MCP server '%s': %d tools registered",
-                    server_name, registered,
-                )
+                log_tool_event("mcp_tools_registered", tool_name=server_name, message=f"MCP server '{server_name}': {registered} tools registered")
                 self._tool_counts[server_name] = registered
         finally:
             self._connecting.clear()
@@ -160,7 +157,7 @@ class McpManager:
         if not self._clients:
             return
 
-        log.info("Stopping %d MCP server(s)...", len(self._clients))
+        log_tool_event("mcp_stop_all", tool_name="mcp_manager", message=f"Stopping {len(self._clients)} MCP server(s)...")
         await self._stop_servers(list(self._clients.values()))
         self._clients.clear()
 
@@ -256,8 +253,11 @@ class McpManager:
                 self._clients[sc.name] = client
                 self._errors.pop(sc.name, None)
                 return sc.name, client
+            except asyncio.CancelledError:
+                await client.stop()
+                raise
             except McpConnectionError as e:
-                log.warning("MCP server '%s' failed to start: %s", sc.name, e)
+                log_internal_error(e, context="mcp_server_start")
                 self._errors[sc.name] = str(e)
                 return None
 
@@ -275,8 +275,8 @@ class McpManager:
         async def safe_stop(client: McpClient) -> None:
             try:
                 await client.stop()
-            except Exception:
-                log.exception("Error stopping MCP server '%s'", client.server_name)
+            except Exception as e:
+                log_internal_error(e, context="mcp_server_stop")
 
         await self._gather_safe([safe_stop(c) for c in clients])
 

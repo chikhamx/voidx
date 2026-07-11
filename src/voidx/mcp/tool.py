@@ -12,7 +12,7 @@ from typing import Any
 
 from voidx.mcp.client import McpClient, McpConnectionError, McpProtocolError, McpTimeoutError
 from voidx.mcp.schema import McpCallResult, McpToolDef, format_mcp_call_result
-from voidx.tools.base import BaseTool, ToolResult, ToolContext
+from voidx.tools.base import BaseTool, ToolContext, ToolResult, tool_timeout_metadata
 
 
 _LLM_TOOL_NAME_MAX = 64
@@ -56,7 +56,16 @@ class McpToolWrapper(BaseTool):
             )
         try:
             result: McpCallResult = await self._client.call_tool(self._tool_def.name, args)
-        except (McpConnectionError, McpTimeoutError, McpProtocolError) as e:
+        except McpTimeoutError as e:
+            return ToolResult(
+                output=f"MCP server '{self._server}' timed out: {e}",
+                metadata=tool_timeout_metadata(
+                    "mcp",
+                    server=self._server,
+                    error_type=type(e).__name__,
+                ),
+            )
+        except (McpConnectionError, McpProtocolError) as e:
             return ToolResult(
                 output=f"MCP server '{self._server}' is unavailable: {e}",
                 metadata={"error": True, "server": self._server, "error_type": type(e).__name__},

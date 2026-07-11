@@ -4,12 +4,11 @@ from __future__ import annotations
 
 import asyncio
 import json
-import logging
 
 from voidx.mcp.client.errors import McpConnectionError
 from voidx.logging.tool_log import log_tool_event
+from voidx.runtime.processes import create_owned_subprocess_exec
 
-log = logging.getLogger(__name__)
 
 
 class StdioTransportMixin:
@@ -26,7 +25,7 @@ class StdioTransportMixin:
             env = {**os.environ, **self._config.env}
 
         try:
-            self._proc = await asyncio.create_subprocess_exec(
+            self._proc = await create_owned_subprocess_exec(
                 *args,
                 stdin=asyncio.subprocess.PIPE,
                 stdout=asyncio.subprocess.PIPE,
@@ -82,13 +81,13 @@ class StdioTransportMixin:
                 try:
                     msg = json.loads(text)
                 except json.JSONDecodeError:
-                    log.warning("Invalid JSON from MCP server '%s': %s", self._server_name, text[:200])
+                    log_tool_event("mcp_invalid_json", tool_name=self._server_name, message=f"Invalid JSON from MCP server '{self._server_name}': {text[:200]}")
                     continue
                 self._dispatch_response(msg)
         except asyncio.CancelledError:
             pass
         except Exception as e:
-            log.debug("stdio reader for '%s' exited: %s", self._server_name, e)
+            log_tool_event("mcp_stdio_exited", tool_name=self._server_name, message=f"stdio reader for '{self._server_name}' exited: {e}")
         finally:
             if self._healthy:
                 self._healthy = False
@@ -111,7 +110,7 @@ class StdioTransportMixin:
                     break
                 text = line.decode("utf-8", errors="replace").rstrip()
                 if text:
-                    log.debug("[MCP stderr:%s] %s", self._server_name, text)
+                    log_tool_event("mcp_stderr", tool_name=self._server_name, message=text)
         except Exception as exc:
             log_tool_event("mcp_stderr_reader_failed", tool_name=self._server_name, message=str(exc))
             pass

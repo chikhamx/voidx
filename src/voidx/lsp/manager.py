@@ -300,6 +300,9 @@ class LspManager:
             client = LspClient(config, cwd=self.workspace)
             try:
                 await client.start(root_uri=file_uri(self.workspace), timeout=timeout)
+            except asyncio.CancelledError:
+                await client.stop()
+                raise
             except Exception as exc:
                 await client.stop()
                 self._errors[language] = str(exc)

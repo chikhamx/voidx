@@ -3,13 +3,12 @@
 from __future__ import annotations
 
 import json
-import logging
 
 import httpx
 
+from voidx.logging.tool_log import log_tool_event
 from voidx.mcp.client.errors import McpConnectionError, McpProtocolError
 
-log = logging.getLogger(__name__)
 
 
 class StreamableHttpTransportMixin:
@@ -31,11 +30,8 @@ class StreamableHttpTransportMixin:
         if self._config.env:
             for key, value in self._config.env.items():
                 if key.lower() == "authorization" and "Authorization" not in headers:
-                    log.warning(
-                        "MCP server '%s': reading Authorization from env is deprecated, "
-                        "use the 'headers' field instead",
-                        self._server_name,
-                    )
+                    log_tool_event("mcp_auth_deprecated", tool_name=self._server_name,
+                                   message=f"MCP server '{self._server_name}': reading Authorization from env is deprecated, use the 'headers' field instead")
                     headers["Authorization"] = value
 
         self._http_client = httpx.AsyncClient(
@@ -88,10 +84,8 @@ class StreamableHttpTransportMixin:
                                     try:
                                         msg = json.loads(data)
                                     except json.JSONDecodeError:
-                                        log.warning(
-                                            "Invalid SSE JSON from '%s': %s",
-                                            self._server_name, data[:200],
-                                        )
+                                        log_tool_event("mcp_invalid_json", tool_name=self._server_name,
+                                                       message=f"Invalid SSE JSON from '{self._server_name}': {data[:200]}")
                                         continue
                                     self._dispatch_response(msg)
                                     # Stop reading once we get the response for our request

@@ -11,6 +11,10 @@ class LspConnectionError(LspError):
     """Raised when a language server process cannot be used."""
 
 
+class LspTimeoutError(LspConnectionError):
+    """Raised when an LSP operation exceeds its deadline."""
+
+
 class LspRequestError(LspError):
     """Raised when a server returns a JSON-RPC error response."""
 

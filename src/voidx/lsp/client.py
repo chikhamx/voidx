@@ -4,16 +4,19 @@ from __future__ import annotations
 
 import asyncio
 import json
-import logging
 import os
 from collections.abc import Callable
 from typing import Any
 
 from voidx.logging import log_internal_error
-from voidx.lsp.errors import LspConnectionError, LspRequestError
+from voidx.logging.tool_log import log_tool_event
+from voidx.lsp.errors import LspConnectionError, LspRequestError, LspTimeoutError
 from voidx.lsp.schema import LspServerConfig, parse_diagnostics
+from voidx.runtime.processes import (
+    create_owned_subprocess_exec,
+    finalize_process_tree,
+)
 
-log = logging.getLogger(__name__)
 
 NotificationHandler = Callable[[str, dict[str, Any]], None]
 LSP_REQUEST_TIMEOUT_SECONDS = 30.0
@@ -96,7 +99,7 @@ class LspClient:
         if self.connected:
             return
         try:
-            self._process = await asyncio.create_subprocess_exec(
+            self._process = await create_owned_subprocess_exec(
                 self.config.command,
                 *self.config.args,
                 cwd=self.cwd,
@@ -109,19 +112,36 @@ class LspClient:
             self._error_message = str(exc)
             raise LspConnectionError(f"Could not start {self.config.language} LSP: {exc}") from exc
 
-        self._reader_task = asyncio.create_task(self._read_loop())
-        self._stderr_task = asyncio.create_task(self._drain_stderr())
-        result = await self.request("initialize", {
-            "processId": None,
-            "rootUri": root_uri,
-            "capabilities": _client_capabilities(),
-            "workspaceFolders": [{"uri": root_uri, "name": "workspace"}],
-        }, timeout=timeout)
-        self._capabilities = result.get("capabilities", {}) if isinstance(result, dict) else {}
-        await self.notify("initialized", {})
+        try:
+            if (
+                self._process.stdin is None
+                or self._process.stdout is None
+                or self._process.stderr is None
+            ):
+                raise LspConnectionError(
+                    f"Failed to open pipes for {self.config.language} LSP"
+                )
+            self._reader_task = asyncio.create_task(self._read_loop())
+            self._stderr_task = asyncio.create_task(self._drain_stderr())
+            result = await self.request("initialize", {
+                "processId": None,
+                "rootUri": root_uri,
+                "capabilities": _client_capabilities(),
+                "workspaceFolders": [{"uri": root_uri, "name": "workspace"}],
+            }, timeout=timeout)
+            self._capabilities = result.get("capabilities", {}) if isinstance(result, dict) else {}
+            await self.notify("initialized", {})
+        except asyncio.CancelledError:
+            await self._cleanup()
+            raise
+        except Exception as exc:
+            self._error_message = str(exc)
+            await self._cleanup()
+            raise
 
     async def stop(self) -> None:
-        if self._process is None:
+        process = self._process
+        if process is None:
             return
         if self.connected:
             try:
@@ -133,16 +153,11 @@ class LspClient:
             except Exception as exc:
                 log_internal_error(exc, context="lsp_exit_notify")
         try:
-            await asyncio.wait_for(self._process.wait(), timeout=2.0)
+            await asyncio.wait_for(process.wait(), timeout=2.0)
         except asyncio.TimeoutError:
-            self._process.terminate()
-            try:
-                await asyncio.wait_for(self._process.wait(), timeout=2.0)
-            except asyncio.TimeoutError:
-                self._process.kill()
-                await self._process.wait()
-        self._process = None
-        self._cancel_tasks()
+            pass
+        finally:
+            await self._cleanup()
 
     async def request(
         self,
@@ -164,7 +179,7 @@ class LspClient:
             response = await asyncio.wait_for(future, timeout=timeout)
         except asyncio.TimeoutError as exc:
             self._pending.pop(req_id, None)
-            raise LspConnectionError(f"LSP request timed out: {method}") from exc
+            raise LspTimeoutError(f"LSP request timed out: {method}") from exc
         if isinstance(response, dict) and response.get("error"):
             error = response["error"]
             message = error.get("message", str(error)) if isinstance(error, dict) else str(error)
@@ -201,7 +216,7 @@ class LspClient:
             raise
         except Exception as exc:
             self._error_message = str(exc)
-            log.debug("LSP read loop failed for %s: %s", self.config.language, exc)
+            log_tool_event("lsp_read_loop_failed", tool_name=self.config.language, message=f"LSP read loop failed for {self.config.language}: {exc}")
         finally:
             for future in self._pending.values():
                 if not future.done():
@@ -239,12 +254,42 @@ class LspClient:
         except Exception as exc:
             log_internal_error(exc, context="lsp_stderr_reader")
 
-    def _cancel_tasks(self) -> None:
-        for task in (self._reader_task, self._stderr_task):
-            if task is not None and not task.done():
-                task.cancel()
-        self._reader_task = None
-        self._stderr_task = None
+    async def _cleanup(self) -> None:
+        cleanup_task = asyncio.create_task(self._cleanup_impl())
+        cancellation: asyncio.CancelledError | None = None
+        while not cleanup_task.done():
+            try:
+                await asyncio.shield(cleanup_task)
+            except asyncio.CancelledError as exc:
+                if cancellation is None:
+                    cancellation = exc
+        await cleanup_task
+        if cancellation is not None:
+            raise cancellation
+
+    async def _cleanup_impl(self) -> None:
+        tasks = []
+        for task_name in ("_reader_task", "_stderr_task"):
+            task = getattr(self, task_name)
+            setattr(self, task_name, None)
+            if task is not None:
+                tasks.append(task)
+                if not task.done():
+                    task.cancel()
+        if tasks:
+            await asyncio.gather(*tasks, return_exceptions=True)
+
+        for future in self._pending.values():
+            if not future.done():
+                future.set_exception(LspConnectionError("LSP connection closed"))
+        self._pending.clear()
+
+        process = self._process
+        self._process = None
+        if process is not None:
+            await finalize_process_tree(process)
+
+        self._capabilities = {}
 
 
 def _client_capabilities() -> dict[str, Any]:
