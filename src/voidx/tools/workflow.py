@@ -51,8 +51,8 @@ class WorkflowInput(BaseModel):
         default="",
         max_length=120,
         description=(
-            "One-sentence goal of the current workflow. Required for 'enter'. "
-            "Optional retarget for 'advance'. Ignored for 'done'."
+            "Stable overall objective for the current task. Keep it short, sharp, and clear. "
+            "Required for 'enter'. Optional retarget for 'advance'. Ignored for 'done'."
         ),
     )
 

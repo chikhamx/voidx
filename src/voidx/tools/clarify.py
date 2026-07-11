@@ -7,7 +7,7 @@ from uuid import uuid4
 
 from pydantic import BaseModel, Field
 
-from voidx.runtime import GoalSpec, IntentResolution, TaskIntent, ToolStatePatch
+from voidx.runtime import IntentResolution, TaskIntent, ToolStatePatch
 from voidx.tools.base import (
     BaseTool,
     ToolContext,
@@ -112,10 +112,8 @@ def _infer_state_patch(response: UserResponse) -> ToolStatePatch | None:
         "debug": TaskIntent.CODING,
     }
     if normalized in intent_map:
-        goal_modes = {"inspect", "design", "review", "implement", "debug"}
         return ToolStatePatch(
             intent=IntentResolution(type=intent_map[normalized]),
-            goal=GoalSpec(desc=answer) if normalized in goal_modes else None,
         )
 
     return None

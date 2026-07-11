@@ -3,7 +3,6 @@
 from __future__ import annotations
 
 import asyncio
-import logging
 import random
 from typing import Awaitable, Callable, TypeVar
 
@@ -18,7 +17,6 @@ async def retry_async(
     max_delay: float,
     jitter: bool,
     label: str,
-    logger: logging.Logger | None = None,
     retry_on: type[Exception] | tuple[type[Exception], ...] | None = None,
 ) -> T:
     last_exc: Exception | None = None
@@ -34,10 +32,5 @@ async def retry_async(
             delay = min(base_delay * (2 ** (attempt - 1)), max_delay)
             if jitter:
                 delay *= 0.5 + random.random()
-            if logger:
-                logger.warning(
-                    "%s attempt %d/%d failed: %s — retrying in %.2fs",
-                    label, attempt, max_attempts, exc, delay,
-                )
             await asyncio.sleep(delay)
     raise last_exc  # unreachable

@@ -196,8 +196,11 @@ class FileReadTool(BaseTool):
             external = _try_resolve_external(inp.file_path)
             if external and ctx.interact:
                 response = await ctx.interact(UserInteraction(
-                    prompt=f"读取 workspace 外的文件: {inp.file_path}",
-                    options=[("允许", "allow", "本次允许读取该文件"), ("拒绝", "deny", "不读取该文件")],
+                    prompt=f"Read file outside workspace? {inp.file_path}",
+                    options=[
+                        ("Yes", "allow", "Allow this read once"),
+                        ("No", "deny", "Do not read this file"),
+                    ],
                 ))
                 if response.cancelled or response.value == "deny":
                     return ToolResult(
@@ -249,7 +252,7 @@ class FileReadTool(BaseTool):
             return ToolResult(
                 title=f"Read {bounded.lines} lines",
                 output=output,
-                summary=f"Read {bounded.lines}/{len(lines)} lines",
+                summary=f"{bounded.lines}/{len(lines)} lines",
                 metadata={
                     "file": inp.file_path,
                     "lines": bounded.lines,
@@ -273,7 +276,7 @@ class FileReadTool(BaseTool):
         return ToolResult(
             title=f"Read {bounded.lines} lines",
             output=bounded.output,
-            summary=f"Read {bounded.lines}/{len(lines)} lines",
+            summary=f"{bounded.lines}/{len(lines)} lines",
             metadata={
                 "file": inp.file_path,
                 "lines": bounded.lines,

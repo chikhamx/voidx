@@ -7,9 +7,16 @@ from typing import Literal
 from pydantic import BaseModel, Field
 
 from voidx.diffing import make_file_diff
-from voidx.lsp.errors import LspError
+from voidx.lsp.errors import LspError, LspTimeoutError
 from voidx.lsp.service import LspService
-from voidx.tools.base import BaseTool, ToolContext, ToolResult, model_to_json_schema, resolve_safe
+from voidx.tools.base import (
+    BaseTool,
+    ToolContext,
+    ToolResult,
+    model_to_json_schema,
+    resolve_safe,
+    tool_timeout_metadata,
+)
 from voidx.tools.file.state import clear_read_coverage, record_mtime, save_file_version
 
 
@@ -84,6 +91,11 @@ class LspTool(BaseTool):
                 return ToolResult(title="LSP references", output=output, summary=f"references at line {inp.line}")
             else:
                 return ToolResult(output=f"Unknown LSP operation: {inp.operation}", metadata={"error": True})
+        except LspTimeoutError as exc:
+            return ToolResult(
+                output=f"LSP {inp.operation} timed out: {exc}",
+                metadata=tool_timeout_metadata("lsp", operation=inp.operation),
+            )
         except LspError as exc:
             return ToolResult(output=f"LSP {inp.operation} failed: {exc}", metadata={"error": True})
 
@@ -114,6 +126,11 @@ class LspFormatTool(BaseTool):
             await save_file_version(ctx, path, display_path=inp.file_path, tool_name=self.id)
         try:
             changed, old_text, new_text = await service.format(inp.file_path)
+        except LspTimeoutError as exc:
+            return ToolResult(
+                output=f"LSP format timed out: {exc}",
+                metadata=tool_timeout_metadata("lsp", operation="format"),
+            )
         except LspError as exc:
             return ToolResult(output=f"LSP format failed: {exc}", metadata={"error": True})
         if not changed:

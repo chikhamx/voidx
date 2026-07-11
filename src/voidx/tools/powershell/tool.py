@@ -17,6 +17,8 @@ from voidx.tools.shell.common import (
     build_hint_result,
     build_success_result,
     build_timeout_result,
+    create_owned_subprocess_exec,
+    release_owned_process,
     terminate_process,
 )
 
@@ -52,7 +54,7 @@ class PowerShellTool(BaseTool):
             return build_hint_result(inp.command, hint, "PowerShell")
 
         try:
-            proc = await asyncio.create_subprocess_exec(
+            proc = await create_owned_subprocess_exec(
                 _powershell_exe(),
                 "-NoProfile",
                 "-NonInteractive",
@@ -63,14 +65,18 @@ class PowerShellTool(BaseTool):
                 stdout=subprocess.PIPE,
                 stderr=subprocess.PIPE,
                 cwd=ctx.workspace,
-                creationflags=subprocess.CREATE_NEW_PROCESS_GROUP,
             )
-            stdout, stderr = await asyncio.wait_for(
-                proc.communicate(), timeout=inp.timeout
-            )
-        except asyncio.TimeoutError:
-            await terminate_process(proc)
-            return build_timeout_result(inp.command, inp.timeout)
+            try:
+                stdout, stderr = await asyncio.wait_for(
+                    proc.communicate(), timeout=inp.timeout
+                )
+                await release_owned_process(proc)
+            except asyncio.TimeoutError:
+                await terminate_process(proc)
+                return build_timeout_result(inp.command, inp.timeout)
+            except asyncio.CancelledError:
+                await terminate_process(proc)
+                raise
         except FileNotFoundError:
             return ToolResult(
                 output="powershell.exe not found. Check your Windows installation.",

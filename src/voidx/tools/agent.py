@@ -15,7 +15,13 @@ from voidx.runtime.task_state import (
     IntentResolution,
     PlanResolution,
 )
-from voidx.tools.base import BaseTool, ToolContext, ToolResult, model_to_json_schema
+from voidx.tools.base import (
+    BaseTool,
+    ToolContext,
+    ToolResult,
+    model_to_json_schema,
+    tool_timeout_metadata,
+)
 from voidx.workflow.dag import DEFAULT_WORKFLOW_DAG
 
 
@@ -226,6 +232,16 @@ class AgentTool(BaseTool):
                     "workflow_route": plan.model_dump(mode="json") if plan is not None else None,
                     "result_schema": normalized.result_contract.schema_name,
                 },
+            )
+        except TimeoutError as exc:
+            return ToolResult(
+                output=f"Child agent '{agent_def_name}' timed out: {exc}",
+                metadata=tool_timeout_metadata(
+                    "agent",
+                    agent=agent_def_name,
+                    reason="timeout",
+                    detail=str(exc)[:200],
+                ),
             )
         except Exception as exc:
             return ToolResult(

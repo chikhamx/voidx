@@ -4,7 +4,7 @@ from __future__ import annotations
 
 from typing import Any
 
-from voidx.tools.base import ToolContext, ToolResult
+from voidx.tools.base import ToolContext, ToolResult, tool_timeout_metadata
 
 
 def adapt_mcp_web_arguments(kind: str, tool: str, arguments: dict[str, Any]) -> dict[str, Any]:
@@ -77,9 +77,22 @@ async def call_mcp_web_tool(
             },
         )
 
+    from voidx.mcp.client.errors import McpTimeoutError
+
     try:
         adapted_arguments = adapt_mcp_web_arguments(kind, route.tool, arguments)
         result = await manager.call_tool(route.server, route.tool, adapted_arguments)
+    except McpTimeoutError as exc:
+        return ToolResult(
+            output=f"MCP web {kind} timed out via {route.server}/{route.tool}: {exc}",
+            metadata=tool_timeout_metadata(
+                "mcp",
+                backend="mcp",
+                kind=kind,
+                server=route.server,
+                tool=route.tool,
+            ),
+        )
     except Exception as exc:
         return ToolResult(
             output=f"MCP web {kind} failed via {route.server}/{route.tool}: {exc}",

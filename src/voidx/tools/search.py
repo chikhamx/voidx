@@ -2,7 +2,6 @@
 
 from __future__ import annotations
 
-import logging
 import fnmatch
 import json
 import re
@@ -12,7 +11,6 @@ from pydantic import BaseModel, Field, field_validator
 from voidx.logging.tool_log import log_tool_event
 from voidx.tools.base import BaseTool, model_to_json_schema, ToolContext, ToolResult, resolve_safe, SKIP_DIRS, SKIP_SUFFIXES
 
-_logger = logging.getLogger(__name__)
 
 
 class GlobInput(BaseModel):
@@ -273,7 +271,6 @@ class GrepTool(BaseTool):
                     truncated = True
                     break
             except Exception as exc:
-                _logger.debug("Failed to read file during grep: %s: %s", f, exc, exc_info=True)
                 log_tool_event("grep_read_failed", tool_name="search", message=f"Failed to read file during grep: {f}: {exc}")
                 continue
 
@@ -307,5 +304,5 @@ def _load_gitignore(base: Path):
         lines = gitignore_path.read_text(encoding="utf-8").splitlines()
         return pathspec.PathSpec.from_lines("gitignore", lines)
     except Exception:
-        _logger.debug("Failed to parse .gitignore", exc_info=True)
+        log_tool_event("tool_gitignore_parse_failed", tool_name="search", message="Failed to parse .gitignore")
         return None

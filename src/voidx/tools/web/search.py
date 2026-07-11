@@ -6,10 +6,17 @@ import logging
 import os
 from html.parser import HTMLParser
 
+import httpx
 from pydantic import BaseModel, Field
 
 from voidx.logging.tool_log import log_tool_event
-from voidx.tools.base import BaseTool, model_to_json_schema, ToolContext, ToolResult
+from voidx.tools.base import (
+    BaseTool,
+    ToolContext,
+    ToolResult,
+    model_to_json_schema,
+    tool_timeout_metadata,
+)
 from .content import (
     WEB_TOOL_CACHE,
     cached_tool_result,
@@ -230,6 +237,15 @@ class WebSearchTool(BaseTool):
                 inp.max_results,
             )
         except Exception as e:
+            if isinstance(e, httpx.TimeoutException):
+                return ToolResult(
+                    output=f"Search timed out: {e}. Query: {inp.query}",
+                    metadata=tool_timeout_metadata(
+                        "web",
+                        query=inp.query,
+                        fallback_errors=fallback_errors,
+                    ),
+                )
             return ToolResult(
                 output=f"Search failed: {e}. Query: {inp.query}",
                 metadata={"query": inp.query, "error": str(e), "fallback_errors": fallback_errors},

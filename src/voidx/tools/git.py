@@ -13,7 +13,19 @@ from typing import Any
 
 from pydantic import BaseModel, Field
 
-from voidx.tools.base import BaseTool, ToolContext, ToolResult, model_to_json_schema, resolve_safe
+from voidx.runtime.processes import (
+    create_owned_subprocess_exec,
+    finalize_process_tree,
+    release_owned_process,
+)
+from voidx.tools.base import (
+    BaseTool,
+    ToolContext,
+    ToolResult,
+    model_to_json_schema,
+    resolve_safe,
+    tool_timeout_metadata,
+)
 from voidx.logging.tool_log import log_tool_event
 
 
@@ -78,6 +90,12 @@ class GitRepo(BaseModel):
     workspace: str
 
 
+class GitProcessTimeout(RuntimeError):
+    def __init__(self, result: dict[str, Any]) -> None:
+        self.result = result
+        super().__init__(result.get("stderr") or "git command timed out")
+
+
 class GitTool(BaseTool):
     id = "git"
     description = (
@@ -97,7 +115,10 @@ class GitTool(BaseTool):
         effective_ctx = _resolve_path_context(inp.path, ctx)
         if effective_ctx is None:
             return _result("unknown", ctx, ok=False, error="unsafe_path: path escapes workspace")
-        repo = await _discover_repo(effective_ctx)
+        try:
+            repo = await _discover_repo(effective_ctx)
+        except GitProcessTimeout as exc:
+            return _timeout_result("discover", effective_ctx, exc.result)
         if repo is None:
             return _result("unknown", ctx, ok=False, error="not_a_git_repository")
 
@@ -123,6 +144,8 @@ class GitTool(BaseTool):
             if handler is not None and _is_structured_route(subcommand, rest):
                 return await handler(rest, effective_ctx, repo)
             return await _git_raw(subcommand, rest, effective_ctx, repo)
+        except GitProcessTimeout as exc:
+            return _timeout_result(subcommand, effective_ctx, exc.result, repo=repo)
         except ValueError as exc:
             from pydantic import ValidationError as _VE
             if isinstance(exc, _VE):
@@ -639,6 +662,8 @@ def _resolve_path_context(path: str, ctx: ToolContext) -> ToolContext | None:
 
 async def _discover_repo(ctx: ToolContext) -> GitRepo | None:
     proc = await _run_process(["git", "rev-parse", "--show-toplevel"], cwd=ctx.workspace, read_only=True)
+    if proc.get("timeout"):
+        raise GitProcessTimeout(proc)
     if proc["returncode"] != 0:
         return None
     return GitRepo(
@@ -648,7 +673,10 @@ async def _discover_repo(ctx: ToolContext) -> GitRepo | None:
 
 
 async def _run_git(repo: GitRepo, args: list[str], *, read_only: bool = False, timeout: int | None = None) -> dict[str, Any]:
-    return await _run_process(["git", *args], cwd=repo.repo_root, read_only=read_only, timeout=timeout)
+    result = await _run_process(["git", *args], cwd=repo.repo_root, read_only=read_only, timeout=timeout)
+    if result.get("timeout"):
+        raise GitProcessTimeout(result)
+    return result
 
 
 async def _run_process(args: list[str], *, cwd: str, read_only: bool = False, timeout: int | None = None) -> dict[str, Any]:
@@ -660,7 +688,7 @@ async def _run_process(args: list[str], *, cwd: str, read_only: bool = False, ti
     if read_only:
         env["GIT_OPTIONAL_LOCKS"] = "0"
     try:
-        proc = await asyncio.create_subprocess_exec(
+        proc = await create_owned_subprocess_exec(
             *args,
             cwd=cwd,
             env=env,
@@ -668,13 +696,23 @@ async def _run_process(args: list[str], *, cwd: str, read_only: bool = False, ti
             stdout=asyncio.subprocess.PIPE,
             stderr=asyncio.subprocess.PIPE,
         )
-        stdout, stderr = await asyncio.wait_for(proc.communicate(), timeout=effective_timeout)
-    except asyncio.TimeoutError:
-        proc.kill()
-        await proc.wait()
-        return {"returncode": -1, "stdout": "", "stderr": f"git command timed out after {effective_timeout}s"}
     except FileNotFoundError:
         return {"returncode": -1, "stdout": "", "stderr": "git executable not found"}
+
+    try:
+        stdout, stderr = await asyncio.wait_for(proc.communicate(), timeout=effective_timeout)
+        await release_owned_process(proc)
+    except asyncio.TimeoutError:
+        await finalize_process_tree(proc)
+        return {
+            "returncode": -1,
+            "stdout": "",
+            "stderr": f"git command timed out after {effective_timeout}s",
+            **tool_timeout_metadata("git"),
+        }
+    except asyncio.CancelledError:
+        await finalize_process_tree(proc)
+        raise
     return {
         "returncode": proc.returncode or 0,
         "stdout": stdout.decode("utf-8", errors="replace"),
@@ -921,6 +959,40 @@ def _parse_track(track: str) -> tuple[int, int]:
         elif part.startswith("behind "):
             behind = int(part.removeprefix("behind "))
     return ahead, behind
+
+
+def _timeout_result(
+    command: str,
+    ctx: ToolContext,
+    process_result: dict[str, Any],
+    *,
+    repo: GitRepo | None = None,
+) -> ToolResult:
+    error = str(process_result.get("stderr") or "git command timed out").strip()
+    data = {
+        "stdout": str(process_result.get("stdout") or ""),
+        "stderr": error,
+        "returncode": int(process_result.get("returncode", -1)),
+    }
+    payload = {
+        "ok": False,
+        "command": command,
+        "repo_root": repo.repo_root if repo else "",
+        "workspace": repo.workspace if repo else str(Path(ctx.workspace).resolve()),
+        "data": data,
+        "error": error,
+    }
+    return ToolResult(
+        title=f"git: {command}",
+        output=json.dumps(payload, ensure_ascii=False, indent=2),
+        summary="timed out",
+        metadata=tool_timeout_metadata(
+            "git",
+            command=command,
+            returncode=-1,
+            error_message=error,
+        ),
+    )
 
 
 def _result(

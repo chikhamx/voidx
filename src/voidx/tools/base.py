@@ -12,6 +12,16 @@ from pydantic import BaseModel, Field
 from voidx.workflow.types import WorkflowRunState
 
 
+def tool_timeout_metadata(source: str, **extra: Any) -> dict[str, Any]:
+    return {
+        **extra,
+        "error": True,
+        "timeout": True,
+        "error_kind": "tool_timeout",
+        "timeout_source": source,
+    }
+
+
 def resolve_safe(workspace: str, file_path: str, extra_paths: list[str] | None = None) -> Path | None:
     """Resolve file path and verify it stays inside workspace (+ optional extra paths).
 

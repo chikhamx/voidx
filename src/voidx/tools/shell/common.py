@@ -15,7 +15,15 @@ from contextlib import suppress
 from dataclasses import dataclass
 from typing import Literal
 
-from voidx.tools.base import ToolResult
+from voidx.runtime.processes import (
+    create_owned_process,
+    create_owned_subprocess_exec,
+    create_owned_subprocess_shell,
+    finalize_process_tree,
+    process_launch_options,
+    release_owned_process,
+)
+from voidx.tools.base import ToolResult, tool_timeout_metadata
 
 _HintableTool = Literal["read", "git", "manage", "write", "replace", "glob", "grep"]
 
@@ -70,7 +78,7 @@ def build_timeout_result(command: str, timeout: int) -> ToolResult:
     return ToolResult(
         output=json.dumps(payload, ensure_ascii=False),
         display=display,
-        metadata={"command": command, "exit_code": -1, "timeout": True, "error": True},
+        metadata=tool_timeout_metadata("shell", command=command, exit_code=-1),
     )
 
 
@@ -104,7 +112,7 @@ def build_success_result(
         title=f"{tool_label}: {command}",
         output=json.dumps(payload, ensure_ascii=False),
         display="\n".join(display_parts) or "(no output)",
-        summary=f"exit {exit_code}",
+        summary="" if exit_code == 0 else f"exit {exit_code}",
         metadata={
             "command": command,
             "exit_code": exit_code,
@@ -118,48 +126,4 @@ def build_success_result(
 
 
 async def terminate_process(proc: asyncio.subprocess.Process) -> None:
-    """Terminate a subprocess, escalating from SIGTERM/terminate to SIGKILL/kill.
-
-    On Unix, kills the entire process group (os.killpg).
-    On Windows, uses taskkill /T /F to kill the entire process tree.
-    """
-    if proc.returncode is not None:
-        return
-    try:
-        if hasattr(os, "killpg"):
-            os.killpg(proc.pid, signal.SIGTERM)
-        elif sys.platform == "win32":
-            await _win32_kill_tree(proc.pid)
-        else:
-            proc.terminate()
-    except ProcessLookupError:
-        return
-
-    try:
-        await asyncio.wait_for(proc.wait(), timeout=2)
-        return
-    except asyncio.TimeoutError:
-        pass
-
-    with suppress(ProcessLookupError):
-        if hasattr(os, "killpg"):
-            os.killpg(proc.pid, signal.SIGKILL)
-        elif sys.platform == "win32":
-            await _win32_kill_tree(proc.pid)
-        else:
-            proc.kill()
-    with suppress(asyncio.TimeoutError):
-        await asyncio.wait_for(proc.wait(), timeout=2)
-
-
-async def _win32_kill_tree(pid: int) -> None:
-    """Kill a process tree on Windows using taskkill /T /F."""
-    args = ["taskkill", "/T", "/F", "/PID", str(pid)]
-    with suppress(ProcessLookupError, OSError):
-        proc = await asyncio.create_subprocess_exec(
-            *args,
-            stdout=subprocess.DEVNULL,
-            stderr=subprocess.DEVNULL,
-        )
-        with suppress(asyncio.TimeoutError):
-            await asyncio.wait_for(proc.wait(), timeout=5)
+    await finalize_process_tree(proc)

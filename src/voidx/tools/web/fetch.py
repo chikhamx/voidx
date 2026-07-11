@@ -12,7 +12,13 @@ from urllib.parse import urljoin, urlparse
 import httpx
 from pydantic import BaseModel, Field
 
-from voidx.tools.base import BaseTool, model_to_json_schema, ToolContext, ToolResult
+from voidx.tools.base import (
+    BaseTool,
+    ToolContext,
+    ToolResult,
+    model_to_json_schema,
+    tool_timeout_metadata,
+)
 from .content import (
     WEB_TOOL_CACHE,
     cached_tool_result,
@@ -202,7 +208,7 @@ class WebFetchTool(BaseTool):
             result = ToolResult(
                 title=f"Fetched: {canonicalize_url(resp.url)}",
                 output=output,
-                summary=f"Fetched {len(output)} chars from {canonicalize_url(resp.url)}",
+                summary=f"Fetched {len(output)} chars",
                 metadata={
                     "url": inp.url,
                     "canonical_url": extracted["url"],
@@ -228,6 +234,11 @@ class WebFetchTool(BaseTool):
                 return ToolResult(
                     output=f"Blocked: {e}",
                     metadata=_blocked_metadata(inp.url),
+                )
+            if isinstance(e, httpx.TimeoutException):
+                return ToolResult(
+                    output=f"Failed to fetch {inp.url}: request timed out: {e}",
+                    metadata=tool_timeout_metadata("web", url=inp.url),
                 )
             return ToolResult(
                 output=f"Failed to fetch {inp.url}: {e}",
