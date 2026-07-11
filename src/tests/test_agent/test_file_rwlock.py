@@ -7,7 +7,11 @@ from pathlib import Path
 
 import pytest
 
-from voidx.agent.graph.tool_executor.helpers import _FileRWLock, _extract_file_paths
+from voidx.agent.graph.tool_executor.helpers import (
+    _FileRWLock,
+    _acquire_file_locks,
+    _extract_file_paths,
+)
 
 
 # ---------------------------------------------------------------------------
@@ -499,3 +503,79 @@ class TestSameFileWriteOrdering:
         # Execution order must be descending by line number: w2(10), w1(5), w3(2)
         assert execution_order == ["w2", "w1", "w3"], f"Expected descending line order, got {execution_order}"
         assert all(r is not None for r in results)
+
+
+@pytest.mark.asyncio
+async def test_cancelled_waiting_reader_does_not_release_writer_lock():
+    lock = _FileRWLock()
+    await lock.acquire_write()
+
+    task = asyncio.create_task(
+        _acquire_file_locks(["file.py"], is_write=False, get_lock=lambda _path: lock)
+    )
+    await asyncio.sleep(0)
+    task.cancel()
+    with pytest.raises(asyncio.CancelledError):
+        await task
+
+    assert lock._writer_active is True
+    assert lock._readers == 0
+    await lock.release_write()
+
+
+@pytest.mark.asyncio
+async def test_cancelled_waiting_writer_does_not_release_reader_lock():
+    lock = _FileRWLock()
+    await lock.acquire_read()
+
+    task = asyncio.create_task(
+        _acquire_file_locks(["file.py"], is_write=True, get_lock=lambda _path: lock)
+    )
+    await asyncio.sleep(0)
+    task.cancel()
+    with pytest.raises(asyncio.CancelledError):
+        await task
+
+    assert lock._writer_active is False
+    assert lock._readers == 1
+    await lock.release_read()
+
+
+@pytest.mark.asyncio
+async def test_partial_multi_path_cancellation_releases_only_acquired_locks_in_reverse_order():
+    first = _FileRWLock()
+    second = _FileRWLock()
+    release_order: list[str] = []
+    await second.acquire_write()
+
+    original_release = first.release_read
+
+    async def release_first():
+        release_order.append("first")
+        await original_release()
+
+    first.release_read = release_first
+    locks = {"a.py": first, "b.py": second}
+    task = asyncio.create_task(
+        _acquire_file_locks(
+            ["a.py", "b.py"],
+            is_write=False,
+            get_lock=locks.__getitem__,
+        )
+    )
+    await asyncio.sleep(0)
+    assert first._readers == 1
+
+    task.cancel()
+    with pytest.raises(asyncio.CancelledError):
+        await task
+
+    assert release_order == ["first"]
+    assert first._readers == 0
+    assert second._writer_active is True
+    await second.release_write()
+
+    await first.acquire_write()
+    await first.release_write()
+    await second.acquire_read()
+    await second.release_read()

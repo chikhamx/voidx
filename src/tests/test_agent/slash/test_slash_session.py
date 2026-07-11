@@ -9,6 +9,7 @@ import pytest
 
 
 from voidx.agent.slash import SlashHandler
+from voidx.agent.slash.host import SlashHostAdapter
 import voidx.memory.store as store
 from voidx.memory.session import MessageRow, create_session, delete_session, get_session, save_message
 from voidx.ui.commands import COMMANDS
@@ -455,3 +456,14 @@ def test_title_auto_command_is_in_palette():
 
 def test_quit_command_is_in_palette():
     assert ("/quit", "Exit voidx") in COMMANDS
+
+
+def test_slash_host_adapter_forwards_guidance_source():
+    calls = []
+    raw = SimpleNamespace(
+        submit_guidance=lambda text, **kwargs: calls.append((text, kwargs)) or True,
+    )
+
+    assert SlashHostAdapter(raw).submit_guidance("change approach", source="guard") is True
+
+    assert calls == [("change approach", {"source": "guard"})]

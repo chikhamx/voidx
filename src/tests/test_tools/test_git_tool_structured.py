@@ -1,3 +1,4 @@
+import asyncio
 import json
 import subprocess
 import sys
@@ -429,3 +430,40 @@ async def test_git_stash_list_empty(tmp_path):
     assert len(entries) == 0
 
 
+
+
+@pytest.mark.asyncio
+async def test_git_run_process_preserves_structured_timeout(monkeypatch, tmp_path):
+    class FakeProcess:
+        returncode = None
+        pid = 12345
+
+        async def communicate(self):
+            await asyncio.sleep(60)
+
+    fake_process = FakeProcess()
+    finalized = False
+
+    async def create_process(*_args, **_kwargs):
+        return fake_process
+
+    async def finalize_process(process):
+        nonlocal finalized
+        assert process is fake_process
+        process.returncode = -1
+        finalized = True
+
+    monkeypatch.setattr(git_mod.asyncio, "create_subprocess_exec", create_process)
+    monkeypatch.setattr(git_mod, "finalize_process_tree", finalize_process, raising=False)
+
+    result = await git_mod._run_process(
+        ["git", "status"],
+        cwd=str(tmp_path),
+        timeout=0.01,
+    )
+
+    assert finalized is True
+    assert result["returncode"] == -1
+    assert result["timeout"] is True
+    assert result["error_kind"] == "tool_timeout"
+    assert result["timeout_source"] == "git"

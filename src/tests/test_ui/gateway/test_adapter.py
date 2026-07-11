@@ -28,6 +28,8 @@ from voidx.ui.output.events.schema import (
     ClarifyPromptShown,
     ErrorAppended,
     FileChangeAppended,
+    GuidanceCommitted,
+    GuidanceSubmitted,
     MarkdownAppended,
     MessageAppended,
     PermissionPromptShown,
@@ -345,7 +347,13 @@ async def test_checkpoint_prompt_to_item_started():
     msg = await adapter.handle(
         CheckpointPromptShown(
             checkpoint_id="cp1",
-            plan={"plan_summary": "do x", "steps": [], "affected_files": [], "risks": []},
+            plan={
+                "goal": "do x",
+                "plan_summary": "do x",
+                "steps": [],
+                "affected_files": [],
+                "risks": [],
+            },
         )
     )
     params = _item_params(msg)
@@ -471,3 +479,38 @@ async def test_clarify_answer_submitted_to_item_completed():
     assert params["data"]["prompt_type"] == "clarify"
     assert params["data"]["answer"] == "option a"
     assert params["data"]["cancelled"] is False
+
+
+@pytest.mark.asyncio
+async def test_guidance_submitted_renders_as_guidance_preview_item():
+    adapter = _adapter()
+
+    msg = await adapter.handle(GuidanceSubmitted(text="keep going"))
+
+    assert _method(msg) == "item.started"
+    params = _item_params(msg)
+    assert params["kind"] == "guidance_preview"
+    assert params["data"] == {"text": "keep going", "truncated": False}
+
+
+@pytest.mark.asyncio
+async def test_guidance_committed_renders_as_completed_guidance_preview():
+    adapter = _adapter()
+
+    msg = await adapter.handle(GuidanceCommitted())
+
+    assert _method(msg) == "item.completed"
+    params = _item_params(msg)
+    assert params["kind"] == "guidance_preview"
+
+
+@pytest.mark.asyncio
+async def test_guidance_message_appended_renders_exactly_once():
+    adapter = _adapter()
+
+    msg = await adapter.handle(MessageAppended(text="keep going", style="guidance"))
+
+    assert _method(msg) == "item.started"
+    params = _item_params(msg)
+    assert params["kind"] == "message"
+    assert params["data"] == {"text": "keep going", "style": "guidance"}

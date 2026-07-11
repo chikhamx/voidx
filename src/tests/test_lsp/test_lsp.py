@@ -1,3 +1,4 @@
+import asyncio
 import json
 import sys
 from pathlib import Path
@@ -8,12 +9,12 @@ import pytest
 
 from voidx.agent.slash import SlashHandler
 from voidx.agent.tool_filters import filter_unavailable_lsp_tools
-from voidx.lsp.client import LSP_REQUEST_TIMEOUT_SECONDS, encode_lsp_message
-from voidx.lsp.errors import LspConnectionError, LspServerUnavailable
+from voidx.lsp.client import LSP_REQUEST_TIMEOUT_SECONDS, LspClient, encode_lsp_message
+from voidx.lsp.errors import LspConnectionError, LspServerUnavailable, LspTimeoutError
 from voidx.lsp.manager import LspManager, apply_text_edits
 from voidx.lsp.schema import LspServerConfig
 from voidx.tools.base import ToolContext
-from voidx.tools.lsp import LspFormatTool
+from voidx.tools.lsp import LspFormatTool, LspTool
 from voidx.tools.registry import ToolRegistry
 import voidx.memory.store as store
 import voidx.tools.lsp as lsp_module
@@ -357,3 +358,155 @@ async def test_lsp_manager_requests_use_extended_timeout(tmp_path):
     ]
 
 
+
+
+@pytest.mark.asyncio
+async def test_lsp_request_timeout_raises_lsp_timeout_error(tmp_path):
+    class FakeStdin:
+        def write(self, data):
+            pass
+
+        async def drain(self):
+            pass
+
+    client = LspClient(
+        LspServerConfig(language="python", command=sys.executable, extensions=[".py"]),
+        cwd=str(tmp_path),
+    )
+    client._process = SimpleNamespace(stdin=FakeStdin(), returncode=None)
+
+    with pytest.raises(LspTimeoutError):
+        await client.request("textDocument/hover", {}, timeout=0.001)
+
+
+@pytest.mark.asyncio
+async def test_lsp_tool_timeout_uses_unified_metadata(tmp_path, monkeypatch):
+    class TimeoutService:
+        async def diagnostics(self, file_path=None):
+            raise LspTimeoutError("diagnostics timed out")
+
+    monkeypatch.setattr(lsp_module, "_service", lambda ctx: TimeoutService())
+
+    result = await LspTool().execute(
+        {"operation": "diagnostics"},
+        ToolContext(workspace=str(tmp_path)),
+    )
+
+    assert result.metadata["error"] is True
+    assert result.metadata["timeout"] is True
+    assert result.metadata["error_kind"] == "tool_timeout"
+    assert result.metadata["timeout_source"] == "lsp"
+
+
+@pytest.mark.asyncio
+async def test_lsp_start_cancellation_rolls_back_owned_process_and_tasks(tmp_path, monkeypatch):
+    import voidx.lsp.client as client_module
+
+    class FakeProcess:
+        def __init__(self):
+            self.pid = 1234
+            self.returncode = None
+            self.stdin = object()
+            self.stdout = object()
+            self.stderr = object()
+
+    process = FakeProcess()
+    initialize_started = asyncio.Event()
+    reader_cancelled = asyncio.Event()
+    stderr_cancelled = asyncio.Event()
+    finalized = asyncio.Event()
+
+    async def create_owned_subprocess_exec(*args, **kwargs):
+        return process
+
+    async def finalize(owned):
+        assert owned is process
+        process.returncode = -15
+        finalized.set()
+
+    async def block_reader():
+        try:
+            await asyncio.Event().wait()
+        finally:
+            reader_cancelled.set()
+
+    async def block_stderr():
+        try:
+            await asyncio.Event().wait()
+        finally:
+            stderr_cancelled.set()
+
+    client = LspClient(
+        LspServerConfig(language="python", command=sys.executable, extensions=[".py"]),
+        cwd=str(tmp_path),
+    )
+
+    async def block_request(method, params=None, *, timeout=0):
+        initialize_started.set()
+        await asyncio.Event().wait()
+
+    monkeypatch.setattr(client_module, "create_owned_subprocess_exec", create_owned_subprocess_exec, raising=False)
+    monkeypatch.setattr(client_module, "finalize_process_tree", finalize, raising=False)
+    monkeypatch.setattr(client, "_read_loop", block_reader)
+    monkeypatch.setattr(client, "_drain_stderr", block_stderr)
+    monkeypatch.setattr(client, "request", block_request)
+
+    task = asyncio.create_task(client.start(root_uri=tmp_path.as_uri()))
+    await initialize_started.wait()
+    task.cancel()
+
+    with pytest.raises(asyncio.CancelledError):
+        await task
+
+    assert finalized.is_set()
+    assert reader_cancelled.is_set()
+    assert stderr_cancelled.is_set()
+    assert client._process is None
+    assert client._reader_task is None
+    assert client._stderr_task is None
+    assert client._pending == {}
+
+
+@pytest.mark.asyncio
+async def test_lsp_manager_cancellation_stops_client_before_propagating(tmp_path, monkeypatch):
+    import voidx.lsp.manager as manager_module
+
+    start_entered = asyncio.Event()
+    stop_finished = asyncio.Event()
+
+    class FakeClient:
+        connected = False
+
+        def __init__(self, config, *, cwd):
+            self.config = config
+            self.cwd = cwd
+
+        async def start(self, *, root_uri, timeout):
+            start_entered.set()
+            await asyncio.Event().wait()
+
+        async def stop(self):
+            await asyncio.sleep(0)
+            stop_finished.set()
+
+    manager = LspManager(str(tmp_path))
+    manager._servers = {
+        "python": LspServerConfig(
+            language="python",
+            command=sys.executable,
+            extensions=[".py"],
+            resolved_command=sys.executable,
+        ),
+    }
+    manager._initialized = True
+    monkeypatch.setattr(manager_module, "LspClient", FakeClient)
+
+    task = asyncio.create_task(manager._ensure_client("python"))
+    await start_entered.wait()
+    task.cancel()
+
+    with pytest.raises(asyncio.CancelledError):
+        await task
+
+    assert stop_finished.is_set()
+    assert manager._clients == {}

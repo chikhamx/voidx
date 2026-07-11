@@ -65,7 +65,7 @@ async def test_goal_resolver_validation_error_falls_back_to_general(tmp_path, mo
     )
 
     assert result.intent.type == TaskIntent.GENERAL
-    assert result.goal is not None
+    assert result.goal is None
     assert result.plan is None
 
     entries = [
@@ -89,20 +89,32 @@ async def test_run_once_uses_goal_resolver_and_keeps_resolver_messages_out_of_hi
         class ResolverShouldRunModel:
             called = False
 
-            def with_structured_output(self, schema):
+            def with_structured_output(self, schema, *, include_raw=False):
                 assert schema is ResolverGoal
+                assert include_raw is True
                 return self
 
             async def ainvoke(self, messages):
                 self.called = True
                 assert "GoalResolution JSON schema" not in messages[0].content
                 assert "review 这个文件" in messages[-1].content
-                return ResolverGoal(
-                    intent="coding",
-                    goal="review 这个文件",
-                    workflow="review",
-                    kind_hint="review",
-                )
+                return {
+                    "raw": AIMessage(
+                        content="",
+                        usage_metadata={
+                            "input_tokens": 4,
+                            "output_tokens": 1,
+                            "total_tokens": 5,
+                        },
+                    ),
+                    "parsed": ResolverGoal(
+                        intent="coding",
+                        goal="review 这个文件",
+                        workflow="review",
+                        kind_hint="review",
+                    ),
+                    "parsing_error": None,
+                }
 
         resolver_model = ResolverShouldRunModel()
         graph.model = resolver_model
@@ -135,6 +147,9 @@ async def test_run_once_uses_goal_resolver_and_keeps_resolver_messages_out_of_hi
         assert graph._task_state.recent_exchanges == [
             TurnExchange(user_text="review 这个文件", assistant_text="ok")
         ]
+        assert graph._usage_stats.total_input_tokens == 4
+        assert graph._usage_stats.total_output_tokens == 1
+        assert graph._usage_stats.total_calls == 1
 
         rows = await load_messages(session.id)
         for row in rows:
@@ -200,7 +215,7 @@ async def test_general_intent_with_active_workflow_preserves_coding():
 
 @pytest.mark.asyncio
 async def test_general_intent_without_active_workflow_falls_back():
-    """GENERAL intent + no active workflow → stays GENERAL, goal from user_text."""
+    """GENERAL intent + no active workflow + no current_goal → stays GENERAL, goal is None."""
     model = StructuredModel(
         GoalResolution(
             intent=IntentResolution(type=TaskIntent.GENERAL),
@@ -217,7 +232,7 @@ async def test_general_intent_without_active_workflow_falls_back():
     )
 
     assert result.intent.type == TaskIntent.GENERAL
-    assert result.goal is not None
+    assert result.goal is None
     assert result.plan is None
 
 
@@ -246,7 +261,7 @@ async def test_general_intent_with_workflow_route_but_no_goal_falls_back():
     )
 
     assert result.intent.type == TaskIntent.GENERAL
-    assert result.goal is not None
+    assert result.goal is None
     assert result.plan is None
 
 

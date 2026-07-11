@@ -284,3 +284,49 @@ class TestWebFetchRetry:
         result = await webfetch_module._fetch_url_with_retry("https://example.com", rc)
         assert result.status_code == 404
         assert call_count == 1
+
+
+@pytest.mark.asyncio
+async def test_webfetch_timeout_uses_unified_metadata(tmp_path, monkeypatch):
+    WEB_TOOL_CACHE.clear()
+
+    async def timeout_fetch(url, retry_config):
+        raise httpx.ReadTimeout("fetch timed out")
+
+    monkeypatch.setattr(webfetch_module, "_is_private_host", lambda host: False)
+    monkeypatch.setattr(webfetch_module, "_fetch_url_with_retry", timeout_fetch)
+
+    result = await WebFetchTool().execute(
+        {"url": "https://timeout.example/test", "prompt": "Extract the page"},
+        ToolContext(workspace=str(tmp_path)),
+    )
+
+    assert result.metadata["error"] is True
+    assert result.metadata["timeout"] is True
+    assert result.metadata["error_kind"] == "tool_timeout"
+    assert result.metadata["timeout_source"] == "web"
+
+
+@pytest.mark.asyncio
+async def test_webfetch_summary_omits_repeated_url(tmp_path, monkeypatch):
+    WEB_TOOL_CACHE.clear()
+
+    async def fake_fetch(url, retry_config):
+        return webfetch_module._FetchResponse(
+            url="https://example.com/a/very/long/path?with=query",
+            status_code=200,
+            text="<html><head><title>Example</title></head><body>Readable page text.</body></html>",
+            content_type="text/html",
+        )
+
+    monkeypatch.setattr(webfetch_module, "_is_private_host", lambda host: False)
+    monkeypatch.setattr(webfetch_module, "_fetch_url_with_retry", fake_fetch)
+
+    result = await WebFetchTool().execute(
+        {"url": "https://example.com/a/very/long/path?with=query", "prompt": "Extract text"},
+        ToolContext(workspace=str(tmp_path)),
+    )
+
+    assert result.summary == f"Fetched {len(result.output)} chars"
+    assert "https://example.com" not in result.summary
+    assert result.metadata["canonical_url"] == "https://example.com/a/very/long/path?with=query"

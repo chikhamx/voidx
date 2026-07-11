@@ -19,6 +19,7 @@ from voidx.agent.task_state import (
     WorkflowRoute,
 )
 from voidx.config import Config
+from voidx.llm.usage import UsageStats
 from voidx.memory.session import create_session, delete_session, load_messages
 from voidx.runtime.intent import TaskIntent
 from voidx.ui.output.dock import BottomInputDock, set_dock
@@ -36,6 +37,51 @@ class StructuredModel:
     async def ainvoke(self, messages):
         self.messages = messages
         return self.result
+
+
+@pytest.mark.asyncio
+async def test_goal_resolver_records_raw_response_usage():
+    class StructuredUsageModel:
+        def with_structured_output(self, schema, *, include_raw=False):
+            assert schema is ResolverGoal
+            assert include_raw is True
+            return self
+
+        async def ainvoke(self, _messages):
+            return {
+                "raw": AIMessage(
+                    content="",
+                    usage_metadata={
+                        "input_tokens": 5,
+                        "output_tokens": 2,
+                        "total_tokens": 7,
+                    },
+                ),
+                "parsed": ResolverGoal(
+                    intent="coding",
+                    goal="Track resolver usage",
+                    workflow=None,
+                ),
+                "parsing_error": None,
+            }
+
+    usage_stats = UsageStats()
+
+    result = await resolve_goal_for_turn(
+        model=StructuredUsageModel(),
+        user_text="track resolver usage",
+        interaction_mode="auto",
+        task_state=TaskState(),
+        usage_stats=usage_stats,
+    )
+
+    assert result.goal is not None
+    assert result.goal.desc == "Track resolver usage"
+    assert usage_stats.last_input_tokens == 5
+    assert usage_stats.last_output_tokens == 2
+    assert usage_stats.total_input_tokens == 5
+    assert usage_stats.total_output_tokens == 2
+    assert usage_stats.total_calls == 1
 
 
 @pytest.mark.asyncio
@@ -137,7 +183,7 @@ def test_goal_resolver_prompt_keeps_goal_as_stable_task_objective():
     prompt = model.messages[0].content
     assert "Stable overall objective for the current task" in prompt
     assert "Summarize the user's intent" in prompt
-    assert "do not enumerate individual bugs, files, functions, or implementation steps" in prompt
+    assert "without explicit details" in prompt
     assert "status bar" not in prompt
 
 
@@ -329,11 +375,12 @@ async def test_goal_resolver_propagates_valid_plan_join():
 @pytest.mark.asyncio
 async def test_goal_resolver_drops_unknown_plan_route():
     model = StructuredModel(
-        {
-            "intent": {"type": "coding", "desc": "bad workflow target"},
-            "goal": {"type": "feature", "desc": "continue"},
-            "plan": {"join": "nonexistent", "leave": "also-missing"},
-        }
+        ResolverGoal(
+            intent="coding",
+            goal="continue",
+            workflow="review",
+            kind_hint="feature",
+        )
     )
 
     result = await resolve_goal_for_turn(
@@ -343,7 +390,7 @@ async def test_goal_resolver_drops_unknown_plan_route():
         task_state=TaskState(),
     )
 
-    assert result.plan is None
+    assert result.plan == PlanResolution(join="review", leave=None)
     assert result.goal is not None
 
 
@@ -449,7 +496,7 @@ async def test_goal_resolver_falls_back_to_general_when_structured_output_fails(
     )
 
     assert result.intent.type == TaskIntent.GENERAL
-    assert result.goal is not None
+    assert result.goal is None
     assert result.plan is None
 
 

@@ -140,7 +140,7 @@ def test_brainstorm_exit_rules_make_small_change_precedence_explicit(tmp_path):
 
 
 def test_skill_transitions_are_soft_constraints_documented():
-    doc = Path(__file__).resolve().parents[3] / "docs" / "archive" / "2026-06-09" / "skill-state-machine-2026-06-08.md"
+    doc = Path(__file__).resolve().parents[3] / "docs" / "archive" / "2026-06" / "2026-06-09" / "skill-state-machine-2026-06-08.md"
     text = doc.read_text(encoding="utf-8")
 
     assert "transition 是 **soft constraint**" in text

@@ -248,8 +248,6 @@ async def test_model_switch_global_scope_updates_global_and_local(tmp_path, monk
         await delete_model_profile_async(profile_name)
 
 
-@pytest.mark.asyncio
-
 def test_model_provider_list_matches_catalog():
     from voidx.agent.slash.runtime import PROVIDERS
 

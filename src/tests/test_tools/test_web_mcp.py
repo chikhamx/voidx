@@ -278,3 +278,88 @@ async def test_webfetch_uses_ttl_cache(tmp_path, monkeypatch):
     assert calls == 1
     assert first.metadata["cached"] is False
     assert second.metadata["cached"] is True
+
+
+@pytest.mark.asyncio
+async def test_mcp_web_timeout_uses_unified_metadata(tmp_path):
+    from voidx.mcp.client import McpTimeoutError
+
+    class TimeoutManager:
+        async def call_tool(self, server, tool, arguments):
+            raise McpTimeoutError("request timed out")
+
+    settings = Settings(str(tmp_path))
+    settings.set_web_tool_route(
+        "search",
+        WebToolRoute(backend="mcp", server="test-server", tool="search"),
+    )
+
+    result = await WebSearchTool(settings=settings).execute(
+        {"query": "timeout"},
+        ToolContext(workspace=str(tmp_path), mcp_manager=TimeoutManager()),
+    )
+
+    assert result.metadata["error"] is True
+    assert result.metadata["timeout"] is True
+    assert result.metadata["error_kind"] == "tool_timeout"
+    assert result.metadata["timeout_source"] == "mcp"
+    assert result.metadata["backend"] == "mcp"
+
+
+@pytest.mark.asyncio
+async def test_direct_websearch_timeout_uses_unified_metadata(tmp_path, monkeypatch):
+    import httpx
+
+    WEB_TOOL_CACHE.clear()
+
+    async def timeout_search(*args, **kwargs):
+        raise httpx.ReadTimeout("search timed out")
+
+    monkeypatch.setattr(WebSearchTool, "_get_tavily_key", lambda self: None)
+    monkeypatch.setattr(websearch_module, "_search_duckduckgo", timeout_search)
+
+    result = await WebSearchTool(settings=Settings(str(tmp_path))).execute(
+        {"query": "timeout"},
+        ToolContext(workspace=str(tmp_path)),
+    )
+
+    assert result.metadata["error"] is True
+    assert result.metadata["timeout"] is True
+    assert result.metadata["error_kind"] == "tool_timeout"
+    assert result.metadata["timeout_source"] == "web"
+
+
+@pytest.mark.asyncio
+async def test_websearch_fallback_succeeds_when_first_backend_times_out(tmp_path, monkeypatch):
+    """When the first search backend times out but the fallback succeeds,
+    the result must be successful, not a timeout."""
+    import httpx
+
+    WEB_TOOL_CACHE.clear()
+
+    async def tavily_timeout(*args, **kwargs):
+        raise httpx.ReadTimeout("tavily timed out")
+
+    async def duckduckgo_success(*args, **kwargs):
+        return [
+            {
+                "title": "Fallback Result",
+                "url": "https://fallback.example.com",
+                "snippet": "from duckduckgo",
+            },
+        ]
+
+    monkeypatch.setattr(WebSearchTool, "_get_tavily_key", lambda self: "fake-key")
+    monkeypatch.setattr(websearch_module, "_search_tavily", tavily_timeout)
+    monkeypatch.setattr(websearch_module, "_search_duckduckgo", duckduckgo_success)
+
+    result = await WebSearchTool(settings=Settings(str(tmp_path))).execute(
+        {"query": "fallback test"},
+        ToolContext(workspace=str(tmp_path)),
+    )
+
+    assert result.metadata.get("error") is not True
+    assert result.metadata.get("timeout") is not True
+    assert result.metadata.get("backend") == "duckduckgo"
+    assert result.metadata.get("results") == 1
+    assert "Fallback Result" in result.output

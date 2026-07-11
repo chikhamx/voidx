@@ -16,6 +16,7 @@ from voidx.agent.graph import VoidXGraph
 from voidx.agent.graph.run_loop import GraphRunLoopMixin
 from voidx.agent.graph.title_mixin import _sanitize_generated_title
 from voidx.agent.runtime_context import InteractionMode, TaskIntent
+from voidx.agent.goal_resolver import ResolverGoal
 from voidx.agent.task_state import (
     GoalResolution,
     GoalSpec,
@@ -44,26 +45,18 @@ from tests.test_agent.graph.run_loop_helpers import (
 )
 
 @pytest.mark.asyncio
-async def test_run_once_uses_user_text_for_first_session_title_without_resolver_goal(tmp_path):
+async def test_run_once_keeps_default_title_when_resolver_falls_back_without_goal(tmp_path):
     graph = VoidXGraph(Config(workspace=str(tmp_path)), api_key=None)
 
-    class StructuredGoalModel:
-        def with_structured_output(self, schema):
-            assert schema is GoalResolution
-            return self
-
+    class FailingResolverModel:
         async def ainvoke(self, _messages):
-            return GoalResolution(
-                intent=IntentResolution(type=TaskIntent.CODING),
-                goal=None,
-                plan=None,
-            )
+            raise RuntimeError("resolver failed")
 
     class FakeGraph:
         async def ainvoke(self, initial, _config):
             return {"messages": list(initial["messages"]) + [AIMessage(content="ok")], "task_state": initial["task_state"]}
 
-    graph.model = StructuredGoalModel()
+    graph.model = FailingResolverModel()
     graph.graph = FakeGraph()
     test_dock = BottomInputDock()
     set_dock(test_dock)
@@ -76,22 +69,30 @@ async def test_run_once_uses_user_text_for_first_session_title_without_resolver_
         set_dock(None)
 
     assert graph._session is not None
-    assert graph._session.title == "review runtime"
+    assert graph._session.title == "New session"
 
 
 @pytest.mark.asyncio
 async def test_smart_title_generation_failure_keeps_temporary_title(tmp_path):
     graph = VoidXGraph(Config(workspace=str(tmp_path)), api_key=None)
 
-    class FailingTitleModel:
+    class ResolverModel:
+        def with_structured_output(self, schema):
+            assert schema is ResolverGoal
+            return self
+
         async def ainvoke(self, _messages):
-            raise RuntimeError("title failed")
+            return ResolverGoal(
+                intent="coding",
+                goal="分析启动流程",
+                workflow=None,
+            )
 
     class FakeGraph:
         async def ainvoke(self, initial, _config):
             return {"messages": list(initial["messages"]) + [AIMessage(content="ok")]}
 
-    graph.model = FailingTitleModel()
+    graph.model = ResolverModel()
     graph.graph = FakeGraph()
     test_dock = BottomInputDock()
     set_dock(test_dock)
@@ -105,8 +106,8 @@ async def test_smart_title_generation_failure_keeps_temporary_title(tmp_path):
         assert graph._session is not None
         loaded = await get_session(graph._session.id)
         assert loaded is not None
-        assert loaded.title == "分析一下启动流程"
-        assert graph._session.title == "分析一下启动流程"
+        assert loaded.title == "分析启动流程"
+        assert graph._session.title == "分析启动流程"
     finally:
         test_dock.deactivate()
         test_dock.reset()
@@ -170,5 +171,3 @@ async def test_smart_title_does_not_update_resumed_session(tmp_path):
     assert loaded_old.title == "temporary"
     assert loaded_resumed is not None
     assert loaded_resumed.title == "Resumed title"
-
-

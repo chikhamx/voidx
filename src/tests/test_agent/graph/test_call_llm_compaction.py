@@ -123,8 +123,47 @@ async def test_call_llm_injects_current_todo_runtime_context(tmp_path, monkeypat
 
 
 @pytest.mark.asyncio
-async def test_call_llm_updates_usage_stats(tmp_path, monkeypatch):
+async def test_call_llm_updates_usage_stats_across_turn_control_calls(tmp_path, monkeypatch):
     import voidx.agent.graph.core.llm as graph_module
+
+    class TurnControlUsageStreamingModel:
+        def __init__(self):
+            self.calls = 0
+
+        def bind_tools(self, _tool_defs):
+            return self
+
+        async def astream(self, _messages):
+            self.calls += 1
+            if self.calls == 1:
+                yield AIMessageChunk(
+                    content="answer",
+                    usage_metadata={
+                        "input_tokens": 7,
+                        "output_tokens": 3,
+                        "total_tokens": 10,
+                    },
+                )
+                return
+            if self.calls == 2:
+                yield AIMessageChunk(
+                    content="",
+                    tool_calls=[
+                        {
+                            "name": "turn",
+                            "args": {},
+                            "id": "turn-usage",
+                            "type": "tool_call",
+                        }
+                    ],
+                    usage_metadata={
+                        "input_tokens": 2,
+                        "output_tokens": 1,
+                        "total_tokens": 3,
+                    },
+                )
+                return
+            pytest.fail(f"Unexpected LLM call {self.calls}")
 
     monkeypatch.setattr(graph_module, "StreamingRenderer", FakeRenderer)
 
@@ -135,7 +174,7 @@ async def test_call_llm_updates_usage_stats(tmp_path, monkeypatch):
         ),
         api_key=None,
     )
-    graph.model = FakeUsageStreamingModel()
+    graph.model = TurnControlUsageStreamingModel()
 
     result = await graph._call_llm({
         "messages": [HumanMessage(content="hi")],
@@ -144,11 +183,13 @@ async def test_call_llm_updates_usage_stats(tmp_path, monkeypatch):
     })
 
     assert result["step_count"] == 1
-    assert graph._usage_stats.last_input_tokens == 7
-    assert graph._usage_stats.last_output_tokens == 3
-    assert graph._usage_stats.total_input_tokens == 7
-    assert graph._usage_stats.total_output_tokens == 3
-    assert graph._usage_stats.total_calls == 1
+    assert result["messages"][0].content == "answer"
+    assert graph.model.calls == 2
+    assert graph._usage_stats.last_input_tokens == 2
+    assert graph._usage_stats.last_output_tokens == 1
+    assert graph._usage_stats.total_input_tokens == 9
+    assert graph._usage_stats.total_output_tokens == 4
+    assert graph._usage_stats.total_calls == 2
 
 
 @pytest.mark.asyncio

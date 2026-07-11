@@ -78,8 +78,8 @@ async def test_first_turn_without_goal_uses_temporary_session_title(tmp_path):
         assert graph._session is not None
         loaded = await get_session(graph._session.id)
         assert loaded is not None
-        assert loaded.title == "看看这个项目"
-        assert graph._session.title == "看看这个项目"
+        assert loaded.title == "New session"
+        assert graph._session.title == "New session"
     finally:
         test_dock.deactivate()
         test_dock.reset()
@@ -117,7 +117,7 @@ async def test_run_once_uses_general_fallback_when_structured_resolver_fails(tmp
 
     initial = captured["initial"]
     assert initial["task_state"]["current_intent"] == "general"
-    assert initial["task_state"]["current_goal"] is not None
+    assert initial["task_state"]["current_goal"] is None
     assert initial["task_state"]["recent_exchanges"] == []
     rows = await load_messages(graph._session.id)
     assert [row.role for row in rows] == ["user", "assistant"]

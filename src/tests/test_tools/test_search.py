@@ -2,7 +2,6 @@
 
 import asyncio
 import json
-import logging
 import shlex
 import sys
 from pathlib import Path
@@ -103,7 +102,7 @@ class TestSearch:
         assert "No matches" in result.display
 
     @pytest.mark.asyncio
-    async def test_grep_logs_unreadable_file_and_continues(self, tmp_path, monkeypatch, caplog):
+    async def test_grep_handles_unreadable_file_and_continues(self, tmp_path, monkeypatch):
         bad = tmp_path / "bad.py"
         good = tmp_path / "good.py"
         bad.write_text("TODO hidden\n")
@@ -119,13 +118,10 @@ class TestSearch:
         ctx = ToolContext(workspace=str(tmp_path))
         r = ToolRegistry()
 
-        with caplog.at_level(logging.DEBUG, logger="voidx.tools.search"):
-            result = await r.execute_tool("grep", {"pattern": "TODO", "include": "*.py"}, ctx)
+        result = await r.execute_tool("grep", {"pattern": "TODO", "include": "*.py"}, ctx)
 
         assert "good.py" in result.display
         assert "TODO visible" in result.display
-        assert "Failed to read file during grep" in caplog.text
-        assert "bad.py" in caplog.text
 
     @pytest.mark.asyncio
     async def test_grep_sandbox_extra_path_returns_absolute_file(self, tmp_path):

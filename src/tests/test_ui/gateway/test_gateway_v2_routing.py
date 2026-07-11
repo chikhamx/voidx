@@ -518,3 +518,32 @@ async def test_v2_session_response_without_thread_id_falls_back_to_unique_reques
     assert isinstance(result, JsonRpcResult)
     assert future.done()
     assert future.result().value == "allow"
+
+
+@pytest.mark.asyncio
+async def test_v2_guidance_submit_returns_failure_when_handler_rejects():
+    dock = BottomInputDock()
+    guide_results: list[bool] = [False]
+
+    async def handle_command(command):
+        if isinstance(command, dict) and command.get("kind") == "guide":
+            return guide_results.pop(0)
+        return None
+
+    session = GatewaySession(
+        lambda: dock.tree,
+        thread_id="t1",
+        command_handler=handle_command,
+    )
+
+    first = await session.dispatch_request(
+        JsonRpcRequest(id=40, method="session.submit", params={"thread_id": "t1", "text": "first"})
+    )
+    second = await session.dispatch_request(
+        JsonRpcRequest(id=41, method="session.submit", params={"thread_id": "t1", "text": "keep going"})
+    )
+
+    assert isinstance(first, JsonRpcResult)
+    assert first.result == {"ok": True}
+    assert isinstance(second, JsonRpcResult)
+    assert second.result == {"ok": False}

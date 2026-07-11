@@ -150,7 +150,7 @@ class TestFileOps:
         assert "[Lines " not in second.output
         assert "were already read" not in second.output
         assert second.title == "Read 51 lines"
-        assert second.summary == "Read 51/120 lines"
+        assert second.summary == "51/120 lines"
 
     @pytest.mark.asyncio
     async def test_already_read_repeated_output_stays_within_llm_message_budget(self, tmp_path):
@@ -325,8 +325,11 @@ class TestReadExternalPath:
         workspace.mkdir()
 
         added_paths: list[str] = []
+        seen_request: UserInteraction | None = None
 
         async def fake_interact(req: UserInteraction) -> UserResponse:
+            nonlocal seen_request
+            seen_request = req
             return UserResponse(value="allow")
 
         ctx = ToolContext(
@@ -340,6 +343,12 @@ class TestReadExternalPath:
         assert result.metadata.get("error") is not True
         assert "hello" in result.output
         assert str(external.resolve()) in added_paths
+        assert seen_request is not None
+        assert seen_request.prompt == f"Read file outside workspace? {target}"
+        assert seen_request.options == [
+            ("Yes", "allow", "Allow this read once"),
+            ("No", "deny", "Do not read this file"),
+        ]
 
     @pytest.mark.asyncio
     async def test_external_path_denied_by_user(self, tmp_path):

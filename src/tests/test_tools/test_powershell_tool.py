@@ -56,6 +56,10 @@ class TestPowerShellExecution:
             ctx,
         )
         assert result.metadata["timeout"] is True
+        assert result.metadata["error"] is True
+        assert result.metadata["error_kind"] == "tool_timeout"
+        assert result.metadata["timeout_source"] == "shell"
+        assert result.metadata["exit_code"] == -1
 
 
     @pytest.mark.asyncio

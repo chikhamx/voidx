@@ -358,10 +358,10 @@ async def test_apply_settings_update_refreshes_live_model(monkeypatch, tmp_path)
 @pytest.mark.asyncio
 async def test_web_guide_submit_records_guidance_without_starting_turn():
     graph = _graph()
-    guidance: list[str] = []
+    guidance: list[tuple[str, dict[str, str]]] = []
     queued_inputs: list[str] = []
 
-    graph.submit_guidance = lambda text: guidance.append(text) or True
+    graph.submit_guidance = lambda text, **kwargs: guidance.append((text, kwargs)) or True
     app = SimpleNamespace(
         submit_external_input=queued_inputs.append,
         cancel_external_input=lambda: None,
@@ -369,17 +369,17 @@ async def test_web_guide_submit_records_guidance_without_starting_turn():
 
     await graph._handle_web_command(app, UiSubmitCommand(text="/guide use TypeScript"))
 
-    assert guidance == ["use TypeScript"]
+    assert guidance == [("use TypeScript", {"source": "user"})]
     assert queued_inputs == []
 
 
 @pytest.mark.asyncio
 async def test_web_direct_guide_command_records_guidance():
     graph = _graph()
-    guidance: list[str] = []
+    guidance: list[tuple[str, dict[str, str]]] = []
     queued_inputs: list[str] = []
 
-    graph.submit_guidance = lambda text: guidance.append(text) or True
+    graph.submit_guidance = lambda text, **kwargs: guidance.append((text, kwargs)) or True
     app = SimpleNamespace(
         submit_external_input=queued_inputs.append,
         cancel_external_input=lambda: None,
@@ -387,7 +387,7 @@ async def test_web_direct_guide_command_records_guidance():
 
     await graph._handle_web_command(app, {"kind": "guide", "text": "stay narrow"})
 
-    assert guidance == ["stay narrow"]
+    assert guidance == [("stay narrow", {"source": "user"})]
     assert queued_inputs == []
 
 

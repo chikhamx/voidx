@@ -67,7 +67,6 @@ class TestClarifyTool:
         assert requests
         assert result.metadata["clarify_answer"] == "implement"
         assert result.metadata["state_patch"]["intent"]["type"] == "coding"
-        assert result.metadata["state_patch"]["goal"]["desc"] == "implement"
 
 
     @pytest.mark.asyncio

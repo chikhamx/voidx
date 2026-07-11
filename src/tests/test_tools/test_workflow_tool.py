@@ -28,6 +28,7 @@ from voidx.tools.clarify import ClarifyTool, ClarifyInput, _infer_state_patch
 from voidx.tools.skills import SkillsTool
 from voidx.tools.document import DocumentTool, DocumentInput
 from voidx.tools.checkpoint import PlanCheckpointTool
+from voidx.tools.workflow import WorkflowInput
 from voidx.agent.task_state import GoalSpec, GoalResolution, IntentResolution, PlanResolution, ToolStatePatch
 from voidx.agent.runtime_context import TaskIntent
 from voidx.skills.context import SKILL_TOOL_CONTEXT_MARKER
@@ -37,6 +38,12 @@ import voidx.memory.store as store
 
 
 class TestWorkflowTool:
+    def test_goal_field_describes_stable_task_objective(self):
+        description = WorkflowInput.model_fields["goal"].description
+
+        assert description is not None
+        assert "Stable overall objective" in description
+
     @pytest.mark.asyncio
     async def test_workflow_advance_activates_matching_successor(self, tmp_path):
         ctx = ToolContext(

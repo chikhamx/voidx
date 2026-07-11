@@ -37,16 +37,28 @@ import voidx.memory.store as store
 
 
 class TestInferStatePatch:
-    def test_intent_match_from_option_value(self):
-        inp = ClarifyInput(question="What?", options=["implement"])
-        response = UserResponse(value="implement")
+    @pytest.mark.parametrize(
+        ("answer", "expected_intent"),
+        [
+            ("general", TaskIntent.GENERAL),
+            ("coding", TaskIntent.CODING),
+            ("chat", TaskIntent.GENERAL),
+            ("inspect", TaskIntent.CODING),
+            ("design", TaskIntent.CODING),
+            ("review", TaskIntent.CODING),
+            ("implement", TaskIntent.CODING),
+            ("debug", TaskIntent.CODING),
+        ],
+    )
+    def test_intent_match_does_not_set_goal(self, answer, expected_intent):
+        response = UserResponse(value=answer)
         patch = _infer_state_patch(response)
 
         assert patch is not None
         assert patch.intent is not None
-        assert patch.intent.type == TaskIntent.CODING
-        assert patch.goal is not None
-        assert patch.goal.desc == "implement"
+        assert patch.intent.type == expected_intent
+        assert patch.goal is None
+        assert "goal" not in patch.model_fields_set
 
     def test_intent_match_case_insensitive(self):
         response = UserResponse(value="Implement")

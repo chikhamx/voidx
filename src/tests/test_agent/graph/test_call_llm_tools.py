@@ -23,7 +23,16 @@ from voidx.memory.context_frames import load_context_frames
 from voidx.memory.session import MessageRow, create_session, delete_session, save_message
 from voidx.ui.output.console import StreamingRenderer
 from voidx.ui.output.dock import ANSI_LINE_PREFIX, BottomInputDock, set_dock
-from voidx.ui.output.events import AnsiAppended, DockEventConsumer, StatusFinished, StatusUpdated, ui_events
+from voidx.ui.output.events import (
+    AnsiAppended,
+    DockEventConsumer,
+    GuidanceCommitted,
+    GuidanceSubmitted,
+    MessageAppended,
+    StatusFinished,
+    StatusUpdated,
+    ui_events,
+)
 from voidx.workflow.runtime import WorkflowRunState, WorkflowRunStatus
 from tests.test_agent.graph.stream_llm_helpers import (
     _plain,
@@ -64,6 +73,111 @@ async def test_call_llm_guidance_does_not_create_main_agent_convergence_hint(tmp
     assert model.messages is not None
     assert is_guidance_message(model.messages[-1])
     assert not any(is_step_hint_message(message) for message in model.messages)
+
+
+@pytest.mark.asyncio
+async def test_call_llm_guard_guidance_stays_hidden_from_ui_events(tmp_path, monkeypatch):
+    import voidx.agent.graph.core.llm as graph_module
+
+    monkeypatch.setattr(graph_module, "StreamingRenderer", FakeRenderer)
+
+    class RecordingEvents:
+        def __init__(self) -> None:
+            self.emitted = []
+
+        def emit_direct(self, event) -> bool:
+            self.emitted.append(event)
+            return True
+
+        async def emit(self, event) -> bool:
+            self.emitted.append(event)
+            return True
+
+    graph = VoidXGraph(
+        Config(
+            model=ModelConfig(provider="mimo", model="mimo-v2.5"),
+            workspace=str(tmp_path),
+        ),
+        api_key=None,
+    )
+    events = RecordingEvents()
+    graph._ui = SimpleNamespace(
+        console=Console(file=sys.stdout),
+        events=events,
+        ui=SimpleNamespace(
+            print=lambda *args, **kwargs: None,
+            error=lambda *args, **kwargs: None,
+        ),
+        via_events=lambda: True,
+    )
+    model = TrackingStreamingModel()
+    graph.model = model
+
+    graph.submit_guidance("No meaningful progress has been detected", source="guard")
+    result = await graph._call_llm({
+        "messages": [HumanMessage(content="finish the task")],
+        "step_count": 1,
+        "persona": "voidx",
+    })
+
+    assert result["step_count"] == 2
+    assert model.messages is not None
+    assert is_guidance_message(model.messages[-1])
+    assert model.messages[-1].content == "No meaningful progress has been detected"
+    assert not any(isinstance(event, GuidanceSubmitted | MessageAppended | GuidanceCommitted) for event in events.emitted)
+
+
+@pytest.mark.asyncio
+async def test_call_llm_user_guidance_commits_preview_without_persistent_message(tmp_path, monkeypatch):
+    import voidx.agent.graph.core.llm as graph_module
+
+    monkeypatch.setattr(graph_module, "StreamingRenderer", FakeRenderer)
+
+    class RecordingEvents:
+        def __init__(self) -> None:
+            self.emitted = []
+
+        def emit_direct(self, event) -> bool:
+            self.emitted.append(event)
+            return True
+
+        async def emit(self, event) -> bool:
+            self.emitted.append(event)
+            return True
+
+    graph = VoidXGraph(
+        Config(
+            model=ModelConfig(provider="mimo", model="mimo-v2.5"),
+            workspace=str(tmp_path),
+        ),
+        api_key=None,
+    )
+    events = RecordingEvents()
+    graph._ui = SimpleNamespace(
+        console=Console(file=sys.stdout),
+        events=events,
+        ui=SimpleNamespace(
+            print=lambda *args, **kwargs: None,
+            error=lambda *args, **kwargs: None,
+        ),
+        via_events=lambda: True,
+    )
+    model = TrackingStreamingModel()
+    graph.model = model
+
+    graph.submit_guidance("先写 spedc文档", source="user")
+    events.emitted.clear()
+    result = await graph._call_llm({
+        "messages": [HumanMessage(content="finish the task")],
+        "step_count": 1,
+        "persona": "voidx",
+    })
+
+    assert result["step_count"] == 2
+    assert model.messages is not None
+    assert is_guidance_message(model.messages[-1])
+    assert model.messages[-1].content == "先写 spedc文档"
+    assert events.emitted == [GuidanceCommitted(text="先写 spedc文档")]
 
 
 @pytest.mark.asyncio

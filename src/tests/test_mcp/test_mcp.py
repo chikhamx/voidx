@@ -469,3 +469,128 @@ class TestMcpRequestRetry:
         with pytest.raises(McpProtocolError):
             await client._request("tools/call", {"name": "test"})
         assert call_count == 1
+
+
+@pytest.mark.asyncio
+async def test_mcp_tool_wrapper_classifies_timeout(tmp_path):
+    from voidx.mcp.client import McpTimeoutError
+
+    class FakeClient:
+        healthy = True
+        status = "connected"
+        error_message = ""
+
+        async def call_tool(self, name, arguments):
+            raise McpTimeoutError("request timed out")
+
+    wrapper = McpToolWrapper(FakeClient(), McpToolDef(name="slow"), "test-server")
+
+    result = await wrapper.execute({}, ToolContext(workspace=str(tmp_path)))
+
+    assert result.metadata["error"] is True
+    assert result.metadata["timeout"] is True
+    assert result.metadata["error_kind"] == "tool_timeout"
+    assert result.metadata["timeout_source"] == "mcp"
+    assert result.metadata["server"] == "test-server"
+
+
+@pytest.mark.asyncio
+async def test_mcp_start_cancellation_rolls_back_process_tasks_and_pipes(monkeypatch):
+    import asyncio
+    import voidx.mcp.client.base as base_module
+
+    class FakeProcess:
+        def __init__(self):
+            self.pid = 4321
+            self.returncode = None
+
+    process = FakeProcess()
+    handshake_started = asyncio.Event()
+    reader_cancelled = asyncio.Event()
+    stderr_cancelled = asyncio.Event()
+    finalized = asyncio.Event()
+
+    async def background(cancelled):
+        try:
+            await asyncio.Event().wait()
+        finally:
+            cancelled.set()
+
+    client = McpClient(McpServerConfig(name="test", command="fake-server"))
+
+    async def fake_spawn():
+        client._proc = process
+        client._reader = object()
+        client._writer = object()
+        client._read_task = asyncio.create_task(background(reader_cancelled))
+        client._stderr_task = asyncio.create_task(background(stderr_cancelled))
+
+    async def fake_handshake():
+        handshake_started.set()
+        await asyncio.Event().wait()
+
+    async def finalize(owned):
+        assert owned is process
+        process.returncode = -15
+        finalized.set()
+
+    monkeypatch.setattr(client, "_spawn", fake_spawn)
+    monkeypatch.setattr(client, "_handshake", fake_handshake)
+    monkeypatch.setattr(base_module, "finalize_process_tree", finalize, raising=False)
+
+    task = asyncio.create_task(client.start())
+    await handshake_started.wait()
+    task.cancel()
+
+    with pytest.raises(asyncio.CancelledError):
+        await task
+
+    assert finalized.is_set()
+    assert reader_cancelled.is_set()
+    assert stderr_cancelled.is_set()
+    assert client._proc is None
+    assert client._reader is None
+    assert client._writer is None
+    assert client._read_task is None
+    assert client._stderr_task is None
+    assert client._pending == {}
+    assert client.healthy is False
+
+
+@pytest.mark.asyncio
+async def test_mcp_manager_stop_all_awaits_background_start_cleanup(tmp_path, monkeypatch):
+    import asyncio
+    import voidx.mcp.manager as manager_module
+
+    start_entered = asyncio.Event()
+    stop_finished = asyncio.Event()
+
+    class FakeClient:
+        def __init__(self, config, retry_config=None):
+            self.config = config
+
+        async def start(self):
+            start_entered.set()
+            await asyncio.Event().wait()
+
+        async def stop(self):
+            await asyncio.sleep(0)
+            stop_finished.set()
+
+    settings = Settings(str(tmp_path))
+    settings.save_mcp_server(McpServerConfig(name="slow", command="fake-server"))
+    manager = McpManager(
+        settings,
+        ToolRegistry(settings=settings),
+        PermissionService(),
+    )
+    monkeypatch.setattr(manager_module, "McpClient", FakeClient)
+
+    await manager.start_all()
+    await start_entered.wait()
+    await manager.stop_all()
+
+    assert stop_finished.is_set()
+    assert manager._init_task is None
+    assert manager._clients == {}
+    assert manager.started is False

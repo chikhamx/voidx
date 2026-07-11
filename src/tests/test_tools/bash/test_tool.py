@@ -20,6 +20,7 @@ from voidx.tools.file.state import save_file_version
 import voidx.tools.file.state as file_state
 from voidx.tools.search import GlobInput, GrepInput
 from voidx.tools.bash import BashInput
+from voidx.tools.bash.tool import BashTool
 from voidx.tools.agent import AgentInput, AgentTool
 from voidx.tools.task_tracker import TaskTracker
 from voidx.tools.task_status import TaskStatusTool
@@ -51,6 +52,7 @@ class TestBash:
         assert data["exit_code"] == 0
         assert "hello" in data["stdout"]
         assert "hello" in result.display
+        assert result.summary == ""
         assert result.metadata["exit_code"] == 0
 
     @pytest.mark.asyncio
@@ -84,6 +86,10 @@ class TestBash:
         await asyncio.sleep(2.2)
 
         assert result.metadata["timeout"] is True
+        assert result.metadata["error"] is True
+        assert result.metadata["error_kind"] == "tool_timeout"
+        assert result.metadata["timeout_source"] == "shell"
+        assert result.metadata["exit_code"] == -1
         # On Unix, killpg terminates the entire process group so late.txt is never created.
         # On Windows, process-group killing is unavailable, so the second command may still run.
         if sys.platform != "win32":
@@ -163,3 +169,29 @@ class TestBash:
         )
         assert result.metadata["exit_code"] == 1
         assert result.metadata["error"] is True
+        assert result.summary == "exit 1"
+
+
+@pytest.mark.asyncio
+@pytest.mark.skipif(os.name == "nt", reason="bash cancellation test requires Unix process groups")
+async def test_bash_cancellation_terminates_process_tree(tmp_path):
+    marker = tmp_path / "cancelled-late.txt"
+    script = (
+        "import time, pathlib; "
+        "time.sleep(1); "
+        f"pathlib.Path({str(marker)!r}).write_text('late')"
+    )
+    task = asyncio.create_task(
+        BashTool().execute(
+            {"command": f'{shlex.quote(sys.executable)} -c {shlex.quote(script)}'},
+            ToolContext(workspace=str(tmp_path)),
+        )
+    )
+
+    await asyncio.sleep(0.1)
+    task.cancel()
+    with pytest.raises(asyncio.CancelledError):
+        await task
+
+    await asyncio.sleep(1.1)
+    assert not marker.exists()

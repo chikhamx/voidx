@@ -454,3 +454,30 @@ class TestInteractiveTools:
             assert result.metadata["result_schema"] == schema_name
 
         assert captured == list(expected.values())
+
+
+@pytest.mark.asyncio
+async def test_agent_tool_timeout_uses_unified_metadata(tmp_path):
+    async def runner(*args, **kwargs):
+        raise TimeoutError("child timed out")
+
+    tool = AgentTool(
+        runner,
+        agent_resolver=lambda name: type("Agent", (), {"name": name, "model": None})(),
+        available_agents=["voidx"],
+    )
+
+    result = await tool.execute(
+        {
+            "agent": "voidx",
+            "mode": "review",
+            "task": "Review the timeout behavior in this module",
+            "target": "src/voidx/tools/agent.py",
+        },
+        ToolContext(workspace=str(tmp_path)),
+    )
+
+    assert result.metadata["error"] is True
+    assert result.metadata["timeout"] is True
+    assert result.metadata["error_kind"] == "tool_timeout"
+    assert result.metadata["timeout_source"] == "agent"

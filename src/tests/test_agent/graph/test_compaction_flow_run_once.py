@@ -139,7 +139,7 @@ async def test_compaction_uses_previous_summary_and_prunes_persisted_head(tmp_pa
         await save_message(MessageRow(session_id=session.id, role="assistant", content="old answer"))
         await save_message(MessageRow(session_id=session.id, role="user", content="tail question"))
 
-        graph = VoidXGraph(Config(workspace=str(tmp_path)), api_key="test", session=session)
+        graph = VoidXGraph(Config(workspace=str(tmp_path)), api_key=None, session=session)
         graph._compaction_summary = "previous summary"
         graph._compaction.is_overflow = lambda _tokens: True
         graph._compaction.select_details = lambda messages: CompactionSelection(
@@ -189,7 +189,7 @@ async def test_compaction_uses_previous_summary_and_prunes_persisted_head(tmp_pa
         assert "current question" in initial_contents
         assert graph._compaction_summary == "updated summary"
 
-        resumed = VoidXGraph(Config(workspace=str(tmp_path)), api_key="test", session=session)
+        resumed = VoidXGraph(Config(workspace=str(tmp_path)), api_key=None, session=session)
         await resumed._restore_runtime_state()
 
         assert resumed._compaction_summary == "updated summary"
@@ -205,7 +205,7 @@ async def test_run_once_passes_compacted_messages_to_graph(tmp_path):
         await save_message(MessageRow(session_id=session.id, role="assistant", content="old answer"))
         await save_message(MessageRow(session_id=session.id, role="user", content="tail question"))
 
-        graph = VoidXGraph(Config(workspace=str(tmp_path)), api_key="test", session=session)
+        graph = VoidXGraph(Config(workspace=str(tmp_path)), api_key=None, session=session)
         graph._compaction.is_overflow = lambda _tokens: False
         graph._compaction.is_soft_overflow = lambda _tokens: True
         graph._compaction.select_preflight_details = lambda messages, *, model="": CompactionSelection(
@@ -257,7 +257,7 @@ async def test_run_once_finishes_analyzing_before_preflight_compaction_status(tm
         await save_message(MessageRow(session_id=session.id, role="assistant", content="old answer"))
         await save_message(MessageRow(session_id=session.id, role="user", content="tail question"))
 
-        graph = VoidXGraph(Config(workspace=str(tmp_path)), api_key="test", session=session)
+        graph = VoidXGraph(Config(workspace=str(tmp_path)), api_key=None, session=session)
         graph._compaction.is_overflow = lambda _tokens: False
         graph._compaction.is_soft_overflow = lambda _tokens: True
         graph._compaction.select_preflight_details = lambda messages, *, model="": CompactionSelection(
