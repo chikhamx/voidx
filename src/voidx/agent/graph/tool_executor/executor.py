@@ -20,6 +20,7 @@ from voidx.runtime.ui import (
     StatusUpdated,
     ToolDisplayPolicy,
     WarningAppended,
+    UiEventTimeout,
 )
 from voidx.tools.service import ToolContext, ToolResult
 
@@ -44,6 +45,7 @@ from .helpers import (
     _make_interact_callback,
     _requires_workspace_write_lock,
     _workspace_write_lock_manager,
+    _infrastructure_skipped_tool,
 )
 from .ui import (
     notify_tool_started,
@@ -57,6 +59,7 @@ if TYPE_CHECKING:
     from voidx.agent.graph.contracts import GraphToolExecutionHost
 
 
+UI_EVENT_BUS_TIMEOUT_KIND = "ui_event_bus_timeout"
 TOOL_HEARTBEAT_INITIAL_SECONDS = 15.0
 TOOL_HEARTBEAT_INTERVAL_SECONDS = 15.0
 
@@ -175,7 +178,7 @@ class GraphToolExecutor:
 
             try:
                 tool_node = await notify_tool_started(host, tc, display_policy)
-            except TimeoutError:
+            except UiEventTimeout:
                 return _ExecutedTool(
                     message=ToolMessage(
                         content=sanitize_tool_message_content(
@@ -188,10 +191,17 @@ class GraphToolExecutor:
                     ),
                     result=ToolResult(
                         output="UI event bus timeout",
-                        metadata={"error": True, "timeout": True},
+                        metadata={
+                            "error": True,
+                            "timeout": True,
+                            "error_kind": UI_EVENT_BUS_TIMEOUT_KIND,
+                            "timeout_source": "ui_event_bus",
+                        },
                     ),
                     tool_call=tc,
                     todo_state=None,
+                    terminal_reason=UI_EVENT_BUS_TIMEOUT_KIND,
+                    runtime_guard_eligible=False,
                 )
 
             t0 = time.monotonic()
@@ -340,6 +350,12 @@ class GraphToolExecutor:
                 cycle_workflow_changed = cycle_workflow_changed or "workflow_runs" in segment_update
                 apply_state_update(segment_update)
                 pending = ([barrier] if barrier is not None else []) + suffix
+                if any(item.terminal_reason is not None for item in segment_executed):
+                    executed.extend(
+                        _infrastructure_skipped_tool(tc, reason="was skipped")
+                        for tc in pending
+                    )
+                    break
                 continue
 
             if barrier is None:
@@ -369,6 +385,12 @@ class GraphToolExecutor:
             )
             cycle_workflow_changed = cycle_workflow_changed or "workflow_runs" in segment_update
             apply_state_update(segment_update)
+            if any(item.terminal_reason is not None for item in segment_executed):
+                executed.extend(
+                    _infrastructure_skipped_tool(tc, reason="was skipped")
+                    for tc in suffix
+                )
+                break
             if not segment_executed or not result_ok(segment_executed[-1].result):
                 blocked_msgs.extend(_blocked_after_barrier_messages(suffix, workspace, "failed"))
                 break
@@ -386,7 +408,15 @@ class GraphToolExecutor:
             result_ok=result_ok,
         )
 
-        if host._ui.via_events():
+        terminal_reason = next(
+            (
+                item.terminal_reason
+                for item in executed
+                if item.terminal_reason is not None
+            ),
+            None,
+        )
+        if host._ui.via_events() and terminal_reason != UI_EVENT_BUS_TIMEOUT_KIND:
             try:
                 await host._ui.events.drain()
             except Exception as exc:
@@ -427,12 +457,7 @@ class GraphToolExecutor:
             )
         ):
             state_update["should_continue"] = False
-        has_timeout = any(
-            getattr(item.result, "metadata", {}).get("timeout")
-            for item in executed
-            if item.result is not None
-        )
-        if has_timeout:
+        if terminal_reason == UI_EVENT_BUS_TIMEOUT_KIND:
             tool_messages.append(AIMessage(content=(
                 "Turn terminated: UI event bus timed out while notifying tool start. "
                 "This usually indicates the frontend is unresponsive. "

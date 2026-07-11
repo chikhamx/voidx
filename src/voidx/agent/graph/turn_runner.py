@@ -207,6 +207,8 @@ class GraphTurnRunner:
                         task_state=base_task_state,
                         log_diagnostic=bool(getattr(host.config, "log_llm_diagnostic", False)),
                         retry_config=getattr(host._settings, "get_retry_config", lambda: None)() if host._settings else None,
+                        usage_stats=host._usage_stats,
+                        model_config=host.config.model,
                     )
                 turn_task_state = base_task_state.model_copy(deep=True)
                 turn_task_state.update_after_turn(
@@ -368,14 +370,10 @@ class GraphTurnRunner:
                                 ))
                     await touch_session(host._session.id)
 
-                    # Auto-title on first message
-                    if is_first_user_message:
-                        goal = intent_resolution.goal
-                        title = (
-                            goal.desc.strip()
-                            if goal is not None and goal.desc.strip()
-                            else host._temporary_session_title(payload.title_text)
-                        )
+# Update session title to match current goal after turn completes
+                    goal = final_task_state.current_goal
+                    if goal is not None and goal.desc.strip():
+                        title = goal.desc.strip()
                         await update_title(host._session.id, title)
                         host._session = host._session.model_copy(update={"title": title})
                 elapsed = time.monotonic() - t_turn_start

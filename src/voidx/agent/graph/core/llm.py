@@ -39,11 +39,22 @@ from voidx.memory.service import save_context_frame_from_messages
 from voidx.runtime.ui import (
     AssistantStreamCommitted,
     AssistantStreamUpdated,
+    GuidanceCommitted,
     StatusFinished,
     StatusUpdated,
     StreamingRenderer,
 )
 
+from voidx.agent.graph.turn_control import (
+    FIRST_MISS_PROMPT,
+    INVALID_TURN_PROMPT,
+    SECOND_MISS_PROMPT,
+    TURN_TOOL_DEFINITION,
+    TurnClassification,
+    classify_turn_call,
+    normalize_terminal_message,
+    validate_turn_call,
+)
 from .helpers import (
     _invalidate_tui,
     _merge_workflow_runs,
@@ -52,6 +63,7 @@ from .helpers import (
     _task_state_for_context,
     _workflow_names,
     _LLM_MAX_RETRIES,
+    _LLM_TIMEOUT_MAX_RETRIES,
     _llm_retry_delay,
 )
 
@@ -175,6 +187,9 @@ class GraphLlmMixin:
             }
 
         tool_defs = self.tools.tools_for_llm()
+        turn_control_active = self._turn_control_enabled()
+        if turn_control_active:
+            tool_defs = [*tool_defs, TURN_TOOL_DEFINITION]
         runtime_task_state = _task_state_for_context(
             state.get("task_state"),
             getattr(self, "_task_state", None),
@@ -182,7 +197,25 @@ class GraphLlmMixin:
         tool_defs = filter_unavailable_lsp_tools(tool_defs, getattr(self, "_lsp_manager", None))
         tool_defs = strip_gemini_unsupported_schema_keys(tool_defs, resolve_protocol(self.config.model))
 
-        guidance_messages = self._drain_pending_guidance()
+        guidance_pairs = self._drain_pending_guidance()
+        guidance_messages = [msg for msg, _, _ in guidance_pairs]
+        if self._ui.via_events() and guidance_pairs:
+            user_guidance = [
+                str(msg.content)
+                for msg, _, source in guidance_pairs
+                if source == "user"
+            ]
+            if user_guidance:
+                self._ui.events.emit_direct(
+                    GuidanceCommitted(
+                        text="\n".join(user_guidance),
+                        truncated=any(
+                            truncated for _, truncated, source in guidance_pairs
+                            if source == "user"
+                        ),
+                        source="user",
+                    )
+                )
         state_messages = sanitize_todo_replay_messages(
             list(state["messages"]),
             preserve_latest_tool_exchange=True,
@@ -297,14 +330,24 @@ class GraphLlmMixin:
         await save_context_frame(llm_messages, context_tokens, convergence_messages, convergence_forced)
         max_retries = _LLM_MAX_RETRIES
         failed_attempts = 0
+        timeout_retry_attempts = 0
         overflow_compaction_attempts = 0
         malformed_tool_call_attempts = 0
         retry_status_active = False
+        pending_provisional: AIMessage | None = None
+        missing_turn_count = 0
+        invalid_turn_repaired = False
+        terminal_msg: AIMessage | None = None
         while True:
             try:
                 renderer = StreamingRenderer(self._ui.console, debug=self._debug)
                 model_with_tools = self.model.bind_tools(tool_defs) if tool_defs else self.model
-                assistant_msg = await _stream_llm(model_with_tools, llm_messages, renderer, resolve_protocol(self.config.model))
+                assistant_msg = await _stream_llm(
+                    model_with_tools,
+                    llm_messages,
+                    renderer,
+                    resolve_protocol(self.config.model),
+                )
                 log_llm_exchange(
                     llm_messages,
                     assistant_msg,
@@ -375,6 +418,102 @@ class GraphLlmMixin:
                     self._ui.ui.print()
                 if retry_status_active and self._ui.via_events():
                     await self._ui.events.emit(StatusFinished(status_id="llm:retry"))
+
+                if turn_control_active:
+                    classification = classify_turn_call(assistant_msg)
+
+                    if classification == TurnClassification.VALID_TURN:
+                        turn_terminal = (
+                            assistant_msg
+                            if extract_text(assistant_msg).strip()
+                            else pending_provisional
+                        )
+                        if validate_turn_call(assistant_msg, turn_terminal):
+                            self._turn_metrics.increment("turn_control_called")
+                            terminal_msg = normalize_terminal_message(turn_terminal)
+                            break
+                        self._turn_metrics.increment("turn_control_invalid")
+                        if not invalid_turn_repaired:
+                            invalid_turn_repaired = True
+                            llm_messages = [
+                                *llm_messages,
+                                HumanMessage(
+                                    content=INVALID_TURN_PROMPT,
+                                    additional_kwargs={GUIDANCE_MARKER: True},
+                                ),
+                            ]
+                            context_tokens = estimate_context_tokens(
+                                llm_messages,
+                                self.config.model.model,
+                            )
+                            self._usage_stats.update_context(context_tokens)
+                            continue
+                        failure_msg = AIMessage(
+                            content=(
+                                "LLM call failed: model repeatedly returned an invalid "
+                                "turn control call."
+                            )
+                        )
+                        return {
+                            "messages": replacement_messages(failure_msg),
+                            "step_count": step + 1,
+                            "should_continue": False,
+                        }
+
+                    if classification == TurnClassification.INVALID_TURN:
+                        if not invalid_turn_repaired:
+                            self._turn_metrics.increment("turn_control_mixed_tools")
+                            self._turn_metrics.increment("turn_control_invalid")
+                            invalid_turn_repaired = True
+                            llm_messages = [
+                                *llm_messages,
+                                HumanMessage(
+                                    content=INVALID_TURN_PROMPT,
+                                    additional_kwargs={GUIDANCE_MARKER: True},
+                                ),
+                            ]
+                            context_tokens = estimate_context_tokens(llm_messages, self.config.model.model)
+                            self._usage_stats.update_context(context_tokens)
+                            continue
+                        if pending_provisional is not None:
+                            terminal_msg = normalize_terminal_message(pending_provisional)
+                            break
+                        failure_msg = AIMessage(
+                            content=(
+                                "LLM call failed: model repeatedly returned an invalid "
+                                "turn control call."
+                            )
+                        )
+                        return {
+                            "messages": replacement_messages(failure_msg),
+                            "step_count": step + 1,
+                            "should_continue": False,
+                        }
+
+                    if classification == TurnClassification.PLAIN_TEXT:
+                        pending_provisional = assistant_msg
+                        missing_turn_count += 1
+                        self._turn_metrics.increment("turn_control_missing")
+                        if missing_turn_count == 1:
+                            self._turn_metrics.increment("turn_control_first_prompt")
+                            llm_messages = [
+                                *llm_messages,
+                                HumanMessage(
+                                    content=FIRST_MISS_PROMPT,
+                                    additional_kwargs={GUIDANCE_MARKER: True},
+                                ),
+                            ]
+                            context_tokens = estimate_context_tokens(llm_messages, self.config.model.model)
+                            self._usage_stats.update_context(context_tokens)
+                            continue
+                        self._turn_metrics.increment("turn_control_second_prompt")
+                        terminal_msg = normalize_terminal_message(pending_provisional)
+                        break
+
+                    self._turn_metrics.increment("turn_control_prompt_succeeded")
+                    terminal_msg = assistant_msg
+                    break
+
                 break
             except Exception as e:
                 from .helpers import _classify_llm_error, LLMErrorKind
@@ -419,6 +558,26 @@ class GraphLlmMixin:
                         "step_count": step,
                         "should_continue": False,
                     }
+
+                # Timeout retries are limited separately — waiting through
+                # multiple 600s timeouts is worse than a quick failure.
+                if kind == LLMErrorKind.TIMEOUT:
+                    timeout_retry_attempts += 1
+                    if timeout_retry_attempts > _LLM_TIMEOUT_MAX_RETRIES:
+                        failure_text = f"LLM call failed after {timeout_retry_attempts} timeout(s): {e}"
+                        if retry_status_active and self._ui.via_events():
+                            await self._ui.events.emit(StatusFinished(status_id="llm:retry"))
+                        if self._ui.via_events():
+                            await self._ui.events.emit(AssistantStreamUpdated(text=failure_text))
+                            await self._ui.events.emit(AssistantStreamCommitted())
+                        else:
+                            self._ui.ui.error(failure_text)
+                        return {
+                            "messages": [],
+                            "step_count": step,
+                            "should_continue": False,
+                        }
+
                 if failed_attempts < max_retries:
                     failed_attempts += 1
                     delay = _llm_retry_delay(failed_attempts)
@@ -449,8 +608,9 @@ class GraphLlmMixin:
                         "should_continue": False,
                     }
 
+        final_msg = terminal_msg if terminal_msg is not None else assistant_msg
         return {
-            "messages": replacement_messages(assistant_msg),
+            "messages": replacement_messages(final_msg),
             "step_count": step + 1,
             "convergence_forced": convergence_forced,
         }

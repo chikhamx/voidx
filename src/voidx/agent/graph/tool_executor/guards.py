@@ -100,7 +100,8 @@ async def _record_runtime_guard_outcomes(
     workflow_changed: bool,
     result_ok: ToolResultOk,
 ) -> GuardDecision:
-    for item in executed:
+    guard_eligible = [item for item in executed if item.runtime_guard_eligible]
+    for item in guard_eligible:
         metadata = getattr(item.result, "metadata", {}) or {}
         if metadata.get("runtime_guard"):
             continue
@@ -115,7 +116,7 @@ async def _record_runtime_guard_outcomes(
         _submit_guard_guidance(host, guidance)
 
     summary = cycle_summary_from_tools(
-        executed,
+        guard_eligible,
         previous_todo_state=previous_todo_state,
         next_todo_state=next_todo_state,
         workflow_changed=workflow_changed,
@@ -143,8 +144,8 @@ def _submit_guard_guidance(host, guidance: GuardGuidance | None) -> None:
         return
     submit = getattr(host, "submit_guidance", None)
     if callable(submit):
-        submit(guidance.message)
+        submit(guidance.message, source="guard")
         return
     pending = getattr(host, "_pending_guidance", None)
     if isinstance(pending, list):
-        pending.append(guidance.message)
+        pending.append((guidance.message, False, "guard"))

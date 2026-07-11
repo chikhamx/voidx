@@ -14,6 +14,8 @@ class _ExecutedTool:
     result: object
     tool_call: dict
     todo_state: TodoRunState | None = None
+    terminal_reason: str | None = None
+    runtime_guard_eligible: bool = True
 
 
 ToolResultOk = Callable[[object], bool]

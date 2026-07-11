@@ -17,7 +17,10 @@ _STATIC_PROVIDERS = [
     "kimi",
     "doubao",
     "typex",
+    "minimax",
+    "longcat",
     "xunfei-coding-plan",
+    "gemini",
 ]
 
 

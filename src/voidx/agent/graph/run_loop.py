@@ -365,13 +365,16 @@ class GraphRunLoopMixin(GraphTurnMixin, GraphSessionMixin, GraphTranscriptMixin)
 
     async def _handle_web_command(self: GraphRunLoopHost, app: Any, command: Any) -> None:
         if isinstance(command, dict) and command.get("kind") == "guide":
-            self.submit_guidance(str(command.get("text", "")))
+            self.submit_guidance(str(command.get("text", "")), source="user")
             return
         kind = _ui_command_kind(command)
         if kind == "submit":
             text = command.text
             if text.strip().startswith("/guide "):
-                self.submit_guidance(text.strip().removeprefix("/guide").strip())
+                self.submit_guidance(
+                    text.strip().removeprefix("/guide").strip(),
+                    source="user",
+                )
             else:
                 self._ensure_gateway_thread()
                 thread_id = str(getattr(command, "thread_id", "") or "")

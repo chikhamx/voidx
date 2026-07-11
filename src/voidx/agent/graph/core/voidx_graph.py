@@ -10,7 +10,7 @@ from __future__ import annotations
 
 import asyncio
 import time
-from typing import TYPE_CHECKING, Any
+from typing import TYPE_CHECKING, Any, Literal
 
 from langchain_core.messages import BaseMessage, HumanMessage
 
@@ -36,6 +36,7 @@ from voidx.agent.graph.thread_context import current_thread_execution_state
 from voidx.agent.graph.tool_executor import GraphToolExecutor
 from voidx.agent.graph.tool_execution import GraphToolExecutionMixin
 from voidx.agent.graph.topology import build_graph, session_date
+from voidx.agent.graph.turn_metrics import TurnControlMetrics
 from voidx.agent.graph.turn_runner import GraphTurnRunner
 from voidx.agent.graph.wiring import (
     bind_settings_to_catalog,
@@ -54,7 +55,7 @@ from voidx.agent.todo_state import apply_todo_state_to_host
 from voidx.config import Config, Settings
 from voidx.llm.instruction import InstructionService
 from voidx.llm.message_markers import GUIDANCE_MARKER
-from voidx.llm.service import create_chat_model
+from voidx.llm.service import create_chat_model, resolve_protocol
 from voidx.memory.service import SessionInfo, append_subagent_event
 from voidx.runtime.ui import (
     GuidanceSubmitted,
@@ -260,7 +261,8 @@ class VoidXGraph(
         self._task_state = TaskState()
         self._needs_failure_check: dict[str, dict] = {}
         self._runtime_guards = RuntimeGuardState()
-        self._pending_guidance: list[str] = []
+        self._turn_metrics = TurnControlMetrics()
+        self._pending_guidance: list[tuple[str, bool, Literal["user", "guard"]]] = []
         self._clear_session_tasks: set[asyncio.Task[None]] = set()
         self._title_generation: int = 0
         self._title_task: asyncio.Task[None] | None = None
@@ -396,10 +398,19 @@ class VoidXGraph(
     def debug_enabled(self) -> bool:
         return self._debug
 
+    def _turn_control_enabled(self) -> bool:
+        protocol = resolve_protocol(self.config.model)
+        return protocol in ("openai", "anthropic")
+
     def set_task_state(self, task_state: TaskState) -> None:
         self._task_state = task_state
 
-    def submit_guidance(self, text: str) -> bool:
+    def submit_guidance(
+        self,
+        text: str,
+        *,
+        source: Literal["user", "guard"] = "user",
+    ) -> bool:
         guidance = " ".join(text.strip().split())
         if not guidance:
             return False
@@ -407,18 +418,30 @@ class VoidXGraph(
         if len(guidance) > GUIDANCE_MAX_CHARS:
             guidance = guidance[:GUIDANCE_MAX_CHARS].rstrip()
             truncated = True
-        self._pending_guidance.append(guidance)
-        if self._ui.via_events():
-            self._ui.events.emit_direct(GuidanceSubmitted(text=guidance, truncated=truncated))
+        if source == "user" and self._ui.via_events():
+            if not self._ui.events.emit_direct(
+                GuidanceSubmitted(text=guidance, truncated=truncated)
+            ):
+                return False
+        self._pending_guidance.append((guidance, truncated, source))
         return True
 
-    def _drain_pending_guidance(self) -> list[HumanMessage]:
-        messages: list[HumanMessage] = []
+    def _drain_pending_guidance(self) -> list[tuple[HumanMessage, bool, Literal["user", "guard"]]]:
+        messages: list[tuple[HumanMessage, bool, Literal["user", "guard"]]] = []
         while self._pending_guidance:
-            text = self._pending_guidance.pop(0)
-            messages.append(HumanMessage(
-                content=text,
-                additional_kwargs={GUIDANCE_MARKER: True},
+            entry = self._pending_guidance.pop(0)
+            if len(entry) == 2:
+                text, truncated = entry
+                source: Literal["user", "guard"] = "user"
+            else:
+                text, truncated, source = entry
+            messages.append((
+                HumanMessage(
+                    content=text,
+                    additional_kwargs={GUIDANCE_MARKER: True},
+                ),
+                truncated,
+                source,
             ))
         return messages
 

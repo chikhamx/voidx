@@ -70,6 +70,39 @@ class _FileRWLock:
             self._condition.notify_all()
 
 
+
+
+async def _release_file_locks(
+    acquired: list[_FileRWLock],
+    *,
+    is_write: bool,
+) -> None:
+    for lock in reversed(acquired):
+        if is_write:
+            await lock.release_write()
+        else:
+            await lock.release_read()
+
+
+async def _acquire_file_locks(
+    paths: list[str],
+    *,
+    is_write: bool,
+    get_lock,
+) -> list[_FileRWLock]:
+    acquired: list[_FileRWLock] = []
+    try:
+        for path in paths:
+            lock = get_lock(path)
+            if is_write:
+                await lock.acquire_write()
+            else:
+                await lock.acquire_read()
+            acquired.append(lock)
+        return acquired
+    except BaseException:
+        await _release_file_locks(acquired, is_write=is_write)
+        raise
 def _extract_file_paths(tool_call: dict) -> list[str]:
     """Extract file paths from a tool call for per-file locking."""
     name = tool_call.get("name", "")
@@ -455,6 +488,35 @@ def _apply_state_update(
         _invalidate_tui(host)
 
 
+
+
+def _infrastructure_skipped_tool(tool_call: dict, *, reason: str) -> _ExecutedTool:
+    tool_name = str(tool_call.get("name") or "tool")
+    output = (
+        f"{tool_name} {reason} because another tool-start notification "
+        "timed out in the same turn."
+    )
+    return _ExecutedTool(
+        message=ToolMessage(
+            content=output,
+            tool_call_id=tool_call.get("id", ""),
+            status="error",
+        ),
+        result=ToolResult(
+            title=f"{tool_name}: infrastructure cancellation",
+            output=output,
+            summary="infrastructure cancellation",
+            metadata={
+                "error": True,
+                "timeout": True,
+                "error_kind": "ui_event_bus_timeout",
+                "timeout_source": "ui_event_bus",
+                "infrastructure_cancelled": True,
+            },
+        ),
+        tool_call=tool_call,
+        runtime_guard_eligible=False,
+    )
 async def _execute_approved_batch(
     approved: list[dict],
     *,
@@ -469,9 +531,15 @@ async def _execute_approved_batch(
     runnable, blocked = _split_runtime_guard_blocked_calls(approved, guard_state)
     unique_calls, duplicate_sources = _dedupe_repeated_read_calls(runnable)
     if serial:
-        executed = []
+        executed: list[_ExecutedTool] = []
+        terminal_seen = False
         for tc in unique_calls:
-            executed.append(await execute_one_fn(tc))
+            if terminal_seen:
+                executed.append(_infrastructure_skipped_tool(tc, reason="was skipped"))
+                continue
+            item = await execute_one_fn(tc)
+            executed.append(item)
+            terminal_seen = item.terminal_reason is not None
         restored = _restore_deduped_read_results(runnable, executed, duplicate_sources)
         return _restore_runtime_guard_blocked_results(approved, restored, blocked)
 
@@ -492,24 +560,15 @@ async def _execute_approved_batch(
     async def execute_one_file_locked(tc):
         paths = sorted(set(_extract_file_paths(tc)))
         is_write = tc.get("name") in ("write", "replace", "manage")
-        rw_locks: list[_FileRWLock] = []
-        # Acquire locks in sorted order to avoid deadlock across tools
+        acquired = await _acquire_file_locks(
+            paths,
+            is_write=is_write,
+            get_lock=_get_rwlock,
+        )
         try:
-            for p in paths:
-                lk = _get_rwlock(p)
-                rw_locks.append(lk)
-                if is_write:
-                    await lk.acquire_write()
-                else:
-                    await lk.acquire_read()
-
             return await execute_one_fn(tc)
         finally:
-            for lk, p in zip(rw_locks, paths):
-                if is_write:
-                    await lk.release_write()
-                else:
-                    await lk.release_read()
+            await _release_file_locks(acquired, is_write=is_write)
 
     async def execute_one_no_file_lock(tc):
         if tc.get("name") == "agent":
@@ -547,19 +606,64 @@ async def _execute_approved_batch(
     call_index = {tc.get("id", id(tc)): i for i, tc in enumerate(unique_calls)}
     results: list = [None] * len(unique_calls)
 
-    async def _run_and_place(file_group, executor_fn):
-        if not file_group:
-            return
-        group_results = await __import__("asyncio").gather(
-            *[executor_fn(tc) for tc in file_group]
-        )
-        for tc, result in zip(file_group, group_results):
-            results[call_index[tc.get("id", id(tc))]] = result
+    async def _run_and_place(tool_group, executor_fn) -> bool:
+        if not tool_group:
+            return False
+        tasks = {
+            asyncio.create_task(executor_fn(tc)): tc
+            for tc in tool_group
+        }
+        try:
+            terminal_seen = False
+            while tasks:
+                done, _ = await asyncio.wait(
+                    tasks,
+                    return_when=asyncio.FIRST_COMPLETED,
+                )
+                for task in done:
+                    tc = tasks.pop(task)
+                    result = task.result()
+                    results[call_index[tc.get("id", id(tc))]] = result
+                    terminal_seen = terminal_seen or result.terminal_reason is not None
+                if not terminal_seen:
+                    continue
+
+                pending = list(tasks.items())
+                for task, _ in pending:
+                    task.cancel()
+                if pending:
+                    await asyncio.gather(
+                        *(task for task, _ in pending),
+                        return_exceptions=True,
+                    )
+                for _, tc in pending:
+                    index = call_index[tc.get("id", id(tc))]
+                    if results[index] is None:
+                        results[index] = _infrastructure_skipped_tool(
+                            tc,
+                            reason="was cancelled",
+                        )
+                return True
+            return False
+        except asyncio.CancelledError:
+            pending = [task for task in tasks if not task.done()]
+            for task in pending:
+                task.cancel()
+            if pending:
+                await asyncio.gather(*pending, return_exceptions=True)
+            raise
 
     executed = []
     try:
-        await _run_and_place(file_calls, execute_one_file_locked)
-        await _run_and_place(other_calls, execute_one_no_file_lock)
+        terminal_seen = await _run_and_place(file_calls, execute_one_file_locked)
+        if terminal_seen:
+            for tc in other_calls:
+                results[call_index[tc.get("id", id(tc))]] = _infrastructure_skipped_tool(
+                    tc,
+                    reason="was skipped",
+                )
+        else:
+            await _run_and_place(other_calls, execute_one_no_file_lock)
         executed = [r for r in results if r is not None]
     finally:
         if aggregate_status_id:

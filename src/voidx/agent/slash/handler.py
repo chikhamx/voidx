@@ -224,6 +224,7 @@ class SlashHandler(
         self.host.set_task_state(task_state)
         self._set_interaction_mode(InteractionMode.GOAL.value)
         await self.host.persist_runtime_state()
+        await self.host.set_session_title(task_state.current_goal.desc)
         ui.print(f"[dim]Goal set to [cyan]{goal_label(task_state.current_goal)}[/cyan][/dim]")
 
     def _usage(self) -> None:
