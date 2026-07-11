@@ -10,6 +10,8 @@ from langchain_core.messages import AIMessageChunk
 
 from voidx.config import ModelConfig
 from voidx.llm.provider import (
+    create_chat_model,
+    create_resolver_model,
     extract_thinking,
     get_context_limit,
     resolve_protocol,
@@ -143,6 +145,23 @@ def test_gemini_reasoning_kwargs_none_string_effort():
     config = ModelConfig(provider="gemini", model="gemini-2.5-flash", reasoning_effort="none")
     kwargs = _gemini_reasoning_kwargs(config)
     assert kwargs == {}
+
+
+def test_create_resolver_model_disables_gemini_thinking():
+    config = ModelConfig(
+        provider="gemini",
+        model="gemini-2.5-pro",
+        reasoning_effort="high",
+    )
+    model = create_chat_model("test-key", config)
+
+    resolver_model = create_resolver_model(model, config)
+
+    assert model.thinking_budget == 16_384
+    assert model.include_thoughts is True
+    assert resolver_model.thinking_budget is None
+    assert resolver_model.thinking_level is None
+    assert resolver_model.include_thoughts is None
 
 
 # ── thinking extraction ──────────────────────────────────────────────────

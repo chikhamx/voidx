@@ -1,5 +1,4 @@
 from pathlib import Path
-import logging
 
 import pytest
 
@@ -68,7 +67,7 @@ async def test_system_paths_uses_first_instruction_file_at_first_matching_level(
 
 
 @pytest.mark.asyncio
-async def test_resolve_logs_injected_instruction_files_when_debug(tmp_path, caplog, monkeypatch):
+async def test_resolve_injects_instruction_files_when_debug(tmp_path, monkeypatch):
     monkeypatch.setattr(Path, "home", staticmethod(lambda: tmp_path / "home"))
     package = tmp_path / "pkg"
     src = package / "src"
@@ -79,10 +78,7 @@ async def test_resolve_logs_injected_instruction_files_when_debug(tmp_path, capl
     target.write_text("print('hi')\n", encoding="utf-8")
     service = InstructionService(str(tmp_path))
     service.set_debug(True)
-    caplog.set_level(logging.DEBUG, logger="voidx.llm.instruction")
 
     resolved = await service.resolve(str(target), "msg-1")
 
     assert resolved == [f"Instructions from: {instruction.resolve()}\nFollow package rules."]
-    assert "Injected instruction file" in caplog.text
-    assert str(instruction.resolve()) in caplog.text

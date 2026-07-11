@@ -15,11 +15,11 @@ from __future__ import annotations
 import asyncio
 from collections.abc import Iterable
 from dataclasses import dataclass, field
-import logging
 from pathlib import Path
 
 import httpx
 
+from voidx.logging.request_log import log_llm_diagnostic
 from voidx.paths import voidx_home
 from voidx.skills.registry import SkillRegistry
 from voidx.skills.schema import SkillSelectionConfig
@@ -29,7 +29,6 @@ from voidx.workflow.types import WorkflowRunState
 
 INSTRUCTION_FILES = ["AGENTS.md", "CLAUDE.md"]  # CLAUDE.md for compat
 
-logger = logging.getLogger(__name__)
 
 
 @dataclass(frozen=True)
@@ -210,11 +209,7 @@ class InstructionService:
                 if content:
                     results.append(f"Instructions from: {candidate_str}\n{content}")
                     if self._debug:
-                        logger.debug(
-                            "Injected instruction file for %s: %s",
-                            filepath,
-                            candidate_str,
-                        )
+                        log_llm_diagnostic("instruction_file_injected", filepath=str(filepath), candidate=candidate_str)
 
             current = current.parent
 

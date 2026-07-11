@@ -18,6 +18,10 @@ def create_chat_model(api_key: str, config: ModelConfig) -> BaseChatModel:
     return provider.create_chat_model(api_key, config)
 
 
+def create_resolver_model(model: BaseChatModel, config: ModelConfig) -> BaseChatModel:
+    return provider.create_resolver_model(model, config)
+
+
 def extract_thinking(chunk: AIMessageChunk, protocol: str) -> str:
     return provider.extract_thinking(chunk, protocol)
 
@@ -27,6 +31,7 @@ def get_context_limit(provider_name: str, protocol: str = "", context_window: in
 
 __all__ = [
     "create_chat_model",
+    "create_resolver_model",
     "DeepSeekChatOpenAI",
     "extract_thinking",
     "get_context_limit",

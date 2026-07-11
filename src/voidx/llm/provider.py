@@ -14,6 +14,7 @@ silently drops it) and handles provider-specific reasoning-effort mapping.
 
 from __future__ import annotations
 
+import os
 import subprocess
 import sys
 
@@ -68,6 +69,7 @@ _PROVIDER_PROTOCOLS: dict[str, str] = {
     "doubao": PROTOCOL_DEEPSEEK,
     "typex": PROTOCOL_DEEPSEEK,
     "minimax": PROTOCOL_DEEPSEEK,
+    "longcat": PROTOCOL_DEEPSEEK,
     # Xunfei Astron Coding Plan — OpenAI-compatible proxy
     "xunfei-coding-plan": "openai",
     "gemini": "gemini",
@@ -86,6 +88,7 @@ _DEFAULT_BASE_URLS: dict[tuple[str, str], str] = {
     ("doubao", PROTOCOL_DEEPSEEK): "https://ark.cn-beijing.volces.com/api/v3",
     ("typex", PROTOCOL_DEEPSEEK): "https://newapi.typex-test.cn/v1",
     ("minimax", PROTOCOL_DEEPSEEK): "https://api.minimax.io/v1",
+    ("longcat", PROTOCOL_DEEPSEEK): "https://api.longcat.chat/openai/v1",
     ("xunfei-coding-plan", "openai"): "https://maas-coding-api.cn-huabei-1.xf-yun.com/v2",
 }
 
@@ -304,7 +307,7 @@ class DeepSeekChatOpenAI(ChatOpenAI):
             return {"extra_body": {"thinking": {"type": thinking_type}}}
 
         # ── Mimo / Kimi ───────────────────────────────────────────────────
-        if provider in ("mimo", "mimo-token-plan", "kimi"):
+        if provider in ("mimo", "mimo-token-plan", "kimi", "longcat"):
             if effort is None:
                 return {}
             if effort == "none":
@@ -590,6 +593,84 @@ def _reasoning_kwargs(config: ModelConfig, protocol: str) -> dict:
     return {}
 
 
+_STREAM_CHUNK_TIMEOUT_ENV = "LANGCHAIN_OPENAI_STREAM_CHUNK_TIMEOUT_S"
+_REASONING_STREAM_CHUNK_TIMEOUT = 600
+
+
+def _reasoning_stream_chunk_timeout(reasoning_kwargs: dict) -> int | None:
+    if _STREAM_CHUNK_TIMEOUT_ENV in os.environ or not reasoning_kwargs:
+        return None
+
+    extra_body = reasoning_kwargs.get("extra_body")
+    if isinstance(extra_body, dict):
+        if extra_body.get("enable_thinking") is False:
+            return None
+        thinking = extra_body.get("thinking")
+        if isinstance(thinking, dict) and thinking.get("type") == "disabled":
+            return None
+        reasoning = extra_body.get("reasoning")
+        if isinstance(reasoning, dict) and reasoning.get("effort") == "none":
+            return None
+
+    return _REASONING_STREAM_CHUNK_TIMEOUT
+
+
+_REASONING_MODEL_FIELDS = (
+    "thinking",
+    "effort",
+    "reasoning_effort",
+    "thinking_budget",
+    "thinking_level",
+    "include_thoughts",
+)
+_REASONING_EXTRA_BODY_KEYS = {
+    "enable_thinking",
+    "thinking_budget",
+    "thinking",
+    "reasoning",
+    "reasoning_split",
+}
+
+
+def create_resolver_model(
+    model: BaseChatModel,
+    config: ModelConfig,
+) -> BaseChatModel:
+    """Copy a chat model with reasoning disabled or provider-minimized."""
+    model_copy = getattr(model, "model_copy", None)
+    if not callable(model_copy):
+        return model
+
+    resolver_config = config.model_copy(update={"reasoning_effort": "none"})
+    reasoning_kwargs = dict(_reasoning_kwargs(
+        resolver_config,
+        resolve_protocol(resolver_config),
+    ))
+    model_fields = getattr(type(model), "model_fields", {})
+    updates: dict = {
+        field: None
+        for field in _REASONING_MODEL_FIELDS
+        if field in model_fields
+    }
+
+    if "extra_body" in model_fields:
+        extra_body = {
+            key: value
+            for key, value in dict(getattr(model, "extra_body", None) or {}).items()
+            if key not in _REASONING_EXTRA_BODY_KEYS
+        }
+        resolver_extra_body = reasoning_kwargs.pop("extra_body", None)
+        if isinstance(resolver_extra_body, dict):
+            extra_body.update(resolver_extra_body)
+        updates["extra_body"] = extra_body or None
+
+    for key, value in reasoning_kwargs.items():
+        if key in model_fields:
+            updates[key] = value
+
+    return model_copy(update=updates)
+
+
 def create_chat_model(api_key: str, config: ModelConfig) -> BaseChatModel:
     protocol = resolve_protocol(config)
     base_url = _resolve_base_url(config, protocol)
@@ -607,18 +688,23 @@ def create_chat_model(api_key: str, config: ModelConfig) -> BaseChatModel:
         return ChatAnthropic(**kwargs)
 
     if protocol == PROTOCOL_DEEPSEEK:
+        reasoning_kwargs = _reasoning_kwargs(config, protocol)
         kwargs = dict(
             api_key=api_key,
             model=config.model,
             temperature=config.temperature,
             max_tokens=config.max_tokens,
         )
+        stream_chunk_timeout = _reasoning_stream_chunk_timeout(reasoning_kwargs)
+        if stream_chunk_timeout is not None:
+            kwargs["stream_chunk_timeout"] = stream_chunk_timeout
         if base_url:
             kwargs["base_url"] = base_url
-        kwargs.update(_reasoning_kwargs(config, protocol))
+        kwargs.update(reasoning_kwargs)
         return DeepSeekChatOpenAI(**kwargs)
 
     if protocol == "openai":
+        reasoning_kwargs = _reasoning_kwargs(config, protocol)
         kwargs = dict(
             api_key=api_key,
             model=config.model,
@@ -629,7 +715,10 @@ def create_chat_model(api_key: str, config: ModelConfig) -> BaseChatModel:
             kwargs["base_url"] = base_url
         if config.provider not in _OFFICIAL_OPENAI_PROVIDERS:
             kwargs["default_headers"] = _strip_stainless_headers()
-        kwargs.update(_reasoning_kwargs(config, protocol))
+        stream_chunk_timeout = _reasoning_stream_chunk_timeout(reasoning_kwargs)
+        if stream_chunk_timeout is not None:
+            kwargs["stream_chunk_timeout"] = stream_chunk_timeout
+        kwargs.update(reasoning_kwargs)
         return ReasoningPreservingChatOpenAI(**kwargs)
 
     if protocol == "gemini":
@@ -750,6 +839,7 @@ def get_context_limit(provider: str, protocol: str = "", context_window: int | N
         "doubao": 256_000,
         "typex": 128_000,
         "minimax": 1_000_000,
+        "longcat": 131_072,
         "xunfei-coding-plan": 200_000,
         "gemini": 1_000_000,
     }

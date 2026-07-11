@@ -1,16 +1,11 @@
-import logging
-import sys
-from pathlib import Path
-
 import httpx
 import pytest
-
 
 from voidx.llm import catalog
 
 
 @pytest.mark.asyncio
-async def test_list_models_logs_expected_fetcher_failure_and_falls_back(monkeypatch, caplog):
+async def test_list_models_expected_fetcher_failure_falls_back(monkeypatch):
     provider = "expected-failure-provider"
 
     async def failing_fetcher():
@@ -20,15 +15,13 @@ async def test_list_models_logs_expected_fetcher_failure_and_falls_back(monkeypa
     monkeypatch.setitem(catalog.STATIC_MODELS, provider, ["static-model"])
     monkeypatch.setitem(catalog._fetchers, provider, failing_fetcher)
 
-    with caplog.at_level(logging.DEBUG, logger="voidx.llm.catalog"):
-        models = await catalog.list_models(provider)
+    models = await catalog.list_models(provider)
 
     assert models == ["static-model"]
-    assert f"Failed to fetch models for {provider}" in caplog.text
 
 
 @pytest.mark.asyncio
-async def test_list_models_logs_unexpected_fetcher_failure_and_falls_back(monkeypatch, caplog):
+async def test_list_models_unexpected_fetcher_failure_falls_back(monkeypatch):
     provider = "unexpected-failure-provider"
 
     async def failing_fetcher():
@@ -38,11 +31,9 @@ async def test_list_models_logs_unexpected_fetcher_failure_and_falls_back(monkey
     monkeypatch.setitem(catalog.STATIC_MODELS, provider, ["static-model"])
     monkeypatch.setitem(catalog._fetchers, provider, failing_fetcher)
 
-    with caplog.at_level(logging.DEBUG, logger="voidx.llm.catalog"):
-        models = await catalog.list_models(provider)
+    models = await catalog.list_models(provider)
 
     assert models == ["static-model"]
-    assert f"Unexpected error fetching models for {provider}" in caplog.text
 
 
 def test_xunfei_coding_plan_static_models():

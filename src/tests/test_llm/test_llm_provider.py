@@ -8,7 +8,14 @@ from langchain_core.messages import AIMessage, AIMessageChunk, HumanMessage, Too
 from langchain_openai import ChatOpenAI
 
 from voidx.config import ModelConfig
-from voidx.llm.provider import DeepSeekChatOpenAI, create_chat_model, extract_thinking, get_context_limit, resolve_protocol
+from voidx.llm.provider import (
+    DeepSeekChatOpenAI,
+    create_chat_model,
+    create_resolver_model,
+    extract_thinking,
+    get_context_limit,
+    resolve_protocol,
+)
 
 
 PROVIDER_DEFAULTS = {
@@ -23,6 +30,7 @@ PROVIDER_DEFAULTS = {
     "kimi": ("deepseek", DeepSeekChatOpenAI, "https://api.moonshot.cn/v1"),
     "doubao": ("deepseek", DeepSeekChatOpenAI, "https://ark.cn-beijing.volces.com/api/v3"),
     "minimax": ("deepseek", DeepSeekChatOpenAI, "https://api.minimax.io/v1"),
+    "longcat": ("deepseek", DeepSeekChatOpenAI, "https://api.longcat.chat/openai/v1"),
     "xunfei-coding-plan": ("openai", ChatOpenAI, "https://maas-coding-api.cn-huabei-1.xf-yun.com/v2"),
 }
 
@@ -133,7 +141,7 @@ def test_reasoning_kwargs_are_provider_specific():
     assert isinstance(mimo_off, DeepSeekChatOpenAI)
     assert mimo_off.extra_body == {"thinking": {"type": "disabled"}}
 
-    for provider in ("kimi",):
+    for provider in ("kimi", "longcat"):
         model = create_chat_model(
             "test-key",
             ModelConfig(provider=provider, model="test-model", reasoning_effort="medium"),
@@ -165,6 +173,61 @@ def test_reasoning_kwargs_are_provider_specific():
     assert isinstance(deepseek_xhigh, DeepSeekChatOpenAI)
     assert deepseek_xhigh.extra_body == {"thinking": {"type": "enabled"}}
     assert deepseek_xhigh.reasoning_effort == "max"
+
+
+def test_create_resolver_model_uses_provider_minimum_reasoning():
+    anthropic_config = ModelConfig(
+        provider="anthropic",
+        model="claude-sonnet-4-6",
+        reasoning_effort="high",
+    )
+    anthropic = create_chat_model("test-key", anthropic_config)
+    anthropic_resolver = create_resolver_model(anthropic, anthropic_config)
+    assert anthropic.thinking == {"type": "enabled", "budget_tokens": 8191}
+    assert anthropic_resolver.thinking is None
+
+    openai_config = ModelConfig(
+        provider="openai",
+        model="o3",
+        reasoning_effort="high",
+    )
+    openai = create_chat_model("test-key", openai_config)
+    openai_resolver = create_resolver_model(openai, openai_config)
+    assert openai.extra_body == {"reasoning": {"effort": "high"}}
+    assert openai_resolver.extra_body == {"reasoning": {"effort": "low"}}
+
+    qwen_config = ModelConfig(
+        provider="qwen",
+        model="qwen3-coder-plus",
+        reasoning_effort="high",
+    )
+    qwen = create_chat_model("test-key", qwen_config)
+    qwen_resolver = create_resolver_model(qwen, qwen_config)
+    assert qwen.extra_body == {"enable_thinking": True, "thinking_budget": 8191}
+    assert qwen_resolver.extra_body == {"enable_thinking": False}
+
+    zhipu_config = ModelConfig(
+        provider="zhipu",
+        model="glm-4.7",
+        reasoning_effort="high",
+    )
+    zhipu = create_chat_model("test-key", zhipu_config)
+    zhipu_resolver = create_resolver_model(zhipu, zhipu_config)
+    assert zhipu.extra_body == {"thinking": {"type": "enabled"}}
+    assert zhipu_resolver.extra_body == {"thinking": {"type": "disabled"}}
+
+    minimax_config = ModelConfig(
+        provider="minimax",
+        model="MiniMax-M2.1",
+        reasoning_effort="high",
+    )
+    minimax = create_chat_model("test-key", minimax_config)
+    minimax_resolver = create_resolver_model(minimax, minimax_config)
+    assert minimax.extra_body == {
+        "thinking": {"type": "enabled"},
+        "reasoning_split": True,
+    }
+    assert minimax_resolver.extra_body == {"thinking": {"type": "disabled"}}
 
 
 def test_openai_compatible_reasoning_uses_nested_format():
@@ -225,6 +288,63 @@ def test_openai_compatible_reasoning_uses_nested_format():
     )
     assert openrouter.reasoning_effort is None
     assert openrouter.extra_body == {"reasoning": {"effort": "none"}}
+
+
+def test_reasoning_stream_timeout_applies_only_when_reasoning_is_active(monkeypatch):
+    monkeypatch.delenv("LANGCHAIN_OPENAI_STREAM_CHUNK_TIMEOUT_S", raising=False)
+
+    openai_reasoning = create_chat_model(
+        "test-key",
+        ModelConfig(provider="openai", model="o3", reasoning_effort="high"),
+    )
+    openai_plain = create_chat_model(
+        "test-key",
+        ModelConfig(provider="openai", model="gpt-4o", reasoning_effort="high"),
+    )
+    openai_disabled = create_chat_model(
+        "test-key",
+        ModelConfig(provider="openai", model="gpt-5.4-mini", reasoning_effort="off"),
+    )
+    openai_minimum = create_chat_model(
+        "test-key",
+        ModelConfig(provider="openai", model="o3", reasoning_effort="off"),
+    )
+    qwen_reasoning = create_chat_model(
+        "test-key",
+        ModelConfig(provider="qwen", model="qwen3-max", reasoning_effort="high"),
+    )
+    qwen_disabled = create_chat_model(
+        "test-key",
+        ModelConfig(provider="qwen", model="qwen3-max", reasoning_effort="off"),
+    )
+    qwen_plain = create_chat_model(
+        "test-key",
+        ModelConfig(provider="qwen", model="qwen-turbo", reasoning_effort="high"),
+    )
+
+    assert openai_reasoning.stream_chunk_timeout == 600
+    assert openai_plain.stream_chunk_timeout == 120
+    assert openai_disabled.stream_chunk_timeout == 120
+    assert openai_minimum.stream_chunk_timeout == 600
+    assert qwen_reasoning.stream_chunk_timeout == 600
+    assert qwen_disabled.stream_chunk_timeout == 120
+    assert qwen_plain.stream_chunk_timeout == 120
+
+
+def test_reasoning_stream_timeout_respects_environment_override(monkeypatch):
+    monkeypatch.setenv("LANGCHAIN_OPENAI_STREAM_CHUNK_TIMEOUT_S", "30")
+
+    openai = create_chat_model(
+        "test-key",
+        ModelConfig(provider="openai", model="o3", reasoning_effort="high"),
+    )
+    qwen = create_chat_model(
+        "test-key",
+        ModelConfig(provider="qwen", model="qwen3-max", reasoning_effort="high"),
+    )
+
+    assert openai.stream_chunk_timeout == 30
+    assert qwen.stream_chunk_timeout == 30
 
 
 def test_custom_provider_reasoning_uses_nested_format():
