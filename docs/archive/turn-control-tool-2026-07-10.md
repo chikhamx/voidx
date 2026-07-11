@@ -1,8 +1,10 @@
 # Explicit Turn Completion Tool
 
+> **Status: Done** — Archived on 2026-07-10.
+
 ## Status
 
-Exploratory design.
+Implemented, reviewed, and verified on 2026-07-10.
 
 ## Problem
 
@@ -456,22 +458,24 @@ terminal `AIMessage`.
 
 ### Normalization of Terminal `AIMessage`
 
-When `turn()` is valid, `_call_llm` constructs the terminal `AIMessage` from
-the pending provisional candidate:
+When `turn()` is valid, `_call_llm` copies the pending provisional candidate
+while explicitly removing all tool-call fields:
 
 ```python
-terminal_msg = AIMessage(
-    content=pending_provisional.content,
-    additional_kwargs={
-        k: v for k, v in pending_provisional.additional_kwargs.items()
-        if k != "tool_calls"
+terminal_msg = pending_provisional.model_copy(update={
+    "additional_kwargs": {
+        key: value
+        for key, value in pending_provisional.additional_kwargs.items()
+        if key != "tool_calls"
     },
-)
+    "tool_calls": [],
+    "invalid_tool_calls": [],
+})
 ```
 
-This preserves provider metadata (usage, response metadata) while stripping
-the `turn` tool call. The router then sees a tool-free `AIMessage` and routes
-to `finalize → END` as before.
+Using `model_copy` preserves message identity, provider response metadata, and
+usage metadata while guaranteeing the router receives a tool-free terminal
+`AIMessage` and routes to `finalize → END`.
 
 ## Resolved Decisions
 
@@ -489,3 +493,25 @@ to `finalize → END` as before.
    separate from `_usage_stats`. This keeps turn-control protocol health metrics
    independent from token/cost accounting.
 
+
+## Implementation Verification
+
+The completed implementation was reviewed against the required protocol and
+three defects found during review were corrected before archival:
+
+- `turn` calls now require exactly one call with an empty argument object.
+- repeated invalid or mixed calls terminate safely and cannot reach normal tool execution.
+- terminal message normalization preserves message, provider, and usage metadata.
+
+Regression coverage was added for all three cases in
+`src/tests/test_agent/graph/test_turn_control_integration.py`.
+
+Final verification on 2026-07-10:
+
+```text
+./test.py --backend -- src/tests/test_agent/graph/test_turn_control_integration.py src/tests/test_agent/graph/test_turn_control_e2e.py -q
+✅ backend — passed
+
+git diff --check -- src/voidx/agent/graph/turn_control.py src/voidx/agent/graph/core/llm.py src/tests/test_agent/graph/test_turn_control_integration.py
+✅ no whitespace errors
+```
