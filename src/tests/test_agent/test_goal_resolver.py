@@ -15,6 +15,8 @@ from voidx.agent.task_state import (
     IntentResolution,
     PlanResolution,
     TaskState,
+    TodoRunItem,
+    TodoRunState,
     TurnExchange,
     WorkflowRoute,
 )
@@ -392,6 +394,50 @@ async def test_goal_resolver_drops_unknown_plan_route():
 
     assert result.plan == PlanResolution(join="review", leave=None)
     assert result.goal is not None
+
+
+@pytest.mark.asyncio
+async def test_goal_resolver_treats_short_continue_after_completed_todos_as_general():
+    model = StructuredModel(
+        ResolverGoal(
+            intent="coding",
+            goal="continue",
+            workflow="review",
+            kind_hint="review",
+        )
+    )
+    task_state = TaskState(
+        current_goal=GoalSpec(desc="Review git policy hardening"),
+        todo_state=TodoRunState(
+            summary="3/3 done · 0 active · 0 pending",
+            total=3,
+            done=3,
+            active=0,
+            pending=0,
+            items=[
+                TodoRunItem(id="policy", content="Review policy", status="done"),
+                TodoRunItem(id="tool", content="Review tool", status="done"),
+                TodoRunItem(id="tests", content="Run regression suite", status="done"),
+            ],
+        ),
+        recent_exchanges=[
+            TurnExchange(
+                user_text="review git policy hardening",
+                assistant_text="Review complete: no blocking issues found.",
+            ),
+        ],
+    )
+
+    result = await resolve_goal_for_turn(
+        model=model,
+        user_text="继续",
+        interaction_mode="auto",
+        task_state=task_state,
+    )
+
+    assert result.intent.type == TaskIntent.GENERAL
+    assert result.goal == task_state.current_goal
+    assert result.plan is None
 
 
 @pytest.mark.asyncio

@@ -469,6 +469,13 @@ def _normalize_resolution(
     *,
     is_fallback: bool = False,
 ) -> GoalResolution:
+    if _is_short_continuation(user_text) and _has_completed_todos_without_remaining_work(task_state):
+        return GoalResolution(
+            intent=IntentResolution(type=TaskIntent.GENERAL),
+            goal=task_state.current_goal,
+            plan=None,
+        )
+
     plan = resolution.plan
     if plan is not None:
         if plan.join and plan.join not in _ALLOWED_JOIN_NODES:
@@ -542,6 +549,13 @@ def _current_active_join(task_state: TaskState) -> str:
         if getattr(run.status, "value", run.status) == "active":
             return name
     return ""
+
+
+def _has_completed_todos_without_remaining_work(task_state: TaskState) -> bool:
+    todo_state = task_state.todo_state
+    if todo_state is None or todo_state.total <= 0:
+        return False
+    return todo_state.active <= 0 and todo_state.pending <= 0 and todo_state.done >= todo_state.total
 
 
 def _active_workflow_names(task_state: TaskState) -> list[str]:
