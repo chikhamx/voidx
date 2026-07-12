@@ -228,7 +228,7 @@ def _advance(inp: WorkflowInput, runs: list[WorkflowRunState], active: list[Work
             guidance="Advance requires a workflow goal from input, the active run, or current task goal.",
             available_exits=_available_exits(active),
             suggested_call=_suggested_advance_call(active),
-        ), selected.name)
+        ), matched_condition)
 
     count = _track_repeat(ctx, _repeat_key("advance", selected.name, matched_condition))
     event = WorkflowStateEvent(
@@ -249,6 +249,9 @@ def _advance(inp: WorkflowInput, runs: list[WorkflowRunState], active: list[Work
     )
     activated = _activated_successors(runs, updated)
     updated = _apply_goal_to_runs(updated, activated, effective_goal)
+    advanced = _node_transitioned_to_satisfied(updated, selected.name)
+    if advanced:
+        _reset_repeat(ctx, _repeat_key("advance", selected.name, matched_condition))
     payload = {
         "action": "advance",
         "from": selected.name,
@@ -258,7 +261,7 @@ def _advance(inp: WorkflowInput, runs: list[WorkflowRunState], active: list[Work
         "goal": effective_goal,
         "goal_source": goal_source,
     }
-    if count >= 2:
+    if count >= 2 and not advanced:
         guidance = _repeat_guidance(count, "advance", selected.name)
         payload["repeat_warning"] = guidance
         if count >= _REPEAT_MAX:
@@ -319,6 +322,7 @@ def _done(inp: WorkflowInput, runs: list[WorkflowRunState], active: list[Workflo
 
 
 _REPEAT_MAX = 3
+_STUCK_MAX = 3
 
 
 def _repeat_key(action: str, node: str, condition: str = "") -> str:
@@ -333,15 +337,24 @@ def _track_repeat(ctx: ToolContext, key: str) -> int:
     return entry["count"]
 
 
+def _reset_repeat(ctx: ToolContext, key: str) -> None:
+    ctx.workflow_repeat_tracker.pop(key, None)
+
+
 def _wrap_advance_guidance(ctx: ToolContext, result: ToolResult, key_node: str) -> ToolResult:
-    """Wrap an advance guidance result with repeat detection."""
-    count = _track_repeat(ctx, _repeat_key("advance", key_node))
+    """Wrap an advance guidance result with repeat detection.
+
+    Guidance-path repeats (advancing an already-satisfied node) use a separate
+    counter from successful transitions, so a legitimate cross-task advance that
+    resets the success counter does not mask a genuine stuck-loop on the guidance path.
+    """
+    count = _track_repeat(ctx, _repeat_key("advance_stuck", key_node))
     if count < 2:
         return result
     guidance = _repeat_guidance(count, "advance", key_node)
     payload = json.loads(result.output)
     payload["repeat_warning"] = guidance
-    if count >= _REPEAT_MAX:
+    if count >= _STUCK_MAX:
         return ToolResult(
             title=result.title,
             output=json.dumps(payload, ensure_ascii=False, indent=2),
@@ -669,6 +682,13 @@ def _activated_successors(
         for run in after
         if run.status == WorkflowRunStatus.ACTIVE and run.name not in before_active
     ]
+
+
+def _node_transitioned_to_satisfied(runs: list[WorkflowRunState], name: str) -> bool:
+    return any(
+        run.name == name and run.status == WorkflowRunStatus.SATISFIED
+        for run in runs
+    )
 
 
 def _next_hints(names: list[str]) -> list[str]:

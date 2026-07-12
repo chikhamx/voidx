@@ -683,51 +683,57 @@ class TestWorkflowTool:
         assert r3.metadata["reason"] == "repeated_workflow_enter"
 
     @pytest.mark.asyncio
-    async def test_repeated_advance_returns_warning_then_error(self, tmp_path):
+    async def test_repeated_advance_across_separate_tasks_not_flagged(self, tmp_path):
+        """Advancing the same node+condition across separate tasks (fresh active run each
+        time) must not accumulate repeat counts. Each advance is a legitimate transition."""
         ctx = ToolContext(
             workspace=str(tmp_path),
             workflow_runs=[
-                WorkflowRunState(name="tdd", status=WorkflowRunStatus.ACTIVE, goal="验证实现", transition_to=["verify"]),
+                WorkflowRunState(name="tdd", status=WorkflowRunStatus.ACTIVE, goal="任务1", transition_to=["verify"]),
             ],
         )
         reg = ToolRegistry()
 
         r1 = await reg.execute_tool(
-            "workflow", {"action": "advance", "condition": "implemented", "goal": "验证实现"}, ctx
+            "workflow", {"action": "advance", "condition": "implemented", "goal": "任务1"}, ctx
         )
         p1 = json.loads(r1.output)
         assert p1["from"] == "tdd"
         assert "repeat_warning" not in p1
 
-        # Re-activate tdd to simulate the LLM advancing the same node again
+        # Task 2: fresh active tdd, same condition — legitimate new task
         ctx2 = ToolContext(
             workspace=str(tmp_path),
             workflow_repeat_tracker=ctx._workflow_repeat_tracker,
             workflow_runs=[
-                WorkflowRunState(name="tdd", status=WorkflowRunStatus.ACTIVE, goal="验证实现", transition_to=["verify"]),
+                WorkflowRunState(name="tdd", status=WorkflowRunStatus.ACTIVE, goal="任务2", transition_to=["verify"]),
             ],
         )
         r2 = await reg.execute_tool(
-            "workflow", {"action": "advance", "condition": "implemented", "goal": "验证实现"}, ctx2
+            "workflow", {"action": "advance", "condition": "implemented", "goal": "任务2"}, ctx2
         )
         p2 = json.loads(r2.output)
-        assert "repeat_warning" in p2
+        assert "repeat_warning" not in p2, (
+            f"Cross-task advance must not be flagged. got: {p2.get('repeat_warning')}"
+        )
         assert r2.metadata.get("error") is not True
 
+        # Task 3: still must not error
         ctx3 = ToolContext(
             workspace=str(tmp_path),
             workflow_repeat_tracker=ctx._workflow_repeat_tracker,
             workflow_runs=[
-                WorkflowRunState(name="tdd", status=WorkflowRunStatus.ACTIVE, goal="验证实现", transition_to=["verify"]),
+                WorkflowRunState(name="tdd", status=WorkflowRunStatus.ACTIVE, goal="任务3", transition_to=["verify"]),
             ],
         )
         r3 = await reg.execute_tool(
-            "workflow", {"action": "advance", "condition": "implemented", "goal": "验证实现"}, ctx3
+            "workflow", {"action": "advance", "condition": "implemented", "goal": "任务3"}, ctx3
         )
         p3 = json.loads(r3.output)
-        assert "repeat_warning" in p3
-        assert r3.metadata.get("error") is True
-        assert r3.metadata["reason"] == "repeated_workflow_advance"
+        assert "repeat_warning" not in p3, (
+            f"Third cross-task advance must not be flagged. got: {p3.get('repeat_warning')}"
+        )
+        assert r3.metadata.get("error") is not True
 
     @pytest.mark.asyncio
     async def test_repeated_advance_after_satisfied_triggers_warning_via_guidance(self, tmp_path):
@@ -748,24 +754,36 @@ class TestWorkflowTool:
         p1 = json.loads(r1.output)
         assert p1["from"] == "tdd"
         assert "repeat_warning" not in p1
+        # Simulate the graph writing the state patch back into ctx
+        ctx.workflow_runs = [
+            WorkflowRunState.model_validate(r)
+            for r in r1.metadata["state_patch"]["workflow_runs"]
+        ]
 
         # 2nd advance same condition: tdd is now satisfied, no active node matches
-        # → guidance path (no_active_nodes or invalid_exit), should get repeat_warning
+        # → guidance path (no_active_nodes). First guidance call: no warning yet.
         r2 = await reg.execute_tool(
             "workflow", {"action": "advance", "condition": "implemented", "goal": "验证实现"}, ctx
         )
         p2 = json.loads(r2.output)
-        assert "repeat_warning" in p2
-        assert r2.metadata.get("error") is not True
+        assert "repeat_warning" not in p2
 
-        # 3rd: should return error
+        # 3rd: guidance count=2 → warning
         r3 = await reg.execute_tool(
             "workflow", {"action": "advance", "condition": "implemented", "goal": "验证实现"}, ctx
         )
         p3 = json.loads(r3.output)
         assert "repeat_warning" in p3
-        assert r3.metadata.get("error") is True
-        assert r3.metadata["reason"] == "repeated_workflow_advance"
+        assert r3.metadata.get("error") is not True
+
+        # 4th: guidance count=3 → error
+        r4 = await reg.execute_tool(
+            "workflow", {"action": "advance", "condition": "implemented", "goal": "验证实现"}, ctx
+        )
+        p4 = json.loads(r4.output)
+        assert "repeat_warning" in p4
+        assert r4.metadata.get("error") is True
+        assert r4.metadata["reason"] == "repeated_workflow_advance"
 
     @pytest.mark.asyncio
     async def test_repeated_advance_guidance_text_contains_transition_succeeded(self, tmp_path):
@@ -781,20 +799,22 @@ class TestWorkflowTool:
         r1 = await reg.execute_tool(
             "workflow", {"action": "advance", "condition": "implemented", "goal": "验证实现"}, ctx
         )
+        # Simulate the graph writing the state patch back into ctx
+        ctx.workflow_runs = [
+            WorkflowRunState.model_validate(r)
+            for r in r1.metadata["state_patch"]["workflow_runs"]
+        ]
 
-        # Re-activate tdd to simulate 2nd advance call
-        ctx2 = ToolContext(
-            workspace=str(tmp_path),
-            workflow_repeat_tracker=ctx._workflow_repeat_tracker,
-            workflow_runs=[
-                WorkflowRunState(name="tdd", status=WorkflowRunStatus.ACTIVE, goal="验证实现", transition_to=["verify"]),
-            ],
-        )
+        # 2nd advance: tdd is now satisfied → guidance path (count=1, no warning yet)
         r2 = await reg.execute_tool(
-            "workflow", {"action": "advance", "condition": "implemented", "goal": "验证实现"}, ctx2
+            "workflow", {"action": "advance", "condition": "implemented", "goal": "验证实现"}, ctx
         )
-        p2 = json.loads(r2.output)
-        guidance = p2["repeat_warning"]
+        # 3rd advance: guidance count=2 → warning
+        r3 = await reg.execute_tool(
+            "workflow", {"action": "advance", "condition": "implemented", "goal": "验证实现"}, ctx
+        )
+        p3 = json.loads(r3.output)
+        guidance = p3["repeat_warning"]
         assert "already advanced" in guidance or "transition succeeded" in guidance, (
             f"Advance guidance should mention transition completion, got: {guidance}"
         )
@@ -820,4 +840,114 @@ class TestWorkflowTool:
         guidance = p2["repeat_warning"]
         assert "already active" in guidance, (
             f"Enter guidance should say 'already active', got: {guidance}"
+        )
+
+    @pytest.mark.asyncio
+    async def test_advance_same_condition_across_separate_tasks_not_flagged(self, tmp_path):
+        """Advancing the same node+condition across separate tasks (fresh enter) must not
+        accumulate repeat counts. Repeat detection should only fire when the LLM is stuck
+        re-advancing a node that already transitioned within the same task."""
+        ctx = ToolContext(
+            workspace=str(tmp_path),
+            workflow_runs=[
+                WorkflowRunState(name="tdd", status=WorkflowRunStatus.ACTIVE, goal="任务A", transition_to=["verify"]),
+            ],
+        )
+        reg = ToolRegistry()
+
+        # Task A: advance tdd -> implemented (succeeds, tdd satisfied, verify activated)
+        r1 = await reg.execute_tool(
+            "workflow", {"action": "advance", "condition": "implemented", "goal": "任务A"}, ctx
+        )
+        p1 = json.loads(r1.output)
+        assert p1["from"] == "tdd"
+        assert "repeat_warning" not in p1
+
+        # Task B: fresh enter tdd with a new goal, then advance implemented.
+        # This is a legitimate new task, not a stuck retry.
+        ctx2 = ToolContext(
+            workspace=str(tmp_path),
+            workflow_repeat_tracker=ctx._workflow_repeat_tracker,
+            workflow_runs=[
+                WorkflowRunState(name="tdd", status=WorkflowRunStatus.ACTIVE, goal="任务B", transition_to=["verify"]),
+            ],
+        )
+        r2 = await reg.execute_tool(
+            "workflow", {"action": "advance", "condition": "implemented", "goal": "任务B"}, ctx2
+        )
+        p2 = json.loads(r2.output)
+        assert p2["from"] == "tdd", f"advance should succeed for the new task, got: {p2}"
+        assert "repeat_warning" not in p2, (
+            f"Cross-task advance must not be flagged as repeat. got warning: {p2.get('repeat_warning')}"
+        )
+        assert r2.metadata.get("error") is not True
+
+        # Task C: third separate task — still must not error
+        ctx3 = ToolContext(
+            workspace=str(tmp_path),
+            workflow_repeat_tracker=ctx._workflow_repeat_tracker,
+            workflow_runs=[
+                WorkflowRunState(name="tdd", status=WorkflowRunStatus.ACTIVE, goal="任务C", transition_to=["verify"]),
+            ],
+        )
+        r3 = await reg.execute_tool(
+            "workflow", {"action": "advance", "condition": "implemented", "goal": "任务C"}, ctx3
+        )
+        p3 = json.loads(r3.output)
+        assert p3["from"] == "tdd", f"advance should succeed for the third task, got: {p3}"
+        assert r3.metadata.get("error") is not True, (
+            f"Third cross-task advance must not error. reason={r3.metadata.get('reason')}"
+        )
+
+    @pytest.mark.asyncio
+    async def test_advance_terminal_node_across_tasks_not_flagged(self, tmp_path):
+        """Advancing a node with no successors (terminal advance) across separate tasks
+        must still reset the repeat counter — success is success, even without activated successors."""
+        ctx = ToolContext(
+            workspace=str(tmp_path),
+            workflow_runs=[
+                WorkflowRunState(name="tdd", status=WorkflowRunStatus.ACTIVE, goal="任务A"),
+            ],
+        )
+        reg = ToolRegistry()
+
+        # Task A: advance tdd -> implemented (no transition_to, terminal)
+        r1 = await reg.execute_tool(
+            "workflow", {"action": "advance", "condition": "implemented", "goal": "任务A"}, ctx
+        )
+        p1 = json.loads(r1.output)
+        assert p1["from"] == "tdd"
+        assert "repeat_warning" not in p1
+
+        # Task B: fresh active tdd, same condition — legitimate new task
+        ctx2 = ToolContext(
+            workspace=str(tmp_path),
+            workflow_repeat_tracker=ctx._workflow_repeat_tracker,
+            workflow_runs=[
+                WorkflowRunState(name="tdd", status=WorkflowRunStatus.ACTIVE, goal="任务B"),
+            ],
+        )
+        r2 = await reg.execute_tool(
+            "workflow", {"action": "advance", "condition": "implemented", "goal": "任务B"}, ctx2
+        )
+        p2 = json.loads(r2.output)
+        assert "repeat_warning" not in p2, (
+            f"Cross-task terminal advance must not be flagged. got: {p2.get('repeat_warning')}"
+        )
+        assert r2.metadata.get("error") is not True
+
+        # Task C: third separate task — still must not error
+        ctx3 = ToolContext(
+            workspace=str(tmp_path),
+            workflow_repeat_tracker=ctx._workflow_repeat_tracker,
+            workflow_runs=[
+                WorkflowRunState(name="tdd", status=WorkflowRunStatus.ACTIVE, goal="任务C"),
+            ],
+        )
+        r3 = await reg.execute_tool(
+            "workflow", {"action": "advance", "condition": "implemented", "goal": "任务C"}, ctx3
+        )
+        p3 = json.loads(r3.output)
+        assert r3.metadata.get("error") is not True, (
+            f"Third cross-task terminal advance must not error. reason={r3.metadata.get('reason')}"
         )
