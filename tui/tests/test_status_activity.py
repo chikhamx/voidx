@@ -40,6 +40,7 @@ def test_busy_activity_label_rotates_centered_glyphs(tmp_path, monkeypatch):
 
 def test_busy_activity_label_replaces_verb_during_thinking_stream(tmp_path, monkeypatch):
     monkeypatch.setattr("voidx_cli.render_activity.time.monotonic", lambda: 105.0)
+    monkeypatch.setattr("voidx_cli.app.random.choice", lambda _choices: "Pondering")
     tui = _tui(tmp_path)
     tui._busy = True
     tui._busy_started_at = 100.0
@@ -181,6 +182,7 @@ def test_busy_activity_renders_thinking_content_below_verb(tmp_path, monkeypatch
 
 def test_busy_activity_renders_permission_details_below_requesting_verb(tmp_path, monkeypatch):
     monkeypatch.setattr("voidx_cli.render_activity.time.monotonic", lambda: 105.0)
+    monkeypatch.setattr("voidx_cli.app.random.choice", lambda _choices: "Canoodling")
     tui = _tui(tmp_path)
     tui._console = Console(file=None, force_terminal=True, width=100, height=24, _environ={})
     tui._busy = True
@@ -292,6 +294,7 @@ def test_busy_activity_label_includes_step_and_turn_tokens(tmp_path, monkeypatch
 
 def test_busy_activity_label_includes_active_analyzing_status(tmp_path, monkeypatch):
     monkeypatch.setattr("voidx_cli.render_activity.time.monotonic", lambda: 123.0)
+    monkeypatch.setattr("voidx_cli.app.random.choice", lambda _choices: "Pondering")
     tui = _tui(tmp_path)
     tui._busy = True
     tui._busy_started_at = 120.0
@@ -312,6 +315,7 @@ def test_busy_activity_label_includes_active_analyzing_status(tmp_path, monkeypa
 
 def test_busy_activity_label_includes_active_compacting_status(tmp_path, monkeypatch):
     monkeypatch.setattr("voidx_cli.render_activity.time.monotonic", lambda: 124.0)
+    monkeypatch.setattr("voidx_cli.app.random.choice", lambda _choices: "Pondering")
     tui = _tui(tmp_path)
     tui._busy = True
     tui._busy_started_at = 120.0
@@ -380,10 +384,12 @@ def test_busy_activity_glyph_cycles_rainbow_styles(tmp_path):
 
 
 @pytest.mark.asyncio
-async def test_busy_activity_verb_randomized_once_per_turn(tmp_path, monkeypatch):
+async def test_busy_activity_verb_rerandomized_on_special_to_normal(tmp_path, monkeypatch):
+    """当从特殊状态（thinking/analyzing 等）切换到普通状态时，动词应重新随机。"""
     now = 20.0
+    verb_iter = iter(["Ruminating", "Pondering", "Canoodling"])
     monkeypatch.setattr("voidx_cli.app.time.monotonic", lambda: now)
-    monkeypatch.setattr("voidx_cli.app.random.choice", lambda _choices: "Ruminating")
+    monkeypatch.setattr("voidx_cli.app.random.choice", lambda _choices: next(verb_iter))
     tui = _tui(tmp_path)
     started = asyncio.Event()
     release = asyncio.Event()
@@ -398,7 +404,19 @@ async def test_busy_activity_verb_randomized_once_per_turn(tmp_path, monkeypatch
         tui._queue.put_nowait("run")
         await asyncio.wait_for(started.wait(), timeout=1)
 
+        # 初始状态：busy 开始，应已随机选择动词
         assert tui._busy_activity_verb == "Ruminating"
+
+        # 模拟进入特殊状态（thinking），然后回到普通状态
+        # 这应该触发重新随机
+        tui._busy_activity_prev_has_special = True  # 假设上次有特殊状态
+        # 调用 _busy_activity_label 会检测状态变化并重新随机
+        _ = tui._busy_activity_label()
+        assert tui._busy_activity_verb == "Pondering"
+
+        # 再次调用，状态未变（都是普通状态），不应重新随机
+        _ = tui._busy_activity_label()
+        assert tui._busy_activity_verb == "Pondering"
 
         release.set()
         await asyncio.sleep(0)

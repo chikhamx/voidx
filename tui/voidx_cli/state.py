@@ -120,6 +120,7 @@ class RenderState:
     busy_started_at: float | None = None
     busy_activity_verb: str = ""
     busy_activity_tick: int = 0
+    busy_activity_prev_has_special: bool = False
     busy_activity_timer_task: asyncio.Task[None] | None = None
     last_busy_activity_rows: int = 0
     last_busy_activity_start_row: int = 0
@@ -226,6 +227,7 @@ STATE_FIELD_MAP: dict[str, tuple[str, str]] = {
     "_busy_started_at": ("_render_state", "busy_started_at"),
     "_busy_activity_verb": ("_render_state", "busy_activity_verb"),
     "_busy_activity_tick": ("_render_state", "busy_activity_tick"),
+    "_busy_activity_prev_has_special": ("_render_state", "busy_activity_prev_has_special"),
     "_busy_activity_timer_task": ("_render_state", "busy_activity_timer_task"),
     "_last_busy_activity_rows": ("_render_state", "last_busy_activity_rows"),
     "_last_busy_activity_start_row": ("_render_state", "last_busy_activity_start_row"),

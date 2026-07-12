@@ -616,6 +616,7 @@ class PureTui(
             self._busy = True
             self._busy_started_at = time.monotonic()
             self._busy_activity_verb = self._choose_busy_activity_verb()
+            self._busy_activity_prev_has_special = False
             self._busy_activity_tick = 0
             self._last_error = ""
             self._submit_cancel_requested = False
@@ -651,6 +652,7 @@ class PureTui(
                 self._busy_started_at = None
                 self._busy_activity_verb = ""
                 self._busy_activity_tick = 0
+                self._busy_activity_prev_has_special = False
                 await self._stop_busy_activity_timer()
                 self._current_submit_task = None
                 self._current_submitted_text = ""

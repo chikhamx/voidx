@@ -24,7 +24,6 @@ from voidx.ui.output.dock import (
     dock,
 )
 from .activity import (
-    BUSY_ACTIVITY_DEFAULT_VERB,
     BUSY_ACTIVITY_GLYPHS,
     BUSY_ACTIVITY_GLYPH_STYLES,
     BUSY_ACTIVITY_STYLE,
@@ -87,7 +86,11 @@ class _ActivityRendererMixin:
         step = active_agent_step_text()
         status_label = permission or error or analyzing or compacting or step or llm_retry_label or ""
         thinking = dock.has_active_thinking_stream()
-        verb = "Thinking" if thinking else status_label or self._busy_activity_verb or BUSY_ACTIVITY_DEFAULT_VERB
+        current_has_special = bool(thinking or status_label)
+        if self._busy_activity_prev_has_special and not current_has_special:
+            self._busy_activity_verb = self._choose_busy_activity_verb()
+        self._busy_activity_prev_has_special = current_has_special
+        verb = "Thinking" if thinking else status_label or self._busy_activity_verb or ""
         prefix = f"{glyph} {verb}"
         if started_at is None:
             return prefix
