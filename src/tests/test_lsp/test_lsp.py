@@ -385,11 +385,11 @@ async def test_lsp_tool_timeout_uses_unified_metadata(tmp_path, monkeypatch):
         async def diagnostics(self, file_path=None):
             raise LspTimeoutError("diagnostics timed out")
 
-    monkeypatch.setattr(lsp_module, "_service", lambda ctx: TimeoutService())
+    ctx = ToolContext(workspace=str(tmp_path), lsp_manager=TimeoutService())
 
     result = await LspTool().execute(
         {"operation": "diagnostics"},
-        ToolContext(workspace=str(tmp_path)),
+        ctx,
     )
 
     assert result.metadata["error"] is True

@@ -23,23 +23,22 @@ def test_shell_closed_policy_denies_unknown_and_dynamic(tmp_path: Path):
         PermissionContext(workspace=str(tmp_path), sandbox_mode="workspace-write"),
     )
 
-    assert unknown.action == "deny"
+    assert unknown.action == "ask"
     assert unknown.source == "sandbox"
     assert "shell policy" in unknown.reason
-    assert dynamic.action == "deny"
+    assert dynamic.action == "ask"
     assert "dynamic" in dynamic.reason
     assert capability_for_tool("bash", {"command": "awk '{print $1}' data.txt"}).value == "bash_write"
 
 
-def test_shell_requires_process_sandbox_backend(tmp_path: Path):
+def test_shell_allows_static_read_without_process_sandbox_backend(tmp_path: Path):
     decision = authorize_tool_call(
         {"name": "bash", "args": {"command": "cat allowed.txt"}},
         PermissionContext(workspace=str(tmp_path), sandbox_mode="workspace-write"),
     )
 
-    assert decision.action == "deny"
-    assert decision.source == "sandbox"
-    assert "process sandbox" in decision.reason
+    assert decision.action == "allow"
+    assert decision.source == "strategy"
 
 
 def test_shell_read_only_denies_write_capability(tmp_path: Path):
@@ -87,7 +86,7 @@ def test_shell_policy_static_plan_requires_writable_grant_for_external_paths(tmp
         ),
     )
 
-    assert read_only_grant[0] == "deny"
+    assert read_only_grant[0] == "defer"
     assert "writable grant" in (read_only_grant[1] or "")
     assert writable_grant == ("allow", None)
 
@@ -130,7 +129,7 @@ def test_shell_policy_denies_glued_compound_operators(tmp_path: Path):
         )
 
         assert policy.allowed is False, command
-        assert decision.action == "deny", command
+        assert decision.action == "ask", command
         assert "shell policy" in decision.reason
 
 
@@ -148,7 +147,7 @@ def test_powershell_policy_denies_glued_redirection(tmp_path: Path):
     )
 
     assert policy.allowed is False
-    assert decision.action == "deny"
+    assert decision.action == "ask"
     assert "shell policy" in decision.reason
 
 
@@ -198,7 +197,7 @@ def test_shell_policy_denies_quote_boundary_operators(tmp_path: Path):
         )
 
         assert policy.allowed is False, command
-        assert decision.action == "deny", command
+        assert decision.action == "ask", command
         assert "shell policy" in decision.reason
 
 
@@ -222,7 +221,7 @@ def test_shell_policy_denies_newline_and_carriage_return_separators(tmp_path: Pa
         )
 
         assert policy.allowed is False, command
-        assert decision.action == "deny", command
+        assert decision.action == "ask", command
         assert "shell policy" in decision.reason
 
 
@@ -246,7 +245,7 @@ def test_shell_policy_denies_unresolved_variable_path_expansion(tmp_path: Path):
         )
 
         assert policy.allowed is False, command
-        assert decision.action == "deny", command
+        assert decision.action == "ask", command
         assert "dynamic" in decision.reason.lower()
 
 
@@ -264,7 +263,7 @@ def test_powershell_policy_denies_backslash_operator_smuggling(tmp_path: Path):
     )
 
     assert policy.allowed is False
-    assert decision.action == "deny"
+    assert decision.action == "ask"
     assert "shell policy" in decision.reason
 
 
@@ -282,7 +281,7 @@ def test_powershell_policy_denies_parenthesized_execution(tmp_path: Path):
     )
 
     assert policy.allowed is False
-    assert decision.action == "deny"
+    assert decision.action == "ask"
     assert "shell policy" in decision.reason
 
 

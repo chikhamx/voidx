@@ -7,7 +7,7 @@ from pathlib import Path
 import pytest
 
 from voidx.agent.tool_messages import DEFAULT_TOOL_MESSAGE_MAX_CHARS, sanitize_tool_message_content
-from voidx.tools.base import ToolContext, ToolResult
+from voidx.tools.base import ToolContext, ToolResult, UserInteraction, UserResponse
 from voidx.tools.file import FileReadInput, FileReadTool
 from voidx.tools.file.state import save_file_version
 import voidx.tools.file.state as file_state
@@ -314,7 +314,6 @@ class TestReadExternalPath:
 
     @pytest.mark.asyncio
     async def test_external_path_allowed_by_user(self, tmp_path):
-        from voidx.tools.base import UserInteraction, UserResponse
 
         external = tmp_path / "external"
         external.mkdir()
@@ -349,7 +348,6 @@ class TestReadExternalPath:
 
     @pytest.mark.asyncio
     async def test_external_path_denied_by_user(self, tmp_path):
-        from voidx.tools.base import UserInteraction, UserResponse
 
         external = tmp_path / "external"
         external.mkdir()
@@ -404,4 +402,4 @@ class TestReadExternalPath:
         )
 
         assert result.metadata.get("error") is True
-        assert "blocked" in result.output.lower()
+        assert "not found" in result.output.lower()

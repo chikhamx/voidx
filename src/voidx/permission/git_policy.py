@@ -131,7 +131,7 @@ _FORBIDDEN_GLOBAL_OPTIONS_WITH_VALUE = {
 
 
 def git_policy_for_args(args: dict) -> GitPolicyDecision:
-    raw_args = str(args.get("args", ""))
+    raw_args = _raw_git_args(args)
     try:
         tokens = shlex.split(raw_args)
     except ValueError as exc:
@@ -153,10 +153,19 @@ def git_policy_for_args(args: dict) -> GitPolicyDecision:
     return GitPolicyDecision("deny", reason="command is not registered", subcommand=subcommand, rest=tuple(rest))
 
 
+def _raw_git_args(args: dict) -> str:
+    raw_args = args.get("args")
+    if raw_args is None or str(raw_args).strip() == "":
+        raw_args = args.get("command", "")
+    return str(raw_args)
+
+
 def git_sandbox_precheck(args: dict, context) -> tuple[str, str | None]:
     decision = git_policy_for_args(args)
     if not decision.allowed:
-        return "deny", f"git policy denied: {decision.reason}"
+        if "dangerous" in decision.reason:
+            return "deny", f"git policy denied: {decision.reason}"
+        return "defer", f"git policy deferred: {decision.reason}"
 
     path = str(args.get("path") or "")
     if not path or path == ".":

@@ -99,6 +99,7 @@ def repair_tool_name(tool: str) -> str:
         "Read": "read", "Write": "manage", "Edit": "replace", "Delete": "replace",
         "MultiEdit": "replace", "multiEdit": "replace", "multi_edit": "replace",
         "Glob": "glob", "Grep": "grep", "Bash": "bash", "PowerShell": "powershell",
+        "Git": "git", "git": "git",
         "Agent": "agent", "TodoWrite": "todo", "Todo": "todo",
         "WebFetch": "webfetch", "WebSearch": "websearch",
         "read_file": "read", "write_file": "manage",

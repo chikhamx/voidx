@@ -20,6 +20,7 @@ from voidx.permission.grants import (
     resolve_access,
 )
 from voidx.workflow.types import WorkflowRunState
+from voidx.paths import resolve_tool_path as _resolve_tool_path
 
 
 def tool_timeout_metadata(source: str, **extra: Any) -> dict[str, Any]:
@@ -30,33 +31,6 @@ def tool_timeout_metadata(source: str, **extra: Any) -> dict[str, Any]:
         "error_kind": "tool_timeout",
         "timeout_source": source,
     }
-
-
-def _resolve_tool_path(workspace: str, file_path: str, allowed_paths: list[str] | None = None) -> Path | None:
-    ws = Path(workspace).resolve()
-    raw = Path(file_path)
-    try:
-        if file_path.startswith("~") or raw.is_absolute():
-            resolved = raw.expanduser().resolve()
-        else:
-            resolved = (ws / raw).resolve()
-    except (OSError, ValueError):
-        return None
-
-    allowed = [ws]
-    for path in allowed_paths or []:
-        try:
-            allowed.append(Path(path).expanduser().resolve())
-        except (OSError, ValueError):
-            continue
-
-    for base in allowed:
-        try:
-            resolved.relative_to(base)
-            return resolved
-        except ValueError:
-            continue
-    return None
 
 
 class ToolResult(BaseModel):
@@ -362,9 +336,51 @@ def model_to_json_schema(model: type[BaseModel]) -> dict[str, Any]:
     }
     if defs:
         _inline_refs(result, defs)
+    _flatten_anyof(result)
     _disallow_extra_properties(result)
     return result
 
+
+def _flatten_anyof(schema: dict[str, Any]) -> None:
+    """Replace anyOf with a multi-type 'type' array for OpenAI strict mode.
+
+    Pydantic generates ``anyOf`` for ``str | list[str] | None`` fields.
+    OpenAI strict mode handles multi-type ``type`` arrays more reliably
+    than ``anyOf``, especially when the field is also in ``required``.
+    """
+    for key, value in list(schema.items()):
+        if isinstance(value, dict):
+            if "anyOf" in value:
+                _replace_anyof(value)
+            _flatten_anyof(value)
+        elif isinstance(value, list):
+            for i, item in enumerate(value):
+                if isinstance(item, dict):
+                    if "anyOf" in item:
+                        _replace_anyof(item)
+                    _flatten_anyof(item)
+
+
+def _replace_anyof(prop: dict[str, Any]) -> None:
+    """Convert an anyOf node into a flat type array, preserving siblings."""
+    branches = prop.pop("anyOf")
+    types: list[str] = []
+    array_items: dict[str, Any] | None = None
+    for branch in branches:
+        t = branch.get("type")
+        if t == "array":
+            types.append("array")
+            array_items = branch.get("items")
+        elif t is not None:
+            types.append(t)
+    if not types:
+        return
+    if len(types) == 1:
+        prop["type"] = types[0]
+    else:
+        prop["type"] = types
+    if "array" in types and array_items is not None:
+        prop["items"] = array_items
 
 
 def _inline_refs(schema: dict[str, Any], defs: dict[str, Any]) -> None:

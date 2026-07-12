@@ -557,8 +557,8 @@ async def test_model_switch_profile_updates_session_db(tmp_path, monkeypatch):
 
 
 @pytest.mark.asyncio
-async def test_switch_model_spec_calls_show_startup(tmp_path, monkeypatch):
-    """/model <provider/model> 切换后应调用 _show_startup 展示新模型信息。"""
+async def test_switch_model_spec_does_not_show_startup(tmp_path, monkeypatch):
+    """/model <provider/model> 切换后不应重绘 startup banner。"""
     settings = await Settings.create(str(tmp_path))
     await save_model_profile_async(ModelProfileRow(
         name="deepseek/deepseek-v4-pro",
@@ -587,7 +587,6 @@ async def test_switch_model_spec_calls_show_startup(tmp_path, monkeypatch):
 
     try:
         await handler.dispatch("/model deepseek/deepseek-v4-pro")
-        assert len(startup_calls) == 1
-        assert startup_calls[0].get("prefer_direct") is True
+        assert startup_calls == []
     finally:
         await delete_model_profile_async("deepseek/deepseek-v4-pro")

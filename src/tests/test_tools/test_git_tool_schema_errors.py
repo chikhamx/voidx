@@ -46,6 +46,23 @@ def test_git_schema_has_only_path_and_args():
 
 
 @pytest.mark.asyncio
+async def test_git_execute_accepts_command_alias(tmp_path):
+    repo = _init_repo(tmp_path / "repo")
+    (repo / "f.txt").write_text("x\n", encoding="utf-8")
+    _run(repo, "add", "f.txt")
+    _run(repo, "commit", "-m", "init")
+
+    result = await GitTool().execute(
+        {"command": "status --short"},
+        ToolContext(workspace=str(repo)),
+    )
+    payload = _payload(result)
+
+    assert payload["ok"] is True
+    assert result.metadata["ok"] is True
+
+
+@pytest.mark.asyncio
 async def test_git_path_overrides_workspace(tmp_path):
     """path field should scope git execution to a subdirectory within workspace."""
     repo = _init_repo(tmp_path / "repo")
@@ -140,5 +157,4 @@ async def test_git_denied_subcommand(tmp_path):
     payload = _payload(result)
     assert payload["ok"] is False
     assert payload["error"].startswith("command_denied")
-
 

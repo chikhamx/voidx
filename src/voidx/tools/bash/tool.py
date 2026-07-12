@@ -51,6 +51,10 @@ class BashTool(BaseTool):
         if blocked:
             return build_blocked_result(inp.command, blocked)
 
+        hint = try_hint(inp.command)
+        if hint is not None:
+            return build_hint_result(inp.command, hint, "Bash")
+
         access_grants = ctx.get_access_grants() if ctx.get_access_grants is not None else AccessGrants.from_parts(
             readable_files=ctx.sandbox_readable_files,
             readable_dirs=ctx.sandbox_readable_dirs,
@@ -69,10 +73,6 @@ class BashTool(BaseTool):
         )
         if shell_blocked:
             return build_blocked_result(inp.command, shell_blocked)
-
-        hint = try_hint(inp.command)
-        if hint is not None:
-            return build_hint_result(inp.command, hint, "Bash")
 
         proc = await create_owned_subprocess_shell(
             inp.command,

@@ -83,10 +83,12 @@ def shell_sandbox_precheck(args: dict, context: PermissionContext, *, shell: str
     command = str(args.get("command") or "")
     policy = shell_policy_for_command(command, shell=shell)
     if not policy.allowed:
-        return "deny", f"shell policy denied: {policy.reason}"
+        if "nested interpreter" in policy.reason:
+            return "deny", f"shell policy denied: {policy.reason}"
+        return "defer", f"shell policy deferred: {policy.reason}"
     capability = getattr(context, "process_sandbox", None) or default_process_sandbox_capability()
     if not capability.usable_for(shell):
-        return "deny", capability.denial_reason(shell)
+        return "allow", None
     for raw_path in policy.access_paths:
         resolution = resolve_access(
             context.workspace,
@@ -97,8 +99,16 @@ def shell_sandbox_precheck(args: dict, context: PermissionContext, *, shell: str
             allow_missing_write_file=True,
         )
         if resolution.action != "allow":
-            return "deny", "shell policy denied: external path requires writable grant"
+            return "defer", "shell policy deferred: external path requires writable grant"
     return "allow", None
+
+
+def _requires_user_approval(reason: str) -> bool:
+    return reason in {
+        "unknown shell command",
+        "unknown powershell command",
+        "shell policy denied nested interpreter",
+    }
 
 
 def _bash_policy(words: list[str]) -> ShellPolicyDecision:

@@ -19,35 +19,35 @@ def _payload(result):
 
 @pytest.mark.asyncio
 async def test_powershell_external_read_requires_write(tmp_path: Path):
+    from voidx.permission.context import PermissionContext
+    from voidx.permission.shell_policy import shell_sandbox_precheck
+
     workspace = tmp_path / "workspace"
     external = tmp_path / "external"
     workspace.mkdir()
     external.mkdir()
     (external / "data.txt").write_text("secret", encoding="utf-8")
 
-    result = await PowerShellTool().execute(
+    action, reason = shell_sandbox_precheck(
         {"command": f"Get-Content '{external / 'data.txt'}'"},
-        ToolContext(
+        PermissionContext(
             workspace=str(workspace),
-            get_access_grants=lambda: AccessGrants.from_parts(readable_dirs=[str(external)]),
+            sandbox_mode="workspace-write",
+            access_grants=AccessGrants.from_parts(readable_dirs=[str(external)]),
             process_sandbox=ProcessSandboxCapability(backend=ProcessSandboxBackend.TEST, supported=True),
         ),
+        shell="powershell",
     )
 
-    payload = _payload(result)
-    assert payload["ok"] is False
-    assert payload["blocked"] is True
-    assert "writable grant" in payload["stderr"]
+    assert action == "defer"
+    assert "writable grant" in reason
 
 
 @pytest.mark.asyncio
-async def test_powershell_requires_process_sandbox_backend(tmp_path: Path):
+async def test_powershell_without_process_sandbox_fails_open(tmp_path: Path):
     result = await PowerShellTool().execute(
-        {"command": "Get-Content README.md"},
+        {"command": "Write-Output hello"},
         ToolContext(workspace=str(tmp_path)),
     )
 
-    payload = _payload(result)
-    assert payload["ok"] is False
-    assert payload["blocked"] is True
-    assert "process sandbox" in payload["stderr"]
+    assert result.metadata.get("error") is True

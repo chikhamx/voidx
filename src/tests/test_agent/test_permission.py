@@ -266,7 +266,7 @@ def test_permission_service_mode_presets_update_sandbox_and_approval():
     assert service.decide("manage", "src/app.py") == "allow"
     assert service.decide("write", "src/app.py") == "allow"
     assert service.decide("replace", "src/app.py") == "allow"
-    assert service.decide("bash", "pip install requests") == "deny"
+    assert service.decide("bash", "pip install requests") == "ask"
 
     service.set_permission_mode("full-access")
     assert service.sandbox_mode == "danger-full-access"
@@ -307,7 +307,10 @@ def test_permission_engine_default_strategy_and_plan_overlay(tmp_path):
     context = PermissionContext(workspace=str(tmp_path))
 
     assert authorize_tool_call({"name": "read", "args": {"file_path": "x.py"}}, context).action == "allow"
-    assert authorize_tool_call({"name": "bash", "args": {"command": "ls"}}, context).action == "deny"
+    assert authorize_tool_call({"name": "bash", "args": {"command": "ls"}}, context).action == "allow"
+    script_decision = authorize_tool_call({"name": "bash", "args": {"command": "./test.py"}}, context)
+    assert script_decision.action == "ask"
+    assert script_decision.source == "sandbox"
     assert authorize_tool_call({"name": "git", "args": {"args": "status"}}, context).action == "allow"
     assert authorize_tool_call({"name": "git", "args": {"args": "commit"}}, context).action == "ask"
     assert authorize_tool_call({"name": "manage", "args": {"op": "create", "paths": "x.py"}}, context).action == "ask"
@@ -324,7 +327,7 @@ def test_permission_engine_default_strategy_and_plan_overlay(tmp_path):
     implement = authorize_tool_call({"name": "agent", "args": {"agent": "implement"}}, plan)
     mode_implement = authorize_tool_call({"name": "agent", "args": {"agent": "voidx", "mode": "implement"}}, plan)
 
-    assert safe_bash.action == "deny"
+    assert safe_bash.action == "allow"
     assert unsafe_bash.action == "deny"
     assert git_read.action == "allow"
     assert git_write.action == "deny"
@@ -332,6 +335,24 @@ def test_permission_engine_default_strategy_and_plan_overlay(tmp_path):
     assert replace.action == "deny"
     assert implement.action == "deny"
     assert mode_implement.action == "deny"
+
+
+def test_permission_engine_plan_mode_uses_sandbox_source(tmp_path):
+    """plan 模式复用 read-only 沙箱逻辑，deny 的 source 应为 'sandbox' 而非 'mode'。"""
+    plan = PermissionContext(workspace=str(tmp_path), interaction_mode="plan")
+    unsafe_bash = authorize_tool_call({"name": "bash", "args": {"command": "pip install requests"}}, plan)
+    git_write = authorize_tool_call({"name": "git", "args": {"args": "restore"}}, plan)
+    edit = authorize_tool_call({"name": "write", "args": {"file_path": "x.py"}}, plan)
+    implement = authorize_tool_call({"name": "agent", "args": {"agent": "implement"}}, plan)
+
+    assert unsafe_bash.action == "deny"
+    assert unsafe_bash.source == "sandbox"
+    assert git_write.action == "deny"
+    assert git_write.source == "sandbox"
+    assert edit.action == "deny"
+    assert edit.source == "sandbox"
+    assert implement.action == "deny"
+    assert implement.source == "sandbox"
 
 
 def test_permission_engine_policy_presets(tmp_path):
@@ -352,7 +373,7 @@ def test_permission_engine_policy_presets(tmp_path):
     assert authorize_tool_call({"name": "manage", "args": {"op": "create", "paths": "x.py"}}, accept_edits).action == "allow"
     assert authorize_tool_call({"name": "write", "args": {"file_path": "x.py"}}, accept_edits).action == "allow"
     assert authorize_tool_call({"name": "replace", "args": {"file_path": "x.py"}}, accept_edits).action == "allow"
-    assert authorize_tool_call({"name": "bash", "args": {"command": "pip install requests"}}, accept_edits).action == "deny"
+    assert authorize_tool_call({"name": "bash", "args": {"command": "pip install requests"}}, accept_edits).action == "ask"
     assert authorize_tool_call({"name": "bash", "args": {"command": "python -m pytest"}}, full_access).action == "allow"
 
     edit = authorize_tool_call({"name": "manage", "args": {"op": "create", "paths": "x.py"}}, on_failure)
@@ -360,13 +381,13 @@ def test_permission_engine_policy_presets(tmp_path):
 
     assert edit.action == "allow"
     assert edit.failure_check is True
-    assert bash.action == "deny"
+    assert bash.action == "ask"
 
 
 def test_permission_engine_read_only_sandbox_allows_read_bash_but_blocks_writes(tmp_path):
     context = PermissionContext(workspace=str(tmp_path), sandbox_mode="read-only")
 
-    assert authorize_tool_call({"name": "bash", "args": {"command": "ls"}}, context).action == "deny"
+    assert authorize_tool_call({"name": "bash", "args": {"command": "ls"}}, context).action == "allow"
     assert authorize_tool_call({"name": "git", "args": {"args": "status"}}, context).action == "allow"
     assert authorize_tool_call({"name": "git", "args": {"args": "commit"}}, context).action == "deny"
     assert authorize_tool_call({"name": "bash", "args": {"command": "pip install requests"}}, context).action == "deny"
@@ -409,13 +430,13 @@ def test_permission_engine_workspace_write_checks_manage_paths(tmp_path):
     )
 
     assert inside.action != "deny"
-    assert create_outside.action == "deny"
+    assert create_outside.action == "ask"
     assert "outside the allowed workspace" in create_outside.reason
-    assert create_batch_outside.action == "deny"
+    assert create_batch_outside.action == "ask"
     assert "outside the allowed workspace" in create_batch_outside.reason
-    assert move_src_outside.action == "deny"
+    assert move_src_outside.action == "ask"
     assert "outside the allowed workspace" in move_src_outside.reason
-    assert move_dest_outside.action == "deny"
+    assert move_dest_outside.action == "ask"
     assert "outside the allowed workspace" in move_dest_outside.reason
 
 
@@ -535,7 +556,7 @@ def test_engine_defers_approvable_read(tmp_path):
 
     decision = authorize_tool_call({"name": "read", "args": {"file_path": str(target)}}, context)
 
-    assert decision.action == "defer"
+    assert decision.action == "ask"
     assert decision.source == "sandbox"
 
 
@@ -551,5 +572,5 @@ def test_engine_denies_non_approvable_tool(tmp_path):
         context,
     )
 
-    assert decision.action == "deny"
+    assert decision.action == "ask"
     assert "outside the allowed workspace" in decision.reason

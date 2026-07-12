@@ -22,7 +22,7 @@ from voidx.lsp.schema import (
     parse_document_symbols,
     parse_locations,
 )
-from voidx.tools.base import _resolve_tool_path
+from voidx.paths import resolve_tool_path as _resolve_tool_path
 
 
 class LspManager:

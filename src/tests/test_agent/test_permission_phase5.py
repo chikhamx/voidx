@@ -6,16 +6,16 @@ from pathlib import Path
 
 from voidx.permission.engine import PermissionContext, authorize_tool_call
 from voidx.permission.grants import AccessGrants
-from voidx.permission.rules import build_pattern, capability_for_tool
+from voidx.permission.rules import build_pattern, capability_for_tool, classify_tool_call
 
 
-def test_git_unknown_raw_policy_denied_in_workspace_write(tmp_path: Path):
+def test_git_unknown_raw_policy_deferred_in_workspace_write(tmp_path: Path):
     decision = authorize_tool_call(
         {"name": "git", "args": {"args": "for-each-ref --format=%(refname)"}},
         PermissionContext(workspace=str(tmp_path), sandbox_mode="workspace-write"),
     )
 
-    assert decision.action == "deny"
+    assert decision.action == "ask"
     assert decision.source == "sandbox"
     assert "git policy" in decision.reason
 
@@ -28,6 +28,33 @@ def test_git_registered_status_policy_remains_read_allowed(tmp_path: Path):
 
     assert decision.action == "allow"
     assert build_pattern("git", {"args": "status --short"}) == "read"
+
+
+def test_git_read_policy_accepts_command_alias_and_display_name(tmp_path: Path):
+    log_call = {
+        "name": "Git",
+        "args": {"command": "log --oneline -10 -- src/voidx/permission/git_policy.py"},
+    }
+    status_call = {
+        "name": "git",
+        "args": {"command": "status --porcelain -- src/voidx/permission/git_policy.py"},
+    }
+
+    log_decision = authorize_tool_call(
+        log_call,
+        PermissionContext(workspace=str(tmp_path), sandbox_mode="workspace-write"),
+    )
+    status_decision = authorize_tool_call(
+        status_call,
+        PermissionContext(workspace=str(tmp_path), sandbox_mode="workspace-write"),
+    )
+    classified = classify_tool_call(log_call)
+
+    assert log_decision.action == "allow"
+    assert status_decision.action == "allow"
+    assert classified.name == "git"
+    assert classified.capability.value == "git_read"
+    assert classified.pattern == "read"
 
 
 def test_git_dangerous_global_config_policy_denied(tmp_path: Path):
@@ -51,7 +78,7 @@ def test_git_external_path_requires_grant_for_engine(tmp_path: Path):
         PermissionContext(workspace=str(workspace), sandbox_mode="workspace-write"),
     )
 
-    assert decision.action == "defer"
+    assert decision.action == "ask"
     assert "outside workspace" in decision.reason
 
 

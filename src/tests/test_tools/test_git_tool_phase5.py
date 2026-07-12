@@ -179,6 +179,20 @@ async def test_git_denies_implicit_executable_config(tmp_path: Path):
 
 
 @pytest.mark.asyncio
+async def test_git_allows_local_credential_helper_for_read_only_status(tmp_path: Path):
+    repo = _init_repo(tmp_path / "repo")
+    _run(repo, "config", "credential.helper", "store --file=.git/credentials")
+
+    result = await GitTool().execute(
+        {"path": str(repo), "args": "status --short"},
+        ToolContext(workspace=str(repo)),
+    )
+
+    payload = _payload(result)
+    assert payload["ok"] is True
+
+
+@pytest.mark.asyncio
 async def test_git_unknown_raw_policy_denied(tmp_path: Path):
     repo = _init_repo(tmp_path / "repo")
 

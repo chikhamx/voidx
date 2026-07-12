@@ -110,6 +110,8 @@ def test_permission_read_only_status():
     assert _is_read_only_git_tool_command({"args": "status"}) is True
     assert _is_read_only_git_tool_command({"args": "log --oneline"}) is True
     assert _is_read_only_git_tool_command({"args": "diff"}) is True
+    assert _is_read_only_git_tool_command({"command": "status --porcelain"}) is True
+    assert _is_read_only_git_tool_command({"command": "log --oneline -10 -- src/app.py"}) is True
 
 
 def test_permission_write_add():
@@ -386,6 +388,5 @@ def test_permission_config_global_set_is_write():
     """config --global user.name foo (set) should be classified as write."""
     from voidx.permission.rules import _is_read_only_git_tool_command
     assert _is_read_only_git_tool_command({"args": "config --global user.name foo"}) is False
-
 
 

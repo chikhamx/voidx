@@ -52,6 +52,10 @@ class PowerShellTool(BaseTool):
         if sandbox_blocked:
             return build_blocked_result(inp.command, sandbox_blocked)
 
+        hint = _try_hint(inp.command)
+        if hint is not None:
+            return build_hint_result(inp.command, hint, "PowerShell")
+
         access_grants = ctx.get_access_grants() if ctx.get_access_grants is not None else AccessGrants.from_parts(
             readable_files=ctx.sandbox_readable_files,
             readable_dirs=ctx.sandbox_readable_dirs,
@@ -70,10 +74,6 @@ class PowerShellTool(BaseTool):
         )
         if shell_blocked:
             return build_blocked_result(inp.command, shell_blocked)
-
-        hint = _try_hint(inp.command)
-        if hint is not None:
-            return build_hint_result(inp.command, hint, "PowerShell")
 
         try:
             proc = await create_owned_subprocess_exec(

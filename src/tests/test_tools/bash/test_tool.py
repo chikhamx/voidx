@@ -74,7 +74,7 @@ class TestBash:
 
     @pytest.mark.asyncio
     async def test_bash_timeout_terminates_process(self, tmp_path):
-        ctx = ToolContext(workspace=str(tmp_path))
+        ctx = ToolContext(workspace=str(tmp_path), sandbox_mode="danger-full-access")
         r = ToolRegistry()
 
         sleep_cmd = f'"{sys.executable}" -c "import time; time.sleep(2)"'
@@ -144,7 +144,7 @@ class TestBash:
     @pytest.mark.asyncio
     async def test_bash_timeout_sets_error_metadata(self, tmp_path):
         """E1: timeout must set metadata['error'] = True for consistency."""
-        ctx = ToolContext(workspace=str(tmp_path))
+        ctx = ToolContext(workspace=str(tmp_path), sandbox_mode="danger-full-access")
         r = ToolRegistry()
 
         sleep_cmd = f'"{sys.executable}" -c "import time; time.sleep(1.5)"'
@@ -159,7 +159,7 @@ class TestBash:
     @pytest.mark.asyncio
     async def test_bash_nonzero_exit_sets_error_metadata(self, tmp_path):
         """E1: non-zero exit code must set metadata['error'] = True for consistency."""
-        ctx = ToolContext(workspace=str(tmp_path))
+        ctx = ToolContext(workspace=str(tmp_path), sandbox_mode="danger-full-access")
         r = ToolRegistry()
 
         result = await r.execute_tool(
@@ -184,7 +184,7 @@ async def test_bash_cancellation_terminates_process_tree(tmp_path):
     task = asyncio.create_task(
         BashTool().execute(
             {"command": f'{shlex.quote(sys.executable)} -c {shlex.quote(script)}'},
-            ToolContext(workspace=str(tmp_path)),
+            ToolContext(workspace=str(tmp_path), sandbox_mode="danger-full-access"),
         )
     )
 

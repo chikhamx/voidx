@@ -60,6 +60,48 @@ class TestToolSchemas:
                 pass
         assert GoodTool.id == "good"
 
+    def test_model_to_json_schema_flattens_anyof(self):
+        from voidx.tools.base import model_to_json_schema
+        from voidx.tools.file.manage import ManageInput
+
+        schema = model_to_json_schema(ManageInput)
+        for name, prop in schema["properties"].items():
+            assert "anyOf" not in prop, (
+                f"Property '{name}' has anyOf — OpenAI strict mode prefers "
+                f"multi-type 'type' arrays over anyOf for optional fields"
+            )
+
+    def test_replace_anyof_preserves_null_and_array_types(self):
+        from voidx.tools.base import _replace_anyof
+
+        prop: dict = {"anyOf": [
+            {"type": "string"},
+            {"type": "array", "items": {"type": "string"}},
+            {"type": "null"},
+        ]}
+        _replace_anyof(prop)
+        assert prop["type"] == ["string", "array", "null"]
+        assert prop["items"] == {"type": "string"}
+
+    def test_replace_anyof_skips_ref_branch_without_type(self):
+        from voidx.tools.base import _replace_anyof
+
+        prop: dict = {"anyOf": [
+            {"type": "string"},
+            {"$ref": "#/$defs/Foo"},
+        ]}
+        _replace_anyof(prop)
+        assert prop["type"] == "string"
+
+    def test_replace_anyof_no_type_branches_returns_unchanged(self):
+        from voidx.tools.base import _replace_anyof
+
+        original = {"anyOf": [{"$ref": "#/$defs/A"}, {"$ref": "#/$defs/B"}]}
+        prop = dict(original)
+        _replace_anyof(prop)
+        assert "anyOf" not in prop
+        assert "type" not in prop
+
     def test_read_input_validates(self):
         inp = FileReadInput(file_path="foo.py")
         assert inp.file_path == "foo.py"

@@ -40,18 +40,16 @@ async def test_shell_sandbox_contains_child_process(tmp_path: Path):
 
 
 @pytest.mark.asyncio
-async def test_shell_requires_process_sandbox_backend(tmp_path: Path):
+async def test_shell_allows_static_read_without_process_sandbox_backend(tmp_path: Path):
     (tmp_path / "allowed.txt").write_text("ok", encoding="utf-8")
 
     result = await BashTool().execute(
-        {"command": "cat allowed.txt"},
+        {"command": "ls allowed.txt"},
         ToolContext(workspace=str(tmp_path)),
     )
 
     payload = _payload(result)
-    assert payload["ok"] is False
-    assert payload["blocked"] is True
-    assert "process sandbox" in payload["stderr"]
+    assert payload["ok"] is True
 
 
 @pytest.mark.asyncio
@@ -63,7 +61,7 @@ async def test_shell_external_read_requires_writable_grant(tmp_path: Path):
     (external / "data.txt").write_text("secret", encoding="utf-8")
 
     result = await BashTool().execute(
-        {"command": f"cat {external / 'data.txt'}"},
+        {"command": f"ls {external / 'data.txt'}"},
         ToolContext(
             workspace=str(workspace),
             get_access_grants=lambda: AccessGrants.from_parts(readable_dirs=[str(external)]),

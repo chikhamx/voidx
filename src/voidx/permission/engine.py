@@ -33,12 +33,8 @@ def authorize_tool_call(tool_call: dict, context: PermissionContext) -> Permissi
     if sandbox_action == "deny":
         return _decision(classified, "deny", "sandbox", reason or "")
 
-    mode_reason = mode_overlay_denial_reason(classified, context)
-    if mode_reason:
-        return _decision(classified, "deny", "mode", mode_reason)
-
     if sandbox_action == "defer":
-        return _decision(classified, "defer", "sandbox", reason or _reason_for(classified, "ask"))
+        return _decision(classified, "ask", "sandbox", reason or _reason_for(classified, "ask"))
 
     session_action = session_action_for_tool(classified.name, context)
     if session_action:
@@ -71,7 +67,7 @@ def sandbox_precheck_action(classified: ClassifiedToolCall, context: PermissionC
     if context.sandbox_mode == "danger-full-access":
         return "allow", None
 
-    if context.sandbox_mode == "read-only":
+    if context.sandbox_mode == "read-only" or context.interaction_mode == "plan":
         if classified.name == "bash":
             if classified.capability == PermissionCapability.BASH_WRITE:
                 return "deny", f"SANDBOX READ-ONLY: '{classified.name}' is not allowed."
@@ -122,27 +118,12 @@ def sandbox_precheck_action(classified: ClassifiedToolCall, context: PermissionC
                     writable_paths,
                 )
                 if reason:
-                    return "deny", reason
+                    return "defer", reason
         if classified.name == "bash":
             return shell_sandbox_precheck(classified.args, context, shell="bash")
         if classified.name == "powershell":
             return shell_sandbox_precheck(classified.args, context, shell="powershell")
     return "allow", None
-
-
-def mode_overlay_denial_reason(classified: ClassifiedToolCall, context: PermissionContext) -> str | None:
-    if context.interaction_mode != "plan":
-        return None
-    if classified.capability in {
-        PermissionCapability.FILE_WRITE,
-        PermissionCapability.FILE_FORMAT,
-        PermissionCapability.BASH_WRITE,
-        PermissionCapability.GIT_WRITE,
-    }:
-        return f"BLOCKED by plan mode: '{classified.name}' is not allowed."
-    if classified.capability == PermissionCapability.AGENT_IMPLEMENT:
-        return "BLOCKED by plan mode: cannot delegate to implement."
-    return None
 
 
 def session_action_for_tool(tool: str, context: PermissionContext) -> Action | None:

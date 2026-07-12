@@ -149,23 +149,26 @@ async def test_graph_on_request_auto_approves_need_ask_tools(tmp_path):
 
 
 @pytest.mark.asyncio
-async def test_graph_on_failure_denies_unsafe_bash_before_prompt(tmp_path):
+async def test_graph_on_failure_asks_unsafe_bash_before_prompt(tmp_path):
     graph = _graph(tmp_path)
     graph._permission.approval_policy = "on-failure"
 
-    async def deny(_tool_calls):
-        raise AssertionError("unsafe bash should be denied by Phase 6 policy before prompting")
+    asked: list[dict] = []
 
-    graph._ask_tool_permission = deny
+    async def ask(tool_calls):
+        asked.extend(tool_calls)
+        return "y"
+
+    graph._ask_tool_permission = ask
     approved, denied = await graph._authorize_tool_calls(
         [{"name": "bash", "args": {"command": "pip install requests"}, "id": "call_1"}],
         plan_mode=False,
         session_id="test",
     )
 
-    assert approved == []
-    assert len(denied) == 1
-    assert "shell policy" in denied[0][1]
+    assert len(approved) == 1
+    assert denied == []
+    assert len(asked) == 1
 
 
 def test_tool_result_ok_detects_structured_failures():
