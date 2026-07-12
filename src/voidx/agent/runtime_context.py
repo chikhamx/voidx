@@ -54,7 +54,10 @@ class ExecutionPolicy(BaseModel):
     def from_config(cls, config: Config) -> "ExecutionPolicy":
         from voidx.memory.store import DATA_DIR
 
-        extra = list(config.sandbox_workspace_write)
+        extra = [
+            *config.sandbox_writable_files,
+            *config.sandbox_writable_dirs,
+        ]
         data_dir = str(DATA_DIR.resolve())
         if data_dir not in extra:
             extra.append(data_dir)

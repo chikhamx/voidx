@@ -76,6 +76,7 @@ async def run_subagent(
     parent_tools: ToolRegistry | None = None,
     workflow_runtime_context: WorkflowRuntimeContext | None = None,
     todo_state_sink=None,
+    permission_snapshot=None,
     ui_port: AgentUiPort = runtime_ui_port,
 ) -> str:
     """Run a child agent in its own message context."""
@@ -132,12 +133,25 @@ async def run_subagent(
     ).build_incremental(context_cache)
     context.apply_to_messages(messages)
 
+    snapshot_grants = None
+    if permission_snapshot is not None:
+        snapshot_grants = permission_snapshot.get_access_grants()
+
     ctx = ToolContext(
         workspace=config.workspace,
         session_id=session_id or "default",
         lsp_manager=lsp_manager,
         sandbox_mode=config.sandbox_mode.value,
-        sandbox_extra_paths=config.sandbox_workspace_write,
+        sandbox_readable_files=list(snapshot_grants.readable_files) if snapshot_grants is not None else list(config.sandbox_readable_files),
+        sandbox_readable_dirs=list(snapshot_grants.readable_dirs) if snapshot_grants is not None else list(config.sandbox_readable_dirs),
+        sandbox_writable_files=list(snapshot_grants.writable_files) if snapshot_grants is not None else list(config.sandbox_writable_files),
+        sandbox_writable_dirs=list(snapshot_grants.writable_dirs) if snapshot_grants is not None else list(config.sandbox_writable_dirs),
+        get_access_grants=(
+            (lambda: permission_snapshot.get_access_grants())
+            if permission_snapshot is not None
+            else None
+        ),
+        get_revocation_epoch=(lambda: permission_snapshot.revocation_epoch) if permission_snapshot is not None else None,
     )
 
     # Register with tracker

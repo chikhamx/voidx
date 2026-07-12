@@ -56,4 +56,4 @@ def _sandbox_denial(command: str, ctx: ToolContext) -> str | None:
         if is_safe_bash_command(command):
             return None
         return f"SANDBOX READ-ONLY: 'bash' is not allowed.\n  command: {command.strip()[:120]}"
-    return bash_sandbox_denial(command, ctx.workspace, ctx.sandbox_extra_paths)
+    return bash_sandbox_denial(command, ctx.workspace, [*ctx.sandbox_writable_files, *ctx.sandbox_writable_dirs])

@@ -266,7 +266,7 @@ def test_permission_service_mode_presets_update_sandbox_and_approval():
     assert service.decide("manage", "src/app.py") == "allow"
     assert service.decide("write", "src/app.py") == "allow"
     assert service.decide("replace", "src/app.py") == "allow"
-    assert service.decide("bash", "pip install requests") == "ask"
+    assert service.decide("bash", "pip install requests") == "deny"
 
     service.set_permission_mode("full-access")
     assert service.sandbox_mode == "danger-full-access"
@@ -307,7 +307,7 @@ def test_permission_engine_default_strategy_and_plan_overlay(tmp_path):
     context = PermissionContext(workspace=str(tmp_path))
 
     assert authorize_tool_call({"name": "read", "args": {"file_path": "x.py"}}, context).action == "allow"
-    assert authorize_tool_call({"name": "bash", "args": {"command": "ls"}}, context).action == "allow"
+    assert authorize_tool_call({"name": "bash", "args": {"command": "ls"}}, context).action == "deny"
     assert authorize_tool_call({"name": "git", "args": {"args": "status"}}, context).action == "allow"
     assert authorize_tool_call({"name": "git", "args": {"args": "commit"}}, context).action == "ask"
     assert authorize_tool_call({"name": "manage", "args": {"op": "create", "paths": "x.py"}}, context).action == "ask"
@@ -324,7 +324,7 @@ def test_permission_engine_default_strategy_and_plan_overlay(tmp_path):
     implement = authorize_tool_call({"name": "agent", "args": {"agent": "implement"}}, plan)
     mode_implement = authorize_tool_call({"name": "agent", "args": {"agent": "voidx", "mode": "implement"}}, plan)
 
-    assert safe_bash.action == "allow"
+    assert safe_bash.action == "deny"
     assert unsafe_bash.action == "deny"
     assert git_read.action == "allow"
     assert git_write.action == "deny"
@@ -352,7 +352,7 @@ def test_permission_engine_policy_presets(tmp_path):
     assert authorize_tool_call({"name": "manage", "args": {"op": "create", "paths": "x.py"}}, accept_edits).action == "allow"
     assert authorize_tool_call({"name": "write", "args": {"file_path": "x.py"}}, accept_edits).action == "allow"
     assert authorize_tool_call({"name": "replace", "args": {"file_path": "x.py"}}, accept_edits).action == "allow"
-    assert authorize_tool_call({"name": "bash", "args": {"command": "pip install requests"}}, accept_edits).action == "ask"
+    assert authorize_tool_call({"name": "bash", "args": {"command": "pip install requests"}}, accept_edits).action == "deny"
     assert authorize_tool_call({"name": "bash", "args": {"command": "python -m pytest"}}, full_access).action == "allow"
 
     edit = authorize_tool_call({"name": "manage", "args": {"op": "create", "paths": "x.py"}}, on_failure)
@@ -360,13 +360,13 @@ def test_permission_engine_policy_presets(tmp_path):
 
     assert edit.action == "allow"
     assert edit.failure_check is True
-    assert bash.action == "ask"
+    assert bash.action == "deny"
 
 
 def test_permission_engine_read_only_sandbox_allows_read_bash_but_blocks_writes(tmp_path):
     context = PermissionContext(workspace=str(tmp_path), sandbox_mode="read-only")
 
-    assert authorize_tool_call({"name": "bash", "args": {"command": "ls"}}, context).action == "allow"
+    assert authorize_tool_call({"name": "bash", "args": {"command": "ls"}}, context).action == "deny"
     assert authorize_tool_call({"name": "git", "args": {"args": "status"}}, context).action == "allow"
     assert authorize_tool_call({"name": "git", "args": {"args": "commit"}}, context).action == "deny"
     assert authorize_tool_call({"name": "bash", "args": {"command": "pip install requests"}}, context).action == "deny"
@@ -476,7 +476,7 @@ def test_is_safe_bash_preserves_windows_backslash_path():
 
 
 class TestDataDirInjection:
-    """DATA_DIR should be auto-injected into sandbox_workspace_write."""
+    """DATA_DIR should be auto-injected into runtime writable grants."""
 
     def test_build_permission_service_includes_data_dir(self, tmp_path, monkeypatch):
         monkeypatch.setenv("HOME", str(tmp_path))
@@ -491,7 +491,7 @@ class TestDataDirInjection:
         )
         service = build_permission_service(config, notifier=lambda _msg: None)
         expected = str(DATA_DIR.resolve())
-        assert expected in service.sandbox_workspace_write
+        assert expected in service.sandbox_writable_dirs
 
     def test_build_permission_service_preserves_user_extra_paths(self, tmp_path, monkeypatch):
         monkeypatch.setenv("HOME", str(tmp_path))
@@ -503,10 +503,10 @@ class TestDataDirInjection:
         config = Config(
             model=ModelConfig(provider="mimo", model="mimo-v2.5"),
             workspace=str(tmp_path),
-            sandbox_workspace_write=[user_extra],
+            sandbox_writable_dirs=[user_extra],
         )
         service = build_permission_service(config, notifier=lambda _msg: None)
-        assert user_extra in service.sandbox_workspace_write
+        assert user_extra in service.sandbox_writable_dirs
 
     def test_execution_policy_from_config_includes_data_dir(self, tmp_path, monkeypatch):
         monkeypatch.setenv("HOME", str(tmp_path))
@@ -522,3 +522,34 @@ class TestDataDirInjection:
         policy = ExecutionPolicy.from_config(config)
         expected = str(DATA_DIR.resolve())
         assert expected in policy.extra_write_paths
+
+
+def test_engine_defers_approvable_read(tmp_path):
+    workspace = tmp_path / "workspace"
+    outside = tmp_path / "outside"
+    workspace.mkdir()
+    outside.mkdir()
+    target = outside / "file.txt"
+    target.write_text("hello\n", encoding="utf-8")
+    context = PermissionContext(workspace=str(workspace), sandbox_mode="workspace-write")
+
+    decision = authorize_tool_call({"name": "read", "args": {"file_path": str(target)}}, context)
+
+    assert decision.action == "defer"
+    assert decision.source == "sandbox"
+
+
+def test_engine_denies_non_approvable_tool(tmp_path):
+    workspace = tmp_path / "workspace"
+    outside = tmp_path / "outside"
+    workspace.mkdir()
+    outside.mkdir()
+    context = PermissionContext(workspace=str(workspace), sandbox_mode="workspace-write")
+
+    decision = authorize_tool_call(
+        {"name": "manage", "args": {"op": "create", "paths": str(outside / "x.txt")}},
+        context,
+    )
+
+    assert decision.action == "deny"
+    assert "outside the allowed workspace" in decision.reason

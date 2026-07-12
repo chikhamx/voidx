@@ -324,7 +324,6 @@ class TestReadExternalPath:
         workspace = tmp_path / "workspace"
         workspace.mkdir()
 
-        added_paths: list[str] = []
         seen_request: UserInteraction | None = None
 
         async def fake_interact(req: UserInteraction) -> UserResponse:
@@ -335,14 +334,12 @@ class TestReadExternalPath:
         ctx = ToolContext(
             workspace=str(workspace),
             interact=fake_interact,
-            add_extra_path=added_paths.append,
         )
         r = ToolRegistry()
         result = await r.execute_tool("read", {"file_path": str(target)}, ctx)
 
         assert result.metadata.get("error") is not True
         assert "hello" in result.output
-        assert str(external.resolve()) in added_paths
         assert seen_request is not None
         assert seen_request.prompt == f"Read file outside workspace? {target}"
         assert seen_request.options == [
@@ -368,7 +365,6 @@ class TestReadExternalPath:
         ctx = ToolContext(
             workspace=str(workspace),
             interact=fake_interact,
-            add_extra_path=lambda _p: None,
         )
         r = ToolRegistry()
         result = await r.execute_tool("read", {"file_path": str(target)}, ctx)

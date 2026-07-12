@@ -9,7 +9,7 @@ from pathlib import Path
 
 from pydantic import BaseModel, Field, field_validator
 from voidx.logging.tool_log import log_tool_event
-from voidx.tools.base import BaseTool, model_to_json_schema, ToolContext, ToolResult, resolve_safe, SKIP_DIRS, SKIP_SUFFIXES
+from voidx.tools.base import BaseTool, model_to_json_schema, ToolContext, ToolResult, _resolve_tool_path, _sandbox_paths_for_access, SKIP_DIRS, SKIP_SUFFIXES
 
 
 
@@ -142,7 +142,7 @@ class GrepTool(BaseTool):
         except Exception as exc:
             return ToolResult(output=f"Invalid arguments: {exc}", metadata={"error": True})
         base = Path(ctx.workspace)
-        search_dir = resolve_safe(ctx.workspace, inp.path, ctx.sandbox_extra_paths) if inp.path else base
+        search_dir = _resolve_tool_path(ctx.workspace, inp.path, _sandbox_paths_for_access(ctx, write=False)) if inp.path else base
         if search_dir is None:
             return ToolResult(output=f"Path traversal blocked: {inp.path}", metadata={"error": True})
 

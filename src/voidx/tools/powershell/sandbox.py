@@ -2,14 +2,14 @@
 
 Checks Out-File/Set-Content/Add-Content/Tee-Object -FilePath, redirections (> >>),
 Remove-Item/Move-Item/Copy-Item targets, and New-Item -ItemType File -Path.
-Reuses resolve_safe from tools.base for path validation.
+Uses canonical writable grants for path validation.
 """
 
 from __future__ import annotations
 
 import re
 
-from voidx.tools.base import ToolContext, resolve_safe
+from voidx.tools.base import ToolContext, _resolve_tool_path
 
 # Read-only PowerShell commands (no write targets, no side effects)
 _READ_ONLY_PROGRAMS = frozenset({
@@ -164,7 +164,7 @@ def check_sandbox_powershell(
         clean = target.strip("'").strip('"').strip("`")
         if not clean:
             continue
-        if not resolve_safe(workspace, clean, extra_paths):
+        if not _resolve_tool_path(workspace, clean, extra_paths):
             blocked_targets.append(target)
 
     if blocked_targets:
@@ -186,7 +186,7 @@ def _sandbox_denial(command: str, ctx: ToolContext) -> str | None:
         if is_safe_powershell_command(command):
             return None
         return f"SANDBOX READ-ONLY: 'powershell' is not allowed.\n  command: {command.strip()[:120]}"
-    return check_sandbox_powershell(command, ctx.workspace, ctx.sandbox_extra_paths)
+    return check_sandbox_powershell(command, ctx.workspace, [*ctx.sandbox_writable_files, *ctx.sandbox_writable_dirs])
 
 
 def _segment_words(segment: str) -> list[str]:

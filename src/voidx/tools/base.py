@@ -3,12 +3,22 @@
 from __future__ import annotations
 
 from abc import ABC, abstractmethod
+import inspect
 from collections.abc import Awaitable, Callable
 from pathlib import Path
 from typing import Any
 
 from pydantic import BaseModel, Field
 
+from voidx.permission.grants import (
+    AccessGrant,
+    AccessGrants,
+    ApprovalPrecondition,
+    GrantPersistence,
+    ObjectType,
+    grant_for_intent,
+    resolve_access,
+)
 from voidx.workflow.types import WorkflowRunState
 
 
@@ -22,22 +32,23 @@ def tool_timeout_metadata(source: str, **extra: Any) -> dict[str, Any]:
     }
 
 
-def resolve_safe(workspace: str, file_path: str, extra_paths: list[str] | None = None) -> Path | None:
-    """Resolve file path and verify it stays inside workspace (+ optional extra paths).
-
-    Returns the resolved path if safe, or None if blocked.
-    """
+def _resolve_tool_path(workspace: str, file_path: str, allowed_paths: list[str] | None = None) -> Path | None:
     ws = Path(workspace).resolve()
     raw = Path(file_path)
-    if file_path.startswith("~") or raw.is_absolute():
-        resolved = raw.expanduser().resolve()
-    else:
-        resolved = (ws / raw).resolve()
+    try:
+        if file_path.startswith("~") or raw.is_absolute():
+            resolved = raw.expanduser().resolve()
+        else:
+            resolved = (ws / raw).resolve()
+    except (OSError, ValueError):
+        return None
 
     allowed = [ws]
-    if extra_paths:
-        for ep in extra_paths:
-            allowed.append(Path(ep).expanduser().resolve())
+    for path in allowed_paths or []:
+        try:
+            allowed.append(Path(path).expanduser().resolve())
+        except (OSError, ValueError):
+            continue
 
     for base in allowed:
         try:
@@ -81,9 +92,6 @@ class UserResponse(BaseModel):
 
 
 UserInteractionCallback = Callable[[UserInteraction], Awaitable[UserResponse]]
-AddExtraPathCallback = Callable[[str], None]
-
-
 class ToolContext(BaseModel):
     """Context passed to every tool execution. Mutable file fingerprints for staleness guard."""
 
@@ -101,9 +109,17 @@ class ToolContext(BaseModel):
     mcp_manager: Any | None = None
     lsp_manager: Any | None = None
     sandbox_mode: str = "workspace-write"
-    sandbox_extra_paths: list[str] = Field(default_factory=list)
+    sandbox_readable_files: list[str] = Field(default_factory=list)
+    sandbox_readable_dirs: list[str] = Field(default_factory=list)
+    sandbox_writable_files: list[str] = Field(default_factory=list)
+    sandbox_writable_dirs: list[str] = Field(default_factory=list)
+    get_access_grants: Callable[[], AccessGrants] | None = Field(default=None, exclude=True)
+    get_revocation_epoch: Callable[[], int] | None = Field(default=None, exclude=True)
+    add_grant: Callable[..., Awaitable[Any] | Any] | None = Field(default=None, exclude=True)
+    acquire_grant_targets: Callable[..., Awaitable[Any]] | None = Field(default=None, exclude=True)
+    acquire_execution_lease: Callable[[str], Any] | None = Field(default=None, exclude=True)
+    process_sandbox: Any | None = Field(default=None, exclude=True)
     interact: UserInteractionCallback | None = Field(default=None, exclude=True)
-    add_extra_path: AddExtraPathCallback | None = Field(default=None, exclude=True)
 
     model_config = {"arbitrary_types_allowed": True}
 
@@ -136,6 +152,157 @@ class ToolContext(BaseModel):
     @property
     def workflow_repeat_tracker(self) -> dict[str, dict[str, int]]:
         return self._workflow_repeat_tracker
+
+
+
+async def _resolve_tool_path_for_access(
+    ctx: ToolContext,
+    file_path: str,
+    *,
+    write: bool,
+    require_exists: bool = False,
+    allow_missing_write_file: bool = False,
+    prompt_label: str | None = None,
+    allow_description: str | None = None,
+    deny_description: str | None = None,
+) -> tuple[Path | None, ToolResult | None]:
+    access = "write" if write else "read"
+    access_grants = ctx.get_access_grants() if ctx.get_access_grants is not None else AccessGrants.from_parts(
+        readable_files=ctx.sandbox_readable_files,
+        readable_dirs=ctx.sandbox_readable_dirs,
+        writable_files=ctx.sandbox_writable_files,
+        writable_dirs=ctx.sandbox_writable_dirs,
+    )
+    precondition = _approval_precondition(access_grants)
+    resolution = resolve_access(
+        ctx.workspace,
+        file_path,
+        access=access,
+        access_grants=access_grants,
+        require_exists=require_exists,
+        allow_missing_write_file=allow_missing_write_file,
+    )
+    if resolution.action == "allow" and resolution.intent is not None:
+        return resolution.intent.normalized_path, None
+    if resolution.action == "deny":
+        return None, ToolResult(output=resolution.reason or f"Path traversal blocked: {file_path}", metadata={"error": True})
+
+    label = prompt_label or ("Write" if write else "Read")
+    if not ctx.interact:
+        return None, ToolResult(output=f"Path traversal blocked: {file_path}", metadata={"error": True})
+    lock = None
+    if ctx.acquire_grant_targets is not None and resolution.intent is not None:
+        lock = await ctx.acquire_grant_targets([resolution.intent.normalized_path])
+        access_grants = ctx.get_access_grants() if ctx.get_access_grants is not None else access_grants
+        precondition = _approval_precondition(access_grants)
+        resolution = resolve_access(
+            ctx.workspace,
+            file_path,
+            access=access,
+            access_grants=access_grants,
+            require_exists=require_exists,
+            allow_missing_write_file=allow_missing_write_file,
+        )
+        if resolution.action == "allow" and resolution.intent is not None:
+            await _release_lock(lock)
+            return resolution.intent.normalized_path, None
+        if resolution.action == "deny":
+            await _release_lock(lock)
+            return None, ToolResult(output=resolution.reason or f"Path traversal blocked: {file_path}", metadata={"error": True})
+    try:
+        options = [
+            ("Yes", "allow", allow_description or f"Allow this {access} once"),
+            ("No", "deny", deny_description or f"Do not {access} this file"),
+        ]
+        if ctx.add_grant is not None:
+            options = [
+                ("Session file", "session_file", allow_description or f"Allow this {access} file for this session"),
+                ("Session dir", "session_dir", f"Allow this {access} directory for this session"),
+                ("Persistent file", "persistent_file", f"Always allow this {access} file"),
+                ("Persistent dir", "persistent_dir", f"Always allow this {access} directory"),
+                ("Once", "allow", f"Allow this {access} once"),
+                ("No", "deny", deny_description or f"Do not {access} this file"),
+            ]
+        response = await ctx.interact(UserInteraction(
+            prompt=f"{label} file outside workspace? {file_path}",
+            options=options,
+        ))
+        if response.cancelled or response.value == "deny":
+            return None, ToolResult(output=f"{label} denied by user: {file_path}", metadata={"error": True})
+        if resolution.intent is None:
+            return None, ToolResult(output=f"Path traversal blocked: {file_path}", metadata={"error": True})
+        if response.value in {"session_file", "session_dir", "persistent_file", "persistent_dir"} and ctx.add_grant is not None:
+            persistence: GrantPersistence = "persistent" if response.value.startswith("persistent") else "session"
+            object_type: ObjectType = "dir" if response.value.endswith("dir") else "file"
+            grant = grant_for_intent(resolution.intent, persistence, object_type=object_type)
+            if ctx.acquire_grant_targets is not None:
+                await _release_lock(lock)
+                lock = await ctx.acquire_grant_targets([resolution.intent.normalized_path], final_paths=[grant.path])
+                access_grants = ctx.get_access_grants() if ctx.get_access_grants is not None else access_grants
+                precondition = _approval_precondition(access_grants)
+                resolution = resolve_access(
+                    ctx.workspace,
+                    file_path,
+                    access=access,
+                    access_grants=access_grants,
+                    require_exists=require_exists,
+                    allow_missing_write_file=allow_missing_write_file,
+                )
+                if resolution.action == "allow" and resolution.intent is not None:
+                    return resolution.intent.normalized_path, None
+                if resolution.action == "deny":
+                    return None, ToolResult(output=resolution.reason or f"Path traversal blocked: {file_path}", metadata={"error": True})
+            result = await _call_add_grant(ctx.add_grant, grant, precondition)
+            if getattr(result, "ok", True) is False:
+                message = getattr(result, "error", "Permission grant conflict") or "Permission grant conflict"
+                return None, ToolResult(output=message, metadata={"error": True, "conflict": getattr(result, "conflict", False)})
+        return resolution.intent.normalized_path, None
+    finally:
+        await _release_lock(lock)
+
+
+async def _release_lock(lock: Any | None) -> None:
+    if lock is not None and hasattr(lock, "release"):
+        await _maybe_await(lock.release())
+
+
+async def _maybe_await(value: Awaitable[Any] | Any) -> Any:
+    if hasattr(value, "__await__"):
+        return await value
+    return value
+
+
+
+def _approval_precondition(access_grants: AccessGrants) -> ApprovalPrecondition:
+    return ApprovalPrecondition(
+        permission_mode=access_grants.permission_mode,
+        revocation_epoch=access_grants.revocation_epoch,
+    )
+
+
+async def _call_add_grant(add_grant: Callable[..., Any], grant: AccessGrant, precondition: ApprovalPrecondition) -> Any:
+    try:
+        signature = inspect.signature(add_grant)
+        accepts_precondition = (
+            "precondition" in signature.parameters
+            or any(param.kind == inspect.Parameter.VAR_KEYWORD for param in signature.parameters.values())
+        )
+    except (TypeError, ValueError):
+        accepts_precondition = True
+    if accepts_precondition:
+        return await _maybe_await(add_grant(grant, precondition=precondition))
+    return await _maybe_await(add_grant(grant))
+
+
+def _sandbox_paths_for_access(ctx: ToolContext, *, write: bool) -> list[str]:
+    writable = [*ctx.sandbox_writable_files, *ctx.sandbox_writable_dirs]
+    if write:
+        return writable
+    return [
+        *ctx.sandbox_readable_files,
+        *ctx.sandbox_readable_dirs,
+        *writable,
+    ]
 
 
 class BaseTool(ABC):

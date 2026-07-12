@@ -56,20 +56,30 @@ def register_agent_tool(
     registry.register("agent", agent_tool, agent_tool.description, agent_tool.parameters_schema())
 
 
-def build_permission_service(config: Config, *, notifier: Callable[[str], object]) -> PermissionService:
+def build_permission_service(
+    config: Config,
+    *,
+    settings: Settings | None = None,
+    notifier: Callable[[str], object],
+) -> PermissionService:
     from voidx.memory.store import DATA_DIR
 
-    extra_paths = list(config.sandbox_workspace_write)
+    writable_dirs = list(config.sandbox_writable_dirs)
     data_dir = str(DATA_DIR.resolve())
-    if data_dir not in extra_paths:
-        extra_paths.append(data_dir)
+    if data_dir not in writable_dirs:
+        writable_dirs.append(data_dir)
     return PermissionService(
         permission_mode=config.permission_mode.value,
         sandbox_mode=config.sandbox_mode.value,
-        sandbox_workspace_write=extra_paths,
+        sandbox_readable_files=list(config.sandbox_readable_files),
+        sandbox_readable_dirs=list(config.sandbox_readable_dirs),
+        sandbox_writable_files=list(config.sandbox_writable_files),
+        sandbox_writable_dirs=writable_dirs,
+        persistent_grants=settings.persistent_grants() if settings is not None else [],
         approval_policy=config.approval_policy.value,
         approval_reviewer=config.approval_reviewer.value,
         notifier=notifier,
+        persistent_grant_writer=settings.add_persistent_grant_delta if settings is not None else None,
     )
 
 

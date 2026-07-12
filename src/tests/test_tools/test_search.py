@@ -124,7 +124,7 @@ class TestSearch:
         assert "TODO visible" in result.display
 
     @pytest.mark.asyncio
-    async def test_grep_sandbox_extra_path_returns_absolute_file(self, tmp_path):
+    async def test_grep_sandbox_readable_dir_returns_absolute_file(self, tmp_path):
         workspace = tmp_path / "workspace"
         workspace.mkdir()
         external = tmp_path / "external"
@@ -132,7 +132,7 @@ class TestSearch:
         target = external / "outside.txt"
         target.write_text("OUTSIDE_MARKER\n", encoding="utf-8")
 
-        ctx = ToolContext(workspace=str(workspace), sandbox_extra_paths=[str(external)])
+        ctx = ToolContext(workspace=str(workspace), sandbox_readable_dirs=[str(external)])
         r = ToolRegistry()
         result = await r.execute_tool("grep", {"pattern": "OUTSIDE_MARKER", "path": str(external)}, ctx)
         data = json.loads(result.output)

@@ -377,3 +377,124 @@ class TestWriteInsert1Based:
         )
 
         assert result.metadata.get("error") is True
+
+
+class TestExternalWriteApproval:
+    @pytest.mark.asyncio
+    async def test_deferred_path_denied_by_user(self, tmp_path):
+        from voidx.tools.base import UserInteraction, UserResponse
+
+        workspace = tmp_path / "workspace"
+        external = tmp_path / "external"
+        workspace.mkdir()
+        external.mkdir()
+        target = external / "denied.txt"
+        seen_request: UserInteraction | None = None
+
+        async def fake_interact(req: UserInteraction) -> UserResponse:
+            nonlocal seen_request
+            seen_request = req
+            return UserResponse(value="deny")
+
+        ctx = ToolContext(workspace=str(workspace), interact=fake_interact)
+        result = await ToolRegistry().execute_tool(
+            "write",
+            {"file_path": str(target), "op": "write", "new_string": "secret\n"},
+            ctx,
+        )
+
+        assert result.metadata.get("error") is True
+        assert seen_request is not None
+        assert target.exists() is False
+
+    @pytest.mark.asyncio
+    async def test_read_grant_does_not_allow_write(self, tmp_path):
+        from voidx.tools.base import UserInteraction, UserResponse
+
+        workspace = tmp_path / "workspace"
+        external = tmp_path / "external"
+        workspace.mkdir()
+        external.mkdir()
+        target = external / "file.txt"
+        target.write_text("original\n", encoding="utf-8")
+        seen_request: UserInteraction | None = None
+
+        async def fake_interact(req: UserInteraction) -> UserResponse:
+            nonlocal seen_request
+            seen_request = req
+            return UserResponse(value="deny")
+
+        ctx = ToolContext(
+            workspace=str(workspace),
+            sandbox_readable_files=[str(target)],
+            interact=fake_interact,
+        )
+        result = await ToolRegistry().execute_tool(
+            "write",
+            {"file_path": str(target), "op": "append", "new_string": "changed\n"},
+            ctx,
+        )
+
+        assert result.metadata.get("error") is True
+        assert seen_request is not None
+        assert target.read_text(encoding="utf-8") == "original\n"
+
+    @pytest.mark.asyncio
+    async def test_file_grant_does_not_cover_sibling(self, tmp_path):
+        from voidx.tools.base import UserInteraction, UserResponse
+
+        workspace = tmp_path / "workspace"
+        external = tmp_path / "external"
+        workspace.mkdir()
+        external.mkdir()
+        granted = external / "granted.txt"
+        sibling = external / "sibling.txt"
+        granted.write_text("ok\n", encoding="utf-8")
+        seen_request: UserInteraction | None = None
+
+        async def fake_interact(req: UserInteraction) -> UserResponse:
+            nonlocal seen_request
+            seen_request = req
+            return UserResponse(value="deny")
+
+        ctx = ToolContext(
+            workspace=str(workspace),
+            sandbox_writable_files=[str(granted)],
+            interact=fake_interact,
+        )
+        result = await ToolRegistry().execute_tool(
+            "write",
+            {"file_path": str(sibling), "op": "write", "new_string": "nope\n"},
+            ctx,
+        )
+
+        assert result.metadata.get("error") is True
+        assert seen_request is not None
+        assert sibling.exists() is False
+
+    @pytest.mark.asyncio
+    async def test_write_missing_external_target(self, tmp_path):
+        from voidx.tools.base import UserInteraction, UserResponse
+
+        workspace = tmp_path / "workspace"
+        external = tmp_path / "external"
+        workspace.mkdir()
+        external.mkdir()
+        target = external / "new.txt"
+        seen_request: UserInteraction | None = None
+
+        async def fake_interact(req: UserInteraction) -> UserResponse:
+            nonlocal seen_request
+            seen_request = req
+            return UserResponse(value="allow")
+
+        ctx = ToolContext(workspace=str(workspace), interact=fake_interact)
+        result = await ToolRegistry().execute_tool(
+            "write",
+            {"file_path": str(target), "op": "write", "new_string": "created\n"},
+            ctx,
+        )
+
+        assert result.metadata.get("error") is not True
+        assert seen_request is not None
+        assert target.read_text(encoding="utf-8") == "created\n"

@@ -1,0 +1,87 @@
+"""Phase 5 git limited policy and engine gate tests."""
+
+from __future__ import annotations
+
+from pathlib import Path
+
+from voidx.permission.engine import PermissionContext, authorize_tool_call
+from voidx.permission.grants import AccessGrants
+from voidx.permission.rules import build_pattern, capability_for_tool
+
+
+def test_git_unknown_raw_policy_denied_in_workspace_write(tmp_path: Path):
+    decision = authorize_tool_call(
+        {"name": "git", "args": {"args": "for-each-ref --format=%(refname)"}},
+        PermissionContext(workspace=str(tmp_path), sandbox_mode="workspace-write"),
+    )
+
+    assert decision.action == "deny"
+    assert decision.source == "sandbox"
+    assert "git policy" in decision.reason
+
+
+def test_git_registered_status_policy_remains_read_allowed(tmp_path: Path):
+    decision = authorize_tool_call(
+        {"name": "git", "args": {"args": "status --short"}},
+        PermissionContext(workspace=str(tmp_path), sandbox_mode="workspace-write"),
+    )
+
+    assert decision.action == "allow"
+    assert build_pattern("git", {"args": "status --short"}) == "read"
+
+
+def test_git_dangerous_global_config_policy_denied(tmp_path: Path):
+    decision = authorize_tool_call(
+        {"name": "git", "args": {"args": "-c core.sshCommand=/tmp/evil status"}},
+        PermissionContext(workspace=str(tmp_path), sandbox_mode="workspace-write"),
+    )
+
+    assert decision.action == "deny"
+    assert "git policy" in decision.reason
+
+
+def test_git_external_path_requires_grant_for_engine(tmp_path: Path):
+    workspace = tmp_path / "workspace"
+    external_repo = tmp_path / "external-repo"
+    workspace.mkdir()
+    external_repo.mkdir()
+
+    decision = authorize_tool_call(
+        {"name": "git", "args": {"path": str(external_repo), "args": "status"}},
+        PermissionContext(workspace=str(workspace), sandbox_mode="workspace-write"),
+    )
+
+    assert decision.action == "defer"
+    assert "outside workspace" in decision.reason
+
+
+def test_git_external_path_with_grant_allowed_by_engine(tmp_path: Path):
+    workspace = tmp_path / "workspace"
+    external_repo = tmp_path / "external-repo"
+    workspace.mkdir()
+    external_repo.mkdir()
+
+    decision = authorize_tool_call(
+        {"name": "git", "args": {"path": str(external_repo), "args": "status"}},
+        PermissionContext(
+            workspace=str(workspace),
+            sandbox_mode="workspace-write",
+            access_grants=AccessGrants.from_parts(readable_dirs=[str(external_repo)]),
+        ),
+    )
+
+    assert decision.action == "allow"
+
+
+def test_git_unknown_policy_is_not_classified_as_git_read():
+    assert capability_for_tool("git", {"args": "for-each-ref --format=%(refname)"}).value == "git_write"
+
+
+def test_git_config_env_global_option_denied(tmp_path: Path):
+    decision = authorize_tool_call(
+        {"name": "git", "args": {"args": "--config-env=core.fsmonitor=VOIDX_EVIL status"}},
+        PermissionContext(workspace=str(tmp_path), sandbox_mode="workspace-write"),
+    )
+
+    assert decision.action == "deny"
+    assert "git policy" in decision.reason

@@ -63,6 +63,8 @@ class GraphPermissionMixin:
                 approved.append(decision.tool_call)
                 if decision.failure_check:
                     self._needs_failure_check[decision.tool_call.get("id", "")] = decision.tool_call
+            elif decision.action == "defer":
+                approved.append(decision.tool_call)
             elif decision.action == "deny":
                 denied.append((decision.tool_call, decision.reason))
             else:

@@ -7,7 +7,7 @@ from dataclasses import dataclass
 from enum import Enum
 
 from voidx.permission.schema import Rule, Ruleset
-from voidx.tools.git import is_git_read_only
+from voidx.permission.git_policy import git_policy_for_args
 from voidx.workflow.policy import workflow_personas
 
 
@@ -440,8 +440,6 @@ _FILE_PATTERN_TOOLS = {
 
 
 def _is_read_only_git_tool_command(args: dict) -> bool:
-    """Classify a git tool call as read-only or write.
-
-    Delegates to voidx.tools.git.is_git_read_only (single source of truth).
-    """
-    return is_git_read_only(args)
+    """Classify a registered git tool call as read-only or write."""
+    decision = git_policy_for_args(args)
+    return decision.allowed and decision.read_only

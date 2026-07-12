@@ -95,7 +95,7 @@ def test_settings_reads_legacy_skill_selection_from_voidx_json(tmp_path):
 
 async def test_permission_mode_presets_drive_build_config(tmp_path):
     settings = Settings(str(tmp_path))
-    settings.set_sandbox_workspace_write([str(tmp_path / "external")])
+    settings.set_sandbox_writable_dirs([str(tmp_path / "external")])
 
     settings.set_permission_mode(PermissionMode.FULL_ACCESS)
     cfg = await (await Settings.create(str(tmp_path))).build_config()
@@ -104,7 +104,7 @@ async def test_permission_mode_presets_drive_build_config(tmp_path):
     assert cfg.sandbox_mode == SandboxMode.DANGER_FULL_ACCESS
     assert cfg.approval_policy == ApprovalPolicy.NEVER
     assert cfg.approval_reviewer == ApprovalReviewer.USER
-    assert cfg.sandbox_workspace_write == []
+    assert cfg.sandbox_writable_dirs == []
 
     settings.set_permission_mode(PermissionMode.AUTO_REVIEW)
     cfg = await (await Settings.create(str(tmp_path))).build_config()
@@ -120,6 +120,93 @@ async def test_permission_mode_presets_drive_build_config(tmp_path):
     assert cfg.sandbox_mode == SandboxMode.READ_ONLY
     assert cfg.approval_policy == ApprovalPolicy.UNTRUSTED
 
+
+
+
+def test_legacy_permission_schema_migrates_to_canonical_fields(tmp_path):
+    external = tmp_path / "external"
+    (tmp_path / "voidx.json").write_text(
+        json.dumps({"sandbox_workspace_write": [str(external)]}),
+        encoding="utf-8",
+    )
+
+    settings = Settings(str(tmp_path))
+
+    assert settings.get_sandbox_writable_dirs() == [str(external)]
+    assert settings.get_sandbox_readable_files() == []
+    assert settings.get_sandbox_readable_dirs() == []
+    assert settings.get_sandbox_writable_files() == []
+    assert "sandbox_workspace_write" not in settings._effective_data()
+
+
+async def test_build_config_uses_canonical_permission_grants(tmp_path):
+    readable = tmp_path / "readable.txt"
+    writable = tmp_path / "writable.txt"
+    settings = Settings(str(tmp_path))
+    settings.set_sandbox_readable_files([str(readable)])
+    settings.set_sandbox_writable_files([str(writable)])
+
+    cfg = await (await Settings.create(str(tmp_path))).build_config()
+
+    assert cfg.sandbox_readable_files == [str(readable)]
+    assert cfg.sandbox_writable_files == [str(writable)]
+    assert not hasattr(cfg, "sandbox_workspace_write")
+
+
+def test_mixed_permission_schema_prefers_canonical(tmp_path):
+    legacy = tmp_path / "legacy"
+    canonical = tmp_path / "canonical"
+    (tmp_path / "voidx.json").write_text(
+        json.dumps({
+            "sandbox_workspace_write": [str(legacy)],
+            "sandbox_writable_dirs": [str(canonical)],
+            "sandbox_readable_files": [str(tmp_path / "readable.txt")],
+        }),
+        encoding="utf-8",
+    )
+
+    settings = Settings(str(tmp_path))
+
+    assert settings.get_sandbox_writable_dirs() == [str(canonical)]
+    assert str(legacy) not in settings.get_sandbox_writable_dirs()
+    assert settings.get_sandbox_readable_files() == [str(tmp_path / "readable.txt")]
+    assert "sandbox_workspace_write" not in settings._effective_data()
+
+
+def test_legacy_migration_failure_fails_closed(tmp_path):
+    (tmp_path / "voidx.json").write_text(
+        json.dumps({"sandbox_workspace_write": [str(tmp_path / "valid"), 123]}),
+        encoding="utf-8",
+    )
+
+    settings = Settings(str(tmp_path))
+
+    assert settings.get_sandbox_readable_files() == []
+    assert settings.get_sandbox_readable_dirs() == []
+    assert settings.get_sandbox_writable_files() == []
+    assert settings.get_sandbox_writable_dirs() == []
+    assert "sandbox_workspace_write" not in settings._effective_data()
+
+
+def test_preset_clears_path_grants(tmp_path):
+    settings = Settings(str(tmp_path))
+    settings.set_sandbox_readable_files([str(tmp_path / "readable-file")])
+    settings.set_sandbox_readable_dirs([str(tmp_path / "readable-dir")])
+    settings.set_sandbox_writable_files([str(tmp_path / "writable-file")])
+    settings.set_sandbox_writable_dirs([str(tmp_path / "writable-dir")])
+
+    settings.set_permission_mode(PermissionMode.AUTO_REVIEW)
+    loaded = Settings(str(tmp_path))
+
+    assert loaded.get_sandbox_readable_files() == []
+    assert loaded.get_sandbox_readable_dirs() == []
+    assert loaded.get_sandbox_writable_files() == []
+    assert loaded.get_sandbox_writable_dirs() == []
+    data = loaded._effective_data()
+    assert "sandbox_readable_files" not in data
+    assert "sandbox_readable_dirs" not in data
+    assert "sandbox_writable_files" not in data
+    assert "sandbox_writable_dirs" not in data
 
 async def test_build_config_defaults_and_reads_ask_compact(tmp_path):
     cfg = await (await Settings.create(str(tmp_path))).build_config()

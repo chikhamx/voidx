@@ -10,6 +10,9 @@ from pydantic import BaseModel, Field
 
 from voidx.tools.base import BaseTool, ToolContext, ToolResult, model_to_json_schema
 from voidx.tools.bash.router import try_hint
+from voidx.permission.context import PermissionContext
+from voidx.permission.grants import AccessGrants
+from voidx.permission.shell_policy import shell_sandbox_precheck
 from voidx.tools.bash.safety import _check_command, _sandbox_denial
 from voidx.tools.shell.common import (
     build_blocked_result,
@@ -47,6 +50,25 @@ class BashTool(BaseTool):
         blocked = _sandbox_denial(inp.command, ctx)
         if blocked:
             return build_blocked_result(inp.command, blocked)
+
+        access_grants = ctx.get_access_grants() if ctx.get_access_grants is not None else AccessGrants.from_parts(
+            readable_files=ctx.sandbox_readable_files,
+            readable_dirs=ctx.sandbox_readable_dirs,
+            writable_files=ctx.sandbox_writable_files,
+            writable_dirs=ctx.sandbox_writable_dirs,
+        )
+        _, shell_blocked = shell_sandbox_precheck(
+            {"command": inp.command},
+            PermissionContext(
+                workspace=ctx.workspace,
+                sandbox_mode=ctx.sandbox_mode,
+                access_grants=access_grants,
+                process_sandbox=ctx.process_sandbox,
+            ),
+            shell="bash",
+        )
+        if shell_blocked:
+            return build_blocked_result(inp.command, shell_blocked)
 
         hint = try_hint(inp.command)
         if hint is not None:

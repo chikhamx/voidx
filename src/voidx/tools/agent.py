@@ -2,12 +2,14 @@
 
 from __future__ import annotations
 
+import inspect
 from collections.abc import Callable, Iterable
 from dataclasses import dataclass
 from typing import Any, Literal
 
 from pydantic import BaseModel, Field, ValidationError
 
+from voidx.permission.service import SubagentPermissionSnapshot
 from voidx.runtime.intent import TaskIntent
 from voidx.runtime.task_state import (
     GoalResolution,
@@ -218,6 +220,7 @@ class AgentTool(BaseTool):
                 normalized.description,
                 normalized.goal_resolution,
                 normalized.result_contract,
+                **_runner_permission_kwargs(self._run_child_agent, ctx),
             )
             goal = normalized.goal_resolution.goal
             plan = normalized.goal_resolution.plan
@@ -248,6 +251,24 @@ class AgentTool(BaseTool):
                 output=f"Child agent '{agent_def_name}' failed: {exc}",
                 metadata={"agent": agent_def_name, "error": True, "reason": "exception", "detail": str(exc)[:200]},
             )
+
+
+def _runner_permission_kwargs(runner, ctx: ToolContext) -> dict[str, object]:
+    if ctx.get_access_grants is None or ctx.get_revocation_epoch is None:
+        return {}
+    try:
+        params = inspect.signature(runner).parameters
+    except (TypeError, ValueError):
+        return {}
+    if "permission_snapshot" not in params:
+        return {}
+    return {
+        "permission_snapshot": SubagentPermissionSnapshot.from_parts(
+            ctx.get_access_grants(),
+            ctx.get_revocation_epoch(),
+            current_revocation_epoch=ctx.get_revocation_epoch,
+        )
+    }
 
 
 def normalize_agent_input(inp: AgentInput) -> NormalizedAgentDelegation:

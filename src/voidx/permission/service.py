@@ -9,7 +9,8 @@ Manage via /allow <tool>, /deny <tool>, /permissions commands.
 from __future__ import annotations
 
 import asyncio
-from collections.abc import Callable
+from collections.abc import AsyncIterator, Callable
+from contextlib import asynccontextmanager
 from dataclasses import dataclass
 
 from pydantic import BaseModel
@@ -24,6 +25,15 @@ from voidx.permission.engine import (
     is_safe_bash,
     sandbox_denial_reason,
     tool_call_from_pattern,
+)
+from voidx.permission.grants import (
+    AccessGrant,
+    AccessGrants,
+    ApprovalPrecondition,
+    GrantDelta,
+    GrantUpdateResult,
+    PathGrantLockManager,
+    delta_for_grant,
 )
 from voidx.permission.schema import Action
 from voidx.permission.sandbox import check_sandbox_bash
@@ -64,6 +74,74 @@ class PermissionRejectedError(Exception):
         super().__init__(f"User rejected {tool} → {pattern}")
 
 
+_EXECUTION_LEASE_TOKEN = object()
+_SUBAGENT_SNAPSHOT_TOKEN = object()
+
+
+class ExecutionLease:
+    __slots__ = ("_service", "_token", "_released")
+
+    def __init__(self, service: "PermissionService", token: object) -> None:
+        if token is not _EXECUTION_LEASE_TOKEN:
+            raise TypeError("ExecutionLease cannot be constructed directly")
+        self._service = service
+        self._token = token
+        self._released = False
+
+    async def release(self) -> None:
+        if self._released:
+            return
+        self._released = True
+        self._service._release_execution_lease(self)
+
+    async def __aenter__(self) -> "ExecutionLease":
+        return self
+
+    async def __aexit__(self, exc_type, exc, tb) -> None:
+        await self.release()
+
+
+@dataclass(frozen=True)
+class SubagentPermissionSnapshot:
+    access_grants: AccessGrants
+    revocation_epoch: int
+    _token: object
+    _current_revocation_epoch: Callable[[], int] | None = None
+
+    @classmethod
+    def capture(cls, service: "PermissionService") -> "SubagentPermissionSnapshot":
+        return cls(
+            service.get_access_grants(),
+            service.revocation_epoch,
+            _SUBAGENT_SNAPSHOT_TOKEN,
+            lambda: service.revocation_epoch,
+        )
+
+    @classmethod
+    def from_parts(
+        cls,
+        access_grants: AccessGrants,
+        revocation_epoch: int,
+        current_revocation_epoch: Callable[[], int] | None = None,
+    ) -> "SubagentPermissionSnapshot":
+        return cls(access_grants, revocation_epoch, _SUBAGENT_SNAPSHOT_TOKEN, current_revocation_epoch)
+
+    def __post_init__(self) -> None:
+        if self._token is not _SUBAGENT_SNAPSHOT_TOKEN:
+            raise TypeError("SubagentPermissionSnapshot cannot be constructed directly")
+
+    def get_access_grants(self, *, current_revocation_epoch: int | None = None) -> AccessGrants:
+        epoch = current_revocation_epoch
+        if epoch is None and self._current_revocation_epoch is not None:
+            epoch = self._current_revocation_epoch()
+        if epoch != self.revocation_epoch:
+            raise PermissionError("Subagent permission snapshot was revoked")
+        return self.access_grants
+
+    def add_grant(self, grant: AccessGrant) -> None:
+        raise PermissionError("Subagents cannot add grant")
+
+
 # ── service ────────────────────────────────────────────────────────────────
 
 class PermissionService:
@@ -73,17 +151,32 @@ class PermissionService:
         self,
         permission_mode: str = "default",
         sandbox_mode: str = "workspace-write",
-        sandbox_workspace_write: list[str] | None = None,
+        sandbox_readable_files: list[str] | None = None,
+        sandbox_readable_dirs: list[str] | None = None,
+        sandbox_writable_files: list[str] | None = None,
+        sandbox_writable_dirs: list[str] | None = None,
+        persistent_grants: list[AccessGrant] | None = None,
         approval_policy: str = "untrusted",
         approval_reviewer: str = "user",
         notifier: PermissionNotifier | None = None,
+        permission_state_ready: bool = True,
+        persistent_grant_writer: Callable[[GrantDelta], object] | None = None,
     ) -> None:
         self._pending: dict[str, PendingEntry] = {}
         self._notifier = notifier
-        # Session whitelist: tools the user has approved for this session
         self._session_allow: set[str] = set()
         self._session_deny: set[str] = set()
-        # Sandbox / approval — persistent filesystem + frequency controls
+        self._runtime_grants: list[AccessGrant] = []
+        self._session_grants: list[AccessGrant] = []
+        self._persistent_grants: list[AccessGrant] = list(persistent_grants or [])
+        self._grant_lock_manager = PathGrantLockManager()
+        self._commit_lock = asyncio.Lock()
+        self._active_execution_leases: set[ExecutionLease] = set()
+        self.state_revision = 0
+        self.permissions_revision = 0
+        self.permission_state_ready = permission_state_ready
+        self.revocation_epoch = 0
+        self._persistent_grant_writer = persistent_grant_writer
         try:
             parsed_mode = PermissionMode(permission_mode)
         except ValueError:
@@ -107,7 +200,11 @@ class PermissionService:
             self.sandbox_mode = mode_sandbox.value
             self.approval_policy = mode_approval.value
             self.approval_reviewer = permission_mode_reviewer_default(parsed_mode).value
-        self.sandbox_workspace_write = sandbox_workspace_write or []
+        self.sandbox_readable_files = sandbox_readable_files or []
+        self.sandbox_readable_dirs = sandbox_readable_dirs or []
+        self.sandbox_writable_files = sandbox_writable_files or []
+        self.sandbox_writable_dirs = sandbox_writable_dirs or []
+        self.process_sandbox = None
 
     # ── session whitelist management ─────────────────────────────────────
 
@@ -135,23 +232,171 @@ class PermissionService:
 
     def status_label(self) -> str:
         return self.permission_mode_label()
-
     def set_permission_mode(self, mode: str) -> None:
+        previous = (
+            self.permission_mode,
+            self.sandbox_mode,
+            self.approval_policy,
+            self.approval_reviewer,
+            tuple(self.sandbox_readable_files),
+            tuple(self.sandbox_readable_dirs),
+            tuple(self.sandbox_writable_files),
+            tuple(self.sandbox_writable_dirs),
+        )
+        had_path_grants = any((
+            self.sandbox_readable_files,
+            self.sandbox_readable_dirs,
+            self.sandbox_writable_files,
+            self.sandbox_writable_dirs,
+            self._runtime_grants,
+            self._session_grants,
+            self._persistent_grants,
+        ))
         try:
             parsed = PermissionMode(mode)
         except ValueError:
             parsed = PermissionMode.CUSTOM
+        if parsed != PermissionMode.CUSTOM and self._active_execution_leases:
+            raise PermissionError("Cannot tighten permission mode while active execution lease exists")
         self.permission_mode = parsed.value
-        if parsed == PermissionMode.CUSTOM:
-            return
-        sandbox_mode, approval_policy = permission_mode_defaults(parsed)
-        self.sandbox_mode = sandbox_mode.value
-        self.approval_policy = approval_policy.value
-        self.approval_reviewer = permission_mode_reviewer_default(parsed).value
-        self.sandbox_workspace_write = []
+        if parsed != PermissionMode.CUSTOM:
+            sandbox_mode, approval_policy = permission_mode_defaults(parsed)
+            self.sandbox_mode = sandbox_mode.value
+            self.approval_policy = approval_policy.value
+            self.approval_reviewer = permission_mode_reviewer_default(parsed).value
+            self.sandbox_readable_files = []
+            self.sandbox_readable_dirs = []
+            self.sandbox_writable_files = []
+            self.sandbox_writable_dirs = []
+            self._runtime_grants = []
+            self._session_grants = []
+            self._persistent_grants = []
+        current = (
+            self.permission_mode,
+            self.sandbox_mode,
+            self.approval_policy,
+            self.approval_reviewer,
+            tuple(self.sandbox_readable_files),
+            tuple(self.sandbox_readable_dirs),
+            tuple(self.sandbox_writable_files),
+            tuple(self.sandbox_writable_dirs),
+        )
+        if current != previous:
+            self.state_revision += 1
+            self.revocation_epoch += 1
+        if parsed != PermissionMode.CUSTOM and had_path_grants:
+            self.permissions_revision += 1
 
     def mark_custom_mode(self) -> None:
+        if self._active_execution_leases:
+            raise PermissionError("Cannot change permission mode while active execution lease exists")
+        if self.permission_mode != PermissionMode.CUSTOM.value:
+            self.state_revision += 1
+            self.revocation_epoch += 1
         self.permission_mode = PermissionMode.CUSTOM.value
+
+    def set_sandbox_mode(self, mode: str) -> None:
+        if self._active_execution_leases:
+            raise PermissionError("Cannot change sandbox mode while active execution lease exists")
+        if self.sandbox_mode != mode:
+            self.sandbox_mode = mode
+            if self.permission_mode != PermissionMode.CUSTOM.value:
+                self.permission_mode = PermissionMode.CUSTOM.value
+            self.state_revision += 1
+            self.revocation_epoch += 1
+
+    def set_approval_policy(self, policy: str) -> None:
+        if self._active_execution_leases:
+            raise PermissionError("Cannot change approval policy while active execution lease exists")
+        if self.approval_policy != policy:
+            self.approval_policy = policy
+            if self.permission_mode != PermissionMode.CUSTOM.value:
+                self.permission_mode = PermissionMode.CUSTOM.value
+            self.state_revision += 1
+            self.revocation_epoch += 1
+
+    def get_access_grants(self) -> AccessGrants:
+        return AccessGrants.from_parts(
+            readable_files=self.sandbox_readable_files,
+            readable_dirs=self.sandbox_readable_dirs,
+            writable_files=self.sandbox_writable_files,
+            writable_dirs=self.sandbox_writable_dirs,
+            extra_grants=[*self._runtime_grants, *self._session_grants, *self._persistent_grants],
+            permissions_revision=self.permissions_revision,
+            state_revision=self.state_revision,
+            revocation_epoch=self.revocation_epoch,
+            permission_state_ready=self.permission_state_ready,
+            permission_mode=self.permission_mode,
+        )
+
+    async def add_grant(
+        self,
+        grant: AccessGrant,
+        *,
+        precondition: ApprovalPrecondition | None = None,
+    ) -> GrantUpdateResult:
+        async with self._commit_lock:
+            if precondition is not None and (
+                precondition.permission_mode != self.permission_mode
+                or precondition.revocation_epoch != self.revocation_epoch
+            ):
+                return GrantUpdateResult(
+                    persistent=grant.persistence == "persistent",
+                    ok=False,
+                    committed=False,
+                    durable=None,
+                    applied=False,
+                    conflict=True,
+                    restart_required=False,
+                    state_revision=self.state_revision,
+                    permissions_revision=self.permissions_revision,
+                    error="Approval precondition no longer matches current permission state",
+                )
+            if grant.persistence == "persistent" and self._persistent_grant_writer is not None:
+                self._persistent_grant_writer(delta_for_grant(grant))
+            target = self._persistent_grants if grant.persistence == "persistent" else self._runtime_grants if grant.persistence == "runtime" else self._session_grants
+            applied = False
+            if grant not in target:
+                target.append(grant)
+                self.state_revision += 1
+                applied = True
+                if grant.persistence == "persistent":
+                    self.permissions_revision += 1
+            return GrantUpdateResult(
+                persistent=grant.persistence == "persistent",
+                ok=True,
+                committed=True,
+                durable=True if grant.persistence == "persistent" else None,
+                applied=applied,
+                conflict=False,
+                restart_required=False,
+                state_revision=self.state_revision,
+                permissions_revision=self.permissions_revision,
+            )
+    async def acquire_grant_targets(self, paths, *, final_paths=None) -> object:
+        if final_paths is not None:
+            return await self._grant_lock_manager.acquire_final_targets(paths, final_paths)
+        return await self._grant_lock_manager.acquire_request_targets(paths)
+
+    async def acquire_execution_lease(self) -> ExecutionLease:
+        lease = ExecutionLease(self, _EXECUTION_LEASE_TOKEN)
+        self._active_execution_leases.add(lease)
+        return lease
+
+    @asynccontextmanager
+    async def execution_lease_for_tool(self, tool_name: str) -> AsyncIterator[ExecutionLease]:
+        lease = await self.acquire_execution_lease()
+        try:
+            yield lease
+        finally:
+            await lease.release()
+
+    def has_active_execution_lease(self, lease: ExecutionLease) -> bool:
+        return lease in self._active_execution_leases and not lease._released
+
+    def _release_execution_lease(self, lease: ExecutionLease) -> None:
+        if lease in self._active_execution_leases:
+            self._active_execution_leases.remove(lease)
 
     def permission_mode_label(self) -> str:
         labels = {
@@ -221,8 +466,14 @@ class PermissionService:
             f"Approval: [cyan]{self.approval_policy}[/cyan]  "
             f"Reviewer: [cyan]{self.approval_reviewer}[/cyan]"
         )
-        if self.sandbox_workspace_write:
-            lines.append(f"  Extra write paths: [dim]{', '.join(self.sandbox_workspace_write)}[/dim]")
+        for label, paths in (
+            ("Readable files", self.sandbox_readable_files),
+            ("Readable dirs", self.sandbox_readable_dirs),
+            ("Writable files", self.sandbox_writable_files),
+            ("Writable dirs", self.sandbox_writable_dirs),
+        ):
+            if paths:
+                lines.append(f"  {label}: [dim]{', '.join(paths)}[/dim]")
         lines.append("  [green]Always allowed:[/green] read, glob, grep, webfetch, websearch, todo, task_status, lsp, read-only agents, read-only bash")
         if self._session_allow:
             lines.append(f"  [green]Session allow:[/green] {', '.join(sorted(self._session_allow))}")
@@ -301,22 +552,34 @@ class PermissionService:
             if not entry.future.done():
                 entry.future.set_result("deny")
         self._pending.clear()
-
     def clear_session_permissions(self) -> None:
         """Reset session allow/deny whitelists."""
+        if self._active_execution_leases:
+            raise PermissionError("Cannot clear permissions while active execution lease exists")
+        had_permissions = bool(self._session_allow or self._session_deny or self._session_grants)
         self._session_allow.clear()
         self._session_deny.clear()
+        self._session_grants.clear()
+        if had_permissions:
+            self.state_revision += 1
+            self.revocation_epoch += 1
 
     def _context(self, *, workspace: str = ".") -> PermissionContext:
         return PermissionContext(
             workspace=workspace,
             permission_mode=self.permission_mode,
             sandbox_mode=self.sandbox_mode,
-            sandbox_workspace_write=tuple(self.sandbox_workspace_write),
+            sandbox_readable_files=tuple(self.sandbox_readable_files),
+            sandbox_readable_dirs=tuple(self.sandbox_readable_dirs),
+            sandbox_writable_files=tuple(self.sandbox_writable_files),
+            sandbox_writable_dirs=tuple(self.sandbox_writable_dirs),
             approval_policy=self.approval_policy,
             approval_reviewer=self.approval_reviewer,
+            access_grants=self.get_access_grants(),
+            permission_state_ready=self.permission_state_ready,
             session_allow=frozenset(self._session_allow),
             session_deny=frozenset(self._session_deny),
+            process_sandbox=self.process_sandbox,
         )
 
     def _notify(self, message: str) -> None:

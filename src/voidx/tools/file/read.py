@@ -8,16 +8,15 @@ from voidx.tools.base import (
     BaseTool,
     ToolContext,
     ToolResult,
-    UserInteraction,
-    UserResponse,
+    _resolve_tool_path_for_access,
     model_to_json_schema,
-    resolve_safe,
 )
 from .state import (
     covered_read_range,
     record_mtime,
     record_read_range,
 )
+from .safe_path import SafePathExecutor
 
 from .types import BINARY_DETECTION_BYTES, BoundedReadOutput, DisplayLines, READ_OUTPUT_MAX_CHARS
 
@@ -72,9 +71,12 @@ def _numbered_output_with_note(numbered: list[str], next_offset: int) -> str:
     return f"{output}\n\n{note}" if output else note
 
 
-def _binary_null_byte_detected(path) -> bool:
-    with path.open("rb") as handle:
-        return b"\0" in handle.read(BINARY_DETECTION_BYTES)
+def _binary_null_byte_detected(executor: SafePathExecutor, authorized) -> tuple[bool, str | None]:
+    result = executor.read_bytes_prefix(authorized, BINARY_DETECTION_BYTES)
+    if not result.ok:
+        return False, result.error
+    assert isinstance(result.value, bytes)
+    return b"\0" in result.value, None
 
 
 def _bounded_truncated_output(numbered: list[str], start_line: int, next_offset: int) -> BoundedReadOutput:
@@ -198,35 +200,28 @@ class FileReadTool(BaseTool):
             inp = FileReadInput.model_validate(args)
         except Exception as exc:
             return ToolResult(output=f"Invalid arguments: {exc}", metadata={"error": True})
-        path = resolve_safe(ctx.workspace, inp.file_path, ctx.sandbox_extra_paths)
-        if path is None:
-            external = _try_resolve_external(inp.file_path)
-            if external and ctx.interact:
-                response = await ctx.interact(UserInteraction(
-                    prompt=f"Read file outside workspace? {inp.file_path}",
-                    options=[
-                        ("Yes", "allow", "Allow this read once"),
-                        ("No", "deny", "Do not read this file"),
-                    ],
-                ))
-                if response.cancelled or response.value == "deny":
-                    return ToolResult(
-                        output=f"Read denied by user: {inp.file_path}",
-                        metadata={"error": True},
-                    )
-                if ctx.add_extra_path:
-                    ctx.add_extra_path(str(external.parent))
-                path = external
-            else:
-                return ToolResult(
-                    output=f"Path traversal blocked: {inp.file_path}",
-                    metadata={"error": True},
-                )
+        path, error = await _resolve_tool_path_for_access(
+            ctx,
+            inp.file_path,
+            write=False,
+            require_exists=True,
+            prompt_label="Read",
+            allow_description="Allow this read once",
+            deny_description="Do not read this file",
+        )
+        if error is not None:
+            return error
+        assert path is not None
         if not path.exists():
             return ToolResult(output=f"File not found: {inp.file_path}", metadata={"error": True})
         if path.is_dir():
             return ToolResult(output=f"Path is a directory: {inp.file_path}", metadata={"error": True})
-        if _binary_null_byte_detected(path):
+        executor = SafePathExecutor()
+        authorized = executor.authorize_existing(path, access="read")
+        is_binary, binary_error = _binary_null_byte_detected(executor, authorized)
+        if binary_error is not None:
+            return ToolResult(output=binary_error, metadata={"error": True})
+        if is_binary:
             return ToolResult(
                 title="Read blocked (binary file)",
                 output=(
@@ -236,7 +231,11 @@ class FileReadTool(BaseTool):
                 metadata={"file": inp.file_path, "lines": 0, "binary": True, "error": True},
             )
 
-        display = _split_display_lines(path.read_text(encoding="utf-8", errors="replace"))
+        read_result = executor.read_text(authorized, encoding="utf-8", errors="replace")
+        if not read_result.ok:
+            return ToolResult(output=read_result.error, metadata={"error": True})
+        assert isinstance(read_result.value, str)
+        display = _split_display_lines(read_result.value)
         lines = display.lines
         start = (inp.offset or 1) - 1
         if start >= len(lines):

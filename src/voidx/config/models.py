@@ -107,10 +107,26 @@ class Config(BaseModel):
     workspace: str = "."
     permission_mode: PermissionMode = PermissionMode.DEFAULT
     sandbox_mode: SandboxMode = SandboxMode.WORKSPACE_WRITE
-    sandbox_workspace_write: list[str] = Field(
+    sandbox_readable_files: list[str] = Field(
         default_factory=list,
-        description="Extra paths writable under workspace-write sandbox mode.",
+        description="Extra file paths readable under workspace-write sandbox mode.",
     )
+    sandbox_readable_dirs: list[str] = Field(
+        default_factory=list,
+        description="Extra directory paths readable under workspace-write sandbox mode.",
+    )
+    sandbox_writable_files: list[str] = Field(
+        default_factory=list,
+        description="Extra file paths writable under workspace-write sandbox mode.",
+    )
+    sandbox_writable_dirs: list[str] = Field(
+        default_factory=list,
+        description="Extra directory paths writable under workspace-write sandbox mode.",
+    )
+    persistent_readable_files: list[str] = Field(default_factory=list)
+    persistent_readable_dirs: list[str] = Field(default_factory=list)
+    persistent_writable_files: list[str] = Field(default_factory=list)
+    persistent_writable_dirs: list[str] = Field(default_factory=list)
     approval_policy: ApprovalPolicy = ApprovalPolicy.UNTRUSTED
     approval_reviewer: ApprovalReviewer = ApprovalReviewer.USER
     ask_compact: bool = False

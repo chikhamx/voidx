@@ -266,8 +266,11 @@ class SlashHandler(
         if mode not in valid:
             ui.error(f"Invalid sandbox mode: {mode}. Use: {', '.join(valid)}")
             return
-        permission.sandbox_mode = mode
-        permission.mark_custom_mode()
+        try:
+            permission.set_sandbox_mode(mode)
+        except PermissionError as exc:
+            ui.error(str(exc))
+            return
         settings = self.host.settings
         if settings is not None:
             from voidx.config import SandboxMode
@@ -285,8 +288,11 @@ class SlashHandler(
         if policy not in valid:
             ui.error(f"Invalid approval policy: {policy}. Use: {', '.join(valid)}")
             return
-        permission.approval_policy = policy
-        permission.mark_custom_mode()
+        try:
+            permission.set_approval_policy(policy)
+        except PermissionError as exc:
+            ui.error(str(exc))
+            return
         settings = self.host.settings
         if settings is not None:
             from voidx.config import ApprovalPolicy

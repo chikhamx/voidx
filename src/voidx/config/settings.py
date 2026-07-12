@@ -38,7 +38,14 @@ GLOBAL_KEYS = frozenset({
 WORKSPACE_ONLY_KEYS = frozenset({
     "permission_mode",
     "sandbox_mode",
-    "sandbox_workspace_write",
+    "sandbox_readable_files",
+    "sandbox_readable_dirs",
+    "sandbox_writable_files",
+    "sandbox_writable_dirs",
+    "persistent_readable_files",
+    "persistent_readable_dirs",
+    "persistent_writable_files",
+    "persistent_writable_dirs",
     "approval_policy",
     "approval_reviewer",
     "ask_compact",
@@ -97,15 +104,34 @@ class Settings(
             legacy.rename(self._path)
 
     def _load(self) -> dict:
-        return self._load_path(self._path)
+        return self._migrate_permission_schema(self._load_path(self._path))
 
     def _load_path(self, path: Path) -> dict:
         if path.exists():
             try:
-                return json.loads(path.read_text(encoding="utf-8"))
+                return self._migrate_permission_schema(json.loads(path.read_text(encoding="utf-8")))
             except (json.JSONDecodeError, OSError):
                 pass
         return {}
+
+    def _migrate_permission_schema(self, data: dict) -> dict:
+        if not isinstance(data, dict):
+            return {}
+        canonical_keys = {
+            "sandbox_readable_files",
+            "sandbox_readable_dirs",
+            "sandbox_writable_files",
+            "sandbox_writable_dirs",
+        }
+        if any(key in data for key in canonical_keys):
+            data.pop("sandbox_workspace_write", None)
+            return data
+        legacy = data.pop("sandbox_workspace_write", None)
+        if legacy is None:
+            return data
+        if isinstance(legacy, list) and all(isinstance(path, str) for path in legacy):
+            data["sandbox_writable_dirs"] = list(legacy)
+        return data
 
     def _save(self) -> None:
         self._effective_cache = None
@@ -374,7 +400,14 @@ class Settings(
             parallel_subagents=self.get_parallel_subagents(),
             permission_mode=permission_mode,
             sandbox_mode=sandbox_mode,
-            sandbox_workspace_write=self.get_sandbox_workspace_write(),
+            sandbox_readable_files=self.get_sandbox_readable_files(),
+            sandbox_readable_dirs=self.get_sandbox_readable_dirs(),
+            sandbox_writable_files=self.get_sandbox_writable_files(),
+            sandbox_writable_dirs=self.get_sandbox_writable_dirs(),
+            persistent_readable_files=self.get_persistent_readable_files(),
+            persistent_readable_dirs=self.get_persistent_readable_dirs(),
+            persistent_writable_files=self.get_persistent_writable_files(),
+            persistent_writable_dirs=self.get_persistent_writable_dirs(),
             approval_policy=approval_policy,
             approval_reviewer=approval_reviewer,
             ask_compact=bool(self._effective_data().get(

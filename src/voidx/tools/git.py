@@ -11,6 +11,9 @@ import shlex
 from pathlib import Path
 from typing import Any
 
+from voidx.permission.git_policy import GitRuntimeAccessPlan, git_policy_for_args
+from voidx.permission.grants import AccessGrants, resolve_access
+
 from pydantic import BaseModel, Field
 
 from voidx.runtime.processes import (
@@ -23,7 +26,8 @@ from voidx.tools.base import (
     ToolContext,
     ToolResult,
     model_to_json_schema,
-    resolve_safe,
+    _resolve_tool_path,
+    _sandbox_paths_for_access,
     tool_timeout_metadata,
 )
 from voidx.logging.tool_log import log_tool_event
@@ -115,6 +119,9 @@ class GitTool(BaseTool):
         effective_ctx = _resolve_path_context(inp.path, ctx)
         if effective_ctx is None:
             return _result("unknown", ctx, ok=False, error="unsafe_path: path escapes workspace")
+        explicit_root_error = _external_requested_repo_root_error(inp.path, ctx, effective_ctx)
+        if explicit_root_error:
+            return _result("unknown", effective_ctx, ok=False, error=explicit_root_error)
         try:
             repo = await _discover_repo(effective_ctx)
         except GitProcessTimeout as exc:
@@ -138,6 +145,19 @@ class GitTool(BaseTool):
         denied_flags = _DENIED_SUBCOMMAND_FLAGS.get(subcommand)
         if denied_flags and _has_denied_flag(subcommand, rest, denied_flags):
             return _result(subcommand, ctx, repo=repo, ok=False, error=f"command_denied: destructive flag in '{subcommand}'")
+
+        policy = git_policy_for_args({"args": inp.args})
+        if not policy.allowed:
+            return _result(policy.subcommand or subcommand, effective_ctx, repo=repo, ok=False, error=f"git_policy_denied: {policy.reason}")
+        subcommand = policy.subcommand
+        rest = list(policy.rest)
+
+        root_error = _external_repo_root_error(inp.path, ctx, effective_ctx, repo)
+        if root_error:
+            return _result(subcommand, effective_ctx, repo=repo, ok=False, error=root_error)
+        plan_error = await _validate_runtime_access_plan(effective_ctx, repo)
+        if plan_error:
+            return _result(subcommand, effective_ctx, repo=repo, ok=False, error=plan_error)
 
         try:
             handler = _STRUCTURED_HANDLERS.get(subcommand)
@@ -251,44 +271,15 @@ def _sanitize_raw_pathspecs(rest: list[str], ctx: ToolContext, repo: GitRepo) ->
 
 def _is_read_only_subcommand(subcommand: str, rest: list[str]) -> bool:
     """Classify a git subcommand+args as read-only or write."""
-    if subcommand in _READ_ONLY_SUBCOMMANDS:
-        return True
-    if subcommand == "config":
-        read_flags = {"--get", "--get-all", "--get-regexp", "--get-urlmatch", "--list", "-l", "--show-origin", "--show-scope"}
-        if any(a in read_flags for a in rest):
-            return True
-        scope_flags = {"--global", "--system", "--local", "--file", "--blob"}
-        value_tokens = [a for a in rest if not a.startswith("-") and a not in scope_flags]
-        return len(value_tokens) <= 1
-    if subcommand == "stash":
-        return bool(rest) and rest[0] in ("list", "show")
-    if subcommand == "reflog":
-        return bool(rest) and rest[0] in ("show", "list")
-    if subcommand in ("branch", "tag"):
-        return not any(a in _REF_WRITE_FLAGS for a in rest)
-    if subcommand == "remote":
-        return not rest or all(a in ("-v", "--verbose") for a in rest)
-    if subcommand == "worktree":
-        return bool(rest) and rest[0] == "list"
-    if subcommand == "bisect":
-        return bool(rest) and rest[0] in ("log", "view", "visualize")
-    return False
+    args = " ".join([shlex.quote(subcommand), *(shlex.quote(arg) for arg in rest)])
+    decision = git_policy_for_args({"args": args})
+    return decision.allowed and decision.read_only
 
 
 def is_git_read_only(args: dict) -> bool:
-    """Classify a git tool call (raw args dict) as read-only or write.
-
-    Single source of truth for git read/write classification.
-    Used by both git.py internals and permission/rules.py.
-    """
-    raw_args = str(args.get("args", ""))
-    try:
-        tokens = shlex.split(raw_args)
-    except ValueError:
-        return False
-    if not tokens:
-        return False
-    return _is_read_only_subcommand(tokens[0], tokens[1:])
+    """Classify a registered git tool call (raw args dict) as read-only or write."""
+    decision = git_policy_for_args(args)
+    return decision.allowed and decision.read_only
 
 
 def _extract_pathspec(rest: list[str]) -> list[str]:
@@ -647,17 +638,230 @@ def _parse_conflicts(output: str) -> list[str]:
     return conflicts
 
 def _resolve_path_context(path: str, ctx: ToolContext) -> ToolContext | None:
-    """Return a ToolContext with workspace adjusted to inp.path.
-
-    Empty path returns the original ctx. Non-empty path is resolved against
-    the current workspace and must stay inside it.
-    """
+    """Return a ToolContext with workspace adjusted to inp.path."""
     if not path or path == ".":
         return ctx
-    resolved = resolve_safe(ctx.workspace, path, ctx.sandbox_extra_paths)
-    if resolved is None:
+    grants = _access_grants(ctx)
+    resolution = resolve_access(
+        ctx.workspace,
+        path,
+        access="read",
+        access_grants=grants,
+        require_exists=True,
+    )
+    if resolution.action != "allow" or resolution.intent is None:
         return None
-    return ctx.model_copy(update={"workspace": str(resolved)})
+    return ctx.model_copy(update={"workspace": str(resolution.intent.normalized_path)})
+
+
+def _access_grants(ctx: ToolContext) -> AccessGrants:
+    if ctx.get_access_grants is not None:
+        return ctx.get_access_grants()
+    return AccessGrants.from_parts(
+        readable_files=ctx.sandbox_readable_files,
+        readable_dirs=ctx.sandbox_readable_dirs,
+        writable_files=ctx.sandbox_writable_files,
+        writable_dirs=ctx.sandbox_writable_dirs,
+    )
+
+
+def _contains(base: Path, path: Path) -> bool:
+    try:
+        path.relative_to(base)
+        return True
+    except ValueError:
+        return False
+
+
+def _external_requested_repo_root_error(path: str, original_ctx: ToolContext, effective_ctx: ToolContext) -> str:
+    if not path or path == ".":
+        return ""
+    requested = Path(effective_ctx.workspace).resolve()
+    original_workspace = Path(original_ctx.workspace).resolve()
+    if _contains(original_workspace, requested):
+        return ""
+    if _looks_like_worktree_root(requested) or _looks_like_bare_git_dir(requested):
+        return ""
+    return "git_policy_denied: external path must be repository root"
+
+
+def _looks_like_worktree_root(path: Path) -> bool:
+    return (path / ".git").is_dir() or (path / ".git").is_file()
+
+
+def _looks_like_bare_git_dir(path: Path) -> bool:
+    return (path / "HEAD").is_file() and (path / "objects").is_dir() and ((path / "refs").is_dir() or (path / "packed-refs").exists())
+
+
+def _external_repo_root_error(path: str, original_ctx: ToolContext, effective_ctx: ToolContext, repo: GitRepo) -> str:
+    if not path or path == ".":
+        return ""
+    requested = Path(effective_ctx.workspace).resolve()
+    original_workspace = Path(original_ctx.workspace).resolve()
+    if _contains(original_workspace, requested):
+        return ""
+    if requested != Path(repo.repo_root).resolve():
+        return "git_policy_denied: external path must be repository root"
+    return ""
+
+
+async def _validate_runtime_access_plan(ctx: ToolContext, repo: GitRepo) -> str:
+    if _has_unplanned_git_config_environment():
+        return "git_policy_denied: unplanned config origin"
+    plan = await _runtime_access_plan(repo)
+    if plan.requires_external_authorization(ctx.workspace, _access_grants(ctx)):
+        return "git_policy_denied: runtime access plan requires authorization"
+    if _plan_has_dangerous_config(plan):
+        return "git_policy_denied: dangerous executable config"
+    return ""
+
+
+def _has_unplanned_git_config_environment() -> bool:
+    return any(name in os.environ for name in {"GIT_CONFIG", "GIT_CONFIG_GLOBAL", "GIT_CONFIG_SYSTEM", "GIT_CONFIG_COUNT"})
+
+
+async def _runtime_access_plan(repo: GitRepo) -> GitRuntimeAccessPlan:
+    worktree = Path(repo.repo_root).resolve()
+    git_dir = await _git_resolved_path(repo, ["rev-parse", "--git-dir"], worktree / ".git")
+    common_dir = await _git_resolved_path(repo, ["rev-parse", "--git-common-dir"], git_dir)
+    index = await _git_resolved_path(repo, ["rev-parse", "--git-path", "index"], git_dir / "index")
+    objects = await _git_resolved_path(repo, ["rev-parse", "--git-path", "objects"], common_dir / "objects")
+    object_dirs = [objects, *_alternate_object_dirs(objects)]
+    config_files = _config_files(git_dir, common_dir)
+    config_files.extend(_included_config_files(config_files))
+    return GitRuntimeAccessPlan(
+        worktree=worktree,
+        git_dir=git_dir,
+        common_dir=common_dir,
+        index=index,
+        object_dirs=tuple(object_dirs),
+        config_files=tuple(config_files),
+    )
+
+
+async def _git_resolved_path(repo: GitRepo, args: list[str], fallback: Path) -> Path:
+    proc = await _run_process(["git", *args], cwd=repo.repo_root, read_only=True)
+    if proc.get("timeout"):
+        raise GitProcessTimeout(proc)
+    raw = proc["stdout"].strip() if proc["returncode"] == 0 else ""
+    if not raw:
+        return fallback.resolve(strict=False)
+    path = Path(raw)
+    if path.is_absolute():
+        return path.resolve(strict=False)
+    return (Path(repo.repo_root) / path).resolve(strict=False)
+
+
+def _alternate_object_dirs(objects: Path) -> list[Path]:
+    alternates = objects / "info" / "alternates"
+    if not alternates.exists():
+        return []
+    result: list[Path] = []
+    try:
+        lines = alternates.read_text(encoding="utf-8").splitlines()
+    except OSError:
+        return result
+    for line in lines:
+        stripped = line.strip()
+        if not stripped or stripped.startswith("#"):
+            continue
+        path = Path(stripped)
+        if not path.is_absolute():
+            path = alternates.parent / path
+        result.append(path.resolve(strict=False))
+    return result
+
+
+def _config_files(git_dir: Path, common_dir: Path) -> list[Path]:
+    candidates = [
+        git_dir / "config",
+        common_dir / "config",
+        git_dir / "config.worktree",
+        common_dir / "config.worktree",
+    ]
+    return [path.resolve(strict=False) for path in candidates if path.exists()]
+
+
+def _included_config_files(config_files: list[Path]) -> list[Path]:
+    result: list[Path] = []
+    seen = {path.resolve(strict=False) for path in config_files}
+    pending = list(config_files)
+    while pending:
+        config_file = pending.pop(0)
+        for include in _parse_include_paths(config_file):
+            resolved = include.resolve(strict=False)
+            if resolved in seen:
+                continue
+            seen.add(resolved)
+            result.append(resolved)
+            if resolved.exists():
+                pending.append(resolved)
+    return result
+
+
+def _parse_include_paths(config_file: Path) -> list[Path]:
+    includes: list[Path] = []
+    section = ""
+    try:
+        lines = config_file.read_text(encoding="utf-8").splitlines()
+    except OSError:
+        return includes
+    for line in lines:
+        stripped = line.strip()
+        if not stripped or stripped.startswith(("#", ";")):
+            continue
+        if stripped.startswith("[") and stripped.endswith("]"):
+            section = stripped.strip("[]").split(' ', 1)[0].lower()
+            continue
+        if section in {"include", "includeif"} and "=" in stripped:
+            key, value = stripped.split("=", 1)
+            if key.strip().lower() == "path":
+                raw_value = value.strip().strip('"')
+                path = Path(raw_value).expanduser() if raw_value.startswith("~") else Path(raw_value)
+                includes.append(path if path.is_absolute() else config_file.parent / path)
+    return includes
+
+
+def _plan_has_dangerous_config(plan: GitRuntimeAccessPlan) -> bool:
+    dangerous_exact = {
+        "core.askpass",
+        "core.editor",
+        "core.fsmonitor",
+        "core.hookspath",
+        "core.pager",
+        "core.sshcommand",
+        "credential.helper",
+        "diff.external",
+        "gpg.program",
+        "gpg.ssh.program",
+        "sequence.editor",
+    }
+    dangerous_prefixes = (
+        "filter.",
+        "diff.",
+        "difftool.",
+        "mergetool.",
+    )
+    for config_file in plan.config_files:
+        section = ""
+        try:
+            lines = config_file.read_text(encoding="utf-8").splitlines()
+        except OSError:
+            continue
+        for line in lines:
+            stripped = line.strip()
+            if not stripped or stripped.startswith(("#", ";")):
+                continue
+            if stripped.startswith("[") and stripped.endswith("]"):
+                section = stripped.strip("[]").split(' ', 1)[0].lower()
+                continue
+            if "=" not in stripped:
+                continue
+            key = stripped.split("=", 1)[0].strip().lower()
+            full_key = f"{section}.{key}" if section else key
+            if full_key in dangerous_exact or any(full_key.startswith(prefix) for prefix in dangerous_prefixes):
+                return True
+    return False
 
 
 async def _discover_repo(ctx: ToolContext) -> GitRepo | None:
@@ -681,10 +885,13 @@ async def _run_git(repo: GitRepo, args: list[str], *, read_only: bool = False, t
 
 async def _run_process(args: list[str], *, cwd: str, read_only: bool = False, timeout: int | None = None) -> dict[str, Any]:
     effective_timeout = timeout or GIT_TIMEOUT_SECONDS
-    env = {
-        **os.environ,
+    env = {key: value for key, value in os.environ.items() if not key.startswith("GIT_")}
+    env.update({
         "GIT_TERMINAL_PROMPT": "0",
-    }
+        "GIT_CONFIG_NOSYSTEM": "1",
+        "GIT_CONFIG_GLOBAL": os.devnull,
+        "GIT_CONFIG_SYSTEM": os.devnull,
+    })
     if read_only:
         env["GIT_OPTIONAL_LOCKS"] = "0"
     try:
@@ -728,7 +935,7 @@ def _pathspecs(paths: list[str], ctx: ToolContext, repo: GitRepo, *, allow_empty
     result = []
     repo_root = Path(repo.repo_root).resolve()
     for path in paths:
-        resolved = resolve_safe(ctx.workspace, path, ctx.sandbox_extra_paths)
+        resolved = _resolve_tool_path(ctx.workspace, path, _sandbox_paths_for_access(ctx, write=False))
         if resolved is None:
             raise ValueError(f"path outside allowed workspace: {path}")
         try:

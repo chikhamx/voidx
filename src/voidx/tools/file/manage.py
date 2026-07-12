@@ -1,13 +1,14 @@
 from __future__ import annotations
 
 import os
-import shutil
+import errno
 from pathlib import Path
 from typing import Literal
 
 from pydantic import BaseModel, Field, model_validator
 
-from voidx.tools.base import BaseTool, ToolContext, ToolResult, model_to_json_schema, resolve_safe
+from voidx.permission.grants import resolve_access
+from voidx.tools.base import BaseTool, ToolContext, ToolResult, _resolve_tool_path_for_access, model_to_json_schema
 from .state import (
     check_staleness,
     clear_file_tracking,
@@ -17,6 +18,7 @@ from .state import (
     record_mtime,
     save_file_version,
 )
+from .safe_path import SafePathExecutor
 
 
 class MoveSpec(BaseModel):
@@ -144,8 +146,9 @@ def _batch_result(operation: str, results: list[dict], kind: Literal["file", "di
             "succeeded": succeeded,
             "skipped": skipped,
             "failed": failed,
+            "error": failed == total and total > 0,
             "results": results,
-        },
+        }
     )
 
 
@@ -188,20 +191,57 @@ def _has_symlink_component(path: Path) -> bool:
     return False
 
 
-def _resolve_directory_path(ctx: ToolContext, file_path: str) -> tuple[Path | None, str | None]:
+async def _resolve_manage_path(
+    ctx: ToolContext,
+    file_path: str,
+    *,
+    require_exists: bool,
+    allow_missing_write_file: bool = False,
+) -> tuple[Path | None, str | None]:
+    if ctx.get_access_grants is not None:
+        resolution = resolve_access(
+            ctx.workspace,
+            file_path,
+            access="write",
+            access_grants=ctx.get_access_grants(),
+            require_exists=require_exists,
+            allow_missing_write_file=allow_missing_write_file,
+        )
+        if resolution.action == "allow" and resolution.intent is not None:
+            return resolution.intent.normalized_path, None
+        if resolution.action == "deny":
+            return None, resolution.reason
+    path, error = await _resolve_tool_path_for_access(
+        ctx,
+        file_path,
+        write=True,
+        require_exists=require_exists,
+        allow_missing_write_file=allow_missing_write_file,
+        prompt_label="Write",
+        allow_description="Allow this write once",
+        deny_description="Do not write this file",
+    )
+    if error is not None:
+        return None, error.output
+    assert path is not None
+    return path, None
+
+
+async def _resolve_directory_path(ctx: ToolContext, file_path: str, *, require_exists: bool = True) -> tuple[Path | None, str | None]:
     lexical = _lexical_path(ctx, file_path)
     normalized = Path(os.path.normpath(str(lexical)))
     if _has_symlink_component(lexical) or _has_symlink_component(normalized):
         return None, f"Directory path contains a symbolic link: {file_path}"
-    path = resolve_safe(ctx.workspace, file_path, ctx.sandbox_extra_paths)
-    if path is None:
-        return None, f"Path traversal blocked: {file_path}"
-    return path, None
+    return await _resolve_manage_path(ctx, file_path, require_exists=require_exists, allow_missing_write_file=True)
 
 
 def _protected_roots(ctx: ToolContext) -> set[Path]:
     roots = {Path(ctx.workspace).resolve()}
-    roots.update(Path(path).expanduser().resolve() for path in ctx.sandbox_extra_paths)
+    for path in [*ctx.sandbox_writable_files, *ctx.sandbox_writable_dirs]:
+        try:
+            roots.add(Path(path).expanduser().resolve(strict=False))
+        except (OSError, RuntimeError, ValueError):
+            continue
     return roots
 
 
@@ -218,11 +258,12 @@ async def _create_one(
     tool_name: str,
 ) -> dict:
     if kind == "dir":
-        return _create_directory(ctx, file_path)
+        return await _create_directory(ctx, file_path)
 
-    path = resolve_safe(ctx.workspace, file_path, ctx.sandbox_extra_paths)
-    if path is None:
-        return {"file": file_path, "status": "error", "reason": f"Path traversal blocked: {file_path}"}
+    path, error = await _resolve_manage_path(ctx, file_path, require_exists=False, allow_missing_write_file=True)
+    if error:
+        return {"file": file_path, "status": "error", "reason": error}
+    assert path is not None
     if path.exists() and path.is_dir():
         return {"file": file_path, "status": "error", "reason": f"Path is a directory: {file_path}"}
     if path.exists() and not overwrite:
@@ -234,15 +275,18 @@ async def _create_one(
         if stale:
             return {"file": file_path, "status": "error", "reason": stale}
         await save_file_version(ctx, path, display_path=file_path, tool_name=tool_name)
-    path.parent.mkdir(parents=True, exist_ok=True)
-    path.write_text("", encoding="utf-8")
+    executor = SafePathExecutor()
+    authorized = executor.authorize_target(path, access="write")
+    write_result = executor.write_text(authorized, "")
+    if not write_result.ok:
+        return {"file": file_path, "status": "error", "reason": write_result.error}
     record_mtime(ctx, path)
     clear_read_coverage(ctx, path)
     return {"file": file_path, "status": "created"}
 
 
-def _create_directory(ctx: ToolContext, file_path: str) -> dict:
-    path, error = _resolve_directory_path(ctx, file_path)
+async def _create_directory(ctx: ToolContext, file_path: str) -> dict:
+    path, error = await _resolve_directory_path(ctx, file_path, require_exists=False)
     if error:
         return {"file": file_path, "status": "error", "reason": error}
     assert path is not None
@@ -250,10 +294,11 @@ def _create_directory(ctx: ToolContext, file_path: str) -> dict:
         return {"file": file_path, "status": "error", "reason": "Path is a file, not a directory"}
     if path.exists():
         return {"file": file_path, "status": "skipped", "reason": "directory already exists"}
-    try:
-        path.mkdir(parents=True, exist_ok=True)
-    except OSError as exc:
-        return {"file": file_path, "status": "error", "reason": str(exc)}
+    executor = SafePathExecutor()
+    authorized = executor.authorize_target(path, access="write")
+    create_result = executor.create_dir(authorized)
+    if not create_result.ok:
+        return {"file": file_path, "status": "error", "reason": create_result.error}
     return {"file": file_path, "status": "created"}
 
 
@@ -265,11 +310,12 @@ async def _delete_one(
     tool_name: str,
 ) -> dict:
     if kind == "dir":
-        return _delete_directory(ctx, file_path)
+        return await _delete_directory(ctx, file_path)
 
-    path = resolve_safe(ctx.workspace, file_path, ctx.sandbox_extra_paths)
-    if path is None:
-        return {"file": file_path, "status": "error", "reason": f"Path traversal blocked: {file_path}"}
+    path, error = await _resolve_manage_path(ctx, file_path, require_exists=True)
+    if error:
+        return {"file": file_path, "status": "error", "reason": error}
+    assert path is not None
     if not path.exists():
         return {"file": file_path, "status": "skipped", "reason": "file does not exist"}
     if path.is_dir():
@@ -278,13 +324,17 @@ async def _delete_one(
     if stale:
         return {"file": file_path, "status": "error", "reason": stale}
     await save_file_version(ctx, path, display_path=file_path, tool_name=tool_name)
-    path.unlink()
+    executor = SafePathExecutor()
+    authorized = executor.authorize_existing(path, access="write")
+    delete_result = executor.delete_file(authorized)
+    if not delete_result.ok:
+        return {"file": file_path, "status": "error", "reason": delete_result.error}
     clear_file_tracking(ctx, path)
     return {"file": file_path, "status": "deleted"}
 
 
-def _delete_directory(ctx: ToolContext, file_path: str) -> dict:
-    path, error = _resolve_directory_path(ctx, file_path)
+async def _delete_directory(ctx: ToolContext, file_path: str) -> dict:
+    path, error = await _resolve_directory_path(ctx, file_path)
     if error:
         return {"file": file_path, "status": "error", "reason": error}
     assert path is not None
@@ -294,11 +344,12 @@ def _delete_directory(ctx: ToolContext, file_path: str) -> dict:
         return {"file": file_path, "status": "error", "reason": "Protected root directory cannot be deleted"}
     if not path.is_dir():
         return {"file": file_path, "status": "error", "reason": "Path is not a directory"}
-    try:
-        shutil.rmtree(path)
-    except OSError as exc:
+    executor = SafePathExecutor()
+    authorized = executor.authorize_existing(path, access="write")
+    delete_result = executor.delete_tree(authorized)
+    if not delete_result.ok:
         clear_tree_tracking(ctx, path)
-        return {"file": file_path, "status": "error", "reason": str(exc)}
+        return {"file": file_path, "status": "error", "reason": delete_result.error}
     clear_tree_tracking(ctx, path)
     return {"file": file_path, "status": "deleted"}
 
@@ -313,14 +364,15 @@ async def _move_one(
     tool_name: str,
 ) -> dict:
     if kind == "dir":
-        return _move_directory(ctx, src, dest_path, overwrite)
+        return await _move_directory(ctx, src, dest_path, overwrite)
 
-    source = resolve_safe(ctx.workspace, src, ctx.sandbox_extra_paths)
-    dest = resolve_safe(ctx.workspace, dest_path, ctx.sandbox_extra_paths)
-    if source is None:
-        return {"file": src, "dest": dest_path, "status": "error", "reason": f"Path traversal blocked: {src}"}
-    if dest is None:
-        return {"file": src, "dest": dest_path, "status": "error", "reason": f"Path traversal blocked: {dest_path}"}
+    source, source_error = await _resolve_manage_path(ctx, src, require_exists=True)
+    if source_error:
+        return {"file": src, "dest": dest_path, "status": "error", "reason": source_error}
+    dest, dest_error = await _resolve_manage_path(ctx, dest_path, require_exists=False, allow_missing_write_file=True)
+    if dest_error:
+        return {"file": src, "dest": dest_path, "status": "error", "reason": dest_error}
+    assert source is not None and dest is not None
     if source == dest:
         return {"file": src, "dest": dest_path, "status": "error", "reason": "Source and destination are the same file"}
     if not source.exists():
@@ -334,23 +386,30 @@ async def _move_one(
         return {"file": src, "dest": dest_path, "status": "error", "reason": source_stale}
     if dest.exists() and not overwrite:
         return {"file": src, "dest": dest_path, "status": "skipped", "reason": "destination already exists, set overwrite=True to replace"}
+
+    executor = SafePathExecutor()
+    authorized_source = executor.authorize_existing(source, access="write")
     if dest.exists():
         dest_stale = check_staleness(ctx, dest)
         if dest_stale:
             return {"file": src, "dest": dest_path, "status": "error", "reason": dest_stale}
         await save_file_version(ctx, dest, display_path=dest_path, tool_name=tool_name)
+        authorized_dest = executor.authorize_existing(dest, access="write")
+    else:
+        authorized_dest = executor.authorize_target(dest, access="write")
     await save_file_version(ctx, source, display_path=src, tool_name=tool_name)
-    dest.parent.mkdir(parents=True, exist_ok=True)
-    shutil.move(str(source), str(dest))
+    move_result = executor.rename(authorized_source, authorized_dest, overwrite=overwrite)
+    if not move_result.ok:
+        return {"file": src, "dest": dest_path, "status": "error", "reason": move_result.error}
     move_file_tracking(ctx, source, dest)
     return {"file": src, "dest": dest_path, "status": "moved"}
 
 
-def _move_directory(ctx: ToolContext, src: str, dest_path: str, overwrite: bool) -> dict:
-    source, source_error = _resolve_directory_path(ctx, src)
+async def _move_directory(ctx: ToolContext, src: str, dest_path: str, overwrite: bool) -> dict:
+    source, source_error = await _resolve_directory_path(ctx, src)
     if source_error:
         return {"file": src, "dest": dest_path, "status": "error", "reason": source_error}
-    dest, dest_error = _resolve_directory_path(ctx, dest_path)
+    dest, dest_error = await _resolve_directory_path(ctx, dest_path, require_exists=False)
     if dest_error:
         return {"file": src, "dest": dest_path, "status": "error", "reason": dest_error}
     assert source is not None and dest is not None
@@ -372,16 +431,28 @@ def _move_directory(ctx: ToolContext, src: str, dest_path: str, overwrite: bool)
         return {"file": src, "dest": dest_path, "status": "skipped", "reason": "destination already exists, set overwrite=True to replace"}
 
     source_root = source
-    dest_root = dest if dest.exists() else None
-    try:
-        if dest_root is not None:
-            shutil.rmtree(dest)
-        dest.parent.mkdir(parents=True, exist_ok=True)
-        shutil.move(str(source), str(dest))
-    except OSError as exc:
+    executor = SafePathExecutor()
+    authorized_source = executor.authorize_existing(source, access="write")
+    authorized_dest = executor.authorize_existing(dest, access="write") if dest.exists() else executor.authorize_target(dest, access="write")
+    move_result = executor.rename(authorized_source, authorized_dest, overwrite=overwrite)
+    if not move_result.ok and dest.exists() and overwrite and move_result.error_kind == "destination_exists":
+        delete_result = executor.delete_tree(authorized_dest)
+        if not delete_result.ok:
+            clear_tree_tracking(ctx, source_root)
+            clear_tree_tracking(ctx, dest)
+            result = {"file": src, "dest": dest_path, "status": "error", "reason": delete_result.error}
+            if delete_result.error_kind:
+                result["error_kind"] = delete_result.error_kind
+            return result
+        authorized_dest = executor.authorize_target(dest, access="write")
+        move_result = executor.rename(authorized_source, authorized_dest, overwrite=overwrite)
+    if not move_result.ok:
         clear_tree_tracking(ctx, source_root)
         clear_tree_tracking(ctx, dest)
-        return {"file": src, "dest": dest_path, "status": "error", "reason": str(exc)}
+        result = {"file": src, "dest": dest_path, "status": "error", "reason": move_result.error}
+        if move_result.error_kind:
+            result["error_kind"] = move_result.error_kind
+        return result
 
     clear_tree_tracking(ctx, source_root)
     clear_tree_tracking(ctx, dest)

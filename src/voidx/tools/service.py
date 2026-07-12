@@ -10,7 +10,6 @@ from voidx.tools.base import (
     UserInteraction,
     UserResponse,
     model_to_json_schema,
-    resolve_safe,
 )
 from voidx.tools.registry import ToolDef, ToolRegistry
 from voidx.tools.task_tracker import TaskState, TaskStatus, TaskTracker
@@ -28,5 +27,4 @@ __all__ = [
     "UserInteraction",
     "UserResponse",
     "model_to_json_schema",
-    "resolve_safe",
 ]

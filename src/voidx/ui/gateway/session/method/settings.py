@@ -45,11 +45,17 @@ class SettingsMethods:
                     settings.set_approval_policy(ApprovalPolicy(permissions["approval_policy"]))
                 except ValueError as exc:
                     raise MethodParamsError("invalid approval_policy") from exc
-            if "sandbox_workspace_write" in permissions:
-                paths = permissions["sandbox_workspace_write"]
-                if not isinstance(paths, list) or not all(isinstance(path, str) for path in paths):
-                    raise MethodParamsError("invalid sandbox_workspace_write")
-                settings.set_sandbox_workspace_write(paths)
+            for key, setter in (
+                ("sandbox_readable_files", settings.set_sandbox_readable_files),
+                ("sandbox_readable_dirs", settings.set_sandbox_readable_dirs),
+                ("sandbox_writable_files", settings.set_sandbox_writable_files),
+                ("sandbox_writable_dirs", settings.set_sandbox_writable_dirs),
+            ):
+                if key in permissions:
+                    paths = permissions[key]
+                    if not isinstance(paths, list) or not all(isinstance(path, str) for path in paths):
+                        raise MethodParamsError(f"invalid {key}")
+                    setter(paths)
 
         user_profile = patch.get("user_profile")
         if user_profile is not None:
@@ -218,7 +224,10 @@ class SettingsMethods:
                 "sandbox_mode": settings.get_sandbox_mode().value,
                 "approval_policy": settings.get_approval_policy().value,
                 "approval_reviewer": settings.get_approval_reviewer().value,
-                "sandbox_workspace_write": settings.get_sandbox_workspace_write(),
+                "sandbox_readable_files": settings.get_sandbox_readable_files(),
+                "sandbox_readable_dirs": settings.get_sandbox_readable_dirs(),
+                "sandbox_writable_files": settings.get_sandbox_writable_files(),
+                "sandbox_writable_dirs": settings.get_sandbox_writable_dirs(),
             },
             "user_profile": settings.get_user_profile().model_dump(),
             "code_ide": settings.get_code_ide().value,

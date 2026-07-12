@@ -22,7 +22,7 @@ from voidx.lsp.schema import (
     parse_document_symbols,
     parse_locations,
 )
-from voidx.tools.base import resolve_safe
+from voidx.tools.base import _resolve_tool_path
 
 
 class LspManager:
@@ -323,7 +323,7 @@ class LspManager:
         return languages
 
     def _resolve_path(self, file_path: str) -> Path:
-        path = resolve_safe(self.workspace, file_path)
+        path = _resolve_tool_path(self.workspace, file_path)
         if path is None:
             raise LspServerUnavailable(f"Path traversal blocked: {file_path}")
         if not path.exists():

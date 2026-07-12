@@ -625,7 +625,7 @@ class TestManageToolDirectoryOps:
         ctx = ToolContext(
             workspace=str(tmp_path),
             session_id="sid-file-redesign",
-            sandbox_extra_paths=[str(extra_root)],
+            sandbox_writable_dirs=[str(extra_root)],
         )
 
         result = await ManageTool().execute(
@@ -655,7 +655,7 @@ class TestManageToolDirectoryOps:
         def fail_move(_source, _dest):
             raise OSError("simulated move failure")
 
-        monkeypatch.setattr("voidx.tools.file.manage.shutil.move", fail_move)
+        monkeypatch.setattr("voidx.tools.file.safe_path.os.replace", fail_move)
 
         result = await ManageTool().execute(
             {
@@ -672,7 +672,7 @@ class TestManageToolDirectoryOps:
         assert dest_key not in ctx.file_mtimes
         assert dest_key not in ctx.file_read_coverage
         assert source_child.read_text(encoding="utf-8") == "source\n"
-        assert not (tmp_path / "dest").exists()
+        assert dest_child.read_text(encoding="utf-8") == "dest\n"
 
     @pytest.mark.asyncio
     async def test_manage_delete_directory_clears_tracking_after_partial_failure(
@@ -685,11 +685,11 @@ class TestManageToolDirectoryOps:
         await FileReadTool().execute({"file_path": "target/app.py"}, ctx)
         child_key = str(child.resolve())
 
-        def partially_delete(path):
+        def partially_delete(path, expected_stat=None):
             (path / "app.py").unlink()
             raise OSError("simulated partial delete")
 
-        monkeypatch.setattr("voidx.tools.file.manage.shutil.rmtree", partially_delete)
+        monkeypatch.setattr("voidx.tools.file.safe_path._remove_tree", partially_delete)
 
         result = await ManageTool().execute(
             {"op": "delete", "kind": "dir", "paths": "target"}, ctx,

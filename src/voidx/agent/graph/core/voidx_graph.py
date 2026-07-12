@@ -238,7 +238,7 @@ class VoidXGraph(
         )
 
         self._instruction = InstructionService(self._workspace, settings=settings)
-        self._permission = build_permission_service(config, notifier=self._ui.ui.print)
+        self._permission = build_permission_service(config, settings=self._settings, notifier=self._ui.ui.print)
 
         self._interaction_mode: InteractionMode = InteractionMode.AUTO
         self._debug: bool = False
@@ -347,7 +347,7 @@ class VoidXGraph(
             config=self.config,
             subagent_runner=self._subagent_runner,
         )
-        self._permission = build_permission_service(self.config, notifier=self._ui.ui.print)
+        self._permission = build_permission_service(self.config, settings=settings, notifier=self._ui.ui.print)
         self._tool_executor = GraphToolExecutor(self)
 
         context_limit = self._compaction.context_limit
@@ -538,6 +538,8 @@ class VoidXGraph(
         description: str,
         goal_resolution: GoalResolution,
         result_contract: Any,
+        *,
+        permission_snapshot=None,
     ) -> str:
         sub_buffer: list[BaseMessage] = []
         session_id = self._session.id if self._session else "default"
@@ -609,6 +611,7 @@ class VoidXGraph(
                 "workflow_runtime_context": workflow_runtime_context,
                 "todo_state_sink": lambda todo_state: apply_todo_state_to_host(self, todo_state),
                 "run_metadata": run_metadata,
+                "permission_snapshot": permission_snapshot,
             }
             if self._current_tree and self._turn_node:
                 kwargs.update({

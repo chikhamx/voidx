@@ -1,16 +1,18 @@
 from __future__ import annotations
 
+from pathlib import Path
 from typing import Literal
 
 from pydantic import BaseModel, Field, model_validator
 
 from voidx.diffing import make_file_diff, make_structured_diff, render_numbered_diff
-from voidx.tools.base import BaseTool, ToolContext, ToolResult, model_to_json_schema, resolve_safe
+from voidx.tools.base import BaseTool, ToolContext, ToolResult, _resolve_tool_path_for_access, model_to_json_schema
 from .state import check_read_coverage, check_staleness, clear_read_coverage, record_mtime, save_file_version
 
 from .replace import _apply_resolved_edits, _resolve_edit_target
 from .read import _split_display_lines
 from .types import ResolvedEdit
+from .safe_path import SafePathExecutor
 
 
 class WriteInput(BaseModel):
@@ -69,12 +71,23 @@ async def _execute_write_insert(ctx: ToolContext, inp: WriteInput) -> ToolResult
             summary="No changes",
             metadata={"file": inp.file_path, "operations": 0},
         )
-    path = resolve_safe(ctx.workspace, inp.file_path, ctx.sandbox_extra_paths)
-    if path is None:
-        return ToolResult(output=f"Path traversal blocked: {inp.file_path}", metadata={"error": True})
+    path, error = await _resolve_tool_path_for_access(
+        ctx,
+        inp.file_path,
+        write=True,
+        require_exists=True,
+        prompt_label="Write",
+        allow_description="Allow this write once",
+        deny_description="Do not write this file",
+    )
+    if error is not None:
+        return error
+    assert path is not None
     if not path.exists():
         return ToolResult(output=f"File not found: {inp.file_path}", metadata={"error": True})
-    original = path.read_text(encoding="utf-8", errors="replace")
+    original, read_error = _safe_read_text(path)
+    if read_error is not None:
+        return ToolResult(output=read_error, metadata={"error": True})
     total_lines = len(_split_display_lines(original).lines)
     assert inp.lineno is not None
     if inp.lineno > total_lines + 1:
@@ -88,6 +101,7 @@ async def _execute_write_insert(ctx: ToolContext, inp: WriteInput) -> ToolResult
         ctx,
         inp.file_path,
         ResolvedEdit("insert", resolved_lineno, resolved_lineno, inp.new_string),
+        resolved_path=path,
     )
     if inp.lineno == total_lines + 1 and total_lines > 0:
         result.next_step_hint = (
@@ -105,24 +119,45 @@ async def _execute_write_append(ctx: ToolContext, inp: WriteInput) -> ToolResult
             summary="No changes",
             metadata={"file": inp.file_path, "operations": 0},
         )
-    path = resolve_safe(ctx.workspace, inp.file_path, ctx.sandbox_extra_paths)
-    if path is None:
-        return ToolResult(output=f"Path traversal blocked: {inp.file_path}", metadata={"error": True})
+    path, error = await _resolve_tool_path_for_access(
+        ctx,
+        inp.file_path,
+        write=True,
+        require_exists=True,
+        prompt_label="Write",
+        allow_description="Allow this write once",
+        deny_description="Do not write this file",
+    )
+    if error is not None:
+        return error
+    assert path is not None
     if not path.exists():
         return ToolResult(output=f"File not found: {inp.file_path}", metadata={"error": True})
-    original = path.read_text(encoding="utf-8", errors="replace")
+    original, read_error = _safe_read_text(path)
+    if read_error is not None:
+        return ToolResult(output=read_error, metadata={"error": True})
     total_lines = len(_split_display_lines(original).lines)
     return await _apply_single_write_edit(
         ctx,
         inp.file_path,
         ResolvedEdit("insert", total_lines, total_lines, inp.new_string),
+        resolved_path=path,
     )
 
 
 async def _execute_write_full(ctx: ToolContext, inp: WriteInput) -> ToolResult:
-    path = resolve_safe(ctx.workspace, inp.file_path, ctx.sandbox_extra_paths)
-    if path is None:
-        return ToolResult(output=f"Path traversal blocked: {inp.file_path}", metadata={"error": True})
+    path, error = await _resolve_tool_path_for_access(
+        ctx,
+        inp.file_path,
+        write=True,
+        allow_missing_write_file=True,
+        prompt_label="Write",
+        allow_description="Allow this write once",
+        deny_description="Do not write this file",
+    )
+    if error is not None:
+        return error
+    assert path is not None
     created = not path.exists()
     original = ""
     if path.exists():
@@ -134,10 +169,13 @@ async def _execute_write_full(ctx: ToolContext, inp: WriteInput) -> ToolResult:
         stale = check_staleness(ctx, path)
         if stale:
             return ToolResult(output=stale, metadata={"error": True})
-        original = path.read_text(encoding="utf-8", errors="replace")
+        original, read_error = _safe_read_text(path)
+        if read_error is not None:
+            return ToolResult(output=read_error, metadata={"error": True})
         await save_file_version(ctx, path, display_path=inp.file_path, tool_name="write")
-    path.parent.mkdir(parents=True, exist_ok=True)
-    path.write_text(inp.new_string, encoding="utf-8")
+    write_error = _safe_write_text(path, inp.new_string)
+    if write_error is not None:
+        return ToolResult(output=write_error, metadata={"error": True})
     record_mtime(ctx, path)
     clear_read_coverage(ctx, path)
     diff = make_file_diff(inp.file_path, original, inp.new_string)
@@ -156,12 +194,26 @@ async def _execute_write_full(ctx: ToolContext, inp: WriteInput) -> ToolResult:
     )
 
 
-async def _apply_single_write_edit(ctx: ToolContext, file_path: str, edit: ResolvedEdit) -> ToolResult:
-    path, error = _resolve_edit_target(ctx, file_path)
-    if error is not None:
-        return error
-    assert path is not None
-    original = path.read_text(encoding="utf-8", errors="replace")
+async def _apply_single_write_edit(
+    ctx: ToolContext,
+    file_path: str,
+    edit: ResolvedEdit,
+    *,
+    resolved_path=None,
+) -> ToolResult:
+    if resolved_path is None:
+        path, error = await _resolve_edit_target(ctx, file_path)
+        if error is not None:
+            return error
+        assert path is not None
+    else:
+        path = resolved_path
+        stale = check_staleness(ctx, path)
+        if stale:
+            return ToolResult(output=stale, metadata={"error": True})
+    original, read_error = _safe_read_text(path)
+    if read_error is not None:
+        return ToolResult(output=read_error, metadata={"error": True})
     display = _split_display_lines(original)
     return await _apply_resolved_edits(
         ctx,
@@ -173,3 +225,25 @@ async def _apply_single_write_edit(ctx: ToolContext, file_path: str, edit: Resol
         tool_name="write",
         hints=[],
     )
+
+
+def _safe_read_text(path: Path) -> tuple[str, str | None]:
+    executor = SafePathExecutor()
+    try:
+        authorized = executor.authorize_existing(path, access="read")
+    except OSError as exc:
+        return "", str(exc)
+    result = executor.read_text(authorized, encoding="utf-8", errors="replace")
+    if not result.ok:
+        return "", result.error
+    assert isinstance(result.value, str)
+    return result.value, None
+
+
+def _safe_write_text(path: Path, content: str) -> str | None:
+    executor = SafePathExecutor()
+    authorized = executor.authorize_target(path, access="write")
+    result = executor.write_text(authorized, content, encoding="utf-8")
+    if not result.ok:
+        return result.error
+    return None

@@ -106,10 +106,6 @@ class GraphToolExecutor:
         runtime_task_state_ref = [runtime_task_state, runtime_goal, runtime_workflow_runs]
 
         def make_context() -> ToolContext:
-            def _add_extra_path(path: str) -> None:
-                if path not in host._permission.sandbox_workspace_write:
-                    host._permission.sandbox_workspace_write.append(path)
-
             return ToolContext(
                 workspace=workspace,
                 session_id=session_id,
@@ -134,9 +130,17 @@ class GraphToolExecutor:
                 mcp_manager=getattr(host, "_mcp_manager", None),
                 lsp_manager=getattr(host, "_lsp_manager", None),
                 sandbox_mode=host._permission.sandbox_mode,
-                sandbox_extra_paths=host._permission.sandbox_workspace_write,
+                sandbox_readable_files=list(host._permission.sandbox_readable_files),
+                sandbox_readable_dirs=list(host._permission.sandbox_readable_dirs),
+                sandbox_writable_files=list(host._permission.sandbox_writable_files),
+                sandbox_writable_dirs=list(host._permission.sandbox_writable_dirs),
+                get_access_grants=host._permission.get_access_grants,
+                get_revocation_epoch=lambda: host._permission.revocation_epoch,
+                add_grant=host._permission.add_grant,
+                acquire_grant_targets=host._permission.acquire_grant_targets,
+                acquire_execution_lease=host._permission.execution_lease_for_tool,
+                process_sandbox=getattr(host._permission, "process_sandbox", None),
                 interact=_make_interact_callback(getattr(host, "_app", None)),
-                add_extra_path=_add_extra_path,
             )
 
         ctx = make_context()
@@ -218,22 +222,29 @@ class GraphToolExecutor:
                     name=f"voidx-tool-heartbeat:{tid}",
                 )
             try:
-                host._ui.session_tracker.capture_tool_call(tid, targs, ctx.workspace, ctx.sandbox_extra_paths)
+                host._ui.session_tracker.capture_tool_call(tid, targs, ctx.workspace, [*ctx.sandbox_readable_files, *ctx.sandbox_readable_dirs, *ctx.sandbox_writable_files, *ctx.sandbox_writable_dirs])
                 parent_tool_token = current_parent_tool_call_id.set(tool_event_id)
                 lock_manager = _workspace_write_lock_manager(host) if _requires_workspace_write_lock(tc) else None
                 lock_acquired = False
-                try:
+                lease_factory = getattr(host._permission, "execution_lease_for_tool", None)
+
+                async def run_authorized_tool() -> ToolResult:
+                    nonlocal lock_acquired
                     if lock_manager is not None:
                         lock_acquired = await lock_manager.acquire_workspace_write_lock(session_id)
                         if not lock_acquired:
-                            result = ToolResult(
+                            return ToolResult(
                                 output="Workspace write lock acquisition cancelled before tool start.",
                                 metadata={"blocked": True, "error": True},
                             )
-                        else:
-                            result = await host.tools.execute_tool(tid, targs, ctx)
+                    return await host.tools.execute_tool(tid, targs, ctx)
+
+                try:
+                    if lease_factory is not None:
+                        async with lease_factory(tid):
+                            result = await run_authorized_tool()
                     else:
-                        result = await host.tools.execute_tool(tid, targs, ctx)
+                        result = await run_authorized_tool()
                 finally:
                     if lock_acquired and lock_manager is not None:
                         lock_manager.release_workspace_write_lock(session_id)

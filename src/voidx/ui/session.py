@@ -9,7 +9,7 @@ from typing import Protocol
 from rich.cells import cell_len
 from rich.markup import escape
 
-from voidx.tools.service import resolve_safe
+from voidx.tools.base import _resolve_tool_path
 
 
 # ---------------------------------------------------------------------------
@@ -278,7 +278,7 @@ class SessionChangeTracker:
         extra_paths: list[str] | None = None,
     ) -> None:
         workspace = workspace or self._workspace
-        resolved = resolve_safe(workspace, file_path, extra_paths)
+        resolved = _resolve_tool_path(workspace, file_path, extra_paths)
         if resolved is None:
             return
         key = str(resolved)
