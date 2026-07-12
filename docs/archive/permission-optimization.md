@@ -1,5 +1,7 @@
 # 权限系统优化：plan 模式复用 read-only + 静态黑名单精简 + deny 转 ask
 
+> **Status: Done** — Archived on 2026-07-12.
+
 ## 目标
 
 1. plan 模式直接复用 read-only 沙箱逻辑，消除 `mode_overlay_denial_reason` 的重复实现。

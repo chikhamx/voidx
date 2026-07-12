@@ -1,3 +1,5 @@
+> **Status: Done** — Archived on 2026-07-12.
+
 ---
 name: external-path-permission-model
 display_name: Workspace 外路径权限模型
