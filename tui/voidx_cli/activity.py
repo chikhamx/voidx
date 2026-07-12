@@ -16,49 +16,26 @@ BUSY_ACTIVITY_GLYPH_STYLES = (
 )
 BUSY_ACTIVITY_DEFAULT_VERB = "Working"
 BUSY_ACTIVITY_VERBS = (
-    # cerebral
-    "Cerebrating",
-    "Cogitating",
-    "Pondering",
-    "Ruminating",
-    "Deliberating",
-    "Musing",
-    # whimsical
-    "Booping",
-    "Canoodling",
-    "Lollygagging",
-    "Shenaniganing",
-    "Tomfoolering",
-    "Flibbertigibbeting",
-    # kinetic
-    "Gallivanting",
-    "Frolicking",
-    "Skedaddling",
-    "Moonwalking",
-    "Scurrying",
-    "Shimmying",
-    # culinary
-    "Brewing",
-    "Cooking",
-    "Simmering",
-    "Marinating",
-    "Fermenting",
-    "Kneading",
-    # existential
-    "Discombobulating",
-    "Flummoxing",
-    "Combobulating",
-    "Recombobulating",
-    # scientific
-    "Crystallizing",
-    "Osmosing",
-    "Nucleating",
-    "Sublimating",
-    # practical
-    "Churning",
-    "Finagling",
-    "Noodling",
-    "Tinkering",
-    "Cobbling",
-    "Contemplating",
+    # 唱跳rap篮球
+    "Singing",
+    "Dancing",
+    "Rapping",
+    "Ballin'",
+    # 2025-2026 热梗(英文)
+    "Skibidi-ing",
+    "Side-questing",
+    "Rage-baiting",
+    "Beige-flagging",
+    "Hakimi-ing",
+    # 2025-2026 热梗(中文)
+    "赛博对账中",
+    "喝丝瓜汤中",
+    "回答我中",
+    "馕言文中",
+    "活人感中",
+    "预制中",
+    "谷子中",
+    "绷不住了",
+    "从夯到拉中",
+    "摇一摇中",
 )
