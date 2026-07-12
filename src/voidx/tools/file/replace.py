@@ -1,13 +1,14 @@
 from __future__ import annotations
 
 from dataclasses import asdict
+from pathlib import Path
 from typing import NamedTuple
 
 from pydantic import BaseModel, Field, model_validator
 
 from voidx.diffing import make_file_diff, make_structured_diff, render_numbered_diff
 from voidx.logging.tool_log import log_tool_event
-from voidx.tools.base import BaseTool, ToolContext, ToolResult, model_to_json_schema, resolve_safe
+from voidx.tools.base import BaseTool, ToolContext, ToolResult, _resolve_tool_path_for_access, model_to_json_schema
 from .state import (
     LineDriftMap,
     check_read_coverage,
@@ -28,6 +29,7 @@ from .replace_resolve import (
 )
 from .read import _join_display_lines, _split_display_lines, _split_edit_lines
 from .types import DisplayLines, ResolvedEdit
+from .safe_path import SafePathExecutor
 
 
 
@@ -235,11 +237,23 @@ class FileReplaceTool(BaseTool):
         )
 
 
-def _resolve_edit_target(ctx: ToolContext, file_path: str):
-    path = resolve_safe(ctx.workspace, file_path, ctx.sandbox_extra_paths)
-    if path is None:
-        return None, ToolResult(output=f"Path traversal blocked: {file_path}", metadata={"error": True})
+async def _resolve_edit_target(ctx: ToolContext, file_path: str, *, allow_missing: bool = False):
+    path, error = await _resolve_tool_path_for_access(
+        ctx,
+        file_path,
+        write=True,
+        require_exists=not allow_missing,
+        allow_missing_write_file=allow_missing,
+        prompt_label="Write",
+        allow_description="Allow this write once",
+        deny_description="Do not write this file",
+    )
+    if error is not None:
+        return None, error
+    assert path is not None
     if not path.exists():
+        if allow_missing:
+            return path, None
         return None, ToolResult(output=f"File not found: {file_path}", metadata={"error": True})
     stale = check_staleness(ctx, path)
     if stale:
@@ -247,21 +261,20 @@ def _resolve_edit_target(ctx: ToolContext, file_path: str):
     return path, None
 
 
-def _auto_create_file(
+async def _auto_create_file(
     ctx: ToolContext,
     *,
     file_path: str,
     new_string: str,
 ) -> ToolResult:
-    path = resolve_safe(ctx.workspace, file_path, ctx.sandbox_extra_paths)
-    if path is None:
-        return ToolResult(output=f"Path traversal blocked: {file_path}", metadata={"error": True})
-    try:
-        path.parent.mkdir(parents=True, exist_ok=True)
-        path.write_text(new_string, encoding="utf-8")
-    except OSError as exc:
+    path, error = await _resolve_edit_target(ctx, file_path, allow_missing=True)
+    if error is not None:
+        return error
+    assert path is not None
+    write_error = _safe_write_text(path, new_string)
+    if write_error is not None:
         return ToolResult(
-            output=f"Failed to create file: {file_path}\n{exc}",
+            output=f"Failed to create file: {file_path}\n{write_error}",
             metadata={"error": True},
         )
     record_mtime(ctx, path)
@@ -296,10 +309,10 @@ async def _execute_text_replace(
     new_string: str,
     tool_name: str,
 ) -> ToolResult:
-    path, error = _resolve_edit_target(ctx, file_path)
+    path, error = await _resolve_edit_target(ctx, file_path)
     if error is not None:
         if error.output.startswith("File not found:"):
-            return _auto_create_file(ctx, file_path=file_path, new_string=new_string)
+            return await _auto_create_file(ctx, file_path=file_path, new_string=new_string)
         _log_replace_failure(
             tool_name=tool_name,
             file_path=file_path,
@@ -314,7 +327,9 @@ async def _execute_text_replace(
         return error
     assert path is not None
 
-    original = path.read_text(encoding="utf-8", errors="replace")
+    original, read_error = _safe_read_text(path)
+    if read_error is not None:
+        return ToolResult(output=read_error, metadata={"error": True})
     display = _split_display_lines(original)
     drift_maps = get_line_drift_maps(ctx, path)
     fallback = _find_text_segment_with_drift_fallback(
@@ -382,24 +397,47 @@ async def _execute_text_replace(
         new_lines = []
     lines[start_line - 1:end_line] = new_lines
 
-    # Head-line dedup: if the first line of new_string exactly matches the
-    # line immediately before the replaced range, consume that line too.
+    # Head-line dedup: find the largest N (1..3) such that the first N lines
+    # of new_string match the N lines immediately before the replaced range
+    # (same order).  Consume those N preceding lines.  Empty lines are never
+    # consumed.  Head + tail consumed lines must not exceed len(new_lines).
     actual_start_line = start_line
-    if new_lines and new_lines[0] != "":
-        prev_idx = start_line - 2
-        if prev_idx >= 0 and lines[prev_idx] == new_lines[0]:
-            del lines[prev_idx]
-            actual_start_line = start_line - 1
+    head_consumed = 0
+    if new_lines:
+        max_head = min(3, len(new_lines))
+        for n in range(max_head, 0, -1):
+            file_start = start_line - 1 - n
+            if file_start < 0:
+                continue
+            if any(new_lines[i] == "" for i in range(n)):
+                continue
+            if lines[file_start:start_line - 1] == new_lines[:n]:
+                head_consumed = n
+                break
+        if head_consumed:
+            del lines[start_line - 1 - head_consumed:start_line - 1]
+            actual_start_line = start_line - head_consumed
 
-    # Tail-line dedup: if the last line of new_string exactly matches the
-    # first line after the replaced range, consume that line too.
+    # Tail-line dedup: find the largest N (1..3) such that the last N lines
+    # of new_string match the N lines immediately after the replaced range
+    # (same order).  Consume those N following lines.
     actual_end_line = end_line
-    if new_lines and new_lines[-1] != "":
-        head_shift = 1 if actual_start_line < start_line else 0
-        next_idx = start_line - 1 + len(new_lines) - head_shift
-        if next_idx < len(lines) and lines[next_idx] == new_lines[-1]:
-            del lines[next_idx]
-            actual_end_line = end_line + 1
+    if new_lines:
+        max_tail = min(3, len(new_lines) - head_consumed)
+        tail_base = start_line - 1 - head_consumed + len(new_lines)
+        tail_consumed = 0
+        for n in range(max_tail, 0, -1):
+            file_end = tail_base + n
+            if file_end > len(lines):
+                continue
+            if any(new_lines[len(new_lines) - n + i] == "" for i in range(n)):
+                continue
+            if lines[tail_base:file_end] == new_lines[-n:]:
+                tail_consumed = n
+                break
+        if tail_consumed:
+            del lines[tail_base:tail_base + tail_consumed]
+            actual_end_line = end_line + tail_consumed
 
     # Trailing newline: preserve the original file's trailing newline.
     # _split_edit_lines already strips a trailing \n from new_string, so
@@ -409,7 +447,9 @@ async def _execute_text_replace(
     content = _join_display_lines(lines, trailing_newline=trailing_newline)
 
     await save_file_version(ctx, path, display_path=file_path, tool_name=tool_name)
-    path.write_text(content, encoding="utf-8")
+    write_error = _safe_write_text(path, content)
+    if write_error is not None:
+        return ToolResult(output=write_error, metadata={"error": True})
     diff = make_file_diff(file_path, original, content)
     file_diff = make_structured_diff(file_path, original, content)
     remap_read_coverage_from_file_diff(ctx, path, file_diff, old_ranges=old_ranges)
@@ -507,7 +547,9 @@ async def _apply_resolved_edits(
     content = _join_display_lines(lines, trailing_newline=trailing_newline)
 
     await save_file_version(ctx, path, display_path=file_path, tool_name=tool_name)
-    path.write_text(content, encoding="utf-8")
+    write_error = _safe_write_text(path, content)
+    if write_error is not None:
+        return ToolResult(output=write_error, metadata={"error": True})
     diff = make_file_diff(file_path, original, content)
     file_diff = make_structured_diff(file_path, original, content)
     remap_read_coverage_from_file_diff(ctx, path, file_diff, old_ranges=old_ranges)
@@ -600,3 +642,24 @@ def _find_text_segment_with_drift_fallback(
         matched_map=None,
         remapped_range=None,
     )
+
+
+def _safe_read_text(path: Path) -> tuple[str, str | None]:
+    executor = SafePathExecutor()
+    try:
+        authorized = executor.authorize_existing(path, access="read")
+    except OSError as exc:
+        return "", str(exc)
+    result = executor.read_text(authorized, encoding="utf-8", errors="replace")
+    if not result.ok:
+        return "", result.error
+    return result.value or "", None
+
+
+def _safe_write_text(path: Path, content: str) -> str | None:
+    executor = SafePathExecutor()
+    authorized = executor.authorize_target(path, access="write")
+    result = executor.write_text(authorized, content, encoding="utf-8")
+    if not result.ok:
+        return result.error
+    return None

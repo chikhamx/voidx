@@ -296,3 +296,296 @@ class TestFileOpsDedup:
         assert "@@ -1,3 +1,3 @@" in result.diff
         assert "-old" in result.diff
         assert "+new" in result.diff
+
+
+class TestMultiLineDedup:
+    """Tests for multi-line (up to 3) head/tail dedup."""
+
+    @pytest.mark.asyncio
+    async def test_head_dedup_two_lines(self, tmp_path):
+        """Head dedup consumes 2 lines when new_string prefix matches 2 preceding lines."""
+        f = tmp_path / "head2.txt"
+        f.write_text("A\nB\nC\nold\nend\n")
+        ctx = ToolContext(workspace=str(tmp_path))
+        r = ToolRegistry()
+        await r.execute_tool("read", {"file_path": "head2.txt"}, ctx)
+
+        result = await r.execute_tool(
+            "replace",
+            {
+                "file_path": "head2.txt",
+                "bounds": [{"line_no": 4, "anchor": "old"}],
+                "new_string": "B\nC\nnew\n",
+            },
+            ctx,
+        )
+
+        assert result.metadata.get("error") is not True
+        assert result.metadata["start_line"] == 2
+        assert f.read_text() == "A\nB\nC\nnew\nend\n"
+
+    @pytest.mark.asyncio
+    async def test_head_dedup_three_lines(self, tmp_path):
+        """Head dedup consumes 3 lines when new_string prefix matches 3 preceding lines."""
+        f = tmp_path / "head3.txt"
+        f.write_text("A\nB\nC\nD\nold\nend\n")
+        ctx = ToolContext(workspace=str(tmp_path))
+        r = ToolRegistry()
+        await r.execute_tool("read", {"file_path": "head3.txt"}, ctx)
+
+        result = await r.execute_tool(
+            "replace",
+            {
+                "file_path": "head3.txt",
+                "bounds": [{"line_no": 5, "anchor": "old"}],
+                "new_string": "B\nC\nD\nnew\n",
+            },
+            ctx,
+        )
+
+        assert result.metadata.get("error") is not True
+        assert result.metadata["start_line"] == 2
+        assert f.read_text() == "A\nB\nC\nD\nnew\nend\n"
+
+    @pytest.mark.asyncio
+    async def test_head_dedup_partial_match_stops_early(self, tmp_path):
+        """Head dedup stops at first mismatch, consuming only matched lines."""
+        f = tmp_path / "head-partial.txt"
+        f.write_text("A\nX\nC\nold\nend\n")
+        ctx = ToolContext(workspace=str(tmp_path))
+        r = ToolRegistry()
+        await r.execute_tool("read", {"file_path": "head-partial.txt"}, ctx)
+
+        result = await r.execute_tool(
+            "replace",
+            {
+                "file_path": "head-partial.txt",
+                "bounds": [{"line_no": 4, "anchor": "old"}],
+                "new_string": "X\nC\nnew\n",
+            },
+            ctx,
+        )
+
+        assert result.metadata.get("error") is not True
+        # C matches (line 3), X matches (line 2), A vs nothing — stop at 2
+        assert result.metadata["start_line"] == 2
+        assert f.read_text() == "A\nX\nC\nnew\nend\n"
+
+    @pytest.mark.asyncio
+    async def test_tail_dedup_two_lines(self, tmp_path):
+        """Tail dedup consumes 2 lines when new_string suffix matches 2 following lines."""
+        f = tmp_path / "tail2.txt"
+        f.write_text("start\nold\nE\nF\nG\n")
+        ctx = ToolContext(workspace=str(tmp_path))
+        r = ToolRegistry()
+        await r.execute_tool("read", {"file_path": "tail2.txt"}, ctx)
+
+        result = await r.execute_tool(
+            "replace",
+            {
+                "file_path": "tail2.txt",
+                "bounds": [{"line_no": 2, "anchor": "old"}],
+                "new_string": "new\nE\nF\n",
+            },
+            ctx,
+        )
+
+        assert result.metadata.get("error") is not True
+        assert result.metadata["end_line"] == 4
+        assert f.read_text() == "start\nnew\nE\nF\nG\n"
+
+    @pytest.mark.asyncio
+    async def test_tail_dedup_three_lines(self, tmp_path):
+        """Tail dedup consumes 3 lines when new_string suffix matches 3 following lines."""
+        f = tmp_path / "tail3.txt"
+        f.write_text("start\nold\nE\nF\nG\nH\n")
+        ctx = ToolContext(workspace=str(tmp_path))
+        r = ToolRegistry()
+        await r.execute_tool("read", {"file_path": "tail3.txt"}, ctx)
+
+        result = await r.execute_tool(
+            "replace",
+            {
+                "file_path": "tail3.txt",
+                "bounds": [{"line_no": 2, "anchor": "old"}],
+                "new_string": "new\nE\nF\nG\n",
+            },
+            ctx,
+        )
+
+        assert result.metadata.get("error") is not True
+        assert result.metadata["end_line"] == 5
+        assert f.read_text() == "start\nnew\nE\nF\nG\nH\n"
+
+    @pytest.mark.asyncio
+    async def test_tail_dedup_partial_match_stops_early(self, tmp_path):
+        """Tail dedup stops at first mismatch, consuming only matched lines."""
+        f = tmp_path / "tail-partial.txt"
+        f.write_text("start\nold\nE\nX\nG\n")
+        ctx = ToolContext(workspace=str(tmp_path))
+        r = ToolRegistry()
+        await r.execute_tool("read", {"file_path": "tail-partial.txt"}, ctx)
+
+        result = await r.execute_tool(
+            "replace",
+            {
+                "file_path": "tail-partial.txt",
+                "bounds": [{"line_no": 2, "anchor": "old"}],
+                # last line "E" matches file line 3 (E), but "new2" != X — stop at 1
+                "new_string": "new2\nE\n",
+            },
+            ctx,
+        )
+
+        assert result.metadata.get("error") is not True
+        assert result.metadata["end_line"] == 3
+        assert f.read_text() == "start\nnew2\nE\nX\nG\n"
+
+    @pytest.mark.asyncio
+    async def test_head_and_tail_dedup_three_each(self, tmp_path):
+        """Both head and tail dedup can consume up to 3 lines simultaneously."""
+        f = tmp_path / "both3.txt"
+        f.write_text("B\nC\nD\nold\nE\nF\nG\n")
+        ctx = ToolContext(workspace=str(tmp_path))
+        r = ToolRegistry()
+        await r.execute_tool("read", {"file_path": "both3.txt"}, ctx)
+
+        result = await r.execute_tool(
+            "replace",
+            {
+                "file_path": "both3.txt",
+                "bounds": [{"line_no": 4, "anchor": "old"}],
+                "new_string": "B\nC\nD\nnew\nE\nF\nG\n",
+            },
+            ctx,
+        )
+
+        assert result.metadata.get("error") is not True
+        assert result.metadata["start_line"] == 1
+        assert result.metadata["end_line"] == 7
+        assert f.read_text() == "B\nC\nD\nnew\nE\nF\nG\n"
+
+    @pytest.mark.asyncio
+    async def test_dedup_capped_by_new_string_line_count(self, tmp_path):
+        """Head + tail consumed lines must not exceed new_string total lines."""
+        f = tmp_path / "cap.txt"
+        # file: P\nQ\nold\nR\nS\n  — head could match P,Q (2 lines), tail could match R,S (2 lines)
+        f.write_text("P\nQ\nold\nR\nS\n")
+        ctx = ToolContext(workspace=str(tmp_path))
+        r = ToolRegistry()
+        await r.execute_tool("read", {"file_path": "cap.txt"}, ctx)
+
+        result = await r.execute_tool(
+            "replace",
+            {
+                "file_path": "cap.txt",
+                "bounds": [{"line_no": 3, "anchor": "old"}],
+                # new_string has only 2 lines: Q (head) and R (tail)
+                # head matches Q (1 line), tail matches R (1 line), total 2 = len(new_lines)
+                "new_string": "Q\nR\n",
+            },
+            ctx,
+        )
+
+        assert result.metadata.get("error") is not True
+        assert result.metadata["start_line"] == 2
+        assert result.metadata["end_line"] == 4
+        assert f.read_text() == "P\nQ\nR\nS\n"
+
+    @pytest.mark.asyncio
+    async def test_dedup_empty_line_not_consumed_multiline(self, tmp_path):
+        """Empty lines are never consumed even in multi-line dedup."""
+        f = tmp_path / "empty-multi.txt"
+        f.write_text("start\n\n\n\nend\n")
+        ctx = ToolContext(workspace=str(tmp_path))
+        r = ToolRegistry()
+        await r.execute_tool("read", {"file_path": "empty-multi.txt"}, ctx)
+
+        result = await r.execute_tool(
+            "replace",
+            {
+                "file_path": "empty-multi.txt",
+                "bounds": [{"line_no": 3, "anchor": ""}],
+                "new_string": "\n",
+            },
+            ctx,
+        )
+
+        assert result.metadata.get("error") is not True
+        assert f.read_text() == "start\n\n\n\nend\n"
+
+    @pytest.mark.asyncio
+    async def test_head_dedup_at_file_boundary(self, tmp_path):
+        """Head dedup stops when reaching file start, even if 3 lines could match."""
+        f = tmp_path / "head-bound.txt"
+        f.write_text("A\nB\nold\nend\n")
+        ctx = ToolContext(workspace=str(tmp_path))
+        r = ToolRegistry()
+        await r.execute_tool("read", {"file_path": "head-bound.txt"}, ctx)
+
+        result = await r.execute_tool(
+            "replace",
+            {
+                "file_path": "head-bound.txt",
+                "bounds": [{"line_no": 3, "anchor": "old"}],
+                "new_string": "A\nB\nnew\n",
+            },
+            ctx,
+        )
+
+        assert result.metadata.get("error") is not True
+        # Only 2 lines available before start_line
+        assert result.metadata["start_line"] == 1
+        assert f.read_text() == "A\nB\nnew\nend\n"
+
+    @pytest.mark.asyncio
+    async def test_tail_dedup_at_file_boundary(self, tmp_path):
+        """Tail dedup stops when reaching file end, even if 3 lines could match."""
+        f = tmp_path / "tail-bound.txt"
+        f.write_text("start\nold\nE\nF\n")
+        ctx = ToolContext(workspace=str(tmp_path))
+        r = ToolRegistry()
+        await r.execute_tool("read", {"file_path": "tail-bound.txt"}, ctx)
+
+        result = await r.execute_tool(
+            "replace",
+            {
+                "file_path": "tail-bound.txt",
+                "bounds": [{"line_no": 2, "anchor": "old"}],
+                "new_string": "new\nE\nF\n",
+            },
+            ctx,
+        )
+
+        assert result.metadata.get("error") is not True
+        # Only 2 lines available after end_line
+        assert result.metadata["end_line"] == 4
+        assert f.read_text() == "start\nnew\nE\nF\n"
+
+
+    @pytest.mark.asyncio
+    async def test_multiline_replace_with_head_and_tail_dedup(self, tmp_path):
+        """Dedup works when the replaced range itself spans multiple lines."""
+        f = tmp_path / "multi-range.txt"
+        f.write_text("B\nC\nold1\nold2\nE\nF\n")
+        ctx = ToolContext(workspace=str(tmp_path))
+        r = ToolRegistry()
+        await r.execute_tool("read", {"file_path": "multi-range.txt"}, ctx)
+
+        result = await r.execute_tool(
+            "replace",
+            {
+                "file_path": "multi-range.txt",
+                "bounds": [
+                    {"line_no": 3, "anchor": "old1"},
+                    {"line_no": 4, "anchor": "old2"},
+                ],
+                "new_string": "B\nC\nnew\nE\nF\n",
+            },
+            ctx,
+        )
+
+        assert result.metadata.get("error") is not True
+        assert result.metadata["start_line"] == 1
+        assert result.metadata["end_line"] == 6
+        assert f.read_text() == "B\nC\nnew\nE\nF\n"
