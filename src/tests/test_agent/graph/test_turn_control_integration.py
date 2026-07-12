@@ -32,12 +32,15 @@ class ScriptedStreamingModel:
         yield AIMessageChunk(content="")
 
 
+def _turn_args(operation: str = "stop", intent: str = "", goal: str = "") -> dict[str, str]:
+    return {"operation": operation, "intent": intent, "goal": goal}
+
+
 def _turn_call_chunk() -> AIMessageChunk:
     return AIMessageChunk(
         content="",
-        tool_calls=[{"name": "turn", "args": {"decision": "stop"}, "id": "tc1", "type": "tool_call"}],
+        tool_calls=[{"name": "turn", "args": _turn_args(), "id": "tc1", "type": "tool_call"}],
     )
-
 
 
 def _turn_call_with_decision_chunk(decision: str) -> AIMessageChunk:
@@ -50,9 +53,21 @@ def _turn_call_with_decision_chunk(decision: str) -> AIMessageChunk:
 def _turn_stop_with_text_chunk(text: str = "unexpected text") -> AIMessageChunk:
     return AIMessageChunk(
         content=text,
-        tool_calls=[{"name": "turn", "args": {"decision": "stop"}, "id": "tc-stop-text", "type": "tool_call"}],
+        tool_calls=[{"name": "turn", "args": _turn_args(), "id": "tc-stop-text", "type": "tool_call"}],
     )
 
+
+
+def _turn_start_chunk(intent: str = "coding", goal: str = "Fix the issue") -> AIMessageChunk:
+    return AIMessageChunk(
+        content="",
+        tool_calls=[{
+            "name": "turn",
+            "args": _turn_args(operation="start", intent=intent, goal=goal),
+            "id": "tc-start",
+            "type": "tool_call",
+        }],
+    )
 def _text_chunk(text: str) -> AIMessageChunk:
     return AIMessageChunk(content=text)
 
@@ -69,7 +84,7 @@ def _mixed_chunk() -> AIMessageChunk:
         content="",
         tool_calls=[
             {"name": "read", "args": {"file_path": "x.py"}, "id": "tc3", "type": "tool_call"},
-            {"name": "turn", "args": {"decision": "stop"}, "id": "tc4", "type": "tool_call"},
+            {"name": "turn", "args": _turn_args(), "id": "tc4", "type": "tool_call"},
         ],
     )
 
@@ -109,6 +124,32 @@ def _make_graph(tmp_path, model, monkeypatch, provider="openai", renderer_cls=Fa
     return graph
 
 
+@pytest.mark.asyncio
+async def test_turn_start_accepts_goal_then_continues_to_stop(tmp_path, monkeypatch):
+    model = ScriptedStreamingModel([
+        [_turn_start_chunk(goal="Implement turn start")],
+        [_text_chunk("Done.")],
+        [_turn_call_chunk()],
+    ])
+    graph = _make_graph(tmp_path, model, monkeypatch)
+
+    result = await graph._call_llm({
+        "messages": [HumanMessage(content="start work")],
+        "step_count": 0,
+        "persona": "coordinate",
+        "turn_state": "initial",
+    })
+
+    assert result["messages"][0].content == "Done."
+    assert result["turn_state"] == "committed"
+    assert result["task_state"]["current_goal"] == {"desc": "Implement turn start"}
+    assert model.call_index == 3
+    assert any(
+        getattr(msg, "name", "") == "turn" and "Goal accepted" in str(msg.content)
+        for msg in model.received_messages[1]
+    )
+
+
 # ── Test 1: valid turn commits latest provisional response ──────────────────
 
 
@@ -144,7 +185,7 @@ async def test_turn_with_same_message_text_commits_immediately(tmp_path, monkeyp
             tool_calls=[
                 {
                     "name": "turn",
-                    "args": {"decision": "stop"},
+                    "args": _turn_args(),
                     "id": "tc-same-message",
                     "type": "tool_call",
                 }
@@ -276,11 +317,7 @@ async def test_missing_turn_reprompt_keeps_full_tool_set_and_appends_turn_prompt
     assert model.call_index == 2
     turn_prompt_messages = model.received_messages[1]
     assert any(
-        isinstance(msg, AIMessage) and msg.content == "Provisional answer."
-        for msg in turn_prompt_messages
-    )
-    assert any(
-        isinstance(msg, HumanMessage) and "regular tool" in str(msg.content).lower()
+        isinstance(msg, HumanMessage) and "operation='start'" in str(msg.content)
         for msg in turn_prompt_messages
     )
     tool_names = [tool["function"]["name"] for tool in model.bound_tools]
@@ -321,6 +358,7 @@ async def test_decision_only_turn_with_text_is_rejected_before_stop(tmp_path, mo
         "messages": [HumanMessage(content="hello")],
         "step_count": 0,
         "persona": "coordinate",
+        "turn_state": "running",
     })
 
     assert result["messages"][0].content == "Provisional answer."
@@ -331,11 +369,12 @@ async def test_decision_only_turn_with_text_is_rejected_before_stop(tmp_path, mo
 
 
 @pytest.mark.asyncio
-async def test_plain_text_during_decision_prompt_is_rejected_without_ui_leak(tmp_path, monkeypatch):
+async def test_plain_text_prompts_start_then_stop_without_ui_leak(tmp_path, monkeypatch):
     RecordingRenderer.reset()
     model = ScriptedStreamingModel([
         [_text_chunk("First provisional.")],
         [_text_chunk("Second provisional.")],
+        [_text_chunk("")],
     ])
     graph = _make_graph(tmp_path, model, monkeypatch, renderer_cls=RecordingRenderer)
 
@@ -346,10 +385,8 @@ async def test_plain_text_during_decision_prompt_is_rejected_without_ui_leak(tmp
     })
 
     visible_text = "".join(RecordingRenderer.visible_text)
-    assert result["should_continue"] is False
-    assert "invalid turn control call" in result["messages"][0].content
+    assert result["messages"][0].content == "Second provisional."
     assert "First provisional." in visible_text
-    assert "Second provisional." not in visible_text
     assert RecordingRenderer.headless_values[0] is False
     assert all(RecordingRenderer.headless_values[1:])
 
@@ -526,3 +563,64 @@ def test_terminal_normalization_preserves_message_metadata():
     assert normalized.usage_metadata == pending.usage_metadata
     assert normalized.additional_kwargs == {"provider_field": "value"}
     assert not normalized.tool_calls
+
+
+# ── Test: turn(start) re-renders context with Turn state: running ──────────
+
+
+@pytest.mark.asyncio
+async def test_turn_start_rerenders_context_with_running_state(tmp_path, monkeypatch):
+    model = ScriptedStreamingModel([
+        [_turn_start_chunk(goal="Implement turn start")],
+        [_text_chunk("Done.")],
+        [_turn_call_chunk()],
+    ])
+    graph = _make_graph(tmp_path, model, monkeypatch)
+
+    state = {
+        "messages": [HumanMessage(content="start work")],
+        "step_count": 0,
+        "persona": "coordinate",
+        "turn_state": "initial",
+    }
+    await graph._prepare_with_stream(state)
+    await graph._call_llm(state)
+
+    second_round_messages = model.received_messages[1]
+    task_context_text = "\n".join(
+        str(getattr(msg, "content", "")) for msg in second_round_messages
+    )
+    assert "Turn state: running" in task_context_text
+    assert "Implement turn start" in task_context_text
+
+
+# ── Test: TURN_START_PROMPT injected once, then TURN_STOP_PROMPT ────────────
+
+
+@pytest.mark.asyncio
+async def test_start_prompt_injected_once_then_stop_prompt(tmp_path, monkeypatch):
+    model = ScriptedStreamingModel([
+        [_text_chunk("First provisional.")],
+        [_text_chunk("Second provisional.")],
+        [_text_chunk("Third provisional.")],
+        [_turn_call_chunk()],
+    ])
+    graph = _make_graph(tmp_path, model, monkeypatch)
+
+    result = await graph._call_llm({
+        "messages": [HumanMessage(content="hello")],
+        "step_count": 0,
+        "persona": "coordinate",
+        "turn_state": "initial",
+    })
+
+    round1_messages = model.received_messages[1]
+    round1_text = "\n".join(str(getattr(msg, "content", "")) for msg in round1_messages)
+    assert "operation='start'" in round1_text
+
+    round2_messages = model.received_messages[2]
+    round2_text = "\n".join(str(getattr(msg, "content", "")) for msg in round2_messages)
+    assert "operation='stop'" in round2_text
+
+    assert result["messages"][0].content == "Second provisional."
+    assert model.call_index == 3

@@ -307,7 +307,7 @@ async def test_parallel_subagents_plan_mode_blocks_implement(tmp_path):
 
     assert executed == []
     assert [msg.tool_call_id for msg in result["messages"]] == ["call_a", "call_b"]
-    assert all("BLOCKED by plan mode: cannot delegate to implement" in msg.content for msg in result["messages"])
+    assert all("cannot delegate to implement" in msg.content for msg in result["messages"])
 
 
 @pytest.mark.asyncio

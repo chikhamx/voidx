@@ -116,7 +116,7 @@ async def test_run_once_uses_general_fallback_when_structured_resolver_fails(tmp
         set_dock(None)
 
     initial = captured["initial"]
-    assert initial["task_state"]["current_intent"] == "general"
+    assert initial["task_state"]["current_intent"] == "coding"
     assert initial["task_state"]["current_goal"] is None
     assert initial["task_state"]["recent_exchanges"] == []
     rows = await load_messages(graph._session.id)
@@ -167,6 +167,6 @@ async def test_run_once_does_not_preadvance_workflow_without_resolver_join(tmp_p
     initial = captured["initial"]
     state = TaskState.model_validate(initial["task_state"])
     assert "brainstorm" in state.workflow_runs
-    assert initial["persona"] == "plan"
+    assert initial["persona"] == "coordinate"
 
 

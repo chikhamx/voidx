@@ -1,5 +1,7 @@
 # 实现计划：turn(start) — LLM 主动声明 goal
 
+> **Status: Done** — Archived on 2026-07-12.
+
 参考设计文档：`docs/design/turn-start-goal-declaration.md`
 
 ## 目标

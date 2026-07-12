@@ -12,12 +12,20 @@ from langchain_core.messages import AIMessage, HumanMessage, ToolMessage
 from voidx.agent.todo_state import sanitize_todo_replay_messages
 from voidx.agent.attachments import build_user_message_payload, serialize_message_content
 from voidx.agent.message_rows import messages_from_rows_incremental
-from voidx.agent.goal_resolver import resolve_goal_for_turn, resolve_goal_mode, resolve_plan_mode
+from voidx.agent.goal_resolver import resolve_goal_mode, resolve_plan_mode
 from voidx.agent.runtime_context import TaskIntent
 from voidx.agent.graph.thread_context import bind_thread_execution_context
 from voidx.agent.state import AgentState
-from voidx.agent.task_state import TaskState, TurnExchange, goal_label, goal_type_from_join
+from voidx.agent.task_state import (
+    GoalResolution,
+    IntentResolution,
+    TaskState,
+    TurnExchange,
+    goal_label,
+    goal_type_from_join,
+)
 from voidx.llm.message_status import message_status
+from voidx.logging.tool_log import log_tool_event
 from voidx.memory.service import (
     MessageRow,
     MessageRuntimeSnapshot,
@@ -42,7 +50,7 @@ from voidx.runtime.ui import (
     TurnCompleted,
     TurnFailed,
     TurnStarted,
-    WarningAppended,
+    GuidanceCommitted,
 )
 from voidx.workflow.service import reconcile_workflow_runs_for_turn
 from voidx.workflow.types import WorkflowRunStatus
@@ -200,15 +208,10 @@ class GraphTurnRunner:
                 elif interaction_mode == "goal":
                     intent_resolution = resolve_goal_mode(payload.title_text, base_task_state)
                 else:
-                    intent_resolution = await resolve_goal_for_turn(
-                        model=host.model,
-                        user_text=payload.title_text,
-                        interaction_mode=interaction_mode,
-                        task_state=base_task_state,
-                        log_diagnostic=bool(getattr(host.config, "log_llm_diagnostic", False)),
-                        retry_config=getattr(host._settings, "get_retry_config", lambda: None)() if host._settings else None,
-                        usage_stats=host._usage_stats,
-                        model_config=host.config.model,
+                    intent_resolution = GoalResolution(
+                        intent=IntentResolution(type=TaskIntent.CODING),
+                        goal=None,
+                        plan=None,
                     )
                 turn_task_state = base_task_state.model_copy(deep=True)
                 turn_task_state.update_after_turn(
@@ -264,6 +267,7 @@ class GraphTurnRunner:
                     "interaction_mode": interaction_mode,
                     "task_state": turn_task_state.model_dump(mode="json"),
                     "user_message_id": user_message_id,
+                    "turn_state": "initial",
                 }
 
                 # ── compaction: check overflow before running ──────────────────
@@ -434,10 +438,13 @@ class GraphTurnRunner:
                 if pending_guidance is not None:
                     if pending_guidance:
                         message = "Guidance discarded: no LLM call to inject into."
+                        log_tool_event("guidance_discarded", message=message)
                         if host._ui.via_events():
-                            await host._ui.events.emit(WarningAppended(message=message))
+                            await host._ui.events.emit(GuidanceCommitted(source="system"))
                         else:
-                            host._ui.dock.append_message(f"[dim]{message}[/dim]", markup=True)
+                            clear_guidance_preview = getattr(host._ui.dock, "clear_guidance_preview", None)
+                            if callable(clear_guidance_preview):
+                                clear_guidance_preview()
                     pending_guidance.clear()
                 host._ui.session_tracker.finish_turn()
                 if host._ui.via_events():

@@ -73,26 +73,31 @@ async def test_run_once_keeps_default_title_when_resolver_falls_back_without_goa
 
 
 @pytest.mark.asyncio
-async def test_smart_title_generation_failure_keeps_temporary_title(tmp_path):
+async def test_smart_title_generation_failure_keeps_temporary_title(tmp_path, monkeypatch):
     graph = VoidXGraph(Config(workspace=str(tmp_path)), api_key=None)
 
-    class ResolverModel:
-        def with_structured_output(self, schema):
-            assert schema is ResolverGoal
-            return self
-
-        async def ainvoke(self, _messages):
-            return ResolverGoal(
-                intent="coding",
-                goal="分析启动流程",
-                workflow=None,
-            )
+    def _fake_resolve_goal_mode(user_text, task_state):
+        return GoalResolution(
+            intent=IntentResolution(type=TaskIntent.CODING),
+            goal=GoalSpec(desc="分析启动流程"),
+            plan=None,
+        )
 
     class FakeGraph:
         async def ainvoke(self, initial, _config):
             return {"messages": list(initial["messages"]) + [AIMessage(content="ok")]}
 
-    graph.model = ResolverModel()
+    graph.graph = FakeGraph()
+    graph._interaction_mode = InteractionMode.GOAL
+    import voidx.agent.graph.turn_runner as turn_runner_mod
+    monkeypatch.setattr(turn_runner_mod, "resolve_goal_mode", _fake_resolve_goal_mode)
+    test_dock = BottomInputDock()
+    set_dock(test_dock)
+    test_dock.begin_capture()
+    set_dock(test_dock)
+    graph.graph = FakeGraph()
+    graph._interaction_mode = InteractionMode.GOAL
+    test_dock = BottomInputDock()
     graph.graph = FakeGraph()
     test_dock = BottomInputDock()
     set_dock(test_dock)

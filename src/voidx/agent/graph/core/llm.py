@@ -3,19 +3,29 @@ from __future__ import annotations
 import asyncio
 from typing import TYPE_CHECKING, Any
 
-from langchain_core.messages import AIMessage, BaseMessage, HumanMessage, RemoveMessage
+from langchain_core.messages import AIMessage, BaseMessage, HumanMessage, RemoveMessage, ToolMessage
 from langgraph.graph.message import REMOVE_ALL_MESSAGES
 
 from voidx.agent.agents import get_agent
 from voidx.agent.prompts import WORKFLOW_RUNTIME, build_base_system, persona_prompt
 from voidx.agent.runtime_context import (
+    ContextCompiler,
     ContextCompilerCache,
     InteractionMode,
     RuntimeContextBuilder,
+    TaskIntent,
     raw_semantic_messages,
 )
 from voidx.agent.state import AgentState
-from voidx.agent.task_state import GoalResolution, TaskState, TodoRunState, goal_label, goal_type_from_join
+from voidx.agent.task_state import (
+    GoalResolution,
+    GoalSpec,
+    IntentResolution,
+    TaskState,
+    TodoRunState,
+    goal_label,
+    goal_type_from_join,
+)
 from voidx.agent.todo_state import sanitize_todo_replay_messages
 from voidx.agent.message_trimming import trim_superseded_file_tools
 from voidx.agent.tool_exchange_sanitizer import sanitize_failed_tool_exchanges
@@ -46,14 +56,16 @@ from voidx.runtime.ui import (
 )
 
 from voidx.agent.graph.turn_control import (
-    TURN_PROMPT,
+    TURN_STOP_PROMPT,
     INVALID_TURN_PROMPT,
+    TURN_START_PROMPT,
     TURN_TOOL_DEFINITION,
     TurnClassification,
     classify_turn_call,
     normalize_terminal_message,
     validate_turn_call,
 )
+from voidx.workflow.service import reconcile_workflow_runs_for_turn
 from .helpers import (
     _invalidate_tui,
     _merge_workflow_runs,
@@ -118,7 +130,7 @@ class GraphLlmMixin:
         summary = self._pending_summary or self._compaction_summary
         self._pending_summary = None
 
-        context, self._context_cache = RuntimeContextBuilder(
+        self._last_context_builder = RuntimeContextBuilder(
             config=self.config,
             workspace=state.get("workspace", "."),
             base_system_prompt=build_base_system(self.config.user_profile.language),
@@ -132,7 +144,9 @@ class GraphLlmMixin:
             summary=summary,
             task_state=task_state,
             session_date=self._session_date,
-        ).build_incremental(self._context_cache)
+            turn_state=state.get("turn_state", "initial"),
+        )
+        context, self._context_cache = self._last_context_builder.build_incremental(self._context_cache)
         context.apply_to_messages(state.get("messages", []))
 
         task_state.workflow_runs = {run.name: run for run in workflow_runs}
@@ -185,6 +199,10 @@ class GraphLlmMixin:
                 "should_continue": False,
             }
 
+        interaction_mode_value = state.get("interaction_mode") or (
+            InteractionMode.PLAN.value if state.get("plan_mode", False) else self._interaction_mode.value
+        )
+        turn_state = str(state.get("turn_state") or "initial")
         tool_defs = self.tools.tools_for_llm()
         turn_control_active = self._turn_control_enabled()
         if turn_control_active:
@@ -277,6 +295,18 @@ class GraphLlmMixin:
                 },
             )
 
+        def _rerender_task_context(messages: list[BaseMessage], new_turn_state: str, task_state: TaskState | None = None) -> list[BaseMessage]:
+            builder = getattr(self, "_last_context_builder", None)
+            if builder is None:
+                return messages
+            builder.turn_state = new_turn_state
+            if task_state is not None:
+                builder.task_state = task_state
+                builder.current_goal = task_state.current_goal
+                builder.task_intent = task_state.current_intent
+            context = builder.build()
+            return ContextCompiler(context).compile_messages(messages)
+
         def replacement_messages(assistant_msg: AIMessage) -> list[BaseMessage]:
             if not compaction_happened:
                 return [assistant_msg]
@@ -344,6 +374,7 @@ class GraphLlmMixin:
         missing_turn_count = 0
         invalid_turn_repaired = False
         turn_prompt_active = False
+        start_prompt_injected = False
         terminal_msg: AIMessage | None = None
         while True:
             try:
@@ -433,10 +464,68 @@ class GraphLlmMixin:
                 if turn_control_active:
                     classification = classify_turn_call(assistant_msg)
                     has_text = bool(extract_text(assistant_msg).strip())
-                    if turn_prompt_active and (
-                        has_text or classification == TurnClassification.PLAIN_TEXT
-                    ):
+                    if turn_prompt_active and has_text and classification != TurnClassification.PLAIN_TEXT:
                         classification = TurnClassification.INVALID_TURN
+
+                    if classification == TurnClassification.VALID_START:
+                        start_call = assistant_msg.tool_calls[0]
+                        tool_call_id = str(start_call.get("id") or "")
+                        if turn_state != "initial":
+                            llm_messages = [
+                                *llm_messages,
+                                assistant_msg,
+                                ToolMessage(
+                                    content="Goal already declared.",
+                                    tool_call_id=tool_call_id,
+                                    name="turn",
+                                ),
+                            ]
+                            context_tokens = estimate_context_tokens(llm_messages, self.config.model.model)
+                            self._usage_stats.update_context(context_tokens)
+                            continue
+
+                        start_args = start_call.get("args") or {}
+                        intent_value = str(start_args.get("intent") or "coding")
+                        goal_text = str(start_args.get("goal") or "").strip()
+                        resolution = GoalResolution(
+                            intent=IntentResolution(
+                                type=TaskIntent.GENERAL if intent_value == "general" else TaskIntent.CODING,
+                            ),
+                            goal=GoalSpec(desc=goal_text),
+                            plan=None,
+                        )
+                        runtime_task_state.update_after_turn(
+                            resolution,
+                            latest_user_text(state_messages),
+                        )
+                        reconciled_workflow_runs = reconcile_workflow_runs_for_turn(
+                            goal_resolution=resolution,
+                            after_state=runtime_task_state,
+                        )
+                        runtime_task_state.workflow_runs = {
+                            run.name: run for run in reconciled_workflow_runs
+                        }
+                        self._task_state = runtime_task_state.model_copy(deep=True)
+                        _invalidate_tui(self)
+                        turn_state = "running"
+                        turn_prompt_active = False
+                        llm_messages = _rerender_task_context(llm_messages, "running", runtime_task_state)
+                        llm_messages = [
+                            *llm_messages,
+                            assistant_msg,
+                            ToolMessage(
+                                content=(
+                                    f"Goal accepted: {goal_label(runtime_task_state.current_goal) or goal_text}. "
+                                    f"Intent: {intent_value}. Next: consider whether to enter or maintain "
+                                    "a workflow (brainstorm/plan/tdd/...) to work on this, or proceed directly."
+                                ),
+                                tool_call_id=tool_call_id,
+                                name="turn",
+                            ),
+                        ]
+                        context_tokens = estimate_context_tokens(llm_messages, self.config.model.model)
+                        self._usage_stats.update_context(context_tokens)
+                        continue
 
                     if classification == TurnClassification.VALID_TURN:
                         turn_terminal = (
@@ -447,6 +536,7 @@ class GraphLlmMixin:
                         if validate_turn_call(assistant_msg, turn_terminal):
                             self._turn_metrics.increment("turn_control_called")
                             terminal_msg = normalize_terminal_message(turn_terminal)
+                            turn_state = "committed"
                             break
                         self._turn_metrics.increment("turn_control_invalid")
                         if not invalid_turn_repaired:
@@ -512,7 +602,28 @@ class GraphLlmMixin:
                         }
 
                     if classification == TurnClassification.PLAIN_TEXT:
-                        pending_provisional = assistant_msg
+                        if missing_turn_count == 0:
+                            pending_provisional = assistant_msg
+                        if (
+                            turn_state == "initial"
+                            and not start_prompt_injected
+                            and missing_turn_count == 0
+                            and interaction_mode_value not in {"plan", "goal"}
+                        ):
+                            start_prompt_injected = True
+                            turn_prompt_active = True
+                            self._turn_metrics.increment("turn_control_missing")
+                            llm_messages = [
+                                *llm_messages,
+                                assistant_msg,
+                                HumanMessage(
+                                    content=TURN_START_PROMPT,
+                                    additional_kwargs={GUIDANCE_MARKER: True},
+                                ),
+                            ]
+                            context_tokens = estimate_context_tokens(llm_messages, self.config.model.model)
+                            self._usage_stats.update_context(context_tokens)
+                            continue
                         missing_turn_count += 1
                         self._turn_metrics.increment("turn_control_missing")
                         if missing_turn_count == 1:
@@ -522,7 +633,7 @@ class GraphLlmMixin:
                                 *llm_messages,
                                 assistant_msg,
                                 HumanMessage(
-                                    content=TURN_PROMPT,
+                                    content=TURN_STOP_PROMPT,
                                     additional_kwargs={GUIDANCE_MARKER: True},
                                 ),
                             ]
@@ -636,6 +747,8 @@ class GraphLlmMixin:
             "messages": replacement_messages(final_msg),
             "step_count": step + 1,
             "convergence_forced": convergence_forced,
+            "turn_state": turn_state,
+            "task_state": runtime_task_state.model_dump(mode="json"),
         }
 
     def _router(self, state: AgentState) -> str:

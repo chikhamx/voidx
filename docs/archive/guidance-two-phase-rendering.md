@@ -7,8 +7,8 @@
 把 `/guide` 消息的渲染从"提交时立即输出到终端"改为两阶段：提交时在 vibe 动态行括号内截断预览，下次 LLM 调用前才正式输出到终端，样式与普通用户消息一致，仅开头标志不同（`⚡` vs `❯`）。
 
 **关键设计决策**：
-- guard guidance 与 user guidance 走相同的渲染路径（都发 `GuidanceSubmitted`，都在 vibe 行预览，都在注入时输出到终端）。
-- guard guidance 的 emit 失败语义与 user 不同：user guidance emit 失败时返回 `False` 不入队；guard guidance emit 失败时仍入队返回 `True`（保持当前行为，guard guidance 是系统内部信号，不应因 UI 状态丢失）。
+- guard guidance 不发 `GuidanceSubmitted`（不在 vibe 行预览），仅入队 `_pending_guidance`，在注入时与 user guidance 一起 drain 并输出到终端。
+- guard guidance 的 emit 失败语义与 user 不同：user guidance emit 失败时返回 `False` 不入队；guard guidance 不走 emit 路径，直接入队返回 `True`（guard guidance 是系统内部信号，不应因 UI 状态丢失）。
 - `[truncated]` 标记：`_pending_guidance` 改为存储 `(text, truncated)` 元组而非纯 `str`，drain 时还原 truncated 标记，注入时 `MessageAppended` 的 text 包含 `[truncated]` 后缀（与当前 Phase 1 的 `display_text` 一致）。
 
 ## Source of Truth
@@ -16,7 +16,7 @@
 | Source | Path / Link | Notes |
 |--------|-------------|-------|
 | Design | 本文档 | 用户已批准方案 |
-| Existing Code — submit_guidance | `src/voidx/agent/graph/core/voidx_graph.py:409-433` | source="user" 且 via_events() 时立即发 MessageAppended；guard guidance 不发 MessageAppended 但发 GuidanceSubmitted；emit 失败时 user 返回 False 不入队，guard 仍入队返回 True |
+| Existing Code — submit_guidance | `src/voidx/agent/graph/core/voidx_graph.py:409-433` | source="user" 且 via_events() 时发 GuidanceSubmitted；guard guidance 不发 GuidanceSubmitted 也不发 MessageAppended；emit 失败时 user 返回 False 不入队，guard 直接入队返回 True |
 | Existing Code — DockEventConsumer | `src/voidx/ui/output/events/consumers.py:129-189` | MessageAppended → dock.append_message; GuidanceSubmitted → None |
 | Existing Code — vibe 行 | `tui/voidx_cli/render_activity.py:72-115` | `_busy_activity_label()` 拼接 details |
 | Existing Code — start_turn | `src/voidx/ui/output/dock/app.py:225-244` | 普通用户消息 turn 节点创建 |
@@ -31,42 +31,37 @@
 - `"guidance"` 不是注册的 Rich style，文本无特殊样式，显示为普通文本行。
 - guidance 文本同时存入 `_pending_guidance` 队列，在下次 LLM 调用前由 `_drain_pending_guidance()` drain 注入 messages。
 - `GuidanceSubmitted` 事件被 `DockEventConsumer` 忽略（返回 `None`），web gateway 也不映射它。
-- guard guidance（`source="guard"`）不发 `MessageAppended`，但发 `GuidanceSubmitted`（当 `via_events()` 为 True）。emit 失败时仍入队返回 `True`（与 user guidance 不同，user emit 失败返回 `False` 不入队）。
+- guard guidance（`source="guard"`）不发 `MessageAppended`，也不发 `GuidanceSubmitted`。直接入队返回 `True`（与 user guidance 不同，user emit 失败返回 `False` 不入队）。
 
 ## Target Behavior
 
 - **提交时**：`submit_guidance()` 不再发 `MessageAppended`，只发 `GuidanceSubmitted`。`DockEventConsumer` 收到 `GuidanceSubmitted` 后调用 `dock.set_guidance_preview(text)`，存到 dock 状态字段，不创建输出树节点。TUI vibe 动态行从 dock 查询 preview，截断后显示在括号内，格式 `⚡{truncated_text}`。多条 guidance 时只显示最后一条（覆盖）。
 - **注入时**：`_call_llm()` 中 `_drain_pending_guidance()` 返回后，对每条 guidance 发 `MessageAppended(text=display_text, style="guidance")`（`display_text` 含 `[truncated]` 后缀当 truncated=True），最后发一条 `GuidanceCommitted()`。`DockEventConsumer` 收到 `MessageAppended(style="guidance")` 后调用 `dock.append_guidance_turn(text)`，创建 `node_type="turn"` 节点，header 为 `[bold white]⚡[/] {text}`，全宽背景、空行分隔、body 缩进，与普通用户消息一致。`GuidanceCommitted` 调用 `dock.clear_guidance_preview()` 清除 vibe 行 preview（只在所有 MessageAppended 发完后清除，避免多条 guidance 时过早清除）。
-- guard guidance 也走同样路径（发 `GuidanceSubmitted`，在 vibe 行显示，注入时输出到终端）。但 emit 失败语义不同：guard emit 失败时仍入队返回 `True`。
+- guard guidance 不发 `GuidanceSubmitted`（不在 vibe 行预览），仅入队 `_pending_guidance`，在注入时与 user guidance 一起 drain 并输出到终端。guard guidance 直接入队返回 `True`，不走 emit 路径。
 - web gateway 适配：`GuidanceSubmitted` 映射为 preview 通知；`MessageAppended(style="guidance")` 继续映射为 `item.started`（注入时渲染）；`GuidanceCommitted` 映射为清除 preview 的通知。
 
 ## Files to Change
 
 | Path | Change Type | Required Change | Do Not Change |
 |------|-------------|-----------------|---------------|
-| `src/voidx/agent/graph/core/voidx_graph.py` | modify | `submit_guidance()`: 删除 `MessageAppended` 发送，只发 `GuidanceSubmitted`；guard guidance 也发 `GuidanceSubmitted`；`_pending_guidance` 改为存储 `(text, truncated)` 元组；`_drain_pending_guidance()` 返回 `list[tuple[HumanMessage, bool]]` | `_pending_guidance` 的 FIFO 队列语义、`GUIDANCE_MAX_CHARS` 截断逻辑、`HumanMessage` 的 `GUIDANCE_MARKER` |
-| `src/voidx/agent/graph/contracts.py` | modify | `_pending_guidance` 类型从 `list[str]` 改为 `list[tuple[str, bool]]` | 其他字段 |
-| `src/voidx/agent/graph/tool_executor/guards.py` | modify | `_submit_guard_guidance()` fallback 路径（line 149-151）：`pending.append(guidance.message)` 改为 `pending.append((guidance.message, False))` | `submit_guidance` 调用路径 |
-| `src/voidx/agent/graph/core/llm.py` | modify | `_call_llm()`: drain 后对每条 guidance 发 `MessageAppended(style="guidance")` + `GuidanceCommitted`；需新增 `from voidx.ui.output.events import MessageAppended, GuidanceCommitted` 导入 | drain 返回值、messages 注入逻辑 |
-| `src/voidx/ui/output/events/schema.py` | modify | 新增 `GuidanceCommitted` 事件类型 | 现有事件类型 |
-| `src/voidx/ui/output/events/__init__.py` | modify | 导出 `GuidanceCommitted` | |
-| `src/voidx/ui/output/events/consumers.py` | modify | `GuidanceSubmitted` → `dock.set_guidance_preview(text)`；`MessageAppended(style="guidance")` → `dock.append_guidance_turn(text)`；`GuidanceCommitted` → `dock.clear_guidance_preview()` | 其他事件处理 |
-| `src/voidx/ui/output/dock/app.py` | modify | 新增 `_guidance_preview: str` 字段；`set_guidance_preview()` / `clear_guidance_preview()` / `append_guidance_turn()` 方法 | `start_turn()` 逻辑 |
-| `src/voidx/ui/output/dock/status.py` | modify | 新增 `active_guidance_preview_text()` 模块级函数 | 现有 status 函数 |
-| `src/voidx/ui/output/dock/__init__.py` | modify | 导出 `active_guidance_preview_text` | |
-| `src/voidx/runtime/ui.py` | modify | 新增 `GuidanceCommitted = _LazyAttr("voidx.ui.output.events", "GuidanceCommitted")` | 现有 `_LazyAttr` 条目 |
-| `tui/voidx_cli/render_activity.py` | modify | `_busy_activity_label()` details 中加入 `⚡{truncated_preview}` | 现有 details 拼接逻辑 |
-| `src/voidx/ui/gateway/adapter.py` | modify | `GuidanceSubmitted` 映射为 preview 通知；`GuidanceCommitted` 映射为清除 preview | 现有 handler 逻辑 |
+| `src/voidx/agent/graph/core/voidx_graph.py` | modify | `submit_guidance()`: 删除 `MessageAppended` 发送，只发 `GuidanceSubmitted`；guard guidance 不发 `GuidanceSubmitted`，直接入队；`_pending_guidance` 改为存储 `(text, truncated)` 元组；`_drain_pending_guidance()` 返回 `list[tuple[HumanMessage, bool]]` | `_pending_guidance` 的 FIFO 队列语义、`GUIDANCE_MAX_CHARS` 截断逻辑、`HumanMessage` 的 `GUIDANCE_MARKER` |
+| `src/voidx/ui/output/events/schema.py` | add | 新增 `GuidanceCommitted` 事件（fields: `text: str = ""`, `truncated: bool = False`, `source: Literal["user", "guard", "system"] = "user"`） | `GuidanceSubmitted` schema 不变 |
+| `src/voidx/ui/output/events/consumers.py` | modify | `GuidanceSubmitted` → `dock.set_guidance_preview(text)`；`GuidanceCommitted` → `dock.clear_guidance_preview()` | `MessageAppended` 的其他 style 分支 |
+| `src/voidx/ui/output/dock/app.py` | add | `set_guidance_preview(text)`, `clear_guidance_preview()`, `append_guidance_turn(text)`, `_guidance_preview` 字段 | `start_turn()` 的 header 格式或 node_type |
+| `src/voidx/ui/output/dock/status.py` | add | `active_guidance_preview_text()` 函数 | 其他 `active_*_text()` 函数 |
+| `tui/voidx_cli/render_activity.py` | modify | `_busy_activity_label()` 在 details 末尾加入 `⚡{preview}` | 其他 details 拼接逻辑 |
+| `src/voidx/agent/graph/core/llm.py` | modify | `_call_llm()` drain 后发 `MessageAppended(style="guidance")` + `GuidanceCommitted` | drain 调用点、`rebuild_llm_messages` |
+| `src/voidx/ui/gateway/adapter.py` | modify | `GuidanceSubmitted` 映射为 preview 通知；`GuidanceCommitted` 映射为清除 | `MessageAppended` 映射 |
 | `src/tests/test_agent/test_guide_command.py` | modify | 更新断言：不再期望 `MessageAppended`，改为只期望 `GuidanceSubmitted` | |
 | `src/tests/test_ui/gateway/test_ui_events_dock_prompts.py` | modify | 更新 guidance dock 测试 | |
 | `src/tests/test_ui/gateway/test_adapter.py` | modify | 更新 guidance adapter 测试 | |
-| `src/tests/test_agent/test_guard_guidance.py` | modify | 更新断言：guard guidance 现在也发 `GuidanceSubmitted`（当前已发）；emit 失败时仍入队返回 `True` 的行为保持；`_pending_guidance` 改为元组后需适配 | |
+| `src/tests/test_agent/test_guard_guidance.py` | modify | 更新断言：guard guidance 不发 `GuidanceSubmitted`（直接入队）；emit 失败时仍入队返回 `True` 的行为保持；`_pending_guidance` 改为元组后需适配 | |
 
 ## Invariants
 
 - `_pending_guidance` 队列 FIFO 语义不变：`submit_guidance()` 追加，`_drain_pending_guidance()` 弹出。存储格式从 `list[str]` 改为 `list[tuple[str, bool]]`（text, truncated），但 FIFO 顺序和 clear 逻辑不变。
 - `submit_guidance(source="user")` emit 失败时返回 `False` 不入队（保持当前行为）。
-- `submit_guidance(source="guard")` emit 失败时仍入队返回 `True`（保持当前行为，guard guidance 是系统内部信号）。
+- `submit_guidance(source="guard")` 不发 `GuidanceSubmitted`，直接入队返回 `True`（guard guidance 是系统内部信号，不应因 UI 状态丢失）。
 - guidance `HumanMessage` 的 `GUIDANCE_MARKER` additional_kwargs 不变。
 - 普通用户消息（`start_turn`）的渲染逻辑不变。
 - `safe_flush_line_count` 的 settled 链检查逻辑不变。
@@ -78,7 +73,7 @@
 ### Functional Requirements
 
 - [ ] `submit_guidance(source="user")` 不再发 `MessageAppended`，只发 `GuidanceSubmitted(text, truncated)`。emit 失败时返回 `False`（不入队）。
-- [ ] `submit_guidance(source="guard")` 也发 `GuidanceSubmitted(text, truncated)`（truncated 由截断逻辑计算，与 user 一致）。emit 失败时仍入队返回 `True`（与 user 不同）。
+- [ ] `submit_guidance(source="guard")` 不发 `GuidanceSubmitted`，直接入队返回 `True`（与 user 不同，user emit 失败返回 `False` 不入队）。
 - [ ] `_pending_guidance` 改为存储 `(text, truncated)` 元组。`_drain_pending_guidance()` 改为返回 `list[tuple[HumanMessage, bool]]`（message, truncated）。`_call_llm()` 中 drain 后需解包：`guidance_messages = [msg for msg, _ in drained]` 用于注入 LLM，`truncated_flags = [t for _, t in drained]` 用于构造 `display_text`。注意 `rebuild_llm_messages` 中 `[*messages, *guidance_messages]` 的使用方式需适配（guidance_messages 仍为 `list[HumanMessage]`）。
 - [ ] `DockEventConsumer.handle(GuidanceSubmitted)` 调用 `dock.set_guidance_preview(text)`。
 - [ ] `DockEventConsumer.handle(MessageAppended(style="guidance"))` 调用 `dock.append_guidance_turn(text)` 而非 `dock.append_message(text, style="guidance")`。
@@ -94,7 +89,7 @@
 ### Error Handling
 
 - [ ] `submit_guidance(source="user")` emit `GuidanceSubmitted` 失败时返回 `False` 不入队（保持当前 user guidance 的 emit 失败语义）。
-- [ ] `submit_guidance(source="guard")` emit `GuidanceSubmitted` 失败时仍入队返回 `True`（保持当前 guard guidance 的 emit 失败语义，guard guidance 是系统内部信号，不应因 UI 状态丢失）。
+- [ ] `submit_guidance(source="guard")` 不发 `GuidanceSubmitted`，直接入队返回 `True`（guard guidance 是系统内部信号，不应因 UI 状态丢失）。
 - [ ] `_call_llm()` 中发 `MessageAppended` / `GuidanceCommitted` 时如果 `via_events()` 为 False，跳过（非 events 模式下 guidance 不渲染到终端，与当前行为一致——当前非 events 模式下 guidance 只入队不显示）。
 
 ### Data / Migration Requirements
@@ -115,9 +110,8 @@
 | 超长 guidance（> GUIDANCE_MAX_CHARS） | 截断后存入队列，`GuidanceSubmitted.truncated=True`，preview 显示截断后的文本 | `test_submit_user_guidance_marks_truncated_display_without_polluting_llm_input` |
 | 多条 guidance（同一 turn 内多次 `/guide`） | vibe 行只显示最后一条（`set_guidance_preview` 覆盖）；注入时每条各自输出一个 guidance turn 节点 | 新增测试 |
 | emit `GuidanceSubmitted` 失败（user） | 返回 `False`，不入队 | `test_submit_user_guidance_fails_without_queueing_when_visible_emit_fails` |
-| emit `GuidanceSubmitted` 失败（guard） | 仍入队返回 `True` | `test_submit_guard_guidance_stays_hidden_and_queues_when_event_bus_rejects` |
+| guard guidance | 不发 `GuidanceSubmitted`（不在 vibe 行预览），直接入队返回 `True`；注入时与 user guidance 一起 drain 并输出到终端 | `test_guard_guidance.py` 更新 |
 | guidance 提交后 turn 结束但无 LLM 调用 | `turn_runner.py` finally 块中 `_pending_guidance` 被 clear，发 `WarningAppended`；preview 状态残留但 turn 结束后 vibe 行不再渲染 | 新增测试（现有 `turn_runner.py:435-445` finally 块逻辑无测试覆盖） |
-| guard guidance | 与 user guidance 走同样路径（发 `GuidanceSubmitted`，preview 显示，注入时输出），但 emit 失败时仍入队 | `test_guard_guidance.py` 更新 |
 | 非 events 模式（`via_events()` 为 False） | `submit_guidance` 不发事件只入队；`_call_llm` 不发渲染事件；guidance 不显示在终端 | 现有行为保持 |
 
 ## Forbidden Changes
@@ -139,7 +133,7 @@
 | Focused — dock prompts | `./test.py --backend -- src/tests/test_ui/gateway/test_ui_events_dock_prompts.py -v` | GuidanceSubmitted 设置 preview；MessageAppended(style="guidance") 创建 turn 节点 |
 | Focused — gateway adapter | `./test.py --backend -- src/tests/test_ui/gateway/test_adapter.py -v` | GuidanceSubmitted 映射为 preview 通知；GuidanceCommitted 映射为清除 |
 | Focused — TUI activity | `./test.py --backend -- tui/tests/test_status_activity.py -v` | vibe 行包含 `⚡{truncated_preview}` |
-| Focused — guard guidance | `./test.py --backend -- src/tests/test_agent/test_guard_guidance.py -v` | guard guidance 发 GuidanceSubmitted；emit 失败仍入队 |
+| Focused — guard guidance | `./test.py --backend -- src/tests/test_agent/test_guard_guidance.py -v` | guard guidance 不发 GuidanceSubmitted；直接入队返回 True |
 | Regression — slash session | `./test.py --backend -- src/tests/test_agent/slash/test_slash_session.py -v` | `/guide` slash 命令行为不变 |
 | Regression — run loop startup | `./test.py --backend -- src/tests/test_agent/graph/test_run_loop_startup.py -v` | web command guide 路径不变 |
 | Regression — full backend | `./test.py --backend` | 全绿 |

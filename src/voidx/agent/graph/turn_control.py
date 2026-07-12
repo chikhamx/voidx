@@ -20,20 +20,30 @@ TURN_TOOL_DEFINITION: dict[str, Any] = {
         "name": TURN_TOOL_NAME,
         "description": (
             "Commit the pending assistant response and end the current user turn. "
-            "Call with decision='stop' only when the pending response is complete. "
+            "Call with operation='stop' only when the pending response is complete. "
+            "Call with operation='start' at the beginning of a turn to declare intent and goal. "
             "If more work is needed, call another available tool instead. Do not output text with this call."
         ),
         "strict": True,
         "parameters": {
             "type": "object",
             "properties": {
-                "decision": {
+                "operation": {
                     "type": "string",
-                    "enum": ["stop"],
-                    "description": "Choose stop to commit the pending answer.",
-                }
+                    "enum": ["start", "stop"],
+                    "description": "start: declare turn objective. stop: commit pending answer.",
+                },
+                "intent": {
+                    "type": "string",
+                    "enum": ["coding", "general", ""],
+                    "description": "For start: coding=code task, general=chat/Q&A. For stop: pass empty string.",
+                },
+                "goal": {
+                    "type": "string",
+                    "description": "For start: stable objective, short and clear. For stop: pass empty string.",
+                },
             },
-            "required": ["decision"],
+            "required": ["operation", "intent", "goal"],
             "additionalProperties": False,
         },
     },
@@ -42,24 +52,30 @@ TURN_TOOL_DEFINITION: dict[str, Any] = {
 
 class TurnClassification(str, Enum):
     VALID_TURN = "valid_turn"
+    VALID_START = "valid_start"
     REGULAR_TOOLS = "regular_tools"
     INVALID_TURN = "invalid_turn"
     PLAIN_TEXT = "plain_text"
 
 
-TURN_PROMPT = (
+TURN_STOP_PROMPT = (
     "Decide whether the latest assistant response fully completes the user's request. "
-    "Do not output text. If complete, call turn with decision='stop' to commit "
-    "the pending response and end this turn. If more work is needed, call the appropriate regular tool now."
+    "Do not output text. If complete, call turn with operation='stop', intent='', and goal='' "
+    "to commit the pending response and end this turn. If more work is needed, call the appropriate regular tool now."
 )
 
-FIRST_MISS_PROMPT = TURN_PROMPT
+TURN_START_PROMPT = (
+    "You forgot to call turn with operation='start' to declare this turn's intent and goal. "
+    "Please call turn with operation='start', intent, and goal now."
+)
 
-SECOND_MISS_PROMPT = TURN_PROMPT
+FIRST_MISS_PROMPT = TURN_STOP_PROMPT
+
+SECOND_MISS_PROMPT = TURN_STOP_PROMPT
 
 INVALID_TURN_PROMPT = (
     "The turn control response was invalid. Do not output text. Call turn with "
-    "decision='stop' to commit the pending response, or call a regular tool to continue working."
+    "operation='stop', intent='', and goal='' to commit the pending response, or call a regular tool to continue working."
 )
 
 
@@ -84,10 +100,15 @@ def classify_turn_call(msg: AIMessage) -> TurnClassification:
 
     if turn_count == 1 and regular_count == 0:
         args = calls[0].get("args")
-        if isinstance(args, dict) and set(args) == {"decision"}:
-            decision = args.get("decision")
-            if decision == "stop":
-                return TurnClassification.VALID_TURN
+        if not isinstance(args, dict) or set(args) != {"operation", "intent", "goal"}:
+            return TurnClassification.INVALID_TURN
+        operation = args.get("operation")
+        intent = args.get("intent")
+        goal = args.get("goal")
+        if operation == "stop":
+            return TurnClassification.VALID_TURN
+        if operation == "start" and intent in {"coding", "general"} and _is_non_empty_text(goal):
+            return TurnClassification.VALID_START
 
     return TurnClassification.INVALID_TURN
 

@@ -157,6 +157,7 @@ class RuntimeContextBuilder:
         summary: str | None = None,
         task_state: "TaskState | None" = None,
         session_date: str | None = None,
+        turn_state: str = "initial",
     ) -> None:
         from voidx.runtime.task_state import TaskState as _TaskState
 
@@ -178,6 +179,7 @@ class RuntimeContextBuilder:
         self.workflow_route = ts.workflow_route
         self.todo_state = ts.todo_state
         self.user_profile = config.user_profile
+        self.turn_state = turn_state.strip() or "initial"
         now = datetime.now().astimezone()
         self.session_date = (session_date or now.strftime("%Y-%m-%d %Z")).strip()
 
@@ -261,6 +263,7 @@ class RuntimeContextBuilder:
         lines = [
             f"- Current persona: {self.persona}",
             f"- Intent: {self.task_intent.value}",
+            f"- Turn state: {self.turn_state}",
         ]
         if self.current_goal is not None:
             lines.extend([

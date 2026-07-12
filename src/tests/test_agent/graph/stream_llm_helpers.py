@@ -41,7 +41,7 @@ class FakeStreamingModel:
         yield AIMessageChunk(content="answer")
         yield AIMessageChunk(
             content="",
-            tool_calls=[{"name": "turn", "args": {"decision": "stop"}, "id": "turn-1", "type": "tool_call"}],
+            tool_calls=[{"name": "turn", "args": {"operation": "stop", "intent": "", "goal": ""}, "id": "turn-1", "type": "tool_call"}],
         )
 
 
@@ -60,7 +60,7 @@ class FakeUsageStreamingModel:
         )
         yield AIMessageChunk(
             content="",
-            tool_calls=[{"name": "turn", "args": {"decision": "stop"}, "id": "turn-1", "type": "tool_call"}],
+            tool_calls=[{"name": "turn", "args": {"operation": "stop", "intent": "", "goal": ""}, "id": "turn-1", "type": "tool_call"}],
         )
 
 
@@ -73,7 +73,7 @@ class FakeDuplicatedReasoningStreamingModel:
         yield AIMessageChunk(content="final answer")
         yield AIMessageChunk(
             content="",
-            tool_calls=[{"name": "turn", "args": {"decision": "stop"}, "id": "turn-1", "type": "tool_call"}],
+            tool_calls=[{"name": "turn", "args": {"operation": "stop", "intent": "", "goal": ""}, "id": "turn-1", "type": "tool_call"}],
         )
 
 
@@ -144,7 +144,7 @@ class RepairsMalformedToolCallStreamingModel:
         yield AIMessageChunk(content="repaired answer")
         yield AIMessageChunk(
             content="",
-            tool_calls=[{"name": "turn", "args": {"decision": "stop"}, "id": "turn-1", "type": "tool_call"}],
+            tool_calls=[{"name": "turn", "args": {"operation": "stop", "intent": "", "goal": ""}, "id": "turn-1", "type": "tool_call"}],
         )
 
 
@@ -226,7 +226,7 @@ class FailsOnceStreamingModel(FakeStreamingModel):
         yield AIMessageChunk(content="answer")
         yield AIMessageChunk(
             content="",
-            tool_calls=[{"name": "turn", "args": {"decision": "stop"}, "id": "turn-1", "type": "tool_call"}],
+            tool_calls=[{"name": "turn", "args": {"operation": "stop", "intent": "", "goal": ""}, "id": "turn-1", "type": "tool_call"}],
         )
 
 

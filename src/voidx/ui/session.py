@@ -9,7 +9,7 @@ from typing import Protocol
 from rich.cells import cell_len
 from rich.markup import escape
 
-from voidx.tools.base import _resolve_tool_path
+from voidx.paths import resolve_tool_path as _resolve_tool_path
 
 
 # ---------------------------------------------------------------------------

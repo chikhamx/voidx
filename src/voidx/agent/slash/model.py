@@ -339,7 +339,6 @@ class SlashModelMixin:
                 await update_session_model(self.host.session.id, profile.provider, profile.model)
             scope_label = "global + local" if scope == "global" else "local"
             ui.print(f"[cyan]{profile.name}[/cyan] ({profile.provider}/{profile.model}) [green]✓ switched ({scope_label})[/green]")
-            await self._show_startup(prefer_direct=True)
 
         await self._pick_or_act("Switch", target, _do_switch)
 

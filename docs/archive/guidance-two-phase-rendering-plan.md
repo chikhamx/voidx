@@ -55,14 +55,13 @@ Python, Rich, Pydantic (event schema), pytest.
 
 ### Task 3: Remove `MessageAppended` from `submit_guidance`
 - [ ] 3.1 In `src/voidx/agent/graph/core/voidx_graph.py:422-427`, delete the `if source == "user" and self._ui.via_events():` block that emits `MessageAppended`
-- [ ] 3.2 Restructure: emit `GuidanceSubmitted(text=guidance, truncated=truncated)` for both user and guard when `via_events()`. For user: if emit fails → return `False` (don't append). For guard: emit, append regardless, return `True`.
+- [ ] 3.2 Restructure: emit `GuidanceSubmitted(text=guidance, truncated=truncated)` only for user when `via_events()`. Guard guidance does not emit `GuidanceSubmitted`, directly appends to queue and returns `True`. For user: if emit fails → return `False` (don't append).
 - [ ] 3.3 New logic:
   ```python
-  if self._ui.via_events():
+  if source == "user" and self._ui.via_events():
       if not self._ui.events.emit_direct(GuidanceSubmitted(text=guidance, truncated=truncated)):
-          if source == "user":
-              return False
-  self._pending_guidance.append((guidance, truncated))
+          return False
+  self._pending_guidance.append((guidance, truncated, source))
   return True
   ```
 - **Test**: `./test.py --backend -- src/tests/test_agent/test_guide_command.py src/tests/test_agent/test_guard_guidance.py -v`
@@ -103,7 +102,7 @@ Python, Rich, Pydantic (event schema), pytest.
 - **Test**: `./test.py --backend -- src/tests/test_ui/gateway/test_adapter.py -v`
 
 ### Task 10: Update tests
-- [ ] 10.1 `test_guide_command.py`: update assertions — no `MessageAppended` in emitted; `_pending_guidance` stores tuples; emit failure for user returns `False` with empty queue; emit failure for guard returns `True` with queued tuple
+- [ ] 10.1 `test_guide_command.py`: update assertions — no `MessageAppended` in emitted; `_pending_guidance` stores tuples; emit failure for user returns `False` with empty queue; guard guidance does not emit `GuidanceSubmitted`, directly appends to queue and returns `True`
 - [ ] 10.2 `test_guard_guidance.py`: update `_pending_guidance` assertion to `[("retry differently", False)]`
 - [ ] 10.3 `test_ui_events_dock_prompts.py`: update `test_guidance_submitted_event_does_not_render_message` → now sets preview; update `test_message_appended_guidance_renders_in_dock` → now creates turn node with `⚡`
 - [ ] 10.4 `test_adapter.py`: update `test_guidance_submitted_is_not_rendered_as_message_item` → now returns a `guidance_preview` item; add `GuidanceCommitted` test

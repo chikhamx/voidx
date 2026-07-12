@@ -20,7 +20,9 @@ Each subdirectory has its own `AGENTS.md` for directory-specific details only; g
 - Export UI protocol schema: `./python.py scripts/export_ui_protocol_schema.py`
 
 ## Testing
-`./test.py` auto-switches to the voidx venv and runs three suites: **backend** (pytest), **frontend** (vitest), **desktop** (cargo test).
+**Always prefer `./test.py` over invoking pytest/vitest/cargo directly** — it auto-switches to the voidx venv and handles suite selection.
+
+`./test.py` runs three suites: **backend** (pytest), **frontend** (vitest), **desktop** (cargo test).
 
 - Verbose output: `./test.py -v`
 - Keep going after failures: `./test.py --keep-going`

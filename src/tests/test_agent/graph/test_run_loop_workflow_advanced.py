@@ -16,6 +16,7 @@ from voidx.agent.graph import VoidXGraph
 from voidx.agent.graph.run_loop import GraphRunLoopMixin
 from voidx.agent.graph.title_mixin import _sanitize_generated_title
 from voidx.agent.runtime_context import InteractionMode, TaskIntent
+from voidx.agent.task_state import GoalResolution, IntentResolution, PlanResolution, GoalSpec, TaskState
 from voidx.agent.goal_resolver import ResolverGoal
 from voidx.agent.task_state import GoalSpec, TaskState
 from voidx.config import Config
@@ -93,7 +94,7 @@ async def test_run_once_clears_stale_completed_workflow_when_resolver_has_no_joi
 
 
 @pytest.mark.asyncio
-async def test_run_once_preadvances_workflow_from_resolver_workflow_start(tmp_path):
+async def test_run_once_preadvances_workflow_from_resolver_workflow_start(tmp_path, monkeypatch):
     graph = VoidXGraph(Config(workspace=str(tmp_path)), api_key=None)
     graph._task_state = TaskState(
         current_goal=GoalSpec(desc="agent_name 语义清理"),
@@ -108,28 +109,23 @@ async def test_run_once_preadvances_workflow_from_resolver_workflow_start(tmp_pa
     )
     captured: dict[str, object] = {}
 
-    class StructuredGoalModel:
-        def with_structured_output(self, schema):
-            assert schema is ResolverGoal
-            return self
-
-        async def ainvoke(self, messages):
-            assert "## ResolverGoal Schema" not in messages[-1].content
-            assert "可以，先写一个 spec" in messages[-1].content
-            return {
-                "intent": "coding",
-                "goal": "agent_name 语义清理",
-                "workflow": "design",
-                "kind_hint": "doc",
-            }
+    def _fake_resolve_goal_mode(user_text, task_state):
+        return GoalResolution(
+            intent=IntentResolution(type=TaskIntent.CODING),
+            goal=GoalSpec(desc="agent_name 语义清理"),
+            plan=PlanResolution(join="design", leave=None),
+        )
 
     class FakeGraph:
         async def ainvoke(self, initial, _config):
             captured["initial"] = initial
             return {"messages": list(initial["messages"]) + [AIMessage(content="ok")], "task_state": initial["task_state"]}
 
-    graph.model = StructuredGoalModel()
     graph.graph = FakeGraph()
+    graph._interaction_mode = InteractionMode.GOAL
+    import voidx.agent.graph.turn_runner as turn_runner_mod
+    monkeypatch.setattr(turn_runner_mod, "resolve_goal_mode", _fake_resolve_goal_mode)
+
     test_dock = BottomInputDock()
     set_dock(test_dock)
     test_dock.begin_capture()

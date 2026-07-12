@@ -31,10 +31,15 @@ class ScriptedStreamingModel:
             yield chunk
 
 
+def _turn_args(operation: str = "stop", intent: str = "", goal: str = "") -> dict[str, str]:
+    return {"operation": operation, "intent": intent, "goal": goal}
+
+
 def _turn_chunk(decision: str = "stop") -> AIMessageChunk:
+    args = _turn_args() if decision == "stop" else {"decision": decision}
     return AIMessageChunk(
         content="",
-        tool_calls=[{"name": "turn", "args": {"decision": decision}, "id": "tc1", "type": "tool_call"}],
+        tool_calls=[{"name": "turn", "args": args, "id": "tc1", "type": "tool_call"}],
     )
 
 
@@ -54,7 +59,7 @@ def _mixed_chunk() -> AIMessageChunk:
         content="",
         tool_calls=[
             {"name": "read", "args": {"file_path": "x.py"}, "id": "tc3", "type": "tool_call"},
-            {"name": "turn", "args": {"decision": "stop"}, "id": "tc4", "type": "tool_call"},
+            {"name": "turn", "args": _turn_args(), "id": "tc4", "type": "tool_call"},
         ],
     )
 

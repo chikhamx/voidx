@@ -81,42 +81,23 @@ async def test_goal_resolver_validation_error_falls_back_to_general(tmp_path, mo
 
 
 @pytest.mark.asyncio
-async def test_run_once_uses_goal_resolver_and_keeps_resolver_messages_out_of_history(tmp_path):
+async def test_run_once_auto_mode_skips_goal_resolver_and_initializes_turn_state(tmp_path):
     session = await create_session(workspace=str(tmp_path))
     try:
-        graph = VoidXGraph(Config(workspace=str(tmp_path)), api_key=None, session=session)
+        graph = VoidXGraph(Config(workspace=str(tmp_path)), api_key="test-key", session=session)
 
-        class ResolverShouldRunModel:
+        class ResolverShouldNotRunModel:
             called = False
 
-            def with_structured_output(self, schema, *, include_raw=False):
-                assert schema is ResolverGoal
-                assert include_raw is True
+            def with_structured_output(self, *_args, **_kwargs):
+                self.called = True
                 return self
 
-            async def ainvoke(self, messages):
+            async def ainvoke(self, _messages):
                 self.called = True
-                assert "GoalResolution JSON schema" not in messages[0].content
-                assert "review 这个文件" in messages[-1].content
-                return {
-                    "raw": AIMessage(
-                        content="",
-                        usage_metadata={
-                            "input_tokens": 4,
-                            "output_tokens": 1,
-                            "total_tokens": 5,
-                        },
-                    ),
-                    "parsed": ResolverGoal(
-                        intent="coding",
-                        goal="review 这个文件",
-                        workflow="review",
-                        kind_hint="review",
-                    ),
-                    "parsing_error": None,
-                }
+                raise AssertionError("auto mode should not call resolve_goal_for_turn")
 
-        resolver_model = ResolverShouldRunModel()
+        resolver_model = ResolverShouldNotRunModel()
         graph.model = resolver_model
 
         captured_initial: dict = {}
@@ -124,7 +105,7 @@ async def test_run_once_uses_goal_resolver_and_keeps_resolver_messages_out_of_hi
         class FakeGraph:
             async def ainvoke(self, initial, _config):
                 captured_initial.update(initial)
-                return {"messages": list(initial["messages"]) + [AIMessage(content="ok")]}
+                return {"messages": list(initial["messages"]) + [AIMessage(content="ok")], "task_state": initial["task_state"]}
 
         graph.graph = FakeGraph()
 
@@ -138,18 +119,17 @@ async def test_run_once_uses_goal_resolver_and_keeps_resolver_messages_out_of_hi
             test_dock.reset()
             set_dock(None)
 
-        assert resolver_model.called is True
+        assert resolver_model.called is False
+        assert captured_initial.get("turn_state") == "initial"
         ts = captured_initial.get("task_state", {})
         assert ts.get("current_intent") == "coding"
-        assert ts.get("current_goal", {}) == {"desc": "review 这个文件"}
-        assert ts.get("workflow_route") == {"join": "review", "leave": None}
+        assert ts.get("current_goal") is None
+        assert ts.get("workflow_route") is None
         assert ts.get("recent_exchanges") == []
         assert graph._task_state.recent_exchanges == [
             TurnExchange(user_text="review 这个文件", assistant_text="ok")
         ]
-        assert graph._usage_stats.total_input_tokens == 4
-        assert graph._usage_stats.total_output_tokens == 1
-        assert graph._usage_stats.total_calls == 1
+        assert graph._usage_stats.total_calls == 0
 
         rows = await load_messages(session.id)
         for row in rows:

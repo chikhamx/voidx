@@ -6,6 +6,7 @@ from voidx.agent.graph.turn_control import (
     FIRST_MISS_PROMPT,
     INVALID_TURN_PROMPT,
     SECOND_MISS_PROMPT,
+    TURN_START_PROMPT,
     TURN_TOOL_DEFINITION,
     TurnClassification,
     classify_turn_call,
@@ -14,13 +15,25 @@ from voidx.agent.graph.turn_control import (
 )
 
 
-def _ai_with_turn_call(decision: str = "stop") -> AIMessage:
+def _ai_with_turn_stop() -> AIMessage:
     return AIMessage(
         content="Here is the answer.",
         tool_calls=[{
             "name": "turn",
-            "args": {"decision": decision},
+            "args": {"operation": "stop", "intent": "", "goal": ""},
             "id": "call_1",
+            "type": "tool_call",
+        }],
+    )
+
+
+def _ai_with_turn_start(intent: str = "coding", goal: str = "Fix the bug") -> AIMessage:
+    return AIMessage(
+        content="",
+        tool_calls=[{
+            "name": "turn",
+            "args": {"operation": "start", "intent": intent, "goal": goal},
+            "id": "call_start",
             "type": "tool_call",
         }],
     )
@@ -38,7 +51,7 @@ def _ai_with_mixed_calls() -> AIMessage:
         content="Done after reading.",
         tool_calls=[
             {"name": "read", "args": {"file_path": "x.py"}, "id": "call_3", "type": "tool_call"},
-            {"name": "turn", "args": {"decision": "stop"}, "id": "call_4", "type": "tool_call"},
+            {"name": "turn", "args": {"operation": "stop", "intent": "", "goal": ""}, "id": "call_4", "type": "tool_call"},
         ],
     )
 
@@ -54,25 +67,22 @@ def test_turn_tool_definition_has_correct_name():
     assert TURN_TOOL_DEFINITION["function"]["name"] == "turn"
 
 
-def test_turn_tool_definition_description_requires_turn():
+def test_turn_tool_definition_description_requires_start_and_stop():
     description = TURN_TOOL_DEFINITION["function"]["description"]
-    assert "decision='stop'" in description
-    assert "available tool" in description
+    assert "operation='start'" in description
+    assert "operation='stop'" in description
+    assert "intent and goal" in description
     assert "Do not output text" in description
     assert "end the current user turn" in description
 
 
-def test_turn_tool_definition_requires_stop_decision_enum():
+def test_turn_tool_definition_requires_operation_intent_goal():
     params = TURN_TOOL_DEFINITION["function"]["parameters"]
     assert params["type"] == "object"
-    assert params["properties"] == {
-        "decision": {
-            "type": "string",
-            "enum": ["stop"],
-            "description": "Choose stop to commit the pending answer.",
-        }
-    }
-    assert params["required"] == ["decision"]
+    assert params["properties"]["operation"]["enum"] == ["start", "stop"]
+    assert params["properties"]["intent"]["enum"] == ["coding", "general", ""]
+    assert "goal" in params["properties"]
+    assert params["required"] == ["operation", "intent", "goal"]
     assert params["additionalProperties"] is False
 
 
@@ -83,14 +93,41 @@ def test_turn_tool_definition_is_strict():
 # ── Classification ───────────────────────────────────────────────────────────
 
 
-def test_classify_valid_turn_call():
-    msg = _ai_with_turn_call()
+def test_classify_valid_turn_stop_call():
+    msg = _ai_with_turn_stop()
     assert classify_turn_call(msg) == TurnClassification.VALID_TURN
 
 
+def test_classify_valid_turn_start_call():
+    msg = _ai_with_turn_start()
+    assert classify_turn_call(msg) == TurnClassification.VALID_START
 
-def test_classify_continue_turn_call_invalid():
-    msg = _ai_with_turn_call("continue")
+
+def test_classify_turn_start_accepts_general_intent():
+    msg = _ai_with_turn_start(intent="general", goal="Answer the question")
+    assert classify_turn_call(msg) == TurnClassification.VALID_START
+
+
+def test_classify_turn_start_rejects_empty_goal():
+    msg = _ai_with_turn_start(goal="  ")
+    assert classify_turn_call(msg) == TurnClassification.INVALID_TURN
+
+
+def test_classify_turn_start_rejects_empty_or_invalid_intent():
+    assert classify_turn_call(_ai_with_turn_start(intent="")) == TurnClassification.INVALID_TURN
+    assert classify_turn_call(_ai_with_turn_start(intent="debug")) == TurnClassification.INVALID_TURN
+
+
+def test_classify_turn_stop_ignores_empty_sentinel_fields():
+    msg = _ai_with_turn_stop()
+    assert classify_turn_call(msg) == TurnClassification.VALID_TURN
+
+
+def test_classify_legacy_decision_turn_call_invalid():
+    msg = AIMessage(
+        content="",
+        tool_calls=[{"name": "turn", "args": {"decision": "stop"}, "id": "call_legacy", "type": "tool_call"}],
+    )
     assert classify_turn_call(msg) == TurnClassification.INVALID_TURN
 
 
@@ -125,25 +162,31 @@ def test_classify_empty_message():
 
 
 def test_validate_turn_call_valid_with_pending():
-    msg = _ai_with_turn_call()
+    msg = _ai_with_turn_stop()
     pending = _ai_plain_text("Provisional answer.")
     assert validate_turn_call(msg, pending) is True
 
 
 def test_validate_turn_call_rejected_without_pending():
-    msg = _ai_with_turn_call()
+    msg = _ai_with_turn_stop()
     assert validate_turn_call(msg, None) is False
 
 
 def test_validate_turn_call_rejected_with_empty_pending():
-    msg = _ai_with_turn_call()
+    msg = _ai_with_turn_stop()
     pending = AIMessage(content="")
     assert validate_turn_call(msg, pending) is False
 
 
 def test_validate_turn_call_rejected_with_whitespace_pending():
-    msg = _ai_with_turn_call()
+    msg = _ai_with_turn_stop()
     pending = AIMessage(content="   \n  ")
+    assert validate_turn_call(msg, pending) is False
+
+
+def test_validate_turn_call_rejects_start_even_with_pending():
+    msg = _ai_with_turn_start()
+    pending = _ai_plain_text("Provisional answer.")
     assert validate_turn_call(msg, pending) is False
 
 
@@ -183,18 +226,26 @@ def test_repair_prompts_are_non_empty():
 def test_first_miss_prompt_mentions_turn():
     prompt = FIRST_MISS_PROMPT.lower()
     assert "turn" in prompt
-    assert "decision='stop'" in prompt
+    assert "operation='stop'" in prompt
     assert "regular tool" in prompt
     assert "do not output text" in prompt
     assert "user's request" in prompt
+
+
+def test_start_prompt_mentions_start_intent_and_goal():
+    prompt = TURN_START_PROMPT.lower()
+    assert "turn" in prompt
+    assert "operation='start'" in prompt
+    assert "intent" in prompt
+    assert "goal" in prompt
 
 
 def test_second_miss_prompt_mentions_turn():
     assert "turn" in SECOND_MISS_PROMPT.lower()
 
 
-def test_invalid_turn_prompt_mentions_decision_or_regular_tool():
+def test_invalid_turn_prompt_mentions_operation_or_regular_tool():
     prompt = INVALID_TURN_PROMPT.lower()
     assert "do not output text" in prompt
-    assert "decision='stop'" in prompt
+    assert "operation='stop'" in prompt
     assert "regular tool" in prompt
