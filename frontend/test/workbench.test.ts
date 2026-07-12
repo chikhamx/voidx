@@ -315,6 +315,70 @@ describe("workbench shell", () => {
     expect(input.disabled).toBe(false);
   });
 
+  it("clears input without sending when submitting an unknown slash command", () => {
+    const sentMessages = setupOpenSocket();
+    const input = document.querySelector("#input");
+
+    handleNotification("workspace.snapshot", {
+      active_thread_id: "t1",
+      active_snapshot: { thread_id: "t1", nodes: [] },
+      threads: [{ thread_id: "t1", title: "Default", workspace: "<workspace>" }],
+      workspace: "<workspace>",
+      provider: "deepseek",
+      model: "deepseek-chat",
+      profile_configured: true,
+    });
+    sentMessages.length = 0;
+
+    input.value = "/zzz";
+    document.querySelector("#composer").dispatchEvent(new SubmitEvent("submit", { bubbles: true, cancelable: true }));
+
+    expect(input.value).toBe("");
+    expect(sentPayloads(sentMessages).filter((p) => p.method === "session.submit")).toHaveLength(0);
+  });
+
+  it("sends known slash command without args instead of clearing input", () => {
+    const sentMessages = setupOpenSocket();
+    const input = document.querySelector("#input");
+
+    handleNotification("workspace.snapshot", {
+      active_thread_id: "t1",
+      active_snapshot: { thread_id: "t1", nodes: [] },
+      threads: [{ thread_id: "t1", title: "Default", workspace: "<workspace>" }],
+      workspace: "<workspace>",
+      provider: "deepseek",
+      model: "deepseek-chat",
+      profile_configured: true,
+    });
+    sentMessages.length = 0;
+
+    input.value = "/help";
+    document.querySelector("#composer").dispatchEvent(new SubmitEvent("submit", { bubbles: true, cancelable: true }));
+
+    expect(sentPayloads(sentMessages).some((p) => p.method === "session.submit" && p.params.text === "/help")).toBe(true);
+  });
+
+  it("sends known slash command with args instead of clearing input", () => {
+    const sentMessages = setupOpenSocket();
+    const input = document.querySelector("#input");
+
+    handleNotification("workspace.snapshot", {
+      active_thread_id: "t1",
+      active_snapshot: { thread_id: "t1", nodes: [] },
+      threads: [{ thread_id: "t1", title: "Default", workspace: "<workspace>" }],
+      workspace: "<workspace>",
+      provider: "deepseek",
+      model: "deepseek-chat",
+      profile_configured: true,
+    });
+    sentMessages.length = 0;
+
+    input.value = "/lang en";
+    document.querySelector("#composer").dispatchEvent(new SubmitEvent("submit", { bubbles: true, cancelable: true }));
+
+    expect(sentPayloads(sentMessages).some((p) => p.method === "session.submit" && p.params.text === "/lang en")).toBe(true);
+  });
+
   it("shows guidance pending state when submitting during a running turn", async () => {
     const sentMessages = setupOpenSocket();
     const input = document.querySelector("#input");

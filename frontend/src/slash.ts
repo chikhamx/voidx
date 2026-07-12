@@ -6,20 +6,27 @@ export const COMMAND_CATALOG: SlashCommand[] = [
   { command: "/clear", description: "Start a new session with empty context", category: "session", execution: "run", dangerous: true, requiresArgs: false },
   { command: "/code-ide", description: "Choose app for opening changed files", category: "code", execution: "open-ui", dangerous: false, requiresArgs: false, uiTarget: "settings:code" },
   { command: "/compact", description: "Manually trigger context compaction", category: "maintenance", execution: "fill", dangerous: false, requiresArgs: false },
+  { command: "/debug", description: "Toggle verbose step/tool output", category: "maintenance", execution: "fill", dangerous: false, requiresArgs: false },
   { command: "/deny", description: "Deny a tool for this session", category: "permission", execution: "fill", dangerous: false, requiresArgs: true },
   { command: "/diff", description: "Show git working tree diff", category: "code", execution: "fill", dangerous: false, requiresArgs: false },
+  { command: "/exit", description: "Exit voidx", category: "session", execution: "run", dangerous: false, requiresArgs: false },
+  { command: "/goal", description: "Set or show current goal", category: "permission", execution: "fill", dangerous: false, requiresArgs: true },
+  { command: "/guide", description: "Add guidance to the running agent turn", category: "permission", execution: "fill", dangerous: false, requiresArgs: true },
+  { command: "/help", description: "Show all commands", category: "maintenance", execution: "run", dangerous: false, requiresArgs: false },
   { command: "/init", description: "Initialize project config", category: "maintenance", execution: "fill", dangerous: false, requiresArgs: false },
   { command: "/lang", description: "Set response language preference", category: "preference", execution: "fill", dangerous: false, requiresArgs: true },
   { command: "/list", description: "List saved sessions", category: "session", execution: "run", dangerous: false, requiresArgs: false },
   { command: "/log", description: "Toggle LLM logging", category: "maintenance", execution: "fill", dangerous: false, requiresArgs: false },
   { command: "/lsp", description: "Manage language servers", category: "code", execution: "open-ui", dangerous: false, requiresArgs: false, uiTarget: "integrations:lsp" },
   { command: "/mcp", description: "Manage MCP servers", category: "integrations", execution: "open-ui", dangerous: false, requiresArgs: false, uiTarget: "integrations:mcp" },
+  { command: "/mode", description: "Choose interaction mode: auto|plan|goal", category: "permission", execution: "fill", dangerous: false, requiresArgs: false },
   { command: "/model", description: "Switch model or adjust reasoning", category: "model", execution: "fill", dangerous: false, requiresArgs: false },
   { command: "/parallel", description: "Toggle parallel subagent execution", category: "preference", execution: "fill", dangerous: false, requiresArgs: false },
   { command: "/paste", description: "Paste an image from the clipboard", category: "code", execution: "run", dangerous: false, requiresArgs: false },
   { command: "/permission-mode", description: "Choose permission mode", category: "permission", execution: "open-ui", dangerous: false, requiresArgs: false, uiTarget: "settings:permissions" },
   { command: "/permissions", description: "Show current permission rules", category: "permission", execution: "open-ui", dangerous: false, requiresArgs: false, uiTarget: "settings:permissions" },
   { command: "/plan", description: "Enter plan mode", category: "permission", execution: "run", dangerous: false, requiresArgs: false },
+  { command: "/quit", description: "Exit voidx", category: "session", execution: "run", dangerous: false, requiresArgs: false },
   { command: "/resume", description: "Resume a session", category: "session", execution: "fill", dangerous: false, requiresArgs: true },
   { command: "/rollback", description: "Revert file changes from the current turn", category: "maintenance", execution: "run", dangerous: true, requiresArgs: false },
   { command: "/sandbox", description: "Set sandbox mode", category: "permission", execution: "open-ui", dangerous: false, requiresArgs: false, uiTarget: "settings:permissions" },
@@ -39,6 +46,14 @@ export const COMMAND_CATALOG: SlashCommand[] = [
   { command: "/model switch", description: "Switch to a configured provider", category: "model", execution: "fill", dangerous: false, requiresArgs: true },
   { command: "/model test", description: "Test a provider's connectivity", category: "model", execution: "open-ui", dangerous: false, requiresArgs: false, uiTarget: "settings:model" },
 ];
+
+export function isKnownSlashCommand(input: string): boolean {
+  if (!input || !input.startsWith("/")) {
+    return false;
+  }
+  const head = input.trim().split(/\s+/)[0].toLowerCase();
+  return COMMAND_CATALOG.some((cmd) => cmd.command.toLowerCase() === head);
+}
 
 export function matchSlashCommands(input: string): SlashCommand[] {
   if (!input || !input.startsWith("/")) {

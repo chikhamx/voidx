@@ -9,7 +9,7 @@ import {
   appendDiffItem,
 } from "./render";
 import type { TranscriptSnapshot } from "./render";
-import { matchSlashCommands, renderSlashMenu } from "./slash";
+import { isKnownSlashCommand, matchSlashCommands, renderSlashMenu } from "./slash";
 import {
   setTranscriptElement,
   appendStreamText,
@@ -769,6 +769,11 @@ composerEl.addEventListener("submit", (event: SubmitEvent) => {
     uiState.isSwitchingModel ||
     !isRpcConnected()
   ) {
+    return;
+  }
+  if (text.startsWith("/") && !isKnownSlashCommand(text)) {
+    inputEl.value = "";
+    hideSlashMenu();
     return;
   }
   if (uiState.isRunning) {

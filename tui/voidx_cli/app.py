@@ -467,6 +467,11 @@ class PureTui(
             return True
         if self._command_panel_active and self._accept_command_panel_selection():
             return True
+        if stripped.startswith("/"):
+            head = stripped.split(None, 1)[0]
+            if not any(n == head for n, _ in self.commands):
+                self._clear_input()
+                return True
         if stripped == "/paste":
             self._record_history(draft_text)
             self._clear_input()

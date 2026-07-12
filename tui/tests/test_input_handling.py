@@ -192,6 +192,18 @@ def test_filtered_commands_only_match_current_prefix(tmp_path):
     assert tui._filtered_commands() == []
 
 
+def test_unknown_slash_command_clears_input_without_queueing(tmp_path):
+    tui = _tui(tmp_path)
+    tui._input_lines = ["/zzz"]
+    tui._cursor_col = len("/zzz")
+    tui._update_command_panel()
+
+    tui._process_input(b"\r")
+
+    assert tui._get_input_text() == ""
+    assert tui._queue.empty()
+
+
 def test_attachment_panel_accepts_workspace_file(tmp_path):
     file_path = tmp_path / "src" / "main.py"
     file_path.parent.mkdir()

@@ -16,11 +16,12 @@ describe("matchSlashCommands", () => {
     expect(matchSlashCommands(undefined)).toEqual([]);
   });
 
-  it("matches /m prefix to /mcp and /model", () => {
+  it("matches /m prefix to /mcp, /mode, and /model", () => {
     const result = matchSlashCommands("/m");
-    expect(result).toHaveLength(2);
+    expect(result).toHaveLength(3);
     expect(result[0].command).toBe("/mcp");
-    expect(result[1].command).toBe("/model");
+    expect(result[1].command).toBe("/mode");
+    expect(result[2].command).toBe("/model");
   });
 
   it("matches exact /mcp", () => {
