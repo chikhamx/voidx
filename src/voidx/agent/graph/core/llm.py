@@ -15,7 +15,7 @@ from voidx.agent.runtime_context import (
     raw_semantic_messages,
 )
 from voidx.agent.state import AgentState
-from voidx.agent.task_state import GoalResolution, TaskState, goal_label, goal_type_from_join
+from voidx.agent.task_state import GoalResolution, TaskState, TodoRunState, goal_label, goal_type_from_join
 from voidx.agent.todo_state import sanitize_todo_replay_messages
 from voidx.agent.message_trimming import trim_superseded_file_tools
 from voidx.agent.tool_exchange_sanitizer import sanitize_failed_tool_exchanges
@@ -231,7 +231,14 @@ class GraphLlmMixin:
             else getattr(getattr(self, "_task_state", None), "todo_state", None)
         )
         if raw_todo_state is not None:
-            runtime_task_state.todo_state = raw_todo_state
+            try:
+                runtime_task_state.todo_state = (
+                    raw_todo_state
+                    if isinstance(raw_todo_state, TodoRunState)
+                    else TodoRunState.model_validate(raw_todo_state)
+                )
+            except (TypeError, ValueError):
+                runtime_task_state.todo_state = None
 
         def rebuild_llm_messages(
             messages: list[BaseMessage],

@@ -1,6 +1,7 @@
 """Tests for call_llm compaction and retry."""
 
 import sys
+import warnings
 from pathlib import Path
 from types import SimpleNamespace
 
@@ -347,6 +348,66 @@ async def test_call_llm_overflow_compaction_does_not_send_temporary_summary_mess
         and isinstance(message.content, str)
         and message.content.startswith("## Long Summary")
         for message in graph.model.messages
+    )
+
+
+@pytest.mark.asyncio
+async def test_call_llm_coerces_todo_state_dict_before_compaction_dump(tmp_path, monkeypatch):
+    import voidx.agent.graph.core.llm as graph_module
+
+    monkeypatch.setattr(graph_module, "StreamingRenderer", FakeRenderer)
+    graph = VoidXGraph(
+        Config(
+            model=ModelConfig(provider="mimo", model="mimo-v2.5"),
+            workspace=str(tmp_path),
+        ),
+        api_key=None,
+    )
+    graph.model = FakeStreamingModel()
+    graph._compaction.is_overflow = lambda _tokens: True
+
+    async def preflight(messages, session_msgs=None, *, force=False, reason="threshold", ask=False):
+        result = CompactionResult(
+            summary="compacted",
+            removed_messages=list(messages[:1]),
+            live_messages=list(messages[1:]),
+            tail_id=getattr(messages[1], "id", None) if len(messages) > 1 else None,
+            metadata={"compaction_reason": reason},
+        )
+        return result, PreflightCompactionResult.from_compaction_result(result)
+
+    graph._preflight_compact_if_needed = preflight
+
+    todo_state = {
+        "summary": "0/1 done · 1 active · 0 pending",
+        "total": 1,
+        "done": 0,
+        "active": 1,
+        "pending": 0,
+        "active_items": [
+            {"id": "inspect", "content": "inspect warning", "status": "active"},
+        ],
+        "items": [
+            {"id": "inspect", "content": "inspect warning", "status": "active"},
+        ],
+    }
+
+    with warnings.catch_warnings(record=True) as caught:
+        warnings.simplefilter("always")
+        await graph._call_llm({
+            "messages": [
+                HumanMessage(content="old question", id="old_user"),
+                AIMessage(content="old answer"),
+                HumanMessage(content="current question", id="current_user"),
+            ],
+            "step_count": 0,
+            "persona": "voidx",
+            "todo_state": todo_state,
+        })
+
+    assert not any(
+        "PydanticSerializationUnexpectedValue" in str(warning.message)
+        for warning in caught
     )
 
 
