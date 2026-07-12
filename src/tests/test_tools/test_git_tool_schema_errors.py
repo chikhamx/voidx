@@ -45,6 +45,15 @@ def test_git_schema_has_only_path_and_args():
     assert props["path"]["type"] == "string"
 
 
+def test_git_tool_descriptions_explain_path_scoped_json_output():
+    schema = GitTool().parameters_schema()
+
+    assert "raw git subcommand" in schema["properties"]["args"]["description"]
+    assert "Do not include git" in schema["properties"]["args"]["description"]
+    assert "working directory" in schema["properties"]["path"]["description"]
+    assert "structured JSON" in GitTool.description
+    assert "raw stdout/stderr inside JSON" in GitTool.description
+
 @pytest.mark.asyncio
 async def test_git_execute_accepts_command_alias(tmp_path):
     repo = _init_repo(tmp_path / "repo")

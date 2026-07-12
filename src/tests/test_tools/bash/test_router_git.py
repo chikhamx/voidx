@@ -223,17 +223,17 @@ class TestGitGlobalOptions:
     def test_git_c_status(self):
         h = try_hint("git -C /tmp status")
         assert h is not None
-        assert "status" in h.llm_hint
+        assert h.llm_hint == "Prefer git tool with path='/tmp', args='status' for structured output."
 
     def test_git_no_pager_diff(self):
         h = try_hint("git --no-pager diff")
         assert h is not None
-        assert "diff" in h.llm_hint
+        assert h.llm_hint == "Prefer git tool with args='diff' for structured output."
 
     def test_git_config_log(self):
         h = try_hint("git -c core.quotepath=false log -5")
         assert h is not None
-        assert "log" in h.llm_hint
+        assert h.llm_hint == "Prefer git tool with args='log -5' for structured output."
 
 
 class TestGitTagHints:

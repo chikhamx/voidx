@@ -81,11 +81,11 @@ _REF_WRITE_FLAGS = {"-d", "-D", "-m", "-M", "--delete", "--move", "--force"}
 class GitInput(BaseModel):
     path: str = Field(
         default="",
-        description="Repository path to run git in; relative paths are resolved from the workspace, empty uses the workspace root.",
+        description="Repository working directory. Relative paths resolve from the workspace; empty uses the workspace root.",
     )
     args: str = Field(
         min_length=1,
-        description='Git subcommand and arguments only; do not include the git executable, e.g. "status --porcelain" or "log --oneline -5".',
+        description='raw git subcommand and arguments only. Do not include git itself, e.g. "status --porcelain" or "log --oneline -5".',
     )
 
     @model_validator(mode="before")
@@ -112,8 +112,8 @@ class GitProcessTimeout(RuntimeError):
 class GitTool(BaseTool):
     id = "git"
     description = (
-        "Run explicit path-scoped git operations. Pass args as a raw git subcommand string. "
-        "Core read-only commands return structured JSON; other allowed commands return raw stdout. "
+        "Run path-scoped git commands. Pass only the git subcommand in args. "
+        "Core read-only commands return structured JSON; other allowed commands return raw stdout/stderr inside JSON. "
         "Write commands require approval; destructive commands are denied."
     )
 
