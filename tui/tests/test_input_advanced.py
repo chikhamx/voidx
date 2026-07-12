@@ -237,6 +237,30 @@ def test_multiline_arrow_up_down_moves_within_input_before_history(tmp_path):
     assert tui._get_input_text() == "first\nsecond\nthird"
 
 
+def test_history_navigation_does_not_stall_on_slash_command_entry(tmp_path):
+    tui = _tui(tmp_path)
+    tui._record_history("hello")
+    tui._record_history("/help")
+    tui._input_lines = ["draft"]
+    tui._cursor_col = len("draft")
+
+    # Up → loads "/help" (most recent)
+    tui._process_input(b"\x1b[A")
+    assert tui._get_input_text() == "/help"
+
+    # Up again → should continue to "hello", not stall in command panel
+    tui._process_input(b"\x1b[A")
+    assert tui._get_input_text() == "hello"
+
+    # Down → back to "/help"
+    tui._process_input(b"\x1b[B")
+    assert tui._get_input_text() == "/help"
+
+    # Down → back to draft
+    tui._process_input(b"\x1b[B")
+    assert tui._get_input_text() == "draft"
+
+
 def test_multiline_arrow_navigation_clamps_column(tmp_path):
     tui = _tui(tmp_path)
     tui._input_lines = ["short", "a much longer line"]
