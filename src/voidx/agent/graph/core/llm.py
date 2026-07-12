@@ -515,9 +515,9 @@ class GraphLlmMixin:
                             assistant_msg,
                             ToolMessage(
                                 content=(
-                                    f"Goal accepted: {goal_label(runtime_task_state.current_goal) or goal_text}. "
-                                    f"Intent: {intent_value}. Next: consider whether to enter or maintain "
-                                    "a workflow (brainstorm/plan/tdd/...) to work on this, or proceed directly."
+                                    f"Turn started: {goal_label(runtime_task_state.current_goal) or goal_text}. "
+                                    f"Intent: {intent_value}. Continue with the next appropriate tool or workflow step. "
+                                    "When the user-facing response is complete, call turn operation='stop'."
                                 ),
                                 tool_call_id=tool_call_id,
                                 name="turn",

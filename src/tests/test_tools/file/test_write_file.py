@@ -45,9 +45,7 @@ class TestFileTool:
         result = await r.execute_tool("manage", {"op": "create", "paths": "hint.txt"}, ctx)
 
         assert result.metadata.get("error") is not True
-        assert "write tool" in result.next_step_hint
-        assert "hint.txt" in result.next_step_hint
-        assert 'op="append"' in result.next_step_hint
+        assert result.next_step_hint == 'Created file hint.txt. Use write op="append" to add content.'
 
     @pytest.mark.asyncio
     async def test_file_create_overwrite_has_no_next_step_hint(self, tmp_path, monkeypatch):
@@ -154,6 +152,7 @@ class TestWriteTool:
 
         assert blocked.metadata.get("error") is True
         assert "read" in blocked.output.lower()
+        assert "Retry after reading lines 1-1." in blocked.output
         assert inserted.metadata.get("error") is not True
         assert target.read_text(encoding="utf-8") == "zero\none\ntwo\n"
 
@@ -345,6 +344,7 @@ class TestWriteInsert1Based:
 
         assert result.metadata.get("error") is not True
         assert target.read_text(encoding="utf-8") == "one\ntwo\nthree\n"
+        assert result.next_step_hint == 'Insert at EOF is append; use write op="append" next time.'
 
     @pytest.mark.asyncio
     async def test_insert_lineno_beyond_total_lines_errors(self, tmp_path):

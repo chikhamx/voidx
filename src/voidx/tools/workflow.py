@@ -60,8 +60,8 @@ class WorkflowInput(BaseModel):
 class WorkflowTool(BaseTool):
     id = "workflow"
     description = (
-        "Manage workflow node lifecycle. Use 'enter' to activate a workflow node, "
-        "'advance' to transition via an exit condition, or 'done' to end a node "
+        "Manage workflow node lifecycle. Enter a workflow before gated work, "
+        "advance after its gate is satisfied, and use done only to close active nodes "
         "without activating successors."
     )
 
@@ -707,10 +707,19 @@ def _next_hints(names: list[str]) -> list[str]:
 
 
 def _first_hint(payload: dict) -> str:
+    activated = payload.get("activated")
+    active_name = ""
+    if isinstance(activated, list) and activated:
+        active_name = str(activated[0])
+    if not active_name:
+        return ""
+
     hints = payload.get("next_hints")
-    if isinstance(hints, list) and hints:
-        return str(hints[0])
-    return ""
+    first_hint = str(hints[0]) if isinstance(hints, list) and hints else ""
+    parts = [f"Active workflow: {active_name}.", "Follow its gate before advancing again."]
+    if first_hint:
+        parts.append(first_hint)
+    return " ".join(parts)
 
 
 def _active_persona(runs: list[WorkflowRunState]) -> str | None:

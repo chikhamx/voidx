@@ -197,12 +197,10 @@ class FileReplaceTool(BaseTool):
     description = (
         "Replace complete lines in an existing text file. "
         "Read the target lines first. "
-        "bounds must contain 1 locator for a single line or 2 locators for an inclusive line range; "
-        "locator order is ignored. "
-        "Each locator uses a 1-based line_no hint and an anchor literal, case-sensitive substring from that boundary line. "
-        "The tool may relocate anchors near the hinted lines; if any boundary is missing or ambiguous, "
-        "it fails without modifying the file. "
-        "new_string replaces only the resolved line(s) and may contain multiple lines."
+        "Use one bound for one line or two bounds for an inclusive line range; order is ignored. "
+        "Each bound has a 1-based line_no hint and a case-sensitive anchor from that line. "
+        "missing or ambiguous anchors fail without modifying the file. "
+        "new_string is the full replacement for only the resolved line(s)."
     )
 
     def parameters_schema(self) -> dict:
@@ -360,11 +358,7 @@ async def _execute_text_replace(
         )
     coverage_error = check_read_coverage(ctx, path, start_line, end_line, display_path=file_path)
     if coverage_error:
-        output = (
-            f"{coverage_error}\n"
-            f"Hint: Read lines {start_line}-{end_line}, then retry replace with the refreshed "
-            "line numbers and anchors."
-        )
+        output = f"{coverage_error}\nRetry after reading lines {start_line}-{end_line}."
         _log_replace_failure(
             tool_name=tool_name,
             file_path=file_path,
@@ -511,8 +505,7 @@ async def _apply_resolved_edits(
         if coverage_error:
             output = (
                 f"Edit {i}: {coverage_error}\n"
-                f"Hint: Read lines {edit.start_line}-{edit.end_line}, then retry with the refreshed "
-                "line numbers and anchors."
+                f"Retry after reading lines {edit.start_line}-{edit.end_line}."
             )
             _log_replace_failure(
                 tool_name=tool_name,

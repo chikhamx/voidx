@@ -97,7 +97,8 @@ def test_current_task_state_records_structured_workflow_runs(tmp_path):
     context.apply_to_messages(messages)
 
     assert "Workflow run state:" not in messages[-1].content
-    assert "Workflow exits [tdd]: implemented -> verify" in messages[-1].content
+    assert "Active workflows: tdd" in messages[-1].content
+    assert "Workflow transitions [tdd]: implemented -> verify" in messages[-1].content
     assert "Workflow gate [tdd]" not in messages[-1].content
     assert "test written, red verified, implementation green" not in messages[-1].content
 
@@ -144,7 +145,8 @@ def test_current_task_state_lists_feedback_design_and_plan_exits(tmp_path):
 
     context.apply_to_messages(messages)
 
-    assert "Workflow exits [feedback]:" in messages[-1].content
+    assert "Active workflows: feedback" in messages[-1].content
+    assert "Workflow transitions [feedback]:" in messages[-1].content
     assert "needs_design -> brainstorm" in messages[-1].content
     assert "needs_plan -> plan" in messages[-1].content
 

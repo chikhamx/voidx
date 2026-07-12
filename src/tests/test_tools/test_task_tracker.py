@@ -86,6 +86,13 @@ class TestTaskTracker:
         tracker.clear_todos()
         assert tracker.list_todos() == []
 
+    def test_todo_tool_description_guides_multi_step_progress(self):
+        description = TodoWriteTool().description
+
+        assert "Track multi-step work" in description
+        assert "Use write to replace the list" in description
+        assert "Use update to move items" in description
+
     @pytest.mark.asyncio
     async def test_todo_tool_returns_structured_metadata(self, tmp_path):
         tracker = TaskTracker()
@@ -107,6 +114,7 @@ class TestTaskTracker:
             {"id": "docs", "content": "update docs", "status": "done"},
         ]
         assert tracker.list_todos()[0]["content"] == "implement event"
+        assert result.next_step_hint == "Todo updated: continue with active item 'impl'; update todo when status changes."
 
     def test_todo_input_rejects_unknown_status(self):
         with pytest.raises(ValueError):
@@ -134,6 +142,24 @@ class TestTaskTracker:
         result = await tool.execute({"op": "read"}, ctx)
         assert "error" not in result.metadata
         assert "empty" in result.output.lower()
+        assert result.next_step_hint == ""
+
+    @pytest.mark.asyncio
+    async def test_todo_update_returns_active_item_hint(self, tmp_path):
+        tracker = TaskTracker()
+        tracker.set_todos_from_dict({
+            "impl": {"content": "implement change", "status": "pending"},
+            "verify": {"content": "run tests", "status": "pending"},
+        })
+        tool = TodoWriteTool(tracker=tracker)
+        ctx = ToolContext(workspace=str(tmp_path))
+
+        result = await tool.execute(
+            {"op": "update", "updates": [{"id": "impl", "status": "active"}]},
+            ctx,
+        )
+
+        assert result.next_step_hint == "Todo updated: continue with active item 'impl'; update todo when status changes."
 
     @pytest.mark.asyncio
     async def test_todo_update_no_tracker_sets_error(self, tmp_path):

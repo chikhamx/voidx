@@ -149,7 +149,7 @@ def test_runtime_context_applies_task_context_before_current_user(tmp_path):
     assert "## Runtime State" not in messages[-1].content
     assert "Current Task State" in messages[-1].content
     assert "Todo: 1/2 done · 1 active · 0 pending" in messages[-1].content
-    assert "active: update runtime context" in messages[-1].content
+    assert "  - active ctx: update runtime context" in messages[-1].content
     assert "Active/Pending" not in messages[-1].content
     assert "Call todo with op=read" not in messages[-1].content
     assert "## Task Context" in messages[-1].content
@@ -182,6 +182,8 @@ def test_current_task_state_todo_omits_active_when_all_pending(tmp_path):
     ).build()
     context.apply_to_messages(messages)
     assert "Todo: 0/2 done · 0 active · 2 pending" in messages[-1].content
+    assert "  - pending p1: first task" in messages[-1].content
+    assert "  - pending p2: second task" in messages[-1].content
     assert "active:" not in messages[-1].content
 
 
@@ -208,8 +210,46 @@ def test_current_task_state_todo_truncates_long_active_content(tmp_path):
         task_state=task_state,
     ).build()
     context.apply_to_messages(messages)
-    assert "active: " + "x" * 60 + "…" in messages[-1].content
+    assert "  - active a1: " + "x" * 80 + "…" in messages[-1].content
     assert "x" * 100 not in messages[-1].content
+
+
+def test_current_task_state_todo_limits_visible_items(tmp_path):
+    task_state = TaskState(
+        todo_state=TodoRunState.model_validate({
+            "summary": "0/5 done · 2 active · 3 pending",
+            "total": 5,
+            "done": 0,
+            "active": 2,
+            "pending": 3,
+            "active_items": [],
+            "items": [
+                {"id": "a1", "content": "active one", "status": "active"},
+                {"id": "a2", "content": "active two", "status": "active"},
+                {"id": "p1", "content": "pending one", "status": "pending"},
+                {"id": "p2", "content": "pending two", "status": "pending"},
+                {"id": "p3", "content": "pending three", "status": "pending"},
+            ],
+        })
+    )
+    messages = [HumanMessage(content="go")]
+    context = RuntimeContextBuilder(
+        config=Config(workspace=str(tmp_path)),
+        workspace=str(tmp_path),
+        base_system_prompt="You are voidx.",
+        persona="voidx",
+        interaction_mode=InteractionMode.AUTO,
+        task_state=task_state,
+    ).build()
+
+    context.apply_to_messages(messages)
+
+    assert "  - active a1: active one" in messages[-1].content
+    assert "  - active a2: active two" in messages[-1].content
+    assert "  - pending p1: pending one" in messages[-1].content
+    assert "pending p2" not in messages[-1].content
+    assert "  - … 2 more active/pending todos" in messages[-1].content
+
 
 
 def test_runtime_context_omits_goal_resolution_guide(tmp_path):

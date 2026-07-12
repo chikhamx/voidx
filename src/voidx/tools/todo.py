@@ -56,8 +56,8 @@ class TodoInput(BaseModel):
 class TodoWriteTool(BaseTool):
     id = "todo"
     description = (
-        "Create and manage a task list. Supports write (full replace), "
-        "update (incremental by id), and read (query with filter)."
+        "Track multi-step work with a short task list. Use write to replace the list, "
+        "Use update to move items between pending/active/done, and use read to inspect current progress."
     )
 
     def __init__(self, tracker=None):
@@ -212,6 +212,7 @@ class TodoWriteTool(BaseTool):
             output="\n".join(lines),
             summary=summary,
             metadata=metadata,
+            next_step_hint=_todo_next_step_hint(metadata),
         )
 
     async def _execute_write(self, inp: TodoInput) -> ToolResult:
@@ -270,16 +271,19 @@ class TodoWriteTool(BaseTool):
         
         lines.append(f"Summary: {summary}")
         
+        metadata = {
+            "total": total, "done": done, "active": active,
+            "pending": pending,
+            "todo_items": [{"id": item.id, "content": item.content, "status": item.status} for item in inp.todos],
+            "todo_summary": summary,
+        }
+
         return ToolResult(
             title=f"Todo: {done}/{total} done · {active} active · {pending} pending",
             output="\n".join(lines),
             summary=summary,
-            metadata={
-                "total": total, "done": done, "active": active,
-                "pending": pending,
-                "todo_items": [{"id": item.id, "content": item.content, "status": item.status} for item in inp.todos],
-                "todo_summary": summary,
-            },
+            metadata=metadata,
+            next_step_hint=_todo_next_step_hint(metadata),
         )
 
     def _filter_items(self, todos: dict, filter_type: TodoReadFilter) -> dict:
@@ -287,3 +291,20 @@ class TodoWriteTool(BaseTool):
         if filter_type == "all":
             return todos
         return {k: v for k, v in todos.items() if v["status"] == filter_type}
+
+
+def _todo_next_step_hint(metadata: dict) -> str:
+    items = metadata.get("todo_items")
+    if not isinstance(items, list):
+        return ""
+    active_item = next(
+        (
+            item for item in items
+            if isinstance(item, dict) and item.get("status") == "active" and item.get("id")
+        ),
+        None,
+    )
+    if active_item is None:
+        return "Todo updated: pick the next pending item or continue the current task; update todo when status changes."
+    return f"Todo updated: continue with active item {active_item['id']!r}; update todo when status changes."
+

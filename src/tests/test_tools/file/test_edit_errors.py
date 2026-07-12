@@ -35,7 +35,7 @@ class TestFileOpsErrors:
 
         assert result.metadata.get("error")
         assert "must be read before editing" in result.output
-        assert "Hint: Read lines 3-3" in result.output
+        assert "Retry after reading lines 3-3." in result.output
         assert "Edit 0:" not in result.output
 
     @pytest.mark.asyncio

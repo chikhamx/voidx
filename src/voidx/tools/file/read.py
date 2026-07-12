@@ -52,6 +52,12 @@ def _read_continuation_note(next_offset: int) -> str:
     )
 
 
+def _read_next_step_hint(bounded: BoundedReadOutput) -> str:
+    if bounded.next_offset is not None and bounded.truncated_by_chars:
+        return f"Read capped. Continue with read offset={bounded.next_offset}."
+    return ""
+
+
 def _overlong_line_output(line_number: int, line: str, max_chars: int) -> str:
     note = (
         f"[Line {line_number} exceeds the read output budget "
@@ -190,7 +196,7 @@ class FileReadInput(BaseModel):
 
 class FileReadTool(BaseTool):
     id = "read"
-    description = "Read a text file and return visible content as numbered lines. Use offset/limit for large files or to continue a capped read."
+    description = "Read a text file as numbered lines. Use offset/limit for large files or to continue capped output."
 
     def parameters_schema(self) -> dict:
         return model_to_json_schema(FileReadInput)
@@ -271,6 +277,7 @@ class FileReadTool(BaseTool):
                     "truncated_by_chars": bounded.truncated_by_chars,
                     "truncated_single_line": bounded.truncated_single_line,
                 },
+                next_step_hint=_read_next_step_hint(bounded),
             )
 
         bounded = _bounded_numbered_read_output(sliced, start + 1)
@@ -293,4 +300,5 @@ class FileReadTool(BaseTool):
                 "truncated_by_chars": bounded.truncated_by_chars,
                 "truncated_single_line": bounded.truncated_single_line,
             },
+            next_step_hint=_read_next_step_hint(bounded),
         )

@@ -25,8 +25,12 @@ class TestFileOps:
         assert "create" in file_desc
         assert "delete" in file_desc
         assert "move" in file_desc
-        assert "insert" in line_desc
-        assert "append" in line_desc
+        assert "create empty files or directories" in file_desc
+        assert "delete" in file_desc
+        assert "move" in file_desc
+        assert "write op=\"insert\"" in line_desc
+        assert "op=\"append\"" in line_desc
+        assert "op=\"write\"" in line_desc
 
     @pytest.mark.asyncio
     async def test_read(self, tmp_path):
@@ -83,6 +87,7 @@ class TestFileOps:
         assert first.metadata["end_line"] == next_offset - 1
         assert file_state.covered_read_range(ctx, f, 1, first.metadata["end_line"]) is not None
         assert file_state.covered_read_range(ctx, f, next_offset, next_offset) is None
+        assert first.next_step_hint == f"Read capped. Continue with read offset={next_offset}."
 
         second = await r.execute_tool("read", {"file_path": "long-read.txt", "offset": next_offset, "limit": 5}, ctx)
 

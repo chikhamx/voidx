@@ -68,7 +68,7 @@ class ManageInput(BaseModel):
 
 class ManageTool(BaseTool):
     id = "manage"
-    description = "Create an empty file or directory, delete files or directories, or move/rename files or directories. No file content is written; use write for content."
+    description = "Create empty files or directories, delete files or directories, or move/rename paths. Use write to add file content."
 
     def parameters_schema(self) -> dict:
         return model_to_json_schema(ManageInput)
@@ -84,10 +84,7 @@ class ManageTool(BaseTool):
             if inp.kind == "file" and result.metadata.get("succeeded") == 1 and not inp.overwrite:
                 paths = _paths_list(inp.paths)
                 if paths:
-                    result.next_step_hint = (
-                        f"Use the write tool to append content to {paths[0]}. "
-                        f"Start with write(file_path=\"{paths[0]}\", op=\"append\", new_string=\"...\")."
-                    )
+                    result.next_step_hint = f'Created file {paths[0]}. Use write op="append" to add content.'
             return result
         if inp.op == "delete":
             return await _delete_files(ctx, inp)

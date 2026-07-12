@@ -44,7 +44,7 @@ class WriteInput(BaseModel):
 
 class WriteTool(BaseTool):
     id = "write"
-    description = "Insert, append, or write file content. insert uses a 1-based line number; append adds to an existing file; write creates or fully overwrites the file."
+    description = 'Edit text files: write op="insert" before a 1-based line, op="append" at EOF, or op="write" to create/overwrite full content.'
 
     def parameters_schema(self) -> dict:
         return model_to_json_schema(WriteInput)
@@ -96,7 +96,10 @@ async def _execute_write_insert(ctx: ToolContext, inp: WriteInput) -> ToolResult
     if total_lines > 0 and inp.lineno <= total_lines:
         coverage_error = check_read_coverage(ctx, path, inp.lineno, inp.lineno, display_path=inp.file_path)
         if coverage_error:
-            return ToolResult(output=coverage_error, metadata={"error": True})
+            return ToolResult(
+                output=f"{coverage_error}\nRetry after reading lines {inp.lineno}-{inp.lineno}.",
+                metadata={"error": True},
+            )
     result = await _apply_single_write_edit(
         ctx,
         inp.file_path,
@@ -104,10 +107,7 @@ async def _execute_write_insert(ctx: ToolContext, inp: WriteInput) -> ToolResult
         resolved_path=path,
     )
     if inp.lineno == total_lines + 1 and total_lines > 0:
-        result.next_step_hint = (
-            f"Inserting at line {inp.lineno} is equivalent to appending. "
-            f"Consider using write(file_path=\"{inp.file_path}\", op=\"append\", new_string=\"...\") instead."
-        )
+        result.next_step_hint = 'Insert at EOF is append; use write op="append" next time.'
     return result
 
 

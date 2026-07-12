@@ -4,6 +4,7 @@ import pytest
 from langchain_core.messages import AIMessage, AIMessageChunk, HumanMessage
 
 from voidx.agent.graph import VoidXGraph
+from voidx.agent.graph.turn_control import TURN_TOOL_DEFINITION
 from voidx.config import Config, ModelConfig
 from tests.test_agent.graph.stream_llm_helpers import FakeRenderer
 
@@ -79,6 +80,18 @@ def _regular_tool_chunk() -> AIMessageChunk:
     )
 
 
+def test_turn_tool_definition_describes_start_and_stop_usage():
+    definition = TURN_TOOL_DEFINITION["function"]
+    description = definition["description"]
+
+    assert "At turn start" in description
+    assert "At turn end" in description
+    assert "Do not combine turn with other tool calls" in description
+    assert definition["parameters"]["properties"]["operation"]["description"] == (
+        "start declares intent and goal; stop commits the pending final answer."
+    )
+
+
 def _mixed_chunk() -> AIMessageChunk:
     return AIMessageChunk(
         content="",
@@ -145,7 +158,9 @@ async def test_turn_start_accepts_goal_then_continues_to_stop(tmp_path, monkeypa
     assert result["task_state"]["current_goal"] == {"desc": "Implement turn start"}
     assert model.call_index == 3
     assert any(
-        getattr(msg, "name", "") == "turn" and "Goal accepted" in str(msg.content)
+        getattr(msg, "name", "") == "turn"
+        and "Turn started:" in str(msg.content)
+        and "Continue with the next appropriate tool or workflow step" in str(msg.content)
         for msg in model.received_messages[1]
     )
 
@@ -621,6 +636,8 @@ async def test_start_prompt_injected_once_then_stop_prompt(tmp_path, monkeypatch
     round2_messages = model.received_messages[2]
     round2_text = "\n".join(str(getattr(msg, "content", "")) for msg in round2_messages)
     assert "operation='stop'" in round2_text
+    assert "If finished" in round2_text
+    assert "continue with a regular tool" in round2_text
 
     assert result["messages"][0].content == "Second provisional."
     assert model.call_index == 3

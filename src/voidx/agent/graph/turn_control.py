@@ -19,10 +19,9 @@ TURN_TOOL_DEFINITION: dict[str, Any] = {
     "function": {
         "name": TURN_TOOL_NAME,
         "description": (
-            "Commit the pending assistant response and end the current user turn. "
-            "Call with operation='stop' only when the pending response is complete. "
-            "Call with operation='start' at the beginning of a turn to declare intent and goal. "
-            "If more work is needed, call another available tool instead. Do not output text with this call."
+            "Turn lifecycle control. At turn start, call operation='start' with intent and a short goal before other work. "
+            "At turn end, call operation='stop' only after the pending final answer is complete. "
+            "Do not combine turn with other tool calls. Do not output text with this call."
         ),
         "strict": True,
         "parameters": {
@@ -31,7 +30,7 @@ TURN_TOOL_DEFINITION: dict[str, Any] = {
                 "operation": {
                     "type": "string",
                     "enum": ["start", "stop"],
-                    "description": "start: declare turn objective. stop: commit pending answer.",
+                    "description": "start declares intent and goal; stop commits the pending final answer.",
                 },
                 "intent": {
                     "type": "string",
@@ -40,7 +39,7 @@ TURN_TOOL_DEFINITION: dict[str, Any] = {
                 },
                 "goal": {
                     "type": "string",
-                    "description": "For start: stable objective, short and clear. For stop: pass empty string.",
+                    "description": "For start: short stable objective for this user turn. For stop: pass empty string.",
                 },
             },
             "required": ["operation", "intent", "goal"],
@@ -59,14 +58,12 @@ class TurnClassification(str, Enum):
 
 
 TURN_STOP_PROMPT = (
-    "Decide whether the latest assistant response fully completes the user's request. "
-    "Do not output text. If complete, call turn with operation='stop', intent='', and goal='' "
-    "to commit the pending response and end this turn. If more work is needed, call the appropriate regular tool now."
+    "Do not output text. If finished, call turn with operation='stop', intent='', and goal='' now. "
+    "If not finished, continue with a regular tool instead."
 )
 
 TURN_START_PROMPT = (
-    "You forgot to call turn with operation='start' to declare this turn's intent and goal. "
-    "Please call turn with operation='start', intent, and goal now."
+    "Turn state is initial. Do not output text yet. Call turn with operation='start', intent, and a short goal now."
 )
 
 FIRST_MISS_PROMPT = TURN_STOP_PROMPT

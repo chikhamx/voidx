@@ -71,9 +71,8 @@ def test_turn_tool_definition_description_requires_start_and_stop():
     description = TURN_TOOL_DEFINITION["function"]["description"]
     assert "operation='start'" in description
     assert "operation='stop'" in description
-    assert "intent and goal" in description
-    assert "Do not output text" in description
-    assert "end the current user turn" in description
+    assert "intent and a short goal" in description
+    assert "At turn end" in description
 
 
 def test_turn_tool_definition_requires_operation_intent_goal():
@@ -228,8 +227,8 @@ def test_first_miss_prompt_mentions_turn():
     assert "turn" in prompt
     assert "operation='stop'" in prompt
     assert "regular tool" in prompt
-    assert "do not output text" in prompt
-    assert "user's request" in prompt
+    assert "finished" in prompt
+    assert "continue" in prompt
 
 
 def test_start_prompt_mentions_start_intent_and_goal():

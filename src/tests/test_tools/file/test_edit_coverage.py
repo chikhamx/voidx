@@ -37,6 +37,23 @@ class TestFileOpsCoverage:
         assert (tmp_path / "coverage.txt").read_text() == "ONE\nTWO\n"
 
     @pytest.mark.asyncio
+    async def test_replace_unread_range_uses_short_retry_hint(self, tmp_path):
+        f = tmp_path / "retry-hint.txt"
+        f.write_text("one\ntwo\nthree\n")
+        ctx = ToolContext(workspace=str(tmp_path))
+        r = ToolRegistry()
+        await r.execute_tool("read", {"file_path": "retry-hint.txt", "offset": 1, "limit": 1}, ctx)
+
+        result = await r.execute_tool(
+            "replace",
+            {"file_path": "retry-hint.txt", "bounds": [{"line_no": 3, "anchor": "three"}], "new_string": "THREE"},
+            ctx,
+        )
+
+        assert result.metadata.get("error") is True
+        assert "Retry after reading lines 3-3." in result.output
+
+    @pytest.mark.asyncio
     async def test_replace_does_not_mark_unseen_lines_as_read_after_partial_edit(self, tmp_path):
         f = tmp_path / "partial-coverage.txt"
         f.write_text("\n".join(f"line {i}" for i in range(1, 13)) + "\n")

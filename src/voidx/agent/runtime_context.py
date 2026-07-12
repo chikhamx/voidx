@@ -275,22 +275,16 @@ class RuntimeContextBuilder:
             join = self.workflow_route.join or "not set"
             leave = self.workflow_route.leave or "not set"
             lines.append(f"- Workflow route: {join} -> {leave}")
-        for workflow_name in self._active_workflow_node_names():
+        active_workflow_names = self._active_workflow_node_names()
+        if active_workflow_names:
+            lines.append(f"- Active workflows: {'; '.join(active_workflow_names)}")
+        for workflow_name in active_workflow_names:
             exits = workflow_exit_summaries(workflow_name)
             if exits:
-                lines.append(f"- Workflow exits [{workflow_name}]: {'; '.join(exits)}")
-        todo_state = _coerce_todo_run_state(self.todo_state)
-        if todo_state is not None and todo_state.items:
-            visible = [i for i in todo_state.items if i.status in ("active", "pending")]
-            if visible:
-                line = f"- Todo: {todo_state.summary}"
-                active_item = next((i for i in todo_state.items if i.status == "active"), None)
-                if active_item and active_item.content:
-                    content = active_item.content
-                    if len(content) > 60:
-                        content = content[:60] + "…"
-                    line += f" · active: {content}"
-                lines.append(line)
+                lines.append(f"- Workflow transitions [{workflow_name}]: {'; '.join(exits)}")
+        todo_lines = _render_task_state_todo_lines(self.todo_state)
+        if todo_lines:
+            lines.extend(todo_lines)
         if self.interaction_mode == InteractionMode.PLAN:
             lines.append("- Constraint: plan mode blocks write/insert/replace/edit, write-capable bash, and implement delegation.")
         elif self.interaction_mode == InteractionMode.GOAL:
@@ -309,6 +303,35 @@ class RuntimeContextBuilder:
             if name:
                 names.append(name)
         return names
+
+
+def _render_task_state_todo_lines(todo_state_value: object | None) -> list[str]:
+    todo_state = _coerce_todo_run_state(todo_state_value)
+    if todo_state is None or not todo_state.items:
+        return []
+
+    visible = [item for status in ("active", "pending") for item in todo_state.items if item.status == status]
+    if not visible:
+        return []
+
+    lines = [f"- Todo: {todo_state.summary}"]
+    visible_limit = 3
+    for item in visible[:visible_limit]:
+        content = _truncate_todo_content(item.content)
+        item_id = f" {item.id}" if item.id else ""
+        lines.append(f"  - {item.status}{item_id}: {content}")
+
+    omitted = len(visible) - visible_limit
+    if omitted > 0:
+        lines.append(f"  - … {omitted} more active/pending todos")
+    return lines
+
+
+def _truncate_todo_content(content: str, limit: int = 80) -> str:
+    if len(content) <= limit:
+        return content
+    return content[:limit] + "…"
+
 
 
 def _render_sections(sections: list[ContextSection]) -> str:

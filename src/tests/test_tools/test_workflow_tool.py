@@ -28,7 +28,7 @@ from voidx.tools.clarify import ClarifyTool, ClarifyInput, _infer_state_patch
 from voidx.tools.skills import SkillsTool
 from voidx.tools.document import DocumentTool, DocumentInput
 from voidx.tools.checkpoint import PlanCheckpointTool
-from voidx.tools.workflow import WorkflowInput
+from voidx.tools.workflow import WorkflowInput, WorkflowTool
 from voidx.agent.task_state import GoalSpec, GoalResolution, IntentResolution, PlanResolution, ToolStatePatch
 from voidx.agent.runtime_context import TaskIntent
 from voidx.skills.context import SKILL_TOOL_CONTEXT_MARKER
@@ -43,6 +43,13 @@ class TestWorkflowTool:
 
         assert description is not None
         assert "Stable overall objective" in description
+
+    def test_workflow_tool_description_is_actionable(self):
+        description = WorkflowTool().description
+
+        assert "Enter a workflow before gated work" in description
+        assert "advance after its gate is satisfied" in description
+        assert "done only to close active nodes" in description
 
     @pytest.mark.asyncio
     async def test_workflow_advance_activates_matching_successor(self, tmp_path):
@@ -74,6 +81,8 @@ class TestWorkflowTool:
         assert payload["action"] == "advance"
         assert payload["activated"] == ["verify"]
         assert payload["next_hints"]
+        assert result.next_step_hint.startswith("Active workflow: verify.")
+        assert "Follow its gate before advancing again." in result.next_step_hint
         assert by_name["tdd"].status == WorkflowRunStatus.SATISFIED
         assert by_name["tdd"].evidence[0].condition == "implemented"
         assert by_name["verify"].status == WorkflowRunStatus.ACTIVE
@@ -108,6 +117,7 @@ class TestWorkflowTool:
         assert payload["action"] == "enter"
         assert payload["workflow"] == "debug"
         assert payload["activated"] == ["debug"]
+        assert result.next_step_hint.startswith("Active workflow: debug.")
         assert by_name["brainstorm"].status == WorkflowRunStatus.SATISFIED
         assert by_name["plan"].status == WorkflowRunStatus.SATISFIED
         assert by_name["debug"].status == WorkflowRunStatus.ACTIVE
