@@ -13,11 +13,12 @@ Registering a custom fetcher:
 from __future__ import annotations
 
 import asyncio
+import re
 from collections.abc import Awaitable, Callable
 
 import httpx
 
-from voidx.llm.provider import _DEFAULT_BASE_URLS, _PROVIDER_PROTOCOLS, PROTOCOL_DEEPSEEK
+from voidx.llm.provider import _DEFAULT_BASE_URLS, _PROVIDER_PROTOCOLS, _strip_gemini_version_suffix, PROTOCOL_DEEPSEEK
 from voidx.logging.tool_log import log_tool_event
 
 
@@ -96,6 +97,25 @@ STATIC_MODELS: dict[str, list[str]] = {
         "gemini-2.0-flash",
     ],
 }
+
+_VERSION_TOKEN_RE = re.compile(r"\d+")
+
+
+def _sort_models_latest_first(models: list[str]) -> list[str]:
+    versioned = [
+        (index, model, tuple(int(part) for part in _VERSION_TOKEN_RE.findall(model)))
+        for index, model in enumerate(models)
+    ]
+    width = max((len(version) for _index, _model, version in versioned), default=0)
+
+    def key(item: tuple[int, str, tuple[int, ...]]) -> tuple:
+        index, _model, version = item
+        if not version:
+            return (1, (), index)
+        padded = version + (0,) * (width - len(version))
+        return (0, tuple(-part for part in padded), index)
+
+    return [model for _index, model, _version in sorted(versioned, key=key)]
 
 # ── fetcher registry ───────────────────────────────────────────────────────
 
@@ -218,20 +238,28 @@ async def _resolve_api_key(provider: str) -> str | None:
         return None
 
 
-async def _fetch_openai_compatible_models(provider: str) -> list[str]:
+async def _fetch_openai_compatible_models(
+    provider: str,
+    *,
+    api_key: str | None = None,
+    base_url: str | None = None,
+) -> list[str]:
     """Fetch models from an OpenAI-compatible /models endpoint.
 
     Used by 12 providers: openai, deepseek, mimo, mimo-token-plan, qwen,
     zhipu, kimi, doubao, typex, minimax, longcat, xunfei-coding-plan.
     Falls back to STATIC_MODELS on any error or missing API key.
     """
-    api_key = await _resolve_api_key(provider)
+    if api_key is None:
+        api_key = await _resolve_api_key(provider)
     if not api_key:
         return STATIC_MODELS.get(provider, [])
 
-    base_url = await _resolve_base_url(provider)
+    if base_url is None:
+        base_url = await _resolve_base_url(provider)
     if not base_url:
         return STATIC_MODELS.get(provider, [])
+    base_url = base_url.rstrip("/")
 
     url = f"{base_url}/models"
     headers = {"Authorization": f"Bearer {api_key}"}
@@ -261,7 +289,7 @@ async def _fetch_openai_compatible_models(provider: str) -> list[str]:
 
     if not models:
         return STATIC_MODELS.get(provider, [])
-    return models[:100]
+    return _sort_models_latest_first(models)[:100]
 
 
 # ── built-in: Anthropic ────────────────────────────────────────────────────
@@ -270,13 +298,21 @@ _ANTHROPIC_BASE_URL = "https://api.anthropic.com"
 _ANTHROPIC_VERSION = "2023-06-01"
 
 
-async def _fetch_anthropic_models() -> list[str]:
+async def _fetch_anthropic_models(
+    provider: str = "anthropic",
+    *,
+    api_key: str | None = None,
+    base_url: str | None = None,
+) -> list[str]:
     """Fetch models from Anthropic's /v1/models endpoint."""
-    api_key = await _resolve_api_key("anthropic")
+    if api_key is None:
+        api_key = await _resolve_api_key(provider)
     if not api_key:
-        return STATIC_MODELS.get("anthropic", [])
+        return STATIC_MODELS.get(provider, [])
 
-    base_url = await _resolve_base_url("anthropic") or _ANTHROPIC_BASE_URL
+    if base_url is None:
+        base_url = await _resolve_base_url(provider)
+    base_url = (base_url or _ANTHROPIC_BASE_URL).rstrip("/")
     url = f"{base_url}/v1/models"
     headers = {
         "x-api-key": api_key,
@@ -290,8 +326,8 @@ async def _fetch_anthropic_models() -> list[str]:
             data = resp.json()
         except Exception as exc:
             log_tool_event("catalog_fetch_failed", tool_name="catalog",
-                           message=f"Failed to fetch models for anthropic: {exc}")
-            return STATIC_MODELS.get("anthropic", [])
+                           message=f"Failed to fetch models for {provider}: {exc}")
+            return STATIC_MODELS.get(provider, [])
 
     models: list[str] = []
     seen: set[str] = set()
@@ -304,8 +340,8 @@ async def _fetch_anthropic_models() -> list[str]:
             models.append(model_id)
 
     if not models:
-        return STATIC_MODELS.get("anthropic", [])
-    return models
+        return STATIC_MODELS.get(provider, [])
+    return _sort_models_latest_first(models)
 
 
 # ── built-in: Gemini ───────────────────────────────────────────────────────
@@ -314,29 +350,39 @@ _GEMINI_BASE_URL = "https://generativelanguage.googleapis.com"
 _GEMINI_SKIP_KEYWORDS = ("embed", "aqa")
 
 
-async def _fetch_gemini_models() -> list[str]:
+async def _fetch_gemini_models(
+    provider: str = "gemini",
+    *,
+    api_key: str | None = None,
+    base_url: str | None = None,
+) -> list[str]:
     """Fetch models from Gemini's /v1beta/models endpoint.
 
     Gemini returns models[].name as 'models/gemini-xxx'; we strip the prefix.
     Filters out embedding and non-generative models.
     """
-    api_key = await _resolve_api_key("gemini")
+    if api_key is None:
+        api_key = await _resolve_api_key(provider)
     if not api_key:
-        return STATIC_MODELS.get("gemini", [])
+        return STATIC_MODELS.get(provider, [])
 
-    base_url = await _resolve_base_url("gemini") or _GEMINI_BASE_URL
+    if base_url is None:
+        base_url = await _resolve_base_url(provider)
+    base_url = base_url or _GEMINI_BASE_URL
+    base_url = _strip_gemini_version_suffix(base_url)
     url = f"{base_url}/v1beta/models"
     params = {"key": api_key}
+    headers = {"x-goog-api-key": api_key}
 
     async with httpx.AsyncClient(timeout=15.0) as client:
         try:
-            resp = await client.get(url, params=params)
+            resp = await client.get(url, headers=headers, params=params)
             resp.raise_for_status()
             data = resp.json()
         except Exception as exc:
             log_tool_event("catalog_fetch_failed", tool_name="catalog",
-                           message=f"Failed to fetch models for gemini: {exc}")
-            return STATIC_MODELS.get("gemini", [])
+                           message=f"Failed to fetch models for {provider}: {exc}")
+            return STATIC_MODELS.get(provider, [])
 
     models: list[str] = []
     seen: set[str] = set()
@@ -353,8 +399,8 @@ async def _fetch_gemini_models() -> list[str]:
             models.append(model_id)
 
     if not models:
-        return STATIC_MODELS.get("gemini", [])
-    return models
+        return STATIC_MODELS.get(provider, [])
+    return _sort_models_latest_first(models)
 
 
 # ── register all built-in fetchers ────────────────────────────────────────
@@ -366,7 +412,7 @@ for _provider in _OPENAI_COMPATIBLE_PROVIDERS:
 
 
 async def _merge_custom(provider: str, base: list[str]) -> list[str]:
-    """Merge custom models (from settings) in front of base list, deduplicating."""
+    """Merge custom models (from settings) with base list, deduplicating."""
     if _settings is None:
         return base
     custom = await _settings.list_custom_models(provider)
@@ -378,7 +424,46 @@ async def _merge_custom(provider: str, base: list[str]) -> list[str]:
         if m not in seen:
             seen.add(m)
             result.append(m)
-    return result
+    return _sort_models_latest_first(result)
+
+
+def _static_fallback_models(provider: str, protocol: str | None = None) -> list[str]:
+    models = STATIC_MODELS.get(provider, [])
+    if models or not protocol:
+        return _sort_models_latest_first(models)
+    return _sort_models_latest_first(STATIC_MODELS.get(protocol, []))
+
+
+async def list_fallback_models(provider: str, protocol: str | None = None) -> list[str]:
+    """Return local custom models plus static fallback models for *provider*."""
+    return await _merge_custom(provider, _static_fallback_models(provider, protocol))
+
+
+async def _fetch_models_for_config(
+    provider: str,
+    *,
+    api_key: str | None,
+    base_url: str | None,
+    protocol: str | None,
+) -> list[str]:
+    resolved_protocol = protocol or _PROVIDER_PROTOCOLS.get(provider, "openai")
+    if resolved_protocol == "anthropic":
+        return await _fetch_anthropic_models(
+            provider,
+            api_key=api_key,
+            base_url=base_url,
+        )
+    if resolved_protocol == "gemini":
+        return await _fetch_gemini_models(
+            provider,
+            api_key=api_key,
+            base_url=base_url,
+        )
+    return await _fetch_openai_compatible_models(
+        provider,
+        api_key=api_key,
+        base_url=base_url,
+    )
 
 
 # ── public API ─────────────────────────────────────────────────────────────
@@ -400,4 +485,28 @@ async def list_models(provider: str) -> list[str]:
             log_tool_event("catalog_fetch_failed", tool_name="catalog", message=f"Failed to fetch models for {provider}: {exc}")
         except Exception as exc:
             log_tool_event("catalog_fetch_unexpected", tool_name="catalog", message=f"Unexpected error fetching models for {provider}: {exc}")
-    return await _merge_custom(provider, STATIC_MODELS.get(provider, []))
+    return await list_fallback_models(provider)
+
+
+async def list_models_for_config(
+    provider: str,
+    *,
+    api_key: str | None = None,
+    base_url: str | None = None,
+    protocol: str | None = None,
+) -> list[str]:
+    """Return model names using explicit connection details before fallback."""
+    try:
+        models = await _fetch_models_for_config(
+            provider,
+            api_key=api_key,
+            base_url=base_url,
+            protocol=protocol,
+        )
+        if models:
+            return await _merge_custom(provider, models)
+    except (httpx.HTTPError, asyncio.TimeoutError, ValueError) as exc:
+        log_tool_event("catalog_fetch_failed", tool_name="catalog", message=f"Failed to fetch models for {provider}: {exc}")
+    except Exception as exc:
+        log_tool_event("catalog_fetch_unexpected", tool_name="catalog", message=f"Unexpected error fetching models for {provider}: {exc}")
+    return await list_fallback_models(provider, protocol=protocol)

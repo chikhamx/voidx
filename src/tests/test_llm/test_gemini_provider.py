@@ -237,6 +237,27 @@ def test_create_chat_model_gemini():
             assert call_kwargs["api_key"] == "test-api-key"
 
 
+def test_create_chat_model_gemini_strips_v1beta_suffix_from_base_url():
+    """base_url ending with /v1beta must be stripped — google-genai SDK appends it."""
+    from voidx.llm.provider import create_chat_model
+
+    mock_cls = MagicMock()
+    mock_cls.return_value = MagicMock()
+
+    with patch.dict("sys.modules", {"langchain_google_genai": MagicMock(ChatGoogleGenerativeAI=mock_cls)}):
+        with patch("voidx.llm.provider.resolve_protocol", return_value="gemini"):
+            create_chat_model(
+                "test-api-key",
+                ModelConfig(
+                    provider="gemini",
+                    model="gemini-2.5-flash",
+                    base_url="http://relay.example.com/antigravity/v1beta",
+                ),
+            )
+            call_kwargs = mock_cls.call_args[1]
+            assert call_kwargs["base_url"] == "http://relay.example.com/antigravity"
+
+
 def test_create_chat_model_gemini_with_reasoning():
     """Gemini model with reasoning_effort should include thinking kwargs."""
     from voidx.llm.provider import create_chat_model

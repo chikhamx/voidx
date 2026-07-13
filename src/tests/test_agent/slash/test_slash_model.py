@@ -185,6 +185,96 @@ async def test_model_prompt_uses_prompt_app_text_input():
 
 
 @pytest.mark.asyncio
+async def test_model_new_prompts_connection_details_before_fetching_models(tmp_path, monkeypatch):
+    settings = await Settings.create(str(tmp_path))
+    events: list[tuple[str, str]] = []
+
+    class SequenceChoiceApp:
+        def __init__(self) -> None:
+            self.status = SimpleNamespace(
+                context_limit=0,
+                provider="",
+                model="",
+                reasoning_effort="",
+            )
+
+        async def ask_choice(self, prompt, choices, details=None):
+            events.append(("choice", prompt))
+            target = "gemini" if prompt == "Provider" else "fetched-gemini-model"
+            for label, value, _description in choices:
+                if label == target:
+                    return value
+            raise AssertionError(f"missing choice {target!r}")
+
+        async def ask_text(self, prompt, default="", secret=False):
+            events.append(("text", prompt))
+            if prompt == "Base URL (optional)":
+                return "https://relay.example.com/gemini"
+            if prompt == "API key":
+                return "AIza-temp"
+            raise AssertionError(f"unexpected prompt {prompt!r}")
+
+    captured: dict[str, object] = {}
+
+    async def fake_list_models_for_config(provider, *, api_key=None, base_url=None, protocol=None):
+        captured.update(
+            provider=provider,
+            api_key=api_key,
+            base_url=base_url,
+            protocol=protocol,
+            events=list(events),
+        )
+        return ["fetched-gemini-model"]
+
+    monkeypatch.setattr("voidx.llm.catalog.list_models_for_config", fake_list_models_for_config)
+    monkeypatch.setattr("voidx.llm.service.create_chat_model", lambda *_args, **_kwargs: object())
+
+    app = SequenceChoiceApp()
+    graph = SimpleNamespace(
+        config=Config(model=ModelConfig(provider="gemini", model="old")),
+        _settings=settings,
+        _app=app,
+        app=app,
+        _session=None,
+        _usage_stats=None,
+    )
+    handler = SlashHandler(graph)
+
+    async def fake_test_connection(_model):
+        return True, ""
+
+    async def fake_show_startup(**_kwargs):
+        return None
+
+    handler._test_connection = fake_test_connection
+    handler._show_startup = fake_show_startup
+
+    try:
+        await handler._model_new()
+
+        assert captured == {
+            "provider": "gemini",
+            "api_key": "AIza-temp",
+            "base_url": "https://relay.example.com/gemini",
+            "protocol": None,
+            "events": [
+                ("choice", "Provider"),
+                ("text", "Base URL (optional)"),
+                ("text", "API key"),
+            ],
+        }
+        assert events == [
+            ("choice", "Provider"),
+            ("text", "Base URL (optional)"),
+            ("text", "API key"),
+            ("choice", "Model"),
+        ]
+        assert graph.config.model.model == "fetched-gemini-model"
+    finally:
+        await delete_model_profile_async("gemini/fetched-gemini-model")
+
+
+@pytest.mark.asyncio
 async def test_model_switch_defaults_to_local_scope(tmp_path, monkeypatch):
     profile_name = f"deepseek/{tmp_path.name}-local"
     settings = await Settings.create(str(tmp_path))

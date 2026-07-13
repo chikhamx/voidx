@@ -108,6 +108,23 @@ def _normalize_base_url(url: str) -> str:
     return url.strip().rstrip("/")
 
 
+_GEMINI_API_VERSION = "v1beta"
+
+
+def _strip_gemini_version_suffix(url: str) -> str:
+    """Strip a trailing /v1beta from a Gemini base_url.
+
+    google-genai SDK appends the api version (v1beta) to every request URL,
+    so a user-supplied base_url that already ends with /v1beta produces
+    /v1beta/v1beta/... and a 404.
+    """
+    normalized = url.strip().rstrip("/")
+    suffix = f"/{_GEMINI_API_VERSION}"
+    if normalized.endswith(suffix):
+        return normalized[: -len(suffix)]
+    return normalized
+
+
 def _resolve_base_url(config: ModelConfig, protocol: str) -> str:
     provider_protocol = _PROVIDER_PROTOCOLS.get(config.provider)
     stale_openai_base_url = (
@@ -732,7 +749,7 @@ def create_chat_model(api_key: str, config: ModelConfig) -> BaseChatModel:
         if api_key:
             kwargs["api_key"] = api_key
         if base_url:
-            kwargs["base_url"] = base_url
+            kwargs["base_url"] = _strip_gemini_version_suffix(base_url)
         kwargs.update(_reasoning_kwargs(config, protocol))
         return ChatGoogleGenerativeAI(**kwargs)
 

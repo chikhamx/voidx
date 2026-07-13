@@ -59,6 +59,27 @@ def _has_additional_properties(obj) -> bool:
     return False
 
 
+def _has_schema_keyword(obj) -> bool:
+    if isinstance(obj, dict):
+        if "$schema" in obj:
+            return True
+        return any(_has_schema_keyword(v) for v in obj.values())
+    if isinstance(obj, list):
+        return any(_has_schema_keyword(item) for item in obj)
+    return False
+
+
+def _has_non_string_enum(obj) -> bool:
+    if isinstance(obj, dict):
+        enum_values = obj.get("enum")
+        if isinstance(enum_values, list) and any(not isinstance(v, str) for v in enum_values):
+            return True
+        return any(_has_non_string_enum(v) for v in obj.values())
+    if isinstance(obj, list):
+        return any(_has_non_string_enum(item) for item in obj)
+    return False
+
+
 def test_gemini_strips_additional_properties():
     """Gemini protocol should remove all additionalProperties keys."""
     tool_defs = _sample_tool_defs()
@@ -66,6 +87,96 @@ def test_gemini_strips_additional_properties():
 
     assert len(result) == 2
     assert not _has_additional_properties(result)
+
+
+def test_gemini_strips_schema_keyword():
+    """Gemini protocol should remove all $schema keys from MCP schemas."""
+    tool_defs = [
+        {
+            "type": "function",
+            "function": {
+                "name": "mcp__test__search",
+                "description": "MCP search",
+                "parameters": {
+                    "$schema": "https://json-schema.org/draft/2020-12/schema",
+                    "type": "object",
+                    "properties": {
+                        "query": {
+                            "$schema": "https://json-schema.org/draft/2020-12/schema",
+                            "type": "string",
+                        }
+                    },
+                    "required": ["query"],
+                },
+            },
+        }
+    ]
+    result = strip_gemini_unsupported_schema_keys(tool_defs, "gemini")
+
+    assert not _has_schema_keyword(result)
+
+
+def test_gemini_strips_non_string_enums_but_keeps_string_enums():
+    """Gemini protocol should remove enum values that google-genai Schema rejects."""
+    tool_defs = [
+        {
+            "type": "function",
+            "function": {
+                "name": "mcp__test__search",
+                "description": "MCP search",
+                "parameters": {
+                    "type": "object",
+                    "properties": {
+                        "count": {"type": "integer", "enum": [0, 1, 2, 3]},
+                        "mode": {"type": "string", "enum": ["fast", "deep"]},
+                        "nested": {
+                            "type": "object",
+                            "properties": {
+                                "enabled": {"type": "boolean", "enum": [True, False]},
+                            },
+                        },
+                    },
+                    "required": ["count"],
+                },
+            },
+        }
+    ]
+    result = strip_gemini_unsupported_schema_keys(tool_defs, "gemini")
+    properties = result[0]["function"]["parameters"]["properties"]
+
+    assert "enum" not in properties["count"]
+    assert properties["mode"]["enum"] == ["fast", "deep"]
+    assert "enum" not in properties["nested"]["properties"]["enabled"]
+    assert not _has_non_string_enum(result)
+
+
+def test_gemini_strips_empty_string_enum_values():
+    """Gemini protocol should remove empty string enum values rejected by the API."""
+    tool_defs = [
+        {
+            "type": "function",
+            "function": {
+                "name": "turn",
+                "description": "Turn lifecycle control",
+                "parameters": {
+                    "type": "object",
+                    "properties": {
+                        "intent": {
+                            "type": "string",
+                            "enum": ["coding", "general", ""],
+                        },
+                        "empty_only": {"type": "string", "enum": [""]},
+                    },
+                    "required": ["intent", "empty_only"],
+                },
+            },
+        }
+    ]
+    result = strip_gemini_unsupported_schema_keys(tool_defs, "gemini")
+    properties = result[0]["function"]["parameters"]["properties"]
+
+    assert properties["intent"]["enum"] == ["coding", "general"]
+    assert "enum" not in properties["empty_only"]
 
 
 def test_non_gemini_keeps_additional_properties():

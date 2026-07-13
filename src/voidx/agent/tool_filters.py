@@ -30,9 +30,10 @@ def strip_gemini_unsupported_schema_keys(
 ) -> list[dict]:
     """Remove schema keys that langchain-google-genai warns about.
 
-    ``langchain-google-genai`` does not include ``additionalProperties`` in its
-    ``_ALLOWED_SCHEMA_FIELDS`` list, so every tool schema that contains it
-    emits a warning per LLM call.  For Gemini we strip it recursively; other
+    ``langchain-google-genai`` does not include keys such as
+    ``additionalProperties`` and ``$schema`` in its ``_ALLOWED_SCHEMA_FIELDS``
+    list, and the underlying google-genai ``Schema`` model only accepts string
+    enum values.  For Gemini we strip incompatible fields recursively; other
     providers are unaffected.
     """
     if protocol != "gemini":
@@ -42,17 +43,27 @@ def strip_gemini_unsupported_schema_keys(
     for tool in stripped:
         params = tool.get("function", {}).get("parameters")
         if isinstance(params, dict):
-            _strip_additional_properties(params)
+            _strip_gemini_unsupported_keys(params)
     return stripped
 
 
-def _strip_additional_properties(schema: dict) -> None:
-    """Recursively remove ``additionalProperties`` from a schema dict in-place."""
+def _strip_gemini_unsupported_keys(schema: dict) -> None:
+    """Recursively remove known unsupported Gemini schema keys in-place."""
     schema.pop("additionalProperties", None)
+    schema.pop("$schema", None)
+    enum_values = schema.get("enum")
+    if isinstance(enum_values, list) and all(isinstance(v, str) for v in enum_values):
+        non_empty_values = [v for v in enum_values if v]
+        if non_empty_values:
+            schema["enum"] = non_empty_values
+        else:
+            schema.pop("enum", None)
+    else:
+        schema.pop("enum", None)
     for value in schema.values():
         if isinstance(value, dict):
-            _strip_additional_properties(value)
+            _strip_gemini_unsupported_keys(value)
         elif isinstance(value, list):
             for item in value:
                 if isinstance(item, dict):
-                    _strip_additional_properties(item)
+                    _strip_gemini_unsupported_keys(item)

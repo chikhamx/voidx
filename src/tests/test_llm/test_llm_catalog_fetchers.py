@@ -22,9 +22,15 @@ from voidx.llm import catalog
 class FakeSettings:
     """Minimal settings stub for fetcher tests."""
 
-    def __init__(self, keys: dict[str, str] | None = None, base_urls: dict[str, str] | None = None):
+    def __init__(
+        self,
+        keys: dict[str, str] | None = None,
+        base_urls: dict[str, str] | None = None,
+        custom_models: dict[str, list[str]] | None = None,
+    ):
         self._keys = keys or {}
         self._base_urls = base_urls or {}
+        self._custom_models = custom_models or {}
 
     async def resolve_api_key(self, provider: str) -> str | None:
         return self._keys.get(provider)
@@ -33,7 +39,7 @@ class FakeSettings:
         return self._base_urls.get(provider)
 
     async def list_custom_models(self, provider: str) -> list[str]:
-        return []
+        return self._custom_models.get(provider, [])
 
 
 def _mock_httpx(monkeypatch, handler):
@@ -115,6 +121,24 @@ async def test_openai_compatible_fetcher_uses_custom_base_url(monkeypatch):
 
 
 @pytest.mark.asyncio
+async def test_fetched_models_are_sorted_latest_first(monkeypatch):
+    monkeypatch.setattr(catalog, "_settings", FakeSettings(keys={"openai": "sk-test"}))
+
+    def handler(method, url, headers, params):
+        return 200, {"data": [
+            {"id": "gpt-4o"},
+            {"id": "gpt-5.4-mini"},
+            {"id": "gpt-5.10-mini"},
+            {"id": "gpt-5.4-nano"},
+        ]}
+
+    _mock_httpx(monkeypatch, handler)
+    models = await catalog.list_models("openai")
+
+    assert models == ["gpt-5.10-mini", "gpt-5.4-mini", "gpt-5.4-nano", "gpt-4o"]
+
+
+@pytest.mark.asyncio
 async def test_openai_compatible_fetcher_no_key_falls_back(monkeypatch):
     """Without an API key, fetcher returns STATIC_MODELS."""
     monkeypatch.setattr(catalog, "_settings", FakeSettings(keys={}))
@@ -176,6 +200,7 @@ async def test_gemini_fetcher_parses_models(monkeypatch):
     def handler(method, url, headers, params):
         assert "generativelanguage.googleapis.com" in url
         assert params.get("key") == "AIza-test"
+        assert headers.get("x-goog-api-key") == "AIza-test"
         return 200, {"models": [
             {"name": "models/gemini-2.5-flash"},
             {"name": "models/gemini-2.5-pro"},
@@ -193,6 +218,89 @@ async def test_gemini_fetcher_parses_models(monkeypatch):
 async def test_gemini_fetcher_no_key_falls_back(monkeypatch):
     monkeypatch.setattr(catalog, "_settings", FakeSettings(keys={}))
     models = await catalog.list_models("gemini")
+    assert models == catalog.STATIC_MODELS["gemini"]
+
+
+@pytest.mark.asyncio
+async def test_gemini_fetcher_strips_v1beta_suffix_from_custom_base_url(monkeypatch):
+    """Custom base_url ending with /v1beta should not produce /v1beta/v1beta/models."""
+    monkeypatch.setattr(catalog, "_settings", FakeSettings(
+        keys={"gemini": "AIza-test"},
+        base_urls={"gemini": "http://relay.example.com/antigravity/v1beta"},
+    ))
+
+    captured_url = []
+
+    def handler(method, url, headers, params):
+        captured_url.append(url)
+        return 200, {"models": [{"name": "models/gemini-2.5-pro"}]}
+
+    _mock_httpx(monkeypatch, handler)
+    models = await catalog.list_models("gemini")
+    assert captured_url == ["http://relay.example.com/antigravity/v1beta/models"]
+    assert "gemini-2.5-pro" in models
+
+
+@pytest.mark.asyncio
+async def test_configured_custom_provider_fetches_models_with_protocol_base_url_and_key(monkeypatch):
+    monkeypatch.setattr(catalog, "_settings", FakeSettings())
+    captured_url = []
+
+    def handler(method, url, headers, params):
+        captured_url.append(url)
+        assert params.get("key") == "AIza-temp"
+        assert headers.get("x-goog-api-key") == "AIza-temp"
+        return 200, {"models": [{"name": "models/gemini-3.1-pro-high"}]}
+
+    _mock_httpx(monkeypatch, handler)
+    models = await catalog.list_models_for_config(
+        "jochen",
+        api_key="AIza-temp",
+        base_url="http://relay.example.com/antigravity/v1beta",
+        protocol="gemini",
+    )
+
+    assert captured_url == ["http://relay.example.com/antigravity/v1beta/models"]
+    assert models == ["gemini-3.1-pro-high"]
+
+
+@pytest.mark.asyncio
+async def test_configured_custom_provider_falls_back_to_local_models(monkeypatch):
+    monkeypatch.setattr(
+        catalog,
+        "_settings",
+        FakeSettings(custom_models={"jochen": ["models/gemini-3.1-pro-high"]}),
+    )
+
+    def handler(method, url, headers, params):
+        return 500, {}
+
+    _mock_httpx(monkeypatch, handler)
+    models = await catalog.list_models_for_config(
+        "jochen",
+        api_key="AIza-temp",
+        base_url="http://relay.example.com/antigravity",
+        protocol="gemini",
+    )
+
+    assert models == ["models/gemini-3.1-pro-high"] + catalog.STATIC_MODELS["gemini"]
+
+
+@pytest.mark.asyncio
+async def test_configured_custom_provider_falls_back_to_protocol_static_models(monkeypatch):
+    monkeypatch.setattr(catalog, "_settings", FakeSettings())
+
+    def handler(method, url, headers, params):
+        return 500, {}
+
+    _mock_httpx(monkeypatch, handler)
+    models = await catalog.list_models_for_config(
+        "jochen",
+        api_key="AIza-temp",
+        base_url="http://relay.example.com/antigravity",
+        protocol="gemini",
+    )
+
     assert models == catalog.STATIC_MODELS["gemini"]
 
 

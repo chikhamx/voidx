@@ -37,25 +37,59 @@ class SlashModelMixin:
             protocol = protocol_choices[proto_idx]
             if protocol == "deepseek":
                 ui.print("[dim]  deepseek: China-domestic OpenAI-compatible providers (DeepSeek, Qwen, Zhipu, etc.)[/dim]")
-            custom_base_url = await self._prompt("Base URL (optional)", default="")
-            if custom_base_url is None:
-                ui.print("[dim]Cancelled.[/dim]")
-                return
-            custom_base_url = custom_base_url.strip()
             ui.print(f"[dim]  Custom provider: {new_provider} (protocol={protocol})[/dim]")
         else:
             new_provider = provider_choices[idx]
             protocol = (await self.host.settings.resolve_protocol(new_provider)) if self.host.settings else None
-            custom_base_url = ""
         ui.print(f"[dim]  Provider: {new_provider}[/dim]")
 
-        # Step 2: choose model from known list or enter manually
-        from voidx.llm.catalog import list_models as list_provider_models
+        # Step 2: connection details, used immediately for model discovery
+        current_base_url = ""
+        current_key = ""
+        if self.host.settings:
+            current_base_url = await self.host.settings.resolve_base_url(new_provider) or ""
+            current_key = await self.host.settings.resolve_api_key(new_provider) or ""
+
+        base_url_input = await self._prompt("Base URL (optional)", default=current_base_url)
+        if base_url_input is None:
+            ui.print("[dim]Cancelled.[/dim]")
+            return
+        base_url = base_url_input.strip() or current_base_url or None
+
+        masked = self._mask_key(current_key) if current_key else "(not set)"
+        ui.print(f"[dim]Current: {masked}[/dim]")
+        new_key = await self._prompt("API key", default="", secret=True)
+        if new_key is None:
+            ui.print("[dim]Cancelled.[/dim]")
+            return
+        if new_key.strip():
+            api_key = new_key.strip()
+        else:
+            if not current_key:
+                ui.error(
+                    f"No API key found for '{new_provider}'. Provide one now."
+                )
+                return
+            api_key = current_key
+
+        # Step 3: choose model from fetched list or enter manually
+        from voidx.llm.catalog import (
+            list_fallback_models,
+            list_models_for_config,
+        )
         try:
-            known = await asyncio.wait_for(list_provider_models(new_provider), timeout=15.0)
+            known = await asyncio.wait_for(
+                list_models_for_config(
+                    new_provider,
+                    api_key=api_key,
+                    base_url=base_url,
+                    protocol=protocol,
+                ),
+                timeout=15.0,
+            )
         except asyncio.TimeoutError:
-            known = []
-            ui.warn("Model list fetch timed out; enter model name manually.")
+            known = await list_fallback_models(new_provider, protocol=protocol)
+            ui.warn("Model list fetch timed out; using saved/static model list.")
         model_choices = known + ["Other (enter manually)"]
         ui.print()
         model_idx = await _select_from_list(self.host.app, "Model", model_choices)
@@ -78,32 +112,7 @@ class SlashModelMixin:
             new_model = model_choices[model_idx]
             ui.print(f"[dim]  Model: {new_model}[/dim]")
 
-        # Step 3: API key
-        current_key = ""
-        if self.host.settings:
-            current_key = await self.host.settings.resolve_api_key(new_provider) or ""
-        masked = self._mask_key(current_key) if current_key else "(not set)"
-        ui.print(f"[dim]Current: {masked}[/dim]")
-        new_key = await self._prompt("API key", default="", secret=True)
-        if new_key is None:
-            ui.print("[dim]Cancelled.[/dim]")
-            return
-        if new_key.strip():
-            api_key = new_key.strip()
-        else:
-            if self.host.settings:
-                key = await self.host.settings.resolve_api_key(new_provider)
-                if not key:
-                    ui.error(
-                        f"No API key found for '{new_provider}'. Provide one now."
-                    )
-                    return
-                api_key = key
-            else:
-                return
-
         # Step 4: build and validate
-        base_url = custom_base_url or (await self.host.settings.resolve_base_url(new_provider) if self.host.settings else None)
         test_cfg = self.host.config.model.model_copy()
         test_cfg.provider = new_provider
         test_cfg.model = new_model
