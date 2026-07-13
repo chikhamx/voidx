@@ -61,6 +61,23 @@ file list.
 - PyPI account with access to the `voidx` project
 - Clean working tree, except ignored build outputs
 
+## Recommended: Use `scripts/release.py`
+
+The end-to-end release script handles the full flow — version sync, build,
+PyPI upload, npm wheel bundling, and npm publish — in one command:
+
+```bash
+UV_CACHE_DIR=/private/tmp/voidx-uv-cache ./python.py scripts/release.py
+```
+
+It ensures the freshly built `voidx_cli` wheel is copied into `npm/` before
+publishing. **Always prefer this over manual step-by-step publishing** —
+skipping it leaves a stale wheel in `npm/` and ships a broken npm package
+(see Common Pitfalls below).
+
+Use `--pypi-only` or `--npm-only` for partial releases, `--dry-run` to build
+without publishing, `--skip-checks` to bypass metadata validation.
+
 ## Preflight
 
 Run the full verification suite before publishing:
@@ -122,6 +139,20 @@ python3.11 -m venv /tmp/voidx-pypi-smoke
 ```
 
 ## Publish to npm
+
+The npm package must be published after the matching Python packages are
+available on PyPI, because the npm launcher installs `voidx-cli==<version>`
+on first run.
+
+> **⚠️ Do not run `npm publish` manually.** The npm `files` field includes
+> `*.whl`, which means `npm pack` bundles whatever `voidx_cli-*.whl` exists
+> in `npm/` at publish time. If you skip `scripts/release.py`, the stale
+> wheel from the previous version stays in `npm/` and gets shipped — the
+> postinstall then fails with `Bundled voidx_cli-<version>-py3-none-any.whl
+> not found`. Always use `scripts/release.py`, which removes stale wheels
+> and copies the freshly built one from `dist/`.
+
+Pack and inspect the npm package:
 
 The npm package must be published after the matching Python packages are
 available on PyPI, because the npm launcher installs `voidx-cli==<version>`
@@ -193,6 +224,7 @@ voidx --help
 | Edit `__init__.py` but forget to run `bump_version.py` | `voidx_cli`, `npm/package.json`, and install scripts keep the old version |
 | Forget to publish `voidx-cli` | Terminal UI (`voidx --web`) users fail with \"No frontend registered\" |
 | Only bump package files, not install scripts | New users get the old version via `curl \| bash` |
+| Run `npm publish` manually instead of `scripts/release.py` | `npm/` keeps the stale `voidx_cli-*.whl` from the previous version; postinstall fails with `Bundled ... not found` |
 
 ## Notes
 
