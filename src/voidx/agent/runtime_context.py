@@ -319,7 +319,8 @@ def _render_task_state_todo_lines(todo_state_value: object | None) -> list[str]:
     for item in visible[:visible_limit]:
         content = _truncate_todo_content(item.content)
         item_id = f" {item.id}" if item.id else ""
-        lines.append(f"  - {item.status}{item_id}: {content}")
+        alias = f" ({item.status}: {content})" if item.id else ""
+        lines.append(f"  - {item.status}{item_id}: {content}{alias}")
 
     omitted = len(visible) - visible_limit
     if omitted > 0:

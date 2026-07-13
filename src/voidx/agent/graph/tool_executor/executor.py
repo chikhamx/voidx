@@ -129,6 +129,7 @@ class GraphToolExecutor:
                 workflow_repeat_tracker=host._workflow_repeat_tracker,
                 mcp_manager=getattr(host, "_mcp_manager", None),
                 lsp_manager=getattr(host, "_lsp_manager", None),
+                loop_manager=getattr(host, "loop_manager", getattr(host, "_loop_manager", None)),
                 sandbox_mode=host._permission.sandbox_mode,
                 sandbox_readable_files=list(host._permission.sandbox_readable_files),
                 sandbox_readable_dirs=list(host._permission.sandbox_readable_dirs),

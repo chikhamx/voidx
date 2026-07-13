@@ -102,6 +102,8 @@ class GraphTurnRunner:
 
     def __init__(self, host: GraphRunLoopHost) -> None:
         self.host = host
+        self.idle_event = asyncio.Event()
+        self.idle_event.set()
 
     async def run_once(
         self,
@@ -115,6 +117,7 @@ class GraphTurnRunner:
         async with bind_thread_execution_context(host, session_id=context_session_id):
             t_turn_start = time.monotonic()
             host._usage_stats.begin_turn()
+            self.idle_event.clear()
             user_message_id: int | None = None
             try:
                 host._ui.session_tracker.begin_turn(host._workspace)
@@ -457,6 +460,7 @@ class GraphTurnRunner:
                 else:
                     host._ui.dock.clear_todo_state()
                     host._ui.dock.set_input("", [])
+                self.idle_event.set()
 
 
 def _invalidate_tui(host: object) -> None:

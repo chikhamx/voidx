@@ -52,6 +52,7 @@ from voidx.runtime.ui_port import AgentUiPort, runtime_ui_port
 
 _SAFETY_STEP_LIMIT = 50
 _RESULT_CONTRACT_RETRY_LIMIT = 2
+_BLOCKED_CHILD_TOOLS = {"agent", "clarify", "checkpoint", "schedule_wakeup"}
 
 async def run_subagent(
     agent_def: AgentDef,
@@ -89,7 +90,7 @@ async def run_subagent(
     # Child agents inherit the full parent tool registry.
     # Access control is handled by the permission layer and workflow denied_tools.
     agent_tools = parent_tools or ToolRegistry()
-    blocked_child_tools = {"agent", "clarify", "checkpoint"}
+    blocked_child_tools = _BLOCKED_CHILD_TOOLS
     if not agent_def.can_delegate:
         agent_tools = agent_tools.filtered_copy(set(agent_tools.ids()) - blocked_child_tools)
     model = create_chat_model(api_key, model_cfg)

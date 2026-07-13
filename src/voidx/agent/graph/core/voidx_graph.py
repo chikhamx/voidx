@@ -32,6 +32,7 @@ from voidx.agent.graph.session_runtime import GraphSessionRuntime
 from voidx.agent.graph.streaming import stream_llm as _stream_llm
 from voidx.agent.graph.subagent import run_subagent as _run_subagent
 from voidx.agent.graph.title_mixin import GraphTitleMixin
+from voidx.agent.loop import LoopManager
 from voidx.agent.graph.thread_context import current_thread_execution_state
 from voidx.agent.graph.tool_executor import GraphToolExecutor
 from voidx.agent.graph.tool_execution import GraphToolExecutionMixin
@@ -271,6 +272,12 @@ class VoidXGraph(
         self._session_runtime = GraphSessionRuntime(self)
         self._tool_executor = GraphToolExecutor(self)
         self._turn_runner = GraphTurnRunner(self)
+        self._loop_manager = LoopManager(
+            self,
+            idle_event=self._turn_runner.idle_event,
+            workspace=self._workspace,
+        )
+        self.tools._loop_manager = self._loop_manager
         self._skill_service: SkillService | None = None
 
         from voidx.runtime.ui import ToolDisplayPolicy, DEFAULT_DISPLAY_RULES
@@ -349,6 +356,8 @@ class VoidXGraph(
         )
         self._permission = build_permission_service(self.config, settings=settings, notifier=self._ui.ui.print)
         self._tool_executor = GraphToolExecutor(self)
+        if hasattr(self, "_loop_manager"):
+            self.tools._loop_manager = self._loop_manager
 
         context_limit = self._compaction.context_limit
         updated_usage_stats, updated_compaction = build_compaction_service(self.config)
@@ -378,6 +387,10 @@ class VoidXGraph(
     @property
     def lsp_manager(self):
         return getattr(self, "_lsp_manager", None)
+
+    @property
+    def loop_manager(self) -> LoopManager:
+        return self._loop_manager
 
     @property
     def _plan_mode(self) -> bool:
@@ -468,6 +481,7 @@ class VoidXGraph(
         await self._run_once(text, display_text=display_text)
 
     async def clear_current_session(self) -> None:
+        await self._loop_manager.cleanup()
         self._invalidate_session_title_generation()
         old_session_id = self._session.id if self._session is not None else None
         self._session = None
@@ -512,10 +526,12 @@ class VoidXGraph(
         )
 
     async def resume_session(self, session: SessionInfo) -> None:
+        await self._loop_manager.cleanup()
         self._invalidate_session_title_generation()
         self._session = session
         self._workspace = session.workspace
         self.config.workspace = session.workspace
+        self._loop_manager.set_workspace(self._workspace)
         self._session_date = session_date(session)
         self._session_msg_cache = None
         self._context_cache = ContextCompilerCache()

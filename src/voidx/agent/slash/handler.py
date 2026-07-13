@@ -12,6 +12,7 @@ from voidx.agent.slash.guide import SlashGuideMixin
 from voidx.agent.slash.host import SlashCommandHost, SlashHostAdapter
 from voidx.agent.slash.init import SlashInitMixin
 from voidx.agent.slash.lsp import SlashLspMixin
+from voidx.agent.loop.slash import SlashLoopMixin
 from voidx.agent.slash.mcp import SlashMcpMixin
 from voidx.agent.slash.model import SlashModelMixin
 from voidx.agent.slash.profile import SlashProfileMixin
@@ -31,6 +32,7 @@ class SlashHandler(
     SlashSkillsMixin,
     SlashUpgradeMixin,
     SlashMcpMixin,
+    SlashLoopMixin,
     SlashProfileMixin,
     SlashModelMixin,
 ):
@@ -108,6 +110,7 @@ class SlashHandler(
             "/upgrade": lambda: self._upgrade(args),
             "/mcp": lambda: self._mcp(args),
             "/lsp": lambda: self._lsp(args),
+            "/loop": lambda: self._loop(args),
             "/skills": lambda: self._skills(args),
             "/paste": self._paste_clipboard_image,
             "/tone": lambda: self._tone(args),

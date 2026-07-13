@@ -42,6 +42,8 @@ class SlashCommandHost(Protocol):
     def mcp_manager(self) -> McpManager | None: ...
     @property
     def lsp_manager(self) -> LspManager | None: ...
+    @property
+    def loop_manager(self) -> Any | None: ...
 
     def set_debug(self, value: bool) -> None: ...
     def set_interaction_mode(self, mode: str | InteractionMode) -> InteractionMode: ...
@@ -133,6 +135,10 @@ class SlashHostAdapter:
     @property
     def lsp_manager(self) -> LspManager | None:
         return self._value("lsp_manager", "_lsp_manager")
+
+    @property
+    def loop_manager(self) -> Any | None:
+        return self._value("loop_manager", "_loop_manager")
 
     def _legacy_attr(self, name: str, default: Any = None) -> Any:
         return getattr(self.raw, name, default)

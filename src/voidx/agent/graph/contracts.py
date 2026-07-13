@@ -183,6 +183,7 @@ class GraphRunLoopHost(Protocol):
     _title_task: asyncio.Task[None] | None
     _mcp_manager: Any
     _lsp_manager: Any
+    _loop_manager: Any
     _slash: Any
     _any_messages_sent: bool
     _pending_guidance: list[tuple[str, bool] | tuple[str, bool, Literal["user", "guard"]]]

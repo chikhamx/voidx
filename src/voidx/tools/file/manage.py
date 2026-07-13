@@ -68,7 +68,7 @@ class ManageInput(BaseModel):
 
 class ManageTool(BaseTool):
     id = "manage"
-    description = "Create empty files or directories, delete files or directories, or move/rename paths. Use write to add file content."
+    description = "Create empty files or directories; create an empty file or directory, delete files or directories, or move/rename paths. No file content is written; use write to add file content."
 
     def parameters_schema(self) -> dict:
         return model_to_json_schema(ManageInput)

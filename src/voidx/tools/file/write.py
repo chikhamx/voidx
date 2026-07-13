@@ -44,7 +44,7 @@ class WriteInput(BaseModel):
 
 class WriteTool(BaseTool):
     id = "write"
-    description = 'Edit text files: write op="insert" before a 1-based line, op="append" at EOF, or op="write" to create/overwrite full content.'
+    description = 'Edit text files: write op="insert" before a 1-based line, op="append" at EOF, or op="write" creates or fully overwrites full content.'
 
     def parameters_schema(self) -> dict:
         return model_to_json_schema(WriteInput)

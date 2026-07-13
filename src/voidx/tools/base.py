@@ -82,6 +82,7 @@ class ToolContext(BaseModel):
     workflow_route: dict[str, str | None] | None = None
     mcp_manager: Any | None = None
     lsp_manager: Any | None = None
+    loop_manager: Any | None = Field(default=None, exclude=True)
     sandbox_mode: str = "workspace-write"
     sandbox_readable_files: list[str] = Field(default_factory=list)
     sandbox_readable_dirs: list[str] = Field(default_factory=list)

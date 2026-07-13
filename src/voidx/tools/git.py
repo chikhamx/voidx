@@ -85,7 +85,7 @@ class GitInput(BaseModel):
     )
     args: str = Field(
         min_length=1,
-        description='raw git subcommand and arguments only. Do not include git itself, e.g. "status --porcelain" or "log --oneline -5".',
+        description='raw git subcommand and arguments only. Do not include git itself; do not include the git executable, e.g. "status --porcelain" or "log --oneline -5".',
     )
 
     @model_validator(mode="before")
