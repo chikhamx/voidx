@@ -217,6 +217,7 @@ def _verify_wheels(out_dir: Path) -> int:
         result = subprocess.run(
             [python, "-c", probe],
             capture_output=True, text=True,
+            cwd=tmp,
         )
         if result.returncode != 0:
             print(f"Import verification failed:\n{result.stderr}", file=sys.stderr)
