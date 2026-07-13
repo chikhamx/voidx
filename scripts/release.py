@@ -111,8 +111,31 @@ def _release_pypi(dry_run: bool) -> int:
     return 0
 
 
+def _sync_npm_wheel(dist_dir: Path = DIST, npm_dir: Path = NPM_DIR) -> Path | None:
+    """Remove stale wheels from npm/ and copy the freshly built one from dist/.
+
+    Returns the destination wheel path on success, or None if no wheel was
+    found in dist/. This is the step that manual ``npm publish`` skips,
+    shipping a stale wheel and breaking postinstall.
+    """
+    for stale_wheel in npm_dir.glob("voidx_cli-*.whl"):
+        stale_wheel.unlink()
+    tui_wheel = list(dist_dir.glob("voidx_cli-*.whl"))
+    if not tui_wheel:
+        print("❌ No voidx_cli wheel found in dist/. Build PyPI first.")
+        return None
+    wheel_src = tui_wheel[0]
+    wheel_dst = npm_dir / wheel_src.name
+    shutil.copy2(wheel_src, wheel_dst)
+    print(f"   ✅ Bundled {wheel_src.name} → npm/")
+    return wheel_dst
+
+
 def _release_npm(dry_run: bool) -> int:
-    # Remove stale wheels so npm pack only bundles the current version
+    wheel_dst = _sync_npm_wheel()
+    if wheel_dst is None:
+        return 1
+    print("\n📦 Preparing npm package...")
     for stale_wheel in NPM_DIR.glob("voidx_cli-*.whl"):
         stale_wheel.unlink()
     # Copy bundled voidx_cli wheel from dist/ to npm/
