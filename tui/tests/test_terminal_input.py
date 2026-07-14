@@ -159,6 +159,45 @@ def test_tty_render_reuses_previous_frame_region(tmp_path, monkeypatch):
     assert "\x1b[K" in fake_stdout.text
 
 
+def test_input_region_render_falls_back_to_full_frame_after_terminal_resize(
+    tmp_path, monkeypatch
+):
+    fake_stdout = _FakeStdout()
+    monkeypatch.setattr(sys, "stdout", fake_stdout)
+    terminal_height = 24
+    monkeypatch.setattr(
+        shutil,
+        "get_terminal_size",
+        lambda fallback=None: os.terminal_size((80, terminal_height)),
+    )
+
+    tui = _tui(tmp_path)
+    tui._tty = True
+    tui._console = Console(file=None, force_terminal=True, width=80, height=24, _environ={})
+    for index in range(12):
+        dock.append_message(f"line {index}")
+    dock.set_todo_state(
+        "6/6 done · 0 active · 0 pending",
+        [{"content": f"task {index}", "status": "done"} for index in range(6)],
+    )
+
+    tui._render_frame()
+    stale_bottom_start = tui._last_bottom_start_row
+    assert stale_bottom_start > 10
+
+    fake_stdout.text = ""
+    terminal_height = 10
+    assert tui._process_input(b"x") is True
+    assert tui._input_region_render_pending is True
+
+    tui._render_after_input()
+
+    assert fake_stdout.text.startswith("\x1b[1;1H\x1b[J")
+    assert f"\x1b[{stale_bottom_start};1H" not in fake_stdout.text
+    assert tui._prev_frame_term_height == 10
+    assert tui._last_bottom_start_row <= 10
+
+
 def test_command_panel_renders_below_input_with_bottom_rule(tmp_path):
     tui = _tui(
         tmp_path,
