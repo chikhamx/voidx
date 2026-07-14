@@ -75,6 +75,12 @@ INVALID_TURN_PROMPT = (
     "operation='stop', intent='', and goal='' to commit the pending response, or call a regular tool to continue working."
 )
 
+NO_USER_RESPONSE_PROMPT = (
+    "Turn stop was called but the user has not received a text response yet. "
+    "Output a concise user-facing summary of the completed work first, "
+    "then call turn with operation='stop', intent='', and goal='' to finish."
+)
+
 
 def _has_tool_calls(msg: AIMessage) -> bool:
     calls = getattr(msg, "tool_calls", None)

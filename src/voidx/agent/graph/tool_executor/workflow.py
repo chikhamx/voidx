@@ -22,7 +22,7 @@ from voidx.workflow.types import (
     WorkflowStateEventKind,
 )
 
-from .types import _ExecutedTool, ToolResultOk
+from .types import _ExecutedTool
 
 
 def _state_update_from_executed_tools(
@@ -270,35 +270,6 @@ def _satisfy_workflow_without_transition(
             )
         updated.append(copy)
     return updated
-
-
-def _terminal_workflow_completed(
-    executed: list[_ExecutedTool],
-    *,
-    workflow_runs: list[WorkflowRunState],
-    result_ok: ToolResultOk,
-) -> bool:
-    if not executed:
-        return False
-    if any(not result_ok(item.result) for item in executed):
-        return False
-
-    saw_terminal_advance = False
-    for item in executed:
-        if item.tool_call.get("name") != "workflow":
-            continue
-        metadata = getattr(item.result, "metadata", {}) or {}
-        transition = metadata.get("workflow_transition") or {}
-        if not isinstance(transition, dict):
-            continue
-        if str(transition.get("action") or "").strip().lower() != "done":
-            continue
-        if not any(run.status == WorkflowRunStatus.ACTIVE for run in workflow_runs):
-            saw_terminal_advance = True
-            break
-    if not saw_terminal_advance:
-        return False
-    return not any(run.status == WorkflowRunStatus.ACTIVE for run in workflow_runs)
 
 
 def _merge_workflow_runs_for_state(*groups: object) -> list[WorkflowRunState]:

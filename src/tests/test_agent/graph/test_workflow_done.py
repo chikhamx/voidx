@@ -132,7 +132,9 @@ def _tree_nodes(root):
 
 
 @pytest.mark.asyncio
-async def test_workflow_done_stops_before_followup_llm_when_workflow_complete(tmp_path):
+async def test_workflow_done_returns_to_llm_when_workflow_complete(tmp_path):
+    from voidx.agent.graph.topology import route_after_execute_tools
+
     graph = _graph(tmp_path)
     parent = AIMessage(
         content="",
@@ -164,7 +166,8 @@ async def test_workflow_done_stops_before_followup_llm_when_workflow_complete(tm
         ),
     })
 
-    assert result["should_continue"] is False
+    assert result.get("should_continue") is not False
+    assert route_after_execute_tools(result) == "call_llm"
     by_name = {run.name: run for run in _result_task_state(result).workflow_runs.values()}
     assert by_name["verify"].status == WorkflowRunStatus.SATISFIED
 
@@ -256,7 +259,9 @@ async def test_workflow_route_end_satisfies_non_review_without_successor(tmp_pat
 
 
 @pytest.mark.asyncio
-async def test_multiple_workflow_done_calls_finish_batch_before_stopping(tmp_path):
+async def test_multiple_workflow_done_calls_finish_batch_before_returning_to_llm(tmp_path):
+    from voidx.agent.graph.topology import route_after_execute_tools
+
     graph = _graph(tmp_path)
     parent = AIMessage(
         content="",
@@ -303,9 +308,9 @@ async def test_multiple_workflow_done_calls_finish_batch_before_stopping(tmp_pat
         "call_design_done",
         "call_verify_done",
     ]
-    assert result["should_continue"] is False
+    assert result.get("should_continue") is not False
+    assert route_after_execute_tools(result) == "call_llm"
     by_name = {run.name: run for run in _result_task_state(result).workflow_runs.values()}
     assert by_name["design"].status == WorkflowRunStatus.SATISFIED
     assert by_name["verify"].status == WorkflowRunStatus.SATISFIED
-
 

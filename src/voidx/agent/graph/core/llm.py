@@ -58,6 +58,7 @@ from voidx.runtime.ui import (
 from voidx.agent.graph.turn_control import (
     TURN_STOP_PROMPT,
     INVALID_TURN_PROMPT,
+    NO_USER_RESPONSE_PROMPT,
     TURN_START_PROMPT,
     TURN_TOOL_DEFINITION,
     TurnClassification,
@@ -464,7 +465,15 @@ class GraphLlmMixin:
                 if turn_control_active:
                     classification = classify_turn_call(assistant_msg)
                     has_text = bool(extract_text(assistant_msg).strip())
-                    if turn_prompt_active and has_text and classification != TurnClassification.PLAIN_TEXT:
+                    if (
+                        turn_prompt_active
+                        and has_text
+                        and classification != TurnClassification.PLAIN_TEXT
+                        and not (
+                            classification == TurnClassification.VALID_TURN
+                            and pending_provisional is None
+                        )
+                    ):
                         classification = TurnClassification.INVALID_TURN
 
                     if classification == TurnClassification.VALID_START:
@@ -528,11 +537,10 @@ class GraphLlmMixin:
                         continue
 
                     if classification == TurnClassification.VALID_TURN:
-                        turn_terminal = (
-                            pending_provisional
-                            if turn_prompt_active
-                            else (assistant_msg if has_text else pending_provisional)
-                        )
+                        if pending_provisional is not None:
+                            turn_terminal = pending_provisional
+                        else:
+                            turn_terminal = assistant_msg if has_text else pending_provisional
                         if validate_turn_call(assistant_msg, turn_terminal):
                             self._turn_metrics.increment("turn_control_called")
                             terminal_msg = normalize_terminal_message(turn_terminal)
@@ -542,10 +550,18 @@ class GraphLlmMixin:
                         if not invalid_turn_repaired:
                             invalid_turn_repaired = True
                             turn_prompt_active = True
+                            no_response = turn_terminal is None or not bool(
+                                extract_text(turn_terminal).strip()
+                            )
+                            repair_prompt = (
+                                NO_USER_RESPONSE_PROMPT
+                                if no_response
+                                else INVALID_TURN_PROMPT
+                            )
                             llm_messages = [
                                 *llm_messages,
                                 HumanMessage(
-                                    content=INVALID_TURN_PROMPT,
+                                    content=repair_prompt,
                                     additional_kwargs={GUIDANCE_MARKER: True},
                                 ),
                             ]
@@ -650,7 +666,7 @@ class GraphLlmMixin:
 
                 break
             except Exception as e:
-                from .helpers import _classify_llm_error, LLMErrorKind
+                from .helpers import _classify_llm_error, LLMErrorKind, _clean_error_message
 
                 kind = _classify_llm_error(e)
 
@@ -675,7 +691,7 @@ class GraphLlmMixin:
                         continue
 
                 if kind == LLMErrorKind.NON_RETRYABLE:
-                    failure_text = f"LLM call failed (non-retryable): {e}"
+                    failure_text = f"LLM call failed (non-retryable): {_clean_error_message(e)}"
                     if self._ui.via_events():
                         await self._ui.events.emit(StatusUpdated(
                             status_id="llm:retry",
@@ -698,7 +714,7 @@ class GraphLlmMixin:
                 if kind == LLMErrorKind.TIMEOUT:
                     timeout_retry_attempts += 1
                     if timeout_retry_attempts > _LLM_TIMEOUT_MAX_RETRIES:
-                        failure_text = f"LLM call failed after {timeout_retry_attempts} timeout(s): {e}"
+                        failure_text = f"LLM call failed after {timeout_retry_attempts} timeout(s): {_clean_error_message(e)}"
                         if retry_status_active and self._ui.via_events():
                             await self._ui.events.emit(StatusFinished(status_id="llm:retry"))
                         if self._ui.via_events():
@@ -716,7 +732,7 @@ class GraphLlmMixin:
                     failed_attempts += 1
                     delay = _llm_retry_delay(failed_attempts)
                     delay_str = str(int(delay)) if delay == int(delay) else str(delay)
-                    retry_detail = f"retrying in {delay_str}s: {e}"
+                    retry_detail = f"retrying in {delay_str}s: {_clean_error_message(e)}"
                     if self._ui.via_events():
                         retry_status_active = True
                         await self._ui.events.emit(StatusUpdated(
@@ -728,7 +744,7 @@ class GraphLlmMixin:
                         self._ui.ui.print(f"[dim]Retrying ({retry_detail})[/dim]")
                     await asyncio.sleep(delay)
                 else:
-                    failure_text = f"LLM call failed after {max_retries + 1} attempts: {e}"
+                    failure_text = f"LLM call failed after {max_retries + 1} attempts: {_clean_error_message(e)}"
                     if retry_status_active and self._ui.via_events():
                         await self._ui.events.emit(StatusFinished(status_id="llm:retry"))
                     if self._ui.via_events():

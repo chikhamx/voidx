@@ -44,6 +44,17 @@ def test_extract_tool_display_value_formats_common_mcp_list_args():
     )
 
 
+def test_extract_tool_display_value_prefers_mcp_target_over_instruction():
+    assert (
+        extract_tool_display_value(
+            "mcp__tavily__tavily_extract_99a8fac9",
+            {"urls": ["https://example.com"], "query": "extract title"},
+            "",
+        )
+        == "https://example.com"
+    )
+
+
 def test_strip_rich_markup_removes_markup_and_key_prefix():
     assert strip_rich_markup('[bold]file_path[/bold]="src/app.py"') == "src/app.py"
 
