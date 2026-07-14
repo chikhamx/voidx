@@ -197,7 +197,7 @@ async def test_git_unknown_raw_policy_denied(tmp_path: Path):
     repo = _init_repo(tmp_path / "repo")
 
     result = await GitTool().execute(
-        {"path": str(repo), "args": "for-each-ref --format=%(refname)"},
+        {"path": str(repo), "args": "submodule update"},
         ToolContext(workspace=str(repo)),
     )
 
