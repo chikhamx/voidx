@@ -33,6 +33,7 @@ from voidx.ui.output.events.schema import (
     MarkdownAppended,
     MessageAppended,
     PermissionPromptShown,
+    PermissionToolDetail,
     StartupShown,
     StatusFinished,
     StatusUpdated,
@@ -339,6 +340,51 @@ async def test_permission_prompt_to_item_started():
     params = _item_params(msg)
     assert params["kind"] == "prompt"
     assert params["data"]["prompt_type"] == "permission"
+
+
+@pytest.mark.asyncio
+async def test_permission_prompt_forwards_risk_scope_tool_details():
+    adapter = _adapter()
+    msg = await adapter.handle(
+        PermissionPromptShown(
+            prompt="Allow tool?",
+            choices=[("Do not run", "n", "Blocked")],
+            tools=[
+                PermissionToolDetail(
+                    name="bash",
+                    pattern="sudo true",
+                    args={"command": "sudo true"},
+                    risk={
+                        "level": "blocked",
+                        "tags": ["privilege_escalation"],
+                        "reason": "sudo is blocked",
+                        "tool_name": "bash",
+                        "pattern": "sudo true",
+                    },
+                    allowed_scopes=("once",),
+                    default_scope="once",
+                )
+            ],
+        )
+    )
+
+    data = _item_params(msg)["data"]
+    assert data["tools"] == [
+        {
+            "name": "bash",
+            "pattern": "sudo true",
+            "args": {"command": "sudo true"},
+            "risk": {
+                "level": "blocked",
+                "tags": ["privilege_escalation"],
+                "reason": "sudo is blocked",
+                "tool_name": "bash",
+                "pattern": "sudo true",
+            },
+            "allowed_scopes": ("once",),
+            "default_scope": "once",
+        }
+    ]
 
 
 @pytest.mark.asyncio

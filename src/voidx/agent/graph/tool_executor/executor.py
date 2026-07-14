@@ -22,7 +22,7 @@ from voidx.runtime.ui import (
     WarningAppended,
     UiEventTimeout,
 )
-from voidx.tools.service import ToolContext, ToolResult
+from voidx.tools.service import ApprovedToolRisk, ToolContext, ToolResult
 
 from .types import ToolResultOk, _ExecutedTool, _task_state_for_state, _tool_result_ok
 from .guards import (
@@ -33,7 +33,6 @@ from .guards import (
 from .workflow import (
     _state_update_from_executed_tools,
     _inline_compaction_messages,
-    _terminal_workflow_completed,
 )
 from .helpers import (
     _apply_state_update,
@@ -181,6 +180,7 @@ class GraphToolExecutor:
             cid = tc.get("id", "")
             tool_event_id = cid or f"{tid}:{id(tc)}"
 
+
             try:
                 tool_node = await notify_tool_started(host, tc, display_policy)
             except UiEventTimeout:
@@ -238,7 +238,12 @@ class GraphToolExecutor:
                                 output="Workspace write lock acquisition cancelled before tool start.",
                                 metadata={"blocked": True, "error": True},
                             )
-                    return await host.tools.execute_tool(tid, targs, ctx)
+                    previous_approved_tool_risks = ctx.approved_tool_risks
+                    ctx.approved_tool_risks = _approved_tool_risks_for_call(tc)
+                    try:
+                        return await host.tools.execute_tool(tid, targs, ctx)
+                    finally:
+                        ctx.approved_tool_risks = previous_approved_tool_risks
 
                 try:
                     if lease_factory is not None:
@@ -459,16 +464,6 @@ class GraphToolExecutor:
         compacted_messages = await _inline_compaction_messages(host, state.get("messages", []), executed)
         if compacted_messages:
             tool_messages = compacted_messages + tool_messages
-        if (
-            not denied_msgs
-            and not blocked_msgs
-            and _terminal_workflow_completed(
-                executed,
-                workflow_runs=runtime_task_state_ref[2],
-                result_ok=result_ok,
-            )
-        ):
-            state_update["should_continue"] = False
         if terminal_reason == UI_EVENT_BUS_TIMEOUT_KIND:
             tool_messages.append(AIMessage(content=(
                 "Turn terminated: UI event bus timed out while notifying tool start. "
@@ -486,6 +481,16 @@ class GraphToolExecutor:
 
     tool_result_ok = staticmethod(_tool_result_ok)
 
+
+
+def _approved_tool_risks_for_call(tool_call: dict) -> list[ApprovedToolRisk]:
+    raw = (tool_call.get("metadata") or {}).get("approved_risk")
+    if not isinstance(raw, dict):
+        return []
+    try:
+        return [ApprovedToolRisk.model_validate(raw)]
+    except ValueError:
+        return []
 
 async def _emit_tool_heartbeat(
     host: GraphToolExecutionHost,

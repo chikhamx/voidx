@@ -15,7 +15,7 @@ from voidx.ui.output.dock import BottomInputDock
 from voidx.ui.output.dock.status import PERMISSION_REQUEST_STATUS_ID
 from voidx.ui.output.dock.formatting import short_path, short_value
 from voidx.ui.output.manage_display import manage_display
-from voidx.ui.output.tool_display import extract_tool_display_value
+from voidx.ui.output.tool_display import extract_tool_display_value, mcp_tool_display_name
 from voidx.ui.output.events.schema import (
     AnsiAppended,
     AssistantStreamCommitted,
@@ -601,6 +601,8 @@ def _subagent_tool_action(tool_name: str, label: str) -> str:
     }
     if tool_name in mapping:
         return mapping[tool_name]
+    mcp_name = mcp_tool_display_name(tool_name)
+    if mcp_name:
+        return mcp_name
     return label or (tool_name.replace("_", " ").title() if tool_name else "Working")
-
 

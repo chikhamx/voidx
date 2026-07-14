@@ -72,6 +72,10 @@ def _result_task_state(result: dict) -> TaskState:
     return TaskState.model_validate(result["task_state"])
 
 
+def _asked_tool_calls(batch):
+    return [getattr(item, "tool_call", item) for item in batch]
+
+
 def _child_goal_resolution(
     goal_type: str = "feature",
     *,
@@ -320,6 +324,13 @@ async def test_subagent_runner_authorizes_with_child_interaction_mode(tmp_path, 
 async def test_graph_authorization_does_not_treat_goal_as_read_only_mode(tmp_path):
     graph = _graph(tmp_path)
     graph._permission.approval_policy = "on-request"
+    asked: list[list[dict]] = []
+
+    async def approve(tool_calls):
+        asked.append(tool_calls)
+        return "y"
+
+    graph._ask_tool_permission = approve
 
     approved, denied = await graph._authorize_tool_calls(
         [{"name": "edit", "args": {"file_path": "src/app.py"}, "id": "call_1"}],
@@ -331,6 +342,7 @@ async def test_graph_authorization_does_not_treat_goal_as_read_only_mode(tmp_pat
 
     assert [tc["name"] for tc in approved] == ["replace"]
     assert denied == []
+    assert [[tc["name"] for tc in _asked_tool_calls(batch)] for batch in asked] == [["replace"]]
 
 
 @pytest.mark.asyncio
@@ -369,7 +381,7 @@ async def test_graph_authorization_prompts_for_edit(tmp_path):
 
     assert [tc["name"] for tc in approved] == ["replace"]
     assert denied == []
-    assert [[tc["name"] for tc in batch] for batch in asked] == [["replace"]]
+    assert [[tc["name"] for tc in _asked_tool_calls(batch)] for batch in asked] == [["replace"]]
 
 
 @pytest.mark.asyncio
@@ -413,4 +425,4 @@ async def test_graph_authorization_prompts_for_unsafe_bash(tmp_path):
 
     assert [tc["name"] for tc in approved] == ["bash"]
     assert denied == []
-    assert [[tc["name"] for tc in batch] for batch in asked] == [["bash"]]
+    assert [[tc["name"] for tc in _asked_tool_calls(batch)] for batch in asked] == [["bash"]]

@@ -248,6 +248,9 @@ class PermissionToolDetail(BaseModel):
     name: str
     pattern: str = ""
     args: dict[str, Any] = Field(default_factory=dict)
+    risk: dict[str, Any] | None = None
+    allowed_scopes: tuple[str, ...] = ()
+    default_scope: str | None = None
 
 
 class PermissionPromptShown(UiEventBase):
