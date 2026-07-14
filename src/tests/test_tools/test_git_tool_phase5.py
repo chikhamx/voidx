@@ -403,7 +403,7 @@ async def test_git_unknown_leading_global_options_are_denied(tmp_path: Path):
 
 @pytest.mark.asyncio
 async def test_git_external_child_path_denied_before_repo_discovery(tmp_path: Path, monkeypatch: pytest.MonkeyPatch):
-    from voidx.tools import git as git_module
+    from voidx.tools.git import tool as git_tool_mod
 
     workspace = tmp_path / "workspace"
     workspace.mkdir()
@@ -417,7 +417,7 @@ async def test_git_external_child_path_denied_before_repo_discovery(tmp_path: Pa
         called = True
         raise AssertionError("repo discovery should not run for external non-root path")
 
-    monkeypatch.setattr(git_module, "_discover_repo", fail_discover)
+    monkeypatch.setattr(git_tool_mod, "_discover_repo", fail_discover)
 
     result = await GitTool().execute(
         {"path": str(child), "args": "status"},

@@ -6,7 +6,6 @@ from pathlib import Path
 import pytest
 
 
-from voidx.tools import git as git_mod
 from voidx.tools.base import ToolContext
 from voidx.tools.git import GitTool
 
@@ -79,7 +78,7 @@ async def test_git_clean_fd_combined_denied(tmp_path):
 
 def test_git_summary_ok_no_command_prefix():
     """Summary should not duplicate the command name shown in the tool header."""
-    from voidx.tools.git import _result
+    from voidx.tools.git.results import _result
 
     ctx = ToolContext(workspace=".")
     r = _result("log", ctx, ok=True)
@@ -87,7 +86,7 @@ def test_git_summary_ok_no_command_prefix():
 
 
 def test_git_summary_failed_no_command_prefix():
-    from voidx.tools.git import _result
+    from voidx.tools.git.results import _result
 
     ctx = ToolContext(workspace=".")
     r = _result("push", ctx, ok=False, error="command_denied")

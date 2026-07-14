@@ -6,7 +6,6 @@ from pathlib import Path
 import pytest
 
 
-from voidx.tools import git as git_mod
 from voidx.tools.base import ToolContext
 from voidx.tools.git import GitTool
 
@@ -160,7 +159,7 @@ def test_permission_reflog_read_vs_write():
 
 
 def test_git_is_read_only_reflog():
-    from voidx.tools.git import _is_read_only_subcommand
+    from voidx.tools.git.routing import _is_read_only_subcommand
     assert _is_read_only_subcommand("reflog", ["show"]) is True
     assert _is_read_only_subcommand("reflog", ["list"]) is True
     assert _is_read_only_subcommand("reflog", ["expire", "--all"]) is False

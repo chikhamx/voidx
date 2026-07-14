@@ -7,7 +7,6 @@ from pathlib import Path
 import pytest
 
 
-from voidx.tools import git as git_mod
 from voidx.tools.base import ToolContext
 from voidx.tools.git import GitTool
 
@@ -453,10 +452,11 @@ async def test_git_run_process_preserves_structured_timeout(monkeypatch, tmp_pat
         process.returncode = -1
         finalized = True
 
-    monkeypatch.setattr(git_mod.asyncio, "create_subprocess_exec", create_process)
-    monkeypatch.setattr(git_mod, "finalize_process_tree", finalize_process, raising=False)
+    from voidx.tools.git import process as git_process_mod
+    monkeypatch.setattr(git_process_mod.asyncio, "create_subprocess_exec", create_process)
+    monkeypatch.setattr(git_process_mod, "finalize_process_tree", finalize_process, raising=False)
 
-    result = await git_mod._run_process(
+    result = await git_process_mod._run_process(
         ["git", "status"],
         cwd=str(tmp_path),
         timeout=0.01,

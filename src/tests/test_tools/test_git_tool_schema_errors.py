@@ -6,7 +6,6 @@ from pathlib import Path
 import pytest
 
 
-from voidx.tools import git as git_mod
 from voidx.tools.base import ToolContext
 from voidx.tools.git import GitTool
 
