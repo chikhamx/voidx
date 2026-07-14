@@ -377,6 +377,8 @@ class GraphLlmMixin:
         turn_prompt_active = False
         start_prompt_injected = False
         terminal_msg: AIMessage | None = None
+        terminal_msg_visible = True
+        pending_provisional_visible = True
         while True:
             try:
                 renderer = StreamingRenderer(
@@ -539,11 +541,14 @@ class GraphLlmMixin:
                     if classification == TurnClassification.VALID_TURN:
                         if pending_provisional is not None:
                             turn_terminal = pending_provisional
+                            turn_terminal_visible = pending_provisional_visible
                         else:
                             turn_terminal = assistant_msg if has_text else pending_provisional
+                            turn_terminal_visible = not turn_prompt_active
                         if validate_turn_call(assistant_msg, turn_terminal):
                             self._turn_metrics.increment("turn_control_called")
                             terminal_msg = normalize_terminal_message(turn_terminal)
+                            terminal_msg_visible = turn_terminal_visible
                             turn_state = "committed"
                             break
                         self._turn_metrics.increment("turn_control_invalid")
@@ -620,6 +625,7 @@ class GraphLlmMixin:
                     if classification == TurnClassification.PLAIN_TEXT:
                         if missing_turn_count == 0:
                             pending_provisional = assistant_msg
+                            pending_provisional_visible = not turn_prompt_active
                         if (
                             turn_state == "initial"
                             and not start_prompt_injected
@@ -658,6 +664,7 @@ class GraphLlmMixin:
                             continue
                         self._turn_metrics.increment("turn_control_second_prompt")
                         terminal_msg = normalize_terminal_message(pending_provisional)
+                        terminal_msg_visible = pending_provisional_visible
                         break
 
                     self._turn_metrics.increment("turn_control_prompt_succeeded")
@@ -759,6 +766,14 @@ class GraphLlmMixin:
                     }
 
         final_msg = terminal_msg if terminal_msg is not None else assistant_msg
+        if terminal_msg is not None and not terminal_msg_visible:
+            final_text = extract_text(final_msg).strip()
+            if final_text:
+                if self._ui.via_events():
+                    await self._ui.events.emit(AssistantStreamUpdated(text=final_text, phase="text"))
+                    await self._ui.events.emit(AssistantStreamCommitted())
+                else:
+                    self._ui.ui.print(final_text)
         return {
             "messages": replacement_messages(final_msg),
             "step_count": step + 1,

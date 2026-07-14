@@ -244,9 +244,7 @@ async def test_settings_update_persists_preferences_and_permissions(tmp_path):
     result = await session.dispatch_request(JsonRpcRequest(id=16, method="settings.update", params={
         "patch": {
             "permissions": {
-                "permission_mode": "read-only",
-                "sandbox_mode": "read-only",
-                "approval_policy": "on-request",
+                "permission_preset": "read_only",
             },
             "user_profile": {"language": "zh-CN", "tone": "concise"},
             "parallel_subagents": {"enabled": True, "max_concurrent": 3},
@@ -257,9 +255,7 @@ async def test_settings_update_persists_preferences_and_permissions(tmp_path):
     assert isinstance(result, JsonRpcResult)
     assert result.result["ok"] is True
     settings = result.result["settings"]
-    assert settings["permissions"]["permission_mode"] == "custom"
-    assert settings["permissions"]["sandbox_mode"] == "read-only"
-    assert settings["permissions"]["approval_policy"] == "on-request"
+    assert settings["permissions"]["permission_preset"] == "read_only"
     assert settings["user_profile"] == {"language": "zh-CN", "tone": "concise"}
     assert settings["parallel_subagents"] == {"enabled": True, "max_concurrent": 3}
     assert settings["update_check"]["enabled"] is False

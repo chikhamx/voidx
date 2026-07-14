@@ -301,6 +301,9 @@ async def test_workflow_transaction_reauthorizes_following_write(tmp_path):
             nonlocal invalidations
             invalidations += 1
 
+        async def ask_choice(self, _prompt, _choices, details=None):
+            return "y"
+
     graph._app = FakeApp()
     parent = AIMessage(
         content="",

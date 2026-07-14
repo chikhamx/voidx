@@ -14,6 +14,7 @@ from langchain_core.messages import AIMessage, AIMessageChunk, HumanMessage, Too
 
 from voidx.agent.graph import VoidXGraph
 from voidx.config import Config, ModelConfig
+from voidx.ui.output.events import AssistantStreamCommitted, AssistantStreamUpdated
 from tests.test_agent.graph.stream_llm_helpers import FakeRenderer
 
 
@@ -53,6 +54,18 @@ def _turn_stop_chunk() -> AIMessageChunk:
 
 def _text_chunk(text: str) -> AIMessageChunk:
     return AIMessageChunk(content=text)
+
+
+def _text_and_turn_stop_chunk(text: str) -> AIMessageChunk:
+    return AIMessageChunk(
+        content=text,
+        tool_calls=[{
+            "name": "turn",
+            "args": {"operation": "stop", "intent": "", "goal": ""},
+            "id": "tc1",
+            "type": "tool_call",
+        }],
+    )
 
 
 def _make_graph(tmp_path, model, monkeypatch, provider="openai"):
@@ -105,6 +118,93 @@ async def test_turn_stop_in_running_state_without_pending_emits_text(tmp_path, m
     text = (msg.content or "").strip() if isinstance(msg.content, str) else ""
     assert "Review completed" in text
     assert "LLM call failed" not in text
+
+
+@pytest.mark.parametrize("repair_shape", ["text_then_stop", "text_and_stop"])
+@pytest.mark.asyncio
+async def test_headless_repair_commit_emits_user_visible_stream(tmp_path, monkeypatch, repair_shape):
+    """Gemini often repairs missing pending text by returning text + turn stop
+    in one headless repair call. The committed answer must still be emitted to
+    the UI; checking only result["messages"] misses the user-visible blank turn.
+    """
+    import voidx.agent.graph.core.llm as graph_module
+
+    emitted = []
+
+    class TrackingEvents:
+        async def emit(self, event):
+            emitted.append(event)
+            return True
+
+        def emit_direct(self, event):
+            emitted.append(event)
+            return True
+
+        async def drain(self):
+            pass
+
+        @property
+        def is_running(self):
+            return True
+
+    class TrackingUi:
+        class Output:
+            def print(self, *args, **kwargs):
+                pass
+
+            def error(self, *args, **kwargs):
+                pass
+
+        def __init__(self):
+            self.events = TrackingEvents()
+            self.console = None
+            self.ui = self.Output()
+
+        def via_events(self):
+            return True
+
+    class HeadlessAwareRenderer(FakeRenderer):
+        def __init__(self, *args, **kwargs) -> None:
+            super().__init__(*args, **kwargs)
+            self.headless = bool(kwargs.get("headless", False))
+
+        def feed_text(self, text: str) -> None:
+            if not self.headless:
+                super().feed_text(text)
+
+    async def fail_on_retry(delay):
+        pytest.fail(f"Unexpected LLM retry with delay {delay}s")
+
+    monkeypatch.setattr(graph_module, "StreamingRenderer", HeadlessAwareRenderer)
+    monkeypatch.setattr(graph_module.asyncio, "sleep", fail_on_retry)
+
+    scripts = [[_turn_stop_chunk()]]
+    if repair_shape == "text_then_stop":
+        scripts.extend([[_text_chunk("Review completed: PASS")], [_turn_stop_chunk()]])
+    else:
+        scripts.append([_text_and_turn_stop_chunk("Review completed: PASS")])
+    model = ScriptedStreamingModel(scripts)
+    graph = VoidXGraph(
+        Config(
+            model=ModelConfig(provider="gemini", model="gemini-test"),
+            workspace=str(tmp_path),
+        ),
+        api_key=None,
+    )
+    graph.model = model
+    graph._ui = TrackingUi()
+
+    result = await graph._call_llm({
+        "messages": [HumanMessage(content="Run review")],
+        "step_count": 1,
+        "persona": "coordinate",
+        "turn_state": "running",
+    })
+
+    assert result["messages"][0].content == "Review completed: PASS"
+    stream_updates = [event for event in emitted if isinstance(event, AssistantStreamUpdated)]
+    assert any("Review completed: PASS" in event.text for event in stream_updates)
+    assert any(isinstance(event, AssistantStreamCommitted) for event in emitted)
 
 
 @pytest.mark.asyncio

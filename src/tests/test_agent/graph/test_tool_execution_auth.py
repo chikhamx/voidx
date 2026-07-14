@@ -135,7 +135,7 @@ def _tree_nodes(root):
 @pytest.mark.asyncio
 async def test_graph_on_request_auto_approves_need_ask_tools(tmp_path):
     graph = _graph(tmp_path)
-    graph._permission.approval_policy = "on-request"
+    graph._permission.permission_preset = "full_access"
 
     approved, denied = await graph._authorize_tool_calls(
         [{"name": "write", "args": {"file_path": "app.py", "op": "append", "new_string": "x"}, "id": "call_1"}],

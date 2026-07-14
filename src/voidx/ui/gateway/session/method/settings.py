@@ -211,11 +211,7 @@ class SettingsMethods:
                 for profile_item in profiles
             ],
             "permissions": {
-                "permission_preset": _permission_preset_for(
-                    settings.get_permission_mode().value,
-                    settings.get_sandbox_mode().value,
-                    settings.get_approval_policy().value,
-                ),
+                "permission_preset": settings.get_permission_preset().value,
                 "permission_mode": settings.get_permission_mode().value,
                 "sandbox_mode": settings.get_sandbox_mode().value,
                 "approval_policy": settings.get_approval_policy().value,
