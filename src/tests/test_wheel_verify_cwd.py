@@ -38,16 +38,16 @@ def test_verify_probe_does_not_use_root_cwd(tmp_path: Path) -> None:
 
     def fake_run(cmd, *args, **kwargs):
         captured_runs.append({"cmd": list(cmd), "cwd": kwargs.get("cwd", None)})
-        cmd_str = " ".join(str(c) for c in cmd)
-        if "venv" in cmd_str:
-            venv_path = Path(cmd[-1])
+        cmd_list = [str(c) for c in cmd]
+        if len(cmd_list) >= 3 and cmd_list[1] == "-m" and cmd_list[2] == "venv":
+            venv_path = Path(cmd_list[-1])
             (venv_path / "bin").mkdir(parents=True, exist_ok=True)
             (venv_path / "bin" / "python").write_text("#!/bin/sh\n")
             (venv_path / "bin" / "pip").write_text("#!/bin/sh\n")
             return subprocess.CompletedProcess(cmd, 0, "", "")
-        if "pip" in str(cmd[0]):
+        if "pip" in cmd_list[0]:
             return subprocess.CompletedProcess(cmd, 0, "", "")
-        if "-c" in cmd:
+        if "-c" in cmd_list:
             return subprocess.CompletedProcess(cmd, 0, "voidx 9.9.9\nvoidx_cli 9.9.9\n", "")
         return subprocess.CompletedProcess(cmd, 0, "", "")
 
