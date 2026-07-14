@@ -100,6 +100,28 @@ def test_capture_console_non_event_methods_append_under_parent(isolated_dock):
     assert all(child.parent is parent for child in parent.children)
 
 
+def test_capture_console_non_event_mcp_tool_header_is_readable(isolated_dock):
+    isolated_dock.begin_capture()
+    parent = isolated_dock.tree.new_node(
+        isolated_dock.tree.root,
+        node_type="subagent",
+        header="child",
+        collapsed=False,
+    )
+    capture = CaptureConsole(isolated_dock.tree, parent, agent_id=0)
+
+    capture.tool_call(
+        "mcp__tavily__tavily_extract_99a8fac9",
+        {"urls": ["https://example.com/a", "https://example.com/b"]},
+    )
+
+    rendered = "\n".join(_rich_plain(line) for line in isolated_dock.tree.render(100))
+
+    assert 'Tavily Extract("https://example.com/a +1 more")' in rendered
+    assert "Mcp__" not in rendered
+    assert "99a8fac9" not in rendered
+
+
 @pytest.mark.asyncio
 async def test_capture_console_event_methods_remain_noop(isolated_dock):
     isolated_dock.begin_capture()

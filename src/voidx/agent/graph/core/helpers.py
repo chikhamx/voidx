@@ -196,3 +196,61 @@ def _task_state_for_context(value: object, fallback: TaskState | None = None) ->
     if fallback is not None:
         return fallback.model_copy(deep=True)
     return TaskState()
+
+
+def _clean_error_message(exc: Exception) -> str:
+    import ast
+    import json
+    import re
+
+    exc_str = str(exc)
+    start_idx = exc_str.find('{')
+    end_idx = exc_str.rfind('}')
+    if start_idx != -1 and end_idx != -1 and end_idx > start_idx:
+        dict_str = exc_str[start_idx:end_idx+1]
+        prefix = exc_str[:start_idx].strip()
+        while prefix and (prefix.endswith("-") or prefix.endswith(":")):
+            prefix = prefix[:-1].strip()
+        
+        message = None
+        try:
+            data = ast.literal_eval(dict_str)
+            if isinstance(data, dict):
+                if "error" in data:
+                    err = data["error"]
+                    if isinstance(err, dict) and "message" in err:
+                        message = err["message"]
+                    elif isinstance(err, str):
+                        message = err
+                elif "message" in data:
+                    message = data["message"]
+        except Exception:
+            try:
+                data = json.loads(dict_str)
+                if isinstance(data, dict):
+                    if "error" in data:
+                        err = data["error"]
+                        if isinstance(err, dict) and "message" in err:
+                            message = err["message"]
+                        elif isinstance(err, str):
+                            message = err
+                    elif "message" in data:
+                        message = data["message"]
+            except Exception:
+                pass
+        
+        if message:
+            if prefix:
+                return f"{prefix} - {message}"
+            return message
+
+    # Fallback to regex
+    match = re.search(r"['\"]message['\"]\s*:\s*['\"](.*?)['\"]", exc_str)
+    if match:
+        msg = match.group(1)
+        prefix_match = re.match(r"^(Error code: \d+)", exc_str)
+        if prefix_match:
+            return f"{prefix_match.group(1)} - {msg}"
+        return msg
+
+    return exc_str

@@ -17,7 +17,7 @@ from voidx.agent.graph.runtime_guards import (
     cycle_summary_from_tools,
 )
 from voidx.agent.graph.streaming import extract_text, stream_llm
-from voidx.agent.graph.core.helpers import LLMErrorKind, _classify_llm_error, _LLM_MAX_RETRIES, _llm_retry_delay
+from voidx.agent.graph.core.helpers import LLMErrorKind, _classify_llm_error, _LLM_MAX_RETRIES, _llm_retry_delay, _clean_error_message
 from voidx.agent.graph.todo_events import todo_updated_event
 from voidx.agent.todo_state import todo_run_state_from_result
 from voidx.agent.runtime_context import (
@@ -229,7 +229,7 @@ async def run_subagent(
                         llm_failed_attempts += 1
                         delay = _llm_retry_delay(llm_failed_attempts)
                         delay_str = str(int(delay)) if delay == int(delay) else str(delay)
-                        retry_detail = f"retrying in {delay_str}s: {e}"
+                        retry_detail = f"retrying in {delay_str}s: {_clean_error_message(e)}"
                         if ui_port.via_events():
                             retry_status_active = True
                             await ui_port.events.emit(StatusUpdated(

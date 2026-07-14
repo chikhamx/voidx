@@ -792,3 +792,23 @@ def test_llm_retry_delay_exponential_cap():
     assert _llm_retry_delay(8) == 60.0
     assert _llm_retry_delay(9) == 60.0
     assert _llm_retry_delay(10) == 60.0
+
+
+def test_clean_error_message():
+    from voidx.agent.graph.core.helpers import _clean_error_message
+
+    # Test case 1: OpenAI rate limit error with dict representation
+    exc1 = Exception("Error code: 402 - {'error': {'type': 'rate_limit_error', 'message': '每日额度超限: 当前 $50.813...'}}")
+    assert _clean_error_message(exc1) == "Error code: 402 - 每日额度超限: 当前 $50.813..."
+
+    # Test case 2: OpenAI error with json representation
+    exc2 = Exception('Error code: 400 - {"error": {"message": "Invalid prompt", "type": "invalid_request_error"}}')
+    assert _clean_error_message(exc2) == "Error code: 400 - Invalid prompt"
+
+    # Test case 3: Standard exception with no JSON/dict
+    exc3 = Exception("Connection refused")
+    assert _clean_error_message(exc3) == "Connection refused"
+
+    # Test case 4: Dict representation without error key
+    exc4 = Exception("Error: {'message': 'Something went wrong'}")
+    assert _clean_error_message(exc4) == "Error - Something went wrong"

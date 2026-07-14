@@ -300,6 +300,24 @@ def test_manage_tool_header_long_path_fits_one_visual_row():
     assert "…" in plain
 
 
+def test_mcp_tool_header_uses_human_readable_server_tool_name():
+    dock = BottomInputDock()
+    assistant = dock.tree.new_node(dock.tree.root, node_type="assistant", header="● voidx")
+    node = dock.start_tool(
+        "Mcp__tavily__tavily_search_943584b9ing",
+        'query="Claude Code agent goal mode todo list"',
+        parent=assistant,
+        tool_name="mcp__tavily__tavily_search_943584b9",
+        raw_args={"query": "Claude Code agent goal mode todo list"},
+    )
+
+    header = _plain(node.header)
+
+    assert 'Tavily Search("Claude Code agent goal mode todo list")' in header
+    assert "Mcp__" not in header
+    assert "943584b9" not in header
+
+
 def test_transcript_snapshot_round_trips_turn_tree():
     tree = OutputTree()
     turn = tree.new_node(tree.root, node_type="turn", header="❯ inspect")

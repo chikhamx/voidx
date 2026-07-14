@@ -18,7 +18,7 @@ from voidx.ui.output.dock.formatting import (
 )
 from voidx.ui.output.agent_display import agent_display_name
 from voidx.ui.output.manage_display import manage_display
-from voidx.ui.output.tool_display import extract_tool_display_value
+from voidx.ui.output.tool_display import extract_tool_display_value, mcp_tool_display_name
 from voidx.ui.output.tree import OutputNode
 from voidx.ui.output.dock.nodes_startup import DockStartupNodeMixin
 from voidx.ui.output.dock.nodes_status import DockStatusNodeMixin
@@ -402,6 +402,9 @@ def _tool_display_name(tool_name: str, label: str) -> str:
     }
     if tool_name in mapping:
         return mapping[tool_name]
+    mcp_name = mcp_tool_display_name(tool_name)
+    if mcp_name:
+        return mcp_name
     if label in label_mapping:
         return label_mapping[label]
     return label or (tool_name or "Tool").title()
