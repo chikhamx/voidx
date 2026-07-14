@@ -149,6 +149,27 @@ async def test_graph_on_request_auto_approves_need_ask_tools(tmp_path):
 
 
 @pytest.mark.asyncio
+async def test_full_access_auto_approves_write_without_implement_persona(tmp_path):
+    graph = _graph(tmp_path)
+    graph._permission.permission_preset = "full_access"
+
+    async def fail_if_asked(_tool_calls):
+        pytest.fail("full_access should not prompt for workspace edit")
+
+    graph._ask_tool_permission = fail_if_asked
+
+    approved, denied = await graph._authorize_tool_calls(
+        [{"name": "replace", "args": {"file_path": "app.py", "bounds": [{"line_no": 1, "anchor": "x"}], "new_string": "y"}, "id": "call_1"}],
+        runtime_persona="coordinate",
+        plan_mode=False,
+        session_id="test",
+    )
+
+    assert [tc["name"] for tc in approved] == ["replace"]
+    assert denied == []
+
+
+@pytest.mark.asyncio
 async def test_graph_on_failure_asks_unsafe_bash_before_prompt(tmp_path):
     graph = _graph(tmp_path)
     

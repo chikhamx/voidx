@@ -12,7 +12,6 @@ from voidx.permission.service import (
     classify_tool_call,
 )
 from voidx.permission.context import PermissionDecision
-from voidx.permission.rules import PermissionCapability
 from voidx.workflow.service import workflow_gate, workflow_sort_key
 from voidx.workflow.types import WorkflowRunState, WorkflowRunStatus
 from voidx.runtime.ui import PermissionPromptCleared, PermissionPromptShown, PermissionToolDetail
@@ -57,14 +56,7 @@ class GraphPermissionMixin:
                     self._needs_failure_check[decision.tool_call.get("id", "")] = decision.tool_call
                 continue
             if decision.action == "allow":
-                if (
-                    gate_requires_approval
-                    or (
-                        not gate_allows_without_approval
-                        and decision.source != "session"
-                        and _persona_requires_approval(classified.capability, runtime_persona or "coordinate")
-                    )
-                ):
+                if gate_requires_approval:
                     need_ask.append(decision)
                     continue
                 approved.append(decision.tool_call)
@@ -273,12 +265,3 @@ def _matches_allowed_path(file_path: object, patterns: tuple[str, ...]) -> bool:
     return any(fnmatch(normalized, pattern) for pattern in patterns)
 
 
-def _persona_requires_approval(capability: PermissionCapability, runtime_persona: str) -> bool:
-    if capability not in {PermissionCapability.FILE_WRITE, PermissionCapability.FILE_FORMAT}:
-        return False
-    personas = {
-        item.strip()
-        for item in (runtime_persona or "coordinate").split(",")
-        if item.strip()
-    }
-    return "implement" not in personas
