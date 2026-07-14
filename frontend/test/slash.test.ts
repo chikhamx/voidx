@@ -30,9 +30,17 @@ describe("matchSlashCommands", () => {
     expect(result[0].command).toBe("/mcp");
   });
 
-  it("matches /s prefix to session, sandbox, and skills commands", () => {
+  it("matches /s prefix to session and skills commands", () => {
     const result = matchSlashCommands("/s");
-    expect(result.map((c) => c.command)).toEqual(["/sandbox", "/session", "/skills"]);
+    expect(result.map((c) => c.command)).toEqual(["/session", "/skills"]);
+  });
+
+  it("matches /loop and its status controls", () => {
+    expect(matchSlashCommands("/loop").map((c) => c.command)).toEqual(["/loop"]);
+    expect(matchSlashCommands("/loop ").map((c) => c.command)).toEqual([
+      "/loop stop",
+      "/loop status",
+    ]);
   });
 
   it("returns empty for unknown command", () => {

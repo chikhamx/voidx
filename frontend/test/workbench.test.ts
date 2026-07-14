@@ -379,6 +379,28 @@ describe("workbench shell", () => {
     expect(sentPayloads(sentMessages).some((p) => p.method === "session.submit" && p.params.text === "/lang en")).toBe(true);
   });
 
+
+  it("sends /loop prompts with attachment tokens instead of clearing input", () => {
+    const sentMessages = setupOpenSocket();
+    const input = document.querySelector("#input");
+
+    handleNotification("workspace.snapshot", {
+      active_thread_id: "t1",
+      active_snapshot: { thread_id: "t1", nodes: [] },
+      threads: [{ thread_id: "t1", title: "Default", workspace: "<workspace>" }],
+      workspace: "<workspace>",
+      provider: "deepseek",
+      model: "deepseek-chat",
+      profile_configured: true,
+    });
+    sentMessages.length = 0;
+
+    input.value = "/loop 5m @docs/review.md";
+    document.querySelector("#composer").dispatchEvent(new SubmitEvent("submit", { bubbles: true, cancelable: true }));
+
+    expect(sentPayloads(sentMessages).some((p) => p.method === "session.submit" && p.params.text === "/loop 5m @docs/review.md")).toBe(true);
+  });
+
   it("shows guidance pending state when submitting during a running turn", async () => {
     const sentMessages = setupOpenSocket();
     const input = document.querySelector("#input");

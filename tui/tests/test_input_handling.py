@@ -229,6 +229,27 @@ def test_attachment_panel_accepts_workspace_file(tmp_path):
 
 
 
+def test_loop_prompt_accepts_attachment_candidate_in_command_args(tmp_path):
+    file_path = tmp_path / "src" / "main.py"
+    file_path.parent.mkdir()
+    file_path.write_text("print('hi')\n", encoding="utf-8")
+    tui = _tui(tmp_path)
+    tui._input_lines = ["/loop 5m @src"]
+    tui._cursor_col = len("/loop 5m @src")
+    tui._update_input_panels()
+
+    assert not tui._command_panel_active
+    assert tui._attachment_panel_active()
+
+    tui._process_input(b"\r")
+    assert tui._get_input_text() == "/loop 5m @src/"
+    assert tui._attachment_panel_active()
+
+    tui._process_input(b"\r")
+    assert tui._get_input_text() == "/loop 5m @src/main.py "
+    assert tui._queue.empty()
+
+
 
 def test_attachment_matches_are_cached_per_token(tmp_path, monkeypatch):
     from voidx.ui.tools.file_picker import FileCandidate

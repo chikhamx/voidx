@@ -100,8 +100,11 @@ class _PanelManagerMixin:
     def _update_command_panel(self) -> None:
         line = self._current_line()
         if self._cursor_row == len(self._input_lines) - 1 and line.startswith("/"):
-            self._command_panel_active = True
-            self._command_selected = 0
+            if find_attachment_token(self._get_input_text(), self._input_cursor_position()) is not None:
+                self._command_panel_active = False
+            else:
+                self._command_panel_active = True
+                self._command_selected = 0
         else:
             self._command_panel_active = False
 
