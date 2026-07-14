@@ -34,6 +34,14 @@ class TaskIntent(str, Enum):
     GENERAL = "general"
 
 
+class PersonaName(str, Enum):
+    COORDINATE = "coordinate"
+    EXPLORE = "explore"
+    PLAN = "plan"
+    IMPLEMENT = "implement"
+    REVIEW = "review"
+
+
 def _contains_any(text: str, hints: tuple[str, ...]) -> bool:
     return any(_contains_hint(text, hint) for hint in hints)
 

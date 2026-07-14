@@ -2,11 +2,11 @@
 
 from __future__ import annotations
 
-from typing import Literal
 
 from pydantic import BaseModel, Field, model_validator
 
 from voidx.runtime.intent import InteractionMode, TaskIntent
+from enum import Enum
 from voidx.workflow.types import WorkflowRunState
 
 
@@ -49,10 +49,16 @@ class WorkflowRoute(BaseModel):
     leave: str | None = None
 
 
+class TodoStatus(str, Enum):
+    PENDING = "pending"
+    ACTIVE = "active"
+    DONE = "done"
+
+
 class TodoRunItem(BaseModel):
     id: str = Field(..., max_length=20, description="Semantic id for the todo item")
     content: str
-    status: Literal["pending", "active", "done"]
+    status: TodoStatus
 
 
 class TodoRunState(BaseModel):

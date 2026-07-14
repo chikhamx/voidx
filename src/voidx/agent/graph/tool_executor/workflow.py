@@ -3,6 +3,7 @@ from __future__ import annotations
 from langchain_core.messages import RemoveMessage, ToolMessage
 from langgraph.graph.message import REMOVE_ALL_MESSAGES
 
+from voidx.runtime.intent import PersonaName
 from voidx.agent.task_state import (
     ToolStatePatch,
     WorkflowRoute,
@@ -75,7 +76,7 @@ def _state_update_from_executed_tools(
                 value = data.get(field)
                 update["workflow_route"] = value if value is not None else None
             elif field == "persona":
-                update["persona"] = data.get(field) or "coordinate"
+                update["persona"] = data.get(field) or PersonaName.COORDINATE
 
     # Auto-advance: detect structured tool result signals and drive DAG
     # transitions without explicit workflow.

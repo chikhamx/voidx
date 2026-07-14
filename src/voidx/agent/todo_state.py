@@ -9,6 +9,7 @@ from typing import Any
 from langchain_core.messages import AIMessage, BaseMessage, ToolMessage
 
 from voidx.agent.task_state import TodoRunItem, TodoRunState
+from voidx.runtime.task_state import TodoStatus
 
 
 _DSML_MARKER_RE = r"\|\|DSML\|\|"
@@ -41,12 +42,12 @@ def todo_run_state_from_result(result: object) -> TodoRunState | None:
     
     # Build counts
     total = len(items)
-    done = sum(1 for item in items if item.status == "done")
-    active = sum(1 for item in items if item.status == "active")
-    pending = sum(1 for item in items if item.status == "pending")
+    done = sum(1 for item in items if item.status == TodoStatus.DONE)
+    active = sum(1 for item in items if item.status == TodoStatus.ACTIVE)
+    pending = sum(1 for item in items if item.status == TodoStatus.PENDING)
     
     # Build active_items (only active)
-    active_items = [item for item in items if item.status == "active"]
+    active_items = [item for item in items if item.status == TodoStatus.ACTIVE]
     
     return TodoRunState(
         summary=summary,

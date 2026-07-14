@@ -14,6 +14,11 @@ from langchain_core.messages import AIMessage
 
 TURN_TOOL_NAME = "turn"
 
+
+class TurnOperation(str, Enum):
+    START = "start"
+    STOP = "stop"
+
 TURN_TOOL_DEFINITION: dict[str, Any] = {
     "type": "function",
     "function": {
@@ -108,9 +113,9 @@ def classify_turn_call(msg: AIMessage) -> TurnClassification:
         operation = args.get("operation")
         intent = args.get("intent")
         goal = args.get("goal")
-        if operation == "stop":
+        if operation == TurnOperation.STOP:
             return TurnClassification.VALID_TURN
-        if operation == "start" and intent in {"coding", "general"} and _is_non_empty_text(goal):
+        if operation == TurnOperation.START and intent in {"coding", "general"} and _is_non_empty_text(goal):
             return TurnClassification.VALID_START
 
     return TurnClassification.INVALID_TURN

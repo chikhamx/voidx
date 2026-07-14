@@ -12,6 +12,7 @@ from pydantic import BaseModel, Field, model_validator
 
 from voidx.logging.request_log import log_llm_diagnostic, serialize_llm_message
 from voidx.runtime.intent import InteractionMode, TaskIntent, _contains_any
+from enum import Enum
 from voidx.runtime.task_state import (
     GoalResolution,
     GoalSpec,
@@ -34,7 +35,15 @@ from voidx.tools.retry import retry_async
 
 
 GOAL_RESOLVER_TIMEOUT_SECONDS = 20
-WorkflowName = Literal["brainstorm", "debug", "design", "feedback", "plan", "review", "tdd", "verify"]
+class WorkflowName(str, Enum):
+    BRAINSTORM = "brainstorm"
+    DEBUG = "debug"
+    DESIGN = "design"
+    FEEDBACK = "feedback"
+    PLAN = "plan"
+    REVIEW = "review"
+    TDD = "tdd"
+    VERIFY = "verify"
 
 
 class ResolverGoal(BaseModel):
@@ -62,7 +71,7 @@ def resolve_plan_mode(user_text: str, task_state: TaskState) -> GoalResolution:
     return GoalResolution(
         intent=IntentResolution(type=TaskIntent.CODING),
         goal=GoalSpec(desc=desc),
-        plan=PlanResolution(join="brainstorm", leave="brainstorm"),
+        plan=PlanResolution(join=WorkflowName.BRAINSTORM, leave=WorkflowName.BRAINSTORM),
     )
 
 
@@ -76,7 +85,7 @@ def resolve_goal_mode(user_text: str, task_state: TaskState) -> GoalResolution:
     return GoalResolution(
         intent=IntentResolution(type=TaskIntent.CODING),
         goal=goal,
-        plan=PlanResolution(join="plan", leave=None),
+        plan=PlanResolution(join=WorkflowName.PLAN, leave=None),
     )
 
 
@@ -389,7 +398,7 @@ def _resolver_request_markdown(user_text: str, task_state: TaskState) -> str:
     return "\n".join(sections)
 
 
-_ALLOWED_JOIN_NODES = {"debug", "brainstorm", "design", "plan", "tdd", "review", "feedback", "verify"}
+_ALLOWED_JOIN_NODES = {WorkflowName.DEBUG, WorkflowName.BRAINSTORM, WorkflowName.DESIGN, WorkflowName.PLAN, WorkflowName.TDD, WorkflowName.REVIEW, WorkflowName.FEEDBACK, WorkflowName.VERIFY}
 
 
 def _coerce_resolution(value: object) -> ResolverGoal | None:

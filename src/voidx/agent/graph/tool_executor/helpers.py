@@ -8,6 +8,7 @@ import os
 from langchain_core.messages import ToolMessage
 
 from voidx.agent.tool_messages import sanitize_tool_message_content
+from voidx.runtime.intent import PersonaName
 from voidx.tools.service import ToolResult, UserInteraction, UserResponse
 
 from .types import (
@@ -350,7 +351,7 @@ async def _authorize_tool_calls(
     authorize,
     tool_calls: list[dict],
     *,
-    runtime_persona: str = "coordinate",
+    runtime_persona: str = PersonaName.COORDINATE,
     plan_mode: bool,
     session_id: str,
     interaction_mode: str | None,

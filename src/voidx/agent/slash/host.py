@@ -212,7 +212,7 @@ class SlashHostAdapter:
             mode = self._legacy_attr("_interaction_mode")
         current = getattr(mode, "value", None)
         if current is None:
-            current = "plan" if self._legacy_attr("_plan_mode", False) else "auto"
+            current = InteractionMode.PLAN.value if self._legacy_attr("_plan_mode", False) else InteractionMode.AUTO.value
         return current
 
     def set_task_state(self, task_state: TaskState) -> None:

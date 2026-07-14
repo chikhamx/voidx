@@ -12,8 +12,11 @@ from voidx.permission.service import (
     classify_tool_call,
 )
 from voidx.permission.context import PermissionDecision
+from voidx.permission.schema import Action
+from voidx.permission.risk import ApprovalScope, RiskLevel
 from voidx.workflow.service import workflow_gate, workflow_sort_key
 from voidx.workflow.types import WorkflowRunState, WorkflowRunStatus
+from voidx.runtime.intent import PersonaName
 from voidx.runtime.ui import PermissionPromptCleared, PermissionPromptShown, PermissionToolDetail
 
 if TYPE_CHECKING:
@@ -27,7 +30,7 @@ class GraphPermissionMixin:
         self: GraphPermissionHost,
         tool_calls: list[dict],
         *,
-        runtime_persona: str = "coordinate",
+        runtime_persona: str = PersonaName.COORDINATE,
         plan_mode: bool,
         session_id: str,
         interaction_mode: str | None = None,
@@ -50,23 +53,23 @@ class GraphPermissionMixin:
             gate_requires_approval = _workflow_gate_requires_approval(classified, active_workflows)
             gate_allows_without_approval = _workflow_gate_allows_without_approval(classified, active_workflows)
             decision = authorize_tool_call(tc, context)
-            if gate_allows_without_approval and decision.action in {"allow", "ask"}:
+            if gate_allows_without_approval and decision.action in {Action.ALLOW, Action.ASK}:
                 approved.append(decision.tool_call)
                 if decision.failure_check:
                     self._needs_failure_check[decision.tool_call.get("id", "")] = decision.tool_call
                 continue
-            if decision.action == "allow":
+            if decision.action == Action.ALLOW:
                 if gate_requires_approval:
                     need_ask.append(decision)
                     continue
                 approved.append(decision.tool_call)
                 if decision.failure_check:
                     self._needs_failure_check[decision.tool_call.get("id", "")] = decision.tool_call
-            elif decision.action == "defer":
+            elif decision.action == Action.DEFER:
                 approved.append(decision.tool_call)
-            elif decision.action == "deny":
+            elif decision.action == Action.DENY:
                 denied.append((decision.tool_call, decision.reason))
-            elif decision.action == "blocked_ack":
+            elif decision.action == Action.BLOCKED_ACK:
                 need_ask.append(decision)
             else:
                 need_ask.append(decision)
@@ -82,8 +85,8 @@ class GraphPermissionMixin:
         approved: list[dict],
         denied: list[tuple[dict, str]],
     ) -> None:
-        blocked = [decision for decision in need_ask if decision.action == "blocked_ack"]
-        approvable = [decision for decision in need_ask if decision.action != "blocked_ack"]
+        blocked = [decision for decision in need_ask if decision.action == Action.BLOCKED_ACK]
+        approvable = [decision for decision in need_ask if decision.action != Action.BLOCKED_ACK]
 
         if blocked:
             await self._ask_tool_permission(blocked)
@@ -103,7 +106,7 @@ class GraphPermissionMixin:
             await self._ui.events.emit(PermissionPromptCleared())
 
         tool_calls = [_tool_call_with_approval_risk(decision) for decision in approvable]
-        if choice == "a" and _all_decisions_allow_scope(approvable, "session"):
+        if choice == "a" and _all_decisions_allow_scope(approvable, ApprovalScope.SESSION):
             for tc in tool_calls:
                 self._permission.allow_silent(tc["name"])
             approved.extend(tool_calls)
@@ -182,7 +185,7 @@ def _coerce_permission_decision(item: dict | PermissionDecision) -> PermissionDe
         return item
     classified = classify_tool_call(item)
     return PermissionDecision(
-        action="ask",
+        action=Action.ASK,
         tool_call=classified.tool_call,
         name=classified.name,
         args=classified.args,
@@ -193,7 +196,7 @@ def _coerce_permission_decision(item: dict | PermissionDecision) -> PermissionDe
 
 
 def _tool_call_with_approval_risk(decision: PermissionDecision) -> dict:
-    if decision.risk is None or decision.risk.level.value == "blocked":
+    if decision.risk is None or decision.risk.level == RiskLevel.BLOCKED:
         return decision.tool_call
     metadata = dict(decision.tool_call.get("metadata") or {})
     metadata["approved_risk"] = {
@@ -210,7 +213,7 @@ def _permission_choices(decisions: list[PermissionDecision]) -> list[tuple[str, 
     if _all_decisions_blocked_ack(decisions):
         return [("Do not run", "n", "This command is blocked")]
     choices: list[tuple[str, str, str]] = []
-    if _all_decisions_allow_scope(decisions, "session"):
+    if _all_decisions_allow_scope(decisions, ApprovalScope.SESSION):
         choices.append(("Yes, always", "a", "Allow these tools for this session"))
     choices.append(("Yes", "y", "Allow this tool use once"))
     choices.append(("No", "n", "Deny these tools"))
@@ -224,7 +227,7 @@ def _all_decisions_allow_scope(decisions: list[PermissionDecision], scope: str) 
 
 
 def _all_decisions_blocked_ack(decisions: list[PermissionDecision]) -> bool:
-    return bool(decisions) and all(decision.action == "blocked_ack" for decision in decisions)
+    return bool(decisions) and all(decision.action == Action.BLOCKED_ACK for decision in decisions)
 
 
 def _scope_values(scopes: tuple[object, ...]) -> set[str]:

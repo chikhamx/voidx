@@ -2,11 +2,17 @@
 
 from __future__ import annotations
 
-from typing import Literal
+from enum import Enum
 
 from pydantic import BaseModel, Field
 
-Action = Literal["allow", "deny", "ask", "defer", "blocked_ack"]
+
+class Action(str, Enum):
+    ALLOW = "allow"
+    DENY = "deny"
+    ASK = "ask"
+    DEFER = "defer"
+    BLOCKED_ACK = "blocked_ack"
 
 
 class Rule(BaseModel):
@@ -18,7 +24,7 @@ class Rule(BaseModel):
     """
     permission: str
     pattern: str = "*"
-    action: Action = "ask"
+    action: Action = Action.ASK
 
 
 Ruleset = list[Rule]

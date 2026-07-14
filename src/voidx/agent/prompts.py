@@ -4,6 +4,7 @@ from __future__ import annotations
 
 from pydantic import BaseModel, Field, model_validator
 
+from voidx.runtime.intent import PersonaName
 from voidx.workflow.service import WorkflowService
 
 
@@ -285,23 +286,23 @@ WORKFLOW_RUNTIME = WorkflowRuntimePrompt(
 PERSONA_MODEL = PersonaModel(
     personas={
         "coordinate": PersonaPrompt(
-            name="coordinate",
+            name=PersonaName.COORDINATE,
             description="Default. Assess, plan next steps, coordinate work, delegate when parallel speedup is needed.",
         ),
         "explore": PersonaPrompt(
-            name="explore",
+            name=PersonaName.EXPLORE,
             description="Read-only evidence gathering and codebase search. Search broadly, report with concrete paths and lines. Do not write or edit files.",
         ),
         "plan": PersonaPrompt(
-            name="plan",
+            name=PersonaName.PLAN,
             description="Design and architecture. Study existing patterns, output structured implementable plans.",
         ),
         "implement": PersonaPrompt(
-            name="implement",
+            name=PersonaName.IMPLEMENT,
             description="Build and execute. Write minimal precise edits, run tests to verify.",
         ),
         "review": PersonaPrompt(
-            name="review",
+            name=PersonaName.REVIEW,
             description="Verify and critique. Check correctness, completeness, style, security. Produce PASS/FAIL verdicts.",
         ),
     },

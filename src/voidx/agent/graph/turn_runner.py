@@ -14,6 +14,7 @@ from voidx.agent.attachments import build_user_message_payload, serialize_messag
 from voidx.agent.message_rows import messages_from_rows_incremental
 from voidx.agent.goal_resolver import resolve_goal_mode, resolve_plan_mode
 from voidx.agent.runtime_context import TaskIntent
+from voidx.runtime.intent import InteractionMode
 from voidx.agent.graph.thread_context import bind_thread_execution_context
 from voidx.agent.state import AgentState
 from voidx.agent.task_state import (
@@ -199,16 +200,16 @@ class GraphTurnRunner:
                 interaction_mode = getattr(
                     getattr(host, "_interaction_mode", None),
                     "value",
-                    "plan" if getattr(host, "_plan_mode", False) else "auto",
+                    InteractionMode.PLAN.value if getattr(host, "_plan_mode", False) else InteractionMode.AUTO.value,
                 )
                 base_task_state = _load_task_state(getattr(host, "_task_state", None))
                 if not base_task_state.recent_exchanges and session_msgs:
                     base_task_state.recent_exchanges = _rebuild_exchanges_from_session_msgs(session_msgs)
-                if interaction_mode == "goal" and base_task_state.current_goal is None:
+                if interaction_mode == InteractionMode.GOAL.value and base_task_state.current_goal is None:
                     base_task_state.set_goal(payload.title_text)
-                if interaction_mode == "plan":
+                if interaction_mode == InteractionMode.PLAN.value:
                     intent_resolution = resolve_plan_mode(payload.title_text, base_task_state)
-                elif interaction_mode == "goal":
+                elif interaction_mode == InteractionMode.GOAL.value:
                     intent_resolution = resolve_goal_mode(payload.title_text, base_task_state)
                 else:
                     intent_resolution = GoalResolution(

@@ -4,6 +4,7 @@ from enum import Enum
 
 from voidx.agent.agents import AgentDef
 from voidx.agent.runtime_context import COMPACTION_GUIDE_MARKER, InteractionMode
+from voidx.runtime.intent import PersonaName
 from voidx.llm.compaction import SUMMARY_TEMPLATE
 from voidx.agent.task_state import GoalResolution, TaskState
 from voidx.workflow import workflow_personas
@@ -145,7 +146,7 @@ def _workflow_names(group: list[WorkflowRunState | dict]) -> list[str]:
 def _persona_for_workflow_runs(
     group: list[WorkflowRunState | dict],
     *,
-    fallback: str = "coordinate",
+    fallback: str = PersonaName.COORDINATE,
 ) -> str:
     personas: list[str] = []
     for item in group:
@@ -157,7 +158,7 @@ def _persona_for_workflow_runs(
             continue
         personas.extend(persona.strip() for persona in run.personas if persona.strip())
     if not personas:
-        return fallback or "coordinate"
+        return fallback or PersonaName.COORDINATE
     return ",".join(dict.fromkeys(personas))
 
 
@@ -166,7 +167,7 @@ def _persona_for_child_workflow(group: list[WorkflowRunState | dict], join: str)
     if persona:
         return persona
     personas = [item for item in workflow_personas(join) if item.strip()]
-    return ",".join(dict.fromkeys(personas)) or "explore"
+    return ",".join(dict.fromkeys(personas)) or PersonaName.EXPLORE
 
 
 def _interaction_mode_for_persona(persona: str) -> str:

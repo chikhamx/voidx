@@ -12,6 +12,7 @@ from voidx.agent.graph.transcript_mixin import GraphTranscriptMixin
 from voidx.agent.graph.turn_mixin import GraphTurnMixin
 from voidx.agent.graph.workflow_utils import active_workflow_names
 from voidx.llm.service import get_context_limit
+from voidx.runtime.intent import InteractionMode
 from voidx.runtime.ui import (
     COMMANDS,
     CompositeEventConsumer,
@@ -213,7 +214,7 @@ class GraphRunLoopMixin(GraphTurnMixin, GraphSessionMixin, GraphTranscriptMixin)
             interaction_mode=lambda: getattr(
                 getattr(self, "_interaction_mode", None),
                 "value",
-                "plan" if getattr(self, "_plan_mode", False) else "auto",
+                InteractionMode.PLAN.value if getattr(self, "_plan_mode", False) else InteractionMode.AUTO.value,
             ),
             goal_label=lambda: goal_label(getattr(getattr(self, "_task_state", None), "current_goal", None)),
             active_workflows=lambda: active_workflow_names(getattr(self, "_task_state", None)),

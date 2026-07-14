@@ -9,6 +9,7 @@ from langchain_core.language_models import BaseChatModel
 from langchain_core.messages import BaseMessage
 
 from voidx.agent.runtime_context import ContextCompilerCache, InteractionMode
+from voidx.runtime.intent import PersonaName
 from voidx.agent.state import AgentState
 from voidx.agent.task_state import TaskState
 from voidx.config import Config, Settings
@@ -108,7 +109,7 @@ class GraphToolExecutionHost(Protocol):
         self,
         tool_calls: list[dict],
         *,
-        runtime_persona: str = "coordinate",
+        runtime_persona: str = PersonaName.COORDINATE,
         plan_mode: bool,
         session_id: str,
         interaction_mode: str | None = None,
@@ -134,7 +135,7 @@ class GraphPermissionHost(Protocol):
         self,
         tool_calls: list[dict],
         *,
-        runtime_persona: str = "coordinate",
+        runtime_persona: str = PersonaName.COORDINATE,
         plan_mode: bool,
         session_id: str,
         interaction_mode: str | None = None,

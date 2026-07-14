@@ -4,6 +4,7 @@ from __future__ import annotations
 
 from pathlib import Path
 
+from voidx.runtime.intent import InteractionMode
 from voidx.runtime.ui import ui
 
 
@@ -83,7 +84,7 @@ class SlashInitMixin:
             ui.error("Usage: /init [force]")
             return
 
-        if self.host.interaction_mode_value() == "plan":
+        if self.host.interaction_mode_value() == InteractionMode.PLAN.value:
             ui.error("/init writes AGENTS.md. Run /unplan first.")
             return
 
