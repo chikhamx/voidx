@@ -316,3 +316,27 @@ class TestGitAllSubcommandsHintable:
 # Comprehensive: grep flags that cause semantic differences
 # ---------------------------------------------------------------------------
 
+
+
+class TestGitAutoRouteArgs:
+    """git route hints expose structured args for shell auto-route."""
+
+    def test_git_status_tool_args(self):
+        h = try_hint("git status --porcelain")
+
+        assert h is not None
+        assert h.tool_id == "git"
+        assert h.tool_args == {"args": "status --porcelain"}
+
+    def test_git_dash_c_tool_args_include_path(self):
+        h = try_hint("git -C repo status")
+
+        assert h is not None
+        assert h.tool_args == {"args": "status", "path": "repo"}
+
+    def test_git_config_global_option_stays_hint_only(self):
+        h = try_hint("git -c core.quotePath=false status")
+
+        assert h is not None
+        assert h.tool_id == "git"
+        assert h.tool_args is None

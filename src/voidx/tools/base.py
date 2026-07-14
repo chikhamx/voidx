@@ -93,7 +93,8 @@ class ToolContext(BaseModel):
     mcp_manager: Any | None = None
     lsp_manager: Any | None = None
     loop_manager: Any | None = Field(default=None, exclude=True)
-    sandbox_mode: str = "workspace-write"
+    tool_registry: Any | None = Field(default=None, exclude=True)
+    permission_preset: str = "safe"
     sandbox_readable_files: list[str] = Field(default_factory=list)
     sandbox_readable_dirs: list[str] = Field(default_factory=list)
     sandbox_writable_files: list[str] = Field(default_factory=list)
@@ -138,6 +139,22 @@ class ToolContext(BaseModel):
     @property
     def workflow_repeat_tracker(self) -> dict[str, dict[str, int]]:
         return self._workflow_repeat_tracker
+
+    @property
+    def sandbox_mode(self) -> str:
+        from voidx.config import PermissionPreset
+        try:
+            return PermissionPreset(self.permission_preset).sandbox_mode
+        except ValueError:
+            return "workspace-write"
+
+    @property
+    def approval_policy(self) -> str:
+        from voidx.config import PermissionPreset
+        try:
+            return PermissionPreset(self.permission_preset).approval_policy
+        except ValueError:
+            return "untrusted"
 
     def has_approved_tool_risk(self, tool_name: str, pattern: str) -> bool:
         for risk in self.approved_tool_risks:
@@ -268,7 +285,7 @@ async def _maybe_await(value: Awaitable[Any] | Any) -> Any:
 
 def _approval_precondition(access_grants: AccessGrants) -> ApprovalPrecondition:
     return ApprovalPrecondition(
-        permission_mode=access_grants.permission_mode,
+        permission_preset=access_grants.permission_preset,
         revocation_epoch=access_grants.revocation_epoch,
     )
 

@@ -20,6 +20,7 @@ from voidx.tools.shell.common import (
     build_hint_result,
     build_success_result,
     build_timeout_result,
+    maybe_route_hint,
     create_owned_subprocess_exec,
     release_owned_process,
     terminate_process,
@@ -55,6 +56,9 @@ class PowerShellTool(BaseTool):
 
         hint = _try_hint(inp.command)
         if hint is not None:
+            routed = await maybe_route_hint(inp.command, hint, ctx, "powershell")
+            if routed is not None:
+                return routed
             return build_hint_result(inp.command, hint, "PowerShell")
         access_grants = ctx.get_access_grants() if ctx.get_access_grants is not None else AccessGrants.from_parts(
             readable_files=ctx.sandbox_readable_files,
@@ -68,7 +72,7 @@ class PowerShellTool(BaseTool):
                 {"command": inp.command},
                 PermissionContext(
                     workspace=ctx.workspace,
-                    sandbox_mode=ctx.sandbox_mode,
+                    permission_preset=ctx.permission_preset,
                     access_grants=access_grants,
                     process_sandbox=ctx.process_sandbox,
                 ),

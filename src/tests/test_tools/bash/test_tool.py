@@ -5,6 +5,7 @@ import json
 import logging
 import os
 import shlex
+import subprocess
 import sys
 from pathlib import Path
 
@@ -74,7 +75,7 @@ class TestBash:
 
     @pytest.mark.asyncio
     async def test_bash_timeout_terminates_process(self, tmp_path):
-        ctx = ToolContext(workspace=str(tmp_path), sandbox_mode="danger-full-access")
+        ctx = ToolContext(workspace=str(tmp_path), permission_preset="full_access")
         r = ToolRegistry()
 
         sleep_cmd = f'"{sys.executable}" -c "import time; time.sleep(2)"'
@@ -96,7 +97,7 @@ class TestBash:
             assert not (tmp_path / "late.txt").exists()
 
     @pytest.mark.asyncio
-    async def test_bash_route_hint_metadata(self, tmp_path):
+    async def test_bash_git_hint_metadata_without_registry(self, tmp_path):
         ctx = ToolContext(workspace=str(tmp_path))
         r = ToolRegistry()
         result = await r.execute_tool("bash", {"command": "git status"}, ctx)
@@ -104,6 +105,98 @@ class TestBash:
         assert hint["tool_id"] == "git"
         assert hint["command"] == "git status"
         assert result.metadata["skipped"] is True
+
+    @pytest.mark.asyncio
+    async def test_bash_auto_routes_git_when_registry_available(self, tmp_path):
+        ctx = ToolContext(workspace=str(tmp_path), tool_registry=ToolRegistry())
+        result = await ctx.tool_registry.execute_tool("bash", {"command": "git status --porcelain"}, ctx)
+
+        assert result.metadata.get("route_hint") is None
+        assert result.metadata["tool"] == "git"
+        assert result.metadata["routed_command"] == "git status --porcelain"
+        assert result.metadata["routed_tool_args"] == {"args": "status --porcelain"}
+        assert result.metadata["routed_from"] == "bash"
+
+    @pytest.mark.asyncio
+    async def test_bash_git_filtered_registry_falls_back_to_hint(self, tmp_path):
+        registry = ToolRegistry().filtered_copy({"bash"})
+        ctx = ToolContext(workspace=str(tmp_path), tool_registry=registry)
+        result = await registry.execute_tool("bash", {"command": "git status"}, ctx)
+
+        assert result.metadata["skipped"] is True
+        assert result.metadata["route_hint"]["tool_id"] == "git"
+
+    @pytest.mark.asyncio
+    async def test_bash_git_config_global_option_falls_back_to_hint(self, tmp_path):
+        ctx = ToolContext(workspace=str(tmp_path), tool_registry=ToolRegistry())
+        result = await ctx.tool_registry.execute_tool(
+            "bash",
+            {"command": "git -c core.quotePath=false status"},
+            ctx,
+        )
+
+        assert result.metadata["skipped"] is True
+        assert result.metadata["route_hint"]["tool_id"] == "git"
+
+    @pytest.mark.asyncio
+    async def test_bash_auto_route_git_reset_hard_still_denied_by_git_tool(self, tmp_path):
+        repo = tmp_path / "repo"
+        repo.mkdir()
+        subprocess.run(["git", "init"], cwd=repo, check=True, stdout=subprocess.PIPE, stderr=subprocess.PIPE)
+        subprocess.run(["git", "config", "user.email", "voidx@example.com"], cwd=repo, check=True)
+        subprocess.run(["git", "config", "user.name", "VoidX Tests"], cwd=repo, check=True)
+        (repo / "f.txt").write_text("x\n", encoding="utf-8")
+        subprocess.run(["git", "add", "f.txt"], cwd=repo, check=True)
+        subprocess.run(["git", "commit", "-m", "init"], cwd=repo, check=True, stdout=subprocess.PIPE, stderr=subprocess.PIPE)
+        (repo / "f.txt").write_text("changed\n", encoding="utf-8")
+
+        registry = ToolRegistry()
+        command = "git reset --hard HEAD"
+        ctx = ToolContext(
+            workspace=str(repo),
+            tool_registry=registry,
+            permission_preset="full_access",
+            approved_tool_risks=[{"tool_name": "bash", "pattern": command, "risk_level": "dangerous"}],
+        )
+        result = await registry.execute_tool("bash", {"command": command}, ctx)
+        payload = json.loads(result.output)
+
+        assert result.metadata.get("route_hint") is None
+        assert result.metadata["tool"] == "git"
+        assert result.metadata["routed_from"] == "bash"
+        assert payload["ok"] is False
+        assert payload["error"].startswith("command_denied")
+        assert (repo / "f.txt").read_text(encoding="utf-8") == "changed\n"
+
+    @pytest.mark.asyncio
+    async def test_bash_auto_route_git_push_still_uses_git_tool(self, tmp_path):
+        repo = tmp_path / "repo"
+        repo.mkdir()
+        subprocess.run(["git", "init"], cwd=repo, check=True, stdout=subprocess.PIPE, stderr=subprocess.PIPE)
+        subprocess.run(["git", "config", "user.email", "voidx@example.com"], cwd=repo, check=True)
+        subprocess.run(["git", "config", "user.name", "VoidX Tests"], cwd=repo, check=True)
+        (repo / "f.txt").write_text("x\n", encoding="utf-8")
+        subprocess.run(["git", "add", "f.txt"], cwd=repo, check=True)
+        subprocess.run(["git", "commit", "-m", "init"], cwd=repo, check=True, stdout=subprocess.PIPE, stderr=subprocess.PIPE)
+
+        registry = ToolRegistry()
+        command = "git push origin HEAD"
+        ctx = ToolContext(
+            workspace=str(repo),
+            tool_registry=registry,
+            permission_preset="full_access",
+            approved_tool_risks=[{"tool_name": "bash", "pattern": command, "risk_level": "dangerous"}],
+        )
+        result = await registry.execute_tool("bash", {"command": command}, ctx)
+        payload = json.loads(result.output)
+
+        assert result.metadata.get("route_hint") is None
+        assert result.metadata["tool"] == "git"
+        assert result.metadata["routed_tool_args"] == {"args": "push origin HEAD"}
+        assert payload["command"] == "push"
+        assert payload["ok"] is False
+        assert "git_policy_denied" not in payload["error"]
+        assert "origin" in payload["error"]
 
     @pytest.mark.asyncio
     async def test_bash_route_hint_skips_execution(self, tmp_path):
@@ -144,7 +237,7 @@ class TestBash:
     @pytest.mark.asyncio
     async def test_bash_timeout_sets_error_metadata(self, tmp_path):
         """E1: timeout must set metadata['error'] = True for consistency."""
-        ctx = ToolContext(workspace=str(tmp_path), sandbox_mode="danger-full-access")
+        ctx = ToolContext(workspace=str(tmp_path), permission_preset="full_access")
         r = ToolRegistry()
 
         sleep_cmd = f'"{sys.executable}" -c "import time; time.sleep(1.5)"'
@@ -159,7 +252,7 @@ class TestBash:
     @pytest.mark.asyncio
     async def test_bash_nonzero_exit_sets_error_metadata(self, tmp_path):
         """E1: non-zero exit code must set metadata['error'] = True for consistency."""
-        ctx = ToolContext(workspace=str(tmp_path), sandbox_mode="danger-full-access")
+        ctx = ToolContext(workspace=str(tmp_path), permission_preset="full_access")
         r = ToolRegistry()
 
         result = await r.execute_tool(
@@ -184,7 +277,7 @@ async def test_bash_cancellation_terminates_process_tree(tmp_path):
     task = asyncio.create_task(
         BashTool().execute(
             {"command": f'{shlex.quote(sys.executable)} -c {shlex.quote(script)}'},
-            ToolContext(workspace=str(tmp_path), sandbox_mode="danger-full-access"),
+            ToolContext(workspace=str(tmp_path), permission_preset="full_access"),
         )
     )
 

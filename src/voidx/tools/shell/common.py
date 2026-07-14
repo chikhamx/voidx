@@ -23,7 +23,7 @@ from voidx.runtime.processes import (
     process_launch_options,
     release_owned_process,
 )
-from voidx.tools.base import ToolResult, tool_timeout_metadata
+from voidx.tools.base import ToolContext, ToolResult, tool_timeout_metadata
 
 _HintableTool = Literal["read", "git", "manage", "write", "replace", "glob", "grep"]
 
@@ -33,6 +33,7 @@ class RouteHint:
     tool_id: _HintableTool
     ui_label: str
     llm_hint: str
+    tool_args: dict | None = None
 
 
 # ── result factory functions ────────────────────────────────────────────────
@@ -51,6 +52,23 @@ def build_blocked_result(command: str, reason: str) -> ToolResult:
 def build_sandbox_result(command: str, reason: str) -> ToolResult:
     """Build a ToolResult for a sandbox denial (same structure as blocked)."""
     return build_blocked_result(command, reason)
+
+
+async def maybe_route_hint(command: str, hint: RouteHint, ctx: ToolContext, source: str) -> ToolResult | None:
+    """Execute a route hint when structured args and the target tool are available."""
+    if hint.tool_args is None or ctx.tool_registry is None:
+        return None
+    if ctx.tool_registry.get(hint.tool_id) is None:
+        return None
+    result = await ctx.tool_registry.execute_tool(hint.tool_id, hint.tool_args, ctx)
+    result.metadata = {
+        **result.metadata,
+        "tool": hint.tool_id,
+        "routed_from": source.lower(),
+        "routed_command": command,
+        "routed_tool_args": hint.tool_args,
+    }
+    return result
 
 
 def build_hint_result(command: str, hint: RouteHint, tool_label: str) -> ToolResult:

@@ -3,6 +3,7 @@
 import asyncio
 import json
 import os
+import subprocess
 import sys
 from pathlib import Path
 
@@ -17,6 +18,55 @@ skip_if_not_windows = pytest.mark.skipif(
     reason="PowerShell tool only available on Windows",
 )
 
+
+
+class TestPowerShellGitAutoRoute:
+    """PowerShell can auto-route git hints without launching powershell.exe."""
+
+    @pytest.mark.asyncio
+    async def test_powershell_auto_routes_git_when_registry_available(self, tmp_path):
+        from voidx.tools.powershell.tool import PowerShellTool
+
+        ctx = ToolContext(workspace=str(tmp_path), tool_registry=ToolRegistry())
+        result = await PowerShellTool().execute({"command": "git status --porcelain"}, ctx)
+
+        assert result.metadata.get("route_hint") is None
+        assert result.metadata["tool"] == "git"
+        assert result.metadata["routed_command"] == "git status --porcelain"
+        assert result.metadata["routed_tool_args"] == {"args": "status --porcelain"}
+        assert result.metadata["routed_from"] == "powershell"
+
+
+    @pytest.mark.asyncio
+    async def test_powershell_auto_route_git_reset_hard_still_denied_by_git_tool(self, tmp_path):
+        from voidx.tools.powershell.tool import PowerShellTool
+
+        repo = tmp_path / "repo"
+        repo.mkdir()
+        subprocess.run(["git", "init"], cwd=repo, check=True, stdout=subprocess.PIPE, stderr=subprocess.PIPE)
+        subprocess.run(["git", "config", "user.email", "voidx@example.com"], cwd=repo, check=True)
+        subprocess.run(["git", "config", "user.name", "VoidX Tests"], cwd=repo, check=True)
+        (repo / "f.txt").write_text("x\n", encoding="utf-8")
+        subprocess.run(["git", "add", "f.txt"], cwd=repo, check=True)
+        subprocess.run(["git", "commit", "-m", "init"], cwd=repo, check=True, stdout=subprocess.PIPE, stderr=subprocess.PIPE)
+        (repo / "f.txt").write_text("changed\n", encoding="utf-8")
+
+        command = "git reset --hard HEAD"
+        ctx = ToolContext(
+            workspace=str(repo),
+            tool_registry=ToolRegistry(),
+            permission_preset="full_access",
+            approved_tool_risks=[{"tool_name": "powershell", "pattern": command, "risk_level": "dangerous"}],
+        )
+        result = await PowerShellTool().execute({"command": command}, ctx)
+        payload = json.loads(result.output)
+
+        assert result.metadata.get("route_hint") is None
+        assert result.metadata["tool"] == "git"
+        assert result.metadata["routed_from"] == "powershell"
+        assert payload["ok"] is False
+        assert payload["error"].startswith("command_denied")
+        assert (repo / "f.txt").read_text(encoding="utf-8") == "changed\n"
 
 @skip_if_not_windows
 class TestPowerShellExecution:
@@ -292,7 +342,7 @@ class TestPowerShellSandbox:
 
     @pytest.mark.asyncio
     async def test_powershell_readonly_allowed_in_readonly_mode(self, tmp_path):
-        ctx = ToolContext(workspace=str(tmp_path), sandbox_mode="read-only")
+        ctx = ToolContext(workspace=str(tmp_path), permission_preset="read_only")
         r = ToolRegistry()
         result = await r.execute_tool(
             "powershell",
@@ -305,7 +355,7 @@ class TestPowerShellSandbox:
     @pytest.mark.asyncio
     async def test_powershell_readonly_blocks_subexpression(self, tmp_path):
         """Commands with $(...) must not be classified as read-only — can execute arbitrary code."""
-        ctx = ToolContext(workspace=str(tmp_path), sandbox_mode="read-only")
+        ctx = ToolContext(workspace=str(tmp_path), permission_preset="read_only")
         r = ToolRegistry()
         result = await r.execute_tool(
             "powershell",

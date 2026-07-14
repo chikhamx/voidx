@@ -27,6 +27,7 @@ from voidx.agent.runtime_context import (
 )
 from voidx.runtime.task_state import GoalResolution, TaskState, WorkflowRoute
 from voidx.agent.tool_messages import sanitize_tool_message_content
+from voidx.agent.tool_result_storage import maybe_persist_tool_result
 from voidx.agent.tool_filters import filter_unavailable_lsp_tools, strip_gemini_unsupported_schema_keys
 from voidx.config import Config
 from voidx.llm.service import create_chat_model, resolve_protocol
@@ -142,7 +143,8 @@ async def run_subagent(
         workspace=config.workspace,
         session_id=session_id or "default",
         lsp_manager=lsp_manager,
-        sandbox_mode=config.sandbox_mode.value,
+        tool_registry=agent_tools,
+        permission_preset=config.permission_preset.value,
         sandbox_readable_files=list(snapshot_grants.readable_files) if snapshot_grants is not None else list(config.sandbox_readable_files),
         sandbox_readable_dirs=list(snapshot_grants.readable_dirs) if snapshot_grants is not None else list(config.sandbox_readable_dirs),
         sandbox_writable_files=list(snapshot_grants.writable_files) if snapshot_grants is not None else list(config.sandbox_writable_files),
@@ -359,9 +361,16 @@ async def run_subagent(
                 if capture_tree and parent_node is not None:
                     capture.tool_done(tid, 0.0, True, tool_call_id=cid)
                     capture.tool_result(result.output, tool_call_id=cid)
+                llm_content = maybe_persist_tool_result(
+                    result.output,
+                    cid,
+                    tid,
+                    session_id=ctx.session_id,
+                    workspace=ctx.workspace,
+                )
                 return {
                     "tool_message": ToolMessage(
-                        content=sanitize_tool_message_content(result.output, workspace=ctx.workspace),
+                        content=sanitize_tool_message_content(llm_content, workspace=ctx.workspace),
                         tool_call_id=cid,
                         status="success" if result_ok(result) else "error",
                     ),

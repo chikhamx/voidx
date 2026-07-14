@@ -80,10 +80,11 @@ def _tool_context_for_host(host) -> ToolContext:
         "workspace": workspace,
         "session_id": getattr(session, "id", "default") or "default",
         "loop_manager": getattr(host, "loop_manager", None),
+        "tool_registry": getattr(host, "tools", None),
     }
     if permission is not None:
         kwargs.update(
-            sandbox_mode=getattr(permission, "sandbox_mode", "workspace-write"),
+            permission_preset=getattr(permission, "permission_preset", "safe"),
             sandbox_readable_files=list(getattr(permission, "sandbox_readable_files", [])),
             sandbox_readable_dirs=list(getattr(permission, "sandbox_readable_dirs", [])),
             sandbox_writable_files=list(getattr(permission, "sandbox_writable_files", [])),
