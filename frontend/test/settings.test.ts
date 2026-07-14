@@ -47,13 +47,29 @@ describe("renderSettingsModal", () => {
     expect(document.querySelector('[name="new_api_key"]')).not.toBeNull();
   });
 
-  it("renders permissions tab when switched", () => {
+  it("renders ask-first permission presets instead of low-level controls", () => {
     initSettingsModal();
-    renderSettingsModal({ permissions: { permission_mode: "accept-edits", sandbox_mode: "read-only", approval_policy: "on-failure" } });
+    renderSettingsModal({ permissions: { permission_preset: "project_trusted" } });
     document.querySelector(".settings-tab[data-tab='permissions']").click();
     const content = document.querySelector("#settings-content");
-    expect(content.textContent).toContain("accept-edits");
-    expect(content.textContent).toContain("on-failure");
+    const preset = document.querySelector('[name="permission_preset"]');
+
+    expect(preset).not.toBeNull();
+    expect(preset.value).toBe("project_trusted");
+    expect(content.textContent).toContain("Project trusted");
+    expect(document.querySelector('[name="permission_mode"]')).toBeNull();
+    expect(document.querySelector('[name="sandbox_mode"]')).toBeNull();
+    expect(document.querySelector('[name="approval_policy"]')).toBeNull();
+  });
+
+  it("defaults legacy permission fields to safe without compatibility mapping", () => {
+    initSettingsModal();
+    renderSettingsModal({ permissions: { permission_mode: "accept-edits", sandbox_mode: "workspace-write", approval_policy: "untrusted" } });
+    document.querySelector(".settings-tab[data-tab='permissions']").click();
+    const preset = document.querySelector('[name="permission_preset"]');
+
+    expect(preset).not.toBeNull();
+    expect(preset.value).toBe("safe");
   });
 
   it("renders preferences tab", () => {
@@ -87,16 +103,19 @@ describe("renderSettingsModal", () => {
 });
 
 describe("collectSettingsPatch", () => {
-  it("collects permissions from active tab", () => {
+  it("collects only the ask-first permission preset", () => {
     initSettingsModal();
-    renderSettingsModal({ permissions: { permission_mode: "accept-edits", sandbox_mode: "read-only", approval_policy: "on-failure" } });
+    renderSettingsModal({ permissions: { permission_preset: "safe" } });
     document.querySelector(".settings-tab[data-tab='permissions']").click();
-    const select = document.querySelector('[name="permission_mode"]');
-    if (select) select.value = "full-access";
+    const select = document.querySelector('[name="permission_preset"]');
+    if (select) select.value = "full_access";
 
     const patch = collectSettingsPatch();
-    expect(patch.permissions.permission_mode).toBe("full-access");
+    expect(patch.permissions).toEqual({
+      permission_preset: "full_access",
+    });
   });
+
 
   it("collects code_ide from active tab", () => {
     initSettingsModal();

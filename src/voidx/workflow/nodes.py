@@ -20,15 +20,6 @@ BRAINSTORMING = WorkflowNode(
             "scope": "Confirmed change boundaries",
         },
     ),
-    tools=[
-        "read",
-        "glob",
-        "grep",
-        "clarify",
-        "checkpoint",
-        "webfetch",
-        "websearch",
-    ],
     gate=NodeGate(
         denied_tools=("manage", "write", "replace"),
         description=(
@@ -73,17 +64,6 @@ WRITING_DESIGN_DOCS = WorkflowNode(
             "action": "Actual document tool action",
         },
     ),
-    tools=[
-        "read",
-        "glob",
-        "grep",
-        "manage",
-        "write",
-        "replace",
-        "document",
-        "webfetch",
-        "websearch",
-    ],
     gate=NodeGate(
         description=(
             "Do not skip the audience-specific quality gate. Human-facing docs must "
@@ -129,16 +109,6 @@ WRITING_PLANS = WorkflowNode(
             "test_commands": "Related verification commands",
         },
     ),
-    tools=[
-        "read",
-        "glob",
-        "grep",
-        "webfetch",
-        "websearch",
-        "manage",
-        "write",
-        "replace",
-    ],
     gate=NodeGate(
         denied_tools=("manage", "write", "replace"),
         allowed_paths=("docs/specs/**", "docs/design/**"),
@@ -178,17 +148,6 @@ TEST_DRIVEN_DEVELOPMENT = WorkflowNode(
             "test_result": "Test run result",
         },
     ),
-    tools=[
-        "read",
-        "manage",
-        "write",
-        "replace",
-        "bash",
-        "powershell",
-        "glob",
-        "grep",
-        "lsp",
-    ],
     gate=NodeGate(
         description="If you wrote implementation code before a failing test, delete the implementation and start from the test.",
         required_before_transition="test written, red verified, implementation green",
@@ -238,14 +197,6 @@ VERIFICATION_BEFORE_COMPLETION = WorkflowNode(
             "scope": "Change impact scope (substantial/routine)",
         },
     ),
-    tools=[
-        "bash",
-        "powershell",
-        "read",
-        "glob",
-        "grep",
-        "lsp",
-    ],
     gate=NodeGate(
         description="Before claiming any status, identify the proving command, run it in this turn, read the output, and report the evidence.",
         required_before_transition="verification command run with evidence",
@@ -279,12 +230,6 @@ REQUESTING_CODE_REVIEW = WorkflowNode(
             "review_result": "Review result (PASS/FAIL)",
         },
     ),
-    tools=[
-        "agent",
-        "read",
-        "glob",
-        "grep",
-    ],
     gate=NodeGate(
         description="Do not merge to main or mark substantial work complete without requesting review.",
         required_before_transition="review requested with required brief fields",
@@ -327,16 +272,6 @@ RECEIVING_CODE_REVIEW = WorkflowNode(
             "deferred_items": "Items needing design/analysis/planning rather than direct implementation",
         },
     ),
-    tools=[
-        "read",
-        "manage",
-        "write",
-        "replace",
-        "bash",
-        "powershell",
-        "glob",
-        "grep",
-    ],
     gate=NodeGate(
         description="Do not implement any feedback item before verifying it against the codebase.",
         required_before_transition="feedback verified against codebase",
@@ -377,14 +312,6 @@ SYSTEMATIC_DEBUGGING = WorkflowNode(
             "fix_type": "Fix type (trivial/nontrivial)",
         },
     ),
-    tools=[
-        "read",
-        "glob",
-        "grep",
-        "bash",
-        "powershell",
-        "lsp",
-    ],
     gate=NodeGate(
         denied_tools=("manage", "write", "replace"),
         description="Root cause investigation must complete before proposing or applying any fix.",

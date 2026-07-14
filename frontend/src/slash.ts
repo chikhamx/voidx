@@ -2,7 +2,6 @@ import type { SlashCommand } from "./types";
 
 export const COMMAND_CATALOG: SlashCommand[] = [
   { command: "/allow", description: "Allow a tool for this session", category: "permission", execution: "fill", dangerous: false, requiresArgs: true },
-  { command: "/approval", description: "Set approval policy", category: "permission", execution: "open-ui", dangerous: false, requiresArgs: false, uiTarget: "settings:permissions" },
   { command: "/clear", description: "Start a new session with empty context", category: "session", execution: "run", dangerous: true, requiresArgs: false },
   { command: "/code-ide", description: "Choose app for opening changed files", category: "code", execution: "open-ui", dangerous: false, requiresArgs: false, uiTarget: "settings:code" },
   { command: "/compact", description: "Manually trigger context compaction", category: "maintenance", execution: "fill", dangerous: false, requiresArgs: false },
@@ -23,7 +22,7 @@ export const COMMAND_CATALOG: SlashCommand[] = [
   { command: "/model", description: "Switch model or adjust reasoning", category: "model", execution: "fill", dangerous: false, requiresArgs: false },
   { command: "/parallel", description: "Toggle parallel subagent execution", category: "preference", execution: "fill", dangerous: false, requiresArgs: false },
   { command: "/paste", description: "Paste an image from the clipboard", category: "code", execution: "run", dangerous: false, requiresArgs: false },
-  { command: "/permission-mode", description: "Choose permission mode", category: "permission", execution: "open-ui", dangerous: false, requiresArgs: false, uiTarget: "settings:permissions" },
+  { command: "/permission-preset", description: "Choose permission preset", category: "permission", execution: "open-ui", dangerous: false, requiresArgs: false, uiTarget: "settings:permissions" },
   { command: "/permissions", description: "Show current permission rules", category: "permission", execution: "open-ui", dangerous: false, requiresArgs: false, uiTarget: "settings:permissions" },
   { command: "/plan", description: "Enter plan mode", category: "permission", execution: "run", dangerous: false, requiresArgs: false },
   { command: "/quit", description: "Exit voidx", category: "session", execution: "run", dangerous: false, requiresArgs: false },

@@ -30,6 +30,15 @@ class ApprovalPolicy(str, Enum):
     NEVER = "never"
 
 
+class PermissionPreset(str, Enum):
+    """Ask-first permission presets."""
+
+    READ_ONLY = "read_only"
+    SAFE = "safe"
+    PROJECT_TRUSTED = "project_trusted"
+    FULL_ACCESS = "full_access"
+
+
 class ApprovalReviewer(str, Enum):
     """Who handles approval prompts when a tool call needs a decision."""
     USER = "user"

@@ -11,14 +11,11 @@ from voidx.agent.slash.runtime import _select_from_list
 from voidx.agent.task_state import GoalSpec, TaskState
 from voidx.config import (
     CodeIde,
-    ApprovalPolicy,
-    ApprovalReviewer,
     Config,
     McpServerConfig,
     ModelConfig,
     ParallelSubagentsConfig,
-    PermissionMode,
-    SandboxMode,
+    PermissionPreset,
     Settings,
     UserProfile,
 )
@@ -568,7 +565,7 @@ async def test_usage_dispatch_reads_usage_stats():
 
 
 @pytest.mark.asyncio
-async def test_permission_mode_dispatch_updates_service_and_settings(tmp_path):
+async def test_permission_preset_dispatch_updates_service_and_settings(tmp_path):
     settings = Settings(str(tmp_path))
     permission = PermissionService()
     graph = SimpleNamespace(
@@ -577,17 +574,15 @@ async def test_permission_mode_dispatch_updates_service_and_settings(tmp_path):
         _app=None,
     )
 
-    assert await SlashHandler(graph).dispatch("/permission-mode full-access") is True
+    assert await SlashHandler(graph).dispatch("/permission-preset full_access") is True
 
     reloaded = await Settings.create(str(tmp_path))
     cfg = await reloaded.build_config()
-    assert permission.permission_mode == "full-access"
-    assert permission.sandbox_mode == "danger-full-access"
-    assert permission.approval_policy == "never"
-    assert cfg.permission_mode == PermissionMode.FULL_ACCESS
-    assert cfg.sandbox_mode == SandboxMode.DANGER_FULL_ACCESS
-    assert cfg.approval_policy == ApprovalPolicy.NEVER
-    assert cfg.approval_reviewer == ApprovalReviewer.USER
+    assert permission.permission_preset == "full_access"
+    assert cfg.permission_preset == PermissionPreset.FULL_ACCESS
+    assert reloaded.get_permission_preset() == PermissionPreset.FULL_ACCESS
+    assert await SlashHandler(graph).dispatch("/permission-mode full-access") is False
+    assert await SlashHandler(graph).dispatch("/approval never") is False
 
 
 @pytest.mark.asyncio

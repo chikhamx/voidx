@@ -206,7 +206,7 @@ async def test_revision_domains_are_independent(tmp_path):
     start_state = service.state_revision
     start_permissions = service.permissions_revision
 
-    service.set_permission_mode("accept-edits")
+    service.set_permission_preset("project_trusted")
     assert service.state_revision == start_state + 1
     assert service.permissions_revision == start_permissions
 
@@ -297,7 +297,7 @@ async def test_add_grant_rejects_stale_approval_precondition(tmp_path):
         revocation_epoch=service.revocation_epoch,
     )
 
-    service.set_permission_mode("read-only")
+    service.set_permission_preset("read_only")
     result = await service.add_grant(
         AccessGrant(path=str(tmp_path / "stale.txt"), access="read", object_type="file", persistence="session"),
         precondition=precondition,
@@ -331,7 +331,7 @@ def test_permission_transaction_postcommit_recovery(tmp_path, monkeypatch):
 
 
 @pytest.mark.asyncio
-async def test_non_custom_mode_revokes_all_path_grant_sources(tmp_path):
+async def test_permission_preset_change_preserves_path_grant_sources(tmp_path):
     service = PermissionService(
         sandbox_readable_files=[str(tmp_path / "sandbox.txt")],
         sandbox_writable_dirs=[str(tmp_path / "sandbox-dir")],
@@ -344,14 +344,15 @@ async def test_non_custom_mode_revokes_all_path_grant_sources(tmp_path):
     await service.add_grant(AccessGrant(path=str(runtime_file), access="write", object_type="file", persistence="runtime"))
     start_permissions_revision = service.permissions_revision
 
-    service.set_permission_mode("read-only")
+    service.set_permission_preset("read_only")
 
     grants = service.get_access_grants()
-    assert grants.readable_files == ()
-    assert grants.readable_dirs == ()
-    assert grants.writable_files == ()
-    assert grants.writable_dirs == ()
-    assert service.permissions_revision == start_permissions_revision + 1
+    assert str(tmp_path / "sandbox.txt") in grants.readable_files
+    assert str(tmp_path / "sandbox-dir") in grants.writable_dirs
+    assert str(session_file) in grants.readable_files
+    assert str(persistent_file) in grants.readable_files
+    assert str(runtime_file) in grants.writable_files
+    assert service.permissions_revision == start_permissions_revision
 
 
 def test_persistent_grants_are_stored_separately_from_sandbox_grants(tmp_path):

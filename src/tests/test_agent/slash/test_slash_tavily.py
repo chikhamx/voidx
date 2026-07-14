@@ -11,14 +11,10 @@ from voidx.agent.slash.runtime import _select_from_list
 from voidx.agent.task_state import GoalSpec, TaskState
 from voidx.config import (
     CodeIde,
-    ApprovalPolicy,
-    ApprovalReviewer,
     Config,
     McpServerConfig,
     ModelConfig,
     ParallelSubagentsConfig,
-    PermissionMode,
-    SandboxMode,
     Settings,
     UserProfile,
 )

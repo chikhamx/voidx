@@ -6,12 +6,10 @@
 
 | 命令 | 行为 |
 |------|------|
-| `/permission-mode read-only` | 阻止所有写操作 |
-| `/permission-mode default` | 写/编辑/bash 前询问 |
-| `/permission-mode accept-edits` | 允许文件编辑，bash 仍询问 |
-| `/permission-mode auto-review` | reviewer 辅助审批 |
-| `/permission-mode custom` | 用 `.voidx/settings.json` 配置 |
-| `/permission-mode full-access` | 无沙箱无审批 |
+| `/permission-preset read_only` | 阻止写入和高风险操作 |
+| `/permission-preset safe` | 默认安全预设，风险操作会询问 |
+| `/permission-preset project_trusted` | 信任项目内编辑，危险操作仍询问 |
+| `/permission-preset full_access` | 最宽松预设，但极高风险仍需确认 |
 
 ### 沙箱
 
@@ -28,6 +26,6 @@
 | `/allow <tool>` | 本会话允许某工具 |
 | `/deny <tool>` | 本会话禁止某工具 |
 | `/permissions` | 查看当前规则 |
-| `/approval untrusted\|on-failure\|on-request\|never` | 审批策略 |
+| `/permission-preset <preset>` | 切换高层权限预设 |
 
 ---

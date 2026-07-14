@@ -283,9 +283,12 @@ export interface UiPermissionRequest {
   [k: string]: unknown;
 }
 export interface PermissionToolDetail {
+  allowed_scopes?: string[];
   args?: Args;
+  default_scope?: string | null;
   name: Name;
   pattern?: Pattern;
+  risk?: { [k: string]: unknown } | null;
   [k: string]: unknown;
 }
 export interface Args {

@@ -204,10 +204,30 @@
     },
     "PermissionToolDetail": {
       "properties": {
+        "allowed_scopes": {
+          "default": [],
+          "items": {
+            "type": "string"
+          },
+          "title": "Allowed Scopes",
+          "type": "array"
+        },
         "args": {
           "additionalProperties": true,
           "title": "Args",
           "type": "object"
+        },
+        "default_scope": {
+          "anyOf": [
+            {
+              "type": "string"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null,
+          "title": "Default Scope"
         },
         "name": {
           "title": "Name",
@@ -217,6 +237,19 @@
           "default": "",
           "title": "Pattern",
           "type": "string"
+        },
+        "risk": {
+          "anyOf": [
+            {
+              "additionalProperties": true,
+              "type": "object"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null,
+          "title": "Risk"
         }
       },
       "required": [

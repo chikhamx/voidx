@@ -11,14 +11,11 @@ from voidx.agent.slash.runtime import _select_from_list
 from voidx.agent.task_state import GoalSpec, TaskState
 from voidx.config import (
     CodeIde,
-    ApprovalPolicy,
-    ApprovalReviewer,
     Config,
     McpServerConfig,
     ModelConfig,
     ParallelSubagentsConfig,
-    PermissionMode,
-    SandboxMode,
+    PermissionPreset,
     Settings,
     UserProfile,
 )
@@ -332,22 +329,21 @@ def test_model_ctx_command_is_in_palette():
     assert ("/model ctx", "Set context window size") in COMMANDS
 
 @pytest.mark.asyncio
-async def test_permission_mode_without_args_uses_prompt_app_choice(tmp_path):
+async def test_permission_preset_without_args_uses_prompt_app_choice(tmp_path):
     settings = Settings(str(tmp_path))
     permission = PermissionService()
-    app = FakeChoiceApp(result="auto-review")
+    app = FakeChoiceApp(result="project_trusted")
     graph = SimpleNamespace(
         _permission=permission,
         _settings=settings,
         _app=app,
     )
 
-    assert await SlashHandler(graph).dispatch("/permission-mode") is True
+    assert await SlashHandler(graph).dispatch("/permission-preset") is True
 
-    assert app.prompt == "Permission mode"
-    assert permission.permission_mode == "auto-review"
-    assert permission.approval_policy == "untrusted"
-    assert permission.approval_reviewer == "auto_review"
+    assert app.prompt == "Permission preset"
+    assert permission.permission_preset == "project_trusted"
+    assert settings.get_permission_preset() == PermissionPreset.PROJECT_TRUSTED
 
 
 @pytest.mark.asyncio

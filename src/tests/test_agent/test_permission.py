@@ -131,12 +131,12 @@ class TestMerge:
 def test_permission_service_status_label_ignores_session_overrides():
     service = PermissionService(sandbox_mode="workspace-write")
 
-    assert service.status_label() == "Default"
+    assert service.status_label() == "Safe"
 
     service.allow_silent("bash")
     service.deny_silent("write")
 
-    assert service.status_label() == "Default"
+    assert service.status_label() == "Safe"
 
 
 def test_permission_service_splits_readonly_and_implement_agents():
@@ -246,32 +246,20 @@ def test_permission_service_allows_read_only_lsp_tools_but_asks_for_format():
     assert service.decide("lsp") == "allow"
 
 
-def test_permission_service_mode_presets_update_sandbox_and_approval():
+def test_permission_service_preset_updates_runtime_decisions():
     service = PermissionService()
 
-    service.set_permission_mode("auto-review")
-    assert service.permission_mode == "auto-review"
-    assert service.sandbox_mode == "workspace-write"
-    assert service.approval_policy == "untrusted"
-    assert service.approval_reviewer == "auto_review"
-    assert service.status_label() == "Auto review"
-
-    service.set_permission_mode("read-only")
-    assert service.sandbox_mode == "read-only"
-    assert service.approval_policy == "untrusted"
-    assert service.approval_reviewer == "user"
-
-    service.set_permission_mode("accept-edits")
-    assert service.sandbox_mode == "workspace-write"
+    service.set_permission_preset("project_trusted")
+    assert service.permission_preset == "project_trusted"
+    assert service.status_label() == "Project trusted"
     assert service.decide("manage", "src/app.py") == "allow"
     assert service.decide("write", "src/app.py") == "allow"
     assert service.decide("replace", "src/app.py") == "allow"
     assert service.decide("bash", "pip install requests") == "ask"
 
-    service.set_permission_mode("full-access")
-    assert service.sandbox_mode == "danger-full-access"
-    assert service.approval_policy == "never"
-    assert service.decide("bash", "python -m pytest") == "allow"
+    service.set_permission_preset("full_access")
+    assert service.permission_preset == "full_access"
+    assert service.decide("bash", "python -m pytest") == "ask"
     assert service.status_label() == "Full access"
 
 
@@ -356,55 +344,49 @@ def test_permission_engine_plan_mode_uses_sandbox_source(tmp_path):
 
 
 def test_permission_engine_policy_presets(tmp_path):
-    accept_edits = PermissionContext(
+    project_trusted = PermissionContext(
         workspace=str(tmp_path),
-        permission_mode="accept-edits",
+        permission_preset="project_trusted",
     )
     full_access = PermissionContext(
         workspace=str(tmp_path),
         sandbox_mode="danger-full-access",
         approval_policy="never",
     )
-    on_failure = PermissionContext(
-        workspace=str(tmp_path),
-        approval_policy="on-failure",
+
+    safe_edit = authorize_tool_call({"name": "manage", "args": {"op": "create", "paths": "x.py"}}, PermissionContext(workspace=str(tmp_path)))
+    full_access_edit = authorize_tool_call(
+        {"name": "manage", "args": {"op": "create", "paths": "x.py"}},
+        PermissionContext(workspace=str(tmp_path), permission_preset="full_access", sandbox_mode="danger-full-access"),
     )
 
-    assert authorize_tool_call({"name": "manage", "args": {"op": "create", "paths": "x.py"}}, accept_edits).action == "allow"
-    assert authorize_tool_call({"name": "write", "args": {"file_path": "x.py"}}, accept_edits).action == "allow"
-    assert authorize_tool_call({"name": "replace", "args": {"file_path": "x.py"}}, accept_edits).action == "allow"
-    assert authorize_tool_call({"name": "bash", "args": {"command": "pip install requests"}}, accept_edits).action == "ask"
-    assert authorize_tool_call({"name": "bash", "args": {"command": "python -m pytest"}}, full_access).action == "allow"
-
-    edit = authorize_tool_call({"name": "manage", "args": {"op": "create", "paths": "x.py"}}, on_failure)
-    bash = authorize_tool_call({"name": "bash", "args": {"command": "pip install requests"}}, on_failure)
-
-    assert edit.action == "allow"
-    assert edit.failure_check is True
-    assert bash.action == "ask"
+    assert safe_edit.action == "ask"
+    assert full_access_edit.action == "allow"
 
 
-def test_permission_engine_read_only_sandbox_allows_read_bash_but_blocks_writes(tmp_path):
+def test_permission_engine_read_only_sandbox_allows_read_bash_but_asks_for_writes(tmp_path):
     context = PermissionContext(workspace=str(tmp_path), sandbox_mode="read-only")
 
     assert authorize_tool_call({"name": "bash", "args": {"command": "ls"}}, context).action == "allow"
     assert authorize_tool_call({"name": "git", "args": {"args": "status"}}, context).action == "allow"
-    assert authorize_tool_call({"name": "git", "args": {"args": "commit"}}, context).action == "deny"
-    assert authorize_tool_call({"name": "bash", "args": {"command": "pip install requests"}}, context).action == "deny"
-    assert authorize_tool_call({"name": "manage", "args": {"op": "create", "paths": "x.py"}}, context).action == "deny"
-    assert authorize_tool_call({"name": "write", "args": {"file_path": "x.py"}}, context).action == "deny"
-    assert authorize_tool_call({"name": "replace", "args": {"file_path": "x.py"}}, context).action == "deny"
+    assert authorize_tool_call({"name": "git", "args": {"args": "commit"}}, context).action == "ask"
+    bash = authorize_tool_call({"name": "bash", "args": {"command": "pip install requests"}}, context)
+    assert bash.action == "ask"
+    assert bash.allowed_scopes == ("once",)
+    assert authorize_tool_call({"name": "manage", "args": {"op": "create", "paths": "x.py"}}, context).action == "ask"
+    assert authorize_tool_call({"name": "write", "args": {"file_path": "x.py"}}, context).action == "ask"
+    assert authorize_tool_call({"name": "replace", "args": {"file_path": "x.py"}}, context).action == "ask"
 
 
-def test_permission_engine_blocks_manage_in_read_only_sandbox(tmp_path):
+def test_permission_engine_asks_for_manage_in_read_only_sandbox(tmp_path):
     context = PermissionContext(workspace=str(tmp_path), sandbox_mode="read-only")
 
-    assert authorize_tool_call({"name": "manage", "args": {"op": "create", "paths": "x.py"}}, context).action == "deny"
-    assert authorize_tool_call({"name": "manage", "args": {"op": "delete", "paths": ["x.py"]}}, context).action == "deny"
+    assert authorize_tool_call({"name": "manage", "args": {"op": "create", "paths": "x.py"}}, context).action == "ask"
+    assert authorize_tool_call({"name": "manage", "args": {"op": "delete", "paths": ["x.py"]}}, context).action == "ask"
     assert authorize_tool_call(
         {"name": "manage", "args": {"op": "move", "moves": [{"src": "x.py", "dest": "y.py"}]}},
         context,
-    ).action == "deny"
+    ).action == "ask"
 
 
 def test_permission_engine_workspace_write_checks_manage_paths(tmp_path):

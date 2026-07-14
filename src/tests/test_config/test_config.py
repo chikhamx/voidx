@@ -5,14 +5,10 @@ from pathlib import Path
 
 
 from voidx.config import (
-    ApprovalPolicy,
-    ApprovalReviewer,
     CodeIde,
     McpServerConfig,
     ParallelSubagentsConfig,
-    PermissionMode,
     Profile,
-    SandboxMode,
     Settings,
     UserProfile,
     WebToolRoute,

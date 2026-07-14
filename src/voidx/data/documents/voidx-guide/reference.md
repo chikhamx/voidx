@@ -18,10 +18,9 @@
 | `/guide` | 向运行中的 agent 注入指导 |
 | `/parallel` | 切换并行子 agent 执行 |
 | `/permissions` | 查看权限规则 |
-| `/permission-mode` | 选择权限预设模式 |
+| `/permission-preset` | 选择权限预设 |
 | `/allow` `/deny` | 临时允许/拒绝某个工具 |
-| `/sandbox` | 设置沙箱 |
-| `/approval` | 设置审批策略 |
+| `/sandbox` | 设置执行沙箱边界 |
 | `/compact` | 压缩上下文 |
 | `/usage` | 查看 token 用量 |
 | `/diff` | 查看 git diff |

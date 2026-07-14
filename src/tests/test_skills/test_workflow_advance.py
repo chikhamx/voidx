@@ -55,7 +55,7 @@ def test_builtin_workflow_nodes_declare_execution_contracts():
         assert node.persona
         assert node.io.input
         assert node.io.output
-        assert isinstance(node.tools, list)
+        assert not hasattr(node, "tools")
         assert not hasattr(node, "triggers")
         assert not hasattr(node, "priority")
         assert not hasattr(node, "enabled")

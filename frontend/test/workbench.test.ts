@@ -557,6 +557,47 @@ describe("workbench shell", () => {
     expect(document.querySelector("#request-controls").textContent).toContain("允许一次");
   });
 
+
+  it("renders risk-aware permission request details", () => {
+    const dialog = document.querySelector("#request-dialog");
+    vi.spyOn(dialog, "showModal").mockImplementation(() => {});
+
+    handleNotification("ui.request", {
+      kind: "permission",
+      request_id: "perm_risk_1",
+      thread_id: "t2",
+      prompt: "Allow tool use?",
+      choices: [["Do not run", "n", "This command is blocked"]],
+      tools: [
+        {
+          name: "bash",
+          pattern: "sudo true",
+          args: { command: "sudo true" },
+          risk: {
+            level: "blocked",
+            tags: ["privilege_escalation"],
+            reason: "sudo is blocked",
+            tool_name: "bash",
+            pattern: "sudo true",
+          },
+          allowed_scopes: ["once"],
+          default_scope: "once",
+        },
+      ],
+    });
+
+    const details = document.querySelector("#request-details");
+    expect(details.textContent).toContain("bash");
+    expect(details.textContent).toContain("sudo true");
+    expect(details.textContent).toContain("blocked");
+    expect(details.textContent).toContain("privilege_escalation");
+    expect(details.textContent).toContain("sudo is blocked");
+    expect(details.textContent).not.toContain("Allowed scopes: once");
+    expect(details.textContent).not.toContain("Default scope: once");
+    expect(document.querySelector("#request-controls").textContent).toContain("This command is blocked");
+    expect(document.querySelectorAll("#request-controls button")).toHaveLength(1);
+    expect(document.querySelector("#request-controls").textContent).not.toContain("Allow this command");
+  });
   it("queues overlapping ui requests instead of replacing the active dialog", () => {
     const sentMessages = setupOpenSocket();
     const dialog = document.querySelector("#request-dialog");

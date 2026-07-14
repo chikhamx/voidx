@@ -2,12 +2,14 @@
 
 from __future__ import annotations
 
-from voidx.config import ApprovalPolicy, ApprovalReviewer, PermissionMode
+from voidx.config import PermissionPreset
 from voidx.permission.context import PermissionContext, PermissionDecision
 from voidx.permission.evaluate import evaluate
 from voidx.permission.git_policy import git_sandbox_precheck
-from voidx.permission.shell_policy import shell_sandbox_precheck
+from voidx.permission.shell_policy import classify_shell_risk, shell_sandbox_precheck
 from voidx.permission.grants import resolve_access
+from voidx.permission.presets import resolve_preset_decision
+from voidx.permission.risk import RiskAssessment, RiskLevel, RiskTag
 from voidx.permission.rules import (
     BASIC_RULES,
     ClassifiedToolCall,
@@ -31,21 +33,22 @@ def authorize_tool_call(tool_call: dict, context: PermissionContext) -> Permissi
 
     sandbox_action, reason = sandbox_precheck_action(classified, context)
     if sandbox_action == "deny":
-        return _decision(classified, "deny", "sandbox", reason or "")
+        if classified.name in {"bash", "powershell"}:
+            risk = _risk_for(classified, "ask", reason or "")
+            if risk.level == RiskLevel.BLOCKED:
+                return _decision(classified, "ask", "sandbox", risk.reason, context=context)
+        return _decision(classified, "deny", "sandbox", reason or "", context=context)
 
     if sandbox_action == "defer":
-        return _decision(classified, "ask", "sandbox", reason or _reason_for(classified, "ask"))
+        return _decision(classified, "ask", "sandbox", reason or _reason_for(classified, "ask"), context=context)
 
     session_action = session_action_for_tool(classified.name, context)
     if session_action:
         reason = _reason_for(classified, session_action)
-        return _decision(classified, session_action, "session", reason)
+        return _decision(classified, session_action, "session", reason, context=context)
 
-    action = strategy_action_for_tool(classified, context)
-    if action != "ask":
-        return _decision(classified, action, "strategy", _reason_for(classified, action))
-
-    return resolve_approval(classified, context)
+    base_action = strategy_action_for_tool(classified, context)
+    return _decision(classified, base_action, "preset", reason or _reason_for(classified, base_action), context=context)
 
 
 def decide_base_action(tool: str, pattern: str, context: PermissionContext) -> Action:
@@ -53,7 +56,7 @@ def decide_base_action(tool: str, pattern: str, context: PermissionContext) -> A
     session_action = session_action_for_tool(classified.name, context)
     if session_action:
         return session_action
-    return strategy_action_for_tool(classified, context)
+    return _preset_decision_for(_risk_for(classified, "ask", _reason_for(classified, "ask")), context).action
 
 
 def sandbox_denial_reason(classified: ClassifiedToolCall, context: PermissionContext) -> str | None:
@@ -67,7 +70,7 @@ def sandbox_precheck_action(classified: ClassifiedToolCall, context: PermissionC
     if context.sandbox_mode == "danger-full-access":
         return "allow", None
 
-    if context.sandbox_mode == "read-only" or context.interaction_mode == "plan":
+    if context.interaction_mode == "plan":
         if classified.name == "bash":
             if classified.capability == PermissionCapability.BASH_WRITE:
                 return "deny", f"SANDBOX READ-ONLY: '{classified.name}' is not allowed."
@@ -85,6 +88,22 @@ def sandbox_precheck_action(classified: ClassifiedToolCall, context: PermissionC
             return "deny", f"SANDBOX READ-ONLY: '{classified.name}' is not allowed."
         if classified.capability == PermissionCapability.AGENT_IMPLEMENT:
             return "deny", "SANDBOX READ-ONLY: cannot delegate to implement."
+        return "allow", None
+
+    if context.sandbox_mode == "read-only":
+        if classified.name == "bash":
+            return shell_sandbox_precheck(classified.args, context, shell="bash")
+        if classified.name == "powershell":
+            return shell_sandbox_precheck(classified.args, context, shell="powershell")
+        if classified.capability in {
+            PermissionCapability.FILE_WRITE,
+            PermissionCapability.FILE_FORMAT,
+            PermissionCapability.BASH_WRITE,
+            PermissionCapability.GIT_WRITE,
+        }:
+            return "defer", f"READ ONLY requires approval for '{classified.name}'."
+        if classified.capability == PermissionCapability.AGENT_IMPLEMENT:
+            return "defer", "READ ONLY requires approval for implement delegation."
         return "allow", None
 
     if context.sandbox_mode == "workspace-write":
@@ -135,39 +154,10 @@ def session_action_for_tool(tool: str, context: PermissionContext) -> Action | N
 
 
 def strategy_action_for_tool(classified: ClassifiedToolCall, context: PermissionContext) -> Action:
-    if context.permission_mode == PermissionMode.ACCEPT_EDITS.value and classified.capability in {
-        PermissionCapability.FILE_WRITE,
-        PermissionCapability.FILE_FORMAT,
-    }:
-        return "allow"
     if classified.capability in {PermissionCapability.BASH_READ, PermissionCapability.GIT_READ}:
         return "allow"
     permission = "edit" if classified.name in {"manage", "write", "replace"} else classified.name
     return evaluate(permission, classified.pattern, BASIC_RULES).action
-
-
-def resolve_approval(classified: ClassifiedToolCall, context: PermissionContext) -> PermissionDecision:
-    policy = context.approval_policy
-    if policy in {ApprovalPolicy.NEVER.value, ApprovalPolicy.ON_REQUEST.value}:
-        return _decision(classified, "allow", "approval_policy", _reason_for(classified, "allow"))
-
-    if policy == ApprovalPolicy.ON_FAILURE.value:
-        if classified.capability in {PermissionCapability.BASH_WRITE, PermissionCapability.GIT_WRITE}:
-            return _decision(classified, "ask", "approval_policy", _reason_for(classified, "ask"))
-        return _decision(
-            classified,
-            "allow",
-            "approval_policy",
-            _reason_for(classified, "allow"),
-            failure_check=True,
-        )
-
-    if context.approval_reviewer == ApprovalReviewer.AUTO_REVIEW.value:
-        if classified.capability in {PermissionCapability.BASH_WRITE, PermissionCapability.GIT_WRITE}:
-            return _decision(classified, "ask", "auto_review", _reason_for(classified, "ask"))
-        return _decision(classified, "allow", "auto_review", _reason_for(classified, "allow"))
-
-    return _decision(classified, "ask", "strategy", _reason_for(classified, "ask"))
 
 
 def _session_rule_matches(tool: str, rule: str) -> bool:
@@ -187,7 +177,21 @@ def _decision(
     reason: str = "",
     *,
     failure_check: bool = False,
+    context: PermissionContext | None = None,
 ) -> PermissionDecision:
+    risk = _risk_for(classified, action, reason)
+    allowed_scopes = ()
+    default_scope = None
+    if action == "ask":
+        preset_decision = _preset_decision_for(risk, context)
+        action = preset_decision.action
+        if action == "blocked_ack":
+            reason = risk.reason
+        elif action == "ask":
+            allowed_scopes = preset_decision.allowed_scopes
+            default_scope = preset_decision.default_scope
+        else:
+            reason = risk.reason or reason
     return PermissionDecision(
         action=action,
         tool_call=classified.tool_call,
@@ -198,7 +202,32 @@ def _decision(
         source=source,
         reason=reason,
         failure_check=failure_check,
+        risk=risk,
+        allowed_scopes=allowed_scopes,
+        default_scope=default_scope,
     )
+
+
+
+def _preset_decision_for(risk: RiskAssessment, context: PermissionContext | None):
+    raw = context.permission_preset if context else PermissionPreset.SAFE.value
+    try:
+        preset = PermissionPreset(raw)
+    except ValueError:
+        preset = PermissionPreset.SAFE
+    return resolve_preset_decision(preset, risk)
+
+def _risk_for(classified: ClassifiedToolCall, action: Action, reason: str) -> RiskAssessment:
+    if classified.name == "bash":
+        return classify_shell_risk(str(classified.args.get("command") or ""), shell="bash")
+    if classified.name == "powershell":
+        return classify_shell_risk(str(classified.args.get("command") or ""), shell="powershell")
+    if action == "allow":
+        return RiskAssessment.normal(tool_name=classified.name, pattern=classified.pattern, tags=(RiskTag.SAFE_READ,), reason=reason)
+    if action == "deny":
+        return RiskAssessment.blocked(tool_name=classified.name, pattern=classified.pattern, tags=(), reason=reason)
+    tags = (RiskTag.WORKSPACE_EDIT,) if classified.capability in {PermissionCapability.FILE_WRITE, PermissionCapability.FILE_FORMAT} else ()
+    return RiskAssessment.dangerous(tool_name=classified.name, pattern=classified.pattern, tags=tags, reason=reason)
 
 
 def _reason_for(classified: ClassifiedToolCall, action: Action) -> str:

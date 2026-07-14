@@ -4,9 +4,10 @@ from __future__ import annotations
 
 from dataclasses import dataclass, field
 
-from voidx.config import ApprovalPolicy, ApprovalReviewer, PermissionMode
+from voidx.config import ApprovalPolicy, ApprovalReviewer, PermissionMode, PermissionPreset
 from voidx.permission.grants import AccessGrants
 from voidx.permission.rules import PermissionCapability
+from voidx.permission.risk import ApprovalScope, RiskAssessment
 from voidx.permission.schema import Action
 
 
@@ -14,6 +15,7 @@ from voidx.permission.schema import Action
 class PermissionContext:
     workspace: str
     interaction_mode: str = "auto"
+    permission_preset: str = PermissionPreset.SAFE.value
     permission_mode: str = PermissionMode.DEFAULT.value
     sandbox_mode: str = "workspace-write"
     sandbox_readable_files: tuple[str, ...] = ()
@@ -61,6 +63,7 @@ class PermissionContext:
         return cls(
             workspace=workspace,
             interaction_mode=mode,
+            permission_preset=getattr(service, "permission_preset", PermissionPreset.SAFE.value),
             permission_mode=getattr(service, "permission_mode", PermissionMode.DEFAULT.value),
             sandbox_mode=getattr(service, "sandbox_mode", "workspace-write"),
             sandbox_readable_files=tuple(getattr(service, "sandbox_readable_files", []) or []),
@@ -88,3 +91,6 @@ class PermissionDecision:
     source: str
     reason: str = ""
     failure_check: bool = False
+    risk: RiskAssessment | None = None
+    allowed_scopes: tuple[ApprovalScope, ...] = ()
+    default_scope: ApprovalScope | None = None

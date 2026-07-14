@@ -5,6 +5,7 @@ from voidx.config.enums import (
     ApprovalReviewer,
     CodeIde,
     PermissionMode,
+    PermissionPreset,
     SandboxMode,
 )
 from voidx.config.models import (
@@ -17,10 +18,6 @@ from voidx.config.models import (
     RetryConfig,
     UserProfile,
     WebToolRoute,
-)
-from voidx.config.permissions import (
-    permission_mode_defaults,
-    permission_mode_reviewer_default,
 )
 from voidx.config.settings import SETTINGS_FILE, SKILLS_STATE_FILE, Settings
 
@@ -36,12 +33,11 @@ __all__ = [
     "ModelConfig",
     "ParallelSubagentsConfig",
     "PermissionMode",
+    "PermissionPreset",
     "Profile",
     "RetryConfig",
     "SandboxMode",
     "Settings",
     "UserProfile",
     "WebToolRoute",
-    "permission_mode_defaults",
-    "permission_mode_reviewer_default",
 ]

@@ -8,9 +8,7 @@ from pathlib import Path
 from typing import Literal
 
 from voidx.config.defaults import DEFAULT_MODEL, DEFAULT_PROVIDER
-from voidx.config.enums import PermissionMode
 from voidx.config.models import Config, ModelConfig, Profile, UserProfile
-from voidx.config.permissions import permission_mode_defaults, permission_mode_reviewer_default
 from voidx.config.settings_agent import SettingsAgentMixin
 from voidx.config.settings_api_keys import SettingsApiKeyMixin
 from voidx.config.settings_code_ide import SettingsCodeIdeMixin
@@ -36,6 +34,7 @@ GLOBAL_KEYS = frozenset({
     "retry",
 })
 WORKSPACE_ONLY_KEYS = frozenset({
+    "permission_preset",
     "permission_mode",
     "sandbox_mode",
     "sandbox_readable_files",
@@ -386,20 +385,12 @@ class Settings(
         cfg = ModelConfig(provider=provider, model=model, base_url=base_url, context_window=self._effective_data().get("context_window"))
         if protocol:
             cfg.protocol = protocol
-        permission_mode = self.get_permission_mode()
-        if permission_mode == PermissionMode.CUSTOM:
-            sandbox_mode = self.get_sandbox_mode()
-            approval_policy = self.get_approval_policy()
-            approval_reviewer = self.get_approval_reviewer()
-        else:
-            sandbox_mode, approval_policy = permission_mode_defaults(permission_mode)
-            approval_reviewer = permission_mode_reviewer_default(permission_mode)
-
         return Config(
             model=cfg,
             parallel_subagents=self.get_parallel_subagents(),
-            permission_mode=permission_mode,
-            sandbox_mode=sandbox_mode,
+            permission_preset=self.get_permission_preset(),
+            permission_mode=self.get_permission_mode(),
+            sandbox_mode=self.get_sandbox_mode(),
             sandbox_readable_files=self.get_sandbox_readable_files(),
             sandbox_readable_dirs=self.get_sandbox_readable_dirs(),
             sandbox_writable_files=self.get_sandbox_writable_files(),
@@ -408,8 +399,8 @@ class Settings(
             persistent_readable_dirs=self.get_persistent_readable_dirs(),
             persistent_writable_files=self.get_persistent_writable_files(),
             persistent_writable_dirs=self.get_persistent_writable_dirs(),
-            approval_policy=approval_policy,
-            approval_reviewer=approval_reviewer,
+            approval_policy=self.get_approval_policy(),
+            approval_reviewer=self.get_approval_reviewer(),
             ask_compact=bool(self._effective_data().get(
                 "askCompact",
                 self._effective_data().get("ask_compact", False),

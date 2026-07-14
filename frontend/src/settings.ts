@@ -19,6 +19,32 @@ export interface SettingsSnapshot {
   [k: string]: unknown;
 }
 
+type PermissionPreset = "read_only" | "safe" | "project_trusted" | "full_access";
+
+interface PermissionPresetConfig {
+  label: string;
+  description: string;
+}
+
+const PERMISSION_PRESETS: Record<PermissionPreset, PermissionPresetConfig> = {
+  read_only: {
+    label: "Read only",
+    description: "Ask before writes or risky commands; no session-wide approval.",
+  },
+  safe: {
+    label: "Safe",
+    description: "Allow normal reads; ask for risky edits and commands.",
+  },
+  project_trusted: {
+    label: "Project trusted",
+    description: "Allow routine project edits; ask for dynamic shell, external paths, and higher risks.",
+  },
+  full_access: {
+    label: "Full access",
+    description: "Run with full sandbox access while still asking for the highest-risk operations.",
+  },
+};
+
 interface SettingsState {
   dialog: HTMLDialogElement | null;
   content: HTMLElement | null;
@@ -132,13 +158,7 @@ export function collectSettingsPatch(): Record<string, unknown> {
     case "model":
       return collectModelPatch(value);
     case "permissions":
-      return {
-        permissions: {
-          permission_mode: value("permission_mode"),
-          sandbox_mode: value("sandbox_mode"),
-          approval_policy: value("approval_policy"),
-        },
-      };
+      return collectPermissionsPatch(value);
     case "preferences":
       return {
         user_profile: {
@@ -158,6 +178,24 @@ export function collectSettingsPatch(): Record<string, unknown> {
       return {};
   }
 }
+function collectPermissionsPatch(value: (name: string) => string): Record<string, unknown> {
+  const raw = value("permission_preset") || "safe";
+  const preset = raw in PERMISSION_PRESETS ? (raw as PermissionPreset) : "safe";
+  return {
+    permissions: {
+      permission_preset: preset,
+    },
+  };
+}
+
+function inferPermissionPreset(permissions: Record<string, unknown> = {}): PermissionPreset {
+  const explicit = permissions.permission_preset;
+  if (typeof explicit === "string" && explicit in PERMISSION_PRESETS) {
+    return explicit as PermissionPreset;
+  }
+  return "safe";
+}
+
 
 function collectModelPatch(value: (name: string) => string): Record<string, unknown> {
   const provider = value("new_provider").trim();
@@ -251,18 +289,23 @@ function renderModelTab(snapshot: SettingsSnapshot = {}): DocumentFragment {
 
 function renderPermissionsTab(snapshot: SettingsSnapshot = {}): DocumentFragment {
   const permissions = snapshot.permissions || {};
+  const preset = inferPermissionPreset(permissions);
+  const presetConfig = PERMISSION_PRESETS[preset];
   const frag = document.createDocumentFragment();
   frag.append(
-    section("权限模式", [
-      selectRow("Permission mode", "permission_mode", permissions.permission_mode || "default", ["default", "read-only", "accept-edits", "auto-review", "full-access", "custom"]),
-      selectRow("Sandbox", "sandbox_mode", permissions.sandbox_mode || "workspace-write", ["read-only", "workspace-write", "danger-full-access"]),
-      selectRow("Approval", "approval_policy", permissions.approval_policy || "untrusted", ["untrusted", "on-failure", "on-request", "never"]),
+    section("权限预设", [
+      selectRow(
+        "Permission preset",
+        "permission_preset",
+        preset,
+        Object.keys(PERMISSION_PRESETS),
+        (key) => PERMISSION_PRESETS[key as PermissionPreset].label,
+      ),
+      readonlyRow("说明", presetConfig.description),
     ]),
     section("沙箱路径", [
-      readonlyRow("Workspace write paths", (permissions.sandbox_workspace_write || []).join(", ") || "—"),
-    ]),
-    section("当前规则", [
-      readonlyRow("Approval reviewer", permissions.approval_reviewer || "—"),
+      readonlyRow("Readable paths", [permissions.sandbox_readable_files, permissions.sandbox_readable_dirs].flat().join(", ") || "—"),
+      readonlyRow("Writable paths", [permissions.sandbox_writable_files, permissions.sandbox_writable_dirs].flat().join(", ") || "—"),
     ]),
   );
   return frag;
@@ -377,14 +420,14 @@ function checkboxRow(label: string, name: string, value: boolean): HTMLLabelElem
   return row;
 }
 
-function selectRow(label: string, name: string, value: string, options: string[]): HTMLLabelElement {
+function selectRow(label: string, name: string, value: string, options: string[], optionLabel?: (value: string) => string): HTMLLabelElement {
   const row = rowBase(label);
   const select = document.createElement("select");
   select.name = name;
   for (const optionValue of options) {
     const option = document.createElement("option");
     option.value = optionValue;
-    option.textContent = optionValue || (optionValue ? optionValue : "none");
+    option.textContent = optionLabel ? optionLabel(optionValue) : optionValue || (optionValue ? optionValue : "none");
     select.append(option);
   }
   select.value = value;

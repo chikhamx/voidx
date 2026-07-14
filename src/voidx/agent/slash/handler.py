@@ -103,9 +103,8 @@ class SlashHandler(
             "/allow": allow_tool,
             "/deny": deny_tool,
             "/permissions": lambda: ui.print(self.host.permission.show_rules()),
-            "/permission-mode": lambda: self._permission_mode(args),
+            "/permission-preset": lambda: self._permission_preset(args),
             "/sandbox": lambda: self._sandbox(args),
-            "/approval": lambda: self._approval(args),
             "/usage": self._usage,
             "/upgrade": lambda: self._upgrade(args),
             "/mcp": lambda: self._mcp(args),
@@ -280,69 +279,47 @@ class SlashHandler(
             settings.set_sandbox_mode(SandboxMode(mode))
         ui.print(f"[dim]Sandbox mode set to [cyan]{mode}[/cyan][/dim]")
 
-    def _approval(self, arg: str) -> None:
-        permission = self.host.permission
-        policy = arg.strip().lower()
-        valid = {"untrusted", "on-failure", "on-request", "never"}
-        if not policy:
-            ui.print(f"Approval policy: [cyan]{permission.approval_policy}[/cyan]")
-            ui.print("Usage: /approval [untrusted|on-failure|on-request|never]")
+    async def _permission_preset(self, arg: str) -> None:
+        from voidx.config import PermissionPreset
+
+        raw = arg.strip().lower().replace("-", "_")
+        labels = {
+            PermissionPreset.READ_ONLY.value: "Read only",
+            PermissionPreset.SAFE.value: "Safe",
+            PermissionPreset.PROJECT_TRUSTED.value: "Project trusted",
+            PermissionPreset.FULL_ACCESS.value: "Full access",
+        }
+        choices = [
+            (labels[PermissionPreset.READ_ONLY.value], PermissionPreset.READ_ONLY.value, "Ask for writes and block/acknowledge unsafe operations."),
+            (labels[PermissionPreset.SAFE.value], PermissionPreset.SAFE.value, "Ask before writes or risky commands."),
+            (labels[PermissionPreset.PROJECT_TRUSTED.value], PermissionPreset.PROJECT_TRUSTED.value, "Allow workspace edits; ask for broader risk."),
+            (labels[PermissionPreset.FULL_ACCESS.value], PermissionPreset.FULL_ACCESS.value, "Allow most operations; still ask for extreme risk."),
+        ]
+        valid = set(labels)
+
+        app = self.host.app
+        if not raw and app is not None:
+            raw = await app.ask_choice("Permission preset", choices) or ""
+
+        if not raw:
+            current = getattr(self.host.permission, "permission_preset", PermissionPreset.SAFE.value)
+            ui.print(f"Permission preset: [cyan]{labels.get(current, labels[PermissionPreset.SAFE.value])}[/cyan]")
+            ui.print("Usage: /permission-preset [read_only|safe|project_trusted|full_access]")
             return
-        if policy not in valid:
-            ui.error(f"Invalid approval policy: {policy}. Use: {', '.join(valid)}")
+        if raw not in valid:
+            ui.error(f"Invalid permission preset: {raw}. Use: {', '.join(sorted(valid))}")
             return
+
+        preset = PermissionPreset(raw)
         try:
-            permission.set_approval_policy(policy)
+            self.host.permission.set_permission_preset(preset.value)
         except PermissionError as exc:
             ui.error(str(exc))
             return
         settings = self.host.settings
         if settings is not None:
-            from voidx.config import ApprovalPolicy
-            settings.set_approval_policy(ApprovalPolicy(policy))
-        ui.print(f"[dim]Approval policy set to [cyan]{policy}[/cyan][/dim]")
-
-    async def _permission_mode(self, arg: str) -> None:
-        from voidx.config import PermissionMode
-
-        mode = arg.strip().lower()
-        labels = {
-            PermissionMode.DEFAULT.value: "Default",
-            PermissionMode.READ_ONLY.value: "Read only",
-            PermissionMode.ACCEPT_EDITS.value: "Accept edits",
-            PermissionMode.AUTO_REVIEW.value: "Auto review",
-            PermissionMode.FULL_ACCESS.value: "Full access",
-            PermissionMode.CUSTOM.value: "Custom (.voidx/settings.json)",
-        }
-        valid = set(labels)
-
-        app = self.host.app
-        if not mode and app is not None:
-            choices = [
-                (labels[PermissionMode.DEFAULT.value], PermissionMode.DEFAULT.value, "Ask before write/edit/bash."),
-                (labels[PermissionMode.READ_ONLY.value], PermissionMode.READ_ONLY.value, "Block all writes and implement delegation."),
-                (labels[PermissionMode.ACCEPT_EDITS.value], PermissionMode.ACCEPT_EDITS.value, "Allow workspace file edits; still ask for bash."),
-                (labels[PermissionMode.AUTO_REVIEW.value], PermissionMode.AUTO_REVIEW.value, "Use reviewer-assisted approvals where possible."),
-                (labels[PermissionMode.FULL_ACCESS.value], PermissionMode.FULL_ACCESS.value, "No sandbox or approval prompts."),
-                (labels[PermissionMode.CUSTOM.value], PermissionMode.CUSTOM.value, "Use explicit sandbox/approval config."),
-            ]
-            mode = await app.ask_choice("Permission mode", choices) or ""
-
-        permission = self.host.permission
-        if not mode:
-            current = permission.permission_mode
-            ui.print(f"Permission mode: [cyan]{labels.get(current, 'Custom')}[/cyan]")
-            ui.print("Usage: /permission-mode [default|read-only|accept-edits|auto-review|full-access|custom]")
-            return
-        if mode not in valid:
-            ui.error(f"Invalid permission mode: {mode}. Use: {', '.join(sorted(valid))}")
-            return
-
-        permission.set_permission_mode(mode)
-        settings = self.host.settings
-        if settings is not None:
-            settings.set_permission_mode(PermissionMode(mode))
-        ui.print(f"[dim]Permission mode set to [cyan]{labels[mode]}[/cyan][/dim]")
+            settings.set_permission_preset(preset)
+        ui.print(f"[dim]Permission preset set to [cyan]{labels[preset.value]}[/cyan][/dim]")
 
     def _debug(self, arg: str) -> None:
         value = arg.strip().lower()

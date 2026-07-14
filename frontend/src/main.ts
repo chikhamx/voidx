@@ -1193,12 +1193,27 @@ function runSlashCommand(command: SlashCommand): void {
   inputEl.focus();
 }
 
+interface PermissionToolDetail {
+  name: string;
+  pattern?: string;
+  args?: Record<string, unknown>;
+  risk?: {
+    level?: string;
+    tags?: string[];
+    reason?: string;
+    tool_name?: string;
+    pattern?: string;
+  } | null;
+  allowed_scopes?: string[];
+  default_scope?: string | null;
+}
+
 interface UiRequest {
   prompt: string;
   kind: string;
   request_id: string;
   thread_id?: string;
-  tools?: { name: string; pattern?: string; args?: Record<string, unknown> }[];
+  tools?: PermissionToolDetail[];
   choices?: [string, string, string][];
   default?: string;
   secret?: boolean;
@@ -1296,16 +1311,54 @@ function showPromptItemRequest(data: Record<string, unknown>): void {
 
 function renderPermissionDetails(request: UiRequest): void {
   requestDetailsEl.className = "request-details";
+  requestDetailsEl.replaceChildren();
   if (!request.tools?.length) {
-    requestDetailsEl.textContent = "";
     return;
   }
-  requestDetailsEl.textContent = request.tools
-    .map(
-      (tool) =>
-        `${tool.name} ${tool.pattern || ""}\n${JSON.stringify(tool.args || {}, null, 2)}`,
-    )
-    .join("\n\n");
+  for (const tool of request.tools) {
+    const block = document.createElement("section");
+    block.className = "request-tool-detail";
+
+    const title = document.createElement("div");
+    title.className = "request-tool-title";
+    title.textContent = [tool.name, tool.pattern].filter(Boolean).join(" ");
+    block.append(title);
+
+    if (tool.risk) {
+      const risk = document.createElement("div");
+      risk.className = `request-risk request-risk-${tool.risk.level || "unknown"}`;
+      const tags = tool.risk.tags?.length ? ` · ${tool.risk.tags.join(", ")}` : "";
+      risk.textContent = `Risk: ${tool.risk.level || "unknown"}${tags}`;
+      block.append(risk);
+      if (tool.risk.reason) {
+        const reason = document.createElement("div");
+        reason.className = "request-risk-reason";
+        reason.textContent = tool.risk.reason;
+        block.append(reason);
+      }
+    }
+
+    const isBlockedRisk = tool.risk?.level === "blocked";
+    if (!isBlockedRisk && tool.allowed_scopes?.length) {
+      const scopes = document.createElement("div");
+      scopes.className = "request-approval-scopes";
+      scopes.textContent = `Allowed scopes: ${tool.allowed_scopes.join(", ")}`;
+      block.append(scopes);
+    }
+
+    if (!isBlockedRisk && tool.default_scope) {
+      const defaultScope = document.createElement("div");
+      defaultScope.className = "request-default-scope";
+      defaultScope.textContent = `Default scope: ${tool.default_scope}`;
+      block.append(defaultScope);
+    }
+
+    const args = document.createElement("pre");
+    args.className = "request-tool-args";
+    args.textContent = JSON.stringify(tool.args || {}, null, 2);
+    block.append(args);
+    requestDetailsEl.append(block);
+  }
 }
 
 function renderChoiceButtons(request: UiRequest): void {
@@ -1319,6 +1372,11 @@ function renderChoiceButtons(request: UiRequest): void {
       sendResponse(request.request_id, value),
     );
     actions.append(button);
+  }
+  const acknowledgementOnly = request.kind === "permission" && (request.choices || []).length === 1 && (request.choices || [])[0]?.[1] === "n";
+  if (acknowledgementOnly) {
+    requestControlsEl.append(actions);
+    return;
   }
   const cancel = document.createElement("button");
   cancel.type = "button";

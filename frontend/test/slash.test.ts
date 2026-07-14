@@ -47,9 +47,9 @@ describe("matchSlashCommands", () => {
 });
 
 
-  it("matches commands by description text", () => {
-    const result = matchSlashCommands("/approval");
-    expect(result.map((c) => c.command)).toContain("/approval");
+  it("matches permission preset command", () => {
+    const result = matchSlashCommands("/permission-preset");
+    expect(result.map((c) => c.command)).toContain("/permission-preset");
     expect(result[0].category).toBe("permission");
   });
 

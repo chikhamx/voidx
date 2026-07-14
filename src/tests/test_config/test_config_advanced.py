@@ -5,14 +5,11 @@ from pathlib import Path
 
 
 from voidx.config import (
-    ApprovalPolicy,
-    ApprovalReviewer,
     CodeIde,
     McpServerConfig,
     ParallelSubagentsConfig,
-    PermissionMode,
+    PermissionPreset,
     Profile,
-    SandboxMode,
     Settings,
     UserProfile,
     WebToolRoute,
@@ -93,32 +90,28 @@ def test_settings_reads_legacy_skill_selection_from_voidx_json(tmp_path):
     assert selection.auto == set()
 
 
-async def test_permission_mode_presets_drive_build_config(tmp_path):
+async def test_permission_preset_drives_build_config_without_rewriting_boundaries(tmp_path):
     settings = Settings(str(tmp_path))
-    settings.set_sandbox_writable_dirs([str(tmp_path / "external")])
+    external = str(tmp_path / "external")
+    settings.set_sandbox_writable_dirs([external])
 
-    settings.set_permission_mode(PermissionMode.FULL_ACCESS)
+    settings.set_permission_preset(PermissionPreset.FULL_ACCESS)
     cfg = await (await Settings.create(str(tmp_path))).build_config()
 
-    assert cfg.permission_mode == PermissionMode.FULL_ACCESS
-    assert cfg.sandbox_mode == SandboxMode.DANGER_FULL_ACCESS
-    assert cfg.approval_policy == ApprovalPolicy.NEVER
-    assert cfg.approval_reviewer == ApprovalReviewer.USER
-    assert cfg.sandbox_writable_dirs == []
+    assert cfg.permission_preset == PermissionPreset.FULL_ACCESS
+    assert cfg.sandbox_writable_dirs == [external]
 
-    settings.set_permission_mode(PermissionMode.AUTO_REVIEW)
+    settings.set_permission_preset(PermissionPreset.PROJECT_TRUSTED)
     cfg = await (await Settings.create(str(tmp_path))).build_config()
 
-    assert cfg.permission_mode == PermissionMode.AUTO_REVIEW
-    assert cfg.sandbox_mode == SandboxMode.WORKSPACE_WRITE
-    assert cfg.approval_policy == ApprovalPolicy.UNTRUSTED
-    assert cfg.approval_reviewer == ApprovalReviewer.AUTO_REVIEW
+    assert cfg.permission_preset == PermissionPreset.PROJECT_TRUSTED
+    assert cfg.sandbox_writable_dirs == [external]
 
-    settings.set_permission_mode(PermissionMode.READ_ONLY)
+    settings.set_permission_preset(PermissionPreset.READ_ONLY)
     cfg = await (await Settings.create(str(tmp_path))).build_config()
 
-    assert cfg.sandbox_mode == SandboxMode.READ_ONLY
-    assert cfg.approval_policy == ApprovalPolicy.UNTRUSTED
+    assert cfg.permission_preset == PermissionPreset.READ_ONLY
+    assert cfg.sandbox_writable_dirs == [external]
 
 
 
@@ -188,25 +181,21 @@ def test_legacy_migration_failure_fails_closed(tmp_path):
     assert "sandbox_workspace_write" not in settings._effective_data()
 
 
-def test_preset_clears_path_grants(tmp_path):
+def test_permission_preset_preserves_path_grants(tmp_path):
     settings = Settings(str(tmp_path))
     settings.set_sandbox_readable_files([str(tmp_path / "readable-file")])
     settings.set_sandbox_readable_dirs([str(tmp_path / "readable-dir")])
     settings.set_sandbox_writable_files([str(tmp_path / "writable-file")])
     settings.set_sandbox_writable_dirs([str(tmp_path / "writable-dir")])
 
-    settings.set_permission_mode(PermissionMode.AUTO_REVIEW)
+    settings.set_permission_preset(PermissionPreset.PROJECT_TRUSTED)
     loaded = Settings(str(tmp_path))
 
-    assert loaded.get_sandbox_readable_files() == []
-    assert loaded.get_sandbox_readable_dirs() == []
-    assert loaded.get_sandbox_writable_files() == []
-    assert loaded.get_sandbox_writable_dirs() == []
-    data = loaded._effective_data()
-    assert "sandbox_readable_files" not in data
-    assert "sandbox_readable_dirs" not in data
-    assert "sandbox_writable_files" not in data
-    assert "sandbox_writable_dirs" not in data
+    assert loaded.get_sandbox_readable_files() == [str(tmp_path / "readable-file")]
+    assert loaded.get_sandbox_readable_dirs() == [str(tmp_path / "readable-dir")]
+    assert loaded.get_sandbox_writable_files() == [str(tmp_path / "writable-file")]
+    assert loaded.get_sandbox_writable_dirs() == [str(tmp_path / "writable-dir")]
+    assert loaded.get_permission_preset() == PermissionPreset.PROJECT_TRUSTED
 
 async def test_build_config_defaults_and_reads_ask_compact(tmp_path):
     cfg = await (await Settings.create(str(tmp_path))).build_config()
@@ -322,16 +311,15 @@ def test_user_profile_save_cleans_legacy_workspace_keys(monkeypatch, tmp_path):
     assert workspace_saved == {}
 
 
-async def test_low_level_permission_changes_mark_custom_mode(tmp_path):
+async def test_low_level_permission_changes_do_not_rewrite_permission_preset(tmp_path):
     settings = Settings(str(tmp_path))
 
-    settings.set_permission_mode(PermissionMode.DEFAULT)
-    settings.set_approval_policy(ApprovalPolicy.ON_FAILURE)
+    settings.set_permission_preset(PermissionPreset.PROJECT_TRUSTED)
+    settings.set_sandbox_mode(__import__("voidx.config", fromlist=["SandboxMode"]).SandboxMode.READ_ONLY)
     cfg = await (await Settings.create(str(tmp_path))).build_config()
 
-    assert cfg.permission_mode == PermissionMode.CUSTOM
-    assert cfg.sandbox_mode == SandboxMode.WORKSPACE_WRITE
-    assert cfg.approval_policy == ApprovalPolicy.ON_FAILURE
+    assert cfg.permission_preset == PermissionPreset.PROJECT_TRUSTED
+    assert cfg.sandbox_mode.value == "read-only"
 
 
 def test_settings_defaults_and_saves_code_ide(tmp_path):

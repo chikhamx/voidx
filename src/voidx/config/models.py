@@ -5,7 +5,7 @@ from __future__ import annotations
 from pydantic import BaseModel, Field
 
 from voidx.config.defaults import DEFAULT_MODEL, DEFAULT_PROVIDER
-from voidx.config.enums import ApprovalPolicy, ApprovalReviewer, PermissionMode, SandboxMode
+from voidx.config.enums import ApprovalPolicy, ApprovalReviewer, PermissionMode, PermissionPreset, SandboxMode
 
 class Profile(BaseModel):
     """A named LLM configuration.  Name is ``provider/model`` (e.g. ``mimo/mimo-v2.5-pro``)."""
@@ -105,6 +105,7 @@ class Config(BaseModel):
     ))
     parallel_subagents: ParallelSubagentsConfig = Field(default_factory=ParallelSubagentsConfig)
     workspace: str = "."
+    permission_preset: PermissionPreset = PermissionPreset.SAFE
     permission_mode: PermissionMode = PermissionMode.DEFAULT
     sandbox_mode: SandboxMode = SandboxMode.WORKSPACE_WRITE
     sandbox_readable_files: list[str] = Field(

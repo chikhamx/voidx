@@ -57,15 +57,15 @@ async def test_main_tool_execution_lease_blocks_revocation(tmp_path):
     before_epoch = service.revocation_epoch
 
     with pytest.raises(Exception, match="active execution lease"):
-        service.set_permission_mode("read-only")
+        service.set_permission_preset("read_only")
 
     assert service.permission_mode == "custom"
     assert service.revocation_epoch == before_epoch
 
     await lease.release()
-    service.set_permission_mode("read-only")
+    service.set_permission_preset("read_only")
 
-    assert service.permission_mode == "read-only"
+    assert service.permission_preset == "read_only"
     assert service.revocation_epoch == before_epoch + 1
 
 
@@ -80,7 +80,7 @@ async def test_pregranted_tool_holds_execution_lease(tmp_path):
     async with service.execution_lease_for_tool("write") as lease:
         assert service.has_active_execution_lease(lease)
         with pytest.raises(Exception, match="active execution lease"):
-            service.set_permission_mode("read-only")
+            service.set_permission_preset("read_only")
 
     assert not service.has_active_execution_lease(lease)
 
@@ -151,7 +151,7 @@ def test_subagent_snapshot_invalidated_on_revocation(tmp_path):
     )
     snapshot = SubagentPermissionSnapshot.capture(service)
 
-    service.set_permission_mode("read-only")
+    service.set_permission_preset("read_only")
 
     with pytest.raises(PermissionError, match="revoked"):
         snapshot.get_access_grants(current_revocation_epoch=service.revocation_epoch)
@@ -277,22 +277,22 @@ def test_subagent_snapshot_checks_live_parent_revocation_epoch(tmp_path):
 
 
 @pytest.mark.asyncio
-async def test_slash_sandbox_and_approval_respect_active_execution_lease(tmp_path):
+async def test_slash_sandbox_and_permission_preset_respect_active_execution_lease(tmp_path):
     from voidx.agent.slash import SlashHandler
 
-    service = PermissionService(permission_mode="custom", sandbox_mode="workspace-write", approval_policy="untrusted")
+    service = PermissionService(permission_preset="safe", sandbox_mode="workspace-write")
     lease = await service.acquire_execution_lease()
-    handler = SlashHandler(SimpleNamespace(_permission=service, _settings=None))
+    handler = SlashHandler(SimpleNamespace(_permission=service, _settings=None, _app=None))
 
     handler._sandbox("read-only")
-    handler._approval("never")
+    await handler._permission_preset("full_access")
 
     assert service.sandbox_mode == "workspace-write"
-    assert service.approval_policy == "untrusted"
+    assert service.permission_preset == "safe"
 
     await lease.release()
     handler._sandbox("read-only")
-    handler._approval("never")
+    await handler._permission_preset("full_access")
 
     assert service.sandbox_mode == "read-only"
-    assert service.approval_policy == "never"
+    assert service.permission_preset == "full_access"

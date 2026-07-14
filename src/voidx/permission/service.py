@@ -15,7 +15,7 @@ from dataclasses import dataclass
 
 from pydantic import BaseModel
 
-from voidx.config import ApprovalReviewer, PermissionMode, permission_mode_defaults, permission_mode_reviewer_default
+from voidx.config import ApprovalReviewer, PermissionMode, PermissionPreset
 from voidx.permission.engine import (
     BASIC_RULES,
     PermissionContext,
@@ -149,6 +149,7 @@ class PermissionService:
 
     def __init__(
         self,
+        permission_preset: str = PermissionPreset.SAFE.value,
         permission_mode: str = "default",
         sandbox_mode: str = "workspace-write",
         sandbox_readable_files: list[str] | None = None,
@@ -178,28 +179,16 @@ class PermissionService:
         self.revocation_epoch = 0
         self._persistent_grant_writer = persistent_grant_writer
         try:
-            parsed_mode = PermissionMode(permission_mode)
+            self.permission_preset = PermissionPreset(permission_preset).value
         except ValueError:
-            parsed_mode = PermissionMode.CUSTOM
-        if (
-            parsed_mode == PermissionMode.DEFAULT
-            and (
-                sandbox_mode != "workspace-write"
-                or approval_policy != "untrusted"
-                or approval_reviewer != "user"
-            )
-        ):
-            parsed_mode = PermissionMode.CUSTOM
-        self.permission_mode = parsed_mode.value
-        if parsed_mode == PermissionMode.CUSTOM:
-            self.sandbox_mode = sandbox_mode
-            self.approval_policy = approval_policy
-            self.approval_reviewer = approval_reviewer
-        else:
-            mode_sandbox, mode_approval = permission_mode_defaults(parsed_mode)
-            self.sandbox_mode = mode_sandbox.value
-            self.approval_policy = mode_approval.value
-            self.approval_reviewer = permission_mode_reviewer_default(parsed_mode).value
+            self.permission_preset = PermissionPreset.SAFE.value
+        try:
+            self.permission_mode = PermissionMode(permission_mode).value
+        except ValueError:
+            self.permission_mode = PermissionMode.DEFAULT.value
+        self.sandbox_mode = sandbox_mode
+        self.approval_policy = approval_policy
+        self.approval_reviewer = approval_reviewer
         self.sandbox_readable_files = sandbox_readable_files or []
         self.sandbox_readable_dirs = sandbox_readable_dirs or []
         self.sandbox_writable_files = sandbox_writable_files or []
@@ -231,61 +220,19 @@ class PermissionService:
         self._session_allow.discard(tool)
 
     def status_label(self) -> str:
-        return self.permission_mode_label()
-    def set_permission_mode(self, mode: str) -> None:
-        previous = (
-            self.permission_mode,
-            self.sandbox_mode,
-            self.approval_policy,
-            self.approval_reviewer,
-            tuple(self.sandbox_readable_files),
-            tuple(self.sandbox_readable_dirs),
-            tuple(self.sandbox_writable_files),
-            tuple(self.sandbox_writable_dirs),
-        )
-        had_path_grants = any((
-            self.sandbox_readable_files,
-            self.sandbox_readable_dirs,
-            self.sandbox_writable_files,
-            self.sandbox_writable_dirs,
-            self._runtime_grants,
-            self._session_grants,
-            self._persistent_grants,
-        ))
+        return self.permission_preset_label()
+
+    def set_permission_preset(self, preset: str) -> None:
+        if self._active_execution_leases:
+            raise PermissionError("Cannot change permission preset while active execution lease exists")
         try:
-            parsed = PermissionMode(mode)
-        except ValueError:
-            parsed = PermissionMode.CUSTOM
-        if parsed != PermissionMode.CUSTOM and self._active_execution_leases:
-            raise PermissionError("Cannot tighten permission mode while active execution lease exists")
-        self.permission_mode = parsed.value
-        if parsed != PermissionMode.CUSTOM:
-            sandbox_mode, approval_policy = permission_mode_defaults(parsed)
-            self.sandbox_mode = sandbox_mode.value
-            self.approval_policy = approval_policy.value
-            self.approval_reviewer = permission_mode_reviewer_default(parsed).value
-            self.sandbox_readable_files = []
-            self.sandbox_readable_dirs = []
-            self.sandbox_writable_files = []
-            self.sandbox_writable_dirs = []
-            self._runtime_grants = []
-            self._session_grants = []
-            self._persistent_grants = []
-        current = (
-            self.permission_mode,
-            self.sandbox_mode,
-            self.approval_policy,
-            self.approval_reviewer,
-            tuple(self.sandbox_readable_files),
-            tuple(self.sandbox_readable_dirs),
-            tuple(self.sandbox_writable_files),
-            tuple(self.sandbox_writable_dirs),
-        )
-        if current != previous:
+            parsed = PermissionPreset(preset.replace("-", "_"))
+        except ValueError as exc:
+            raise PermissionError(f"Invalid permission preset: {preset}") from exc
+        if self.permission_preset != parsed.value:
+            self.permission_preset = parsed.value
             self.state_revision += 1
             self.revocation_epoch += 1
-        if parsed != PermissionMode.CUSTOM and had_path_grants:
-            self.permissions_revision += 1
 
     def mark_custom_mode(self) -> None:
         if self._active_execution_leases:
@@ -300,18 +247,6 @@ class PermissionService:
             raise PermissionError("Cannot change sandbox mode while active execution lease exists")
         if self.sandbox_mode != mode:
             self.sandbox_mode = mode
-            if self.permission_mode != PermissionMode.CUSTOM.value:
-                self.permission_mode = PermissionMode.CUSTOM.value
-            self.state_revision += 1
-            self.revocation_epoch += 1
-
-    def set_approval_policy(self, policy: str) -> None:
-        if self._active_execution_leases:
-            raise PermissionError("Cannot change approval policy while active execution lease exists")
-        if self.approval_policy != policy:
-            self.approval_policy = policy
-            if self.permission_mode != PermissionMode.CUSTOM.value:
-                self.permission_mode = PermissionMode.CUSTOM.value
             self.state_revision += 1
             self.revocation_epoch += 1
 
@@ -398,16 +333,14 @@ class PermissionService:
         if lease in self._active_execution_leases:
             self._active_execution_leases.remove(lease)
 
-    def permission_mode_label(self) -> str:
+    def permission_preset_label(self) -> str:
         labels = {
-            PermissionMode.DEFAULT.value: "Default",
-            PermissionMode.READ_ONLY.value: "Read only",
-            PermissionMode.ACCEPT_EDITS.value: "Accept edits",
-            PermissionMode.AUTO_REVIEW.value: "Auto review",
-            PermissionMode.FULL_ACCESS.value: "Full access",
-            PermissionMode.CUSTOM.value: "Custom",
+            PermissionPreset.READ_ONLY.value: "Read only",
+            PermissionPreset.SAFE.value: "Safe",
+            PermissionPreset.PROJECT_TRUSTED.value: "Project trusted",
+            PermissionPreset.FULL_ACCESS.value: "Full access",
         }
-        return labels.get(self.permission_mode, "Custom")
+        return labels.get(self.permission_preset, "Safe")
 
     def status_details(self) -> tuple[str, str, str]:
         """Return (sandbox_label, approval_label, session_label) for UI."""
@@ -460,7 +393,7 @@ class PermissionService:
     def show_rules(self) -> str:
         """Format current sandbox, approval, and session rules."""
         lines = ["[bold]Session permissions:[/bold]"]
-        lines.append(f"  Mode: [cyan]{self.permission_mode_label()}[/cyan] ({self.permission_mode})")
+        lines.append(f"  Preset: [cyan]{self.permission_preset_label()}[/cyan] ({self.permission_preset})")
         lines.append(
             f"  Sandbox: [cyan]{self.sandbox_mode}[/cyan]  "
             f"Approval: [cyan]{self.approval_policy}[/cyan]  "
@@ -481,7 +414,7 @@ class PermissionService:
             lines.append(f"  [red]Session deny:[/red] {', '.join(sorted(self._session_deny))}")
         lines.append("  [yellow]Ask first:[/yellow] file, line, replace, edit, write-capable bash, agent=implement, mcp__*")
         lines.append("")
-        lines.append("  Commands: /permission-mode  /allow <tool>  /deny <tool>  /sandbox [r-o|w-write|danger]  /approval [ask|on-fail|auto]")
+        lines.append("  Commands: /permission-preset  /allow <tool>  /deny <tool>  /sandbox [read-only|workspace-write|danger-full-access]")
         return "\n".join(lines)
 
     # ── sandbox ──────────────────────────────────────────────────────────
@@ -567,6 +500,7 @@ class PermissionService:
     def _context(self, *, workspace: str = ".") -> PermissionContext:
         return PermissionContext(
             workspace=workspace,
+            permission_preset=self.permission_preset,
             permission_mode=self.permission_mode,
             sandbox_mode=self.sandbox_mode,
             sandbox_readable_files=tuple(self.sandbox_readable_files),

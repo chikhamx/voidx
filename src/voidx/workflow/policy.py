@@ -42,10 +42,6 @@ def workflow_gate(name: str) -> NodeGate | None:
     return DEFAULT_WORKFLOW_DAG.gate_for(name)
 
 
-def workflow_tools(name: str) -> tuple[str, ...]:
-    node = DEFAULT_WORKFLOW_DAG.nodes.get(name.strip().lower())
-    return tuple(node.tools) if node else ()
-
 
 def workflow_personas(name: str) -> tuple[str, ...]:
     node = DEFAULT_WORKFLOW_DAG.nodes.get(name.strip().lower())

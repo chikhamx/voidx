@@ -6,6 +6,7 @@ from voidx.config.defaults import DEFAULT_MODEL
 from voidx.ui.protocol.v2.methods import MethodParamsError
 
 
+
 class SettingsMethods:
     """Settings-related JSON-RPC handlers, mixed into GatewaySession."""
 
@@ -16,7 +17,7 @@ class SettingsMethods:
         return await self._desktop_settings_snapshot(settings)
 
     async def _method_settings_update(self, params: dict) -> dict:
-        from voidx.config.enums import ApprovalPolicy, CodeIde, PermissionMode, SandboxMode
+        from voidx.config.enums import CodeIde, PermissionPreset
         from voidx.config.models import ParallelSubagentsConfig, Profile
         from voidx.config.settings import Settings
 
@@ -30,21 +31,11 @@ class SettingsMethods:
         if permissions is not None:
             if not isinstance(permissions, dict):
                 raise MethodParamsError("invalid permissions")
-            if "permission_mode" in permissions:
-                try:
-                    settings.set_permission_mode(PermissionMode(permissions["permission_mode"]))
-                except ValueError as exc:
-                    raise MethodParamsError("invalid permission_mode") from exc
-            if "sandbox_mode" in permissions:
-                try:
-                    settings.set_sandbox_mode(SandboxMode(permissions["sandbox_mode"]))
-                except ValueError as exc:
-                    raise MethodParamsError("invalid sandbox_mode") from exc
-            if "approval_policy" in permissions:
-                try:
-                    settings.set_approval_policy(ApprovalPolicy(permissions["approval_policy"]))
-                except ValueError as exc:
-                    raise MethodParamsError("invalid approval_policy") from exc
+            preset = permissions.get("permission_preset", "safe")
+            try:
+                settings.set_permission_preset(PermissionPreset(str(preset)))
+            except ValueError as exc:
+                raise MethodParamsError("invalid permission_preset") from exc
             for key, setter in (
                 ("sandbox_readable_files", settings.set_sandbox_readable_files),
                 ("sandbox_readable_dirs", settings.set_sandbox_readable_dirs),
@@ -220,6 +211,11 @@ class SettingsMethods:
                 for profile_item in profiles
             ],
             "permissions": {
+                "permission_preset": _permission_preset_for(
+                    settings.get_permission_mode().value,
+                    settings.get_sandbox_mode().value,
+                    settings.get_approval_policy().value,
+                ),
                 "permission_mode": settings.get_permission_mode().value,
                 "sandbox_mode": settings.get_sandbox_mode().value,
                 "approval_policy": settings.get_approval_policy().value,

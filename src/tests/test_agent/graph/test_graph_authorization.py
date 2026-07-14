@@ -72,6 +72,10 @@ def _result_task_state(result: dict) -> TaskState:
     return TaskState.model_validate(result["task_state"])
 
 
+def _asked_tool_calls(batch):
+    return [getattr(item, "tool_call", item) for item in batch]
+
+
 def _child_goal_resolution(
     goal_type: str = "feature",
     *,
@@ -191,7 +195,7 @@ async def test_graph_authorization_prompts_for_implement_agent(tmp_path):
 
     assert [tc["name"] for tc in approved] == ["agent"]
     assert denied == []
-    assert [[tc["args"]["goal_resolution"]["plan"]["join"] for tc in batch] for batch in asked] == [["tdd"]]
+    assert [[tc["args"]["goal_resolution"]["plan"]["join"] for tc in _asked_tool_calls(batch)] for batch in asked] == [["tdd"]]
 
 
 @pytest.mark.asyncio
@@ -208,6 +212,34 @@ async def test_graph_authorization_respects_session_deny_for_safe_bash(tmp_path)
     assert approved == []
     assert len(denied) == 1
     assert "Permission denied" in denied[0][1]
+
+
+@pytest.mark.asyncio
+async def test_graph_authorization_never_approves_mixed_blocked_batch(tmp_path):
+    graph = _graph(tmp_path)
+    graph._permission.permission_preset = "safe"
+    asked: list[list[object]] = []
+
+    async def approve(tool_calls):
+        asked.append(tool_calls)
+        return "y"
+
+    graph._ask_tool_permission = approve
+
+    approved, denied = await graph._authorize_tool_calls(
+        [
+            {"name": "bash", "args": {"command": "rm -rf /"}, "id": "blocked"},
+            {"name": "bash", "args": {"command": "echo $(date)"}, "id": "ask"},
+        ],
+        plan_mode=False,
+        session_id="test",
+    )
+
+    assert [call["id"] for call in approved] == ["ask"]
+    assert [call["id"] for call, _ in denied] == ["blocked"]
+    assert len(asked) == 2
+    assert [item.tool_call["id"] for item in asked[0]] == ["blocked"]
+    assert [item.tool_call["id"] for item in asked[1]] == ["ask"]
 
 
 @pytest.mark.asyncio
@@ -231,7 +263,7 @@ async def test_graph_authorization_asks_for_write_by_active_workflow_gate(tmp_pa
         ],
     )
 
-    assert [[call["id"] for call in batch] for batch in asked] == [["call_1"]]
+    assert [[call["id"] for call in _asked_tool_calls(batch)] for batch in asked] == [["call_1"]]
     assert [call["id"] for call in approved] == ["call_1"]
     assert denied == []
 
@@ -294,7 +326,7 @@ async def test_graph_authorization_allows_plan_gate_doc_paths_only(tmp_path):
     )
 
     assert [call["id"] for call in approved] == ["call_docs"]
-    assert [[call["id"] for call in batch] for batch in asked] == [["call_src"]]
+    assert [[call["id"] for call in _asked_tool_calls(batch)] for batch in asked] == [["call_src"]]
     assert [call["id"] for call, _reason in denied] == ["call_src"]
     assert denied[0][1] == "User denied: replace"
 
@@ -371,7 +403,7 @@ async def test_graph_authorization_asks_for_workflow_gate_tools_instead_of_denyi
         ],
     )
 
-    assert [[call["id"] for call in batch] for batch in asked] == [["call_src"]]
+    assert [[call["id"] for call in _asked_tool_calls(batch)] for batch in asked] == [["call_src"]]
     assert [call["id"] for call in approved] == ["call_src"]
     assert denied == []
 
@@ -470,6 +502,9 @@ async def test_permission_prompt_uses_dock_details_when_events_are_active(tmp_pa
             "name": "bash",
             "pattern": "npm install lodash",
             "args": {"command": "npm install lodash"},
+            "risk": None,
+            "allowed_scopes": [],
+            "default_scope": None,
         }]
         record = test_dock.status_record("permission:request")
         assert record is not None
@@ -480,3 +515,154 @@ async def test_permission_prompt_uses_dock_details_when_events_are_active(tmp_pa
         await graph._ui.events.stop()
         test_dock.deactivate()
         set_dock(None)
+
+
+@pytest.mark.asyncio
+async def test_read_only_permission_prompt_limits_choices_to_once(tmp_path):
+    graph = _graph(tmp_path)
+    graph._permission.sandbox_mode = "read-only"
+    graph._permission.permission_mode = "read-only"
+    graph._permission.approval_policy = "untrusted"
+    captured_choices = None
+
+    class FakeApp:
+        async def ask_choice(self, _prompt, choices, details=None):
+            nonlocal captured_choices
+            captured_choices = choices
+            return "y"
+
+    graph._app = FakeApp()
+
+    approved, denied = await graph._authorize_tool_calls(
+        [{"name": "bash", "args": {"command": "cat input.txt > output.txt"}, "id": "call_1"}],
+        plan_mode=False,
+        session_id="s",
+    )
+
+    assert [tc["name"] for tc in approved] == ["bash"]
+    assert denied == []
+    assert captured_choices == [
+        ("Yes", "y", "Allow this tool use once"),
+        ("No", "n", "Deny these tools"),
+    ]
+
+
+@pytest.mark.asyncio
+async def test_permission_prompt_details_include_risk_and_scopes(tmp_path):
+    graph = _graph(tmp_path)
+    graph._permission.permission_mode = "default"
+    graph._permission.approval_policy = "untrusted"
+    received_details = None
+
+    class FakeApp:
+        async def ask_choice(self, _prompt, _choices, details=None):
+            nonlocal received_details
+            received_details = details
+            return "y"
+
+    graph._app = FakeApp()
+
+    approved, denied = await graph._authorize_tool_calls(
+        [{"name": "bash", "args": {"command": "npm install lodash"}, "id": "call_1"}],
+        plan_mode=False,
+        session_id="s",
+    )
+
+    assert [tc["name"] for tc in approved] == ["bash"]
+    assert denied == []
+    assert received_details == [{
+        "name": "bash",
+        "pattern": "npm install lodash",
+        "args": {"command": "npm install lodash"},
+        "risk": {
+            "level": "extreme",
+            "tags": ["dependency_install"],
+            "reason": "shell policy deferred: dependency install command",
+            "tool_name": "bash",
+            "pattern": "npm install lodash",
+        },
+        "allowed_scopes": ["once"],
+        "default_scope": "once",
+    }]
+
+
+@pytest.mark.asyncio
+async def test_graph_authorization_attaches_approved_risk_token_to_approved_shell_call(tmp_path):
+    graph = _graph(tmp_path)
+    graph._permission.sandbox_mode = "read-only"
+    graph._permission.permission_mode = "read-only"
+    graph._permission.approval_policy = "untrusted"
+
+    async def approve(_tool_calls):
+        return "y"
+
+    graph._ask_tool_permission = approve
+    command = "cat input.txt > output.txt"
+
+    approved, denied = await graph._authorize_tool_calls(
+        [{"name": "bash", "args": {"command": command}, "id": "call_1"}],
+        plan_mode=False,
+        session_id="s",
+    )
+
+    assert denied == []
+    assert approved[0]["metadata"]["approved_risk"] == {
+        "tool_name": "bash",
+        "pattern": command,
+        "risk_level": "extreme",
+        "tags": ["dynamic_shell"],
+        "reason": "shell policy deferred: compound shell syntax, compound shell operator",
+    }
+
+
+@pytest.mark.asyncio
+async def test_blocked_permission_prompt_only_acknowledges_and_denies_execution(tmp_path):
+    graph = _graph(tmp_path)
+    graph._permission.permission_mode = "default"
+    graph._permission.approval_policy = "untrusted"
+    captured_choices = None
+    captured_details = None
+
+    class FakeApp:
+        async def ask_choice(self, _prompt, choices, details=None):
+            nonlocal captured_choices, captured_details
+            captured_choices = choices
+            captured_details = details
+            return "n"
+
+    graph._app = FakeApp()
+
+    approved, denied = await graph._authorize_tool_calls(
+        [{"name": "bash", "args": {"command": "sudo true"}, "id": "call_blocked"}],
+        plan_mode=False,
+        session_id="s",
+    )
+
+    assert approved == []
+    assert denied == [({"name": "bash", "args": {"command": "sudo true"}, "id": "call_blocked"}, "Blocked: sudo is blocked — privilege escalation")]
+    assert captured_choices == [("Do not run", "n", "This command is blocked")]
+    assert captured_details[0]["risk"]["level"] == "blocked"
+    assert captured_details[0]["allowed_scopes"] == []
+    assert captured_details[0]["default_scope"] is None
+
+
+@pytest.mark.asyncio
+async def test_blocked_permission_prompt_cannot_be_approved_with_yes(tmp_path):
+    graph = _graph(tmp_path)
+    graph._permission.permission_mode = "default"
+    graph._permission.approval_policy = "untrusted"
+
+    class FakeApp:
+        async def ask_choice(self, _prompt, _choices, details=None):
+            return "y"
+
+    graph._app = FakeApp()
+
+    approved, denied = await graph._authorize_tool_calls(
+        [{"name": "bash", "args": {"command": "sudo true"}, "id": "call_blocked"}],
+        plan_mode=False,
+        session_id="s",
+    )
+
+    assert approved == []
+    assert denied == [({"name": "bash", "args": {"command": "sudo true"}, "id": "call_blocked"}, "Blocked: sudo is blocked — privilege escalation")]

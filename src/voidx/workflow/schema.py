@@ -43,7 +43,6 @@ class WorkflowNode(BaseModel):
     goal: str
     description: str
     io: NodeIO
-    tools: list[str]
     persona: str
     gate: NodeGate = Field(default_factory=NodeGate)
     workflow: list[WorkflowStep] = Field(default_factory=list)
