@@ -9,6 +9,7 @@ from typing import Literal
 
 from voidx.permission.context import PermissionContext
 from voidx.permission.grants import resolve_access
+from voidx.permission.risk import RiskAssessment, RiskLevel, RiskTag
 from voidx.permission.process_sandbox import default_process_sandbox_capability
 
 Action = Literal["allow", "deny", "defer"]
@@ -30,34 +31,105 @@ _SHELL_OPERATOR_CHARS = {";", "|", "<", ">", "&", "\n", "\r"}
 
 
 def shell_policy_for_command(command: str, *, shell: str = "bash") -> ShellPolicyDecision:
+    risk = classify_shell_risk(command, shell=shell)
+    if risk.level in {RiskLevel.EXTREME, RiskLevel.BLOCKED}:
+        return ShellPolicyDecision(False, False, risk.reason)
     stripped = command.strip()
     if not stripped or stripped.startswith("#"):
         return ShellPolicyDecision(True, True)
-    if any(marker in stripped for marker in _DYNAMIC_MARKERS):
-        return ShellPolicyDecision(False, False, "shell policy denied dynamic syntax")
-    if shell == "powershell" and any(ch in stripped for ch in "()"):
-        return ShellPolicyDecision(False, False, "shell policy denied dynamic or compound syntax")
-    if _has_shell_operator(stripped, shell=shell):
-        return ShellPolicyDecision(False, False, "shell policy denied dynamic or compound syntax")
     try:
         words = shlex.split(stripped, posix=shell == "bash")
     except ValueError:
         return ShellPolicyDecision(False, False, "shell policy denied unparsable command")
     if not words:
         return ShellPolicyDecision(True, True)
-    if any(token in {";", "&&", "||", "|", "|&", ">", ">>", "<"} for token in words):
-        return ShellPolicyDecision(False, False, "shell policy denied dynamic or compound syntax")
-    program = words[0].lower()
-    if program in _NESTED_INTERPRETERS:
-        return ShellPolicyDecision(False, False, "shell policy denied nested interpreter")
     if shell == "powershell":
         return _powershell_policy(words)
     return _bash_policy(words)
 
 
+def classify_shell_risk(command: str, *, shell: str = "bash") -> RiskAssessment:
+    stripped = command.strip()
+    tool_name = "powershell" if shell == "powershell" else "bash"
+    if not stripped or stripped.startswith("#"):
+        return RiskAssessment.normal(tool_name=tool_name, pattern=stripped, tags=(RiskTag.SAFE_READ,), reason="empty or comment-only shell command")
+    if _is_catastrophic_shell_command(stripped):
+        return RiskAssessment.blocked(
+            tool_name=tool_name,
+            pattern=stripped,
+            tags=(RiskTag.SYSTEM_DESTRUCTIVE,),
+            reason="shell policy blocked catastrophic system command",
+        )
+    blocked = _blocked_shell_risk(stripped, tool_name=tool_name)
+    if blocked is not None:
+        return blocked
+    tags: list[RiskTag] = []
+    reasons: list[str] = []
+    if any(marker in stripped for marker in _DYNAMIC_MARKERS):
+        tags.append(RiskTag.DYNAMIC_SHELL)
+        reasons.append("dynamic shell syntax")
+    if shell == "powershell" and any(ch in stripped for ch in "()"):
+        tags.append(RiskTag.DYNAMIC_SHELL)
+        reasons.append("dynamic or compound PowerShell syntax")
+    if _has_shell_operator(stripped, shell=shell):
+        tags.append(RiskTag.DYNAMIC_SHELL)
+        reasons.append("compound shell syntax")
+    try:
+        words = shlex.split(stripped, posix=shell == "bash")
+    except ValueError:
+        return RiskAssessment.extreme(
+            tool_name=tool_name,
+            pattern=stripped,
+            tags=(RiskTag.DYNAMIC_SHELL,),
+            reason="unparsable shell command",
+        )
+    if any(token in {";", "&&", "||", "|", "|&", ">", ">>", "<"} for token in words):
+        tags.append(RiskTag.DYNAMIC_SHELL)
+        reasons.append("compound shell operator")
+    program = words[0].lower() if words else ""
+    if program in _NESTED_INTERPRETERS:
+        tags.append(RiskTag.NESTED_INTERPRETER)
+        reasons.append("nested interpreter")
+    if _is_dependency_install(words):
+        tags.append(RiskTag.DEPENDENCY_INSTALL)
+        reasons.append("dependency install command")
+    if _is_network_command(words):
+        tags.append(RiskTag.NETWORK)
+        reasons.append("network command")
+    if tags:
+        deduped = tuple(dict.fromkeys(tags))
+        return RiskAssessment.extreme(tool_name=tool_name, pattern=stripped, tags=deduped, reason="shell policy deferred: " + ", ".join(dict.fromkeys(reasons)))
+    policy = _powershell_policy(words) if shell == "powershell" else _bash_policy(words)
+    if policy.allowed:
+        return RiskAssessment.normal(tool_name=tool_name, pattern=stripped, tags=(RiskTag.SAFE_READ,), reason="read-only shell command")
+    return RiskAssessment.dangerous(tool_name=tool_name, pattern=stripped, tags=(RiskTag.WORKSPACE_EDIT,), reason=policy.reason)
 
 
-def _has_shell_operator(command: str, *, shell: str = "bash") -> bool:
+def _blocked_shell_risk(command: str, *, tool_name: str) -> RiskAssessment | None:
+    try:
+        words = shlex.split(command, posix=tool_name == "bash")
+    except ValueError:
+        return None
+    program = words[0].lower() if words else ""
+    if program == "sudo":
+        return RiskAssessment.blocked(
+            tool_name=tool_name,
+            pattern=command,
+            tags=(RiskTag.PRIVILEGE_ESCALATION,),
+            reason="Blocked: sudo is blocked — privilege escalation",
+        )
+    if program in {"reboot", "shutdown", "poweroff"}:
+        return RiskAssessment.blocked(
+            tool_name=tool_name,
+            pattern=command,
+            tags=(RiskTag.SYSTEM_DESTRUCTIVE,),
+            reason=f"Blocked: {program} is blocked — system destructive command",
+        )
+    return None
+
+
+
+def _has_shell_operator(command: str, *, shell: str) -> bool:
     in_single = False
     in_double = False
     escaped = False
@@ -77,15 +149,18 @@ def _has_shell_operator(command: str, *, shell: str = "bash") -> bool:
         if not in_single and not in_double and ch in _SHELL_OPERATOR_CHARS:
             return True
     return False
+
+
 def shell_sandbox_precheck(args: dict, context: PermissionContext, *, shell: str = "bash") -> tuple[Action, str | None]:
     if context.sandbox_mode == "danger-full-access":
         return "allow", None
     command = str(args.get("command") or "")
+    risk = classify_shell_risk(command, shell=shell)
+    if risk.level == RiskLevel.BLOCKED:
+        return "deny", risk.reason
     policy = shell_policy_for_command(command, shell=shell)
     if not policy.allowed:
-        if "nested interpreter" in policy.reason:
-            return "deny", f"shell policy denied: {policy.reason}"
-        return "defer", f"shell policy deferred: {policy.reason}"
+        return "defer", policy.reason
     capability = getattr(context, "process_sandbox", None) or default_process_sandbox_capability()
     if not capability.usable_for(shell):
         return "allow", None
@@ -125,6 +200,36 @@ def _powershell_policy(words: list[str]) -> ShellPolicyDecision:
         return ShellPolicyDecision(False, False, "unknown powershell command")
     access_paths = tuple(Path(_clean_path_arg(arg)) for arg in words[1:] if not arg.startswith("-") and _looks_like_path(arg))
     return ShellPolicyDecision(True, True, access_paths=access_paths)
+
+
+def _is_catastrophic_shell_command(command: str) -> bool:
+    lowered = command.lower().strip()
+    compact = " ".join(lowered.split())
+    if "rm -rf /" in compact or "rm -fr /" in compact:
+        targets = {"/", "/home", "~", "$home", "${home}"}
+        parts = compact.replace(";", " ").split()
+        if any(part.rstrip("/") in targets or part in targets for part in parts[2:]):
+            return True
+    if compact.startswith(("mkfs", "shutdown", "reboot", "poweroff")):
+        return True
+    if ":(){ :|:& };:" in compact or ":(){:|:&};:" in compact:
+        return True
+    if compact.startswith("dd ") and (" of=/dev/" in compact or " of=/dev/disk" in compact):
+        return True
+    return False
+
+
+def _is_dependency_install(words: list[str]) -> bool:
+    if not words:
+        return False
+    program = words[0].lower()
+    if program in {"pip", "pip3", "npm", "pnpm", "yarn", "brew", "apt", "apt-get"}:
+        return any(word.lower() in {"install", "add"} for word in words[1:])
+    return False
+
+
+def _is_network_command(words: list[str]) -> bool:
+    return bool(words) and words[0].lower() in {"curl", "wget", "scp", "ssh"}
 
 
 def _clean_path_arg(value: str) -> str:

@@ -230,7 +230,7 @@ def _is_safe_bash_segment(words: list[str]) -> bool:
         read_only_git = {
             "status", "log", "diff", "show", "blame", "rev-parse", "rev-list",
             "ls-files", "ls-tree", "describe", "shortlog", "reflog", "cherry",
-            "whatchanged", "notes", "grep",
+            "whatchanged", "notes", "grep", "cat-file", "name-rev", "for-each-ref",
         }
         if sub in read_only_git:
             return True

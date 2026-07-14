@@ -85,11 +85,13 @@ _READ_POLICIES = frozenset({
     "grep",
     "cat-file",
     "name-rev",
+    "for-each-ref",
 })
 _WRITE_POLICIES = frozenset({
     "add",
     "restore",
     "checkout",
+    "switch",
     "rm",
     "mv",
     "reset",
@@ -103,6 +105,9 @@ _WRITE_POLICIES = frozenset({
     "stash",
     "remote",
     "worktree",
+    "pull",
+    "push",
+    "fetch",
 })
 _REF_WRITE_FLAGS = {"-d", "-D", "-m", "-M", "--delete", "--move", "--force"}
 _DANGEROUS_CONFIG_PREFIXES = (

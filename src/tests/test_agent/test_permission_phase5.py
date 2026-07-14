@@ -9,15 +9,14 @@ from voidx.permission.grants import AccessGrants
 from voidx.permission.rules import build_pattern, capability_for_tool, classify_tool_call
 
 
-def test_git_unknown_raw_policy_deferred_in_workspace_write(tmp_path: Path):
+def test_git_registered_for_each_ref_policy_allowed_in_workspace_write(tmp_path: Path):
     decision = authorize_tool_call(
         {"name": "git", "args": {"args": "for-each-ref --format=%(refname)"}},
         PermissionContext(workspace=str(tmp_path), sandbox_mode="workspace-write"),
     )
 
-    assert decision.action == "ask"
-    assert decision.source == "sandbox"
-    assert "git policy" in decision.reason
+    assert decision.action == "allow"
+    assert decision.source == "preset"
 
 
 def test_git_registered_status_policy_remains_read_allowed(tmp_path: Path):
@@ -100,8 +99,8 @@ def test_git_external_path_with_grant_allowed_by_engine(tmp_path: Path):
     assert decision.action == "allow"
 
 
-def test_git_unknown_policy_is_not_classified_as_git_read():
-    assert capability_for_tool("git", {"args": "for-each-ref --format=%(refname)"}).value == "git_write"
+def test_git_registered_for_each_ref_policy_is_classified_as_git_read():
+    assert capability_for_tool("git", {"args": "for-each-ref --format=%(refname)"}).value == "git_read"
 
 
 def test_git_config_env_global_option_denied(tmp_path: Path):

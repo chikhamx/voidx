@@ -65,6 +65,16 @@ class UserResponse(BaseModel):
     free_text: bool = False
 
 
+
+class ApprovedToolRisk(BaseModel):
+    """One approval token for one exact tool invocation."""
+
+    tool_name: str
+    pattern: str = ""
+    risk_level: str = ""
+    tags: tuple[str, ...] = ()
+    reason: str = ""
+
 UserInteractionCallback = Callable[[UserInteraction], Awaitable[UserResponse]]
 class ToolContext(BaseModel):
     """Context passed to every tool execution. Mutable file fingerprints for staleness guard."""
@@ -95,6 +105,7 @@ class ToolContext(BaseModel):
     acquire_execution_lease: Callable[[str], Any] | None = Field(default=None, exclude=True)
     process_sandbox: Any | None = Field(default=None, exclude=True)
     interact: UserInteractionCallback | None = Field(default=None, exclude=True)
+    approved_tool_risks: list[ApprovedToolRisk] = Field(default_factory=list)
 
     model_config = {"arbitrary_types_allowed": True}
 
@@ -127,6 +138,13 @@ class ToolContext(BaseModel):
     @property
     def workflow_repeat_tracker(self) -> dict[str, dict[str, int]]:
         return self._workflow_repeat_tracker
+
+    def has_approved_tool_risk(self, tool_name: str, pattern: str) -> bool:
+        for risk in self.approved_tool_risks:
+            if risk.tool_name == tool_name and risk.pattern == pattern and risk.risk_level != "blocked":
+                return True
+        return False
+
 
 
 

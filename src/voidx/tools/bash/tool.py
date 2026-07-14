@@ -47,30 +47,32 @@ class BashTool(BaseTool):
         if blocked:
             return build_blocked_result(inp.command, blocked)
 
-        blocked = _sandbox_denial(inp.command, ctx)
+        approved_shell_risk = ctx.has_approved_tool_risk("bash", inp.command)
+        blocked = None if approved_shell_risk else _sandbox_denial(inp.command, ctx)
         if blocked:
             return build_blocked_result(inp.command, blocked)
 
         hint = try_hint(inp.command)
         if hint is not None:
             return build_hint_result(inp.command, hint, "Bash")
-
         access_grants = ctx.get_access_grants() if ctx.get_access_grants is not None else AccessGrants.from_parts(
             readable_files=ctx.sandbox_readable_files,
             readable_dirs=ctx.sandbox_readable_dirs,
             writable_files=ctx.sandbox_writable_files,
             writable_dirs=ctx.sandbox_writable_dirs,
         )
-        _, shell_blocked = shell_sandbox_precheck(
-            {"command": inp.command},
-            PermissionContext(
-                workspace=ctx.workspace,
-                sandbox_mode=ctx.sandbox_mode,
-                access_grants=access_grants,
-                process_sandbox=ctx.process_sandbox,
-            ),
-            shell="bash",
-        )
+        shell_blocked = None
+        if not approved_shell_risk:
+            _, shell_blocked = shell_sandbox_precheck(
+                {"command": inp.command},
+                PermissionContext(
+                    workspace=ctx.workspace,
+                    sandbox_mode=ctx.sandbox_mode,
+                    access_grants=access_grants,
+                    process_sandbox=ctx.process_sandbox,
+                ),
+                shell="bash",
+            )
         if shell_blocked:
             return build_blocked_result(inp.command, shell_blocked)
 

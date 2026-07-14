@@ -109,3 +109,57 @@ async def test_shell_tool_denies_quote_boundary_operator_before_execution(tmp_pa
     assert payload["blocked"] is True
     assert "shell policy" in payload["stderr"]
     assert not (tmp_path / "escape.txt").exists()
+
+
+@pytest.mark.asyncio
+async def test_shell_tool_honors_exact_approved_shell_risk_token(tmp_path: Path):
+    command = "printf approved > out.txt"
+
+    result = await BashTool().execute(
+        {"command": command},
+        ToolContext(
+            workspace=str(tmp_path),
+            sandbox_mode="read-only",
+            approved_tool_risks=[{"tool_name": "bash", "pattern": command, "risk_level": "dangerous"}],
+        ),
+    )
+
+    payload = _payload(result)
+    assert payload["ok"] is True
+    assert (tmp_path / "out.txt").read_text(encoding="utf-8") == "approved"
+
+
+@pytest.mark.asyncio
+async def test_shell_tool_rejects_non_matching_approved_shell_risk_token(tmp_path: Path):
+    command = "printf approved > out.txt"
+
+    result = await BashTool().execute(
+        {"command": command},
+        ToolContext(
+            workspace=str(tmp_path),
+            sandbox_mode="read-only",
+            approved_tool_risks=[{"tool_name": "bash", "pattern": "printf other > out.txt", "risk_level": "dangerous"}],
+        ),
+    )
+
+    payload = _payload(result)
+    assert payload["ok"] is False
+    assert payload["blocked"] is True
+    assert not (tmp_path / "out.txt").exists()
+
+
+@pytest.mark.asyncio
+async def test_shell_tool_keeps_hard_block_with_approved_shell_risk_token(tmp_path: Path):
+    command = "sudo true"
+
+    result = await BashTool().execute(
+        {"command": command},
+        ToolContext(
+            workspace=str(tmp_path),
+            sandbox_mode="danger-full-access",
+            approved_tool_risks=[{"tool_name": "bash", "pattern": command, "risk_level": "blocked"}],
+        ),
+    )
+
+    assert result.metadata["blocked"] is True
+    assert result.metadata["error"] is True

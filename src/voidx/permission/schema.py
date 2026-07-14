@@ -6,7 +6,7 @@ from typing import Literal
 
 from pydantic import BaseModel, Field
 
-Action = Literal["allow", "deny", "ask", "defer"]
+Action = Literal["allow", "deny", "ask", "defer", "blocked_ack"]
 
 
 class Rule(BaseModel):

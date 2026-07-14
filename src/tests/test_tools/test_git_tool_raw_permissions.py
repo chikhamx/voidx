@@ -390,3 +390,64 @@ def test_permission_config_global_set_is_write():
     assert _is_read_only_git_tool_command({"args": "config --global user.name foo"}) is False
 
 
+
+
+# --- New registered commands: switch, for-each-ref, fetch, pull, push ---
+
+@pytest.mark.asyncio
+async def test_git_switch_allowed(tmp_path):
+    repo = _init_repo(tmp_path / "repo")
+    (repo / "f.txt").write_text("x\n", encoding="utf-8")
+    _run(repo, "add", "f.txt")
+    _run(repo, "commit", "-m", "init")
+
+    # Create and switch to a new branch
+    result = await GitTool().execute(
+        {"args": "switch -c new-branch"},
+        ToolContext(workspace=str(repo)),
+    )
+    payload = _payload(result)
+    assert payload["ok"] is True
+
+    # Switch back to master
+    result = await GitTool().execute(
+        {"args": "switch master"},
+        ToolContext(workspace=str(repo)),
+    )
+    payload = _payload(result)
+    assert payload["ok"] is True
+
+
+@pytest.mark.asyncio
+async def test_git_for_each_ref_allowed(tmp_path):
+    repo = _init_repo(tmp_path / "repo")
+    (repo / "f.txt").write_text("x\n", encoding="utf-8")
+    _run(repo, "add", "f.txt")
+    _run(repo, "commit", "-m", "init")
+
+    result = await GitTool().execute(
+        {"args": "for-each-ref --format=%(refname)"},
+        ToolContext(workspace=str(repo)),
+    )
+    payload = _payload(result)
+    assert payload["ok"] is True
+    assert "refs/heads/master" in payload["data"]["stdout"]
+
+
+@pytest.mark.asyncio
+async def test_git_fetch_pull_push_allowed(tmp_path):
+    repo = _init_repo(tmp_path / "repo")
+    (repo / "f.txt").write_text("x\n", encoding="utf-8")
+    _run(repo, "add", "f.txt")
+    _run(repo, "commit", "-m", "init")
+
+    # fetch/pull/push should not be blocked by git_policy_denied.
+    # They might fail because there is no remote configured, but the error should be a git error, not git_policy_denied.
+    result = await GitTool().execute(
+        {"args": "fetch origin"},
+        ToolContext(workspace=str(repo)),
+    )
+    payload = _payload(result)
+    assert payload["ok"] is False
+    assert "git_policy_denied" not in payload["error"]
+    assert "origin" in payload["error"]

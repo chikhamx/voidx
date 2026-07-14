@@ -51,3 +51,52 @@ async def test_powershell_without_process_sandbox_fails_open(tmp_path: Path):
     )
 
     assert result.metadata.get("error") is True
+
+
+@pytest.mark.asyncio
+async def test_powershell_tool_honors_exact_approved_shell_risk_token(tmp_path: Path, monkeypatch: pytest.MonkeyPatch):
+    async def fake_exec(*_args, **_kwargs):
+        class Proc:
+            returncode = 0
+
+            async def communicate(self):
+                return b"approved\n", b""
+
+        return Proc()
+
+    monkeypatch.setattr("voidx.tools.powershell.tool.create_owned_subprocess_exec", fake_exec)
+    async def fake_release(_proc):
+        return None
+
+    monkeypatch.setattr("voidx.tools.powershell.tool.release_owned_process", fake_release)
+
+    command = "Set-Content out.txt approved"
+    result = await PowerShellTool().execute(
+        {"command": command},
+        ToolContext(
+            workspace=str(tmp_path),
+            sandbox_mode="read-only",
+            approved_tool_risks=[{"tool_name": "powershell", "pattern": command, "risk_level": "dangerous"}],
+        ),
+    )
+
+    payload = _payload(result)
+    assert payload["ok"] is True
+    assert "approved" in payload["stdout"]
+
+
+@pytest.mark.asyncio
+async def test_powershell_tool_rejects_non_matching_approved_shell_risk_token(tmp_path: Path):
+    command = "Set-Content out.txt approved"
+    result = await PowerShellTool().execute(
+        {"command": command},
+        ToolContext(
+            workspace=str(tmp_path),
+            sandbox_mode="read-only",
+            approved_tool_risks=[{"tool_name": "powershell", "pattern": "Write-Output approved", "risk_level": "dangerous"}],
+        ),
+    )
+
+    payload = _payload(result)
+    assert payload["ok"] is False
+    assert payload["blocked"] is True
