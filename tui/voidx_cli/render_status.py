@@ -86,7 +86,6 @@ class _StatusRendererMixin:
         effort = _safe_status_value(getattr(self.status, "reasoning_effort", ""), "")
         sandbox = _call_status(getattr(self.status, "sandbox_label", None), "")
         approval = _call_status(getattr(self.status, "approval_label", None), "")
-        reviewer = _call_status(getattr(self.status, "approval_reviewer_label", None), "")
         mode = _call_status(getattr(self.status, "interaction_mode", None), "")
         debug = _call_bool(getattr(self.status, "debug", None))
         goal_label = _call_status(getattr(self.status, "goal_label", None), "")
@@ -104,7 +103,6 @@ class _StatusRendererMixin:
             effort,
             sandbox,
             approval,
-            reviewer,
             mode,
             debug,
             goal_label,
@@ -117,8 +115,6 @@ class _StatusRendererMixin:
             model_text = f"{model_text} {effort}"
 
         policy_parts = [part for part in (sandbox, approval) if part]
-        if reviewer and reviewer != "user":
-            policy_parts.append(reviewer)
         policy_text = " ".join(policy_parts)
 
         state_parts = []

@@ -4,7 +4,7 @@ from __future__ import annotations
 
 from dataclasses import dataclass, field
 
-from voidx.config import ApprovalPolicy, ApprovalReviewer, PermissionMode, PermissionPreset
+from voidx.config import PermissionPreset
 from voidx.permission.grants import AccessGrants
 from voidx.permission.rules import PermissionCapability
 from voidx.permission.risk import ApprovalScope, RiskAssessment
@@ -16,19 +16,32 @@ class PermissionContext:
     workspace: str
     interaction_mode: str = "auto"
     permission_preset: str = PermissionPreset.SAFE.value
-    permission_mode: str = PermissionMode.DEFAULT.value
-    sandbox_mode: str = "workspace-write"
     sandbox_readable_files: tuple[str, ...] = ()
     sandbox_readable_dirs: tuple[str, ...] = ()
     sandbox_writable_files: tuple[str, ...] = ()
     sandbox_writable_dirs: tuple[str, ...] = ()
-    approval_policy: str = ApprovalPolicy.UNTRUSTED.value
-    approval_reviewer: str = ApprovalReviewer.USER.value
     access_grants: AccessGrants = field(default_factory=AccessGrants)
     permission_state_ready: bool = True
     session_allow: frozenset[str] = field(default_factory=frozenset)
     session_deny: frozenset[str] = field(default_factory=frozenset)
     process_sandbox: object | None = None
+
+    @property
+    def sandbox_mode(self) -> str:
+        try:
+            preset = PermissionPreset(self.permission_preset)
+            return preset.sandbox_mode
+        except ValueError:
+            return "workspace-write"
+
+    @property
+    def approval_policy(self) -> str:
+        try:
+            preset = PermissionPreset(self.permission_preset)
+            return preset.approval_policy
+        except ValueError:
+            return "untrusted"
+
 
     def __post_init__(self) -> None:
         if self.access_grants == AccessGrants() and any((
@@ -64,14 +77,10 @@ class PermissionContext:
             workspace=workspace,
             interaction_mode=mode,
             permission_preset=getattr(service, "permission_preset", PermissionPreset.SAFE.value),
-            permission_mode=getattr(service, "permission_mode", PermissionMode.DEFAULT.value),
-            sandbox_mode=getattr(service, "sandbox_mode", "workspace-write"),
             sandbox_readable_files=tuple(getattr(service, "sandbox_readable_files", []) or []),
             sandbox_readable_dirs=tuple(getattr(service, "sandbox_readable_dirs", []) or []),
             sandbox_writable_files=tuple(getattr(service, "sandbox_writable_files", []) or []),
             sandbox_writable_dirs=tuple(getattr(service, "sandbox_writable_dirs", []) or []),
-            approval_policy=getattr(service, "approval_policy", ApprovalPolicy.UNTRUSTED.value),
-            approval_reviewer=getattr(service, "approval_reviewer", ApprovalReviewer.USER.value),
             access_grants=getattr(service, "get_access_grants", lambda: AccessGrants())(),
             permission_state_ready=getattr(service, "permission_state_ready", True),
             session_allow=frozenset(getattr(service, "_session_allow", set())),

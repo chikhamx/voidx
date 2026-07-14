@@ -104,7 +104,6 @@ class SlashHandler(
             "/deny": deny_tool,
             "/permissions": lambda: ui.print(self.host.permission.show_rules()),
             "/permission-preset": lambda: self._permission_preset(args),
-            "/sandbox": lambda: self._sandbox(args),
             "/usage": self._usage,
             "/upgrade": lambda: self._upgrade(args),
             "/mcp": lambda: self._mcp(args),
@@ -257,27 +256,6 @@ class SlashHandler(
             f" · calls {stats.total_calls}"
         )
 
-    def _sandbox(self, arg: str) -> None:
-        permission = self.host.permission
-        mode = arg.strip().lower()
-        valid = {"read-only", "workspace-write", "danger-full-access"}
-        if not mode:
-            ui.print(f"Sandbox mode: [cyan]{permission.sandbox_mode}[/cyan]")
-            ui.print("Usage: /sandbox [read-only|workspace-write|danger-full-access]")
-            return
-        if mode not in valid:
-            ui.error(f"Invalid sandbox mode: {mode}. Use: {', '.join(valid)}")
-            return
-        try:
-            permission.set_sandbox_mode(mode)
-        except PermissionError as exc:
-            ui.error(str(exc))
-            return
-        settings = self.host.settings
-        if settings is not None:
-            from voidx.config import SandboxMode
-            settings.set_sandbox_mode(SandboxMode(mode))
-        ui.print(f"[dim]Sandbox mode set to [cyan]{mode}[/cyan][/dim]")
 
     async def _permission_preset(self, arg: str) -> None:
         from voidx.config import PermissionPreset

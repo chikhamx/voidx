@@ -32,7 +32,7 @@ class GrantDelta:
 
 @dataclass(frozen=True)
 class ApprovalPrecondition:
-    permission_mode: str
+    permission_preset: str
     revocation_epoch: int
 
 
@@ -97,7 +97,8 @@ class AccessGrants:
     state_revision: int = 0
     revocation_epoch: int = 0
     permission_state_ready: bool = True
-    permission_mode: str = ""
+    permission_preset: str = ""
+
 
     @classmethod
     def from_parts(
@@ -112,7 +113,7 @@ class AccessGrants:
         state_revision: int = 0,
         revocation_epoch: int = 0,
         permission_state_ready: bool = True,
-        permission_mode: str = "",
+        permission_preset: str = "",
     ) -> "AccessGrants":
         rf = [*readable_files]
         rd = [*readable_dirs]
@@ -136,7 +137,7 @@ class AccessGrants:
             state_revision=state_revision,
             revocation_epoch=revocation_epoch,
             permission_state_ready=permission_state_ready,
-            permission_mode=permission_mode,
+            permission_preset=permission_preset,
         )
 
     def with_delta(self, delta: GrantDelta, *, permissions_revision: int | None = None) -> "AccessGrants":
@@ -149,7 +150,7 @@ class AccessGrants:
             state_revision=self.state_revision,
             revocation_epoch=self.revocation_epoch,
             permission_state_ready=self.permission_state_ready,
-            permission_mode=self.permission_mode,
+            permission_preset=self.permission_preset,
         )
 
 

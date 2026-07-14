@@ -181,6 +181,7 @@ async def test_call_llm_updates_usage_stats_across_turn_control_calls(tmp_path, 
         "messages": [HumanMessage(content="hi")],
         "step_count": 0,
         "persona": "voidx",
+        "turn_state": "running",
     })
 
     assert result["step_count"] == 1

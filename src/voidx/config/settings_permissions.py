@@ -5,7 +5,7 @@ from __future__ import annotations
 from pathlib import Path
 from threading import RLock
 
-from voidx.config.enums import ApprovalPolicy, ApprovalReviewer, PermissionMode, PermissionPreset, SandboxMode
+from voidx.config.enums import PermissionPreset
 from voidx.config.settings_utils import string_list as _string_list
 from voidx.permission.grants import GrantDelta
 
@@ -26,39 +26,6 @@ class SettingsPermissionMixin:
         self._save()
         return self._path
 
-    def get_permission_mode(self) -> PermissionMode:
-        raw = self._effective_data().get("permission_mode")
-        if raw is not None:
-            try:
-                return PermissionMode(raw)
-            except ValueError:
-                return PermissionMode.CUSTOM
-        if (
-            "sandbox_mode" in self._effective_data()
-            or "approval_policy" in self._effective_data()
-            or self.get_sandbox_readable_files()
-            or self.get_sandbox_readable_dirs()
-            or self.get_sandbox_writable_files()
-            or self.get_sandbox_writable_dirs()
-            or self.get_persistent_readable_files()
-            or self.get_persistent_readable_dirs()
-            or self.get_persistent_writable_files()
-            or self.get_persistent_writable_dirs()
-        ):
-            return PermissionMode.CUSTOM
-        return PermissionMode.DEFAULT
-
-    def get_sandbox_mode(self) -> SandboxMode:
-        raw = self._effective_data().get("sandbox_mode", "workspace-write")
-        try:
-            return SandboxMode(raw)
-        except ValueError:
-            return SandboxMode.WORKSPACE_WRITE
-
-    def set_sandbox_mode(self, mode: SandboxMode) -> Path:
-        self._data["sandbox_mode"] = mode.value
-        self._save()
-        return self._path
 
     def get_sandbox_readable_files(self) -> list[str]:
         return _string_list(self._effective_data().get("sandbox_readable_files", []))
@@ -142,21 +109,4 @@ class SettingsPermissionMixin:
         ):
             self._data.pop(key, None)
 
-    def get_approval_policy(self) -> ApprovalPolicy:
-        raw = self._effective_data().get("approval_policy", "untrusted")
-        try:
-            return ApprovalPolicy(raw)
-        except ValueError:
-            return ApprovalPolicy.UNTRUSTED
 
-    def get_approval_reviewer(self) -> ApprovalReviewer:
-        raw = self._effective_data().get("approval_reviewer", "user")
-        try:
-            return ApprovalReviewer(raw)
-        except ValueError:
-            return ApprovalReviewer.USER
-
-    def set_approval_reviewer(self, reviewer: ApprovalReviewer) -> Path:
-        self._data["approval_reviewer"] = reviewer.value
-        self._save()
-        return self._path

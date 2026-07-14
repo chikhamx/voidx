@@ -311,15 +311,14 @@ def test_user_profile_save_cleans_legacy_workspace_keys(monkeypatch, tmp_path):
     assert workspace_saved == {}
 
 
-async def test_low_level_permission_changes_do_not_rewrite_permission_preset(tmp_path):
+async def test_permission_preset_determines_derived_sandbox_mode(tmp_path):
     settings = Settings(str(tmp_path))
 
     settings.set_permission_preset(PermissionPreset.PROJECT_TRUSTED)
-    settings.set_sandbox_mode(__import__("voidx.config", fromlist=["SandboxMode"]).SandboxMode.READ_ONLY)
     cfg = await (await Settings.create(str(tmp_path))).build_config()
 
     assert cfg.permission_preset == PermissionPreset.PROJECT_TRUSTED
-    assert cfg.sandbox_mode.value == "read-only"
+    assert cfg.permission_preset.sandbox_mode == "workspace-write"
 
 
 def test_settings_defaults_and_saves_code_ide(tmp_path):

@@ -98,7 +98,7 @@ class GraphSessionRuntime:
         if host._session is not None:
             session_id = host._session.id
             await clear_runtime_state(session_id)
-            cleanup_session_results(session_id)
+            cleanup_session_results(session_id, workspace=host._workspace)
         reset = reset_runtime_state_memory or self.reset_runtime_state_memory
         reset()
 

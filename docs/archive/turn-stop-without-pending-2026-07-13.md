@@ -1,3 +1,5 @@
+> **Status: Done** — Archived on 2026-07-14.
+
 ---
 name: turn-stop-without-pending
 display_name: Turn Stop Without Pending Fix

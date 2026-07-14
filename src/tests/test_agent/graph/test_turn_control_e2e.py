@@ -102,6 +102,7 @@ async def test_regular_tool_call_resets_missing_turn_count(tmp_path, monkeypatch
         "messages": [HumanMessage(content="hello")],
         "step_count": 0,
         "persona": "coordinate",
+        "turn_state": "running",
     })
     # The regular tool call should route to execute, not end
     assert result1["messages"][0].tool_calls
@@ -113,6 +114,7 @@ async def test_regular_tool_call_resets_missing_turn_count(tmp_path, monkeypatch
         "messages": [HumanMessage(content="hello"), *result1["messages"]],
         "step_count": 1,
         "persona": "coordinate",
+        "turn_state": result1.get("turn_state", "running"),
     })
     assert result2["messages"][0].content == "Final answer."
     assert not result2["messages"][0].tool_calls
@@ -170,6 +172,7 @@ async def test_turn_call_never_emits_permission_or_execution_events(tmp_path, mo
         "messages": [HumanMessage(content="hello")],
         "step_count": 0,
         "persona": "coordinate",
+        "turn_state": "running",
     })
 
     # Check that no tool permission or tool execution events were emitted
@@ -195,6 +198,7 @@ async def test_successful_barrier_emits_one_committed_stream(tmp_path, monkeypat
         "messages": [HumanMessage(content="hello")],
         "step_count": 0,
         "persona": "coordinate",
+        "turn_state": "running",
     })
 
     msgs = result["messages"]
@@ -221,6 +225,7 @@ async def test_regular_tool_continues_after_turn_prompt(tmp_path, monkeypatch):
         "messages": [HumanMessage(content="hello")],
         "step_count": 0,
         "persona": "coordinate",
+        "turn_state": "running",
     })
 
     assert result["messages"][0].tool_calls

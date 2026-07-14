@@ -145,7 +145,6 @@ def test_permission_decision_splits_readonly_and_implement_agents():
 @pytest.mark.asyncio
 async def test_graph_authorization_auto_allows_readonly_agent(tmp_path):
     graph = _graph(tmp_path)
-    graph._permission.approval_policy = "untrusted"
     approved, denied = await graph._authorize_tool_calls(
         [{
             "name": "agent",
@@ -245,7 +244,6 @@ async def test_graph_authorization_never_approves_mixed_blocked_batch(tmp_path):
 @pytest.mark.asyncio
 async def test_graph_authorization_asks_for_write_by_active_workflow_gate(tmp_path):
     graph = _graph(tmp_path)
-    graph._permission.approval_policy = "on-request"
     asked: list[list[dict]] = []
 
     async def approve(tool_calls):
@@ -271,8 +269,7 @@ async def test_graph_authorization_asks_for_write_by_active_workflow_gate(tmp_pa
 @pytest.mark.asyncio
 async def test_graph_authorization_uses_current_workflow_gate_only(tmp_path):
     graph = _graph(tmp_path)
-    graph._permission.approval_policy = "on-request"
-
+    
     approved, denied = await graph._authorize_tool_calls(
         [{
             "name": "edit",
@@ -295,7 +292,6 @@ async def test_graph_authorization_uses_current_workflow_gate_only(tmp_path):
 @pytest.mark.asyncio
 async def test_graph_authorization_allows_plan_gate_doc_paths_only(tmp_path):
     graph = _graph(tmp_path)
-    graph._permission.approval_policy = "on-request"
     asked: list[list[dict]] = []
 
     async def deny(tool_calls):
@@ -334,8 +330,7 @@ async def test_graph_authorization_allows_plan_gate_doc_paths_only(tmp_path):
 @pytest.mark.asyncio
 async def test_graph_authorization_allowed_paths_match_nested_docs(tmp_path):
     graph = _graph(tmp_path)
-    graph._permission.approval_policy = "on-request"
-
+    
     approved, denied = await graph._authorize_tool_calls(
         [{
             "name": "edit",
@@ -357,8 +352,7 @@ async def test_graph_authorization_allowed_paths_match_nested_docs(tmp_path):
 @pytest.mark.asyncio
 async def test_graph_authorization_does_not_block_tools_outside_active_workflow_node_allowlist(tmp_path):
     graph = _graph(tmp_path)
-    graph._permission.approval_policy = "on-request"
-
+    
     approved, denied = await graph._authorize_tool_calls(
         [{
             "name": "todo",
@@ -380,7 +374,6 @@ async def test_graph_authorization_does_not_block_tools_outside_active_workflow_
 @pytest.mark.asyncio
 async def test_graph_authorization_asks_for_workflow_gate_tools_instead_of_denying(tmp_path):
     graph = _graph(tmp_path)
-    graph._permission.approval_policy = "on-request"
     asked: list[list[dict]] = []
 
     async def approve(tool_calls):
@@ -411,7 +404,6 @@ async def test_graph_authorization_asks_for_workflow_gate_tools_instead_of_denyi
 @pytest.mark.asyncio
 async def test_graph_authorization_asks_for_persona_blocked_write(tmp_path):
     graph = _graph(tmp_path)
-    graph._permission.approval_policy = "on-request"
     asked: list[list[dict]] = []
 
     async def approve(tool_calls):
@@ -434,7 +426,6 @@ async def test_graph_authorization_asks_for_persona_blocked_write(tmp_path):
 @pytest.mark.asyncio
 async def test_permission_result_uses_transient_output(tmp_path):
     graph = _graph(tmp_path)
-    graph._permission.approval_policy = "untrusted"
     test_dock = BottomInputDock()
     set_dock(test_dock)
     test_dock.begin_capture()
@@ -520,9 +511,7 @@ async def test_permission_prompt_uses_dock_details_when_events_are_active(tmp_pa
 @pytest.mark.asyncio
 async def test_read_only_permission_prompt_limits_choices_to_once(tmp_path):
     graph = _graph(tmp_path)
-    graph._permission.sandbox_mode = "read-only"
-    graph._permission.permission_mode = "read-only"
-    graph._permission.approval_policy = "untrusted"
+    graph._permission.set_permission_preset("read_only")
     captured_choices = None
 
     class FakeApp:
@@ -550,8 +539,7 @@ async def test_read_only_permission_prompt_limits_choices_to_once(tmp_path):
 @pytest.mark.asyncio
 async def test_permission_prompt_details_include_risk_and_scopes(tmp_path):
     graph = _graph(tmp_path)
-    graph._permission.permission_mode = "default"
-    graph._permission.approval_policy = "untrusted"
+    graph._permission.set_permission_preset("safe")
     received_details = None
 
     class FakeApp:
@@ -589,10 +577,9 @@ async def test_permission_prompt_details_include_risk_and_scopes(tmp_path):
 @pytest.mark.asyncio
 async def test_graph_authorization_attaches_approved_risk_token_to_approved_shell_call(tmp_path):
     graph = _graph(tmp_path)
-    graph._permission.sandbox_mode = "read-only"
-    graph._permission.permission_mode = "read-only"
-    graph._permission.approval_policy = "untrusted"
-
+    graph._permission.set_permission_preset("read_only")
+    graph._permission.set_permission_preset("read_only")
+    
     async def approve(_tool_calls):
         return "y"
 
@@ -618,8 +605,7 @@ async def test_graph_authorization_attaches_approved_risk_token_to_approved_shel
 @pytest.mark.asyncio
 async def test_blocked_permission_prompt_only_acknowledges_and_denies_execution(tmp_path):
     graph = _graph(tmp_path)
-    graph._permission.permission_mode = "default"
-    graph._permission.approval_policy = "untrusted"
+    graph._permission.set_permission_preset("safe")
     captured_choices = None
     captured_details = None
 
@@ -649,9 +635,8 @@ async def test_blocked_permission_prompt_only_acknowledges_and_denies_execution(
 @pytest.mark.asyncio
 async def test_blocked_permission_prompt_cannot_be_approved_with_yes(tmp_path):
     graph = _graph(tmp_path)
-    graph._permission.permission_mode = "default"
-    graph._permission.approval_policy = "untrusted"
-
+    graph._permission.set_permission_preset("safe")
+    
     class FakeApp:
         async def ask_choice(self, _prompt, _choices, details=None):
             return "y"

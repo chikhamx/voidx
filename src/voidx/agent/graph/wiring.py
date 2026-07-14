@@ -70,15 +70,11 @@ def build_permission_service(
         writable_dirs.append(data_dir)
     return PermissionService(
         permission_preset=config.permission_preset.value,
-        permission_mode=config.permission_mode.value,
-        sandbox_mode=config.sandbox_mode.value,
         sandbox_readable_files=list(config.sandbox_readable_files),
         sandbox_readable_dirs=list(config.sandbox_readable_dirs),
         sandbox_writable_files=list(config.sandbox_writable_files),
         sandbox_writable_dirs=writable_dirs,
         persistent_grants=settings.persistent_grants() if settings is not None else [],
-        approval_policy=config.approval_policy.value,
-        approval_reviewer=config.approval_reviewer.value,
         notifier=notifier,
         persistent_grant_writer=settings.add_persistent_grant_delta if settings is not None else None,
     )

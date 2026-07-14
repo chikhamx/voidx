@@ -52,6 +52,8 @@ def resolve_tool_path(workspace: str, file_path: str, allowed_paths: list[str] |
     otherwise None. Pure path logic — no permission side effects.
     """
     ws = Path(workspace).resolve()
+    if file_path == "<workspace>" or file_path.startswith("<workspace>/"):
+        file_path = str(ws) + file_path[len("<workspace>"):]
     raw = Path(file_path)
     try:
         if file_path.startswith("~") or raw.is_absolute():

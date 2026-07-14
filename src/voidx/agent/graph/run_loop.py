@@ -207,7 +207,6 @@ class GraphRunLoopMixin(GraphTurnMixin, GraphSessionMixin, GraphTranscriptMixin)
             reasoning_effort=self.config.model.reasoning_effort or "xhigh",
             sandbox_label=lambda: self._permission._sandbox_label(),
             approval_label=lambda: self._permission._approval_label(),
-            approval_reviewer_label=lambda: self._permission._reviewer_label(),
             usage_stats=self._usage_stats,
             debug=lambda: self._debug,
             plan_mode=lambda: self._plan_mode,

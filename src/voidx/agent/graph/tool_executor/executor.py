@@ -315,6 +315,7 @@ class GraphToolExecutor:
             llm_content = maybe_persist_tool_result(
                 result.output, tool_event_id, tid,
                 session_id=host._session.id if host._session else "default",
+                workspace=ctx.workspace,
             )
             next_step_hint = getattr(result, "next_step_hint", "").strip()
             if next_step_hint:

@@ -323,7 +323,6 @@ async def test_subagent_runner_authorizes_with_child_interaction_mode(tmp_path, 
 @pytest.mark.asyncio
 async def test_graph_authorization_does_not_treat_goal_as_read_only_mode(tmp_path):
     graph = _graph(tmp_path)
-    graph._permission.approval_policy = "on-request"
     asked: list[list[dict]] = []
 
     async def approve(tool_calls):

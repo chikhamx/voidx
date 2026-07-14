@@ -7,9 +7,11 @@ from pathlib import Path
 
 from pydantic import BaseModel
 
-from voidx.memory.store import DATA_DIR
+from voidx.agent.tool_messages import DEFAULT_TOOL_MESSAGE_MAX_CHARS
+from voidx.memory import store
+from voidx.paths import voidx_workspace_dir
 
-TOOL_RESULT_PERSIST_THRESHOLD = 50_000
+TOOL_RESULT_PERSIST_THRESHOLD = DEFAULT_TOOL_MESSAGE_MAX_CHARS
 TOOL_RESULT_PREVIEW_CHARS = 2_000
 PREVIEW_HEAD_FRACTION = 0.7
 
@@ -28,6 +30,7 @@ def maybe_persist_tool_result(
     session_id: str = "default",
     threshold: int = TOOL_RESULT_PERSIST_THRESHOLD,
     preview_chars: int = TOOL_RESULT_PREVIEW_CHARS,
+    workspace: str | None = None,
 ) -> str:
     if len(content) <= threshold:
         return content
@@ -36,7 +39,7 @@ def maybe_persist_tool_result(
         return content
 
     try:
-        file_path = _persist_to_disk(content, tool_use_id, session_id=session_id)
+        file_path = _persist_to_disk(content, tool_use_id, session_id=session_id, workspace=workspace)
     except OSError:
         return content
 
@@ -50,9 +53,24 @@ def maybe_persist_tool_result(
     )
 
 
-def _persist_to_disk(content: str, tool_use_id: str, *, session_id: str = "default") -> str:
+def _tool_results_root(workspace: str | None = None) -> Path:
+    if workspace:
+        try:
+            return voidx_workspace_dir(workspace) / "tool-results"
+        except OSError:
+            pass
+    return store.DATA_DIR / "tool-results"
+
+
+def _persist_to_disk(
+    content: str,
+    tool_use_id: str,
+    *,
+    session_id: str = "default",
+    workspace: str | None = None,
+) -> str:
     safe_id = "".join(c for c in tool_use_id if c.isalnum() or c in "-_")
-    dir_path = DATA_DIR / "tool-results" / session_id
+    dir_path = _tool_results_root(workspace) / session_id
     dir_path.mkdir(parents=True, exist_ok=True)
     file_path = dir_path / f"{safe_id}.txt"
     file_path.write_text(content, encoding="utf-8", errors="replace")
@@ -67,7 +85,14 @@ def _make_preview(content: str, limit: int) -> str:
     return content[:head_n] + "\n…\n" + content[-tail_n:]
 
 
-def cleanup_session_results(session_id: str) -> None:
-    dir_path = DATA_DIR / "tool-results" / session_id
-    if dir_path.exists():
-        shutil.rmtree(dir_path, ignore_errors=True)
+def cleanup_session_results(session_id: str, workspace: str | None = None) -> None:
+    roots = [store.DATA_DIR / "tool-results"]
+    if workspace:
+        workspace_root = _tool_results_root(workspace)
+        if workspace_root not in roots:
+            roots.insert(0, workspace_root)
+
+    for root in roots:
+        dir_path = root / session_id
+        if dir_path.exists():
+            shutil.rmtree(dir_path, ignore_errors=True)

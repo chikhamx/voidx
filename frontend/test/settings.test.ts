@@ -20,7 +20,7 @@ describe("renderSettingsModal", () => {
     renderSettingsModal({
       model: { provider: "openai", model: "gpt-5.5", base_url: "https://api.openai.com", protocol: "openai" },
       profiles: [{ name: "openai-default", provider: "openai", model: "gpt-5.5", base_url: null, protocol: null, configured: true }],
-      permissions: { permission_mode: "default", sandbox_mode: "workspace-write", approval_policy: "untrusted" },
+      permissions: { permission_preset: "safe" },
       user_profile: { language: "en", tone: "direct" },
       parallel_subagents: { enabled: true, max_concurrent: 4 },
       code_ide: "cursor",
@@ -64,7 +64,7 @@ describe("renderSettingsModal", () => {
 
   it("defaults legacy permission fields to safe without compatibility mapping", () => {
     initSettingsModal();
-    renderSettingsModal({ permissions: { permission_mode: "accept-edits", sandbox_mode: "workspace-write", approval_policy: "untrusted" } });
+    renderSettingsModal({ permissions: { permission_preset: "safe" } });
     document.querySelector(".settings-tab[data-tab='permissions']").click();
     const preset = document.querySelector('[name="permission_preset"]');
 

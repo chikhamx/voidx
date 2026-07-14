@@ -49,8 +49,6 @@ def _range() -> LspRange:
 @pytest.mark.asyncio
 async def test_main_tool_execution_lease_blocks_revocation(tmp_path):
     service = PermissionService(
-        permission_mode="custom",
-        sandbox_mode="workspace-write",
         sandbox_readable_files=[str(tmp_path / "allowed.txt")],
     )
     lease = await service.acquire_execution_lease()
@@ -59,7 +57,7 @@ async def test_main_tool_execution_lease_blocks_revocation(tmp_path):
     with pytest.raises(Exception, match="active execution lease"):
         service.set_permission_preset("read_only")
 
-    assert service.permission_mode == "custom"
+    assert service.permission_preset == "safe"
     assert service.revocation_epoch == before_epoch
 
     await lease.release()
@@ -72,8 +70,6 @@ async def test_main_tool_execution_lease_blocks_revocation(tmp_path):
 @pytest.mark.asyncio
 async def test_pregranted_tool_holds_execution_lease(tmp_path):
     service = PermissionService(
-        permission_mode="custom",
-        sandbox_mode="workspace-write",
         sandbox_writable_files=[str(tmp_path / "allowed.txt")],
     )
 
@@ -97,8 +93,6 @@ async def test_subagent_inherits_effective_grants(tmp_path):
     from voidx.permission.service import SubagentPermissionSnapshot
 
     service = PermissionService(
-        permission_mode="custom",
-        sandbox_mode="workspace-write",
         sandbox_readable_files=[str(tmp_path / "readable.txt")],
     )
     writable = tmp_path / "writable.txt"
@@ -114,7 +108,7 @@ async def test_subagent_inherits_effective_grants(tmp_path):
 def test_subagent_cannot_add_grant(tmp_path):
     from voidx.permission.service import SubagentPermissionSnapshot
 
-    service = PermissionService(permission_mode="custom", sandbox_mode="workspace-write")
+    service = PermissionService()
     snapshot = SubagentPermissionSnapshot.capture(service)
 
     with pytest.raises(PermissionError, match="cannot add grant"):
@@ -128,8 +122,6 @@ async def test_subagent_grants_snapshot_fixed(tmp_path):
     first = tmp_path / "first.txt"
     second = tmp_path / "second.txt"
     service = PermissionService(
-        permission_mode="custom",
-        sandbox_mode="workspace-write",
         sandbox_readable_files=[str(first)],
     )
     snapshot = SubagentPermissionSnapshot.capture(service)
@@ -145,8 +137,6 @@ def test_subagent_snapshot_invalidated_on_revocation(tmp_path):
     from voidx.permission.service import SubagentPermissionSnapshot
 
     service = PermissionService(
-        permission_mode="custom",
-        sandbox_mode="workspace-write",
         sandbox_readable_files=[str(tmp_path / "readable.txt")],
     )
     snapshot = SubagentPermissionSnapshot.capture(service)
@@ -161,8 +151,6 @@ def test_subagent_snapshot_invalidated_on_revocation(tmp_path):
 async def test_agent_tool_passes_subagent_permission_snapshot(tmp_path):
     captured: dict[str, object] = {}
     service = PermissionService(
-        permission_mode="custom",
-        sandbox_mode="workspace-write",
         sandbox_readable_files=[str(tmp_path / "readable.txt")],
     )
 
@@ -277,22 +265,17 @@ def test_subagent_snapshot_checks_live_parent_revocation_epoch(tmp_path):
 
 
 @pytest.mark.asyncio
-async def test_slash_sandbox_and_permission_preset_respect_active_execution_lease(tmp_path):
-    from voidx.agent.slash import SlashHandler
-
-    service = PermissionService(permission_preset="safe", sandbox_mode="workspace-write")
+async def test_permission_preset_change_blocked_by_execution_lease(tmp_path):
+    service = PermissionService(permission_preset="safe")
     lease = await service.acquire_execution_lease()
-    handler = SlashHandler(SimpleNamespace(_permission=service, _settings=None, _app=None))
 
-    handler._sandbox("read-only")
-    await handler._permission_preset("full_access")
+    with pytest.raises(Exception, match="active execution lease"):
+        service.set_permission_preset("full_access")
 
-    assert service.sandbox_mode == "workspace-write"
     assert service.permission_preset == "safe"
 
     await lease.release()
-    handler._sandbox("read-only")
-    await handler._permission_preset("full_access")
+    service.set_permission_preset("full_access")
 
-    assert service.sandbox_mode == "read-only"
     assert service.permission_preset == "full_access"
+    assert service.sandbox_mode == "danger-full-access"

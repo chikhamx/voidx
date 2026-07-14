@@ -291,9 +291,9 @@ async def test_tool_context_get_access_grants_fails_closed_when_not_ready(tmp_pa
 
 @pytest.mark.asyncio
 async def test_add_grant_rejects_stale_approval_precondition(tmp_path):
-    service = PermissionService(permission_mode="custom", sandbox_mode="workspace-write")
+    service = PermissionService()
     precondition = ApprovalPrecondition(
-        permission_mode=service.permission_mode,
+        permission_preset=service.permission_preset,
         revocation_epoch=service.revocation_epoch,
     )
 

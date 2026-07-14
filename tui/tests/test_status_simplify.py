@@ -19,9 +19,8 @@ def _make_status(tmp_path, **overrides):
         model="claude-sonnet-4-20250514",
         workspace=str(tmp_path),
         reasoning_effort="xhigh",
-        sandbox_label=lambda: "w-write",
-        approval_label=lambda: "on-fail",
-        approval_reviewer_label=lambda: "user",
+        sandbox_label=lambda: "safe",
+        approval_label=lambda: "",
         interaction_mode=lambda: "auto",
         debug=lambda: False,
         goal_label=lambda: "",
@@ -69,18 +68,9 @@ def test_policy_segment_excludes_permission_label(tmp_path):
     tui = PureTui(status, COMMANDS)
     plain = _status_plain(tui)
     assert "default" not in plain.lower()
-    assert "w-write" in plain
-    assert "on-fail" in plain
+    assert "safe" in plain
 
 
-def test_policy_segment_includes_reviewer_when_not_user(tmp_path):
-    status = _make_status(
-        tmp_path,
-        approval_reviewer_label=lambda: "reviewer",
-    )
-    tui = PureTui(status, COMMANDS)
-    plain = _status_plain(tui)
-    assert "reviewer" in plain
 
 
 # ── state segment: no plan_mode, auto hidden ───────────────────────

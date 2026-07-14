@@ -4,32 +4,6 @@ from __future__ import annotations
 
 from enum import Enum
 
-class SandboxMode(str, Enum):
-    """Filesystem boundary control — mirrors Codex CLI sandbox modes.
-
-    read-only:        All write/edit/bash tools are denied.
-    workspace-write:  Only writes inside the workspace (+ extra_paths) are allowed.
-    danger-full-access: No filesystem restrictions (current voidx behaviour).
-    """
-    READ_ONLY = "read-only"
-    WORKSPACE_WRITE = "workspace-write"
-    DANGER_FULL_ACCESS = "danger-full-access"
-
-
-class ApprovalPolicy(str, Enum):
-    """How often voidx asks for human confirmation on tool calls.
-
-    untrusted:   Write/edit/write-capable bash/implement agent tools ask.
-    on-failure:  Auto-allow non-bash ask tools, then report failures.
-    on-request:  Auto-allow; only ask when the agent explicitly requests approval.
-    never:       Full auto — no human-in-the-loop (equivalent to --full-auto).
-    """
-    UNTRUSTED = "untrusted"
-    ON_FAILURE = "on-failure"
-    ON_REQUEST = "on-request"
-    NEVER = "never"
-
-
 class PermissionPreset(str, Enum):
     """Ask-first permission presets."""
 
@@ -38,11 +12,19 @@ class PermissionPreset(str, Enum):
     PROJECT_TRUSTED = "project_trusted"
     FULL_ACCESS = "full_access"
 
+    @property
+    def sandbox_mode(self) -> str:
+        if self == PermissionPreset.READ_ONLY:
+            return "read-only"
+        if self == PermissionPreset.FULL_ACCESS:
+            return "danger-full-access"
+        return "workspace-write"
 
-class ApprovalReviewer(str, Enum):
-    """Who handles approval prompts when a tool call needs a decision."""
-    USER = "user"
-    AUTO_REVIEW = "auto_review"
+    @property
+    def approval_policy(self) -> str:
+        if self == PermissionPreset.FULL_ACCESS:
+            return "never"
+        return "untrusted"
 
 
 class CodeIde(str, Enum):
@@ -57,13 +39,3 @@ class CodeIde(str, Enum):
     JETBRAINS = "jetbrains"
     GHOSTTY = "ghostty"
     SYSTEM = "system"
-
-
-class PermissionMode(str, Enum):
-    """User-facing presets for sandbox + approval behavior."""
-    DEFAULT = "default"
-    READ_ONLY = "read-only"
-    ACCEPT_EDITS = "accept-edits"
-    AUTO_REVIEW = "auto-review"
-    FULL_ACCESS = "full-access"
-    CUSTOM = "custom"

@@ -151,8 +151,7 @@ async def test_graph_on_request_auto_approves_need_ask_tools(tmp_path):
 @pytest.mark.asyncio
 async def test_graph_on_failure_asks_unsafe_bash_before_prompt(tmp_path):
     graph = _graph(tmp_path)
-    graph._permission.approval_policy = "on-failure"
-
+    
     asked: list[dict] = []
 
     async def ask(tool_calls):

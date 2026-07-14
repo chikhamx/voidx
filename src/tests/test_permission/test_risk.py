@@ -86,6 +86,54 @@ def test_project_trusted_allows_only_workspace_edit_risk():
     assert resolve_preset_decision(PermissionPreset.PROJECT_TRUSTED, network).action == "ask"
 
 
+def test_project_trusted_allows_nested_interpreter_in_workspace():
+    risk = classify_shell_risk("python -m pytest", shell="bash")
+    assert risk.level == RiskLevel.EXTREME
+    assert RiskTag.NESTED_INTERPRETER in risk.tags
+    assert resolve_preset_decision(PermissionPreset.PROJECT_TRUSTED, risk).action == "allow"
+
+
+def test_project_trusted_allows_dynamic_shell_in_workspace():
+    risk = classify_shell_risk("echo $HOME", shell="bash")
+    assert risk.level == RiskLevel.EXTREME
+    assert RiskTag.DYNAMIC_SHELL in risk.tags
+    assert resolve_preset_decision(PermissionPreset.PROJECT_TRUSTED, risk).action == "allow"
+
+
+def test_project_trusted_allows_dependency_install():
+    risk = classify_shell_risk("pip install requests", shell="bash")
+    assert risk.level == RiskLevel.EXTREME
+    assert RiskTag.DEPENDENCY_INSTALL in risk.tags
+    assert resolve_preset_decision(PermissionPreset.PROJECT_TRUSTED, risk).action == "allow"
+
+
+def test_project_trusted_still_asks_for_network():
+    risk = classify_shell_risk("curl https://example.com", shell="bash")
+    assert risk.level == RiskLevel.EXTREME
+    assert RiskTag.NETWORK in risk.tags
+    assert resolve_preset_decision(PermissionPreset.PROJECT_TRUSTED, risk).action == "ask"
+
+
+def test_project_trusted_still_asks_for_system_destructive():
+    risk = RiskAssessment.extreme(
+        tool_name="bash",
+        pattern="rm -rf /",
+        tags=(RiskTag.SYSTEM_DESTRUCTIVE,),
+        reason="system destructive",
+    )
+    assert resolve_preset_decision(PermissionPreset.PROJECT_TRUSTED, risk).action == "ask"
+
+
+def test_full_access_still_asks_for_network_after_extreme_change():
+    risk = classify_shell_risk("curl https://example.com", shell="bash")
+    assert resolve_preset_decision(PermissionPreset.FULL_ACCESS, risk).action == "ask"
+
+
+def test_full_access_allows_nested_interpreter_after_extreme_change():
+    risk = classify_shell_risk("python -m pytest", shell="bash")
+    assert resolve_preset_decision(PermissionPreset.FULL_ACCESS, risk).action == "allow"
+
+
 def test_shell_risk_classifies_nested_interpreter_as_extreme_not_blocked():
     risk = classify_shell_risk("python3 /tmp/script.py", shell="bash")
 

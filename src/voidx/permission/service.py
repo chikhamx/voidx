@@ -15,7 +15,7 @@ from dataclasses import dataclass
 
 from pydantic import BaseModel
 
-from voidx.config import ApprovalReviewer, PermissionMode, PermissionPreset
+from voidx.config import PermissionPreset
 from voidx.permission.engine import (
     BASIC_RULES,
     PermissionContext,
@@ -150,15 +150,11 @@ class PermissionService:
     def __init__(
         self,
         permission_preset: str = PermissionPreset.SAFE.value,
-        permission_mode: str = "default",
-        sandbox_mode: str = "workspace-write",
         sandbox_readable_files: list[str] | None = None,
         sandbox_readable_dirs: list[str] | None = None,
         sandbox_writable_files: list[str] | None = None,
         sandbox_writable_dirs: list[str] | None = None,
         persistent_grants: list[AccessGrant] | None = None,
-        approval_policy: str = "untrusted",
-        approval_reviewer: str = "user",
         notifier: PermissionNotifier | None = None,
         permission_state_ready: bool = True,
         persistent_grant_writer: Callable[[GrantDelta], object] | None = None,
@@ -182,13 +178,6 @@ class PermissionService:
             self.permission_preset = PermissionPreset(permission_preset).value
         except ValueError:
             self.permission_preset = PermissionPreset.SAFE.value
-        try:
-            self.permission_mode = PermissionMode(permission_mode).value
-        except ValueError:
-            self.permission_mode = PermissionMode.DEFAULT.value
-        self.sandbox_mode = sandbox_mode
-        self.approval_policy = approval_policy
-        self.approval_reviewer = approval_reviewer
         self.sandbox_readable_files = sandbox_readable_files or []
         self.sandbox_readable_dirs = sandbox_readable_dirs or []
         self.sandbox_writable_files = sandbox_writable_files or []
@@ -234,21 +223,21 @@ class PermissionService:
             self.state_revision += 1
             self.revocation_epoch += 1
 
-    def mark_custom_mode(self) -> None:
-        if self._active_execution_leases:
-            raise PermissionError("Cannot change permission mode while active execution lease exists")
-        if self.permission_mode != PermissionMode.CUSTOM.value:
-            self.state_revision += 1
-            self.revocation_epoch += 1
-        self.permission_mode = PermissionMode.CUSTOM.value
+    @property
+    def sandbox_mode(self) -> str:
+        try:
+            preset = PermissionPreset(self.permission_preset)
+            return preset.sandbox_mode
+        except ValueError:
+            return "workspace-write"
 
-    def set_sandbox_mode(self, mode: str) -> None:
-        if self._active_execution_leases:
-            raise PermissionError("Cannot change sandbox mode while active execution lease exists")
-        if self.sandbox_mode != mode:
-            self.sandbox_mode = mode
-            self.state_revision += 1
-            self.revocation_epoch += 1
+    @property
+    def approval_policy(self) -> str:
+        try:
+            preset = PermissionPreset(self.permission_preset)
+            return preset.approval_policy
+        except ValueError:
+            return "untrusted"
 
     def get_access_grants(self) -> AccessGrants:
         return AccessGrants.from_parts(
@@ -261,7 +250,7 @@ class PermissionService:
             state_revision=self.state_revision,
             revocation_epoch=self.revocation_epoch,
             permission_state_ready=self.permission_state_ready,
-            permission_mode=self.permission_mode,
+            permission_preset=self.permission_preset,
         )
 
     async def add_grant(
@@ -272,7 +261,7 @@ class PermissionService:
     ) -> GrantUpdateResult:
         async with self._commit_lock:
             if precondition is not None and (
-                precondition.permission_mode != self.permission_mode
+                precondition.permission_preset != self.permission_preset
                 or precondition.revocation_epoch != self.revocation_epoch
             ):
                 return GrantUpdateResult(
@@ -351,35 +340,14 @@ class PermissionService:
         )
 
     def _sandbox_label(self) -> str:
-        if self.sandbox_mode == "read-only":
-            return "r-o"
-        if self.sandbox_mode == "workspace-write":
-            return "w-write"
-        return "danger"
+        return self.permission_preset
 
     def _sandbox_short(self) -> str:
-        labels = {
-            "read-only": "r-o",
-            "workspace-write": "w-write",
-            "danger-full-access": "danger",
-        }
-        return labels.get(self.sandbox_mode, self.sandbox_mode)
+        return self.permission_preset
 
     def _approval_label(self) -> str:
-        labels = {
-            "untrusted": "ask",
-            "on-failure": "on-fail",
-            "on-request": "on-req",
-            "never": "auto",
-        }
-        return labels.get(self.approval_policy, self.approval_policy)
+        return ""
 
-    def _reviewer_label(self) -> str:
-        labels = {
-            ApprovalReviewer.USER.value: "user",
-            ApprovalReviewer.AUTO_REVIEW.value: "reviewer",
-        }
-        return labels.get(self.approval_reviewer, self.approval_reviewer)
 
     def _session_short(self) -> str:
         if self._session_allow and not self._session_deny:
@@ -396,8 +364,7 @@ class PermissionService:
         lines.append(f"  Preset: [cyan]{self.permission_preset_label()}[/cyan] ({self.permission_preset})")
         lines.append(
             f"  Sandbox: [cyan]{self.sandbox_mode}[/cyan]  "
-            f"Approval: [cyan]{self.approval_policy}[/cyan]  "
-            f"Reviewer: [cyan]{self.approval_reviewer}[/cyan]"
+            f"Approval: [cyan]{self.approval_policy}[/cyan]"
         )
         for label, paths in (
             ("Readable files", self.sandbox_readable_files),
@@ -414,7 +381,7 @@ class PermissionService:
             lines.append(f"  [red]Session deny:[/red] {', '.join(sorted(self._session_deny))}")
         lines.append("  [yellow]Ask first:[/yellow] file, line, replace, edit, write-capable bash, agent=implement, mcp__*")
         lines.append("")
-        lines.append("  Commands: /permission-preset  /allow <tool>  /deny <tool>  /sandbox [read-only|workspace-write|danger-full-access]")
+        lines.append("  Commands: /permission-preset  /allow <tool>  /deny <tool>")
         return "\n".join(lines)
 
     # ── sandbox ──────────────────────────────────────────────────────────
@@ -501,14 +468,10 @@ class PermissionService:
         return PermissionContext(
             workspace=workspace,
             permission_preset=self.permission_preset,
-            permission_mode=self.permission_mode,
-            sandbox_mode=self.sandbox_mode,
             sandbox_readable_files=tuple(self.sandbox_readable_files),
             sandbox_readable_dirs=tuple(self.sandbox_readable_dirs),
             sandbox_writable_files=tuple(self.sandbox_writable_files),
             sandbox_writable_dirs=tuple(self.sandbox_writable_dirs),
-            approval_policy=self.approval_policy,
-            approval_reviewer=self.approval_reviewer,
             access_grants=self.get_access_grants(),
             permission_state_ready=self.permission_state_ready,
             session_allow=frozenset(self._session_allow),

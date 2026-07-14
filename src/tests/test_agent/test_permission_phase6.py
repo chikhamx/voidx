@@ -16,11 +16,11 @@ from voidx.permission.shell_policy import shell_policy_for_command, shell_sandbo
 def test_shell_closed_policy_denies_unknown_and_dynamic(tmp_path: Path):
     unknown = authorize_tool_call(
         {"name": "bash", "args": {"command": "awk '{print $1}' data.txt"}},
-        PermissionContext(workspace=str(tmp_path), sandbox_mode="workspace-write"),
+        PermissionContext(workspace=str(tmp_path)),
     )
     dynamic = authorize_tool_call(
         {"name": "bash", "args": {"command": "echo $(cat secret.txt)"}},
-        PermissionContext(workspace=str(tmp_path), sandbox_mode="workspace-write"),
+        PermissionContext(workspace=str(tmp_path)),
     )
 
     assert unknown.action == "ask"
@@ -34,7 +34,7 @@ def test_shell_closed_policy_denies_unknown_and_dynamic(tmp_path: Path):
 def test_shell_allows_static_read_without_process_sandbox_backend(tmp_path: Path):
     decision = authorize_tool_call(
         {"name": "bash", "args": {"command": "cat allowed.txt"}},
-        PermissionContext(workspace=str(tmp_path), sandbox_mode="workspace-write"),
+        PermissionContext(workspace=str(tmp_path)),
     )
 
     assert decision.action == "allow"
@@ -44,7 +44,7 @@ def test_shell_allows_static_read_without_process_sandbox_backend(tmp_path: Path
 def test_shell_read_only_asks_for_write_capability(tmp_path: Path):
     decision = authorize_tool_call(
         {"name": "bash", "args": {"command": "cat allowed.txt > out.txt"}},
-        PermissionContext(workspace=str(tmp_path), sandbox_mode="read-only"),
+        PermissionContext(workspace=str(tmp_path)),
     )
 
     assert decision.action == "ask"
@@ -55,7 +55,7 @@ def test_shell_read_only_asks_for_write_capability(tmp_path: Path):
 def test_shell_full_access_mode_matrix(tmp_path: Path):
     decision = authorize_tool_call(
         {"name": "bash", "args": {"command": "awk '{print $1}' data.txt"}},
-        PermissionContext(workspace=str(tmp_path), sandbox_mode="danger-full-access"),
+        PermissionContext(workspace=str(tmp_path)),
     )
 
     assert decision.action != "deny"
@@ -67,8 +67,6 @@ def test_full_access_preset_still_asks_for_network_script(tmp_path: Path):
         PermissionContext(
             workspace=str(tmp_path),
             permission_preset="full_access",
-            sandbox_mode="danger-full-access",
-            approval_policy="on-request",
         ),
     )
 
@@ -84,8 +82,6 @@ def test_project_trusted_preset_allows_workspace_edit_even_with_untrusted_policy
         PermissionContext(
             workspace=str(tmp_path),
             permission_preset="project_trusted",
-            sandbox_mode="workspace-write",
-            approval_policy="untrusted",
         ),
     )
 
@@ -104,7 +100,6 @@ def test_shell_policy_static_plan_requires_writable_grant_for_external_paths(tmp
         {"command": command},
         PermissionContext(
             workspace=str(workspace),
-            sandbox_mode="workspace-write",
             access_grants=AccessGrants.from_parts(readable_dirs=[str(external)]),
             process_sandbox=ProcessSandboxCapability(backend=ProcessSandboxBackend.TEST, supported=True),
         ),
@@ -113,7 +108,6 @@ def test_shell_policy_static_plan_requires_writable_grant_for_external_paths(tmp
         {"command": command},
         PermissionContext(
             workspace=str(workspace),
-            sandbox_mode="workspace-write",
             access_grants=AccessGrants.from_parts(writable_dirs=[str(external)]),
             process_sandbox=ProcessSandboxCapability(backend=ProcessSandboxBackend.TEST, supported=True),
         ),
@@ -156,7 +150,6 @@ def test_shell_policy_denies_glued_compound_operators(tmp_path: Path):
             {"name": "bash", "args": {"command": command}},
             PermissionContext(
                 workspace=str(tmp_path),
-                sandbox_mode="workspace-write",
                 process_sandbox=ProcessSandboxCapability(backend=ProcessSandboxBackend.TEST, supported=True),
             ),
         )
@@ -174,7 +167,6 @@ def test_powershell_policy_denies_glued_redirection(tmp_path: Path):
         {"name": "powershell", "args": {"command": command}},
         PermissionContext(
             workspace=str(tmp_path),
-            sandbox_mode="workspace-write",
             process_sandbox=ProcessSandboxCapability(backend=ProcessSandboxBackend.TEST, supported=True),
         ),
     )
@@ -224,7 +216,6 @@ def test_shell_policy_denies_quote_boundary_operators(tmp_path: Path):
             {"name": "bash", "args": {"command": command}},
             PermissionContext(
                 workspace=str(tmp_path),
-                sandbox_mode="workspace-write",
                 process_sandbox=ProcessSandboxCapability(backend=ProcessSandboxBackend.TEST, supported=True),
             ),
         )
@@ -248,7 +239,6 @@ def test_shell_policy_denies_newline_and_carriage_return_separators(tmp_path: Pa
             {"name": shell, "args": {"command": command}},
             PermissionContext(
                 workspace=str(tmp_path),
-                sandbox_mode="workspace-write",
                 process_sandbox=ProcessSandboxCapability(backend=ProcessSandboxBackend.TEST, supported=True),
             ),
         )
@@ -272,7 +262,6 @@ def test_shell_policy_denies_unresolved_variable_path_expansion(tmp_path: Path):
             {"name": shell, "args": {"command": command}},
             PermissionContext(
                 workspace=str(tmp_path),
-                sandbox_mode="workspace-write",
                 process_sandbox=ProcessSandboxCapability(backend=ProcessSandboxBackend.TEST, supported=True),
             ),
         )
@@ -290,7 +279,6 @@ def test_powershell_policy_denies_backslash_operator_smuggling(tmp_path: Path):
         {"name": "powershell", "args": {"command": command}},
         PermissionContext(
             workspace=str(tmp_path),
-            sandbox_mode="workspace-write",
             process_sandbox=ProcessSandboxCapability(backend=ProcessSandboxBackend.TEST, supported=True),
         ),
     )
@@ -308,7 +296,6 @@ def test_powershell_policy_denies_parenthesized_execution(tmp_path: Path):
         {"name": "powershell", "args": {"command": command}},
         PermissionContext(
             workspace=str(tmp_path),
-            sandbox_mode="workspace-write",
             process_sandbox=ProcessSandboxCapability(backend=ProcessSandboxBackend.TEST, supported=True),
         ),
     )

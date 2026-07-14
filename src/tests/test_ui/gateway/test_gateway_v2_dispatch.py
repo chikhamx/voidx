@@ -226,9 +226,7 @@ async def test_settings_get_returns_desktop_settings_snapshot(tmp_path):
     assert isinstance(result, JsonRpcResult)
     settings = result.result
     assert settings["model"]["provider"]
-    assert settings["permissions"]["permission_mode"] == "default"
-    assert settings["permissions"]["sandbox_mode"] == "workspace-write"
-    assert settings["permissions"]["approval_policy"] == "untrusted"
+    assert settings["permissions"]["permission_preset"] == "safe"
     assert settings["user_profile"] == {"language": "", "tone": ""}
     assert settings["code_ide"]
     assert settings["update_check"]["enabled"] is True

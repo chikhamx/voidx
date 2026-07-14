@@ -12,7 +12,7 @@ from voidx.permission.rules import build_pattern, capability_for_tool, classify_
 def test_git_registered_for_each_ref_policy_allowed_in_workspace_write(tmp_path: Path):
     decision = authorize_tool_call(
         {"name": "git", "args": {"args": "for-each-ref --format=%(refname)"}},
-        PermissionContext(workspace=str(tmp_path), sandbox_mode="workspace-write"),
+        PermissionContext(workspace=str(tmp_path)),
     )
 
     assert decision.action == "allow"
@@ -22,7 +22,7 @@ def test_git_registered_for_each_ref_policy_allowed_in_workspace_write(tmp_path:
 def test_git_registered_status_policy_remains_read_allowed(tmp_path: Path):
     decision = authorize_tool_call(
         {"name": "git", "args": {"args": "status --short"}},
-        PermissionContext(workspace=str(tmp_path), sandbox_mode="workspace-write"),
+        PermissionContext(workspace=str(tmp_path)),
     )
 
     assert decision.action == "allow"
@@ -41,11 +41,11 @@ def test_git_read_policy_accepts_command_alias_and_display_name(tmp_path: Path):
 
     log_decision = authorize_tool_call(
         log_call,
-        PermissionContext(workspace=str(tmp_path), sandbox_mode="workspace-write"),
+        PermissionContext(workspace=str(tmp_path)),
     )
     status_decision = authorize_tool_call(
         status_call,
-        PermissionContext(workspace=str(tmp_path), sandbox_mode="workspace-write"),
+        PermissionContext(workspace=str(tmp_path)),
     )
     classified = classify_tool_call(log_call)
 
@@ -59,7 +59,7 @@ def test_git_read_policy_accepts_command_alias_and_display_name(tmp_path: Path):
 def test_git_dangerous_global_config_policy_denied(tmp_path: Path):
     decision = authorize_tool_call(
         {"name": "git", "args": {"args": "-c core.sshCommand=/tmp/evil status"}},
-        PermissionContext(workspace=str(tmp_path), sandbox_mode="workspace-write"),
+        PermissionContext(workspace=str(tmp_path)),
     )
 
     assert decision.action == "deny"
@@ -74,7 +74,7 @@ def test_git_external_path_requires_grant_for_engine(tmp_path: Path):
 
     decision = authorize_tool_call(
         {"name": "git", "args": {"path": str(external_repo), "args": "status"}},
-        PermissionContext(workspace=str(workspace), sandbox_mode="workspace-write"),
+        PermissionContext(workspace=str(workspace)),
     )
 
     assert decision.action == "ask"
@@ -91,7 +91,6 @@ def test_git_external_path_with_grant_allowed_by_engine(tmp_path: Path):
         {"name": "git", "args": {"path": str(external_repo), "args": "status"}},
         PermissionContext(
             workspace=str(workspace),
-            sandbox_mode="workspace-write",
             access_grants=AccessGrants.from_parts(readable_dirs=[str(external_repo)]),
         ),
     )
@@ -106,7 +105,7 @@ def test_git_registered_for_each_ref_policy_is_classified_as_git_read():
 def test_git_config_env_global_option_denied(tmp_path: Path):
     decision = authorize_tool_call(
         {"name": "git", "args": {"args": "--config-env=core.fsmonitor=VOIDX_EVIL status"}},
-        PermissionContext(workspace=str(tmp_path), sandbox_mode="workspace-write"),
+        PermissionContext(workspace=str(tmp_path)),
     )
 
     assert decision.action == "deny"

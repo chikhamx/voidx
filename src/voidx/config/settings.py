@@ -35,8 +35,6 @@ GLOBAL_KEYS = frozenset({
 })
 WORKSPACE_ONLY_KEYS = frozenset({
     "permission_preset",
-    "permission_mode",
-    "sandbox_mode",
     "sandbox_readable_files",
     "sandbox_readable_dirs",
     "sandbox_writable_files",
@@ -45,8 +43,6 @@ WORKSPACE_ONLY_KEYS = frozenset({
     "persistent_readable_dirs",
     "persistent_writable_files",
     "persistent_writable_dirs",
-    "approval_policy",
-    "approval_reviewer",
     "ask_compact",
     "skills",
 })
@@ -389,8 +385,6 @@ class Settings(
             model=cfg,
             parallel_subagents=self.get_parallel_subagents(),
             permission_preset=self.get_permission_preset(),
-            permission_mode=self.get_permission_mode(),
-            sandbox_mode=self.get_sandbox_mode(),
             sandbox_readable_files=self.get_sandbox_readable_files(),
             sandbox_readable_dirs=self.get_sandbox_readable_dirs(),
             sandbox_writable_files=self.get_sandbox_writable_files(),
@@ -399,8 +393,6 @@ class Settings(
             persistent_readable_dirs=self.get_persistent_readable_dirs(),
             persistent_writable_files=self.get_persistent_writable_files(),
             persistent_writable_dirs=self.get_persistent_writable_dirs(),
-            approval_policy=self.get_approval_policy(),
-            approval_reviewer=self.get_approval_reviewer(),
             ask_compact=bool(self._effective_data().get(
                 "askCompact",
                 self._effective_data().get("ask_compact", False),

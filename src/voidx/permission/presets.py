@@ -25,6 +25,10 @@ def resolve_preset_decision(preset: PermissionPreset, risk: RiskAssessment) -> P
     if risk.level == RiskLevel.NORMAL:
         return PresetDecision(action="allow", risk=risk)
     if risk.level == RiskLevel.EXTREME:
+        if preset == PermissionPreset.PROJECT_TRUSTED and _project_trusted_allows(risk):
+            return PresetDecision(action="allow", risk=risk)
+        if preset == PermissionPreset.FULL_ACCESS and not _full_access_asks(risk):
+            return PresetDecision(action="allow", risk=risk)
         return _ask_once(risk)
     if preset == PermissionPreset.READ_ONLY:
         return _ask_once(risk)
@@ -49,8 +53,17 @@ def _ask_scoped(risk: RiskAssessment, scopes: tuple[ApprovalScope, ...]) -> Pres
     return PresetDecision(action="ask", risk=risk, allowed_scopes=scopes, default_scope=ApprovalScope.ONCE)
 
 
+_PROJECT_TRUSTED_DENY_TAGS = frozenset({
+    RiskTag.NETWORK,
+    RiskTag.EXTERNAL_PATH,
+    RiskTag.GIT_PUSH,
+    RiskTag.SYSTEM_DESTRUCTIVE,
+    RiskTag.PRIVILEGE_ESCALATION,
+})
+
+
 def _project_trusted_allows(risk: RiskAssessment) -> bool:
-    return bool(risk.tags) and set(risk.tags).issubset({RiskTag.WORKSPACE_EDIT, RiskTag.SAFE_READ})
+    return not (set(risk.tags) & _PROJECT_TRUSTED_DENY_TAGS)
 
 
 def _full_access_asks(risk: RiskAssessment) -> bool:

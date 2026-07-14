@@ -1,6 +1,6 @@
 # Ask-First Permission Model — 技术设计文档
 
-> **Status: Design**
+> **Status: Done** — Archived on 2026-07-14.
 > Date: 2026-07-13
 
 ## Context

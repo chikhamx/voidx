@@ -1,5 +1,7 @@
 # Ask-First Permission Model Implementation Plan
 
+> **Status: Done** — Archived on 2026-07-14.
+
 > **For agentic workers:** REQUIRED SUB-SKILL: Use superpowers:subagent-driven-development (recommended) or superpowers:executing-plans to implement this plan task-by-task. Steps use checkbox (`- [ ]`) syntax for tracking.
 
 **Goal:** Replace voidx's current sandbox/approval split with a simpler ask-first permission model that uses risk levels, user-friendly presets, and one consistent approval token from authorization through tool execution.

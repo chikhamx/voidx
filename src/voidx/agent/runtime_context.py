@@ -46,9 +46,24 @@ class ContextCompilerCache:
 
 
 class ExecutionPolicy(BaseModel):
-    sandbox_mode: str
-    approval_policy: str
+    permission_preset: str
     extra_write_paths: list[str] = Field(default_factory=list)
+
+    @property
+    def sandbox_mode(self) -> str:
+        from voidx.config import PermissionPreset
+        try:
+            return PermissionPreset(self.permission_preset).sandbox_mode
+        except ValueError:
+            return "workspace-write"
+
+    @property
+    def approval_policy(self) -> str:
+        from voidx.config import PermissionPreset
+        try:
+            return PermissionPreset(self.permission_preset).approval_policy
+        except ValueError:
+            return "untrusted"
 
     @classmethod
     def from_config(cls, config: Config) -> "ExecutionPolicy":
@@ -62,8 +77,7 @@ class ExecutionPolicy(BaseModel):
         if data_dir not in extra:
             extra.append(data_dir)
         return cls(
-            sandbox_mode=config.sandbox_mode.value,
-            approval_policy=config.approval_policy.value,
+            permission_preset=config.permission_preset.value,
             extra_write_paths=extra,
         )
 

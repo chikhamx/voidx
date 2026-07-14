@@ -119,7 +119,7 @@ async def test_shell_tool_honors_exact_approved_shell_risk_token(tmp_path: Path)
         {"command": command},
         ToolContext(
             workspace=str(tmp_path),
-            sandbox_mode="read-only",
+            permission_preset="read_only",
             approved_tool_risks=[{"tool_name": "bash", "pattern": command, "risk_level": "dangerous"}],
         ),
     )
@@ -137,7 +137,7 @@ async def test_shell_tool_rejects_non_matching_approved_shell_risk_token(tmp_pat
         {"command": command},
         ToolContext(
             workspace=str(tmp_path),
-            sandbox_mode="read-only",
+            permission_preset="read_only",
             approved_tool_risks=[{"tool_name": "bash", "pattern": "printf other > out.txt", "risk_level": "dangerous"}],
         ),
     )
@@ -156,7 +156,7 @@ async def test_shell_tool_keeps_hard_block_with_approved_shell_risk_token(tmp_pa
         {"command": command},
         ToolContext(
             workspace=str(tmp_path),
-            sandbox_mode="danger-full-access",
+            permission_preset="full_access",
             approved_tool_risks=[{"tool_name": "bash", "pattern": command, "risk_level": "blocked"}],
         ),
     )

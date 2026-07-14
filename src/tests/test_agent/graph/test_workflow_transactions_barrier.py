@@ -293,7 +293,6 @@ async def test_multiple_barriers_apply_patches_in_order(tmp_path):
 @pytest.mark.asyncio
 async def test_workflow_transaction_reauthorizes_following_write(tmp_path):
     graph = _graph(tmp_path)
-    graph._permission.approval_policy = "on-request"
     invalidations = 0
 
     class FakeApp:

@@ -32,7 +32,7 @@ async def test_powershell_external_read_requires_write(tmp_path: Path):
         {"command": f"Get-Content '{external / 'data.txt'}'"},
         PermissionContext(
             workspace=str(workspace),
-            sandbox_mode="workspace-write",
+            permission_preset="safe",
             access_grants=AccessGrants.from_parts(readable_dirs=[str(external)]),
             process_sandbox=ProcessSandboxCapability(backend=ProcessSandboxBackend.TEST, supported=True),
         ),
@@ -75,7 +75,7 @@ async def test_powershell_tool_honors_exact_approved_shell_risk_token(tmp_path: 
         {"command": command},
         ToolContext(
             workspace=str(tmp_path),
-            sandbox_mode="read-only",
+            permission_preset="read_only",
             approved_tool_risks=[{"tool_name": "powershell", "pattern": command, "risk_level": "dangerous"}],
         ),
     )
@@ -92,7 +92,7 @@ async def test_powershell_tool_rejects_non_matching_approved_shell_risk_token(tm
         {"command": command},
         ToolContext(
             workspace=str(tmp_path),
-            sandbox_mode="read-only",
+            permission_preset="read_only",
             approved_tool_risks=[{"tool_name": "powershell", "pattern": "Write-Output approved", "risk_level": "dangerous"}],
         ),
     )

@@ -5,7 +5,7 @@ from __future__ import annotations
 from pydantic import BaseModel, Field
 
 from voidx.config.defaults import DEFAULT_MODEL, DEFAULT_PROVIDER
-from voidx.config.enums import ApprovalPolicy, ApprovalReviewer, PermissionMode, PermissionPreset, SandboxMode
+from voidx.config.enums import PermissionPreset
 
 class Profile(BaseModel):
     """A named LLM configuration.  Name is ``provider/model`` (e.g. ``mimo/mimo-v2.5-pro``)."""
@@ -106,8 +106,6 @@ class Config(BaseModel):
     parallel_subagents: ParallelSubagentsConfig = Field(default_factory=ParallelSubagentsConfig)
     workspace: str = "."
     permission_preset: PermissionPreset = PermissionPreset.SAFE
-    permission_mode: PermissionMode = PermissionMode.DEFAULT
-    sandbox_mode: SandboxMode = SandboxMode.WORKSPACE_WRITE
     sandbox_readable_files: list[str] = Field(
         default_factory=list,
         description="Extra file paths readable under workspace-write sandbox mode.",
@@ -128,8 +126,6 @@ class Config(BaseModel):
     persistent_readable_dirs: list[str] = Field(default_factory=list)
     persistent_writable_files: list[str] = Field(default_factory=list)
     persistent_writable_dirs: list[str] = Field(default_factory=list)
-    approval_policy: ApprovalPolicy = ApprovalPolicy.UNTRUSTED
-    approval_reviewer: ApprovalReviewer = ApprovalReviewer.USER
     ask_compact: bool = False
     compaction_soft_ratio: float = Field(default=0.75, ge=0.1, le=0.95)
     compaction_post_target_ratio: float = Field(default=0.10, ge=0.05, le=0.80)

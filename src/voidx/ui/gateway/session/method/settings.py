@@ -212,10 +212,6 @@ class SettingsMethods:
             ],
             "permissions": {
                 "permission_preset": settings.get_permission_preset().value,
-                "permission_mode": settings.get_permission_mode().value,
-                "sandbox_mode": settings.get_sandbox_mode().value,
-                "approval_policy": settings.get_approval_policy().value,
-                "approval_reviewer": settings.get_approval_reviewer().value,
                 "sandbox_readable_files": settings.get_sandbox_readable_files(),
                 "sandbox_readable_dirs": settings.get_sandbox_readable_dirs(),
                 "sandbox_writable_files": settings.get_sandbox_writable_files(),

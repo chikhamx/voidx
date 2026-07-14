@@ -317,6 +317,9 @@ class GraphLlmMixin:
                 assistant_msg,
             ]
 
+        def initial_context_ends_with_user_message() -> bool:
+            return bool(state_messages and isinstance(state_messages[-1], HumanMessage))
+
         async def apply_compaction_result(result: CompactionResult) -> tuple[list[BaseMessage], list[HumanMessage], bool, int]:
             nonlocal compaction_happened, state_messages, runtime_task_state
             compaction_happened = True
@@ -623,6 +626,17 @@ class GraphLlmMixin:
                         }
 
                     if classification == TurnClassification.PLAIN_TEXT:
+                        if (
+                            turn_state == "initial"
+                            and missing_turn_count == 0
+                            and not start_prompt_injected
+                            and not turn_prompt_active
+                            and initial_context_ends_with_user_message()
+                        ):
+                            terminal_msg = normalize_terminal_message(assistant_msg)
+                            terminal_msg_visible = not turn_prompt_active
+                            turn_state = "committed"
+                            break
                         if missing_turn_count == 0:
                             pending_provisional = assistant_msg
                             pending_provisional_visible = not turn_prompt_active
