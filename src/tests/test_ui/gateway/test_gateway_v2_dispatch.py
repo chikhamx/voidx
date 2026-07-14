@@ -226,7 +226,7 @@ async def test_settings_get_returns_desktop_settings_snapshot(tmp_path):
     assert isinstance(result, JsonRpcResult)
     settings = result.result
     assert settings["model"]["provider"]
-    assert settings["permissions"]["permission_preset"] == "safe"
+    assert settings["permissions"]["permission_mode"] == "safe"
     assert settings["user_profile"] == {"language": "", "tone": ""}
     assert settings["code_ide"]
     assert settings["update_check"]["enabled"] is True
@@ -242,7 +242,7 @@ async def test_settings_update_persists_preferences_and_permissions(tmp_path):
     result = await session.dispatch_request(JsonRpcRequest(id=16, method="settings.update", params={
         "patch": {
             "permissions": {
-                "permission_preset": "read_only",
+                "permission_mode": "read_only",
             },
             "user_profile": {"language": "zh-CN", "tone": "concise"},
             "parallel_subagents": {"enabled": True, "max_concurrent": 3},
@@ -253,7 +253,7 @@ async def test_settings_update_persists_preferences_and_permissions(tmp_path):
     assert isinstance(result, JsonRpcResult)
     assert result.result["ok"] is True
     settings = result.result["settings"]
-    assert settings["permissions"]["permission_preset"] == "read_only"
+    assert settings["permissions"]["permission_mode"] == "read_only"
     assert settings["user_profile"] == {"language": "zh-CN", "tone": "concise"}
     assert settings["parallel_subagents"] == {"enabled": True, "max_concurrent": 3}
     assert settings["update_check"]["enabled"] is False

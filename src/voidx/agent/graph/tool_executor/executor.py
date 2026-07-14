@@ -7,6 +7,7 @@ from typing import TYPE_CHECKING
 from langchain_core.messages import AIMessage, ToolMessage
 
 from voidx.logging.tool_log import log_tool_event
+from voidx.runtime.intent import InteractionMode
 from voidx.agent.graph.runtime import current_parent_tool_call_id
 from voidx.agent.graph.workflow_utils import active_workflow_names
 from voidx.agent.todo_state import todo_run_state_from_result
@@ -109,7 +110,7 @@ class GraphToolExecutor:
                 workspace=workspace,
                 session_id=session_id,
                 persona=runtime_persona_ref[0],
-                interaction_mode=interaction_mode or ("plan" if plan_mode else "auto"),
+                interaction_mode=interaction_mode or (InteractionMode.PLAN.value if plan_mode else InteractionMode.AUTO.value),
                 task_intent=str(runtime_persona_ref[1] or "coding"),
                 goal_type=goal_type_from_join(
                     runtime_task_state_ref[0].workflow_route.join
@@ -130,7 +131,7 @@ class GraphToolExecutor:
                 lsp_manager=getattr(host, "_lsp_manager", None),
                 loop_manager=getattr(host, "loop_manager", getattr(host, "_loop_manager", None)),
                 tool_registry=host.tools,
-                permission_preset=host._permission.permission_preset,
+                permission_mode=host._permission.permission_mode,
                 sandbox_readable_files=list(host._permission.sandbox_readable_files),
                 sandbox_readable_dirs=list(host._permission.sandbox_readable_dirs),
                 sandbox_writable_files=list(host._permission.sandbox_writable_files),

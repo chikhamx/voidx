@@ -20,6 +20,7 @@ from voidx.agent.graph.streaming import extract_text, stream_llm
 from voidx.agent.graph.core.helpers import LLMErrorKind, _classify_llm_error, _LLM_MAX_RETRIES, _llm_retry_delay, _clean_error_message
 from voidx.agent.graph.todo_events import todo_updated_event
 from voidx.agent.todo_state import todo_run_state_from_result
+from voidx.runtime.intent import PersonaName
 from voidx.agent.runtime_context import (
     ContextCompilerCache,
     InteractionMode,
@@ -83,7 +84,7 @@ async def run_subagent(
 ) -> str:
     """Run a child agent in its own message context."""
     agent_def = child_run_agent_def(agent_def)
-    persona = (runtime_persona or "explore").strip() or "explore"
+    persona = (runtime_persona or PersonaName.EXPLORE).strip() or PersonaName.EXPLORE
     model_cfg = config.model.model_copy()
     if agent_def.model:
         model_cfg.model = agent_def.model
@@ -106,7 +107,7 @@ async def run_subagent(
 
     context_config = config.model_copy(deep=True)
     context_config.model = model_cfg
-    interaction_mode = InteractionMode.PLAN.value if persona == "plan" else InteractionMode.AUTO.value
+    interaction_mode = InteractionMode.PLAN if persona == PersonaName.PLAN else InteractionMode.AUTO
     workflow_context = workflow_runtime_context or WorkflowRuntimeContext(instructions=[], active=[], content="", runs=[])
     context_cache = ContextCompilerCache()
     plan = goal_resolution.plan
@@ -144,7 +145,7 @@ async def run_subagent(
         session_id=session_id or "default",
         lsp_manager=lsp_manager,
         tool_registry=agent_tools,
-        permission_preset=config.permission_preset.value,
+        permission_mode=config.permission_mode.value,
         sandbox_readable_files=list(snapshot_grants.readable_files) if snapshot_grants is not None else list(config.sandbox_readable_files),
         sandbox_readable_dirs=list(snapshot_grants.readable_dirs) if snapshot_grants is not None else list(config.sandbox_readable_dirs),
         sandbox_writable_files=list(snapshot_grants.writable_files) if snapshot_grants is not None else list(config.sandbox_writable_files),

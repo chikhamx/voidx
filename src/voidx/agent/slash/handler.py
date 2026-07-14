@@ -103,7 +103,7 @@ class SlashHandler(
             "/allow": allow_tool,
             "/deny": deny_tool,
             "/permissions": lambda: ui.print(self.host.permission.show_rules()),
-            "/permission-preset": lambda: self._permission_preset(args),
+            "/permission": lambda: self._permission_mode(args),
             "/usage": self._usage,
             "/upgrade": lambda: self._upgrade(args),
             "/mcp": lambda: self._mcp(args),
@@ -257,47 +257,47 @@ class SlashHandler(
         )
 
 
-    async def _permission_preset(self, arg: str) -> None:
-        from voidx.config import PermissionPreset
+    async def _permission_mode(self, arg: str) -> None:
+        from voidx.config import PermissionMode
 
         raw = arg.strip().lower().replace("-", "_")
         labels = {
-            PermissionPreset.READ_ONLY.value: "Read only",
-            PermissionPreset.SAFE.value: "Safe",
-            PermissionPreset.PROJECT_TRUSTED.value: "Project trusted",
-            PermissionPreset.FULL_ACCESS.value: "Full access",
+            PermissionMode.READ_ONLY.value: "Read only",
+            PermissionMode.SAFE.value: "Safe",
+            PermissionMode.PROJECT_TRUSTED.value: "Project trusted",
+            PermissionMode.FULL_ACCESS.value: "Full access",
         }
         choices = [
-            (labels[PermissionPreset.READ_ONLY.value], PermissionPreset.READ_ONLY.value, "Ask for writes and block/acknowledge unsafe operations."),
-            (labels[PermissionPreset.SAFE.value], PermissionPreset.SAFE.value, "Ask before writes or risky commands."),
-            (labels[PermissionPreset.PROJECT_TRUSTED.value], PermissionPreset.PROJECT_TRUSTED.value, "Allow workspace edits; ask for broader risk."),
-            (labels[PermissionPreset.FULL_ACCESS.value], PermissionPreset.FULL_ACCESS.value, "Allow most operations; still ask for extreme risk."),
+            (labels[PermissionMode.READ_ONLY.value], PermissionMode.READ_ONLY.value, "Ask for writes and block/acknowledge unsafe operations."),
+            (labels[PermissionMode.SAFE.value], PermissionMode.SAFE.value, "Ask before writes or risky commands."),
+            (labels[PermissionMode.PROJECT_TRUSTED.value], PermissionMode.PROJECT_TRUSTED.value, "Allow workspace edits; ask for broader risk."),
+            (labels[PermissionMode.FULL_ACCESS.value], PermissionMode.FULL_ACCESS.value, "Allow most operations; still ask for extreme risk."),
         ]
         valid = set(labels)
 
         app = self.host.app
         if not raw and app is not None:
-            raw = await app.ask_choice("Permission preset", choices) or ""
+            raw = await app.ask_choice("Permission mode", choices) or ""
 
         if not raw:
-            current = getattr(self.host.permission, "permission_preset", PermissionPreset.SAFE.value)
-            ui.print(f"Permission preset: [cyan]{labels.get(current, labels[PermissionPreset.SAFE.value])}[/cyan]")
-            ui.print("Usage: /permission-preset [read_only|safe|project_trusted|full_access]")
+            current = getattr(self.host.permission, "permission_mode", PermissionMode.SAFE.value)
+            ui.print(f"Permission mode: [cyan]{labels.get(current, labels[PermissionMode.SAFE.value])}[/cyan]")
+            ui.print("Usage: /permission [read_only|safe|project_trusted|full_access]")
             return
         if raw not in valid:
-            ui.error(f"Invalid permission preset: {raw}. Use: {', '.join(sorted(valid))}")
+            ui.error(f"Invalid permission mode: {raw}. Use: {', '.join(sorted(valid))}")
             return
 
-        preset = PermissionPreset(raw)
+        preset = PermissionMode(raw)
         try:
-            self.host.permission.set_permission_preset(preset.value)
+            self.host.permission.set_permission_mode(preset.value)
         except PermissionError as exc:
             ui.error(str(exc))
             return
         settings = self.host.settings
         if settings is not None:
-            settings.set_permission_preset(preset)
-        ui.print(f"[dim]Permission preset set to [cyan]{labels[preset.value]}[/cyan][/dim]")
+            settings.set_permission_mode(preset)
+        ui.print(f"[dim]Permission mode set to [cyan]{labels[preset.value]}[/cyan][/dim]")
 
     def _debug(self, arg: str) -> None:
         value = arg.strip().lower()

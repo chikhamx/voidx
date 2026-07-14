@@ -69,7 +69,7 @@ def build_permission_service(
     if data_dir not in writable_dirs:
         writable_dirs.append(data_dir)
     return PermissionService(
-        permission_preset=config.permission_preset.value,
+        permission_mode=config.permission_mode.value,
         sandbox_readable_files=list(config.sandbox_readable_files),
         sandbox_readable_dirs=list(config.sandbox_readable_dirs),
         sandbox_writable_files=list(config.sandbox_writable_files),

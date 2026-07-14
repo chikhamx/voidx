@@ -71,7 +71,7 @@ class BashTool(BaseTool):
                 {"command": inp.command},
                 PermissionContext(
                     workspace=ctx.workspace,
-                    permission_preset=ctx.permission_preset,
+                    permission_mode=ctx.permission_mode,
                     access_grants=access_grants,
                     process_sandbox=ctx.process_sandbox,
                 ),

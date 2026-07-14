@@ -20,7 +20,7 @@ describe("renderSettingsModal", () => {
     renderSettingsModal({
       model: { provider: "openai", model: "gpt-5.5", base_url: "https://api.openai.com", protocol: "openai" },
       profiles: [{ name: "openai-default", provider: "openai", model: "gpt-5.5", base_url: null, protocol: null, configured: true }],
-      permissions: { permission_preset: "safe" },
+      permissions: { permission_mode: "safe" },
       user_profile: { language: "en", tone: "direct" },
       parallel_subagents: { enabled: true, max_concurrent: 4 },
       code_ide: "cursor",
@@ -49,24 +49,23 @@ describe("renderSettingsModal", () => {
 
   it("renders ask-first permission presets instead of low-level controls", () => {
     initSettingsModal();
-    renderSettingsModal({ permissions: { permission_preset: "project_trusted" } });
+    renderSettingsModal({ permissions: { permission_mode: "project_trusted" } });
     document.querySelector(".settings-tab[data-tab='permissions']").click();
     const content = document.querySelector("#settings-content");
-    const preset = document.querySelector('[name="permission_preset"]');
+    const preset = document.querySelector('[name="permission_mode"]');
 
     expect(preset).not.toBeNull();
     expect(preset.value).toBe("project_trusted");
     expect(content.textContent).toContain("Project trusted");
-    expect(document.querySelector('[name="permission_mode"]')).toBeNull();
-    expect(document.querySelector('[name="sandbox_mode"]')).toBeNull();
     expect(document.querySelector('[name="approval_policy"]')).toBeNull();
+    expect(document.querySelector('[name="sandbox_mode"]')).toBeNull();
   });
 
   it("defaults legacy permission fields to safe without compatibility mapping", () => {
     initSettingsModal();
-    renderSettingsModal({ permissions: { permission_preset: "safe" } });
+    renderSettingsModal({ permissions: { permission_mode: "safe" } });
     document.querySelector(".settings-tab[data-tab='permissions']").click();
-    const preset = document.querySelector('[name="permission_preset"]');
+    const preset = document.querySelector('[name="permission_mode"]');
 
     expect(preset).not.toBeNull();
     expect(preset.value).toBe("safe");
@@ -105,14 +104,14 @@ describe("renderSettingsModal", () => {
 describe("collectSettingsPatch", () => {
   it("collects only the ask-first permission preset", () => {
     initSettingsModal();
-    renderSettingsModal({ permissions: { permission_preset: "safe" } });
+    renderSettingsModal({ permissions: { permission_mode: "safe" } });
     document.querySelector(".settings-tab[data-tab='permissions']").click();
-    const select = document.querySelector('[name="permission_preset"]');
+    const select = document.querySelector('[name="permission_mode"]');
     if (select) select.value = "full_access";
 
     const patch = collectSettingsPatch();
     expect(patch.permissions).toEqual({
-      permission_preset: "full_access",
+      permission_mode: "full_access",
     });
   });
 

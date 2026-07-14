@@ -19,14 +19,14 @@ export interface SettingsSnapshot {
   [k: string]: unknown;
 }
 
-type PermissionPreset = "read_only" | "safe" | "project_trusted" | "full_access";
+type PermissionMode = "read_only" | "safe" | "project_trusted" | "full_access";
 
-interface PermissionPresetConfig {
+interface PermissionModeConfig {
   label: string;
   description: string;
 }
 
-const PERMISSION_PRESETS: Record<PermissionPreset, PermissionPresetConfig> = {
+const PERMISSION_MODES: Record<PermissionMode, PermissionModeConfig> = {
   read_only: {
     label: "Read only",
     description: "Ask before writes or risky commands; no session-wide approval.",
@@ -179,19 +179,19 @@ export function collectSettingsPatch(): Record<string, unknown> {
   }
 }
 function collectPermissionsPatch(value: (name: string) => string): Record<string, unknown> {
-  const raw = value("permission_preset") || "safe";
-  const preset = raw in PERMISSION_PRESETS ? (raw as PermissionPreset) : "safe";
+  const raw = value("permission_mode") || "safe";
+  const preset = raw in PERMISSION_MODES ? (raw as PermissionMode) : "safe";
   return {
     permissions: {
-      permission_preset: preset,
+      permission_mode: preset,
     },
   };
 }
 
-function inferPermissionPreset(permissions: Record<string, unknown> = {}): PermissionPreset {
-  const explicit = permissions.permission_preset;
-  if (typeof explicit === "string" && explicit in PERMISSION_PRESETS) {
-    return explicit as PermissionPreset;
+function inferPermissionMode(permissions: Record<string, unknown> = {}): PermissionMode {
+  const explicit = permissions.permission_mode;
+  if (typeof explicit === "string" && explicit in PERMISSION_MODES) {
+    return explicit as PermissionMode;
   }
   return "safe";
 }
@@ -289,17 +289,17 @@ function renderModelTab(snapshot: SettingsSnapshot = {}): DocumentFragment {
 
 function renderPermissionsTab(snapshot: SettingsSnapshot = {}): DocumentFragment {
   const permissions = snapshot.permissions || {};
-  const preset = inferPermissionPreset(permissions);
-  const presetConfig = PERMISSION_PRESETS[preset];
+  const preset = inferPermissionMode(permissions);
+  const presetConfig = PERMISSION_MODES[preset];
   const frag = document.createDocumentFragment();
   frag.append(
     section("权限预设", [
       selectRow(
         "Permission preset",
-        "permission_preset",
+        "permission_mode",
         preset,
-        Object.keys(PERMISSION_PRESETS),
-        (key) => PERMISSION_PRESETS[key as PermissionPreset].label,
+        Object.keys(PERMISSION_MODES),
+        (key) => PERMISSION_MODES[key as PermissionMode].label,
       ),
       readonlyRow("说明", presetConfig.description),
     ]),

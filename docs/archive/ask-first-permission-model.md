@@ -184,7 +184,7 @@ system_destructive
 privilege_escalation
 ```
 
-### PermissionPreset
+### PermissionMode
 
 Preset 将 risk assessment 映射为用户可见 decision：
 
@@ -318,7 +318,7 @@ This fixes the current class of failures where `cat file | head`, `python3 /tmp/
 LLM tool call
   -> classify_tool_call
   -> RiskClassifier.assess(tool, args, workspace)
-  -> PermissionPreset.resolve(risk, current_mode, grants)
+  -> PermissionMode.resolve(risk, current_mode, grants)
   -> UI prompt if needed
   -> approval token attached to ToolContext
   -> Tool.execute(...)
@@ -337,11 +337,11 @@ LLM tool call
 
 ## Configuration Migration
 
-`permission_preset` is the only high-level runtime input. Existing low-level fields can remain in saved state and UI compatibility payloads, but they must not shape new permission decisions.
+`permission_mode` is the only high-level runtime input. Existing low-level fields can remain in saved state and UI compatibility payloads, but they must not shape new permission decisions.
 
 | Existing concept | Final behavior |
 | --- | --- |
-| missing `permission_preset` | default to `safe` |
+| missing `permission_mode` | default to `safe` |
 | `permission_mode` / `approval_policy` | compatibility state only, not runtime decision inputs |
 | `sandbox_mode` | execution boundary only |
 | session allow | approval scope `session` |
@@ -355,7 +355,7 @@ The UI should display only the preset name and short description. Advanced setti
 ### Unit tests
 
 - RiskClassifier classifies common file, git, shell, network, dependency, and destructive commands.
-- PermissionPreset maps risk levels to allow / ask / blocked_ack for each preset.
+- PermissionMode maps risk levels to allow / ask / blocked_ack for each preset.
 - Read Only never produces persistent approval scopes.
 - Extreme risks default to once-only approvals.
 - Blocked risks never produce executable approval choices.
@@ -379,7 +379,7 @@ The UI should display only the preset name and short description. Advanced setti
 
 1. Introduce `RiskLevel`, `RiskTag`, `RiskAssessment`, and `ApprovalScope` types.
 2. Add a RiskClassifier wrapper around existing file/git/shell policy logic.
-3. Add preset resolution driven directly by `permission_preset`.
+3. Add preset resolution driven directly by `permission_mode`.
 4. Update permission UI payloads to include risk level, reason, tags, and allowed scopes.
 5. Pass approved risks into `ToolContext`.
 6. Update BashTool and PowerShellTool to honor approved dynamic-shell risks while retaining hard blocks.

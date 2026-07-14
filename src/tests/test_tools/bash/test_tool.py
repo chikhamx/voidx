@@ -75,7 +75,7 @@ class TestBash:
 
     @pytest.mark.asyncio
     async def test_bash_timeout_terminates_process(self, tmp_path):
-        ctx = ToolContext(workspace=str(tmp_path), permission_preset="full_access")
+        ctx = ToolContext(workspace=str(tmp_path), permission_mode="full_access")
         r = ToolRegistry()
 
         sleep_cmd = f'"{sys.executable}" -c "import time; time.sleep(2)"'
@@ -155,7 +155,7 @@ class TestBash:
         ctx = ToolContext(
             workspace=str(repo),
             tool_registry=registry,
-            permission_preset="full_access",
+            permission_mode="full_access",
             approved_tool_risks=[{"tool_name": "bash", "pattern": command, "risk_level": "dangerous"}],
         )
         result = await registry.execute_tool("bash", {"command": command}, ctx)
@@ -184,7 +184,7 @@ class TestBash:
         ctx = ToolContext(
             workspace=str(repo),
             tool_registry=registry,
-            permission_preset="full_access",
+            permission_mode="full_access",
             approved_tool_risks=[{"tool_name": "bash", "pattern": command, "risk_level": "dangerous"}],
         )
         result = await registry.execute_tool("bash", {"command": command}, ctx)
@@ -237,7 +237,7 @@ class TestBash:
     @pytest.mark.asyncio
     async def test_bash_timeout_sets_error_metadata(self, tmp_path):
         """E1: timeout must set metadata['error'] = True for consistency."""
-        ctx = ToolContext(workspace=str(tmp_path), permission_preset="full_access")
+        ctx = ToolContext(workspace=str(tmp_path), permission_mode="full_access")
         r = ToolRegistry()
 
         sleep_cmd = f'"{sys.executable}" -c "import time; time.sleep(1.5)"'
@@ -252,7 +252,7 @@ class TestBash:
     @pytest.mark.asyncio
     async def test_bash_nonzero_exit_sets_error_metadata(self, tmp_path):
         """E1: non-zero exit code must set metadata['error'] = True for consistency."""
-        ctx = ToolContext(workspace=str(tmp_path), permission_preset="full_access")
+        ctx = ToolContext(workspace=str(tmp_path), permission_mode="full_access")
         r = ToolRegistry()
 
         result = await r.execute_tool(
@@ -277,7 +277,7 @@ async def test_bash_cancellation_terminates_process_tree(tmp_path):
     task = asyncio.create_task(
         BashTool().execute(
             {"command": f'{shlex.quote(sys.executable)} -c {shlex.quote(script)}'},
-            ToolContext(workspace=str(tmp_path), permission_preset="full_access"),
+            ToolContext(workspace=str(tmp_path), permission_mode="full_access"),
         )
     )
 

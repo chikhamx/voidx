@@ -249,8 +249,8 @@ def test_permission_service_allows_read_only_lsp_tools_but_asks_for_format():
 def test_permission_service_preset_updates_runtime_decisions():
     service = PermissionService()
 
-    service.set_permission_preset("project_trusted")
-    assert service.permission_preset == "project_trusted"
+    service.set_permission_mode("project_trusted")
+    assert service.permission_mode == "project_trusted"
     assert service.status_label() == "Project trusted"
     assert service.decide("manage", "src/app.py") == "allow"
     assert service.decide("write", "src/app.py") == "allow"
@@ -259,8 +259,8 @@ def test_permission_service_preset_updates_runtime_decisions():
     assert service.decide("bash", "python -m pytest") == "allow"
     assert service.decide("bash", "curl https://example.com") == "ask"
 
-    service.set_permission_preset("full_access")
-    assert service.permission_preset == "full_access"
+    service.set_permission_mode("full_access")
+    assert service.permission_mode == "full_access"
     assert service.decide("bash", "python -m pytest") == "allow"
     assert service.status_label() == "Full access"
 
@@ -348,7 +348,7 @@ def test_permission_engine_plan_mode_uses_sandbox_source(tmp_path):
 def test_permission_engine_policy_presets(tmp_path):
     project_trusted = PermissionContext(
         workspace=str(tmp_path),
-        permission_preset="project_trusted",
+        permission_mode="project_trusted",
     )
     full_access = PermissionContext(
         workspace=str(tmp_path),
@@ -357,7 +357,7 @@ def test_permission_engine_policy_presets(tmp_path):
     safe_edit = authorize_tool_call({"name": "manage", "args": {"op": "create", "paths": "x.py"}}, PermissionContext(workspace=str(tmp_path)))
     full_access_edit = authorize_tool_call(
         {"name": "manage", "args": {"op": "create", "paths": "x.py"}},
-        PermissionContext(workspace=str(tmp_path), permission_preset="full_access"),
+        PermissionContext(workspace=str(tmp_path), permission_mode="full_access"),
     )
 
     assert safe_edit.action == "ask"
@@ -365,7 +365,7 @@ def test_permission_engine_policy_presets(tmp_path):
 
 
 def test_permission_engine_read_only_sandbox_allows_read_bash_but_asks_for_writes(tmp_path):
-    context = PermissionContext(workspace=str(tmp_path), permission_preset="read_only")
+    context = PermissionContext(workspace=str(tmp_path), permission_mode="read_only")
 
     assert authorize_tool_call({"name": "bash", "args": {"command": "ls"}}, context).action == "allow"
     assert authorize_tool_call({"name": "git", "args": {"args": "status"}}, context).action == "allow"
@@ -379,7 +379,7 @@ def test_permission_engine_read_only_sandbox_allows_read_bash_but_asks_for_write
 
 
 def test_permission_engine_asks_for_manage_in_read_only_sandbox(tmp_path):
-    context = PermissionContext(workspace=str(tmp_path), permission_preset="read_only")
+    context = PermissionContext(workspace=str(tmp_path), permission_mode="read_only")
 
     assert authorize_tool_call({"name": "manage", "args": {"op": "create", "paths": "x.py"}}, context).action == "ask"
     assert authorize_tool_call({"name": "manage", "args": {"op": "delete", "paths": ["x.py"]}}, context).action == "ask"
@@ -394,7 +394,7 @@ def test_permission_engine_workspace_write_checks_manage_paths(tmp_path):
     outside = tmp_path / "outside"
     workspace.mkdir()
     outside.mkdir()
-    context = PermissionContext(workspace=str(workspace), permission_preset="safe")
+    context = PermissionContext(workspace=str(workspace), permission_mode="safe")
 
     inside = authorize_tool_call({"name": "manage", "args": {"op": "create", "paths": "safe.py"}}, context)
     create_outside = authorize_tool_call({"name": "manage", "args": {"op": "create", "paths": str(outside / "x.py")}}, context)
@@ -534,7 +534,7 @@ def test_engine_defers_approvable_read(tmp_path):
     outside.mkdir()
     target = outside / "file.txt"
     target.write_text("hello\n", encoding="utf-8")
-    context = PermissionContext(workspace=str(workspace), permission_preset="safe")
+    context = PermissionContext(workspace=str(workspace), permission_mode="safe")
 
     decision = authorize_tool_call({"name": "read", "args": {"file_path": str(target)}}, context)
 
@@ -547,7 +547,7 @@ def test_engine_denies_non_approvable_tool(tmp_path):
     outside = tmp_path / "outside"
     workspace.mkdir()
     outside.mkdir()
-    context = PermissionContext(workspace=str(workspace), permission_preset="safe")
+    context = PermissionContext(workspace=str(workspace), permission_mode="safe")
 
     decision = authorize_tool_call(
         {"name": "manage", "args": {"op": "create", "paths": str(outside / "x.txt")}},

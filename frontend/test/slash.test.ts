@@ -56,8 +56,8 @@ describe("matchSlashCommands", () => {
 
 
   it("matches permission preset command", () => {
-    const result = matchSlashCommands("/permission-preset");
-    expect(result.map((c) => c.command)).toContain("/permission-preset");
+    const result = matchSlashCommands("/permission");
+    expect(result.map((c) => c.command)).toContain("/permission");
     expect(result[0].category).toBe("permission");
   });
 

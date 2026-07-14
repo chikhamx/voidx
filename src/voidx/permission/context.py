@@ -4,7 +4,7 @@ from __future__ import annotations
 
 from dataclasses import dataclass, field
 
-from voidx.config import PermissionPreset
+from voidx.config import PermissionMode
 from voidx.permission.grants import AccessGrants
 from voidx.permission.rules import PermissionCapability
 from voidx.permission.risk import ApprovalScope, RiskAssessment
@@ -15,7 +15,7 @@ from voidx.permission.schema import Action
 class PermissionContext:
     workspace: str
     interaction_mode: str = "auto"
-    permission_preset: str = PermissionPreset.SAFE.value
+    permission_mode: str = PermissionMode.SAFE.value
     sandbox_readable_files: tuple[str, ...] = ()
     sandbox_readable_dirs: tuple[str, ...] = ()
     sandbox_writable_files: tuple[str, ...] = ()
@@ -29,7 +29,7 @@ class PermissionContext:
     @property
     def sandbox_mode(self) -> str:
         try:
-            preset = PermissionPreset(self.permission_preset)
+            preset = PermissionMode(self.permission_mode)
             return preset.sandbox_mode
         except ValueError:
             return "workspace-write"
@@ -37,7 +37,7 @@ class PermissionContext:
     @property
     def approval_policy(self) -> str:
         try:
-            preset = PermissionPreset(self.permission_preset)
+            preset = PermissionMode(self.permission_mode)
             return preset.approval_policy
         except ValueError:
             return "untrusted"
@@ -76,7 +76,7 @@ class PermissionContext:
         return cls(
             workspace=workspace,
             interaction_mode=mode,
-            permission_preset=getattr(service, "permission_preset", PermissionPreset.SAFE.value),
+            permission_mode=getattr(service, "permission_mode", PermissionMode.SAFE.value),
             sandbox_readable_files=tuple(getattr(service, "sandbox_readable_files", []) or []),
             sandbox_readable_dirs=tuple(getattr(service, "sandbox_readable_dirs", []) or []),
             sandbox_writable_files=tuple(getattr(service, "sandbox_writable_files", []) or []),

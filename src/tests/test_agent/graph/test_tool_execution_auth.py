@@ -135,7 +135,7 @@ def _tree_nodes(root):
 @pytest.mark.asyncio
 async def test_graph_on_request_auto_approves_need_ask_tools(tmp_path):
     graph = _graph(tmp_path)
-    graph._permission.permission_preset = "full_access"
+    graph._permission.permission_mode = "full_access"
 
     approved, denied = await graph._authorize_tool_calls(
         [{"name": "write", "args": {"file_path": "app.py", "op": "append", "new_string": "x"}, "id": "call_1"}],
@@ -151,7 +151,7 @@ async def test_graph_on_request_auto_approves_need_ask_tools(tmp_path):
 @pytest.mark.asyncio
 async def test_full_access_auto_approves_write_without_implement_persona(tmp_path):
     graph = _graph(tmp_path)
-    graph._permission.permission_preset = "full_access"
+    graph._permission.permission_mode = "full_access"
 
     async def fail_if_asked(_tool_calls):
         pytest.fail("full_access should not prompt for workspace edit")

@@ -15,7 +15,7 @@ from voidx.config import (
     McpServerConfig,
     ModelConfig,
     ParallelSubagentsConfig,
-    PermissionPreset,
+    PermissionMode,
     Settings,
     UserProfile,
 )
@@ -329,7 +329,7 @@ def test_model_ctx_command_is_in_palette():
     assert ("/model ctx", "Set context window size") in COMMANDS
 
 @pytest.mark.asyncio
-async def test_permission_preset_without_args_uses_prompt_app_choice(tmp_path):
+async def test_permission_mode_without_args_uses_prompt_app_choice(tmp_path):
     settings = Settings(str(tmp_path))
     permission = PermissionService()
     app = FakeChoiceApp(result="project_trusted")
@@ -339,11 +339,11 @@ async def test_permission_preset_without_args_uses_prompt_app_choice(tmp_path):
         _app=app,
     )
 
-    assert await SlashHandler(graph).dispatch("/permission-preset") is True
+    assert await SlashHandler(graph).dispatch("/permission") is True
 
-    assert app.prompt == "Permission preset"
-    assert permission.permission_preset == "project_trusted"
-    assert settings.get_permission_preset() == PermissionPreset.PROJECT_TRUSTED
+    assert app.prompt == "Permission mode"
+    assert permission.permission_mode == "project_trusted"
+    assert settings.get_permission_mode() == PermissionMode.PROJECT_TRUSTED
 
 
 @pytest.mark.asyncio

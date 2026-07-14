@@ -18,7 +18,7 @@
 | `/guide` | 向运行中的 agent 注入指导 |
 | `/parallel` | 切换并行子 agent 执行 |
 | `/permissions` | 查看权限规则 |
-| `/permission-preset` | 选择权限预设 |
+| `/permission` | 选择权限预设 |
 | `/allow` `/deny` | 临时允许/拒绝某个工具 |
 | `/sandbox` | 设置执行沙箱边界 |
 | `/compact` | 压缩上下文 |

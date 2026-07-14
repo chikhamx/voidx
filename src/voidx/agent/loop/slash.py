@@ -84,7 +84,7 @@ def _tool_context_for_host(host) -> ToolContext:
     }
     if permission is not None:
         kwargs.update(
-            permission_preset=getattr(permission, "permission_preset", "safe"),
+            permission_mode=getattr(permission, "permission_mode", "safe"),
             sandbox_readable_files=list(getattr(permission, "sandbox_readable_files", [])),
             sandbox_readable_dirs=list(getattr(permission, "sandbox_readable_dirs", [])),
             sandbox_writable_files=list(getattr(permission, "sandbox_writable_files", [])),

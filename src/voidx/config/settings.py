@@ -34,7 +34,7 @@ GLOBAL_KEYS = frozenset({
     "retry",
 })
 WORKSPACE_ONLY_KEYS = frozenset({
-    "permission_preset",
+    "permission_mode",
     "sandbox_readable_files",
     "sandbox_readable_dirs",
     "sandbox_writable_files",
@@ -384,7 +384,7 @@ class Settings(
         return Config(
             model=cfg,
             parallel_subagents=self.get_parallel_subagents(),
-            permission_preset=self.get_permission_preset(),
+            permission_mode=self.get_permission_mode(),
             sandbox_readable_files=self.get_sandbox_readable_files(),
             sandbox_readable_dirs=self.get_sandbox_readable_dirs(),
             sandbox_writable_files=self.get_sandbox_writable_files(),

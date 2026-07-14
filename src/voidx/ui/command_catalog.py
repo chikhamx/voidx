@@ -39,7 +39,7 @@ class CommandCatalogItem:
 CATEGORY_PREFIXES: tuple[tuple[tuple[str, ...], CommandCategory], ...] = (
     (("/session", "/clear", "/list", "/resume", "/title"), "session"),
     (("/model",), "model"),
-    (("/permission-preset", "/allow", "/deny", "/permissions", "/mode", "/plan", "/unplan"), "permission"),
+    (("/permission", "/allow", "/deny", "/permissions", "/mode", "/plan", "/unplan"), "permission"),
     (("/mcp", "/tavily", "/skills"), "integrations"),
     (("/lsp", "/code-ide", "/diff", "/paste"), "code"),
     (("/lang", "/tone", "/parallel"), "preference"),
@@ -52,7 +52,7 @@ OPEN_UI_TARGETS: dict[str, str] = {
     "/model test": "settings:model",
     "/model reasoning": "settings:model",
     "/model ctx": "settings:model",
-    "/permission-preset": "settings:permissions",
+    "/permission": "settings:permissions",
     "/permissions": "settings:permissions",
     "/code-ide": "settings:code",
     "/code-ide status": "settings:code",
@@ -85,7 +85,7 @@ DANGEROUS_COMMANDS = {
     "/session del",
     "/mcp del",
     "/model del",
-    "/permission-preset full_access",
+    "/permission full_access",
 }
 
 REQUIRES_ARGS = {

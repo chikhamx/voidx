@@ -55,7 +55,7 @@ class TestPowerShellGitAutoRoute:
         ctx = ToolContext(
             workspace=str(repo),
             tool_registry=ToolRegistry(),
-            permission_preset="full_access",
+            permission_mode="full_access",
             approved_tool_risks=[{"tool_name": "powershell", "pattern": command, "risk_level": "dangerous"}],
         )
         result = await PowerShellTool().execute({"command": command}, ctx)
@@ -342,7 +342,7 @@ class TestPowerShellSandbox:
 
     @pytest.mark.asyncio
     async def test_powershell_readonly_allowed_in_readonly_mode(self, tmp_path):
-        ctx = ToolContext(workspace=str(tmp_path), permission_preset="read_only")
+        ctx = ToolContext(workspace=str(tmp_path), permission_mode="read_only")
         r = ToolRegistry()
         result = await r.execute_tool(
             "powershell",
@@ -355,7 +355,7 @@ class TestPowerShellSandbox:
     @pytest.mark.asyncio
     async def test_powershell_readonly_blocks_subexpression(self, tmp_path):
         """Commands with $(...) must not be classified as read-only — can execute arbitrary code."""
-        ctx = ToolContext(workspace=str(tmp_path), permission_preset="read_only")
+        ctx = ToolContext(workspace=str(tmp_path), permission_mode="read_only")
         r = ToolRegistry()
         result = await r.execute_tool(
             "powershell",

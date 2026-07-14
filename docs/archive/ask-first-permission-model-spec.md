@@ -193,7 +193,7 @@ git commit -m "feat(permission): add risk assessment model"
 Add tests:
 
 ```python
-from voidx.permission.presets import PermissionPreset, resolve_preset_decision
+from voidx.permission.presets import PermissionMode, resolve_mode_decision
 from voidx.permission.risk import ApprovalScope, RiskAssessment, RiskLevel, RiskTag
 
 
@@ -202,22 +202,22 @@ def _risk(level, *tags):
 
 
 def test_read_only_asks_once_for_dangerous_risk():
-    decision = resolve_preset_decision(PermissionPreset.READ_ONLY, _risk(RiskLevel.DANGEROUS, RiskTag.WORKSPACE_EDIT))
+    decision = resolve_mode_decision(PermissionMode.READ_ONLY, _risk(RiskLevel.DANGEROUS, RiskTag.WORKSPACE_EDIT))
 
     assert decision.action == "ask"
     assert decision.allowed_scopes == (ApprovalScope.ONCE,)
 
 
 def test_safe_allows_normal_and_asks_dangerous():
-    assert resolve_preset_decision(PermissionPreset.SAFE, _risk(RiskLevel.NORMAL)).action == "allow"
-    decision = resolve_preset_decision(PermissionPreset.SAFE, _risk(RiskLevel.DANGEROUS, RiskTag.WORKSPACE_EDIT))
+    assert resolve_mode_decision(PermissionMode.SAFE, _risk(RiskLevel.NORMAL)).action == "allow"
+    decision = resolve_mode_decision(PermissionMode.SAFE, _risk(RiskLevel.DANGEROUS, RiskTag.WORKSPACE_EDIT))
     assert decision.action == "ask"
     assert ApprovalScope.SESSION in decision.allowed_scopes
 
 
 def test_project_trusted_allows_workspace_edit_but_asks_dynamic_shell():
-    edit = resolve_preset_decision(PermissionPreset.PROJECT_TRUSTED, _risk(RiskLevel.DANGEROUS, RiskTag.WORKSPACE_EDIT))
-    shell = resolve_preset_decision(PermissionPreset.PROJECT_TRUSTED, _risk(RiskLevel.DANGEROUS, RiskTag.DYNAMIC_SHELL))
+    edit = resolve_mode_decision(PermissionMode.PROJECT_TRUSTED, _risk(RiskLevel.DANGEROUS, RiskTag.WORKSPACE_EDIT))
+    shell = resolve_mode_decision(PermissionMode.PROJECT_TRUSTED, _risk(RiskLevel.DANGEROUS, RiskTag.DYNAMIC_SHELL))
 
     assert edit.action == "allow"
     assert shell.action == "ask"
@@ -226,8 +226,8 @@ def test_project_trusted_allows_workspace_edit_but_asks_dynamic_shell():
 def test_blocked_is_notice_only_for_every_preset():
     blocked = _risk(RiskLevel.BLOCKED, RiskTag.SYSTEM_DESTRUCTIVE)
 
-    for preset in PermissionPreset:
-        decision = resolve_preset_decision(preset, blocked)
+    for preset in PermissionMode:
+        decision = resolve_mode_decision(preset, blocked)
         assert decision.action == "blocked_ack"
         assert decision.allowed_scopes == ()
 ```
@@ -242,41 +242,41 @@ Run:
 
 Expected: fail because `presets.py` does not exist.
 
-- [x] **Step 3: Implement `PermissionPreset` and decision model**
+- [x] **Step 3: Implement `PermissionMode` and decision model**
 
 Add:
 
 ```python
-class PermissionPreset(str, Enum):
+class PermissionMode(str, Enum):
     READ_ONLY = "read-only"
     SAFE = "safe"
     PROJECT_TRUSTED = "project-trusted"
     FULL_ACCESS = "full-access"
 
 
-class PresetDecision(BaseModel):
+class ModeDecision(BaseModel):
     action: Literal["allow", "ask", "blocked_ack"]
     risk: RiskAssessment
     allowed_scopes: tuple[ApprovalScope, ...] = ()
     default_scope: ApprovalScope | None = None
 ```
 
-Implement `resolve_preset_decision(preset, risk)`.
+Implement `resolve_mode_decision(preset, risk)`.
 
-- [x] **Step 4: Make `permission_preset` the high-level runtime entrypoint**
+- [x] **Step 4: Make `permission_mode` the high-level runtime entrypoint**
 
 Final implementation decision:
 
-- `permission_preset` is the only high-level permission runtime input.
+- `permission_mode` is the only high-level permission runtime input.
 - Missing legacy config defaults to `safe`.
 - `permission_mode` and `approval_policy` may remain in state/UI compatibility shapes, but they must not drive new permission decisions.
 - `sandbox_mode` remains an execution boundary only; it does not decide whether to ask the user.
 
 - [x] **Step 5: Update settings defaults without reviving old runtime semantics**
 
-- Add `permission_preset` to settings and config models.
-- Read `permission_preset` directly in `build_config()`.
-- When old settings lack `permission_preset`, default to `safe` instead of mapping old `permission_mode` / `approval_policy` combinations.
+- Add `permission_mode` to settings and config models.
+- Read `permission_mode` directly in `build_config()`.
+- When old settings lack `permission_mode`, default to `safe` instead of mapping old `permission_mode` / `approval_policy` combinations.
 - Remove old setter paths that actively write `permission_mode` or `approval_policy`.
 
 - [x] **Step 6: Verify focused permission tests**
@@ -413,7 +413,7 @@ from voidx.permission.context import PermissionContext
 def test_complex_bash_is_ask_not_deny_in_safe_mode(tmp_path):
     decision = authorize_tool_call(
         {"name": "bash", "args": {"command": "cat file.txt | head -5"}},
-        PermissionContext(workspace=str(tmp_path), permission_preset="safe", sandbox_mode="workspace-write"),
+        PermissionContext(workspace=str(tmp_path), permission_mode="safe", sandbox_mode="workspace-write"),
     )
 
     assert decision.action == "ask"
@@ -423,7 +423,7 @@ def test_complex_bash_is_ask_not_deny_in_safe_mode(tmp_path):
 def test_read_only_write_is_ask_once_not_deny(tmp_path):
     decision = authorize_tool_call(
         {"name": "bash", "args": {"command": "echo hi > out.txt"}},
-        PermissionContext(workspace=str(tmp_path), permission_preset="read_only", sandbox_mode="read-only"),
+        PermissionContext(workspace=str(tmp_path), permission_mode="read_only", sandbox_mode="read-only"),
     )
 
     assert decision.action == "ask"
@@ -433,7 +433,7 @@ def test_read_only_write_is_ask_once_not_deny(tmp_path):
 def test_blocked_command_returns_blocked_ack(tmp_path):
     decision = authorize_tool_call(
         {"name": "bash", "args": {"command": "rm -rf /home"}},
-        PermissionContext(workspace=str(tmp_path), permission_preset="full_access", sandbox_mode="danger-full-access"),
+        PermissionContext(workspace=str(tmp_path), permission_mode="full_access", sandbox_mode="danger-full-access"),
     )
 
     assert decision.action == "blocked_ack"
@@ -901,7 +901,7 @@ Replace the `Permission mode`, `Sandbox`, and `Approval` controls with one prese
 
 - [x] **Step 4: Update gateway settings method**
 
-Accept and persist `permission_preset` directly. Legacy low-level permission fields may remain in snapshots, but they do not map back into runtime preset decisions.
+Accept and persist `permission_mode` directly. Legacy low-level permission fields may remain in snapshots, but they do not map back into runtime preset decisions.
 
 - [x] **Step 5: Verify settings tests**
 
@@ -1005,7 +1005,7 @@ git commit -m "test(permission): cover ask-first permission model"
 8. `python3 /tmp/script.py 2>&1` no longer fails with `shell policy deferred` after approval.
 9. `rm -rf /home` and equivalent catastrophic commands remain non-executable in every preset.
 10. Session/project approvals apply only to matching tool, risk tags, and pattern.
-11. Existing config files that lack `permission_preset` load with the default `safe` preset.
+11. Existing config files that lack `permission_mode` load with the default `safe` preset.
 12. Frontend permission prompts show risk level, reason, command/pattern, and allowed choices.
 13. All targeted backend/frontend tests listed in this plan pass.
 

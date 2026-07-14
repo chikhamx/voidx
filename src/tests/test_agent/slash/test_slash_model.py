@@ -15,7 +15,7 @@ from voidx.config import (
     McpServerConfig,
     ModelConfig,
     ParallelSubagentsConfig,
-    PermissionPreset,
+    PermissionMode,
     Settings,
     UserProfile,
 )
@@ -565,7 +565,7 @@ async def test_usage_dispatch_reads_usage_stats():
 
 
 @pytest.mark.asyncio
-async def test_permission_preset_dispatch_updates_service_and_settings(tmp_path):
+async def test_permission_mode_dispatch_updates_service_and_settings(tmp_path):
     settings = Settings(str(tmp_path))
     permission = PermissionService()
     graph = SimpleNamespace(
@@ -574,13 +574,13 @@ async def test_permission_preset_dispatch_updates_service_and_settings(tmp_path)
         _app=None,
     )
 
-    assert await SlashHandler(graph).dispatch("/permission-preset full_access") is True
+    assert await SlashHandler(graph).dispatch("/permission full_access") is True
 
     reloaded = await Settings.create(str(tmp_path))
     cfg = await reloaded.build_config()
-    assert permission.permission_preset == "full_access"
-    assert cfg.permission_preset == PermissionPreset.FULL_ACCESS
-    assert reloaded.get_permission_preset() == PermissionPreset.FULL_ACCESS
+    assert permission.permission_mode == "full_access"
+    assert cfg.permission_mode == PermissionMode.FULL_ACCESS
+    assert reloaded.get_permission_mode() == PermissionMode.FULL_ACCESS
     assert await SlashHandler(graph).dispatch("/permission-mode full-access") is False
     assert await SlashHandler(graph).dispatch("/approval never") is False
 

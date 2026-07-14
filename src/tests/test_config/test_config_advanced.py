@@ -8,7 +8,7 @@ from voidx.config import (
     CodeIde,
     McpServerConfig,
     ParallelSubagentsConfig,
-    PermissionPreset,
+    PermissionMode,
     Profile,
     Settings,
     UserProfile,
@@ -90,27 +90,27 @@ def test_settings_reads_legacy_skill_selection_from_voidx_json(tmp_path):
     assert selection.auto == set()
 
 
-async def test_permission_preset_drives_build_config_without_rewriting_boundaries(tmp_path):
+async def test_permission_mode_drives_build_config_without_rewriting_boundaries(tmp_path):
     settings = Settings(str(tmp_path))
     external = str(tmp_path / "external")
     settings.set_sandbox_writable_dirs([external])
 
-    settings.set_permission_preset(PermissionPreset.FULL_ACCESS)
+    settings.set_permission_mode(PermissionMode.FULL_ACCESS)
     cfg = await (await Settings.create(str(tmp_path))).build_config()
 
-    assert cfg.permission_preset == PermissionPreset.FULL_ACCESS
+    assert cfg.permission_mode == PermissionMode.FULL_ACCESS
     assert cfg.sandbox_writable_dirs == [external]
 
-    settings.set_permission_preset(PermissionPreset.PROJECT_TRUSTED)
+    settings.set_permission_mode(PermissionMode.PROJECT_TRUSTED)
     cfg = await (await Settings.create(str(tmp_path))).build_config()
 
-    assert cfg.permission_preset == PermissionPreset.PROJECT_TRUSTED
+    assert cfg.permission_mode == PermissionMode.PROJECT_TRUSTED
     assert cfg.sandbox_writable_dirs == [external]
 
-    settings.set_permission_preset(PermissionPreset.READ_ONLY)
+    settings.set_permission_mode(PermissionMode.READ_ONLY)
     cfg = await (await Settings.create(str(tmp_path))).build_config()
 
-    assert cfg.permission_preset == PermissionPreset.READ_ONLY
+    assert cfg.permission_mode == PermissionMode.READ_ONLY
     assert cfg.sandbox_writable_dirs == [external]
 
 
@@ -181,21 +181,21 @@ def test_legacy_migration_failure_fails_closed(tmp_path):
     assert "sandbox_workspace_write" not in settings._effective_data()
 
 
-def test_permission_preset_preserves_path_grants(tmp_path):
+def test_permission_mode_preserves_path_grants(tmp_path):
     settings = Settings(str(tmp_path))
     settings.set_sandbox_readable_files([str(tmp_path / "readable-file")])
     settings.set_sandbox_readable_dirs([str(tmp_path / "readable-dir")])
     settings.set_sandbox_writable_files([str(tmp_path / "writable-file")])
     settings.set_sandbox_writable_dirs([str(tmp_path / "writable-dir")])
 
-    settings.set_permission_preset(PermissionPreset.PROJECT_TRUSTED)
+    settings.set_permission_mode(PermissionMode.PROJECT_TRUSTED)
     loaded = Settings(str(tmp_path))
 
     assert loaded.get_sandbox_readable_files() == [str(tmp_path / "readable-file")]
     assert loaded.get_sandbox_readable_dirs() == [str(tmp_path / "readable-dir")]
     assert loaded.get_sandbox_writable_files() == [str(tmp_path / "writable-file")]
     assert loaded.get_sandbox_writable_dirs() == [str(tmp_path / "writable-dir")]
-    assert loaded.get_permission_preset() == PermissionPreset.PROJECT_TRUSTED
+    assert loaded.get_permission_mode() == PermissionMode.PROJECT_TRUSTED
 
 async def test_build_config_defaults_and_reads_ask_compact(tmp_path):
     cfg = await (await Settings.create(str(tmp_path))).build_config()
@@ -311,14 +311,14 @@ def test_user_profile_save_cleans_legacy_workspace_keys(monkeypatch, tmp_path):
     assert workspace_saved == {}
 
 
-async def test_permission_preset_determines_derived_sandbox_mode(tmp_path):
+async def test_permission_mode_determines_derived_sandbox_mode(tmp_path):
     settings = Settings(str(tmp_path))
 
-    settings.set_permission_preset(PermissionPreset.PROJECT_TRUSTED)
+    settings.set_permission_mode(PermissionMode.PROJECT_TRUSTED)
     cfg = await (await Settings.create(str(tmp_path))).build_config()
 
-    assert cfg.permission_preset == PermissionPreset.PROJECT_TRUSTED
-    assert cfg.permission_preset.sandbox_mode == "workspace-write"
+    assert cfg.permission_mode == PermissionMode.PROJECT_TRUSTED
+    assert cfg.permission_mode.sandbox_mode == "workspace-write"
 
 
 def test_settings_defaults_and_saves_code_ide(tmp_path):

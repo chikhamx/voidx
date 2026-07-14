@@ -15,7 +15,7 @@ from dataclasses import dataclass
 
 from pydantic import BaseModel
 
-from voidx.config import PermissionPreset
+from voidx.config import PermissionMode
 from voidx.permission.engine import (
     BASIC_RULES,
     PermissionContext,
@@ -149,7 +149,7 @@ class PermissionService:
 
     def __init__(
         self,
-        permission_preset: str = PermissionPreset.SAFE.value,
+        permission_mode: str = PermissionMode.SAFE.value,
         sandbox_readable_files: list[str] | None = None,
         sandbox_readable_dirs: list[str] | None = None,
         sandbox_writable_files: list[str] | None = None,
@@ -175,9 +175,9 @@ class PermissionService:
         self.revocation_epoch = 0
         self._persistent_grant_writer = persistent_grant_writer
         try:
-            self.permission_preset = PermissionPreset(permission_preset).value
+            self.permission_mode = PermissionMode(permission_mode).value
         except ValueError:
-            self.permission_preset = PermissionPreset.SAFE.value
+            self.permission_mode = PermissionMode.SAFE.value
         self.sandbox_readable_files = sandbox_readable_files or []
         self.sandbox_readable_dirs = sandbox_readable_dirs or []
         self.sandbox_writable_files = sandbox_writable_files or []
@@ -209,24 +209,24 @@ class PermissionService:
         self._session_allow.discard(tool)
 
     def status_label(self) -> str:
-        return self.permission_preset_label()
+        return self.permission_mode_label()
 
-    def set_permission_preset(self, preset: str) -> None:
+    def set_permission_mode(self, preset: str) -> None:
         if self._active_execution_leases:
-            raise PermissionError("Cannot change permission preset while active execution lease exists")
+            raise PermissionError("Cannot change permission mode while active execution lease exists")
         try:
-            parsed = PermissionPreset(preset.replace("-", "_"))
+            parsed = PermissionMode(preset.replace("-", "_"))
         except ValueError as exc:
-            raise PermissionError(f"Invalid permission preset: {preset}") from exc
-        if self.permission_preset != parsed.value:
-            self.permission_preset = parsed.value
+            raise PermissionError(f"Invalid permission mode: {preset}") from exc
+        if self.permission_mode != parsed.value:
+            self.permission_mode = parsed.value
             self.state_revision += 1
             self.revocation_epoch += 1
 
     @property
     def sandbox_mode(self) -> str:
         try:
-            preset = PermissionPreset(self.permission_preset)
+            preset = PermissionMode(self.permission_mode)
             return preset.sandbox_mode
         except ValueError:
             return "workspace-write"
@@ -234,7 +234,7 @@ class PermissionService:
     @property
     def approval_policy(self) -> str:
         try:
-            preset = PermissionPreset(self.permission_preset)
+            preset = PermissionMode(self.permission_mode)
             return preset.approval_policy
         except ValueError:
             return "untrusted"
@@ -250,7 +250,7 @@ class PermissionService:
             state_revision=self.state_revision,
             revocation_epoch=self.revocation_epoch,
             permission_state_ready=self.permission_state_ready,
-            permission_preset=self.permission_preset,
+            permission_mode=self.permission_mode,
         )
 
     async def add_grant(
@@ -261,7 +261,7 @@ class PermissionService:
     ) -> GrantUpdateResult:
         async with self._commit_lock:
             if precondition is not None and (
-                precondition.permission_preset != self.permission_preset
+                precondition.permission_mode != self.permission_mode
                 or precondition.revocation_epoch != self.revocation_epoch
             ):
                 return GrantUpdateResult(
@@ -322,14 +322,14 @@ class PermissionService:
         if lease in self._active_execution_leases:
             self._active_execution_leases.remove(lease)
 
-    def permission_preset_label(self) -> str:
+    def permission_mode_label(self) -> str:
         labels = {
-            PermissionPreset.READ_ONLY.value: "Read only",
-            PermissionPreset.SAFE.value: "Safe",
-            PermissionPreset.PROJECT_TRUSTED.value: "Project trusted",
-            PermissionPreset.FULL_ACCESS.value: "Full access",
+            PermissionMode.READ_ONLY.value: "Read only",
+            PermissionMode.SAFE.value: "Safe",
+            PermissionMode.PROJECT_TRUSTED.value: "Project trusted",
+            PermissionMode.FULL_ACCESS.value: "Full access",
         }
-        return labels.get(self.permission_preset, "Safe")
+        return labels.get(self.permission_mode, "Safe")
 
     def status_details(self) -> tuple[str, str, str]:
         """Return (sandbox_label, approval_label, session_label) for UI."""
@@ -340,10 +340,10 @@ class PermissionService:
         )
 
     def _sandbox_label(self) -> str:
-        return self.permission_preset
+        return self.permission_mode
 
     def _sandbox_short(self) -> str:
-        return self.permission_preset
+        return self.permission_mode
 
     def _approval_label(self) -> str:
         return ""
@@ -361,7 +361,7 @@ class PermissionService:
     def show_rules(self) -> str:
         """Format current sandbox, approval, and session rules."""
         lines = ["[bold]Session permissions:[/bold]"]
-        lines.append(f"  Preset: [cyan]{self.permission_preset_label()}[/cyan] ({self.permission_preset})")
+        lines.append(f"  Mode: [cyan]{self.permission_mode_label()}[/cyan] ({self.permission_mode})")
         lines.append(
             f"  Sandbox: [cyan]{self.sandbox_mode}[/cyan]  "
             f"Approval: [cyan]{self.approval_policy}[/cyan]"
@@ -381,7 +381,7 @@ class PermissionService:
             lines.append(f"  [red]Session deny:[/red] {', '.join(sorted(self._session_deny))}")
         lines.append("  [yellow]Ask first:[/yellow] file, line, replace, edit, write-capable bash, agent=implement, mcp__*")
         lines.append("")
-        lines.append("  Commands: /permission-preset  /allow <tool>  /deny <tool>")
+        lines.append("  Commands: /permission  /allow <tool>  /deny <tool>")
         return "\n".join(lines)
 
     # ── sandbox ──────────────────────────────────────────────────────────
@@ -467,7 +467,7 @@ class PermissionService:
     def _context(self, *, workspace: str = ".") -> PermissionContext:
         return PermissionContext(
             workspace=workspace,
-            permission_preset=self.permission_preset,
+            permission_mode=self.permission_mode,
             sandbox_readable_files=tuple(self.sandbox_readable_files),
             sandbox_readable_dirs=tuple(self.sandbox_readable_dirs),
             sandbox_writable_files=tuple(self.sandbox_writable_files),

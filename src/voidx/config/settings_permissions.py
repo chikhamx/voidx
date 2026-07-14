@@ -5,7 +5,7 @@ from __future__ import annotations
 from pathlib import Path
 from threading import RLock
 
-from voidx.config.enums import PermissionPreset
+from voidx.config.enums import PermissionMode
 from voidx.config.settings_utils import string_list as _string_list
 from voidx.permission.grants import GrantDelta
 
@@ -14,15 +14,15 @@ _PERMISSION_TRANSACTION_LOCK = RLock()
 
 
 class SettingsPermissionMixin:
-    def get_permission_preset(self) -> PermissionPreset:
-        raw = self._effective_data().get("permission_preset", PermissionPreset.SAFE.value)
+    def get_permission_mode(self) -> PermissionMode:
+        raw = self._effective_data().get("permission_mode", PermissionMode.SAFE.value)
         try:
-            return PermissionPreset(raw)
+            return PermissionMode(raw)
         except ValueError:
-            return PermissionPreset.SAFE
+            return PermissionMode.SAFE
 
-    def set_permission_preset(self, preset: PermissionPreset) -> Path:
-        self._data["permission_preset"] = preset.value
+    def set_permission_mode(self, preset: PermissionMode) -> Path:
+        self._data["permission_mode"] = preset.value
         self._save()
         return self._path
 

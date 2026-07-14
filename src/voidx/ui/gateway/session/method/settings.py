@@ -17,7 +17,7 @@ class SettingsMethods:
         return await self._desktop_settings_snapshot(settings)
 
     async def _method_settings_update(self, params: dict) -> dict:
-        from voidx.config.enums import CodeIde, PermissionPreset
+        from voidx.config.enums import CodeIde, PermissionMode
         from voidx.config.models import ParallelSubagentsConfig, Profile
         from voidx.config.settings import Settings
 
@@ -31,11 +31,11 @@ class SettingsMethods:
         if permissions is not None:
             if not isinstance(permissions, dict):
                 raise MethodParamsError("invalid permissions")
-            preset = permissions.get("permission_preset", "safe")
+            preset = permissions.get("permission_mode", "safe")
             try:
-                settings.set_permission_preset(PermissionPreset(str(preset)))
+                settings.set_permission_mode(PermissionMode(str(preset)))
             except ValueError as exc:
-                raise MethodParamsError("invalid permission_preset") from exc
+                raise MethodParamsError("invalid permission_mode") from exc
             for key, setter in (
                 ("sandbox_readable_files", settings.set_sandbox_readable_files),
                 ("sandbox_readable_dirs", settings.set_sandbox_readable_dirs),
@@ -211,7 +211,7 @@ class SettingsMethods:
                 for profile_item in profiles
             ],
             "permissions": {
-                "permission_preset": settings.get_permission_preset().value,
+                "permission_mode": settings.get_permission_mode().value,
                 "sandbox_readable_files": settings.get_sandbox_readable_files(),
                 "sandbox_readable_dirs": settings.get_sandbox_readable_dirs(),
                 "sandbox_writable_files": settings.get_sandbox_writable_files(),

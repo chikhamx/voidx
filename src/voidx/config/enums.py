@@ -4,8 +4,8 @@ from __future__ import annotations
 
 from enum import Enum
 
-class PermissionPreset(str, Enum):
-    """Ask-first permission presets."""
+class PermissionMode(str, Enum):
+    """Ask-first permission modes."""
 
     READ_ONLY = "read_only"
     SAFE = "safe"
@@ -14,15 +14,15 @@ class PermissionPreset(str, Enum):
 
     @property
     def sandbox_mode(self) -> str:
-        if self == PermissionPreset.READ_ONLY:
+        if self == PermissionMode.READ_ONLY:
             return "read-only"
-        if self == PermissionPreset.FULL_ACCESS:
+        if self == PermissionMode.FULL_ACCESS:
             return "danger-full-access"
         return "workspace-write"
 
     @property
     def approval_policy(self) -> str:
-        if self == PermissionPreset.FULL_ACCESS:
+        if self == PermissionMode.FULL_ACCESS:
             return "never"
         return "untrusted"
 

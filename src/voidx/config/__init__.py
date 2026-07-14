@@ -2,7 +2,7 @@
 
 from voidx.config.enums import (
     CodeIde,
-    PermissionPreset,
+    PermissionMode,
 )
 from voidx.config.models import (
     AgentConfig,
@@ -26,7 +26,7 @@ __all__ = [
     "McpServerConfig",
     "ModelConfig",
     "ParallelSubagentsConfig",
-    "PermissionPreset",
+    "PermissionMode",
     "Profile",
     "RetryConfig",
     "Settings",

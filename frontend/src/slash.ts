@@ -25,7 +25,7 @@ export const COMMAND_CATALOG: SlashCommand[] = [
   { command: "/model", description: "Switch model or adjust reasoning", category: "model", execution: "fill", dangerous: false, requiresArgs: false },
   { command: "/parallel", description: "Toggle parallel subagent execution", category: "preference", execution: "fill", dangerous: false, requiresArgs: false },
   { command: "/paste", description: "Paste an image from the clipboard", category: "code", execution: "run", dangerous: false, requiresArgs: false },
-  { command: "/permission-preset", description: "Choose permission preset", category: "permission", execution: "open-ui", dangerous: false, requiresArgs: false, uiTarget: "settings:permissions" },
+  { command: "/permission", description: "Choose permission preset", category: "permission", execution: "open-ui", dangerous: false, requiresArgs: false, uiTarget: "settings:permissions" },
   { command: "/permissions", description: "Show current permission rules", category: "permission", execution: "open-ui", dangerous: false, requiresArgs: false, uiTarget: "settings:permissions" },
   { command: "/plan", description: "Enter plan mode", category: "permission", execution: "run", dangerous: false, requiresArgs: false },
   { command: "/quit", description: "Exit voidx", category: "session", execution: "run", dangerous: false, requiresArgs: false },

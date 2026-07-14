@@ -216,7 +216,7 @@ async def test_graph_authorization_respects_session_deny_for_safe_bash(tmp_path)
 @pytest.mark.asyncio
 async def test_graph_authorization_never_approves_mixed_blocked_batch(tmp_path):
     graph = _graph(tmp_path)
-    graph._permission.permission_preset = "safe"
+    graph._permission.permission_mode = "safe"
     asked: list[list[object]] = []
 
     async def approve(tool_calls):
@@ -511,7 +511,7 @@ async def test_permission_prompt_uses_dock_details_when_events_are_active(tmp_pa
 @pytest.mark.asyncio
 async def test_read_only_permission_prompt_limits_choices_to_once(tmp_path):
     graph = _graph(tmp_path)
-    graph._permission.set_permission_preset("read_only")
+    graph._permission.set_permission_mode("read_only")
     captured_choices = None
 
     class FakeApp:
@@ -539,7 +539,7 @@ async def test_read_only_permission_prompt_limits_choices_to_once(tmp_path):
 @pytest.mark.asyncio
 async def test_permission_prompt_details_include_risk_and_scopes(tmp_path):
     graph = _graph(tmp_path)
-    graph._permission.set_permission_preset("safe")
+    graph._permission.set_permission_mode("safe")
     received_details = None
 
     class FakeApp:
@@ -577,8 +577,8 @@ async def test_permission_prompt_details_include_risk_and_scopes(tmp_path):
 @pytest.mark.asyncio
 async def test_graph_authorization_attaches_approved_risk_token_to_approved_shell_call(tmp_path):
     graph = _graph(tmp_path)
-    graph._permission.set_permission_preset("read_only")
-    graph._permission.set_permission_preset("read_only")
+    graph._permission.set_permission_mode("read_only")
+    graph._permission.set_permission_mode("read_only")
     
     async def approve(_tool_calls):
         return "y"
@@ -605,7 +605,7 @@ async def test_graph_authorization_attaches_approved_risk_token_to_approved_shel
 @pytest.mark.asyncio
 async def test_blocked_permission_prompt_only_acknowledges_and_denies_execution(tmp_path):
     graph = _graph(tmp_path)
-    graph._permission.set_permission_preset("safe")
+    graph._permission.set_permission_mode("safe")
     captured_choices = None
     captured_details = None
 
@@ -635,7 +635,7 @@ async def test_blocked_permission_prompt_only_acknowledges_and_denies_execution(
 @pytest.mark.asyncio
 async def test_blocked_permission_prompt_cannot_be_approved_with_yes(tmp_path):
     graph = _graph(tmp_path)
-    graph._permission.set_permission_preset("safe")
+    graph._permission.set_permission_mode("safe")
     
     class FakeApp:
         async def ask_choice(self, _prompt, _choices, details=None):

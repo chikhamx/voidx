@@ -2,13 +2,13 @@
 
 from __future__ import annotations
 
-from voidx.config import PermissionPreset
+from voidx.config import PermissionMode
 from voidx.permission.context import PermissionContext, PermissionDecision
 from voidx.permission.evaluate import evaluate
 from voidx.permission.git_policy import git_sandbox_precheck
 from voidx.permission.shell_policy import classify_shell_risk, shell_sandbox_precheck
 from voidx.permission.grants import resolve_access
-from voidx.permission.presets import resolve_preset_decision
+from voidx.permission.presets import resolve_mode_decision
 from voidx.permission.risk import RiskAssessment, RiskLevel, RiskTag
 from voidx.permission.rules import (
     BASIC_RULES,
@@ -210,12 +210,12 @@ def _decision(
 
 
 def _preset_decision_for(risk: RiskAssessment, context: PermissionContext | None):
-    raw = context.permission_preset if context else PermissionPreset.SAFE.value
+    raw = context.permission_mode if context else PermissionMode.SAFE.value
     try:
-        preset = PermissionPreset(raw)
+        preset = PermissionMode(raw)
     except ValueError:
-        preset = PermissionPreset.SAFE
-    return resolve_preset_decision(preset, risk)
+        preset = PermissionMode.SAFE
+    return resolve_mode_decision(preset, risk)
 
 def _risk_for(classified: ClassifiedToolCall, action: Action, reason: str) -> RiskAssessment:
     if classified.name == "bash":

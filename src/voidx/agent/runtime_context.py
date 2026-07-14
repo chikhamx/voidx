@@ -18,6 +18,7 @@ from voidx.agent.message_rows import RowMessageCacheEntry
 from voidx.agent.task_state import GoalSpec, TodoRunState
 from voidx.config import Config, UserProfile
 from voidx.runtime.intent import InteractionMode, TaskIntent
+from voidx.runtime.task_state import TodoStatus
 from voidx.skills.service import (
     has_skill_tool_context,
     strip_skill_tool_context,
@@ -46,22 +47,22 @@ class ContextCompilerCache:
 
 
 class ExecutionPolicy(BaseModel):
-    permission_preset: str
+    permission_mode: str
     extra_write_paths: list[str] = Field(default_factory=list)
 
     @property
     def sandbox_mode(self) -> str:
-        from voidx.config import PermissionPreset
+        from voidx.config import PermissionMode
         try:
-            return PermissionPreset(self.permission_preset).sandbox_mode
+            return PermissionMode(self.permission_mode).sandbox_mode
         except ValueError:
             return "workspace-write"
 
     @property
     def approval_policy(self) -> str:
-        from voidx.config import PermissionPreset
+        from voidx.config import PermissionMode
         try:
-            return PermissionPreset(self.permission_preset).approval_policy
+            return PermissionMode(self.permission_mode).approval_policy
         except ValueError:
             return "untrusted"
 
@@ -77,7 +78,7 @@ class ExecutionPolicy(BaseModel):
         if data_dir not in extra:
             extra.append(data_dir)
         return cls(
-            permission_preset=config.permission_preset.value,
+            permission_mode=config.permission_mode.value,
             extra_write_paths=extra,
         )
 
@@ -324,7 +325,7 @@ def _render_task_state_todo_lines(todo_state_value: object | None) -> list[str]:
     if todo_state is None or not todo_state.items:
         return []
 
-    visible = [item for status in ("active", "pending") for item in todo_state.items if item.status == status]
+    visible = [item for status in (TodoStatus.ACTIVE, TodoStatus.PENDING) for item in todo_state.items if item.status == status]
     if not visible:
         return []
 
@@ -333,8 +334,8 @@ def _render_task_state_todo_lines(todo_state_value: object | None) -> list[str]:
     for item in visible[:visible_limit]:
         content = _truncate_todo_content(item.content)
         item_id = f" {item.id}" if item.id else ""
-        alias = f" ({item.status}: {content})" if item.id else ""
-        lines.append(f"  - {item.status}{item_id}: {content}{alias}")
+        alias = f" ({item.status.value}: {content})" if item.id else ""
+        lines.append(f"  - {item.status.value}{item_id}: {content}{alias}")
 
     omitted = len(visible) - visible_limit
     if omitted > 0:
