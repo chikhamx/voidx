@@ -3,31 +3,24 @@ from __future__ import annotations
 import asyncio
 from typing import TYPE_CHECKING, Any
 
-from langchain_core.messages import AIMessage, BaseMessage, HumanMessage, RemoveMessage, ToolMessage
-from langgraph.graph.message import REMOVE_ALL_MESSAGES
+from langchain_core.messages import AIMessage, BaseMessage, HumanMessage
 
 from voidx.agent.agents import get_agent
 from voidx.agent.prompts import WORKFLOW_RUNTIME, build_base_system, persona_prompt
 from voidx.agent.runtime_context import (
-    ContextCompiler,
     ContextCompilerCache,
     InteractionMode,
     RuntimeContextBuilder,
-    TaskIntent,
     raw_semantic_messages,
 )
 from voidx.agent.state import AgentState
 from voidx.agent.task_state import (
-    GoalResolution,
-    GoalSpec,
-    IntentResolution,
     TaskState,
     TodoRunState,
     goal_label,
     goal_type_from_join,
 )
 from voidx.agent.todo_state import sanitize_todo_replay_messages
-from voidx.agent.message_trimming import trim_superseded_file_tools
 from voidx.agent.tool_exchange_sanitizer import sanitize_failed_tool_exchanges
 from voidx.agent.tool_filters import filter_unavailable_lsp_tools, strip_gemini_unsupported_schema_keys
 from voidx.agent.graph.streaming import (
@@ -42,31 +35,27 @@ from voidx.logging.request_log import log_llm_exchange
 from voidx.llm.service import resolve_protocol
 from voidx.llm.usage import (
     estimate_context_tokens,
+    estimate_context_tokens_with_tools,
     estimate_message_tokens,
     extract_token_usage,
 )
-from voidx.memory.service import save_context_frame_from_messages
 from voidx.runtime.ui import (
     AssistantStreamCommitted,
     AssistantStreamUpdated,
     GuidanceCommitted,
     StatusFinished,
-    StatusUpdated,
     StreamingRenderer,
 )
 
-from voidx.agent.graph.turn_control import (
-    TURN_STOP_PROMPT,
-    INVALID_TURN_PROMPT,
-    NO_USER_RESPONSE_PROMPT,
-    TURN_START_PROMPT,
-    TURN_TOOL_DEFINITION,
-    TurnClassification,
-    classify_turn_call,
-    normalize_terminal_message,
-    validate_turn_call,
+from voidx.agent.graph.turn_control import TURN_TOOL_DEFINITION
+from .context import (
+    rebuild_llm_messages as build_llm_context_messages,
+    replacement_messages as compacted_replacement_messages,
+    rerender_task_context,
+    save_main_context_frame,
 )
-from voidx.workflow.service import reconcile_workflow_runs_for_turn
+from .loop import LlmLoopState, handle_llm_exception
+from .turn import handle_turn_control_response
 from .helpers import (
     _invalidate_tui,
     _merge_workflow_runs,
@@ -76,7 +65,6 @@ from .helpers import (
     _workflow_names,
     _LLM_MAX_RETRIES,
     _LLM_TIMEOUT_MAX_RETRIES,
-    _llm_retry_delay,
 )
 
 if TYPE_CHECKING:
@@ -161,6 +149,9 @@ class GraphLlmMixin:
 
     async def _workflow_context_for(self, *args, **kwargs):
         return await self._instruction.workflow_context_for(*args, **kwargs)
+
+    def _invalidate_tui_for_turn(self) -> None:
+        _invalidate_tui(self)
 
     def _inline_compaction_guide_for(self, messages: list[BaseMessage]) -> HumanMessage | None:
         if not getattr(self.config, "inline_compaction_enabled", False):
@@ -264,12 +255,13 @@ class GraphLlmMixin:
             *,
             allow_inline_compaction: bool,
         ) -> tuple[list[BaseMessage], list[HumanMessage], bool]:
-            base_messages = trim_superseded_file_tools([*messages, *guidance_messages])
-            if allow_inline_compaction and not compaction_happened:
-                inline_compaction_guide = self._inline_compaction_guide_for(base_messages)
-                if inline_compaction_guide is not None:
-                    base_messages.append(inline_compaction_guide)
-            return base_messages, [], False
+            return build_llm_context_messages(
+                messages,
+                guidance_messages,
+                allow_inline_compaction=allow_inline_compaction,
+                compaction_happened=compaction_happened,
+                inline_compaction_guide_for=self._inline_compaction_guide_for,
+            )
 
         async def save_context_frame(
             messages: list[BaseMessage],
@@ -277,48 +269,41 @@ class GraphLlmMixin:
             convergence_messages: list[HumanMessage],
             convergence_forced: bool,
         ) -> None:
-            if self._session is None:
-                return
-            await save_context_frame_from_messages(
-                session_id=self._session.id,
+            await save_main_context_frame(
+                session=self._session,
                 user_message_id=state.get("user_message_id"),
-                frame_kind="main",
-                agent_persona=persona,
+                persona=persona,
                 provider=self.config.model.provider,
                 model=self.config.model.model,
                 messages=messages,
                 token_estimate=token_estimate,
-                metadata={
-                    "step": step,
-                    "tool_count": len(tool_defs),
-                    "convergence_hint_count": len(convergence_messages),
-                    "convergence_forced": convergence_forced,
-                },
+                step=step,
+                tool_count=len(tool_defs),
+                convergence_messages=convergence_messages,
+                convergence_forced=convergence_forced,
+            )
+
+        def replacement_messages(assistant_msg: AIMessage) -> list[BaseMessage]:
+            return compacted_replacement_messages(
+                assistant_msg,
+                compaction_happened=compaction_happened,
+                state_messages=state_messages,
             )
 
         def _rerender_task_context(messages: list[BaseMessage], new_turn_state: str, task_state: TaskState | None = None) -> list[BaseMessage]:
-            builder = getattr(self, "_last_context_builder", None)
-            if builder is None:
-                return messages
-            builder.turn_state = new_turn_state
-            if task_state is not None:
-                builder.task_state = task_state
-                builder.current_goal = task_state.current_goal
-                builder.task_intent = task_state.current_intent
-            context = builder.build()
-            return ContextCompiler(context).compile_messages(messages)
+            return rerender_task_context(
+                getattr(self, "_last_context_builder", None),
+                messages,
+                new_turn_state,
+                task_state,
+            )
 
-        def replacement_messages(assistant_msg: AIMessage) -> list[BaseMessage]:
-            if not compaction_happened:
-                return [assistant_msg]
-            return [
-                RemoveMessage(id=REMOVE_ALL_MESSAGES),
-                *state_messages,
-                assistant_msg,
-            ]
-
-        def initial_context_ends_with_user_message() -> bool:
-            return bool(state_messages and isinstance(state_messages[-1], HumanMessage))
+        def estimate_llm_context_tokens(messages: list[BaseMessage]) -> int:
+            return estimate_context_tokens_with_tools(
+                messages,
+                tool_defs,
+                self.config.model.model,
+            )
 
         async def apply_compaction_result(result: CompactionResult) -> tuple[list[BaseMessage], list[HumanMessage], bool, int]:
             nonlocal compaction_happened, state_messages, runtime_task_state
@@ -339,7 +324,7 @@ class GraphLlmMixin:
                 state_messages,
                 allow_inline_compaction=False,
             )
-            rebuilt_tokens = estimate_context_tokens(rebuilt, self.config.model.model)
+            rebuilt_tokens = estimate_llm_context_tokens(rebuilt)
             self._usage_stats.update_context(rebuilt_tokens)
             return rebuilt, conv_messages, conv_forced, rebuilt_tokens
 
@@ -353,9 +338,11 @@ class GraphLlmMixin:
             self._ui.ui.print()
 
         # ── LLM call with retry ────────────────────────────────────────
-        context_tokens = estimate_context_tokens(llm_messages, self.config.model.model)
-        self._usage_stats.update_context(context_tokens)
-        if self._compaction.is_overflow({"total": context_tokens}):
+        loop = LlmLoopState(
+            context_tokens=estimate_llm_context_tokens(llm_messages),
+        )
+        self._usage_stats.update_context(loop.context_tokens)
+        if self._compaction.is_overflow({"total": loop.context_tokens}):
             result, _preflight_result = await self._preflight_compact_if_needed(
                 state_messages,
                 force=True,
@@ -366,28 +353,16 @@ class GraphLlmMixin:
                 llm_messages, convergence_messages, convergence_forced, context_tokens = (
                     await apply_compaction_result(result)
                 )
+                loop.context_tokens = context_tokens
 
-        await save_context_frame(llm_messages, context_tokens, convergence_messages, convergence_forced)
+        await save_context_frame(llm_messages, loop.context_tokens, convergence_messages, convergence_forced)
         max_retries = _LLM_MAX_RETRIES
-        failed_attempts = 0
-        timeout_retry_attempts = 0
-        overflow_compaction_attempts = 0
-        malformed_tool_call_attempts = 0
-        retry_status_active = False
-        pending_provisional: AIMessage | None = None
-        missing_turn_count = 0
-        invalid_turn_repaired = False
-        turn_prompt_active = False
-        start_prompt_injected = False
-        terminal_msg: AIMessage | None = None
-        terminal_msg_visible = True
-        pending_provisional_visible = True
         while True:
             try:
                 renderer = StreamingRenderer(
                     self._ui.console,
                     debug=self._debug,
-                    headless=turn_prompt_active,
+                    headless=loop.turn_prompt_active,
                 )
                 model_with_tools = self.model.bind_tools(tool_defs) if tool_defs else self.model
                 assistant_msg = await _stream_llm(
@@ -407,15 +382,15 @@ class GraphLlmMixin:
                 )
                 self._usage_stats.record_call(
                     extract_token_usage(assistant_msg),
-                    fallback_input_tokens=context_tokens,
+                    fallback_input_tokens=loop.context_tokens,
                     fallback_output_tokens=estimate_message_tokens(assistant_msg, self.config.model.model),
                     messages=llm_messages,
                     model=self.config.model.model,
                     cache_key=f"{self.config.model.provider}/{self.config.model.model}",
                 )
                 if is_malformed_tool_call_response(assistant_msg):
-                    if malformed_tool_call_attempts < 1:
-                        malformed_tool_call_attempts += 1
+                    if loop.malformed_tool_call_attempts < 1:
+                        loop.malformed_tool_call_attempts += 1
                         llm_messages = [
                             *llm_messages,
                             HumanMessage(
@@ -423,21 +398,22 @@ class GraphLlmMixin:
                                 additional_kwargs={GUIDANCE_MARKER: True},
                             ),
                         ]
-                        context_tokens = estimate_context_tokens(llm_messages, self.config.model.model)
-                        self._usage_stats.update_context(context_tokens)
+                        loop.context_tokens = estimate_llm_context_tokens(llm_messages)
+                        self._usage_stats.update_context(loop.context_tokens)
                         continue
-                    if malformed_tool_call_attempts < 2 and compaction_happened:
+                    if loop.malformed_tool_call_attempts < 2 and compaction_happened:
                         result, _preflight_result = await self._preflight_compact_if_needed(
                             state_messages,
                             force=True,
                             reason="malformed_tool_call",
                             ask=False,
                         )
-                        malformed_tool_call_attempts += 1
+                        loop.malformed_tool_call_attempts += 1
                         if result is not None:
                             llm_messages, convergence_messages, convergence_forced, context_tokens = (
                                 await apply_compaction_result(result)
                             )
+                            loop.context_tokens = context_tokens
                             llm_messages = [
                                 *llm_messages,
                                 HumanMessage(
@@ -445,11 +421,11 @@ class GraphLlmMixin:
                                     additional_kwargs={GUIDANCE_MARKER: True},
                                 ),
                             ]
-                            context_tokens = estimate_context_tokens(llm_messages, self.config.model.model)
-                            self._usage_stats.update_context(context_tokens)
+                            loop.context_tokens = estimate_llm_context_tokens(llm_messages)
+                            self._usage_stats.update_context(loop.context_tokens)
                             await save_context_frame(
                                 llm_messages,
-                                context_tokens,
+                                loop.context_tokens,
                                 convergence_messages,
                                 convergence_forced,
                             )
@@ -464,235 +440,52 @@ class GraphLlmMixin:
                     }
                 if self._debug or not assistant_msg.tool_calls:
                     self._ui.ui.print()
-                if retry_status_active and self._ui.via_events():
+                if loop.retry_status_active and self._ui.via_events():
                     await self._ui.events.emit(StatusFinished(status_id="llm:retry"))
 
                 if turn_control_active:
-                    classification = classify_turn_call(assistant_msg)
-                    has_text = bool(extract_text(assistant_msg).strip())
-                    if (
-                        turn_prompt_active
-                        and has_text
-                        and classification != TurnClassification.PLAIN_TEXT
-                        and not (
-                            classification == TurnClassification.VALID_TURN
-                            and pending_provisional is None
-                        )
-                    ):
-                        classification = TurnClassification.INVALID_TURN
-
-                    if classification == TurnClassification.VALID_START:
-                        start_call = assistant_msg.tool_calls[0]
-                        tool_call_id = str(start_call.get("id") or "")
-                        if turn_state != "initial":
-                            llm_messages = [
-                                *llm_messages,
-                                assistant_msg,
-                                ToolMessage(
-                                    content="Goal already declared.",
-                                    tool_call_id=tool_call_id,
-                                    name="turn",
-                                ),
-                            ]
-                            context_tokens = estimate_context_tokens(llm_messages, self.config.model.model)
-                            self._usage_stats.update_context(context_tokens)
-                            continue
-
-                        start_args = start_call.get("args") or {}
-                        intent_value = str(start_args.get("intent") or "coding")
-                        goal_text = str(start_args.get("goal") or "").strip()
-                        resolution = GoalResolution(
-                            intent=IntentResolution(
-                                type=TaskIntent.GENERAL if intent_value == "general" else TaskIntent.CODING,
-                            ),
-                            goal=GoalSpec(desc=goal_text),
-                            plan=None,
-                        )
-                        runtime_task_state.update_after_turn(
-                            resolution,
-                            latest_user_text(state_messages),
-                        )
-                        reconciled_workflow_runs = reconcile_workflow_runs_for_turn(
-                            goal_resolution=resolution,
-                            after_state=runtime_task_state,
-                        )
-                        runtime_task_state.workflow_runs = {
-                            run.name: run for run in reconciled_workflow_runs
-                        }
-                        self._task_state = runtime_task_state.model_copy(deep=True)
-                        _invalidate_tui(self)
-                        turn_state = "running"
-                        turn_prompt_active = False
-                        llm_messages = _rerender_task_context(llm_messages, "running", runtime_task_state)
-                        llm_messages = [
-                            *llm_messages,
-                            assistant_msg,
-                            ToolMessage(
-                                content=(
-                                    f"Turn started: {goal_label(runtime_task_state.current_goal) or goal_text}. "
-                                    f"Intent: {intent_value}. Continue with the next appropriate tool or workflow step. "
-                                    "When the user-facing response is complete, call turn operation='stop'."
-                                ),
-                                tool_call_id=tool_call_id,
-                                name="turn",
-                            ),
-                        ]
-                        context_tokens = estimate_context_tokens(llm_messages, self.config.model.model)
-                        self._usage_stats.update_context(context_tokens)
+                    turn_result = await handle_turn_control_response(
+                        graph=self,
+                        assistant_msg=assistant_msg,
+                        llm_messages=llm_messages,
+                        loop=loop,
+                        turn_state=turn_state,
+                        runtime_task_state=runtime_task_state,
+                        state_messages=state_messages,
+                        interaction_mode_value=interaction_mode_value,
+                        estimate_tokens=estimate_llm_context_tokens,
+                        rerender_task_context=_rerender_task_context,
+                    )
+                    llm_messages = turn_result.llm_messages
+                    turn_state = turn_result.turn_state
+                    runtime_task_state = turn_result.runtime_task_state
+                    if turn_result.action == "retry":
+                        self._usage_stats.update_context(turn_result.context_tokens)
                         continue
-
-                    if classification == TurnClassification.VALID_TURN:
-                        if pending_provisional is not None:
-                            turn_terminal = pending_provisional
-                            turn_terminal_visible = pending_provisional_visible
-                        else:
-                            turn_terminal = assistant_msg if has_text else pending_provisional
-                            turn_terminal_visible = not turn_prompt_active
-                        if validate_turn_call(assistant_msg, turn_terminal):
-                            self._turn_metrics.increment("turn_control_called")
-                            terminal_msg = normalize_terminal_message(turn_terminal)
-                            terminal_msg_visible = turn_terminal_visible
-                            turn_state = "committed"
-                            break
-                        self._turn_metrics.increment("turn_control_invalid")
-                        if not invalid_turn_repaired:
-                            invalid_turn_repaired = True
-                            turn_prompt_active = True
-                            no_response = turn_terminal is None or not bool(
-                                extract_text(turn_terminal).strip()
-                            )
-                            repair_prompt = (
-                                NO_USER_RESPONSE_PROMPT
-                                if no_response
-                                else INVALID_TURN_PROMPT
-                            )
-                            llm_messages = [
-                                *llm_messages,
-                                HumanMessage(
-                                    content=repair_prompt,
-                                    additional_kwargs={GUIDANCE_MARKER: True},
-                                ),
-                            ]
-                            context_tokens = estimate_context_tokens(
-                                llm_messages,
-                                self.config.model.model,
-                            )
-                            self._usage_stats.update_context(context_tokens)
-                            continue
-                        failure_msg = AIMessage(
-                            content=(
-                                "LLM call failed: model repeatedly returned an invalid "
-                                "turn control call."
-                            )
-                        )
+                    if turn_result.action == "fail":
                         return {
-                            "messages": replacement_messages(failure_msg),
+                            "messages": replacement_messages(turn_result.failure_msg),
                             "step_count": step + 1,
                             "should_continue": False,
                         }
-
-                    if classification == TurnClassification.REGULAR_TOOLS:
-                        if turn_prompt_active:
-                            self._turn_metrics.increment("turn_control_prompt_succeeded")
-                        terminal_msg = assistant_msg
+                    if turn_result.action == "break":
                         break
-
-                    if classification == TurnClassification.INVALID_TURN:
-                        if not invalid_turn_repaired:
-                            self._turn_metrics.increment("turn_control_mixed_tools")
-                            self._turn_metrics.increment("turn_control_invalid")
-                            invalid_turn_repaired = True
-                            turn_prompt_active = True
-                            llm_messages = [
-                                *llm_messages,
-                                HumanMessage(
-                                    content=INVALID_TURN_PROMPT,
-                                    additional_kwargs={GUIDANCE_MARKER: True},
-                                ),
-                            ]
-                            context_tokens = estimate_context_tokens(llm_messages, self.config.model.model)
-                            self._usage_stats.update_context(context_tokens)
-                            continue
-                        failure_msg = AIMessage(
-                            content=(
-                                "LLM call failed: model repeatedly returned an invalid "
-                                "turn control call."
-                            )
-                        )
-                        return {
-                            "messages": replacement_messages(failure_msg),
-                            "step_count": step + 1,
-                            "should_continue": False,
-                        }
-
-                    if classification == TurnClassification.PLAIN_TEXT:
-                        if (
-                            turn_state == "initial"
-                            and missing_turn_count == 0
-                            and not start_prompt_injected
-                            and not turn_prompt_active
-                            and initial_context_ends_with_user_message()
-                        ):
-                            terminal_msg = normalize_terminal_message(assistant_msg)
-                            terminal_msg_visible = not turn_prompt_active
-                            turn_state = "committed"
-                            break
-                        if missing_turn_count == 0:
-                            pending_provisional = assistant_msg
-                            pending_provisional_visible = not turn_prompt_active
-                        if (
-                            turn_state == "initial"
-                            and not start_prompt_injected
-                            and missing_turn_count == 0
-                            and interaction_mode_value not in {"plan", "goal"}
-                        ):
-                            start_prompt_injected = True
-                            turn_prompt_active = True
-                            self._turn_metrics.increment("turn_control_missing")
-                            llm_messages = [
-                                *llm_messages,
-                                assistant_msg,
-                                HumanMessage(
-                                    content=TURN_START_PROMPT,
-                                    additional_kwargs={GUIDANCE_MARKER: True},
-                                ),
-                            ]
-                            context_tokens = estimate_context_tokens(llm_messages, self.config.model.model)
-                            self._usage_stats.update_context(context_tokens)
-                            continue
-                        missing_turn_count += 1
-                        self._turn_metrics.increment("turn_control_missing")
-                        if missing_turn_count == 1:
-                            self._turn_metrics.increment("turn_control_first_prompt")
-                            turn_prompt_active = True
-                            llm_messages = [
-                                *llm_messages,
-                                assistant_msg,
-                                HumanMessage(
-                                    content=TURN_STOP_PROMPT,
-                                    additional_kwargs={GUIDANCE_MARKER: True},
-                                ),
-                            ]
-                            context_tokens = estimate_context_tokens(llm_messages, self.config.model.model)
-                            self._usage_stats.update_context(context_tokens)
-                            continue
-                        self._turn_metrics.increment("turn_control_second_prompt")
-                        terminal_msg = normalize_terminal_message(pending_provisional)
-                        terminal_msg_visible = pending_provisional_visible
-                        break
-
-                    self._turn_metrics.increment("turn_control_prompt_succeeded")
-                    terminal_msg = assistant_msg
-                    break
 
                 break
             except Exception as e:
-                from .helpers import _classify_llm_error, LLMErrorKind, _clean_error_message
+                from .helpers import _classify_llm_error
 
                 kind = _classify_llm_error(e)
 
-                if kind == LLMErrorKind.CONTEXT_OVERFLOW and overflow_compaction_attempts < 1:
-                    overflow_compaction_attempts += 1
+                retry_result = await handle_llm_exception(
+                    ui=self._ui,
+                    loop=loop,
+                    error=e,
+                    kind=kind,
+                    max_retries=max_retries,
+                    timeout_max_retries=_LLM_TIMEOUT_MAX_RETRIES,
+                )
+                if retry_result.action == "overflow":
                     result, _preflight_result = await self._preflight_compact_if_needed(
                         state_messages,
                         force=True,
@@ -703,84 +496,25 @@ class GraphLlmMixin:
                         llm_messages, convergence_messages, convergence_forced, context_tokens = (
                             await apply_compaction_result(result)
                         )
+                        loop.context_tokens = context_tokens
                         await save_context_frame(
                             llm_messages,
-                            context_tokens,
+                            loop.context_tokens,
                             convergence_messages,
                             convergence_forced,
                         )
                         continue
-
-                if kind == LLMErrorKind.NON_RETRYABLE:
-                    failure_text = f"LLM call failed (non-retryable): {_clean_error_message(e)}"
-                    if self._ui.via_events():
-                        await self._ui.events.emit(StatusUpdated(
-                            status_id="llm:retry",
-                            label="Failed",
-                            detail=failure_text,
-                        ))
-                        await self._ui.events.emit(StatusFinished(status_id="llm:retry"))
-                        await self._ui.events.emit(AssistantStreamUpdated(text=failure_text))
-                        await self._ui.events.emit(AssistantStreamCommitted())
-                    else:
-                        self._ui.ui.error(failure_text)
+                if retry_result.action == "retry":
+                    continue
+                if retry_result.action == "fail":
                     return {
                         "messages": [],
                         "step_count": step,
                         "should_continue": False,
                     }
 
-                # Timeout retries are limited separately — waiting through
-                # multiple 600s timeouts is worse than a quick failure.
-                if kind == LLMErrorKind.TIMEOUT:
-                    timeout_retry_attempts += 1
-                    if timeout_retry_attempts > _LLM_TIMEOUT_MAX_RETRIES:
-                        failure_text = f"LLM call failed after {timeout_retry_attempts} timeout(s): {_clean_error_message(e)}"
-                        if retry_status_active and self._ui.via_events():
-                            await self._ui.events.emit(StatusFinished(status_id="llm:retry"))
-                        if self._ui.via_events():
-                            await self._ui.events.emit(AssistantStreamUpdated(text=failure_text))
-                            await self._ui.events.emit(AssistantStreamCommitted())
-                        else:
-                            self._ui.ui.error(failure_text)
-                        return {
-                            "messages": [],
-                            "step_count": step,
-                            "should_continue": False,
-                        }
-
-                if failed_attempts < max_retries:
-                    failed_attempts += 1
-                    delay = _llm_retry_delay(failed_attempts)
-                    delay_str = str(int(delay)) if delay == int(delay) else str(delay)
-                    retry_detail = f"retrying in {delay_str}s: {_clean_error_message(e)}"
-                    if self._ui.via_events():
-                        retry_status_active = True
-                        await self._ui.events.emit(StatusUpdated(
-                            status_id="llm:retry",
-                            label="Retrying",
-                            detail=retry_detail,
-                        ))
-                    else:
-                        self._ui.ui.print(f"[dim]Retrying ({retry_detail})[/dim]")
-                    await asyncio.sleep(delay)
-                else:
-                    failure_text = f"LLM call failed after {max_retries + 1} attempts: {_clean_error_message(e)}"
-                    if retry_status_active and self._ui.via_events():
-                        await self._ui.events.emit(StatusFinished(status_id="llm:retry"))
-                    if self._ui.via_events():
-                        await self._ui.events.emit(AssistantStreamUpdated(text=failure_text))
-                        await self._ui.events.emit(AssistantStreamCommitted())
-                    else:
-                        self._ui.ui.error(failure_text)
-                    return {
-                        "messages": [],
-                        "step_count": step,
-                        "should_continue": False,
-                    }
-
-        final_msg = terminal_msg if terminal_msg is not None else assistant_msg
-        if terminal_msg is not None and not terminal_msg_visible:
+        final_msg = loop.terminal_msg if loop.terminal_msg is not None else assistant_msg
+        if loop.terminal_msg is not None and not loop.terminal_msg_visible:
             final_text = extract_text(final_msg).strip()
             if final_text:
                 if self._ui.via_events():
