@@ -23,8 +23,10 @@ from voidx.ui.output.dock import BottomInputDock
 from voidx.ui.output.events.schema import (
     AssistantStreamUpdated,
     RefreshRequested,
+    TurnCompleted,
     TurnStarted,
 )
+from voidx.ui.protocol import UiSubmitCommand
 from voidx.ui.protocol.v2.envelope import (
     JsonRpcNotification,
     JsonRpcRequest,
@@ -175,6 +177,54 @@ async def test_v2_multi_session_event_routes_to_correct_adapter():
     assert msg["method"] == "turn.started"
     assert msg["params"]["thread_id"] == "t2"
 
+
+
+
+@pytest.mark.asyncio
+async def test_v2_running_thread_events_do_not_fall_back_to_active_thread():
+    dock = BottomInputDock()
+    handled = []
+
+    async def command_handler(command):
+        handled.append(command)
+        await session.switch_thread("t1")
+        await session.broadcast_event(TurnStarted(text=command.text))
+        await session.broadcast_event(AssistantStreamUpdated(text="reply", phase="text"))
+        await session.broadcast_event(TurnCompleted())
+
+    session = GatewaySession(lambda: dock.tree, thread_id="t1", command_handler=command_handler)
+    client = FakeClient()
+    await session.connect(client)
+    await session.register_thread("t2", title="Second thread")
+    await session.switch_thread("t2")
+
+    await session.handle_command(UiSubmitCommand(text="hello", thread_id="t2"))
+
+    messages = [_parse(message) for message in client.messages]
+    routed = [message for message in messages if message.get("method") in {"turn.started", "item.delta", "turn.completed"}]
+    assert [message["params"]["thread_id"] for message in routed] == ["t2", "t2", "t2"]
+    assert session._run_manager.status("t2") == "idle"
+    assert session._run_manager.status("t1") == "idle"
+
+
+
+@pytest.mark.asyncio
+async def test_v2_ambiguous_running_thread_event_does_not_complete_active_thread():
+    dock = BottomInputDock()
+    session = GatewaySession(lambda: dock.tree, thread_id="t1")
+    client = FakeClient()
+    await session.connect(client)
+    await session.register_thread("t2", title="Second thread")
+    session._run_manager.mark_running("t1")
+    session._run_manager.mark_running("t2")
+    await session.switch_thread("t1")
+
+    await session.broadcast_event(TurnCompleted())
+
+    methods = [_method(message) for message in client.messages]
+    assert methods.count("turn.completed") == 0
+    assert session._run_manager.status("t1") == "running"
+    assert session._run_manager.status("t2") == "running"
 
 @pytest.mark.asyncio
 async def test_v2_multi_session_unregister_thread():

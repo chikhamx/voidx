@@ -12,7 +12,6 @@ from voidx.workflow.context import WORKFLOW_CONTEXT_MARKER, WORKFLOW_CONTEXT_SCO
 from voidx.workflow.dag import DEFAULT_WORKFLOW_DAG
 from voidx.workflow.policy import (
     is_workflow_terminal_condition,
-    workflow_denied_tools,
     workflow_edges,
     workflow_exit_summaries,
     workflow_terminal_condition,
@@ -158,10 +157,6 @@ def test_workflow_state_summary_includes_transition_hint():
     )
 
     assert "next=verify" in run.state_summary()
-
-
-def test_workflow_denied_tools_aggregates_all_active_gates():
-    assert workflow_denied_tools(["debug", "tdd"]) >= {"manage", "write", "replace"}
 
 
 def test_feedback_workflow_exposes_design_and_plan_exits():

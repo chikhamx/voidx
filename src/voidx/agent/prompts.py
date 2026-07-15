@@ -208,7 +208,7 @@ BASE_SYSTEM = BaseSystemPrompt(
             rules=[
                 PromptRule(detail="When turn state is initial, call turn operation='start' with intent and goal."),
                 PromptRule(detail="When the user-facing response is complete, call turn operation='stop'."),
-                PromptRule(detail="If an active workflow gate exists, satisfy it before changing workflow or claiming completion."),
+                PromptRule(detail="If an active workflow gate exists, follow its guidance before changing workflow or claiming completion. Gates are advisory — they recommend the right workflow, not hard blocks."),
             ],
         ),
         PromptSection(

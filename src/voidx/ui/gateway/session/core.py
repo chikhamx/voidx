@@ -200,8 +200,17 @@ class GatewaySession(
 
     # ── v2 event broadcasting ─────────────────────────────────────────────
 
+    def _single_active_run_thread_id(self) -> str:
+        active = self._run_manager.active_thread_ids()
+        return active[0] if len(active) == 1 else ""
+
     async def broadcast_event(self, event: UiEvent, *, thread_id: str = "") -> None:
-        tid = thread_id or getattr(event, "thread_id", "") or self._active_thread_id
+        tid = thread_id or getattr(event, "thread_id", "")
+        active_run_thread_id = self._single_active_run_thread_id()
+        if not tid:
+            tid = active_run_thread_id
+        if not tid and not self._run_manager.active_thread_ids():
+            tid = self._active_thread_id
         if not tid and self._thread_id_provider is not None:
             tid = self._thread_id_provider() or ""
         if not tid:

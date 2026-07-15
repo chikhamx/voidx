@@ -115,7 +115,12 @@ class GraphTurnRunner:
     ) -> None:
         host = self.host
         context_session_id = str(getattr(context, "session_id", "") or "")
-        async with bind_thread_execution_context(host, session_id=context_session_id):
+        context_thread_id = str(getattr(context, "thread_id", "") or context_session_id)
+        async with bind_thread_execution_context(
+            host,
+            session_id=context_session_id,
+            thread_id=context_thread_id,
+        ):
             t_turn_start = time.monotonic()
             host._usage_stats.begin_turn()
             self.idle_event.clear()

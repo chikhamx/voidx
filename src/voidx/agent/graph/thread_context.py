@@ -23,6 +23,7 @@ if TYPE_CHECKING:
 class ThreadExecutionState:
     """Mutable graph state that must not bleed across concurrent turns."""
 
+    thread_id: str = ""
     session: SessionInfo | None = None
     session_msg_cache: list[BaseMessage] | None = None
     context_cache: ContextCompilerCache = field(default_factory=ContextCompilerCache)
@@ -151,12 +152,14 @@ async def bind_thread_execution_context(
     host: GraphRunLoopHost,
     *,
     session_id: str = "",
+    thread_id: str = "",
 ) -> AsyncIterator[ThreadExecutionState]:
     """Bind host mutable state to one session for the duration of a turn."""
 
     state = await _state_for_context(host, session_id)
     if session_id:
         await _restore_state_runtime(host, state)
+    state.thread_id = thread_id or session_id
     state.runtime_guards = RuntimeGuardState()
     token = _CURRENT_THREAD_EXECUTION_STATE.set(state)
     try:

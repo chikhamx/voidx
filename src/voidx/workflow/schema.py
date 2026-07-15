@@ -6,8 +6,6 @@ from pydantic import BaseModel, Field, field_validator, model_validator
 
 
 class NodeGate(BaseModel):
-    denied_tools: tuple[str, ...] = Field(default_factory=tuple)
-    allowed_paths: tuple[str, ...] = Field(default_factory=tuple)
     description: str = ""
     required_before_transition: str = ""
 
@@ -160,14 +158,6 @@ class WorkflowDAG(BaseModel):
     def gate_for(self, name: str) -> NodeGate | None:
         node = self.nodes.get(name.strip().lower())
         return node.gate if node else None
-
-    def all_denied_tools(self, active_nodes: list[str]) -> set[str]:
-        denied: set[str] = set()
-        for name in active_nodes:
-            gate = self.gate_for(name)
-            if gate:
-                denied.update(gate.denied_tools)
-        return denied
 
     def is_terminal_condition(self, condition: str) -> bool:
         return condition.strip().lower() == self.terminal_exit.condition

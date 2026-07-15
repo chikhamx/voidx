@@ -48,12 +48,6 @@ def workflow_personas(name: str) -> tuple[str, ...]:
     return (node.persona,) if node else ()
 
 
-def workflow_denied_tools(active_names: list[str]) -> set[str]:
-    if not active_names:
-        return set()
-    return DEFAULT_WORKFLOW_DAG.all_denied_tools(active_names)
-
-
 def workflow_exit_summaries(name: str) -> list[str]:
     summaries = [
         f"{edge.condition} -> {edge.target}"

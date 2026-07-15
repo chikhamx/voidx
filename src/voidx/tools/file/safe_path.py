@@ -257,8 +257,6 @@ class SafePathExecutor:
         return None
 
 
-
-
 def _atomic_temp_path(parent: Path, name: str) -> Path:
     for _ in range(100):
         candidate = parent / f".{name}.tmp-{secrets.token_hex(8)}"

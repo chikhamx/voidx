@@ -14,7 +14,6 @@ from voidx.workflow.context import (
 from voidx.workflow.dag import DEFAULT_WORKFLOW_DAG
 from voidx.workflow.policy import (
     is_workflow_terminal_condition,
-    workflow_denied_tools,
     workflow_edges,
     workflow_exit_summaries,
     workflow_gate,

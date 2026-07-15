@@ -10,6 +10,7 @@ from voidx.tools.base import ToolContext
 from voidx.tools.file.replace import FileReplaceTool
 from voidx.tools.file.replace_resolve import _find_text_segment
 from voidx.tools.registry import ToolRegistry
+import voidx.tools.file.replace as file_replace
 import voidx.tools.file.state as file_state
 
 
@@ -589,3 +590,105 @@ class TestMultiLineDedup:
         assert result.metadata["start_line"] == 1
         assert result.metadata["end_line"] == 6
         assert f.read_text() == "B\nC\nnew\nE\nF\n"
+
+
+class TestReplaceOverlapIntegration:
+    @pytest.mark.asyncio
+    async def test_replace_consumes_decorator_signature_overlap(self, tmp_path):
+        f = tmp_path / "decorator.py"
+        f.write_text("before\nslot\n@pytest.mark.asyncio\nasync def existing():\n    pass\n")
+        ctx = ToolContext(workspace=str(tmp_path))
+        r = ToolRegistry()
+        await r.execute_tool("read", {"file_path": "decorator.py", "offset": 2, "limit": 3}, ctx)
+
+        result = await r.execute_tool(
+            "replace",
+            {
+                "file_path": "decorator.py",
+                "bounds": [{"line_no": 2, "anchor": "slot"}],
+                "new_string": "new_test = True\n\n@pytest.mark.asyncio\nasync def existing():",
+            },
+            ctx,
+        )
+
+        assert result.metadata.get("error") is not True
+        assert result.metadata["overlap"] == {"head": 0, "tail": 2}
+        assert result.metadata["start_line"] == 2
+        assert result.metadata["end_line"] == 4
+        assert f.read_text() == "before\nnew_test = True\n\n@pytest.mark.asyncio\nasync def existing():\n    pass\n"
+
+    @pytest.mark.asyncio
+    async def test_replace_overlap_requires_coverage_for_consumed_tail(self, tmp_path):
+        f = tmp_path / "coverage.py"
+        original = "before\nold\ntail-1\ntail-2\nafter\n"
+        f.write_text(original)
+        ctx = ToolContext(workspace=str(tmp_path))
+        r = ToolRegistry()
+        await r.execute_tool("read", {"file_path": "coverage.py", "offset": 2, "limit": 1}, ctx)
+
+        result = await r.execute_tool(
+            "replace",
+            {
+                "file_path": "coverage.py",
+                "bounds": [{"line_no": 2, "anchor": "old"}],
+                "new_string": "new\ntail-1\ntail-2",
+            },
+            ctx,
+        )
+
+        assert result.metadata.get("error") is True
+        assert "lines 2-4" in result.output
+        assert f.read_text() == original
+
+    @pytest.mark.asyncio
+    async def test_replace_overlap_succeeds_with_effective_range_coverage(self, tmp_path):
+        f = tmp_path / "covered.py"
+        f.write_text("before\nold\ntail-1\ntail-2\nafter\n")
+        ctx = ToolContext(workspace=str(tmp_path))
+        r = ToolRegistry()
+        await r.execute_tool("read", {"file_path": "covered.py", "offset": 2, "limit": 3}, ctx)
+
+        result = await r.execute_tool(
+            "replace",
+            {
+                "file_path": "covered.py",
+                "bounds": [{"line_no": 2, "anchor": "old"}],
+                "new_string": "new\ntail-1\ntail-2",
+            },
+            ctx,
+        )
+
+        assert result.metadata.get("error") is not True
+        assert result.metadata["overlap"] == {"head": 0, "tail": 2}
+        assert f.read_text() == "before\nnew\ntail-1\ntail-2\nafter\n"
+
+    @pytest.mark.asyncio
+    async def test_replace_identical_content_returns_no_changes_without_write(self, tmp_path, monkeypatch):
+        f = tmp_path / "same.txt"
+        f.write_text("head\nold\ntail\n")
+        ctx = ToolContext(workspace=str(tmp_path))
+        r = ToolRegistry()
+        await r.execute_tool("read", {"file_path": "same.txt"}, ctx)
+        writes: list[str] = []
+
+        def record_write(_path, content):
+            writes.append(content)
+            return None
+
+        monkeypatch.setattr(file_replace, "_safe_write_text", record_write)
+
+        result = await r.execute_tool(
+            "replace",
+            {
+                "file_path": "same.txt",
+                "bounds": [{"line_no": 2, "anchor": "old"}],
+                "new_string": "head\nold\ntail",
+            },
+            ctx,
+        )
+
+        assert result.title == "No changes"
+        assert result.metadata["operations"] == 0
+        assert result.metadata["overlap"] == {"head": 1, "tail": 1}
+        assert "Boundary overlap" in result.output
+        assert writes == []

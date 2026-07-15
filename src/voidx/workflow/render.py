@@ -64,10 +64,6 @@ def render_node_markdown(node: WorkflowNode, dag: WorkflowDAG | None = None) -> 
             lines.append(f"Required before transition: {node.gate.required_before_transition}")
         if node.gate.description:
             lines.append(node.gate.description)
-        if node.gate.denied_tools:
-            lines.append(f"Denied tools: {', '.join(node.gate.denied_tools)}")
-        if node.gate.allowed_paths:
-            lines.append(f"Allowed paths: {', '.join(node.gate.allowed_paths)}")
     if node.workflow:
         lines.extend(["", "### Workflow"])
         for step in sorted(node.workflow, key=lambda item: item.order):

@@ -2,10 +2,8 @@
 
 from __future__ import annotations
 
-from fnmatch import fnmatch
 from typing import TYPE_CHECKING
 
-from voidx.agent.graph.workflow_utils import active_workflow_names
 from voidx.permission.service import (
     PermissionContext,
     authorize_tool_call,
@@ -14,7 +12,6 @@ from voidx.permission.service import (
 from voidx.permission.context import PermissionDecision
 from voidx.permission.schema import Action
 from voidx.permission.risk import ApprovalScope, RiskLevel
-from voidx.workflow.service import workflow_gate, workflow_sort_key
 from voidx.workflow.types import WorkflowRunState, WorkflowRunStatus
 from voidx.runtime.intent import PersonaName
 from voidx.runtime.ui import PermissionPromptCleared, PermissionPromptShown, PermissionToolDetail
@@ -39,8 +36,6 @@ class GraphPermissionMixin:
         approved: list[dict] = []
         denied: list[tuple[dict, str]] = []
         need_ask: list[PermissionDecision] = []
-        active_workflows = active_workflow_names(workflow_runs)
-
         context = PermissionContext.from_service(
             self._permission,
             workspace=self._workspace,
@@ -50,18 +45,8 @@ class GraphPermissionMixin:
 
         for tc in tool_calls:
             classified = classify_tool_call(tc)
-            gate_requires_approval = _workflow_gate_requires_approval(classified, active_workflows)
-            gate_allows_without_approval = _workflow_gate_allows_without_approval(classified, active_workflows)
             decision = authorize_tool_call(tc, context)
-            if gate_allows_without_approval and decision.action in {Action.ALLOW, Action.ASK}:
-                approved.append(decision.tool_call)
-                if decision.failure_check:
-                    self._needs_failure_check[decision.tool_call.get("id", "")] = decision.tool_call
-                continue
             if decision.action == Action.ALLOW:
-                if gate_requires_approval:
-                    need_ask.append(decision)
-                    continue
                 approved.append(decision.tool_call)
                 if decision.failure_check:
                     self._needs_failure_check[decision.tool_call.get("id", "")] = decision.tool_call
@@ -233,38 +218,5 @@ def _all_decisions_blocked_ack(decisions: list[PermissionDecision]) -> bool:
 def _scope_values(scopes: tuple[object, ...]) -> set[str]:
     return {scope.value if hasattr(scope, "value") else str(scope) for scope in scopes}
 
-def _workflow_gate_requires_approval(classified, active_workflows: list[str]) -> bool:
-    workflow = _current_workflow_name(active_workflows)
-    if not workflow:
-        return False
-    gate = workflow_gate(workflow)
-    if gate is None or classified.name not in gate.denied_tools:
-        return False
-    if _matches_allowed_path(classified.args.get("file_path", ""), gate.allowed_paths):
-        return False
-    return True
-
-
-def _workflow_gate_allows_without_approval(classified, active_workflows: list[str]) -> bool:
-    workflow = _current_workflow_name(active_workflows)
-    if not workflow:
-        return False
-    gate = workflow_gate(workflow)
-    if gate is None or classified.name not in gate.denied_tools:
-        return False
-    return _matches_allowed_path(classified.args.get("file_path", ""), gate.allowed_paths)
-
-
-def _current_workflow_name(active_workflows: list[str]) -> str:
-    if not active_workflows:
-        return ""
-    return sorted(active_workflows, key=workflow_sort_key)[-1]
-
-
-def _matches_allowed_path(file_path: object, patterns: tuple[str, ...]) -> bool:
-    if not isinstance(file_path, str) or not file_path.strip():
-        return False
-    normalized = file_path.strip().replace("\\", "/")
-    return any(fnmatch(normalized, pattern) for pattern in patterns)
 
 

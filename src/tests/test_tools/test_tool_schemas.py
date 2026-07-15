@@ -148,6 +148,8 @@ class TestToolSchemas:
         assert "insert" in schema["properties"]["op"]["description"]
         assert "append" in schema["properties"]["op"]["description"]
         assert "op=write" in schema["properties"]["new_string"]["description"]
+        assert "up to three non-empty" in schema["properties"]["new_string"]["description"]
+        assert "treated as overlap" in schema["properties"]["new_string"]["description"]
         assert "creates or fully overwrites" in WriteTool.description
 
     def test_file_tool_descriptions_are_precise_for_llms(self):

@@ -27,6 +27,7 @@ from .replace_resolve import (
     _validate_resolved_edits,
     remap_line_range,
 )
+from .overlap import LineOverlap, resolve_overlap
 from .read import _join_display_lines, _split_display_lines, _split_edit_lines
 from .types import DisplayLines, ResolvedEdit
 from .safe_path import SafePathExecutor
@@ -356,16 +357,36 @@ async def _execute_text_replace(
             f"start_no {start_no}→{fallback.remapped_range[0]}, "
             f"end_no {end_no}→{fallback.remapped_range[1]} matched via drift map.]\n"
         )
-    coverage_error = check_read_coverage(ctx, path, start_line, end_line, display_path=file_path)
+    new_lines = _split_edit_lines(new_string)
+    if (
+        start_line == end_line
+        and new_string in ("", "\n", " ")
+        and display.lines[start_line - 1] != ""
+    ):
+        new_lines = []
+
+    before = list(display.lines[:start_line - 1])
+    after = list(display.lines[end_line:])
+    overlap = resolve_overlap(before, new_lines, after)
+    actual_start_line = start_line - overlap.head
+    actual_end_line = end_line + overlap.tail
+
+    coverage_error = check_read_coverage(
+        ctx,
+        path,
+        actual_start_line,
+        actual_end_line,
+        display_path=file_path,
+    )
     if coverage_error:
-        output = f"{coverage_error}\nRetry after reading lines {start_line}-{end_line}."
+        output = f"{coverage_error}\nRetry after reading lines {actual_start_line}-{actual_end_line}."
         _log_replace_failure(
             tool_name=tool_name,
             file_path=file_path,
             reason=output,
             ctx=ctx,
-            start_no=start_line,
-            end_no=end_line,
+            start_no=actual_start_line,
+            end_no=actual_end_line,
             start_anchor=start_anchor,
             end_anchor=end_anchor,
             new_string=new_string,
@@ -381,57 +402,8 @@ async def _execute_text_replace(
         for item in existing_coverage.get("ranges", [])
     ] if existing_coverage.get("fingerprint") == current_fingerprint else []
 
-    lines = list(display.lines)
-    new_lines = _split_edit_lines(new_string)
-    if (
-        start_line == end_line
-        and new_string in ("", "\n", " ")
-        and lines[start_line - 1] != ""
-    ):
-        new_lines = []
-    lines[start_line - 1:end_line] = new_lines
-
-    # Head-line dedup: find the largest N (1..3) such that the first N lines
-    # of new_string match the N lines immediately before the replaced range
-    # (same order).  Consume those N preceding lines.  Empty lines are never
-    # consumed.  Head + tail consumed lines must not exceed len(new_lines).
-    actual_start_line = start_line
-    head_consumed = 0
-    if new_lines:
-        max_head = min(3, len(new_lines))
-        for n in range(max_head, 0, -1):
-            file_start = start_line - 1 - n
-            if file_start < 0:
-                continue
-            if any(new_lines[i] == "" for i in range(n)):
-                continue
-            if lines[file_start:start_line - 1] == new_lines[:n]:
-                head_consumed = n
-                break
-        if head_consumed:
-            del lines[start_line - 1 - head_consumed:start_line - 1]
-            actual_start_line = start_line - head_consumed
-
-    # Tail-line dedup: find the largest N (1..3) such that the last N lines
-    # of new_string match the N lines immediately after the replaced range
-    # (same order).  Consume those N following lines.
-    actual_end_line = end_line
-    if new_lines:
-        max_tail = min(3, len(new_lines) - head_consumed)
-        tail_base = start_line - 1 - head_consumed + len(new_lines)
-        tail_consumed = 0
-        for n in range(max_tail, 0, -1):
-            file_end = tail_base + n
-            if file_end > len(lines):
-                continue
-            if any(new_lines[len(new_lines) - n + i] == "" for i in range(n)):
-                continue
-            if lines[tail_base:file_end] == new_lines[-n:]:
-                tail_consumed = n
-                break
-        if tail_consumed:
-            del lines[tail_base:tail_base + tail_consumed]
-            actual_end_line = end_line + tail_consumed
+    kept_before = before[:-overlap.head] if overlap.head else before
+    lines = [*kept_before, *new_lines, *after[overlap.tail:]]
 
     # Trailing newline: preserve the original file's trailing newline.
     # _split_edit_lines already strips a trailing \n from new_string, so
@@ -439,6 +411,25 @@ async def _execute_text_replace(
     # trailing newline is kept unless the file becomes empty.
     trailing_newline = display.trailing_newline if lines else False
     content = _join_display_lines(lines, trailing_newline=trailing_newline)
+    overlap_metadata = {"head": overlap.head, "tail": overlap.tail}
+    overlap_hint = _format_overlap_hint(overlap)
+
+    if content == original:
+        output = f"No changes: {file_path}"
+        if overlap_hint:
+            output = f"{overlap_hint}\n{output}"
+        return ToolResult(
+            title="No changes",
+            output=output,
+            summary="No changes",
+            metadata={
+                "file": file_path,
+                "operations": 0,
+                "start_line": actual_start_line,
+                "end_line": actual_end_line,
+                "overlap": overlap_metadata,
+            },
+        )
 
     await save_file_version(ctx, path, display_path=file_path, tool_name=tool_name)
     write_error = _safe_write_text(path, content)
@@ -452,6 +443,8 @@ async def _execute_text_replace(
     output = f"File edited: {file_path} (1 operations)"
     if drift_hint:
         output = f"{drift_hint}{output}"
+    if overlap_hint:
+        output = f"{overlap_hint}\n{output}"
     if numbered_diff:
         output = f"{output}\n{numbered_diff}"
     return ToolResult(
@@ -463,6 +456,7 @@ async def _execute_text_replace(
             "operations": 1,
             "start_line": actual_start_line,
             "end_line": actual_end_line,
+            "overlap": overlap_metadata,
         },
         diff=diff,
     )
@@ -478,6 +472,8 @@ async def _apply_resolved_edits(
     display: DisplayLines,
     tool_name: str,
     hints: list[str],
+    overlap: LineOverlap | None = None,
+    coverage_checked: bool = False,
 ) -> ToolResult:
     lines = list(display.lines)
     total_lines = len(lines)
@@ -492,31 +488,32 @@ async def _apply_resolved_edits(
         )
         return ToolResult(output=validation_error, metadata={"error": True})
 
-    for i, edit in enumerate(edits):
-        # (0, 0) is the convention for beginning-of-file insert/prepend —
-        # no prior read is required since there are no existing lines to verify.
-        # Similarly, insert at (total_lines, total_lines) is an append —
-        # no existing lines are modified.
-        if (edit.start_line, edit.end_line) == (0, 0):
-            continue
-        if edit.operation == "insert" and edit.start_line == total_lines and edit.end_line == total_lines:
-            continue
-        coverage_error = check_read_coverage(ctx, path, edit.start_line, edit.end_line, display_path=file_path)
-        if coverage_error:
-            output = (
-                f"Edit {i}: {coverage_error}\n"
-                f"Retry after reading lines {edit.start_line}-{edit.end_line}."
-            )
-            _log_replace_failure(
-                tool_name=tool_name,
-                file_path=file_path,
-                reason=output,
-                ctx=ctx,
-                start_no=edit.start_line,
-                end_no=edit.end_line,
-                lines=display.lines,
-            )
-            return ToolResult(output=output, metadata={"error": True})
+    if not coverage_checked:
+        for i, edit in enumerate(edits):
+            # (0, 0) is the convention for beginning-of-file insert/prepend —
+            # no prior read is required since there are no existing lines to verify.
+            # Similarly, insert at (total_lines, total_lines) is an append —
+            # no existing lines are modified.
+            if (edit.start_line, edit.end_line) == (0, 0):
+                continue
+            if edit.operation == "insert" and edit.start_line == total_lines and edit.end_line == total_lines:
+                continue
+            coverage_error = check_read_coverage(ctx, path, edit.start_line, edit.end_line, display_path=file_path)
+            if coverage_error:
+                output = (
+                    f"Edit {i}: {coverage_error}\n"
+                    f"Retry after reading lines {edit.start_line}-{edit.end_line}."
+                )
+                _log_replace_failure(
+                    tool_name=tool_name,
+                    file_path=file_path,
+                    reason=output,
+                    ctx=ctx,
+                    start_no=edit.start_line,
+                    end_no=edit.end_line,
+                    lines=display.lines,
+                )
+                return ToolResult(output=output, metadata={"error": True})
 
     key = str(path.resolve())
     existing_coverage = ctx.file_read_coverage.get(key, {})
@@ -534,10 +531,34 @@ async def _apply_resolved_edits(
                 lines[0:0] = new_lines
             else:
                 lines[edit.start_line - 1:edit.end_line] = new_lines
+        elif overlap is not None:
+            before = lines[:edit.start_line]
+            after = lines[edit.start_line:]
+            kept_before = before[:-overlap.head] if overlap.head else before
+            lines = [*kept_before, *new_lines, *after[overlap.tail:]]
         else:
             lines[edit.start_line:edit.start_line] = new_lines
 
+    if overlap is not None and lines == display.lines:
+        trailing_newline = display.trailing_newline
+
     content = _join_display_lines(lines, trailing_newline=trailing_newline)
+    overlap_metadata = None if overlap is None else {"head": overlap.head, "tail": overlap.tail}
+    overlap_hint = "" if overlap is None else _format_overlap_hint(overlap)
+
+    if content == original:
+        metadata = {"file": file_path, "operations": 0}
+        if overlap_metadata is not None:
+            metadata["overlap"] = overlap_metadata
+        output = f"No changes: {file_path}"
+        if overlap_hint:
+            output = f"{overlap_hint}\n{output}"
+        return ToolResult(
+            title="No changes",
+            output=output,
+            summary="No changes",
+            metadata=metadata,
+        )
 
     await save_file_version(ctx, path, display_path=file_path, tool_name=tool_name)
     write_error = _safe_write_text(path, content)
@@ -548,24 +569,40 @@ async def _apply_resolved_edits(
     remap_read_coverage_from_file_diff(ctx, path, file_diff, old_ranges=old_ranges)
 
     numbered_diff = render_numbered_diff(file_diff)
-    details = "\n".join([*hints, *_line_shift_hints(edits), numbered_diff])
+    details = "\n".join(
+        part for part in [overlap_hint, *hints, *_line_shift_hints(edits, overlap=overlap), numbered_diff] if part
+    )
     output = f"File edited: {file_path} ({len(edits)} operations)"
     if details:
         output = f"{output}\n{details}"
 
+    metadata = {"file": file_path, "operations": len(edits)}
+    if overlap_metadata is not None:
+        metadata["overlap"] = overlap_metadata
     return ToolResult(
         title=f"Edited ({len(edits)} edits)",
         output=output,
         summary=f"Edited ({len(edits)} operations)",
-        metadata={"file": file_path, "operations": len(edits)},
+        metadata=metadata,
         diff=diff,
     )
 
 
-def _line_shift_hints(edits: list[ResolvedEdit]) -> list[str]:
+def _format_overlap_hint(overlap: LineOverlap) -> str:
+    if overlap.head == 0 and overlap.tail == 0:
+        return ""
+    return (
+        f"[Boundary overlap: consumed {overlap.head} preceding and "
+        f"{overlap.tail} following lines.]"
+    )
+
+
+def _line_shift_hints(edits: list[ResolvedEdit], *, overlap: LineOverlap | None = None) -> list[str]:
     hints: list[str] = []
     for edit in sorted(edits, key=lambda item: item.start_line):
         new_count = len(_split_edit_lines(edit.new_string))
+        if overlap is not None and edit.operation == "insert":
+            new_count -= overlap.head + overlap.tail
         if edit.operation == "replace":
             old_count = 0 if (edit.start_line, edit.end_line) == (0, 0) else edit.end_line - edit.start_line + 1
             offset = new_count - old_count

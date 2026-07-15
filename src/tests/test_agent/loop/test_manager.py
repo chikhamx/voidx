@@ -34,6 +34,23 @@ async def test_fixed_loop_fires_after_interval(tmp_path) -> None:
 
 
 @pytest.mark.asyncio
+async def test_first_fire_is_immediate(tmp_path) -> None:
+    host = FakeHost()
+    idle = asyncio.Event()
+    idle.set()
+    manager = LoopManager(host, idle_event=idle, workspace=str(tmp_path))
+
+    manager.start(PromptSource.from_raw("tick"), 60)
+    for _ in range(20):
+        if host.turns:
+            break
+        await asyncio.sleep(0.005)
+    await manager.cleanup()
+
+    assert host.turns[:1] == ["tick"]
+
+
+@pytest.mark.asyncio
 async def test_stop_cancels_active_loop_before_fire(tmp_path) -> None:
     host = FakeHost()
     idle = asyncio.Event()
@@ -56,12 +73,13 @@ async def test_dynamic_wakeup_interrupts_default_sleep(tmp_path) -> None:
     manager = LoopManager(host, idle_event=idle, workspace=str(tmp_path), default_interval_seconds=10)
 
     manager.start(PromptSource.from_raw("tick"), None)
-    await asyncio.sleep(0)
+    await asyncio.sleep(0.02)
+    assert host.turns == ["tick"]
     manager.schedule_wakeup(0.01)
     await asyncio.sleep(0.04)
     await manager.cleanup()
 
-    assert host.turns == ["tick"]
+    assert host.turns == ["tick", "tick"]
 
 
 

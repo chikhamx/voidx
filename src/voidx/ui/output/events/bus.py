@@ -7,6 +7,8 @@ import inspect
 from dataclasses import dataclass
 from typing import Any
 
+from voidx.agent.graph.thread_context import current_thread_execution_state
+
 from voidx.logging.tool_log import log_tool_event
 from voidx.runtime.ui import UiEventTimeout
 from voidx.ui.output.events.schema import UiEvent
@@ -44,6 +46,15 @@ class UiEventBus:
         self._last_error = None
         return error
 
+    def _with_current_thread_id(self, event: UiEvent) -> UiEvent:
+        if getattr(event, "thread_id", ""):
+            return event
+        state = current_thread_execution_state()
+        thread_id = str(getattr(state, "thread_id", "") or "")
+        if not thread_id:
+            return event
+        return event.model_copy(update={"thread_id": thread_id})
+
     def start(self, consumer: Any) -> None:
         if self.is_running:
             self._consumer = consumer
@@ -56,13 +67,13 @@ class UiEventBus:
     async def emit(self, event: UiEvent) -> bool:
         if not self.is_running or self._queue is None:
             return False
-        await self._queue.put(_QueuedEvent(event))
+        await self._queue.put(_QueuedEvent(self._with_current_thread_id(event)))
         return True
 
     def emit_nowait(self, event: UiEvent) -> bool:
         if not self.is_running or self._queue is None:
             return False
-        self._queue.put_nowait(_QueuedEvent(event))
+        self._queue.put_nowait(_QueuedEvent(self._with_current_thread_id(event)))
         return True
 
     def emit_direct(self, event: UiEvent) -> bool:
@@ -73,6 +84,7 @@ class UiEventBus:
         """
         if not self.is_running or self._consumer is None:
             return False
+        event = self._with_current_thread_id(event)
         if hasattr(self._consumer, "handle_direct"):
             self._consumer.handle_direct(event)
         else:
@@ -85,7 +97,7 @@ class UiEventBus:
         if not self.is_running or self._queue is None:
             raise RuntimeError("UI event bus is not running")
         future: asyncio.Future[Any] = asyncio.get_running_loop().create_future()
-        await self._queue.put(_QueuedEvent(event, future))
+        await self._queue.put(_QueuedEvent(self._with_current_thread_id(event), future))
         for attempt in range(max_retries):
             try:
                 return await asyncio.wait_for(asyncio.shield(future), timeout=timeout)

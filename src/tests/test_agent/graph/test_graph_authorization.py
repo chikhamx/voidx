@@ -242,6 +242,56 @@ async def test_graph_authorization_never_approves_mixed_blocked_batch(tmp_path):
 
 
 @pytest.mark.asyncio
+async def test_full_access_workflow_gate_advisory_allows_without_approval(tmp_path):
+    graph = _graph(tmp_path)
+    graph._permission.set_permission_mode("full_access")
+
+    async def fail_if_asked(_tool_calls):
+        pytest.fail("workflow gate should not prompt for approval under full_access")
+
+    graph._ask_tool_permission = fail_if_asked
+
+    approved, denied = await graph._authorize_tool_calls(
+        [{"name": "write", "args": {"file_path": "app.py", "content": "x"}, "id": "call_1"}],
+        plan_mode=False,
+        session_id="test",
+        workflow_runs=[
+            WorkflowRunState(name="brainstorm", status=WorkflowRunStatus.ACTIVE),
+        ],
+    )
+
+    assert [call["id"] for call in approved] == ["call_1"]
+    assert denied == []
+
+
+@pytest.mark.asyncio
+async def test_safe_mode_workflow_gate_still_prompts(tmp_path):
+    """Under safe mode, workflow gate advisory does not bypass permission approval."""
+    graph = _graph(tmp_path)
+    graph._permission.set_permission_mode("safe")
+    asked: list = []
+
+    async def approve(tool_calls):
+        asked.extend(tool_calls)
+        return "y"
+
+    graph._ask_tool_permission = approve
+
+    approved, denied = await graph._authorize_tool_calls(
+        [{"name": "write", "args": {"file_path": "app.py", "content": "x"}, "id": "call_1"}],
+        plan_mode=False,
+        session_id="test",
+        workflow_runs=[
+            WorkflowRunState(name="brainstorm", status=WorkflowRunStatus.ACTIVE),
+        ],
+    )
+
+    assert [call["id"] for call in approved] == ["call_1"]
+    assert denied == []
+    assert len(asked) > 0
+
+
+@pytest.mark.asyncio
 async def test_graph_authorization_asks_for_write_by_active_workflow_gate(tmp_path):
     graph = _graph(tmp_path)
     asked: list[list[dict]] = []
@@ -269,7 +319,14 @@ async def test_graph_authorization_asks_for_write_by_active_workflow_gate(tmp_pa
 @pytest.mark.asyncio
 async def test_graph_authorization_uses_current_workflow_gate_only(tmp_path):
     graph = _graph(tmp_path)
-    
+    asked: list[list[dict]] = []
+
+    async def approve(tool_calls):
+        asked.append(tool_calls)
+        return "y"
+
+    graph._ask_tool_permission = approve
+
     approved, denied = await graph._authorize_tool_calls(
         [{
             "name": "edit",
@@ -285,12 +342,14 @@ async def test_graph_authorization_uses_current_workflow_gate_only(tmp_path):
         ],
     )
 
+    assert [[call["id"] for call in _asked_tool_calls(batch)] for batch in asked] == [["call_1"]]
     assert [call["id"] for call in approved] == ["call_1"]
     assert denied == []
 
 
 @pytest.mark.asyncio
-async def test_graph_authorization_allows_plan_gate_doc_paths_only(tmp_path):
+async def test_graph_authorization_plan_gate_no_longer_bypasses_doc_paths(tmp_path):
+    """allowed_paths bypass removed: both docs and src edits go through normal permission."""
     graph = _graph(tmp_path)
     asked: list[list[dict]] = []
 
@@ -321,16 +380,23 @@ async def test_graph_authorization_allows_plan_gate_doc_paths_only(tmp_path):
         ],
     )
 
-    assert [call["id"] for call in approved] == ["call_docs"]
-    assert [[call["id"] for call in _asked_tool_calls(batch)] for batch in asked] == [["call_src"]]
-    assert [call["id"] for call, _reason in denied] == ["call_src"]
-    assert denied[0][1] == "User denied: replace"
+    assert approved == []
+    assert [call["id"] for call, _reason in denied] == ["call_docs", "call_src"]
+    assert all(reason == "User denied: replace" for _tc, reason in denied)
 
 
 @pytest.mark.asyncio
-async def test_graph_authorization_allowed_paths_match_nested_docs(tmp_path):
+async def test_graph_authorization_nested_docs_go_through_normal_permission(tmp_path):
+    """allowed_paths bypass removed: nested docs edits go through normal permission."""
     graph = _graph(tmp_path)
-    
+    asked: list[list[dict]] = []
+
+    async def approve(tool_calls):
+        asked.append(tool_calls)
+        return "y"
+
+    graph._ask_tool_permission = approve
+
     approved, denied = await graph._authorize_tool_calls(
         [{
             "name": "edit",
@@ -345,6 +411,7 @@ async def test_graph_authorization_allowed_paths_match_nested_docs(tmp_path):
         ],
     )
 
+    assert [[call["id"] for call in _asked_tool_calls(batch)] for batch in asked] == [["call_nested_docs"]]
     assert [call["id"] for call in approved] == ["call_nested_docs"]
     assert denied == []
 

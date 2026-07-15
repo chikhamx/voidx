@@ -21,7 +21,6 @@ BRAINSTORMING = WorkflowNode(
         },
     ),
     gate=NodeGate(
-        denied_tools=("manage", "write", "replace"),
         description=(
             "Do not write code, invoke implementation workflows, or take implementation "
             "action until the design is presented and approved. This applies regardless "
@@ -110,8 +109,6 @@ WRITING_PLANS = WorkflowNode(
         },
     ),
     gate=NodeGate(
-        denied_tools=("manage", "write", "replace"),
-        allowed_paths=("docs/specs/**", "docs/design/**"),
         description="Do not write implementation code until the plan is approved. File edits are allowed only under docs/specs/ and docs/design/ for plan documents.",
         required_before_transition="plan is executable and approved",
     ),
@@ -313,7 +310,6 @@ SYSTEMATIC_DEBUGGING = WorkflowNode(
         },
     ),
     gate=NodeGate(
-        denied_tools=("manage", "write", "replace"),
         description="Root cause investigation must complete before proposing or applying any fix.",
         required_before_transition="root cause identified with evidence",
     ),

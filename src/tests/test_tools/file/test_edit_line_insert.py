@@ -10,6 +10,7 @@ from voidx.tools.base import ToolContext
 from voidx.tools.file.replace import FileReplaceTool
 from voidx.tools.file.replace_resolve import _find_text_segment
 from voidx.tools.registry import ToolRegistry
+import voidx.tools.file.replace as file_replace
 import voidx.tools.file.state as file_state
 
 
@@ -215,3 +216,183 @@ class TestFileOpsLineInsert:
         assert result.metadata.get("error") is not True
         reread = await r.execute_tool("read", {"file_path": "remap.txt", "offset": 11, "limit": 1}, ctx)
         assert reread.metadata.get("already_read")
+
+
+class TestWriteInsertOverlap:
+    @pytest.mark.asyncio
+    async def test_insert_consumes_decorator_signature_tail_overlap(self, tmp_path):
+        f = tmp_path / "decorator.py"
+        f.write_text("before\n@pytest.mark.asyncio\nasync def existing():\n    pass\n")
+        ctx = ToolContext(workspace=str(tmp_path))
+        r = ToolRegistry()
+        await r.execute_tool("read", {"file_path": "decorator.py", "offset": 2, "limit": 2}, ctx)
+
+        result = await r.execute_tool(
+            "write",
+            {
+                "file_path": "decorator.py",
+                "op": "insert",
+                "lineno": 2,
+                "new_string": "new_test = True\n\n@pytest.mark.asyncio\nasync def existing():",
+            },
+            ctx,
+        )
+
+        assert result.metadata.get("error") is not True
+        assert result.metadata["overlap"] == {"head": 0, "tail": 2}
+        assert "Boundary overlap" in result.output
+        assert f.read_text() == "before\nnew_test = True\n\n@pytest.mark.asyncio\nasync def existing():\n    pass\n"
+
+    @pytest.mark.asyncio
+    async def test_insert_consumes_head_overlap(self, tmp_path):
+        f = tmp_path / "head.txt"
+        f.write_text("keep\nhead-1\nhead-2\nafter\n")
+        ctx = ToolContext(workspace=str(tmp_path))
+        r = ToolRegistry()
+        await r.execute_tool("read", {"file_path": "head.txt"}, ctx)
+
+        result = await r.execute_tool(
+            "write",
+            {
+                "file_path": "head.txt",
+                "op": "insert",
+                "lineno": 4,
+                "new_string": "head-1\nhead-2\nnew",
+            },
+            ctx,
+        )
+
+        assert result.metadata["overlap"] == {"head": 2, "tail": 0}
+        assert f.read_text() == "keep\nhead-1\nhead-2\nnew\nafter\n"
+
+    @pytest.mark.asyncio
+    async def test_insert_consumes_overlap_on_both_sides(self, tmp_path):
+        f = tmp_path / "both.txt"
+        f.write_text("keep\nhead\ntail\nafter\n")
+        ctx = ToolContext(workspace=str(tmp_path))
+        r = ToolRegistry()
+        await r.execute_tool("read", {"file_path": "both.txt"}, ctx)
+
+        result = await r.execute_tool(
+            "write",
+            {
+                "file_path": "both.txt",
+                "op": "insert",
+                "lineno": 3,
+                "new_string": "head\nnew\ntail",
+            },
+            ctx,
+        )
+
+        assert result.metadata["overlap"] == {"head": 1, "tail": 1}
+        assert f.read_text() == "keep\nhead\nnew\ntail\nafter\n"
+
+    @pytest.mark.asyncio
+    async def test_insert_tail_overlap_requires_consumed_line_coverage(self, tmp_path):
+        f = tmp_path / "tail-coverage.txt"
+        original = "before\ntail-1\ntail-2\nafter\n"
+        f.write_text(original)
+        ctx = ToolContext(workspace=str(tmp_path))
+        r = ToolRegistry()
+        await r.execute_tool("read", {"file_path": "tail-coverage.txt", "offset": 2, "limit": 1}, ctx)
+
+        result = await r.execute_tool(
+            "write",
+            {
+                "file_path": "tail-coverage.txt",
+                "op": "insert",
+                "lineno": 2,
+                "new_string": "new\ntail-1\ntail-2",
+            },
+            ctx,
+        )
+
+        assert result.metadata.get("error") is True
+        assert "lines 2-3" in result.output
+        assert f.read_text() == original
+
+    @pytest.mark.asyncio
+    async def test_insert_head_overlap_requires_consumed_line_coverage(self, tmp_path):
+        f = tmp_path / "head-coverage.txt"
+        original = "head-1\nhead-2\ntarget\n"
+        f.write_text(original)
+        ctx = ToolContext(workspace=str(tmp_path))
+        r = ToolRegistry()
+        await r.execute_tool("read", {"file_path": "head-coverage.txt", "offset": 3, "limit": 1}, ctx)
+
+        result = await r.execute_tool(
+            "write",
+            {
+                "file_path": "head-coverage.txt",
+                "op": "insert",
+                "lineno": 3,
+                "new_string": "head-1\nhead-2\nnew",
+            },
+            ctx,
+        )
+
+        assert result.metadata.get("error") is True
+        assert "lines 1-3" in result.output
+        assert f.read_text() == original
+
+    @pytest.mark.asyncio
+    async def test_fully_overlapping_insert_returns_no_changes_without_write(self, tmp_path, monkeypatch):
+        f = tmp_path / "same.txt"
+        f.write_text("same\nafter\n")
+        ctx = ToolContext(workspace=str(tmp_path))
+        r = ToolRegistry()
+        await r.execute_tool("read", {"file_path": "same.txt", "offset": 1, "limit": 1}, ctx)
+        writes: list[str] = []
+
+        def record_write(_path, content):
+            writes.append(content)
+            return None
+
+        monkeypatch.setattr(file_replace, "_safe_write_text", record_write)
+
+        result = await r.execute_tool(
+            "write",
+            {"file_path": "same.txt", "op": "insert", "lineno": 1, "new_string": "same"},
+            ctx,
+        )
+
+        assert result.title == "No changes"
+        assert result.metadata["operations"] == 0
+        assert result.metadata["overlap"] == {"head": 0, "tail": 1}
+        assert "Boundary overlap" in result.output
+        assert writes == []
+
+    @pytest.mark.asyncio
+    async def test_insert_at_eof_with_overlap_omits_append_hint(self, tmp_path):
+        f = tmp_path / "eof.txt"
+        f.write_text("tail\n")
+        ctx = ToolContext(workspace=str(tmp_path))
+        r = ToolRegistry()
+        await r.execute_tool("read", {"file_path": "eof.txt"}, ctx)
+
+        result = await r.execute_tool(
+            "write",
+            {"file_path": "eof.txt", "op": "insert", "lineno": 2, "new_string": "tail"},
+            ctx,
+        )
+
+        assert result.metadata["overlap"] == {"head": 1, "tail": 0}
+        assert result.next_step_hint == ""
+        assert f.read_text() == "tail\n"
+
+    @pytest.mark.asyncio
+    async def test_append_remains_literal_when_content_matches_file_tail(self, tmp_path):
+        f = tmp_path / "append.txt"
+        f.write_text("same\n")
+        ctx = ToolContext(workspace=str(tmp_path))
+        r = ToolRegistry()
+
+        result = await r.execute_tool(
+            "write",
+            {"file_path": "append.txt", "op": "append", "new_string": "same\n"},
+            ctx,
+        )
+
+        assert result.metadata.get("error") is not True
+        assert "overlap" not in result.metadata
+        assert f.read_text() == "same\nsame\n"

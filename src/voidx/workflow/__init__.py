@@ -4,7 +4,6 @@ from __future__ import annotations
 
 from voidx.workflow.dag import DEFAULT_WORKFLOW_DAG
 from voidx.workflow.policy import (
-    workflow_denied_tools,
     workflow_edges,
     workflow_exit_summaries,
     workflow_gate,
@@ -58,7 +57,6 @@ __all__ = [
     "render_dag_overview",
     "render_node_markdown",
     "render_node_summary",
-    "workflow_denied_tools",
     "workflow_edges",
     "workflow_exit_summaries",
     "workflow_gate",

@@ -103,9 +103,12 @@ class LoopManager:
                 self._last_error = f"loop crashed: {exc}"
 
     async def _run_loop(self) -> None:
+        first = True
         while True:
-            delay = self._next_delay()
-            await self._sleep_interruptibly(delay)
+            if not first:
+                delay = self._next_delay()
+                await self._sleep_interruptibly(delay)
+            first = False
             await self._idle_event.wait()
             prompt_source = self._prompt_source
             if prompt_source is None:

@@ -15,7 +15,7 @@ from voidx.ui.protocol import export_protocol_schema
 
 
 def main() -> None:
-    target = REPO_ROOT / "frontend" / "src" / "protocol.schema.json"
+    target = REPO_ROOT / "frontend" / "src" / "rpc" / "protocol.schema.json"
     target.parent.mkdir(parents=True, exist_ok=True)
     target.write_text(
         json.dumps(export_protocol_schema(), indent=2, sort_keys=True) + "\n",

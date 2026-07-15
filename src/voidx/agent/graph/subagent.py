@@ -90,7 +90,7 @@ async def run_subagent(
         model_cfg.model = agent_def.model
 
     # Child agents inherit the full parent tool registry.
-    # Access control is handled by the permission layer and workflow denied_tools.
+    # Access control is handled by the permission layer.
     agent_tools = parent_tools or ToolRegistry()
     blocked_child_tools = _BLOCKED_CHILD_TOOLS
     if not agent_def.can_delegate:
