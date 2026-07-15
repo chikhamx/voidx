@@ -1,0 +1,122 @@
+* { box-sizing: border-box; }
+
+body {
+  margin: 0;
+  font-family: var(--vx-font-sans);
+  background: var(--vx-bg-base);
+  color: var(--vx-text-primary);
+}
+
+/* === Status Indicators === */
+.status-dot {
+  border-radius: 50%;
+  display: inline-block;
+  height: 8px;
+  width: 8px;
+}
+.status-dot.connected { background: var(--vx-success); }
+.status-dot.connecting { background: var(--vx-warning); }
+.status-dot.disconnected { background: var(--vx-error); }
+.status-brand { color: var(--vx-text-primary); font-weight: 700; }
+.status-model { color: var(--vx-accent); }
+.status-workspace { color: var(--vx-text-dim); font-family: var(--vx-font-mono); font-size: 12px; }
+.status-session { color: var(--vx-text-dim); font-size: 12px; margin-left: auto; }
+
+/* === Scrollbar === */
+::-webkit-scrollbar { width: 8px; height: 8px; }
+::-webkit-scrollbar-track { background: var(--vx-bg-base); }
+::-webkit-scrollbar-thumb { background: var(--vx-border-strong); border-radius: var(--vx-radius-sm); }
+::-webkit-scrollbar-thumb:hover { background: var(--vx-text-muted); }
+
+/* === Notice Toast (error/warn popup) === */
+.notice-toast-region {
+  position: fixed;
+  top: var(--vx-space-4);
+  right: var(--vx-space-4);
+  z-index: 1000;
+  display: flex;
+  flex-direction: column;
+  align-items: flex-end;
+  gap: var(--vx-space-2);
+  pointer-events: none;
+}
+.notice-item {
+  max-width: min(520px, calc(100vw - var(--vx-space-8)));
+  display: flex;
+  align-items: center;
+  gap: var(--vx-space-2);
+  padding: var(--vx-space-2) var(--vx-space-3);
+  border-radius: var(--vx-radius-md);
+  background: var(--vx-bg-elevated);
+  border: 1px solid var(--vx-border);
+  box-shadow: var(--vx-shadow-lg);
+  pointer-events: auto;
+  opacity: 1;
+  transform: translateY(0);
+  transition: opacity 0.2s ease, transform 0.2s ease;
+}
+.notice-item.notice-toast-exiting {
+  opacity: 0;
+  transform: translateY(-6px);
+}
+.notice-error { color: var(--vx-error); }
+.notice-warning { color: var(--vx-warning); }
+.notice-icon { font-weight: 700; }
+.notice-text { font-size: var(--vx-text-sm); }
+
+/* === Markdown Render === */
+.markdown-body { line-height: 1.6; }
+.markdown-body p { margin: 0 0 var(--vx-space-2); }
+.markdown-body p:last-child { margin-bottom: 0; }
+.markdown-body h1, .markdown-body h2, .markdown-body h3 {
+  font-weight: 700;
+  margin: var(--vx-space-3) 0 var(--vx-space-2);
+}
+.markdown-body h1 { font-size: 1.3em; }
+.markdown-body h2 { font-size: 1.15em; }
+.markdown-body h3 { font-size: 1.05em; }
+.markdown-body ul, .markdown-body ol { margin: 0 0 var(--vx-space-2); padding-left: var(--vx-space-4); }
+.markdown-body li { margin: var(--vx-space-1) 0; }
+.markdown-body code {
+  background: var(--vx-bg-surface);
+  border-radius: var(--vx-radius-sm);
+  font-family: var(--vx-font-mono);
+  font-size: 0.9em;
+  padding: 1px var(--vx-space-1);
+}
+.markdown-body pre {
+  background: var(--vx-bg-surface);
+  border: 1px solid var(--vx-border);
+  border-radius: var(--vx-radius-md);
+  margin: var(--vx-space-2) 0;
+  overflow: auto;
+  padding: var(--vx-space-2) var(--vx-space-3);
+}
+.markdown-body pre code {
+  background: none;
+  border: 0;
+  padding: 0;
+}
+.markdown-body blockquote {
+  border-left: 3px solid var(--vx-border-strong);
+  color: var(--vx-text-muted);
+  margin: var(--vx-space-2) 0;
+  padding-left: var(--vx-space-3);
+}
+.markdown-body a { color: var(--vx-accent); text-decoration: none; }
+.markdown-body a:hover { text-decoration: underline; }
+.markdown-body table { border-collapse: collapse; margin: var(--vx-space-2) 0; }
+.markdown-body th, .markdown-body td { border: 1px solid var(--vx-border); padding: var(--vx-space-1) var(--vx-space-2); }
+.markdown-body th { background: var(--vx-bg-surface); font-weight: 600; }
+
+/* highlight.js theme overrides */
+.hljs { background: none; color: #c0caf5; }
+.hljs-keyword { color: #bb9af7; }
+.hljs-string { color: #9ece6a; }
+.hljs-comment { color: #565f89; font-style: italic; }
+.hljs-number { color: #ff9e64; }
+.hljs-title { color: #7aa2f7; }
+.hljs-built_in { color: #2ac3de; }
+.hljs-attr { color: #bb9af7; }
+.hljs-meta { color: #e0af68; }
+.hljs-tag { color: #f7768e; }

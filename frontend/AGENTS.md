@@ -2,20 +2,37 @@
 
 ## Module Map
 - `main.ts`: Entry point — boots the app, wires RPC to UI.
-- `rpc.ts` + `rpc-worker.ts`: WebSocket transport (main-thread API + Web Worker).
-- `protocol.d.ts` + `protocol.schema.json`: UI protocol types (`.d.ts` is generated — see Schema Sync).
-- `render.ts`: Transcript rendering — maps protocol payloads to DOM.
-- `stream.ts`: Streaming text accumulation with debounce.
-- `markdown.ts`: Markdown → sanitized HTML with code highlighting.
-- `slash.ts`: Slash command catalog and autocomplete.
-- `dock.ts`: Bottom dock panel — tabs, todo.
-- `sidebar.ts`: Session list, search, new-chat.
-- `settings.ts`: Settings panel — profiles, permissions.
-- `terminal.ts`: Embedded terminal bridge.
-- `integrations.ts`: MCP/LSP integration management.
-- `context-menu.ts`: Right-click context menu.
-- `diff-review.ts`: Diff viewer for file change review.
-- `types.ts`: Shared frontend-only types.
+- `rpc/`: WebSocket transport module.
+  - `client.ts`: Main-thread client API for sending and receiving RPC messages.
+  - `worker.ts`: Web Worker managing WebSocket connection logic.
+  - `protocol.d.ts` + `protocol.schema.json`: UI protocol types (`.d.ts` is generated — see Schema Sync).
+  - `index.ts`: Public export gateway.
+- `services/`: Core services and application state.
+  - `state.ts`: UI state management, status bar updater, and DOM element caches.
+  - `connection.ts`: Socket connection/reconnection and workspace picker lifecycle.
+  - `index.ts`: Public export gateway.
+- `ui/`: User interface components and panel controllers.
+  - `sidebar.ts`: Session threads list, workspace categories, search, rename, and new chats.
+  - `dock.ts`: Tabs manager for Todo/Terminal panels.
+  - `dialog.ts`: Permission/Tool execution approval popup dialogs.
+  - `workspace.ts`: Project switcher drawer and sidebar resize handles.
+  - `model.ts`: Custom model dropdown picker and permission toggles.
+  - `settings.ts` / `integrations.ts` / `context-menu.ts` / `diff-review.ts` / `terminal.ts` / `slash.ts`: Specilized UI overlays.
+  - `index.ts`: Public export gateway.
+- `utils/`: Parsing, streaming, and rendering helpers.
+  - `render.ts`: Localized English text generators and tool group renderers.
+  - `stream.ts`: Debounced thinking stream and assistant text block collectors.
+  - `markdown.ts`: Syntax highlight sanitizer.
+  - `types.ts`: Sibling shared Typescript definitions.
+  - `index.ts`: Public export gateway.
+- `css/`: Modular components styling.
+  - `styles.css`: CSS Entry point importing all sub-stylesheets.
+  - `tokens.css`: Visual tokens (colors, variables, and themes).
+  - `base.css`: Standard resets, notice toasts, status dots, and markdown typography.
+  - `layout.css`: Shell layouts, sidebar resizer, and responsive breakpoints.
+  - `chat.css`: Messages, bubble themes, tool logs, brain thoughts, and headers.
+  - `composer.css`: Composer inputs, model selects, and permission selectors.
+  - `components.css`: Todo lists, terminals, diff reviewers, context menus, and status grids.
 
 ## Schema Sync
 `src/protocol.d.ts` is generated from `src/protocol.schema.json`. The schema

@@ -1,0 +1,1194 @@
+import { renderMarkdown, renderUserMessage, highlightCode } from './markdown';
+import { takeCommittedStreams, clearActiveStreams, appendStreamText, commitStream, getTranscriptElement } from './stream';
+import type { TranscriptNode, Payload } from '../rpc/protocol';
+
+/* ── Local type aliases ── */
+
+/** Concrete payload fields accessed by render.ts */
+interface NodePayload {
+  tool_name?: string;
+  diff_text?: string;
+  args?: string | Record<string, unknown>;
+  raw_args?: { command?: string };
+  name?: string;
+  description?: string;
+  style?: string;
+  raw_text?: string;
+  title?: string;
+  [k: string]: unknown;
+}
+
+interface MessageItemData {
+  style?: string;
+  text?: string;
+}
+
+interface ToolItemData {
+  tool_call_id?: string | null;
+  tool_name?: string;
+  label?: string;
+  args?: string | Record<string, unknown>;
+  raw_args?: { command?: string };
+  diff_text?: string;
+  detail?: string;
+  ok?: boolean;
+  elapsed?: number | null;
+}
+
+interface ThoughtItemData {
+  text?: string;
+  meta?: string | null;
+  elapsed?: number | null;
+}
+
+interface NoticeItemData {
+  style?: string;
+  text?: string;
+}
+
+interface DiffItemData {
+  text?: string;
+  title?: string;
+}
+
+interface StatusItemData {
+  status_id?: string;
+  label?: string;
+  detail?: string;
+  ok?: boolean;
+}
+
+interface TodoItem {
+  status: string;
+  content: string;
+}
+
+export interface TranscriptSnapshot {
+  nodes: TranscriptNode[];
+}
+
+type ByIdMap = Map<string, TranscriptNode>;
+
+const RICH_TAG = /\[(\/)?(?:bold|dim|italic|underline|strike|red|green|yellow|blue|magenta|cyan|white|black|#[0-9A-Fa-f]{6})\]/g;
+const TOOL_GROUP_PREVIEW_LIMIT = 3;
+
+export function stripRichMarkup(text: unknown): string {
+  return String(text || "").replace(RICH_TAG, "");
+}
+
+export function nodeClassName(node: TranscriptNode): string {
+  const classes = ["node", `node-${node.node_type || "message"}`];
+  if (node.status === "error") {
+    classes.push("node-error");
+  }
+  if (node.status === "running") {
+    classes.push("node-running");
+  }
+  if (node.collapsed) {
+    classes.push("node-collapsed");
+  }
+  return classes.join(" ");
+}
+
+export function renderNodeElement(node: TranscriptNode, byId: ByIdMap): HTMLElement | null {
+  const type = node.node_type;
+
+  if (type === "root" || type === "startup" || type === "turn") {
+    return null;
+  }
+
+  if (type === "todo") {
+    return null;
+  }
+
+  const item = document.createElement("article");
+  item.className = nodeClassName(node);
+  item.dataset.nodeId = node.id;
+  item.style.marginLeft = `${depthFor(node, byId) * 18}px`;
+
+  const title = document.createElement("div");
+  title.className = "node-title";
+  title.textContent = stripRichMarkup(node.title || node.header || type);
+  item.append(title);
+
+  if (type === "subagent") {
+    item.append(renderSubagentCard(node));
+  }
+
+  if (node.meta && (type === "thought" || type === "subagent")) {
+    const meta = document.createElement("div");
+    meta.className = "node-meta";
+    meta.textContent = stripRichMarkup(node.meta);
+    item.append(meta);
+  }
+
+  if (node.payload?.tool_name) {
+    const tool = document.createElement("div");
+    tool.className = "node-tool-meta";
+    tool.textContent = formatToolMeta(node.payload);
+    item.append(tool);
+  }
+
+  if (node.payload?.diff_text || type === "diff") {
+    const diffText = String(node.payload?.diff_text || node.body_lines?.join("\n") || "");
+    item.append(renderDiffBlock(diffText));
+  } else if (type === "assistant") {
+    const text = (node.body_lines ?? []).map(stripRichMarkup).join("\n");
+    item.append(renderMarkdown(text));
+  } else if (node.body_lines?.length) {
+    item.append(renderBodyLines(node));
+  }
+
+  if (type === "tool_call" || type === "tool_result" || type === "thought" || type === "status") {
+    title.addEventListener("click", () => {
+      item.classList.toggle("node-collapsed");
+    });
+  } else {
+    title.style.cursor = "default";
+  }
+
+  return item;
+}
+
+function renderBodyLines(node: TranscriptNode): HTMLDivElement {
+  const body = document.createElement("div");
+  body.className = "node-body";
+  const text = (node.body_lines ?? []).map(stripRichMarkup).join("\n");
+  if (node.node_type === "tool_call" || node.node_type === "tool_result") {
+    const pre = document.createElement("pre");
+    pre.className = "node-code";
+    pre.innerHTML = highlightCode(text, "json");
+    body.append(pre);
+  } else {
+    body.textContent = text;
+  }
+  return body;
+}
+
+export function renderDiffBlock(diffText: string): HTMLPreElement {
+  const block = document.createElement("pre");
+  block.className = "diff-content";
+  for (const line of String(diffText).split("\n")) {
+    const row = document.createElement("div");
+    row.className = diffLineClass(line);
+    row.textContent = line;
+    block.append(row);
+  }
+  return block;
+}
+
+export function diffLineClass(line: string): string {
+  if (line.startsWith("+++") || line.startsWith("---")) {
+    return "diff-meta";
+  }
+  if (line.startsWith("@@")) {
+    return "diff-hunk";
+  }
+  if (line.startsWith("+")) {
+    return "diff-add";
+  }
+  if (line.startsWith("-")) {
+    return "diff-del";
+  }
+  return "diff-context";
+}
+
+function renderSubagentCard(node: TranscriptNode): HTMLDivElement {
+  const card = document.createElement("div");
+  card.className = "subagent-card";
+  const header = document.createElement("div");
+  header.className = "subagent-header";
+  const name = document.createElement("span");
+  name.className = "subagent-name";
+  name.textContent = String(node.payload?.name || node.agent_name || "subagent");
+  header.append(name);
+  if (node.elapsed != null) {
+    const elapsed = document.createElement("span");
+    elapsed.className = "subagent-elapsed";
+    elapsed.textContent = formatElapsed(node.elapsed);
+    header.append(elapsed);
+  }
+  card.append(header);
+  if (node.payload?.description) {
+    const desc = document.createElement("div");
+    desc.className = "subagent-steps";
+    desc.textContent = String(node.payload.description);
+    card.append(desc);
+  }
+  return card;
+}
+
+export function formatToolMeta(payload: Payload): string {
+  const name = payload.tool_name || "tool";
+  const args = payload.args ? ` ${payload.args}` : "";
+  return `${name}${args}`.trim();
+}
+
+export function formatElapsed(seconds: number | null | undefined): string {
+  if (seconds == null || Number.isNaN(seconds)) {
+    return "";
+  }
+  if (seconds < 1) {
+    return `${Math.round(seconds * 1000)}ms`;
+  }
+  return `${seconds.toFixed(1)}s`;
+}
+
+
+/* ── Item-path rendering functions (shared by snapshot recovery and live streaming) ── */
+
+export function formatSwitchNotification(text: string): string | null {
+  const clean = text.replace(/\x1B\[[0-9;]*[a-zA-Z]/g, "").trim();
+  if (clean.includes("switched")) {
+    const lines = clean.split("\n").map(l => l.trim()).filter(Boolean);
+    let modelName = "";
+    let isLocal = clean.toLowerCase().includes("local");
+
+    for (const line of lines) {
+      if (line.includes("switched")) {
+        const match = line.match(/\(([^)]+)\)\s*✔\s*switched/);
+        if (match && match[1]) {
+          modelName = match[1];
+          break;
+        }
+      }
+    }
+
+    if (!modelName && lines.length > 0) {
+      for (const line of lines) {
+        if (line.includes("switched")) {
+          modelName = line.replace(/[\(\)]/g, "").replace("✔", "").replace("switched", "").trim();
+          break;
+        }
+      }
+    }
+
+    if (!modelName && lines.length > 0) {
+      modelName = lines[0].replace(/[\(\)]/g, "").replace("✔ switched", "").trim();
+    }
+
+    if (modelName) {
+      return `✔ Switched model to ${modelName}${isLocal ? " (local)" : ""}`;
+    }
+  }
+  return null;
+}
+
+function parseTurnStats(text: string): { duration: string; calls: string; input: string; output: string } | null {
+  const clean = text.replace(/\[\/?(dim|cyan)\]/g, "");
+  const match = clean.match(/✻\s*([\w.]+s)\s*·\s*(\d+)\s*calls\s*·\s*([\w.]+)\s*in\s*([\w.]+)\s*out/);
+  if (match) {
+    return {
+      duration: match[1],
+      calls: match[2],
+      input: match[3],
+      output: match[4]
+    };
+  }
+  return null;
+}
+
+function renderTurnStats(duration: string, calls: string, input: string, output: string): HTMLElement {
+  const el = document.createElement("div");
+  el.className = "vx-turn-stats";
+  
+  const durItem = document.createElement("span");
+  durItem.className = "vx-stat-item vx-stat-duration";
+  durItem.title = "Duration";
+  durItem.innerHTML = `
+    <svg xmlns="http://www.w3.org/2000/svg" width="12" height="12" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.5" stroke-linecap="round" stroke-linejoin="round" class="vx-stat-icon"><circle cx="12" cy="12" r="10"></circle><polyline points="12 6 12 12 16 14"></polyline></svg>
+    <span>${duration}</span>
+  `;
+  
+  const callsItem = document.createElement("span");
+  callsItem.className = "vx-stat-item vx-stat-calls";
+  callsItem.title = "Tool Calls";
+  callsItem.innerHTML = `
+    <svg xmlns="http://www.w3.org/2000/svg" width="12" height="12" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.5" stroke-linecap="round" stroke-linejoin="round" class="vx-stat-icon"><rect x="3" y="3" width="18" height="18" rx="2" ry="2"></rect><polyline points="8 9 11 12 8 15"></polyline><line x1="13" y1="15" x2="16" y2="15"></line></svg>
+    <span>${calls} calls</span>
+  `;
+  
+  const tokensItem = document.createElement("span");
+  tokensItem.className = "vx-stat-item vx-stat-tokens";
+  tokensItem.title = "Tokens (Input / Output)";
+  tokensItem.innerHTML = `
+    <svg xmlns="http://www.w3.org/2000/svg" width="12" height="12" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.5" stroke-linecap="round" stroke-linejoin="round" class="vx-stat-icon"><rect x="4" y="4" width="16" height="16" rx="2" ry="2"></rect><rect x="9" y="9" width="6" height="6"></rect><line x1="9" y1="1" x2="9" y2="4"></line><line x1="15" y1="1" x2="15" y2="4"></line><line x1="9" y1="20" x2="9" y2="23"></line><line x1="15" y1="20" x2="15" y2="23"></line><line x1="20" y1="9" x2="23" y2="9"></line><line x1="20" y1="15" x2="23" y2="15"></line><line x1="1" y1="9" x2="4" y2="9"></line><line x1="1" y1="15" x2="4" y2="15"></line></svg>
+    <span>${input} in</span>
+    <span class="vx-stat-arrow">→</span>
+    <span>${output} out</span>
+  `;
+  
+  const divider1 = document.createElement("span");
+  divider1.className = "vx-stat-divider";
+  divider1.textContent = "·";
+
+  const divider2 = document.createElement("span");
+  divider2.className = "vx-stat-divider";
+  divider2.textContent = "·";
+
+  el.append(durItem, divider1, callsItem, divider2, tokensItem);
+  return el;
+}
+
+export function appendMessageItem(itemId: string, data: MessageItemData): void {
+  const text = data.text || "";
+  const stats = parseTurnStats(text);
+  if (stats) {
+    const el = document.createElement("div");
+    el.className = "message-item message-stats";
+    el.dataset.itemId = itemId;
+    el.append(renderTurnStats(stats.duration, stats.calls, stats.input, stats.output));
+    
+    const transcriptEl = getTranscriptElement();
+    if (transcriptEl) {
+      transcriptEl.append(el);
+      transcriptEl.scrollTop = transcriptEl.scrollHeight;
+    }
+    return;
+  }
+
+  const switchNotify = formatSwitchNotification(text);
+
+  if (switchNotify) {
+    return;
+  }
+
+  const cleanText = text.trim();
+  if (
+    cleanText.includes("MCP connecting:") ||
+    cleanText.includes("LSP setup failed:") ||
+    cleanText.includes("LSP startup:") ||
+    cleanText.includes("LSP warmup:") ||
+    (cleanText.includes("→") && (cleanText.includes("warming...") || cleanText.includes("ready") || cleanText.includes("failed")))
+  ) {
+    return;
+  }
+
+  const el = document.createElement("div");
+  const style = data.style || "text";
+  el.className = `message-item message-${style}`;
+  el.dataset.itemId = itemId;
+  if (style === "markdown" || style === "guidance") {
+    el.append(renderMarkdown(text));
+  } else if (style === "text") {
+    el.append(renderUserMessage(text));
+  } else if (style === "ansi") {
+    el.append(renderMarkdown(text));
+  } else {
+    const pre = document.createElement("pre");
+    pre.textContent = text;
+    el.append(pre);
+  }
+  const transcriptEl = getTranscriptElement();
+  if (transcriptEl) {
+    transcriptEl.append(el);
+    transcriptEl.scrollTop = transcriptEl.scrollHeight;
+  }
+}
+
+interface ToolInfo {
+  tool_name: string;
+}
+
+const SVG_ICONS = {
+  read: `<svg xmlns="http://www.w3.org/2000/svg" width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" class="vx-icon"><path d="M2 3h6a4 4 0 0 1 4 4v14a3 3 0 0 0-3-3H2z"></path><path d="M22 3h-6a4 4 0 0 0-4 4v14a3 3 0 0 1 3-3h7z"></path></svg>`,
+  write: `<svg xmlns="http://www.w3.org/2000/svg" width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" class="vx-icon"><path d="M12 20h9"></path><path d="M16.5 3.5a2.12 2.12 0 0 1 3 3L7 19l-4 1 1-4Z"></path></svg>`,
+  command: `<svg xmlns="http://www.w3.org/2000/svg" width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" class="vx-icon"><rect x="3" y="3" width="18" height="18" rx="2" ry="2"></rect><polyline points="8 9 11 12 8 15"></polyline><line x1="13" y1="15" x2="16" y2="15"></line></svg>`,
+  search: `<svg xmlns="http://www.w3.org/2000/svg" width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" class="vx-icon"><circle cx="11" cy="11" r="8"></circle><line x1="21" y1="21" x2="16.65" y2="16.65"></line></svg>`,
+  folder: `<svg xmlns="http://www.w3.org/2000/svg" width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" class="vx-icon"><path d="M4 20h16a2 2 0 0 0 2-2V8a2 2 0 0 0-2-2h-7.93a2 2 0 0 1-1.66-.9l-.82-1.2A2 2 0 0 0 7.93 3H4a2 2 0 0 0-2 2v13a2 2 0 0 0 2 2z"></path></svg>`,
+  tool: `<svg xmlns="http://www.w3.org/2000/svg" width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" class="vx-icon"><path d="M14.7 6.3a1 1 0 0 0 0 1.4l1.6 1.6a1 1 0 0 0 1.4 0l3.77-3.77a6 6 0 0 1-7.94 7.94l-6.91 6.91a2.12 2.12 0 0 1-3-3l6.91-6.91a6 6 0 0 1 7.94-7.94l-3.76 3.76z"></path></svg>`
+};
+
+function getToolGroupSummary(tools: ToolInfo[]): { icon: string; text: string } {
+  if (tools.length === 0) {
+    return { icon: SVG_ICONS.tool, text: "tool" };
+  }
+
+  let isAllRead = true;
+  let isAllWrite = true;
+  let isAllCommand = true;
+
+  for (const tool of tools) {
+    const name = (tool.tool_name || "").toLowerCase();
+    const isRead = name.includes("read") || name.includes("view") || name.includes("grep") || name.includes("list") || name.includes("locate");
+    const isWrite = name.includes("write") || name.includes("replace") || name.includes("edit");
+    const isCommand = name.includes("command") || name.includes("run") || name.includes("bash") || name.includes("cmd") || name.includes("terminal");
+
+    if (!isRead) isAllRead = false;
+    if (!isWrite) isAllWrite = false;
+    if (!isCommand) isAllCommand = false;
+  }
+
+  if (isAllRead) {
+    return {
+      icon: SVG_ICONS.read,
+      text: tools.length > 1 ? "read files" : "read file",
+    };
+  }
+
+  if (isAllWrite) {
+    return {
+      icon: SVG_ICONS.write,
+      text: tools.length > 1 ? "write files" : "write file",
+    };
+  }
+
+  if (isAllCommand) {
+    return {
+      icon: SVG_ICONS.command,
+      text: tools.length > 1 ? "run commands" : "run command",
+    };
+  }
+
+  return {
+    icon: SVG_ICONS.tool,
+    text: tools.length > 1 ? "run tools" : "run tool",
+  };
+}
+
+function getToolItemHeaderInfo(data: ToolItemData): { icon: string; text: string } {
+  const toolName = (data.tool_name || "").toLowerCase();
+  const args: Record<string, any> = typeof data.args === "object" && data.args !== null ? data.args : {};
+  const rawArgs: Record<string, any> = typeof data.raw_args === "object" && data.raw_args !== null ? data.raw_args : {};
+  const path = String(args.path || args.file_path || args.TargetFile || args.target_file || args.AbsolutePath || args.absolute_path || args.DirectoryPath || args.directory_path || args.SearchPath || args.search_path || "");
+  const filename = path ? path.substring(path.lastIndexOf("/") + 1) : "";
+
+  if (toolName.includes("read") || toolName.includes("view")) {
+    return {
+      icon: SVG_ICONS.read,
+      text: filename ? `read ${filename}` : "read file",
+    };
+  }
+
+  if (toolName.includes("grep")) {
+    const query = String(args.query || args.Query || args.pattern || "");
+    const searchPath = String(args.search_path || args.SearchPath || "");
+    const dirname = searchPath ? searchPath.substring(searchPath.lastIndexOf("/") + 1) : "";
+    const queryTruncated = query.length > 20 ? query.slice(0, 20) + "..." : query;
+    const location = dirname ? ` in ${dirname}` : "";
+    return {
+      icon: SVG_ICONS.search,
+      text: query ? `search "${queryTruncated}"${location}` : "search",
+    };
+  }
+
+  if (toolName.includes("list_dir") || toolName.includes("list")) {
+    return {
+      icon: SVG_ICONS.folder,
+      text: filename ? `list ${filename}` : "list directory",
+    };
+  }
+
+  if (toolName.includes("write")) {
+    return {
+      icon: SVG_ICONS.write,
+      text: filename ? `write ${filename}` : "write file",
+    };
+  }
+
+  if (toolName.includes("replace") || toolName.includes("edit")) {
+    return {
+      icon: SVG_ICONS.write,
+      text: filename ? `edit ${filename}` : "edit file",
+    };
+  }
+
+  if (toolName.includes("command") || toolName.includes("run") || toolName.includes("bash") || toolName.includes("cmd") || toolName.includes("terminal")) {
+    const cmd = String(args.command || args.CommandLine || args.command_line || rawArgs.command || "");
+    const cmdTruncated = cmd.length > 30 ? cmd.slice(0, 30) + "..." : cmd;
+    return {
+      icon: SVG_ICONS.command,
+      text: cmd ? `run "${cmdTruncated}"` : "run command",
+    };
+  }
+
+  return {
+    icon: SVG_ICONS.tool,
+    text: data.tool_name || data.label || "tool",
+  };
+}
+
+function createToolGroup(): HTMLElement {
+  const group = document.createElement("div");
+  group.className = "tool-group";
+  group.dataset.visibleCount = String(TOOL_GROUP_PREVIEW_LIMIT);
+
+  const header = document.createElement("div");
+  header.className = "tool-group-header";
+
+  const name = document.createElement("span");
+  name.className = "tool-group-name";
+  name.textContent = "tool";
+
+  const chevron = document.createElement("span");
+  chevron.className = "tool-group-chevron";
+  chevron.textContent = " \u203a";
+
+  const args = document.createElement("span");
+  args.className = "tool-group-args";
+
+  header.addEventListener("click", () => {
+    const body = group.querySelector<HTMLElement>(".tool-group-body");
+    if (!body) return;
+    body.hidden = !body.hidden;
+    chevron.textContent = body.hidden ? " \u203a" : " \u2228";
+    renderToolGroupVisibility(group);
+  });
+
+  header.append(name, chevron, args);
+  group.append(header);
+
+  const body = document.createElement("div");
+  body.className = "tool-group-body";
+  body.hidden = true;
+  group.append(body);
+
+  return group;
+}
+
+function latestToolGroup(transcriptEl: HTMLElement): HTMLElement {
+  let curr = transcriptEl.lastElementChild as HTMLElement | null;
+  while (curr) {
+    if (curr.classList.contains("tool-group")) {
+      return curr;
+    }
+    if (
+      curr.classList.contains("message-item") ||
+      curr.classList.contains("stream-buffer") ||
+      curr.classList.contains("thought-item")
+    ) {
+      break;
+    }
+    curr = curr.previousElementSibling as HTMLElement | null;
+  }
+  const group = createToolGroup();
+  transcriptEl.append(group);
+  return group;
+}
+
+function updateToolGroupSummary(group: HTMLElement, data: ToolItemData): void {
+  const name = group.querySelector<HTMLElement>(".tool-group-name");
+  const args = group.querySelector<HTMLElement>(".tool-group-args");
+
+  const toolItems = [...group.querySelectorAll<HTMLElement>(".tool-item")];
+  const tools: ToolInfo[] = toolItems.map(el => {
+    const toolName = el.querySelector<HTMLElement>(".tool-name")?.textContent || "";
+    return { tool_name: toolName };
+  });
+
+  if (tools.length === 0 && data.tool_name) {
+    tools.push({ tool_name: data.tool_name });
+  }
+
+  const summary = getToolGroupSummary(tools);
+
+  if (name) {
+    name.innerHTML = `<span class="tool-group-icon">${summary.icon}</span> ${summary.text}`;
+  }
+  if (args) {
+    args.textContent = "";
+  }
+}
+
+function renderToolGroupVisibility(group: HTMLElement): void {
+  const body = group.querySelector<HTMLElement>(".tool-group-body");
+  if (!body) return;
+  const items = [...body.querySelectorAll<HTMLElement>(".tool-item")];
+  const visibleCount = Math.min(
+    Number(group.dataset.visibleCount || TOOL_GROUP_PREVIEW_LIMIT),
+    items.length,
+  );
+
+  for (const [index, item] of items.entries()) {
+    item.hidden = index >= visibleCount;
+  }
+
+  group.querySelector(".tool-group-expand-controls")?.remove();
+  if (body.hidden || visibleCount >= items.length) return;
+
+  const controls = document.createElement("div");
+  controls.className = "tool-group-expand-controls";
+
+  const expand = document.createElement("button");
+  expand.type = "button";
+  expand.className = "tool-group-expand tool-group-expand-more";
+  expand.textContent = "展开显示";
+  expand.addEventListener("click", (event) => {
+    event.stopPropagation();
+    group.dataset.visibleCount = String(
+      Math.min(visibleCount + TOOL_GROUP_PREVIEW_LIMIT, items.length),
+    );
+    renderToolGroupVisibility(group);
+  });
+
+  controls.append(expand);
+  body.append(controls);
+}
+
+export function handleToolItem(method: string, itemId: string, data: ToolItemData): void {
+  let el: HTMLElement | null = document.querySelector<HTMLElement>(`[data-tool-id="${data.tool_call_id}"]`);
+  const transcriptEl = getTranscriptElement();
+  if (method === "item.started") {
+    el = document.createElement("div");
+    el.className = "tool-item";
+    el.dataset.toolId = data.tool_call_id ?? "";
+    el.dataset.itemId = itemId;
+
+    const header = document.createElement("div");
+    header.className = "tool-header";
+
+    const chevron = document.createElement("span");
+    chevron.className = "tool-chevron";
+    const hasArgs = !!data.args && (typeof data.args === "string" ? data.args.trim() !== "" : Object.keys(data.args).length > 0);
+    const isCmd = data.tool_name === "run_command" || data.tool_name === "command" || data.tool_name === "bash";
+    chevron.textContent = (hasArgs || isCmd) ? "\u203a" : "\u00b7";
+
+    const name = document.createElement("span");
+    name.className = "tool-name";
+    name.textContent = data.tool_name || data.label || "tool";
+
+    const summaryInfo = getToolItemHeaderInfo(data);
+    const summary = document.createElement("span");
+    summary.className = "tool-summary";
+    summary.innerHTML = `<span class="tool-icon">${summaryInfo.icon}</span> ${summaryInfo.text}`;
+
+    const argsSummary = document.createElement("span");
+    argsSummary.className = "tool-args-summary";
+    argsSummary.textContent = summarizeArgs(data);
+
+    const spinner = document.createElement("span");
+    spinner.className = "tool-spinner";
+    spinner.textContent = "running";
+
+    const toolEl = el;
+    header.addEventListener("click", () => {
+      const body = toolEl.querySelector<HTMLElement>(".tool-body");
+      if (body) {
+        body.hidden = !body.hidden;
+        if (chevron.textContent !== "\u00b7") {
+          chevron.textContent = body.hidden ? "\u203a" : "\u2228";
+        }
+        chevron.classList.toggle("open", !body.hidden);
+      }
+    });
+
+    header.append(chevron, name, summary, argsSummary, spinner);
+    el.append(header);
+
+    const body = document.createElement("div");
+    body.className = "tool-body";
+    body.hidden = true;
+    el.append(body);
+
+    if (data.args) {
+      const args = document.createElement("pre");
+      args.className = "tool-args";
+      args.textContent = typeof data.args === "string"
+        ? data.args
+        : JSON.stringify(data.args, null, 2);
+      body.append(args);
+    }
+
+    if (transcriptEl) {
+      const group = latestToolGroup(transcriptEl);
+      group.querySelector(".tool-group-body")?.append(el);
+      updateToolGroupSummary(group, data);
+      renderToolGroupVisibility(group);
+      transcriptEl.scrollTop = transcriptEl.scrollHeight;
+    }
+  } else if (el) {
+    const body = el.querySelector<HTMLElement>(".tool-body");
+    if (!body) return;
+    const chev = el.querySelector<HTMLElement>(".tool-chevron");
+    if (method === "item.delta") {
+      if (data.diff_text) {
+        const diff = renderDiffBlock(data.diff_text);
+        body.append(diff);
+      } else if (data.detail) {
+        const detail = document.createElement("pre");
+        detail.className = "tool-detail";
+        detail.textContent = data.detail;
+        body.append(detail);
+      }
+      if (chev && chev.textContent === "\u00b7") {
+        chev.textContent = body.hidden ? "\u203a" : "\u2228";
+      }
+    } else if (method === "item.completed") {
+      const spinner = el.querySelector(".tool-spinner");
+      if (spinner) {
+        spinner.textContent = data.ok ? "done" : "failed";
+        spinner.className = `tool-status ${data.ok ? "ok" : "err"}`;
+      }
+      if (data.elapsed) {
+        const elapsed = document.createElement("span");
+        elapsed.className = "tool-elapsed";
+        elapsed.textContent = formatElapsed(data.elapsed);
+        el.querySelector(".tool-header")?.append(elapsed);
+      }
+      if (data.detail) {
+        const detail = document.createElement("pre");
+        detail.className = "tool-detail";
+        detail.textContent = data.detail;
+        body.append(detail);
+      }
+      if (body && chev) {
+        if (body.children.length === 0) {
+          chev.textContent = "\u00b7";
+        } else if (chev.textContent === "\u00b7") {
+          chev.textContent = body.hidden ? "\u203a" : "\u2228";
+        }
+      }
+    }
+    if (transcriptEl) {
+      transcriptEl.scrollTop = transcriptEl.scrollHeight;
+    }
+  } else if (method === "item.delta") {
+    console.warn(`voidx: tool delta for unknown tool_call_id: ${data.tool_call_id}`);
+  }
+}
+
+function formatThoughtMeta(meta: string | null | undefined, elapsed?: number | null): string {
+  let seconds = elapsed;
+
+  if ((seconds === undefined || seconds === null) && meta) {
+    const match = meta.match(/Thinking for ([\d.]+)s/);
+    if (match) {
+      seconds = parseFloat(match[1]);
+    } else {
+      const num = parseFloat(meta);
+      if (!isNaN(num)) {
+        seconds = num;
+      }
+    }
+  }
+
+  if (seconds !== undefined && seconds !== null) {
+    if (seconds < 1) {
+      const ms = Math.round(seconds * 1000);
+      return `thought for ${ms}ms`;
+    } else if (seconds < 60) {
+      return `thought for ${seconds.toFixed(1)}s`;
+    } else {
+      const m = Math.floor(seconds / 60);
+      const s = Math.round(seconds % 60);
+      return `thought for ${m}m ${s}s`;
+    }
+  }
+
+  if (meta) {
+    if (meta.toLowerCase() === "thinking") {
+      return "thought";
+    }
+    return meta.replace(/^thinking/i, "thought");
+  }
+
+  return "thought";
+}
+
+function findMergeableThoughtTarget(
+  insertBeforeEl: HTMLElement | null,
+  transcriptEl: HTMLElement
+): HTMLElement | null {
+  let curr = insertBeforeEl
+    ? (insertBeforeEl.previousElementSibling as HTMLElement | null)
+    : (transcriptEl.lastElementChild as HTMLElement | null);
+
+  while (curr) {
+    if (curr.classList.contains("thought-item")) {
+      return curr;
+    }
+    // Block searching across user message boundaries (previous turns)
+    if (
+      curr.classList.contains("message-user") ||
+      curr.classList.contains("message-text")
+    ) {
+      break;
+    }
+    curr = curr.previousElementSibling as HTMLElement | null;
+  }
+  return null;
+}
+
+export function appendThoughtItem(
+  itemId: string,
+  data: ThoughtItemData,
+  insertBeforeEl?: HTMLElement | null
+): void {
+  const transcriptEl = getTranscriptElement();
+  if (!transcriptEl) return;
+
+  const mergeTarget = findMergeableThoughtTarget(insertBeforeEl || null, transcriptEl);
+
+  if (mergeTarget && mergeTarget.classList.contains("thought-item")) {
+    const body = mergeTarget.querySelector<HTMLElement>(".thought-body");
+    const label = mergeTarget.querySelector<HTMLElement>(".thought-label");
+
+    const prevText = mergeTarget.dataset.text || "";
+    const prevElapsed = mergeTarget.dataset.elapsed ? parseInt(mergeTarget.dataset.elapsed, 10) : 0;
+
+    const combinedText = prevText ? (prevText + "\n\n" + (data.text || "")) : (data.text || "");
+    const combinedElapsed = prevElapsed + (typeof data.elapsed === "number" ? data.elapsed : 0);
+
+    mergeTarget.dataset.text = combinedText;
+    mergeTarget.dataset.elapsed = String(combinedElapsed);
+
+    const chevron = mergeTarget.querySelector<HTMLElement>(".thought-chevron");
+
+    if (label) {
+      const formatted = formatThoughtMeta(data.meta, combinedElapsed);
+      const brainSvg = `<svg xmlns="http://www.w3.org/2000/svg" width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" class="vx-icon"><path d="M12 5a3 3 0 1 0-5.997.125 4 4 0 0 0-2.526 5.77 4 4 0 0 0 .556 6.588A4 4 0 1 0 12 18Z"></path><path d="M12 5a3 3 0 1 1 5.997.125 4 4 0 0 1 2.526 5.77 4 4 0 0 1-.556 6.588A4 4 0 1 1 12 18Z"></path><path d="M12 5v14"></path><path d="M12 9h4"></path><path d="M12 14h-4"></path><path d="M12 14h4"></path><path d="M12 9h-4"></path></svg>`;
+      label.innerHTML = `${brainSvg}${formatted}`;
+    }
+
+    if (chevron && body) {
+      chevron.textContent = body.hidden ? " \u203a" : " \u2228";
+    }
+
+    if (body && data.text) {
+      if (body.firstElementChild) {
+        const divider = document.createElement("div");
+        divider.className = "thought-divider";
+        body.append(divider);
+      }
+      const md = renderMarkdown(data.text);
+      md.className = "markdown-body";
+      body.append(md);
+    }
+    transcriptEl.scrollTop = transcriptEl.scrollHeight;
+    return;
+  }
+
+  const el = document.createElement("div");
+  el.className = "thought-item";
+  el.dataset.itemId = itemId;
+  el.dataset.text = data.text || "";
+  el.dataset.elapsed = String(typeof data.elapsed === "number" ? data.elapsed : 0);
+
+  const header = document.createElement("div");
+  header.className = "thought-header";
+
+  const label = document.createElement("span");
+  label.className = "thought-label";
+  const formatted = formatThoughtMeta(data.meta, data.elapsed);
+  const brainSvg = `<svg xmlns="http://www.w3.org/2000/svg" width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" class="vx-icon"><path d="M12 5a3 3 0 1 0-5.997.125 4 4 0 0 0-2.526 5.77 4 4 0 0 0 .556 6.588A4 4 0 1 0 12 18Z"></path><path d="M12 5a3 3 0 1 1 5.997.125 4 4 0 0 1 2.526 5.77 4 4 0 0 1-.556 6.588A4 4 0 1 1 12 18Z"></path><path d="M12 5v14"></path><path d="M12 9h4"></path><path d="M12 14h-4"></path><path d="M12 14h4"></path><path d="M12 9h-4"></path></svg>`;
+  label.innerHTML = `${brainSvg}${formatted}`;
+
+  const chevron = document.createElement("span");
+  chevron.className = "thought-chevron";
+  chevron.textContent = " \u203a";
+
+  header.addEventListener("click", () => {
+    const body = el.querySelector<HTMLElement>(".thought-body");
+    if (body) {
+      body.hidden = !body.hidden;
+      chevron.textContent = body.hidden ? " \u203a" : " \u2228";
+    }
+  });
+
+  header.append(label, chevron);
+  el.append(header);
+
+  const body = document.createElement("div");
+  body.className = "thought-body";
+  body.hidden = true;
+  if (data.text) {
+    const md = renderMarkdown(data.text);
+    md.className = "markdown-body";
+    body.append(md);
+  }
+  el.append(body);
+
+  if (insertBeforeEl) {
+    insertBeforeEl.parentNode?.insertBefore(el, insertBeforeEl);
+  } else {
+    transcriptEl.append(el);
+  }
+  transcriptEl.scrollTop = transcriptEl.scrollHeight;
+}
+
+export function appendNoticeItem(itemId: string, data: NoticeItemData): void {
+  const el = document.createElement("div");
+  el.className = `notice-item notice-${data.style || "error"}`;
+  el.dataset.itemId = itemId;
+
+  const icon = document.createElement("span");
+  icon.className = "notice-icon";
+  icon.textContent = data.style === "warning" ? "!" : "\u2717";
+
+  const text = document.createElement("span");
+  text.className = "notice-text";
+  text.textContent = stripRichMarkup(data.text || "");
+
+  el.append(icon, text);
+
+  const region = getOrCreateNoticeToastRegion();
+  region.append(el);
+  setTimeout(() => {
+    el.classList.add("notice-toast-exiting");
+    setTimeout(() => {
+      el.remove();
+      if (!region.childElementCount) {
+        region.remove();
+      }
+    }, 250);
+  }, 4000);
+}
+
+function getOrCreateNoticeToastRegion(): Element {
+  let region: Element | null = document.querySelector(".notice-toast-region");
+  if (region) {
+    return region;
+  }
+  region = document.createElement("div");
+  region.className = "notice-toast-region";
+  region.setAttribute("role", "status");
+  region.setAttribute("aria-live", "polite");
+  document.body.append(region);
+  return region;
+}
+
+export function appendDiffItem(itemId: string, data: DiffItemData): void {
+  const el = document.createElement("div");
+  el.className = "diff-item";
+  el.dataset.itemId = itemId;
+
+  const header = document.createElement("div");
+  header.className = "diff-header";
+
+  const chevron = document.createElement("span");
+  chevron.className = "diff-chevron";
+  chevron.textContent = "\u25B8";
+
+  const title = document.createElement("span");
+  title.className = "diff-title";
+  title.textContent = data.title || "diff";
+
+  header.addEventListener("click", () => {
+    const body = el.querySelector<HTMLElement>(".diff-body");
+    if (body) {
+      body.hidden = !body.hidden;
+      chevron.classList.toggle("open", !body.hidden);
+    }
+  });
+
+  header.append(chevron, title);
+  el.append(header);
+
+  const body = document.createElement("div");
+  body.className = "diff-body";
+  body.hidden = true;
+  if (data.text) {
+    body.append(renderDiffBlock(data.text));
+  }
+  el.append(body);
+
+  const transcriptEl = getTranscriptElement();
+  if (transcriptEl) {
+    transcriptEl.append(el);
+    transcriptEl.scrollTop = transcriptEl.scrollHeight;
+  }
+}
+
+export function handleStatusItem(method: string, itemId: string, data: StatusItemData): void {
+  if (itemId === "turn:analyzing" || data.status_id === "turn:analyzing") {
+    return;
+  }
+  const transcriptEl = getTranscriptElement();
+  let el = document.querySelector<HTMLElement>(`[data-status-item-id="${itemId}"]`);
+  if (method === "item.started") {
+    if (!el) {
+      el = document.createElement("div");
+      el.className = "status-item running";
+      el.dataset.statusItemId = itemId;
+      el.dataset.statusId = data.status_id || itemId;
+      const label = document.createElement("span");
+      label.className = "status-label";
+      el.append(label);
+      const detail = document.createElement("div");
+      detail.className = "status-detail";
+      el.append(detail);
+      transcriptEl?.append(el);
+    }
+    const label = el.querySelector<HTMLElement>(".status-label");
+    const detail = el.querySelector<HTMLElement>(".status-detail");
+    if (label) label.textContent = data.label || "Working";
+    if (detail) {
+      detail.textContent = data.detail || "";
+      detail.hidden = !data.detail;
+    }
+    return;
+  }
+  if (method === "item.completed") {
+    if (!el) return;
+    el.classList.remove("running");
+    el.classList.add(data.ok === false ? "failed" : "completed");
+    const label = el.querySelector<HTMLElement>(".status-label");
+    const detail = el.querySelector<HTMLElement>(".status-detail");
+    if (label && data.label) label.textContent = data.label;
+    if (detail && data.detail) {
+      detail.textContent = data.detail;
+      detail.hidden = false;
+    }
+    return;
+  }
+}
+
+function summarizeArgs(data: ToolItemData): string {
+  if (data.tool_name === "bash") {
+    const cmd = typeof data.raw_args?.command === "string"
+      ? data.raw_args.command
+      : "";
+    return cmd.length > 60 ? cmd.slice(0, 60) + "..." : cmd;
+  }
+  const args = data.args || "";
+  const s = typeof args === "string" ? args : JSON.stringify(args);
+  return s.length > 40 ? s.slice(0, 40) + "..." : s;
+}
+
+function depthFor(node: TranscriptNode, byId: ByIdMap): number {
+  let depth = 0;
+  let cursor: TranscriptNode | undefined = node;
+  while (cursor?.parent_id && byId.has(cursor.parent_id)) {
+    depth += 1;
+    cursor = byId.get(cursor.parent_id);
+  }
+  return depth;
+}
+
+export function renderTranscript(root: HTMLElement, snapshot: TranscriptSnapshot): void {
+  root.replaceChildren();
+  const committed = takeCommittedStreams();
+  clearActiveStreams();
+
+  for (const node of snapshot.nodes) {
+    const payload = node.payload as Record<string, unknown> | undefined;
+    switch (node.node_type) {
+      case "message": {
+        const style = String(payload?.style || "text");
+        const rawText = String(payload?.raw_text
+          ?? stripRichMarkup([node.header, ...(node.body_lines ?? [])].join("\n")));
+        if (style === "thought") {
+          appendThoughtItem(node.id, {
+            text: rawText,
+            meta: (node.meta ?? undefined) as string | null | undefined,
+            elapsed: node.elapsed ?? null,
+          });
+        } else if (style === "error" || style === "warning") {
+          appendNoticeItem(node.id, { style, text: rawText });
+        } else if (style === "diff") {
+          appendDiffItem(node.id, { text: rawText, title: String(payload?.title ?? "") });
+        } else {
+          appendMessageItem(node.id, { style, text: rawText });
+        }
+        break;
+      }
+      case "assistant": {
+        const rawText = String(payload?.raw_text
+          ?? stripRichMarkup((node.body_lines ?? []).join("\n")));
+        const thinkingText = String(payload?.thinking_text || "");
+        if (thinkingText) {
+          appendStreamText(node.id, thinkingText, "thinking");
+        }
+        appendStreamText(
+          node.id,
+          rawText,
+          payload?.phase === "thinking" ? "thinking" : "text",
+        );
+        commitStream(node.id);
+        break;
+      }
+      case "tool_call":
+        handleToolItem("item.started", node.id, {
+          tool_call_id: node.tool_call_id ?? null,
+          tool_name: String(payload?.tool_name ?? ""),
+          args: payload?.args as string | Record<string, unknown> | undefined,
+          raw_args: payload?.raw_args as { command?: string } | undefined,
+        });
+        if (payload?.diff_text) {
+          handleToolItem("item.delta", node.id, {
+            tool_call_id: node.tool_call_id ?? null,
+            diff_text: String(payload.diff_text),
+          });
+        }
+        handleToolItem("item.completed", node.id, {
+          tool_call_id: node.tool_call_id ?? null,
+          ok: node.status !== "error",
+          elapsed: node.elapsed ?? null,
+        });
+        break;
+      case "tool_result": {
+        const detailText = String(payload?.raw_text
+          ?? stripRichMarkup((node.body_lines ?? []).join("\n")));
+        handleToolItem("item.delta", node.id, {
+          tool_call_id: node.tool_call_id ?? null,
+          detail: detailText,
+        });
+        break;
+      }
+      case "thought": {
+        const thoughtText = String(payload?.raw_text
+          ?? stripRichMarkup((node.body_lines ?? []).join("\n")));
+        appendThoughtItem(node.id, {
+          text: thoughtText,
+          meta: (node.meta ?? undefined) as string | null | undefined,
+          elapsed: node.elapsed ?? null,
+        });
+        break;
+      }
+      case "error": {
+        const rawText = String(payload?.raw_text
+          ?? stripRichMarkup(node.header ?? "").replace(/^[✗!]\s*/, ""));
+        appendNoticeItem(node.id, { style: "error", text: rawText });
+        break;
+      }
+      case "warn": {
+        const rawText = String(payload?.raw_text
+          ?? stripRichMarkup(node.header ?? "").replace(/^[✗!]\s*/, ""));
+        appendNoticeItem(node.id, { style: "warning", text: rawText });
+        break;
+      }
+      case "diff":
+        appendDiffItem(node.id, {
+          text: (node.body_lines ?? []).join("\n"),
+          title: node.header ?? "",
+        });
+        break;
+      // root / turn / startup / todo / status / permission / checkpoint / subagent → skip
+    }
+  }
+
+  for (const el of committed) {
+    if (el.isConnected) continue;
+    root.append(el);
+  }
+}
+
+export function renderTodoPanel(
+  panel: HTMLElement,
+  items: TodoItem[],
+  summary: string,
+): void {
+  panel.replaceChildren();
+  if (!items || items.length === 0) {
+    panel.classList.remove("visible");
+    return;
+  }
+  panel.classList.add("visible");
+  if (summary) {
+    const summaryEl = document.createElement("span");
+    summaryEl.className = "todo-summary";
+    summaryEl.textContent = summary;
+    panel.append(summaryEl);
+  }
+  for (const item of items) {
+    const el = document.createElement("div");
+    el.className = `todo-item ${item.status}`;
+    const icon = document.createElement("span");
+    icon.className = "todo-icon";
+    icon.textContent = item.status === "done" ? "\u2713" : item.status === "active" ? "\u25B6" : "\u25CB";
+    const text = document.createElement("span");
+    text.textContent = item.content;
+    el.append(icon, text);
+    panel.append(el);
+  }
+}

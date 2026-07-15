@@ -4,17 +4,26 @@
     <meta charset="utf-8" />
     <meta name="viewport" content="width=device-width, initial-scale=1" />
     <title>voidx</title>
-    <link rel="stylesheet" href="./styles.css" />
+    <link rel="stylesheet" href="./css/styles.css" />
   </head>
   <body>
     <main class="vx-shell vx-workbench-shell">
       <!-- Titlebar -->
-      <header class="vx-titlebar">
-        <div class="vx-titlebar-left">
+      <header class="vx-titlebar" data-tauri-drag-region>
+        <div class="vx-titlebar-left" data-tauri-drag-region>
           <span class="status-dot disconnected" id="status-dot" aria-label="Connection status"></span>
           <button type="button" class="vx-titlebar-tool" id="titlebar-sidebar-toggle" aria-label="Toggle sidebar">▯</button>
           <button type="button" class="vx-titlebar-tool" aria-label="Back" disabled>←</button>
           <button type="button" class="vx-titlebar-tool" aria-label="Forward" disabled>→</button>
+        </div>
+        <div class="vx-titlebar-right" data-tauri-drag-region>
+          <div class="vx-chat-header" id="chat-header" hidden>
+            <span class="vx-chat-header-icon">
+              <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" class="vx-icon"><path d="M4 20h16a2 2 0 0 0 2-2V8a2 2 0 0 0-2-2h-7.93a2 2 0 0 1-1.66-.9l-.82-1.2A2 2 0 0 0 7.93 3H4a2 2 0 0 0-2 2v13a2 2 0 0 0 2 2z"></path></svg>
+            </span>
+            <span class="vx-chat-header-title" id="chat-header-title"></span>
+            <button type="button" class="vx-chat-header-btn" id="chat-header-options" title="Options">•••</button>
+          </div>
         </div>
       </header>
 
@@ -58,22 +67,38 @@
         <!-- Main area -->
         <section class="vx-main">
           <div class="vx-main-canvas">
-          <section class="vx-empty-state" id="empty-state" aria-live="polite">
-            <h1>我们应该在 voidx 中构建什么？</h1>
-          </section>
-          <div class="transcript" id="transcript" aria-live="polite"></div>
+            <section class="vx-empty-state" id="empty-state" aria-live="polite">
+              <h1>我们应该在 voidx 中构建什么？</h1>
+            </section>
+            <div class="transcript" id="transcript" aria-live="polite"></div>
           <form class="composer" id="composer">
             <div class="slash-menu" id="slash-menu"></div>
             <textarea id="input" rows="3" placeholder="Ask voidx... (use / for commands)"></textarea>
             <div class="vx-composer-actions">
-              <button type="button" class="vx-attach-btn" id="btn-attach" aria-label="Add context">+</button>
-              <label class="vx-select-label" for="provider-select">
-                <select id="provider-select" aria-label="Provider"></select>
-              </label>
-              <label class="vx-select-label" for="model-select">
-                <select id="model-select" aria-label="Model"></select>
-              </label>
-              <button type="submit" class="btn-send" id="btn-send" aria-label="Send">↑</button>
+              <div class="vx-composer-left">
+                <button type="button" class="vx-attach-btn" id="btn-attach" aria-label="Add context">+</button>
+                <div class="vx-permission-selector-container">
+                  <div class="vx-permission-pill" id="permission-pill" title="点击配置权限">
+                    <svg class="vx-icon" xmlns="http://www.w3.org/2000/svg" width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><circle cx="12" cy="12" r="10"/><line x1="12" y1="8" x2="12" y2="12"/><line x1="12" y1="16" x2="12.01" y2="16"/></svg>
+                    <span id="permission-pill-text">安全模式</span>
+                  </div>
+                  <div class="vx-permission-dropdown" id="permission-dropdown" hidden></div>
+                </div>
+              </div>
+              <div class="vx-composer-right">
+                <select id="provider-select" aria-label="Provider" style="display: none;"></select>
+                <select id="model-select" aria-label="Model" style="display: none;"></select>
+                
+                <div class="vx-model-selector-container">
+                  <button type="button" class="vx-model-pill" id="model-pill">
+                    <span id="model-pill-text">等待模型状态</span>
+                    <span class="vx-model-pill-arrow">∨</span>
+                  </button>
+                  <div class="vx-model-dropdown" id="model-dropdown" hidden></div>
+                </div>
+                
+                <button type="submit" class="btn-send" id="btn-send" aria-label="Send">↑</button>
+              </div>
             </div>
           </form>
           <div class="context-menu" id="context-menu" hidden>
