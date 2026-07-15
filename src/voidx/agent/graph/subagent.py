@@ -35,7 +35,7 @@ from voidx.llm.service import create_chat_model, resolve_protocol
 from voidx.llm.instruction import WorkflowRuntimeContext
 from voidx.llm.usage import (
     UsageStats,
-    estimate_context_tokens,
+    estimate_context_tokens_with_tools,
     estimate_message_tokens,
     extract_token_usage,
 )
@@ -191,7 +191,11 @@ async def run_subagent(
             llm_messages = [*messages, *drain_guard_guidance()]
             model_with_tools = model.bind_tools(tool_defs) if tool_defs else model
             renderer = StreamingRenderer(ui_port.console, debug=debug, agent_id=agent_id, headless=True)
-            context_tokens = estimate_context_tokens(llm_messages, config.model.model)
+            context_tokens = estimate_context_tokens_with_tools(
+                llm_messages,
+                tool_defs,
+                config.model.model,
+            )
             if usage_stats is not None:
                 usage_stats.update_context(context_tokens)
             if session_id:

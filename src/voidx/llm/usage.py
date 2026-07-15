@@ -2,10 +2,11 @@
 
 from __future__ import annotations
 
+import json
 from dataclasses import dataclass, field
 from typing import Any
 
-from voidx.llm.context import count_messages_tokens
+from voidx.llm.context import count_messages_tokens, count_tokens
 
 
 @dataclass
@@ -244,6 +245,24 @@ def extract_token_usage(message: object) -> TokenUsage:
 
 def estimate_context_tokens(messages: list, model: str = "") -> int:
     return count_messages_tokens(_messages_for_count(messages), model)
+
+
+def estimate_context_tokens_with_tools(
+    messages: list,
+    tool_defs: list[dict] | None = None,
+    model: str = "",
+) -> int:
+    tokens = estimate_context_tokens(messages, model)
+    if not tool_defs:
+        return tokens
+    serialized_tools = json.dumps(
+        {"tools": tool_defs},
+        ensure_ascii=False,
+        sort_keys=True,
+        separators=(",", ":"),
+        default=str,
+    )
+    return tokens + count_tokens(serialized_tools, model)
 
 
 def estimate_message_tokens(message: object, model: str = "") -> int:

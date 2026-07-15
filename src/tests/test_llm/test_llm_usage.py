@@ -7,6 +7,7 @@ from langchain_core.messages import AIMessage, HumanMessage
 from voidx.llm.usage import (
     UsageStats,
     estimate_context_tokens,
+    estimate_context_tokens_with_tools,
     extract_token_usage,
     format_cache_hit_rate,
     format_token_count,
@@ -202,6 +203,30 @@ def test_estimate_context_tokens_ignores_image_payload_bytes():
     tokens = estimate_context_tokens(messages)
 
     assert tokens < 20
+
+
+def test_estimate_context_tokens_with_tools_includes_tool_schema():
+    messages = [HumanMessage(content="hello")]
+    tool_defs = [{
+        "type": "function",
+        "function": {
+            "name": "read_file",
+            "description": "Read a file from disk",
+            "parameters": {
+                "type": "object",
+                "properties": {
+                    "path": {"type": "string", "description": "File path"},
+                },
+                "required": ["path"],
+            },
+        },
+    }]
+
+    messages_only = estimate_context_tokens(messages)
+    with_tools = estimate_context_tokens_with_tools(messages, tool_defs)
+
+    assert estimate_context_tokens_with_tools(messages, []) == messages_only
+    assert with_tools > messages_only
 
 
 def test_format_token_count_uses_compact_suffixes():

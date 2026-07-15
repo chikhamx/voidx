@@ -8,6 +8,13 @@ from pathlib import Path
 from typing import Literal
 
 from voidx.permission.grants import AccessGrants, resolve_access
+from voidx.permission.constants import (
+    DANGEROUS_CONFIG_PREFIXES,
+    FORBIDDEN_GLOBAL_OPTIONS_WITH_VALUE,
+    GIT_READ_POLICIES,
+    GIT_REF_WRITE_FLAGS,
+    GIT_WRITE_POLICIES,
+)
 
 
 GitPolicyAction = Literal["allow", "deny"]
@@ -67,72 +74,6 @@ class GitRuntimeAccessPlan:
         return False
 
 
-_READ_POLICIES = frozenset({
-    "status",
-    "log",
-    "diff",
-    "show",
-    "blame",
-    "rev-parse",
-    "rev-list",
-    "ls-files",
-    "ls-tree",
-    "describe",
-    "shortlog",
-    "cherry",
-    "whatchanged",
-    "notes",
-    "grep",
-    "cat-file",
-    "name-rev",
-    "for-each-ref",
-})
-_WRITE_POLICIES = frozenset({
-    "add",
-    "restore",
-    "checkout",
-    "switch",
-    "rm",
-    "mv",
-    "reset",
-    "commit",
-    "merge",
-    "rebase",
-    "cherry-pick",
-    "revert",
-    "branch",
-    "tag",
-    "stash",
-    "remote",
-    "worktree",
-    "pull",
-    "push",
-    "fetch",
-})
-_REF_WRITE_FLAGS = {"-d", "-D", "-m", "-M", "--delete", "--move", "--force"}
-_DANGEROUS_CONFIG_PREFIXES = (
-    "alias.",
-    "core.askpass",
-    "core.editor",
-    "core.fsmonitor",
-    "core.hookspath",
-    "core.pager",
-    "core.sshcommand",
-    "credential.helper",
-    "filter.",
-    "gpg.program",
-    "gpg.ssh.program",
-    "include.",
-    "protocol.",
-    "sequence.editor",
-)
-_FORBIDDEN_GLOBAL_OPTIONS_WITH_VALUE = {
-    "-C",
-    "--git-dir",
-    "--work-tree",
-    "--namespace",
-    "--exec-path",
-}
 
 
 def git_policy_for_args(args: dict) -> GitPolicyDecision:
@@ -205,9 +146,9 @@ def _split_global_options(tokens: list[str]) -> tuple[str, str, list[str]]:
             return _global_config_error(tokens[index + 1]), "", []
         if token.startswith("--config-env="):
             return _global_config_error(token.split("=", 1)[1]), "", []
-        if token in _FORBIDDEN_GLOBAL_OPTIONS_WITH_VALUE:
+        if token in FORBIDDEN_GLOBAL_OPTIONS_WITH_VALUE:
             return "global path option is not registered", "", []
-        for option in _FORBIDDEN_GLOBAL_OPTIONS_WITH_VALUE:
+        for option in FORBIDDEN_GLOBAL_OPTIONS_WITH_VALUE:
             if option.startswith("--") and token.startswith(f"{option}="):
                 return "global path option is not registered", "", []
         if token.startswith("-"):
@@ -218,20 +159,20 @@ def _split_global_options(tokens: list[str]) -> tuple[str, str, list[str]]:
 
 def _global_config_error(config: str) -> str:
     key = config.split("=", 1)[0].strip().lower()
-    if any(key == prefix.rstrip(".") or key.startswith(prefix) for prefix in _DANGEROUS_CONFIG_PREFIXES):
+    if any(key == prefix.rstrip(".") or key.startswith(prefix) for prefix in DANGEROUS_CONFIG_PREFIXES):
         return "dangerous global config"
     return "global config is not registered"
 
 
 def _registered_read_policy(subcommand: str, rest: list[str]) -> bool:
-    if subcommand in _READ_POLICIES:
+    if subcommand in GIT_READ_POLICIES:
         return True
     if subcommand == "config":
         return _registered_config_read(rest)
     if subcommand == "reflog":
         return bool(rest) and rest[0] in {"show", "list"}
     if subcommand in {"branch", "tag"}:
-        return not any(arg in _REF_WRITE_FLAGS for arg in rest)
+        return not any(arg in GIT_REF_WRITE_FLAGS for arg in rest)
     if subcommand == "remote":
         return not rest or all(arg in {"-v", "--verbose"} for arg in rest)
     if subcommand == "stash":
@@ -268,7 +209,7 @@ def _registered_config_read(rest: list[str]) -> bool:
 
 
 def _registered_write_policy(subcommand: str, rest: list[str]) -> bool:
-    if subcommand not in _WRITE_POLICIES:
+    if subcommand not in GIT_WRITE_POLICIES:
         return False
     if subcommand == "worktree":
         return False

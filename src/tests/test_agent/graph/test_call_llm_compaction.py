@@ -19,6 +19,7 @@ from voidx.agent.task_state import TaskState, TodoRunState
 from voidx.config import Config, ModelConfig
 from voidx.agent.graph.compaction_coordinator import CompactionResult, PreflightCompactionResult
 from voidx.llm.compaction import CompactionSelection, SUMMARY_TEMPLATE
+from voidx.llm.usage import estimate_context_tokens
 from voidx.llm.message_markers import is_guidance_message
 from voidx.memory.context_frames import load_context_frames
 from voidx.memory.session import MessageRow, create_session, delete_session, save_message
@@ -189,9 +190,36 @@ async def test_call_llm_updates_usage_stats_across_turn_control_calls(tmp_path, 
     assert graph.model.calls == 2
     assert graph._usage_stats.last_input_tokens == 2
     assert graph._usage_stats.last_output_tokens == 1
+    assert graph._usage_stats.context_tokens == 2
     assert graph._usage_stats.total_input_tokens == 9
     assert graph._usage_stats.total_output_tokens == 4
     assert graph._usage_stats.total_calls == 2
+
+
+@pytest.mark.asyncio
+async def test_call_llm_fallback_context_estimate_includes_tool_schema(tmp_path, monkeypatch):
+    import voidx.agent.graph.core.llm as graph_module
+
+    monkeypatch.setattr(graph_module, "StreamingRenderer", FakeRenderer)
+
+    graph = VoidXGraph(
+        Config(
+            model=ModelConfig(provider="openai", model="gpt-4o"),
+            workspace=str(tmp_path),
+        ),
+        api_key=None,
+    )
+    graph.model = FakeStreamingModel()
+
+    await graph._call_llm({
+        "messages": [HumanMessage(content="hi")],
+        "step_count": 0,
+        "persona": "voidx",
+        "turn_state": "running",
+    })
+
+    messages_only = estimate_context_tokens(graph.model.messages, graph.config.model.model)
+    assert graph._usage_stats.context_tokens > messages_only
 
 
 @pytest.mark.asyncio

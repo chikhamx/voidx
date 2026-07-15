@@ -5,14 +5,18 @@ from __future__ import annotations
 import shlex
 from dataclasses import dataclass
 from pathlib import Path
-from typing import Literal
-
 from voidx.permission.context import PermissionContext
 from voidx.permission.grants import resolve_access
 from voidx.permission.risk import RiskAssessment, RiskLevel, RiskTag
+from voidx.permission.schema import Action
 from voidx.permission.process_sandbox import default_process_sandbox_capability
-
-Action = Literal["allow", "deny", "defer"]
+from voidx.permission.constants import (
+    DYNAMIC_MARKERS,
+    NESTED_INTERPRETERS,
+    POWERSHELL_READ_COMMANDS,
+    READ_COMMANDS,
+    SHELL_OPERATOR_CHARS,
+)
 
 
 @dataclass(frozen=True)
@@ -23,11 +27,6 @@ class ShellPolicyDecision:
     access_paths: tuple[Path, ...] = ()
 
 
-_READ_COMMANDS = {"cat", "head", "tail", "wc", "ls", "pwd", "echo", "printf"}
-_POWERSHELL_READ_COMMANDS = {"get-content", "gc", "cat", "type", "get-childitem", "gci", "dir", "ls", "write-output", "echo"}
-_DYNAMIC_MARKERS = ("$", "`", "<(", ">(")
-_NESTED_INTERPRETERS = {"bash", "sh", "zsh", "fish", "cmd", "powershell", "pwsh", "python", "python3", "node", "ruby", "perl"}
-_SHELL_OPERATOR_CHARS = {";", "|", "<", ">", "&", "\n", "\r"}
 
 
 def shell_policy_for_command(command: str, *, shell: str = "bash") -> ShellPolicyDecision:
@@ -65,7 +64,7 @@ def classify_shell_risk(command: str, *, shell: str = "bash") -> RiskAssessment:
         return blocked
     tags: list[RiskTag] = []
     reasons: list[str] = []
-    if any(marker in stripped for marker in _DYNAMIC_MARKERS):
+    if any(marker in stripped for marker in DYNAMIC_MARKERS):
         tags.append(RiskTag.DYNAMIC_SHELL)
         reasons.append("dynamic shell syntax")
     if shell == "powershell" and any(ch in stripped for ch in "()"):
@@ -87,7 +86,7 @@ def classify_shell_risk(command: str, *, shell: str = "bash") -> RiskAssessment:
         tags.append(RiskTag.DYNAMIC_SHELL)
         reasons.append("compound shell operator")
     program = words[0].lower() if words else ""
-    if program in _NESTED_INTERPRETERS:
+    if program in NESTED_INTERPRETERS:
         tags.append(RiskTag.NESTED_INTERPRETER)
         reasons.append("nested interpreter")
     if _is_dependency_install(words):
@@ -146,7 +145,7 @@ def _has_shell_operator(command: str, *, shell: str) -> bool:
         if ch == '"' and not in_single:
             in_double = not in_double
             continue
-        if not in_single and not in_double and ch in _SHELL_OPERATOR_CHARS:
+        if not in_single and not in_double and ch in SHELL_OPERATOR_CHARS:
             return True
     return False
 
@@ -188,7 +187,7 @@ def _requires_user_approval(reason: str) -> bool:
 
 def _bash_policy(words: list[str]) -> ShellPolicyDecision:
     program = words[0].lower()
-    if program not in _READ_COMMANDS:
+    if program not in READ_COMMANDS:
         return ShellPolicyDecision(False, False, "unknown shell command")
     access_paths = tuple(Path(arg) for arg in words[1:] if _looks_like_path(arg))
     return ShellPolicyDecision(True, True, access_paths=access_paths)
@@ -196,7 +195,7 @@ def _bash_policy(words: list[str]) -> ShellPolicyDecision:
 
 def _powershell_policy(words: list[str]) -> ShellPolicyDecision:
     program = words[0].lower()
-    if program not in _POWERSHELL_READ_COMMANDS:
+    if program not in POWERSHELL_READ_COMMANDS:
         return ShellPolicyDecision(False, False, "unknown powershell command")
     access_paths = tuple(Path(_clean_path_arg(arg)) for arg in words[1:] if not arg.startswith("-") and _looks_like_path(arg))
     return ShellPolicyDecision(True, True, access_paths=access_paths)

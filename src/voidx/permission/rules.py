@@ -8,6 +8,11 @@ from enum import Enum
 
 from voidx.permission.schema import Rule, Ruleset
 from voidx.permission.git_policy import git_policy_for_args
+from voidx.permission.constants import (
+    FILE_PATTERN_TOOLS,
+    GIT_GLOBAL_OPTIONS_WITH_VALUE,
+    GIT_REF_WRITE_FLAGS,
+)
 from voidx.workflow.policy import workflow_personas
 
 
@@ -87,7 +92,7 @@ def tool_call_from_pattern(tool: str, pattern: str = "*") -> dict:
         args = {"agent": pattern}
     elif name == "manage":
         args = {"op": "create", "paths": pattern}
-    elif name in _FILE_PATTERN_TOOLS:
+    elif name in FILE_PATTERN_TOOLS:
         args = {"file_path": pattern}
     else:
         args = {}
@@ -333,19 +338,16 @@ def _is_safe_env(args: list[str]) -> bool:
     return True
 
 
-_GIT_GLOBAL_OPTIONS_WITH_VALUE = {
-    "-C", "-c", "--git-dir", "--work-tree", "--namespace", "--exec-path",
-}
 
 
 def _git_subcommand(args: list[str]) -> tuple[str, list[str]]:
     index = 0
     while index < len(args):
         word = args[index]
-        if word in _GIT_GLOBAL_OPTIONS_WITH_VALUE:
+        if word in GIT_GLOBAL_OPTIONS_WITH_VALUE:
             index += 2
             continue
-        if any(word.startswith(f"{option}=") for option in _GIT_GLOBAL_OPTIONS_WITH_VALUE if option.startswith("--")):
+        if any(word.startswith(f"{option}=") for option in GIT_GLOBAL_OPTIONS_WITH_VALUE if option.startswith("--")):
             index += 1
             continue
         if word == "--":
@@ -369,8 +371,7 @@ def _is_read_only_git_config(args: list[str]) -> bool:
 
 
 def _is_read_only_git_ref_command(subcommand: str, args: list[str]) -> bool:
-    write_flags = {"-d", "-D", "-m", "-M", "--delete", "--move", "--force"}
-    if any(arg in write_flags for arg in args):
+    if any(arg in GIT_REF_WRITE_FLAGS for arg in args):
         return False
     if subcommand == "tag" and any(arg in {"-l", "--list"} for arg in args):
         return True
@@ -407,7 +408,7 @@ def capability_for_tool(tool: str, args: dict) -> PermissionCapability:
 
 
 def file_paths_for_tool(tool: str, args: dict) -> list[str]:
-    if tool in _FILE_PATTERN_TOOLS:
+    if tool in FILE_PATTERN_TOOLS:
         file_path = args.get("file_path")
         return [str(file_path)] if file_path else []
     if tool != "manage":
@@ -434,10 +435,6 @@ def file_paths_for_tool(tool: str, args: dict) -> list[str]:
     return []
 
 
-_FILE_PATTERN_TOOLS = {
-    "read", "write", "replace",
-    "lsp",
-}
 
 
 def _is_read_only_git_tool_command(args: dict) -> bool:

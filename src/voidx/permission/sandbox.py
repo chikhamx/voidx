@@ -2,9 +2,14 @@
 
 from __future__ import annotations
 
-import re
 import shlex
 from pathlib import Path
+
+from voidx.permission.constants import (
+    FS_WRITE_COMMANDS,
+    GIT_GLOBAL_OPTIONS_WITH_VALUE,
+    REDIR_PATTERNS,
+)
 
 
 def _allowed(
@@ -58,37 +63,7 @@ def check_sandbox_filepath(
     )
 
 
-# ── bash command write-target extraction ──────────────────────────────
 
-# Patterns that extract write targets from common bash idioms.
-# Each captures the target path in group 1.
-_REDIR_PATTERNS = [
-    # standard redirect: cmd > /path/to/file, cmd >> /path/to/file
-    re.compile(r"\d?\s*>>?\s*(\S+)"),
-    # tee: cmd | tee /path/to/file,  cmd | tee -a /path/to/file
-    re.compile(r"\|\s*tee(?:\s+-a)?\s+(\S+)"),
-    # dd of=/dev/… (already handled by _BLOCKED in bash.py, but belt-and-suspenders)
-    re.compile(r"\bof=(\S+)"),
-]
-
-# Destructive filesystem commands whose arguments are potential write targets.
-_FS_WRITE_COMMANDS = {
-    "rm": 1,   # rm target
-    "cp": -1,   # cp src… dst  (last arg is destination)
-    "mv": -1,   # mv src… dst  (last arg is destination)
-    "ln": -1,   # ln [-s] src… dst  (last arg is destination)
-    "mkdir": 1, # mkdir dir
-    "touch": 1, # touch file
-    "install": -1, # install src… dst
-    "tee": 1,  # tee [-a] file…
-    "chmod": 0,  # chmod doesn't change filesystem layout; skip
-    "chown": 0,  # chown doesn't change filesystem layout; skip
-    "chgrp": 0,  # chgrp doesn't change filesystem layout; skip
-}
-
-# Git operations that write outside the repo (push to remote).
-# These can't be checked by path inspection, so we only flag force-push
-# which is already blocked by _BLOCKED in bash.py.
 
 
 def check_sandbox_bash(
@@ -113,7 +88,7 @@ def check_sandbox_bash(
     write_targets: list[str] = []
 
     # ── redirections (> / >> / | tee) ────────────────────────────────
-    for pattern in _REDIR_PATTERNS:
+    for pattern in REDIR_PATTERNS:
         for m in pattern.finditer(stripped):
             target = m.group(1)
             if target and not target.startswith("&") and not target.startswith("/dev/"):
@@ -199,7 +174,7 @@ def _extract_command_targets(words: list[str], workspace: str, current_dir: Path
         if word.startswith("of=") and len(word) > 3:
             result.extend(_resolve_targets([word[3:]], current_dir))
 
-    arg_idx = _FS_WRITE_COMMANDS.get(prog)
+    arg_idx = FS_WRITE_COMMANDS.get(prog)
     if arg_idx is None:
         return result
     if arg_idx == 0:
@@ -274,19 +249,16 @@ def _is_git_push_outside(
     return subcommand == "push"
 
 
-_GIT_GLOBAL_OPTIONS_WITH_VALUE = {
-    "-C", "-c", "--git-dir", "--work-tree", "--namespace", "--exec-path",
-}
 
 
 def _git_subcommand(args: list[str]) -> str:
     index = 0
     while index < len(args):
         word = args[index]
-        if word in _GIT_GLOBAL_OPTIONS_WITH_VALUE:
+        if word in GIT_GLOBAL_OPTIONS_WITH_VALUE:
             index += 2
             continue
-        if any(word.startswith(f"{option}=") for option in _GIT_GLOBAL_OPTIONS_WITH_VALUE if option.startswith("--")):
+        if any(word.startswith(f"{option}=") for option in GIT_GLOBAL_OPTIONS_WITH_VALUE if option.startswith("--")):
             index += 1
             continue
         if word == "--":

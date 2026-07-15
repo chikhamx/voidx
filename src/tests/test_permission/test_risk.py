@@ -1,4 +1,4 @@
-from voidx.permission.presets import PermissionPreset, resolve_preset_decision
+from voidx.permission.presets import PermissionMode, resolve_mode_decision
 from voidx.permission.risk import ApprovalScope, RiskAssessment, RiskLevel, RiskTag
 from voidx.permission.shell_policy import classify_shell_risk
 
@@ -43,8 +43,8 @@ def test_safe_preset_asks_for_dangerous_and_once_only_for_extreme():
         reason="runs nested interpreter",
     )
 
-    dangerous_decision = resolve_preset_decision(PermissionPreset.SAFE, dangerous)
-    extreme_decision = resolve_preset_decision(PermissionPreset.SAFE, extreme)
+    dangerous_decision = resolve_mode_decision(PermissionMode.SAFE, dangerous)
+    extreme_decision = resolve_mode_decision(PermissionMode.SAFE, extreme)
 
     assert dangerous_decision.action == "ask"
     assert dangerous_decision.allowed_scopes == (ApprovalScope.ONCE, ApprovalScope.SESSION)
@@ -61,7 +61,7 @@ def test_read_only_preset_uses_stateless_approval_for_dangerous_risk():
         reason="writes through shell",
     )
 
-    decision = resolve_preset_decision(PermissionPreset.READ_ONLY, risk)
+    decision = resolve_mode_decision(PermissionMode.READ_ONLY, risk)
 
     assert decision.action == "ask"
     assert decision.allowed_scopes == (ApprovalScope.ONCE,)
@@ -82,36 +82,36 @@ def test_project_trusted_allows_only_workspace_edit_risk():
         reason="uses network",
     )
 
-    assert resolve_preset_decision(PermissionPreset.PROJECT_TRUSTED, workspace).action == "allow"
-    assert resolve_preset_decision(PermissionPreset.PROJECT_TRUSTED, network).action == "ask"
+    assert resolve_mode_decision(PermissionMode.PROJECT_TRUSTED, workspace).action == "allow"
+    assert resolve_mode_decision(PermissionMode.PROJECT_TRUSTED, network).action == "ask"
 
 
 def test_project_trusted_allows_nested_interpreter_in_workspace():
     risk = classify_shell_risk("python -m pytest", shell="bash")
     assert risk.level == RiskLevel.EXTREME
     assert RiskTag.NESTED_INTERPRETER in risk.tags
-    assert resolve_preset_decision(PermissionPreset.PROJECT_TRUSTED, risk).action == "allow"
+    assert resolve_mode_decision(PermissionMode.PROJECT_TRUSTED, risk).action == "allow"
 
 
 def test_project_trusted_allows_dynamic_shell_in_workspace():
     risk = classify_shell_risk("echo $HOME", shell="bash")
     assert risk.level == RiskLevel.EXTREME
     assert RiskTag.DYNAMIC_SHELL in risk.tags
-    assert resolve_preset_decision(PermissionPreset.PROJECT_TRUSTED, risk).action == "allow"
+    assert resolve_mode_decision(PermissionMode.PROJECT_TRUSTED, risk).action == "allow"
 
 
 def test_project_trusted_allows_dependency_install():
     risk = classify_shell_risk("pip install requests", shell="bash")
     assert risk.level == RiskLevel.EXTREME
     assert RiskTag.DEPENDENCY_INSTALL in risk.tags
-    assert resolve_preset_decision(PermissionPreset.PROJECT_TRUSTED, risk).action == "allow"
+    assert resolve_mode_decision(PermissionMode.PROJECT_TRUSTED, risk).action == "allow"
 
 
 def test_project_trusted_still_asks_for_network():
     risk = classify_shell_risk("curl https://example.com", shell="bash")
     assert risk.level == RiskLevel.EXTREME
     assert RiskTag.NETWORK in risk.tags
-    assert resolve_preset_decision(PermissionPreset.PROJECT_TRUSTED, risk).action == "ask"
+    assert resolve_mode_decision(PermissionMode.PROJECT_TRUSTED, risk).action == "ask"
 
 
 def test_project_trusted_still_asks_for_system_destructive():
@@ -121,17 +121,17 @@ def test_project_trusted_still_asks_for_system_destructive():
         tags=(RiskTag.SYSTEM_DESTRUCTIVE,),
         reason="system destructive",
     )
-    assert resolve_preset_decision(PermissionPreset.PROJECT_TRUSTED, risk).action == "ask"
+    assert resolve_mode_decision(PermissionMode.PROJECT_TRUSTED, risk).action == "ask"
 
 
 def test_full_access_still_asks_for_network_after_extreme_change():
     risk = classify_shell_risk("curl https://example.com", shell="bash")
-    assert resolve_preset_decision(PermissionPreset.FULL_ACCESS, risk).action == "ask"
+    assert resolve_mode_decision(PermissionMode.FULL_ACCESS, risk).action == "ask"
 
 
 def test_full_access_allows_nested_interpreter_after_extreme_change():
     risk = classify_shell_risk("python -m pytest", shell="bash")
-    assert resolve_preset_decision(PermissionPreset.FULL_ACCESS, risk).action == "allow"
+    assert resolve_mode_decision(PermissionMode.FULL_ACCESS, risk).action == "allow"
 
 
 def test_shell_risk_classifies_nested_interpreter_as_extreme_not_blocked():
