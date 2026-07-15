@@ -1,5 +1,7 @@
 # Tool Result Persistence Optimization
 
+> **Status: Done** — Archived on 2026-07-16.
+
 ## Status
 Spec — awaiting implementation.
 

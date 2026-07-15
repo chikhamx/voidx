@@ -1,5 +1,7 @@
 # Rename: permission_preset → permission_mode
 
+> **Status: Done** — Archived on 2026-07-16.
+
 ## Goal
 
 Pure mechanical rename across the full codebase. No logic changes, no backward compatibility.

@@ -1,3 +1,5 @@
+> **Status: Done** — 实现完成，14 个 auto-route 专项测试全部通过
+
 ---
 name: bash-auto-route-git
 display_name: Bash Auto-Route to Git Tool
