@@ -1,6 +1,6 @@
 {
   "name": "@chikhamx/voidx",
-"version": "3.7.4"
+"version": "3.7.4",
   "description": "npm launcher for voidx, a terminal AI coding agent.",
   "license": "MIT",
   "bin": {
