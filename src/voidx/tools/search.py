@@ -87,7 +87,7 @@ class GlobTool(BaseTool):
         if not matches:
             payload = {"pattern": inp.pattern, "matches": 0, "truncated": False, "files": []}
             return ToolResult(
-                output=json.dumps(payload, ensure_ascii=False),
+                output=json.dumps(payload, ensure_ascii=False, indent=2),
                 display=f"No files matched pattern: {inp.pattern}",
                 metadata={"pattern": inp.pattern, "matches": 0},
             )
@@ -98,7 +98,7 @@ class GlobTool(BaseTool):
         payload = {"pattern": inp.pattern, "matches": total, "truncated": truncated, "files": shown}
         return ToolResult(
             title=f"Glob: {inp.pattern} → {total} files",
-            output=json.dumps(payload, ensure_ascii=False),
+            output=json.dumps(payload, ensure_ascii=False, indent=2),
             display="\n".join(shown),
             summary=f"{total} files matched",
             metadata={"pattern": inp.pattern, "matches": total, "truncated": truncated},
@@ -277,7 +277,7 @@ class GrepTool(BaseTool):
         if not results:
             payload = {"pattern": inp.pattern, "matches": 0, "truncated": False, "results": []}
             return ToolResult(
-                output=json.dumps(payload, ensure_ascii=False),
+                output=json.dumps(payload, ensure_ascii=False, indent=2),
                 display=f"No matches found for: {inp.pattern}",
                 metadata={"pattern": inp.pattern, "matches": 0, "match_details": [], "truncated": False},
             )
@@ -285,7 +285,7 @@ class GrepTool(BaseTool):
         payload = {"pattern": inp.pattern, "matches": count, "truncated": truncated, "results": match_details}
         return ToolResult(
             title=f"Grep: {inp.pattern} → {count} matches",
-            output=json.dumps(payload, ensure_ascii=False),
+            output=json.dumps(payload, ensure_ascii=False, indent=2),
             display="\n".join(results),
             summary=f"{count} matches",
             metadata={"pattern": inp.pattern, "matches": count, "match_details": match_details, "truncated": truncated},

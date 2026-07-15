@@ -43,7 +43,7 @@ def build_blocked_result(command: str, reason: str) -> ToolResult:
     """Build a ToolResult for a blocked command (dangerous pattern or sandbox denial)."""
     payload = {"ok": False, "exit_code": -1, "stdout": "", "stderr": reason, "blocked": True}
     return ToolResult(
-        output=json.dumps(payload, ensure_ascii=False),
+        output=json.dumps(payload, ensure_ascii=False, indent=2),
         display=reason,
         metadata={"command": command, "blocked": True, "error": True},
     )
@@ -94,7 +94,7 @@ def build_timeout_result(command: str, timeout: int) -> ToolResult:
     payload = {"ok": False, "exit_code": -1, "stdout": "", "stderr": "", "timeout": True}
     display = f"Command timed out after {timeout}s: {command}"
     return ToolResult(
-        output=json.dumps(payload, ensure_ascii=False),
+        output=json.dumps(payload, ensure_ascii=False, indent=2),
         display=display,
         metadata=tool_timeout_metadata("shell", command=command, exit_code=-1),
     )
@@ -128,7 +128,7 @@ def build_success_result(
 
     return ToolResult(
         title=f"{tool_label}: {command}",
-        output=json.dumps(payload, ensure_ascii=False),
+        output=json.dumps(payload, ensure_ascii=False, indent=2),
         display="\n".join(display_parts) or "(no output)",
         summary="" if exit_code == 0 else f"exit {exit_code}",
         metadata={
