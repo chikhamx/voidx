@@ -97,6 +97,19 @@ def test_classify_valid_turn_stop_call():
     assert classify_turn_call(msg) == TurnClassification.VALID_TURN
 
 
+def test_classify_turn_stop_without_params_key():
+    msg = AIMessage(
+        content="",
+        tool_calls=[{
+            "name": "turn",
+            "args": {"operation": "stop"},
+            "id": "call_no_params",
+            "type": "tool_call",
+        }],
+    )
+    assert classify_turn_call(msg) == TurnClassification.VALID_TURN
+
+
 def test_classify_valid_turn_start_call():
     msg = _ai_with_turn_start()
     assert classify_turn_call(msg) == TurnClassification.VALID_START

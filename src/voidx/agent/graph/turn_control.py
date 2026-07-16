@@ -109,18 +109,20 @@ def classify_turn_call(msg: AIMessage) -> TurnClassification:
 
     if turn_count == 1 and regular_count == 0:
         args = calls[0].get("args")
-        if not isinstance(args, dict) or set(args) != {"operation", "params"}:
+        if not isinstance(args, dict) or "operation" not in args:
             return TurnClassification.INVALID_TURN
         operation = args.get("operation")
         params = args.get("params")
-        if operation == TurnOperation.STOP and params is None:
-            return TurnClassification.VALID_TURN
+        if operation == TurnOperation.STOP:
+            if params is None and set(args).issubset({"operation", "params"}):
+                return TurnClassification.VALID_TURN
         if (
             operation == TurnOperation.START
             and isinstance(params, dict)
             and set(params) == {"intent", "goal"}
             and params.get("intent") in {"coding", "general"}
             and _is_non_empty_text(params.get("goal"))
+            and set(args) == {"operation", "params"}
         ):
             return TurnClassification.VALID_START
 
