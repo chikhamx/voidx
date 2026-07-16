@@ -9,15 +9,18 @@
 | `/permission read_only` | 阻止写入和高风险操作 |
 | `/permission safe` | 默认安全预设，风险操作会询问 |
 | `/permission project_trusted` | 信任项目内编辑，危险操作仍询问 |
-| `/permission full_access` | 最宽松预设，但极高风险仍需确认 |
+| `/permission full_access` | 最宽松预设，大多数操作自动允许；硬阻断风险仍直接拒绝 |
 
 ### 沙箱
 
-| 命令 | 行为 |
-|------|------|
-| `/sandbox read-only` | 只读沙箱 |
-| `/sandbox workspace-write` | 允许工作区写 |
-| `/sandbox danger-full-access` | 无沙箱限制 |
+沙箱不是独立命令；它由 `/permission` 预设派生。
+
+| 权限模式 | 派生沙箱 | 审批策略 |
+|------|------|------|
+| `read_only` | `read-only` | 风险操作询问，写入默认受限 |
+| `safe` | `workspace-write` | 写入和风险命令询问 |
+| `project_trusted` | `workspace-write` | 项目内编辑/常规命令更宽松，危险操作询问 |
+| `full_access` | `danger-full-access` | 大多数操作自动允许，硬阻断风险仍直接拒绝 |
 
 ### 工具级控制
 

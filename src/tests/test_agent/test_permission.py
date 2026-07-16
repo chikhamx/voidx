@@ -265,6 +265,21 @@ def test_permission_service_preset_updates_runtime_decisions():
     assert service.status_label() == "Full access"
 
 
+@pytest.mark.parametrize(
+    ("permission_mode", "sandbox_mode"),
+    [
+        ("read_only", "read-only"),
+        ("safe", "workspace-write"),
+        ("project_trusted", "workspace-write"),
+        ("full_access", "danger-full-access"),
+    ],
+)
+def test_permission_service_status_details_use_derived_sandbox_mode(permission_mode, sandbox_mode):
+    service = PermissionService(permission_mode=permission_mode)
+
+    assert service.status_details()[0] == sandbox_mode
+
+
 def test_permission_engine_classifies_basic_capabilities():
     assert classify_tool_call({"name": "read", "args": {"file_path": "x.py"}}).capability == PermissionCapability.READ_TOOLS
     assert classify_tool_call({"name": "manage", "args": {"op": "create", "paths": "x.py"}}).capability == PermissionCapability.FILE_WRITE
@@ -459,6 +474,8 @@ def test_sandbox_bash_blocks_git_push_even_with_extra_paths(tmp_path):
 
         assert reason is not None
         assert "git push writes outside" in reason
+        assert "/permission full_access" in reason
+        assert "/sandbox" not in reason
 
 
 def test_is_safe_bash_preserves_windows_backslash_path():

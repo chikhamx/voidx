@@ -44,12 +44,12 @@ class GraphPermissionMixin:
         )
 
         for tc in tool_calls:
-            classified = classify_tool_call(tc)
             decision = authorize_tool_call(tc, context)
             if decision.action == Action.ALLOW:
-                approved.append(decision.tool_call)
+                approved_call = _tool_call_with_execution_approval(decision)
+                approved.append(approved_call)
                 if decision.failure_check:
-                    self._needs_failure_check[decision.tool_call.get("id", "")] = decision.tool_call
+                    self._needs_failure_check[approved_call.get("id", "")] = approved_call
             elif decision.action == Action.DEFER:
                 approved.append(decision.tool_call)
             elif decision.action == Action.DENY:
@@ -194,6 +194,14 @@ def _tool_call_with_approval_risk(decision: PermissionDecision) -> dict:
     return {**decision.tool_call, "metadata": metadata}
 
 
+def _tool_call_with_execution_approval(decision: PermissionDecision) -> dict:
+    if decision.name not in {"bash", "powershell"}:
+        return decision.tool_call
+    if decision.risk is None or decision.risk.level == RiskLevel.NORMAL:
+        return decision.tool_call
+    return _tool_call_with_approval_risk(decision)
+
+
 def _permission_choices(decisions: list[PermissionDecision]) -> list[tuple[str, str, str]]:
     if _all_decisions_blocked_ack(decisions):
         return [("Do not run", "n", "This command is blocked")]
@@ -217,6 +225,4 @@ def _all_decisions_blocked_ack(decisions: list[PermissionDecision]) -> bool:
 
 def _scope_values(scopes: tuple[object, ...]) -> set[str]:
     return {scope.value if hasattr(scope, "value") else str(scope) for scope in scopes}
-
-
 

@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+import re
 import shlex
 from dataclasses import dataclass
 from pathlib import Path
@@ -25,6 +26,53 @@ class ShellPolicyDecision:
     read_only: bool
     reason: str = ""
     access_paths: tuple[Path, ...] = ()
+
+
+@dataclass(frozen=True)
+class HardBlockedShellCommand:
+    reason: str
+    tags: tuple[RiskTag, ...]
+
+
+_HARD_BLOCKED_SHELL_PATTERNS: tuple[tuple[str, str, tuple[RiskTag, ...]], ...] = (
+    (r"\bsudo\b", "sudo is blocked — privilege escalation", (RiskTag.PRIVILEGE_ESCALATION,)),
+    (r"\bchmod\s+.*[0]*7\d{2}\b", "chmod 7xx is blocked — world-writable permissions", (RiskTag.SYSTEM_DESTRUCTIVE,)),
+    (r"\bchmod\s+[0]*\d*7\b", "chmod with 7 is blocked", (RiskTag.SYSTEM_DESTRUCTIVE,)),
+    (r"\bchown\b", "chown is blocked", (RiskTag.PRIVILEGE_ESCALATION,)),
+    (r"\bchgrp\b", "chgrp is blocked", (RiskTag.PRIVILEGE_ESCALATION,)),
+    (r"\bmkfs\b", "mkfs is blocked — filesystem formatting", (RiskTag.SYSTEM_DESTRUCTIVE,)),
+    (r"\bdd\s+if=.*of=/dev/", "dd to /dev is blocked — raw disk write", (RiskTag.SYSTEM_DESTRUCTIVE,)),
+    (r">\s*/dev/sd", "write to /dev/sd* is blocked", (RiskTag.SYSTEM_DESTRUCTIVE,)),
+    (r"\breboot\b", "reboot is blocked", (RiskTag.SYSTEM_DESTRUCTIVE,)),
+    (r"\bshutdown\b", "shutdown is blocked", (RiskTag.SYSTEM_DESTRUCTIVE,)),
+    (r"\bpoweroff\b", "poweroff is blocked", (RiskTag.SYSTEM_DESTRUCTIVE,)),
+    (r"\binit\s+[06]\b", "init runlevel change is blocked", (RiskTag.SYSTEM_DESTRUCTIVE,)),
+    (r":\(\)\s*\{", "fork bomb pattern is blocked", (RiskTag.SYSTEM_DESTRUCTIVE,)),
+    (r"\bgit\s+push\s+.*(-f|--force).*(main|master)\b", "force push to main/master is blocked", (RiskTag.GIT_PUSH,)),
+    (r"\bcurl\b.*\|\s*(bash|sh|/bin/bash|/bin/sh)\b", "curl piped to shell is blocked", (RiskTag.NETWORK, RiskTag.DYNAMIC_SHELL)),
+    (r"\bwget\b.*\|\s*(bash|sh|/bin/bash|/bin/sh)\b", "wget piped to shell is blocked", (RiskTag.NETWORK, RiskTag.DYNAMIC_SHELL)),
+)
+
+
+def hard_blocked_shell_command(command: str) -> HardBlockedShellCommand | None:
+    normalized = _normalize_shell_command(command)
+    for pattern, reason, tags in _HARD_BLOCKED_SHELL_PATTERNS:
+        if re.search(pattern, normalized):
+            return HardBlockedShellCommand(
+                reason=f"Blocked: {reason}\n  command: {command.strip()[:120]}",
+                tags=tags,
+            )
+    return None
+
+
+def _normalize_shell_command(command: str) -> str:
+    s = command.strip()
+    s = re.sub(r"\\\s*\n", " ", s)
+    s = re.sub(r"\\(.)", r"\1", s)
+    s = re.sub(r"\$\([^)]*\)", "SUB", s)
+    s = re.sub(r"`[^`]*`", "SUB", s)
+    s = re.sub(r"''", "", s)
+    return s
 
 
 
@@ -62,6 +110,14 @@ def classify_shell_risk(command: str, *, shell: str = "bash") -> RiskAssessment:
     blocked = _blocked_shell_risk(stripped, tool_name=tool_name)
     if blocked is not None:
         return blocked
+    hard_blocked = hard_blocked_shell_command(stripped)
+    if hard_blocked is not None:
+        return RiskAssessment.blocked(
+            tool_name=tool_name,
+            pattern=stripped,
+            tags=hard_blocked.tags,
+            reason=hard_blocked.reason,
+        )
     tags: list[RiskTag] = []
     reasons: list[str] = []
     if any(marker in stripped for marker in DYNAMIC_MARKERS):

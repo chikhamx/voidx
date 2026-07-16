@@ -106,7 +106,7 @@ def check_sandbox_bash(
             f"SANDBOX: git push writes outside the allowed workspace."
             f"\n  Allowed: {workspace}"
             + (f" + {extra_paths}" if extra_paths else "")
-            + "\n  Use /sandbox danger-full-access to allow git push."
+            + "\n  Use /permission full_access to allow git push."
         )
 
     # ── check each target ────────────────────────────────────────────

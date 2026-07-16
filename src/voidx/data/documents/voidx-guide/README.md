@@ -6,7 +6,7 @@
 | `voidx-guide/session.md` | 用户询问会话管理、恢复、清理、回滚或标题时读取。 | /clear, /session, /resume, /rollback, /title |
 | `voidx-guide/model.md` | 用户询问模型、Provider、profile、reasoning 或上下文窗口时读取。 | /model, provider, profile, reasoning, context window |
 | `voidx-guide/mode.md` | 用户询问 auto、plan、goal 等交互模式差异时读取。 | auto mode, plan mode, goal mode, interaction |
-| `voidx-guide/permission.md` | 用户询问权限、沙箱、审批、allow/deny 或 permission-mode 时读取。 | permission, sandbox, approval, allow, deny |
+| `voidx-guide/permission.md` | 用户询问权限、沙箱、审批、allow/deny 或 permission 时读取。 | permission, sandbox, approval, allow, deny |
 | `voidx-guide/workflow.md` | 用户询问 brainstorm、design、plan、tdd、verify、review、feedback、debug 工作流时读取。 | workflow, TDD, verify, review, debug |
 | `voidx-guide/extension.md` | 用户询问 MCP、LSP、skills 或扩展能力时读取。 | MCP, LSP, skills, extension |
 | `voidx-guide/context.md` | 用户询问上下文压缩、usage、diff 或上下文管理时读取。 | compact, usage, diff, context |

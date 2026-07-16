@@ -669,6 +669,119 @@ async def test_graph_authorization_attaches_approved_risk_token_to_approved_shel
     }
 
 
+@pytest.mark.parametrize("permission_mode", ["project_trusted", "full_access"])
+@pytest.mark.asyncio
+async def test_auto_allowed_shell_call_carries_approved_risk(tmp_path, permission_mode: str):
+    graph = _graph(tmp_path)
+    graph._permission.set_permission_mode(permission_mode)
+
+    async def fail_if_asked(_tool_calls):
+        raise AssertionError(f"{permission_mode} should auto-allow workspace shell commands")
+
+    graph._ask_tool_permission = fail_if_asked
+    command = "./build.sh"
+
+    approved, denied = await graph._authorize_tool_calls(
+        [{"name": "bash", "args": {"command": command}, "id": "call_1"}],
+        plan_mode=False,
+        session_id="s",
+    )
+
+    assert denied == []
+    assert approved[0]["metadata"]["approved_risk"] == {
+        "tool_name": "bash",
+        "pattern": command,
+        "risk_level": "dangerous",
+        "tags": ["workspace_edit"],
+        "reason": "unknown shell command",
+    }
+
+
+@pytest.mark.skipif(sys.platform == "win32", reason="bash is not registered on Windows")
+@pytest.mark.parametrize("permission_mode", ["project_trusted", "full_access"])
+@pytest.mark.asyncio
+async def test_shell_script_executes_after_auto_allow(tmp_path, permission_mode: str):
+    graph = _graph(tmp_path)
+    graph._permission.set_permission_mode(permission_mode)
+    script = tmp_path / "build.sh"
+    script.write_text("#!/usr/bin/env bash\nprintf 'built\\n'\n", encoding="utf-8")
+    script.chmod(0o755)
+
+    async def fail_if_asked(_tool_calls):
+        raise AssertionError(f"{permission_mode} should auto-allow workspace shell commands")
+
+    graph._ask_tool_permission = fail_if_asked
+    parent = AIMessage(
+        content="",
+        tool_calls=[
+            {
+                "name": "bash",
+                "args": {"command": "./build.sh"},
+                "id": "call_build",
+                "type": "tool_call",
+            },
+        ],
+    )
+
+    result = await graph._execute_tools({
+        "messages": [parent],
+        "workspace": str(tmp_path),
+        "persona": "voidx",
+        "plan_mode": False,
+    })
+
+    tool_message = next(message for message in result["messages"] if isinstance(message, ToolMessage))
+    assert tool_message.status == "success"
+    payload = json.loads(tool_message.content)
+    assert payload["ok"] is True
+    assert payload["stdout"] == "built\n"
+
+
+@pytest.mark.skipif(sys.platform == "win32", reason="bash is not registered on Windows")
+@pytest.mark.parametrize("permission_mode", ["read_only", "safe"])
+@pytest.mark.asyncio
+async def test_shell_script_executes_after_prompt_approval(tmp_path, permission_mode: str):
+    graph = _graph(tmp_path)
+    graph._permission.set_permission_mode(permission_mode)
+    script = tmp_path / "build.sh"
+    script.write_text("#!/usr/bin/env bash\nprintf 'built\\n'\n", encoding="utf-8")
+    script.chmod(0o755)
+
+    asked = 0
+
+    async def approve(_tool_calls):
+        nonlocal asked
+        asked += 1
+        return "y"
+
+    graph._ask_tool_permission = approve
+    parent = AIMessage(
+        content="",
+        tool_calls=[
+            {
+                "name": "bash",
+                "args": {"command": "./build.sh"},
+                "id": "call_build",
+                "type": "tool_call",
+            },
+        ],
+    )
+
+    result = await graph._execute_tools({
+        "messages": [parent],
+        "workspace": str(tmp_path),
+        "persona": "voidx",
+        "plan_mode": False,
+    })
+
+    tool_message = next(message for message in result["messages"] if isinstance(message, ToolMessage))
+    assert asked == 1
+    assert tool_message.status == "success"
+    payload = json.loads(tool_message.content)
+    assert payload["ok"] is True
+    assert payload["stdout"] == "built\n"
+
+
 @pytest.mark.asyncio
 async def test_blocked_permission_prompt_only_acknowledges_and_denies_execution(tmp_path):
     graph = _graph(tmp_path)

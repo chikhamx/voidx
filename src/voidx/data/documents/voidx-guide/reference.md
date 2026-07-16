@@ -20,7 +20,6 @@
 | `/permissions` | 查看权限规则 |
 | `/permission` | 选择权限预设 |
 | `/allow` `/deny` | 临时允许/拒绝某个工具 |
-| `/sandbox` | 设置执行沙箱边界 |
 | `/compact` | 压缩上下文 |
 | `/usage` | 查看 token 用量 |
 | `/diff` | 查看 git diff |

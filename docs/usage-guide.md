@@ -107,20 +107,21 @@ voidx sessions
 
 | 命令 | 行为 |
 |------|------|
-| `/permission-mode read-only` | 阻止所有写操作 |
-| `/permission-mode default` | 写/编辑/bash 前询问 |
-| `/permission-mode accept-edits` | 允许文件编辑，bash 仍询问 |
-| `/permission-mode auto-review` | reviewer 辅助审批 |
-| `/permission-mode custom` | 用 `.voidx/settings.json` 配置 |
-| `/permission-mode full-access` | 无沙箱无审批 |
+| `/permission read_only` | 阻止写入和高风险操作 |
+| `/permission safe` | 默认安全预设，写入和风险命令会询问 |
+| `/permission project_trusted` | 信任项目内编辑和常规命令，危险操作仍询问 |
+| `/permission full_access` | 最宽松预设，大多数操作自动允许；硬阻断风险仍直接拒绝 |
 
 ### 沙箱
 
-| 命令 | 行为 |
-|------|------|
-| `/sandbox read-only` | 只读沙箱 |
-| `/sandbox workspace-write` | 允许工作区写 |
-| `/sandbox danger-full-access` | 无沙箱限制 |
+沙箱不是独立命令；它由 `/permission` 预设派生。
+
+| 权限模式 | 派生沙箱 | 审批策略 |
+|------|------|------|
+| `read_only` | `read-only` | 风险操作询问，写入默认受限 |
+| `safe` | `workspace-write` | 写入和风险命令询问 |
+| `project_trusted` | `workspace-write` | 项目内编辑/常规命令更宽松，危险操作询问 |
+| `full_access` | `danger-full-access` | 大多数操作自动允许，硬阻断风险仍直接拒绝 |
 
 ### 工具级控制
 
@@ -129,7 +130,7 @@ voidx sessions
 | `/allow <tool>` | 本会话允许某工具 |
 | `/deny <tool>` | 本会话禁止某工具 |
 | `/permissions` | 查看当前规则 |
-| `/approval untrusted\|on-failure\|on-request\|never` | 审批策略 |
+| `/permission <preset>` | 切换高层权限预设 |
 
 ---
 
@@ -283,8 +284,7 @@ npm update -g @chikhamx/voidx
 | `/plan` `/unplan` | 进入/退出 plan 模式 |
 | `/goal` | 设置目标 |
 | `/permissions` | 查看权限规则 |
-| `/sandbox` | 设置沙箱 |
-| `/approval` | 设置审批策略 |
+| `/permission` | 选择权限预设 |
 | `/compact` | 压缩上下文 |
 | `/usage` | 查看 token 用量 |
 | `/diff` | 查看 git diff |
