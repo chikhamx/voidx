@@ -124,9 +124,9 @@ def test_project_trusted_still_asks_for_system_destructive():
     assert resolve_mode_decision(PermissionMode.PROJECT_TRUSTED, risk).action == "ask"
 
 
-def test_full_access_still_asks_for_network_after_extreme_change():
+def test_full_access_allows_network_after_extreme_change():
     risk = classify_shell_risk("curl https://example.com", shell="bash")
-    assert resolve_mode_decision(PermissionMode.FULL_ACCESS, risk).action == "ask"
+    assert resolve_mode_decision(PermissionMode.FULL_ACCESS, risk).action == "allow"
 
 
 def test_full_access_allows_nested_interpreter_after_extreme_change():

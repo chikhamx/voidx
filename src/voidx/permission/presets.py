@@ -65,7 +65,6 @@ def _full_access_asks(risk: RiskAssessment) -> bool:
         tag in risk.tags
         for tag in {
             RiskTag.EXTERNAL_PATH,
-            RiskTag.NETWORK,
             RiskTag.GIT_PUSH,
             RiskTag.SYSTEM_DESTRUCTIVE,
             RiskTag.PRIVILEGE_ESCALATION,
