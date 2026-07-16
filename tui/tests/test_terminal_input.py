@@ -233,8 +233,7 @@ def test_command_panel_keeps_dynamic_status_below_panel(tmp_path):
         model="mimo-v2.5-pro",
         workspace=str(tmp_path),
         reasoning_effort="xhigh",
-        sandbox_label=lambda: "safe",
-        approval_label=lambda: "",
+        permission_label=lambda: "Safe",
         interaction_mode=lambda: "auto",
         debug=lambda: True,
     )

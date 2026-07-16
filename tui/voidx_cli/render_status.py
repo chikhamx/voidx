@@ -84,8 +84,7 @@ class _StatusRendererMixin:
     def _status_segments(self, *, include_busy: bool) -> tuple[tuple, tuple[StatusSegment, ...]]:
         model = _safe_status_value(getattr(self.status, "model", ""), "")
         effort = _safe_status_value(getattr(self.status, "reasoning_effort", ""), "")
-        sandbox = _call_status(getattr(self.status, "sandbox_label", None), "")
-        approval = _call_status(getattr(self.status, "approval_label", None), "")
+        permission = _call_status(getattr(self.status, "permission_label", None), "")
         mode = _call_status(getattr(self.status, "interaction_mode", None), "")
         debug = _call_bool(getattr(self.status, "debug", None))
         goal_label = _call_status(getattr(self.status, "goal_label", None), "")
@@ -101,8 +100,7 @@ class _StatusRendererMixin:
         snapshot = (
             model,
             effort,
-            sandbox,
-            approval,
+            permission,
             mode,
             debug,
             goal_label,
@@ -114,7 +112,7 @@ class _StatusRendererMixin:
         if effort:
             model_text = f"{model_text} {effort}"
 
-        policy_parts = [part for part in (sandbox, approval) if part]
+        policy_parts = [part for part in (permission,) if part]
         policy_text = " ".join(policy_parts)
 
         state_parts = []

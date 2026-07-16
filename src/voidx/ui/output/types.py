@@ -37,8 +37,7 @@ class UiStatus:
     goal_label: Callable[[], str] = field(default_factory=lambda: lambda: "")
     active_workflows: Callable[[], list[str]] = field(default_factory=lambda: lambda: [])
     reasoning_effort: str = "xhigh"
-    sandbox_label: Callable[[], str] = field(default_factory=lambda: lambda: "w-write")
-    approval_label: Callable[[], str] = field(default_factory=lambda: lambda: "on-fail")
+    permission_label: Callable[[], str] = field(default_factory=lambda: lambda: "Safe")
     usage_stats: UsageStats = field(default_factory=UsageStats)
     mcp_servers: Callable[[], list[McpServerStatus]] = field(default_factory=lambda: lambda: [])
     mcp_config_path: str = ""

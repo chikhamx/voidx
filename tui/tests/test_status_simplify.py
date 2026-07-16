@@ -19,8 +19,7 @@ def _make_status(tmp_path, **overrides):
         model="claude-sonnet-4-20250514",
         workspace=str(tmp_path),
         reasoning_effort="xhigh",
-        sandbox_label=lambda: "safe",
-        approval_label=lambda: "",
+        permission_label=lambda: "Safe",
         interaction_mode=lambda: "auto",
         debug=lambda: False,
         goal_label=lambda: "",
@@ -68,7 +67,7 @@ def test_policy_segment_excludes_permission_label(tmp_path):
     tui = PureTui(status, COMMANDS)
     plain = _status_plain(tui)
     assert "default" not in plain.lower()
-    assert "safe" in plain
+    assert "Safe" in plain
 
 
 
@@ -132,7 +131,7 @@ def test_status_works_without_goal_type_field(tmp_path):
     )
     assert not hasattr(status, "goal_type")
     assert not hasattr(status, "goal_awaiting_approval")
-    assert not hasattr(status, "permission_label")
+    assert hasattr(status, "permission_label")
 
 
 # ── variant priority: workflow before usage at narrow widths ───────
