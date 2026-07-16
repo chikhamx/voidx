@@ -10,7 +10,6 @@ from voidx.runtime.intent import InteractionMode
 from voidx.agent.graph.streaming import extract_text
 from voidx.agent.graph.topology import latest_user_text
 from voidx.agent.graph.turn_control import (
-    INVALID_TURN_PROMPT,
     NO_USER_RESPONSE_PROMPT,
     TURN_START_PROMPT,
     TURN_STOP_PROMPT,
@@ -24,7 +23,6 @@ from voidx.agent.task_state import (
     GoalSpec,
     IntentResolution,
     TaskState,
-    goal_label,
 )
 from voidx.agent.runtime_context import TaskIntent
 from voidx.llm.message_markers import GUIDANCE_MARKER
@@ -163,8 +161,9 @@ async def _handle_turn_start(
         return TurnControlResult("retry", llm_messages, loop.context_tokens, turn_state, runtime_task_state)
 
     start_args = start_call.get("args") or {}
-    intent_value = str(start_args.get("intent") or "coding")
-    goal_text = str(start_args.get("goal") or "").strip()
+    start_params = start_args.get("params") or {}
+    intent_value = str(start_params.get("intent") or "coding")
+    goal_text = str(start_params.get("goal") or "").strip()
     resolution = GoalResolution(
         intent=IntentResolution(
             type=TaskIntent.GENERAL if intent_value == "general" else TaskIntent.CODING,
@@ -193,9 +192,8 @@ async def _handle_turn_start(
         assistant_msg,
         ToolMessage(
             content=(
-                f"Turn started: {goal_label(runtime_task_state.current_goal) or goal_text}. "
-                f"Intent: {intent_value}. Continue with the next appropriate tool or workflow step. "
-                "When the user-facing response is complete, call turn operation='stop'."
+                "Check the active workflow in the task state and enter it if applicable, "
+                "otherwise proceed with the work directly."
             ),
             tool_call_id=tool_call_id,
             name="turn",
@@ -232,14 +230,11 @@ def _handle_turn_stop(
     if not loop.invalid_turn_repaired:
         loop.invalid_turn_repaired = True
         loop.turn_prompt_active = True
-        no_response = turn_terminal is None or not bool(
-            extract_text(turn_terminal).strip()
-        )
-        repair_prompt = NO_USER_RESPONSE_PROMPT if no_response else INVALID_TURN_PROMPT
         llm_messages = [
             *llm_messages,
+            assistant_msg,
             HumanMessage(
-                content=repair_prompt,
+                content=NO_USER_RESPONSE_PROMPT,
                 additional_kwargs={GUIDANCE_MARKER: True},
             ),
         ]
@@ -258,6 +253,19 @@ def _handle_invalid_turn(
     runtime_task_state: TaskState,
     estimate_tokens: Any,
 ) -> TurnControlResult:
+    has_text = bool(extract_text(assistant_msg).strip())
+    if has_text:
+        graph._turn_metrics.increment("turn_control_invalid_committed")
+        if loop.pending_provisional is not None and loop.turn_prompt_active:
+            terminal = loop.pending_provisional
+            terminal_visible = loop.pending_provisional_visible
+        else:
+            terminal = assistant_msg
+            terminal_visible = not loop.turn_prompt_active
+        loop.terminal_msg = normalize_terminal_message(terminal)
+        loop.terminal_msg_visible = terminal_visible
+        turn_state = "committed"
+        return TurnControlResult("break", llm_messages, loop.context_tokens, turn_state, runtime_task_state)
     if not loop.invalid_turn_repaired:
         graph._turn_metrics.increment("turn_control_mixed_tools")
         graph._turn_metrics.increment("turn_control_invalid")
@@ -265,8 +273,9 @@ def _handle_invalid_turn(
         loop.turn_prompt_active = True
         llm_messages = [
             *llm_messages,
+            assistant_msg,
             HumanMessage(
-                content=INVALID_TURN_PROMPT,
+                content=NO_USER_RESPONSE_PROMPT,
                 additional_kwargs={GUIDANCE_MARKER: True},
             ),
         ]
@@ -322,6 +331,13 @@ def _handle_plain_text(
         return TurnControlResult("retry", llm_messages, loop.context_tokens, turn_state, runtime_task_state)
     loop.missing_turn_count += 1
     graph._turn_metrics.increment("turn_control_missing")
+    text = extract_text(assistant_msg).strip()
+    if loop.missing_turn_count == 1 and len(text.splitlines()) >= 3:
+        graph._turn_metrics.increment("turn_control_auto_committed")
+        loop.terminal_msg = normalize_terminal_message(assistant_msg)
+        loop.terminal_msg_visible = loop.pending_provisional_visible
+        turn_state = "committed"
+        return TurnControlResult("break", llm_messages, loop.context_tokens, turn_state, runtime_task_state)
     if loop.missing_turn_count == 1:
         graph._turn_metrics.increment("turn_control_first_prompt")
         loop.turn_prompt_active = True

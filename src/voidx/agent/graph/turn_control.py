@@ -24,8 +24,8 @@ TURN_TOOL_DEFINITION: dict[str, Any] = {
     "function": {
         "name": TURN_TOOL_NAME,
         "description": (
-            "Turn lifecycle control. At turn start, call operation='start' with intent and a short goal before other work. "
-            "At turn end, call operation='stop' only after the pending final answer is complete. "
+            "Turn lifecycle control. At turn start, call operation='start' with intent and a short goal. "
+            "At turn end, call operation='stop' with params=null only after the pending final answer is complete. "
             "Do not combine turn with other tool calls. Do not output text with this call."
         ),
         "strict": True,
@@ -37,17 +37,23 @@ TURN_TOOL_DEFINITION: dict[str, Any] = {
                     "enum": ["start", "stop"],
                     "description": "start declares intent and goal; stop commits the pending final answer.",
                 },
-                "intent": {
-                    "type": "string",
-                    "enum": ["coding", "general", ""],
-                    "description": "For start: coding=code task, general=chat/Q&A. For stop: pass empty string.",
-                },
-                "goal": {
-                    "type": "string",
-                    "description": "For start: short stable objective for this user turn. For stop: pass empty string.",
+                "params": {
+                    "anyOf": [
+                        {
+                            "type": "object",
+                            "properties": {
+                                "intent": {"type": "string", "enum": ["coding", "general"]},
+                                "goal": {"type": "string"},
+                            },
+                            "required": ["intent", "goal"],
+                            "additionalProperties": False,
+                        },
+                        {"type": "null"},
+                    ],
+                    "description": "Object for start; null for stop.",
                 },
             },
-            "required": ["operation", "intent", "goal"],
+            "required": ["operation", "params"],
             "additionalProperties": False,
         },
     },
@@ -63,8 +69,8 @@ class TurnClassification(str, Enum):
 
 
 TURN_STOP_PROMPT = (
-    "Do not output text. If finished, call turn with operation='stop', intent='', and goal='' now. "
-    "If not finished, continue with a regular tool instead."
+    "If your text response is the final answer, call turn with operation='stop' with params=null to commit it. "
+    "If you still need to work, call a regular tool instead of outputting text."
 )
 
 TURN_START_PROMPT = (
@@ -75,15 +81,10 @@ FIRST_MISS_PROMPT = TURN_STOP_PROMPT
 
 SECOND_MISS_PROMPT = TURN_STOP_PROMPT
 
-INVALID_TURN_PROMPT = (
-    "The turn control response was invalid. Do not output text. Call turn with "
-    "operation='stop', intent='', and goal='' to commit the pending response, or call a regular tool to continue working."
-)
-
 NO_USER_RESPONSE_PROMPT = (
     "Turn stop was called but the user has not received a text response yet. "
     "Output a concise user-facing summary of the completed work first, "
-    "then call turn with operation='stop', intent='', and goal='' to finish."
+    "then call turn with operation='stop' with params=null to finish."
 )
 
 
@@ -108,14 +109,19 @@ def classify_turn_call(msg: AIMessage) -> TurnClassification:
 
     if turn_count == 1 and regular_count == 0:
         args = calls[0].get("args")
-        if not isinstance(args, dict) or set(args) != {"operation", "intent", "goal"}:
+        if not isinstance(args, dict) or set(args) != {"operation", "params"}:
             return TurnClassification.INVALID_TURN
         operation = args.get("operation")
-        intent = args.get("intent")
-        goal = args.get("goal")
-        if operation == TurnOperation.STOP:
+        params = args.get("params")
+        if operation == TurnOperation.STOP and params is None:
             return TurnClassification.VALID_TURN
-        if operation == TurnOperation.START and intent in {"coding", "general"} and _is_non_empty_text(goal):
+        if (
+            operation == TurnOperation.START
+            and isinstance(params, dict)
+            and set(params) == {"intent", "goal"}
+            and params.get("intent") in {"coding", "general"}
+            and _is_non_empty_text(params.get("goal"))
+        ):
             return TurnClassification.VALID_START
 
     return TurnClassification.INVALID_TURN

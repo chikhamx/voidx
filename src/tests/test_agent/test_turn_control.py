@@ -4,7 +4,7 @@ from langchain_core.messages import AIMessage
 
 from voidx.agent.graph.turn_control import (
     FIRST_MISS_PROMPT,
-    INVALID_TURN_PROMPT,
+    NO_USER_RESPONSE_PROMPT,
     SECOND_MISS_PROMPT,
     TURN_START_PROMPT,
     TURN_TOOL_DEFINITION,
@@ -20,7 +20,7 @@ def _ai_with_turn_stop() -> AIMessage:
         content="Here is the answer.",
         tool_calls=[{
             "name": "turn",
-            "args": {"operation": "stop", "intent": "", "goal": ""},
+            "args": {"operation": "stop", "params": None},
             "id": "call_1",
             "type": "tool_call",
         }],
@@ -32,7 +32,7 @@ def _ai_with_turn_start(intent: str = "coding", goal: str = "Fix the bug") -> AI
         content="",
         tool_calls=[{
             "name": "turn",
-            "args": {"operation": "start", "intent": intent, "goal": goal},
+            "args": {"operation": "start", "params": {"intent": intent, "goal": goal}},
             "id": "call_start",
             "type": "tool_call",
         }],
@@ -51,7 +51,7 @@ def _ai_with_mixed_calls() -> AIMessage:
         content="Done after reading.",
         tool_calls=[
             {"name": "read", "args": {"file_path": "x.py"}, "id": "call_3", "type": "tool_call"},
-            {"name": "turn", "args": {"operation": "stop", "intent": "", "goal": ""}, "id": "call_4", "type": "tool_call"},
+            {"name": "turn", "args": {"operation": "stop", "params": None}, "id": "call_4", "type": "tool_call"},
         ],
     )
 
@@ -79,9 +79,9 @@ def test_turn_tool_definition_requires_operation_intent_goal():
     params = TURN_TOOL_DEFINITION["function"]["parameters"]
     assert params["type"] == "object"
     assert params["properties"]["operation"]["enum"] == ["start", "stop"]
-    assert params["properties"]["intent"]["enum"] == ["coding", "general", ""]
-    assert "goal" in params["properties"]
-    assert params["required"] == ["operation", "intent", "goal"]
+    assert params["properties"]["params"]["anyOf"][0]["properties"]["intent"]["enum"] == ["coding", "general"]
+    assert "goal" in params["properties"]["params"]["anyOf"][0]["properties"]
+    assert params["required"] == ["operation", "params"]
     assert params["additionalProperties"] is False
 
 
@@ -219,7 +219,7 @@ def test_normalize_terminal_message_preserves_content():
 def test_repair_prompts_are_non_empty():
     assert len(FIRST_MISS_PROMPT.strip()) > 10
     assert len(SECOND_MISS_PROMPT.strip()) > 10
-    assert len(INVALID_TURN_PROMPT.strip()) > 10
+    assert len(NO_USER_RESPONSE_PROMPT.strip()) > 10
 
 
 def test_first_miss_prompt_mentions_turn():
@@ -227,8 +227,8 @@ def test_first_miss_prompt_mentions_turn():
     assert "turn" in prompt
     assert "operation='stop'" in prompt
     assert "regular tool" in prompt
-    assert "finished" in prompt
-    assert "continue" in prompt
+    assert "final answer" in prompt
+    assert "still need to work" in prompt
 
 
 def test_start_prompt_mentions_start_intent_and_goal():
@@ -243,8 +243,7 @@ def test_second_miss_prompt_mentions_turn():
     assert "turn" in SECOND_MISS_PROMPT.lower()
 
 
-def test_invalid_turn_prompt_mentions_operation_or_regular_tool():
-    prompt = INVALID_TURN_PROMPT.lower()
-    assert "do not output text" in prompt
+def test_no_user_response_prompt_mentions_operation_stop():
+    prompt = NO_USER_RESPONSE_PROMPT.lower()
     assert "operation='stop'" in prompt
-    assert "regular tool" in prompt
+    assert "summary" in prompt

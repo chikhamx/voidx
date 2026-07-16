@@ -34,7 +34,7 @@ class ScriptedStreamingModel:
 
 
 def _turn_args(operation: str = "stop", intent: str = "", goal: str = "") -> dict[str, str]:
-    return {"operation": operation, "intent": intent, "goal": goal}
+    return {"operation": operation, "params": None if operation == "stop" else {"intent": intent, "goal": goal}}
 
 
 def _turn_call_chunk() -> AIMessageChunk:
@@ -159,8 +159,7 @@ async def test_turn_start_accepts_goal_then_continues_to_stop(tmp_path, monkeypa
     assert model.call_index == 3
     assert any(
         getattr(msg, "name", "") == "turn"
-        and "Turn started:" in str(msg.content)
-        and "Continue with the next appropriate tool or workflow step" in str(msg.content)
+        and "Check the active workflow" in str(msg.content)
         for msg in model.received_messages[1]
     )
 
@@ -360,11 +359,10 @@ async def test_regular_tool_after_turn_prompt_continues_without_committing_text(
 
 
 @pytest.mark.asyncio
-async def test_decision_only_turn_with_text_is_rejected_before_stop(tmp_path, monkeypatch):
+async def test_invalid_turn_with_text_commits_pending_without_retry(tmp_path, monkeypatch):
     model = ScriptedStreamingModel([
         [_text_chunk("Provisional answer.")],
         [_turn_stop_with_text_chunk("extra text")],
-        [_turn_call_chunk()],
     ])
     graph = _make_graph(tmp_path, model, monkeypatch)
 
@@ -376,7 +374,7 @@ async def test_decision_only_turn_with_text_is_rejected_before_stop(tmp_path, mo
     })
 
     assert result["messages"][0].content == "Provisional answer."
-    assert model.call_index == 3
+    assert model.call_index == 2
 
 
 # ── Test 5: second consecutive plain-text exits without another prompt ──────
@@ -650,8 +648,8 @@ async def test_start_prompt_injected_once_then_stop_prompt(tmp_path, monkeypatch
     round2_messages = model.received_messages[2]
     round2_text = "\n".join(str(getattr(msg, "content", "")) for msg in round2_messages)
     assert "operation='stop'" in round2_text
-    assert "If finished" in round2_text
-    assert "continue with a regular tool" in round2_text
+    assert "final answer" in round2_text
+    assert "regular tool" in round2_text
 
     assert result["messages"][0].content == "Second provisional."
     assert model.call_index == 3
