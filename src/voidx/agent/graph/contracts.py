@@ -100,6 +100,7 @@ class GraphToolExecutionHost(Protocol):
     _mcp_manager: Any
     _lsp_manager: Any
     _needs_failure_check: dict[str, dict]
+    _successful_dangerous_calls: set[str]
     _runtime_guards: RuntimeGuardState
     _tool_executor: GraphToolExecutor
     _display_policy: Any
@@ -129,7 +130,11 @@ class GraphPermissionHost(Protocol):
     _workspace: str
     _app: InteractionFrontend | None
     _permission: PermissionService
+    _settings: Settings | None
+    _ai_approval: Any
     _needs_failure_check: dict[str, dict]
+    _successful_dangerous_calls: set[str]
+    _successful_dangerous_calls_session_id: str | None
 
     async def _authorize_tool_calls(
         self,
@@ -152,6 +157,8 @@ class GraphPermissionHost(Protocol):
     def _notify_tool_failure(self, tc: dict, result: Any) -> None: ...
     def _show_permission_output(self, message: str) -> bool: ...
     def _clear_failure_check(self, cid: str) -> None: ...
+    def _record_successful_tool_call(self, tool_call: dict[str, Any]) -> None: ...
+    def clear_successful_dangerous_calls(self) -> None: ...
     def _permission_tool_details(self, tool_calls: list[PermissionDecision]) -> list[Any]: ...
 
 

@@ -585,6 +585,32 @@ async def test_permission_mode_dispatch_updates_service_and_settings(tmp_path):
     assert await SlashHandler(graph).dispatch("/approval never") is False
 
 
+
+
+@pytest.mark.asyncio
+async def test_permission_mode_dispatch_updates_ai_approval(tmp_path):
+    settings = Settings(str(tmp_path))
+    permission = PermissionService()
+    graph = SimpleNamespace(
+        _permission=permission,
+        _settings=settings,
+        _app=None,
+    )
+
+    graph._successful_dangerous_calls = {"cached"}
+    graph._successful_dangerous_calls_session_id = "session"
+
+    assert await SlashHandler(graph).dispatch("/permission ai-approval") is True
+
+    assert graph._successful_dangerous_calls == set()
+    assert graph._successful_dangerous_calls_session_id is None
+
+    reloaded = await Settings.create(str(tmp_path))
+    assert permission.permission_mode == PermissionMode.AI_APPROVAL.value
+    assert reloaded.get_permission_mode() == PermissionMode.AI_APPROVAL
+    assert (await reloaded.build_config()).permission_mode == PermissionMode.AI_APPROVAL
+
+    assert await SlashHandler(graph).dispatch("/permission") is True
 @pytest.mark.asyncio
 async def test_parallel_toggle_on_persists_without_live_config_update(tmp_path, monkeypatch):
     output = _capture_handler_output(monkeypatch)

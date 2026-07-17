@@ -54,6 +54,7 @@ from voidx.agent.runtime_context import (
 from voidx.agent.task_state import GoalResolution, TaskState, goal_type_from_join
 from voidx.agent.todo_state import apply_todo_state_to_host
 from voidx.config import Config, Settings
+from voidx.permission.ai_approval import AiApprovalService
 from voidx.llm.instruction import InstructionService
 from voidx.llm.message_markers import GUIDANCE_MARKER
 from voidx.llm.service import create_chat_model
@@ -229,6 +230,7 @@ class VoidXGraph(
         self._session = session
         self._workspace = config.workspace
         self._settings = settings
+        self._ai_approval = AiApprovalService()
         self._ui = runtime_ui_port
 
         bind_settings_to_catalog(settings)
@@ -261,6 +263,8 @@ class VoidXGraph(
         self._next_agent_id: int = 0
         self._task_state = TaskState()
         self._needs_failure_check: dict[str, dict] = {}
+        self._successful_dangerous_calls: set[str] = set()
+        self._successful_dangerous_calls_session_id: str | None = None
         self._runtime_guards = RuntimeGuardState()
         self._turn_metrics = TurnControlMetrics()
         self._pending_guidance: list[tuple[str, bool, Literal["user", "guard"]]] = []
@@ -343,6 +347,7 @@ class VoidXGraph(
         new_config = await settings.build_config(profile=profile)
         new_config.workspace = self._workspace
 
+        self.clear_successful_dangerous_calls()
         self._settings = settings
         self.config = new_config
         self.api_key = profile.api_key if profile is not None else None

@@ -6,6 +6,7 @@ from pathlib import Path
 from threading import RLock
 
 from voidx.config.enums import PermissionMode
+from voidx.config.models import AiApprovalConfig
 from voidx.config.settings_utils import string_list as _string_list
 from voidx.permission.grants import GrantDelta
 
@@ -14,6 +15,16 @@ _PERMISSION_TRANSACTION_LOCK = RLock()
 
 
 class SettingsPermissionMixin:
+    def get_ai_approval_config(self) -> AiApprovalConfig:
+        raw = self._effective_data().get("ai_approval", {})
+        try:
+            return AiApprovalConfig.model_validate(raw if isinstance(raw, dict) else {})
+        except Exception:
+            return AiApprovalConfig()
+
+    def set_ai_approval_config(self, config: AiApprovalConfig) -> Path:
+        return self._set_setting("ai_approval", config.model_dump(mode="json"))
+
     def get_permission_mode(self) -> PermissionMode:
         raw = self._effective_data().get("permission_mode", PermissionMode.SAFE.value)
         try:

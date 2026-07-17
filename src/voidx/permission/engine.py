@@ -23,13 +23,14 @@ from voidx.permission.rules import (
     tool_call_from_pattern,
 )
 from voidx.permission.sandbox import check_sandbox_bash, check_sandbox_filepath
+from voidx.permission.session_rules import session_rule_matches
 from voidx.tools.powershell.sandbox import check_sandbox_powershell
 from voidx.permission.schema import Action
-from voidx.permission.wildcard import match as wildcard_match
 
 
 def authorize_tool_call(tool_call: dict, context: PermissionContext) -> PermissionDecision:
     classified = classify_tool_call(tool_call)
+    session_action = session_action_for_tool(classified, context)
 
     sandbox_action, reason = sandbox_precheck_action(classified, context)
     if sandbox_action == "deny":
@@ -40,9 +41,12 @@ def authorize_tool_call(tool_call: dict, context: PermissionContext) -> Permissi
         return _decision(classified, "deny", "sandbox", reason or "", context=context)
 
     if sandbox_action == "defer":
+        if session_action == "deny":
+            return _decision(classified, "deny", "session", _reason_for(classified, "deny"), context=context)
+        if session_action == "allow" and context.sandbox_mode == "workspace-write":
+            return _decision(classified, "allow", "session", _reason_for(classified, "allow"), context=context)
         return _decision(classified, "ask", "sandbox", reason or _reason_for(classified, "ask"), context=context)
 
-    session_action = session_action_for_tool(classified.name, context)
     if session_action:
         reason = _reason_for(classified, session_action)
         return _decision(classified, session_action, "session", reason, context=context)
@@ -53,7 +57,7 @@ def authorize_tool_call(tool_call: dict, context: PermissionContext) -> Permissi
 
 def decide_base_action(tool: str, pattern: str, context: PermissionContext) -> Action:
     classified = classify_tool_call(tool_call_from_pattern(tool, pattern))
-    session_action = session_action_for_tool(classified.name, context)
+    session_action = session_action_for_tool(classified, context)
     if session_action:
         return session_action
     return _preset_decision_for(_risk_for(classified, "ask", _reason_for(classified, "ask")), context).action
@@ -145,10 +149,10 @@ def sandbox_precheck_action(classified: ClassifiedToolCall, context: PermissionC
     return "allow", None
 
 
-def session_action_for_tool(tool: str, context: PermissionContext) -> Action | None:
-    if any(_session_rule_matches(tool, rule) for rule in context.session_deny):
+def session_action_for_tool(classified: ClassifiedToolCall, context: PermissionContext) -> Action | None:
+    if any(session_rule_matches(classified, rule) for rule in context.session_deny):
         return "deny"
-    if any(_session_rule_matches(tool, rule) for rule in context.session_allow):
+    if any(session_rule_matches(classified, rule) for rule in context.session_allow):
         return "allow"
     return None
 
@@ -158,16 +162,6 @@ def strategy_action_for_tool(classified: ClassifiedToolCall, context: Permission
         return "allow"
     permission = "edit" if classified.name in {"manage", "write", "replace"} else classified.name
     return evaluate(permission, classified.pattern, BASIC_RULES).action
-
-
-def _session_rule_matches(tool: str, rule: str) -> bool:
-    if rule == "edit" and tool in {"manage", "write", "replace"}:
-        return True
-    if wildcard_match(tool, rule):
-        return True
-    if rule.startswith("mcp/"):
-        return wildcard_match(tool, rule.replace("/", "__"))
-    return False
 
 
 def _decision(

@@ -19,7 +19,7 @@ export interface SettingsSnapshot {
   [k: string]: unknown;
 }
 
-type PermissionMode = "read_only" | "safe" | "project_trusted" | "full_access";
+type PermissionMode = "read_only" | "safe" | "ai_approval" | "project_trusted" | "full_access";
 
 interface PermissionModeConfig {
   label: string;
@@ -34,6 +34,10 @@ const PERMISSION_MODES: Record<PermissionMode, PermissionModeConfig> = {
   safe: {
     label: "Safe",
     description: "Allow normal reads; ask for risky edits and commands.",
+  },
+  ai_approval: {
+    label: "AI approval",
+    description: "Let the selected model pre-screen dangerous calls; uncertain cases still require your approval. Projected arguments are sent to that model.",
   },
   project_trusted: {
     label: "Project trusted",
@@ -181,11 +185,15 @@ export function collectSettingsPatch(): Record<string, unknown> {
 function collectPermissionsPatch(value: (name: string) => string): Record<string, unknown> {
   const raw = value("permission_mode") || "safe";
   const preset = raw in PERMISSION_MODES ? (raw as PermissionMode) : "safe";
-  return {
-    permissions: {
-      permission_mode: preset,
-    },
-  };
+  const ai = (state.snapshot.permissions?.ai_approval || {}) as Record<string, unknown>;
+  const permissions: Record<string, unknown> = { permission_mode: preset };
+  if (preset === "ai_approval" || Object.keys(ai).length > 0) {
+    permissions.ai_approval = {
+      profile_name: value("ai_approval_profile"),
+      timeout_seconds: Number(value("ai_approval_timeout") || ai.timeout_seconds || 12),
+    };
+  }
+  return { permissions };
 }
 
 function inferPermissionMode(permissions: Record<string, unknown> = {}): PermissionMode {
@@ -302,6 +310,15 @@ function renderPermissionsTab(snapshot: SettingsSnapshot = {}): DocumentFragment
         (key) => PERMISSION_MODES[key as PermissionMode].label,
       ),
       readonlyRow("说明", presetConfig.description),
+      ...(preset === "ai_approval" ? [
+        selectRow(
+          "AI 审批 profile",
+          "ai_approval_profile",
+          String((permissions.ai_approval as Record<string, unknown> | undefined)?.profile_name || ""),
+          ["", ...(snapshot.profiles || []).filter((profile) => profile.configured).map((profile) => profile.name)],
+        ),
+        numberRow("审批超时（秒）", "ai_approval_timeout", Number((permissions.ai_approval as Record<string, unknown> | undefined)?.timeout_seconds || 12), 1, 60),
+      ] : []),
     ]),
     section("沙箱路径", [
       readonlyRow("Readable paths", [permissions.sandbox_readable_files, permissions.sandbox_readable_dirs].flat().join(", ") || "—"),

@@ -264,12 +264,14 @@ class SlashHandler(
         labels = {
             PermissionMode.READ_ONLY.value: "Read only",
             PermissionMode.SAFE.value: "Safe",
+            PermissionMode.AI_APPROVAL.value: "AI approval",
             PermissionMode.PROJECT_TRUSTED.value: "Project trusted",
             PermissionMode.FULL_ACCESS.value: "Full access",
         }
         choices = [
             (labels[PermissionMode.READ_ONLY.value], PermissionMode.READ_ONLY.value, "Ask for writes and block/acknowledge unsafe operations."),
             (labels[PermissionMode.SAFE.value], PermissionMode.SAFE.value, "Ask before writes or risky commands."),
+            (labels[PermissionMode.AI_APPROVAL.value], PermissionMode.AI_APPROVAL.value, "AI pre-screens dangerous tools; uncertain calls still ask you."),
             (labels[PermissionMode.PROJECT_TRUSTED.value], PermissionMode.PROJECT_TRUSTED.value, "Allow workspace edits; ask for broader risk."),
             (labels[PermissionMode.FULL_ACCESS.value], PermissionMode.FULL_ACCESS.value, "Allow most operations; still ask for extreme risk."),
         ]
@@ -282,7 +284,7 @@ class SlashHandler(
         if not raw:
             current = getattr(self.host.permission, "permission_mode", PermissionMode.SAFE.value)
             ui.print(f"Permission mode: [cyan]{labels.get(current, labels[PermissionMode.SAFE.value])}[/cyan]")
-            ui.print("Usage: /permission [read_only|safe|project_trusted|full_access]")
+            ui.print("Usage: /permission [read_only|safe|ai_approval|project_trusted|full_access]")
             return
         if raw not in valid:
             ui.error(f"Invalid permission mode: {raw}. Use: {', '.join(sorted(valid))}")
@@ -294,6 +296,7 @@ class SlashHandler(
         except PermissionError as exc:
             ui.error(str(exc))
             return
+        self.host.clear_successful_dangerous_calls()
         settings = self.host.settings
         if settings is not None:
             settings.set_permission_mode(preset)

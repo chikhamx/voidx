@@ -6,6 +6,7 @@ from voidx.config.enums import (
 )
 from voidx.config.models import (
     AgentConfig,
+    AiApprovalConfig,
     Config,
     McpServerConfig,
     ModelConfig,
@@ -21,6 +22,7 @@ __all__ = [
     "SETTINGS_FILE",
     "SKILLS_STATE_FILE",
     "AgentConfig",
+    "AiApprovalConfig",
     "CodeIde",
     "Config",
     "McpServerConfig",

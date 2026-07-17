@@ -9,6 +9,7 @@ class PermissionMode(str, Enum):
 
     READ_ONLY = "read_only"
     SAFE = "safe"
+    AI_APPROVAL = "ai_approval"
     PROJECT_TRUSTED = "project_trusted"
     FULL_ACCESS = "full_access"
 

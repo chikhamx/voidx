@@ -528,6 +528,157 @@ async def test_permission_result_uses_transient_output(tmp_path):
 
 
 @pytest.mark.asyncio
+async def test_always_approval_for_shell_is_target_scoped(tmp_path):
+    graph = _graph(tmp_path)
+    asked: list[list[str]] = []
+
+    async def approve(tool_calls):
+        asked.append([decision.pattern for decision in tool_calls])
+        return "a"
+
+    graph._ask_tool_permission = approve
+
+    first, denied = await graph._authorize_tool_calls(
+        [{"name": "bash", "args": {"command": "./test.py --backend -- src/tests/test_permission/test_ai_approval.py"}, "id": "call_1"}],
+        plan_mode=False,
+        session_id="s",
+    )
+    second, denied_second = await graph._authorize_tool_calls(
+        [{"name": "bash", "args": {"command": "./test.py --backend -- src/tests/test_agent/test_permission.py"}, "id": "call_2"}],
+        plan_mode=False,
+        session_id="s",
+    )
+    third, denied_third = await graph._authorize_tool_calls(
+        [{"name": "bash", "args": {"command": "./other-test.py --backend"}, "id": "call_3"}],
+        plan_mode=False,
+        session_id="s",
+    )
+
+    assert [tc["id"] for tc in first] == ["call_1"]
+    assert [tc["id"] for tc in second] == ["call_2"]
+    assert [tc["id"] for tc in third] == ["call_3"]
+    assert denied == []
+    assert denied_second == []
+    assert denied_third == []
+    assert asked == [
+        ["./test.py --backend -- src/tests/test_permission/test_ai_approval.py"],
+        ["./other-test.py --backend"],
+    ]
+
+
+
+@pytest.mark.asyncio
+async def test_ai_approval_reuses_successful_dangerous_call_without_review(tmp_path):
+    from voidx.agent.graph.permissions import _tool_call_key
+    from voidx.permission.ai_approval import AiApprovalResult
+    from voidx.config import PermissionMode
+
+    graph = _graph(tmp_path)
+    graph._settings = Settings(str(tmp_path))
+    graph._permission.permission_mode = PermissionMode.AI_APPROVAL.value
+    reviewed: list[int] = []
+
+    async def review(candidates, _settings):
+        reviewed.append(len(candidates))
+        return AiApprovalResult(
+            allowed_ids=frozenset({candidates[0].tool_call["id"]}),
+            reason="reviewed",
+        )
+
+    graph._ai_approval.review = review
+    graph._notice_permission_result = lambda _message: None
+    call = {"name": "write", "args": {"file_path": "app.py", "new_string": "x"}, "id": "call_1"}
+
+    first, first_denied = await graph._authorize_tool_calls([call], plan_mode=False, session_id="s")
+    graph._record_successful_tool_call(first[0])
+    second, second_denied = await graph._authorize_tool_calls(
+        [{**call, "id": "call_2"}], plan_mode=False, session_id="s"
+    )
+
+    assert [item["id"] for item in first] == ["call_1"]
+    assert [item["id"] for item in second] == ["call_2"]
+    assert first_denied == second_denied == []
+    assert reviewed == [1]
+    assert _tool_call_key(call) == _tool_call_key({**call, "id": "different"})
+    assert second[0]["metadata"]["approved_risk"]["approved_by"] == "cached"
+
+
+
+@pytest.mark.asyncio
+async def test_successful_dangerous_call_cache_resets_with_runtime_state(tmp_path):
+    graph = _graph(tmp_path)
+    graph._successful_dangerous_calls.add("cached")
+    graph._successful_dangerous_calls_session_id = "default"
+
+    graph._reset_runtime_state_memory()
+
+    assert graph._successful_dangerous_calls == set()
+    assert graph._successful_dangerous_calls_session_id is None
+
+
+@pytest.mark.asyncio
+async def test_settings_update_clears_successful_dangerous_call_cache(tmp_path):
+    graph = _graph(tmp_path)
+    graph._successful_dangerous_calls.add("cached")
+    graph._successful_dangerous_calls_session_id = "session"
+    settings = Settings(str(tmp_path))
+
+    await graph._apply_settings_update(settings)
+
+    assert graph._successful_dangerous_calls == set()
+    assert graph._successful_dangerous_calls_session_id is None
+
+
+
+
+@pytest.mark.asyncio
+async def test_clear_current_session_clears_successful_dangerous_call_cache(tmp_path):
+    graph = _graph(tmp_path)
+    graph._successful_dangerous_calls.add("cached")
+    graph._successful_dangerous_calls_session_id = "default"
+
+    await graph.clear_current_session()
+
+    assert graph._successful_dangerous_calls == set()
+    assert graph._successful_dangerous_calls_session_id is None
+
+@pytest.mark.asyncio
+async def test_always_approval_for_file_write_is_path_scoped(tmp_path):
+    graph = _graph(tmp_path)
+    asked: list[list[str]] = []
+
+    async def approve(tool_calls):
+        asked.append([decision.pattern for decision in tool_calls])
+        return "a"
+
+    graph._ask_tool_permission = approve
+
+    first, denied = await graph._authorize_tool_calls(
+        [{"name": "write", "args": {"file_path": "app.py", "new_string": "x"}, "id": "call_1"}],
+        plan_mode=False,
+        session_id="s",
+    )
+    second, denied_second = await graph._authorize_tool_calls(
+        [{"name": "write", "args": {"file_path": "app.py", "new_string": "y"}, "id": "call_2"}],
+        plan_mode=False,
+        session_id="s",
+    )
+    third, denied_third = await graph._authorize_tool_calls(
+        [{"name": "write", "args": {"file_path": "other.py", "new_string": "z"}, "id": "call_3"}],
+        plan_mode=False,
+        session_id="s",
+    )
+
+    assert [tc["id"] for tc in first] == ["call_1"]
+    assert [tc["id"] for tc in second] == ["call_2"]
+    assert [tc["id"] for tc in third] == ["call_3"]
+    assert denied == []
+    assert denied_second == []
+    assert denied_third == []
+    assert asked == [["app.py"], ["other.py"]]
+
+
+@pytest.mark.asyncio
 async def test_permission_prompt_uses_dock_details_when_events_are_active(tmp_path):
     graph = _graph(tmp_path)
     test_dock = BottomInputDock()
@@ -780,6 +931,88 @@ async def test_shell_script_executes_after_prompt_approval(tmp_path, permission_
     payload = json.loads(tool_message.content)
     assert payload["ok"] is True
     assert payload["stdout"] == "built\n"
+
+
+@pytest.mark.skipif(sys.platform == "win32", reason="bash is not registered on Windows")
+@pytest.mark.asyncio
+async def test_ai_approval_executor_success_is_reused_without_review(tmp_path):
+    from voidx.config import PermissionMode
+    from voidx.permission.ai_approval import AiApprovalResult
+
+    graph = _graph(tmp_path)
+    graph._settings = Settings(str(tmp_path))
+    graph._permission.set_permission_mode(PermissionMode.AI_APPROVAL.value)
+    script = tmp_path / "build.sh"
+    script.write_text("#!/usr/bin/env bash\nprintf 'built\\n'\n", encoding="utf-8")
+    script.chmod(0o755)
+    reviewed: list[str] = []
+
+    async def review(candidates, _settings):
+        reviewed.append(candidates[0].tool_call["id"])
+        return AiApprovalResult(
+            allowed_ids=frozenset({candidates[0].tool_call["id"]}),
+            reason="reviewed",
+        )
+
+    graph._ai_approval.review = review
+
+    for call_id in ("call_first", "call_second"):
+        result = await graph._execute_tools({
+            "messages": [AIMessage(content="", tool_calls=[{
+                "name": "bash",
+                "args": {"command": "./build.sh"},
+                "id": call_id,
+                "type": "tool_call",
+            }])],
+            "workspace": str(tmp_path),
+            "persona": "voidx",
+            "plan_mode": False,
+        })
+        tool_message = next(message for message in result["messages"] if isinstance(message, ToolMessage))
+        assert tool_message.status == "success"
+
+    assert reviewed == ["call_first"]
+
+
+@pytest.mark.skipif(sys.platform == "win32", reason="bash is not registered on Windows")
+@pytest.mark.asyncio
+async def test_ai_approval_executor_failure_is_not_reused(tmp_path):
+    from voidx.config import PermissionMode
+    from voidx.permission.ai_approval import AiApprovalResult
+
+    graph = _graph(tmp_path)
+    graph._settings = Settings(str(tmp_path))
+    graph._permission.set_permission_mode(PermissionMode.AI_APPROVAL.value)
+    script = tmp_path / "fail.sh"
+    script.write_text("#!/usr/bin/env bash\nexit 1\n", encoding="utf-8")
+    script.chmod(0o755)
+    reviewed: list[str] = []
+
+    async def review(candidates, _settings):
+        reviewed.append(candidates[0].tool_call["id"])
+        return AiApprovalResult(
+            allowed_ids=frozenset({candidates[0].tool_call["id"]}),
+            reason="reviewed",
+        )
+
+    graph._ai_approval.review = review
+
+    for call_id in ("call_first", "call_second"):
+        result = await graph._execute_tools({
+            "messages": [AIMessage(content="", tool_calls=[{
+                "name": "bash",
+                "args": {"command": "./fail.sh"},
+                "id": call_id,
+                "type": "tool_call",
+            }])],
+            "workspace": str(tmp_path),
+            "persona": "voidx",
+            "plan_mode": False,
+        })
+        tool_message = next(message for message in result["messages"] if isinstance(message, ToolMessage))
+        assert tool_message.status == "error"
+
+    assert reviewed == ["call_first", "call_second"]
 
 
 @pytest.mark.asyncio

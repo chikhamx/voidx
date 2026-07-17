@@ -17,6 +17,7 @@ vi.mock("@tauri-apps/api/core", () => ({
 }));
 
 import { handleNotification, initModelControls, resolveWsUrl, _resetWorkbenchForTest } from "../../src/main";
+import { initPermissionControls, populatePermissionDropdown } from "../../src/ui/model";
 import { _resetForTest as resetDock, initDock, switchTab, toggleDock, getActiveTab } from "../../src/ui/dock";
 import { _setSocket, _resetForTest as resetRpc } from "../../src/rpc";
 
@@ -69,6 +70,7 @@ beforeEach(() => {
   delete window.__TAURI__;
   initDock();
   initModelControls();
+  initPermissionControls();
 });
 
 describe("workbench shell", () => {
@@ -1155,4 +1157,16 @@ it("renders running-turn guidance exactly once from the backend message event", 
   const messages = document.querySelectorAll(".message-guidance");
   expect(messages).toHaveLength(1);
   expect(messages[0].textContent).toContain("keep going");
+});
+
+
+describe("AI approval permission mode", () => {
+  it("shows AI approval in the permission dropdown", async () => {
+    const dropdown = document.createElement("div");
+    dropdown.id = "permission-dropdown";
+    document.body.append(dropdown);
+    populatePermissionDropdown();
+    expect(dropdown.textContent).toContain("AI 审批");
+    expect(dropdown.textContent).toContain("受限工具参数");
+  });
 });

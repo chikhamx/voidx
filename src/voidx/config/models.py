@@ -4,6 +4,11 @@ from __future__ import annotations
 
 from pydantic import BaseModel, Field
 
+
+class AiApprovalConfig(BaseModel):
+    profile_name: str = ""
+    timeout_seconds: float = Field(default=12.0, ge=1.0, le=60.0, allow_inf_nan=False)
+
 from voidx.config.defaults import DEFAULT_MODEL, DEFAULT_PROVIDER
 from voidx.config.enums import PermissionMode
 

@@ -324,6 +324,11 @@
   color: #ea580c;
 }
 
+.vx-permission-pill.ai-approval {
+  background: rgba(124, 58, 237, 0.1);
+  color: #7c3aed;
+}
+
 .vx-permission-pill.project-trusted {
   background: rgba(59, 130, 246, 0.1);
   color: #3b82f6;

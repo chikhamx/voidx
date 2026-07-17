@@ -50,6 +50,7 @@ class SlashCommandHost(Protocol):
     def interaction_mode_value(self) -> str: ...
     def debug_enabled(self) -> bool: ...
     def invalidate_skill_service_cache(self) -> None: ...
+    def clear_successful_dangerous_calls(self) -> None: ...
     def set_task_state(self, task_state: TaskState) -> None: ...
     def can_submit_guidance(self) -> bool: ...
     def submit_guidance(self, text: str, **kwargs: Any) -> bool: ...
@@ -194,6 +195,18 @@ class SlashHostAdapter:
         method = self._method("invalidate_skill_service_cache", "_invalidate_skill_service_cache")
         if method is not None:
             method()
+
+    def clear_successful_dangerous_calls(self) -> None:
+        method = self._method("clear_successful_dangerous_calls", "_clear_successful_dangerous_calls")
+        if method is not None:
+            method()
+            return
+        calls = self._legacy_attr("_successful_dangerous_calls")
+        if calls is not None:
+            calls.clear()
+        if hasattr(self.raw, "_successful_dangerous_calls_session_id"):
+            self._set_legacy_attr("_successful_dangerous_calls_session_id", None)
+
 
     def set_interaction_mode(self, mode: str | InteractionMode) -> InteractionMode:
         parsed = InteractionMode.parse(mode)

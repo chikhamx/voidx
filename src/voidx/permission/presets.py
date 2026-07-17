@@ -33,7 +33,7 @@ def resolve_mode_decision(preset: PermissionMode, risk: RiskAssessment) -> ModeD
         return _ask_once(risk)
     if preset == PermissionMode.READ_ONLY:
         return _ask_once(risk)
-    if preset == PermissionMode.SAFE:
+    if preset in (PermissionMode.SAFE, PermissionMode.AI_APPROVAL):
         return _ask_scoped(risk, (ApprovalScope.ONCE, ApprovalScope.SESSION))
     if preset == PermissionMode.PROJECT_TRUSTED:
         if _project_trusted_allows(risk):

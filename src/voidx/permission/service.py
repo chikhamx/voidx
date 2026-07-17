@@ -35,6 +35,7 @@ from voidx.permission.grants import (
     PathGrantLockManager,
     delta_for_grant,
 )
+from voidx.permission.session_rules import format_session_rule
 from voidx.permission.schema import Action
 from voidx.permission.sandbox import check_sandbox_bash
 
@@ -376,9 +377,9 @@ class PermissionService:
                 lines.append(f"  {label}: [dim]{', '.join(paths)}[/dim]")
         lines.append("  [green]Always allowed:[/green] read, glob, grep, webfetch, websearch, todo, task_status, lsp, read-only agents, read-only bash")
         if self._session_allow:
-            lines.append(f"  [green]Session allow:[/green] {', '.join(sorted(self._session_allow))}")
+            lines.append(f"  [green]Session allow:[/green] {', '.join(sorted(format_session_rule(rule) for rule in self._session_allow))}")
         if self._session_deny:
-            lines.append(f"  [red]Session deny:[/red] {', '.join(sorted(self._session_deny))}")
+            lines.append(f"  [red]Session deny:[/red] {', '.join(sorted(format_session_rule(rule) for rule in self._session_deny))}")
         lines.append("  [yellow]Ask first:[/yellow] file, line, replace, edit, write-capable bash, agent=implement, mcp__*")
         lines.append("")
         lines.append("  Commands: /permission  /allow <tool>  /deny <tool>")

@@ -134,6 +134,9 @@ export function updateStatusBar(): void {
     if (uiState.permissionMode === "full_access") {
       text = "完全访问";
       colorClass = "full-access";
+    } else if (uiState.permissionMode === "ai_approval") {
+      text = "AI 审批";
+      colorClass = "ai-approval";
     } else if (uiState.permissionMode === "project_trusted") {
       text = "项目已信任";
       colorClass = "project-trusted";

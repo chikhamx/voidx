@@ -6,7 +6,7 @@ from abc import ABC, abstractmethod
 import inspect
 from collections.abc import Awaitable, Callable
 from pathlib import Path
-from typing import Any
+from typing import Any, Literal
 
 from pydantic import BaseModel, Field
 
@@ -74,6 +74,7 @@ class ApprovedToolRisk(BaseModel):
     risk_level: str = ""
     tags: tuple[str, ...] = ()
     reason: str = ""
+    approved_by: Literal["user", "ai", "cached"] = "user"
 
 UserInteractionCallback = Callable[[UserInteraction], Awaitable[UserResponse]]
 class ToolContext(BaseModel):

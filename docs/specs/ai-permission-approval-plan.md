@@ -11,6 +11,22 @@ audience: llm
 ## Goal
 
 按 `docs/specs/ai-permission-approval.md` 实现 `ai_approval` 模式：只对 dangerous + ask 调用进行严格、单次、可追溯来源的 AI 审批，任何不确定状态回退人工，并保持现有四种权限模式行为不变。
+## Final Verification Status
+
+自动化实现已完成：T1–T11 的代码与对应测试已落地；本轮新增并验证了 `/permission ai_approval` 的 slash handler 回归覆盖。最终自动化验收结果记录如下：
+
+- Backend 全量：`3310 passed, 31 skipped`
+- Frontend 全量：`290 passed`
+- TUI：`268 passed`
+- Graph + slash focused：`61 passed`
+- Permission + execution focused：`40 passed`
+- 去重专项：`6 passed`
+- Frontend production build：通过
+- `git diff --check`：通过
+- 独立 review：PASS，无 findings
+
+自动化验收完成。后续需求新增了同一 session 成功 dangerous 调用去重：按工具名与规范化完整参数复用审批，来源标记为 `cached`；失败、参数变化、session reset/clear、settings 或 slash 权限模式切换均清理或绕过缓存。`Manual Acceptance` 保留为待真实外部模型环境执行的项目，不将模拟测试结果冒充真实模型验收。
+
 
 ## Architecture
 
@@ -164,7 +180,7 @@ Acceptance：执行侧 `_approved_tool_risks_for_call` 不丢失 AI 来源。
   - mixed allow/deny 只询问剩余项；
   - extreme/blocked/risk=None 不传 AI；
   - service unavailable/invalid response 全部人工；
-  - AI allow 不写 session allow，后续同调用仍重新审批；
+  - AI allow 不写 session allow；仅工具成功执行后，同 session 的同工具+完整参数调用可命中内存去重；
   - 人工对剩余项选 always 时 AI allow 项不参与 session 写入；
   - dock 仅提示 `AI 审批: allow <tool>`，不含 args/reason；
   - 空/重复 tool-call ID 全部人工。
@@ -256,7 +272,7 @@ Acceptance：切换模式不要求同时改 profile；未配置时后端安全�
 - [ ] extreme/blocked 不触发 B。
 - [ ] 删除 B、清空 B key、断网或模型超时均回退人工。
 - [ ] 在不重启 session 的情况下切换 B→C，下一次审批使用 C。
-- [ ] 同一 dangerous 调用再次发生时仍重新审批，不受上次 AI allow 影响。
+- [ ] 同一 dangerous 调用成功后再次发生时跳过 AI；失败、参数变化、session clear 或权限模式切换后重新审批。
 
 ## Risks and Rollback
 

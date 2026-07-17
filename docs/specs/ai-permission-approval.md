@@ -12,7 +12,7 @@ audience: human+llm
 
 新增 `PermissionMode.AI_APPROVAL`。它沿用 safe 模式的 sandbox 与人工授权范围，但在 dangerous、action=ask 的工具调用进入人工弹窗前，先调用已配置 profile 对本批调用做一次受限安全审查。只有完整、唯一、可验证的结构化 `allow` 结果才单次放行；deny、缺项、未知 ID、超时、异常、profile 不可用以及 extreme/blocked 调用全部回退现有人工流程。
 
-审批服务不缓存模型或密钥，每次 review 从当前 `Settings` 解析 profile，因此设置热更新和 profile 删除立即生效。AI 放行不写 session/persistent grant，不绕过 sandbox，也不承担用户意图判断。
+审批服务不缓存模型或密钥，每次 review 从当前 `Settings` 解析 profile，因此设置热更新和 profile 删除立即生效。首次 AI 放行不写 session/persistent grant，不绕过 sandbox，也不承担用户意图判断；同一 session 内仅当同一 dangerous 工具与规范化完整参数已成功执行时，后续调用可复用该成功审批并标记 `approved_by="cached"`，失败、参数变化、会话清理或权限模式切换均不复用。
 
 ## Context
 
@@ -257,8 +257,11 @@ AiApprovalConfig
 - 只有 risk=DANGEROUS 且 action=ASK 的决策可发送给 AI。
 - extreme、blocked、risk=None 永不发送给 AI。
 - 任意不确定状态的默认结果都是人工确认。
-- AI allow 只绑定一个原始 tool-call ID，只生效一次。
-- AI allow 不修改 session_allow/session_deny/persistent grants。
+- 首次 AI allow 只绑定一个原始 tool-call ID，不直接创建长期 grant。
+- 仅成功执行过的 dangerous 调用可在同一 session 内按工具名与规范化完整参数复用审批；复用来源为 `cached`。
+- 失败、deny、extreme、blocked、不可规范化参数、参数变化、session reset/clear 和权限模式切换均不得命中缓存。
+- 成功调用缓存仅驻留 graph 内存，不持久化，也不复用工具输出。
+- AI allow 与缓存复用均不修改 session_allow/session_deny/persistent grants。
 - 原始参数、投影和模型理由不持久化、不输出到 dock。
 - profile 或 API key 不缓存于 AiApprovalService。
 - 现有四种 PermissionMode 行为不变。

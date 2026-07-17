@@ -490,3 +490,11 @@ async def test_tui_busy_clear_cancels_current_submit_and_runs_clear_next(tmp_pat
         await asyncio.wait_for(consumer, timeout=1)
 
 
+
+
+def test_permission_commands_include_ai_approval_mode():
+    from voidx.ui.commands import COMMANDS
+
+    commands = dict(COMMANDS)
+    assert "/permission ai_approval" in commands
+    assert "AI approval" in commands["/permission ai_approval"]

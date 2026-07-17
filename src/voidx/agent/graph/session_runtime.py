@@ -50,6 +50,11 @@ class GraphSessionRuntime:
         host._task_state = TaskState()
         host._compaction_summary = ""
         host._pending_summary = None
+        successful_calls = getattr(host, "_successful_dangerous_calls", None)
+        if successful_calls is not None:
+            successful_calls.clear()
+        if hasattr(host, "_successful_dangerous_calls_session_id"):
+            host._successful_dangerous_calls_session_id = None
         if not hasattr(host, "_file_read_coverage"):
             host._file_read_coverage = {}
         else:

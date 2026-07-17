@@ -36,6 +36,7 @@ GLOBAL_KEYS = frozenset({
 })
 WORKSPACE_ONLY_KEYS = frozenset({
     "permission_mode",
+    "ai_approval",
     "sandbox_readable_files",
     "sandbox_readable_dirs",
     "sandbox_writable_files",

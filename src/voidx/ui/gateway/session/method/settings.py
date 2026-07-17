@@ -18,7 +18,7 @@ class SettingsMethods:
 
     async def _method_settings_update(self, params: dict) -> dict:
         from voidx.config.enums import CodeIde, PermissionMode
-        from voidx.config.models import ParallelSubagentsConfig, Profile
+        from voidx.config.models import AiApprovalConfig, ParallelSubagentsConfig, Profile
         from voidx.config.settings import Settings
 
         patch = params.get("patch", {})
@@ -31,11 +31,29 @@ class SettingsMethods:
         if permissions is not None:
             if not isinstance(permissions, dict):
                 raise MethodParamsError("invalid permissions")
-            preset = permissions.get("permission_mode", "safe")
+            preset = permissions.get("permission_mode", settings.get_permission_mode().value)
             try:
                 settings.set_permission_mode(PermissionMode(str(preset)))
             except ValueError as exc:
                 raise MethodParamsError("invalid permission_mode") from exc
+            if "ai_approval" in permissions:
+                raw_ai = permissions["ai_approval"]
+                if not isinstance(raw_ai, dict):
+                    raise MethodParamsError("invalid ai_approval")
+                current_ai = settings.get_ai_approval_config()
+                profile_name = raw_ai.get("profile_name", current_ai.profile_name)
+                timeout_seconds = raw_ai.get("timeout_seconds", current_ai.timeout_seconds)
+                try:
+                    ai_config = AiApprovalConfig(profile_name=str(profile_name), timeout_seconds=timeout_seconds)
+                except Exception as exc:
+                    raise MethodParamsError("invalid ai_approval") from exc
+                if ai_config.profile_name:
+                    profiles = await settings.list_profiles()
+                    profile = next((item for item in profiles if item.name == ai_config.profile_name), None)
+                    if profile is None or not profile.api_key:
+                        raise MethodParamsError("invalid ai_approval profile")
+                settings.set_ai_approval_config(ai_config)
+
             for key, setter in (
                 ("sandbox_readable_files", settings.set_sandbox_readable_files),
                 ("sandbox_readable_dirs", settings.set_sandbox_readable_dirs),
@@ -216,6 +234,7 @@ class SettingsMethods:
             ],
             "permissions": {
                 "permission_mode": settings.get_permission_mode().value,
+                "ai_approval": settings.get_ai_approval_config().model_dump(mode="json"),
                 "sandbox_readable_files": settings.get_sandbox_readable_files(),
                 "sandbox_readable_dirs": settings.get_sandbox_readable_dirs(),
                 "sandbox_writable_files": settings.get_sandbox_writable_files(),

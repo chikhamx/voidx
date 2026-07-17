@@ -288,6 +288,9 @@ class GraphToolExecutor:
                     host._notify_tool_failure(failure_tc, result)
             elif ok:
                 host._clear_failure_check(cid)
+                record_success = getattr(host, "_record_successful_tool_call", None)
+                if record_success is not None:
+                    record_success(tc)
 
             todo_state = todo_run_state_from_result(result) if tid == "todo" and ok else None
             todo_meta = getattr(result, "metadata", {}) or {} if tid == "todo" and ok else {}

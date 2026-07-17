@@ -358,6 +358,12 @@ export function populatePermissionDropdown(): void {
       icon: `<svg class="vx-icon" xmlns="http://www.w3.org/2000/svg" width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.5" stroke-linecap="round" stroke-linejoin="round"><path d="M12 22s8-4 8-10V5l-8-3-8 3v7c0 6 8 10 8 10z"/></svg>`
     },
     {
+      mode: "ai_approval",
+      title: "AI 审批",
+      desc: "先将受限工具参数发送给所选模型预审，不确定时仍由你确认",
+      icon: `<svg class="vx-icon" xmlns="http://www.w3.org/2000/svg" width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.5"><path d="M12 3a9 9 0 1 0 9 9"/><path d="M12 7v5l3 2"/></svg>`
+    },
+    {
       mode: "project_trusted",
       title: "项目已信任",
       desc: "在此项目中自动批准常见操作，其他敏感操作仍需提示",

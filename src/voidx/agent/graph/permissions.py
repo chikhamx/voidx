@@ -2,14 +2,18 @@
 
 from __future__ import annotations
 
-from typing import TYPE_CHECKING
+import json
+from typing import Any, TYPE_CHECKING
 
+from voidx.config import PermissionMode
+from voidx.permission.ai_approval import AiApprovalResult
 from voidx.permission.service import (
     PermissionContext,
     authorize_tool_call,
     classify_tool_call,
 )
 from voidx.permission.context import PermissionDecision
+from voidx.permission.session_rules import scoped_session_rule_for_decision
 from voidx.permission.schema import Action
 from voidx.permission.risk import ApprovalScope, RiskLevel
 from voidx.workflow.types import WorkflowRunState, WorkflowRunStatus
@@ -18,6 +22,19 @@ from voidx.runtime.ui import PermissionPromptCleared, PermissionPromptShown, Per
 
 if TYPE_CHECKING:
     from voidx.agent.graph.contracts import GraphPermissionHost
+
+
+
+def _tool_call_key(tool_call: dict[str, Any]) -> str | None:
+    try:
+        payload = {
+            "name": str(tool_call.get("name") or ""),
+            "args": tool_call.get("args") or {},
+        }
+        return json.dumps(payload, sort_keys=True, separators=(",", ":"), ensure_ascii=False)
+    except (TypeError, ValueError):
+        return None
+
 
 
 class GraphPermissionMixin:
@@ -33,6 +50,9 @@ class GraphPermissionMixin:
         interaction_mode: str | None = None,
         workflow_runs: object = (),
     ) -> tuple[list[dict], list[tuple[dict, str]]]:
+        if getattr(self, "_successful_dangerous_calls_session_id", None) != session_id:
+            self._successful_dangerous_calls.clear()
+            self._successful_dangerous_calls_session_id = session_id
         approved: list[dict] = []
         denied: list[tuple[dict, str]] = []
         need_ask: list[PermissionDecision] = []
@@ -45,7 +65,15 @@ class GraphPermissionMixin:
 
         for tc in tool_calls:
             decision = authorize_tool_call(tc, context)
-            if decision.action == Action.ALLOW:
+            if (
+                decision.action == Action.ASK
+                and decision.risk is not None
+                and decision.risk.level == RiskLevel.DANGEROUS
+                and getattr(self._permission, "permission_mode", "") == PermissionMode.AI_APPROVAL.value
+                and _tool_call_key(tc) in getattr(self, "_successful_dangerous_calls", set())
+            ):
+                approved.append(_tool_call_with_approval_risk(decision, approved_by="cached"))
+            elif decision.action == Action.ALLOW:
                 approved_call = _tool_call_with_execution_approval(decision)
                 approved.append(approved_call)
                 if decision.failure_check:
@@ -71,6 +99,29 @@ class GraphPermissionMixin:
         denied: list[tuple[dict, str]],
     ) -> None:
         blocked = [decision for decision in need_ask if decision.action == Action.BLOCKED_ACK]
+        ai_allowed: list[PermissionDecision] = []
+        if (
+            getattr(self._permission, "permission_mode", "") == PermissionMode.AI_APPROVAL.value
+            and getattr(self, "_settings", None) is not None
+            and getattr(self, "_ai_approval", None) is not None
+        ):
+            candidates = [
+                decision for decision in need_ask
+                if decision.action == Action.ASK
+                and decision.risk is not None
+                and decision.risk.level == RiskLevel.DANGEROUS
+            ]
+            if candidates:
+                result = await self._ai_approval.review(candidates, self._settings)
+                allowed_ids = result.allowed_ids if result.reason == "reviewed" else frozenset()
+                for decision in candidates:
+                    if decision.tool_call.get("id") in allowed_ids:
+                        ai_allowed.append(decision)
+                        approved.append(_tool_call_with_approval_risk(decision, approved_by="ai"))
+                        self._notice_permission_result(f"AI 审批: allow {decision.name}")
+            if ai_allowed:
+                need_ask = [decision for decision in need_ask if decision not in ai_allowed]
+
         approvable = [decision for decision in need_ask if decision.action != Action.BLOCKED_ACK]
 
         if blocked:
@@ -92,8 +143,8 @@ class GraphPermissionMixin:
 
         tool_calls = [_tool_call_with_approval_risk(decision) for decision in approvable]
         if choice == "a" and _all_decisions_allow_scope(approvable, ApprovalScope.SESSION):
-            for tc in tool_calls:
-                self._permission.allow_silent(tc["name"])
+            for decision in approvable:
+                self._permission.allow_silent(scoped_session_rule_for_decision(decision))
             approved.extend(tool_calls)
         elif choice == "y":
             approved.extend(tool_calls)
@@ -124,27 +175,39 @@ class GraphPermissionMixin:
             return await self._app.ask_choice("Allow tool use?", choices, details=details)
         return "n"
 
+
+    def _show_permission_output(self: GraphPermissionHost, message: str) -> bool:
+        dock = getattr(getattr(self, "_ui", None), "dock", None)
+        append = getattr(dock, "append_message", None)
+        if not callable(append):
+            return False
+        append(message)
+        return True
     def _notice_permission_result(self: GraphPermissionHost, message: str) -> None:
         if self._show_permission_output(message):
             return
         self._ui.ui.print(f"[dim]✓ {message}[/dim]")
 
     def _notify_tool_failure(self: GraphPermissionHost, tc: dict, result) -> None:
-        """Notify user when an auto-approved tool (on-failure policy) fails.
-
-        The tool was auto-allowed by the on-failure policy and then
-        actually failed.  Let the user know so they can decide whether
-        to abort or let the agent retry.
-        """
+        """Notify user when an auto-approved tool fails."""
         tool_name = tc.get("name", "unknown")
         error_preview = str(result.output)[:200]
         message = f"[on-failure] '{tool_name}' failed: {error_preview}"
         if not self._show_permission_output(message):
             self._ui.ui.print(f"\n[yellow]{message}[/yellow]")
 
-    def _show_permission_output(self: GraphPermissionHost, message: str) -> bool:
-        self._ui.dock.append_message(message)
-        return True
+    def _record_successful_tool_call(self: GraphPermissionHost, tool_call: dict[str, Any]) -> None:
+        risk = (tool_call.get("metadata") or {}).get("approved_risk") or {}
+        if risk.get("risk_level") != RiskLevel.DANGEROUS.value:
+            return
+        key = _tool_call_key(tool_call)
+        if key is not None:
+            self._successful_dangerous_calls.add(key)
+
+    def clear_successful_dangerous_calls(self: GraphPermissionHost) -> None:
+        self._successful_dangerous_calls.clear()
+        self._successful_dangerous_calls_session_id = None
+
 
     def _clear_failure_check(self: GraphPermissionHost, cid: str) -> None:
         """Remove a tool call ID from on-failure tracking (used on success)."""
@@ -180,7 +243,7 @@ def _coerce_permission_decision(item: dict | PermissionDecision) -> PermissionDe
     )
 
 
-def _tool_call_with_approval_risk(decision: PermissionDecision) -> dict:
+def _tool_call_with_approval_risk(decision: PermissionDecision, *, approved_by: str = "user") -> dict:
     if decision.risk is None or decision.risk.level == RiskLevel.BLOCKED:
         return decision.tool_call
     metadata = dict(decision.tool_call.get("metadata") or {})
@@ -190,6 +253,7 @@ def _tool_call_with_approval_risk(decision: PermissionDecision) -> dict:
         "risk_level": decision.risk.level.value,
         "tags": [tag.value for tag in decision.risk.tags],
         "reason": decision.risk.reason,
+        **({"approved_by": approved_by} if approved_by != "user" else {}),
     }
     return {**decision.tool_call, "metadata": metadata}
 
@@ -225,4 +289,3 @@ def _all_decisions_blocked_ack(decisions: list[PermissionDecision]) -> bool:
 
 def _scope_values(scopes: tuple[object, ...]) -> set[str]:
     return {scope.value if hasattr(scope, "value") else str(scope) for scope in scopes}
-
