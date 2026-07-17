@@ -13,6 +13,7 @@ from voidx.config.settings_agent import SettingsAgentMixin
 from voidx.config.settings_api_keys import SettingsApiKeyMixin
 from voidx.config.settings_code_ide import SettingsCodeIdeMixin
 from voidx.config.settings_custom import SettingsCustomProviderMixin
+from voidx.config.settings_lsp import SettingsLspMixin
 from voidx.config.settings_mcp import SettingsMcpMixin
 from voidx.config.settings_permissions import SettingsPermissionMixin
 from voidx.config.settings_retry import SettingsRetryMixin
@@ -45,6 +46,7 @@ WORKSPACE_ONLY_KEYS = frozenset({
     "persistent_writable_dirs",
     "ask_compact",
     "skills",
+    "lsp",
 })
 
 
@@ -56,6 +58,7 @@ class Settings(
     SettingsAgentMixin,
     SettingsApiKeyMixin,
     SettingsMcpMixin,
+    SettingsLspMixin,
     SettingsWebMixin,
     SettingsSkillsMixin,
     SettingsUpdateMixin,
@@ -378,12 +381,19 @@ class Settings(
             base_url = None
             protocol = None
 
-        cfg = ModelConfig(provider=provider, model=model, base_url=base_url, context_window=self._effective_data().get("context_window"))
+        cfg = ModelConfig(
+            provider=provider,
+            model=model,
+            base_url=base_url,
+            reasoning_effort=self._effective_data().get("reasoning_effort") or "xhigh",
+            context_window=self._effective_data().get("context_window"),
+        )
         if protocol:
             cfg.protocol = protocol
         return Config(
             model=cfg,
             parallel_subagents=self.get_parallel_subagents(),
+            lsp_format_after_edit=self.get_lsp_format_after_edit(),
             permission_mode=self.get_permission_mode(),
             sandbox_readable_files=self.get_sandbox_readable_files(),
             sandbox_readable_dirs=self.get_sandbox_readable_dirs(),

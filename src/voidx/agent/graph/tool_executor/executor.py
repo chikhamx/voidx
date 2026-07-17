@@ -130,6 +130,7 @@ class GraphToolExecutor:
                 mcp_manager=getattr(host, "_mcp_manager", None),
                 lsp_manager=getattr(host, "_lsp_manager", None),
                 loop_manager=getattr(host, "loop_manager", getattr(host, "_loop_manager", None)),
+                format_after_edit_enabled=host.config.lsp_format_after_edit,
                 tool_registry=host.tools,
                 permission_mode=host._permission.permission_mode,
                 sandbox_readable_files=list(host._permission.sandbox_readable_files),

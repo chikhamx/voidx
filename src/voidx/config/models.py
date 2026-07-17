@@ -104,6 +104,7 @@ class Config(BaseModel):
         name="build", description="Primary coding agent.",
     ))
     parallel_subagents: ParallelSubagentsConfig = Field(default_factory=ParallelSubagentsConfig)
+    lsp_format_after_edit: bool = True
     workspace: str = "."
     permission_mode: PermissionMode = PermissionMode.SAFE
     sandbox_readable_files: list[str] = Field(

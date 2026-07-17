@@ -36,6 +36,32 @@ def isolated_global_store(monkeypatch, tmp_path):
     store.DATA_DIR = previous_data_dir
 
 
+def test_lsp_format_after_edit_defaults_true_and_is_workspace_scoped(tmp_path):
+    workspace = tmp_path / "workspace"
+    workspace.mkdir()
+    settings = Settings(str(workspace))
+
+    assert settings.get_lsp_format_after_edit() is True
+    saved = settings.set_lsp_format_after_edit(False)
+
+    assert saved == workspace / ".voidx" / "settings.json"
+    assert settings.get_lsp_format_after_edit() is False
+    data = json.loads(saved.read_text(encoding="utf-8"))
+    assert data["lsp"]["format_after_edit"] is False
+
+
+def test_lsp_format_after_edit_ignores_invalid_value(tmp_path):
+    workspace = tmp_path / "workspace"
+    config_dir = workspace / ".voidx"
+    config_dir.mkdir(parents=True)
+    (config_dir / "settings.json").write_text(
+        json.dumps({"lsp": {"format_after_edit": "nope"}}),
+        encoding="utf-8",
+    )
+
+    assert Settings(str(workspace)).get_lsp_format_after_edit() is True
+
+
 async def test_settings_reads_global_values_before_workspace_overrides(monkeypatch, tmp_path):
     _set_home(monkeypatch, tmp_path)
     global_dir = tmp_path / ".voidx"

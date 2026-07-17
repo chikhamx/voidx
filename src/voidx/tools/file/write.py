@@ -7,13 +7,21 @@ from pydantic import BaseModel, Field, model_validator
 
 from voidx.diffing import make_file_diff, make_structured_diff, render_numbered_diff
 from voidx.tools.base import BaseTool, ToolContext, ToolResult, _resolve_tool_path_for_access, model_to_json_schema
-from .state import check_read_coverage, check_staleness, clear_read_coverage, record_mtime, save_file_version
+from .state import (
+    check_read_coverage,
+    check_staleness,
+    clear_file_tracking,
+    clear_read_coverage,
+    record_mtime,
+    save_file_version,
+)
 
 from .overlap import LineOverlap, resolve_overlap
 from .replace import _apply_resolved_edits, _resolve_edit_target
 from .read import _split_display_lines, _split_edit_lines
 from .types import ResolvedEdit
-from .safe_path import SafePathExecutor
+from .io import safe_read_text as _safe_read_text, safe_write_text as _safe_write_text
+from .post_edit import format_after_edit, format_range_from_diff
 
 
 class WriteInput(BaseModel):
@@ -209,10 +217,25 @@ async def _execute_write_full(ctx: ToolContext, inp: WriteInput) -> ToolResult:
     write_error = _safe_write_text(path, inp.new_string)
     if write_error is not None:
         return ToolResult(output=write_error, metadata={"error": True})
+    edited_diff = make_structured_diff(inp.file_path, original, inp.new_string)
+    formatting = await format_after_edit(
+        ctx,
+        path,
+        display_path=inp.file_path,
+        edited_text=inp.new_string,
+        format_range=format_range_from_diff(inp.new_string, edited_diff),
+    )
+    final_text = formatting.final_text
+    if final_text is None:
+        clear_file_tracking(ctx, path)
+        return ToolResult(
+            output=f"Write completed, but final file state is unavailable: {formatting.error}",
+            metadata={"error": True, "formatting_status": formatting.status},
+        )
     record_mtime(ctx, path)
     clear_read_coverage(ctx, path)
-    diff = make_file_diff(inp.file_path, original, inp.new_string)
-    file_diff = make_structured_diff(inp.file_path, original, inp.new_string)
+    diff = make_file_diff(inp.file_path, original, final_text)
+    file_diff = make_structured_diff(inp.file_path, original, final_text)
     numbered_diff = render_numbered_diff(file_diff)
     title = "File created" if created else "File overwritten"
     output = f"{title}: {inp.file_path}"
@@ -222,7 +245,13 @@ async def _execute_write_full(ctx: ToolContext, inp: WriteInput) -> ToolResult:
         title=title,
         output=output,
         summary=title,
-        metadata={"file": inp.file_path, "operation": "write", "created": created, "operations": 1},
+        metadata={
+            "file": inp.file_path,
+            "operation": "write",
+            "created": created,
+            "operations": 1,
+            "formatting_status": formatting.status,
+        },
         diff=diff or None,
     )
 
@@ -262,25 +291,3 @@ async def _apply_single_write_edit(
         overlap=overlap,
         coverage_checked=coverage_checked,
     )
-
-
-def _safe_read_text(path: Path) -> tuple[str, str | None]:
-    executor = SafePathExecutor()
-    try:
-        authorized = executor.authorize_existing(path, access="read")
-    except OSError as exc:
-        return "", str(exc)
-    result = executor.read_text(authorized, encoding="utf-8", errors="replace")
-    if not result.ok:
-        return "", result.error
-    assert isinstance(result.value, str)
-    return result.value, None
-
-
-def _safe_write_text(path: Path, content: str) -> str | None:
-    executor = SafePathExecutor()
-    authorized = executor.authorize_target(path, access="write")
-    result = executor.write_text(authorized, content, encoding="utf-8")
-    if not result.ok:
-        return result.error
-    return None

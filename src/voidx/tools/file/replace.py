@@ -14,6 +14,7 @@ from .state import (
     check_read_coverage,
     check_staleness,
     clear_read_coverage,
+    clear_file_tracking,
     file_fingerprint,
     get_line_drift_maps,
     record_mtime,
@@ -30,7 +31,8 @@ from .replace_resolve import (
 from .overlap import LineOverlap, resolve_overlap
 from .read import _join_display_lines, _split_display_lines, _split_edit_lines
 from .types import DisplayLines, ResolvedEdit
-from .safe_path import SafePathExecutor
+from .io import safe_read_text as _safe_read_text, safe_write_text as _safe_write_text
+from .post_edit import format_after_edit, format_range_from_diff
 
 
 
@@ -276,10 +278,25 @@ async def _auto_create_file(
             output=f"Failed to create file: {file_path}\n{write_error}",
             metadata={"error": True},
         )
+    edited_diff = make_structured_diff(file_path, "", new_string)
+    formatting = await format_after_edit(
+        ctx,
+        path,
+        display_path=file_path,
+        edited_text=new_string,
+        format_range=format_range_from_diff(new_string, edited_diff),
+    )
+    final_text = formatting.final_text
+    if final_text is None:
+        clear_file_tracking(ctx, path)
+        return ToolResult(
+            output=f"File created, but final file state is unavailable: {formatting.error}",
+            metadata={"error": True, "formatting_status": formatting.status},
+        )
     record_mtime(ctx, path)
     clear_read_coverage(ctx, path)
-    diff = make_file_diff(file_path, "", new_string)
-    file_diff = make_structured_diff(file_path, "", new_string)
+    diff = make_file_diff(file_path, "", final_text)
+    file_diff = make_structured_diff(file_path, "", final_text)
     numbered_diff = render_numbered_diff(file_diff)
     output = f"File created: {file_path}"
     if numbered_diff:
@@ -292,6 +309,7 @@ async def _auto_create_file(
             "file": file_path,
             "operations": 1,
             "auto_created": True,
+            "formatting_status": formatting.status,
         },
         diff=diff,
     )
@@ -435,8 +453,23 @@ async def _execute_text_replace(
     write_error = _safe_write_text(path, content)
     if write_error is not None:
         return ToolResult(output=write_error, metadata={"error": True})
-    diff = make_file_diff(file_path, original, content)
-    file_diff = make_structured_diff(file_path, original, content)
+    edited_diff = make_structured_diff(file_path, original, content)
+    formatting = await format_after_edit(
+        ctx,
+        path,
+        display_path=file_path,
+        edited_text=content,
+        format_range=format_range_from_diff(content, edited_diff),
+    )
+    final_text = formatting.final_text
+    if final_text is None:
+        clear_file_tracking(ctx, path)
+        return ToolResult(
+            output=f"Edit completed, but final file state is unavailable: {formatting.error}",
+            metadata={"error": True, "formatting_status": formatting.status},
+        )
+    diff = make_file_diff(file_path, original, final_text)
+    file_diff = make_structured_diff(file_path, original, final_text)
     remap_read_coverage_from_file_diff(ctx, path, file_diff, old_ranges=old_ranges)
 
     numbered_diff = render_numbered_diff(file_diff)
@@ -457,6 +490,7 @@ async def _execute_text_replace(
             "start_line": actual_start_line,
             "end_line": actual_end_line,
             "overlap": overlap_metadata,
+            "formatting_status": formatting.status,
         },
         diff=diff,
     )
@@ -564,8 +598,23 @@ async def _apply_resolved_edits(
     write_error = _safe_write_text(path, content)
     if write_error is not None:
         return ToolResult(output=write_error, metadata={"error": True})
-    diff = make_file_diff(file_path, original, content)
-    file_diff = make_structured_diff(file_path, original, content)
+    edited_diff = make_structured_diff(file_path, original, content)
+    formatting = await format_after_edit(
+        ctx,
+        path,
+        display_path=file_path,
+        edited_text=content,
+        format_range=format_range_from_diff(content, edited_diff),
+    )
+    final_text = formatting.final_text
+    if final_text is None:
+        clear_file_tracking(ctx, path)
+        return ToolResult(
+            output=f"Edit completed, but final file state is unavailable: {formatting.error}",
+            metadata={"error": True, "formatting_status": formatting.status},
+        )
+    diff = make_file_diff(file_path, original, final_text)
+    file_diff = make_structured_diff(file_path, original, final_text)
     remap_read_coverage_from_file_diff(ctx, path, file_diff, old_ranges=old_ranges)
 
     numbered_diff = render_numbered_diff(file_diff)
@@ -576,7 +625,11 @@ async def _apply_resolved_edits(
     if details:
         output = f"{output}\n{details}"
 
-    metadata = {"file": file_path, "operations": len(edits)}
+    metadata = {
+        "file": file_path,
+        "operations": len(edits),
+        "formatting_status": formatting.status,
+    }
     if overlap_metadata is not None:
         metadata["overlap"] = overlap_metadata
     return ToolResult(
@@ -672,24 +725,3 @@ def _find_text_segment_with_drift_fallback(
         matched_map=None,
         remapped_range=None,
     )
-
-
-def _safe_read_text(path: Path) -> tuple[str, str | None]:
-    executor = SafePathExecutor()
-    try:
-        authorized = executor.authorize_existing(path, access="read")
-    except OSError as exc:
-        return "", str(exc)
-    result = executor.read_text(authorized, encoding="utf-8", errors="replace")
-    if not result.ok:
-        return "", result.error
-    return result.value or "", None
-
-
-def _safe_write_text(path: Path, content: str) -> str | None:
-    executor = SafePathExecutor()
-    authorized = executor.authorize_target(path, access="write")
-    result = executor.write_text(authorized, content, encoding="utf-8")
-    if not result.ok:
-        return result.error
-    return None

@@ -145,6 +145,7 @@ async def run_subagent(
         session_id=session_id or "default",
         lsp_manager=lsp_manager,
         tool_registry=agent_tools,
+        format_after_edit_enabled=config.lsp_format_after_edit,
         permission_mode=config.permission_mode.value,
         sandbox_readable_files=list(snapshot_grants.readable_files) if snapshot_grants is not None else list(config.sandbox_readable_files),
         sandbox_readable_dirs=list(snapshot_grants.readable_dirs) if snapshot_grants is not None else list(config.sandbox_readable_dirs),
