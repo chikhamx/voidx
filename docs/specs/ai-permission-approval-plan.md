@@ -1,89 +1,280 @@
 ---
 name: ai-permission-approval-plan
 display_name: AI 权限审批实现计划
-description: 把 ai-permission-approval 设计拆成 TDD 小任务
+description: 按安全边界、服务生命周期和前后端集成拆解 AI 权限审批的 TDD 实现任务
 doc_type: tasks
 audience: llm
 ---
 
 # AI 权限审批 — 实现计划
 
-依据设计文档 `docs/specs/ai-permission-approval.md`。每个任务先写失败测试，再实现，最后跑指定测试命令确认绿。
+## Goal
 
-## 任务列表
+按 `docs/specs/ai-permission-approval.md` 实现 `ai_approval` 模式：只对 dangerous + ask 调用进行严格、单次、可追溯来源的 AI 审批，任何不确定状态回退人工，并保持现有四种权限模式行为不变。
 
-- [ ] T1: 新增 `PermissionMode.AI_APPROVAL` 枚举
-  - 文件: `src/voidx/config/enums.py`
-  - 改动: 在 `PermissionMode` 增加 `AI_APPROVAL = "ai_approval"`；`sandbox_mode` 返回 `"workspace-write"`，`approval_policy` 返回 `"untrusted"`。
-  - 测试: `src/tests/test_permission/test_ai_approval.py::test_ai_approval_mode_sandbox`
-  - 命令: `./test.py --backend -- src/tests/test_permission/test_ai_approval.py -v`
+## Architecture
 
-- [ ] T2: 新增 `AiApprovalConfig` 配置模型
-  - 文件: `src/voidx/config/models.py`
-  - 改动: 新增 Pydantic 模型 `AiApprovalConfig(enabled: bool=False, profile_name: str="", max_risk: str="dangerous", timeout_seconds: float=12.0)`。
-  - 测试: `test_ai_approval_config_defaults`
-  - 命令: 同上
+权限引擎继续负责 sandbox、session 与 risk；无状态 `AiApprovalService` 只负责候选投影、按次解析 profile、调用模型和严格校验响应；graph 只应用合法 allow 并将剩余决策交给现有人工流程。设置由 workspace Settings 持久化，经 gateway 校验和热更新；前端只操作同一份 `permissions.ai_approval` 数据。
 
-- [ ] T2.5: `presets.resolve_mode_decision` 增加 AI_APPROVAL 分支
-  - 文件: `src/voidx/permission/presets.py`
-  - 改动: 在 SAFE 分支后增加 `if preset == PermissionMode.AI_APPROVAL: return _ask_scoped(risk, (ONCE, SESSION))`，使 dangerous 风险返回 session scope（与 safe 一致）。extreme 仍走前面的 `_ask_once`。
-  - 测试: `test_presets_ai_approval_dangerous_scopes`, `test_presets_ai_approval_extreme_ask_once`
-  - 命令: `./test.py --backend -- src/tests/test_permission/test_ai_approval.py -v`
+## Tech Stack
 
-- [ ] T3: Settings 读写 `ai_approval` 配置
-  - 文件: `src/voidx/config/settings_permissions.py`, `src/voidx/config/settings.py`
-  - 改动:
-    - 新增 `get_ai_approval_config() -> AiApprovalConfig`（同步读 `_effective_data().get("ai_approval", {})`）。
-    - 新增 `set_ai_approval_config(cfg) -> Path`（同步写 `_data["ai_approval"]`，不校验 profile）。
-    - `settings.py` 的 `WORKSPACE_ONLY_KEYS` 增加 `"ai_approval"`。
-    - profile_name 校验放到 T6 gateway 层 async 调 `list_profiles`。
-  - 测试: `test_get_set_ai_approval_config`
-  - 命令: `./test.py --backend -- src/tests/test_permission/test_ai_approval.py -v`
+- Python 3、Pydantic、LangChain structured output、asyncio、现有 `retry_async`
+- pytest（通过 `./test.py --backend`）
+- TypeScript、DOM API、Vitest（通过 `./test.py --frontend`）
 
-- [ ] T4: 实现 `AiApprovalService`
-  - 文件: `src/voidx/permission/ai_approval.py`（新建）
-  - 改动:
-    - `AiApprovalResult(BaseModel)`: `allowed_ids: set[str]`, `reason: str`
-    - `AiApprovalService.review(decisions, context, settings) -> AiApprovalResult`:
-      - 过滤条件：`risk.level in {NORMAL, DANGEROUS}` 且 `action != BLOCKED_ACK`（显式检查 risk.level，不靠 action）。
-      - 解析 profile_name（空则用当前主模型 profile）；无 profile/api_key → 返回空 allowed_ids + reason="ai_unavailable"。
-      - 构造 prompt（SystemMessage + HumanMessage），要求 JSON `{"decisions":[{"id","allow":bool,"reason":str}]}`。
-      - 用 `create_chat_model` + `create_resolver_model` + `with_structured_output` 调用，12s 超时 + retry_async。
-      - 异常/超时/解析失败 → 返回空 allowed_ids + reason。
-  - 测试: `test_ai_review_allow`, `test_ai_review_deny`, `test_ai_review_unavailable`, `test_ai_review_skips_extreme`
-  - 命令: `./test.py --backend -- src/tests/test_permission/test_ai_approval.py -v`
+## Source of Truth
 
-- [ ] T5: Graph 审批链路接入 AI 审批
-  - 文件: `src/voidx/agent/graph/permissions.py`, `src/voidx/agent/graph/contracts.py`
-  - 改动:
-    - `GraphPermissionHost` Protocol 增加可选 `_ai_approval: AiApprovalService | None` 与 `_settings: Settings | None`。
-    - `_ask_and_apply_permission`: 当 `context.permission_mode == "ai_approval"` 且 approvable 非空且 `_ai_approval` 可用时，先调 `review`；allow 的决策移入 approved（带 approved_risk + approved_by=ai metadata），剩余继续人工。
-    - `_tool_call_with_approval_risk` 扩展：新增可选 `approved_by` 参数，写入 metadata["approved_by"]。
-    - AI allow 后 dock 提示 "AI 审批: allow <tool>"。
-    - 注意：AI 过滤在 `AiApprovalService.review` 内部做，显式检查 `risk.level not in {EXTREME, BLOCKED}`，不依赖 action。
-  - 测试: `test_graph_ai_approval_allow`, `test_graph_ai_approval_fallback_on_deny`, `test_graph_ai_approval_skips_blocked`, `test_graph_ai_approval_skips_extreme`, `test_graph_ai_approval_no_session_persist`
-  - 命令: `./test.py --backend -- src/tests/test_agent/graph/test_graph_authorization.py -v`
+实现前必须遵守设计文档中的以下章节，不在本计划重复策略细节：
 
-- [ ] T6: Gateway settings 往返 `ai_approval`
-  - 文件: `src/voidx/ui/gateway/session/method/settings.py`
-  - 改动: `_desktop_settings_snapshot` 增加 `ai_approval` 字段（调 `get_ai_approval_config().model_dump()`）；`_method_settings_update` 处理 `patch["ai_approval"]`，async 校验 profile_name（调 `settings.list_profiles()`，不存在则 `MethodParamsError`），通过后调 `set_ai_approval_config`。
-  - 测试: `test_settings_snapshot_includes_ai_approval`, `test_settings_update_ai_approval`, `test_settings_update_ai_approval_invalid_profile`
-  - 命令: `./test.py --backend -- src/tests/test_ui -v -k ai_approval`
+- `Trust Boundary and Prompt Safety`
+- `Response Contract and Validation`
+- `Configuration`
+- `Failure Matrix`
+- `Invariants`
 
-- [ ] T7: 前端设置页支持 AI Approval 模式与审批 profile 选择
-  - 文件: `frontend/src/ui/settings.ts`, `frontend/src/ui/model.ts`, `frontend/src/services/state.ts`
-  - 改动:
-    - `settings.ts`: `PermissionMode` 类型加 `"ai_approval"`；`PERMISSION_MODES` 加配置项（label "AI approval", description "AI 自动审批低中风险操作，高风险仍需人工确认"）；`renderPermissionsTab` 增加 AI 审批 profile 下拉（来自 `snapshot.profiles`）；`collectPermissionsPatch` 收集 `ai_approval.profile_name`。
-    - `model.ts`: 权限下拉 `options` 数组增加 ai_approval 项（title "AI 审批", desc "AI 自动审批低中风险，高风险仍需确认", icon 用 shield-svg）；否则用户无法从 composer pill 切换。
-    - `state.ts`: `permissionMode` 类型扩展；`updateStatusBar` 的 pill 文案 if-elif 增加 `ai_approval` 分支（text "AI 审批", colorClass "ai-approval"）；否则 pill 显示默认"安全模式"。
-  - 测试: `frontend/test/workbench.test.ts` 调整权限 pill 断言；新增 ai_approval 模式渲染测试
-  - 命令: `./test.py --frontend -- --reporter=verbose`
+禁止在实现中扩大到 normal/extreme/blocked、缓存 profile/key、接受 partial response，或写 session/persistent grant。
 
-- [ ] T8: 回归验证
-  - 命令: `./test.py --backend -- src/tests/test_permission -v` + `./test.py --backend -- src/tests/test_agent/graph/test_graph_authorization.py -v` + `./test.py --backend -- src/tests/test_ui -v` + `./test.py --frontend`
-  - 预期: 全绿
+## File Structure
 
-## 风险与回滚
+| Path | Responsibility |
+|---|---|
+| `src/voidx/config/enums.py` | 新 PermissionMode |
+| `src/voidx/config/models.py`, `src/voidx/config/__init__.py` | AiApprovalConfig 定义与导出 |
+| `src/voidx/config/settings_permissions.py`, `src/voidx/config/settings.py` | workspace-only 配置读写 |
+| `src/voidx/permission/presets.py` | ai_approval 的 safe 等价人工 scopes |
+| `src/voidx/permission/ai_approval.py` | 请求投影、prompt、模型调用、响应校验 |
+| `src/voidx/agent/graph/permissions.py`, `contracts.py` | graph 接入与 AI allow 应用 |
+| `src/voidx/agent/graph/core/voidx_graph.py` | service 生命周期与 settings 热更新 |
+| `src/voidx/tools/base.py` | approved_by metadata 模型 |
+| `src/voidx/ui/gateway/session/method/settings.py` | 配置 API、async profile 校验 |
+| `frontend/src/ui/settings.ts` | 设置页配置与说明 |
+| `frontend/src/ui/model.ts`, `frontend/src/services/state.ts` | 快捷模式与 pill |
 
-- 若审批模型调用导致 graph 卡顿，回滚 T5 即可恢复纯人工审批；T1-T4 为纯新增，不影响现有模式。
-- `PermissionMode.AI_APPROVAL` 新增值对旧 settings.json 透明（未知值 fallback safe）。
+## TDD Tasks
+
+每个任务严格执行：先写测试并运行确认因目标行为缺失而 RED，再写最小实现，最后运行同一命令确认 GREEN。不要把后续任务的实现提前放入当前任务。
+
+### T1 — PermissionMode 与 preset 语义
+
+- [ ] 在 `src/tests/test_permission/test_ai_approval.py` 新增：
+  - `test_ai_approval_mode_sandbox_and_policy`
+  - `test_ai_approval_dangerous_uses_safe_scopes`
+  - `test_ai_approval_extreme_stays_once`
+  - `test_existing_permission_modes_are_unchanged`
+- [ ] 运行并确认 RED：
+  - `./test.py --backend -- src/tests/test_permission/test_ai_approval.py -v`
+- [ ] 修改 `src/voidx/config/enums.py`：新增 `PermissionMode.AI_APPROVAL = "ai_approval"`。
+- [ ] 修改 `src/voidx/permission/presets.py`：dangerous 使用 `(ONCE, SESSION)`；extreme 继续命中现有 `_ask_once`；normal 保持现有 allow。
+- [ ] 运行同一命令确认 GREEN。
+
+Acceptance：`sandbox_mode == "workspace-write"`、`approval_policy == "untrusted"`，且没有 normal + ask 新行为。
+
+### T2 — 强类型配置与 workspace 持久化
+
+- [ ] 在 `src/tests/test_permission/test_ai_approval.py` 新增：
+  - `test_ai_approval_config_defaults`
+  - `test_ai_approval_config_timeout_bounds`
+  - `test_ai_approval_settings_round_trip`
+  - `test_ai_approval_settings_are_workspace_only`
+  - `test_ai_approval_corrupt_settings_fall_back_to_defaults`
+- [ ] 运行并确认 RED：
+  - `./test.py --backend -- src/tests/test_permission/test_ai_approval.py -v`
+- [ ] 修改 `src/voidx/config/models.py`：新增 `AiApprovalConfig(profile_name="", timeout_seconds=Field(12.0, ge=1.0, le=60.0))`；增加拒绝 NaN/Infinity 的校验。
+- [ ] 修改 `src/voidx/config/__init__.py`：导出模型。
+- [ ] 修改 `src/voidx/config/settings_permissions.py`：同步 get/set；损坏数据 get 返回默认；set 写完整 `model_dump(mode="json")`。
+- [ ] 修改 `src/voidx/config/settings.py`：`WORKSPACE_ONLY_KEYS` 增加 `ai_approval`。
+- [ ] 运行同一命令确认 GREEN。
+
+Acceptance：无 `enabled`、无 `max_risk`，`permission_mode` 是唯一开关。
+
+### T3 — 安全请求投影
+
+- [ ] 在 `src/tests/test_permission/test_ai_approval.py` 新增投影测试：
+  - 完整 bash/powershell command；
+  - 文件正文只保留长度与 SHA-256；
+  - 路径、git 子命令和 agent 最小字段保留；
+  - 大小写敏感键统一 redacted；
+  - 未知工具、不可序列化参数、关键字段过长不进入候选；
+  - 单项 16 KiB、整批 48 KiB 边界；
+  - 参数内提示注入文本只能出现在 JSON data，不改变 system policy；
+  - `args_sha256` 对规范化 args 稳定。
+- [ ] 运行并确认 RED：
+  - `./test.py --backend -- src/tests/test_permission/test_ai_approval.py -v -k projection`
+- [ ] 新建 `src/voidx/permission/ai_approval.py`，实现私有的规范化、redaction、投影和尺寸检查函数，以及 `AiApprovalRequestItem`。
+- [ ] 不记录、不 dock 输出原始参数或投影。
+- [ ] 运行同一命令确认 GREEN。
+
+Acceptance：投影规则与设计逐项一致；不使用自由文本“参数摘要”。
+
+### T4 — 响应 schema 与严格批次校验
+
+- [ ] 在 `src/tests/test_permission/test_ai_approval.py` 新增：
+  - 全 allow、全 deny、混合结果；
+  - 响应乱序仍按 ID 匹配；
+  - 缺项、未知 ID、重复 ID、空 ID、非法 decision 均整批无效；
+  - 请求空 ID/重复 ID 不调用模型；
+  - structured output 外层 raw/parsed 兼容；
+  - 不接受 partial success。
+- [ ] 运行并确认 RED：
+  - `./test.py --backend -- src/tests/test_permission/test_ai_approval.py -v -k "response or batch or review"`
+- [ ] 在 `src/voidx/permission/ai_approval.py` 实现 `AiApprovalItemResult`、`AiApprovalResponse`、`AiApprovalResult` 和严格 validator/coercion。
+- [ ] 运行同一命令确认 GREEN。
+
+Acceptance：任一完整性错误都返回 `reason="invalid_response"` 和空 `allowed_ids`。
+
+### T5 — 无状态模型调用与 profile 生命周期
+
+- [ ] 在 `src/tests/test_permission/test_ai_approval.py` 使用 fake Settings/model 新增：
+  - 空 profile_name 解析当前 profile；
+  - 指定 profile 精确解析且不回退首项；
+  - 无 settings/profile/key、structured output 不支持均 unavailable；
+  - timeout、连接异常、解析异常均空 allow；
+  - 只重试允许的瞬态异常；
+  - extreme/blocked/risk=None 不进入模型；
+  - profile 切换/删除后下一次 review 读取新值；
+  - service 实例不持有 model/profile/api_key。
+- [ ] 运行并确认 RED：
+  - `./test.py --backend -- src/tests/test_permission/test_ai_approval.py -v -k "service or profile or timeout"`
+- [ ] 在 `src/voidx/permission/ai_approval.py` 实现 async `AiApprovalService.review`：按次读取配置/profile、创建 chat/resolver model、structured invoke、timeout/retry 和失败回退。
+- [ ] 使用设计规定的 system policy；args 作为 JSON data 发送。
+- [ ] 运行同一命令确认 GREEN。
+
+Acceptance：service 无缓存；模型失败永不抛过授权边界。
+
+### T6 — approval 来源 metadata
+
+- [ ] 在 `src/tests/test_permission/test_ai_approval.py` 新增：
+  - `ApprovedToolRisk` 可解析 `approved_by="ai"`；
+  - 旧 metadata 无字段仍兼容；
+  - 非法来源被拒绝或按明确默认处理。
+- [ ] 在 `src/tests/test_agent/graph/test_graph_authorization.py` 新增 AI allow 的 metadata 断言。
+- [ ] 运行并确认 RED：
+  - `./test.py --backend -- src/tests/test_permission/test_ai_approval.py src/tests/test_agent/graph/test_graph_authorization.py -v -k approved_by`
+- [ ] 修改 `src/voidx/tools/base.py`：`ApprovedToolRisk` 增加受限 `approved_by`。
+- [ ] 修改 `src/voidx/agent/graph/permissions.py`：`_tool_call_with_approval_risk(decision, approved_by=...)` 写入 `approved_risk` 内部；人工审批写 `user`，AI 写 `ai`。
+- [ ] 运行同一命令确认 GREEN。
+
+Acceptance：执行侧 `_approved_tool_risks_for_call` 不丢失 AI 来源。
+
+### T7 — Graph 授权链接入
+
+- [ ] 在 `src/tests/test_agent/graph/test_graph_authorization.py` 新增：
+  - AI allow 单次进入 approved，不弹人工；
+  - AI deny 回退人工；
+  - mixed allow/deny 只询问剩余项；
+  - extreme/blocked/risk=None 不传 AI；
+  - service unavailable/invalid response 全部人工；
+  - AI allow 不写 session allow，后续同调用仍重新审批；
+  - 人工对剩余项选 always 时 AI allow 项不参与 session 写入；
+  - dock 仅提示 `AI 审批: allow <tool>`，不含 args/reason；
+  - 空/重复 tool-call ID 全部人工。
+- [ ] 运行并确认 RED：
+  - `./test.py --backend -- src/tests/test_agent/graph/test_graph_authorization.py -v -k ai_approval`
+- [ ] 修改 `src/voidx/agent/graph/contracts.py`：声明 `_settings` 与 `_ai_approval`。
+- [ ] 修改 `src/voidx/agent/graph/permissions.py`：把本次 `PermissionContext` 传给 `_ask_and_apply_permission`；筛选 dangerous + ask；调用 service；移出 AI allow；剩余项复用原人工逻辑。
+- [ ] 过滤必须在 graph 与 service 两层都执行，形成 defense in depth。
+- [ ] 运行同一命令确认 GREEN。
+
+Acceptance：blocked 仍先处理；AI 不影响原有 choice/session 语义。
+
+### T8 — Graph 初始化与设置热更新
+
+- [ ] 在 `src/tests/test_agent/graph/test_run_loop_startup.py` 新增：
+  - graph 构造时创建一个无状态 `AiApprovalService`；
+  - settings update 替换 `self._settings` 后 service 实例可复用；
+  - 更新模式/profile 后下一次授权读取新 settings；
+  - graph settings=None 时安全回退人工。
+- [ ] 运行并确认 RED：
+  - `./test.py --backend -- src/tests/test_agent/graph/test_run_loop_startup.py -v -k ai_approval`
+- [ ] 修改 `src/voidx/agent/graph/core/voidx_graph.py`：初始化 `_ai_approval`；保持 service 无状态；现有 `_apply_settings_update` 不缓存审批 profile/model。
+- [ ] 运行同一命令确认 GREEN。
+
+Acceptance：profile 删除、切换、key 更新无需重启 session。
+
+### T9 — Gateway 配置契约
+
+- [ ] 在 `src/tests/test_ui/gateway/test_gateway_v2_dispatch.py` 新增：
+  - snapshot 返回 `permissions.ai_approval`；
+  - update 对 profile_name/timeout 使用 merge 语义；
+  - 空 profile_name 可保存；
+  - 指定 profile 不存在或 key 为空时报 `MethodParamsError`；
+  - timeout bool/NaN/Infinity/越界拒绝；
+  - 更新触发 `_settings_update_handler`，当前 graph 可见新配置。
+- [ ] 运行并确认 RED：
+  - `./test.py --backend -- src/tests/test_ui/gateway/test_gateway_v2_dispatch.py -v -k ai_approval`
+- [ ] 修改 `src/voidx/ui/gateway/session/method/settings.py`：在 permissions 内往返配置；async 精确校验 profile；构建 `AiApprovalConfig` 后同步 set；保持现有 settings 热更新回调。
+- [ ] 运行同一命令确认 GREEN。
+
+Acceptance：前后端只使用 `permissions.ai_approval`，不新增重复顶层字段。
+
+### T10 — Frontend 设置页
+
+- [ ] 在 `frontend/test/ui/settings.test.ts` 新增：
+  - AI Approval 模式渲染；
+  - profile 下拉只显示 `configured !== false` 的 profiles，并提供“当前主 profile”空值；
+  - timeout 回显和保存；
+  - 切换到其他模式不清空已有 ai_approval 配置；
+  - patch 形状为 `permissions: { permission_mode, ai_approval: { profile_name, timeout_seconds } }`；
+  - 页面显示“会将受限工具参数发送给所选模型”的说明。
+- [ ] 运行并确认 RED：
+  - `./test.py --frontend -- test/ui/settings.test.ts --reporter=verbose`
+- [ ] 修改 `frontend/src/ui/settings.ts`：扩展 PermissionMode、snapshot 类型、模式配置、条件控件和 collect merge 数据。
+- [ ] 运行同一命令确认 GREEN。
+
+Acceptance：保存后 gateway snapshot 可无损回显。
+
+### T11 — Frontend 快捷模式与状态 pill
+
+- [ ] 在 `frontend/test/ui/workbench.test.ts`（现有实际路径）新增：
+  - dropdown 显示 AI 审批选项；
+  - 点击发送 `permissions.permission_mode="ai_approval"`；
+  - pill 显示“AI 审批”及 `ai-approval` class；
+  - settings snapshot 可同步状态。
+- [ ] 运行并确认 RED：
+  - `./test.py --frontend -- test/ui/workbench.test.ts --reporter=verbose`
+- [ ] 修改 `frontend/src/ui/model.ts` 与 `frontend/src/services/state.ts`。
+- [ ] 仅当缺少现有样式时修改 `frontend/css/composer.css`，不要改无关布局。
+- [ ] 运行同一命令确认 GREEN。
+
+Acceptance：切换模式不要求同时改 profile；未配置时后端安全回退人工。
+
+### T12 — Focused Regression and Final Verification
+
+- [ ] 运行 backend focused regression：
+  - `./test.py --backend -- src/tests/test_permission src/tests/test_agent/graph/test_graph_authorization.py src/tests/test_agent/graph/test_run_loop_startup.py src/tests/test_ui/gateway/test_gateway_v2_dispatch.py -v`
+- [ ] 运行 frontend focused regression：
+  - `./test.py --frontend -- test/ui/settings.test.ts test/ui/workbench.test.ts --reporter=verbose`
+- [ ] 运行完整 frontend：
+  - `./test.py --frontend`
+- [ ] 若 focused backend 通过且改动未触及 desktop，至少运行完整 backend：
+  - `./test.py --backend`
+- [ ] 确认所有命令退出码为 0，且没有跳过新增测试。
+
+## Manual Acceptance
+
+- [ ] 主模型 A、审批 profile B：dangerous edit 可由 B 单次放行，dock 不泄露参数。
+- [ ] extreme/blocked 不触发 B。
+- [ ] 删除 B、清空 B key、断网或模型超时均回退人工。
+- [ ] 在不重启 session 的情况下切换 B→C，下一次审批使用 C。
+- [ ] 同一 dangerous 调用再次发生时仍重新审批，不受上次 AI allow 影响。
+
+## Risks and Rollback
+
+| Risk | Mitigation | Rollback |
+|---|---|---|
+| 模型误放行 | dangerous-only、sandbox 前置、严格输出、单次授权 | 从 frontend 隐藏模式并在 gateway 拒绝新选择；保留配置数据 |
+| 参数泄露 | 安全投影、redaction、大小限制、不持久化 | 禁用 AI 模式，退化 safe |
+| 延迟或供应商故障 | 有界 timeout/retry，失败人工 | 移除 graph 调用点即可恢复纯人工 |
+| profile 热更新陈旧 | service 无状态、每次解析 | 无需重建 graph；回滚 service 接入 |
+| metadata 兼容 | 新字段有兼容默认，旧数据可解析 | 保留 schema 字段，不再写 ai 值 |
+
+## Forbidden Changes
+
+- 不改 `sandbox_precheck_action`、RiskLevel/RiskAssessment 语义。
+- 不让 normal、extreme、blocked 进入 AI review。
+- 不新增 AI 专用 API key。
+- 不缓存审批 profile、API key 或 BaseChatModel。
+- 不接受缺项、未知/重复 ID 的部分成功。
+- 不写 session allow/deny 或 persistent grants。
+- 不记录 prompt、投影参数或模型理由。
+- 不手工编辑生成的 `frontend/src/rpc/protocol.d.ts`；本功能当前不需要协议 schema 变更。

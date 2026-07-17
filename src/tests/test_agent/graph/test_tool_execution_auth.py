@@ -371,14 +371,27 @@ async def test_tool_execution_mixin_delegates_to_component():
 async def test_graph_authorization_blocks_lsp_format_in_plan_mode(tmp_path):
     graph = _graph(tmp_path)
 
+    tool_call = {
+        "name": "lsp_format",
+        "args": {
+            "file_path": "src/app.py",
+            "start_line": 1,
+            "start_character": 0,
+            "end_line": 1,
+            "end_character": 5,
+        },
+        "id": "call_1",
+    }
     approved, denied = await graph._authorize_tool_calls(
-        [{"name": "lsp", "args": {"operation": "diagnostics", "file_path": "src/app.py"}, "id": "call_1"}],
+        [tool_call],
         plan_mode=True,
         session_id="test",
     )
 
-    assert approved == [{"name": "lsp", "args": {"operation": "diagnostics", "file_path": "src/app.py"}, "id": "call_1"}]
-    assert denied == []
+    assert approved == []
+    assert len(denied) == 1
+    assert denied[0][0]["id"] == "call_1"
+    assert "not allowed" in denied[0][1]
 
 
 @pytest.mark.asyncio

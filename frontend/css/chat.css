@@ -414,6 +414,7 @@
   padding: 4px 8px;
   border-radius: var(--vx-radius-sm);
   transition: background var(--vx-transition), color var(--vx-transition);
+  -webkit-app-region: no-drag;
 }
 
 .vx-chat-header-btn:hover {

@@ -296,20 +296,35 @@ def _handle_plain_text(
     interaction_mode_value: str,
     estimate_tokens: Any,
 ) -> TurnControlResult:
+    text = extract_text(assistant_msg).strip()
+    has_text = bool(text)
     if (
         turn_state == "initial"
         and loop.missing_turn_count == 0
         and not loop.start_prompt_injected
         and not loop.turn_prompt_active
         and bool(state_messages and isinstance(state_messages[-1], HumanMessage))
+        and has_text
     ):
         loop.terminal_msg = normalize_terminal_message(assistant_msg)
         loop.terminal_msg_visible = not loop.turn_prompt_active
         turn_state = "committed"
         return TurnControlResult("break", llm_messages, loop.context_tokens, turn_state, runtime_task_state)
-    if loop.missing_turn_count == 0:
+    if loop.missing_turn_count == 0 and has_text:
         loop.pending_provisional = assistant_msg
         loop.pending_provisional_visible = not loop.turn_prompt_active
+    if (
+        turn_state == "initial"
+        and not loop.start_prompt_injected
+        and loop.missing_turn_count == 0
+        and len(text.splitlines()) > 3
+        and interaction_mode_value not in {InteractionMode.PLAN.value, InteractionMode.GOAL.value}
+    ):
+        graph._turn_metrics.increment("turn_control_auto_committed")
+        loop.terminal_msg = normalize_terminal_message(assistant_msg)
+        loop.terminal_msg_visible = loop.pending_provisional_visible
+        turn_state = "committed"
+        return TurnControlResult("break", llm_messages, loop.context_tokens, turn_state, runtime_task_state)
     if (
         turn_state == "initial"
         and not loop.start_prompt_injected
@@ -331,8 +346,7 @@ def _handle_plain_text(
         return TurnControlResult("retry", llm_messages, loop.context_tokens, turn_state, runtime_task_state)
     loop.missing_turn_count += 1
     graph._turn_metrics.increment("turn_control_missing")
-    text = extract_text(assistant_msg).strip()
-    if loop.missing_turn_count == 1 and len(text.splitlines()) >= 3:
+    if loop.missing_turn_count == 1 and len(text.splitlines()) > 3:
         graph._turn_metrics.increment("turn_control_auto_committed")
         loop.terminal_msg = normalize_terminal_message(assistant_msg)
         loop.terminal_msg_visible = loop.pending_provisional_visible
@@ -352,6 +366,8 @@ def _handle_plain_text(
         loop.context_tokens = estimate_tokens(llm_messages)
         return TurnControlResult("retry", llm_messages, loop.context_tokens, turn_state, runtime_task_state)
     graph._turn_metrics.increment("turn_control_second_prompt")
+    if loop.pending_provisional is None:
+        return _invalid_turn_failure(llm_messages, loop, turn_state, runtime_task_state)
     loop.terminal_msg = normalize_terminal_message(loop.pending_provisional)
     loop.terminal_msg_visible = loop.pending_provisional_visible
     return TurnControlResult("break", llm_messages, loop.context_tokens, turn_state, runtime_task_state)

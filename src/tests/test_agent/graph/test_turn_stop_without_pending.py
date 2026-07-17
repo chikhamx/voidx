@@ -45,7 +45,7 @@ def _turn_stop_chunk() -> AIMessageChunk:
         content="",
         tool_calls=[{
             "name": "turn",
-            "args": {"operation": "stop", "intent": "", "goal": ""},
+            "args": {"operation": "stop", "params": None},
             "id": "tc1",
             "type": "tool_call",
         }],
@@ -61,7 +61,7 @@ def _text_and_turn_stop_chunk(text: str) -> AIMessageChunk:
         content=text,
         tool_calls=[{
             "name": "turn",
-            "args": {"operation": "stop", "intent": "", "goal": ""},
+            "args": {"operation": "stop", "params": None},
             "id": "tc1",
             "type": "tool_call",
         }],

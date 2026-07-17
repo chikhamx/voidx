@@ -104,7 +104,7 @@ describe("workbench shell", () => {
     expect(transcript.children).toHaveLength(0);
     expect(emptyState.hidden).toBe(false);
     expect(mainCanvas.classList.contains("empty")).toBe(true);
-    expect(emptyState.textContent).toContain("我们应该在 voidx 中构建什么？");
+    expect(emptyState.textContent).toContain("让我们一起让世界变得更加美好！");
   });
 
   it("does not render the redundant configured permission pill in the composer", () => {

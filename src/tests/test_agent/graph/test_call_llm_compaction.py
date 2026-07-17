@@ -153,7 +153,7 @@ async def test_call_llm_updates_usage_stats_across_turn_control_calls(tmp_path, 
                     tool_calls=[
                         {
                             "name": "turn",
-                            "args": {"operation": "stop", "intent": "", "goal": ""},
+                            "args": {"operation": "stop", "params": None},
                             "id": "turn-usage",
                             "type": "tool_call",
                         }
@@ -522,7 +522,7 @@ class MalformedThenRepairsAfterCompactionStreamingModel:
         yield AIMessageChunk(content="repaired after compaction")
         yield AIMessageChunk(
             content="",
-            tool_calls=[{"name": "turn", "args": {"operation": "stop", "intent": "", "goal": ""}, "id": "turn-1", "type": "tool_call"}],
+            tool_calls=[{"name": "turn", "args": {"operation": "stop", "params": None}, "id": "turn-1", "type": "tool_call"}],
         )
 
 

@@ -134,7 +134,14 @@ class SafePathExecutor:
         except OSError as exc:
             return SafePathResult(False, error=str(exc), error_kind="io_error")
 
-    def write_text(self, authorized: AuthorizedPath, content: str, *, encoding: str = "utf-8") -> SafePathResult:
+    def write_text(
+        self,
+        authorized: AuthorizedPath,
+        content: str,
+        *,
+        encoding: str = "utf-8",
+        expected_text: str | None = None,
+    ) -> SafePathResult:
         invalid = self._validate_capability(authorized)
         if invalid:
             return invalid
@@ -144,6 +151,16 @@ class SafePathExecutor:
         if changed:
             return changed
         temp_path: Path | None = None
+        if expected_text is not None:
+            current = self.read_text(authorized, encoding=encoding, errors="replace")
+            if not current.ok:
+                return current
+            if current.value != expected_text:
+                return SafePathResult(
+                    False,
+                    error="Authorized file content changed before write",
+                    error_kind="content_changed",
+                )
         try:
             _mkdir_parent_safely(authorized.path.parent, authorized._parent_path, authorized._parent_stat)
             data = content.encode(encoding)
@@ -154,6 +171,16 @@ class SafePathExecutor:
                 os.fsync(fd)
             finally:
                 os.close(fd)
+            if expected_text is not None:
+                current = self.read_text(authorized, encoding=encoding, errors="replace")
+                if not current.ok:
+                    return current
+                if current.value != expected_text:
+                    return SafePathResult(
+                        False,
+                        error="Authorized file content changed before commit",
+                        error_kind="content_changed",
+                    )
             changed = _parent_or_existing_path_changed(authorized)
             if changed:
                 return changed

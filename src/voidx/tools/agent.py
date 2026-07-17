@@ -135,7 +135,7 @@ _RESULT_PRESETS: dict[str, AgentResultContract] = {
 class AgentTool(BaseTool):
     id = "agent"
     description = (
-        "Start an isolated child agent for one independent delegated task. "
+        "Run an isolated child agent for one independent delegated task and return its completed result. "
         "The child receives the task brief and runtime context, but not caller conversation history."
     )
 

@@ -186,6 +186,28 @@ def test_safe_path_rejects_cross_executor_capability(tmp_path):
     assert not target.exists()
 
 
+
+def test_safe_path_write_rejects_unexpected_existing_content(tmp_path):
+    from voidx.tools.file.safe_path import SafePathExecutor
+
+    target = tmp_path / "target.txt"
+    target.write_text("original\n", encoding="utf-8")
+    executor = SafePathExecutor()
+    authorized = executor.authorize_existing(target, access="write")
+    target.write_text("concurrent\n", encoding="utf-8")
+
+    result = executor.write_text(
+        authorized,
+        "formatted\n",
+        expected_text="original\n",
+        encoding="utf-8",
+    )
+
+    assert result.ok is False
+    assert result.error_kind == "content_changed"
+    assert target.read_text(encoding="utf-8") == "concurrent\n"
+
+
 def test_authorized_path_is_immutable_after_issue(tmp_path):
     from voidx.tools.file.safe_path import SafePathExecutor
 

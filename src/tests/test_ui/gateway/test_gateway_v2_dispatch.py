@@ -413,3 +413,39 @@ async def test_v2_dispatch_returns_method_not_found_for_unknown_method():
     # It should be an error (method not found)
     assert hasattr(result, "error")
     assert result.error.code == -32601
+
+
+@pytest.mark.asyncio
+async def test_settings_update_reasoning_effort_does_not_switch_model(tmp_path):
+    dock = BottomInputDock()
+    session = GatewaySession(lambda: dock.tree, thread_id="t1", workspace=str(tmp_path))
+
+    # First, configure and activate a specific model profile
+    await session.dispatch_request(JsonRpcRequest(id=1, method="settings.update", params={
+        "patch": {
+            "model": {
+                "provider": "xunfei-coding-plan",
+                "model": "astron-code-latest",
+            },
+        }
+    }))
+
+    # Verify model is indeed xunfei
+    snapshot1 = await session.dispatch_request(JsonRpcRequest(id=2, method="settings.get", params={}))
+    assert snapshot1.result["model"]["provider"] == "xunfei-coding-plan"
+    assert snapshot1.result["model"]["model"] == "astron-code-latest"
+
+    # Now patch only the reasoning_effort
+    result = await session.dispatch_request(JsonRpcRequest(id=3, method="settings.update", params={
+        "patch": {
+            "model": {
+                "reasoning_effort": "high",
+            },
+        }
+    }))
+
+    # Verify that the model is still xunfei, and reasoning_effort is updated
+    assert isinstance(result, JsonRpcResult)
+    assert result.result["settings"]["model"]["provider"] == "xunfei-coding-plan"
+    assert result.result["settings"]["model"]["model"] == "astron-code-latest"
+    assert result.result["settings"]["model"]["reasoning_effort"] == "high"

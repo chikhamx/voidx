@@ -10,11 +10,12 @@ from typing import Any
 
 from voidx.lsp.client import LSP_REQUEST_TIMEOUT_SECONDS, LspClient
 from voidx.lsp.config import install_hint_for, language_for_path, load_lsp_servers
-from voidx.lsp.errors import LspConnectionError, LspServerUnavailable
+from voidx.lsp.errors import LspConnectionError, LspError, LspFormattingUnsupported, LspServerUnavailable
 from voidx.lsp.schema import (
     LspDiagnostic,
     LspDoctorCheck,
     LspLocation,
+    LspRange,
     LspRuntimeStatus,
     LspServerConfig,
     LspSymbol,
@@ -255,6 +256,33 @@ class LspManager:
         await self.open_document(file_path)
         return True, old_text, new_text
 
+    async def formatted_range_text(
+        self,
+        file_path: str,
+        range_: LspRange,
+    ) -> tuple[bool, str, str]:
+        path = self._resolve_path(file_path)
+        old_text = path.read_text(encoding="utf-8", errors="replace")
+        client, uri = await self.open_document(file_path)
+        if not client.capabilities.get("documentRangeFormattingProvider"):
+            raise LspFormattingUnsupported("Language server does not support document range formatting")
+        range_data = range_.model_dump(mode="json")
+        edits = await client.request("textDocument/rangeFormatting", {
+            "textDocument": {"uri": uri},
+            "range": range_data,
+            "options": {"tabSize": 4, "insertSpaces": True},
+        }, timeout=LSP_REQUEST_TIMEOUT_SECONDS)
+        edit_list = edits if isinstance(edits, list) else []
+        for edit in edit_list:
+            edit_range = _text_edit_range(edit)
+            if edit_range is None or not _range_positions_valid(old_text, edit_range):
+                raise LspError("LSP range formatting returned an invalid document position")
+            if not _range_within(edit_range, range_):
+                raise LspError("LSP range formatting returned an edit outside requested range")
+        new_text = apply_text_edits(old_text, edit_list)
+        return new_text != old_text, old_text, new_text
+
+
     async def open_document(self, file_path: str) -> tuple[LspClient, str]:
         path = self._resolve_path(file_path)
         await self.initialize()
@@ -384,8 +412,57 @@ def apply_text_edits(text: str, edits: list[Any]) -> str:
 
 def _offset_for_position(text: str, line: int, character: int) -> int:
     lines = text.splitlines(keepends=True)
-    if line <= 0:
-        return min(character, len(lines[0]) if lines else len(text))
+    if not lines:
+        return 0
     if line >= len(lines):
         return len(text)
-    return sum(len(part) for part in lines[:line]) + min(character, len(lines[line]))
+    line = max(line, 0)
+    return sum(len(part) for part in lines[:line]) + _python_offset_for_utf16(lines[line], character)
+
+
+def _python_offset_for_utf16(text: str, character: int) -> int:
+    units = 0
+    for index, value in enumerate(text):
+        next_units = units + (2 if ord(value) > 0xFFFF else 1)
+        if next_units > character:
+            return index
+        units = next_units
+        if units == character:
+            return index + 1
+    return len(text)
+
+
+def _text_edit_range(edit: Any) -> LspRange | None:
+    if not isinstance(edit, dict):
+        return None
+    range_data = edit.get("range")
+    if not isinstance(range_data, dict):
+        return None
+    try:
+        return LspRange.model_validate(range_data)
+    except ValueError:
+        return None
+
+
+def _range_within(edit_range: LspRange, requested: LspRange) -> bool:
+    requested_start = (requested.start.line, requested.start.character)
+    requested_end = (requested.end.line, requested.end.character)
+    edit_start = (edit_range.start.line, edit_range.start.character)
+    edit_end = (edit_range.end.line, edit_range.end.character)
+    return requested_start <= edit_start <= edit_end <= requested_end
+
+
+def _range_positions_valid(text: str, range_: LspRange) -> bool:
+    lines = text.splitlines(keepends=True)
+    return _position_valid(text, lines, range_.start.line, range_.start.character) and _position_valid(
+        text, lines, range_.end.line, range_.end.character
+    )
+
+
+def _position_valid(text: str, lines: list[str], line: int, character: int) -> bool:
+    if line == len(lines) and text.endswith(("\n", "\r")):
+        return character == 0
+    if line >= len(lines):
+        return False
+    line_text = lines[line].rstrip("\r\n")
+    return character <= len(line_text.encode("utf-16-le")) // 2

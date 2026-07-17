@@ -32,6 +32,10 @@ export function initModelControls(): void {
 
     document.addEventListener("click", () => {
       dropdownEl.hidden = true;
+      const reasoningDropdown = document.querySelector("#reasoning-dropdown");
+      if (reasoningDropdown) {
+        (reasoningDropdown as HTMLElement).hidden = true;
+      }
     });
   }
 
@@ -82,6 +86,9 @@ export function initModelControls(): void {
       });
   });
 }
+
+const REASONING_LEVELS = ["off", "low", "medium", "high", "xhigh"];
+const REASONING_LABELS = ["关闭", "低", "中", "高", "高级"];
 
 export function populateCustomModelDropdown(): void {
   const dropdownEl = document.querySelector("#model-dropdown");
@@ -187,23 +194,36 @@ export function populateModelOptions(
 }
 
 export function applySettingsRuntimeState(snapshot: SettingsSnapshot): void {
+  const oldProfilesJson = JSON.stringify(uiState.configuredProfiles);
   uiState.configuredProfiles = configuredProfilesFromSnapshot(snapshot);
+  const profilesChanged = JSON.stringify(uiState.configuredProfiles) !== oldProfilesJson;
+
   if (snapshot.permissions && typeof snapshot.permissions.permission_mode === "string") {
     uiState.permissionMode = snapshot.permissions.permission_mode;
   }
   const model = (snapshot.model || {}) as Record<string, unknown>;
   const provider = typeof model.provider === "string" ? model.provider : "";
   const modelName = typeof model.model === "string" ? model.model : "";
-  if (!provider && !modelName) {
-    updateStatusBar();
-    return;
-  }
+  const reasoningEffort = typeof model.reasoning_effort === "string" ? model.reasoning_effort : "xhigh";
+  uiState.reasoningEffort = reasoningEffort;
 
-  applyRuntimeState({
-    provider,
-    model: modelName,
-    profile_configured: resolveProfileConfigured(snapshot, provider, modelName),
-  });
+  const profileConfigured = resolveProfileConfigured(snapshot, provider, modelName);
+  uiState.profileConfigured = profileConfigured;
+
+  const modelChanged = provider !== uiState.provider || modelName !== uiState.model;
+
+  if (modelChanged && (provider || modelName)) {
+    applyRuntimeState({
+      provider,
+      model: modelName,
+      profile_configured: profileConfigured,
+    });
+  } else {
+    if (profilesChanged) {
+      populateModelControls();
+    }
+    updateStatusBar();
+  }
 }
 
 export function configuredProfilesFromSnapshot(snapshot: SettingsSnapshot): ProfileSummary[] {
@@ -391,4 +411,122 @@ export function populatePermissionDropdown(): void {
   }
 
   dropdownEl.append(listEl);
+}
+
+export function initReasoningControls(): void {
+  const reasoningPill = document.querySelector("#reasoning-pill");
+  const dropdownEl = document.querySelector("#reasoning-dropdown");
+  if (reasoningPill && dropdownEl && reasoningPill.dataset.initialized !== "true") {
+    reasoningPill.dataset.initialized = "true";
+    reasoningPill.addEventListener("click", (e) => {
+      e.stopPropagation();
+      const isHidden = dropdownEl.hidden;
+      if (isHidden) {
+        populateReasoningDropdown();
+      }
+      dropdownEl.hidden = !isHidden;
+    });
+
+    dropdownEl.addEventListener("click", (e) => {
+      e.stopPropagation();
+    });
+
+    document.addEventListener("click", () => {
+      dropdownEl.hidden = true;
+    });
+  }
+}
+
+export function populateReasoningDropdown(): void {
+  const dropdownEl = document.querySelector("#reasoning-dropdown");
+  if (!dropdownEl) return;
+  dropdownEl.replaceChildren();
+
+  const sliderContainer = document.createElement("div");
+  sliderContainer.className = "vx-reasoning-slider-container";
+
+  const headerEl = document.createElement("div");
+  headerEl.className = "vx-reasoning-header";
+
+  const titleSpan = document.createElement("span");
+  titleSpan.className = "vx-reasoning-title";
+  
+  const initialIndex = REASONING_LEVELS.indexOf(uiState.reasoningEffort || "xhigh");
+  const initialLabel = REASONING_LABELS[initialIndex !== -1 ? initialIndex : 4];
+  titleSpan.textContent = `${initialLabel}`;
+
+  const chevronSpan = document.createElement("span");
+  chevronSpan.className = "vx-reasoning-chevron";
+  chevronSpan.textContent = " ›";
+
+  headerEl.append(titleSpan, chevronSpan);
+
+  const wrapperEl = document.createElement("div");
+  wrapperEl.className = "vx-reasoning-slider-wrapper";
+
+  const inputRange = document.createElement("input");
+  inputRange.type = "range";
+  inputRange.min = "0";
+  inputRange.max = "4";
+  inputRange.step = "1";
+  inputRange.className = "vx-reasoning-slider";
+  
+  const initialVal = initialIndex !== -1 ? initialIndex : 4;
+  inputRange.value = String(initialVal);
+
+  const updateSliderProgress = (val: number) => {
+    const pct = (val / 4) * 100;
+    inputRange.style.background = `linear-gradient(to right, #2f99ff 0%, #2f99ff ${pct}%, #e5e7eb ${pct}%, #e5e7eb 100%)`;
+  };
+  updateSliderProgress(initialVal);
+
+  const dotsContainer = document.createElement("div");
+  dotsContainer.className = "vx-reasoning-dots";
+  for (let i = 0; i <= 4; i++) {
+    const dot = document.createElement("span");
+    dot.className = `vx-reasoning-dot ${i <= initialVal ? "active" : ""}`;
+    dotsContainer.append(dot);
+  }
+
+  inputRange.addEventListener("input", () => {
+    const val = parseInt(inputRange.value);
+    titleSpan.textContent = `${REASONING_LABELS[val]}`;
+    updateSliderProgress(val);
+    
+    const dots = dotsContainer.querySelectorAll(".vx-reasoning-dot");
+    dots.forEach((dot, idx) => {
+      if (idx <= val) {
+        dot.classList.add("active");
+      } else {
+        dot.classList.remove("active");
+      }
+    });
+  });
+
+  inputRange.addEventListener("change", () => {
+    const val = parseInt(inputRange.value);
+    const effort = REASONING_LEVELS[val];
+    uiState.reasoningEffort = effort;
+    updateStatusBar();
+
+    const patch = {
+      model: {
+        reasoning_effort: effort
+      }
+    };
+    rpcCall("settings.update", { patch })
+      .then((result) => {
+        const settings = (result as { settings?: SettingsSnapshot } | undefined)?.settings;
+        if (settings) {
+          applySettingsRuntimeState(settings);
+        }
+      })
+      .catch((err) => {
+        console.error("Failed to update reasoning effort:", err);
+      });
+  });
+
+  wrapperEl.append(inputRange, dotsContainer);
+  sliderContainer.append(headerEl, wrapperEl);
+  dropdownEl.append(sliderContainer);
 }

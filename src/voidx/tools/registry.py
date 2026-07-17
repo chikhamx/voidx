@@ -7,7 +7,7 @@ from pydantic import BaseModel, ConfigDict
 from voidx.tools.base import ToolContext, ToolResult  # noqa: F401 — re-export
 from voidx.tools.file import FileReadTool, ManageTool, WriteTool, FileReplaceTool
 from voidx.tools.git import GitTool
-from voidx.tools.lsp import LspTool
+from voidx.tools.lsp import LspFormatTool, LspTool
 from voidx.tools.search import GlobTool, GrepTool
 from voidx.tools.bash import BashTool
 from voidx.tools.task_status import TaskStatusTool
@@ -47,7 +47,7 @@ class ToolRegistry:
             FileReadTool, ManageTool, WriteTool, FileReplaceTool,
             GitTool,
             GlobTool, GrepTool,
-            LspTool,
+            LspTool, LspFormatTool,
             ClarifyTool, PlanCheckpointTool, WorkflowTool, CompactContextTool, DocumentTool,
         ]:
             instance = cls()

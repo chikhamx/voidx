@@ -392,6 +392,8 @@ def capability_for_tool(tool: str, args: dict) -> PermissionCapability:
         return PermissionCapability.READ_TOOLS
     if tool in {"manage", "write", "replace"}:
         return PermissionCapability.FILE_WRITE
+    if tool == "lsp_format":
+        return PermissionCapability.FILE_FORMAT
     if tool == "bash":
         return PermissionCapability.BASH_READ if is_safe_bash(str(args.get("command", ""))) else PermissionCapability.BASH_WRITE
     if tool == "powershell":

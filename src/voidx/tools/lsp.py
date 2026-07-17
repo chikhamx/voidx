@@ -5,11 +5,11 @@ from __future__ import annotations
 from pathlib import Path
 from typing import Literal
 
-from pydantic import BaseModel, Field
+from pydantic import BaseModel, Field, model_validator
 
 from voidx.diffing import make_file_diff
 from voidx.lsp.errors import LspError, LspTimeoutError
-from voidx.lsp.schema import LspDiagnostic, LspLocation, LspSymbol
+from voidx.lsp.schema import LspDiagnostic, LspLocation, LspPosition, LspRange, LspSymbol
 from voidx.lsp.service import LspService, _format_diagnostic, _format_location, _format_symbol
 from voidx.permission.grants import AccessGrants, resolve_access
 from voidx.tools.base import (
@@ -18,9 +18,11 @@ from voidx.tools.base import (
     ToolResult,
     model_to_json_schema,
     _resolve_tool_path,
+    _resolve_tool_path_for_access,
     _sandbox_paths_for_access,
     tool_timeout_metadata,
 )
+from voidx.tools.file.safe_path import SafePathExecutor
 from voidx.tools.file.state import clear_read_coverage, record_mtime, save_file_version
 
 
@@ -127,15 +129,31 @@ class LspTool(BaseTool):
             return ToolResult(output=f"LSP {inp.operation} failed: {exc}", metadata={"error": True})
 
 
-# ── LspFormatTool kept but not registered ───────────────────────────────────
+# ── Range formatting tool ────────────────────────────────────────────────────
 
 class LspFormatInput(BaseModel):
-    file_path: str = Field(description="File to format with the configured language server. Format writes to disk.")
+    file_path: str = Field(description="File to format with the configured language server.")
+    start_line: int = Field(ge=1, description="1-based inclusive start line.")
+    start_character: int = Field(ge=0, description="0-based UTF-16 character offset.")
+    end_line: int = Field(ge=1, description="1-based line containing the end position.")
+    end_character: int = Field(ge=0, description="0-based UTF-16 end-exclusive character offset.")
+
+    @model_validator(mode="after")
+    def _validate_range(self) -> "LspFormatInput":
+        if (self.end_line, self.end_character) < (self.start_line, self.start_character):
+            raise ValueError("format range end must not precede start")
+        return self
+
+    def lsp_range(self) -> LspRange:
+        return LspRange(
+            start=LspPosition(line=self.start_line - 1, character=self.start_character),
+            end=LspPosition(line=self.end_line - 1, character=self.end_character),
+        )
 
 
 class LspFormatTool(BaseTool):
     id = "lsp_format"
-    description = "Format a file with its configured language server. Writes formatted content back to the same file."
+    description = "Format an explicit range in a file with its configured language server and write the result safely."
 
     def parameters_schema(self) -> dict:
         return model_to_json_schema(LspFormatInput)
@@ -148,33 +166,102 @@ class LspFormatTool(BaseTool):
         service = _service(ctx)
         if service is None:
             return ToolResult(output="LSP manager not available.", metadata={"error": True})
-        path = _resolve_tool_path(ctx.workspace, inp.file_path, _sandbox_paths_for_access(ctx, write=True))
-        if path is not None and path.exists() and path.is_file():
-            await save_file_version(ctx, path, display_path=inp.file_path, tool_name=self.id)
+        path, error = await _resolve_tool_path_for_access(
+            ctx,
+            inp.file_path,
+            write=True,
+            require_exists=True,
+            prompt_label="LSP format",
+            allow_description="Allow formatting this file once",
+            deny_description="Do not format this file",
+        )
+        if error is not None:
+            return error
+        assert path is not None
+        old_text, read_error = _safe_read_text(path)
+        if read_error is not None:
+            return ToolResult(output=read_error, metadata={"error": True})
+        range_error = _validate_lsp_range(old_text, inp.lsp_range())
+        if range_error is not None:
+            return ToolResult(output=range_error, metadata={"error": True})
+        await save_file_version(ctx, path, display_path=inp.file_path, tool_name=self.id)
         try:
-            changed, old_text, new_text = await service.format(inp.file_path)
+            changed, service_old_text, new_text = await service.format_range(inp.file_path, inp.lsp_range())
         except LspTimeoutError as exc:
             return ToolResult(
-                output=f"LSP format timed out: {exc}",
-                metadata=tool_timeout_metadata("lsp", operation="format"),
+                output=f"LSP range format timed out: {exc}",
+                metadata=tool_timeout_metadata("lsp_format", operation="range_format"),
             )
         except LspError as exc:
-            return ToolResult(output=f"LSP format failed: {exc}", metadata={"error": True})
+            return ToolResult(output=f"LSP range format failed: {exc}", metadata={"error": True})
+        if service_old_text != old_text:
+            return ToolResult(output="File changed while LSP range formatting was running.", metadata={"error": True})
         if not changed:
-            if path is not None and path.exists():
-                record_mtime(ctx, path)
-            return ToolResult(output=f"No formatting changes for {inp.file_path}.")
-        if path is not None and path.exists():
             record_mtime(ctx, path)
-            clear_read_coverage(ctx, path)
-
+            return ToolResult(
+                title="No formatting changes",
+                output=f"No range formatting changes for {inp.file_path}.",
+                metadata={"file": inp.file_path, "formatted": False},
+            )
+        write_error = _safe_write_text(path, new_text, expected_text=old_text)
+        if write_error is not None:
+            return ToolResult(output=write_error, metadata={"error": True})
+        record_mtime(ctx, path)
+        clear_read_coverage(ctx, path)
         diff = make_file_diff(inp.file_path, old_text, new_text)
         return ToolResult(
             title=f"Formatted {inp.file_path}",
-            output=f"File formatted: {inp.file_path}",
-            metadata={"file": inp.file_path, "size": len(new_text)},
+            output=f"File range formatted: {inp.file_path}",
+            metadata={"file": inp.file_path, "size": len(new_text), "formatted": True},
             diff=diff,
         )
+
+
+def _safe_read_text(path: Path) -> tuple[str, str | None]:
+    try:
+        executor = SafePathExecutor()
+        authorized = executor.authorize_existing(path, access="write")
+        result = executor.read_text(authorized, encoding="utf-8", errors="replace")
+    except OSError as exc:
+        return "", str(exc)
+    if not result.ok:
+        return "", result.error
+    return str(result.value), None
+
+
+def _safe_write_text(path: Path, content: str, *, expected_text: str) -> str | None:
+    try:
+        executor = SafePathExecutor()
+        authorized = executor.authorize_existing(path, access="write")
+        result = executor.write_text(
+            authorized,
+            content,
+            encoding="utf-8",
+            expected_text=expected_text,
+        )
+    except OSError as exc:
+        return str(exc)
+    return None if result.ok else result.error
+
+
+def _validate_lsp_range(text: str, range_: LspRange) -> str | None:
+    lines = text.splitlines(keepends=True)
+    if not lines:
+        return "Cannot format an empty file."
+    positions = (("start", range_.start), ("end", range_.end))
+    for label, position in positions:
+        if position.line == len(lines) and text.endswith(("\n", "\r")) and position.character == 0:
+            continue
+        if position.line >= len(lines):
+            return f"Format range {label} line is outside the document."
+        line_text = lines[position.line].rstrip("\r\n")
+        if position.character > _utf16_length(line_text):
+            return f"Format range {label} character is outside the line."
+    return None
+
+
+def _utf16_length(text: str) -> int:
+    return len(text.encode("utf-16-le")) // 2
 
 
 def _service(ctx: ToolContext) -> LspService | None:

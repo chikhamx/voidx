@@ -17,9 +17,8 @@ class TaskStatusInput(BaseModel):
 class TaskStatusTool(BaseTool):
     id = "task_status"
     description = (
-        "Check child-agent task status. Returns status (pending/running/completed/error), "
-        "current step, elapsed time, and recent output preview. "
-        "Without task_id, lists all tasks."
+        "Inspect tasks recorded by the child-agent tracker. With task_id, returns that "
+        "task's current tracked status; without task_id, lists all tracked tasks."
     )
 
     def __init__(self, tracker=None):

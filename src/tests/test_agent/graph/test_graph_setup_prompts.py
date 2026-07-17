@@ -215,9 +215,9 @@ def test_orchestrator_prompt_matches_agent_workflow_schema():
 
 
 def test_voidx_persona_prompt_declares_core_rules():
-    assert "If an active workflow gate exists" in BASE_SYSTEM.render()
+    assert "Use active workflow gates as completion and transition criteria." in BASE_SYSTEM.render()
     assert "Subagents do not interact with the user" not in BASE_SYSTEM.render()
-    assert "Switch persona" in PERSONA_MODEL.render()
+    assert "Switch persona" not in PERSONA_MODEL.render()
     assert "implement persona" not in PERSONA_MODEL.render()
 
 

@@ -184,8 +184,9 @@ def test_goal_resolver_prompt_keeps_goal_as_stable_task_objective():
 
     prompt = model.messages[0].content
     assert "Stable overall objective for the current task" in prompt
-    assert "Summarize the user's intent" in prompt
-    assert "without explicit details" in prompt
+    assert "Preserve material constraints" in prompt
+    assert "omitting transient execution detail" in prompt
+    assert "without explicit details" not in prompt
     assert "status bar" not in prompt
 
 

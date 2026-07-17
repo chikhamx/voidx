@@ -88,31 +88,35 @@ class SettingsMethods:
         if model_patch is not None:
             if not isinstance(model_patch, dict):
                 raise MethodParamsError("invalid model")
-            provider = model_patch.get("provider") or "anthropic"
-            model_name = model_patch.get("model") or DEFAULT_MODEL
-            profile_name = f"{provider}/{model_name}"
-            try:
-                existing_profiles = await settings.list_profiles()
-                existing_profile = next(
-                    (profile for profile in existing_profiles if profile.name == profile_name),
-                    None,
-                )
-                await settings.save_profile(Profile(
-                    name=profile_name,
-                    api_key=existing_profile.api_key if existing_profile else "",
-                    base_url=(
-                        model_patch["base_url"]
-                        if "base_url" in model_patch
-                        else existing_profile.base_url if existing_profile else None
-                    ),
-                    protocol=(
-                        model_patch["protocol"]
-                        if "protocol" in model_patch
-                        else existing_profile.protocol if existing_profile else None
-                    ),
-                ), scope="local")
-            except Exception as exc:
-                raise MethodParamsError(f"model save failed: {exc}") from exc
+            if any(k in model_patch for k in ("provider", "model", "base_url", "protocol")):
+                current_profile = await settings.resolve_profile()
+                default_provider = current_profile.provider if current_profile else "anthropic"
+                default_model = current_profile.model if current_profile else DEFAULT_MODEL
+                provider = model_patch.get("provider") or default_provider
+                model_name = model_patch.get("model") or default_model
+                profile_name = f"{provider}/{model_name}"
+                try:
+                    existing_profiles = await settings.list_profiles()
+                    existing_profile = next(
+                        (profile for profile in existing_profiles if profile.name == profile_name),
+                        None,
+                    )
+                    await settings.save_profile(Profile(
+                        name=profile_name,
+                        api_key=existing_profile.api_key if existing_profile else "",
+                        base_url=(
+                            model_patch["base_url"]
+                            if "base_url" in model_patch
+                            else existing_profile.base_url if existing_profile else None
+                        ),
+                        protocol=(
+                            model_patch["protocol"]
+                            if "protocol" in model_patch
+                            else existing_profile.protocol if existing_profile else None
+                        ),
+                    ), scope="local")
+                except Exception as exc:
+                    raise MethodParamsError(f"model save failed: {exc}") from exc
 
         # reasoning / context
         if "reasoning_effort" in model_patch if model_patch else {}:

@@ -66,7 +66,7 @@ class TestToolRegistry:
         assert "advance_workflow" not in ids
         assert "skill" in ids
         assert "lsp" in ids
-        assert "lsp_format" not in ids
+        assert "lsp_format" in ids
 
     def test_tools_for_llm(self):
         r = ToolRegistry()

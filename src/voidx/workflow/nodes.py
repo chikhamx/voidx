@@ -23,8 +23,7 @@ BRAINSTORMING = WorkflowNode(
     gate=NodeGate(
         description=(
             "Do not write code, invoke implementation workflows, or take implementation "
-            "action until the design is presented and approved. This applies regardless "
-            "of perceived simplicity."
+            "action until the design is presented and approved."
         ),
         required_before_transition="design approved by user",
     ),
@@ -35,9 +34,7 @@ BRAINSTORMING = WorkflowNode(
         WorkflowStep(order=4, action="Present design for approval", description="Scale to complexity and get user approval."),
     ],
     rules=[
-        "Present a design and get user approval before writing any code.",
         "Do not write the design document inside brainstorm; transition to design if a document is needed.",
-        '"This is too simple to need a design" is where unexamined assumptions cause wasted work.',
     ],
 )
 
@@ -74,7 +71,7 @@ WRITING_DESIGN_DOCS = WorkflowNode(
     workflow=[
         WorkflowStep(order=1, action="Identify the scenario", description="Design-phase document, post-implementation documentation, capability spec, or execution spec."),
         WorkflowStep(order=2, action="Identify the audience", description="Classify the target reader as human, llm, or human+llm before choosing structure or detail level."),
-        WorkflowStep(order=3, action="Load the audience-aware template index", description="Read templates/readme.md first when the document type or audience is unclear, then load the selected template."),
+        WorkflowStep(order=3, action="Select the document structure", description="Use a project-provided template when available; otherwise choose a structure suited to the document type and audience."),
         WorkflowStep(order=4, action="Gather context", description="Read relevant code, specs, commands, APIs, and existing docs. Do not write from memory alone."),
         WorkflowStep(order=5, action="Draft for the audience", description="Human docs optimize for clear decisions; LLM specs optimize for paths, invariants, forbidden changes, test commands, and acceptance criteria."),
         WorkflowStep(order=6, action="Fresh reader test", description="For human-facing sections, re-read as a zero-context reader and remove ambiguity, excess detail, and missing conclusions."),
@@ -82,7 +79,6 @@ WRITING_DESIGN_DOCS = WorkflowNode(
         WorkflowStep(order=8, action="Verify accuracy", description="Check examples, paths, commands, field names, API shapes, and test instructions against the actual implementation."),
     ],
     rules=[
-        "Choose the document template by audience before drafting content.",
         "Human-facing docs should optimize for purpose, clarity, readability, and brevity.",
         "LLM-facing specs may be more explicit and repetitive when that improves implementation quality.",
         "Do not put implementation task detail into human docs unless the selected template explicitly asks for it.",
@@ -109,7 +105,10 @@ WRITING_PLANS = WorkflowNode(
         },
     ),
     gate=NodeGate(
-        description="Do not write implementation code until the plan is approved. File edits are allowed only under docs/specs/ and docs/design/ for plan documents.",
+        description=(
+            "Do not write implementation code until the plan is approved. "
+            "Obey the current interaction mode's write permissions."
+        ),
         required_before_transition="plan is executable and approved",
     ),
     workflow=[
@@ -123,7 +122,7 @@ WRITING_PLANS = WorkflowNode(
         WorkflowStep(order=8, action="Verify plan is executable", description="Every task has a file path and a test command."),
     ],
     rules=[
-        "Plans must be executable: exact paths, concrete commands, and voidx tool names.",
+        "Plans must be executable: exact paths, concrete commands, and available tool names.",
         "After the plan is approved, follow tdd for each task.",
     ],
 )
@@ -157,7 +156,7 @@ TEST_DRIVEN_DEVELOPMENT = WorkflowNode(
         name="TDD Cycle",
         description="Repeat until all implementation tasks are complete.",
         steps=[
-            WorkflowStep(order=1, action="Pick the next task from the plan"),
+            WorkflowStep(order=1, action="Pick the next unimplemented requirement or plan task"),
             WorkflowStep(order=2, action="Write a failing test"),
             WorkflowStep(order=3, action="Run the test and confirm RED"),
             WorkflowStep(order=4, action="Implement minimal code"),
@@ -165,7 +164,7 @@ TEST_DRIVEN_DEVELOPMENT = WorkflowNode(
             WorkflowStep(order=6, action="Refactor if needed"),
             WorkflowStep(order=7, action="Run the broader test set"),
         ],
-        exit_condition="all plan tasks implemented and broader test set green",
+        exit_condition="all scoped implementation tasks are complete and the relevant test set is green",
     ),
     rules=[
         "Write a test that fails for the intended reason before writing implementation.",
@@ -213,8 +212,8 @@ VERIFICATION_BEFORE_COMPLETION = WorkflowNode(
 
 REQUESTING_CODE_REVIEW = WorkflowNode(
     name="review",
-    goal="Initiate structured code review request and collect verdict",
-    description="Use after substantial implementation work, complex bug fixes, or before merging to request a focused review.",
+    goal="Evaluate work and produce an evidence-based review verdict",
+    description="Use when reviewing code, design, implementation, or changes for correctness, completeness, style, or risk.",
     persona="review",
     io=NodeIO(
         input={
@@ -228,28 +227,27 @@ REQUESTING_CODE_REVIEW = WorkflowNode(
         },
     ),
     gate=NodeGate(
-        description="Do not merge to main or mark substantial work complete without requesting review.",
-        required_before_transition="review requested with required brief fields",
+        description=(
+            "Do not report a review verdict without checking the supplied requirements, "
+            "changes, verification evidence, and risks."
+        ),
+        required_before_transition="review completed with an evidence-based PASS/FAIL verdict",
     ),
     workflow=[
-        WorkflowStep(order=1, action="Run the internal review cycle"),
-        WorkflowStep(order=2, action="Confirm review is completed and collect verdict"),
+        WorkflowStep(order=1, action="Define the review scope"),
+        WorkflowStep(order=2, action="Perform the review and produce a verdict"),
     ],
     subworkflow=NodeSubworkflow(
         name="Review Cycle",
         description="Repeat until review verdict is resolved and either PASS is reached or feedback is routed.",
         steps=[
             WorkflowStep(order=1, action="Construct review brief"),
-            WorkflowStep(order=2, action="Delegate to review agent"),
-            WorkflowStep(order=3, action="Collect verdict"),
+            WorkflowStep(order=2, action="Perform the review directly or request independent review when delegation is available"),
+            WorkflowStep(order=3, action="Record evidence and verdict"),
             WorkflowStep(order=4, action="Route verdict"),
         ],
         exit_condition="review verdict is PASS, or feedback is handed off to feedback",
     ),
-    rules=[
-        "Include what changed, requirements checked, files changed, verification run, and specific risks to inspect.",
-        "Do not ask for review with only 'please review'.",
-    ],
 )
 
 
@@ -285,7 +283,7 @@ RECEIVING_CODE_REVIEW = WorkflowNode(
     rules=[
         "Verify feedback against the codebase before changing code.",
         "Clarify unclear feedback before implementing the batch.",
-        "If feedback asks for a proper feature, grep for actual usage before expanding the code.",
+        "If feedback asks for a proper feature, search for actual usage before expanding the code.",
         "If some feedback items need design or analysis rather than direct implementation, implement the actionable items first, then use needs_design to route the remaining items to brainstorm.",
         "If some feedback items have clear requirements but need a structured implementation plan, use needs_plan to route them to plan.",
     ],

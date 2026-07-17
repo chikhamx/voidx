@@ -64,7 +64,7 @@ def test_runtime_context_section_order_places_runtime_state_before_task_state(tm
         "Persona",
         "Workflow Runtime",
         "Runtime State",
-        "Project Facts",
+        "Project Instructions",
         "Session Time",
         "Long Summary",
         "Current Task State",
@@ -74,7 +74,7 @@ def test_runtime_context_section_order_places_runtime_state_before_task_state(tm
     system = context.render_system()
     assert system.index("## Persona") < system.index("## Workflow Runtime")
     assert system.index("## Workflow Runtime") < system.index("## Runtime State")
-    assert system.index("## Runtime State") < system.index("## Project Facts")
+    assert system.index("## Runtime State") < system.index("## Project Instructions")
     assert system.index("## Session Time") < system.index("## Long Summary")
     assert "## Mode" not in system
     assert "## Runtime Constraints" not in system

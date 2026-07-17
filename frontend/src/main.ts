@@ -64,6 +64,7 @@ import {
   _resetDialogForTest,
   initModelControls,
   initPermissionControls,
+  initReasoningControls,
   applySettingsRuntimeState,
   applyRuntimeState,
 } from "./ui";
@@ -102,6 +103,7 @@ initDock();
 initTerminal();
 initModelControls();
 initPermissionControls();
+initReasoningControls();
 initIntegrationsPanel();
 initSettingsModal({
   onSave: async (patch: Record<string, unknown>) => {

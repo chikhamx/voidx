@@ -14,6 +14,7 @@ export interface UiState {
   slashCommands: SlashCommand[];
   slashSelectedIndex: number;
   permissionMode: string;
+  reasoningEffort: string;
 }
 
 export const uiState: UiState = {
@@ -29,6 +30,7 @@ export const uiState: UiState = {
   slashCommands: [],
   slashSelectedIndex: 0,
   permissionMode: "safe",
+  reasoningEffort: "xhigh",
 };
 
 export const DEFAULT_WORKSPACE = "voidx";
@@ -114,6 +116,14 @@ export function updateStatusBar(): void {
   const modelPillTextEl = document.querySelector("#model-pill-text");
   if (modelPillTextEl) {
     modelPillTextEl.textContent = uiState.model || PENDING_MODEL_LABEL;
+  }
+
+  const reasoningPillTextEl = document.querySelector("#reasoning-pill-text");
+  if (reasoningPillTextEl) {
+    const REASONING_LEVELS = ["off", "low", "medium", "high", "xhigh"];
+    const REASONING_PILL_LABELS = ["关闭", "低", "中", "高", "极"];
+    const rIdx = REASONING_LEVELS.indexOf(uiState.reasoningEffort || "xhigh");
+    reasoningPillTextEl.textContent = rIdx !== -1 ? REASONING_PILL_LABELS[rIdx] : "极";
   }
 
   const pillEl = document.querySelector("#permission-pill");

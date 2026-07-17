@@ -57,9 +57,13 @@ def skill_reference_message(
 
     if not summaries:
         return SkillReferenceMessage(remove_spans=remove_spans)
-    prefix = "用户指定了技能：\n" + "\n".join(
+    prefix = "Explicit skills requested:\n" + "\n".join(
         f"- {summary.name}: {summary.description}"
         for summary in summaries
+    )
+    prefix += (
+        "\n\nBefore acting, call skill with op='load' for each listed skill. "
+        "Descriptions are index metadata, not the full instructions."
     )
     return SkillReferenceMessage(
         prefix=prefix,

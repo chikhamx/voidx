@@ -21,3 +21,7 @@ class LspRequestError(LspError):
 
 class LspServerUnavailable(LspError):
     """Raised when no enabled server can handle a file."""
+
+
+class LspFormattingUnsupported(LspError):
+    """Raised when a server does not support document range formatting."""

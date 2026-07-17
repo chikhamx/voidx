@@ -104,6 +104,7 @@ def test_compaction_is_not_a_global_workflow_node():
 
 def test_compaction_request_contains_runtime_workflow_instructions():
     assert "Preserve durable facts" in COMPACTION_REQUEST
+    assert COMPACTION_REQUEST.lower().count("durable facts") == 1
     assert "Remove stale transient execution detail" in COMPACTION_REQUEST
     assert "Write a structured summary only" in COMPACTION_REQUEST
     assert "do not invent facts" in COMPACTION_REQUEST
@@ -282,7 +283,12 @@ def test_skill_reference_message_wraps_enabled_explicit_refs(tmp_path):
     wrapped = skill_reference_message("use $docs for this", str(tmp_path / "workspace"))
 
     assert wrapped.remove_spans == [(4, 9)]
-    assert wrapped.prefix == "用户指定了技能：\n- docs: Write documentation"
+    assert wrapped.prefix == (
+        "Explicit skills requested:\n"
+        "- docs: Write documentation\n\n"
+        "Before acting, call skill with op='load' for each listed skill. "
+        "Descriptions are index metadata, not the full instructions."
+    )
     assert [skill.name for skill in wrapped.skills] == ["docs"]
     assert "Docs body" not in wrapped.prefix
 

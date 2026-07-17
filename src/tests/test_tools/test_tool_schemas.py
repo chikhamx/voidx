@@ -221,8 +221,12 @@ class TestToolSchemas:
         assert "max_scanned" in GrepTool.description
         assert "definition and references" in lsp_schema["properties"]["line"]["description"]
         assert "0-based" in lsp_schema["properties"]["character"]["description"]
-        assert "Writes formatted content back to the same file" in LspFormatTool.description
-        assert "Format writes to disk" in lsp_format_schema["properties"]["file_path"]["description"]
+        assert "range" in LspFormatTool.description.lower()
+        assert set(lsp_format_schema["required"]) == {
+            "file_path", "start_line", "start_character", "end_line", "end_character"
+        }
+        assert "1-based" in lsp_format_schema["properties"]["start_line"]["description"]
+        assert "UTF-16" in lsp_format_schema["properties"]["end_character"]["description"]
         assert "Load/list are read-only" in SkillsTool.description
         assert "Required for op=load and op=create" in skill_schema["properties"]["name"]["description"]
 
@@ -261,6 +265,9 @@ class TestToolSchemas:
         checkpoint_schema = PlanCheckpointTool().parameters_schema()
 
         assert "independent delegated task" in AgentTool(runner=None).description
+        assert "return its completed result" in AgentTool(runner=None).description
+        assert "tasks recorded by the child-agent tracker" in TaskStatusTool.description
+        assert "current step" not in TaskStatusTool.description
         assert "self-contained" in agent_schema["properties"]["task"]["description"]
         assert "Use empty string if not needed" in agent_schema["properties"]["success_criteria"]["description"]
         assert "built-in document" in DocumentTool.description

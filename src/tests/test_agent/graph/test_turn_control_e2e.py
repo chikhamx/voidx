@@ -32,7 +32,7 @@ class ScriptedStreamingModel:
 
 
 def _turn_args(operation: str = "stop", intent: str = "", goal: str = "") -> dict[str, str]:
-    return {"operation": operation, "intent": intent, "goal": goal}
+    return {"operation": operation, "params": None if operation == "stop" else {"intent": intent, "goal": goal}}
 
 
 def _turn_chunk(decision: str = "stop") -> AIMessageChunk:

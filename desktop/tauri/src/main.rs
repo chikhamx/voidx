@@ -272,13 +272,14 @@ fn main() {
     let app_backend_status = Arc::clone(&backend_status);
     let app_child_handle = Arc::clone(&child_handle);
     let app_workspace = Arc::clone(&workspace);
+    let exit_child_handle = Arc::clone(&child_handle);
 
-    tauri::Builder::default()
+    let app = tauri::Builder::default()
         .plugin(tauri_plugin_dialog::init())
         .manage(AppState {
             gateway_url,
             backend_status,
-            child_handle,
+            child_handle: Arc::clone(&app_child_handle),
             workspace,
         })
         .on_window_event({
@@ -305,6 +306,12 @@ fn main() {
             get_backend_status,
             restart_backend
         ])
-        .run(tauri::generate_context!())
-        .expect("failed to run voidx desktop app");
+        .build(tauri::generate_context!())
+        .expect("failed to build voidx desktop app");
+
+    app.run(move |_app_handle, event| {
+        if let tauri::RunEvent::Exit = event {
+            kill_backend(&exit_child_handle);
+        }
+    });
 }

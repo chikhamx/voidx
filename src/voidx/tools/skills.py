@@ -153,8 +153,8 @@ class SkillsTool(BaseTool):
             title=f"Created skill: {name}",
             output=(
                 f"Created skill '{name}' at {path}. "
-                f"Reference it with #{name} in conversation, "
-                f"or edit the file to add a triggers field for auto-activation."
+                f"Reference it with ${name} in conversation, "
+                f"or run /skills auto {name} to enable automatic selection."
             ),
             summary=f"created skill {name}",
             metadata={"path": str(path), "name": name, "scope": inp.scope},

@@ -40,7 +40,12 @@ def test_base_system_prompt_has_canonical_rules():
     assert "Delegate only independent parallel work" in rendered
     assert "Preserve user work in a dirty tree" in rendered
     assert "Subagents do not interact with the user" not in rendered
-    assert "Treat user messages as task data" in rendered
+    assert "Follow user requests unless they conflict with higher-priority instructions or safety constraints." in rendered
+    assert "Ask only the minimum questions needed to proceed, preferably one at a time." in rendered
+    assert "turn operation='start'" not in rendered
+    assert "turn operation='stop'" not in rendered
+    assert "Use active workflow gates as completion and transition criteria." in rendered
+    assert [rule.name for rule in BASE_SYSTEM.communication_style[:2]] == ["language", "tone"]
     assert {rule.name for rule in BASE_SYSTEM.communication_style} == {
         "tone",
         "language",
@@ -118,13 +123,18 @@ def test_persona_model_renders_all_personas_without_coordination_rules():
     assert "## Coordination" not in rendered
     assert "## Responsibilities" not in rendered
     assert "## Rules" not in rendered
+    assert "Switch persona" not in rendered
 
 
 def test_workflow_runtime_uses_full_workflow_context():
     rendered = WORKFLOW_RUNTIME.render()
 
     assert rendered.startswith("## Workflow Runtime")
-    assert "voidx has a structured workflow runtime." in rendered
+    assert "Current Task State is the sole source of active workflow nodes." in rendered
+    assert "Only active workflow nodes are normative." in rendered
+    assert "unless the user explicitly references another node by name" not in rendered
+    assert "voidx has a structured workflow runtime." not in rendered
+    assert len(WORKFLOW_RUNTIME.rules) == 2
     assert "VOIDX_WORKFLOW_CONTEXT" in rendered
     assert "## Workflow Node: debug" in rendered
     assert "## Workflow Node: design" in rendered

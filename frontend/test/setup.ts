@@ -53,7 +53,7 @@ document.body.innerHTML = `
       <section class="vx-main">
         <div class="vx-main-canvas">
         <section class="vx-empty-state" id="empty-state" aria-live="polite">
-          <h1>我们应该在 voidx 中构建什么？</h1>
+          <h1>让我们一起让世界变得更加美好！</h1>
         </section>
         <div class="transcript" id="transcript" aria-live="polite"></div>
         <form class="composer" id="composer">

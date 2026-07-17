@@ -147,13 +147,15 @@ class TestSkillsToolCreate:
         assert result.metadata["error"] is True
 
     @pytest.mark.asyncio
-    async def test_create_output_mentions_hash_reference(self, tmp_path):
+    async def test_create_output_mentions_explicit_reference_and_auto_command(self, tmp_path):
         result = await SkillsTool().execute(
             {"op": "create", "name": "my-skill", "description": "Desc", "body": "Body"},
             ToolContext(workspace=str(tmp_path)),
         )
 
-        assert "#my-skill" in result.output
+        assert "$my-skill" in result.output
+        assert "/skills auto my-skill" in result.output
+        assert "triggers field" not in result.output
 
 
     @pytest.mark.asyncio

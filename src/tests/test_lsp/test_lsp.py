@@ -10,9 +10,9 @@ import pytest
 from voidx.agent.slash import SlashHandler
 from voidx.agent.tool_filters import filter_unavailable_lsp_tools
 from voidx.lsp.client import LSP_REQUEST_TIMEOUT_SECONDS, LspClient, encode_lsp_message
-from voidx.lsp.errors import LspConnectionError, LspServerUnavailable, LspTimeoutError
+from voidx.lsp.errors import LspConnectionError, LspError, LspFormattingUnsupported, LspServerUnavailable, LspTimeoutError
 from voidx.lsp.manager import LspManager, apply_text_edits
-from voidx.lsp.schema import LspServerConfig
+from voidx.lsp.schema import LspPosition, LspRange, LspServerConfig
 from voidx.tools.base import ToolContext
 from voidx.tools.lsp import LspFormatTool, LspTool
 from voidx.tools.registry import ToolRegistry
@@ -52,7 +52,9 @@ while True:
     msg_id = message.get("id")
     params = message.get("params") or {}
     if method == "initialize":
-        send({"jsonrpc": "2.0", "id": msg_id, "result": {"capabilities": {}}})
+        send({"jsonrpc": "2.0", "id": msg_id, "result": {"capabilities": {
+            "documentRangeFormattingProvider": True
+        }}})
     elif method == "initialized":
         continue
     elif method == "textDocument/didOpen":
@@ -103,6 +105,11 @@ while True:
             "range": {"start": {"line": 0, "character": 0}, "end": {"line": 999, "character": 0}},
             "newText": "class Foo:\n    def bar(self):\n        return 1\n"
         }]})
+    elif method == "textDocument/rangeFormatting":
+        send({"jsonrpc": "2.0", "id": msg_id, "result": [{
+            "range": params["range"],
+            "newText": "    def bar(self):\n        return 1\n"
+        }]})
     elif method == "shutdown":
         send({"jsonrpc": "2.0", "id": msg_id, "result": None})
     elif method == "exit":
@@ -148,6 +155,19 @@ def test_apply_text_edits_replaces_ranges_from_back_to_front():
     ]
 
     assert apply_text_edits(text, edits) == "aBc\nxyz\n"
+
+
+def test_apply_text_edits_uses_utf16_character_offsets():
+    text = "a😀b\n"
+    edits = [{
+        "range": {
+            "start": {"line": 0, "character": 3},
+            "end": {"line": 0, "character": 4},
+        },
+        "newText": "B",
+    }]
+
+    assert apply_text_edits(text, edits) == "a😀B\n"
 
 
 @pytest.mark.asyncio
@@ -510,3 +530,120 @@ async def test_lsp_manager_cancellation_stops_client_before_propagating(tmp_path
 
     assert stop_finished.is_set()
     assert manager._clients == {}
+
+
+@pytest.mark.asyncio
+async def test_lsp_manager_formats_only_requested_range_without_writing(tmp_path):
+    _write_fake_lsp(tmp_path)
+    target = tmp_path / "sample.py"
+    original = "class Foo:\n def bar(self):\n  return 1\n"
+    target.write_text(original, encoding="utf-8")
+    manager = LspManager(str(tmp_path))
+    range_ = LspRange(
+        start=LspPosition(line=1, character=0),
+        end=LspPosition(line=3, character=0),
+    )
+
+    try:
+        changed, old_text, new_text = await manager.formatted_range_text("sample.py", range_)
+
+        assert changed is True
+        assert old_text == original
+        assert new_text == "class Foo:\n    def bar(self):\n        return 1\n"
+        assert target.read_text(encoding="utf-8") == original
+    finally:
+        await manager.stop_all()
+
+
+@pytest.mark.asyncio
+async def test_lsp_manager_rejects_range_formatting_without_capability(tmp_path, monkeypatch):
+    target = tmp_path / "sample.py"
+    target.write_text("print( 1 )\n", encoding="utf-8")
+    manager = LspManager(str(tmp_path))
+
+    class FakeClient:
+        capabilities = {"documentFormattingProvider": True}
+
+        async def request(self, method, params, timeout):
+            raise AssertionError(f"unexpected request: {method}")
+
+    async def fake_open_document(_file_path):
+        return FakeClient(), target.as_uri()
+
+    monkeypatch.setattr(manager, "open_document", fake_open_document)
+
+    with pytest.raises(LspFormattingUnsupported):
+        await manager.formatted_range_text(
+            "sample.py",
+            LspRange(
+                start=LspPosition(line=0, character=0),
+                end=LspPosition(line=0, character=10),
+            ),
+        )
+
+
+@pytest.mark.asyncio
+async def test_lsp_manager_rejects_range_formatting_edits_outside_request(tmp_path, monkeypatch):
+    target = tmp_path / "sample.py"
+    target.write_text("first\nsecond\n", encoding="utf-8")
+    manager = LspManager(str(tmp_path))
+
+    class FakeClient:
+        capabilities = {"documentRangeFormattingProvider": True}
+
+        async def request(self, method, params, timeout):
+            assert method == "textDocument/rangeFormatting"
+            return [{
+                "range": {
+                    "start": {"line": 0, "character": 0},
+                    "end": {"line": 1, "character": 0},
+                },
+                "newText": "changed\n",
+            }]
+
+    async def fake_open_document(_file_path):
+        return FakeClient(), target.as_uri()
+
+    monkeypatch.setattr(manager, "open_document", fake_open_document)
+
+    with pytest.raises(LspError, match="outside requested range"):
+        await manager.formatted_range_text(
+            "sample.py",
+            LspRange(
+                start=LspPosition(line=1, character=0),
+                end=LspPosition(line=1, character=6),
+            ),
+        )
+
+
+@pytest.mark.asyncio
+async def test_lsp_manager_rejects_range_formatting_edit_with_invalid_document_position(tmp_path, monkeypatch):
+    target = tmp_path / "sample.py"
+    target.write_text("first\nsecond\n", encoding="utf-8")
+    manager = LspManager(str(tmp_path))
+
+    class FakeClient:
+        capabilities = {"documentRangeFormattingProvider": True}
+
+        async def request(self, method, params, timeout):
+            return [{
+                "range": {
+                    "start": {"line": 1, "character": 99},
+                    "end": {"line": 1, "character": 99},
+                },
+                "newText": "changed",
+            }]
+
+    async def fake_open_document(_file_path):
+        return FakeClient(), target.as_uri()
+
+    monkeypatch.setattr(manager, "open_document", fake_open_document)
+
+    with pytest.raises(LspError, match="invalid document position"):
+        await manager.formatted_range_text(
+            "sample.py",
+            LspRange(
+                start=LspPosition(line=0, character=0),
+                end=LspPosition(line=2, character=0),
+            ),
+        )

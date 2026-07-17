@@ -88,7 +88,6 @@ Rules:
 - Do not mention the summary process or that context was compacted."""
 
 COMPACTION_REQUEST = """Summarize the conversation above into the structured format below.
-Focus on durable facts, decisions, constraints, open work, and final tool outcomes.
 Do not narrate step-by-step execution.
 Preserve durable facts, explicit decisions, constraints, open work, and final tool outcomes.
 Remove stale transient execution detail.

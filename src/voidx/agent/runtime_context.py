@@ -249,7 +249,7 @@ class RuntimeContextBuilder:
 
         if self.instructions:
             sections.append(ContextSection(
-                name="Project Facts",
+                name="Project Instructions",
                 content="\n\n".join(self.instructions),
             ))
         sections.append(ContextSection(name="Session Time", content=self.session_date))

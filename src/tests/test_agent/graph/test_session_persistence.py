@@ -563,7 +563,9 @@ async def test_run_once_wraps_explicit_skill_refs_in_user_message(tmp_path):
 
         user_message = captured["messages"][-1]
         assert isinstance(user_message, HumanMessage)
-        assert user_message.content.startswith("用户指定了技能：\n- docs: Write docs")
+        assert user_message.content.startswith("Explicit skills requested:\n- docs: Write docs")
+        assert "call skill with op='load'" in user_message.content
+        assert "not the full instructions" in user_message.content
         assert "Use for this README" in user_message.content
         assert "$docs" not in user_message.content
         assert "Docs body" not in user_message.content
@@ -639,5 +641,4 @@ async def test_run_once_does_not_persist_compiled_overlay_to_user_history(tmp_pa
         assert "Active Skills" not in user_rows[-1].content
     finally:
         await delete_session(session.id)
-
 

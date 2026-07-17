@@ -76,7 +76,9 @@ def test_design_workflow_is_audience_aware():
 
     rendered = service.render_instruction(design)
     assert "Identify the audience" in rendered
-    assert "Load the audience-aware template index" in rendered
+    assert "Select the document structure" in rendered
+    assert "project-provided template when available" in rendered
+    assert "templates/readme.md" not in rendered
     assert "Draft for the audience" in rendered
     assert "Execution readiness test" in rendered
 
@@ -93,7 +95,7 @@ def test_workflow_internal_subworkflows_are_structured_and_local():
     assert tdd.subworkflow.name == "TDD Cycle"
     assert tdd.subworkflow.exit_condition
     assert [step.action for step in tdd.subworkflow.steps][:3] == [
-        "Pick the next task from the plan",
+        "Pick the next unimplemented requirement or plan task",
         "Write a failing test",
         "Run the test and confirm RED",
     ]
@@ -117,9 +119,32 @@ def test_workflow_render_expands_execution_contract():
     assert "### Available Exits" not in rendered
     assert "### Gate" in rendered
     assert "### Internal Subworkflow: TDD Cycle" in rendered
-    assert "Exit condition: all plan tasks implemented and broader test set green" in rendered
+    assert "Exit condition: all scoped implementation tasks are complete and the relevant test set is green" in rendered
     assert "### Core Rule" not in rendered
     assert "### Decision Rules" not in rendered
+
+
+def test_workflow_prompts_are_capability_aware_and_repository_agnostic():
+    service = WorkflowService()
+    brainstorm = service.render_instruction(service.get("brainstorm"))
+    plan = service.render_instruction(service.get("plan"))
+    review = service.render_instruction(service.get("review"))
+
+    assert "perceived simplicity" not in brainstorm
+    assert "too simple to need a design" not in brainstorm.lower()
+    assert "docs/specs/" not in plan
+    assert "docs/design/" not in plan
+    assert "Obey the current interaction mode's write permissions." in plan
+    assert "available tool names" in plan
+    assert "voidx tool names" not in plan
+    assert "Perform the review directly" in review
+    assert "when delegation is available" in review
+    assert "Delegate to review agent" not in review
+    assert "Do not ask for review" not in review
+
+    feedback = service.render_instruction(service.get("feedback"))
+    assert "search for actual usage" in feedback
+    assert "grep for actual usage" not in feedback
 
 
 def test_brainstorm_exit_rules_make_small_change_precedence_explicit(tmp_path):

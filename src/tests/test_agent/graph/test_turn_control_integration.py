@@ -653,3 +653,124 @@ async def test_start_prompt_injected_once_then_stop_prompt(tmp_path, monkeypatch
 
     assert result["messages"][0].content == "Second provisional."
     assert model.call_index == 3
+
+
+
+# ── Test: initial state, >3 lines after tools, auto-commit without TURN_START_PROMPT ─
+
+
+@pytest.mark.asyncio
+async def test_initial_long_plain_text_after_tools_auto_commits(tmp_path, monkeypatch):
+    """In initial state, >3 lines of plain text after tool calls should auto-commit
+    without injecting TURN_START_PROMPT retry."""
+    long_text = "\n".join(f"Line {i}." for i in range(1, 5))
+    model = ScriptedStreamingModel([
+        [_text_chunk(long_text)],
+    ])
+    graph = _make_graph(tmp_path, model, monkeypatch)
+
+    result = await graph._call_llm({
+        "messages": [
+            HumanMessage(content="hello"),
+            AIMessage(
+                content="",
+                tool_calls=[{
+                    "name": "read",
+                    "args": {"file_path": "x.py"},
+                    "id": "tc-prior",
+                    "type": "tool_call",
+                }],
+            ),
+            ToolMessage(content="ok", tool_call_id="tc-prior", name="read"),
+        ],
+        "step_count": 0,
+        "persona": "coordinate",
+        "turn_state": "initial",
+    })
+
+    assert result["turn_state"] == "committed"
+    assert result["messages"][0].content == long_text
+    assert model.call_index == 1
+    assert len(model.received_messages) == 1
+
+
+# ── Test: running state, exactly 3 lines triggers TURN_STOP_PROMPT (not auto-commit) ─
+
+
+@pytest.mark.asyncio
+async def test_running_three_line_plain_text_triggers_stop_prompt(tmp_path, monkeypatch):
+    """In running state, exactly 3 lines of plain text should trigger TURN_STOP_PROMPT
+    retry, not auto-commit (threshold is >3, i.e. >=4)."""
+    three_line_text = "Line 1.\nLine 2.\nLine 3."
+    model = ScriptedStreamingModel([
+        [_text_chunk(three_line_text)],
+        [_turn_call_chunk()],
+    ])
+    graph = _make_graph(tmp_path, model, monkeypatch)
+
+    result = await graph._call_llm({
+        "messages": [HumanMessage(content="hello")],
+        "step_count": 0,
+        "persona": "coordinate",
+        "turn_state": "running",
+    })
+
+    assert result["turn_state"] == "committed"
+    assert model.call_index == 2
+    round1_messages = model.received_messages[1]
+    round1_text = "\n".join(str(getattr(msg, "content", "")) for msg in round1_messages)
+    assert "operation='stop'" in round1_text
+
+
+@pytest.mark.asyncio
+async def test_initial_empty_plain_text_retries_instead_of_committing_blank(tmp_path, monkeypatch):
+    model = ScriptedStreamingModel([
+        [AIMessageChunk(content="")],
+        [_turn_start_chunk(goal="Continue the task")],
+        [_text_chunk("Done after retry.")],
+        [_turn_call_chunk()],
+    ])
+    graph = _make_graph(tmp_path, model, monkeypatch)
+
+    result = await graph._call_llm({
+        "messages": [HumanMessage(content="continue")],
+        "step_count": 0,
+        "persona": "coordinate",
+        "turn_state": "initial",
+    })
+
+    assert result["turn_state"] == "committed"
+    assert result["messages"][0].content == "Done after retry."
+    assert model.call_index == 4
+
+
+@pytest.mark.asyncio
+async def test_tool_followup_empty_plain_text_preserves_prior_provisional(tmp_path, monkeypatch):
+    model = ScriptedStreamingModel([
+        [_text_chunk("Starting the implementation now.")],
+        [AIMessageChunk(content="")],
+        [AIMessageChunk(content="")],
+    ])
+    graph = _make_graph(tmp_path, model, monkeypatch)
+
+    result = await graph._call_llm({
+        "messages": [
+            HumanMessage(content="fix it"),
+            AIMessage(
+                content="I will inspect the tests.",
+                tool_calls=[{
+                    "name": "read",
+                    "args": {"file_path": "x.py"},
+                    "id": "tc-prior",
+                    "type": "tool_call",
+                }],
+            ),
+            ToolMessage(content="ok", tool_call_id="tc-prior", name="read"),
+        ],
+        "step_count": 0,
+        "persona": "coordinate",
+        "turn_state": "initial",
+    })
+
+    assert result["messages"][0].content == "Starting the implementation now."
+    assert model.call_index == 3

@@ -163,7 +163,7 @@ FS_WRITE_COMMANDS = {
 
 # ── Tool name → file-path-argument pattern ────────────────────────────
 FILE_PATTERN_TOOLS = {
-    "read", "write", "replace",
+    "read", "write", "replace", "lsp_format",
     "lsp",
 }
 

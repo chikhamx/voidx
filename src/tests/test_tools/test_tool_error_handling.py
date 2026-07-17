@@ -90,7 +90,13 @@ async def test_lsp_invalid_args_returns_error():
 
 @pytest.mark.asyncio
 async def test_lsp_format_invalid_args_returns_error():
-    result = await LspFormatTool().execute({"file_path": 123}, _CTX)
+    result = await LspFormatTool().execute({
+        "file_path": "sample.py",
+        "start_line": 2,
+        "start_character": 0,
+        "end_line": 1,
+        "end_character": 0,
+    }, _CTX)
     assert isinstance(result, ToolResult)
     assert result.metadata.get("error") is True
 

@@ -207,22 +207,38 @@ async def test_lsp_format_tool_saves_file_version_before_format(tmp_path, monkey
     target.write_text("print( 1 )\n", encoding="utf-8")
 
     class FakeService:
-        async def format(self, file_path):
+        async def format_range(self, file_path, range_):
+            assert range_.start.line == 0
+            assert range_.start.character == 0
+            assert range_.end.line == 0
+            assert range_.end.character == 10
             path = tmp_path / file_path
             old_text = path.read_text(encoding="utf-8")
-            new_text = "print(1)\n"
-            path.write_text(new_text, encoding="utf-8")
-            return True, old_text, new_text
+            return True, old_text, "print(1)\n"
 
     monkeypatch.setattr(lsp_module, "_service", lambda _ctx: FakeService())
 
+    ctx = ToolContext(workspace=str(tmp_path), session_id="sid-1", lsp_manager=object())
+    key = str(target.resolve())
+    ctx.file_read_coverage[key] = {"ranges": [{"start_line": 1, "end_line": 1}]}
     result = await LspFormatTool().execute(
-        {"file_path": "sample.py"},
-        ToolContext(workspace=str(tmp_path), session_id="sid-1", lsp_manager=object()),
+        {
+            "file_path": "sample.py",
+            "start_line": 1,
+            "start_character": 0,
+            "end_line": 1,
+            "end_character": 10,
+        },
+        ctx,
     )
 
     assert result.metadata.get("error") is not True
+    assert result.metadata["formatted"] is True
+    assert target.read_text(encoding="utf-8") == "print(1)\n"
+    assert result.diff is not None
     history_dir = store.DATA_DIR / "sessions" / "sid-1" / "file-history"
+    assert key in ctx.file_mtimes
+    assert key not in ctx.file_read_coverage
     rows = [
         json.loads(line)
         for line in (history_dir / "manifest.jsonl").read_text(encoding="utf-8").splitlines()
@@ -329,3 +345,64 @@ async def test_slash_lsp_dispatches_status_and_restart(tmp_path):
     assert await handler.dispatch("/lsp doctor") is True
     assert await handler.dispatch("/lsp restart python") is True
     assert manager.restart_target == "python"
+
+
+@pytest.mark.asyncio
+async def test_lsp_format_tool_accepts_eof_position_after_trailing_newline(tmp_path, monkeypatch):
+    target = tmp_path / "sample.py"
+    target.write_text("print( 1 )\n", encoding="utf-8")
+
+    class FakeService:
+        async def format_range(self, file_path, range_):
+            old_text = target.read_text(encoding="utf-8")
+            return False, old_text, old_text
+
+    monkeypatch.setattr(lsp_module, "_service", lambda _ctx: FakeService())
+
+    ctx = ToolContext(workspace=str(tmp_path), lsp_manager=object())
+    key = str(target.resolve())
+    ctx.file_read_coverage[key] = {"ranges": [{"start_line": 1, "end_line": 1}]}
+    result = await LspFormatTool().execute(
+        {
+            "file_path": "sample.py",
+            "start_line": 1,
+            "start_character": 0,
+            "end_line": 2,
+            "end_character": 0,
+        },
+        ctx,
+    )
+
+    assert result.metadata.get("error") is not True
+    assert result.metadata["formatted"] is False
+
+    assert key in ctx.file_mtimes
+    assert key in ctx.file_read_coverage
+
+@pytest.mark.asyncio
+async def test_lsp_format_tool_does_not_overwrite_concurrent_change(tmp_path, monkeypatch):
+    target = tmp_path / "sample.py"
+    original = "print( 1 )\n"
+    target.write_text(original, encoding="utf-8")
+
+    class FakeService:
+        async def format_range(self, file_path, range_):
+            target.write_text("concurrent = True\n", encoding="utf-8")
+            return True, original, "print(1)\n"
+
+    monkeypatch.setattr(lsp_module, "_service", lambda _ctx: FakeService())
+
+    result = await LspFormatTool().execute(
+        {
+            "file_path": "sample.py",
+            "start_line": 1,
+            "start_character": 0,
+            "end_line": 2,
+            "end_character": 0,
+        },
+        ToolContext(workspace=str(tmp_path), lsp_manager=object()),
+    )
+
+    assert result.metadata["error"] is True
+    assert "changed" in result.output.lower()
+    assert target.read_text(encoding="utf-8") == "concurrent = True\n"

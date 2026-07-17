@@ -5,7 +5,7 @@ from __future__ import annotations
 from pathlib import Path
 
 from voidx.lsp.manager import LspManager
-from voidx.lsp.schema import LspDiagnostic, LspLocation, LspSymbol
+from voidx.lsp.schema import LspDiagnostic, LspLocation, LspRange, LspSymbol
 
 
 class LspService:
@@ -56,6 +56,14 @@ class LspService:
 
     async def format(self, file_path: str) -> tuple[bool, str, str]:
         return await self._manager.format_document(file_path)
+
+
+    async def format_range(
+        self,
+        file_path: str,
+        range_: LspRange,
+    ) -> tuple[bool, str, str]:
+        return await self._manager.formatted_range_text(file_path, range_)
 
 
 def _format_diagnostic(diagnostic: LspDiagnostic, workspace: str) -> str:
