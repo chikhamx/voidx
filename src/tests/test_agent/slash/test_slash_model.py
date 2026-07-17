@@ -28,17 +28,29 @@ from voidx.ui.tools.clipboard_image import ClipboardImageResult
 
 
 class FakeChoiceApp:
-    def __init__(self, result: str | None = None, text_result: str | None = None) -> None:
+    def __init__(
+        self,
+        result: str | None = None,
+        text_result: str | None = None,
+        results: list[str | None] | None = None,
+    ) -> None:
         self.result = result
+        self.results = list(results or [])
         self.text_result = text_result
         self.prompt = ""
+        self.prompts = []
         self.choices = []
+        self.choice_history = []
         self.text_prompt = ""
         self.text_secret = False
 
     async def ask_choice(self, prompt, choices, details=None):
         self.prompt = prompt
+        self.prompts.append(prompt)
         self.choices = choices
+        self.choice_history.append(choices)
+        if self.results:
+            return self.results.pop(0)
         return self.result
 
     async def ask_text(self, prompt, default="", secret=False):
@@ -611,6 +623,52 @@ async def test_permission_mode_dispatch_updates_ai_approval(tmp_path):
     assert (await reloaded.build_config()).permission_mode == PermissionMode.AI_APPROVAL
 
     assert await SlashHandler(graph).dispatch("/permission") is True
+
+
+@pytest.mark.asyncio
+async def test_permission_ai_approval_prompts_for_profile(tmp_path, monkeypatch):
+    profile_name = f"deepseek/{tmp_path.name}-reviewer"
+    await save_model_profile_async(ModelProfileRow(
+        name=profile_name,
+        provider="deepseek",
+        model=f"{tmp_path.name}-reviewer",
+        api_key="secret",
+    ))
+    settings = Settings(str(tmp_path))
+    app = FakeChoiceApp(results=[PermissionMode.AI_APPROVAL.value, profile_name])
+    graph = SimpleNamespace(
+        _permission=PermissionService(),
+        _settings=settings,
+        _app=app,
+    )
+
+    assert await SlashHandler(graph).dispatch("/permission") is True
+
+    assert app.prompts == ["Permission mode", "AI approval profile"]
+    assert app.choice_history[1][0][1] == ""
+    assert any(choice[1] == profile_name for choice in app.choice_history[1])
+    assert settings.get_ai_approval_config().profile_name == profile_name
+
+
+@pytest.mark.asyncio
+async def test_permission_ai_approval_accepts_explicit_profile(tmp_path):
+    profile_name = f"deepseek/{tmp_path.name}-reviewer"
+    await save_model_profile_async(ModelProfileRow(
+        name=profile_name,
+        provider="deepseek",
+        model=f"{tmp_path.name}-reviewer",
+        api_key="secret",
+    ))
+    settings = Settings(str(tmp_path))
+    graph = SimpleNamespace(
+        _permission=PermissionService(),
+        _settings=settings,
+        _app=None,
+    )
+
+    assert await SlashHandler(graph).dispatch(f"/permission ai_approval {profile_name}") is True
+
+    assert settings.get_ai_approval_config().profile_name == profile_name
 @pytest.mark.asyncio
 async def test_parallel_toggle_on_persists_without_live_config_update(tmp_path, monkeypatch):
     output = _capture_handler_output(monkeypatch)

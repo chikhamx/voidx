@@ -64,7 +64,7 @@ COMMANDS: list[tuple[str, str]] = [
     ("/permission project_trusted", "Allow workspace edits; ask for broader risk"),
     ("/permission read_only", "Ask for writes and block unsafe operations"),
     ("/permission safe", "Ask before writes or risky commands"),
-    ("/permission ai_approval", "AI approval pre-screens dangerous tools; uncertain calls still ask you"),
+    ("/permission ai_approval", "AI approval pre-screens dangerous tools; optionally add a profile name"),
     ("/permissions", "Show current permission rules"),
     ("/plan", "Enter plan mode (writes and write-capable bash blocked)"),
     ("/quit", "Exit voidx"),
