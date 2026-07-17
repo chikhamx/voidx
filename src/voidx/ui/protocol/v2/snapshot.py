@@ -39,5 +39,7 @@ class WorkspaceSnapshot(BaseModel):
     model: str = ""
     workspace: str = ""
     profile_configured: bool | None = None
+    permission_mode: str = ""
+    ai_approval_count: int = 0
     runtime: dict[str, object] = Field(default_factory=dict)
     workspace_write_lock: dict[str, object] = Field(default_factory=dict)

@@ -809,9 +809,19 @@
           "title": "Active Thread Id",
           "type": "string"
         },
+        "ai_approval_count": {
+          "default": 0,
+          "title": "Ai Approval Count",
+          "type": "integer"
+        },
         "model": {
           "default": "",
           "title": "Model",
+          "type": "string"
+        },
+        "permission_mode": {
+          "default": "",
+          "title": "Permission Mode",
           "type": "string"
         },
         "profile_configured": {

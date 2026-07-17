@@ -14,6 +14,7 @@ export interface UiState {
   slashCommands: SlashCommand[];
   slashSelectedIndex: number;
   permissionMode: string;
+  aiApprovalCount: number;
   reasoningEffort: string;
 }
 
@@ -30,6 +31,7 @@ export const uiState: UiState = {
   slashCommands: [],
   slashSelectedIndex: 0,
   permissionMode: "safe",
+  aiApprovalCount: 0,
   reasoningEffort: "xhigh",
 };
 
@@ -135,7 +137,7 @@ export function updateStatusBar(): void {
       text = "完全访问";
       colorClass = "full-access";
     } else if (uiState.permissionMode === "ai_approval") {
-      text = "AI 审批";
+      text = uiState.aiApprovalCount > 0 ? `AI 审批 (${uiState.aiApprovalCount})` : "AI 审批";
       colorClass = "ai-approval";
     } else if (uiState.permissionMode === "project_trusted") {
       text = "项目已信任";

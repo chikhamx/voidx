@@ -265,6 +265,12 @@ export function applyRuntimeState(params: Record<string, unknown>): void {
   if (typeof params.profile_configured === "boolean") {
     uiState.profileConfigured = params.profile_configured;
   }
+  if (typeof params.permission_mode === "string") {
+    uiState.permissionMode = params.permission_mode;
+  }
+  if (typeof params.ai_approval_count === "number") {
+    uiState.aiApprovalCount = params.ai_approval_count;
+  }
   if (hasProviderModel) {
     populateModelControls();
   }

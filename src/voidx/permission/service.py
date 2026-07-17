@@ -174,6 +174,7 @@ class PermissionService:
         self.permissions_revision = 0
         self.permission_state_ready = permission_state_ready
         self.revocation_epoch = 0
+        self.ai_approval_count = 0
         self._persistent_grant_writer = persistent_grant_writer
         try:
             self.permission_mode = PermissionMode(permission_mode).value
@@ -323,14 +324,22 @@ class PermissionService:
         if lease in self._active_execution_leases:
             self._active_execution_leases.remove(lease)
 
+    def inc_ai_approval_count(self) -> None:
+        self.ai_approval_count += 1
+        self.state_revision += 1
+
     def permission_mode_label(self) -> str:
         labels = {
             PermissionMode.READ_ONLY.value: "Read only",
             PermissionMode.SAFE.value: "Safe",
+            PermissionMode.AI_APPROVAL.value: "AI approval",
             PermissionMode.PROJECT_TRUSTED.value: "Project trusted",
             PermissionMode.FULL_ACCESS.value: "Full access",
         }
-        return labels.get(self.permission_mode, "Safe")
+        label = labels.get(self.permission_mode, "Safe")
+        if self.permission_mode == PermissionMode.AI_APPROVAL.value and self.ai_approval_count > 0:
+            return f"{label} ({self.ai_approval_count})"
+        return label
 
     def status_details(self) -> tuple[str, str, str]:
         """Return (sandbox_label, approval_label, session_label) for UI."""
@@ -457,10 +466,11 @@ class PermissionService:
         """Reset session allow/deny whitelists."""
         if self._active_execution_leases:
             raise PermissionError("Cannot clear permissions while active execution lease exists")
-        had_permissions = bool(self._session_allow or self._session_deny or self._session_grants)
+        had_permissions = bool(self._session_allow or self._session_deny or self._session_grants or self.ai_approval_count > 0)
         self._session_allow.clear()
         self._session_deny.clear()
         self._session_grants.clear()
+        self.ai_approval_count = 0
         if had_permissions:
             self.state_revision += 1
             self.revocation_epoch += 1

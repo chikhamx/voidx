@@ -395,6 +395,8 @@ class GatewaySession(
                 if isinstance(runtime_state.get("profile_configured"), bool)
                 else None
             ),
+            permission_mode=str(runtime_state.get("permission_mode") or ""),
+            ai_approval_count=int(runtime_state.get("ai_approval_count") or 0),
             runtime=self._run_manager.runtime_snapshot(),
             workspace_write_lock=self._run_manager.workspace_write_lock_snapshot(),
         )

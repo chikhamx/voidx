@@ -359,7 +359,10 @@ class VoidXGraph(
             config=self.config,
             subagent_runner=self._subagent_runner,
         )
+        old_permission = getattr(self, "_permission", None)
         self._permission = build_permission_service(self.config, settings=settings, notifier=self._ui.ui.print)
+        if old_permission is not None and hasattr(old_permission, "ai_approval_count"):
+            self._permission.ai_approval_count = old_permission.ai_approval_count
         self._tool_executor = GraphToolExecutor(self)
         if hasattr(self, "_loop_manager"):
             self.tools._loop_manager = self._loop_manager

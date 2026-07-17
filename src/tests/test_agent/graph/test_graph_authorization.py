@@ -603,6 +603,49 @@ async def test_ai_approval_reuses_successful_dangerous_call_without_review(tmp_p
     assert second[0]["metadata"]["approved_risk"]["approved_by"] == "cached"
 
 
+@pytest.mark.asyncio
+async def test_ai_approval_increments_counter_and_emits_refresh(tmp_path):
+    from voidx.permission.ai_approval import AiApprovalResult
+    from voidx.config import PermissionMode
+    from voidx.ui.output.events import RefreshRequested
+
+    graph = _graph(tmp_path)
+    graph._settings = Settings(str(tmp_path))
+    graph._permission.permission_mode = PermissionMode.AI_APPROVAL.value
+    assert graph._permission.ai_approval_count == 0
+
+    async def review(candidates, _settings):
+        return AiApprovalResult(
+            allowed_ids=frozenset({candidates[0].tool_call["id"]}),
+            reason="reviewed",
+        )
+
+    graph._ai_approval.review = review
+    graph._notice_permission_result = lambda _message: None
+
+    emitted_events = []
+    async def fake_emit(event):
+        emitted_events.append(event)
+
+    orig_emit = graph._ui.events.emit
+    orig_via_events = graph._ui.via_events
+    try:
+        graph._ui.events.emit = fake_emit
+        graph._ui.via_events = lambda: True
+
+        call = {"name": "write", "args": {"file_path": "app.py", "new_string": "x"}, "id": "call_1"}
+        first, first_denied = await graph._authorize_tool_calls([call], plan_mode=False, session_id="s")
+
+        assert [item["id"] for item in first] == ["call_1"]
+        assert first_denied == []
+        assert graph._permission.ai_approval_count == 1
+        assert len(emitted_events) == 1
+        assert isinstance(emitted_events[0], RefreshRequested)
+    finally:
+        graph._ui.events.emit = orig_emit
+        graph._ui.via_events = orig_via_events
+
+
 
 @pytest.mark.asyncio
 async def test_successful_dangerous_call_cache_resets_with_runtime_state(tmp_path):

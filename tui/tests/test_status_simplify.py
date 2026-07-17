@@ -70,6 +70,25 @@ def test_policy_segment_excludes_permission_label(tmp_path):
     assert "Safe" in plain
 
 
+def test_policy_segment_shows_ai_approval_count(tmp_path):
+    status = _make_status(tmp_path, permission_label=lambda: "AI approval (1)")
+    tui = PureTui(status, COMMANDS)
+    plain = _status_plain(tui)
+    assert "AI approval (1)" in plain
+
+
+def test_policy_dropped_at_narrow_width(tmp_path):
+    status = _make_status(
+        tmp_path,
+        model="claude-3-5-sonnet-20241022",
+        permission_label=lambda: "AI approval (1)",
+        usage_stats=_usage_stats(),
+    )
+    tui = PureTui(status, COMMANDS)
+    plain = _status_plain(tui, width=80)
+    assert "AI approval (1)" in plain
+
+
 
 
 # ── state segment: no plan_mode, auto hidden ───────────────────────

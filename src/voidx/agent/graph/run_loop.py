@@ -164,6 +164,8 @@ class GraphRunLoopMixin(GraphTurnMixin, GraphSessionMixin, GraphTranscriptMixin)
                         "model": self.config.model.model,
                         "workspace": self._workspace,
                         "profile_configured": self.model is not None,
+                        "permission_mode": getattr(self._permission, "permission_mode", ""),
+                        "ai_approval_count": getattr(self._permission, "ai_approval_count", 0),
                     },
                     settings_update_handler=getattr(self, "_apply_settings_update", None),
                 )

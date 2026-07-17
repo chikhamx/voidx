@@ -229,6 +229,7 @@ PermissionToolDetail = _LazyAttr("voidx.ui.output.events", "PermissionToolDetail
 PermissionPromptShown = _LazyAttr("voidx.ui.output.events", "PermissionPromptShown")
 PermissionPromptCleared = _LazyAttr("voidx.ui.output.events", "PermissionPromptCleared")
 StartupShown = _LazyAttr("voidx.ui.output.events", "StartupShown")
+RefreshRequested = _LazyAttr("voidx.ui.output.events", "RefreshRequested")
 StatusFinished = _LazyAttr("voidx.ui.output.events", "StatusFinished")
 StatusUpdated = _LazyAttr("voidx.ui.output.events", "StatusUpdated")
 StreamingRenderer = _LazyAttr("voidx.ui.output.console", "StreamingRenderer")

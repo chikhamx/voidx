@@ -147,3 +147,21 @@ def test_approved_tool_risk_accepts_ai_source_and_legacy_metadata():
 
     assert ApprovedToolRisk(tool_name="write", approved_by="ai").approved_by == "ai"
     assert ApprovedToolRisk(tool_name="write").approved_by == "user"
+
+
+def test_permission_service_ai_approval_counter():
+    from voidx.permission.service import PermissionService
+
+    service = PermissionService(permission_mode="ai_approval")
+    assert service.ai_approval_count == 0
+    assert service.permission_mode_label() == "AI approval"
+
+    old_revision = service.state_revision
+    service.inc_ai_approval_count()
+    assert service.ai_approval_count == 1
+    assert service.state_revision > old_revision
+    assert service.permission_mode_label() == "AI approval (1)"
+
+    service.clear_session_permissions()
+    assert service.ai_approval_count == 0
+    assert service.permission_mode_label() == "AI approval"

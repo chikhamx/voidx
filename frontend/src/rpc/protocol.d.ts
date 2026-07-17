@@ -65,7 +65,9 @@ export type Nodes = TranscriptNode[];
 export type Revision = number;
 export type ThreadId = string;
 export type ActiveThreadId = string;
+export type AiApprovalCount = number;
 export type Model = string;
+export type PermissionMode = string;
 export type ProfileConfigured = boolean | null;
 export type Provider = string;
 export type CreatedAt = string;
@@ -173,7 +175,9 @@ export interface ErrorPayload {
 export interface WorkspaceSnapshot {
   active_snapshot?: ThreadSnapshot | null;
   active_thread_id?: ActiveThreadId;
+  ai_approval_count?: AiApprovalCount;
   model?: Model;
+  permission_mode?: PermissionMode;
   profile_configured?: ProfileConfigured;
   provider?: Provider;
   runtime?: Runtime;

@@ -119,7 +119,12 @@ class GraphPermissionMixin:
                         ai_allowed.append(decision)
                         approved.append(_tool_call_with_approval_risk(decision, approved_by="ai"))
                         self._notice_permission_result(f"AI 审批: allow {decision.name}")
+                        if hasattr(self._permission, "inc_ai_approval_count"):
+                            self._permission.inc_ai_approval_count()
             if ai_allowed:
+                if self._ui.via_events():
+                    from voidx.runtime.ui import RefreshRequested
+                    await self._ui.events.emit(RefreshRequested())
                 need_ask = [decision for decision in need_ask if decision not in ai_allowed]
 
         approvable = [decision for decision in need_ask if decision.action != Action.BLOCKED_ACK]
