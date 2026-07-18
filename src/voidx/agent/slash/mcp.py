@@ -121,7 +121,7 @@ class SlashMcpMixin:
         return McpServerConfig(
             name=name,
             command=sys.executable,
-            args=["-m", "voidx.mcp_servers.web"],
+            args=["-m", "voidx.mcp.server.web"],
             env=env,
             tools=["web_search", "web_fetch"],
         )

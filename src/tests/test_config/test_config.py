@@ -287,7 +287,7 @@ def test_settings_saves_mcp_server_and_web_routes(tmp_path):
     settings.save_mcp_server(McpServerConfig(
         name="voidx-web",
         command="python",
-        args=["-m", "voidx.mcp_servers.web"],
+        args=["-m", "voidx.mcp.server.web"],
         tools=["web_search", "web_fetch"],
     ))
     settings.set_web_tool_route(
@@ -315,7 +315,7 @@ def test_settings_set_mcp_server_disabled_clears_web_routes(tmp_path):
     settings.save_mcp_server(McpServerConfig(
         name="voidx-web",
         command="python",
-        args=["-m", "voidx.mcp_servers.web"],
+        args=["-m", "voidx.mcp.server.web"],
         tools=["web_search", "web_fetch"],
     ))
     settings.set_web_tool_route(

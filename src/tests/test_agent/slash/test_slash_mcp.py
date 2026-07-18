@@ -64,7 +64,7 @@ async def test_mcp_new_builtin_saves_server_and_web_routes(tmp_path, monkeypatch
     await handler.dispatch("/mcp new")
 
     saved = json.loads((tmp_path / ".voidx" / "settings.json").read_text(encoding="utf-8"))
-    assert saved["mcpServers"]["voidx-web"]["args"] == ["-m", "voidx.mcp_servers.web"]
+    assert saved["mcpServers"]["voidx-web"]["args"] == ["-m", "voidx.mcp.server.web"]
     assert saved["mcpServers"]["voidx-web"]["tools"] == ["web_search", "web_fetch"]
     assert saved["web"]["search"] == {
         "backend": "mcp",
@@ -147,7 +147,7 @@ async def test_mcp_disable_command_sets_disabled_true_and_restarts(tmp_path):
     settings.save_mcp_server(McpServerConfig(
         name="voidx-web",
         command=sys.executable,
-        args=["-m", "voidx.mcp_servers.web"],
+        args=["-m", "voidx.mcp.server.web"],
         tools=["web_search"],
     ))
     settings.set_web_tool_route(
@@ -171,7 +171,7 @@ async def test_mcp_enable_command_sets_disabled_false_and_restarts(tmp_path):
     settings.save_mcp_server(McpServerConfig(
         name="voidx-web",
         command=sys.executable,
-        args=["-m", "voidx.mcp_servers.web"],
+        args=["-m", "voidx.mcp.server.web"],
         disabled=True,
         tools=["web_search"],
     ))

@@ -363,7 +363,7 @@ async def test_builtin_web_mcp_server_lists_tools():
     client = McpClient(McpServerConfig(
         name="voidx-web",
         command=sys.executable,
-        args=["-m", "voidx.mcp_servers.web"],
+        args=["-m", "voidx.mcp.server.web"],
         cwd=src_path,
         env={"PYTHONPATH": src_path},
     ))

@@ -7,8 +7,7 @@ Python backend core for voidx.
 - `voidx/agent/slash/`: Slash command handlers — runtime config, session, model, MCP/LSP, skills, profile, host, and IDE integration commands.
 - `voidx/config/`: Settings & profiles — Pydantic models, MCP server config, API keys, permissions.
 - `voidx/llm/`: Provider setup, prompt context, compaction, token usage.
-- `voidx/mcp/`: MCP client manager, tool wrapper, schema.
-- `voidx/mcp_servers/`: Built-in MCP server implementations (e.g. voidx-web).
+- `voidx/mcp/`: MCP support — `client/` (JSON-RPC client), `manager.py` (lifecycle), `tool.py` (tool wrapper), `schema.py`, and `server/` (built-in MCP server implementations, e.g. voidx-web).
 - `voidx/memory/`: SQLite-backed sessions, transcript, runtime snapshots, context frames.
 - `voidx/permission/`: Permission engine — rules, sandbox, approval policy, wildcard matching.
 - `voidx/runtime/`: Shared runtime — UI sink, task state, intent resolution.
