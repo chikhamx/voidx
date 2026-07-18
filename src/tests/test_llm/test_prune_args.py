@@ -7,8 +7,15 @@ import pytest
 from langchain_core.messages import AIMessage, HumanMessage, ToolMessage
 
 
-from voidx.llm import compaction
 from voidx.llm.compaction import CompactionService, PRUNE_PROTECTED_TOOLS, TOOL_OUTPUT_MAX_CHARS
+from voidx.llm.compaction import constants as compaction
+
+
+
+
+@pytest.fixture(autouse=True)
+def _allow_small_prune_candidates(monkeypatch):
+    monkeypatch.setattr(compaction, "PRUNE_MINIMUM", 0)
 
 
 def _make_messages_with_tool_call(tool_name: str, args: dict, tool_output: str = "ok", has_diff: bool = True) -> list:
@@ -157,6 +164,44 @@ class TestPruneLineArgs:
         svc.prune(msgs)
 
         assert msgs[1].tool_calls[0]["args"]["new_string"] == "x"
+
+
+class TestPruneAtomicThreshold:
+    def test_candidates_below_threshold_are_not_committed(self, monkeypatch):
+        monkeypatch.setattr(compaction, "PRUNE_MINIMUM", 10_000)
+        content = "x" * 500
+        messages = _make_messages_with_tool_call(
+            "replace",
+            {"file_path": "foo.py", "new_string": content},
+        )
+        original_ai = messages[1]
+        original_tool = messages[2]
+
+        saved = CompactionService().prune(messages)
+
+        assert saved == 0
+        assert messages[1] is original_ai
+        assert messages[1].tool_calls[0]["args"]["new_string"] == content
+        assert messages[2] is original_tool
+        assert messages[2].content == original_tool.content
+
+    def test_commits_all_candidates_and_returns_actual_saved_chars(self, monkeypatch):
+        monkeypatch.setattr(compaction, "PRUNE_PROTECT", 0)
+        monkeypatch.setattr(compaction, "PRUNE_MINIMUM", 100)
+        content = "y" * 500
+        messages = _make_messages_with_tool_call(
+            "replace",
+            {"file_path": "foo.py", "new_string": content},
+        )
+        original_total = len(messages[1].tool_calls[0]["args"]["new_string"]) + len(messages[2].content)
+
+        saved = CompactionService().prune(messages)
+
+        new_total = len(messages[1].tool_calls[0]["args"]["new_string"]) + len(messages[2].content)
+        assert saved == original_total - new_total
+        assert saved > compaction.PRUNE_MINIMUM
+        assert messages[1].tool_calls[0]["args"]["new_string"] == "[omitted: see diff in tool result]"
+        assert "Tool output truncated" in messages[2].content
 
 class TestPruneRecentTurnsProtected:
     def test_recent_tool_call_not_pruned(self):

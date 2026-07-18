@@ -23,7 +23,7 @@ from voidx.runtime.task_state import (
 )
 from voidx.workflow.dag import DEFAULT_WORKFLOW_DAG
 from voidx.config import ModelConfig, RetryConfig
-from voidx.llm.service import DeepSeekChatOpenAI, create_resolver_model
+from voidx.llm.service import create_resolver_model, get_resolver_structured_output_method
 from voidx.llm.usage import (
     TokenUsage,
     UsageStats,
@@ -129,14 +129,7 @@ async def resolve_goal_for_turn(
 
     resolver_goal: ResolverGoal | None
     try:
-        if isinstance(resolver_model, DeepSeekChatOpenAI):
-            # function_calling sends tool_choice which several providers
-            # reject while thinking mode is active.  Fall back to
-            # json_mode (response_format {type: json_object}) which
-            # does not involve tool_choice.
-            method = "json_mode" if resolver_model.has_active_reasoning else "function_calling"
-        else:
-            method = None
+        method = get_resolver_structured_output_method(resolver_model)
         structured_kwargs: dict[str, Any] = {}
         if method is not None:
             structured_kwargs["method"] = method

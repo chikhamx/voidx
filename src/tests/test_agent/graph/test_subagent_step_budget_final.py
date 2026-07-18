@@ -157,11 +157,7 @@ async def test_subagent_starts_from_isolated_task_context(tmp_path, monkeypatch)
         interaction_mode=InteractionMode.AUTO,
     ).build().apply_to_messages(inherited_messages)
     workflow_context = await InstructionService(str(tmp_path)).workflow_context_for(
-        "Inspect the workspace",
-        agent="explore",
-        task_intent="coding",
         goal_type="inspect",
-        interaction_mode=InteractionMode.AUTO.value,
         scope="Inspect the workspace",
     )
 

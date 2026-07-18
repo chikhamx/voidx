@@ -72,20 +72,16 @@ def _resolve_base_url(config: ModelConfig, protocol: str) -> str:
 
 
 def _reasoning_kwargs(config: ModelConfig, protocol: str) -> dict:
+    spec = get(config.provider)
+    if spec is not None:
+        return spec.reasoning(config) if spec.reasoning is not None else {}
     if protocol == "anthropic":
-        if config.provider == "anthropic":
-            return _anthropic_reasoning_kwargs(config)
-        return {}
+        return _anthropic_reasoning_kwargs(config)
     if protocol == "gemini":
         return _gemini_reasoning_kwargs(config)
     if protocol == PROTOCOL_DEEPSEEK:
         return DeepSeekChatOpenAI.reasoning_kwargs(config)
     if protocol == "openai":
-        spec = get(config.provider)
-        if spec is not None and spec.reasoning is not None:
-            return spec.reasoning(config)
-        # Custom providers with openai protocol: inject reasoning for known
-        # reasoning models, same as official openai.
         return _openai_compatible_reasoning_kwargs(config)
     return {}
 

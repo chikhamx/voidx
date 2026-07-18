@@ -126,15 +126,9 @@ class InstructionService:
 
     async def workflow_context_for(
         self,
-        user_text: str,
         *,
-        agent: str = "",
-        task_intent: str | None = None,
         goal_type: str | None = None,
-        interaction_mode: str | None = None,
         scope: str = "",
-        runtime_trigger: str | None = None,
-        exclude_names: list[str] | None = None,
         active_names: list[str] | None = None,
         workflow_start: str | None = None,
     ) -> WorkflowRuntimeContext:
@@ -204,9 +198,9 @@ class InstructionService:
                 if candidate_str in self._claims[message_id]:
                     continue
 
-                self._claims[message_id].add(candidate_str)
                 content = await self._read_file(str(candidate))
                 if content:
+                    self._claims[message_id].add(candidate_str)
                     results.append(f"Instructions from: {candidate_str}\n{content}")
                     if self._debug:
                         log_llm_diagnostic("instruction_file_injected", filepath=str(filepath), candidate=candidate_str)

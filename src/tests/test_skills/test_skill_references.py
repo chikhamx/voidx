@@ -83,10 +83,7 @@ async def test_instruction_service_system_includes_available_skills_section(tmp_
 async def test_workflow_context_message_renders_fixed_full_workflow_nodes(tmp_path, monkeypatch):
     monkeypatch.setattr(Path, "home", staticmethod(lambda: tmp_path / "home"))
 
-    context = await InstructionService(str(tmp_path)).workflow_context_for(
-        "hello",
-        task_intent="general",
-    )
+    context = await InstructionService(str(tmp_path)).workflow_context_for()
 
     assert context.content.startswith(WORKFLOW_CONTEXT_MARKER)
     assert f"Scope: {WORKFLOW_CONTEXT_SCOPE}" in context.content
@@ -115,9 +112,6 @@ async def test_workflow_context_message_expands_all_workflow_nodes(tmp_path, mon
     monkeypatch.setattr(Path, "home", staticmethod(lambda: tmp_path / "home"))
 
     context = await InstructionService(str(tmp_path)).workflow_context_for(
-        "Implement the feature",
-        agent="implement",
-        task_intent="coding",
         goal_type="feature",
     )
 
@@ -132,16 +126,10 @@ async def test_workflow_context_message_stays_fixed_with_active_workflow_nodes(t
 
     instruction = InstructionService(str(tmp_path))
     inspect_context = await instruction.workflow_context_for(
-        "看看代码",
-        agent="voidx",
-        task_intent="coding",
         goal_type="inspect",
         workflow_start="brainstorm",
     )
     implement_context = await instruction.workflow_context_for(
-        "Implement the feature",
-        agent="implement",
-        task_intent="coding",
         goal_type="feature",
         workflow_start="tdd",
     )

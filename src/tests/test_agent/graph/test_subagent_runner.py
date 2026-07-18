@@ -206,8 +206,8 @@ async def test_subagent_runner_passes_main_workflow_runtime_context(tmp_path, mo
     assert ("parent" + "_messages") not in captured
     assert emitted[-1].kind == "subagent.finished"
     assert emitted[-1].summary == "child result"
-    assert calls[0]["kwargs"]["agent"] == ""
-    assert calls[0]["kwargs"]["task_intent"] == "coding"
+    assert "agent" not in calls[0]["kwargs"]
+    assert "task_intent" not in calls[0]["kwargs"]
     assert calls[0]["kwargs"]["goal_type"] == "feature"
     assert calls[0]["kwargs"]["scope"] == "Implement the feature"
     assert calls[0]["kwargs"]["workflow_start"] == "tdd"

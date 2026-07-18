@@ -111,3 +111,26 @@ async def test_instruction_read_file_logs_exception_and_clears_cache(tmp_path, m
     assert await service._read_file(str(path)) == ""
     assert resolved not in service._file_cache
     assert events == [("instruction_read_file", "instruction", "cannot stat")]
+
+
+@pytest.mark.asyncio
+async def test_resolve_retries_unclaimed_instruction_after_transient_read_failure(tmp_path, monkeypatch):
+    package = tmp_path / "package"
+    source = package / "src"
+    source.mkdir(parents=True)
+    instruction = package / "AGENTS.md"
+    target = source / "app.py"
+    instruction.write_text("Follow package rules.", encoding="utf-8")
+    target.write_text("print('hi')\n", encoding="utf-8")
+    service = InstructionService(str(tmp_path))
+    reads = iter(["", "Follow package rules."])
+
+    async def transient_read(_path):
+        return next(reads)
+
+    monkeypatch.setattr(service, "_read_file", transient_read)
+
+    assert await service.resolve(str(target), "msg-1") == []
+    assert await service.resolve(str(target), "msg-1") == [
+        f"Instructions from: {instruction.resolve()}\nFollow package rules."
+    ]

@@ -14,6 +14,7 @@ from __future__ import annotations
 
 from langchain_core.messages import AIMessage, HumanMessage
 
+from voidx.llm.compaction import constants
 from voidx.llm.context import count_tokens
 
 
@@ -43,8 +44,6 @@ def prune_ai_tool_call_args(
     Only prunes when the corresponding tool result contains a diff
     (so the LLM can still see the content via the diff).
     """
-    from voidx.llm.compaction import PRUNE_ARGS_PLACEHOLDER_DIFF
-
     changed = False
     saved_chars = 0
     new_tool_calls: list[dict] = []
@@ -62,13 +61,13 @@ def prune_ai_tool_call_args(
                 args["content"] = placeholder
                 changed = True
         elif name == "replace" and "new_string" in args:
-            placeholder = PRUNE_ARGS_PLACEHOLDER_DIFF
+            placeholder = constants.PRUNE_ARGS_PLACEHOLDER_DIFF
             if len(args["new_string"]) > len(placeholder) and tool_result_has_diff(messages, ai_msg_index, tc_id):
                 saved_chars += len(args["new_string"]) - len(placeholder)
                 args["new_string"] = placeholder
                 changed = True
         elif name == "write" and args.get("op") in ("insert", "append") and "new_string" in args:
-            placeholder = PRUNE_ARGS_PLACEHOLDER_DIFF
+            placeholder = constants.PRUNE_ARGS_PLACEHOLDER_DIFF
             if len(args["new_string"]) > len(placeholder) and tool_result_has_diff(messages, ai_msg_index, tc_id):
                 saved_chars += len(args["new_string"]) - len(placeholder)
                 args["new_string"] = placeholder
@@ -93,12 +92,6 @@ def prune_messages(messages: list) -> int:
     - For previous-turn AIMessage tool_calls, omit large content/new_string args
       when the corresponding tool result contains a diff
     """
-    from voidx.llm.compaction import (
-        PRUNE_MINIMUM,
-        PRUNE_PROTECT,
-        PRUNE_PROTECTED_TOOLS,
-        TOOL_OUTPUT_MAX_CHARS,
-    )
 
     turns_seen = 0
     accumulated = 0
@@ -134,34 +127,32 @@ def prune_messages(messages: list) -> int:
             continue
 
         tool_name = getattr(msg, "name", "")
-        if tool_name in PRUNE_PROTECTED_TOOLS:
+        if tool_name in constants.PRUNE_PROTECTED_TOOLS:
             continue
 
         content = str(getattr(msg, "content", ""))
         token_est = count_tokens(content)
 
         accumulated += token_est
-        if accumulated <= PRUNE_PROTECT:
+        if accumulated <= constants.PRUNE_PROTECT:
             continue
 
         # Protect most recent 2 turns from ToolMessage truncation
         if turns_seen < 2:
             continue
 
-        if len(content) > TOOL_OUTPUT_MAX_CHARS:
-            truncated = content[:TOOL_OUTPUT_MAX_CHARS] + (
-                f"\n\n[Tool output truncated for context: omitted {len(content) - TOOL_OUTPUT_MAX_CHARS} chars]"
+        if len(content) > constants.TOOL_OUTPUT_MAX_CHARS:
+            truncated = content[:constants.TOOL_OUTPUT_MAX_CHARS] + (
+                f"\n\n[Tool output truncated for context: omitted {len(content) - constants.TOOL_OUTPUT_MAX_CHARS} chars]"
             )
             pruned_chars += len(content) - len(truncated)
             to_prune.append((i, truncated))
 
-    if pruned_chars > PRUNE_MINIMUM:
-        for idx, truncated in to_prune:
-            messages[idx] = type(messages[idx])(
-                content=truncated,
-                tool_call_id=messages[idx].tool_call_id,
-            )
+    if pruned_chars <= constants.PRUNE_MINIMUM:
+        return 0
 
+    for idx, truncated in to_prune:
+        messages[idx] = messages[idx].model_copy(update={"content": truncated})
     for idx, new_tcs in ai_to_rebuild.items():
         messages[idx] = messages[idx].model_copy(update={"tool_calls": new_tcs})
 

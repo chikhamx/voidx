@@ -7,6 +7,7 @@ Layer 1 (prune) and the fallback summary live in sibling modules.
 
 from __future__ import annotations
 
+from collections.abc import Callable
 from dataclasses import dataclass
 from typing import Literal
 
@@ -29,6 +30,7 @@ from voidx.llm.compaction.fallback_summary import (
 )
 from voidx.llm.compaction.prune import prune_messages
 from voidx.llm.message_markers import is_guidance_message, is_step_hint_message
+from voidx.llm.usage import estimate_context_tokens
 
 
 @dataclass
@@ -62,11 +64,13 @@ class CompactionService:
         *,
         soft_ratio: float = 0.75,
         post_target_ratio: float = 0.10,
+        token_counter: Callable[[list, str], int] = estimate_context_tokens,
     ) -> None:
         self.context_limit = context_limit
         self.output_token_max = output_token_max
         self.soft_ratio = soft_ratio
         self.post_target_ratio = post_target_ratio
+        self.token_counter = token_counter
         self.compaction_count: int = 0
 
     # ── token budget helpers ────────────────────────────────────────────
@@ -145,7 +149,6 @@ class CompactionService:
         Preserves recent turns up to preserve_recent_budget() tokens.
         Uses estimate_context_tokens for consistent counting with overflow checks.
         """
-        from voidx.llm.compaction import estimate_context_tokens
 
         budget = self.preserve_recent_budget()
         turns = self._turns(messages)
@@ -159,7 +162,7 @@ class CompactionService:
 
         for turn in reversed(recent):
             turn_msgs = messages[turn.start:turn.end]
-            size = estimate_context_tokens(turn_msgs)
+            size = self.token_counter(turn_msgs, "")
             if total + size <= budget:
                 total += size
                 keep_start = turn.start
@@ -186,7 +189,6 @@ class CompactionService:
 
     def select_preflight_details(self, messages: list, *, model: str = "") -> CompactionSelection:
         """Select a deeply compacted head while preserving current and previous turns."""
-        from voidx.llm.compaction import estimate_context_tokens
 
         turns = self._turns(messages)
         if not turns:
@@ -202,7 +204,7 @@ class CompactionService:
         for turn in reversed(turns[:minimum_keep_index]):
             candidate_start = turn.start
             candidate_tail = messages[candidate_start:]
-            if estimate_context_tokens(candidate_tail, model) > target:
+            if self.token_counter(candidate_tail, model) > target:
                 break
             keep_start = candidate_start
             keep_id = turn.id
@@ -220,7 +222,6 @@ class CompactionService:
 
     def truncate_head_to_budget(self, messages: list, *, budget: int, model: str) -> list:
         """Keep the newest complete turns from head messages within a token budget."""
-        from voidx.llm.compaction import estimate_context_tokens
 
         turns = self._turns(messages)
         if not turns or budget <= 0:
@@ -230,7 +231,7 @@ class CompactionService:
         total = 0
         for turn in reversed(turns):
             turn_msgs = messages[turn.start:turn.end]
-            size = estimate_context_tokens(turn_msgs, model)
+            size = self.token_counter(turn_msgs, model)
             if total + size > budget:
                 break
             kept = [*turn_msgs, *kept]

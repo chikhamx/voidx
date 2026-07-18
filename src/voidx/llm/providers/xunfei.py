@@ -2,18 +2,9 @@
 
 from __future__ import annotations
 
-from voidx.config import ModelConfig
 from voidx.llm.providers import base
 from voidx.llm.providers.base import ProviderSpec
-from voidx.llm.providers.common import openai_effort
-
-
-def _reasoning(config: ModelConfig) -> dict:
-    """Same nested reasoning format as OpenRouter."""
-    effort = openai_effort(config.reasoning_effort)
-    if effort is None:
-        return {}
-    return {"extra_body": {"reasoning": {"effort": effort}}}
+from voidx.llm.providers.common import nested_reasoning
 
 
 base.register(ProviderSpec(
@@ -24,5 +15,5 @@ base.register(ProviderSpec(
     static_models=(
         "astron-code-latest",
     ),
-    reasoning=_reasoning,
+    reasoning=nested_reasoning,
 ))

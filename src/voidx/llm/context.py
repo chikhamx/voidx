@@ -1,39 +1,40 @@
-"""Context window management — token counting, not guessing."""
+"""Context-window token estimation."""
 
 from __future__ import annotations
+
+from functools import lru_cache
 
 import tiktoken
 
 from voidx.config.defaults import DEFAULT_MODEL
 
 
-_ENCODING = None
-
-
-def _get_encoding():
-    global _ENCODING
-    if _ENCODING is not None:
-        return _ENCODING
+@lru_cache(maxsize=64)
+def _get_encoding(model: str = ""):
+    """Resolve a model tokenizer, falling back to a stable base encoding."""
+    if model:
+        try:
+            return tiktoken.encoding_for_model(model)
+        except (KeyError, ValueError):
+            return _get_encoding("")
     for name in ("cl100k_base", "o200k_base", "gpt2"):
         try:
-            _ENCODING = tiktoken.get_encoding(name)
-            return _ENCODING
+            return tiktoken.get_encoding(name)
         except Exception:
             continue
     raise RuntimeError("No tiktoken encoding available")
 
 
 def count_tokens(text: str, model: str = DEFAULT_MODEL) -> int:
-    """Count tokens in text using tiktoken. Deterministic, not estimated."""
-    enc = _get_encoding()
-    return len(enc.encode(text))
+    """Estimate text tokens with the model tokenizer or a stable fallback."""
+    return len(_get_encoding(model).encode(text))
 
 
 def count_messages_tokens(messages: list[dict], model: str = DEFAULT_MODEL) -> int:
-    """Total token count across all messages."""
+    """Estimate tokens across serializable message fields."""
     total = 0
     for msg in messages:
-        for key, value in msg.items():
+        for value in msg.values():
             if isinstance(value, str):
                 total += count_tokens(value, model)
             elif isinstance(value, list):

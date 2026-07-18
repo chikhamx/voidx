@@ -149,11 +149,7 @@ async def test_subagent_skill_context_matches_orchestrator(tmp_path, monkeypatch
     monkeypatch.setattr(subagent_module, "create_chat_model", lambda *_args, **_kwargs: FakeModel())
     monkeypatch.setattr(subagent_module, "stream_llm", fake_stream_llm)
     workflow_context = await InstructionService(str(tmp_path)).workflow_context_for(
-        "Implement the feature",
-        agent="implement",
-        task_intent="coding",
         goal_type="feature",
-        interaction_mode=InteractionMode.AUTO.value,
         scope="Implement the feature",
         workflow_start="tdd",
     )

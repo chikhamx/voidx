@@ -32,23 +32,18 @@ class DeepSeekChatOpenAI(ChatOpenAI):
 
     @property
     def has_active_reasoning(self) -> bool:
-        """Return True when thinking/reasoning mode is currently active.
-
-        Checks the provider-specific reasoning configuration that
-        :meth:`reasoning_kwargs` bakes into the model instance.  Used by
-        callers (e.g. goal resolver) to decide whether ``tool_choice``
-        is safe — several providers reject ``tool_choice`` while
-        thinking mode is enabled.
-        """
+        """Return whether the current request has reasoning enabled."""
         if getattr(self, "reasoning_effort", None):
             return True
         extra = getattr(self, "extra_body", None) or {}
         if extra.get("enable_thinking"):
             return True
         thinking = extra.get("thinking", {})
-        if isinstance(thinking, dict) and thinking.get("type") in ("enabled", "auto"):
-            return True
-        return False
+        return isinstance(thinking, dict) and thinking.get("type") in ("enabled", "auto")
+
+    @property
+    def resolver_structured_output_method(self) -> str:
+        return "json_mode" if self.has_active_reasoning else "function_calling"
 
     # ── streaming reasoning_content preservation ──────────────────────────
 

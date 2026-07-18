@@ -615,7 +615,7 @@ async def test_goal_resolver_logs_native_request_and_response(tmp_path, monkeypa
 @pytest.mark.asyncio
 async def test_goal_resolver_uses_function_calling_for_deepseek_protocol():
     """DeepSeek protocol models should use method='function_calling' for with_structured_output."""
-    from voidx.llm.service import DeepSeekChatOpenAI
+    from voidx.llm.providers.deepseek import DeepSeekChatOpenAI
 
     class FakeDeepSeekModel(DeepSeekChatOpenAI):
         """Real subclass — isinstance works. Use object.__new__ to skip init."""
@@ -654,7 +654,7 @@ async def test_goal_resolver_uses_function_calling_for_deepseek_protocol():
 @pytest.mark.asyncio
 async def test_goal_resolver_uses_json_mode_for_deepseek_with_reasoning():
     """DeepSeek protocol with active reasoning → json_mode (avoids tool_choice conflict)."""
-    from voidx.llm.service import DeepSeekChatOpenAI
+    from voidx.llm.providers.deepseek import DeepSeekChatOpenAI
 
     class FakeDeepSeekReasoningModel(DeepSeekChatOpenAI):
         _structured_method: str | None = None
@@ -696,7 +696,7 @@ async def test_goal_resolver_uses_json_mode_for_deepseek_with_reasoning():
 @pytest.mark.asyncio
 async def test_goal_resolver_uses_json_mode_for_deepseek_with_qwen_reasoning():
     """Qwen's enable_thinking: True also triggers json_mode."""
-    from voidx.llm.service import DeepSeekChatOpenAI
+    from voidx.llm.providers.deepseek import DeepSeekChatOpenAI
 
     class FakeQwenModel(DeepSeekChatOpenAI):
         _structured_method: str | None = None

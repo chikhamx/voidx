@@ -50,8 +50,6 @@ from voidx.llm.compaction.service import (
     CompactionSelection,
     CompactionService,
     Turn,
-    _minimum_tail_turn,
-    _token_total,
 )
 from voidx.llm.message_markers import STEP_HINT_MARKER
 from voidx.llm.usage import estimate_context_tokens
@@ -77,10 +75,6 @@ __all__ = [
     "SUMMARY_TEMPLATE",
     "TOOL_OUTPUT_MAX_CHARS",
     "Turn",
-    "_dedupe",
-    "_message_text",
-    "_minimum_tail_turn",
-    "_token_total",
     "bullets",
     "dedupe",
     "estimate_context_tokens",
@@ -95,8 +89,3 @@ __all__ = [
     "tool_result_has_diff",
     "truncate_line",
 ]
-
-# Backwards-compat aliases: callers (e.g. convergence.py) import the
-# underscore-prefixed names that were private helpers in the old flat module.
-_dedupe = dedupe
-_message_text = message_text

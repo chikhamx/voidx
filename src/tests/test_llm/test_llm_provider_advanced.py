@@ -19,7 +19,7 @@ PROVIDER_DEFAULTS = {
     "mimo-token-plan": ("deepseek", DeepSeekChatOpenAI, "https://token-plan-cn.xiaomimimo.com/v1"),
     "qwen": ("deepseek", DeepSeekChatOpenAI, "https://dashscope.aliyuncs.com/compatible-mode/v1"),
     "zhipu": ("deepseek", DeepSeekChatOpenAI, "https://open.bigmodel.cn/api/paas/v4"),
-    "kimi": ("deepseek", DeepSeekChatOpenAI, "https://api.moonshot.cn/v1"),
+    "kimi": ("deepseek", DeepSeekChatOpenAI, "https://api.kimi.com/coding/v1"),
     "doubao": ("deepseek", DeepSeekChatOpenAI, "https://ark.cn-beijing.volces.com/api/v3"),
     "minimax": ("deepseek", DeepSeekChatOpenAI, "https://api.minimax.io/v1"),
 }
@@ -377,3 +377,52 @@ def test_deepseek_chat_omits_reasoning_content_when_absent():
     msgs = payload["messages"]
     assistant_dict = msgs[1]
     assert "reasoning_content" not in assistant_dict
+
+
+
+def test_kimi_k3_reasoning_effort_mapping():
+    """Kimi K3 maps reasoning effort to reasoning_effort and extra_body.thinking.type."""
+    # Kimi K3: ultra/max/xhigh -> max
+    k3_max = DeepSeekChatOpenAI.reasoning_kwargs(
+        ModelConfig(provider="kimi", model="k3", reasoning_effort="max"),
+    )
+    assert k3_max == {"reasoning_effort": "max", "extra_body": {"thinking": {"type": "enabled"}}}
+
+    k3_xhigh = DeepSeekChatOpenAI.reasoning_kwargs(
+        ModelConfig(provider="kimi", model="k3", reasoning_effort="xhigh"),
+    )
+    assert k3_xhigh == {"reasoning_effort": "max", "extra_body": {"thinking": {"type": "enabled"}}}
+
+    # Kimi K3: high/medium -> high
+    k3_high = DeepSeekChatOpenAI.reasoning_kwargs(
+        ModelConfig(provider="kimi", model="k3", reasoning_effort="high"),
+    )
+    assert k3_high == {"reasoning_effort": "high", "extra_body": {"thinking": {"type": "enabled"}}}
+
+    k3_medium = DeepSeekChatOpenAI.reasoning_kwargs(
+        ModelConfig(provider="kimi", model="k3", reasoning_effort="medium"),
+    )
+    assert k3_medium == {"reasoning_effort": "high", "extra_body": {"thinking": {"type": "enabled"}}}
+
+    # Kimi K3: low/minimum/light/minimal -> low
+    k3_low = DeepSeekChatOpenAI.reasoning_kwargs(
+        ModelConfig(provider="kimi", model="k3", reasoning_effort="low"),
+    )
+    assert k3_low == {"reasoning_effort": "low", "extra_body": {"thinking": {"type": "enabled"}}}
+
+    k3_light = DeepSeekChatOpenAI.reasoning_kwargs(
+        ModelConfig(provider="kimi", model="k3", reasoning_effort="light"),
+    )
+    assert k3_light == {"reasoning_effort": "low", "extra_body": {"thinking": {"type": "enabled"}}}
+
+    # Kimi K3: none -> thinking.type disabled
+    k3_none = DeepSeekChatOpenAI.reasoning_kwargs(
+        ModelConfig(provider="kimi", model="k3", reasoning_effort="none"),
+    )
+    assert k3_none == {"extra_body": {"thinking": {"type": "disabled"}}}
+
+    # Kimi non-K3 (e.g. kimi-k2.6): medium -> enabled (no reasoning_effort)
+    k26_medium = DeepSeekChatOpenAI.reasoning_kwargs(
+        ModelConfig(provider="kimi", model="kimi-k2.6", reasoning_effort="medium"),
+    )
+    assert k26_medium == {"extra_body": {"thinking": {"type": "enabled"}}}

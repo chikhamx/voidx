@@ -7,7 +7,7 @@ from typing import Any
 
 from langchain_core.messages import AIMessage, BaseMessage, HumanMessage, ToolMessage
 
-from voidx.llm.compaction import _dedupe, _message_text
+from voidx.llm.compaction.fallback_summary import dedupe, message_text
 from voidx.llm.message_markers import (
     STEP_HINT_MARKER,
     is_guidance_message,
@@ -37,7 +37,7 @@ def generate_fallback_summary(state: Mapping[str, Any]) -> str:
     if tool_result_count:
         lines.append(f"Tool results available: {tool_result_count}")
     if files:
-        lines.append(f"Relevant paths: {', '.join(_dedupe(files)[:5])}")
+        lines.append(f"Relevant paths: {', '.join(dedupe(files)[:5])}")
 
     lines.append("Pending: continue from the current context or refine the request for the remaining work.")
     return "\n".join(lines)
@@ -54,7 +54,7 @@ def _latest_user_text(messages: list[BaseMessage]) -> str:
             and not is_step_hint_message(message)
             and not is_guidance_message(message)
         ):
-            return _message_text(message).strip()
+            return message_text(message).strip()
     return ""
 
 
@@ -76,7 +76,7 @@ def _extract_file_mentions(tool_results: Mapping[Any, Any]) -> list[str]:
 
 def _extract_file_mentions_from_messages(messages: list[BaseMessage]) -> list[str]:
     pseudo_results = {
-        str(index): _message_text(message)
+        str(index): message_text(message)
         for index, message in enumerate(messages)
         if isinstance(message, ToolMessage)
     }

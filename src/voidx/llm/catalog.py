@@ -362,11 +362,18 @@ async def _merge_custom(provider: str, base: list[str]) -> list[str]:
     return _sort_models_latest_first(result)
 
 
+def _registered_static_models(provider: str) -> list[str]:
+    spec = get(provider)
+    if spec is not None and spec.static_models:
+        return list(spec.static_models)
+    return STATIC_MODELS.get(provider, [])
+
+
 def _static_fallback_models(provider: str, protocol: str | None = None) -> list[str]:
-    models = STATIC_MODELS.get(provider, [])
+    models = _registered_static_models(provider)
     if models or not protocol:
         return _sort_models_latest_first(models)
-    return _sort_models_latest_first(STATIC_MODELS.get(protocol, []))
+    return _sort_models_latest_first(_registered_static_models(protocol))
 
 
 async def list_fallback_models(provider: str, protocol: str | None = None) -> list[str]:

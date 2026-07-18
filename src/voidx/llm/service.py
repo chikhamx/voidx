@@ -7,7 +7,6 @@ from langchain_core.messages import AIMessageChunk
 
 from voidx.config import ModelConfig
 from voidx.llm import provider
-from voidx.llm.provider import DeepSeekChatOpenAI
 
 
 def resolve_protocol(config: ModelConfig) -> str:
@@ -30,11 +29,16 @@ def extract_thinking(chunk: AIMessageChunk, protocol: str) -> str:
 def get_context_limit(provider_name: str, protocol: str = "", context_window: int | None = None) -> int:
     return provider.get_context_limit(provider_name, protocol, context_window)
 
+
+def get_resolver_structured_output_method(model: BaseChatModel) -> str | None:
+    method = getattr(model, "resolver_structured_output_method", None)
+    return method if method in {"json_mode", "function_calling"} else None
+
 __all__ = [
     "create_chat_model",
     "create_resolver_model",
-    "DeepSeekChatOpenAI",
     "extract_thinking",
     "get_context_limit",
+    "get_resolver_structured_output_method",
     "resolve_protocol",
 ]

@@ -58,10 +58,7 @@ def test_state_update_applies_intent_resolution_patch():
 @pytest.mark.asyncio
 async def test_workflow_context_skips_trigger_matching_when_resolver_join_is_absent(tmp_path):
     context = await InstructionService(str(tmp_path)).workflow_context_for(
-        "implement a feature",
-        task_intent="coding",
         goal_type="feature",
-        interaction_mode="auto",
         workflow_start=None,
     )
 

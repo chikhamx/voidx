@@ -577,11 +577,7 @@ class VoidXGraph(
         workflow_start = plan.join if plan is not None else ""
         goal_type = goal_type_from_join(workflow_start)
         workflow_runtime_context = await self._workflow_context_for(
-            description,
-            agent="",
-            task_intent=goal_resolution.intent.type.value,
             goal_type=goal_type,
-            interaction_mode=InteractionMode.AUTO.value,
             scope=goal.label if goal is not None else description,
             workflow_start=workflow_start,
         )

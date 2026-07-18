@@ -27,7 +27,7 @@ PROVIDER_DEFAULTS = {
     "mimo-token-plan": ("deepseek", DeepSeekChatOpenAI, "https://token-plan-cn.xiaomimimo.com/v1"),
     "qwen": ("deepseek", DeepSeekChatOpenAI, "https://dashscope.aliyuncs.com/compatible-mode/v1"),
     "zhipu": ("deepseek", DeepSeekChatOpenAI, "https://open.bigmodel.cn/api/paas/v4"),
-    "kimi": ("deepseek", DeepSeekChatOpenAI, "https://api.moonshot.cn/v1"),
+    "kimi": ("deepseek", DeepSeekChatOpenAI, "https://api.kimi.com/coding/v1"),
     "doubao": ("deepseek", DeepSeekChatOpenAI, "https://ark.cn-beijing.volces.com/api/v3"),
     "minimax": ("deepseek", DeepSeekChatOpenAI, "https://api.minimax.io/v1"),
     "longcat": ("deepseek", DeepSeekChatOpenAI, "https://api.longcat.chat/openai/v1"),
@@ -578,3 +578,39 @@ def test_xunfei_coding_plan_passes_through_reasoning_effort():
     )
     assert off.reasoning_effort is None
     assert off.extra_body == {"reasoning": {"effort": "none"}}
+
+
+def test_model_temperature_overrides():
+    # 1. deepseek-reasoner should omit temperature
+    ds_reasoner = create_chat_model(
+        "test-key",
+        ModelConfig(provider="deepseek", model="deepseek-reasoner", temperature=0.3),
+    )
+    assert getattr(ds_reasoner, "temperature", None) is None
+
+    # 2. OpenAI reasoning models (o1, o3) should override temperature to 1.0
+    o1_model = create_chat_model(
+        "test-key",
+        ModelConfig(provider="openai", model="o1-mini", temperature=0.3),
+    )
+    assert getattr(o1_model, "temperature", None) == 1.0
+
+    o3_model = create_chat_model(
+        "test-key",
+        ModelConfig(provider="openai", model="o3-mini", temperature=0.3),
+    )
+    assert getattr(o3_model, "temperature", None) == 1.0
+
+    # 3. Kimi models should override temperature to 1.0
+    kimi_model = create_chat_model(
+        "test-key",
+        ModelConfig(provider="kimi", model="kimi-k2.5", temperature=0.3),
+    )
+    assert getattr(kimi_model, "temperature", None) == 1.0
+
+    # 4. Standard models should preserve the configured temperature
+    gpt4o = create_chat_model(
+        "test-key",
+        ModelConfig(provider="openai", model="gpt-4o", temperature=0.3),
+    )
+    assert getattr(gpt4o, "temperature", None) == 0.3

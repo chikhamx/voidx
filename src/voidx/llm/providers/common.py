@@ -38,13 +38,28 @@ def openai_effort(effort: str | None) -> str | None:
 
 
 def thinking_toggle(config: ModelConfig) -> dict:
-    """``extra_body.thinking`` enabled/disabled for deepseek-protocol providers."""
+    """``extra_body.thinking`` enabled/disabled for compatible providers."""
     effort = normalized_effort(config.reasoning_effort)
     if effort is None:
         return {}
     if effort == "none":
         return {"extra_body": {"thinking": {"type": "disabled"}}}
     return {"extra_body": {"thinking": {"type": "enabled"}}}
+
+
+def nested_reasoning(config: ModelConfig) -> dict:
+    """Map reasoning effort to ``extra_body.reasoning.effort``."""
+    effort = openai_effort(config.reasoning_effort)
+    if effort is None:
+        return {}
+    return {"extra_body": {"reasoning": {"effort": effort}}}
+
+
+def zhipu_reasoning(config: ModelConfig) -> dict:
+    """Enable GLM thinking only for models that support it."""
+    if not supports_zhipu_thinking(config.model):
+        return {}
+    return thinking_toggle(config)
 
 
 _ZHIPU_THINKING_MODELS = (

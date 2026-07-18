@@ -7,6 +7,68 @@ import pytest
 from langchain_core.messages import AIMessage, HumanMessage, SystemMessage, ToolMessage
 
 
+
+class _StubEncoding:
+    def __init__(self, token_count: int):
+        self.token_count = token_count
+
+    def encode(self, _text: str) -> list[int]:
+        return list(range(self.token_count))
+
+
+def test_count_tokens_uses_and_caches_model_encoding(monkeypatch):
+    import voidx.llm.context as context_module
+
+    calls = []
+    encodings = {
+        "model-a": _StubEncoding(2),
+        "model-b": _StubEncoding(5),
+    }
+
+    def encoding_for_model(model):
+        calls.append(model)
+        return encodings[model]
+
+    monkeypatch.setattr(context_module.tiktoken, "encoding_for_model", encoding_for_model)
+    context_module._get_encoding.cache_clear()
+
+    assert context_module.count_tokens("same text", "model-a") == 2
+    assert context_module.count_tokens("same text", "model-b") == 5
+    assert context_module.count_tokens("same text", "model-a") == 2
+    assert calls == ["model-a", "model-b"]
+
+    context_module._get_encoding.cache_clear()
+
+
+def test_count_tokens_falls_back_stably_when_model_encoding_is_unavailable(monkeypatch):
+    import voidx.llm.context as context_module
+
+    model_calls = []
+    base_calls = []
+    fallback = _StubEncoding(3)
+
+    def unavailable_model(model):
+        model_calls.append(model)
+        raise ValueError("unknown or non-OpenAI model")
+
+    def get_encoding(name):
+        base_calls.append(name)
+        if name == "cl100k_base":
+            return fallback
+        raise ValueError(name)
+
+    monkeypatch.setattr(context_module.tiktoken, "encoding_for_model", unavailable_model)
+    monkeypatch.setattr(context_module.tiktoken, "get_encoding", get_encoding)
+    context_module._get_encoding.cache_clear()
+
+    assert context_module.count_tokens("same text", "provider/custom") == 3
+    assert context_module.count_tokens("same text", "provider/custom") == 3
+    assert context_module.count_tokens("same text", "") == 3
+    assert model_calls == ["provider/custom"]
+    assert base_calls == ["cl100k_base"]
+
+    context_module._get_encoding.cache_clear()
+
 from voidx.agent.graph.wiring import build_compaction_service
 from voidx.config import Config
 from voidx.llm.compaction import (
@@ -65,11 +127,12 @@ class TestSelectTokenCounting:
         assert svc.soft_ratio == 0.65
         assert svc.post_target_ratio == 0.12
 
-    def test_select_preflight_details_keeps_minimum_two_turn_tail_even_over_target(self, monkeypatch):
-        import voidx.llm.compaction as compaction_module
-
-        monkeypatch.setattr(compaction_module, "estimate_context_tokens", _sized_token_count)
-        svc = CompactionService(context_limit=1_000, output_token_max=100)
+    def test_select_preflight_details_keeps_minimum_two_turn_tail_even_over_target(self):
+        svc = CompactionService(
+            context_limit=1_000,
+            output_token_max=100,
+            token_counter=_sized_token_count,
+        )
         messages = [
             _sized_human("old", "u1", 10),
             _sized_ai("old answer", 10),
@@ -88,11 +151,12 @@ class TestSelectTokenCounting:
             "current",
         ]
 
-    def test_select_preflight_details_expands_recent_tail_until_target(self, monkeypatch):
-        import voidx.llm.compaction as compaction_module
-
-        monkeypatch.setattr(compaction_module, "estimate_context_tokens", _sized_token_count)
-        svc = CompactionService(context_limit=1_000, output_token_max=100)
+    def test_select_preflight_details_expands_recent_tail_until_target(self):
+        svc = CompactionService(
+            context_limit=1_000,
+            output_token_max=100,
+            token_counter=_sized_token_count,
+        )
         messages = [
             _sized_human("old 1", "u1", 60),
             _sized_ai("old answer 1", 60),

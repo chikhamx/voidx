@@ -5,28 +5,15 @@ from __future__ import annotations
 import asyncio
 import sys
 
-_STATIC_PROVIDERS = [
-    "anthropic",
-    "openai",
-    "deepseek",
-    "openrouter",
-    "mimo",
-    "mimo-token-plan",
-    "qwen",
-    "zhipu",
-    "kimi",
-    "doubao",
-    "typex",
-    "minimax",
-    "longcat",
-    "xunfei-coding-plan",
-    "gemini",
-]
+def _builtin_providers() -> list[str]:
+    from voidx.llm.providers import all_specs
+
+    return [spec.name for spec in all_specs()]
 
 
 async def get_providers(settings=None) -> list[str]:
-    """Return providers list, merging static + custom providers from settings."""
-    base = list(_STATIC_PROVIDERS)
+    """Return registered providers merged with custom settings providers."""
+    base = _builtin_providers()
     if settings:
         for profile in await settings.list_profiles():
             if profile.provider not in base:
@@ -38,8 +25,21 @@ async def get_providers(settings=None) -> list[str]:
     return base
 
 
-# Backward-compatible alias (static list only).
-PROVIDERS = list(_STATIC_PROVIDERS)
+class _ProviderNames:
+    def __iter__(self):
+        return iter(_builtin_providers())
+
+    def __len__(self) -> int:
+        return len(_builtin_providers())
+
+    def __contains__(self, value: object) -> bool:
+        return value in _builtin_providers()
+
+    def __eq__(self, other: object) -> bool:
+        return _builtin_providers() == other
+
+
+PROVIDERS = _ProviderNames()
 
 
 def _w(text: str) -> None:

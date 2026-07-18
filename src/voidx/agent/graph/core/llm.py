@@ -62,7 +62,6 @@ from .helpers import (
     _persona_for_workflow_runs,
     _render_inline_compaction_guide,
     _task_state_for_context,
-    _workflow_names,
     _LLM_MAX_RETRIES,
     _LLM_TIMEOUT_MAX_RETRIES,
 )
@@ -101,13 +100,8 @@ class GraphLlmMixin:
             else None
         )
         workflow_context = await self._workflow_context_for(
-            current_user_text,
-            agent=runtime_persona,
-            task_intent=task_state.current_intent.value,
             goal_type=goal_type_from_join(workflow_start),
-            interaction_mode=interaction_mode,
             scope=goal_label(current_goal) or current_user_text,
-            exclude_names=_workflow_names(existing_workflow_runs),
             active_names=active_workflow_names(existing_workflow_runs),
             workflow_start=workflow_start,
         )
