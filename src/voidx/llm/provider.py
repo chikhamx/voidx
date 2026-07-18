@@ -1,4 +1,9 @@
-"""LLM Provider layer — typed abstraction over LangChain ChatModels.
+"""LLM Provider layer — protocol-level factory over LangChain ChatModels.
+
+Per-provider metadata (default base URLs, static models, context limits,
+reasoning hooks) lives in :mod:`voidx.llm.providers`; this module keeps the
+protocol dispatch, the chat-model factory, thinking extraction, and the
+stable import surface used by ``service.py`` and tests.
 
 Four protocols:
   - ``anthropic``  — first-party Anthropic API
@@ -6,594 +11,64 @@ Four protocols:
   - ``deepseek``   — China-domestic OpenAI-compatible providers (DeepSeek, Qwen,
                      Zhipu/GLM, Doubao, Mimo, Kimi, Typex, MiniMax, etc.)
   - ``gemini``     — Google Gemini native API (via langchain-google-genai)
-
-The ``deepseek`` protocol uses :class:`DeepSeekChatOpenAI`, a ``ChatOpenAI``
-subclass that preserves ``reasoning_content`` in streaming chunks (LangChain
-silently drops it) and handles provider-specific reasoning-effort mapping.
 """
 
 from __future__ import annotations
 
 import os
-import subprocess
-import sys
 
 from langchain_anthropic import ChatAnthropic
-from langchain_openai import ChatOpenAI
 from langchain_core.language_models import BaseChatModel
-from langchain_core.messages import AIMessageChunk
-from langchain_core.outputs import ChatGenerationChunk
 
 from voidx.config import ModelConfig
+from voidx.llm.providers import get
+from voidx.llm.providers.base import PROTOCOL_DEEPSEEK
+from voidx.llm.providers.anthropic import anthropic_reasoning as _anthropic_reasoning_kwargs
+from voidx.llm.providers.deepseek import DeepSeekChatOpenAI
+from voidx.llm.providers.gemini import (
+    _is_gemini3_plus,
+    ensure_gemini_dep as _ensure_gemini_dep,
+    gemini_reasoning as _gemini_reasoning_kwargs,
+    strip_gemini_version_suffix as _strip_gemini_version_suffix,
+)
+from voidx.llm.providers.openai import (
+    OFFICIAL_OPENAI_BASE_URLS as _OFFICIAL_OPENAI_BASE_URLS,
+    OFFICIAL_OPENAI_PROVIDERS as _OFFICIAL_OPENAI_PROVIDERS,
+    ReasoningPreservingChatOpenAI,
+    openai_reasoning as _openai_compatible_reasoning_kwargs,
+    strip_stainless_headers as _strip_stainless_headers,
+)
 
 
 # ── protocol resolution ───────────────────────────────────────────────────
-
-_OFFICIAL_OPENAI_PROVIDERS = {"openai", "openrouter"}
-
-_STAINLESS_HEADERS_TO_STRIP = {
-    "x-stainless-lang",
-    "x-stainless-os",
-    "x-stainless-arch",
-    "x-stainless-runtime",
-    "x-stainless-runtime-version",
-    "x-stainless-package-version",
-    "x-stainless-async",
-    "x-stainless-retry-count",
-}
-
-
-def _strip_stainless_headers() -> dict[str, str]:
-    """Return headers that clear OpenAI SDK fingerprint for third-party relays.
-
-    Many third-party relays block requests carrying x-stainless-* headers
-    to prevent unmodified SDK access.
-    """
-    return {k: "" for k in _STAINLESS_HEADERS_TO_STRIP} | {"User-Agent": "voidx/1.0"}
-
-
-PROTOCOL_DEEPSEEK = "deepseek"
-
-
-_PROVIDER_PROTOCOLS: dict[str, str] = {
-    "anthropic": "anthropic",
-    "openai": "openai",
-    "openrouter": "openai",
-    # China-domestic providers — all use the deepseek protocol
-    "deepseek": PROTOCOL_DEEPSEEK,
-    "mimo": PROTOCOL_DEEPSEEK,
-    "mimo-token-plan": PROTOCOL_DEEPSEEK,
-    "qwen": PROTOCOL_DEEPSEEK,
-    "zhipu": PROTOCOL_DEEPSEEK,
-    "kimi": PROTOCOL_DEEPSEEK,
-    "doubao": PROTOCOL_DEEPSEEK,
-    "typex": PROTOCOL_DEEPSEEK,
-    "minimax": PROTOCOL_DEEPSEEK,
-    "longcat": PROTOCOL_DEEPSEEK,
-    # Xunfei Astron Coding Plan — OpenAI-compatible proxy
-    "xunfei-coding-plan": "openai",
-    "gemini": "gemini",
-}
-
-_DEFAULT_BASE_URLS: dict[tuple[str, str], str] = {
-    ("anthropic", "anthropic"): "https://api.anthropic.com",
-    ("openai", "openai"): "https://api.openai.com/v1",
-    ("openrouter", "openai"): "https://openrouter.ai/api/v1",
-    ("deepseek", PROTOCOL_DEEPSEEK): "https://api.deepseek.com/v1",
-    ("mimo", PROTOCOL_DEEPSEEK): "https://api.xiaomimimo.com/v1",
-    ("mimo-token-plan", PROTOCOL_DEEPSEEK): "https://token-plan-cn.xiaomimimo.com/v1",
-    ("qwen", PROTOCOL_DEEPSEEK): "https://dashscope.aliyuncs.com/compatible-mode/v1",
-    ("zhipu", PROTOCOL_DEEPSEEK): "https://open.bigmodel.cn/api/paas/v4",
-    ("kimi", PROTOCOL_DEEPSEEK): "https://api.moonshot.cn/v1",
-    ("doubao", PROTOCOL_DEEPSEEK): "https://ark.cn-beijing.volces.com/api/v3",
-    ("typex", PROTOCOL_DEEPSEEK): "https://newapi.typex-test.cn/v1",
-    ("minimax", PROTOCOL_DEEPSEEK): "https://api.minimax.io/v1",
-    ("longcat", PROTOCOL_DEEPSEEK): "https://api.longcat.chat/openai/v1",
-    ("xunfei-coding-plan", "openai"): "https://maas-coding-api.cn-huabei-1.xf-yun.com/v2",
-}
-
-_OFFICIAL_OPENAI_BASE_URLS = {
-    "https://api.openai.com",
-    "https://api.openai.com/v1",
-}
 
 
 def resolve_protocol(config: ModelConfig) -> str:
     if config.protocol:
         return config.protocol
-    return _PROVIDER_PROTOCOLS.get(config.provider, "openai")
+    spec = get(config.provider)
+    return spec.protocol if spec is not None else "openai"
 
 
 def _normalize_base_url(url: str) -> str:
     return url.strip().rstrip("/")
 
 
-_GEMINI_API_VERSION = "v1beta"
-
-
-def _strip_gemini_version_suffix(url: str) -> str:
-    """Strip a trailing /v1beta from a Gemini base_url.
-
-    google-genai SDK appends the api version (v1beta) to every request URL,
-    so a user-supplied base_url that already ends with /v1beta produces
-    /v1beta/v1beta/... and a 404.
-    """
-    normalized = url.strip().rstrip("/")
-    suffix = f"/{_GEMINI_API_VERSION}"
-    if normalized.endswith(suffix):
-        return normalized[: -len(suffix)]
-    return normalized
-
-
 def _resolve_base_url(config: ModelConfig, protocol: str) -> str:
-    provider_protocol = _PROVIDER_PROTOCOLS.get(config.provider)
+    spec = get(config.provider)
     stale_openai_base_url = (
-        provider_protocol is not None
-        and provider_protocol != "openai"
+        spec is not None
+        and spec.protocol != "openai"
         and _normalize_base_url(config.base_url or "") in _OFFICIAL_OPENAI_BASE_URLS
     )
     if config.base_url and not stale_openai_base_url:
         return config.base_url
-    if provider_protocol:
-        default = _DEFAULT_BASE_URLS.get((config.provider, provider_protocol))
-        if default:
-            return default
-    return _DEFAULT_BASE_URLS.get((config.provider, protocol), "")
+    if spec is not None:
+        return spec.default_base_url
+    return ""
 
 
-# ── shared reasoning constants ────────────────────────────────────────────
-
-_ANTHROPIC_BUDGETS = {
-    "low": 1_024,
-    "medium": 4_096,
-    "high": 8_192,
-}
-
-_QWEN_THINKING_MODELS = (
-    "qwen3",
-    "qwq",
-)
-
-_ZHIPU_THINKING_MODELS = (
-    "glm-4.5",
-    "glm-4.6",
-    "glm-4.7",
-    "glm-5",
-)
-
-
-# ── DeepSeekChatOpenAI — China-domestic OpenAI-compatible subclass ────────
-
-
-class DeepSeekChatOpenAI(ChatOpenAI):
-    """Unified ``ChatOpenAI`` subclass for China-domestic providers.
-
-    Solves two problems common to all these providers:
-
-    1. **Streaming reasoning_content loss** — LangChain's
-       ``_convert_delta_to_message_chunk`` silently drops ``reasoning_content``
-       from the streaming delta.  We intercept the raw chunk and inject it
-       into ``additional_kwargs`` so that ``_extract_thinking_openai`` can
-       find it.
-
-    2. **Provider-specific reasoning parameters** — each provider has its own
-       ``extra_body`` schema for enabling/disabling thinking and mapping
-       effort levels.  :meth:`reasoning_kwargs` handles the differences,
-       accepting unified effort values (xhigh / high / medium / low / none)
-       and mapping them to provider-specific formats internally.
-    """
-
-    @property
-    def has_active_reasoning(self) -> bool:
-        """Return True when thinking/reasoning mode is currently active.
-
-        Checks the provider-specific reasoning configuration that
-        :meth:`reasoning_kwargs` bakes into the model instance.  Used by
-        callers (e.g. goal resolver) to decide whether ``tool_choice``
-        is safe — several providers reject ``tool_choice`` while
-        thinking mode is enabled.
-        """
-        if getattr(self, "reasoning_effort", None):
-            return True
-        extra = getattr(self, "extra_body", None) or {}
-        if extra.get("enable_thinking"):
-            return True
-        thinking = extra.get("thinking", {})
-        if isinstance(thinking, dict) and thinking.get("type") in ("enabled", "auto"):
-            return True
-        return False
-
-    # ── streaming reasoning_content preservation ──────────────────────────
-
-    def _convert_chunk_to_generation_chunk(  # type: ignore[override]
-        self,
-        chunk: dict,
-        default_chunk_class: type,
-        base_generation_info: dict | None,
-    ) -> ChatGenerationChunk | None:
-        generation_chunk = super()._convert_chunk_to_generation_chunk(
-            chunk, default_chunk_class, base_generation_info
-        )
-        if generation_chunk is None:
-            return None
-
-        msg = generation_chunk.message
-        if not isinstance(msg, AIMessageChunk):
-            return generation_chunk
-
-        # Extract reasoning_content from the raw delta dict
-        choices = chunk.get("choices") or []
-        if choices:
-            delta = choices[0].get("delta") or {}
-            _preserve_reasoning_delta(msg, delta)
-
-        return generation_chunk
-
-    # ── multi-turn reasoning_content injection ──────────────────────────────
-
-    def _get_request_payload(self, input_, *, stop=None, **kwargs):
-        """Inject reasoning_content into assistant message dicts.
-
-        DeepSeek's thinking mode requires ``reasoning_content`` to be passed
-        back as a top-level field on assistant messages in multi-turn
-        conversations.  LangChain's ``_convert_message_to_dict`` silently
-        drops ``additional_kwargs.reasoning_content``, so we re-inject it
-        after the parent builds the payload.
-        """
-        payload = super()._get_request_payload(input_, stop=stop, **kwargs)
-        messages = payload.get("messages")
-        if not isinstance(messages, list):
-            return payload
-
-        original_messages = self._convert_input(input_).to_messages()
-        for i, msg_dict in enumerate(messages):
-            if not isinstance(msg_dict, dict) or msg_dict.get("role") != "assistant":
-                continue
-            if i >= len(original_messages):
-                break
-            orig = original_messages[i]
-            rc = getattr(orig, "additional_kwargs", {}).get("reasoning_content")
-            if isinstance(rc, str) and rc:
-                msg_dict["reasoning_content"] = rc
-
-        return payload
-
-    # ── provider-specific reasoning effort mapping ────────────────────────
-
-    @staticmethod
-    def reasoning_kwargs(config: ModelConfig) -> dict:
-        """Return reasoning kwargs for China-domestic providers.
-
-        Accepts unified effort values (xhigh / high / medium / low / none)
-        and maps them to each provider's specific format:
-
-          - deepseek: ``reasoning_effort`` top-level + ``extra_body.thinking.type``
-          - qwen:     ``extra_body.enable_thinking`` + ``thinking_budget``
-          - zhipu/typex: ``extra_body.thinking.type`` (model-gated)
-          - doubao:   ``extra_body.thinking.type`` (model-gated, supports "auto")
-          - mimo/kimi: ``extra_body.thinking.type``
-          - minimax:  ``extra_body.thinking.type`` + ``reasoning_split``
-
-        Unknown providers with the deepseek protocol fall back to DeepSeek format.
-        """
-        effort = _normalized_effort(config.reasoning_effort)
-        provider = config.provider
-
-        # ── DeepSeek ──────────────────────────────────────────────────────
-        if provider == PROTOCOL_DEEPSEEK:
-            if effort is None:
-                return {}
-            if effort == "none":
-                return {"extra_body": {"thinking": {"type": "disabled"}}}
-            ds_effort = "max" if effort in ("xhigh", "max") else "high"
-            return {"reasoning_effort": ds_effort, "extra_body": {"thinking": {"type": "enabled"}}}
-
-        # ── Qwen ──────────────────────────────────────────────────────────
-        if provider == "qwen":
-            if effort is None:
-                return {}
-            if not _supports_qwen_thinking(config.model):
-                return {}
-            if effort == "none":
-                return {"extra_body": {"enable_thinking": False}}
-            budget = _ANTHROPIC_BUDGETS.get(effort, _ANTHROPIC_BUDGETS["high"])
-            budget = min(budget, max(config.max_tokens - 1, 1))
-            return {"extra_body": {"enable_thinking": True, "thinking_budget": budget}}
-
-        # ── Zhipu / Typex ─────────────────────────────────────────────────
-        if provider in ("zhipu", "typex"):
-            if effort is None:
-                return {}
-            if not _supports_zhipu_thinking(config.model):
-                return {}
-            if effort == "none":
-                return {"extra_body": {"thinking": {"type": "disabled"}}}
-            return {"extra_body": {"thinking": {"type": "enabled"}}}
-
-        # ── Doubao ────────────────────────────────────────────────────────
-        if provider == "doubao":
-            if not _supports_doubao_thinking(config.model):
-                return {}
-            raw_effort = (config.reasoning_effort or "").strip().lower()
-            if effort is None or effort == "none":
-                thinking_type = "disabled"
-            elif raw_effort == "auto":
-                thinking_type = "auto"
-            else:
-                thinking_type = "enabled"
-            return {"extra_body": {"thinking": {"type": thinking_type}}}
-
-        # ── Mimo / Kimi ───────────────────────────────────────────────────
-        if provider in ("mimo", "mimo-token-plan", "kimi", "longcat"):
-            if effort is None:
-                return {}
-            if effort == "none":
-                return {"extra_body": {"thinking": {"type": "disabled"}}}
-            return {"extra_body": {"thinking": {"type": "enabled"}}}
-
-        # ── MiniMax ────────────────────────────────────────────────────────
-        if provider == "minimax":
-            if effort is None:
-                return {}
-            if effort == "none":
-                return {"extra_body": {"thinking": {"type": "disabled"}}}
-            return {"extra_body": {"thinking": {"type": "enabled"}, "reasoning_split": True}}
-
-        # ── Fallback: unknown provider with deepseek protocol ─────────────
-        if effort is None:
-            return {}
-        if effort == "none":
-            return {"extra_body": {"thinking": {"type": "disabled"}}}
-        ds_effort = "max" if effort in ("xhigh", "max") else "high"
-        return {"reasoning_effort": ds_effort, "extra_body": {"thinking": {"type": "enabled"}}}
-
-
-class ReasoningPreservingChatOpenAI(ChatOpenAI):
-    """OpenAI-compatible chat model that preserves streaming reasoning deltas."""
-
-    def _convert_chunk_to_generation_chunk(  # type: ignore[override]
-        self,
-        chunk: dict,
-        default_chunk_class: type,
-        base_generation_info: dict | None,
-    ) -> ChatGenerationChunk | None:
-        generation_chunk = super()._convert_chunk_to_generation_chunk(
-            chunk, default_chunk_class, base_generation_info
-        )
-        if generation_chunk is None:
-            return None
-
-        msg = generation_chunk.message
-        if not isinstance(msg, AIMessageChunk):
-            return generation_chunk
-
-        choices = chunk.get("choices") or []
-        if choices:
-            delta = choices[0].get("delta") or {}
-            _preserve_reasoning_delta(msg, delta)
-
-        return generation_chunk
-
-
-def _preserve_reasoning_delta(msg: AIMessageChunk, delta: dict) -> None:
-    rc = delta.get("reasoning_content")
-    if isinstance(rc, str) and rc:
-        msg.additional_kwargs["reasoning_content"] = rc
-
-    reasoning = delta.get("reasoning")
-    if reasoning:
-        msg.additional_kwargs["reasoning"] = reasoning
-
-    thinking = delta.get("thinking")
-    if thinking:
-        msg.additional_kwargs["thinking"] = thinking
-
-    rd = delta.get("reasoning_details")
-    if isinstance(rd, list) and rd:
-        items = [
-            item for item in rd
-            if isinstance(item, dict) and isinstance(item.get("text"), str) and item["text"]
-        ]
-        if items:
-            msg.additional_kwargs["reasoning_details"] = items
-
-
-# ── effort helpers (shared) ──────────────────────────────────────────────
-
-
-def _normalized_effort(effort: str | None) -> str | None:
-    if effort is None:
-        return None
-    value = effort.strip().lower()
-    if value in {"", "off", "none"}:
-        return "none"
-    if value in {"minimal", "low", "medium", "high", "xhigh", "max"}:
-        return value
-    return "medium"
-
-
-def _supports_qwen_thinking(model: str) -> bool:
-    name = model.lower()
-    return name.startswith(_QWEN_THINKING_MODELS)
-
-
-def _supports_zhipu_thinking(model: str) -> bool:
-    name = model.lower()
-    return any(p in name for p in _ZHIPU_THINKING_MODELS)
-
-
-_DOUBAO_THINKING_MODELS = (
-    "doubao-seed",
-    "seed-1.6",
-)
-
-
-def _supports_doubao_thinking(model: str) -> bool:
-    name = model.lower()
-    return any(p in name for p in _DOUBAO_THINKING_MODELS)
-
-
-_GEMINI3_PREFIXES = (
-    "gemini-3",
-    "gemini-4",
-)
-
-
-def _is_gemini3_plus(model: str) -> bool:
-    """Whether a Gemini model uses thinking_level (3+) vs thinking_budget (2.5)."""
-    return any(model.lower().startswith(p) for p in _GEMINI3_PREFIXES)
-
-
-_GEMINI_THINKING_BUDGETS = {
-    "minimal": 1_024,
-    "low": 4_096,
-    "medium": 8_192,
-    "high": 16_384,
-    "xhigh": 32_768,
-    "max": 65_536,
-}
-
-
-def _gemini_reasoning_kwargs(config: ModelConfig) -> dict:
-    effort = _normalized_effort(config.reasoning_effort)
-    if effort in (None, "none"):
-        return {}
-    kwargs: dict = {"include_thoughts": True}
-    if _is_gemini3_plus(config.model):
-        level_map = {
-            "minimal": "minimal",
-            "low": "low",
-            "medium": "medium",
-            "high": "high",
-            "xhigh": "high",
-            "max": "high",
-        }
-        kwargs["thinking_level"] = level_map.get(effort, "medium")
-    else:
-        kwargs["thinking_budget"] = _GEMINI_THINKING_BUDGETS.get(effort, 8_192)
-    return kwargs
-
-
-# ── Anthropic reasoning ──────────────────────────────────────────────────
-
-_REASONING_PREFIXES = (
-    "gpt-5",
-    "o1",
-    "o3",
-    "o4",
-)
-
-
-def _supports_openai_reasoning(model: str) -> bool:
-    name = model.lower()
-    return name.startswith(_REASONING_PREFIXES)
-
-
-def _supports_anthropic_effort(model: str) -> bool:
-    name = model.lower()
-    return "claude-opus-4-" in name
-
-
-def _anthropic_reasoning_kwargs(config: ModelConfig) -> dict:
-    """Return Anthropic-compatible reasoning kwargs for first-party Claude models."""
-    effort = _normalized_effort(config.reasoning_effort)
-    if effort in (None, "none"):
-        return {}
-    if _supports_anthropic_effort(config.model):
-        level = {"minimal": "low"}.get(effort, effort)
-        return {"thinking": {"type": "adaptive"}, "effort": level}
-    budget = _ANTHROPIC_BUDGETS.get(effort, _ANTHROPIC_BUDGETS["high"])
-    budget = min(budget, max(config.max_tokens - 1, 1))
-    if budget < 1_024:
-        return {}
-    return {"thinking": {"type": "enabled", "budget_tokens": budget}}
-
-
-# ── OpenAI reasoning ─────────────────────────────────────────────────────
-
-
-def _openai_reasoning_effort(effort: str | None) -> str | None:
-    """Map unified reasoning_effort to an effort string for the nested reasoning format."""
-    value = _normalized_effort(effort)
-    if value is None:
-        return None
-    return {"none": "none", "minimal": "minimal", "low": "low", "medium": "medium", "high": "high", "xhigh": "xhigh", "max": "high"}.get(value)
-
-
-def _openai_reasoning_kwargs(config: ModelConfig) -> dict:
-    effort = _openai_reasoning_effort(config.reasoning_effort)
-
-    if config.provider == "openai":
-        if effort is None:
-            return {}
-        if not _supports_openai_reasoning(config.model):
-            return {}
-        if effort == "none" and not config.model.lower().startswith("gpt-5"):
-            effort = "low"
-        return {"extra_body": {"reasoning": {"effort": effort}}}
-
-    if config.provider in ("openrouter", "xunfei-coding-plan"):
-        if effort is None:
-            return {}
-        return {"extra_body": {"reasoning": {"effort": effort}}}
-
-    # Custom providers with openai protocol: inject reasoning for known
-    # reasoning models, same as official openai.
-    if _supports_openai_reasoning(config.model):
-        if effort is None:
-            return {}
-        if effort == "none" and not config.model.lower().startswith("gpt-5"):
-            effort = "low"
-        return {"extra_body": {"reasoning": {"effort": effort}}}
-
-    return {}
-
-
-# ── model factory ────────────────────────────────────────────────────────
-
-
-def _ensure_gemini_dep() -> None:
-    """Ensure langchain-google-genai is importable; auto-install if missing.
-
-    Tries to import the package. On ImportError, silently runs
-    ``pip install langchain-google-genai`` up to 3 times, retrying the import
-    after each install. Raises ImportError with a manual install hint only
-    after all retries are exhausted.
-    """
-    try:
-        import langchain_google_genai  # noqa: F401
-        return
-    except ImportError:
-        pass
-
-    last_err = ""
-    for _ in range(3):
-        try:
-            result = subprocess.run(
-                [sys.executable, "-m", "pip", "install", "langchain-google-genai>=4.0.0"],
-                capture_output=True,
-                text=True,
-                timeout=120,
-            )
-        except subprocess.TimeoutExpired as e:
-            last_err = f"pip install timed out after 120s: {e}"
-            continue
-        if result.returncode != 0:
-            last_err = (result.stderr or result.stdout or "").strip()[-200:]
-            continue
-        try:
-            import langchain_google_genai  # noqa: F401
-            return
-        except ImportError as e:
-            last_err = str(e)
-            continue
-
-    raise ImportError(
-        "langchain-google-genai is required for Gemini protocol. "
-        "Auto-install failed"
-        + (f": {last_err}" if last_err else "")
-        + ". Install manually with: pip install voidx[gemini]"
-    )
+# ── reasoning dispatch ────────────────────────────────────────────────────
 
 
 def _reasoning_kwargs(config: ModelConfig, protocol: str) -> dict:
@@ -601,12 +76,17 @@ def _reasoning_kwargs(config: ModelConfig, protocol: str) -> dict:
         if config.provider == "anthropic":
             return _anthropic_reasoning_kwargs(config)
         return {}
-    if protocol == "openai":
-        return _openai_reasoning_kwargs(config)
-    if protocol == PROTOCOL_DEEPSEEK:
-        return DeepSeekChatOpenAI.reasoning_kwargs(config)
     if protocol == "gemini":
         return _gemini_reasoning_kwargs(config)
+    if protocol == PROTOCOL_DEEPSEEK:
+        return DeepSeekChatOpenAI.reasoning_kwargs(config)
+    if protocol == "openai":
+        spec = get(config.provider)
+        if spec is not None and spec.reasoning is not None:
+            return spec.reasoning(config)
+        # Custom providers with openai protocol: inject reasoning for known
+        # reasoning models, same as official openai.
+        return _openai_compatible_reasoning_kwargs(config)
     return {}
 
 
@@ -688,17 +168,30 @@ def create_resolver_model(
     return model_copy(update=updates)
 
 
+# ── model factory ─────────────────────────────────────────────────────────
+
+
 def create_chat_model(api_key: str, config: ModelConfig) -> BaseChatModel:
     protocol = resolve_protocol(config)
     base_url = _resolve_base_url(config, protocol)
+
+    # Resolve temperature: delegate to provider spec when it defines a
+    # temperature_override hook (e.g. deepseek-reasoner → None, kimi → 1.0,
+    # openai reasoning models → 1.0).  Fall back to config.temperature.
+    spec = get(config.provider)
+    if spec is not None and spec.temperature_override is not None:
+        temp = spec.temperature_override(config)
+    else:
+        temp = config.temperature
 
     if protocol == "anthropic":
         kwargs = dict(
             api_key=api_key,
             model=config.model,
-            temperature=config.temperature,
             max_tokens=config.max_tokens,
         )
+        if temp is not None:
+            kwargs["temperature"] = temp
         if base_url:
             kwargs["base_url"] = base_url
         kwargs.update(_reasoning_kwargs(config, protocol))
@@ -709,9 +202,10 @@ def create_chat_model(api_key: str, config: ModelConfig) -> BaseChatModel:
         kwargs = dict(
             api_key=api_key,
             model=config.model,
-            temperature=config.temperature,
             max_tokens=config.max_tokens,
         )
+        if temp is not None:
+            kwargs["temperature"] = temp
         stream_chunk_timeout = _reasoning_stream_chunk_timeout(reasoning_kwargs)
         if stream_chunk_timeout is not None:
             kwargs["stream_chunk_timeout"] = stream_chunk_timeout
@@ -725,9 +219,10 @@ def create_chat_model(api_key: str, config: ModelConfig) -> BaseChatModel:
         kwargs = dict(
             api_key=api_key,
             model=config.model,
-            temperature=config.temperature,
             max_tokens=config.max_tokens,
         )
+        if temp is not None:
+            kwargs["temperature"] = temp
         if base_url:
             kwargs["base_url"] = base_url
         if config.provider not in _OFFICIAL_OPENAI_PROVIDERS:
@@ -743,9 +238,10 @@ def create_chat_model(api_key: str, config: ModelConfig) -> BaseChatModel:
         from langchain_google_genai import ChatGoogleGenerativeAI
         kwargs = dict(
             model=config.model,
-            temperature=config.temperature,
             max_tokens=config.max_tokens,
         )
+        if temp is not None:
+            kwargs["temperature"] = temp
         if api_key:
             kwargs["api_key"] = api_key
         if base_url:
@@ -757,84 +253,9 @@ def create_chat_model(api_key: str, config: ModelConfig) -> BaseChatModel:
 
 
 # ── thinking extraction ───────────────────────────────────────────────────
+# Moved to voidx.llm.thinking; re-exported here for import compatibility.
 
-_THINKING_BLOCK_TYPES = {
-    "thinking",
-    "redacted_thinking",
-    "reasoning",
-    "reasoning_content",
-}
-
-
-def _extract_reasoning_text(value: object) -> str:
-    if isinstance(value, str):
-        return value
-    if isinstance(value, list):
-        return "".join(_extract_reasoning_text(item) for item in value)
-    if not isinstance(value, dict):
-        return ""
-
-    parts: list[str] = []
-    for key in ("thinking", "reasoning_content", "reasoning", "text", "data"):
-        field = value.get(key)
-        if isinstance(field, str):
-            parts.append(field)
-
-    summary = value.get("summary")
-    if isinstance(summary, (dict, list)):
-        parts.append(_extract_reasoning_text(summary))
-
-    return "".join(parts)
-
-
-def _extract_reasoning_blocks(content: object) -> str:
-    if not isinstance(content, list):
-        return ""
-    parts: list[str] = []
-    for item in content:
-        if isinstance(item, dict) and item.get("type") in _THINKING_BLOCK_TYPES:
-            parts.append(_extract_reasoning_text(item))
-    return "".join(parts)
-
-
-def _extract_thinking_anthropic(chunk: AIMessageChunk) -> str:
-    parts: list[str] = []
-    content_text = _extract_reasoning_blocks(chunk.content)
-    if content_text:
-        parts.append(content_text)
-
-    meta = chunk.response_metadata
-    if isinstance(meta, dict):
-        for key in ("thinking", "reasoning"):
-            text = _extract_reasoning_text(meta.get(key))
-            if text:
-                parts.append(text)
-    return "".join(parts)
-
-
-def _extract_thinking_openai(chunk: AIMessageChunk) -> str:
-    parts: list[str] = []
-    content_text = _extract_reasoning_blocks(chunk.content)
-    if content_text:
-        parts.append(content_text)
-
-    extra = chunk.additional_kwargs
-    if isinstance(extra, dict):
-        for key in ("reasoning_content", "reasoning", "thinking", "reasoning_details"):
-            text = _extract_reasoning_text(extra.get(key))
-            if text:
-                parts.append(text)
-    return "".join(parts)
-
-
-def extract_thinking(chunk: AIMessageChunk, protocol: str) -> str:
-    if protocol == "anthropic":
-        return _extract_thinking_anthropic(chunk)
-    if protocol == "gemini":
-        return _extract_thinking_anthropic(chunk) or _extract_thinking_openai(chunk)
-    # Both openai and deepseek protocols use the OpenAI-compatible
-    # extraction path (reasoning_content in additional_kwargs).
-    return _extract_thinking_openai(chunk)
+from voidx.llm.thinking import extract_thinking  # noqa: E402,F401
 
 
 # ── context limits ────────────────────────────────────────────────────────
@@ -843,25 +264,9 @@ def get_context_limit(provider: str, protocol: str = "", context_window: int | N
     """Return context-window limit for *provider*.  Falls back to *protocol* for unknown providers."""
     if context_window is not None and context_window > 0:
         return context_window
-    limits: dict[str, int] = {
-        PROTOCOL_DEEPSEEK: 1_000_000,
-        "anthropic": 200_000,
-        "openai": 1_050_000,
-        "openrouter": 128_000,
-        "mimo": 1_000_000,
-        "mimo-token-plan": 1_000_000,
-        "qwen": 1_000_000,
-        "zhipu": 200_000,
-        "kimi": 262_144,
-        "doubao": 256_000,
-        "typex": 128_000,
-        "minimax": 1_000_000,
-        "longcat": 131_072,
-        "xunfei-coding-plan": 200_000,
-        "gemini": 1_000_000,
-    }
-    if provider in limits:
-        return limits[provider]
+    spec = get(provider)
+    if spec is not None and spec.context_limit:
+        return spec.context_limit
     if protocol == "anthropic":
         return 200_000
     return 128_000

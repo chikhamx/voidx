@@ -3,6 +3,11 @@
 Each provider registers a fetcher (async callable returning model names).
 Providers without fetchers fall back to STATIC_MODELS.
 
+Per-provider metadata (static models, default base URLs, protocols) comes
+from the :mod:`voidx.llm.providers` registry; this module keeps the fetch
+machinery (protocol-level HTTP fetchers, settings binding, custom-model
+merging).
+
 Public interface:
     async def list_models(provider: str) -> list[str]
 
@@ -18,84 +23,17 @@ from collections.abc import Awaitable, Callable
 
 import httpx
 
-from voidx.llm.provider import _DEFAULT_BASE_URLS, _PROVIDER_PROTOCOLS, _strip_gemini_version_suffix, PROTOCOL_DEEPSEEK
+from voidx.llm.providers import all_specs, get
+from voidx.llm.providers.gemini import strip_gemini_version_suffix
 from voidx.logging.tool_log import log_tool_event
 
 
-# ── static fallbacks ───────────────────────────────────────────────────────
+# ── static fallbacks (derived from the provider registry) ─────────────────
 
 STATIC_MODELS: dict[str, list[str]] = {
-    "anthropic": [
-        "claude-opus-4-8",
-        "claude-sonnet-4-6",
-        "claude-opus-4-7",
-        "claude-haiku-4-5",
-    ],
-    "openai": [
-        "gpt-5.5",
-        "gpt-5.4-mini",
-        "gpt-5.4-nano",
-        "o3",
-        "o4-mini",
-    ],
-    "deepseek": [
-        "deepseek-v4-pro",
-        "deepseek-v4-flash",
-    ],
-    "mimo": [
-        "mimo-v2.5-pro",
-        "mimo-v2.5",
-        "mimo-v2.5-tts",
-    ],
-    "mimo-token-plan": [
-        "mimo-v2.5-pro",
-        "mimo-v2.5",
-        "mimo-v2.5-tts",
-    ],
-    "qwen": [
-        "qwen3.7-max",
-        "qwen3-max",
-        "qwen3.6-plus",
-        "qwen-plus",
-        "qwen-turbo",
-    ],
-    "zhipu": [
-        "glm-5.1",
-        "glm-5",
-        "glm-4.7",
-        "glm-4.7-flash",
-    ],
-    "kimi": [
-        "kimi-k2.6",
-        "kimi-k2.5",
-        "kimi-k2",
-    ],
-    "doubao": [
-        "doubao-seed-1.6-thinking",
-        "doubao-seed-1.6",
-        "doubao-seed-1.6-flash",
-    ],
-    "typex": [
-        "zai-org/GLM-5-FP8",
-    ],
-    "minimax": [
-        "MiniMax-M3",
-        "MiniMax-M2.7",
-        "MiniMax-M2.7-highspeed",
-        "MiniMax-M2.5",
-        "MiniMax-M2.5-highspeed",
-    ],
-    "longcat": [
-        "LongCat-2.0",
-    ],
-    "xunfei-coding-plan": [
-        "astron-code-latest",
-    ],
-    "gemini": [
-        "gemini-2.5-pro",
-        "gemini-2.5-flash",
-        "gemini-2.0-flash",
-    ],
+    spec.name: list(spec.static_models)
+    for spec in all_specs()
+    if spec.static_models
 }
 
 _VERSION_TOKEN_RE = re.compile(r"\d+")
@@ -187,8 +125,6 @@ async def _fetch_openrouter_models() -> list[str]:
     return result[:100]
 
 
-register_fetcher("openrouter", _fetch_openrouter_models)
-
 # ── settings binding (needed by fetchers) ─────────────────────────────────
 
 _settings = None
@@ -206,12 +142,6 @@ _SKIP_KEYWORDS = (
     "whisper", "tts", "dall-e", "dalle", "transcribe",
 )
 
-_OPENAI_COMPATIBLE_PROVIDERS = [
-    "openai", "deepseek", "mimo", "mimo-token-plan",
-    "qwen", "zhipu", "kimi", "doubao",
-    "typex", "minimax", "longcat", "xunfei-coding-plan",
-]
-
 
 async def _resolve_base_url(provider: str) -> str:
     """Resolve base URL: user-configured (from settings) or built-in default."""
@@ -222,9 +152,10 @@ async def _resolve_base_url(provider: str) -> str:
                 return url.rstrip("/")
         except Exception as exc:
             log_tool_event("llm_resolve_base_url", tool_name="catalog", message=str(exc))
-    protocol = _PROVIDER_PROTOCOLS.get(provider, "openai")
-    default = _DEFAULT_BASE_URLS.get((provider, protocol), "")
-    return default.rstrip("/")
+    spec = get(provider)
+    if spec is not None:
+        return spec.default_base_url.rstrip("/")
+    return ""
 
 
 async def _resolve_api_key(provider: str) -> str | None:
@@ -246,8 +177,7 @@ async def _fetch_openai_compatible_models(
 ) -> list[str]:
     """Fetch models from an OpenAI-compatible /models endpoint.
 
-    Used by 12 providers: openai, deepseek, mimo, mimo-token-plan, qwen,
-    zhipu, kimi, doubao, typex, minimax, longcat, xunfei-coding-plan.
+    Used by every openai/deepseek-protocol provider except OpenRouter.
     Falls back to STATIC_MODELS on any error or missing API key.
     """
     if api_key is None:
@@ -369,7 +299,7 @@ async def _fetch_gemini_models(
     if base_url is None:
         base_url = await _resolve_base_url(provider)
     base_url = base_url or _GEMINI_BASE_URL
-    base_url = _strip_gemini_version_suffix(base_url)
+    base_url = strip_gemini_version_suffix(base_url)
     url = f"{base_url}/v1beta/models"
     params = {"key": api_key}
     headers = {"x-goog-api-key": api_key}
@@ -405,10 +335,15 @@ async def _fetch_gemini_models(
 
 # ── register all built-in fetchers ────────────────────────────────────────
 
-for _provider in _OPENAI_COMPATIBLE_PROVIDERS:
-    register_fetcher(_provider, lambda p=_provider: _fetch_openai_compatible_models(p))
-    register_fetcher("anthropic", _fetch_anthropic_models)
-    register_fetcher("gemini", _fetch_gemini_models)
+for _spec in all_specs():
+    if _spec.name == "openrouter":
+        register_fetcher("openrouter", _fetch_openrouter_models)
+    elif _spec.protocol == "anthropic":
+        register_fetcher(_spec.name, _fetch_anthropic_models)
+    elif _spec.protocol == "gemini":
+        register_fetcher(_spec.name, _fetch_gemini_models)
+    else:
+        register_fetcher(_spec.name, lambda p=_spec.name: _fetch_openai_compatible_models(p))
 
 
 async def _merge_custom(provider: str, base: list[str]) -> list[str]:
@@ -446,7 +381,8 @@ async def _fetch_models_for_config(
     base_url: str | None,
     protocol: str | None,
 ) -> list[str]:
-    resolved_protocol = protocol or _PROVIDER_PROTOCOLS.get(provider, "openai")
+    spec = get(provider)
+    resolved_protocol = protocol or (spec.protocol if spec is not None else "openai")
     if resolved_protocol == "anthropic":
         return await _fetch_anthropic_models(
             provider,

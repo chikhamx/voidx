@@ -31,7 +31,6 @@ from voidx.workflow.types import WorkflowRunState
 INSTRUCTION_FILES = ["AGENTS.md", "CLAUDE.md"]  # CLAUDE.md for compat
 
 
-
 @dataclass(frozen=True)
 class WorkflowRuntimeContext:
     instructions: list[str]

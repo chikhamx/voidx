@@ -23,7 +23,8 @@ def create_resolver_model(model: BaseChatModel, config: ModelConfig) -> BaseChat
 
 
 def extract_thinking(chunk: AIMessageChunk, protocol: str) -> str:
-    return provider.extract_thinking(chunk, protocol)
+    from voidx.llm.thinking import extract_thinking as _extract
+    return _extract(chunk, protocol)
 
 
 def get_context_limit(provider_name: str, protocol: str = "", context_window: int | None = None) -> int:
