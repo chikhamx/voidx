@@ -38,6 +38,7 @@ class SubmitState:
 @dataclass
 class ChoiceState:
     queue: asyncio.Queue[str | None] = field(default_factory=asyncio.Queue)
+    prompt_lock: asyncio.Lock = field(default_factory=asyncio.Lock)
     active: list[tuple[str, str, str]] | None = None
     prompt: str = ""
     selected: int = 0

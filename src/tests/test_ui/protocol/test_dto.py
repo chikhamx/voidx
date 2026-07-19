@@ -1,5 +1,8 @@
 from __future__ import annotations
 
+import json
+from pathlib import Path
+
 import pytest
 
 from voidx.ui.output.tree import OutputTree
@@ -149,3 +152,12 @@ def test_protocol_schema_exports_v2_and_common_dto_definitions():
     assert "TranscriptSnapshot" in schema["$defs"]
     assert "UiChoiceRequest" in schema["$defs"]
     assert "UiSubmitCommand" in schema["$defs"]
+
+
+def test_checked_in_frontend_protocol_schema_matches_backend_export():
+    repo_root = Path(__file__).resolve().parents[4]
+    schema_path = repo_root / "frontend" / "src" / "rpc" / "protocol.schema.json"
+
+    checked_in = json.loads(schema_path.read_text(encoding="utf-8"))
+
+    assert checked_in == export_protocol_schema()

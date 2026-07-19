@@ -65,6 +65,7 @@ async def test_permission_prompt_event_renders_and_clears(isolated_dock):
                     name="bash",
                     pattern="npm test",
                     args={"command": "npm test"},
+                    ai_approval_failure="AI approval failed: timed out; requesting human review.",
                 )
             ],
         ))
@@ -75,6 +76,7 @@ async def test_permission_prompt_event_renders_and_clears(isolated_dock):
         assert record.label == "Requesting"
         assert "1. bash" in record.detail
         assert "target: npm test" in record.detail
+        assert "ai approval: AI approval failed: timed out" in record.detail
         assert "command: npm test" in record.detail
 
         await bus.emit(PermissionPromptCleared())

@@ -251,6 +251,7 @@ class PermissionToolDetail(BaseModel):
     risk: dict[str, Any] | None = None
     allowed_scopes: tuple[str, ...] = ()
     default_scope: str | None = None
+    ai_approval_failure: str = Field(default="", exclude_if=lambda value: not value)
 
 
 class PermissionPromptShown(UiEventBase):

@@ -86,6 +86,29 @@ def test_ask_choice_accepts_permission_details(tmp_path):
     assert asyncio.run(run_prompt()) == "y"
 
 
+def test_ask_choice_serializes_concurrent_prompts(tmp_path):
+    tui = _tui(tmp_path)
+
+    async def run_prompts():
+        first = asyncio.create_task(tui.ask_choice("First?", ["y", "n"]))
+        await asyncio.sleep(0)
+        second = asyncio.create_task(tui.ask_choice("Second?", ["a", "b"]))
+        await asyncio.sleep(0)
+
+        assert tui._choice_prompt == "First?"
+        tui._process_input(b"\r")
+        first_result = await asyncio.wait_for(first, timeout=0.5)
+
+        await asyncio.sleep(0)
+        assert tui._choice_prompt == "Second?"
+        tui._process_input(b"\r")
+        second_result = await asyncio.wait_for(second, timeout=0.5)
+
+        return first_result, second_result
+
+    assert asyncio.run(run_prompts()) == ("y", "a")
+
+
 def test_ask_choice_timeout_returns_none_and_clears_prompt(tmp_path):
     tui = _tui(tmp_path)
 

@@ -550,6 +550,9 @@ def _permission_detail_text(tools: list[dict[str, Any]]) -> str:
         pattern = str(tool.get("pattern") or "")
         if pattern and pattern != "*":
             lines.append(f"   target: {pattern}")
+        ai_approval_failure = str(tool.get("ai_approval_failure") or "")
+        if ai_approval_failure:
+            lines.append(f"   ai approval: {ai_approval_failure}")
         args = tool.get("args")
         if isinstance(args, dict):
             for key, value in args.items():
@@ -605,4 +608,3 @@ def _subagent_tool_action(tool_name: str, label: str) -> str:
     if mcp_name:
         return mcp_name
     return label or (tool_name.replace("_", " ").title() if tool_name else "Working")
-
