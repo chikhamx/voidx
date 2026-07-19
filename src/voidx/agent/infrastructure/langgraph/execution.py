@@ -476,6 +476,8 @@ class LangGraphExecution:
         self._settings = settings
         self._ai_approval = AiApprovalService()
         self._ui = runtime_ui_port
+        self._gateway_session = None
+        self._any_messages_sent = False
         self._startup_presenter = None
 
         bind_settings_to_catalog(settings)
@@ -547,9 +549,62 @@ class LangGraphExecution:
             _host_contract: Any = self
 
     @property
+    def ui(self):
+        return self._ui
+
+    @property
+    def runtime_guards(self):
+        return self._runtime_guards
+
+    async def apply_settings_update(self, settings: Settings) -> None:
+        await self._apply_settings_update(settings)
+
+    @property
+    def plan_mode(self) -> bool:
+        return self._plan_mode
+
+    @property
+    def slash(self):
+        return self._slash
+
+    @property
+    def gateway_session(self):
+        return self._gateway_session
+
+    @gateway_session.setter
+    def gateway_session(self, value) -> None:
+        self._gateway_session = value
+
+    @property
+    def any_messages_sent(self) -> bool:
+        return self._any_messages_sent
+
+    @any_messages_sent.setter
+    def any_messages_sent(self, value: bool) -> None:
+        self._any_messages_sent = value
+
+    @property
+    def compaction_summary(self) -> str:
+        return self._compaction_summary
+
+    def set_compaction_summary(self, value: str) -> None:
+        self._compaction_summary = value
+
+    @property
+    def session_date(self) -> str:
+        return self._session_date
+
+    def set_session_date(self, value: str) -> None:
+        self._session_date = value
+
+    @property
     def app(self) -> InteractionFrontend | None:
         """The interactive TUI app, if one is running."""
         return self._app
+
+    @app.setter
+    def app(self, value: InteractionFrontend | None) -> None:
+        self._app = value
 
     @property
     def permission(self):
@@ -661,6 +716,7 @@ class LangGraphExecution:
     def interaction_mode(self) -> InteractionMode:
         return self._interaction_mode
 
+    @property
     def debug_enabled(self) -> bool:
         return self._debug
 
@@ -793,7 +849,7 @@ class LangGraphExecution:
         self._session_date = session_date(session)
         self._session_msg_cache = None
         self._context_cache = ContextCompilerCache()
-        await self._restore_runtime_state()
+        await self.restore_runtime_state()
         self._reload_parallel_subagents_from_settings()
 
     async def set_session_title(self, title: str) -> None:
@@ -989,7 +1045,7 @@ class LangGraphExecution:
             schedule_session_title_generation=self._schedule_session_title_generation,
         )
 
-    async def _delete_empty_current_session(self: "Any") -> None:
+    async def delete_empty_current_session(self) -> None:
         await _session_runtime_for(self).delete_empty_current_session(
             invalidate_session_title_generation=self._invalidate_session_title_generation,
         )
@@ -1000,7 +1056,7 @@ class LangGraphExecution:
     def _reset_runtime_state_memory(self: Any) -> None:
         _session_runtime_for(self).reset_runtime_state_memory()
 
-    async def _restore_runtime_state(self: Any) -> None:
+    async def restore_runtime_state(self) -> None:
         await _session_runtime_for(self).restore_runtime_state()
 
     async def _persist_runtime_state(self: Any) -> None:

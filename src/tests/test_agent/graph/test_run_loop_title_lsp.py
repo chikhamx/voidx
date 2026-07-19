@@ -99,7 +99,7 @@ async def test_delete_empty_current_session_only_deletes_sessions_without_messag
     empty = await create_session(workspace=str(tmp_path), provider="mimo", model="mimo-v2.5")
     graph = LangGraphExecution(Config(workspace=str(tmp_path)), api_key=None, session=empty)
 
-    await graph._delete_empty_current_session()
+    await graph.delete_empty_current_session()
 
     assert await get_session(empty.id) is None
     assert graph._session is None
@@ -108,7 +108,7 @@ async def test_delete_empty_current_session_only_deletes_sessions_without_messag
     await save_message(MessageRow(session_id=non_empty.id, role="user", content="hello"))
     graph = LangGraphExecution(Config(workspace=str(tmp_path)), api_key=None, session=non_empty)
 
-    await graph._delete_empty_current_session()
+    await graph.delete_empty_current_session()
 
     assert await get_session(non_empty.id) is not None
     assert graph._session is not None

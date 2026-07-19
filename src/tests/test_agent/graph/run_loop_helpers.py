@@ -100,35 +100,44 @@ def _service(execution) -> AgentService:
 def _graph(session=None, workspace: str = "/tmp/workspace") -> AgentService:
     execution = SimpleNamespace()
     graph = _service(execution)
-    execution._session = session
-    execution._workspace = workspace
+    execution.session = session
+    execution.workspace = workspace
     execution.model = object()
     execution.config = SimpleNamespace(
         workspace=workspace,
         model=ModelConfig(provider="mimo", model="mimo-v2.5", reasoning_effort="high"),
     )
-    execution._settings = SimpleNamespace(list_mcp_servers=lambda: [], path=f"{workspace}/.voidx/settings.json")
-    execution._permission = SimpleNamespace(
+    execution.settings = SimpleNamespace(list_mcp_servers=lambda: [], path=f"{workspace}/.voidx/settings.json")
+    execution.permission = SimpleNamespace(
         status_label=lambda: "default",
         clear_session_permissions=lambda: None,
     )
-    execution._usage_stats = UsageStats()
-    execution._debug = False
-    execution._plan_mode = False
-    execution._interaction_mode = InteractionMode.AUTO
-    execution._task_state = TaskState()
-    execution._compaction_summary = ""
-    execution._session_date = ""
+    execution.usage_stats = UsageStats()
+    execution.debug_enabled = False
+    execution.plan_mode = False
+    execution.interaction_mode = InteractionMode.AUTO
+    execution.set_interaction_mode = lambda value: setattr(execution, "interaction_mode", value)
+    execution.task_state = TaskState()
+    execution.set_task_state = lambda value: setattr(execution, "task_state", value)
+    execution.compaction_summary = ""
+    execution.set_compaction_summary = lambda value: setattr(execution, "compaction_summary", value)
+    execution.session_date = ""
+    execution.set_session_date = lambda value: setattr(execution, "session_date", value)
     execution._tracker = TaskTracker()
     execution._session_msg_cache = None
-    execution._ui = runtime_ui_port
+    execution.ui = runtime_ui_port
+    execution.mcp_manager = None
+    execution.lsp_manager = None
+    execution.gateway_session = None
+    execution.runtime_guards = SimpleNamespace(wall_clock=None)
 
     async def noop(*_args, **_kwargs):
         return None
 
-    execution._restore_runtime_state = noop
-    execution._restore_transcript_snapshot = noop
-    execution._delete_empty_current_session = noop
+    execution.apply_settings_update = noop
+    execution.restore_runtime_state = noop
+    execution.restore_transcript_snapshot = noop
+    execution.delete_empty_current_session = noop
     execution.run_turn = noop
     execution.runtime_snapshot = lambda: LangGraphStateMapper().runtime_from_execution(
         execution,
@@ -141,5 +150,9 @@ def _graph(session=None, workspace: str = "/tmp/workspace") -> AgentService:
 
 def _disable_external_managers(graph) -> None:
     execution = getattr(graph, "_execution", graph)
-    execution._mcp_manager = NoopMcpManager()
-    execution._lsp_manager = NoopLspManager()
+    if isinstance(execution, LangGraphExecution):
+        execution._mcp_manager = NoopMcpManager()
+        execution._lsp_manager = NoopLspManager()
+    else:
+        execution.mcp_manager = NoopMcpManager()
+        execution.lsp_manager = NoopLspManager()

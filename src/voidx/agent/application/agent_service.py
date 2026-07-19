@@ -5,7 +5,7 @@ from __future__ import annotations
 import asyncio
 import logging
 from functools import partial
-from typing import Any, Protocol
+from typing import Any
 
 from voidx.llm.service import get_context_limit
 from voidx.runtime.intent import InteractionMode
@@ -27,11 +27,10 @@ from voidx.agent.application.workflow_utils import active_workflow_names
 from voidx.runtime.task_state import goal_label
 from voidx.logging.tool_log import log_tool_event
 from voidx.runtime.ui import ThreadExecutionContext
+from voidx.agent.ports.execution_host import ExecutionHost
 
 
-class AgentExecution(Protocol):
-    """Execution engine and runtime dependencies consumed by the run loop."""
-
+AgentExecution = ExecutionHost
 
 logger = logging.getLogger(__name__)
 
@@ -60,59 +59,59 @@ class AgentService:
         append_transcript: bool = False,
         prefer_direct: bool = False,
     ) -> None:
-        is_new = self._execution._session is None
+        is_new = self._execution.session is None
         title = self._startup_title()
-        active_dock = self._execution._ui.get_dock()
+        active_dock = self._execution.ui.get_dock()
         startup_event = StartupShown(
             model=self._execution.config.model.model,
             provider=self._execution.config.model.provider,
-            workspace=self._execution._workspace,
+            workspace=self._execution.workspace,
             session_title=title,
             is_new=is_new,
             profile_configured=self._execution.model is not None,
         )
-        startup_via_event = active_dock is not None and self._execution._ui.events.is_running and not prefer_direct
+        startup_via_event = active_dock is not None and self._execution.ui.events.is_running and not prefer_direct
         if startup_via_event:
-            await self._execution._ui.events.request(startup_event)
+            await self._execution.ui.events.request(startup_event)
             if append_transcript:
-                await self._execution._restore_transcript_snapshot(append=True)
+                await self._execution.restore_transcript_snapshot(append=True)
             return
 
         if active_dock is not None and active_dock.active:
             active_dock.append_startup(
                 model=self._execution.config.model.model,
                 provider=self._execution.config.model.provider,
-                workspace=self._execution._workspace,
+                workspace=self._execution.workspace,
                 session_title=title,
                 is_new=is_new,
                 profile_configured=self._execution.model is not None,
             )
             if append_transcript:
-                await self._execution._restore_transcript_snapshot(append=True)
+                await self._execution.restore_transcript_snapshot(append=True)
             return
 
-        self._execution._ui.show_startup(
-            console=self._execution._ui.ui,
+        self._execution.ui.show_startup(
+            console=self._execution.ui.ui,
             model=self._execution.config.model.model,
             provider=self._execution.config.model.provider,
-            workspace=self._execution._workspace,
+            workspace=self._execution.workspace,
             session_title=title,
             is_new=is_new,
         )
         if self._execution.model is None:
-            self._execution._ui.ui.print()
-            self._execution._ui.ui.print("[yellow]No profile configured — chat is disabled until you set one up.[/yellow]")
-            self._execution._ui.ui.print(f"[dim]  Use [cyan]/model new[/cyan] to create a profile interactively[/dim]")
-            self._execution._ui.ui.print()
+            self._execution.ui.ui.print()
+            self._execution.ui.ui.print("[yellow]No profile configured — chat is disabled until you set one up.[/yellow]")
+            self._execution.ui.ui.print(f"[dim]  Use [cyan]/model new[/cyan] to create a profile interactively[/dim]")
+            self._execution.ui.ui.print()
 
     def _startup_title(self) -> str:
-        title = self._execution._session.title if self._execution._session else "New session"
+        title = self._execution.session.title if self._execution.session else "New session"
         if len(title) > 60:
             title = title[:57] + "..."
         return title
 
     async def _show_update_check_if_needed(self) -> None:
-        settings = self._execution._settings
+        settings = self._execution.settings
         if settings is None:
             return
         try:
@@ -127,7 +126,7 @@ class AgentService:
             if callable(mark_update_check):
                 mark_update_check(result.latest_version)
             if result.update_available and result.latest_version:
-                self._execution._ui.dock.append_message(
+                self._execution.ui.dock.append_message(
                     "[yellow]Update available:[/yellow] "
                     f"voidx {result.current_version} -> {result.latest_version}. "
                     f"[dim]{upgrade_hint()}[/dim]",
@@ -148,13 +147,13 @@ class AgentService:
         web_token: str = "",
     ) -> None:
         """Interactive REPL with orchestrator agent."""
-        self._execution._any_messages_sent = False
-        self._execution._ui.session_tracker.clear()
+        self._execution.any_messages_sent = False
+        self._execution.ui.session_tracker.clear()
 
         title = self._startup_title()
 
-        self._execution._ui.dock.begin_capture()
-        active_dock = self._execution._ui.get_dock()
+        self._execution.ui.dock.begin_capture()
+        active_dock = self._execution.ui.get_dock()
         gateway_session: GatewaySession | None = None
         gateway_server: GatewayServer | None = None
         lsp_startup_tasks: list[asyncio.Task] = []
@@ -164,69 +163,63 @@ class AgentService:
             if web:
                 gateway_session = GatewaySession(
                     lambda: active_dock.tree,
-                    thread_id=self._execution._session.id if self._execution._session else "",
-                    session_id=self._execution._session.id if self._execution._session else "",
-                    workspace=self._execution._workspace,
+                    thread_id=self._execution.session.id if self._execution.session else "",
+                    session_id=self._execution.session.id if self._execution.session else "",
+                    workspace=self._execution.workspace,
                     runtime_state_provider=lambda: {
                         "provider": self._execution.config.model.provider,
                         "model": self._execution.config.model.model,
-                        "workspace": self._execution._workspace,
+                        "workspace": self._execution.workspace,
                         "profile_configured": self._execution.model is not None,
-                        "permission_mode": getattr(self._execution._permission, "permission_mode", ""),
-                        "ai_approval_count": getattr(self._execution._permission, "ai_approval_count", 0),
+                        "permission_mode": getattr(self._execution.permission, "permission_mode", ""),
+                        "ai_approval_count": getattr(self._execution.permission, "ai_approval_count", 0),
                     },
-                    settings_update_handler=getattr(self._execution, "_apply_settings_update", None),
+                    settings_update_handler=self._execution.apply_settings_update,
                 )
-                self._execution._ui.events.start(CompositeEventConsumer(
+                self._execution.ui.events.start(CompositeEventConsumer(
                     primary=consumer,
                     mirrors=[GatewayEventConsumer(gateway_session)],
                 ))
             else:
-                self._execution._ui.events.start(consumer)
-        await self._execution._restore_runtime_state()
+                self._execution.ui.events.start(consumer)
+        await self._execution.restore_runtime_state()
         await self._show_startup(append_transcript=True)
 
         exit_message: str | None = None
 
         async def cleanup_run_loop() -> None:
-            empty_session_cleanup = getattr(self._execution, "_delete_empty_current_session", None)
-            if callable(empty_session_cleanup):
-                await empty_session_cleanup()
+            await self._execution.delete_empty_current_session()
             if gateway_server is not None:
                 await gateway_server.stop()
             if update_check_task is not None:
                 update_check_task.cancel()
                 await asyncio.gather(update_check_task, return_exceptions=True)
-            if hasattr(self._execution, '_mcp_manager'):
-                await self._execution._mcp_manager.stop_all()
+            if self._execution.mcp_manager is not None:
+                await self._execution.mcp_manager.stop_all()
             for task in lsp_startup_tasks:
                 task.cancel()
             if lsp_startup_tasks:
                 await asyncio.gather(*lsp_startup_tasks, return_exceptions=True)
-            if hasattr(self._execution, '_lsp_manager'):
-                await self._execution._lsp_manager.stop_all()
-            if self._execution._ui.events.is_running:
-                await self._execution._ui.events.stop()
-            self._execution._ui.dock.deactivate()
+            if self._execution.lsp_manager is not None:
+                await self._execution.lsp_manager.stop_all()
+            if self._execution.ui.events.is_running:
+                await self._execution.ui.events.stop()
+            self._execution.ui.dock.deactivate()
 
         status = UiStatus(
             provider=self._execution.config.model.provider,
             model=self._execution.config.model.model,
-            workspace=self._execution._workspace,
+            workspace=self._execution.workspace,
             session_title=title,
             context_limit=get_context_limit(self._execution.config.model.provider, self._execution.config.model.protocol or "", self._execution.config.model.context_window),
             reasoning_effort=self._execution.config.model.reasoning_effort or "xhigh",
-            permission_label=lambda: self._execution._permission.permission_mode_label(),
-            usage_stats=self._execution._usage_stats,
-            debug=lambda: self._execution._debug,
-            plan_mode=lambda: self._execution._plan_mode,
-            interaction_mode=lambda: getattr(
-                getattr(self._execution, "_interaction_mode", None),
-                "value",
-                InteractionMode.PLAN.value if getattr(self._execution, "_plan_mode", False) else InteractionMode.AUTO.value,
-            ),
-            goal_label=lambda: goal_label(getattr(getattr(self._execution, "_task_state", None), "current_goal", None)),
-            active_workflows=lambda: active_workflow_names(getattr(self._execution, "_task_state", None)),
+            permission_label=lambda: self._execution.permission.permission_mode_label(),
+            usage_stats=self._execution.usage_stats,
+            debug=lambda: self._execution.debug_enabled,
+            plan_mode=lambda: self._execution.plan_mode,
+            interaction_mode=lambda: self._execution.interaction_mode.value,
+            goal_label=lambda: goal_label(self._execution.task_state.current_goal),
+            active_workflows=lambda: active_workflow_names(self._execution.task_state),
             mcp_servers=lambda: [
                 McpServerStatus(
                     name=s.name,
@@ -234,19 +227,19 @@ class AgentService:
                     tool_count=s.tool_count,
                 )
                 for s in (
-                    self._execution._mcp_manager.statuses()
-                    if hasattr(self._execution, '_mcp_manager')
+                    self._execution.mcp_manager.statuses()
+                    if self._execution.mcp_manager is not None
                     else []
                 )
-            ] if self._execution._settings is not None else [],
-            mcp_config_path=str(self._execution._settings.path) if self._execution._settings is not None else "",
+            ] if self._execution.settings is not None else [],
+            mcp_config_path=str(self._execution.settings.path) if self._execution.settings is not None else "",
             code_ide=lambda: (
-                self._execution._settings.get_code_ide().value
-                if self._execution._settings is not None
+                self._execution.settings.get_code_ide().value
+                if self._execution.settings is not None
                 else "trae"
             ),
             latest_action=lambda: getattr(
-                getattr(getattr(self._execution, "_runtime_guards", None), "wall_clock", None),
+                getattr(self._execution.runtime_guards, "wall_clock", None),
                 "latest_action",
                 "",
             ),
@@ -260,21 +253,21 @@ class AgentService:
                 if not web:
                     await cleanup_run_loop()
                     raise RunLoopStartupError(f"Cannot start terminal UI: {exc}") from exc
-                self._execution._ui.dock.append_message(
+                self._execution.ui.dock.append_message(
                     "[dim]voidx_cli not installed — starting Web UI in headless mode. "
                     "Install voidx-cli for terminal UI: pip install voidx-cli[/dim]",
                     markup=True,
                 )
                 app = GatewayHeadlessFrontend(status, COMMANDS)
-        self._execution._app = app
+        self._execution.app = app
         app.set_external_command_handler(partial(self._handle_web_command, app))
         update_check_task = asyncio.create_task(self._show_update_check_if_needed())
 
-        self._execution._gateway_session = gateway_session
+        self._execution.gateway_session = gateway_session
         if gateway_session is not None:
             gateway_session.set_command_handler(partial(self._handle_web_command, app))
             gateway_session.set_thread_id_provider(
-                lambda: self._execution._session.id if self._execution._session else ""
+                lambda: self._execution.session.id if self._execution.session else ""
             )
             app.set_external_request_handler(gateway_session.request)
             gateway_server = GatewayServer(
@@ -287,10 +280,10 @@ class AgentService:
             if web_headless:
                 emit_web_gateway_bootstrap(gateway_server.url)
             else:
-                self._execution._ui.dock.append_message(f"Web UI gateway: {gateway_server.url}")
+                self._execution.ui.dock.append_message(f"Web UI gateway: {gateway_server.url}")
 
         async def show_lsp_startup() -> None:
-            manager = getattr(self._execution, "_lsp_manager", None)
+            manager = self._execution.lsp_manager
             if manager is None:
                 return
             try:
@@ -306,7 +299,7 @@ class AgentService:
                             f"{check.resolved_path}{source}{suffix}"
                         )
                 if lsp_lines:
-                    self._execution._ui.dock.append_message("\n".join(lsp_lines), markup=True)
+                    self._execution.ui.dock.append_message("\n".join(lsp_lines), markup=True)
                 warm_up = getattr(manager, "warm_up", None)
                 if callable(warm_up):
                     results = await warm_up()
@@ -326,22 +319,22 @@ class AgentService:
                             f"{check.resolved_path}{source}{suffix}"
                         )
                     if warmup_lines:
-                        self._execution._ui.dock.append_message("\n".join(warmup_lines), markup=True)
+                        self._execution.ui.dock.append_message("\n".join(warmup_lines), markup=True)
             except asyncio.CancelledError:
                 raise
             except Exception as exc:
-                self._execution._ui.dock.append_message(f"[dim]LSP setup failed: {exc}[/dim]", markup=True)
+                self._execution.ui.dock.append_message(f"[dim]LSP setup failed: {exc}[/dim]", markup=True)
 
-        if hasattr(self._execution, '_lsp_manager'):
+        if self._execution.lsp_manager is not None:
             lsp_startup_tasks.append(asyncio.create_task(show_lsp_startup()))
 
-        if hasattr(self._execution, '_mcp_manager'):
-            servers = self._execution._settings.list_mcp_servers() if self._execution._settings else []
+        if self._execution.mcp_manager is not None:
+            servers = self._execution.settings.list_mcp_servers() if self._execution.settings else []
             enabled = [s for s in servers if not s.disabled]
             if enabled:
                 names = ", ".join(s.name for s in enabled)
-                self._execution._ui.dock.append_message(f"[dim]MCP connecting: {names}…[/dim]", markup=True)
-            await self._execution._mcp_manager.start_all()
+                self._execution.ui.dock.append_message(f"[dim]MCP connecting: {names}…[/dim]", markup=True)
+            await self._execution.mcp_manager.start_all()
 
         async def handle_user_input(
             user_input: str,
@@ -370,7 +363,7 @@ class AgentService:
         finally:
             await cleanup_run_loop()
             if exit_message:
-                self._execution._ui.ui.print(exit_message)
+                self._execution.ui.ui.print(exit_message)
 
     async def _handle_web_command(self, app: Any, command: Any) -> None:
         if isinstance(command, dict) and command.get("kind") == "guide":
@@ -397,16 +390,16 @@ class AgentService:
     def _ensure_gateway_thread(self) -> None:
         """Register the active session as a gateway thread if not yet registered.
 
-        self._execution._session is None when GatewaySession is constructed (session is
+        self._execution.session is None when GatewaySession is constructed (session is
         created lazily on first turn). This ensures the thread/adapter exist
         before events start flowing.
         """
-        gs = getattr(self._execution, "_gateway_session", None)
-        if gs is None or self._execution._session is None:
+        gs = self._execution.gateway_session
+        if gs is None or self._execution.session is None:
             return
-        tid = self._execution._session.id
+        tid = self._execution.session.id
         if tid and tid not in gs._threads:
-            asyncio.ensure_future(gs.register_thread(tid, title=self._execution._session.title or "", directory=getattr(self._execution._session, "directory", "") or ""))
+            asyncio.ensure_future(gs.register_thread(tid, title=self._execution.session.title or "", directory=getattr(self._execution.session, "directory", "") or ""))
 
     async def _handle_user_input(
         self,
@@ -428,10 +421,10 @@ class AgentService:
             if is_quiet and callable(hide_command_output):
                 hide_command_output()
             if not is_quiet:
-                self._execution._ui.dock.start_turn(user_input)
+                self._execution.ui.dock.start_turn(user_input)
             dispatched = await self._dispatch_slash(user_input)
             if not dispatched:
-                self._execution._ui.ui.print(f"[dim]Unknown command: {user_input}  — type [cyan]/help[/cyan] to see available commands[/dim]")
+                self._execution.ui.ui.print(f"[dim]Unknown command: {user_input}  — type [cyan]/help[/cyan] to see available commands[/dim]")
             if is_quiet and callable(hide_command_output):
                 hide_command_output()
             return True, None
@@ -444,9 +437,9 @@ class AgentService:
                 context=context,
             )
         except (KeyboardInterrupt, asyncio.CancelledError):
-            self._execution._ui.ui.print(f"\n[dim]Interrupted.[/dim]")
+            self._execution.ui.ui.print(f"\n[dim]Interrupted.[/dim]")
         return True, None
 
     async def _dispatch_slash(self, inp: str) -> bool:
         """Try to dispatch a slash command. Returns True if handled."""
-        return await self._execution._slash.dispatch(inp)
+        return await self._execution.slash.dispatch(inp)

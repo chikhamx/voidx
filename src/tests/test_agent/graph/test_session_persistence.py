@@ -227,7 +227,7 @@ async def test_run_turn_loads_execution_context_runtime_state(tmp_path):
         await save_runtime_state(target.id, RuntimeStateSnapshot(interaction_mode=InteractionMode.PLAN, task_state=target_state))
 
         graph = LangGraphExecution(Config(workspace=str(tmp_path)), api_key=None, session=active)
-        await graph._restore_runtime_state()
+        await graph.restore_runtime_state()
         captured: dict[str, str] = {}
 
         class FakeGraph:
@@ -315,7 +315,7 @@ async def test_run_turn_model_enabled_borrowed_context_does_not_leak_task_state(
         await save_runtime_state(target.id, RuntimeStateSnapshot(interaction_mode=InteractionMode.PLAN, task_state=target_state))
 
         graph = LangGraphExecution(Config(workspace=str(tmp_path)), api_key="test", session=active)
-        await graph._restore_runtime_state()
+        await graph.restore_runtime_state()
         captured: dict[str, str] = {}
 
         class FakeGraph:

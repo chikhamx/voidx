@@ -52,9 +52,9 @@ async def test_startup_update_check_appends_update_notice(tmp_path, monkeypatch)
 
     graph = _graph(workspace=str(tmp_path))
     settings = Settings(str(tmp_path))
-    graph._execution._settings = settings
+    graph._execution.settings = settings
     messages: list[tuple[str, bool]] = []
-    graph._execution._ui = SimpleNamespace(
+    graph._execution.ui = SimpleNamespace(
         dock=SimpleNamespace(
             append_message=lambda text, *, markup=False: messages.append((text, markup)),
         ),
@@ -87,9 +87,9 @@ async def test_startup_update_check_skips_when_ttl_not_due(tmp_path, monkeypatch
     graph = _graph(workspace=str(tmp_path))
     settings = Settings(str(tmp_path))
     settings.mark_update_check("9.0.0")
-    graph._execution._settings = settings
+    graph._execution.settings = settings
     messages: list[str] = []
-    graph._execution._ui = SimpleNamespace(
+    graph._execution.ui = SimpleNamespace(
         dock=SimpleNamespace(
             append_message=lambda text, *, markup=False: messages.append(text),
         ),
@@ -119,7 +119,7 @@ async def test_quiet_slash_command_dispatches_without_turn(monkeypatch):
         dispatched.append(command)
         return True
 
-    graph._execution._slash = SimpleNamespace(dispatch=MethodType(fake_dispatch, graph._execution))
+    graph._execution.slash = SimpleNamespace(dispatch=MethodType(fake_dispatch, graph._execution))
 
     await graph.run()
 

@@ -190,7 +190,7 @@ async def test_compaction_uses_previous_summary_and_prunes_persisted_head(tmp_pa
         assert graph._compaction_summary == "updated summary"
 
         resumed = LangGraphExecution(Config(workspace=str(tmp_path)), api_key=None, session=session)
-        await resumed._restore_runtime_state()
+        await resumed.restore_runtime_state()
 
         assert resumed._compaction_summary == "updated summary"
     finally:
