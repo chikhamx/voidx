@@ -11,8 +11,8 @@ from .state import (
     check_read_coverage,
     check_staleness,
     clear_file_tracking,
-    clear_read_coverage,
-    record_mtime,
+    coverage_ranges_snapshot,
+    remap_read_coverage_from_file_diff,
     save_file_version,
 )
 
@@ -201,6 +201,7 @@ async def _execute_write_full(ctx: ToolContext, inp: WriteInput) -> ToolResult:
     assert path is not None
     created = not path.exists()
     original = ""
+    old_ranges: list[dict] = []
     if path.exists():
         if str(path.resolve()) not in ctx.file_mtimes:
             return ToolResult(
@@ -214,6 +215,7 @@ async def _execute_write_full(ctx: ToolContext, inp: WriteInput) -> ToolResult:
         if read_error is not None:
             return ToolResult(output=read_error, metadata={"error": True})
         await save_file_version(ctx, path, display_path=inp.file_path, tool_name="write")
+        old_ranges = coverage_ranges_snapshot(ctx, path)
     write_error = _safe_write_text(path, inp.new_string)
     if write_error is not None:
         return ToolResult(output=write_error, metadata={"error": True})
@@ -232,10 +234,9 @@ async def _execute_write_full(ctx: ToolContext, inp: WriteInput) -> ToolResult:
             output=f"Write completed, but final file state is unavailable: {formatting.error}",
             metadata={"error": True, "formatting_status": formatting.status},
         )
-    record_mtime(ctx, path)
-    clear_read_coverage(ctx, path)
     diff = make_file_diff(inp.file_path, original, final_text)
     file_diff = make_structured_diff(inp.file_path, original, final_text)
+    remap_read_coverage_from_file_diff(ctx, path, file_diff, old_ranges=old_ranges)
     numbered_diff = render_numbered_diff(file_diff)
     title = "File created" if created else "File overwritten"
     output = f"{title}: {inp.file_path}"

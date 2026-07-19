@@ -564,7 +564,7 @@ async def test_resume_restores_structured_runtime_state(tmp_path):
 
 
 @pytest.mark.asyncio
-async def testrun_turn_cancel_deletes_pending_user_message(tmp_path):
+async def test_run_turn_cancel_deletes_pending_user_message(tmp_path):
     session = await create_session(
         workspace=str(tmp_path),
         provider="mimo",

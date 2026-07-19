@@ -1,6 +1,5 @@
 from __future__ import annotations
 
-from dataclasses import asdict
 from pathlib import Path
 from typing import NamedTuple
 
@@ -15,7 +14,7 @@ from .state import (
     check_staleness,
     clear_read_coverage,
     clear_file_tracking,
-    file_fingerprint,
+    coverage_ranges_snapshot,
     get_line_drift_maps,
     record_mtime,
     remap_read_coverage_from_file_diff,
@@ -412,13 +411,7 @@ async def _execute_text_replace(
         )
         return ToolResult(output=output, metadata={"error": True})
 
-    key = str(path.resolve())
-    existing_coverage = ctx.file_read_coverage.get(key, {})
-    current_fingerprint = asdict(file_fingerprint(path))
-    old_ranges = [
-        item.copy()
-        for item in existing_coverage.get("ranges", [])
-    ] if existing_coverage.get("fingerprint") == current_fingerprint else []
+    old_ranges = coverage_ranges_snapshot(ctx, path)
 
     kept_before = before[:-overlap.head] if overlap.head else before
     lines = [*kept_before, *new_lines, *after[overlap.tail:]]
@@ -549,13 +542,7 @@ async def _apply_resolved_edits(
                 )
                 return ToolResult(output=output, metadata={"error": True})
 
-    key = str(path.resolve())
-    existing_coverage = ctx.file_read_coverage.get(key, {})
-    current_fingerprint = asdict(file_fingerprint(path))
-    old_ranges = [
-        item.copy()
-        for item in existing_coverage.get("ranges", [])
-    ] if existing_coverage.get("fingerprint") == current_fingerprint else []
+    old_ranges = coverage_ranges_snapshot(ctx, path)
 
     trailing_newline = _result_trailing_newline(edits, total_lines, display.trailing_newline)
     for edit in sorted(edits, key=lambda item: item.start_line, reverse=True):

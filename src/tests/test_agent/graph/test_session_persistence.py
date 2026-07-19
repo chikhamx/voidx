@@ -175,7 +175,7 @@ async def test_session_persistence_saves_only_new_ai_and_tool_messages(tmp_path)
 
 
 @pytest.mark.asyncio
-async def testrun_turn_uses_execution_context_session_id_for_persistence(tmp_path):
+async def test_run_turn_uses_execution_context_session_id_for_persistence(tmp_path):
     from voidx.ui.output.types import ThreadExecutionContext
 
     active = await create_session(workspace=str(tmp_path), title="Active")
@@ -213,7 +213,7 @@ async def testrun_turn_uses_execution_context_session_id_for_persistence(tmp_pat
 
 
 @pytest.mark.asyncio
-async def testrun_turn_loads_execution_context_runtime_state(tmp_path):
+async def test_run_turn_loads_execution_context_runtime_state(tmp_path):
     from voidx.agent.runtime_context import InteractionMode
     from voidx.memory.runtime_state import RuntimeStateSnapshot, save_runtime_state
     from voidx.ui.output.types import ThreadExecutionContext
@@ -263,7 +263,7 @@ async def testrun_turn_loads_execution_context_runtime_state(tmp_path):
 
 
 @pytest.mark.asyncio
-async def testrun_turn_model_enabled_first_turn_syncs_default_task_state(tmp_path):
+async def test_run_turn_model_enabled_first_turn_syncs_default_task_state(tmp_path):
     from voidx.agent.runtime_context import InteractionMode
 
     graph = LangGraphExecution(Config(workspace=str(tmp_path)), api_key="test", session=None)
@@ -301,7 +301,7 @@ async def testrun_turn_model_enabled_first_turn_syncs_default_task_state(tmp_pat
 
 
 @pytest.mark.asyncio
-async def testrun_turn_model_enabled_borrowed_context_does_not_leak_task_state(tmp_path):
+async def test_run_turn_model_enabled_borrowed_context_does_not_leak_task_state(tmp_path):
     from voidx.agent.runtime_context import InteractionMode
     from voidx.memory.runtime_state import RuntimeStateSnapshot, load_runtime_state, save_runtime_state
     from voidx.ui.output.types import ThreadExecutionContext
@@ -360,7 +360,7 @@ async def testrun_turn_model_enabled_borrowed_context_does_not_leak_task_state(t
         await delete_session(active.id)
         await delete_session(target.id)
 @pytest.mark.asyncio
-async def testrun_turn_isolates_concurrent_execution_context_state(tmp_path):
+async def test_run_turn_isolates_concurrent_execution_context_state(tmp_path):
     from voidx.agent.runtime_context import InteractionMode
     from voidx.memory.runtime_state import RuntimeStateSnapshot, save_runtime_state
     from voidx.ui.output.types import ThreadExecutionContext
@@ -526,7 +526,7 @@ async def test_run_synthetic_turn_uses_display_text_without_losing_prompt(tmp_pa
 
 
 @pytest.mark.asyncio
-async def testrun_turn_wraps_explicit_skill_refs_in_user_message(tmp_path):
+async def test_run_turn_wraps_explicit_skill_refs_in_user_message(tmp_path):
     skill_dir = tmp_path / ".voidx" / "skills" / "docs"
     skill_dir.mkdir(parents=True)
     (skill_dir / "SKILL.md").write_text(
@@ -579,7 +579,7 @@ async def testrun_turn_wraps_explicit_skill_refs_in_user_message(tmp_path):
 
 
 @pytest.mark.asyncio
-async def testrun_turn_persists_clipboard_image_attachment_as_structured_user_message(tmp_path):
+async def test_run_turn_persists_clipboard_image_attachment_as_structured_user_message(tmp_path):
     image_dir = tmp_path / ".voidx" / "attachments"
     image_dir.mkdir(parents=True)
     image = image_dir / "shot.png"
@@ -616,7 +616,7 @@ async def testrun_turn_persists_clipboard_image_attachment_as_structured_user_me
 
 
 @pytest.mark.asyncio
-async def testrun_turn_does_not_persist_compiled_overlay_to_user_history(tmp_path):
+async def test_run_turn_does_not_persist_compiled_overlay_to_user_history(tmp_path):
     session = await create_session(workspace=str(tmp_path))
     try:
         graph = LangGraphExecution(Config(workspace=str(tmp_path)), api_key=None, session=session)

@@ -138,7 +138,7 @@ def _tree_nodes(root):
 
 
 @pytest.mark.asyncio
-async def testrun_turn_persists_and_restores_transcript_snapshot(tmp_path):
+async def test_run_turn_persists_and_restores_transcript_snapshot(tmp_path):
     session = await create_session(workspace=str(tmp_path))
     try:
         graph = LangGraphExecution(Config(workspace=str(tmp_path)), api_key=None, session=session)
@@ -196,7 +196,7 @@ async def testrun_turn_persists_and_restores_transcript_snapshot(tmp_path):
 
 
 @pytest.mark.asyncio
-async def testrun_turn_emits_turn_completed_event(tmp_path):
+async def test_run_turn_emits_turn_completed_event(tmp_path):
     session = await create_session(workspace=str(tmp_path))
     events: list[object] = []
 
@@ -236,7 +236,7 @@ async def testrun_turn_emits_turn_completed_event(tmp_path):
 
 
 @pytest.mark.asyncio
-async def testrun_turn_emits_turn_failed_event_on_exception(tmp_path):
+async def test_run_turn_emits_turn_failed_event_on_exception(tmp_path):
     session = await create_session(workspace=str(tmp_path))
     events: list[object] = []
 
@@ -279,7 +279,7 @@ async def testrun_turn_emits_turn_failed_event_on_exception(tmp_path):
 
 
 @pytest.mark.asyncio
-async def testrun_turn_commits_event_todo_at_turn_end(tmp_path):
+async def test_run_turn_commits_event_todo_at_turn_end(tmp_path):
     session = await create_session(workspace=str(tmp_path))
     try:
         graph = LangGraphExecution(Config(workspace=str(tmp_path)), api_key=None, session=session)
@@ -321,7 +321,7 @@ async def testrun_turn_commits_event_todo_at_turn_end(tmp_path):
 
 
 @pytest.mark.asyncio
-async def testrun_turn_persists_todo_replay_rows(tmp_path):
+async def test_run_turn_persists_todo_replay_rows(tmp_path):
     session = await create_session(workspace=str(tmp_path))
     try:
         graph = LangGraphExecution(Config(workspace=str(tmp_path)), api_key=None, session=session)
@@ -369,7 +369,7 @@ async def testrun_turn_persists_todo_replay_rows(tmp_path):
 
 
 @pytest.mark.asyncio
-async def testrun_turn_persists_user_decision_tool_replay_rows(tmp_path):
+async def test_run_turn_persists_user_decision_tool_replay_rows(tmp_path):
     session = await create_session(workspace=str(tmp_path))
     try:
         graph = LangGraphExecution(Config(workspace=str(tmp_path)), api_key=None, session=session)

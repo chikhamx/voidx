@@ -41,7 +41,7 @@ from tests.test_agent.graph.run_loop_helpers import (
 
 
 @pytest.mark.asyncio
-async def testrun_turn_clears_stale_completed_workflow_when_resolver_has_no_join(tmp_path):
+async def test_run_turn_clears_stale_completed_workflow_when_resolver_has_no_join(tmp_path):
     graph = LangGraphExecution(Config(workspace=str(tmp_path)), api_key=None)
     graph._task_state = TaskState(
         current_goal=GoalSpec(desc="检查检查，准备push吧"),
@@ -94,7 +94,7 @@ async def testrun_turn_clears_stale_completed_workflow_when_resolver_has_no_join
 
 
 @pytest.mark.asyncio
-async def testrun_turn_preadvances_workflow_from_resolver_workflow_start(tmp_path, monkeypatch):
+async def test_run_turn_preadvances_workflow_from_resolver_workflow_start(tmp_path, monkeypatch):
     graph = LangGraphExecution(Config(workspace=str(tmp_path)), api_key=None)
     graph._task_state = TaskState(
         current_goal=GoalSpec(desc="agent_name 语义清理"),

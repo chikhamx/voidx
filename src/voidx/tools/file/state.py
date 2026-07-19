@@ -36,6 +36,9 @@ class DiffSpan:
 
 MAX_LINE_DRIFT_MAPS_PER_FILE = 16
 
+# Edit coverage may span read ranges with at most this many unread lines between them.
+EDIT_COVERAGE_GAP_TOLERANCE = 3
+
 
 @dataclass(frozen=True)
 class LineDriftMap:
@@ -329,6 +332,14 @@ def _line_numbers_to_ranges(line_numbers: list[int]) -> list[tuple[int, int]]:
     return ranges
 
 
+def coverage_ranges_snapshot(ctx: ToolContext, resolved: Path) -> list[dict]:
+    """Copy the stored read ranges when they still match the file on disk."""
+    existing = ctx.file_read_coverage.get(str(resolved.resolve()), {})
+    if existing.get("fingerprint") != asdict(file_fingerprint(resolved)):
+        return []
+    return [item.copy() for item in existing.get("ranges", [])]
+
+
 def check_read_coverage(
     ctx: ToolContext,
     resolved: Path,
@@ -339,7 +350,9 @@ def check_read_coverage(
 ) -> str | None:
     """Return None when the range is covered, otherwise return an edit-blocking message."""
     shown = display_path or str(resolved)
-    if covered_read_range(ctx, resolved, start_line, end_line) is not None:
+    if covered_read_range(
+        ctx, resolved, start_line, end_line, gap_tolerance=EDIT_COVERAGE_GAP_TOLERANCE
+    ) is not None:
         return None
     key = str(resolved.resolve())
     coverage = ctx.file_read_coverage.get(key)
@@ -353,18 +366,35 @@ def check_read_coverage(
     return f"Lines {start_line}-{end_line} in {shown} must be read before editing."
 
 
-def covered_read_range(ctx: ToolContext, resolved: Path, start_line: int, end_line: int) -> ReadLineRange | None:
+def covered_read_range(
+    ctx: ToolContext,
+    resolved: Path,
+    start_line: int,
+    end_line: int,
+    *,
+    gap_tolerance: int = 0,
+) -> ReadLineRange | None:
     key = str(resolved.resolve())
     coverage = ctx.file_read_coverage.get(key)
     if coverage is None:
         return None
     if coverage.get("fingerprint") != asdict(file_fingerprint(resolved)):
         return None
-    ranges = coverage.get("ranges", [])
-    for item in ranges:
-        if item.get("start_line") <= start_line and end_line <= item.get("end_line"):
-            return ReadLineRange(int(item.get("start_line")), int(item.get("end_line")))
-    return None
+    overlapping = [
+        item for item in coverage.get("ranges", [])
+        if int(item.get("start_line", 0)) <= end_line and start_line <= int(item.get("end_line", 0))
+    ]
+    if not overlapping:
+        return None
+    first, last = overlapping[0], overlapping[-1]
+    if int(first["start_line"]) > start_line or int(last["end_line"]) < end_line:
+        return None
+    covered_end = int(first["end_line"])
+    for item in overlapping[1:]:
+        if int(item["start_line"]) - covered_end - 1 > gap_tolerance:
+            return None
+        covered_end = max(covered_end, int(item["end_line"]))
+    return ReadLineRange(int(first["start_line"]), int(last["end_line"]))
 
 
 def file_fingerprint(resolved: Path) -> FileFingerprint:

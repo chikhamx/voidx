@@ -45,7 +45,7 @@ from tests.test_agent.graph.run_loop_helpers import (
 )
 
 @pytest.mark.asyncio
-async def testrun_turn_keeps_default_title_when_resolver_falls_back_without_goal(tmp_path):
+async def test_run_turn_keeps_default_title_when_resolver_falls_back_without_goal(tmp_path):
     graph = LangGraphExecution(Config(workspace=str(tmp_path)), api_key=None)
 
     class FailingResolverModel:

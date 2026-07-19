@@ -198,7 +198,7 @@ async def test_compaction_uses_previous_summary_and_prunes_persisted_head(tmp_pa
 
 
 @pytest.mark.asyncio
-async def testrun_turn_passes_compacted_messages_to_graph(tmp_path):
+async def test_run_turn_passes_compacted_messages_to_graph(tmp_path):
     session = await create_session(workspace=str(tmp_path))
     try:
         await save_message(MessageRow(session_id=session.id, role="user", content="old question"))
@@ -250,7 +250,7 @@ async def testrun_turn_passes_compacted_messages_to_graph(tmp_path):
 
 
 @pytest.mark.asyncio
-async def testrun_turn_finishes_analyzing_before_preflight_compaction_status(tmp_path):
+async def test_run_turn_finishes_analyzing_before_preflight_compaction_status(tmp_path):
     session = await create_session(workspace=str(tmp_path))
     try:
         await save_message(MessageRow(session_id=session.id, role="user", content="old question"))
