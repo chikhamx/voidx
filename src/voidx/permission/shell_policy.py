@@ -82,6 +82,9 @@ def shell_policy_for_command(command: str, *, shell: str = "bash") -> ShellPolic
     if risk.level in {RiskLevel.EXTREME, RiskLevel.BLOCKED}:
         return ShellPolicyDecision(False, False, risk.reason)
     stripped = command.strip()
+    compound_policy = _bounded_read_only_compound_policy(stripped, shell=shell)
+    if compound_policy is not None:
+        return compound_policy
     if not stripped or stripped.startswith("#"):
         return ShellPolicyDecision(True, True)
     try:
@@ -137,6 +140,13 @@ def classify_shell_risk(command: str, *, shell: str = "bash") -> RiskAssessment:
             pattern=stripped,
             tags=(RiskTag.DYNAMIC_SHELL,),
             reason="unparsable shell command",
+        )
+    if _bounded_read_only_compound_policy(stripped, shell=shell) is not None:
+        return RiskAssessment.normal(
+            tool_name=tool_name,
+            pattern=stripped,
+            tags=(RiskTag.SAFE_READ,),
+            reason="bounded read-only compound shell command",
         )
     if any(token in {";", "&&", "||", "|", "|&", ">", ">>", "<"} for token in words):
         tags.append(RiskTag.DYNAMIC_SHELL)
@@ -206,6 +216,117 @@ def _has_shell_operator(command: str, *, shell: str) -> bool:
     return False
 
 
+def _bounded_read_only_compound_policy(command: str, *, shell: str) -> ShellPolicyDecision | None:
+    if shell != "bash" or not command or "\n" in command or "\r" in command:
+        return None
+    if any(marker in command for marker in DYNAMIC_MARKERS):
+        return None
+    words = _shell_words_with_punctuation(command)
+    if words is None:
+        return None
+
+    segments: list[list[str]] = []
+    segment: list[str] = []
+    saw_operator = False
+    for word in words:
+        if word in {"&&", "|"}:
+            if not segment:
+                return None
+            segments.append(segment)
+            segment = []
+            saw_operator = True
+        elif any(char in SHELL_OPERATOR_CHARS for char in word):
+            return None
+        else:
+            segment.append(word)
+    if not saw_operator or not segment:
+        return None
+    segments.append(segment)
+
+    access_paths: list[Path] = []
+    for words in segments:
+        policy = _bounded_read_only_segment_policy(words)
+        if not policy.allowed:
+            return None
+        access_paths.extend(policy.access_paths)
+    return ShellPolicyDecision(
+        True,
+        True,
+        access_paths=tuple(dict.fromkeys(access_paths)),
+    )
+
+
+def _bounded_read_only_segment_policy(words: list[str]) -> ShellPolicyDecision:
+    if not words:
+        return ShellPolicyDecision(False, False, "empty shell segment")
+    program = words[0].lower()
+    if program in READ_COMMANDS:
+        return _bash_policy(words)
+    if program == "find":
+        return _bounded_find_policy(words[1:])
+    if program in {"grep", "rg"}:
+        return _bounded_search_policy(program, words[1:])
+    return ShellPolicyDecision(False, False, "compound segment is not registered read-only")
+
+
+def _bounded_find_policy(args: list[str]) -> ShellPolicyDecision:
+    if not args or args[0].startswith("-"):
+        return ShellPolicyDecision(False, False, "find search path is not explicit")
+    unsafe_actions = {
+        "-delete",
+        "-exec",
+        "-execdir",
+        "-ok",
+        "-okdir",
+        "-fls",
+        "-fprint",
+        "-fprint0",
+        "-fprintf",
+    }
+    if any(arg in unsafe_actions for arg in args):
+        return ShellPolicyDecision(False, False, "find action is not read-only")
+    paths: list[Path] = []
+    for arg in args:
+        if arg.startswith("-") or arg in {"!", "(", ")", ","}:
+            break
+        paths.append(Path(_clean_path_arg(arg)))
+    return ShellPolicyDecision(True, True, access_paths=tuple(paths))
+
+
+def _bounded_search_policy(program: str, args: list[str]) -> ShellPolicyDecision:
+    if program == "rg" and any(
+        arg in {"--pre", "--hostname-bin"}
+        or arg.startswith(("--pre=", "--hostname-bin="))
+        for arg in args
+    ):
+        return ShellPolicyDecision(False, False, "rg external helper is not read-only")
+    return ShellPolicyDecision(True, True, access_paths=_explicit_argument_paths(args))
+
+
+def _explicit_argument_paths(args: list[str]) -> tuple[Path, ...]:
+    paths: list[Path] = []
+    for arg in args:
+        candidate = arg.split("=", 1)[1] if arg.startswith("-") and "=" in arg else arg
+        if _looks_like_path(candidate):
+            paths.append(Path(_clean_path_arg(candidate)))
+    return tuple(paths)
+
+
+def _shell_words_with_punctuation(command: str) -> list[str] | None:
+    try:
+        lexer = shlex.shlex(command, posix=False, punctuation_chars=True)
+        lexer.whitespace_split = True
+        return [_strip_shell_token_quotes(word) for word in lexer]
+    except ValueError:
+        return None
+
+
+def _strip_shell_token_quotes(word: str) -> str:
+    if len(word) >= 2 and word[0] == word[-1] and word[0] in ("'", '"'):
+        return word[1:-1]
+    return word
+
+
 def shell_sandbox_precheck(args: dict, context: PermissionContext, *, shell: str = "bash") -> tuple[Action, str | None]:
     if context.sandbox_mode == "danger-full-access":
         return "allow", None
@@ -245,8 +366,26 @@ def _bash_policy(words: list[str]) -> ShellPolicyDecision:
     program = words[0].lower()
     if program not in READ_COMMANDS:
         return ShellPolicyDecision(False, False, "unknown shell command")
-    access_paths = tuple(Path(arg) for arg in words[1:] if _looks_like_path(arg))
+    if program in {"cat", "head", "tail", "wc", "ls"}:
+        access_paths = _file_operand_paths(words[1:])
+    else:
+        access_paths = tuple(Path(arg) for arg in words[1:] if _looks_like_path(arg))
     return ShellPolicyDecision(True, True, access_paths=access_paths)
+
+
+def _file_operand_paths(args: list[str]) -> tuple[Path, ...]:
+    paths: list[Path] = []
+    for arg in args:
+        if arg == "-":
+            continue
+        if not arg.startswith("-"):
+            paths.append(Path(_clean_path_arg(arg)))
+            continue
+        if "=" in arg:
+            candidate = arg.split("=", 1)[1]
+            if _looks_like_path(candidate):
+                paths.append(Path(_clean_path_arg(candidate)))
+    return tuple(paths)
 
 
 def _powershell_policy(words: list[str]) -> ShellPolicyDecision:

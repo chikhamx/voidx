@@ -103,3 +103,4 @@ class PermissionDecision:
     risk: RiskAssessment | None = None
     allowed_scopes: tuple[ApprovalScope, ...] = ()
     default_scope: ApprovalScope | None = None
+    ai_approval_failure: str = ""

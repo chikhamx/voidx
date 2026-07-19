@@ -10,7 +10,7 @@ audience: llm
 
 ## Goal
 
-按 `docs/specs/ai-permission-approval.md` 实现 `ai_approval` 模式：只对 dangerous + ask 调用进行严格、单次、可追溯来源的 AI 审批，任何不确定状态回退人工，并保持现有四种权限模式行为不变。
+按 `docs/specs/ai-permission-approval.md` 实现 `ai_approval` 模式：对所有可人工批准的 dangerous/extreme + ask 调用进行严格、单次、可追溯来源的 AI 语义审批，任何不确定状态回退人工，并保持 blocked 与现有四种权限模式行为不变。
 ## Final Verification Status
 
 自动化实现已完成：T1–T11 的代码与对应测试已落地；本轮新增并验证了 `/permission ai_approval` 的 slash handler 回归覆盖。最终自动化验收结果记录如下：
@@ -48,7 +48,7 @@ audience: llm
 - `Failure Matrix`
 - `Invariants`
 
-禁止在实现中扩大到 normal/extreme/blocked、缓存 profile/key、接受 partial response，或写 session/persistent grant。
+禁止在实现中扩大到 normal/blocked、缓存 profile/key、接受 partial response，或写 session/persistent grant。extreme 可进入 AI，但仍只允许单次批准且不进入成功复用缓存。
 
 ## File Structure
 
@@ -146,7 +146,7 @@ Acceptance：任一完整性错误都返回 `reason="invalid_response"` 和空 `
   - 无 settings/profile/key、structured output 不支持均 unavailable；
   - timeout、连接异常、解析异常均空 allow；
   - 只重试允许的瞬态异常；
-  - extreme/blocked/risk=None 不进入模型；
+  - extreme 进入模型；blocked/risk=None 不进入模型；
   - profile 切换/删除后下一次 review 读取新值；
   - service 实例不持有 model/profile/api_key。
 - [ ] 运行并确认 RED：
@@ -160,14 +160,14 @@ Acceptance：service 无缓存；模型失败永不抛过授权边界。
 ### T6 — approval 来源 metadata
 
 - [ ] 在 `src/tests/test_permission/test_ai_approval.py` 新增：
-  - `ApprovedToolRisk` 可解析 `approved_by="ai"`；
+  - `ApprovedToolRisk` 可解析 `approved_by="ai"` 与 `approved_by="cached"`；
   - 旧 metadata 无字段仍兼容；
   - 非法来源被拒绝或按明确默认处理。
 - [ ] 在 `src/tests/test_agent/graph/test_graph_authorization.py` 新增 AI allow 的 metadata 断言。
 - [ ] 运行并确认 RED：
   - `./test.py --backend -- src/tests/test_permission/test_ai_approval.py src/tests/test_agent/graph/test_graph_authorization.py -v -k approved_by`
 - [ ] 修改 `src/voidx/tools/base.py`：`ApprovedToolRisk` 增加受限 `approved_by`。
-- [ ] 修改 `src/voidx/agent/graph/permissions.py`：`_tool_call_with_approval_risk(decision, approved_by=...)` 写入 `approved_risk` 内部；人工审批写 `user`，AI 写 `ai`。
+- [ ] 修改 `src/voidx/agent/graph/permissions.py`：`_tool_call_with_approval_risk(decision, approved_by=...)` 写入 `approved_risk` 内部；人工审批写 `user`，AI 写 `ai`，成功 dangerous 调用的精确复用写 `cached`。
 - [ ] 运行同一命令确认 GREEN。
 
 Acceptance：执行侧 `_approved_tool_risks_for_call` 不丢失 AI 来源。
@@ -178,7 +178,7 @@ Acceptance：执行侧 `_approved_tool_risks_for_call` 不丢失 AI 来源。
   - AI allow 单次进入 approved，不弹人工；
   - AI deny 回退人工；
   - mixed allow/deny 只询问剩余项；
-  - extreme/blocked/risk=None 不传 AI；
+  - extreme 可传 AI；blocked/risk=None 不传 AI；
   - service unavailable/invalid response 全部人工；
   - AI allow 不写 session allow；仅工具成功执行后，同 session 的同工具+完整参数调用可命中内存去重；
   - 人工对剩余项选 always 时 AI allow 项不参与 session 写入；
@@ -187,7 +187,7 @@ Acceptance：执行侧 `_approved_tool_risks_for_call` 不丢失 AI 来源。
 - [ ] 运行并确认 RED：
   - `./test.py --backend -- src/tests/test_agent/graph/test_graph_authorization.py -v -k ai_approval`
 - [ ] 修改 `src/voidx/agent/graph/contracts.py`：声明 `_settings` 与 `_ai_approval`。
-- [ ] 修改 `src/voidx/agent/graph/permissions.py`：把本次 `PermissionContext` 传给 `_ask_and_apply_permission`；筛选 dangerous + ask；调用 service；移出 AI allow；剩余项复用原人工逻辑。
+- [ ] 修改 `src/voidx/agent/graph/permissions.py`：筛选 dangerous/extreme + ask；调用 service；移出 AI allow；剩余项复用原人工逻辑。
 - [ ] 过滤必须在 graph 与 service 两层都执行，形成 defense in depth。
 - [ ] 运行同一命令确认 GREEN。
 
@@ -266,10 +266,22 @@ Acceptance：切换模式不要求同时改 profile；未配置时后端安全�
   - `./test.py --backend`
 - [ ] 确认所有命令退出码为 0，且没有跳过新增测试。
 
+### T13 — Shell 语义审批上下文
+
+- [ ] 先新增候选范围测试：dangerous/extreme + ask 进入 AI，normal、blocked、非 ask 与 risk=None 不进入 AI。
+- [ ] 新增 shell 投影测试：只提供脱敏 command、shell 类型和 workspace-root cwd；不输出 network mode、SSH 副作用等静态语义推断。
+- [ ] 新增敏感信息测试：认证 header、敏感环境变量、凭证参数与 URL userinfo 不出现在模型投影或 shell pattern。
+- [ ] 运行聚焦测试确认 RED。
+- [ ] 简化 `is_ai_approval_candidate` 为 action/risk 边界；删除 AI 模块内重复的 shell 语义分类规则。
+- [ ] 更新 system policy：具体分析解释器、网络、SSH、包管理器与复合命令；无法理解或包含脱敏凭证时 deny 并回退人工。
+- [ ] 运行聚焦测试确认 GREEN，再运行 permission/graph/gateway 回归。
+
+Acceptance：权限层只提供确定性事实，模糊 shell 语义由 AI 判断；模型输入不包含可识别凭证，任意不确定状态继续回退人工。
+
 ## Manual Acceptance
 
 - [ ] 主模型 A、审批 profile B：dangerous edit 可由 B 单次放行，dock 不泄露参数。
-- [ ] extreme/blocked 不触发 B。
+- [ ] extreme 触发 B；blocked 不触发 B。
 - [ ] 删除 B、清空 B key、断网或模型超时均回退人工。
 - [ ] 在不重启 session 的情况下切换 B→C，下一次审批使用 C。
 - [ ] 同一 dangerous 调用成功后再次发生时跳过 AI；失败、参数变化、session clear 或权限模式切换后重新审批。
@@ -278,7 +290,7 @@ Acceptance：切换模式不要求同时改 profile；未配置时后端安全�
 
 | Risk | Mitigation | Rollback |
 |---|---|---|
-| 模型误放行 | dangerous-only、sandbox 前置、严格输出、单次授权 | 从 frontend 隐藏模式并在 gateway 拒绝新选择；保留配置数据 |
+| 模型误放行 | blocked 前置、严格输出、语义不确定时 deny、单次授权、extreme 不缓存 | 从 frontend 隐藏模式并在 gateway 拒绝新选择；保留配置数据 |
 | 参数泄露 | 安全投影、redaction、大小限制、不持久化 | 禁用 AI 模式，退化 safe |
 | 延迟或供应商故障 | 有界 timeout/retry，失败人工 | 移除 graph 调用点即可恢复纯人工 |
 | profile 热更新陈旧 | service 无状态、每次解析 | 无需重建 graph；回滚 service 接入 |
@@ -287,7 +299,7 @@ Acceptance：切换模式不要求同时改 profile；未配置时后端安全�
 ## Forbidden Changes
 
 - 不改 `sandbox_precheck_action`、RiskLevel/RiskAssessment 语义。
-- 不让 normal、extreme、blocked 进入 AI review。
+- 不让 normal、blocked 进入 AI review；extreme 与 dangerous 一样由 AI 做语义审批。
 - 不新增 AI 专用 API key。
 - 不缓存审批 profile、API key 或 BaseChatModel。
 - 不接受缺项、未知/重复 ID 的部分成功。

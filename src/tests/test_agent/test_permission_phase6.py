@@ -156,7 +156,6 @@ def test_shell_policy_denies_glued_compound_operators(tmp_path: Path):
         "cat README.md;rm escape.txt",
         "cat README.md&&rm escape.txt",
         "cat README.md||rm escape.txt",
-        "cat README.md|wc -l",
         "cat README.md>out.txt",
         "cat README.md>>out.txt",
         "cat README.md<input.txt",
@@ -224,7 +223,6 @@ def test_shell_policy_denies_quote_boundary_operators(tmp_path: Path):
     commands = [
         "cat '\\';touch escape.txt",
         "cat '\\'&&touch escape.txt",
-        "cat '\\'|wc -l",
         "cat '\\'>out.txt",
     ]
 
@@ -247,6 +245,8 @@ def test_shell_policy_denies_newline_and_carriage_return_separators(tmp_path: Pa
     commands = [
         ("bash", "cat README.md\nrm escape.txt"),
         ("bash", "cat README.md\rrm escape.txt"),
+        ("bash", "echo ok\nrm escape.txt | head"),
+        ("bash", "echo ok\rrm escape.txt | head"),
         ("powershell", "Get-Content README.md\nRemove-Item escape.txt"),
         ("powershell", "Get-Content README.md\rRemove-Item escape.txt"),
     ]
@@ -264,6 +264,52 @@ def test_shell_policy_denies_newline_and_carriage_return_separators(tmp_path: Pa
         assert policy.allowed is False, command
         assert decision.action == "ask", command
         assert "shell policy" in decision.reason
+
+
+def test_bounded_read_only_compound_preserves_external_access_paths(tmp_path: Path):
+    workspace = tmp_path / "workspace"
+    external = tmp_path / "external"
+    workspace.mkdir()
+    external.mkdir()
+    command = f"cat {external / 'input.txt'} | head -1"
+    capability = ProcessSandboxCapability(backend=ProcessSandboxBackend.TEST, supported=True)
+
+    policy = shell_policy_for_command(command)
+    precheck = shell_sandbox_precheck(
+        {"command": command},
+        PermissionContext(workspace=str(workspace), process_sandbox=capability),
+    )
+
+    assert policy.allowed is True
+    assert policy.read_only is True
+    assert [str(path) for path in policy.access_paths] == [str(external / "input.txt")]
+    assert precheck[0] == "defer"
+    assert "external path" in (precheck[1] or "")
+
+
+def test_bounded_read_only_compound_resolves_extensionless_symlink_operand(tmp_path: Path):
+    workspace = tmp_path / "workspace"
+    external = tmp_path / "external"
+    workspace.mkdir()
+    external.mkdir()
+    target = external / "secret"
+    target.write_text("secret", encoding="utf-8")
+    link = workspace / "secret"
+    try:
+        link.symlink_to(target)
+    except OSError:
+        pytest.skip("symlinks are unavailable")
+    command = "cat secret | head -1"
+    capability = ProcessSandboxCapability(backend=ProcessSandboxBackend.TEST, supported=True)
+
+    policy = shell_policy_for_command(command)
+    precheck = shell_sandbox_precheck(
+        {"command": command},
+        PermissionContext(workspace=str(workspace), process_sandbox=capability),
+    )
+
+    assert policy.access_paths == (Path("secret"),)
+    assert precheck[0] == "defer"
 
 
 def test_shell_policy_denies_unresolved_variable_path_expansion(tmp_path: Path):

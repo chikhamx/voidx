@@ -3,10 +3,11 @@
 from __future__ import annotations
 
 import json
+from dataclasses import replace
 from typing import Any, TYPE_CHECKING
 
 from voidx.config import PermissionMode
-from voidx.permission.ai_approval import AiApprovalResult
+from voidx.permission.ai_approval import is_ai_approval_candidate
 from voidx.permission.service import (
     PermissionContext,
     authorize_tool_call,
@@ -107,9 +108,7 @@ class GraphPermissionMixin:
         ):
             candidates = [
                 decision for decision in need_ask
-                if decision.action == Action.ASK
-                and decision.risk is not None
-                and decision.risk.level == RiskLevel.DANGEROUS
+                if is_ai_approval_candidate(decision)
             ]
             if candidates:
                 result = await self._ai_approval.review(candidates, self._settings)
@@ -121,6 +120,7 @@ class GraphPermissionMixin:
                         self._notice_permission_result(f"AI 审批: allow {decision.name}")
                         if hasattr(self._permission, "inc_ai_approval_count"):
                             self._permission.inc_ai_approval_count()
+                need_ask = _attach_ai_approval_failures(need_ask, candidates, result, allowed_ids)
             if ai_allowed:
                 if self._ui.via_events():
                     from voidx.runtime.ui import RefreshRequested
@@ -228,9 +228,55 @@ class GraphPermissionMixin:
                 risk=decision.risk.model_dump(mode="json") if decision.risk is not None else None,
                 allowed_scopes=tuple(scope.value if hasattr(scope, "value") else str(scope) for scope in decision.allowed_scopes),
                 default_scope=decision.default_scope.value if hasattr(decision.default_scope, "value") else decision.default_scope,
+                ai_approval_failure=decision.ai_approval_failure,
             ))
         return details
 
+
+
+def _attach_ai_approval_failures(
+    decisions: list[PermissionDecision],
+    candidates: list[PermissionDecision],
+    result: Any,
+    allowed_ids: frozenset[str],
+) -> list[PermissionDecision]:
+    candidate_ids = {str(decision.tool_call.get("id") or "") for decision in candidates}
+    failures = {
+        call_id: _ai_approval_failure_message(result, call_id)
+        for call_id in candidate_ids
+        if call_id and call_id not in allowed_ids
+    }
+    if not failures:
+        return decisions
+    return [
+        replace(decision, ai_approval_failure=failures[call_id])
+        if (call_id := str(decision.tool_call.get("id") or "")) in failures
+        else decision
+        for decision in decisions
+    ]
+
+
+def _ai_approval_failure_message(result: Any, call_id: str) -> str:
+    skipped_reason = getattr(result, "skipped_reasons", {}).get(call_id, "")
+    if skipped_reason:
+        return f"AI approval skipped: {skipped_reason}; requesting human review."
+    if getattr(result, "reason", "") == "reviewed":
+        reason = getattr(result, "denied_reasons", {}).get(call_id, "")
+        if reason:
+            return f"AI approval denied: {reason}"
+        if call_id in getattr(result, "reviewed_ids", frozenset()):
+            return "AI approval denied; requesting human review."
+        return "AI approval skipped: candidate was not reviewed; requesting human review."
+    failure = {
+        "disabled": "disabled",
+        "unavailable": "unavailable",
+        "invalid_response": "returned an invalid response",
+        "skipped": "skipped before review",
+        "timeout": "timed out",
+        "connection_error": "connection error",
+        "error": "internal error",
+    }.get(getattr(result, "reason", ""), "unknown error")
+    return f"AI approval failed: {failure}; requesting human review."
 
 
 def _coerce_permission_decision(item: dict | PermissionDecision) -> PermissionDecision:

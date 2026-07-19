@@ -1,3 +1,5 @@
+import pytest
+
 from voidx.permission.presets import PermissionMode, resolve_mode_decision
 from voidx.permission.risk import ApprovalScope, RiskAssessment, RiskLevel, RiskTag
 from voidx.permission.shell_policy import classify_shell_risk
@@ -148,3 +150,63 @@ def test_shell_risk_classifies_catastrophic_delete_as_blocked():
     assert risk.level == RiskLevel.BLOCKED
     assert RiskTag.SYSTEM_DESTRUCTIVE in risk.tags
     assert risk.approvable is False
+
+
+def test_shell_risk_allows_bounded_read_only_chain():
+    risk = classify_shell_risk('ls -la . && echo "---" && cat AGENTS.md', shell="bash")
+
+    assert risk.level == RiskLevel.NORMAL
+    assert RiskTag.SAFE_READ in risk.tags
+
+
+def test_shell_risk_allows_bounded_read_only_pipe_to_head():
+    risk = classify_shell_risk('find src -name "*.py" | head -50', shell="bash")
+
+    assert risk.level == RiskLevel.NORMAL
+    assert RiskTag.SAFE_READ in risk.tags
+
+
+def test_shell_risk_keeps_dynamic_read_command_extreme():
+    risk = classify_shell_risk("echo $HOME", shell="bash")
+
+    assert risk.level == RiskLevel.EXTREME
+    assert RiskTag.DYNAMIC_SHELL in risk.tags
+
+
+def test_shell_risk_keeps_multiline_compound_command_extreme():
+    risk = classify_shell_risk("echo ok\nrm -f /tmp/victim | head", shell="bash")
+
+    assert risk.level == RiskLevel.EXTREME
+    assert RiskTag.DYNAMIC_SHELL in risk.tags
+
+
+def test_shell_risk_keeps_git_compound_extreme_without_runtime_repo_plan():
+    risk = classify_shell_risk("git status | head", shell="bash")
+
+    assert risk.level == RiskLevel.EXTREME
+    assert RiskTag.DYNAMIC_SHELL in risk.tags
+
+
+@pytest.mark.parametrize(
+    "command",
+    [
+        "make clean | head",
+        "npm exec touch /tmp/victim | head",
+        "ruff check --fix . && echo done",
+        "prettier --write . | head",
+        "git diff --output=/tmp/diff.txt | head",
+        "git notes add -m note HEAD | head",
+        "git branch new-branch | head",
+        "git tag v1 | head",
+        "git grep --open-files-in-pager pattern | head",
+        "git cat-file --filters HEAD:file | head",
+        "find . -fprintf /tmp/find.txt %p | head",
+        "rg --pre ./mutating-helper pattern . | head",
+        "rg --hostname-bin ./mutating-helper pattern . | head",
+    ],
+)
+def test_shell_risk_does_not_treat_mutating_compound_as_safe_read(command):
+    risk = classify_shell_risk(command, shell="bash")
+
+    assert risk.level != RiskLevel.NORMAL
+    assert RiskTag.SAFE_READ not in risk.tags

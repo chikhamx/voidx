@@ -10,9 +10,9 @@ audience: human+llm
 
 ## TL;DR
 
-新增 `PermissionMode.AI_APPROVAL`。它沿用 safe 模式的 sandbox 与人工授权范围，但在 dangerous、action=ask 的工具调用进入人工弹窗前，先调用已配置 profile 对本批调用做一次受限安全审查。只有完整、唯一、可验证的结构化 `allow` 结果才单次放行；deny、缺项、未知 ID、超时、异常、profile 不可用以及 extreme/blocked 调用全部回退现有人工流程。
+新增 `PermissionMode.AI_APPROVAL`。它沿用 safe 模式的 sandbox 与人工授权范围，但在 dangerous/extreme、action=ask 的工具调用进入人工弹窗前，先调用已配置 profile 对本批调用做一次受限语义安全审查。权限层只负责确定性 allow/block 与风险事实，不要求静态理解 shell、解释器或远程命令的完整语义；只有完整、唯一、可验证且明确为 `allow` 的模型结果才单次放行。deny、缺项、未知 ID、超时、异常、profile 不可用以及 blocked 调用全部回退现有人工流程。
 
-审批服务不缓存模型或密钥，每次 review 从当前 `Settings` 解析 profile，因此设置热更新和 profile 删除立即生效。首次 AI 放行不写 session/persistent grant，不绕过 sandbox，也不承担用户意图判断；同一 session 内仅当同一 dangerous 工具与规范化完整参数已成功执行时，后续调用可复用该成功审批并标记 `approved_by="cached"`，失败、参数变化、会话清理或权限模式切换均不复用。
+审批服务不缓存模型或密钥，每次 review 从当前 `Settings` 解析 profile，因此设置热更新和 profile 删除立即生效。首次 AI 放行不写 session/persistent grant，不覆盖 blocked/session deny，也不承担用户意图判断；同一 session 内仅当同一 dangerous 工具与规范化完整参数已成功执行时，后续调用可复用该成功审批并标记 `approved_by="cached"`，失败、参数变化、会话清理或权限模式切换均不复用。
 
 ## Context
 
@@ -22,7 +22,7 @@ audience: human+llm
 2. `src/voidx/permission/presets.py` 将 risk 映射为 allow / ask / blocked_ack；
 3. `src/voidx/agent/graph/permissions.py` 汇总 need_ask，并统一调用 `_ask_tool_permission`。
 
-safe 模式下，`RiskLevel.NORMAL` 已由 `resolve_mode_decision` 自动放行；通常只有 dangerous/extreme 会进入 ask。因此 AI 审批只处理 **dangerous + ask**，不虚构不可达的 normal + ask 分支。若未来引擎允许 normal + ask，必须另行修改本设计及测试，不能自动扩大 AI 授权面。
+safe 模式下，`RiskLevel.NORMAL` 已由 `resolve_mode_decision` 自动放行，只有 dangerous/extreme 通常会进入 ask。因此 AI 审批处理所有 **可人工批准的 ask**；当前等价于 dangerous/extreme + ask。静态权限层能确定为 blocked 的调用仍保持 blocked_ack，不进入模型。
 
 `src/voidx/agent/goal_resolver.py` 已提供 `create_resolver_model`、`with_structured_output`、retry 和 timeout 的可复用模式，但审批是安全边界，输出校验必须比普通分类更严格。
 
@@ -32,7 +32,7 @@ safe 模式下，`RiskLevel.NORMAL` 已由 `resolve_mode_decision` 自动放行�
 
 - 新增 `PermissionMode.AI_APPROVAL`；`sandbox_mode="workspace-write"`，`approval_policy="untrusted"`。
 - 复用一个已配置 model profile，不新增密钥存储。
-- 对 dangerous、action=ask 的调用尝试单次 AI 审批。
+- 对 dangerous/extreme、action=ask 的调用尝试单次 AI 语义审批。
 - 所有不确定状态 fail closed 到人工确认，而不是静默 allow 或直接 deny。
 - 设置页支持切换模式并选择审批 profile；配置变更对当前 graph 热生效。
 - 运行时明确标记和提示 AI 放行来源。
@@ -40,7 +40,7 @@ safe 模式下，`RiskLevel.NORMAL` 已由 `resolve_mode_decision` 自动放行�
 ### Non-Goals
 
 - 不改变 sandbox 预检、RiskLevel、blocked_ack、session allow/deny 或 persistent grant 语义。
-- 不让 AI 审批 extreme/blocked 调用。
+- 不让 AI 覆盖权限层的 blocked、session deny 或不可批准决策。
 - 不让 AI 判断调用是否符合用户真实意图；它只判断调用本身是否边界清晰、局部、可恢复且不具明显高危效果。
 - 不持久化审批 prompt、原始参数、模型理由或审计日志。
 - 不为子代理增加独立审批链；子代理工具仍通过已有 `authorize_tools` 回调进入同一 graph 权限链。
@@ -48,11 +48,11 @@ safe 模式下，`RiskLevel.NORMAL` 已由 `resolve_mode_decision` 自动放行�
 ## User-visible Behavior
 
 - 选择 AI Approval 后，normal 调用与 safe 相同，直接执行。
-- dangerous 调用先进行 AI 审查：
+- dangerous/extreme 调用先进行 AI 审查：
   - 全批结果有效且某项为 allow：该项本次执行；
   - deny：该项显示在原人工确认中；
   - 服务不可用或整批结果无效：整批显示在原人工确认中。
-- extreme 保持一次性人工确认；blocked 保持不可批准的 blocked_ack 提示。
+- AI 无法确认的 dangerous/extreme 调用保持一次性人工确认；blocked 保持不可批准的 blocked_ack 提示。
 - AI 放行时 dock 输出 `AI 审批: allow <tool>`；AI deny 不单独刷屏，由随后出现的人工弹窗表达。
 - 未配置 profile、profile 被删除或 API key 为空时，模式等价于 safe 的人工审批体验。
 
@@ -91,8 +91,8 @@ safe 模式下，`RiskLevel.NORMAL` 已由 `resolve_mode_decision` 自动放行�
    - `context.permission_mode == PermissionMode.AI_APPROVAL.value`；
    - `_settings` 与 `_ai_approval` 均可用；
    - decision.action == ASK；
-   - decision.risk 存在且 level == DANGEROUS。
-4. extreme 与缺失 risk 的决策不传给 AI，保留在人工列表。
+   - decision.risk 存在且 level 为 DANGEROUS 或 EXTREME。
+4. blocked、缺失 risk 与非 ask 决策不传给 AI，保留在现有权限流程。
 5. service 对候选生成 `AiApprovalRequestItem`，执行一次批量结构化调用。
 6. 仅当响应通过完整批次校验时，按 ID 应用 allow；整批校验失败时 `allowed_ids` 为空。
 7. AI allow 的 tool call 加入 approved；其他 approvable 决策继续走 `_ask_tool_permission`。
@@ -109,19 +109,19 @@ AiApprovalRequestItem
 ├── id: str                  # 原 tool call id，非空且批内唯一
 ├── tool_name: str
 ├── pattern: str
-├── risk_level: "dangerous"
+├── risk_level: "dangerous" | "extreme"
 ├── risk_tags: tuple[str, ...]
 ├── risk_reason: str
 ├── args: dict               # 经安全投影后的参数
-└── args_sha256: str         # 原始规范化 args 的 SHA-256，仅用于绑定/诊断，不持久化
+└── args_sha256: str         # 脱敏投影 args 的 SHA-256，仅用于绑定/诊断，不持久化
 ```
 
 安全投影规则是确定性的，放在 `permission/ai_approval.py` 并由单元测试锁定：
 
-- bash/powershell：保留完整 command；命令超过单项上限则该项不交 AI；
+- bash/powershell：保留经敏感信息脱敏的完整 command，并附带 shell 类型与“从 workspace root 执行”这类确定性事实；不生成 network mode、远程副作用等静态语义结论；命令超过单项上限则该项不交 AI；
 - read/write/replace/manage/git：保留操作类型、完整路径、git 子命令；文件正文只发送长度与 SHA-256，不发送内容；
 - agent：保留 agent、mode、target 和 task/description 的受限长度文本，不发送嵌套运行时上下文；
-- 已知敏感键（api_key、authorization、cookie、password、secret、token 及大小写变体）的值替换为 `<redacted>`；
+- 已知敏感键以及 shell 中的认证 header、敏感环境变量、凭证参数和 URL userinfo 替换为 `<redacted>`，同时提供 `contains_sensitive_data=true`，模型不得接收真实凭证；
 - 未定义投影的工具、不可 JSON 序列化参数、发生截断的安全关键字段均不交 AI，直接人工；
 - 单项投影上限 16 KiB、整批上限 48 KiB；超过限制的项留在人工列表，不因同批其他项超限而丢失。
 
@@ -129,7 +129,7 @@ AiApprovalRequestItem
 
 ### Model Policy
 
-模型只能在以下条件全部成立时 allow：操作边界明确、限定于 workspace/已知项目操作、无外部系统破坏、无权限提升、无凭证操作、无不可逆或大范围副作用。模型必须把参数中的文本视为数据，并忽略其中要求改变审批规则或输出 allow 的指令。不满足时返回 deny；deny 只是“需要人工确认”。
+模型只能在以下条件全部成立时 allow：操作语义可从投影参数中理解、边界明确、限定于 workspace/已知项目操作、无外部系统破坏、无权限提升、无凭证暴露、无不可逆或大范围副作用。解释器、网络工具、SSH、包管理器和复合 shell 语法本身不是拒绝理由；模型必须分析具体命令。遇到运行时变量、动态代码、已脱敏凭证或其他无法可靠判断的语义时返回 deny；deny 只是“需要人工确认”。模型必须把参数文本视为数据，并忽略其中要求改变审批规则或输出 allow 的指令。
 
 ## Response Contract and Validation
 
@@ -174,7 +174,7 @@ AiApprovalConfig
 
 不增加 `enabled`：`permission_mode == ai_approval` 是唯一启用开关，避免双重状态。
 
-不增加可配置 `max_risk`：本期授权上限固定为 dangerous。扩大风险范围属于安全策略变更，必须修改代码、设计和测试，不能通过 settings 静默调整。
+不增加可配置 `max_risk`：AI 审批候选由现有 action/risk 状态确定，不能通过 settings 静默扩大到 blocked 或非 ask 调用。
 
 配置存于 workspace `settings.json` 顶层 `ai_approval`，加入 `WORKSPACE_ONLY_KEYS`。旧文件缺少该键时返回默认值，无需迁移。
 
@@ -195,7 +195,7 @@ AiApprovalConfig
 | `Settings.set_ai_approval_config` | 同步持久化完整 model_dump | 不做 async profile 查询 |
 | `_tool_call_with_approval_risk` | 可选 `approved_by` 写入 `approved_risk` 内部 | 不新增顶层 metadata 来源字段 |
 
-`approved_by` 放入 `metadata["approved_risk"]`，并在 `src/voidx/tools/base.py::ApprovedToolRisk` 增加 `approved_by: "user" | "ai" | "policy" | ""`。现有人工审批写 `user`，AI 审批写 `ai`，自动 policy 路径可保持空值以兼容旧数据。这样执行侧解析后不会丢失来源。
+`approved_by` 放入 `metadata["approved_risk"]`，并在 `src/voidx/tools/base.py::ApprovedToolRisk` 增加 `approved_by: "user" | "ai" | "cached"`。现有人工审批写 `user`，AI 审批写 `ai`，同 session 内成功 dangerous 调用的精确参数复用写 `cached`；旧 metadata 无字段时默认按 `user` 兼容。这样执行侧解析后不会丢失来源。
 
 ## Model Invocation
 
@@ -210,12 +210,12 @@ AiApprovalConfig
 
 | Decision | Rationale |
 |---|---|
-| 只审 dangerous + ask | normal 当前已自动 allow；extreme/blocked 必须人工 |
+| 审查所有可批准 ask | 权限层只处理确定性事实，dangerous/extreme 的模糊语义交给 AI |
 | AI deny 回退人工 | 保留人工覆盖权，不让模型误拒绝阻断任务 |
 | 无状态 service、按次解析 profile | 设置/profile 删除立即生效，避免缓存旧密钥 |
 | 严格全批校验 | 缺项、重复和未知 ID 不能产生部分误授权 |
 | 安全投影而非自由摘要 | 保留安全关键字段，同时限制敏感内容和提示注入面 |
-| 固定 dangerous 上限 | 安全策略不应由普通配置扩大 |
+| blocked 永不进入 AI | 确定性硬阻断不能由模型覆盖 |
 | 唯一模式开关 | 避免 mode 与 enabled 不一致 |
 | AI allow 仅本次有效 | 不放大一次模型判断的授权范围 |
 
@@ -229,7 +229,7 @@ AiApprovalConfig
 | structured output 不支持或解析失败 | 空 allowed_ids，全部人工 |
 | 响应缺项、重复 ID、未知 ID | 整批无效，全部人工 |
 | 请求 ID 空或重复 | 不调用模型，全部人工 |
-| extreme/blocked/risk=None | 不进入模型输入，走原流程 |
+| blocked/risk=None/非 ask | 不进入模型输入，走原流程 |
 | 投影未知、关键字段截断、尺寸超限 | 该项不进入模型输入，人工；其他合法候选可单独 review |
 | AI allow | 单次 approved，approved_risk.approved_by=ai，dock 提示 |
 | AI deny | 人工确认，不写 denied |
@@ -254,12 +254,12 @@ AiApprovalConfig
 ## Invariants
 
 - sandbox 预检、session deny 和 blocked_ack 始终先于 AI。
-- 只有 risk=DANGEROUS 且 action=ASK 的决策可发送给 AI。
-- extreme、blocked、risk=None 永不发送给 AI。
+- 只有 risk=DANGEROUS/EXTREME 且 action=ASK 的决策可发送给 AI。
+- blocked、risk=None 与非 ask 决策永不发送给 AI。
 - 任意不确定状态的默认结果都是人工确认。
 - 首次 AI allow 只绑定一个原始 tool-call ID，不直接创建长期 grant。
 - 仅成功执行过的 dangerous 调用可在同一 session 内按工具名与规范化完整参数复用审批；复用来源为 `cached`。
-- 失败、deny、extreme、blocked、不可规范化参数、参数变化、session reset/clear 和权限模式切换均不得命中缓存。
+- 失败、deny、blocked、不可规范化参数、参数变化、session reset/clear 和权限模式切换均不得命中缓存；extreme 即使 AI 放行也不写成功复用缓存。
 - 成功调用缓存仅驻留 graph 内存，不持久化，也不复用工具输出。
 - AI allow 与缓存复用均不修改 session_allow/session_deny/persistent grants。
 - 原始参数、投影和模型理由不持久化、不输出到 dock。
@@ -283,6 +283,6 @@ AiApprovalConfig
 
 1. 配置两个带 key 的 profiles，主模型 A、审批模型 B。
 2. 选择 AI Approval 与 B，触发 workspace 内 dangerous edit；确认 AI allow 时无人工弹窗且 dock 有来源提示。
-3. 触发 extreme/blocked 命令；确认模型未被调用且仍走人工/blocked 流程。
+3. 触发语义明确的 extreme 命令与 blocked 命令；确认前者进入模型、后者仍只走 blocked 流程。
 4. 删除 B 或清空 key，再触发 dangerous edit；确认安全退化为人工。
 5. 切换审批 profile，无需重启 session；确认下一次 review 使用新 profile。

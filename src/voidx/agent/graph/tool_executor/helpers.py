@@ -382,9 +382,20 @@ def _make_interact_callback(app):
     async def interact(request: UserInteraction) -> UserResponse:
         timeout = request.timeout
         if request.options and _is_tuple_options(request.options):
-            other_value = _other_choice_value(request.options)
-            choices = [*request.options, ("Other…", other_value, "Type a custom answer")]
-            result = await app.ask_choice(request.prompt, choices, timeout=timeout)
+            permission_details = _permission_details_for_interaction(request)
+            if permission_details:
+                choices = list(request.options)
+                other_value = ""
+            else:
+                other_value = _other_choice_value(request.options)
+                choices = [*request.options, ("Other…", other_value, "Type a custom answer")]
+            result = await _ask_choice_with_permission_events(
+                app,
+                request,
+                choices,
+                permission_details,
+                timeout=timeout,
+            )
             if result == other_value:
                 result = await app.ask_text(request.prompt, timeout=timeout)
                 if result is None:
@@ -407,6 +418,59 @@ def _make_interact_callback(app):
         return UserResponse(value=result)
 
     return interact
+
+
+async def _ask_choice_with_permission_events(
+    app,
+    request: UserInteraction,
+    choices: list[tuple[str, str, str]],
+    permission_details: list,
+    *,
+    timeout: float | None,
+):
+    shown = False
+    details_payload = [detail.model_dump(mode="json") for detail in permission_details]
+    if permission_details:
+        from voidx.runtime.ui import PermissionPromptShown, ui_events
+
+        if ui_events.is_running:
+            await ui_events.emit(PermissionPromptShown(
+                prompt=request.prompt,
+                choices=choices,
+                tools=permission_details,
+            ))
+            shown = True
+    try:
+        kwargs = {"timeout": timeout}
+        if details_payload:
+            kwargs["details"] = details_payload
+        return await app.ask_choice(request.prompt, choices, **kwargs)
+    finally:
+        if shown:
+            from voidx.runtime.ui import PermissionPromptCleared, ui_events
+
+            await ui_events.emit(PermissionPromptCleared())
+
+
+def _permission_details_for_interaction(request: UserInteraction) -> list:
+    from voidx.runtime.ui import PermissionToolDetail
+
+    prompt = request.prompt.strip()
+    marker = " file outside workspace? "
+    if marker not in prompt:
+        return []
+    label, file_path = prompt.split(marker, 1)
+    file_path = file_path.strip()
+    tool_name = label.strip().lower().replace(" ", "_")
+    if not tool_name or not file_path:
+        return []
+    return [
+        PermissionToolDetail(
+            name=tool_name,
+            pattern=file_path,
+            args={"file_path": file_path},
+        )
+    ]
 
 
 def _is_tuple_options(options: list[str | tuple[str, str, str]]) -> bool:

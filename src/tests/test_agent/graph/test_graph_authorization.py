@@ -604,6 +604,40 @@ async def test_ai_approval_reuses_successful_dangerous_call_without_review(tmp_p
 
 
 @pytest.mark.asyncio
+async def test_ai_approval_reviews_bounded_shell_extreme_without_prompt(tmp_path):
+    from voidx.config import PermissionMode
+    from voidx.permission.ai_approval import AiApprovalResult
+    from voidx.permission.risk import RiskLevel, RiskTag
+
+    graph = _graph(tmp_path)
+    graph._settings = Settings(str(tmp_path))
+    graph._permission.permission_mode = PermissionMode.AI_APPROVAL.value
+    reviewed: list[tuple[str, RiskLevel, tuple[RiskTag, ...]]] = []
+
+    async def review(candidates, _settings):
+        reviewed.extend((item.pattern, item.risk.level, item.risk.tags) for item in candidates)
+        return AiApprovalResult(
+            allowed_ids=frozenset({candidates[0].tool_call["id"]}),
+            reason="reviewed",
+        )
+
+    async def fail_if_asked(_tool_calls):
+        pytest.fail("bounded shell command should be reviewed by AI before prompting")
+
+    graph._ai_approval.review = review
+    graph._ask_tool_permission = fail_if_asked
+    graph._notice_permission_result = lambda _message: None
+
+    call = {"name": "bash", "args": {"command": "python -m pytest -q"}, "id": "call_1"}
+    approved, denied = await graph._authorize_tool_calls([call], plan_mode=False, session_id="s")
+
+    assert [item["id"] for item in approved] == ["call_1"]
+    assert denied == []
+    assert reviewed == [("python -m pytest -q", RiskLevel.EXTREME, (RiskTag.NESTED_INTERPRETER,))]
+    assert approved[0]["metadata"]["approved_risk"]["approved_by"] == "ai"
+
+
+@pytest.mark.asyncio
 async def test_ai_approval_increments_counter_and_emits_refresh(tmp_path):
     from voidx.permission.ai_approval import AiApprovalResult
     from voidx.config import PermissionMode
@@ -1056,6 +1090,81 @@ async def test_ai_approval_executor_failure_is_not_reused(tmp_path):
         assert tool_message.status == "error"
 
     assert reviewed == ["call_first", "call_second"]
+
+
+@pytest.mark.asyncio
+async def test_ai_approval_failure_reason_is_shown_in_permission_details(tmp_path):
+    from voidx.config import PermissionMode
+    from voidx.permission.ai_approval import AiApprovalResult
+
+    graph = _graph(tmp_path)
+    graph._settings = Settings(str(tmp_path))
+    graph._permission.set_permission_mode(PermissionMode.AI_APPROVAL.value)
+    captured_details = None
+
+    async def review(_candidates, _settings):
+        return AiApprovalResult(reason="timeout")
+
+    class FakeApp:
+        async def ask_choice(self, _prompt, _choices, details=None):
+            nonlocal captured_details
+            captured_details = details
+            return "n"
+
+    graph._ai_approval.review = review
+    graph._app = FakeApp()
+
+    approved, denied = await graph._authorize_tool_calls(
+        [{"name": "bash", "args": {"command": "./build.sh"}, "id": "call_build"}],
+        plan_mode=False,
+        session_id="s",
+    )
+
+    assert approved == []
+    assert len(denied) == 1
+    assert captured_details is not None
+    assert captured_details[0]["ai_approval_failure"] == (
+        "AI approval failed: timed out; requesting human review."
+    )
+
+
+@pytest.mark.asyncio
+async def test_ai_approval_skipped_candidate_reason_is_shown_in_permission_details(tmp_path):
+    from voidx.config import PermissionMode
+    from voidx.permission.ai_approval import AiApprovalResult
+
+    graph = _graph(tmp_path)
+    graph._settings = Settings(str(tmp_path))
+    graph._permission.set_permission_mode(PermissionMode.AI_APPROVAL.value)
+    captured_details = None
+
+    async def review(_candidates, _settings):
+        return AiApprovalResult(
+            reason="reviewed",
+            skipped_reasons={"call_remote": "tool is not supported by AI approval"},
+        )
+
+    class FakeApp:
+        async def ask_choice(self, _prompt, _choices, details=None):
+            nonlocal captured_details
+            captured_details = details
+            return "n"
+
+    graph._ai_approval.review = review
+    graph._app = FakeApp()
+
+    approved, denied = await graph._authorize_tool_calls(
+        [{"name": "mcp__remote", "args": {"operation": "read"}, "id": "call_remote"}],
+        plan_mode=False,
+        session_id="s",
+    )
+
+    assert approved == []
+    assert len(denied) == 1
+    assert captured_details is not None
+    assert captured_details[0]["ai_approval_failure"] == (
+        "AI approval skipped: tool is not supported by AI approval; requesting human review."
+    )
 
 
 @pytest.mark.asyncio
