@@ -4,6 +4,7 @@ from __future__ import annotations
 
 from voidx.tools.bash.core import (
     _has_shell_expansion,
+    _has_unquoted_pathname_expansion,
     _RE_AMP,
     _shell_words,
     _strip_cd_prefix,
@@ -35,9 +36,10 @@ def _try_hint_impl(command: str) -> RouteHint | None:
     if not stripped:
         return None
 
-    stripped = _strip_cd_prefix(stripped)
+    if _strip_cd_prefix(stripped) != stripped:
+        return None
 
-    if ";" in stripped or _has_shell_expansion(stripped):
+    if ";" in stripped or _has_shell_expansion(stripped) or _has_unquoted_pathname_expansion(stripped):
         return None
     if _RE_AMP.search(stripped):
         return None

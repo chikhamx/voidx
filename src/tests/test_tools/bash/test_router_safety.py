@@ -26,6 +26,18 @@ class TestTryHintExceptionSafety:
         assert result is None or isinstance(result, RouteHint)
 
 
+class TestUnquotedPathnameExpansion:
+    """Shell wildcard expansion must remain under bash control."""
+
+    @pytest.mark.parametrize("command", [
+        "cat *.txt",
+        "grep pattern *.py",
+        "find . -type f -name *.py",
+    ])
+    def test_unquoted_wildcard_is_not_routed(self, command):
+        assert try_hint(command) is None
+
+
 # ---------------------------------------------------------------------------
 # #2: sed start_anchor/end_anchor hint wording
 # ---------------------------------------------------------------------------
@@ -91,4 +103,3 @@ class TestEchoDoubleQuoteSafety:
 # ---------------------------------------------------------------------------
 # #5: git commit -m"msg" compact form and --message=<msg>
 # ---------------------------------------------------------------------------
-

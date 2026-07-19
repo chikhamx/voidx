@@ -213,30 +213,180 @@ class TestBashHintFallbackNoRegistry:
 
 
 # ---------------------------------------------------------------------------
-# 7. RouteHint tool_args 默认 None（非 git hint）
+# 6. bash read auto-route
 # ---------------------------------------------------------------------------
 
 
-class TestRouteHintToolArgsDefaultNone:
-    """Non-git hints keep tool_args=None and preserve old hint-only behavior."""
+class TestBashReadAutoRoute:
+    """bash read-like commands auto-route to read tool."""
 
-    def test_cat_hint_tool_args_none(self):
+    @pytest.mark.asyncio
+    async def test_cat_routes_to_read_and_records_coverage(self, tmp_path):
+        target = tmp_path / "code.py"
+        target.write_text("keep\nREMOVE_ME\n", encoding="utf-8")
+        r = _make_registry()
+        ctx = _make_ctx(tmp_path, r)
+
+        read_result = await r.execute_tool("bash", {"command": "cat code.py"}, ctx)
+        replace_result = await r.execute_tool(
+            "replace",
+            {
+                "file_path": "code.py",
+                "bounds": [{"line_no": 2, "anchor": "REMOVE_ME"}],
+                "new_string": "",
+            },
+            ctx,
+        )
+
+        assert read_result.metadata.get("tool") == "read"
+        assert read_result.metadata.get("routed_from") == "bash"
+        assert read_result.metadata.get("routed_tool_args") == {"file_path": "code.py"}
+        assert "1\tkeep" in read_result.output
+        assert replace_result.metadata.get("error") is not True
+        assert target.read_text(encoding="utf-8") == "keep\n"
+
+    @pytest.mark.asyncio
+    async def test_head_routes_to_read_limit(self, tmp_path):
+        (tmp_path / "code.py").write_text("one\ntwo\nthree\n", encoding="utf-8")
+        r = _make_registry()
+        ctx = _make_ctx(tmp_path, r)
+
+        result = await r.execute_tool("bash", {"command": "head -n 2 code.py"}, ctx)
+
+        assert result.metadata.get("tool") == "read"
+        assert result.metadata.get("routed_tool_args") == {"file_path": "code.py", "limit": 2}
+        assert "1\tone" in result.output
+        assert "2\ttwo" in result.output
+        assert "3\tthree" not in result.output
+
+    @pytest.mark.asyncio
+    async def test_tail_plus_routes_to_read_offset(self, tmp_path):
+        (tmp_path / "code.py").write_text("one\ntwo\nthree\n", encoding="utf-8")
+        r = _make_registry()
+        ctx = _make_ctx(tmp_path, r)
+
+        result = await r.execute_tool("bash", {"command": "tail -n +2 code.py"}, ctx)
+
+        assert result.metadata.get("tool") == "read"
+        assert result.metadata.get("routed_tool_args") == {"file_path": "code.py", "offset": 2}
+        assert "1\tone" not in result.output
+        assert "2\ttwo" in result.output
+        assert "3\tthree" in result.output
+
+
+# ---------------------------------------------------------------------------
+# 7. bash search auto-route
+# ---------------------------------------------------------------------------
+
+
+class TestBashSearchAutoRoute:
+    """bash search commands auto-route to grep/glob tools."""
+
+    @pytest.mark.asyncio
+    async def test_grep_routes_and_records_matching_line_coverage(self, tmp_path):
+        target = tmp_path / "code.py"
+        target.write_text("keep\nREMOVE_ME\n", encoding="utf-8")
+        r = _make_registry()
+        ctx = _make_ctx(tmp_path, r)
+
+        grep_result = await r.execute_tool(
+            "bash", {"command": "grep -n REMOVE_ME code.py"}, ctx
+        )
+        replace_result = await r.execute_tool(
+            "replace",
+            {
+                "file_path": "code.py",
+                "bounds": [{"line_no": 2, "anchor": "REMOVE_ME"}],
+                "new_string": "",
+            },
+            ctx,
+        )
+
+        assert grep_result.metadata.get("tool") == "grep"
+        assert grep_result.metadata.get("routed_from") == "bash"
+        assert grep_result.metadata.get("routed_tool_args") == {
+            "pattern": "REMOVE_ME",
+            "path": "code.py",
+        }
+        assert replace_result.metadata.get("error") is not True
+        assert target.read_text(encoding="utf-8") == "keep\n"
+
+    @pytest.mark.asyncio
+    async def test_find_files_routes_to_glob(self, tmp_path):
+        (tmp_path / "a.py").touch()
+        (tmp_path / "notes.txt").touch()
+        sub = tmp_path / "sub"
+        sub.mkdir()
+        (sub / "b.py").touch()
+        r = _make_registry()
+        ctx = _make_ctx(tmp_path, r)
+
+        result = await r.execute_tool(
+            "bash", {"command": "find . -type f -name '*.py'"}, ctx
+        )
+        payload = json.loads(result.output)
+
+        assert result.metadata.get("tool") == "glob"
+        assert result.metadata.get("routed_from") == "bash"
+        assert result.metadata.get("routed_tool_args") == {"pattern": "**/*.py"}
+        assert payload["files"] == ["a.py", "sub/b.py"]
+
+    @pytest.mark.asyncio
+    async def test_cd_prefixed_grep_runs_in_requested_directory(self, tmp_path):
+        (tmp_path / "code.py").write_text("ROOT\n", encoding="utf-8")
+        sub = tmp_path / "sub"
+        sub.mkdir()
+        (sub / "code.py").write_text("NEEDLE\n", encoding="utf-8")
+        r = _make_registry()
+        ctx = _make_ctx(tmp_path, r)
+
+        result = await r.execute_tool(
+            "bash", {"command": "cd sub && grep NEEDLE code.py"}, ctx
+        )
+        payload = json.loads(result.output)
+
+        assert result.metadata.get("routed_from") is None
+        assert payload["ok"] is True
+        assert payload["stdout"] == "NEEDLE\n"
+
+
+# ---------------------------------------------------------------------------
+# 8. RouteHint tool_args for auto-routable commands
+# ---------------------------------------------------------------------------
+
+
+class TestRouteHintToolArgs:
+    """Auto-routable hints carry structured tool arguments."""
+
+    def test_cat_hint_tool_args(self):
         h = try_hint("cat file.py")
         assert h is not None
         assert h.tool_id == "read"
-        assert h.tool_args is None
+        assert h.tool_args == {"file_path": "file.py"}
 
-    def test_grep_hint_tool_args_none(self):
+    def test_head_hint_tool_args(self):
+        h = try_hint("head -n 5 file.py")
+        assert h is not None
+        assert h.tool_id == "read"
+        assert h.tool_args == {"file_path": "file.py", "limit": 5}
+
+    def test_tail_plus_hint_tool_args(self):
+        h = try_hint("tail -n +5 file.py")
+        assert h is not None
+        assert h.tool_id == "read"
+        assert h.tool_args == {"file_path": "file.py", "offset": 5}
+
+    def test_grep_hint_tool_args(self):
         h = try_hint("grep -r foo .")
         assert h is not None
         assert h.tool_id == "grep"
-        assert h.tool_args is None
+        assert h.tool_args == {"pattern": "foo", "path": "."}
 
-    def test_find_hint_tool_args_none(self):
-        h = try_hint("find . -name '*.py'")
+    def test_find_hint_tool_args(self):
+        h = try_hint("find . -type f -name '*.py'")
         assert h is not None
         assert h.tool_id == "glob"
-        assert h.tool_args is None
+        assert h.tool_args == {"pattern": "**/*.py"}
 
 
 # ---------------------------------------------------------------------------

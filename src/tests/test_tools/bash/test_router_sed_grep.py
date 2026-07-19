@@ -8,12 +8,19 @@ from voidx.tools.bash import RouteHint, try_hint
 
 
 class TestGrepSemanticFlags:
-    """grep -v, -l, -c, -A/-B → no hint (semantic difference)."""
+    """Grep forms without an equivalent structured search stay in bash."""
 
     @pytest.mark.parametrize("cmd", [
         "grep -v pattern file.py",
         "grep -l pattern file.py",
         "grep -c pattern file.py",
+        "grep -A2 pattern file.py",
+        "grep -B3 pattern file.py",
+        "grep -A2 -B5 pattern file.py",
+        "grep -C -1 pattern file.py",
+        "grep 'a+' file.py",
+        "rg -r replacement pattern",
+        "rg -R pattern",
     ])
     def test_semantic_grep_flags_no_hint(self, cmd):
         assert try_hint(cmd) is None
@@ -47,30 +54,21 @@ class TestGrepSupportedFlags:
         assert "context_lines=2" in h.llm_hint
 
 
-    def test_grep_after_context(self):
-        h = try_hint("grep -A2 pattern file.py")
+    def test_grep_balanced_after_and_before_context(self):
+        h = try_hint("grep -A2 -B2 pattern file.py")
         assert h is not None
         assert h.tool_id == "grep"
         assert "context_lines=2" in h.llm_hint
 
-    def test_grep_before_context(self):
-        h = try_hint("grep -B3 pattern file.py")
-        assert h is not None
-        assert h.tool_id == "grep"
-        assert "context_lines=3" in h.llm_hint
-
-    def test_grep_after_and_before_context_takes_max(self):
-        h = try_hint("grep -A2 -B5 pattern file.py")
-        assert h is not None
-        assert h.tool_id == "grep"
-        assert "context_lines=5" in h.llm_hint
-
     def test_grep_exclude_multiple(self):
-        h = try_hint("grep --exclude=*.min.js --exclude=*.map pattern")
+        h = try_hint("grep -r --exclude '*.min.js' --exclude '*.map' pattern .")
         assert h is not None
         assert h.tool_id == "grep"
         assert "*.min.js" in h.llm_hint
         assert "*.map" in h.llm_hint
+
+    def test_grep_without_path_or_recursive_flag_uses_stdin(self):
+        assert try_hint("grep pattern") is None
 
     def test_grep_short_flag_combo(self):
         h = try_hint("grep -in pattern file.py")
@@ -146,22 +144,32 @@ class TestBasicPositive:
         assert "staged" in h.llm_hint
 
     def test_find_name(self):
-        h = try_hint("find . -name '*.py'")
+        h = try_hint("find . -type f -name '*.py'")
         assert h is not None
         assert h.tool_id == "glob"
         assert "**/*.py" in h.llm_hint
 
     def test_find_iname(self):
-        h = try_hint("find . -iname '*.py'")
+        h = try_hint("find . -type f -iname '*.py'")
         assert h is not None
         assert h.tool_id == "glob"
         assert "ignore_case=True" in h.llm_hint
 
     def test_find_maxdepth(self):
-        h = try_hint("find . -maxdepth 2 -name '*.py'")
+        h = try_hint("find . -maxdepth 2 -type f -name '*.py'")
         assert h is not None
         assert h.tool_id == "glob"
         assert "max_depth=2" in h.llm_hint
+
+    def test_find_without_file_type_is_not_routed(self):
+        assert try_hint("find . -name '*.py'") is None
+
+    @pytest.mark.parametrize("command", [
+        "find ./../ -type f -name '*.py'",
+        "find src -type f -name 'nested/*.py'",
+    ])
+    def test_find_forms_without_safe_glob_mapping_are_not_routed(self, command):
+        assert try_hint(command) is None
 
     def test_grep_basic(self):
         h = try_hint("grep pattern file.py")
@@ -285,33 +293,18 @@ class TestSedRegexAnchor:
 # cd && prefix stripping
 # ---------------------------------------------------------------------------
 
-class TestCdPrefixStripping:
-    """cd <dir> && <cmd> should strip the cd prefix and hint on <cmd>."""
+class TestCdPrefixRouting:
+    """Commands that change directory must retain bash working-directory semantics."""
 
-    def test_cd_and_sed(self):
-        h = try_hint("cd /tmp && sed -i '' 's/old/new/g' file.py")
-        assert h is not None
-        assert h.tool_id == "replace"
-
-    def test_cd_and_git_status(self):
-        h = try_hint("cd /tmp && git status")
-        assert h is not None
-        assert h.tool_id == "git"
-
-    def test_cd_and_cat(self):
-        h = try_hint("cd /tmp && cat file.py")
-        assert h is not None
-        assert h.tool_id == "read"
-
-    def test_cd_and_grep(self):
-        h = try_hint("cd /tmp && grep pattern file.py")
-        assert h is not None
-        assert h.tool_id == "grep"
-
-    def test_cd_and_find(self):
-        h = try_hint("cd /tmp && find . -name '*.py'")
-        assert h is not None
-        assert h.tool_id == "glob"
+    @pytest.mark.parametrize("command", [
+        "cd /tmp && sed -i '' 's/old/new/g' file.py",
+        "cd /tmp && git status",
+        "cd /tmp && cat file.py",
+        "cd /tmp && grep pattern file.py",
+        "cd /tmp && find . -type f -name '*.py'",
+    ])
+    def test_cd_prefixed_command_is_not_routed(self, command):
+        assert try_hint(command) is None
 
     def test_cd_multiple_commands_still_excluded(self):
         """cd && cmd1 && cmd2 should still be excluded (multiple &&)."""

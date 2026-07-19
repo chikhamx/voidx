@@ -87,6 +87,48 @@ class TestMakeInteractCallback:
         assert not response.free_text
 
     @pytest.mark.asyncio
+    async def test_tuple_options_emit_permission_prompt_events_when_event_bus_running(self):
+        from voidx.agent.graph.tool_executor import _make_interact_callback
+        from voidx.ui.output.events import PermissionPromptCleared, PermissionPromptShown, ui_events
+
+        seen_events = []
+
+        class FakeConsumer:
+            def handle(self, event):
+                seen_events.append(event)
+
+        class FakeApp:
+            async def ask_choice(self, prompt, choices, **kwargs):
+                return choices[0][1]
+
+            async def ask_text(self, prompt, **kwargs):
+                return "text"
+
+        ui_events.start(FakeConsumer())
+        try:
+            callback = _make_interact_callback(FakeApp())
+            response = await callback(UserInteraction(
+                prompt="Read file outside workspace? /tmp/example.rs",
+                options=[("Yes", "allow", "Allow this read once"), ("No", "deny", "Do not read this file")],
+            ))
+            await ui_events.drain()
+        finally:
+            await ui_events.stop()
+
+        assert response.value == "allow"
+        shown = next(event for event in seen_events if isinstance(event, PermissionPromptShown))
+        assert shown.prompt == "Read file outside workspace? /tmp/example.rs"
+        assert shown.choices[:2] == [
+            ("Yes", "allow", "Allow this read once"),
+            ("No", "deny", "Do not read this file"),
+        ]
+        assert shown.tools
+        assert shown.tools[0].name == "read"
+        assert shown.tools[0].pattern == "/tmp/example.rs"
+        assert shown.tools[0].args == {"file_path": "/tmp/example.rs"}
+        assert any(isinstance(event, PermissionPromptCleared) for event in seen_events)
+
+    @pytest.mark.asyncio
     async def test_tuple_options_appends_other_choice(self):
         from voidx.agent.graph.tool_executor import _make_interact_callback
 

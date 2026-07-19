@@ -54,6 +54,31 @@ def _has_shell_expansion(command: str) -> bool:
     return False
 
 
+def _has_unquoted_pathname_expansion(command: str) -> bool:
+    """Return true when bash would interpret an unquoted glob character."""
+    in_single = False
+    in_double = False
+    escaped = False
+    for ch in command:
+        if escaped:
+            if not in_single and not in_double and ch in "*?[":
+                return True
+            escaped = False
+            continue
+        if ch == "\\" and not in_single:
+            escaped = True
+            continue
+        if ch == "'" and not in_double:
+            in_single = not in_single
+            continue
+        if ch == '"' and not in_single:
+            in_double = not in_double
+            continue
+        if ch in "*?[" and not in_single and not in_double:
+            return True
+    return False
+
+
 _RE_CD_PREFIX = re.compile(r"^cd\s+\S+\s*&&\s+")
 _RE_AMP = re.compile(r"&&|\s&$")
 

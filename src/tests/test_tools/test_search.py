@@ -2,6 +2,7 @@
 
 import asyncio
 import json
+import os
 import shlex
 import sys
 from pathlib import Path
@@ -64,6 +65,45 @@ class TestSearch:
         assert "notes.txt" not in data["files"]
 
     @pytest.mark.asyncio
+    async def test_glob_returns_files_only(self, tmp_path):
+        (tmp_path / "file.py").touch()
+        (tmp_path / "package.py").mkdir()
+        ctx = ToolContext(workspace=str(tmp_path))
+        r = ToolRegistry()
+
+        result = await r.execute_tool("glob", {"pattern": "**/*.py"}, ctx)
+        data = json.loads(result.output)
+
+        assert data["files"] == ["file.py"]
+
+    @pytest.mark.skipif(os.name == "nt", reason="symlink creation may require elevated privileges")
+    @pytest.mark.asyncio
+    async def test_glob_excludes_symlinks_to_files(self, tmp_path):
+        target = tmp_path / "target.py"
+        target.touch()
+        (tmp_path / "linked.py").symlink_to(target)
+        ctx = ToolContext(workspace=str(tmp_path))
+        r = ToolRegistry()
+
+        result = await r.execute_tool("glob", {"pattern": "**/*.py"}, ctx)
+        data = json.loads(result.output)
+
+        assert data["files"] == ["target.py"]
+
+    @pytest.mark.asyncio
+    @pytest.mark.parametrize("pattern", ["../*.py", "/tmp/*.py", r"C:\\temp\\*.py"])
+    async def test_glob_rejects_patterns_outside_workspace(self, tmp_path, pattern):
+        workspace = tmp_path / "workspace"
+        workspace.mkdir()
+        ctx = ToolContext(workspace=str(workspace))
+        r = ToolRegistry()
+
+        result = await r.execute_tool("glob", {"pattern": pattern}, ctx)
+
+        assert result.metadata.get("error") is True
+        assert "workspace-relative" in result.output
+
+    @pytest.mark.asyncio
     async def test_glob_max_depth(self, tmp_path):
         (tmp_path / "a.py").touch()
         (tmp_path / "sub").mkdir()
@@ -90,6 +130,90 @@ class TestSearch:
         assert any(r["file"] == "code.py" for r in data["results"])
         assert "code.py" in result.display
         assert "TODO" in result.display
+
+    @pytest.mark.asyncio
+    async def test_grep_match_line_can_be_replaced_without_extra_read(self, tmp_path):
+        target = tmp_path / "code.py"
+        target.write_text(
+            "from pkg import keep\n"
+            "from pkg import REMOVE_ME\n"
+            "print('ok')\n",
+            encoding="utf-8",
+        )
+        ctx = ToolContext(workspace=str(tmp_path))
+        r = ToolRegistry()
+
+        grep_result = await r.execute_tool("grep", {"pattern": "REMOVE_ME", "path": "code.py"}, ctx)
+        replace_result = await r.execute_tool(
+            "replace",
+            {
+                "file_path": "code.py",
+                "bounds": [{"line_no": 2, "anchor": "REMOVE_ME"}],
+                "new_string": "",
+            },
+            ctx,
+        )
+
+        assert grep_result.metadata.get("error") is not True
+        assert replace_result.metadata.get("error") is not True
+        assert target.read_text(encoding="utf-8") == "from pkg import keep\nprint('ok')\n"
+
+    @pytest.mark.asyncio
+    async def test_grep_preserves_indentation_for_edit_coverage(self, tmp_path):
+        target = tmp_path / "code.py"
+        target.write_text("    REMOVE_ME\nkeep\n", encoding="utf-8")
+        ctx = ToolContext(workspace=str(tmp_path))
+        r = ToolRegistry()
+
+        grep_result = await r.execute_tool(
+            "grep", {"pattern": "REMOVE_ME", "path": "code.py"}, ctx
+        )
+        replace_result = await r.execute_tool(
+            "replace",
+            {
+                "file_path": "code.py",
+                "bounds": [{"line_no": 1, "anchor": "REMOVE_ME"}],
+                "new_string": "",
+            },
+            ctx,
+        )
+
+        assert "code.py:1:    REMOVE_ME" in grep_result.display
+        assert replace_result.metadata.get("error") is not True
+        assert target.read_text(encoding="utf-8") == "keep\n"
+
+    @pytest.mark.asyncio
+    async def test_grep_does_not_cover_matches_hidden_by_output_limit(self, tmp_path):
+        target = tmp_path / "code.py"
+        lines: list[str] = []
+        match_lines: list[int] = []
+        for i in range(80):
+            match_lines.append(len(lines) + 1)
+            lines.append(f"MATCH {i}")
+            lines.extend(f"context {i}-{j}" for j in range(9))
+        target.write_text("\n".join(lines) + "\n", encoding="utf-8")
+        ctx = ToolContext(workspace=str(tmp_path))
+        r = ToolRegistry()
+
+        grep_result = await r.execute_tool(
+            "grep",
+            {"pattern": "MATCH", "path": "code.py", "context_lines": 5},
+            ctx,
+        )
+        last_line = match_lines[-1]
+        replace_result = await r.execute_tool(
+            "replace",
+            {
+                "file_path": "code.py",
+                "bounds": [{"line_no": last_line, "anchor": "MATCH 79"}],
+                "new_string": "",
+            },
+            ctx,
+        )
+
+        assert f"code.py:{last_line}:MATCH 79" not in grep_result.display
+        assert replace_result.metadata.get("error") is True
+        assert "must be read before editing" in replace_result.output
 
     @pytest.mark.asyncio
     async def test_grep_no_match(self, tmp_path):

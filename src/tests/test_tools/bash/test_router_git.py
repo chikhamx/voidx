@@ -44,6 +44,18 @@ class TestHeadOldStyleDigits:
         assert h is not None
         assert "limit=20" in h.llm_hint
 
+    @pytest.mark.parametrize("command", [
+        "cat -",
+        "cat -n",
+        "head -n 0 file.py",
+        "head -n -5 file.py",
+        "head first.py second.py",
+        "tail -n +0 file.py",
+        "tail -n +5 first.py second.py",
+    ])
+    def test_read_forms_without_equivalent_tool_args_are_not_routed(self, command):
+        assert try_hint(command) is None
+
 
 # ---------------------------------------------------------------------------
 # #7: heredoc two orderings and append mode
@@ -106,7 +118,7 @@ class TestRouteHintToolIdLiteral:
             ("echo 'x' > f", "manage"),
             ("sed -i '3s/a/b/' f", "replace"),
             ("echo 'x' >> f", "write"),
-            ("find . -name '*.py'", "glob"),
+            ("find . -type f -name '*.py'", "glob"),
             ("grep pattern file.py", "grep"),
         ]:
             h = try_hint(cmd)

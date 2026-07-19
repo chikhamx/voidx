@@ -12,6 +12,23 @@ _RG_TYPE_MAP = {
 }
 
 
+def _grep_bre_is_python_compatible(pattern: str) -> bool:
+    if "[[:" in pattern:
+        return False
+    escaped = False
+    for ch in pattern:
+        if escaped:
+            if ch.isalnum() or ch in "+?(){}|":
+                return False
+            escaped = False
+            continue
+        if ch == "\\":
+            escaped = True
+        elif ch in "+?(){}|":
+            return False
+    return True
+
+
 def _parse_grep_short_flags(flags: str) -> dict[str, bool] | None:
     parsed = {"recursive": False, "line_number": False, "ignore_case": False, "whole_word": False}
     for flag in flags:
@@ -37,13 +54,19 @@ def _hint_grep(words: list[str]) -> RouteHint | None:
     path = None
     ignore_case = False
     whole_word = False
+    recursive = prog == "rg"
     context_lines = 0
     after_context = 0
     before_context = 0
     i = 0
     while i < len(args):
         a = args[i]
-        if a in ("-r", "-R", "-n", "--line-number"):
+        if a in ("-r", "-R"):
+            if prog == "rg":
+                return None
+            recursive = True
+            i += 1
+        elif a in ("-n", "--line-number"):
             i += 1
         elif a == "--include" and i + 1 < len(args):
             include = args[i + 1]
@@ -111,9 +134,12 @@ def _hint_grep(words: list[str]) -> RouteHint | None:
                 return None
             i += 1
         elif len(a) > 2 and a.startswith("-") and not a.startswith("--"):
+            if prog == "rg" and ("r" in a[1:] or "R" in a[1:]):
+                return None
             parsed_flags = _parse_grep_short_flags(a[1:])
             if parsed_flags is None:
                 return None
+            recursive = recursive or parsed_flags["recursive"]
             ignore_case = ignore_case or parsed_flags["ignore_case"]
             whole_word = whole_word or parsed_flags["whole_word"]
             i += 1
@@ -129,25 +155,43 @@ def _hint_grep(words: list[str]) -> RouteHint | None:
             return None
     if pattern is None:
         return None
+    if path is None and not recursive:
+        return None
     if prog == "fgrep":
         pattern = re.escape(pattern)
-    effective_context = context_lines or max(after_context, before_context)
+    elif prog == "grep" and not _grep_bre_is_python_compatible(pattern):
+        return None
+    if min(context_lines, after_context, before_context) < 0:
+        return None
+    if context_lines and (after_context or before_context):
+        return None
+    if after_context != before_context:
+        return None
+    effective_context = context_lines or after_context
+    tool_args: dict = {"pattern": pattern}
     parts = [f'pattern="{pattern}"']
     if path:
         parts.append(f'path="{path}"')
+        tool_args["path"] = path
     if include:
         parts.append(f'include="{include}"')
+        tool_args["include"] = include
     if excludes:
         parts.append(f'exclude={excludes}')
+        tool_args["exclude"] = excludes
     if ignore_case:
         parts.append("ignore_case=True")
+        tool_args["ignore_case"] = True
     if whole_word:
         parts.append("whole_word=True")
+        tool_args["whole_word"] = True
     if effective_context > 0:
         parts.append(f"context_lines={effective_context}")
+        tool_args["context_lines"] = effective_context
     return RouteHint(
         tool_id="grep", ui_label="→ grep",
         llm_hint=f'Prefer grep({", ".join(parts)}) — skips .git, node_modules, and binary files automatically.',
+        tool_args=tool_args,
     )
 
 

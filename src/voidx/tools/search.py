@@ -5,11 +5,12 @@ from __future__ import annotations
 import fnmatch
 import json
 import re
-from pathlib import Path
+from pathlib import Path, PurePosixPath, PureWindowsPath
 
 from pydantic import BaseModel, Field, field_validator
 from voidx.logging.tool_log import log_tool_event
 from voidx.tools.base import BaseTool, model_to_json_schema, ToolContext, ToolResult, _resolve_tool_path, _sandbox_paths_for_access, SKIP_DIRS, SKIP_SUFFIXES
+from voidx.tools.file.state import record_read_range
 
 
 
@@ -17,6 +18,19 @@ class GlobInput(BaseModel):
     pattern: str = Field(description="workspace-relative glob pattern to match files, e.g. '**/*.py' or 'src/**/*.ts'.")
     ignore_case: bool = Field(default=False, description="Case-insensitive glob matching when true.")
     max_depth: int | None = Field(default=None, ge=0, description="Maximum path depth from workspace root when set.")
+
+    @field_validator("pattern")
+    @classmethod
+    def _workspace_relative_pattern(cls, value: str) -> str:
+        normalized = value.replace("\\", "/")
+        if (
+            not value
+            or PurePosixPath(normalized).is_absolute()
+            or PureWindowsPath(value).is_absolute()
+            or ".." in PurePosixPath(normalized).parts
+        ):
+            raise ValueError("pattern must be workspace-relative and stay within the workspace")
+        return value
 
 
 class GlobTool(BaseTool):
@@ -81,7 +95,7 @@ class GlobTool(BaseTool):
         matches = sorted(
             _relative(p)
             for p in candidates
-            if _visible_path(p) and _within_depth(p)
+            if p.is_file() and not p.is_symlink() and _visible_path(p) and _within_depth(p)
         )
 
         if not matches:
@@ -236,20 +250,23 @@ class GrepTool(BaseTool):
 
             try:
                 lines = f.read_text(encoding="utf-8", errors="replace").split("\n")
-                hits: list[tuple[str, int, str, int]] = []
+                hits: list[tuple[str, int, str, int, bool]] = []
                 for i, line in enumerate(lines, 1):
                     m = regex.search(line)
                     if m:
                         rel = result_path(f)
-                        hits.append((rel, i, line.strip()[:200], m.start()))
+                        content = line[:200]
+                        hits.append((rel, i, content, m.start(), content == line))
                         count += 1
                         if count >= inp.max_matches:
                             break
                 if inp.context_lines > 0 and hits:
                     shown_lines: set[tuple[str, int]] = set()
-                    for rel, line_no, content, col in hits:
+                    for rel, line_no, content, col, fully_visible in hits:
                         results.append(f"{rel}:{line_no}:{content}")
                         match_details.append({"file": rel, "line": line_no, "column": col + 1, "content": content})
+                        if fully_visible:
+                            record_read_range(ctx, f, line_no, line_no)
                         shown_lines.add((rel, line_no))
                         start = max(1, line_no - inp.context_lines)
                         end = min(len(lines), line_no + inp.context_lines)
@@ -261,9 +278,11 @@ class GrepTool(BaseTool):
                             truncated = True
                             break
                 else:
-                    for rel, line_no, content, col in hits:
+                    for rel, line_no, content, col, fully_visible in hits:
                         results.append(f"{rel}:{line_no}:{content}")
                         match_details.append({"file": rel, "line": line_no, "column": col + 1, "content": content})
+                        if fully_visible:
+                            record_read_range(ctx, f, line_no, line_no)
                 if count >= inp.max_matches:
                     truncated = True
                     break

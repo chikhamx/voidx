@@ -16,11 +16,12 @@ def _hint_read(words: list[str]) -> RouteHint | None:
         return None
 
     if prog == "cat":
-        if len(args) != 1:
+        if len(args) != 1 or args[0].startswith("-"):
             return None
         return RouteHint(
             tool_id="read", ui_label="→ read",
             llm_hint=f'Prefer read(file_path="{args[0]}") for line numbers and file tracking.',
+            tool_args={"file_path": args[0]},
         )
 
     if prog == "head":
@@ -41,15 +42,18 @@ def _hint_read(words: list[str]) -> RouteHint | None:
                     return None
                 i += 1
             elif not args[i].startswith("-"):
+                if path is not None:
+                    return None
                 path = args[i]
                 i += 1
             else:
                 return None
-        if path is None:
+        if path is None or limit <= 0:
             return None
         return RouteHint(
             tool_id="read", ui_label="→ read",
             llm_hint=f'Prefer read(file_path="{path}", limit={limit}) for line numbers and file tracking.',
+            tool_args={"file_path": path, "limit": limit},
         )
 
     if prog == "tail":
@@ -75,15 +79,18 @@ def _hint_tail(args: list[str]) -> RouteHint | None:
                 return None
             i += 2
         elif not args[i].startswith("-"):
+            if path is not None:
+                return None
             path = args[i]
             i += 1
         else:
             return None
-    if path is None or offset is None:
+    if path is None or offset is None or offset <= 0:
         return None
     return RouteHint(
         tool_id="read", ui_label="→ read",
         llm_hint=f'Prefer read(file_path="{path}", offset={offset}) for line numbers and file tracking.',
+        tool_args={"file_path": path, "offset": offset},
     )
 
 
@@ -192,6 +199,7 @@ def _hint_find(words: list[str]) -> RouteHint | None:
     ignore_case = False
     max_depth = None
     base_dir = "."
+    file_only = False
     i = 0
     while i < len(args):
         if args[i] == "-name" and i + 1 < len(args):
@@ -212,21 +220,36 @@ def _hint_find(words: list[str]) -> RouteHint | None:
         elif args[i] == "-type" and i + 1 < len(args):
             if args[i + 1] != "f":
                 return None
+            file_only = True
             i += 2
         elif not args[i].startswith("-") and i == 0:
             base_dir = args[i]
             i += 1
         else:
             return None
-    if name_pattern is None:
+    if name_pattern is None or not file_only:
         return None
-    glob_pattern = f"**/{name_pattern}" if base_dir == "." else f"{base_dir}/**/{name_pattern}"
+    normalized_base = base_dir.removeprefix("./").rstrip("/") or "."
+    if (
+        base_dir.startswith("/")
+        or ".." in normalized_base.split("/")
+        or "/" in name_pattern
+        or "\\" in name_pattern
+    ):
+        return None
+    glob_pattern = f"**/{name_pattern}" if normalized_base == "." else f"{normalized_base}/**/{name_pattern}"
+    tool_args: dict = {"pattern": glob_pattern}
     parts = [f'pattern="{glob_pattern}"']
     if ignore_case:
         parts.append("ignore_case=True")
+        tool_args["ignore_case"] = True
     if max_depth is not None:
-        parts.append(f"max_depth={max_depth}")
+        base_depth = 0 if normalized_base == "." else len(normalized_base.split("/"))
+        routed_max_depth = base_depth + max_depth
+        parts.append(f"max_depth={routed_max_depth}")
+        tool_args["max_depth"] = routed_max_depth
     return RouteHint(
         tool_id="glob", ui_label="→ glob",
         llm_hint=f'Prefer glob({", ".join(parts)}) — skips .git, node_modules, and build dirs automatically.',
+        tool_args=tool_args,
     )
