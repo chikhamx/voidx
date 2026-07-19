@@ -17,7 +17,7 @@ This file covers the remaining scenarios:
 import pytest
 from langchain_core.messages import AIMessage, AIMessageChunk, HumanMessage, ToolMessage
 
-from voidx.agent.graph import VoidXGraph
+from voidx.agent.infrastructure.langgraph.execution import LangGraphExecution
 from voidx.config import Config, ModelConfig
 from tests.test_agent.graph.stream_llm_helpers import FakeRenderer
 from tests.test_agent.graph.test_turn_control_integration import (

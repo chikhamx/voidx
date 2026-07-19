@@ -8,18 +8,19 @@ import pytest
 
 
 from voidx.agent.slash import SlashHandler
-from voidx.agent.slash.init import INIT_PROMPT
+from tests.test_agent.slash.context import command_context
+from voidx.agent.slash.handler import INIT_PROMPT
 from voidx.ui.commands import COMMANDS
 
 
 def _capture_output(monkeypatch):
     output: list[str] = []
     monkeypatch.setattr(
-        "voidx.agent.slash.init.ui.print",
+        "voidx.agent.slash.handler.ui.print",
         lambda text="": output.append(str(text)),
     )
     monkeypatch.setattr(
-        "voidx.agent.slash.init.ui.error",
+        "voidx.agent.slash.handler.ui.error",
         lambda text="": output.append(f"ERROR: {text}"),
     )
     return output
@@ -31,9 +32,9 @@ def _graph(tmp_path, *, plan_mode: bool = False):
     async def run_synthetic_turn(text: str, *, display_text: str | None = None) -> None:
         calls.append((text, display_text))
 
-    graph = SimpleNamespace(
-        _workspace=str(tmp_path),
-        _plan_mode=plan_mode,
+    graph = command_context(
+        workspace=str(tmp_path),
+        interaction_mode_value=lambda: "plan" if plan_mode else "auto",
         run_synthetic_turn=run_synthetic_turn,
     )
     return graph, calls

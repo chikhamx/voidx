@@ -502,7 +502,7 @@ class TestDataDirInjection:
         monkeypatch.setenv("HOME", str(tmp_path))
         monkeypatch.setenv("USERPROFILE", str(tmp_path))
         from voidx.config import Config, ModelConfig
-        from voidx.agent.graph.wiring import build_permission_service
+        from voidx.agent.infrastructure.langgraph.runtime.wiring import build_permission_service
         from voidx.memory.store import DATA_DIR
 
         config = Config(
@@ -517,7 +517,7 @@ class TestDataDirInjection:
         monkeypatch.setenv("HOME", str(tmp_path))
         monkeypatch.setenv("USERPROFILE", str(tmp_path))
         from voidx.config import Config, ModelConfig
-        from voidx.agent.graph.wiring import build_permission_service
+        from voidx.agent.infrastructure.langgraph.runtime.wiring import build_permission_service
 
         user_extra = str(tmp_path / "custom")
         config = Config(

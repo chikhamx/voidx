@@ -2,9 +2,9 @@
 
 from types import SimpleNamespace
 
-from voidx.agent.graph import VoidXGraph
-from voidx.agent.graph.runtime_guards import GuardGuidance
-from voidx.agent.graph.tool_executor.guards import _submit_guard_guidance
+from voidx.agent.infrastructure.langgraph.execution import LangGraphExecution
+from voidx.agent.infrastructure.langgraph.runtime.runtime_guards import GuardGuidance
+from voidx.agent.infrastructure.langgraph.runtime.tool_executor.guards import _submit_guard_guidance
 from voidx.ui.output.events.schema import GuidanceSubmitted
 
 
@@ -19,7 +19,7 @@ class _Events:
 
 
 def test_submit_guard_guidance_stays_hidden_and_queues_when_event_bus_rejects():
-    graph = object.__new__(VoidXGraph)
+    graph = object.__new__(LangGraphExecution)
     events = _Events(succeeds=False)
     graph._pending_guidance = []
     graph._ui = SimpleNamespace(events=events, via_events=lambda: True)
@@ -31,7 +31,7 @@ def test_submit_guard_guidance_stays_hidden_and_queues_when_event_bus_rejects():
 
 
 def test_drain_guard_guidance_marks_message_without_displaying_it():
-    graph = object.__new__(VoidXGraph)
+    graph = object.__new__(LangGraphExecution)
     events = _Events()
     graph._pending_guidance = []
     graph._ui = SimpleNamespace(events=events, via_events=lambda: True)

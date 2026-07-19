@@ -1,0 +1,48 @@
+from voidx.agent.domain.state import AgentRuntime
+from voidx.agent.infrastructure.runtime_state_mapper import (
+    agent_runtime_from_snapshot,
+    snapshot_from_agent_runtime,
+)
+from voidx.memory.service import RuntimeStateSnapshot
+from voidx.runtime import (
+    GoalSpec,
+    InteractionMode,
+    TaskIntent,
+    TaskState,
+    TodoRunState,
+    WorkflowRoute,
+)
+
+
+def test_agent_runtime_snapshot_round_trip_preserves_persisted_json() -> None:
+    snapshot = RuntimeStateSnapshot(
+        interaction_mode=InteractionMode.GOAL,
+        task_state=TaskState(
+            current_intent=TaskIntent.CODING,
+            previous_intent=TaskIntent.GENERAL,
+            current_goal=GoalSpec(desc="unify agent state"),
+            workflow_route=WorkflowRoute(join="tdd", leave="verify"),
+            todo_state=TodoRunState.model_validate(
+                {
+                    "summary": "0/1 done · 1 active",
+                    "total": 1,
+                    "active": 1,
+                    "active_items": [
+                        {"id": "domain", "content": "create domain", "status": "active"}
+                    ],
+                    "items": [
+                        {"id": "domain", "content": "create domain", "status": "active"}
+                    ],
+                    "updated_at": "2026-07-19T00:00:00+08:00",
+                }
+            ),
+        ),
+        compaction_summary="summary",
+        session_time="2026-07-19 CST",
+    )
+
+    runtime = agent_runtime_from_snapshot(snapshot)
+    restored = snapshot_from_agent_runtime(runtime)
+
+    assert isinstance(runtime, AgentRuntime)
+    assert restored.model_dump(mode="json") == snapshot.model_dump(mode="json")

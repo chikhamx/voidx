@@ -6,6 +6,7 @@ import pytest
 
 
 from voidx.agent.slash import SlashHandler
+from tests.test_agent.slash.context import command_context
 from voidx.config import Settings
 
 
@@ -21,7 +22,7 @@ def _write_skill(workspace: Path, name: str, body: str = "Skill body") -> None:
 @pytest.mark.asyncio
 async def test_skills_dispatch_lists_and_shows_project_skill(tmp_path):
     _write_skill(tmp_path, "docs", "Write docs clearly.")
-    graph = SimpleNamespace(_settings=Settings(str(tmp_path)), _workspace=str(tmp_path))
+    graph = command_context(settings=Settings(str(tmp_path)), workspace=str(tmp_path))
 
     handler = SlashHandler(graph)
 
@@ -30,10 +31,10 @@ async def test_skills_dispatch_lists_and_shows_project_skill(tmp_path):
 
 
 @pytest.mark.asyncio
-async def test_skills_enable_disable_updates_settings(tmp_path):
+async def test_skills_enable_disable_updatessettings(tmp_path):
     _write_skill(tmp_path, "docs")
     settings = Settings(str(tmp_path))
-    graph = SimpleNamespace(_settings=settings, _workspace=str(tmp_path))
+    graph = command_context(settings=settings, workspace=str(tmp_path))
     handler = SlashHandler(graph)
 
     assert await handler.dispatch("/skills disable docs") is True
@@ -47,10 +48,10 @@ async def test_skills_enable_disable_updates_settings(tmp_path):
 
 
 @pytest.mark.asyncio
-async def test_skills_auto_manual_updates_settings(tmp_path):
+async def test_skills_auto_manual_updatessettings(tmp_path):
     _write_skill(tmp_path, "docs")
     settings = Settings(str(tmp_path))
-    graph = SimpleNamespace(_settings=settings, _workspace=str(tmp_path))
+    graph = command_context(settings=settings, workspace=str(tmp_path))
     handler = SlashHandler(graph)
 
     assert await handler.dispatch("/skills auto docs") is True
@@ -67,7 +68,7 @@ async def test_skills_auto_manual_updates_settings(tmp_path):
 
 @pytest.mark.asyncio
 async def test_skills_paths_dispatch(tmp_path):
-    graph = SimpleNamespace(_settings=Settings(str(tmp_path)), _workspace=str(tmp_path))
+    graph = command_context(settings=Settings(str(tmp_path)), workspace=str(tmp_path))
 
     assert await SlashHandler(graph).dispatch("/skills paths") is True
 
@@ -75,8 +76,8 @@ async def test_skills_paths_dispatch(tmp_path):
 @pytest.mark.asyncio
 async def test_skills_paths_prints_bundled_source(tmp_path, monkeypatch):
     output: list[str] = []
-    monkeypatch.setattr("voidx.agent.slash.skills.ui.print", lambda text="": output.append(str(text)))
-    graph = SimpleNamespace(_settings=Settings(str(tmp_path)), _workspace=str(tmp_path))
+    monkeypatch.setattr("voidx.agent.slash.handler.ui.print", lambda text="": output.append(str(text)))
+    graph = command_context(settings=Settings(str(tmp_path)), workspace=str(tmp_path))
 
     assert await SlashHandler(graph).dispatch("/skills paths") is True
 

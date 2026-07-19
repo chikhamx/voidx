@@ -12,7 +12,7 @@ and should_continue=False, producing no user-facing text.
 import pytest
 from langchain_core.messages import AIMessage, AIMessageChunk, HumanMessage, ToolMessage
 
-from voidx.agent.graph import VoidXGraph
+from voidx.agent.infrastructure.langgraph.execution import LangGraphExecution
 from voidx.config import Config, ModelConfig
 from voidx.ui.output.events import AssistantStreamCommitted, AssistantStreamUpdated
 from tests.test_agent.graph.stream_llm_helpers import FakeRenderer
@@ -69,7 +69,7 @@ def _text_and_turn_stop_chunk(text: str) -> AIMessageChunk:
 
 
 def _make_graph(tmp_path, model, monkeypatch, provider="openai"):
-    import voidx.agent.graph.core.llm as graph_module
+    import voidx.agent.infrastructure.langgraph.execution as graph_module
 
     async def fail_on_retry(delay):
         pytest.fail(f"Unexpected LLM retry with delay {delay}s")
@@ -77,7 +77,7 @@ def _make_graph(tmp_path, model, monkeypatch, provider="openai"):
     monkeypatch.setattr(graph_module, "StreamingRenderer", FakeRenderer)
     monkeypatch.setattr(graph_module.asyncio, "sleep", fail_on_retry)
 
-    graph = VoidXGraph(
+    graph = LangGraphExecution(
         Config(
             model=ModelConfig(provider=provider, model="test-model"),
             workspace=str(tmp_path),
@@ -127,7 +127,7 @@ async def test_headless_repair_commit_emits_user_visible_stream(tmp_path, monkey
     in one headless repair call. The committed answer must still be emitted to
     the UI; checking only result["messages"] misses the user-visible blank turn.
     """
-    import voidx.agent.graph.core.llm as graph_module
+    import voidx.agent.infrastructure.langgraph.execution as graph_module
 
     emitted = []
 
@@ -184,7 +184,7 @@ async def test_headless_repair_commit_emits_user_visible_stream(tmp_path, monkey
     else:
         scripts.append([_text_and_turn_stop_chunk("Review completed: PASS")])
     model = ScriptedStreamingModel(scripts)
-    graph = VoidXGraph(
+    graph = LangGraphExecution(
         Config(
             model=ModelConfig(provider="gemini", model="gemini-test"),
             workspace=str(tmp_path),

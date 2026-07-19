@@ -2,8 +2,8 @@
 
 from types import SimpleNamespace
 
-from voidx.agent.graph import VoidXGraph
-from voidx.agent.graph.core.voidx_graph import GUIDANCE_MAX_CHARS
+from voidx.agent.infrastructure.langgraph.execution import LangGraphExecution
+from voidx.agent.infrastructure.langgraph.execution import GUIDANCE_MAX_CHARS
 from voidx.ui.output.events.schema import GuidanceSubmitted
 
 
@@ -17,8 +17,8 @@ class _Events:
         return self.succeeds
 
 
-def _graph(*, succeeds: bool = True) -> tuple[VoidXGraph, _Events]:
-    graph = object.__new__(VoidXGraph)
+def _graph(*, succeeds: bool = True) -> tuple[LangGraphExecution, _Events]:
+    graph = object.__new__(LangGraphExecution)
     events = _Events(succeeds=succeeds)
     graph._pending_guidance = []
     graph._ui = SimpleNamespace(events=events, via_events=lambda: True)

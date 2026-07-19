@@ -2,7 +2,7 @@ import sys
 from pathlib import Path
 
 
-from voidx.agent.task_state import (
+from voidx.runtime.task_state import (
     GoalResolution,
     GoalSpec,
     IntentResolution,

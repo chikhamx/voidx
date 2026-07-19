@@ -4,7 +4,7 @@ from pathlib import Path
 
 from voidx.agent.prompts import BASE_SYSTEM, WORKFLOW_RUNTIME, persona_prompt
 from voidx.agent.runtime_context import InteractionMode, RuntimeContextBuilder
-from voidx.agent.task_state import TaskState
+from voidx.runtime.task_state import TaskState
 from voidx.config import Config
 
 

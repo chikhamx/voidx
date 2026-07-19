@@ -33,12 +33,13 @@ class TestCompactionRetry:
     async def test_mixin_delegates_to_compaction_coordinator_with_overrides(self):
         from types import SimpleNamespace
 
-        from voidx.agent.graph.compaction import GraphCompactionMixin
+        from voidx.agent.domain.compaction import CompactionResult
+        from voidx.agent.infrastructure.langgraph.execution import LangGraphExecution
 
         calls = []
 
         class FakeCoordinator:
-            async def maybe_compact(
+            async def compact_for_live_state(
                 self,
                 messages,
                 session_msgs,
@@ -52,7 +53,12 @@ class TestCompactionRetry:
                 calls.append((messages, session_msgs, force, ask, preflight))
                 assert await run_compaction_agent(["head"], "previous") == "summary"
                 await persist_compaction(["head"])
-                return ["head"], "tail"
+                return CompactionResult(
+                    summary="summary",
+                    live_messages=list(messages),
+                    removed_messages=["head"],
+                    tail_id="tail",
+                )
 
         async def fake_run_agent(_head_messages, _previous_summary):
             return "summary"
@@ -68,7 +74,7 @@ class TestCompactionRetry:
             _persist_compaction=fake_persist,
         )
 
-        result = await GraphCompactionMixin._maybe_compact(
+        result = await LangGraphExecution._maybe_compact(
             host,
             ["message"],
             ["row"],
@@ -87,8 +93,8 @@ class TestCompactionRetry:
         from types import SimpleNamespace
         from unittest.mock import MagicMock
 
-        import voidx.agent.graph.compaction_coordinator as compaction_module
-        from voidx.agent.graph.compaction_coordinator import GraphCompactionCoordinator
+        import voidx.agent.infrastructure.langgraph.runtime.compaction_coordinator as compaction_module
+        from voidx.agent.infrastructure.langgraph.runtime.compaction_coordinator import CompactionCoordinator
 
         captured = {}
 
@@ -143,7 +149,7 @@ class TestCompactionRetry:
             _ui=_FakeUiPort(via_events=False),
         )
 
-        result = await GraphCompactionCoordinator(host).run_compaction_agent(
+        result = await CompactionCoordinator(host).run_compaction_agent(
             [HumanMessage(content="Fix the compaction fallback", id="1")],
             "## Goal\n- previous",
         )
@@ -170,8 +176,8 @@ class TestCompactionRetry:
         from types import SimpleNamespace
         from unittest.mock import MagicMock
 
-        import voidx.agent.graph.compaction_coordinator as compaction_module
-        from voidx.agent.graph.compaction_coordinator import GraphCompactionCoordinator
+        import voidx.agent.infrastructure.langgraph.runtime.compaction_coordinator as compaction_module
+        from voidx.agent.infrastructure.langgraph.runtime.compaction_coordinator import CompactionCoordinator
 
         captured = {}
         estimate_results = iter([200_000, 200_000, 1_000])
@@ -219,7 +225,7 @@ class TestCompactionRetry:
             _ui=_FakeUiPort(via_events=False),
         )
 
-        result = await GraphCompactionCoordinator(host).run_compaction_agent(
+        result = await CompactionCoordinator(host).run_compaction_agent(
             head_messages,
             None,
         )
@@ -235,7 +241,7 @@ class TestCompactionRetry:
         from types import SimpleNamespace
         from unittest.mock import MagicMock
 
-        from voidx.agent.graph.compaction_coordinator import GraphCompactionCoordinator
+        from voidx.agent.infrastructure.langgraph.runtime.compaction_coordinator import CompactionCoordinator
 
         host = SimpleNamespace(
             _compaction=CompactionService(context_limit=128_000, output_token_max=8_192),
@@ -271,7 +277,7 @@ class TestCompactionRetry:
         async def persist(head_messages):
             persisted.extend(head_messages)
 
-        result = await GraphCompactionCoordinator(host).compact_for_live_state(
+        result = await CompactionCoordinator(host).compact_for_live_state(
             messages,
             force=True,
             ask=False,
@@ -304,7 +310,7 @@ class TestCompactionRetry:
         before falling back to truncation."""
         from unittest.mock import AsyncMock, MagicMock, patch
 
-        from voidx.agent.graph.compaction_coordinator import GraphCompactionCoordinator
+        from voidx.agent.infrastructure.langgraph.runtime.compaction_coordinator import CompactionCoordinator
 
         call_count = 0
 
@@ -326,7 +332,7 @@ class TestCompactionRetry:
         host._debug = False
         host.model = MagicMock()
         host._ui = _FakeUiPort(via_events=False)
-        coordinator = GraphCompactionCoordinator(host)
+        coordinator = CompactionCoordinator(host)
         coordinator.run_compaction_agent = fake_run_agent
         coordinator.persist_compaction = AsyncMock()
         messages = []
@@ -334,7 +340,7 @@ class TestCompactionRetry:
             messages.append(HumanMessage(content=f"User message {i}", id=str(i * 2 + 1)))
             messages.append(AIMessage(content=f"Assistant reply {i}"))
 
-        with patch('voidx.agent.graph.compaction_coordinator.estimate_context_tokens', return_value=200_000):
+        with patch('voidx.agent.infrastructure.langgraph.runtime.compaction_coordinator.estimate_context_tokens', return_value=200_000):
             result = await coordinator.maybe_compact(messages, [], force=True, ask=False)
 
         # Should have retried and eventually succeeded
@@ -348,7 +354,7 @@ class TestCompactionRetry:
         from unittest.mock import AsyncMock, MagicMock, patch
 
         from voidx.llm.compaction import COMPACTION_MAX_RETRIES
-        from voidx.agent.graph.compaction_coordinator import GraphCompactionCoordinator
+        from voidx.agent.infrastructure.langgraph.runtime.compaction_coordinator import CompactionCoordinator
 
         call_count = 0
 
@@ -368,7 +374,7 @@ class TestCompactionRetry:
         host._debug = False
         host.model = MagicMock()
         host._ui = _FakeUiPort(via_events=False)
-        coordinator = GraphCompactionCoordinator(host)
+        coordinator = CompactionCoordinator(host)
         coordinator.run_compaction_agent = fake_run_agent_always_fail
         coordinator.persist_compaction = AsyncMock()
 
@@ -377,7 +383,7 @@ class TestCompactionRetry:
             messages.append(HumanMessage(content=f"Fix the auth bug {i}", id=str(i * 2 + 1)))
             messages.append(AIMessage(content=f"Looking at it {i}"))
 
-        with patch('voidx.agent.graph.compaction_coordinator.estimate_context_tokens', return_value=200_000):
+        with patch('voidx.agent.infrastructure.langgraph.runtime.compaction_coordinator.estimate_context_tokens', return_value=200_000):
             result = await coordinator.maybe_compact(messages, [], force=True, ask=False)
 
         # Should have tried COMPACTION_MAX_RETRIES + 1 times (initial + retries)
@@ -393,7 +399,7 @@ class TestCompactionRetry:
         """The final fallback status should keep the failure reason visible."""
         from unittest.mock import AsyncMock, MagicMock
 
-        from voidx.agent.graph.compaction_coordinator import GraphCompactionCoordinator
+        from voidx.agent.infrastructure.langgraph.runtime.compaction_coordinator import CompactionCoordinator
 
         class FakeEvents:
             def __init__(self):
@@ -406,7 +412,7 @@ class TestCompactionRetry:
             raise RuntimeError("LLM always fails")
 
         fake_events = FakeEvents()
-        import voidx.agent.graph.compaction_coordinator as compaction_module
+        import voidx.agent.infrastructure.langgraph.runtime.compaction_coordinator as compaction_module
 
         monkeypatch.setattr(compaction_module, "estimate_context_tokens", lambda *_args, **_kwargs: 200_000)
 
@@ -421,7 +427,7 @@ class TestCompactionRetry:
         host._debug = False
         host.model = MagicMock()
         host._ui = _FakeUiPort(via_events=True, events=fake_events)
-        coordinator = GraphCompactionCoordinator(host)
+        coordinator = CompactionCoordinator(host)
         coordinator.run_compaction_agent = fake_run_agent_always_fail
         coordinator.persist_compaction = AsyncMock()
 
@@ -447,8 +453,8 @@ class TestCompactionRetry:
         from types import SimpleNamespace
         from unittest.mock import MagicMock
 
-        import voidx.agent.graph.compaction_coordinator as compaction_module
-        from voidx.agent.graph.compaction_coordinator import GraphCompactionCoordinator
+        import voidx.agent.infrastructure.langgraph.runtime.compaction_coordinator as compaction_module
+        from voidx.agent.infrastructure.langgraph.runtime.compaction_coordinator import CompactionCoordinator
 
         async def fake_stream_llm(_model, _messages, _renderer, _protocol):
             return AIMessage(content="")
@@ -478,9 +484,9 @@ class TestCompactionRetry:
         host.config.model.provider = "test-provider"
         host.config.model.model = "test-model"
 
-        caplog.set_level(logging.WARNING, logger="voidx.agent.graph.compaction_coordinator")
+        caplog.set_level(logging.WARNING, logger="voidx.agent.infrastructure.langgraph.runtime.compaction_coordinator")
 
-        result = await GraphCompactionCoordinator(host).run_compaction_agent(
+        result = await CompactionCoordinator(host).run_compaction_agent(
             [HumanMessage(content="old context")],
             None,
         )

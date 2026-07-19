@@ -28,7 +28,7 @@ from voidx.tools.clarify import ClarifyTool, ClarifyInput, _infer_state_patch
 from voidx.tools.skills import SkillsTool
 from voidx.tools.document import DocumentTool, DocumentInput
 from voidx.tools.checkpoint import PlanCheckpointTool
-from voidx.agent.task_state import GoalSpec, GoalResolution, IntentResolution, PlanResolution, ToolStatePatch
+from voidx.runtime.task_state import GoalSpec, GoalResolution, IntentResolution, PlanResolution, ToolStatePatch
 from voidx.agent.runtime_context import TaskIntent
 from voidx.skills.context import SKILL_TOOL_CONTEXT_MARKER
 from voidx.workflow.runtime import WorkflowRunState, WorkflowRunStatus

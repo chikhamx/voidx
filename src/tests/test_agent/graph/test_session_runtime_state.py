@@ -14,7 +14,7 @@ import voidx.memory.store as store
 import voidx.memory.jsonl_store as jsonl_store
 
 from voidx.agent.runtime_context import InteractionMode, TaskIntent
-from voidx.agent.task_state import (
+from voidx.runtime.task_state import (
     GoalSpec,
     TaskState,
     TodoRunState,
@@ -375,7 +375,7 @@ async def test_clear_runtime_state_resets_structured_state():
 async def test_graph_session_runtime_persists_and_restores_structured_state():
     from types import SimpleNamespace
 
-    from voidx.agent.graph.session_runtime import GraphSessionRuntime
+    from voidx.agent.infrastructure.langgraph.runtime.session_runtime import SessionRuntime
 
     session = await create_session()
     try:
@@ -387,7 +387,7 @@ async def test_graph_session_runtime_persists_and_restores_structured_state():
             _session_date="2026-06-11 CST",
         )
 
-        runtime = GraphSessionRuntime(host)
+        runtime = SessionRuntime(host)
         await runtime.persist_runtime_state()
 
         host._interaction_mode = InteractionMode.AUTO

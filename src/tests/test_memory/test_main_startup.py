@@ -29,10 +29,7 @@ async def test_run_chat_resolves_profile_once(monkeypatch, tmp_path):
         async def resolve_api_key(self, provider: str):
             raise AssertionError("resolve_api_key should not be called for matching profile")
 
-    class FakeGraph:
-        def __init__(self, cfg, api_key, *, session=None, settings=None):
-            captured.api_key = api_key
-
+    class FakeAgentApp:
         async def run(self, **kwargs):
             return None
 
@@ -40,7 +37,11 @@ async def test_run_chat_resolves_profile_once(monkeypatch, tmp_path):
         return None
 
     monkeypatch.setattr("voidx.config.Settings", FakeSettings)
-    monkeypatch.setattr("voidx.agent.graph.VoidXGraph", FakeGraph)
+    def fake_build_agent_app(cfg, api_key, **kwargs):
+        captured.api_key = api_key
+        return FakeAgentApp()
+
+    monkeypatch.setattr("voidx.agent.composition.build_agent_app", fake_build_agent_app)
     monkeypatch.setattr("voidx.main._select_start_session", fake_select_start_session)
 
     await _run_chat(workspace=str(tmp_path))
@@ -69,10 +70,7 @@ async def test_run_chat_awaits_resolve_api_key_when_no_profile(monkeypatch, tmp_
             captured.provider = provider
             return "resolved-key"
 
-    class FakeGraph:
-        def __init__(self, cfg, api_key, *, session=None, settings=None):
-            captured.api_key = api_key
-
+    class FakeAgentApp:
         async def run(self, **kwargs):
             return None
 
@@ -80,7 +78,11 @@ async def test_run_chat_awaits_resolve_api_key_when_no_profile(monkeypatch, tmp_
         return None
 
     monkeypatch.setattr("voidx.config.Settings", FakeSettings)
-    monkeypatch.setattr("voidx.agent.graph.VoidXGraph", FakeGraph)
+    def fake_build_agent_app(cfg, api_key, **kwargs):
+        captured.api_key = api_key
+        return FakeAgentApp()
+
+    monkeypatch.setattr("voidx.agent.composition.build_agent_app", fake_build_agent_app)
     monkeypatch.setattr("voidx.main._select_start_session", fake_select_start_session)
 
     await _run_chat(workspace=str(tmp_path))
@@ -109,10 +111,7 @@ async def test_run_chat_uses_provider_specific_key_after_cli_override(monkeypatc
             captured.provider = provider
             return "openai-key"
 
-    class FakeGraph:
-        def __init__(self, cfg, api_key, *, session=None, settings=None):
-            captured.api_key = api_key
-
+    class FakeAgentApp:
         async def run(self, **kwargs):
             return None
 
@@ -120,7 +119,11 @@ async def test_run_chat_uses_provider_specific_key_after_cli_override(monkeypatc
         return None
 
     monkeypatch.setattr("voidx.config.Settings", FakeSettings)
-    monkeypatch.setattr("voidx.agent.graph.VoidXGraph", FakeGraph)
+    def fake_build_agent_app(cfg, api_key, **kwargs):
+        captured.api_key = api_key
+        return FakeAgentApp()
+
+    monkeypatch.setattr("voidx.agent.composition.build_agent_app", fake_build_agent_app)
     monkeypatch.setattr("voidx.main._select_start_session", fake_select_start_session)
 
     await _run_chat(workspace=str(tmp_path), provider="openai")

@@ -7,9 +7,9 @@ import pytest
 from langchain_core.messages import AIMessage, HumanMessage, SystemMessage, ToolMessage
 
 from voidx.agent.goal_resolver import ResolverGoal, resolve_goal_for_turn
-from voidx.agent.graph import VoidXGraph
-from voidx.agent.graph.turn_runner import _turn_exchange_from_final_messages
-from voidx.agent.task_state import (
+from voidx.agent.infrastructure.langgraph.execution import LangGraphExecution
+from voidx.agent.infrastructure.langgraph.runtime.turn_runner import _turn_exchange_from_final_messages
+from voidx.runtime.task_state import (
     GoalResolution,
     GoalSpec,
     IntentResolution,
@@ -81,10 +81,10 @@ async def test_goal_resolver_validation_error_falls_back_to_general(tmp_path, mo
 
 
 @pytest.mark.asyncio
-async def test_run_once_auto_mode_skips_goal_resolver_and_initializes_turn_state(tmp_path):
+async def testrun_turn_auto_mode_skips_goal_resolver_and_initializes_turn_state(tmp_path):
     session = await create_session(workspace=str(tmp_path))
     try:
-        graph = VoidXGraph(Config(workspace=str(tmp_path)), api_key="test-key", session=session)
+        graph = LangGraphExecution(Config(workspace=str(tmp_path)), api_key="test-key", session=session)
 
         class ResolverShouldNotRunModel:
             called = False
@@ -113,7 +113,7 @@ async def test_run_once_auto_mode_skips_goal_resolver_and_initializes_turn_state
         set_dock(test_dock)
         test_dock.begin_capture()
         try:
-            await graph._run_once("review 这个文件")
+            await graph.run_turn("review 这个文件")
         finally:
             test_dock.deactivate()
             test_dock.reset()

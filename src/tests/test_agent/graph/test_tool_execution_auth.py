@@ -20,11 +20,11 @@ from voidx.agent.agents import (
     get_visible_agents,
 )
 from voidx.agent.prompts import BASE_SYSTEM, PERSONA_MODEL, persona_prompt
-from voidx.agent.graph.convergence import is_step_hint_message
-from voidx.agent.graph.runtime import current_parent_tool_call_id
-from voidx.agent.graph.runtime_guards import RuntimeGuardState, WallClockGuardState
-from voidx.agent.graph import VoidXGraph
-from voidx.agent.graph.tool_execution import AGENT_RESULT_PREVIEW_CHARS, _agent_result_preview
+from voidx.agent.infrastructure.langgraph.runtime.convergence import is_step_hint_message
+from voidx.agent.infrastructure.langgraph.runtime.runtime import current_parent_tool_call_id
+from voidx.agent.infrastructure.langgraph.runtime.runtime_guards import RuntimeGuardState, WallClockGuardState
+from voidx.agent.infrastructure.langgraph.execution import LangGraphExecution
+from voidx.agent.infrastructure.langgraph.execution import AGENT_RESULT_PREVIEW_CHARS, _agent_result_preview
 from voidx.agent.message_rows import RowMessageCacheEntry
 from voidx.agent.runtime_context import InteractionMode, RuntimeContextBuilder
 from voidx.config import Config, ParallelSubagentsConfig, Settings, UserProfile
@@ -44,7 +44,7 @@ from voidx.runtime import GoalResolution, GoalSpec, IntentResolution, PlanResolu
 from voidx.skills.context import SKILL_TOOL_CONTEXT_MARKER
 from voidx.workflow.context import WORKFLOW_CONTEXT_MARKER
 from voidx.workflow.runtime import WorkflowRunState, WorkflowRunStatus
-from voidx.agent.task_state import TaskState, ToolStatePatch, WorkflowRoute
+from voidx.runtime.task_state import TaskState, ToolStatePatch, WorkflowRoute
 from voidx.tools.base import ToolContext, ToolResult
 from voidx.tools.agent import AgentResultContract, AgentTool
 from voidx.tools.registry import ToolRegistry
@@ -54,7 +54,7 @@ from voidx.ui.output.events import DockEventConsumer, TurnStarted, ui_events
 
 def _graph(tmp_path):
     cfg = Config(workspace=str(tmp_path))
-    return VoidXGraph(cfg, api_key=None)
+    return LangGraphExecution(cfg, api_key=None)
 
 
 def _task_state_json(**kwargs):
@@ -192,12 +192,12 @@ async def test_graph_on_failure_asks_unsafe_bash_before_prompt(tmp_path):
 
 
 def test_tool_result_ok_detects_structured_failures():
-    from voidx.agent.graph.tool_execution import GraphToolExecutionMixin
+    from voidx.agent.infrastructure.langgraph.execution import LangGraphExecution
 
-    assert GraphToolExecutionMixin._tool_result_ok(ToolResult(output="ok", metadata={"exit_code": 0}))
-    assert not GraphToolExecutionMixin._tool_result_ok(ToolResult(output="failed", metadata={"exit_code": 2}))
-    assert not GraphToolExecutionMixin._tool_result_ok(ToolResult(output="blocked", metadata={"blocked": True}))
-    assert not GraphToolExecutionMixin._tool_result_ok(ToolResult(output="error", metadata={"error": True}))
+    assert LangGraphExecution._tool_result_ok(ToolResult(output="ok", metadata={"exit_code": 0}))
+    assert not LangGraphExecution._tool_result_ok(ToolResult(output="failed", metadata={"exit_code": 2}))
+    assert not LangGraphExecution._tool_result_ok(ToolResult(output="blocked", metadata={"blocked": True}))
+    assert not LangGraphExecution._tool_result_ok(ToolResult(output="error", metadata={"error": True}))
 
 
 @pytest.mark.asyncio
@@ -337,7 +337,7 @@ async def test_execute_tools_escalates_and_blocks_repeated_tool_failure(tmp_path
 
 @pytest.mark.asyncio
 async def test_tool_execution_mixin_delegates_to_component():
-    from voidx.agent.graph.tool_execution import GraphToolExecutionMixin
+    from voidx.agent.infrastructure.langgraph.execution import LangGraphExecution
 
     class FakeToolExecutor:
         def __init__(self):
@@ -360,7 +360,7 @@ async def test_tool_execution_mixin_delegates_to_component():
     )
     state = {"messages": []}
 
-    result = await GraphToolExecutionMixin._execute_tools(host, state)
+    result = await LangGraphExecution._execute_tools(host, state)
 
     assert result == {"messages": []}
     assert executor.state is state

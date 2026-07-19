@@ -9,21 +9,21 @@ from __future__ import annotations
 
 import asyncio
 
-from voidx.agent.graph.thread_context import bind_thread_execution_context
+from voidx.agent.infrastructure.langgraph.runtime.thread_context import bind_thread_execution_context
 from voidx.runtime.intent import TaskIntent
 from voidx.runtime.task_state import GoalSpec, TaskState
 from voidx.workflow.types import WorkflowRunState, WorkflowRunStatus
 
 
 class _FakeHost:
-    """Minimal host replicating VoidXGraph._task_state property semantics."""
+    """Minimal host replicating LangGraphExecution._task_state property semantics."""
 
     def __init__(self) -> None:
         self._default_task_state = TaskState()
 
     @property
     def _task_state(self) -> TaskState:
-        from voidx.agent.graph.thread_context import current_thread_execution_state
+        from voidx.agent.infrastructure.langgraph.runtime.thread_context import current_thread_execution_state
 
         state = current_thread_execution_state()
         if state is not None:
@@ -32,7 +32,7 @@ class _FakeHost:
 
     @_task_state.setter
     def _task_state(self, value: TaskState) -> None:
-        from voidx.agent.graph.thread_context import current_thread_execution_state
+        from voidx.agent.infrastructure.langgraph.runtime.thread_context import current_thread_execution_state
 
         state = current_thread_execution_state()
         if state is not None:

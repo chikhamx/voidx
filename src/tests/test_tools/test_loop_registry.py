@@ -26,7 +26,7 @@ def test_filtered_copy_preserves_loop_manager() -> None:
 
 
 def test_subagent_blocked_child_tools_includes_schedule_wakeup() -> None:
-    from voidx.agent.graph.subagent import _BLOCKED_CHILD_TOOLS
+    from voidx.agent.infrastructure.langgraph.runtime.subagent import _BLOCKED_CHILD_TOOLS
 
     assert "schedule_wakeup" in _BLOCKED_CHILD_TOOLS
 

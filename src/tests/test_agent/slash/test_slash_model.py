@@ -7,8 +7,9 @@ import pytest
 
 
 from voidx.agent.slash import SlashHandler
+from tests.test_agent.slash.context import command_context
 from voidx.agent.slash.runtime import _select_from_list
-from voidx.agent.task_state import GoalSpec, TaskState
+from voidx.runtime.task_state import GoalSpec, TaskState
 from voidx.config import (
     CodeIde,
     Config,
@@ -89,7 +90,7 @@ async def test_select_from_list_uses_prompt_app_choice():
 
 
 @pytest.mark.asyncio
-async def test_model_list_reads_settings_profiles(tmp_path):
+async def test_model_list_readssettings_profiles(tmp_path):
     profile_one = f"mimo/{tmp_path.name}-v2.5"
     profile_two = f"openai/{tmp_path.name}-gpt-4o"
     (tmp_path / "voidx.json").write_text(
@@ -104,11 +105,11 @@ async def test_model_list_reads_settings_profiles(tmp_path):
     )
     try:
         settings = await Settings.create(str(tmp_path))
-        graph = SimpleNamespace(
+        graph = command_context(
             config=await settings.build_config(),
-            _settings=settings,
+            settings=settings,
             model=object(),
-            _app=None,
+            app=None,
         )
 
         await SlashHandler(graph)._model_list()
@@ -119,7 +120,7 @@ async def test_model_list_reads_settings_profiles(tmp_path):
 
 @pytest.mark.asyncio
 async def test_model_test_dispatch_strips_command_prefix():
-    graph = SimpleNamespace()
+    graph = command_context()
     handler = SlashHandler(graph)
     targets: list[str] = []
 
@@ -136,7 +137,7 @@ async def test_model_test_dispatch_strips_command_prefix():
 
 @pytest.mark.asyncio
 async def test_slash_dispatch_rejects_unknown_prefix_command():
-    assert await SlashHandler(SimpleNamespace()).dispatch("/debugx") is False
+    assert await SlashHandler(command_context()).dispatch("/debugx") is False
 
 
 @pytest.mark.asyncio
@@ -155,10 +156,10 @@ async def test_model_test_creates_model_with_config_defaults(tmp_path, monkeypat
     )
     try:
         settings = await Settings.create(str(tmp_path))
-        graph = SimpleNamespace(
+        graph = command_context(
             config=await settings.build_config(),
-            _settings=settings,
-            _app=None,
+            settings=settings,
+            app=None,
         )
         captured = {}
 
@@ -184,7 +185,7 @@ async def test_model_test_creates_model_with_config_defaults(tmp_path, monkeypat
 @pytest.mark.asyncio
 async def test_model_prompt_uses_prompt_app_text_input():
     app = FakeChoiceApp(result="sk-test")
-    graph = SimpleNamespace(_app=app)
+    graph = command_context(app=app)
 
     result = await SlashHandler(graph)._prompt("API key", secret=True)
 
@@ -239,13 +240,12 @@ async def test_model_new_prompts_connection_details_before_fetching_models(tmp_p
     monkeypatch.setattr("voidx.llm.service.create_chat_model", lambda *_args, **_kwargs: object())
 
     app = SequenceChoiceApp()
-    graph = SimpleNamespace(
+    graph = command_context(
         config=Config(model=ModelConfig(provider="gemini", model="old")),
-        _settings=settings,
-        _app=app,
+        settings=settings,
         app=app,
-        _session=None,
-        _usage_stats=None,
+        session=None,
+        usage_stats=None,
     )
     handler = SlashHandler(graph)
 
@@ -293,14 +293,14 @@ async def test_model_switch_defaults_to_local_scope(tmp_path, monkeypatch):
         model=f"{tmp_path.name}-local",
         api_key="sk-local",
     ))
-    graph = SimpleNamespace(
+    graph = command_context(
         config=Config(model=ModelConfig(provider="deepseek", model="old")),
         api_key="sk-old",
         model=object(),
-        _settings=settings,
-        _session=None,
-        _app=None,
-        _usage_stats=None,
+        settings=settings,
+        session=None,
+        app=None,
+        usage_stats=None,
     )
     monkeypatch.setattr("voidx.llm.provider.create_chat_model", lambda *_args: object())
 
@@ -325,14 +325,14 @@ async def test_model_switch_global_scope_updates_global_and_local(tmp_path, monk
         model=f"{tmp_path.name}-global",
         api_key="sk-global",
     ))
-    graph = SimpleNamespace(
+    graph = command_context(
         config=Config(model=ModelConfig(provider="deepseek", model="old")),
         api_key="sk-old",
         model=object(),
-        _settings=settings,
-        _session=None,
-        _app=None,
-        _usage_stats=None,
+        settings=settings,
+        session=None,
+        app=None,
+        usage_stats=None,
     )
     monkeypatch.setattr("voidx.llm.provider.create_chat_model", lambda *_args: object())
 
@@ -367,12 +367,12 @@ def test_model_status_sync_updates_prompt_footer_state():
         reasoning_effort="medium",
         context_limit=0,
     )
-    graph = SimpleNamespace(
+    graph = command_context(
         config=SimpleNamespace(
             model=ModelConfig(provider="mimo", model="mimo-v2.5", reasoning_effort="high")
         ),
-        _usage_stats=UsageStats(),
-        _app=SimpleNamespace(status=status),
+        usage_stats=UsageStats(),
+        app=SimpleNamespace(status=status),
     )
 
     SlashHandler(graph)._sync_context_limit()
@@ -391,12 +391,12 @@ def test_model_status_sync_uses_context_window_override():
         reasoning_effort="high",
         context_limit=0,
     )
-    graph = SimpleNamespace(
+    graph = command_context(
         config=SimpleNamespace(
             model=ModelConfig(provider="mimo", model="mimo-v2.5", reasoning_effort="high", context_window=256_000)
         ),
-        _usage_stats=UsageStats(),
-        _app=SimpleNamespace(status=status),
+        usage_stats=UsageStats(),
+        app=SimpleNamespace(status=status),
     )
 
     SlashHandler(graph)._sync_context_limit()
@@ -406,7 +406,7 @@ def test_model_status_sync_uses_context_window_override():
 
 @pytest.mark.asyncio
 async def test_model_dispatch_without_args_opens_switch_picker():
-    graph = SimpleNamespace()
+    graph = command_context()
     handler = SlashHandler(graph)
     targets: list[str] = []
 
@@ -422,7 +422,7 @@ async def test_model_dispatch_without_args_opens_switch_picker():
 
 @pytest.mark.asyncio
 async def test_model_new_and_del_dispatch_to_matching_methods():
-    graph = SimpleNamespace()
+    graph = command_context()
     handler = SlashHandler(graph)
     calls: list[tuple[str, str]] = []
 
@@ -446,11 +446,11 @@ async def test_model_ctx_direct_value_sets_and_persists(tmp_path):
     """/model ctx 256k 设置 context_window 并持久化到配置文件。"""
     settings = await Settings.create(str(tmp_path))
     status = SimpleNamespace(context_limit=0, provider="mimo", model="mimo-v2.5", reasoning_effort="high")
-    graph = SimpleNamespace(
+    graph = command_context(
         config=await settings.build_config(),
-        _settings=settings,
-        _app=SimpleNamespace(status=status),
-        _usage_stats=UsageStats(),
+        settings=settings,
+        app=SimpleNamespace(status=status),
+        usage_stats=UsageStats(),
     )
 
     assert await SlashHandler(graph).dispatch("/model ctx 256k") is True
@@ -467,11 +467,11 @@ async def test_model_ctx_auto_removes_persisted_key(tmp_path):
     settings = await Settings.create(str(tmp_path))
     settings._set_setting("context_window", 256000)
     status = SimpleNamespace(context_limit=0, provider="mimo", model="mimo-v2.5", reasoning_effort="high")
-    graph = SimpleNamespace(
+    graph = command_context(
         config=await settings.build_config(),
-        _settings=settings,
-        _app=SimpleNamespace(status=status),
-        _usage_stats=UsageStats(),
+        settings=settings,
+        app=SimpleNamespace(status=status),
+        usage_stats=UsageStats(),
     )
 
     assert await SlashHandler(graph).dispatch("/model ctx auto") is True
@@ -485,11 +485,11 @@ async def test_model_ctx_auto_removes_persisted_key(tmp_path):
 async def test_model_ctx_invalid_value_errors(tmp_path):
     """/model ctx 999x 无效值时报错，不修改 context_window。"""
     settings = await Settings.create(str(tmp_path))
-    graph = SimpleNamespace(
+    graph = command_context(
         config=await settings.build_config(),
-        _settings=settings,
-        _app=None,
-        _usage_stats=UsageStats(),
+        settings=settings,
+        app=None,
+        usage_stats=UsageStats(),
     )
     original = graph.config.model.context_window
 
@@ -505,11 +505,11 @@ async def test_model_ctx_picker_selects_value(tmp_path):
     app = FakeChoiceApp(result="1")  # 选择第 1 项 = 256k
     status = SimpleNamespace(context_limit=0, provider="mimo", model="mimo-v2.5", reasoning_effort="high")
     app.status = status
-    graph = SimpleNamespace(
+    graph = command_context(
         config=await settings.build_config(),
-        _settings=settings,
-        _app=app,
-        _usage_stats=UsageStats(),
+        settings=settings,
+        app=app,
+        usage_stats=UsageStats(),
     )
 
     assert await SlashHandler(graph).dispatch("/model ctx") is True
@@ -524,11 +524,11 @@ async def test_model_ctx_picker_cancel_does_nothing(tmp_path):
     """/model ctx 选项框取消时不修改 context_window。"""
     settings = await Settings.create(str(tmp_path))
     app = FakeChoiceApp(result=None)  # 取消
-    graph = SimpleNamespace(
+    graph = command_context(
         config=await settings.build_config(),
-        _settings=settings,
-        _app=app,
-        _usage_stats=UsageStats(),
+        settings=settings,
+        app=app,
+        usage_stats=UsageStats(),
     )
     original = graph.config.model.context_window
 
@@ -553,16 +553,16 @@ async def test_paste_dispatch_uses_core_clipboard_tool(tmp_path, monkeypatch):
         "voidx.agent.slash.handler.paste_clipboard_image",
         fake_paste_clipboard_image,
     )
-    graph = SimpleNamespace(_workspace=str(tmp_path), _app=object())
+    graph = command_context(workspace=str(tmp_path), app=object())
 
     assert await SlashHandler(graph).dispatch("/paste") is True
     assert calls == [str(tmp_path)]
 
 
 @pytest.mark.asyncio
-async def test_usage_dispatch_reads_usage_stats():
-    graph = SimpleNamespace(
-        _usage_stats=UsageStats(
+async def test_usage_dispatch_readsusage_stats():
+    graph = command_context(
+        usage_stats=UsageStats(
             context_tokens=100,
             context_limit=1_000,
             last_input_tokens=100,
@@ -580,10 +580,10 @@ async def test_usage_dispatch_reads_usage_stats():
 async def test_permission_mode_dispatch_updates_service_and_settings(tmp_path):
     settings = Settings(str(tmp_path))
     permission = PermissionService()
-    graph = SimpleNamespace(
-        _permission=permission,
-        _settings=settings,
-        _app=None,
+    graph = command_context(
+        permission=permission,
+        settings=settings,
+        app=None,
     )
 
     assert await SlashHandler(graph).dispatch("/permission full_access") is True
@@ -603,10 +603,10 @@ async def test_permission_mode_dispatch_updates_service_and_settings(tmp_path):
 async def test_permission_mode_dispatch_updates_ai_approval(tmp_path):
     settings = Settings(str(tmp_path))
     permission = PermissionService()
-    graph = SimpleNamespace(
-        _permission=permission,
-        _settings=settings,
-        _app=None,
+    graph = command_context(
+        permission=permission,
+        settings=settings,
+        app=None,
     )
 
     graph._successful_dangerous_calls = {"cached"}
@@ -636,10 +636,10 @@ async def test_permission_ai_approval_prompts_for_profile(tmp_path, monkeypatch)
     ))
     settings = Settings(str(tmp_path))
     app = FakeChoiceApp(results=[PermissionMode.AI_APPROVAL.value, profile_name])
-    graph = SimpleNamespace(
-        _permission=PermissionService(),
-        _settings=settings,
-        _app=app,
+    graph = command_context(
+        permission=PermissionService(),
+        settings=settings,
+        app=app,
     )
 
     assert await SlashHandler(graph).dispatch("/permission") is True
@@ -660,10 +660,10 @@ async def test_permission_ai_approval_accepts_explicit_profile(tmp_path):
         api_key="secret",
     ))
     settings = Settings(str(tmp_path))
-    graph = SimpleNamespace(
-        _permission=PermissionService(),
-        _settings=settings,
-        _app=None,
+    graph = command_context(
+        permission=PermissionService(),
+        settings=settings,
+        app=None,
     )
 
     assert await SlashHandler(graph).dispatch(f"/permission ai_approval {profile_name}") is True
@@ -673,9 +673,9 @@ async def test_permission_ai_approval_accepts_explicit_profile(tmp_path):
 async def test_parallel_toggle_on_persists_without_live_config_update(tmp_path, monkeypatch):
     output = _capture_handler_output(monkeypatch)
     settings = Settings(str(tmp_path))
-    graph = SimpleNamespace(
+    graph = command_context(
         config=Config(workspace=str(tmp_path)),
-        _settings=settings,
+        settings=settings,
     )
 
     assert await SlashHandler(graph).dispatch("/parallel on") is True
@@ -700,14 +700,14 @@ async def test_model_switch_profile_updates_session_db(tmp_path, monkeypatch):
         api_key="sk-test",
     ))
     session = SimpleNamespace(id="sess-123")
-    graph = SimpleNamespace(
+    graph = command_context(
         config=Config(model=ModelConfig(provider="deepseek", model="old")),
         api_key="sk-old",
         model=object(),
-        _settings=settings,
-        _session=session,
-        _app=None,
-        _usage_stats=None,
+        settings=settings,
+        session=session,
+        app=None,
+        usage_stats=None,
     )
     monkeypatch.setattr("voidx.llm.provider.create_chat_model", lambda *_a, **_k: object())
 
@@ -735,14 +735,14 @@ async def test_switch_model_spec_does_not_show_startup(tmp_path, monkeypatch):
         model="deepseek-v4-pro",
         api_key="sk-test",
     ))
-    graph = SimpleNamespace(
+    graph = command_context(
         config=Config(model=ModelConfig(provider="anthropic", model="old")),
         api_key="sk-old",
         model=object(),
-        _settings=settings,
-        _session=None,
-        _app=None,
-        _usage_stats=None,
+        settings=settings,
+        session=None,
+        app=None,
+        usage_stats=None,
     )
     monkeypatch.setattr("voidx.llm.provider.create_chat_model", lambda *_a, **_k: object())
 

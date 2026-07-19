@@ -12,13 +12,13 @@ import voidx.memory.store as store
 
 
 from voidx.agent.slash import SlashHandler
-from voidx.agent.graph import VoidXGraph
-from voidx.agent.graph.run_loop import GraphRunLoopMixin
-from voidx.agent.graph.title_mixin import _sanitize_generated_title
+from voidx.agent.infrastructure.langgraph.execution import LangGraphExecution
+from voidx.agent.application.agent_service import AgentService
+from voidx.agent.infrastructure.langgraph.execution import _sanitize_generated_title
 from voidx.agent.runtime_context import InteractionMode, TaskIntent
-from voidx.agent.task_state import GoalResolution, IntentResolution, PlanResolution, GoalSpec, TaskState
+from voidx.runtime.task_state import GoalResolution, IntentResolution, PlanResolution, GoalSpec, TaskState
 from voidx.agent.goal_resolver import ResolverGoal
-from voidx.agent.task_state import GoalSpec, TaskState
+from voidx.runtime.task_state import GoalSpec, TaskState
 from voidx.config import Config
 from voidx.llm.usage import UsageStats
 from voidx.memory.runtime_state import RuntimeStateSnapshot, save_runtime_state
@@ -41,8 +41,8 @@ from tests.test_agent.graph.run_loop_helpers import (
 
 
 @pytest.mark.asyncio
-async def test_run_once_clears_stale_completed_workflow_when_resolver_has_no_join(tmp_path):
-    graph = VoidXGraph(Config(workspace=str(tmp_path)), api_key=None)
+async def testrun_turn_clears_stale_completed_workflow_when_resolver_has_no_join(tmp_path):
+    graph = LangGraphExecution(Config(workspace=str(tmp_path)), api_key=None)
     graph._task_state = TaskState(
         current_goal=GoalSpec(desc="检查检查，准备push吧"),
         workflow_runs={
@@ -81,7 +81,7 @@ async def test_run_once_clears_stale_completed_workflow_when_resolver_has_no_joi
     set_dock(test_dock)
     test_dock.begin_capture()
     try:
-        await graph._run_once("检查检查，准备push吧")
+        await graph.run_turn("检查检查，准备push吧")
     finally:
         test_dock.deactivate()
         test_dock.reset()
@@ -94,8 +94,8 @@ async def test_run_once_clears_stale_completed_workflow_when_resolver_has_no_joi
 
 
 @pytest.mark.asyncio
-async def test_run_once_preadvances_workflow_from_resolver_workflow_start(tmp_path, monkeypatch):
-    graph = VoidXGraph(Config(workspace=str(tmp_path)), api_key=None)
+async def testrun_turn_preadvances_workflow_from_resolver_workflow_start(tmp_path, monkeypatch):
+    graph = LangGraphExecution(Config(workspace=str(tmp_path)), api_key=None)
     graph._task_state = TaskState(
         current_goal=GoalSpec(desc="agent_name 语义清理"),
         workflow_runs={
@@ -123,14 +123,14 @@ async def test_run_once_preadvances_workflow_from_resolver_workflow_start(tmp_pa
 
     graph.graph = FakeGraph()
     graph._interaction_mode = InteractionMode.GOAL
-    import voidx.agent.graph.turn_runner as turn_runner_mod
+    import voidx.agent.infrastructure.langgraph.runtime.turn_runner as turn_runner_mod
     monkeypatch.setattr(turn_runner_mod, "resolve_goal_mode", _fake_resolve_goal_mode)
 
     test_dock = BottomInputDock()
     set_dock(test_dock)
     test_dock.begin_capture()
     try:
-        await graph._run_once("可以，先写一个 spec")
+        await graph.run_turn("可以，先写一个 spec")
     finally:
         test_dock.deactivate()
         test_dock.reset()

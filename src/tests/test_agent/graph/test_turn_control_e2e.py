@@ -3,8 +3,8 @@
 import pytest
 from langchain_core.messages import AIMessage, AIMessageChunk, HumanMessage
 
-from voidx.agent.graph import VoidXGraph
-from voidx.agent.graph.turn_control import TURN_TOOL_DEFINITION
+from voidx.agent.infrastructure.langgraph.execution import LangGraphExecution
+from voidx.agent.infrastructure.langgraph.runtime.turn_control import TURN_TOOL_DEFINITION
 from voidx.config import Config, ModelConfig
 from tests.test_agent.graph.stream_llm_helpers import FakeRenderer
 
@@ -65,7 +65,7 @@ def _mixed_chunk() -> AIMessageChunk:
 
 
 def _make_graph(tmp_path, model, monkeypatch, provider="openai"):
-    import voidx.agent.graph.core.llm as graph_module
+    import voidx.agent.infrastructure.langgraph.execution as graph_module
 
     async def fail_on_retry(delay):
         pytest.fail(f"Unexpected LLM retry with delay {delay}s")
@@ -73,7 +73,7 @@ def _make_graph(tmp_path, model, monkeypatch, provider="openai"):
     monkeypatch.setattr(graph_module, "StreamingRenderer", FakeRenderer)
     monkeypatch.setattr(graph_module.asyncio, "sleep", fail_on_retry)
 
-    graph = VoidXGraph(
+    graph = LangGraphExecution(
         Config(
             model=ModelConfig(provider=provider, model="test-model"),
             workspace=str(tmp_path),

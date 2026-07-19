@@ -7,6 +7,7 @@ import pytest
 
 
 from voidx.agent.slash import SlashHandler
+from tests.test_agent.slash.context import command_context
 from voidx.config import McpServerConfig, Settings, WebToolRoute
 from voidx.mcp.schema import McpToolDef
 from voidx.ui.commands import filter_commands
@@ -52,7 +53,7 @@ async def test_mcp_new_builtin_saves_server_and_web_routes(tmp_path, monkeypatch
     settings = Settings(str(tmp_path))
     app = FakePromptApp(choices=["0"], texts=["voidx-web"])
     manager = FakeMcpManager()
-    graph = SimpleNamespace(_settings=settings, _app=app, _mcp_manager=manager)
+    graph = command_context(settings=settings, app=app, mcp_manager=manager)
     handler = SlashHandler(graph)
 
     async def fake_test(server):
@@ -85,7 +86,7 @@ async def test_mcp_new_tavily_saves_server_and_web_routes(tmp_path, monkeypatch)
     settings = Settings(str(tmp_path))
     app = FakePromptApp(choices=["1"], texts=["tavily", "tvly-test"])
     manager = FakeMcpManager()
-    graph = SimpleNamespace(_settings=settings, _app=app, _mcp_manager=manager)
+    graph = command_context(settings=settings, app=app, mcp_manager=manager)
     handler = SlashHandler(graph)
 
     async def fake_test(server):
@@ -122,7 +123,7 @@ async def test_mcp_new_url_saves_server_with_url(tmp_path, monkeypatch):
     settings = Settings(str(tmp_path))
     app = FakePromptApp(choices=["2", "0"], texts=["my-remote", "https://mcp.example.com/sse", ""])
     manager = FakeMcpManager()
-    graph = SimpleNamespace(_settings=settings, _app=app, _mcp_manager=manager)
+    graph = command_context(settings=settings, app=app, mcp_manager=manager)
     handler = SlashHandler(graph)
 
     async def fake_test(server):
@@ -155,7 +156,7 @@ async def test_mcp_disable_command_sets_disabled_true_and_restarts(tmp_path):
         WebToolRoute(backend="mcp", server="voidx-web", tool="web_search"),
     )
     manager = FakeMcpManager()
-    graph = SimpleNamespace(_settings=settings, _app=None, _mcp_manager=manager)
+    graph = command_context(settings=settings, app=None, mcp_manager=manager)
 
     await SlashHandler(graph).dispatch("/mcp disable voidx-web")
 
@@ -176,7 +177,7 @@ async def test_mcp_enable_command_sets_disabled_false_and_restarts(tmp_path):
         tools=["web_search"],
     ))
     manager = FakeMcpManager()
-    graph = SimpleNamespace(_settings=settings, _app=None, _mcp_manager=manager)
+    graph = command_context(settings=settings, app=None, mcp_manager=manager)
 
     await SlashHandler(graph).dispatch("/mcp enable voidx-web")
 

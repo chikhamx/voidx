@@ -12,11 +12,11 @@ import voidx.memory.store as store
 
 
 from voidx.agent.slash import SlashHandler
-from voidx.agent.graph import VoidXGraph
-from voidx.agent.graph.run_loop import GraphRunLoopMixin
-from voidx.agent.graph.title_mixin import _sanitize_generated_title
+from voidx.agent.infrastructure.langgraph.execution import LangGraphExecution
+from voidx.agent.application.agent_service import AgentService
+from voidx.agent.infrastructure.langgraph.execution import _sanitize_generated_title
 from voidx.agent.runtime_context import InteractionMode, TaskIntent
-from voidx.agent.task_state import (
+from voidx.runtime.task_state import (
     GoalResolution,
     GoalSpec,
     IntentResolution,
@@ -40,6 +40,7 @@ from tests.test_agent.graph.run_loop_helpers import (
     NoopMcpManager,
     NoopLspManager,
     _graph,
+    _service,
     _disable_external_managers,
 )
 
@@ -49,7 +50,7 @@ async def test_smart_title_requires_database_title_to_remain_temporary(tmp_path)
     session = await create_session(workspace=str(tmp_path), provider="mimo", model="mimo-v2.5")
     await update_title(session.id, "temporary")
     session = session.model_copy(update={"title": "temporary"})
-    graph = VoidXGraph(Config(workspace=str(tmp_path)), api_key=None, session=session)
+    graph = LangGraphExecution(Config(workspace=str(tmp_path)), api_key=None, session=session)
     graph._schedule_session_title_generation(session.id, "first request", "temporary")
     assert graph._title_task is None
 
@@ -66,7 +67,7 @@ async def test_title_auto_uses_first_user_message(tmp_path):
     await save_message(MessageRow(session_id=session.id, role="user", content="first user request"))
     await save_message(MessageRow(session_id=session.id, role="assistant", content="response"))
     await save_message(MessageRow(session_id=session.id, role="user", content="second user request"))
-    graph = VoidXGraph(Config(workspace=str(tmp_path)), api_key=None, session=session)
+    graph = LangGraphExecution(Config(workspace=str(tmp_path)), api_key=None, session=session)
     prompts: list[str] = []
 
     class FakeTitleModel:
@@ -96,7 +97,7 @@ def test_sanitize_generated_title_rejects_markdown():
 @pytest.mark.asyncio
 async def test_delete_empty_current_session_only_deletes_sessions_without_messages(tmp_path):
     empty = await create_session(workspace=str(tmp_path), provider="mimo", model="mimo-v2.5")
-    graph = VoidXGraph(Config(workspace=str(tmp_path)), api_key=None, session=empty)
+    graph = LangGraphExecution(Config(workspace=str(tmp_path)), api_key=None, session=empty)
 
     await graph._delete_empty_current_session()
 
@@ -105,7 +106,7 @@ async def test_delete_empty_current_session_only_deletes_sessions_without_messag
 
     non_empty = await create_session(workspace=str(tmp_path), provider="mimo", model="mimo-v2.5")
     await save_message(MessageRow(session_id=non_empty.id, role="user", content="hello"))
-    graph = VoidXGraph(Config(workspace=str(tmp_path)), api_key=None, session=non_empty)
+    graph = LangGraphExecution(Config(workspace=str(tmp_path)), api_key=None, session=non_empty)
 
     await graph._delete_empty_current_session()
 
@@ -115,9 +116,10 @@ async def test_delete_empty_current_session_only_deletes_sessions_without_messag
 
 @pytest.mark.asyncio
 async def test_exit_cleanup_deletes_empty_current_session(tmp_path, monkeypatch):
-    monkeypatch.setattr("voidx.agent.graph.run_loop.create_frontend", ExitTui)
+    monkeypatch.setattr("voidx.agent.application.agent_service.create_frontend", ExitTui)
     session = await create_session(workspace=str(tmp_path), provider="mimo", model="mimo-v2.5")
-    graph = VoidXGraph(Config(workspace=str(tmp_path)), api_key=None, session=session)
+    execution = LangGraphExecution(Config(workspace=str(tmp_path)), api_key=None, session=session)
+    graph = _service(execution)
     _disable_external_managers(graph)
     test_dock = BottomInputDock()
     set_dock(test_dock)
@@ -128,16 +130,17 @@ async def test_exit_cleanup_deletes_empty_current_session(tmp_path, monkeypatch)
         set_dock(None)
 
     assert await get_session(session.id) is None
-    assert graph._session is None
+    assert execution._session is None
 
 
 @pytest.mark.asyncio
 async def test_exit_cleanup_keeps_session_with_messages_even_new_session_title(tmp_path, monkeypatch):
-    monkeypatch.setattr("voidx.agent.graph.run_loop.create_frontend", ExitTui)
+    monkeypatch.setattr("voidx.agent.application.agent_service.create_frontend", ExitTui)
     session = await create_session(workspace=str(tmp_path), provider="mimo", model="mimo-v2.5")
     await save_message(MessageRow(session_id=session.id, role="user", content="hello"))
     await update_title(session.id, "New session")
-    graph = VoidXGraph(Config(workspace=str(tmp_path)), api_key=None, session=session)
+    execution = LangGraphExecution(Config(workspace=str(tmp_path)), api_key=None, session=session)
+    graph = _service(execution)
     _disable_external_managers(graph)
     test_dock = BottomInputDock()
     set_dock(test_dock)
@@ -151,7 +154,7 @@ async def test_exit_cleanup_keeps_session_with_messages_even_new_session_title(t
     assert loaded is not None
     assert loaded.title == "New session"
     assert loaded.message_count == 1
-    assert graph._session is not None
-    assert graph._session.id == session.id
+    assert execution._session is not None
+    assert execution._session.id == session.id
 
 

@@ -9,7 +9,7 @@ import pytest
 
 
 from voidx.agent.slash import SlashHandler
-from voidx.agent.slash.host import SlashHostAdapter
+from tests.test_agent.slash.context import command_context
 import voidx.memory.store as store
 from voidx.memory.session import MessageRow, create_session, delete_session, get_session, save_message
 from voidx.ui.commands import COMMANDS
@@ -63,17 +63,17 @@ def isolated_memory_store(tmp_path):
 
 
 def _graph(app=None):
-    return SimpleNamespace(_app=app)
+    return SimpleNamespace(app=app)
 
 
 def _capture_output(monkeypatch):
     output: list[str] = []
     monkeypatch.setattr(
-        "voidx.agent.slash.session.ui.print",
+        "voidx.agent.slash.handler.ui.print",
         lambda text="": output.append(str(text)),
     )
     monkeypatch.setattr(
-        "voidx.agent.slash.session.ui.error",
+        "voidx.agent.slash.handler.ui.error",
         lambda text="": output.append(f"ERROR: {text}"),
     )
     return output
@@ -305,7 +305,7 @@ def test_session_del_command_is_in_palette():
 
 
 @pytest.mark.asyncio
-async def test_session_list_alias_lists_saved_sessions(monkeypatch, isolated_memory_store):
+async def test_session_list_alias_lists_savedsessions(monkeypatch, isolated_memory_store):
     output = _capture_output(monkeypatch)
     session = await create_session()
     try:
@@ -335,7 +335,7 @@ async def test_session_new_alias_clears_current_session(monkeypatch):
         calls.append(f"startup:{kwargs}")
         return True
 
-    graph = SimpleNamespace(
+    graph = command_context(
         clear_current_session=clear_current_session,
         show_startup=show_startup,
     )
@@ -347,7 +347,7 @@ async def test_session_new_alias_clears_current_session(monkeypatch):
 
 
 @pytest.mark.asyncio
-async def test_session_resume_alias_resumes_saved_session(monkeypatch, isolated_memory_store):
+async def test_session_resume_alias_resumes_savedsession(monkeypatch, isolated_memory_store):
     output = _capture_output(monkeypatch)
     session = await create_session()
     calls: list[str] = []
@@ -365,7 +365,7 @@ async def test_session_resume_alias_resumes_saved_session(monkeypatch, isolated_
             calls.append(f"restore:{append}")
             return True
 
-        graph = SimpleNamespace(
+        graph = command_context(
             resume_session=resume_session,
             restore_transcript_snapshot=restore_transcript_snapshot,
         )
@@ -387,7 +387,7 @@ def test_session_namespace_commands_are_in_palette():
 @pytest.mark.asyncio
 async def test_guide_command_submits_pending_guidance():
     calls: list[str] = []
-    graph = SimpleNamespace(
+    graph = command_context(
         submit_guidance=lambda text: calls.append(text) or True,
     )
 
@@ -400,11 +400,11 @@ async def test_guide_command_submits_pending_guidance():
 async def test_guide_command_without_text_prints_usage(monkeypatch):
     output: list[str] = []
     monkeypatch.setattr(
-        "voidx.agent.slash.guide.ui.print",
+        "voidx.agent.slash.handler.ui.print",
         lambda text="": output.append(str(text)),
     )
 
-    assert await SlashHandler(SimpleNamespace()).dispatch("/guide") is True
+    assert await SlashHandler(command_context()).dispatch("/guide") is True
 
     assert output == ["[dim]Usage: /guide <guidance for the next agent step>[/dim]"]
 
@@ -422,8 +422,8 @@ async def test_title_auto_dispatches_regenerator(monkeypatch):
         calls.append(True)
         return True
 
-    graph = SimpleNamespace(
-        _session=SimpleNamespace(id="session_1"),
+    graph = command_context(
+        session=SimpleNamespace(id="session_1"),
         regenerate_session_title=regenerate_session_title,
     )
 
@@ -440,8 +440,8 @@ async def test_title_auto_without_user_message_prints_notice(monkeypatch):
     async def regenerate_session_title() -> bool:
         return False
 
-    graph = SimpleNamespace(
-        _session=SimpleNamespace(id="session_1"),
+    graph = command_context(
+        session=SimpleNamespace(id="session_1"),
         regenerate_session_title=regenerate_session_title,
     )
 
@@ -456,14 +456,3 @@ def test_title_auto_command_is_in_palette():
 
 def test_quit_command_is_in_palette():
     assert ("/quit", "Exit voidx") in COMMANDS
-
-
-def test_slash_host_adapter_forwards_guidance_source():
-    calls = []
-    raw = SimpleNamespace(
-        submit_guidance=lambda text, **kwargs: calls.append((text, kwargs)) or True,
-    )
-
-    assert SlashHostAdapter(raw).submit_guidance("change approach", source="guard") is True
-
-    assert calls == [("change approach", {"source": "guard"})]

@@ -6,6 +6,7 @@ import pytest
 
 from voidx.agent.loop.prompt_source import PromptSource
 from voidx.agent.slash import SlashHandler
+from tests.test_agent.slash.context import command_context
 
 
 class FakeLoopManager:
@@ -29,13 +30,13 @@ class FakeLoopManager:
 
 
 def _graph(tmp_path, manager: FakeLoopManager):
-    return SimpleNamespace(_workspace=str(tmp_path), _loop_manager=manager, _session=None)
+    return SimpleNamespace(workspace=str(tmp_path), loop_manager=manager, session=None)
 
 
 def _capture_output(monkeypatch):
     output: list[str] = []
-    monkeypatch.setattr("voidx.agent.loop.slash.ui.print", lambda text="": output.append(str(text)))
-    monkeypatch.setattr("voidx.agent.loop.slash.ui.error", lambda text="": output.append(f"ERROR: {text}"))
+    monkeypatch.setattr("voidx.agent.slash.handler.ui.print", lambda text="": output.append(str(text)))
+    monkeypatch.setattr("voidx.agent.slash.handler.ui.error", lambda text="": output.append(f"ERROR: {text}"))
     return output
 
 

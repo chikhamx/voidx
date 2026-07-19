@@ -28,7 +28,7 @@ from voidx.tools.clarify import ClarifyTool, ClarifyInput, _infer_state_patch
 from voidx.tools.skills import SkillsTool
 from voidx.tools.document import DocumentTool, DocumentInput
 from voidx.tools.checkpoint import PlanCheckpointTool
-from voidx.agent.task_state import GoalSpec, GoalResolution, IntentResolution, PlanResolution, ToolStatePatch
+from voidx.runtime.task_state import GoalSpec, GoalResolution, IntentResolution, PlanResolution, ToolStatePatch
 from voidx.agent.runtime_context import TaskIntent
 from voidx.skills.context import SKILL_TOOL_CONTEXT_MARKER
 from voidx.workflow.runtime import WorkflowRunState, WorkflowRunStatus
@@ -39,12 +39,12 @@ import voidx.memory.store as store
 class TestMakeInteractCallback:
     @pytest.mark.asyncio
     async def test_returns_none_when_app_is_none(self):
-        from voidx.agent.graph.tool_executor import _make_interact_callback
+        from voidx.agent.infrastructure.langgraph.runtime.tool_executor import _make_interact_callback
         assert _make_interact_callback(None) is None
 
     @pytest.mark.asyncio
     async def test_str_options_route_to_ask_text(self):
-        from voidx.agent.graph.tool_executor import _make_interact_callback
+        from voidx.agent.infrastructure.langgraph.runtime.tool_executor import _make_interact_callback
 
         calls = []
 
@@ -68,7 +68,7 @@ class TestMakeInteractCallback:
 
     @pytest.mark.asyncio
     async def test_tuple_options_route_to_ask_choice(self):
-        from voidx.agent.graph.tool_executor import _make_interact_callback
+        from voidx.agent.infrastructure.langgraph.runtime.tool_executor import _make_interact_callback
 
         class FakeApp:
             async def ask_choice(self, prompt, choices, **kwargs):
@@ -88,7 +88,7 @@ class TestMakeInteractCallback:
 
     @pytest.mark.asyncio
     async def test_tuple_options_emit_permission_prompt_events_when_event_bus_running(self):
-        from voidx.agent.graph.tool_executor import _make_interact_callback
+        from voidx.agent.infrastructure.langgraph.runtime.tool_executor import _make_interact_callback
         from voidx.ui.output.events import PermissionPromptCleared, PermissionPromptShown, ui_events
 
         seen_events = []
@@ -130,7 +130,7 @@ class TestMakeInteractCallback:
 
     @pytest.mark.asyncio
     async def test_tuple_options_appends_other_choice(self):
-        from voidx.agent.graph.tool_executor import _make_interact_callback
+        from voidx.agent.infrastructure.langgraph.runtime.tool_executor import _make_interact_callback
 
         captured_choices = []
 
@@ -155,7 +155,7 @@ class TestMakeInteractCallback:
 
     @pytest.mark.asyncio
     async def test_tuple_options_other_invokes_text_and_marks_free_text(self):
-        from voidx.agent.graph.tool_executor import _make_interact_callback
+        from voidx.agent.infrastructure.langgraph.runtime.tool_executor import _make_interact_callback
 
         calls = []
 
@@ -180,7 +180,7 @@ class TestMakeInteractCallback:
 
     @pytest.mark.asyncio
     async def test_tuple_options_other_sentinel_collision_preserves_real_option(self):
-        from voidx.agent.graph.tool_executor import _make_interact_callback
+        from voidx.agent.infrastructure.langgraph.runtime.tool_executor import _make_interact_callback
 
         text_called = False
         captured_choices = []
@@ -209,7 +209,7 @@ class TestMakeInteractCallback:
 
     @pytest.mark.asyncio
     async def test_ask_text_without_options(self):
-        from voidx.agent.graph.tool_executor import _make_interact_callback
+        from voidx.agent.infrastructure.langgraph.runtime.tool_executor import _make_interact_callback
 
         class FakeApp:
             async def ask_choice(self, prompt, choices, **kwargs):
@@ -224,7 +224,7 @@ class TestMakeInteractCallback:
 
     @pytest.mark.asyncio
     async def test_cancelled_when_app_returns_none(self):
-        from voidx.agent.graph.tool_executor import _make_interact_callback
+        from voidx.agent.infrastructure.langgraph.runtime.tool_executor import _make_interact_callback
 
         class FakeApp:
             async def ask_choice(self, prompt, choices, **kwargs):

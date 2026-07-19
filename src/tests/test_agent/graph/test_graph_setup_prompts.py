@@ -20,11 +20,11 @@ from voidx.agent.agents import (
     get_visible_agents,
 )
 from voidx.agent.prompts import BASE_SYSTEM, PERSONA_MODEL, persona_prompt
-from voidx.agent.graph.convergence import is_step_hint_message
-from voidx.agent.graph.runtime import current_parent_tool_call_id
-from voidx.agent.graph.runtime_guards import RuntimeGuardState, WallClockGuardState
-from voidx.agent.graph import VoidXGraph
-from voidx.agent.graph.tool_execution import AGENT_RESULT_PREVIEW_CHARS, _agent_result_preview
+from voidx.agent.infrastructure.langgraph.runtime.convergence import is_step_hint_message
+from voidx.agent.infrastructure.langgraph.runtime.runtime import current_parent_tool_call_id
+from voidx.agent.infrastructure.langgraph.runtime.runtime_guards import RuntimeGuardState, WallClockGuardState
+from voidx.agent.infrastructure.langgraph.execution import LangGraphExecution
+from voidx.agent.infrastructure.langgraph.execution import AGENT_RESULT_PREVIEW_CHARS, _agent_result_preview
 from voidx.agent.message_rows import RowMessageCacheEntry
 from voidx.agent.runtime_context import InteractionMode, RuntimeContextBuilder
 from voidx.config import Config, ParallelSubagentsConfig, Settings, UserProfile
@@ -44,7 +44,7 @@ from voidx.runtime import GoalResolution, GoalSpec, IntentResolution, PlanResolu
 from voidx.skills.context import SKILL_TOOL_CONTEXT_MARKER
 from voidx.workflow.context import WORKFLOW_CONTEXT_MARKER
 from voidx.workflow.runtime import WorkflowRunState, WorkflowRunStatus
-from voidx.agent.task_state import TaskState, ToolStatePatch, WorkflowRoute
+from voidx.runtime.task_state import TaskState, ToolStatePatch, WorkflowRoute
 from voidx.tools.base import ToolContext, ToolResult
 from voidx.tools.agent import AgentResultContract, AgentTool
 from voidx.tools.registry import ToolRegistry
@@ -54,7 +54,7 @@ from voidx.ui.output.events import DockEventConsumer, TurnStarted, ui_events
 
 def _graph(tmp_path):
     cfg = Config(workspace=str(tmp_path))
-    return VoidXGraph(cfg, api_key=None)
+    return LangGraphExecution(cfg, api_key=None)
 
 
 def _task_state_json(**kwargs):
@@ -168,7 +168,7 @@ def test_agent_tool_description_hides_parallel_when_disabled(tmp_path):
 
 
 def test_agent_tool_description_exposes_parallel_when_enabled(tmp_path):
-    graph = VoidXGraph(
+    graph = LangGraphExecution(
         Config(
             workspace=str(tmp_path),
             parallel_subagents=ParallelSubagentsConfig(enabled=True),
@@ -235,7 +235,7 @@ async def test_clear_applies_saved_parallel_subagents_config(tmp_path):
     )
     settings = Settings(str(tmp_path))
     settings.set_parallel_subagents(ParallelSubagentsConfig(enabled=True, max_concurrent=3))
-    graph = VoidXGraph(
+    graph = LangGraphExecution(
         Config(workspace=str(tmp_path)),
         api_key=None,
         session=session,
@@ -263,7 +263,7 @@ async def test_resume_applies_saved_parallel_subagents_config(tmp_path):
     )
     settings = Settings(str(tmp_path))
     settings.set_parallel_subagents(ParallelSubagentsConfig(enabled=True, max_concurrent=3))
-    graph = VoidXGraph(
+    graph = LangGraphExecution(
         Config(workspace=str(tmp_path)),
         api_key=None,
         settings=settings,
@@ -289,7 +289,7 @@ def test_graph_session_date_uses_session_creation_date(tmp_path):
         updated_at="2026-06-07T12:00:00",
     )
 
-    graph = VoidXGraph(Config(workspace=str(tmp_path)), api_key=None, session=session)
+    graph = LangGraphExecution(Config(workspace=str(tmp_path)), api_key=None, session=session)
 
     assert graph._session_date.startswith("2026-06-06 ")
 

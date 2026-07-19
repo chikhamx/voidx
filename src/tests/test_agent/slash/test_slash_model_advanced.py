@@ -7,8 +7,9 @@ import pytest
 
 
 from voidx.agent.slash import SlashHandler
+from tests.test_agent.slash.context import command_context
 from voidx.agent.slash.runtime import _select_from_list
-from voidx.agent.task_state import GoalSpec, TaskState
+from voidx.runtime.task_state import GoalSpec, TaskState
 from voidx.config import (
     CodeIde,
     Config,
@@ -66,12 +67,12 @@ async def test_parallel_toggle_off_persists_without_live_config_update(tmp_path,
     output = _capture_handler_output(monkeypatch)
     settings = Settings(str(tmp_path))
     settings.set_parallel_subagents(ParallelSubagentsConfig(enabled=True, max_concurrent=3))
-    graph = SimpleNamespace(
+    graph = command_context(
         config=Config(
             workspace=str(tmp_path),
             parallel_subagents=ParallelSubagentsConfig(enabled=True, max_concurrent=3),
         ),
-        _settings=settings,
+        settings=settings,
     )
 
     assert await SlashHandler(graph).dispatch("/parallel off") is True
@@ -90,9 +91,9 @@ async def test_parallel_toggle_off_persists_without_live_config_update(tmp_path,
 async def test_parallel_toggle_no_arg_uses_saved_state(tmp_path, monkeypatch):
     _capture_handler_output(monkeypatch)
     settings = Settings(str(tmp_path))
-    graph = SimpleNamespace(
+    graph = command_context(
         config=Config(workspace=str(tmp_path)),
-        _settings=settings,
+        settings=settings,
     )
     handler = SlashHandler(graph)
 
@@ -108,9 +109,9 @@ async def test_parallel_status_shows_active_and_saved_state(tmp_path, monkeypatc
     output = _capture_handler_output(monkeypatch)
     settings = Settings(str(tmp_path))
     settings.set_parallel_subagents(ParallelSubagentsConfig(enabled=True, max_concurrent=3))
-    graph = SimpleNamespace(
+    graph = command_context(
         config=Config(workspace=str(tmp_path)),
-        _settings=settings,
+        settings=settings,
     )
 
     assert await SlashHandler(graph).dispatch("/parallel status") is True
@@ -124,9 +125,9 @@ async def test_parallel_status_shows_active_and_saved_state(tmp_path, monkeypatc
 @pytest.mark.asyncio
 async def test_parallel_invalid_arg(tmp_path, monkeypatch):
     output = _capture_handler_output(monkeypatch)
-    graph = SimpleNamespace(
+    graph = command_context(
         config=Config(workspace=str(tmp_path)),
-        _settings=Settings(str(tmp_path)),
+        settings=Settings(str(tmp_path)),
     )
 
     assert await SlashHandler(graph).dispatch("/parallel maybe") is True
@@ -135,11 +136,11 @@ async def test_parallel_invalid_arg(tmp_path, monkeypatch):
 
 
 @pytest.mark.asyncio
-async def test_language_and_tone_dispatch_update_settings_and_live_config(tmp_path):
+async def test_language_and_tone_dispatch_updatesettings_and_live_config(tmp_path):
     settings = Settings(str(tmp_path))
-    graph = SimpleNamespace(
+    graph = command_context(
         config=Config(workspace=str(tmp_path)),
-        _settings=settings,
+        settings=settings,
     )
 
     assert await SlashHandler(graph).dispatch("/lang zh-CN") is True
@@ -159,10 +160,10 @@ async def test_language_and_tone_dispatch_update_settings_and_live_config(tmp_pa
 async def test_language_and_tone_without_args_use_picker(tmp_path):
     settings = Settings(str(tmp_path))
     app = FakeChoiceApp(result="0")
-    graph = SimpleNamespace(
+    graph = command_context(
         config=Config(workspace=str(tmp_path)),
-        _settings=settings,
-        _app=app,
+        settings=settings,
+        app=app,
     )
     handler = SlashHandler(graph)
 
@@ -188,10 +189,10 @@ async def test_language_and_tone_without_args_use_picker(tmp_path):
 async def test_language_and_tone_picker_other_prompts_for_manual_value(tmp_path):
     settings = Settings(str(tmp_path))
     app = FakeChoiceApp(result="7", text_result="pt-BR")
-    graph = SimpleNamespace(
+    graph = command_context(
         config=Config(workspace=str(tmp_path)),
-        _settings=settings,
-        _app=app,
+        settings=settings,
+        app=app,
     )
     handler = SlashHandler(graph)
 
@@ -212,10 +213,10 @@ async def test_language_and_tone_picker_reset_clears_values(tmp_path):
     settings.set_user_language("en")
     settings.set_user_tone("formal")
     app = FakeChoiceApp(result="8")
-    graph = SimpleNamespace(
+    graph = command_context(
         config=await settings.build_config(),
-        _settings=settings,
-        _app=app,
+        settings=settings,
+        app=app,
     )
     handler = SlashHandler(graph)
 
@@ -232,10 +233,10 @@ async def test_language_and_tone_picker_reset_clears_values(tmp_path):
 @pytest.mark.asyncio
 async def test_language_and_tone_headless_fallback_prompts_for_text(tmp_path):
     settings = Settings(str(tmp_path))
-    graph = SimpleNamespace(
+    graph = command_context(
         config=Config(workspace=str(tmp_path)),
-        _settings=settings,
-        _app=None,
+        settings=settings,
+        app=None,
     )
     handler = SlashHandler(graph)
     prompts: list[str] = []
@@ -264,10 +265,10 @@ async def test_language_and_tone_picker_cancel_keeps_current_values(tmp_path):
     settings.set_user_language("en")
     settings.set_user_tone("direct")
     app = FakeChoiceApp(result=None)
-    graph = SimpleNamespace(
+    graph = command_context(
         config=await settings.build_config(),
-        _settings=settings,
-        _app=app,
+        settings=settings,
+        app=app,
     )
     handler = SlashHandler(graph)
 
@@ -283,10 +284,10 @@ async def test_language_and_tone_headless_empty_input_cancels(tmp_path):
     settings = Settings(str(tmp_path))
     settings.set_user_language("en")
     settings.set_user_tone("direct")
-    graph = SimpleNamespace(
+    graph = command_context(
         config=await settings.build_config(),
-        _settings=settings,
-        _app=None,
+        settings=settings,
+        app=None,
     )
     handler = SlashHandler(graph)
 
@@ -333,10 +334,10 @@ async def test_permission_mode_without_args_uses_prompt_app_choice(tmp_path):
     settings = Settings(str(tmp_path))
     permission = PermissionService()
     app = FakeChoiceApp(result="project_trusted")
-    graph = SimpleNamespace(
-        _permission=permission,
-        _settings=settings,
-        _app=app,
+    graph = command_context(
+        permission=permission,
+        settings=settings,
+        app=app,
     )
 
     assert await SlashHandler(graph).dispatch("/permission") is True
@@ -348,10 +349,10 @@ async def test_permission_mode_without_args_uses_prompt_app_choice(tmp_path):
 
 @pytest.mark.asyncio
 async def test_mode_dispatch_updates_interaction_mode():
-    graph = SimpleNamespace(
+    graph = command_context(
         _interaction_mode=None,
         _plan_mode=False,
-        _app=None,
+        app=None,
     )
 
     assert await SlashHandler(graph).dispatch("/mode goal") is True
@@ -362,10 +363,10 @@ async def test_mode_dispatch_updates_interaction_mode():
 
 @pytest.mark.asyncio
 async def test_mode_dispatch_rejects_removed_modes():
-    graph = SimpleNamespace(
+    graph = command_context(
         _interaction_mode=None,
         _plan_mode=False,
-        _app=None,
+        app=None,
     )
 
     assert await SlashHandler(graph).dispatch("/mode review") is True
@@ -377,7 +378,7 @@ async def test_mode_dispatch_rejects_removed_modes():
 @pytest.mark.asyncio
 async def test_code_ide_dispatch_saves_ghostty(tmp_path):
     settings = Settings(str(tmp_path))
-    graph = SimpleNamespace(_settings=settings, _app=None)
+    graph = command_context(settings=settings, app=None)
 
     assert await SlashHandler(graph).dispatch("/code-ide ghostty") is True
 
@@ -387,7 +388,7 @@ async def test_code_ide_dispatch_saves_ghostty(tmp_path):
 @pytest.mark.asyncio
 async def test_code_ide_dispatch_rejects_gostty_typo(tmp_path):
     settings = Settings(str(tmp_path))
-    graph = SimpleNamespace(_settings=settings, _app=None)
+    graph = command_context(settings=settings, app=None)
 
     assert await SlashHandler(graph).dispatch("/code-ide gostty") is True
 
@@ -398,9 +399,9 @@ async def test_code_ide_dispatch_rejects_gostty_typo(tmp_path):
 async def test_code_ide_dispatch_uses_choice_panel(tmp_path, monkeypatch):
     settings = Settings(str(tmp_path))
     app = FakeChoiceApp(result=CodeIde.CURSOR.value)
-    graph = SimpleNamespace(_settings=settings, _app=app)
+    graph = command_context(settings=settings, app=app)
 
-    monkeypatch.setattr("voidx.agent.slash.code_ide.detect_code_ides", lambda: [])
+    monkeypatch.setattr("voidx.agent.slash.handler.detect_code_ides", lambda: [])
 
     assert await SlashHandler(graph).dispatch("/code-ide") is True
 
@@ -411,10 +412,10 @@ async def test_code_ide_dispatch_uses_choice_panel(tmp_path, monkeypatch):
 
 @pytest.mark.asyncio
 async def test_plan_and_unplan_are_mode_aliases():
-    graph = SimpleNamespace(
+    graph = command_context(
         _interaction_mode=None,
         _plan_mode=False,
-        _app=None,
+        app=None,
     )
     handler = SlashHandler(graph)
 
@@ -429,19 +430,19 @@ async def test_plan_and_unplan_are_mode_aliases():
 
 @pytest.mark.asyncio
 async def test_goal_dispatch_sets_goal_and_goal_mode():
-    graph = SimpleNamespace(
+    graph = command_context(
         _interaction_mode=None,
         _plan_mode=False,
-        _app=None,
-        _task_state=TaskState(),
+        app=None,
+        task_state=TaskState(),
     )
 
     assert await SlashHandler(graph).dispatch("/goal 优化 markdown 渲染截断") is True
 
     assert graph._interaction_mode.value == "goal"
     assert graph._plan_mode is False
-    assert graph._task_state.current_goal is not None
-    assert graph._task_state.current_goal.desc == "优化 markdown 渲染截断"
+    assert graph.task_state.current_goal is not None
+    assert graph.task_state.current_goal.desc == "优化 markdown 渲染截断"
 
 
 @pytest.mark.asyncio
@@ -449,14 +450,14 @@ async def test_goal_clear_resets_goal_and_returns_to_auto():
     state = TaskState(
         current_goal=GoalSpec(desc="优化 markdown 渲染截断"),
     )
-    graph = SimpleNamespace(
+    graph = command_context(
         _interaction_mode=None,
         _plan_mode=False,
-        _app=None,
-        _task_state=state,
+        app=None,
+        task_state=state,
     )
 
     assert await SlashHandler(graph).dispatch("/goal clear") is True
 
     assert graph._interaction_mode.value == "auto"
-    assert graph._task_state.current_goal is None
+    assert graph.task_state.current_goal is None

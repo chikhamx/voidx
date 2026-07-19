@@ -15,7 +15,7 @@ from pydantic import BaseModel, ConfigDict, Field
 from voidx.agent.prompts import BaseSystemPrompt, WorkflowRuntimePrompt
 from voidx.agent.todo_state import sanitize_todo_replay_messages
 from voidx.agent.message_rows import RowMessageCacheEntry
-from voidx.agent.task_state import GoalSpec, TodoRunState
+from voidx.runtime.task_state import GoalSpec, TodoRunState
 from voidx.config import Config, UserProfile
 from voidx.runtime.intent import InteractionMode, TaskIntent
 from voidx.runtime.task_state import TodoStatus

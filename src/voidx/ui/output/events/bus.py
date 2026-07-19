@@ -7,7 +7,7 @@ import inspect
 from dataclasses import dataclass
 from typing import Any
 
-from voidx.agent.graph.thread_context import current_thread_execution_state
+from voidx.runtime.execution_context import current_execution_identity
 
 from voidx.logging.tool_log import log_tool_event
 from voidx.runtime.ui import UiEventTimeout
@@ -49,8 +49,7 @@ class UiEventBus:
     def _with_current_thread_id(self, event: UiEvent) -> UiEvent:
         if getattr(event, "thread_id", ""):
             return event
-        state = current_thread_execution_state()
-        thread_id = str(getattr(state, "thread_id", "") or "")
+        thread_id = current_execution_identity().thread_id
         if not thread_id:
             return event
         return event.model_copy(update={"thread_id": thread_id})

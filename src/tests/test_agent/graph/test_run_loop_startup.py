@@ -12,12 +12,12 @@ import voidx.memory.store as store
 
 
 from voidx.agent.slash import SlashHandler
-from voidx.agent.graph import VoidXGraph
-from voidx.agent.graph.compaction_coordinator import PreflightCompactionResult
-from voidx.agent.graph.run_loop import GraphRunLoopMixin
-from voidx.agent.graph.title_mixin import _sanitize_generated_title
+from voidx.agent.infrastructure.langgraph.execution import LangGraphExecution
+from voidx.agent.infrastructure.langgraph.runtime.compaction_coordinator import PreflightCompactionResult
+from voidx.agent.application.agent_service import AgentService
+from voidx.agent.infrastructure.langgraph.execution import _sanitize_generated_title
 from voidx.agent.runtime_context import InteractionMode, TaskIntent
-from voidx.agent.task_state import (
+from voidx.runtime.task_state import (
     GoalResolution,
     GoalSpec,
     IntentResolution,
@@ -42,6 +42,7 @@ from tests.test_agent.graph.run_loop_helpers import (
     NoopMcpManager,
     NoopLspManager,
     _graph,
+    _service,
     _disable_external_managers,
 )
 
@@ -51,9 +52,9 @@ async def test_startup_update_check_appends_update_notice(tmp_path, monkeypatch)
 
     graph = _graph(workspace=str(tmp_path))
     settings = Settings(str(tmp_path))
-    graph._settings = settings
+    graph._execution._settings = settings
     messages: list[tuple[str, bool]] = []
-    graph._ui = SimpleNamespace(
+    graph._execution._ui = SimpleNamespace(
         dock=SimpleNamespace(
             append_message=lambda text, *, markup=False: messages.append((text, markup)),
         ),
@@ -86,9 +87,9 @@ async def test_startup_update_check_skips_when_ttl_not_due(tmp_path, monkeypatch
     graph = _graph(workspace=str(tmp_path))
     settings = Settings(str(tmp_path))
     settings.mark_update_check("9.0.0")
-    graph._settings = settings
+    graph._execution._settings = settings
     messages: list[str] = []
-    graph._ui = SimpleNamespace(
+    graph._execution._ui = SimpleNamespace(
         dock=SimpleNamespace(
             append_message=lambda text, *, markup=False: messages.append(text),
         ),
@@ -107,23 +108,10 @@ async def test_startup_update_check_skips_when_ttl_not_due(tmp_path, monkeypatch
 @pytest.mark.asyncio
 async def test_quiet_slash_command_dispatches_without_turn(monkeypatch):
     FakeTui.instances = []
-    monkeypatch.setattr("voidx.agent.graph.run_loop.create_frontend", FakeTui)
+    monkeypatch.setattr("voidx.agent.application.agent_service.create_frontend", FakeTui)
     monkeypatch.setattr(runtime_ui_port, "show_startup", lambda **_: None)
 
-    graph = GraphRunLoopMixin()
-    graph._session = None
-    graph._workspace = "/tmp/workspace"
-    graph.model = object()
-    graph.config = SimpleNamespace(
-        workspace=graph._workspace,
-        model=ModelConfig(provider="mimo", model="mimo-v2.5", reasoning_effort="high"),
-    )
-    graph._settings = SimpleNamespace(list_mcp_servers=lambda: [], path="/tmp/workspace/.voidx/settings.json")
-    graph._permission = SimpleNamespace(status_label=lambda: "default")
-    graph._usage_stats = UsageStats()
-    graph._debug = False
-    graph._plan_mode = False
-    graph._ui = runtime_ui_port
+    graph = _graph()
 
     dispatched: list[str] = []
 
@@ -131,7 +119,7 @@ async def test_quiet_slash_command_dispatches_without_turn(monkeypatch):
         dispatched.append(command)
         return True
 
-    graph._dispatch_slash = MethodType(fake_dispatch, graph)
+    graph._execution._slash = SimpleNamespace(dispatch=MethodType(fake_dispatch, graph._execution))
 
     await graph.run()
 
@@ -165,9 +153,9 @@ async def test_web_headless_uses_gateway_frontend_without_default_tui_factory(mo
         def set_external_request_handler(self, handler):
             self.request_handler = handler
 
-    monkeypatch.setattr("voidx.agent.graph.run_loop.create_frontend", fail_create_frontend)
-    monkeypatch.setattr("voidx.agent.graph.run_loop.GatewayHeadlessFrontend", ExitHeadlessFrontend)
-    monkeypatch.setattr("voidx.agent.graph.run_loop.emit_web_gateway_bootstrap", lambda _url: None)
+    monkeypatch.setattr("voidx.agent.application.agent_service.create_frontend", fail_create_frontend)
+    monkeypatch.setattr("voidx.agent.application.agent_service.GatewayHeadlessFrontend", ExitHeadlessFrontend)
+    monkeypatch.setattr("voidx.agent.application.agent_service.emit_web_gateway_bootstrap", lambda _url: None)
 
     test_dock = BottomInputDock()
     set_dock(test_dock)
@@ -215,9 +203,9 @@ async def test_web_non_headless_falls_back_to_gateway_frontend_when_tui_unavaila
     def fail_create_frontend(*_args, **_kwargs):
         raise RuntimeError("voidx_cli is required for terminal UI mode.")
 
-    monkeypatch.setattr("voidx.agent.graph.run_loop.create_frontend", fail_create_frontend)
-    monkeypatch.setattr("voidx.agent.graph.run_loop.GatewayHeadlessFrontend", ExitHeadlessFrontend)
-    monkeypatch.setattr("voidx.agent.graph.run_loop.emit_web_gateway_bootstrap", lambda _url: None)
+    monkeypatch.setattr("voidx.agent.application.agent_service.create_frontend", fail_create_frontend)
+    monkeypatch.setattr("voidx.agent.application.agent_service.GatewayHeadlessFrontend", ExitHeadlessFrontend)
+    monkeypatch.setattr("voidx.agent.application.agent_service.emit_web_gateway_bootstrap", lambda _url: None)
 
     test_dock = BottomInputDock()
     set_dock(test_dock)
@@ -238,7 +226,7 @@ async def test_non_web_create_frontend_failure_exits_with_error(monkeypatch, tmp
     """Non --web mode: create_frontend failure must print error and exit,
     not silently fall back to GatewayHeadlessFrontend (which would hang
     forever without a gateway server)."""
-    from voidx.agent.graph.run_loop import RunLoopStartupError
+    from voidx.agent.application.agent_service import RunLoopStartupError
 
     graph = _graph(workspace=str(tmp_path))
     _disable_external_managers(graph)
@@ -265,8 +253,8 @@ async def test_non_web_create_frontend_failure_exits_with_error(monkeypatch, tmp
     def fail_create_frontend(*_args, **_kwargs):
         raise RuntimeError("voidx_cli is required for terminal UI mode.")
 
-    monkeypatch.setattr("voidx.agent.graph.run_loop.create_frontend", fail_create_frontend)
-    monkeypatch.setattr("voidx.agent.graph.run_loop.GatewayHeadlessFrontend", HeadlessFrontend)
+    monkeypatch.setattr("voidx.agent.application.agent_service.create_frontend", fail_create_frontend)
+    monkeypatch.setattr("voidx.agent.application.agent_service.GatewayHeadlessFrontend", HeadlessFrontend)
 
     messages: list[str] = []
 
@@ -310,7 +298,7 @@ async def test_apply_settings_update_refreshes_live_model(monkeypatch, tmp_path)
         created_models.append((api_key, model_config.provider, model_config.model, model_config.base_url))
         return marker
 
-    monkeypatch.setattr("voidx.agent.graph.core.voidx_graph.create_chat_model", fake_create_chat_model)
+    monkeypatch.setattr("voidx.agent.infrastructure.langgraph.execution.create_chat_model", fake_create_chat_model)
 
     settings = await Settings.create(str(tmp_path))
     await settings.save_profile(
@@ -321,7 +309,7 @@ async def test_apply_settings_update_refreshes_live_model(monkeypatch, tmp_path)
             protocol="openai",
         )
     )
-    graph = VoidXGraph(
+    graph = LangGraphExecution(
         Config(workspace=str(tmp_path), model=ModelConfig(provider="openai", model="gpt-4.1")),
         api_key="sk-openai",
         settings=settings,
@@ -398,35 +386,36 @@ async def test_clear_reprints_startup(tmp_path):
         provider="mimo",
         model="mimo-v2.5",
     )
-    graph = _graph(session=session, workspace=str(tmp_path))
-    graph._interaction_mode = InteractionMode.GOAL
-    graph._task_state = TaskState(current_goal=GoalSpec(desc="修复 UI"))
+    execution = LangGraphExecution(Config(workspace=str(tmp_path)), api_key=None, session=session)
+    _service(execution)
+    execution._interaction_mode = InteractionMode.GOAL
+    execution._task_state = TaskState(current_goal=GoalSpec(desc="修复 UI"))
     restore_calls: list[bool] = []
 
     async def fake_restore(self, *, append: bool = False) -> bool:
         restore_calls.append(append)
         return True
 
-    graph._restore_transcript_snapshot = MethodType(fake_restore, graph)
+    execution._restore_transcript_snapshot = MethodType(fake_restore, execution)
     test_dock = BottomInputDock()
     set_dock(test_dock)
     test_dock.begin_capture()
     try:
         test_dock.append_message("old transcript")
 
-        await SlashHandler(graph)._clear()
+        await SlashHandler(execution)._clear()
 
         rendered = "\n".join(test_dock.tree.render(120))
         assert "voidx v" in rendered
         assert "Ask anything" in rendered
         assert "old transcript" not in rendered
-        assert graph._session is None
-        assert graph._session_msg_cache == []
-        assert graph._interaction_mode == InteractionMode.AUTO
-        assert graph._task_state.current_goal is None
+        assert execution._session is None
+        assert execution._session_msg_cache == []
+        assert execution._interaction_mode == InteractionMode.AUTO
+        assert execution._task_state.current_goal is None
         assert restore_calls == []
-        if getattr(graph, "_clear_session_tasks", None):
-            await asyncio.gather(*graph._clear_session_tasks)
+        if getattr(execution, "_clear_session_tasks", None):
+            await asyncio.gather(*execution._clear_session_tasks)
     finally:
         test_dock.deactivate()
         test_dock.reset()
@@ -441,7 +430,8 @@ async def test_clear_detaches_old_session_and_cleans_storage_in_background(tmp_p
         model="mimo-v2.5",
     )
     await save_message(MessageRow(session_id=session.id, role="user", content="old question"))
-    graph = VoidXGraph(Config(workspace=str(tmp_path)), api_key=None, session=session)
+    graph = LangGraphExecution(Config(workspace=str(tmp_path)), api_key=None, session=session)
+    _service(graph)
     graph._interaction_mode = InteractionMode.GOAL
     graph._task_state = TaskState(current_goal=GoalSpec(desc="old goal"))
 
@@ -505,7 +495,8 @@ async def test_resume_does_not_reprint_startup(tmp_path):
         provider="mimo",
         model="mimo-v2.5",
     )
-    graph = _graph(session=None, workspace="/tmp/old-workspace")
+    execution = LangGraphExecution(Config(workspace="/tmp/old-workspace"), api_key=None)
+    _service(execution)
     test_dock = BottomInputDock()
     set_dock(test_dock)
     test_dock.begin_capture()
@@ -516,11 +507,11 @@ async def test_resume_does_not_reprint_startup(tmp_path):
         test_dock.append_message("restored transcript")
         return True
 
-    graph._restore_transcript_snapshot = MethodType(fake_restore, graph)
+    execution._restore_transcript_snapshot = MethodType(fake_restore, execution)
     try:
         test_dock.append_message("old transcript")
 
-        await SlashHandler(graph)._resume(f"/resume {session.id}")
+        await SlashHandler(execution)._resume(f"/resume {session.id}")
 
         rendered_lines = test_dock.tree.render(120)
         rendered = "\n".join(rendered_lines)
@@ -528,9 +519,9 @@ async def test_resume_does_not_reprint_startup(tmp_path):
         assert restore_calls == [True]
         assert "old transcript" not in rendered
         assert "restored transcript" in rendered
-        assert graph._session.id == session.id
-        assert graph._workspace == str(tmp_path)
-        assert graph.config.workspace == str(tmp_path)
+        assert execution._session.id == session.id
+        assert execution._workspace == str(tmp_path)
+        assert execution.config.workspace == str(tmp_path)
     finally:
         test_dock.deactivate()
         test_dock.reset()
@@ -554,17 +545,18 @@ async def test_resume_restores_structured_runtime_state(tmp_path):
             ),
         ),
     )
-    graph = _graph(session=None, workspace="/tmp/old-workspace")
+    execution = LangGraphExecution(Config(workspace="/tmp/old-workspace"), api_key=None)
+    _service(execution)
     test_dock = BottomInputDock()
     set_dock(test_dock)
     test_dock.begin_capture()
     try:
-        await SlashHandler(graph)._resume(f"/resume {session.id}")
+        await SlashHandler(execution)._resume(f"/resume {session.id}")
 
-        assert graph._interaction_mode == InteractionMode.GOAL
-        assert graph._task_state.current_intent == TaskIntent.CODING
-        assert graph._task_state.current_goal is not None
-        assert graph._task_state.current_goal.desc == "优化 markdown 渲染截断"
+        assert execution._interaction_mode == InteractionMode.GOAL
+        assert execution._task_state.current_intent == TaskIntent.CODING
+        assert execution._task_state.current_goal is not None
+        assert execution._task_state.current_goal.desc == "优化 markdown 渲染截断"
     finally:
         test_dock.deactivate()
         test_dock.reset()
@@ -572,20 +564,20 @@ async def test_resume_restores_structured_runtime_state(tmp_path):
 
 
 @pytest.mark.asyncio
-async def test_run_once_cancel_deletes_pending_user_message(tmp_path):
+async def testrun_turn_cancel_deletes_pending_user_message(tmp_path):
     session = await create_session(
         workspace=str(tmp_path),
         provider="mimo",
         model="mimo-v2.5",
     )
-    graph = _graph(session=session, workspace=str(tmp_path))
-    graph.config = SimpleNamespace(
+    execution = LangGraphExecution(Config(workspace=str(tmp_path)), api_key=None, session=session)
+    execution.config = SimpleNamespace(
         workspace=str(tmp_path),
         model=ModelConfig(provider="mimo", model="mimo-v2.5", reasoning_effort="high"),
         agent=SimpleNamespace(recursion_limit=5),
     )
-    graph._interaction_mode = InteractionMode.AUTO
-    graph._task_state = TaskState()
+    execution._interaction_mode = InteractionMode.AUTO
+    execution._task_state = TaskState()
 
     async def fake_maybe_compact(self, messages, session_messages, **_kwargs):
         return messages, None
@@ -602,16 +594,16 @@ async def test_run_once_cancel_deletes_pending_user_message(tmp_path):
         except asyncio.CancelledError:
             raise
 
-    graph._maybe_compact = MethodType(fake_maybe_compact, graph)
-    graph._preflight_compact_if_needed = MethodType(fake_preflight_compact, graph)
-    graph.graph = SimpleNamespace(ainvoke=fake_ainvoke)
-    graph._compaction = SimpleNamespace(prune=lambda _messages: None)
+    execution._maybe_compact = MethodType(fake_maybe_compact, execution)
+    execution._preflight_compact_if_needed = MethodType(fake_preflight_compact, execution)
+    execution.graph = SimpleNamespace(ainvoke=fake_ainvoke)
+    execution._compaction = SimpleNamespace(prune=lambda _messages: None)
 
     test_dock = BottomInputDock()
     set_dock(test_dock)
     test_dock.begin_capture()
     try:
-        task = asyncio.create_task(graph._run_once("hello world"))
+        task = asyncio.create_task(execution.run_turn("hello world"))
         await asyncio.wait_for(started.wait(), timeout=1)
         task.cancel()
         with pytest.raises(asyncio.CancelledError):
@@ -666,14 +658,14 @@ async def test_web_cancel_preserves_thread_id_for_execution_context():
 
 
 @pytest.mark.asyncio
-async def test_handle_user_input_passes_execution_context_to_run_once():
+async def test_handle_user_input_passes_execution_context_to_turn_service():
     graph = _graph()
     captured: list[tuple[str, str]] = []
 
-    async def fake_run_once(self, user_text: str, *, display_text=None, context=None):
+    async def fake_run_turn(self, user_text: str, *, display_text=None, context=None):
         captured.append((user_text, context.thread_id if context is not None else ""))
 
-    graph._run_once = MethodType(fake_run_once, graph)
+    graph._execution.run_turn = MethodType(fake_run_turn, graph._execution)
 
     keep_running, exit_message = await graph._handle_user_input(
         SimpleNamespace(),

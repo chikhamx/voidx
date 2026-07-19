@@ -5,6 +5,7 @@ from types import SimpleNamespace
 import pytest
 
 from voidx.agent.slash import SlashHandler
+from tests.test_agent.slash.context import command_context
 from voidx.config import Settings
 from voidx.selfupdate import UpdateCheckResult, UpgradeResult
 
@@ -12,18 +13,18 @@ from voidx.selfupdate import UpdateCheckResult, UpgradeResult
 def _capture_output(monkeypatch):
     output: list[str] = []
     monkeypatch.setattr(
-        "voidx.agent.slash.upgrade.ui.print",
+        "voidx.agent.slash.handler.ui.print",
         lambda text="": output.append(str(text)),
     )
     monkeypatch.setattr(
-        "voidx.agent.slash.upgrade.ui.error",
+        "voidx.agent.slash.handler.ui.error",
         lambda text="": output.append(f"ERROR: {text}"),
     )
     return output
 
 
 @pytest.mark.asyncio
-async def test_upgrade_check_dispatches_and_marks_settings(tmp_path, monkeypatch):
+async def test_upgrade_check_dispatches_and_markssettings(tmp_path, monkeypatch):
     output = _capture_output(monkeypatch)
     settings = Settings(str(tmp_path))
 
@@ -35,10 +36,10 @@ async def test_upgrade_check_dispatches_and_marks_settings(tmp_path, monkeypatch
             message="voidx 9.0.0 is available.",
         )
 
-    monkeypatch.setattr("voidx.agent.slash.upgrade.check_for_update", fake_check_for_update)
-    monkeypatch.setattr("voidx.agent.slash.upgrade.upgrade_hint", lambda: "Run /upgrade now")
+    monkeypatch.setattr("voidx.agent.slash.handler.check_for_update", fake_check_for_update)
+    monkeypatch.setattr("voidx.agent.slash.handler.upgrade_hint", lambda: "Run /upgrade now")
 
-    handled = await SlashHandler(SimpleNamespace(_settings=settings)).dispatch("/upgrade check")
+    handled = await SlashHandler(command_context(settings=settings)).dispatch("/upgrade check")
 
     assert handled is True
     assert settings.get_update_check_latest_version() == "9.0.0"
@@ -53,9 +54,9 @@ async def test_upgrade_now_dispatches_perform_upgrade(monkeypatch):
     async def fake_perform_upgrade():
         return UpgradeResult(ok=True, version="9.0.0", message="Upgraded voidx to 9.0.0.")
 
-    monkeypatch.setattr("voidx.agent.slash.upgrade.perform_upgrade", fake_perform_upgrade)
+    monkeypatch.setattr("voidx.agent.slash.handler.perform_upgrade", fake_perform_upgrade)
 
-    handled = await SlashHandler(SimpleNamespace()).dispatch("/upgrade now")
+    handled = await SlashHandler(command_context()).dispatch("/upgrade now")
 
     assert handled is True
     assert output[0] == "[dim]Checking for updates...[/dim]"
@@ -73,9 +74,9 @@ async def test_upgrade_now_uses_fresh_cached_latest_version(tmp_path, monkeypatc
         calls.append(version)
         return UpgradeResult(ok=True, version=version, message="Upgraded voidx to 9.0.0.")
 
-    monkeypatch.setattr("voidx.agent.slash.upgrade.perform_upgrade", fake_perform_upgrade)
+    monkeypatch.setattr("voidx.agent.slash.handler.perform_upgrade", fake_perform_upgrade)
 
-    handled = await SlashHandler(SimpleNamespace(_settings=settings)).dispatch("/upgrade now")
+    handled = await SlashHandler(command_context(settings=settings)).dispatch("/upgrade now")
 
     assert handled is True
     assert calls == ["9.0.0"]
@@ -83,10 +84,10 @@ async def test_upgrade_now_uses_fresh_cached_latest_version(tmp_path, monkeypatc
 
 
 @pytest.mark.asyncio
-async def test_upgrade_on_off_status_use_settings(tmp_path, monkeypatch):
+async def test_upgrade_on_off_status_usesettings(tmp_path, monkeypatch):
     output = _capture_output(monkeypatch)
     settings = Settings(str(tmp_path))
-    handler = SlashHandler(SimpleNamespace(_settings=settings))
+    handler = SlashHandler(command_context(settings=settings))
 
     assert await handler.dispatch("/upgrade off") is True
     assert settings.get_update_check_enabled() is False

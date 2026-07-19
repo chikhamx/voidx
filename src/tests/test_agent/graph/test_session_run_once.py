@@ -20,11 +20,11 @@ from voidx.agent.agents import (
     get_visible_agents,
 )
 from voidx.agent.prompts import BASE_SYSTEM, PERSONA_MODEL, persona_prompt
-from voidx.agent.graph.convergence import is_step_hint_message
-from voidx.agent.graph.runtime import current_parent_tool_call_id
-from voidx.agent.graph.runtime_guards import RuntimeGuardState, WallClockGuardState
-from voidx.agent.graph import VoidXGraph
-from voidx.agent.graph.tool_execution import AGENT_RESULT_PREVIEW_CHARS, _agent_result_preview
+from voidx.agent.infrastructure.langgraph.runtime.convergence import is_step_hint_message
+from voidx.agent.infrastructure.langgraph.runtime.runtime import current_parent_tool_call_id
+from voidx.agent.infrastructure.langgraph.runtime.runtime_guards import RuntimeGuardState, WallClockGuardState
+from voidx.agent.infrastructure.langgraph.execution import LangGraphExecution
+from voidx.agent.infrastructure.langgraph.execution import AGENT_RESULT_PREVIEW_CHARS, _agent_result_preview
 from voidx.agent.message_rows import RowMessageCacheEntry
 from voidx.agent.runtime_context import InteractionMode, RuntimeContextBuilder
 from voidx.config import Config, ParallelSubagentsConfig, Settings, UserProfile
@@ -44,7 +44,7 @@ from voidx.runtime import GoalResolution, GoalSpec, IntentResolution, PlanResolu
 from voidx.skills.context import SKILL_TOOL_CONTEXT_MARKER
 from voidx.workflow.context import WORKFLOW_CONTEXT_MARKER
 from voidx.workflow.runtime import WorkflowRunState, WorkflowRunStatus
-from voidx.agent.task_state import TaskState, ToolStatePatch, WorkflowRoute
+from voidx.runtime.task_state import TaskState, ToolStatePatch, WorkflowRoute
 from voidx.tools.base import ToolContext, ToolResult
 from voidx.tools.agent import AgentResultContract, AgentTool
 from voidx.tools.registry import ToolRegistry
@@ -60,7 +60,7 @@ from voidx.ui.output.events import (
 
 def _graph(tmp_path):
     cfg = Config(workspace=str(tmp_path))
-    return VoidXGraph(cfg, api_key=None)
+    return LangGraphExecution(cfg, api_key=None)
 
 
 def _task_state_json(**kwargs):
@@ -138,10 +138,10 @@ def _tree_nodes(root):
 
 
 @pytest.mark.asyncio
-async def test_run_once_persists_and_restores_transcript_snapshot(tmp_path):
+async def testrun_turn_persists_and_restores_transcript_snapshot(tmp_path):
     session = await create_session(workspace=str(tmp_path))
     try:
-        graph = VoidXGraph(Config(workspace=str(tmp_path)), api_key=None, session=session)
+        graph = LangGraphExecution(Config(workspace=str(tmp_path)), api_key=None, session=session)
 
         class FakeGraph:
             async def ainvoke(self, initial, _config):
@@ -168,7 +168,7 @@ async def test_run_once_persists_and_restores_transcript_snapshot(tmp_path):
         set_dock(first_dock)
         first_dock.begin_capture()
         try:
-            await graph._run_once("new question")
+            await graph.run_turn("new question")
         finally:
             first_dock.deactivate()
             first_dock.reset()
@@ -196,7 +196,7 @@ async def test_run_once_persists_and_restores_transcript_snapshot(tmp_path):
 
 
 @pytest.mark.asyncio
-async def test_run_once_emits_turn_completed_event(tmp_path):
+async def testrun_turn_emits_turn_completed_event(tmp_path):
     session = await create_session(workspace=str(tmp_path))
     events: list[object] = []
 
@@ -208,7 +208,7 @@ async def test_run_once_emits_turn_completed_event(tmp_path):
             return None
 
     try:
-        graph = VoidXGraph(Config(workspace=str(tmp_path)), api_key=None, session=session)
+        graph = LangGraphExecution(Config(workspace=str(tmp_path)), api_key=None, session=session)
 
         class FakeGraph:
             async def ainvoke(self, initial, _config):
@@ -221,7 +221,7 @@ async def test_run_once_emits_turn_completed_event(tmp_path):
         test_dock.begin_capture()
         ui_events.start(RecordingConsumer())
         try:
-            await graph._run_once("hello")
+            await graph.run_turn("hello")
             await ui_events.drain()
         finally:
             await ui_events.stop()
@@ -236,7 +236,7 @@ async def test_run_once_emits_turn_completed_event(tmp_path):
 
 
 @pytest.mark.asyncio
-async def test_run_once_emits_turn_failed_event_on_exception(tmp_path):
+async def testrun_turn_emits_turn_failed_event_on_exception(tmp_path):
     session = await create_session(workspace=str(tmp_path))
     events: list[object] = []
 
@@ -248,7 +248,7 @@ async def test_run_once_emits_turn_failed_event_on_exception(tmp_path):
             return None
 
     try:
-        graph = VoidXGraph(Config(workspace=str(tmp_path)), api_key=None, session=session)
+        graph = LangGraphExecution(Config(workspace=str(tmp_path)), api_key=None, session=session)
 
         class FakeGraph:
             async def ainvoke(self, initial, _config):
@@ -262,7 +262,7 @@ async def test_run_once_emits_turn_failed_event_on_exception(tmp_path):
         ui_events.start(RecordingConsumer())
         try:
             with pytest.raises(RuntimeError, match="provider failed"):
-                await graph._run_once("hello")
+                await graph.run_turn("hello")
             await ui_events.drain()
         finally:
             await ui_events.stop()
@@ -279,10 +279,10 @@ async def test_run_once_emits_turn_failed_event_on_exception(tmp_path):
 
 
 @pytest.mark.asyncio
-async def test_run_once_commits_event_todo_at_turn_end(tmp_path):
+async def testrun_turn_commits_event_todo_at_turn_end(tmp_path):
     session = await create_session(workspace=str(tmp_path))
     try:
-        graph = VoidXGraph(Config(workspace=str(tmp_path)), api_key=None, session=session)
+        graph = LangGraphExecution(Config(workspace=str(tmp_path)), api_key=None, session=session)
 
         class FakeGraph:
             async def ainvoke(self, initial, _config):
@@ -301,7 +301,7 @@ async def test_run_once_commits_event_todo_at_turn_end(tmp_path):
         test_dock.begin_capture()
         ui_events.start(DockEventConsumer(test_dock))
         try:
-            await graph._run_once("track todo")
+            await graph.run_turn("track todo")
             await ui_events.drain()
         finally:
             await ui_events.stop()
@@ -321,10 +321,10 @@ async def test_run_once_commits_event_todo_at_turn_end(tmp_path):
 
 
 @pytest.mark.asyncio
-async def test_run_once_persists_todo_replay_rows(tmp_path):
+async def testrun_turn_persists_todo_replay_rows(tmp_path):
     session = await create_session(workspace=str(tmp_path))
     try:
-        graph = VoidXGraph(Config(workspace=str(tmp_path)), api_key=None, session=session)
+        graph = LangGraphExecution(Config(workspace=str(tmp_path)), api_key=None, session=session)
 
         class FakeGraph:
             async def ainvoke(self, initial, _config):
@@ -350,7 +350,7 @@ async def test_run_once_persists_todo_replay_rows(tmp_path):
         set_dock(test_dock)
         test_dock.begin_capture()
         try:
-            await graph._run_once("track todo")
+            await graph.run_turn("track todo")
         finally:
             test_dock.deactivate()
             set_dock(None)
@@ -369,10 +369,10 @@ async def test_run_once_persists_todo_replay_rows(tmp_path):
 
 
 @pytest.mark.asyncio
-async def test_run_once_persists_user_decision_tool_replay_rows(tmp_path):
+async def testrun_turn_persists_user_decision_tool_replay_rows(tmp_path):
     session = await create_session(workspace=str(tmp_path))
     try:
-        graph = VoidXGraph(Config(workspace=str(tmp_path)), api_key=None, session=session)
+        graph = LangGraphExecution(Config(workspace=str(tmp_path)), api_key=None, session=session)
 
         class FakeGraph:
             async def ainvoke(self, initial, _config):
@@ -409,7 +409,7 @@ async def test_run_once_persists_user_decision_tool_replay_rows(tmp_path):
         set_dock(test_dock)
         test_dock.begin_capture()
         try:
-            await graph._run_once("need a decision")
+            await graph.run_turn("need a decision")
         finally:
             test_dock.deactivate()
             set_dock(None)

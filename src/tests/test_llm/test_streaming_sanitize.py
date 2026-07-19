@@ -6,7 +6,7 @@ from pathlib import Path
 
 from langchain_core.messages import AIMessage, HumanMessage
 
-from voidx.agent.graph.streaming import (
+from voidx.agent.infrastructure.langgraph.runtime.streaming import (
     _sanitize_ai_content_for_replay,
     _sanitize_messages_for_replay,
 )

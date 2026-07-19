@@ -7,11 +7,18 @@ from types import SimpleNamespace
 import voidx.memory.store as store
 
 
-from voidx.agent.graph import VoidXGraph
-from voidx.agent.graph.run_loop import GraphRunLoopMixin
-from voidx.agent.graph.title_mixin import _sanitize_generated_title
+from voidx.agent.infrastructure.langgraph.execution import LangGraphExecution
+from voidx.agent.application.agent_service import AgentService
+from voidx.agent.application.turn_service import TurnService
+from voidx.agent.infrastructure.langgraph.adapter import LangGraphTurnEngine
+from voidx.agent.infrastructure.langgraph.state_mapper import LangGraphStateMapper
+from voidx.agent.infrastructure.memory_session import MemorySessionAdapter
+from voidx.agent.infrastructure.null_events import NullEventPublisher
+from voidx.agent.domain.turn import TurnPhase
+from voidx.agent.infrastructure.langgraph.execution import _sanitize_generated_title
 from voidx.config import Config, ModelConfig
 from voidx.llm.usage import UsageStats
+from voidx.runtime import InteractionMode, TaskState
 from voidx.tools.task_tracker import TaskTracker
 from voidx.ui.output.dock import BottomInputDock, set_dock
 from voidx.ui.output.events import DockEventConsumer, ui_events
@@ -79,29 +86,60 @@ class NoopLspManager:
         return None
 
 
-def _graph(session=None, workspace: str = "/tmp/workspace") -> GraphRunLoopMixin:
-    graph = GraphRunLoopMixin()
-    graph._session = session
-    graph._workspace = workspace
-    graph.model = object()
-    graph.config = SimpleNamespace(
+def _service(execution) -> AgentService:
+    return AgentService(
+        execution,
+        TurnService(
+            LangGraphTurnEngine(execution),
+            MemorySessionAdapter(),
+            NullEventPublisher(),
+        ),
+    )
+
+
+def _graph(session=None, workspace: str = "/tmp/workspace") -> AgentService:
+    execution = SimpleNamespace()
+    graph = _service(execution)
+    execution._session = session
+    execution._workspace = workspace
+    execution.model = object()
+    execution.config = SimpleNamespace(
         workspace=workspace,
         model=ModelConfig(provider="mimo", model="mimo-v2.5", reasoning_effort="high"),
     )
-    graph._settings = SimpleNamespace(list_mcp_servers=lambda: [], path=f"{workspace}/.voidx/settings.json")
-    graph._permission = SimpleNamespace(
+    execution._settings = SimpleNamespace(list_mcp_servers=lambda: [], path=f"{workspace}/.voidx/settings.json")
+    execution._permission = SimpleNamespace(
         status_label=lambda: "default",
         clear_session_permissions=lambda: None,
     )
-    graph._usage_stats = UsageStats()
-    graph._debug = False
-    graph._plan_mode = False
-    graph._tracker = TaskTracker()
-    graph._session_msg_cache = None
-    graph._ui = runtime_ui_port
+    execution._usage_stats = UsageStats()
+    execution._debug = False
+    execution._plan_mode = False
+    execution._interaction_mode = InteractionMode.AUTO
+    execution._task_state = TaskState()
+    execution._compaction_summary = ""
+    execution._session_date = ""
+    execution._tracker = TaskTracker()
+    execution._session_msg_cache = None
+    execution._ui = runtime_ui_port
+
+    async def noop(*_args, **_kwargs):
+        return None
+
+    execution._restore_runtime_state = noop
+    execution._restore_transcript_snapshot = noop
+    execution._delete_empty_current_session = noop
+    execution.run_turn = noop
+    execution.runtime_snapshot = lambda: LangGraphStateMapper().runtime_from_execution(
+        execution,
+        turn_phase=TurnPhase.RUNNING,
+    )
+    execution.session_id = session.id if session is not None else ""
+    execution._dispatch_slash = lambda _inp: False
     return graph
 
 
 def _disable_external_managers(graph) -> None:
-    graph._mcp_manager = NoopMcpManager()
-    graph._lsp_manager = NoopLspManager()
+    execution = getattr(graph, "_execution", graph)
+    execution._mcp_manager = NoopMcpManager()
+    execution._lsp_manager = NoopLspManager()

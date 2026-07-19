@@ -2,7 +2,7 @@
 
 from langchain_core.messages import AIMessage
 
-from voidx.agent.graph.turn_control import (
+from voidx.agent.infrastructure.langgraph.runtime.turn_control import (
     FIRST_MISS_PROMPT,
     NO_USER_RESPONSE_PROMPT,
     SECOND_MISS_PROMPT,

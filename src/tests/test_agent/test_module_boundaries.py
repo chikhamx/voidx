@@ -162,9 +162,9 @@ def test_agent_module_uses_permission_service_boundary():
     assert offenders == []
 
 
-def test_agent_graph_uses_runtime_ui_boundary():
+def test_langgraph_infrastructure_uses_runtime_ui_boundary():
     offenders = []
-    for path in _python_files("src/voidx/agent/graph"):
+    for path in _python_files_recursive("src/voidx/agent/infrastructure/langgraph"):
         rel = path.relative_to(ROOT).as_posix()
         direct_ui_imports = {
             module
@@ -238,3 +238,125 @@ def test_ui_uses_existing_service_boundaries():
     ]
 
     assert offenders == []
+
+
+def test_external_modules_do_not_import_agent_graph():
+    external_roots = ("ui", "tools", "runtime", "memory", "workflow")
+    offenders: list[str] = []
+    for root in external_roots:
+        for path in _python_files_recursive(f"src/voidx/{root}"):
+            rel = path.relative_to(ROOT).as_posix()
+            imports = _imported_modules(rel)
+            if any(module == "voidx.agent.infrastructure.langgraph.runtime" or module.startswith("voidx.agent.infrastructure.langgraph.runtime.") for module in imports):
+                offenders.append(rel)
+
+    assert offenders == []
+
+
+def test_tools_do_not_import_agent():
+    offenders: list[str] = []
+    for path in _python_files_recursive("src/voidx/tools"):
+        rel = path.relative_to(ROOT).as_posix()
+        if any(module == "voidx.agent" or module.startswith("voidx.agent.") for module in _imported_modules(rel)):
+            offenders.append(rel)
+
+    assert offenders == []
+
+
+def test_agent_application_does_not_import_langgraph():
+    offenders = [
+        path.relative_to(ROOT).as_posix()
+        for path in _python_files_recursive("src/voidx/agent/application")
+        if any(module == "langgraph" or module.startswith("langgraph.") for module in _imported_modules(path.relative_to(ROOT).as_posix()))
+    ]
+
+    assert offenders == []
+
+
+
+
+def test_agent_production_entrypoints_do_not_import_legacy_graph():
+    entrypoints = (
+        "src/voidx/agent/composition.py",
+        "src/voidx/agent/facade.py",
+        "src/voidx/main.py",
+    )
+    offenders = [
+        path
+        for path in entrypoints
+        if any(
+            module == "voidx.agent.infrastructure.langgraph.runtime" or module.startswith("voidx.agent.infrastructure.langgraph.runtime.")
+            for module in _imported_modules(path)
+        )
+    ]
+
+    assert offenders == []
+
+
+
+def test_run_loop_lives_in_application_without_legacy_alias():
+    application_service = ROOT / "src/voidx/agent/application/agent_service.py"
+    legacy_run_loop = ROOT / "src/voidx/agent/graph/run_loop.py"
+
+    assert application_service.is_file()
+    assert not legacy_run_loop.exists()
+
+    source = application_service.read_text(encoding="utf-8")
+    assert "class AgentService" in source
+    assert "GraphRunLoopMixin" not in source
+    assert not any(
+        module == "voidx.agent.infrastructure.langgraph.runtime" or module.startswith("voidx.agent.infrastructure.langgraph.runtime.")
+        for module in _imported_modules("src/voidx/agent/application/agent_service.py")
+    )
+
+
+
+def test_legacy_graph_and_contracts_are_deleted():
+    assert not (ROOT / "src/voidx/agent/graph").exists()
+    assert not (ROOT / "src/voidx/agent/task_state.py").exists()
+    assert not (ROOT / "src/voidx/agent/slash/host.py").exists()
+
+
+def test_agent_has_no_mixin_or_compatibility_adapter_modules():
+    agent_root = ROOT / "src/voidx/agent"
+    forbidden_files = {
+        "title_operations.py",
+        "session_operations.py",
+        "transcript_operations.py",
+        "turn_operations.py",
+        "tool_execution.py",
+        "permissions.py",
+        "llm.py",
+        "code_ide.py",
+        "guide.py",
+        "init.py",
+        "lsp.py",
+        "mcp.py",
+        "model.py",
+        "profile.py",
+        "session.py",
+        "skills.py",
+        "upgrade.py",
+        "host.py",
+    }
+    forbidden_symbols = (
+        "VoidXGraph",
+        "SlashHostAdapter",
+        "SlashCommandHost",
+        "GraphRunLoopMixin",
+        "CompactionOperations",
+        "ToolExecutionOperations",
+    )
+
+    offenders = [
+        path.relative_to(agent_root).as_posix()
+        for path in agent_root.rglob("*.py")
+        if path.name in forbidden_files and (
+            "infrastructure/langgraph/runtime/" in path.as_posix()
+            or "/slash/" in path.as_posix()
+        )
+    ]
+    source = "\n".join(path.read_text(encoding="utf-8") for path in agent_root.rglob("*.py"))
+
+    assert offenders == []
+    assert all(symbol not in source for symbol in forbidden_symbols)

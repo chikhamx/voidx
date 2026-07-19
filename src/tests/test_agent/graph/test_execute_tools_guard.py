@@ -20,11 +20,11 @@ from voidx.agent.agents import (
     get_visible_agents,
 )
 from voidx.agent.prompts import BASE_SYSTEM, PERSONA_MODEL, persona_prompt
-from voidx.agent.graph.convergence import is_step_hint_message
-from voidx.agent.graph.runtime import current_parent_tool_call_id
-from voidx.agent.graph.runtime_guards import RuntimeGuardState, WallClockGuardState
-from voidx.agent.graph import VoidXGraph
-from voidx.agent.graph.tool_execution import AGENT_RESULT_PREVIEW_CHARS, _agent_result_preview
+from voidx.agent.infrastructure.langgraph.runtime.convergence import is_step_hint_message
+from voidx.agent.infrastructure.langgraph.runtime.runtime import current_parent_tool_call_id
+from voidx.agent.infrastructure.langgraph.runtime.runtime_guards import RuntimeGuardState, WallClockGuardState
+from voidx.agent.infrastructure.langgraph.execution import LangGraphExecution
+from voidx.agent.infrastructure.langgraph.execution import AGENT_RESULT_PREVIEW_CHARS, _agent_result_preview
 from voidx.agent.message_rows import RowMessageCacheEntry
 from voidx.agent.runtime_context import InteractionMode, RuntimeContextBuilder
 from voidx.config import Config, ParallelSubagentsConfig, Settings, UserProfile
@@ -44,7 +44,7 @@ from voidx.runtime import GoalResolution, GoalSpec, IntentResolution, PlanResolu
 from voidx.skills.context import SKILL_TOOL_CONTEXT_MARKER
 from voidx.workflow.context import WORKFLOW_CONTEXT_MARKER
 from voidx.workflow.runtime import WorkflowRunState, WorkflowRunStatus
-from voidx.agent.task_state import TaskState, ToolStatePatch, WorkflowRoute
+from voidx.runtime.task_state import TaskState, ToolStatePatch, WorkflowRoute
 from voidx.tools.base import ToolContext, ToolResult
 from voidx.tools.agent import AgentResultContract, AgentTool
 from voidx.tools.registry import ToolRegistry
@@ -54,7 +54,7 @@ from voidx.ui.output.events import DockEventConsumer, StatusUpdated, ToolResultA
 
 def _graph(tmp_path):
     cfg = Config(workspace=str(tmp_path))
-    return VoidXGraph(cfg, api_key=None)
+    return LangGraphExecution(cfg, api_key=None)
 
 
 def _task_state_json(**kwargs):
@@ -351,7 +351,7 @@ async def test_execute_tools_read_todo_no_warning_with_events(tmp_path, monkeypa
 
 @pytest.mark.asyncio
 async def test_subagent_full_output_reaches_orchestrator(tmp_path, monkeypatch):
-    import voidx.agent.graph.subagent as subagent_module
+    import voidx.agent.infrastructure.langgraph.runtime.subagent as subagent_module
 
     graph = _graph(tmp_path)
     child_output = "\n".join(f"child final line {index}" for index in range(1, 8))
@@ -611,7 +611,7 @@ async def test_execute_tools_does_not_lock_read_only_tool(tmp_path):
 
 @pytest.mark.asyncio
 async def test_execute_tools_terminates_turn_when_tool_started_notification_times_out(tmp_path, monkeypatch):
-    from voidx.agent.graph.tool_executor import executor as executor_module
+    from voidx.agent.infrastructure.langgraph.runtime.tool_executor import executor as executor_module
     from voidx.ui.output.events.bus import UiEventTimeout
 
     graph = _graph(tmp_path)
@@ -669,7 +669,7 @@ async def test_execute_tools_terminates_turn_when_tool_started_notification_time
         and "UI event bus timed out" in str(message.content)
         for message in result["messages"]
     )
-    from voidx.agent.graph.topology import route_after_execute_tools
+    from voidx.agent.infrastructure.langgraph.runtime.topology import route_after_execute_tools
     assert route_after_execute_tools(result) == "end"
 
 
@@ -731,7 +731,7 @@ async def test_execute_tools_returns_tool_error_when_result_rendering_fails(tmp_
 
 @pytest.mark.asyncio
 async def test_execute_tools_emits_heartbeat_while_tool_is_still_running(tmp_path, monkeypatch):
-    from voidx.agent.graph.tool_executor import executor as executor_module
+    from voidx.agent.infrastructure.langgraph.runtime.tool_executor import executor as executor_module
 
     graph = _graph(tmp_path)
     emitted: list = []
@@ -802,7 +802,7 @@ async def test_execute_tools_emits_heartbeat_while_tool_is_still_running(tmp_pat
 
 @pytest.mark.asyncio
 async def test_execute_tools_continues_after_legacy_tool_timeout(tmp_path):
-    from voidx.agent.graph.topology import route_after_execute_tools
+    from voidx.agent.infrastructure.langgraph.runtime.topology import route_after_execute_tools
 
     graph = _graph(tmp_path)
 
@@ -863,7 +863,7 @@ async def test_execute_tools_continues_after_legacy_tool_timeout(tmp_path):
 
 @pytest.mark.asyncio
 async def test_execute_tools_does_not_trust_forged_ui_timeout_metadata(tmp_path):
-    from voidx.agent.graph.topology import route_after_execute_tools
+    from voidx.agent.infrastructure.langgraph.runtime.topology import route_after_execute_tools
 
     graph = _graph(tmp_path)
 
@@ -929,7 +929,7 @@ async def test_execute_tools_does_not_trust_forged_ui_timeout_metadata(tmp_path)
 
 @pytest.mark.asyncio
 async def test_ui_timeout_cancels_sibling_and_skips_later_group(tmp_path, monkeypatch):
-    from voidx.agent.graph.tool_executor import executor as executor_module
+    from voidx.agent.infrastructure.langgraph.runtime.tool_executor import executor as executor_module
     from voidx.ui.output.events.bus import UiEventTimeout
 
     graph = _graph(tmp_path)
@@ -1029,7 +1029,7 @@ async def test_ui_timeout_cancels_sibling_and_skips_later_group(tmp_path, monkey
     assert sibling_cancelled.is_set()
     assert later_executed is False
     assert result["should_continue"] is False
-    from voidx.agent.graph.topology import route_after_execute_tools
+    from voidx.agent.infrastructure.langgraph.runtime.topology import route_after_execute_tools
     assert route_after_execute_tools(result) == "end"
     pending = [t for t in asyncio.all_tasks() if t is not asyncio.current_task() and not t.done()]
     assert not pending
@@ -1037,7 +1037,7 @@ async def test_ui_timeout_cancels_sibling_and_skips_later_group(tmp_path, monkey
 
 @pytest.mark.asyncio
 async def test_ui_timeout_skips_event_drain(tmp_path, monkeypatch):
-    from voidx.agent.graph.tool_executor import executor as executor_module
+    from voidx.agent.infrastructure.langgraph.runtime.tool_executor import executor as executor_module
     from voidx.ui.output.events.bus import UiEventTimeout
 
     graph = _graph(tmp_path)
@@ -1090,7 +1090,7 @@ async def test_ui_timeout_skips_event_drain(tmp_path, monkeypatch):
 
 @pytest.mark.asyncio
 async def test_barrier_tool_timeout_blocks_suffix_but_continues_turn(tmp_path):
-    from voidx.agent.graph.topology import route_after_execute_tools
+    from voidx.agent.infrastructure.langgraph.runtime.topology import route_after_execute_tools
     from voidx.tools.base import tool_timeout_metadata
 
     graph = _graph(tmp_path)
@@ -1183,8 +1183,8 @@ async def test_barrier_tool_timeout_blocks_suffix_but_continues_turn(tmp_path):
 
 @pytest.mark.asyncio
 async def test_ui_timeout_preserves_mixed_tool_result_order_and_reasons(tmp_path, monkeypatch):
-    from voidx.agent.graph.runtime_guards import tool_call_key
-    from voidx.agent.graph.tool_executor import executor as executor_module
+    from voidx.agent.infrastructure.langgraph.runtime.runtime_guards import tool_call_key
+    from voidx.agent.infrastructure.langgraph.runtime.tool_executor import executor as executor_module
     from voidx.ui.output.events.bus import UiEventTimeout
 
     graph = _graph(tmp_path)
@@ -1301,8 +1301,8 @@ async def test_ui_timeout_preserves_mixed_tool_result_order_and_reasons(tmp_path
 
 @pytest.mark.asyncio
 async def test_infrastructure_results_do_not_pollute_runtime_guards():
-    from voidx.agent.graph.tool_executor.guards import _record_runtime_guard_outcomes
-    from voidx.agent.graph.tool_executor.types import _ExecutedTool, _tool_result_ok
+    from voidx.agent.infrastructure.langgraph.runtime.tool_executor.guards import _record_runtime_guard_outcomes
+    from voidx.agent.infrastructure.langgraph.runtime.tool_executor.types import _ExecutedTool, _tool_result_ok
 
     guard_state = RuntimeGuardState()
     host = SimpleNamespace(_pending_guidance=[])
@@ -1354,8 +1354,8 @@ async def test_infrastructure_results_do_not_pollute_runtime_guards():
 
 @pytest.mark.asyncio
 async def test_ordinary_tool_timeout_remains_runtime_guard_eligible():
-    from voidx.agent.graph.tool_executor.guards import _record_runtime_guard_outcomes
-    from voidx.agent.graph.tool_executor.types import _ExecutedTool, _tool_result_ok
+    from voidx.agent.infrastructure.langgraph.runtime.tool_executor.guards import _record_runtime_guard_outcomes
+    from voidx.agent.infrastructure.langgraph.runtime.tool_executor.types import _ExecutedTool, _tool_result_ok
     from voidx.tools.base import tool_timeout_metadata
 
     guard_state = RuntimeGuardState()
@@ -1389,8 +1389,8 @@ async def test_ordinary_tool_timeout_remains_runtime_guard_eligible():
 
 @pytest.mark.asyncio
 async def test_execute_approved_batch_cancels_pending_tasks_on_outer_cancellation():
-    from voidx.agent.graph.tool_executor.helpers import _execute_approved_batch
-    from voidx.agent.graph.tool_executor.types import _ExecutedTool
+    from voidx.agent.infrastructure.langgraph.runtime.tool_executor.helpers import _execute_approved_batch
+    from voidx.agent.infrastructure.langgraph.runtime.tool_executor.types import _ExecutedTool
 
     started: dict[str, asyncio.Event] = {
         "call_a": asyncio.Event(),
@@ -1439,8 +1439,8 @@ async def test_execute_approved_batch_cancels_pending_tasks_on_outer_cancellatio
 async def test_real_event_bus_stall_terminates_turn_without_drain(tmp_path, monkeypatch):
     """Regression: a real blocked UiEventBus consumer must cause a bounded turn
     termination that skips drain and leaves no pending task."""
-    from voidx.agent.graph.tool_executor import executor as executor_module
-    from voidx.agent.graph.topology import route_after_execute_tools
+    from voidx.agent.infrastructure.langgraph.runtime.tool_executor import executor as executor_module
+    from voidx.agent.infrastructure.langgraph.runtime.topology import route_after_execute_tools
     from voidx.ui.output.events.bus import UiEventBus
     from voidx.ui.output.events.schema import ToolStarted
 
@@ -1559,8 +1559,8 @@ async def test_real_event_bus_stall_terminates_turn_without_drain(tmp_path, monk
 async def test_prefix_terminal_blocks_barrier_and_suffix(tmp_path, monkeypatch):
     """A terminal UI timeout in the prefix group must prevent barrier and suffix
     from executing, and route to end."""
-    from voidx.agent.graph.tool_executor import executor as executor_module
-    from voidx.agent.graph.topology import route_after_execute_tools
+    from voidx.agent.infrastructure.langgraph.runtime.tool_executor import executor as executor_module
+    from voidx.agent.infrastructure.langgraph.runtime.topology import route_after_execute_tools
     from voidx.ui.output.events.bus import UiEventTimeout
 
     graph = _graph(tmp_path)
@@ -1658,8 +1658,8 @@ async def test_prefix_terminal_blocks_barrier_and_suffix(tmp_path, monkeypatch):
 async def test_barrier_terminal_blocks_suffix(tmp_path, monkeypatch):
     """A terminal UI timeout for the barrier tool must prevent its suffix from
     executing, and route to end."""
-    from voidx.agent.graph.tool_executor import executor as executor_module
-    from voidx.agent.graph.topology import route_after_execute_tools
+    from voidx.agent.infrastructure.langgraph.runtime.tool_executor import executor as executor_module
+    from voidx.agent.infrastructure.langgraph.runtime.topology import route_after_execute_tools
     from voidx.ui.output.events.bus import UiEventTimeout
 
     graph = _graph(tmp_path)
@@ -1739,7 +1739,7 @@ async def test_barrier_terminal_blocks_suffix(tmp_path, monkeypatch):
 async def test_ui_timeout_no_inherited_block_after_recovery(tmp_path, monkeypatch):
     """After a UI event bus timeout, the same tool call must execute without
     inheriting a repeated-failure block from the infrastructure event."""
-    from voidx.agent.graph.tool_executor import executor as executor_module
+    from voidx.agent.infrastructure.langgraph.runtime.tool_executor import executor as executor_module
     from voidx.ui.output.events.bus import UiEventTimeout
 
     graph = _graph(tmp_path)

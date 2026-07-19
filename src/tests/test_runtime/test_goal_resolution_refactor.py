@@ -24,7 +24,7 @@ from voidx.workflow.types import (
 
 
 def test_goal_type_compatibility_exports_are_removed():
-    import voidx.agent.task_state as agent_task_state
+    import voidx.runtime.task_state as agent_task_state
     import voidx.runtime as runtime
 
     for module in (runtime, agent_task_state):
@@ -34,7 +34,7 @@ def test_goal_type_compatibility_exports_are_removed():
 
 
 def test_state_update_applies_intent_resolution_patch():
-    from voidx.agent.graph.tool_executor import _ExecutedTool, _state_update_from_executed_tools
+    from voidx.agent.infrastructure.langgraph.runtime.tool_executor import _ExecutedTool, _state_update_from_executed_tools
 
     patch = {
         "intent": {

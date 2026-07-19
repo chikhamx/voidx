@@ -12,11 +12,11 @@ import voidx.memory.store as store
 
 
 from voidx.agent.slash import SlashHandler
-from voidx.agent.graph import VoidXGraph
-from voidx.agent.graph.run_loop import GraphRunLoopMixin
-from voidx.agent.graph.title_mixin import _sanitize_generated_title
+from voidx.agent.infrastructure.langgraph.execution import LangGraphExecution
+from voidx.agent.application.agent_service import AgentService
+from voidx.agent.infrastructure.langgraph.execution import _sanitize_generated_title
 from voidx.agent.runtime_context import InteractionMode, TaskIntent
-from voidx.agent.task_state import (
+from voidx.runtime.task_state import (
     GoalResolution,
     GoalSpec,
     IntentResolution,
@@ -45,7 +45,7 @@ from tests.test_agent.graph.run_loop_helpers import (
 
 @pytest.mark.asyncio
 async def test_first_turn_without_goal_uses_temporary_session_title(tmp_path):
-    graph = VoidXGraph(Config(workspace=str(tmp_path)), api_key=None)
+    graph = LangGraphExecution(Config(workspace=str(tmp_path)), api_key=None)
 
     class StructuredGoalModel:
         def with_structured_output(self, schema):
@@ -70,7 +70,7 @@ async def test_first_turn_without_goal_uses_temporary_session_title(tmp_path):
     set_dock(test_dock)
     test_dock.begin_capture()
     try:
-        await graph._run_once("看看这个项目")
+        await graph.run_turn("看看这个项目")
         task = graph._title_task
         if task is not None:
             await task
@@ -87,8 +87,8 @@ async def test_first_turn_without_goal_uses_temporary_session_title(tmp_path):
 
 
 @pytest.mark.asyncio
-async def test_run_once_uses_general_fallback_when_structured_resolver_fails(tmp_path):
-    graph = VoidXGraph(Config(workspace=str(tmp_path)), api_key=None)
+async def testrun_turn_uses_general_fallback_when_structured_resolver_fails(tmp_path):
+    graph = LangGraphExecution(Config(workspace=str(tmp_path)), api_key=None)
     captured: dict[str, object] = {}
 
     class StructuredGoalModel:
@@ -109,7 +109,7 @@ async def test_run_once_uses_general_fallback_when_structured_resolver_fails(tmp
     set_dock(test_dock)
     test_dock.begin_capture()
     try:
-        await graph._run_once("review runtime context")
+        await graph.run_turn("review runtime context")
     finally:
         test_dock.deactivate()
         test_dock.reset()
@@ -125,8 +125,8 @@ async def test_run_once_uses_general_fallback_when_structured_resolver_fails(tmp
 
 
 @pytest.mark.asyncio
-async def test_run_once_does_not_preadvance_workflow_without_resolver_join(tmp_path):
-    graph = VoidXGraph(Config(workspace=str(tmp_path)), api_key=None)
+async def testrun_turn_does_not_preadvance_workflow_without_resolver_join(tmp_path):
+    graph = LangGraphExecution(Config(workspace=str(tmp_path)), api_key=None)
     graph._task_state = TaskState(
         current_goal=GoalSpec(desc="agent_name 语义清理"),
         workflow_runs={
@@ -158,7 +158,7 @@ async def test_run_once_does_not_preadvance_workflow_without_resolver_join(tmp_p
     set_dock(test_dock)
     test_dock.begin_capture()
     try:
-        await graph._run_once("可以，先写一个 spec")
+        await graph.run_turn("可以，先写一个 spec")
     finally:
         test_dock.deactivate()
         test_dock.reset()

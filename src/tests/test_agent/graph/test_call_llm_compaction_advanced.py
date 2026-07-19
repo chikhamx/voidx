@@ -10,11 +10,11 @@ from langgraph.graph.message import REMOVE_ALL_MESSAGES
 from rich.console import Console
 
 
-from voidx.agent.graph.streaming import stream_llm as _stream_llm
-from voidx.agent.graph import VoidXGraph
-from voidx.agent.graph.convergence import is_step_hint_message
+from voidx.agent.infrastructure.langgraph.runtime.streaming import stream_llm as _stream_llm
+from voidx.agent.infrastructure.langgraph.execution import LangGraphExecution
+from voidx.agent.infrastructure.langgraph.runtime.convergence import is_step_hint_message
 from voidx.agent.runtime_context import RuntimeContextBuilder
-from voidx.agent.task_state import TaskState, TodoRunState
+from voidx.runtime.task_state import TaskState, TodoRunState
 from voidx.config import Config, ModelConfig
 from voidx.llm.compaction import CompactionSelection
 from voidx.llm.message_markers import is_guidance_message
@@ -47,11 +47,11 @@ from tests.test_agent.graph.stream_llm_helpers import (
 
 @pytest.mark.asyncio
 async def test_call_llm_ignores_legacy_max_steps_for_tool_binding(tmp_path, monkeypatch):
-    import voidx.agent.graph.core.llm as graph_module
+    import voidx.agent.infrastructure.langgraph.execution as graph_module
 
     monkeypatch.setattr(graph_module, "StreamingRenderer", FakeRenderer)
 
-    graph = VoidXGraph(
+    graph = LangGraphExecution(
         Config(
             model=ModelConfig(provider="mimo", model="mimo-v2.5"),
             workspace=str(tmp_path),
@@ -73,11 +73,11 @@ async def test_call_llm_ignores_legacy_max_steps_for_tool_binding(tmp_path, monk
 
 @pytest.mark.asyncio
 async def test_call_llm_does_not_add_main_agent_step_hint(tmp_path, monkeypatch):
-    import voidx.agent.graph.core.llm as graph_module
+    import voidx.agent.infrastructure.langgraph.execution as graph_module
 
     monkeypatch.setattr(graph_module, "StreamingRenderer", FakeRenderer)
 
-    graph = VoidXGraph(
+    graph = LangGraphExecution(
         Config(
             model=ModelConfig(provider="mimo", model="mimo-v2.5"),
             workspace=str(tmp_path),
@@ -105,7 +105,7 @@ async def test_call_llm_does_not_add_main_agent_step_hint(tmp_path, monkeypatch)
 
 @pytest.mark.asyncio
 async def test_call_llm_retry_uses_transient_status_event(tmp_path, monkeypatch):
-    import voidx.agent.graph.core.llm as graph_module
+    import voidx.agent.infrastructure.langgraph.execution as graph_module
 
     async def no_sleep(_delay: float) -> None:
         return None
@@ -125,7 +125,7 @@ async def test_call_llm_retry_uses_transient_status_event(tmp_path, monkeypatch)
     test_dock.begin_capture()
     ui_events.start(RecordingConsumer())
     try:
-        graph = VoidXGraph(
+        graph = LangGraphExecution(
             Config(
                 model=ModelConfig(provider="mimo", model="mimo-v2.5"),
                 workspace=str(tmp_path),
@@ -183,7 +183,7 @@ class AlwaysFailsStreamingModel:
 
 @pytest.mark.asyncio
 async def test_call_llm_exhausts_retries_then_renders_assistant_error(tmp_path, monkeypatch):
-    import voidx.agent.graph.core.llm as graph_module
+    import voidx.agent.infrastructure.langgraph.execution as graph_module
 
     async def no_sleep(_delay: float) -> None:
         return None
@@ -203,7 +203,7 @@ async def test_call_llm_exhausts_retries_then_renders_assistant_error(tmp_path, 
     test_dock.begin_capture()
     ui_events.start(RecordingConsumer())
     try:
-        graph = VoidXGraph(
+        graph = LangGraphExecution(
             Config(
                 model=ModelConfig(provider="mimo", model="mimo-v2.5"),
                 workspace=str(tmp_path),

@@ -195,3 +195,46 @@ class TestFileOpsCoverage:
         assert "read" in second.output.lower()
         assert second.metadata.get("error")
         assert (tmp_path / "partial-edit.txt").read_text().splitlines()[9] == "line 10"
+
+    @pytest.mark.asyncio
+    async def test_replace_spans_small_unread_gap_allowed(self, tmp_path):
+        f = tmp_path / "gap-allowed.txt"
+        f.write_text("\n".join(f"line {i}" for i in range(1, 21)) + "\n")
+        ctx = ToolContext(workspace=str(tmp_path))
+        r = ToolRegistry()
+        await r.execute_tool("read", {"file_path": "gap-allowed.txt", "offset": 1, "limit": 10}, ctx)
+        await r.execute_tool("read", {"file_path": "gap-allowed.txt", "offset": 14, "limit": 7}, ctx)
+
+        result = await r.execute_tool(
+            "replace",
+            {
+                "file_path": "gap-allowed.txt",
+                "bounds": [{"line_no": 8, "anchor": "line 8"}, {"line_no": 16, "anchor": "line 16"}],
+                "new_string": "replaced",
+            },
+            ctx,
+        )
+
+        assert result.metadata.get("error") is not True
+
+    @pytest.mark.asyncio
+    async def test_replace_spans_large_unread_gap_rejected(self, tmp_path):
+        f = tmp_path / "gap-rejected.txt"
+        f.write_text("\n".join(f"line {i}" for i in range(1, 21)) + "\n")
+        ctx = ToolContext(workspace=str(tmp_path))
+        r = ToolRegistry()
+        await r.execute_tool("read", {"file_path": "gap-rejected.txt", "offset": 1, "limit": 10}, ctx)
+        await r.execute_tool("read", {"file_path": "gap-rejected.txt", "offset": 15, "limit": 6}, ctx)
+
+        result = await r.execute_tool(
+            "replace",
+            {
+                "file_path": "gap-rejected.txt",
+                "bounds": [{"line_no": 8, "anchor": "line 8"}, {"line_no": 16, "anchor": "line 16"}],
+                "new_string": "replaced",
+            },
+            ctx,
+        )
+
+        assert result.metadata.get("error") is True
+        assert "must be read" in result.output

@@ -12,12 +12,12 @@ import voidx.memory.store as store
 
 
 from voidx.agent.slash import SlashHandler
-from voidx.agent.graph import VoidXGraph
-from voidx.agent.graph.run_loop import GraphRunLoopMixin
-from voidx.agent.graph.title_mixin import _sanitize_generated_title
+from voidx.agent.infrastructure.langgraph.execution import LangGraphExecution
+from voidx.agent.application.agent_service import AgentService
+from voidx.agent.infrastructure.langgraph.execution import _sanitize_generated_title
 from voidx.agent.runtime_context import InteractionMode, TaskIntent
 from voidx.agent.goal_resolver import ResolverGoal
-from voidx.agent.task_state import (
+from voidx.runtime.task_state import (
     GoalResolution,
     GoalSpec,
     IntentResolution,
@@ -45,8 +45,8 @@ from tests.test_agent.graph.run_loop_helpers import (
 )
 
 @pytest.mark.asyncio
-async def test_run_once_keeps_default_title_when_resolver_falls_back_without_goal(tmp_path):
-    graph = VoidXGraph(Config(workspace=str(tmp_path)), api_key=None)
+async def testrun_turn_keeps_default_title_when_resolver_falls_back_without_goal(tmp_path):
+    graph = LangGraphExecution(Config(workspace=str(tmp_path)), api_key=None)
 
     class FailingResolverModel:
         async def ainvoke(self, _messages):
@@ -62,7 +62,7 @@ async def test_run_once_keeps_default_title_when_resolver_falls_back_without_goa
     set_dock(test_dock)
     test_dock.begin_capture()
     try:
-        await graph._run_once("review runtime")
+        await graph.run_turn("review runtime")
     finally:
         test_dock.deactivate()
         test_dock.reset()
@@ -74,7 +74,7 @@ async def test_run_once_keeps_default_title_when_resolver_falls_back_without_goa
 
 @pytest.mark.asyncio
 async def test_smart_title_generation_failure_keeps_temporary_title(tmp_path, monkeypatch):
-    graph = VoidXGraph(Config(workspace=str(tmp_path)), api_key=None)
+    graph = LangGraphExecution(Config(workspace=str(tmp_path)), api_key=None)
 
     def _fake_resolve_goal_mode(user_text, task_state):
         return GoalResolution(
@@ -89,7 +89,7 @@ async def test_smart_title_generation_failure_keeps_temporary_title(tmp_path, mo
 
     graph.graph = FakeGraph()
     graph._interaction_mode = InteractionMode.GOAL
-    import voidx.agent.graph.turn_runner as turn_runner_mod
+    import voidx.agent.infrastructure.langgraph.runtime.turn_runner as turn_runner_mod
     monkeypatch.setattr(turn_runner_mod, "resolve_goal_mode", _fake_resolve_goal_mode)
     test_dock = BottomInputDock()
     set_dock(test_dock)
@@ -103,7 +103,7 @@ async def test_smart_title_generation_failure_keeps_temporary_title(tmp_path, mo
     set_dock(test_dock)
     test_dock.begin_capture()
     try:
-        await graph._run_once("分析一下启动流程")
+        await graph.run_turn("分析一下启动流程")
         task = graph._title_task
         if task is not None:
             await task
@@ -124,7 +124,7 @@ async def test_smart_title_does_not_override_manual_title(tmp_path):
     session = await create_session(workspace=str(tmp_path), provider="mimo", model="mimo-v2.5")
     await update_title(session.id, "temporary")
     session = session.model_copy(update={"title": "temporary"})
-    graph = VoidXGraph(Config(workspace=str(tmp_path)), api_key=None, session=session)
+    graph = LangGraphExecution(Config(workspace=str(tmp_path)), api_key=None, session=session)
     graph._schedule_session_title_generation(session.id, "first request", "temporary")
     assert graph._title_task is None
 
@@ -140,7 +140,7 @@ async def test_smart_title_does_not_update_after_clear(tmp_path):
     session = await create_session(workspace=str(tmp_path), provider="mimo", model="mimo-v2.5")
     await update_title(session.id, "temporary")
     session = session.model_copy(update={"title": "temporary"})
-    graph = VoidXGraph(Config(workspace=str(tmp_path)), api_key=None, session=session)
+    graph = LangGraphExecution(Config(workspace=str(tmp_path)), api_key=None, session=session)
     graph._schedule_session_title_generation(session.id, "first request", "temporary")
     assert graph._title_task is None
 
@@ -162,7 +162,7 @@ async def test_smart_title_does_not_update_resumed_session(tmp_path):
     resumed = await create_session(workspace=str(tmp_path), provider="mimo", model="mimo-v2.5")
     await update_title(resumed.id, "Resumed title")
     resumed = resumed.model_copy(update={"title": "Resumed title"})
-    graph = VoidXGraph(Config(workspace=str(tmp_path)), api_key=None, session=session)
+    graph = LangGraphExecution(Config(workspace=str(tmp_path)), api_key=None, session=session)
     graph._schedule_session_title_generation(session.id, "first request", "temporary")
     assert graph._title_task is None
 

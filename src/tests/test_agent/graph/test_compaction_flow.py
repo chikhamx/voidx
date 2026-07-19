@@ -20,11 +20,11 @@ from voidx.agent.agents import (
     get_visible_agents,
 )
 from voidx.agent.prompts import BASE_SYSTEM, PERSONA_MODEL, persona_prompt
-from voidx.agent.graph.convergence import is_step_hint_message
-from voidx.agent.graph.runtime import current_parent_tool_call_id
-from voidx.agent.graph.runtime_guards import RuntimeGuardState, WallClockGuardState
-from voidx.agent.graph import VoidXGraph
-from voidx.agent.graph.tool_execution import AGENT_RESULT_PREVIEW_CHARS, _agent_result_preview
+from voidx.agent.infrastructure.langgraph.runtime.convergence import is_step_hint_message
+from voidx.agent.infrastructure.langgraph.runtime.runtime import current_parent_tool_call_id
+from voidx.agent.infrastructure.langgraph.runtime.runtime_guards import RuntimeGuardState, WallClockGuardState
+from voidx.agent.infrastructure.langgraph.execution import LangGraphExecution
+from voidx.agent.infrastructure.langgraph.execution import AGENT_RESULT_PREVIEW_CHARS, _agent_result_preview
 from voidx.agent.message_rows import RowMessageCacheEntry
 from voidx.agent.runtime_context import InteractionMode, RuntimeContextBuilder
 from voidx.config import Config, ParallelSubagentsConfig, Settings, UserProfile
@@ -44,7 +44,7 @@ from voidx.runtime import GoalResolution, GoalSpec, IntentResolution, PlanResolu
 from voidx.skills.context import SKILL_TOOL_CONTEXT_MARKER
 from voidx.workflow.context import WORKFLOW_CONTEXT_MARKER
 from voidx.workflow.runtime import WorkflowRunState, WorkflowRunStatus
-from voidx.agent.task_state import TaskState, ToolStatePatch, WorkflowRoute
+from voidx.runtime.task_state import TaskState, ToolStatePatch, WorkflowRoute
 from voidx.tools.base import ToolContext, ToolResult
 from voidx.tools.agent import AgentResultContract, AgentTool
 from voidx.tools.registry import ToolRegistry
@@ -54,7 +54,7 @@ from voidx.ui.output.events import DockEventConsumer, StatusFinished, StatusUpda
 
 def _graph(tmp_path):
     cfg = Config(workspace=str(tmp_path))
-    return VoidXGraph(cfg, api_key=None)
+    return LangGraphExecution(cfg, api_key=None)
 
 
 def _task_state_json(**kwargs):
@@ -270,7 +270,7 @@ async def test_preflight_compaction_returns_structured_metadata(tmp_path):
     assert result.live_messages[-1].content == "current question"
 @pytest.mark.asyncio
 async def test_compaction_asks_only_when_configured_and_can_skip(tmp_path):
-    graph = VoidXGraph(Config(workspace=str(tmp_path), ask_compact=True), api_key=None)
+    graph = LangGraphExecution(Config(workspace=str(tmp_path), ask_compact=True), api_key=None)
     graph._compaction.is_overflow = lambda _tokens: True
     asked: list[str] = []
 
@@ -300,7 +300,7 @@ async def test_compaction_asks_only_when_configured_and_can_skip(tmp_path):
 
 @pytest.mark.asyncio
 async def test_compaction_auto_compacts_by_default_without_asking(tmp_path):
-    graph = VoidXGraph(Config(workspace=str(tmp_path)), api_key=None)
+    graph = LangGraphExecution(Config(workspace=str(tmp_path)), api_key=None)
     graph._compaction.is_overflow = lambda _tokens: True
     graph._compaction.select_details = lambda messages: CompactionSelection(
         head=messages[:2],
@@ -335,7 +335,7 @@ async def test_compaction_auto_compacts_by_default_without_asking(tmp_path):
 
 @pytest.mark.asyncio
 async def test_compaction_fallback_returns_removed_messages(tmp_path):
-    graph = VoidXGraph(Config(workspace=str(tmp_path)), api_key=None)
+    graph = LangGraphExecution(Config(workspace=str(tmp_path)), api_key=None)
     graph._compaction.is_overflow = lambda _tokens: True
     graph._compaction.select_details = lambda messages: CompactionSelection(
         head=messages[:2],
@@ -366,7 +366,7 @@ async def test_compaction_fallback_returns_removed_messages(tmp_path):
 
 @pytest.mark.asyncio
 async def test_preflight_compaction_uses_soft_threshold_and_target_tail(tmp_path):
-    graph = VoidXGraph(Config(workspace=str(tmp_path)), api_key=None)
+    graph = LangGraphExecution(Config(workspace=str(tmp_path)), api_key=None)
     graph._compaction.is_overflow = lambda _tokens: False
     graph._compaction.is_soft_overflow = lambda _tokens: True
     graph._compaction.soft_threshold = lambda: 90
@@ -429,7 +429,7 @@ async def test_preflight_compaction_uses_soft_threshold_and_target_tail(tmp_path
 
 @pytest.mark.asyncio
 async def test_maybe_compact_preflight_preserves_current_user_message(tmp_path):
-    graph = VoidXGraph(Config(workspace=str(tmp_path)), api_key=None)
+    graph = LangGraphExecution(Config(workspace=str(tmp_path)), api_key=None)
     graph._compaction.is_overflow = lambda _tokens: False
     graph._compaction.is_soft_overflow = lambda _tokens: True
     graph._compaction.select_preflight_details = lambda messages, *, model="": CompactionSelection(

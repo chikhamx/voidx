@@ -15,7 +15,7 @@ import voidx.memory.jsonl_store as jsonl_store
 
 from voidx.agent.message_rows import message_from_row, messages_from_rows, messages_from_rows_incremental, row_fingerprint
 from voidx.agent.runtime_context import InteractionMode, TaskIntent
-from voidx.agent.task_state import (
+from voidx.runtime.task_state import (
     GoalSpec,
     TaskState,
     TodoRunState,

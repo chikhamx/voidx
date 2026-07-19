@@ -173,6 +173,51 @@ class TestWriteTool:
         assert target.read_text(encoding="utf-8") == "one\ntwo\n"
 
 
+class TestWriteFullOverwriteCoverage:
+    @pytest.mark.asyncio
+    async def test_full_overwrite_preserves_coverage_for_unchanged_region(self, tmp_path):
+        target = tmp_path / "overwrite.txt"
+        target.write_text("\n".join(f"line {i}" for i in range(1, 21)) + "\n", encoding="utf-8")
+        ctx = ToolContext(workspace=str(tmp_path))
+        r = ToolRegistry()
+        await r.execute_tool("read", {"file_path": "overwrite.txt"}, ctx)
+        lines = [f"line {i}" for i in range(1, 21)]
+        lines[1] = "LINE 2"
+        lines[2] = "LINE 3"
+        overwritten = await r.execute_tool(
+            "write",
+            {"file_path": "overwrite.txt", "op": "write", "new_string": "\n".join(lines) + "\n"},
+            ctx,
+        )
+        edit = await r.execute_tool(
+            "replace",
+            {"file_path": "overwrite.txt", "bounds": [{"line_no": 10, "anchor": "line 10"}], "new_string": "LINE 10"},
+            ctx,
+        )
+
+        assert overwritten.metadata.get("error") is not True
+        assert edit.metadata.get("error") is not True
+
+    @pytest.mark.asyncio
+    async def test_new_file_written_is_editable_without_read(self, tmp_path):
+        ctx = ToolContext(workspace=str(tmp_path))
+        r = ToolRegistry()
+        created = await r.execute_tool(
+            "write",
+            {"file_path": "fresh.txt", "op": "write", "new_string": "one\ntwo\nthree\n"},
+            ctx,
+        )
+        edit = await r.execute_tool(
+            "replace",
+            {"file_path": "fresh.txt", "bounds": [{"line_no": 2, "anchor": "two"}], "new_string": "TWO"},
+            ctx,
+        )
+
+        assert created.metadata.get("error") is not True
+        assert edit.metadata.get("error") is not True
+        assert (tmp_path / "fresh.txt").read_text(encoding="utf-8") == "one\nTWO\nthree\n"
+
+
 class TestWriteAppendOp:
     """Tests for op='append' — new feature from spec."""
 

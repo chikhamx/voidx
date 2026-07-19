@@ -80,7 +80,7 @@ async def test_persistent_tool_grant_commits_to_settings(tmp_path):
 
 @pytest.mark.asyncio
 async def test_build_permission_service_persists_tool_grant_to_settings(tmp_path):
-    from voidx.agent.graph.wiring import build_permission_service
+    from voidx.agent.infrastructure.langgraph.runtime.wiring import build_permission_service
 
     workspace = tmp_path / "workspace"
     external = tmp_path / "external"
@@ -371,7 +371,7 @@ def test_persistent_grants_are_stored_separately_from_sandbox_grants(tmp_path):
 
 @pytest.mark.asyncio
 async def test_build_permission_service_hydrates_persistent_grants_separately(tmp_path):
-    from voidx.agent.graph.wiring import build_permission_service
+    from voidx.agent.infrastructure.langgraph.runtime.wiring import build_permission_service
 
     workspace = tmp_path / "workspace"
     external = tmp_path / "external"

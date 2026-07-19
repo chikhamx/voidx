@@ -20,11 +20,11 @@ from voidx.agent.agents import (
     get_visible_agents,
 )
 from voidx.agent.prompts import BASE_SYSTEM, PERSONA_MODEL, persona_prompt
-from voidx.agent.graph.convergence import is_step_hint_message
-from voidx.agent.graph.runtime import current_parent_tool_call_id
-from voidx.agent.graph.runtime_guards import RuntimeGuardState, WallClockGuardState
-from voidx.agent.graph import VoidXGraph
-from voidx.agent.graph.tool_execution import AGENT_RESULT_PREVIEW_CHARS, _agent_result_preview
+from voidx.agent.infrastructure.langgraph.runtime.convergence import is_step_hint_message
+from voidx.agent.infrastructure.langgraph.runtime.runtime import current_parent_tool_call_id
+from voidx.agent.infrastructure.langgraph.runtime.runtime_guards import RuntimeGuardState, WallClockGuardState
+from voidx.agent.infrastructure.langgraph.execution import LangGraphExecution
+from voidx.agent.infrastructure.langgraph.execution import AGENT_RESULT_PREVIEW_CHARS, _agent_result_preview
 from voidx.agent.message_rows import RowMessageCacheEntry
 from voidx.agent.runtime_context import InteractionMode, RuntimeContextBuilder
 from voidx.config import Config, ParallelSubagentsConfig, Settings, UserProfile
@@ -44,7 +44,7 @@ from voidx.runtime import GoalResolution, GoalSpec, IntentResolution, PlanResolu
 from voidx.skills.context import SKILL_TOOL_CONTEXT_MARKER
 from voidx.workflow.context import WORKFLOW_CONTEXT_MARKER
 from voidx.workflow.runtime import WorkflowRunState, WorkflowRunStatus
-from voidx.agent.task_state import TaskState, ToolStatePatch, WorkflowRoute
+from voidx.runtime.task_state import TaskState, ToolStatePatch, WorkflowRoute
 from voidx.tools.base import ToolContext, ToolResult
 from voidx.tools.agent import AgentResultContract, AgentTool
 from voidx.tools.registry import ToolRegistry
@@ -54,7 +54,7 @@ from voidx.ui.output.events import DockEventConsumer, TurnStarted, ui_events
 
 def _graph(tmp_path):
     cfg = Config(workspace=str(tmp_path))
-    return VoidXGraph(cfg, api_key=None)
+    return LangGraphExecution(cfg, api_key=None)
 
 
 def _task_state_json(**kwargs):
@@ -569,7 +569,7 @@ async def test_always_approval_for_shell_is_target_scoped(tmp_path):
 
 @pytest.mark.asyncio
 async def test_ai_approval_reuses_successful_dangerous_call_without_review(tmp_path):
-    from voidx.agent.graph.permissions import _tool_call_key
+    from voidx.agent.infrastructure.langgraph.execution import _tool_call_key
     from voidx.permission.ai_approval import AiApprovalResult
     from voidx.config import PermissionMode
 
@@ -685,7 +685,7 @@ async def test_ai_approval_increments_counter_and_emits_refresh(tmp_path):
 async def test_ai_approval_notice_written_to_log_not_ui(tmp_path, monkeypatch):
     from voidx.config import PermissionMode
     from voidx.permission.ai_approval import AiApprovalResult
-    import voidx.agent.graph.permissions as perms_mod
+    import voidx.agent.infrastructure.langgraph.execution as perms_mod
 
     graph = _graph(tmp_path)
     graph._settings = Settings(str(tmp_path))
@@ -705,14 +705,18 @@ async def test_ai_approval_notice_written_to_log_not_ui(tmp_path, monkeypatch):
     graph._ask_tool_permission = fail_if_asked
 
     printed: list[str] = []
-    graph._ui.ui.print = lambda *a, **k: printed.append(str(a))
+    monkeypatch.setattr(graph._ui.ui, "print", lambda *a, **k: printed.append(str(a)))
 
     dock_calls: list[str] = []
     orig_dock = getattr(graph._ui, "dock", None)
     if orig_dock is not None:
         orig_append = getattr(orig_dock, "append_message", None)
         if callable(orig_append):
-            orig_dock.append_message = lambda msg: dock_calls.append(msg)
+            monkeypatch.setattr(
+                orig_dock,
+                "append_message",
+                lambda msg, **_kwargs: dock_calls.append(msg),
+            )
 
     logged: list[dict] = []
 

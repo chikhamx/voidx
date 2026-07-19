@@ -3,10 +3,10 @@ from __future__ import annotations
 from typing import Literal, NamedTuple
 
 
-from voidx.agent.tool_messages import DEFAULT_TOOL_MESSAGE_MAX_CHARS
+from voidx.tools.output_policy import DEFAULT_TOOL_OUTPUT_MAX_CHARS
 
 
-READ_OUTPUT_MAX_CHARS = DEFAULT_TOOL_MESSAGE_MAX_CHARS
+READ_OUTPUT_MAX_CHARS = DEFAULT_TOOL_OUTPUT_MAX_CHARS
 BINARY_DETECTION_BYTES = 8 * 1024
 TEXT_REPLACE_LINE_RADIUS = 3
 TEXT_REPLACE_SPAN_TOLERANCE = 2

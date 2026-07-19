@@ -3,8 +3,8 @@
 import pytest
 from langchain_core.messages import HumanMessage
 
-from voidx.agent.graph import VoidXGraph
-from voidx.agent.graph.turn_control import (
+from voidx.agent.infrastructure.langgraph.execution import LangGraphExecution
+from voidx.agent.infrastructure.langgraph.runtime.turn_control import (
     TURN_START_PROMPT,
     TURN_STOP_PROMPT,
     TURN_TOOL_DEFINITION,
@@ -14,10 +14,10 @@ from tests.test_agent.graph.stream_llm_helpers import FakeRenderer, FakeStreamin
 
 
 def _make_graph(tmp_path, monkeypatch, provider="openai"):
-    import voidx.agent.graph.core.llm as graph_module
+    import voidx.agent.infrastructure.langgraph.execution as graph_module
     monkeypatch.setattr(graph_module, "StreamingRenderer", FakeRenderer)
 
-    graph = VoidXGraph(
+    graph = LangGraphExecution(
         Config(
             model=ModelConfig(provider=provider, model="test-model"),
             workspace=str(tmp_path),

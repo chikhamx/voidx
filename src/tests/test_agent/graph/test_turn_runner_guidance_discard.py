@@ -12,7 +12,7 @@ from types import SimpleNamespace
 
 import pytest
 
-from voidx.agent.graph.turn_runner import GraphTurnRunner
+from voidx.agent.infrastructure.langgraph.runtime.turn_runner import TurnRunner
 from voidx.llm.usage import UsageStats
 from voidx.ui.output.events.schema import GuidanceCommitted, WarningAppended
 
@@ -78,10 +78,10 @@ async def test_finally_block_discards_pending_guidance_quietly_with_events(monke
     host = _make_host(via_events=True)
     logged: list[dict] = []
     monkeypatch.setattr(
-        "voidx.agent.graph.turn_runner.log_tool_event",
+        "voidx.agent.infrastructure.langgraph.runtime.turn_runner.log_tool_event",
         lambda event, **kwargs: logged.append({"event": event, **kwargs}),
     )
-    runner = GraphTurnRunner(host)
+    runner = TurnRunner(host)
 
     with pytest.raises(RuntimeError, match="simulated early failure"):
         await runner.run_once("hello")
@@ -108,10 +108,10 @@ async def test_finally_block_discards_pending_guidance_quietly_without_events_mo
     host._ui.dock.clear_guidance_preview = lambda: clear_calls.append(True)
     logged: list[dict] = []
     monkeypatch.setattr(
-        "voidx.agent.graph.turn_runner.log_tool_event",
+        "voidx.agent.infrastructure.langgraph.runtime.turn_runner.log_tool_event",
         lambda event, **kwargs: logged.append({"event": event, **kwargs}),
     )
-    runner = GraphTurnRunner(host)
+    runner = TurnRunner(host)
 
     with pytest.raises(RuntimeError, match="simulated early failure"):
         await runner.run_once("hello")
@@ -129,7 +129,7 @@ async def test_finally_block_discards_pending_guidance_quietly_without_events_mo
 async def test_finally_block_no_warning_when_no_pending_guidance():
     host = _make_host(via_events=True)
     host._pending_guidance = []
-    runner = GraphTurnRunner(host)
+    runner = TurnRunner(host)
 
     with pytest.raises(RuntimeError, match="simulated early failure"):
         await runner.run_once("hello")

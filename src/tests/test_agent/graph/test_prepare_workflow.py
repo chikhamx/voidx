@@ -20,11 +20,11 @@ from voidx.agent.agents import (
     get_visible_agents,
 )
 from voidx.agent.prompts import BASE_SYSTEM, PERSONA_MODEL, persona_prompt
-from voidx.agent.graph.convergence import is_step_hint_message
-from voidx.agent.graph.runtime import current_parent_tool_call_id
-from voidx.agent.graph.runtime_guards import RuntimeGuardState, WallClockGuardState
-from voidx.agent.graph import VoidXGraph
-from voidx.agent.graph.tool_execution import AGENT_RESULT_PREVIEW_CHARS, _agent_result_preview
+from voidx.agent.infrastructure.langgraph.runtime.convergence import is_step_hint_message
+from voidx.agent.infrastructure.langgraph.runtime.runtime import current_parent_tool_call_id
+from voidx.agent.infrastructure.langgraph.runtime.runtime_guards import RuntimeGuardState, WallClockGuardState
+from voidx.agent.infrastructure.langgraph.execution import LangGraphExecution
+from voidx.agent.infrastructure.langgraph.execution import AGENT_RESULT_PREVIEW_CHARS, _agent_result_preview
 from voidx.agent.message_rows import RowMessageCacheEntry
 from voidx.agent.runtime_context import InteractionMode, RuntimeContextBuilder
 from voidx.config import Config, ParallelSubagentsConfig, Settings, UserProfile
@@ -44,7 +44,7 @@ from voidx.runtime import GoalResolution, GoalSpec, IntentResolution, PlanResolu
 from voidx.skills.context import SKILL_TOOL_CONTEXT_MARKER
 from voidx.workflow.context import WORKFLOW_CONTEXT_MARKER
 from voidx.workflow.runtime import WorkflowRunState, WorkflowRunStatus
-from voidx.agent.task_state import TaskState, ToolStatePatch, WorkflowRoute
+from voidx.runtime.task_state import TaskState, ToolStatePatch, WorkflowRoute
 from voidx.tools.base import ToolContext, ToolResult
 from voidx.tools.agent import AgentResultContract, AgentTool
 from voidx.tools.registry import ToolRegistry
@@ -54,7 +54,7 @@ from voidx.ui.output.events import DockEventConsumer, TurnStarted, ui_events
 
 def _graph(tmp_path):
     cfg = Config(workspace=str(tmp_path))
-    return VoidXGraph(cfg, api_key=None)
+    return LangGraphExecution(cfg, api_key=None)
 
 
 def _task_state_json(**kwargs):
@@ -139,7 +139,7 @@ async def test_prepare_does_not_auto_inject_project_skill_body(tmp_path):
         "---\nname: docs\ndescription: Documentation helper\n---\nWrite concise docs.",
         encoding="utf-8",
     )
-    graph = VoidXGraph(
+    graph = LangGraphExecution(
         Config(workspace=str(tmp_path)),
         api_key=None,
         settings=Settings(str(tmp_path)),
@@ -173,7 +173,7 @@ async def test_prepare_does_not_auto_inject_project_skill_body(tmp_path):
 
 @pytest.mark.asyncio
 async def test_prepare_injects_workflow_nodes_from_task_state(tmp_path):
-    graph = VoidXGraph(
+    graph = LangGraphExecution(
         Config(workspace=str(tmp_path)),
         api_key=None,
         settings=Settings(str(tmp_path)),
@@ -221,7 +221,7 @@ async def test_prepare_injects_workflow_nodes_from_task_state(tmp_path):
 
 @pytest.mark.asyncio
 async def test_prepare_syncs_triggered_workflow_to_status_state(tmp_path):
-    graph = VoidXGraph(
+    graph = LangGraphExecution(
         Config(workspace=str(tmp_path)),
         api_key=None,
         settings=Settings(str(tmp_path)),
@@ -259,7 +259,7 @@ async def test_prepare_syncs_triggered_workflow_to_status_state(tmp_path):
 @pytest.mark.asyncio
 async def test_implement_subagent_injects_workflow_nodes(tmp_path, monkeypatch):
     from voidx.agent.agents import get_agent
-    import voidx.agent.graph.subagent as subagent_module
+    import voidx.agent.infrastructure.langgraph.runtime.subagent as subagent_module
 
     captured: dict[str, list] = {}
 
@@ -360,7 +360,7 @@ async def test_prepare_does_not_reactivate_satisfied_workflow_via_stale_route(tm
     points at the old node (feedback) because workflow enter/advance does
     not update the route. The LLM prepare step must not use the stale
     route to reactivate feedback and overwrite its SATISFIED status."""
-    graph = VoidXGraph(
+    graph = LangGraphExecution(
         Config(workspace=str(tmp_path)),
         api_key=None,
         settings=Settings(str(tmp_path)),

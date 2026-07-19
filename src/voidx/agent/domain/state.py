@@ -1,0 +1,18 @@
+"""Agent-owned domain runtime state."""
+
+from __future__ import annotations
+
+from pydantic import BaseModel, Field
+
+from voidx.agent.domain.turn import TurnPhase
+from voidx.runtime import InteractionMode, TaskState
+
+
+class AgentRuntime(BaseModel):
+    """Mutable Agent state independent of graph and persistence adapters."""
+
+    interaction_mode: InteractionMode = InteractionMode.AUTO
+    task_state: TaskState = Field(default_factory=TaskState)
+    compaction_summary: str = ""
+    session_time: str = ""
+    turn_phase: TurnPhase = TurnPhase.INITIAL

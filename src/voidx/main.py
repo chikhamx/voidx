@@ -61,7 +61,7 @@ async def _run_chat(
     set_dock(BottomInputDock())
 
     from voidx.config import Settings
-    from voidx.agent.graph import VoidXGraph
+    from voidx.agent.composition import build_agent_app
 
     vconsole = _vconsole()
     ws_path = str(Path(workspace).resolve())
@@ -90,8 +90,8 @@ async def _run_chat(
         vconsole=vconsole,
     )
 
-    graph = VoidXGraph(cfg, api_key, session=session, settings=settings)
-    await graph.run(
+    agent_app = build_agent_app(cfg, api_key, session=session, settings=settings)
+    await agent_app.run(
         web=web,
         web_headless=web_headless,
         web_host=web_host,
@@ -125,7 +125,7 @@ def main(
         raise typer.Exit()
     if web_headless and not web:
         raise typer.BadParameter("--web-headless requires --web")
-    from voidx.agent.graph.run_loop import RunLoopStartupError
+    from voidx.agent.facade import RunLoopStartupError
 
     try:
         asyncio.run(_run_chat(workspace, model, provider, resume, new, web, web_headless, web_host, web_port))

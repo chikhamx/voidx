@@ -7,8 +7,9 @@ import pytest
 
 
 from voidx.agent.slash import SlashHandler
+from tests.test_agent.slash.context import command_context
 from voidx.agent.slash.runtime import _select_from_list
-from voidx.agent.task_state import GoalSpec, TaskState
+from voidx.runtime.task_state import GoalSpec, TaskState
 from voidx.config import (
     CodeIde,
     Config,
@@ -72,7 +73,7 @@ async def test_tavily_set_creates_mcp_server_and_routes(tmp_path, monkeypatch):
         manager.restarts += 1
 
     manager.restart_all = restart_all
-    graph = SimpleNamespace(_settings=settings, _app=app, _mcp_manager=manager)
+    graph = command_context(settings=settings, app=app, mcp_manager=manager)
 
     handled = await SlashHandler(graph).dispatch("/tavily set")
 
@@ -104,7 +105,7 @@ async def test_tavily_set_updates_existing_mcp_server_env(tmp_path, monkeypatch)
         tools=["custom_tool"],
     ))
     app = FakeChoiceApp(result="tvly-new")
-    graph = SimpleNamespace(_settings=settings, _app=app)
+    graph = command_context(settings=settings, app=app)
 
     handled = await SlashHandler(graph).dispatch("/tavily set")
 
@@ -118,7 +119,7 @@ async def test_tavily_set_updates_existing_mcp_server_env(tmp_path, monkeypatch)
 
 
 @pytest.mark.asyncio
-async def test_tavily_set_restarts_mcp_manager_when_available(tmp_path, monkeypatch):
+async def test_tavily_set_restartsmcp_manager_when_available(tmp_path, monkeypatch):
     monkeypatch.delenv("TAVILY_API_KEY", raising=False)
     settings = Settings(str(tmp_path))
     app = FakeChoiceApp(result="tvly-secret")
@@ -128,7 +129,7 @@ async def test_tavily_set_restarts_mcp_manager_when_available(tmp_path, monkeypa
         manager.restarts += 1
 
     manager.restart_all = restart_all
-    graph = SimpleNamespace(_settings=settings, _app=app, _mcp_manager=manager)
+    graph = command_context(settings=settings, app=app, mcp_manager=manager)
 
     handled = await SlashHandler(graph).dispatch("/tavily set")
 
@@ -151,7 +152,7 @@ async def test_tavily_delete_removes_key_from_mcp_server_env_and_routes(tmp_path
     from voidx.config import WebToolRoute
     settings.set_web_tool_route("search", WebToolRoute(backend="mcp", server="tavily", tool="tavily_search"))
     settings.set_web_tool_route("fetch", WebToolRoute(backend="mcp", server="tavily", tool="tavily_extract"))
-    graph = SimpleNamespace(_settings=settings, _app=None)
+    graph = command_context(settings=settings, app=None)
 
     handled = await SlashHandler(graph).dispatch("/tavily delete")
 
@@ -168,7 +169,7 @@ async def test_tavily_set_rejects_key_in_command_text(tmp_path, monkeypatch):
     monkeypatch.delenv("TAVILY_API_KEY", raising=False)
     settings = Settings(str(tmp_path))
     app = FakeChoiceApp(result="tvly-secret")
-    graph = SimpleNamespace(_settings=settings, _app=app)
+    graph = command_context(settings=settings, app=app)
 
     handled = await SlashHandler(graph).dispatch("/tavily set tvly-plain")
 
@@ -182,7 +183,7 @@ async def test_tavily_mcp_restart_skips_when_manager_unavailable(tmp_path, monke
     monkeypatch.delenv("TAVILY_API_KEY", raising=False)
     settings = Settings(str(tmp_path))
     app = FakeChoiceApp(result="tvly-secret")
-    graph = SimpleNamespace(_settings=settings, _app=app, _mcp_manager=None)
+    graph = command_context(settings=settings, app=app, mcp_manager=None)
 
     handled = await SlashHandler(graph).dispatch("/tavily set")
 

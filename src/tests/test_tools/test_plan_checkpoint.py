@@ -38,7 +38,7 @@ from voidx.ui.output.events import (
     CheckpointPromptShown,
     ui_events,
 )
-from voidx.agent.task_state import GoalSpec, GoalResolution, IntentResolution, PlanResolution, ToolStatePatch
+from voidx.runtime.task_state import GoalSpec, GoalResolution, IntentResolution, PlanResolution, ToolStatePatch
 from voidx.agent.runtime_context import TaskIntent
 from voidx.skills.context import SKILL_TOOL_CONTEXT_MARKER
 from voidx.workflow.runtime import WorkflowRunState, WorkflowRunStatus
@@ -209,7 +209,7 @@ class TestPlanCheckpoint:
     async def test_plan_checkpoint_workflow_patch_does_not_stop_turn(self, tmp_path):
         from langchain_core.messages import ToolMessage
 
-        from voidx.agent.graph.tool_executor import _ExecutedTool, _state_update_from_executed_tools
+        from voidx.agent.infrastructure.langgraph.runtime.tool_executor import _ExecutedTool, _state_update_from_executed_tools
 
         async def interact(request):
             return UserResponse(value="approved")

@@ -79,7 +79,7 @@ class ProviderError(Exception):
 
 @pytest.mark.asyncio
 async def test_run_subagent_retries_transient_llm_errors_and_cleans_retry_status(tmp_path, monkeypatch):
-    import voidx.agent.graph.subagent as subagent_module
+    import voidx.agent.infrastructure.langgraph.runtime.subagent as subagent_module
 
     attempts = 0
     sleep_delays: list[int] = []
@@ -126,7 +126,7 @@ async def test_run_subagent_retries_transient_llm_errors_and_cleans_retry_status
 
 @pytest.mark.asyncio
 async def test_run_subagent_does_not_retry_context_overflow(tmp_path, monkeypatch):
-    import voidx.agent.graph.subagent as subagent_module
+    import voidx.agent.infrastructure.langgraph.runtime.subagent as subagent_module
 
     attempts = 0
     sleep_delays: list[int] = []
@@ -168,7 +168,7 @@ async def test_run_subagent_does_not_retry_context_overflow(tmp_path, monkeypatc
 
 @pytest.mark.asyncio
 async def test_run_subagent_does_not_retry_non_retryable_llm_errors(tmp_path, monkeypatch):
-    import voidx.agent.graph.subagent as subagent_module
+    import voidx.agent.infrastructure.langgraph.runtime.subagent as subagent_module
 
     attempts = 0
     sleep_delays: list[int] = []
@@ -210,7 +210,7 @@ async def test_run_subagent_does_not_retry_non_retryable_llm_errors(tmp_path, mo
 
 @pytest.mark.asyncio
 async def test_run_subagent_exhausts_retryable_llm_errors(tmp_path, monkeypatch):
-    import voidx.agent.graph.subagent as subagent_module
+    import voidx.agent.infrastructure.langgraph.runtime.subagent as subagent_module
 
     attempts = 0
     sleep_delays: list[int] = []
@@ -266,7 +266,7 @@ async def test_run_subagent_exhausts_retryable_llm_errors(tmp_path, monkeypatch)
 
 @pytest.mark.asyncio
 async def test_run_subagent_retry_uses_text_fallback_without_events(tmp_path, monkeypatch):
-    import voidx.agent.graph.subagent as subagent_module
+    import voidx.agent.infrastructure.langgraph.runtime.subagent as subagent_module
 
     attempts = 0
     sleep_delays: list[int] = []

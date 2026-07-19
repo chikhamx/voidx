@@ -119,7 +119,7 @@ def test_sanitize_failed_tool_exchanges_cleans_content_and_additional_kwargs():
 
 def test_streaming_sanitize_applies_failed_exchange_cleanup():
     """Verify _sanitize_messages_for_replay in streaming.py applies failed exchange cleanup."""
-    from voidx.agent.graph.streaming import _sanitize_messages_for_replay
+    from voidx.agent.infrastructure.langgraph.runtime.streaming import _sanitize_messages_for_replay
 
     messages = [
         HumanMessage(content="do it"),

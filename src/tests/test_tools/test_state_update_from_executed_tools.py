@@ -28,7 +28,7 @@ from voidx.tools.clarify import ClarifyTool, ClarifyInput, _infer_state_patch
 from voidx.tools.skills import SkillsTool
 from voidx.tools.document import DocumentTool, DocumentInput
 from voidx.tools.checkpoint import PlanCheckpointTool
-from voidx.agent.task_state import GoalSpec, GoalResolution, IntentResolution, PlanResolution, ToolStatePatch
+from voidx.runtime.task_state import GoalSpec, GoalResolution, IntentResolution, PlanResolution, ToolStatePatch
 from voidx.agent.runtime_context import TaskIntent
 from voidx.skills.context import SKILL_TOOL_CONTEXT_MARKER
 from voidx.workflow.runtime import WorkflowRunState, WorkflowRunStatus
@@ -38,7 +38,7 @@ import voidx.memory.store as store
 
 class TestStateUpdateFromExecutedTools:
     def test_merges_state_patches(self):
-        from voidx.agent.graph.tool_executor import _state_update_from_executed_tools, _ExecutedTool
+        from voidx.agent.infrastructure.langgraph.runtime.tool_executor import _state_update_from_executed_tools, _ExecutedTool
 
         patch1 = ToolStatePatch(intent=IntentResolution(type=TaskIntent.CODING))
         patch2 = ToolStatePatch(
@@ -64,7 +64,7 @@ class TestStateUpdateFromExecutedTools:
         assert update["workflow_route"] == {"join": "tdd", "leave": "verify"}
 
     def test_later_patch_overrides_earlier(self):
-        from voidx.agent.graph.tool_executor import _state_update_from_executed_tools, _ExecutedTool
+        from voidx.agent.infrastructure.langgraph.runtime.tool_executor import _state_update_from_executed_tools, _ExecutedTool
 
         patch1 = ToolStatePatch(intent=IntentResolution(type=TaskIntent.GENERAL))
         patch2 = ToolStatePatch(intent=IntentResolution(type=TaskIntent.CODING))
@@ -84,7 +84,7 @@ class TestStateUpdateFromExecutedTools:
         assert update["task_intent"] == "coding"
 
     def test_state_patch_updates_runtime_persona(self):
-        from voidx.agent.graph.tool_executor import _state_update_from_executed_tools, _ExecutedTool
+        from voidx.agent.infrastructure.langgraph.runtime.tool_executor import _state_update_from_executed_tools, _ExecutedTool
 
         patch = ToolStatePatch(persona="implement")
         msg = ToolMessage(content="r", tool_call_id="c1")
@@ -100,7 +100,7 @@ class TestStateUpdateFromExecutedTools:
         assert update["persona"] == "implement"
 
     def test_workflow_runs_merge_with_current_state(self):
-        from voidx.agent.graph.tool_executor import _state_update_from_executed_tools, _ExecutedTool
+        from voidx.agent.infrastructure.langgraph.runtime.tool_executor import _state_update_from_executed_tools, _ExecutedTool
 
         current = [
             WorkflowRunState(name="tdd", reason="existing"),
@@ -123,7 +123,7 @@ class TestStateUpdateFromExecutedTools:
         ]
 
     def test_no_patch_returns_empty(self):
-        from voidx.agent.graph.tool_executor import _state_update_from_executed_tools, _ExecutedTool
+        from voidx.agent.infrastructure.langgraph.runtime.tool_executor import _state_update_from_executed_tools, _ExecutedTool
 
         msg = ToolMessage(content="r", tool_call_id="c1")
         result = ToolResult(output="r", metadata={})
@@ -132,7 +132,7 @@ class TestStateUpdateFromExecutedTools:
         assert update == {}
 
     def test_auto_advance_review_has_issues(self):
-        from voidx.agent.graph.tool_executor import _state_update_from_executed_tools, _ExecutedTool
+        from voidx.agent.infrastructure.langgraph.runtime.tool_executor import _state_update_from_executed_tools, _ExecutedTool
 
         current = [
             WorkflowRunState(
@@ -154,7 +154,7 @@ class TestStateUpdateFromExecutedTools:
         assert by_name["feedback"].status == WorkflowRunStatus.ACTIVE
 
     def test_auto_advance_route_terminal_updates_turn(self):
-        from voidx.agent.graph.tool_executor import _state_update_from_executed_tools, _ExecutedTool
+        from voidx.agent.infrastructure.langgraph.runtime.tool_executor import _state_update_from_executed_tools, _ExecutedTool
 
         current = [
             WorkflowRunState(
@@ -181,7 +181,7 @@ class TestStateUpdateFromExecutedTools:
         assert by_name["review"].updated_turn == 9
 
     def test_auto_advance_failed_implementation(self):
-        from voidx.agent.graph.tool_executor import _state_update_from_executed_tools, _ExecutedTool
+        from voidx.agent.infrastructure.langgraph.runtime.tool_executor import _state_update_from_executed_tools, _ExecutedTool
 
         current = [
             WorkflowRunState(
@@ -203,7 +203,7 @@ class TestStateUpdateFromExecutedTools:
         assert by_name["tdd"].status == WorkflowRunStatus.ACTIVE
 
     def test_auto_advance_failed_implementation_without_route_stops_generically(self):
-        from voidx.agent.graph.tool_executor import _state_update_from_executed_tools, _ExecutedTool
+        from voidx.agent.infrastructure.langgraph.runtime.tool_executor import _state_update_from_executed_tools, _ExecutedTool
 
         current = [
             WorkflowRunState(
@@ -222,7 +222,7 @@ class TestStateUpdateFromExecutedTools:
         assert update["should_continue"] is False
 
     def test_auto_advance_failed_implementation_can_loop_back_to_route_end(self):
-        from voidx.agent.graph.tool_executor import _state_update_from_executed_tools, _ExecutedTool
+        from voidx.agent.infrastructure.langgraph.runtime.tool_executor import _state_update_from_executed_tools, _ExecutedTool
 
         current = [
             WorkflowRunState(
@@ -248,7 +248,7 @@ class TestStateUpdateFromExecutedTools:
         assert update.get("should_continue", True) is True
 
     def test_auto_advance_skipped_when_node_already_satisfied(self):
-        from voidx.agent.graph.tool_executor import _state_update_from_executed_tools, _ExecutedTool
+        from voidx.agent.infrastructure.langgraph.runtime.tool_executor import _state_update_from_executed_tools, _ExecutedTool
 
         current = [
             WorkflowRunState(

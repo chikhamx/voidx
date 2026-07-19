@@ -338,7 +338,7 @@ async def test_slash_lsp_dispatches_status_and_restart(tmp_path):
             ]
 
     manager = FakeLspManager()
-    graph = SimpleNamespace(_lsp_manager=manager, _workspace=str(tmp_path))
+    graph = SimpleNamespace(lsp_manager=manager, workspace=str(tmp_path))
     handler = SlashHandler(graph)
 
     assert await handler.dispatch("/lsp status") is True

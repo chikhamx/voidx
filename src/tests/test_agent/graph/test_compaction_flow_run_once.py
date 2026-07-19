@@ -20,11 +20,11 @@ from voidx.agent.agents import (
     get_visible_agents,
 )
 from voidx.agent.prompts import BASE_SYSTEM, PERSONA_MODEL, persona_prompt
-from voidx.agent.graph.convergence import is_step_hint_message
-from voidx.agent.graph.runtime import current_parent_tool_call_id
-from voidx.agent.graph.runtime_guards import RuntimeGuardState, WallClockGuardState
-from voidx.agent.graph import VoidXGraph
-from voidx.agent.graph.tool_execution import AGENT_RESULT_PREVIEW_CHARS, _agent_result_preview
+from voidx.agent.infrastructure.langgraph.runtime.convergence import is_step_hint_message
+from voidx.agent.infrastructure.langgraph.runtime.runtime import current_parent_tool_call_id
+from voidx.agent.infrastructure.langgraph.runtime.runtime_guards import RuntimeGuardState, WallClockGuardState
+from voidx.agent.infrastructure.langgraph.execution import LangGraphExecution
+from voidx.agent.infrastructure.langgraph.execution import AGENT_RESULT_PREVIEW_CHARS, _agent_result_preview
 from voidx.agent.message_rows import RowMessageCacheEntry
 from voidx.agent.runtime_context import InteractionMode, RuntimeContextBuilder
 from voidx.config import Config, ParallelSubagentsConfig, Settings, UserProfile
@@ -44,7 +44,7 @@ from voidx.runtime import GoalResolution, GoalSpec, IntentResolution, PlanResolu
 from voidx.skills.context import SKILL_TOOL_CONTEXT_MARKER
 from voidx.workflow.context import WORKFLOW_CONTEXT_MARKER
 from voidx.workflow.runtime import WorkflowRunState, WorkflowRunStatus
-from voidx.agent.task_state import TaskState, ToolStatePatch, WorkflowRoute
+from voidx.runtime.task_state import TaskState, ToolStatePatch, WorkflowRoute
 from voidx.tools.base import ToolContext, ToolResult
 from voidx.tools.agent import AgentResultContract, AgentTool
 from voidx.tools.registry import ToolRegistry
@@ -54,7 +54,7 @@ from voidx.ui.output.events import DockEventConsumer, StatusFinished, StatusUpda
 
 def _graph(tmp_path):
     cfg = Config(workspace=str(tmp_path))
-    return VoidXGraph(cfg, api_key=None)
+    return LangGraphExecution(cfg, api_key=None)
 
 
 def _task_state_json(**kwargs):
@@ -139,7 +139,7 @@ async def test_compaction_uses_previous_summary_and_prunes_persisted_head(tmp_pa
         await save_message(MessageRow(session_id=session.id, role="assistant", content="old answer"))
         await save_message(MessageRow(session_id=session.id, role="user", content="tail question"))
 
-        graph = VoidXGraph(Config(workspace=str(tmp_path)), api_key=None, session=session)
+        graph = LangGraphExecution(Config(workspace=str(tmp_path)), api_key=None, session=session)
         graph._compaction_summary = "previous summary"
         graph._compaction.is_overflow = lambda _tokens: True
         graph._compaction.select_details = lambda messages: CompactionSelection(
@@ -169,7 +169,7 @@ async def test_compaction_uses_previous_summary_and_prunes_persisted_head(tmp_pa
         set_dock(test_dock)
         test_dock.begin_capture()
         try:
-            await graph._run_once("current question")
+            await graph.run_turn("current question")
         finally:
             test_dock.deactivate()
             test_dock.reset()
@@ -189,7 +189,7 @@ async def test_compaction_uses_previous_summary_and_prunes_persisted_head(tmp_pa
         assert "current question" in initial_contents
         assert graph._compaction_summary == "updated summary"
 
-        resumed = VoidXGraph(Config(workspace=str(tmp_path)), api_key=None, session=session)
+        resumed = LangGraphExecution(Config(workspace=str(tmp_path)), api_key=None, session=session)
         await resumed._restore_runtime_state()
 
         assert resumed._compaction_summary == "updated summary"
@@ -198,14 +198,14 @@ async def test_compaction_uses_previous_summary_and_prunes_persisted_head(tmp_pa
 
 
 @pytest.mark.asyncio
-async def test_run_once_passes_compacted_messages_to_graph(tmp_path):
+async def testrun_turn_passes_compacted_messages_to_graph(tmp_path):
     session = await create_session(workspace=str(tmp_path))
     try:
         await save_message(MessageRow(session_id=session.id, role="user", content="old question"))
         await save_message(MessageRow(session_id=session.id, role="assistant", content="old answer"))
         await save_message(MessageRow(session_id=session.id, role="user", content="tail question"))
 
-        graph = VoidXGraph(Config(workspace=str(tmp_path)), api_key=None, session=session)
+        graph = LangGraphExecution(Config(workspace=str(tmp_path)), api_key=None, session=session)
         graph._compaction.is_overflow = lambda _tokens: False
         graph._compaction.is_soft_overflow = lambda _tokens: True
         graph._compaction.select_preflight_details = lambda messages, *, model="": CompactionSelection(
@@ -235,7 +235,7 @@ async def test_run_once_passes_compacted_messages_to_graph(tmp_path):
         set_dock(test_dock)
         test_dock.begin_capture()
         try:
-            await graph._run_once("current question")
+            await graph.run_turn("current question")
         finally:
             test_dock.deactivate()
             test_dock.reset()
@@ -250,14 +250,14 @@ async def test_run_once_passes_compacted_messages_to_graph(tmp_path):
 
 
 @pytest.mark.asyncio
-async def test_run_once_finishes_analyzing_before_preflight_compaction_status(tmp_path):
+async def testrun_turn_finishes_analyzing_before_preflight_compaction_status(tmp_path):
     session = await create_session(workspace=str(tmp_path))
     try:
         await save_message(MessageRow(session_id=session.id, role="user", content="old question"))
         await save_message(MessageRow(session_id=session.id, role="assistant", content="old answer"))
         await save_message(MessageRow(session_id=session.id, role="user", content="tail question"))
 
-        graph = VoidXGraph(Config(workspace=str(tmp_path)), api_key=None, session=session)
+        graph = LangGraphExecution(Config(workspace=str(tmp_path)), api_key=None, session=session)
         graph._compaction.is_overflow = lambda _tokens: False
         graph._compaction.is_soft_overflow = lambda _tokens: True
         graph._compaction.select_preflight_details = lambda messages, *, model="": CompactionSelection(
@@ -289,7 +289,7 @@ async def test_run_once_finishes_analyzing_before_preflight_compaction_status(tm
         test_dock.begin_capture()
         ui_events.start(Recorder())
         try:
-            await graph._run_once("current question")
+            await graph.run_turn("current question")
             await ui_events.drain()
         finally:
             await ui_events.stop()
@@ -320,7 +320,7 @@ async def test_compaction_drops_removed_row_cache_entries(tmp_path):
         await save_message(MessageRow(session_id=session.id, role="assistant", content="old answer"))
         await save_message(MessageRow(session_id=session.id, role="user", content="tail question"))
 
-        graph = VoidXGraph(Config(workspace=str(tmp_path)), api_key=None, session=session)
+        graph = LangGraphExecution(Config(workspace=str(tmp_path)), api_key=None, session=session)
         graph._context_cache.row_messages = {
             1: RowMessageCacheEntry("old-user", HumanMessage(content="old question", id="1")),
             2: RowMessageCacheEntry("old-assistant", AIMessage(content="old answer", id="2")),
@@ -347,7 +347,7 @@ async def test_slash_compact_runs_manual_session_compaction(tmp_path):
         await save_message(MessageRow(session_id=session.id, role="assistant", content="old answer"))
         await save_message(MessageRow(session_id=session.id, role="user", content="tail question"))
 
-        graph = VoidXGraph(Config(workspace=str(tmp_path), ask_compact=True), api_key=None, session=session)
+        graph = LangGraphExecution(Config(workspace=str(tmp_path), ask_compact=True), api_key=None, session=session)
         graph._compaction.select_details = lambda messages: CompactionSelection(
             head=messages[:2],
             tail_id=getattr(messages[2], "id", None),
