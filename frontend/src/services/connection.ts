@@ -74,7 +74,8 @@ export async function resolveWsUrl(): Promise<string | null> {
 export function connect(url: string): void {
   const generation = connectionGeneration;
   setConnectionStatus("connecting");
-  socket = createWorkerSocket(url);
+  const sock = createWorkerSocket(url);
+  socket = sock;
   let reconnecting = false;
   const scheduleReconnect = () => {
     if (generation !== connectionGeneration) {
@@ -90,19 +91,19 @@ export function connect(url: string): void {
       setTimeout(() => connect(url), 5000);
     }
   };
-  socket.addEventListener("open", () => {
+  sock.addEventListener("open", () => {
     reconnectAttempts = 0;
     setConnectionStatus("connected");
   });
-  _setSocket(socket);
-  socket.addEventListener("close", () => {
+  _setSocket(sock);
+  sock.addEventListener("close", () => {
     if (generation !== connectionGeneration) {
       return;
     }
     setConnectionStatus("disconnected");
     scheduleReconnect();
   });
-  socket.addEventListener("error", () => {
+  sock.addEventListener("error", () => {
     if (generation !== connectionGeneration) {
       return;
     }

@@ -6,7 +6,7 @@
     "dev": "vite --host 127.0.0.1",
     "build": "vite build",
     "preview": "vite preview --host 127.0.0.1",
-    "schema": "python ../scripts/export_ui_protocol_schema.py && json2ts src/rpc/protocol.schema.json -o src/rpc/protocol.d.ts --bannerComment \"/* generated from protocol.schema.json */\"",
+    "schema": "../python.py ../scripts/export_ui_protocol_schema.py && json2ts src/rpc/protocol.schema.json -o src/rpc/protocol.d.ts --bannerComment \"/* generated from protocol.schema.json */\"",
     "test": "vitest run",
     "test:watch": "vitest"
   },

@@ -1,5 +1,10 @@
 import type { ProfileSummary, SlashCommand } from "../utils/types";
 import type { SettingsSnapshot } from "../ui/settings";
+import { iconSvg } from "../utils/icons";
+
+/** 发送按钮图标：待机=向上箭头，运行=停止方块 */
+export const sendArrowIcon = iconSvg("arrow-up", 18, 2);
+export const sendStopIcon = iconSvg("stop", 16, 1.6);
 
 export interface UiState {
   connection: string;
@@ -165,7 +170,7 @@ export function setConnectionStatus(status: string, message?: string): void {
 export function setRunning(running: boolean): void {
   uiState.isRunning = running;
   btnSendEl.classList.toggle("running", running);
-  btnSendEl.textContent = running ? "■" : "↑";
+  btnSendEl.innerHTML = running ? sendStopIcon : sendArrowIcon;
   btnSendEl.setAttribute("aria-label", running ? "Cancel" : "Send");
   inputEl.disabled = uiState.isSwitchingModel;
   updateStatusBar();

@@ -265,15 +265,15 @@ describe("renderSidebar", () => {
   it("defines compact hover styling for expand controls", () => {
     const styles = readStylesCSS();
 
-    expect(styles).toMatch(/\.vx-workspace-expand-controls \{[^}]*display: flex;[^}]*gap: 14px;[^}]*padding-left: 37px;[^}]*\}/);
-    expect(styles).toMatch(/\.vx-workspace-expand \{[^}]*color: var\(--vx-text-dim\);[^}]*font-size: 13px;[^}]*width: auto;[^}]*\}/);
+    expect(styles).toMatch(/\.vx-workspace-expand-controls \{[^}]*display: flex;[^}]*gap: var\(--vx-space-3\);[^}]*padding-left: var\(--vx-space-6\);[^}]*\}/);
+    expect(styles).toMatch(/\.vx-workspace-expand \{[^}]*color: var\(--vx-text-dim\);[^}]*font-size: var\(--vx-text-xs\);[^}]*width: auto;[^}]*\}/);
     expect(styles).toMatch(/\.vx-workspace-expand:hover \{[^}]*background: transparent;[^}]*color: var\(--vx-text-secondary\);[^}]*\}/);
   });
 
   it("keeps collapsed workspace sessions visually hidden despite grid styling", () => {
     const styles = readStylesCSS();
 
-    expect(styles).toMatch(/\.vx-workbench-shell \.vx-session-children\[hidden\] \{[^}]*display: none;[^}]*\}/);
+    expect(styles).toMatch(/\.vx-session-children\[hidden\] \{[^}]*display: none;[^}]*\}/);
   });
 
   it("truncates long session titles and shows relative time", () => {
@@ -321,8 +321,8 @@ describe("renderSidebar", () => {
     const workspaceBtn = document.querySelector(".vx-workspace-session-new-chat");
 
     expect(workspaceBtn).not.toBeNull();
-    expect(styles).toMatch(/\.vx-workbench-shell \.vx-directory-new-chat \{[^}]*opacity: 0;[^}]*pointer-events: auto;[^}]*\}/);
-    expect(styles).toMatch(/\.vx-workbench-shell \.vx-directory-row:hover \.vx-directory-new-chat,[\s\S]*\.vx-workbench-shell \.vx-directory-new-chat:focus-visible \{[^}]*opacity: 1;[^}]*\}/);
+    expect(styles).toMatch(/\.vx-directory-new-chat \{[^}]*opacity: 0;[^}]*\}/);
+    expect(styles).toMatch(/\.vx-directory-row:hover \.vx-directory-new-chat,[\s\S]*\.vx-directory-new-chat:focus-visible \{[^}]*opacity: 1;[^}]*\}/);
 
     workspaceBtn.click();
 
@@ -337,9 +337,9 @@ describe("renderSidebar", () => {
     const toggle = document.querySelector(".vx-workspace-collapse-toggle");
 
     expect(toggle).not.toBeNull();
-    expect(styles).toMatch(/\.vx-workbench-shell \.vx-directory-row \{[^}]*position: relative;[^}]*\}/);
-    expect(styles).toMatch(/\.vx-workspace-collapse-toggle \{[^}]*opacity: 0;[^}]*position: absolute;[^}]*right: 39px;[^}]*top: 50%;[^}]*transform: translateY\(-50%\);[^}]*\}/);
-    expect(styles).toMatch(/\.vx-workbench-shell \.vx-directory-row:hover \.vx-workspace-collapse-toggle,[\s\S]*\.vx-workbench-shell \.vx-workspace-collapse-toggle:focus-visible \{[^}]*opacity: 1;[^}]*\}/);
+    expect(styles).toMatch(/\.vx-directory-row \{[^}]*position: relative;[^}]*\}/);
+    expect(styles).toMatch(/\.vx-workspace-collapse-toggle \{[^}]*opacity: 0;[^}]*position: absolute;[^}]*right: 34px;[^}]*top: 50%;[^}]*transform: translateY\(-50%\);[^}]*\}/);
+    expect(styles).toMatch(/\.vx-directory-row:hover \.vx-workspace-collapse-toggle,[\s\S]*\.vx-workspace-collapse-toggle:focus-visible \{[^}]*opacity: 1;[^}]*\}/);
   });
 
   it("marks active thread with active class", () => {
@@ -668,9 +668,9 @@ describe("session item actions", () => {
     expandWorkspace();
     const styles = readStylesCSS();
 
-    expect(styles).toMatch(/\.vx-workbench-shell \.vx-session-actions \{[^}]*background: transparent;[^}]*border: 0;[^}]*opacity: 0;[^}]*pointer-events: none;[^}]*\}/);
-    expect(styles).toMatch(/\.vx-workbench-shell \.vx-session-item:hover \.vx-session-actions,[\s\S]*\.vx-workbench-shell \.vx-session-actions:focus-within \{[^}]*color: #3f4348;[^}]*opacity: 1;[^}]*pointer-events: auto;[^}]*\}/);
-    expect(styles).toMatch(/\.vx-workbench-shell \.vx-session-action-icon \.vx-sidebar-row-icon svg \{[^}]*stroke-width: 1\.9;[^}]*\}/);
-    expect(styles).toMatch(/\.vx-workbench-shell \.vx-session-action-icon:hover,[\s\S]*\.vx-workbench-shell \.vx-session-action-icon:focus-visible \{[^}]*background: transparent;[^}]*color: #15171a;[^}]*\}/);
+    expect(styles).toMatch(/\.vx-session-actions \{[^}]*opacity: 0;[^}]*pointer-events: none;[^}]*\}/);
+    expect(styles).toMatch(/\.vx-session-item:hover \.vx-session-actions,[\s\S]*\.vx-session-actions:focus-within \{[^}]*opacity: 1;[^}]*pointer-events: auto;[^}]*\}/);
+    expect(styles).toMatch(/\.vx-session-action-icon \{[^}]*height: 24px;[^}]*width: 24px;[^}]*\}/);
+    expect(styles).toMatch(/\.vx-session-action-icon:hover,[\s\S]*\.vx-session-action-icon:focus-visible \{[^}]*background: var\(--vx-bg-hover\);[^}]*color: var\(--vx-text-primary\);[^}]*\}/);
   });
 });

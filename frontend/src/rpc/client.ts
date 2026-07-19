@@ -8,8 +8,8 @@ type RequestHandler = (params: Record<string, unknown>) => unknown;
 type RpcSocket = {
   readyState: number;
   send: (data: string) => void;
-  close?: () => void;
-  addEventListener?: (type: string, handler: (event: MessageEvent | Event) => void) => void;
+  close: () => void;
+  addEventListener: (type: string, handler: (event: MessageEvent | Event) => void) => void;
   onmessage?: ((ev: MessageEvent) => void) | null;
 };
 type WorkerLike = {

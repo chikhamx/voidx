@@ -1,452 +1,324 @@
-/* === Three-Column Shell === */
+/* ============================================================
+   Layout — 应用骨架：Titlebar / Sidebar / 主区 / Dock
+   Kimi-grade: 分区背景层级、hairline 分隔、大量留白
+   ============================================================ */
+
+/* === Shell === */
 .vx-shell {
   display: flex;
   flex-direction: column;
   height: 100vh;
   overflow: hidden;
+  background: var(--vx-bg-canvas);
 }
 
+/* === Titlebar === */
 .vx-titlebar {
-  align-items: center;
-  background: var(--vx-bg-surface);
-  border-bottom: 1px solid var(--vx-border);
+  align-items: stretch;
   display: flex;
-  gap: var(--vx-space-4);
-  padding: var(--vx-space-2) var(--vx-space-5);
+  height: var(--vx-titlebar-height);
+  min-height: var(--vx-titlebar-height);
+  padding: 0;
+  gap: 0;
   -webkit-app-region: drag;
   user-select: none;
 }
-.vx-titlebar-left { align-items: center; display: flex; gap: var(--vx-space-2); }
-.vx-titlebar-center { flex: 1; }
-.vx-titlebar-right { align-items: center; display: flex; gap: var(--vx-space-2); }
-.vx-brand { color: var(--vx-text-primary); font-weight: 700; }
-.vx-search {
-  background: var(--vx-bg-base);
-  border: 1px solid var(--vx-border);
-  border-radius: var(--vx-radius-sm);
-  color: var(--vx-text-primary);
-  font: inherit;
-  padding: var(--vx-space-1) var(--vx-space-2);
-  width: 100%;
-}
-.vx-search:focus { border-color: var(--vx-accent); outline: none; }
 
-.vx-body {
-  display: flex;
-  flex: 1;
-  min-height: 0;
-}
-
-/* Sidebar */
-.vx-sidebar {
-  background: var(--vx-bg-surface);
-  border-right: 1px solid var(--vx-border);
-  display: flex;
-  flex-direction: column;
-  width: var(--vx-sidebar-width);
-}
-.vx-sidebar-header { padding: var(--vx-space-2) var(--vx-space-3); }
-.vx-new-chat {
-  background: var(--vx-bg-elevated);
-  border: 1px solid var(--vx-border);
-  border-radius: var(--vx-radius-sm);
-  color: var(--vx-text-primary);
-  cursor: pointer;
-  font: inherit;
-  padding: var(--vx-space-1) var(--vx-space-2);
-  width: 100%;
-}
-.vx-new-chat:hover { background: var(--vx-bg-hover); border-color: var(--vx-accent); }
-.vx-session-list {
-  flex: 1;
-  overflow-y: auto;
-  padding: var(--vx-space-1) 0;
-}
-
-/* Main area */
-.vx-main {
-  display: flex;
-  flex-direction: column;
-  flex: 1;
-  min-width: 0;
-}
-.vx-main .transcript { flex: 1; }
-.vx-composer-actions { display: flex; gap: var(--vx-space-2); }
-
-/* Dock */
-.vx-dock {
-  background: var(--vx-bg-surface);
-  border-left: 1px solid var(--vx-border);
-  display: flex;
-  flex-direction: column;
-  width: var(--vx-dock-width);
-}
-.vx-dock.collapsed { width: var(--vx-dock-collapsed); }
-.vx-dock.collapsed .vx-dock-content { display: none; }
-.vx-dock-tabs {
+.vx-titlebar-left {
   align-items: center;
-  border-bottom: 1px solid var(--vx-border);
-  display: flex;
-  gap: 0;
-}
-.vx-dock-tab {
-  background: none;
-  border: 0;
-  border-bottom: 2px solid transparent;
-  color: var(--vx-text-muted);
-  cursor: pointer;
-  font: inherit;
-  padding: var(--vx-space-2) var(--vx-space-3);
-}
-.vx-dock-tab:hover { color: var(--vx-text-primary); }
-.vx-dock-tab.active { border-bottom-color: var(--vx-accent); color: var(--vx-text-primary); }
-.vx-dock-toggle {
-  background: none;
-  border: 0;
-  color: var(--vx-text-muted);
-  cursor: pointer;
-  margin-left: auto;
-  padding: var(--vx-space-2);
-}
-.vx-dock-content { flex: 1; overflow-y: auto; }
-.vx-dock-pane { padding: var(--vx-space-3); }
-
-/* Status bar */
-.vx-statusbar {
-  align-items: center;
-  background: var(--vx-bg-surface);
-  border-top: 1px solid var(--vx-border);
-  display: flex;
-  gap: var(--vx-space-4);
-  padding: var(--vx-space-1) var(--vx-space-5);
-}
-
-/* === Desktop Workbench Redesign Layout === */
-:root {
-  color-scheme: light;
-}
-
-body {
-  background: #f9fafb;
-  color: #1f2328;
-}
-
-.vx-workbench-shell {
-  --vx-bg-base: #ffffff;
-  --vx-bg-surface: #f3f4f6;
-  --vx-bg-elevated: #ffffff;
-  --vx-bg-hover: #e5e7eb;
-  --vx-border: #e5e7eb;
-  --vx-border-strong: #d1d5db;
-  --vx-text-primary: #202124;
-  --vx-text-secondary: #3f4247;
-  --vx-text-muted: #686c73;
-  --vx-text-dim: #7d828b;
-  --vx-accent: #1f6feb;
-  --vx-success: #1a7f37;
-  --vx-warning: #9a6700;
-  --vx-error: #cf222e;
-  --vx-diff-add: #1a7f37;
-  --vx-diff-del: #cf222e;
-  --vx-diff-hunk: #8250df;
-  --vx-sidebar-width: 260px;
-  --vx-sidebar-row-padding: 7px 9px;
-  background: #f9fafb;
-  color: var(--vx-text-primary);
-}
-
-.vx-workbench-shell .vx-titlebar {
-  background: transparent;
-  border-bottom: 0;
-  display: flex;
-  height: 34px;
-  min-height: 34px;
-  padding: 0;
-  gap: 0;
-}
-
-.vx-workbench-shell .vx-titlebar-left {
-  align-items: center;
-  background: #f9fafb;
-  border-right: 1px solid #e5e7eb;
+  background: var(--vx-bg-app);
   box-sizing: border-box;
   display: flex;
-  gap: 10px;
+  gap: var(--vx-space-1);
   height: 100%;
-  padding-left: 18px;
+  padding-left: var(--vx-space-3);
   width: var(--vx-sidebar-width);
   flex-shrink: 0;
   overflow: hidden;
 }
 
-.vx-workbench-shell .vx-titlebar-left * {
-  display: none !important;
+body.is-desktop .vx-titlebar-left {
+  padding-left: 80px; /* macOS traffic lights */
 }
 
-.vx-workbench-shell .vx-titlebar-right {
+.vx-titlebar-right {
   align-items: center;
-  background: #ffffff;
-  border-bottom: 1px solid #e5e7eb;
+  background: var(--vx-bg-canvas);
+  border-bottom: 1px solid var(--vx-border);
   display: flex;
   flex: 1;
+  gap: var(--vx-space-2);
   height: 100%;
-  padding-left: 20px;
-  padding-right: 18px;
-}
-
-.vx-titlebar-tool {
-  align-items: center;
-  background: transparent;
-  border: 0;
-  border-radius: 8px;
-  color: var(--vx-text-muted);
-  cursor: pointer;
-  display: inline-flex;
-  font: inherit;
-  font-size: 18px;
-  height: 28px;
-  justify-content: center;
-  width: 34px;
-  -webkit-app-region: no-drag;
-}
-
-.vx-titlebar-tool:hover:not(:disabled) {
-  background: #e5e7eb;
-  color: var(--vx-text-primary);
-}
-
-.vx-titlebar-tool:disabled {
-  color: #b5b7ba;
-  cursor: default;
+  padding: 0 var(--vx-space-3) 0 var(--vx-space-4);
+  min-width: 0;
 }
 
 .vx-titlebar-center {
   align-items: center;
   display: flex;
   justify-content: center;
+  flex: 1;
+}
+
+.vx-titlebar-tool {
+  align-items: center;
+  background: transparent;
+  border: 0;
+  border-radius: var(--vx-radius-sm);
+  color: var(--vx-text-muted);
+  cursor: pointer;
+  display: inline-flex;
+  height: 30px;
+  justify-content: center;
+  padding: 0;
+  width: 32px;
+  -webkit-app-region: no-drag;
+  transition: background var(--vx-transition-fast), color var(--vx-transition-fast);
+}
+
+.vx-titlebar-tool:hover:not(:disabled) {
+  background: var(--vx-bg-hover);
+  color: var(--vx-text-primary);
+}
+
+.vx-titlebar-tool:disabled {
+  color: var(--vx-text-dim);
+  cursor: default;
 }
 
 .vx-titlebar-project {
   color: var(--vx-text-muted);
-  font-size: 13px;
+  font-size: var(--vx-text-sm);
   font-weight: 600;
 }
 
-.vx-panel-toggle {
-  background: transparent;
-  border: 1px solid var(--vx-border);
-  border-radius: 8px;
-  color: var(--vx-text-muted);
-  cursor: pointer;
-  height: 28px;
-  width: 32px;
-}
+.vx-brand { color: var(--vx-text-primary); font-weight: 700; }
 
-.vx-workbench-shell .vx-body {
-  background: #ffffff;
+/* 会话标题（titlebar 右侧） */
+.vx-chat-header {
+  align-items: center;
+  display: flex;
+  gap: var(--vx-space-2);
+  min-width: 0;
   flex: 1;
 }
 
-.vx-workbench-shell .vx-sidebar {
-  background: #f9fafb;
-  border-right: 0;
+.vx-chat-header-icon {
+  align-items: center;
+  color: var(--vx-text-muted);
+  display: inline-flex;
+  flex-shrink: 0;
+}
+
+.vx-chat-header-title {
+  color: var(--vx-text-secondary);
+  font-size: var(--vx-text-sm);
+  min-width: 0;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.vx-chat-header-workspace { color: var(--vx-text-muted); }
+.vx-chat-header-separator { color: var(--vx-text-dim); }
+.vx-chat-header-session-title { color: var(--vx-text-primary); font-weight: 550; }
+
+.vx-chat-header-btn {
+  align-items: center;
+  background: transparent;
+  border: 0;
+  border-radius: var(--vx-radius-sm);
+  color: var(--vx-text-muted);
+  cursor: pointer;
+  display: inline-flex;
+  height: 28px;
+  justify-content: center;
+  padding: 0;
+  width: 28px;
+  transition: background var(--vx-transition-fast), color var(--vx-transition-fast);
+}
+
+.vx-chat-header-btn:hover {
+  background: var(--vx-bg-hover);
+  color: var(--vx-text-primary);
+}
+
+/* === Body 三列 === */
+.vx-body {
+  background: var(--vx-bg-canvas);
+  display: flex;
+  flex: 1;
+  min-height: 0;
+}
+
+/* === Sidebar === */
+.vx-sidebar {
+  background: var(--vx-bg-app);
+  display: flex;
+  flex-direction: column;
   flex: 0 0 var(--vx-sidebar-width);
-  gap: 10px;
-  padding: 10px 8px;
+  gap: var(--vx-space-2);
+  padding: var(--vx-space-2);
   width: var(--vx-sidebar-width);
-}
-
-.vx-workbench-shell .vx-sidebar-resizer {
-  background: #e5e7eb;
-  cursor: col-resize;
-  flex: 0 0 1px;
-  position: relative;
-  z-index: 4;
-}
-
-.vx-workbench-shell .vx-sidebar-resizer::after {
-  content: "";
-  position: absolute;
-  top: 0;
-  bottom: 0;
-  left: -4px;
-  right: -4px;
-  background: transparent;
-}
-
-.vx-workbench-shell .vx-sidebar-resizer:hover,
-.vx-workbench-shell .vx-sidebar-resizer.dragging {
-  background: #1f6feb;
-}
-
-.vx-sidebar ::-webkit-scrollbar-track {
-  background: transparent;
+  min-height: 0;
 }
 
 .vx-sidebar-nav,
-.vx-session-list,
 .vx-sidebar-footer {
   display: grid;
-  gap: 4px;
+  gap: 2px;
 }
 
-.vx-workbench-shell .vx-sidebar-section {
+.vx-sidebar-section {
   display: grid;
   flex: 1;
-  gap: 6px;
+  gap: var(--vx-space-1);
   grid-template-rows: auto minmax(0, 1fr);
   min-height: 0;
 }
 
+/* 侧栏行（导航 / 会话 / 目录） */
+.vx-nav-item,
+.vx-directory-row,
+.vx-session-item {
+  align-items: center;
+  background: transparent;
+  border: 0;
+  border-radius: var(--vx-radius-sm);
+  color: var(--vx-text-secondary);
+  cursor: pointer;
+  display: flex;
+  font: inherit;
+  font-size: var(--vx-text-sm);
+  gap: var(--vx-space-2);
+  min-height: 32px;
+  padding: 0 var(--vx-space-2);
+  text-align: left;
+  width: 100%;
+  transition: background var(--vx-transition-fast), color var(--vx-transition-fast);
+}
+
+.vx-nav-item:hover,
+.vx-directory-row:hover,
+.vx-session-item:hover {
+  background: var(--vx-bg-hover);
+  color: var(--vx-text-primary);
+}
+
+.vx-hidden-action { display: none; }
+
+/* 新对话 — 轻微浮起的卡片按钮 */
+.vx-new-chat {
+  background: var(--vx-bg-surface);
+  border: 1px solid var(--vx-border);
+  box-shadow: var(--vx-shadow-xs);
+  color: var(--vx-text-primary);
+  font-weight: 550;
+  min-height: 36px;
+  padding: 0 var(--vx-space-3);
+}
+
+.vx-new-chat:hover {
+  background: var(--vx-bg-surface);
+  border-color: var(--vx-border-strong);
+  box-shadow: var(--vx-shadow-sm);
+  color: var(--vx-text-primary);
+}
+
+/* 搜索 — 常驻内联输入框 */
+.vx-search-item {
+  align-items: center;
+  cursor: text;
+  display: flex;
+  min-height: 32px;
+  position: relative;
+}
+
+.vx-search {
+  background: transparent;
+  border: 0;
+  color: var(--vx-text-primary);
+  flex: 1;
+  font: inherit;
+  font-size: var(--vx-text-sm);
+  min-width: 0;
+  outline: none;
+  padding: 0;
+}
+
+.vx-search::placeholder { color: var(--vx-text-dim); }
+
+.vx-search-item:focus-within {
+  background: var(--vx-bg-surface);
+  box-shadow: 0 0 0 1.5px var(--vx-border-focus);
+}
+
+/* 分组标题 */
 .vx-sidebar-heading {
-  color: var(--vx-text-dim);
-  font-size: 11px;
-  font-weight: 700;
+  align-items: center;
+  color: var(--vx-text-muted);
+  display: flex;
+  font-size: var(--vx-text-xs);
+  font-weight: 600;
+  gap: var(--vx-space-2);
   letter-spacing: 0.04em;
-  padding: 0 10px;
+  min-height: 28px;
+  padding: 0 var(--vx-space-2);
   text-transform: uppercase;
 }
 
-.vx-workbench-shell .vx-project-heading {
-  align-items: center;
-  display: flex;
-  gap: 8px;
-  justify-content: flex-start;
-}
-
-.vx-workbench-shell .vx-project-heading {
-  color: var(--vx-text-secondary);
-  font-size: 14px;
-  font-weight: 650;
-  letter-spacing: 0;
-  min-height: 30px;
-  padding: var(--vx-sidebar-row-padding);
-  text-transform: none;
-}
-
-.vx-workbench-shell .vx-project-heading .vx-sidebar-row-icon {
-  color: var(--vx-text-secondary);
-}
-
-.vx-project-heading-label {
-  flex: 1 1 auto;
-}
+.vx-project-heading { cursor: default; }
+.vx-project-heading-label { flex: 1 1 auto; }
 
 .vx-project-add {
   align-items: center;
   background: transparent;
   border: 0;
   border-radius: 6px;
-  color: var(--vx-text-secondary);
+  color: var(--vx-text-muted);
   cursor: pointer;
   display: inline-flex;
-  font: inherit;
-  font-size: 15px;
-  height: 24px;
+  height: 22px;
   justify-content: center;
-  line-height: 1;
-  margin-right: -3px;
   opacity: 0;
   padding: 0;
-  pointer-events: auto;
-  transition: opacity 0.12s ease, background-color 0.12s ease, color 0.12s ease;
-  width: 24px;
+  transition: opacity var(--vx-transition-fast), background var(--vx-transition-fast), color var(--vx-transition-fast);
+  width: 22px;
 }
 
 .vx-project-heading:hover .vx-project-add,
-.vx-project-add:focus-visible {
-  opacity: 1;
-}
+.vx-project-add:focus-visible { opacity: 1; }
 
 .vx-project-add:hover {
-  background: transparent;
+  background: var(--vx-bg-active);
   color: var(--vx-text-primary);
 }
 
-.vx-nav-item,
-.vx-workbench-shell .vx-directory-row,
-.vx-workbench-shell .vx-session-item {
-  align-items: center;
-  background: transparent;
-  border: 0;
-  border-radius: 8px;
-  color: var(--vx-text-secondary);
-  cursor: pointer;
-  display: flex;
-  font: inherit;
-  font-size: 14px;
-  gap: 8px;
-  min-height: 30px;
-  padding: var(--vx-sidebar-row-padding);
-  text-align: left;
-  width: 100%;
-}
-
-.vx-hidden-action {
-  display: none;
-}
-
-.vx-nav-item:hover,
-.vx-session-item:hover {
-  background: #e9e9e4;
-}
-
-.vx-new-chat {
-  color: var(--vx-text-primary);
-  font-weight: 650;
-}
-
-.vx-new-chat:hover {
-  background: #e9e9e4;
-}
-
-.vx-search-item {
-  align-items: center;
-  display: flex;
-  height: 34px;
-  position: relative;
-}
-
-.vx-search-item .vx-search {
-  background: #ffffff;
-  border: 1px solid var(--vx-border);
-  border-radius: 8px;
-  color: var(--vx-text-primary);
-  height: 30px;
-  inset: calc(100% + 6px) 0 auto 0;
-  position: absolute;
-  width: 100%;
-  z-index: 2;
-}
-
-.vx-search-item:not(:focus-within) .vx-search {
-  display: none;
-}
-
-.vx-workbench-shell .vx-session-list {
+/* 会话列表 */
+.vx-session-list {
   display: grid;
   align-content: start;
-  gap: 4px;
+  gap: 1px;
   min-height: 0;
   overflow-y: auto;
   padding: 0;
 }
 
-.vx-workbench-shell .vx-directory-group {
-  margin-bottom: 0;
+.vx-directory-group { margin-bottom: var(--vx-space-1); }
+
+.vx-directory-row {
+  color: var(--vx-text-primary);
+  font-weight: 550;
+  min-height: 30px;
+  position: relative;
 }
 
-.vx-workbench-shell .vx-directory-row {
-  color: var(--vx-text-primary);
-  font-size: 14px;
-  font-weight: 650;
-  min-height: 30px;
-  padding: var(--vx-sidebar-row-padding);
-  position: relative;
-  text-transform: none;
-  letter-spacing: 0;
-  cursor: pointer;
-  margin-left: 12px;
+.vx-directory-name {
+  flex: 1 1 auto;
+  min-width: 0;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
 }
 
 .vx-workspace-collapse-toggle {
@@ -454,103 +326,66 @@ body {
   background: transparent;
   border: 0;
   border-radius: 6px;
-  color: var(--vx-text-secondary);
+  color: var(--vx-text-muted);
   cursor: pointer;
-  display: none !important;
-  height: 24px;
+  display: inline-flex;
+  height: 22px;
   justify-content: center;
   opacity: 0;
   padding: 0;
   position: absolute;
-  right: 39px;
+  right: 34px;
   top: 50%;
   transform: translateY(-50%);
-  transition: opacity 0.12s ease, background-color 0.12s ease, color 0.12s ease;
-  width: 20px;
+  transition: opacity var(--vx-transition-fast), color var(--vx-transition-fast);
+  width: 22px;
 }
 
-.vx-workbench-shell .vx-directory-row:hover .vx-workspace-collapse-toggle,
-.vx-workbench-shell .vx-workspace-collapse-toggle:focus-visible {
-  color: #4b4f54;
-  opacity: 1;
-}
+.vx-directory-row:hover .vx-workspace-collapse-toggle,
+.vx-workspace-collapse-toggle:focus-visible { opacity: 1; }
+.vx-workspace-collapse-toggle:hover { color: var(--vx-text-primary); }
 
-.vx-workspace-collapse-toggle:hover {
-  background: transparent;
-  color: var(--vx-text-primary);
-}
-
-.vx-workspace-collapse-toggle .vx-sidebar-row-icon {
-  flex-basis: 16px;
-  height: 16px;
-  width: 16px;
-}
-
-.vx-workspace-collapse-toggle .vx-sidebar-row-icon svg {
-  height: 16px;
-  width: 16px;
-}
-
-.vx-workbench-shell .vx-workspace-session-group.active .vx-directory-row {
-  color: var(--vx-text-primary);
-}
-
-.vx-workbench-shell .vx-directory-new-chat {
+.vx-directory-new-chat {
   align-items: center;
   background: transparent;
   border: 0;
   border-radius: 6px;
-  color: var(--vx-text-secondary);
+  color: var(--vx-text-muted);
   cursor: pointer;
   display: inline-flex;
   justify-content: center;
   margin-left: auto;
-  min-height: 26px;
-  min-width: 26px;
+  min-height: 22px;
+  min-width: 22px;
   opacity: 0;
   padding: 0;
-  pointer-events: auto;
-  transition: opacity 0.12s ease, background-color 0.12s ease, color 0.12s ease;
+  transition: opacity var(--vx-transition-fast), color var(--vx-transition-fast);
 }
 
-.vx-workbench-shell .vx-directory-row:hover .vx-directory-new-chat,
-.vx-workbench-shell .vx-directory-new-chat:focus-visible {
-  color: #4b4f54;
-  opacity: 1;
-}
+.vx-directory-row:hover .vx-directory-new-chat,
+.vx-directory-new-chat:focus-visible { opacity: 1; }
+.vx-directory-new-chat:hover { color: var(--vx-text-primary); }
 
-.vx-workbench-shell .vx-directory-new-chat:hover {
-  background: transparent;
-  color: var(--vx-text-primary);
-}
-
-.vx-workbench-shell .vx-session-children {
+.vx-session-children {
   display: grid;
-  gap: 2px;
-  padding-left: 28px;
+  gap: 1px;
+  padding-left: var(--vx-space-4);
 }
 
-.vx-workbench-shell .vx-session-children[hidden] {
-  display: none;
-}
-
-.vx-workbench-shell .vx-session-item {
-  border-radius: 8px;
+.vx-session-item {
   display: grid;
-  font-size: 14px;
-  gap: 8px;
+  gap: var(--vx-space-2);
   grid-template-columns: 16px minmax(0, 1fr) max-content;
   min-height: 30px;
-  padding: var(--vx-sidebar-row-padding);
   position: relative;
 }
 
-.vx-workbench-shell .vx-session-item.active {
-  background: #e9e9e4;
+.vx-session-item.active {
+  background: var(--vx-bg-active);
   color: var(--vx-text-primary);
 }
 
-.vx-workbench-shell .vx-session-title {
+.vx-session-title {
   flex: 1 1 auto;
   min-width: 0;
   overflow: hidden;
@@ -560,14 +395,39 @@ body {
 
 .vx-session-time {
   color: var(--vx-text-dim);
-  font-size: 13px;
+  font-size: var(--vx-text-xs);
   justify-self: end;
+  white-space: nowrap;
+}
+
+.vx-session-dot {
+  align-self: center;
+  background: var(--vx-accent);
+  border-radius: 50%;
+  height: 6px;
+  justify-self: end;
+  width: 6px;
+  animation: vx-pulse 1.6s ease-in-out infinite;
+}
+
+@keyframes vx-pulse {
+  0%, 100% { opacity: 1; }
+  50% { opacity: 0.35; }
+}
+
+.vx-session-lock-badge {
+  align-self: center;
+  background: var(--vx-warning-soft);
+  border-radius: var(--vx-radius-full);
+  color: var(--vx-warning);
+  font-size: var(--vx-text-xs);
+  padding: 1px var(--vx-space-2);
   white-space: nowrap;
 }
 
 .vx-sidebar-row-icon {
   align-items: center;
-  color: var(--vx-text-secondary);
+  color: var(--vx-text-muted);
   display: inline-flex;
   flex: 0 0 16px;
   height: 16px;
@@ -581,7 +441,7 @@ body {
   stroke: currentColor;
   stroke-linecap: round;
   stroke-linejoin: round;
-  stroke-width: 1.6;
+  stroke-width: 1.5;
   width: 16px;
 }
 
@@ -589,23 +449,16 @@ body {
   align-items: center;
   background: transparent;
   border: 0;
-  border-radius: 4px;
+  border-radius: 6px;
   color: var(--vx-text-dim);
   cursor: pointer;
   display: flex;
   font: inherit;
-  font-size: 13px;
-  min-height: 22px;
-  padding: 2px 0;
+  font-size: var(--vx-text-xs);
+  min-height: 26px;
+  padding: 0 var(--vx-space-2);
   text-align: left;
   width: auto;
-}
-
-.vx-workspace-expand-controls {
-  align-items: center;
-  display: flex;
-  gap: 14px;
-  padding-left: 37px;
 }
 
 .vx-workspace-expand:hover {
@@ -613,62 +466,99 @@ body {
   color: var(--vx-text-secondary);
 }
 
-.vx-workbench-shell .vx-session-actions {
+.vx-workspace-expand-controls {
+  align-items: center;
+  display: flex;
+  gap: var(--vx-space-3);
+  padding-left: var(--vx-space-6);
+}
+
+/* 会话行 hover 操作（重命名/删除） */
+.vx-session-actions {
   align-items: center;
   background: transparent;
   border: 0;
-  border-radius: 7px;
   display: inline-flex;
-  gap: 4px;
+  gap: 2px;
   opacity: 0;
   padding: 0;
   pointer-events: none;
   position: absolute;
-  right: 6px;
+  right: 4px;
   top: 50%;
   transform: translateY(-50%);
+  transition: opacity var(--vx-transition-fast);
 }
 
-.vx-workbench-shell .vx-session-item:hover .vx-session-actions,
-.vx-workbench-shell .vx-session-actions:focus-within {
-  color: #3f4348;
+.vx-session-item:hover .vx-session-actions,
+.vx-session-actions:focus-within {
   opacity: 1;
   pointer-events: auto;
 }
 
-.vx-workbench-shell .vx-session-action-icon {
+.vx-session-action-icon {
   align-items: center;
   background: transparent;
   border: 0;
-  border-radius: 5px;
-  color: inherit;
+  border-radius: 6px;
+  color: var(--vx-text-muted);
   cursor: pointer;
   display: inline-flex;
   height: 24px;
   justify-content: center;
   padding: 0;
   width: 24px;
+  transition: background var(--vx-transition-fast), color var(--vx-transition-fast);
 }
 
-.vx-workbench-shell .vx-session-action-icon .vx-sidebar-row-icon svg {
-  stroke-width: 1.9;
+.vx-session-action-icon:hover,
+.vx-session-action-icon:focus-visible {
+  background: var(--vx-bg-hover);
+  color: var(--vx-text-primary);
 }
 
-.vx-workbench-shell .vx-session-action-icon:hover,
-.vx-workbench-shell .vx-session-action-icon:focus-visible {
-  background: transparent;
-  color: #15171a;
-}
-
+/* 侧栏底部 */
 .vx-sidebar-footer {
   border-top: 1px solid var(--vx-border);
-  padding-top: 10px;
+  padding-top: var(--vx-space-2);
 }
 
-.vx-workbench-shell .vx-main {
-  background: #ffffff;
-  min-height: 0;
+/* 侧栏拖拽手柄 */
+.vx-sidebar-resizer {
+  background: var(--vx-border);
+  cursor: col-resize;
+  flex: 0 0 1px;
+  position: relative;
+  z-index: 4;
+  transition: background var(--vx-transition-fast);
 }
+
+.vx-sidebar-resizer::after {
+  content: "";
+  position: absolute;
+  top: 0;
+  bottom: 0;
+  left: -4px;
+  right: -4px;
+  background: transparent;
+}
+
+.vx-sidebar-resizer:hover,
+.vx-sidebar-resizer.dragging {
+  background: var(--vx-accent);
+}
+
+/* === 主区 === */
+.vx-main {
+  background: var(--vx-bg-canvas);
+  display: flex;
+  flex-direction: column;
+  flex: 1;
+  min-height: 0;
+  min-width: 0;
+}
+
+.vx-main .transcript { flex: 1; }
 
 .vx-main-canvas {
   display: flex;
@@ -679,71 +569,187 @@ body {
 
 .vx-main-canvas.empty {
   justify-content: center;
-  padding-bottom: clamp(64px, 10vh, 132px);
+  padding-bottom: clamp(48px, 8vh, 120px);
 }
 
-.vx-main-canvas.empty .transcript {
-  display: none;
+.vx-main-canvas.empty .transcript { display: none; }
+
+/* 空状态 — Kimi 式问候 + 建议 chips */
+.vx-empty-state {
+  align-items: center;
+  display: flex;
+  flex-direction: column;
+  gap: var(--vx-space-6);
+  margin: 0 auto;
+  max-width: var(--vx-content-max);
+  padding: 0 var(--vx-space-6);
+  text-align: center;
+  width: 100%;
 }
 
+.vx-empty-state h1 {
+  color: var(--vx-text-primary);
+  font-size: var(--vx-text-display);
+  font-weight: 600;
+  letter-spacing: -0.02em;
+  line-height: 1.3;
+  margin: 0;
+}
 
-.vx-workbench-shell .vx-dock {
-  background: #f9fafb;
+.vx-empty-suggestions {
+  display: flex;
+  flex-wrap: wrap;
+  gap: var(--vx-space-2);
+  justify-content: center;
+}
+
+.vx-suggestion-chip {
+  background: var(--vx-bg-surface);
+  border: 1px solid var(--vx-border);
+  border-radius: var(--vx-radius-full);
+  color: var(--vx-text-secondary);
+  cursor: pointer;
+  font-size: var(--vx-text-sm);
+  padding: 7px var(--vx-space-4);
+  transition: border-color var(--vx-transition-fast), box-shadow var(--vx-transition-fast), color var(--vx-transition-fast), transform var(--vx-transition-fast);
+}
+
+.vx-suggestion-chip:hover {
+  border-color: var(--vx-border-strong);
+  box-shadow: var(--vx-shadow-sm);
+  color: var(--vx-text-primary);
+  transform: translateY(-1px);
+}
+
+/* 上下文信息行 */
+.vx-context-row {
+  align-items: center;
+  color: var(--vx-text-dim);
+  display: flex;
+  gap: var(--vx-space-3);
+  font-size: var(--vx-text-xs);
+  justify-content: center;
+  margin: 0 auto;
+  max-width: var(--vx-content-max);
+  padding: var(--vx-space-1) var(--vx-space-6) var(--vx-space-2);
+  width: 100%;
+}
+
+/* === Dock（右侧面板） === */
+.vx-dock {
+  background: var(--vx-bg-canvas);
+  border-left: 1px solid var(--vx-border);
+  display: flex;
+  flex-direction: column;
+  flex-shrink: 0;
+  overflow: hidden;
+  transition: width var(--vx-transition);
+  width: var(--vx-dock-width);
+}
+
+.vx-dock.collapsed {
   border-left: 0;
-  border-top: 1px solid #e5e7eb;
-  flex: 0 0 280px;
-  margin-left: var(--vx-sidebar-width);
-  width: calc(100% - var(--vx-sidebar-width));
+  width: var(--vx-dock-collapsed);
 }
 
-.vx-workbench-shell .vx-dock.collapsed {
-  flex-basis: 34px;
-  width: calc(100% - var(--vx-sidebar-width));
+.vx-dock.collapsed .vx-dock-content { display: none; }
+
+.vx-dock-tabs {
+  align-items: center;
+  border-bottom: 1px solid var(--vx-border);
+  display: flex;
+  gap: 2px;
+  min-height: var(--vx-titlebar-height);
+  padding: 0 var(--vx-space-2);
 }
 
-.vx-workbench-shell .vx-dock.collapsed .vx-dock-tabs {
-  display: none;
+.vx-dock-tab {
+  background: transparent;
+  border: 0;
+  border-radius: var(--vx-radius-sm);
+  color: var(--vx-text-muted);
+  cursor: pointer;
+  font: inherit;
+  font-size: var(--vx-text-sm);
+  padding: 5px 10px;
+  transition: background var(--vx-transition-fast), color var(--vx-transition-fast);
 }
 
-.vx-workbench-shell .vx-dock-tabs {
-  background: #f9fafb;
-  min-height: 40px;
-  padding: 0 10px;
+.vx-dock-tab:hover { color: var(--vx-text-primary); }
+
+.vx-dock-tab.active {
+  background: var(--vx-bg-active);
+  color: var(--vx-text-primary);
+  font-weight: 550;
 }
 
-.vx-workbench-shell .vx-dock-content {
-  background: #ffffff;
+.vx-dock-toggle {
+  align-items: center;
+  background: transparent;
+  border: 0;
+  border-radius: var(--vx-radius-sm);
+  color: var(--vx-text-muted);
+  cursor: pointer;
+  display: inline-flex;
+  height: 28px;
+  justify-content: center;
+  margin-left: auto;
+  padding: 0;
+  width: 28px;
+}
+
+.vx-dock-toggle:hover {
+  background: var(--vx-bg-hover);
+  color: var(--vx-text-primary);
+}
+
+.vx-dock-strip {
+  align-items: center;
+  border-bottom: 1px solid var(--vx-border);
+  color: var(--vx-text-dim);
+  display: flex;
+  font-size: var(--vx-text-xs);
+  gap: var(--vx-space-2);
+  padding: var(--vx-space-1) var(--vx-space-3);
+}
+
+.vx-dock-content {
+  background: var(--vx-bg-canvas);
+  flex: 1;
   min-height: 0;
+  overflow-y: auto;
 }
 
-@media (max-width: 1199px) {
-  .vx-workbench-shell .vx-sidebar {
-    flex-basis: var(--vx-sidebar-width);
-    width: var(--vx-sidebar-width);
-  }
+.vx-dock-pane { padding: var(--vx-space-3); }
+
+/* === Status bar（保留兼容） === */
+.vx-statusbar {
+  align-items: center;
+  background: var(--vx-bg-app);
+  border-top: 1px solid var(--vx-border);
+  display: flex;
+  gap: var(--vx-space-4);
+  padding: var(--vx-space-1) var(--vx-space-5);
 }
 
+/* === 响应式 === */
 @media (max-width: 899px) {
-  .vx-workbench-shell .vx-sidebar {
-    display: none;
-  }
+  .vx-sidebar,
+  .vx-sidebar-resizer { display: none; }
 
-  .vx-workbench-shell .vx-sidebar-resizer {
-    display: none;
-  }
+  .vx-titlebar-left { width: auto; }
 
-  .vx-workbench-shell .vx-dock,
-  .vx-workbench-shell .vx-dock.collapsed {
+  .vx-dock,
+  .vx-dock.collapsed {
     margin-left: 0;
     width: 100%;
   }
 
-  .vx-empty-state h1 {
-    font-size: 28px;
-  }
-
-  .vx-workbench-shell .composer,
-  .vx-context-row {
-    width: calc(100% - 24px);
-  }
+  .vx-empty-state h1 { font-size: var(--vx-text-2xl); }
 }
+
+/* 折叠的工作区会话列表必须真正隐藏（grid 会覆盖 [hidden] 的 UA 样式） */
+.vx-session-children[hidden] { display: none; }
+
+/* 空状态与输入区间的留白 */
+.vx-main-canvas.empty .vx-empty-state { margin-bottom: var(--vx-space-8); }

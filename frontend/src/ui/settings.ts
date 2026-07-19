@@ -1,11 +1,6 @@
-export interface ProfileSummary {
-  name: string;
-  provider: string;
-  model: string;
-  base_url?: string | null;
-  protocol?: string | null;
-  configured?: boolean;
-}
+import { getThemePreference, setThemePreference, type ThemePreference } from "./theme";
+import type { ProfileSummary } from "../utils/types";
+export type { ProfileSummary };
 
 export interface SettingsSnapshot {
   model?: Record<string, unknown>;
@@ -241,7 +236,9 @@ async function saveSettingsModal() {
   try {
     setError("");
     const result = await state.onSave?.(collectSettingsPatch());
-    if (result?.settings) renderSettingsModal(result.settings);
+    if (result && typeof result === "object" && "settings" in result) {
+      renderSettingsModal((result as { settings: SettingsSnapshot }).settings);
+    }
     closeSettingsModal();
   } catch (error) {
     setError(error instanceof Error ? error.message : String(error));
@@ -257,12 +254,12 @@ function renderModelTab(snapshot: SettingsSnapshot = {}): DocumentFragment {
   const frag = document.createDocumentFragment();
   frag.append(
     section("当前模型", [
-      readonlyRow("Provider", model.provider || ""),
-      readonlyRow("Model", model.model || ""),
-      readonlyRow("Base URL", model.base_url || "—"),
-      readonlyRow("Protocol", model.protocol || "auto"),
-      readonlyRow("Reasoning", model.reasoning_effort || "xhigh"),
-      readonlyRow("Context window", model.context_window ? `${model.context_window.toLocaleString()} tokens` : "Auto"),
+      readonlyRow("Provider", String(model.provider || "")),
+      readonlyRow("Model", String(model.model || "")),
+      readonlyRow("Base URL", String(model.base_url || "—")),
+      readonlyRow("Protocol", String(model.protocol || "auto")),
+      readonlyRow("Reasoning", String(model.reasoning_effort || "xhigh")),
+      readonlyRow("Context window", model.context_window ? `${Number(model.context_window).toLocaleString()} tokens` : "Auto"),
     ]),
     section("已配置 Profiles", [
       ...(profiles.length
@@ -333,6 +330,7 @@ function renderPreferencesTab(snapshot: SettingsSnapshot = {}): DocumentFragment
   const parallel = snapshot.parallel_subagents || {};
   const frag = document.createDocumentFragment();
   frag.append(
+    section("外观", [themeRow()]),
     section("回复偏好", [
       inputRow("Language", "language", userProfile.language || ""),
       inputRow("Tone", "tone", userProfile.tone || ""),
@@ -415,7 +413,7 @@ function secretRow(label: string, name: string, value: string): HTMLLabelElement
   return row;
 }
 
-function numberRow(label: string, name: string, value: string, min: number, max: number): HTMLLabelElement {
+function numberRow(label: string, name: string, value: number, min: number, max: number): HTMLLabelElement {
   const row = rowBase(label);
   const input = document.createElement("input");
   input.type = "number";
@@ -434,6 +432,16 @@ function checkboxRow(label: string, name: string, value: boolean): HTMLLabelElem
   input.name = name;
   input.checked = value;
   row.append(input);
+  return row;
+}
+
+function themeRow(): HTMLLabelElement {
+  const labels: Record<ThemePreference, string> = { system: "跟随系统", light: "浅色", dark: "深色" };
+  const row = selectRow("主题", "ui_theme", getThemePreference(), ["system", "light", "dark"], (v) => labels[v as ThemePreference] ?? v);
+  row.querySelector("select")?.addEventListener("change", (e) => {
+    const value = (e.target as HTMLSelectElement).value;
+    if (value === "system" || value === "light" || value === "dark") setThemePreference(value);
+  });
   return row;
 }
 

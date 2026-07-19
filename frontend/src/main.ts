@@ -67,6 +67,7 @@ import {
   initReasoningControls,
   applySettingsRuntimeState,
   applyRuntimeState,
+  initTheme,
 } from "./ui";
 import type { ThreadInfo, SettingsSnapshot, IntegrationsSnapshot } from "./ui";
 
@@ -93,12 +94,17 @@ import {
   requestStartupSettingsIfNeeded,
   _resetConnectionForTest,
   incrementConnectionGeneration,
+  sendStopIcon,
 } from "./services";
 
 // Re-export functions required by test suites
 export { initModelControls, resolveWsUrl };
 
+if (typeof window !== "undefined" && ((window as any).__TAURI_INTERNALS__ || (window as any).__TAURI__)) {
+  document.body.classList.add("is-desktop");
+}
 setTranscriptElement(transcriptEl);
+initTheme();
 initDock();
 initTerminal();
 initModelControls();
@@ -548,7 +554,7 @@ composerEl.addEventListener("submit", (event: SubmitEvent) => {
   }
   if (uiState.isRunning) {
     btnSendEl.classList.add("guidance-pending");
-    btnSendEl.textContent = "◌";
+    btnSendEl.innerHTML = sendStopIcon;
     rpcCall("session.submit", { text, thread_id: uiState.sessionId })
       .then(() => {
         inputEl.value = "";
@@ -557,7 +563,7 @@ composerEl.addEventListener("submit", (event: SubmitEvent) => {
       .catch(() => {})
       .finally(() => {
         btnSendEl.classList.remove("guidance-pending");
-        btnSendEl.textContent = "■";
+        btnSendEl.innerHTML = sendStopIcon;
       });
     return;
   }

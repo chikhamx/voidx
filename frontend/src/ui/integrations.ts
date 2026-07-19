@@ -194,7 +194,7 @@ function skillRow(skill: Skill): HTMLDivElement {
 // ── LSP row ─────────────────────────────────────────────────────────────
 
 function lspRow(server: LspServer): HTMLDivElement {
-  return readonlyRow(server.language || server.name, `${server.status || "unknown"}`);
+  return readonlyRow(server.language || server.name || "lsp", `${server.status || "unknown"}`);
 }
 
 // ── helpers ─────────────────────────────────────────────────────────────

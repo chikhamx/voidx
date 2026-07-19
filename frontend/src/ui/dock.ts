@@ -48,7 +48,7 @@ export function switchTab(tab: DockTab): void {
 }
 
 export function renderTodoInDock(
-  items: { id: string; content: string; status: string }[] | null,
+  items: { id?: string; content: string; status: string }[] | null,
   summary: string,
 ): void {
   const todoPanel = document.querySelector<HTMLElement>("#todo-panel");

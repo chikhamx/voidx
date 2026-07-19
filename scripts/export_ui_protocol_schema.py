@@ -8,8 +8,9 @@ from pathlib import Path
 
 REPO_ROOT = Path(__file__).resolve().parents[1]
 SRC_ROOT = REPO_ROOT / "src"
-if str(SRC_ROOT) not in sys.path:
-    sys.path.insert(0, str(SRC_ROOT))
+if str(SRC_ROOT) in sys.path:
+    sys.path.remove(str(SRC_ROOT))
+sys.path.insert(0, str(SRC_ROOT))
 
 from voidx.ui.protocol import export_protocol_schema
 

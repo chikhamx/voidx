@@ -1,5 +1,21 @@
 import { beforeEach } from "vitest";
 
+// jsdom 环境下 localStorage 可能是无方法的占位对象，补齐内存版 Storage
+(function ensureLocalStorage() {
+  const ls = window.localStorage as Storage | undefined;
+  if (ls && typeof ls.getItem === "function" && typeof ls.setItem === "function") return;
+  let store: Record<string, string> = {};
+  const memory: Storage = {
+    get length() { return Object.keys(store).length; },
+    clear: () => { store = {}; },
+    getItem: (key: string) => (key in store ? store[key] : null),
+    key: (index: number) => Object.keys(store)[index] ?? null,
+    removeItem: (key: string) => { delete store[key]; },
+    setItem: (key: string, value: string) => { store[key] = String(value); },
+  };
+  Object.defineProperty(window, "localStorage", { value: memory, configurable: true });
+})();
+
 if (typeof HTMLDialogElement !== "undefined") {
   HTMLDialogElement.prototype.showModal = function showModal() {
     this.setAttribute("open", "");
@@ -14,9 +30,12 @@ document.body.innerHTML = `
     <header class="vx-titlebar">
       <div class="vx-titlebar-left">
         <span class="status-dot disconnected" id="status-dot" aria-label="Connection status"></span>
-        <button type="button" class="vx-titlebar-tool" id="titlebar-sidebar-toggle" aria-label="Toggle sidebar">▯</button>
-        <button type="button" class="vx-titlebar-tool" aria-label="Back" disabled>←</button>
-        <button type="button" class="vx-titlebar-tool" aria-label="Forward" disabled>→</button>
+        <button type="button" class="vx-titlebar-tool" id="titlebar-sidebar-toggle" aria-label="Toggle sidebar"><svg class="vx-icon" viewBox="0 0 24 24" aria-hidden="true"></svg></button>
+        <button type="button" class="vx-titlebar-tool" aria-label="Back" disabled><svg class="vx-icon" viewBox="0 0 24 24" aria-hidden="true"></svg></button>
+        <button type="button" class="vx-titlebar-tool" aria-label="Forward" disabled><svg class="vx-icon" viewBox="0 0 24 24" aria-hidden="true"></svg></button>
+      </div>
+      <div class="vx-titlebar-right">
+        <button type="button" class="vx-titlebar-tool" id="titlebar-dock-toggle" aria-label="Toggle right panel"><svg class="vx-icon" viewBox="0 0 24 24" aria-hidden="true"></svg></button>
       </div>
     </header>
     <div class="vx-body">
@@ -40,13 +59,14 @@ document.body.innerHTML = `
           <div class="vx-sidebar-heading vx-project-heading">
             <span class="vx-sidebar-row-icon"><svg viewBox="0 0 20 20" aria-hidden="true" focusable="false"><path d="M3.5 6.5h5l1.4 1.7h6.6v7.3a2 2 0 0 1-2 2h-11a2 2 0 0 1-2-2v-7a2 2 0 0 1 2-2Z"/><path d="M3.5 6.5V5a2 2 0 0 1 2-2h3.2l1.4 1.7h4.4a2 2 0 0 1 2 2v1.7"/></svg></span>
             <span class="vx-project-heading-label">项目</span>
-            <button type="button" class="vx-project-add" id="btn-open-workspace" title="打开项目" aria-label="打开项目">+</button>
+            <button type="button" class="vx-project-add" id="btn-open-workspace" title="打开项目" aria-label="打开项目"><svg class="vx-icon" viewBox="0 0 24 24" aria-hidden="true"></svg></button>
           </div>
           <div class="vx-session-list" id="session-list"></div>
         </div>
         <div class="vx-sidebar-footer">
           <button type="button" class="vx-nav-item" id="btn-settings">设置</button>
           <button type="button" class="vx-nav-item" id="btn-account">账户</button>
+          <button type="button" class="vx-nav-item vx-theme-toggle" id="btn-theme-toggle" aria-label="切换主题">主题</button>
         </div>
       </aside>
       <div class="vx-sidebar-resizer" id="sidebar-resizer" role="separator" aria-orientation="vertical" aria-label="调整侧栏宽度"></div>
@@ -60,41 +80,41 @@ document.body.innerHTML = `
           <div class="slash-menu" id="slash-menu"></div>
           <textarea id="input" rows="3"></textarea>
           <div class="vx-composer-actions">
-            <button type="button" class="vx-attach-btn" id="btn-attach" aria-label="Add context">+</button>
+            <button type="button" class="vx-attach-btn" id="btn-attach" aria-label="Add context"><svg class="vx-icon" viewBox="0 0 24 24" aria-hidden="true"></svg></button>
             <label class="vx-select-label" for="provider-select">
               <select id="provider-select" aria-label="Provider"></select>
             </label>
             <label class="vx-select-label" for="model-select">
               <select id="model-select" aria-label="Model"></select>
             </label>
-            <button type="submit" class="btn-send" id="btn-send" aria-label="Send">↑</button>
+            <button type="submit" class="btn-send" id="btn-send" aria-label="Send"><svg class="vx-icon" viewBox="0 0 24 24" aria-hidden="true"></svg></button>
           </div>
         </form>
         <div class="context-menu" id="context-menu" hidden>
           <div class="context-menu-title">添加</div>
           <button type="button" class="context-menu-item" data-action="file">
-            <span class="context-menu-icon">⌘</span>
+            <span class="context-menu-icon"><svg class="vx-icon" viewBox="0 0 24 24" aria-hidden="true"></svg></span>
             <span>文件和文件夹</span>
             <span class="context-menu-detail">添加路径到上下文</span>
           </button>
           <button type="button" class="context-menu-item" data-action="model">
-            <span class="context-menu-icon">◇</span>
+            <span class="context-menu-icon"><svg class="vx-icon" viewBox="0 0 24 24" aria-hidden="true"></svg></span>
             <span>供应商 / 模型</span>
             <span class="context-menu-detail">新增或配置模型</span>
           </button>
           <button type="button" class="context-menu-item" data-action="paste">
-            <span class="context-menu-icon">▣</span>
+            <span class="context-menu-icon"><svg class="vx-icon" viewBox="0 0 24 24" aria-hidden="true"></svg></span>
             <span>剪贴板图片</span>
             <span class="context-menu-detail">粘贴图片上下文</span>
           </button>
           <div class="context-menu-title">插件</div>
           <button type="button" class="context-menu-item" data-action="skills">
-            <span class="context-menu-icon">◆</span>
+            <span class="context-menu-icon"><svg class="vx-icon" viewBox="0 0 24 24" aria-hidden="true"></svg></span>
             <span>技能</span>
             <span class="context-menu-detail">管理 Skills</span>
           </button>
           <button type="button" class="context-menu-item" data-action="integrations">
-            <span class="context-menu-icon">◎</span>
+            <span class="context-menu-icon"><svg class="vx-icon" viewBox="0 0 24 24" aria-hidden="true"></svg></span>
             <span>插件</span>
             <span class="context-menu-detail">MCP / Web / LSP</span>
           </button>
@@ -105,41 +125,43 @@ document.body.innerHTML = `
         </div>
         </div>
       </section>
+
+      <!-- Right sidebar (Dock) -->
+      <aside class="vx-dock collapsed" id="dock">
+        <div class="vx-dock-tabs">
+          <button class="vx-dock-tab active" data-tab="todo" aria-selected="true">Todo</button>
+          <button class="vx-dock-tab" data-tab="terminal" aria-selected="false">Terminal</button>
+          <button class="vx-dock-tab" data-tab="diff" aria-selected="false">Diff</button>
+          <button class="vx-dock-tab" data-tab="status" aria-selected="false">Status</button>
+          <button class="vx-dock-toggle" id="dock-toggle" aria-label="Toggle right panel"><svg class="vx-icon" viewBox="0 0 24 24" aria-hidden="true"></svg></button>
+        </div>
+        <div class="vx-dock-strip" id="dock-strip" hidden>
+          <span class="status-session" id="status-session"></span>
+          <span id="strip-workspace">voidx</span>
+          <span id="strip-provider-model"></span>
+        </div>
+        <div class="vx-dock-content" id="dock-content">
+          <div class="vx-dock-pane" data-pane="todo">
+            <section class="todo-panel" id="todo-panel" aria-label="Task progress"></section>
+          </div>
+          <div class="vx-dock-pane" data-pane="terminal" hidden>
+            <div class="vx-terminal" id="terminal-pane"></div>
+          </div>
+          <div class="vx-dock-pane" data-pane="diff" hidden>
+            <div class="vx-diff-review" id="diff-pane"></div>
+          </div>
+          <div class="vx-dock-pane" data-pane="status" hidden>
+            <dl class="vx-status-grid" id="status-panel">
+              <div><dt>Connection</dt><dd id="status-connection">disconnected</dd></div>
+              <div><dt>Session</dt><dd id="status-session-detail"></dd></div>
+              <div><dt>Workspace</dt><dd id="status-workspace-detail">voidx</dd></div>
+              <div><dt>Model</dt><dd id="status-provider-model"></dd></div>
+              <div><dt>Running</dt><dd id="status-running">idle</dd></div>
+            </dl>
+          </div>
+        </div>
+      </aside>
     </div>
-    <aside class="vx-dock collapsed" id="dock">
-      <div class="vx-dock-tabs">
-        <button class="vx-dock-tab active" data-tab="todo" aria-selected="true">Todo</button>
-        <button class="vx-dock-tab" data-tab="terminal" aria-selected="false">Terminal</button>
-        <button class="vx-dock-tab" data-tab="diff" aria-selected="false">Diff</button>
-        <button class="vx-dock-tab" data-tab="status" aria-selected="false">Status</button>
-        <button class="vx-dock-toggle" id="dock-toggle" aria-label="Toggle bottom panel">▾</button>
-      </div>
-      <div class="vx-dock-strip" id="dock-strip" hidden>
-        <span class="status-session" id="status-session"></span>
-        <span id="strip-workspace">voidx</span>
-        <span id="strip-provider-model"></span>
-      </div>
-      <div class="vx-dock-content" id="dock-content">
-        <div class="vx-dock-pane" data-pane="todo">
-          <section class="todo-panel" id="todo-panel" aria-label="Task progress"></section>
-        </div>
-        <div class="vx-dock-pane" data-pane="terminal" hidden>
-          <div class="vx-terminal" id="terminal-pane"></div>
-        </div>
-        <div class="vx-dock-pane" data-pane="diff" hidden>
-          <div class="vx-diff-review" id="diff-pane"></div>
-        </div>
-        <div class="vx-dock-pane" data-pane="status" hidden>
-          <dl class="vx-status-grid" id="status-panel">
-            <div><dt>Connection</dt><dd id="status-connection">disconnected</dd></div>
-            <div><dt>Session</dt><dd id="status-session-detail"></dd></div>
-            <div><dt>Workspace</dt><dd id="status-workspace-detail">voidx</dd></div>
-            <div><dt>Model</dt><dd id="status-provider-model"></dd></div>
-            <div><dt>Running</dt><dd id="status-running">idle</dd></div>
-          </dl>
-        </div>
-      </div>
-    </aside>
     <!-- Integrations panel -->
     <dialog id="integrations-dialog" class="settings-dialog integrations-dialog">
       <form id="integrations-form" method="dialog">

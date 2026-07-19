@@ -1,29 +1,9 @@
+/* ============================================================
+   voidx Design Tokens — Kimi-grade visual system
+   暖中性灰阶 · 双主题 · 克制的蓝色强调
+   ============================================================ */
+
 :root {
-  color-scheme: dark;
-
-  /* ── 色彩 ── */
-  --vx-bg-base:        #0b0f14;
-  --vx-bg-surface:     #0f1620;
-  --vx-bg-elevated:    #111a26;
-  --vx-bg-hover:       #1a2433;
-
-  --vx-border:         #263241;
-  --vx-border-strong:  #304155;
-
-  --vx-text-primary:   #e7edf5;
-  --vx-text-secondary: #b7c4d6;
-  --vx-text-muted:     #8fa3bb;
-  --vx-text-dim:       #9aa9bb;
-
-  --vx-accent:         #7aa2f7;
-  --vx-success:        #9ece6a;
-  --vx-warning:        #e0af68;
-  --vx-error:          #f7768e;
-
-  --vx-diff-add:       #9ece6a;
-  --vx-diff-del:       #f7768e;
-  --vx-diff-hunk:      #7aa2f7;
-
   /* ── 间距（4px 基准） ── */
   --vx-space-1:  4px;
   --vx-space-2:  8px;
@@ -32,31 +12,211 @@
   --vx-space-5:  20px;
   --vx-space-6:  24px;
   --vx-space-8:  32px;
+  --vx-space-10: 40px;
 
   /* ── 圆角 ── */
-  --vx-radius-sm: 6px;
-  --vx-radius-md: 10px;
-  --vx-radius-lg: 16px;
+  --vx-radius-sm:   8px;
+  --vx-radius-md:   12px;
+  --vx-radius-lg:   16px;
+  --vx-radius-xl:   22px;
+  --vx-radius-full: 999px;
 
   /* ── 字体 ── */
-  --vx-font-sans: Inter, ui-sans-serif, system-ui, -apple-system, BlinkMacSystemFont, "Segoe UI", sans-serif;
-  --vx-font-mono: ui-monospace, SFMono-Regular, Menlo, Consolas, "Cascadia Code", monospace;
+  --vx-font-sans: "Inter", -apple-system, BlinkMacSystemFont, "SF Pro Text",
+    "PingFang SC", "Hiragino Sans GB", "Microsoft YaHei", "Segoe UI", sans-serif;
+  --vx-font-mono: "SF Mono", ui-monospace, SFMono-Regular, Menlo, Consolas,
+    "Cascadia Code", monospace;
 
   /* ── 字号 ── */
   --vx-text-xs:   11px;
-  --vx-text-sm:   13px;
+  --vx-text-sm:   12.5px;
   --vx-text-base: 14px;
-  --vx-text-lg:   16px;
-  --vx-text-xl:   18px;
+  --vx-text-md:   15px;
+  --vx-text-lg:   17px;
+  --vx-text-xl:   20px;
+  --vx-text-2xl:  24px;
+  --vx-text-display: 28px;
 
-  /* ── 侧栏宽度 ── */
-  --vx-sidebar-width: 240px;
-  --vx-sidebar-collapsed: 48px;
-  --vx-dock-width: 360px;
+  /* ── 布局 ── */
+  --vx-sidebar-width: 264px;
+  --vx-sidebar-collapsed: 0px;
+  --vx-dock-width: 380px;
   --vx-dock-collapsed: 0px;
+  --vx-titlebar-height: 44px;
+  --vx-content-max: 768px;
 
   /* ── 动效 ── */
-  --vx-transition: 0.15s ease;
-  --vx-shadow-sm: 0 1px 2px rgb(0 0 0 / 0.2);
-  --vx-shadow-md: 0 4px 12px rgb(0 0 0 / 0.3);
+  --vx-transition-fast: 0.12s ease;
+  --vx-transition: 0.18s cubic-bezier(0.4, 0, 0.2, 1);
+  --vx-transition-slow: 0.28s cubic-bezier(0.4, 0, 0.2, 1);
+
+  /* ── 图标 ── */
+  --vx-icon-size: 18px;
+  --vx-icon-stroke: 1.6;
+}
+
+/* ──────────────────────────────────────────────
+   Light — 纸感暖白（默认）
+   ────────────────────────────────────────────── */
+:root,
+:root[data-theme="light"] {
+  color-scheme: light;
+
+  /* 层级背景：app=侧栏/titlebar 区，canvas=主区，surface=浮起卡片 */
+  --vx-bg-app:      #f7f7f4;
+  --vx-bg-canvas:   #ffffff;
+  --vx-bg-surface:  #ffffff;
+  --vx-bg-elevated: #ffffff;
+  --vx-bg-subtle:   #f1f1ed;
+  --vx-bg-hover:    #ecece7;
+  --vx-bg-active:   #e3e3dd;
+  --vx-bg-inverse:  #1c1c1a;
+
+  --vx-border:        #e9e9e4;
+  --vx-border-strong: #dcdcd5;
+  --vx-border-focus:  #c9c9c2;
+
+  --vx-text-primary:   #1c1c1a;
+  --vx-text-secondary: #4f4f4a;
+  --vx-text-muted:     #88887f;
+  --vx-text-dim:       #b0b0a8;
+  --vx-text-inverse:   #fafaf7;
+
+  /* Kimi 蓝 — 仅用于激活态、焦点、链接 */
+  --vx-accent:       #2e6bff;
+  --vx-accent-hover: #1f5aef;
+  --vx-accent-soft:  rgb(46 107 255 / 0.09);
+  --vx-accent-faint: rgb(46 107 255 / 0.05);
+
+  --vx-success: #1f9d55;
+  --vx-success-soft: rgb(31 157 85 / 0.1);
+  --vx-warning: #c77700;
+  --vx-warning-soft: rgb(199 119 0 / 0.1);
+  --vx-error:   #dc3b3b;
+  --vx-error-soft: rgb(220 59 59 / 0.08);
+
+  --vx-diff-add: #1f9d55;
+  --vx-diff-add-bg: rgb(31 157 85 / 0.09);
+  --vx-diff-del: #dc3b3b;
+  --vx-diff-del-bg: rgb(220 59 59 / 0.08);
+  --vx-diff-hunk: #2e6bff;
+
+  /* 主按钮（Kimi 式单色高级按钮） */
+  --vx-btn-primary-bg:   #1c1c1a;
+  --vx-btn-primary-text: #fafaf7;
+  --vx-btn-primary-hover: #35352f;
+
+  /* 阴影 — 柔和多层 ambient */
+  --vx-shadow-xs: 0 1px 2px rgb(28 28 26 / 0.04);
+  --vx-shadow-sm: 0 1px 2px rgb(28 28 26 / 0.05), 0 2px 8px rgb(28 28 26 / 0.04);
+  --vx-shadow-md: 0 2px 6px rgb(28 28 26 / 0.05), 0 8px 24px rgb(28 28 26 / 0.07);
+  --vx-shadow-lg: 0 4px 12px rgb(28 28 26 / 0.06), 0 16px 48px rgb(28 28 26 / 0.1);
+  --vx-shadow-composer: 0 1px 2px rgb(28 28 26 / 0.04), 0 4px 16px rgb(28 28 26 / 0.06), 0 12px 40px rgb(28 28 26 / 0.05);
+
+  /* 旧 token 别名（兼容期内映射，逐步收敛） */
+  --vx-bg-base: var(--vx-bg-canvas);
+}
+
+/* ──────────────────────────────────────────────
+   Dark — 中性暖墨（去蓝调）
+   ────────────────────────────────────────────── */
+:root[data-theme="dark"] {
+  color-scheme: dark;
+
+  --vx-bg-app:      #171715;
+  --vx-bg-canvas:   #1e1e1c;
+  --vx-bg-surface:  #262624;
+  --vx-bg-elevated: #2b2b28;
+  --vx-bg-subtle:   #282826;
+  --vx-bg-hover:    #2e2e2b;
+  --vx-bg-active:   #383834;
+  --vx-bg-inverse:  #ecece9;
+
+  --vx-border:        rgb(236 236 233 / 0.08);
+  --vx-border-strong: rgb(236 236 233 / 0.14);
+  --vx-border-focus:  rgb(236 236 233 / 0.24);
+
+  --vx-text-primary:   #ecece9;
+  --vx-text-secondary: #b9b9b3;
+  --vx-text-muted:     #8a8a83;
+  --vx-text-dim:       #63635d;
+  --vx-text-inverse:   #1c1c1a;
+
+  --vx-accent:       #5c8dff;
+  --vx-accent-hover: #749cff;
+  --vx-accent-soft:  rgb(92 141 255 / 0.14);
+  --vx-accent-faint: rgb(92 141 255 / 0.07);
+
+  --vx-success: #4cc38a;
+  --vx-success-soft: rgb(76 195 138 / 0.14);
+  --vx-warning: #e5a13d;
+  --vx-warning-soft: rgb(229 161 61 / 0.14);
+  --vx-error:   #f06060;
+  --vx-error-soft: rgb(240 96 96 / 0.12);
+
+  --vx-diff-add: #4cc38a;
+  --vx-diff-add-bg: rgb(76 195 138 / 0.12);
+  --vx-diff-del: #f06060;
+  --vx-diff-del-bg: rgb(240 96 96 / 0.1);
+  --vx-diff-hunk: #5c8dff;
+
+  --vx-btn-primary-bg:   #ecece9;
+  --vx-btn-primary-text: #1c1c1a;
+  --vx-btn-primary-hover: #ffffff;
+
+  /* 深色下阴影收敛，靠 hairline 分层 */
+  --vx-shadow-xs: 0 1px 2px rgb(0 0 0 / 0.3);
+  --vx-shadow-sm: 0 1px 2px rgb(0 0 0 / 0.35), 0 2px 8px rgb(0 0 0 / 0.25);
+  --vx-shadow-md: 0 2px 6px rgb(0 0 0 / 0.35), 0 8px 24px rgb(0 0 0 / 0.3);
+  --vx-shadow-lg: 0 4px 12px rgb(0 0 0 / 0.4), 0 16px 48px rgb(0 0 0 / 0.4);
+  --vx-shadow-composer: 0 1px 2px rgb(0 0 0 / 0.3), 0 8px 32px rgb(0 0 0 / 0.35);
+
+  --vx-bg-base: var(--vx-bg-canvas);
+}
+
+/* 未显式设置 data-theme 时跟随系统（JS 启动后会立即写入 data-theme） */
+@media (prefers-color-scheme: dark) {
+  :root:not([data-theme]) {
+    color-scheme: dark;
+    --vx-bg-app: #171715;
+    --vx-bg-canvas: #1e1e1c;
+    --vx-bg-surface: #262624;
+    --vx-bg-elevated: #2b2b28;
+    --vx-bg-subtle: #282826;
+    --vx-bg-hover: #2e2e2b;
+    --vx-bg-active: #383834;
+    --vx-bg-inverse: #ecece9;
+    --vx-border: rgb(236 236 233 / 0.08);
+    --vx-border-strong: rgb(236 236 233 / 0.14);
+    --vx-border-focus: rgb(236 236 233 / 0.24);
+    --vx-text-primary: #ecece9;
+    --vx-text-secondary: #b9b9b3;
+    --vx-text-muted: #8a8a83;
+    --vx-text-dim: #63635d;
+    --vx-text-inverse: #1c1c1a;
+    --vx-accent: #5c8dff;
+    --vx-accent-hover: #749cff;
+    --vx-accent-soft: rgb(92 141 255 / 0.14);
+    --vx-accent-faint: rgb(92 141 255 / 0.07);
+    --vx-success: #4cc38a;
+    --vx-success-soft: rgb(76 195 138 / 0.14);
+    --vx-warning: #e5a13d;
+    --vx-warning-soft: rgb(229 161 61 / 0.14);
+    --vx-error: #f06060;
+    --vx-error-soft: rgb(240 96 96 / 0.12);
+    --vx-diff-add: #4cc38a;
+    --vx-diff-add-bg: rgb(76 195 138 / 0.12);
+    --vx-diff-del: #f06060;
+    --vx-diff-del-bg: rgb(240 96 96 / 0.1);
+    --vx-diff-hunk: #5c8dff;
+    --vx-btn-primary-bg: #ecece9;
+    --vx-btn-primary-text: #1c1c1a;
+    --vx-btn-primary-hover: #ffffff;
+    --vx-shadow-xs: 0 1px 2px rgb(0 0 0 / 0.3);
+    --vx-shadow-sm: 0 1px 2px rgb(0 0 0 / 0.35), 0 2px 8px rgb(0 0 0 / 0.25);
+    --vx-shadow-md: 0 2px 6px rgb(0 0 0 / 0.35), 0 8px 24px rgb(0 0 0 / 0.3);
+    --vx-shadow-lg: 0 4px 12px rgb(0 0 0 / 0.4), 0 16px 48px rgb(0 0 0 / 0.4);
+    --vx-shadow-composer: 0 1px 2px rgb(0 0 0 / 0.3), 0 8px 32px rgb(0 0 0 / 0.35);
+    --vx-bg-base: var(--vx-bg-canvas);
+  }
 }

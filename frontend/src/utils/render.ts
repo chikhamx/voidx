@@ -1,6 +1,7 @@
 import { renderMarkdown, renderUserMessage, highlightCode } from './markdown';
 import { takeCommittedStreams, clearActiveStreams, appendStreamText, commitStream, getTranscriptElement } from './stream';
 import type { TranscriptNode, Payload } from '../rpc/protocol';
+import { iconSvg } from './icons';
 
 /* ── Local type aliases ── */
 
@@ -295,24 +296,18 @@ function renderTurnStats(duration: string, calls: string, input: string, output:
   const durItem = document.createElement("span");
   durItem.className = "vx-stat-item vx-stat-duration";
   durItem.title = "Duration";
-  durItem.innerHTML = `
-    <svg xmlns="http://www.w3.org/2000/svg" width="12" height="12" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.5" stroke-linecap="round" stroke-linejoin="round" class="vx-stat-icon"><circle cx="12" cy="12" r="10"></circle><polyline points="12 6 12 12 16 14"></polyline></svg>
-    <span>${duration}</span>
-  `;
-  
+  durItem.innerHTML = `${iconSvg("clock", 12, 2.5)}<span>${duration}</span>`;
+
   const callsItem = document.createElement("span");
   callsItem.className = "vx-stat-item vx-stat-calls";
   callsItem.title = "Tool Calls";
-  callsItem.innerHTML = `
-    <svg xmlns="http://www.w3.org/2000/svg" width="12" height="12" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.5" stroke-linecap="round" stroke-linejoin="round" class="vx-stat-icon"><rect x="3" y="3" width="18" height="18" rx="2" ry="2"></rect><polyline points="8 9 11 12 8 15"></polyline><line x1="13" y1="15" x2="16" y2="15"></line></svg>
-    <span>${calls} calls</span>
-  `;
-  
+  callsItem.innerHTML = `${iconSvg("terminal", 12, 2.5)}<span>${calls} calls</span>`;
+
   const tokensItem = document.createElement("span");
   tokensItem.className = "vx-stat-item vx-stat-tokens";
   tokensItem.title = "Tokens (Input / Output)";
   tokensItem.innerHTML = `
-    <svg xmlns="http://www.w3.org/2000/svg" width="12" height="12" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.5" stroke-linecap="round" stroke-linejoin="round" class="vx-stat-icon"><rect x="4" y="4" width="16" height="16" rx="2" ry="2"></rect><rect x="9" y="9" width="6" height="6"></rect><line x1="9" y1="1" x2="9" y2="4"></line><line x1="15" y1="1" x2="15" y2="4"></line><line x1="9" y1="20" x2="9" y2="23"></line><line x1="15" y1="20" x2="15" y2="23"></line><line x1="20" y1="9" x2="23" y2="9"></line><line x1="20" y1="15" x2="23" y2="15"></line><line x1="1" y1="9" x2="4" y2="9"></line><line x1="1" y1="15" x2="4" y2="15"></line></svg>
+    ${iconSvg("cpu", 12, 2.5)}
     <span>${input} in</span>
     <span class="vx-stat-arrow">→</span>
     <span>${output} out</span>
@@ -390,13 +385,13 @@ interface ToolInfo {
   tool_name: string;
 }
 
-const SVG_ICONS = {
-  read: `<svg xmlns="http://www.w3.org/2000/svg" width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" class="vx-icon"><path d="M2 3h6a4 4 0 0 1 4 4v14a3 3 0 0 0-3-3H2z"></path><path d="M22 3h-6a4 4 0 0 0-4 4v14a3 3 0 0 1 3-3h7z"></path></svg>`,
-  write: `<svg xmlns="http://www.w3.org/2000/svg" width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" class="vx-icon"><path d="M12 20h9"></path><path d="M16.5 3.5a2.12 2.12 0 0 1 3 3L7 19l-4 1 1-4Z"></path></svg>`,
-  command: `<svg xmlns="http://www.w3.org/2000/svg" width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" class="vx-icon"><rect x="3" y="3" width="18" height="18" rx="2" ry="2"></rect><polyline points="8 9 11 12 8 15"></polyline><line x1="13" y1="15" x2="16" y2="15"></line></svg>`,
-  search: `<svg xmlns="http://www.w3.org/2000/svg" width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" class="vx-icon"><circle cx="11" cy="11" r="8"></circle><line x1="21" y1="21" x2="16.65" y2="16.65"></line></svg>`,
-  folder: `<svg xmlns="http://www.w3.org/2000/svg" width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" class="vx-icon"><path d="M4 20h16a2 2 0 0 0 2-2V8a2 2 0 0 0-2-2h-7.93a2 2 0 0 1-1.66-.9l-.82-1.2A2 2 0 0 0 7.93 3H4a2 2 0 0 0-2 2v13a2 2 0 0 0 2 2z"></path></svg>`,
-  tool: `<svg xmlns="http://www.w3.org/2000/svg" width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" class="vx-icon"><path d="M14.7 6.3a1 1 0 0 0 0 1.4l1.6 1.6a1 1 0 0 0 1.4 0l3.77-3.77a6 6 0 0 1-7.94 7.94l-6.91 6.91a2.12 2.12 0 0 1-3-3l6.91-6.91a6 6 0 0 1 7.94-7.94l-3.76 3.76z"></path></svg>`
+const SVG_ICONS: Record<string, string> = {
+  read: iconSvg("book", 14, 2),
+  write: iconSvg("pencil", 14, 2),
+  command: iconSvg("terminal", 14, 2),
+  search: iconSvg("search", 14, 2),
+  folder: iconSvg("folder", 14, 2),
+  tool: iconSvg("wrench", 14, 2),
 };
 
 function getToolGroupSummary(tools: ToolInfo[]): { icon: string; text: string } {
@@ -522,7 +517,7 @@ function createToolGroup(): HTMLElement {
 
   const chevron = document.createElement("span");
   chevron.className = "tool-group-chevron";
-  chevron.textContent = " \u203a";
+  chevron.innerHTML = iconSvg("chevron-right", 12, 2);
 
   const args = document.createElement("span");
   args.className = "tool-group-args";
@@ -531,7 +526,7 @@ function createToolGroup(): HTMLElement {
     const body = group.querySelector<HTMLElement>(".tool-group-body");
     if (!body) return;
     body.hidden = !body.hidden;
-    chevron.textContent = body.hidden ? " \u203a" : " \u2228";
+    chevron.innerHTML = iconSvg(body.hidden ? "chevron-right" : "chevron-down", 12, 2);
     renderToolGroupVisibility(group);
   });
 
@@ -641,7 +636,8 @@ export function handleToolItem(method: string, itemId: string, data: ToolItemDat
     chevron.className = "tool-chevron";
     const hasArgs = !!data.args && (typeof data.args === "string" ? data.args.trim() !== "" : Object.keys(data.args).length > 0);
     const isCmd = data.tool_name === "run_command" || data.tool_name === "command" || data.tool_name === "bash";
-    chevron.textContent = (hasArgs || isCmd) ? "\u203a" : "\u00b7";
+    const expandable = hasArgs || isCmd;
+    chevron.innerHTML = iconSvg(expandable ? "chevron-right" : "dot", 12, 2);
 
     const name = document.createElement("span");
     name.className = "tool-name";
@@ -665,8 +661,8 @@ export function handleToolItem(method: string, itemId: string, data: ToolItemDat
       const body = toolEl.querySelector<HTMLElement>(".tool-body");
       if (body) {
         body.hidden = !body.hidden;
-        if (chevron.textContent !== "\u00b7") {
-          chevron.textContent = body.hidden ? "\u203a" : "\u2228";
+        if (body.children.length > 0) {
+          chevron.innerHTML = iconSvg(body.hidden ? "chevron-right" : "chevron-down", 12, 2);
         }
         chevron.classList.toggle("open", !body.hidden);
       }
@@ -710,8 +706,8 @@ export function handleToolItem(method: string, itemId: string, data: ToolItemDat
         detail.textContent = data.detail;
         body.append(detail);
       }
-      if (chev && chev.textContent === "\u00b7") {
-        chev.textContent = body.hidden ? "\u203a" : "\u2228";
+      if (chev && body.children.length > 0) {
+        chev.innerHTML = iconSvg(body.hidden ? "chevron-right" : "chevron-down", 12, 2);
       }
     } else if (method === "item.completed") {
       const spinner = el.querySelector(".tool-spinner");
@@ -732,11 +728,11 @@ export function handleToolItem(method: string, itemId: string, data: ToolItemDat
         body.append(detail);
       }
       if (body && chev) {
-        if (body.children.length === 0) {
-          chev.textContent = "\u00b7";
-        } else if (chev.textContent === "\u00b7") {
-          chev.textContent = body.hidden ? "\u203a" : "\u2228";
-        }
+        chev.innerHTML = iconSvg(
+          body.children.length === 0 ? "dot" : body.hidden ? "chevron-right" : "chevron-down",
+          12,
+          2,
+        );
       }
     }
     if (transcriptEl) {
@@ -836,12 +832,11 @@ export function appendThoughtItem(
 
     if (label) {
       const formatted = formatThoughtMeta(data.meta, combinedElapsed);
-      const brainSvg = `<svg xmlns="http://www.w3.org/2000/svg" width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" class="vx-icon"><path d="M12 5a3 3 0 1 0-5.997.125 4 4 0 0 0-2.526 5.77 4 4 0 0 0 .556 6.588A4 4 0 1 0 12 18Z"></path><path d="M12 5a3 3 0 1 1 5.997.125 4 4 0 0 1 2.526 5.77 4 4 0 0 1-.556 6.588A4 4 0 1 1 12 18Z"></path><path d="M12 5v14"></path><path d="M12 9h4"></path><path d="M12 14h-4"></path><path d="M12 14h4"></path><path d="M12 9h-4"></path></svg>`;
-      label.innerHTML = `${brainSvg}${formatted}`;
+      label.innerHTML = `${iconSvg("brain", 14, 2)}${formatted}`;
     }
 
     if (chevron && body) {
-      chevron.textContent = body.hidden ? " \u203a" : " \u2228";
+      chevron.innerHTML = iconSvg(body.hidden ? "chevron-right" : "chevron-down", 12, 2);
     }
 
     if (body && data.text) {
@@ -870,18 +865,17 @@ export function appendThoughtItem(
   const label = document.createElement("span");
   label.className = "thought-label";
   const formatted = formatThoughtMeta(data.meta, data.elapsed);
-  const brainSvg = `<svg xmlns="http://www.w3.org/2000/svg" width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" class="vx-icon"><path d="M12 5a3 3 0 1 0-5.997.125 4 4 0 0 0-2.526 5.77 4 4 0 0 0 .556 6.588A4 4 0 1 0 12 18Z"></path><path d="M12 5a3 3 0 1 1 5.997.125 4 4 0 0 1 2.526 5.77 4 4 0 0 1-.556 6.588A4 4 0 1 1 12 18Z"></path><path d="M12 5v14"></path><path d="M12 9h4"></path><path d="M12 14h-4"></path><path d="M12 14h4"></path><path d="M12 9h-4"></path></svg>`;
-  label.innerHTML = `${brainSvg}${formatted}`;
+  label.innerHTML = `${iconSvg("brain", 14, 2)}${formatted}`;
 
   const chevron = document.createElement("span");
   chevron.className = "thought-chevron";
-  chevron.textContent = " \u203a";
+  chevron.innerHTML = iconSvg("chevron-right", 12, 2);
 
   header.addEventListener("click", () => {
     const body = el.querySelector<HTMLElement>(".thought-body");
     if (body) {
       body.hidden = !body.hidden;
-      chevron.textContent = body.hidden ? " \u203a" : " \u2228";
+      chevron.innerHTML = iconSvg(body.hidden ? "chevron-right" : "chevron-down", 12, 2);
     }
   });
 
@@ -957,7 +951,7 @@ export function appendDiffItem(itemId: string, data: DiffItemData): void {
 
   const chevron = document.createElement("span");
   chevron.className = "diff-chevron";
-  chevron.textContent = "\u25B8";
+  chevron.innerHTML = iconSvg("chevron-right", 12, 2);
 
   const title = document.createElement("span");
   title.className = "diff-title";

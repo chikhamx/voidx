@@ -204,6 +204,11 @@
     },
     "PermissionToolDetail": {
       "properties": {
+        "ai_approval_failure": {
+          "default": "",
+          "title": "Ai Approval Failure",
+          "type": "string"
+        },
         "allowed_scopes": {
           "default": [],
           "items": {

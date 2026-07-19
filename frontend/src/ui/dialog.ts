@@ -19,6 +19,7 @@ export interface PermissionToolDetail {
   } | null;
   allowed_scopes?: string[];
   default_scope?: string | null;
+  ai_approval_failure?: string;
 }
 
 export interface UiRequest {
@@ -173,6 +174,13 @@ export function renderPermissionDetails(request: UiRequest): void {
       defaultScope.className = "request-default-scope";
       defaultScope.textContent = `Default scope: ${tool.default_scope}`;
       block.append(defaultScope);
+    }
+
+    if (tool.ai_approval_failure) {
+      const aiApproval = document.createElement("div");
+      aiApproval.className = "request-risk-reason";
+      aiApproval.textContent = tool.ai_approval_failure;
+      block.append(aiApproval);
     }
 
     const args = document.createElement("pre");

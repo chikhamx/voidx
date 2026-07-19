@@ -134,7 +134,7 @@ describe("workbench shell", () => {
     const styles = readStylesCSS();
 
     expect(styles).toMatch(/\.vx-main-canvas\.empty \{[^}]*justify-content: center;[^}]*\}/);
-    expect(styles).toMatch(/\.vx-main-canvas\.empty \.vx-empty-state \{[^}]*margin: 0 auto 32px;[^}]*\}/);
+    expect(styles).toMatch(/\.vx-main-canvas\.empty \.vx-empty-state \{[^}]*margin-bottom: var\(--vx-space-8\);[^}]*\}/);
     expect(styles).toMatch(/\.vx-main-canvas\.empty \.composer \{[^}]*margin-bottom: 0;[^}]*\}/);
   });
 
@@ -210,20 +210,19 @@ describe("workbench shell", () => {
   it("keeps sidebar rows aligned in the workbench layout", () => {
     const styles = readStylesCSS();
 
-    expect(styles).toContain("--vx-sidebar-row-padding: 7px 9px;");
+    expect(styles).toContain(".vx-nav-item,\n.vx-directory-row,\n.vx-session-item");
     expect(document.querySelector("#sidebar-resizer")).not.toBeNull();
-    expect(styles).toContain(".vx-sidebar-nav,\n.vx-session-list,\n.vx-sidebar-footer");
-    expect(styles).toContain(".vx-workbench-shell .vx-session-children {\n  display: grid;");
-    expect(styles).toContain("padding-left: 28px;");
-    expect(styles).toMatch(/\.vx-workbench-shell \.vx-sidebar-section \{[^}]*flex: 1;[^}]*min-height: 0;[^}]*\}/);
-    expect(styles).toMatch(/\.vx-workbench-shell \.vx-session-item \{[^}]*font-size: 14px;[^}]*grid-template-columns: 16px minmax\(0, 1fr\) max-content;[^}]*\}/);
+    expect(styles).toContain(".vx-sidebar-nav,\n.vx-sidebar-footer");
+    expect(styles).toContain(".vx-session-children {\n  display: grid;");
+    expect(styles).toContain("padding-left: var(--vx-space-4);");
+    expect(styles).toMatch(/\.vx-sidebar-section \{[^}]*flex: 1;[^}]*min-height: 0;[^}]*\}/);
+    expect(styles).toMatch(/\.vx-session-item \{[^}]*grid-template-columns: 16px minmax\(0, 1fr\) max-content;[^}]*\}/);
     expect(styles).toMatch(/\.vx-session-time \{[^}]*justify-self: end;[^}]*\}/);
-    expect(styles).toMatch(/\.vx-workbench-shell \.vx-directory-row \{[^}]*padding: var\(--vx-sidebar-row-padding\);[^}]*\}/);
-    expect(styles).toMatch(/\.vx-workbench-shell \.vx-session-item \{[^}]*padding: var\(--vx-sidebar-row-padding\);[^}]*\}/);
-    expect(styles).toMatch(/\.vx-workbench-shell \.vx-project-heading \{[^}]*color: var\(--vx-text-secondary\);[^}]*font-size: 14px;[^}]*min-height: 30px;[^}]*padding: var\(--vx-sidebar-row-padding\);[^}]*\}/);
-    expect(styles).toMatch(/\.vx-workbench-shell \.vx-project-heading \.vx-sidebar-row-icon \{[^}]*color: var\(--vx-text-secondary\);[^}]*\}/);
-    expect(styles).toMatch(/\.vx-workbench-shell \.vx-sidebar-resizer \{[^}]*cursor: col-resize;[^}]*\}/);
-    expect(styles).toMatch(/\.vx-workbench-shell \.vx-dock \{[^}]*margin-left: var\(--vx-sidebar-width\);[^}]*width: calc\(100% - var\(--vx-sidebar-width\)\);[^}]*\}/);
+    expect(styles).toMatch(/\.vx-nav-item,[\s\S]*\.vx-directory-row,[\s\S]*\.vx-session-item \{[^}]*padding: 0 var\(--vx-space-2\);[^}]*\}/);
+    expect(styles).toMatch(/\.vx-sidebar-heading \{[^}]*color: var\(--vx-text-muted\);[^}]*font-size: var\(--vx-text-xs\);[^}]*min-height: 28px;[^}]*\}/);
+    expect(styles).toMatch(/\.vx-sidebar-row-icon \{[^}]*color: var\(--vx-text-muted\);[^}]*\}/);
+    expect(styles).toMatch(/\.vx-sidebar-resizer \{[^}]*cursor: col-resize;[^}]*\}/);
+    expect(styles).toMatch(/\.vx-dock \{[^}]*border-left: 1px solid var\(--vx-border\);[^}]*width: var\(--vx-dock-width\);[^}]*\}/);
     expect(styles).toContain(".vx-sidebar-row-icon");
   });
 
@@ -313,7 +312,7 @@ describe("workbench shell", () => {
     document.querySelector("#composer").dispatchEvent(new SubmitEvent("submit", { bubbles: true, cancelable: true }));
 
     expect(send.classList.contains("running")).toBe(true);
-    expect(send.textContent).toBe("■");
+    expect(send.querySelector("svg.vx-icon")).not.toBeNull();
     expect(input.disabled).toBe(false);
     expect(sentPayloads(sentMessages).find((payload) => payload.method === "session.submit")).toMatchObject({
       method: "session.submit",
@@ -542,7 +541,7 @@ describe("workbench shell", () => {
     handleNotification("turn.completed", {});
 
     expect(send.classList.contains("running")).toBe(false);
-    expect(send.textContent).toBe("↑");
+    expect(send.querySelector("svg.vx-icon")).not.toBeNull();
   });
 
   it("renders a visible error when a turn fails", () => {
@@ -552,7 +551,7 @@ describe("workbench shell", () => {
     handleNotification("turn.failed", { message: "LLM call failed: invalid API key" });
 
     expect(send.classList.contains("running")).toBe(false);
-    expect(send.textContent).toBe("↑");
+    expect(send.querySelector("svg.vx-icon")).not.toBeNull();
     expect(document.querySelector("#transcript").textContent).toContain("LLM call failed: invalid API key");
     expect(document.querySelector(".message-error")).not.toBeNull();
   });
@@ -636,6 +635,30 @@ describe("workbench shell", () => {
     expect(document.querySelectorAll("#request-controls button")).toHaveLength(1);
     expect(document.querySelector("#request-controls").textContent).not.toContain("Allow this command");
   });
+
+  it("renders AI approval failure reason in permission details", () => {
+    const dialog = document.querySelector("#request-dialog");
+    vi.spyOn(dialog, "showModal").mockImplementation(() => {});
+
+    handleNotification("ui.request", {
+      kind: "permission",
+      request_id: "perm_ai_1",
+      thread_id: "t2",
+      prompt: "Allow tool use?",
+      choices: [["Yes", "y", "Allow once"]],
+      tools: [
+        {
+          name: "bash",
+          pattern: "./build.sh",
+          args: { command: "./build.sh" },
+          ai_approval_failure: "AI approval failed: error",
+        },
+      ],
+    });
+
+    expect(document.querySelector("#request-details").textContent).toContain("AI approval failed: error");
+  });
+
   it("queues overlapping ui requests instead of replacing the active dialog", () => {
     const sentMessages = setupOpenSocket();
     const dialog = document.querySelector("#request-dialog");

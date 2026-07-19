@@ -1,3 +1,5 @@
+import { iconSvg } from "../utils/icons";
+
 export interface ThreadInfo {
   thread_id: string;
   title?: string;
@@ -145,17 +147,7 @@ function groupByWorkspace(threads: ThreadInfo[]): WorkspaceGroup[] {
 function _svgIcon(name: "folder" | "folder-open" | "message" | "plus" | "pencil" | "trash" | "chevron-down" | "chevron-right"): HTMLElement {
   const icon = document.createElement("span");
   icon.className = "vx-sidebar-row-icon";
-  const paths: Record<typeof name, string> = {
-    folder: '<path d="M3.5 6.5h5l1.4 1.7h6.6v7.3a2 2 0 0 1-2 2h-11a2 2 0 0 1-2-2v-7a2 2 0 0 1 2-2Z"/><path d="M3.5 6.5V5a2 2 0 0 1 2-2h3.2l1.4 1.7h4.4a2 2 0 0 1 2 2v1.7"/>',
-    "folder-open": '<path d="M2.5 8h6l1.2 1.5h7.8a1.5 1.5 0 0 1 1.5 1.5l-1.5 5.5a2 2 0 0 1-2 1.5H4a2 2 0 0 1-2-2v-6.5a1.5 1.5 0 0 1 1.5-1.5Z"/><path d="M3.5 6.5V5a2 2 0 0 1 2-2h3.2l1.4 1.7h4.4a2 2 0 0 1 2 2v1.7"/>',
-    message: '<path d="M5 5.5h10a2 2 0 0 1 2 2v5.8a2 2 0 0 1-2 2H8.4L5 18v-2.7a2 2 0 0 1-2-2V7.5a2 2 0 0 1 2-2Z"/>',
-    plus: '<path d="M10 4.5v11"/><path d="M4.5 10h11"/>',
-    pencil: '<path d="M4 14.5V17h2.5L15.2 8.3l-2.5-2.5L4 14.5Z"/><path d="m11.7 6.8 2.5 2.5"/>',
-    trash: '<path d="M5 6h10"/><path d="M8 6V4.5h4V6"/><path d="M6.5 8.5 7 16h6l.5-7.5"/><path d="M9 9.5v4.5"/><path d="M11 9.5v4.5"/>',
-    "chevron-down": '<path d="m5.5 8 4.5 4.5L14.5 8"/>',
-    "chevron-right": '<path d="m8 5.5 4.5 4.5L8 14.5"/>',
-  };
-  icon.innerHTML = `<svg viewBox="0 0 20 20" aria-hidden="true" focusable="false">${paths[name]}</svg>`;
+  icon.innerHTML = iconSvg(name, 16, 1.5);
   return icon;
 }
 

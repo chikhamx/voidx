@@ -1,3 +1,13 @@
+/** Model/provider profile summary returned by settings. */
+export interface ProfileSummary {
+  name: string;
+  provider: string;
+  model: string;
+  base_url?: string | null;
+  protocol?: string | null;
+  configured?: boolean;
+}
+
 /** RPC-layer transcript node (alias for protocol.d.ts Item). */
 export type TranscriptNode = Record<string, unknown>;
 

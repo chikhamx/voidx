@@ -112,6 +112,7 @@ export type Kind3 = "permission";
 export type Prompt2 = string;
 export type RequestId2 = string;
 export type ThreadId6 = string;
+export type AiApprovalFailure = string;
 export type AllowedScopes = string[];
 export type DefaultScope = string | null;
 export type Name = string;
@@ -292,6 +293,7 @@ export interface UiPermissionRequest {
   [k: string]: unknown;
 }
 export interface PermissionToolDetail {
+  ai_approval_failure?: AiApprovalFailure;
   allowed_scopes?: AllowedScopes;
   args?: Args;
   default_scope?: DefaultScope;

@@ -10,11 +10,12 @@ import {
 } from "../services/state";
 import type { ProfileSummary } from "../utils/types";
 import type { SettingsSnapshot } from "./settings";
+import { iconSvg } from "../utils/icons";
 
 export function initModelControls(): void {
   // Bind click listener for custom model pill dropdown
-  const modelPill = document.querySelector("#model-pill");
-  const dropdownEl = document.querySelector("#model-dropdown");
+  const modelPill = document.querySelector<HTMLElement>("#model-pill");
+  const dropdownEl = document.querySelector<HTMLElement>("#model-dropdown");
   if (modelPill && dropdownEl && modelPill.dataset.initialized !== "true") {
     modelPill.dataset.initialized = "true";
     modelPill.addEventListener("click", (e) => {
@@ -32,7 +33,7 @@ export function initModelControls(): void {
 
     document.addEventListener("click", () => {
       dropdownEl.hidden = true;
-      const reasoningDropdown = document.querySelector("#reasoning-dropdown");
+      const reasoningDropdown = document.querySelector<HTMLElement>("#reasoning-dropdown");
       if (reasoningDropdown) {
         (reasoningDropdown as HTMLElement).hidden = true;
       }
@@ -91,7 +92,7 @@ const REASONING_LEVELS = ["off", "low", "medium", "high", "xhigh"];
 const REASONING_LABELS = ["关闭", "低", "中", "高", "高级"];
 
 export function populateCustomModelDropdown(): void {
-  const dropdownEl = document.querySelector("#model-dropdown");
+  const dropdownEl = document.querySelector<HTMLElement>("#model-dropdown");
   if (!dropdownEl) return;
   dropdownEl.replaceChildren();
 
@@ -236,7 +237,7 @@ export function resolveProfileConfigured(
   snapshot: SettingsSnapshot,
   provider: string,
   model: string,
-): boolean | undefined {
+): boolean | null {
   const profiles = snapshot.profiles || [];
   const matchingProfile = profiles.find(
     (profile) => profile.provider === provider && profile.model === model,
@@ -247,7 +248,7 @@ export function resolveProfileConfigured(
   if (profiles.length > 0) {
     return profiles.some((profile) => Boolean(profile.configured));
   }
-  return undefined;
+  return null;
 }
 
 export function applyRuntimeState(params: Record<string, unknown>): void {
@@ -295,8 +296,8 @@ export function parseProviderModel(
 }
 
 export function initPermissionControls(): void {
-  const permissionPill = document.querySelector("#permission-pill");
-  const dropdownEl = document.querySelector("#permission-dropdown");
+  const permissionPill = document.querySelector<HTMLElement>("#permission-pill");
+  const dropdownEl = document.querySelector<HTMLElement>("#permission-dropdown");
   if (permissionPill && dropdownEl && permissionPill.dataset.initialized !== "true") {
     permissionPill.dataset.initialized = "true";
     permissionPill.addEventListener("click", (e) => {
@@ -319,7 +320,7 @@ export function initPermissionControls(): void {
 }
 
 export function populatePermissionDropdown(): void {
-  const dropdownEl = document.querySelector("#permission-dropdown");
+  const dropdownEl = document.querySelector<HTMLElement>("#permission-dropdown");
   if (!dropdownEl) return;
   dropdownEl.replaceChildren();
 
@@ -355,32 +356,32 @@ export function populatePermissionDropdown(): void {
       mode: "read_only",
       title: "只读模式",
       desc: "只允许读取文件和进行安全的安全检查，禁止任何修改操作",
-      icon: `<svg class="vx-icon" xmlns="http://www.w3.org/2000/svg" width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.5" stroke-linecap="round" stroke-linejoin="round"><path d="M2 12s3-7 10-7 10 7 10 7-3 7-10 7-10-7-10-7Z"/><circle cx="12" cy="12" r="3"/></svg>`
+      icon: iconSvg("eye", 16, 2),
     },
     {
       mode: "safe",
       title: "安全模式",
       desc: "对检测到的潜在风险操作请求批准，保障系统安全",
-      icon: `<svg class="vx-icon" xmlns="http://www.w3.org/2000/svg" width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.5" stroke-linecap="round" stroke-linejoin="round"><path d="M12 22s8-4 8-10V5l-8-3-8 3v7c0 6 8 10 8 10z"/></svg>`
+      icon: iconSvg("shield", 16, 2),
     },
     {
       mode: "ai_approval",
       title: "AI 审批",
       desc: "先将受限工具参数发送给所选模型预审，不确定时仍由你确认",
-      icon: `<svg class="vx-icon" xmlns="http://www.w3.org/2000/svg" width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.5"><path d="M12 3a9 9 0 1 0 9 9"/><path d="M12 7v5l3 2"/></svg>`
+      icon: iconSvg("clock", 16, 2),
     },
     {
       mode: "project_trusted",
       title: "项目已信任",
       desc: "在此项目中自动批准常见操作，其他敏感操作仍需提示",
-      icon: `<svg class="vx-icon" xmlns="http://www.w3.org/2000/svg" width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.5" stroke-linecap="round" stroke-linejoin="round"><path d="M12 22s8-4 8-10V5l-8-3-8 3v7c0 6 8 10 8 10z"/><path d="m9 11 2 2 4-4"/></svg>`
+      icon: iconSvg("shield-check", 16, 2),
     },
     {
       mode: "full_access",
       title: "完全访问",
       desc: "可不受限制地访问互联网、执行命令和修改电脑上的任何文件",
-      icon: `<svg class="vx-icon" xmlns="http://www.w3.org/2000/svg" width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.5" stroke-linecap="round" stroke-linejoin="round"><circle cx="12" cy="12" r="10"/><line x1="12" y1="8" x2="12" y2="12"/><line x1="12" y1="16" x2="12.01" y2="16"/></svg>`
-    }
+      icon: iconSvg("alert-circle", 16, 2),
+    },
   ];
 
   for (const opt of options) {
@@ -426,8 +427,8 @@ export function populatePermissionDropdown(): void {
 }
 
 export function initReasoningControls(): void {
-  const reasoningPill = document.querySelector("#reasoning-pill");
-  const dropdownEl = document.querySelector("#reasoning-dropdown");
+  const reasoningPill = document.querySelector<HTMLElement>("#reasoning-pill");
+  const dropdownEl = document.querySelector<HTMLElement>("#reasoning-dropdown");
   if (reasoningPill && dropdownEl && reasoningPill.dataset.initialized !== "true") {
     reasoningPill.dataset.initialized = "true";
     reasoningPill.addEventListener("click", (e) => {
@@ -450,7 +451,7 @@ export function initReasoningControls(): void {
 }
 
 export function populateReasoningDropdown(): void {
-  const dropdownEl = document.querySelector("#reasoning-dropdown");
+  const dropdownEl = document.querySelector<HTMLElement>("#reasoning-dropdown");
   if (!dropdownEl) return;
   dropdownEl.replaceChildren();
 
@@ -469,7 +470,7 @@ export function populateReasoningDropdown(): void {
 
   const chevronSpan = document.createElement("span");
   chevronSpan.className = "vx-reasoning-chevron";
-  chevronSpan.textContent = " ›";
+  chevronSpan.innerHTML = iconSvg("chevron-right", 12, 2);
 
   headerEl.append(titleSpan, chevronSpan);
 
