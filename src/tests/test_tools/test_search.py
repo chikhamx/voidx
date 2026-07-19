@@ -381,6 +381,29 @@ class TestGrepImprovements:
         assert result.display.count("code.py-3-line3") == 1
 
     @pytest.mark.asyncio
+    async def test_context_lines_fully_visible_record_read_coverage(self, tmp_path):
+        f = tmp_path / "code.py"
+        f.write_text("line1\nline2\nTARGET\nline4\nline5\n")
+        ctx = ToolContext(workspace=str(tmp_path))
+        r = ToolRegistry()
+        result = await r.execute_tool("grep", {"pattern": "TARGET", "context_lines": 1}, ctx)
+
+        assert result.metadata.get("error") is not True
+        assert file_state.covered_read_range(ctx, f, 2, 4) is not None
+        assert file_state.covered_read_range(ctx, f, 1, 1) is None
+
+    @pytest.mark.asyncio
+    async def test_context_lines_truncated_not_recorded(self, tmp_path):
+        f = tmp_path / "code.py"
+        f.write_text("x" * 300 + "\nTARGET\n")
+        ctx = ToolContext(workspace=str(tmp_path))
+        r = ToolRegistry()
+        result = await r.execute_tool("grep", {"pattern": "TARGET", "context_lines": 1}, ctx)
+
+        assert result.metadata.get("error") is not True
+        assert file_state.covered_read_range(ctx, f, 1, 1) is None
+
+    @pytest.mark.asyncio
     async def test_metadata_truncated_on_match_limit(self, tmp_path):
         for i in range(110):
             (tmp_path / f"f{i}.py").write_text("TODO\n")

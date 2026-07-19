@@ -272,8 +272,11 @@ class GrepTool(BaseTool):
                         end = min(len(lines), line_no + inp.context_lines)
                         for ctx_no in range(start, end + 1):
                             if ctx_no != line_no and (rel, ctx_no) not in shown_lines:
-                                results.append(f"{rel}-{ctx_no}-{lines[ctx_no - 1].strip()[:200]}")
+                                ctx_line = lines[ctx_no - 1]
+                                results.append(f"{rel}-{ctx_no}-{ctx_line.strip()[:200]}")
                                 shown_lines.add((rel, ctx_no))
+                                if len(ctx_line) <= 200:
+                                    record_read_range(ctx, f, ctx_no, ctx_no)
                         if len(results) >= _MAX_OUTPUT_LINES:
                             truncated = True
                             break
