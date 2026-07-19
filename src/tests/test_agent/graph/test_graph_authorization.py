@@ -682,6 +682,61 @@ async def test_ai_approval_increments_counter_and_emits_refresh(tmp_path):
 
 
 @pytest.mark.asyncio
+async def test_ai_approval_notice_written_to_log_not_ui(tmp_path, monkeypatch):
+    from voidx.config import PermissionMode
+    from voidx.permission.ai_approval import AiApprovalResult
+    import voidx.agent.graph.permissions as perms_mod
+
+    graph = _graph(tmp_path)
+    graph._settings = Settings(str(tmp_path))
+    graph._permission.permission_mode = PermissionMode.AI_APPROVAL.value
+
+    async def review(candidates, _settings):
+        return AiApprovalResult(
+            allowed_ids=frozenset({candidates[0].tool_call["id"]}),
+            reason="reviewed",
+        )
+
+    graph._ai_approval.review = review
+
+    async def fail_if_asked(_tool_calls):
+        pytest.fail("should not prompt")
+
+    graph._ask_tool_permission = fail_if_asked
+
+    printed: list[str] = []
+    graph._ui.ui.print = lambda *a, **k: printed.append(str(a))
+
+    dock_calls: list[str] = []
+    orig_dock = getattr(graph._ui, "dock", None)
+    if orig_dock is not None:
+        orig_append = getattr(orig_dock, "append_message", None)
+        if callable(orig_append):
+            orig_dock.append_message = lambda msg: dock_calls.append(msg)
+
+    logged: list[dict] = []
+
+    def fake_log(event, *, tool_name="", message="", session_id=None, **kwargs):
+        logged.append({"event": event, "tool_name": tool_name, "message": message})
+
+    monkeypatch.setattr(perms_mod, "log_tool_event", fake_log)
+
+    call = {"name": "bash", "args": {"command": "python -m pytest -q"}, "id": "call_1"}
+    approved, denied = await graph._authorize_tool_calls([call], plan_mode=False, session_id="s")
+
+    assert [item["id"] for item in approved] == ["call_1"]
+    assert denied == []
+    assert printed == []
+    assert dock_calls == []
+    assert len(logged) == 1
+    assert logged[0]["event"] == "permission_notice"
+    assert "AI 审批" in logged[0]["message"]
+    assert "allow bash" in logged[0]["message"]
+
+
+
+
+@pytest.mark.asyncio
 async def test_successful_dangerous_call_cache_resets_with_runtime_state(tmp_path):
     graph = _graph(tmp_path)
     graph._successful_dangerous_calls.add("cached")

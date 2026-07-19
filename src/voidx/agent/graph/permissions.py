@@ -7,6 +7,7 @@ from dataclasses import replace
 from typing import Any, TYPE_CHECKING
 
 from voidx.config import PermissionMode
+from voidx.logging.tool_log import log_tool_event
 from voidx.permission.ai_approval import is_ai_approval_candidate
 from voidx.permission.service import (
     PermissionContext,
@@ -189,9 +190,7 @@ class GraphPermissionMixin:
         append(message)
         return True
     def _notice_permission_result(self: GraphPermissionHost, message: str) -> None:
-        if self._show_permission_output(message):
-            return
-        self._ui.ui.print(f"[dim]✓ {message}[/dim]")
+        log_tool_event("permission_notice", message=message)
 
     def _notify_tool_failure(self: GraphPermissionHost, tc: dict, result) -> None:
         """Notify user when an auto-approved tool fails."""
