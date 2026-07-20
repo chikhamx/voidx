@@ -50,7 +50,7 @@ def test_list_mcp_candidates_filters_by_query():
 
 
 def test_list_mcp_candidates_does_not_expose_catalog_tools():
-    settings = _settings_with_servers([_server("tavily")])
+    settings = _settings_with_servers([_server("tavily", tools=["search", "extract"])])
     catalog = [
         SimpleNamespace(
             name="tavily",
@@ -62,11 +62,11 @@ def test_list_mcp_candidates_does_not_expose_catalog_tools():
         )
     ]
     candidates = list_mcp_candidates(".", "", settings=settings, catalog=catalog)
-    assert candidates[0].description == "(no description)"
+    assert candidates[0].description == "Configured tools: search, extract"
 
 
 def test_list_mcp_candidates_does_not_expose_runtime_instructions():
-    settings = _settings_with_servers([_server("tavily")])
+    settings = _settings_with_servers([_server("tavily", tools={"tavily_search": True, "blocked": False})])
     catalog = [
         SimpleNamespace(
             name="tavily",
@@ -75,7 +75,7 @@ def test_list_mcp_candidates_does_not_expose_runtime_instructions():
         )
     ]
     candidates = list_mcp_candidates(".", "", settings=settings, catalog=catalog)
-    assert candidates[0].description == "(no description)"
+    assert candidates[0].description == "Configured tools: tavily_search"
 
 
 def test_list_mcp_candidates_falls_back_when_no_catalog():
@@ -87,4 +87,4 @@ def test_list_mcp_candidates_falls_back_when_no_catalog():
 def test_list_mcp_candidates_empty_description_without_catalog():
     settings = _settings_with_servers([_server("tavily")])
     candidates = list_mcp_candidates(".", "", settings=settings, catalog=None)
-    assert candidates[0].description == "(no description)"
+    assert candidates[0].description == "No description configured."

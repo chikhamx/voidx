@@ -389,7 +389,7 @@ class PermissionService:
             lines.append(f"  [green]Session allow:[/green] {', '.join(sorted(format_session_rule(rule) for rule in self._session_allow))}")
         if self._session_deny:
             lines.append(f"  [red]Session deny:[/red] {', '.join(sorted(format_session_rule(rule) for rule in self._session_deny))}")
-        lines.append("  [yellow]Ask first:[/yellow] file, line, replace, edit, write-capable bash, agent=implement, mcp__*")
+        lines.append("  [yellow]Ask first:[/yellow] file, line, replace, edit, write-capable bash, agent=implement, mcp calls")
         lines.append("")
         lines.append("  Commands: /permission  /allow <tool>  /deny <tool>")
         return "\n".join(lines)

@@ -47,7 +47,10 @@ async def test_mcp_candidates_returns_configured_servers(tmp_path: Path):
 
 @pytest.mark.asyncio
 async def test_mcp_candidates_does_not_expose_catalog_instructions(tmp_path: Path):
-    _write_mcp_config(tmp_path, "tavily")
+    (tmp_path / "voidx.json").write_text(
+        json.dumps({"mcpServers": {"tavily": {"command": "echo", "tools": {"search": True, "blocked": False}}}}),
+        encoding="utf-8",
+    )
     from types import SimpleNamespace
     catalog = [
         SimpleNamespace(
@@ -65,7 +68,7 @@ async def test_mcp_candidates_does_not_expose_catalog_instructions(tmp_path: Pat
 
     assert isinstance(result, JsonRpcResult)
     candidates = result.result["candidates"]
-    assert candidates[0]["description"] == "(no description)"
+    assert candidates[0]["description"] == "Configured tools: search"
 
 
 @pytest.mark.asyncio
@@ -88,4 +91,27 @@ async def test_mcp_candidates_does_not_expose_tool_list(tmp_path: Path):
     )
 
     assert isinstance(result, JsonRpcResult)
-    assert result.result["candidates"][0]["description"] == "(no description)"
+    assert result.result["candidates"][0]["description"] == "No description configured."
+
+
+@pytest.mark.asyncio
+async def test_mcp_candidates_use_catalog_description_when_config_is_empty(tmp_path: Path):
+    _write_mcp_config(tmp_path, "tavily")
+    from types import SimpleNamespace
+    catalog = [
+        SimpleNamespace(
+            name="tavily",
+            description="Search the web for current information.",
+            tools=(),
+            server_info={},
+            instructions="",
+        )
+    ]
+    session = _session(str(tmp_path), catalog_provider=lambda: catalog)
+
+    result = await session.dispatch_request(
+        JsonRpcRequest(id=4, method="mcp.candidates", params={"query": ""})
+    )
+
+    assert isinstance(result, JsonRpcResult)
+    assert result.result["candidates"][0]["description"] == "Search the web for current information."

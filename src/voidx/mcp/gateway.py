@@ -17,6 +17,7 @@ from pydantic import BaseModel, Field, field_validator
 
 from voidx.mcp.client import McpConnectionError
 from voidx.mcp.context import render_mcp_tool_context
+from voidx.mcp.descriptions import configured_server_description
 from voidx.mcp.schema import McpToolDef, format_mcp_call_result
 from voidx.mcp.validation import validate_mcp_arguments
 from voidx.tools.base import BaseTool, ToolContext, ToolResult, model_to_json_schema
@@ -103,7 +104,7 @@ class McpGatewayTool(BaseTool):
             entry = catalog.get(name)
             tools = list(entry.tools) if entry is not None else []
             config = self._manager.server_config(name)
-            if inp.query and not _matches_query(inp.query, name, status, tools, config):
+            if inp.query and not _matches_query(inp.query, name, status, tools, config, entry):
                 continue
             matched += 1
             if matched > _MAX_LIST_SERVERS:
@@ -127,10 +128,10 @@ class McpGatewayTool(BaseTool):
         state = status.status if status is not None else "unknown"
         count = len(tools) if tools else (status.tool_count if status is not None else 0)
         summary = ""
+        if entry is not None:
+            summary = (entry.description or "").strip()
         if config is not None:
-            summary = (config.description or "").strip()
-        if not summary and config is not None:
-            summary = (config.source or "").strip()
+            summary = summary or configured_server_description(config)
         headline = f"- {name}"
         if summary:
             headline += f": {summary}"
@@ -259,7 +260,7 @@ class McpGatewayTool(BaseTool):
         return ToolResult(output=format_mcp_call_result(result), metadata=meta)
 
 
-def _matches_query(query: str, name: str, status, tools: list[McpToolDef], config=None) -> bool:
+def _matches_query(query: str, name: str, status, tools: list[McpToolDef], config=None, entry=None) -> bool:
     needle = query.strip().lower()
     if not needle:
         return True
@@ -268,6 +269,8 @@ def _matches_query(query: str, name: str, status, tools: list[McpToolDef], confi
     if config is not None and (
         needle in config.description.lower() or needle in config.source.lower()
     ):
+        return True
+    if entry is not None and needle in (entry.description or "").lower():
         return True
     if status is not None and needle in status.error_message.lower():
         return True

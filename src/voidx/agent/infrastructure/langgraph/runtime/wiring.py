@@ -99,15 +99,20 @@ def build_external_managers(
     tools: ToolRegistry,
     permission: PermissionService,
     workspace: str,
+    model: Any | None = None,
 ) -> tuple[Any, Any]:
     from voidx.lsp import LspManager
     from voidx.mcp import McpManager
+    from voidx.mcp.description_generator import McpDescriptionGenerator
     from voidx.mcp.gateway import McpGatewayTool
 
+    description_generator = McpDescriptionGenerator(model)
     mcp_manager = McpManager(
         settings=settings,
         registry=tools,
         permission=permission,
+        description_generator=description_generator.generate,
+        workspace=workspace,
     )
     gateway_tool = McpGatewayTool(mcp_manager)
     tools.register(gateway_tool.id, gateway_tool, gateway_tool.description, gateway_tool.parameters_schema())

@@ -3,7 +3,7 @@
 Responsibilities:
   - Reads server configs from Settings
   - Spawns McpClient per server
-  - Discovers tools and registers them in ToolRegistry
+  - Discovers tools and stores them in the MCP catalog for the gateway tool
   - Exposes status for UI
   - Clean shutdown on graph exit
 
@@ -15,14 +15,17 @@ in the background. UI can poll statuses() to show progress.
 from __future__ import annotations
 
 import asyncio
+from collections.abc import Awaitable, Callable
 from voidx.logging import log_internal_error
 from voidx.logging.tool_log import log_tool_event
 
 from voidx.config import McpServerConfig, Settings
 from voidx.mcp.client import McpClient, McpConnectionError
 from voidx.mcp.catalog import McpCatalog, McpServerCatalogEntry
+from voidx.mcp.description_cache import McpDescriptionCache, description_fingerprint
+from voidx.mcp.descriptions import configured_server_description
 from voidx.mcp.schema import McpCallResult, McpRuntimeStatus, McpToolDef
-from voidx.mcp.tool import McpToolWrapper, mcp_tool_id
+from voidx.mcp.tool import mcp_tool_id
 from voidx.permission.service import PermissionService
 from voidx.tools.registry import ToolRegistry
 
@@ -31,7 +34,15 @@ from voidx.tools.registry import ToolRegistry
 class McpManager:
     """Manages all MCP server connections for a session."""
 
-    def __init__(self, settings: Settings | None, registry: ToolRegistry, permission: PermissionService) -> None:
+    def __init__(
+        self,
+        settings: Settings | None,
+        registry: ToolRegistry,
+        permission: PermissionService,
+        *,
+        description_generator: Callable[[dict[str, list[McpToolDef]]], Awaitable[dict[str, str]]] | None = None,
+        workspace: str | None = None,
+    ) -> None:
         self._settings = settings
         self._registry = registry
         self._permission = permission
@@ -41,9 +52,17 @@ class McpManager:
         self._errors: dict[str, str] = {}
         self._connecting: set[str] = set()
         self._init_task: asyncio.Task | None = None
+        self._description_task: asyncio.Task | None = None
         self._server_configs: list[McpServerConfig] = []
         self._catalog = McpCatalog()
-        self._exposure = "direct"
+        self._description_generator = description_generator
+        self._generated_descriptions: dict[str, str] = {}
+        workspace_root = workspace or getattr(settings, "_workspace", None)
+        self._description_cache = (
+            McpDescriptionCache(str(workspace_root))
+            if workspace_root is not None
+            else None
+        )
 
     @property
     def started(self) -> bool:
@@ -63,12 +82,10 @@ class McpManager:
         self._registry.unregister_prefix("mcp__")
         self._tool_counts.clear()
         self._catalog.clear()
+        self._generated_descriptions.clear()
 
         if self._settings is None:
-            self._exposure = "direct"
             return
-
-        self._exposure = self._settings.get_mcp_exposure()
 
         servers = self._settings.list_mcp_servers()
         if not servers:
@@ -98,9 +115,10 @@ class McpManager:
             log_tool_event("mcp_init_timeout", tool_name="mcp_manager", message=f"MCP server init did not complete within {timeout:.0f}s")
 
     async def _init_servers(self, servers: list[McpServerConfig]) -> None:
-        """Connect to servers and register tools (runs in background)."""
+        """Connect to servers and catalog tools for the gateway (runs in background)."""
         try:
             results = await self._start_servers(servers)
+            missing_descriptions: dict[str, list[McpToolDef]] = {}
 
             # Register tools from successfully started servers
             for server_name, client in results:
@@ -120,21 +138,12 @@ class McpManager:
                 self._catalog.put(
                     server_name,
                     filtered,
+                    description=(server_config.description.strip() if server_config else ""),
                     server_info=client.server_info,
                     instructions=client.instructions,
                 )
-
-                registered = 0
-                if self._exposure != "gateway" and not (server_config and server_config.auto):
-                    for td in filtered:
-                        wrapper = McpToolWrapper(client, td, server_name)
-                        self._registry.register(
-                            wrapper.id,
-                            wrapper,
-                            wrapper.description,
-                            wrapper.parameters_schema(),
-                        )
-                        registered += 1
+                if server_config is not None and not server_config.description.strip():
+                    missing_descriptions[server_name] = filtered
 
                 # Pre-deny tools that are in deny filter (user explicitly wants them blocked)
                 disallowed = self._resolve_tool_filter(server_config, allow_mode=False)
@@ -144,10 +153,77 @@ class McpManager:
                         self._permission.deny_silent(tool_id)
                         self._permission.deny_silent(f"mcp@pattern:mcp:{server_name}:{tool_name}")
 
-                log_tool_event("mcp_tools_registered", tool_name=server_name, message=f"MCP server '{server_name}': {registered} tools registered")
+                log_tool_event("mcp_tools_cataloged", tool_name=server_name, message=f"MCP server '{server_name}': {len(filtered)} tools cataloged")
                 self._tool_counts[server_name] = len(filtered)
+
+            pending_descriptions: dict[str, list[McpToolDef]] = {}
+            description_fingerprints: dict[str, str] = {}
+            for server_name, tools in missing_descriptions.items():
+                config = next((s for s in servers if s.name == server_name), None)
+                if config is None:
+                    continue
+                fingerprint = description_fingerprint(config, tools)
+                description_fingerprints[server_name] = fingerprint
+                cached = (
+                    self._description_cache.get(server_name, fingerprint)
+                    if self._description_cache is not None
+                    else None
+                )
+                if cached:
+                    self._store_generated_description(server_name, cached)
+                else:
+                    pending_descriptions[server_name] = tools
+
+            if pending_descriptions and self._description_generator is not None:
+                self._description_task = asyncio.create_task(
+                    self._generate_missing_descriptions(
+                        pending_descriptions,
+                        description_fingerprints,
+                    )
+                )
         finally:
             self._connecting.clear()
+
+    async def wait_descriptions(self) -> None:
+        """Wait for the optional background description generation task."""
+        if self._description_task is None:
+            return
+        await asyncio.shield(self._description_task)
+
+    async def _generate_missing_descriptions(
+        self,
+        server_tools: dict[str, list[McpToolDef]],
+        fingerprints: dict[str, str],
+    ) -> None:
+        try:
+            generated = await self._description_generator(server_tools)
+        except Exception as exc:
+            log_tool_event(
+                "mcp_description_generation_failed",
+                tool_name="mcp_manager",
+                message=f"Could not generate descriptions for {len(server_tools)} MCP server(s): {exc}",
+            )
+            log_internal_error(exc, context="mcp_description_generation")
+            return
+        log_tool_event(
+            "mcp_description_generated",
+            tool_name="mcp_manager",
+            message=f"Generated descriptions for {len(generated)} of {len(server_tools)} MCP server(s).",
+        )
+        for server, description in generated.items():
+            config = self.server_config(server)
+            if not description or config is None:
+                continue
+            if config.description.strip():
+                continue
+            self._store_generated_description(server, description)
+            fingerprint = fingerprints.get(server)
+            if fingerprint and self._description_cache is not None:
+                self._description_cache.put(server, fingerprint, description)
+
+    def _store_generated_description(self, server: str, description: str) -> None:
+        self._generated_descriptions[server] = description
+        self._catalog.set_description(server, description)
 
     async def stop_all(self) -> None:
         """Gracefully stop all MCP server connections."""
@@ -163,9 +239,15 @@ class McpManager:
                 pass
             self._init_task = None
 
+        if self._description_task is not None and not self._description_task.done():
+            self._description_task.cancel()
+            await asyncio.gather(self._description_task, return_exceptions=True)
+        self._description_task = None
+
         self._registry.unregister_prefix("mcp__")
         self._tool_counts.clear()
         self._catalog.clear()
+        self._generated_descriptions.clear()
         if not self._clients:
             return
 
@@ -191,6 +273,24 @@ class McpManager:
         if not configs and self._settings is not None:
             configs = self._settings.list_mcp_servers()
         return next((config for config in configs if config.name == server_name), None)
+
+    def server_description(self, server_name: str) -> str:
+        config = self.server_config(server_name)
+        if config is None:
+            return self._generated_descriptions.get(server_name, "")
+        if config.description.strip():
+            return config.description.strip()
+        return self._generated_descriptions.get(server_name) or configured_server_description(config)
+
+    def generated_descriptions(self) -> dict[str, str]:
+        return dict(self._generated_descriptions)
+
+    def set_description_model(self, model) -> None:
+        """Update the model used by an injected LLM description generator."""
+        target = getattr(self._description_generator, "__self__", None)
+        setter = getattr(target, "set_model", None)
+        if callable(setter):
+            setter(model)
 
     def catalog_snapshot(self) -> list[McpServerCatalogEntry]:
         """Filtered tool definitions per server, from the shared in-memory catalog."""

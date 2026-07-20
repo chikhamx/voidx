@@ -544,7 +544,9 @@ class LangGraphExecution:
             tools=self.tools,
             permission=self._permission,
             workspace=self._workspace,
+            model=self.model,
         )
+        self._instruction.set_mcp_description_provider(self._mcp_manager.generated_descriptions)
         if TYPE_CHECKING:
             _host_contract: Any = self
 
@@ -652,6 +654,8 @@ class LangGraphExecution:
         self.config = new_config
         self.api_key = profile.api_key if profile is not None else None
         self.model = create_chat_model(self.api_key, self.config.model) if self.api_key else None
+        if self._mcp_manager is not None:
+            self._mcp_manager.set_description_model(self.model)
 
         bind_settings_to_catalog(settings)
         self._tracker, self.tools = build_tool_registry(

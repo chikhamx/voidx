@@ -2,14 +2,21 @@
 
 from __future__ import annotations
 
+from collections.abc import Mapping
 from typing import TYPE_CHECKING
 
 if TYPE_CHECKING:
     from voidx.config import Settings
     from voidx.config.models import McpServerConfig
 
+from voidx.mcp.descriptions import configured_server_description
 
-def render_available_mcp_servers(settings: Settings | None) -> str:
+
+def render_available_mcp_servers(
+    settings: Settings | None,
+    *,
+    descriptions: Mapping[str, str] | None = None,
+) -> str:
     if settings is None:
         return ""
     servers = sorted(
@@ -26,14 +33,13 @@ def render_available_mcp_servers(settings: Settings | None) -> str:
             "to inspect its tools and parameters before calling it."
         ),
     ]
-    lines.extend(_server_summary(server) for server in servers)
+    lines.extend(_server_summary(server, descriptions) for server in servers)
     return "\n".join(lines)
 
 
-def _server_summary(server: McpServerConfig) -> str:
-    line = f"- {server.name} [auto]"
-    if server.description:
-        line += f": {server.description}"
-    if server.source:
-        line += f" (source: {server.source})"
-    return line
+def _server_summary(
+    server: McpServerConfig,
+    descriptions: Mapping[str, str] | None = None,
+) -> str:
+    generated = (descriptions or {}).get(server.name, "").strip()
+    return f"- {server.name}: {generated or configured_server_description(server)}"

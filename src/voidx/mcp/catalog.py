@@ -18,6 +18,7 @@ class McpServerCatalogEntry:
 
     name: str
     tools: tuple[McpToolDef, ...]
+    description: str = ""
     server_info: dict = field(default_factory=dict)
     instructions: str = ""
 
@@ -33,14 +34,28 @@ class McpCatalog:
         server: str,
         tool_defs: list[McpToolDef],
         *,
+        description: str = "",
         server_info: dict | None = None,
         instructions: str = "",
     ) -> None:
         self._entries[server] = McpServerCatalogEntry(
             name=server,
             tools=tuple(tool_defs),
+            description=description,
             server_info=server_info or {},
             instructions=instructions,
+        )
+
+    def set_description(self, server: str, description: str) -> None:
+        entry = self._entries.get(server)
+        if entry is None:
+            return
+        self._entries[server] = McpServerCatalogEntry(
+            name=entry.name,
+            tools=entry.tools,
+            description=description,
+            server_info=entry.server_info,
+            instructions=entry.instructions,
         )
 
     def remove(self, server: str) -> None:

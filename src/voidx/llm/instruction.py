@@ -66,6 +66,7 @@ class InstructionService:
         self._skill_service: SkillService | None = None
         self._skill_service_signature: tuple[tuple[str, ...], tuple[str, ...], tuple[str, ...]] | None = None
         self._available_mcp_servers: str | None = None
+        self._mcp_description_provider = None
         self._workflow_service = WorkflowService()
         self._debug = False
 
@@ -77,6 +78,11 @@ class InstructionService:
 
     def set_debug(self, value: bool) -> None:
         self._debug = value
+
+    def set_mcp_description_provider(self, provider) -> None:
+        """Use current MCP-generated descriptions when rendering the system prompt."""
+        self._mcp_description_provider = provider
+        self._available_mcp_servers = None
 
     async def system_paths(self) -> list[str]:
         """Discover all instruction file paths. Refreshed each call."""
@@ -117,10 +123,18 @@ class InstructionService:
         available_skills = await self.available_skills_section()
         if available_skills:
             instructions.append(available_skills)
-        if self._available_mcp_servers is None:
-            self._available_mcp_servers = render_available_mcp_servers(self._settings)
-        if self._available_mcp_servers:
-            instructions.append(self._available_mcp_servers)
+        if self._mcp_description_provider is not None:
+            descriptions = self._mcp_description_provider() or {}
+            available_mcp_servers = render_available_mcp_servers(
+                self._settings,
+                descriptions=descriptions,
+            )
+        else:
+            if self._available_mcp_servers is None:
+                self._available_mcp_servers = render_available_mcp_servers(self._settings)
+            available_mcp_servers = self._available_mcp_servers
+        if available_mcp_servers:
+            instructions.append(available_mcp_servers)
         return instructions
 
     async def available_skills_section(self) -> str:

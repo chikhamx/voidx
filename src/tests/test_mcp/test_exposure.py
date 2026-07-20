@@ -1,4 +1,4 @@
-"""mcp.exposure setting: direct (default) | gateway | hybrid."""
+"""MCP tools are exposed through the gateway only."""
 
 import json
 import sys
@@ -62,21 +62,24 @@ def _write_env(tmp_path, extra: dict | None = None):
 
 
 class TestExposureSetting:
-    def test_default_is_direct(self, tmp_path):
+    def test_default_is_gateway(self, tmp_path):
         settings = _write_env(tmp_path)
-        assert settings.get_mcp_exposure() == "direct"
+        assert settings.get_mcp_exposure() == "gateway"
 
     def test_explicit_gateway(self, tmp_path):
         settings = _write_env(tmp_path, {"mcp": {"exposure": "gateway"}})
         assert settings.get_mcp_exposure() == "gateway"
 
-    def test_explicit_hybrid(self, tmp_path):
-        settings = _write_env(tmp_path, {"mcp": {"exposure": "hybrid"}})
-        assert settings.get_mcp_exposure() == "hybrid"
+    def test_legacy_direct_and_hybrid_are_treated_as_gateway(self, tmp_path):
+        direct = _write_env(tmp_path, {"mcp": {"exposure": "direct"}})
+        assert direct.get_mcp_exposure() == "gateway"
 
-    def test_invalid_value_falls_back_to_direct(self, tmp_path):
+        settings = _write_env(tmp_path, {"mcp": {"exposure": "hybrid"}})
+        assert settings.get_mcp_exposure() == "gateway"
+
+    def test_invalid_value_falls_back_to_gateway(self, tmp_path):
         settings = _write_env(tmp_path, {"mcp": {"exposure": "banana"}})
-        assert settings.get_mcp_exposure() == "direct"
+        assert settings.get_mcp_exposure() == "gateway"
 
 
 class TestGatewayMode:
@@ -123,7 +126,7 @@ class TestAutoExposure:
             await manager.stop_all()
 
     @pytest.mark.asyncio
-    async def test_direct_mode_registers_wrappers(self, tmp_path):
+    async def test_legacy_direct_mode_still_uses_gateway_without_wrappers(self, tmp_path):
         settings = _write_env(tmp_path)
         registry = ToolRegistry(settings=settings)
         manager = McpManager(settings, registry, PermissionService())
@@ -132,12 +135,13 @@ class TestAutoExposure:
         await manager.wait_ready()
         try:
             tool_names = [t["function"]["name"] for t in registry.tools_for_llm()]
-            assert any(name.startswith("mcp__") for name in tool_names)
+            assert not any(name.startswith("mcp__") for name in tool_names)
+            assert manager.catalog_snapshot()[0].name == "fake"
         finally:
             await manager.stop_all()
 
     @pytest.mark.asyncio
-    async def test_hybrid_mode_registers_wrappers(self, tmp_path):
+    async def test_legacy_hybrid_mode_still_uses_gateway_without_wrappers(self, tmp_path):
         settings = _write_env(tmp_path, {"mcp": {"exposure": "hybrid"}})
         registry = ToolRegistry(settings=settings)
         manager = McpManager(settings, registry, PermissionService())
@@ -146,7 +150,8 @@ class TestAutoExposure:
         await manager.wait_ready()
         try:
             tool_names = [t["function"]["name"] for t in registry.tools_for_llm()]
-            assert any(name.startswith("mcp__") for name in tool_names)
+            assert not any(name.startswith("mcp__") for name in tool_names)
+            assert manager.catalog_snapshot()[0].name == "fake"
         finally:
             await manager.stop_all()
 

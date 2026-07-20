@@ -36,19 +36,9 @@ def render_mcp_server_summary(
         "Scope: current-turn",
         "",
         f"## MCP Server: {server}",
-        f"Status: {status}",
     ]
     if description.strip():
         lines.append(f"Summary: {description.strip()}")
-    if instructions.strip() and instructions.strip() != description.strip():
-        lines.append(f"Instructions: {instructions.strip()}")
-    name = (server_info or {}).get("name") if server_info else None
-    version = (server_info or {}).get("version") if server_info else None
-    if name or version:
-        value = name or server
-        if version:
-            value = f"{value} ({version})"
-        lines.append(f"Server-Info: {value}")
     lines.append("")
     lines.append(f'Use `mcp(op="load", server="{server}")` to expand tools and parameters.')
     return "\n".join(lines)

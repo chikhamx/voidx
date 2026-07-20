@@ -232,7 +232,15 @@ def test_permission_service_session_wildcards_apply_to_mcp_tools():
 def test_mcp_tool_execution_requires_permission(tmp_path):
     context = PermissionContext(workspace=str(tmp_path))
     decision = authorize_tool_call(
-        {"name": "mcp__demo__send_message_12345678", "args": {"text": "hello"}},
+        {
+            "name": "mcp",
+            "args": {
+                "op": "call",
+                "server": "demo",
+                "tool": "send_message",
+                "arguments": {"text": "hello"},
+            },
+        },
         context,
     )
 

@@ -171,27 +171,29 @@ class TerminalManager:
         return pty
 
     def _create_unix_pty(self, command: list[str], cols: int, rows: int, cwd: str | None):
-        import pty as pty_module
-        master, slave = pty_module.openpty()
-        import struct
         import fcntl
+        import pty
+        import struct
+        import subprocess
         import termios
+
+        master, slave = pty.openpty()
         fcntl.ioctl(slave, termios.TIOCSWINSZ, struct.pack("HHHH", rows, cols, 0, 0))
-        pid = os.fork()
-        if pid == 0:
-            os.close(master)
-            os.setsid()
-            os.dup2(slave, 0)
-            os.dup2(slave, 1)
-            os.dup2(slave, 2)
-            os.close(slave)
-            if cwd:
-                os.chdir(cwd)
-            os.execvp(command[0], command)
+        process = subprocess.Popen(
+            command,
+            stdin=slave,
+            stdout=slave,
+            stderr=slave,
+            cwd=cwd,
+            start_new_session=True,
+            close_fds=True,
+        )
         os.close(slave)
+
         class _UnixPty:
             fd = master
-        return _UnixPty(), pid
+
+        return _UnixPty(), process.pid
 
     def get(self, terminal_id: str) -> TerminalSession | None:
         return self.sessions.get(terminal_id)

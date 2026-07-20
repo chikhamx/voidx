@@ -30,6 +30,24 @@ ECHO_CMD = [sys.executable, "-c", "print('hello')"]
 
 
 @pytest.mark.asyncio
+async def test_terminal_manager_create_does_not_warn_on_unix_pty():
+    if sys.platform == "win32":
+        pytest.skip("Unix PTY implementation only")
+
+    import warnings
+
+    manager = TerminalManager()
+    with warnings.catch_warnings(record=True) as caught:
+        warnings.simplefilter("always")
+        session = await manager.create(command=ECHO_CMD)
+
+    await manager.close(session.terminal_id)
+    deprecations = [warning for warning in caught if warning.category is DeprecationWarning]
+    details = [(warning.filename, warning.lineno, str(warning.message)) for warning in deprecations]
+    assert not deprecations, details
+
+
+@pytest.mark.asyncio
 async def test_terminal_manager_create_returns_session():
     manager = TerminalManager()
     session = await manager.create(command=ECHO_CMD)

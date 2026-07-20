@@ -67,6 +67,22 @@ async def test_mcp_reference_uses_semantic_summary_for_load_prompt():
 
 
 @pytest.mark.asyncio
+async def test_mcp_reference_uses_manager_generated_description():
+    manager = _fake_manager("tavily", [McpToolDef(name="search")])
+    manager.server_description = lambda name: "Search the web for current information."
+
+    result = await mcp_reference_message(
+        "use $tavily",
+        settings=SimpleNamespace(list_mcp_servers=lambda: [
+            SimpleNamespace(name="tavily", disabled=False, auto=True, description=""),
+        ]),
+        manager=manager,
+    )
+
+    assert "Search the web for current information." in result.prefix
+
+
+@pytest.mark.asyncio
 async def test_manual_mcp_reference_is_summary_and_requires_load():
     manager = _fake_manager("typex", [McpToolDef(name="send_message")])
 
@@ -118,11 +134,12 @@ async def test_mcp_reference_does_not_expose_runtime_instructions():
     assert "Web research" in result.prefix
     assert "Call search" not in result.prefix
     assert "max_results" not in result.prefix
+    assert "Server-Info:" not in result.prefix
 
 
 @pytest.mark.asyncio
 @pytest.mark.parametrize("status", ["connecting", "disconnected", "error"])
-async def test_mcp_reference_preserves_summary_when_server_not_connected(status):
+async def test_mcp_reference_summary_omits_runtime_status(status):
     manager = _fake_manager("tavily", [], status=status)
 
     result = await mcp_reference_message(
@@ -139,7 +156,7 @@ async def test_mcp_reference_preserves_summary_when_server_not_connected(status)
     )
 
     assert "Web research" in result.prefix
-    assert f"Status: {status}" in result.prefix
+    assert "Status:" not in result.prefix
     assert result.remove_spans
     assert result.servers == ["tavily"]
 

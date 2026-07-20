@@ -22,6 +22,7 @@ def test_renderer_includes_only_enabled_auto_servers_in_stable_order(tmp_path):
         "manual": {"command": "m", "description": "Manual tools"},
         "disabled": {"command": "d", "auto": True, "disabled": True},
         "alpha": {"command": "a", "auto": True, "source": "bundled"},
+        "tools-only": {"command": "t", "auto": True, "tools": ["search", "extract", "crawl", "rank"]},
     })
 
     section = render_available_mcp_servers(Settings(str(tmp_path)))
@@ -29,10 +30,27 @@ def test_renderer_includes_only_enabled_auto_servers_in_stable_order(tmp_path):
     assert section.startswith("## Available MCP Servers")
     assert 'mcp(op="load", server="<name>")' in section
     assert section.index("alpha") < section.index("zeta")
-    assert "- alpha [auto] (source: bundled)" in section
-    assert "- zeta [auto]: Zeta tools (source: workspace)" in section
+    assert "- alpha: No description configured." in section
+    assert "- tools-only: Configured tools: search, extract, crawl, ..." in section
+    assert "- zeta: Zeta tools" in section
+    assert "[auto]" not in section
+    assert "source:" not in section
     assert "manual" not in section
     assert "disabled" not in section
+
+
+def test_renderer_prefers_generated_descriptions(tmp_path):
+    _write_settings(tmp_path, {
+        "tavily": {"command": "npx", "auto": True},
+    })
+
+    section = render_available_mcp_servers(
+        Settings(str(tmp_path)),
+        descriptions={"tavily": "Search the web for current information."},
+    )
+
+    assert "- tavily: Search the web for current information." in section
+    assert "No description configured" not in section
 
 
 @pytest.mark.asyncio
@@ -53,12 +71,28 @@ async def test_instruction_system_includes_configuration_only_auto_section(tmp_p
     joined = "\n\n".join(await service.system())
 
     assert "## Available MCP Servers" in joined
-    assert "- tavily [auto]: Web research (source: workspace)" in joined
+    assert "- tavily: Web research" in joined
     assert "manual" not in joined
     assert "- search" not in joined
     assert "- extract" not in joined
     assert "connected" not in joined
     assert "tool_count" not in joined
+    assert "source:" not in joined
+
+
+@pytest.mark.asyncio
+async def test_instruction_system_uses_manager_generated_descriptions(tmp_path):
+    _write_settings(tmp_path, {
+        "tavily": {"command": "npx", "auto": True},
+    })
+    service = InstructionService(str(tmp_path), settings=Settings(str(tmp_path)))
+    service.set_mcp_description_provider(
+        lambda: {"tavily": "Search the web for current information."}
+    )
+
+    joined = "\n\n".join(await service.system())
+
+    assert "- tavily: Search the web for current information." in joined
 
 
 @pytest.mark.asyncio

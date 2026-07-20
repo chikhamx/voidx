@@ -10,6 +10,7 @@ from __future__ import annotations
 from dataclasses import dataclass, field
 
 from voidx.mcp.context import render_mcp_server_summary
+from voidx.mcp.descriptions import configured_server_description
 from voidx.runtime.reference_tokens import EXPLICIT_REF_RE
 
 
@@ -58,7 +59,7 @@ async def mcp_reference_message(
             render_mcp_server_summary(
                 name,
                 status=state,
-                description=getattr(config, "description", ""),
+                description=_server_description(manager, name, config),
                 server_info=entry.server_info if entry is not None else None,
             )
         )
@@ -71,3 +72,12 @@ async def mcp_reference_message(
         remove_spans=remove_spans,
         servers=servers,
     )
+
+
+def _server_description(manager, name: str, config) -> str:
+    getter = getattr(manager, "server_description", None)
+    if callable(getter):
+        description = str(getter(name) or "").strip()
+        if description:
+            return description
+    return configured_server_description(config)

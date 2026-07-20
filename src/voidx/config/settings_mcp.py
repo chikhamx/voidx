@@ -9,11 +9,12 @@ from voidx.config.models import McpServerConfig
 
 class SettingsMcpMixin:
     def get_mcp_exposure(self) -> str:
-        """How MCP tools are exposed to the model: direct | gateway | hybrid."""
-        data = self._effective_data()
-        mcp_section = data.get("mcp")
-        value = mcp_section.get("exposure") if isinstance(mcp_section, dict) else None
-        return value if value in {"direct", "gateway", "hybrid"} else "direct"
+        """How MCP tools are exposed to the model.
+
+        Legacy direct/hybrid values are accepted in config files but ignored:
+        MCP tools are exposed through the stable gateway tool only.
+        """
+        return "gateway"
 
     def list_mcp_servers(self) -> list[McpServerConfig]:
         data = self._effective_data()

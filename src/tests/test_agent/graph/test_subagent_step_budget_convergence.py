@@ -198,7 +198,7 @@ async def test_subagent_skill_context_matches_orchestrator(tmp_path, monkeypatch
 
 
 @pytest.mark.asyncio
-async def test_subagent_inherits_parent_mcp_tools(tmp_path, monkeypatch):
+async def test_subagent_inherits_parent_mcp_gateway(tmp_path, monkeypatch):
     import voidx.agent.infrastructure.langgraph.runtime.subagent as subagent_module
 
     captured: dict[str, list] = {}
@@ -213,9 +213,9 @@ async def test_subagent_inherits_parent_mcp_tools(tmp_path, monkeypatch):
 
     parent_tools = ToolRegistry()
     parent_tools.register(
-        "mcp__demo__send_message_12345678",
+        "mcp",
         object(),
-        "MCP demo",
+        "MCP gateway",
         {"type": "object", "properties": {}},
     )
 
@@ -240,10 +240,10 @@ async def test_subagent_inherits_parent_mcp_tools(tmp_path, monkeypatch):
 
     assert output == "done"
     tool_names = [tool["function"]["name"] for tool in captured["tool_defs"]]
-    assert "mcp__demo__send_message_12345678" in tool_names
+    assert "mcp" in tool_names
 
 @pytest.mark.asyncio
-async def test_subagent_with_mcp_tools_copies_parent_mcp_tools(tmp_path, monkeypatch):
+async def test_subagent_with_mcp_gateway_copies_parent_gateway(tmp_path, monkeypatch):
     import voidx.agent.infrastructure.langgraph.runtime.subagent as subagent_module
 
     captured: dict[str, list] = {}
@@ -268,8 +268,13 @@ async def test_subagent_with_mcp_tools_copies_parent_mcp_tools(tmp_path, monkeyp
             return AIMessage(
                 content="",
                 tool_calls=[{
-                    "name": "mcp__demo__send_message_12345678",
-                    "args": {"text": "hello"},
+                    "name": "mcp",
+                    "args": {
+                        "op": "call",
+                        "server": "demo",
+                        "tool": "send_message",
+                        "arguments": {"text": "hello"},
+                    },
                     "id": "mcp1",
                     "type": "tool_call",
                 }],
@@ -278,10 +283,10 @@ async def test_subagent_with_mcp_tools_copies_parent_mcp_tools(tmp_path, monkeyp
 
     parent_tools = ToolRegistry()
     parent_tools.register(
-        "mcp__demo__send_message_12345678",
+        "mcp",
         FakeMcpTool(),
-        "MCP demo",
-        {"type": "object", "properties": {"text": {"type": "string"}}},
+        "MCP gateway",
+        {"type": "object", "properties": {"op": {"type": "string"}, "arguments": {"type": "object"}}},
     )
 
     monkeypatch.setattr(subagent_module, "create_chat_model", lambda *_args, **_kwargs: FakeModel())
@@ -305,8 +310,13 @@ async def test_subagent_with_mcp_tools_copies_parent_mcp_tools(tmp_path, monkeyp
 
     assert output == "done"
     tool_names = [tool["function"]["name"] for tool in captured["tool_defs"]]
-    assert "mcp__demo__send_message_12345678" in tool_names
-    assert calls == [{"text": "hello"}]
+    assert "mcp" in tool_names
+    assert calls == [{
+        "op": "call",
+        "server": "demo",
+        "tool": "send_message",
+        "arguments": {"text": "hello"},
+    }]
 
 
 @pytest.mark.asyncio
@@ -356,5 +366,4 @@ async def test_subagent_tool_filter_always_blocks_nested_agent_tool(tmp_path, mo
     assert "task_status" in captured[0]
     assert "agent" not in captured[1]
     assert "task_status" in captured[1]
-
 

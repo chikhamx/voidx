@@ -1,7 +1,7 @@
-"""MCP tool wrapper — adapts MCP server tools into voidx's BaseTool interface.
+"""Legacy MCP tool wrapper — adapts MCP server tools into BaseTool instances.
 
-Each discovered MCP tool becomes a McpToolWrapper registered in ToolRegistry
-with an LLM-safe id derived from the server and tool name.
+Runtime MCP exposure now uses the stable gateway tool. This wrapper remains for
+compatibility and focused behavior tests around MCP result formatting.
 """
 
 from __future__ import annotations

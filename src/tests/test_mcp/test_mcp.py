@@ -1,7 +1,8 @@
 import json
-import re
 import sys
 from pathlib import Path
+from types import SimpleNamespace
+from unittest.mock import AsyncMock, patch
 
 import pytest
 
@@ -9,6 +10,7 @@ import pytest
 from voidx.config import Settings
 from voidx.config import McpServerConfig
 from voidx.mcp.client import McpClient
+from voidx.mcp.gateway import McpGatewayTool
 from voidx.mcp.manager import McpManager
 from voidx.mcp.schema import McpCallResult, McpInitializeParams, McpToolDef
 from voidx.mcp.tool import McpToolWrapper
@@ -27,7 +29,7 @@ def test_initialize_params_serialize_to_mcp_wire_keys():
 
 
 @pytest.mark.asyncio
-async def test_mcp_manager_registers_llm_safe_tool_name(tmp_path):
+async def test_mcp_manager_catalogs_tools_without_registering_direct_wrappers(tmp_path):
     server = tmp_path / "fake_mcp_server.py"
     server.write_text(
         """
@@ -88,16 +90,10 @@ for raw in sys.stdin:
             for tool in registry.tools_for_llm()
             if tool["function"]["name"].startswith("mcp__")
         ]
-        assert len(mcp_tool_names) == 1
-        assert re.fullmatch(r"[A-Za-z0-9_-]{1,64}", mcp_tool_names[0])
-        assert "/" not in mcp_tool_names[0]
+        assert mcp_tool_names == []
 
-        result = await registry.execute_tool(
-            mcp_tool_names[0],
-            {"url": "https://example.com"},
-            ToolContext(workspace=str(tmp_path)),
-        )
-        assert result.output == "ok"
+        entries = {entry.name: entry for entry in manager.catalog_snapshot()}
+        assert [tool.name for tool in entries["web-reader"].tools] == ["read/url"]
         direct = await manager.call_tool("web-reader", "read/url", {"url": "https://example.com"})
         assert direct.content[0]["text"] == "ok"
     finally:
@@ -105,8 +101,136 @@ for raw in sys.stdin:
 
 
 @pytest.mark.asyncio
+async def test_mcp_manager_generates_missing_server_descriptions_after_cataloging():
+    config = McpServerConfig(name="tavily", command="fake")
+    tools = [McpToolDef(name="search", description="Search the web")]
+    client = SimpleNamespace(
+        list_tools=AsyncMock(return_value=tools),
+        server_info={},
+        instructions="",
+    )
+    generator = AsyncMock(return_value={"tavily": "Search the web for current information."})
+    settings = SimpleNamespace(
+        get_retry_config=lambda: None,
+        list_mcp_servers=lambda: [config],
+    )
+    registry = ToolRegistry(settings=settings)
+    manager = McpManager(
+        settings,
+        registry,
+        PermissionService(),
+        description_generator=generator,
+    )
+    manager._start_servers = AsyncMock(return_value=[("tavily", client)])
+
+    await manager._init_servers([config])
+    await manager.wait_descriptions()
+
+    generator.assert_awaited_once_with({"tavily": tools})
+    assert manager.server_description("tavily") == "Search the web for current information."
+    assert manager.catalog_snapshot()[0].description == "Search the web for current information."
+
+
+@pytest.mark.asyncio
+async def test_mcp_manager_does_not_generate_for_explicit_server_description():
+    config = McpServerConfig(name="tavily", command="fake", description="Web research")
+    client = SimpleNamespace(
+        list_tools=AsyncMock(return_value=[McpToolDef(name="search")]),
+        server_info={},
+        instructions="",
+    )
+    generator = AsyncMock(return_value={})
+    settings = SimpleNamespace(
+        get_retry_config=lambda: None,
+        list_mcp_servers=lambda: [config],
+    )
+    manager = McpManager(
+        settings,
+        ToolRegistry(settings=settings),
+        PermissionService(),
+        description_generator=generator,
+    )
+    manager._start_servers = AsyncMock(return_value=[("tavily", client)])
+
+    await manager._init_servers([config])
+    await manager.wait_descriptions()
+
+    generator.assert_not_awaited()
+    assert manager.server_description("tavily") == "Web research"
+
+
+@pytest.mark.asyncio
+async def test_mcp_manager_logs_description_generation_failure():
+    config = McpServerConfig(name="tavily", command="fake")
+    client = SimpleNamespace(
+        list_tools=AsyncMock(return_value=[McpToolDef(name="search")]),
+        server_info={},
+        instructions="",
+    )
+    generator = AsyncMock(side_effect=RuntimeError("model unavailable"))
+    settings = SimpleNamespace(
+        get_retry_config=lambda: None,
+        list_mcp_servers=lambda: [config],
+    )
+    manager = McpManager(
+        settings,
+        ToolRegistry(settings=settings),
+        PermissionService(),
+        description_generator=generator,
+    )
+    manager._start_servers = AsyncMock(return_value=[("tavily", client)])
+
+    with patch("voidx.mcp.manager.log_tool_event") as log_event:
+        await manager._init_servers([config])
+        await manager.wait_descriptions()
+
+    assert any(
+        call.args and call.args[0] == "mcp_description_generation_failed"
+        for call in log_event.call_args_list
+    )
+
+
+@pytest.mark.asyncio
+async def test_mcp_manager_reuses_workspace_description_cache(tmp_path):
+    config = McpServerConfig(name="tavily", command="fake")
+    tools = [McpToolDef(name="search", description="Search the web")]
+    settings = SimpleNamespace(
+        get_retry_config=lambda: None,
+        list_mcp_servers=lambda: [config],
+    )
+
+    async def run_manager(generator):
+        client = SimpleNamespace(
+            list_tools=AsyncMock(return_value=tools),
+            server_info={},
+            instructions="",
+        )
+        manager = McpManager(
+            settings,
+            ToolRegistry(settings=settings),
+            PermissionService(),
+            description_generator=generator,
+            workspace=str(tmp_path),
+        )
+        manager._start_servers = AsyncMock(return_value=[("tavily", client)])
+        await manager._init_servers([config])
+        await manager.wait_descriptions()
+        return manager
+
+    first_generator = AsyncMock(return_value={"tavily": "Search the web."})
+    first = await run_manager(first_generator)
+    second_generator = AsyncMock(return_value={"tavily": "Should not be used."})
+    second = await run_manager(second_generator)
+
+    first_generator.assert_awaited_once()
+    second_generator.assert_not_awaited()
+    assert first.server_description("tavily") == "Search the web."
+    assert second.server_description("tavily") == "Search the web."
+
+
+@pytest.mark.asyncio
 async def test_call_tool_sends_empty_arguments_object(tmp_path):
-    """call_tool({}) must send 'arguments': {} — not omit the field."""
+    """gateway call with no args must send 'arguments': {} — not omit the field."""
     server = tmp_path / "fake_mcp_server.py"
     server.write_text(
         """
@@ -162,18 +286,17 @@ for raw in sys.stdin:
     settings = Settings(str(tmp_path))
     registry = ToolRegistry(settings=settings)
     manager = McpManager(settings, registry, PermissionService())
+    gateway = McpGatewayTool(manager)
+    registry.register(gateway.id, gateway, gateway.description, gateway.parameters_schema())
 
     await manager.start_all()
     await manager.wait_ready()
     try:
-        mcp_tool_names = [
-            tid for tid in registry.ids() if tid.startswith("mcp__")
-        ]
-        assert len(mcp_tool_names) == 1
+        assert not any(tid.startswith("mcp__") for tid in registry.ids())
 
         result = await registry.execute_tool(
-            mcp_tool_names[0],
-            {},
+            "mcp",
+            {"op": "call", "server": "test-server", "tool": "get_me", "arguments": {}},
             ToolContext(workspace=str(tmp_path)),
         )
         # The fake server echoes whether 'arguments' was present in the request
@@ -221,13 +344,15 @@ for raw in sys.stdin:
 
     await manager.start_all()
     await manager.wait_ready()
-    assert any(tool_id.startswith("mcp__") for tool_id in registry.ids())
+    assert not any(tool_id.startswith("mcp__") for tool_id in registry.ids())
+    assert [entry.name for entry in manager.catalog_snapshot()] == ["web-reader"]
 
     settings.delete_mcp_server("web-reader")
     await manager.restart_all()
     await manager.wait_ready()
 
     assert not any(tool_id.startswith("mcp__") for tool_id in registry.ids())
+    assert manager.catalog_snapshot() == []
 
 
 @pytest.mark.asyncio
@@ -273,7 +398,8 @@ for raw in sys.stdin:
     await manager.restart_all()
     await manager.wait_ready()
 
-    assert any(tool_id.startswith("mcp__") for tool_id in registry.ids())
+    assert not any(tool_id.startswith("mcp__") for tool_id in registry.ids())
+    assert [entry.name for entry in manager.catalog_snapshot()] == ["web-reader"]
 
     await manager.stop_all()
 

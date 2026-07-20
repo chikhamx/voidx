@@ -110,6 +110,19 @@ class TestList:
         assert "Call tavily_search" not in result.output
         assert "max_results" not in result.output
         assert 'mcp(op="load", server="tavily")' in result.output
+
+    @pytest.mark.asyncio
+    async def test_list_uses_generated_catalog_description(self, manager, tmp_path):
+        tools = manager.catalog.snapshot()[0].tools
+        manager.catalog.put(
+            "tavily",
+            tools,
+            description="Search the web for current information.",
+        )
+
+        result = await McpGatewayTool(manager).execute({"op": "list"}, _ctx(tmp_path))
+
+        assert "tavily: Search the web for current information." in result.output
     @pytest.mark.asyncio
     async def test_query_filters_by_server_or_tool(self, manager, tmp_path):
         tool = McpGatewayTool(manager)

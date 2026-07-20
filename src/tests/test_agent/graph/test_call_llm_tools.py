@@ -293,12 +293,6 @@ async def test_available_tool_ids_no_longer_filter_llm_tools(tmp_path, monkeypat
     )
     model = TrackingStreamingModel()
     graph.model = model
-    graph.tools.register(
-        "mcp__demo__send_message_12345678",
-        object(),
-        "MCP demo",
-        {"type": "object", "properties": {}},
-    )
 
     await graph._call_llm({
         "messages": [HumanMessage(content="hi")],
@@ -310,7 +304,7 @@ async def test_available_tool_ids_no_longer_filter_llm_tools(tmp_path, monkeypat
     tool_names = [tool["function"]["name"] for tool in model.bound_tools]
     assert "read" in tool_names
     assert "grep" in tool_names
-    assert "mcp__demo__send_message_12345678" in tool_names
+    assert "mcp" in tool_names
 
 
 @pytest.mark.asyncio
@@ -358,7 +352,7 @@ async def test_call_llm_keeps_bound_tools_fixed_across_active_workflow_node(tmp_
 
 
 @pytest.mark.asyncio
-async def test_orchestrator_sees_mcp_tools(tmp_path, monkeypatch):
+async def test_orchestrator_sees_mcp_gateway(tmp_path, monkeypatch):
     import voidx.agent.infrastructure.langgraph.execution as graph_module
 
     monkeypatch.setattr(graph_module, "StreamingRenderer", FakeRenderer)
@@ -372,12 +366,6 @@ async def test_orchestrator_sees_mcp_tools(tmp_path, monkeypatch):
     )
     model = TrackingStreamingModel()
     graph.model = model
-    graph.tools.register(
-        "mcp__demo__send_message_12345678",
-        object(),
-        "MCP demo",
-        {"type": "object", "properties": {}},
-    )
 
     await graph._call_llm({
         "messages": [HumanMessage(content="hi")],
@@ -386,11 +374,11 @@ async def test_orchestrator_sees_mcp_tools(tmp_path, monkeypatch):
     })
 
     tool_names = [tool["function"]["name"] for tool in model.bound_tools]
-    assert "mcp__demo__send_message_12345678" in tool_names
+    assert "mcp" in tool_names
 
 
 @pytest.mark.asyncio
-async def test_runtime_persona_does_not_change_agent_mcp_tool_visibility(tmp_path, monkeypatch):
+async def test_runtime_persona_does_not_change_agent_mcp_gateway_visibility(tmp_path, monkeypatch):
     import voidx.agent.infrastructure.langgraph.execution as graph_module
 
     monkeypatch.setattr(graph_module, "StreamingRenderer", FakeRenderer)
@@ -404,12 +392,6 @@ async def test_runtime_persona_does_not_change_agent_mcp_tool_visibility(tmp_pat
     )
     model = TrackingStreamingModel()
     graph.model = model
-    graph.tools.register(
-        "mcp__demo__send_message_12345678",
-        object(),
-        "MCP demo",
-        {"type": "object", "properties": {}},
-    )
 
     await graph._call_llm({
         "messages": [HumanMessage(content="hi")],
@@ -419,7 +401,7 @@ async def test_runtime_persona_does_not_change_agent_mcp_tool_visibility(tmp_pat
 
     tool_names = [tool["function"]["name"] for tool in model.bound_tools]
     assert "read" in tool_names
-    assert "mcp__demo__send_message_12345678" in tool_names
+    assert "mcp" in tool_names
 
 
 @pytest.mark.asyncio
