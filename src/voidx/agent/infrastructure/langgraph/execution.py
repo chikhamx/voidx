@@ -726,6 +726,9 @@ class LangGraphExecution:
     def set_task_state(self, task_state: TaskState) -> None:
         self._task_state = task_state
 
+    def can_submit_guidance(self) -> bool:
+        return True
+
     def submit_guidance(
         self,
         text: str,

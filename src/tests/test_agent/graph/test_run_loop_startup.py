@@ -349,7 +349,7 @@ async def test_web_guide_submit_records_guidance_without_starting_turn():
     guidance: list[tuple[str, dict[str, str]]] = []
     queued_inputs: list[str] = []
 
-    graph.submit_guidance = lambda text, **kwargs: guidance.append((text, kwargs)) or True
+    graph._execution.submit_guidance = lambda text, **kwargs: guidance.append((text, kwargs)) or True
     app = SimpleNamespace(
         submit_external_input=queued_inputs.append,
         cancel_external_input=lambda: None,
@@ -367,7 +367,7 @@ async def test_web_direct_guide_command_records_guidance():
     guidance: list[tuple[str, dict[str, str]]] = []
     queued_inputs: list[str] = []
 
-    graph.submit_guidance = lambda text, **kwargs: guidance.append((text, kwargs)) or True
+    graph._execution.submit_guidance = lambda text, **kwargs: guidance.append((text, kwargs)) or True
     app = SimpleNamespace(
         submit_external_input=queued_inputs.append,
         cancel_external_input=lambda: None,
