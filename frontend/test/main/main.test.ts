@@ -1,7 +1,7 @@
 // @ts-nocheck
 import { describe, it, expect, beforeEach, vi } from "vitest";
 import { handleItem } from "../../src/main";
-import { appendMessageItem, handleStatusItem, handleToolItem } from "../../src/utils/render";
+import { appendMessageItem, appendThoughtItem, handleStatusItem, handleToolItem } from "../../src/utils/render";
 
 beforeEach(() => {
   const transcript = document.querySelector("#transcript");
@@ -281,6 +281,40 @@ describe("handleToolItem", () => {
     const transcript = document.querySelector("#transcript");
     expect(transcript.querySelectorAll(".tool-group")).toHaveLength(2);
     expect(transcript.children[1].classList.contains("message-item")).toBe(true);
+  });
+
+  it("starts a new tool group across thought items", () => {
+    handleToolItem("item.started", "t15a-1", {
+      tool_call_id: "c15a-1",
+      tool_name: "bash",
+    });
+    appendThoughtItem("thought-15a", { text: "checking next command" });
+    handleToolItem("item.started", "t15a-2", {
+      tool_call_id: "c15a-2",
+      tool_name: "bash",
+    });
+
+    const transcript = document.querySelector("#transcript");
+    expect(transcript.querySelectorAll(".tool-group")).toHaveLength(2);
+    expect(transcript.querySelectorAll(".thought-item")).toHaveLength(1);
+    expect(transcript.querySelectorAll(".tool-item")).toHaveLength(2);
+  });
+
+  it("merges adjacent thought items but not thoughts separated by tools", () => {
+    appendThoughtItem("thought-1", { text: "first thought" });
+    appendThoughtItem("thought-2", { text: "second thought" });
+    handleToolItem("item.started", "t15b-1", {
+      tool_call_id: "c15b-1",
+      tool_name: "bash",
+    });
+    appendThoughtItem("thought-3", { text: "third thought" });
+
+    const transcript = document.querySelector("#transcript");
+    const thoughts = transcript.querySelectorAll(".thought-item");
+    expect(thoughts).toHaveLength(2);
+    expect(thoughts[0].textContent).toContain("first thought");
+    expect(thoughts[0].textContent).toContain("second thought");
+    expect(thoughts[1].textContent).toContain("third thought");
   });
 
   it("expands grouped tool calls three at a time", () => {

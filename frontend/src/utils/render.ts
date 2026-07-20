@@ -785,22 +785,12 @@ function findMergeableThoughtTarget(
   insertBeforeEl: HTMLElement | null,
   transcriptEl: HTMLElement
 ): HTMLElement | null {
-  let curr = insertBeforeEl
+  const curr = insertBeforeEl
     ? (insertBeforeEl.previousElementSibling as HTMLElement | null)
     : (transcriptEl.lastElementChild as HTMLElement | null);
 
-  while (curr) {
-    if (curr.classList.contains("thought-item")) {
-      return curr;
-    }
-    // Block searching across user message boundaries (previous turns)
-    if (
-      curr.classList.contains("message-user") ||
-      curr.classList.contains("message-text")
-    ) {
-      break;
-    }
-    curr = curr.previousElementSibling as HTMLElement | null;
+  if (curr?.classList.contains("thought-item")) {
+    return curr;
   }
   return null;
 }

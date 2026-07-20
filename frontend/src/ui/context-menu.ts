@@ -36,7 +36,7 @@ export function initContextMenu(): void {
     if (
       state.menu &&
       !state.menu.contains(e.target as Node) &&
-      e.target !== state.attachBtn
+      !state.attachBtn.contains(e.target as Node)
     ) {
       hideContextMenu();
     }

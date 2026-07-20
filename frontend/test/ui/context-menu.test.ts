@@ -31,6 +31,16 @@ describe("initContextMenu", () => {
     expect(menu.hidden).toBe(false);
   });
 
+  it("shows context menu when clicking the icon inside the attach button", () => {
+    initContextMenu();
+    const menu = document.querySelector("#context-menu");
+    const icon = document.querySelector("#btn-attach svg");
+
+    icon.dispatchEvent(new MouseEvent("click", { bubbles: true }));
+
+    expect(menu.hidden).toBe(false);
+  });
+
   it("toggles context menu visibility on repeated attach clicks", () => {
     initContextMenu();
     const menu = document.querySelector("#context-menu");
