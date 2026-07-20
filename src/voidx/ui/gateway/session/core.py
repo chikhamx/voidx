@@ -33,6 +33,7 @@ from voidx.ui.protocol.v2.threads import ThreadInfo
 
 from voidx.ui.gateway.session.method.diff import DiffMethods
 from voidx.ui.gateway.session.method.integrations import IntegrationMethods
+from voidx.ui.gateway.session.method.references import ReferenceMethods
 from voidx.ui.gateway.session.method.sessions import SessionMethods
 from voidx.ui.gateway.session.method.settings import SettingsMethods
 from voidx.ui.gateway.session.method.terminal import TerminalMethods
@@ -53,6 +54,7 @@ class GatewaySession(
     SessionMethods,
     SettingsMethods,
     IntegrationMethods,
+    ReferenceMethods,
 ):
     """v2 JSON-RPC gateway session with multi-thread support."""
 
@@ -66,6 +68,7 @@ class GatewaySession(
         workspace: str = "",
         runtime_state_provider: RuntimeStateProvider | None = None,
         settings_update_handler: SettingsUpdateHandler | None = None,
+        mcp_catalog_provider: Callable[[], list] | None = None,
     ) -> None:
         self._tree_provider = tree_providers
         self._session_id = session_id or thread_id
@@ -77,6 +80,7 @@ class GatewaySession(
         self._workspace = workspace
         self._runtime_state_provider = runtime_state_provider
         self._settings_update_handler = settings_update_handler
+        self._mcp_catalog_provider = mcp_catalog_provider
         self._clients: set[ProtocolClient] = set()
         self._seq = 0
         self._thread_id_provider: Callable[[], str] | None = None
@@ -462,6 +466,11 @@ class GatewaySession(
         m.register("commands.run", self._method_commands_run)
         m.register("settings.get", self._method_settings_get)
         m.register("settings.update", self._method_settings_update)
+
+        # Reference candidates (@ files / # skills)
+        m.register("attachments.candidates", self._method_attachments_candidates)
+        m.register("skills.candidates", self._method_skills_candidates)
+        m.register("mcp.candidates", self._method_mcp_candidates)
         m.register("integrations.get", self._method_integrations_get)
         m.register("mcp.list", self._method_mcp_list)
         m.register("mcp.test", self._method_mcp_test)

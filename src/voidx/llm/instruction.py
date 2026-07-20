@@ -20,6 +20,7 @@ from pathlib import Path
 import httpx
 
 from voidx.logging.request_log import log_llm_diagnostic
+from voidx.mcp.auto import render_available_mcp_servers
 from voidx.logging.tool_log import log_tool_event
 from voidx.paths import voidx_home
 from voidx.skills.registry import SkillRegistry
@@ -64,6 +65,7 @@ class InstructionService:
         self._skill_registry = SkillRegistry(str(self._workspace))
         self._skill_service: SkillService | None = None
         self._skill_service_signature: tuple[tuple[str, ...], tuple[str, ...], tuple[str, ...]] | None = None
+        self._available_mcp_servers: str | None = None
         self._workflow_service = WorkflowService()
         self._debug = False
 
@@ -115,6 +117,10 @@ class InstructionService:
         available_skills = await self.available_skills_section()
         if available_skills:
             instructions.append(available_skills)
+        if self._available_mcp_servers is None:
+            self._available_mcp_servers = render_available_mcp_servers(self._settings)
+        if self._available_mcp_servers:
+            instructions.append(self._available_mcp_servers)
         return instructions
 
     async def available_skills_section(self) -> str:

@@ -41,6 +41,7 @@ from voidx.memory.service import (
     update_title,
 )
 from voidx.skills.service import skill_reference_message
+from voidx.mcp.references import mcp_reference_message
 from voidx.runtime.ui import (
     InputSet,
     StatusFinished,
@@ -123,18 +124,31 @@ class TurnRunner:
             user_message_id: int | None = None
             try:
                 host._ui.session_tracker.begin_turn(host._workspace)
-                skill_service = host._skill_service_for_references() if "$" in user_text else None
+                has_ref = "$" in user_text
+                skill_service = host._skill_service_for_references() if has_ref else None
                 skill_refs = skill_reference_message(
                     user_text,
                     host._workspace,
                     settings=host._settings,
                     service=skill_service,
                 )
+                mcp_refs = await mcp_reference_message(
+                    user_text,
+                    settings=host._settings,
+                    manager=host.mcp_manager if has_ref else None,
+                )
+                combined_prefix = "\n\n".join(
+                    p for p in [skill_refs.prefix, mcp_refs.prefix] if p
+                )
+                combined_spans = sorted(
+                    [*skill_refs.remove_spans, *mcp_refs.remove_spans],
+                    key=lambda span: span[0],
+                )
                 payload = build_user_message_payload(
                     user_text,
                     host._workspace,
-                    text_prefix=skill_refs.prefix,
-                    extra_removed_spans=skill_refs.remove_spans,
+                    text_prefix=combined_prefix,
+                    extra_removed_spans=combined_spans,
                 )
                 turn_display_text = display_text or payload.display_text
                 host._current_tree = host._ui.dock.tree

@@ -184,3 +184,45 @@ async def test_mcp_enable_command_sets_disabled_false_and_restarts(tmp_path):
     saved = json.loads((tmp_path / ".voidx" / "settings.json").read_text(encoding="utf-8"))
     assert saved["mcpServers"]["voidx-web"]["disabled"] is False
     assert manager.restarts == 1
+
+
+@pytest.mark.asyncio
+async def test_mcp_auto_command_sets_auto_true(tmp_path):
+    settings = Settings(str(tmp_path))
+    settings.save_mcp_server(McpServerConfig(
+        name="tavily",
+        command="npx",
+        args=["-y", "tavily-mcp@latest"],
+    ))
+    manager = FakeMcpManager()
+    graph = command_context(settings=settings, app=None, mcp_manager=manager)
+
+    await SlashHandler(graph).dispatch("/mcp auto tavily")
+
+    saved = json.loads((tmp_path / ".voidx" / "settings.json").read_text(encoding="utf-8"))
+    assert saved["mcpServers"]["tavily"]["auto"] is True
+    assert settings.get_mcp_server("tavily").auto is True
+
+
+@pytest.mark.asyncio
+async def test_mcp_manual_command_sets_auto_false(tmp_path):
+    settings = Settings(str(tmp_path))
+    settings.save_mcp_server(McpServerConfig(
+        name="tavily",
+        command="npx",
+        args=["-y", "tavily-mcp@latest"],
+        auto=True,
+    ))
+    manager = FakeMcpManager()
+    graph = command_context(settings=settings, app=None, mcp_manager=manager)
+
+    await SlashHandler(graph).dispatch("/mcp manual tavily")
+
+    saved = json.loads((tmp_path / ".voidx" / "settings.json").read_text(encoding="utf-8"))
+    assert saved["mcpServers"]["tavily"]["auto"] is False
+    assert settings.get_mcp_server("tavily").auto is False
+
+
+def test_mcp_auto_manual_commands_are_in_palette():
+    assert ("/mcp auto", "Mark an MCP server for auto-discovery") in filter_commands("/mcp a")
+    assert ("/mcp manual", "Mark an MCP server for manual discovery only") in filter_commands("/mcp m")

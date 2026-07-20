@@ -135,7 +135,7 @@ class ToolRegistry:
             # MCP tools come from third-party servers whose inputSchema may not
             # comply with OpenAI strict mode (optional fields, missing
             # additionalProperties:false).  Only enable strict for builtins.
-            is_mcp = t.id.startswith("mcp__")
+            is_mcp = t.id == "mcp" or t.id.startswith("mcp__")
             result.append({
                 "type": "function",
                 "function": {

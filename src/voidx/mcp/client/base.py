@@ -77,6 +77,8 @@ class McpClient(StreamableHttpTransportMixin, SseTransportMixin, StdioTransportM
         self._reconnect_attempt = 0
         self._closed = False
         self._server_name = config.name
+        self._server_info: dict[str, Any] = {}
+        self._instructions: str = ""
         self._retry_config = retry_config
 
         # Synchronisation: only one call at a time per client
@@ -87,6 +89,14 @@ class McpClient(StreamableHttpTransportMixin, SseTransportMixin, StdioTransportM
     @property
     def server_name(self) -> str:
         return self._server_name
+
+    @property
+    def server_info(self) -> dict[str, Any]:
+        return self._server_info
+
+    @property
+    def instructions(self) -> str:
+        return self._instructions
 
     @property
     def healthy(self) -> bool:
@@ -220,6 +230,12 @@ class McpClient(StreamableHttpTransportMixin, SseTransportMixin, StdioTransportM
             raise McpProtocolError(
                 f"Expected dict from initialize, got {type(result).__name__}"
             )
+        server_info = result.get("serverInfo")
+        if isinstance(server_info, dict):
+            self._server_info = server_info
+        instructions = result.get("instructions")
+        if isinstance(instructions, str):
+            self._instructions = instructions
         server_version = result.get("protocolVersion", "unknown")
         if server_version != MCP_PROTOCOL_VERSION:
             log_tool_event("mcp_protocol_mismatch", tool_name=self._server_name,

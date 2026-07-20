@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+import json
 import re
 from typing import Any
 
@@ -66,6 +67,8 @@ def extract_tool_display_value(
         value = raw_args.get("goal")
     elif tool_name in {"webfetch", "websearch"}:
         value = raw_args.get("url") or raw_args.get("query")
+    elif tool_name == "mcp":
+        value = mcp_gateway_display_value(raw_args)
     elif raw_args:
         value = _first_display_arg(raw_args)
     if not _has_display_value(value):
@@ -82,8 +85,62 @@ def mcp_tool_display_name(tool_name: str) -> str:
     match = _MCP_TOOL_ID_RE.match(tool_name)
     if match is None:
         return ""
-    server_words = _display_words(match.group("server"))
-    tool_words = _display_words(match.group("tool"))
+    return _mcp_action_display_name(match.group("server"), match.group("tool"))
+
+
+_MCP_GATEWAY_VALUE_KEYS = ("query", "url", "urls", "path", "pattern", "name", "text")
+
+
+def mcp_gateway_tool_name(raw_args: dict[str, Any]) -> str:
+    """Display name for the fixed `mcp` gateway tool, based on the op."""
+    op = str(raw_args.get("op") or "")
+    if op == "list":
+        return "MCP List"
+    if op == "load":
+        return "MCP Load"
+    if op == "call":
+        name = _mcp_action_display_name(
+            str(raw_args.get("server") or ""),
+            str(raw_args.get("tool") or ""),
+        )
+        return name or "MCP Call"
+    return "MCP"
+
+
+def mcp_gateway_display_value(raw_args: dict[str, Any]) -> object:
+    """Display value for gateway calls, parsed from the arguments JSON string."""
+    op = str(raw_args.get("op") or "")
+    if op == "load":
+        return str(raw_args.get("server") or "")
+    if op != "call":
+        return ""
+    server = str(raw_args.get("server") or "")
+    tool = str(raw_args.get("tool") or "")
+    parsed = _parse_gateway_arguments(raw_args.get("arguments"))
+    if parsed is None:
+        return f"{server}/{tool}" if server or tool else ""
+    for key in _MCP_GATEWAY_VALUE_KEYS:
+        value = parsed.get(key)
+        if _has_display_value(value):
+            return value
+    return ""
+
+
+def _parse_gateway_arguments(raw: Any) -> dict[str, Any] | None:
+    if isinstance(raw, dict):
+        return raw
+    if not isinstance(raw, str):
+        return None
+    try:
+        parsed = json.loads(raw)
+    except json.JSONDecodeError:
+        return None
+    return parsed if isinstance(parsed, dict) else None
+
+
+def _mcp_action_display_name(server: str, tool: str) -> str:
+    server_words = _display_words(server)
+    tool_words = _display_words(tool)
     if not tool_words:
         return _title_words(server_words)
     if server_words and tool_words[: len(server_words)] == server_words:

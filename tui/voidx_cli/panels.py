@@ -22,6 +22,10 @@ from voidx.ui.tools.skill_picker import (
     find_skill_token,
     list_skill_candidates,
 )
+from voidx.ui.tools.mcp_picker import (
+    McpCandidate,
+    list_mcp_candidates,
+)
 
 
 class _PanelManagerMixin:
@@ -167,12 +171,21 @@ class _PanelManagerMixin:
         key = (workspace, token.query, token.start, token.end)
         if key == self._skill_matches_cache_key:
             return self._skill_matches_cache
-        matches = list_skill_candidates(
+        skill_matches = list_skill_candidates(
             workspace,
             token.query,
             limit=8,
             service=self._skill_candidate_service(workspace),
         )
+        mcp_catalog = self._mcp_catalog_provider() if self._mcp_catalog_provider else None
+        mcp_matches = list_mcp_candidates(
+            workspace, token.query, limit=8, catalog=mcp_catalog,
+        )
+        mcp_as_skill = [
+            SkillCandidate(name=m.name, scope="mcp", description=m.description, mode=m.mode)
+            for m in mcp_matches
+        ]
+        matches = [*skill_matches, *mcp_as_skill][:8]
         self._skill_matches_cache_key = key
         self._skill_matches_cache = matches
         return matches

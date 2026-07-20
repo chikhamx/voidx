@@ -374,3 +374,44 @@ def test_settings_saves_mcp_server_with_url(tmp_path):
     assert server.effective_transport == "sse"
 
 
+
+
+def test_mcp_server_discovery_fields_round_trip(tmp_path):
+    settings = Settings(str(tmp_path))
+    settings.save_mcp_server(McpServerConfig(
+        name="tavily",
+        command="npx",
+        auto=True,
+        description="Web research",
+        source="workspace",
+    ))
+
+    server = settings.get_mcp_server("tavily")
+
+    assert server is not None
+    assert server.auto is True
+    assert server.description == "Web research"
+    assert server.source == "workspace"
+
+
+def test_set_mcp_server_auto_toggles_auto_flag(tmp_path):
+    settings = Settings(str(tmp_path))
+    settings.save_mcp_server(McpServerConfig(name="tavily", command="npx"))
+
+    settings.set_mcp_server_auto("tavily", True)
+
+    saved = json.loads((tmp_path / ".voidx" / "settings.json").read_text(encoding="utf-8"))
+    assert saved["mcpServers"]["tavily"]["auto"] is True
+    assert settings.get_mcp_server("tavily").auto is True
+
+    settings.set_mcp_server_auto("tavily", False)
+
+    saved = json.loads((tmp_path / ".voidx" / "settings.json").read_text(encoding="utf-8"))
+    assert saved["mcpServers"]["tavily"]["auto"] is False
+    assert settings.get_mcp_server("tavily").auto is False
+
+
+def test_set_mcp_server_auto_raises_keyerror_for_unknown_server(tmp_path):
+    settings = Settings(str(tmp_path))
+    with pytest.raises(KeyError):
+        settings.set_mcp_server_auto("nope", True)

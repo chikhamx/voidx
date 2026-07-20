@@ -18,7 +18,7 @@ from voidx.ui.output.dock.formatting import (
 )
 from voidx.ui.output.agent_display import agent_display_name
 from voidx.ui.output.manage_display import manage_display
-from voidx.ui.output.tool_display import extract_tool_display_value, mcp_tool_display_name
+from voidx.ui.output.tool_display import extract_tool_display_value, mcp_gateway_tool_name, mcp_tool_display_name
 from voidx.ui.output.tree import OutputNode
 from voidx.ui.output.dock.nodes_startup import DockStartupNodeMixin
 from voidx.ui.output.dock.nodes_status import DockStatusNodeMixin
@@ -363,7 +363,10 @@ def _tool_header(
         if value:
             return f'[bold]{escape(name)}[/bold]("[cyan]{escape(value)}[/cyan]")'
         return f"[bold]{escape(name)}[/bold]()"
-    name = _tool_display_name(tool_name, label)
+    if tool_name == "mcp":
+        name = mcp_gateway_tool_name(raw_args)
+    else:
+        name = _tool_display_name(tool_name, label)
     value = extract_tool_display_value(tool_name, raw_args, args)
     if value:
         return f'[bold]{escape(name)}[/bold]("[cyan]{escape(_shorten(value))}[/cyan]")'

@@ -86,14 +86,16 @@ class TestToolRegistry:
             assert "description" in t["function"]
             assert "parameters" in t["function"]
 
-    def test_builtin_tools_have_strict_mcp_tools_do_not(self):
+    def test_builtin_tools_have_strict_mcp_tools_and_gateway_do_not(self):
         r = ToolRegistry()
-        # Register a fake MCP tool
+        r.register("mcp", object(), "MCP gateway", {"type": "object", "properties": {}})
         r.register("mcp__tavily__search_abc12345", object(), "MCP search", {"type": "object", "properties": {}})
         tools = r.tools_for_llm()
         builtin = next(t for t in tools if t["function"]["name"] == "read")
+        gateway = next(t for t in tools if t["function"]["name"] == "mcp")
         mcp = next(t for t in tools if t["function"]["name"].startswith("mcp__"))
         assert builtin["function"]["strict"] is True
+        assert "strict" not in gateway["function"]
         assert "strict" not in mcp["function"]
 
     def test_nested_tool_schemas_keep_defs_and_checkpoint_is_flat(self):

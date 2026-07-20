@@ -246,6 +246,9 @@ class PureTui(
     def set_external_command_handler(self, handler) -> None:
         self._external_command_handler = handler
 
+    def set_mcp_catalog_provider(self, provider) -> None:
+        self._mcp_catalog_provider = provider
+
     def show_transient_output(self, text: str, title: str = "") -> None:
         from voidx.ui.output.dock import dock
         dock.append_message(text)

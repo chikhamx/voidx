@@ -15,7 +15,7 @@ from voidx.ui.output.dock import BottomInputDock
 from voidx.ui.output.dock.status import PERMISSION_REQUEST_STATUS_ID
 from voidx.ui.output.dock.formatting import short_path, short_value
 from voidx.ui.output.manage_display import manage_display
-from voidx.ui.output.tool_display import extract_tool_display_value, mcp_tool_display_name
+from voidx.ui.output.tool_display import extract_tool_display_value, mcp_gateway_tool_name, mcp_tool_display_name
 from voidx.ui.output.events.schema import (
     AnsiAppended,
     AssistantStreamCommitted,
@@ -524,7 +524,7 @@ def _subagent_tool_status(
     if tool_name == "manage":
         action, detail = manage_display(raw_args, limit=72)
         return f"{action} {detail}" if detail else action
-    action = _subagent_tool_action(tool_name, label)
+    action = _subagent_tool_action(tool_name, label, raw_args)
     detail = extract_tool_display_value(tool_name, raw_args, args, short_path_limit=72)
     return f"{action} {detail}" if detail else action
 
@@ -582,7 +582,9 @@ def _subagent_description_summary(description: str) -> str:
     return " ".join(first.split())
 
 
-def _subagent_tool_action(tool_name: str, label: str) -> str:
+def _subagent_tool_action(tool_name: str, label: str, raw_args: dict[str, Any] | None = None) -> str:
+    if tool_name == "mcp":
+        return mcp_gateway_tool_name(raw_args or {})
     mapping = {
         "read": "Reading",
         "manage": "Managing",

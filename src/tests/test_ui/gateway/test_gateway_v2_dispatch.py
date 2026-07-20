@@ -353,7 +353,15 @@ async def test_integrations_get_returns_snapshot_sections(tmp_path, monkeypatch)
 
     monkeypatch.delenv("TAVILY_API_KEY", raising=False)
     settings = Settings(str(tmp_path))
-    settings.save_mcp_server(McpServerConfig(name="demo", command="node", args=["server.js"], tools=["alpha"]))
+    settings.save_mcp_server(McpServerConfig(
+        name="demo",
+        command="node",
+        args=["server.js"],
+        tools=["alpha"],
+        auto=True,
+        description="Demo MCP",
+        source="workspace",
+    ))
     skill_path = tmp_path / ".voidx" / "skills" / "demo-skill" / "SKILL.md"
     skill_path.parent.mkdir(parents=True)
     skill_path.write_text("---\nname: demo-skill\ndescription: Demo skill\nenabled: true\n---\n\nBody", encoding="utf-8")
@@ -366,6 +374,9 @@ async def test_integrations_get_returns_snapshot_sections(tmp_path, monkeypatch)
     snapshot = result.result
     assert snapshot["mcp_servers"][0]["name"] == "demo"
     assert snapshot["mcp_servers"][0]["tool_count"] == 1
+    assert snapshot["mcp_servers"][0]["auto"] is True
+    assert snapshot["mcp_servers"][0]["description"] == "Demo MCP"
+    assert snapshot["mcp_servers"][0]["source"] == "workspace"
     assert snapshot["web_routes"]["search"]["backend"] == "legacy"
     assert snapshot["tavily"] == {"configured": False, "source": "none"}
     assert any(item["name"] == "demo-skill" for item in snapshot["skills"])

@@ -19,6 +19,7 @@ dependencies = [
     "httpx>=0.28.0",
     "websockets>=14",
     "pathspec>=0.12",
+    "jsonschema>=4.21",
 	    "Pillow>=10.0.0; platform_system == 'Windows'",
 ]
 

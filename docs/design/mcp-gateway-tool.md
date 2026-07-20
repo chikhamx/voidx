@@ -1,6 +1,6 @@
 # MCP Gateway Tool — 技术设计文档
 
-> **Status: Design**
+> **Status: Implemented**（stale catalog refresh 作为独立增强保留）
 > Date: 2026-07-14
 
 ## Context
@@ -35,7 +35,7 @@ Skill 工具提供了另一种模式：`skill list/load` 只把按需说明注�
 - 不在第一版实现完整语义搜索；`query` 只做轻量字符串匹配和排序。
 - 不把 MCP tool 的 schema 校验结果当成安全边界。权限仍以 `server/tool` 和用户策略为准。
 
-## Proposed Model
+## Implemented Model
 
 新增一个固定内置工具 `mcp`，始终注册在 `ToolRegistry` 中。它的 schema 稳定，不随 MCP server 或 tool 数量变化。
 
@@ -44,42 +44,40 @@ Skill 工具提供了另一种模式：`skill list/load` 只把按需说明注�
   "op": "list | load | call",
   "server": "tavily",
   "tool": "tavily_search",
-  "arguments": "{\"query\": \"...\"}",
+  "arguments": {"query": "..."},
   "query": "optional discovery query"
 }
 ```
 
-`arguments` 是 JSON object **字符串**，不是内联对象：
+`arguments` 是内联 JSON object，不接受序列化后的 JSON 字符串：
 
-- 内置工具会带 `strict: true` 且 schema 强制 `additionalProperties: false`（见 `tools/registry.py`、`tools/base.py`），开放对象会破坏 strict；字符串 schema 完全稳定，也避免在 strict 逻辑里给 `mcp` 开特例。
-- 跨 provider 行为统一（Anthropic 无 strict 概念，字符串两边一致）。
-- gateway 内部解析后再走 input schema 校验；解析失败和 schema 校验失败是两类不同的可修复错误。
-- 防御性解析：调用方直接传 dict 时容错接受，不强制要求字符串。
+- 对模型只提供一种调用形式，避免双重编码、转义错误和类型丢失。
+- gateway 的 schema 固定为开放 object，不随 MCP catalog 变化，因此仍可保持 prefix cache 稳定。
+- `mcp` gateway 不启用 provider strict mode；内部在调用前使用目标工具的真实 `inputSchema` 校验参数。
+- 参数不是 object 时直接返回可修复错误；不提供字符串兼容路径。
 
 模型使用流程：
 
-1. 需要 MCP 能力时，调用 `mcp(op="list")` 查看可用 server/tool bundle。
-2. 需要具体说明时，调用 `mcp(op="load", server="tavily")` 或 `mcp(op="load", server="tavily", tool="tavily_search")`。
-3. `load` 返回类似 skill load 的当前 turn 上下文，包含工具列表、用途、参数摘要和示例。
-4. 执行时调用 `mcp(op="call", server="tavily", tool="tavily_search", arguments="{\"query\": \"...\"}")`。
-5. `mcp` 工具内部通过 `McpManager.call_tool(server, tool, arguments)` 调真实 MCP server。
+1. 模型先从稳定的 `## Available MCP Servers` capability hints、用户显式 `#server` 引用，或 `mcp(op="list")` 的 server 摘要中判断相关能力。
+2. 摘要不是工具文档；相关时必须调用 `mcp(op="load", server="tavily")`，也可用 `tool` 参数只加载一个已知工具。
+3. `load` 返回类似 skill load 的当前 turn 上下文，包含真实工具名称、用途、参数摘要和调用示例。
+4. 执行时调用 `mcp(op="call", server="tavily", tool="tavily_search", arguments={"query": "..."})`。
+5. `mcp` 工具内部通过 `McpManager.call_tool(server, tool, arguments)` 调用真实 MCP server。
 
 ## Tool Description Contract
 
-固定 gateway tool 的注册描述需要承担 MCP 工作流指引，不再额外新增 system/runtime section。这样模型在查看 bound tool schema 时就能学到 `list/load/call` 用法，同时避免 prompt 里再重复一层 MCP 指引。
+固定 gateway tool 的注册描述承担 `list/load/call` 工作流指引；稳定 system prefix 另有一个只含配置态 auto server 的 capability-hint 区间。两者都不包含运行时 tool catalog。
 
-`McpGatewayTool.description` 应包含短规则，但不包含 MCP catalog。Catalog 只能通过 `mcp list/load` 进入当前 turn。
-
-建议工具描述包含：
+`McpGatewayTool.description` 必须保持稳定，并明确区分摘要发现、工具文档加载和真实调用：
 
 ```text
-Discover, load, and call Model Context Protocol (MCP) tools through a stable gateway.
+Discover and use Model Context Protocol (MCP) servers through a stable gateway.
 
-- Use `mcp(op="list")` to discover available MCP servers and tool bundles.
-- Use `mcp(op="load", server="...")` before calling an unfamiliar MCP server or tool.
-- Use `mcp(op="call", server="...", tool="...", arguments="{...}")` to execute a real MCP tool.
-- Do not invent MCP server or tool names. If uncertain, list or load first.
-- Treat `mcp load` output as current-turn context and follow its parameter examples.
+- `mcp(op="list")` returns semantic server summaries; it does not load tool documentation.
+- When a server is relevant, use `mcp(op="load", server="...")` before calling it.
+- `mcp(op="load")` may target a whole server or one tool and returns current-turn context.
+- `mcp(op="call", ...)` executes a real MCP tool; pass arguments as a JSON object.
+- Never invent server names, tool names, or parameters; list or load when uncertain.
 ```
 
 这层和 skill 机制的关系：
@@ -94,12 +92,12 @@ Discover, load, and call Model Context Protocol (MCP) tools through a stable gat
 
 借鉴 skill 的选择机制（`SkillSelectionConfig.auto` → `available_skill_summaries()` → `## Available Skills` 段，见 `skills/service.py`、`llm/instruction.py`），MCP server 分两种发现模式：
 
-- **auto**：`McpServerConfig.auto = true` 的 server 出现在固定提示词区间（`## Available MCP Servers`，对齐 skills 段），模型无需 `list` 即可直接 `load`/`call`。
-- **manual**：其余 server 只能通过 `mcp list` 发现，或由用户显式点名后 `load`。
+- **auto**：`McpServerConfig.auto = true` 且未禁用的 server 出现在稳定提示词区间 `## Available MCP Servers`。auto server 会连接并进入 catalog，但不注册独立 `mcp__...` 模型工具。
+- **manual**：不进入自动提示词区间；仍可通过 `mcp(op="list")` 或用户显式 `#server` 引用发现，并通过 gateway `load/call` 使用。现有 exposure 配置允许 manual server 保留 direct wrapper 行为。
 
-**稳定性约束**：auto 段内容必须在 session 开始时可确定。MCP server 是后台异步连接、可断线重连（`McpManager.start_all()` 非阻塞），catalog 属于运行时易变数据；因此 auto 段只放配置态内容（server 名 + 配置描述/来源），**不放**连接状态、tool_count 或发现到的工具列表。否则连接完成后 mid-session 更新该段会改动 system 前缀，重新引入本设计要消除的 prefix cache 失效。工具级细节仍走 `load`。
+**稳定性约束**：auto 段内容必须在 session 开始时可确定。MCP server 是后台异步连接、可断线重连（`McpManager.start_all()` 非阻塞），catalog 属于运行时易变数据；因此 auto 段只放配置态内容（server 名 + 配置描述/来源），**不放**连接状态、tool_count、运行时 instructions 或发现到的工具列表。该段按 `InstructionService` 会话冻结，避免 mid-session 改动 system 前缀。工具级细节统一走 `load`。
 
-第一版粒度为 per-server；per-tool auto 和 `@server` 显式引用（对齐 skill 的 `EXPLICIT_REF_RE`）留作后续。
+发现粒度为 per-server。auto/manual server 都支持用户显式 `#server` 引用；UI 实际插入 `$server` token，运行时将其替换为语义摘要。摘要作为该条用户消息的一部分保留在会话历史中。
 
 实现上需要给 `McpServerConfig` 增加配置态字段：
 
@@ -115,23 +113,31 @@ Discover, load, and call Model Context Protocol (MCP) tools through a stable gat
 
 ### `list`
 
-返回 MCP server 摘要，控制输出长度。
+返回 MCP server 的语义摘要，控制输出长度。每个条目包含 server 名、配置态 description/source、状态、过滤后的工具数量，以及精确的 `mcp(op="load", server="...")` 指引；**不展示工具名或参数**。
 
-字段建议：
+摘要来源边界：
 
-| 字段 | 说明 |
-| --- | --- |
-| `server` | MCP server name |
-| `status` | connected / connecting / error / disabled |
-| `tool_count` | 可用工具数量 |
-| `summary` | server 描述或来源 |
-| `examples` | 可选，1-2 个代表工具名 |
+- 系统 Available 段、`mcp list`、`#server` 引用和 UI/TUI 候选只使用受控配置字段 `description/source`。
+- MCP `initialize.instructions` 是不受控的运行时文本，可能包含工具名、参数或调用示例，不进入 discovery 摘要。
+- 候选菜单缺少配置 description 时显示固定回退文本，不从 catalog 工具列表生成 `Tools: ...`。
+- 完整工具说明只能由 `mcp load` 展开。
 
-如果传入 `query`，`list` 可以做简单过滤，用于查找相关 MCP server 或 tool。
+如果传入 `query`，`list` 可按 server 名、配置 description/source、工具名或工具描述做轻量匹配；匹配工具名只影响筛选，不改变输出边界，结果仍只显示 server 摘要。
 
-`list` 应优先读取 `McpCatalog` 的内存快照，不应每次临时请求所有 MCP server。输出可以展示连接状态和 `tool_count`，但这些字段只出现在 tool result 中，不能回写到 system/runtime prompt。`query` 的第一版匹配范围建议限定为 server name、server description、tool name、tool description。
+`list` 读取 `McpCatalog` 内存快照，不临时请求所有 MCP server。连接状态和 `tool_count` 只出现在 tool result 中，不回写稳定 system prompt。
 
-`tool_count` 必须统计配置过滤后的可用工具。对尚未连接或 catalog 尚未就绪的 server，`tool_count` 可为 `0` 或 omitted，并返回 `status=connecting/error/disabled`。
+`tool_count` 统计配置过滤后的可用工具。对尚未连接或 catalog 尚未就绪的 server，数量可为 `0`，并返回 `connecting/error/disconnected/unknown` 状态。
+
+### Explicit `#server` Reference
+
+Web/TUI 引用菜单同时展示 auto/manual server，但候选描述只使用配置 `description`；缺失时显示固定回退文本。用户选择后发送 `$server` token，运行时注入包含以下字段的语义摘要：
+
+- server 名和当前状态；
+- 配置 description；
+- 可选 `serverInfo` 实现名称/版本；
+- `mcp(op="load", server="...")` 指引。
+
+引用摘要不包含 runtime instructions 或工具列表。server 处于 connecting、disconnected、error 或 unknown 状态时仍保留摘要与状态，避免静默吞掉用户引用；实际 `load/call` 仍按连接状态返回可修复错误。
 
 ### `load`
 
@@ -151,11 +157,11 @@ Tools:
   Required: query
   Optional: max_results, search_depth
   Example:
-    mcp(op="call", server="tavily", tool="tavily_search", arguments="{\"query\": \"...\"}")
+    mcp(op="call", server="tavily", tool="tavily_search", arguments={"query": "..."})
 - tavily_extract: Extract page content from URLs.
   Required: urls
   Example:
-    mcp(op="call", server="tavily", tool="tavily_extract", arguments="{\"urls\": [\"https://...\"]}")
+    mcp(op="call", server="tavily", tool="tavily_extract", arguments={"urls": ["https://..."]})
 ```
 
 `load` 输出应压缩 schema：
@@ -176,17 +182,16 @@ Tools:
 
 - server 存在且 connected。
 - tool 存在且未被配置过滤。
-- `arguments` 是合法 JSON object 字符串（容错接受已解析的 dict）。
-- 解析后的 arguments 能通过 MCP tool input schema 校验。
+- `arguments` 是 JSON object，不接受序列化后的 JSON 字符串。
+- arguments 能通过 MCP tool input schema 校验。
 - 权限服务允许 `mcp:{server}:{tool}` 或对应策略。
 
 权限检查需要发生在真实 MCP `tools/call` 之前，并且审批展示应使用解析后的 arguments。即使 `McpGatewayTool.execute()` 内部也做防御性检查，graph 级 authorization 仍需要能把 gateway call 分类成具体 MCP capability，否则 on-failure approval、session allow/deny 和 UI pending request 都只能看到 `mcp`。
 
-校验失败时返回结构化、可修复错误。JSON 语法错误和 schema 校验错误分开报，便于模型自我修正：
+校验失败时返回结构化、可修复错误，并区分 object 类型错误和目标工具 schema 错误：
 
 ```text
-MCP call failed: arguments is not valid JSON for tavily/tavily_search.
-Expect a JSON object string, e.g. "{\"query\": \"...\"}".
+MCP call failed: arguments must be a JSON object.
 Run mcp(op="load", server="tavily", tool="tavily_search") for parameter details.
 ```
 
@@ -206,7 +211,7 @@ Run mcp(op="load", server="tavily", tool="tavily_search") for parameter details.
 | `McpManager` | 继续管理 MCP client 生命周期、状态、真实调用 |
 | `McpCatalog` | 从 connected clients 读取、过滤并缓存 server/tool definitions，作为 gateway 的 source of truth |
 | `McpContextRenderer` | 把 MCP definitions 渲染成 skill-like current-turn context |
-| `McpArgumentValidator` | 解析 `call.arguments` JSON 字符串，并用 input schema 校验 |
+| `McpArgumentValidator` | 校验 `call.arguments` 为 object，并用目标工具 input schema 校验 |
 | `McpSchemaSummarizer` | 把 JSON Schema 压缩成 required/optional/type/enum/nested path 摘要 |
 | `McpPermissionResolver` | 从 gateway args 生成 `mcp:{server}:{tool}` 权限资源和审批摘要 |
 | `McpAutoRenderer` | 把 auto server 渲染成固定提示词区间（仅配置态内容，见 Discovery Modes） |
@@ -226,7 +231,7 @@ LLM
           -> real MCP server
 ```
 
-`ToolRegistry.tools_for_llm()` 只看到稳定的 `mcp` tool。真实 MCP catalog 不进入 `tool_defs`，而是作为 tool result 或内部 runtime state 使用。
+`ToolRegistry.tools_for_llm()` 始终包含稳定的 `mcp` gateway。auto server 不注册独立 wrapper；manual server 是否额外直接暴露由现有 `mcp.exposure` 配置控制。真实 MCP catalog 不进入 gateway schema，而是作为 tool result 或内部 runtime state 使用。
 
 ### Catalog and Refresh Semantics
 
@@ -251,11 +256,10 @@ McpManager.tool_def(server, tool) -> McpToolDef | None
 
 ### Argument Validation
 
-`McpArgumentValidator` 至少要区分三类失败：
+`McpArgumentValidator` 区分两类失败：
 
-1. `arguments` 不是 JSON object 字符串，或解析失败。
-2. 解析后不是 object，例如 array/string/null。
-3. object 不满足 MCP tool `inputSchema`。
+1. `arguments` 不是 object，例如 array/string/null。
+2. object 不满足 MCP tool `inputSchema`。
 
 schema 校验第一版不要只检查 required 字段。至少要保留：
 
@@ -273,11 +277,12 @@ schema 校验第一版不要只检查 required 字段。至少要保留：
 目标是让 provider 侧请求前缀尽量稳定：
 
 - bound tools 固定，不随 MCP catalog 变化。
-- system/runtime context 不包含 MCP catalog，也不需要额外 MCP 指引。
+- system prompt 只包含按会话冻结的 auto server 配置摘要，不包含运行时 catalog、状态、instructions 或工具名。
 - 固定 `mcp` tool description 承载 gateway 工作流，不随 MCP catalog 变化。
 - `mcp load` 的大段说明只出现在当前 turn 的 tool result 中，历史中可被 marker stripping 压缩。
-- 新增/删除 MCP server 不改变 `bind_tools()` schema，只改变 `mcp list/load` 返回内容。
-- auto server 段只包含 session-start 可确定的配置态内容，不包含连接状态、tool_count、tool names 或 schema hash。
+- `#server` 摘要作为用户显式引用的一部分保留在用户消息历史中，但不包含工具级文档。
+- 新增/删除 MCP server 不改变 gateway schema；只改变后续会话的 auto 摘要以及当前运行时的 `mcp list/load` 结果。
+- auto server 段只包含 session-start 可确定的配置态内容，不包含连接状态、tool_count、tool names、runtime instructions 或 schema hash。
 
 这比动态注册 MCP native tools 更适合长会话和大量 MCP server。
 
@@ -319,7 +324,7 @@ Arguments: query="..."
 TUI/GUI 不应显示 `Mcp("call")`。对 `mcp(op="call", server, tool, arguments)`：
 
 - 标题显示为 `{Server} {Tool}("display value")`。
-- display value 复用现有工具摘要逻辑：优先 `query/url/urls/path/pattern/name/text`，需先解析 arguments JSON 字符串；parse 失败时降级为 `MCP Call("server/tool")`。
+- display value 复用现有工具摘要逻辑：优先 `query/url/urls/path/pattern/name/text`；arguments 非 object 时降级为 `MCP Call("server/tool")`。
 - `urls` 列表显示为 `first +N more`。
 - `op=list/load` 可显示为 `MCP List()`、`MCP Load("tavily")`。
 - UI 事件中的 `raw_args` 保留 gateway 原始参数；display helper 负责解析 `raw_args.arguments`，不要要求执行层改写 tool call args。
@@ -341,49 +346,46 @@ TUI/GUI 不应显示 `Mcp("call")`。对 `mcp(op="call", server, tool, arguments
 | server connecting | 返回状态并提示稍后重试 |
 | server disconnected | 尝试 reconnect；失败则返回连接错误 |
 | unknown server/tool | 返回可用候选或提示 `mcp list` |
-| invalid arguments JSON | 返回 JSON 语法错误和格式示例，提示 `load` 获取参数细节 |
+| arguments 非 object | 返回类型错误和 object 调用示例，提示 `load` 获取参数细节 |
 | arguments schema mismatch | 返回 schema 校验错误和 `load` 提示 |
 | permission denied | 返回具体 `mcp:{server}:{tool}` 被拒绝，不执行真实 MCP call |
-| stale catalog | 尝试针对该 server refresh 一次；仍失败则提示重新 `mcp list/load` |
+| stale catalog | 返回可修复错误并提示重新 `mcp list/load`；自动 refresh 尚未实现 |
 | unsupported schema feature | 返回 validator warning，提示加载具体 tool 查看参数细节 |
 | MCP tool error | 保留 MCP error 内容，标记 metadata.error |
 | large result | 走现有 display policy summary / truncation |
 
-## Migration Plan
+## Implementation Status
 
-1. 新增 `McpGatewayTool`，注册为内置工具 `mcp`。
-2. 提取 `McpCatalog`，让 `McpManager` 能提供 server/tool defs 给 gateway。
-3. 在 `McpGatewayTool.description` 中写清 `list/load/call` 工作流。
-4. 实现 `list/load`，先不改变现有 direct MCP tool 注册。
-5. 增加 gateway 权限分类：`mcp op=call` → `mcp:{server}:{tool}`，`list/load` read-only。
-6. 实现 `call`，复用 `McpManager.call_tool()` 和 `format_mcp_call_result()`。
-7. 加入参数 JSON 解析、schema 校验和 stale catalog refresh。
-8. 更新 TUI/GUI 渲染，使 gateway call 显示为真实 MCP 动作。
-9. 增加 `McpServerConfig.auto` 和 `McpAutoRenderer`，输出配置态 auto server 段。
-10. 增加配置开关：
-   - `mcp.exposure = "gateway"`：只暴露固定 `mcp` tool。
-   - `mcp.exposure = "direct"`：保留当前每工具注册模式。
-   - `mcp.exposure = "hybrid"`：固定 gateway + 少量显式 allowlist direct tools。
-11. 默认先保持 `direct` 或实验配置启用 `gateway`，观察 cache hit、调用成功率和用户反馈。
+已实现：
+
+1. 固定 `mcp` gateway 及 `list/load/call`。
+2. 统一 `McpCatalog`，由 manager 连接发现后写入，gateway/UI 读取快照。
+3. object-only arguments、真实 MCP input schema 校验和具体 `mcp:{server}:{tool}` 权限资源。
+4. MCP gateway 的 TUI/GUI 动作渲染。
+5. `auto/description/source` 配置、稳定 Available MCP Servers 段及 `/mcp auto|manual`。
+6. Web/TUI `#server` 候选与显式语义摘要引用。
+7. auto server gateway-only：继续连接并进入 catalog，但不注册独立 `mcp__...` 工具。
+8. `mcp.exposure` 对 manual server 的 direct/gateway/hybrid 兼容行为。
+9. `mcp load` current-turn marker 及历史 tool result 压缩。
+
+尚未实现：过期 catalog 的自动 refresh。当前 stale catalog 返回可修复错误，refresh 作为独立增强处理。
 
 ## Testing
 
 ### Unit Tests
 
-- `mcp list` 返回 server 状态、tool_count、过滤后的工具摘要。
+- `mcp list` 返回 server 语义摘要、状态、tool_count 和精确 load 指令，不展示工具名。
+- `mcp list` 查询仍能按 server/config/tool 名称和描述匹配。
 - `mcp load server` 返回 marker、工具描述、参数摘要和 examples。
 - `mcp load server/tool` 返回单工具详细参数摘要。
 - `mcp call` 对 valid arguments 调用 `McpManager.call_tool()`。
-- `mcp call` 对非法 JSON arguments 字符串返回可修复的格式错误。
-- `mcp call` 容错接受 dict 形式的 arguments。
-- `mcp call` 对 missing required field 返回可修复错误。
-- `mcp call` 对 enum、array item、nested object、additionalProperties 做 schema 校验。
-- `mcp call` 遇到 stale catalog 时 refresh 一次，再决定失败或执行。
-- `mcp op=list/load` 默认 read-only allow，`mcp op=call` 默认按 MCP 权限 ask。
-- auto server 段只含配置态内容，不随连接状态或工具发现结果变化。
-- 权限分类能按 `mcp:{server}:{tool}` 做 allow/ask/deny。
-- direct `mcp__...hash` 与 gateway `mcp:{server}:{tool}` session rule 能等价或可迁移。
-- 历史 stripping 能把 `VOIDX_MCP_TOOL_CONTEXT` 压缩为摘要。
+- `mcp call` 拒绝非 object arguments，并对 enum、array item、nested object、additionalProperties 做真实 schema 校验。
+- `mcp op=list/load` 默认 read-only allow，`mcp op=call` 按具体 MCP 权限资源审批。
+- auto server 段只含会话冻结的配置态内容，manual server 不进入该段。
+- auto server 不注册独立模型工具，但 catalog 仍可供 gateway load/call。
+- auto/manual `#server` 都只注入语义摘要；未连接状态仍保留摘要和状态。
+- list、引用和候选菜单不泄露 runtime instructions 或 catalog 工具名。
+- 历史 stripping 能把 `mcp load` 的 `VOIDX_MCP_TOOL_CONTEXT` tool result 压缩为摘要。
 - `McpGatewayTool.description` 固定且不包含 server/tool catalog。
 - `McpCatalog` 只返回配置过滤后的 tool defs。
 - `load` metadata 包含 `server`、`tool_names`、`schema_hash`、`truncated`。
@@ -403,33 +405,14 @@ TUI/GUI 不应显示 `Mcp("call")`。对 `mcp(op="call", server, tool, arguments
 
 - prefix cache read/write tokens。
 - MCP tool call success rate。
-- invalid argument retry rate（拆分为 JSON parse error 和 schema validation error 两类计数）。
+- invalid argument retry rate（拆分为 object type error 和 schema validation error 两类计数）。
 - tool_defs token count。
 - `mcp list/load/call` latency，拆分 catalog cache hit 和 server refresh。
 - permission prompt frequency，拆分 direct/gateway/hybrid。
 
-## Open Questions
+## Follow-up Work
 
-- 默认 exposure 应直接切 `gateway`，还是先提供实验开关？
-- auto server 段后续是否需要 per-tool 粒度，以及 `@server` 显式引用（对齐 skill 的 `EXPLICIT_REF_RE`）？
-- `load` 是否允许一次加载所有 connected MCP server，还是强制按 server 加载？
-- 参数 schema 压缩是否需要保留 enum、array item 类型和 nested object path？
-- 第一版 schema 校验使用现有依赖还是新增 JSON Schema validator？
-- MCP `tools/list` pagination 和 tools-list-changed 通知是否在第一版一起补齐？
-- `websearch/webfetch` 是否继续作为高频 native tools，还是迁移到 gateway-backed wrappers？
-- 是否需要 `mcp(op="search", query="...")` 作为 `list` 的语义别名，方便模型发现工具？
-
-## Recommended First Version
-
-第一版建议做保守实现：
-
-1. 新增固定 `mcp` tool，支持 `list/load/call`。
-2. 在 `mcp` 工具描述里教模型先 `list/load` 再 `call`。
-3. `list/load` 使用统一 `McpCatalog`，并加 current-turn marker stripping。
-4. `call` 先实现 JSON 解析、基础 JSON Schema 校验和 `mcp:{server}:{tool}` 权限分类。
-5. 保留现有 direct MCP 注册，但加配置 `mcp.exposure`。
-6. 默认仍可先用现状，开发者开启 `gateway` 测试。
-7. 在 gateway 模式下禁用 direct `mcp__*` 注册，只保留固定 `mcp`。
-8. 收集 cache hit、权限 prompt 频率和调用错误数据后，再决定是否默认切换。
-
-这个路径风险低：不会一次性删除现有 MCP 能力，同时能验证 gateway 是否真的改善 cache 和工具列表膨胀问题。
+- 实现 stale catalog 自动 refresh，并覆盖 reconnect / tools-list-changed / pagination。
+- 评估 per-tool auto、批量 load 和语义搜索是否有足够收益。
+- 持续观测 prefix cache、gateway latency、权限 prompt 频率和参数校验失败率。
+- 根据实际使用情况决定 manual server 的默认 exposure 策略，以及高频 native tools 是否迁移到 gateway。

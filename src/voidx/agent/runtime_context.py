@@ -19,6 +19,7 @@ from voidx.runtime.task_state import GoalSpec, TodoRunState
 from voidx.config import Config, UserProfile
 from voidx.runtime.intent import InteractionMode, TaskIntent
 from voidx.runtime.task_state import TodoStatus
+from voidx.mcp.context import has_mcp_tool_context, strip_mcp_tool_context
 from voidx.skills.service import (
     has_skill_tool_context,
     strip_skill_tool_context,
@@ -440,10 +441,11 @@ def _strip_historical_tool_skill_context(
     stripped: list[BaseMessage] = []
     for index, message in enumerate(messages):
         if index < cutoff and isinstance(message, ToolMessage):
-            if not has_skill_tool_context(message.content):
-                stripped.append(message)
-                continue
-            content = strip_skill_tool_context(message.content)
+            content = message.content
+            if has_skill_tool_context(content):
+                content = strip_skill_tool_context(content)
+            if has_mcp_tool_context(content):
+                content = strip_mcp_tool_context(content)
             if content != message.content:
                 stripped.append(message.model_copy(update={"content": content}))
                 continue

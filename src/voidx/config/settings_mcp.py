@@ -8,6 +8,13 @@ from voidx.config.models import McpServerConfig
 
 
 class SettingsMcpMixin:
+    def get_mcp_exposure(self) -> str:
+        """How MCP tools are exposed to the model: direct | gateway | hybrid."""
+        data = self._effective_data()
+        mcp_section = data.get("mcp")
+        value = mcp_section.get("exposure") if isinstance(mcp_section, dict) else None
+        return value if value in {"direct", "gateway", "hybrid"} else "direct"
+
     def list_mcp_servers(self) -> list[McpServerConfig]:
         data = self._effective_data()
         servers_data = data.get("mcpServers") or data.get("mcp_servers") or {}
@@ -58,6 +65,17 @@ class SettingsMcpMixin:
         if disabled:
             self.clear_web_routes_for_server(name, save=True)
         return path
+
+    def set_mcp_server_auto(self, name: str, auto: bool) -> Path:
+        servers, _path, target = self._target_mapping("mcpServers")
+        fields = servers.get(name)
+        if not isinstance(fields, dict):
+            effective_fields = self._mcp_servers_data().get(name)
+            if not isinstance(effective_fields, dict):
+                raise KeyError(name)
+            fields = {} if target == "workspace" else effective_fields
+        servers[name] = {**fields, "auto": auto}
+        return self._save_target_mapping("mcpServers", servers, target)
 
     def _mcp_servers_data(self) -> dict:
         data = self._effective_data()

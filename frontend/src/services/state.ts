@@ -1,4 +1,5 @@
 import type { ProfileSummary, SlashCommand } from "../utils/types";
+import type { RefCandidate, RefToken } from "../ui/reference";
 import type { SettingsSnapshot } from "../ui/settings";
 import { iconSvg } from "../utils/icons";
 
@@ -18,6 +19,9 @@ export interface UiState {
   isSwitchingModel: boolean;
   slashCommands: SlashCommand[];
   slashSelectedIndex: number;
+  refCandidates: RefCandidate[];
+  refSelectedIndex: number;
+  refToken: RefToken | null;
   permissionMode: string;
   aiApprovalCount: number;
   reasoningEffort: string;
@@ -35,6 +39,9 @@ export const uiState: UiState = {
   isSwitchingModel: false,
   slashCommands: [],
   slashSelectedIndex: 0,
+  refCandidates: [],
+  refSelectedIndex: 0,
+  refToken: null,
   permissionMode: "safe",
   aiApprovalCount: 0,
   reasoningEffort: "xhigh",
@@ -73,6 +80,7 @@ export const btnSendEl = document.querySelector<HTMLButtonElement>("#btn-send")!
 export const providerSelectEl = document.querySelector<HTMLSelectElement>("#provider-select")!;
 export const modelSelectEl = document.querySelector<HTMLSelectElement>("#model-select")!;
 export const slashMenuEl = document.querySelector<HTMLElement>("#slash-menu")!;
+export const refMenuEl = document.querySelector<HTMLElement>("#ref-menu")!;
 export const requestDialogEl = document.querySelector<HTMLDialogElement>("#request-dialog")!;
 export const requestTitleEl = document.querySelector<HTMLElement>("#request-title")!;
 export const requestDetailsEl = document.querySelector<HTMLElement>("#request-details")!;

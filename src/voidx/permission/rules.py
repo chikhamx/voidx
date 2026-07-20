@@ -52,6 +52,9 @@ BASIC_RULES: Ruleset = [
     Rule(permission="bash", pattern="*", action="ask"),
     Rule(permission="powershell", pattern="*", action="ask"),
     Rule(permission="agent", pattern="implement", action="ask"),
+    Rule(permission="mcp", pattern="*", action="ask"),
+    Rule(permission="mcp", pattern="list", action="allow"),
+    Rule(permission="mcp", pattern="load", action="allow"),
     Rule(permission="mcp__*", pattern="*", action="ask"),
     Rule(permission="mcp/*", pattern="*", action="ask"),
 ]
@@ -134,7 +137,18 @@ def build_pattern(tool: str, args: dict) -> str:
         return "read" if _is_read_only_git_tool_command(args) else "write"
     if tool == "skill":
         return "create" if args.get("op") == "create" else "*"
+    if tool == "mcp":
+        return _mcp_gateway_pattern(args)
     return "*"
+
+
+def _mcp_gateway_pattern(args: dict) -> str:
+    op = str(args.get("op") or "")
+    if op in {"list", "load"}:
+        return op
+    server = str(args.get("server") or "*")
+    tool_name = str(args.get("tool") or "*")
+    return f"mcp:{server}:{tool_name}"
 
 
 def delegated_agent(args: dict) -> str:
@@ -404,6 +418,10 @@ def capability_for_tool(tool: str, args: dict) -> PermissionCapability:
     if tool == "agent":
         delegated = delegated_persona(args) or delegated_agent(args)
         return PermissionCapability.AGENT_IMPLEMENT if delegated == "implement" else PermissionCapability.AGENT_READONLY
+    if tool == "mcp":
+        if str(args.get("op") or "") == "call":
+            return PermissionCapability.MCP_TOOLS
+        return PermissionCapability.READ_TOOLS
     if tool.startswith("mcp__") or tool.startswith("mcp/"):
         return PermissionCapability.MCP_TOOLS
     return PermissionCapability.OTHER

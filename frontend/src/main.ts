@@ -25,6 +25,9 @@ import {
   isKnownSlashCommand,
   matchSlashCommands,
   renderSlashMenu,
+  findRefToken,
+  refInsertionText,
+  renderRefMenu,
   renderSidebar,
   addThread,
   removeThread,
@@ -69,7 +72,7 @@ import {
   applyRuntimeState,
   initTheme,
 } from "./ui";
-import type { ThreadInfo, SettingsSnapshot, IntegrationsSnapshot } from "./ui";
+import type { ThreadInfo, SettingsSnapshot, IntegrationsSnapshot, RefCandidate, FileCandidate, SkillCandidate, McpCandidate } from "./ui";
 
 import {
   uiState,
@@ -77,6 +80,7 @@ import {
   inputEl,
   btnSendEl,
   slashMenuEl,
+  refMenuEl,
   requestDialogEl,
   transcriptEl,
   providerSelectEl,
@@ -550,6 +554,7 @@ composerEl.addEventListener("submit", (event: SubmitEvent) => {
   if (text.startsWith("/") && !isKnownSlashCommand(text)) {
     inputEl.value = "";
     hideSlashMenu();
+    hideRefMenu();
     return;
   }
   if (uiState.isRunning) {
@@ -559,6 +564,7 @@ composerEl.addEventListener("submit", (event: SubmitEvent) => {
       .then(() => {
         inputEl.value = "";
         hideSlashMenu();
+        hideRefMenu();
       })
       .catch(() => {})
       .finally(() => {
@@ -573,12 +579,15 @@ composerEl.addEventListener("submit", (event: SubmitEvent) => {
   syncEmptyState();
   inputEl.value = "";
   hideSlashMenu();
+  hideRefMenu();
 });
 
 export function _resetWorkbenchForTest(): void {
   _resetWorkbenchStateForTest();
   _resetConnectionForTest();
   _resetDialogForTest();
+  hideRefMenu();
+  hideSlashMenu();
 
   const shell = document.querySelector<HTMLElement>(".vx-workbench-shell");
   if (shell) {
@@ -632,6 +641,34 @@ window.addEventListener("voidx:open-ui", (event: Event) => {
 });
 
 inputEl.addEventListener("keydown", (event: KeyboardEvent) => {
+  if (refMenuVisible() && uiState.refCandidates.length > 0) {
+    const count = uiState.refCandidates.length;
+    if (event.key === "ArrowDown") {
+      event.preventDefault();
+      uiState.refSelectedIndex = (uiState.refSelectedIndex + 1) % count;
+      updateRefMenu();
+      return;
+    }
+    if (event.key === "ArrowUp") {
+      event.preventDefault();
+      uiState.refSelectedIndex = (uiState.refSelectedIndex - 1 + count) % count;
+      updateRefMenu();
+      return;
+    }
+    if ((event.key === "Enter" && !event.shiftKey) || event.key === "Tab") {
+      event.preventDefault();
+      const selected = uiState.refCandidates[uiState.refSelectedIndex];
+      if (selected) {
+        acceptRefCandidate(selected);
+      }
+      return;
+    }
+    if (event.key === "Escape") {
+      event.preventDefault();
+      hideRefMenu();
+      return;
+    }
+  }
   if (uiState.slashCommands.length > 0) {
     if (event.key === "ArrowDown") {
       event.preventDefault();
@@ -674,6 +711,7 @@ inputEl.addEventListener("input", () => {
   if (value.startsWith("/")) {
     const matched = matchSlashCommands(value);
     if (matched.length > 0) {
+      hideRefMenu();
       uiState.slashCommands = matched;
       uiState.slashSelectedIndex = 0;
       showSlashMenu();
@@ -681,6 +719,7 @@ inputEl.addEventListener("input", () => {
     }
   }
   hideSlashMenu();
+  scheduleRefUpdate();
 });
 
 function showSlashMenu(): void {
@@ -731,4 +770,138 @@ function runSlashCommand(command: SlashCommand): void {
   }
   inputEl.value = command.command + " ";
   inputEl.focus();
+}
+
+// ── @ file / # skill reference menu ────────────────────────────────────
+let refRequestSeq = 0;
+let refDebounceTimer: number | undefined;
+
+function refMenuVisible(): boolean {
+  return refMenuEl.classList.contains("visible");
+}
+
+function showRefMenu(): void {
+  updateRefMenu();
+  refMenuEl.classList.add("visible");
+  hideSlashMenu();
+}
+
+function hideRefMenu(): void {
+  refRequestSeq += 1;
+  refMenuEl.classList.remove("visible");
+  uiState.refCandidates = [];
+  uiState.refSelectedIndex = 0;
+  uiState.refToken = null;
+}
+
+function updateRefMenu(): void {
+  const menu = renderRefMenu(
+    uiState.refCandidates,
+    uiState.refSelectedIndex,
+    (candidate: RefCandidate) => acceptRefCandidate(candidate),
+  );
+  refMenuEl.replaceChildren(...menu.childNodes);
+}
+
+function scheduleRefUpdate(): void {
+  window.clearTimeout(refDebounceTimer);
+  refDebounceTimer = window.setTimeout(() => {
+    void refreshRefCandidates();
+  }, 120);
+}
+
+async function refreshRefCandidates(): Promise<void> {
+  const token = findRefToken(
+    inputEl.value,
+    inputEl.selectionStart ?? inputEl.value.length,
+  );
+  if (!token || !isRpcConnected()) {
+    hideRefMenu();
+    return;
+  }
+  const seq = ++refRequestSeq;
+  if (token.trigger === "@") {
+    try {
+      const result = (await rpcCall("attachments.candidates", {
+        thread_id: uiState.sessionId,
+        query: token.query,
+        limit: 8,
+      })) as { candidates?: Array<Record<string, unknown>> };
+      if (seq !== refRequestSeq) return;
+      const current = findRefToken(
+        inputEl.value,
+        inputEl.selectionStart ?? inputEl.value.length,
+      );
+      if (!current || current.trigger !== token.trigger || current.query !== token.query) {
+        return;
+      }
+      const raw = result.candidates ?? [];
+      const candidates: RefCandidate[] = raw.map(
+        (c) => ({ type: "file", file: c as unknown as FileCandidate }),
+      );
+      if (candidates.length === 0) {
+        hideRefMenu();
+        return;
+      }
+      uiState.refToken = token;
+      uiState.refCandidates = candidates;
+      uiState.refSelectedIndex = 0;
+      showRefMenu();
+    } catch {
+      if (seq === refRequestSeq) hideRefMenu();
+    }
+    return;
+  }
+  try {
+    const [skillResult, mcpResult] = await Promise.all([
+      rpcCall("skills.candidates", {
+        thread_id: uiState.sessionId,
+        query: token.query,
+        limit: 8,
+      }) as Promise<{ candidates?: Array<Record<string, unknown>> }>,
+      rpcCall("mcp.candidates", {
+        thread_id: uiState.sessionId,
+        query: token.query,
+        limit: 8,
+      }) as Promise<{ candidates?: Array<Record<string, unknown>> }>,
+    ]);
+    if (seq !== refRequestSeq) return;
+    const current = findRefToken(
+      inputEl.value,
+      inputEl.selectionStart ?? inputEl.value.length,
+    );
+    if (!current || current.trigger !== token.trigger || current.query !== token.query) {
+      return;
+    }
+    const skillRaw = skillResult.candidates ?? [];
+    const mcpRaw = mcpResult.candidates ?? [];
+    const candidates: RefCandidate[] = [
+      ...skillRaw.map((c) => ({ type: "skill" as const, skill: c as unknown as SkillCandidate })),
+      ...mcpRaw.map((c) => ({ type: "mcp" as const, mcp: c as unknown as McpCandidate })),
+    ];
+    if (candidates.length === 0) {
+      hideRefMenu();
+      return;
+    }
+    uiState.refToken = token;
+    uiState.refCandidates = candidates;
+    uiState.refSelectedIndex = 0;
+    showRefMenu();
+  } catch {
+    if (seq === refRequestSeq) hideRefMenu();
+  }
+}
+
+function acceptRefCandidate(candidate: RefCandidate): void {
+  const token = uiState.refToken;
+  if (!token) return;
+  const insertion = refInsertionText(candidate);
+  const text = inputEl.value;
+  inputEl.value = text.slice(0, token.start) + insertion + text.slice(token.end);
+  const cursor = token.start + insertion.length;
+  inputEl.setSelectionRange(cursor, cursor);
+  const drillDown = candidate.type === "file" && candidate.file.kind === "dir";
+  hideRefMenu();
+  inputEl.focus();
+  if (drillDown) scheduleRefUpdate();
 }

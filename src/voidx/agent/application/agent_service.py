@@ -175,6 +175,11 @@ class AgentService:
                         "ai_approval_count": getattr(self._execution.permission, "ai_approval_count", 0),
                     },
                     settings_update_handler=self._execution.apply_settings_update,
+                    mcp_catalog_provider=lambda: (
+                        self._execution.mcp_manager.catalog_snapshot()
+                        if self._execution.mcp_manager is not None
+                        else []
+                    ),
                 )
                 self._execution.ui.events.start(CompositeEventConsumer(
                     primary=consumer,
@@ -261,6 +266,14 @@ class AgentService:
                 app = GatewayHeadlessFrontend(status, COMMANDS)
         self._execution.app = app
         app.set_external_command_handler(partial(self._handle_web_command, app))
+        if hasattr(app, "set_mcp_catalog_provider"):
+            app.set_mcp_catalog_provider(
+                lambda: (
+                    self._execution.mcp_manager.catalog_snapshot()
+                    if self._execution.mcp_manager is not None
+                    else []
+                )
+            )
         update_check_task = asyncio.create_task(self._show_update_check_if_needed())
 
         self._execution.gateway_session = gateway_session
@@ -386,6 +399,15 @@ class AgentService:
             thread_id = str(getattr(command, "thread_id", "") or "")
             context = ThreadExecutionContext(thread_id=thread_id, session_id=thread_id)
             app.cancel_external_input(context=context)
+
+    def can_submit_guidance(self) -> bool:
+        return callable(getattr(self._execution, "submit_guidance", None))
+
+    def submit_guidance(self, text: str, **kwargs: Any) -> bool:
+        submit = getattr(self._execution, "submit_guidance", None)
+        if not callable(submit):
+            return False
+        return bool(submit(text, **kwargs))
 
     def _ensure_gateway_thread(self) -> None:
         """Register the active session as a gateway thread if not yet registered.

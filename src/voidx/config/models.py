@@ -64,6 +64,9 @@ class McpServerConfig(BaseModel):
     headers: dict[str, str] = Field(default_factory=dict)
     url: str = ""
     disabled: bool = False
+    auto: bool = False
+    description: str = ""
+    source: str = ""
     tools: list[str] | dict[str, object] | None = None
     transport: str = ""  # "stdio" | "sse" | "streamable-http"; auto-detected from url if blank
 

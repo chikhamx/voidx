@@ -20,6 +20,7 @@ from voidx.logging.tool_log import log_tool_event
 
 from voidx.config import McpServerConfig, Settings
 from voidx.mcp.client import McpClient, McpConnectionError
+from voidx.mcp.catalog import McpCatalog, McpServerCatalogEntry
 from voidx.mcp.schema import McpCallResult, McpRuntimeStatus, McpToolDef
 from voidx.mcp.tool import McpToolWrapper, mcp_tool_id
 from voidx.permission.service import PermissionService
@@ -41,6 +42,8 @@ class McpManager:
         self._connecting: set[str] = set()
         self._init_task: asyncio.Task | None = None
         self._server_configs: list[McpServerConfig] = []
+        self._catalog = McpCatalog()
+        self._exposure = "direct"
 
     @property
     def started(self) -> bool:
@@ -59,9 +62,13 @@ class McpManager:
         self._started = True
         self._registry.unregister_prefix("mcp__")
         self._tool_counts.clear()
+        self._catalog.clear()
 
         if self._settings is None:
+            self._exposure = "direct"
             return
+
+        self._exposure = self._settings.get_mcp_exposure()
 
         servers = self._settings.list_mcp_servers()
         if not servers:
@@ -106,35 +113,39 @@ class McpManager:
                     continue
                 self._errors.pop(server_name, None)
 
-                allowed = self._resolve_tool_filter(
-                    next((s for s in servers if s.name == server_name), None)
+                server_config = next((s for s in servers if s.name == server_name), None)
+                allowed = self._resolve_tool_filter(server_config)
+
+                filtered = [td for td in tool_defs if allowed is None or td.name in allowed]
+                self._catalog.put(
+                    server_name,
+                    filtered,
+                    server_info=client.server_info,
+                    instructions=client.instructions,
                 )
 
                 registered = 0
-                for td in tool_defs:
-                    if allowed is not None and td.name not in allowed:
-                        continue
-                    wrapper = McpToolWrapper(client, td, server_name)
-                    self._registry.register(
-                        wrapper.id,
-                        wrapper,
-                        wrapper.description,
-                        wrapper.parameters_schema(),
-                    )
-                    registered += 1
+                if self._exposure != "gateway" and not (server_config and server_config.auto):
+                    for td in filtered:
+                        wrapper = McpToolWrapper(client, td, server_name)
+                        self._registry.register(
+                            wrapper.id,
+                            wrapper,
+                            wrapper.description,
+                            wrapper.parameters_schema(),
+                        )
+                        registered += 1
 
                 # Pre-deny tools that are in deny filter (user explicitly wants them blocked)
-                disallowed = self._resolve_tool_filter(
-                    next((s for s in servers if s.name == server_name), None),
-                    allow_mode=False,
-                )
+                disallowed = self._resolve_tool_filter(server_config, allow_mode=False)
                 if disallowed:
                     for tool_name in disallowed:
                         tool_id = mcp_tool_id(server_name, tool_name)
                         self._permission.deny_silent(tool_id)
+                        self._permission.deny_silent(f"mcp@pattern:mcp:{server_name}:{tool_name}")
 
                 log_tool_event("mcp_tools_registered", tool_name=server_name, message=f"MCP server '{server_name}': {registered} tools registered")
-                self._tool_counts[server_name] = registered
+                self._tool_counts[server_name] = len(filtered)
         finally:
             self._connecting.clear()
 
@@ -154,6 +165,7 @@ class McpManager:
 
         self._registry.unregister_prefix("mcp__")
         self._tool_counts.clear()
+        self._catalog.clear()
         if not self._clients:
             return
 
@@ -172,6 +184,21 @@ class McpManager:
         """Restart all configured server connections and re-register tools."""
         await self.stop_all()
         await self.start_all()
+
+    def server_config(self, server_name: str) -> McpServerConfig | None:
+        """Return configuration-only metadata for one MCP server."""
+        configs = self._server_configs
+        if not configs and self._settings is not None:
+            configs = self._settings.list_mcp_servers()
+        return next((config for config in configs if config.name == server_name), None)
+
+    def catalog_snapshot(self) -> list[McpServerCatalogEntry]:
+        """Filtered tool definitions per server, from the shared in-memory catalog."""
+        return self._catalog.snapshot()
+
+    def tool_def(self, server_name: str, tool_name: str) -> McpToolDef | None:
+        """Look up one filtered tool definition from the catalog."""
+        return self._catalog.tool_def(server_name, tool_name)
 
     async def list_tools_for_server(self, server_name: str) -> list[McpToolDef]:
         """List tools from a connected server."""

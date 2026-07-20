@@ -102,12 +102,17 @@ def build_external_managers(
 ) -> tuple[Any, Any]:
     from voidx.lsp import LspManager
     from voidx.mcp import McpManager
+    from voidx.mcp.gateway import McpGatewayTool
+
+    mcp_manager = McpManager(
+        settings=settings,
+        registry=tools,
+        permission=permission,
+    )
+    gateway_tool = McpGatewayTool(mcp_manager)
+    tools.register(gateway_tool.id, gateway_tool, gateway_tool.description, gateway_tool.parameters_schema())
 
     return (
-        McpManager(
-            settings=settings,
-            registry=tools,
-            permission=permission,
-        ),
+        mcp_manager,
         LspManager(workspace),
     )

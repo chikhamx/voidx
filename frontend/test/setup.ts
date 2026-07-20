@@ -78,6 +78,7 @@ document.body.innerHTML = `
         <div class="transcript" id="transcript" aria-live="polite"></div>
         <form class="composer" id="composer">
           <div class="slash-menu" id="slash-menu"></div>
+          <div class="ref-menu" id="ref-menu"></div>
           <textarea id="input" rows="3"></textarea>
           <div class="vx-composer-actions">
             <button type="button" class="vx-attach-btn" id="btn-attach" aria-label="Add context"><svg class="vx-icon" viewBox="0 0 24 24" aria-hidden="true"></svg></button>

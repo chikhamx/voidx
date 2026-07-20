@@ -1336,8 +1336,12 @@ class SlashHandler:
             await self._mcp_set_disabled(target, disabled=True)
         elif action == "enable" or action.startswith("enable "):
             await self._mcp_set_disabled(target, disabled=False)
+        elif action == "auto" or action.startswith("auto "):
+            await self._mcp_set_auto(target, auto=True)
+        elif action == "manual" or action.startswith("manual "):
+            await self._mcp_set_auto(target, auto=False)
         elif action:
-            ui.error("Usage: /mcp [new|list|test|del|restart|tools|disable|enable]")
+            ui.error("Usage: /mcp [new|list|test|del|restart|tools|disable|enable|auto|manual]")
         else:
             await self._mcp_list()
 
@@ -1561,7 +1565,7 @@ class SlashHandler:
             ui.print("[bold]Web routing:[/bold]")
             ui.print(f"  search · {search.backend} {search.server}/{search.tool}".rstrip("/"))
             ui.print(f"  fetch  · {fetch.backend} {fetch.server}/{fetch.tool}".rstrip("/"))
-        ui.print("[dim]Usage: /mcp new|list|test|del|restart|tools|disable|enable[/dim]")
+        ui.print("[dim]Usage: /mcp new|list|test|del|restart|tools|disable|enable|auto|manual[/dim]")
 
     async def _mcp_test(self, target: str) -> None:
         async def _do_test(name: str) -> None:
@@ -1631,6 +1635,26 @@ class SlashHandler:
             if disabled:
                 ui.print("[dim]Web routes pointing to this server were cleared.[/dim]")
             ui.print(f"[dim]Saved to {path}[/dim]")
+
+        await self._pick_mcp_server(action, target, _do_set)
+
+    async def _mcp_set_auto(self, target: str, *, auto: bool) -> None:
+        action = "Auto-discovery" if auto else "Manual-only"
+
+        async def _do_set(name: str) -> None:
+            if self.host.settings is None:
+                ui.error("No settings file available.")
+                return
+            try:
+                path = self.host.settings.set_mcp_server_auto(name, auto)
+            except KeyError:
+                ui.error(f"MCP server not found: {name}")
+                return
+            mode = "auto-discovery" if auto else "manual-only"
+            ui.print(f"[green]✓ {name} set to {mode}[/green]")
+            ui.print(f"[dim]Saved to {path}[/dim]")
+            if auto:
+                ui.print("[dim]Restart the session for the system prompt to include this server.[/dim]")
 
         await self._pick_mcp_server(action, target, _do_set)
 

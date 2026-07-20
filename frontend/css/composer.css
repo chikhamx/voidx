@@ -434,8 +434,9 @@
   margin: 4px 8px;
 }
 
-/* === Slash 命令菜单 === */
-.slash-menu {
+/* === Slash 命令菜单 & @/# 引用菜单 === */
+.slash-menu,
+.ref-menu {
   background: var(--vx-bg-elevated);
   border: 1px solid var(--vx-border);
   border-radius: var(--vx-radius-lg);
@@ -452,7 +453,8 @@
   z-index: 10;
 }
 
-.slash-menu.visible { display: block; }
+.slash-menu.visible,
+.ref-menu.visible { display: block; }
 
 .slash-item {
   align-items: center;

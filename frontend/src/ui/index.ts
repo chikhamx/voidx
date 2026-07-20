@@ -16,6 +16,7 @@ export {
   getActiveTab,
 } from "./dock";
 export * from "./integrations";
+export * from "./reference";
 export * from "./model";
 export * from "./settings";
 export {
