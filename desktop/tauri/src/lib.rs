@@ -165,9 +165,6 @@ pub fn resolve_workspace() -> PathBuf {
             return path;
         }
     }
-    if let Some(path) = load_persisted_workspace() {
-        return path;
-    }
     // Walk up from exe directory to find project root (contains AGENTS.md or pyproject.toml)
     if let Ok(exe) = std::env::current_exe() {
         let mut dir = exe.parent();
@@ -210,24 +207,3 @@ pub fn is_usable_workspace(path: &std::path::Path) -> bool {
     path.exists() && path.is_dir() && path.parent().is_some()
 }
 
-pub fn workspace_state_path() -> Option<PathBuf> {
-    let home = std::env::var("HOME").ok()?;
-    Some(PathBuf::from(home).join(".voidx/desktop-workspace"))
-}
-
-pub fn load_persisted_workspace() -> Option<PathBuf> {
-    let path = workspace_state_path()?;
-    let text = std::fs::read_to_string(path).ok()?;
-    let workspace = PathBuf::from(text.trim());
-    is_usable_workspace(&workspace).then_some(workspace)
-}
-
-pub fn persist_workspace(workspace: &std::path::Path) {
-    let Some(path) = workspace_state_path() else {
-        return;
-    };
-    if let Some(parent) = path.parent() {
-        let _ = std::fs::create_dir_all(parent);
-    }
-    let _ = std::fs::write(path, workspace.to_string_lossy().as_bytes());
-}

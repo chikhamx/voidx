@@ -1,7 +1,7 @@
 use std::fs;
 use std::path::PathBuf;
 
-use voidx_desktop::{is_project_root, is_usable_workspace, workspace_state_path};
+use voidx_desktop::{is_project_root, is_usable_workspace};
 
 #[test]
 fn project_root_detected_by_agents_md() {
@@ -43,12 +43,3 @@ fn usable_workspace_rejects_file() {
     assert!(!is_usable_workspace(file.path()));
 }
 
-#[test]
-fn workspace_state_path_under_home() {
-    // workspace_state_path reads $HOME; verify it produces the expected suffix.
-    // We can't fully isolate HOME in an integration test without env mutation,
-    // so we only assert the shape when HOME is set.
-    if let Some(path) = workspace_state_path() {
-        assert!(path.ends_with(".voidx/desktop-workspace"));
-    }
-}

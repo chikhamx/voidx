@@ -12,7 +12,7 @@ use std::os::windows::process::CommandExt;
 use voidx_desktop::CommandExt;
 use tauri::{Emitter, State, WindowEvent};
 
-use voidx_desktop::{BackendStatus, persist_workspace, resolve_python, resolve_workspace};
+use voidx_desktop::{BackendStatus, resolve_python, resolve_workspace};
 
 struct AppState {
     gateway_url: Arc<Mutex<Option<String>>>,
@@ -58,7 +58,6 @@ fn restart_backend(
     if let Some(path) = workspace {
         if !path.trim().is_empty() {
             let workspace_path = PathBuf::from(path);
-            persist_workspace(&workspace_path);
             if let Ok(mut slot) = state.workspace.lock() {
                 *slot = workspace_path;
             }
