@@ -1,3 +1,5 @@
+> **Status: Done** — Archived on 2026-07-20.
+
 ---
 name: agent-architecture-refactor-plan
 display_name: Agent 架构分层改造实施计划

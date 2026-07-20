@@ -1,3 +1,5 @@
+> **Status: Done** — Archived on 2026-07-20.
+
 ---
 name: ai-permission-approval-plan
 display_name: AI 权限审批实现计划

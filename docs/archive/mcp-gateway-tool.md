@@ -1,6 +1,6 @@
 # MCP Gateway Tool — 技术设计文档
 
-> **Status: Implemented**（stale catalog refresh 作为独立增强保留）
+> **Status: Done** — Archived on 2026-07-20.
 > Date: 2026-07-14
 
 ## Context

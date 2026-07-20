@@ -1,3 +1,5 @@
+> **Status: Done** — Archived on 2026-07-20.
+
 ---
 name: ai-permission-approval
 display_name: AI 权限审批模式

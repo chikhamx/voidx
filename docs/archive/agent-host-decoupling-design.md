@@ -1,3 +1,5 @@
+> **Status: Done** — Archived on 2026-07-20.
+
 ---
 name: agent-host-decoupling-design
 display_name: Agent Host 解耦设计：消除 LangGraphExecution 隐式耦合
