@@ -9,6 +9,7 @@ import subprocess
 from pydantic import BaseModel, Field
 
 from voidx.tools.base import BaseTool, ToolContext, ToolResult, model_to_json_schema
+from voidx.tools.bash.edit_router import maybe_route_sed_edit
 from voidx.tools.bash.router import try_hint
 from voidx.permission.context import PermissionContext
 from voidx.permission.grants import AccessGrants
@@ -52,6 +53,10 @@ class BashTool(BaseTool):
         blocked = None if approved_shell_risk else _sandbox_denial(inp.command, ctx)
         if blocked:
             return build_blocked_result(inp.command, blocked)
+
+        sed_routed = await maybe_route_sed_edit(inp.command, ctx, "bash")
+        if sed_routed is not None:
+            return sed_routed
 
         hint = try_hint(inp.command)
         if hint is not None:
