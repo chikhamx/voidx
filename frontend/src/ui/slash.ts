@@ -48,12 +48,25 @@ export const COMMAND_CATALOG: SlashCommand[] = [
   { command: "/model test", description: "Test a provider's connectivity", category: "model", execution: "open-ui", dangerous: false, requiresArgs: false, uiTarget: "settings:model" },
 ];
 
+const BUILTIN_CATALOG: SlashCommand[] = COMMAND_CATALOG;
+let activeCatalog: SlashCommand[] = BUILTIN_CATALOG;
+
+export function setCommandCatalog(commands: SlashCommand[]): void {
+  if (Array.isArray(commands) && commands.length > 0) {
+    activeCatalog = commands;
+  }
+}
+
+export function _resetCommandCatalogForTest(): void {
+  activeCatalog = BUILTIN_CATALOG;
+}
+
 export function isKnownSlashCommand(input: string): boolean {
   if (!input || !input.startsWith("/")) {
     return false;
   }
   const head = input.trim().split(/\s+/)[0].toLowerCase();
-  return COMMAND_CATALOG.some((cmd) => cmd.command.toLowerCase() === head);
+  return activeCatalog.some((cmd) => cmd.command.toLowerCase() === head);
 }
 
 export function matchSlashCommands(input: string): SlashCommand[] {
@@ -64,7 +77,7 @@ export function matchSlashCommands(input: string): SlashCommand[] {
   const query = rawQuery.trimEnd();
   const wantsSubcommands = rawQuery.endsWith(" ") || query.includes(" ");
   if (!wantsSubcommands) {
-    const topLevel = COMMAND_CATALOG.filter((cmd) => !cmd.command.includes(" "));
+    const topLevel = activeCatalog.filter((cmd) => !cmd.command.includes(" "));
     const exact = topLevel.filter((cmd) => cmd.command.toLowerCase() === query);
     if (exact.length > 0) {
       return exact;
@@ -79,17 +92,42 @@ export function matchSlashCommands(input: string): SlashCommand[] {
       );
     });
   }
-  const commandQuery = rawQuery.endsWith(" ") ? `${query} ` : query;
+  const trailingSpace = rawQuery.endsWith(" ");
+  const commandQuery = trailingSpace ? `${query} ` : query;
   const descriptionQuery = query.slice(1);
-  const matched = COMMAND_CATALOG.filter((cmd) => {
+  const matched = activeCatalog.filter((cmd) => {
     const command = cmd.command.toLowerCase();
     const description = cmd.description.toLowerCase();
     return (
       command.startsWith(commandQuery) ||
-      (descriptionQuery.length > 2 && description.includes(descriptionQuery))
+      (!trailingSpace && descriptionQuery.length > 2 && description.includes(descriptionQuery))
     );
   });
   return matched.length > 0 ? matched : [];
+}
+
+export function completeSlashInput(input: string): string | null {
+  if (!input || !input.startsWith("/")) return null;
+  const matched = matchSlashCommands(input);
+  if (matched.length === 0) return null;
+  if (matched.length === 1) {
+    const command = matched[0].command;
+    if (command.toLowerCase() === input.toLowerCase()) {
+      const hasSubcommands = activeCatalog.some((cmd) =>
+        cmd.command.toLowerCase().startsWith(`${command.toLowerCase()} `),
+      );
+      return hasSubcommands ? `${command} ` : null;
+    }
+    return `${command} `;
+  }
+  const commands = matched.map((cmd) => cmd.command.toLowerCase());
+  let prefix = commands[0];
+  for (const command of commands.slice(1)) {
+    while (!command.startsWith(prefix)) {
+      prefix = prefix.slice(0, -1);
+    }
+  }
+  return prefix.length > input.length ? prefix : input;
 }
 
 export function renderSlashMenu(

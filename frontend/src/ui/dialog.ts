@@ -222,10 +222,19 @@ export function renderChoiceButtons(request: UiRequest): void {
 }
 
 export function renderTextRequest(request: UiRequest): void {
-  const input = document.createElement("textarea");
-  input.rows = 3;
+  const input = request.secret
+    ? (() => {
+        const field = document.createElement("input");
+        field.type = "password";
+        field.autocomplete = "off";
+        return field;
+      })()
+    : (() => {
+        const field = document.createElement("textarea");
+        field.rows = 3;
+        return field;
+      })();
   input.value = request.default || "";
-  input.placeholder = request.secret ? "Input hidden in terminal UI" : "";
   const actions = document.createElement("div");
   actions.className = "request-actions";
   const submit = document.createElement("button");

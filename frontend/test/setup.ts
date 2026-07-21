@@ -31,8 +31,6 @@ document.body.innerHTML = `
       <div class="vx-titlebar-left">
         <span class="status-dot disconnected" id="status-dot" aria-label="Connection status"></span>
         <button type="button" class="vx-titlebar-tool" id="titlebar-sidebar-toggle" aria-label="Toggle sidebar"><svg class="vx-icon" viewBox="0 0 24 24" aria-hidden="true"></svg></button>
-        <button type="button" class="vx-titlebar-tool" aria-label="Back" disabled><svg class="vx-icon" viewBox="0 0 24 24" aria-hidden="true"></svg></button>
-        <button type="button" class="vx-titlebar-tool" aria-label="Forward" disabled><svg class="vx-icon" viewBox="0 0 24 24" aria-hidden="true"></svg></button>
       </div>
       <div class="vx-titlebar-right">
         <button type="button" class="vx-titlebar-tool" id="titlebar-dock-toggle" aria-label="Toggle right panel"><svg class="vx-icon" viewBox="0 0 24 24" aria-hidden="true"></svg></button>
@@ -77,6 +75,7 @@ document.body.innerHTML = `
         </section>
         <div class="transcript" id="transcript" aria-live="polite"></div>
         <form class="composer" id="composer">
+          <div class="attachment-strip" id="attachment-strip" hidden></div>
           <div class="slash-menu" id="slash-menu"></div>
           <div class="ref-menu" id="ref-menu"></div>
           <textarea id="input" rows="3"></textarea>
@@ -158,6 +157,7 @@ document.body.innerHTML = `
               <div><dt>Workspace</dt><dd id="status-workspace-detail">voidx</dd></div>
               <div><dt>Model</dt><dd id="status-provider-model"></dd></div>
               <div><dt>Running</dt><dd id="status-running">idle</dd></div>
+              <div><dt>Usage</dt><dd id="status-usage">—</dd></div>
             </dl>
           </div>
         </div>

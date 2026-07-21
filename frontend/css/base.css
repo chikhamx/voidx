@@ -21,6 +21,9 @@ body {
   color: var(--vx-text-primary);
 }
 
+/* macOS 桌面端：窗口透明 + 毛玻璃，body 透出 vibrancy */
+body.is-desktop.is-mac { background: transparent; }
+
 button {
   font: inherit;
   color: inherit;
@@ -121,6 +124,7 @@ button:focus:not(:focus-visible),
 }
 .notice-error { color: var(--vx-error); }
 .notice-warning { color: var(--vx-warning); }
+.notice-info { color: var(--vx-text-secondary); }
 .notice-icon { font-weight: 700; }
 .notice-text { font-size: var(--vx-text-sm); color: var(--vx-text-primary); }
 

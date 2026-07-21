@@ -10,7 +10,7 @@
   flex: 1;
   gap: var(--vx-space-3);
   overflow-y: auto;
-  padding: var(--vx-space-6) max(var(--vx-space-6), calc((100% - var(--vx-content-max)) / 2)) var(--vx-space-8);
+  padding: calc(var(--vx-titlebar-height) + var(--vx-space-2)) max(var(--vx-space-6), calc((100% - var(--vx-content-max)) / 2)) var(--vx-space-8);
   scroll-behavior: smooth;
 }
 
@@ -130,6 +130,11 @@
 
 .status-item.running .status-label::before { background: var(--vx-warning); }
 .status-item.completed .status-label::before { background: var(--vx-success); }
+.status-elapsed {
+  color: var(--vx-text-dim);
+  margin-left: var(--vx-space-2);
+}
+
 
 .status-detail {
   color: var(--vx-text-dim);
@@ -155,16 +160,22 @@
 }
 
 .tool-group-header:hover { color: var(--vx-text-primary); }
-.tool-group-header:hover .tool-group-chevron { opacity: 1; }
 
 .tool-group-chevron {
   align-items: center;
   display: inline-flex;
-  opacity: 0;
+  flex-shrink: 0;
   transition: opacity var(--vx-transition-fast);
 }
 
-.tool-group-name { color: inherit; font-weight: normal; }
+.tool-group-name {
+  color: inherit;
+  font-weight: normal;
+  min-width: 0;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
 
 .tool-group-args {
   color: var(--vx-text-dim);
@@ -231,6 +242,7 @@
   display: flex;
   font-size: var(--vx-text-sm);
   gap: var(--vx-space-2);
+  min-width: 0;
   user-select: none;
 }
 
@@ -248,7 +260,32 @@
 .tool-header:hover .tool-chevron { color: var(--vx-text-primary); }
 
 .tool-name { display: none; }
-.tool-summary { color: inherit; font-weight: normal; }
+.tool-summary {
+  color: inherit;
+  display: inline-block;
+  font-weight: normal;
+  min-width: 0;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.tool-summary .tool-icon { vertical-align: -2px; }
+
+.tool-target {
+  color: var(--vx-text-secondary);
+  text-decoration: underline dotted;
+  text-underline-offset: 3px;
+}
+
+.tool-stats {
+  flex-shrink: 0;
+  font-size: var(--vx-text-xs);
+  white-space: nowrap;
+}
+
+.tool-stat-add { color: var(--vx-diff-add); }
+.tool-stat-del { color: var(--vx-diff-del); }
 .tool-args-summary { display: none; }
 .tool-spinner { display: none; }
 .tool-status { display: none; }

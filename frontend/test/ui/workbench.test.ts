@@ -286,7 +286,7 @@ describe("workbench shell", () => {
     await vi.waitFor(() => {
       expect(document.querySelector("#status-session-detail").textContent).toContain("empty-1");
     });
-    document.querySelector(".vx-workspace-collapse-toggle")?.click();
+    document.querySelector(".vx-workspace-session-row")?.click();
     await vi.waitFor(() => {
       expect(document.querySelector(".vx-session-item.active").dataset.threadId).toBe("empty-1");
     });
@@ -753,7 +753,7 @@ describe("provider and model controls", () => {
       provider: "",
       model: "",
     });
-    const request = sentPayloads(sentMessages)[0];
+    const request = sentPayloads(sentMessages).find((p) => p.method === "settings.get");
     socket.onmessage({
       data: JSON.stringify({
         jsonrpc: "2.0",
@@ -789,7 +789,7 @@ describe("provider and model controls", () => {
       provider: "",
       model: "",
     });
-    const request = sentPayloads(sentMessages)[0];
+    const request = sentPayloads(sentMessages).find((p) => p.method === "settings.get");
     socket.onmessage({
       data: JSON.stringify({
         jsonrpc: "2.0",
@@ -827,7 +827,7 @@ describe("provider and model controls", () => {
       provider: "",
       model: "",
     });
-    const request = sentPayloads(sentMessages)[0];
+    const request = sentPayloads(sentMessages).find((p) => p.method === "settings.get");
     socket.onmessage({
       data: JSON.stringify({
         jsonrpc: "2.0",
@@ -900,7 +900,7 @@ describe("provider and model controls", () => {
       workspace: "/Users/chikham/workspace/voidx",
     });
 
-    const request = sentPayloads(sentMessages)[0];
+    const request = sentPayloads(sentMessages).find((p) => p.method === "settings.get");
     expect(request).toMatchObject({
       method: "settings.get",
       params: {},
@@ -947,7 +947,7 @@ describe("provider and model controls", () => {
       profile_configured: null,
     });
 
-    const request = sentPayloads(sentMessages)[0];
+    const request = sentPayloads(sentMessages).find((p) => p.method === "settings.get");
     expect(request).toMatchObject({
       method: "settings.get",
       params: {},
@@ -993,7 +993,7 @@ describe("provider and model controls", () => {
       model: "",
     });
 
-    const request = sentPayloads(sentMessages)[0];
+    const request = sentPayloads(sentMessages).find((p) => p.method === "settings.get");
     socket.onmessage({
       data: JSON.stringify({
         jsonrpc: "2.0",
@@ -1060,7 +1060,7 @@ describe("provider and model controls", () => {
       profile_configured: true,
     });
 
-    const request = sentPayloads(sentMessages)[0];
+    const request = sentPayloads(sentMessages).find((p) => p.method === "settings.get");
     expect(request).toMatchObject({
       method: "settings.get",
       params: {},

@@ -13,8 +13,6 @@
         <div class="vx-titlebar-left" data-tauri-drag-region>
           <span class="status-dot disconnected" id="status-dot" aria-label="Connection status"></span>
           <button type="button" class="vx-titlebar-tool" id="titlebar-sidebar-toggle" aria-label="Toggle sidebar"><svg class="vx-icon" xmlns="http://www.w3.org/2000/svg" width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.6" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><rect x="3" y="4" width="18" height="16" rx="2.5"/><path d="M9.5 4v16"/></svg></button>
-          <button type="button" class="vx-titlebar-tool" aria-label="Back" disabled><svg class="vx-icon" xmlns="http://www.w3.org/2000/svg" width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.6" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="m14.5 6-6 6 6 6"/></svg></button>
-          <button type="button" class="vx-titlebar-tool" aria-label="Forward" disabled><svg class="vx-icon" xmlns="http://www.w3.org/2000/svg" width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.6" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="m9.5 6 6 6-6 6"/></svg></button>
         </div>
         <div class="vx-titlebar-right" data-tauri-drag-region>
           <div class="vx-chat-header" id="chat-header" hidden>
@@ -82,6 +80,7 @@
             </section>
             <div class="transcript" id="transcript" aria-live="polite"></div>
           <form class="composer" id="composer">
+            <div class="attachment-strip" id="attachment-strip" hidden></div>
             <div class="slash-menu" id="slash-menu"></div>
             <div class="ref-menu" id="ref-menu"></div>
             <textarea id="input" rows="3" placeholder="Ask voidx... (/ 命令, @ 文件, # 技能)"></textarea>
@@ -103,7 +102,6 @@
                 <div class="vx-model-selector-container">
                   <button type="button" class="vx-model-pill" id="model-pill">
                     <span id="model-pill-text">等待模型状态</span>
-                    <span class="vx-model-pill-arrow"><svg class="vx-icon" xmlns="http://www.w3.org/2000/svg" width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.6" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="m6 9.5 6 6 6-6"/></svg></span>
                   </button>
                   <div class="vx-model-dropdown" id="model-dropdown" hidden></div>
                 </div>
@@ -111,7 +109,6 @@
                 <div class="vx-reasoning-selector-container">
                   <button type="button" class="vx-reasoning-pill" id="reasoning-pill" title="推理强度">
                     <span id="reasoning-pill-text">极</span>
-                    <span class="vx-reasoning-pill-arrow"><svg class="vx-icon" xmlns="http://www.w3.org/2000/svg" width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.6" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="m6 9.5 6 6 6-6"/></svg></span>
                   </button>
                   <div class="vx-reasoning-dropdown" id="reasoning-dropdown" hidden></div>
                 </div>
@@ -188,6 +185,7 @@
                 <div><dt>Workspace</dt><dd id="status-workspace-detail">voidx</dd></div>
                 <div><dt>Model</dt><dd id="status-provider-model"></dd></div>
                 <div><dt>Running</dt><dd id="status-running">idle</dd></div>
+                <div><dt>Usage</dt><dd id="status-usage">—</dd></div>
               </dl>
             </div>
           </div>

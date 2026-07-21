@@ -327,14 +327,6 @@ function _createWorkspaceGroup(group: WorkspaceGroup, activeThreadId: string | n
     groupEl.append(controls);
   };
 
-  const collapseToggle = document.createElement("button");
-  collapseToggle.type = "button";
-  collapseToggle.className = "vx-workspace-collapse-toggle";
-  collapseToggle.title = collapsed ? "展开会话" : "折叠会话";
-  collapseToggle.setAttribute("aria-label", collapsed ? `展开 ${group.label}` : `折叠 ${group.label}`);
-  collapseToggle.setAttribute("aria-expanded", String(!collapsed));
-  collapseToggle.append(_svgIcon(collapsed ? "chevron-right" : "chevron-down"));
-  row.append(collapseToggle);
 
   let folderIcon = _svgIcon(collapsed ? "folder" : "folder-open");
   row.append(folderIcon);
@@ -371,11 +363,6 @@ function _createWorkspaceGroup(group: WorkspaceGroup, activeThreadId: string | n
     const newIcon = _svgIcon(nextCollapsed ? "folder" : "folder-open");
     folderIcon.replaceWith(newIcon);
     folderIcon = newIcon;
-
-    collapseToggle.title = nextCollapsed ? "展开会话" : "折叠会话";
-    collapseToggle.setAttribute("aria-label", nextCollapsed ? `展开 ${group.label}` : `折叠 ${group.label}`);
-    collapseToggle.setAttribute("aria-expanded", String(!nextCollapsed));
-    collapseToggle.replaceChildren(_svgIcon(nextCollapsed ? "chevron-right" : "chevron-down"));
 
     if (nextCollapsed) {
       children.replaceChildren();

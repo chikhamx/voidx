@@ -83,6 +83,14 @@ export function _setSocket(ws: RpcSocket | null): void {
   }
 }
 
+export function _resolvePendingForTest(id: number, result: unknown): void {
+  const entry = pending.get(id);
+  if (entry) {
+    pending.delete(id);
+    entry.resolve(result);
+  }
+}
+
 export function isRpcConnected(): boolean {
   return socket?.readyState === WebSocket.OPEN;
 }

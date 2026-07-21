@@ -24,6 +24,13 @@ import {
 import {
   isKnownSlashCommand,
   matchSlashCommands,
+  completeSlashInput,
+  setCommandCatalog,
+  expandPasteTokens,
+  clearPasteEntries,
+  registerTextPaste,
+  imageAttachmentTokens,
+  clearImageAttachments,
   renderSlashMenu,
   findRefToken,
   refInsertionText,
@@ -72,9 +79,17 @@ import {
   applyRuntimeState,
   initTheme,
 } from "./ui";
+import {
+  pushHistory,
+  historyPrev,
+  historyNext,
+  resetHistoryNavigation,
+  isHistoryBrowsing,
+} from "./ui/history";
 import type { ThreadInfo, SettingsSnapshot, IntegrationsSnapshot, RefCandidate, FileCandidate, SkillCandidate, McpCandidate } from "./ui";
 
 import {
+  type UsageSnapshot,
   uiState,
   composerEl,
   inputEl,
@@ -106,6 +121,9 @@ export { initModelControls, resolveWsUrl };
 
 if (typeof window !== "undefined" && ((window as any).__TAURI_INTERNALS__ || (window as any).__TAURI__)) {
   document.body.classList.add("is-desktop");
+  if (/macintosh|mac os x/i.test(navigator.userAgent)) {
+    document.body.classList.add("is-mac");
+  }
 }
 setTranscriptElement(transcriptEl);
 initTheme();
@@ -314,6 +332,38 @@ if (!import.meta.env.TEST) {
   });
 }
 
+let catalogRequested = false;
+
+function refreshUsageSnapshot(): void {
+  if (!isRpcConnected()) return;
+  rpcCall("usage.get", {})
+    .then((result: unknown) => {
+      const usage = (result as { usage?: UsageSnapshot } | undefined)?.usage;
+      if (usage && typeof usage.context_tokens === "number") {
+        uiState.usage = usage;
+      } else {
+        uiState.usage = null;
+      }
+      updateStatusBar();
+    })
+    .catch(() => {});
+}
+
+function requestCommandCatalogIfNeeded(): void {
+  if (catalogRequested || !isRpcConnected()) return;
+  catalogRequested = true;
+  rpcCall("commands.list", {})
+    .then((result: unknown) => {
+      const commands = (result as { commands?: SlashCommand[] } | undefined)?.commands;
+      if (Array.isArray(commands) && commands.length > 0) {
+        setCommandCatalog(commands);
+      }
+    })
+    .catch(() => {
+      catalogRequested = false;
+    });
+}
+
 function registerNotificationHandlers(): void {
   for (const method of [
     "workspace.snapshot",
@@ -344,6 +394,8 @@ export function handleNotification(
 ): void {
   if (method === "workspace.snapshot") {
     const snapshot = params.active_snapshot || { nodes: [] };
+    requestCommandCatalogIfNeeded();
+    refreshUsageSnapshot();
     uiState.sessionId = (params.active_thread_id as string) || "";
     applyRuntimeState(params);
     requestStartupSettingsIfNeeded(applySettingsRuntimeState);
@@ -376,6 +428,9 @@ export function handleNotification(
     method === "turn.failed" ||
     method === "turn.cancelled"
   ) {
+    if (method === "turn.completed") {
+      refreshUsageSnapshot();
+    }
     setRunning(false);
     if (method === "turn.failed") {
       const message = typeof params.message === "string" ? params.message : "";
@@ -411,6 +466,10 @@ export function handleNotification(
     return;
   }
   if (method === "notice.set") {
+    const text = typeof params.text === "string" ? params.text.trim() : "";
+    if (text) {
+      appendNoticeItem(`notice-${Date.now()}`, { style: "info", text });
+    }
     return;
   }
   if (method === "input.set") {
@@ -507,6 +566,15 @@ export function handleItem(
     handleStatusItem(method, itemId, data);
     return;
   }
+  if (kind === "guidance_preview") {
+    if (method === "item.started") {
+      const text = (data.text as string) || "";
+      if (text) {
+        appendMessageItem(itemId, { style: "guidance", text });
+      }
+    }
+    return;
+  }
   if (kind === "subagent") {
     return;
   }
@@ -541,9 +609,30 @@ function scrollToBottom(): void {
   transcriptEl.scrollTop = transcriptEl.scrollHeight;
 }
 
+inputEl.addEventListener("paste", (event: ClipboardEvent) => {
+  if (Array.from(event.clipboardData?.files ?? []).some((f) => f.type.startsWith("image/"))) {
+    return;
+  }
+  const text = event.clipboardData?.getData("text/plain") ?? "";
+  if (text.includes("\n")) {
+    event.preventDefault();
+    const token = registerTextPaste(text);
+    const start = inputEl.selectionStart ?? inputEl.value.length;
+    const end = inputEl.selectionEnd ?? start;
+    inputEl.value = `${inputEl.value.slice(0, start)}${token}${inputEl.value.slice(end)}`;
+    const cursor = start + token.length;
+    inputEl.setSelectionRange(cursor, cursor);
+  }
+});
+
 composerEl.addEventListener("submit", (event: SubmitEvent) => {
   event.preventDefault();
-  const text = inputEl.value.trim();
+  const tokens = imageAttachmentTokens();
+  const text = [expandPasteTokens(inputEl.value.trim()), tokens]
+    .filter(Boolean)
+    .join(" ");
+  clearPasteEntries();
+  clearImageAttachments();
   if (
     !text ||
     uiState.isSwitchingModel ||
@@ -557,6 +646,7 @@ composerEl.addEventListener("submit", (event: SubmitEvent) => {
     hideRefMenu();
     return;
   }
+  pushHistory(text);
   if (uiState.isRunning) {
     btnSendEl.classList.add("guidance-pending");
     btnSendEl.innerHTML = sendStopIcon;
@@ -640,6 +730,52 @@ window.addEventListener("voidx:open-ui", (event: Event) => {
   }
 });
 
+let lastEmptyCtrlCAt = 0;
+
+function isTauriRuntime(): boolean {
+  return Boolean((window as any).__TAURI_INTERNALS__ || (window as any).__TAURI__);
+}
+
+function cancelRunningTurn(): void {
+  if (!isRpcConnected()) return;
+  rpcCall("session.cancel", { thread_id: uiState.sessionId })
+    .then(() => setRunning(false))
+    .catch(() => setRunning(false));
+}
+
+function requestAppQuit(): boolean {
+  if (!isTauriRuntime()) return false;
+  void import("@tauri-apps/api/window")
+    .then(({ getCurrentWindow }) => getCurrentWindow().close())
+    .catch(() => {});
+  return true;
+}
+
+function handleCtrlCInterrupt(event: KeyboardEvent): boolean {
+  const selectionStart = inputEl.selectionStart ?? 0;
+  const selectionEnd = inputEl.selectionEnd ?? 0;
+  if (selectionEnd > selectionStart) return false;
+  if (uiState.isRunning) {
+    event.preventDefault();
+    cancelRunningTurn();
+    return true;
+  }
+  if (inputEl.value !== "") {
+    event.preventDefault();
+    pushHistory(inputEl.value);
+    inputEl.value = "";
+    return true;
+  }
+  const now = Date.now();
+  if (now - lastEmptyCtrlCAt < 3000 && requestAppQuit()) {
+    event.preventDefault();
+    lastEmptyCtrlCAt = 0;
+    return true;
+  }
+  lastEmptyCtrlCAt = now;
+  return false;
+}
+
 inputEl.addEventListener("keydown", (event: KeyboardEvent) => {
   if (refMenuVisible() && uiState.refCandidates.length > 0) {
     const count = uiState.refCandidates.length;
@@ -685,6 +821,16 @@ inputEl.addEventListener("keydown", (event: KeyboardEvent) => {
       updateSlashMenu();
       return;
     }
+    if (event.key === "Tab") {
+      const completed = completeSlashInput(inputEl.value);
+      if (completed !== null && completed !== inputEl.value) {
+        event.preventDefault();
+        inputEl.value = completed;
+        inputEl.setSelectionRange(completed.length, completed.length);
+        inputEl.dispatchEvent(new Event("input", { bubbles: true }));
+      }
+      return;
+    }
     if (event.key === "Enter" && !event.shiftKey) {
       event.preventDefault();
       const selected = uiState.slashCommands[uiState.slashSelectedIndex];
@@ -700,6 +846,34 @@ inputEl.addEventListener("keydown", (event: KeyboardEvent) => {
       return;
     }
   }
+  if (event.key === "Escape" && uiState.isRunning) {
+    event.preventDefault();
+    cancelRunningTurn();
+    return;
+  }
+  if (event.key === "c" && event.ctrlKey && !event.metaKey) {
+    if (handleCtrlCInterrupt(event)) return;
+  }
+  if (event.key === "d" && event.ctrlKey && !event.metaKey && inputEl.value === "") {
+    if (requestAppQuit()) {
+      event.preventDefault();
+      return;
+    }
+  }
+  if (event.key === "ArrowUp" || event.key === "ArrowDown") {
+    if (inputEl.value === "" || isHistoryBrowsing()) {
+      const recalled =
+        event.key === "ArrowUp"
+          ? historyPrev(inputEl.value)
+          : historyNext(inputEl.value);
+      if (recalled !== null) {
+        event.preventDefault();
+        inputEl.value = recalled;
+        inputEl.setSelectionRange(recalled.length, recalled.length);
+      }
+      return;
+    }
+  }
   if (event.key === "Enter" && !event.shiftKey && !event.metaKey) {
     event.preventDefault();
     composerEl.requestSubmit();
@@ -707,6 +881,7 @@ inputEl.addEventListener("keydown", (event: KeyboardEvent) => {
 });
 
 inputEl.addEventListener("input", () => {
+  resetHistoryNavigation();
   const value = inputEl.value;
   if (value.startsWith("/")) {
     const matched = matchSlashCommands(value);

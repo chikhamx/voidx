@@ -235,6 +235,19 @@ export function formatElapsed(seconds: number | null | undefined): string {
   return `${seconds.toFixed(1)}s`;
 }
 
+export function truncateText(text: string, maxLines = 10, maxChars = 1000): string {
+  if (!text) return "";
+  const lines = text.split("\n");
+  if (lines.length > maxLines) {
+    const omitted = lines.length - maxLines;
+    return lines.slice(0, maxLines).join("\n") + `\n... (truncated, ${omitted} more lines)`;
+  }
+  if (text.length > maxChars) {
+    return text.slice(0, maxChars) + " ... (truncated)";
+  }
+  return text;
+}
+
 
 /* ── Item-path rendering functions (shared by snapshot recovery and live streaming) ── */
 
@@ -399,49 +412,41 @@ function getToolGroupSummary(tools: ToolInfo[]): { icon: string; text: string } 
     return { icon: SVG_ICONS.tool, text: "tool" };
   }
 
-  let isAllRead = true;
-  let isAllWrite = true;
-  let isAllCommand = true;
+  let reads = 0;
+  let writes = 0;
+  let commands = 0;
+  let others = 0;
 
   for (const tool of tools) {
     const name = (tool.tool_name || "").toLowerCase();
-    const isRead = name.includes("read") || name.includes("view") || name.includes("grep") || name.includes("list") || name.includes("locate");
-    const isWrite = name.includes("write") || name.includes("replace") || name.includes("edit");
-    const isCommand = name.includes("command") || name.includes("run") || name.includes("bash") || name.includes("cmd") || name.includes("terminal");
-
-    if (!isRead) isAllRead = false;
-    if (!isWrite) isAllWrite = false;
-    if (!isCommand) isAllCommand = false;
+    if (name.includes("read") || name.includes("view") || name.includes("grep") || name.includes("list") || name.includes("locate")) {
+      reads += 1;
+    } else if (name.includes("write") || name.includes("replace") || name.includes("edit")) {
+      writes += 1;
+    } else if (name.includes("command") || name.includes("run") || name.includes("bash") || name.includes("cmd") || name.includes("terminal")) {
+      commands += 1;
+    } else {
+      others += 1;
+    }
   }
 
-  if (isAllRead) {
-    return {
-      icon: SVG_ICONS.read,
-      text: tools.length > 1 ? "read files" : "read file",
-    };
-  }
+  const parts: string[] = [];
+  if (writes) parts.push(`edited ${writes} ${writes > 1 ? "files" : "file"}`);
+  if (commands) parts.push(`ran ${commands} ${commands > 1 ? "commands" : "command"}`);
+  if (reads) parts.push(`read ${reads} ${reads > 1 ? "files" : "file"}`);
+  if (others) parts.push(`ran ${others} ${others > 1 ? "tools" : "tool"}`);
 
-  if (isAllWrite) {
-    return {
-      icon: SVG_ICONS.write,
-      text: tools.length > 1 ? "write files" : "write file",
-    };
-  }
-
-  if (isAllCommand) {
-    return {
-      icon: SVG_ICONS.command,
-      text: tools.length > 1 ? "run commands" : "run command",
-    };
-  }
-
-  return {
-    icon: SVG_ICONS.tool,
-    text: tools.length > 1 ? "run tools" : "run tool",
-  };
+  const icon = writes ? SVG_ICONS.write : commands ? SVG_ICONS.command : reads ? SVG_ICONS.read : SVG_ICONS.tool;
+  return { icon, text: parts.join(", ") };
 }
 
-function getToolItemHeaderInfo(data: ToolItemData): { icon: string; text: string } {
+interface ToolHeaderInfo {
+  icon: string;
+  verb: string;
+  target?: string;
+}
+
+function getToolItemHeaderInfo(data: ToolItemData): ToolHeaderInfo {
   const toolName = (data.tool_name || "").toLowerCase();
   const args: Record<string, any> = typeof data.args === "object" && data.args !== null ? data.args : {};
   const rawArgs: Record<string, any> = typeof data.raw_args === "object" && data.raw_args !== null ? data.raw_args : {};
@@ -449,10 +454,7 @@ function getToolItemHeaderInfo(data: ToolItemData): { icon: string; text: string
   const filename = path ? path.substring(path.lastIndexOf("/") + 1) : "";
 
   if (toolName.includes("read") || toolName.includes("view")) {
-    return {
-      icon: SVG_ICONS.read,
-      text: filename ? `read ${filename}` : "read file",
-    };
+    return { icon: SVG_ICONS.read, verb: "read", target: filename || "file" };
   }
 
   if (toolName.includes("grep")) {
@@ -463,44 +465,30 @@ function getToolItemHeaderInfo(data: ToolItemData): { icon: string; text: string
     const location = dirname ? ` in ${dirname}` : "";
     return {
       icon: SVG_ICONS.search,
-      text: query ? `search "${queryTruncated}"${location}` : "search",
+      verb: query ? `searched "${queryTruncated}"${location}` : "searched",
     };
   }
 
   if (toolName.includes("list_dir") || toolName.includes("list")) {
-    return {
-      icon: SVG_ICONS.folder,
-      text: filename ? `list ${filename}` : "list directory",
-    };
+    return { icon: SVG_ICONS.folder, verb: "listed", target: filename || "directory" };
   }
 
   if (toolName.includes("write")) {
-    return {
-      icon: SVG_ICONS.write,
-      text: filename ? `write ${filename}` : "write file",
-    };
+    return { icon: SVG_ICONS.write, verb: "edited", target: filename || "file" };
   }
 
   if (toolName.includes("replace") || toolName.includes("edit")) {
-    return {
-      icon: SVG_ICONS.write,
-      text: filename ? `edit ${filename}` : "edit file",
-    };
+    return { icon: SVG_ICONS.write, verb: "edited", target: filename || "file" };
   }
 
   if (toolName.includes("command") || toolName.includes("run") || toolName.includes("bash") || toolName.includes("cmd") || toolName.includes("terminal")) {
     const cmd = String(args.command || args.CommandLine || args.command_line || rawArgs.command || "");
-    const cmdTruncated = cmd.length > 30 ? cmd.slice(0, 30) + "..." : cmd;
-    return {
-      icon: SVG_ICONS.command,
-      text: cmd ? `run "${cmdTruncated}"` : "run command",
-    };
+    return cmd
+      ? { icon: SVG_ICONS.command, verb: "ran", target: cmd }
+      : { icon: SVG_ICONS.command, verb: "ran command" };
   }
 
-  return {
-    icon: SVG_ICONS.tool,
-    text: data.tool_name || data.label || "tool",
-  };
+  return { icon: SVG_ICONS.tool, verb: data.tool_name || data.label || "tool" };
 }
 
 function createToolGroup(): HTMLElement {
@@ -620,6 +608,20 @@ function renderToolGroupVisibility(group: HTMLElement): void {
   body.append(controls);
 }
 
+function updateToolStats(el: HTMLElement): void {
+  const adds = Number(el.dataset.diffAdds || 0);
+  const dels = Number(el.dataset.diffDels || 0);
+  if (!adds && !dels) return;
+  let stats = el.querySelector<HTMLElement>(".tool-stats");
+  if (!stats) {
+    stats = document.createElement("span");
+    stats.className = "tool-stats";
+    el.querySelector(".tool-summary")?.after(stats);
+  }
+  stats.innerHTML = `<span class="tool-stat-add">+${adds}</span> <span class="tool-stat-del">-${dels}</span>`;
+}
+
+
 export function handleToolItem(method: string, itemId: string, data: ToolItemData): void {
   let el: HTMLElement | null = document.querySelector<HTMLElement>(`[data-tool-id="${data.tool_call_id}"]`);
   const transcriptEl = getTranscriptElement();
@@ -627,6 +629,7 @@ export function handleToolItem(method: string, itemId: string, data: ToolItemDat
     el = document.createElement("div");
     el.className = "tool-item";
     el.dataset.toolId = data.tool_call_id ?? "";
+
     el.dataset.itemId = itemId;
 
     const header = document.createElement("div");
@@ -646,7 +649,15 @@ export function handleToolItem(method: string, itemId: string, data: ToolItemDat
     const summaryInfo = getToolItemHeaderInfo(data);
     const summary = document.createElement("span");
     summary.className = "tool-summary";
-    summary.innerHTML = `<span class="tool-icon">${summaryInfo.icon}</span> ${summaryInfo.text}`;
+    summary.innerHTML = `<span class="tool-icon">${summaryInfo.icon}</span> `;
+    summary.append(document.createTextNode(summaryInfo.verb));
+    if (summaryInfo.target) {
+      summary.append(" ");
+      const target = document.createElement("span");
+      target.className = "tool-target";
+      target.textContent = summaryInfo.target;
+      summary.append(target);
+    }
 
     const argsSummary = document.createElement("span");
     argsSummary.className = "tool-args-summary";
@@ -700,10 +711,20 @@ export function handleToolItem(method: string, itemId: string, data: ToolItemDat
       if (data.diff_text) {
         const diff = renderDiffBlock(data.diff_text);
         body.append(diff);
+        let adds = Number(el.dataset.diffAdds || 0);
+        let dels = Number(el.dataset.diffDels || 0);
+        for (const line of String(data.diff_text).split("\n")) {
+          if (line.startsWith("+++") || line.startsWith("---")) continue;
+          if (line.startsWith("+")) adds += 1;
+          else if (line.startsWith("-")) dels += 1;
+        }
+        el.dataset.diffAdds = String(adds);
+        el.dataset.diffDels = String(dels);
+        updateToolStats(el);
       } else if (data.detail) {
         const detail = document.createElement("pre");
         detail.className = "tool-detail";
-        detail.textContent = data.detail;
+        detail.textContent = truncateText(data.detail);
         body.append(detail);
       }
       if (chev && body.children.length > 0) {
@@ -724,7 +745,7 @@ export function handleToolItem(method: string, itemId: string, data: ToolItemDat
       if (data.detail) {
         const detail = document.createElement("pre");
         detail.className = "tool-detail";
-        detail.textContent = data.detail;
+        detail.textContent = truncateText(data.detail);
         body.append(detail);
       }
       if (body && chev) {
@@ -897,7 +918,7 @@ export function appendNoticeItem(itemId: string, data: NoticeItemData): void {
 
   const icon = document.createElement("span");
   icon.className = "notice-icon";
-  icon.textContent = data.style === "warning" ? "!" : "\u2717";
+  icon.textContent = data.style === "warning" ? "!" : data.style === "info" ? "i" : "\u2717";
 
   const text = document.createElement("span");
   text.className = "notice-text";
@@ -973,6 +994,22 @@ export function appendDiffItem(itemId: string, data: DiffItemData): void {
   }
 }
 
+const statusElapsedTimers = new Map<string, ReturnType<typeof setInterval>>();
+
+function formatElapsedSeconds(totalSeconds: number): string {
+  if (totalSeconds < 60) return `${totalSeconds}s`;
+  const minutes = Math.floor(totalSeconds / 60);
+  const seconds = totalSeconds % 60;
+  return `${minutes}m ${seconds}s`;
+}
+
+function updateStatusElapsed(el: HTMLElement): void {
+  const startTs = Number(el.dataset.startTs || Date.now());
+  const seconds = Math.max(0, Math.floor((Date.now() - startTs) / 1000));
+  const elapsedEl = el.querySelector<HTMLElement>(".status-elapsed");
+  if (elapsedEl) elapsedEl.textContent = formatElapsedSeconds(seconds);
+}
+
 export function handleStatusItem(method: string, itemId: string, data: StatusItemData): void {
   if (itemId === "turn:analyzing" || data.status_id === "turn:analyzing") {
     return;
@@ -985,13 +1022,23 @@ export function handleStatusItem(method: string, itemId: string, data: StatusIte
       el.className = "status-item running";
       el.dataset.statusItemId = itemId;
       el.dataset.statusId = data.status_id || itemId;
+      el.dataset.startTs = String(Date.now());
       const label = document.createElement("span");
       label.className = "status-label";
       el.append(label);
+      const elapsed = document.createElement("span");
+      elapsed.className = "status-elapsed";
+      elapsed.textContent = "0s";
+      el.append(elapsed);
       const detail = document.createElement("div");
       detail.className = "status-detail";
       el.append(detail);
       transcriptEl?.append(el);
+      const target = el;
+      statusElapsedTimers.set(
+        itemId,
+        setInterval(() => updateStatusElapsed(target), 1000),
+      );
     }
     const label = el.querySelector<HTMLElement>(".status-label");
     const detail = el.querySelector<HTMLElement>(".status-detail");
@@ -1004,6 +1051,12 @@ export function handleStatusItem(method: string, itemId: string, data: StatusIte
   }
   if (method === "item.completed") {
     if (!el) return;
+    const timer = statusElapsedTimers.get(itemId);
+    if (timer) {
+      clearInterval(timer);
+      statusElapsedTimers.delete(itemId);
+    }
+    updateStatusElapsed(el);
     el.classList.remove("running");
     el.classList.add(data.ok === false ? "failed" : "completed");
     const label = el.querySelector<HTMLElement>(".status-label");
@@ -1098,6 +1151,7 @@ export function renderTranscript(root: HTMLElement, snapshot: TranscriptSnapshot
           tool_call_id: node.tool_call_id ?? null,
           ok: node.status !== "error",
           elapsed: node.elapsed ?? null,
+          detail: String(payload?.summary ?? ""),
         });
         break;
       case "tool_result": {

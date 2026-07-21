@@ -25,6 +25,36 @@ export interface UiState {
   permissionMode: string;
   aiApprovalCount: number;
   reasoningEffort: string;
+  usage: UsageSnapshot | null;
+}
+
+export interface UsageSnapshot {
+  context_tokens: number;
+  context_limit: number;
+  total_tokens: number;
+  cache_hit_rate: number | null;
+  cache_hit_rate_estimated?: boolean;
+}
+
+function formatTokenCount(value: number): string {
+  if (value >= 1000) {
+    const scaled = value / 1000;
+    const text = scaled >= 100 ? String(Math.round(scaled)) : scaled.toFixed(1);
+    return `${text}k`;
+  }
+  return String(value);
+}
+
+export function formatUsageLabel(usage: UsageSnapshot | null): string {
+  if (!usage) return "\u2014";
+  const ctx = `${formatTokenCount(usage.context_tokens)}/${formatTokenCount(usage.context_limit)} ctx`;
+  const total = `${formatTokenCount(usage.total_tokens)} total`;
+  if (usage.cache_hit_rate === null || usage.cache_hit_rate === undefined) {
+    return `${ctx} \u00b7 ${total}`;
+  }
+  const pct = Math.round(usage.cache_hit_rate * 100);
+  const prefix = usage.cache_hit_rate_estimated ? "~" : "";
+  return `${ctx} \u00b7 cache ${prefix}${pct}% \u00b7 ${total}`;
 }
 
 export const uiState: UiState = {
@@ -45,6 +75,7 @@ export const uiState: UiState = {
   permissionMode: "safe",
   aiApprovalCount: 0,
   reasoningEffort: "xhigh",
+  usage: null,
 };
 
 export const DEFAULT_WORKSPACE = "voidx";
@@ -64,6 +95,7 @@ export const statusWorkspaceDetailEl = document.querySelector("#status-workspace
 export const statusProviderModelEl = document.querySelector("#status-provider-model")!;
 export const statusPermissionEl = document.querySelector("#status-permission");
 export const statusRunningEl = document.querySelector("#status-running")!;
+export const statusUsageEl = document.querySelector("#status-usage");
 export const stripWorkspaceEl = document.querySelector("#strip-workspace")!;
 export const stripPermissionEl = document.querySelector("#strip-permission");
 export const stripProviderModelEl = document.querySelector("#strip-provider-model")!;
@@ -127,6 +159,7 @@ export function updateStatusBar(): void {
     : uiState.isSwitchingModel
       ? "switching"
       : "idle";
+  if (statusUsageEl) statusUsageEl.textContent = formatUsageLabel(uiState.usage);
 
   const modelPillTextEl = document.querySelector("#model-pill-text");
   if (modelPillTextEl) {

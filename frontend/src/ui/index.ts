@@ -1,4 +1,7 @@
 export * from "./context-menu";
+export * from "./history";
+export * from "./image-attachments";
+export * from "./paste";
 export * from "./dialog";
 export {
   renderDiffReview,

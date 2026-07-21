@@ -1,3 +1,6 @@
+import { rpcCall } from "../rpc/client";
+import { addImageAttachment } from "./image-attachments";
+
 type ContextMenuState = {
   menu: HTMLElement | null;
   attachBtn: HTMLButtonElement | null;
@@ -15,14 +18,17 @@ export function initContextMenu(): void {
   state.menu = document.querySelector<HTMLElement>("#context-menu");
   state.attachBtn = document.querySelector<HTMLButtonElement>("#btn-attach");
   state.input = document.querySelector<HTMLTextAreaElement>("#input");
-  if (!state.menu || !state.attachBtn) return;
 
-  state.attachBtn.addEventListener("click", (e: MouseEvent) => {
+  const menu = state.menu;
+  const attachBtn = state.attachBtn;
+  if (!menu || !attachBtn) return;
+
+  attachBtn.addEventListener("click", (e: MouseEvent) => {
     e.preventDefault();
     toggleContextMenu();
   }, { signal });
 
-  state.menu
+  menu
     .querySelectorAll<HTMLElement>(".context-menu-item:not(.disabled)")
     .forEach((item) => {
       item.addEventListener("click", () => {
@@ -32,11 +38,20 @@ export function initContextMenu(): void {
       }, { signal });
     });
 
+  state.input?.addEventListener("paste", (e: ClipboardEvent) => {
+    const file = Array.from(e.clipboardData?.files ?? []).find((f) =>
+      f.type.startsWith("image/"),
+    );
+    if (file) {
+      e.preventDefault();
+      void uploadImageBlob(file);
+    }
+  }, { signal });
+
   document.addEventListener("click", (e: MouseEvent) => {
     if (
-      state.menu &&
-      !state.menu.contains(e.target as Node) &&
-      !state.attachBtn.contains(e.target as Node)
+      !menu.contains(e.target as Node) &&
+      !attachBtn.contains(e.target as Node)
     ) {
       hideContextMenu();
     }
@@ -84,14 +99,7 @@ async function pasteFromClipboard(): Promise<void> {
       for (const type of item.types) {
         if (type.startsWith("image/")) {
           const blob = await item.getType(type);
-          const reader = new FileReader();
-          reader.onload = () => {
-            if (state.input) {
-              state.input.value += "\n/paste\n";
-              state.input.focus();
-            }
-          };
-          reader.readAsDataURL(blob);
+          await uploadImageBlob(blob);
           return;
         }
       }
@@ -99,10 +107,44 @@ async function pasteFromClipboard(): Promise<void> {
     alert("剪贴板中没有图片");
   } catch {
     alert(
-      "无法读取剪贴板。请在支持 Clipboard API 的浏览器中使用 /paste 命令粘贴图片。",
+      "无法读取剪贴板。请在支持 Clipboard API 的浏览器中授予剪贴板权限后重试。",
     );
   }
 }
+
+function blobToBase64(blob: Blob): Promise<string> {
+  return new Promise((resolve, reject) => {
+    const reader = new FileReader();
+    reader.onload = () => {
+      const dataUrl = String(reader.result || "");
+      resolve(dataUrl.slice(dataUrl.indexOf(",") + 1));
+    };
+    reader.onerror = () => reject(reader.error);
+    reader.readAsDataURL(blob);
+  });
+}
+
+async function uploadImageBlob(blob: Blob): Promise<void> {
+  try {
+    const data_base64 = await blobToBase64(blob);
+    const result = (await rpcCall("attachments.saveImage", { data_base64 })) as {
+      ok?: boolean;
+      stem?: string;
+      message?: string;
+    };
+    if (result?.ok && result.stem) {
+      addImageAttachment(
+        result.stem,
+        `data:${blob.type || "image/png"};base64,${data_base64}`,
+      );
+    } else {
+      alert(result?.message || "图片上传失败");
+    }
+  } catch {
+    alert("图片上传失败：无法连接后端");
+  }
+}
+
 
 function openIntegrations(): void {
   const btn = document.querySelector<HTMLButtonElement>("#btn-integrations");

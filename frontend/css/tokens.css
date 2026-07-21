@@ -63,7 +63,7 @@
   color-scheme: light;
 
   /* 层级背景：app=侧栏/titlebar 区，canvas=主区，surface=浮起卡片 */
-  --vx-bg-app:      #f7f7f4;
+  --vx-bg-app:      #f2f2ed;
   --vx-bg-canvas:   #ffffff;
   --vx-bg-surface:  #ffffff;
   --vx-bg-elevated: #ffffff;
@@ -123,7 +123,7 @@
 :root[data-theme="dark"] {
   color-scheme: dark;
 
-  --vx-bg-app:      #171715;
+  --vx-bg-app:      #141412;
   --vx-bg-canvas:   #1e1e1c;
   --vx-bg-surface:  #262624;
   --vx-bg-elevated: #2b2b28;
@@ -178,7 +178,7 @@
 @media (prefers-color-scheme: dark) {
   :root:not([data-theme]) {
     color-scheme: dark;
-    --vx-bg-app: #171715;
+    --vx-bg-app: #141412;
     --vx-bg-canvas: #1e1e1c;
     --vx-bg-surface: #262624;
     --vx-bg-elevated: #2b2b28;

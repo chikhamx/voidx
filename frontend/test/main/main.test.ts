@@ -192,6 +192,25 @@ describe("handleToolItem", () => {
     expect(details[0].textContent).toBe("finished output");
   });
 
+  it("truncates extremely long detail on item.completed", () => {
+    handleToolItem("item.started", "t12", {
+      tool_call_id: "c12",
+      tool_name: "bash",
+    });
+    const longDetail = Array.from({ length: 25 }, (_, i) => `line ${i + 1}`).join("\n");
+    handleToolItem("item.completed", "t12", {
+      tool_call_id: "c12",
+      ok: true,
+      detail: longDetail,
+    });
+    const transcript = document.querySelector("#transcript");
+    const details = transcript.querySelectorAll(".tool-detail");
+    const lastDetail = details[details.length - 1];
+    expect(lastDetail.textContent).toContain("truncated");
+    expect(lastDetail.textContent).toContain("15 more lines");
+  });
+
+
   it("toggles hidden attribute on header click", () => {
     handleToolItem("item.started", "t11", {
       tool_call_id: "c11",
@@ -262,7 +281,7 @@ describe("handleToolItem", () => {
     expect(transcript.children).toHaveLength(1);
     expect(group).not.toBeNull();
     expect(group.querySelectorAll(".tool-item")).toHaveLength(2);
-    expect(group.querySelector(".tool-group-name").textContent).toContain("run tools");
+    expect(group.querySelector(".tool-group-name").textContent).toContain("ran 1 command, read 1 file");
     expect(group.querySelector(".tool-group-args").textContent).toBe("");
     expect(group.querySelector(".tool-group-body").hidden).toBe(true);
   });
@@ -342,6 +361,76 @@ describe("handleToolItem", () => {
     group.querySelector(".tool-group-expand-more").click();
     expect(items.filter((item) => !item.hidden)).toHaveLength(7);
     expect(group.querySelector(".tool-group-expand-more")).toBeNull();
+  });
+
+  it("shows verb and highlighted filename target for file edits", () => {
+    handleToolItem("item.started", "ts1", {
+      tool_call_id: "cs1",
+      tool_name: "replace",
+      args: { file_path: "/src/utils/manager.py" },
+    });
+    const transcript = document.querySelector("#transcript");
+    const summary = transcript.querySelector(".tool-summary");
+    expect(summary.textContent).toContain("edited");
+    const target = summary.querySelector(".tool-target");
+    expect(target).not.toBeNull();
+    expect(target.textContent).toBe("manager.py");
+  });
+
+  it("shows full command in the row summary without hard truncation", () => {
+    const cmd = "./test.py --backend -- src/tests/test_mcp/test_descriptions.py src/tests/test_mcp/test_mcp.py -q";
+    handleToolItem("item.started", "ts2", {
+      tool_call_id: "cs2",
+      tool_name: "bash",
+      raw_args: { command: cmd },
+    });
+    const transcript = document.querySelector("#transcript");
+    const summary = transcript.querySelector(".tool-summary");
+    expect(summary.textContent).toContain("ran");
+    expect(summary.textContent).toContain(cmd);
+  });
+
+  it("shows accumulated diff stats in the row header when diff_text streams in", () => {
+    handleToolItem("item.started", "ts3", {
+      tool_call_id: "cs3",
+      tool_name: "replace",
+      args: { file_path: "/src/manager.py" },
+    });
+    handleToolItem("item.delta", "ts3", {
+      tool_call_id: "cs3",
+      diff_text: "--- a/manager.py\n+++ b/manager.py\n@@ -1,2 +1,2 @@\n-old\n+new\n+more",
+    });
+    handleToolItem("item.delta", "ts3", {
+      tool_call_id: "cs3",
+      diff_text: "@@ -10,1 +10,1 @@\n-old2\n+new2",
+    });
+    const transcript = document.querySelector("#transcript");
+    const stats = transcript.querySelector(".tool-stats");
+    expect(stats).not.toBeNull();
+    expect(stats.textContent).toContain("+3");
+    expect(stats.textContent).toContain("-2");
+  });
+
+  it("combines categories in the group summary", () => {
+    handleToolItem("item.started", "ts4-1", {
+      tool_call_id: "cs4-1",
+      tool_name: "replace",
+      args: { file_path: "/a.py" },
+    });
+    handleToolItem("item.started", "ts4-2", {
+      tool_call_id: "cs4-2",
+      tool_name: "write",
+      args: { file_path: "/b.py" },
+    });
+    handleToolItem("item.started", "ts4-3", {
+      tool_call_id: "cs4-3",
+      tool_name: "bash",
+      raw_args: { command: "ls" },
+    });
+    const transcript = document.querySelector("#transcript");
+    const name = transcript.querySelector(".tool-group-name");
+    expect(name.textContent).toContain("edited 2 files");
+    expect(name.textContent).toContain("ran 1 command");
   });
 });
 
