@@ -323,7 +323,7 @@ class TurnRunner:
                     current_goal=final_task_state.current_goal,
                     workflow_runs=final_task_state.workflow_runs,
                 ))
-                await host._persist_runtime_state()
+                # Runtime facade owns the final session runtime-state commit.
 
                 # ── prune old tool outputs after turn ──────────────────────────
                 host._compaction.prune(final["messages"])

@@ -4,7 +4,7 @@ from dataclasses import dataclass, field
 
 import pytest
 
-from voidx.agent.domain.state import AgentRuntime
+from voidx.agent.domain.state import SessionRuntimeState
 from voidx.agent.domain.turn import TurnPhase
 from voidx.agent.infrastructure.langgraph.adapter import LangGraphTurnEngine
 from voidx.runtime import InteractionMode, TaskState
@@ -60,7 +60,7 @@ class FakeBackend:
 async def test_langgraph_engine_delegates_turn_with_runtime_boundary():
     backend = FakeBackend()
     engine = LangGraphTurnEngine(backend)
-    runtime = AgentRuntime(turn_phase=TurnPhase.RUNNING)
+    runtime = SessionRuntimeState(turn_phase=TurnPhase.RUNNING)
 
     result = await engine.run("hello", runtime)
 

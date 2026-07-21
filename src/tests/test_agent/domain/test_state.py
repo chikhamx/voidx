@@ -1,10 +1,10 @@
-from voidx.agent.domain.state import AgentRuntime
+from voidx.agent.domain.state import SessionRuntimeState
 from voidx.agent.domain.turn import TurnPhase, advance_turn
 from voidx.runtime import GoalSpec, InteractionMode, TaskIntent, TaskState
 
 
 def test_agent_runtime_owns_domain_state_without_graph() -> None:
-    runtime = AgentRuntime(
+    runtime = SessionRuntimeState(
         interaction_mode=InteractionMode.GOAL,
         task_state=TaskState(
             current_intent=TaskIntent.CODING,
@@ -20,7 +20,7 @@ def test_agent_runtime_owns_domain_state_without_graph() -> None:
 
 
 def test_turn_state_conversion_is_pure_and_preserves_runtime() -> None:
-    runtime = AgentRuntime(compaction_summary="summary")
+    runtime = SessionRuntimeState(compaction_summary="summary")
 
     running = advance_turn(runtime, TurnPhase.RUNNING)
     committed = advance_turn(running, TurnPhase.COMMITTED)
@@ -32,7 +32,7 @@ def test_turn_state_conversion_is_pure_and_preserves_runtime() -> None:
 
 
 def test_turn_state_rejects_invalid_transition() -> None:
-    runtime = AgentRuntime(turn_phase=TurnPhase.COMMITTED)
+    runtime = SessionRuntimeState(turn_phase=TurnPhase.COMMITTED)
 
     try:
         advance_turn(runtime, TurnPhase.RUNNING)

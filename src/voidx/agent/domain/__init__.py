@@ -2,13 +2,13 @@
 
 from voidx.agent.domain.compaction import CompactionResult, PreflightCompactionResult
 from voidx.agent.domain.events import AgentEvent, AgentEventKind
-from voidx.agent.domain.state import AgentRuntime
+from voidx.agent.domain.state import SessionRuntimeState
 from voidx.agent.domain.turn import TurnPhase, advance_turn
 
 __all__ = [
     "AgentEvent",
     "AgentEventKind",
-    "AgentRuntime",
+    "SessionRuntimeState",
     "CompactionResult",
     "PreflightCompactionResult",
     "TurnPhase",

@@ -1,58 +1,59 @@
-"""Single-turn lifecycle use case."""
+"""Compatibility adapter for the reusable Agent Runtime."""
 
-import asyncio
+from __future__ import annotations
+
 from typing import Any
 
-from voidx.agent.domain.events import AgentEvent, AgentEventKind
-from voidx.agent.domain.state import AgentRuntime
+from voidx.agent.domain.state import SessionRuntimeState
+from voidx.agent.domain.thread import AgentThread
 from voidx.agent.ports.events import EventPublisher
 from voidx.agent.ports.session import SessionStore
 from voidx.agent.ports.turn_engine import TurnEngine
+from voidx.agent.runtime import AgentRuntime
+from voidx.agent.runtime.contracts import TurnRequest
 
 
 class TurnService:
+    """Legacy call shape delegating all turn ownership to AgentRuntime."""
+
     def __init__(
         self,
-        engine: TurnEngine,
-        sessions: SessionStore,
-        events: EventPublisher,
+        engine: TurnEngine | None = None,
+        sessions: SessionStore | None = None,
+        events: EventPublisher | None = None,
+        *,
+        runtime: AgentRuntime | None = None,
     ) -> None:
-        self._engine = engine
-        self._sessions = sessions
-        self._events = events
+        self._runtime = runtime or AgentRuntime(
+            type(
+                "RuntimeResourcesAdapter",
+                (),
+                {"turn_engine": engine, "sessions": sessions, "events": events},
+            )()
+        )
+
+    async def run_turn(self, request: TurnRequest):
+        return await self._runtime.run_turn(request)
 
     async def run(
         self,
         session_id: str,
         user_text: str,
-        runtime: AgentRuntime,
+        runtime: SessionRuntimeState,
         *,
         display_text: str | None = None,
         context: Any | None = None,
-    ) -> AgentRuntime:
-        self._events.publish(AgentEvent(kind=AgentEventKind.TURN_STARTED))
-        try:
-            result = await self._engine.run(
-                user_text,
-                runtime,
+    ) -> SessionRuntimeState:
+        result = await self.run_turn(
+            TurnRequest(
+                thread=AgentThread(
+                    thread_id=session_id or "coding",
+                    session_id=session_id or None,
+                ),
+                user_text=user_text,
+                runtime=runtime,
                 display_text=display_text,
                 context=context,
             )
-        except asyncio.CancelledError:
-            if session_id:
-                await self._sessions.save_runtime(session_id, runtime)
-            self._events.publish(
-                AgentEvent(kind=AgentEventKind.TURN_FAILED, metadata={"cancelled": True})
-            )
-            raise
-        except Exception as exc:
-            if session_id:
-                await self._sessions.save_runtime(session_id, runtime)
-            self._events.publish(
-                AgentEvent(kind=AgentEventKind.TURN_FAILED, message=str(exc))
-            )
-            raise
-        if session_id:
-            await self._sessions.save_runtime(session_id, result)
-        self._events.publish(AgentEvent(kind=AgentEventKind.TURN_COMPLETED))
-        return result
+        )
+        return result.runtime

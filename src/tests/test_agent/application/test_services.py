@@ -12,19 +12,19 @@ from voidx.agent.application.tool_service import ToolService
 from voidx.agent.application.turn_service import TurnService
 from voidx.agent.domain.compaction import CompactionResult
 from voidx.agent.domain.events import AgentEventKind
-from voidx.agent.domain.state import AgentRuntime
+from voidx.agent.domain.state import SessionRuntimeState
 from voidx.agent.ports.tools import ToolExecutionResult
 
 
 @dataclass
 class MemorySessionStore:
-    runtimes: dict[str, AgentRuntime] = field(default_factory=dict)
+    runtimes: dict[str, SessionRuntimeState] = field(default_factory=dict)
     cleared: list[str] = field(default_factory=list)
 
-    async def load_runtime(self, session_id: str) -> AgentRuntime:
-        return self.runtimes.get(session_id, AgentRuntime()).model_copy(deep=True)
+    async def load_runtime(self, session_id: str) -> SessionRuntimeState:
+        return self.runtimes.get(session_id, SessionRuntimeState()).model_copy(deep=True)
 
-    async def save_runtime(self, session_id: str, runtime: AgentRuntime) -> None:
+    async def save_runtime(self, session_id: str, runtime: SessionRuntimeState) -> None:
         self.runtimes[session_id] = runtime.model_copy(deep=True)
 
     async def clear_runtime(self, session_id: str) -> None:
@@ -34,7 +34,7 @@ class MemorySessionStore:
 
 @pytest.mark.asyncio
 async def test_session_service_restores_persists_and_clears_runtime():
-    stored = AgentRuntime(compaction_summary="saved", session_time="2026-07-19 CST")
+    stored = SessionRuntimeState(compaction_summary="saved", session_time="2026-07-19 CST")
     store = MemorySessionStore(runtimes={"s1": stored})
     service = SessionService(store)
 
@@ -113,16 +113,16 @@ async def test_tool_service_checks_permission_before_execution():
 @dataclass
 class FakeTurnEngine:
     fail: bool = False
-    calls: list[tuple[str, AgentRuntime, str | None]] = field(default_factory=list)
+    calls: list[tuple[str, SessionRuntimeState, str | None]] = field(default_factory=list)
 
     async def run(
         self,
         user_text: str,
-        runtime: AgentRuntime,
+        runtime: SessionRuntimeState,
         *,
         display_text: str | None = None,
         context=None,
-    ) -> AgentRuntime:
+    ) -> SessionRuntimeState:
         self.calls.append((user_text, runtime, display_text))
         if self.fail:
             raise RuntimeError("engine failed")
@@ -137,13 +137,31 @@ class MemoryEvents:
         self.events.append(event)
 
 
+
+
+@pytest.mark.asyncio
+async def test_turn_service_delegates_to_runtime_facade_without_owning_lifecycle():
+    class RuntimeFacade:
+        def __init__(self):
+            self.calls = []
+
+        async def run_turn(self, request):
+            self.calls.append(request)
+            return type("Result", (), {"runtime": SessionRuntimeState(compaction_summary="runtime")})()
+
+    facade = RuntimeFacade()
+    service = TurnService(runtime=facade)
+    result = await service.run("s1", "hello", SessionRuntimeState())
+
+    assert result.compaction_summary == "runtime"
+    assert len(facade.calls) == 1
 @pytest.mark.asyncio
 async def test_turn_service_orders_events_and_persists_success():
     sessions = MemorySessionStore()
     events = MemoryEvents()
     service = TurnService(FakeTurnEngine(), sessions, events)
 
-    runtime = await service.run("s1", "hello", AgentRuntime(), display_text="focus")
+    runtime = await service.run("s1", "hello", SessionRuntimeState(), display_text="focus")
 
     assert runtime.compaction_summary == "completed"
     assert [event.kind for event in events.events] == [
@@ -160,7 +178,7 @@ async def test_turn_service_persists_failure_and_emits_failed_event():
     service = TurnService(FakeTurnEngine(fail=True), sessions, events)
 
     with pytest.raises(RuntimeError, match="engine failed"):
-        await service.run("s1", "hello", AgentRuntime())
+        await service.run("s1", "hello", SessionRuntimeState())
 
     assert "s1" in sessions.runtimes
     assert [event.kind for event in events.events] == [
@@ -181,7 +199,7 @@ async def test_turn_service_cancel_persists_and_propagates_cancellation():
     service = TurnService(CancelledEngine(), sessions, events)
 
     with pytest.raises(asyncio.CancelledError):
-        await service.run("s1", "hello", AgentRuntime())
+        await service.run("s1", "hello", SessionRuntimeState())
 
     assert "s1" in sessions.runtimes
     assert events.events[-1].metadata["cancelled"] is True

@@ -8,7 +8,7 @@ from collections.abc import Callable
 from typing import TYPE_CHECKING
 
 from voidx.agent.application.session_service import SessionService
-from voidx.agent.domain.state import AgentRuntime
+from voidx.agent.domain.state import SessionRuntimeState
 from voidx.agent.infrastructure.memory_session import MemorySessionAdapter
 from voidx.memory.service import (
     MessageRow,
@@ -81,7 +81,7 @@ class SessionRuntime:
         from voidx.agent.runtime_context import InteractionMode
         from voidx.runtime.task_state import TaskState
 
-        runtime = AgentRuntime(
+        runtime = SessionRuntimeState(
             interaction_mode=getattr(host, "_interaction_mode", None) or InteractionMode.AUTO,
             task_state=getattr(host, "_task_state", None) or TaskState(),
             compaction_summary=getattr(host, "_compaction_summary", ""),

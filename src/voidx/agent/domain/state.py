@@ -8,7 +8,7 @@ from voidx.agent.domain.turn import TurnPhase
 from voidx.runtime import InteractionMode, TaskState
 
 
-class AgentRuntime(BaseModel):
+class SessionRuntimeState(BaseModel):
     """Mutable Agent state independent of graph and persistence adapters."""
 
     interaction_mode: InteractionMode = InteractionMode.AUTO

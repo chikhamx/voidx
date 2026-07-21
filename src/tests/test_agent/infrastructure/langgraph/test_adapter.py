@@ -4,7 +4,7 @@ from dataclasses import dataclass, field
 
 import pytest
 
-from voidx.agent.domain.state import AgentRuntime
+from voidx.agent.domain.state import SessionRuntimeState
 from voidx.agent.domain.turn import TurnPhase
 from voidx.agent.infrastructure.langgraph.adapter import LangGraphTurnEngine
 from voidx.agent.infrastructure.langgraph.state_mapper import LangGraphStateMapper
@@ -56,7 +56,7 @@ class FakeHost:
 async def test_turn_engine_maps_runtime_and_delegates_to_execution():
     host = FakeHost()
     engine = LangGraphTurnEngine(host)
-    runtime = AgentRuntime(
+    runtime = SessionRuntimeState(
         interaction_mode=InteractionMode.PLAN,
         compaction_summary="before",
         session_time="2026-07-19 CST",
@@ -75,7 +75,7 @@ async def test_turn_engine_maps_runtime_and_delegates_to_execution():
 def test_state_mapper_is_the_runtime_graph_host_conversion_boundary():
     host = FakeHost()
     mapper = LangGraphStateMapper()
-    runtime = AgentRuntime(
+    runtime = SessionRuntimeState(
         interaction_mode=InteractionMode.GOAL,
         task_state=TaskState(current_goal=GoalSpec(desc="ship adapter")),
         compaction_summary="summary",

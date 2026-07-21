@@ -6,7 +6,7 @@ from typing import Any
 
 from voidx.agent.ports.execution_host import ExecutionHost
 
-from voidx.agent.domain.state import AgentRuntime
+from voidx.agent.domain.state import SessionRuntimeState
 from voidx.agent.domain.turn import TurnPhase
 from voidx.agent.infrastructure.langgraph.state_mapper import LangGraphStateMapper
 
@@ -21,14 +21,18 @@ class LangGraphTurnEngine:
         self._execution = execution
         self._mapper = mapper or LangGraphStateMapper()
 
+    @property
+    def session_id(self) -> str:
+        return getattr(self._execution, "session_id", "") or ""
+
     async def run(
         self,
         user_text: str,
-        runtime: AgentRuntime,
+        runtime: SessionRuntimeState,
         *,
         display_text: str | None = None,
         context: Any | None = None,
-    ) -> AgentRuntime:
+    ) -> SessionRuntimeState:
         self._mapper.apply_runtime(self._execution, runtime)
         await self._execution.run_turn(
             user_text,

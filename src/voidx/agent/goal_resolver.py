@@ -3,7 +3,6 @@
 from __future__ import annotations
 
 import asyncio
-import inspect
 import json
 from typing import Any, Literal
 
@@ -23,7 +22,8 @@ from voidx.runtime.task_state import (
 )
 from voidx.workflow.dag import DEFAULT_WORKFLOW_DAG
 from voidx.config import ModelConfig, RetryConfig
-from voidx.llm.service import create_resolver_model, get_resolver_structured_output_method
+from voidx.llm.service import create_resolver_model
+from voidx.llm.structured import ainvoke_structured, resolve_structured_output_method
 from voidx.llm.usage import (
     TokenUsage,
     UsageStats,
@@ -129,19 +129,21 @@ async def resolve_goal_for_turn(
 
     resolver_goal: ResolverGoal | None
     try:
-        method = get_resolver_structured_output_method(resolver_model)
-        structured_kwargs: dict[str, Any] = {}
-        if method is not None:
-            structured_kwargs["method"] = method
-        if _accepts_keyword(structured, "include_raw"):
-            structured_kwargs["include_raw"] = True
-        runnable = structured(ResolverGoal, **structured_kwargs)
-        resolver_messages = _resolver_messages_from_exchanges(user_text, task_state, json_mode=(method == "json_mode"))
+        method = resolve_structured_output_method(resolver_model)
+        resolver_messages = _resolver_messages_from_exchanges(
+            user_text,
+            task_state,
+            json_mode=(method == "json_mode"),
+        )
         rc = retry_config or RetryConfig()
 
         async def _invoke_once():
-            return await asyncio.wait_for(
-                runnable.ainvoke(resolver_messages),
+            return await ainvoke_structured(
+                model=resolver_model,
+                schema=ResolverGoal,
+                messages=resolver_messages,
+                method=method,
+                include_raw=True,
                 timeout=GOAL_RESOLVER_TIMEOUT_SECONDS,
             )
 
@@ -204,15 +206,6 @@ def _resolver_messages_from_exchanges(user_text: str, task_state: TaskState, *, 
     ]
 
 
-def _accepts_keyword(callable_obj: Any, keyword: str) -> bool:
-    try:
-        parameters = inspect.signature(callable_obj).parameters.values()
-    except (TypeError, ValueError):
-        return True
-    return any(
-        parameter.name == keyword or parameter.kind == inspect.Parameter.VAR_KEYWORD
-        for parameter in parameters
-    )
 
 
 def _record_resolver_usage(

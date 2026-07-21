@@ -1,13 +1,13 @@
 from voidx.agent.application.agent_service import AgentService
-from voidx.agent.application.turn_service import TurnService
 from voidx.agent.composition import build_agent_app
 from voidx.agent.facade import AgentFacade
 from voidx.agent.infrastructure.langgraph.adapter import LangGraphTurnEngine
 from voidx.agent.infrastructure.memory_session import MemorySessionAdapter
 from voidx.agent.infrastructure.null_events import NullEventPublisher
+from voidx.agent.runtime import AgentRuntime
 
 
-def test_build_agent_app_wires_application_turn_service(monkeypatch):
+def test_build_agent_app_wires_runtime_entry(monkeypatch):
     execution = object()
     monkeypatch.setattr(
         "voidx.agent.composition.LangGraphExecution",
@@ -19,8 +19,9 @@ def test_build_agent_app_wires_application_turn_service(monkeypatch):
     assert isinstance(app, AgentFacade)
     assert isinstance(app._execution, AgentService)
     assert app._execution._execution is execution
-    turns = app._execution._turns
-    assert isinstance(turns, TurnService)
-    assert isinstance(turns._engine, LangGraphTurnEngine)
-    assert isinstance(turns._sessions, MemorySessionAdapter)
-    assert isinstance(turns._events, NullEventPublisher)
+    runtime = app._execution._runtime
+    assert isinstance(runtime, AgentRuntime)
+    resources = runtime._resources
+    assert isinstance(resources.turn_engine, LangGraphTurnEngine)
+    assert isinstance(resources.sessions, MemorySessionAdapter)
+    assert isinstance(resources.events, NullEventPublisher)

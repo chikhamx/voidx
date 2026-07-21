@@ -1,4 +1,4 @@
-from voidx.agent.domain.state import AgentRuntime
+from voidx.agent.domain.state import SessionRuntimeState
 from voidx.agent.infrastructure.runtime_state_mapper import (
     agent_runtime_from_snapshot,
     snapshot_from_agent_runtime,
@@ -44,5 +44,5 @@ def test_agent_runtime_snapshot_round_trip_preserves_persisted_json() -> None:
     runtime = agent_runtime_from_snapshot(snapshot)
     restored = snapshot_from_agent_runtime(runtime)
 
-    assert isinstance(runtime, AgentRuntime)
+    assert isinstance(runtime, SessionRuntimeState)
     assert restored.model_dump(mode="json") == snapshot.model_dump(mode="json")

@@ -28,6 +28,8 @@ from voidx.runtime.task_state import goal_label
 from voidx.logging.tool_log import log_tool_event
 from voidx.runtime.ui import ThreadExecutionContext
 from voidx.agent.ports.execution_host import ExecutionHost
+from voidx.agent.domain.thread import AgentThread
+from voidx.agent.runtime.contracts import TurnRequest
 
 
 AgentExecution = ExecutionHost
@@ -46,9 +48,9 @@ def _ui_command_kind(command: Any) -> str:
 class AgentService:
     """Application-level startup and interactive run-loop service."""
 
-    def __init__(self, execution: AgentExecution, turns) -> None:
+    def __init__(self, execution: AgentExecution, runtime) -> None:
         self._execution = execution
-        self._turns = turns
+        self._runtime = runtime
         bind_startup = getattr(execution, "bind_startup_presenter", None)
         if bind_startup is not None:
             bind_startup(self._show_startup)
@@ -175,6 +177,7 @@ class AgentService:
                         "ai_approval_count": getattr(self._execution.permission, "ai_approval_count", 0),
                     },
                     settings_update_handler=self._execution.apply_settings_update,
+                    usage_stats_provider=lambda: self._execution.usage_stats,
                     mcp_catalog_provider=lambda: (
                         self._execution.mcp_manager.catalog_snapshot()
                         if self._execution.mcp_manager is not None
@@ -452,11 +455,16 @@ class AgentService:
             return True, None
 
         try:
-            await self._turns.run(
-                self._execution.session_id,
-                user_input,
-                self._execution.runtime_snapshot(),
-                context=context,
+            await self._runtime.run_turn(
+                TurnRequest(
+                    thread=AgentThread(
+                        thread_id=thread_id or self._execution.session_id or "coding",
+                        session_id=self._execution.session_id or None,
+                    ),
+                    user_text=user_input,
+                    runtime=self._execution.runtime_snapshot(),
+                    context=context,
+                )
             )
         except (KeyboardInterrupt, asyncio.CancelledError):
             self._execution.ui.ui.print(f"\n[dim]Interrupted.[/dim]")

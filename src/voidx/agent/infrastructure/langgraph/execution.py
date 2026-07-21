@@ -545,6 +545,7 @@ class LangGraphExecution:
             permission=self._permission,
             workspace=self._workspace,
             model=self.model,
+            model_config=self.config.model,
         )
         self._instruction.set_mcp_description_provider(self._mcp_manager.generated_descriptions)
         if TYPE_CHECKING:

@@ -564,7 +564,11 @@ async def test_goal_resolver_logs_fallback_decision(tmp_path, monkeypatch):
         task_state=TaskState(),
     )
 
-    entry = json.loads((tmp_path / "llm_requests.jsonl").read_text(encoding="utf-8").strip())
+    entries = [
+        json.loads(line)
+        for line in (tmp_path / "llm_requests.jsonl").read_text(encoding="utf-8").splitlines()
+    ]
+    entry = next(item for item in entries if item.get("event") == "goal_resolver_decision")
     assert entry["event"] == "goal_resolver_decision"
     assert entry["intent"] == "general"
     assert entry["goal_type"] == ""

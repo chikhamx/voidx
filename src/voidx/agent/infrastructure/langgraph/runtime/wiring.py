@@ -8,7 +8,7 @@ from typing import Any
 from voidx.agent.agents import child_agent_descriptions_for_llm, get_agent, get_subagents
 from voidx.config import Config, Settings
 from voidx.llm.compaction import CompactionService
-from voidx.llm.service import get_context_limit
+from voidx.llm.service import create_resolver_model, get_context_limit
 from voidx.llm.usage import UsageStats
 from voidx.permission.service import PermissionService
 from voidx.tools.service import AgentTool, ToolRegistry, TaskTracker
@@ -100,13 +100,19 @@ def build_external_managers(
     permission: PermissionService,
     workspace: str,
     model: Any | None = None,
+    model_config: Any | None = None,
 ) -> tuple[Any, Any]:
     from voidx.lsp import LspManager
     from voidx.mcp import McpManager
     from voidx.mcp.description_generator import McpDescriptionGenerator
     from voidx.mcp.gateway import McpGatewayTool
 
-    description_generator = McpDescriptionGenerator(model)
+    description_model = (
+        create_resolver_model(model, model_config)
+        if model is not None and model_config is not None
+        else model
+    )
+    description_generator = McpDescriptionGenerator(description_model)
     mcp_manager = McpManager(
         settings=settings,
         registry=tools,
