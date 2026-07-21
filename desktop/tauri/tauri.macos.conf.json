@@ -1,0 +1,20 @@
+{
+  "app": {
+    "windows": [
+      {
+        "label": "main",
+        "minWidth": 800,
+        "width": 1200,
+        "minHeight": 600,
+        "title": "",
+        "height": 820,
+        "titleBarStyle": "Overlay",
+        "transparent": true,
+        "windowEffects": {
+          "effects": ["sidebar"],
+          "state": "active"
+        }
+      }
+    ]
+  }
+}
