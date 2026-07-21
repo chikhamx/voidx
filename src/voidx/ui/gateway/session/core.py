@@ -267,12 +267,14 @@ class GatewaySession(
         title: str = "",
         directory: str = "",
         workspace: str = "",
+        runtime_profile: str = "coding",
     ) -> None:
         self._threads[thread_id] = ThreadInfo(
             thread_id=thread_id,
             title=title,
             workspace=workspace or self._workspace or ".",
             directory=directory,
+            runtime_profile=runtime_profile,
         )
         self._adapters[thread_id] = UiEventItemAdapter(
             thread_id=thread_id, turn_id="",
@@ -325,6 +327,7 @@ class GatewaySession(
                 created_at=info.created_at,
                 updated_at=info.updated_at,
                 message_count=info.message_count,
+                runtime_profile=getattr(info, "runtime_profile", "coding") or "coding",
             )
 
         changed = False

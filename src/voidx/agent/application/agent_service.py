@@ -48,9 +48,10 @@ def _ui_command_kind(command: Any) -> str:
 class AgentService:
     """Application-level startup and interactive run-loop service."""
 
-    def __init__(self, execution: AgentExecution, runtime) -> None:
+    def __init__(self, execution: AgentExecution, runtime, *, chat_service=None) -> None:
         self._execution = execution
         self._runtime = runtime
+        self._chat_service = chat_service
         bind_startup = getattr(execution, "bind_startup_presenter", None)
         if bind_startup is not None:
             bind_startup(self._show_startup)
@@ -455,6 +456,8 @@ class AgentService:
             return True, None
 
         try:
+            if await self._route_chat_turn(user_input, thread_id=thread_id):
+                return True, None
             await self._runtime.run_turn(
                 TurnRequest(
                     thread=AgentThread(
@@ -462,13 +465,40 @@ class AgentService:
                         session_id=self._execution.session_id or None,
                     ),
                     user_text=user_input,
-                    runtime=self._execution.runtime_snapshot(),
+                    runtime=None,  # coding loads persisted state via the runtime facade
                     context=context,
                 )
             )
         except (KeyboardInterrupt, asyncio.CancelledError):
             self._execution.ui.ui.print(f"\n[dim]Interrupted.[/dim]")
         return True, None
+
+    async def _route_chat_turn(self, user_input: str, *, thread_id: str) -> bool:
+        """Route a turn to ChatService when the target thread is a chat session.
+
+        Returns True when the turn was handled by the chat profile. Coding
+        sessions, the host's own thread, and unknown threads fall through to the
+        default coding path (False).
+        """
+        if self._chat_service is None or not thread_id:
+            return False
+        if thread_id == (self._execution.session_id or ""):
+            return False
+        from voidx.memory.service import get_session
+
+        target = await get_session(thread_id)
+        if target is None or target.runtime_profile != "chat":
+            return False
+        workspace = target.workspace or target.directory or None
+        await self._chat_service.run_turn(
+            user_text=user_input,
+            thread=AgentThread(
+                thread_id=f"chat:{target.id}",
+                session_id=target.id,
+            ),
+            workspace=workspace,
+        )
+        return True
 
     async def _dispatch_slash(self, inp: str) -> bool:
         """Try to dispatch a slash command. Returns True if handled."""

@@ -9,7 +9,7 @@ import voidx.memory.store as store
 
 from voidx.agent.infrastructure.langgraph.execution import LangGraphExecution
 from voidx.agent.application.agent_service import AgentService
-from voidx.agent.application.turn_service import TurnService
+from voidx.agent.runtime import AgentRuntime
 from voidx.agent.infrastructure.langgraph.adapter import LangGraphTurnEngine
 from voidx.agent.infrastructure.langgraph.state_mapper import LangGraphStateMapper
 from voidx.agent.infrastructure.memory_session import MemorySessionAdapter
@@ -87,14 +87,14 @@ class NoopLspManager:
 
 
 def _service(execution) -> AgentService:
-    return AgentService(
-        execution,
-        TurnService(
-            LangGraphTurnEngine(execution),
-            MemorySessionAdapter(),
-            NullEventPublisher(),
-        ),
+    runtime = AgentRuntime(
+        SimpleNamespace(
+            turn_engine=LangGraphTurnEngine(execution),
+            sessions=MemorySessionAdapter(),
+            events=NullEventPublisher(),
+        )
     )
+    return AgentService(execution, runtime)
 
 
 def _graph(session=None, workspace: str = "/tmp/workspace") -> AgentService:

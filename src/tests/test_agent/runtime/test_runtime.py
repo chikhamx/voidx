@@ -32,7 +32,7 @@ class FakeEvents:
 
 @dataclass
 class FakeEngine:
-    session_id: str | None = None
+    session_id: str = ""
     runtime: SessionRuntimeState = field(default_factory=SessionRuntimeState)
 
     async def run(self, user_text, runtime, *, display_text=None, context=None):
@@ -76,3 +76,57 @@ async def test_runtime_commits_one_result_and_returns_thread_identity():
     assert result.session_id == "s1"
     assert [session_id for session_id, _ in sessions.saves] == ["s1"]
     assert len(events.events) == 2
+
+
+@pytest.mark.asyncio
+async def test_runtime_loads_state_when_caller_does_not_supply_one():
+    stored = SessionRuntimeState(compaction_summary="from store")
+    sessions = FakeSessions(loaded={"s1": stored})
+    events = FakeEvents()
+    engine = FakeEngine()
+    runtime = AgentRuntime(type("Resources", (), {"sessions": sessions, "events": events, "turn_engine": engine})())
+
+    await runtime.run_turn(
+        TurnRequest(thread=AgentThread(thread_id="t1", session_id="s1"), user_text="hello")
+    )
+
+    assert engine.runtime.compaction_summary == "from store"
+
+
+@pytest.mark.asyncio
+async def test_runtime_prefers_caller_supplied_state_over_store():
+    sessions = FakeSessions(loaded={"s1": SessionRuntimeState(compaction_summary="from store")})
+    events = FakeEvents()
+    engine = FakeEngine()
+    runtime = AgentRuntime(type("Resources", (), {"sessions": sessions, "events": events, "turn_engine": engine})())
+
+    await runtime.run_turn(
+        TurnRequest(
+            thread=AgentThread(thread_id="t1", session_id="s1"),
+            user_text="hello",
+            runtime=SessionRuntimeState(compaction_summary="from caller"),
+        )
+    )
+
+    assert engine.runtime.compaction_summary == "from caller"
+
+
+@pytest.mark.asyncio
+async def test_runtime_resolves_lazy_identity_from_engine_session_id():
+    sessions = FakeSessions()
+    events = FakeEvents()
+    engine = FakeEngine()
+
+    async def run(user_text, runtime, *, display_text=None, context=None):
+        engine.session_id = "lazy-created"
+        return runtime
+
+    engine.run = run
+    runtime = AgentRuntime(type("Resources", (), {"sessions": sessions, "events": events, "turn_engine": engine})())
+
+    result = await runtime.run_turn(
+        TurnRequest(thread=AgentThread(thread_id="t1"), user_text="hello")
+    )
+
+    assert result.session_id == "lazy-created"
+    assert [session_id for session_id, _ in sessions.saves] == ["lazy-created"]

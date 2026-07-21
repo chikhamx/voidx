@@ -175,6 +175,24 @@ class ToolExecutorAdapter:
 
         async def execute_one(tc):
             tid = tc["name"]
+            chat_tool_view = getattr(host, "_active_chat_tool_view", None)
+            if chat_tool_view is not None:
+                decision = chat_tool_view.check(tid)
+                if not decision.allowed:
+                    return _ExecutedTool(
+                        message=ToolMessage(
+                            content=f"Tool denied: {decision.reason}",
+                            tool_call_id=tc.get("id", ""),
+                            status="error",
+                        ),
+                        result=ToolResult(
+                            output=f"Tool denied: {decision.reason}",
+                            metadata={"error": True, "tool_denied": True, "reason": decision.reason},
+                        ),
+                        tool_call=tc,
+                        todo_state=None,
+                        runtime_guard_eligible=False,
+                    )
             targs = tc.get("args", {})
             cid = tc.get("id", "")
             tool_event_id = cid or f"{tid}:{id(tc)}"

@@ -1212,6 +1212,22 @@ class LangGraphExecution:
         if getattr(self, "_successful_dangerous_calls_session_id", None) != session_id:
             self._successful_dangerous_calls.clear()
             self._successful_dangerous_calls_session_id = session_id
+        chat_tool_view = getattr(self, "_active_chat_tool_view", None)
+        if chat_tool_view is not None:
+            approved: list[dict] = []
+            denied: list[tuple[dict, str]] = []
+            for tool_call in tool_calls:
+                args = tool_call.get("args", {}) or {}
+                raw_path = args.get("path") or args.get("file") or args.get("directory")
+                decision = chat_tool_view.check(
+                    str(tool_call.get("name", "")),
+                    path=Path(raw_path) if raw_path else None,
+                )
+                if decision.allowed:
+                    approved.append(tool_call)
+                else:
+                    denied.append((tool_call, f"Tool denied: {decision.reason}"))
+            return approved, denied
         approved: list[dict] = []
         denied: list[tuple[dict, str]] = []
         need_ask: list[PermissionDecision] = []
@@ -1498,6 +1514,9 @@ class LangGraphExecution:
         )
         turn_state = str(state.get("turn_state") or "initial")
         tool_defs = self.tools.tools_for_llm()
+        chat_tool_view = getattr(self, "_active_chat_tool_view", None)
+        if chat_tool_view is not None:
+            tool_defs = [tool for tool in tool_defs if chat_tool_view.allows(tool.get("name", ""))]
         turn_control_active = self._turn_control_enabled()
         if turn_control_active:
             tool_defs = [*tool_defs, TURN_TOOL_DEFINITION]

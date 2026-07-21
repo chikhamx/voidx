@@ -35,6 +35,7 @@ class SessionInfo(BaseModel):
     created_at: str = Field(default_factory=_now)
     updated_at: str = Field(default_factory=_now)
     message_count: int = 0
+    runtime_profile: str = "coding"
 
 
 class MessageRow(BaseModel):
@@ -58,17 +59,19 @@ async def create_session(
     *,
     title: str = "New session",
     directory: str = "",
+    profile: str = "coding",
 ) -> SessionInfo:
     sid = _uid()
     now = _now()
     await _execute_commit(
-        """INSERT INTO sessions (id, title, workspace, directory, model_provider, model_name, created_at, updated_at)
-           VALUES (?, ?, ?, ?, ?, ?, ?, ?)""",
-        (sid, title, workspace, directory, provider, model, now, now),
+        """INSERT INTO sessions (id, title, workspace, directory, model_provider, model_name, runtime_profile, created_at, updated_at)
+           VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)""",
+        (sid, title, workspace, directory, provider, model, profile, now, now),
     )
     return SessionInfo(
         id=sid, title=title, workspace=workspace, directory=directory,
-        model_provider=provider, model_name=model, created_at=now, updated_at=now,
+        model_provider=provider, model_name=model, runtime_profile=profile,
+        created_at=now, updated_at=now,
     )
 
 
@@ -83,7 +86,7 @@ async def get_session(session_id: str) -> SessionInfo | None:
         directory=row["directory"],
         model_provider=row["model_provider"], model_name=row["model_name"],
         created_at=row["created_at"], updated_at=row["updated_at"],
-        message_count=row["message_count"],
+        message_count=row["message_count"], runtime_profile=row["runtime_profile"],
     )
 
 
@@ -101,7 +104,7 @@ async def list_sessions(limit: int = 50) -> list[SessionInfo]:
             directory=row["directory"],
             model_provider=row["model_provider"], model_name=row["model_name"],
             created_at=row["created_at"], updated_at=row["updated_at"],
-            message_count=row["message_count"],
+            message_count=row["message_count"], runtime_profile=row["runtime_profile"],
         )
         for row in rows
     ]
@@ -123,7 +126,7 @@ async def latest_session_for_workspace(workspace: str) -> SessionInfo | None:
         directory=row["directory"],
         model_provider=row["model_provider"], model_name=row["model_name"],
         created_at=row["created_at"], updated_at=row["updated_at"],
-        message_count=row["message_count"],
+        message_count=row["message_count"], runtime_profile=row["runtime_profile"],
     )
 
 

@@ -13,16 +13,21 @@ class SessionMethods:
         title = params.get("title", "New session")
         directory = str(params.get("directory", "") or "")
         workspace = directory or self._workspace or "."
+        profile = str(params.get("profile", "") or "coding")
+        if profile not in ("coding", "chat"):
+            raise MethodParamsError(f"unknown profile: {profile}")
         info = await create_session(
             workspace=workspace,
             title=title,
             directory=directory,
+            profile=profile,
         )
         await self.register_thread(
             info.id,
             title=info.title,
             directory=info.directory,
             workspace=info.workspace,
+            runtime_profile=info.runtime_profile,
         )
         self._active_thread_id = info.id
         await self.broadcast_snapshot()

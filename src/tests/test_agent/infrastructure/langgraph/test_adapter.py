@@ -69,7 +69,9 @@ async def test_turn_engine_maps_runtime_and_delegates_to_execution():
     assert host._interaction_mode is InteractionMode.PLAN
     assert host._compaction_summary == "before"
     assert result.interaction_mode is InteractionMode.PLAN
-    assert result.turn_phase is TurnPhase.COMMITTED
+    # The engine returns the post-execution state still RUNNING; the runtime
+    # facade owns the COMMITTED transition via advance_turn.
+    assert result.turn_phase is TurnPhase.RUNNING
 
 
 def test_state_mapper_is_the_runtime_graph_host_conversion_boundary():

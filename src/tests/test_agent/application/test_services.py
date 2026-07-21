@@ -9,7 +9,10 @@ import pytest
 from voidx.agent.application.compaction_service import CompactionService
 from voidx.agent.application.session_service import SessionService
 from voidx.agent.application.tool_service import ToolService
-from voidx.agent.application.turn_service import TurnService
+from types import SimpleNamespace
+
+from voidx.agent.domain.thread import AgentThread
+from voidx.agent.runtime import AgentRuntime, TurnRequest
 from voidx.agent.domain.compaction import CompactionResult
 from voidx.agent.domain.events import AgentEventKind
 from voidx.agent.domain.state import SessionRuntimeState
@@ -114,6 +117,7 @@ async def test_tool_service_checks_permission_before_execution():
 class FakeTurnEngine:
     fail: bool = False
     calls: list[tuple[str, SessionRuntimeState, str | None]] = field(default_factory=list)
+    session_id: str = ""
 
     async def run(
         self,
@@ -137,33 +141,29 @@ class MemoryEvents:
         self.events.append(event)
 
 
+def _runtime(engine, sessions, events) -> AgentRuntime:
+    return AgentRuntime(
+        SimpleNamespace(turn_engine=engine, sessions=sessions, events=events)
+    )
+
+
+def _request(session_id: str, text: str, **kwargs) -> TurnRequest:
+    return TurnRequest(
+        thread=AgentThread(thread_id=session_id or "coding", session_id=session_id or None),
+        user_text=text,
+        **kwargs,
+    )
 
 
 @pytest.mark.asyncio
-async def test_turn_service_delegates_to_runtime_facade_without_owning_lifecycle():
-    class RuntimeFacade:
-        def __init__(self):
-            self.calls = []
-
-        async def run_turn(self, request):
-            self.calls.append(request)
-            return type("Result", (), {"runtime": SessionRuntimeState(compaction_summary="runtime")})()
-
-    facade = RuntimeFacade()
-    service = TurnService(runtime=facade)
-    result = await service.run("s1", "hello", SessionRuntimeState())
-
-    assert result.compaction_summary == "runtime"
-    assert len(facade.calls) == 1
-@pytest.mark.asyncio
-async def test_turn_service_orders_events_and_persists_success():
+async def test_runtime_orders_events_and_persists_success():
     sessions = MemorySessionStore()
     events = MemoryEvents()
-    service = TurnService(FakeTurnEngine(), sessions, events)
+    runtime = _runtime(FakeTurnEngine(), sessions, events)
 
-    runtime = await service.run("s1", "hello", SessionRuntimeState(), display_text="focus")
+    result = await runtime.run_turn(_request("s1", "hello", display_text="focus"))
 
-    assert runtime.compaction_summary == "completed"
+    assert result.runtime.compaction_summary == "completed"
     assert [event.kind for event in events.events] == [
         AgentEventKind.TURN_STARTED,
         AgentEventKind.TURN_COMPLETED,
@@ -172,13 +172,13 @@ async def test_turn_service_orders_events_and_persists_success():
 
 
 @pytest.mark.asyncio
-async def test_turn_service_persists_failure_and_emits_failed_event():
+async def test_runtime_persists_failure_and_emits_failed_event():
     sessions = MemorySessionStore()
     events = MemoryEvents()
-    service = TurnService(FakeTurnEngine(fail=True), sessions, events)
+    runtime = _runtime(FakeTurnEngine(fail=True), sessions, events)
 
     with pytest.raises(RuntimeError, match="engine failed"):
-        await service.run("s1", "hello", SessionRuntimeState())
+        await runtime.run_turn(_request("s1", "hello"))
 
     assert "s1" in sessions.runtimes
     assert [event.kind for event in events.events] == [
@@ -188,18 +188,19 @@ async def test_turn_service_persists_failure_and_emits_failed_event():
 
 
 @pytest.mark.asyncio
-async def test_turn_service_cancel_persists_and_propagates_cancellation():
+async def test_runtime_cancel_persists_and_propagates_cancellation():
     class CancelledEngine:
+        session_id = ""
+
         async def run(self, user_text, runtime, *, display_text=None, context=None):
             raise asyncio.CancelledError
 
-
     sessions = MemorySessionStore()
     events = MemoryEvents()
-    service = TurnService(CancelledEngine(), sessions, events)
+    runtime = _runtime(CancelledEngine(), sessions, events)
 
     with pytest.raises(asyncio.CancelledError):
-        await service.run("s1", "hello", SessionRuntimeState())
+        await runtime.run_turn(_request("s1", "hello"))
 
     assert "s1" in sessions.runtimes
     assert events.events[-1].metadata["cancelled"] is True

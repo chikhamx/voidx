@@ -5,9 +5,9 @@ from __future__ import annotations
 from typing import TYPE_CHECKING
 
 from voidx.agent.application.agent_service import AgentService
+from voidx.agent.application.chat_service import ChatService
 from types import SimpleNamespace
 
-from voidx.agent.application.turn_service import TurnService
 from voidx.agent.runtime import AgentRuntime
 from voidx.agent.facade import AgentFacade
 from voidx.agent.infrastructure.langgraph.adapter import LangGraphTurnEngine
@@ -35,4 +35,5 @@ def build_agent_app(
     runtime = AgentRuntime(
         SimpleNamespace(turn_engine=engine, sessions=sessions, events=events)
     )
-    return AgentFacade(AgentService(execution, runtime))
+    chat_service = ChatService(runtime)
+    return AgentFacade(AgentService(execution, runtime, chat_service=chat_service))

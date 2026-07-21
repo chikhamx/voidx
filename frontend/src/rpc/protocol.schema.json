@@ -290,6 +290,11 @@
           "title": "Model Provider",
           "type": "string"
         },
+        "runtime_profile": {
+          "default": "coding",
+          "title": "Runtime Profile",
+          "type": "string"
+        },
         "status": {
           "default": "idle",
           "enum": [

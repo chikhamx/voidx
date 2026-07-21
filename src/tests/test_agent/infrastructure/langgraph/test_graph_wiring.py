@@ -65,4 +65,4 @@ async def test_langgraph_engine_delegates_turn_with_runtime_boundary():
     result = await engine.run("hello", runtime)
 
     assert backend.calls == [("hello", None)]
-    assert result.turn_phase is TurnPhase.COMMITTED
+    assert result.turn_phase is TurnPhase.RUNNING

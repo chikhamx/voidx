@@ -39,7 +39,9 @@ class LangGraphTurnEngine:
             display_text=display_text,
             context=context,
         )
+        # Return the post-execution state still in RUNNING phase; the runtime
+        # facade owns the COMMITTED transition via advance_turn.
         return self._mapper.runtime_from_execution(
             self._execution,
-            turn_phase=TurnPhase.COMMITTED,
+            turn_phase=TurnPhase.RUNNING,
         )

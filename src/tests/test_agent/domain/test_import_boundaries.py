@@ -51,3 +51,43 @@ def test_domain_has_no_infrastructure_dependencies() -> None:
     }
 
     assert {path: imports for path, imports in offenders.items() if imports} == {}
+
+
+
+def _attribute_calls(path: Path, attr: str) -> int:
+    """Count ``x.<attr>(...)`` call sites in one module."""
+    tree = ast.parse(path.read_text(encoding="utf-8"))
+    count = 0
+    for node in ast.walk(tree):
+        func = node.func if isinstance(node, ast.Call) else None
+        if isinstance(func, ast.Attribute) and func.attr == attr:
+            count += 1
+    return count
+
+
+
+
+def test_only_facade_and_engine_adapter_call_run_turn() -> None:
+    """``run_turn`` may only be invoked on the runtime facade or the execution.
+
+    Allowed call sites:
+    - ``AgentRuntime.run_turn`` delegating to ``turn_engine.run`` (facade internal).
+    - application services calling ``self._runtime.run_turn``.
+    - ``LangGraphTurnEngine`` calling ``self._execution.run_turn``.
+    """
+    allowed_files = {
+        "runtime/runtime.py",
+        "application/agent_service.py",
+        "application/chat_service.py",
+        "infrastructure/langgraph/adapter.py",
+        # infrastructure-internal self delegation (run_synthetic_turn -> run_turn)
+        "infrastructure/langgraph/execution.py",
+    }
+    offenders = []
+    for path in AGENT_ROOT.rglob("*.py"):
+        rel = path.relative_to(AGENT_ROOT).as_posix()
+        if rel in allowed_files:
+            continue
+        if _attribute_calls(path, "run_turn") > 0:
+            offenders.append(rel)
+    assert offenders == []

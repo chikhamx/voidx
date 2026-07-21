@@ -14,6 +14,10 @@ SubmitHandler = Callable[..., Awaitable[bool]]
 class ThreadExecutionContext:
     thread_id: str = ""
     session_id: str = ""
+    # Optional profile-scoped tool view (e.g. chat). ``None`` keeps the default
+    # coding tool surface. The object is only inspected for a ``check``/``allows``
+    # policy interface by the tool execution boundary; it stays opaque here.
+    tool_view: Any | None = None
 
 
 @dataclass

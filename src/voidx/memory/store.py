@@ -77,7 +77,7 @@ def _run_with_locked_retry(operation: Callable[[], T]) -> T:
     raise RuntimeError("unreachable sqlite retry state")
 
 
-_SCHEMA_VERSION = 1
+_SCHEMA_VERSION = 2
 
 
 def _column_exists(conn: sqlite3.Connection, table: str, column: str) -> bool:
@@ -108,7 +108,12 @@ def _migrate_to_v1(conn: sqlite3.Connection) -> None:
     _drop_column_if_exists(conn, "session_runtime_state", "recent_user_texts_json")
 
 
-_MIGRATIONS = [_migrate_to_v1]
+def _migrate_to_v2(conn: sqlite3.Connection) -> None:
+    """v1 → v2: add the runtime profile discriminator to sessions."""
+    _add_column_if_missing(conn, "sessions", "runtime_profile", "TEXT NOT NULL DEFAULT 'coding'")
+
+
+_MIGRATIONS = [_migrate_to_v1, _migrate_to_v2]
 
 
 def _init_schema(conn: sqlite3.Connection) -> None:
@@ -122,7 +127,8 @@ def _init_schema(conn: sqlite3.Connection) -> None:
             model_name TEXT NOT NULL DEFAULT 'claude-sonnet-4-6',
             created_at TEXT NOT NULL,
             updated_at TEXT NOT NULL,
-            message_count INTEGER NOT NULL DEFAULT 0
+            message_count INTEGER NOT NULL DEFAULT 0,
+            runtime_profile TEXT NOT NULL DEFAULT 'coding'
         );
 
         CREATE TABLE IF NOT EXISTS session_runtime_state (

@@ -113,6 +113,7 @@ class TurnRunner:
         host = self.host
         context_session_id = str(getattr(context, "session_id", "") or "")
         context_thread_id = str(getattr(context, "thread_id", "") or context_session_id)
+        host._active_chat_tool_view = getattr(context, "tool_view", None)
         async with bind_thread_execution_context(
             host,
             session_id=context_session_id,

@@ -22,7 +22,11 @@ class TurnRequest(BaseModel):
         )
     )
     display_text: str | None = None
-    runtime: SessionRuntimeState = Field(default_factory=SessionRuntimeState)
+    # ``None`` means the caller did not supply an input snapshot; the runtime
+    # then loads the persisted state for ``thread.session_id``. Supplying a
+    # state (even a default-constructed one) makes the caller's snapshot
+    # authoritative and the runtime will not reload it from the store.
+    runtime: SessionRuntimeState | None = None
     context: Any | None = None
 
 
