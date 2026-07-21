@@ -444,8 +444,8 @@ class AiApprovalService:
             )
             model = create_chat_model(profile.api_key, model_config)
             resolver = create_resolver_model(model, model_config)
-            structured = getattr(resolver, "with_structured_output", None)
-            if not callable(structured):
+            from voidx.llm.structured import ainvoke_structured
+            if not callable(getattr(resolver, "with_structured_output", None)):
                 return AiApprovalResult(reason="unavailable", skipped_reasons=skipped_reasons)
             from langchain_core.messages import HumanMessage, SystemMessage
             payload = json.dumps([item.model_dump(mode="json") for item in items], ensure_ascii=False, sort_keys=True)
@@ -457,35 +457,31 @@ class AiApprovalService:
 
             base_method = getattr(resolver, "resolver_structured_output_method", None)
             if base_method not in {"json_mode", "function_calling"}:
-                base_method = None
-            accepts_method = _structured_accepts_keyword(structured, "method")
-            accepts_raw = _structured_accepts_keyword(structured, "include_raw")
+                base_method = "function_calling"
             messages = [
                 SystemMessage(content=ai_approval_system_prompt()),
                 HumanMessage(content=payload),
             ]
 
-            async def _invoke_with_method(method: str | None) -> AiApprovalResult:
-                kwargs: dict = {}
-                if method is not None and accepts_method:
-                    kwargs["method"] = method
-                if accepts_raw:
-                    kwargs["include_raw"] = True
-                runnable = structured(AiApprovalResponse, **kwargs)
-
+            async def _invoke_with_method(method: str) -> AiApprovalResult:
                 async def invoke_once():
                     try:
-                        return await asyncio.wait_for(
-                            runnable.ainvoke(messages),
+                        response = await ainvoke_structured(
+                            model=resolver,
+                            schema=AiApprovalResponse,
+                            messages=messages,
+                            method=method,
+                            include_raw=True,
                             timeout=config.timeout_seconds,
                         )
+                        return validate_ai_approval_response(response, set(ids))
                     except Exception as exc:
                         reason = _classify_ai_approval_failure(exc)
                         if reason in {"timeout", "connection_error"}:
                             raise _AiApprovalTransientError(reason) from exc
                         raise
 
-                response = await retry_async(
+                return await retry_async(
                     invoke_once,
                     max_attempts=2,
                     base_delay=0.1,
@@ -494,13 +490,11 @@ class AiApprovalService:
                     label="ai_approval",
                     retry_on=_AiApprovalTransientError,
                 )
-                return validate_ai_approval_response(response, set(ids))
 
             result = await _invoke_with_method(base_method)
             if (
                 result.reason == "invalid_response"
                 and base_method != "json_mode"
-                and accepts_method
             ):
                 result = await _invoke_with_method("json_mode")
             return result.model_copy(update={"skipped_reasons": skipped_reasons})

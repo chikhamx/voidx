@@ -15,9 +15,11 @@ class StructuredFakeModel:
         self.error = error
         self.calls = []
         self.schema = None
+        self.structured_kwargs = None
 
     def with_structured_output(self, schema, **kwargs):
         self.schema = schema
+        self.structured_kwargs = kwargs
         return self
 
     async def ainvoke(self, messages):
@@ -39,7 +41,9 @@ async def test_description_generator_batches_servers_and_parses_json():
 
     assert result == {"tavily": "Search the web for current information."}
     assert len(model.calls) == 1
-    assert model.schema is McpDescriptionBatch
+    assert model.schema["function"]["name"] == "McpDescriptionBatch"
+    assert "$defs" not in model.schema["function"]["parameters"]
+    assert model.structured_kwargs == {"method": "function_calling"}
     prompt = str(model.calls[0][-1].content)
     assert "tavily" in prompt
     assert "github" in prompt

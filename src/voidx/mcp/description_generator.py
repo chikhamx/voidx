@@ -8,7 +8,7 @@ from typing import Any
 from langchain_core.messages import HumanMessage, SystemMessage
 from pydantic import BaseModel, Field
 
-from voidx.llm.service import get_resolver_structured_output_method
+from voidx.llm.structured import ainvoke_structured
 from voidx.mcp.schema import McpToolDef
 
 _MAX_TOOLS_PER_SERVER = 12
@@ -58,15 +58,12 @@ class McpDescriptionGenerator:
             SystemMessage(content=_SYSTEM_PROMPT),
             HumanMessage(content=json.dumps(payload, ensure_ascii=False, sort_keys=True)),
         ]
-        structured = getattr(self._model, "with_structured_output", None)
-        if not callable(structured):
-            raise RuntimeError("MCP description model does not support structured output")
-        kwargs: dict[str, Any] = {}
-        method = get_resolver_structured_output_method(self._model)
-        if method is not None:
-            kwargs["method"] = method
-        runnable = structured(McpDescriptionBatch, **kwargs)
-        response = await runnable.ainvoke(messages)
+        response = await ainvoke_structured(
+            model=self._model,
+            schema=McpDescriptionBatch,
+            messages=messages,
+            method="function_calling",
+        )
         parsed = _coerce_batch(response)
         return {
             name: _clip(_clean_description(parsed.descriptions.get(name)), _MAX_DESCRIPTION_LENGTH)
