@@ -118,6 +118,26 @@ class SessionMethods:
         )
         return {"ok": True}
 
+    def _method_usage_get(self, params: dict) -> dict:
+        provider = getattr(self, "_usage_stats_provider", None)
+        if provider is None:
+            return {"usage": {}}
+        stats = provider()
+        if stats is None:
+            return {"usage": {}}
+        cache_hit_rate = stats.cache_hit_rate
+        return {
+            "usage": {
+                "context_tokens": stats.context_tokens,
+                "context_limit": stats.context_limit,
+                "total_tokens": stats.total_tokens,
+                "cache_hit_rate": cache_hit_rate,
+                "cache_hit_rate_estimated": (
+                    cache_hit_rate is not None and stats.cache_hit_rate_is_estimated
+                ),
+            }
+        }
+
     def _method_commands_list(self, params: dict) -> dict:
         from voidx.ui.command_catalog import command_catalog_dicts
 

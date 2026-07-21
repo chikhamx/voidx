@@ -89,6 +89,35 @@ def paste_clipboard_image(
         _safe_unlink(png_path)
         return ClipboardImageResult(status=_result_status(status), message=_capture_message(status))
 
+    return _finalize_captured_png(root, png_path, jpg_path, compress_image)
+
+
+def save_clipboard_image_bytes(
+    workspace: str,
+    data: bytes,
+    *,
+    compress_image: CompressImage | None = None,
+    name_factory: NameFactory | None = None,
+) -> ClipboardImageResult:
+    """Persist client-supplied clipboard image bytes (desktop/web paste path)."""
+    if not data:
+        return ClipboardImageResult(status="error", message="Clipboard image is empty.")
+    root = Path(workspace).resolve()
+    target_dir = root / CLIPBOARD_ATTACHMENT_DIR
+    target_dir.mkdir(parents=True, exist_ok=True)
+    stem = name_factory() if name_factory else _attachment_stem()
+    png_path = target_dir / f"{stem}.png"
+    jpg_path = target_dir / f"{stem}.jpg"
+    png_path.write_bytes(data)
+    return _finalize_captured_png(root, png_path, jpg_path, compress_image)
+
+
+def _finalize_captured_png(
+    root: Path,
+    png_path: Path,
+    jpg_path: Path,
+    compress_image: CompressImage | None,
+) -> ClipboardImageResult:
     if not png_path.exists() or png_path.stat().st_size == 0:
         _safe_unlink(png_path)
         return ClipboardImageResult(status="error", message="Clipboard image could not be saved.")

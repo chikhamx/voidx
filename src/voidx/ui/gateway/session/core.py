@@ -69,6 +69,7 @@ class GatewaySession(
         runtime_state_provider: RuntimeStateProvider | None = None,
         settings_update_handler: SettingsUpdateHandler | None = None,
         mcp_catalog_provider: Callable[[], list] | None = None,
+        usage_stats_provider: Callable[[], object] | None = None,
     ) -> None:
         self._tree_provider = tree_providers
         self._session_id = session_id or thread_id
@@ -81,6 +82,7 @@ class GatewaySession(
         self._runtime_state_provider = runtime_state_provider
         self._settings_update_handler = settings_update_handler
         self._mcp_catalog_provider = mcp_catalog_provider
+        self._usage_stats_provider = usage_stats_provider
         self._clients: set[ProtocolClient] = set()
         self._seq = 0
         self._thread_id_provider: Callable[[], str] | None = None
@@ -463,12 +465,14 @@ class GatewaySession(
         m.register("session.cancel", self._method_session_cancel)
         m.register("session.respond", self._method_session_respond)
         m.register("commands.list", self._method_commands_list)
+        m.register("usage.get", self._method_usage_get)
         m.register("commands.run", self._method_commands_run)
         m.register("settings.get", self._method_settings_get)
         m.register("settings.update", self._method_settings_update)
 
         # Reference candidates (@ files / # skills)
         m.register("attachments.candidates", self._method_attachments_candidates)
+        m.register("attachments.saveImage", self._method_attachments_save_image)
         m.register("skills.candidates", self._method_skills_candidates)
         m.register("mcp.candidates", self._method_mcp_candidates)
         m.register("integrations.get", self._method_integrations_get)
