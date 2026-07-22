@@ -70,7 +70,13 @@ from voidx.runtime.intent import PersonaName
 from voidx.runtime.ui import PermissionPromptCleared, PermissionPromptShown, PermissionToolDetail
 from langchain_core.messages import AIMessage, BaseMessage, HumanMessage
 from voidx.agent.agents import get_agent
-from voidx.agent.prompts import WORKFLOW_RUNTIME, build_base_system, persona_prompt
+from voidx.agent.prompts import (
+    CODING_PROFILE_SPEC,
+    WORKFLOW_RUNTIME,
+    assemble_base_system,
+    build_base_system,
+    persona_prompt,
+)
 from voidx.agent.runtime_context import (
     ContextCompilerCache,
     InteractionMode,
@@ -1410,6 +1416,42 @@ class LangGraphExecution:
         self._current_agent = get_agent(agent_id)
         rendered_persona_prompt = persona_prompt() if self._current_agent else ""
 
+        active_profile = getattr(self, "_active_profile", None)
+        prompt_policy = getattr(active_profile, "prompt_policy", None)
+        persona_prompt_value = (
+            prompt_policy.persona_prompt
+            if prompt_policy is not None and prompt_policy.persona_prompt is not None
+            else rendered_persona_prompt
+        )
+        workflow_runtime_value = (
+            prompt_policy.workflow_runtime
+            if prompt_policy is not None and prompt_policy.workflow_runtime is not None
+            else WORKFLOW_RUNTIME
+        )
+        profile_directive_value = (
+            prompt_policy.profile_directive
+            if prompt_policy is not None and prompt_policy.profile_directive is not None
+            else ""
+        )
+        task_state_suppressed = (
+            prompt_policy is not None and prompt_policy.task_state_section == ""
+        )
+        base_system_spec = (
+            prompt_policy.base_system_spec
+            if prompt_policy is not None and prompt_policy.base_system_spec is not None
+            else CODING_PROFILE_SPEC
+        )
+        active_tool_view = getattr(self, "_active_chat_tool_view", None)
+        available_tools = (
+            set(active_tool_view.bound_tool_ids)
+            if active_tool_view is not None
+            else None
+        )
+        base_system = assemble_base_system(
+            base_system_spec,
+            available_tools=available_tools,
+        )
+
         interaction_mode = state.get("interaction_mode") or (
             InteractionMode.PLAN.value if state.get("plan_mode", False) else self._interaction_mode.value
         )
@@ -1440,9 +1482,12 @@ class LangGraphExecution:
         self._last_context_builder = RuntimeContextBuilder(
             config=self.config,
             workspace=state.get("workspace", "."),
-            base_system_prompt=build_base_system(self.config.user_profile.language),
-            workflow_runtime=WORKFLOW_RUNTIME,
-            persona_prompt=rendered_persona_prompt,
+            base_system_prompt=build_base_system(
+                self.config.user_profile.language,
+                base_system=base_system,
+            ),
+            workflow_runtime=workflow_runtime_value,
+            persona_prompt=persona_prompt_value,
             persona=runtime_persona,
             interaction_mode=interaction_mode,
             instructions=instructions,
@@ -1452,6 +1497,8 @@ class LangGraphExecution:
             task_state=task_state,
             session_date=self._session_date,
             turn_state=state.get("turn_state", "initial"),
+            profile_directive=profile_directive_value,
+            suppress_task_state=task_state_suppressed,
         )
         context, self._context_cache = self._last_context_builder.build_incremental(self._context_cache)
         context.apply_to_messages(state.get("messages", []))

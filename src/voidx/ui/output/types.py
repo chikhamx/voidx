@@ -18,6 +18,9 @@ class ThreadExecutionContext:
     # coding tool surface. The object is only inspected for a ``check``/``allows``
     # policy interface by the tool execution boundary; it stays opaque here.
     tool_view: Any | None = None
+    # Optional runtime profile. When set, the execution layer reads
+    # ``profile.prompt_policy`` to override prompt section injection.
+    profile: Any | None = None
 
 
 @dataclass

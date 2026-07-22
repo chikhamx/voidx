@@ -6,6 +6,7 @@ from pathlib import Path
 from typing import Any
 
 from voidx.agent.domain.chat_policy import ChatResourceScope, ChatToolView
+from voidx.agent.domain.prompt_policy import ChatPromptPolicy
 from voidx.agent.domain.profile import RuntimeProfile
 from voidx.agent.domain.state import SessionRuntimeState
 from voidx.agent.domain.thread import AgentThread
@@ -14,7 +15,9 @@ from voidx.memory.service import SessionInfo, create_session
 from voidx.runtime.ui import ThreadExecutionContext
 
 
-CHAT_PROFILE = RuntimeProfile(profile_id="chat", revision=1, name="Chat")
+CHAT_PROFILE = RuntimeProfile(
+    profile_id="chat", revision=1, name="Chat", prompt_policy=ChatPromptPolicy()
+)
 
 
 class ChatService:
@@ -50,6 +53,7 @@ class ChatService:
             thread_id=thread.thread_id,
             session_id=thread.session_id or "",
             tool_view=tool_view,
+            profile=CHAT_PROFILE,
         )
         return await self._runtime.run_turn(
             TurnRequest(

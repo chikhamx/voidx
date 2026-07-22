@@ -56,7 +56,17 @@ def test_base_system_prompt_has_canonical_rules():
         "uncertainty",
         "todo_progress",
     }
-    assert all(rule.name == "" for rule in BASE_SYSTEM.global_rules)
+    assert [rule.name for rule in BASE_SYSTEM.global_rules] == [
+        "workflow_gates",
+        "workspace_facts",
+        "read_before_edit",
+        "smallest_change",
+        "preserve_dirty",
+        "fresh_verification",
+        "min_questions",
+        "follow_requests",
+        "delegate_independent",
+    ]
 
 
 def test_build_base_system_returns_default_for_auto_or_blank_language():
