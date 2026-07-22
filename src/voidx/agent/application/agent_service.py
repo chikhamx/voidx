@@ -29,7 +29,6 @@ from voidx.logging.tool_log import log_tool_event
 from voidx.runtime.ui import ThreadExecutionContext
 from voidx.agent.ports.execution_host import ExecutionHost
 from voidx.agent.domain.thread import AgentThread
-from voidx.agent.runtime.contracts import TurnRequest
 
 
 AgentExecution = ExecutionHost
@@ -48,10 +47,18 @@ def _ui_command_kind(command: Any) -> str:
 class AgentService:
     """Application-level startup and interactive run-loop service."""
 
-    def __init__(self, execution: AgentExecution, runtime, *, chat_service=None) -> None:
+    def __init__(
+        self,
+        execution: AgentExecution,
+        runtime,
+        *,
+        chat_service=None,
+        coding_service=None,
+    ) -> None:
         self._execution = execution
         self._runtime = runtime
         self._chat_service = chat_service
+        self._coding_service = coding_service
         bind_startup = getattr(execution, "bind_startup_presenter", None)
         if bind_startup is not None:
             bind_startup(self._show_startup)
@@ -458,17 +465,27 @@ class AgentService:
         try:
             if await self._route_chat_turn(user_input, thread_id=thread_id):
                 return True, None
-            await self._runtime.run_turn(
-                TurnRequest(
-                    thread=AgentThread(
-                        thread_id=thread_id or self._execution.session_id or "coding",
-                        session_id=self._execution.session_id or None,
-                    ),
+            if self._coding_service is not None:
+                await self._coding_service.run_turn(
                     user_text=user_input,
-                    runtime=None,  # coding loads persisted state via the runtime facade
+                    thread_id=thread_id,
+                    session_id=self._execution.session_id or None,
                     context=context,
                 )
-            )
+            else:
+                from voidx.agent.runtime.contracts import TurnRequest
+
+                await self._runtime.run_turn(
+                    TurnRequest(
+                        thread=AgentThread(
+                            thread_id=thread_id or self._execution.session_id or "coding",
+                            session_id=self._execution.session_id or None,
+                        ),
+                        user_text=user_input,
+                        runtime=None,  # coding loads persisted state via the runtime facade
+                        context=context,
+                    )
+                )
         except (KeyboardInterrupt, asyncio.CancelledError):
             self._execution.ui.ui.print(f"\n[dim]Interrupted.[/dim]")
         return True, None

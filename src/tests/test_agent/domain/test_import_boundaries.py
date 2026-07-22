@@ -79,6 +79,7 @@ def test_only_facade_and_engine_adapter_call_run_turn() -> None:
         "runtime/runtime.py",
         "application/agent_service.py",
         "application/chat_service.py",
+        "application/coding_service.py",
         "infrastructure/langgraph/adapter.py",
         # infrastructure-internal self delegation (run_synthetic_turn -> run_turn)
         "infrastructure/langgraph/execution.py",

@@ -6,6 +6,7 @@ from typing import TYPE_CHECKING
 
 from voidx.agent.application.agent_service import AgentService
 from voidx.agent.application.chat_service import ChatService
+from voidx.agent.application.coding_service import CodingService
 from types import SimpleNamespace
 
 from voidx.agent.runtime import AgentRuntime
@@ -36,4 +37,12 @@ def build_agent_app(
         SimpleNamespace(turn_engine=engine, sessions=sessions, events=events)
     )
     chat_service = ChatService(runtime)
-    return AgentFacade(AgentService(execution, runtime, chat_service=chat_service))
+    coding_service = CodingService(runtime)
+    return AgentFacade(
+        AgentService(
+            execution,
+            runtime,
+            chat_service=chat_service,
+            coding_service=coding_service,
+        )
+    )

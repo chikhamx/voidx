@@ -676,3 +676,55 @@ async def test_handle_user_input_passes_execution_context_to_turn_service():
     assert keep_running is True
     assert exit_message is None
     assert captured == [("hello from t2", "t2")]
+
+
+@pytest.mark.asyncio
+async def test_handle_user_input_delegates_coding_turn_to_coding_service():
+    graph = _graph()
+    captured: list[tuple[str, str, str, str]] = []
+    graph._execution.session_id = "session-1"
+
+    class FakeCodingService:
+        async def run_turn(self, *, user_text, thread_id="", session_id=None, context=None):
+            captured.append(
+                (
+                    user_text,
+                    thread_id,
+                    session_id or "",
+                    context.thread_id if context is not None else "",
+                )
+            )
+
+    graph._coding_service = FakeCodingService()
+
+    keep_running, exit_message = await graph._handle_user_input(
+        SimpleNamespace(),
+        "hello from t2",
+        context=ThreadExecutionContext(thread_id="t2", session_id="t2"),
+        thread_id="t2",
+    )
+
+    assert keep_running is True
+    assert exit_message is None
+    assert captured == [("hello from t2", "t2", "session-1", "t2")]
+
+
+@pytest.mark.asyncio
+async def test_handle_user_input_preserves_missing_context_for_coding_service():
+    graph = _graph()
+    captured: list[object] = []
+
+    class FakeCodingService:
+        async def run_turn(self, *, user_text, thread_id="", session_id=None, context=None):
+            captured.append(context)
+
+    graph._coding_service = FakeCodingService()
+
+    keep_running, exit_message = await graph._handle_user_input(
+        SimpleNamespace(),
+        "hello without context",
+    )
+
+    assert keep_running is True
+    assert exit_message is None
+    assert captured == [None]

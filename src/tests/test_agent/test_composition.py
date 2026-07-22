@@ -1,4 +1,5 @@
 from voidx.agent.application.agent_service import AgentService
+from voidx.agent.application.coding_service import CodingService
 from voidx.agent.composition import build_agent_app
 from voidx.agent.facade import AgentFacade
 from voidx.agent.infrastructure.langgraph.adapter import LangGraphTurnEngine
@@ -25,3 +26,4 @@ def test_build_agent_app_wires_runtime_entry(monkeypatch):
     assert isinstance(resources.turn_engine, LangGraphTurnEngine)
     assert isinstance(resources.sessions, MemorySessionAdapter)
     assert isinstance(resources.events, NullEventPublisher)
+    assert isinstance(app._execution._coding_service, CodingService)
