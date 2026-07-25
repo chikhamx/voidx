@@ -1,5 +1,6 @@
 """Tests for run loop run_once workflow resolution."""
 
+from voidx.agent.domain.turn_context import TurnExecutionContext
 import asyncio
 import contextlib
 import sys
@@ -81,7 +82,7 @@ async def test_run_turn_clears_stale_completed_workflow_when_resolver_has_no_joi
     set_dock(test_dock)
     test_dock.begin_capture()
     try:
-        await graph.run_turn("检查检查，准备push吧")
+        await graph.run_turn("检查检查，准备push吧", context=TurnExecutionContext(thread_id=getattr(graph, "session_id", "") or "coding", session_id=getattr(graph, "session_id", "") or ""))
     finally:
         test_dock.deactivate()
         test_dock.reset()
@@ -130,7 +131,7 @@ async def test_run_turn_preadvances_workflow_from_resolver_workflow_start(tmp_pa
     set_dock(test_dock)
     test_dock.begin_capture()
     try:
-        await graph.run_turn("可以，先写一个 spec")
+        await graph.run_turn("可以，先写一个 spec", context=TurnExecutionContext(thread_id=getattr(graph, "session_id", "") or "coding", session_id=getattr(graph, "session_id", "") or ""))
     finally:
         test_dock.deactivate()
         test_dock.reset()

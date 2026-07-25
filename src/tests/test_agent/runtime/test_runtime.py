@@ -7,6 +7,7 @@ import pytest
 from voidx.agent.domain.events import AgentEvent
 from voidx.agent.domain.state import SessionRuntimeState
 from voidx.agent.domain.thread import AgentThread
+from voidx.agent.domain.turn_context import TurnExecutionContext
 from voidx.agent.runtime import AgentRuntime, TurnRequest
 
 
@@ -56,7 +57,7 @@ async def test_runtime_advances_turn_phase_around_engine_and_commit():
     runtime = AgentRuntime(type("Resources", (), {"sessions": sessions, "events": events, "turn_engine": engine})())
 
     result = await runtime.run_turn(
-        TurnRequest(thread=AgentThread(thread_id="t1"), user_text="hello")
+TurnRequest(thread=AgentThread(thread_id="t1"), user_text="hello", context=TurnExecutionContext(thread_id="t1", session_id=""))
     )
 
     assert observed["phase"].value == "running"
@@ -70,7 +71,11 @@ async def test_runtime_commits_one_result_and_returns_thread_identity():
     runtime = AgentRuntime(type("Resources", (), {"sessions": sessions, "events": events, "turn_engine": engine})())
 
     result = await runtime.run_turn(
-        TurnRequest(thread=AgentThread(thread_id="t1", session_id="s1"), user_text="hello")
+        TurnRequest(
+            thread=AgentThread(thread_id="t1", session_id="s1"),
+            user_text="hello",
+            context=TurnExecutionContext(thread_id="t1", session_id="s1"),
+        )
     )
 
     assert result.session_id == "s1"
@@ -87,7 +92,11 @@ async def test_runtime_loads_state_when_caller_does_not_supply_one():
     runtime = AgentRuntime(type("Resources", (), {"sessions": sessions, "events": events, "turn_engine": engine})())
 
     await runtime.run_turn(
-        TurnRequest(thread=AgentThread(thread_id="t1", session_id="s1"), user_text="hello")
+        TurnRequest(
+            thread=AgentThread(thread_id="t1", session_id="s1"),
+            user_text="hello",
+            context=TurnExecutionContext(thread_id="t1", session_id="s1"),
+        )
     )
 
     assert engine.runtime.compaction_summary == "from store"
@@ -104,6 +113,7 @@ async def test_runtime_prefers_caller_supplied_state_over_store():
         TurnRequest(
             thread=AgentThread(thread_id="t1", session_id="s1"),
             user_text="hello",
+            context=TurnExecutionContext(thread_id="t1", session_id="s1"),
             runtime=SessionRuntimeState(compaction_summary="from caller"),
         )
     )
@@ -125,7 +135,11 @@ async def test_runtime_resolves_lazy_identity_from_engine_session_id():
     runtime = AgentRuntime(type("Resources", (), {"sessions": sessions, "events": events, "turn_engine": engine})())
 
     result = await runtime.run_turn(
-        TurnRequest(thread=AgentThread(thread_id="t1"), user_text="hello")
+        TurnRequest(
+            thread=AgentThread(thread_id="t1"),
+            user_text="hello",
+            context=TurnExecutionContext(thread_id="t1", session_id=""),
+        )
     )
 
     assert result.session_id == "lazy-created"

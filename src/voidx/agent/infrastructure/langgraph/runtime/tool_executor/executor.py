@@ -86,7 +86,11 @@ class ToolExecutorAdapter:
         session_id = host._session.id if host._session else "default"
         plan_mode = state.get("plan_mode", False)
         interaction_mode = state.get("interaction_mode")
-        workspace = state.get("workspace", host._workspace)
+        from voidx.agent.infrastructure.langgraph.runtime.thread_context import current_thread_execution_state
+        thread_state = current_thread_execution_state()
+        if thread_state is None:
+            raise RuntimeError("tool execution requires bound TurnExecutionContext")
+        workspace = thread_state.workspace
         runtime_task_state = _task_state_for_state(
             state.get("task_state"),
             fallback=getattr(host, "_task_state", None),
@@ -175,9 +179,12 @@ class ToolExecutorAdapter:
 
         async def execute_one(tc):
             tid = tc["name"]
-            chat_tool_view = getattr(host, "_active_chat_tool_view", None)
-            if chat_tool_view is not None:
-                decision = chat_tool_view.check(tid)
+            targs = tc.get("args", {})
+            from voidx.agent.infrastructure.langgraph.runtime.thread_context import current_thread_execution_state
+            state_context = current_thread_execution_state()
+            tool_policy = getattr(state_context, "tool_policy", None) if state_context else None
+            if tool_policy is not None:
+                decision = tool_policy.check_tool_call(tid, targs)
                 if not decision.allowed:
                     return _ExecutedTool(
                         message=ToolMessage(
@@ -193,7 +200,6 @@ class ToolExecutorAdapter:
                         todo_state=None,
                         runtime_guard_eligible=False,
                     )
-            targs = tc.get("args", {})
             cid = tc.get("id", "")
             tool_event_id = cid or f"{tid}:{id(tc)}"
 

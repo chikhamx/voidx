@@ -5,7 +5,11 @@ from __future__ import annotations
 from contextlib import asynccontextmanager
 from contextvars import ContextVar
 from dataclasses import dataclass, field
-from typing import TYPE_CHECKING, AsyncIterator
+from typing import TYPE_CHECKING, Any, AsyncIterator
+
+from voidx.agent.domain.profile import RuntimeProfile
+from voidx.agent.domain.tool_policy import ToolPolicy
+from voidx.agent.domain.turn_context import TurnExecutionContext
 
 from voidx.agent.infrastructure.langgraph.runtime.runtime_guards import RuntimeGuardState
 from voidx.agent.infrastructure.langgraph.runtime.topology import session_date
@@ -33,6 +37,10 @@ class ThreadExecutionState:
     pending_summary: str | None = None
     session_date: str = ""
     runtime_guards: RuntimeGuardState = field(default_factory=RuntimeGuardState)
+    turn_context: TurnExecutionContext | None = None
+    runtime_profile: RuntimeProfile | None = None
+    tool_policy: ToolPolicy | None = None
+    workspace: str = ""
 
 
 _CURRENT_THREAD_EXECUTION_STATE: ContextVar[ThreadExecutionState | None] = ContextVar(
@@ -116,6 +124,10 @@ async def _state_for_context(host: Any, session_id: str) -> ThreadExecutionState
     key = _state_key(session_id, current_session)
     if key and key in states:
         return states[key]
+    if session_id and current_session is not None and current_session.id == session_id:
+        state = _state_from_host(host)
+        states[key] = state
+        return state
 
     if session_id:
         target_session = await get_session(session_id)
@@ -153,13 +165,25 @@ async def bind_thread_execution_context(
     *,
     session_id: str = "",
     thread_id: str = "",
+    turn_context: TurnExecutionContext | None = None,
 ) -> AsyncIterator[ThreadExecutionState]:
     """Bind host mutable state to one session for the duration of a turn."""
 
     state = await _state_for_context(host, session_id)
-    if session_id:
+    if session_id and not (
+        getattr(host, "_session", None) is not None
+        and getattr(host._session, "id", "") == session_id
+        and (
+            getattr(state.task_state, "current_goal", None) is not None
+            or bool(getattr(state, "compaction_summary", ""))
+        )
+    ):
         await _restore_state_runtime(host, state)
     state.thread_id = thread_id or session_id
+    state.turn_context = turn_context
+    state.runtime_profile = turn_context.runtime_profile if turn_context else None
+    state.tool_policy = turn_context.tool_policy if turn_context else None
+    state.workspace = turn_context.workspace if turn_context else ""
     state.runtime_guards = RuntimeGuardState()
     token = _CURRENT_THREAD_EXECUTION_STATE.set(state)
     identity = ExecutionIdentity(

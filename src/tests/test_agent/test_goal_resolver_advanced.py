@@ -1,3 +1,4 @@
+from voidx.agent.domain.turn_context import TurnExecutionContext
 import json
 import sys
 from pathlib import Path
@@ -113,7 +114,7 @@ async def test_run_turn_auto_mode_skips_goal_resolver_and_initializes_turn_state
         set_dock(test_dock)
         test_dock.begin_capture()
         try:
-            await graph.run_turn("review 这个文件")
+            await graph.run_turn("review 这个文件", context=TurnExecutionContext(thread_id=getattr(graph, "session_id", "") or "coding", session_id=getattr(graph, "session_id", "") or ""))
         finally:
             test_dock.deactivate()
             test_dock.reset()

@@ -14,8 +14,12 @@ from voidx.agent.attachments import build_user_message_payload, serialize_messag
 from voidx.agent.message_rows import messages_from_rows_incremental
 from voidx.agent.goal_resolver import resolve_goal_mode, resolve_plan_mode
 from voidx.agent.runtime_context import TaskIntent
+from voidx.agent.domain.turn_context import TurnExecutionContext
 from voidx.runtime.intent import InteractionMode
-from voidx.agent.infrastructure.langgraph.runtime.thread_context import bind_thread_execution_context
+from voidx.agent.infrastructure.langgraph.runtime.thread_context import (
+    bind_thread_execution_context,
+    current_thread_execution_state,
+)
 from voidx.agent.state import AgentState
 from voidx.runtime.task_state import (
     GoalResolution,
@@ -108,17 +112,17 @@ class TurnRunner:
         user_text: str,
         *,
         display_text: str | None = None,
-        context: Any | None = None,
+        context: TurnExecutionContext,
     ) -> None:
         host = self.host
-        context_session_id = str(getattr(context, "session_id", "") or "")
-        context_thread_id = str(getattr(context, "thread_id", "") or context_session_id)
-        host._active_chat_tool_view = getattr(context, "tool_view", None)
-        host._active_profile = getattr(context, "profile", None)
+        context_session_id = context.session_id
+        context_thread_id = context.thread_id
+
         async with bind_thread_execution_context(
             host,
             session_id=context_session_id,
             thread_id=context_thread_id,
+            turn_context=context,
         ):
             t_turn_start = time.monotonic()
             host._usage_stats.begin_turn()
@@ -234,6 +238,10 @@ class TurnRunner:
                         goal=None,
                         plan=None,
                     )
+                host._task_state = base_task_state
+                current_state = current_thread_execution_state()
+                if current_state is not None:
+                    current_state.task_state = base_task_state
                 turn_task_state = base_task_state.model_copy(deep=True)
                 turn_task_state.update_after_turn(
                     intent_resolution,
@@ -244,6 +252,10 @@ class TurnRunner:
                         else payload.title_text
                     ),
                 )
+                current_state = current_thread_execution_state()
+                if current_state is not None:
+                    current_state.task_state = turn_task_state
+                host._task_state = turn_task_state
                 reconciled_workflow_runs = reconcile_workflow_runs_for_turn(
                     goal_resolution=intent_resolution,
                     after_state=turn_task_state,
@@ -279,7 +291,7 @@ class TurnRunner:
 
                 initial: AgentState = {
                     "messages": msgs,
-                    "workspace": host._workspace,
+                    "workspace": current_thread_execution_state().workspace,
                     "tool_results": {},
                     "step_count": 0,
                     "should_continue": True,

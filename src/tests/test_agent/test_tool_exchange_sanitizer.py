@@ -13,16 +13,16 @@ def test_sanitize_failed_tool_exchanges_removes_failed_exchange_and_preserves_su
         AIMessage(
             content=[
                 {"type": "tool_use", "id": "call_error", "name": "read", "input": {}},
-                {"type": "tool_use", "id": "call_ok", "name": "grep", "input": {}},
+                {"type": "tool_use", "id": "call_ok", "name": "search", "input": {}},
             ],
             tool_calls=[
                 {"name": "read", "args": {}, "id": "call_error", "type": "tool_call"},
-                {"name": "grep", "args": {}, "id": "call_ok", "type": "tool_call"},
+                {"name": "search", "args": {}, "id": "call_ok", "type": "tool_call"},
             ],
             additional_kwargs={
                 "tool_calls": [
                     {"id": "call_error", "function": {"name": "read", "arguments": "{}"}},
-                    {"id": "call_ok", "function": {"name": "grep", "arguments": "{}"}},
+                    {"id": "call_ok", "function": {"name": "search", "arguments": "{}"}},
                 ]
             },
         ),
@@ -38,10 +38,10 @@ def test_sanitize_failed_tool_exchanges_removes_failed_exchange_and_preserves_su
     assert isinstance(replay_ai, AIMessage)
     assert [call["id"] for call in replay_ai.tool_calls] == ["call_ok"]
     assert replay_ai.content == [
-        {"type": "tool_use", "id": "call_ok", "name": "grep", "input": {}},
+        {"type": "tool_use", "id": "call_ok", "name": "search", "input": {}},
     ]
     assert replay_ai.additional_kwargs["tool_calls"] == [
-        {"id": "call_ok", "function": {"name": "grep", "arguments": "{}"}},
+        {"id": "call_ok", "function": {"name": "search", "arguments": "{}"}},
     ]
     assert isinstance(sanitized[2], ToolMessage)
     assert sanitized[2].tool_call_id == "call_ok"
@@ -130,7 +130,7 @@ def test_streaming_sanitize_applies_failed_exchange_cleanup():
         ToolMessage(content="no such file", tool_call_id="old_fail", status="error"),
         AIMessage(
             content="",
-            tool_calls=[{"name": "grep", "args": {}, "id": "cur_fail", "type": "tool_call"}],
+            tool_calls=[{"name": "search", "args": {}, "id": "cur_fail", "type": "tool_call"}],
         ),
         ToolMessage(content="no match", tool_call_id="cur_fail", status="error"),
     ]

@@ -1,5 +1,6 @@
 """Regression tests for core graph behavior."""
 
+from voidx.agent.domain.turn_context import TurnExecutionContext
 import asyncio
 import json
 import sys
@@ -168,7 +169,7 @@ async def test_run_turn_persists_and_restores_transcript_snapshot(tmp_path):
         set_dock(first_dock)
         first_dock.begin_capture()
         try:
-            await graph.run_turn("new question")
+            await graph.run_turn("new question", context=TurnExecutionContext(thread_id=getattr(graph, "session_id", "") or "coding", session_id=getattr(graph, "session_id", "") or ""))
         finally:
             first_dock.deactivate()
             first_dock.reset()
@@ -221,7 +222,7 @@ async def test_run_turn_emits_turn_completed_event(tmp_path):
         test_dock.begin_capture()
         ui_events.start(RecordingConsumer())
         try:
-            await graph.run_turn("hello")
+            await graph.run_turn("hello", context=TurnExecutionContext(thread_id=getattr(graph, "session_id", "") or "coding", session_id=getattr(graph, "session_id", "") or ""))
             await ui_events.drain()
         finally:
             await ui_events.stop()
@@ -262,7 +263,7 @@ async def test_run_turn_emits_turn_failed_event_on_exception(tmp_path):
         ui_events.start(RecordingConsumer())
         try:
             with pytest.raises(RuntimeError, match="provider failed"):
-                await graph.run_turn("hello")
+                await graph.run_turn("hello", context=TurnExecutionContext(thread_id=getattr(graph, "session_id", "") or "coding", session_id=getattr(graph, "session_id", "") or ""))
             await ui_events.drain()
         finally:
             await ui_events.stop()
@@ -301,7 +302,7 @@ async def test_run_turn_commits_event_todo_at_turn_end(tmp_path):
         test_dock.begin_capture()
         ui_events.start(DockEventConsumer(test_dock))
         try:
-            await graph.run_turn("track todo")
+            await graph.run_turn("track todo", context=TurnExecutionContext(thread_id=getattr(graph, "session_id", "") or "coding", session_id=getattr(graph, "session_id", "") or ""))
             await ui_events.drain()
         finally:
             await ui_events.stop()
@@ -350,7 +351,7 @@ async def test_run_turn_persists_todo_replay_rows(tmp_path):
         set_dock(test_dock)
         test_dock.begin_capture()
         try:
-            await graph.run_turn("track todo")
+            await graph.run_turn("track todo", context=TurnExecutionContext(thread_id=getattr(graph, "session_id", "") or "coding", session_id=getattr(graph, "session_id", "") or ""))
         finally:
             test_dock.deactivate()
             set_dock(None)
@@ -409,7 +410,7 @@ async def test_run_turn_persists_user_decision_tool_replay_rows(tmp_path):
         set_dock(test_dock)
         test_dock.begin_capture()
         try:
-            await graph.run_turn("need a decision")
+            await graph.run_turn("need a decision", context=TurnExecutionContext(thread_id=getattr(graph, "session_id", "") or "coding", session_id=getattr(graph, "session_id", "") or ""))
         finally:
             test_dock.deactivate()
             set_dock(None)

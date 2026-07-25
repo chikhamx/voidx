@@ -12,6 +12,7 @@ from voidx.agent.prompts import CHAT_PROFILE_SPEC
 from voidx.agent.domain.profile import RuntimeProfile
 from voidx.agent.runtime.contracts import TurnRequest
 from voidx.agent.domain.thread import AgentThread
+from voidx.agent.domain.turn_context import TurnExecutionContext
 
 
 def test_coding_prompt_policy_returns_none_for_all_overrides():
@@ -69,9 +70,10 @@ def test_turn_request_default_coding_profile_has_no_prompt_policy():
     request = TurnRequest(
         thread=AgentThread(thread_id="t", session_id="s"),
         user_text="hi",
+        context=TurnExecutionContext(thread_id="t", session_id="s"),
     )
 
-    assert request.profile.prompt_policy is None
+    assert request.context.runtime_profile.prompt_policy is None
 
 
 def test_prompt_policy_is_protocol():

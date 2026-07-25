@@ -366,13 +366,13 @@ async def test_subagent_requires_structured_contract_after_tool_work(tmp_path, m
             return self
 
         def ids(self):
-            return ["grep"]
+            return ["search"]
 
         def tools_for_llm(self):
             return [{
                 "type": "function",
                 "function": {
-                    "name": "grep",
+                    "name": "search",
                     "description": "fake grep",
                     "parameters": {"type": "object", "properties": {}},
                     "strict": True,
@@ -388,7 +388,7 @@ async def test_subagent_requires_structured_contract_after_tool_work(tmp_path, m
             return AIMessage(
                 content="",
                 tool_calls=[{
-                    "name": "grep",
+                    "name": "search",
                     "args": {"pattern": "TaskTracker"},
                     "id": "tc1",
                     "type": "tool_call",
@@ -447,13 +447,13 @@ async def test_subagent_contract_retry_exhausted_returns_contract_unsatisfied(tm
             return self
 
         def ids(self):
-            return ["grep"]
+            return ["search"]
 
         def tools_for_llm(self):
             return [{
                 "type": "function",
                 "function": {
-                    "name": "grep",
+                    "name": "search",
                     "description": "fake grep",
                     "parameters": {"type": "object", "properties": {}},
                     "strict": True,
@@ -469,7 +469,7 @@ async def test_subagent_contract_retry_exhausted_returns_contract_unsatisfied(tm
             return AIMessage(
                 content="",
                 tool_calls=[{
-                    "name": "grep",
+                    "name": "search",
                     "args": {"pattern": "TaskTracker"},
                     "id": "tc1",
                     "type": "tool_call",

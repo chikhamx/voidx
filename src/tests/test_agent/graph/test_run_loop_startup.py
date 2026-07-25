@@ -1,3 +1,4 @@
+from voidx.agent.application.coding_service import CODING_PROFILE
 """Tests for run loop startup, clear, resume, and cancel."""
 
 import asyncio
@@ -33,7 +34,7 @@ from voidx.workflow.runtime import WorkflowActivationSource, WorkflowRunState, W
 from voidx.tools.task_tracker import TaskTracker
 from voidx.ui.output.dock import BottomInputDock, set_dock
 from voidx.ui.output.events import DockEventConsumer, ui_events
-from voidx.ui.output.types import ThreadExecutionContext
+from voidx.agent.domain.turn_context import TurnExecutionContext
 from voidx.ui.protocol import UiCancelCommand, UiSubmitCommand
 from voidx.runtime.ui_port import runtime_ui_port
 from tests.test_agent.graph.run_loop_helpers import (
@@ -603,7 +604,15 @@ async def test_run_turn_cancel_deletes_pending_user_message(tmp_path):
     set_dock(test_dock)
     test_dock.begin_capture()
     try:
-        task = asyncio.create_task(execution.run_turn("hello world"))
+        task = asyncio.create_task(
+            execution.run_turn(
+                "hello world",
+                context=TurnExecutionContext(
+                    thread_id=execution.session_id or "coding",
+                    session_id=execution.session_id or "",
+                ),
+            )
+        )
         await asyncio.wait_for(started.wait(), timeout=1)
         task.cancel()
         with pytest.raises(asyncio.CancelledError):
@@ -670,7 +679,7 @@ async def test_handle_user_input_passes_execution_context_to_turn_service():
     keep_running, exit_message = await graph._handle_user_input(
         SimpleNamespace(),
         "hello from t2",
-        context=ThreadExecutionContext(thread_id="t2", session_id="t2"),
+        context=TurnExecutionContext(thread_id="t2", session_id="t2", runtime_profile=CODING_PROFILE),
     )
 
     assert keep_running is True
@@ -700,7 +709,7 @@ async def test_handle_user_input_delegates_coding_turn_to_coding_service():
     keep_running, exit_message = await graph._handle_user_input(
         SimpleNamespace(),
         "hello from t2",
-        context=ThreadExecutionContext(thread_id="t2", session_id="t2"),
+        context=TurnExecutionContext(thread_id="t2", session_id="t2", runtime_profile=CODING_PROFILE),
         thread_id="t2",
     )
 

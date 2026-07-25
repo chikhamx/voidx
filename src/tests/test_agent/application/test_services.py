@@ -12,6 +12,7 @@ from voidx.agent.application.tool_service import ToolService
 from types import SimpleNamespace
 
 from voidx.agent.domain.thread import AgentThread
+from voidx.agent.domain.turn_context import TurnExecutionContext
 from voidx.agent.runtime import AgentRuntime, TurnRequest
 from voidx.agent.domain.compaction import CompactionResult
 from voidx.agent.domain.events import AgentEventKind
@@ -151,6 +152,10 @@ def _request(session_id: str, text: str, **kwargs) -> TurnRequest:
     return TurnRequest(
         thread=AgentThread(thread_id=session_id or "coding", session_id=session_id or None),
         user_text=text,
+        context=TurnExecutionContext(
+            thread_id=session_id or "coding",
+            session_id=session_id or "",
+        ),
         **kwargs,
     )
 

@@ -2,10 +2,10 @@
 
 from __future__ import annotations
 
-from typing import Any
-
 from voidx.agent.domain.prompt_policy import CodingPromptPolicy
 from voidx.agent.domain.profile import RuntimeProfile
+from voidx.agent.domain.state import SessionRuntimeState
+from voidx.agent.domain.turn_context import TurnExecutionContext
 from voidx.agent.domain.thread import AgentThread
 from voidx.agent.runtime.contracts import TurnRequest, TurnResult
 
@@ -32,9 +32,17 @@ class CodingService:
         user_text: str,
         thread_id: str = "",
         session_id: str | None = None,
-        context: Any | None = None,
+        context: TurnExecutionContext | None = None,
     ) -> TurnResult:
-        resolved_thread_id = thread_id or session_id or "coding"
+        resolved_thread_id = thread_id or str(getattr(context, "thread_id", "") or "") or session_id or "coding"
+        expected_context = TurnExecutionContext(
+            thread_id=resolved_thread_id,
+            session_id=session_id or "",
+            runtime_profile=CODING_PROFILE,
+        )
+        if context is not None and context != expected_context:
+            raise ValueError("Coding turn context does not match thread, session, profile, or workspace")
+        execution_context = expected_context
         thread = AgentThread(
             thread_id=resolved_thread_id,
             session_id=session_id or None,
@@ -43,8 +51,7 @@ class CodingService:
             TurnRequest(
                 thread=thread,
                 user_text=user_text,
-                profile=CODING_PROFILE,
                 runtime=None,
-                context=context,
+                context=execution_context,
             )
         )

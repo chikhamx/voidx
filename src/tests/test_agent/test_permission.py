@@ -105,8 +105,8 @@ class TestFromConfig:
         ruleset = from_config({
             "*": "deny",
             "read": "allow",
-            "glob": "allow",
-            "grep": "allow",
+            "find": "allow",
+            "search": "allow",
         })
         assert evaluate("read", "x.py", ruleset).action == "allow"
         assert evaluate("write", "x.py", ruleset).action == "deny"

@@ -3,17 +3,14 @@
 from __future__ import annotations
 
 from pathlib import Path
-from typing import Any
-
 from voidx.agent.domain.chat_policy import ChatResourceScope, ChatToolView
 from voidx.agent.domain.prompt_policy import ChatPromptPolicy
 from voidx.agent.domain.profile import RuntimeProfile
 from voidx.agent.domain.state import SessionRuntimeState
+from voidx.agent.domain.turn_context import TurnExecutionContext
 from voidx.agent.domain.thread import AgentThread
 from voidx.agent.runtime.contracts import TurnRequest, TurnResult
 from voidx.memory.service import SessionInfo, create_session
-from voidx.runtime.ui import ThreadExecutionContext
-
 
 CHAT_PROFILE = RuntimeProfile(
     profile_id="chat", revision=1, name="Chat", prompt_policy=ChatPromptPolicy()
@@ -39,7 +36,7 @@ class ChatService:
         runtime_state: SessionRuntimeState | None = None,
         workspace: str | Path | None = None,
         display_text: str | None = None,
-        context: Any | None = None,
+        context: TurnExecutionContext | None = None,
     ) -> TurnResult:
         if thread is None:
             session = await self._create_session(workspace)
@@ -49,17 +46,20 @@ class ChatService:
 
         scope = ChatResourceScope(workspace=workspace)
         tool_view = ChatToolView.for_scope(scope)
-        execution_context = context or ThreadExecutionContext(
+        expected_context = TurnExecutionContext(
             thread_id=thread.thread_id,
             session_id=thread.session_id or "",
-            tool_view=tool_view,
-            profile=CHAT_PROFILE,
+            runtime_profile=CHAT_PROFILE,
+            workspace=str(workspace or ""),
+            tool_policy=tool_view,
         )
+        if context is not None and context != expected_context:
+            raise ValueError("Chat turn context does not match thread, workspace, profile, or tool policy")
+        execution_context = expected_context
         return await self._runtime.run_turn(
             TurnRequest(
                 thread=thread,
                 user_text=user_text,
-                profile=CHAT_PROFILE,
                 # Chat always supplies its input snapshot explicitly; the runtime
                 # treats the caller-provided state as authoritative.
                 runtime=runtime_state or SessionRuntimeState(),

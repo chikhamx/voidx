@@ -89,7 +89,7 @@ class FakeDsmlStreamingModel:
         yield AIMessageChunk(content=(
             '也必须在 commands 列表中注册:\n\n'
             '<｜｜DSML｜｜tool_calls>\n'
-            '<｜｜DSML｜｜invoke name="grep">\n'
+            '<｜｜DSML｜｜invoke name="search">\n'
             '<｜｜DSML｜｜parameter name="path" string="true">src/voidx/ui/commands.py</｜｜DSML｜｜parameter>\n'
             '<｜｜DSML｜｜parameter name="pattern" string="true">permissions</｜｜DSML｜｜parameter>\n'
             '</｜｜DSML｜｜invoke>\n'
@@ -104,7 +104,7 @@ class FakeMalformedDsmlStreamingModel:
     async def astream(self, messages):
         yield AIMessageChunk(content=(
             '<|||DSML||tool_calls>\n'
-            '<||DSML||invoke name="grep">\n'
+            '<||DSML||invoke name="search">\n'
             '<||DSML||parameter name="path" string="true">src/voidx/ui/commands.py</||DSML||parameter>\n'
             '</||DSML||invoke>\n'
             '</|||DSML||tool_calls>'

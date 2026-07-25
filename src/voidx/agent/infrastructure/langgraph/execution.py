@@ -155,6 +155,7 @@ from voidx.agent.infrastructure.langgraph.runtime.streaming import stream_llm as
 from voidx.agent.infrastructure.langgraph.runtime.subagent import run_subagent as _run_subagent
 from voidx.agent.loop import LoopManager
 from voidx.agent.infrastructure.langgraph.runtime.thread_context import current_thread_execution_state
+from voidx.agent.domain.turn_context import TurnExecutionContext
 from voidx.agent.infrastructure.langgraph.runtime.tool_executor import ToolExecutorAdapter
 from voidx.agent.infrastructure.langgraph.runtime.topology import build_graph, session_date
 from voidx.agent.infrastructure.langgraph.runtime.turn_metrics import TurnControlMetrics
@@ -805,8 +806,19 @@ class LangGraphExecution:
             prefer_direct=prefer_direct,
         )
 
-    async def run_synthetic_turn(self, text: str, *, display_text: str | None = None) -> None:
-        await self.run_turn(text, display_text=display_text)
+    async def run_synthetic_turn(
+        self,
+        text: str,
+        *,
+        display_text: str | None = None,
+        context: TurnExecutionContext | None = None,
+    ) -> None:
+        if context is None:
+            state = current_thread_execution_state()
+            if state is None or state.turn_context is None:
+                raise RuntimeError("synthetic turn requires bound TurnExecutionContext")
+            context = state.turn_context
+        await self.run_turn(text, display_text=display_text, context=context)
 
     async def clear_current_session(self) -> None:
         await self._loop_manager.cleanup()
@@ -1105,8 +1117,10 @@ class LangGraphExecution:
         user_text: str,
         *,
         display_text: str | None = None,
-        context: Any | None = None,
+        context: TurnExecutionContext,
     ) -> None:
+        if not isinstance(context, TurnExecutionContext):
+            raise TypeError("run_turn requires TurnExecutionContext")
         await _turn_runner_for(self).run_once(
             user_text,
             display_text=display_text,
@@ -1218,7 +1232,8 @@ class LangGraphExecution:
         if getattr(self, "_successful_dangerous_calls_session_id", None) != session_id:
             self._successful_dangerous_calls.clear()
             self._successful_dangerous_calls_session_id = session_id
-        chat_tool_view = getattr(self, "_active_chat_tool_view", None)
+        state_context = current_thread_execution_state()
+        chat_tool_view = getattr(state_context, "tool_policy", None) if state_context else None
         if chat_tool_view is not None:
             approved: list[dict] = []
             denied: list[tuple[dict, str]] = []
@@ -1416,7 +1431,8 @@ class LangGraphExecution:
         self._current_agent = get_agent(agent_id)
         rendered_persona_prompt = persona_prompt() if self._current_agent else ""
 
-        active_profile = getattr(self, "_active_profile", None)
+        state_context = current_thread_execution_state()
+        active_profile = getattr(state_context, "runtime_profile", None) if state_context else None
         prompt_policy = getattr(active_profile, "prompt_policy", None)
         persona_prompt_value = (
             prompt_policy.persona_prompt
@@ -1441,7 +1457,8 @@ class LangGraphExecution:
             if prompt_policy is not None and prompt_policy.base_system_spec is not None
             else CODING_PROFILE_SPEC
         )
-        active_tool_view = getattr(self, "_active_chat_tool_view", None)
+        state_context = current_thread_execution_state()
+        active_tool_view = getattr(state_context, "tool_policy", None) if state_context else None
         available_tools = (
             set(active_tool_view.bound_tool_ids)
             if active_tool_view is not None
@@ -1561,7 +1578,8 @@ class LangGraphExecution:
         )
         turn_state = str(state.get("turn_state") or "initial")
         tool_defs = self.tools.tools_for_llm()
-        chat_tool_view = getattr(self, "_active_chat_tool_view", None)
+        state_context = current_thread_execution_state()
+        chat_tool_view = getattr(state_context, "tool_policy", None) if state_context else None
         if chat_tool_view is not None:
             tool_defs = [tool for tool in tool_defs if chat_tool_view.allows(tool.get("name", ""))]
         turn_control_active = self._turn_control_enabled()

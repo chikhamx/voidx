@@ -5,22 +5,14 @@ from __future__ import annotations
 from dataclasses import dataclass, field
 from typing import Any, Awaitable, Callable, Protocol
 
+from voidx.agent.domain.turn_context import TurnExecutionContext
+
+# Compatibility alias for TUI integrations using the former name.
+ThreadExecutionContext = TurnExecutionContext
+
 from voidx.llm.usage import UsageStats
 
 SubmitHandler = Callable[..., Awaitable[bool]]
-
-
-@dataclass(frozen=True)
-class ThreadExecutionContext:
-    thread_id: str = ""
-    session_id: str = ""
-    # Optional profile-scoped tool view (e.g. chat). ``None`` keeps the default
-    # coding tool surface. The object is only inspected for a ``check``/``allows``
-    # policy interface by the tool execution boundary; it stays opaque here.
-    tool_view: Any | None = None
-    # Optional runtime profile. When set, the execution layer reads
-    # ``profile.prompt_policy`` to override prompt section injection.
-    profile: Any | None = None
 
 
 @dataclass
@@ -50,6 +42,8 @@ class UiStatus:
     mcp_config_path: str = ""
     code_ide: Callable[[], str] = field(default_factory=lambda: lambda: "trae")
     latest_action: Callable[[], str] = field(default_factory=lambda: lambda: "")
+    runtime_profile: Callable[[], str] = field(default_factory=lambda: lambda: "coding")
+
 
 
 class InteractionFrontend(Protocol):
@@ -84,14 +78,14 @@ class InteractionFrontend(Protocol):
         text: str,
         *,
         thread_id: str = "",
-        context: ThreadExecutionContext | None = None,
+        context: TurnExecutionContext | None = None,
     ) -> None: ...
 
     def cancel_external_input(
         self,
         *,
         thread_id: str = "",
-        context: ThreadExecutionContext | None = None,
+        context: TurnExecutionContext | None = None,
     ) -> None: ...
 
     def set_external_command_handler(self, handler: Any) -> None: ...

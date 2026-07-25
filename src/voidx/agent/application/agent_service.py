@@ -26,7 +26,8 @@ from voidx.runtime.ui import (
 from voidx.agent.application.workflow_utils import active_workflow_names
 from voidx.runtime.task_state import goal_label
 from voidx.logging.tool_log import log_tool_event
-from voidx.runtime.ui import ThreadExecutionContext
+from voidx.agent.domain.turn_context import TurnExecutionContext
+from voidx.agent.application.coding_service import CODING_PROFILE
 from voidx.agent.ports.execution_host import ExecutionHost
 from voidx.agent.domain.thread import AgentThread
 
@@ -259,7 +260,9 @@ class AgentService:
                 "latest_action",
                 "",
             ),
+            runtime_profile=lambda: getattr(self._execution.session, "runtime_profile", "coding") if self._execution.session else "coding",
         )
+
         if web_headless:
             app = GatewayHeadlessFrontend(status, COMMANDS)
         else:
@@ -363,15 +366,21 @@ class AgentService:
         async def handle_user_input(
             user_input: str,
             *,
-            context: ThreadExecutionContext | None = None,
+            context: TurnExecutionContext | None = None,
             thread_id: str = "",
         ) -> bool:
             nonlocal exit_message
-            context = context or ThreadExecutionContext(thread_id=thread_id, session_id=thread_id)
+            if context is None:
+                context = TurnExecutionContext(
+                    thread_id=thread_id,
+                    session_id=thread_id,
+                    runtime_profile=CODING_PROFILE,
+                )
             keep_running, next_exit_message = await self._handle_user_input(
                 app,
                 user_input,
                 context=context,
+                thread_id=thread_id,
             )
             if next_exit_message is not None:
                 exit_message = next_exit_message
@@ -397,18 +406,23 @@ class AgentService:
         if kind == "submit":
             text = command.text
             if text.strip().startswith("/guide "):
-                self.submit_guidance(
-                    text.strip().removeprefix("/guide").strip(),
-                    source="user",
-                )
+                self.submit_guidance(text.strip().removeprefix("/guide").strip(), source="user")
             else:
                 self._ensure_gateway_thread()
                 thread_id = str(getattr(command, "thread_id", "") or "")
-                context = ThreadExecutionContext(thread_id=thread_id, session_id=thread_id)
+                context = TurnExecutionContext(
+                    thread_id=thread_id,
+                    session_id=thread_id,
+                    runtime_profile=CODING_PROFILE,
+                )
                 app.submit_external_input(text, context=context)
         elif kind == "cancel":
             thread_id = str(getattr(command, "thread_id", "") or "")
-            context = ThreadExecutionContext(thread_id=thread_id, session_id=thread_id)
+            context = TurnExecutionContext(
+                thread_id=thread_id,
+                session_id=thread_id,
+                runtime_profile=CODING_PROFILE,
+            )
             app.cancel_external_input(context=context)
 
     def can_submit_guidance(self) -> bool:
@@ -439,7 +453,7 @@ class AgentService:
         app,
         user_input: str,
         *,
-        context: ThreadExecutionContext | None = None,
+        context: TurnExecutionContext | None = None,
         thread_id: str = "",
     ) -> tuple[bool, str | None]:
         user_input = user_input.strip()

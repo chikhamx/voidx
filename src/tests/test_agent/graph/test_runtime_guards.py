@@ -42,8 +42,8 @@ def test_failure_loop_guidance_escalates_and_blocks_same_call():
 
 def test_failure_loop_does_not_block_materially_different_args():
     guards = RuntimeGuardState()
-    original = {"name": "grep", "args": {"pattern": "old", "path": "src"}}
-    changed = {"name": "grep", "args": {"pattern": "new", "path": "src"}}
+    original = {"name": "search", "args": {"pattern": "old", "path": "src"}}
+    changed = {"name": "search", "args": {"pattern": "new", "path": "src"}}
     result = ToolResult(output="grep failed", metadata={"error": True, "error_kind": "unknown_error"})
     key = build_failure_key(original, result)
 

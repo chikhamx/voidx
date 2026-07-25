@@ -1,1 +1,31 @@
-"""Existing conftest."""
+"""Shared fixtures for direct graph-node tests."""
+
+import pytest
+
+from voidx.agent.domain.turn_context import TurnExecutionContext
+from voidx.agent.infrastructure.langgraph.runtime.thread_context import (
+    ThreadExecutionState,
+    _CURRENT_THREAD_EXECUTION_STATE,
+)
+
+
+@pytest.fixture(autouse=True)
+def bound_turn_execution_context(request, tmp_path):
+    source = request.path.read_text(encoding="utf-8")
+    if "_execute_tools(" not in source:
+        yield
+        return
+    state = ThreadExecutionState(
+        thread_id="test-thread",
+        turn_context=TurnExecutionContext(
+            thread_id="test-thread",
+            session_id="test-session",
+            workspace=str(tmp_path),
+        ),
+        workspace=str(tmp_path),
+    )
+    token = _CURRENT_THREAD_EXECUTION_STATE.set(state)
+    try:
+        yield
+    finally:
+        _CURRENT_THREAD_EXECUTION_STATE.reset(token)

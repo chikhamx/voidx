@@ -180,16 +180,16 @@ async def test_stream_llm_sanitizes_replayed_failed_tool_exchanges():
             AIMessage(
                 content=[
                     {"type": "tool_use", "id": "call_error", "name": "read", "input": {}},
-                    {"type": "tool_use", "id": "call_ok", "name": "grep", "input": {}},
+                    {"type": "tool_use", "id": "call_ok", "name": "search", "input": {}},
                 ],
                 tool_calls=[
                     {"name": "read", "args": {}, "id": "call_error", "type": "tool_call"},
-                    {"name": "grep", "args": {}, "id": "call_ok", "type": "tool_call"},
+                    {"name": "search", "args": {}, "id": "call_ok", "type": "tool_call"},
                 ],
                 additional_kwargs={
                     "tool_calls": [
                         {"id": "call_error", "function": {"name": "read", "arguments": "{}"}},
-                        {"id": "call_ok", "function": {"name": "grep", "arguments": "{}"}},
+                        {"id": "call_ok", "function": {"name": "search", "arguments": "{}"}},
                     ]
                 },
             ),
@@ -206,10 +206,10 @@ async def test_stream_llm_sanitizes_replayed_failed_tool_exchanges():
     assert isinstance(replay_ai, AIMessage)
     assert [call["id"] for call in replay_ai.tool_calls] == ["call_ok"]
     assert replay_ai.content == [
-        {"type": "tool_use", "id": "call_ok", "name": "grep", "input": {}},
+        {"type": "tool_use", "id": "call_ok", "name": "search", "input": {}},
     ]
     assert replay_ai.additional_kwargs["tool_calls"] == [
-        {"id": "call_ok", "function": {"name": "grep", "arguments": "{}"}},
+        {"id": "call_ok", "function": {"name": "search", "arguments": "{}"}},
     ]
     assert isinstance(model.messages[2], ToolMessage)
     assert model.messages[2].tool_call_id == "call_ok"
@@ -398,7 +398,7 @@ async def test_stream_llm_parses_dsml_text_tool_calls():
     assert msg.content == ""
     assert msg.tool_calls == [
         {
-            "name": "grep",
+            "name": "search",
             "args": {
                 "path": "src/voidx/ui/commands.py",
                 "pattern": "permissions",
@@ -500,7 +500,7 @@ async def test_stream_llm_strips_legacy_dsml_blocks_before_replay():
             AIMessage(content=(
                 '也必须在 commands 列表中注册:\n\n'
                 '<｜｜DSML｜｜tool_calls>\n'
-                '<｜｜DSML｜｜invoke name="grep">\n'
+                '<｜｜DSML｜｜invoke name="search">\n'
                 '<｜｜DSML｜｜parameter name="path" string="true">src/voidx/ui/commands.py</｜｜DSML｜｜parameter>\n'
                 '</｜｜DSML｜｜invoke>\n'
                 '</｜｜DSML｜｜tool_calls>'

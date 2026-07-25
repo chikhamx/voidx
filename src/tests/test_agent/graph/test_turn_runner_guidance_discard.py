@@ -13,6 +13,8 @@ from types import SimpleNamespace
 import pytest
 
 from voidx.agent.infrastructure.langgraph.runtime.turn_runner import TurnRunner
+from voidx.agent.domain.profile import RuntimeProfile
+from voidx.agent.domain.turn_context import TurnExecutionContext
 from voidx.llm.usage import UsageStats
 from voidx.ui.output.events.schema import GuidanceCommitted, WarningAppended
 
@@ -84,7 +86,7 @@ async def test_finally_block_discards_pending_guidance_quietly_with_events(monke
     runner = TurnRunner(host)
 
     with pytest.raises(RuntimeError, match="simulated early failure"):
-        await runner.run_once("hello")
+        await runner.run_once("hello", context=TurnExecutionContext(thread_id="test", session_id="", runtime_profile=RuntimeProfile(profile_id="coding", revision=1, name="Coding")))
 
     warning_events = [e for e in host._ui.events.emitted if isinstance(e, WarningAppended)]
     committed_events = [e for e in host._ui.events.emitted if isinstance(e, GuidanceCommitted)]
@@ -114,7 +116,7 @@ async def test_finally_block_discards_pending_guidance_quietly_without_events_mo
     runner = TurnRunner(host)
 
     with pytest.raises(RuntimeError, match="simulated early failure"):
-        await runner.run_once("hello")
+        await runner.run_once("hello", context=TurnExecutionContext(thread_id="test", session_id="", runtime_profile=RuntimeProfile(profile_id="coding", revision=1, name="Coding")))
 
     assert dock_messages == []
     assert clear_calls == [True]
@@ -132,7 +134,7 @@ async def test_finally_block_no_warning_when_no_pending_guidance():
     runner = TurnRunner(host)
 
     with pytest.raises(RuntimeError, match="simulated early failure"):
-        await runner.run_once("hello")
+        await runner.run_once("hello", context=TurnExecutionContext(thread_id="test", session_id="", runtime_profile=RuntimeProfile(profile_id="coding", revision=1, name="Coding")))
 
     warning_events = [e for e in host._ui.events.emitted if isinstance(e, WarningAppended)]
     assert len(warning_events) == 0

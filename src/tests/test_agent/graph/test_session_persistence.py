@@ -12,6 +12,7 @@ from langchain_core.messages import AIMessage, AIMessageChunk, HumanMessage, Rem
 from langgraph.graph.message import REMOVE_ALL_MESSAGES
 
 import voidx.memory.store as store
+from voidx.agent.domain.turn_context import TurnExecutionContext
 
 from voidx.agent.agents import (
     AgentDef,
@@ -28,6 +29,7 @@ from voidx.agent.infrastructure.langgraph.execution import AGENT_RESULT_PREVIEW_
 from voidx.agent.message_rows import RowMessageCacheEntry
 from voidx.agent.runtime_context import InteractionMode, RuntimeContextBuilder
 from voidx.config import Config, ParallelSubagentsConfig, Settings, UserProfile
+from voidx.agent.domain.profile import RuntimeProfile
 from voidx.llm.compaction import CompactionSelection
 from voidx.llm.instruction import InstructionService, WorkflowRuntimeContext
 from voidx.memory.session import (
@@ -158,7 +160,7 @@ async def test_session_persistence_saves_only_new_ai_and_tool_messages(tmp_path)
         set_dock(test_dock)
         test_dock.begin_capture()
         try:
-            await graph.run_turn("new question")
+            await graph.run_turn("new question", context=TurnExecutionContext(thread_id=getattr(graph, "session_id", "") or "coding", session_id=getattr(graph, "session_id", "") or ""))
         finally:
             test_dock.deactivate()
             test_dock.reset()
@@ -176,7 +178,7 @@ async def test_session_persistence_saves_only_new_ai_and_tool_messages(tmp_path)
 
 @pytest.mark.asyncio
 async def test_run_turn_uses_execution_context_session_id_for_persistence(tmp_path):
-    from voidx.ui.output.types import ThreadExecutionContext
+    from voidx.agent.domain.turn_context import TurnExecutionContext
 
     active = await create_session(workspace=str(tmp_path), title="Active")
     target = await create_session(workspace=str(tmp_path), title="Target")
@@ -195,7 +197,7 @@ async def test_run_turn_uses_execution_context_session_id_for_persistence(tmp_pa
         try:
             await graph.run_turn(
                 "target question",
-                context=ThreadExecutionContext(thread_id=target.id, session_id=target.id),
+                context=TurnExecutionContext(thread_id=target.id, session_id=target.id, runtime_profile=RuntimeProfile(profile_id="coding", revision=1, name="Coding")),
             )
         finally:
             test_dock.deactivate()
@@ -216,7 +218,7 @@ async def test_run_turn_uses_execution_context_session_id_for_persistence(tmp_pa
 async def test_run_turn_loads_execution_context_runtime_state(tmp_path):
     from voidx.agent.runtime_context import InteractionMode
     from voidx.memory.runtime_state import RuntimeStateSnapshot, save_runtime_state
-    from voidx.ui.output.types import ThreadExecutionContext
+    from voidx.agent.domain.turn_context import TurnExecutionContext
 
     active = await create_session(workspace=str(tmp_path), title="Active")
     target = await create_session(workspace=str(tmp_path), title="Target")
@@ -245,7 +247,7 @@ async def test_run_turn_loads_execution_context_runtime_state(tmp_path):
         try:
             await graph.run_turn(
                 "target question",
-                context=ThreadExecutionContext(thread_id=target.id, session_id=target.id),
+                context=TurnExecutionContext(thread_id=target.id, session_id=target.id, runtime_profile=RuntimeProfile(profile_id="coding", revision=1, name="Coding")),
             )
         finally:
             test_dock.deactivate()
@@ -290,7 +292,14 @@ async def test_run_turn_model_enabled_first_turn_syncs_default_task_state(tmp_pa
     set_dock(test_dock)
     test_dock.begin_capture()
     try:
-        await graph.run_turn("first question")
+        await graph.run_turn(
+            "first question",
+            context=TurnExecutionContext(
+                thread_id=getattr(graph, "session_id", "") or "coding",
+                session_id=getattr(graph, "session_id", "") or "",
+                workspace=str(tmp_path),
+            ),
+        )
     finally:
         test_dock.deactivate()
         test_dock.reset()
@@ -304,7 +313,7 @@ async def test_run_turn_model_enabled_first_turn_syncs_default_task_state(tmp_pa
 async def test_run_turn_model_enabled_borrowed_context_does_not_leak_task_state(tmp_path):
     from voidx.agent.runtime_context import InteractionMode
     from voidx.memory.runtime_state import RuntimeStateSnapshot, load_runtime_state, save_runtime_state
-    from voidx.ui.output.types import ThreadExecutionContext
+    from voidx.agent.domain.turn_context import TurnExecutionContext
 
     active = await create_session(workspace=str(tmp_path), title="Active")
     target = await create_session(workspace=str(tmp_path), title="Target")
@@ -337,7 +346,7 @@ async def test_run_turn_model_enabled_borrowed_context_does_not_leak_task_state(
         try:
             await graph.run_turn(
                 "target question",
-                context=ThreadExecutionContext(thread_id=target.id, session_id=target.id),
+                context=TurnExecutionContext(thread_id=target.id, session_id=target.id, runtime_profile=RuntimeProfile(profile_id="coding", revision=1, name="Coding")),
             )
         finally:
             test_dock.deactivate()
@@ -363,7 +372,7 @@ async def test_run_turn_model_enabled_borrowed_context_does_not_leak_task_state(
 async def test_run_turn_isolates_concurrent_execution_context_state(tmp_path):
     from voidx.agent.runtime_context import InteractionMode
     from voidx.memory.runtime_state import RuntimeStateSnapshot, save_runtime_state
-    from voidx.ui.output.types import ThreadExecutionContext
+    from voidx.agent.domain.turn_context import TurnExecutionContext
 
     session_a = await create_session(workspace=str(tmp_path), title="Session A")
     session_b = await create_session(workspace=str(tmp_path), title="Session B")
@@ -422,13 +431,13 @@ async def test_run_turn_isolates_concurrent_execution_context_state(tmp_path):
             task_a = asyncio.create_task(
                 graph.run_turn(
                     "question a",
-                    context=ThreadExecutionContext(thread_id=session_a.id, session_id=session_a.id),
+                    context=TurnExecutionContext(thread_id=session_a.id, session_id=session_a.id, runtime_profile=RuntimeProfile(profile_id="coding", revision=1, name="Coding")),
                 )
             )
             task_b = asyncio.create_task(
                 graph.run_turn(
                     "question b",
-                    context=ThreadExecutionContext(thread_id=session_b.id, session_id=session_b.id),
+                    context=TurnExecutionContext(thread_id=session_b.id, session_id=session_b.id, runtime_profile=RuntimeProfile(profile_id="coding", revision=1, name="Coding")),
                 )
             )
             await asyncio.wait_for(asyncio.gather(*(event.wait() for event in entered.values())), timeout=1)
@@ -475,7 +484,7 @@ async def test_runtime_context_overlay_not_persisted_to_user_history(tmp_path):
         set_dock(test_dock)
         test_dock.begin_capture()
         try:
-            await graph.run_turn("new question")
+            await graph.run_turn("new question", context=TurnExecutionContext(thread_id=getattr(graph, "session_id", "") or "coding", session_id=getattr(graph, "session_id", "") or ""))
         finally:
             test_dock.deactivate()
             test_dock.reset()
@@ -508,6 +517,7 @@ async def test_run_synthetic_turn_uses_display_text_without_losing_prompt(tmp_pa
         await graph.run_synthetic_turn(
             "full initialization prompt with unique model marker",
             display_text="/init",
+            context=TurnExecutionContext(thread_id=graph.session_id or "coding", session_id=graph.session_id or "", workspace=str(tmp_path)),
         )
         turn_header = test_dock.tree.root.children[0].header
         rendered = "\n".join(test_dock.tree.render(120))
@@ -554,7 +564,7 @@ async def test_run_turn_wraps_explicit_skill_refs_in_user_message(tmp_path):
         set_dock(test_dock)
         test_dock.begin_capture()
         try:
-            await graph.run_turn("Use $docs for this README")
+            await graph.run_turn("Use $docs for this README", context=TurnExecutionContext(thread_id=getattr(graph, "session_id", "") or "coding", session_id=getattr(graph, "session_id", "") or ""))
             turn_header = test_dock.tree.root.children[0].header
         finally:
             test_dock.deactivate()
@@ -601,7 +611,7 @@ async def test_run_turn_persists_clipboard_image_attachment_as_structured_user_m
         set_dock(test_dock)
         test_dock.begin_capture()
         try:
-            await graph.run_turn("describe [image-shot]")
+            await graph.run_turn("describe [image-shot]", context=TurnExecutionContext(thread_id=getattr(graph, "session_id", "") or "coding", session_id=getattr(graph, "session_id", "") or ""))
         finally:
             test_dock.deactivate()
             test_dock.reset()
@@ -625,7 +635,7 @@ async def test_run_turn_does_not_persist_compiled_overlay_to_user_history(tmp_pa
         set_dock(test_dock)
         test_dock.begin_capture()
         try:
-            await graph.run_turn("hello world")
+            await graph.run_turn("hello world", context=TurnExecutionContext(thread_id=getattr(graph, "session_id", "") or "coding", session_id=getattr(graph, "session_id", "") or ""))
         finally:
             test_dock.deactivate()
             test_dock.reset()

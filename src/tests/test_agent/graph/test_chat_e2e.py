@@ -20,7 +20,7 @@ from voidx.agent.runtime import AgentRuntime
 from voidx.config import Config
 from voidx.memory.session import create_session, delete_session, get_session, load_messages
 from voidx.ui.output.dock import BottomInputDock, set_dock
-from voidx.ui.output.types import ThreadExecutionContext
+from voidx.agent.domain.turn_context import TurnExecutionContext
 
 
 @pytest.fixture(autouse=True)
@@ -59,7 +59,9 @@ async def test_chat_turn_runs_in_isolated_session_with_tool_view(tmp_path):
 
         class FakeGraph:
             async def ainvoke(self, initial, _config):
-                captured["active_view"] = getattr(execution, "_active_chat_tool_view", None)
+                from voidx.agent.infrastructure.langgraph.runtime.thread_context import current_thread_execution_state
+                state = current_thread_execution_state()
+                captured["active_view"] = state.tool_policy if state else None
                 captured["session_id"] = execution._session.id
                 return {"messages": list(initial["messages"]) + [AIMessage(content="chat answer")]}
 
@@ -246,10 +248,10 @@ async def test_custom_profile_policy_selects_base_system_without_profile_branch(
             name="Research",
             prompt_policy=CustomPromptPolicy(),
         )
-        context = ThreadExecutionContext(
+        context = TurnExecutionContext(
             thread_id=coding.id,
             session_id=coding.id,
-            profile=profile,
+            runtime_profile=profile,
         )
 
         class FakeGraph:
@@ -304,7 +306,7 @@ async def test_coding_system_prompt_still_includes_persona_and_workflow(tmp_path
         set_dock(dock)
         dock.begin_capture()
         try:
-            await execution.run_turn("hello")
+            await execution.run_turn("hello", context=TurnExecutionContext(thread_id=getattr(execution, "session_id", "") or "coding", session_id=getattr(execution, "session_id", "") or ""))
         finally:
             dock.deactivate()
             dock.reset()

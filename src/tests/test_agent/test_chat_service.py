@@ -39,8 +39,8 @@ async def test_chat_service_creates_isolated_session_and_delegates(monkeypatch):
     assert result.session_id == "chat-session"
     assert result.thread.thread_id == "chat:chat-session"
     assert len(runtime.requests) == 1
-    assert runtime.requests[0].profile.profile_id == "chat"
-    assert runtime.requests[0].context.tool_view.scope.workspace is None
+    assert runtime.requests[0].context.runtime_profile.profile_id == "chat"
+    assert runtime.requests[0].context.tool_policy.scope.workspace is None
     assert runtime.requests[0].context.session_id == "chat-session"
     assert runtime.requests[0].context.thread_id == "chat:chat-session"
 
@@ -60,5 +60,5 @@ async def test_chat_service_preserves_existing_chat_thread():
 
     assert result.session_id == "existing"
     assert runtime.requests[0].thread.thread_id == "chat:existing"
-    assert runtime.requests[0].context.tool_view.scope.workspace == Path("/tmp/project").resolve()
+    assert runtime.requests[0].context.tool_policy.scope.workspace == Path("/tmp/project").resolve()
     assert runtime.requests[0].context.session_id == "existing"

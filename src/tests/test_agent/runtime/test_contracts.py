@@ -6,6 +6,7 @@ from pydantic import ValidationError
 from voidx.agent.domain.profile import RuntimeProfile
 from voidx.agent.domain.thread import AgentThread, LifecycleState
 from voidx.agent.domain.turn import TurnExecution
+from voidx.agent.domain.turn_context import TurnExecutionContext
 from voidx.agent.runtime.contracts import TurnRequest, TurnResult
 
 
@@ -32,7 +33,11 @@ def test_agent_thread_allows_lazy_session_identity():
 
 
 def test_turn_request_and_result_carry_final_session_identity():
-    request = TurnRequest(thread=AgentThread(thread_id="thread-1"), user_text="hello")
+    request = TurnRequest(
+        thread=AgentThread(thread_id="thread-1"),
+        user_text="hello",
+        context=TurnExecutionContext(thread_id="thread-1", session_id=""),
+    )
     result = TurnResult(
         thread=request.thread.model_copy(update={"session_id": "session-1"}),
         lifecycle=LifecycleState.COMPLETED,

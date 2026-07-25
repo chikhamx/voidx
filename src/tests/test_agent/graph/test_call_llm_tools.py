@@ -298,12 +298,12 @@ async def test_available_tool_ids_no_longer_filter_llm_tools(tmp_path, monkeypat
         "messages": [HumanMessage(content="hi")],
         "step_count": 0,
         "persona": "coordinate",
-        "available_tool_ids": ["read", "grep"],
+        "available_tool_ids": ["read", "search"],
     })
 
     tool_names = [tool["function"]["name"] for tool in model.bound_tools]
     assert "read" in tool_names
-    assert "grep" in tool_names
+    assert "search" in tool_names
     assert "mcp" in tool_names
 
 
@@ -337,7 +337,7 @@ async def test_call_llm_keeps_bound_tools_fixed_across_active_workflow_node(tmp_
 
     tool_names = [tool["function"]["name"] for tool in model.bound_tools]
     assert "read" in tool_names
-    assert "grep" in tool_names
+    assert "search" in tool_names
     assert "clarify" in tool_names
     assert "workflow" in tool_names
     assert ("bash" if os.name != "nt" else "powershell") in tool_names

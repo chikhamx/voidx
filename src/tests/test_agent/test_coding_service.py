@@ -3,7 +3,7 @@ import pytest
 from voidx.agent.application.coding_service import CODING_PROFILE, CodingService
 from voidx.agent.domain.thread import LifecycleState
 from voidx.agent.runtime.contracts import TurnResult
-from voidx.runtime.ui import ThreadExecutionContext
+from voidx.agent.domain.turn_context import TurnExecutionContext
 
 
 class FakeRuntime:
@@ -40,9 +40,9 @@ async def test_coding_service_delegates_default_coding_turn():
     assert request.user_text == "fix it"
     assert request.thread.thread_id == "coding"
     assert request.thread.session_id is None
-    assert request.profile == CODING_PROFILE
+    assert request.context.runtime_profile == CODING_PROFILE
     assert request.runtime is None
-    assert request.context is None
+    assert request.context is not None
 
 
 @pytest.mark.asyncio
@@ -59,7 +59,7 @@ async def test_coding_service_uses_existing_thread_and_session_ids():
     request = runtime.requests[0]
     assert request.thread.thread_id == "thread-1"
     assert request.thread.session_id == "session-1"
-    assert request.context is None
+    assert request.context is not None
 
 
 @pytest.mark.asyncio
@@ -75,19 +75,15 @@ async def test_coding_service_falls_back_to_session_id_for_thread_id():
 
 
 @pytest.mark.asyncio
-async def test_coding_service_passes_context_through_unchanged():
+async def test_coding_service_rejects_context_identity_mismatch():
     runtime = FakeRuntime()
     service = CodingService(runtime)
-    context = ThreadExecutionContext(thread_id="ui-thread", session_id="ui-session")
+    context = TurnExecutionContext(thread_id="ui-thread", session_id="ui-session", runtime_profile=CODING_PROFILE)
 
-    await service.run_turn(
-        user_text="continue",
-        thread_id="thread-1",
-        session_id="session-1",
-        context=context,
-    )
-
-    request = runtime.requests[0]
-    assert request.context is context
-    assert request.thread.thread_id == "thread-1"
-    assert request.thread.session_id == "session-1"
+    with pytest.raises(ValueError, match="context does not match"):
+        await service.run_turn(
+            user_text="continue",
+            thread_id="thread-1",
+            session_id="session-1",
+            context=context,
+        )

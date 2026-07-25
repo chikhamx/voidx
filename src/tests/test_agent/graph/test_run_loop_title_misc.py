@@ -1,5 +1,6 @@
 """Tests for run loop title generation, LSP, compaction, and misc."""
 
+from voidx.agent.domain.turn_context import TurnExecutionContext
 import asyncio
 import contextlib
 import sys
@@ -62,7 +63,7 @@ async def test_run_turn_keeps_default_title_when_resolver_falls_back_without_goa
     set_dock(test_dock)
     test_dock.begin_capture()
     try:
-        await graph.run_turn("review runtime")
+        await graph.run_turn("review runtime", context=TurnExecutionContext(thread_id=getattr(graph, "session_id", "") or "coding", session_id=getattr(graph, "session_id", "") or ""))
     finally:
         test_dock.deactivate()
         test_dock.reset()
@@ -103,7 +104,7 @@ async def test_smart_title_generation_failure_keeps_temporary_title(tmp_path, mo
     set_dock(test_dock)
     test_dock.begin_capture()
     try:
-        await graph.run_turn("分析一下启动流程")
+        await graph.run_turn("分析一下启动流程", context=TurnExecutionContext(thread_id=getattr(graph, "session_id", "") or "coding", session_id=getattr(graph, "session_id", "") or ""))
         task = graph._title_task
         if task is not None:
             await task

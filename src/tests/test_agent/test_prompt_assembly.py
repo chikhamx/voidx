@@ -104,6 +104,6 @@ def test_rule_pools_have_required_rule_metadata():
     assert STYLE_RULES["summarize_results"].requires == set()
     assert GLOBAL_RULE_SECTIONS["Workspace Rules"]["workspace_facts"].requires == {
         "read",
-        "glob",
-        "grep",
+        "find",
+        "search",
     }

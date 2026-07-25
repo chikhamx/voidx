@@ -1,5 +1,6 @@
 """Tests for run loop run_once workflow resolution."""
 
+from voidx.agent.domain.turn_context import TurnExecutionContext
 import asyncio
 import contextlib
 import sys
@@ -70,7 +71,7 @@ async def test_first_turn_without_goal_uses_temporary_session_title(tmp_path):
     set_dock(test_dock)
     test_dock.begin_capture()
     try:
-        await graph.run_turn("看看这个项目")
+        await graph.run_turn("看看这个项目", context=TurnExecutionContext(thread_id=getattr(graph, "session_id", "") or "coding", session_id=getattr(graph, "session_id", "") or ""))
         task = graph._title_task
         if task is not None:
             await task
@@ -109,7 +110,7 @@ async def test_run_turn_uses_general_fallback_when_structured_resolver_fails(tmp
     set_dock(test_dock)
     test_dock.begin_capture()
     try:
-        await graph.run_turn("review runtime context")
+        await graph.run_turn("review runtime context", context=TurnExecutionContext(thread_id=getattr(graph, "session_id", "") or "coding", session_id=getattr(graph, "session_id", "") or ""))
     finally:
         test_dock.deactivate()
         test_dock.reset()
@@ -158,7 +159,7 @@ async def test_run_turn_does_not_preadvance_workflow_without_resolver_join(tmp_p
     set_dock(test_dock)
     test_dock.begin_capture()
     try:
-        await graph.run_turn("可以，先写一个 spec")
+        await graph.run_turn("可以，先写一个 spec", context=TurnExecutionContext(thread_id=getattr(graph, "session_id", "") or "coding", session_id=getattr(graph, "session_id", "") or ""))
     finally:
         test_dock.deactivate()
         test_dock.reset()
