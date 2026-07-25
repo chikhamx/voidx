@@ -27,6 +27,7 @@ ModelProfileScope = Literal["local", "global"]
 GLOBAL_KEYS = frozenset({
     "mcpServers",
     "tavily_api_key",
+    "bocha_api_key",
     "codeIde",
     "userProfile",
     "web",

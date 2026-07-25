@@ -317,6 +317,7 @@ async def test_direct_websearch_timeout_uses_unified_metadata(tmp_path, monkeypa
 
     monkeypatch.setattr(WebSearchTool, "_get_tavily_key", lambda self: None)
     monkeypatch.setattr(websearch_module, "_search_duckduckgo", timeout_search)
+    monkeypatch.setattr(websearch_module, "_search_bing", timeout_search)
 
     result = await WebSearchTool(settings=Settings(str(tmp_path))).execute(
         {"query": "timeout"},
@@ -353,6 +354,11 @@ async def test_websearch_fallback_succeeds_when_first_backend_times_out(tmp_path
     monkeypatch.setattr(websearch_module, "_search_tavily", tavily_timeout)
     monkeypatch.setattr(websearch_module, "_search_duckduckgo", duckduckgo_success)
 
+    async def bing_empty(*args, **kwargs):
+        return []
+
+    monkeypatch.setattr(websearch_module, "_search_bing", bing_empty)
+
     result = await WebSearchTool(settings=Settings(str(tmp_path))).execute(
         {"query": "fallback test"},
         ToolContext(workspace=str(tmp_path)),
@@ -363,3 +369,113 @@ async def test_websearch_fallback_succeeds_when_first_backend_times_out(tmp_path
     assert result.metadata.get("backend") == "duckduckgo"
     assert result.metadata.get("results") == 1
     assert "Fallback Result" in result.output
+
+
+def test_bing_parser_extracts_algo_results():
+    html = '''
+    <li class="b_algo"><h2><a href="https://example.com/a">Title A</a></h2>
+      <div class="b_caption"><p>Snippet A</p></div></li>
+    <li class="b_algo"><h2><a href="https://example.org/b">Title B</a></h2>
+      <div class="b_caption"><p>Snippet B</p></div></li>
+    '''
+
+    assert websearch_module._parse_bing_html(html) == [
+        {"url": "https://example.com/a", "title": "Title A", "snippet": "Snippet A"},
+        {"url": "https://example.org/b", "title": "Title B", "snippet": "Snippet B"},
+    ]
+
+
+@pytest.mark.asyncio
+async def test_bocha_maps_web_pages_response(monkeypatch):
+    class FakeResponse:
+        def raise_for_status(self):
+            return None
+
+        def json(self):
+            return {"webPages": {"value": [{
+                "url": "https://example.com",
+                "name": "Example",
+                "snippet": "Summary",
+            }]}}
+
+    class FakeClient:
+        def __init__(self, *args, **kwargs):
+            pass
+
+        async def __aenter__(self):
+            return self
+
+        async def __aexit__(self, *args):
+            return None
+
+        async def post(self, url, *, json, headers):
+            assert url == "https://api.bochaai.com/v1/web-search"
+            assert headers["Authorization"] == "Bearer bocha-key"
+            assert json["query"] == "voidx"
+            return FakeResponse()
+
+    monkeypatch.setattr(websearch_module.httpx, "AsyncClient", FakeClient)
+
+    assert await websearch_module._search_bocha("voidx", "bocha-key") == [{
+        "url": "https://example.com",
+        "title": "Example",
+        "snippet": "Summary",
+    }]
+
+
+@pytest.mark.asyncio
+async def test_websearch_api_group_success_skips_crawler_group(tmp_path, monkeypatch):
+    WEB_TOOL_CACHE.clear()
+    settings = Settings(str(tmp_path))
+    tool = WebSearchTool(settings=settings)
+    monkeypatch.setattr(WebSearchTool, "_get_tavily_key", lambda self: "tavily-key")
+    monkeypatch.setattr(WebSearchTool, "_get_bocha_key", lambda self: "bocha-key")
+    low_priority_started = False
+
+    async def fake_tavily(*args, **kwargs):
+        return [{"title": "Tavily", "url": "https://tavily.example", "snippet": "ok"}]
+
+    async def fake_bocha(*args, **kwargs):
+        return []
+
+    async def fake_ddg(*args, **kwargs):
+        nonlocal low_priority_started
+        low_priority_started = True
+        return []
+
+    async def fake_bing(*args, **kwargs):
+        nonlocal low_priority_started
+        low_priority_started = True
+        return []
+
+    monkeypatch.setattr(websearch_module, "_search_tavily", fake_tavily)
+    monkeypatch.setattr(websearch_module, "_search_bocha", fake_bocha)
+    monkeypatch.setattr(websearch_module, "_search_duckduckgo", fake_ddg)
+    monkeypatch.setattr(websearch_module, "_search_bing", fake_bing)
+
+    result = await tool.execute({"query": "voidx"}, ToolContext(workspace=str(tmp_path)))
+
+    assert result.metadata["backend"] == "tavily"
+    assert low_priority_started is False
+
+
+@pytest.mark.asyncio
+async def test_websearch_aggregates_low_priority_backends(tmp_path, monkeypatch):
+    WEB_TOOL_CACHE.clear()
+    tool = WebSearchTool(settings=Settings(str(tmp_path)))
+    monkeypatch.setattr(WebSearchTool, "_get_tavily_key", lambda self: None)
+    monkeypatch.setattr(WebSearchTool, "_get_bocha_key", lambda self: None)
+
+    async def fake_ddg(*args, **kwargs):
+        return [{"title": "DDG", "url": "https://example.com", "snippet": "first"}]
+
+    async def fake_bing(*args, **kwargs):
+        return [{"title": "Bing", "url": "https://example.org", "snippet": "second"}]
+
+    monkeypatch.setattr(websearch_module, "_search_duckduckgo", fake_ddg)
+    monkeypatch.setattr(websearch_module, "_search_bing", fake_bing)
+
+    result = await tool.execute({"query": "voidx"}, ToolContext(workspace=str(tmp_path)))
+
+    assert result.metadata["backend"] == "duckduckgo+bing"
+    assert [item["title"] for item in result.metadata["items"]] == ["DDG", "Bing"]

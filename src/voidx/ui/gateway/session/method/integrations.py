@@ -146,6 +146,36 @@ class IntegrationMethods:
             summary["masked_value"] = "****" if len(key) <= 8 else f"{key[:3]}...{key[-4:]}"
         return summary
 
+    def _bocha_summary(self, settings) -> dict:
+        import os
+        key = settings.get_bocha_api_key()
+        env_key = os.environ.get("BOCHA_API_KEY")
+        data = settings._effective_data()
+        source = "env" if env_key else ("settings" if data.get("bocha_api_key") else "none")
+        summary = {"configured": bool(key), "source": source}
+        if key:
+            summary["masked_value"] = "****" if len(key) <= 8 else f"{key[:3]}...{key[-4:]}"
+        return summary
+
+    def _method_bocha_set(self, params: dict) -> dict:
+        api_key = params.get("api_key", "")
+        if not isinstance(api_key, str) or not api_key.strip():
+            raise MethodParamsError("api_key is required")
+        scope = params.get("scope", "global")
+        if scope not in {"global", "workspace"}:
+            raise MethodParamsError("invalid scope")
+        settings = self._settings_for_scope(scope, self._workspace or ".")
+        settings.set_bocha_api_key(api_key.strip())
+        return {"ok": True, "bocha": self._bocha_summary(settings)}
+
+    def _method_bocha_delete(self, params: dict) -> dict:
+        scope = params.get("scope", "global")
+        if scope not in {"global", "workspace"}:
+            raise MethodParamsError("invalid scope")
+        settings = self._settings_for_scope(scope, self._workspace or ".")
+        settings.delete_bocha_api_key()
+        return {"ok": True, "bocha": self._bocha_summary(settings)}
+
     def _method_tavily_set(self, params: dict) -> dict:
         api_key = params.get("api_key", "")
         if not isinstance(api_key, str) or not api_key.strip():

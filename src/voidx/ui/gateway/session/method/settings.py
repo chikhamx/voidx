@@ -264,6 +264,7 @@ class SettingsMethods:
                 "fetch": settings.get_web_tool_route("fetch").model_dump(),
             },
             "tavily": self._tavily_summary(settings),
+            "bocha": self._bocha_summary(settings),
             "skills": self._skill_summaries(settings),
             "lsp": await self._lsp_status_list(),
             "warnings": [],

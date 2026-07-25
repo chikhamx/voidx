@@ -494,3 +494,5 @@ class GatewaySession(
         m.register("lsp.restart", self._method_lsp_restart)
         m.register("tavily.set", self._method_tavily_set)
         m.register("tavily.delete", self._method_tavily_delete)
+        m.register("bocha.set", self._method_bocha_set)
+        m.register("bocha.delete", self._method_bocha_delete)

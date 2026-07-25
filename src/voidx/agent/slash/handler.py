@@ -266,7 +266,9 @@ class SlashHandler:
             "/code-ide": lambda: self._code_ide(args),
             "/list": self._list_sessions,
             "/session": lambda: self._session(args),
+            "/chat": lambda: self._chat_shortcut(args),
             "/resume": lambda: self._resume(inp),
+
             "/rollback": self._rollback,
             "/title": lambda: self._set_title(inp),
             "/mode": lambda: self._mode(args),
@@ -294,6 +296,7 @@ class SlashHandler:
             "/compact": compact,
             "/diff": self._show_diff,
             "/tavily": lambda: self._tavily(args),
+            "/bocha": lambda: self._bocha(args),
             "/model": lambda: self._dispatch_model(args),
             "/help": show_help,
         }
@@ -669,6 +672,38 @@ class SlashHandler:
             ui.print("[dim]Tavily API key deleted. Using DuckDuckGo fallback.[/dim]")
         else:
             ui.print("[dim]Usage: /tavily [set|delete|show][/dim]")
+    async def _bocha(self, args: str) -> None:
+        """Configure Bocha API key for web search."""
+        settings = self.host.settings
+        if not settings:
+            ui.error("No settings available.")
+            return
+        if not args or args.strip() == "show":
+            key = settings.get_bocha_api_key()
+            if key:
+                ui.print(f"Bocha API key: [cyan]{self._mask_key(key)}[/cyan]")
+            else:
+                ui.print("[dim]Bocha API key not configured. Using crawler fallbacks.[/dim]")
+            ui.print("[dim]Usage: /bocha set | /bocha delete[/dim]")
+            return
+        action = args.split(None, 1)[0].strip().lower()
+        if action == "set":
+            api_key = await self._prompt("Bocha API key", default="", secret=True)
+            if api_key is None:
+                ui.print("[dim]Cancelled.[/dim]")
+                return
+            api_key = api_key.strip()
+            if not api_key:
+                ui.error("Bocha API key is required.")
+                return
+            settings.set_bocha_api_key(api_key)
+            ui.print(f"Bocha API key saved: [cyan]{self._mask_key(api_key)}[/cyan]")
+        elif args.strip() == "delete":
+            settings.delete_bocha_api_key()
+            ui.print("[dim]Bocha API key deleted. Using crawler fallbacks.[/dim]")
+        else:
+            ui.print("[dim]Usage: /bocha [set|delete|show][/dim]")
+
 
     async def _sync_tavily_mcp_config(self, api_key: str) -> None:
         from voidx.config import McpServerConfig, WebToolRoute
@@ -902,8 +937,41 @@ class SlashHandler:
             await self._list_sessions()
             return
         if subcommand == "new":
-            await self._clear()
+            profile = None
+            rest_lower = rest.strip().lower()
+            if rest_lower in {"chat", "--chat", "-c"}:
+                profile = "chat"
+            elif rest_lower in {"coding", "--coding"}:
+                profile = "coding"
+
+            if profile is None:
+                await self._clear()
+                return
+
+            from voidx.memory.service import create_session
+            config = getattr(self.host, "config", None)
+            model_info = getattr(config, "model", None) if config else None
+            provider = getattr(model_info, "provider", "anthropic") if model_info else "anthropic"
+            model = getattr(model_info, "model", "claude-3-5-sonnet") if model_info else "claude-3-5-sonnet"
+            workspace = getattr(self.host, "workspace", "")
+
+            session = await create_session(
+                workspace=workspace,
+                provider=provider,
+                model=model,
+                profile=profile,
+                title="Chat session" if profile == "chat" else "New session",
+            )
+
+            if hasattr(self.host, "resume_session"):
+                await self.host.resume_session(session)
+            session_tracker.clear()
+            active_dock = get_dock()
+            if active_dock is not None:
+                active_dock.reset()
+            await self._show_startup(prefer_direct=True)
             return
+
         if subcommand == "resume":
             await self._resume(f"/resume {rest}".rstrip())
             return
@@ -911,6 +979,10 @@ class SlashHandler:
             await self._session_del(rest)
             return
         ui.print("[dim]Usage: /session list|new|resume|del[/dim]")
+
+    async def _chat_shortcut(self, args: str) -> None:
+        await self._session(f"new chat {args}".strip())
+
 
     async def _session_del(self, args: str) -> None:
         parts = args.split()

@@ -106,6 +106,7 @@ REQUIRES_ARGS = {
     "/session resume",
     "/resume",
     "/tavily set",
+    "/bocha set",
     "/title",
     "/tone",
 }

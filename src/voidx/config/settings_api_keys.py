@@ -43,3 +43,19 @@ class SettingsApiKeyMixin:
 
     def delete_tavily_api_key(self) -> None:
         self._pop_setting("tavily_api_key")
+
+    # ── bocha API key ──────────────────────────────────────────────────────
+
+    def get_bocha_api_key(self) -> str | None:
+        """Get Bocha API key. Env var BOCHA_API_KEY takes priority over config file."""
+        import os
+        env_key = os.environ.get("BOCHA_API_KEY")
+        if env_key:
+            return env_key
+        return self._effective_data().get("bocha_api_key") or None
+
+    def set_bocha_api_key(self, api_key: str) -> None:
+        self._set_setting("bocha_api_key", api_key)
+
+    def delete_bocha_api_key(self) -> None:
+        self._pop_setting("bocha_api_key")
