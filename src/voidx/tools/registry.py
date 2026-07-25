@@ -34,6 +34,8 @@ class ToolDef(BaseModel):
 class ToolRegistry:
     """Manages all available tools. No dynamic discovery — everything explicit."""
 
+    _HIDDEN_FROM_LLM = frozenset({"git"})
+
     def __init__(self, settings=None, tracker=None, loop_manager=None) -> None:
         self._tools: dict[str, ToolDef] = {}
         self._instances: dict[str, object] = {}
@@ -132,6 +134,8 @@ class ToolRegistry:
         """Generate OpenAI/Anthropic-compatible tool definitions."""
         result = []
         for t in self._tools.values():
+            if t.id in self._HIDDEN_FROM_LLM:
+                continue
             # The MCP gateway passes through third-party arguments, and legacy
             # wrappers may carry non-strict external schemas. Keep MCP non-strict.
             is_mcp = t.id == "mcp" or t.id.startswith("mcp__")

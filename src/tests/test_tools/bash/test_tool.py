@@ -97,14 +97,15 @@ class TestBash:
             assert not (tmp_path / "late.txt").exists()
 
     @pytest.mark.asyncio
-    async def test_bash_git_hint_metadata_without_registry(self, tmp_path):
+    async def test_bash_git_runs_without_registry(self, tmp_path):
         ctx = ToolContext(workspace=str(tmp_path))
         r = ToolRegistry()
         result = await r.execute_tool("bash", {"command": "git status"}, ctx)
-        hint = result.metadata["route_hint"]
-        assert hint["tool_id"] == "git"
-        assert hint["command"] == "git status"
-        assert result.metadata["skipped"] is True
+
+        assert result.metadata.get("skipped") is not True
+        assert "not a git repository" in result.output.lower()
+        assert "route_hint" not in result.metadata
+        assert "routed_from" not in result.metadata
 
     @pytest.mark.asyncio
     async def test_bash_auto_routes_git_when_registry_available(self, tmp_path):
@@ -118,16 +119,17 @@ class TestBash:
         assert result.metadata["routed_from"] == "bash"
 
     @pytest.mark.asyncio
-    async def test_bash_git_filtered_registry_falls_back_to_hint(self, tmp_path):
+    async def test_bash_git_filtered_registry_runs_as_bash(self, tmp_path):
         registry = ToolRegistry().filtered_copy({"bash"})
         ctx = ToolContext(workspace=str(tmp_path), tool_registry=registry)
         result = await registry.execute_tool("bash", {"command": "git status"}, ctx)
 
-        assert result.metadata["skipped"] is True
-        assert result.metadata["route_hint"]["tool_id"] == "git"
+        assert result.metadata.get("skipped") is not True
+        assert "not a git repository" in result.output.lower()
+        assert "route_hint" not in result.metadata
 
     @pytest.mark.asyncio
-    async def test_bash_git_config_global_option_falls_back_to_hint(self, tmp_path):
+    async def test_bash_git_config_global_option_runs_as_bash(self, tmp_path):
         ctx = ToolContext(workspace=str(tmp_path), tool_registry=ToolRegistry())
         result = await ctx.tool_registry.execute_tool(
             "bash",
@@ -135,8 +137,9 @@ class TestBash:
             ctx,
         )
 
-        assert result.metadata["skipped"] is True
-        assert result.metadata["route_hint"]["tool_id"] == "git"
+        assert result.metadata.get("skipped") is not True
+        assert "not a git repository" in result.output.lower()
+        assert "route_hint" not in result.metadata
 
     @pytest.mark.asyncio
     async def test_bash_auto_route_git_reset_hard_still_denied_by_git_tool(self, tmp_path):

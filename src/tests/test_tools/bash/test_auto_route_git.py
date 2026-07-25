@@ -199,16 +199,16 @@ class TestBashNonGitUnaffected:
 
 
 class TestBashHintFallbackNoRegistry:
-    """When ctx.tool_registry is None, falls back to hint-only result."""
+    """When ctx.tool_registry is None, git runs as a raw bash command."""
 
     @pytest.mark.asyncio
-    async def test_no_registry_returns_hint(self, tmp_path):
+    async def test_no_registry_runs_as_bash(self, tmp_path):
         r = _make_registry()
         ctx = _make_ctx(tmp_path, registry=None)
         result = await r.execute_tool("bash", {"command": "git status"}, ctx)
 
-        assert result.metadata.get("skipped") is True
-        assert result.metadata.get("route_hint", {}).get("tool_id") == "git"
+        assert result.metadata.get("skipped") is not True
+        assert "not a git repository" in result.output.lower()
         assert "routed_from" not in result.metadata
 
 
@@ -395,18 +395,18 @@ class TestRouteHintToolArgs:
 
 
 class TestBashGitConfigFlagFallback:
-    """git -c key=value falls back to hint-only (tool_args=None)."""
+    """git -c key=value falls back to raw bash execution."""
 
     @pytest.mark.asyncio
-    async def test_git_with_c_flag_returns_hint(self, tmp_path):
+    async def test_git_with_c_flag_runs_as_bash(self, tmp_path):
         r = _make_registry()
         ctx = _make_ctx(tmp_path, r)
         result = await r.execute_tool(
             "bash", {"command": "git -c core.autocrlf=true status"}, ctx
         )
 
-        assert result.metadata.get("skipped") is True
-        assert result.metadata.get("route_hint", {}).get("tool_id") == "git"
+        assert result.metadata.get("skipped") is not True
+        assert "not a git repository" in result.output.lower()
         assert "routed_from" not in result.metadata
 
 
@@ -436,17 +436,17 @@ class TestBashGitGlobalDirNoHint:
 
 
 class TestBashFilteredRegistryFallback:
-    """When registry excludes git tool, falls back to hint-only result."""
+    """When registry excludes git, git runs as a raw bash command."""
 
     @pytest.mark.asyncio
-    async def test_filtered_registry_returns_hint(self, tmp_path):
+    async def test_filtered_registry_runs_as_bash(self, tmp_path):
         r = _make_registry()
         r.filter_tools({"bash"})
         ctx = _make_ctx(tmp_path, r)
         result = await r.execute_tool("bash", {"command": "git status"}, ctx)
 
-        assert result.metadata.get("skipped") is True
-        assert result.metadata.get("route_hint", {}).get("tool_id") == "git"
+        assert result.metadata.get("skipped") is not True
+        assert "not a git repository" in result.output.lower()
         assert "routed_from" not in result.metadata
 
 
@@ -490,3 +490,41 @@ class TestPowerShellGitAutoRoute:
         ctx = _make_ctx(tmp_path, r)
         result = await r.execute_tool("powershell", {"command": "git status"}, ctx)
         assert result.metadata.get("routed_from") == "powershell"
+
+
+# ---------------------------------------------------------------------------
+# Hidden git schema and bash fallback behavior
+# ---------------------------------------------------------------------------
+
+
+class TestBashGitHiddenFromLlm:
+    def test_git_is_hidden_from_llm_but_registered_for_routing(self):
+        r = _make_registry()
+        names = [tool["function"]["name"] for tool in r.tools_for_llm()]
+
+        assert "git" not in names
+        assert r.get("git") is not None
+
+    @pytest.mark.asyncio
+    async def test_git_hint_without_registry_falls_back_to_bash(self, tmp_path):
+        r = _make_registry()
+        ctx = _make_ctx(tmp_path, registry=None)
+
+        result = await r.execute_tool("bash", {"command": "git status"}, ctx)
+
+        assert result.metadata.get("skipped") is not True
+        assert "not a git repository" in result.output.lower()
+        assert "routed_from" not in result.metadata
+
+    @pytest.mark.asyncio
+    async def test_git_config_hint_falls_back_to_bash(self, tmp_path):
+        r = _make_registry()
+        ctx = _make_ctx(tmp_path, r)
+
+        result = await r.execute_tool(
+            "bash", {"command": "git -c advice.detachedHead=false status"}, ctx
+        )
+
+        assert result.metadata.get("skipped") is not True
+        assert "not a git repository" in result.output.lower()
+        assert "routed_from" not in result.metadata

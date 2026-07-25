@@ -71,7 +71,7 @@ class TestToolRegistry:
     def test_tools_for_llm(self):
         r = ToolRegistry()
         tools = r.tools_for_llm()
-        assert len(tools) == len(r.ids())
+        assert len(tools) == len(r.ids()) - 1
         assert len(tools) >= 10
         names = [t["function"]["name"] for t in tools]
         assert "manage" in names

@@ -59,11 +59,14 @@ class BashTool(BaseTool):
             return sed_routed
 
         hint = try_hint(inp.command)
+        git_fallback = False
         if hint is not None:
             routed = await maybe_route_hint(inp.command, hint, ctx, "bash")
             if routed is not None:
                 return routed
-            return build_hint_result(inp.command, hint, "Bash")
+            if hint.tool_id != "git":
+                return build_hint_result(inp.command, hint, "Bash")
+            git_fallback = True
         access_grants = ctx.get_access_grants() if ctx.get_access_grants is not None else AccessGrants.from_parts(
             readable_files=ctx.sandbox_readable_files,
             readable_dirs=ctx.sandbox_readable_dirs,
@@ -71,7 +74,7 @@ class BashTool(BaseTool):
             writable_dirs=ctx.sandbox_writable_dirs,
         )
         shell_blocked = None
-        if not approved_shell_risk:
+        if not approved_shell_risk and not git_fallback:
             _, shell_blocked = shell_sandbox_precheck(
                 {"command": inp.command},
                 PermissionContext(
