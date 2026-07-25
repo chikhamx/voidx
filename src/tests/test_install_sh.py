@@ -333,7 +333,7 @@ class TestInstallPs1PairTransaction:
 
         assert "function Verify-ManagedInstall" in src
         assert "from importlib.metadata import PackageNotFoundError, version" in src
-        assert '(("voidx", "voidx"), ("voidx-cli", "voidx_cli"))' in src
+        assert "(('voidx', 'voidx'), ('voidx-cli', 'voidx_cli'))" in src
         assert "importlib.import_module(module)" in src
         assert "os.getcwd()" in src
         assert "sys.path =" in src

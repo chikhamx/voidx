@@ -243,25 +243,26 @@ sys.path = [
 
 expected = sys.argv[1]
 failures = []
-for distribution, module in (("voidx", "voidx"), ("voidx-cli", "voidx_cli")):
+for distribution, module in (('voidx', 'voidx'), ('voidx-cli', 'voidx_cli')):
     try:
         installed = version(distribution)
     except PackageNotFoundError:
         installed = None
     except Exception as exc:
         installed = None
-        failures.append(f"{distribution} metadata failed: {exc}")
+        failures.append(f'{distribution} metadata failed: {exc}')
     if installed != expected:
+        inst_str = installed if installed else 'missing'
         failures.append(
-            f"{distribution} version is {installed or 'missing'}, expected {expected}"
+            f'{distribution} version is {inst_str}, expected {expected}'
         )
     try:
         importlib.import_module(module)
     except Exception as exc:
-        failures.append(f"{module} import failed: {exc}")
+        failures.append(f'{module} import failed: {exc}')
 
 if failures:
-    print("; ".join(failures), file=sys.stderr)
+    print('; '.join(failures), file=sys.stderr)
     raise SystemExit(1)
 '@
 
