@@ -19,7 +19,7 @@ from voidx.tools.base import ToolContext, ToolResult, BaseTool, UserInteraction,
 from voidx.tools.file import FileReadInput, FileReadTool
 from voidx.tools.file.state import save_file_version
 import voidx.tools.file.state as file_state
-from voidx.tools.search import GlobInput, GrepInput
+from voidx.tools.search import FindInput, SearchInput
 from voidx.tools.bash import BashInput
 from voidx.tools.bash.tool import BashTool
 from voidx.tools.agent import AgentInput, AgentTool
@@ -55,6 +55,17 @@ class TestBash:
         assert "hello" in result.display
         assert result.summary == ""
         assert result.metadata["exit_code"] == 0
+
+    @pytest.mark.asyncio
+    async def test_bash_reports_empty_workspace_without_launching(self):
+        result = await BashTool().execute(
+            {"command": "echo hello"},
+            ToolContext(workspace="", permission_mode="full_access"),
+        )
+
+        assert result.metadata["error"] is True
+        assert result.metadata["error_kind"] == "invalid_workspace"
+        assert "workspace is not set" in result.output
 
     @pytest.mark.asyncio
     async def test_bash_blocks_workspace_escape_in_tool_layer(self, tmp_path):
