@@ -13,6 +13,10 @@ class RuntimeProfile(BaseModel):
     profile_id: str
     revision: int = Field(ge=1)
     name: str
+    system_prompt: str = ""
+    constraints: tuple[str, ...] = ()
+    persona: str | None = None
+    continuation_policy: dict[str, Any] = Field(default_factory=dict)
     # Optional prompt injection policy. ``None`` (default) keeps the standard
     # coding prompt sections. Chat and future profiles supply a PromptPolicy
     # implementation to suppress or override sections.

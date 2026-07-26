@@ -30,11 +30,14 @@ def coding_turn_context_for_queue(
 ) -> TurnExecutionContext:
     from voidx.agent.application.coding_service import CODING_PROFILE
 
-    status_session_id = _status_value(status, "session_id")
-    context_session_id = str(getattr(context, "session_id", "") or "")
-    resolved_session_id = str(context_session_id or status_session_id)
-    resolved_thread_id = str(thread_id or getattr(context, "thread_id", "") or resolved_session_id or "coding")
-    resolved_workspace = str(getattr(context, "workspace", "") or _status_value(status, "workspace"))
+    if context is not None:
+        resolved_session_id = context.session_id
+        resolved_thread_id = str(thread_id or context.thread_id or resolved_session_id or "coding")
+        resolved_workspace = context.workspace
+    else:
+        resolved_session_id = _status_value(status, "session_id")
+        resolved_thread_id = str(thread_id or resolved_session_id or "coding")
+        resolved_workspace = _status_value(status, "workspace")
     profile = getattr(context, "runtime_profile", CODING_PROFILE)
     if getattr(profile, "profile_id", "coding") == "coding":
         profile = CODING_PROFILE

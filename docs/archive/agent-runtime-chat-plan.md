@@ -1,5 +1,7 @@
 # Chat Runtime Implementation Spec
 
+> **Status: Done** — Archived on 2026-07-25.
+
 ## Goal
 
 Provide an isolated Chat turn path that reuses `AgentRuntime.run_turn()` while keeping coding tools, permissions, sessions, and runtime state behavior unchanged.

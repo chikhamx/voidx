@@ -74,6 +74,7 @@ def test_only_facade_and_engine_adapter_call_run_turn() -> None:
     - ``AgentRuntime.run_turn`` delegating to ``turn_engine.run`` (facade internal).
     - application services calling ``self._runtime.run_turn``.
     - ``LangGraphTurnEngine`` calling ``self._execution.run_turn``.
+    - runtime-backed autonomous dispatchers/schedulers invoking injected runners.
     """
     allowed_files = {
         "runtime/runtime.py",
@@ -81,7 +82,8 @@ def test_only_facade_and_engine_adapter_call_run_turn() -> None:
         "application/chat_service.py",
         "application/coding_service.py",
         "infrastructure/langgraph/adapter.py",
-        # infrastructure-internal self delegation (run_synthetic_turn -> run_turn)
+        "runtime/dispatcher.py",
+        "loop/scheduler.py",
         "infrastructure/langgraph/execution.py",
     }
     offenders = []
@@ -91,4 +93,14 @@ def test_only_facade_and_engine_adapter_call_run_turn() -> None:
             continue
         if _attribute_calls(path, "run_turn") > 0:
             offenders.append(rel)
+    assert offenders == []
+
+
+def test_codebase_does_not_call_synthetic_turn() -> None:
+    offenders = []
+    for root in (AGENT_ROOT, AGENT_ROOT.parents[1] / "tests" / "test_agent"):
+        for path in root.rglob("*.py"):
+            rel = path.relative_to(AGENT_ROOT).as_posix() if path.is_relative_to(AGENT_ROOT) else f"../tests/test_agent/{path.relative_to(AGENT_ROOT.parents[1] / 'tests' / 'test_agent').as_posix()}"
+            if _attribute_calls(path, "run_synthetic_turn") > 0:
+                offenders.append(rel)
     assert offenders == []

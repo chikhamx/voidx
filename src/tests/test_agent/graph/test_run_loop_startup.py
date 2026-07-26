@@ -1,4 +1,3 @@
-from voidx.agent.application.coding_service import CODING_PROFILE
 """Tests for run loop startup, clear, resume, and cancel."""
 
 import asyncio
@@ -15,6 +14,7 @@ import voidx.memory.store as store
 from voidx.agent.slash import SlashHandler
 from voidx.agent.infrastructure.langgraph.execution import LangGraphExecution
 from voidx.agent.infrastructure.langgraph.runtime.compaction_coordinator import PreflightCompactionResult
+from voidx.agent.application.coding_service import CODING_PROFILE, CodingService
 from voidx.agent.application.agent_service import AgentService
 from voidx.agent.infrastructure.langgraph.execution import _sanitize_generated_title
 from voidx.agent.runtime_context import InteractionMode, TaskIntent
@@ -126,6 +126,47 @@ async def test_quiet_slash_command_dispatches_without_turn(monkeypatch):
 
     assert dispatched == ["/model reasoning"]
 
+
+@pytest.mark.asyncio
+async def test_run_loop_default_context_includes_workspace(monkeypatch, tmp_path):
+    workspace = str(tmp_path)
+
+    class SubmitTui:
+        def __init__(self, status, commands):
+            self.status = status
+            self.commands = commands
+            self.command_handler = None
+
+        async def run(self, on_submit):
+            keep_running = await on_submit("hello from tui")
+            assert keep_running is True
+
+        def set_external_command_handler(self, handler):
+            self.command_handler = handler
+
+    monkeypatch.setattr("voidx.agent.application.agent_service.create_frontend", SubmitTui)
+    monkeypatch.setattr(runtime_ui_port, "show_startup", lambda **_: None)
+
+    graph = _graph(workspace=workspace)
+    _disable_external_managers(graph)
+
+    class FakeRuntime:
+        def __init__(self):
+            self.requests = []
+
+        async def run_turn(self, request):
+            self.requests.append(request)
+
+    runtime = FakeRuntime()
+    graph._coding_service = CodingService(runtime)
+
+    await graph.run()
+
+    assert len(runtime.requests) == 1
+    request = runtime.requests[0]
+    assert request.context.thread_id == "coding"
+    assert request.context.session_id == ""
+    assert request.context.workspace == workspace
 
 @pytest.mark.asyncio
 async def test_web_headless_uses_gateway_frontend_without_default_tui_factory(monkeypatch, tmp_path):
@@ -343,6 +384,27 @@ async def test_apply_settings_update_refreshes_live_model(monkeypatch, tmp_path)
     assert graph._app.status.provider == "deepseek"
     assert graph._app.status.model == "deepseek-v4-pro"
 
+
+
+@pytest.mark.asyncio
+async def test_web_submit_context_defaults_to_coding_identity(tmp_path):
+    workspace = str(tmp_path)
+    graph = _graph(workspace=workspace)
+    queued_inputs: list[tuple[str, TurnExecutionContext]] = []
+
+    app = SimpleNamespace(
+        submit_external_input=lambda text, *, context: queued_inputs.append((text, context)),
+        cancel_external_input=lambda **_: None,
+    )
+
+    await graph._handle_web_command(app, UiSubmitCommand(text="hello from web"))
+
+    assert len(queued_inputs) == 1
+    text, context = queued_inputs[0]
+    assert text == "hello from web"
+    assert context.thread_id == "coding"
+    assert context.session_id == ""
+    assert context.workspace == workspace
 
 @pytest.mark.asyncio
 async def test_web_guide_submit_records_guidance_without_starting_turn():
@@ -667,40 +729,65 @@ async def test_web_cancel_preserves_thread_id_for_execution_context():
 
 
 @pytest.mark.asyncio
-async def test_handle_user_input_passes_execution_context_to_turn_service():
+async def test_handle_user_input_passes_execution_context_to_coding_turn_runner():
     graph = _graph()
-    captured: list[tuple[str, str]] = []
+    captured: list[tuple[str, str, str]] = []
 
-    async def fake_run_turn(self, user_text: str, *, display_text=None, context=None):
-        captured.append((user_text, context.thread_id if context is not None else ""))
+    async def fake_run_coding_turn(
+        self,
+        user_text: str,
+        *,
+        thread_id: str = "",
+        context: TurnExecutionContext | None = None,
+        display_text: str | None = None,
+    ):
+        captured.append(
+            (
+                user_text,
+                thread_id,
+                context.thread_id if context is not None else "",
+            )
+        )
 
-    graph._execution.run_turn = MethodType(fake_run_turn, graph._execution)
+    graph.run_coding_turn = MethodType(fake_run_coding_turn, graph)
 
     keep_running, exit_message = await graph._handle_user_input(
         SimpleNamespace(),
         "hello from t2",
         context=TurnExecutionContext(thread_id="t2", session_id="t2", runtime_profile=CODING_PROFILE),
+        thread_id="t2",
     )
 
     assert keep_running is True
     assert exit_message is None
-    assert captured == [("hello from t2", "t2")]
+    assert captured == [("hello from t2", "t2", "t2")]
 
 
 @pytest.mark.asyncio
 async def test_handle_user_input_delegates_coding_turn_to_coding_service():
     graph = _graph()
-    captured: list[tuple[str, str, str, str]] = []
+    captured: list[tuple[str, str, str, str, str | None, str]] = []
     graph._execution.session_id = "session-1"
 
     class FakeCodingService:
-        async def run_turn(self, *, user_text, thread_id="", session_id=None, context=None):
+        async def run_turn(
+            self,
+            *,
+            user_text,
+            thread_id="",
+            session_id=None,
+            context=None,
+            display_text=None,
+            workspace="",
+        ):
             captured.append(
                 (
                     user_text,
                     thread_id,
                     session_id or "",
                     context.thread_id if context is not None else "",
+                    display_text,
+                    workspace,
                 )
             )
 
@@ -715,17 +802,26 @@ async def test_handle_user_input_delegates_coding_turn_to_coding_service():
 
     assert keep_running is True
     assert exit_message is None
-    assert captured == [("hello from t2", "t2", "session-1", "t2")]
+    assert captured == [("hello from t2", "t2", "t2", "t2", None, "/tmp/workspace")]
 
 
 @pytest.mark.asyncio
 async def test_handle_user_input_preserves_missing_context_for_coding_service():
     graph = _graph()
-    captured: list[object] = []
+    captured: list[tuple[object, str]] = []
 
     class FakeCodingService:
-        async def run_turn(self, *, user_text, thread_id="", session_id=None, context=None):
-            captured.append(context)
+        async def run_turn(
+            self,
+            *,
+            user_text,
+            thread_id="",
+            session_id=None,
+            context=None,
+            display_text=None,
+            workspace="",
+        ):
+            captured.append((context, workspace))
 
     graph._coding_service = FakeCodingService()
 
@@ -736,4 +832,4 @@ async def test_handle_user_input_preserves_missing_context_for_coding_service():
 
     assert keep_running is True
     assert exit_message is None
-    assert captured == [None]
+    assert captured == [(None, "/tmp/workspace")]

@@ -825,7 +825,7 @@ class SlashHandler:
             ui.print("[dim]AGENTS.md already exists. Use /init force to regenerate.[/dim]")
             return
 
-        await self.host.run_synthetic_turn(INIT_PROMPT, display_text="/init")
+        await self.host.run_coding_turn(INIT_PROMPT, display_text="/init")
 
     async def _lsp(self, args: str) -> None:
         parts = args.split(None, 1)

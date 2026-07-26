@@ -10,6 +10,8 @@ from voidx.agent.application.coding_service import CodingService
 from types import SimpleNamespace
 
 from voidx.agent.runtime import AgentRuntime
+from voidx.agent.loop.scheduler import LoopRuntimeScheduler
+from voidx.memory.service import ThreadStore
 from voidx.agent.facade import AgentFacade
 from voidx.agent.infrastructure.langgraph.adapter import LangGraphTurnEngine
 from voidx.agent.infrastructure.langgraph.execution import LangGraphExecution
@@ -36,6 +38,16 @@ def build_agent_app(
     runtime = AgentRuntime(
         SimpleNamespace(turn_engine=engine, sessions=sessions, events=events)
     )
+    loop_manager = getattr(execution, "loop_manager", None)
+    set_runtime_scheduler = getattr(loop_manager, "set_runtime_scheduler", None)
+    if set_runtime_scheduler is not None:
+        set_runtime_scheduler(
+            LoopRuntimeScheduler(
+                store=ThreadStore(),
+                runtime=runtime,
+                workspace=getattr(config, "workspace", ""),
+            )
+        )
     chat_service = ChatService(runtime)
     coding_service = CodingService(runtime)
     return AgentFacade(

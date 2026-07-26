@@ -41,6 +41,7 @@ class ThreadExecutionState:
     runtime_profile: RuntimeProfile | None = None
     tool_policy: ToolPolicy | None = None
     workspace: str = ""
+    host_id: int | None = None
 
 
 _CURRENT_THREAD_EXECUTION_STATE: ContextVar[ThreadExecutionState | None] = ContextVar(
@@ -91,6 +92,7 @@ def _state_from_host(host: Any) -> ThreadExecutionState:
         pending_summary=getattr(host, "_pending_summary", None),
         session_date=getattr(host, "_session_date", ""),
         runtime_guards=getattr(host, "_runtime_guards", RuntimeGuardState()),
+        host_id=id(host),
     )
 
 
@@ -136,6 +138,7 @@ async def _state_for_context(host: Any, session_id: str) -> ThreadExecutionState
             session_msg_cache=None,
             context_cache=ContextCompilerCache(),
             session_date=session_date(target_session),
+            host_id=id(host),
         )
         if key:
             states[key] = state
@@ -189,6 +192,7 @@ async def bind_thread_execution_context(
         )
     ):
         await _restore_state_runtime(host, state)
+    state.host_id = id(host)
     state.thread_id = thread_id or session_id
     workspace = _workspace_for_turn(host, state, turn_context)
     if turn_context is not None and workspace != turn_context.workspace:
@@ -211,6 +215,6 @@ async def bind_thread_execution_context(
         # Only sync state back to the host when the turn belongs to the host's
         # own session. A borrowed turn for a different session must not mutate
         # the host's session, task_state, compaction_summary, etc.
-        orig_session = getattr(host, "_session", None)
+        orig_session = getattr(host, "_default_session", None)
         if orig_session is None or (state.session is not None and orig_session.id == state.session.id):
             _apply_state(host, state)

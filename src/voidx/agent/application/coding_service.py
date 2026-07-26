@@ -33,12 +33,15 @@ class CodingService:
         thread_id: str = "",
         session_id: str | None = None,
         context: TurnExecutionContext | None = None,
+        display_text: str | None = None,
+        workspace: str = "",
     ) -> TurnResult:
         resolved_thread_id = thread_id or str(getattr(context, "thread_id", "") or "") or session_id or "coding"
         expected_context = TurnExecutionContext(
             thread_id=resolved_thread_id,
             session_id=session_id or "",
             runtime_profile=CODING_PROFILE,
+            workspace=workspace,
         )
         if context is not None:
             identity_matches = (
@@ -59,5 +62,6 @@ class CodingService:
                 user_text=user_text,
                 runtime=None,
                 context=execution_context,
+                display_text=display_text,
             )
         )

@@ -1,3 +1,5 @@
+> **Status: Done** — Archived on 2026-07-25.
+
 ---
 name: agent-runtime-phase-2-closure-plan
 display_name: Agent Runtime 契约闭环 + Chat 端到端接入

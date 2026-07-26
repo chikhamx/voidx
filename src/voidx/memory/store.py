@@ -77,7 +77,7 @@ def _run_with_locked_retry(operation: Callable[[], T]) -> T:
     raise RuntimeError("unreachable sqlite retry state")
 
 
-_SCHEMA_VERSION = 2
+_SCHEMA_VERSION = 3
 
 
 def _column_exists(conn: sqlite3.Connection, table: str, column: str) -> bool:
@@ -113,7 +113,96 @@ def _migrate_to_v2(conn: sqlite3.Connection) -> None:
     _add_column_if_missing(conn, "sessions", "runtime_profile", "TEXT NOT NULL DEFAULT 'coding'")
 
 
-_MIGRATIONS = [_migrate_to_v1, _migrate_to_v2]
+def _create_agent_thread_tables(conn: sqlite3.Connection) -> None:
+    conn.executescript("""
+        CREATE TABLE IF NOT EXISTS agent_threads (
+            id TEXT PRIMARY KEY,
+            parent_thread_id TEXT,
+            session_id TEXT,
+            workspace TEXT NOT NULL DEFAULT '',
+            profile_id TEXT NOT NULL,
+            profile_revision INTEGER NOT NULL,
+            profile_json TEXT NOT NULL,
+            resource_scope_json TEXT NOT NULL DEFAULT '{}',
+            created_at TEXT NOT NULL,
+            updated_at TEXT NOT NULL
+        );
+
+        CREATE TABLE IF NOT EXISTS agent_thread_state (
+            thread_id TEXT PRIMARY KEY,
+            state_json TEXT NOT NULL,
+            state_version INTEGER NOT NULL DEFAULT 0,
+            updated_at TEXT NOT NULL,
+            FOREIGN KEY (thread_id) REFERENCES agent_threads(id) ON DELETE CASCADE
+        );
+
+        CREATE TABLE IF NOT EXISTS agent_thread_messages (
+            id INTEGER PRIMARY KEY AUTOINCREMENT,
+            thread_id TEXT NOT NULL,
+            role TEXT NOT NULL,
+            payload_json TEXT NOT NULL,
+            status TEXT,
+            created_at TEXT NOT NULL,
+            FOREIGN KEY (thread_id) REFERENCES agent_threads(id) ON DELETE CASCADE
+        );
+
+        CREATE TABLE IF NOT EXISTS agent_thread_frames (
+            id INTEGER PRIMARY KEY AUTOINCREMENT,
+            thread_id TEXT NOT NULL,
+            prefix_hash TEXT NOT NULL,
+            frame_hash TEXT NOT NULL,
+            metadata_json TEXT NOT NULL DEFAULT '{}',
+            created_at TEXT NOT NULL,
+            FOREIGN KEY (thread_id) REFERENCES agent_threads(id) ON DELETE CASCADE
+        );
+
+        CREATE TABLE IF NOT EXISTS runtime_turn_attempts (
+            id TEXT PRIMARY KEY,
+            thread_id TEXT NOT NULL,
+            source_outbox_id TEXT NOT NULL UNIQUE,
+            input_frame_json TEXT NOT NULL,
+            base_state_version INTEGER NOT NULL,
+            profile_id TEXT NOT NULL,
+            profile_revision INTEGER NOT NULL,
+            status TEXT NOT NULL,
+            side_effect_started INTEGER NOT NULL DEFAULT 0,
+            lease_owner TEXT NOT NULL DEFAULT '',
+            fencing_token INTEGER NOT NULL,
+            lease_expires_at REAL NOT NULL DEFAULT 0,
+            updated_at TEXT NOT NULL,
+            FOREIGN KEY (thread_id) REFERENCES agent_threads(id) ON DELETE CASCADE
+        );
+
+        CREATE TABLE IF NOT EXISTS runtime_outbox (
+            id TEXT PRIMARY KEY,
+            thread_id TEXT NOT NULL,
+            source_attempt_id TEXT,
+            kind TEXT NOT NULL,
+            payload_json TEXT NOT NULL DEFAULT '{}',
+            expected_state_version INTEGER NOT NULL,
+            available_at REAL NOT NULL DEFAULT 0,
+            claimed_by TEXT,
+            claimed_until REAL,
+            delivered_at TEXT,
+            created_at TEXT NOT NULL,
+            FOREIGN KEY (thread_id) REFERENCES agent_threads(id) ON DELETE CASCADE,
+            FOREIGN KEY (source_attempt_id) REFERENCES runtime_turn_attempts(id) ON DELETE CASCADE,
+            UNIQUE(source_attempt_id, kind)
+        );
+
+        CREATE INDEX IF NOT EXISTS idx_runtime_outbox_ready
+            ON runtime_outbox(delivered_at, available_at, claimed_until);
+        CREATE INDEX IF NOT EXISTS idx_runtime_attempts_thread
+            ON runtime_turn_attempts(thread_id, status);
+    """)
+
+
+def _migrate_to_v3(conn: sqlite3.Connection) -> None:
+    """v2 → v3: add durable agent thread, attempt, and outbox tables."""
+    _create_agent_thread_tables(conn)
+
+
+_MIGRATIONS = [_migrate_to_v1, _migrate_to_v2, _migrate_to_v3]
 
 
 def _init_schema(conn: sqlite3.Connection) -> None:
@@ -185,6 +274,7 @@ def _init_schema(conn: sqlite3.Connection) -> None:
         CREATE INDEX IF NOT EXISTS idx_model_profiles_provider
             ON model_profiles(provider);
     """)
+    _create_agent_thread_tables(conn)
     current_version = conn.execute("PRAGMA user_version").fetchone()[0]
     for version in range(current_version, _SCHEMA_VERSION):
         _MIGRATIONS[version](conn)
@@ -245,14 +335,16 @@ async def _execute_commit(sql: str, params: tuple = ()) -> sqlite3.Cursor:
 async def _fetch_all(sql: str, params: tuple = ()) -> list[sqlite3.Row]:
     def _run():
         conn = _get_db()
-        return conn.execute(sql, params).fetchall()
+        with _write_lock:
+            return conn.execute(sql, params).fetchall()
     return await asyncio.to_thread(lambda: _run_with_locked_retry(_run))
 
 
 async def _fetch_one(sql: str, params: tuple = ()) -> sqlite3.Row | None:
     def _run():
         conn = _get_db()
-        return conn.execute(sql, params).fetchone()
+        with _write_lock:
+            return conn.execute(sql, params).fetchone()
     return await asyncio.to_thread(lambda: _run_with_locked_retry(_run))
 
 

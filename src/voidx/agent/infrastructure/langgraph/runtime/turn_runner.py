@@ -256,6 +256,14 @@ class TurnRunner:
                 if current_state is not None:
                     current_state.task_state = turn_task_state
                 host._task_state = turn_task_state
+                if current_state is not None:
+                    default_session = getattr(host, "_default_session", None)
+                    if (
+                        current_state.session is None
+                        or default_session is None
+                        or current_state.session.id == default_session.id
+                    ):
+                        host._default_task_state = turn_task_state
                 reconciled_workflow_runs = reconcile_workflow_runs_for_turn(
                     goal_resolution=intent_resolution,
                     after_state=turn_task_state,

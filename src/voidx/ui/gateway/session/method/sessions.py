@@ -38,6 +38,7 @@ class SessionMethods:
             "directory": info.directory,
             "workspace": info.workspace,
             "status": "idle",
+            "runtime_profile": info.runtime_profile,
         }
 
     async def _method_session_fork(self, params: dict) -> dict:
@@ -52,12 +53,14 @@ class SessionMethods:
             title=info.title,
             directory=info.directory,
             workspace=info.workspace,
+            runtime_profile=info.runtime_profile,
         )
         return {
             "thread_id": info.id,
             "title": info.title,
             "directory": info.directory,
             "workspace": info.workspace,
+            "runtime_profile": info.runtime_profile,
             "status": "idle",
         }
 

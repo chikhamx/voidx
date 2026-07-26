@@ -1,3 +1,5 @@
+> **Status: Done** — Archived on 2026-07-25.
+
 ---
 name: agent-runtime-phase-1-plan
 display_name: Agent Runtime Unification 第一期实施计划

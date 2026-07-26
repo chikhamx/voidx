@@ -136,6 +136,7 @@ from voidx.agent.infrastructure.langgraph.runtime.core.helpers import (
 
 import asyncio
 import time
+from collections.abc import Awaitable, Callable
 from typing import TYPE_CHECKING, Any, Literal
 
 from langchain_core.messages import BaseMessage, HumanMessage
@@ -340,12 +341,12 @@ class LangGraphExecution:
 
     @property
     def _session(self) -> SessionInfo | None:
-        state = current_thread_execution_state()
+        state = self._current_thread_state()
         return state.session if state is not None else getattr(self, "_default_session", None)
 
     @_session.setter
     def _session(self, value: SessionInfo | None) -> None:
-        state = current_thread_execution_state()
+        state = self._current_thread_state()
         if state is not None:
             state.session = value
         else:
@@ -394,9 +395,15 @@ class LangGraphExecution:
         else:
             self._default_interaction_mode = value
 
+    def _current_thread_state(self):
+        state = current_thread_execution_state()
+        if state is None or getattr(state, "host_id", None) != id(self):
+            return None
+        return state
+
     @property
     def _task_state(self) -> TaskState:
-        state = current_thread_execution_state()
+        state = self._current_thread_state()
         if state is not None:
             return state.task_state
         if not hasattr(self, "_default_task_state"):
@@ -405,7 +412,7 @@ class LangGraphExecution:
 
     @_task_state.setter
     def _task_state(self, value: TaskState) -> None:
-        state = current_thread_execution_state()
+        state = self._current_thread_state()
         if state is not None:
             state.task_state = value
             default_session = getattr(self, "_default_session", None)
@@ -486,6 +493,7 @@ class LangGraphExecution:
         self._gateway_session = None
         self._any_messages_sent = False
         self._startup_presenter = None
+        self._coding_turn_runner: Callable[..., Awaitable[Any]] | None = None
 
         bind_settings_to_catalog(settings)
         self._tracker, self.tools = build_tool_registry(
@@ -793,6 +801,22 @@ class LangGraphExecution:
     def bind_startup_presenter(self, presenter) -> None:
         self._startup_presenter = presenter
 
+    def bind_coding_turn_runner(
+        self,
+        runner: Callable[..., Awaitable[Any]],
+    ) -> None:
+        self._coding_turn_runner = runner
+
+    async def run_coding_turn(
+        self,
+        text: str,
+        *,
+        display_text: str | None = None,
+    ) -> None:
+        if self._coding_turn_runner is None:
+            raise RuntimeError("coding turn runner is not bound")
+        await self._coding_turn_runner(text, display_text=display_text)
+
     async def show_startup(
         self,
         *,
@@ -806,19 +830,6 @@ class LangGraphExecution:
             prefer_direct=prefer_direct,
         )
 
-    async def run_synthetic_turn(
-        self,
-        text: str,
-        *,
-        display_text: str | None = None,
-        context: TurnExecutionContext | None = None,
-    ) -> None:
-        if context is None:
-            state = current_thread_execution_state()
-            if state is None or state.turn_context is None:
-                raise RuntimeError("synthetic turn requires bound TurnExecutionContext")
-            context = state.turn_context
-        await self.run_turn(text, display_text=display_text, context=context)
 
     async def clear_current_session(self) -> None:
         await self._loop_manager.cleanup()

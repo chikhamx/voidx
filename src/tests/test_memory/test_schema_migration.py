@@ -68,6 +68,25 @@ class TestSchemaMigration:
         assert version_after_first == version_after_second
         conn.close()
 
+    def test_agent_runtime_thread_tables_exist(self, tmp_path: Path) -> None:
+        db_path = tmp_path / "test.db"
+        conn = sqlite3.connect(str(db_path))
+        conn.row_factory = sqlite3.Row
+        _init_schema(conn)
+        tables = {
+            row["name"]
+            for row in conn.execute(
+                "SELECT name FROM sqlite_master WHERE type = 'table'"
+            )
+        }
+        assert "agent_threads" in tables
+        assert "agent_thread_state" in tables
+        assert "runtime_turn_attempts" in tables
+        assert "runtime_outbox" in tables
+        version = conn.execute("PRAGMA user_version").fetchone()[0]
+        assert version >= 3
+        conn.close()
+
     def test_migrates_legacy_db_without_columns(self, tmp_path: Path) -> None:
         db_path = tmp_path / "test.db"
         conn = sqlite3.connect(str(db_path))

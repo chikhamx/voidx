@@ -63,6 +63,9 @@ class AgentService:
         bind_startup = getattr(execution, "bind_startup_presenter", None)
         if bind_startup is not None:
             bind_startup(self._show_startup)
+        bind_coding_turn = getattr(execution, "bind_coding_turn_runner", None)
+        if bind_coding_turn is not None:
+            bind_coding_turn(self.run_coding_turn)
 
     async def _show_startup(
         self,
@@ -261,6 +264,7 @@ class AgentService:
                 "",
             ),
             runtime_profile=lambda: getattr(self._execution.session, "runtime_profile", "coding") if self._execution.session else "coding",
+            session_id=lambda: self._execution.session_id,
         )
 
         if web_headless:
@@ -371,10 +375,13 @@ class AgentService:
         ) -> bool:
             nonlocal exit_message
             if context is None:
+                session_id = self._execution.session_id or ""
+                resolved_thread_id = thread_id or session_id or "coding"
                 context = TurnExecutionContext(
-                    thread_id=thread_id,
-                    session_id=thread_id,
+                    thread_id=resolved_thread_id,
+                    session_id=session_id,
                     runtime_profile=CODING_PROFILE,
+                    workspace=self._execution.workspace,
                 )
             keep_running, next_exit_message = await self._handle_user_input(
                 app,
@@ -410,18 +417,24 @@ class AgentService:
             else:
                 self._ensure_gateway_thread()
                 thread_id = str(getattr(command, "thread_id", "") or "")
+                session_id = self._execution.session_id or thread_id
+                resolved_thread_id = thread_id or session_id or "coding"
                 context = TurnExecutionContext(
-                    thread_id=thread_id,
-                    session_id=thread_id,
+                    thread_id=resolved_thread_id,
+                    session_id=session_id,
                     runtime_profile=CODING_PROFILE,
+                    workspace=self._execution.workspace,
                 )
                 app.submit_external_input(text, context=context)
         elif kind == "cancel":
             thread_id = str(getattr(command, "thread_id", "") or "")
+            session_id = self._execution.session_id or thread_id
+            resolved_thread_id = thread_id or session_id or "coding"
             context = TurnExecutionContext(
-                thread_id=thread_id,
-                session_id=thread_id,
+                thread_id=resolved_thread_id,
+                session_id=session_id,
                 runtime_profile=CODING_PROFILE,
+                workspace=self._execution.workspace,
             )
             app.cancel_external_input(context=context)
 
@@ -433,6 +446,59 @@ class AgentService:
         if not callable(submit):
             return False
         return bool(submit(text, **kwargs))
+
+    async def run_coding_turn(
+        self,
+        user_text: str,
+        *,
+        thread_id: str = "",
+        context: TurnExecutionContext | None = None,
+        display_text: str | None = None,
+    ) -> None:
+        if self._coding_service is not None:
+            session_id = (
+                (getattr(context, "session_id", "") or None)
+                if context is not None
+                else (self._execution.session_id or None)
+            )
+            await self._coding_service.run_turn(
+                user_text=user_text,
+                thread_id=thread_id,
+                session_id=session_id,
+                context=context,
+                display_text=display_text,
+                workspace=self._execution.workspace,
+            )
+            return
+
+        from voidx.agent.runtime.contracts import TurnRequest
+
+        if context is not None:
+            resolved_thread_id = thread_id or context.thread_id or self._execution.session_id or "coding"
+            session_id = context.session_id or None
+            execution_context = context
+        else:
+            session_id = self._execution.session_id or None
+            resolved_thread_id = thread_id or session_id or "coding"
+            execution_context = TurnExecutionContext(
+                thread_id=resolved_thread_id,
+                session_id=session_id or "",
+                runtime_profile=CODING_PROFILE,
+                workspace=self._execution.workspace,
+            )
+
+        await self._runtime.run_turn(
+            TurnRequest(
+                thread=AgentThread(
+                    thread_id=resolved_thread_id,
+                    session_id=session_id,
+                ),
+                user_text=user_text,
+                runtime=None,
+                display_text=display_text,
+                context=execution_context,
+            )
+        )
 
     def _ensure_gateway_thread(self) -> None:
         """Register the active session as a gateway thread if not yet registered.
@@ -479,27 +545,11 @@ class AgentService:
         try:
             if await self._route_chat_turn(user_input, thread_id=thread_id):
                 return True, None
-            if self._coding_service is not None:
-                await self._coding_service.run_turn(
-                    user_text=user_input,
-                    thread_id=thread_id,
-                    session_id=self._execution.session_id or None,
-                    context=context,
-                )
-            else:
-                from voidx.agent.runtime.contracts import TurnRequest
-
-                await self._runtime.run_turn(
-                    TurnRequest(
-                        thread=AgentThread(
-                            thread_id=thread_id or self._execution.session_id or "coding",
-                            session_id=self._execution.session_id or None,
-                        ),
-                        user_text=user_input,
-                        runtime=None,  # coding loads persisted state via the runtime facade
-                        context=context,
-                    )
-                )
+            await self.run_coding_turn(
+                user_text=user_input,
+                thread_id=thread_id,
+                context=context,
+            )
         except (KeyboardInterrupt, asyncio.CancelledError):
             self._execution.ui.ui.print(f"\n[dim]Interrupted.[/dim]")
         return True, None

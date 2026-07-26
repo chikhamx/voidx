@@ -1,3 +1,5 @@
+> **Status: Done** — Archived on 2026-07-26.
+
 ---
 name: agent-runtime-chat
 display_name: Agent Runtime Chat 模式设计

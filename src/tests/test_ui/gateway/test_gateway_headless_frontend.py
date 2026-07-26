@@ -1,14 +1,13 @@
 from __future__ import annotations
 
-from voidx.agent.application.coding_service import CODING_PROFILE
-
 import asyncio
 from types import SimpleNamespace
 
 import pytest
 
-from voidx.ui.gateway.frontend import GatewayHeadlessFrontend
+from voidx.agent.application.coding_service import CODING_PROFILE
 from voidx.agent.domain.turn_context import TurnExecutionContext
+from voidx.ui.gateway.frontend import GatewayHeadlessFrontend
 from voidx.ui.protocol.requests import UiChoiceRequest, UiPermissionRequest, UiResponse, UiTextRequest
 
 
@@ -89,6 +88,88 @@ async def test_headless_frontend_preserves_explicit_context_values(tmp_path):
     assert queued.workspace == "/explicit/workspace"
     assert queued.tool_policy is context.tool_policy
 
+
+@pytest.mark.asyncio
+async def test_headless_frontend_preserves_explicit_empty_session_context(tmp_path):
+    frontend = GatewayHeadlessFrontend(
+        SimpleNamespace(workspace=str(tmp_path), session_id=lambda: "status-session"),
+        [],
+    )
+    submitted: list[TurnExecutionContext] = []
+    context = TurnExecutionContext(
+        thread_id="coding",
+        session_id="",
+        runtime_profile=CODING_PROFILE,
+        workspace="/explicit/workspace",
+        tool_policy=object(),
+    )
+
+    async def on_submit(text: str, *, context=None):
+        submitted.append(context)
+        return False
+
+    task = asyncio.create_task(frontend.run_headless(on_submit))
+    frontend.submit_external_input("hello", context=context)
+    await asyncio.wait_for(task, timeout=1)
+
+    assert len(submitted) == 1
+    queued = submitted[0]
+    assert queued.thread_id == "coding"
+    assert queued.session_id == ""
+    assert queued.workspace == "/explicit/workspace"
+    assert queued.tool_policy is context.tool_policy
+
+
+@pytest.mark.asyncio
+async def test_headless_frontend_defaults_to_coding_identity_without_session(tmp_path):
+    frontend = GatewayHeadlessFrontend(
+        SimpleNamespace(workspace=str(tmp_path), session_id=lambda: ""),
+        [],
+    )
+    submitted: list[TurnExecutionContext] = []
+
+    async def on_submit(text: str, *, context=None):
+        submitted.append(context)
+        return False
+
+    task = asyncio.create_task(frontend.run_headless(on_submit))
+    frontend.submit_external_input("hello")
+    await asyncio.wait_for(task, timeout=1)
+
+    assert len(submitted) == 1
+    queued = submitted[0]
+    assert queued.thread_id == "coding"
+    assert queued.session_id == ""
+    assert queued.workspace == str(tmp_path)
+
+
+@pytest.mark.asyncio
+async def test_headless_frontend_thread_id_arg_overrides_explicit_context_thread(tmp_path):
+    frontend = GatewayHeadlessFrontend(
+        SimpleNamespace(workspace=str(tmp_path), session_id=lambda: "status-session"),
+        [],
+    )
+    submitted: list[TurnExecutionContext] = []
+    context = TurnExecutionContext(
+        thread_id="context-thread",
+        session_id="context-session",
+        runtime_profile=CODING_PROFILE,
+        workspace="/explicit/workspace",
+    )
+
+    async def on_submit(text: str, *, context=None):
+        submitted.append(context)
+        return False
+
+    task = asyncio.create_task(frontend.run_headless(on_submit))
+    frontend.submit_external_input("hello", thread_id="override-thread", context=context)
+    await asyncio.wait_for(task, timeout=1)
+
+    assert len(submitted) == 1
+    queued = submitted[0]
+    assert queued.thread_id == "override-thread"
+    assert queued.session_id == "context-session"
+    assert queued.workspace == "/explicit/workspace"
 
 @pytest.mark.asyncio
 async def test_headless_frontend_sends_permission_request_with_thread_context():

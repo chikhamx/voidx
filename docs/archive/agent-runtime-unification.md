@@ -1,3 +1,5 @@
+> **Status: Done** — Archived on 2026-07-26.
+
 ---
 name: agent-runtime-unification
 display_name: Unified Agent Runtime for Chat, Coding, Goal, and Loop

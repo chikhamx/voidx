@@ -499,7 +499,7 @@ async def test_runtime_context_overlay_not_persisted_to_user_history(tmp_path):
 
 
 @pytest.mark.asyncio
-async def test_run_synthetic_turn_uses_display_text_without_losing_prompt(tmp_path):
+async def test_run_turn_uses_display_text_without_losing_prompt(tmp_path):
     graph = LangGraphExecution(Config(workspace=str(tmp_path)), api_key=None)
     captured: dict[str, list] = {}
 
@@ -514,10 +514,14 @@ async def test_run_synthetic_turn_uses_display_text_without_losing_prompt(tmp_pa
     set_dock(test_dock)
     test_dock.begin_capture()
     try:
-        await graph.run_synthetic_turn(
+        await graph.run_turn(
             "full initialization prompt with unique model marker",
             display_text="/init",
-            context=TurnExecutionContext(thread_id=graph.session_id or "coding", session_id=graph.session_id or "", workspace=str(tmp_path)),
+            context=TurnExecutionContext(
+                thread_id=graph.session_id or "coding",
+                session_id=graph.session_id or "",
+                workspace=str(tmp_path),
+            ),
         )
         turn_header = test_dock.tree.root.children[0].header
         rendered = "\n".join(test_dock.tree.render(120))

@@ -75,6 +75,24 @@ async def test_coding_service_falls_back_to_session_id_for_thread_id():
 
 
 @pytest.mark.asyncio
+async def test_coding_service_populates_default_context_workspace():
+    runtime = FakeRuntime()
+    service = CodingService(runtime)
+
+    await service.run_turn(
+        user_text="continue",
+        session_id="session-1",
+        workspace="/tmp/workspace",
+    )
+
+    request = runtime.requests[0]
+    assert request.context.thread_id == "session-1"
+    assert request.context.session_id == "session-1"
+    assert request.context.workspace == "/tmp/workspace"
+    assert request.context.runtime_profile == CODING_PROFILE
+
+
+@pytest.mark.asyncio
 async def test_coding_service_accepts_queued_context_with_workspace():
     runtime = FakeRuntime()
     service = CodingService(runtime)

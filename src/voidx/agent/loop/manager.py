@@ -18,6 +18,7 @@ class LoopManager:
         idle_event: asyncio.Event,
         workspace: str,
         default_interval_seconds: float = 600,
+        runtime_scheduler: Any | None = None,
     ) -> None:
         self._host = host
         self._idle_event = idle_event
@@ -33,9 +34,13 @@ class LoopManager:
         self._wakeup_changed = asyncio.Event()
         self._next_fire_at: float | None = None
         self._last_error: str | None = None
+        self._runtime_scheduler = runtime_scheduler
 
     def set_workspace(self, workspace: str) -> None:
         self._workspace = workspace
+
+    def set_runtime_scheduler(self, runtime_scheduler: Any | None) -> None:
+        self._runtime_scheduler = runtime_scheduler
 
     def start(
         self,
@@ -121,7 +126,15 @@ class LoopManager:
             if prompt.startswith("[loop] prompt source error:"):
                 self._last_error = prompt
             try:
-                await self._host.run_synthetic_turn(prompt, display_text=self._display_text(prompt))
+                display_text = self._display_text(prompt)
+                scheduler = self._runtime_scheduler
+                if scheduler is None:
+                    raise RuntimeError("loop runtime scheduler is not configured")
+                await scheduler.run_prompt(
+                    prompt,
+                    display_text=display_text,
+                    session_id=self._session_id,
+                )
             except asyncio.CancelledError:
                 raise
             except Exception as exc:
