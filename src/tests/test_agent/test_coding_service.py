@@ -75,6 +75,54 @@ async def test_coding_service_falls_back_to_session_id_for_thread_id():
 
 
 @pytest.mark.asyncio
+async def test_coding_service_accepts_queued_context_with_workspace():
+    runtime = FakeRuntime()
+    service = CodingService(runtime)
+    context = TurnExecutionContext(
+        thread_id="session-1",
+        session_id="session-1",
+        runtime_profile=CODING_PROFILE,
+        workspace="/tmp/workspace",
+    )
+
+    await service.run_turn(
+        user_text="continue",
+        session_id="session-1",
+        context=context,
+    )
+
+    request = runtime.requests[0]
+    assert request.thread.thread_id == "session-1"
+    assert request.thread.session_id == "session-1"
+    assert request.context.workspace == "/tmp/workspace"
+    assert request.context.runtime_profile == CODING_PROFILE
+
+
+@pytest.mark.asyncio
+async def test_coding_service_preserves_context_when_identity_matches():
+    runtime = FakeRuntime()
+    service = CodingService(runtime)
+    tool_policy = object()
+    context = TurnExecutionContext(
+        thread_id="session-1",
+        session_id="session-1",
+        runtime_profile=CODING_PROFILE,
+        workspace="/tmp/workspace",
+        tool_policy=tool_policy,
+    )
+
+    await service.run_turn(
+        user_text="continue",
+        session_id="session-1",
+        context=context,
+    )
+
+    request = runtime.requests[0]
+    assert request.context is context
+    assert request.context.workspace == "/tmp/workspace"
+    assert request.context.tool_policy is tool_policy
+
+@pytest.mark.asyncio
 async def test_coding_service_rejects_context_identity_mismatch():
     runtime = FakeRuntime()
     service = CodingService(runtime)

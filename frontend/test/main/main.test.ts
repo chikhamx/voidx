@@ -89,7 +89,7 @@ describe("handleToolItem", () => {
   it("renders string args as-is", () => {
     handleToolItem("item.started", "t3", {
       tool_call_id: "c3",
-      tool_name: "grep",
+      tool_name: "search",
       args: "pattern",
     });
     const transcript = document.querySelector("#transcript");

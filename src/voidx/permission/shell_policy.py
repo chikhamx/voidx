@@ -264,7 +264,7 @@ def _bounded_read_only_segment_policy(words: list[str]) -> ShellPolicyDecision:
         return _bash_policy(words)
     if program == "find":
         return _bounded_find_policy(words[1:])
-    if program in {"grep", "rg"}:
+    if program in {"grep", "egrep", "fgrep", "rg"}:
         return _bounded_search_policy(program, words[1:])
     return ShellPolicyDecision(False, False, "compound segment is not registered read-only")
 

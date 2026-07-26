@@ -3,11 +3,14 @@
 from __future__ import annotations
 
 from pathlib import Path
+from typing import Iterable, Mapping
+
+from voidx.agent.domain.tool_policy import ToolPolicyDecision
 
 from pydantic import BaseModel, ConfigDict, Field, field_validator
 
 
-_LOCAL_READ_TOOLS = frozenset({"read", "glob", "grep", "lsp"})
+_LOCAL_READ_TOOLS = frozenset({"read", "find", "search", "lsp"})
 _ALWAYS_BOUND_TOOLS = frozenset({"websearch", "webfetch", "mcp"})
 _ESCAPE_TOOLS = frozenset(
     {"bash", "powershell", "write", "manage", "replace", "git", "agent", "subagent"}
@@ -57,6 +60,20 @@ class ChatToolView(BaseModel):
             return ChatToolDecision(allowed=False, reason="resource_out_of_scope")
         return ChatToolDecision(allowed=True, reason="tool_bound")
 
+    def visible_tool_ids(self, available_tool_ids: Iterable[str]) -> frozenset[str]:
+        return frozenset(tool for tool in available_tool_ids if self.allows(tool))
+
+    def check_tool_call(self, tool_id: str, args: Mapping[str, object]) -> ToolPolicyDecision:
+        if tool_id == "mcp" and args.get("op") == "call":
+            return ToolPolicyDecision(False, "mcp_call_not_allowed", False)
+        decision = self.check(tool_id)
+        if not decision.allowed:
+            return ToolPolicyDecision(decision.allowed, decision.reason, decision.requests_approval)
+        for path in _path_candidates(args):
+            if not self._path_is_in_scope(path):
+                return ToolPolicyDecision(False, "resource_out_of_scope", False)
+        return ToolPolicyDecision(decision.allowed, decision.reason, decision.requests_approval)
+
     def allows(self, tool_id: str, *, path: Path | None = None) -> bool:
         return self.check(tool_id, path=path).allowed
 
@@ -68,3 +85,19 @@ class ChatToolView(BaseModel):
         except ValueError:
             return False
         return True
+
+
+def _path_candidates(value: object, key: str = "") -> list[Path]:
+    candidates: list[Path] = []
+    if isinstance(value, Mapping):
+        for child_key, child in value.items():
+            if child_key in {"file_path", "path", "file", "directory", "paths", "moves"}:
+                candidates.extend(_path_candidates(child, str(child_key)))
+            elif child_key in {"src", "dest"}:
+                candidates.extend(_path_candidates(child, str(child_key)))
+    elif isinstance(value, (list, tuple)):
+        for child in value:
+            candidates.extend(_path_candidates(child, key))
+    elif isinstance(value, str) and key in {"file_path", "path", "file", "directory", "paths", "src", "dest"}:
+        candidates.append(Path(value))
+    return candidates

@@ -64,6 +64,15 @@ def _try_hint_impl(command: str) -> RouteHint | None:
     # Resolve alias to cmdlet
     prog_resolved = _ALIAS_MAP.get(prog, prog).lower()
 
+    if has_pipe:
+        pipe_idx = words.index("|")
+        if pipe_idx + 1 < len(words):
+            after_pipe = words[pipe_idx + 1].lower()
+            after_pipe_resolved = _ALIAS_MAP.get(after_pipe, after_pipe).lower()
+            if after_pipe_resolved in ("out-file", "set-content", "add-content"):
+                return _hint_out_file(words[pipe_idx + 1:])
+        return None
+
     # git — reuse shell.hint.git
     if prog == "git" and len(words) >= 2:
         return _hint_git(stripped, words)
@@ -72,27 +81,16 @@ def _try_hint_impl(command: str) -> RouteHint | None:
     if prog_resolved == "get-content":
         return _hint_get_content(words)
 
-    # Select-String / sls → grep
+    # Select-String / sls → search
     if prog_resolved == "select-string":
         return _hint_select_string(words)
 
-    # Get-ChildItem / dir / ls / gci → glob
+    # Get-ChildItem / dir / ls / gci → find
     if prog_resolved == "get-childitem":
         return _hint_get_child_item(words)
 
     # Out-File / Set-Content / Add-Content → write (can be piped)
     if prog_resolved in ("out-file", "set-content", "add-content"):
         return _hint_out_file(words)
-
-    # Piped Out-File: "Write-Output hello | Out-File ..."
-    if has_pipe:
-        pipe_idx = words.index("|")
-        if pipe_idx + 1 < len(words):
-            after_pipe = words[pipe_idx + 1].lower()
-            after_pipe_resolved = _ALIAS_MAP.get(after_pipe, after_pipe).lower()
-            if after_pipe_resolved in ("out-file", "set-content", "add-content"):
-                # Reconstruct words as if Out-File is the program
-                out_words = words[pipe_idx + 1:]
-                return _hint_out_file(out_words)
 
     return None

@@ -51,11 +51,11 @@ def extract_tool_display_value(
         value = raw_args.get("file_path") or raw_args.get("path")
     elif tool_name == "manage":
         _action, value = manage_display(raw_args)
-    elif tool_name == "grep":
+    elif tool_name == "search":
         pattern = raw_args.get("pattern") or raw_args.get("query")
         include = raw_args.get("include")
         value = f"{pattern} in {include}" if pattern and include and short_path_limit is None else pattern
-    elif tool_name == "glob":
+    elif tool_name == "find":
         value = raw_args.get("pattern") or raw_args.get("query")
     elif tool_name in ("bash", "powershell"):
         value = str(raw_args.get("command") or "").replace("\n", "; ")

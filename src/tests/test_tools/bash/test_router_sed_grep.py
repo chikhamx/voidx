@@ -8,7 +8,7 @@ from voidx.tools.bash import RouteHint, try_hint
 
 
 class TestGrepSemanticFlags:
-    """Grep forms without an equivalent structured search stay in bash."""
+    """Unsupported grep forms stay in Bash."""
 
     @pytest.mark.parametrize("cmd", [
         "grep -v pattern file.py",
@@ -18,7 +18,6 @@ class TestGrepSemanticFlags:
         "grep -B3 pattern file.py",
         "grep -A2 -B5 pattern file.py",
         "grep -C -1 pattern file.py",
-        "grep 'a+' file.py",
         "rg -r replacement pattern",
         "rg -R pattern",
     ])
@@ -32,62 +31,54 @@ class TestGrepSupportedFlags:
     def test_grep_ignore_case(self):
         h = try_hint("grep -i pattern file.py")
         assert h is not None
-        assert h.tool_id == "grep"
-        assert "ignore_case=True" in h.llm_hint
+        assert h.tool_id == "search"
+        assert h.tool_args["case"] == "insensitive"
 
     def test_grep_whole_word(self):
         h = try_hint("grep -w pattern file.py")
         assert h is not None
-        assert h.tool_id == "grep"
-        assert "whole_word=True" in h.llm_hint
+        assert h.tool_id == "search"
+        assert h.tool_args["match"] == "word"
 
     def test_grep_context(self):
         h = try_hint("grep -C1 pattern file.py")
-        assert h is not None
-        assert h.tool_id == "grep"
-        assert "context_lines=1" in h.llm_hint
+        assert h is None
 
     def test_grep_context_long(self):
         h = try_hint("grep --context 2 pattern file.py")
         assert h is not None
-        assert h.tool_id == "grep"
-        assert "context_lines=2" in h.llm_hint
-
+        assert h.tool_args["context"] == 2
 
     def test_grep_balanced_after_and_before_context(self):
         h = try_hint("grep -A2 -B2 pattern file.py")
-        assert h is not None
-        assert h.tool_id == "grep"
-        assert "context_lines=2" in h.llm_hint
+        assert h is None
 
     def test_grep_exclude_multiple(self):
-        h = try_hint("grep -r --exclude '*.min.js' --exclude '*.map' pattern .")
-        assert h is not None
-        assert h.tool_id == "grep"
-        assert "*.min.js" in h.llm_hint
-        assert "*.map" in h.llm_hint
+        assert try_hint("grep -r --exclude '*.min.js' --exclude '*.map' pattern .") is None
 
     def test_grep_without_path_or_recursive_flag_uses_stdin(self):
         assert try_hint("grep pattern") is None
 
     def test_grep_short_flag_combo(self):
-        h = try_hint("grep -in pattern file.py")
-        assert h is not None
-        assert h.tool_id == "grep"
-        assert "ignore_case=True" in h.llm_hint
-        assert 'path="file.py"' in h.llm_hint
+        assert try_hint("grep -in pattern file.py") is None
 
     def test_grep_e_pattern(self):
-        h = try_hint("grep -e pattern file.py")
-        assert h is not None
-        assert h.tool_id == "grep"
-        assert 'pattern="pattern"' in h.llm_hint
+        assert try_hint("grep -e pattern file.py") is None
 
     def test_grep_single_quoted_regex_anchor(self):
         h = try_hint("grep 'foo$' file.py")
         assert h is not None
-        assert h.tool_id == "grep"
-        assert 'pattern="foo$"' in h.llm_hint
+        assert h.tool_id == "search"
+        assert h.tool_args["query"] == "foo$"
+
+    @pytest.mark.parametrize("command", [
+        r"grep '\(foo\)' file.py",
+        "grep '[[:alpha:]]' file.py",
+        "egrep '[[:alpha:]]' file.py",
+        "rg '[[:alpha:]]'",
+    ])
+    def test_incompatible_regex_dialect_is_not_routed(self, command):
+        assert try_hint(command) is None
 
 # ---------------------------------------------------------------------------
 # Comprehensive: basic positive cases
@@ -146,20 +137,17 @@ class TestBasicPositive:
     def test_find_name(self):
         h = try_hint("find . -type f -name '*.py'")
         assert h is not None
-        assert h.tool_id == "glob"
-        assert "**/*.py" in h.llm_hint
+        assert h.tool_id == "find"
+        assert "extensions" in h.llm_hint
 
     def test_find_iname(self):
         h = try_hint("find . -type f -iname '*.py'")
         assert h is not None
-        assert h.tool_id == "glob"
-        assert "ignore_case=True" in h.llm_hint
+        assert h.tool_id == "find"
+        assert "insensitive" in h.llm_hint
 
     def test_find_maxdepth(self):
-        h = try_hint("find . -maxdepth 2 -type f -name '*.py'")
-        assert h is not None
-        assert h.tool_id == "glob"
-        assert "max_depth=2" in h.llm_hint
+        assert try_hint("find . -maxdepth 2 -type f -name '*.py'") is None
 
     def test_find_without_file_type_is_not_routed(self):
         assert try_hint("find . -name '*.py'") is None
@@ -174,7 +162,7 @@ class TestBasicPositive:
     def test_grep_basic(self):
         h = try_hint("grep pattern file.py")
         assert h is not None
-        assert h.tool_id == "grep"
+        assert h.tool_id == "search"
 
     def test_grep_recursive(self):
         h = try_hint("grep -r pattern")

@@ -22,7 +22,7 @@ from voidx.tools.file import (
 )
 from voidx.tools.file.state import save_file_version
 import voidx.tools.file.state as file_state
-from voidx.tools.search import GlobInput, GrepInput
+from voidx.tools.search import FindInput, SearchInput
 from voidx.tools.bash import BashInput
 from voidx.tools.agent import AgentInput, AgentTool
 from voidx.tools.task_tracker import TaskTracker
@@ -56,8 +56,8 @@ class TestToolRegistry:
         assert "edit" not in ids
         assert "insert" not in ids
         assert "delete" not in ids
-        assert "glob" in ids
-        assert "grep" in ids
+        assert "find" in ids
+        assert "search" in ids
         assert "git" in ids
         assert ("bash" if os.name != "nt" else "powershell") in ids
         assert "clarify" in ids
@@ -116,10 +116,10 @@ class TestToolRegistry:
     def test_filter_tools_retains_only_allowed_tools(self):
         r = ToolRegistry()
 
-        r.filter_tools({"read", "grep"})
+        r.filter_tools({"read", "search"})
 
-        assert set(r.ids()) == {"read", "grep"}
+        assert set(r.ids()) == {"read", "search"}
         assert r.get("read") is not None
         assert r.get("file") is None
         names = [tool["function"]["name"] for tool in r.tools_for_llm()]
-        assert names == ["read", "grep"]
+        assert names == ["read", "search"]

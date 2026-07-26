@@ -12,7 +12,7 @@ from pydantic import BaseModel, Field
 
 
 LOW_VALUE_REPETITIVE_TOOL_KEYS = frozenset({"todo:read", "checkpoint", "workflow:advance", "workflow:enter", "workflow:done"})
-REPETITIVE_TOOL_EXEMPTIONS = frozenset({"bash", "powershell", "read", "grep"})
+REPETITIVE_TOOL_EXEMPTIONS = frozenset({"bash", "powershell", "read", "search"})
 EVIDENCE_TEXT_LIMIT = 500
 
 
@@ -339,7 +339,7 @@ def normalize_tool_args(tool_name: str, args: dict[str, Any]) -> str:
             "line": args.get("line"),
             "character": args.get("character"),
         })
-    if tool_name == "grep":
+    if tool_name == "search":
         return stable_json({
             "pattern": args.get("pattern"),
             "path": args.get("path"),

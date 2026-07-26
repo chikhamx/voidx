@@ -9,6 +9,7 @@ from __future__ import annotations
 
 import asyncio
 
+from voidx.agent.domain.turn_context import TurnExecutionContext
 from voidx.agent.infrastructure.langgraph.runtime.thread_context import bind_thread_execution_context
 from voidx.runtime.intent import TaskIntent
 from voidx.runtime.task_state import GoalSpec, TaskState
@@ -19,6 +20,7 @@ class _FakeHost:
     """Minimal host replicating LangGraphExecution._task_state property semantics."""
 
     def __init__(self) -> None:
+        self._workspace = ""
         self._default_task_state = TaskState()
 
     @property
@@ -91,3 +93,16 @@ async def test_set_task_state_inside_context_visible_during_await() -> None:
 
     await reader_task
     assert seen == ["test goal"]
+
+
+async def test_empty_turn_context_workspace_falls_back_to_host_workspace(tmp_path) -> None:
+    host = _FakeHost()
+    host._workspace = str(tmp_path)
+
+    async with bind_thread_execution_context(
+        host,
+        turn_context=TurnExecutionContext(thread_id="coding", session_id="", workspace=""),
+    ) as state:
+        assert state.workspace == str(tmp_path)
+        assert state.turn_context is not None
+        assert state.turn_context.workspace == str(tmp_path)

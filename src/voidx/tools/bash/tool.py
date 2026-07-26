@@ -21,6 +21,7 @@ from voidx.tools.shell.common import (
     build_success_result,
     build_timeout_result,
     maybe_route_hint,
+    resolve_shell_workspace,
     create_owned_subprocess_shell,
     release_owned_process,
     terminate_process,
@@ -48,6 +49,10 @@ class BashTool(BaseTool):
         blocked = _check_command(inp.command)
         if blocked:
             return build_blocked_result(inp.command, blocked)
+
+        workspace, workspace_error = resolve_shell_workspace(inp.command, ctx.workspace)
+        if workspace_error is not None:
+            return workspace_error
 
         approved_shell_risk = ctx.has_approved_tool_risk("bash", inp.command)
         blocked = None if approved_shell_risk else _sandbox_denial(inp.command, ctx)
@@ -78,7 +83,7 @@ class BashTool(BaseTool):
             _, shell_blocked = shell_sandbox_precheck(
                 {"command": inp.command},
                 PermissionContext(
-                    workspace=ctx.workspace,
+                    workspace=workspace,
                     permission_mode=ctx.permission_mode,
                     access_grants=access_grants,
                     process_sandbox=ctx.process_sandbox,
@@ -93,7 +98,7 @@ class BashTool(BaseTool):
             stdin=subprocess.DEVNULL,
             stdout=subprocess.PIPE,
             stderr=subprocess.PIPE,
-            cwd=ctx.workspace,
+            cwd=workspace,
         )
         try:
             stdout, stderr = await asyncio.wait_for(

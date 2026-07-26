@@ -8,7 +8,7 @@ from voidx.tools.base import ToolContext, ToolResult  # noqa: F401 — re-export
 from voidx.tools.file import FileReadTool, ManageTool, WriteTool, FileReplaceTool
 from voidx.tools.git import GitTool
 from voidx.tools.lsp import LspFormatTool, LspTool
-from voidx.tools.search import GlobTool, GrepTool
+from voidx.tools.search import FindTool, SearchTool
 from voidx.tools.bash import BashTool
 from voidx.tools.task_status import TaskStatusTool
 from voidx.tools.todo import TodoWriteTool
@@ -48,7 +48,7 @@ class ToolRegistry:
         for cls in [
             FileReadTool, ManageTool, WriteTool, FileReplaceTool,
             GitTool,
-            GlobTool, GrepTool,
+            FindTool, SearchTool,
             LspTool, LspFormatTool,
             ClarifyTool, PlanCheckpointTool, WorkflowTool, CompactContextTool, DocumentTool,
         ]:

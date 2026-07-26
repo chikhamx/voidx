@@ -117,8 +117,8 @@ DEFAULT_DISPLAY_RULES: dict[str, ToolDisplayRule] = {
     "skill": ToolDisplayRule(tool_name="skill", mode=ToolDisplayMode.HIDDEN),
     "clarify": ToolDisplayRule(tool_name="clarify", mode=ToolDisplayMode.HIDDEN),
     # ── Summary：搜索/查询类 ──
-    "grep": ToolDisplayRule(tool_name="grep", mode=ToolDisplayMode.SUMMARY, summary_max_lines=5),
-    "glob": ToolDisplayRule(tool_name="glob", mode=ToolDisplayMode.SUMMARY, summary_max_lines=5),
+    "search": ToolDisplayRule(tool_name="search", mode=ToolDisplayMode.SUMMARY, summary_max_lines=5),
+    "find": ToolDisplayRule(tool_name="find", mode=ToolDisplayMode.SUMMARY, summary_max_lines=5),
     "websearch": ToolDisplayRule(tool_name="websearch", mode=ToolDisplayMode.SUMMARY, summary_max_lines=5),
     "lsp": ToolDisplayRule(tool_name="lsp", mode=ToolDisplayMode.SUMMARY, summary_max_lines=5),
     # ── Show + 自适应 ──

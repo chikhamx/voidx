@@ -13,6 +13,7 @@ import subprocess
 import sys
 from contextlib import suppress
 from dataclasses import dataclass
+from pathlib import Path
 from typing import Literal
 
 from voidx.runtime.processes import (
@@ -25,7 +26,7 @@ from voidx.runtime.processes import (
 )
 from voidx.tools.base import ToolContext, ToolResult, tool_timeout_metadata
 
-_HintableTool = Literal["read", "git", "manage", "write", "replace", "glob", "grep"]
+_HintableTool = Literal["read", "git", "manage", "write", "replace", "find", "search"]
 
 
 @dataclass
@@ -52,6 +53,44 @@ def build_blocked_result(command: str, reason: str) -> ToolResult:
 def build_sandbox_result(command: str, reason: str) -> ToolResult:
     """Build a ToolResult for a sandbox denial (same structure as blocked)."""
     return build_blocked_result(command, reason)
+
+
+def resolve_shell_workspace(command: str, workspace: str) -> tuple[str, ToolResult | None]:
+    raw = str(workspace or "").strip()
+    if not raw:
+        message = "Shell workspace is not set; cannot choose a working directory."
+        return "", ToolResult(
+            output=message,
+            display=message,
+            metadata={"command": command, "error": True, "error_kind": "invalid_workspace"},
+        )
+    try:
+        resolved = Path(raw).expanduser().resolve()
+    except (OSError, ValueError) as exc:
+        message = f"Shell workspace is invalid: {raw} ({exc})"
+        return "", ToolResult(
+            output=message,
+            display=message,
+            metadata={
+                "command": command,
+                "workspace": raw,
+                "error": True,
+                "error_kind": "invalid_workspace",
+            },
+        )
+    if not resolved.is_dir():
+        message = f"Shell workspace does not exist or is not a directory: {resolved}"
+        return "", ToolResult(
+            output=message,
+            display=message,
+            metadata={
+                "command": command,
+                "workspace": str(resolved),
+                "error": True,
+                "error_kind": "invalid_workspace",
+            },
+        )
+    return str(resolved), None
 
 
 async def maybe_route_hint(command: str, hint: RouteHint, ctx: ToolContext, source: str) -> ToolResult | None:

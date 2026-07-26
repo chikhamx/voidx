@@ -17,7 +17,7 @@ from voidx.tools.base import ToolContext, ToolResult, BaseTool, UserInteraction,
 from voidx.tools.file import FileReadInput, FileReplaceInput, WriteInput, FileReadTool, WriteTool, FileReplaceTool, ManageTool
 from voidx.tools.file.state import save_file_version
 import voidx.tools.file.state as file_state
-from voidx.tools.search import GlobInput, GrepInput, GlobTool, GrepTool
+from voidx.tools.search import FindInput, SearchInput, FindTool, SearchTool
 from voidx.tools.bash import BashInput, BashTool
 from voidx.tools.powershell import PowerShellTool
 from voidx.tools.git import GitTool
@@ -184,13 +184,14 @@ class TestToolSchemas:
         with pytest.raises(ValueError):
             FileReplaceInput(file_path="x.py", bounds=[{"line_no": 5, "anchor": ""}, {"line_no": 3, "anchor": "tail"}], new_string="new")
 
-    def test_glob_input(self):
-        inp = GlobInput(pattern="**/*.py")
-        assert inp.pattern == "**/*.py"
+    def test_find_input(self):
+        inp = FindInput(query="src", extensions=["py"])
+        assert inp.query == "src"
+        assert inp.extensions == ["py"]
 
-    def test_grep_input(self):
-        inp = GrepInput(pattern="TODO", include="*.py")
-        assert inp.pattern == "TODO"
+    def test_search_input(self):
+        inp = SearchInput(query="TODO", extensions=["py"])
+        assert inp.query == "TODO"
 
     def test_bash_input(self):
         inp = BashInput(command="ls")
@@ -201,8 +202,8 @@ class TestToolSchemas:
         git_schema = GitTool().parameters_schema()
         bash_schema = BashTool().parameters_schema()
         powershell_schema = PowerShellTool().parameters_schema()
-        glob_schema = GlobTool().parameters_schema()
-        grep_schema = GrepTool().parameters_schema()
+        find_schema = FindTool().parameters_schema()
+        search_schema = SearchTool().parameters_schema()
         lsp_schema = LspTool().parameters_schema()
         lsp_format_schema = LspFormatTool().parameters_schema()
         skill_schema = SkillsTool().parameters_schema()
@@ -214,11 +215,11 @@ class TestToolSchemas:
         assert "terminated" in bash_schema["properties"]["timeout"]["description"]
         assert "Windows only" in PowerShellTool.description
         assert "PowerShell command string" in powershell_schema["properties"]["command"]["description"]
-        assert "workspace-relative" in glob_schema["properties"]["pattern"]["description"]
-        assert "sorted workspace-relative" in GlobTool.description
-        assert "Python regular expression" in grep_schema["properties"]["pattern"]["description"]
-        assert "file or directory scope" in grep_schema["properties"]["path"]["description"]
-        assert "max_scanned" in GrepTool.description
+        assert "Filename" in find_schema["properties"]["query"]["description"]
+        assert "stable structured" in FindTool.description
+        assert "Text or regular expression" in search_schema["properties"]["query"]["description"]
+        assert "File or directory scope" in search_schema["properties"]["path"]["description"]
+        assert "literal" in SearchTool.description
         assert "definition and references" in lsp_schema["properties"]["line"]["description"]
         assert "0-based" in lsp_schema["properties"]["character"]["description"]
         assert "range" in LspFormatTool.description.lower()

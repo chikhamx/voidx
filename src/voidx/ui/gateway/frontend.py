@@ -7,7 +7,8 @@ import uuid
 from typing import Any
 
 from voidx.ui.output.events.schema import PermissionToolDetail
-from voidx.ui.output.types import SubmitHandler, ThreadExecutionContext, UiStatus
+from voidx.ui.output.types import SubmitHandler, UiStatus, coding_turn_context_for_queue
+from voidx.agent.domain.turn_context import TurnExecutionContext
 from voidx.ui.protocol.requests import UiChoiceRequest, UiPermissionRequest, UiTextRequest
 
 
@@ -27,9 +28,10 @@ class _SubmitQueueItem(str):
         submit_text: str,
         *,
         thread_id: str = "",
-        context: ThreadExecutionContext | None = None,
+        context: TurnExecutionContext | None = None,
     ):
-        context = context or ThreadExecutionContext(thread_id=thread_id, session_id=thread_id)
+        if context is None:
+            context = TurnExecutionContext(thread_id=thread_id, session_id=thread_id)
         obj = str.__new__(cls, submit_text)
         obj.context = context
         obj.thread_id = context.thread_id
@@ -49,7 +51,7 @@ class GatewayHeadlessFrontend:
         self._queue: asyncio.Queue[_SubmitQueueItem | None] = asyncio.Queue()
         self._running = False
         self._current_submit_task: asyncio.Task[bool] | None = None
-        self._current_submit_context: ThreadExecutionContext | None = None
+        self._current_submit_context: TurnExecutionContext | None = None
         self._submit_cancel_requested = False
         self._external_command_handler: Any = None
         self._external_request_handler: Any = None
@@ -68,7 +70,7 @@ class GatewayHeadlessFrontend:
                 context = getattr(item, "context", None)
                 if context is None:
                     thread_id = getattr(item, "thread_id", "")
-                    context = ThreadExecutionContext(thread_id=thread_id, session_id=thread_id)
+                    context = coding_turn_context_for_queue(self.status, thread_id=thread_id)
                 self._current_submit_context = context
                 try:
                     submit_result = on_submit(str(item), context=context)
@@ -99,16 +101,16 @@ class GatewayHeadlessFrontend:
         text: str,
         *,
         thread_id: str = "",
-        context: ThreadExecutionContext | None = None,
+        context: TurnExecutionContext | None = None,
     ) -> None:
-        context = context or ThreadExecutionContext(thread_id=thread_id, session_id=thread_id)
+        context = coding_turn_context_for_queue(self.status, thread_id=thread_id, context=context)
         self._queue.put_nowait(_SubmitQueueItem(text, context=context))
 
     def cancel_external_input(
         self,
         *,
         thread_id: str = "",
-        context: ThreadExecutionContext | None = None,
+        context: TurnExecutionContext | None = None,
     ) -> None:
         self._submit_cancel_requested = True
         if self._current_submit_task is not None:

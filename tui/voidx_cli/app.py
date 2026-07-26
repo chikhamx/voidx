@@ -25,7 +25,7 @@ from voidx.paths import voidx_workspace_dir
 from voidx.ui.output.dock import dock
 from voidx.ui.output.dock.formatting import _text_from_line
 from voidx.ui.output.tree import OutputTree
-from voidx.ui.output.types import SubmitHandler, ThreadExecutionContext
+from voidx.ui.output.types import SubmitHandler, ThreadExecutionContext, coding_turn_context_for_queue
 from voidx.ui.tools.clipboard_image import paste_clipboard_image as paste_clipboard_image_from_system
 from voidx.ui.tools.clipboard_text import read_clipboard_text as paste_clipboard_text_from_system
 from .helpers import (
@@ -207,6 +207,14 @@ class PureTui(
         """Run without TUI — consume gateway input via the submit queue."""
         await self._consume(on_submit)
 
+    def _submit_context(
+        self,
+        *,
+        thread_id: str = "",
+        context: ThreadExecutionContext | None = None,
+    ) -> ThreadExecutionContext:
+        return coding_turn_context_for_queue(self.status, thread_id=thread_id, context=context)
+
     def submit_external_input(
         self,
         text: str,
@@ -215,7 +223,7 @@ class PureTui(
         context: ThreadExecutionContext | None = None,
     ) -> None:
         """Submit text from web gateway."""
-        context = context or ThreadExecutionContext(thread_id=thread_id, session_id=thread_id)
+        context = self._submit_context(thread_id=thread_id, context=context)
         self._queue.put_nowait(_SubmitQueueItem(
             text,
             restore_text=text,
@@ -492,6 +500,7 @@ class PureTui(
                 "/clear",
                 restore_text=draft_text,
                 paste_entries=paste_entries,
+                context=self._submit_context(),
             ))
             self._submit_cancel_requested = True
             if self._current_submit_task is not None and not self._current_submit_task.done():
@@ -514,6 +523,7 @@ class PureTui(
             submit_text,
             restore_text=draft_text,
             paste_entries=paste_entries,
+            context=self._submit_context(),
         ))
         return True
 
@@ -614,7 +624,7 @@ class PureTui(
             context = getattr(item, "context", None)
             if context is None:
                 thread_id = getattr(item, "thread_id", "")
-                context = ThreadExecutionContext(thread_id=thread_id, session_id=thread_id)
+                context = self._submit_context(thread_id=thread_id)
 
             self._busy = True
             self._busy_started_at = time.monotonic()

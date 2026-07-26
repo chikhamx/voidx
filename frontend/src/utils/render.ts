@@ -419,7 +419,7 @@ function getToolGroupSummary(tools: ToolInfo[]): { icon: string; text: string } 
 
   for (const tool of tools) {
     const name = (tool.tool_name || "").toLowerCase();
-    if (name.includes("read") || name.includes("view") || name.includes("grep") || name.includes("list") || name.includes("locate")) {
+    if (name.includes("read") || name.includes("view") || name.includes("search") || name.includes("find") || name.includes("list") || name.includes("locate")) {
       reads += 1;
     } else if (name.includes("write") || name.includes("replace") || name.includes("edit")) {
       writes += 1;
@@ -457,15 +457,27 @@ function getToolItemHeaderInfo(data: ToolItemData): ToolHeaderInfo {
     return { icon: SVG_ICONS.read, verb: "read", target: filename || "file" };
   }
 
-  if (toolName.includes("grep")) {
-    const query = String(args.query || args.Query || args.pattern || "");
-    const searchPath = String(args.search_path || args.SearchPath || "");
+  if (toolName.includes("search")) {
+    const query = String(args.query || args.Query || "");
+    const searchPath = String(args.path || args.Path || "");
     const dirname = searchPath ? searchPath.substring(searchPath.lastIndexOf("/") + 1) : "";
     const queryTruncated = query.length > 20 ? query.slice(0, 20) + "..." : query;
     const location = dirname ? ` in ${dirname}` : "";
     return {
       icon: SVG_ICONS.search,
       verb: query ? `searched "${queryTruncated}"${location}` : "searched",
+    };
+  }
+
+  if (toolName.includes("find")) {
+    const query = String(args.query || args.Query || "");
+    const searchPath = String(args.path || args.Path || "");
+    const dirname = searchPath ? searchPath.substring(searchPath.lastIndexOf("/") + 1) : "";
+    const queryTruncated = query.length > 20 ? query.slice(0, 20) + "..." : query;
+    const location = dirname ? ` in ${dirname}` : "";
+    return {
+      icon: SVG_ICONS.search,
+      verb: query ? `found "${queryTruncated}"${location}` : "found files",
     };
   }
 

@@ -196,8 +196,7 @@ def _hint_find(words: list[str]) -> RouteHint | None:
         return None
     args = words[1:]
     name_pattern = None
-    ignore_case = False
-    max_depth = None
+    case = "sensitive"
     base_dir = "."
     file_only = False
     i = 0
@@ -207,22 +206,16 @@ def _hint_find(words: list[str]) -> RouteHint | None:
             i += 2
         elif args[i] == "-iname" and i + 1 < len(args):
             name_pattern = args[i + 1]
-            ignore_case = True
-            i += 2
-        elif args[i] == "-maxdepth" and i + 1 < len(args):
-            try:
-                max_depth = int(args[i + 1])
-            except ValueError:
-                return None
-            if max_depth < 0:
-                return None
+            case = "insensitive"
             i += 2
         elif args[i] == "-type" and i + 1 < len(args):
             if args[i + 1] != "f":
                 return None
             file_only = True
             i += 2
-        elif not args[i].startswith("-") and i == 0:
+        elif args[i].startswith("-"):
+            return None
+        elif i == 0:
             base_dir = args[i]
             i += 1
         else:
@@ -230,26 +223,36 @@ def _hint_find(words: list[str]) -> RouteHint | None:
     if name_pattern is None or not file_only:
         return None
     normalized_base = base_dir.removeprefix("./").rstrip("/") or "."
-    if (
-        base_dir.startswith("/")
-        or ".." in normalized_base.split("/")
-        or "/" in name_pattern
-        or "\\" in name_pattern
-    ):
+    if base_dir.startswith("/") or ".." in normalized_base.split("/") or "/" in name_pattern or "\\" in name_pattern:
         return None
-    glob_pattern = f"**/{name_pattern}" if normalized_base == "." else f"{normalized_base}/**/{name_pattern}"
-    tool_args: dict = {"pattern": glob_pattern}
-    parts = [f'pattern="{glob_pattern}"']
-    if ignore_case:
-        parts.append("ignore_case=True")
-        tool_args["ignore_case"] = True
-    if max_depth is not None:
-        base_depth = 0 if normalized_base == "." else len(normalized_base.split("/"))
-        routed_max_depth = base_depth + max_depth
-        parts.append(f"max_depth={routed_max_depth}")
-        tool_args["max_depth"] = routed_max_depth
+    if any(ch in name_pattern for ch in "?[{"):
+        return None
+    query = None
+    extensions = None
+    if name_pattern.startswith("*.") and name_pattern.count("*") == 1:
+        ext = name_pattern[2:]
+        if not ext or any(ch in ext for ch in "*?[{"):
+            return None
+        extensions = [ext]
+    elif name_pattern.startswith("*") and name_pattern.endswith("*"):
+        query = name_pattern[1:-1]
+    elif name_pattern.startswith("*"):
+        query = name_pattern[1:]
+        if not query:
+            return None
+    elif name_pattern.endswith("*"):
+        query = name_pattern[:-1]
+        if not query:
+            return None
+    else:
+        return None
+    tool_args: dict = {"path": normalized_base, "case": case}
+    if query:
+        tool_args["query"] = query
+    if extensions:
+        tool_args["extensions"] = extensions
     return RouteHint(
-        tool_id="glob", ui_label="→ glob",
-        llm_hint=f'Prefer glob({", ".join(parts)}) — skips .git, node_modules, and build dirs automatically.',
+        tool_id="find", ui_label="→ find",
+        llm_hint=f'Prefer find({tool_args}) — stable filename results.',
         tool_args=tool_args,
     )

@@ -1,317 +1,76 @@
-"""Search tools — glob pattern matching, grep content search. Fast, deterministic."""
+"""Semantic file discovery and content search tools."""
 
 from __future__ import annotations
 
-import fnmatch
 import json
+import os
 import re
-from pathlib import Path, PurePosixPath, PureWindowsPath
+from pathlib import Path
+from typing import Literal
 
-from pydantic import BaseModel, Field, field_validator
+from pydantic import BaseModel, Field, field_validator, model_validator
+
 from voidx.logging.tool_log import log_tool_event
-from voidx.tools.base import BaseTool, model_to_json_schema, ToolContext, ToolResult, _resolve_tool_path, _sandbox_paths_for_access, SKIP_DIRS, SKIP_SUFFIXES
+from voidx.tools.base import (
+    BaseTool,
+    ToolContext,
+    ToolResult,
+    _resolve_tool_path,
+    _sandbox_paths_for_access,
+    model_to_json_schema,
+    SKIP_DIRS,
+    SKIP_SUFFIXES,
+)
 from voidx.tools.file.state import record_read_range
 
 
+CaseMode = Literal["auto", "sensitive", "insensitive"]
+MatchMode = Literal["text", "word", "regex"]
 
-class GlobInput(BaseModel):
-    pattern: str = Field(description="workspace-relative glob pattern to match files, e.g. '**/*.py' or 'src/**/*.ts'.")
-    ignore_case: bool = Field(default=False, description="Case-insensitive glob matching when true.")
-    max_depth: int | None = Field(default=None, ge=0, description="Maximum path depth from workspace root when set.")
 
-    @field_validator("pattern")
+class FindInput(BaseModel):
+    query: str | None = Field(default=None, description="Filename substring, without path separators.")
+    path: str | None = Field(default=None, description="File or directory scope; defaults to workspace root.")
+    extensions: list[str] | None = Field(default=None, description="Extensions such as ['py', 'pyi'].")
+    case: CaseMode = "auto"
+    max_results: int = Field(default=50, ge=1, le=200)
+
+    @model_validator(mode="after")
+    def _require_query_or_extensions(self):
+        if not self.query and not self.extensions:
+            raise ValueError("query or extensions is required")
+        if self.query and any(sep in self.query for sep in ("/", "\\")):
+            raise ValueError("query must not contain path separators")
+        return self
+
+    @field_validator("extensions", mode="before")
     @classmethod
-    def _workspace_relative_pattern(cls, value: str) -> str:
-        normalized = value.replace("\\", "/")
-        if (
-            not value
-            or PurePosixPath(normalized).is_absolute()
-            or PureWindowsPath(value).is_absolute()
-            or ".." in PurePosixPath(normalized).parts
-        ):
-            raise ValueError("pattern must be workspace-relative and stay within the workspace")
-        return value
+    def _normalize_extensions(cls, value):
+        if value is None:
+            return value
+        return [str(item).lstrip(".").lower() for item in value]
 
 
-class GlobTool(BaseTool):
-    id = "glob"
-    description = (
-        "Find files by workspace-relative glob pattern. Returns sorted workspace-relative paths. "
-        "Skips .git, node_modules, .venv, __pycache__, and other build/dot directories."
-    )
+class SearchInput(BaseModel):
+    query: str = Field(min_length=1, description="Text or regular expression to search for.")
+    path: str | None = Field(default=None, description="File or directory scope; defaults to workspace root.")
+    extensions: list[str] | None = None
+    match: MatchMode = "text"
+    case: CaseMode = "auto"
+    context: int = Field(default=0, ge=0, le=10)
+    max_results: int = Field(default=30, ge=1, le=100)
 
-    def parameters_schema(self) -> dict:
-        return model_to_json_schema(GlobInput)
-
-    async def execute(self, args: dict, ctx: ToolContext) -> ToolResult:
-        try:
-            inp = GlobInput.model_validate(args)
-        except Exception as exc:
-            return ToolResult(output=f"Invalid arguments: {exc}", metadata={"error": True})
-        base = Path(ctx.workspace)
-
-        def _visible_path(p: Path) -> bool:
-            parts = p.relative_to(base).parts
-            for i, part in enumerate(parts):
-                if part in SKIP_DIRS:
-                    return False
-                # Allow dot-files at root level (e.g. .env, .gitignore)
-                # but skip content inside hidden directories
-                if part.startswith(".") and i < len(parts) - 1:
-                    return False
-            return True
-
-        def _within_depth(p: Path) -> bool:
-            if inp.max_depth is None:
-                return True
-            return len(p.relative_to(base).parts) <= inp.max_depth
-
-        def _relative(p: Path) -> str:
-            return str(p.relative_to(base)).replace("\\", "/")
-
-        def _glob_pattern_variants(pattern: str) -> set[str]:
-            variants = {pattern}
-            pending = [pattern]
-            while pending:
-                current = pending.pop()
-                idx = current.find("**/")
-                while idx != -1:
-                    variant = current[:idx] + current[idx + 3:]
-                    if variant not in variants:
-                        variants.add(variant)
-                        pending.append(variant)
-                    idx = current.find("**/", idx + 1)
-            return variants
-
-        if inp.ignore_case:
-            patterns = _glob_pattern_variants(inp.pattern.lower())
-            candidates = (
-                p for p in base.rglob("*")
-                if any(fnmatch.fnmatchcase(_relative(p).lower(), pattern) for pattern in patterns)
-            )
-        else:
-            candidates = base.glob(inp.pattern)
-
-        matches = sorted(
-            _relative(p)
-            for p in candidates
-            if p.is_file() and not p.is_symlink() and _visible_path(p) and _within_depth(p)
-        )
-
-        if not matches:
-            payload = {"pattern": inp.pattern, "matches": 0, "truncated": False, "files": []}
-            return ToolResult(
-                output=json.dumps(payload, ensure_ascii=False, indent=2),
-                display=f"No files matched pattern: {inp.pattern}",
-                metadata={"pattern": inp.pattern, "matches": 0},
-            )
-
-        total = len(matches)
-        shown = matches[:200]
-        truncated = total > 200
-        payload = {"pattern": inp.pattern, "matches": total, "truncated": truncated, "files": shown}
-        return ToolResult(
-            title=f"Glob: {inp.pattern} → {total} files",
-            output=json.dumps(payload, ensure_ascii=False, indent=2),
-            display="\n".join(shown),
-            summary=f"{total} files matched",
-            metadata={"pattern": inp.pattern, "matches": total, "truncated": truncated},
-        )
-
-
-class GrepInput(BaseModel):
-    pattern: str = Field(description="Python regular expression to search for.")
-    path: str | None = Field(default=None, description="file or directory scope to search; defaults to workspace root.")
-    include: str | None = Field(default=None, description="Glob pattern to include files, e.g. '*.py'.")
-    ignore_case: bool = Field(default=False, description="Case-insensitive search when true.")
-    whole_word: bool = Field(default=False, description="Match whole words only by adding word boundaries.")
-    context_lines: int = Field(default=0, ge=0, description="Number of context lines before and after each match; 0 returns only matching lines.")
-    exclude: list[str] | None = Field(default=None, description="Glob patterns to exclude files, e.g. ['*.min.js', '*.map'].")
-    max_matches: int = Field(default=100, ge=1, description="Maximum number of matches to return.")
-    max_scanned: int = Field(default=5000, ge=1, description="Maximum number of files to scan before stopping.")
-
-    @field_validator("exclude", mode="before")
+    @field_validator("extensions", mode="before")
     @classmethod
-    def _normalize_exclude(cls, v):
-        if isinstance(v, str):
-            return [v] if v else None
-        return v
+    def _normalize_extensions(cls, value):
+        if value is None:
+            return value
+        return [str(item).lstrip(".").lower() for item in value]
 
 
-class GrepTool(BaseTool):
-    id = "grep"
-    description = (
-        "Search file contents with a Python regex. Returns file:line:content matches. "
-        "Skips .git, node_modules, binary files, and build/dot directories. "
-        "Use include/exclude to filter files, context_lines for surrounding lines, "
-        "and max_matches/max_scanned to bound output and scan cost."
-    )
-
-    def parameters_schema(self) -> dict:
-        return model_to_json_schema(GrepInput)
-
-    async def execute(self, args: dict, ctx: ToolContext) -> ToolResult:
-        try:
-            inp = GrepInput.model_validate(args)
-        except Exception as exc:
-            return ToolResult(output=f"Invalid arguments: {exc}", metadata={"error": True})
-        base = Path(ctx.workspace)
-        search_dir = _resolve_tool_path(ctx.workspace, inp.path, _sandbox_paths_for_access(ctx, write=False)) if inp.path else base
-        if search_dir is None:
-            return ToolResult(output=f"Path traversal blocked: {inp.path}", metadata={"error": True})
-
-        pattern = rf"\b{inp.pattern}\b" if inp.whole_word else inp.pattern
-        flags = re.IGNORECASE if inp.ignore_case else 0
-        try:
-            regex = re.compile(pattern, flags)
-        except re.error as e:
-            return ToolResult(output=f"Invalid regex: {e}", metadata={"error": True})
-
-        gitignore_spec = _load_gitignore(base)
-
-        results: list[str] = []
-        match_details: list[dict] = []
-        count = 0
-        scanned = 0
-
-        def should_skip_dir(p: Path) -> bool:
-            if p.name in SKIP_DIRS:
-                return True
-            if gitignore_spec is not None:
-                try:
-                    rel = str(p.relative_to(base)).replace("\\", "/") + "/"
-                    if gitignore_spec.match_file(rel):
-                        return True
-                except ValueError:
-                    pass
-            return False
-
-        def is_binary(f: Path) -> bool:
-            if f.suffix in SKIP_SUFFIXES:
-                return True
-            try:
-                chunk = f.read_bytes()[:8192]
-                return b"\x00" in chunk
-            except Exception:
-                return False
-
-        def is_gitignored(f: Path) -> bool:
-            if gitignore_spec is None:
-                return False
-            try:
-                rel = str(f.relative_to(base)).replace("\\", "/")
-                return gitignore_spec.match_file(rel)
-            except ValueError:
-                return False
-
-        def result_path(f: Path) -> str:
-            try:
-                return str(f.resolve().relative_to(base)).replace("\\", "/")
-            except ValueError:
-                return str(f.resolve())
-
-        def iter_files(dir_path: Path):
-            nonlocal scanned
-            try:
-                for entry in dir_path.iterdir():
-                    if should_skip_dir(entry):
-                        continue
-                    if entry.is_dir():
-                        yield from iter_files(entry)
-                    elif entry.is_file():
-                        if is_binary(entry):
-                            continue
-                        if is_gitignored(entry):
-                            continue
-                        if inp.include and not entry.match(inp.include):
-                            continue
-                        if inp.exclude and any(entry.match(g) for g in inp.exclude):
-                            continue
-                        scanned += 1
-                        yield entry
-            except PermissionError as exc:
-                log_tool_event("grep_dir_denied", tool_name="search", message=f"Permission denied accessing directory: {dir_path}: {exc}")
-
-        if search_dir.is_file():
-            files = [search_dir]
-        elif search_dir.is_dir():
-            files = iter_files(search_dir)
-        else:
-            return ToolResult(output=f"Path not found: {inp.path}", metadata={"error": True})
-
-        _MAX_OUTPUT_LINES = 500
-        truncated = False
-
-        for f in files:
-            if scanned > inp.max_scanned:
-                truncated = True
-                results.append(f"... (stopped after scanning {scanned} files)")
-                break
-
-            try:
-                lines = f.read_text(encoding="utf-8", errors="replace").split("\n")
-                hits: list[tuple[str, int, str, int, bool]] = []
-                for i, line in enumerate(lines, 1):
-                    m = regex.search(line)
-                    if m:
-                        rel = result_path(f)
-                        content = line[:200]
-                        hits.append((rel, i, content, m.start(), content == line))
-                        count += 1
-                        if count >= inp.max_matches:
-                            break
-                if inp.context_lines > 0 and hits:
-                    shown_lines: set[tuple[str, int]] = set()
-                    for rel, line_no, content, col, fully_visible in hits:
-                        results.append(f"{rel}:{line_no}:{content}")
-                        match_details.append({"file": rel, "line": line_no, "column": col + 1, "content": content})
-                        if fully_visible:
-                            record_read_range(ctx, f, line_no, line_no)
-                        shown_lines.add((rel, line_no))
-                        start = max(1, line_no - inp.context_lines)
-                        end = min(len(lines), line_no + inp.context_lines)
-                        for ctx_no in range(start, end + 1):
-                            if ctx_no != line_no and (rel, ctx_no) not in shown_lines:
-                                ctx_line = lines[ctx_no - 1]
-                                results.append(f"{rel}-{ctx_no}-{ctx_line.strip()[:200]}")
-                                shown_lines.add((rel, ctx_no))
-                                if len(ctx_line) <= 200:
-                                    record_read_range(ctx, f, ctx_no, ctx_no)
-                        if len(results) >= _MAX_OUTPUT_LINES:
-                            truncated = True
-                            break
-                else:
-                    for rel, line_no, content, col, fully_visible in hits:
-                        results.append(f"{rel}:{line_no}:{content}")
-                        match_details.append({"file": rel, "line": line_no, "column": col + 1, "content": content})
-                        if fully_visible:
-                            record_read_range(ctx, f, line_no, line_no)
-                if count >= inp.max_matches:
-                    truncated = True
-                    break
-                if len(results) >= _MAX_OUTPUT_LINES:
-                    truncated = True
-                    break
-            except Exception as exc:
-                log_tool_event("grep_read_failed", tool_name="search", message=f"Failed to read file during grep: {f}: {exc}")
-                continue
-
-        if not results:
-            payload = {"pattern": inp.pattern, "matches": 0, "truncated": False, "results": []}
-            return ToolResult(
-                output=json.dumps(payload, ensure_ascii=False, indent=2),
-                display=f"No matches found for: {inp.pattern}",
-                metadata={"pattern": inp.pattern, "matches": 0, "match_details": [], "truncated": False},
-            )
-
-        payload = {"pattern": inp.pattern, "matches": count, "truncated": truncated, "results": match_details}
-        return ToolResult(
-            title=f"Grep: {inp.pattern} → {count} matches",
-            output=json.dumps(payload, ensure_ascii=False, indent=2),
-            display="\n".join(results),
-            summary=f"{count} matches",
-            metadata={"pattern": inp.pattern, "matches": count, "match_details": match_details, "truncated": truncated},
-        )
+class _FileEntry(BaseModel):
+    path: Path
+    relative: str
 
 
 def _load_gitignore(base: Path):
@@ -319,12 +78,168 @@ def _load_gitignore(base: Path):
         import pathspec
     except ImportError:
         return None
-    gitignore_path = base / ".gitignore"
-    if not gitignore_path.is_file():
+    target = base / ".gitignore"
+    if not target.is_file():
         return None
     try:
-        lines = gitignore_path.read_text(encoding="utf-8").splitlines()
-        return pathspec.PathSpec.from_lines("gitignore", lines)
+        return pathspec.PathSpec.from_lines("gitignore", target.read_text(encoding="utf-8").splitlines())
     except Exception:
         log_tool_event("tool_gitignore_parse_failed", tool_name="search", message="Failed to parse .gitignore")
         return None
+
+
+def _relative(base: Path, path: Path) -> str:
+    return str(path.relative_to(base)).replace("\\", "/")
+
+
+def _hidden_content(relative: str) -> bool:
+    parts = Path(relative).parts
+    return any(part.startswith(".") for part in parts[:-1])
+
+
+def _ignored(spec, relative: str) -> bool:
+    if spec is None:
+        return False
+    return bool(spec.match_file(relative) or spec.match_file(relative + "/"))
+
+
+def _is_binary(path: Path) -> bool:
+    if path.suffix.lower() in SKIP_SUFFIXES:
+        return True
+    try:
+        return b"\x00" in path.read_bytes()[:8192]
+    except OSError:
+        return False
+
+
+def _visible_files(base: Path, scope: Path, *, skip_binary: bool):
+    spec = _load_gitignore(base)
+    candidates: list[Path] = []
+    if scope.is_file():
+        candidates = [scope]
+    elif scope.is_dir():
+        for root, dirs, files in os.walk(scope, topdown=True, followlinks=False):
+            root_path = Path(root)
+            dirs[:] = [name for name in dirs if name not in SKIP_DIRS and not name.startswith(".")]
+            candidates.extend(root_path / name for name in files)
+    for path in sorted(candidates, key=lambda item: _relative(base, item)):
+        if path.is_symlink():
+            continue
+        try:
+            relative = _relative(base, path)
+        except ValueError:
+            continue
+        if _hidden_content(relative):
+            continue
+        if _ignored(spec, relative) or (skip_binary and _is_binary(path)):
+            continue
+        yield _FileEntry(path=path, relative=relative)
+
+
+def _resolve_scope(ctx: ToolContext, value: str | None):
+    base = Path(ctx.workspace)
+    scope = _resolve_tool_path(ctx.workspace, value, _sandbox_paths_for_access(ctx, write=False)) if value else base
+    return base, scope
+
+
+def _case_insensitive(value: str, mode: CaseMode) -> bool:
+    return mode == "insensitive" or (mode == "auto" and not any(char.isupper() for char in value))
+
+
+class FindTool(BaseTool):
+    id = "find"
+    description = "Find files by filename substring and extension filters with stable structured results."
+
+    def parameters_schema(self) -> dict:
+        return model_to_json_schema(FindInput)
+
+    async def execute(self, args: dict, ctx: ToolContext) -> ToolResult:
+        try:
+            inp = FindInput.model_validate(args)
+        except Exception as exc:
+            return ToolResult(output=f"Invalid arguments: {exc}", metadata={"error": True})
+        base, scope = _resolve_scope(ctx, inp.path)
+        if scope is None:
+            return ToolResult(output=f"Path traversal blocked: {inp.path}", metadata={"error": True})
+        if not scope.exists():
+            return ToolResult(output=f"Path not found: {inp.path}", metadata={"error": True})
+        query = inp.query or ""
+        needle = query if not _case_insensitive(query, inp.case) else query.lower()
+        extensions = set(inp.extensions or [])
+        matches = []
+        for entry in _visible_files(base, scope, skip_binary=False):
+            candidate = entry.path.name if not _case_insensitive(query, inp.case) else entry.path.name.lower()
+            if query and needle not in candidate:
+                continue
+            if extensions and entry.path.suffix.lstrip(".").lower() not in extensions:
+                continue
+            rank = 0 if query and candidate == needle else 1 if query and candidate.startswith(needle) else 2
+            matches.append((rank, entry.relative, {"path": entry.relative, "name": entry.path.name}))
+        matches.sort(key=lambda item: (item[0], item[1]))
+        truncated = len(matches) > inp.max_results
+        payload = {"query": inp.query, "extensions": inp.extensions, "files": [item[2] for item in matches[:inp.max_results]], "truncated": truncated}
+        return ToolResult(output=json.dumps(payload, ensure_ascii=False, indent=2), summary=f"{len(payload['files'])} files", metadata={"count": len(payload["files"]), "truncated": truncated})
+
+
+class SearchTool(BaseTool):
+    id = "search"
+    description = "Search text with literal, word, or regex matching and structured results."
+
+    def parameters_schema(self) -> dict:
+        return model_to_json_schema(SearchInput)
+    async def execute(self, args: dict, ctx: ToolContext) -> ToolResult:
+        try:
+            inp = SearchInput.model_validate(args)
+        except Exception as exc:
+            return ToolResult(output=f"Invalid arguments: {exc}", metadata={"error": True})
+        base, scope = _resolve_scope(ctx, inp.path)
+        if scope is None:
+            return ToolResult(output=f"Path traversal blocked: {inp.path}", metadata={"error": True})
+        if not scope.exists():
+            return ToolResult(output=f"Path not found: {inp.path}", metadata={"error": True})
+        flags = re.IGNORECASE if _case_insensitive(inp.query, inp.case) else 0
+        expression = re.escape(inp.query) if inp.match in ("text", "word") else inp.query
+        if inp.match == "word":
+            expression = rf"(?<!\w){expression}(?!\w)"
+        try:
+            regex = re.compile(expression, flags)
+        except re.error as exc:
+            return ToolResult(output=f"Invalid regex: {exc}", metadata={"error": True})
+        extensions = set(inp.extensions or [])
+        grouped: dict[str, list[dict]] = {}
+        count = 0
+        truncated = False
+        for entry in _visible_files(base, scope, skip_binary=True):
+            if extensions and entry.path.suffix.lstrip(".").lower() not in extensions:
+                continue
+            try:
+                lines = entry.path.read_text(encoding="utf-8", errors="replace").splitlines()
+            except OSError as exc:
+                log_tool_event("search_read_failed", tool_name="search", message=str(exc))
+                continue
+            hits = []
+            for line_no, line in enumerate(lines, 1):
+                match = regex.search(line)
+                if not match:
+                    continue
+                if count >= inp.max_results:
+                    truncated = True
+                    break
+                count += 1
+                hits.append({"line": line_no, "column": match.start() + 1, "text": line[:200], "before": [], "after": []})
+            if hits:
+                if inp.context:
+                    for hit in hits:
+                        start = max(1, hit["line"] - inp.context)
+                        end = min(len(lines), hit["line"] + inp.context)
+                        hit["before"] = [{"line": n, "text": lines[n - 1][:200]} for n in range(start, hit["line"])]
+                        hit["after"] = [{"line": n, "text": lines[n - 1][:200]} for n in range(hit["line"] + 1, end + 1)]
+                grouped[entry.relative] = hits
+                record_read_range(ctx, entry.path, min(hit["line"] for hit in hits), max(hit["line"] for hit in hits))
+            if truncated:
+                break
+        matches = [{"path": path, "hits": hits} for path, hits in grouped.items()]
+        payload = {"query": inp.query, "match": inp.match, "case": inp.case, "matches": matches, "truncated": truncated}
+        details = [{"path": path, **hit} for path, hits in grouped.items() for hit in hits]
+        display = "\n".join(f"{path}:{hit['line']}:{hit['text']}" for path, hits in grouped.items() for hit in hits)
+        return ToolResult(output=json.dumps(payload, ensure_ascii=False, indent=2), display=display, summary=f"{count} matches", metadata={"query": inp.query, "matches": count, "match_details": details, "truncated": truncated})

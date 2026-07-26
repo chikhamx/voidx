@@ -32,8 +32,8 @@ class PermissionCapability(str, Enum):
 
 BASIC_RULES: Ruleset = [
     Rule(permission="read", pattern="*", action="allow"),
-    Rule(permission="glob", pattern="*", action="allow"),
-    Rule(permission="grep", pattern="*", action="allow"),
+    Rule(permission="find", pattern="*", action="allow"),
+    Rule(permission="search", pattern="*", action="allow"),
     Rule(permission="webfetch", pattern="*", action="allow"),
     Rule(permission="websearch", pattern="*", action="allow"),
     Rule(permission="todo", pattern="*", action="allow"),
@@ -106,17 +106,16 @@ def repair_tool_name(tool: str) -> str:
     tool_map = {
         "Read": "read", "Write": "manage", "Edit": "replace", "Delete": "replace",
         "MultiEdit": "replace", "multiEdit": "replace", "multi_edit": "replace",
-        "Glob": "glob", "Grep": "grep", "Bash": "bash", "PowerShell": "powershell",
+        "Find": "find", "Search": "search", "Bash": "bash", "PowerShell": "powershell",
         "Git": "git", "git": "git",
         "Agent": "agent", "TodoWrite": "todo", "Todo": "todo",
         "WebFetch": "webfetch", "WebSearch": "websearch",
         "read_file": "read", "write_file": "manage",
         "edit_file": "replace", "shell": "bash",
         "readfile": "read", "writefile": "manage",
-        "search": "grep", "find": "glob",
         "LspDiagnostics": "lsp", "LspSymbols": "lsp",
         "LspDefinition": "lsp", "LspReferences": "lsp",
-        "CompactContext": "compact",
+        "CompactContext": "compact", "find": "find", "search": "search",
         "edit": "replace", "insert": "write", "append": "write", "delete": "replace", "line": "write",
     }
     return tool_map.get(tool, tool_map.get(tool.lower(), tool))
@@ -394,7 +393,7 @@ def _is_read_only_git_ref_command(subcommand: str, args: list[str]) -> bool:
 
 def capability_for_tool(tool: str, args: dict) -> PermissionCapability:
     if tool in {
-        "read", "glob", "grep", "webfetch", "websearch", "todo", "task_status",
+        "read", "find", "search", "webfetch", "websearch", "todo", "task_status",
         "document",
         "workflow", "compact",
         "lsp",

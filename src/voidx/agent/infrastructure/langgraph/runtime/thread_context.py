@@ -159,6 +159,16 @@ async def _restore_state_runtime(host: Any, state: ThreadExecutionState) -> None
         state.session_date = snapshot.session_time
 
 
+def _workspace_for_turn(host: Any, state: ThreadExecutionState, turn_context: TurnExecutionContext | None) -> str:
+    if turn_context is not None and turn_context.workspace:
+        return turn_context.workspace
+    if state.session is not None:
+        session_workspace = state.session.workspace or state.session.directory
+        if session_workspace:
+            return session_workspace
+    return str(getattr(host, "_workspace", "") or "")
+
+
 @asynccontextmanager
 async def bind_thread_execution_context(
     host: Any,
@@ -180,10 +190,13 @@ async def bind_thread_execution_context(
     ):
         await _restore_state_runtime(host, state)
     state.thread_id = thread_id or session_id
+    workspace = _workspace_for_turn(host, state, turn_context)
+    if turn_context is not None and workspace != turn_context.workspace:
+        turn_context = turn_context.model_copy(update={"workspace": workspace})
     state.turn_context = turn_context
     state.runtime_profile = turn_context.runtime_profile if turn_context else None
     state.tool_policy = turn_context.tool_policy if turn_context else None
-    state.workspace = turn_context.workspace if turn_context else ""
+    state.workspace = workspace
     state.runtime_guards = RuntimeGuardState()
     token = _CURRENT_THREAD_EXECUTION_STATE.set(state)
     identity = ExecutionIdentity(

@@ -234,7 +234,7 @@ GLOBAL_RULE_SECTIONS: dict[str, dict[str, PromptRule]] = {
         "workspace_facts": PromptRule(
             name="workspace_facts",
             detail="Use tools for workspace facts; do not guess file contents, command output, or test results.",
-            requires={"read", "glob", "grep"},
+            requires={"read", "find", "search"},
         ),
         "read_before_edit": PromptRule(
             name="read_before_edit",

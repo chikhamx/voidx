@@ -94,7 +94,7 @@ class TestToolDisplayPolicy:
 
     def test_resolve_display_mode_summary_stays_summary(self):
         policy = ToolDisplayPolicy(rules=DEFAULT_DISPLAY_RULES)
-        mode, _ = policy.resolve_display_mode("grep", "output", result_ok=True)
+        mode, _ = policy.resolve_display_mode("search", "output", result_ok=True)
         assert mode == ToolDisplayMode.SUMMARY
 
     def test_from_config_empty(self):
@@ -153,7 +153,7 @@ class TestDefaultDisplayRules:
         assert DEFAULT_DISPLAY_RULES["compact"].replay_sanitize is False
 
     def test_summary_tools(self):
-        summary_tools = ["grep", "glob", "websearch", "lsp"]
+        summary_tools = ["search", "find", "websearch", "lsp"]
         for name in summary_tools:
             assert DEFAULT_DISPLAY_RULES[name].mode == ToolDisplayMode.SUMMARY, f"{name} should be summary"
 

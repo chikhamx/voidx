@@ -85,10 +85,10 @@ def _fmt_args_short(tool_name: str, args: dict[str, object]) -> str:
     if tool_name == "manage":
         _action, value = manage_display(args, limit=72)
         return _escape_rich(value)
-    if tool_name == "glob":
+    if tool_name == "find":
         value = args.get("pattern")
         return _escape_rich(str(value)) if value else ""
-    if tool_name == "grep":
+    if tool_name == "search":
         value = args.get("pattern")
         include = args.get("include")
         suffix = f" in {_escape_rich(str(include))}" if include else ""

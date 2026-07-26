@@ -40,9 +40,15 @@ class CodingService:
             session_id=session_id or "",
             runtime_profile=CODING_PROFILE,
         )
-        if context is not None and context != expected_context:
-            raise ValueError("Coding turn context does not match thread, session, profile, or workspace")
-        execution_context = expected_context
+        if context is not None:
+            identity_matches = (
+                context.thread_id == expected_context.thread_id
+                and context.session_id == expected_context.session_id
+                and context.runtime_profile.profile_id == CODING_PROFILE.profile_id
+            )
+            if not identity_matches:
+                raise ValueError("Coding turn context does not match thread, session, or profile")
+        execution_context = context or expected_context
         thread = AgentThread(
             thread_id=resolved_thread_id,
             session_id=session_id or None,

@@ -15,6 +15,38 @@ from voidx.llm.usage import UsageStats
 SubmitHandler = Callable[..., Awaitable[bool]]
 
 
+def _status_value(status: Any, name: str) -> str:
+    value = getattr(status, name, "")
+    if callable(value):
+        value = value()
+    return str(value or "")
+
+
+def coding_turn_context_for_queue(
+    status: Any,
+    *,
+    thread_id: str = "",
+    context: TurnExecutionContext | None = None,
+) -> TurnExecutionContext:
+    from voidx.agent.application.coding_service import CODING_PROFILE
+
+    status_session_id = _status_value(status, "session_id")
+    context_session_id = str(getattr(context, "session_id", "") or "")
+    resolved_session_id = str(context_session_id or status_session_id)
+    resolved_thread_id = str(thread_id or getattr(context, "thread_id", "") or resolved_session_id or "coding")
+    resolved_workspace = str(getattr(context, "workspace", "") or _status_value(status, "workspace"))
+    profile = getattr(context, "runtime_profile", CODING_PROFILE)
+    if getattr(profile, "profile_id", "coding") == "coding":
+        profile = CODING_PROFILE
+    return TurnExecutionContext(
+        thread_id=resolved_thread_id,
+        session_id=resolved_session_id,
+        runtime_profile=profile,
+        workspace=resolved_workspace,
+        tool_policy=getattr(context, "tool_policy", None),
+    )
+
+
 @dataclass
 class McpServerStatus:
     name: str
@@ -43,6 +75,7 @@ class UiStatus:
     code_ide: Callable[[], str] = field(default_factory=lambda: lambda: "trae")
     latest_action: Callable[[], str] = field(default_factory=lambda: lambda: "")
     runtime_profile: Callable[[], str] = field(default_factory=lambda: lambda: "coding")
+    session_id: Callable[[], str] = field(default_factory=lambda: lambda: "")
 
 
 

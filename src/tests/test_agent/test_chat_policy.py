@@ -22,6 +22,9 @@ def test_chat_workspace_binds_read_only_tools_and_scope():
 
     assert view.allows("read", path=workspace / "README.md")
     assert view.allows("find", path=workspace / "src")
+    assert view.allows("search", path=workspace / "src")
+    assert not view.allows("glob", path=workspace / "src")
+    assert not view.allows("grep", path=workspace / "src")
     assert not view.allows("write", path=workspace / "README.md")
     assert not view.allows("read", path=workspace.parent / "secret.txt")
     assert not view.allows("bash", path=workspace / "README.md")

@@ -380,8 +380,8 @@ def _operation_header(operation: str, path: str) -> str:
 def _tool_display_name(tool_name: str, label: str) -> str:
     mapping = {
         "read": "Read",
-        "grep": "Search",
-        "glob": "Search",
+        "search": "Search",
+        "find": "Search",
         "manage": "Manage",
         "write": "Update",
         "replace": "Update",

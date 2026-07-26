@@ -12,6 +12,14 @@ _RG_TYPE_MAP = {
 }
 
 
+def _regex_is_simple_python_compatible(pattern: str) -> bool:
+    try:
+        re.compile(pattern)
+    except re.error:
+        return False
+    return "[[:" not in pattern
+
+
 def _grep_bre_is_python_compatible(pattern: str) -> bool:
     if "[[:" in pattern:
         return False
@@ -48,16 +56,15 @@ def _parse_grep_short_flags(flags: str) -> dict[str, bool] | None:
 def _hint_grep(words: list[str]) -> RouteHint | None:
     prog = words[0].lower()
     args = words[1:]
-    include = None
-    excludes: list[str] = []
     pattern = None
     path = None
-    ignore_case = False
-    whole_word = False
+    extensions = None
+    match_mode = "text" if prog == "fgrep" else "regex"
+    case = "sensitive"
+    context = 0
+    before = after = 0
     recursive = prog == "rg"
-    context_lines = 0
-    after_context = 0
-    before_context = 0
+    fixed = prog == "fgrep"
     i = 0
     while i < len(args):
         a = args[i]
@@ -68,82 +75,45 @@ def _hint_grep(words: list[str]) -> RouteHint | None:
             i += 1
         elif a in ("-n", "--line-number"):
             i += 1
-        elif a == "--include" and i + 1 < len(args):
-            include = args[i + 1]
-            i += 2
-        elif a.startswith("--include="):
-            include = a.split("=", 1)[1]
+        elif a in ("-F", "--fixed-strings"):
+            fixed = True
+            match_mode = "text"
             i += 1
-        elif a == "--exclude" and i + 1 < len(args):
-            excludes.append(args[i + 1])
-            i += 2
-        elif a.startswith("--exclude="):
-            excludes.append(a.split("=", 1)[1])
-            i += 1
-        elif a == "-t" and i + 1 < len(args) and prog == "rg":
-            type_name = args[i + 1]
-            include = _RG_TYPE_MAP.get(type_name)
-            if include is None:
-                return None
-            i += 2
         elif a in ("-i", "--ignore-case"):
-            ignore_case = True
+            case = "insensitive"
+            i += 1
+        elif a in ("-S", "--smart-case") and prog == "rg":
+            case = "auto"
             i += 1
         elif a in ("-w", "--word-regexp"):
-            whole_word = True
+            match_mode = "word"
             i += 1
-        elif a == "-e" and i + 1 < len(args):
-            if pattern is not None:
-                return None
-            pattern = args[i + 1]
-            i += 2
         elif a in ("-C", "--context") and i + 1 < len(args):
             try:
-                context_lines = int(args[i + 1])
+                context = int(args[i + 1])
             except ValueError:
                 return None
             i += 2
-        elif a.startswith("-C"):
-            try:
-                context_lines = int(a[2:])
-            except ValueError:
-                return None
-            i += 1
         elif a in ("-A", "--after-context") and i + 1 < len(args):
             try:
-                after_context = int(args[i + 1])
+                after = int(args[i + 1])
             except ValueError:
                 return None
             i += 2
-        elif a.startswith("-A") and len(a) > 2:
-            try:
-                after_context = int(a[2:])
-            except ValueError:
-                return None
-            i += 1
         elif a in ("-B", "--before-context") and i + 1 < len(args):
             try:
-                before_context = int(args[i + 1])
+                before = int(args[i + 1])
             except ValueError:
                 return None
             i += 2
-        elif a.startswith("-B") and len(a) > 2:
-            try:
-                before_context = int(a[2:])
-            except ValueError:
+        elif a == "-t" and prog == "rg" and i + 1 < len(args):
+            type_name = args[i + 1]
+            ext = _RG_TYPE_MAP.get(type_name)
+            if ext is None:
                 return None
-            i += 1
-        elif len(a) > 2 and a.startswith("-") and not a.startswith("--"):
-            if prog == "rg" and ("r" in a[1:] or "R" in a[1:]):
-                return None
-            parsed_flags = _parse_grep_short_flags(a[1:])
-            if parsed_flags is None:
-                return None
-            recursive = recursive or parsed_flags["recursive"]
-            ignore_case = ignore_case or parsed_flags["ignore_case"]
-            whole_word = whole_word or parsed_flags["whole_word"]
-            i += 1
-        elif a.startswith("-") and a not in ("-e",):
+            extensions = [ext.removeprefix("*.")]
+            i += 2
+        elif a.startswith("-"):
             return None
         elif pattern is None:
             pattern = a
@@ -153,44 +123,27 @@ def _hint_grep(words: list[str]) -> RouteHint | None:
             i += 1
         else:
             return None
-    if pattern is None:
+    if pattern is None or (path is None and not recursive) or context < 0 or before < 0 or after < 0:
         return None
-    if path is None and not recursive:
+    if context and (before or after) or before != after:
         return None
-    if prog == "fgrep":
-        pattern = re.escape(pattern)
+    if fixed:
+        match_mode = "text"
     elif prog == "grep" and not _grep_bre_is_python_compatible(pattern):
         return None
-    if min(context_lines, after_context, before_context) < 0:
+    elif prog in ("egrep", "rg") and not _regex_is_simple_python_compatible(pattern):
         return None
-    if context_lines and (after_context or before_context):
-        return None
-    if after_context != before_context:
-        return None
-    effective_context = context_lines or after_context
-    tool_args: dict = {"pattern": pattern}
-    parts = [f'pattern="{pattern}"']
+    tool_args: dict = {"query": pattern, "match": match_mode, "case": case}
     if path:
-        parts.append(f'path="{path}"')
         tool_args["path"] = path
-    if include:
-        parts.append(f'include="{include}"')
-        tool_args["include"] = include
-    if excludes:
-        parts.append(f'exclude={excludes}')
-        tool_args["exclude"] = excludes
-    if ignore_case:
-        parts.append("ignore_case=True")
-        tool_args["ignore_case"] = True
-    if whole_word:
-        parts.append("whole_word=True")
-        tool_args["whole_word"] = True
-    if effective_context > 0:
-        parts.append(f"context_lines={effective_context}")
-        tool_args["context_lines"] = effective_context
+    if extensions:
+        tool_args["extensions"] = extensions
+    effective_context = context or before
+    if effective_context:
+        tool_args["context"] = effective_context
     return RouteHint(
-        tool_id="grep", ui_label="→ grep",
-        llm_hint=f'Prefer grep({", ".join(parts)}) — skips .git, node_modules, and binary files automatically.',
+        tool_id="search", ui_label="→ search",
+        llm_hint=f'Prefer search({tool_args}) — structured matches with context.',
         tool_args=tool_args,
     )
 

@@ -12,6 +12,7 @@ import pytest
 
 from voidx.tools.base import ToolContext
 from voidx.tools.registry import ToolRegistry
+from voidx.tools.powershell.router import try_hint as try_powershell_hint
 
 skip_if_not_windows = pytest.mark.skipif(
     os.name != "nt",
@@ -20,8 +21,44 @@ skip_if_not_windows = pytest.mark.skipif(
 
 
 
+class TestPowerShellSemanticSearchRoutes:
+    def test_select_string_glob_path_is_not_routed(self):
+        assert try_powershell_hint("Select-String -Pattern 'foo' *.py") is None
+
+    def test_select_string_pipe_input_is_not_routed(self):
+        assert try_powershell_hint("Get-Content a.txt | Select-String foo") is None
+
+    def test_select_string_explicit_file_is_routed(self):
+        h = try_powershell_hint("Select-String -Pattern 'foo' -Path file.py")
+        assert h is not None
+        assert h.tool_id == "search"
+        assert h.tool_args == {"query": "foo", "path": "file.py", "match": "regex", "case": "insensitive"}
+
+    def test_get_child_item_without_recurse_is_not_routed(self):
+        assert try_powershell_hint("Get-ChildItem . -File -Filter *.py") is None
+
+    def test_get_child_item_recurse_filter_is_routed(self):
+        h = try_powershell_hint("Get-ChildItem . -File -Recurse -Filter *.py")
+        assert h is not None
+        assert h.tool_id == "find"
+        assert h.tool_args == {"path": ".", "case": "sensitive", "extensions": ["py"]}
+
+
 class TestPowerShellGitAutoRoute:
     """PowerShell can auto-route git hints without launching powershell.exe."""
+
+    @pytest.mark.asyncio
+    async def test_powershell_reports_empty_workspace_before_launching(self):
+        from voidx.tools.powershell.tool import PowerShellTool
+
+        result = await PowerShellTool().execute(
+            {"command": "Write-Output hello"},
+            ToolContext(workspace="", permission_mode="full_access"),
+        )
+
+        assert result.metadata["error"] is True
+        assert result.metadata["error_kind"] == "invalid_workspace"
+        assert "workspace is not set" in result.output
 
     @pytest.mark.asyncio
     async def test_powershell_auto_routes_git_when_registry_available(self, tmp_path):
@@ -390,11 +427,11 @@ class TestPowerShellRouteHints:
         r = ToolRegistry()
         result = await r.execute_tool(
             "powershell",
-            {"command": "Select-String -Pattern 'foo' *.py"},
+            {"command": "Select-String -Pattern 'foo' -Path file.py"},
             ctx,
         )
         assert result.metadata["skipped"] is True
-        assert result.metadata["route_hint"]["tool_id"] == "grep"
+        assert result.metadata["route_hint"]["tool_id"] == "search"
 
     @pytest.mark.asyncio
     async def test_powershell_route_hint_out_file(self, tmp_path):

@@ -7,7 +7,7 @@ from voidx.ui.output.tool_display import (
 
 def test_extract_tool_display_value_supports_all_shared_branches():
     assert extract_tool_display_value("edit", {"file_path": "src/app.py"}, "") == "src/app.py"
-    assert extract_tool_display_value("glob", {"pattern": "src/**/*.py"}, "") == "src/**/*.py"
+    assert extract_tool_display_value("find", {"pattern": "src/**/*.py"}, "") == "src/**/*.py"
     assert extract_tool_display_value("agent", {"agent": "implement"}, "") == "implement"
     assert extract_tool_display_value("checkpoint", {"goal": "ship safely"}, "") == "ship safely"
     assert extract_tool_display_value("bash", {"command": "echo one\necho two"}, "") == "echo one; echo two"
@@ -16,7 +16,7 @@ def test_extract_tool_display_value_supports_all_shared_branches():
 
 def test_extract_tool_display_value_preserves_nodes_grep_format():
     assert extract_tool_display_value(
-        "grep",
+        "search",
         {"pattern": "needle", "include": "*.py"},
         "",
     ) == "needle in *.py"
