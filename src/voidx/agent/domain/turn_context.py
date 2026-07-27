@@ -21,3 +21,4 @@ class TurnExecutionContext(BaseModel):
     runtime_profile: RuntimeProfile = Field(default_factory=_coding_profile)
     workspace: str = ""
     tool_policy: Any | None = None
+    loop_controller: Any | None = None

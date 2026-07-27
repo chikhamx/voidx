@@ -4,14 +4,14 @@ from __future__ import annotations
 
 from dataclasses import dataclass
 
-from voidx.agent.domain.profile import RuntimeProfile
+from voidx.agent.domain.loop import LOOP_PROFILE, LoopSpec, LoopToolView
 from voidx.agent.domain.thread import AgentThread, AgentThreadState, LifecycleState, RuntimeDecision
 from voidx.agent.domain.turn_context import TurnExecutionContext
 from voidx.agent.runtime.contracts import TurnRequest
 from voidx.agent.runtime.dispatcher import DispatchResult, RuntimeDispatcher
 from voidx.memory.thread_store import ThreadStore
+from voidx.agent.loop.controller import LoopAttemptController
 
-LOOP_PROFILE = RuntimeProfile(profile_id="loop", revision=1, name="Loop")
 
 
 @dataclass(frozen=True)
@@ -26,11 +26,15 @@ class LoopRuntimeRunner:
                 summary="Loop prompt was empty.",
                 reason="empty_loop_prompt",
             )
+        spec = LoopSpec.model_validate(input_frame.get("spec") or {"prompt": prompt})
+        controller = LoopAttemptController(spec=spec)
         context = TurnExecutionContext(
             thread_id=thread.thread_id,
             session_id=thread.session_id or "",
             runtime_profile=profile,
             workspace=thread.workspace,
+            tool_policy=LoopToolView.default(workflow_enabled=False).bind(_available_loop_tool_ids()),
+            loop_controller=controller,
         )
         await self.runtime.run_turn(
             TurnRequest(
@@ -41,6 +45,9 @@ class LoopRuntimeRunner:
                 runtime=None,
             )
         )
+        submitted = controller.final_decision()
+        if submitted is not None:
+            return submitted
         return RuntimeDecision(
             outcome="completed",
             summary="Loop turn completed.",
@@ -70,12 +77,18 @@ class LoopRuntimeScheduler:
         *,
         display_text: str | None,
         session_id: str | None,
+        spec: LoopSpec | None = None,
     ) -> DispatchResult | None:
-        loaded = await self._ensure_thread(session_id)
+        loop_spec = spec or LoopSpec(prompt=prompt)
+        loaded = await self._ensure_thread(session_id, loop_spec)
         outbox = await self._store.enqueue_outbox(
             thread_id=loaded.thread.thread_id,
             kind="loop_prompt",
-            payload={"prompt": prompt, "display_text": display_text},
+            payload={
+                "prompt": prompt,
+                "display_text": display_text,
+                "spec": loop_spec.model_dump(mode="json"),
+            },
             expected_state_version=loaded.state_version,
         )
         dispatcher = RuntimeDispatcher(
@@ -86,8 +99,8 @@ class LoopRuntimeScheduler:
         )
         return await dispatcher.dispatch_outbox(outbox.outbox_id)
 
-    async def _ensure_thread(self, session_id: str | None):
-        thread_id = _loop_thread_id(session_id)
+    async def _ensure_thread(self, session_id: str | None, spec: LoopSpec):
+        thread_id = spec.loop_thread_id(session_id)
         loaded = await self._store.load(thread_id)
         if loaded is not None:
             return loaded
@@ -95,6 +108,7 @@ class LoopRuntimeScheduler:
             AgentThread(
                 thread_id=thread_id,
                 session_id=session_id,
+                parent_thread_id=session_id,
                 workspace=self._workspace,
             ),
             profile=LOOP_PROFILE,
@@ -102,6 +116,29 @@ class LoopRuntimeScheduler:
             resource_scope={"workspace": self._workspace},
         )
 
+
+def _available_loop_tool_ids() -> set[str]:
+    return {
+        "loop_update",
+        "read",
+        "find",
+        "search",
+        "lsp",
+        "document",
+        "websearch",
+        "webfetch",
+        "mcp",
+        "skill",
+        "workflow",
+        "task_status",
+        "todo",
+        "schedule_wakeup",
+        "clarify",
+        "checkpoint",
+        "agent",
+        "bash",
+        "write",
+    }
 
 def _loop_thread_id(session_id: str | None) -> str:
     return f"loop:{session_id or 'default'}"

@@ -801,6 +801,64 @@ async def test_execute_tools_emits_heartbeat_while_tool_is_still_running(tmp_pat
 
 
 @pytest.mark.asyncio
+async def test_execute_tools_loop_policy_allows_bound_tool_and_denies_unbound_tool(tmp_path):
+    from voidx.agent.domain.loop import LoopToolView
+    from voidx.agent.infrastructure.langgraph.runtime.thread_context import current_thread_execution_state
+
+    graph = _graph(tmp_path)
+    executed: list[str] = []
+
+    class FakeReadTool:
+        id = "read"
+        description = "fake read"
+
+        def parameters_schema(self):
+            return {"type": "object", "properties": {}}
+
+        async def execute(self, args: dict, ctx: ToolContext) -> ToolResult:
+            executed.append("read")
+            return ToolResult(output="read output")
+
+    class FakeBashTool:
+        id = "bash"
+        description = "fake bash"
+
+        def parameters_schema(self):
+            return {"type": "object", "properties": {}}
+
+        async def execute(self, args: dict, ctx: ToolContext) -> ToolResult:
+            executed.append("bash")
+            return ToolResult(output="bash output")
+
+    state_context = current_thread_execution_state()
+    assert state_context is not None
+    state_context.tool_policy = LoopToolView.default(workflow_enabled=False).bind({"read", "bash"})
+
+    graph.tools.register("read", FakeReadTool(), "fake read", {"type": "object", "properties": {}})
+    graph.tools.register("bash", FakeBashTool(), "fake bash", {"type": "object", "properties": {}})
+    parent = AIMessage(
+        content="",
+        tool_calls=[
+            {"name": "read", "args": {}, "id": "call_read", "type": "tool_call"},
+            {"name": "bash", "args": {}, "id": "call_bash", "type": "tool_call"},
+        ],
+    )
+
+    result = await graph._execute_tools({
+        "messages": [parent],
+        "workspace": str(tmp_path),
+        "persona": "voidx",
+        "plan_mode": False,
+    })
+
+    assert executed == ["read"]
+    assert [message.tool_call_id for message in result["messages"]] == ["call_read", "call_bash"]
+    assert result["messages"][0].content == "read output"
+    assert result["messages"][1].status == "error"
+    assert result["messages"][1].content == "Tool denied: tool_not_bound"
+
+
+@pytest.mark.asyncio
 async def test_execute_tools_continues_after_legacy_tool_timeout(tmp_path):
     from voidx.agent.infrastructure.langgraph.runtime.topology import route_after_execute_tools
 

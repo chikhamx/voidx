@@ -130,6 +130,7 @@ class ToolExecutorAdapter:
                 mcp_manager=getattr(host, "_mcp_manager", None),
                 lsp_manager=getattr(host, "_lsp_manager", None),
                 loop_manager=getattr(host, "loop_manager", getattr(host, "_loop_manager", None)),
+                loop_controller=getattr(thread_state.turn_context, "loop_controller", None),
                 format_after_edit_enabled=host.config.lsp_format_after_edit,
                 tool_registry=host.tools,
                 permission_mode=host._permission.permission_mode,

@@ -31,7 +31,7 @@ _TERMINAL_STATES = frozenset(
 class RuntimeDecision(BaseModel):
     model_config = ConfigDict(frozen=True)
 
-    outcome: Literal["continue", "completed", "blocked", "needs_user", "failed"]
+    outcome: Literal["continue", "completed", "blocked", "needs_user", "failed", "stop"]
     summary: str
     progress: Literal["none", "partial", "meaningful"] = "none"
     next_delay_seconds: float | None = None
@@ -106,4 +106,5 @@ def apply_lifecycle_decision(
         "blocked": LifecycleState.BLOCKED,
         "needs_user": LifecycleState.NEEDS_USER,
         "failed": LifecycleState.FAILED,
+        "stop": LifecycleState.CANCELLED,
     }[decision.outcome]

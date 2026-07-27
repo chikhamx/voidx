@@ -222,6 +222,16 @@ def _compaction_component_for(execution: Any) -> CompactionCoordinator:
 def _tool_executor_for(execution: Any) -> ToolExecutorAdapter:
     return execution._tool_executor
 
+def _tool_definition_name(tool: dict[str, Any]) -> str:
+    name = tool.get("name")
+    if name:
+        return str(name)
+    function = tool.get("function")
+    if isinstance(function, dict):
+        return str(function.get("name") or "")
+    return ""
+
+
 def _tool_call_key(tool_call: dict[str, Any]) -> str | None:
     try:
         payload = {
@@ -1250,11 +1260,7 @@ class LangGraphExecution:
             denied: list[tuple[dict, str]] = []
             for tool_call in tool_calls:
                 args = tool_call.get("args", {}) or {}
-                raw_path = args.get("path") or args.get("file") or args.get("directory")
-                decision = chat_tool_view.check(
-                    str(tool_call.get("name", "")),
-                    path=Path(raw_path) if raw_path else None,
-                )
+                decision = chat_tool_view.check_tool_call(str(tool_call.get("name", "")), args)
                 if decision.allowed:
                     approved.append(tool_call)
                 else:
@@ -1592,7 +1598,7 @@ class LangGraphExecution:
         state_context = current_thread_execution_state()
         chat_tool_view = getattr(state_context, "tool_policy", None) if state_context else None
         if chat_tool_view is not None:
-            tool_defs = [tool for tool in tool_defs if chat_tool_view.allows(tool.get("name", ""))]
+            tool_defs = [tool for tool in tool_defs if chat_tool_view.allows(_tool_definition_name(tool))]
         turn_control_active = self._turn_control_enabled()
         if turn_control_active:
             tool_defs = [*tool_defs, TURN_TOOL_DEFINITION]

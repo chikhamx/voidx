@@ -20,6 +20,7 @@ from voidx.tools.workflow import WorkflowTool
 from voidx.tools.compact import CompactContextTool
 from voidx.tools.document import DocumentTool
 from voidx.tools.schedule_wakeup import ScheduleWakeupTool
+from voidx.tools.loop_update import LoopUpdateTool
 
 
 class ToolDef(BaseModel):
@@ -75,6 +76,13 @@ class ToolRegistry:
         self.register(wf.id, wf, wf.description, wf.parameters_schema())
         ws = WebSearchTool(settings=self._settings)
         self.register(ws.id, ws, ws.description, ws.parameters_schema())
+        loop_update_tool = LoopUpdateTool()
+        self.register(
+            loop_update_tool.id,
+            loop_update_tool,
+            loop_update_tool.description,
+            loop_update_tool.parameters_schema(),
+        )
         schedule_wakeup_tool = ScheduleWakeupTool()
         self.register(
             schedule_wakeup_tool.id,
@@ -126,6 +134,24 @@ class ToolRegistry:
             if tool_id in allowed
         }
         return clone
+
+    def loop_filtered_copy(self, *, workflow_enabled: bool = False) -> "ToolRegistry":
+        """Return the closed-world tool view for automatic runtime-backed /loop wakeups."""
+        allowed = {
+            "loop_update",
+            "read",
+            "find",
+            "search",
+            "lsp",
+            "document",
+            "websearch",
+            "webfetch",
+            "mcp",
+            "skill",
+        }
+        if workflow_enabled:
+            allowed.update({"workflow", "task_status", "todo"})
+        return self.filtered_copy(allowed)
 
     def ids(self) -> list[str]:
         return list(self._tools.keys())

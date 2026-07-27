@@ -44,12 +44,72 @@ async def test_loop_runtime_scheduler_runs_prompt_through_runtime(tmp_path) -> N
     request = runtime.requests[0]
     assert request.user_text == "check build"
     assert request.display_text == "[loop] check build"
-    assert request.thread.thread_id == "loop:session-1"
+    assert request.thread.thread_id == "loop:session-1:active"
     assert request.thread.session_id == "session-1"
-    assert request.context.thread_id == "loop:session-1"
+    assert request.context.thread_id == "loop:session-1:active"
     assert request.context.session_id == "session-1"
     assert request.context.runtime_profile.profile_id == "loop"
 
+
+
+@pytest.mark.asyncio
+async def test_loop_runtime_scheduler_binds_loop_only_tool_policy(tmp_path) -> None:
+    runtime = FakeRuntime()
+    scheduler = LoopRuntimeScheduler(
+        store=ThreadStore(),
+        runtime=runtime,
+        workspace=str(tmp_path),
+        lease_owner="test-worker",
+    )
+
+    await scheduler.run_prompt("check build", display_text="[loop] check", session_id="session-1")
+
+    policy = runtime.requests[0].context.tool_policy
+    assert policy is not None
+    assert policy.allows("loop_update") is True
+    assert policy.allows("read") is True
+    assert policy.allows("schedule_wakeup") is False
+    assert policy.allows("clarify") is False
+    assert policy.allows("checkpoint") is False
+    assert policy.allows("agent") is False
+    assert policy.allows("bash") is False
+
+
+
+
+@dataclass
+class LoopUpdatingRuntime:
+    requested_delay: float = 120
+    requests: list = field(default_factory=list)
+
+    async def run_turn(self, request):
+        self.requests.append(request)
+        controller = request.context.loop_controller
+        await controller.submit_decision(
+            controller.spec_decision(
+                outcome="continue",
+                summary="scheduled next check",
+                next_delay_seconds=self.requested_delay,
+            )
+        )
+
+
+@pytest.mark.asyncio
+async def test_loop_update_decision_overrides_default_completed(tmp_path) -> None:
+    runtime = LoopUpdatingRuntime(requested_delay=180)
+    scheduler = LoopRuntimeScheduler(
+        store=ThreadStore(),
+        runtime=runtime,
+        workspace=str(tmp_path),
+        lease_owner="test-worker",
+    )
+
+    result = await scheduler.run_prompt("check build", display_text="[loop] check", session_id="session-1")
+
+    assert result is not None
+    assert result.decision.outcome == "continue"
+    assert result.decision.summary == "scheduled next check"
+    assert result.decision.next_delay_seconds == 180
 
 
 @pytest.mark.asyncio

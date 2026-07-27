@@ -19,6 +19,7 @@ import sys
 from collections.abc import Mapping
 import re
 from voidx.agent.loop.prompt_source import PromptSource
+from voidx.agent.domain.loop import LoopSpec
 from voidx.tools.service import BashTool, ToolContext
 from voidx.config import UserProfile
 from voidx.agent.slash.runtime import PROVIDERS, get_providers, _select_from_list
@@ -1810,13 +1811,39 @@ class SlashHandler:
 
     async def _loop(self, args: str) -> None:
         manager = getattr(self.host, "loop_manager", None)
-        if manager is None:
+        service = getattr(self.host, "loop_service", None)
+        if manager is None and service is None:
             ui.error("/loop is not available in this session.")
             return
 
         arg = args.strip()
         if not arg or arg == "help":
             ui.print("[dim]Usage: /loop [interval] <prompt>, /loop stop, /loop status[/dim]")
+            return
+        session = getattr(self.host, "session", None)
+        parent_thread_id = getattr(session, "id", None)
+        if service is not None:
+            if arg == "stop":
+                stopped = await service.stop(parent_thread_id)
+                ui.print("[dim]/loop stopped.[/dim]" if stopped else "[dim]No active /loop.[/dim]")
+                return
+            if arg == "status":
+                status = await service.status(parent_thread_id)
+                if status is None:
+                    ui.print("[dim]No active /loop.[/dim]")
+                else:
+                    ui.print(f"[dim]/loop active: {status}[/dim]")
+                return
+            interval_seconds, prompt = _parse_interval(arg)
+            if not prompt.strip():
+                ui.error("/loop requires a prompt.")
+                return
+            status = await service.start(
+                parent_thread_id,
+                LoopSpec(prompt=prompt.strip(), interval_seconds=interval_seconds),
+            )
+            mode = "dynamic" if interval_seconds is None else f"every {int(interval_seconds)}s"
+            ui.print(f"[dim]/loop started ({mode}) · {status.loop_thread_id}.[/dim]")
             return
         if arg == "stop":
             manager.stop()
@@ -1834,14 +1861,13 @@ class SlashHandler:
         if not prompt.strip():
             ui.error("/loop requires a prompt.")
             return
-        session = getattr(self.host, "session", None)
         ctx = _tool_context_for_host(self.host)
         manager.start(
             PromptSource.from_raw(prompt.strip()),
             interval_seconds,
             bash_tool=BashTool(),
             ctx=ctx,
-            session_id=getattr(session, "id", None),
+            session_id=parent_thread_id,
         )
         mode = "dynamic" if interval_seconds is None else f"every {int(interval_seconds)}s"
         ui.print(f"[dim]/loop started ({mode}).[/dim]")
