@@ -234,7 +234,9 @@ export interface ThreadInfo {
   title?: Title1;
   updated_at?: UpdatedAt;
   workspace?: Workspace;
+  runtime_profile?: string;
   [k: string]: unknown;
+
 }
 export interface WorkspaceWriteLock {
   [k: string]: unknown;

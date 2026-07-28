@@ -1,6 +1,6 @@
 """Tests for message trimming pure functions (rules 1 & 2 helpers)."""
 
-from voidx.agent.message_trimming import (
+from voidx.agent.application.message_trimming import (
     parse_read_line_range,
     parse_diff_hunk_ranges,
     merge_ranges,
@@ -16,7 +16,7 @@ from voidx.agent.message_trimming import (
 
 from langchain_core.messages import AIMessage, ToolMessage, HumanMessage
 
-from voidx.agent.message_trimming import trim_superseded_file_tools
+from voidx.agent.application.message_trimming import trim_superseded_file_tools
 
 
 def _read_ai(call_id: str, file_path: str, content: str) -> AIMessage:

@@ -23,6 +23,35 @@ def isolated_memory_store(tmp_path):
     store._conn = None
 
 
+@pytest.fixture(autouse=True)
+def simulated_llm_retry_sleep(monkeypatch: pytest.MonkeyPatch):
+    def simulated_delay(_delay: float) -> float:
+        return 0.002
+
+    monkeypatch.setattr(
+        "voidx.agent.infrastructure.langgraph.runtime.core.loop._llm_retry_sleep_delay",
+        simulated_delay,
+    )
+    monkeypatch.setattr(
+        "voidx.agent.infrastructure.langgraph.runtime.subagent._llm_retry_sleep_delay",
+        simulated_delay,
+    )
+
+
+@pytest.fixture(autouse=True)
+def call_llm_renderer_patch_compat(monkeypatch: pytest.MonkeyPatch):
+    class RendererProxy:
+        def __new__(cls, *args, **kwargs):
+            from voidx.runtime.ui import StreamingRenderer
+
+            return StreamingRenderer(*args, **kwargs)
+
+    monkeypatch.setattr(
+        "voidx.agent.infrastructure.langgraph.runtime.llm_turn.StreamingRenderer",
+        RendererProxy,
+    )
+
+
 def _session_dir(session_id: str) -> Path:
     return store.DATA_DIR / "sessions" / session_id
 

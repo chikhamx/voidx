@@ -18,7 +18,7 @@ def test_paste_clipboard_image_inserts_image_token(tmp_path, monkeypatch):
             size=123,
         )
 
-    monkeypatch.setattr("voidx_cli.app.paste_clipboard_image_from_system", fake_paste)
+    monkeypatch.setattr("voidx_cli.clipboard_mixin._paste_clipboard_image_from_system", fake_paste)
     tui = _tui(tmp_path)
 
     result = tui.paste_clipboard_image()
@@ -37,7 +37,7 @@ def test_paste_clipboard_image_submit_expands_to_image_token(tmp_path, monkeypat
             size=2048,
         )
 
-    monkeypatch.setattr("voidx_cli.app.paste_clipboard_image_from_system", fake_paste)
+    monkeypatch.setattr("voidx_cli.clipboard_mixin._paste_clipboard_image_from_system", fake_paste)
     tui = _tui(tmp_path)
 
     tui.paste_clipboard_image()
@@ -59,8 +59,8 @@ def test_ctrl_v_pastes_clipboard_image_when_available(tmp_path, monkeypatch):
     def fail_text_paste() -> ClipboardTextResult:
         raise AssertionError("text fallback should not run when image paste succeeds")
 
-    monkeypatch.setattr("voidx_cli.app.paste_clipboard_image_from_system", fake_paste_image)
-    monkeypatch.setattr("voidx_cli.app.paste_clipboard_text_from_system", fail_text_paste)
+    monkeypatch.setattr("voidx_cli.clipboard_mixin._paste_clipboard_image_from_system", fake_paste_image)
+    monkeypatch.setattr("voidx_cli.clipboard_mixin._read_clipboard_text_from_system", fail_text_paste)
     tui = _tui(tmp_path)
 
     tui._process_input(b"\x16")
@@ -76,8 +76,8 @@ def test_ctrl_v_falls_back_to_clipboard_text_when_no_image(tmp_path, monkeypatch
     def fake_paste_text() -> ClipboardTextResult:
         return ClipboardTextResult(status="ok", message="Pasted text", text="hello\nworld")
 
-    monkeypatch.setattr("voidx_cli.app.paste_clipboard_image_from_system", fake_paste_image)
-    monkeypatch.setattr("voidx_cli.app.paste_clipboard_text_from_system", fake_paste_text)
+    monkeypatch.setattr("voidx_cli.clipboard_mixin._paste_clipboard_image_from_system", fake_paste_image)
+    monkeypatch.setattr("voidx_cli.clipboard_mixin._read_clipboard_text_from_system", fake_paste_text)
     tui = _tui(tmp_path)
 
     tui._process_input(b"\x16")
@@ -122,7 +122,7 @@ def test_empty_bracketed_paste_falls_back_to_clipboard_image(tmp_path, monkeypat
             size=123,
         )
 
-    monkeypatch.setattr("voidx_cli.app.paste_clipboard_image_from_system", fake_paste)
+    monkeypatch.setattr("voidx_cli.clipboard_mixin._paste_clipboard_image_from_system", fake_paste)
     tui = _tui(tmp_path)
     tui._tty = True
 

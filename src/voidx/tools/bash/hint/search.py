@@ -1,4 +1,4 @@
-"""Search route hints — grep → grep tool, sed → replace tool."""
+"""Search route hints — grep → search tool, sed → read/replace tools."""
 
 from __future__ import annotations
 
@@ -113,6 +113,17 @@ def _hint_grep(words: list[str]) -> RouteHint | None:
                 return None
             extensions = [ext.removeprefix("*.")]
             i += 2
+        elif a.startswith("-") and not a.startswith("--") and len(a) > 2 and prog in {"grep", "egrep", "fgrep"}:
+            parsed = _parse_grep_short_flags(a[1:])
+            if parsed is None:
+                return None
+            if parsed["recursive"]:
+                recursive = True
+            if parsed["ignore_case"]:
+                case = "insensitive"
+            if parsed["whole_word"]:
+                match_mode = "word"
+            i += 1
         elif a.startswith("-"):
             return None
         elif pattern is None:
@@ -155,6 +166,8 @@ def _hint_grep(words: list[str]) -> RouteHint | None:
 _SED_RANGE_DELETE = re.compile(r"^(\d+),(\d+)d$")
 _SED_LINE_DELETE = re.compile(r"^(\d+)d$")
 _SED_PATTERN_DELETE = re.compile(r"^/(.+)/d$")
+_SED_RANGE_PRINT = re.compile(r"^(\d+),(\d+)p$")
+_SED_LINE_PRINT = re.compile(r"^(\d+)p$")
 
 
 def _sed_split(script: str) -> tuple[str, str, str, str] | None:
@@ -205,6 +218,10 @@ def _hint_sed(words: list[str]) -> RouteHint | None:
     if len(words) < 3:
         return None
     args = words[1:]
+    print_hint = _hint_sed_print(args)
+    if print_hint is not None:
+        return print_hint
+
     i = 0
     if args[i] == "-i":
         i += 1
@@ -266,3 +283,37 @@ def _hint_sed(words: list[str]) -> RouteHint | None:
         )
 
     return None
+
+
+def _hint_sed_print(args: list[str]) -> RouteHint | None:
+    if not args or args[0] != "-n":
+        return None
+    if len(args) != 3:
+        return None
+
+    script, path = args[1], args[2]
+    m = _SED_RANGE_PRINT.match(script)
+    if m:
+        start, end = int(m.group(1)), int(m.group(2))
+        if start <= 0 or end < start:
+            return None
+        return _read_hint(path, start, end)
+
+    m = _SED_LINE_PRINT.match(script)
+    if m:
+        line_no = int(m.group(1))
+        if line_no <= 0:
+            return None
+        return _read_hint(path, line_no, line_no)
+
+    return None
+
+
+def _read_hint(path: str, start: int, end: int) -> RouteHint:
+    limit = end - start + 1
+    tool_args = {"file_path": path, "offset": start, "limit": limit}
+    return RouteHint(
+        tool_id="read", ui_label="→ read",
+        llm_hint=f'Prefer read(file_path="{path}", offset={start}, limit={limit}).',
+        tool_args=tool_args,
+    )

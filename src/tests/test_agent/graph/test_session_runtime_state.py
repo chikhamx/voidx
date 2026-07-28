@@ -13,7 +13,7 @@ from langchain_core.messages import AIMessage, HumanMessage, SystemMessage, Tool
 import voidx.memory.store as store
 import voidx.memory.jsonl_store as jsonl_store
 
-from voidx.agent.runtime_context import InteractionMode, TaskIntent
+from voidx.agent.application.runtime_context import InteractionMode, TaskIntent
 from voidx.runtime.task_state import (
     GoalSpec,
     TaskState,

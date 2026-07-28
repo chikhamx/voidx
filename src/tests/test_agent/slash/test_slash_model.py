@@ -550,7 +550,7 @@ async def test_paste_dispatch_uses_core_clipboard_tool(tmp_path, monkeypatch):
         )
 
     monkeypatch.setattr(
-        "voidx.agent.slash.handler.paste_clipboard_image",
+        "voidx.agent.slash.commands.mode.paste_clipboard_image",
         fake_paste_clipboard_image,
     )
     graph = command_context(workspace=str(tmp_path), app=object())

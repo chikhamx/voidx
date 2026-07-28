@@ -9,7 +9,7 @@ from langchain_core.messages import AIMessage, BaseMessage, HumanMessage
 from langgraph.graph import END, StateGraph
 
 from voidx.agent.infrastructure.langgraph.runtime.convergence import is_step_hint_message
-from voidx.agent.state import AgentState
+from voidx.agent.infrastructure.langgraph.state import AgentState
 from voidx.llm.message_markers import is_guidance_message
 
 from voidx.memory.service import SessionInfo

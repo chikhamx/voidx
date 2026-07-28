@@ -94,7 +94,6 @@ class ToolContext(BaseModel):
     mcp_manager: Any | None = None
     lsp_manager: Any | None = None
     format_after_edit_enabled: bool = True
-    loop_manager: Any | None = Field(default=None, exclude=True)
     loop_controller: Any | None = Field(default=None, exclude=True)
     tool_registry: Any | None = Field(default=None, exclude=True)
     permission_mode: str = "safe"

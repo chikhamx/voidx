@@ -1,3 +1,4 @@
+import asyncio
 """E2e tests for the 13 required test cases from the design doc."""
 
 import pytest
@@ -65,13 +66,13 @@ def _mixed_chunk() -> AIMessageChunk:
 
 
 def _make_graph(tmp_path, model, monkeypatch, provider="openai"):
-    import voidx.agent.infrastructure.langgraph.execution as graph_module
+    import voidx.agent.infrastructure.langgraph.runtime.llm_turn as graph_module
 
     async def fail_on_retry(delay):
         pytest.fail(f"Unexpected LLM retry with delay {delay}s")
 
     monkeypatch.setattr(graph_module, "StreamingRenderer", FakeRenderer)
-    monkeypatch.setattr(graph_module.asyncio, "sleep", fail_on_retry)
+    monkeypatch.setattr(asyncio, "sleep", fail_on_retry)
 
     graph = LangGraphExecution(
         Config(

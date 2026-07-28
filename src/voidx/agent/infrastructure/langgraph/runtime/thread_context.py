@@ -13,7 +13,7 @@ from voidx.agent.domain.turn_context import TurnExecutionContext
 
 from voidx.agent.infrastructure.langgraph.runtime.runtime_guards import RuntimeGuardState
 from voidx.agent.infrastructure.langgraph.runtime.topology import session_date
-from voidx.agent.runtime_context import ContextCompilerCache, InteractionMode
+from voidx.agent.application.runtime_context import ContextCompilerCache, InteractionMode
 from voidx.runtime.task_state import TaskState
 from voidx.memory.service import SessionInfo, get_session, load_runtime_state
 from voidx.runtime.execution_context import ExecutionIdentity, bind_execution_identity

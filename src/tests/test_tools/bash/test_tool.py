@@ -14,7 +14,7 @@ import pytest
 
 from langchain_core.messages import ToolMessage
 
-from voidx.agent.tool_messages import DEFAULT_TOOL_MESSAGE_MAX_CHARS
+from voidx.agent.application.tool_messages import DEFAULT_TOOL_MESSAGE_MAX_CHARS
 from voidx.tools.base import ToolContext, ToolResult, BaseTool, UserInteraction, UserResponse
 from voidx.tools.file import FileReadInput, FileReadTool
 from voidx.tools.file.state import save_file_version
@@ -32,7 +32,7 @@ from voidx.tools.skills import SkillsTool
 from voidx.tools.document import DocumentTool, DocumentInput
 from voidx.tools.checkpoint import PlanCheckpointTool
 from voidx.runtime.task_state import GoalSpec, GoalResolution, IntentResolution, PlanResolution, ToolStatePatch
-from voidx.agent.runtime_context import TaskIntent
+from voidx.agent.application.runtime_context import TaskIntent
 from voidx.skills.context import SKILL_TOOL_CONTEXT_MARKER
 from voidx.workflow.runtime import WorkflowRunState, WorkflowRunStatus
 from voidx.workflow.types import WorkflowStateEventKind

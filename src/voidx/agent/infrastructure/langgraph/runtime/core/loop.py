@@ -12,7 +12,7 @@ from voidx.runtime.ui import (
 )
 from langchain_core.messages import AIMessage
 
-from .helpers import LLMErrorKind, _clean_error_message, _llm_retry_delay
+from .helpers import LLMErrorKind, _clean_error_message, _llm_retry_delay, _llm_retry_sleep_delay
 
 
 @dataclass
@@ -25,6 +25,7 @@ class LlmLoopState:
     retry_status_active: bool = False
     pending_provisional: AIMessage | None = None
     missing_turn_count: int = 0
+    protocol_repairs: int = 0
     invalid_turn_repaired: bool = False
     turn_prompt_active: bool = False
     start_prompt_injected: bool = False
@@ -94,7 +95,7 @@ async def handle_llm_exception(
             ))
         else:
             ui.ui.print(f"[dim]Retrying ({retry_detail})[/dim]")
-        await asyncio.sleep(delay)
+        await asyncio.sleep(_llm_retry_sleep_delay(delay))
         return LlmRetryResult("retry")
 
     failure_text = f"LLM call failed after {max_retries + 1} attempts: {_clean_error_message(error)}"

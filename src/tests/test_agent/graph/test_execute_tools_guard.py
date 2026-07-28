@@ -13,23 +13,23 @@ from langgraph.graph.message import REMOVE_ALL_MESSAGES
 
 import voidx.memory.store as store
 
-from voidx.agent.agents import (
+from voidx.agent.application.agents import (
     AgentDef,
     child_agent_descriptions_for_llm,
     get_agent,
     get_visible_agents,
 )
-from voidx.agent.prompts import BASE_SYSTEM, PERSONA_MODEL, persona_prompt
+from voidx.agent.application.prompts import BASE_SYSTEM, PERSONA_MODEL, persona_prompt
 from voidx.agent.infrastructure.langgraph.runtime.convergence import is_step_hint_message
 from voidx.agent.infrastructure.langgraph.runtime.runtime import current_parent_tool_call_id
 from voidx.agent.infrastructure.langgraph.runtime.runtime_guards import RuntimeGuardState, WallClockGuardState
 from voidx.agent.infrastructure.langgraph.execution import LangGraphExecution
 from voidx.agent.infrastructure.langgraph.execution import AGENT_RESULT_PREVIEW_CHARS, _agent_result_preview
-from voidx.agent.message_rows import RowMessageCacheEntry
-from voidx.agent.runtime_context import InteractionMode, RuntimeContextBuilder
+from voidx.agent.infrastructure.message_rows import RowMessageCacheEntry
+from voidx.agent.application.runtime_context import InteractionMode, RuntimeContextBuilder
 from voidx.config import Config, ParallelSubagentsConfig, Settings, UserProfile
 from voidx.llm.compaction import CompactionSelection
-from voidx.llm.instruction import InstructionService, WorkflowRuntimeContext
+from voidx.agent.application.instruction import InstructionService, WorkflowRuntimeContext
 from voidx.memory.session import (
     MessageRow,
     SessionInfo,
@@ -819,28 +819,28 @@ async def test_execute_tools_loop_policy_allows_bound_tool_and_denies_unbound_to
             executed.append("read")
             return ToolResult(output="read output")
 
-    class FakeBashTool:
-        id = "bash"
-        description = "fake bash"
+    class FakeWriteTool:
+        id = "write"
+        description = "fake write"
 
         def parameters_schema(self):
             return {"type": "object", "properties": {}}
 
         async def execute(self, args: dict, ctx: ToolContext) -> ToolResult:
-            executed.append("bash")
-            return ToolResult(output="bash output")
+            executed.append("write")
+            return ToolResult(output="write output")
 
     state_context = current_thread_execution_state()
     assert state_context is not None
-    state_context.tool_policy = LoopToolView.default(workflow_enabled=False).bind({"read", "bash"})
+    state_context.tool_policy = LoopToolView.default(workflow_enabled=False).bind({"read", "write"})
 
     graph.tools.register("read", FakeReadTool(), "fake read", {"type": "object", "properties": {}})
-    graph.tools.register("bash", FakeBashTool(), "fake bash", {"type": "object", "properties": {}})
+    graph.tools.register("write", FakeWriteTool(), "fake write", {"type": "object", "properties": {}})
     parent = AIMessage(
         content="",
         tool_calls=[
             {"name": "read", "args": {}, "id": "call_read", "type": "tool_call"},
-            {"name": "bash", "args": {}, "id": "call_bash", "type": "tool_call"},
+            {"name": "write", "args": {}, "id": "call_write", "type": "tool_call"},
         ],
     )
 
@@ -852,7 +852,7 @@ async def test_execute_tools_loop_policy_allows_bound_tool_and_denies_unbound_to
     })
 
     assert executed == ["read"]
-    assert [message.tool_call_id for message in result["messages"]] == ["call_read", "call_bash"]
+    assert [message.tool_call_id for message in result["messages"]] == ["call_read", "call_write"]
     assert result["messages"][0].content == "read output"
     assert result["messages"][1].status == "error"
     assert result["messages"][1].content == "Tool denied: tool_not_bound"
@@ -1863,3 +1863,74 @@ async def test_ui_timeout_no_inherited_block_after_recovery(tmp_path, monkeypatc
     assert tool_messages[0].tool_call_id == "call_read"
     assert tool_messages[0].status != "error"
     assert "read output" in str(tool_messages[0].content)
+
+
+@pytest.mark.asyncio
+async def test_execute_tools_skips_calls_after_loop_commit_in_same_batch(tmp_path):
+    from voidx.agent.domain.loop import LOOP_PROFILE, LoopSpec
+    from voidx.agent.domain.turn_context import TurnExecutionContext
+    from voidx.agent.infrastructure.langgraph.runtime.thread_context import (
+        ThreadExecutionState,
+        _CURRENT_THREAD_EXECUTION_STATE,
+    )
+    from voidx.agent.loop.controller import LoopAttemptController
+    from voidx.tools.loop import LoopTool
+
+    controller = LoopAttemptController(spec=LoopSpec(prompt="check"))
+    token = _CURRENT_THREAD_EXECUTION_STATE.set(ThreadExecutionState(
+        thread_id="loop-thread",
+        turn_context=TurnExecutionContext(
+            thread_id="loop-thread",
+            session_id="loop-session",
+            runtime_profile=LOOP_PROFILE,
+            workspace=str(tmp_path),
+            loop_controller=controller,
+        ),
+        workspace=str(tmp_path),
+    ))
+    try:
+        graph = _graph(tmp_path)
+        graph.tools.register("loop", LoopTool(), "loop", {"type": "object", "properties": {}})
+
+        executed = []
+
+        class FakeMcpTool:
+            id = "mcp"
+            description = "fake mcp"
+
+            def parameters_schema(self):
+                return {"type": "object", "properties": {}}
+
+            async def execute(self, args: dict, ctx) -> ToolResult:
+                executed.append("mcp")
+                return ToolResult(output="mcp output")
+
+        graph.tools.register("mcp", FakeMcpTool(), "fake mcp", {"type": "object", "properties": {}})
+
+        async def allow_all(tool_calls, plan_mode: bool, session_id: str, interaction_mode=None):
+            return tool_calls, []
+
+        graph._authorize_tool_calls = allow_all
+        parent = AIMessage(
+            content="",
+            tool_calls=[
+                {"name": "loop", "args": {"operation": "commit", "outcome": "continue", "summary": "done", "next_delay_seconds": 1800}, "id": "call_commit", "type": "tool_call"},
+                {"name": "mcp", "args": {"op": "call"}, "id": "call_mcp", "type": "tool_call"},
+            ],
+        )
+
+        result = await graph._execute_tools({
+            "messages": [parent],
+            "workspace": str(tmp_path),
+            "persona": "voidx",
+            "plan_mode": False,
+        })
+
+        assert controller.final_decision() is not None
+        assert executed == [], "mcp must not run after the loop commit"
+        contents = {m.tool_call_id: m.content for m in result["messages"]}
+        assert "call_commit" in contents and "call_mcp" in contents
+        assert "skipped" in contents["call_mcp"]
+        assert result["should_continue"] is False
+    finally:
+        _CURRENT_THREAD_EXECUTION_STATE.reset(token)

@@ -1,6 +1,6 @@
 import pytest
 
-from voidx.agent.prompts import (
+from voidx.agent.application.prompts import (
     CHAT_PROFILE_SPEC,
     CODING_PROFILE_SPEC,
     GLOBAL_RULE_SECTIONS,
@@ -107,3 +107,21 @@ def test_rule_pools_have_required_rule_metadata():
         "find",
         "search",
     }
+
+
+def test_skipped_rules_due_to_tool_gating_do_not_log_warnings(caplog):
+    import logging
+
+    spec = BaseSystemProfile(
+        identity="test",
+        style_names=["progress_preamble", "todo_progress"],
+        global_section_names={
+            "Workspace Rules": ["workspace_facts", "preserve_dirty"],
+        },
+    )
+
+    with caplog.at_level(logging.DEBUG, logger="voidx.agent.application.prompts"):
+        assemble_base_system(spec, available_tools={"websearch"})
+
+    warnings = [r for r in caplog.records if r.levelno >= logging.WARNING]
+    assert warnings == []

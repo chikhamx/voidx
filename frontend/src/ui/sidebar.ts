@@ -9,7 +9,9 @@ export interface ThreadInfo {
   created_at?: string;
   updated_at?: string;
   message_count?: number;
+  runtime_profile?: string;
 }
+
 
 interface WorkspaceGroup {
   workspace: string;
@@ -18,7 +20,8 @@ interface WorkspaceGroup {
 }
 
 type ThreadCallback = (threadId: string) => void;
-type NewThreadCallback = (directory: string) => void;
+type NewThreadCallback = (directory: string, profile?: string) => void;
+
 
 const SESSION_PREVIEW_LIMIT = 5;
 
@@ -32,7 +35,10 @@ let currentWorkspacePath = "";
 let newChatBtnBound = false;
 let projectExpanded = true;
 let projectHeaderBound = false;
+let chatExpanded = true;
+let chatHeaderBound = false;
 const workspaceVisibleCounts = new Map<string, number>();
+
 const expandedWorkspaces = new Set<string>();
 
 function _workspaceBasename(workspace: string): string {
@@ -144,12 +150,13 @@ function groupByWorkspace(threads: ThreadInfo[]): WorkspaceGroup[] {
   return groups;
 }
 
-function _svgIcon(name: "folder" | "folder-open" | "message" | "plus" | "pencil" | "trash" | "chevron-down" | "chevron-right"): HTMLElement {
+function _svgIcon(name: "folder" | "folder-open" | "message" | "plus" | "pencil" | "trash" | "chevron-down" | "chevron-right" | "terminal"): HTMLElement {
   const icon = document.createElement("span");
   icon.className = "vx-sidebar-row-icon";
   icon.innerHTML = iconSvg(name, 16, 1.5);
   return icon;
 }
+
 
 function _updateDocTitle(activeTitle: string | null): void {
   document.title = "";
@@ -177,10 +184,37 @@ export function renderSidebar(
   const header = document.querySelector<HTMLElement>(".vx-project-name");
   if (header) header.textContent = currentProjectName;
 
-  const groups = groupByWorkspace(threads);
+  const codingThreads = threads.filter((t) => t.runtime_profile !== "chat");
+  const chatThreads = threads.filter((t) => t.runtime_profile === "chat");
+
+  const groups = groupByWorkspace(codingThreads);
   for (const group of groups) {
     list.append(_createWorkspaceGroup(group, activeThreadId));
   }
+
+  const chatList = document.querySelector<HTMLElement>("#chat-session-list");
+  if (chatList) {
+    chatList.replaceChildren();
+    for (const thread of chatThreads) {
+      chatList.append(_createSessionItem(thread, activeThreadId));
+    }
+    chatList.hidden = !chatExpanded;
+  }
+
+  const chatHeading = document.querySelector<HTMLElement>("#chat-heading");
+  if (chatHeading) {
+    if (!chatHeaderBound) {
+      chatHeading.addEventListener("click", () => {
+        chatExpanded = !chatExpanded;
+        if (chatList) {
+          chatList.hidden = !chatExpanded;
+        }
+      });
+      chatHeaderBound = true;
+    }
+  }
+
+
 
   const sidebarHeader = document.querySelector<HTMLElement>(".vx-project-heading");
   if (sidebarHeader) {
@@ -250,15 +284,18 @@ export function removeThread(threadId: string, activeThreadId: string | null): v
   renderSidebar(currentThreads, activeThreadId, currentProjectName, currentWorkspacePath);
 }
 
-export function findReusableEmptyThread(directory: string): ThreadInfo | null {
+export function findReusableEmptyThread(directory: string, profile?: string): ThreadInfo | null {
   const workspace = _normalizeWorkspacePath(directory || currentProjectName || "Project");
+  const targetProfile = profile || "coding";
   return (
     currentThreads.find((thread) => (
       _sameWorkspace(_threadWorkspace(thread), workspace) &&
-      _isReusableEmptyThread(thread)
+      _isReusableEmptyThread(thread) &&
+      (thread.runtime_profile || "coding") === targetProfile
     )) || null
   );
 }
+
 
 function _createWorkspaceGroup(group: WorkspaceGroup, activeThreadId: string | null): HTMLElement {
   const groupEl = document.createElement("div");
@@ -345,6 +382,8 @@ function _createWorkspaceGroup(group: WorkspaceGroup, activeThreadId: string | n
     e.stopPropagation();
     if (newThreadCb) newThreadCb(group.workspace);
   });
+
+
   row.append(newChatBtn);
 
   row.addEventListener("click", (e: MouseEvent) => {
@@ -429,7 +468,9 @@ function _createSessionItem(thread: ThreadInfo, activeThreadId: string | null): 
       chatTitle.innerHTML = `<span class="vx-chat-header-workspace">${wsName}</span><span class="vx-chat-header-separator"> / </span><span class="vx-chat-header-session-title">${activeTitle}</span>`;
     }
   }
-  item.append(_svgIcon("message"));
+  const iconName = thread.runtime_profile === "chat" ? "message" : "terminal";
+  item.append(_svgIcon(iconName));
+
 
   const title = document.createElement("span");
   title.className = "vx-session-title";
@@ -563,11 +604,20 @@ export function onNewThread(callback: NewThreadCallback): void {
         if (newThreadCb) newThreadCb("");
       });
     }
+    const btnRestricted = document.querySelector<HTMLElement>("#btn-new-chat-restricted");
+    if (btnRestricted) {
+      btnRestricted.addEventListener("click", () => {
+        if (newThreadCb) newThreadCb("", "chat");
+      });
+    }
     newChatBtnBound = true;
   }
 }
 
+
+
 export function onThreadDelete(callback: ThreadCallback): void {
+
   threadDeleteCb = callback;
 }
 
@@ -586,6 +636,8 @@ export function _resetForTest(): void {
   newChatBtnBound = false;
   projectExpanded = true;
   projectHeaderBound = false;
+  chatExpanded = true;
+  chatHeaderBound = false;
   workspaceVisibleCounts.clear();
   expandedWorkspaces.clear();
 }

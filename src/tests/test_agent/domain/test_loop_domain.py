@@ -39,7 +39,7 @@ def test_loop_tool_view_is_closed_world_for_automatic_wakeups() -> None:
         "read",
         "search",
         "websearch",
-        "loop_update",
+        "loop",
         "schedule_wakeup",
         "clarify",
         "checkpoint",
@@ -52,14 +52,14 @@ def test_loop_tool_view_is_closed_world_for_automatic_wakeups() -> None:
 
     view = LoopToolView.default(workflow_enabled=False).bind(available)
 
-    assert "loop_update" in view.bound_tool_ids
+    assert "loop" in view.bound_tool_ids
     assert "read" in view.bound_tool_ids
     assert "websearch" in view.bound_tool_ids
     assert "schedule_wakeup" not in view.bound_tool_ids
     assert "clarify" not in view.bound_tool_ids
     assert "checkpoint" not in view.bound_tool_ids
     assert "agent" not in view.bound_tool_ids
-    assert "bash" not in view.bound_tool_ids
+    assert "bash" in view.bound_tool_ids
     assert "write" not in view.bound_tool_ids
     assert "workflow" not in view.bound_tool_ids
     assert "todo" not in view.bound_tool_ids
@@ -67,13 +67,27 @@ def test_loop_tool_view_is_closed_world_for_automatic_wakeups() -> None:
 
 def test_loop_tool_view_can_expose_workflow_subset_when_enabled() -> None:
     view = LoopToolView.default(workflow_enabled=True).bind(
-        {"loop_update", "workflow", "task_status", "todo", "clarify"}
+        {"loop", "workflow", "task_status", "todo", "clarify"}
     )
 
-    assert {"loop_update", "workflow", "task_status", "todo"}.issubset(view.bound_tool_ids)
+    assert {"loop", "workflow", "task_status", "todo"}.issubset(view.bound_tool_ids)
     assert "clarify" not in view.bound_tool_ids
 
 
 def test_loop_profile_is_first_class_profile() -> None:
     assert LOOP_PROFILE.profile_id == "loop"
     assert LOOP_PROFILE.name == "Loop"
+
+
+def test_loop_spec_generation_drives_thread_and_session_id() -> None:
+    default = LoopSpec(prompt="check")
+    gen2 = LoopSpec(prompt="check", generation="20260728-01")
+
+    assert default.loop_thread_id("parent-1") == "loop:parent-1:active"
+    assert gen2.loop_thread_id("parent-1") == "loop:parent-1:20260728-01"
+    assert gen2.loop_session_id("parent-1") == "loop:parent-1:20260728-01"
+
+
+def test_loop_spec_rejects_empty_generation() -> None:
+    with pytest.raises(ValueError):
+        LoopSpec(prompt="check", generation="  ")

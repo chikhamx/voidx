@@ -1,3 +1,4 @@
+import asyncio
 """Test: turn stop without pending provisional text in running state.
 
 When the main agent calls a child agent (e.g. review) and the child returns,
@@ -69,13 +70,13 @@ def _text_and_turn_stop_chunk(text: str) -> AIMessageChunk:
 
 
 def _make_graph(tmp_path, model, monkeypatch, provider="openai"):
-    import voidx.agent.infrastructure.langgraph.execution as graph_module
+    import voidx.agent.infrastructure.langgraph.runtime.llm_turn as graph_module
 
     async def fail_on_retry(delay):
         pytest.fail(f"Unexpected LLM retry with delay {delay}s")
 
     monkeypatch.setattr(graph_module, "StreamingRenderer", FakeRenderer)
-    monkeypatch.setattr(graph_module.asyncio, "sleep", fail_on_retry)
+    monkeypatch.setattr(asyncio, "sleep", fail_on_retry)
 
     graph = LangGraphExecution(
         Config(
@@ -127,7 +128,7 @@ async def test_headless_repair_commit_emits_user_visible_stream(tmp_path, monkey
     in one headless repair call. The committed answer must still be emitted to
     the UI; checking only result["messages"] misses the user-visible blank turn.
     """
-    import voidx.agent.infrastructure.langgraph.execution as graph_module
+    import voidx.agent.infrastructure.langgraph.runtime.llm_turn as graph_module
 
     emitted = []
 
@@ -176,7 +177,7 @@ async def test_headless_repair_commit_emits_user_visible_stream(tmp_path, monkey
         pytest.fail(f"Unexpected LLM retry with delay {delay}s")
 
     monkeypatch.setattr(graph_module, "StreamingRenderer", HeadlessAwareRenderer)
-    monkeypatch.setattr(graph_module.asyncio, "sleep", fail_on_retry)
+    monkeypatch.setattr(asyncio, "sleep", fail_on_retry)
 
     scripts = [[_turn_stop_chunk()]]
     if repair_shape == "text_then_stop":

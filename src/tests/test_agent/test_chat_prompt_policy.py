@@ -8,7 +8,7 @@ from voidx.agent.domain.prompt_policy import (
     CodingPromptPolicy,
     PromptPolicy,
 )
-from voidx.agent.prompts import CHAT_PROFILE_SPEC
+from voidx.agent.application.prompts import CHAT_PROFILE_SPEC
 from voidx.agent.domain.profile import RuntimeProfile
 from voidx.agent.runtime.contracts import TurnRequest
 from voidx.agent.domain.thread import AgentThread

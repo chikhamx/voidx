@@ -2,7 +2,7 @@
 
 from __future__ import annotations
 
-from voidx.agent.todo_state import todo_run_state_from_result
+from voidx.agent.application.todo_state import todo_run_state_from_result
 from voidx.runtime.ui import TodoItemPayload, TodoUpdated
 
 

@@ -12,6 +12,8 @@ from types import SimpleNamespace
 from voidx.agent.runtime import AgentRuntime
 from voidx.agent.loop.scheduler import LoopRuntimeScheduler
 from voidx.agent.application.loop_service import LoopService
+from voidx.config.ports import bind_model_profile_store
+from voidx.memory.profile_store import MemoryModelProfileStore
 from voidx.memory.service import ThreadStore
 from voidx.agent.facade import AgentFacade
 from voidx.agent.infrastructure.langgraph.adapter import LangGraphTurnEngine
@@ -32,6 +34,8 @@ def build_agent_app(
     settings: Settings | None = None,
 ) -> AgentFacade:
     """Build the agent application and its LangGraph infrastructure."""
+    bind_model_profile_store(MemoryModelProfileStore())
+
     execution = LangGraphExecution(config, api_key, session=session, settings=settings)
     engine = LangGraphTurnEngine(execution)
     sessions = MemorySessionAdapter()
@@ -52,10 +56,6 @@ def build_agent_app(
     )
     if hasattr(execution, "__dict__"):
         execution.loop_service = loop_service
-    loop_manager = getattr(execution, "loop_manager", None)
-    set_runtime_scheduler = getattr(loop_manager, "set_runtime_scheduler", None)
-    if set_runtime_scheduler is not None:
-        set_runtime_scheduler(loop_scheduler)
     chat_service = ChatService(runtime)
     coding_service = CodingService(runtime)
     return AgentFacade(

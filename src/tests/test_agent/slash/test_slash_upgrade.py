@@ -36,8 +36,8 @@ async def test_upgrade_check_dispatches_and_markssettings(tmp_path, monkeypatch)
             message="voidx 9.0.0 is available.",
         )
 
-    monkeypatch.setattr("voidx.agent.slash.handler.check_for_update", fake_check_for_update)
-    monkeypatch.setattr("voidx.agent.slash.handler.upgrade_hint", lambda: "Run /upgrade now")
+    monkeypatch.setattr("voidx.agent.slash.commands.upgrade.check_for_update", fake_check_for_update)
+    monkeypatch.setattr("voidx.agent.slash.commands.upgrade.upgrade_hint", lambda: "Run /upgrade now")
 
     handled = await SlashHandler(command_context(settings=settings)).dispatch("/upgrade check")
 
@@ -54,7 +54,7 @@ async def test_upgrade_now_dispatches_perform_upgrade(monkeypatch):
     async def fake_perform_upgrade():
         return UpgradeResult(ok=True, version="9.0.0", message="Upgraded voidx to 9.0.0.")
 
-    monkeypatch.setattr("voidx.agent.slash.handler.perform_upgrade", fake_perform_upgrade)
+    monkeypatch.setattr("voidx.agent.slash.commands.upgrade.perform_upgrade", fake_perform_upgrade)
 
     handled = await SlashHandler(command_context()).dispatch("/upgrade now")
 
@@ -74,7 +74,7 @@ async def test_upgrade_now_uses_fresh_cached_latest_version(tmp_path, monkeypatc
         calls.append(version)
         return UpgradeResult(ok=True, version=version, message="Upgraded voidx to 9.0.0.")
 
-    monkeypatch.setattr("voidx.agent.slash.handler.perform_upgrade", fake_perform_upgrade)
+    monkeypatch.setattr("voidx.agent.slash.commands.upgrade.perform_upgrade", fake_perform_upgrade)
 
     handled = await SlashHandler(command_context(settings=settings)).dispatch("/upgrade now")
 

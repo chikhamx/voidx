@@ -17,6 +17,13 @@ class LoopAttemptController:
 
     async def submit_decision(self, decision: LoopDecision | RuntimeDecision | Mapping[str, object]) -> RuntimeDecision:
         runtime_decision = _to_runtime_decision(decision)
+        if runtime_decision.outcome != "continue":
+            # The loop only ends via /loop stop or process exit; model-submitted
+            # terminal/pause outcomes are rejected so the loop cannot kill or
+            # pause itself.
+            raise ValueError(
+                f"outcome {runtime_decision.outcome!r} is not allowed: use 'continue'"
+            )
         if self.spec.mode is LoopMode.FIXED and runtime_decision.outcome == "continue":
             runtime_decision = runtime_decision.model_copy(
                 update={"next_delay_seconds": self.spec.interval_seconds}

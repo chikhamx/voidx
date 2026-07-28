@@ -7,7 +7,7 @@ import os
 
 from langchain_core.messages import ToolMessage
 
-from voidx.agent.tool_messages import sanitize_tool_message_content
+from voidx.agent.application.tool_messages import sanitize_tool_message_content
 from voidx.runtime.intent import PersonaName
 from voidx.tools.service import ToolResult, UserInteraction, UserResponse
 
@@ -319,7 +319,9 @@ def _requires_workspace_write_lock(tool_call: dict) -> bool:
         return name in {"bash", "powershell", "git", "agent"}
     return str(classified.capability.value) in _WORKSPACE_WRITE_LOCK_CAPABILITIES
 def _is_barrier_tool(tool_call: dict) -> bool:
-    return tool_call.get("name") in {"clarify", "checkpoint", "workflow", "compact"}
+    # loop must be serial: a commit ends the iteration, so anything the model
+    # scheduled after it in the same batch must wait (and then be skipped).
+    return tool_call.get("name") in {"clarify", "checkpoint", "workflow", "compact", "loop"}
 
 
 def _split_at_first_barrier(tool_calls: list[dict]) -> tuple[list[dict], dict | None, list[dict]]:
@@ -506,7 +508,7 @@ def _apply_state_update(
     runtime_persona_ref is a mutable list [persona_str, intent_str] so we can update it.
     runtime_task_state is a mutable list [state, goal, workflow_runs_list].
     """
-    from voidx.agent.todo_state import apply_todo_state_to_host
+    from voidx.agent.application.todo_state import apply_todo_state_to_host
     from voidx.runtime.intent import TaskIntent
     from voidx.runtime.task_state import WorkflowRoute
 

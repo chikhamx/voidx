@@ -23,11 +23,9 @@ from voidx.logging import log_internal_error
 from voidx.logging.external import install_external_log_bridge
 from voidx.paths import voidx_workspace_dir
 from voidx.ui.output.dock import dock
-from voidx.ui.output.dock.formatting import _text_from_line
+from voidx.ui.output.dock.formatting import text_from_line
 from voidx.ui.output.tree import OutputTree
 from voidx.ui.output.types import SubmitHandler, ThreadExecutionContext, coding_turn_context_for_queue
-from voidx.ui.tools.clipboard_image import paste_clipboard_image as paste_clipboard_image_from_system
-from voidx.ui.tools.clipboard_text import read_clipboard_text as paste_clipboard_text_from_system
 from .helpers import (
     _ENTER_TERMINAL_SEQUENCE,
     _EXIT_TERMINAL_SEQUENCE,
@@ -301,7 +299,9 @@ class PureTui(
         return random.choice(tui_activity.BUSY_ACTIVITY_VERBS)
 
     def _start_busy_activity_timer(self) -> None:
-        if not self._tty or not self._running or not self._busy:
+        if not self._tty or not self._running:
+            return
+        if not (self._busy or self._loop_waiting_active()):
             return
         task = self._busy_activity_timer_task
         if task is not None and not task.done():
@@ -328,9 +328,9 @@ class PureTui(
 
     async def _busy_activity_timer(self) -> None:
         try:
-            while self._running and self._busy:
+            while self._running and (self._busy or self._loop_waiting_active()):
                 await asyncio.sleep(tui_activity.BUSY_ACTIVITY_TICK_SECONDS)
-                if not self._running or not self._busy:
+                if not self._running or not (self._busy or self._loop_waiting_active()):
                     return
                 self._busy_activity_tick += 1
                 if not self._render_busy_activity_tick():
@@ -402,7 +402,7 @@ class PureTui(
         rendered_lines: list[Text] = []
         for line in [*echo_lines, *flush_lines]:
             try:
-                rendered_lines.append(_text_from_line(line))
+                rendered_lines.append(text_from_line(line))
             except Exception:
                 rendered_lines.append(Text(line))
 
@@ -667,6 +667,9 @@ class PureTui(
                 self._busy_activity_tick = 0
                 self._busy_activity_prev_has_special = False
                 await self._stop_busy_activity_timer()
+                # A loop may still be waiting for its next wakeup: keep the
+                # countdown ticking after the turn ends.
+                self._start_busy_activity_timer()
                 self._current_submit_task = None
                 self._current_submitted_text = ""
                 self._current_submitted_paste_entries = []

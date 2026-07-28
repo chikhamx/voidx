@@ -22,7 +22,7 @@ from voidx.memory.service import (
 )
 from voidx.logging.tool_log import log_tool_event
 from voidx.runtime.ui import transcript_rows_to_tree, tree_to_transcript_rows
-from voidx.agent.tool_result_storage import cleanup_session_results
+from voidx.agent.infrastructure.tool_result_storage import cleanup_session_results
 
 TITLE_TIMEOUT_SECONDS = 10.0
 TITLE_PERSONA_USER_CHARS = 500
@@ -37,7 +37,7 @@ class SessionRuntime:
         self.host = host
 
     def reset_runtime_state_memory(self) -> None:
-        from voidx.agent.runtime_context import InteractionMode
+        from voidx.agent.application.runtime_context import InteractionMode
         from voidx.runtime.task_state import TaskState
 
         host = self.host
@@ -78,7 +78,7 @@ class SessionRuntime:
         host = self.host
         if host._session is None:
             return
-        from voidx.agent.runtime_context import InteractionMode
+        from voidx.agent.application.runtime_context import InteractionMode
         from voidx.runtime.task_state import TaskState
 
         runtime = SessionRuntimeState(

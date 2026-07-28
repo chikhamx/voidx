@@ -1,0 +1,336 @@
+"""Tool permission authorization flow for LangGraph execution."""
+
+from __future__ import annotations
+
+import json
+from dataclasses import replace
+from typing import Any
+from voidx.config import PermissionMode
+from voidx.logging.tool_log import log_tool_event
+from voidx.permission.ai_approval import is_ai_approval_candidate
+from voidx.permission.service import (
+    PermissionContext,
+    authorize_tool_call,
+    classify_tool_call,
+)
+from voidx.permission.context import PermissionDecision
+from voidx.permission.session_rules import scoped_session_rule_for_decision
+from voidx.permission.schema import Action
+from voidx.permission.risk import ApprovalScope, RiskLevel
+from voidx.runtime.intent import PersonaName
+from voidx.runtime.ui import PermissionPromptCleared, PermissionPromptShown, PermissionToolDetail
+from typing import Any
+from voidx.agent.infrastructure.langgraph.runtime.thread_context import current_thread_execution_state
+
+
+def _attach_ai_approval_failures(
+    decisions: list[PermissionDecision],
+    candidates: list[PermissionDecision],
+    result: Any,
+    allowed_ids: frozenset[str],
+) -> list[PermissionDecision]:
+    candidate_ids = {str(decision.tool_call.get("id") or "") for decision in candidates}
+    failures = {
+        call_id: _ai_approval_failure_message(result, call_id)
+        for call_id in candidate_ids
+        if call_id and call_id not in allowed_ids
+    }
+    if not failures:
+        return decisions
+    return [
+        replace(decision, ai_approval_failure=failures[call_id])
+        if (call_id := str(decision.tool_call.get("id") or "")) in failures
+        else decision
+        for decision in decisions
+    ]
+
+
+def _coerce_permission_decision(item: dict | PermissionDecision) -> PermissionDecision:
+    if isinstance(item, PermissionDecision):
+        return item
+    classified = classify_tool_call(item)
+    return PermissionDecision(
+        action=Action.ASK,
+        tool_call=classified.tool_call,
+        name=classified.name,
+        args=classified.args,
+        pattern=classified.pattern,
+        capability=classified.capability,
+        source="compat",
+    )
+
+
+def _permission_choices(decisions: list[PermissionDecision]) -> list[tuple[str, str, str]]:
+    if _all_decisions_blocked_ack(decisions):
+        return [("Do not run", "n", "This command is blocked")]
+    choices: list[tuple[str, str, str]] = []
+    if _all_decisions_allow_scope(decisions, ApprovalScope.SESSION):
+        choices.append(("Yes, always", "a", "Allow these tools for this session"))
+    choices.append(("Yes", "y", "Allow this tool use once"))
+    choices.append(("No", "n", "Deny these tools"))
+    return choices
+
+
+def _ai_approval_failure_message(result: Any, call_id: str) -> str:
+    skipped_reason = getattr(result, "skipped_reasons", {}).get(call_id, "")
+    if skipped_reason:
+        return f"AI approval skipped: {skipped_reason}; requesting human review."
+    if getattr(result, "reason", "") == "reviewed":
+        reason = getattr(result, "denied_reasons", {}).get(call_id, "")
+        if reason:
+            return f"AI approval denied: {reason}"
+        if call_id in getattr(result, "reviewed_ids", frozenset()):
+            return "AI approval denied; requesting human review."
+        return "AI approval skipped: candidate was not reviewed; requesting human review."
+    failure = {
+        "disabled": "disabled",
+        "unavailable": "unavailable",
+        "invalid_response": "returned an invalid response",
+        "skipped": "skipped before review",
+        "timeout": "timed out",
+        "connection_error": "connection error",
+        "error": "internal error",
+    }.get(getattr(result, "reason", ""), "unknown error")
+    return f"AI approval failed: {failure}; requesting human review."
+
+
+def _tool_call_key(tool_call: dict[str, Any]) -> str | None:
+    try:
+        payload = {
+            "name": str(tool_call.get("name") or ""),
+            "args": tool_call.get("args") or {},
+        }
+        return json.dumps(payload, sort_keys=True, separators=(",", ":"), ensure_ascii=False)
+    except (TypeError, ValueError):
+        return None
+
+
+def _all_decisions_allow_scope(decisions: list[PermissionDecision], scope: str) -> bool:
+    if not decisions:
+        return False
+    return all(scope in _scope_values(decision.allowed_scopes) for decision in decisions)
+
+
+def _tool_call_with_approval_risk(decision: PermissionDecision, *, approved_by: str = "user") -> dict:
+    if decision.risk is None or decision.risk.level == RiskLevel.BLOCKED:
+        return decision.tool_call
+    metadata = dict(decision.tool_call.get("metadata") or {})
+    metadata["approved_risk"] = {
+        "tool_name": decision.name,
+        "pattern": decision.pattern,
+        "risk_level": decision.risk.level.value,
+        "tags": [tag.value for tag in decision.risk.tags],
+        "reason": decision.risk.reason,
+        **({"approved_by": approved_by} if approved_by != "user" else {}),
+    }
+    return {**decision.tool_call, "metadata": metadata}
+
+
+def _tool_call_with_execution_approval(decision: PermissionDecision) -> dict:
+    if decision.name not in {"bash", "powershell"}:
+        return decision.tool_call
+    if decision.risk is None or decision.risk.level == RiskLevel.NORMAL:
+        return decision.tool_call
+    return _tool_call_with_approval_risk(decision)
+
+
+def _all_decisions_blocked_ack(decisions: list[PermissionDecision]) -> bool:
+    return bool(decisions) and all(decision.action == Action.BLOCKED_ACK for decision in decisions)
+
+
+def _scope_values(scopes: tuple[object, ...]) -> set[str]:
+    return {scope.value if hasattr(scope, "value") else str(scope) for scope in scopes}
+
+
+class PermissionFlow:
+    def __init__(self, host: Any) -> None:
+        self.host = host
+
+    async def _authorize_tool_calls(
+        self: Any,
+        tool_calls: list[dict],
+        *,
+        runtime_persona: str = PersonaName.COORDINATE,
+        plan_mode: bool,
+        session_id: str,
+        interaction_mode: str | None = None,
+        workflow_runs: object = (),
+    ) -> tuple[list[dict], list[tuple[dict, str]]]:
+        host = self.host
+        if host._successful_dangerous_calls_session_id != session_id:
+            host._successful_dangerous_calls.clear()
+            host._successful_dangerous_calls_session_id = session_id
+        state_context = current_thread_execution_state()
+        chat_tool_view = getattr(state_context, "tool_policy", None) if state_context else None
+        if chat_tool_view is not None:
+            approved: list[dict] = []
+            denied: list[tuple[dict, str]] = []
+            for tool_call in tool_calls:
+                args = tool_call.get("args", {}) or {}
+                decision = chat_tool_view.check_tool_call(str(tool_call.get("name", "")), args)
+                if decision.allowed:
+                    approved.append(tool_call)
+                else:
+                    denied.append((tool_call, f"Tool denied: {decision.reason}"))
+            return approved, denied
+        approved: list[dict] = []
+        denied: list[tuple[dict, str]] = []
+        need_ask: list[PermissionDecision] = []
+        context = PermissionContext.from_service(
+            host._permission,
+            workspace=host._workspace,
+            interaction_mode=interaction_mode,
+            plan_mode=plan_mode,
+        )
+
+        for tc in tool_calls:
+            decision = authorize_tool_call(tc, context)
+            if (
+                decision.action == Action.ASK
+                and decision.risk is not None
+                and decision.risk.level == RiskLevel.DANGEROUS
+                and getattr(host._permission, "permission_mode", "") == PermissionMode.AI_APPROVAL.value
+                and _tool_call_key(tc) in getattr(host, "_successful_dangerous_calls", set())
+            ):
+                approved.append(_tool_call_with_approval_risk(decision, approved_by="cached"))
+            elif decision.action == Action.ALLOW:
+                approved_call = _tool_call_with_execution_approval(decision)
+                approved.append(approved_call)
+                if decision.failure_check:
+                    host._needs_failure_check[approved_call.get("id", "")] = approved_call
+            elif decision.action == Action.DEFER:
+                approved.append(decision.tool_call)
+            elif decision.action == Action.DENY:
+                denied.append((decision.tool_call, decision.reason))
+            elif decision.action == Action.BLOCKED_ACK:
+                need_ask.append(decision)
+            else:
+                need_ask.append(decision)
+
+        if need_ask:
+            await host._ask_and_apply_permission(need_ask, approved, denied)
+
+        return approved, denied
+
+
+    async def _ask_and_apply_permission(
+        self: Any,
+        need_ask: list[PermissionDecision],
+        approved: list[dict],
+        denied: list[tuple[dict, str]],
+    ) -> None:
+        host = self.host
+        blocked = [decision for decision in need_ask if decision.action == Action.BLOCKED_ACK]
+        ai_allowed: list[PermissionDecision] = []
+        if (
+            getattr(host._permission, "permission_mode", "") == PermissionMode.AI_APPROVAL.value
+            and getattr(host, "_settings", None) is not None
+            and getattr(host, "_ai_approval", None) is not None
+        ):
+            candidates = [
+                decision for decision in need_ask
+                if is_ai_approval_candidate(decision)
+            ]
+            if candidates:
+                result = await host._ai_approval.review(candidates, host._settings)
+                allowed_ids = result.allowed_ids if result.reason == "reviewed" else frozenset()
+                for decision in candidates:
+                    if decision.tool_call.get("id") in allowed_ids:
+                        ai_allowed.append(decision)
+                        approved.append(_tool_call_with_approval_risk(decision, approved_by="ai"))
+                        host._notice_permission_result(f"AI 审批: allow {decision.name}")
+                        if hasattr(host._permission, "inc_ai_approval_count"):
+                            host._permission.inc_ai_approval_count()
+                need_ask = _attach_ai_approval_failures(need_ask, candidates, result, allowed_ids)
+            if ai_allowed:
+                if host._ui.via_events():
+                    from voidx.runtime.ui import RefreshRequested
+                    await host._ui.events.emit(RefreshRequested())
+                need_ask = [decision for decision in need_ask if decision not in ai_allowed]
+
+        approvable = [decision for decision in need_ask if decision.action != Action.BLOCKED_ACK]
+
+        if blocked:
+            await host._ask_tool_permission(blocked)
+            if host._ui.via_events():
+                await host._ui.events.emit(PermissionPromptCleared())
+            for decision in blocked:
+                denied.append((decision.tool_call, decision.reason or "Blocked command"))
+
+        if not approvable:
+            return
+
+        choice = await host._ask_tool_permission(approvable)
+        if choice is None:
+            choice = "n"
+
+        if host._ui.via_events():
+            await host._ui.events.emit(PermissionPromptCleared())
+
+        tool_calls = [_tool_call_with_approval_risk(decision) for decision in approvable]
+        if choice == "a" and _all_decisions_allow_scope(approvable, ApprovalScope.SESSION):
+            for decision in approvable:
+                host._permission.allow_silent(scoped_session_rule_for_decision(decision))
+            approved.extend(tool_calls)
+        elif choice == "y":
+            approved.extend(tool_calls)
+        else:
+            host._notice_permission_result(f"{len(need_ask)} tools denied")
+            for tc in tool_calls:
+                denied.append((tc, f"User denied: {tc['name']}"))
+
+
+    async def _ask_tool_permission(self: Any, tool_calls: list[dict] | list[PermissionDecision]) -> str | None:
+        host = self.host
+        decisions = [_coerce_permission_decision(item) for item in tool_calls]
+        raw_tool_calls = [decision.tool_call for decision in decisions]
+        tool_list = ", ".join(t["name"] for t in raw_tool_calls)
+        choices = _permission_choices(decisions)
+        details = [item.model_dump(mode="json") for item in host._permission_tool_details(decisions)]
+
+        if host._ui.via_events():
+            await host._ui.events.emit(PermissionPromptShown(
+                prompt=f"Allow tools: {tool_list}?",
+                choices=choices,
+                tools=host._permission_tool_details(decisions),
+            ))
+
+        if not host._app:
+            host._ui.ui.print("")
+            host._ui.ui.print(f"  [yellow]Allow tools: [bold]{tool_list}[/bold]?[/yellow]")
+
+        if host._app:
+            return await host._app.ask_choice("Allow tool use?", choices, details=details)
+        return "n"
+
+
+    def _show_permission_output(self: Any, message: str) -> bool:
+        host = self.host
+        dock = getattr(getattr(host, "_ui", None), "dock", None)
+        append = getattr(dock, "append_message", None)
+        if not callable(append):
+            return False
+        append(message)
+        return True
+
+
+    def _notice_permission_result(self: Any, message: str) -> None:
+        host = self.host
+        log_tool_event("permission_notice", message=message)
+
+
+    def _permission_tool_details(self: Any, decisions: list[PermissionDecision]) -> list[PermissionToolDetail]:
+        host = self.host
+        details: list[PermissionToolDetail] = []
+        for decision in decisions:
+            details.append(PermissionToolDetail(
+                name=decision.name,
+                pattern=decision.pattern,
+                args=decision.args,
+                risk=decision.risk.model_dump(mode="json") if decision.risk is not None else None,
+                allowed_scopes=tuple(scope.value if hasattr(scope, "value") else str(scope) for scope in decision.allowed_scopes),
+                default_scope=decision.default_scope.value if hasattr(decision.default_scope, "value") else decision.default_scope,
+                ai_approval_failure=decision.ai_approval_failure,
+            ))
+        return details
+

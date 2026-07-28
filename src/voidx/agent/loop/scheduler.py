@@ -2,6 +2,8 @@
 
 from __future__ import annotations
 
+import asyncio
+import logging
 from dataclasses import dataclass
 
 from voidx.agent.domain.loop import LOOP_PROFILE, LoopSpec, LoopToolView
@@ -10,7 +12,29 @@ from voidx.agent.domain.turn_context import TurnExecutionContext
 from voidx.agent.runtime.contracts import TurnRequest
 from voidx.agent.runtime.dispatcher import DispatchResult, RuntimeDispatcher
 from voidx.memory.thread_store import ThreadStore
+from voidx.runtime.ui import StatusFinished, StatusUpdated, ui_events
+
+LOOP_WAITING_STATUS_ID = "loop:waiting"
+
+
+def _publish_loop_waiting(decision: RuntimeDecision) -> None:
+    """Surface the next-wakeup time so idle UIs can show a countdown."""
+    import time
+
+    if decision.outcome == "continue" and decision.next_delay_seconds:
+        ui_events.emit_nowait(StatusUpdated(
+            status_id=LOOP_WAITING_STATUS_ID,
+            label="Looping",
+            detail=str(time.time() + float(decision.next_delay_seconds)),
+            display="record_only",
+        ))
+    else:
+        ui_events.emit_nowait(StatusFinished(status_id=LOOP_WAITING_STATUS_ID))
+
+_DEFAULT_DYNAMIC_DELAY_SECONDS = 600.0
 from voidx.agent.loop.controller import LoopAttemptController
+
+
 
 
 
@@ -28,6 +52,7 @@ class LoopRuntimeRunner:
             )
         spec = LoopSpec.model_validate(input_frame.get("spec") or {"prompt": prompt})
         controller = LoopAttemptController(spec=spec)
+        ui_events.emit_nowait(StatusFinished(status_id=LOOP_WAITING_STATUS_ID))
         context = TurnExecutionContext(
             thread_id=thread.thread_id,
             session_id=thread.session_id or "",
@@ -47,12 +72,18 @@ class LoopRuntimeRunner:
         )
         submitted = controller.final_decision()
         if submitted is not None:
+            _publish_loop_waiting(submitted)
             return submitted
-        return RuntimeDecision(
-            outcome="completed",
-            summary="Loop turn completed.",
-            progress="meaningful",
+        fallback = await controller.submit_decision(
+            RuntimeDecision(
+                outcome="continue",
+                summary="Iteration ended without a loop decision; continuing with the default delay.",
+                next_delay_seconds=None if spec.interval_seconds is not None else _DEFAULT_DYNAMIC_DELAY_SECONDS,
+                reason="no_loop_decision_submitted",
+            )
         )
+        _publish_loop_waiting(fallback)
+        return fallback
 
 
 class LoopRuntimeScheduler:
@@ -64,12 +95,47 @@ class LoopRuntimeScheduler:
         workspace: str,
         lease_owner: str = "loop-manager",
         lease_seconds: float = 60,
+        pump_poll_seconds: float = 1.0,
     ) -> None:
         self._store = store
         self._runtime = runtime
         self._workspace = workspace
         self._lease_owner = lease_owner
         self._lease_seconds = lease_seconds
+        self._pump_poll_seconds = pump_poll_seconds
+        self._pump_task: asyncio.Task | None = None
+
+    def start_pump(self) -> None:
+        if self._pump_task is not None:
+            return
+        self._pump_task = asyncio.create_task(self._pump_loop())
+
+    async def stop_pump(self) -> None:
+        task, self._pump_task = self._pump_task, None
+        if task is None:
+            return
+        task.cancel()
+        try:
+            await task
+        except asyncio.CancelledError:
+            pass
+
+    async def _pump_loop(self) -> None:
+        dispatcher = RuntimeDispatcher(
+            store=self._store,
+            runner=LoopRuntimeRunner(self._runtime),
+            lease_owner=self._lease_owner,
+            lease_seconds=self._lease_seconds,
+            claim_kind="wakeup",
+        )
+        while True:
+            try:
+                result = await dispatcher.dispatch_once()
+            except Exception:
+                logging.getLogger(__name__).exception("loop wakeup pump dispatch failed")
+                result = None
+            if result is None:
+                await asyncio.sleep(self._pump_poll_seconds)
 
     async def run_prompt(
         self,
@@ -107,7 +173,7 @@ class LoopRuntimeScheduler:
         return await self._store.create_thread(
             AgentThread(
                 thread_id=thread_id,
-                session_id=session_id,
+                session_id=spec.loop_session_id(session_id),
                 parent_thread_id=session_id,
                 workspace=self._workspace,
             ),
@@ -119,7 +185,7 @@ class LoopRuntimeScheduler:
 
 def _available_loop_tool_ids() -> set[str]:
     return {
-        "loop_update",
+        "loop",
         "read",
         "find",
         "search",
@@ -129,16 +195,8 @@ def _available_loop_tool_ids() -> set[str]:
         "webfetch",
         "mcp",
         "skill",
+        "bash",
         "workflow",
         "task_status",
         "todo",
-        "schedule_wakeup",
-        "clarify",
-        "checkpoint",
-        "agent",
-        "bash",
-        "write",
     }
-
-def _loop_thread_id(session_id: str | None) -> str:
-    return f"loop:{session_id or 'default'}"

@@ -4,6 +4,7 @@ from __future__ import annotations
 
 from voidx.tools.bash.core import (
     _has_shell_expansion,
+    _has_shell_redirection,
     _has_unquoted_pathname_expansion,
     _RE_AMP,
     _shell_words,
@@ -53,14 +54,17 @@ def _try_hint_impl(command: str) -> RouteHint | None:
 
     prog = words[0].lower()
 
+    if prog == "cat" and "<<" in stripped:
+        return _hint_write_heredoc(stripped)
+    if prog in ("echo", "printf") and ">" in stripped:
+        return _hint_write_echo(stripped, words)
+    if _has_shell_redirection(words):
+        return None
+
     if prog == "git" and len(words) >= 2:
         return _hint_git(stripped, words)
     if prog in ("cat", "head", "tail"):
-        if prog == "cat" and "<<" in stripped:
-            return _hint_write_heredoc(stripped)
         return _hint_read(words)
-    if prog in ("echo", "printf") and ">" in stripped:
-        return _hint_write_echo(stripped, words)
     if prog == "find":
         return _hint_find(words)
     if prog in ("grep", "egrep", "fgrep", "rg"):

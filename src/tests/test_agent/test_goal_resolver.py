@@ -6,7 +6,7 @@ from pathlib import Path
 import pytest
 from langchain_core.messages import AIMessage, HumanMessage, SystemMessage, ToolMessage
 
-from voidx.agent.goal_resolver import ResolverGoal, resolve_goal_for_turn
+from voidx.agent.application.goal_resolver import ResolverGoal, resolve_goal_for_turn
 from voidx.agent.infrastructure.langgraph.execution import LangGraphExecution
 from voidx.agent.infrastructure.langgraph.runtime.turn_runner import _turn_exchange_from_final_messages
 from voidx.runtime.task_state import (

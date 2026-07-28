@@ -7,8 +7,8 @@ from pathlib import Path
 
 import pytest
 
-from voidx.agent.tool_messages import DEFAULT_TOOL_MESSAGE_MAX_CHARS
-from voidx.agent.tool_result_storage import (
+from voidx.agent.application.tool_messages import DEFAULT_TOOL_MESSAGE_MAX_CHARS
+from voidx.agent.infrastructure.tool_result_storage import (
     TOOL_RESULT_PERSIST_THRESHOLD,
     _make_preview,
     _persist_to_disk,
@@ -63,7 +63,7 @@ class TestPersistToDisk:
         def bad_workspace_dir(workspace):
             raise OSError("bad workspace")
 
-        monkeypatch.setattr("voidx.agent.tool_result_storage.voidx_workspace_dir", bad_workspace_dir)
+        monkeypatch.setattr("voidx.agent.infrastructure.tool_result_storage.voidx_workspace_dir", bad_workspace_dir)
         path = _persist_to_disk("data", "call_1", session_id="s", workspace=str(tmp_path / "bad"))
         assert Path(path) == tmp_path / ".voidx" / "tool-results" / "s" / "call_1.txt"
 

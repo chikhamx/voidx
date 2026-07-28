@@ -111,7 +111,7 @@ class TestTodoUpdatedEvent:
 
 class TestApplyTodoStateToHost:
     def test_tracker_restored_with_all_statuses(self):
-        from voidx.agent.todo_state import apply_todo_state_to_host
+        from voidx.agent.application.todo_state import apply_todo_state_to_host
         from voidx.runtime.task_state import TodoRunItem, TodoRunState
         from voidx.tools.task_tracker import TaskTracker
 

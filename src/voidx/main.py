@@ -56,6 +56,7 @@ async def _run_chat(
     web_headless: bool = False,
     web_host: str = "127.0.0.1",
     web_port: int = 0,
+    chat: bool = False,
 ) -> None:
     from voidx.ui.output.dock import set_dock, BottomInputDock
     set_dock(BottomInputDock())
@@ -90,7 +91,18 @@ async def _run_chat(
         vconsole=vconsole,
     )
 
+    if not session and (chat or new_session):
+        from voidx.memory.session import create_session
+        session = await create_session(
+            workspace=ws_path,
+            provider=cfg.model.provider,
+            model=cfg.model.model,
+            profile="chat" if chat else "coding",
+            title="Chat session" if chat else "New session",
+        )
+
     agent_app = build_agent_app(cfg, api_key, session=session, settings=settings)
+
     await agent_app.run(
         web=web,
         web_headless=web_headless,
@@ -117,6 +129,7 @@ def main(
     ),
     web_host: str = typer.Option("127.0.0.1", "--web-host", help="Web UI gateway host"),
     web_port: int = typer.Option(0, "--web-port", help="Web UI gateway port"),
+    chat: bool = typer.Option(False, "-c", "--chat", help="Start the session in Chat mode (restricted, read-only tools)"),
     version: bool = typer.Option(False, "--version", help="Show version and exit"),
 ) -> None:
     """Start an interactive coding session."""
@@ -128,7 +141,8 @@ def main(
     from voidx.agent.facade import RunLoopStartupError
 
     try:
-        asyncio.run(_run_chat(workspace, model, provider, resume, new, web, web_headless, web_host, web_port))
+        asyncio.run(_run_chat(workspace, model, provider, resume, new, web, web_headless, web_host, web_port, chat))
+
     except RunLoopStartupError as exc:
         _vconsole().error(str(exc))
         raise typer.Exit(code=1) from None

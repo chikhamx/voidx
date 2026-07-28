@@ -8,8 +8,8 @@ import time
 
 from langchain_core.messages import AIMessage, HumanMessage, ToolMessage
 
-from voidx.agent.agents import AgentDef, child_run_agent_def
-from voidx.agent.prompts import WORKFLOW_RUNTIME, build_base_system, persona_prompt
+from voidx.agent.application.agents import AgentDef, child_run_agent_def
+from voidx.agent.application.prompts import WORKFLOW_RUNTIME, build_base_system, persona_prompt
 from voidx.agent.infrastructure.langgraph.runtime.runtime_guards import (
     RuntimeGuardState,
     WallClockGuardState,
@@ -17,22 +17,22 @@ from voidx.agent.infrastructure.langgraph.runtime.runtime_guards import (
     cycle_summary_from_tools,
 )
 from voidx.agent.infrastructure.langgraph.runtime.streaming import extract_text, stream_llm
-from voidx.agent.infrastructure.langgraph.runtime.core.helpers import LLMErrorKind, _classify_llm_error, _LLM_MAX_RETRIES, _llm_retry_delay, _clean_error_message
+from voidx.agent.infrastructure.langgraph.runtime.core.helpers import LLMErrorKind, _classify_llm_error, _LLM_MAX_RETRIES, _llm_retry_delay, _llm_retry_sleep_delay, _clean_error_message
 from voidx.agent.infrastructure.langgraph.runtime.todo_events import todo_updated_event
-from voidx.agent.todo_state import todo_run_state_from_result
+from voidx.agent.application.todo_state import todo_run_state_from_result
 from voidx.runtime.intent import PersonaName
-from voidx.agent.runtime_context import (
+from voidx.agent.application.runtime_context import (
     ContextCompilerCache,
     InteractionMode,
     RuntimeContextBuilder,
 )
 from voidx.runtime.task_state import GoalResolution, TaskState, WorkflowRoute
-from voidx.agent.tool_messages import sanitize_tool_message_content
-from voidx.agent.tool_result_storage import maybe_persist_tool_result
-from voidx.agent.tool_filters import filter_unavailable_lsp_tools, strip_gemini_unsupported_schema_keys
+from voidx.agent.application.tool_messages import sanitize_tool_message_content
+from voidx.agent.infrastructure.tool_result_storage import maybe_persist_tool_result
+from voidx.agent.application.tool_filters import filter_unavailable_lsp_tools, strip_gemini_unsupported_schema_keys
 from voidx.config import Config
 from voidx.llm.service import create_chat_model, resolve_protocol
-from voidx.llm.instruction import WorkflowRuntimeContext
+from voidx.agent.application.instruction import WorkflowRuntimeContext
 from voidx.llm.usage import (
     UsageStats,
     estimate_context_tokens_with_tools,
@@ -54,7 +54,7 @@ from voidx.runtime.ui_port import AgentUiPort, runtime_ui_port
 
 _SAFETY_STEP_LIMIT = 50
 _RESULT_CONTRACT_RETRY_LIMIT = 2
-_BLOCKED_CHILD_TOOLS = {"agent", "clarify", "checkpoint", "schedule_wakeup"}
+_BLOCKED_CHILD_TOOLS = {"agent", "clarify", "checkpoint"}
 
 async def run_subagent(
     agent_def: AgentDef,
@@ -247,7 +247,7 @@ async def run_subagent(
                             ))
                         else:
                             ui_port.ui.print(f"[dim]Retrying ({retry_detail})[/dim]")
-                        await asyncio.sleep(delay)
+                        await asyncio.sleep(_llm_retry_sleep_delay(delay))
                         continue
                     if retry_status_active and ui_port.via_events():
                         await ui_port.events.emit(StatusFinished(status_id="llm:retry"))

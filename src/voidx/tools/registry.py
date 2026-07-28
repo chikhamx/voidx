@@ -19,8 +19,7 @@ from voidx.tools.checkpoint import PlanCheckpointTool
 from voidx.tools.workflow import WorkflowTool
 from voidx.tools.compact import CompactContextTool
 from voidx.tools.document import DocumentTool
-from voidx.tools.schedule_wakeup import ScheduleWakeupTool
-from voidx.tools.loop_update import LoopUpdateTool
+from voidx.tools.loop import LoopTool
 
 
 class ToolDef(BaseModel):
@@ -37,12 +36,11 @@ class ToolRegistry:
 
     _HIDDEN_FROM_LLM = frozenset({"git"})
 
-    def __init__(self, settings=None, tracker=None, loop_manager=None) -> None:
+    def __init__(self, settings=None, tracker=None) -> None:
         self._tools: dict[str, ToolDef] = {}
         self._instances: dict[str, object] = {}
         self._settings = settings
         self._tracker = tracker
-        self._loop_manager = loop_manager
         self._register_builtins()
 
     def _register_builtins(self) -> None:
@@ -76,19 +74,12 @@ class ToolRegistry:
         self.register(wf.id, wf, wf.description, wf.parameters_schema())
         ws = WebSearchTool(settings=self._settings)
         self.register(ws.id, ws, ws.description, ws.parameters_schema())
-        loop_update_tool = LoopUpdateTool()
+        loop_tool = LoopTool()
         self.register(
-            loop_update_tool.id,
-            loop_update_tool,
-            loop_update_tool.description,
-            loop_update_tool.parameters_schema(),
-        )
-        schedule_wakeup_tool = ScheduleWakeupTool()
-        self.register(
-            schedule_wakeup_tool.id,
-            schedule_wakeup_tool,
-            schedule_wakeup_tool.description,
-            schedule_wakeup_tool.parameters_schema(),
+            loop_tool.id,
+            loop_tool,
+            loop_tool.description,
+            loop_tool.parameters_schema(),
         )
 
     def register(self, tool_id: str, instance: object, description: str, parameters: dict) -> None:
@@ -122,7 +113,7 @@ class ToolRegistry:
     def filtered_copy(self, allowed_ids: set[str] | list[str] | tuple[str, ...]) -> "ToolRegistry":
         """Return a registry view containing existing tool defs and instances."""
         allowed = set(allowed_ids)
-        clone = ToolRegistry(settings=self._settings, tracker=self._tracker, loop_manager=self._loop_manager)
+        clone = ToolRegistry(settings=self._settings, tracker=self._tracker)
         clone._tools = {
             tool_id: tool_def
             for tool_id, tool_def in self._tools.items()
@@ -138,7 +129,7 @@ class ToolRegistry:
     def loop_filtered_copy(self, *, workflow_enabled: bool = False) -> "ToolRegistry":
         """Return the closed-world tool view for automatic runtime-backed /loop wakeups."""
         allowed = {
-            "loop_update",
+            "loop",
             "read",
             "find",
             "search",
@@ -148,6 +139,7 @@ class ToolRegistry:
             "webfetch",
             "mcp",
             "skill",
+            "bash",
         }
         if workflow_enabled:
             allowed.update({"workflow", "task_status", "todo"})

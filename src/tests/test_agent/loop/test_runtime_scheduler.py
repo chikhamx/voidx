@@ -1,14 +1,12 @@
 from __future__ import annotations
 
-import asyncio
 from dataclasses import dataclass, field
 
 import pytest
 
+from voidx.agent.domain.loop import LoopSpec
 from voidx.agent.domain.profile import RuntimeProfile
 from voidx.agent.domain.thread import AgentThread
-from voidx.agent.loop.manager import LoopManager
-from voidx.agent.loop.prompt_source import PromptSource
 from voidx.agent.loop.scheduler import LoopRuntimeScheduler
 from voidx.memory.thread_store import ThreadStore
 
@@ -39,15 +37,17 @@ async def test_loop_runtime_scheduler_runs_prompt_through_runtime(tmp_path) -> N
     )
 
     assert result is not None
-    assert result.decision.outcome == "completed"
+    assert result.decision.outcome == "continue"
+    assert result.decision.next_delay_seconds == 600
+    assert result.decision.reason == "no_loop_decision_submitted"
     assert len(runtime.requests) == 1
     request = runtime.requests[0]
     assert request.user_text == "check build"
     assert request.display_text == "[loop] check build"
     assert request.thread.thread_id == "loop:session-1:active"
-    assert request.thread.session_id == "session-1"
+    assert request.thread.session_id == "loop:session-1:active"
     assert request.context.thread_id == "loop:session-1:active"
-    assert request.context.session_id == "session-1"
+    assert request.context.session_id == "loop:session-1:active"
     assert request.context.runtime_profile.profile_id == "loop"
 
 
@@ -66,13 +66,13 @@ async def test_loop_runtime_scheduler_binds_loop_only_tool_policy(tmp_path) -> N
 
     policy = runtime.requests[0].context.tool_policy
     assert policy is not None
-    assert policy.allows("loop_update") is True
+    assert policy.allows("loop") is True
     assert policy.allows("read") is True
     assert policy.allows("schedule_wakeup") is False
     assert policy.allows("clarify") is False
     assert policy.allows("checkpoint") is False
     assert policy.allows("agent") is False
-    assert policy.allows("bash") is False
+    assert policy.allows("bash") is True
 
 
 
@@ -95,7 +95,7 @@ class LoopUpdatingRuntime:
 
 
 @pytest.mark.asyncio
-async def test_loop_update_decision_overrides_default_completed(tmp_path) -> None:
+async def test_loop_decision_overrides_default_continuation(tmp_path) -> None:
     runtime = LoopUpdatingRuntime(requested_delay=180)
     scheduler = LoopRuntimeScheduler(
         store=ThreadStore(),
@@ -110,6 +110,28 @@ async def test_loop_update_decision_overrides_default_completed(tmp_path) -> Non
     assert result.decision.outcome == "continue"
     assert result.decision.summary == "scheduled next check"
     assert result.decision.next_delay_seconds == 180
+
+
+@pytest.mark.asyncio
+async def test_loop_runtime_scheduler_fallback_uses_spec_interval_without_decision(tmp_path) -> None:
+    runtime = FakeRuntime()
+    scheduler = LoopRuntimeScheduler(
+        store=ThreadStore(),
+        runtime=runtime,
+        workspace=str(tmp_path),
+        lease_owner="test-worker",
+    )
+
+    result = await scheduler.run_prompt(
+        "check build",
+        display_text="[loop] check build",
+        session_id="session-1",
+        spec=LoopSpec(prompt="check build", interval_seconds=120),
+    )
+
+    assert result is not None
+    assert result.decision.outcome == "continue"
+    assert result.decision.next_delay_seconds == 120
 
 
 @pytest.mark.asyncio
@@ -147,33 +169,39 @@ async def test_loop_runtime_scheduler_dispatches_its_own_outbox_when_other_work_
     assert other_outbox is not None
     assert other_outbox.thread_id == "other"
 
+
+# ── Loop waiting status for UI countdown ─────────────────────────────────────
+
+
 @pytest.mark.asyncio
-async def test_loop_manager_uses_runtime_scheduler_instead_of_synthetic_turn(tmp_path) -> None:
-    class FakeHost:
-        async def forbidden_legacy_turn(self, *_args, **_kwargs):
-            raise AssertionError("synthetic turn should not be used when scheduler is bound")
+async def test_loop_runner_publishes_waiting_record_with_next_wakeup(tmp_path) -> None:
+    from voidx.ui.output.events import StatusUpdated, ui_events
 
-    class FakeScheduler:
-        def __init__(self) -> None:
-            self.calls: list[tuple[str, str | None, str | None]] = []
-            self.called = asyncio.Event()
+    emitted = []
 
-        async def run_prompt(self, prompt: str, *, display_text: str | None, session_id: str | None):
-            self.calls.append((prompt, display_text, session_id))
-            self.called.set()
+    class _Consumer:
+        def handle(self, event):
+            emitted.append(event)
 
-    idle = asyncio.Event()
-    idle.set()
-    scheduler = FakeScheduler()
-    manager = LoopManager(
-        FakeHost(),
-        idle_event=idle,
-        workspace=str(tmp_path),
-        runtime_scheduler=scheduler,
-    )
+    ui_events.start(_Consumer())
+    try:
+        runtime = LoopUpdatingRuntime(requested_delay=180)
+        scheduler = LoopRuntimeScheduler(
+            store=ThreadStore(),
+            runtime=runtime,
+            workspace=str(tmp_path),
+            lease_owner="test-worker",
+        )
+        await scheduler.run_prompt("check build", display_text="[loop] check", session_id="session-1")
+        await ui_events.drain()
+    finally:
+        await ui_events.stop()
 
-    manager.start(PromptSource.from_raw("check build"), None, session_id="session-1")
-    await asyncio.wait_for(scheduler.called.wait(), timeout=1)
-    await manager.cleanup()
-
-    assert scheduler.calls == [("check build", "[loop] check build", "session-1")]
+    waiting = [
+        e for e in emitted
+        if isinstance(e, StatusUpdated) and e.status_id == "loop:waiting"
+    ]
+    assert waiting, "expected a loop:waiting status record"
+    assert waiting[-1].display == "record_only"
+    import time as _time
+    assert abs(float(waiting[-1].detail) - (_time.time() + 180)) < 5

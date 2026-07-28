@@ -2,7 +2,7 @@ import sys
 from pathlib import Path
 
 
-from voidx.agent.attachments import (
+from voidx.agent.application.attachments import (
     build_user_message_payload,
     parse_structured_content,
     serialize_message_content,

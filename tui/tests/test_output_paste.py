@@ -7,7 +7,7 @@ from rich.console import Console
 from rich.text import Text
 
 from voidx.ui.output.dock import dock
-from voidx.ui.output.dock.formatting import _text_from_line
+from voidx.ui.output.dock.formatting import text_from_line
 
 
 def test_safe_flush_line_count_stops_at_unsettled_stream_after_finished_tool():

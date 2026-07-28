@@ -123,7 +123,7 @@ class RecordingRenderer(FakeRenderer):
 
 
 def _make_graph(tmp_path, model, monkeypatch, provider="openai", renderer_cls=FakeRenderer):
-    import voidx.agent.infrastructure.langgraph.execution as graph_module
+    import voidx.agent.infrastructure.langgraph.runtime.llm_turn as graph_module
     monkeypatch.setattr(graph_module, "StreamingRenderer", renderer_cls)
 
     graph = LangGraphExecution(

@@ -12,7 +12,7 @@ from rich.console import Console, Group
 from rich.text import Text
 
 from voidx.ui.output.dock import dock
-from voidx.ui.output.dock.formatting import _text_from_line
+from voidx.ui.output.dock.formatting import text_from_line
 from .helpers import _rendered_row_count
 from .state import RenderStats
 
@@ -259,7 +259,7 @@ class _FrameRendererMixin:
     def _render_busy_activity_tick(self) -> bool:
         if (
             not self._tty
-            or not self._busy
+            or not (self._busy or self._loop_waiting_active())
             or not self._has_rendered_frame
             or self._render_scheduled
             or self._last_busy_activity_rows <= 0
@@ -476,7 +476,7 @@ class _FrameRendererMixin:
         renderables: list[Text] = []
         for line in lines:
             try:
-                renderables.append(_text_from_line(line))
+                renderables.append(text_from_line(line))
             except Exception:
                 renderables.append(Text(line))
 

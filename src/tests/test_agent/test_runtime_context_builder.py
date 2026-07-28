@@ -7,7 +7,7 @@ import pytest
 from langchain_core.messages import AIMessage, HumanMessage, SystemMessage, ToolMessage
 from typing_extensions import NotRequired
 
-from voidx.agent.runtime_context import (
+from voidx.agent.application.runtime_context import (
     COMPACTION_GUIDE_MARKER,
     ContextCompilerCache,
     InteractionMode,
@@ -16,7 +16,7 @@ from voidx.agent.runtime_context import (
     is_goal_resolution_guide_content,
     raw_semantic_messages,
 )
-from voidx.agent.state import AgentState
+from voidx.agent.infrastructure.langgraph.state import AgentState
 from voidx.runtime.task_state import GoalSpec, TaskState, TodoRunState, WorkflowRoute
 from voidx.config import Config, UserProfile
 from voidx.skills.context import (

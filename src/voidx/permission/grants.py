@@ -7,6 +7,27 @@ from dataclasses import dataclass, field
 from pathlib import Path
 from typing import Literal
 
+from voidx.config.grants import GrantDelta
+
+__all__ = [
+    "AccessGrant",
+    "GrantDelta",
+    "ApprovalPrecondition",
+    "GrantUpdateResult",
+    "PermissionCommitResult",
+    "PermissionUpdateResult",
+    "PermissionEpochGate",
+    "AccessGrants",
+    "AccessIntent",
+    "AccessResolution",
+    "PathGrantLock",
+    "PathGrantLockManager",
+    "persistent_grants_from_paths",
+    "resolve_access",
+    "grant_for_intent",
+    "delta_for_grant",
+]
+
 
 AccessAction = Literal["allow", "deny", "defer"]
 AccessMode = Literal["read", "write"]
@@ -22,12 +43,6 @@ class AccessGrant:
     persistence: GrantPersistence = "session"
 
 
-@dataclass(frozen=True)
-class GrantDelta:
-    readable_files: list[str] = field(default_factory=list)
-    readable_dirs: list[str] = field(default_factory=list)
-    writable_files: list[str] = field(default_factory=list)
-    writable_dirs: list[str] = field(default_factory=list)
 
 
 @dataclass(frozen=True)
@@ -306,6 +321,20 @@ def grant_for_intent(intent: AccessIntent, persistence: GrantPersistence, *, obj
         object_type=selected_type,
         persistence=persistence,
     )
+
+
+def persistent_grants_from_paths(
+    readable_files: list[str],
+    readable_dirs: list[str],
+    writable_files: list[str],
+    writable_dirs: list[str],
+) -> list[AccessGrant]:
+    return [
+        *(AccessGrant(path=path, access="read", object_type="file", persistence="persistent") for path in readable_files),
+        *(AccessGrant(path=path, access="read", object_type="dir", persistence="persistent") for path in readable_dirs),
+        *(AccessGrant(path=path, access="write", object_type="file", persistence="persistent") for path in writable_files),
+        *(AccessGrant(path=path, access="write", object_type="dir", persistence="persistent") for path in writable_dirs),
+    ]
 
 
 def delta_for_grant(grant: AccessGrant) -> GrantDelta:

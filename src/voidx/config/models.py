@@ -156,3 +156,9 @@ class RetryConfig(BaseModel):
     base_delay: float = Field(default=1.0, ge=0.0, le=60.0)
     max_delay: float = Field(default=10.0, ge=0.0, le=120.0)
     jitter: bool = Field(default=True)
+
+
+class SkillSelectionConfig(BaseModel):
+    enabled: set[str] = Field(default_factory=set)
+    disabled: set[str] = Field(default_factory=set)
+    auto: set[str] = Field(default_factory=set)

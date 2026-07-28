@@ -1,7 +1,7 @@
 ---
 name: goal-evaluator-loop
 display_name: Goal Evaluator & Autonomous Loop
-description: 为 voidx goal 模式增加独立评估调用和可取消的自主循环
+description: 为 /loop 增加引导式目标输入、独立验收调用和可取消的自主循环
 doc_type: tech-design
 audience: human+llm
 ---
@@ -10,395 +10,588 @@ audience: human+llm
 
 ## TL;DR
 
-voidx 的 goal 模式目前只做“设定目标 + 路由到 plan workflow”，缺少完成判定和自主循环。本设计为带完成条件的 `/goal <desc> when <condition>` 增加立即启动、独立评估调用、有限轮次循环和统一取消机制：每轮 `run_once()` 返回只读 `TurnResult`，评估器根据该轮结束时的有效上下文和 workflow 状态判断目标是否达成；未达成时自动继续，达成、预算耗尽、连续评估失败、无进展或用户取消时停止。无 `when` 的 `/goal <desc>` 保持现有行为。
+目标型自主执行应挂在现有 runtime-backed `/loop` 上，而不是新增 `/goal <desc> when <condition>` 入口。用户先输入 `/loop` 进入 setup；系统引导输入两类必填提示词：**目标**、**验收条件**，并可选输入**达成目标的方法**。setup 完成后复用现有 loop runtime 基建启动循环。每次 attempt 先跑一个普通 agent turn，再追加只读 evaluator；通过则 `completed`，未通过则由 runtime lifecycle 继续调度。
 
-## Context
+## Design Principle
 
-### 当前行为
+Evaluated goal loops are `/loop` runs with structured setup, not a separate `/goal` runtime.
 
-voidx goal 模式（`/goal <desc>`）的执行路径：
+- **入口统一**：用户通过 `/loop` 进入自主循环；无参数 `/loop` 触发引导式 setup。
+- **复用基建**：使用现有 `LOOP_PROFILE`、loop thread、outbox、dispatcher、runner、lifecycle；不新增 `GOAL_PROFILE` / `GoalService` / `GoalRuntimeScheduler`。
+- **结构化提示**：setup 收集 objective、acceptance condition，并可选收集 achievement method，再生成 deterministic loop prompt。
+- **验收只读**：evaluator 只读最后一次真实 LLM 上下文和 post-turn state，不执行工具、不读文件、不改状态。
+- **runtime 收尾**：runner 只返回 `RuntimeDecision`；commit、continuation、恢复和终态仍由 runtime/lifecycle 负责。
 
-1. `src/voidx/agent/slash/handler.py:_goal()` 调用 `task_state.set_goal(desc)` 并切换到 `InteractionMode.GOAL`。
-2. slash 命令被 `src/voidx/agent/graph/run_loop.py:_handle_user_input()` 消费后直接返回，不会启动 turn。
-3. 用户下一条普通输入触发 `turn_runner.py:run_once()`；goal 模式调用纯函数 `resolve_goal_mode()`。
-4. `resolve_goal_mode()` 返回 `PlanResolution(join="plan", leave=None)`，进入 plan workflow。
-5. turn 结束后等待下一次用户输入，没有完成判定或自动继续。
+## Current Codebase Alignment
 
-`src/voidx/agent/goal_resolver.py:resolve_goal_for_turn()` 是未接入当前 goal-mode 路径的 LLM resolver。
+### Existing Runtime-Backed Loop
 
-### 问题
+当前 `/loop` 已经是目标功能的承载点：
 
-- **无完成判定**：没有机制判断目标是否已有可验证证据。
-- **无自主循环**：每个 turn 结束后仍需用户手动继续。
-- **slash 与 turn 控制流分离**：仅扩展 `_goal()` 无法让命令立即启动首轮。
-- **缺少评估输入边界**：当前 `_run_once()` 返回 `None`，其最终 messages 是 `turn_runner.py` 内部局部值。
-- **缺少运行中控制通道**：同步连续调用 `_run_once()` 会阻塞后续 `/goal clear` 的命令分发。
+| Area | Path | Current Role |
+|---|---|---|
+| loop domain | `src/voidx/agent/domain/loop.py` | `LOOP_PROFILE`、`LoopSpec`、`LoopDecision`、`LoopToolView`。 |
+| loop service | `src/voidx/agent/application/loop_service.py` | 创建/重置 loop thread，调用 scheduler。 |
+| loop scheduler/runner | `src/voidx/agent/loop/scheduler.py` | `LoopRuntimeScheduler` enqueue outbox；`LoopRuntimeRunner.run_turn()` 调用 runtime turn 并返回 `RuntimeDecision`。 |
+| loop attempt controller | `src/voidx/agent/loop/controller.py` | 收集 `loop` 决策并转换为 runtime decision。 |
+| runtime dispatcher | `src/voidx/agent/runtime/dispatcher.py` | claim outbox、begin attempt、调用 runner、commit decision。 |
+| runtime lifecycle | `src/voidx/agent/domain/thread.py` | `RuntimeDecision` 和 lifecycle transition。 |
+| runtime turn engine | `src/voidx/agent/infrastructure/langgraph/adapter.py` | `LangGraphTurnEngine.run()` 执行普通 LangGraph turn 并返回 post-turn runtime state。 |
+
+目标型 evaluator loop 应扩展这条 `/loop` 线，而不是在 `AgentService._handle_user_input()`、slash handler 或新的 goal service 中手写 outer while-loop。
+
+### Current Slash Behavior
+
+| Area | Path | Current Role |
+|---|---|---|
+| slash `/loop` | `src/voidx/agent/slash/handler.py` | 当前无参数打印 usage；`/loop [interval] <prompt>` 启动 runtime-backed loop；`stop` / `status` 控制活动 loop。 |
+| slash `/goal` | `src/voidx/agent/slash/handler.py` | legacy：设置/清除 `TaskState.current_goal`，切 `InteractionMode.GOAL`，持久化。 |
+| legacy goal route | `src/voidx/agent/goal_resolver.py` | `resolve_goal_mode()` 固定返回 `PlanResolution(join="plan", leave=None)`。 |
+| LLM call site | `src/voidx/agent/infrastructure/langgraph/execution.py` | `_stream_llm()` 成功返回处可捕获最后一次 LLM input/output snapshot。 |
+| graph state | `src/voidx/agent/state.py` | 当前没有 evaluation snapshot / loop evaluator stop reason 字段。 |
+
+`/goal` 不参与本设计的 runtime-backed evaluator loop；保留 legacy 行为。
 
 ## Goals / Non-Goals
 
 ### Goals
 
-- 支持 `/goal <desc> when <condition>`，设置成功后立即以 `desc` 启动首轮。
-- 每轮结束后通过独立评估调用检查可验证证据。
-- 带 condition 的 goal 命令作为本次 run 的显式自主授权，审批类 workflow gate 无需再次询问用户；循环在停止条件前自主运行。
-- 提供 1–200 的有限轮次预算，默认 20。
-- Ctrl+C、UI Cancel、`/goal clear` 和新 `/goal` 均可终止活动循环。
-- 循环状态与轮次计数可持久化，进程异常退出后不会误判为仍在执行。
-- 保持无 `when` 的 `/goal <desc>` 行为兼容。
+- 支持用户先输入 `/loop`，再由系统引导输入必要提示词并启动 evaluated loop。
+- 引导式 setup 必须收集 **目标** 和 **验收条件**，可选收集 **达成目标的方法**。
+- 复用 `/loop` runtime 基建：`LOOP_PROFILE`、`LoopSpec`、`LoopService`、`LoopRuntimeScheduler`、`LoopRuntimeRunner`、loop thread/outbox state。
+- 每个 loop attempt 执行一个普通 LangGraph turn，然后在 turn 结束边界追加 evaluator。
+- evaluator 通过已有证据验收 acceptance condition；通过后 loop terminal completed，未通过则返回 `RuntimeDecision(outcome="continue")`。
+- continuation 走 runtime/lifecycle 单一路径；完整 wakeup 规则见 **Continuation Semantics**。
+- 提供有限预算：`max_turns` 取值 1–200，默认 20。
+- Ctrl+C、UI Cancel、`/loop stop`、有效新 `/loop` setup、session cleanup 均能取消或替换活动 evaluated loop。
+- 保持 `/loop [interval] <prompt>` 快捷模式兼容；它可以继续启动普通 loop，或在未来通过显式 flag 进入 evaluated mode，但不作为本设计的主要目标体验。
 
 ### Non-Goals
 
-- 不做 Codex 风格的文件化里程碑。
-- 评估器不执行工具或验证命令；执行模型负责运行命令并留下证据。
-- 不做 token 预算控制。
-- 不改变 plan/brainstorm/debug 等 workflow 的 DAG 和 transition 规则。
-- 不做多目标编排。
-- 不保证使用不同供应商或不同底层模型；“独立”指独立调用、prompt、结构化输出和失败处理。
+- 不新增 `/goal ... when ...` 语法作为 runtime-backed goal 入口。
+- 不新增 `GOAL_PROFILE`、`GoalService`、`GoalRuntimeScheduler` 或 goal-specific thread family，除非后续证明 loop 基建无法承载。
+- 不把 evaluated loop 实现成脱离 runtime dispatcher 的后台 while-loop。
+- 不让 evaluator 执行工具、命令、文件读取或外部验证。
+- 不让 continuation 使用 scheduler-created prompt 和 runtime-created `wakeup` 两套并行队列。
+- 不修改 workflow DAG、transition 规则或 `InteractionMode` 枚举。
+- 不做无限预算、多目标编排或文件化里程碑。
+- 不强制 evaluator 使用不同供应商；独立性来自独立 prompt、结构化输出、timeout 和 failure handling。
 
-## Proposed Design
+## Proposed Architecture
 
-### 核心控制流
+### High-Level Flow
 
 ```text
-用户: /goal <desc> when <condition>
+用户: /loop
   │
   ▼
-运行中命令控制层（gateway/TUI adapter）
-  │  若当前 session 正在执行且输入是 /goal clear、/goal reset 或语法有效的新 /goal：
-  │  先取消并等待当前 submit task，再把原命令作为新的 submit 正常分发
-  ▼
-run_loop._handle_user_input()
-  │  slash handler 解析并持久化 GoalSpec
-  │  返回 GoalCommandResult(start_loop=True, initial_text=desc)
-  ▼
-GoalLoopController.run()  ← 当前 submit task 等待它，不创建脱离 submit 的后台任务
+SlashHandler._loop(args="")
+  │ enter interactive evaluated-loop setup instead of printing usage
   │
-  ├─ 开始一次 attempt：先递增并持久化 goal_turn_count
+  ├─ prompt 1: Objective / 目标
+  ├─ optional prompt: Achievement method / 达成目标的方法
+  ├─ prompt 2: Acceptance condition / 验收条件
+  ├─ optional: max_turns, interval/dynamic mode
+  │
   ▼
-turn_runner.run_once(desc) -> TurnResult  ←────────────────────┐
-  │                                                            │
-  ▼                                                            │
-goal_evaluator.evaluate(turn_result, condition)                 │
-  │                                                            │
-  ├─ achieved ───────────────→ Goal achieved，停止并清理状态    │
-  ├─ budget exhausted ───────→ Goal budget exhausted，停止      │
-  ├─ evaluator failures >= 3 → Evaluator unavailable，停止      │
-  ├─ no progress >= 3 ───────→ No progress detected，停止        │
-  └─ not achieved ───────────→ 下一 attempt(continue_text) ─────┘
-
-取消源：Ctrl+C / UI Cancel / goal 控制命令 / session cleanup
-  └─ 取消当前 submit task（覆盖 turn 或 evaluator await）→ finally 清理活动状态
+Build EvaluatedLoopSpec / extended LoopSpec
+  │ prompt = deterministic prompt(objective, optional method, acceptance condition)
+  │ evaluator_enabled = true
+  │
+  ▼
+LoopService.start(parent_session/thread, spec)
+  │ create/reset loop thread with LOOP_PROFILE
+  │ persist evaluated-loop metadata in thread.state.context["loop"]
+  │ enqueue first loop_prompt outbox only
+  │
+  ▼
+RuntimeDispatcher.dispatch_outbox()
+  │ begin attempt + lease + lifecycle guard
+  │ input_frame = {"kind": outbox.kind, **outbox.payload}
+  │
+  ▼
+LoopRuntimeRunner.run_turn(thread, profile, input_frame)
+  │
+  ├─ load committed loop state from ThreadStore
+  ├─ if kind=loop_prompt → use payload prompt/spec for first attempt
+  ├─ if kind=wakeup → use payload.decision + loop state to build next prompt
+  ├─ build TurnExecutionContext(runtime_profile=LOOP_PROFILE, tool_policy=composite loop policy, optional evaluated-loop context adapter)
+  ├─ runtime.run_turn(TurnRequest(... user_text=loop prompt ...))
+  │    └─ normal LangGraph turn runs until runtime says that turn is complete
+  │
+  ├─ if turn needs user input / failed / cancelled → RuntimeDecision(needs_user/failed/stop)
+  │
+  └─ LoopEvaluator.evaluate(post_turn_result, acceptance_condition)
+        ├─ achieved=True  → RuntimeDecision(completed)
+        ├─ not achieved   → RuntimeDecision(continue, next_delay_seconds=<dynamic/default interval>)
+        ├─ budget hit     → RuntimeDecision(blocked, reason="budget_exhausted")
+        ├─ no progress    → RuntimeDecision(blocked, reason="no_progress")
+        └─ evaluator down → RuntimeDecision(failed, reason="evaluator_unavailable")
 ```
 
-### 启动语义
+Key point: evaluated-loop continuation is a runtime decision, not a synchronous recursive call. The detailed single-source wakeup contract is defined in **Continuation Semantics**.
 
-1. `_goal()` 只负责解析、校验、更新状态和返回结构化命令结果，不直接递归调用 `_run_once()`。
-2. `_handle_user_input()` 收到 `start_loop=True` 后在当前 submit task 内等待 `GoalLoopController.run()`；controller 不创建脱离 submit 生命周期的后台任务。
-3. 带 `when` 的命令使用解析后的 `desc` 作为首轮 `user_text`，不把完整 slash 命令写入 agent 消息历史。
-4. 无 `when` 的命令只设置 goal 和 goal mode，返回 `start_loop=False`，保持现有行为。带 condition 的命令在写入 GoalSpec 前要求执行模型可用；若 `host.model is None`，显示配置模型的错误并保持现有目标和模式不变。
-5. 无活动 submit 时，所有 `/goal` 仍走现有 slash dispatch。活动 submit 期间，gateway `RunManager.submit()` 和 `GatewayFrontend`/`PureTui` 的入队入口只特殊识别语法有效的 `/goal clear`、`/goal reset` 和新 `/goal`：先 cancel-and-wait，再把未修改的命令重新入队并交给正常 slash dispatch。语法校验复用 slash parser 的只读解析函数，不在 UI 层复制语法。
-6. 活动 submit 期间，所有可能改变 session、模型或持久化状态的 slash 命令（至少 `/clear`、`/session`、`/resume`、`/model`、`/mode`、`/goal`、`/exit`）都不得与 loop 并发：退出/切换/清理类命令使用 cancel-and-wait 后正常分发；其他 slash 命令排队或返回 busy。纯只读命令可并发执行，但不得持久化状态。普通文本保持现有排队或 `ERR_TURN_IN_PROGRESS` 行为。
+### Loop Spec Extension
 
-### 取消与并发语义
-
-`GoalLoopController` 是 session 级运行时组件，但 loop 由当前 submit task 拥有；同一 session 最多有一个活动 loop。controller 保存 cancellation event 和 run id，不保存脱离 submit 的后台 task。
-
-- **Ctrl+C / UI Cancel**：取消当前 submit task，同时设置 controller event。取消可发生在 `_run_once()` 或 evaluator await 中；`CancelledError` 由 controller 的 `finally` 清理状态后重新抛给已有中断处理。
-- **`/goal clear` / `/goal reset`**：运行中命令控制层先校验命令，再取消并等待当前 submit；旧 loop 的 `finally` 完成后，将原命令作为新 submit 分发，由 `_goal()` 执行 `clear_goal()`、切换 AUTO 并持久化。
-- **新 `/goal`**：使用同一 cancel-and-resubmit 操作；旧状态清理完成后才由 slash handler 校验并替换 GoalSpec。无效命令不得取消当前 loop。
-- **session cleanup**：取消并等待当前 submit task，防止退出后继续调用模型或写消息。
-- **竞态保护**：loop 捕获启动时的 `goal_run_id`；每轮开始、评估后和持久化前都确认 run id 仍匹配。旧 controller 不得修改新目标状态。
-- **取消检查点**：每轮开始前、`run_once()` 返回后、评估器返回后检查 cancellation event；task cancellation 本身可立即中断 turn 或 evaluator await，不依赖检查点或 10 秒 timeout。
-
-`goal_loop_active` 是可持久化的观测字段，不是取消原语。数据库恢复时若其值为 `True`，内存中必须归一化为 `False` 并立即回写；系统不自动恢复无人监管的循环，用户可重新执行目标命令。
-
-以 `/goal fix auth tests when all tests in tests/test_auth pass` 为例：
-
-1. slash parser 解析出 `desc="fix auth tests"`、`condition="all tests in tests/test_auth pass"`。
-2. 创建 `GoalSpec(done_condition=..., max_turns=20, goal_turn_count=0, goal_run_id=<uuid>)`，切换 GOAL 并持久化。
-3. `_handle_user_input()` 进入 loop；controller 将 `goal_loop_active=True` 并持久化。
-4. controller 校验 run id 和剩余预算，将 `goal_turn_count += 1` 持久化后，启动首轮 `run_once("fix auth tests")`。
-5. `run_once()` 完成消息、workflow/task state 和 runtime state 持久化后，返回 `TurnResult`。
-6. evaluator 只读取 `TurnResult.evaluation_messages`、`task_state.workflow_runs` 和 condition。
-7. 若未达成且仍有预算，下一轮固定使用 `continue working on: <desc>`，并在启动前再次预增计数。
-8. 若执行模型调用 checkpoint 审批工具，tool context 中的 goal autonomous grant 将其解析为结构化 `approved_by="goal"`，无需 UI 交互；workflow 按现有 transition 继续。
-9. 若执行模型调用 clarify 等信息收集工具，goal grant 不生成答案；controller 输出 `Goal needs user input` 并停止当前 loop，避免伪造需求。用户补充信息后需以新 `/goal ... when ...` 启动新的 run id。
-10. 任一停止条件触发后输出原因；`finally` 将仍属于该 run id 的 `goal_loop_active=False` 持久化。
-
-轮次定义为一次已获预算并开始执行的 `run_once()` attempt。计数在调用前按 run id 原子地递增并持久化，因此 completed、failed 和 cancelled attempt 都计入预算，崩溃恢复后也不会回退。取消仍会沿用现有行为回滚未完成 turn 的消息；轮次计数记录的是已消耗的执行机会，不代表已保留一轮 transcript。checkpoint 自动批准不额外消耗轮次；clarify 停止发生在已启动的 attempt 内，因此该 attempt 正常计数。
-
-## API / Function Contracts
-
-### GoalSpec
+Extend `src/voidx/agent/domain/loop.py:LoopSpec` rather than adding a separate goal domain.
 
 ```text
-GoalSpec (src/voidx/runtime/task_state.py)
-├── desc: str (existing, normalized, max 120 chars)
-├── done_condition: str | None (new, normalized, max 2000 chars)
-├── max_turns: int (new, default 20, ge=1, le=200)
-├── goal_turn_count: int (new, default 0, ge=0)
-├── goal_run_id: str (new, default ""; loop goals use UUID)
-└── model_config = {"extra": "ignore"} (existing, retain)
+LoopSpec
+├── prompt: str                         # existing; deterministic prompt for current/next turn
+├── interval_seconds: float | None      # existing; fixed vs dynamic schedule
+├── workflow_enabled: bool              # existing
+├── evaluator_enabled: bool = False     # new; true for guided evaluated loop
+├── objective: str = ""                 # new; what the user wants done
+├── achievement_method: str = ""        # new; optional guidance, may be empty
+├── acceptance_condition: str = ""      # new; what evidence proves completion
+├── max_turns: int = 20                 # new; ge=1, le=200
+└── run_id: str = ""                    # new; UUID generated for evaluated loop setup
 ```
 
-- 空 `done_condition` 归一化为 `None`。
-- 不支持 `max_turns <= 0` 或无限预算。
-- `/goal clear` 和新 `/goal` 都通过替换 GoalSpec 重置计数。
-- 旧数据缺少新增字段时由默认值兼容反序列化。
+For backward compatibility:
 
-### Goal Loop State / Persistence
+- Existing `/loop [interval] <prompt>` can keep `evaluator_enabled=False` and only use `prompt`.
+- Guided `/loop` sets `evaluator_enabled=True`, requires objective and acceptance condition, and fills `achievement_method` only when the user supplies it.
+- `prompt` remains the executable instruction sent to the ordinary turn; for guided setup it is generated from objective, optional method guidance, and acceptance condition.
+- `LoopSpec.model_config` should continue tolerating older persisted specs if current behavior requires it.
+
+`AgentThreadState.context["loop"]` should hold evaluated-loop metadata that is needed across attempts:
 
 ```text
-TaskState
-├── ... existing fields
-└── goal_loop_active: bool (new, default False)
+thread.state.context["loop"]
+├── run_id: str
+├── evaluator_enabled: bool
+├── objective: str
+├── achievement_method: str              # optional; may be empty
+├── acceptance_condition: str
+├── max_turns: int
+├── evaluator_failure_count: int
+├── last_progress_key: str
+├── repeated_progress_count: int
+├── last_summary: str
+├── last_evaluator_note: str
+├── last_next_hint: str
+├── blocked_reason: str
+└── active: bool
 ```
 
-运行时 controller 另持有 cancellation event 和 run id；这些对象不可序列化，也不进入 `TaskState`。`goal_loop_active` 必须进入 `session_runtime_state` 的持久化读写：为表增加非空、默认 false 的列和 migration，并在 `save_session_runtime_state()` / `load_task_state_with_session_time()` 中显式映射。恢复出的 true 先归一化为 false，再由 session 初始化路径回写数据库。
+State persistence rule: evaluated-loop state advances only at the dispatcher commit boundary. `LoopRuntimeRunner` must not call `ThreadStore.save_state()` or otherwise update `agent_thread_state` during an active attempt, because `RuntimeDispatcher` commits with the attempt's fixed `state_version`. The default implementation should keep the existing `ThreadStore.commit_decision()` contract unchanged: return a `RuntimeDecision`, let commit persist `lifecycle_decision`, and derive continuation counters/hints on the next attempt from committed loop state, prior `lifecycle_decision`, runtime attempt records, and the wakeup's previous decision. Only add a narrow commit-time merge hook if those existing records are proven insufficient; never write loop state independently before `commit_decision()`.
 
-GoalSpec 新字段继续随 `current_goal_json` 保存，不新增独立列。session 的所有 runtime-state 写（包括 `turn_runner` 的现有 `_persist_runtime_state()`、slash handler、controller 和恢复回写）必须进入同一个 session-scoped `RuntimeStateWriter`。writer 在单一 asyncio lock 下串行化写入，并把每次底层 `asyncio.to_thread()` future 记录为可等待操作；调用方被取消时使用 `asyncio.shield()` 等待已启动写完成后再传播 `CancelledError`。
+### Guided Setup UX
 
-loop 启动后，writer 为该 submit 绑定 `goal_run_id`。任何可能写 `current_goal_json` 或 `goal_loop_active` 的旧 run 请求都在同一数据库事务内执行 run-id CAS，并检查 affected row；不得采用“内存检查后无条件整行 upsert”。不属于 loop 的新 slash submit 只有在 cancel-and-wait 已等待 writer 空闲后才能写入。因此 cancel-and-wait 的完成条件是：旧 submit 已退出、其 writer pending future 为空、旧 run 的 active 清理 CAS 已完成。该条件覆盖 `run_once()` 内部发起的 runtime-state 写，旧快照不能在新 GoalSpec 后落库。
+`/loop` with no args becomes an interactive setup command instead of only printing usage.
 
-### Workflow Gate Semantics
+Required prompts:
 
-带 condition 的 `/goal` 是用户对该 `goal_run_id` 的显式自主执行授权。授权只覆盖“是否按已形成的方案继续执行”这类 approval gate，不代表用户提供未知需求，也不允许模型替用户选择产品偏好。
+1. **目标**："你希望我自动完成什么？"
+2. **验收条件**："什么证据证明目标已完成？例如指定测试通过、文件存在、命令输出包含某内容。"
+
+Optional prompts should stay short and skippable:
+
+- **达成目标的方法**：可跳过；若提供，用作推进策略，例如先定位失败、再最小修改、最后跑测试。
+- **最大轮次**：默认 20。
+- **执行节奏**：dynamic 默认，或固定 interval。
+- **workflow tools**：默认沿用 loop 当前行为；只有明确需要时再打开 workflow-enabled path。
+
+Setup validation:
+
+- objective 和 acceptance_condition 必须非空；achievement_method 可为空。
+- acceptance_condition 必须是可由 post-turn evidence 判断的条件；不能要求 evaluator 自己联网、读文件或运行命令。
+- invalid setup does not stop an active loop until the new setup is valid and user confirms replace/start.
+- In headless/non-interactive mode, bare `/loop` should print the required fields, optional method field, and example syntax rather than block forever. UI/TUI can provide structured prompts.
+
+Generated first prompt:
 
 ```text
-ToolContext
-└── autonomous_goal_grant: GoalAutonomousGrant | None
+Autonomous loop objective:
+<objective>
 
-GoalAutonomousGrant
-├── goal_run_id: str
-├── condition: str
-└── approved_scope: Literal["workflow_execution"]
+Method to achieve the objective (optional):
+<achievement_method or "Use the default autonomous method: inspect, act minimally, verify, and iterate toward the acceptance condition.">
+
+Acceptance condition:
+<acceptance_condition>
+
+Work autonomously within the supplied method when present; otherwise use the default autonomous method: inspect, act minimally, verify, and iterate toward the acceptance condition. At the end of each attempt, report concrete evidence collected or produced. If required information, safety confirmation, or permission is unavailable, stop with needs_user instead of guessing.
 ```
 
-controller 启动每个 attempt 时将 grant 注入 tool context；run id 失效、loop 停止或普通非-loop submit 时该字段为空。`checkpoint` 等纯 approval 工具在 grant 有效时不调用 UI，而是返回现有结构化 approved decision，并标记 `approved_by="goal"`；workflow service 仍按现有 evidence、gate 和 transition 规则处理，因此不修改 DAG。
+### Loop Context
 
-`clarify`、权限确认、安全确认及任何要求用户补充事实或偏好的交互不接受该 grant，也不得合成回答。统一返回/抛出内部 `GoalNeedsUserInput(reason, source)` 信号。tool executor 将该信号转换为 terminal `_ExecutedTool`，在 graph state 写入 `goal_stop_reason="needs_user_input"` 和 `goal_stop_detail`、设置 `should_continue=False`，并把当前 batch 尚未开始的工具标记为 skipped；交互类工具作为 barrier 串行执行，因此其后的写工具不得启动。`TurnResult` 透传 stop reason/detail，controller 在 evaluator 前检查并停止 loop、清理 active 状态。用户补充信息后必须显式提交新的 `/goal ... when ...`，创建新 run id。这样 condition goal 在已知范围内无需人工审批，同时不会越权猜测需求或绕过安全边界。
+Evaluated loop attempts should make the autonomous contract explicit in model context rather than relying on hidden controller state.
 
-模型在 attempt 间变为不可用时，controller 在预增计数前停止并提示配置模型，不消耗新轮次；配置完成后同样由用户显式重发 `/goal`，不保留隐式后台恢复状态。
+Use existing context-builder inputs instead of adding a separate `runtime_profile` branch to `RuntimeContextBuilder`. `LoopRuntimeRunner` already builds `TurnExecutionContext(runtime_profile=LOOP_PROFILE, ...)`; for evaluated loop it should pass structured guidance through existing prompt inputs that already flow into `RuntimeContextBuilder`, primarily `profile_directive` for stable automation policy and the generated loop prompt for turn-local instructions. If richer budget/evaluator fields are needed, add a narrow `evaluated_loop_context` field to `TurnExecutionContext` and have `LangGraphExecution` translate it into `profile_directive` before constructing `RuntimeContextBuilder`; do not require `RuntimeContextBuilder` to inspect `RuntimeProfile` directly.
 
-### TurnResult / Evaluation Context
+Render the following deterministic guidance through `profile_directive` or the narrow context adapter:
 
 ```text
-TurnResult (src/voidx/agent/graph/turn_runner.py)
+<evaluated_loop_context>
+Objective: <LoopSpec.objective>
+Method: <LoopSpec.achievement_method or default autonomous method guidance>
+Acceptance condition: <LoopSpec.acceptance_condition>
+Run id: <run_id>
+Attempt: <attempt_index> of <max_turns>
+Previous outcome: <last RuntimeDecision summary or empty>
+Evaluator feedback: <last_evaluator_note or empty>
+Suggested next step: <last_next_hint or empty>
+Automation policy: Operate fully autonomously within the explicit objective and acceptance condition, following the supplied method only when present. Do not ask the user for preferences, approvals, or missing facts; stop with needs_user when required information or permission is not already available.
+Stop criteria: Stop only when the acceptance condition is satisfied, a safety/permission/user-input barrier is reached, no progress repeats, or the budget is exhausted.
+</evaluated_loop_context>
+```
+
+Context rules:
+
+- `LoopRuntimeRunner` computes the next attempt index from committed loop state and current input kind, but it does not persist that increment before the normal turn starts.
+- Prompt/context rendering uses only `LoopSpec`, committed loop thread state, and the previous `RuntimeDecision` from the `wakeup` payload.
+- Commit is the only place that may persist updated counters/hints; if the process crashes before commit, the leased attempt can be recovered or retried against the same committed state without a half-advanced budget.
+- objective and acceptance_condition are immutable for a run id; achievement_method is immutable when supplied and may be empty. Evaluator hints can influence the next step, but must not rewrite the objective, method, or condition.
+- Loop context is execution guidance only; evaluator still judges from the post-turn evidence snapshot, not from optimistic context text.
+
+### Turn End Evaluation Boundary
+
+Loop runner must execute the normal turn first and evaluate only after that turn has genuinely reached its normal end.
+
+Required runtime result extension:
+
+```text
+TurnResult optional evaluator metadata
+├── runtime: SessionRuntimeState | None
 ├── evaluation_messages: tuple[BaseMessage, ...]
 ├── task_state: TaskState
-├── goal_stop_reason: "" | "needs_user_input"
-└── goal_stop_detail: str
+├── loop_stop_reason: "" | "needs_user_input" | "permission_denied" | "safety_blocked"
+├── loop_stop_detail: str
+└── final_assistant_summary: str
 ```
 
-`GraphTurnRunner.run_once()` 和代理 `_run_once()` 仅在成功完成时从返回 `None` 改为返回 `TurnResult`。取消和普通异常继续按现有契约回滚/发事件并重新抛出，不构造 `TurnResult`，不调用 evaluator；controller 依靠调用前已持久化的计数记录该 attempt，并让异常沿现有上层路径结束 loop。
+Implementation path:
 
-`evaluation_messages` 精确定义为**本轮最后一次成功执行模型调用的输入 `llm_messages`，再追加该调用返回的 `assistant_msg`**。最后一次调用的输入已经包含该 turn 先前的 assistant/tool 轮次以及当时实际生效的 compaction、runtime context 和 guidance，因此不使用 graph 最终 messages 猜测模型所见上下文。
+- Extend reusable `src/voidx/agent/runtime/contracts.py:TurnResult` with optional metadata fields if all runtime engines can safely default them to empty values.
+- Update `src/voidx/agent/runtime/runtime.py:AgentRuntime.run_turn()` because it is the facade that constructs `TurnResult` from the turn engine output.
+- If metadata should remain LangGraph-specific, return a small post-turn metadata object from `LangGraphTurnEngine.run()` alongside `SessionRuntimeState`, then have `AgentRuntime.run_turn()` adapt it into `TurnResult`.
+- Do not assume `LangGraphTurnEngine.run()` already returns `TurnResult`; today it returns `SessionRuntimeState`, while `AgentRuntime.run_turn()` constructs the reusable result.
 
-实现上，LLM node 在每次 `_stream_llm()` 成功后立即对 `llm_messages` 和 `assistant_msg` 做深拷贝（例如逐条 `model_copy(deep=True)`），保存到仅供本次 graph invocation 使用的 state 字段；后续成功调用覆盖前值。不得只做 `tuple(llm_messages)` 浅拷贝，因为 turn 尾部 prune/compaction 可能原地修改共享 message。`turn_runner` 从最终 graph state 读取该不可变快照，拼成 tuple，并在现有消息和 runtime-state 持久化完成后返回。快照不写入 transcript 或 session runtime state；若 graph 成功结束却没有任何成功模型调用，则视为内部契约错误并按现有失败路径抛出。
+Snapshot source:
 
-- 不从 UI transcript tree 或 `final["messages"]` 反向推导模型输入。
-- evaluator 不修改 messages 或 TaskState。
-- evaluator 看见的是执行模型最后一次真实上下文及其回答；工具证据必须已出现在最后一次调用输入中。
+- Add fields to `src/voidx/agent/state.py` for the last successful LLM call snapshot.
+- Populate them in `src/voidx/agent/infrastructure/langgraph/execution.py` around the successful `_stream_llm()` call.
+- The snapshot should be deep-copied before evaluator use.
+
+Evaluator input should include:
+
+```text
+LoopEvaluationInput
+├── objective: str
+├── achievement_method: str              # optional; may be empty
+├── acceptance_condition: str
+├── attempt_index: int
+├── max_turns: int
+├── final_llm_messages: tuple[...]       # final real turn input/output context
+├── final_assistant_summary: str
+├── task_state_snapshot: TaskState
+├── workflow_state_snapshot: list[WorkflowRunState]
+├── todo_snapshot: list[TodoItem]
+├── tool_result_summaries: tuple[str, ...]
+└── previous_eval: LoopEvalResult | None
+```
+
+Do not use UI transcript, dock nodes, streamed partial chunks, or filesystem reads as evaluator input.
 
 ### Evaluator
 
+Evaluator is an independent, no-tool LLM call with strict structured output. It should be small, deterministic, and conservative.
+
 ```text
-GoalEvalResult (src/voidx/agent/goal_evaluator.py)
+LoopEvalResult
 ├── achieved: bool
-├── reason: str (max 500 chars; 必须引用证据或说明缺失证据)
-├── progress_key: str (max 200 chars; 对进展状态的稳定摘要)
-└── next_hint: str (max 200 chars; 可为空，仅作为上下文提示)
+├── confidence: Literal["low", "medium", "high"]
+├── progress: Literal["none", "partial", "meaningful"]
+├── progress_key: str          # stable short key for no-progress detection
+├── summary: str               # concise evidence-based status
+├── next_hint: str             # next autonomous action if not achieved
+└── missing: list[str]         # missing evidence, not user questions
 ```
 
-```python
-evaluate(
-    *,
-    turn_result: TurnResult,
-    condition: str,
-    model: BaseChatModel,
-    config: ModelConfig,
-) -> GoalEvalResult
-```
-
-Evaluator 调用规则：
-
-- 使用独立 system prompt 和 `with_structured_output(GoalEvalResult)`。
-- 通过 `create_resolver_model()` 关闭或最小化 reasoning，再显式复制模型配置为 `temperature=0`、`max_tokens=512`；不得假定 `create_resolver_model()` 已设置这两个值。
-- timeout 为 10 秒；无工具绑定，不暴露工具 schema。
-- 超时、调用异常或无效结构不伪装成正常 `not_achieved`，而是返回/抛出内部 `EvaluatorFailure`，由 controller 单独计数。
-- evaluator 只能根据 transcript 中已有证据判断；仅有执行模型的完成声明而无验证输出时应判为未达成。
-
-### Slash Parsing
-
-把位于参数开头或左侧有空白、且右侧有空白的大小写不敏感 `when` 视为候选分隔符，并选择最后一个：
+Evaluator prompt requirements:
 
 ```text
-/goal <non-empty desc> when <non-empty condition>
+System:
+You are a strict read-only acceptance evaluator. You cannot use tools, run commands, inspect files, or ask the user. Judge only the supplied evidence. Mark achieved=true only when the acceptance condition is directly satisfied by evidence in the final turn snapshot. If evidence is insufficient, mark achieved=false and explain the missing evidence.
+
+User:
+Objective: <objective>
+Method: <achievement_method or default autonomous method guidance>
+Acceptance condition: <acceptance_condition>
+Attempt: <n>/<max_turns>
+Previous evaluation: <summary or none>
+Final turn evidence: <deep-copied snapshot>
+Return LoopEvalResult JSON.
 ```
 
-- 使用等价于 `re.finditer(r"(?i)(?<!\S)when\s+", arg)` 的候选边界，取最后一个 match；desc 为 match 前文本，condition 为 match 后文本，二者分别 trim。
-- 起始位置也可成为候选，因此 `/goal when tests pass` 会得到空 desc 并校验失败；这项校验发生在任何状态写入前。
-- 选择最后一个允许 desc 中自然出现较早的 `when`；condition 如需包含分隔形式的 `when`，用户应改写条件，本期不支持 quoting/escaping。
-- 任一侧 trim 后为空时显示 usage/error，不设置目标、不切换模式、不取消活动 loop。
-- `/goal clear` 和 `/goal reset` 仅在整个 trim 后参数精确匹配时视为控制命令。
-- `when` 无单词左边界或右侧空白（如 `somewherewhenready`、`fix when`）不作为分隔符，按普通 desc 处理。
+Evaluator timeout/failure policy:
 
-### Command Result
+- Timeout after a small bounded duration, e.g. 30s.
+- Invalid structured output counts as evaluator failure.
+- Transient evaluator failure can continue while under failure threshold and budget.
+- Failure threshold default: 3 consecutive evaluator failures → `RuntimeDecision(outcome="failed", reason="evaluator_unavailable")`.
+- Evaluator must not call `loop`, connector tools, shell, filesystem, or subagents.
+
+### Continuation Semantics
+
+Budget accounting is derived from committed runtime state. The runner computes the current attempt number from committed `thread.state.context["loop"]`, prior `lifecycle_decision`, and attempt/outbox history before running the normal turn; it may include the resulting count in prompts and decisions, but must not persist the increment until the dispatcher commit boundary. Evaluator counters and no-progress keys follow the same rule: derive from committed state plus the previous decision, then persist only through the commit path if a narrow merge hook is added.
+
+Stop/continue priority after normal turn ends:
+
+1. thread lifecycle is cancelling or turn was cancelled → `RuntimeDecision(outcome="stop", reason="cancelled")`;
+2. turn/tool signalled missing user input → `RuntimeDecision(outcome="needs_user", reason="needs_user_input")`, no evaluator;
+3. permission/safety confirmation is required and not already granted → `RuntimeDecision(outcome="needs_user", reason="permission_required" | "safety_confirmation_required")`, no evaluator;
+4. normal turn failed before producing evaluable state → `RuntimeDecision(outcome="failed", reason="turn_failed")`, no evaluator;
+5. evaluator achieved → `RuntimeDecision(outcome="completed", progress="meaningful")`;
+6. max_turns reached and not achieved → `RuntimeDecision(outcome="blocked", reason="budget_exhausted")`;
+7. evaluator failures >= 3 → `RuntimeDecision(outcome="failed", reason="evaluator_unavailable")`;
+8. same non-empty progress_key repeated 3 successful evaluations → `RuntimeDecision(outcome="blocked", reason="no_progress")`;
+9. otherwise → `RuntimeDecision(outcome="continue", summary=..., progress=..., reason="not_achieved", next_delay_seconds=<spec interval or dynamic default>)`.
+
+Continuation outbox is single-source-of-truth:
+
+- `LoopRuntimeRunner` returns only a `RuntimeDecision`; it does not enqueue the next prompt.
+- `RuntimeDispatcher` commits that decision through `ThreadStore.commit_decision()`.
+- `ThreadStore.commit_decision()` already creates one `kind="wakeup"` outbox for `outcome="continue"` with payload `{"decision": ...}`.
+- `LoopRuntimeRunner` consumes that `wakeup` on the next attempt and reconstructs the prompt from committed loop state plus the previous decision.
+- The scheduler may dispatch ready wakeups, but must not create an additional `loop_prompt` for the same continuation.
+
+Deterministic continuation prompt:
 
 ```text
-GoalCommandResult
-├── handled: bool
-├── start_loop: bool
-└── initial_text: str
+Continue the autonomous loop.
+
+Objective: <objective>
+Method: <achievement_method or default autonomous method guidance>
+Acceptance condition: <acceptance_condition>
+Attempt: <next_attempt> of <max_turns>
+Previous decision: <decision.summary>
+Evaluator status: <last_summary>
+Evaluator next hint: <last_next_hint>
+
+Work fully autonomously within the explicit objective and acceptance condition, following the supplied method when present. Do not ask the user unless required information, safety confirmation, or permission is unavailable. Stop when the acceptance condition is proven satisfied.
 ```
 
-`slash/handler._goal()` 返回该结果；slash dispatch 将结果传给 `_handle_user_input()`。若现有通用 dispatch 只能返回 bool，应增加最小的结构化 command outcome，而不是让 handler 直接调用 graph turn。
+The continuation text may include evaluator `next_hint`, but must not mutate objective, optional method, or acceptance condition. If the previous decision is malformed or evaluated-loop state is missing, return `failed` with reason `missing_loop_state` rather than inventing a prompt.
 
-## Stop Conditions
+### Tool / Gate Semantics
 
-停止条件按以下优先级检查：
+Evaluated loop is automatic-only inside its explicit objective and acceptance condition, plus optional method guidance when supplied. The tool list should maximize safe autonomous execution while excluding tools that require live user interaction or approval gates.
 
-1. cancellation event 已设置、task 被取消或 run id 已失效；
-2. tool 返回 `GoalNeedsUserInput`：输出明确原因并停止，不调用 evaluator、不自动恢复；
-3. `run_once()` 抛出普通异常：沿现有失败路径结束 loop，不调用 evaluator；
-4. evaluator 返回 `achieved=True`；
-5. `goal_turn_count >= max_turns`；
-6. evaluator 连续失败达到 3 次；
-7. 连续 3 次成功 evaluator 调用返回相同非空 `progress_key`。
+`LoopToolView` should remain the primary tool visibility policy, but evaluated loops may need a broader safe set than today's read-oriented default.
 
-规则：
+```text
+LoopToolView.default(workflow_enabled=True, evaluated=True).bind(available_tool_ids)
 
-- evaluator 成功调用会将连续失败计数清零。
-- evaluator failure 不更新 progress key，也不参与“无进展”判断；未达到阈值且仍有预算时继续下一 attempt。
-- `not_achieved` 但 progress key 变化时，无进展计数重置。
-- 达成优先于预算耗尽：最后一个预算轮次若已达成，输出 achieved，而不是 exhausted。
-- turn 普通异常与 evaluator failure 不同：前者已有 `TurnFailed` 事件并立即结束当前 submit，后者是独立评估服务故障，可在预算内重试。
-- task cancellation 可中断 evaluator 调用；timeout 只负责 evaluator 自身超时，不是取消延迟上限。
-- `next_hint` 可附加到固定 continue 文本后，但不得替代目标描述或修改 condition。
+Always visible when available for evaluated loop:
+- read, find, search, lsp, document
+- bash, write, replace, manage, lsp_format
+- websearch, webfetch
+- mcp, skill, task_status, todo
+- agent only for read-only inspect/review/debug subagent work, never implement/feedback write delegation unless explicitly covered by loop tool policy
 
-## Decisions
+Allowed when workflow_enabled=True:
+- workflow, task_status, todo
 
-| Decision | Alternatives | Rationale |
-|---|---|---|
-| 带 condition 的命令立即启动 | 等下一条普通消息 | `/goal` 本身已包含首轮任务，避免设置后无执行 |
-| session 级可取消 controller | `_handle_user_input()` 内简单 while | 明确 task 所有权，支持 UI cancel、替换目标和 cleanup |
-| `run_once()` 返回 TurnResult | 解析 UI transcript 或读取内部局部值 | 建立稳定、只读、可测试的评估边界 |
-| 同一底层模型的独立调用 | 强制不同供应商/模型 | 保持部署兼容，同时隔离 prompt、配置和判断职责 |
-| 仅有限轮次预算 | `<=0` 表示无限 | 防止误判或服务异常造成无限成本 |
-| evaluator failure 独立计数 | 当作普通 not-achieved | 避免服务故障被误判为无进展 |
-| 最后一个 `when` 分隔 | 第一个分隔或复杂 quoting | 规则简单，并允许目标描述包含 `when` |
-| 恢复时不自动续跑 | 启动后台恢复 | 避免进程重启后在无用户监督下执行和写入 |
+Never visible in evaluated loop attempts:
+- clarify
+- checkpoint
+- turn
+- compact
+- any UI prompt / approval / user-choice tool
+- any connector action that requires interactive OAuth or human confirmation at call time
+```
 
-## Invariants
+Policy rules:
 
-- `done_condition is None` 时绝不触发自主循环。
-- 同一 session 同时最多一个 goal loop task。
-- `goal_turn_count` 单调递增，且不超过 `max_turns`。
-- evaluator 不执行工具、命令或文件读取。
-- controller 每次写状态前校验 `goal_run_id`。
-- 所有退出路径都通过 `finally` 清理 `goal_loop_active`。
-- 恢复持久化状态时将残留的 `goal_loop_active=True` 归一化为 False。
-- 不修改 `resolve_goal_mode()` 的 `PlanResolution(join="plan", leave=None)`。
-- 不修改 workflow DAG、transition 规则或 `InteractionMode` 枚举值。
+- `LoopToolView` is a tool-visibility and runtime-mode constraint, not a replacement for normal permission authorization.
+- Existing `execution._authorize_tool_calls()` currently short-circuits to `tool_policy.check_tool_call()` when `TurnExecutionContext.tool_policy` is present. Evaluated loop mode must therefore use a composite policy: first apply `LoopToolView` to deny non-loop/interactive tools, then pass allowed calls through the existing `authorize_tool_call()` / permission-service path so ASK/BLOCKED/DENY semantics remain intact.
+- Interactive tools are not visible to the model during evaluated loop attempts; the model should not choose `clarify` or `checkpoint` because they are not in the bound tool set.
+- If existing lower-level execution still reaches a user-interaction path, fail closed with an evaluated-loop needs-user signal and convert the attempt to `RuntimeDecision(outcome="needs_user")`.
+- Permission and safety confirmations fail closed unless already covered by existing trusted grants or sandbox policy; evaluated loop mode must not synthesize user approval.
+- File edits, command execution, formatting, and tests are allowed only within normal workspace/sandbox/permission constraints already enforced by the tool layer.
+- Tool executor marks not-yet-started tools in the same batch as skipped after a needs-user barrier; write tools after a user-input barrier must not start.
+- needs-user detail is propagated to the post-turn result so evaluator is skipped and runtime decision becomes `needs_user`.
 
-## Risks / Trade-offs
+No special auto-approval grant is needed for `checkpoint`; the preferred design is to exclude checkpoint from the evaluated-loop-visible tool set. If a future workflow gate requires approval, it should be represented as a non-interactive runtime decision (`needs_user`) rather than an auto-approved checkpoint.
 
-| Risk | Impact | Mitigation |
-|---|---|---|
-| 每轮额外 LLM 调用 | 增加延迟和成本 | 512 tokens、无 reasoning、10 秒 timeout |
-| 假阳性提前停止 | 目标未真正达成 | 要求引用命令/测试等 transcript 证据 |
-| 假阴性持续循环 | 浪费轮次 | 有限预算和无进展检测 |
-| evaluator 服务异常 | 无法判断完成 | 连续失败独立计数，3 次后停止并明确报错 |
-| 上下文压缩丢失证据 | 早期证据不可见 | 评估与执行使用相同有效上下文；执行模型应在后续轮次重跑关键验证 |
-| 取消与新目标竞态 | 旧 loop 污染新状态 | cancel-and-wait + goal_run_id 检查 |
-| 自动消息污染用户历史 | intent 或 UI 误认为用户输入 | 标记内部 continuation 来源；UI 可展示但不作为真实用户命令 |
+## Slash Behavior
 
-## Implementation Notes for LLM
+`/loop` becomes the primary UX for evaluated autonomous execution.
 
-### Files / Entry Points
-
-| Path | Expected Change |
+| Command | Behavior |
 |---|---|
-| `src/voidx/runtime/task_state.py` | 扩展 `GoalSpec` 和 `TaskState.goal_loop_active`，补 normalization/validation |
-| `src/voidx/memory/store.py` | 增加 `goal_loop_active` schema 列和 migration |
-| `src/voidx/memory/runtime_state.py` | 增加 session-scoped `RuntimeStateWriter`、统一串行写、取消等待与事务性 run-id CAS |
-| `src/voidx/tools/base.py`、`checkpoint.py`、`clarify.py`、`src/voidx/permission/service.py`、`src/voidx/agent/graph/permissions.py` 与 tool executor | 注入 grant；approval 自动批准；信息/权限/安全交互 fail closed 为 terminal `GoalNeedsUserInput`，截断后续工具 |
-| `src/voidx/agent/goal_evaluator.py` | 新建 evaluator、结构化结果和 failure 分类 |
-| `src/voidx/agent/slash/handler.py` | 提供可复用只读 parser，解析 `when` 并返回结构化 command outcome |
-| `src/voidx/agent/graph/core/llm.py` 与 graph state 定义 | 暴露本次 invocation 最后一次成功模型调用的输入/输出快照 |
-| `src/voidx/agent/graph/turn_runner.py` | 成功时返回 `TurnResult`；保持取消和失败异常契约 |
-| `src/voidx/agent/graph/turn_mixin.py` | 透传 `TurnResult` 返回值 |
-| `src/voidx/agent/graph/run_loop.py` | 在当前 submit 内运行 GoalLoopController、立即启动并处理停止条件 |
-| `src/voidx/agent/graph/contracts.py` | 更新 host 方法返回类型和 controller 所需接口 |
-| `src/voidx/ui/gateway/run_manager.py`、`src/voidx/ui/gateway/frontend.py` | gateway 对有效 goal 控制命令执行 cancel-and-wait-and-resubmit，其他并发输入行为不变 |
-| `tui/voidx_cli/app.py`（必要时提取专用 mixin） | `PureTui` 忙碌时对有效 goal 控制命令取消当前 submit，待 `_consume()` 清理后将命令重新入队 |
-| `src/voidx/agent/runtime_context.py` | 注入 `Goal loop: turn N/N, condition: ...` |
-| `src/voidx/agent/goal_resolver.py` | 单独清理未使用的 `resolve_goal_for_turn()`；不与本功能耦合 |
+| `/loop` | Start interactive evaluated-loop setup; ask objective and acceptance condition, optionally ask achievement method and budget/interval. |
+| `/loop [interval] <prompt>` | Preserve existing shortcut behavior for ordinary loop; no evaluator unless a future explicit flag enables structured setup. |
+| `/loop stop` | Stop active loop/evaluated loop through existing `LoopService.stop()`. |
+| `/loop status` | Show active loop status; include evaluated-loop objective and last evaluator summary when present. |
+| `/loop help` | Show both shortcut syntax and guided evaluated-loop setup. |
+| `/goal <desc>` | Legacy behavior only: set goal/GOAL mode; does not start evaluated loop. |
 
-若 controller 超过约 150 行，应提取为 `src/voidx/agent/graph/goal_loop.py`，让 `run_loop.py` 只负责接线。
+Guided setup parser/result:
 
-### Forbidden Changes
+```text
+LoopSetupResult
+kind: "cancelled" | "invalid" | "evaluated_loop"
+objective: str
+achievement_method: str
+acceptance_condition: str
+max_turns: int
+interval_seconds: float | None
+workflow_enabled: bool
+```
 
-- 不改变 `resolve_goal_mode()` 的返回值。
-- 不修改 workflow DAG 或 transition 规则。
-- 不在 evaluator 中绑定或执行工具。
-- 不改变 `InteractionMode` 枚举值。
-- 不允许无限 `max_turns`。
-- 不从 UI 渲染文本解析 evaluator 输入。
-- 不移除 `GoalSpec.model_config = {"extra": "ignore"}`。
-- 成功路径仅增加 `TurnResult` 返回；取消和普通异常仍重新抛出并保持现有消息回滚及事件语义。
+Validation rules:
 
-## Edge Cases / Failure Paths
+- objective and acceptance_condition must be non-empty after trim; achievement_method may be empty and should be stored as an empty string/default guidance marker.
+- invalid setup should show a concise correction prompt and must not stop an active loop until a valid replacement is ready.
+- starting a valid new evaluated loop for the same parent stops/replaces the active loop using the same posture as current `/loop` replacement behavior.
+- `/goal` commands must not cancel or replace evaluated loops except if they call explicit shared stop behavior in a separate future design.
+
+### Running Command Control
+
+Evaluated loop should reuse the same cancellation posture as runtime-backed loop.
+
+- Valid `/loop stop` stops active loop through `LoopService.stop()`.
+- Valid new guided `/loop` setup stops/replaces the active loop for the same parent only after setup validation succeeds.
+- Invalid or cancelled setup never cancels an active loop.
+- Gateway/TUI busy handling should share setup logic and avoid duplicating syntax.
+- Session/model/persistence-changing commands (`/clear`, `/session`, `/resume`, `/model`, `/mode`, `/exit`) must not run concurrently with active evaluated-loop attempts; cancel/wait or return busy consistently with loop.
+
+## Implementation Phases
+
+1. **Loop domain contracts**：扩展 `src/voidx/agent/domain/loop.py:LoopSpec`，新增 evaluator fields、structured setup result、eval result、evaluated-loop tool visibility helpers。
+2. **Interactive setup**：在 `src/voidx/agent/slash/handler.py` 或新 `src/voidx/agent/loop/setup.py` 实现 `/loop` 无参数引导；保留 `/loop [interval] <prompt>`、`stop`、`status`、`help`。
+3. **Loop service/scheduler compatibility**：复用 `LoopService` / `LoopRuntimeScheduler`；确保 evaluated spec 持久化到 loop thread context，first outbox 仍是一个 `loop_prompt`。
+4. **Turn result metadata**：扩展 `TurnResult` 或 LangGraph-specific metadata；更新 `AgentRuntime.run_turn()`，让 loop runner 能读取 final LLM snapshot、stop reason、task/workflow/todo state。
+5. **Loop context/prompt rendering**：通过 existing `profile_directive` / generated prompt / optional `TurnExecutionContext` narrow adapter 注入 objective、method、acceptance condition、attempt budget、previous evaluator feedback、automation policy、stop criteria。
+6. **Evaluator**：实现只读 structured evaluator 和 `EvaluatorFailure` 分类。
+7. **Continuation decisions**：在 `LoopRuntimeRunner` 中实现 budget、evaluator failure、no-progress、achieved/not-achieved 到 `RuntimeDecision` 的映射。
+8. **Single-path continuation**：确保 `continue` 只通过 `ThreadStore.commit_decision()` 生成的 `kind="wakeup"` outbox 继续；runner 能消费 wakeup 并从 loop state 构造下一 prompt。
+9. **Automatic tool policy**：扩展 `LoopToolView` 作为可见性过滤，并与现有 `authorize_tool_call()` / permission service 组合；排除 interactive tools，补充 lower-level needs-user/permission/safety fail-closed 路径。
+10. **Gateway/TUI control**：运行中有效 `/loop` setup/stop/status 行为一致；无效 setup 不取消活动 loop。
+11. **Legacy goal regression**：确认 `/goal <desc>`、`/goal clear` 和 `resolve_goal_mode()` 旧行为不变。
+12. **Recovery and dispatcher**：补齐 ready `wakeup` dispatch/recovery 行为；不要声称现有 recovery 已覆盖 waiting continuation。
+
+## File Plan
+
+| Path | Status | Required Change |
+|---|---|---|
+| `src/voidx/agent/domain/loop.py` | existing | extend `LoopSpec` with evaluated-loop fields; add setup/eval result contracts and evaluated tool visibility helpers. |
+| `src/voidx/agent/loop/setup.py` | new optional | shared guided `/loop` setup logic for slash/gateway/TUI/headless prompts. |
+| `src/voidx/agent/slash/handler.py` | existing | make bare `/loop` start guided setup; preserve shortcut/stop/status/help behavior. |
+| `src/voidx/agent/application/loop_service.py` | existing | support evaluated spec metadata in status and active replacement semantics. |
+| `src/voidx/agent/loop/scheduler.py` | existing | consume evaluated specs, enqueue first loop outbox, dispatch ready wakeups without duplicate prompts. |
+| `src/voidx/agent/loop/evaluator.py` | new | structured no-tool evaluator and failure classification. |
+| `src/voidx/agent/loop/controller.py` | existing | optionally carry per-attempt needs-input/evaluator metadata; no outer loop and no independent thread-state writes. |
+| `src/voidx/agent/runtime/contracts.py` | existing | add optional post-turn metadata fields to `TurnResult`, or define a narrow metadata carrier. |
+| `src/voidx/agent/runtime/runtime.py` | existing | propagate turn-engine post-turn metadata into `TurnResult`; this is where reusable `TurnResult` is constructed. |
+| `src/voidx/agent/runtime/dispatcher.py` | existing | no semantic fork; ensure loop runner receives wakeup input unchanged and lifecycle commit remains single-source. |
+| `src/voidx/agent/runtime/recovery.py` | existing | add or document recovery behavior for ready continuation wakeups; current attempt-only recovery is insufficient. |
+| `src/voidx/agent/infrastructure/langgraph/execution.py` | existing | capture last successful LLM call snapshot and needs-input stop detail. |
+| `src/voidx/agent/infrastructure/langgraph/adapter.py` | existing | expose post-turn metadata to `AgentRuntime.run_turn()`. |
+| `src/voidx/agent/state.py` | existing | add invocation-local evaluation snapshot and loop stop fields. |
+| `src/voidx/agent/domain/turn_context.py` | existing | optionally carry narrow evaluated-loop context metadata if current generic fields are insufficient; keep permission authorization outside this data object. |
+| `src/voidx/tools/base.py` | existing | represent evaluated-loop needs-user / permission / safety stop details without interactive callbacks. |
+| `src/voidx/tools/checkpoint.py` | existing | ensure checkpoint is not bound in evaluated-loop view; lower-level accidental use fails closed. |
+| `src/voidx/tools/clarify.py` | existing | ensure clarify is not bound in evaluated-loop view; lower-level accidental use becomes needs_user. |
+| `src/voidx/agent/ports/permission.py` and permission grant files | existing | reuse existing permission decisions; evaluated loop fails closed for ASK/BLOCKED/DENY unless existing grants cover the action. |
+| `src/voidx/agent/infrastructure/langgraph/runtime/tool_executor/executor.py` and `src/voidx/agent/infrastructure/langgraph/execution.py` | existing | skip not-yet-started batched tools after evaluated-loop needs-user/safety/permission barrier. |
+| `src/voidx/agent/runtime_context.py` | existing | no direct `runtime_profile` dependency; render evaluated-loop guidance only through existing `profile_directive` / generated prompt or a narrow adapter from `TurnExecutionContext`. |
+| `src/voidx/ui/gateway/run_manager.py`、`src/voidx/ui/gateway/frontend.py`、`tui/voidx_cli/app.py` | existing | guided loop setup/status/stop behavior using shared setup result. |
+| `src/voidx/agent/goal_resolver.py` | existing | leave `resolve_goal_mode()` behavior unchanged. |
+
+## Forbidden Changes
+
+- Do not implement evaluated loop as a synchronous outer while-loop in `AgentService` or slash handler.
+- Do not bypass `RuntimeDispatcher`, thread state, outbox, attempt, or lifecycle decision for autonomous continuation.
+- Do not add a runtime-backed `/goal ... when ...` syntax; `/goal` remains legacy goal mode.
+- Do not add `GOAL_PROFILE` / `GoalService` unless a later design proves `/loop` cannot support the feature.
+- Do not modify `resolve_goal_mode()` returning `PlanResolution(join="plan", leave=None)` for legacy goal mode.
+- Do not modify workflow DAG or `InteractionMode` enum.
+- Do not bind tools to evaluator.
+- Do not infer evaluator input from UI transcript/dock rendering.
+- Do not allow infinite budget.
+- Do not let invalid `/loop` setup cancel an active loop.
+
+## Edge Cases
 
 | Case | Expected Behavior |
 |---|---|
-| `/goal fix auth` | 设置目标，无自主循环 |
-| `/goal fix auth when tests pass` | 设置后立即以 `fix auth` 启动 |
-| `/goal fix when flaky when tests pass` | desc=`fix when flaky`，condition=`tests pass` |
-| `/goal fix when` | 当作无 condition 的普通 desc，因为没有右侧空白分隔内容 |
-| `/goal when tests pass` | 校验失败，不改变已有目标 |
-| condition 归一化后为空 | 校验失败，不启动 |
-| 带 condition 但 `host.model is None` | 写状态前拒绝，提示配置模型；已有 goal/mode 不变 |
-| 第一轮 achieved | 清理 active 状态并停止 |
-| 最后预算轮 achieved | 输出 achieved |
-| 预算耗尽且未达成 | 输出 `Goal budget exhausted (N/N turns)` |
-| evaluator 单次失败 | 继续下一轮，failure count +1 |
-| evaluator 连续 3 次失败 | 输出 evaluator unavailable 并停止 |
-| 相同 progress key 连续 3 次 | 输出 no progress detected 并停止 |
-| evaluator failure 夹在进展之间 | 不参与 no-progress 计数 |
-| Ctrl+C / UI Cancel | 取消当前 turn，finally 清理 active 状态 |
-| `/goal clear` during loop | cancel-and-wait 后清 goal，切 AUTO |
-| 新 `/goal` during loop | cancel-and-wait 后启动新 run id |
-| 进程在 active 状态崩溃 | 恢复时 active=False，不自动续跑 |
+| `/loop` in interactive UI/TUI | Prompt for objective and acceptance condition, optionally method/budget/interval; start evaluated loop after valid setup. |
+| `/loop` in headless/non-interactive mode | Print required fields, optional method field, and examples; do not block indefinitely. |
+| user cancels setup | No state write; active loop continues unchanged. |
+| objective empty | Re-prompt or return invalid; active loop unchanged. |
+| achievement method empty | Accept as skipped/empty; use default autonomous method guidance; active loop unchanged until required fields are valid. |
+| acceptance condition empty | Re-prompt or return invalid; active loop unchanged. |
+| `/loop 60 fix auth tests` | Preserve current shortcut behavior: ordinary fixed loop prompt, no evaluator unless a future explicit flag says otherwise. |
+| `/loop stop` | Stop active ordinary/evaluated loop. |
+| `/loop status` | Show ordinary/evaluated loop status; include evaluator summary when available. |
+| `/goal fix auth` | Legacy behavior: set goal, GOAL mode, no runtime-backed autonomous acceptance loop. |
+| model unavailable | Reject before starting evaluated loop; previous state unchanged. |
+| normal turn ends, evaluator achieved | RuntimeDecision completed; lifecycle terminal completed. |
+| normal turn ends, evaluator not achieved | RuntimeDecision continue; commit creates one `wakeup` outbox; next attempt consumes wakeup. |
+| next continuation outbox is `wakeup` with no prompt | Loop runner reconstructs prompt from loop state and previous decision. |
+| wakeup payload malformed or loop state missing | failed with reason `missing_loop_state` / `invalid_loop_input`; no invented prompt. |
+| last budget turn achieved | completed wins over budget exhausted. |
+| budget exhausted and not achieved | blocked with reason `budget_exhausted`. |
+| evaluator transient failure | failure count increments; continue while under threshold and budget. |
+| evaluator failure >= 3 | failed with reason `evaluator_unavailable`. |
+| repeated no progress | blocked with reason `no_progress`. |
+| clarify/user preference needed | evaluator skipped; needs_user. |
+| missing permission/safety confirmation | evaluator skipped; needs_user or blocked according to existing permission policy; no synthetic approval. |
+| checkpoint would normally ask approval | checkpoint is not bound in evaluated-loop tool list; lower-level accidental path becomes needs_user. |
+| runtime crash after continue commit | durable `wakeup` outbox remains the recovery/dispatch source; recovery enhancement may dispatch it later. |
+| invalid setup while active loop runs | setup returns invalid/cancelled; active loop continues unchanged. |
 
 ## Test Plan
 
-所有测试均通过项目入口 `./test.py` 运行。
-
-| Scope | Path / Command | Expected Result |
+| Area | Command | Covers |
 |---|---|---|
-| GoalSpec 校验 | `./test.py --backend -- src/tests/test_agent/test_task_state.py -k "goal"` | 字段约束和旧 GoalSpec JSON 兼容 |
-| runtime-state writer/schema/CAS | `./test.py --backend -- src/tests/test_agent/graph/test_session_runtime_state.py -k "goal_loop or stale_run or cancelled_write"` | 所有写串行；active 恢复回写；旧 run 不能覆盖新 goal；取消等待 `run_once` 已启动的线程写 |
-| workflow/交互授权 | `./test.py --backend -- src/tests/test_tools/test_checkpoint.py src/tests/test_tools/test_clarify.py src/tests/test_permission/ -k "goal"` | grant 自动批准 checkpoint；clarify/权限/安全不打开 UI并发出 terminal signal；普通调用不变；失效 run 不授权 |
-| slash 解析与 command outcome | `./test.py --backend -- src/tests/test_agent/slash/test_slash_goal.py` | 起始 when、多个 when、空侧、无边界、无模型拒绝和兼容行为正确 |
-| LLM context snapshot / TurnResult | `./test.py --backend -- src/tests/test_agent/graph/test_session_run_once.py -k "turn_result or evaluation_context"` | 返回最后一次真实调用输入+输出；成功前完成持久化；失败/取消不返回 result |
-| evaluator | `./test.py --backend -- src/tests/test_agent/test_goal_evaluator.py` | achieved/not-achieved、证据要求、timeout、无效结构正确分类 |
-| loop 核心 | `./test.py --backend -- src/tests/test_agent/graph/test_goal_loop.py` | attempt 前预增；继续、达成、预算、异常、评估失败、无进展、checkpoint 自主授权及 needs-input 停止正确 |
-| 取消/工具截断竞态 | `./test.py --backend -- src/tests/test_agent/graph/test_goal_loop.py -k "cancel or clear or replace or stale or needs_user"` | 取消均清理；旧 run 不污染新 goal；交互信号跳过 evaluator；同批后续写工具不启动 |
-| gateway 运行中命令适配 | `./test.py --backend -- src/tests/test_ui/gateway/ -k "goal or concurrent_command"` | goal 及 session/model 变更命令不与 loop 并发；无效 goal 不取消；普通输入行为不变 |
-| TUI 运行中命令适配 | `./test.py --backend -- tui/tests/test_input_handling.py -k "goal or concurrent_command"` | busy 时状态变更命令取消等待或排队；清理后正确重入队 |
-| run loop 接线 | `./test.py --backend -- src/tests/test_agent/graph/test_run_loop_workflow.py -k "goal"` | slash outcome 在当前 submit 内正确运行 controller |
-| resolver 回归 | `./test.py --backend -- src/tests/test_agent/test_goal_resolver.py` | goal 路由行为不变 |
-| workflow 回归 | `./test.py --backend -- src/tests/test_workflow/` | workflow reconcile 不受影响 |
-
-新增测试文件允许按表中路径创建；现有不存在的测试路径不是实现前置条件。
+| loop domain/setup | `./test.py --backend -- src/tests/test_agent/domain/test_loop_domain.py src/tests/test_agent/loop/test_loop_setup.py` | evaluated `LoopSpec` validation, objective/condition required and method optional, budget validation, backward-compatible ordinary `LoopSpec`. |
+| loop service/scheduler | `./test.py --backend -- src/tests/test_agent/test_loop_service.py src/tests/test_agent/loop/test_runtime_scheduler.py` | thread creation/reset, first outbox, evaluated metadata, wakeup consumption, no duplicate continuation prompt. |
+| loop runner | `./test.py --backend -- src/tests/test_agent/loop/test_loop_runner.py` | `loop_prompt` vs `wakeup`, missing state, RuntimeDecision mapping, budget/no-progress, ordinary loop regression. |
+| evaluator | `./test.py --backend -- src/tests/test_agent/loop/test_loop_evaluator.py` | evidence requirement, timeout, invalid structured output, failure classification. |
+| slash behavior | `./test.py --backend -- src/tests/test_agent/slash/test_slash_loop.py` | bare `/loop` guided setup, shortcut loop preserved, stop/status/help, invalid setup no cancel/write. |
+| tool policy / needs user | `./test.py --backend -- src/tests/test_agent/domain/test_loop_domain.py src/tests/test_tools/test_plan_checkpoint.py src/tests/test_tools/test_clarify_tool.py -k "loop"` | evaluated loop tool view excludes interactive tools; clarify/checkpoint accidental paths fail closed. |
+| permission / safety | `./test.py --backend -- src/tests/test_agent/test_permission.py src/tests/test_agent/test_permission_phase*.py -k "loop"` | loop tool visibility is composed with existing authorization; ASK/BLOCKED/DENY do not become synthetic approval. |
+| gateway/TUI control | `./test.py --backend -- src/tests/test_ui/gateway/test_run_manager.py src/tests/test_ui/gateway/test_gateway_headless_frontend.py -k "loop" && ./test.py --backend -- tui/tests/test_input_handling.py -k "loop"` | guided setup/status/stop behavior consistent; invalid setup does not cancel. |
+| runtime recovery | `./test.py --backend -- src/tests/test_agent/runtime/test_recovery.py -k "loop or wakeup"` | committed `continue` leaves a durable ready `wakeup`; recovery/dispatcher can claim it and run the next loop attempt without recreating a prompt. |
+| legacy goal regression | `./test.py --backend -- src/tests/test_agent/test_goal_resolver.py src/tests/test_agent/slash/test_slash_goal.py` | `/goal` and `resolve_goal_mode()` remain unchanged and do not start evaluated loop. |
+| workflow regression | `./test.py --backend -- src/tests/test_workflow/` | workflow gates/reconcile unaffected. |
 
 ## Acceptance Criteria
 
-- `/goal <desc> when <condition>` 在一次命令中完成设置与首轮启动。
-- evaluator 获得稳定、只读、与执行模型一致的有效上下文，不依赖 UI transcript。
-- 未达成时自动继续；checkpoint approval 由本次 goal grant 满足，clarify/权限/安全交互不会被伪造并会停止 loop；达成和最后预算轮优先级符合本文定义。
-- Ctrl+C、UI Cancel、clear、替换目标和 session cleanup 都能终止 loop，并最终持久化 `goal_loop_active=False`。
-- evaluator failure 不会触发 no-progress；两种停止原因有不同用户提示。
-- 无 condition 的旧 goal 行为和现有 workflow 路由保持不变。
-- 表中 focused tests 与 backend 回归测试通过。
+- Bare `/loop` starts guided evaluated-loop setup in interactive contexts.
+- Guided setup requires objective and acceptance condition before starting; achievement method is optional and may be empty.
+- `/loop [interval] <prompt>` shortcut remains compatible with current ordinary loop behavior.
+- Evaluated loop autonomous execution is runtime-backed and uses existing `/loop` architecture.
+- There is no outer synchronous loop in `AgentService`, slash handler, or scheduler start path.
+- A loop attempt runs exactly one normal turn, then runs evaluator at the turn end boundary when `evaluator_enabled=True`.
+- Runtime/lifecycle decisions control continuation and termination.
+- Continuation uses the single-source wakeup contract defined in **Continuation Semantics**.
+- Loop runner can consume both initial `loop_prompt` and continuation inputs.
+- Loop context includes objective, optional achievement method, acceptance condition, attempt/budget, prior evaluator feedback, automatic-only policy, and stop criteria through existing context-builder inputs or a narrow adapter.
+- Loop tool visibility excludes interactive tools (`clarify`, `checkpoint`, `turn`, UI approval tools) while all visible calls still flow through existing sandbox and permission authorization.
+- Evaluator only sees stable, deep-copied last LLM context plus post-turn state; it never uses UI rendering or tools.
+- Legacy `/goal <desc>` and `resolve_goal_mode()` behavior remain unchanged.
+- Invalid or cancelled guided setup cannot stop or replace an active loop.
+- Focused loop/evaluator tests, legacy goal regression, and workflow regression pass.
+
+## Definition of Done
+
+A complete implementation can execute this closed loop:
+
+1. User submits `/loop`.
+2. UI/TUI/slash setup prompts for objective and acceptance condition, with optional achievement method and optional budget/interval.
+3. Setup creates an evaluated `LoopSpec` and `LoopService` starts a `LOOP_PROFILE` thread.
+4. Loop scheduler enqueues and dispatches the first `loop_prompt` through `RuntimeDispatcher`.
+5. `LoopRuntimeRunner` runs one normal LangGraph turn using existing runtime turn machinery.
+6. At normal turn completion, `TurnResult` metadata includes the final LLM evaluation snapshot and stop details.
+7. Loop evaluator checks the acceptance condition against evidence in that snapshot.
+8. If achieved, runner returns `RuntimeDecision(completed)` and lifecycle terminates the loop thread.
+9. If not achieved and budget/progress/failure limits allow, runner returns `RuntimeDecision(continue)`; runtime commit creates the next wakeup per **Continuation Semantics**.
+10. The next loop attempt reconstructs the deterministic continuation prompt from committed loop state plus previous decision, then repeats from step 5.
+11. Cancellation, stop, replace, needs-user-input, permission/safety barriers, crash recovery, and budget exhaustion all end in explicit runtime lifecycle state with no hidden in-memory loop.

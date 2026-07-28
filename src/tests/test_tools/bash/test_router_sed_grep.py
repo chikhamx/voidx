@@ -60,7 +60,29 @@ class TestGrepSupportedFlags:
         assert try_hint("grep pattern") is None
 
     def test_grep_short_flag_combo(self):
-        assert try_hint("grep -in pattern file.py") is None
+        h = try_hint("grep -in pattern file.py")
+        assert h is not None
+        assert h.tool_id == "search"
+        assert h.tool_args == {
+            "query": "pattern",
+            "match": "regex",
+            "case": "insensitive",
+            "path": "file.py",
+        }
+
+    def test_grep_recursive_line_number_combo(self):
+        h = try_hint("grep -rn pattern src")
+        assert h is not None
+        assert h.tool_id == "search"
+        assert h.tool_args == {
+            "query": "pattern",
+            "match": "regex",
+            "case": "sensitive",
+            "path": "src",
+        }
+
+    def test_grep_unsupported_short_flag_combo_stays_in_bash(self):
+        assert try_hint("grep -rln pattern src") is None
 
     def test_grep_e_pattern(self):
         assert try_hint("grep -e pattern file.py") is None
@@ -275,6 +297,29 @@ class TestSedRegexAnchor:
         assert h is not None
         assert h.tool_id == "replace"
         assert "foo$" in h.llm_hint
+
+
+class TestSedPrintReadHint:
+    """sed -n line print reads should route to the read tool."""
+
+    def test_range_print_routes_to_read(self):
+        h = try_hint("sed -n '60,115p' src/voidx/tools/bash/router.py")
+        assert h is not None
+        assert h.tool_id == "read"
+        assert h.tool_args == {
+            "file_path": "src/voidx/tools/bash/router.py",
+            "offset": 60,
+            "limit": 56,
+        }
+
+    def test_single_line_print_routes_to_read(self):
+        h = try_hint("sed -n '73p' file.py")
+        assert h is not None
+        assert h.tool_id == "read"
+        assert h.tool_args == {"file_path": "file.py", "offset": 73, "limit": 1}
+
+    def test_invalid_range_print_stays_in_bash(self):
+        assert try_hint("sed -n '115,60p' file.py") is None
 
 
 # ---------------------------------------------------------------------------

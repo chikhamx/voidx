@@ -1,8 +1,8 @@
-export * from "./context-menu";
-export * from "./history";
-export * from "./image-attachments";
-export * from "./paste";
-export * from "./dialog";
+export { initContextMenu } from "./context-menu";
+export { HISTORY_LIMIT, historyNext, historyPrev, isHistoryBrowsing, pushHistory, resetHistoryNavigation } from "./history";
+export { type ImageAttachment, addImageAttachment, clearImageAttachments, imageAttachmentTokens } from "./image-attachments";
+export { type PasteEntry, type PasteKind, clearPasteEntries, computeTextPasteDisplay, expandPasteTokens, registerTextPaste } from "./paste";
+export { type PermissionToolDetail, type UiRequest, pendingUiRequests, renderChoiceButtons, renderPermissionDetails, renderRequest, renderTextRequest, sendResponse, showNextQueuedRequest, showPromptItemRequest, showRequest } from "./dialog";
 export {
   renderDiffReview,
   setHunkDecision,
@@ -18,10 +18,10 @@ export {
   toggleDock,
   getActiveTab,
 } from "./dock";
-export * from "./integrations";
-export * from "./reference";
-export * from "./model";
-export * from "./settings";
+export { type IntegrationsSnapshot, closeIntegrationsPanel, initIntegrationsPanel, openIntegrationsPanel, renderIntegrationsPanel } from "./integrations";
+export { type FileCandidate, type McpCandidate, type RefCandidate, type RefToken, type RefTrigger, type SkillCandidate, fileInsertionText, findRefToken, mcpInsertionText, refInsertionText, renderRefMenu, skillInsertionText } from "./reference";
+export { applyRuntimeState, applySettingsRuntimeState, configuredProfilesFromSnapshot, initModelControls, initPermissionControls, initReasoningControls, parseProviderModel, populateCustomModelDropdown, populateModelControls, populateModelOptions, populatePermissionDropdown, populateReasoningDropdown, resolveProfileConfigured } from "./model";
+export { type SettingsSnapshot, closeSettingsModal, collectSettingsPatch, initSettingsModal, openSettingsModal, renderSettingsModal } from "./settings";
 export {
   type ThreadInfo,
   renderSidebar,
@@ -35,7 +35,7 @@ export {
   onThreadDelete,
   onThreadRename,
 } from "./sidebar";
-export * from "./slash";
+export { COMMAND_CATALOG, completeSlashInput, isKnownSlashCommand, matchSlashCommands, renderSlashMenu, setCommandCatalog } from "./slash";
 export {
   initTerminal,
   appendTerminalOutput,
@@ -44,5 +44,5 @@ export {
   onTerminalStart,
   setActiveTerminal,
 } from "./terminal";
-export * from "./theme";
-export * from "./workspace";
+export { type ResolvedTheme, type ThemePreference, applyTheme, getThemePreference, initTheme, resolveTheme, setThemePreference, syncThemeToggle, systemTheme, toggleTheme } from "./theme";
+export { initSidebarResizer, initWorkspaceControls, isDesktopRuntime, openWorkspacePicker, setSidebarWidth } from "./workspace";

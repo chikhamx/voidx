@@ -7,7 +7,7 @@ from rich.console import Console
 from rich.text import Text
 
 from voidx.ui.output.dock import dock
-from voidx.ui.output.dock.formatting import _text_from_line
+from voidx.ui.output.dock.formatting import text_from_line
 
 
 def test_turn_render_uses_full_width_user_background(tmp_path):
@@ -17,7 +17,7 @@ def test_turn_render_uses_full_width_user_background(tmp_path):
         test_dock.start_turn("m_virtual_comment_views需要封装")
 
         lines = test_dock.tree.render(48)
-        text = _text_from_line(lines[0])
+        text = text_from_line(lines[0])
 
         assert text.plain.startswith("❯ m_virtual_comment_views需要封装")
         assert cell_len(text.plain) == 48

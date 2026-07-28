@@ -60,18 +60,14 @@ import {
   onGenerateDiff,
   initSettingsModal,
   openSettingsModal,
-  _resetSettingsForTest,
   initIntegrationsPanel,
   openIntegrationsPanel,
-  _resetIntegrationsForTest,
   initContextMenu,
-  _resetContextMenuForTest,
   initWorkspaceControls,
   initSidebarResizer,
   openWorkspacePicker,
   showRequest,
   showPromptItemRequest,
-  _resetDialogForTest,
   initModelControls,
   initPermissionControls,
   initReasoningControls,
@@ -87,10 +83,20 @@ import {
   isHistoryBrowsing,
 } from "./ui/history";
 import type { ThreadInfo, SettingsSnapshot, IntegrationsSnapshot, RefCandidate, FileCandidate, SkillCandidate, McpCandidate } from "./ui";
+import {
+  showSlashMenu, hideSlashMenu, updateSlashMenu, runSlashCommand,
+  refMenuVisible, showRefMenu, hideRefMenu, updateRefMenu,
+  scheduleRefUpdate, refreshRefCandidates, acceptRefCandidate,
+} from "./ui/menus";
+import { _resetSettingsForTest } from "./ui/settings";
+import { _resetIntegrationsForTest } from "./ui/integrations";
+import { _resetContextMenuForTest } from "./ui/context-menu";
+import { _resetDialogForTest } from "./ui/dialog";
 
 import {
   type UsageSnapshot,
   uiState,
+  initStateDom,
   composerEl,
   inputEl,
   btnSendEl,
@@ -125,6 +131,7 @@ if (typeof window !== "undefined" && ((window as any).__TAURI_INTERNALS__ || (wi
     document.body.classList.add("is-mac");
   }
 }
+initStateDom();
 setTranscriptElement(transcriptEl);
 initTheme();
 initDock();
@@ -251,8 +258,8 @@ onThreadSelect((threadId: string) => {
     });
 });
 
-onNewThread((directory: string) => {
-  const existing = findReusableEmptyThread(directory || uiState.workspace);
+onNewThread((directory: string, profile?: string) => {
+  const existing = findReusableEmptyThread(directory || uiState.workspace, profile);
   if (existing) {
     rpcCall("session.switch", { thread_id: existing.thread_id })
       .then((result: unknown) => {
@@ -268,7 +275,7 @@ onNewThread((directory: string) => {
     return;
   }
 
-  rpcCall("session.create", { directory })
+  rpcCall("session.create", { directory, profile })
     .then((result: unknown) => {
       const r = result as Record<string, string>;
       uiState.sessionId = r.thread_id;
@@ -278,9 +285,9 @@ onNewThread((directory: string) => {
           title: r.title,
           status: r.status,
           workspace: r.workspace || r.directory || directory || uiState.workspace,
-          directory: r.directory,
+          runtime_profile: profile,
         },
-        r.thread_id,
+        uiState.sessionId,
       );
       updateStatusBar();
     })
@@ -897,186 +904,3 @@ inputEl.addEventListener("input", () => {
   scheduleRefUpdate();
 });
 
-function showSlashMenu(): void {
-  updateSlashMenu();
-  slashMenuEl.classList.add("visible");
-}
-
-function hideSlashMenu(): void {
-  slashMenuEl.classList.remove("visible");
-  uiState.slashCommands = [];
-  uiState.slashSelectedIndex = 0;
-}
-
-function updateSlashMenu(): void {
-  const menu = renderSlashMenu(
-    uiState.slashCommands,
-    uiState.slashSelectedIndex,
-    (command: SlashCommand) => {
-      runSlashCommand(command);
-      hideSlashMenu();
-    },
-  );
-  slashMenuEl.replaceChildren(...menu.childNodes);
-}
-
-function runSlashCommand(command: SlashCommand): void {
-  if (!command) return;
-  if (command.execution === "open-ui") {
-    inputEl.value = "";
-    window.dispatchEvent(
-      new CustomEvent("voidx:open-ui", {
-        detail: { target: command.uiTarget, command },
-      }),
-    );
-    return;
-  }
-  if (command.execution === "run" && !command.requiresArgs) {
-    const confirmed =
-      !command.dangerous ||
-      window.confirm(`Run ${command.command}?`);
-    if (!confirmed) return;
-    rpcCall("commands.run", {
-      text: command.command,
-      confirmed,
-    }).catch(() => {});
-    inputEl.value = "";
-    return;
-  }
-  inputEl.value = command.command + " ";
-  inputEl.focus();
-}
-
-// ── @ file / # skill reference menu ────────────────────────────────────
-let refRequestSeq = 0;
-let refDebounceTimer: number | undefined;
-
-function refMenuVisible(): boolean {
-  return refMenuEl.classList.contains("visible");
-}
-
-function showRefMenu(): void {
-  updateRefMenu();
-  refMenuEl.classList.add("visible");
-  hideSlashMenu();
-}
-
-function hideRefMenu(): void {
-  refRequestSeq += 1;
-  refMenuEl.classList.remove("visible");
-  uiState.refCandidates = [];
-  uiState.refSelectedIndex = 0;
-  uiState.refToken = null;
-}
-
-function updateRefMenu(): void {
-  const menu = renderRefMenu(
-    uiState.refCandidates,
-    uiState.refSelectedIndex,
-    (candidate: RefCandidate) => acceptRefCandidate(candidate),
-  );
-  refMenuEl.replaceChildren(...menu.childNodes);
-}
-
-function scheduleRefUpdate(): void {
-  window.clearTimeout(refDebounceTimer);
-  refDebounceTimer = window.setTimeout(() => {
-    void refreshRefCandidates();
-  }, 120);
-}
-
-async function refreshRefCandidates(): Promise<void> {
-  const token = findRefToken(
-    inputEl.value,
-    inputEl.selectionStart ?? inputEl.value.length,
-  );
-  if (!token || !isRpcConnected()) {
-    hideRefMenu();
-    return;
-  }
-  const seq = ++refRequestSeq;
-  if (token.trigger === "@") {
-    try {
-      const result = (await rpcCall("attachments.candidates", {
-        thread_id: uiState.sessionId,
-        query: token.query,
-        limit: 8,
-      })) as { candidates?: Array<Record<string, unknown>> };
-      if (seq !== refRequestSeq) return;
-      const current = findRefToken(
-        inputEl.value,
-        inputEl.selectionStart ?? inputEl.value.length,
-      );
-      if (!current || current.trigger !== token.trigger || current.query !== token.query) {
-        return;
-      }
-      const raw = result.candidates ?? [];
-      const candidates: RefCandidate[] = raw.map(
-        (c) => ({ type: "file", file: c as unknown as FileCandidate }),
-      );
-      if (candidates.length === 0) {
-        hideRefMenu();
-        return;
-      }
-      uiState.refToken = token;
-      uiState.refCandidates = candidates;
-      uiState.refSelectedIndex = 0;
-      showRefMenu();
-    } catch {
-      if (seq === refRequestSeq) hideRefMenu();
-    }
-    return;
-  }
-  try {
-    const [skillResult, mcpResult] = await Promise.all([
-      rpcCall("skills.candidates", {
-        thread_id: uiState.sessionId,
-        query: token.query,
-        limit: 8,
-      }) as Promise<{ candidates?: Array<Record<string, unknown>> }>,
-      rpcCall("mcp.candidates", {
-        thread_id: uiState.sessionId,
-        query: token.query,
-        limit: 8,
-      }) as Promise<{ candidates?: Array<Record<string, unknown>> }>,
-    ]);
-    if (seq !== refRequestSeq) return;
-    const current = findRefToken(
-      inputEl.value,
-      inputEl.selectionStart ?? inputEl.value.length,
-    );
-    if (!current || current.trigger !== token.trigger || current.query !== token.query) {
-      return;
-    }
-    const skillRaw = skillResult.candidates ?? [];
-    const mcpRaw = mcpResult.candidates ?? [];
-    const candidates: RefCandidate[] = [
-      ...skillRaw.map((c) => ({ type: "skill" as const, skill: c as unknown as SkillCandidate })),
-      ...mcpRaw.map((c) => ({ type: "mcp" as const, mcp: c as unknown as McpCandidate })),
-    ];
-    if (candidates.length === 0) {
-      hideRefMenu();
-      return;
-    }
-    uiState.refToken = token;
-    uiState.refCandidates = candidates;
-    uiState.refSelectedIndex = 0;
-    showRefMenu();
-  } catch {
-    if (seq === refRequestSeq) hideRefMenu();
-  }
-}
-
-function acceptRefCandidate(candidate: RefCandidate): void {
-  const token = uiState.refToken;
-  if (!token) return;
-  const insertion = refInsertionText(candidate);
-  const text = inputEl.value;
-  inputEl.value = text.slice(0, token.start) + insertion + text.slice(token.end);
-  const cursor = token.start + insertion.length;
-  inputEl.setSelectionRange(cursor, cursor);
-  const drillDown = candidate.type === "file" && candidate.file.kind === "dir";
-  hideRefMenu();
-  inputEl.focus();
-  if (drillDown) scheduleRefUpdate();
-}

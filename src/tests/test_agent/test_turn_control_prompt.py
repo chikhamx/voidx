@@ -14,7 +14,7 @@ from tests.test_agent.graph.stream_llm_helpers import FakeRenderer, FakeStreamin
 
 
 def _make_graph(tmp_path, monkeypatch, provider="openai"):
-    import voidx.agent.infrastructure.langgraph.execution as graph_module
+    import voidx.agent.infrastructure.langgraph.runtime.llm_turn as graph_module
     monkeypatch.setattr(graph_module, "StreamingRenderer", FakeRenderer)
 
     graph = LangGraphExecution(

@@ -6,7 +6,7 @@ from pathlib import Path
 
 import pytest
 
-from voidx.agent.tool_messages import DEFAULT_TOOL_MESSAGE_MAX_CHARS, sanitize_tool_message_content
+from voidx.agent.application.tool_messages import DEFAULT_TOOL_MESSAGE_MAX_CHARS, sanitize_tool_message_content
 from voidx.tools.base import ToolContext, ToolResult
 from voidx.tools.file import FileReadInput, FileReadTool
 from voidx.tools.file.state import save_file_version

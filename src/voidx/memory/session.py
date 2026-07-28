@@ -75,6 +75,22 @@ async def create_session(
     )
 
 
+async def ensure_session(
+    session_id: str,
+    workspace: str,
+    *,
+    profile: str = "coding",
+    title: str = "Loop session",
+) -> None:
+    """Insert a session row if missing so FK references from loop threads hold."""
+    now = _now()
+    await _execute_commit(
+        """INSERT OR IGNORE INTO sessions (id, title, workspace, directory, model_provider, model_name, runtime_profile, created_at, updated_at)
+           VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)""",
+        (session_id, title, workspace, workspace, "anthropic", DEFAULT_MODEL, profile, now, now),
+    )
+
+
 async def get_session(session_id: str) -> SessionInfo | None:
     row = await _fetch_one(
         "SELECT * FROM sessions WHERE id = ?", (session_id,)

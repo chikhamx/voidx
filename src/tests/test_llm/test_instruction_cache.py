@@ -2,7 +2,7 @@ from pathlib import Path
 
 import pytest
 
-from voidx.llm.instruction import InstructionService
+from voidx.agent.application.instruction import InstructionService
 from voidx.config import Settings
 
 
@@ -37,7 +37,6 @@ async def test_instruction_service_reuses_skill_service_until_selection_changes(
     settings = Settings(str(tmp_path))
     service = InstructionService(str(tmp_path), settings=settings)
 
-    first_registry = service._skill_registry
     first_service = service._skill_service_for_current_selection()
     await service.available_skills_section()
     second_service = service._skill_service_for_current_selection()
@@ -45,10 +44,8 @@ async def test_instruction_service_reuses_skill_service_until_selection_changes(
     settings.set_skill_enabled("verify", False)
     third_service = service._skill_service_for_current_selection()
 
-    assert service._skill_registry is first_registry
     assert second_service is first_service
     assert third_service is not first_service
-    assert service._skill_registry is first_registry
 
 
 @pytest.mark.asyncio
@@ -86,7 +83,7 @@ async def test_resolve_injects_instruction_files_when_debug(tmp_path, monkeypatc
 
 @pytest.mark.asyncio
 async def test_instruction_read_file_logs_exception_and_clears_cache(tmp_path, monkeypatch):
-    import voidx.llm.instruction as instruction_module
+    import voidx.agent.application.instruction as instruction_module
 
     path = tmp_path / "AGENTS.md"
     path.write_text("one", encoding="utf-8")

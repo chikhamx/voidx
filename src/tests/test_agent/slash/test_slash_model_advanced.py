@@ -401,7 +401,7 @@ async def test_code_ide_dispatch_uses_choice_panel(tmp_path, monkeypatch):
     app = FakeChoiceApp(result=CodeIde.CURSOR.value)
     graph = command_context(settings=settings, app=app)
 
-    monkeypatch.setattr("voidx.agent.slash.handler.detect_code_ides", lambda: [])
+    monkeypatch.setattr("voidx.agent.slash.commands.ide.detect_code_ides", lambda: [])
 
     assert await SlashHandler(graph).dispatch("/code-ide") is True
 

@@ -95,6 +95,23 @@ class TestBashGitAutoRouteStructured:
         assert result.metadata.get("routed_from") == "bash"
 
 
+class TestBashGitShellSyntaxFallback:
+    """Shell syntax around git commands should run in bash, not the git tool."""
+
+    @pytest.mark.asyncio
+    async def test_git_stderr_redirect_runs_as_bash(self, tmp_path):
+        r = _make_registry()
+        ctx = _make_ctx(tmp_path, r)
+
+        result = await r.execute_tool("bash", {"command": "git status 2>&1"}, ctx)
+        data = json.loads(result.output)
+
+        assert result.metadata.get("routed_from") is None
+        assert data["ok"] is False
+        assert "not a git repository" in data["stdout"].lower()
+        assert data["stderr"] == ""
+
+
 # ---------------------------------------------------------------------------
 # 2. bash git auto-route 带路径
 # ---------------------------------------------------------------------------
@@ -302,10 +319,12 @@ class TestBashSearchAutoRoute:
             ctx,
         )
 
-        assert grep_result.metadata.get("tool") == "grep"
+        assert grep_result.metadata.get("tool") == "search"
         assert grep_result.metadata.get("routed_from") == "bash"
         assert grep_result.metadata.get("routed_tool_args") == {
-            "pattern": "REMOVE_ME",
+            "query": "REMOVE_ME",
+            "match": "regex",
+            "case": "sensitive",
             "path": "code.py",
         }
         assert replace_result.metadata.get("error") is not True
@@ -326,10 +345,13 @@ class TestBashSearchAutoRoute:
         )
         payload = json.loads(result.output)
 
-        assert result.metadata.get("tool") == "glob"
+        assert result.metadata.get("tool") == "find"
         assert result.metadata.get("routed_from") == "bash"
-        assert result.metadata.get("routed_tool_args") == {"pattern": "**/*.py"}
-        assert payload["files"] == ["a.py", "sub/b.py"]
+        assert result.metadata.get("routed_tool_args") == {"path": ".", "extensions": ["py"], "case": "sensitive"}
+        assert payload["files"] == [
+            {"path": "a.py", "name": "a.py"},
+            {"path": "sub/b.py", "name": "b.py"},
+        ]
 
     @pytest.mark.asyncio
     async def test_cd_prefixed_grep_runs_in_requested_directory(self, tmp_path):
@@ -379,14 +401,14 @@ class TestRouteHintToolArgs:
     def test_grep_hint_tool_args(self):
         h = try_hint("grep -r foo .")
         assert h is not None
-        assert h.tool_id == "grep"
-        assert h.tool_args == {"pattern": "foo", "path": "."}
+        assert h.tool_id == "search"
+        assert h.tool_args == {"query": "foo", "match": "regex", "case": "sensitive", "path": "."}
 
     def test_find_hint_tool_args(self):
         h = try_hint("find . -type f -name '*.py'")
         assert h is not None
-        assert h.tool_id == "glob"
-        assert h.tool_args == {"pattern": "**/*.py"}
+        assert h.tool_id == "find"
+        assert h.tool_args == {"path": ".", "extensions": ["py"], "case": "sensitive"}
 
 
 # ---------------------------------------------------------------------------

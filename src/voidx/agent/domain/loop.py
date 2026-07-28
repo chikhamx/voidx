@@ -10,7 +10,7 @@ from pydantic import BaseModel, ConfigDict, Field, field_validator
 from voidx.agent.domain.profile import RuntimeProfile
 
 
-LOOP_PROFILE = RuntimeProfile(profile_id="loop", revision=1, name="Loop")
+LOOP_PROFILE = RuntimeProfile(profile_id="loop", revision=1, name="Loop", protocol="loop")
 
 
 class LoopMode(str, Enum):
@@ -41,6 +41,9 @@ class LoopSpec(BaseModel):
     prompt: str
     interval_seconds: float | None = Field(default=None, gt=0)
     workflow_enabled: bool = False
+    # Identifies this loop's thread/session: each /loop start gets a fresh
+    # generation so it begins with an empty session; "active" marks legacy rows.
+    generation: str = "active"
 
     @field_validator("prompt")
     @classmethod
@@ -50,13 +53,26 @@ class LoopSpec(BaseModel):
             raise ValueError("prompt must not be empty")
         return prompt
 
+    @field_validator("generation")
+    @classmethod
+    def require_generation(cls, value: str) -> str:
+        generation = value.strip()
+        if not generation:
+            raise ValueError("generation must not be empty")
+        return generation
+
     @property
     def mode(self) -> LoopMode:
         return LoopMode.FIXED if self.interval_seconds is not None else LoopMode.DYNAMIC
 
     def loop_thread_id(self, parent_thread_id: str | None) -> str:
         parent = (parent_thread_id or "default").strip() or "default"
-        return f"loop:{parent}:active"
+        return f"loop:{parent}:{self.generation}"
+
+    def loop_session_id(self, parent_thread_id: str | None) -> str:
+        # Loop history lives in its own session so it never reads or writes the
+        # parent conversation; this keeps the two contexts fully isolated.
+        return self.loop_thread_id(parent_thread_id)
 
     def prompt_summary(self) -> str:
         return self.prompt.replace("\n", " ")[:80]
@@ -75,7 +91,7 @@ class LoopToolView(BaseModel):
     def bind(self, available_tool_ids: set[str] | list[str] | tuple[str, ...]) -> "LoopToolView":
         available = set(available_tool_ids)
         allowed = {
-            "loop_update",
+            "loop",
             "read",
             "find",
             "search",
@@ -85,6 +101,7 @@ class LoopToolView(BaseModel):
             "webfetch",
             "mcp",
             "skill",
+            "bash",
         }
         if self.workflow_enabled:
             allowed.update({"workflow", "task_status", "todo"})

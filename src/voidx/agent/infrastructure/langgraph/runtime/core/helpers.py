@@ -2,8 +2,8 @@ from __future__ import annotations
 import asyncio
 from enum import Enum
 
-from voidx.agent.agents import AgentDef
-from voidx.agent.runtime_context import COMPACTION_GUIDE_MARKER, InteractionMode
+from voidx.agent.application.agents import AgentDef
+from voidx.agent.application.runtime_context import COMPACTION_GUIDE_MARKER, InteractionMode
 from voidx.runtime.intent import PersonaName
 from voidx.llm.compaction import SUMMARY_TEMPLATE
 from voidx.runtime.task_state import GoalResolution, TaskState
@@ -90,6 +90,11 @@ def _llm_retry_delay(attempt: int) -> float:
         return _LLM_RETRY_FIXED_DELAY
     exp = attempt - _LLM_RETRY_FIXED_PHASE - 1
     return min(_LLM_RETRY_BASE_DELAY * (2 ** exp), _LLM_RETRY_MAX_DELAY)
+
+
+def _llm_retry_sleep_delay(delay: float) -> float:
+    """Return the wall-clock sleep for a retry delay."""
+    return delay
 
 
 def _render_inline_compaction_guide(*, tail_anchor_id: str, head_count: int, previous_summary: str) -> str:

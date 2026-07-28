@@ -31,6 +31,9 @@ from .activity import (
 from .helpers import _clip_cells
 
 
+LOOP_WAITING_STATUS_ID = "loop:waiting"
+
+
 BUSY_ACTIVITY_DETAIL_STYLE = "#C9D1D9 on #3a3937"
 RETRY_DETAIL_MAX_CELLS = 96
 PERMISSION_DETAIL_MAX_LINES = 5
@@ -44,7 +47,7 @@ class _ActivityRendererMixin:
 
     def _render_busy_activity_elements(self, width: int) -> list[Text]:
         if not self._busy:
-            return []
+            return self._render_loop_waiting_elements(width)
         elements = [self._busy_activity_text(width)]
         permission_detail = active_permission_request_detail_text()
         if permission_detail:
@@ -53,6 +56,30 @@ class _ActivityRendererMixin:
                     Text(_full_width_detail_line(line, width), style=BUSY_ACTIVITY_DETAIL_STYLE)
                 )
         return elements
+
+    def _render_loop_waiting_elements(self, width: int) -> list[Text]:
+        label = self._loop_waiting_label(width)
+        if not label:
+            return []
+        return [Text(label, style=BUSY_ACTIVITY_STYLE)]
+
+    def _loop_waiting_active(self) -> bool:
+        status_record = getattr(dock, "status_record", None)
+        if not callable(status_record):
+            return False
+        return status_record(LOOP_WAITING_STATUS_ID) is not None
+
+    def _loop_waiting_label(self, width: int) -> str:
+        record = dock.status_record(LOOP_WAITING_STATUS_ID) if hasattr(dock, "status_record") else None
+        if record is None:
+            return ""
+        try:
+            wake_at = float(record.detail)
+        except (TypeError, ValueError):
+            return ""
+        remaining = max(0, int(wake_at - time.time()))
+        label = f"○ {record.label} (next round in {self._format_elapsed(remaining)})"
+        return _clip_cells(label, width)
 
     def _busy_activity_text(self, width: int) -> Text:
         label = _clip_cells(self._busy_activity_label(), width)

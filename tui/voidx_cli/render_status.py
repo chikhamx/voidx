@@ -27,6 +27,7 @@ class StatusSegment:
 
 _STATUS_STYLES = {
     "model": "#6CB6FF",
+    "profile": "#FFB366",
     "policy": "#57AB5A",
     "state": BUSY_ACTIVITY_STYLE,
     "workflow": "#8BD5FF",
@@ -35,11 +36,13 @@ _STATUS_STYLES = {
     "separator": "#4B5563",
 }
 _LEFT_VARIANTS = (
-    ("model", "policy", "state"),
-    ("model", "policy"),
+    ("model", "profile", "policy", "state"),
+    ("model", "profile", "policy"),
+    ("model", "profile"),
     ("model",),
     (),
 )
+
 
 _WORKFLOW_RAINBOW = ("#FF6B6B", "#FFD93D", "#6BCB77", "#4D96FF", "#B983FF")
 
@@ -89,6 +92,7 @@ class _StatusRendererMixin:
         debug = _call_bool(getattr(self.status, "debug", None))
         goal_label = _call_status(getattr(self.status, "goal_label", None), "")
         active_workflows = _call_workflows(getattr(self.status, "active_workflows", None))
+        profile = _call_status(getattr(self.status, "runtime_profile", None), "coding")
         stats = getattr(self.status, "usage_stats", None)
         context_limit = getattr(stats, "context_limit", None) or getattr(self.status, "context_limit", 0)
         stats_snapshot = (
@@ -107,10 +111,15 @@ class _StatusRendererMixin:
             tuple(active_workflows),
             self._busy,
             stats_snapshot,
+            profile,
         )
         model_text = model
         if effort:
             model_text = f"{model_text} {effort}"
+
+        profile_text = ""
+        if profile == "chat":
+            profile_text = "chat"
 
         policy_parts = [part for part in (permission,) if part]
         policy_text = " ".join(policy_parts)
@@ -143,6 +152,7 @@ class _StatusRendererMixin:
             segment
             for segment in (
                 StatusSegment("model", model_text),
+                StatusSegment("profile", profile_text),
                 StatusSegment("policy", policy_text),
                 StatusSegment("state", state_text),
                 StatusSegment("workflow", workflow_text),
@@ -167,11 +177,11 @@ class _StatusRendererMixin:
             return self._select_pinned_usage_status_variant(width, by_kind, usage)
 
         for variant in _LEFT_VARIANTS + (
-            ("model", "policy", "state", "workflow", "goal"),
-            ("model", "policy", "workflow", "goal"),
-            ("model", "policy", "state", "workflow"),
-            ("model", "policy", "workflow"),
-            ("model", "policy", "goal"),
+            ("model", "profile", "policy", "state", "workflow", "goal"),
+            ("model", "profile", "policy", "workflow", "goal"),
+            ("model", "profile", "policy", "state", "workflow"),
+            ("model", "profile", "policy", "workflow"),
+            ("model", "profile", "policy", "goal"),
         ):
             selected = tuple(
                 by_kind[kind]
@@ -184,6 +194,7 @@ class _StatusRendererMixin:
             summary = self._status_summary_from_segments(candidate)
             if cell_len(summary) <= width:
                 return summary, candidate
+
 
         fallback = prefix_segments or tuple(
             segment for segment in segments if segment.kind == "model"

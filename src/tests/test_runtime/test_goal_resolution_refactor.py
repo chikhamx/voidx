@@ -1,6 +1,6 @@
 import pytest
 
-from voidx.llm.instruction import InstructionService
+from voidx.agent.application.instruction import InstructionService
 from voidx.runtime.intent import TaskIntent
 from voidx.runtime.task_state import (
     GoalResolution,

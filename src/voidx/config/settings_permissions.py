@@ -8,7 +8,7 @@ from threading import RLock
 from voidx.config.enums import PermissionMode
 from voidx.config.models import AiApprovalConfig
 from voidx.config.settings_utils import string_list as _string_list
-from voidx.permission.grants import GrantDelta
+from voidx.config.grants import GrantDelta
 
 _PERMISSION_TRANSACTION_LOCK = RLock()
 
@@ -79,15 +79,6 @@ class SettingsPermissionMixin:
     def get_persistent_writable_dirs(self) -> list[str]:
         return _string_list(self._effective_data().get("persistent_writable_dirs", []))
 
-    def persistent_grants(self) -> list:
-        from voidx.permission.grants import AccessGrant
-
-        return [
-            *(AccessGrant(path=path, access="read", object_type="file", persistence="persistent") for path in self.get_persistent_readable_files()),
-            *(AccessGrant(path=path, access="read", object_type="dir", persistence="persistent") for path in self.get_persistent_readable_dirs()),
-            *(AccessGrant(path=path, access="write", object_type="file", persistence="persistent") for path in self.get_persistent_writable_files()),
-            *(AccessGrant(path=path, access="write", object_type="dir", persistence="persistent") for path in self.get_persistent_writable_dirs()),
-        ]
 
     def add_persistent_grant_delta(self, delta: GrantDelta) -> Path:
         with _PERMISSION_TRANSACTION_LOCK:

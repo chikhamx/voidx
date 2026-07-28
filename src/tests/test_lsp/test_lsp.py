@@ -8,7 +8,7 @@ import pytest
 
 
 from voidx.agent.slash import SlashHandler
-from voidx.agent.tool_filters import filter_unavailable_lsp_tools
+from voidx.agent.application.tool_filters import filter_unavailable_lsp_tools
 from voidx.lsp.client import LSP_REQUEST_TIMEOUT_SECONDS, LspClient, encode_lsp_message
 from voidx.lsp.errors import LspConnectionError, LspError, LspFormattingUnsupported, LspServerUnavailable, LspTimeoutError
 from voidx.lsp.manager import LspManager, apply_text_edits

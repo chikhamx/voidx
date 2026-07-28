@@ -787,3 +787,56 @@ def test_busy_activity_label_clears_guidance_preview_after_commit(tmp_path, monk
     finally:
         dock.deactivate()
         dock.reset()
+
+
+# ── Loop waiting countdown (idle but loop alive) ─────────────────────────────
+
+
+def test_loop_waiting_renders_countdown_when_idle(tmp_path, monkeypatch):
+    from voidx.ui.output.dock import dock
+
+    monkeypatch.setattr("voidx_cli.render_activity.time.monotonic", lambda: 500.0)
+    monkeypatch.setattr("voidx_cli.render_activity.time.time", lambda: 1_000.0)
+    tui = _tui(tmp_path)
+    tui._busy = False
+
+    dock.record_status("loop:waiting", "Looping", str(1_000.0 + 272))
+
+    elements = tui._render_busy_activity_elements(100)
+
+    assert len(elements) == 1
+    plain = elements[0].plain
+    assert "Looping" in plain
+    assert "4m 32s" in plain
+
+
+def test_loop_waiting_countdown_reaches_zero_shows_due(tmp_path, monkeypatch):
+    from voidx.ui.output.dock import dock
+
+    monkeypatch.setattr("voidx_cli.render_activity.time.time", lambda: 1_000.0)
+    tui = _tui(tmp_path)
+    tui._busy = False
+
+    dock.record_status("loop:waiting", "Looping", str(999.0))
+
+    elements = tui._render_busy_activity_elements(100)
+
+    assert len(elements) == 1
+    assert "0s" in elements[0].plain
+
+
+def test_loop_waiting_hidden_when_busy(tmp_path, monkeypatch):
+    from voidx.ui.output.dock import dock
+
+    monkeypatch.setattr("voidx_cli.render_activity.time.monotonic", lambda: 500.0)
+    tui = _tui(tmp_path)
+    tui._busy = True
+    tui._busy_started_at = 500.0
+    tui._busy_activity_verb = "Cooking"
+
+    dock.record_status("loop:waiting", "Looping", str(1_000.0 + 60))
+
+    elements = tui._render_busy_activity_elements(100)
+
+    assert len(elements) == 1
+    assert "Cooking" in elements[0].plain

@@ -5,7 +5,7 @@ import json
 import pytest
 
 from voidx.config import Settings
-from voidx.llm.instruction import InstructionService
+from voidx.agent.application.instruction import InstructionService
 from voidx.mcp.auto import render_available_mcp_servers
 
 

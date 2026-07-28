@@ -7,7 +7,16 @@ from typing import Literal
 
 from pydantic import BaseModel, Field
 
+from voidx.config.models import SkillSelectionConfig
 from voidx.runtime.reference_tokens import EXPLICIT_REF_RE
+
+__all__ = [
+    "SkillScope",
+    "SkillMeta",
+    "SkillDefinition",
+    "SkillSelectionConfig",
+    "SkillMatch",
+]
 
 SkillScope = Literal["bundled", "global", "project"]
 
@@ -34,10 +43,6 @@ class SkillDefinition(BaseModel):
         return self.path.parent
 
 
-class SkillSelectionConfig(BaseModel):
-    enabled: set[str] = Field(default_factory=set)
-    disabled: set[str] = Field(default_factory=set)
-    auto: set[str] = Field(default_factory=set)
 
 
 class SkillMatch(BaseModel):

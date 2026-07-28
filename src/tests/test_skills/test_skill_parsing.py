@@ -5,7 +5,7 @@ from pathlib import Path
 import pytest
 
 from voidx.llm.compaction import COMPACTION_REQUEST
-from voidx.llm.instruction import InstructionService
+from voidx.agent.application.instruction import InstructionService
 from voidx.config import Settings
 from voidx.skills.registry import SkillRegistry, parse_skill_file
 from voidx.workflow.context import WORKFLOW_CONTEXT_MARKER, WORKFLOW_CONTEXT_SCOPE

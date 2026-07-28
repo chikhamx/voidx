@@ -1,4 +1,4 @@
-from voidx.agent.tool_messages import sanitize_tool_message_content
+from voidx.agent.application.tool_messages import sanitize_tool_message_content
 
 
 def test_sanitize_tool_message_content_redacts_paths_secrets_and_length(tmp_path):

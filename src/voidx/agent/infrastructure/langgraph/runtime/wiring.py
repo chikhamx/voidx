@@ -5,11 +5,12 @@ from __future__ import annotations
 from collections.abc import Callable
 from typing import Any
 
-from voidx.agent.agents import child_agent_descriptions_for_llm, get_agent, get_subagents
+from voidx.agent.application.agents import child_agent_descriptions_for_llm, get_agent, get_subagents
 from voidx.config import Config, Settings
 from voidx.llm.compaction import CompactionService
 from voidx.llm.service import create_resolver_model, get_context_limit
 from voidx.llm.usage import UsageStats
+from voidx.permission.grants import persistent_grants_from_paths
 from voidx.permission.service import PermissionService
 from voidx.tools.service import AgentTool, ToolRegistry, TaskTracker
 
@@ -74,7 +75,12 @@ def build_permission_service(
         sandbox_readable_dirs=list(config.sandbox_readable_dirs),
         sandbox_writable_files=list(config.sandbox_writable_files),
         sandbox_writable_dirs=writable_dirs,
-        persistent_grants=settings.persistent_grants() if settings is not None else [],
+        persistent_grants=persistent_grants_from_paths(
+            settings.get_persistent_readable_files(),
+            settings.get_persistent_readable_dirs(),
+            settings.get_persistent_writable_files(),
+            settings.get_persistent_writable_dirs(),
+        ) if settings is not None else [],
         notifier=notifier,
         persistent_grant_writer=settings.add_persistent_grant_delta if settings is not None else None,
     )

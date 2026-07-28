@@ -540,7 +540,7 @@ class TestDataDirInjection:
         monkeypatch.setenv("HOME", str(tmp_path))
         monkeypatch.setenv("USERPROFILE", str(tmp_path))
         from voidx.config import Config, ModelConfig
-        from voidx.agent.runtime_context import ExecutionPolicy
+        from voidx.agent.application.runtime_context import ExecutionPolicy
         from voidx.memory.store import DATA_DIR
 
         config = Config(

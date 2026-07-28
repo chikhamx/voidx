@@ -87,6 +87,13 @@ NO_USER_RESPONSE_PROMPT = (
     "then call turn with operation='stop' with params=null to finish."
 )
 
+LOOP_DECISION_PROMPT = (
+    "This is a /loop iteration. The turn cannot end until you submit the iteration "
+    "decision with the loop tool: outcome=continue to schedule the next wakeup. "
+    "Use it even when this iteration's work is done or you are waiting on "
+    "something — the loop only ends when the user stops it."
+)
+
 
 def _has_tool_calls(msg: AIMessage) -> bool:
     calls = getattr(msg, "tool_calls", None)

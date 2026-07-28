@@ -4,7 +4,7 @@ from __future__ import annotations
 
 from typing import Any
 
-from pydantic import BaseModel, ConfigDict, Field, field_validator
+from pydantic import BaseModel, ConfigDict, Field, field_serializer, field_validator
 
 
 class RuntimeProfile(BaseModel):
@@ -13,6 +13,8 @@ class RuntimeProfile(BaseModel):
     profile_id: str
     revision: int = Field(ge=1)
     name: str
+    # Graph-level protocol tool set for this profile: turn (default), loop, goal.
+    protocol: str = "turn"
     system_prompt: str = ""
     constraints: tuple[str, ...] = ()
     persona: str | None = None
@@ -21,6 +23,12 @@ class RuntimeProfile(BaseModel):
     # coding prompt sections. Chat and future profiles supply a PromptPolicy
     # implementation to suppress or override sections.
     prompt_policy: Any | None = None
+
+    @field_serializer("prompt_policy")
+    def serialize_prompt_policy(self, policy: Any) -> str | None:
+        # PromptPolicy is a runtime-only object; persist its type name so every
+        # dump path (json mode or not) is serialization-safe.
+        return type(policy).__name__ if policy is not None else None
 
     @field_validator("profile_id", "name")
     @classmethod

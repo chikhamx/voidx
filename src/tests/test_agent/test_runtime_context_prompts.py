@@ -2,8 +2,8 @@ import sys
 from pathlib import Path
 
 
-from voidx.agent.prompts import BASE_SYSTEM, WORKFLOW_RUNTIME, persona_prompt
-from voidx.agent.runtime_context import InteractionMode, RuntimeContextBuilder
+from voidx.agent.application.prompts import BASE_SYSTEM, WORKFLOW_RUNTIME, persona_prompt
+from voidx.agent.application.runtime_context import InteractionMode, RuntimeContextBuilder
 from voidx.runtime.task_state import TaskState
 from voidx.config import Config
 

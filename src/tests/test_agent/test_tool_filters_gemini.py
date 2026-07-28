@@ -1,6 +1,6 @@
 """Tests for Gemini-specific tool schema filtering."""
 
-from voidx.agent.tool_filters import strip_gemini_unsupported_schema_keys
+from voidx.agent.application.tool_filters import strip_gemini_unsupported_schema_keys
 
 
 def _sample_tool_defs() -> list[dict]:

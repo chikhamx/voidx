@@ -9,11 +9,11 @@ from langchain_core.messages import AIMessage, ToolMessage
 from voidx.logging.tool_log import log_tool_event
 from voidx.runtime.intent import InteractionMode
 from voidx.agent.infrastructure.langgraph.runtime.runtime import current_parent_tool_call_id
-from voidx.agent.infrastructure.langgraph.runtime.workflow_utils import active_workflow_names
-from voidx.agent.todo_state import todo_run_state_from_result
+from voidx.agent.application.workflow_utils import active_workflow_names
+from voidx.agent.application.todo_state import todo_run_state_from_result
 from voidx.runtime.task_state import goal_label, goal_type_from_join
-from voidx.agent.tool_messages import sanitize_tool_message_content
-from voidx.agent.tool_result_storage import maybe_persist_tool_result
+from voidx.agent.application.tool_messages import sanitize_tool_message_content
+from voidx.agent.infrastructure.tool_result_storage import maybe_persist_tool_result
 from voidx.agent.infrastructure.langgraph.runtime.todo_events import todo_updated_event
 from voidx.runtime.ui import (
     DEFAULT_DISPLAY_RULES,
@@ -54,6 +54,12 @@ from .ui import (
     notify_tool_failure,
     notify_tool_text_output,
 )
+
+def _loop_iteration_committed(loop_controller) -> bool:
+    if loop_controller is None:
+        return False
+    return loop_controller.final_decision() is not None
+
 
 UI_EVENT_BUS_TIMEOUT_KIND = "ui_event_bus_timeout"
 TOOL_HEARTBEAT_INITIAL_SECONDS = 15.0
@@ -129,7 +135,6 @@ class ToolExecutorAdapter:
                 workflow_repeat_tracker=host._workflow_repeat_tracker,
                 mcp_manager=getattr(host, "_mcp_manager", None),
                 lsp_manager=getattr(host, "_lsp_manager", None),
-                loop_manager=getattr(host, "loop_manager", getattr(host, "_loop_manager", None)),
                 loop_controller=getattr(thread_state.turn_context, "loop_controller", None),
                 format_after_edit_enabled=host.config.lsp_format_after_edit,
                 tool_registry=host.tools,
@@ -369,6 +374,7 @@ class ToolExecutorAdapter:
         pending = list(tool_calls)
         cycle_previous_todo_state = runtime_task_state.todo_state
         cycle_workflow_changed = False
+        loop_controller = getattr(thread_state.turn_context, "loop_controller", None)
 
         while pending:
             prefix, barrier, suffix = _split_at_first_barrier(pending)
@@ -395,6 +401,13 @@ class ToolExecutorAdapter:
                 cycle_workflow_changed = cycle_workflow_changed or "workflow_runs" in segment_update
                 apply_state_update(segment_update)
                 pending = ([barrier] if barrier is not None else []) + suffix
+                if _loop_iteration_committed(loop_controller):
+                    executed.extend(
+                        _infrastructure_skipped_tool(tc, reason="was skipped after loop commit")
+                        for tc in pending
+                    )
+                    state_update["should_continue"] = False
+                    break
                 if any(item.terminal_reason is not None for item in segment_executed):
                     executed.extend(
                         _infrastructure_skipped_tool(tc, reason="was skipped")
@@ -430,6 +443,13 @@ class ToolExecutorAdapter:
             )
             cycle_workflow_changed = cycle_workflow_changed or "workflow_runs" in segment_update
             apply_state_update(segment_update)
+            if _loop_iteration_committed(loop_controller):
+                executed.extend(
+                    _infrastructure_skipped_tool(tc, reason="was skipped after loop commit")
+                    for tc in suffix
+                )
+                state_update["should_continue"] = False
+                break
             if any(item.terminal_reason is not None for item in segment_executed):
                 executed.extend(
                     _infrastructure_skipped_tool(tc, reason="was skipped")

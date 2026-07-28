@@ -10,7 +10,7 @@ from voidx.tools.base import ToolContext, ToolResult
 from voidx.tools.file.read import FileReadTool
 from voidx.tools.file.manage import ManageTool
 from voidx.tools.file.replace import FileReplaceTool
-from voidx.tools.search import GlobTool, GrepTool
+from voidx.tools.search import FindTool, SearchTool
 from voidx.tools.lsp import LspTool, LspFormatTool
 from voidx.tools.bash import BashInput
 from voidx.tools.bash.tool import BashTool
@@ -69,14 +69,14 @@ async def test_file_replace_invalid_args_uses_llm_visible_message():
     assert "validation errors" not in result.output
 @pytest.mark.asyncio
 async def test_glob_invalid_args_returns_error():
-    result = await GlobTool().execute({"pattern": 123}, _CTX)
+    result = await FindTool().execute({"pattern": 123}, _CTX)
     assert isinstance(result, ToolResult)
     assert result.metadata.get("error") is True
 
 
 @pytest.mark.asyncio
 async def test_grep_invalid_args_returns_error():
-    result = await GrepTool().execute({"pattern": 123}, _CTX)
+    result = await SearchTool().execute({"pattern": 123}, _CTX)
     assert isinstance(result, ToolResult)
     assert result.metadata.get("error") is True
 
@@ -183,7 +183,7 @@ async def test_document_invalid_args_returns_error():
 @pytest.mark.asyncio
 async def test_grep_path_traversal_has_error_metadata():
     """search.py:143 — Path traversal blocked must set error: True."""
-    result = await GrepTool().execute(
+    result = await SearchTool().execute(
         {"pattern": "test", "path": "/etc/passwd"}, _CTX
     )
     assert result.metadata.get("error") is True
@@ -192,7 +192,7 @@ async def test_grep_path_traversal_has_error_metadata():
 @pytest.mark.asyncio
 async def test_grep_invalid_regex_has_error_metadata():
     """search.py:150 — Invalid regex must set error: True."""
-    result = await GrepTool().execute(
+    result = await SearchTool().execute(
         {"pattern": "[invalid", "path": "."}, _CTX
     )
     assert result.metadata.get("error") is True
@@ -201,7 +201,7 @@ async def test_grep_invalid_regex_has_error_metadata():
 @pytest.mark.asyncio
 async def test_grep_path_not_found_has_error_metadata():
     """search.py:216 — Path not found must set error: True."""
-    result = await GrepTool().execute(
+    result = await SearchTool().execute(
         {"pattern": "test", "path": "/nonexistent_path_xyz"}, _CTX
     )
     assert result.metadata.get("error") is True

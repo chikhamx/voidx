@@ -14,7 +14,6 @@ from voidx.agent.infrastructure.langgraph.runtime.turn_control import (
     TURN_START_PROMPT,
     TURN_STOP_PROMPT,
     TurnClassification,
-    classify_turn_call,
     normalize_terminal_message,
     validate_turn_call,
 )
@@ -24,7 +23,7 @@ from voidx.runtime.task_state import (
     IntentResolution,
     TaskState,
 )
-from voidx.agent.runtime_context import TaskIntent
+from voidx.agent.application.runtime_context import TaskIntent
 from voidx.llm.message_markers import GUIDANCE_MARKER
 from voidx.workflow.service import reconcile_workflow_runs_for_turn
 
@@ -51,11 +50,30 @@ async def handle_turn_control_response(
     interaction_mode_value: str,
     estimate_tokens: Any,
     rerender_task_context: Any,
+    loop_controller: Any | None = None,
+    protocol: Any | None = None,
 ) -> TurnControlResult:
-    classification = classify_turn_call(assistant_msg)
+    from voidx.agent.infrastructure.langgraph.runtime.graph_protocol import (
+        TurnToolProtocol,
+    )
+
+    protocol = protocol or TurnToolProtocol()
+    classification = protocol.classify(assistant_msg)
     has_text = bool(extract_text(assistant_msg).strip())
     if _is_invalid_prompt_response(classification, has_text, loop):
         classification = TurnClassification.INVALID_TURN
+
+    if protocol.decision_missing(assistant_msg, loop, controller=loop_controller):
+        return _prompt_for_loop_decision(
+            graph=graph,
+            assistant_msg=assistant_msg,
+            llm_messages=llm_messages,
+            loop=loop,
+            turn_state=turn_state,
+            runtime_task_state=runtime_task_state,
+            estimate_tokens=estimate_tokens,
+            repair_prompt=protocol.repair_prompt(),
+        )
 
     if classification == TurnClassification.VALID_START:
         return await _handle_turn_start(
@@ -115,6 +133,32 @@ async def handle_turn_control_response(
     graph._turn_metrics.increment("turn_control_prompt_succeeded")
     loop.terminal_msg = assistant_msg
     return TurnControlResult("break", llm_messages, loop.context_tokens, turn_state, runtime_task_state)
+
+
+def _prompt_for_loop_decision(
+    *,
+    graph: Any,
+    assistant_msg: AIMessage,
+    llm_messages: list[BaseMessage],
+    loop: LlmLoopState,
+    turn_state: str,
+    runtime_task_state: TaskState,
+    estimate_tokens: Any,
+    repair_prompt: str,
+) -> TurnControlResult:
+    graph._turn_metrics.increment("loop_decision_prompted")
+    loop.protocol_repairs += 1
+    loop.turn_prompt_active = True
+    llm_messages = [
+        *llm_messages,
+        assistant_msg,
+        HumanMessage(
+            content=repair_prompt,
+            additional_kwargs={GUIDANCE_MARKER: True},
+        ),
+    ]
+    loop.context_tokens = estimate_tokens(llm_messages)
+    return TurnControlResult("retry", llm_messages, loop.context_tokens, turn_state, runtime_task_state)
 
 
 def _is_invalid_prompt_response(

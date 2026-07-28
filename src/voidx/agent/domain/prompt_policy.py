@@ -10,7 +10,7 @@ from __future__ import annotations
 
 from typing import Protocol
 
-from voidx.agent.prompts import BaseSystemProfile, CHAT_PROFILE_SPEC
+from voidx.agent.application.prompts import BaseSystemProfile, CHAT_PROFILE_SPEC
 
 
 class PromptPolicy(Protocol):

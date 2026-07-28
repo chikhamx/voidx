@@ -81,6 +81,19 @@ def _has_unquoted_pathname_expansion(command: str) -> bool:
 
 _RE_CD_PREFIX = re.compile(r"^cd\s+\S+\s*&&\s+")
 _RE_AMP = re.compile(r"&&|\s&$")
+_SHELL_REDIRECTION_TOKENS = frozenset({
+    "<",
+    "<<",
+    "<<<",
+    ">",
+    ">>",
+    ">|",
+    "<>",
+    "<&",
+    ">&",
+    "&>",
+    "&>>",
+})
 
 
 def _strip_cd_prefix(command: str) -> str:
@@ -96,3 +109,7 @@ def _strip_cd_prefix(command: str) -> str:
     if _RE_AMP.search(remainder):
         return command
     return remainder
+
+
+def _has_shell_redirection(words: list[str]) -> bool:
+    return any(word in _SHELL_REDIRECTION_TOKENS for word in words)

@@ -49,7 +49,7 @@ def _ansi_rgb(text: str, rgb: tuple[int, int, int]) -> str:
     return f"\x1b[38;2;{r};{g};{b}m{text}\x1b[0m"
 
 
-def _text_from_line(line: str) -> Text:
+def text_from_line(line: str) -> Text:
     marker = line.find(ANSI_LINE_PREFIX)
     if marker == -1:
         return Text.from_markup(line)
@@ -93,6 +93,10 @@ def _strip_ansi_trailing_space(line: str) -> str:
 
 
 _PASTED_RE = re.compile(r"<pasted>\n(.*?)\n</pasted>", re.DOTALL)
+
+
+def strip_pasted_wrapper(text: str) -> str:
+    return _PASTED_RE.sub(r"\1", text)
 
 
 def split_pasted_segments(text: str) -> list[tuple[bool, str]]:

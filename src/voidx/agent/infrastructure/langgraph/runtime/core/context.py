@@ -6,8 +6,8 @@ from typing import Any
 from langchain_core.messages import AIMessage, BaseMessage, HumanMessage, RemoveMessage
 from langgraph.graph.message import REMOVE_ALL_MESSAGES
 
-from voidx.agent.message_trimming import trim_superseded_file_tools
-from voidx.agent.runtime_context import ContextCompiler
+from voidx.agent.application.message_trimming import trim_superseded_file_tools
+from voidx.agent.application.runtime_context import ContextCompiler
 from voidx.runtime.task_state import TaskState
 from voidx.memory.service import save_context_frame_from_messages
 

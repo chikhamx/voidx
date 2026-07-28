@@ -5,13 +5,12 @@ from __future__ import annotations
 import json
 from pathlib import Path
 
+from voidx.config.models import SkillSelectionConfig
 from voidx.config.settings_utils import string_list as _string_list
 
 
 class SettingsSkillsMixin:
-    def get_skill_selection(self):
-        from voidx.skills.schema import SkillSelectionConfig
-
+    def get_skill_selection(self) -> SkillSelectionConfig:
         data = self._skills_data()
         return SkillSelectionConfig(
             enabled=set(_string_list(data.get("enabled", []))),

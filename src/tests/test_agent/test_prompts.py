@@ -3,7 +3,7 @@ from pathlib import Path
 
 import pytest
 
-from voidx.agent.prompts import (
+from voidx.agent.application.prompts import (
     BASE_SYSTEM,
     PERSONA_MODEL,
     WORKFLOW_RUNTIME,

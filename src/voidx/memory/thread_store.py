@@ -17,7 +17,7 @@ from voidx.agent.domain.thread import (
     ThreadAttempt,
     apply_lifecycle_decision,
 )
-from voidx.memory.store import _fetch_one, _now, _write_transaction
+from voidx.memory.store import _fetch_all, _fetch_one, _now, _write_transaction
 
 
 class ThreadStateConflict(RuntimeError):
@@ -113,6 +113,16 @@ class ThreadStore:
             state_version=int(row["state_version"]),
             resource_scope=json.loads(row["resource_scope_json"] or "{}"),
         )
+
+    async def rebind_thread_session(self, thread_id: str, session_id: str) -> None:
+        def _tx(conn):
+            now = _now()
+            conn.execute(
+                "UPDATE agent_threads SET session_id = ?, updated_at = ? WHERE id = ?",
+                (session_id, now, thread_id),
+            )
+
+        await _write_transaction(_tx)
 
     async def save_state(
         self,
@@ -260,6 +270,15 @@ class ThreadStore:
             outbox_id = None
             if decision.outcome == "continue":
                 outbox_id = _uid("wakeup")
+                prior_frame = json.loads(attempt["input_frame_json"] or "{}")
+                wakeup_payload = {
+                    "decision": decision.model_dump(mode="json"),
+                    **{
+                        key: prior_frame[key]
+                        for key in ("prompt", "display_text", "spec")
+                        if key in prior_frame
+                    },
+                }
                 conn.execute(
                     """INSERT OR IGNORE INTO runtime_outbox (
                            id, thread_id, source_attempt_id, kind, payload_json,
@@ -269,7 +288,7 @@ class ThreadStore:
                         outbox_id,
                         thread_id,
                         attempt_id,
-                        _json({"decision": decision.model_dump(mode="json")}),
+                        _json(wakeup_payload),
                         next_version,
                         time.time() + float(decision.next_delay_seconds or 0),
                         now,
@@ -354,19 +373,31 @@ class ThreadStore:
         return await _write_transaction(_tx)
 
     async def claim_next_outbox(
-        self, *, lease_owner: str, lease_seconds: float
+        self, *, lease_owner: str, lease_seconds: float, kind: str | None = None
     ) -> RuntimeOutboxItem | None:
         def _tx(conn):
             now_ts = time.time()
-            row = conn.execute(
-                """SELECT * FROM runtime_outbox
-                   WHERE delivered_at IS NULL
-                     AND available_at <= ?
-                     AND (claimed_until IS NULL OR claimed_until <= ?)
-                   ORDER BY available_at, created_at
-                   LIMIT 1""",
-                (now_ts, now_ts),
-            ).fetchone()
+            if kind is None:
+                row = conn.execute(
+                    """SELECT * FROM runtime_outbox
+                       WHERE delivered_at IS NULL
+                         AND available_at <= ?
+                         AND (claimed_until IS NULL OR claimed_until <= ?)
+                       ORDER BY available_at, created_at
+                       LIMIT 1""",
+                    (now_ts, now_ts),
+                ).fetchone()
+            else:
+                row = conn.execute(
+                    """SELECT * FROM runtime_outbox
+                       WHERE delivered_at IS NULL
+                         AND kind = ?
+                         AND available_at <= ?
+                         AND (claimed_until IS NULL OR claimed_until <= ?)
+                       ORDER BY available_at, created_at
+                       LIMIT 1""",
+                    (kind, now_ts, now_ts),
+                ).fetchone()
             if row is None:
                 return None
             conn.execute(
@@ -378,6 +409,55 @@ class ThreadStore:
             return _outbox_from_row(row)
 
         return await _write_transaction(_tx)
+
+    async def latest_thread_id_with_prefix(self, prefix: str) -> str | None:
+        row = await _fetch_one(
+            """SELECT id FROM agent_threads
+               WHERE id LIKE ?
+               ORDER BY created_at DESC, rowid DESC
+               LIMIT 1""",
+            (f"{prefix}%",),
+        )
+        return str(row["id"]) if row is not None else None
+
+    async def discard_pending_outbox_prefix(self, prefix: str) -> int:
+        """Mark undelivered outbox rows of every thread matching the prefix as delivered."""
+
+        def _tx(conn):
+            cur = conn.execute(
+                """UPDATE runtime_outbox
+                   SET delivered_at = COALESCE(delivered_at, ?)
+                   WHERE delivered_at IS NULL AND thread_id LIKE ?""",
+                (_now(), f"{prefix}%"),
+            )
+            return cur.rowcount
+
+        return await _write_transaction(_tx)
+
+    async def discard_pending_outbox(self, thread_id: str) -> int:
+        """Mark every undelivered outbox row of the thread as delivered (stop/restart hygiene)."""
+
+        def _tx(conn):
+            cur = conn.execute(
+                """UPDATE runtime_outbox
+                   SET delivered_at = COALESCE(delivered_at, ?)
+                   WHERE thread_id = ? AND delivered_at IS NULL""",
+                (_now(), thread_id),
+            )
+            return cur.rowcount
+
+        return await _write_transaction(_tx)
+
+    async def list_pending_outbox(self, thread_id: str) -> list[RuntimeOutboxItem]:
+        """Undelivered outbox rows for the thread, regardless of availability."""
+
+        rows = await _fetch_all(
+            """SELECT * FROM runtime_outbox
+               WHERE thread_id = ? AND delivered_at IS NULL
+               ORDER BY available_at, created_at""",
+            (thread_id,),
+        )
+        return [_outbox_from_row(row) for row in rows]
 
     async def ack_attempt_source_outbox(self, attempt_id: str) -> None:
         def _tx(conn):

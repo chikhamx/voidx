@@ -111,15 +111,15 @@ class TestRouteHintToolIdLiteral:
     """RouteHint.tool_id must be one of the Literal values."""
 
     def test_all_tool_ids_are_valid(self):
-        valid = {"read", "git", "manage", "write", "replace", "glob", "grep"}
+        valid = {"read", "git", "manage", "write", "replace", "find", "search"}
         for cmd, expected_id in [
             ("cat file.py", "read"),
             ("git status", "git"),
             ("echo 'x' > f", "manage"),
             ("sed -i '3s/a/b/' f", "replace"),
             ("echo 'x' >> f", "write"),
-            ("find . -type f -name '*.py'", "glob"),
-            ("grep pattern file.py", "grep"),
+            ("find . -type f -name '*.py'", "find"),
+            ("grep pattern file.py", "search"),
         ]:
             h = try_hint(cmd)
             assert h is not None, f"No hint for: {cmd}"
@@ -286,6 +286,8 @@ class TestQuickExclude:
         "cat file | grep pattern",
         "git status && echo done",
         "git status; echo done",
+        "git status 2>&1",
+        "git status > out.txt",
         "cat $HOME/file",
         "cat `find . -name x`",
         "cat $(find . -name x)",

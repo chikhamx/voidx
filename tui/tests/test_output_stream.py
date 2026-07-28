@@ -7,7 +7,7 @@ from rich.console import Console
 from rich.text import Text
 
 from voidx.ui.output.dock import dock
-from voidx.ui.output.dock.formatting import _text_from_line
+from voidx.ui.output.dock.formatting import text_from_line
 from voidx.ui.output.console import StreamingRenderer
 
 

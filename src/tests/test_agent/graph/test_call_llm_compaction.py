@@ -14,7 +14,7 @@ from rich.console import Console
 from voidx.agent.infrastructure.langgraph.runtime.streaming import stream_llm as _stream_llm
 from voidx.agent.infrastructure.langgraph.execution import LangGraphExecution
 from voidx.agent.infrastructure.langgraph.runtime.convergence import is_step_hint_message
-from voidx.agent.runtime_context import RuntimeContextBuilder
+from voidx.agent.application.runtime_context import RuntimeContextBuilder
 from voidx.runtime.task_state import TaskState, TodoRunState
 from voidx.config import Config, ModelConfig
 from voidx.agent.infrastructure.langgraph.runtime.compaction_coordinator import CompactionResult, PreflightCompactionResult
@@ -44,7 +44,7 @@ from tests.test_agent.graph.stream_llm_helpers import (
 
 @pytest.mark.asyncio
 async def test_call_llm_resolves_protocol_for_mimo_provider(tmp_path, monkeypatch):
-    import voidx.agent.infrastructure.langgraph.execution as graph_module
+    import voidx.agent.infrastructure.langgraph.runtime.llm_turn as graph_module
 
     monkeypatch.setattr(graph_module, "StreamingRenderer", FakeRenderer)
 
@@ -69,7 +69,7 @@ async def test_call_llm_resolves_protocol_for_mimo_provider(tmp_path, monkeypatc
 
 @pytest.mark.asyncio
 async def test_call_llm_injects_current_todo_runtime_context(tmp_path, monkeypatch):
-    import voidx.agent.infrastructure.langgraph.execution as graph_module
+    import voidx.agent.infrastructure.langgraph.runtime.llm_turn as graph_module
 
     monkeypatch.setattr(graph_module, "StreamingRenderer", FakeRenderer)
 
@@ -126,7 +126,7 @@ async def test_call_llm_injects_current_todo_runtime_context(tmp_path, monkeypat
 
 @pytest.mark.asyncio
 async def test_call_llm_updates_usage_stats_across_turn_control_calls(tmp_path, monkeypatch):
-    import voidx.agent.infrastructure.langgraph.execution as graph_module
+    import voidx.agent.infrastructure.langgraph.runtime.llm_turn as graph_module
 
     class TurnControlUsageStreamingModel:
         def __init__(self):
@@ -198,7 +198,7 @@ async def test_call_llm_updates_usage_stats_across_turn_control_calls(tmp_path, 
 
 @pytest.mark.asyncio
 async def test_call_llm_fallback_context_estimate_includes_tool_schema(tmp_path, monkeypatch):
-    import voidx.agent.infrastructure.langgraph.execution as graph_module
+    import voidx.agent.infrastructure.langgraph.runtime.llm_turn as graph_module
 
     monkeypatch.setattr(graph_module, "StreamingRenderer", FakeRenderer)
 
@@ -224,7 +224,7 @@ async def test_call_llm_fallback_context_estimate_includes_tool_schema(tmp_path,
 
 @pytest.mark.asyncio
 async def test_call_llm_persists_context_frame_for_session(tmp_path, monkeypatch):
-    import voidx.agent.infrastructure.langgraph.execution as graph_module
+    import voidx.agent.infrastructure.langgraph.runtime.llm_turn as graph_module
 
     monkeypatch.setattr(graph_module, "StreamingRenderer", FakeRenderer)
     session = await create_session(workspace=str(tmp_path))
@@ -326,7 +326,7 @@ def test_inline_compaction_guide_uses_shared_summary_template(tmp_path):
 
 @pytest.mark.asyncio
 async def test_call_llm_overflow_compaction_does_not_send_temporary_summary_message(tmp_path, monkeypatch):
-    import voidx.agent.infrastructure.langgraph.execution as graph_module
+    import voidx.agent.infrastructure.langgraph.runtime.llm_turn as graph_module
 
     monkeypatch.setattr(graph_module, "StreamingRenderer", FakeRenderer)
     graph = LangGraphExecution(
@@ -382,7 +382,7 @@ async def test_call_llm_overflow_compaction_does_not_send_temporary_summary_mess
 
 @pytest.mark.asyncio
 async def test_call_llm_coerces_todo_state_dict_before_compaction_dump(tmp_path, monkeypatch):
-    import voidx.agent.infrastructure.langgraph.execution as graph_module
+    import voidx.agent.infrastructure.langgraph.runtime.llm_turn as graph_module
 
     monkeypatch.setattr(graph_module, "StreamingRenderer", FakeRenderer)
     graph = LangGraphExecution(
@@ -442,7 +442,7 @@ async def test_call_llm_coerces_todo_state_dict_before_compaction_dump(tmp_path,
 
 @pytest.mark.asyncio
 async def test_call_llm_repairs_malformed_tool_call_once(tmp_path, monkeypatch):
-    import voidx.agent.infrastructure.langgraph.execution as graph_module
+    import voidx.agent.infrastructure.langgraph.runtime.llm_turn as graph_module
 
     monkeypatch.setattr(graph_module, "StreamingRenderer", FakeRenderer)
     graph = LangGraphExecution(
@@ -476,7 +476,7 @@ async def test_call_llm_repairs_malformed_tool_call_once(tmp_path, monkeypatch):
 
 @pytest.mark.asyncio
 async def test_call_llm_returns_explicit_error_when_malformed_tool_call_repair_fails(tmp_path, monkeypatch):
-    import voidx.agent.infrastructure.langgraph.execution as graph_module
+    import voidx.agent.infrastructure.langgraph.runtime.llm_turn as graph_module
 
     monkeypatch.setattr(graph_module, "StreamingRenderer", FakeRenderer)
     graph = LangGraphExecution(
@@ -528,7 +528,7 @@ class MalformedThenRepairsAfterCompactionStreamingModel:
 
 @pytest.mark.asyncio
 async def test_call_llm_runs_preflight_compaction_before_second_malformed_retry(tmp_path, monkeypatch):
-    import voidx.agent.infrastructure.langgraph.execution as graph_module
+    import voidx.agent.infrastructure.langgraph.runtime.llm_turn as graph_module
 
     monkeypatch.setattr(graph_module, "StreamingRenderer", FakeRenderer)
     graph = LangGraphExecution(
@@ -603,7 +603,7 @@ class AlwaysMalformedWithCompactionStreamingModel:
 
 @pytest.mark.asyncio
 async def test_call_llm_returns_explicit_error_after_malformed_compaction_retry_fails(tmp_path, monkeypatch):
-    import voidx.agent.infrastructure.langgraph.execution as graph_module
+    import voidx.agent.infrastructure.langgraph.runtime.llm_turn as graph_module
 
     monkeypatch.setattr(graph_module, "StreamingRenderer", FakeRenderer)
     graph = LangGraphExecution(
@@ -659,7 +659,7 @@ async def test_call_llm_returns_explicit_error_after_malformed_compaction_retry_
 @pytest.mark.asyncio
 async def test_classify_llm_error_404_fail_fast(tmp_path, monkeypatch):
     """404 model_not_found → NON_RETRYABLE, should not retry."""
-    import voidx.agent.infrastructure.langgraph.execution as graph_module
+    import voidx.agent.infrastructure.langgraph.runtime.llm_turn as graph_module
     from voidx.agent.infrastructure.langgraph.runtime.core.helpers import _classify_llm_error, LLMErrorKind
 
     monkeypatch.setattr(graph_module, "StreamingRenderer", FakeRenderer)
@@ -767,7 +767,7 @@ async def test_classify_llm_error_unknown(tmp_path, monkeypatch):
 @pytest.mark.asyncio
 async def test_call_llm_non_retryable_404_fail_fast(tmp_path, monkeypatch):
     """A 404 error should fail-fast without retrying."""
-    import voidx.agent.infrastructure.langgraph.execution as graph_module
+    import voidx.agent.infrastructure.langgraph.runtime.llm_turn as graph_module
 
     monkeypatch.setattr(graph_module, "StreamingRenderer", FakeRenderer)
 

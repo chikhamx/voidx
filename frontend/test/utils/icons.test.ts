@@ -1,4 +1,4 @@
-import { iconSvg, createIcon, ICON_NAMES } from "../../src/utils/icons";
+import { iconSvg, ICON_NAMES } from "../../src/utils/icons";
 
 describe("icons", () => {
   it("provides a non-trivial icon set", () => {
@@ -22,11 +22,6 @@ describe("icons", () => {
     expect(svg).toContain('stroke-width="2"');
   });
 
-  it("creates a wrapped icon element", () => {
-    const el = createIcon("sun");
-    expect(el.className).toBe("vx-icon-wrap");
-    expect(el.querySelector("svg.vx-icon")).not.toBeNull();
-  });
 
   it("every icon renders non-empty path content", () => {
     for (const name of ICON_NAMES) {

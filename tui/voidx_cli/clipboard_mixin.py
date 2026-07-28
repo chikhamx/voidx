@@ -3,7 +3,6 @@
 from __future__ import annotations
 
 import subprocess
-import sys
 from pathlib import Path
 
 from voidx.ui.tools.clipboard_image import (
@@ -18,7 +17,7 @@ from voidx.ui.tools.clipboard_text import (
 
 class _ClipboardMixin:
     def paste_clipboard_image(self, *, quiet_no_image: bool = False) -> ClipboardImageResult:
-        result = _paste_clipboard_image(self.status.workspace)
+        result = _paste_clipboard_image_from_system(self.status.workspace)
         if result.ok:
             stem = Path(result.rel_path).stem
             self._insert_text_token(self._register_image_paste(stem, result.size) + " ")
@@ -31,7 +30,7 @@ class _ClipboardMixin:
         self.paste_clipboard_image(quiet_no_image=True)
 
     def paste_clipboard_text(self, *, quiet_no_text: bool = False) -> ClipboardTextResult:
-        result = _read_clipboard_text()
+        result = _read_clipboard_text_from_system()
         if result.ok:
             self._insert_pasted_text(result.text)
         if result.ok or not quiet_no_text:
@@ -67,17 +66,3 @@ class _ClipboardMixin:
             return -1
 
 
-def _paste_clipboard_image(workspace: str) -> ClipboardImageResult:
-    app_module = sys.modules.get("voidx_cli.app")
-    paste = getattr(app_module, "paste_clipboard_image_from_system", None)
-    if callable(paste):
-        return paste(workspace)
-    return _paste_clipboard_image_from_system(workspace)
-
-
-def _read_clipboard_text() -> ClipboardTextResult:
-    app_module = sys.modules.get("voidx_cli.app")
-    paste = getattr(app_module, "paste_clipboard_text_from_system", None)
-    if callable(paste):
-        return paste()
-    return _read_clipboard_text_from_system()

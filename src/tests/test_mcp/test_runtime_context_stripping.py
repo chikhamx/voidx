@@ -2,7 +2,7 @@
 
 from langchain_core.messages import HumanMessage, ToolMessage
 
-from voidx.agent.runtime_context import InteractionMode, RuntimeContextBuilder
+from voidx.agent.application.runtime_context import InteractionMode, RuntimeContextBuilder
 from voidx.config import Config
 from voidx.mcp.context import (
     MCP_TOOL_CONTEXT_MARKER,

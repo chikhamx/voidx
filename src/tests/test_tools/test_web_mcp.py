@@ -179,6 +179,11 @@ async def test_websearch_returns_structured_normalized_results(tmp_path, monkeyp
 
     monkeypatch.setattr(websearch_module, "_search_duckduckgo", fake_search)
 
+    async def fake_bing(*args, **kwargs):
+        return []
+
+    monkeypatch.setattr(websearch_module, "_search_bing", fake_bing)
+
     result = await tool.execute({"query": "voidx docs", "max_results": 5}, ToolContext(workspace=str(tmp_path)))
 
     assert result.metadata["backend"] == "duckduckgo"

@@ -9,6 +9,7 @@ from typing import Literal
 
 from voidx.config.defaults import DEFAULT_MODEL, DEFAULT_PROVIDER
 from voidx.config.models import Config, ModelConfig, Profile, UserProfile
+from voidx.config.ports import model_profile_store
 from voidx.config.settings_agent import SettingsAgentMixin
 from voidx.config.settings_api_keys import SettingsApiKeyMixin
 from voidx.config.settings_code_ide import SettingsCodeIdeMixin
@@ -262,17 +263,7 @@ class Settings(
     # ── profiles API ─────────────────────────────────────────────────────
 
     async def list_profiles(self) -> list[Profile]:
-        from voidx.memory.service import list_model_profiles_async
-
-        return [
-            Profile(
-                name=row.name,
-                api_key=row.api_key,
-                base_url=row.base_url,
-                protocol=row.protocol,
-            )
-            for row in await list_model_profiles_async()
-        ]
+        return await model_profile_store().list()
 
     async def resolve_profile(self, name: str = "") -> Profile | None:
         if not name:
@@ -285,22 +276,11 @@ class Settings(
         return profiles[0] if profiles else None
 
     async def save_profile(self, profile: Profile, *, scope: ModelProfileScope = "local") -> Path:
-        from voidx.memory.service import ModelProfileRow, save_model_profile_async
-
-        await save_model_profile_async(ModelProfileRow(
-            name=profile.name,
-            provider=profile.provider,
-            model=profile.model,
-            api_key=profile.api_key,
-            base_url=profile.base_url,
-            protocol=profile.protocol,
-        ))
+        await model_profile_store().save(profile)
         return self.set_current_profile(profile.name, scope=scope)
 
     async def delete_profile(self, name: str) -> Path:
-        from voidx.memory.service import delete_model_profile_async
-
-        await delete_model_profile_async(name)
+        await model_profile_store().delete(name)
         if self._current_profile_name() == name:
             profiles = await self.list_profiles()
             next_profile = profiles[0] if profiles else None
@@ -413,21 +393,9 @@ class Settings(
         )
 
     async def _get_profile(self, name: str) -> Profile | None:
-        from voidx.memory.service import get_model_profile_async
-
-        row = await get_model_profile_async(name)
-        if row is None:
-            return None
-        return Profile(
-            name=row.name,
-            api_key=row.api_key,
-            base_url=row.base_url,
-            protocol=row.protocol,
-        )
+        return await model_profile_store().get(name)
 
     async def _migrate_legacy_profiles(self) -> None:
-        from voidx.memory.service import ModelProfileRow, save_model_profile_async
-
         profiles_data = self._data.get("profiles", {})
         if not isinstance(profiles_data, dict):
             profiles_data = {}
@@ -453,14 +421,7 @@ class Settings(
                 base_url=base_url,
                 protocol=protocol,
             )
-            await save_model_profile_async(ModelProfileRow(
-                name=profile.name,
-                provider=profile.provider,
-                model=profile.model,
-                api_key=profile.api_key,
-                base_url=profile.base_url,
-                protocol=profile.protocol,
-            ))
+            await model_profile_store().save(profile)
             first_imported = first_imported or profile.name
             changed = True
 

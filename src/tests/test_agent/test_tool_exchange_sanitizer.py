@@ -4,7 +4,7 @@ from pathlib import Path
 
 from langchain_core.messages import AIMessage, HumanMessage, ToolMessage
 
-from voidx.agent.tool_exchange_sanitizer import sanitize_failed_tool_exchanges
+from voidx.agent.application.tool_exchange_sanitizer import sanitize_failed_tool_exchanges
 
 
 def test_sanitize_failed_tool_exchanges_removes_failed_exchange_and_preserves_success_sibling():

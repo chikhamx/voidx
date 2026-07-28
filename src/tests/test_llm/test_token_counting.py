@@ -222,7 +222,7 @@ class TestSelectTokenCounting:
             content="I will call a tool",
             tool_calls=[
                 {"name": "read", "args": {"file_path": "/very/long/path/to/some/file.py"}, "id": "tc_1"},
-                {"name": "grep", "args": {"pattern": "compaction", "path": "/src"}, "id": "tc_2"},
+                {"name": "search", "args": {"pattern": "compaction", "path": "/src"}, "id": "tc_2"},
             ],
         )
         msg_no_tc = HumanMessage(content="Simple message", id="2")
@@ -300,7 +300,7 @@ class TestSelectTokenCounting:
                 content=f"Assistant reply {i} " * 20,
                 tool_calls=[
                     {"name": "read", "args": {"file_path": f"/very/long/path/to/module_{i}.py"}, "id": f"tc_{i}"},
-                    {"name": "grep", "args": {"pattern": "some_pattern", "path": "/src/very/deep/directory"}, "id": f"tc2_{i}"},
+                    {"name": "search", "args": {"pattern": "some_pattern", "path": "/src/very/deep/directory"}, "id": f"tc2_{i}"},
                 ],
             )
             messages.append(ai)

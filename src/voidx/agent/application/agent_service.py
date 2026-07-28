@@ -45,6 +45,11 @@ def _ui_command_kind(command: Any) -> str:
     return str(getattr(command, "kind", "") or "")
 
 
+# Commands that render their own turn bubble (via display_text) when they run a
+# turn; the generic pre-dispatch echo would duplicate that bubble.
+_SELF_DISPLAYING_COMMANDS = frozenset({"/loop", "/init"})
+
+
 class AgentService:
     """Application-level startup and interactive run-loop service."""
 
@@ -533,7 +538,8 @@ class AgentService:
             hide_command_output = getattr(app, "hide_command_output", None)
             if is_quiet and callable(hide_command_output):
                 hide_command_output()
-            if not is_quiet:
+            self_displays = user_input.split(maxsplit=1)[0] in _SELF_DISPLAYING_COMMANDS
+            if not is_quiet and not self_displays:
                 self._execution.ui.dock.start_turn(user_input)
             dispatched = await self._dispatch_slash(user_input)
             if not dispatched:

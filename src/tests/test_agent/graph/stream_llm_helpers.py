@@ -12,7 +12,7 @@ from rich.console import Console
 from voidx.agent.infrastructure.langgraph.runtime.streaming import stream_llm as _stream_llm
 from voidx.agent.infrastructure.langgraph.execution import LangGraphExecution
 from voidx.agent.infrastructure.langgraph.runtime.convergence import is_step_hint_message
-from voidx.agent.runtime_context import RuntimeContextBuilder
+from voidx.agent.application.runtime_context import RuntimeContextBuilder
 from voidx.runtime.task_state import TaskState, TodoRunState
 from voidx.config import Config, ModelConfig
 from voidx.llm.compaction import CompactionSelection

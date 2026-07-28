@@ -1,4 +1,5 @@
 import { beforeEach } from "vitest";
+import { initStateDom } from "../src/services/state";
 
 // jsdom 环境下 localStorage 可能是无方法的占位对象，补齐内存版 Storage
 (function ensureLocalStorage() {
@@ -209,7 +210,10 @@ document.body.innerHTML = `
   </main>
 `;
 
+initStateDom();
+
 beforeEach(() => {
+  initStateDom();
   const transcript = document.querySelector("#transcript");
   if (transcript) transcript.innerHTML = "";
   const todo = document.querySelector("#todo-panel");

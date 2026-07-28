@@ -1,6 +1,6 @@
 """Tests for message trimming pure functions (rules 1 & 2 helpers)."""
 
-from voidx.agent.message_trimming import (
+from voidx.agent.application.message_trimming import (
     parse_read_line_range,
     parse_diff_hunk_ranges,
     merge_ranges,

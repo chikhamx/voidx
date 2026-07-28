@@ -14,8 +14,8 @@ from rich.markup import escape
 from voidx.ui.output.dock.formatting import (
     ANSI_LINE_PREFIX,
     _clean,
-    _PASTED_RE,
-    _text_from_line,
+    strip_pasted_wrapper,
+    text_from_line,
 )
 from voidx.ui.output.dock.nodes import DockNodeMixin
 from voidx.ui.output.dock.stream import DockStreamMixin
@@ -233,7 +233,7 @@ class BottomInputDock(DockStreamMixin, DockStatusMixin, DockNodeMixin):
         if self._tree.root.children:
             self._append_root_spacer()
         preview = _clean(text)
-        preview = _PASTED_RE.sub(r"\1", preview)
+        preview = strip_pasted_wrapper(preview)
         header, body_lines = self._render_turn_text(preview)
         header = f"[bold white]❯[/] {header}" if header else "[bold white]❯[/]"
         self._current_turn = self._tree.new_node(
@@ -284,7 +284,7 @@ class BottomInputDock(DockStreamMixin, DockStatusMixin, DockNodeMixin):
         clean = _clean(text)
         if not clean.strip():
             return None
-        preview = _PASTED_RE.sub(r"\1", clean)
+        preview = strip_pasted_wrapper(clean)
         header, body_lines = self._render_turn_text(preview)
         header = f"[bold white]❯[/] {header}" if header else "[bold white]❯[/]"
         node = self._new_settled_node(
@@ -380,7 +380,7 @@ class BottomInputDock(DockStreamMixin, DockStatusMixin, DockNodeMixin):
         remaining_limit = max(body_limit - startup_count, 1)
         scrollable_lines = lines[startup_count:]
         visible = startup_lines + scrollable_lines[-remaining_limit:]
-        body = Group(*[_text_from_line(line) for line in visible]) if visible else Text("")
+        body = Group(*[text_from_line(line) for line in visible]) if visible else Text("")
 
         border = "─" * width
         input_box = Text.assemble(

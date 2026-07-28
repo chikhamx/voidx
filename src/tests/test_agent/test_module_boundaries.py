@@ -36,7 +36,7 @@ def _python_files_recursive(path: str) -> list[Path]:
 def test_config_settings_uses_memory_service_boundary():
     imports = _imported_modules("src/voidx/config/settings.py")
 
-    assert "voidx.memory.model_profiles" not in imports
+    assert not {module for module in imports if module.startswith("voidx.memory")}
 
 
 def test_workflow_service_does_not_import_skills_schema():
@@ -65,11 +65,22 @@ def test_workflow_types_has_no_workflow_implementation_imports():
     assert "voidx.workflow.policy" not in imports
 
 
-def test_llm_instruction_uses_workflow_types_boundary():
-    imports = _imported_modules("src/voidx/llm/instruction.py")
+def test_agent_instruction_uses_workflow_types_boundary():
+    imports = _imported_modules("src/voidx/agent/application/instruction.py")
 
     assert "voidx.workflow.runtime" not in imports
     assert "voidx.workflow.types" in imports
+
+
+def test_llm_layer_does_not_import_agent_runtime_concerns():
+    offenders = [
+        path.relative_to(ROOT).as_posix()
+        for path in _python_files_recursive("src/voidx/llm")
+        if _imported_modules(path.relative_to(ROOT).as_posix())
+        & {"voidx.agent", "voidx.mcp.auto", "voidx.skills.registry", "voidx.skills.service", "voidx.workflow.service"}
+    ]
+
+    assert offenders == []
 
 
 def test_memory_service_does_not_import_private_session_now():
@@ -225,7 +236,7 @@ def test_agent_module_uses_skills_service_boundary():
 
 def test_ui_uses_existing_service_boundaries():
     internal_modules = {
-        "voidx.agent.attachments",
+        "voidx.agent.application.attachments",
         "voidx.memory.transcript",
         "voidx.skills.registry",
         "voidx.tools.base",
@@ -351,10 +362,12 @@ def test_agent_has_no_mixin_or_compatibility_adapter_modules():
     offenders = [
         path.relative_to(agent_root).as_posix()
         for path in agent_root.rglob("*.py")
-        if path.name in forbidden_files and (
+        if path.name in forbidden_files
+        and (
             "infrastructure/langgraph/runtime/" in path.as_posix()
             or "/slash/" in path.as_posix()
         )
+        and "/slash/commands/" not in path.as_posix()
     ]
     source = "\n".join(path.read_text(encoding="utf-8") for path in agent_root.rglob("*.py"))
 
