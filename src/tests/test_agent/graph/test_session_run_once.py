@@ -14,23 +14,23 @@ from langgraph.graph.message import REMOVE_ALL_MESSAGES
 
 import voidx.memory.store as store
 
-from voidx.agent.agents import (
+from voidx.agent.application.agents import (
     AgentDef,
     child_agent_descriptions_for_llm,
     get_agent,
     get_visible_agents,
 )
-from voidx.agent.prompts import BASE_SYSTEM, PERSONA_MODEL, persona_prompt
+from voidx.agent.application.prompts import BASE_SYSTEM, PERSONA_MODEL, persona_prompt
 from voidx.agent.infrastructure.langgraph.runtime.convergence import is_step_hint_message
 from voidx.agent.infrastructure.langgraph.runtime.runtime import current_parent_tool_call_id
 from voidx.agent.infrastructure.langgraph.runtime.runtime_guards import RuntimeGuardState, WallClockGuardState
 from voidx.agent.infrastructure.langgraph.execution import LangGraphExecution
 from voidx.agent.infrastructure.langgraph.execution import AGENT_RESULT_PREVIEW_CHARS, _agent_result_preview
-from voidx.agent.message_rows import RowMessageCacheEntry
-from voidx.agent.runtime_context import InteractionMode, RuntimeContextBuilder
+from voidx.agent.infrastructure.message_rows import RowMessageCacheEntry
+from voidx.agent.application.runtime_context import InteractionMode, RuntimeContextBuilder
 from voidx.config import Config, ParallelSubagentsConfig, Settings, UserProfile
 from voidx.llm.compaction import CompactionSelection
-from voidx.llm.instruction import InstructionService, WorkflowRuntimeContext
+from voidx.agent.application.instruction import InstructionService, WorkflowRuntimeContext
 from voidx.memory.session import (
     MessageRow,
     SessionInfo,
@@ -145,7 +145,7 @@ async def test_run_turn_persists_and_restores_transcript_snapshot(tmp_path):
         graph = LangGraphExecution(Config(workspace=str(tmp_path)), api_key=None, session=session)
 
         class FakeGraph:
-            async def ainvoke(self, initial, _config):
+            async def astream(self, initial, _config, *, stream_mode="values"):
                 from voidx.ui.output.dock import dock
 
                 dock.append_thought("checked context", elapsed=1.0)
@@ -161,7 +161,7 @@ async def test_run_turn_persists_and_restores_transcript_snapshot(tmp_path):
                     tool_call_id="call_read",
                     collapsed=False,
                 )
-                return {"messages": list(initial["messages"]) + [AIMessage(content="new answer")]}
+                yield {"messages": list(initial["messages"]) + [AIMessage(content="new answer")]}
 
         graph.graph = FakeGraph()
 
@@ -212,8 +212,8 @@ async def test_run_turn_emits_turn_completed_event(tmp_path):
         graph = LangGraphExecution(Config(workspace=str(tmp_path)), api_key=None, session=session)
 
         class FakeGraph:
-            async def ainvoke(self, initial, _config):
-                return {"messages": list(initial["messages"]) + [AIMessage(content="done")]}
+            async def astream(self, initial, _config, *, stream_mode="values"):
+                yield {"messages": list(initial["messages"]) + [AIMessage(content="done")]}
 
         graph.graph = FakeGraph()
 
@@ -252,7 +252,9 @@ async def test_run_turn_emits_turn_failed_event_on_exception(tmp_path):
         graph = LangGraphExecution(Config(workspace=str(tmp_path)), api_key=None, session=session)
 
         class FakeGraph:
-            async def ainvoke(self, initial, _config):
+            async def astream(self, initial, _config, *, stream_mode="values"):
+                if False:
+                    yield
                 raise RuntimeError("provider failed")
 
         graph.graph = FakeGraph()
@@ -286,14 +288,14 @@ async def test_run_turn_commits_event_todo_at_turn_end(tmp_path):
         graph = LangGraphExecution(Config(workspace=str(tmp_path)), api_key=None, session=session)
 
         class FakeGraph:
-            async def ainvoke(self, initial, _config):
+            async def astream(self, initial, _config, *, stream_mode="values"):
                 from voidx.ui.output.events import TodoItemPayload, TodoUpdated, ui_events
 
                 await ui_events.emit(TodoUpdated(
                     items=[TodoItemPayload(id="review", content="finish review", status="done")],
                     summary="1/1 done · 0 active · 0 pending",
                 ))
-                return {"messages": list(initial["messages"]) + [AIMessage(content="done")]}
+                yield {"messages": list(initial["messages"]) + [AIMessage(content="done")]}
 
         graph.graph = FakeGraph()
 
@@ -328,8 +330,8 @@ async def test_run_turn_persists_todo_replay_rows(tmp_path):
         graph = LangGraphExecution(Config(workspace=str(tmp_path)), api_key=None, session=session)
 
         class FakeGraph:
-            async def ainvoke(self, initial, _config):
-                return {
+            async def astream(self, initial, _config, *, stream_mode="values"):
+                yield {
                     "messages": [
                         *list(initial["messages"]),
                         AIMessage(
@@ -376,8 +378,8 @@ async def test_run_turn_persists_user_decision_tool_replay_rows(tmp_path):
         graph = LangGraphExecution(Config(workspace=str(tmp_path)), api_key=None, session=session)
 
         class FakeGraph:
-            async def ainvoke(self, initial, _config):
-                return {
+            async def astream(self, initial, _config, *, stream_mode="values"):
+                yield {
                     "messages": [
                         *list(initial["messages"]),
                         AIMessage(

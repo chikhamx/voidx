@@ -16,7 +16,7 @@ from voidx.agent.slash import SlashHandler
 from voidx.agent.infrastructure.langgraph.execution import LangGraphExecution
 from voidx.agent.application.agent_service import AgentService
 from voidx.agent.infrastructure.langgraph.execution import _sanitize_generated_title
-from voidx.agent.runtime_context import InteractionMode, TaskIntent
+from voidx.agent.application.runtime_context import InteractionMode, TaskIntent
 from voidx.runtime.task_state import (
     GoalResolution,
     GoalSpec,
@@ -62,8 +62,8 @@ async def test_first_turn_without_goal_uses_temporary_session_title(tmp_path):
             )
 
     class FakeGraph:
-        async def ainvoke(self, initial, _config):
-            return {"messages": list(initial["messages"]) + [AIMessage(content="ok")]}
+        async def astream(self, initial, _config, *, stream_mode="values"):
+            yield {"messages": list(initial["messages"]) + [AIMessage(content="ok")]}
 
     graph.model = StructuredGoalModel()
     graph.graph = FakeGraph()
@@ -100,9 +100,9 @@ async def test_run_turn_uses_general_fallback_when_structured_resolver_fails(tmp
             raise AssertionError("resolver should fail before invoking")
 
     class FakeGraph:
-        async def ainvoke(self, initial, _config):
+        async def astream(self, initial, _config, *, stream_mode="values"):
             captured["initial"] = initial
-            return {"messages": list(initial["messages"]) + [AIMessage(content="ok")]}
+            yield {"messages": list(initial["messages"]) + [AIMessage(content="ok")]}
 
     graph.model = StructuredGoalModel()
     graph.graph = FakeGraph()
@@ -149,9 +149,9 @@ async def test_run_turn_does_not_preadvance_workflow_without_resolver_join(tmp_p
             raise AssertionError("resolver should fail before invoking")
 
     class FakeGraph:
-        async def ainvoke(self, initial, _config):
+        async def astream(self, initial, _config, *, stream_mode="values"):
             captured["initial"] = initial
-            return {"messages": list(initial["messages"]) + [AIMessage(content="ok")], "task_state": initial["task_state"]}
+            yield {"messages": list(initial["messages"]) + [AIMessage(content="ok")], "task_state": initial["task_state"]}
 
     graph.model = StructuredGoalModel()
     graph.graph = FakeGraph()

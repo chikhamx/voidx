@@ -16,9 +16,9 @@ from voidx.agent.slash import SlashHandler
 from voidx.agent.infrastructure.langgraph.execution import LangGraphExecution
 from voidx.agent.application.agent_service import AgentService
 from voidx.agent.infrastructure.langgraph.execution import _sanitize_generated_title
-from voidx.agent.runtime_context import InteractionMode, TaskIntent
+from voidx.agent.application.runtime_context import InteractionMode, TaskIntent
 from voidx.runtime.task_state import GoalResolution, IntentResolution, PlanResolution, GoalSpec, TaskState
-from voidx.agent.goal_resolver import ResolverGoal
+from voidx.agent.application.goal_resolver import ResolverGoal
 from voidx.runtime.task_state import GoalSpec, TaskState
 from voidx.config import Config
 from voidx.llm.usage import UsageStats
@@ -72,9 +72,9 @@ async def test_run_turn_clears_stale_completed_workflow_when_resolver_has_no_joi
             }
 
     class FakeGraph:
-        async def ainvoke(self, initial, _config):
+        async def astream(self, initial, _config, *, stream_mode="values"):
             captured["initial"] = initial
-            return {"messages": list(initial["messages"]) + [AIMessage(content="ok")], "task_state": initial["task_state"]}
+            yield {"messages": list(initial["messages"]) + [AIMessage(content="ok")], "task_state": initial["task_state"]}
 
     graph.model = StructuredGoalModel()
     graph.graph = FakeGraph()
@@ -118,9 +118,9 @@ async def test_run_turn_preadvances_workflow_from_resolver_workflow_start(tmp_pa
         )
 
     class FakeGraph:
-        async def ainvoke(self, initial, _config):
+        async def astream(self, initial, _config, *, stream_mode="values"):
             captured["initial"] = initial
-            return {"messages": list(initial["messages"]) + [AIMessage(content="ok")], "task_state": initial["task_state"]}
+            yield {"messages": list(initial["messages"]) + [AIMessage(content="ok")], "task_state": initial["task_state"]}
 
     graph.graph = FakeGraph()
     graph._interaction_mode = InteractionMode.GOAL

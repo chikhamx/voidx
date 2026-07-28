@@ -7,7 +7,7 @@ from pathlib import Path
 import pytest
 from langchain_core.messages import AIMessage, HumanMessage, SystemMessage, ToolMessage
 
-from voidx.agent.goal_resolver import ResolverGoal, resolve_goal_for_turn
+from voidx.agent.application.goal_resolver import ResolverGoal, resolve_goal_for_turn
 from voidx.agent.infrastructure.langgraph.execution import LangGraphExecution
 from voidx.agent.infrastructure.langgraph.runtime.turn_runner import _turn_exchange_from_final_messages
 from voidx.runtime.task_state import (
@@ -104,9 +104,9 @@ async def test_run_turn_auto_mode_skips_goal_resolver_and_initializes_turn_state
         captured_initial: dict = {}
 
         class FakeGraph:
-            async def ainvoke(self, initial, _config):
+            async def astream(self, initial, _config, *, stream_mode="values"):
                 captured_initial.update(initial)
-                return {"messages": list(initial["messages"]) + [AIMessage(content="ok")], "task_state": initial["task_state"]}
+                yield {"messages": list(initial["messages"]) + [AIMessage(content="ok")], "task_state": initial["task_state"]}
 
         graph.graph = FakeGraph()
 

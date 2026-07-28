@@ -17,7 +17,7 @@ from voidx.agent.infrastructure.langgraph.runtime.compaction_coordinator import 
 from voidx.agent.application.coding_service import CODING_PROFILE, CodingService
 from voidx.agent.application.agent_service import AgentService
 from voidx.agent.infrastructure.langgraph.execution import _sanitize_generated_title
-from voidx.agent.runtime_context import InteractionMode, TaskIntent
+from voidx.agent.application.runtime_context import InteractionMode, TaskIntent
 from voidx.runtime.task_state import (
     GoalResolution,
     GoalSpec,
@@ -627,7 +627,7 @@ async def test_resume_restores_structured_runtime_state(tmp_path):
 
 
 @pytest.mark.asyncio
-async def test_run_turn_cancel_deletes_pending_user_message(tmp_path):
+async def test_run_turn_cancel_preserves_pending_user_message(tmp_path):
     session = await create_session(
         workspace=str(tmp_path),
         provider="mimo",
@@ -650,7 +650,9 @@ async def test_run_turn_cancel_deletes_pending_user_message(tmp_path):
 
     started = asyncio.Event()
 
-    async def fake_ainvoke(initial, _config):
+    async def fake_astream(initial, _config, *, stream_mode="values"):
+        if False:
+            yield
         started.set()
         try:
             await asyncio.Future()
@@ -659,7 +661,7 @@ async def test_run_turn_cancel_deletes_pending_user_message(tmp_path):
 
     execution._maybe_compact = MethodType(fake_maybe_compact, execution)
     execution._preflight_compact_if_needed = MethodType(fake_preflight_compact, execution)
-    execution.graph = SimpleNamespace(ainvoke=fake_ainvoke)
+    execution.graph = SimpleNamespace(astream=fake_astream)
     execution._compaction = SimpleNamespace(prune=lambda _messages: None)
 
     test_dock = BottomInputDock()
@@ -681,7 +683,9 @@ async def test_run_turn_cancel_deletes_pending_user_message(tmp_path):
             await task
 
         messages = await load_messages(session.id)
-        assert messages == []
+        assert len(messages) == 1
+        assert messages[0].role == "user"
+        assert messages[0].content == "hello world"
     finally:
         test_dock.deactivate()
         test_dock.reset()

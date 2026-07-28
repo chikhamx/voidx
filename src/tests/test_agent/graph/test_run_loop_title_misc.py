@@ -16,8 +16,8 @@ from voidx.agent.slash import SlashHandler
 from voidx.agent.infrastructure.langgraph.execution import LangGraphExecution
 from voidx.agent.application.agent_service import AgentService
 from voidx.agent.infrastructure.langgraph.execution import _sanitize_generated_title
-from voidx.agent.runtime_context import InteractionMode, TaskIntent
-from voidx.agent.goal_resolver import ResolverGoal
+from voidx.agent.application.runtime_context import InteractionMode, TaskIntent
+from voidx.agent.application.goal_resolver import ResolverGoal
 from voidx.runtime.task_state import (
     GoalResolution,
     GoalSpec,
@@ -54,8 +54,8 @@ async def test_run_turn_keeps_default_title_when_resolver_falls_back_without_goa
             raise RuntimeError("resolver failed")
 
     class FakeGraph:
-        async def ainvoke(self, initial, _config):
-            return {"messages": list(initial["messages"]) + [AIMessage(content="ok")], "task_state": initial["task_state"]}
+        async def astream(self, initial, _config, *, stream_mode="values"):
+            yield {"messages": list(initial["messages"]) + [AIMessage(content="ok")], "task_state": initial["task_state"]}
 
     graph.model = FailingResolverModel()
     graph.graph = FakeGraph()
@@ -85,8 +85,8 @@ async def test_smart_title_generation_failure_keeps_temporary_title(tmp_path, mo
         )
 
     class FakeGraph:
-        async def ainvoke(self, initial, _config):
-            return {"messages": list(initial["messages"]) + [AIMessage(content="ok")]}
+        async def astream(self, initial, _config, *, stream_mode="values"):
+            yield {"messages": list(initial["messages"]) + [AIMessage(content="ok")]}
 
     graph.graph = FakeGraph()
     graph._interaction_mode = InteractionMode.GOAL

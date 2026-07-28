@@ -14,24 +14,24 @@ from langgraph.graph.message import REMOVE_ALL_MESSAGES
 import voidx.memory.store as store
 from voidx.agent.domain.turn_context import TurnExecutionContext
 
-from voidx.agent.agents import (
+from voidx.agent.application.agents import (
     AgentDef,
     child_agent_descriptions_for_llm,
     get_agent,
     get_visible_agents,
 )
-from voidx.agent.prompts import BASE_SYSTEM, PERSONA_MODEL, persona_prompt
+from voidx.agent.application.prompts import BASE_SYSTEM, PERSONA_MODEL, persona_prompt
 from voidx.agent.infrastructure.langgraph.runtime.convergence import is_step_hint_message
 from voidx.agent.infrastructure.langgraph.runtime.runtime import current_parent_tool_call_id
 from voidx.agent.infrastructure.langgraph.runtime.runtime_guards import RuntimeGuardState, WallClockGuardState
 from voidx.agent.infrastructure.langgraph.execution import LangGraphExecution
 from voidx.agent.infrastructure.langgraph.execution import AGENT_RESULT_PREVIEW_CHARS, _agent_result_preview
-from voidx.agent.message_rows import RowMessageCacheEntry
-from voidx.agent.runtime_context import InteractionMode, RuntimeContextBuilder
+from voidx.agent.infrastructure.message_rows import RowMessageCacheEntry
+from voidx.agent.application.runtime_context import InteractionMode, RuntimeContextBuilder
 from voidx.config import Config, ParallelSubagentsConfig, Settings, UserProfile
 from voidx.agent.domain.profile import RuntimeProfile
 from voidx.llm.compaction import CompactionSelection
-from voidx.llm.instruction import InstructionService, WorkflowRuntimeContext
+from voidx.agent.application.instruction import InstructionService, WorkflowRuntimeContext
 from voidx.memory.session import (
     MessageRow,
     SessionInfo,
@@ -151,8 +151,8 @@ async def test_session_persistence_saves_only_new_ai_and_tool_messages(tmp_path)
         graph = LangGraphExecution(Config(workspace=str(tmp_path)), api_key=None, session=session)
 
         class FakeGraph:
-            async def ainvoke(self, initial, _config):
-                return {"messages": list(initial["messages"]) + [AIMessage(content="new answer")]}
+            async def astream(self, initial, _config, *, stream_mode="values"):
+                yield {"messages": list(initial["messages"]) + [AIMessage(content="new answer")]}
 
         graph.graph = FakeGraph()
 
@@ -177,6 +177,81 @@ async def test_session_persistence_saves_only_new_ai_and_tool_messages(tmp_path)
 
 
 @pytest.mark.asyncio
+async def test_persists_partial_messages_when_graph_raises_mid_turn(tmp_path):
+    """Graph 执行中途抛异常时，已生成的 AIMessage 应已落盘。"""
+    session = await create_session(workspace=str(tmp_path))
+    try:
+        graph = LangGraphExecution(Config(workspace=str(tmp_path)), api_key=None, session=session)
+
+        class FakeGraphRaising:
+            async def astream(self, initial, _config, *, stream_mode="values"):
+                yield {"messages": list(initial["messages"]) + [AIMessage(content="partial answer")]}
+                raise RuntimeError("boom")
+
+        graph.graph = FakeGraphRaising()
+
+        test_dock = BottomInputDock()
+        set_dock(test_dock)
+        test_dock.begin_capture()
+        try:
+            with pytest.raises(RuntimeError, match="boom"):
+                await graph.run_turn(
+                    "question",
+                    context=TurnExecutionContext(thread_id=session.id, session_id=session.id),
+                )
+        finally:
+            test_dock.deactivate()
+            test_dock.reset()
+            set_dock(None)
+
+        rows = await load_messages(session.id)
+        assistant_contents = [row.content for row in rows if row.role == "assistant"]
+        assert "partial answer" in assistant_contents
+        user_contents = [row.content for row in rows if row.role == "user"]
+        assert "question" in user_contents
+    finally:
+        await delete_session(session.id)
+
+
+@pytest.mark.asyncio
+async def test_persists_partial_messages_on_keyboard_interrupt(tmp_path):
+    """Ctrl+C 中断时，用户消息和已生成的 assistant 消息都应保留。"""
+    session = await create_session(workspace=str(tmp_path))
+    try:
+        graph = LangGraphExecution(Config(workspace=str(tmp_path)), api_key=None, session=session)
+
+        class FakeGraphInterrupting:
+            async def astream(self, initial, _config, *, stream_mode="values"):
+                yield {"messages": list(initial["messages"]) + [AIMessage(content="partial answer")]}
+                raise KeyboardInterrupt()
+
+        graph.graph = FakeGraphInterrupting()
+
+        test_dock = BottomInputDock()
+        set_dock(test_dock)
+        test_dock.begin_capture()
+        try:
+            with pytest.raises(KeyboardInterrupt):
+                await graph.run_turn(
+                    "question",
+                    context=TurnExecutionContext(thread_id=session.id, session_id=session.id),
+                )
+        finally:
+            test_dock.deactivate()
+            test_dock.reset()
+            set_dock(None)
+
+        rows = await load_messages(session.id)
+        assistant_contents = [row.content for row in rows if row.role == "assistant"]
+        assert "partial answer" in assistant_contents
+        user_contents = [row.content for row in rows if row.role == "user"]
+        assert "question" in user_contents
+    finally:
+        await delete_session(session.id)
+
+
+
+@pytest.mark.asyncio
 async def test_run_turn_uses_execution_context_session_id_for_persistence(tmp_path):
     from voidx.agent.domain.turn_context import TurnExecutionContext
 
@@ -186,8 +261,8 @@ async def test_run_turn_uses_execution_context_session_id_for_persistence(tmp_pa
         graph = LangGraphExecution(Config(workspace=str(tmp_path)), api_key=None, session=active)
 
         class FakeGraph:
-            async def ainvoke(self, initial, _config):
-                return {"messages": list(initial["messages"]) + [AIMessage(content="target answer")]}
+            async def astream(self, initial, _config, *, stream_mode="values"):
+                yield {"messages": list(initial["messages"]) + [AIMessage(content="target answer")]}
 
         graph.graph = FakeGraph()
 
@@ -216,7 +291,7 @@ async def test_run_turn_uses_execution_context_session_id_for_persistence(tmp_pa
 
 @pytest.mark.asyncio
 async def test_run_turn_loads_execution_context_runtime_state(tmp_path):
-    from voidx.agent.runtime_context import InteractionMode
+    from voidx.agent.application.runtime_context import InteractionMode
     from voidx.memory.runtime_state import RuntimeStateSnapshot, save_runtime_state
     from voidx.agent.domain.turn_context import TurnExecutionContext
 
@@ -233,11 +308,11 @@ async def test_run_turn_loads_execution_context_runtime_state(tmp_path):
         captured: dict[str, str] = {}
 
         class FakeGraph:
-            async def ainvoke(self, initial, _config):
+            async def astream(self, initial, _config, *, stream_mode="values"):
                 state = TaskState.model_validate(initial["task_state"])
                 captured["goal"] = state.current_goal.desc if state.current_goal else ""
                 captured["interaction_mode"] = initial["interaction_mode"]
-                return {"messages": list(initial["messages"]) + [AIMessage(content="target answer")], "task_state": initial["task_state"]}
+                yield {"messages": list(initial["messages"]) + [AIMessage(content="target answer")], "task_state": initial["task_state"]}
 
         graph.graph = FakeGraph()
 
@@ -266,7 +341,7 @@ async def test_run_turn_loads_execution_context_runtime_state(tmp_path):
 
 @pytest.mark.asyncio
 async def test_run_turn_model_enabled_first_turn_syncs_default_task_state(tmp_path):
-    from voidx.agent.runtime_context import InteractionMode
+    from voidx.agent.application.runtime_context import InteractionMode
 
     graph = LangGraphExecution(Config(workspace=str(tmp_path)), api_key="test", session=None)
     graph._interaction_mode = InteractionMode.GOAL
@@ -275,10 +350,10 @@ async def test_run_turn_model_enabled_first_turn_syncs_default_task_state(tmp_pa
     seen: list[str | None] = []
 
     class FakeGraph:
-        async def ainvoke(self, initial, _config):
+        async def astream(self, initial, _config, *, stream_mode="values"):
             ready.set()
             await asyncio.wait_for(proceed.wait(), timeout=1)
-            return {"messages": list(initial["messages"]) + [AIMessage(content="first answer")], "task_state": initial["task_state"]}
+            yield {"messages": list(initial["messages"]) + [AIMessage(content="first answer")], "task_state": initial["task_state"]}
 
     async def external_reader():
         await asyncio.wait_for(ready.wait(), timeout=1)
@@ -311,7 +386,7 @@ async def test_run_turn_model_enabled_first_turn_syncs_default_task_state(tmp_pa
 
 @pytest.mark.asyncio
 async def test_run_turn_model_enabled_borrowed_context_does_not_leak_task_state(tmp_path):
-    from voidx.agent.runtime_context import InteractionMode
+    from voidx.agent.application.runtime_context import InteractionMode
     from voidx.memory.runtime_state import RuntimeStateSnapshot, load_runtime_state, save_runtime_state
     from voidx.agent.domain.turn_context import TurnExecutionContext
 
@@ -328,12 +403,12 @@ async def test_run_turn_model_enabled_borrowed_context_does_not_leak_task_state(
         captured: dict[str, str] = {}
 
         class FakeGraph:
-            async def ainvoke(self, initial, _config):
+            async def astream(self, initial, _config, *, stream_mode="values"):
                 state = TaskState.model_validate(initial["task_state"])
                 captured["goal"] = state.current_goal.desc if state.current_goal else ""
                 captured["interaction_mode"] = initial["interaction_mode"]
                 updated_state = state.model_copy(update={"current_goal": GoalSpec(desc="target mutated goal")})
-                return {
+                yield {
                     "messages": list(initial["messages"]) + [AIMessage(content="target answer")],
                     "task_state": updated_state.model_dump(mode="json"),
                 }
@@ -370,7 +445,7 @@ async def test_run_turn_model_enabled_borrowed_context_does_not_leak_task_state(
         await delete_session(target.id)
 @pytest.mark.asyncio
 async def test_run_turn_isolates_concurrent_execution_context_state(tmp_path):
-    from voidx.agent.runtime_context import InteractionMode
+    from voidx.agent.application.runtime_context import InteractionMode
     from voidx.memory.runtime_state import RuntimeStateSnapshot, save_runtime_state
     from voidx.agent.domain.turn_context import TurnExecutionContext
 
@@ -401,7 +476,7 @@ async def test_run_turn_isolates_concurrent_execution_context_state(tmp_path):
         captured: dict[str, dict[str, object]] = {}
 
         class FakeGraph:
-            async def ainvoke(self, initial, _config):
+            async def astream(self, initial, _config, *, stream_mode="values"):
                 user_text = next(
                     message.content
                     for message in initial["messages"]
@@ -418,7 +493,7 @@ async def test_run_turn_isolates_concurrent_execution_context_state(tmp_path):
                 entered[session_id].set()
                 await asyncio.wait_for(asyncio.gather(*(event.wait() for event in entered.values())), timeout=1)
                 await release.wait()
-                return {
+                yield {
                     "messages": list(initial["messages"]) + [AIMessage(content=f"answer {session_id}")],
                     "task_state": initial["task_state"],
                 }
@@ -469,8 +544,8 @@ async def test_runtime_context_overlay_not_persisted_to_user_history(tmp_path):
         graph = LangGraphExecution(Config(workspace=str(tmp_path)), api_key=None, session=session)
 
         class FakeGraph:
-            async def ainvoke(self, initial, _config):
-                return {
+            async def astream(self, initial, _config, *, stream_mode="values"):
+                yield {
                     "messages": [
                         *initial["messages"],
                         HumanMessage(content="VOIDX_RUNTIME_CONTEXT\n\n## Runtime State\n- Workspace: tmp"),
@@ -504,9 +579,9 @@ async def test_run_turn_uses_display_text_without_losing_prompt(tmp_path):
     captured: dict[str, list] = {}
 
     class FakeGraph:
-        async def ainvoke(self, initial, _config):
+        async def astream(self, initial, _config, *, stream_mode="values"):
             captured["messages"] = list(initial["messages"])
-            return {"messages": list(initial["messages"]) + [AIMessage(content="ok")]}
+            yield {"messages": list(initial["messages"]) + [AIMessage(content="ok")]}
 
     graph.graph = FakeGraph()
 
@@ -558,9 +633,9 @@ async def test_run_turn_wraps_explicit_skill_refs_in_user_message(tmp_path):
         captured: dict[str, list] = {}
 
         class FakeGraph:
-            async def ainvoke(self, initial, _config):
+            async def astream(self, initial, _config, *, stream_mode="values"):
                 captured["messages"] = list(initial["messages"])
-                return {"messages": list(initial["messages"]) + [AIMessage(content="ok")]}
+                yield {"messages": list(initial["messages"]) + [AIMessage(content="ok")]}
 
         graph.graph = FakeGraph()
 
@@ -603,11 +678,11 @@ async def test_run_turn_persists_clipboard_image_attachment_as_structured_user_m
         graph = LangGraphExecution(Config(workspace=str(tmp_path)), api_key="test-key", session=session)
 
         class FakeGraph:
-            async def ainvoke(self, initial, _config):
+            async def astream(self, initial, _config, *, stream_mode="values"):
                 user = initial["messages"][-1]
                 assert isinstance(user.content, list)
                 assert user.content[1]["type"] == "image_url"
-                return {"messages": list(initial["messages"]) + [AIMessage(content="ok")]}
+                yield {"messages": list(initial["messages"]) + [AIMessage(content="ok")]}
 
         graph.graph = FakeGraph()
 

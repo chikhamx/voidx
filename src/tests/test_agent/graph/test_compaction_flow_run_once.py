@@ -14,23 +14,23 @@ from langgraph.graph.message import REMOVE_ALL_MESSAGES
 
 import voidx.memory.store as store
 
-from voidx.agent.agents import (
+from voidx.agent.application.agents import (
     AgentDef,
     child_agent_descriptions_for_llm,
     get_agent,
     get_visible_agents,
 )
-from voidx.agent.prompts import BASE_SYSTEM, PERSONA_MODEL, persona_prompt
+from voidx.agent.application.prompts import BASE_SYSTEM, PERSONA_MODEL, persona_prompt
 from voidx.agent.infrastructure.langgraph.runtime.convergence import is_step_hint_message
 from voidx.agent.infrastructure.langgraph.runtime.runtime import current_parent_tool_call_id
 from voidx.agent.infrastructure.langgraph.runtime.runtime_guards import RuntimeGuardState, WallClockGuardState
 from voidx.agent.infrastructure.langgraph.execution import LangGraphExecution
 from voidx.agent.infrastructure.langgraph.execution import AGENT_RESULT_PREVIEW_CHARS, _agent_result_preview
-from voidx.agent.message_rows import RowMessageCacheEntry
-from voidx.agent.runtime_context import InteractionMode, RuntimeContextBuilder
+from voidx.agent.infrastructure.message_rows import RowMessageCacheEntry
+from voidx.agent.application.runtime_context import InteractionMode, RuntimeContextBuilder
 from voidx.config import Config, ParallelSubagentsConfig, Settings, UserProfile
 from voidx.llm.compaction import CompactionSelection
-from voidx.llm.instruction import InstructionService, WorkflowRuntimeContext
+from voidx.agent.application.instruction import InstructionService, WorkflowRuntimeContext
 from voidx.memory.session import (
     MessageRow,
     SessionInfo,
@@ -156,12 +156,12 @@ async def test_compaction_uses_previous_summary_and_prunes_persisted_head(tmp_pa
             return "updated summary"
 
         class FakeGraph:
-            async def ainvoke(self, initial, _config):
+            async def astream(self, initial, _config, *, stream_mode="values"):
                 captured["initial_contents"] = [
                     str(getattr(message, "content", ""))
                     for message in initial["messages"]
                 ]
-                return {"messages": list(initial["messages"]) + [AIMessage(content="new answer")]}
+                yield {"messages": list(initial["messages"]) + [AIMessage(content="new answer")]}
 
         graph._run_compaction_agent = summarize
         graph.graph = FakeGraph()
@@ -222,12 +222,12 @@ async def test_run_turn_passes_compacted_messages_to_graph(tmp_path):
         captured: dict[str, list[str]] = {}
 
         class FakeGraph:
-            async def ainvoke(self, initial, _config):
+            async def astream(self, initial, _config, *, stream_mode="values"):
                 captured["messages"] = [
                     str(getattr(message, "content", ""))
                     for message in initial["messages"]
                 ]
-                return {"messages": list(initial["messages"]) + [AIMessage(content="new answer")]}
+                yield {"messages": list(initial["messages"]) + [AIMessage(content="new answer")]}
 
         graph._run_compaction_agent = summarize
         graph.graph = FakeGraph()
@@ -272,8 +272,8 @@ async def test_run_turn_finishes_analyzing_before_preflight_compaction_status(tm
             return "summary text"
 
         class FakeGraph:
-            async def ainvoke(self, initial, _config):
-                return {"messages": list(initial["messages"]) + [AIMessage(content="new answer")]}
+            async def astream(self, initial, _config, *, stream_mode="values"):
+                yield {"messages": list(initial["messages"]) + [AIMessage(content="new answer")]}
 
         graph._run_compaction_agent = summarize
         graph.graph = FakeGraph()

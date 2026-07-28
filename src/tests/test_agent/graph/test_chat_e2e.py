@@ -11,7 +11,7 @@ import voidx.memory.store as store
 
 from voidx.agent.application.chat_service import ChatService
 from voidx.agent.domain.profile import RuntimeProfile
-from voidx.agent.prompts import BaseSystemProfile
+from voidx.agent.application.prompts import BaseSystemProfile
 from voidx.agent.infrastructure.langgraph.adapter import LangGraphTurnEngine
 from voidx.agent.infrastructure.langgraph.execution import LangGraphExecution
 from voidx.agent.infrastructure.memory_session import MemorySessionAdapter
@@ -58,12 +58,12 @@ async def test_chat_turn_runs_in_isolated_session_with_tool_view(tmp_path):
         captured = {}
 
         class FakeGraph:
-            async def ainvoke(self, initial, _config):
+            async def astream(self, initial, _config, *, stream_mode="values"):
                 from voidx.agent.infrastructure.langgraph.runtime.thread_context import current_thread_execution_state
                 state = current_thread_execution_state()
                 captured["active_view"] = state.tool_policy if state else None
                 captured["session_id"] = execution._session.id
-                return {"messages": list(initial["messages"]) + [AIMessage(content="chat answer")]}
+                yield {"messages": list(initial["messages"]) + [AIMessage(content="chat answer")]}
 
         execution.graph = FakeGraph()
 
@@ -114,8 +114,8 @@ async def test_chat_resumed_thread_keeps_own_session(tmp_path):
         )
 
         class FakeGraph:
-            async def ainvoke(self, initial, _config):
-                return {"messages": list(initial["messages"]) + [AIMessage(content="ok")]}
+            async def astream(self, initial, _config, *, stream_mode="values"):
+                yield {"messages": list(initial["messages"]) + [AIMessage(content="ok")]}
 
         execution.graph = FakeGraph()
         service = ChatService(_runtime(execution))
@@ -166,10 +166,10 @@ async def test_chat_system_prompt_excludes_coding_persona_and_workflow(tmp_path)
         captured = {}
 
         class FakeGraph:
-            async def ainvoke(self, initial, _config):
+            async def astream(self, initial, _config, *, stream_mode="values"):
                 await execution._prepare_with_stream(initial)
                 captured["system"] = _system_text(initial["messages"])
-                return {"messages": list(initial["messages"]) + [AIMessage(content="ok")]}
+                yield {"messages": list(initial["messages"]) + [AIMessage(content="ok")]}
 
         execution.graph = FakeGraph()
         service = ChatService(_runtime(execution))
@@ -255,10 +255,10 @@ async def test_custom_profile_policy_selects_base_system_without_profile_branch(
         )
 
         class FakeGraph:
-            async def ainvoke(self, initial, _config):
+            async def astream(self, initial, _config, *, stream_mode="values"):
                 await execution._prepare_with_stream(initial)
                 captured["system"] = _system_text(initial["messages"])
-                return {"messages": list(initial["messages"]) + [AIMessage(content="ok")]}
+                yield {"messages": list(initial["messages"]) + [AIMessage(content="ok")]}
 
         execution.graph = FakeGraph()
         dock = BottomInputDock()
@@ -296,10 +296,10 @@ async def test_coding_system_prompt_still_includes_persona_and_workflow(tmp_path
         captured = {}
 
         class FakeGraph:
-            async def ainvoke(self, initial, _config):
+            async def astream(self, initial, _config, *, stream_mode="values"):
                 await execution._prepare_with_stream(initial)
                 captured["system"] = _system_text(initial["messages"])
-                return {"messages": list(initial["messages"]) + [AIMessage(content="ok")]}
+                yield {"messages": list(initial["messages"]) + [AIMessage(content="ok")]}
 
         execution.graph = FakeGraph()
         dock = BottomInputDock()

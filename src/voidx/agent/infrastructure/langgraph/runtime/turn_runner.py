@@ -9,18 +9,18 @@ from typing import TYPE_CHECKING, Any
 
 from langchain_core.messages import AIMessage, HumanMessage, ToolMessage
 
-from voidx.agent.todo_state import sanitize_todo_replay_messages
-from voidx.agent.attachments import build_user_message_payload, serialize_message_content
-from voidx.agent.message_rows import messages_from_rows_incremental
-from voidx.agent.goal_resolver import resolve_goal_mode, resolve_plan_mode
-from voidx.agent.runtime_context import TaskIntent
+from voidx.agent.application.todo_state import sanitize_todo_replay_messages
+from voidx.agent.application.attachments import build_user_message_payload, serialize_message_content
+from voidx.agent.infrastructure.message_rows import messages_from_rows_incremental
+from voidx.agent.application.goal_resolver import resolve_goal_mode, resolve_plan_mode
+from voidx.agent.application.runtime_context import TaskIntent
 from voidx.agent.domain.turn_context import TurnExecutionContext
 from voidx.runtime.intent import InteractionMode
 from voidx.agent.infrastructure.langgraph.runtime.thread_context import (
     bind_thread_execution_context,
     current_thread_execution_state,
 )
-from voidx.agent.state import AgentState
+from voidx.agent.infrastructure.langgraph.state import AgentState
 from voidx.runtime.task_state import (
     GoalResolution,
     IntentResolution,
@@ -128,6 +128,8 @@ class TurnRunner:
             host._usage_stats.begin_turn()
             self.idle_event.clear()
             user_message_id: int | None = None
+            streamed_messages: list = []
+            payload = None
             try:
                 host._ui.session_tracker.begin_turn(host._workspace)
                 has_ref = "$" in user_text
@@ -327,7 +329,10 @@ class TurnRunner:
                     initial["messages"] = msgs
 
                 recursion_limit = _resolve_recursion_limit()
-                final = await host.graph.ainvoke(initial, {"recursion_limit": recursion_limit})
+                final: dict[str, Any] = {}
+                async for chunk in host.graph.astream(initial, {"recursion_limit": recursion_limit}, stream_mode="values"):
+                    final = chunk
+                    streamed_messages = list(final.get("messages", []))
                 final_task_state = _load_task_state(final.get("task_state"), fallback=turn_task_state)
                 exchange = _turn_exchange_from_final_messages(payload.title_text, final.get("messages", []))
                 if exchange is not None:
@@ -365,55 +370,7 @@ class TurnRunner:
                                 break
                     new_messages = final["messages"][turn_index + 1:] if turn_index is not None else []
                     new_messages = sanitize_todo_replay_messages(list(new_messages))
-
-                    for msg in new_messages:
-                        if isinstance(msg, AIMessage):
-                            raw_content = msg.content
-                            if isinstance(raw_content, list):
-                                saved = json.dumps(raw_content, ensure_ascii=False)
-                                fmt = "structured"
-                            else:
-                                saved = str(raw_content)
-                                fmt = "text"
-                            row_id = await save_message(MessageRow(
-                                session_id=host._session.id,
-                                role="assistant",
-                                content=saved,
-                                content_format=fmt,
-                                tool_calls=msg.tool_calls if msg.tool_calls else None,
-                                created_at=memory_now(),
-                            ))
-                            if host._session_msg_cache is not None:
-                                host._session_msg_cache.append(MessageRow(
-                                    id=row_id,
-                                    session_id=host._session.id,
-                                    role="assistant",
-                                    content=saved,
-                                    content_format=fmt,
-                                    tool_calls=msg.tool_calls if msg.tool_calls else None,
-                                    created_at=memory_now(),
-                                ))
-                        elif isinstance(msg, ToolMessage):
-                            status = message_status(getattr(msg, "status", None))
-                            row_id = await save_message(MessageRow(
-                                session_id=host._session.id,
-                                role="tool",
-                                content=str(msg.content),
-                                tool_call_id=getattr(msg, "tool_call_id", None),
-                                status=status,
-                                created_at=memory_now(),
-                            ))
-                            if host._session_msg_cache is not None:
-                                host._session_msg_cache.append(MessageRow(
-                                    id=row_id,
-                                    session_id=host._session.id,
-                                    role="tool",
-                                    content=str(msg.content),
-                                    tool_call_id=getattr(msg, "tool_call_id", None),
-                                    status=status,
-                                    created_at=memory_now(),
-                                ))
-                    await touch_session(host._session.id)
+                    await _persist_new_messages(host, new_messages)
 
 # Update session title to match current goal after turn completes
                     goal = final_task_state.current_goal
@@ -450,25 +407,13 @@ class TurnRunner:
                 if host._session:
                     await host._persist_transcript_snapshot()
             except (KeyboardInterrupt, asyncio.CancelledError):
-                if host._session is not None and user_message_id is not None:
-                    await delete_messages_from(host._session.id, user_message_id)
-                    if host._session_msg_cache is not None:
-                        host._session_msg_cache = [
-                            r for r in host._session_msg_cache
-                            if r.id is None or r.id < user_message_id
-                        ]
-                    context_cache = getattr(host, "_context_cache", None)
-                    if context_cache is not None:
-                        context_cache.row_messages = {
-                            row_id: entry
-                            for row_id, entry in context_cache.row_messages.items()
-                            if row_id < user_message_id
-                        }
+                await _persist_streamed_messages(host, streamed_messages, payload.content if payload else None)
                 if host._ui.via_events():
                     await host._ui.events.emit(TurnCancelled())
                     await host._ui.events.drain()
                 raise
             except Exception as exc:
+                await _persist_streamed_messages(host, streamed_messages, payload.content if payload else None)
                 if host._ui.via_events():
                     await host._ui.events.emit(TurnFailed(message=str(exc)))
                     await host._ui.events.drain()
@@ -499,6 +444,83 @@ class TurnRunner:
                     host._ui.dock.clear_todo_state()
                     host._ui.dock.set_input("", [])
                 self.idle_event.set()
+
+
+async def _persist_new_messages(host: Any, new_messages: list) -> None:
+    """Persist a batch of new AIMessage/ToolMessage rows to session storage and cache.
+
+    Called incrementally during graph streaming and from exception handlers so
+    that messages generated before a crash or interrupt are not lost.
+    """
+    if not host._session:
+        return
+    for msg in new_messages:
+        if isinstance(msg, AIMessage):
+            raw_content = msg.content
+            if isinstance(raw_content, list):
+                saved = json.dumps(raw_content, ensure_ascii=False)
+                fmt = "structured"
+            else:
+                saved = str(raw_content)
+                fmt = "text"
+            row_id = await save_message(MessageRow(
+                session_id=host._session.id,
+                role="assistant",
+                content=saved,
+                content_format=fmt,
+                tool_calls=msg.tool_calls if msg.tool_calls else None,
+                created_at=memory_now(),
+            ))
+            if host._session_msg_cache is not None:
+                host._session_msg_cache.append(MessageRow(
+                    id=row_id,
+                    session_id=host._session.id,
+                    role="assistant",
+                    content=saved,
+                    content_format=fmt,
+                    tool_calls=msg.tool_calls if msg.tool_calls else None,
+                    created_at=memory_now(),
+                ))
+        elif isinstance(msg, ToolMessage):
+            status = message_status(getattr(msg, "status", None))
+            row_id = await save_message(MessageRow(
+                session_id=host._session.id,
+                role="tool",
+                content=str(msg.content),
+                tool_call_id=getattr(msg, "tool_call_id", None),
+                status=status,
+                created_at=memory_now(),
+            ))
+            if host._session_msg_cache is not None:
+                host._session_msg_cache.append(MessageRow(
+                    id=row_id,
+                    session_id=host._session.id,
+                    role="tool",
+                    content=str(msg.content),
+                    tool_call_id=getattr(msg, "tool_call_id", None),
+                    status=status,
+                    created_at=memory_now(),
+                ))
+    if new_messages:
+        await touch_session(host._session.id)
+
+
+async def _persist_streamed_messages(host: Any, streamed_messages: list, payload_content: str | None) -> None:
+    """Persist assistant/tool messages collected during streaming before an exception or interrupt.
+
+    Locates the user turn message by content, sanitizes the trailing new messages,
+    and delegates to _persist_new_messages so partial replies survive crashes.
+    """
+    if not host._session or not streamed_messages or not payload_content:
+        return
+    turn_index = None
+    for i, msg in enumerate(streamed_messages):
+        if isinstance(msg, HumanMessage) and msg.content == payload_content:
+            turn_index = i
+            break
+    new_messages = streamed_messages[turn_index + 1:] if turn_index is not None else []
+    new_messages = sanitize_todo_replay_messages(list(new_messages))
+    await _persist_new_messages(host, new_messages)
 
 
 def _invalidate_tui(host: object) -> None:
