@@ -188,7 +188,7 @@ def test_command_panel_enter_accepts_selected_command_without_queueing(tmp_path)
     tui = _tui(
         tmp_path,
         commands=[
-            ("/mode", "Choose interaction mode"),
+            ("/mcp", "Manage MCP servers"),
             ("/model", "Switch model"),
         ],
     )

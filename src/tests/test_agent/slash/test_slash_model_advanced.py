@@ -348,28 +348,15 @@ async def test_permission_mode_without_args_uses_prompt_app_choice(tmp_path):
 
 
 @pytest.mark.asyncio
-async def test_mode_dispatch_updates_interaction_mode():
+async def test_mode_command_is_removed():
     graph = command_context(
         _interaction_mode=None,
         _plan_mode=False,
         app=None,
     )
 
-    assert await SlashHandler(graph).dispatch("/mode goal") is True
-
-    assert graph._interaction_mode.value == "goal"
-    assert graph._plan_mode is False
-
-
-@pytest.mark.asyncio
-async def test_mode_dispatch_rejects_removed_modes():
-    graph = command_context(
-        _interaction_mode=None,
-        _plan_mode=False,
-        app=None,
-    )
-
-    assert await SlashHandler(graph).dispatch("/mode review") is True
+    assert await SlashHandler(graph).dispatch("/mode goal") is False
+    assert await SlashHandler(graph).dispatch("/mode") is False
 
     assert graph._interaction_mode is None
     assert graph._plan_mode is False
@@ -446,7 +433,7 @@ async def test_goal_dispatch_sets_goal_and_goal_mode():
 
 
 @pytest.mark.asyncio
-async def test_goal_clear_resets_goal_and_returns_to_auto():
+async def test_goal_clear_subcommand_is_removed():
     state = TaskState(
         current_goal=GoalSpec(desc="优化 markdown 渲染截断"),
     )
@@ -459,5 +446,6 @@ async def test_goal_clear_resets_goal_and_returns_to_auto():
 
     assert await SlashHandler(graph).dispatch("/goal clear") is True
 
-    assert graph._interaction_mode.value == "auto"
-    assert graph.task_state.current_goal is None
+    assert graph._interaction_mode.value == "goal"
+    assert graph.task_state.current_goal is not None
+    assert graph.task_state.current_goal.desc == "clear"

@@ -90,7 +90,6 @@ class SlashHandler(
 
             "/rollback": self._rollback,
             "/title": lambda: self._set_title(inp),
-            "/mode": lambda: self._mode(args),
             "/goal": lambda: self._goal(args),
             "/guide": lambda: self._guide(args),
             "/init": lambda: self._init(args),

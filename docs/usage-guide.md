@@ -90,12 +90,11 @@ voidx sessions
 
 | 命令 | 模式 | 行为 |
 |------|------|------|
-| `/mode auto` | Auto | 每轮自动推断意图（默认） |
-| `/mode plan` | Plan | 只读规划，禁止写/编辑/bash |
-| `/mode goal` | Goal | 多步工作限定在当前目标内 |
-| `/plan` | — | 等价 `/mode plan` |
-| `/unplan` | — | 回到 auto 模式 |
-| `/goal` | — | 设置/查看当前目标，`/goal clear` 清除 |
+| `/plan` | Plan | 只读规划，禁止写/编辑/bash |
+| `/unplan` | Auto | 回到 auto 模式（默认） |
+| `/goal` | Goal | 设置目标并进入 goal 模式，多步工作限定在当前目标内 |
+
+默认是 Auto：每轮自动推断意图。`/goal` 无参数时显示当前目标。
 
 ---
 
@@ -280,9 +279,8 @@ npm update -g @chikhamx/voidx
 | `/resume` | 恢复会话 |
 | `/rollback` | 回滚当前轮次 |
 | `/model` | 切换模型 |
-| `/mode` | 切换交互模式 |
 | `/plan` `/unplan` | 进入/退出 plan 模式 |
-| `/goal` | 设置目标 |
+| `/goal` | 设置/查看当前目标 |
 | `/permissions` | 查看权限规则 |
 | `/permission` | 选择权限预设 |
 | `/compact` | 压缩上下文 |

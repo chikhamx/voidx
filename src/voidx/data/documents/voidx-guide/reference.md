@@ -12,9 +12,8 @@
 | `/rollback` | 回滚当前轮次 |
 | `/title` | 设置会话标题 |
 | `/model` | 切换模型 |
-| `/mode` | 切换交互模式 |
 | `/plan` `/unplan` | 进入/退出 plan 模式 |
-| `/goal` | 设置目标，`/goal clear` 清除 |
+| `/goal` | 设置/查看当前目标 |
 | `/guide` | 向运行中的 agent 注入指导 |
 | `/parallel` | 切换并行子 agent 执行 |
 | `/permissions` | 查看权限规则 |

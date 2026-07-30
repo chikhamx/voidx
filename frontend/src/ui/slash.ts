@@ -21,7 +21,6 @@ export const COMMAND_CATALOG: SlashCommand[] = [
   { command: "/loop status", description: "Show current loop status", category: "maintenance", execution: "fill", dangerous: false, requiresArgs: false },
   { command: "/lsp", description: "Manage language servers", category: "code", execution: "open-ui", dangerous: false, requiresArgs: false, uiTarget: "integrations:lsp" },
   { command: "/mcp", description: "Manage MCP servers", category: "integrations", execution: "open-ui", dangerous: false, requiresArgs: false, uiTarget: "integrations:mcp" },
-  { command: "/mode", description: "Choose interaction mode: auto|plan|goal", category: "permission", execution: "fill", dangerous: false, requiresArgs: false },
   { command: "/model", description: "Switch model or adjust reasoning", category: "model", execution: "fill", dangerous: false, requiresArgs: false },
   { command: "/parallel", description: "Toggle parallel subagent execution", category: "preference", execution: "fill", dangerous: false, requiresArgs: false },
   { command: "/paste", description: "Paste an image from the clipboard", category: "code", execution: "run", dangerous: false, requiresArgs: false },

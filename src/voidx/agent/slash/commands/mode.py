@@ -1,4 +1,4 @@
-"""Slash /mode commands."""
+"""Slash interaction-mode helpers and /goal command."""
 from __future__ import annotations
 
 from voidx.diffing import git_diff, git_diff_stat
@@ -24,53 +24,18 @@ class ModeCommandsMixin:
         suffix = f" — {notes[parsed]}" if parsed in notes else ""
         ui.print(f"[dim]Mode set to [cyan]{labels[parsed]}[/cyan]{suffix}[/dim]")
 
-    async def _mode(self, arg: str) -> None:
-        from voidx.agent.application.runtime_context import InteractionMode
-
-        mode = arg.strip().lower()
-        choices = [
-            ("Auto", InteractionMode.AUTO.value, "Infer the task intent from each turn."),
-            ("Plan", InteractionMode.PLAN.value, "Read-only exploration and implementation planning."),
-            ("Goal", InteractionMode.GOAL.value, "Keep multi-step work scoped to the current goal."),
-        ]
-
-        app = self.host.app
-        if not mode and app is not None:
-            mode = await app.ask_choice("Interaction mode", choices) or ""
-
-        if not mode:
-            current = self.host.interaction_mode_value()
-            ui.print(f"Mode: [cyan]{current}[/cyan]")
-            ui.print("Usage: /mode [auto|plan|goal]")
-            return
-
-        try:
-            parsed = InteractionMode.parse(mode)
-        except ValueError:
-            ui.error(f"Invalid mode: {mode}. Use: auto, plan, goal")
-            return
-        self._set_interaction_mode(parsed.value)
-        await self.host.persist_runtime_state()
-
     async def _goal(self, arg: str) -> None:
         from voidx.agent.application.runtime_context import InteractionMode
         from voidx.runtime.task_state import TaskState, goal_label
 
         task_state = self.host.task_state or TaskState()
         goal = arg.strip()
-        if goal.lower() in {"clear", "reset"}:
-            task_state.clear_goal()
-            self.host.set_task_state(task_state)
-            self._set_interaction_mode(InteractionMode.AUTO.value)
-            await self.host.persist_runtime_state()
-            ui.print("[dim]Goal cleared.[/dim]")
-            return
 
         if not goal:
             if task_state.current_goal is not None:
                 ui.print(f"Goal: [cyan]{goal_label(task_state.current_goal)}[/cyan]")
             else:
-                ui.print("Usage: /goal <goal>|clear")
+                ui.print("Usage: /goal <goal>")
             return
 
         task_state.set_goal(goal)

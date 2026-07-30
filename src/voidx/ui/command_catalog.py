@@ -39,7 +39,7 @@ class CommandCatalogItem:
 CATEGORY_PREFIXES: tuple[tuple[tuple[str, ...], CommandCategory], ...] = (
     (("/session", "/clear", "/list", "/resume", "/title"), "session"),
     (("/model",), "model"),
-    (("/permission", "/allow", "/deny", "/permissions", "/mode", "/plan", "/unplan"), "permission"),
+    (("/permission", "/allow", "/deny", "/permissions", "/goal", "/plan", "/unplan"), "permission"),
     (("/mcp", "/tavily", "/skills"), "integrations"),
     (("/lsp", "/code-ide", "/diff", "/paste"), "code"),
     (("/lang", "/tone", "/parallel"), "preference"),
