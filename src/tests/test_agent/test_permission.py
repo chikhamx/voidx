@@ -436,13 +436,13 @@ def test_permission_engine_workspace_write_checks_manage_paths(tmp_path):
 
     assert inside.action != "deny"
     assert create_outside.action == "ask"
-    assert "outside the allowed workspace" in create_outside.reason
+    assert create_outside.access_intents
     assert create_batch_outside.action == "ask"
-    assert "outside the allowed workspace" in create_batch_outside.reason
+    assert create_batch_outside.access_intents
     assert move_src_outside.action == "ask"
-    assert "outside the allowed workspace" in move_src_outside.reason
+    assert move_src_outside.access_intents
     assert move_dest_outside.action == "ask"
-    assert "outside the allowed workspace" in move_dest_outside.reason
+    assert move_dest_outside.access_intents
 
 
 def test_sandbox_bash_tracks_cd_before_relative_write(tmp_path):
@@ -580,4 +580,4 @@ def test_engine_denies_non_approvable_tool(tmp_path):
     )
 
     assert decision.action == "ask"
-    assert "outside the allowed workspace" in decision.reason
+    assert decision.access_intents

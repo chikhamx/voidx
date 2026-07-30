@@ -14,12 +14,12 @@ from voidx.permission.service import (
     classify_tool_call,
 )
 from voidx.permission.context import PermissionDecision
+from voidx.permission.grants import AccessIntent, grant_for_intent
 from voidx.permission.session_rules import scoped_session_rule_for_decision
 from voidx.permission.schema import Action
 from voidx.permission.risk import ApprovalScope, RiskLevel
 from voidx.runtime.intent import PersonaName
 from voidx.runtime.ui import PermissionPromptCleared, PermissionPromptShown, PermissionToolDetail
-from typing import Any
 from voidx.agent.infrastructure.langgraph.runtime.thread_context import current_thread_execution_state
 
 
@@ -63,12 +63,80 @@ def _coerce_permission_decision(item: dict | PermissionDecision) -> PermissionDe
 def _permission_choices(decisions: list[PermissionDecision]) -> list[tuple[str, str, str]]:
     if _all_decisions_blocked_ack(decisions):
         return [("Do not run", "n", "This command is blocked")]
+    external_intents = _external_access_intents(decisions)
+    if len(external_intents) == 1:
+        return _path_grant_choices(external_intents[0])
+    if external_intents:
+        return [("Allow once", "allow", "Allow this tool use once"), ("Deny", "deny", "Deny these tools")]
     choices: list[tuple[str, str, str]] = []
     if _all_decisions_allow_scope(decisions, ApprovalScope.SESSION):
         choices.append(("Yes, always", "a", "Allow these tools for this session"))
     choices.append(("Yes", "y", "Allow this tool use once"))
     choices.append(("No", "n", "Deny these tools"))
     return choices
+
+
+def _external_access_intents(decisions: list[PermissionDecision]) -> list[AccessIntent]:
+    intents: list[AccessIntent] = []
+    for decision in decisions:
+        for intent in decision.access_intents:
+            if not intent.is_workspace_path and not intent.grant_matched:
+                intents.append(intent)
+    return intents
+
+
+def _path_grant_choices(intent: AccessIntent) -> list[tuple[str, str, str]]:
+    access = intent.access
+    return [
+        ("Allow once", "allow", f"Allow this {access} once"),
+        ("This file this session", "session_file", f"Allow this {access} file for this session"),
+        ("This folder this session", "session_dir", f"Allow this {access} directory for this session"),
+        ("Always allow this file", "persistent_file", f"Always allow this {access} file"),
+        ("Always allow this folder", "persistent_dir", f"Always allow this {access} directory"),
+        ("Deny", "deny", f"Do not {access} this file"),
+    ]
+
+
+_PATH_GRANT_CHOICES = frozenset({"session_file", "session_dir", "persistent_file", "persistent_dir"})
+
+
+_GRANT_PERSISTENCE_MAP = {
+    "session_file": "session",
+    "session_dir": "session",
+    "persistent_file": "persistent",
+    "persistent_dir": "persistent",
+    "runtime_file": "runtime",
+    "runtime_dir": "runtime",
+}
+
+_GRANT_OBJECT_TYPE_MAP = {
+    "session_file": "file",
+    "session_dir": "dir",
+    "persistent_file": "file",
+    "persistent_dir": "dir",
+    "runtime_file": "file",
+    "runtime_dir": "dir",
+}
+
+
+async def _apply_path_grant_choice(host: Any, decisions: list[PermissionDecision], choice: str) -> None:
+    persistence = _GRANT_PERSISTENCE_MAP.get(choice, "runtime")
+    object_type = _GRANT_OBJECT_TYPE_MAP.get(choice, "file")
+    for decision in decisions:
+        for intent in decision.access_intents:
+            if intent.is_workspace_path or intent.grant_matched:
+                continue
+            grant = grant_for_intent(intent, persistence, object_type=object_type)
+            await host._permission.add_grant(grant)
+
+
+async def _apply_runtime_grant(host: Any, decisions: list[PermissionDecision]) -> None:
+    for decision in decisions:
+        for intent in decision.access_intents:
+            if intent.is_workspace_path or intent.grant_matched:
+                continue
+            choice = "runtime_dir" if intent.object_type == "dir" else "runtime_file"
+            await _apply_path_grant_choice(host, [decision], choice)
 
 
 def _ai_approval_failure_message(result: Any, call_id: str) -> str:
@@ -238,6 +306,7 @@ class PermissionFlow:
                     if decision.tool_call.get("id") in allowed_ids:
                         ai_allowed.append(decision)
                         approved.append(_tool_call_with_approval_risk(decision, approved_by="ai"))
+                        await _apply_runtime_grant(host, [decision])
                         host._notice_permission_result(f"AI 审批: allow {decision.name}")
                         if hasattr(host._permission, "inc_ai_approval_count"):
                             host._permission.inc_ai_approval_count()
@@ -273,6 +342,12 @@ class PermissionFlow:
                 host._permission.allow_silent(scoped_session_rule_for_decision(decision))
             approved.extend(tool_calls)
         elif choice == "y":
+            approved.extend(tool_calls)
+        elif choice in _PATH_GRANT_CHOICES:
+            await _apply_path_grant_choice(host, approvable, choice)
+            approved.extend(tool_calls)
+        elif choice == "allow":
+            await _apply_runtime_grant(host, approvable)
             approved.extend(tool_calls)
         else:
             host._notice_permission_result(f"{len(need_ask)} tools denied")

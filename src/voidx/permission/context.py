@@ -5,7 +5,7 @@ from __future__ import annotations
 from dataclasses import dataclass, field
 
 from voidx.config import PermissionMode
-from voidx.permission.grants import AccessGrants
+from voidx.permission.grants import AccessGrants, AccessIntent
 from voidx.permission.rules import PermissionCapability
 from voidx.permission.risk import ApprovalScope, RiskAssessment
 from voidx.permission.schema import Action
@@ -104,3 +104,8 @@ class PermissionDecision:
     allowed_scopes: tuple[ApprovalScope, ...] = ()
     default_scope: ApprovalScope | None = None
     ai_approval_failure: str = ""
+    access_intents: tuple["AccessIntent", ...] = ()
+
+    @property
+    def primary_access_intent(self) -> "AccessIntent | None":
+        return self.access_intents[0] if len(self.access_intents) == 1 else None

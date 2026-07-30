@@ -316,6 +316,13 @@ class PermissionService:
             yield lease
         finally:
             await lease.release()
+            self._clear_runtime_grants()
+
+    def _clear_runtime_grants(self) -> None:
+        if not self._runtime_grants:
+            return
+        self._runtime_grants.clear()
+        self.state_revision += 1
 
     def has_active_execution_lease(self, lease: ExecutionLease) -> bool:
         return lease in self._active_execution_leases and not lease._released

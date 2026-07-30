@@ -7,7 +7,7 @@ from voidx.permission.context import PermissionContext, PermissionDecision
 from voidx.permission.evaluate import evaluate
 from voidx.permission.git_policy import git_sandbox_precheck
 from voidx.permission.shell_policy import classify_shell_risk, shell_sandbox_precheck
-from voidx.permission.grants import resolve_access
+from voidx.permission.grants import AccessIntent, resolve_access
 from voidx.permission.presets import resolve_mode_decision
 from voidx.permission.risk import RiskAssessment, RiskLevel, RiskTag
 from voidx.permission.rules import (
@@ -32,7 +32,7 @@ def authorize_tool_call(tool_call: dict, context: PermissionContext) -> Permissi
     classified = classify_tool_call(tool_call)
     session_action = session_action_for_tool(classified, context)
 
-    sandbox_action, reason = sandbox_precheck_action(classified, context)
+    sandbox_action, reason, access_intents = sandbox_precheck_action(classified, context)
     if sandbox_action == "deny":
         if classified.name in {"bash", "powershell"}:
             risk = _risk_for(classified, "ask", reason or "")
@@ -45,7 +45,7 @@ def authorize_tool_call(tool_call: dict, context: PermissionContext) -> Permissi
             return _decision(classified, "deny", "session", _reason_for(classified, "deny"), context=context)
         if session_action == "allow" and context.sandbox_mode == "workspace-write":
             return _decision(classified, "allow", "session", _reason_for(classified, "allow"), context=context)
-        return _decision(classified, "ask", "sandbox", reason or _reason_for(classified, "ask"), context=context)
+        return _decision(classified, "ask", "sandbox", reason or _reason_for(classified, "ask"), context=context, access_intents=access_intents)
 
     if session_action:
         reason = _reason_for(classified, session_action)
@@ -64,51 +64,51 @@ def decide_base_action(tool: str, pattern: str, context: PermissionContext) -> A
 
 
 def sandbox_denial_reason(classified: ClassifiedToolCall, context: PermissionContext) -> str | None:
-    action, reason = sandbox_precheck_action(classified, context)
+    action, reason, _intents = sandbox_precheck_action(classified, context)
     return reason if action == "deny" else None
 
 
-def sandbox_precheck_action(classified: ClassifiedToolCall, context: PermissionContext) -> tuple[Action, str | None]:
+def sandbox_precheck_action(classified: ClassifiedToolCall, context: PermissionContext) -> tuple[Action, str | None, tuple[AccessIntent, ...]]:
     if not context.permission_state_ready:
-        return "deny", "Permission state not ready."
+        return "deny", "Permission state not ready.", ()
     if context.sandbox_mode == "danger-full-access":
-        return "allow", None
+        return "allow", None, ()
 
     if context.interaction_mode == "plan":
         if classified.name == "bash":
             if classified.capability == PermissionCapability.BASH_WRITE:
-                return "deny", f"SANDBOX READ-ONLY: '{classified.name}' is not allowed."
-            return shell_sandbox_precheck(classified.args, context, shell="bash")
+                return "deny", f"SANDBOX READ-ONLY: '{classified.name}' is not allowed.", ()
+            return (*shell_sandbox_precheck(classified.args, context, shell="bash"), ())
         if classified.name == "powershell":
             if classified.capability == PermissionCapability.BASH_WRITE:
-                return "deny", f"SANDBOX READ-ONLY: '{classified.name}' is not allowed."
-            return shell_sandbox_precheck(classified.args, context, shell="powershell")
+                return "deny", f"SANDBOX READ-ONLY: '{classified.name}' is not allowed.", ()
+            return (*shell_sandbox_precheck(classified.args, context, shell="powershell"), ())
         if classified.capability in {
             PermissionCapability.FILE_WRITE,
             PermissionCapability.FILE_FORMAT,
             PermissionCapability.BASH_WRITE,
             PermissionCapability.GIT_WRITE,
         }:
-            return "deny", f"SANDBOX READ-ONLY: '{classified.name}' is not allowed."
+            return "deny", f"SANDBOX READ-ONLY: '{classified.name}' is not allowed.", ()
         if classified.capability == PermissionCapability.AGENT_IMPLEMENT:
-            return "deny", "SANDBOX READ-ONLY: cannot delegate to implement."
-        return "allow", None
+            return "deny", "SANDBOX READ-ONLY: cannot delegate to implement.", ()
+        return "allow", None, ()
 
     if context.sandbox_mode == "read-only":
         if classified.name == "bash":
-            return shell_sandbox_precheck(classified.args, context, shell="bash")
+            return (*shell_sandbox_precheck(classified.args, context, shell="bash"), ())
         if classified.name == "powershell":
-            return shell_sandbox_precheck(classified.args, context, shell="powershell")
+            return (*shell_sandbox_precheck(classified.args, context, shell="powershell"), ())
         if classified.capability in {
             PermissionCapability.FILE_WRITE,
             PermissionCapability.FILE_FORMAT,
             PermissionCapability.BASH_WRITE,
             PermissionCapability.GIT_WRITE,
         }:
-            return "defer", f"READ ONLY requires approval for '{classified.name}'."
+            return "defer", f"READ ONLY requires approval for '{classified.name}'.", ()
         if classified.capability == PermissionCapability.AGENT_IMPLEMENT:
-            return "defer", "READ ONLY requires approval for implement delegation."
-        return "allow", None
+            return "defer", "READ ONLY requires approval for implement delegation.", ()
+        return "allow", None, ()
 
     if context.sandbox_mode == "workspace-write":
         writable_paths = [
@@ -116,37 +116,45 @@ def sandbox_precheck_action(classified: ClassifiedToolCall, context: PermissionC
             *context.sandbox_writable_dirs,
         ]
         if classified.name == "git":
-            return git_sandbox_precheck(classified.args, context)
-        if classified.name in {"read", "write", "replace"}:
-            for file_path in file_paths_for_tool(classified.name, classified.args):
-                access = "read" if classified.name == "read" else "write"
-                resolution = resolve_access(
-                    context.workspace,
-                    file_path,
-                    access=access,
-                    access_grants=context.access_grants,
-                    require_exists=classified.name == "read",
-                    allow_missing_write_file=classified.name in {"write", "replace"},
-                )
-                if resolution.action == "deny":
-                    return "deny", resolution.reason
-                if resolution.action == "defer":
-                    return "defer", resolution.reason
-            return "allow", None
-        if classified.capability in {PermissionCapability.FILE_WRITE, PermissionCapability.FILE_FORMAT}:
-            for file_path in file_paths_for_tool(classified.name, classified.args):
-                reason = check_sandbox_filepath(
-                    file_path,
-                    context.workspace,
-                    writable_paths,
-                )
-                if reason:
-                    return "defer", reason
+            return (*git_sandbox_precheck(classified.args, context), ())
+        path_tool_names = {"read", "write", "replace", "manage", "lsp_format", "lsp"}
+        if classified.name in path_tool_names or classified.capability in {PermissionCapability.FILE_WRITE, PermissionCapability.FILE_FORMAT}:
+            intents = _collect_external_access_intents(classified, context)
+            if intents is None:
+                return "deny", f"Path traversal blocked for '{classified.name}'.", ()
+            if intents:
+                defer_reason = _reason_for(classified, "ask")
+                return "defer", defer_reason, tuple(intents)
+            return "allow", None, ()
         if classified.name == "bash":
-            return shell_sandbox_precheck(classified.args, context, shell="bash")
+            return (*shell_sandbox_precheck(classified.args, context, shell="bash"), ())
         if classified.name == "powershell":
-            return shell_sandbox_precheck(classified.args, context, shell="powershell")
-    return "allow", None
+            return (*shell_sandbox_precheck(classified.args, context, shell="powershell"), ())
+    return "allow", None, ()
+
+
+def _collect_external_access_intents(classified: ClassifiedToolCall, context: PermissionContext) -> list[AccessIntent] | None:
+    """Resolve access for every file path of a path tool; return external intents or None on deny."""
+    name = classified.name
+    read_tools = {"read", "lsp"}
+    require_exists = name in {"read", "manage", "lsp", "lsp_format"}
+    allow_missing_write_file = name in {"write", "replace", "manage"}
+    intents: list[AccessIntent] = []
+    for file_path in file_paths_for_tool(name, classified.args):
+        access = "read" if name in read_tools else "write"
+        resolution = resolve_access(
+            context.workspace,
+            file_path,
+            access=access,
+            access_grants=context.access_grants,
+            require_exists=require_exists,
+            allow_missing_write_file=allow_missing_write_file,
+        )
+        if resolution.action == "deny":
+            return None
+        if resolution.action == "defer" and resolution.intent is not None:
+            intents.append(resolution.intent)
+    return intents
 
 
 def session_action_for_tool(classified: ClassifiedToolCall, context: PermissionContext) -> Action | None:
@@ -172,6 +180,7 @@ def _decision(
     *,
     failure_check: bool = False,
     context: PermissionContext | None = None,
+    access_intents: tuple[AccessIntent, ...] = (),
 ) -> PermissionDecision:
     risk = _risk_for(classified, action, reason)
     allowed_scopes = ()
@@ -199,6 +208,7 @@ def _decision(
         risk=risk,
         allowed_scopes=allowed_scopes,
         default_scope=default_scope,
+        access_intents=access_intents,
     )
 
 
