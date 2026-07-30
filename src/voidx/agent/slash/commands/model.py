@@ -378,7 +378,11 @@ class ModelCommandsMixin:
         if effort and effort in valid:
             new_effort = effort
         elif not effort:
-            current = self.host.config.model.reasoning_effort or "xhigh"
+            current = (
+                self.host.config.model.reasoning_effort.value
+                if self.host.config.model.reasoning_effort is not None
+                else "xhigh"
+            )
             choices = list(valid)
             idx = await _select_from_list(self.host.app, "Select effort", choices)
             if idx is None:
@@ -462,5 +466,9 @@ class ModelCommandsMixin:
             app.status.context_limit = limit
             app.status.provider = self.host.config.model.provider
             app.status.model = self.host.config.model.model
-            app.status.reasoning_effort = self.host.config.model.reasoning_effort or "xhigh"
+            app.status.reasoning_effort = (
+                self.host.config.model.reasoning_effort.value
+                if self.host.config.model.reasoning_effort is not None
+                else "xhigh"
+            )
 

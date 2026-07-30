@@ -2,7 +2,7 @@
 
 from __future__ import annotations
 
-from enum import Enum
+from enum import Enum, StrEnum
 
 class PermissionMode(str, Enum):
     """Ask-first permission modes."""
@@ -42,7 +42,7 @@ class CodeIde(str, Enum):
     SYSTEM = "system"
 
 
-class ReasoningEffort(str, Enum):
+class ReasoningEffort(StrEnum):
     """Unified reasoning intensity for all providers/models."""
 
     NONE = "none"

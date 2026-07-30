@@ -237,7 +237,11 @@ class AgentService:
             workspace=self._execution.workspace,
             session_title=title,
             context_limit=get_context_limit(self._execution.config.model.provider, self._execution.config.model.protocol or "", self._execution.config.model.context_window),
-            reasoning_effort=self._execution.config.model.reasoning_effort or "xhigh",
+            reasoning_effort=(
+                self._execution.config.model.reasoning_effort.value
+                if self._execution.config.model.reasoning_effort is not None
+                else "xhigh"
+            ),
             permission_label=lambda: self._execution.permission.permission_mode_label(),
             usage_stats=self._execution.usage_stats,
             debug=lambda: self._execution.debug_enabled,

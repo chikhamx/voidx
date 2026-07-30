@@ -539,7 +539,11 @@ class LangGraphExecution:
             status.provider = self.config.model.provider
             status.model = self.config.model.model
             status.context_limit = context_limit
-            status.reasoning_effort = self.config.model.reasoning_effort or "xhigh"
+            status.reasoning_effort = (
+                self.config.model.reasoning_effort.value
+                if self.config.model.reasoning_effort is not None
+                else "xhigh"
+            )
 
     @property
     def workspace(self) -> str:
