@@ -100,6 +100,84 @@ for raw in sys.stdin:
         await manager.stop_all()
 
 
+
+@pytest.mark.asyncio
+async def test_mcp_load_ignores_non_required_noise_fields() -> None:
+    class FakeManager:
+        def statuses(self):
+            return [SimpleNamespace(name="typex", status="connected", tool_count=1, error_message="")]
+
+        def catalog_snapshot(self):
+            return [
+                SimpleNamespace(
+                    name="typex",
+                    tools=[
+                        McpToolDef(
+                            name="typex.send_message",
+                            description="Send a message",
+                            inputSchema={"type": "object", "properties": {}},
+                        )
+                    ],
+                    description="",
+                )
+            ]
+
+        def server_config(self, name):
+            return None
+
+    tool = McpGatewayTool(FakeManager())
+
+    result = await tool.execute(
+        {
+            "op": "load",
+            "server": "typex",
+            "tool": "null",
+            "query": "null",
+            "arguments": "ignored because load does not use arguments",
+        },
+        ToolContext(workspace="/tmp/workspace"),
+    )
+
+    assert result.metadata.get("error") is not True
+    assert "## MCP Server: typex" in result.output
+    assert "typex.send_message" in result.output
+
+
+@pytest.mark.asyncio
+async def test_mcp_call_requires_arguments_even_when_schema_allows_empty_object() -> None:
+    class FakeManager:
+        def __init__(self) -> None:
+            self.called = False
+
+        def statuses(self):
+            return [SimpleNamespace(name="typex", status="connected", tool_count=1, error_message="")]
+
+        def catalog_snapshot(self):
+            return [
+                SimpleNamespace(
+                    name="typex",
+                    tools=[McpToolDef(name="typex.ping", inputSchema={"type": "object", "properties": {}})],
+                )
+            ]
+
+        def tool_def(self, server, tool):
+            return McpToolDef(name="typex.ping", inputSchema={"type": "object", "properties": {}})
+
+        async def call_tool(self, server, tool, arguments):
+            self.called = True
+            return McpCallResult(content=[{"type": "text", "text": "called"}])
+
+    manager = FakeManager()
+    tool = McpGatewayTool(manager)
+
+    result = await tool.execute(
+        {"op": "call", "server": "typex", "tool": "typex.ping"},
+        ToolContext(workspace="/tmp/workspace"),
+    )
+
+    assert result.metadata.get("error") is True
+    assert "arguments" in result.output
+    assert manager.called is False
 @pytest.mark.asyncio
 async def test_mcp_manager_generates_missing_server_descriptions_after_cataloging():
     config = McpServerConfig(name="tavily", command="fake")

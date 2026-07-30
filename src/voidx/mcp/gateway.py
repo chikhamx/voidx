@@ -20,7 +20,15 @@ from voidx.mcp.context import render_mcp_tool_context
 from voidx.mcp.descriptions import configured_server_description
 from voidx.mcp.schema import McpToolDef, format_mcp_call_result
 from voidx.mcp.validation import validate_mcp_arguments
-from voidx.tools.base import BaseTool, ToolContext, ToolResult, model_to_json_schema
+from voidx.tools.base import (
+    BaseTool,
+    ToolContext,
+    ToolResult,
+    is_nullish_tool_value,
+    keep_tool_args,
+    model_to_json_schema,
+    normalize_nullable_tool_fields,
+)
 
 if TYPE_CHECKING:
     from voidx.mcp.manager import McpManager
@@ -55,6 +63,27 @@ class McpInput(BaseModel):
         return value
 
 
+def _normalize_mcp_args(args: Any) -> Any:
+    if not isinstance(args, dict):
+        return args
+    op = str(args.get("op") or "").strip().lower()
+    if op == "list":
+        return keep_tool_args(args, {"op", "query"})
+    if op == "load":
+        normalized = keep_tool_args(args, {"op", "server", "tool"})
+        normalized = normalize_nullable_tool_fields(normalized, "server", "tool")
+        if is_nullish_tool_value(normalized.get("tool")):
+            normalized.pop("tool", None)
+        return normalized
+    if op == "call":
+        return normalize_nullable_tool_fields(
+            keep_tool_args(args, {"op", "server", "tool", "arguments"}),
+            "server",
+            "tool",
+        )
+    return args
+
+
 class McpGatewayTool(BaseTool):
     id = "mcp"
     description = (
@@ -76,6 +105,7 @@ class McpGatewayTool(BaseTool):
         return schema
 
     async def execute(self, args: dict[str, Any], ctx: ToolContext) -> ToolResult:
+        args = _normalize_mcp_args(args)
         try:
             inp = McpInput.model_validate(args)
         except Exception as exc:
@@ -192,6 +222,14 @@ class McpGatewayTool(BaseTool):
                 output=(
                     'mcp(op="call") requires server and tool. '
                     'Run mcp(op="list") to discover servers, then mcp(op="load", server="...", tool="...") for details.'
+                ),
+                metadata={"error": True},
+            )
+        if inp.arguments is None:
+            return ToolResult(
+                output=(
+                    'mcp(op="call") requires arguments as a JSON object. '
+                    'Pass arguments={} when the target tool accepts no parameters.'
                 ),
                 metadata={"error": True},
             )
