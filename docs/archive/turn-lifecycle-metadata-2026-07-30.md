@@ -2,7 +2,7 @@
 
 Date: 2026-07-30
 
-> **Status: Pending** - design/spec only. Do not implement as part of the current
+> **Status: Done** — Archived on 2026-07-30.
 > loop Ctrl-C hotfix. This spec defines the long-term replacement for text-based
 > turn classification.
 
