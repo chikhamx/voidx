@@ -17,7 +17,7 @@
 - `tests/`: pytest coverage — one file per concern, mirroring `voidx_cli/` modules.
 
 ## Runtime Environment
-- The TUI depends on the main `voidx` package — tests use `pythonpath = [".", "../src"]` to resolve both.
+- The TUI depends on the main `voidx` package — root `pyproject.toml` sets `pythonpath = ["src", "tui"]` so pytest resolves both packages.
 
 ## Commands
 - Full tests: `./test.py --backend` (tui tests are included in the backend suite)

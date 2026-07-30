@@ -154,12 +154,6 @@ on first run.
 
 Pack and inspect the npm package:
 
-The npm package must be published after the matching Python packages are
-available on PyPI, because the npm launcher installs `voidx-cli==<version>`
-on first run.
-
-Pack and inspect the npm package:
-
 ```bash
 npm pack ./npm --dry-run
 ```

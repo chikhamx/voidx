@@ -3,7 +3,7 @@
 Python backend core for voidx.
 
 ## Module Map
-- `voidx/agent/graph/`: LangGraph orchestration — turn loop, compaction, subagents, tool execution, permissions.
+- `voidx/agent/`: Agent runtime — layered as `application/` (services), `domain/` (policies/state/turn), `ports/` (interfaces), `infrastructure/` (LangGraph + adapters), `loop/` (controller/scheduler), `runtime/` (dispatcher/lifecycle), and `slash/` (slash command handlers).
 - `voidx/agent/slash/`: Slash command handlers — runtime config, session, model, MCP/LSP, skills, profile, host, and IDE integration commands.
 - `voidx/config/`: Settings & profiles — Pydantic models, MCP server config, API keys, permissions.
 - `voidx/llm/`: Provider setup, prompt context, compaction, token usage.
@@ -12,7 +12,7 @@ Python backend core for voidx.
 - `voidx/permission/`: Permission engine — rules, sandbox, approval policy, wildcard matching.
 - `voidx/runtime/`: Shared runtime — UI sink, task state, intent resolution.
 - `voidx/skills/`: Skill system — registry, policy, bundled skills.
-- `voidx/tools/`: Typed tool implementations and MCP/LSP adapters — `bash/` (shell execution, safety, routing) and `file_ops/` (read, write, edit, file listing).
+- `voidx/tools/`: Typed tool implementations and MCP/LSP adapters — `bash/` (shell execution, safety, routing), `file/` (read, write, edit, listing), plus `git/`, `shell/`, `powershell/`, `web/`, and top-level tools (search, todo, workflow, etc.).
 - `voidx/lsp/`: Language Server Protocol client — manager, service, detector, schema.
 - `voidx/workflow/`: Structured workflow runtime — DAG, nodes, policy, routing, reconciliation, schema.
 - `voidx/logging/`: Request and tool logging.

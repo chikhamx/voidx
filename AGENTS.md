@@ -22,10 +22,9 @@ Each subdirectory has its own `AGENTS.md` for directory-specific details only; g
 ## Testing
 **Always prefer `./test.py` over invoking pytest/vitest/cargo directly** — it auto-switches to the voidx venv and handles suite selection.
 
-`./test.py` runs three suites: **backend** (pytest), **frontend** (vitest), **desktop** (cargo test).
+`./test.py` runs three suites: **backend** (pytest over `src/tests` + `tui/tests`), **frontend** (vitest), **desktop** (cargo test).
 
 - Verbose output: `./test.py -v`
-- Keep going after failures: `./test.py --keep-going`
 - Pass args to the underlying runner with `--`:
   - Backend (pytest): `./test.py --backend -- src/tests/test_foo.py -k "test_bar"`
   - Frontend (vitest): `./test.py --frontend -- --reporter=verbose`

@@ -17,16 +17,19 @@
   - `dialog.ts`: Permission/Tool execution approval popup dialogs.
   - `workspace.ts`: Project switcher drawer and sidebar resize handles.
   - `model.ts`: Custom model dropdown picker and permission toggles.
-  - `settings.ts` / `integrations.ts` / `context-menu.ts` / `diff-review.ts` / `terminal.ts` / `slash.ts`: Specilized UI overlays.
+  - `settings.ts` / `integrations.ts` / `context-menu.ts` / `diff-review.ts` / `terminal.ts` / `slash.ts`: Specialized UI overlays.
+  - `history.ts` / `image-attachments.ts` / `menus.ts` / `paste.ts` / `reference.ts` / `theme.ts`: Supporting UI modules.
   - `index.ts`: Public export gateway.
 - `utils/`: Parsing, streaming, and rendering helpers.
   - `render.ts`: Localized English text generators and tool group renderers.
+  - `render-notice-status.ts` / `render-thought-items.ts` / `render-tool-items.ts` / `render-types.ts`: Render helpers split by concern.
   - `stream.ts`: Debounced thinking stream and assistant text block collectors.
   - `markdown.ts`: Syntax highlight sanitizer.
+  - `icons.ts`: Shared icon helpers.
   - `types.ts`: Sibling shared Typescript definitions.
   - `index.ts`: Public export gateway.
-- `css/`: Modular components styling.
-  - `styles.css`: CSS Entry point importing all sub-stylesheets.
+- `../css/` (repo path `frontend/css/`): Modular component styling, loaded from `index.html` (sibling of `src/`, not under it).
+  - `styles.css`: CSS entry point importing all sub-stylesheets.
   - `tokens.css`: Visual tokens (colors, variables, and themes).
   - `base.css`: Standard resets, notice toasts, status dots, and markdown typography.
   - `layout.css`: Shell layouts, sidebar resizer, and responsive breakpoints.
@@ -35,7 +38,7 @@
   - `components.css`: Todo lists, terminals, diff reviewers, context menus, and status grids.
 
 ## Schema Sync
-`src/protocol.d.ts` is generated from `src/protocol.schema.json`. The schema
+`src/rpc/protocol.d.ts` is generated from `src/rpc/protocol.schema.json`. The schema
 is exported from the Python side via `scripts/export_ui_protocol_schema.py`.
 To regenerate after protocol changes:
 ```
