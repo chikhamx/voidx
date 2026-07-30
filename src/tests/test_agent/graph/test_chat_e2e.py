@@ -319,3 +319,109 @@ async def test_coding_system_prompt_still_includes_persona_and_workflow(tmp_path
         assert "Profile Directive" not in system
     finally:
         await delete_session(coding.id)
+
+
+@pytest.mark.asyncio
+async def test_profile_system_prompt_is_injected_into_stable_system_context(tmp_path):
+    coding = await create_session(workspace=str(tmp_path), profile="coding")
+    try:
+        execution = LangGraphExecution(
+            Config(workspace=str(tmp_path)),
+            api_key="test-key",
+            session=coding,
+        )
+
+        captured = {}
+        profile = RuntimeProfile(
+            profile_id="loop",
+            revision=1,
+            name="Loop",
+            protocol="loop",
+            system_prompt="## Loop Goal\ncheck build every minute",
+        )
+        context = TurnExecutionContext(
+            thread_id=coding.id,
+            session_id=coding.id,
+            runtime_profile=profile,
+        )
+
+        class FakeGraph:
+            async def astream(self, initial, _config, *, stream_mode="values"):
+                await execution._prepare_with_stream(initial)
+                captured["system"] = _system_text(initial["messages"])
+                yield {"messages": list(initial["messages"]) + [AIMessage(content="ok")]}
+
+        execution.graph = FakeGraph()
+        dock = BottomInputDock()
+        set_dock(dock)
+        dock.begin_capture()
+        try:
+            await execution.run_turn("Run the next scheduled loop iteration.", context=context)
+        finally:
+            dock.deactivate()
+            dock.reset()
+            set_dock(None)
+
+        system = captured["system"]
+        assert "## Profile Directive" in system
+        assert "## Loop Goal" in system
+        assert "check build every minute" in system
+    finally:
+        await delete_session(coding.id)
+
+
+@pytest.mark.asyncio
+async def test_loop_iteration_user_text_is_current_turn_only(tmp_path):
+    coding = await create_session(workspace=str(tmp_path), profile="coding")
+    try:
+        execution = LangGraphExecution(
+            Config(workspace=str(tmp_path)),
+            None,
+            session=coding,
+        )
+
+        captured = {}
+        profile = RuntimeProfile(
+            profile_id="loop",
+            revision=1,
+            name="Loop",
+            protocol="loop",
+            system_prompt="## Loop Goal\ncheck build every minute",
+        )
+        context = TurnExecutionContext(
+            thread_id=coding.id,
+            session_id=coding.id,
+            runtime_profile=profile,
+        )
+
+        class FakeGraph:
+            async def astream(self, initial, _config, *, stream_mode="values"):
+                captured["initial_user_messages"] = [
+                    str(getattr(msg, "content", ""))
+                    for msg in initial["messages"]
+                    if getattr(msg, "type", "") == "human"
+                ]
+                yield {"messages": list(initial["messages"]) + [AIMessage(content="ok")]}
+
+        execution.graph = FakeGraph()
+        dock = BottomInputDock()
+        set_dock(dock)
+        dock.begin_capture()
+        try:
+            await execution.run_turn(
+                "Run the next scheduled loop iteration.",
+                context=context,
+                persist_user_input=False,
+            )
+        finally:
+            dock.deactivate()
+            dock.reset()
+            set_dock(None)
+
+        assert captured["initial_user_messages"] == ["Run the next scheduled loop iteration."]
+        rows = await load_messages(coding.id)
+        assert [row.role for row in rows] == ["assistant"]
+        assert all("Run the next scheduled loop iteration." not in row.content for row in rows)
+        assert execution._task_state.recent_exchanges == []
+    finally:
+        await delete_session(coding.id)

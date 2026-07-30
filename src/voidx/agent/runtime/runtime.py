@@ -46,6 +46,7 @@ class AgentRuntime:
                 runtime,
                 display_text=request.display_text,
                 context=request.context,
+                persist_user_input=request.persist_user_input,
             )
         except asyncio.CancelledError:
             if resolved_session_id:

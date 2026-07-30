@@ -17,6 +17,7 @@ class TurnRequest(BaseModel):
     user_text: str
     context: TurnExecutionContext
     display_text: str | None = None
+    persist_user_input: bool = True
     # ``None`` means the caller did not supply an input snapshot; the runtime
     # then loads the persisted state for ``thread.session_id``. Supplying a
     # state (even a default-constructed one) makes the caller's snapshot

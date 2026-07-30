@@ -12,12 +12,22 @@ from voidx.agent.domain.profile import RuntimeProfile
 from voidx.agent.domain.thread import (
     AgentThread,
     AgentThreadState,
+    LifecycleState,
     RuntimeDecision,
     RuntimeOutboxItem,
     ThreadAttempt,
     apply_lifecycle_decision,
 )
-from voidx.memory.store import _fetch_all, _fetch_one, _now, _write_transaction
+from voidx.memory.store import (
+    _fetch_all,
+    _fetch_one,
+    _now,
+    _write_transaction,
+    fetch_all_on,
+    fetch_one_on,
+    open_isolated_db,
+    write_transaction_on,
+)
 
 
 class ThreadStateConflict(RuntimeError):
@@ -41,6 +51,24 @@ class CommitResult:
 
 
 class ThreadStore:
+    def __init__(self, db_path: Any = None) -> None:
+        # db_path given → isolated database (tests/tools); None → shared global store.
+        self._conn = open_isolated_db(db_path) if db_path is not None else None
+
+    def _write(self, tx: Any) -> Any:
+        if self._conn is not None:
+            return write_transaction_on(self._conn, tx)
+        return _write_transaction(tx)
+
+    def _one(self, sql: str, params: tuple = ()) -> Any:
+        if self._conn is not None:
+            return fetch_one_on(self._conn, sql, params)
+        return _fetch_one(sql, params)
+
+    def _all(self, sql: str, params: tuple = ()) -> Any:
+        if self._conn is not None:
+            return fetch_all_on(self._conn, sql, params)
+        return _fetch_all(sql, params)
     async def create_thread(
         self,
         thread: AgentThread,
@@ -85,10 +113,10 @@ class ThreadStore:
             )
             return LoadedThread(thread, profile, thread_state, 0, scope)
 
-        return await _write_transaction(_tx)
+        return await self._write(_tx)
 
     async def load(self, thread_id: str) -> LoadedThread | None:
-        row = await _fetch_one(
+        row = await self._one(
             """SELECT t.*, s.state_json, s.state_version
                FROM agent_threads t
                JOIN agent_thread_state s ON s.thread_id = t.id
@@ -122,7 +150,7 @@ class ThreadStore:
                 (session_id, now, thread_id),
             )
 
-        await _write_transaction(_tx)
+        await self._write(_tx)
 
     async def save_state(
         self,
@@ -144,7 +172,7 @@ class ThreadStore:
             conn.execute("UPDATE agent_threads SET updated_at = ? WHERE id = ?", (now, thread_id))
             return _loaded_from_conn(conn, thread_id)
 
-        return await _write_transaction(_tx)
+        return await self._write(_tx)
 
     async def begin_attempt(
         self,
@@ -190,7 +218,7 @@ class ThreadStore:
                     now,
                 ),
             )
-            running = loaded.state.model_copy(update={"lifecycle": "running"})
+            running = loaded.state.model_copy(update={"lifecycle": LifecycleState.RUNNING})
             conn.execute(
                 """UPDATE agent_thread_state
                    SET state_json = ?, state_version = state_version + 1, updated_at = ?
@@ -206,7 +234,7 @@ class ThreadStore:
                 status="prepared",
             )
 
-        return await _write_transaction(_tx)
+        return await self._write(_tx)
 
     async def mark_side_effect_started(self, attempt_id: str) -> ThreadAttempt:
         def _tx(conn):
@@ -222,7 +250,7 @@ class ThreadStore:
                 raise KeyError(attempt_id)
             return _attempt_from_row(row)
 
-        return await _write_transaction(_tx)
+        return await self._write(_tx)
 
     async def commit_decision(
         self,
@@ -252,8 +280,18 @@ class ThreadStore:
             if loaded.state_version != expected_state_version:
                 raise ThreadStateConflict("thread state_version conflict")
             next_lifecycle = apply_lifecycle_decision(loaded.state.lifecycle, decision)
+            context = dict(loaded.state.context)
+            try:
+                iteration = int(context.get("iteration", 0) or 0)
+            except (TypeError, ValueError):
+                iteration = 0
+            context["iteration"] = iteration + 1
             next_state = loaded.state.model_copy(
-                update={"lifecycle": next_lifecycle, "lifecycle_decision": decision}
+                update={
+                    "lifecycle": next_lifecycle,
+                    "lifecycle_decision": decision,
+                    "context": context,
+                }
             )
             now = _now()
             next_version = expected_state_version + 1
@@ -305,7 +343,7 @@ class ThreadStore:
                 next_outbox_id=outbox_id,
             )
 
-        return await _write_transaction(_tx)
+        return await self._write(_tx)
 
     async def enqueue_outbox(
         self,
@@ -345,7 +383,7 @@ class ThreadStore:
                 expected_state_version=expected_state_version,
             )
 
-        return await _write_transaction(_tx)
+        return await self._write(_tx)
 
     async def claim_outbox(
         self, outbox_id: str, *, lease_owner: str, lease_seconds: float
@@ -370,7 +408,7 @@ class ThreadStore:
             )
             return _outbox_from_row(row)
 
-        return await _write_transaction(_tx)
+        return await self._write(_tx)
 
     async def claim_next_outbox(
         self, *, lease_owner: str, lease_seconds: float, kind: str | None = None
@@ -408,10 +446,10 @@ class ThreadStore:
             )
             return _outbox_from_row(row)
 
-        return await _write_transaction(_tx)
+        return await self._write(_tx)
 
     async def latest_thread_id_with_prefix(self, prefix: str) -> str | None:
-        row = await _fetch_one(
+        row = await self._one(
             """SELECT id FROM agent_threads
                WHERE id LIKE ?
                ORDER BY created_at DESC, rowid DESC
@@ -432,7 +470,7 @@ class ThreadStore:
             )
             return cur.rowcount
 
-        return await _write_transaction(_tx)
+        return await self._write(_tx)
 
     async def discard_pending_outbox(self, thread_id: str) -> int:
         """Mark every undelivered outbox row of the thread as delivered (stop/restart hygiene)."""
@@ -446,12 +484,12 @@ class ThreadStore:
             )
             return cur.rowcount
 
-        return await _write_transaction(_tx)
+        return await self._write(_tx)
 
     async def list_pending_outbox(self, thread_id: str) -> list[RuntimeOutboxItem]:
         """Undelivered outbox rows for the thread, regardless of availability."""
 
-        rows = await _fetch_all(
+        rows = await self._all(
             """SELECT * FROM runtime_outbox
                WHERE thread_id = ? AND delivered_at IS NULL
                ORDER BY available_at, created_at""",
@@ -472,16 +510,16 @@ class ThreadStore:
                 (_now(), attempt["source_outbox_id"]),
             )
 
-        await _write_transaction(_tx)
+        await self._write(_tx)
 
     async def get_attempt(self, attempt_id: str) -> ThreadAttempt | None:
-        row = await _fetch_one(
+        row = await self._one(
             "SELECT * FROM runtime_turn_attempts WHERE id = ?", (attempt_id,)
         )
         return _attempt_from_row(row) if row is not None else None
 
     async def get_attempt_input_frame(self, attempt_id: str) -> dict[str, Any]:
-        row = await _fetch_one(
+        row = await self._one(
             "SELECT input_frame_json FROM runtime_turn_attempts WHERE id = ?", (attempt_id,)
         )
         if row is None:
@@ -502,7 +540,7 @@ class ThreadStore:
                 reason=reason,
             )
             state = loaded.state.model_copy(
-                update={"lifecycle": "needs_user", "lifecycle_decision": decision}
+                update={"lifecycle": LifecycleState.NEEDS_USER, "lifecycle_decision": decision}
             )
             now = _now()
             conn.execute(
@@ -513,7 +551,7 @@ class ThreadStore:
             )
             return _loaded_from_conn(conn, loaded.thread.thread_id)
 
-        return await _write_transaction(_tx)
+        return await self._write(_tx)
 
     async def ack_outbox(self, outbox_id: str) -> None:
         def _tx(conn):
@@ -522,7 +560,18 @@ class ThreadStore:
                 (_now(), outbox_id),
             )
 
-        await _write_transaction(_tx)
+        await self._write(_tx)
+
+    async def release_outbox_claim(self, outbox_id: str) -> None:
+        """Drop a claim without delivering: another worker may claim it again."""
+        def _tx(conn):
+            conn.execute(
+                "UPDATE runtime_outbox SET claimed_by = NULL, claimed_until = NULL "
+                "WHERE id = ? AND delivered_at IS NULL",
+                (outbox_id,),
+            )
+
+        await self._write(_tx)
 
 
 def _outbox_from_row(row) -> RuntimeOutboxItem:

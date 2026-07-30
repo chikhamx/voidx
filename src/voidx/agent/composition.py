@@ -48,6 +48,7 @@ def build_agent_app(
         store=loop_store,
         runtime=runtime,
         workspace=getattr(config, "workspace", ""),
+        session_id=(session.id if session is not None else ""),
     )
     loop_service = LoopService(
         store=loop_store,

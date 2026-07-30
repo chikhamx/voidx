@@ -718,6 +718,19 @@ class LangGraphExecution:
         self._context_cache = ContextCompilerCache()
         await self.restore_runtime_state()
         self._reload_parallel_subagents_from_settings()
+        await self._resume_loop_for_session(session)
+
+    async def _resume_loop_for_session(self, session: SessionInfo) -> None:
+        """A resumed session takes back ownership of its loop's wakeups."""
+        loop_service = getattr(self, "loop_service", None)
+        if loop_service is None:
+            return
+        try:
+            await loop_service.resume(session.id)
+        except Exception:
+            import logging
+
+            logging.getLogger(__name__).warning("loop resume failed for session %s", session.id)
 
     async def set_session_title(self, title: str) -> None:
         if self._session is None:
@@ -959,6 +972,7 @@ class LangGraphExecution:
         *,
         display_text: str | None = None,
         context: TurnExecutionContext,
+        persist_user_input: bool = True,
     ) -> None:
         if not isinstance(context, TurnExecutionContext):
             raise TypeError("run_turn requires TurnExecutionContext")
@@ -966,6 +980,7 @@ class LangGraphExecution:
             user_text,
             display_text=display_text,
             context=context,
+            persist_user_input=persist_user_input,
         )
 
 

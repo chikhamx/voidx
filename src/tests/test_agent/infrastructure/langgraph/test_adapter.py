@@ -17,7 +17,11 @@ class FakeHost:
     _task_state: TaskState = field(default_factory=TaskState)
     _compaction_summary: str = ""
     _session_date: str = ""
-    calls: list[tuple[str, str | None]] = field(default_factory=list)
+    calls: list[tuple[str, str | None, bool]] = field(default_factory=list)
+
+    @property
+    def session_id(self):
+        return ""
 
     @property
     def interaction_mode(self):
@@ -47,8 +51,8 @@ class FakeHost:
     def set_session_date(self, value):
         self._session_date = value
 
-    async def run_turn(self, user_text, *, display_text=None, context=None):
-        self.calls.append((user_text, display_text))
+    async def run_turn(self, user_text, *, display_text=None, context=None, persist_user_input=True):
+        self.calls.append((user_text, display_text, persist_user_input))
 
 
 @pytest.mark.asyncio
@@ -64,7 +68,7 @@ async def test_turn_engine_maps_runtime_and_delegates_to_execution():
 
     result = await engine.run("continue", runtime, display_text="stay focused")
 
-    assert host.calls == [("continue", "stay focused")]
+    assert host.calls == [("continue", "stay focused", True)]
     assert host._interaction_mode is InteractionMode.PLAN
     assert host._compaction_summary == "before"
     assert result.interaction_mode is InteractionMode.PLAN

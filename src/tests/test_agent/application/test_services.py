@@ -118,7 +118,7 @@ async def test_tool_service_checks_permission_before_execution():
 @dataclass
 class FakeTurnEngine:
     fail: bool = False
-    calls: list[tuple[str, SessionRuntimeState, str | None]] = field(default_factory=list)
+    calls: list[tuple[str, SessionRuntimeState, str | None, bool]] = field(default_factory=list)
     session_id: str = ""
 
     async def run(
@@ -128,8 +128,9 @@ class FakeTurnEngine:
         *,
         display_text: str | None = None,
         context=None,
+        persist_user_input: bool = True,
     ) -> SessionRuntimeState:
-        self.calls.append((user_text, runtime, display_text))
+        self.calls.append((user_text, runtime, display_text, persist_user_input))
         if self.fail:
             raise RuntimeError("engine failed")
         return runtime.model_copy(update={"compaction_summary": "completed"})
@@ -198,7 +199,7 @@ async def test_runtime_cancel_persists_and_propagates_cancellation():
     class CancelledEngine:
         session_id = ""
 
-        async def run(self, user_text, runtime, *, display_text=None, context=None):
+        async def run(self, user_text, runtime, *, display_text=None, context=None, persist_user_input=True):
             raise asyncio.CancelledError
 
     sessions = MemorySessionStore()

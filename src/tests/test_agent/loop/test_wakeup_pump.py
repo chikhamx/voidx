@@ -36,7 +36,7 @@ async def _wait_for_requests(runtime: ContinueThenCompleteRuntime, count: int) -
 @pytest.mark.asyncio
 async def test_wakeup_payload_carries_prompt_forward(tmp_path) -> None:
     runtime = ContinueThenCompleteRuntime()
-    store = ThreadStore()
+    store = ThreadStore(db_path=tmp_path / "store.db")
     scheduler = LoopRuntimeScheduler(
         store=store, runtime=runtime, workspace=str(tmp_path), lease_owner="test-worker"
     )
@@ -55,7 +55,7 @@ async def test_wakeup_payload_carries_prompt_forward(tmp_path) -> None:
 async def test_pump_dispatches_due_wakeup_and_reruns_prompt(tmp_path) -> None:
     runtime = ContinueThenCompleteRuntime()
     scheduler = LoopRuntimeScheduler(
-        store=ThreadStore(),
+        store=ThreadStore(db_path=tmp_path / "store.db"),
         runtime=runtime,
         workspace=str(tmp_path),
         lease_owner="test-worker",
@@ -63,6 +63,7 @@ async def test_pump_dispatches_due_wakeup_and_reruns_prompt(tmp_path) -> None:
     )
 
     await scheduler.run_prompt("check build", display_text="[loop] check build", session_id="s1")
+    scheduler.register_loop_thread("loop:s1:active")
     scheduler.start_pump()
     try:
         await asyncio.wait_for(_wait_for_requests(runtime, 2), timeout=5)
@@ -71,7 +72,9 @@ async def test_pump_dispatches_due_wakeup_and_reruns_prompt(tmp_path) -> None:
 
     assert len(runtime.requests) == 2
     rerun = runtime.requests[1]
-    assert rerun.user_text == "check build"
+    assert rerun.user_text == "Run the next scheduled loop iteration."
+    assert "Loop Goal" in rerun.context.runtime_profile.system_prompt
+    assert "check build" in rerun.context.runtime_profile.system_prompt
     assert rerun.display_text == "[loop] check build"
     assert rerun.thread.thread_id == "loop:s1:active"
 
@@ -80,7 +83,7 @@ async def test_pump_dispatches_due_wakeup_and_reruns_prompt(tmp_path) -> None:
 async def test_pump_stays_idle_without_due_wakeup(tmp_path) -> None:
     runtime = ContinueThenCompleteRuntime()
     scheduler = LoopRuntimeScheduler(
-        store=ThreadStore(),
+        store=ThreadStore(db_path=tmp_path / "store.db"),
         runtime=runtime,
         workspace=str(tmp_path),
         lease_owner="test-worker",
@@ -101,7 +104,7 @@ async def test_pump_ignores_undelivered_loop_prompt_rows(tmp_path) -> None:
     from voidx.agent.domain.thread import AgentThread
 
     runtime = ContinueThenCompleteRuntime()
-    store = ThreadStore()
+    store = ThreadStore(db_path=tmp_path / "store.db")
     await store.create_thread(
         AgentThread(thread_id="loop:s1:active", session_id="s1"),
         profile=RuntimeProfile(profile_id="loop", revision=1, name="Loop"),

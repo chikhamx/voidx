@@ -10,7 +10,29 @@ from pydantic import BaseModel, ConfigDict, Field, field_validator
 from voidx.agent.domain.profile import RuntimeProfile
 
 
+LOOP_ITERATION_USER_TEXT = "Run the next scheduled loop iteration."
 LOOP_PROFILE = RuntimeProfile(profile_id="loop", revision=1, name="Loop", protocol="loop")
+
+
+def loop_profile_for_spec(spec: "LoopSpec") -> RuntimeProfile:
+    return LOOP_PROFILE.model_copy(
+        update={"system_prompt": _loop_system_prompt(spec)}
+    )
+
+
+def _loop_system_prompt(spec: "LoopSpec") -> str:
+    lines = [
+        "## Loop Goal",
+        spec.prompt.strip(),
+        "",
+        "## Loop Iteration Instructions",
+        "Run one scheduled iteration toward the loop goal, then submit exactly one loop(operation='commit') decision.",
+    ]
+    if spec.interval_seconds is not None:
+        lines.append(f"Use the fixed loop interval of {spec.interval_seconds:g} seconds for continue decisions.")
+    else:
+        lines.append("Choose the next delay based on progress and the loop goal.")
+    return "\n".join(lines).strip()
 
 
 class LoopMode(str, Enum):

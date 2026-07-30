@@ -32,12 +32,14 @@ class LangGraphTurnEngine:
         *,
         display_text: str | None = None,
         context: Any | None = None,
+        persist_user_input: bool = True,
     ) -> SessionRuntimeState:
         self._mapper.apply_runtime(self._execution, runtime)
         await self._execution.run_turn(
             user_text,
             display_text=display_text,
             context=context,
+            persist_user_input=persist_user_input,
         )
         # Return the post-execution state still in RUNNING phase; the runtime
         # facade owns the COMMITTED transition via advance_turn.

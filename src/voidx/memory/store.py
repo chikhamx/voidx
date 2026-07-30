@@ -361,3 +361,56 @@ async def _write_transaction(callback: Callable[[sqlite3.Connection], T]) -> T:
                 raise
 
     return await asyncio.to_thread(lambda: _run_with_locked_retry(_run))
+
+
+def open_isolated_db(db_path: Path) -> sqlite3.Connection:
+    """Open a standalone database file with the full voidx schema."""
+    db_path = Path(db_path)
+    db_path.parent.mkdir(parents=True, exist_ok=True)
+    conn = sqlite3.connect(str(db_path), check_same_thread=False, timeout=_SQLITE_TIMEOUT_SECONDS)
+    try:
+        conn.row_factory = sqlite3.Row
+        conn.execute("PRAGMA journal_mode=WAL")
+        conn.execute("PRAGMA foreign_keys=ON")
+        conn.execute(f"PRAGMA busy_timeout={_SQLITE_BUSY_TIMEOUT_MS}")
+        _init_schema(conn)
+        return conn
+    except Exception:
+        conn.close()
+        raise
+
+
+async def fetch_all_on(
+    conn: sqlite3.Connection, sql: str, params: tuple = ()
+) -> list[sqlite3.Row]:
+    def _run():
+        with _write_lock:
+            return conn.execute(sql, params).fetchall()
+
+    return await asyncio.to_thread(lambda: _run_with_locked_retry(_run))
+
+
+async def fetch_one_on(
+    conn: sqlite3.Connection, sql: str, params: tuple = ()
+) -> sqlite3.Row | None:
+    def _run():
+        with _write_lock:
+            return conn.execute(sql, params).fetchone()
+
+    return await asyncio.to_thread(lambda: _run_with_locked_retry(_run))
+
+
+async def write_transaction_on(
+    conn: sqlite3.Connection, callback: Callable[[sqlite3.Connection], T]
+) -> T:
+    def _run() -> T:
+        with _write_lock:
+            try:
+                result = callback(conn)
+                conn.commit()
+                return result
+            except Exception:
+                conn.rollback()
+                raise
+
+    return await asyncio.to_thread(lambda: _run_with_locked_retry(_run))

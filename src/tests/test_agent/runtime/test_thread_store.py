@@ -1,10 +1,22 @@
 from __future__ import annotations
 
+import warnings
+
 import pytest
 
 from voidx.agent.domain.profile import RuntimeProfile
 from voidx.agent.domain.thread import AgentThread, AgentThreadState, LifecycleState, RuntimeDecision
 from voidx.memory.thread_store import ThreadStore, ThreadStateConflict
+
+
+@pytest.fixture(autouse=True)
+def _isolated_db(tmp_path, monkeypatch):
+    real_init = ThreadStore.__init__
+    monkeypatch.setattr(
+        ThreadStore,
+        "__init__",
+        lambda self, db_path=None: real_init(self, db_path=db_path if db_path is not None else tmp_path / "store.db"),
+    )
 
 
 @pytest.mark.asyncio
@@ -138,5 +150,58 @@ async def test_ack_outbox_is_idempotent() -> None:
 
     await store.ack_outbox(committed.next_outbox_id)
     await store.ack_outbox(committed.next_outbox_id)
-
     assert await store.claim_next_outbox(lease_owner="worker-b", lease_seconds=60) is None
+
+
+
+@pytest.mark.asyncio
+async def test_thread_store_lifecycle_updates_do_not_emit_pydantic_serializer_warnings() -> None:
+    store = ThreadStore()
+    await store.create_thread(
+        AgentThread(thread_id="loop-1"),
+        profile=RuntimeProfile(profile_id="loop", revision=1, name="Loop"),
+    )
+    loaded = await store.load("loop-1")
+    assert loaded is not None
+
+    with warnings.catch_warnings(record=True) as caught:
+        warnings.simplefilter("always")
+        attempt = await store.begin_attempt(
+            thread_id="loop-1",
+            source_outbox_id="wake-1",
+            input_frame={"trigger": "scheduled"},
+            expected_state_version=loaded.state_version,
+            lease_owner="worker-a",
+            lease_seconds=60,
+        )
+        assert not [warning for warning in caught if "Pydantic serializer warnings" in str(warning.message)]
+
+    reloaded = await store.load("loop-1")
+    assert reloaded is not None
+    assert reloaded.state.lifecycle is LifecycleState.RUNNING
+
+    with warnings.catch_warnings(record=True) as caught:
+        warnings.simplefilter("always")
+        await store.set_needs_user_for_attempt(attempt.attempt_id, reason="manual review")
+        assert not [warning for warning in caught if "Pydantic serializer warnings" in str(warning.message)]
+
+    reloaded = await store.load("loop-1")
+    assert reloaded is not None
+    assert reloaded.state.lifecycle is LifecycleState.NEEDS_USER
+
+
+@pytest.mark.asyncio
+async def test_thread_store_with_db_path_uses_isolated_database(tmp_path) -> None:
+    """ThreadStore(db_path=...) must not touch the global voidx.db — tests and
+    tooling need hermetic stores."""
+    isolated = tmp_path / "isolated.db"
+    store = ThreadStore(db_path=isolated)
+    await store.create_thread(
+        AgentThread(thread_id="loop-iso"),
+        profile=RuntimeProfile(profile_id="loop", revision=1, name="Loop"),
+    )
+
+    assert isolated.exists()
+
+    other = ThreadStore(db_path=tmp_path / "other.db")
+    assert await other.load("loop-iso") is None

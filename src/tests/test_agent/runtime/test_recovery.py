@@ -9,8 +9,8 @@ from voidx.memory.thread_store import ThreadStore
 
 
 @pytest.mark.asyncio
-async def test_recovery_moves_side_effect_attempt_to_needs_user() -> None:
-    store = ThreadStore()
+async def test_recovery_moves_side_effect_attempt_to_needs_user(tmp_path) -> None:
+    store = ThreadStore(db_path=tmp_path / "store.db")
     await store.create_thread(
         AgentThread(thread_id="loop-1"),
         profile=RuntimeProfile(profile_id="loop", revision=1, name="Loop"),
@@ -39,8 +39,8 @@ async def test_recovery_moves_side_effect_attempt_to_needs_user() -> None:
 
 
 @pytest.mark.asyncio
-async def test_recovery_acknowledges_committed_attempt_source_outbox() -> None:
-    store = ThreadStore()
+async def test_recovery_acknowledges_committed_attempt_source_outbox(tmp_path) -> None:
+    store = ThreadStore(db_path=tmp_path / "store.db")
     await store.create_thread(
         AgentThread(thread_id="loop-1"),
         profile=RuntimeProfile(profile_id="loop", revision=1, name="Loop"),

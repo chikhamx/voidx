@@ -25,4 +25,5 @@ class TurnEngine(Protocol):
         *,
         display_text: str | None = None,
         context: Any | None = None,
+        persist_user_input: bool = True,
     ) -> SessionRuntimeState: ...

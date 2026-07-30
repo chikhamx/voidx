@@ -11,6 +11,16 @@ from voidx.agent.loop.scheduler import LoopRuntimeScheduler
 from voidx.memory.thread_store import ThreadStore
 
 
+@pytest.fixture(autouse=True)
+def _isolated_db(tmp_path, monkeypatch):
+    real_init = ThreadStore.__init__
+    monkeypatch.setattr(
+        ThreadStore,
+        "__init__",
+        lambda self, db_path=None: real_init(self, db_path=db_path if db_path is not None else tmp_path / "store.db"),
+    )
+
+
 @dataclass
 class FakeRuntime:
     requests: list = field(default_factory=list)
@@ -42,7 +52,10 @@ async def test_loop_runtime_scheduler_runs_prompt_through_runtime(tmp_path) -> N
     assert result.decision.reason == "no_loop_decision_submitted"
     assert len(runtime.requests) == 1
     request = runtime.requests[0]
-    assert request.user_text == "check build"
+    assert request.user_text == "Run the next scheduled loop iteration."
+    assert request.persist_user_input is False
+    assert "Loop Goal" in request.context.runtime_profile.system_prompt
+    assert "check build" in request.context.runtime_profile.system_prompt
     assert request.display_text == "[loop] check build"
     assert request.thread.thread_id == "loop:session-1:active"
     assert request.thread.session_id == "loop:session-1:active"
@@ -164,7 +177,8 @@ async def test_loop_runtime_scheduler_dispatches_its_own_outbox_when_other_work_
     )
 
     assert len(runtime.requests) == 1
-    assert runtime.requests[0].user_text == "right prompt"
+    assert runtime.requests[0].user_text == "Run the next scheduled loop iteration."
+    assert "right prompt" in runtime.requests[0].context.runtime_profile.system_prompt
     other_outbox = await store.claim_next_outbox(lease_owner="other-worker", lease_seconds=60)
     assert other_outbox is not None
     assert other_outbox.thread_id == "other"
@@ -205,3 +219,99 @@ async def test_loop_runner_publishes_waiting_record_with_next_wakeup(tmp_path) -
     assert waiting[-1].display == "record_only"
     import time as _time
     assert abs(float(waiting[-1].detail) - (_time.time() + 180)) < 5
+
+
+@pytest.mark.asyncio
+async def test_pump_skips_wakeup_outside_managed_scope(tmp_path) -> None:
+    """A wakeup for a loop this session never started/resumed must not be
+    claimed by the pump: it is deferred (lease refreshed) and never run."""
+    store = ThreadStore()
+    await store.create_thread(
+        AgentThread(thread_id="loop:foreign:active"),
+        profile=RuntimeProfile(profile_id="loop", revision=1, name="Loop"),
+    )
+    await store.enqueue_outbox(
+        thread_id="loop:foreign:active",
+        kind="wakeup",
+        payload={"prompt": "check", "display_text": "[loop] check"},
+        expected_state_version=0,
+    )
+
+    runtime = FakeRuntime()
+    scheduler = LoopRuntimeScheduler(
+        store=store,
+        runtime=runtime,
+        workspace=str(tmp_path),
+        lease_owner="test-worker",
+        lease_seconds=60,
+        session_id="local-session",
+    )
+
+    assert await scheduler._dispatch_next_wakeup() is None
+    assert runtime.requests == []
+
+    # The foreign wakeup stays pending (not acked) so its owning session can
+    # still pick it up later.
+    skipped = await store.claim_next_outbox(lease_owner="other-worker", lease_seconds=60)
+    assert skipped is not None
+    assert skipped.thread_id == "loop:foreign:active"
+
+
+@pytest.mark.asyncio
+async def test_pump_dispatches_registered_loop_wakeup(tmp_path) -> None:
+    store = ThreadStore()
+    await store.create_thread(
+        AgentThread(thread_id="loop:local-session:active"),
+        profile=RuntimeProfile(profile_id="loop", revision=1, name="Loop"),
+    )
+    await store.enqueue_outbox(
+        thread_id="loop:local-session:active",
+        kind="wakeup",
+        payload={"prompt": "check", "display_text": "[loop] check"},
+        expected_state_version=0,
+    )
+
+    runtime = FakeRuntime()
+    scheduler = LoopRuntimeScheduler(
+        store=store,
+        runtime=runtime,
+        workspace=str(tmp_path),
+        lease_owner="test-worker",
+        lease_seconds=60,
+        session_id="local-session",
+    )
+    scheduler.register_loop_thread("loop:local-session:active")
+
+    result = await scheduler._dispatch_next_wakeup()
+
+    assert result is not None
+    assert result.thread_id == "loop:local-session:active"
+    assert len(runtime.requests) == 1
+
+
+@pytest.mark.asyncio
+async def test_pump_without_registered_loops_claims_nothing(tmp_path) -> None:
+    """A scheduler with an empty managed set must not consume any wakeup,
+    even for threads that look like its own session prefix."""
+    store = ThreadStore()
+    await store.create_thread(
+        AgentThread(thread_id="loop:local-session:active"),
+        profile=RuntimeProfile(profile_id="loop", revision=1, name="Loop"),
+    )
+    await store.enqueue_outbox(
+        thread_id="loop:local-session:active",
+        kind="wakeup",
+        payload={"prompt": "check"},
+        expected_state_version=0,
+    )
+
+    scheduler = LoopRuntimeScheduler(
+        store=store,
+        runtime=FakeRuntime(),
+        workspace=str(tmp_path),
+        lease_owner="test-worker",
+        lease_seconds=60,
+        session_id="local-session",
+    )
+
+    assert await scheduler._dispatch_next_wakeup() is None

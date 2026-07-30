@@ -90,6 +90,8 @@ def _tool_definition_name(tool: dict[str, Any]) -> str:
     return ""
 
 
+
+
 class LlmTurn:
     def __init__(self, host: Any) -> None:
         self.host = host
@@ -480,10 +482,14 @@ class LlmTurn:
             if prompt_policy is not None and prompt_policy.workflow_runtime is not None
             else WORKFLOW_RUNTIME
         )
-        profile_directive_value = (
+        policy_directive = (
             prompt_policy.profile_directive
             if prompt_policy is not None and prompt_policy.profile_directive is not None
             else ""
+        )
+        profile_system_prompt = str(getattr(active_profile, "system_prompt", "") or "").strip()
+        profile_directive_value = "\n\n".join(
+            part for part in (policy_directive, profile_system_prompt) if part.strip()
         )
         task_state_suppressed = (
             prompt_policy is not None and prompt_policy.task_state_section == ""

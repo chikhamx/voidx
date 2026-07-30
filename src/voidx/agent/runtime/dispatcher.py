@@ -82,6 +82,12 @@ class RuntimeDispatcher:
             # Redelivery after a crash between commit and ack: do not re-run the turn.
             await self._store.ack_outbox(outbox.outbox_id)
             return None
+        if attempt.side_effect_started:
+            # Another worker already started this attempt.  The outbox lease may
+            # expire during a long turn, but that must not duplicate side effects.
+            await self._store.release_outbox_claim(outbox.outbox_id)
+            return None
+        attempt = await self._store.mark_side_effect_started(attempt.attempt_id)
         decision = await self._runner.run_turn(
             thread=loaded.thread,
             profile=loaded.profile,

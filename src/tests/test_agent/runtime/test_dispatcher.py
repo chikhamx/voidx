@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+import asyncio
 from dataclasses import dataclass, field
 
 import pytest
@@ -8,6 +9,16 @@ from voidx.agent.domain.profile import RuntimeProfile
 from voidx.agent.domain.thread import AgentThread, LifecycleState, RuntimeDecision
 from voidx.agent.runtime.dispatcher import RuntimeDispatcher
 from voidx.memory.thread_store import ThreadStore
+
+
+@pytest.fixture(autouse=True)
+def _isolated_db(tmp_path, monkeypatch):
+    real_init = ThreadStore.__init__
+    monkeypatch.setattr(
+        ThreadStore,
+        "__init__",
+        lambda self, db_path=None: real_init(self, db_path=db_path if db_path is not None else tmp_path / "store.db"),
+    )
 
 
 @dataclass
@@ -185,6 +196,53 @@ async def test_dispatcher_acks_outbox_when_commit_conflicts_after_stop() -> None
     assert await store.claim_next_outbox(lease_owner="w1", lease_seconds=60) is None
     reloaded = await store.load("loop-1")
     assert reloaded.state.lifecycle is LifecycleState.CANCELLED
+
+
+
+@dataclass
+class _BlockingRunner:
+    calls: int = 0
+    first_started: asyncio.Event = field(default_factory=asyncio.Event)
+    release_first: asyncio.Event = field(default_factory=asyncio.Event)
+
+    async def run_turn(self, *, thread, profile, input_frame):
+        self.calls += 1
+        if self.calls == 1:
+            self.first_started.set()
+            await self.release_first.wait()
+        return RuntimeDecision(outcome="continue", summary=f"call {self.calls}", next_delay_seconds=60)
+
+
+@pytest.mark.asyncio
+async def test_dispatcher_does_not_rerun_in_flight_attempt_after_outbox_lease_expires() -> None:
+    store = await _make_loop_store()
+    await _seed_committed_wakeup(store)
+    runner = _BlockingRunner()
+    first = RuntimeDispatcher(
+        store=store,
+        runner=runner,
+        lease_owner="worker-a",
+        lease_seconds=0.01,
+        claim_kind="wakeup",
+    )
+    second = RuntimeDispatcher(
+        store=store,
+        runner=runner,
+        lease_owner="worker-b",
+        lease_seconds=0.01,
+        claim_kind="wakeup",
+    )
+
+    first_task = asyncio.create_task(first.dispatch_once())
+    await runner.first_started.wait()
+    await asyncio.sleep(0.03)
+    second_result = await second.dispatch_once()
+    runner.release_first.set()
+    first_result = await first_task
+
+    assert second_result is None
+    assert first_result is not None
+    assert runner.calls == 1
 
 
 @pytest.mark.asyncio

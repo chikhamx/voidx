@@ -50,6 +50,13 @@ from voidx.tools.agent import AgentResultContract, AgentTool
 from voidx.tools.registry import ToolRegistry
 from voidx.ui.output.dock import BottomInputDock, set_dock
 from voidx.ui.output.events import DockEventConsumer, TurnStarted, ui_events
+from voidx.agent.domain.loop import LOOP_PROFILE, LoopToolView
+from voidx.agent.domain.turn_context import TurnExecutionContext
+from voidx.agent.infrastructure.langgraph.runtime.thread_context import (
+    ThreadExecutionState,
+    _CURRENT_THREAD_EXECUTION_STATE,
+)
+from tests.test_tools.test_loop import FakeLoopController
 
 
 def _graph(tmp_path):
@@ -390,6 +397,53 @@ async def test_execute_tools_warns_then_skips_repeated_todo_without_progress(tmp
     assert result["messages"][0].tool_call_id == "call_todo_4"
     assert "Runtime guard skipped repeated todo:read call" in result["messages"][0].content
     assert result.get("should_continue", True) is True
+
+
+@pytest.mark.asyncio
+async def test_execute_loop_protocol_tool_without_registry_tool(tmp_path):
+    graph = _graph(tmp_path)
+    controller = FakeLoopController()
+    tool_policy = LoopToolView.default(workflow_enabled=False).bind({"loop", *graph.tools.ids()})
+    turn_context = TurnExecutionContext(
+        thread_id="loop:test:gen",
+        session_id="loop:test:gen",
+        runtime_profile=LOOP_PROFILE,
+        workspace=str(tmp_path),
+        tool_policy=tool_policy,
+        loop_controller=controller,
+    )
+    thread_state = ThreadExecutionState(
+        thread_id="loop:test:gen",
+        turn_context=turn_context,
+        runtime_profile=LOOP_PROFILE,
+        tool_policy=tool_policy,
+        workspace=str(tmp_path),
+    )
+    parent = AIMessage(
+        content="",
+        tool_calls=[{
+            "name": "loop",
+            "args": {"operation": "commit", "outcome": "continue", "summary": "checked"},
+            "id": "call_loop_1",
+            "type": "tool_call",
+        }],
+    )
+
+    token = _CURRENT_THREAD_EXECUTION_STATE.set(thread_state)
+    try:
+        result = await graph._execute_tools({
+            "messages": [parent],
+            "workspace": str(tmp_path),
+            "persona": "voidx",
+            "plan_mode": False,
+        })
+    finally:
+        _CURRENT_THREAD_EXECUTION_STATE.reset(token)
+
+    assert "loop" not in graph.tools.ids()
+    assert controller.decisions[0].outcome == "continue"
+    assert result["should_continue"] is False
+    assert result["messages"][0].status == "success"
 
 
 @pytest.mark.asyncio

@@ -113,6 +113,7 @@ class TurnRunner:
         *,
         display_text: str | None = None,
         context: TurnExecutionContext,
+        persist_user_input: bool = True,
     ) -> None:
         host = self.host
         context_session_id = context.session_id
@@ -280,23 +281,24 @@ class TurnRunner:
                     host._task_state = turn_task_state.model_copy(deep=True)
                     _invalidate_tui(host)
 
-                saved_user_content, user_content_format = serialize_message_content(payload.content)
-                user_message_id = await save_message(MessageRow(
-                    session_id=host._session.id,
-                    role="user",
-                    content=saved_user_content,
-                    content_format=user_content_format,
-                    created_at=memory_now(),
-                ))
-                if host._session_msg_cache is not None:
-                    host._session_msg_cache.append(MessageRow(
-                        id=user_message_id,
+                if persist_user_input:
+                    saved_user_content, user_content_format = serialize_message_content(payload.content)
+                    user_message_id = await save_message(MessageRow(
                         session_id=host._session.id,
                         role="user",
                         content=saved_user_content,
                         content_format=user_content_format,
                         created_at=memory_now(),
                     ))
+                    if host._session_msg_cache is not None:
+                        host._session_msg_cache.append(MessageRow(
+                            id=user_message_id,
+                            session_id=host._session.id,
+                            role="user",
+                            content=saved_user_content,
+                            content_format=user_content_format,
+                            created_at=memory_now(),
+                        ))
                 host._any_messages_sent = True
 
                 initial: AgentState = {
@@ -334,7 +336,11 @@ class TurnRunner:
                     final = chunk
                     streamed_messages = list(final.get("messages", []))
                 final_task_state = _load_task_state(final.get("task_state"), fallback=turn_task_state)
-                exchange = _turn_exchange_from_final_messages(payload.title_text, final.get("messages", []))
+                exchange = (
+                    _turn_exchange_from_final_messages(payload.title_text, final.get("messages", []))
+                    if persist_user_input
+                    else None
+                )
                 if exchange is not None:
                     final_task_state.recent_exchanges = [
                         *final_task_state.recent_exchanges,

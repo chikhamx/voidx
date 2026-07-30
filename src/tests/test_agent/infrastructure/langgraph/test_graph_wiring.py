@@ -16,7 +16,11 @@ class FakeBackend:
     _task_state: TaskState = field(default_factory=TaskState)
     _compaction_summary: str = ""
     _session_date: str = ""
-    calls: list[tuple[str, str | None]] = field(default_factory=list)
+    calls: list[tuple[str, str | None, bool]] = field(default_factory=list)
+
+    @property
+    def session_id(self):
+        return ""
 
     @property
     def interaction_mode(self):
@@ -52,8 +56,9 @@ class FakeBackend:
         *,
         display_text: str | None = None,
         context=None,
+        persist_user_input: bool = True,
     ) -> None:
-        self.calls.append((user_text, display_text))
+        self.calls.append((user_text, display_text, persist_user_input))
 
 
 @pytest.mark.asyncio
@@ -64,5 +69,5 @@ async def test_langgraph_engine_delegates_turn_with_runtime_boundary():
 
     result = await engine.run("hello", runtime)
 
-    assert backend.calls == [("hello", None)]
+    assert backend.calls == [("hello", None, True)]
     assert result.turn_phase is TurnPhase.RUNNING

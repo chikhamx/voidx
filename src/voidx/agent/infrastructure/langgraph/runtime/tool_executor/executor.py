@@ -23,6 +23,7 @@ from voidx.runtime.ui import (
     WarningAppended,
     UiEventTimeout,
 )
+from voidx.tools.loop import LoopTool
 from voidx.tools.service import ApprovedToolRisk, ToolContext, ToolResult
 
 from .types import ToolResultOk, _ExecutedTool, _task_state_for_state, _tool_result_ok
@@ -270,6 +271,8 @@ class ToolExecutorAdapter:
                     previous_approved_tool_risks = ctx.approved_tool_risks
                     ctx.approved_tool_risks = _approved_tool_risks_for_call(tc)
                     try:
+                        if tid == "loop" and ctx.loop_controller is not None:
+                            return await LoopTool().execute(targs, ctx)
                         return await host.tools.execute_tool(tid, targs, ctx)
                     finally:
                         ctx.approved_tool_risks = previous_approved_tool_risks

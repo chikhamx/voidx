@@ -28,7 +28,7 @@ class RuntimeStateSnapshot(BaseModel):
 
 
 class MessageRuntimeSnapshot(BaseModel):
-    message_id: int
+    message_id: int | None
     session_id: str
     interaction_mode: InteractionMode = InteractionMode.AUTO
     task_intent: TaskIntent = TaskIntent.CODING
@@ -310,7 +310,7 @@ async def _load_message_runtime_snapshot_jsonl(message_id: int, *, session_id: s
 def _message_runtime_snapshot_from_record(record: dict) -> MessageRuntimeSnapshot | None:
     try:
         return MessageRuntimeSnapshot(
-            message_id=int(record["message_id"]),
+            message_id=int(record["message_id"]) if record.get("message_id") is not None else None,
             session_id=str(record["session_id"]),
             interaction_mode=InteractionMode(str(record["interaction_mode"])),
             task_intent=TaskIntent(str(record["task_intent"])),

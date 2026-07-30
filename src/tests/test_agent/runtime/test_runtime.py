@@ -36,7 +36,7 @@ class FakeEngine:
     session_id: str = ""
     runtime: SessionRuntimeState = field(default_factory=SessionRuntimeState)
 
-    async def run(self, user_text, runtime, *, display_text=None, context=None):
+    async def run(self, user_text, runtime, *, display_text=None, context=None, persist_user_input=True):
         self.runtime = runtime
         return runtime
 
@@ -49,7 +49,7 @@ async def test_runtime_advances_turn_phase_around_engine_and_commit():
     engine = FakeEngine()
     observed = {}
 
-    async def run(user_text, runtime, *, display_text=None, context=None):
+    async def run(user_text, runtime, *, display_text=None, context=None, persist_user_input=True):
         observed["phase"] = runtime.turn_phase
         return runtime
 
@@ -127,7 +127,7 @@ async def test_runtime_resolves_lazy_identity_from_engine_session_id():
     events = FakeEvents()
     engine = FakeEngine()
 
-    async def run(user_text, runtime, *, display_text=None, context=None):
+    async def run(user_text, runtime, *, display_text=None, context=None, persist_user_input=True):
         engine.session_id = "lazy-created"
         return runtime
 

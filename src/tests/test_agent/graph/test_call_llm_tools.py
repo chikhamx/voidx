@@ -45,6 +45,12 @@ from tests.test_agent.graph.stream_llm_helpers import (
     FailsOnceStreamingModel,
     FakeRenderer,
 )
+from voidx.agent.domain.loop import LOOP_PROFILE
+from voidx.agent.domain.turn_context import TurnExecutionContext
+from voidx.agent.infrastructure.langgraph.runtime.thread_context import (
+    ThreadExecutionState,
+    _CURRENT_THREAD_EXECUTION_STATE,
+)
 
 @pytest.mark.asyncio
 async def test_call_llm_guidance_does_not_create_main_agent_convergence_hint(tmp_path, monkeypatch):
@@ -305,6 +311,75 @@ async def test_available_tool_ids_no_longer_filter_llm_tools(tmp_path, monkeypat
     assert "read" in tool_names
     assert "search" in tool_names
     assert "mcp" in tool_names
+    assert "loop" not in tool_names
+
+
+@pytest.mark.asyncio
+async def test_call_llm_default_profile_does_not_bind_loop_tool(tmp_path, monkeypatch):
+    import voidx.agent.infrastructure.langgraph.runtime.llm_turn as graph_module
+
+    monkeypatch.setattr(graph_module, "StreamingRenderer", FakeRenderer)
+
+    graph = LangGraphExecution(
+        Config(
+            model=ModelConfig(provider="openai", model="gpt-4o"),
+            workspace=str(tmp_path),
+        ),
+        api_key="test-key",
+    )
+    model = TrackingStreamingModel()
+    graph.model = model
+
+    await graph._call_llm({
+        "messages": [HumanMessage(content="hi")],
+        "step_count": 0,
+        "persona": "coordinate",
+    })
+
+    tool_names = [tool["function"]["name"] for tool in model.bound_tools]
+    assert "loop" not in tool_names
+
+
+
+@pytest.mark.asyncio
+async def test_call_llm_injects_loop_only_for_loop_profile(tmp_path, monkeypatch):
+    import voidx.agent.infrastructure.langgraph.runtime.llm_turn as graph_module
+
+    monkeypatch.setattr(graph_module, "StreamingRenderer", FakeRenderer)
+
+    graph = LangGraphExecution(
+        Config(
+            model=ModelConfig(provider="openai", model="gpt-4o"),
+            workspace=str(tmp_path),
+        ),
+        api_key="test-key",
+    )
+    model = TrackingStreamingModel()
+    graph.model = model
+    turn_context = TurnExecutionContext(
+        thread_id="loop:test:gen",
+        session_id="loop:test",
+        runtime_profile=LOOP_PROFILE,
+        workspace=str(tmp_path),
+    )
+    thread_state = ThreadExecutionState(
+        thread_id="loop:test:gen",
+        turn_context=turn_context,
+        runtime_profile=LOOP_PROFILE,
+        workspace=str(tmp_path),
+    )
+    token = _CURRENT_THREAD_EXECUTION_STATE.set(thread_state)
+    try:
+        await graph._call_llm({
+            "messages": [HumanMessage(content="[loop] 每三秒喊我吃饭")],
+            "step_count": 0,
+            "persona": "voidx",
+        })
+    finally:
+        _CURRENT_THREAD_EXECUTION_STATE.reset(token)
+
+    tool_names = [tool["function"]["name"] for tool in model.bound_tools]
+    assert tool_names.count("loop") == 1
 
 
 @pytest.mark.asyncio

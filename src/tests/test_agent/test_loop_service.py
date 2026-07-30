@@ -10,10 +10,22 @@ from voidx.agent.domain.thread import LifecycleState, RuntimeDecision
 from voidx.memory.thread_store import ThreadStore
 
 
+@pytest.fixture(autouse=True)
+def _isolated_db(tmp_path, monkeypatch):
+    real_init = ThreadStore.__init__
+    monkeypatch.setattr(
+        ThreadStore,
+        "__init__",
+        lambda self, db_path=None: real_init(self, db_path=db_path if db_path is not None else tmp_path / "store.db"),
+    )
+
+
 @dataclass
 class FakeScheduler:
     calls: list[tuple[str, str | None, str | None]] = field(default_factory=list)
     pump_starts: int = 0
+    registered: list[str] = field(default_factory=list)
+    unregistered: list[str] = field(default_factory=list)
 
     async def run_prompt(self, prompt: str, *, display_text: str | None, session_id: str | None, **_kwargs):
         self.calls.append((prompt, display_text, session_id))
@@ -21,6 +33,12 @@ class FakeScheduler:
 
     def start_pump(self) -> None:
         self.pump_starts += 1
+
+    def register_loop_thread(self, thread_id: str) -> None:
+        self.registered.append(thread_id)
+
+    def unregister_loop_thread(self, thread_id: str) -> None:
+        self.unregistered.append(thread_id)
 
 
 @pytest.mark.asyncio
@@ -68,12 +86,16 @@ async def test_loop_service_replaces_active_loop_for_same_parent(tmp_path) -> No
     scheduler = FakeScheduler()
     service = LoopService(store=store, scheduler=scheduler, workspace=str(tmp_path))
 
-    await service.start("parent-1", LoopSpec(prompt="first"))
+    first = await service.start("parent-1", LoopSpec(prompt="first"))
     status = await service.start("parent-1", LoopSpec(prompt="second", interval_seconds=60))
 
     assert status.prompt_summary == "second"
     assert status.mode == "fixed"
     assert [call[0] for call in scheduler.calls] == ["first", "second"]
+    assert scheduler.unregistered == [first.loop_thread_id]
+    reloaded_first = await store.load(first.loop_thread_id)
+    assert reloaded_first is not None
+    assert reloaded_first.state.lifecycle is LifecycleState.CANCELLED
 
 
 @dataclass
@@ -296,7 +318,7 @@ async def test_loop_restart_migrates_legacy_thread_to_isolated_session(tmp_path)
         profile=LOOP_PROFILE,
         state=AgentThreadState(
             thread_id="loop:parent-1:active",
-            lifecycle=LifecycleState.CANCELLED,
+            lifecycle=LifecycleState.WAITING,
             context={"prompt": "check build", "mode": "dynamic", "interval_seconds": None},
         ),
         resource_scope={"workspace": str(tmp_path)},
@@ -326,6 +348,19 @@ class ContinueRuntime:
                 outcome="continue", summary="pending", next_delay_seconds=self.delay
             )
         )
+
+
+@pytest.mark.asyncio
+async def test_loop_service_status_counts_completed_iterations(tmp_path) -> None:
+    from voidx.agent.loop.scheduler import LoopRuntimeScheduler
+
+    store = ThreadStore()
+    scheduler = LoopRuntimeScheduler(store=store, runtime=ContinueRuntime(), workspace=str(tmp_path))
+    service = LoopService(store=store, scheduler=scheduler, workspace=str(tmp_path))
+
+    status = await service.start("parent-1", LoopSpec(prompt="check"))
+
+    assert status.iteration == 1
 
 
 async def _pending_outbox(store: ThreadStore, thread_id: str = "loop:parent-1:active") -> list:
@@ -414,22 +449,71 @@ async def test_every_start_opens_a_fresh_loop_session(tmp_path) -> None:
 
 
 @pytest.mark.asyncio
-async def test_resume_reactivates_the_last_loop_session(tmp_path) -> None:
+async def test_resume_does_not_reactivate_stopped_loop(tmp_path) -> None:
     scheduler = FakeScheduler()
     service = LoopService(store=ThreadStore(), scheduler=scheduler, workspace=str(tmp_path))
 
-    started = await service.start("parent-1", LoopSpec(prompt="check"))
+    await service.start("parent-1", LoopSpec(prompt="check"))
     await service.stop("parent-1")
     assert await service.status("parent-1") is None
 
     resumed = await service.resume("parent-1")
 
-    assert resumed is not None
-    assert resumed.active is True
-    assert resumed.loop_thread_id == started.loop_thread_id
-    assert [call[0] for call in scheduler.calls] == ["check", "check"]
-    assert scheduler.pump_starts == 2
+    assert resumed is None
+    assert [call[0] for call in scheduler.calls] == ["check"]
+    assert scheduler.pump_starts == 1
 
+
+
+
+@pytest.mark.asyncio
+async def test_resume_preserves_pending_wakeup_without_immediate_rerun(tmp_path) -> None:
+    from voidx.agent.domain.loop import LOOP_PROFILE
+    from voidx.agent.domain.thread import AgentThread, AgentThreadState
+
+    store = ThreadStore()
+    scheduler = FakeScheduler()
+    spec = LoopSpec(prompt="check", interval_seconds=3600, generation="gen-1")
+    thread_id = spec.loop_thread_id("parent-1")
+    await store.create_thread(
+        AgentThread(
+            thread_id=thread_id,
+            session_id=spec.loop_session_id("parent-1"),
+            parent_thread_id="parent-1",
+            workspace=str(tmp_path),
+        ),
+        profile=LOOP_PROFILE,
+        state=AgentThreadState(
+            thread_id=thread_id,
+            lifecycle=LifecycleState.WAITING,
+            context={
+                "iteration": 1,
+                "prompt": spec.prompt,
+                "mode": spec.mode.value,
+                "interval_seconds": spec.interval_seconds,
+                "loop_spec": spec.model_dump(mode="json"),
+            },
+        ),
+        resource_scope={"workspace": str(tmp_path)},
+    )
+    loaded = await store.load(thread_id)
+    assert loaded is not None
+    pending = await store.enqueue_outbox(
+        thread_id=thread_id,
+        kind="wakeup",
+        payload={"prompt": spec.prompt, "spec": spec.model_dump(mode="json")},
+        expected_state_version=loaded.state_version,
+        delay_seconds=3600,
+    )
+
+    service = LoopService(store=store, scheduler=scheduler, workspace=str(tmp_path))
+    resumed = await service.resume("parent-1")
+
+    assert resumed is not None
+    assert resumed.loop_thread_id == thread_id
+    assert scheduler.calls == []
+    assert scheduler.pump_starts == 1
+    assert [item.outbox_id for item in await store.list_pending_outbox(thread_id)] == [pending.outbox_id]
 
 @pytest.mark.asyncio
 async def test_resume_works_after_process_restart_via_persisted_spec(tmp_path) -> None:
@@ -446,6 +530,7 @@ async def test_resume_works_after_process_restart_via_persisted_spec(tmp_path) -
     assert resumed.loop_thread_id == started.loop_thread_id
     assert resumed.mode == "fixed"
     assert resumed.interval_seconds == 60
+    assert [call[0] for call in scheduler.calls] == ["check"]
 
 
 @pytest.mark.asyncio

@@ -6,7 +6,12 @@ import asyncio
 import logging
 from dataclasses import dataclass
 
-from voidx.agent.domain.loop import LOOP_PROFILE, LoopSpec, LoopToolView
+from voidx.agent.domain.loop import (
+    LOOP_ITERATION_USER_TEXT,
+    LoopSpec,
+    LoopToolView,
+    loop_profile_for_spec,
+)
 from voidx.agent.domain.thread import AgentThread, AgentThreadState, LifecycleState, RuntimeDecision
 from voidx.agent.domain.turn_context import TurnExecutionContext
 from voidx.agent.runtime.contracts import TurnRequest
@@ -53,10 +58,11 @@ class LoopRuntimeRunner:
         spec = LoopSpec.model_validate(input_frame.get("spec") or {"prompt": prompt})
         controller = LoopAttemptController(spec=spec)
         ui_events.emit_nowait(StatusFinished(status_id=LOOP_WAITING_STATUS_ID))
+        runtime_profile = loop_profile_for_spec(spec)
         context = TurnExecutionContext(
             thread_id=thread.thread_id,
             session_id=thread.session_id or "",
-            runtime_profile=profile,
+            runtime_profile=runtime_profile,
             workspace=thread.workspace,
             tool_policy=LoopToolView.default(workflow_enabled=False).bind(_available_loop_tool_ids()),
             loop_controller=controller,
@@ -64,10 +70,11 @@ class LoopRuntimeRunner:
         await self.runtime.run_turn(
             TurnRequest(
                 thread=thread,
-                user_text=prompt,
+                user_text=LOOP_ITERATION_USER_TEXT,
                 display_text=str(input_frame.get("display_text") or "") or None,
                 context=context,
                 runtime=None,
+                persist_user_input=False,
             )
         )
         submitted = controller.final_decision()
@@ -96,6 +103,7 @@ class LoopRuntimeScheduler:
         lease_owner: str = "loop-manager",
         lease_seconds: float = 60,
         pump_poll_seconds: float = 1.0,
+        session_id: str = "",
     ) -> None:
         self._store = store
         self._runtime = runtime
@@ -103,7 +111,19 @@ class LoopRuntimeScheduler:
         self._lease_owner = lease_owner
         self._lease_seconds = lease_seconds
         self._pump_poll_seconds = pump_poll_seconds
+        self._session_id = session_id
+        # Loop threads this session owns (started or explicitly resumed).
+        # The pump only claims wakeups for these — a global outbox row for any
+        # other session is never this session's job to run.
+        self._managed_thread_ids: set[str] = set()
         self._pump_task: asyncio.Task | None = None
+
+    def register_loop_thread(self, thread_id: str) -> None:
+        if thread_id:
+            self._managed_thread_ids.add(thread_id)
+
+    def unregister_loop_thread(self, thread_id: str) -> None:
+        self._managed_thread_ids.discard(thread_id)
 
     def start_pump(self) -> None:
         if self._pump_task is not None:
@@ -120,7 +140,10 @@ class LoopRuntimeScheduler:
         except asyncio.CancelledError:
             pass
 
-    async def _pump_loop(self) -> None:
+    async def _dispatch_next_wakeup(self):
+        """Claim and run the next due wakeup owned by this session."""
+        if not self._managed_thread_ids:
+            return None
         dispatcher = RuntimeDispatcher(
             store=self._store,
             runner=LoopRuntimeRunner(self._runtime),
@@ -128,9 +151,26 @@ class LoopRuntimeScheduler:
             lease_seconds=self._lease_seconds,
             claim_kind="wakeup",
         )
+        for _ in range(16):
+            outbox = await self._store.claim_next_outbox(
+                lease_owner=self._lease_owner,
+                lease_seconds=self._lease_seconds,
+                kind="wakeup",
+            )
+            if outbox is None:
+                return None
+            if outbox.thread_id not in self._managed_thread_ids:
+                # Not ours: release the claim and leave it pending for the
+                # session that owns (or resumes) this loop.
+                await self._store.release_outbox_claim(outbox.outbox_id)
+                continue
+            return await dispatcher._dispatch_claimed(outbox)
+        return None
+
+    async def _pump_loop(self) -> None:
         while True:
             try:
-                result = await dispatcher.dispatch_once()
+                result = await self._dispatch_next_wakeup()
             except Exception:
                 logging.getLogger(__name__).exception("loop wakeup pump dispatch failed")
                 result = None
@@ -177,7 +217,7 @@ class LoopRuntimeScheduler:
                 parent_thread_id=session_id,
                 workspace=self._workspace,
             ),
-            profile=LOOP_PROFILE,
+            profile=loop_profile_for_spec(spec),
             state=AgentThreadState(thread_id=thread_id, lifecycle=LifecycleState.READY),
             resource_scope={"workspace": self._workspace},
         )
