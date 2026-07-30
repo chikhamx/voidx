@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+from voidx.agent.domain.turn_metadata import TurnMetadata
 from voidx.ui.output.dock import dock
 from voidx.ui.output.events.bus import UiEventBus, UiEventTimeout
 from voidx.ui.output.events.consumers import CompositeEventConsumer, DockEventConsumer
@@ -112,6 +113,7 @@ __all__ = [
     "TurnCancelled",
     "TurnCompleted",
     "TurnFailed",
+    "TurnMetadata",
     "TurnStarted",
     "UiEvent",
     "UiEventBase",

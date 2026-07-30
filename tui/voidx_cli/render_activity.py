@@ -8,7 +8,6 @@ import time
 from rich.cells import cell_len
 from rich.text import Text
 
-from voidx.agent.domain.loop import LOOP_ITERATION_USER_TEXT
 from voidx.llm.usage import format_token_count
 from voidx.ui.output.dock import (
     active_agent_step_text,
@@ -73,11 +72,8 @@ class _ActivityRendererMixin:
     def _loop_turn_in_progress(self) -> bool:
         if not getattr(dock, "turn_in_progress", False):
             return False
-        current_text = getattr(dock, "current_turn_text", "")
-        if not isinstance(current_text, str):
-            return False
-        stripped = current_text.strip()
-        return stripped == LOOP_ITERATION_USER_TEXT or stripped.startswith("[loop]")
+        metadata = getattr(dock, "current_turn_metadata", None)
+        return getattr(metadata, "protocol", "turn") == "loop"
 
     def _loop_waiting_label(self, width: int) -> str:
         record = dock.status_record(LOOP_WAITING_STATUS_ID) if hasattr(dock, "status_record") else None

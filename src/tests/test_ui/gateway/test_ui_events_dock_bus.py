@@ -204,3 +204,38 @@ async def test_ui_event_bus_request_timeout_writes_tool_log(monkeypatch):
     timeout = next(kwargs for event, kwargs in events if event == "ui_event_bus_request_timeout")
     assert timeout["tool_name"] == "ui_event_bus"
     assert "timed out" in timeout["message"]
+
+
+def test_turn_started_defaults_and_consumer_passes_metadata(isolated_dock):
+    from voidx.agent.domain.turn_metadata import TurnMetadata
+
+    default_event = TurnStarted(text="hi")
+    assert default_event.metadata.protocol == "turn"
+    assert default_event.metadata.profile_id == "coding"
+    assert default_event.metadata.category == "coding"
+
+    loop_metadata = TurnMetadata(profile_id="loop", protocol="loop", category="loop")
+    consumer = DockEventConsumer(isolated_dock)
+    consumer.handle(TurnStarted(text="[loop] visible only", metadata=loop_metadata))
+
+    assert isolated_dock.turn_in_progress is True
+    assert isolated_dock.current_turn_metadata == loop_metadata
+
+
+def test_dock_turn_metadata_clears_on_end_reset_and_restore(isolated_dock):
+    from voidx.agent.domain.turn_metadata import TurnMetadata
+    from voidx.ui.output.tree import OutputTree
+
+    loop_metadata = TurnMetadata(profile_id="loop", protocol="loop", category="loop")
+
+    isolated_dock.start_turn("loop", metadata=loop_metadata)
+    isolated_dock.end_turn()
+    assert isolated_dock.current_turn_metadata.protocol == "turn"
+
+    isolated_dock.start_turn("loop", metadata=loop_metadata)
+    isolated_dock.reset()
+    assert isolated_dock.current_turn_metadata.protocol == "turn"
+
+    isolated_dock.start_turn("loop", metadata=loop_metadata)
+    isolated_dock.restore_tree(OutputTree())
+    assert isolated_dock.current_turn_metadata.protocol == "turn"

@@ -144,3 +144,29 @@ async def test_runtime_resolves_lazy_identity_from_engine_session_id():
 
     assert result.session_id == "lazy-created"
     assert [session_id for session_id, _ in sessions.saves] == ["lazy-created"]
+
+
+def test_turn_metadata_from_context_uses_runtime_profile():
+    from voidx.agent.domain.loop import LOOP_PROFILE
+    from voidx.agent.domain.profile import RuntimeProfile
+    from voidx.agent.domain.turn_metadata import turn_metadata_from_context
+
+    coding = turn_metadata_from_context(TurnExecutionContext(thread_id="t1", session_id="s1"))
+    assert coding.profile_id == "coding"
+    assert coding.protocol == "turn"
+    assert coding.category == "coding"
+
+    chat_profile = RuntimeProfile(profile_id="chat", revision=1, name="Chat")
+    chat = turn_metadata_from_context(
+        TurnExecutionContext(thread_id="chat:s1", session_id="s1", runtime_profile=chat_profile)
+    )
+    assert chat.profile_id == "chat"
+    assert chat.protocol == "turn"
+    assert chat.category == "chat"
+
+    loop = turn_metadata_from_context(
+        TurnExecutionContext(thread_id="loop:t1:1", session_id="loop-session", runtime_profile=LOOP_PROFILE)
+    )
+    assert loop.profile_id == "loop"
+    assert loop.protocol == "loop"
+    assert loop.category == "loop"

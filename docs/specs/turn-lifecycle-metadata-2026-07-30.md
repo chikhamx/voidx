@@ -63,11 +63,11 @@ lifecycle path:
 
 ```python
 class TurnMetadata(BaseModel):
+    model_config = ConfigDict(frozen=True)
+
     profile_id: str = "coding"
     protocol: str = "turn"
-    kind: str = "regular"
-    thread_id: str = ""
-    session_id: str = ""
+    category: str = "coding"
 ```
 
 Use `protocol` as the primary behavior discriminator for runtime protocol state.
@@ -77,9 +77,9 @@ For loop activity and interrupts, the semantic check becomes:
 dock.turn_in_progress and dock.current_turn_metadata.protocol == "loop"
 ```
 
-`kind` is intentionally separate from `protocol` for UI and product-level grouping.
+`category` is intentionally separate from `protocol` for UI and product-level grouping.
 For example, a future `goal` profile may still use protocol `turn` but present as
-kind `goal`; chat can use protocol `turn` and kind `chat`.
+category `goal`; chat can use protocol `turn` and category `chat`.
 
 ## Data Model
 
@@ -100,20 +100,22 @@ class TurnMetadata(BaseModel):
 
     profile_id: str = "coding"
     protocol: str = "turn"
-    kind: str = "regular"
-    thread_id: str = ""
-    session_id: str = ""
+    category: str = "coding"
 ```
 
 Field semantics:
 
 - `profile_id`: runtime profile identity (`coding`, `chat`, `loop`, future ids).
 - `protocol`: graph protocol/tool lifecycle (`turn`, `loop`, `goal`, future ids).
-- `kind`: UI/product category; defaults to `profile_id` when known, otherwise
-  `regular`.
-- `thread_id`: active runtime thread id, useful for diagnostics and future UI
-  correlation.
-- `session_id`: active session id, useful for transcript/gateway consumers.
+- `category`: UI/product category. It is explicit metadata, and defaults to the
+  profile identity for built-in profiles (`coding`, `chat`, `loop`). A future
+  profile may choose a different category without changing its protocol.
+
+Event correlation IDs remain on `UiEventBase`: `TurnStarted.thread_id` is the
+canonical event/thread correlation field. Do not duplicate `thread_id` or
+`session_id` inside `TurnMetadata`; consumers must not have to choose between two
+sources of identity. Session correlation remains available through the existing
+runtime/session context and gateway state where needed.
 
 Do not include rendered text, user prompt text, or localized labels in metadata.
 Metadata must be safe to compare and stable under display changes.
@@ -125,22 +127,28 @@ Add helper construction from `TurnExecutionContext`:
 ```python
 def turn_metadata_from_context(context: TurnExecutionContext) -> TurnMetadata:
     profile = context.runtime_profile
-    profile_id = profile.profile_id or "coding"
-    protocol = profile.protocol or "turn"
+    profile_id = profile.profile_id
+    protocol = profile.protocol
     return TurnMetadata(
         profile_id=profile_id,
         protocol=protocol,
-        kind=profile_id if profile_id else "regular",
-        thread_id=context.thread_id,
-        session_id=context.session_id,
+        category=profile_id,
     )
 ```
+
+`RuntimeProfile.profile_id` and `RuntimeProfile.protocol` are already validated
+as the runtime source of truth. Do not silently coerce an empty value here;
+invalid profile construction should fail at the profile boundary.
+
+The loop profile must come from `src/voidx/agent/domain/loop.py::LOOP_PROFILE`
+(or its `loop_profile_for_spec()` copy), whose protocol is explicitly `"loop"`.
+The loop service must preserve that profile when creating the loop turn context.
 
 This keeps the source of truth in runtime profile/context, not in UI text.
 
 ## Event Schema
 
-Extend `TurnStarted` compatibly:
+Extend `TurnStarted` with metadata:
 
 ```python
 class TurnStarted(UiEventBase):
@@ -149,14 +157,18 @@ class TurnStarted(UiEventBase):
     metadata: TurnMetadata = Field(default_factory=TurnMetadata)
 ```
 
-Compatibility rules:
+Event boundary rules:
 
-- `metadata` must have a default so old tests and any internal callers that only
-  pass `text` remain valid.
-- Gateway/schema export should include the new field; frontend consumers can ignore
-  it initially.
-- Do not overload the existing event `kind` discriminator; use
-  `metadata.protocol` / `metadata.kind` for turn semantics.
+- `metadata` must have a default so internal callers that only pass `text` stay simple.
+- `TurnStarted.thread_id` remains the canonical event correlation field; the metadata
+  object must not reintroduce a competing thread/session ID source.
+- The same `TurnStarted` payload should be the source for dock, TUI, and any UI gateway
+  adapter that exposes turn lifecycle events.
+- Generic event serialization must forward `metadata` unchanged. The frontend may
+  ignore the field for now, but its checked-in protocol schema and decoder must accept
+  the additional object without dropping or rejecting it.
+- Do not overload the existing event `kind` discriminator; use `metadata.protocol` /
+  `metadata.category` for turn semantics.
 
 ## Runtime Flow
 
@@ -234,23 +246,28 @@ interrupt behavior later.
 - Do not change graph protocol selection; `resolve_graph_protocol()` remains driven
   by `RuntimeProfile.protocol`.
 - Do not change loop scheduling, loop persistence, or loop tool execution semantics.
-- Do not require frontend changes beyond tolerating the extra event field.
+- Do not add frontend-specific behavior for loop interrupts or profile semantics in this
+  change. The generic gateway/protocol path must still forward `metadata` unchanged,
+  and the checked-in frontend schema/decoder must accept the new optional object.
 - Do not remove user-visible `[loop] ...` display text; it remains presentation only.
+- Do not make slash-command presentation turns look like loop turns. The direct
+  `agent_service.py` slash-command `dock.start_turn(user_input)` path uses default
+  metadata unless it is later migrated to an explicit command profile.
 
-## Migration Plan
+## Implementation Shape
+
+The change should be implemented as one coherent metadata path:
 
 1. Add `TurnMetadata` and `turn_metadata_from_context()`.
-2. Extend `TurnStarted` with `metadata: TurnMetadata = Field(default_factory=TurnMetadata)`.
-3. Update `turn_runner` event and non-event paths to provide metadata derived from
-   `TurnExecutionContext.runtime_profile`.
-4. Update `DockEventConsumer` to pass event metadata into `dock.start_turn()`.
-5. Update `BottomInputDock.start_turn()` and reset/end paths to store and clear
-   `current_turn_metadata`.
-6. Update TUI loop turn detection to check `current_turn_metadata.protocol == "loop"`.
-7. Remove text-based loop checks and any imports that exist only for those checks,
-   such as `LOOP_ITERATION_USER_TEXT` in TUI rendering.
-8. Keep `current_turn_text` only if still needed for display/debugging; otherwise
-   remove it to avoid two competing sources of truth.
+2. Add defaulted `metadata` to `TurnStarted`.
+3. Derive metadata once in `turn_runner` from `TurnExecutionContext.runtime_profile`.
+4. Pass that metadata through both event and direct dock paths.
+5. Store and clear `current_turn_metadata` in `BottomInputDock`.
+6. Make TUI loop-turn behavior read `current_turn_metadata.protocol`.
+7. Delete text-based loop checks and imports that exist only for those checks.
+
+Keep `current_turn_text` only for presentation/debugging. It must not participate in
+behavior decisions.
 
 ## Tests
 
@@ -269,6 +286,18 @@ Add or update focused tests before implementation:
 - `BottomInputDock.start_turn("[loop] x", metadata=TurnMetadata(protocol="loop"))`
   stores loop metadata.
 - `end_turn()` and `reset()` clear metadata to default.
+- `_reset_runtime_nodes()` and `restore_tree()` clear metadata together with
+  `turn_in_progress`; no stale loop metadata may survive a reset.
+
+### Runtime propagation
+
+- Runtime tests must assert profile metadata from the actual `TurnExecutionContext`,
+  not only construct `TurnStarted` manually. This prevents the default metadata from
+  masking a missing runtime propagation call.
+- The loop service/profile construction path must prove that a loop turn context uses
+  `LOOP_PROFILE` (or its spec-specific copy) with `protocol == "loop"`.
+- The direct slash-command `dock.start_turn(user_input)` path remains a default/regular
+  presentation turn and must not classify text beginning with `[loop]` as loop.
 
 ### TUI
 
@@ -287,7 +316,13 @@ Add or update focused tests before implementation:
 - Chat turn emits `TurnStarted.metadata.profile_id == "chat"` and protocol `turn`.
 - Loop runtime turn emits `TurnStarted.metadata.profile_id == "loop"` and protocol
   `loop`.
-- Event and non-event paths populate identical metadata.
+- Event and non-event paths populate identical metadata for the same
+  `TurnExecutionContext`.
+- Any UI gateway adapter that exposes `turn.started` forwards the same metadata shape
+  instead of reconstructing turn type from text.
+- The exported backend UI protocol schema and checked-in
+  `frontend/src/rpc/protocol.schema.json` agree on the optional `metadata` object;
+  frontend handling may ignore its values, but must not reject or strip them.
 
 ## Verification Commands
 
@@ -311,6 +346,9 @@ Run these after implementation:
   src/voidx/ui/output/events/consumers.py \
   src/voidx/ui/output/dock/app.py \
   tui/voidx_cli/render_activity.py
+
+./python.py scripts/export_ui_protocol_schema.py
+./test.py --backend -- src/tests/test_ui/protocol/test_dto.py -q
 ```
 
 Run a broader backend suite if the event schema or runtime contracts affect many
@@ -328,9 +366,11 @@ callers:
 - Active loop turns still stop with Ctrl-C, including during AI approval / choice
   prompts.
 - Loop waiting countdown/status still stops with Ctrl-C even when no turn is active.
-- `TurnStarted` remains backward-compatible for callers that only provide `text`.
+- `TurnStarted(text=...)` gets default metadata without extra caller ceremony.
 - Metadata source of truth is `TurnExecutionContext.runtime_profile`, not UI display.
 - Event and non-event UI paths expose the same dock metadata.
+- Public UI event adapters, where present, forward metadata from `TurnStarted` rather
+  than deriving it from rendered text.
 
 ## Rollout Notes
 

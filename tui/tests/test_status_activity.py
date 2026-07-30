@@ -864,6 +864,7 @@ def test_loop_turn_in_progress_uses_default_label_without_local_busy_state(tmp_p
     have no busy start time or chosen verb. It should still render a visible
     activity label instead of a lone spinner glyph.
     """
+    from voidx.agent.domain.turn_metadata import TurnMetadata
     from voidx.ui.output.dock import dock
 
     monkeypatch.setattr("voidx_cli.app.random.choice", lambda _choices: "Thinking")
@@ -872,7 +873,10 @@ def test_loop_turn_in_progress_uses_default_label_without_local_busy_state(tmp_p
     tui._busy_started_at = None
     tui._busy_activity_verb = ""
 
-    dock.start_turn("Run the next scheduled loop iteration.")
+    dock.start_turn(
+        "Run the next scheduled loop iteration.",
+        metadata=TurnMetadata(profile_id="loop", protocol="loop", category="loop"),
+    )
 
     elements = tui._render_busy_activity_elements(100)
 
@@ -888,6 +892,7 @@ def test_loop_turn_in_progress_renders_vibe_line_not_countdown(tmp_path, monkeyp
     called (TurnStarted event) and loop:waiting was cleared. The activity line
     should show the normal busy/vibe line, not disappear or show a countdown.
     """
+    from voidx.agent.domain.turn_metadata import TurnMetadata
     from voidx.ui.output.dock import dock
 
     monkeypatch.setattr("voidx_cli.render_activity.time.monotonic", lambda: 500.0)
@@ -897,7 +902,10 @@ def test_loop_turn_in_progress_renders_vibe_line_not_countdown(tmp_path, monkeyp
     tui._busy_started_at = 500.0
     tui._busy_activity_verb = "Thinking"
 
-    dock.start_turn("Run the next scheduled loop iteration.")
+    dock.start_turn(
+        "Run the next scheduled loop iteration.",
+        metadata=TurnMetadata(profile_id="loop", protocol="loop", category="loop"),
+    )
 
     elements = tui._render_busy_activity_elements(100)
 
@@ -912,6 +920,7 @@ def test_loop_turn_finished_clears_vibe_line_back_to_countdown(tmp_path, monkeyp
     """After the loop turn ends and a new waiting record arrives, the activity
     line should switch back to the countdown, not stay on the vibe line.
     """
+    from voidx.agent.domain.turn_metadata import TurnMetadata
     from voidx.ui.output.dock import dock
 
     monkeypatch.setattr("voidx_cli.render_activity.time.monotonic", lambda: 500.0)
@@ -922,7 +931,10 @@ def test_loop_turn_finished_clears_vibe_line_back_to_countdown(tmp_path, monkeyp
     tui._busy_started_at = 500.0
     tui._busy_activity_verb = "Thinking"
 
-    dock.start_turn("Run the next scheduled loop iteration.")
+    dock.start_turn(
+        "Run the next scheduled loop iteration.",
+        metadata=TurnMetadata(profile_id="loop", protocol="loop", category="loop"),
+    )
     assert "Thinking" in tui._render_busy_activity_elements(100)[0].plain
 
     dock.end_turn()
@@ -974,11 +986,15 @@ async def test_loop_waiting_record_arrival_starts_timer(tmp_path, monkeypatch):
 
 
 def test_ctrl_c_stops_loop_even_when_choice_prompt_active(tmp_path, monkeypatch):
+    from voidx.agent.domain.turn_metadata import TurnMetadata
     from voidx.ui.output.dock import dock
     tui = _tui(tmp_path)
     tui._busy = False
     tui._active_choice = [("Yes", "y", "Allow this tool use once")]
-    dock.start_turn("Run the next scheduled loop iteration.")
+    dock.start_turn(
+        "Run the next scheduled loop iteration.",
+        metadata=TurnMetadata(profile_id="loop", protocol="loop", category="loop"),
+    )
 
     assert tui._loop_turn_in_progress() is True
 
@@ -1007,10 +1023,14 @@ def test_ctrl_c_does_not_stop_loop_for_regular_turn_in_progress(tmp_path, monkey
 
 
 def test_ctrl_c_interrupts_loop_turn_in_progress(tmp_path, monkeypatch):
+    from voidx.agent.domain.turn_metadata import TurnMetadata
     from voidx.ui.output.dock import dock
     tui = _tui(tmp_path)
     tui._busy = False
-    dock.start_turn("Run the next scheduled loop iteration.")
+    dock.start_turn(
+        "Run the next scheduled loop iteration.",
+        metadata=TurnMetadata(profile_id="loop", protocol="loop", category="loop"),
+    )
 
     assert tui._loop_turn_in_progress() is True
     assert tui._queue.qsize() == 0
@@ -1057,3 +1077,36 @@ def test_ctrl_c_clears_input_first_even_if_loop_active(tmp_path, monkeypatch):
     assert tui._queue.qsize() == 0
     assert tui._is_input_empty() is True
     assert "Input cleared" in tui._notice
+
+
+def test_loop_turn_in_progress_uses_metadata_not_text(tmp_path):
+    from voidx.agent.domain.turn_metadata import TurnMetadata
+    from voidx.ui.output.dock import dock
+
+    tui = _tui(tmp_path)
+    tui._busy = False
+
+    dock.start_turn("[loop] ordinary user text")
+    assert tui._loop_turn_in_progress() is False
+
+    dock.end_turn()
+    dock.start_turn(
+        "ordinary display text",
+        metadata=TurnMetadata(profile_id="loop", protocol="loop", category="loop"),
+    )
+    assert tui._loop_turn_in_progress() is True
+
+
+def test_ctrl_c_does_not_stop_loop_for_regular_text_that_starts_with_loop(tmp_path):
+    from voidx.ui.output.dock import dock
+
+    tui = _tui(tmp_path)
+    tui._busy = False
+    dock.start_turn("[loop] ordinary coding/chat turn")
+
+    assert tui._loop_turn_in_progress() is False
+
+    tui._handle_interrupt()
+
+    assert tui._queue.empty()
+    assert tui._notice == "Press Ctrl-C again to exit"

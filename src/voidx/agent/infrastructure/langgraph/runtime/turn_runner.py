@@ -15,6 +15,7 @@ from voidx.agent.infrastructure.message_rows import messages_from_rows_increment
 from voidx.agent.application.goal_resolver import resolve_goal_mode, resolve_plan_mode
 from voidx.agent.application.runtime_context import TaskIntent
 from voidx.agent.domain.turn_context import TurnExecutionContext
+from voidx.agent.domain.turn_metadata import turn_metadata_from_context
 from voidx.runtime.intent import InteractionMode
 from voidx.agent.infrastructure.langgraph.runtime.thread_context import (
     bind_thread_execution_context,
@@ -160,9 +161,12 @@ class TurnRunner:
                     extra_removed_spans=combined_spans,
                 )
                 turn_display_text = display_text or payload.display_text
+                turn_metadata = turn_metadata_from_context(context)
                 host._current_tree = host._ui.dock.tree
                 if host._ui.via_events():
-                    host._turn_node = await host._ui.events.request(TurnStarted(text=turn_display_text))
+                    host._turn_node = await host._ui.events.request(
+                        TurnStarted(text=turn_display_text, metadata=turn_metadata)
+                    )
                     await host._ui.events.emit(StatusUpdated(
                         status_id="turn:analyzing",
                         label="Analyzing",
@@ -171,7 +175,9 @@ class TurnRunner:
                         display="record_only",
                     ))
                 else:
-                    host._turn_node = host._ui.dock.start_turn(turn_display_text)
+                    host._turn_node = host._ui.dock.start_turn(
+                        turn_display_text, metadata=turn_metadata
+                    )
                 # Load session messages — use in-memory cache when available
                 force_resume_compaction = False
                 if host._session_msg_cache is not None:

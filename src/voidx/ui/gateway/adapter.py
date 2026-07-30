@@ -435,6 +435,7 @@ class UiEventItemAdapter:
                 "thread_id": event.thread_id or self._thread_id,
                 "turn_id": self._turn_id,
                 "text": event.text,
+                "metadata": event.metadata.model_dump(mode="json"),
             },
         )
 

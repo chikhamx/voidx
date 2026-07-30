@@ -16,6 +16,7 @@ from __future__ import annotations
 
 import pytest
 
+from voidx.agent.domain.turn_metadata import TurnMetadata
 from voidx.ui.gateway.adapter import UiEventItemAdapter
 from voidx.ui.output.events.schema import (
     AnsiAppended,
@@ -424,12 +425,18 @@ async def test_clarify_prompt_to_item_started():
 @pytest.mark.asyncio
 async def test_turn_started_to_turn_started_notification():
     adapter = _adapter()
-    msg = await adapter.handle(TurnStarted(text="hello"))
+    metadata = TurnMetadata(profile_id="loop", protocol="loop", category="loop")
+    msg = await adapter.handle(TurnStarted(text="hello", metadata=metadata))
     assert _method(msg) == "turn.started"
     params = _item_params(msg)
     assert params["thread_id"] == "t1"
     assert params["turn_id"] == "turn1"
     assert params["text"] == "hello"
+    assert params["metadata"] == {
+        "profile_id": "loop",
+        "protocol": "loop",
+        "category": "loop",
+    }
 
 
 @pytest.mark.asyncio

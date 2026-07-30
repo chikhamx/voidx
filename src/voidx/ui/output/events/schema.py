@@ -6,6 +6,7 @@ from typing import Any, Literal, TypeAlias
 
 from pydantic import BaseModel, ConfigDict, Field
 
+from voidx.agent.domain.turn_metadata import TurnMetadata
 from voidx.runtime.todo import TodoStatus
 
 
@@ -37,6 +38,7 @@ class ResetRequested(UiEventBase):
 class TurnStarted(UiEventBase):
     kind: Literal["turn.started"] = "turn.started"
     text: str
+    metadata: TurnMetadata = Field(default_factory=TurnMetadata)
 
 
 class TurnCompleted(UiEventBase):
