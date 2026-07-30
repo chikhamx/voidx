@@ -149,7 +149,7 @@ class TestInteractiveTools:
 
     def _agent_args(self, **overrides):
         args = {
-            "agent": "voidx",
+            "name": "voidx",
             "mode": "review",
             "task": "Review one changed file",
             "target": "src/voidx/tools/agent.py",
@@ -469,7 +469,7 @@ async def test_agent_tool_timeout_uses_unified_metadata(tmp_path):
 
     result = await tool.execute(
         {
-            "agent": "voidx",
+            "name": "voidx",
             "mode": "review",
             "task": "Review the timeout behavior in this module",
             "target": "src/voidx/tools/agent.py",

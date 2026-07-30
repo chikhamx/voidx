@@ -157,12 +157,12 @@ async def test_subagent_tool_events_update_single_status_row(isolated_dock):
             tool_call_id="task_call",
             tool_name="agent",
             label="Running",
-            args='agent="implement"',
+            args='name="voidx"',
         ))
         await bus.emit(SubagentStarted(
             agent_id=0,
             subagent_id="agent_0",
-            name="implement",
+            name="voidx",
             description=(
                 "Task: 实现子agent任务摘要展示\n"
                 "Mode: implement\n"
@@ -187,9 +187,9 @@ async def test_subagent_tool_events_update_single_status_row(isolated_dock):
         subagent = next(node for node in assistant.children if node.node_type == "subagent")
         status_nodes = [node for node in subagent.children if node.node_type == "status"]
 
-        assert "Implementer" in subagent.header
+        assert "voidx" in subagent.header
         assert "实现子agent任务摘要展示" in _rich_plain(subagent.header)
-        assert subagent.payload["agent_name"] == "implement"
+        assert subagent.payload["agent_name"] == "voidx"
         assert len(status_nodes) == 1
         assert _rich_plain(status_nodes[0].header) == "● Reading x.py"
         assert status_nodes[0].body_lines == []
@@ -214,12 +214,12 @@ async def test_subagent_title_ignores_mode_when_using_fallback_summary(isolated_
             tool_call_id="task_call",
             tool_name="agent",
             label="Running",
-            args='agent="implement"',
+            args='name="voidx"',
         ))
         await bus.emit(SubagentStarted(
             agent_id=0,
             subagent_id="agent_0",
-            name="implement",
+            name="voidx",
             description=(
                 "Mode: implement\n"
                 "Success criteria: update the dock title\n"
@@ -233,8 +233,8 @@ async def test_subagent_title_ignores_mode_when_using_fallback_summary(isolated_
         subagent = next(node for node in assistant.children if node.node_type == "subagent")
         title = _rich_plain(subagent.header)
 
-        assert "Implementer(update the dock title)" in title
-        assert "Implementer(implement)" not in title
+        assert "voidx(update the dock title)" in title
+        assert "voidx(implement)" not in title
     finally:
         await bus.stop()
 
@@ -249,7 +249,7 @@ async def test_subagent_git_tool_uses_git_status_action(isolated_dock):
         await bus.emit(SubagentStarted(
             agent_id=0,
             subagent_id="agent_0",
-            name="implement",
+            name="voidx",
             description="update git status display",
         ))
         await bus.emit(ToolStarted(
@@ -280,7 +280,7 @@ async def test_subagent_step_does_not_overwrite_specific_tool_status(isolated_do
         await bus.emit(SubagentStarted(
             agent_id=0,
             subagent_id="agent_0",
-            name="review",
+            name="voidx",
             description="review permission and UI changes",
         ))
         await bus.emit(SubagentStepStarted(
@@ -306,7 +306,7 @@ async def test_subagent_step_does_not_overwrite_specific_tool_status(isolated_do
         subagent = next(node for node in assistant.children if node.node_type == "subagent")
         status = next(node for node in subagent.children if node.node_type == "status")
 
-        assert "Reviewer(review permission and UI changes)" in _rich_plain(subagent.header)
+        assert "voidx(review permission and UI changes)" in _rich_plain(subagent.header)
         assert _rich_plain(status.header) == "● Reading src/voidx/permission/rules.py"
     finally:
         await bus.stop()
@@ -324,12 +324,12 @@ async def test_child_agent_stream_updates_status_without_rendering_text(isolated
             tool_call_id="task_call",
             tool_name="agent",
             label="Running",
-            args='agent="explore"',
+            args='name="voidx"',
         ))
         await bus.emit(SubagentStarted(
             agent_id=0,
             subagent_id="agent_0",
-            name="explore",
+            name="voidx",
             description="inspect auth.py",
             parent_tool_call_id="task_call",
         ))
@@ -346,7 +346,7 @@ async def test_child_agent_stream_updates_status_without_rendering_text(isolated
         agent_node = next(node for node in assistant.children if node.node_type == "subagent")
         status_node = next(node for node in agent_node.children if node.node_type == "status")
 
-        assert "Explorer" in agent_node.header
+        assert "voidx" in agent_node.header
         assert "agent" not in agent_node.header
         assert agent_node.body_lines == []
         assert agent_node.payload["description"] == "inspect auth.py"
@@ -356,7 +356,7 @@ async def test_child_agent_stream_updates_status_without_rendering_text(isolated
 
         rendered = "\n".join(_plain(line) for line in isolated_dock.tree.render(100))
         assert "Task:" not in rendered
-        assert "Explorer(inspect auth.py)" in rendered
+        assert "voidx(inspect auth.py)" in rendered
         assert "Agent ID" not in rendered
         assert "Exploring" not in rendered
         assert "Responding" in rendered
@@ -374,8 +374,8 @@ async def test_child_agent_stream_updates_status_without_rendering_text(isolated
 
         rendered = "\n".join(_rich_plain(line) for line in isolated_dock.tree.render(100))
         assert "explore agent completed (2.5s)" not in rendered
-        assert "Explorer(inspect auth.py) completed (final answer, 2.5s)" in rendered
-        assert "Explorer" in rendered
+        assert "voidx(inspect auth.py) completed (final answer, 2.5s)" in rendered
+        assert "voidx" in rendered
         assert 'Agent("explore")' not in rendered
         assert "subagent completed" not in rendered
 
@@ -429,7 +429,7 @@ async def test_subagent_finish_failure_keeps_reason_status_without_summary(isola
         status_node = next(node for node in agent_node.children if node.node_type == "status")
 
         assert _rich_plain(status_node.header) == "✗ Failed: permission denied"
-        assert "Reviewer(review permission flow) failed (permission denied, 1.2s)" in _rich_plain(agent_node.header)
+        assert "reviewer(review permission flow) failed (permission denied, 1.2s)" in _rich_plain(agent_node.header)
     finally:
         await bus.stop()
 
@@ -447,7 +447,7 @@ async def test_reparent_status_updates_node_depth(isolated_dock):
             tool_call_id="task_call",
             tool_name="agent",
             label="Running",
-            args='agent="implement"',
+            args='name="voidx"',
         ))
         # Child agent starts streaming first — creates agent:0:progress status node
         await bus.emit(AssistantStreamUpdated(
@@ -459,7 +459,7 @@ async def test_reparent_status_updates_node_depth(isolated_dock):
         await bus.emit(SubagentStarted(
             agent_id=0,
             subagent_id="agent_0",
-            name="implement",
+            name="voidx",
             description="implement task",
             parent_agent_id=-1,
             parent_tool_call_id="task_call",

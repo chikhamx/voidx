@@ -23,10 +23,10 @@ class EmptyTodoTracker:
 async def test_agent_inspect_ignores_optional_noise(tmp_path) -> None:
     result = await AgentTool().execute(
         {
+            "name": "voidx",
             "mode": "inspect",
             "task": "Inspect the target and report concrete findings.",
             "target": "src/voidx/tools/agent.py",
-            "agent": "null",
             "success_criteria": {"ignored": True},
             "result_preset": "null",
         },
@@ -40,13 +40,13 @@ async def test_agent_inspect_ignores_optional_noise(tmp_path) -> None:
 
 
 @pytest.mark.asyncio
-async def test_agent_rejects_non_string_agent_identity(tmp_path) -> None:
+async def test_agent_rejects_non_string_name_identity(tmp_path) -> None:
     result = await AgentTool().execute(
         {
             "mode": "inspect",
             "task": "Inspect the target and report concrete findings.",
             "target": "src/voidx/tools/agent.py",
-            "agent": {"not": "a-string"},
+            "name": {"not": "a-string"},
         },
         ToolContext(workspace=str(tmp_path)),
     )

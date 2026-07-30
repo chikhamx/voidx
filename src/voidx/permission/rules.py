@@ -92,7 +92,7 @@ def tool_call_from_pattern(tool: str, pattern: str = "*") -> dict:
     elif name == "powershell":
         args = {"command": pattern}
     elif name == "agent":
-        args = {"agent": pattern}
+        args = {"name": pattern}
     elif name == "manage":
         args = {"op": "create", "paths": pattern}
     elif name in FILE_PATTERN_TOOLS:
@@ -151,7 +151,7 @@ def _mcp_gateway_pattern(args: dict) -> str:
 
 
 def delegated_agent(args: dict) -> str:
-    return str(args.get("agent") or "")
+    return str(args.get("name") or args.get("agent") or "")
 
 
 def delegated_persona(args: dict) -> str:

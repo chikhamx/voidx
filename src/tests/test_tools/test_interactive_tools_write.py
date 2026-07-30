@@ -149,7 +149,7 @@ class TestInteractiveTools:
 
     def _agent_args(self, **overrides):
         args = {
-            "agent": "voidx",
+            "name": "voidx",
             "mode": "review",
             "task": "Review one changed file",
             "target": "src/voidx/tools/agent.py",

@@ -391,7 +391,7 @@ async def test_subagent_full_output_reaches_orchestrator(tmp_path, monkeypatch):
                 tool_calls=[{
                     "name": "agent",
                     "args": {
-                        "agent": "voidx",
+                        "name": "voidx",
                         "mode": "inspect",
                         "task": "Inspect the auth flow",
                         "target": "src/voidx/auth.py",

@@ -219,30 +219,22 @@ def test_regular_subagent_spaces_following_assistant_message():
     assert message_index == subagent_index + 2
 
 
-@pytest.mark.parametrize(
-    ("agent", "display"),
-    [
-        ("explore", "Explorer"),
-        ("plan", "Planner"),
-        ("implement", "Implementer"),
-        ("review", "Reviewer"),
-    ],
-)
-def test_agent_tool_header_uses_role_display_name(agent, display):
+def test_agent_tool_header_uses_raw_name():
     dock = BottomInputDock()
     assistant = dock.tree.new_node(dock.tree.root, node_type="assistant", header="● voidx")
     node = dock.start_tool(
         "Delegating",
-        f'agent="{agent}"',
+        'name="voidx"',
         parent=assistant,
         tool_name="agent",
-        raw_args={"agent": agent},
+        raw_args={"name": "voidx"},
     )
 
     header = _plain(node.header)
 
-    assert display in header
-    assert f'Agent("{agent}")' not in header
+    assert "voidx" in header
+    assert "Reviewer" not in header
+    assert 'Agent("voidx")' not in header
 
 
 @pytest.mark.parametrize(

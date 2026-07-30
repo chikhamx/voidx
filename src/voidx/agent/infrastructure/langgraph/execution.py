@@ -784,7 +784,7 @@ class LangGraphExecution:
             await self._ui.events.emit(SubagentStarted(
                 agent_id=agent_id,
                 subagent_id=agent_run_id,
-                name=runtime_persona,
+                name=agent_def.name,
                 description=description,
                 parent_agent_id=-1,
                 parent_tool_call_id=parent_tool_call_id,

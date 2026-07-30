@@ -149,7 +149,7 @@ async def test_graph_authorization_auto_allows_readonly_agent(tmp_path):
         [{
             "name": "agent",
             "args": {
-                "agent": "voidx",
+                "name": "voidx",
                 "description": "Review current change",
                 "goal_resolution": _child_goal_resolution("review", desc="Review current change", join="review", leave="review").model_dump(mode="json"),
                 "result": _child_result_contract("review_result").model_dump(mode="json"),
@@ -180,7 +180,7 @@ async def test_graph_authorization_prompts_for_implement_agent(tmp_path):
         [{
             "name": "agent",
             "args": {
-                "agent": "voidx",
+                "name": "voidx",
                 "description": "Implement feature",
                 "goal_resolution": _child_goal_resolution("feature", desc="Implement feature", join="tdd", leave="verify").model_dump(mode="json"),
                 "result": _child_result_contract().model_dump(mode="json"),

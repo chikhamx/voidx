@@ -171,7 +171,7 @@ async def test_agent_tool_passes_subagent_permission_snapshot(tmp_path):
 
     result = await tool.execute(
         {
-            "agent": "voidx",
+            "name": "voidx",
             "mode": "review",
             "task": "Review permission snapshot propagation",
             "target": "src/voidx/tools/agent.py",

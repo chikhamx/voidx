@@ -274,7 +274,7 @@ async def test_parallel_subagents_plan_mode_blocks_implement(tmp_path):
             return {"type": "object", "properties": {}}
 
         async def execute(self, args: dict, ctx: ToolContext) -> ToolResult:
-            executed.append(str(args.get("agent", "")))
+            executed.append(str(args.get("name") or args.get("agent") or ""))
             return ToolResult(output="should not run")
 
     graph.tools.register("agent", FakeAgentTool(), "fake agent", {"type": "object", "properties": {}})
@@ -284,13 +284,25 @@ async def test_parallel_subagents_plan_mode_blocks_implement(tmp_path):
         tool_calls=[
             {
                 "name": "agent",
-                "args": {"agent": "implement", "description": "change auth"},
+                "args": {
+                    "name": "voidx",
+                    "mode": "implement",
+                    "task": "change auth carefully",
+                    "target": "src/auth.py",
+                    "success_criteria": "auth updated",
+                },
                 "id": "call_a",
                 "type": "tool_call",
             },
             {
                 "name": "agent",
-                "args": {"agent": "implement", "description": "change ui"},
+                "args": {
+                    "name": "voidx",
+                    "mode": "implement",
+                    "task": "change ui carefully",
+                    "target": "src/ui.py",
+                    "success_criteria": "ui updated",
+                },
                 "id": "call_b",
                 "type": "tool_call",
             },

@@ -352,7 +352,7 @@ def normalize_tool_args(tool_name: str, args: dict[str, Any]) -> str:
         plan = goal_resolution.get("plan") if isinstance(goal_resolution, dict) else {}
         goal = goal_resolution.get("goal") if isinstance(goal_resolution, dict) else {}
         return stable_json({
-            "agent": args.get("agent"),
+            "name": args.get("name"),
             "mode": args.get("mode"),
             "task": args.get("task"),
             "target": args.get("target"),

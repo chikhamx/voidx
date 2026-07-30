@@ -233,19 +233,21 @@ class TestToolSchemas:
 
     def test_agent_input_uses_child_agent_schema(self):
         inp = AgentInput.model_validate({
-            "agent": "voidx",
+            "name": "voidx",
             "mode": "inspect",
             "task": "Inspect auth flow",
             "target": "src/voidx/auth.py",
         })
-        assert inp.agent == "voidx"
+        assert inp.name == "voidx"
         assert inp.mode == "inspect"
         assert inp.task == "Inspect auth flow"
         assert inp.target == "src/voidx/auth.py"
         assert inp.result_preset == "auto"
         schema = AgentInput.model_json_schema()
-        assert "agent" in schema["properties"]
+        assert "name" in schema["properties"]
+        assert "agent" not in schema["properties"]
         assert "sub-voidx" not in str(schema)
+        assert "name" in schema["required"]
         assert "mode" in schema["required"]
         assert "task" in schema["required"]
         assert "target" in schema["required"]
@@ -281,6 +283,12 @@ class TestToolSchemas:
         assert "no code changes" in PlanCheckpointTool.description
         assert "one small action" in checkpoint_schema["properties"]["steps"]["description"]
 
-    def test_agent_input_requires_mode_task_and_target(self):
+    def test_agent_input_requires_name_mode_task_and_target(self):
         with pytest.raises(ValueError):
-            AgentInput.model_validate({"agent": "voidx", "task": "inspect"})
+            AgentInput.model_validate({"name": "voidx", "task": "inspect"})
+        with pytest.raises(ValueError):
+            AgentInput.model_validate({
+                "mode": "inspect",
+                "task": "Inspect auth flow carefully",
+                "target": "src/voidx/auth.py",
+            })

@@ -285,12 +285,12 @@ async def test_subagent_streaming_is_headless(isolated_dock):
             tool_call_id="task_call",
             tool_name="agent",
             label="Running",
-            args='agent="implement"',
+            args='name="voidx"',
         ))
         await bus.emit(SubagentStarted(
             agent_id=0,
             subagent_id="agent_0",
-            name="implement",
+            name="voidx",
             description=(
                 "Task: 实现子agent任务摘要展示\n"
                 "Mode: implement\n"
@@ -338,7 +338,7 @@ async def test_subagent_streaming_is_headless(isolated_dock):
         assert sub_tools == []
         assert len(status_nodes) == 1
         assert _rich_plain(status_nodes[0].header) == "● Completed"
-        assert "Implementer(实现子agent任务摘要展示) completed" in _rich_plain(subagent.header)
+        assert "voidx(实现子agent任务摘要展示) completed" in _rich_plain(subagent.header)
 
         # No ToolResultAppended under the child agent node
         result_nodes = [n for n in subagent.children if n.node_type == "tool_result"]
@@ -359,7 +359,7 @@ async def test_subagent_manage_status_uses_action_display(isolated_dock):
             tool_call_id="task_call",
             tool_name="agent",
             label="Running",
-            args='agent="implement"',
+            args='name="voidx"',
         ))
         await bus.emit(SubagentStarted(
             agent_id=0,

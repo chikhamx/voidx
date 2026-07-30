@@ -38,8 +38,7 @@ class AgentResultContract(BaseModel):
 
 
 class AgentInput(BaseModel):
-    agent: str = Field(
-        default="voidx",
+    name: str = Field(
         description="Child agent identity to run. Use voidx.",
     )
     mode: Literal["inspect", "review", "debug", "plan", "implement", "feedback"] = Field(
@@ -139,10 +138,10 @@ def _normalize_agent_args(args):
         return args
     mode = str(args.get("mode") or "").strip().lower()
     normalized = keep_tool_args(
-        args, {"agent", "mode", "task", "target", "success_criteria", "result_preset"}
+        args, {"name", "mode", "task", "target", "success_criteria", "result_preset"}
     )
     normalized = drop_nullish_tool_fields(
-        normalized, "agent", "success_criteria", "result_preset"
+        normalized, "success_criteria", "result_preset"
     )
     if "result_preset" in normalized and not isinstance(normalized["result_preset"], str):
         normalized.pop("result_preset", None)
@@ -204,12 +203,12 @@ class AgentTool(BaseTool):
             return ToolResult(
                 output=(
                     "Child agent delegation rejected."
-                    f"{detail} The main agent must provide mode, task, and target "
+                    f"{detail} The main agent must provide name, mode, task, and target "
                     "for each delegated task."
                 ),
                 metadata={"error": True, "validation_error": True},
             )
-        requested_agent = inp.agent
+        requested_agent = inp.name
 
         rejection = _delegation_rejection(inp)
         if rejection:
@@ -225,9 +224,9 @@ class AgentTool(BaseTool):
         agent_def = self._agent_resolver(requested_agent) if self._agent_resolver else None
         if not agent_def:
             available = self._available_agents
-            return ToolResult(output=f"Unknown child agent: {inp.agent}. Available: {available}", metadata={"error": True, "reason": "unknown_agent"})
+            return ToolResult(output=f"Unknown child agent: {inp.name}. Available: {available}", metadata={"error": True, "reason": "unknown_agent"})
 
-        agent_def_name = str(getattr(agent_def, "name", inp.agent))
+        agent_def_name = str(getattr(agent_def, "name", inp.name))
 
         if not self._run_child_agent:
             return ToolResult(

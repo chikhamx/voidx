@@ -62,7 +62,7 @@ def extract_tool_display_value(
     elif tool_name == "git":
         value = raw_args.get("args")
     elif tool_name == "agent":
-        value = raw_args.get("agent") or raw_args.get("description")
+        value = raw_args.get("name") or raw_args.get("description")
     elif tool_name == "checkpoint":
         value = raw_args.get("goal")
     elif tool_name in {"webfetch", "websearch"}:

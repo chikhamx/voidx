@@ -356,7 +356,7 @@ def _tool_header(
     raw_args: dict[str, Any],
 ) -> str:
     if tool_name == "agent":
-        agent_name = raw_args.get("agent") or extract_tool_display_value(tool_name, raw_args, args)
+        agent_name = raw_args.get("name") or extract_tool_display_value(tool_name, raw_args, args)
         return f"[bold]{escape(agent_display_name(agent_name))}[/bold]"
     if tool_name == "manage":
         name, value = manage_display(raw_args, limit=56)
