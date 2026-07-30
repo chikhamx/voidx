@@ -383,6 +383,37 @@ def test_model_status_sync_updates_prompt_footer_state():
     assert status.context_limit == 1_000_000
 
 
+@pytest.mark.asyncio
+async def test_model_reasoning_ultra_keeps_enum_and_syncs_status():
+    from voidx.config.enums import ReasoningEffort
+
+    status = SimpleNamespace(
+        provider="openai",
+        model="gpt-5.6-sol",
+        reasoning_effort="xhigh",
+        context_limit=0,
+    )
+    graph = command_context(
+        config=SimpleNamespace(
+            model=ModelConfig(
+                provider="openai",
+                model="gpt-5.6-sol",
+                reasoning_effort=ReasoningEffort.XHIGH,
+            )
+        ),
+        usage_stats=UsageStats(),
+        app=SimpleNamespace(status=status),
+        api_key=None,
+    )
+
+    await SlashHandler(graph)._model_reasoning("ultra")
+
+    assert graph.config.model.reasoning_effort is ReasoningEffort.ULTRA
+    assert status.reasoning_effort == "ultra"
+    assert status.provider == "openai"
+    assert status.model == "gpt-5.6-sol"
+
+
 def test_model_status_sync_uses_context_window_override():
     """context_window 设置后，_sync_context_limit 用 override 值而非 provider 查表。"""
     status = SimpleNamespace(

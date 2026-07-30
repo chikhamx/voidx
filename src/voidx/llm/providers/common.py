@@ -105,41 +105,42 @@ _OPENAI_TO_MAX: tuple[ReasoningEffort, ...] = (
 )
 
 # Specific model prefixes first (longest / most specific wins via scan order).
+# provider=None means match any provider (custom relays / openrouter / aliases).
+# Keep prefixes specific enough to avoid cross-family false positives.
 # (provider_or_None, model_substring, supported)
 _MODEL_EFFORT_TABLE: tuple[tuple[str | None, str, tuple[ReasoningEffort, ...]], ...] = (
-    ("openai", "gpt-5.6-sol", _OPENAI_TO_ULTRA),
-    ("openai", "gpt-5.6-terra", _OPENAI_TO_ULTRA),
-    ("openai", "gpt-5.6", _OPENAI_TO_MAX),
-    ("openai", "gpt-5.5", _OPENAI_GENERIC),
-    ("anthropic", "claude-opus-5", _CLAUDE_ADAPTIVE),
-    ("anthropic", "claude-sonnet-5", _CLAUDE_ADAPTIVE),
-    ("anthropic", "claude-opus-4", _CLAUDE_ADAPTIVE),
-    ("gemini", "gemini-3", _LEVEL_TO_HIGH),
-    ("gemini", "gemini-4", _LEVEL_TO_HIGH),
-    ("gemini", "gemini-2.5", _GEMINI_BUDGET),
-    ("deepseek", "deepseek-v4", _DEEPSEEK),
-    ("kimi", "kimi-k3", _KIMI_K3),
+    (None, "gpt-5.6-sol", _OPENAI_TO_ULTRA),
+    (None, "gpt-5.6-terra", _OPENAI_TO_ULTRA),
+    (None, "gpt-5.6", _OPENAI_TO_MAX),
+    (None, "gpt-5.5", _OPENAI_GENERIC),
+    (None, "claude-opus-5", _CLAUDE_ADAPTIVE),
+    (None, "claude-sonnet-5", _CLAUDE_ADAPTIVE),
+    (None, "claude-opus-4", _CLAUDE_ADAPTIVE),
+    (None, "gemini-3", _LEVEL_TO_HIGH),
+    (None, "gemini-4", _LEVEL_TO_HIGH),
+    (None, "gemini-2.5", _GEMINI_BUDGET),
+    (None, "deepseek-v4", _DEEPSEEK),
+    (None, "kimi-k3", _KIMI_K3),
+    # Short "k3" is too ambiguous for any-provider matching; keep kimi-scoped.
     ("kimi", "k3", _KIMI_K3),
-    ("qwen", "qwen3", _TOGGLE_ONLY),
-    ("qwen", "qwq", _TOGGLE_ONLY),
-    ("doubao", "doubao-seed", _TOGGLE_ONLY),
-    ("doubao", "seed-1.6", _TOGGLE_ONLY),
-    ("zhipu", "glm-5", _TOGGLE_ONLY),
-    ("zhipu", "glm-4.7", _TOGGLE_ONLY),
-    ("zhipu", "glm-4.6", _TOGGLE_ONLY),
-    ("zhipu", "glm-4.5", _TOGGLE_ONLY),
-    ("typex", "glm-5", _TOGGLE_ONLY),
-    ("typex", "glm-4", _TOGGLE_ONLY),
-    ("minimax", "minimax-m3", _TOGGLE_ONLY),
-    ("mimo", "mimo-v2.5", _TOGGLE_ONLY),
-    ("mimo-token-plan", "mimo-v2.5", _TOGGLE_ONLY),
+    (None, "qwen3", _TOGGLE_ONLY),
+    (None, "qwq", _TOGGLE_ONLY),
+    (None, "doubao-seed", _TOGGLE_ONLY),
+    (None, "seed-1.6", _TOGGLE_ONLY),
+    (None, "glm-5", _TOGGLE_ONLY),
+    (None, "glm-4.7", _TOGGLE_ONLY),
+    (None, "glm-4.6", _TOGGLE_ONLY),
+    (None, "glm-4.5", _TOGGLE_ONLY),
+    (None, "glm-4", _TOGGLE_ONLY),
+    (None, "minimax-m3", _TOGGLE_ONLY),
+    (None, "mimo-v2.5", _TOGGLE_ONLY),
 )
 
 _PROVIDER_EFFORT_DEFAULTS: dict[str, tuple[ReasoningEffort, ...]] = {
     "openai": _OPENAI_GENERIC,
     "openrouter": _OPENAI_GENERIC,
     "xunfei-coding-plan": _OPENAI_GENERIC,
-    "anthropic": _LEVEL_TO_HIGH,
+    "anthropic": _CLAUDE_ADAPTIVE,
     "gemini": _GEMINI_BUDGET,
     "deepseek": _DEEPSEEK,
     "kimi": _TOGGLE_ONLY,
@@ -202,14 +203,31 @@ def map_effort(
     return best
 
 
+def _normalize_model_name(model: str) -> str:
+    """Normalize model ids like ``openai/gpt-5.6-sol`` or ``models/gemini-3``."""
+    name = (model or "").lower().strip()
+    if name.startswith("models/"):
+        name = name[len("models/"):]
+    if "/" in name:
+        name = name.rsplit("/", 1)[-1]
+    return name
+
+
 def supported_efforts(provider: str, model: str) -> tuple[ReasoningEffort, ...]:
-    """Resolve supported efforts: model table → provider default → OpenAI generic."""
-    name = (model or "").lower()
+    """Resolve supported efforts: model table → provider default → OpenAI generic.
+
+    Model-table entries with ``provider=None`` match any provider so custom
+    relays and OpenRouter inherit the same capability ladder as first-party
+    names. Provider-scoped entries still win when present.
+    """
+    name = _normalize_model_name(model)
+    raw_name = (model or "").lower()
     prov = (provider or "").lower()
     for table_provider, prefix, supported in _MODEL_EFFORT_TABLE:
         if table_provider is not None and table_provider != prov:
             continue
-        if prefix in name:
+        # Prefer normalized bare model id; also allow raw path matches.
+        if prefix in name or prefix in raw_name:
             return supported
     if prov in _PROVIDER_EFFORT_DEFAULTS:
         return _PROVIDER_EFFORT_DEFAULTS[prov]

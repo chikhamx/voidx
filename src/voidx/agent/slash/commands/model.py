@@ -373,22 +373,24 @@ class ModelCommandsMixin:
         await self._pick_or_act("Switch", target, _do_switch)
 
     async def _model_reasoning(self, effort: str) -> None:
-        valid = ("none", "low", "medium", "high", "xhigh", "max", "ultra")
+        from voidx.config.enums import ReasoningEffort
+
+        valid = tuple(item.value for item in ReasoningEffort)
 
         if effort and effort in valid:
-            new_effort = effort
+            new_effort = ReasoningEffort(effort)
         elif not effort:
             current = (
                 self.host.config.model.reasoning_effort.value
                 if self.host.config.model.reasoning_effort is not None
-                else "xhigh"
+                else ReasoningEffort.XHIGH.value
             )
             choices = list(valid)
             idx = await _select_from_list(self.host.app, "Select effort", choices)
             if idx is None:
                 ui.print("[dim]Cancelled.[/dim]")
                 return
-            new_effort = choices[idx]
+            new_effort = ReasoningEffort(choices[idx])
         else:
             ui.error(f"Invalid effort: '{effort}'. Use: {', '.join(valid)}")
             return
@@ -400,7 +402,7 @@ class ModelCommandsMixin:
             from voidx.llm.service import create_chat_model
             self.host.model = create_chat_model(self.host.api_key, self.host.config.model)
 
-        ui.print(f"Reasoning effort: [cyan]{new_effort}[/cyan] [green]✓[/green]")
+        ui.print(f"Reasoning effort: [cyan]{new_effort.value}[/cyan] [green]✓[/green]")
 
     async def _model_ctx(self, target: str) -> None:
         choices_map: dict[str, int | None] = {

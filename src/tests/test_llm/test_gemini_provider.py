@@ -115,6 +115,35 @@ def test_gemini_reasoning_kwargs_3_max_maps_to_high():
     assert kwargs == {"include_thoughts": True, "thinking_level": "high"}
 
 
+def test_gemini_reasoning_kwargs_custom_provider_xhigh_maps_to_high():
+    """Custom Gemini-protocol providers must not pass raw xhigh to thinking_level."""
+    config = ModelConfig(
+        provider="my-gemini",
+        model="gemini-3.5-flash",
+        protocol="gemini",
+        reasoning_effort="xhigh",
+    )
+    kwargs = _gemini_reasoning_kwargs(config)
+    assert kwargs == {"include_thoughts": True, "thinking_level": "high"}
+
+
+def test_is_gemini3_plus_normalizes_models_prefix():
+    assert _is_gemini3_plus("models/gemini-3.5-flash") is True
+    assert _is_gemini3_plus("google/gemini-3.5-flash") is True
+
+
+def test_create_chat_model_custom_gemini_provider_accepts_xhigh():
+    config = ModelConfig(
+        provider="my-gemini",
+        model="gemini-3.5-flash",
+        protocol="gemini",
+        reasoning_effort="xhigh",
+    )
+    model = create_chat_model("test-key", config)
+    assert model.thinking_level == "high"
+    assert model.include_thoughts is True
+
+
 # ── reasoning kwargs: effort off/none ────────────────────────────────────
 
 

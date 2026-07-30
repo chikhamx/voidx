@@ -6,7 +6,16 @@ from voidx.config import ModelConfig
 from voidx.llm.providers import base
 from voidx.llm.providers.base import ProviderSpec
 from voidx.config.enums import ReasoningEffort
-from voidx.llm.providers.common import ANTHROPIC_BUDGETS, resolve_effort
+from voidx.llm.providers.common import ANTHROPIC_BUDGETS, map_effort, resolve_effort
+
+# ChatAnthropic.effort only accepts these values for adaptive thinking.
+_ANTHROPIC_ADAPTIVE_EFFORTS = (
+    ReasoningEffort.LOW,
+    ReasoningEffort.MEDIUM,
+    ReasoningEffort.HIGH,
+    ReasoningEffort.XHIGH,
+    ReasoningEffort.MAX,
+)
 
 
 def _supports_adaptive(model: str) -> bool:
@@ -27,7 +36,8 @@ def anthropic_reasoning(config: ModelConfig) -> dict:
     if effort is ReasoningEffort.NONE:
         return {}
     if _supports_adaptive(config.model):
-        return {"thinking": {"type": "adaptive"}, "effort": effort.value}
+        level = map_effort(effort, _ANTHROPIC_ADAPTIVE_EFFORTS)
+        return {"thinking": {"type": "adaptive"}, "effort": level.value}
     budget = ANTHROPIC_BUDGETS.get(effort, ANTHROPIC_BUDGETS[ReasoningEffort.HIGH])
     budget = min(budget, max(config.max_tokens - 1, 1))
     if budget < 1_024:

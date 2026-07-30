@@ -25,7 +25,14 @@ from voidx.config import ModelConfig
 from voidx.llm.providers import base
 from voidx.llm.providers.base import PROTOCOL_DEEPSEEK, ProviderSpec
 from voidx.config.enums import ReasoningEffort
-from voidx.llm.providers.common import preserve_reasoning_delta, resolve_effort
+from voidx.llm.providers.common import map_effort, preserve_reasoning_delta, resolve_effort
+
+# DeepSeek thinking models accept none/high/max (via resolve + exit clamp).
+_DEEPSEEK_EFFORTS = (
+    ReasoningEffort.NONE,
+    ReasoningEffort.HIGH,
+    ReasoningEffort.MAX,
+)
 
 
 class DeepSeekChatOpenAI(ChatOpenAI):
@@ -119,7 +126,7 @@ class DeepSeekChatOpenAI(ChatOpenAI):
 
 def _reasoning(config: ModelConfig) -> dict:
     """DeepSeek format: ``reasoning_effort`` top-level + ``extra_body.thinking.type``."""
-    effort = resolve_effort(config)
+    effort = map_effort(resolve_effort(config), _DEEPSEEK_EFFORTS)
     if effort is ReasoningEffort.NONE:
         return {"extra_body": {"thinking": {"type": "disabled"}}}
     return {

@@ -241,16 +241,16 @@ def test_deepseek_chat_reasoning_kwargs_maps_effort_per_provider():
     )
     assert kimi_medium == {"extra_body": {"thinking": {"type": "enabled"}}}
 
-    # Unknown provider: OpenAI-generic clamp (xhigh max); deepseek-protocol fallback format
+    # Unknown provider: deepseek-protocol fallback format, clamped to deepseek ladder
     custom_xhigh = DeepSeekChatOpenAI.reasoning_kwargs(
         ModelConfig(provider="my-custom-ds", model="some-model", reasoning_effort="xhigh"),
     )
-    assert custom_xhigh == {"reasoning_effort": "xhigh", "extra_body": {"thinking": {"type": "enabled"}}}
+    assert custom_xhigh == {"reasoning_effort": "max", "extra_body": {"thinking": {"type": "enabled"}}}
 
     custom_ultra = DeepSeekChatOpenAI.reasoning_kwargs(
         ModelConfig(provider="my-custom-ds", model="some-model", reasoning_effort="ultra"),
     )
-    assert custom_ultra == {"reasoning_effort": "xhigh", "extra_body": {"thinking": {"type": "enabled"}}}
+    assert custom_ultra == {"reasoning_effort": "max", "extra_body": {"thinking": {"type": "enabled"}}}
 
     custom_none = DeepSeekChatOpenAI.reasoning_kwargs(
         ModelConfig(provider="my-custom-ds", model="some-model", reasoning_effort="none"),

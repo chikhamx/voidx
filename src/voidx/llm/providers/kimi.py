@@ -6,14 +6,21 @@ from voidx.config import ModelConfig
 from voidx.config.enums import ReasoningEffort
 from voidx.llm.providers import base
 from voidx.llm.providers.base import PROTOCOL_DEEPSEEK, ProviderSpec
-from voidx.llm.providers.common import resolve_effort, thinking_toggle
+from voidx.llm.providers.common import map_effort, resolve_effort, thinking_toggle
+
+_KIMI_K3_EFFORTS = (
+    ReasoningEffort.NONE,
+    ReasoningEffort.LOW,
+    ReasoningEffort.HIGH,
+    ReasoningEffort.MAX,
+)
 
 
 def _reasoning(config: ModelConfig) -> dict:
     """Kimi format: ``extra_body.thinking.type``; k3 models also take ``reasoning_effort``."""
     if "k3" not in config.model.lower():
         return thinking_toggle(config)
-    effort = resolve_effort(config)
+    effort = map_effort(resolve_effort(config), _KIMI_K3_EFFORTS)
     if effort is ReasoningEffort.NONE:
         return {"extra_body": {"thinking": {"type": "disabled"}}}
     return {

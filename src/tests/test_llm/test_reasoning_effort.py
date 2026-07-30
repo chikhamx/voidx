@@ -16,6 +16,7 @@ from voidx.llm.providers.common import (
 from voidx.llm.providers.deepseek import _reasoning as deepseek_reasoning
 from voidx.llm.providers.gemini import gemini_reasoning
 from voidx.llm.providers.kimi import _reasoning as kimi_reasoning
+from voidx.llm.providers.anthropic import anthropic_reasoning
 from voidx.llm.providers.openai import openai_reasoning
 
 
@@ -74,6 +75,36 @@ def test_supported_efforts_model_table_and_fallback():
     assert ReasoningEffort.MAX not in generic
 
 
+def test_supported_efforts_matches_model_for_custom_providers():
+    """Custom/third-party provider names still inherit model capability ladders."""
+    assert max(
+        supported_efforts("my-openai", "gpt-5.6-sol"),
+        key=lambda e: list(ReasoningEffort).index(e),
+    ) is ReasoningEffort.ULTRA
+    assert max(
+        supported_efforts("openrouter", "openai/gpt-5.6-sol"),
+        key=lambda e: list(ReasoningEffort).index(e),
+    ) is ReasoningEffort.ULTRA
+    assert max(
+        supported_efforts("my-claude", "claude-opus-4-8"),
+        key=lambda e: list(ReasoningEffort).index(e),
+    ) is ReasoningEffort.MAX
+    assert max(
+        supported_efforts("my-deepseek", "deepseek-v4-pro"),
+        key=lambda e: list(ReasoningEffort).index(e),
+    ) is ReasoningEffort.MAX
+    assert max(
+        supported_efforts("my-kimi", "kimi-k3"),
+        key=lambda e: list(ReasoningEffort).index(e),
+    ) is ReasoningEffort.MAX
+    assert max(
+        supported_efforts("my-gemini", "gemini-3.5-flash"),
+        key=lambda e: list(ReasoningEffort).index(e),
+    ) is ReasoningEffort.HIGH
+    # Short ambiguous prefixes must not cross-match custom providers.
+    assert ReasoningEffort.MAX not in supported_efforts("custom-relay", "foo-k3-bar")
+
+
 def test_openai_reasoning_maps_by_model():
     sol = openai_reasoning(ModelConfig(provider="openai", model="gpt-5.6-sol", reasoning_effort="ultra"))
     assert sol == {"extra_body": {"reasoning": {"effort": "ultra"}}}
@@ -113,6 +144,34 @@ def test_deepseek_and_kimi_and_toggle_hooks():
     assert thinking_toggle(ModelConfig(provider="mimo", model="mimo-v2.5", reasoning_effort="ultra")) == {
         "extra_body": {"thinking": {"type": "enabled"}},
     }
+
+
+def test_custom_provider_hooks_clamp_effort_literals():
+    """Custom provider names must not emit vendor-illegal effort literals."""
+    assert deepseek_reasoning(
+        ModelConfig(provider="my-deepseek", model="deepseek-v4-pro", reasoning_effort="xhigh")
+    ) == {
+        "reasoning_effort": "max",
+        "extra_body": {"thinking": {"type": "enabled"}},
+    }
+    assert kimi_reasoning(
+        ModelConfig(provider="my-kimi", model="kimi-k3", reasoning_effort="xhigh")
+    ) == {
+        "reasoning_effort": "max",
+        "extra_body": {"thinking": {"type": "enabled"}},
+    }
+    assert anthropic_reasoning(
+        ModelConfig(provider="my-claude", model="claude-opus-4-8", reasoning_effort="max")
+    ) == {"thinking": {"type": "adaptive"}, "effort": "max"}
+    assert anthropic_reasoning(
+        ModelConfig(provider="my-claude", model="claude-opus-4-8", reasoning_effort="ultra")
+    ) == {"thinking": {"type": "adaptive"}, "effort": "max"}
+    assert openai_reasoning(
+        ModelConfig(provider="my-openai", model="gpt-5.6-sol", reasoning_effort="ultra")
+    ) == {"extra_body": {"reasoning": {"effort": "ultra"}}}
+    assert nested_reasoning(
+        ModelConfig(provider="openrouter", model="openai/gpt-5.6-sol", reasoning_effort="ultra")
+    ) == {"extra_body": {"reasoning": {"effort": "ultra"}}}
 
 
 def test_gemini_and_nested_openai_fallback():

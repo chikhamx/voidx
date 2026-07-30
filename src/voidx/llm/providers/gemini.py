@@ -9,7 +9,7 @@ from voidx.config import ModelConfig
 from voidx.llm.providers import base
 from voidx.llm.providers.base import ProviderSpec
 from voidx.config.enums import ReasoningEffort
-from voidx.llm.providers.common import GEMINI_THINKING_BUDGETS, resolve_effort
+from voidx.llm.providers.common import GEMINI_THINKING_BUDGETS, map_effort, resolve_effort
 
 GEMINI_API_VERSION = "v1beta"
 
@@ -33,10 +33,28 @@ _GEMINI3_PREFIXES = (
     "gemini-4",
 )
 
+# ChatGoogleGenerativeAI.thinking_level only accepts these values.
+_GEMINI_THINKING_LEVELS = (
+    ReasoningEffort.NONE,
+    ReasoningEffort.LOW,
+    ReasoningEffort.MEDIUM,
+    ReasoningEffort.HIGH,
+)
+
+
+def _normalize_gemini_model_name(model: str) -> str:
+    name = (model or "").lower().strip()
+    if name.startswith("models/"):
+        name = name[len("models/"):]
+    if "/" in name:
+        name = name.rsplit("/", 1)[-1]
+    return name
+
 
 def _is_gemini3_plus(model: str) -> bool:
     """Whether a Gemini model uses thinking_level (3+) vs thinking_budget (2.5)."""
-    return any(model.lower().startswith(p) for p in _GEMINI3_PREFIXES)
+    name = _normalize_gemini_model_name(model)
+    return any(name.startswith(p) for p in _GEMINI3_PREFIXES)
 
 
 def gemini_reasoning(config: ModelConfig) -> dict:
@@ -45,7 +63,9 @@ def gemini_reasoning(config: ModelConfig) -> dict:
         return {}
     kwargs: dict = {"include_thoughts": True}
     if _is_gemini3_plus(config.model):
-        kwargs["thinking_level"] = effort.value  # already clamped to high max
+        # Custom providers may not hit the gemini model table, so clamp here.
+        level = map_effort(effort, _GEMINI_THINKING_LEVELS)
+        kwargs["thinking_level"] = level.value
     else:
         kwargs["thinking_budget"] = GEMINI_THINKING_BUDGETS.get(effort, 8_192)
     return kwargs
