@@ -33,6 +33,7 @@ class SubmitState:
     ctrl_c_armed: bool = False
     ctrl_c_deadline: float = 0.0
     quiet_commands: list[str] = field(default_factory=list)
+    locked_context: Any | None = None
 
 
 @dataclass
@@ -112,6 +113,7 @@ class RenderState:
     last_bottom_start_row: int = 1
     input_region_render_pending: bool = False
     choice_selection_render_pending: bool = False
+    bottom_region_dirty: bool = False
     committed_line_count: int = 0
     visible_committed_rows: int = 0
     was_busy: bool = False
@@ -125,6 +127,10 @@ class RenderState:
     busy_activity_timer_task: asyncio.Task[None] | None = None
     last_busy_activity_rows: int = 0
     last_busy_activity_start_row: int = 0
+    last_busy_activity_width: int = 0
+    last_busy_activity_term_height: int | None = None
+    last_busy_activity_bottom_rows: int = 0
+    last_busy_activity_thinking_rows: int = 0
     panel_row_limit: int | None = None
     base_bottom_rows_cache_key: tuple[Any, ...] | None = None
     base_bottom_rows_cache_count: int = 0
@@ -180,6 +186,7 @@ STATE_FIELD_MAP: dict[str, tuple[str, str]] = {
     "_ctrl_c_armed": ("_submit_state", "ctrl_c_armed"),
     "_ctrl_c_deadline": ("_submit_state", "ctrl_c_deadline"),
     "_quiet_commands": ("_submit_state", "quiet_commands"),
+    "_locked_submit_context": ("_submit_state", "locked_context"),
     "_choice_queue": ("_choice_state", "queue"),
     "_active_choice": ("_choice_state", "active"),
     "_choice_prompt": ("_choice_state", "prompt"),
@@ -222,6 +229,7 @@ STATE_FIELD_MAP: dict[str, tuple[str, str]] = {
     "_last_bottom_start_row": ("_render_state", "last_bottom_start_row"),
     "_input_region_render_pending": ("_render_state", "input_region_render_pending"),
     "_choice_selection_render_pending": ("_render_state", "choice_selection_render_pending"),
+    "_bottom_region_dirty": ("_render_state", "bottom_region_dirty"),
     "_committed_line_count": ("_render_state", "committed_line_count"),
     "_visible_committed_rows": ("_render_state", "visible_committed_rows"),
     "_was_busy": ("_render_state", "was_busy"),
@@ -233,6 +241,10 @@ STATE_FIELD_MAP: dict[str, tuple[str, str]] = {
     "_busy_activity_timer_task": ("_render_state", "busy_activity_timer_task"),
     "_last_busy_activity_rows": ("_render_state", "last_busy_activity_rows"),
     "_last_busy_activity_start_row": ("_render_state", "last_busy_activity_start_row"),
+    "_last_busy_activity_width": ("_render_state", "last_busy_activity_width"),
+    "_last_busy_activity_term_height": ("_render_state", "last_busy_activity_term_height"),
+    "_last_busy_activity_bottom_rows": ("_render_state", "last_busy_activity_bottom_rows"),
+    "_last_busy_activity_thinking_rows": ("_render_state", "last_busy_activity_thinking_rows"),
     "_panel_row_limit": ("_render_state", "panel_row_limit"),
     "_base_bottom_rows_cache_key": ("_render_state", "base_bottom_rows_cache_key"),
     "_base_bottom_rows_cache_count": ("_render_state", "base_bottom_rows_cache_count"),

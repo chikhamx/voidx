@@ -40,9 +40,6 @@ _DEFAULT_DYNAMIC_DELAY_SECONDS = 600.0
 from voidx.agent.loop.controller import LoopAttemptController
 
 
-
-
-
 @dataclass(frozen=True)
 class LoopRuntimeRunner:
     runtime: object

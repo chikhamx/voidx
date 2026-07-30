@@ -19,6 +19,7 @@ from rich.console import Console, Group
 from rich.markup import escape
 from rich.text import Text
 
+from voidx.agent.domain.profile import RuntimeProfile
 from voidx.logging import log_internal_error
 from voidx.logging.external import install_external_log_bridge
 from voidx.paths import voidx_workspace_dir
@@ -205,12 +206,44 @@ class PureTui(
         """Run without TUI — consume gateway input via the submit queue."""
         await self._consume(on_submit)
 
+    def _lock_submit_context_from_runtime_state(self) -> None:
+        if self._locked_submit_context is not None:
+            return
+        if not bool(dock):
+            return
+        if self._loop_waiting_active():
+            self._lock_submit_context_for_profile("loop", "loop")
+            return
+        if not getattr(dock, "turn_in_progress", False):
+            return
+        metadata = getattr(dock, "current_turn_metadata", None)
+        profile_id = str(getattr(metadata, "profile_id", "") or "").strip()
+        if not profile_id or profile_id == "coding":
+            return
+        protocol = str(getattr(metadata, "protocol", "") or "turn").strip() or "turn"
+        self._lock_submit_context_for_profile(profile_id, protocol)
+
+    def _lock_submit_context_for_profile(self, profile_id: str, protocol: str) -> None:
+        profile = RuntimeProfile(
+            profile_id=profile_id,
+            revision=1,
+            name=profile_id[:1].upper() + profile_id[1:],
+            protocol=protocol,
+        )
+        base_context = coding_turn_context_for_queue(self.status)
+        self._locked_submit_context = base_context.model_copy(update={"runtime_profile": profile})
+
     def _submit_context(
         self,
         *,
         thread_id: str = "",
         context: ThreadExecutionContext | None = None,
+        lock_from_runtime_state: bool = True,
     ) -> ThreadExecutionContext:
+        if context is None:
+            if lock_from_runtime_state:
+                self._lock_submit_context_from_runtime_state()
+            context = self._locked_submit_context
         return coding_turn_context_for_queue(self.status, thread_id=thread_id, context=context)
 
     def submit_external_input(
@@ -221,7 +254,14 @@ class PureTui(
         context: ThreadExecutionContext | None = None,
     ) -> None:
         """Submit text from web gateway."""
-        context = self._submit_context(thread_id=thread_id, context=context)
+        explicit_context = context is not None
+        context = self._submit_context(
+            thread_id=thread_id,
+            context=context,
+            lock_from_runtime_state=explicit_context or not text.strip().startswith("/"),
+        )
+        if self._locked_submit_context is None and (explicit_context or not text.strip().startswith("/")):
+            self._locked_submit_context = context
         self._queue.put_nowait(_SubmitQueueItem(
             text,
             restore_text=text,
@@ -299,6 +339,7 @@ class PureTui(
         return random.choice(tui_activity.BUSY_ACTIVITY_VERBS)
 
     def _on_dock_refresh(self) -> None:
+        self._lock_submit_context_from_runtime_state()
         # A loop-waiting record may land after the turn already ended; the
         # countdown timer must be (re)started from here, not just at turn end.
         self._start_busy_activity_timer()
@@ -307,7 +348,7 @@ class PureTui(
     def _start_busy_activity_timer(self) -> None:
         if not self._tty or not self._running:
             return
-        if not (self._busy or self._loop_waiting_active() or self._loop_turn_in_progress()):
+        if not self._busy_activity_tick_active():
             return
         task = self._busy_activity_timer_task
         if task is not None and not task.done():
@@ -337,9 +378,9 @@ class PureTui(
 
     async def _busy_activity_timer(self) -> None:
         try:
-            while self._running and (self._busy or self._loop_waiting_active() or self._loop_turn_in_progress()):
+            while self._running and self._busy_activity_tick_active():
                 await asyncio.sleep(tui_activity.BUSY_ACTIVITY_TICK_SECONDS)
-                if not self._running or not (self._busy or self._loop_waiting_active() or self._loop_turn_in_progress()):
+                if not self._running or not self._busy_activity_tick_active():
                     return
                 self._busy_activity_tick += 1
                 if not self._render_busy_activity_tick():
@@ -509,7 +550,7 @@ class PureTui(
                 "/clear",
                 restore_text=draft_text,
                 paste_entries=paste_entries,
-                context=self._submit_context(),
+                context=self._submit_context(lock_from_runtime_state=False),
             ))
             self._submit_cancel_requested = True
             if self._current_submit_task is not None and not self._current_submit_task.done():
@@ -528,11 +569,14 @@ class PureTui(
         paste_entries = self._paste_entries_snapshot()
         self._record_history(draft_text, paste_entries)
         self._clear_input()
+        context = self._submit_context(lock_from_runtime_state=not stripped.startswith("/"))
+        if self._locked_submit_context is None and not stripped.startswith("/"):
+            self._locked_submit_context = context
         self._queue.put_nowait(_SubmitQueueItem(
             submit_text,
             restore_text=draft_text,
             paste_entries=paste_entries,
-            context=self._submit_context(),
+            context=context,
         ))
         return True
 
@@ -556,25 +600,13 @@ class PureTui(
 
     def _handle_interrupt(self) -> None:
         loop_active = self._loop_turn_in_progress() or self._loop_waiting_active()
+        if loop_active:
+            self._stop_active_loop_from_interrupt()
+            return
         if not self._is_input_empty():
             self._clear_input()
             self._reset_ctrl_c()
             self._notice = "Input cleared. Press Ctrl-C twice on empty input to exit."
-            self.invalidate()
-            return
-        if loop_active:
-            if self._active_text_prompt is not None:
-                self._cancel_text_prompt()
-            if self._active_choice is not None:
-                self._finish_choice(None)
-            self._queue.put_nowait(_SubmitQueueItem(
-                "/loop stop",
-                restore_text="",
-                paste_entries=[],
-                context=self._submit_context(),
-            ))
-            self._reset_ctrl_c()
-            self._notice = "Stopping loop..."
             self.invalidate()
             return
         if self._active_text_prompt is not None:
@@ -603,6 +635,26 @@ class PureTui(
             return
         self._notice = ""
         self._request_exit()
+
+    def _stop_active_loop_from_interrupt(self) -> None:
+        if self._active_text_prompt is not None:
+            self._cancel_text_prompt()
+        if self._active_choice is not None:
+            self._finish_choice(None)
+        if self._current_submit_task is not None and not self._current_submit_task.done():
+            self._submit_cancel_requested = True
+            self._current_submit_task.cancel()
+        if not self._is_input_empty():
+            self._clear_input()
+        self._queue.put_nowait(_SubmitQueueItem(
+            "/loop stop",
+            restore_text="",
+            paste_entries=[],
+            context=self._submit_context(),
+        ))
+        self._reset_ctrl_c()
+        self._notice = "Stopping loop..."
+        self.invalidate()
 
     def _reset_ctrl_c(self) -> None:
         self._ctrl_c_armed = False
@@ -649,7 +701,12 @@ class PureTui(
             context = getattr(item, "context", None)
             if context is None:
                 thread_id = getattr(item, "thread_id", "")
-                context = self._submit_context(thread_id=thread_id)
+                context = self._submit_context(
+                    thread_id=thread_id,
+                    lock_from_runtime_state=not submit_text.strip().startswith("/"),
+                )
+            if self._locked_submit_context is None and not submit_text.strip().startswith("/"):
+                self._locked_submit_context = context
 
             self._busy = True
             self._busy_started_at = time.monotonic()

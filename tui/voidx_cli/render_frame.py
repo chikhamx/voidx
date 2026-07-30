@@ -30,7 +30,7 @@ class _FrameRendererMixin:
         clear_screen = False
         if self._tty:
             term_height = term_height or shutil.get_terminal_size().lines
-            force_full = render_failed
+            force_full = render_failed or self._bottom_region_dirty
             if (
                 self._prev_frame_width != 0
                 and (
@@ -84,24 +84,31 @@ class _FrameRendererMixin:
             self._last_frame_start_row = start_row
             self._last_bottom_rows = bottom_rows
             self._last_bottom_start_row = start_row + frame_rows - bottom_rows
-            self._last_busy_activity_rows = busy_activity_rows
             if busy_activity_rows > 0:
                 thinking_stream_rows = len(self._active_thinking_stream_elements(width))
-                self._last_busy_activity_start_row = (
-                    start_row
-                    + frame_rows
-                    - bottom_rows
-                    - thinking_stream_rows
-                    - busy_activity_rows
+                self._record_busy_activity_layout(
+                    start_row=(
+                        start_row
+                        + frame_rows
+                        - bottom_rows
+                        - thinking_stream_rows
+                        - busy_activity_rows
+                    ),
+                    rows=busy_activity_rows,
+                    width=width,
+                    term_height=term_height,
+                    bottom_rows=bottom_rows,
+                    thinking_rows=thinking_stream_rows,
                 )
             else:
-                self._last_busy_activity_start_row = 0
+                self._invalidate_busy_activity_layout()
             self._position_input_cursor(frame_rows)
             self._has_rendered_frame = True
             self._prev_frame_lines = lines
             self._prev_frame_start_row = start_row
             self._prev_frame_width = width
             self._prev_frame_term_height = term_height
+            self._bottom_region_dirty = False
             self._render_stats = RenderStats(
                 total_lines=len(lines),
                 changed_lines=changed_lines,
@@ -156,8 +163,42 @@ class _FrameRendererMixin:
         self._prev_frame_start_row = 1
         self._prev_frame_width = 0
         self._prev_frame_term_height = None
+        self._invalidate_busy_activity_layout()
+
+    def _record_busy_activity_layout(
+        self,
+        *,
+        start_row: int,
+        rows: int,
+        width: int,
+        term_height: int | None,
+        bottom_rows: int,
+        thinking_rows: int,
+    ) -> None:
+        self._last_busy_activity_start_row = start_row
+        self._last_busy_activity_rows = rows
+        self._last_busy_activity_width = width
+        self._last_busy_activity_term_height = term_height
+        self._last_busy_activity_bottom_rows = bottom_rows
+        self._last_busy_activity_thinking_rows = thinking_rows
+
+    def _invalidate_busy_activity_layout(self) -> None:
         self._last_busy_activity_rows = 0
         self._last_busy_activity_start_row = 0
+        self._last_busy_activity_width = 0
+        self._last_busy_activity_term_height = None
+        self._last_busy_activity_bottom_rows = 0
+        self._last_busy_activity_thinking_rows = 0
+
+    def _busy_activity_layout_matches(self, *, width: int, term_height: int | None, rows: int) -> bool:
+        return (
+            self._last_busy_activity_start_row > 0
+            and self._last_busy_activity_rows == rows
+            and self._last_busy_activity_width == width
+            and self._last_busy_activity_term_height == term_height
+            and self._last_busy_activity_bottom_rows == self._last_bottom_rows
+            and self._last_busy_activity_thinking_rows == len(self._active_thinking_stream_elements(width))
+        )
 
     def _frame_geometry_changed(self) -> bool:
         if not self._tty or self._prev_frame_width == 0:
@@ -215,6 +256,8 @@ class _FrameRendererMixin:
         sys.stdout.write(ansi)
         self._position_input_cursor(self._last_frame_rows)
         self._has_rendered_frame = True
+        self._bottom_region_dirty = True
+        self._invalidate_busy_activity_layout()
         sys.stdout.flush()
 
     def _render_choice_selection_region(self) -> bool:
@@ -259,17 +302,16 @@ class _FrameRendererMixin:
     def _render_busy_activity_tick(self) -> bool:
         if (
             not self._tty
-            or not (self._busy or self._loop_waiting_active())
+            or not self._busy_activity_tick_active()
             or not self._has_rendered_frame
             or self._render_scheduled
-            or self._last_busy_activity_rows <= 0
-            or self._last_busy_activity_start_row <= 0
         ):
             return False
         if self._frame_geometry_changed():
             return False
 
         width = self._frame_width()
+        term_height = shutil.get_terminal_size().lines
         try:
             ansi = self._capture_renderable(
                 Group(*self._render_busy_activity_elements(width)),
@@ -279,7 +321,11 @@ class _FrameRendererMixin:
             return False
 
         rows = _rendered_row_count(ansi)
-        if rows != self._last_busy_activity_rows:
+        if rows <= 0 or not self._busy_activity_layout_matches(
+            width=width,
+            term_height=term_height,
+            rows=rows,
+        ):
             return False
 
         lines = ansi.splitlines()

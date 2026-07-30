@@ -46,16 +46,22 @@ class _ActivityRendererMixin:
         return len(self._render_busy_activity_elements(width))
 
     def _render_busy_activity_elements(self, width: int) -> list[Text]:
-        if not self._busy and not self._loop_turn_in_progress():
-            return self._render_loop_waiting_elements(width)
-        elements = [self._busy_activity_text(width)]
-        permission_detail = active_permission_request_detail_text()
-        if permission_detail:
-            for line in _compact_permission_detail_lines(permission_detail):
-                elements.append(
-                    Text(_full_width_detail_line(line, width), style=BUSY_ACTIVITY_DETAIL_STYLE)
-                )
-        return elements
+        if self._busy_activity_turn_active():
+            elements = [self._busy_activity_text(width)]
+            permission_detail = active_permission_request_detail_text()
+            if permission_detail:
+                for line in _compact_permission_detail_lines(permission_detail):
+                    elements.append(
+                        Text(_full_width_detail_line(line, width), style=BUSY_ACTIVITY_DETAIL_STYLE)
+                    )
+            return elements
+        return self._render_loop_waiting_elements(width)
+
+    def _busy_activity_turn_active(self) -> bool:
+        return bool(self._busy or self._loop_turn_in_progress())
+
+    def _busy_activity_tick_active(self) -> bool:
+        return bool(self._busy_activity_turn_active() or self._loop_waiting_active())
 
     def _render_loop_waiting_elements(self, width: int) -> list[Text]:
         label = self._loop_waiting_label(width)

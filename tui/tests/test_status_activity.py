@@ -551,6 +551,162 @@ def test_busy_activity_tick_repaints_only_busy_line_above_thinking_content(tmp_p
         dock.reset()
 
 
+def test_loop_turn_activity_tick_repaints_without_local_busy_state(tmp_path, monkeypatch):
+    from voidx.agent.domain.turn_metadata import TurnMetadata
+
+    now = {"value": 1.0}
+    monkeypatch.setattr("voidx_cli.render_activity.time.monotonic", lambda: now["value"])
+    fake_stdout = _FakeStdout()
+    monkeypatch.setattr(sys, "stdout", fake_stdout)
+    monkeypatch.setattr(
+        shutil,
+        "get_terminal_size",
+        lambda fallback=None: os.terminal_size((100, 12)),
+    )
+    tui = _tui(tmp_path)
+    tui._running = True
+    tui._tty = True
+    tui._busy = False
+    tui._console = Console(file=None, force_terminal=True, width=100, height=12, _environ={})
+    dock.begin_capture()
+    try:
+        dock.start_turn(
+            "Run the next scheduled loop iteration.",
+            metadata=TurnMetadata(profile_id="loop", protocol="loop", category="loop"),
+        )
+        tui._render_frame()
+        assert tui._last_busy_activity_start_row > 0
+
+        fake_stdout.text = ""
+        now["value"] = 2.0
+        monkeypatch.setattr(
+            tui,
+            "_render_frame",
+            lambda: (_ for _ in ()).throw(AssertionError("timer must not full-render")),
+        )
+
+        assert tui._render_busy_activity_tick() is True
+        tick_output = _rich_plain(fake_stdout.text)
+        assert "Thinking" in tick_output
+        assert "Run the next scheduled loop iteration" not in tick_output
+        assert "─" not in tick_output
+    finally:
+        dock.deactivate()
+        dock.reset()
+
+
+@pytest.mark.asyncio
+async def test_choice_prompt_clear_invalidates_activity_tick_layout(tmp_path, monkeypatch):
+    monkeypatch.setattr("voidx_cli.render_activity.time.monotonic", lambda: 105.0)
+    fake_stdout = _FakeStdout()
+    monkeypatch.setattr(sys, "stdout", fake_stdout)
+    monkeypatch.setattr(
+        shutil,
+        "get_terminal_size",
+        lambda fallback=None: os.terminal_size((80, 24)),
+    )
+    tui = _tui(tmp_path)
+    tui._running = True
+    tui._tty = True
+    tui._busy = True
+    tui._busy_started_at = 100.0
+    tui._busy_activity_verb = "Working"
+    tui._console = Console(file=None, force_terminal=True, width=80, height=24, _environ={})
+    tui._active_choice = [("review", "review", ""), ("implement", "implement", "")]
+    tui._choice_prompt = "Intent?"
+    tui._choice_selected = 0
+
+    tui._render_frame()
+    assert tui._last_busy_activity_start_row > 0
+    assert tui._last_busy_activity_rows > 0
+
+    fake_stdout.text = ""
+    tui._clear_choice_prompt()
+
+    assert tui._last_busy_activity_start_row == 0
+    assert tui._last_busy_activity_rows == 0
+    assert tui._render_busy_activity_tick() is False
+    assert "Working" not in _rich_plain(fake_stdout.text)
+
+
+def test_busy_regular_submit_after_typing_preserves_activity_line(tmp_path, monkeypatch):
+    monkeypatch.setattr("voidx_cli.render_activity.time.monotonic", lambda: 105.0)
+    fake_stdout = _FakeStdout()
+    monkeypatch.setattr(sys, "stdout", fake_stdout)
+    monkeypatch.setattr(
+        shutil,
+        "get_terminal_size",
+        lambda fallback=None: os.terminal_size((80, 12)),
+    )
+    tui = _tui(tmp_path)
+    tui._running = True
+    tui._tty = True
+    tui._busy = True
+    tui._busy_started_at = 100.0
+    tui._busy_activity_verb = "Working"
+    tui._console = Console(file=None, force_terminal=True, width=80, height=12, _environ={})
+
+    tui._render_frame()
+    fake_stdout.text = ""
+    assert tui._process_input(b"hello") is True
+    tui._render_after_input()
+    assert tui._bottom_region_dirty is True
+
+    fake_stdout.text = ""
+    assert tui._process_input(b"\r") is True
+    tui._render_after_input()
+
+    output = _rich_plain(fake_stdout.text)
+    assert tui._queue.get_nowait() == "hello"
+    assert "Working (5s)" in output
+    assert "hello" not in output
+    assert tui._bottom_region_dirty is False
+
+
+@pytest.mark.asyncio
+async def test_busy_guide_submit_preserves_activity_line(tmp_path, monkeypatch):
+    monkeypatch.setattr("voidx_cli.render_activity.time.monotonic", lambda: 105.0)
+    fake_stdout = _FakeStdout()
+    monkeypatch.setattr(sys, "stdout", fake_stdout)
+    monkeypatch.setattr(
+        shutil,
+        "get_terminal_size",
+        lambda fallback=None: os.terminal_size((80, 12)),
+    )
+    tui = _tui(tmp_path)
+    requests: list[dict[str, str]] = []
+
+    async def handle_request(request):
+        requests.append(request)
+
+    tui.set_external_command_handler(handle_request)
+    tui._running = True
+    tui._tty = True
+    tui._busy = True
+    tui._busy_started_at = 100.0
+    tui._busy_activity_verb = "Working"
+    tui._console = Console(file=None, force_terminal=True, width=80, height=12, _environ={})
+
+    tui._render_frame()
+    assert "Working (5s)" in _rich_plain(fake_stdout.text)
+
+    fake_stdout.text = ""
+    assert tui._process_input(b"/guide use TypeScript") is True
+    tui._render_after_input()
+    assert tui._bottom_region_dirty is True
+
+    fake_stdout.text = ""
+    assert tui._process_input(b"\r") is True
+    tui._render_after_input()
+    await asyncio.sleep(0)
+
+    output = _rich_plain(fake_stdout.text)
+    assert requests == [{"kind": "guide", "text": "use TypeScript"}]
+    assert "Working (5s)" in output
+    assert "use TypeScript" not in output
+    assert tui._bottom_region_dirty is False
+
+
 def test_busy_activity_tick_refuses_invalidated_frame_cache(tmp_path, monkeypatch):
     now = {"value": 1.0}
     monkeypatch.setattr("voidx_cli.render_activity.time.monotonic", lambda: now["value"])
@@ -1043,6 +1199,111 @@ def test_ctrl_c_interrupts_loop_turn_in_progress(tmp_path, monkeypatch):
     assert tui._notice == "Stopping loop..."
 
 
+@pytest.mark.asyncio
+async def test_ctrl_c_stops_running_loop_even_if_input_has_text(tmp_path, monkeypatch):
+    from voidx.agent.domain.turn_metadata import TurnMetadata
+    from voidx.ui.output.dock import dock
+
+    tui = _tui(tmp_path)
+    started = asyncio.Event()
+    cancelled = asyncio.Event()
+    stopped = asyncio.Event()
+    submitted: list[str] = []
+
+    async def on_submit(text: str) -> bool:
+        submitted.append(text)
+        if text == "/loop stop":
+            stopped.set()
+            return True
+        dock.start_turn(
+            "Run the next scheduled loop iteration.",
+            metadata=TurnMetadata(profile_id="loop", protocol="loop", category="loop"),
+        )
+        started.set()
+        try:
+            await asyncio.Event().wait()
+        except asyncio.CancelledError:
+            cancelled.set()
+            raise
+
+    consumer = asyncio.create_task(tui._consume(on_submit))
+    try:
+        tui._queue.put_nowait("loop iteration")
+        await asyncio.wait_for(started.wait(), timeout=1)
+        tui._input_lines = ["[loop] @../imcore/backend/docs/typex-message-list"]
+        tui._cursor_col = len(tui._input_lines[0])
+
+        tui._handle_interrupt()
+
+        await asyncio.wait_for(cancelled.wait(), timeout=1)
+        await asyncio.wait_for(stopped.wait(), timeout=1)
+        await asyncio.sleep(0)
+
+        assert submitted == ["loop iteration", "/loop stop"]
+        assert tui._is_input_empty() is True
+        assert tui._current_submit_task is None
+        assert tui._busy is False
+        assert tui._notice == "Stopping loop..."
+    finally:
+        dock.deactivate()
+        dock.reset()
+        tui._queue.put_nowait(None)
+        await asyncio.wait_for(consumer, timeout=1)
+
+
+@pytest.mark.asyncio
+async def test_ctrl_c_interrupts_running_loop_submit_task(tmp_path, monkeypatch):
+    from voidx.agent.domain.turn_metadata import TurnMetadata
+    from voidx.ui.output.dock import dock
+
+    tui = _tui(tmp_path)
+    started = asyncio.Event()
+    cancelled = asyncio.Event()
+    stopped = asyncio.Event()
+    submitted: list[str] = []
+
+    async def on_submit(text: str) -> bool:
+        submitted.append(text)
+        if text == "/loop stop":
+            stopped.set()
+            return True
+        dock.start_turn(
+            "Run the next scheduled loop iteration.",
+            metadata=TurnMetadata(profile_id="loop", protocol="loop", category="loop"),
+        )
+        started.set()
+        try:
+            await asyncio.Event().wait()
+        except asyncio.CancelledError:
+            cancelled.set()
+            raise
+
+    consumer = asyncio.create_task(tui._consume(on_submit))
+    try:
+        tui._queue.put_nowait("loop iteration")
+        await asyncio.wait_for(started.wait(), timeout=1)
+
+        assert tui._busy is True
+        assert tui._current_submit_task is not None
+        assert tui._loop_turn_in_progress() is True
+
+        tui._handle_interrupt()
+
+        await asyncio.wait_for(cancelled.wait(), timeout=1)
+        await asyncio.wait_for(stopped.wait(), timeout=1)
+        await asyncio.sleep(0)
+
+        assert submitted == ["loop iteration", "/loop stop"]
+        assert tui._current_submit_task is None
+        assert tui._busy is False
+        assert tui._notice == "Stopping loop..."
+    finally:
+        dock.deactivate()
+        dock.reset()
+        tui._queue.put_nowait(None)
+        await asyncio.wait_for(consumer, timeout=1)
+
+
 def test_ctrl_c_interrupts_loop_waiting(tmp_path, monkeypatch):
     from voidx.ui.output.dock import dock
     tui = _tui(tmp_path)
@@ -1060,7 +1321,7 @@ def test_ctrl_c_interrupts_loop_waiting(tmp_path, monkeypatch):
     assert tui._notice == "Stopping loop..."
 
 
-def test_ctrl_c_clears_input_first_even_if_loop_active(tmp_path, monkeypatch):
+def test_ctrl_c_stops_loop_even_if_input_has_text(tmp_path, monkeypatch):
     from voidx.ui.output.dock import dock
     tui = _tui(tmp_path)
     tui._busy = False
@@ -1074,9 +1335,160 @@ def test_ctrl_c_clears_input_first_even_if_loop_active(tmp_path, monkeypatch):
 
     tui._handle_interrupt()
 
-    assert tui._queue.qsize() == 0
+    assert tui._queue.qsize() == 1
+    item = tui._queue.get_nowait()
+    assert item == "/loop stop"
     assert tui._is_input_empty() is True
-    assert "Input cleared" in tui._notice
+    assert tui._notice == "Stopping loop..."
+
+
+def test_first_slash_command_does_not_lock_loop_waiting_context(tmp_path):
+    from voidx.ui.output.dock import dock
+
+    tui = _tui(tmp_path)
+    dock.record_status("loop:waiting", "Looping", "9999999999.0")
+    tui._input_lines = ["/help"]
+    tui._cursor_col = len("/help")
+
+    assert tui._do_submit() is True
+
+    item = tui._queue.get_nowait()
+    assert item == "/help"
+    assert tui._locked_submit_context is None
+    assert item.context.runtime_profile.profile_id == "coding"
+
+
+def test_first_slash_command_does_not_lock_active_turn_context(tmp_path):
+    from voidx.agent.domain.turn_metadata import TurnMetadata
+    from voidx.ui.output.dock import dock
+
+    tui = _tui(tmp_path)
+    dock.start_turn(
+        "chat turn",
+        metadata=TurnMetadata(profile_id="chat", protocol="chat", category="chat"),
+    )
+    try:
+        tui._input_lines = ["/help"]
+        tui._cursor_col = len("/help")
+
+        assert tui._do_submit() is True
+
+        item = tui._queue.get_nowait()
+        assert item == "/help"
+        assert tui._locked_submit_context is None
+        assert item.context.runtime_profile.profile_id == "coding"
+    finally:
+        dock.end_turn()
+
+
+def test_external_slash_command_does_not_lock_loop_waiting_context(tmp_path):
+    from voidx.ui.output.dock import dock
+
+    tui = _tui(tmp_path)
+    dock.record_status("loop:waiting", "Looping", "9999999999.0")
+
+    tui.submit_external_input("/help")
+
+    item = tui._queue.get_nowait()
+    assert item == "/help"
+    assert tui._locked_submit_context is None
+    assert item.context.runtime_profile.profile_id == "coding"
+
+
+def test_first_plain_message_locks_default_coding_context(tmp_path):
+    from voidx.agent.domain.turn_metadata import TurnMetadata
+    from voidx.ui.output.dock import dock
+
+    tui = _tui(tmp_path)
+    tui._input_lines = ["first"]
+    tui._cursor_col = len("first")
+    assert tui._do_submit() is True
+
+    first = tui._queue.get_nowait()
+    assert first.context.runtime_profile.profile_id == "coding"
+
+    dock.start_turn(
+        "Run the next scheduled loop iteration.",
+        metadata=TurnMetadata(profile_id="loop", protocol="loop", category="loop"),
+    )
+    tui._on_dock_refresh()
+    dock.end_turn()
+
+    tui._input_lines = ["second"]
+    tui._cursor_col = len("second")
+    assert tui._do_submit() is True
+
+    second = tui._queue.get_nowait()
+    assert second.context.runtime_profile.profile_id == "coding"
+    assert second.context.runtime_profile.protocol == "turn"
+
+
+def test_first_explicit_profile_context_locks_future_messages(tmp_path):
+    from voidx.agent.domain.profile import RuntimeProfile
+    from voidx.agent.domain.turn_context import TurnExecutionContext
+
+    tui = _tui(tmp_path)
+    chat_context = TurnExecutionContext(
+        thread_id="chat-thread",
+        session_id="chat-session",
+        runtime_profile=RuntimeProfile(profile_id="chat", revision=1, name="Chat", protocol="chat"),
+        workspace=str(tmp_path),
+    )
+
+    tui.submit_external_input("hello", context=chat_context)
+    first = tui._queue.get_nowait()
+    assert first.context.runtime_profile.profile_id == "chat"
+
+    tui._input_lines = ["你好"]
+    tui._cursor_col = len("你好")
+    assert tui._do_submit() is True
+
+    second = tui._queue.get_nowait()
+    assert second.context.thread_id == "chat-thread"
+    assert second.context.session_id == "chat-session"
+    assert second.context.runtime_profile.profile_id == "chat"
+    assert second.context.runtime_profile.protocol == "chat"
+
+
+def test_message_after_loop_waiting_keeps_loop_context(tmp_path):
+    from voidx.ui.output.dock import dock
+
+    tui = _tui(tmp_path)
+    dock.record_status("loop:waiting", "Looping", "9999999999.0")
+
+    tui._input_lines = ["你好"]
+    tui._cursor_col = len("你好")
+    assert tui._do_submit() is True
+
+    item = tui._queue.get_nowait()
+    assert item == "你好"
+    assert item.context.runtime_profile.profile_id == "loop"
+    assert item.context.runtime_profile.protocol == "loop"
+
+
+def test_message_after_interrupting_loop_keeps_loop_context(tmp_path):
+    from voidx.agent.domain.turn_metadata import TurnMetadata
+    from voidx.ui.output.dock import dock
+
+    tui = _tui(tmp_path)
+    dock.start_turn(
+        "Run the next scheduled loop iteration.",
+        metadata=TurnMetadata(profile_id="loop", protocol="loop", category="loop"),
+    )
+
+    tui._handle_interrupt()
+    stop_item = tui._queue.get_nowait()
+    assert stop_item == "/loop stop"
+    dock.end_turn()
+
+    tui._input_lines = ["你好"]
+    tui._cursor_col = len("你好")
+    assert tui._do_submit() is True
+
+    item = tui._queue.get_nowait()
+    assert item == "你好"
+    assert item.context.runtime_profile.profile_id == "loop"
+    assert item.context.runtime_profile.protocol == "loop"
 
 
 def test_loop_turn_in_progress_uses_metadata_not_text(tmp_path):

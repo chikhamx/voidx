@@ -69,4 +69,7 @@ class _ChoicePromptMixin:
         self._choice_selected = 0
         self._choice_details = []
         self._choice_anchor = ""
+        invalidate_activity = getattr(self, "_invalidate_busy_activity_layout", None)
+        if callable(invalidate_activity):
+            invalidate_activity()
         self.invalidate()
